@@ -8,7 +8,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ deleted: [id: number] }>()
 
-const { update, remove, getSsUrl } = useClients()
+const { update, remove } = useClients()
 const toast = useToast()
 
 const enabled = ref(props.client.enabled)
@@ -40,32 +40,6 @@ async function doDelete() {
   }
   finally {
     confirmDelete.value = false
-  }
-}
-
-async function downloadConfig() {
-  try {
-    const url = await getSsUrl(props.client.id)
-    const blob = new Blob([url], { type: 'text/plain' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${props.client.name}.outline.txt`
-    a.click()
-    URL.revokeObjectURL(a.href)
-  }
-  catch (e) {
-    toast.add({ title: 'Ошибка скачивания', color: 'error', description: (e as Error).message })
-  }
-}
-
-async function copySsUrl() {
-  try {
-    const url = await getSsUrl(props.client.id)
-    await navigator.clipboard.writeText(url)
-    toast.add({ title: 'ss:// URL скопирован', color: 'success' })
-  }
-  catch (e) {
-    toast.add({ title: 'Ошибка копирования', color: 'error', description: (e as Error).message })
   }
 }
 
@@ -102,17 +76,13 @@ function fmtBytes(n: number | undefined | null): string {
     </div>
 
     <div class="flex gap-1 mt-3 justify-end">
-      <UTooltip text="Копировать ss:// URL">
-        <UButton icon="i-lucide-link" size="xs" color="neutral" variant="ghost" @click="copySsUrl" />
+      <UTooltip text="Shadowsocks — QR, копировать URL, одноразовая ссылка, Telegram">
+        <UButton size="xs" color="neutral" variant="ghost" class="font-mono font-semibold" @click="showQr = true">
+          SS
+        </UButton>
       </UTooltip>
       <UTooltip text="Редактировать">
         <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" @click="showEdit = true" />
-      </UTooltip>
-      <UTooltip text="QR / одноразовая ссылка">
-        <UButton icon="i-lucide-qr-code" size="xs" color="neutral" variant="ghost" @click="showQr = true" />
-      </UTooltip>
-      <UTooltip text="Скачать конфиг">
-        <UButton icon="i-lucide-download" size="xs" color="neutral" variant="ghost" @click="downloadConfig" />
       </UTooltip>
       <UTooltip text="Удалить">
         <UButton icon="i-lucide-trash-2" size="xs" color="error" variant="ghost" @click="confirmDelete = true" />

@@ -5,10 +5,12 @@ import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { notifyBot } from '../../utils/bot-events'
 import { generateSsSecret, syncShadowsocksConfig } from '../../utils/shadowsocks'
+import { buildSsUrl } from '../../utils/ss-url'
 
 const Body = z.object({
   name: z.string().min(1).max(64),
   expiresAt: z.iso.datetime().nullable().optional(),
+  sendToTg: z.boolean().optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -39,6 +41,17 @@ export default defineEventHandler(async (event) => {
   })
 
   void notifyBot('client_created', { name: row.name })
+
+  if (body.sendToTg && cfg.ssPublicHost) {
+    const ssUrl = buildSsUrl({
+      cipher: row.cipher,
+      secret: row.ssSecret,
+      host: String(cfg.ssPublicHost),
+      port: Number(cfg.ssPort),
+      name: row.name,
+    })
+    void notifyBot('client_send_config', { name: row.name, ssUrl })
+  }
 
   return row
 })

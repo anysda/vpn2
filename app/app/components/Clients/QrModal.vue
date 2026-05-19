@@ -87,7 +87,7 @@ async function sendToTelegram() {
             :loading="sendingTg"
             @click="sendToTelegram"
           >
-            Telegram
+            Отправить в Telegram
           </UButton>
         </div>
       </div>

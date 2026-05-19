@@ -2,17 +2,21 @@
 @import "@nuxt/ui";
 
 @theme static {
-  --font-sans: 'Public Sans', sans-serif;
+  --font-sans: 'Inter', 'Public Sans', system-ui, sans-serif;
+}
 
-  --color-green-50: #effdf5;
-  --color-green-100: #d9fbe8;
-  --color-green-200: #b3f5d1;
-  --color-green-300: #75edae;
-  --color-green-400: #00dc82;
-  --color-green-500: #00c16a;
-  --color-green-600: #00a155;
-  --color-green-700: #007f45;
-  --color-green-800: #016538;
-  --color-green-900: #0a5331;
-  --color-green-950: #052e16;
+/* Near-black canvas with explicitly contrasted cards (the default slate
+   palette gave bluish background indistinguishable from card surface).  */
+:root.dark {
+  --ui-bg: #0a0a0a;
+  --ui-bg-muted: #0f0f10;
+  --ui-bg-elevated: #161617;
+  --ui-bg-accented: #1c1c1d;
+  --ui-border: #27272a;
+  --ui-border-muted: #1f1f22;
+}
+
+html,
+body {
+  background-color: var(--ui-bg);
 }

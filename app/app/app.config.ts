@@ -1,15 +1,15 @@
 export default defineAppConfig({
-  // https://ui.nuxt.com/getting-started/theme#design-system
   ui: {
     colors: {
       primary: 'emerald',
-      neutral: 'slate',
+      neutral: 'zinc',
     },
-    button: {
-      defaultVariants: {
-        // Set default button color to neutral
-        // color: 'neutral'
-      }
-    }
-  }
+    card: {
+      slots: {
+        root: 'bg-zinc-900 border border-zinc-800/60 ring-0 shadow-xs',
+        header: 'px-4 py-3 border-b border-zinc-800/60',
+        body: 'px-4 py-3',
+      },
+    },
+  },
 })

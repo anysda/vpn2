@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Outbound, Route } from '~/composables/useRoutes'
-import { flagFor, rttColor, useRoutes } from '~/composables/useRoutes'
+import { flagFor, parseOutbound, rttColor, useRoutes } from '~/composables/useRoutes'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()
@@ -9,7 +9,6 @@ const newValue = ref('')
 const newOutbound = ref<string>('')
 const adding = ref(false)
 
-// Default newOutbound to "direct-ru" once we know the proxy list
 watch(outbounds, (list) => {
   if (!newOutbound.value && list.length > 0) {
     newOutbound.value = list.find(o => o.isDirectRu)?.name ?? list[0]!.name
@@ -33,20 +32,63 @@ async function add() {
   }
 }
 
-const directOutbounds = computed(() => outbounds.value.filter(o => o.isDirectRu || (!o.isWarp && o.name.startsWith('hy2-'))))
-const warpOutbounds = computed(() => outbounds.value.filter(o => o.isWarp))
+interface Column {
+  tag: string
+  direct: Outbound | null
+  warp: Outbound | null
+}
 
-function rulesFor(outboundName: string): Route[] {
+const columns = computed<Column[]>(() => {
+  const byTag = new Map<string, Column>()
+  for (const ob of outbounds.value) {
+    const parsed = parseOutbound(ob.name)
+    if (!parsed) continue
+    let col = byTag.get(parsed.tag)
+    if (!col) {
+      col = { tag: parsed.tag, direct: null, warp: null }
+      byTag.set(parsed.tag, col)
+    }
+    if (parsed.variant === 'direct') col.direct = ob
+    else col.warp = ob
+  }
+  // RU first, then others by their direct RTT (lowest first)
+  const arr = Array.from(byTag.values())
+  return arr.sort((a, b) => {
+    if (a.tag === 'ru') return -1
+    if (b.tag === 'ru') return 1
+    return (a.direct?.delay ?? 9999) - (b.direct?.delay ?? 9999)
+  })
+})
+
+function rulesFor(outboundName: string | null | undefined): Route[] {
+  if (!outboundName) return []
   return rules.value.filter(r => r.outbound === outboundName)
 }
 
-const moving = ref<{ id: number, value: string } | null>(null)
+// Drag state
+const dragging = ref<{ id: number, value: string } | null>(null)
+const dragOver = ref<string | null>(null)
 
-async function dropTo(targetOutbound: string) {
-  if (!moving.value) return
-  const m = moving.value
-  moving.value = null
-  if (rules.value.find(r => r.id === m.id)?.outbound === targetOutbound) return
+function onDragStart(rule: Route) {
+  dragging.value = { id: rule.id, value: rule.value }
+}
+function onDragEnd() {
+  dragging.value = null
+  dragOver.value = null
+}
+function onDragEnter(target: string) {
+  dragOver.value = target
+}
+function onDragLeave(target: string) {
+  if (dragOver.value === target) dragOver.value = null
+}
+async function onDrop(targetOutbound: string) {
+  const m = dragging.value
+  dragging.value = null
+  dragOver.value = null
+  if (!m) return
+  const cur = rules.value.find(r => r.id === m.id)
+  if (!cur || cur.outbound === targetOutbound) return
   try {
     await patch(m.id, targetOutbound)
     toast.add({ title: `«${m.value}» → ${targetOutbound}`, color: 'success' })
@@ -65,6 +107,18 @@ async function deleteRule(rule: Route) {
     toast.add({ title: 'Ошибка', color: 'error', description: (e as Error).message })
   }
 }
+
+function rttBadge(delay: number | null) {
+  if (delay === null) return { text: '—', cls: 'text-zinc-500' }
+  const color = rttColor(delay)
+  const map: Record<string, string> = {
+    success: 'text-emerald-400',
+    warning: 'text-amber-400',
+    error: 'text-rose-400',
+    neutral: 'text-zinc-400',
+  }
+  return { text: `${delay}ms`, cls: map[color] }
+}
 </script>
 
 <template>
@@ -74,7 +128,7 @@ async function deleteRule(rule: Route) {
         <div class="font-semibold">
           Маршрутизация
         </div>
-        <span class="text-xs text-(--ui-text-muted)">
+        <span class="text-xs text-zinc-500">
           {{ rules.length }} {{ rules.length === 1 ? 'правило' : 'правил' }}
         </span>
       </div>
@@ -89,13 +143,19 @@ async function deleteRule(rule: Route) {
         <div class="flex-1 min-w-[200px]">
           <UInput
             v-model="newValue"
-            placeholder="домен (netflix.com, *.openai.com) или CIDR (8.8.8.8/32)"
+            placeholder="netflix.com / *.openai.com / 8.8.8.8/32"
             class="w-full"
           />
         </div>
         <USelect
           v-model="newOutbound"
-          :items="outbounds.map(o => ({ label: `${flagFor(o.name)} ${o.name}${o.delay ? ` (${o.delay}ms)` : ''}`, value: o.name }))"
+          :items="outbounds.map(o => {
+            const p = parseOutbound(o.name)
+            const label = p
+              ? `${flagFor(p.tag)} ${p.tag.toUpperCase()}${p.variant === 'warp' ? ' WARP' : ''}`
+              : o.name
+            return { label, value: o.name }
+          })"
           class="w-44"
         />
         <UButton
@@ -107,114 +167,110 @@ async function deleteRule(rule: Route) {
         </UButton>
       </form>
 
-      <!-- Direct outbounds row -->
+      <!-- Columns: one per exit, direct cell on top, warp cell below -->
       <div
-        v-if="directOutbounds.length > 0"
-        class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2"
+        v-if="columns.length > 0"
+        class="grid gap-2"
+        :style="`grid-template-columns: repeat(${columns.length}, minmax(120px, 1fr))`"
       >
         <div
-          v-for="ob in directOutbounds"
-          :key="ob.name"
-          class="border border-(--ui-border) rounded-md p-2 min-h-[120px] flex flex-col"
-          :class="{ 'bg-(--ui-bg-elevated)': moving }"
-          @dragover.prevent
-          @drop.prevent="dropTo(ob.name)"
+          v-for="col in columns"
+          :key="col.tag"
+          class="space-y-2"
         >
-          <div class="flex items-center justify-between mb-2 text-xs">
-            <div class="flex items-center gap-1">
-              <UIcon
-                :name="rttColor(ob.delay) === 'success' ? 'i-lucide-circle' : 'i-lucide-circle-dot'"
-                :class="`text-${rttColor(ob.delay)}-500`"
-              />
-              <span class="font-medium">{{ flagFor(ob.name) }} {{ ob.name }}</span>
+          <!-- Direct cell -->
+          <div
+            v-if="col.direct"
+            :class="[
+              'rounded-md p-2 min-h-[110px] flex flex-col border transition-colors',
+              dragOver === col.direct.name
+                ? 'border-emerald-500 bg-emerald-500/10'
+                : 'border-zinc-800 bg-zinc-900/50',
+            ]"
+            @dragover.prevent
+            @dragenter.prevent="onDragEnter(col.direct.name)"
+            @dragleave="onDragLeave(col.direct.name)"
+            @drop.prevent="onDrop(col.direct.name)"
+          >
+            <div class="flex items-center justify-between mb-1.5 text-xs">
+              <span class="font-semibold">
+                {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }}
+              </span>
+              <span :class="rttBadge(col.direct.delay).cls">
+                {{ rttBadge(col.direct.delay).text }}
+              </span>
             </div>
-            <span class="text-(--ui-text-muted)">
-              {{ ob.delay ? `${ob.delay}ms` : '—' }}
-            </span>
+            <div class="flex-1 space-y-1">
+              <div
+                v-for="rule in rulesFor(col.direct.name)"
+                :key="rule.id"
+                draggable="true"
+                class="text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800 flex items-center justify-between gap-1 group cursor-grab"
+                @dragstart="onDragStart(rule)"
+                @dragend="onDragEnd"
+              >
+                <span class="truncate">{{ rule.value }}</span>
+                <UButton
+                  icon="i-lucide-x"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  class="opacity-0 group-hover:opacity-100"
+                  @click="deleteRule(rule)"
+                />
+              </div>
+            </div>
           </div>
-          <div class="flex-1 space-y-1">
-            <div
-              v-for="rule in rulesFor(ob.name)"
-              :key="rule.id"
-              :draggable="true"
-              class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
-              @dragstart="moving = { id: rule.id, value: rule.value }"
-              @dragend="moving = null"
-            >
-              <span class="truncate">{{ rule.value }}</span>
-              <UButton
-                icon="i-lucide-x"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                class="opacity-0 group-hover:opacity-100"
-                @click="deleteRule(rule)"
-              />
+
+          <!-- Warp cell (under direct, same column) -->
+          <div
+            v-if="col.warp"
+            :class="[
+              'rounded-md p-2 min-h-[80px] flex flex-col border border-dashed transition-colors',
+              dragOver === col.warp.name
+                ? 'border-amber-500 bg-amber-500/10'
+                : 'border-zinc-700 bg-zinc-900/30',
+            ]"
+            @dragover.prevent
+            @dragenter.prevent="onDragEnter(col.warp.name)"
+            @dragleave="onDragLeave(col.warp.name)"
+            @drop.prevent="onDrop(col.warp.name)"
+          >
+            <div class="flex items-center justify-between mb-1.5 text-xs">
+              <span class="font-medium flex items-center gap-1">
+                <UIcon name="i-lucide-zap" class="text-amber-400" />
+                WARP
+              </span>
+              <span :class="rttBadge(col.warp.delay).cls">
+                {{ rttBadge(col.warp.delay).text }}
+              </span>
             </div>
-            <div
-              v-if="rulesFor(ob.name).length === 0"
-              class="text-(--ui-text-muted) text-xs text-center py-3 italic"
-            >
-              пусто — перетащи сюда
+            <div class="flex-1 space-y-1">
+              <div
+                v-for="rule in rulesFor(col.warp.name)"
+                :key="rule.id"
+                draggable="true"
+                class="text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800 flex items-center justify-between gap-1 group cursor-grab"
+                @dragstart="onDragStart(rule)"
+                @dragend="onDragEnd"
+              >
+                <span class="truncate">{{ rule.value }}</span>
+                <UButton
+                  icon="i-lucide-x"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  class="opacity-0 group-hover:opacity-100"
+                  @click="deleteRule(rule)"
+                />
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- WARP outbounds row -->
-      <div
-        v-if="warpOutbounds.length > 0"
-        class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2"
-      >
-        <div
-          v-for="ob in warpOutbounds"
-          :key="ob.name"
-          class="border border-(--ui-border) border-dashed rounded-md p-2 min-h-[120px] flex flex-col"
-          :class="{ 'bg-(--ui-bg-elevated)': moving }"
-          @dragover.prevent
-          @drop.prevent="dropTo(ob.name)"
-        >
-          <div class="flex items-center justify-between mb-2 text-xs">
-            <div class="flex items-center gap-1">
-              <UIcon name="i-lucide-zap" class="text-yellow-500" />
-              <span class="font-medium">{{ flagFor(ob.name) }} {{ ob.name }}</span>
-            </div>
-            <span class="text-(--ui-text-muted)">
-              {{ ob.delay ? `${ob.delay}ms` : '—' }}
-            </span>
-          </div>
-          <div class="flex-1 space-y-1">
-            <div
-              v-for="rule in rulesFor(ob.name)"
-              :key="rule.id"
-              :draggable="true"
-              class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
-              @dragstart="moving = { id: rule.id, value: rule.value }"
-              @dragend="moving = null"
-            >
-              <span class="truncate">{{ rule.value }}</span>
-              <UButton
-                icon="i-lucide-x"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                class="opacity-0 group-hover:opacity-100"
-                @click="deleteRule(rule)"
-              />
-            </div>
-            <div
-              v-if="rulesFor(ob.name).length === 0"
-              class="text-(--ui-text-muted) text-xs text-center py-3 italic"
-            >
-              пусто — перетащи сюда
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <p class="text-xs text-(--ui-text-muted)">
-        Перетаскивай правила между столбцами чтобы сменить outbound.
-        Пустые столбцы → работает обычный geoip-роутинг. Ручные правила всегда побеждают.
+      <p class="text-xs text-zinc-500">
+        Перетаскивай правила между выходами. Пустые ячейки → geoip-роутинг по умолчанию.
       </p>
     </div>
   </UCard>

@@ -3,7 +3,7 @@ import { useClients } from '~/composables/useClients'
 
 useHead({ title: 'anysda-vpn2' })
 
-const { clients, status, refresh } = useClients()
+const { clients } = useClients()
 const search = ref('')
 
 const filtered = computed(() => {
@@ -11,6 +11,17 @@ const filtered = computed(() => {
   if (!q) return clients.value
   return clients.value.filter(c => c.name.toLowerCase().includes(q))
 })
+
+const { data: trafficMap, refresh: refreshTraffic } = useFetch<Record<number, { rxBytes: number, txBytes: number }>>('/api/clients/traffic', {
+  default: () => ({}),
+  server: false,
+})
+
+let trafficTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  if (!trafficTimer) trafficTimer = setInterval(() => { void refreshTraffic() }, 3000)
+})
+onUnmounted(() => { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null } })
 </script>
 
 <template>
@@ -18,18 +29,8 @@ const filtered = computed(() => {
     <div class="space-y-6">
       <UCard>
         <template #header>
-          <div class="flex items-center justify-between">
-            <div class="font-semibold">
-              Клиенты <span class="text-(--ui-text-muted) text-xs ml-1">{{ clients.length }}</span>
-            </div>
-            <UButton
-              icon="i-lucide-refresh-cw"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              :loading="status === 'pending'"
-              @click="refresh"
-            />
+          <div class="font-semibold">
+            Клиенты <span class="text-(--ui-text-muted) text-xs ml-1">{{ clients.length }}</span>
           </div>
         </template>
 
@@ -50,6 +51,7 @@ const filtered = computed(() => {
               v-for="client in filtered"
               :key="client.id"
               :client="client"
+              :traffic="trafficMap?.[client.id] ?? null"
             />
           </div>
         </div>

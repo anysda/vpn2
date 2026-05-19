@@ -211,7 +211,7 @@ function outboundLabel(name: string): string {
                 v-for="rule in rulesFor(col.direct.name)"
                 :key="rule.id"
                 draggable="true"
-                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg-muted) flex items-center justify-between gap-1 group cursor-grab"
+                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
                 @dragstart="onDragStart(rule)"
                 @dragend="onDragEnd"
               >
@@ -270,7 +270,7 @@ function outboundLabel(name: string): string {
                 v-for="rule in rulesFor(col.warp.name)"
                 :key="rule.id"
                 draggable="true"
-                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg-muted) flex items-center justify-between gap-1 group cursor-grab"
+                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
                 @dragstart="onDragStart(rule)"
                 @dragend="onDragEnd"
               >

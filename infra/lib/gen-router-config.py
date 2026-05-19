@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""
+gen-router-config.py — генерирует sing-box конфиг роутера для RU-ноды.
+
+Читает переменные из окружения, пишет JSON в stdout.
+Вызывается из 20-ru-router.sh после того, как все переменные экспортированы.
+
+Обязательные переменные:
+  EXIT_TAGS              — пробельный список тегов выходных нод (us se ...)
+  DOMAIN_{TAG}           — домен выходной ноды (DOMAIN_US, DOMAIN_SE, ...)
+  {TAG}_HY2_DIRECT_PORT  — порт direct (или HY2_DIRECT_PORT — глобальный дефолт)
+  HY2_WARP_PORT          — порт warp (общий для всех нод)
+  {TAG}_DIRECT           — пароль Hysteria2 direct
+  {TAG}_WARP             — пароль Hysteria2 warp
+  {TAG}_OBFS             — пароль salamander obfs
+  WG_OUT_IFACE           — WAN-интерфейс для direct-ru (привязка сокета)
+  RU_CLASH_SECRET        — секрет clash API
+"""
+
+import json
+import os
+import sys
+
+
+def require(key):
+    v = os.environ.get(key)
+    if not v:
+        print(f'ERROR: {key} не задан', file=sys.stderr)
+        sys.exit(1)
+    return v
+
+
+def main():
+    exit_tags = require('EXIT_TAGS').split()
+    if not exit_tags:
+        print('ERROR: EXIT_TAGS пустой', file=sys.stderr)
+        sys.exit(1)
+
+    hy2_direct_port_global = int(require('HY2_DIRECT_PORT'))
+    hy2_warp_port = int(require('HY2_WARP_PORT'))
+    wg_out_iface = require('WG_OUT_IFACE')
+    ru_clash_secret = require('RU_CLASH_SECRET')
+    mgmt_ip = os.environ.get('MGMT_IP', '10.99.0.1')
+
+    outbounds = [
+        {
+            'type': 'direct',
+            'tag': 'direct-ru',
+            'bind_interface': wg_out_iface,
+            'domain_strategy': 'ipv4_only',
+        }
+    ]
+
+    direct_tags = []
+    warp_tags = []
+
+    for tag in exit_tags:
+        T = tag.upper()
+        domain = require(f'DOMAIN_{T}')
+        direct_port = int(os.environ.get(f'{T}_HY2_DIRECT_PORT') or hy2_direct_port_global)
+        pwd_direct = require(f'{T}_DIRECT')
+        pwd_warp = require(f'{T}_WARP')
+        pwd_obfs = require(f'{T}_OBFS')
+
+        # Self-signed cert на exit-нодах → insecure (своя инфраструктура)
+        tls_direct = {'enabled': True, 'server_name': domain, 'insecure': True}
+        tls_warp   = {'enabled': True, 'server_name': domain, 'insecure': True}
+
+        outbounds.append({
+            'type': 'hysteria2',
+            'tag': f'hy2-{tag}-direct',
+            'server': domain,
+            'server_port': direct_port,
+            'password': pwd_direct,
+            'obfs': {'type': 'salamander', 'password': pwd_obfs},
+            'tls': tls_direct,
+        })
+        outbounds.append({
+            'type': 'hysteria2',
+            'tag': f'hy2-{tag}-warp',
+            'server': domain,
+            'server_port': hy2_warp_port,
+            'password': pwd_warp,
+            'obfs': {'type': 'salamander', 'password': pwd_obfs},
+            'tls': tls_warp,
+        })
+        direct_tags.append(f'hy2-{tag}-direct')
+        warp_tags.append(f'hy2-{tag}-warp')
+
+    all_hy2 = direct_tags + warp_tags
+
+    outbounds += [
+        {
+            'type': 'urltest',
+            'tag': 'direct-best',
+            'outbounds': direct_tags,
+            'url': 'http://cp.cloudflare.com/generate_204',
+            'interval': '60s',
+            'tolerance': 50,
+        },
+        {
+            'type': 'urltest',
+            'tag': 'warp-best',
+            'outbounds': warp_tags,
+            'url': 'http://cp.cloudflare.com/generate_204',
+            'interval': '60s',
+            'tolerance': 50,
+        },
+        {
+            'type': 'urltest',
+            'tag': 'foreign-best',
+            'outbounds': all_hy2,
+            'url': 'http://cp.cloudflare.com/generate_204',
+            'interval': '60s',
+            'tolerance': 50,
+        },
+        {'type': 'block', 'tag': 'block-out'},
+    ]
+
+    cfg = {
+        'log': {'level': 'error', 'timestamp': True},
+
+        'dns': {
+            'servers': [
+                {'tag': 'ru-dns', 'address': '77.88.8.8', 'detour': 'direct-ru'},
+                {'tag': 'cf-doh', 'address': 'https://1.1.1.1/dns-query', 'detour': 'foreign-best'},
+            ],
+            'rules': [
+                {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
+                {'geosite': ['category-gov-ru'], 'server': 'ru-dns'},
+            ],
+            'final': 'ru-dns',
+            'strategy': 'ipv4_only',
+        },
+
+        'inbounds': [
+            {
+                'type': 'redirect',
+                'tag': 'redirect-in',
+                'listen': '0.0.0.0',
+                'listen_port': 7895,
+                'sniff': True,
+                'sniff_override_destination': True,
+            },
+            {
+                'type': 'tproxy',
+                'tag': 'tproxy-udp-in',
+                'listen': '0.0.0.0',
+                'listen_port': 7896,
+                'network': 'udp',
+                'sniff': True,
+                'sniff_override_destination': True,
+            },
+            {
+                'type': 'socks',
+                'tag': 'socks-local',
+                'listen': '127.0.0.1',
+                'listen_port': 7897,
+            },
+        ],
+
+        'outbounds': outbounds,
+
+        'route': {
+            'geoip':   {'path': '/var/lib/sing-box/geoip.db'},
+            'geosite': {'path': '/var/lib/sing-box/geosite.db'},
+            # Маршрутизация:
+            #   1. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)
+            #   2. category-gov-ru → direct-ru (госуслуги и т.п.)
+            #   3. geoip:ru / private → direct-ru (физически в РФ)
+            #   4. всё остальное → foreign-best (urltest всех hy2 outbounds, самый быстрый)
+            # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
+            'rules': [
+                {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'outbound': 'block-out'},
+                {
+                    'port': [853],
+                    'ip_cidr': ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8'],
+                    'outbound': 'block-out',
+                },
+                {'protocol': 'dns',                          'outbound': 'direct-ru'},
+                {'domain_suffix': ['.ru', '.рф', '.su'],     'outbound': 'direct-ru'},
+                {'geosite': ['category-gov-ru'],             'outbound': 'direct-ru'},
+                {'geoip':   ['ru', 'private'],               'outbound': 'direct-ru'},
+            ],
+            'final': 'foreign-best',
+            'auto_detect_interface': True,
+        },
+
+        'experimental': {
+            'clash_api': {
+                'external_controller': f'{mgmt_ip}:9090',
+                'secret': ru_clash_secret,
+            },
+        },
+    }
+
+    print(json.dumps(cfg, indent=2, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

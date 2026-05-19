@@ -109,13 +109,13 @@ async function deleteRule(rule: Route) {
 }
 
 function rttBadge(delay: number | null) {
-  if (delay === null) return { text: '—', cls: 'text-zinc-500' }
+  if (delay === null) return { text: '—', cls: 'text-(--ui-text-dimmed)' }
   const color = rttColor(delay)
   const map: Record<string, string> = {
-    success: 'text-emerald-400',
+    success: 'text-violet-400',
     warning: 'text-amber-400',
     error: 'text-rose-400',
-    neutral: 'text-zinc-400',
+    neutral: 'text-(--ui-text-muted)',
   }
   return { text: `${delay}ms`, cls: map[color] }
 }
@@ -128,7 +128,7 @@ function rttBadge(delay: number | null) {
         <div class="font-semibold">
           Маршрутизация
         </div>
-        <span class="text-xs text-zinc-500">
+        <span class="text-xs text-(--ui-text-muted)">
           {{ rules.length }} {{ pluralRu(rules.length, ['правило', 'правила', 'правил']) }}
         </span>
       </div>
@@ -184,8 +184,8 @@ function rttBadge(delay: number | null) {
             :class="[
               'rounded-md p-2 min-h-[110px] flex flex-col border transition-colors',
               dragOver === col.direct.name
-                ? 'border-emerald-500 bg-emerald-500/10'
-                : 'border-zinc-800 bg-zinc-900/50',
+                ? 'border-violet-500 bg-violet-500/10'
+                : 'border-(--ui-border) bg-(--ui-bg)',
             ]"
             @dragover.prevent
             @dragenter.prevent="onDragEnter(col.direct.name)"
@@ -205,7 +205,7 @@ function rttBadge(delay: number | null) {
                 v-for="rule in rulesFor(col.direct.name)"
                 :key="rule.id"
                 draggable="true"
-                class="text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800 flex items-center justify-between gap-1 group cursor-grab"
+                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg-muted) flex items-center justify-between gap-1 group cursor-grab"
                 @dragstart="onDragStart(rule)"
                 @dragend="onDragEnd"
               >
@@ -228,8 +228,8 @@ function rttBadge(delay: number | null) {
             :class="[
               'rounded-md p-2 min-h-[80px] flex flex-col border border-dashed transition-colors',
               dragOver === col.warp.name
-                ? 'border-amber-500 bg-amber-500/10'
-                : 'border-zinc-700 bg-zinc-900/30',
+                ? 'border-violet-500 bg-violet-500/10'
+                : 'border-(--ui-border) bg-(--ui-bg)',
             ]"
             @dragover.prevent
             @dragenter.prevent="onDragEnter(col.warp.name)"
@@ -238,8 +238,7 @@ function rttBadge(delay: number | null) {
           >
             <div class="flex items-center justify-between mb-1.5 text-xs">
               <span class="font-medium flex items-center gap-1">
-                <UIcon name="i-lucide-zap" class="text-amber-400" />
-                WARP
+                {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }} WARP
               </span>
               <span :class="rttBadge(col.warp.delay).cls">
                 {{ rttBadge(col.warp.delay).text }}
@@ -250,7 +249,7 @@ function rttBadge(delay: number | null) {
                 v-for="rule in rulesFor(col.warp.name)"
                 :key="rule.id"
                 draggable="true"
-                class="text-xs px-2 py-1 rounded border border-zinc-700 bg-zinc-800 flex items-center justify-between gap-1 group cursor-grab"
+                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg-muted) flex items-center justify-between gap-1 group cursor-grab"
                 @dragstart="onDragStart(rule)"
                 @dragend="onDragEnd"
               >
@@ -269,7 +268,7 @@ function rttBadge(delay: number | null) {
         </div>
       </div>
 
-      <p class="text-xs text-zinc-500">
+      <p class="text-xs text-(--ui-text-muted)">
         Перетаскивай правила между выходами. Пустые ячейки → geoip-роутинг по умолчанию.
       </p>
     </div>

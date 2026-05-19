@@ -5,18 +5,42 @@
   --font-sans: 'Inter', 'Public Sans', system-ui, sans-serif;
 }
 
-/* Near-black canvas with explicitly contrasted cards (the default slate
-   palette gave bluish background indistinguishable from card surface).  */
+/* Three-tier surface hierarchy used by both themes:
+   --ui-bg          page canvas & inner cells (mini-containers nested in cards)
+   --ui-bg-elevated outer card surface (Monitoring, DNS, Clients, Routes, Bots)
+   --ui-bg-muted    intermediate fill (chips, inputs, hover states)
+   The contrast between bg and bg-elevated is what gives cards visual weight. */
+
+:root {
+  --ui-bg: #f4f4f5;
+  --ui-bg-muted: #e4e4e7;
+  --ui-bg-elevated: #ffffff;
+  --ui-bg-accented: #d4d4d8;
+  --ui-border: #d4d4d8;
+  --ui-border-muted: #e4e4e7;
+  --ui-border-accented: #a1a1aa;
+  --ui-text: #18181b;
+  --ui-text-muted: #52525b;
+  --ui-text-dimmed: #71717a;
+  --ui-text-highlighted: #09090b;
+}
+
 :root.dark {
   --ui-bg: #0a0a0a;
-  --ui-bg-muted: #0f0f10;
-  --ui-bg-elevated: #161617;
-  --ui-bg-accented: #1c1c1d;
-  --ui-border: #27272a;
+  --ui-bg-muted: #141417;
+  --ui-bg-elevated: #1f1f22;
+  --ui-bg-accented: #2a2a2e;
+  --ui-border: #2a2a2e;
   --ui-border-muted: #1f1f22;
+  --ui-border-accented: #3f3f46;
+  --ui-text: #fafafa;
+  --ui-text-muted: #a1a1aa;
+  --ui-text-dimmed: #71717a;
+  --ui-text-highlighted: #ffffff;
 }
 
 html,
 body {
   background-color: var(--ui-bg);
+  color: var(--ui-text);
 }

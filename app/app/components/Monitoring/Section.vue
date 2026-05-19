@@ -19,10 +19,10 @@ const sortedNodes = computed(() => {
 })
 
 function loadColor(v: number | null): string {
-  if (v == null) return 'text-zinc-500'
+  if (v == null) return 'text-(--ui-text-dimmed)'
   if (v >= 80) return 'text-rose-400'
   if (v >= 60) return 'text-amber-400'
-  return 'text-zinc-200'
+  return 'text-(--ui-text)'
 }
 </script>
 
@@ -36,7 +36,7 @@ function loadColor(v: number | null): string {
 
     <div
       v-if="sortedNodes.length === 0"
-      class="text-zinc-500 text-sm text-center py-6"
+      class="text-(--ui-text-muted) text-sm text-center py-6"
     >
       загружаю метрики…
     </div>
@@ -47,28 +47,28 @@ function loadColor(v: number | null): string {
       <div
         v-for="n in sortedNodes"
         :key="n.tag"
-        class="rounded-md border border-zinc-800 bg-zinc-900/50 p-2.5"
+        class="rounded-md border border-(--ui-border) bg-(--ui-bg) p-2.5"
       >
         <div class="flex items-center justify-between text-xs mb-2">
           <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
-          <span class="text-zinc-500">{{ formatUptime(n.uptimeSec) }}</span>
+          <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
         </div>
         <div class="space-y-0.5 text-xs">
           <div class="flex justify-between">
-            <span class="text-zinc-500">CPU</span>
+            <span class="text-(--ui-text-muted)">CPU</span>
             <span :class="loadColor(n.cpu)">{{ formatPercent(n.cpu) }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-zinc-500">RAM</span>
+            <span class="text-(--ui-text-muted)">RAM</span>
             <span :class="loadColor(n.ram)">{{ formatPercent(n.ram) }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-zinc-500">↓</span>
-            <span class="text-zinc-200">{{ formatMbps(n.rxMbps) }} <span class="text-zinc-500">Mbps</span></span>
+            <span class="text-(--ui-text-muted)">↓</span>
+            <span class="text-(--ui-text)">{{ formatMbps(n.rxMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
           </div>
           <div class="flex justify-between">
-            <span class="text-zinc-500">↑</span>
-            <span class="text-zinc-200">{{ formatMbps(n.txMbps) }} <span class="text-zinc-500">Mbps</span></span>
+            <span class="text-(--ui-text-muted)">↑</span>
+            <span class="text-(--ui-text)">{{ formatMbps(n.txMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
           </div>
         </div>
         <svg
@@ -82,7 +82,7 @@ function loadColor(v: number | null): string {
             fill="none"
             stroke="currentColor"
             stroke-width="1.2"
-            class="text-emerald-400/70"
+            class="text-violet-500/80"
           />
         </svg>
       </div>

@@ -25,8 +25,7 @@ const menuItems = computed(() => [
 <template>
   <div class="min-h-screen bg-(--ui-bg) text-(--ui-text)">
     <header class="border-b border-(--ui-border) px-6 py-3 flex items-center justify-between">
-      <NuxtLink to="/" class="font-semibold text-lg flex items-center gap-2">
-        <UIcon name="i-lucide-shield" class="text-(--ui-primary)" />
+      <NuxtLink to="/" class="font-semibold text-lg">
         anysda-vpn2
       </NuxtLink>
       <div class="flex items-center gap-1">

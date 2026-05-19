@@ -80,18 +80,18 @@ function fmtBytes(n: number | undefined | null): string {
 
 <template>
   <div
-    class="rounded-md border border-zinc-800 bg-zinc-900/60 p-3"
+    class="rounded-md border border-(--ui-border) bg-(--ui-bg) p-3"
   >
     <div class="flex items-start gap-3">
       <UAvatar :alt="client.name" size="md" />
       <div class="flex-1 min-w-0">
-        <div class="font-medium truncate text-zinc-100">
+        <div class="font-medium truncate text-(--ui-text-highlighted)">
           {{ client.name }}
         </div>
-        <div class="text-xs text-zinc-500 mt-0.5">
+        <div class="text-xs text-(--ui-text-muted) mt-0.5">
           {{ expiryLabel(client.expiresAt) }}
         </div>
-        <div v-if="traffic" class="text-xs text-zinc-400 mt-1 flex gap-3">
+        <div v-if="traffic" class="text-xs text-(--ui-text-muted) mt-1 flex gap-3">
           <span>↓ {{ fmtBytes(traffic.rxBytes) }}</span>
           <span>↑ {{ fmtBytes(traffic.txBytes) }}</span>
         </div>

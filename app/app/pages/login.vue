@@ -56,8 +56,7 @@ function reset() {
   <div class="min-h-screen flex items-center justify-center bg-(--ui-bg) p-4">
     <UCard class="w-full max-w-sm">
       <template #header>
-        <div class="flex items-center justify-center gap-2 font-semibold text-lg">
-          <UIcon name="i-lucide-shield" class="text-(--ui-primary)" />
+        <div class="text-center font-semibold text-lg">
           anysda-vpn2
         </div>
       </template>

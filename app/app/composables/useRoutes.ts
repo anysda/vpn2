@@ -1,0 +1,85 @@
+export interface Route {
+  id: number
+  type: 'domain' | 'ip_cidr'
+  value: string
+  outbound: string
+  createdAt: string
+}
+
+export interface Outbound {
+  name: string
+  type: string
+  delay: number | null
+  isWarp: boolean
+  isDirectRu: boolean
+}
+
+export function useRoutes() {
+  const { data: rules, refresh: refreshRules } = useFetch<Route[]>('/api/routes', {
+    default: () => [],
+    server: false,
+  })
+  const { data: outbounds, refresh: refreshOutbounds } = useFetch<Outbound[]>('/api/routes/outbounds', {
+    default: () => [],
+    server: false,
+  })
+
+  let timer: ReturnType<typeof setInterval> | null = null
+
+  onMounted(() => {
+    if (!timer) {
+      timer = setInterval(() => {
+        void refreshRules()
+        void refreshOutbounds()
+      }, 4000)
+    }
+  })
+
+  onUnmounted(() => {
+    if (timer) { clearInterval(timer); timer = null }
+  })
+
+  async function create(value: string, outbound: string) {
+    const r = await $fetch<Route>('/api/routes', { method: 'POST', body: { value, outbound } })
+    await refreshRules()
+    return r
+  }
+
+  async function patch(id: number, outbound: string) {
+    const r = await $fetch<Route>(`/api/routes/${id}`, { method: 'PATCH', body: { outbound } })
+    await refreshRules()
+    return r
+  }
+
+  async function remove(id: number) {
+    await $fetch(`/api/routes/${id}`, { method: 'DELETE' })
+    await refreshRules()
+  }
+
+  return { rules, outbounds, refreshRules, refreshOutbounds, create, patch, remove }
+}
+
+export function rttColor(delay: number | null): 'success' | 'warning' | 'error' | 'neutral' {
+  if (delay === null || delay <= 0) return 'error'
+  if (delay < 100) return 'success'
+  if (delay < 300) return 'warning'
+  return 'error'
+}
+
+export function flagFor(name: string): string {
+  if (name === 'direct-ru') return '🇷🇺'
+  // hy2-us-direct / hy2-us-warp / hy2-gb-direct etc.
+  const m = name.match(/^hy2-([a-z]+)-/)
+  const tag = m?.[1]
+  const flags: Record<string, string> = {
+    us: '🇺🇸',
+    gb: '🇬🇧',
+    de: '🇩🇪',
+    nl: '🇳🇱',
+    se: '🇸🇪',
+    fr: '🇫🇷',
+    fi: '🇫🇮',
+    pl: '🇵🇱',
+  }
+  return tag ? (flags[tag] ?? '🌍') : '🌍'
+}

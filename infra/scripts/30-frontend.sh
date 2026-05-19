@@ -132,7 +132,7 @@ docker run -d \
   -e HOST=127.0.0.1 \
   -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
   -e NUXT_SESSION_COOKIE_SECURE="$([[ -n "${PANEL_DOMAIN:-}" ]] && echo true || echo false)" \
-  -e DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
+  -e NUXT_DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
   -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
   -e NUXT_SS_CONFIG_PATH=/etc/outline-ss-server/config.yml \
   -e NUXT_SS_PORT="${SS_PORT}" \

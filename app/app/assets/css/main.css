@@ -28,7 +28,7 @@
 
 :root.dark {
   --ui-page: var(--color-page-dark);
-  --ui-bg: #1e1e22;
+  --ui-bg: #111113;
   --ui-bg-muted: #2a2a2e;
   --ui-bg-elevated: #2a2a2e;
   --ui-bg-accented: #36363b;

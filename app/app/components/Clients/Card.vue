@@ -54,19 +54,20 @@ function fmtBytes(n: number | undefined | null): string {
 
 <template>
   <div
-    class="rounded-md border border-(--ui-border) bg-(--ui-page) p-3"
+    class="rounded-md border border-(--ui-border) bg-(--ui-page) px-3 py-2"
   >
-    <div class="flex items-start gap-3">
+    <div class="flex items-center gap-3">
       <div class="flex-1 min-w-0">
-        <div class="font-medium truncate text-(--ui-text-highlighted)">
+        <div class="font-medium truncate text-(--ui-text-highlighted) leading-tight">
           {{ client.name }}
         </div>
-        <div class="text-xs text-(--ui-text-muted) mt-0.5">
-          {{ expiryLabel(client.expiresAt) }}
-        </div>
-        <div v-if="traffic" class="text-xs text-(--ui-text-muted) mt-1 flex gap-3">
-          <span>↓ {{ fmtBytes(traffic.rxBytes) }}</span>
-          <span>↑ {{ fmtBytes(traffic.txBytes) }}</span>
+        <div class="text-xs text-(--ui-text-muted) flex gap-2 items-center mt-0.5">
+          <span>{{ expiryLabel(client.expiresAt) }}</span>
+          <template v-if="traffic">
+            <span aria-hidden="true">·</span>
+            <span>↓ {{ fmtBytes(traffic.rxBytes) }}</span>
+            <span>↑ {{ fmtBytes(traffic.txBytes) }}</span>
+          </template>
         </div>
       </div>
       <USwitch
@@ -75,7 +76,7 @@ function fmtBytes(n: number | undefined | null): string {
       />
     </div>
 
-    <div class="flex gap-1 mt-3 justify-end">
+    <div class="flex gap-1 mt-1.5 justify-end">
       <UTooltip text="Outline — копировать URL или отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
           <OutlineLogo class="size-4" />

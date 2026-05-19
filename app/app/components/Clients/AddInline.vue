@@ -23,7 +23,8 @@ async function submit() {
     open.value = false
   }
   catch (e) {
-    toast.add({ title: 'Ошибка', color: 'error', description: (e as Error).message })
+    const err = e as { statusMessage?: string, message?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
   }
   finally {
     loading.value = false

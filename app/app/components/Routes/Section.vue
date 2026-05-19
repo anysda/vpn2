@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Outbound, Route } from '~/composables/useRoutes'
-import { flagFor, parseOutbound, rttColor, useRoutes } from '~/composables/useRoutes'
+import { flagFor, parseOutbound, pluralRu, rttColor, useRoutes } from '~/composables/useRoutes'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()
@@ -51,12 +51,12 @@ const columns = computed<Column[]>(() => {
     if (parsed.variant === 'direct') col.direct = ob
     else col.warp = ob
   }
-  // RU first, then others by their direct RTT (lowest first)
+  // RU first, then alphabetical by tag — same order as Monitoring node grid
   const arr = Array.from(byTag.values())
   return arr.sort((a, b) => {
     if (a.tag === 'ru') return -1
     if (b.tag === 'ru') return 1
-    return (a.direct?.delay ?? 9999) - (b.direct?.delay ?? 9999)
+    return a.tag.localeCompare(b.tag)
   })
 })
 
@@ -129,7 +129,7 @@ function rttBadge(delay: number | null) {
           Маршрутизация
         </div>
         <span class="text-xs text-zinc-500">
-          {{ rules.length }} {{ rules.length === 1 ? 'правило' : 'правил' }}
+          {{ rules.length }} {{ pluralRu(rules.length, ['правило', 'правила', 'правил']) }}
         </span>
       </div>
     </template>

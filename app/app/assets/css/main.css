@@ -3,18 +3,19 @@
 
 @theme static {
   --font-sans: 'Inter', 'Public Sans', system-ui, sans-serif;
+
+  /* Page (canvas behind cards). Cards & inputs use --ui-bg (Nuxt UI's
+     "default surface"); inner mini-containers inside cards use --ui-page
+     so they read as wells carved out of a gray card. */
+  --color-page-light: #f4f4f5;
+  --color-page-dark: #060608;
 }
 
-/* Three-tier surface hierarchy used by both themes:
-   --ui-bg          page canvas & inner cells (mini-containers nested in cards)
-   --ui-bg-elevated outer card surface (Monitoring, DNS, Clients, Routes, Bots)
-   --ui-bg-muted    intermediate fill (chips, inputs, hover states)
-   The contrast between bg and bg-elevated is what gives cards visual weight. */
-
 :root {
-  --ui-bg: #f4f4f5;
-  --ui-bg-muted: #e4e4e7;
-  --ui-bg-elevated: #ffffff;
+  --ui-page: var(--color-page-light);
+  --ui-bg: #ffffff;
+  --ui-bg-muted: #f4f4f5;
+  --ui-bg-elevated: #e4e4e7;
   --ui-bg-accented: #d4d4d8;
   --ui-border: #d4d4d8;
   --ui-border-muted: #e4e4e7;
@@ -26,10 +27,11 @@
 }
 
 :root.dark {
-  --ui-bg: #060608;
-  --ui-bg-muted: #1f1f24;
-  --ui-bg-elevated: #3a3a40;
-  --ui-bg-accented: #4a4a50;
+  --ui-page: var(--color-page-dark);
+  --ui-bg: #3a3a40;
+  --ui-bg-muted: #2c2c30;
+  --ui-bg-elevated: #4a4a50;
+  --ui-bg-accented: #50505a;
   --ui-border: #50505a;
   --ui-border-muted: #2a2a2e;
   --ui-border-accented: #6b6b75;
@@ -41,6 +43,6 @@
 
 html,
 body {
-  background-color: var(--ui-bg);
+  background-color: var(--ui-page);
   color: var(--ui-text);
 }

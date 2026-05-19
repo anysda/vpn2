@@ -53,7 +53,7 @@ function reset() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-(--ui-bg) p-4">
+  <div class="min-h-screen flex items-center justify-center bg-(--ui-page) p-4">
     <UCard class="w-full max-w-sm">
       <template #header>
         <div class="text-center font-semibold text-lg">

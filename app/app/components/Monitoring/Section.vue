@@ -47,7 +47,7 @@ function loadColor(v: number | null): string {
       <div
         v-for="n in sortedNodes"
         :key="n.tag"
-        class="rounded-md border border-(--ui-border) bg-(--ui-bg) p-2.5"
+        class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5"
       >
         <div class="flex items-center justify-between text-xs mb-2">
           <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>

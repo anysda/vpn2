@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Stage 35 — Telegram bot on RU.
 #
-# Builds a small Python image from source (pushed by orchestrator),
-# runs it with --network host so it can reach:
+# Pulls the bot image from the public GitLab Container Registry
+# (registry.anysda.space/anysda/vpn2/tgbot) and runs it with
+# --network host so it can reach:
 #   - 127.0.0.1:51821  (anysda-vpn Nuxt API)
 #   - 127.0.0.1:7897   (sing-box SOCKS5 inbound → foreign-best exit)
 #
@@ -59,12 +60,11 @@ PYEOF
 fi
 
 # ----------------------------------------------------------------------------
-# 2. Build Docker image from pushed source
+# 2. Pull bot image from the public GitLab Container Registry
 # ----------------------------------------------------------------------------
-echo "[$HOST_TAG] [2/3] docker build"
-SRC=/tmp/anysda/telegram
-[[ -d "$SRC" ]] || { echo "[$HOST_TAG] $SRC не найден — оркестратор должен был его загрузить"; exit 1; }
-docker build -q -t anysda-tgbot:local "$SRC" 2>&1 | sed "s/^/[$HOST_TAG]   /"
+TGBOT_IMAGE="${TGBOT_IMAGE:-registry.anysda.space/anysda/vpn2/tgbot:dev}"
+echo "[$HOST_TAG] [2/3] docker pull ${TGBOT_IMAGE}"
+docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 
 # ----------------------------------------------------------------------------
 # 3. Run bot container
@@ -83,7 +83,7 @@ docker run -d \
   -e TGBOT_EVENT_PORT=8877 \
   -e ANYSDA_URL=http://127.0.0.1:51821 \
   -e SOCKS5_PROXY=socks5://127.0.0.1:7897 \
-  anysda-tgbot:local >/dev/null
+  "$TGBOT_IMAGE" >/dev/null
 
 echo "[$HOST_TAG] жду пока бот запустится..."
 sleep 6

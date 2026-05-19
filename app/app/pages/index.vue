@@ -72,16 +72,7 @@ const filtered = computed(() => {
 
       <MonitoringSection />
 
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            DNS
-          </div>
-        </template>
-        <div class="text-(--ui-text-muted) text-sm py-4 text-center">
-          (Phase D.3 — AdGuard мини-панель)
-        </div>
-      </UCard>
+      <MonitoringDns />
     </div>
   </div>
 </template>

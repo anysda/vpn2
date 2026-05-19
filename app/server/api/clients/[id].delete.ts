@@ -3,6 +3,7 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncShadowsocksConfig } from '../../utils/shadowsocks'
+import { syncWireguardConfig } from '../../utils/wireguard'
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -19,6 +20,9 @@ export default defineEventHandler(async (event) => {
 
   await syncShadowsocksConfig().catch((err) => {
     useLogger().error({ err }, 'failed to sync ss config after delete')
+  })
+  await syncWireguardConfig().catch((err) => {
+    useLogger().error({ err }, 'failed to sync wg config after delete')
   })
 
   return { ok: true }

@@ -27,6 +27,7 @@ async function onToggle(next: boolean) {
 
 const confirmDelete = ref(false)
 const showQr = ref(false)
+const showWg = ref(false)
 const showEdit = ref(false)
 
 async function doDelete() {
@@ -77,6 +78,11 @@ function fmtBytes(n: number | undefined | null): string {
     </div>
 
     <div class="flex gap-1 mt-1.5 justify-end">
+      <UTooltip text="WireGuard — QR, .conf, копировать, отправить в Telegram">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showWg = true">
+          <WireguardLogo class="size-4" />
+        </UButton>
+      </UTooltip>
       <UTooltip text="Outline — копировать URL или отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
           <OutlineLogo class="size-4" />
@@ -91,6 +97,7 @@ function fmtBytes(n: number | undefined | null): string {
     </div>
 
     <ClientsQrModal v-model:open="showQr" :client="client" />
+    <ClientsWireguardModal v-model:open="showWg" :client="client" />
     <ClientsEditDialog v-model:open="showEdit" :client="client" />
 
     <UModal v-model:open="confirmDelete" title="Удалить клиента?">

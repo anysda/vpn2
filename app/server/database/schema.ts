@@ -25,6 +25,10 @@ export const clients = sqliteTable('clients', {
   cipher: text('cipher').notNull().default('chacha20-ietf-poly1305'),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
+  wgPrivateKey: text('wg_private_key'),
+  wgPublicKey: text('wg_public_key'),
+  wgPresharedKey: text('wg_preshared_key'),
+  wgIp: text('wg_ip'),
   ...timestamps,
 })
 

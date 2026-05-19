@@ -43,6 +43,13 @@ export default defineNuxtConfig({
     mgmtMeshIpPrefix: '10.99.0.',
     tgbotEventPort: 8877,
     tgbotSecret: '',
+    wgEnabled: true,
+    wgListenPort: 51820,
+    wgServerIp: '10.66.66.1',
+    wgSubnetPrefix: '10.66.66.',
+    wgPublicHost: '',
+    wgDns: '10.66.66.1',
+    wgMtu: 1420,
     logLevel: 'info',
     public: {
       panelName: 'anysda-vpn2',

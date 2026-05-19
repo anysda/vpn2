@@ -6,7 +6,8 @@
 #   ./deploy.sh <stage> <group>   одна стадия на группу нод
 #
 # Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 20-ru-router |
-#           22-adguard   | 25-monitoring | 35-telegram | 30-frontend | 99-verify
+#           27-shadowsocks | 28-wireguard | 22-adguard | 25-monitoring
+#           35-telegram | 30-frontend | 99-verify
 # Группы:   ru | foreign | all | <конкретный тег экзита>
 
 set -euo pipefail
@@ -469,6 +470,7 @@ do_all() {
   run_stage 05-mgmt-mesh     all
   run_stage 10-foreign       foreign
   run_stage 27-shadowsocks   ru
+  run_stage 28-wireguard     ru
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
   run_stage 22-adguard       ru

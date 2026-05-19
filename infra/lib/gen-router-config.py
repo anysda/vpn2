@@ -157,6 +157,17 @@ def main():
                 'listen': '127.0.0.1',
                 'listen_port': 7897,
             },
+            {
+                # Forwarded wg0 traffic lands here via TPROXY (PREROUTING -i wg0).
+                # Both TCP and UDP; routing rules below send to direct-ru or hy2-* per geoip.
+                'type': 'tproxy',
+                'tag': 'wg-tproxy-in',
+                'listen': '127.0.0.1',
+                'listen_port': 7898,
+                'network': 'tcp,udp',
+                'sniff': True,
+                'sniff_override_destination': True,
+            },
         ],
 
         'outbounds': outbounds,

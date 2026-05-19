@@ -76,9 +76,9 @@ function fmtBytes(n: number | undefined | null): string {
     </div>
 
     <div class="flex gap-1 mt-3 justify-end">
-      <UTooltip text="Shadowsocks — QR, копировать URL, одноразовая ссылка, Telegram">
-        <UButton size="xs" color="neutral" variant="ghost" class="font-mono font-semibold" @click="showQr = true">
-          SS
+      <UTooltip text="Outline — копировать URL или отправить в Telegram">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
+          <OutlineLogo class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="Редактировать">

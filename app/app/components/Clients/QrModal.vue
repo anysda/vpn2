@@ -5,24 +5,8 @@ import { useClients } from '~/composables/useClients'
 const props = defineProps<{ client: Client }>()
 const open = defineModel<boolean>('open', { default: false })
 
-const { getSsUrl, generateOneTimeLink, sendToTg } = useClients()
+const { getSsUrl, sendToTg } = useClients()
 const toast = useToast()
-const sendingTg = ref(false)
-
-async function sendToTelegram() {
-  sendingTg.value = true
-  try {
-    await sendToTg(props.client.id)
-    toast.add({ title: 'Конфиг отправлен в Telegram', color: 'success' })
-  }
-  catch (e) {
-    const err = e as { statusMessage?: string }
-    toast.add({ title: err.statusMessage ?? 'Ошибка отправки', color: 'error' })
-  }
-  finally {
-    sendingTg.value = false
-  }
-}
 
 const ssUrl = ref<string>('')
 const loadingUrl = ref(false)
@@ -42,15 +26,7 @@ async function loadUrl() {
 }
 
 watch(open, (now) => {
-  if (now) {
-    loadUrl()
-  }
-  else {
-    if (otlTimer) clearInterval(otlTimer)
-    otlTimer = null
-    otl.value = null
-    otlRemaining.value = 0
-  }
+  if (now) loadUrl()
 })
 
 async function copyUrl() {
@@ -59,76 +35,30 @@ async function copyUrl() {
   toast.add({ title: 'ss:// URL скопирован', color: 'success' })
 }
 
-async function download() {
-  if (!ssUrl.value) return
-  const blob = new Blob([ssUrl.value], { type: 'text/plain' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `${props.client.name}.outline.txt`
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
-
-const otl = ref<{ url: string, expiresAt: string, ttlSeconds: number } | null>(null)
-const otlLoading = ref(false)
-const otlRemaining = ref(0)
-let otlTimer: ReturnType<typeof setInterval> | null = null
-
-const otlFullUrl = computed(() => {
-  if (!otl.value || typeof window === 'undefined') return ''
-  return window.location.origin + otl.value.url
-})
-
-const otlRemainingLabel = computed(() => {
-  const m = Math.floor(otlRemaining.value / 60)
-  const s = otlRemaining.value % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
-})
-
-async function genOtl() {
-  otlLoading.value = true
+const sendingTg = ref(false)
+async function sendToTelegram() {
+  sendingTg.value = true
   try {
-    const r = await generateOneTimeLink(props.client.id)
-    otl.value = r
-    otlRemaining.value = r.ttlSeconds
-    if (otlTimer) clearInterval(otlTimer)
-    otlTimer = setInterval(() => {
-      otlRemaining.value--
-      if (otlRemaining.value <= 0) {
-        clearInterval(otlTimer!)
-        otlTimer = null
-      }
-    }, 1000)
+    await sendToTg(props.client.id)
+    toast.add({ title: 'Конфиг отправлен в Telegram', color: 'success' })
   }
   catch (e) {
-    toast.add({ title: 'Не удалось создать ссылку', color: 'error', description: (e as Error).message })
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка отправки', color: 'error' })
   }
   finally {
-    otlLoading.value = false
+    sendingTg.value = false
   }
 }
-
-async function copyOtl() {
-  if (!otlFullUrl.value) return
-  await navigator.clipboard.writeText(otlFullUrl.value)
-  toast.add({ title: 'Ссылка скопирована', color: 'success' })
-}
-
-onUnmounted(() => {
-  if (otlTimer) clearInterval(otlTimer)
-})
 </script>
 
 <template>
   <UModal v-model:open="open" :title="client.name" :ui="{ content: 'max-w-md' }">
     <template #body>
       <div class="space-y-4">
-        <div class="flex justify-center">
-          <img
-            :src="`/api/clients/${client.id}/qrcode.svg`"
-            alt="QR"
-            class="w-64 h-64 rounded-md bg-white p-2"
-          >
+        <div class="flex items-center justify-center gap-2">
+          <OutlineLogo class="size-6" />
+          <span class="font-semibold text-(--ui-text-highlighted)">Outline</span>
         </div>
 
         <UInput
@@ -139,7 +69,7 @@ onUnmounted(() => {
           class="w-full font-mono text-xs"
         />
 
-        <div class="grid grid-cols-3 gap-2">
+        <div class="grid grid-cols-2 gap-2">
           <UButton
             block
             icon="i-lucide-copy"
@@ -147,16 +77,6 @@ onUnmounted(() => {
             @click="copyUrl"
           >
             Копировать
-          </UButton>
-          <UButton
-            block
-            icon="i-lucide-download"
-            variant="soft"
-            color="neutral"
-            :disabled="!ssUrl"
-            @click="download"
-          >
-            Скачать
           </UButton>
           <UButton
             block
@@ -169,35 +89,6 @@ onUnmounted(() => {
           >
             Telegram
           </UButton>
-        </div>
-
-        <USeparator label="или одноразовая ссылка (5 мин)" />
-
-        <div v-if="!otl">
-          <UButton
-            block
-            variant="outline"
-            icon="i-lucide-link"
-            :loading="otlLoading"
-            @click="genOtl"
-          >
-            Сгенерировать одноразовую ссылку
-          </UButton>
-        </div>
-
-        <div v-else class="space-y-2">
-          <div class="text-xs text-(--ui-text-muted) flex items-center gap-1">
-            <UIcon name="i-lucide-timer" />
-            Истекает через {{ otlRemainingLabel }}
-          </div>
-          <div class="flex gap-2">
-            <UInput
-              :model-value="otlFullUrl"
-              readonly
-              class="flex-1 font-mono text-xs"
-            />
-            <UButton icon="i-lucide-copy" @click="copyOtl" />
-          </div>
         </div>
       </div>
     </template>

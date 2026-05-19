@@ -1,5 +1,0 @@
-keys:
-  - id: client_1
-    port: 443
-    cipher: chacha20-ietf-poly1305
-    secret: LRNSjClMInLFlTt1zCErZ9DDBCf6zIDCgkfXRFhlBXs=

@@ -180,7 +180,7 @@ function rttBadge(delay: number | null) {
           <div
             v-if="col.direct"
             :class="[
-              'rounded-md p-3 min-h-[140px] flex flex-col border transition-colors',
+              'rounded-md p-3 flex flex-col border transition-colors',
               dragOver === col.direct.name
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
@@ -213,6 +213,23 @@ function rttBadge(delay: number | null) {
                   variant="ghost"
                   class="opacity-0 group-hover:opacity-100"
                   @click="deleteRule(rule)"
+                />
+              </div>
+              <!-- Invisible placeholder chips so the cell holds height of ≥2 rules at all times.
+                   Same markup as a real chip → identical pixel footprint, no math required. -->
+              <div
+                v-for="i in Math.max(0, 2 - rulesFor(col.direct.name).length)"
+                :key="`ph-${col.direct.name}-${i}`"
+                aria-hidden="true"
+                class="invisible text-xs px-2 py-1 rounded border border-transparent flex items-center justify-between gap-1"
+              >
+                <span class="truncate">·</span>
+                <UButton
+                  icon="i-lucide-x"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  tabindex="-1"
                 />
               </div>
             </div>

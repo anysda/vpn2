@@ -68,16 +68,7 @@ const filtered = computed(() => {
     </div>
 
     <div class="space-y-6">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            Маршрутизация
-          </div>
-        </template>
-        <div class="text-(--ui-text-muted) text-sm py-4 text-center">
-          (Phase D.1 — drag-n-drop правил по outbound'ам)
-        </div>
-      </UCard>
+      <RoutesSection />
 
       <UCard>
         <template #header>

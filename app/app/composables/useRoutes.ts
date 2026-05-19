@@ -39,6 +39,11 @@ export function useRoutes() {
     if (timer) { clearInterval(timer); timer = null }
   })
 
+  useVisibleRefresh(() => {
+    void refreshRules()
+    void refreshOutbounds()
+  })
+
   async function create(value: string, outbound: string) {
     const r = await $fetch<Route>('/api/routes', { method: 'POST', body: { value, outbound } })
     await refreshRules()

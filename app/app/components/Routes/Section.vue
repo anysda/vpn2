@@ -76,11 +76,9 @@ function onDragEnd() {
   dragging.value = null
   dragOver.value = null
 }
-function onDragEnter(target: string) {
-  dragOver.value = target
-}
-function onDragLeave(target: string) {
-  if (dragOver.value === target) dragOver.value = null
+function onDragOver(target: string, e: DragEvent) {
+  e.preventDefault()
+  if (dragOver.value !== target) dragOver.value = target
 }
 async function onDrop(targetOutbound: string) {
   const m = dragging.value
@@ -187,9 +185,7 @@ function rttBadge(delay: number | null) {
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
             ]"
-            @dragover.prevent
-            @dragenter.prevent="onDragEnter(col.direct.name)"
-            @dragleave="onDragLeave(col.direct.name)"
+            @dragover="onDragOver(col.direct.name, $event)"
             @drop.prevent="onDrop(col.direct.name)"
           >
             <div class="flex items-center justify-between mb-1.5 text-xs">
@@ -231,9 +227,7 @@ function rttBadge(delay: number | null) {
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
             ]"
-            @dragover.prevent
-            @dragenter.prevent="onDragEnter(col.warp.name)"
-            @dragleave="onDragLeave(col.warp.name)"
+            @dragover="onDragOver(col.warp.name, $event)"
             @drop.prevent="onDrop(col.warp.name)"
           >
             <div class="flex items-center justify-between mb-1.5 text-xs">

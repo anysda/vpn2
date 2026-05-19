@@ -23,6 +23,8 @@ async function onToggle(next: boolean) {
 }
 
 const confirmDelete = ref(false)
+const showQr = ref(false)
+const showEdit = ref(false)
 
 async function doDelete() {
   try {
@@ -97,13 +99,22 @@ async function copySsUrl() {
           @click="copySsUrl"
         />
       </UTooltip>
-      <UTooltip text="QR / редактировать (скоро)">
+      <UTooltip text="Редактировать">
+        <UButton
+          icon="i-lucide-pencil"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+          @click="showEdit = true"
+        />
+      </UTooltip>
+      <UTooltip text="QR + одноразовая ссылка">
         <UButton
           icon="i-lucide-qr-code"
           size="xs"
           color="neutral"
           variant="ghost"
-          disabled
+          @click="showQr = true"
         />
       </UTooltip>
       <UTooltip text="Скачать .outline.txt">
@@ -125,6 +136,9 @@ async function copySsUrl() {
         />
       </UTooltip>
     </div>
+
+    <ClientsQrModal v-model:open="showQr" :client="client" />
+    <ClientsEditDialog v-model:open="showEdit" :client="client" />
 
     <UModal v-model:open="confirmDelete" title="Удалить клиента?">
       <template #body>

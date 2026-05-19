@@ -185,7 +185,7 @@ function rttBadge(delay: number | null) {
               'rounded-md p-2 min-h-[110px] flex flex-col border transition-colors',
               dragOver === col.direct.name
                 ? 'border-violet-500 bg-violet-500/10'
-                : 'border-(--ui-border) bg-(--ui-bg)',
+                : 'border-(--ui-border) bg-(--ui-page)',
             ]"
             @dragover.prevent
             @dragenter.prevent="onDragEnter(col.direct.name)"
@@ -229,7 +229,7 @@ function rttBadge(delay: number | null) {
               'rounded-md p-2 min-h-[80px] flex flex-col border border-dashed transition-colors',
               dragOver === col.warp.name
                 ? 'border-violet-500 bg-violet-500/10'
-                : 'border-(--ui-border) bg-(--ui-bg)',
+                : 'border-(--ui-border) bg-(--ui-page)',
             ]"
             @dragover.prevent
             @dragenter.prevent="onDragEnter(col.warp.name)"

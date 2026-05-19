@@ -7,7 +7,7 @@ function handleError() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-(--ui-bg) p-4">
+  <div class="min-h-screen flex items-center justify-center bg-(--ui-page) p-4">
     <UCard class="w-full max-w-md">
       <template #header>
         <div class="flex items-center gap-2 font-semibold text-lg">

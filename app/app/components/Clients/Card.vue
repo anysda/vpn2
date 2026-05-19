@@ -80,7 +80,7 @@ function fmtBytes(n: number | undefined | null): string {
 
 <template>
   <div
-    class="rounded-md border border-(--ui-border) bg-(--ui-bg) p-3"
+    class="rounded-md border border-(--ui-border) bg-(--ui-page) p-3"
   >
     <div class="flex items-start gap-3">
       <UAvatar :alt="client.name" size="md" />

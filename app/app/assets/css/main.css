@@ -28,13 +28,13 @@
 
 :root.dark {
   --ui-page: var(--color-page-dark);
-  --ui-bg: #3a3a40;
-  --ui-bg-muted: #2c2c30;
-  --ui-bg-elevated: #4a4a50;
-  --ui-bg-accented: #50505a;
-  --ui-border: #50505a;
+  --ui-bg: #1e1e22;
+  --ui-bg-muted: #2a2a2e;
+  --ui-bg-elevated: #2a2a2e;
+  --ui-bg-accented: #36363b;
+  --ui-border: #36363b;
   --ui-border-muted: #2a2a2e;
-  --ui-border-accented: #6b6b75;
+  --ui-border-accented: #50505a;
   --ui-text: #fafafa;
   --ui-text-muted: #a1a1aa;
   --ui-text-dimmed: #71717a;

@@ -9,6 +9,11 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  colorMode: {
+    preference: 'dark',
+    fallback: 'dark',
+  },
+
   runtimeConfig: {
     databaseUrl: 'file:./local.db',
     ssConfigPath: '/etc/outline-ss-server/config.yml',

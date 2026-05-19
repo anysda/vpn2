@@ -32,33 +32,50 @@ if [[ ! -x /usr/local/bin/wgcf ]] || ! /usr/local/bin/wgcf --version 2>&1 | grep
 fi
 
 cd /etc/anysda
+WGCF_OK=1
 if [[ ! -f wgcf-account.toml ]]; then
   echo "[$HOST_TAG]   регистрирую WARP устройство"
-  /usr/local/bin/wgcf register --accept-tos
+  if ! /usr/local/bin/wgcf register --accept-tos; then
+    echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
+    WGCF_OK=0
+  fi
 fi
-/usr/local/bin/wgcf generate >/dev/null
-chmod 600 wgcf-account.toml wgcf-profile.conf
-
-# Parse the generated profile so the sing-box wireguard outbound can consume it
-WGCF_PRIVKEY=$(awk -F' = ' '/^PrivateKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
-WGCF_LOCAL_IPV4=$(awk -F' = ' '/^Address/{print $2}' /etc/anysda/wgcf-profile.conf | head -1 | cut -d, -f1 | cut -d/ -f1 | tr -d '\r ')
-WGCF_PEER_PUBKEY=$(awk -F' = ' '/^PublicKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
-WGCF_PEER_EP=$(awk -F' = ' '/^Endpoint/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r ')
-WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_EP%:*}
-WGCF_PEER_ENDPOINT_PORT=${WGCF_PEER_EP##*:}
-# Reserved bytes (3-byte session id) — extract from wgcf-account.toml `client_id` (base64).
-# wgcf v2.2+ stores client_id as a base64 string in the account file. Decode the
-# first 3 bytes, fall back to [0,0,0] if anything funky.
-WGCF_CLIENT_ID=$(awk -F'=' '/^client_id/{gsub(/[" ]/, "", $2); print $2; exit}' /etc/anysda/wgcf-account.toml)
-WGCF_RESERVED_JSON=''
-if [[ -n "$WGCF_CLIENT_ID" ]]; then
-  WGCF_RESERVED_JSON=$(echo "$WGCF_CLIENT_ID" | base64 -d 2>/dev/null \
-    | od -An -tu1 -N3 \
-    | awk 'NF==3{printf "[%d,%d,%d]", $1,$2,$3}')
+if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-account.toml ]]; then
+  if /usr/local/bin/wgcf generate >/dev/null 2>&1; then
+    chmod 600 wgcf-account.toml wgcf-profile.conf
+  else
+    echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — WARP outbound будет placeholder"
+    WGCF_OK=0
+  fi
 fi
-WGCF_RESERVED_JSON="${WGCF_RESERVED_JSON:-[0,0,0]}"
 
-echo "[$HOST_TAG]   wgcf: local=${WGCF_LOCAL_IPV4}, peer=${WGCF_PEER_ENDPOINT_HOST}:${WGCF_PEER_ENDPOINT_PORT}, reserved=${WGCF_RESERVED_JSON}"
+if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-profile.conf ]]; then
+  WGCF_PRIVKEY=$(awk -F' = ' '/^PrivateKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
+  WGCF_LOCAL_IPV4=$(awk -F' = ' '/^Address/{print $2}' /etc/anysda/wgcf-profile.conf | head -1 | cut -d, -f1 | cut -d/ -f1 | tr -d '\r ')
+  WGCF_PEER_PUBKEY=$(awk -F' = ' '/^PublicKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
+  WGCF_PEER_EP=$(awk -F' = ' '/^Endpoint/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r ')
+  WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_EP%:*}
+  WGCF_PEER_ENDPOINT_PORT=${WGCF_PEER_EP##*:}
+  WGCF_CLIENT_ID=$(awk -F'=' '/^client_id/{gsub(/[" ]/, "", $2); print $2; exit}' /etc/anysda/wgcf-account.toml)
+  WGCF_RESERVED_JSON=''
+  if [[ -n "$WGCF_CLIENT_ID" ]]; then
+    WGCF_RESERVED_JSON=$(echo "$WGCF_CLIENT_ID" | base64 -d 2>/dev/null \
+      | od -An -tu1 -N3 \
+      | awk 'NF==3{printf "[%d,%d,%d]", $1,$2,$3}')
+  fi
+  WGCF_RESERVED_JSON="${WGCF_RESERVED_JSON:-[0,0,0]}"
+  echo "[$HOST_TAG]   wgcf: local=${WGCF_LOCAL_IPV4}, peer=${WGCF_PEER_ENDPOINT_HOST}:${WGCF_PEER_ENDPOINT_PORT}, reserved=${WGCF_RESERVED_JSON}"
+else
+  # Placeholder values so envsubst doesn't barf. WARP outbound будет нерабочим
+  # на этой ноде, но sing-box стартует и hy2-direct работает нормально.
+  WGCF_PRIVKEY='wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0='
+  WGCF_LOCAL_IPV4='10.111.111.1'
+  WGCF_PEER_PUBKEY='wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0='
+  WGCF_PEER_ENDPOINT_HOST='127.0.0.1'
+  WGCF_PEER_ENDPOINT_PORT='2408'
+  WGCF_RESERVED_JSON='[0,0,0]'
+  echo "[$HOST_TAG]   wgcf: placeholder (WARP outbound disabled on this node)"
+fi
 
 # ----------------------------------------------------------------------------
 # 2. sing-box install

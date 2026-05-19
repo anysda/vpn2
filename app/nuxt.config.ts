@@ -15,6 +15,16 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
+    // nuxt-auth-utils session cookie defaults. `secure: false` by default
+    // because the stand runs HTTP-only (Caddy on :80 without TLS). For prod
+    // with HTTPS, set NUXT_SESSION_COOKIE_SECURE=true.
+    session: {
+      maxAge: 60 * 60 * 24,
+      cookie: {
+        sameSite: 'lax',
+        secure: false,
+      },
+    },
     databaseUrl: 'file:./local.db',
     ssConfigPath: '/etc/outline-ss-server/config.yml',
     ssPort: 443,

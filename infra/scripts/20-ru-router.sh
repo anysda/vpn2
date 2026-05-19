@@ -147,7 +147,9 @@ EOF
 
 cat > /usr/local/sbin/anysda-iptables.sh <<'IPTSEOF'
 #!/usr/bin/env bash
-# Catch outbound TCP/UDP from `outline` user → REDIRECT/TPROXY → sing-box
+# Catch outbound TCP/UDP from `outline` user → REDIRECT/TPROXY → sing-box.
+# Uses custom chains because nftables backend rejects multiple -d/! -d on
+# a single rule.
 set -euo pipefail
 ACTION=${1:-up}
 
@@ -157,8 +159,7 @@ TPROXY_PORT=7896
 MARK=0x1
 TABLE=100
 
-# Skip private destinations (LAN, RFC1918, loopback, mgmt mesh)
-PRIVATE_EXCEPTIONS=(
+PRIVATE_NETS=(
   '127.0.0.0/8'
   '10.0.0.0/8'
   '172.16.0.0/12'
@@ -167,53 +168,63 @@ PRIVATE_EXCEPTIONS=(
   '224.0.0.0/4'
 )
 
-build_private_excl() {
-  local out=''
-  for net in "${PRIVATE_EXCEPTIONS[@]}"; do
-    out+=" ! -d $net"
-  done
-  echo "$out"
-}
-EXCL=$(build_private_excl)
-
 if [[ "$ACTION" == "up" ]]; then
   sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
 
-  # ─── TCP: REDIRECT outline-uid OUTPUT → sing-box redirect inbound ──────
-  # shellcheck disable=SC2086
-  iptables -t nat -C OUTPUT -m owner --uid-owner $OWNER_USER -p tcp $EXCL -j REDIRECT --to-port $REDIRECT_PORT 2>/dev/null || \
-    iptables -t nat -A OUTPUT -m owner --uid-owner $OWNER_USER -p tcp $EXCL -j REDIRECT --to-port $REDIRECT_PORT
+  # ─── TCP custom chain in nat OUTPUT ───────────────────────────────────
+  iptables -t nat -N ANYSDA_OUTLINE_TCP 2>/dev/null || true
+  iptables -t nat -F ANYSDA_OUTLINE_TCP
+  for net in "${PRIVATE_NETS[@]}"; do
+    iptables -t nat -A ANYSDA_OUTLINE_TCP -d "$net" -j RETURN
+  done
+  iptables -t nat -A ANYSDA_OUTLINE_TCP -p tcp -j REDIRECT --to-port "$REDIRECT_PORT"
 
-  # ─── UDP: mark in OUTPUT, route via table → re-enter PREROUTING with TPROXY ──
-  # shellcheck disable=SC2086
-  iptables-legacy -t mangle -C OUTPUT -m owner --uid-owner $OWNER_USER -p udp $EXCL -j MARK --set-mark $MARK 2>/dev/null || \
-    iptables-legacy -t mangle -A OUTPUT -m owner --uid-owner $OWNER_USER -p udp $EXCL -j MARK --set-mark $MARK
+  iptables -t nat -C OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP 2>/dev/null || \
+    iptables -t nat -A OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP
+
+  # ─── UDP custom chain in mangle OUTPUT (mark + route table trick) ─────
+  iptables -t mangle -N ANYSDA_OUTLINE_UDP 2>/dev/null || true
+  iptables -t mangle -F ANYSDA_OUTLINE_UDP
+  for net in "${PRIVATE_NETS[@]}"; do
+    iptables -t mangle -A ANYSDA_OUTLINE_UDP -d "$net" -j RETURN
+  done
+  iptables -t mangle -A ANYSDA_OUTLINE_UDP -p udp -j MARK --set-mark "$MARK"
+
+  iptables -t mangle -C OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP 2>/dev/null || \
+    iptables -t mangle -A OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP
 
   ip rule list 2>/dev/null | grep -q "fwmark $MARK lookup $TABLE" || \
-    ip rule add fwmark $MARK lookup $TABLE
-  ip route show table $TABLE 2>/dev/null | grep -q 'local default' || \
-    ip route add local 0.0.0.0/0 dev lo table $TABLE
+    ip rule add fwmark "$MARK" lookup "$TABLE"
+  ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
+    ip route add local 0.0.0.0/0 dev lo table "$TABLE"
 
-  iptables-legacy -t mangle -C PREROUTING -m mark --mark $MARK -p udp -j TPROXY --tproxy-mark $MARK/$MARK --on-port $TPROXY_PORT 2>/dev/null || \
-    iptables-legacy -t mangle -A PREROUTING -m mark --mark $MARK -p udp -j TPROXY --tproxy-mark $MARK/$MARK --on-port $TPROXY_PORT
+  iptables -t mangle -C PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" 2>/dev/null || \
+    iptables -t mangle -A PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT"
 
-  iptables -C INPUT -m mark --mark $MARK/$MARK -j ACCEPT 2>/dev/null || \
-    iptables -I INPUT 1 -m mark --mark $MARK/$MARK -j ACCEPT
+  iptables -C INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || \
+    iptables -I INPUT 1 -m mark --mark "${MARK}/${MARK}" -j ACCEPT
 
-  # ─── Don't let outside reach the redirect/tproxy ports directly ────────
-  iptables -C INPUT -p tcp --dport $REDIRECT_PORT -j REJECT 2>/dev/null || \
-    iptables -I INPUT 2 -p tcp --dport $REDIRECT_PORT -j REJECT
+  # Block external access to the redirect port — but ONLY from non-loopback.
+  # Redirected traffic from outline (uid-owner) lands here too, we must accept it.
+  iptables -C INPUT -p tcp --dport "$REDIRECT_PORT" ! -i lo -j REJECT 2>/dev/null || \
+    iptables -I INPUT 2 -p tcp --dport "$REDIRECT_PORT" ! -i lo -j REJECT
 
   echo "anysda-iptables up (user=$OWNER_USER, redirect=$REDIRECT_PORT, tproxy=$TPROXY_PORT)"
 
 elif [[ "$ACTION" == "down" ]]; then
-  iptables -t nat -D OUTPUT -m owner --uid-owner $OWNER_USER -p tcp $EXCL -j REDIRECT --to-port $REDIRECT_PORT 2>/dev/null || true
-  iptables-legacy -t mangle -D OUTPUT -m owner --uid-owner $OWNER_USER -p udp $EXCL -j MARK --set-mark $MARK 2>/dev/null || true
-  iptables-legacy -t mangle -D PREROUTING -m mark --mark $MARK -p udp -j TPROXY --tproxy-mark $MARK/$MARK --on-port $TPROXY_PORT 2>/dev/null || true
-  iptables -D INPUT -m mark --mark $MARK/$MARK -j ACCEPT 2>/dev/null || true
-  iptables -D INPUT -p tcp --dport $REDIRECT_PORT -j REJECT 2>/dev/null || true
-  ip rule del fwmark $MARK lookup $TABLE 2>/dev/null || true
-  ip route flush table $TABLE 2>/dev/null || true
+  iptables -t nat -D OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP 2>/dev/null || true
+  iptables -t nat -F ANYSDA_OUTLINE_TCP 2>/dev/null || true
+  iptables -t nat -X ANYSDA_OUTLINE_TCP 2>/dev/null || true
+
+  iptables -t mangle -D OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP 2>/dev/null || true
+  iptables -t mangle -F ANYSDA_OUTLINE_UDP 2>/dev/null || true
+  iptables -t mangle -X ANYSDA_OUTLINE_UDP 2>/dev/null || true
+
+  iptables -t mangle -D PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" 2>/dev/null || true
+  iptables -D INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || true
+  iptables -D INPUT -p tcp --dport "$REDIRECT_PORT" -j REJECT 2>/dev/null || true
+  ip rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
+  ip route flush table "$TABLE" 2>/dev/null || true
   echo "anysda-iptables down"
 fi
 IPTSEOF

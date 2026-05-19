@@ -39,7 +39,13 @@ export default defineNitroPlugin(() => {
     }
   }
 
-  tick().catch(err => log.error({ err }, 'cron: initial tick failed'))
+  // Delay first tick so init plugin has time to run migrations. Without this
+  // the first tick races and fails with "no such table: clients" on a fresh DB.
+  const FIRST_TICK_DELAY_MS = 5_000
+
+  setTimeout(() => {
+    tick().catch(err => log.error({ err }, 'cron: initial tick failed'))
+  }, FIRST_TICK_DELAY_MS)
 
   const handle = setInterval(() => {
     tick().catch(err => log.error({ err }, 'cron: tick failed'))

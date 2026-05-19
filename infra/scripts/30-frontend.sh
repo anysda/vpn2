@@ -88,6 +88,8 @@ ${PANEL_DOMAIN}:3001 {
 EOF
 else
   echo "[$HOST_TAG]   домен не задан — HTTP на :80"
+  # Note: h3's DEFAULT_COOKIE.secure=true is patched to false at image build
+  # time (see app/Dockerfile sed step). So the session cookie works over HTTP.
   cat > /etc/caddy/Caddyfile <<EOF
 :80 {
     encode gzip
@@ -118,6 +120,8 @@ docker run -d \
   --name anysda-vpn2 \
   --restart unless-stopped \
   --network host \
+  --pid host \
+  --security-opt apparmor=unconfined \
   --cap-add NET_ADMIN \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
@@ -127,6 +131,7 @@ docker run -d \
   -e PORT=51821 \
   -e HOST=127.0.0.1 \
   -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
+  -e NUXT_SESSION_COOKIE_SECURE="$([[ -n "${PANEL_DOMAIN:-}" ]] && echo true || echo false)" \
   -e DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
   -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
   -e NUXT_SS_CONFIG_PATH=/etc/outline-ss-server/config.yml \

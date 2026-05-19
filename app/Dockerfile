@@ -25,6 +25,16 @@ ENV PORT=51821
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/server/database/migrations ./server/database/migrations
 
+# h3's useSession bakes `DEFAULT_COOKIE = { secure: true, ... }` into the
+# bundle. We can't override this through runtimeConfig (defu drops the
+# extra keys at module init time). Rewrite the bundled output so that the
+# session cookie isn't Secure — needed for HTTP-only deploys. To re-enable
+# Secure for HTTPS prod, override via NUXT_SESSION_COOKIE_SECURE=true at
+# runtime (panel reads env in server/plugins/init.ts).
+RUN sed -i 's/^  secure: true,$/  secure: false,/' \
+  /app/.output/server/chunks/nitro/nitro.mjs \
+  && grep -c '^  secure: false,$' /app/.output/server/chunks/nitro/nitro.mjs
+
 EXPOSE 51821
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

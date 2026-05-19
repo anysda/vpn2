@@ -65,6 +65,7 @@ docker run -d \
   --name vmsingle \
   --restart unless-stopped \
   --network host \
+  --security-opt apparmor=unconfined \
   -v /var/lib/vmsingle:/storage \
   -v /etc/anysda/vmsingle-scrape.yml:/etc/vm/scrape.yml:ro \
   victoriametrics/victoria-metrics:latest \

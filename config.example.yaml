@@ -1,4 +1,4 @@
-# anysda-vpn — конфигурация инфраструктуры
+# anysda-vpn2 — конфигурация инфраструктуры
 #
 # 1. Запусти интерактивный мастер: ./setup.sh
 #    (или скопируй этот файл и заполни вручную: cp config.example.yaml config.yaml)
@@ -7,8 +7,8 @@
 #
 # chmod 600 — файл содержит пароли в открытом виде.
 
-# Входная нода — WireGuard endpoint, sing-box роутер, веб-панель, AdGuard.
-# Авторизация через root + пароль (sshpass).
+# Входная нода — Shadowsocks-сервер (outline-ss-server), sing-box роутер,
+# веб-панель, AdGuard. Авторизация через root + пароль (sshpass).
 entry:
   host: 1.2.3.4
   password: <root-password>
@@ -48,7 +48,8 @@ admin:
 
 # Кастомные порты (опционально). Дефолты подходят для большинства настроек.
 # ports:
-#   wireguard: 51820        # WireGuard клиентский
-#   hy2_direct: 443         # Hysteria2 прямой выход
-#   hy2_warp: 8443          # Hysteria2 через Cloudflare WARP
-#   mgmt: 51900             # WireGuard management mesh
+#   shadowsocks: 443                                # SS-сервер (outline-ss-server)
+#   shadowsocks_cipher: chacha20-ietf-poly1305      # AEAD-шифр
+#   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit)
+#   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
+#   mgmt: 51900                                     # WG-mesh между нодами (служебный)

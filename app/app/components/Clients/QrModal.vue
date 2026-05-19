@@ -83,14 +83,16 @@ async function sendToTelegram() {
           <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
             <UButton
               block
-              icon="i-simple-icons-telegram"
               variant="soft"
               color="neutral"
               :disabled="!ssUrl || !canSendTg"
               :loading="sendingTg"
               @click="sendToTelegram"
             >
-              Отправить в Telegram
+              <span class="inline-flex items-center justify-center gap-1.5 leading-none">
+                <UIcon name="i-simple-icons-telegram" class="size-4 shrink-0" />
+                <span>Отправить в Telegram</span>
+              </span>
             </UButton>
           </UTooltip>
         </div>

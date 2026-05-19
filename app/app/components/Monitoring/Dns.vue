@@ -78,17 +78,18 @@ function fmt(n: number | undefined | null): string {
         </div>
       </div>
 
-      <a
-        v-if="aghOrigin"
-        :href="aghOrigin"
-        target="_blank"
-        rel="noopener"
-        class="flex items-center justify-center gap-2 w-full py-3 rounded-md bg-[#67B279] hover:bg-[#5BA56C] text-white font-semibold text-base transition-colors"
-      >
-        <UIcon name="i-simple-icons-adguard" class="size-5" />
-        AdGuard Home
-        <UIcon name="i-lucide-external-link" class="size-4 opacity-80" />
-      </a>
+      <div v-if="aghOrigin" class="flex justify-end">
+        <a
+          :href="aghOrigin"
+          target="_blank"
+          rel="noopener"
+          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#00ab5a] hover:bg-[#019a51] text-white text-sm font-medium transition-colors"
+        >
+          <UIcon name="i-simple-icons-adguard" class="size-4" />
+          AdGuard Home
+          <UIcon name="i-lucide-external-link" class="size-3.5 opacity-80" />
+        </a>
+      </div>
     </div>
   </UCard>
 </template>

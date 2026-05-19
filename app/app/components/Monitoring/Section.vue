@@ -24,6 +24,10 @@ function loadColor(v: number | null): string {
   if (v >= 60) return 'text-amber-400'
   return 'text-(--ui-text)'
 }
+
+function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: number | null }): boolean {
+  return n.cpu == null && n.ram == null && n.uptimeSec == null
+}
 </script>
 
 <template>
@@ -47,44 +51,52 @@ function loadColor(v: number | null): string {
       <div
         v-for="n in sortedNodes"
         :key="n.tag"
-        class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5"
+        class="relative rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5"
       >
-        <div class="flex items-center justify-between text-xs mb-2">
-          <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
-          <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
+        <div :class="isOffline(n) ? 'opacity-30' : ''">
+          <div class="flex items-center justify-between text-xs mb-2">
+            <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
+            <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
+          </div>
+          <div class="space-y-0.5 text-xs">
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">CPU</span>
+              <span :class="loadColor(n.cpu)">{{ formatPercent(n.cpu) }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">RAM</span>
+              <span :class="loadColor(n.ram)">{{ formatPercent(n.ram) }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">↓</span>
+              <span class="text-(--ui-text)">{{ formatMbps(n.rxMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">↑</span>
+              <span class="text-(--ui-text)">{{ formatMbps(n.txMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
+            </div>
+          </div>
+          <svg
+            v-if="(cpuHistory.get(n.tag) ?? []).length > 1"
+            viewBox="0 0 80 16"
+            class="w-full h-4 mt-2"
+            preserveAspectRatio="none"
+          >
+            <path
+              :d="sparklinePath(cpuHistory.get(n.tag) ?? [], 80, 16)"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              class="text-violet-500/80"
+            />
+          </svg>
         </div>
-        <div class="space-y-0.5 text-xs">
-          <div class="flex justify-between">
-            <span class="text-(--ui-text-muted)">CPU</span>
-            <span :class="loadColor(n.cpu)">{{ formatPercent(n.cpu) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-(--ui-text-muted)">RAM</span>
-            <span :class="loadColor(n.ram)">{{ formatPercent(n.ram) }}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-(--ui-text-muted)">↓</span>
-            <span class="text-(--ui-text)">{{ formatMbps(n.rxMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-(--ui-text-muted)">↑</span>
-            <span class="text-(--ui-text)">{{ formatMbps(n.txMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
-          </div>
-        </div>
-        <svg
-          v-if="(cpuHistory.get(n.tag) ?? []).length > 1"
-          viewBox="0 0 80 16"
-          class="w-full h-4 mt-2"
-          preserveAspectRatio="none"
+        <div
+          v-if="isOffline(n)"
+          class="absolute inset-0 flex items-center justify-center pointer-events-none"
         >
-          <path
-            :d="sparklinePath(cpuHistory.get(n.tag) ?? [], 80, 16)"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.2"
-            class="text-violet-500/80"
-          />
-        </svg>
+          <span class="font-bold text-rose-500 text-sm tracking-wider">ОФФЛАЙН</span>
+        </div>
       </div>
     </div>
   </UCard>

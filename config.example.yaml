@@ -1,0 +1,54 @@
+# anysda-vpn — конфигурация инфраструктуры
+#
+# 1. Запусти интерактивный мастер: ./setup.sh
+#    (или скопируй этот файл и заполни вручную: cp config.example.yaml config.yaml)
+# 2. ./deploy.sh check
+# 3. ./deploy.sh all
+#
+# chmod 600 — файл содержит пароли в открытом виде.
+
+# Входная нода — WireGuard endpoint, sing-box роутер, веб-панель, AdGuard.
+# Авторизация через root + пароль (sshpass).
+entry:
+  host: 1.2.3.4
+  password: <root-password>
+
+# Выходные ноды — Hysteria2 серверы. Минимум 1, рекомендуется 2+.
+exits:
+  - tag: us              # короткий тег: us / gb / nl / de / us2 / ...
+    host: 5.6.7.8
+    password: <root-password>
+
+  - tag: gb
+    host: 9.10.11.12
+    password: <root-password>
+    hy2_direct_port: 4443   # опционально — задай если хостер фильтрует UDP:443
+                            # (verify_and_rotate_ports сделает это сам, но можно
+                            # сразу прописать чтобы не пересобирать)
+
+# Учётка администратора (веб-панель + AdGuard UI).
+# password опционально: если пусто — будет сгенерирован 18-символьный пароль
+# при первом деплое и записан в /etc/anysda/admin-password.txt на RU ноде.
+admin:
+  user: anysda
+  # password: my-secret
+
+# Домен для веб-панели (опционально).
+# Если задан — Caddy получит Let's Encrypt сертификат, панель доступна по
+# HTTPS. A-запись домена должна указывать на IP entry-ноды.
+# Hysteria2-туннели НЕ зависят от домена и остаются на self-signed TLS (IP).
+# panel:
+#   domain: vpn.example.com
+
+# Telegram-бот (опционально).
+# Если задан — стейдж 35-telegram развернёт бот; иначе skip.
+# telegram:
+#   bot_token: 1234567890:AAEhBOweik9ai2-_ABCD
+#   chat_id: 123456789
+
+# Кастомные порты (опционально). Дефолты подходят для большинства настроек.
+# ports:
+#   wireguard: 51820        # WireGuard клиентский
+#   hy2_direct: 443         # Hysteria2 прямой выход
+#   hy2_warp: 8443          # Hysteria2 через Cloudflare WARP
+#   mgmt: 51900             # WireGuard management mesh

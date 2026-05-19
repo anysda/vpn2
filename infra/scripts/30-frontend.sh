@@ -1,29 +1,28 @@
 #!/usr/bin/env bash
-# Stage 30 — anysda-vpn frontend container on RU.
-# Builds the image from the source tree pushed by the orchestrator,
-# renders anysda-config.yaml from secrets, runs as a host-network container.
-#
-# Pre-DNS (vpn.anysda.space → 193.233.245.247): no Caddy/LE.
-# Access via SSH tunnel:  ssh -L 51821:127.0.0.1:51821 root@193.233.245.247
-# After DNS lands: add Caddy reverse-proxy in stage 30 (TODO subsection).
+# Stage 30 — anysda-vpn2 panel container on RU.
+# Loads pre-built image (built by orchestrator on dev machine, pushed as tarball),
+# renders /etc/anysda/config.yaml from admin secrets, installs Caddy, runs
+# the panel as host-network container on :51821 (Caddy reverse-proxies :80).
+# Container has NET_ADMIN cap so it can manage iptables for sing-box if needed —
+# NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules (no kernel WG client anymore).
 
 set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
-: "${HOST_TAG:?}" "${DOMAIN_WG:?}" "${WG_PORT:?}" "${WG_CLIENT_CIDR:?}" "${AGH_PORT:?}"
+: "${HOST_TAG:?}" "${ENTRY_HOST:?}" "${SS_PORT:?}" "${SS_CIPHER:?}" "${AGH_PORT:?}"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 30-frontend is ru-only — skipping"; exit 0;; esac
 
 STAMP_DIR=/var/anysda/.stamps
 STAGE='30-frontend'
 
-mkdir -p /etc/anysda /opt/anysda-vpn
+mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 
 # ----------------------------------------------------------------------------
-# 1. Load pre-built Docker image (built locally on orchestrator machine)
+# 1. Load pre-built Docker image
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/4] docker load"
-IMG=/tmp/anysda/anysda-vpn.tar.gz
+IMG=/tmp/anysda/anysda-vpn2.tar.gz
 [[ -f "$IMG" ]] || { echo "[$HOST_TAG] $IMG не найден — оркестратор должен был его загрузить"; exit 1; }
 docker load < "$IMG" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 
@@ -31,8 +30,6 @@ docker load < "$IMG" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 # 2. Generate or load admin password, render anysda-config.yaml
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/4] config"
-# Учётка из config.yaml (admin.user / admin.password) пробрасывается через ru.env.
-# Если ADMIN_PASSWORD пуст и 22-adguard уже сгенерил admin-password.txt — используем его.
 if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
   printf '%s' "$ADMIN_PASSWORD" > /etc/anysda/admin-password.txt
   chmod 600 /etc/anysda/admin-password.txt
@@ -42,21 +39,27 @@ elif [[ ! -f /etc/anysda/admin-password.txt ]]; then
 fi
 ADMIN_PASS=$(cat /etc/anysda/admin-password.txt)
 ADMIN_USER="${ADMIN_USER:-anysda}"
-WG_HOST="$DOMAIN_WG"
 
 TPL=/tmp/anysda/anysda-config.yaml.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 
-export ADMIN_USER ADMIN_PASS WG_HOST WG_PORT WG_CLIENT_CIDR
+export ADMIN_USER ADMIN_PASS
 envsubst < "$TPL" > /etc/anysda/anysda-config.yaml
 chmod 600 /etc/anysda/anysda-config.yaml
 
-echo "[$HOST_TAG]   admin user: $ADMIN_USER"
-echo "[$HOST_TAG]   admin pass: $ADMIN_PASS"
-echo "[$HOST_TAG]   wg endpoint: $WG_HOST:$WG_PORT"
+# Session secret — random 64-char hex, persisted so cookies survive container rebuilds
+if [[ ! -f /etc/anysda/session-secret.txt ]]; then
+  openssl rand -hex 32 > /etc/anysda/session-secret.txt
+  chmod 600 /etc/anysda/session-secret.txt
+fi
+SESSION_SECRET=$(cat /etc/anysda/session-secret.txt)
+
+echo "[$HOST_TAG]   admin user:  $ADMIN_USER"
+echo "[$HOST_TAG]   admin pass:  $ADMIN_PASS"
+echo "[$HOST_TAG]   ss endpoint: ${ENTRY_HOST}:${SS_PORT} (${SS_CIPHER})"
 
 # ----------------------------------------------------------------------------
-# 3. Caddy (reverse-proxy + LE)
+# 3. Caddy (reverse-proxy + optional LE)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/4] caddy"
 if ! command -v caddy >/dev/null 2>&1; then
@@ -68,10 +71,7 @@ if ! command -v caddy >/dev/null 2>&1; then
   apt-get update -qq
   apt-get install -y -qq caddy >/dev/null
 fi
-# Если задан PANEL_DOMAIN — Caddy автоматически получит Let's Encrypt
-# сертификат (ACME на :80, обслуживание HTTPS на :443) для веб-панели.
-# Иначе панель отдаётся по HTTP на :80 (трафик и так в WireGuard-туннеле).
-# AdGuard UI остаётся на :3001 HTTP — редко используется и WG-only.
+
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then
   echo "[$HOST_TAG]   домен панели: ${PANEL_DOMAIN} (HTTPS через Let's Encrypt)"
   cat > /etc/caddy/Caddyfile <<EOF
@@ -79,14 +79,9 @@ ${PANEL_DOMAIN} {
     encode gzip
     reverse_proxy 127.0.0.1:51821
 }
-
-# IP-fallback на HTTP (если кто-то заходит по IP, не через домен) →
-# редирект на HTTPS-домен.
 :80 {
     redir https://${PANEL_DOMAIN}{uri} permanent
 }
-
-# AdGuard UI — HTTPS через тот же LE-серт домена.
 ${PANEL_DOMAIN}:3001 {
     reverse_proxy 127.0.0.1:${AGH_PORT}
 }
@@ -98,7 +93,6 @@ else
     encode gzip
     reverse_proxy 127.0.0.1:51821
 }
-
 :3001 {
     reverse_proxy 127.0.0.1:${AGH_PORT}
 }
@@ -113,61 +107,59 @@ caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }
 
 # ----------------------------------------------------------------------------
-# 5. Run container
+# 4. Run container
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] run container"
-docker rm -f anysda-vpn >/dev/null 2>&1 || true
+docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 
-# host networking — panel talks to the kernel WG interface directly
+# host networking — panel needs to write SS config + SIGHUP outline-ss-server.
+# NET_ADMIN is enough; no SYS_MODULE, no /etc/wireguard mount.
 docker run -d \
-  --name anysda-vpn \
+  --name anysda-vpn2 \
   --restart unless-stopped \
   --network host \
   --cap-add NET_ADMIN \
-  --cap-add SYS_MODULE \
-  -v /etc/wireguard:/etc/wireguard \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
-  -v /etc/anysda:/host-anysda \
-  -e HOST_ANYSDA_DIR=/host-anysda \
-  -v /lib/modules:/lib/modules:ro \
+  -v /etc/anysda:/etc/anysda \
+  -v /etc/outline-ss-server:/etc/outline-ss-server \
+  -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
+  -e NODE_ENV=production \
   -e PORT=51821 \
   -e HOST=127.0.0.1 \
-  -e INSECURE=true \
-  -e DISABLE_IPV6=true \
-  -e ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
-  -e CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
-  -e CLASH_API_URL="http://${MGMT_IP}:9090" \
-  -e EXIT_TAGS="${EXIT_TAGS}" \
-  -e VM_URL="http://127.0.0.1:8428" \
-  -e TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
-  -e TGBOT_EVENT_PORT=8877 \
-  anysda-vpn:local \
+  -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
+  -e DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
+  -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
+  -e NUXT_SS_CONFIG_PATH=/etc/outline-ss-server/config.yml \
+  -e NUXT_SS_PORT="${SS_PORT}" \
+  -e NUXT_SS_CIPHER="${SS_CIPHER}" \
+  -e NUXT_SS_PUBLIC_HOST="${ENTRY_HOST}" \
+  -e NUXT_ROUTES_FILE_PATH=/etc/anysda/manual-routes.json \
+  -e NUXT_CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
+  -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \
+  -e NUXT_AGH_URL="http://127.0.0.1:${AGH_PORT}" \
+  -e NUXT_AGH_USER="${ADMIN_USER}" \
+  -e NUXT_AGH_PASSWORD="${ADMIN_PASS}" \
+  -e NUXT_EXIT_TAGS="${EXIT_TAGS}" \
+  -e NUXT_MGMT_MESH_IP_PREFIX="10.99.0." \
+  -e NUXT_VM_URL="http://127.0.0.1:8428" \
+  -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
+  -e NUXT_TGBOT_EVENT_PORT=8877 \
+  -e LOG_LEVEL=info \
+  anysda-vpn2:local \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
-for i in $(seq 1 30); do
-  curl -fsS -o /dev/null http://127.0.0.1:51821/ 2>/dev/null && break
+for i in $(seq 1 60); do
+  curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null && break
   sleep 1
 done
 echo "[$HOST_TAG] статус контейнера:"
-docker ps --filter name=anysda-vpn --format '  {{.Names}} {{.Status}} {{.Ports}}' | sed "s/^/[$HOST_TAG]   /"
-echo "[$HOST_TAG] ответ на login:"
-curl -sS -o /dev/null -w "  http=%{http_code}\n" http://127.0.0.1:51821/ | sed "s/^/[$HOST_TAG]   /"
+docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}}' | sed "s/^/[$HOST_TAG]   /"
+echo "[$HOST_TAG] /api/version:"
+curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | sed "s/^/[$HOST_TAG]   /"
 
-# Wait for wg0: WireGuard.Startup() is fire-and-forget inside the Node process
-# so HTTP may respond before the interface is actually up.
-echo "[$HOST_TAG] жду пока поднимется wg0…"
-for i in $(seq 1 30); do
-  ip link show wg0 >/dev/null 2>&1 && break
-  sleep 1
-done
-if ip link show wg0 >/dev/null 2>&1; then
-  echo "[$HOST_TAG]   wg0 поднят"
-else
-  echo "[$HOST_TAG]   wg0 не поднялся за 30 сек — tproxy правила отложены; запусти: systemctl restart anysda-iptables"
-fi
-
-# Refresh tproxy iptables now that wg0 exists (idempotent)
+# Refresh anysda-iptables after the panel writes initial SS config (the user
+# `outline` already exists from stage 27; iptables rules are safe to refresh).
 systemctl restart anysda-iptables >/dev/null 2>&1 || true
 
 mkdir -p "$STAMP_DIR"
@@ -176,10 +168,10 @@ echo "[$HOST_TAG] $STAGE done"
 echo
 echo "[$HOST_TAG] -------------------------------------------------------------"
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-  echo "[$HOST_TAG]  Панель:       https://${PANEL_DOMAIN}/"
+  echo "[$HOST_TAG]  Панель:        https://${PANEL_DOMAIN}/"
 else
-  echo "[$HOST_TAG]  Панель:       http://${DOMAIN_WG}/"
+  echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
 fi
-echo "[$HOST_TAG]  Логин:        $ADMIN_USER / $ADMIN_PASS"
-echo "[$HOST_TAG]  (Caddy :80 reverse-proxy → 127.0.0.1:51821 — без TLS, IP-only режим)"
+echo "[$HOST_TAG]  Логин:         $ADMIN_USER / $ADMIN_PASS"
+echo "[$HOST_TAG]  SS-сервер:     ${ENTRY_HOST}:${SS_PORT} (${SS_CIPHER})"
 echo "[$HOST_TAG] -------------------------------------------------------------"

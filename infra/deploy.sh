@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anysda-vpn — оркестратор деплоя
+# anysda-vpn2 — оркестратор деплоя
 #
 # Использование:
 #   ./deploy.sh                   полный pipeline: prereqs → проверки → деплой
@@ -28,7 +28,7 @@ print_banner() {
   local exits; exits=$(exit_tags 2>/dev/null || echo "")
   printf '\n'
   printf '%b  ┌──────────────────────────────────────────┐%b\n' "$C_B" "$C_END"
-  printf '%b  │%b  anysda-vpn  ·  deployment orchestrator  %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
+  printf '%b  │%b  anysda-vpn2 ·  deployment orchestrator  %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
   printf '%b  │%b                                          %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
   printf '%b  │%b  RU entry    →  sing-box router          %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
   if [[ -n "$exits" ]]; then
@@ -62,7 +62,7 @@ print_summary() {
   local _ru_host _panel_url _agh_url
   source "$DEPLOY_ROOT/envs/all.env" 2>/dev/null || true
   source "$DEPLOY_ROOT/envs/ru.env"  2>/dev/null || true
-  _ru_host="${SSH_HOST:-${DOMAIN_WG:-}}"
+  _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
   if [[ -n "${PANEL_DOMAIN:-}" ]]; then
     _panel_url="https://${PANEL_DOMAIN}/"
   else
@@ -313,13 +313,13 @@ run_stage_on_host() {
   if [[ "$stage" == "30-frontend" ]]; then
     local app_dir="$DEPLOY_ROOT/../app"
     [[ -d "$app_dir" ]] || die "папка app/ не найдена"
-    local img_tar="$DEPLOY_ROOT/secrets/rendered/anysda-vpn.tar.gz"
+    local img_tar="$DEPLOY_ROOT/secrets/rendered/anysda-vpn2.tar.gz"
     mkdir -p "$(dirname "$img_tar")"
     log "[$stage → $host] building docker image locally for linux/amd64 …"
-    docker buildx build --platform linux/amd64 -t anysda-vpn:local "$app_dir" --load
+    docker buildx build --platform linux/amd64 -t anysda-vpn2:local "$app_dir" --load
     log "[$stage → $host] saving image to tarball …"
-    docker save anysda-vpn:local | gzip > "$img_tar"
-    push "$img_tar" "anysda-vpn.tar.gz"
+    docker save anysda-vpn2:local | gzip > "$img_tar"
+    push "$img_tar" "anysda-vpn2.tar.gz"
     push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl"
   fi
 
@@ -481,16 +481,17 @@ do_all() {
   do_check
   preflight_ssh
 
-  run_stage 00-bootstrap   all
-  run_stage 05-mgmt-mesh   all
-  run_stage 10-foreign     foreign
-  run_stage 20-ru-router   ru
+  run_stage 00-bootstrap     all
+  run_stage 05-mgmt-mesh     all
+  run_stage 10-foreign       foreign
+  run_stage 27-shadowsocks   ru
+  run_stage 20-ru-router     ru
   verify_and_rotate_ports
-  run_stage 22-adguard     ru
-  run_stage 25-monitoring  ru
-  run_stage 35-telegram    ru
-  run_stage 30-frontend    ru
-  run_stage 99-verify      all
+  run_stage 22-adguard       ru
+  run_stage 25-monitoring    ru
+  run_stage 35-telegram      ru
+  run_stage 30-frontend      ru
+  run_stage 99-verify        all
 
   print_summary
   announce_deploy_done

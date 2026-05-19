@@ -70,16 +70,7 @@ const filtered = computed(() => {
     <div class="space-y-6">
       <RoutesSection />
 
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            Мониторинг
-          </div>
-        </template>
-        <div class="text-(--ui-text-muted) text-sm py-4 text-center">
-          (Phase D.2 — карточки нод + RTT/Трафик графики)
-        </div>
-      </UCard>
+      <MonitoringSection />
 
       <UCard>
         <template #header>

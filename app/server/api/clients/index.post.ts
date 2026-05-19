@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
+import { notifyBot } from '../../utils/bot-events'
 import { generateSsSecret, syncShadowsocksConfig } from '../../utils/shadowsocks'
 
 const Body = z.object({
@@ -29,6 +30,8 @@ export default defineEventHandler(async (event) => {
   await syncShadowsocksConfig().catch((err) => {
     useLogger().error({ err }, 'failed to sync ss config after create')
   })
+
+  void notifyBot('client_created', { name: row.name })
 
   return row
 })

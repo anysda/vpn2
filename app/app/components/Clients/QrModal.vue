@@ -89,10 +89,7 @@ async function sendToTelegram() {
               :loading="sendingTg"
               @click="sendToTelegram"
             >
-              <span class="inline-flex items-center justify-center gap-1.5 leading-none">
-                <UIcon name="i-simple-icons-telegram" class="size-4 shrink-0" />
-                <span>Отправить в Telegram</span>
-              </span>
+              Отправить в TG
             </UButton>
           </UTooltip>
         </div>

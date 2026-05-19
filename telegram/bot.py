@@ -113,6 +113,17 @@ async def tg_send_qr(chat_id: int, ss_url: str, caption: str) -> dict:
     return r.json()
 
 
+async def tg_send_document(chat_id: int, filename: str, content: bytes, caption: str = '') -> dict:
+    """Send raw bytes as a Telegram document (used for .conf delivery)."""
+    files = {'document': (filename, content, 'application/octet-stream')}
+    data: dict = {'chat_id': str(chat_id)}
+    if caption:
+        data['caption'] = caption
+        data['parse_mode'] = 'Markdown'
+    r = await _tg.post('/sendDocument', data=data, files=files, timeout=30)
+    return r.json()
+
+
 async def tg_reply(update: Update, text: str, parse_mode: str | None = None) -> dict:
     return await tg_send(update.effective_chat.id, text, parse_mode)
 
@@ -319,8 +330,21 @@ async def handle_event(request: web.Request) -> web.Response:
         name = data.get('name', '?')
         ss_url = data.get('ssUrl', '')
         if ss_url:
-            caption = f'🔑 *{name}*\n\n`{ss_url}`'
+            caption = f'🔑 *{name}* — Outline\n\n`{ss_url}`'
             asyncio.create_task(tg_send_qr(CHAT_ID, ss_url, caption))
+    elif evt == 'client_send_wireguard':
+        name = data.get('name', '?')
+        conf = data.get('conf', '')
+        if conf:
+            async def _send_wg():
+                # Document with the raw .conf — clients import directly into wg-quick / wg apps
+                await tg_send_document(
+                    CHAT_ID, f'{name}.conf', conf.encode('utf-8'),
+                    caption=f'🔒 *{name}* — WireGuard',
+                )
+                # QR with the same payload — phones scan it from the WireGuard app
+                await tg_send_qr(CHAT_ID, conf, f'📱 QR для *{name}*')
+            asyncio.create_task(_send_wg())
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

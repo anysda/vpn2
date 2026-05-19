@@ -125,6 +125,7 @@ docker run -d \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
   -v /etc/outline-ss-server:/etc/outline-ss-server \
+  -v /etc/wireguard:/etc/wireguard \
   -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
   -e NODE_ENV=production \
   -e PORT=51821 \
@@ -137,6 +138,13 @@ docker run -d \
   -e NUXT_SS_PORT="${SS_PORT}" \
   -e NUXT_SS_CIPHER="${SS_CIPHER}" \
   -e NUXT_SS_PUBLIC_HOST="${ENTRY_HOST}" \
+  -e NUXT_WG_ENABLED=true \
+  -e NUXT_WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}" \
+  -e NUXT_WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}" \
+  -e NUXT_WG_SUBNET_PREFIX="${WG_SUBNET_PREFIX:-10.66.66.}" \
+  -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
+  -e NUXT_WG_DNS="${WG_DNS:-10.66.66.1}" \
+  -e NUXT_WG_MTU="${WG_MTU:-1420}" \
   -e NUXT_ROUTES_FILE_PATH=/etc/anysda/manual-routes.json \
   -e NUXT_CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
   -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \

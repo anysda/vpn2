@@ -4,6 +4,7 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncShadowsocksConfig } from '../../utils/shadowsocks'
+import { syncWireguardConfig } from '../../utils/wireguard'
 
 const Body = z.object({
   name: z.string().min(1).max(64).optional(),
@@ -45,6 +46,9 @@ export default defineEventHandler(async (event) => {
   if (body.enabled !== undefined) {
     await syncShadowsocksConfig().catch((err) => {
       useLogger().error({ err }, 'failed to sync ss config after enable toggle')
+    })
+    await syncWireguardConfig().catch((err) => {
+      useLogger().error({ err }, 'failed to sync wg config after enable toggle')
     })
   }
 

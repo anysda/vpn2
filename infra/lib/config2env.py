@@ -102,7 +102,8 @@ def main():
     entry_host = entry['host']
 
     # Дефолтные порты
-    wg_port    = ports.get('wireguard',  '51820')
+    ss_port    = ports.get('shadowsocks', ports.get('wireguard', '443'))  # legacy wg key fallback
+    ss_cipher  = ports.get('shadowsocks_cipher', 'chacha20-ietf-poly1305')
     hy2_direct = ports.get('hy2_direct', '443')
     hy2_warp   = ports.get('hy2_warp',   '8443')
     mgmt_port  = ports.get('mgmt',       '51900')
@@ -113,16 +114,16 @@ def main():
     exit_tags = ' '.join(e['tag'] for e in exits)
 
     # ------------------------------------------------------------------
-    # all.env — IP entry-ноды как DOMAIN_WG (используется в WG-конфигах клиентов)
+    # all.env
     # ------------------------------------------------------------------
     lines = [
-        f'DOMAIN_WG={entry_host}',
+        f'ENTRY_HOST={entry_host}',
         '',
         f'MGMT_NET=10.99.0.0/24',
         f'MGMT_PORT={mgmt_port}',
         '',
-        f'WG_PORT={wg_port}',
-        f'WG_CLIENT_CIDR=10.8.0.0/24',
+        f'SS_PORT={ss_port}',
+        f'SS_CIPHER={ss_cipher}',
         '',
         f'AGH_PORT=3000',
         '',

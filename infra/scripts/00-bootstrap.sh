@@ -8,7 +8,7 @@ set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?HOST_TAG must be set}"
 : "${MGMT_NET:?MGMT_NET must be set}"
-: "${WG_PORT:?WG_PORT must be set}"
+: "${SS_PORT:?SS_PORT must be set}"
 : "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${MGMT_PORT:?}"
 
 STAMP_DIR=/var/anysda/.stamps
@@ -127,7 +127,8 @@ ufw allow 22/tcp comment 'ssh'
 
 case "$HOST_TAG" in
   ru)
-    ufw allow "${WG_PORT}/udp"  comment 'wg-clients inbound'
+    ufw allow "${SS_PORT}/tcp"  comment 'shadowsocks (outline-ss-server) TCP'
+    ufw allow "${SS_PORT}/udp"  comment 'shadowsocks (outline-ss-server) UDP'
     ufw allow 80/tcp            comment 'caddy HTTP панель'
     ;;
   *)

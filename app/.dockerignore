@@ -1,0 +1,17 @@
+node_modules
+.nuxt
+.output
+.data
+.cache
+.git
+.env
+.env.*
+!.env.example
+local.db
+local.db-journal
+local-ss-config.yml
+local-anysda-config.yaml
+local-manual-routes.json
+*.log
+.DS_Store
+Thumbs.db

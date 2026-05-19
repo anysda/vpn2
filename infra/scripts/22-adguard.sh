@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Stage 22 — AdGuard Home on RU server.
-# Listens on 10.8.0.1:53 (DNS for WireGuard clients).
-# Web UI on 127.0.0.1:${AGH_PORT} — proxied by Caddy at https://vpn.example.com:3001 (stage 30).
+# Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh).
+# DNS for SS-clients flows: client → outline-ss-server → DNS query intercepted
+# by iptables OUTPUT --uid-owner outline → sing-box DNS resolver. AdGuard is
+# AVAILABLE on loopback if sing-box config is later wired to upstream it.
+# Web UI on 127.0.0.1:${AGH_PORT} — proxied by Caddy at :3001 (stage 30).
 
 set -euo pipefail
 
@@ -80,8 +83,8 @@ block_auth_min: 15
 
 dns:
   bind_hosts:
-    - 10.8.0.1
     - 127.0.0.1
+    - ${MGMT_IP}
   port: 53
   upstream_dns:
     - 77.88.8.8
@@ -165,9 +168,12 @@ systemctl restart adguardhome
 sleep 2
 systemctl status adguardhome --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
-# ufw: allow DNS only from WG clients
-ufw allow proto udp from 10.8.0.0/24 to 10.8.0.1 port 53 comment 'AdGuard DNS WG clients' >/dev/null 2>&1 || true
-ufw allow proto tcp from 10.8.0.0/24 to 10.8.0.1 port 53 comment 'AdGuard DNS WG clients TCP' >/dev/null 2>&1 || true
+# ufw: AdGuard listens only on 127.0.0.1 and mgmt mesh (${MGMT_IP})
+# Both are reachable from inside the host (sing-box) and from peer nodes via wgmgmt.
+# No firewall opening needed for client traffic — clients hit AdGuard indirectly
+# through sing-box DNS forwarding, not directly.
+ufw allow proto udp from "${MGMT_NET}" to "${MGMT_IP}" port 53 comment 'AdGuard DNS mgmt mesh UDP' >/dev/null 2>&1 || true
+ufw allow proto tcp from "${MGMT_NET}" to "${MGMT_IP}" port 53 comment 'AdGuard DNS mgmt mesh TCP' >/dev/null 2>&1 || true
 ufw reload >/dev/null
 
 mkdir -p "$STAMP_DIR"

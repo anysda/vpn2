@@ -1,14 +1,8 @@
+# anysda-vpn2 panel config — монтируется в контейнер как /etc/anysda/config.yaml
+# Сгенерировано из infra/scripts/30-frontend.sh через envsubst.
+#
+# Только admin: панель читает SS-port/cipher/public-host из env-переменных
+# (NUXT_SS_*), не из этого файла.
 admin:
-  username: ${ADMIN_USER}
+  user: ${ADMIN_USER}
   password: ${ADMIN_PASS}
-  name: ${ADMIN_USER}
-  email: null
-
-wireguard:
-  host: ${WG_HOST}
-  port: ${WG_PORT}
-  ipv4_cidr: ${WG_CLIENT_CIDR}
-  dns: [10.8.0.1]
-  allowed_ips: [0.0.0.0/0]
-  mtu: 1380
-  persistent_keepalive: 25

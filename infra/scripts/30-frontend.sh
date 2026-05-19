@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Stage 30 — anysda-vpn2 panel container on RU.
-# Loads pre-built image (built by orchestrator on dev machine, pushed as tarball),
-# renders /etc/anysda/config.yaml from admin secrets, installs Caddy, runs
-# the panel as host-network container on :51821 (Caddy reverse-proxies :80).
-# Container has NET_ADMIN cap so it can manage iptables for sing-box if needed —
-# NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules (no kernel WG client anymore).
+# Pulls the panel image from the public GitLab Container Registry
+# (registry.anysda.space/anysda/vpn2/panel), renders /etc/anysda/config.yaml
+# from admin secrets, installs Caddy, runs the panel as host-network
+# container on :51821 (Caddy reverse-proxies :80). NET_ADMIN cap only —
+# NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules.
 
 set -euo pipefail
 
@@ -19,12 +19,11 @@ STAGE='30-frontend'
 mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 
 # ----------------------------------------------------------------------------
-# 1. Load pre-built Docker image
+# 1. Pull panel image from the public GitLab Container Registry
 # ----------------------------------------------------------------------------
-echo "[$HOST_TAG] [1/4] docker load"
-IMG=/tmp/anysda/anysda-vpn2.tar.gz
-[[ -f "$IMG" ]] || { echo "[$HOST_TAG] $IMG не найден — оркестратор должен был его загрузить"; exit 1; }
-docker load < "$IMG" 2>&1 | sed "s/^/[$HOST_TAG]   /"
+PANEL_IMAGE="${PANEL_IMAGE:-registry.anysda.space/anysda/vpn2/panel:dev}"
+echo "[$HOST_TAG] [1/4] docker pull ${PANEL_IMAGE}"
+docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password, render anysda-config.yaml
@@ -150,7 +149,7 @@ docker run -d \
   -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
   -e NUXT_TGBOT_EVENT_PORT=8877 \
   -e LOG_LEVEL=info \
-  anysda-vpn2:local \
+  "$PANEL_IMAGE" \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"

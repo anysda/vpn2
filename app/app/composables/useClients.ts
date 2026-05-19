@@ -27,6 +27,8 @@ export function useClients() {
     if (timer) { clearInterval(timer); timer = null }
   })
 
+  useVisibleRefresh(refresh)
+
   async function create(payload: { name: string, expiresAt: string | null, sendToTg?: boolean }) {
     const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
     await refresh()

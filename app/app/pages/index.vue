@@ -22,6 +22,7 @@ onMounted(() => {
   if (!trafficTimer) trafficTimer = setInterval(() => { void refreshTraffic() }, 3000)
 })
 onUnmounted(() => { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null } })
+useVisibleRefresh(refreshTraffic)
 </script>
 
 <template>

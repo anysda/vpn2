@@ -18,6 +18,7 @@ onMounted(() => {
   if (!timer) timer = setInterval(() => { void refresh() }, 60_000)
 })
 onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
+useVisibleRefresh(refresh)
 
 const aghOrigin = computed(() => {
   if (typeof window === 'undefined') return ''

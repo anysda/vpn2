@@ -89,7 +89,7 @@ async function onDrop(targetOutbound: string) {
   if (!cur || cur.outbound === targetOutbound) return
   try {
     await patch(m.id, targetOutbound)
-    toast.add({ title: `«${m.value}» → ${targetOutbound}`, color: 'success' })
+    toast.add({ title: `«${m.value}» → ${outboundLabel(targetOutbound)}`, color: 'success' })
   }
   catch (e) {
     toast.add({ title: 'Ошибка перемещения', color: 'error', description: (e as Error).message })
@@ -106,8 +106,12 @@ async function deleteRule(rule: Route) {
   }
 }
 
-function rttBadge(delay: number | null) {
-  if (delay === null) return { text: '—', cls: 'text-(--ui-text-dimmed)' }
+function rttBadge(delay: number | null, kind: 'direct' | 'warp' | 'ru' = 'direct') {
+  if (delay === null) {
+    if (kind === 'ru') return { text: '0ms', cls: 'text-violet-400' }
+    if (kind === 'warp') return { text: '', cls: '' }
+    return { text: '—', cls: 'text-(--ui-text-dimmed)' }
+  }
   const color = rttColor(delay)
   const map: Record<string, string> = {
     success: 'text-violet-400',
@@ -116,6 +120,12 @@ function rttBadge(delay: number | null) {
     neutral: 'text-(--ui-text-muted)',
   }
   return { text: `${delay}ms`, cls: map[color] }
+}
+
+function outboundLabel(name: string): string {
+  const p = parseOutbound(name)
+  if (!p) return name
+  return `${flagFor(p.tag)} ${p.tag.toUpperCase()}${p.variant === 'warp' ? ' WARP' : ''}`
 }
 </script>
 
@@ -192,8 +202,8 @@ function rttBadge(delay: number | null) {
               <span class="font-semibold">
                 {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }}
               </span>
-              <span :class="rttBadge(col.direct.delay).cls">
-                {{ rttBadge(col.direct.delay).text }}
+              <span :class="rttBadge(col.direct.delay, col.tag === 'ru' ? 'ru' : 'direct').cls">
+                {{ rttBadge(col.direct.delay, col.tag === 'ru' ? 'ru' : 'direct').text }}
               </span>
             </div>
             <div class="space-y-1">
@@ -239,7 +249,7 @@ function rttBadge(delay: number | null) {
           <div
             v-if="col.warp"
             :class="[
-              'rounded-md p-3 min-h-[64px] flex flex-col border transition-colors',
+              'rounded-md p-3 flex flex-col border transition-colors',
               dragOver === col.warp.name
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
@@ -251,8 +261,8 @@ function rttBadge(delay: number | null) {
               <span class="font-medium flex items-center gap-1">
                 {{ flagFor(col.tag) }} <span class="text-[#f38020]">{{ col.tag.toUpperCase() }} WARP</span>
               </span>
-              <span :class="rttBadge(col.warp.delay).cls">
-                {{ rttBadge(col.warp.delay).text }}
+              <span :class="rttBadge(col.warp.delay, 'warp').cls">
+                {{ rttBadge(col.warp.delay, 'warp').text }}
               </span>
             </div>
             <div class="space-y-1">
@@ -272,6 +282,22 @@ function rttBadge(delay: number | null) {
                   variant="ghost"
                   class="opacity-0 group-hover:opacity-100"
                   @click="deleteRule(rule)"
+                />
+              </div>
+              <!-- Same trick as direct cell: pad to a base size of 1 rule. -->
+              <div
+                v-for="i in Math.max(0, 1 - rulesFor(col.warp.name).length)"
+                :key="`ph-${col.warp.name}-${i}`"
+                aria-hidden="true"
+                class="invisible text-xs px-2 py-1 rounded border border-transparent flex items-center justify-between gap-1"
+              >
+                <span class="truncate">·</span>
+                <UButton
+                  icon="i-lucide-x"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  tabindex="-1"
                 />
               </div>
             </div>

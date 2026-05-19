@@ -55,6 +55,11 @@ export function useMonitoring() {
   })
   onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
 
+  useVisibleRefresh(() => {
+    void refreshNodes()
+    void refreshOutbounds()
+  })
+
   return { nodes, outbounds, cpuHistory, refreshNodes, refreshOutbounds }
 }
 

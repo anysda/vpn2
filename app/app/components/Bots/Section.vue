@@ -62,6 +62,7 @@ onMounted(() => {
   if (!timer) timer = setInterval(() => { void refresh() }, 10_000)
 })
 onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
+useVisibleRefresh(refresh)
 </script>
 
 <template>

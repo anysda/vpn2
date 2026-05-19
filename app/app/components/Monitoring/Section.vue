@@ -95,7 +95,7 @@ function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: numbe
           v-if="isOffline(n)"
           class="absolute inset-0 flex items-center justify-center pointer-events-none"
         >
-          <span class="font-bold text-rose-500 text-sm tracking-wider">ОФФЛАЙН</span>
+          <span class="font-black text-red-600 text-xl tracking-wider">ОФФЛАЙН</span>
         </div>
       </div>
     </div>

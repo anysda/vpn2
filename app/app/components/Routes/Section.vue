@@ -180,7 +180,7 @@ function rttBadge(delay: number | null) {
           <div
             v-if="col.direct"
             :class="[
-              'rounded-md p-2 min-h-[121px] flex flex-col border transition-colors',
+              'rounded-md p-2 min-h-[64px] flex flex-col border transition-colors',
               dragOver === col.direct.name
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
@@ -196,7 +196,7 @@ function rttBadge(delay: number | null) {
                 {{ rttBadge(col.direct.delay).text }}
               </span>
             </div>
-            <div class="flex-1 space-y-1">
+            <div class="space-y-1">
               <div
                 v-for="rule in rulesFor(col.direct.name)"
                 :key="rule.id"
@@ -222,7 +222,7 @@ function rttBadge(delay: number | null) {
           <div
             v-if="col.warp"
             :class="[
-              'rounded-md p-2 min-h-[80px] flex flex-col border transition-colors',
+              'rounded-md p-2 min-h-[64px] flex flex-col border transition-colors',
               dragOver === col.warp.name
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
@@ -238,7 +238,7 @@ function rttBadge(delay: number | null) {
                 {{ rttBadge(col.warp.delay).text }}
               </span>
             </div>
-            <div class="flex-1 space-y-1">
+            <div class="space-y-1">
               <div
                 v-for="rule in rulesFor(col.warp.name)"
                 :key="rule.id"

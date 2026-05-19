@@ -3,8 +3,6 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { users } from '../database/schema'
 
-export { buildTotpUri, generateTotpSecret, verifyTotpToken } from './totp'
-
 export async function hashAdminPassword(plain: string): Promise<string> {
   return hash(plain, {
     memoryCost: 65536,

@@ -27,10 +27,14 @@ export function useClients() {
     if (timer) { clearInterval(timer); timer = null }
   })
 
-  async function create(payload: { name: string, expiresAt: string | null }) {
+  async function create(payload: { name: string, expiresAt: string | null, sendToTg?: boolean }) {
     const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
     await refresh()
     return created
+  }
+
+  async function sendToTg(id: number) {
+    return $fetch<{ ok: true }>(`/api/clients/${id}/send-to-tg`, { method: 'POST' })
   }
 
   async function update(id: number, patch: { name?: string, enabled?: boolean, expiresAt?: string | null }) {
@@ -55,7 +59,7 @@ export function useClients() {
     )
   }
 
-  return { clients: data, refresh, status, error, create, update, remove, getSsUrl, generateOneTimeLink }
+  return { clients: data, refresh, status, error, create, update, remove, getSsUrl, generateOneTimeLink, sendToTg }
 }
 
 export function relativeTime(date: Date | string | null | undefined): string {

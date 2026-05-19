@@ -7,6 +7,7 @@ const toast = useToast()
 const open = ref(false)
 const name = ref('')
 const expiresAt = ref<string>('')
+const sendToTg = ref(false)
 const loading = ref(false)
 
 async function submit() {
@@ -16,10 +17,17 @@ async function submit() {
     await create({
       name: name.value.trim(),
       expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
+      sendToTg: sendToTg.value,
     })
-    toast.add({ title: `Клиент «${name.value}» создан`, color: 'success' })
+    toast.add({
+      title: sendToTg.value
+        ? `Клиент «${name.value}» создан, конфиг отправлен в Telegram`
+        : `Клиент «${name.value}» создан`,
+      color: 'success',
+    })
     name.value = ''
     expiresAt.value = ''
+    sendToTg.value = false
     open.value = false
   }
   catch (e) {
@@ -34,6 +42,7 @@ async function submit() {
 function reset() {
   name.value = ''
   expiresAt.value = ''
+  sendToTg.value = false
   open.value = false
 }
 </script>
@@ -71,6 +80,13 @@ function reset() {
           class="w-full"
         />
       </UFormField>
+      <div class="flex items-center justify-between pt-1">
+        <label class="text-sm flex items-center gap-2 cursor-pointer">
+          <UIcon name="i-simple-icons-telegram" class="text-blue-400" />
+          Отправить конфиг в Telegram
+        </label>
+        <USwitch v-model="sendToTg" />
+      </div>
       <div class="flex gap-2">
         <UButton
           color="neutral"

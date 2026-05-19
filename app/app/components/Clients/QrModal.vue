@@ -5,8 +5,24 @@ import { useClients } from '~/composables/useClients'
 const props = defineProps<{ client: Client }>()
 const open = defineModel<boolean>('open', { default: false })
 
-const { getSsUrl, generateOneTimeLink } = useClients()
+const { getSsUrl, generateOneTimeLink, sendToTg } = useClients()
 const toast = useToast()
+const sendingTg = ref(false)
+
+async function sendToTelegram() {
+  sendingTg.value = true
+  try {
+    await sendToTg(props.client.id)
+    toast.add({ title: 'Конфиг отправлен в Telegram', color: 'success' })
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка отправки', color: 'error' })
+  }
+  finally {
+    sendingTg.value = false
+  }
+}
 
 const ssUrl = ref<string>('')
 const loadingUrl = ref(false)
@@ -123,7 +139,7 @@ onUnmounted(() => {
           class="w-full font-mono text-xs"
         />
 
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <UButton
             block
             icon="i-lucide-copy"
@@ -141,6 +157,17 @@ onUnmounted(() => {
             @click="download"
           >
             Скачать
+          </UButton>
+          <UButton
+            block
+            icon="i-simple-icons-telegram"
+            variant="soft"
+            color="neutral"
+            :disabled="!ssUrl"
+            :loading="sendingTg"
+            @click="sendToTelegram"
+          >
+            Telegram
           </UButton>
         </div>
 

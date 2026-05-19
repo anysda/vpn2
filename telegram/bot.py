@@ -27,10 +27,12 @@ Env vars:
 """
 
 import asyncio
+import io
 import logging
 import os
 
 import httpx
+import qrcode
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -91,6 +93,23 @@ async def tg_send(chat_id: int, text: str, parse_mode: str | None = None) -> dic
     if parse_mode:
         payload['parse_mode'] = parse_mode
     r = await _tg.post('/sendMessage', json=payload, timeout=20)
+    return r.json()
+
+
+def _make_qr_png(data: str) -> bytes:
+    """Render an ss:// URL into a PNG QR — black on white, big margin so phones lock onto it."""
+    img = qrcode.make(data, box_size=10, border=4)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+async def tg_send_qr(chat_id: int, ss_url: str, caption: str) -> dict:
+    """Send a QR PNG with caption as photo — phones can scan straight from chat."""
+    png = _make_qr_png(ss_url)
+    files = {'photo': ('qr.png', png, 'image/png')}
+    data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
+    r = await _tg.post('/sendPhoto', data=data, files=files, timeout=30)
     return r.json()
 
 
@@ -292,10 +311,16 @@ async def handle_event(request: web.Request) -> web.Response:
         asyncio.create_task(
             tg_send(
                 CHAT_ID,
-                f'👤 Новый WG клиент: *{name}*',
+                f'👤 Новый клиент: *{name}*',
                 'Markdown',
             )
         )
+    elif evt == 'client_send_config':
+        name = data.get('name', '?')
+        ss_url = data.get('ssUrl', '')
+        if ss_url:
+            caption = f'🔑 *{name}*\n\n`{ss_url}`'
+            asyncio.create_task(tg_send_qr(CHAT_ID, ss_url, caption))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

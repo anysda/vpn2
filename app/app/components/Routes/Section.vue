@@ -222,7 +222,7 @@ function rttBadge(delay: number | null) {
           <div
             v-if="col.warp"
             :class="[
-              'rounded-md p-2 min-h-[80px] flex flex-col border border-dashed transition-colors',
+              'rounded-md p-2 min-h-[80px] flex flex-col border transition-colors',
               dragOver === col.warp.name
                 ? 'border-violet-500 bg-violet-500/10'
                 : 'border-(--ui-border) bg-(--ui-page)',
@@ -232,7 +232,7 @@ function rttBadge(delay: number | null) {
           >
             <div class="flex items-center justify-between mb-1.5 text-xs">
               <span class="font-medium flex items-center gap-1">
-                {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }} WARP
+                {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }} <span class="text-[#f38020]">WARP</span>
               </span>
               <span :class="rttBadge(col.warp.delay).cls">
                 {{ rttBadge(col.warp.delay).text }}

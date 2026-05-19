@@ -37,24 +37,18 @@ function fmt(n: number | undefined | null): string {
         <div class="font-semibold">
           DNS
         </div>
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-(--ui-text-muted) flex items-center gap-1">
-            <UIcon name="i-lucide-radio" class="text-emerald-500" />
-            live · 60с
-          </span>
-          <UButton
-            v-if="aghOrigin"
-            :to="aghOrigin"
-            target="_blank"
-            external
-            icon="i-lucide-external-link"
-            size="xs"
-            color="neutral"
-            variant="ghost"
-          >
-            AdGuard
-          </UButton>
-        </div>
+        <UButton
+          v-if="aghOrigin"
+          :to="aghOrigin"
+          target="_blank"
+          external
+          icon="i-lucide-external-link"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+        >
+          AdGuard
+        </UButton>
       </div>
     </template>
 

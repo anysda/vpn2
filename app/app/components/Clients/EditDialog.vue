@@ -32,7 +32,8 @@ async function submit() {
     open.value = false
   }
   catch (e) {
-    toast.add({ title: 'Ошибка сохранения', color: 'error', description: (e as Error).message })
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка сохранения', color: 'error' })
   }
   finally {
     loading.value = false

@@ -10,6 +10,14 @@ import {
 
 const { nodes, cpuHistory } = useMonitoring()
 
+const sortedNodes = computed(() => {
+  return [...nodes.value].sort((a, b) => {
+    if (a.tag === 'ru') return -1
+    if (b.tag === 'ru') return 1
+    return a.tag.localeCompare(b.tag)
+  })
+})
+
 function loadColor(v: number | null): string {
   if (v == null) return 'text-zinc-500'
   if (v >= 80) return 'text-rose-400'
@@ -21,19 +29,13 @@ function loadColor(v: number | null): string {
 <template>
   <UCard>
     <template #header>
-      <div class="flex items-center justify-between">
-        <div class="font-semibold">
-          Мониторинг
-        </div>
-        <span class="text-xs text-zinc-500 flex items-center gap-1">
-          <span class="size-2 rounded-full bg-emerald-500 animate-pulse" />
-          live
-        </span>
+      <div class="font-semibold">
+        Мониторинг
       </div>
     </template>
 
     <div
-      v-if="nodes.length === 0"
+      v-if="sortedNodes.length === 0"
       class="text-zinc-500 text-sm text-center py-6"
     >
       загружаю метрики…
@@ -43,7 +45,7 @@ function loadColor(v: number | null): string {
       class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2"
     >
       <div
-        v-for="n in nodes"
+        v-for="n in sortedNodes"
         :key="n.tag"
         class="rounded-md border border-zinc-800 bg-zinc-900/50 p-2.5"
       >

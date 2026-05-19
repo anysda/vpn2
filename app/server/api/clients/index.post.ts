@@ -1,3 +1,4 @@
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
@@ -16,10 +17,16 @@ export default defineEventHandler(async (event) => {
   const cfg = useRuntimeConfig()
   const db = useDb()
 
+  const name = body.name.trim()
+  const dup = await db.select({ id: clients.id }).from(clients).where(eq(clients.name, name)).limit(1)
+  if (dup.length > 0) {
+    throw createError({ statusCode: 409, statusMessage: `Клиент с именем «${name}» уже существует` })
+  }
+
   const [row] = await db
     .insert(clients)
     .values({
-      name: body.name,
+      name,
       ssSecret: generateSsSecret(),
       cipher: cfg.ssCipher,
       enabled: true,

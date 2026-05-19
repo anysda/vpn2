@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { Client } from '~/composables/useClients'
 import { useClients } from '~/composables/useClients'
+import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const props = defineProps<{ client: Client }>()
 const open = defineModel<boolean>('open', { default: false })
 
 const { getSsUrl, sendToTg } = useClients()
+const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
 const ssUrl = ref<string>('')
@@ -78,17 +80,19 @@ async function sendToTelegram() {
           >
             Копировать
           </UButton>
-          <UButton
-            block
-            icon="i-simple-icons-telegram"
-            variant="soft"
-            color="neutral"
-            :disabled="!ssUrl"
-            :loading="sendingTg"
-            @click="sendToTelegram"
-          >
-            Отправить в Telegram
-          </UButton>
+          <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
+            <UButton
+              block
+              icon="i-simple-icons-telegram"
+              variant="soft"
+              color="neutral"
+              :disabled="!ssUrl || !canSendTg"
+              :loading="sendingTg"
+              @click="sendToTelegram"
+            >
+              Отправить в Telegram
+            </UButton>
+          </UTooltip>
         </div>
       </div>
     </template>

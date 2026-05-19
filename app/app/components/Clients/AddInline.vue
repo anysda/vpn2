@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { useClients } from '~/composables/useClients'
+import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const { create } = useClients()
+const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
 const open = ref(false)
@@ -81,11 +83,21 @@ function reset() {
         />
       </UFormField>
       <div class="flex items-center justify-between pt-1">
-        <label class="text-sm flex items-center gap-2 cursor-pointer">
-          <UIcon name="i-simple-icons-telegram" class="text-blue-400" />
-          Отправить конфиг в Telegram
-        </label>
-        <USwitch v-model="sendToTg" />
+        <UTooltip :text="tgReason" :disabled="canSendTg">
+          <label
+            :class="[
+              'text-sm flex items-center gap-2',
+              canSendTg ? 'cursor-pointer' : 'cursor-not-allowed opacity-50',
+            ]"
+          >
+            <UIcon name="i-simple-icons-telegram" class="text-blue-400" />
+            Отправить конфиг в Telegram
+          </label>
+        </UTooltip>
+        <USwitch
+          v-model="sendToTg"
+          :disabled="!canSendTg"
+        />
       </div>
       <div class="flex gap-2">
         <UButton

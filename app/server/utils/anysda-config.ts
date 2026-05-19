@@ -2,11 +2,17 @@ import { readFileSync, existsSync } from 'node:fs'
 import { load as parseYaml } from 'js-yaml'
 import { z } from 'zod'
 
+// The panel only reads `admin:` from this YAML; all other sections live in
+// the orchestrator's config.yaml (which has entry/exits/ports), but are
+// stripped out before mounting into the container. So make everything else
+// optional — the panel doesn't need it.
 const ConfigSchema = z.object({
-  entry: z.object({
-    host: z.string(),
-    password: z.string().optional(),
-  }),
+  entry: z
+    .object({
+      host: z.string(),
+      password: z.string().optional(),
+    })
+    .optional(),
   exits: z
     .array(
       z.object({
@@ -16,7 +22,7 @@ const ConfigSchema = z.object({
         hy2_direct_port: z.number().optional(),
       }),
     )
-    .default([]),
+    .optional(),
   admin: z
     .object({
       user: z.string().default('admin'),

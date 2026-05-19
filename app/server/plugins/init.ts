@@ -17,6 +17,12 @@ export default defineNitroPlugin(async () => {
   const log = useLogger()
   const cfg = useRuntimeConfig()
 
+  // Note: session cookie's `Secure` flag is handled by a build-time sed patch
+  // in Dockerfile against /app/.output/.../nitro.mjs (h3's DEFAULT_COOKIE).
+  // Reason: nuxt-auth-utils' module-time defu strips arbitrary keys we set
+  // through nuxt.config.runtimeConfig.session, so we can't toggle Secure at
+  // config or runtime — only at compile time.
+
   // 1. Run migrations
   const dbUrl = cfg.databaseUrl
   const localClient = createClient({ url: dbUrl })
@@ -80,3 +86,4 @@ export default defineNitroPlugin(async () => {
     }
   }
 })
+// MARKER_1779196720

@@ -315,10 +315,19 @@ run_stage_on_host() {
     [[ -d "$app_dir" ]] || die "папка app/ не найдена"
     local img_tar="$DEPLOY_ROOT/secrets/rendered/anysda-vpn2.tar.gz"
     mkdir -p "$(dirname "$img_tar")"
-    log "[$stage → $host] building docker image locally for linux/amd64 …"
-    docker buildx build --platform linux/amd64 -t anysda-vpn2:local "$app_dir" --load
-    log "[$stage → $host] saving image to tarball …"
-    docker save anysda-vpn2:local | gzip > "$img_tar"
+    if [[ -s "$img_tar" ]] && [[ "${SKIP_IMAGE_BUILD:-0}" == "1" ]]; then
+      log "[$stage → $host] SKIP_IMAGE_BUILD=1 — using existing $img_tar"
+    else
+      log "[$stage → $host] building docker image locally …"
+      # apparmor inside privileged LXC blocks Docker build (both BuildKit and
+      # legacy try to apply docker-default profile). When this fails, build
+      # the image on a host with working Docker (e.g. Docker Desktop locally),
+      # place the tarball at $img_tar manually, and re-run with
+      # SKIP_IMAGE_BUILD=1 ./deploy.sh 30-frontend ru.
+      DOCKER_BUILDKIT=0 docker build -t anysda-vpn2:local "$app_dir"
+      log "[$stage → $host] saving image to tarball …"
+      docker save anysda-vpn2:local | gzip > "$img_tar"
+    fi
     push "$img_tar" "anysda-vpn2.tar.gz"
     push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl"
   fi

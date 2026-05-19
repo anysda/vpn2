@@ -55,16 +55,7 @@ const filtered = computed(() => {
         </div>
       </UCard>
 
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            Боты
-          </div>
-        </template>
-        <div class="text-(--ui-text-muted) text-sm py-4 text-center">
-          (Phase D.4 — Telegram настройки)
-        </div>
-      </UCard>
+      <BotsSection />
     </div>
 
     <div class="space-y-6">

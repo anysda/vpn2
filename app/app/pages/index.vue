@@ -1,5 +1,16 @@
 <script setup lang="ts">
+import { useClients } from '~/composables/useClients'
+
 useHead({ title: 'anysda-vpn2' })
+
+const { clients, status, refresh } = useClients()
+const search = ref('')
+
+const filtered = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  if (!q) return clients.value
+  return clients.value.filter(c => c.name.toLowerCase().includes(q))
+})
 </script>
 
 <template>
@@ -7,12 +18,40 @@ useHead({ title: 'anysda-vpn2' })
     <div class="space-y-6">
       <UCard>
         <template #header>
-          <div class="font-semibold">
-            Клиенты
+          <div class="flex items-center justify-between">
+            <div class="font-semibold">
+              Клиенты <span class="text-(--ui-text-muted) text-xs ml-1">{{ clients.length }}</span>
+            </div>
+            <UButton
+              icon="i-lucide-refresh-cw"
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              :loading="status === 'pending'"
+              @click="refresh"
+            />
           </div>
         </template>
-        <div class="text-(--ui-text-muted) text-sm py-4 text-center">
-          (Phase A.next — список и CRUD клиентов)
+
+        <div class="space-y-3">
+          <UInput
+            v-model="search"
+            placeholder="Поиск..."
+            icon="i-lucide-search"
+            size="sm"
+            class="w-full"
+          />
+          <ClientsAddInline />
+          <div v-if="filtered.length === 0" class="text-(--ui-text-muted) text-sm py-4 text-center">
+            {{ search ? 'Ничего не найдено' : 'Пока нет клиентов' }}
+          </div>
+          <div v-else class="space-y-2">
+            <ClientsCard
+              v-for="client in filtered"
+              :key="client.id"
+              :client="client"
+            />
+          </div>
         </div>
       </UCard>
 

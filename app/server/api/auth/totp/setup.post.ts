@@ -1,7 +1,8 @@
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
-import { buildTotpUri, generateTotpSecret, requireAuth } from '../../../utils/auth'
+import { requireAuth } from '../../../utils/auth'
+import { buildTotpUri, generateTotpSecret } from '../../../utils/totp'
 
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)

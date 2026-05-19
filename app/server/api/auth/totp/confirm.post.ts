@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
-import { requireAuth, verifyTotpToken } from '../../../utils/auth'
+import { requireAuth } from '../../../utils/auth'
+import { verifyTotpToken } from '../../../utils/totp'
 
 const Body = z.object({ code: z.string().min(6).max(8) })
 

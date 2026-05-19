@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { users } from '../../database/schema'
-import { verifyAdminPassword, verifyTotpToken } from '../../utils/auth'
+import { verifyAdminPassword } from '../../utils/auth'
+import { verifyTotpToken } from '../../utils/totp'
 
 const Body = z.object({
   username: z.string().min(1).max(64),

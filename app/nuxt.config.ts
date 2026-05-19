@@ -30,6 +30,7 @@ export default defineNuxtConfig({
     ssPort: 443,
     ssCipher: 'chacha20-ietf-poly1305',
     ssPublicHost: '',
+    ssPrometheusUrl: 'http://127.0.0.1:9091',
     anysdaConfigPath: '/etc/anysda/config.yaml',
     routesFilePath: '/etc/anysda/manual-routes.json',
     vmUrl: 'http://127.0.0.1:8428',

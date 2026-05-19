@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { Client } from '~/composables/useClients'
-import { expiryLabel, relativeTime, useClients } from '~/composables/useClients'
+import { expiryLabel, useClients } from '~/composables/useClients'
 
-const props = defineProps<{ client: Client }>()
+const props = defineProps<{
+  client: Client
+  traffic?: { rxBytes: number, txBytes: number } | null
+}>()
 const emit = defineEmits<{ deleted: [id: number] }>()
 
 const { update, remove, getSsUrl } = useClients()
@@ -65,22 +68,32 @@ async function copySsUrl() {
     toast.add({ title: 'Ошибка копирования', color: 'error', description: (e as Error).message })
   }
 }
+
+function fmtBytes(n: number | undefined | null): string {
+  if (!n) return '0'
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
+  return `${(n / 1024 ** 3).toFixed(2)} GB`
+}
 </script>
 
 <template>
-  <UCard
-    :ui="{ body: 'p-3', header: 'p-0' }"
-    variant="soft"
+  <div
+    class="rounded-md border border-zinc-800 bg-zinc-900/60 p-3"
   >
     <div class="flex items-start gap-3">
       <UAvatar :alt="client.name" size="md" />
       <div class="flex-1 min-w-0">
-        <div class="font-medium truncate">
+        <div class="font-medium truncate text-zinc-100">
           {{ client.name }}
         </div>
-        <div class="text-xs text-(--ui-text-muted) flex flex-col gap-0.5 mt-0.5">
-          <div>{{ expiryLabel(client.expiresAt) }}</div>
-          <div>создан {{ relativeTime(client.createdAt) }}</div>
+        <div class="text-xs text-zinc-500 mt-0.5">
+          {{ expiryLabel(client.expiresAt) }}
+        </div>
+        <div v-if="traffic" class="text-xs text-zinc-400 mt-1 flex gap-3">
+          <span>↓ {{ fmtBytes(traffic.rxBytes) }}</span>
+          <span>↑ {{ fmtBytes(traffic.txBytes) }}</span>
         </div>
       </div>
       <USwitch
@@ -91,49 +104,19 @@ async function copySsUrl() {
 
     <div class="flex gap-1 mt-3 justify-end">
       <UTooltip text="Копировать ss:// URL">
-        <UButton
-          icon="i-lucide-link"
-          size="xs"
-          color="neutral"
-          variant="ghost"
-          @click="copySsUrl"
-        />
+        <UButton icon="i-lucide-link" size="xs" color="neutral" variant="ghost" @click="copySsUrl" />
       </UTooltip>
       <UTooltip text="Редактировать">
-        <UButton
-          icon="i-lucide-pencil"
-          size="xs"
-          color="neutral"
-          variant="ghost"
-          @click="showEdit = true"
-        />
+        <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" @click="showEdit = true" />
       </UTooltip>
-      <UTooltip text="QR + одноразовая ссылка">
-        <UButton
-          icon="i-lucide-qr-code"
-          size="xs"
-          color="neutral"
-          variant="ghost"
-          @click="showQr = true"
-        />
+      <UTooltip text="QR / одноразовая ссылка">
+        <UButton icon="i-lucide-qr-code" size="xs" color="neutral" variant="ghost" @click="showQr = true" />
       </UTooltip>
-      <UTooltip text="Скачать .outline.txt">
-        <UButton
-          icon="i-lucide-download"
-          size="xs"
-          color="neutral"
-          variant="ghost"
-          @click="downloadConfig"
-        />
+      <UTooltip text="Скачать конфиг">
+        <UButton icon="i-lucide-download" size="xs" color="neutral" variant="ghost" @click="downloadConfig" />
       </UTooltip>
       <UTooltip text="Удалить">
-        <UButton
-          icon="i-lucide-trash-2"
-          size="xs"
-          color="error"
-          variant="ghost"
-          @click="confirmDelete = true"
-        />
+        <UButton icon="i-lucide-trash-2" size="xs" color="error" variant="ghost" @click="confirmDelete = true" />
       </UTooltip>
     </div>
 
@@ -148,20 +131,13 @@ async function copySsUrl() {
         </p>
       </template>
       <template #footer>
-        <UButton
-          color="neutral"
-          variant="soft"
-          @click="confirmDelete = false"
-        >
+        <UButton color="neutral" variant="soft" @click="confirmDelete = false">
           Отмена
         </UButton>
-        <UButton
-          color="error"
-          @click="doDelete"
-        >
+        <UButton color="error" @click="doDelete">
           Удалить
         </UButton>
       </template>
     </UModal>
-  </UCard>
+  </div>
 </template>

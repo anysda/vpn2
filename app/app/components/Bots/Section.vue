@@ -15,7 +15,6 @@ const toast = useToast()
 
 const newToken = ref('')
 const newChatId = ref('')
-const editing = ref(false)
 const showToken = ref(false)
 const saving = ref(false)
 
@@ -41,14 +40,12 @@ async function save() {
       body.chat_id = newChatId.value.trim()
     }
     if (Object.keys(body).length === 0) {
-      editing.value = false
       saving.value = false
       return
     }
     await $fetch('/api/admin/telegram', { method: 'PUT', body })
-    toast.add({ title: 'Сохранено', color: 'success', description: 'Бот рестартит автоматически через ~10с' })
+    toast.add({ title: 'Сохранено', color: 'success' })
     newToken.value = ''
-    editing.value = false
     await refresh()
   }
   catch (e) {
@@ -78,7 +75,7 @@ onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
     <div class="space-y-3 text-sm">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <UIcon name="i-simple-icons-telegram" class="text-blue-500" />
+          <UIcon name="i-simple-icons-telegram" class="text-blue-400" />
           <span class="font-medium">Telegram</span>
         </div>
         <UBadge :color="statusBadge.color" variant="subtle" size="sm">
@@ -86,15 +83,11 @@ onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
         </UBadge>
       </div>
 
-      <p class="text-xs text-(--ui-text-muted)">
-        Изменения применяются автоматически, бот рестартит через ~10с.
-      </p>
-
       <UFormField label="Token" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput
           v-model="newToken"
           :type="showToken ? 'text' : 'password'"
-          :placeholder="data?.bot_token_masked || 'нажми чтобы заполнить'"
+          :placeholder="data?.bot_token_masked || ''"
           class="w-full font-mono text-xs"
         >
           <template #trailing>
@@ -112,7 +105,7 @@ onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
       <UFormField label="Chat ID" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput
           v-model="newChatId"
-          placeholder="напр. 1234567890 или -1001234..."
+          placeholder=""
           inputmode="numeric"
           class="w-full font-mono text-xs"
         />

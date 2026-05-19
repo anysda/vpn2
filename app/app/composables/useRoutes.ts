@@ -66,12 +66,9 @@ export function rttColor(delay: number | null): 'success' | 'warning' | 'error' 
   return 'error'
 }
 
-export function flagFor(name: string): string {
-  if (name === 'direct-ru') return '🇷🇺'
-  // hy2-us-direct / hy2-us-warp / hy2-gb-direct etc.
-  const m = name.match(/^hy2-([a-z]+)-/)
-  const tag = m?.[1]
+export function flagFor(tag: string): string {
   const flags: Record<string, string> = {
+    ru: '🇷🇺',
     us: '🇺🇸',
     gb: '🇬🇧',
     de: '🇩🇪',
@@ -81,5 +78,13 @@ export function flagFor(name: string): string {
     fi: '🇫🇮',
     pl: '🇵🇱',
   }
-  return tag ? (flags[tag] ?? '🌍') : '🌍'
+  return flags[tag] ?? '🌍'
+}
+
+/** "hy2-us-direct" → { tag: "us", variant: "direct" }, "direct-ru" → { tag: "ru", variant: "direct" } */
+export function parseOutbound(name: string): { tag: string, variant: 'direct' | 'warp' } | null {
+  if (name === 'direct-ru') return { tag: 'ru', variant: 'direct' }
+  const m = name.match(/^hy2-([a-z]+)-(direct|warp)$/)
+  if (!m) return null
+  return { tag: m[1]!, variant: m[2] as 'direct' | 'warp' }
 }

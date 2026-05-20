@@ -122,19 +122,19 @@ function reset() {
         <UTooltip :text="tgReason" :disabled="canSendTg">
           <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">
             <label class="text-sm flex items-center gap-2 cursor-pointer">
-              <OutlineLogo class="size-4" />
-              Отправить Outline в Telegram
+              <OpenVpnLogo class="size-4" />
+              Отправить OpenVPN в Telegram
             </label>
-            <USwitch v-model="sendSsToTg" :disabled="!canSendTg" />
+            <USwitch v-model="sendOvpnToTg" :disabled="!canSendTg" />
           </div>
         </UTooltip>
         <UTooltip :text="tgReason" :disabled="canSendTg">
           <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">
             <label class="text-sm flex items-center gap-2 cursor-pointer">
-              <OpenVpnLogo class="size-4" />
-              Отправить OpenVPN в Telegram
+              <OutlineLogo class="size-4" />
+              Отправить Outline в Telegram
             </label>
-            <USwitch v-model="sendOvpnToTg" :disabled="!canSendTg" />
+            <USwitch v-model="sendSsToTg" :disabled="!canSendTg" />
           </div>
         </UTooltip>
       </div>

@@ -89,14 +89,14 @@ function fmtBytes(n: number | undefined | null): string {
           <WireguardLogo class="size-4" />
         </UButton>
       </UTooltip>
-      <UTooltip text="Outline — копировать URL или отправить в Telegram">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
-          <OutlineLogo class="size-4" />
-        </UButton>
-      </UTooltip>
       <UTooltip text="OpenVPN — .ovpn-файл, копировать, отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showOvpn = true">
           <OpenVpnLogo class="size-4" />
+        </UButton>
+      </UTooltip>
+      <UTooltip text="Outline — копировать URL или отправить в Telegram">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
+          <OutlineLogo class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="Редактировать">

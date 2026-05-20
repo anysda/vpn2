@@ -1,4 +1,5 @@
 import { requireAuth } from '../../../utils/auth'
+import { clientDns } from '../../../utils/client-dns'
 import { buildOvpnConfig, caReady, ensureClientOvpn } from '../../../utils/openvpn'
 
 export default defineEventHandler(async (event) => {
@@ -27,6 +28,7 @@ export default defineEventHandler(async (event) => {
     serverHost: endpoint,
     serverPort: Number(cfg.ovpnPort),
     proto: String(cfg.ovpnProto),
+    dns: clientDns(client.filterTraffic),
   })
 
   const port = Number(cfg.tgbotEventPort ?? 8877)

@@ -145,7 +145,8 @@ persist-tun
 user nobody
 group nogroup
 push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 10.99.0.1"
+# DNS is NOT pushed from the server — each client's .ovpn carries its own
+# dhcp-option DNS (AdGuard or public, per the panel's filterTraffic flag).
 status /run/openvpn-server/status-server.log
 verb 3
 EOF

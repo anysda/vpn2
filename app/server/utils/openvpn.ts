@@ -118,6 +118,7 @@ export interface OvpnConfigParams {
   serverHost: string
   serverPort: number
   proto: string
+  dns: string[]
 }
 
 /** Render a unified .ovpn with inline ca / cert / key / tls-crypt blocks. */
@@ -139,6 +140,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
     `cipher AES-256-GCM`,
     `auth SHA256`,
     `verb 3`,
+    ...p.dns.map(d => `dhcp-option DNS ${d}`),
     ``,
     `<ca>`,
     ca.trim(),

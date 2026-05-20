@@ -77,6 +77,10 @@ async function sendToTelegram() {
           <span class="font-semibold text-(--ui-text-highlighted)">WireGuard</span>
         </div>
 
+        <p class="text-xs text-(--ui-text-muted) text-center">
+          Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
+        </p>
+
         <div class="flex justify-center">
           <img
             :src="`/api/clients/${client.id}/wg-qrcode.svg`"
@@ -110,6 +114,7 @@ async function sendToTelegram() {
               icon="i-lucide-send"
               variant="soft"
               color="neutral"
+              class="h-full justify-center"
               :disabled="!conf || !canSendTg"
               :loading="sendingTg"
               @click="sendToTelegram"

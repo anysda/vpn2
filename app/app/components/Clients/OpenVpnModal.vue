@@ -114,6 +114,7 @@ async function sendToTelegram() {
               icon="i-lucide-send"
               variant="soft"
               color="neutral"
+              class="h-full justify-center"
               :disabled="!conf || !canSendTg"
               :loading="sendingTg"
               @click="sendToTelegram"

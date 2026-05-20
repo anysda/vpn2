@@ -52,6 +52,11 @@ function fmtBytes(n: number | undefined | null): string {
   if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
   return `${(n / 1024 ** 3).toFixed(2)} GB`
 }
+
+// Суммарный трафик клиента (rx+tx) за всё время.
+const trafficTotal = computed(() =>
+  (props.traffic?.rxBytes ?? 0) + (props.traffic?.txBytes ?? 0),
+)
 </script>
 
 <template>
@@ -72,11 +77,16 @@ function fmtBytes(n: number | undefined | null): string {
           </UTooltip>
           <span class="truncate">{{ client.name }}</span>
         </div>
-        <div class="text-xs text-(--ui-text-muted) flex gap-2 items-center mt-0.5">
+        <div class="text-xs text-(--ui-text-muted) flex gap-3 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>
-          <span aria-hidden="true">·</span>
-          <UTooltip :text="`↓ ${fmtBytes(traffic?.rxBytes)} · ↑ ${fmtBytes(traffic?.txBytes)} · за всё время, все протоколы`">
-            <span>{{ fmtBytes((traffic?.rxBytes ?? 0) + (traffic?.txBytes ?? 0)) }}</span>
+          <UTooltip
+            v-if="trafficTotal > 0"
+            :text="`Трафик за всё время (все протоколы) · ↓ ${fmtBytes(traffic?.rxBytes)} ↑ ${fmtBytes(traffic?.txBytes)}`"
+          >
+            <span class="flex items-center gap-0.5">
+              <UIcon name="i-lucide-arrow-down" class="size-3 shrink-0" />
+              {{ fmtBytes(trafficTotal) }}
+            </span>
           </UTooltip>
         </div>
       </div>

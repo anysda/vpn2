@@ -47,7 +47,8 @@ useVisibleRefresh(refreshTraffic)
           <div v-if="filtered.length === 0" class="text-(--ui-text-muted) text-sm py-4 text-center">
             {{ search ? 'Ничего не найдено' : 'Пока нет клиентов' }}
           </div>
-          <div v-else class="space-y-2">
+          <!-- список расширяется до ~5 карточек, дальше — скролл -->
+          <div v-else class="space-y-2 max-h-[480px] overflow-y-auto pr-1">
             <ClientsCard
               v-for="client in filtered"
               :key="client.id"

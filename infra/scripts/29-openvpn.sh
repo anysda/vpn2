@@ -147,7 +147,11 @@ group nogroup
 push "redirect-gateway def1 bypass-dhcp"
 # DNS is NOT pushed from the server — each client's .ovpn carries its own
 # dhcp-option DNS (AdGuard or public, per the panel's filterTraffic flag).
-status /run/openvpn-server/status-server.log
+# status-version 2 → машиночитаемый CSV (CLIENT_LIST,...); файл лежит в
+# /etc/openvpn/server (этот путь смонтирован в контейнер панели) — сборщик
+# трафика панели читает отсюда per-client байты.
+status /etc/openvpn/server/status-server.log
+status-version 2
 verb 3
 EOF
 

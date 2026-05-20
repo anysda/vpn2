@@ -61,20 +61,23 @@ function fmtBytes(n: number | undefined | null): string {
     <div class="flex items-center gap-3">
       <div class="flex-1 min-w-0">
         <div class="font-medium text-(--ui-text-highlighted) leading-tight flex items-center gap-1.5">
-          <UIcon
+          <UTooltip
             v-if="client.filterTraffic"
-            name="i-simple-icons-adguard"
-            class="size-4 text-[#67b279] shrink-0"
-          />
+            text="Фильтрация рекламы и трекеров включена"
+          >
+            <UIcon
+              name="i-simple-icons-adguard"
+              class="size-4 text-[#67b279] shrink-0"
+            />
+          </UTooltip>
           <span class="truncate">{{ client.name }}</span>
         </div>
         <div class="text-xs text-(--ui-text-muted) flex gap-2 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>
-          <template v-if="traffic">
-            <span aria-hidden="true">·</span>
-            <span>↓ {{ fmtBytes(traffic.rxBytes) }}</span>
-            <span>↑ {{ fmtBytes(traffic.txBytes) }}</span>
-          </template>
+          <span aria-hidden="true">·</span>
+          <UTooltip :text="`↓ ${fmtBytes(traffic?.rxBytes)} · ↑ ${fmtBytes(traffic?.txBytes)} · за всё время, все протоколы`">
+            <span>{{ fmtBytes((traffic?.rxBytes ?? 0) + (traffic?.txBytes ?? 0)) }}</span>
+          </UTooltip>
         </div>
       </div>
       <USwitch

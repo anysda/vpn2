@@ -60,6 +60,13 @@ net.ipv4.conf.all.send_redirects = 0
 net.ipv4.ip_nonlocal_bind = 1
 # IPv6 left enabled (kernel default); we just don't use it in the app
 net.ipv6.conf.all.disable_ipv6 = 0
+# QUIC/Hysteria2: крупные UDP-буферы — дефолт ~208 КБ режет пропускную
+# способность QUIC; sing-box без них сам ругается в логи.
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+# BBR + fq — выше throughput TCP (и внутри туннеля, и между нодами).
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
 EOF
 sysctl --quiet --system
 

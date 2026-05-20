@@ -6,6 +6,7 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
     python3 infra/lib/config2env.py [repo_root]
 """
 
+import base64
 import sys
 from pathlib import Path
 
@@ -78,6 +79,30 @@ def parse_yaml(text):
     return cfg
 
 
+def materialize_orchestrator_key(cfg):
+    """Раскладывает orchestrator SSH-ключ из config.yaml в ~/.ssh/id_ed25519.
+
+    Ключ хранится в config.yaml (поля orchestrator_key / orchestrator_pubkey),
+    поэтому переживает пересоздание entry-ноды: новый entry с тем же config.yaml
+    получит тот же ключ, и забутстрапленные ранее экзиты его уже знают.
+    Если ключа в config.yaml нет — ничего не делаем, его сгенерит deploy.sh.
+    """
+    key_b64 = cfg.get('orchestrator_key', '')
+    if not key_b64:
+        return
+    ssh_dir = Path.home() / '.ssh'
+    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    priv = ssh_dir / 'id_ed25519'
+    priv.write_bytes(base64.b64decode(key_b64))
+    priv.chmod(0o600)
+    pub_line = cfg.get('orchestrator_pubkey', '')
+    if pub_line:
+        pub = ssh_dir / 'id_ed25519.pub'
+        pub.write_text(pub_line.rstrip() + '\n')
+        pub.chmod(0o644)
+    print('orchestrator-ключ восстановлен из config.yaml')
+
+
 def main():
     repo_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     config_path = repo_root / 'config.yaml'
@@ -87,6 +112,7 @@ def main():
         sys.exit(1)
 
     cfg = parse_yaml(config_path.read_text())
+    materialize_orchestrator_key(cfg)
 
     entry = cfg.get('entry', {})
     exits = cfg.get('exits', [])

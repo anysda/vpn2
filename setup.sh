@@ -315,6 +315,14 @@ confirm=$(ask_yn "Сохранить config.yaml и сгенерировать e
 
 config_file="${REPO_ROOT}/config.yaml"
 
+# Если config.yaml уже есть — сохраняем orchestrator-ключ: при перезапуске
+# setup.sh он не должен потеряться, иначе повторный деплой сломает доступ.
+orch_key=''; orch_pubkey=''
+if [[ -f "$config_file" ]]; then
+  orch_key=$(sed -n 's/^orchestrator_key:[[:space:]]*//p' "$config_file" | head -1)
+  orch_pubkey=$(sed -n 's/^orchestrator_pubkey:[[:space:]]*//p' "$config_file" | head -1)
+fi
+
 ENTRY_IP="$entry_ip" \
 ENTRY_PASS="$entry_pass" \
 EXITS_YAML="$(printf '%b' "$exits_yaml")" \
@@ -323,6 +331,8 @@ ADMIN_PASS="$admin_pass" \
 PANEL_DOMAIN="$panel_domain" \
 TG_TOKEN="$tg_token" \
 TG_CHAT_ID="$tg_chat_id" \
+ORCH_KEY="$orch_key" \
+ORCH_PUBKEY="$orch_pubkey" \
 CONFIG_FILE="$config_file" \
 python3 <<'PYEOF'
 import os, datetime
@@ -360,6 +370,15 @@ if tt and tc:
     lines.append('telegram:')
     lines.append('  bot_token: ' + tt)
     lines.append('  chat_id: ' + tc)
+
+orch_key = os.environ.get('ORCH_KEY', '')
+orch_pubkey = os.environ.get('ORCH_PUBKEY', '')
+if orch_key:
+    lines.append('')
+    lines.append('# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя.')
+    lines.append('orchestrator_key: ' + orch_key)
+    if orch_pubkey:
+        lines.append('orchestrator_pubkey: ' + orch_pubkey)
 
 with open(os.environ['CONFIG_FILE'], 'w', encoding='utf-8') as f:
     f.write('\n'.join(lines) + '\n')

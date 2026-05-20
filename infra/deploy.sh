@@ -261,13 +261,33 @@ run_stage_on_host() {
   # самой машины-оркестратора + (опционально) authorized_keys, если юзер
   # положил туда свой Mac-pubkey для удалённого доступа.
   if [[ "$stage" == "00-bootstrap" ]]; then
+    mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+    # Keypair оркестратора. config2env уже мог разложить его из config.yaml
+    # (orchestrator_key) — тогда файл на месте. Если нет — генерим.
     if [[ ! -f "${HOME}/.ssh/id_ed25519" ]]; then
       log "[$stage → $host] keypair оркестратора отсутствует — генерю ed25519"
-      mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
-      ssh-keygen -t ed25519 -N '' -f "${HOME}/.ssh/id_ed25519" -q
-      # сразу кладём в свой же authorized_keys чтобы loopback ssh работал
-      cat "${HOME}/.ssh/id_ed25519.pub" >> "${HOME}/.ssh/authorized_keys"
-      chmod 600 "${HOME}/.ssh/authorized_keys"
+      ssh-keygen -t ed25519 -N '' -C 'anysda-orchestrator' -f "${HOME}/.ssh/id_ed25519" -q
+    fi
+    # config2env кладёт только приватный ключ — .pub выводим из него.
+    [[ -f "${HOME}/.ssh/id_ed25519.pub" ]] || \
+      ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" > "${HOME}/.ssh/id_ed25519.pub"
+    # loopback ssh на сам entry — по ключу
+    cat "${HOME}/.ssh/id_ed25519.pub" >> "${HOME}/.ssh/authorized_keys"
+    awk 'NF && !seen[$0]++' "${HOME}/.ssh/authorized_keys" > "${HOME}/.ssh/authorized_keys.u" \
+      && mv "${HOME}/.ssh/authorized_keys.u" "${HOME}/.ssh/authorized_keys"
+    chmod 600 "${HOME}/.ssh/authorized_keys"
+    # Персистим ключ в config.yaml — чтобы он пережил пересоздание entry-ноды
+    # (новый entry с тем же config.yaml получит тот же ключ, экзиты его знают).
+    local _cfg="$DEPLOY_ROOT/../config.yaml"
+    if [[ -f "$_cfg" ]] && ! grep -q '^orchestrator_key:' "$_cfg"; then
+      log "[$stage → $host] сохраняю orchestrator-ключ в config.yaml"
+      {
+        echo ''
+        echo '# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя'
+        echo '# с пересозданной entry-ноды. config.yaml надо сохранять/переносить.'
+        echo "orchestrator_key: $(base64 -w0 < "${HOME}/.ssh/id_ed25519")"
+        echo "orchestrator_pubkey: $(cat "${HOME}/.ssh/id_ed25519.pub")"
+      } >> "$_cfg"
     fi
 
     local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"

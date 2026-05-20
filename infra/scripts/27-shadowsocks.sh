@@ -94,6 +94,12 @@ ReadWritePaths=/etc/outline-ss-server
 ProtectHome=true
 PrivateTmp=true
 LimitNOFILE=65536
+# Только IPv4: outline-ss-server резолвит назначение сам, и Go happy-eyeballs
+# периодически выбирал IPv6 — а v6-трафик идёт мимо sing-box (TPROXY/redirect
+# только на iptables v4) и виснет. Запрет v6 заставляет ходить по v4 → через
+# sing-box → корректный geoip-роутинг и фильтрация.
+IPAddressDeny=::/0
+IPAddressAllow=0.0.0.0/0
 
 [Install]
 WantedBy=multi-user.target

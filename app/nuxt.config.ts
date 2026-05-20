@@ -50,6 +50,10 @@ export default defineNuxtConfig({
     wgPublicHost: '',
     wgDns: '10.66.66.1',
     wgMtu: 1420,
+    ovpnEnabled: true,
+    ovpnPort: 1194,
+    ovpnProto: 'udp',
+    ovpnPublicHost: '',
     logLevel: 'info',
     public: {
       panelName: 'anysda-vpn2',

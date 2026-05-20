@@ -126,6 +126,7 @@ docker run -d \
   -v /etc/anysda:/etc/anysda \
   -v /etc/outline-ss-server:/etc/outline-ss-server \
   -v /etc/wireguard:/etc/wireguard \
+  -v /etc/openvpn:/etc/openvpn \
   -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
   -e NODE_ENV=production \
   -e PORT=51821 \
@@ -145,6 +146,10 @@ docker run -d \
   -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
   -e NUXT_WG_DNS="${WG_DNS:-10.66.66.1}" \
   -e NUXT_WG_MTU="${WG_MTU:-1420}" \
+  -e NUXT_OVPN_ENABLED=true \
+  -e NUXT_OVPN_PORT="${OVPN_PORT:-1194}" \
+  -e NUXT_OVPN_PROTO="${OVPN_PROTO:-udp}" \
+  -e NUXT_OVPN_PUBLIC_HOST="${OVPN_PUBLIC_HOST:-$ENTRY_HOST}" \
   -e NUXT_ROUTES_FILE_PATH=/etc/anysda/manual-routes.json \
   -e NUXT_CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
   -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \

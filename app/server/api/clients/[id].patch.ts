@@ -5,6 +5,7 @@ import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncShadowsocksConfig } from '../../utils/shadowsocks'
 import { syncWireguardConfig } from '../../utils/wireguard'
+import { ovpnCn, setCcdDisabled } from '../../utils/openvpn'
 
 const Body = z.object({
   name: z.string().min(1).max(64).optional(),
@@ -50,6 +51,12 @@ export default defineEventHandler(async (event) => {
     await syncWireguardConfig().catch((err) => {
       useLogger().error({ err }, 'failed to sync wg config after enable toggle')
     })
+    // OpenVPN: flip the client-config-dir disable flag (only if a cert exists).
+    if (row.ovpnCert) {
+      await setCcdDisabled(ovpnCn(row.id), !row.enabled).catch((err) => {
+        useLogger().error({ err }, 'failed to sync ovpn ccd after enable toggle')
+      })
+    }
   }
 
   return row

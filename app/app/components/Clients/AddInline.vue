@@ -11,6 +11,7 @@ const name = ref('')
 const expiresAt = ref<string>('')
 const sendWgToTg = ref(false)
 const sendSsToTg = ref(false)
+const sendOvpnToTg = ref(false)
 const loading = ref(false)
 
 async function submit() {
@@ -22,8 +23,13 @@ async function submit() {
       expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
       sendSsToTg: sendSsToTg.value,
       sendWgToTg: sendWgToTg.value,
+      sendOvpnToTg: sendOvpnToTg.value,
     })
-    const tgParts = [sendWgToTg.value && 'WireGuard', sendSsToTg.value && 'Outline'].filter(Boolean)
+    const tgParts = [
+      sendWgToTg.value && 'WireGuard',
+      sendSsToTg.value && 'Outline',
+      sendOvpnToTg.value && 'OpenVPN',
+    ].filter(Boolean)
     toast.add({
       title: tgParts.length
         ? `Клиент «${name.value}» создан, ${tgParts.join(' + ')} отправлены в Telegram`
@@ -34,6 +40,7 @@ async function submit() {
     expiresAt.value = ''
     sendWgToTg.value = false
     sendSsToTg.value = false
+    sendOvpnToTg.value = false
     open.value = false
   }
   catch (e) {
@@ -50,6 +57,7 @@ function reset() {
   expiresAt.value = ''
   sendWgToTg.value = false
   sendSsToTg.value = false
+  sendOvpnToTg.value = false
   open.value = false
 }
 </script>
@@ -104,6 +112,15 @@ function reset() {
               Отправить Outline в Telegram
             </label>
             <USwitch v-model="sendSsToTg" :disabled="!canSendTg" />
+          </div>
+        </UTooltip>
+        <UTooltip :text="tgReason" :disabled="canSendTg">
+          <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">
+            <label class="text-sm flex items-center gap-2 cursor-pointer">
+              <OpenVpnLogo class="size-4" />
+              Отправить OpenVPN в Telegram
+            </label>
+            <USwitch v-model="sendOvpnToTg" :disabled="!canSendTg" />
           </div>
         </UTooltip>
       </div>

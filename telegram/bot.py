@@ -345,6 +345,15 @@ async def handle_event(request: web.Request) -> web.Response:
                 # QR with the same payload — phones scan it from the WireGuard app
                 await tg_send_qr(CHAT_ID, conf, f'📱 QR для *{name}*')
             asyncio.create_task(_send_wg())
+    elif evt == 'client_send_openvpn':
+        name = data.get('name', '?')
+        conf = data.get('conf', '')
+        if conf:
+            # .ovpn carries inline certs — too large for a QR, send as a file.
+            asyncio.create_task(tg_send_document(
+                CHAT_ID, f'{name}.ovpn', conf.encode('utf-8'),
+                caption=f'🟠 *{name}* — OpenVPN',
+            ))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

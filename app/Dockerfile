@@ -15,7 +15,7 @@ RUN pnpm build
 FROM node:22-slim AS runtime
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools \
+  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools openssl \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

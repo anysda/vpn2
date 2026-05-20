@@ -325,6 +325,12 @@ run_stage_on_host() {
     push "$gen" "gen-router-config.py"
   fi
 
+  if [[ "$stage" == "21-failover-watchdog" ]]; then
+    local wd="$DEPLOY_ROOT/lib/failover-watchdog.py"
+    [[ -f "$wd" ]] || die "lib/failover-watchdog.py не найден"
+    push "$wd" "failover-watchdog.py"
+  fi
+
   # Panel + tgbot images live in the public GitLab Container Registry now —
   # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
   # thing 30-frontend still needs from the orchestrator side is the rails
@@ -552,6 +558,7 @@ do_all() {
   run_stage 29-openvpn       ru
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
+  run_stage 21-failover-watchdog ru
   run_stage 22-adguard       ru
   run_stage 25-monitoring    ru
   run_stage 35-telegram      ru

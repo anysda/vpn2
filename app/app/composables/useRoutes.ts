@@ -83,7 +83,9 @@ export function flagFor(tag: string): string {
     fi: '🇫🇮',
     pl: '🇵🇱',
   }
-  return flags[tag] ?? '🌍'
+  // `us2` / `de3` etc. — strip the trailing index so multi-node countries
+  // still resolve to the right flag.
+  return flags[tag] ?? flags[tag.replace(/[0-9]+$/, '')] ?? '🌍'
 }
 
 /** Russian plural: pluralRu(1, ['правило','правила','правил']) → 'правило' */
@@ -96,10 +98,10 @@ export function pluralRu(n: number, forms: [string, string, string]): string {
   return forms[2]
 }
 
-/** "hy2-us-direct" → { tag: "us", variant: "direct" }, "direct-ru" → { tag: "ru", variant: "direct" } */
+/** "hy2-us2-direct" → { tag: "us2", variant: "direct" }, "direct-ru" → { tag: "ru", variant: "direct" } */
 export function parseOutbound(name: string): { tag: string, variant: 'direct' | 'warp' } | null {
   if (name === 'direct-ru') return { tag: 'ru', variant: 'direct' }
-  const m = name.match(/^hy2-([a-z]+)-(direct|warp)$/)
+  const m = name.match(/^hy2-([a-z0-9]+)-(direct|warp)$/)
   if (!m) return null
   return { tag: m[1]!, variant: m[2] as 'direct' | 'warp' }
 }

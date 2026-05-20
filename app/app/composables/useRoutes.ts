@@ -82,6 +82,20 @@ export function flagFor(tag: string): string {
     fr: '🇫🇷',
     fi: '🇫🇮',
     pl: '🇵🇱',
+    kz: '🇰🇿',
+    ua: '🇺🇦',
+    tr: '🇹🇷',
+    am: '🇦🇲',
+    ge: '🇬🇪',
+    ae: '🇦🇪',
+    jp: '🇯🇵',
+    sg: '🇸🇬',
+    hk: '🇭🇰',
+    ca: '🇨🇦',
+    es: '🇪🇸',
+    it: '🇮🇹',
+    ch: '🇨🇭',
+    at: '🇦🇹',
   }
   // `us2` / `de3` etc. — strip the trailing index so multi-node countries
   // still resolve to the right flag.

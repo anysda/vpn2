@@ -2,6 +2,7 @@
 import type { Client } from '~/composables/useClients'
 import { useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
+import { copyText } from '~/utils/clipboard'
 
 const props = defineProps<{ client: Client }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -33,8 +34,10 @@ watch(open, (now) => {
 
 async function copyUrl() {
   if (!ssUrl.value) return
-  await navigator.clipboard.writeText(ssUrl.value)
-  toast.add({ title: 'ss:// URL скопирован', color: 'success' })
+  if (await copyText(ssUrl.value))
+    toast.add({ title: 'ss:// URL скопирован', color: 'success' })
+  else
+    toast.add({ title: 'Не удалось скопировать', color: 'error' })
 }
 
 const sendingTg = ref(false)
@@ -83,13 +86,14 @@ async function sendToTelegram() {
           <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
             <UButton
               block
+              icon="i-lucide-send"
               variant="soft"
               color="neutral"
               :disabled="!ssUrl || !canSendTg"
               :loading="sendingTg"
               @click="sendToTelegram"
             >
-              Отправить в TG
+              В TG
             </UButton>
           </UTooltip>
         </div>

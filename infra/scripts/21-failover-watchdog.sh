@@ -43,7 +43,7 @@ cat > /etc/anysda/failover-watchdog.env <<EOF
 CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}
 WATCH_GROUP=foreign-best
-PROBE_URL=http://cp.cloudflare.com/generate_204
+PROBE_URL=http://www.gstatic.com/generate_204
 INTERVAL=3
 PROBE_TIMEOUT_MS=2000
 TOLERANCE_MS=50

@@ -2,14 +2,15 @@
  * Копирование текста в буфер обмена с фолбэком для небезопасного контекста.
  *
  * `navigator.clipboard` доступен только в secure context (HTTPS / localhost).
- * Панель на стенде отдаётся по HTTP на IP — там Clipboard API отсутствует.
+ * Панель на стенде отдаётся по HTTP на IP — там Clipboard API отсутствует,
+ * остаётся legacy `execCommand('copy')`.
  *
- * Фолбэк — скрытый textarea + `execCommand('copy')`. Важный нюанс: модалки
- * панели это reka-ui Dialog с focus-trap. Если смонтировать textarea в
- * `document.body` (вне диалога), focus-trap тут же вернёт фокус в модалку,
- * textarea останется без фокуса и copy молча проваливается (а execCommand
- * всё равно возвращает true — отсюда ложное «скопировано»). Поэтому textarea
- * монтируется ВНУТРЬ ближайшего `[role="dialog"]`.
+ * Нюанс: модалки панели — reka-ui Dialog с focus-trap. Если смонтировать
+ * textarea вне диалога, focus-trap синхронно вернёт фокус в модалку на
+ * `focusin`, textarea останется без фокуса, copy ничего не скопирует — но
+ * `execCommand` всё равно вернёт true (отсюда ложное «скопировано»). Поэтому
+ * textarea монтируется ВНУТРЬ диалога, и перед вердиктом проверяется, что
+ * фокус реально на ней — иначе честно возвращаем false.
  *
  * @returns true — текст реально скопирован; false — не удалось.
  */
@@ -27,24 +28,29 @@ export async function copyText(text: string): Promise<boolean> {
     }
   }
 
-  // Legacy execCommand. Монтируем в ту же модалку, что и активный элемент,
-  // иначе focus-trap диалога не отдаст фокус textarea.
+  // Legacy execCommand. Монтируем в активный диалог (или в любой открытый),
+  // иначе focus-trap не отдаст фокус textarea.
   const active = document.activeElement as HTMLElement | null
-  const host = (active?.closest('[role="dialog"]') as HTMLElement | null) ?? document.body
+  const host = (active?.closest('[role="dialog"]') as HTMLElement | null)
+    ?? (document.querySelector('[role="dialog"]') as HTMLElement | null)
+    ?? document.body
 
   const ta = document.createElement('textarea')
   ta.value = text
   ta.setAttribute('readonly', '')
-  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;'
-    + 'opacity:0;border:0;padding:0;margin:0;'
+  // Off-screen, но отрендеренная: display:none / visibility:hidden ломают copy.
+  ta.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:1px;'
+    + 'padding:0;border:0;margin:0;opacity:0;'
   host.appendChild(ta)
 
   let ok = false
   try {
-    ta.focus()
+    ta.focus({ preventScroll: true })
     ta.select()
     ta.setSelectionRange(0, text.length)
-    ok = document.execCommand('copy')
+    // execCommand копирует выделение textarea только пока она в фокусе. Если
+    // focus-trap фокус увёл — copy пустой; не врём про успех, возвращаем false.
+    ok = document.activeElement === ta && document.execCommand('copy')
   }
   catch {
     ok = false

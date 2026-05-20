@@ -15,7 +15,7 @@ sing-box urltest снимается с мёртвой ноды ~33с: он оп�
   CLASH_API         базовый URL clash-api          http://10.99.0.1:9090
   CLASH_SECRET      Bearer-секрет clash-api         (обязателен)
   WATCH_GROUP       тег selector-группы             foreign-best
-  PROBE_URL         URL для delay-теста             http://cp.cloudflare.com/generate_204
+  PROBE_URL         URL для delay-теста             http://www.gstatic.com/generate_204
   INTERVAL          период опроса, сек              3
   PROBE_TIMEOUT_MS  таймаут delay-теста, мс         2000
   TOLERANCE_MS      порог переключения по латентности, мс  50
@@ -31,7 +31,9 @@ import urllib.request
 CLASH      = os.environ.get('CLASH_API', 'http://10.99.0.1:9090').rstrip('/')
 SECRET     = os.environ.get('CLASH_SECRET', '')
 GROUP      = os.environ.get('WATCH_GROUP', 'foreign-best')
-PROBE_URL  = os.environ.get('PROBE_URL', 'http://cp.cloudflare.com/generate_204')
+# не-Cloudflare URL: до cp.cloudflare.com WARP-выходы быстрее direct (это сеть
+# Cloudflare) и замеры врут; gstatic нейтрален.
+PROBE_URL  = os.environ.get('PROBE_URL', 'http://www.gstatic.com/generate_204')
 INTERVAL   = float(os.environ.get('INTERVAL', '3'))
 TIMEOUT_MS = int(os.environ.get('PROBE_TIMEOUT_MS', '2000'))
 TOLERANCE  = int(os.environ.get('TOLERANCE_MS', '50'))

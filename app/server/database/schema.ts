@@ -32,6 +32,10 @@ export const clients = sqliteTable('clients', {
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
   filterTraffic: integer('filter_traffic', { mode: 'boolean' }).notNull().default(true),
+  // Накопительный трафик за всё время по всем протоколам (SS+WG+OpenVPN),
+  // байты. Копит фоновый сборщик (server/utils/traffic-collector.ts).
+  rxTotal: integer('rx_total').notNull().default(0),
+  txTotal: integer('tx_total').notNull().default(0),
   ...timestamps,
 })
 

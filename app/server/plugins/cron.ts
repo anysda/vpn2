@@ -2,6 +2,7 @@ import { and, eq, isNotNull, lt } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, oneTimeLinks } from '../database/schema'
 import { syncShadowsocksConfig } from '../utils/shadowsocks'
+import { collectTraffic } from '../utils/traffic-collector'
 
 const INTERVAL_MS = 60_000
 const OTL_GRACE_MS = 60_000
@@ -37,6 +38,11 @@ export default defineNitroPlugin(() => {
     if (deleted.length > 0) {
       log.debug({ count: deleted.length }, 'cron: OTLs cleaned')
     }
+
+    // Накопительный трафик по всем протоколам (SS+WG+OpenVPN).
+    await collectTraffic().catch(err =>
+      log.error({ err }, 'cron: traffic collection failed'),
+    )
   }
 
   // Delay first tick so init plugin has time to run migrations. Without this

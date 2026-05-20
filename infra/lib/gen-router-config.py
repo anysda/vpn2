@@ -94,7 +94,10 @@ def main():
             'type': 'urltest',
             'tag': 'direct-best',
             'outbounds': direct_tags,
-            'url': 'http://cp.cloudflare.com/generate_204',
+            # Пробный URL — НЕ Cloudflare: до cp.cloudflare.com WARP (сеть
+            # Cloudflare) добирается быстрее direct, и замеры врут. gstatic
+            # нейтрален — direct закономерно не медленнее warp.
+            'url': 'http://www.gstatic.com/generate_204',
             'interval': '10s',
             'tolerance': 50,
             'idle_timeout': '5m',
@@ -104,7 +107,10 @@ def main():
             'type': 'urltest',
             'tag': 'warp-best',
             'outbounds': warp_tags,
-            'url': 'http://cp.cloudflare.com/generate_204',
+            # Пробный URL — НЕ Cloudflare: до cp.cloudflare.com WARP (сеть
+            # Cloudflare) добирается быстрее direct, и замеры врут. gstatic
+            # нейтрален — direct закономерно не медленнее warp.
+            'url': 'http://www.gstatic.com/generate_204',
             'interval': '10s',
             'tolerance': 50,
             'idle_timeout': '5m',

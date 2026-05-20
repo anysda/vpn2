@@ -2,6 +2,7 @@
 import type { Client } from '~/composables/useClients'
 import { useClientsOvpn } from '~/composables/useClientsOvpn'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
+import { copyText } from '~/utils/clipboard'
 
 const props = defineProps<{ client: Client }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -34,8 +35,10 @@ watch(open, (now) => {
 
 async function copyConf() {
   if (!conf.value) return
-  await navigator.clipboard.writeText(conf.value)
-  toast.add({ title: '.ovpn скопирован', color: 'success' })
+  if (await copyText(conf.value))
+    toast.add({ title: '.ovpn скопирован', color: 'success' })
+  else
+    toast.add({ title: 'Не удалось скопировать', color: 'error' })
 }
 
 function download() {
@@ -108,6 +111,7 @@ async function sendToTelegram() {
           <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
             <UButton
               block
+              icon="i-lucide-send"
               variant="soft"
               color="neutral"
               :disabled="!conf || !canSendTg"

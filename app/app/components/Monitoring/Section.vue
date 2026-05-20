@@ -46,7 +46,8 @@ function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: numbe
     </div>
     <div
       v-else
-      class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2"
+      class="grid gap-2"
+      :style="`grid-template-columns: repeat(${sortedNodes.length}, minmax(120px, 1fr))`"
     >
       <div
         v-for="n in sortedNodes"

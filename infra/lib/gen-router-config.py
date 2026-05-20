@@ -123,13 +123,17 @@ def main():
         'dns': {
             'servers': [
                 {'tag': 'ru-dns', 'address': '77.88.8.8', 'detour': 'direct-ru'},
-                {'tag': 'cf-doh', 'address': 'https://1.1.1.1/dns-query', 'detour': 'foreign-best'},
+                # AdGuard Home on the entry mgmt IP — sing-box resolves through
+                # it so SS/Outline clients (no DNS field in ss://) still get
+                # ad/tracker filtering. .ru stays on Yandex DNS for correct
+                # Russian CDN IPs (geoip routing depends on it).
+                {'tag': 'adguard', 'address': '10.99.0.1', 'detour': 'direct-ru'},
             ],
             'rules': [
                 {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
                 {'geosite': ['category-gov-ru'], 'server': 'ru-dns'},
             ],
-            'final': 'ru-dns',
+            'final': 'adguard',
             'strategy': 'ipv4_only',
         },
 

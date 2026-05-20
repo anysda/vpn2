@@ -64,6 +64,9 @@ EOF
 sysctl -p /etc/sysctl.d/98-wg-forward.conf >/dev/null
 
 ufw allow "${WG_PORT}/udp" comment 'wireguard listener' >/dev/null 2>&1 || true
+# WireGuard clients (10.66.66.0/24) resolve via AdGuard on the entry mgmt IP
+ufw allow proto udp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
+ufw allow proto tcp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
 # ── 4. wg-quick@wg0 ────────────────────────────────────────────────────────
@@ -110,6 +113,8 @@ if [[ "$ACTION" == "up" ]]; then
 
   iptables -t mangle -N ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY
+  # DNS to AdGuard (entry mgmt IP) must be delivered locally, not TPROXY'd.
+  iptables -t mangle -A ANYSDA_WG_TPROXY -d 10.99.0.1 -j RETURN
   iptables -t mangle -A ANYSDA_WG_TPROXY -p tcp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
   iptables -t mangle -A ANYSDA_WG_TPROXY -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
 

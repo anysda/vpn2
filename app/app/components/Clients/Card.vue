@@ -28,6 +28,7 @@ async function onToggle(next: boolean) {
 const confirmDelete = ref(false)
 const showQr = ref(false)
 const showWg = ref(false)
+const showOvpn = ref(false)
 const showEdit = ref(false)
 
 async function doDelete() {
@@ -88,6 +89,11 @@ function fmtBytes(n: number | undefined | null): string {
           <OutlineLogo class="size-4" />
         </UButton>
       </UTooltip>
+      <UTooltip text="OpenVPN — .ovpn-файл, копировать, отправить в Telegram">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showOvpn = true">
+          <OpenVpnLogo class="size-4" />
+        </UButton>
+      </UTooltip>
       <UTooltip text="Редактировать">
         <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" @click="showEdit = true" />
       </UTooltip>
@@ -98,6 +104,7 @@ function fmtBytes(n: number | undefined | null): string {
 
     <ClientsQrModal v-model:open="showQr" :client="client" />
     <ClientsWireguardModal v-model:open="showWg" :client="client" />
+    <ClientsOpenVpnModal v-model:open="showOvpn" :client="client" />
     <ClientsEditDialog v-model:open="showEdit" :client="client" />
 
     <UModal v-model:open="confirmDelete" title="Удалить клиента?">

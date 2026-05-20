@@ -4,6 +4,7 @@ import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncShadowsocksConfig } from '../../utils/shadowsocks'
 import { syncWireguardConfig } from '../../utils/wireguard'
+import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../utils/openvpn'
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -17,6 +18,7 @@ export default defineEventHandler(async (event) => {
   if (result.length === 0) {
     throw createError({ statusCode: 404, statusMessage: 'not_found' })
   }
+  const removed = result[0]!
 
   await syncShadowsocksConfig().catch((err) => {
     useLogger().error({ err }, 'failed to sync ss config after delete')
@@ -24,6 +26,14 @@ export default defineEventHandler(async (event) => {
   await syncWireguardConfig().catch((err) => {
     useLogger().error({ err }, 'failed to sync wg config after delete')
   })
+  // OpenVPN: a deleted client's cert stays cryptographically valid until
+  // revoked — push it into the CRL, and drop any stale CCD file.
+  if (removed.ovpnCert && await caReady()) {
+    await revokeClientCert(removed.ovpnCert).catch((err) => {
+      useLogger().error({ err }, 'failed to revoke ovpn cert after delete')
+    })
+    await setCcdDisabled(ovpnCn(removed.id), false).catch(() => {})
+  }
 
   return { ok: true }
 })

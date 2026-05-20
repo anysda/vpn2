@@ -14,12 +14,14 @@ import {
   nextAvailableWgIp,
   syncWireguardConfig,
 } from '../../utils/wireguard'
+import { buildOvpnConfig, caReady, ensureClientOvpn } from '../../utils/openvpn'
 
 const Body = z.object({
   name: z.string().min(1).max(64),
   expiresAt: z.iso.datetime().nullable().optional(),
   sendSsToTg: z.boolean().optional(),
   sendWgToTg: z.boolean().optional(),
+  sendOvpnToTg: z.boolean().optional(),
   // legacy alias for older clients of this API
   sendToTg: z.boolean().optional(),
 })
@@ -96,6 +98,28 @@ export default defineEventHandler(async (event) => {
         mtu: Number(cfg.wgMtu),
       })
       void notifyBot('client_send_wireguard', { name: row.name, conf })
+    }
+  }
+
+  if (body.sendOvpnToTg && cfg.ovpnEnabled) {
+    const endpoint = String(cfg.ovpnPublicHost || cfg.ssPublicHost || '')
+    // OpenVPN cert issuance shells out to the CA — best-effort, don't let a
+    // not-yet-initialised CA fail the whole client creation.
+    try {
+      if (endpoint && await caReady()) {
+        const client = await ensureClientOvpn(row.id)
+        const conf = await buildOvpnConfig({
+          clientCert: client.ovpnCert!,
+          clientKey: client.ovpnKey!,
+          serverHost: endpoint,
+          serverPort: Number(cfg.ovpnPort),
+          proto: String(cfg.ovpnProto),
+        })
+        void notifyBot('client_send_openvpn', { name: row.name, conf })
+      }
+    }
+    catch (err) {
+      useLogger().error({ err }, 'failed to send openvpn config after create')
     }
   }
 

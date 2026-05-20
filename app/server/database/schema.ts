@@ -29,6 +29,8 @@ export const clients = sqliteTable('clients', {
   wgPublicKey: text('wg_public_key'),
   wgPresharedKey: text('wg_preshared_key'),
   wgIp: text('wg_ip'),
+  ovpnCert: text('ovpn_cert'),
+  ovpnKey: text('ovpn_key'),
   ...timestamps,
 })
 

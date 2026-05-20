@@ -15,6 +15,13 @@
       "when": 1779228976340,
       "tag": "0001_even_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779264977142,
+      "tag": "0002_dapper_killer_shrike",
+      "breakpoints": true
     }
   ]
 }

@@ -1,14 +1,17 @@
 /**
  * Копирование текста в буфер обмена с фолбэком для небезопасного контекста.
  *
- * `navigator.clipboard` доступен только в secure context (HTTPS или localhost).
+ * `navigator.clipboard` доступен только в secure context (HTTPS / localhost).
  * Панель на стенде отдаётся по HTTP на IP — там Clipboard API отсутствует.
- * Фолбэк: скрытый textarea + `execCommand('copy')`. Чтобы execCommand реально
- * скопировал (а не вернул true вхолостую), textarea должен быть в DOM,
- * сфокусирован и с выделенным текстом — поэтому `focus()` обязателен, а позиция
- * не уносится далеко за экран (иначе фокус не встаёт).
  *
- * @returns true — текст реально скопирован; false — не удалось (показать ошибку).
+ * Фолбэк — скрытый textarea + `execCommand('copy')`. Важный нюанс: модалки
+ * панели это reka-ui Dialog с focus-trap. Если смонтировать textarea в
+ * `document.body` (вне диалога), focus-trap тут же вернёт фокус в модалку,
+ * textarea останется без фокуса и copy молча проваливается (а execCommand
+ * всё равно возвращает true — отсюда ложное «скопировано»). Поэтому textarea
+ * монтируется ВНУТРЬ ближайшего `[role="dialog"]`.
+ *
+ * @returns true — текст реально скопирован; false — не удалось.
  */
 export async function copyText(text: string): Promise<boolean> {
   if (!text || !import.meta.client) return false
@@ -24,15 +27,17 @@ export async function copyText(text: string): Promise<boolean> {
     }
   }
 
-  // HTTP / без secure context — legacy execCommand.
+  // Legacy execCommand. Монтируем в ту же модалку, что и активный элемент,
+  // иначе focus-trap диалога не отдаст фокус textarea.
+  const active = document.activeElement as HTMLElement | null
+  const host = (active?.closest('[role="dialog"]') as HTMLElement | null) ?? document.body
+
   const ta = document.createElement('textarea')
   ta.value = text
   ta.setAttribute('readonly', '')
-  ta.style.cssText
-    = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;'
-    + 'border:none;outline:none;box-shadow:none;background:transparent;'
-    + 'opacity:0;z-index:-1;'
-  document.body.appendChild(ta)
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;'
+    + 'opacity:0;border:0;padding:0;margin:0;'
+  host.appendChild(ta)
 
   let ok = false
   try {
@@ -46,6 +51,7 @@ export async function copyText(text: string): Promise<boolean> {
   }
   finally {
     ta.remove()
+    active?.focus?.()
   }
   return ok
 }

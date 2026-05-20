@@ -91,7 +91,7 @@ def materialize_orchestrator_key(cfg):
     if not key_b64:
         return
     ssh_dir = Path.home() / '.ssh'
-    ssh_dir.mkdir(mode=0o700, exist_ok=True)
+    ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     priv = ssh_dir / 'id_ed25519'
     priv.write_bytes(base64.b64decode(key_b64))
     priv.chmod(0o600)

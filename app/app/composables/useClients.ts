@@ -5,6 +5,7 @@ export interface Client {
   cipher: string
   enabled: boolean
   expiresAt: string | null
+  filterTraffic: boolean
   createdAt: string
   updatedAt: string
 }
@@ -29,7 +30,14 @@ export function useClients() {
 
   useVisibleRefresh(refresh)
 
-  async function create(payload: { name: string, expiresAt: string | null, sendToTg?: boolean }) {
+  async function create(payload: {
+    name: string
+    expiresAt: string | null
+    filterTraffic?: boolean
+    sendSsToTg?: boolean
+    sendWgToTg?: boolean
+    sendOvpnToTg?: boolean
+  }) {
     const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
     await refresh()
     return created

@@ -15,10 +15,12 @@ import {
   syncWireguardConfig,
 } from '../../utils/wireguard'
 import { buildOvpnConfig, caReady, ensureClientOvpn } from '../../utils/openvpn'
+import { clientDns } from '../../utils/client-dns'
 
 const Body = z.object({
   name: z.string().min(1).max(64),
   expiresAt: z.iso.datetime().nullable().optional(),
+  filterTraffic: z.boolean().optional(),
   sendSsToTg: z.boolean().optional(),
   sendWgToTg: z.boolean().optional(),
   sendOvpnToTg: z.boolean().optional(),
@@ -53,6 +55,7 @@ export default defineEventHandler(async (event) => {
       cipher: cfg.ssCipher,
       enabled: true,
       expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      filterTraffic: body.filterTraffic ?? true,
       wgPrivateKey: wgKp.privateKey,
       wgPublicKey: wgKp.publicKey,
       wgPresharedKey: wgPsk,
@@ -94,7 +97,7 @@ export default defineEventHandler(async (event) => {
         serverPublicKey: server.publicKey,
         serverEndpoint: endpoint,
         serverPort: Number(cfg.wgListenPort),
-        dns: String(cfg.wgDns),
+        dns: clientDns(row.filterTraffic).join(', '),
         mtu: Number(cfg.wgMtu),
       })
       void notifyBot('client_send_wireguard', { name: row.name, conf })
@@ -114,6 +117,7 @@ export default defineEventHandler(async (event) => {
           serverHost: endpoint,
           serverPort: Number(cfg.ovpnPort),
           proto: String(cfg.ovpnProto),
+          dns: clientDns(client.filterTraffic),
         })
         void notifyBot('client_send_openvpn', { name: row.name, conf })
       }

@@ -31,6 +31,7 @@ export const clients = sqliteTable('clients', {
   wgIp: text('wg_ip'),
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
+  filterTraffic: integer('filter_traffic', { mode: 'boolean' }).notNull().default(true),
   ...timestamps,
 })
 

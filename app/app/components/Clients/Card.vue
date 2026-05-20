@@ -60,8 +60,13 @@ function fmtBytes(n: number | undefined | null): string {
   >
     <div class="flex items-center gap-3">
       <div class="flex-1 min-w-0">
-        <div class="font-medium truncate text-(--ui-text-highlighted) leading-tight">
-          {{ client.name }}
+        <div class="font-medium text-(--ui-text-highlighted) leading-tight flex items-center gap-1.5">
+          <UIcon
+            v-if="client.filterTraffic"
+            name="i-simple-icons-adguard"
+            class="size-4 text-[#67b279] shrink-0"
+          />
+          <span class="truncate">{{ client.name }}</span>
         </div>
         <div class="text-xs text-(--ui-text-muted) flex gap-2 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>

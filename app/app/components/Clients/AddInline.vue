@@ -9,6 +9,7 @@ const toast = useToast()
 const open = ref(false)
 const name = ref('')
 const expiresAt = ref<string>('')
+const filterTraffic = ref(true)
 const sendWgToTg = ref(false)
 const sendSsToTg = ref(false)
 const sendOvpnToTg = ref(false)
@@ -21,6 +22,7 @@ async function submit() {
     await create({
       name: name.value.trim(),
       expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
+      filterTraffic: filterTraffic.value,
       sendSsToTg: sendSsToTg.value,
       sendWgToTg: sendWgToTg.value,
       sendOvpnToTg: sendOvpnToTg.value,
@@ -38,6 +40,7 @@ async function submit() {
     })
     name.value = ''
     expiresAt.value = ''
+    filterTraffic.value = true
     sendWgToTg.value = false
     sendSsToTg.value = false
     sendOvpnToTg.value = false
@@ -55,6 +58,7 @@ async function submit() {
 function reset() {
   name.value = ''
   expiresAt.value = ''
+  filterTraffic.value = true
   sendWgToTg.value = false
   sendSsToTg.value = false
   sendOvpnToTg.value = false
@@ -95,6 +99,16 @@ function reset() {
           class="w-full"
         />
       </UFormField>
+      <div class="flex items-center justify-between pt-1">
+        <label class="text-sm flex items-center gap-2 cursor-pointer">
+          <UIcon name="i-simple-icons-adguard" class="size-4 text-[#67b279]" />
+          Фильтровать трафик (AdGuard)
+        </label>
+        <USwitch v-model="filterTraffic" />
+      </div>
+
+      <USeparator />
+
       <div class="space-y-2 pt-1">
         <UTooltip :text="tgReason" :disabled="canSendTg">
           <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">

@@ -21,6 +21,12 @@ if [[ -f "$STAMP_DIR/$STAGE" ]]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a   # needrestart: рестартить службы сам, без интерактива
+
+# esm-cache.service (Ubuntu Pro) при каждом apt дёргается к esm.ubuntu.com и,
+# когда тот недоступен/медленный, виснет — а apt через needrestart его ждёт,
+# из-за чего деплой стопорится. Маскируем: для VPN-ноды кэш ESM не нужен.
+systemctl mask --now esm-cache.service >/dev/null 2>&1 || true
 
 # ----------------------------------------------------------------------------
 # 1. apt update + base packages

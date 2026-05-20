@@ -354,32 +354,6 @@ preflight_ssh() {
   printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
   local attempts="${PREFLIGHT_ATTEMPTS:-10}"
 
-  # ── Reference probe ───────────────────────────────────────────────────────
-  # Can THIS orchestrator do outbound TCP :22 at all? github/gitlab SSH are
-  # the most reliable :22 endpoints on the internet. If they're dead while
-  # the box otherwise has internet, the orchestrator's provider is filtering
-  # outbound SSH (common budget-VPS anti-abuse) — no point hammering nodes.
-  local ref_ok=0 ref i
-  for ((i=1; i<=3; i++)); do
-    for ref in github.com gitlab.com; do
-      if _tcp22_open "$ref/22"; then ref_ok=1; break 2; fi
-    done
-    sleep 2
-  done
-  if [[ $ref_ok -eq 1 ]]; then
-    printf '  %-30s %b✓%b\n' 'эталон :22 (github/gitlab)' "$C_G" "$C_END"
-  else
-    printf '  %-30s %b✗%b\n' 'эталон :22 (github/gitlab)' "$C_R" "$C_END"
-    printf '\n%b✗ Исходящий TCP :22 НЕ работает с центральной ноды.%b\n' "$C_R" "$C_END"
-    printf '  github.com:22 и gitlab.com:22 недоступны (хотя интернет/HTTPS есть).\n'
-    printf '  Провайдер центральной ноды режет ИСХОДЯЩИЙ SSH (анти-абуз-фильтр).\n\n'
-    printf '  %bРешения:%b\n' "$C_Y" "$C_END"
-    printf '    • открой тикет хостеру центральной ноды:\n'
-    printf '      «разблокируйте исходящий TCP-порт 22»\n'
-    printf '    • либо смени центральную ноду на провайдера без фильтра :22\n'
-    die "pre-flight failed — деплой не запускался (исходящий :22 заблокирован)"
-  fi
-
   # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
   local hosts; hosts=$(expand_hosts all)
   local unreachable=()
@@ -398,16 +372,42 @@ preflight_ssh() {
     fi
   done
 
-  if [[ ${#unreachable[@]} -gt 0 ]]; then
-    printf '\n%b✗ Недоступны по SSH после %s попыток:%b %s\n' \
-      "$C_R" "$attempts" "$C_END" "${unreachable[*]}"
-    printf '  Исходящий :22 с центральной ноды работает (эталон OK) — дело в самих нодах:\n'
-    printf '    1. пароль/IP в config.yaml\n'
-    printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
-    printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
-    die "pre-flight failed — деплой не запускался"
+  # Все ноды доступны — эталон не нужен, идём дальше.
+  if [[ ${#unreachable[@]} -eq 0 ]]; then
+    printf '\n'
+    return 0
   fi
-  printf '\n'
+
+  # ── Часть нод не пускает — опрашиваем эталонный :22 ТОЛЬКО для диагноза ────
+  # Эталон github/gitlab — диагностический фактор, НЕ блокер. Сюда мы
+  # попадаем только когда ноды уже не пустили; эталон лишь помогает понять,
+  # режет ли провайдер центральной ноды исходящий :22, или дело в самих
+  # нодах. Если github/gitlab заблокированы РКН, но ноды живые — этот код
+  # вообще не выполняется (вышли по return выше).
+  local ref_ok=0 ref i
+  for ((i=1; i<=3; i++)); do
+    for ref in github.com gitlab.com; do
+      if _tcp22_open "$ref/22"; then ref_ok=1; break 2; fi
+    done
+    sleep 2
+  done
+
+  printf '\n%b✗ Недоступны по SSH после %s попыток:%b %s\n' \
+    "$C_R" "$attempts" "$C_END" "${unreachable[*]}"
+  if [[ $ref_ok -eq 0 ]]; then
+    printf '  Эталонные github.com:22 / gitlab.com:22 тоже недоступны.\n'
+    printf '  %bВероятно%b провайдер центральной ноды режет исходящий :22\n' "$C_Y" "$C_END"
+    printf '  (анти-абуз-фильтр). Решения:\n'
+    printf '    • тикет хостеру: «разблокируйте исходящий TCP-порт 22»\n'
+    printf '    • либо смени центральную ноду на провайдера без фильтра :22\n'
+    printf '  Если github/gitlab у тебя просто заблокированы — смотри пункты ниже.\n'
+  else
+    printf '  Исходящий :22 с центральной ноды работает (эталон OK) — дело в нодах:\n'
+  fi
+  printf '    1. пароль/IP в config.yaml\n'
+  printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
+  printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
+  die "pre-flight failed — деплой не запускался"
 }
 
 # ----------------------------------------------------------------------------

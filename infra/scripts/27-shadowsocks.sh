@@ -35,7 +35,8 @@ fi
 NEED_INSTALL=0
 if [[ ! -x "$OSS_BIN" ]]; then
   NEED_INSTALL=1
-elif ! "$OSS_BIN" -version 2>&1 | grep -q "$OSS_VERSION"; then
+elif ! "$OSS_BIN" -version 2>&1 | grep -qF "${OSS_VERSION#v}"; then
+  # `-version` печатает «1.7.0» без ведущего v — сверяем без него.
   NEED_INSTALL=1
 fi
 
@@ -49,7 +50,8 @@ if [[ "$NEED_INSTALL" -eq 1 ]]; then
     aarch64|arm64) ARCH_TAG='linux_arm64' ;;
     *) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
   esac
-  curl -fsSL -o "$TMPDIR/oss.tar.gz" \
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o "$TMPDIR/oss.tar.gz" \
     "https://github.com/Jigsaw-Code/outline-ss-server/releases/download/${OSS_VERSION}/outline-ss-server_${OSS_VERSION#v}_${ARCH_TAG}.tar.gz"
   tar -xzf "$TMPDIR/oss.tar.gz" -C "$TMPDIR"
   install -m 755 -o root -g root "$TMPDIR/outline-ss-server" "$OSS_BIN"

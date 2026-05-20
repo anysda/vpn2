@@ -111,13 +111,16 @@ def main():
             'interrupt_exist_connections': True,
         },
         {
-            'type': 'urltest',
+            # foreign-best — selector, а НЕ urltest: им управляет
+            # failover-watchdog (стейдж 21), активно опрашивая экзиты через
+            # clash-api и переключаясь за ~3-5с. urltest сюда не годится — он
+            # снимается с мёртвой ноды ~33с (зависшее QUIC-соединение висит
+            # ~30с до признания дохлым). `default` — стартовый выбор до
+            # первого тика вотчдога. См. lib/failover-watchdog.py.
+            'type': 'selector',
             'tag': 'foreign-best',
             'outbounds': all_hy2,
-            'url': 'http://cp.cloudflare.com/generate_204',
-            'interval': '10s',
-            'tolerance': 50,
-            'idle_timeout': '5m',
+            'default': all_hy2[0],
             'interrupt_exist_connections': True,
         },
         {'type': 'block', 'tag': 'block-out'},

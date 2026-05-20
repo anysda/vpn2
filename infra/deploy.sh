@@ -342,26 +342,69 @@ run_stage() {
 # sshd не отвечает) — это не наша проблема, но без preflight деплой
 # падает где-нибудь в середине 00-bootstrap. Лучше сразу сказать.
 # ----------------------------------------------------------------------------
+# TCP :22 reachability probe (no creds needed). Used both for the reference
+# endpoints and as a quick liveness check. Returns 0 if a banner-bearing
+# socket opens within the timeout.
+_tcp22_open() {
+  local hostport="$1"
+  timeout 8 bash -c "exec 3<>/dev/tcp/${hostport}" 2>/dev/null
+}
+
 preflight_ssh() {
   printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
+  local attempts="${PREFLIGHT_ATTEMPTS:-10}"
+
+  # ── Reference probe ───────────────────────────────────────────────────────
+  # Can THIS orchestrator do outbound TCP :22 at all? github/gitlab SSH are
+  # the most reliable :22 endpoints on the internet. If they're dead while
+  # the box otherwise has internet, the orchestrator's provider is filtering
+  # outbound SSH (common budget-VPS anti-abuse) — no point hammering nodes.
+  local ref_ok=0 ref i
+  for ((i=1; i<=3; i++)); do
+    for ref in github.com gitlab.com; do
+      if _tcp22_open "$ref/22"; then ref_ok=1; break 2; fi
+    done
+    sleep 2
+  done
+  if [[ $ref_ok -eq 1 ]]; then
+    printf '  %-30s %b✓%b\n' 'эталон :22 (github/gitlab)' "$C_G" "$C_END"
+  else
+    printf '  %-30s %b✗%b\n' 'эталон :22 (github/gitlab)' "$C_R" "$C_END"
+    printf '\n%b✗ Исходящий TCP :22 НЕ работает с центральной ноды.%b\n' "$C_R" "$C_END"
+    printf '  github.com:22 и gitlab.com:22 недоступны (хотя интернет/HTTPS есть).\n'
+    printf '  Провайдер центральной ноды режет ИСХОДЯЩИЙ SSH (анти-абуз-фильтр).\n\n'
+    printf '  %bРешения:%b\n' "$C_Y" "$C_END"
+    printf '    • открой тикет хостеру центральной ноды:\n'
+    printf '      «разблокируйте исходящий TCP-порт 22»\n'
+    printf '    • либо смени центральную ноду на провайдера без фильтра :22\n'
+    die "pre-flight failed — деплой не запускался (исходящий :22 заблокирован)"
+  fi
+
+  # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
   local hosts; hosts=$(expand_hosts all)
   local unreachable=()
   for h in $hosts; do
     load_env "$h"
-    if ssh_exec 'echo ok' >/dev/null 2>&1; then
-      printf '  %-28s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
+    local ok=0 try
+    for ((try=1; try<=attempts; try++)); do
+      if ssh_exec 'echo ok' >/dev/null 2>&1; then ok=1; break; fi
+      sleep 2
+    done
+    if [[ $ok -eq 1 ]]; then
+      printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
     else
-      printf '  %-28s %b✗%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$C_END"
+      printf '  %-30s %b✗ (%s попыток)%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$attempts" "$C_END"
       unreachable+=("$h ($SSH_HOST)")
     fi
   done
+
   if [[ ${#unreachable[@]} -gt 0 ]]; then
-    printf '\n%b✗ Недоступны:%b %s\n' "$C_R" "$C_END" "${unreachable[*]}"
-    printf '  Что проверить:\n'
+    printf '\n%b✗ Недоступны по SSH после %s попыток:%b %s\n' \
+      "$C_R" "$attempts" "$C_END" "${unreachable[*]}"
+    printf '  Исходящий :22 с центральной ноды работает (эталон OK) — дело в самих нодах:\n'
     printf '    1. пароль/IP в config.yaml\n'
     printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
-    printf '    3. провайдер не geo-блокирует SSH с RU (часто бывает; TCP открыт,\n'
-    printf '       но банер не приходит — замени сервер или попроси разблок)\n'
+    printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
     die "pre-flight failed — деплой не запускался"
   fi
   printf '\n'

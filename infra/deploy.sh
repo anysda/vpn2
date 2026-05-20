@@ -227,6 +227,47 @@ prep_mgmt_mesh() {
 }
 
 # ----------------------------------------------------------------------------
+# One-time (до параллельного fan-out 00-bootstrap): keypair оркестратора +
+# сборка orchestrator_keys. Делается ОДИН раз — иначе при параллельном
+# 00-bootstrap несколько хостов гонялись бы за один ключ и config.yaml.
+# ----------------------------------------------------------------------------
+prep_orchestrator_key() {
+  mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
+  # config2env мог разложить ключ из config.yaml — тогда файл уже на месте.
+  if [[ ! -f "${HOME}/.ssh/id_ed25519" ]]; then
+    log "keypair оркестратора отсутствует — генерю ed25519"
+    ssh-keygen -t ed25519 -N '' -C 'anysda-orchestrator' -f "${HOME}/.ssh/id_ed25519" -q
+  fi
+  [[ -f "${HOME}/.ssh/id_ed25519.pub" ]] || \
+    ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" > "${HOME}/.ssh/id_ed25519.pub"
+  cat "${HOME}/.ssh/id_ed25519.pub" >> "${HOME}/.ssh/authorized_keys"
+  awk 'NF && !seen[$0]++' "${HOME}/.ssh/authorized_keys" > "${HOME}/.ssh/authorized_keys.u" \
+    && mv "${HOME}/.ssh/authorized_keys.u" "${HOME}/.ssh/authorized_keys"
+  chmod 600 "${HOME}/.ssh/authorized_keys"
+  # Персистим ключ в config.yaml — чтобы пережил пересоздание entry-ноды.
+  local _cfg="$DEPLOY_ROOT/../config.yaml"
+  if [[ -f "$_cfg" ]] && ! grep -q '^orchestrator_key:' "$_cfg"; then
+    log "сохраняю orchestrator-ключ в config.yaml (переживёт пересоздание entry)"
+    {
+      echo ''
+      echo '# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя'
+      echo '# с пересозданной entry-ноды. config.yaml надо сохранять/переносить.'
+      echo "orchestrator_key: $(base64 -w0 < "${HOME}/.ssh/id_ed25519")"
+      echo "orchestrator_pubkey: $(cat "${HOME}/.ssh/id_ed25519.pub")"
+    } >> "$_cfg"
+  fi
+  local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
+  mkdir -p "$(dirname "$combined")"
+  chmod 700 "$(dirname "$combined")" 2>/dev/null || true
+  : > "$combined"
+  for src in "${HOME}/.ssh/id_ed25519.pub" "${HOME}/.ssh/id_rsa.pub" "${HOME}/.ssh/authorized_keys"; do
+    [[ -f "$src" ]] && cat "$src" >> "$combined"
+  done
+  awk 'NF && !seen[$0]++' "$combined" > "${combined}.uniq" && mv "${combined}.uniq" "$combined"
+  chmod 600 "$combined"
+}
+
+# ----------------------------------------------------------------------------
 # Run a stage on one host
 # ----------------------------------------------------------------------------
 run_stage_on_host() {
@@ -253,53 +294,10 @@ run_stage_on_host() {
   push "$rendered_env" "${host}.env"
   push "$script"
 
-  # Перед 00-bootstrap пушим публичные ключи оркестратора.
-  # Если ~/.ssh/id_ed25519 ещё не существует — генерим keypair (нужен чтобы
-  # ssh с оркестратора на удалённые ноды работал по ключу после того, как
-  # стейдж отключит парольный вход).
-  # В orchestrator_keys пушим ВСЕ доступные pubkey'ы — обычно это один ключ
-  # самой машины-оркестратора + (опционально) authorized_keys, если юзер
-  # положил туда свой Mac-pubkey для удалённого доступа.
+  # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
+  # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).
   if [[ "$stage" == "00-bootstrap" ]]; then
-    mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
-    # Keypair оркестратора. config2env уже мог разложить его из config.yaml
-    # (orchestrator_key) — тогда файл на месте. Если нет — генерим.
-    if [[ ! -f "${HOME}/.ssh/id_ed25519" ]]; then
-      log "[$stage → $host] keypair оркестратора отсутствует — генерю ed25519"
-      ssh-keygen -t ed25519 -N '' -C 'anysda-orchestrator' -f "${HOME}/.ssh/id_ed25519" -q
-    fi
-    # config2env кладёт только приватный ключ — .pub выводим из него.
-    [[ -f "${HOME}/.ssh/id_ed25519.pub" ]] || \
-      ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" > "${HOME}/.ssh/id_ed25519.pub"
-    # loopback ssh на сам entry — по ключу
-    cat "${HOME}/.ssh/id_ed25519.pub" >> "${HOME}/.ssh/authorized_keys"
-    awk 'NF && !seen[$0]++' "${HOME}/.ssh/authorized_keys" > "${HOME}/.ssh/authorized_keys.u" \
-      && mv "${HOME}/.ssh/authorized_keys.u" "${HOME}/.ssh/authorized_keys"
-    chmod 600 "${HOME}/.ssh/authorized_keys"
-    # Персистим ключ в config.yaml — чтобы он пережил пересоздание entry-ноды
-    # (новый entry с тем же config.yaml получит тот же ключ, экзиты его знают).
-    local _cfg="$DEPLOY_ROOT/../config.yaml"
-    if [[ -f "$_cfg" ]] && ! grep -q '^orchestrator_key:' "$_cfg"; then
-      log "[$stage → $host] сохраняю orchestrator-ключ в config.yaml"
-      {
-        echo ''
-        echo '# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя'
-        echo '# с пересозданной entry-ноды. config.yaml надо сохранять/переносить.'
-        echo "orchestrator_key: $(base64 -w0 < "${HOME}/.ssh/id_ed25519")"
-        echo "orchestrator_pubkey: $(cat "${HOME}/.ssh/id_ed25519.pub")"
-      } >> "$_cfg"
-    fi
-
     local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
-    mkdir -p "$(dirname "$combined")"
-    : > "$combined"
-    for src in "${HOME}/.ssh/id_ed25519.pub" "${HOME}/.ssh/id_rsa.pub" "${HOME}/.ssh/authorized_keys"; do
-      [[ -f "$src" ]] && cat "$src" >> "$combined"
-    done
-    # uniq по строкам
-    awk 'NF && !seen[$0]++' "$combined" > "${combined}.uniq" && mv "${combined}.uniq" "$combined"
-    chmod 600 "$combined"
-
     if [[ -s "$combined" ]]; then
       log "[$stage → $host] раскатываю $(wc -l < "$combined") ключ(а/ей)"
       push "$combined" "orchestrator_keys"
@@ -351,11 +349,21 @@ run_stage() {
     05-mgmt-mesh) prep_mgmt_mesh ;;
     20-ru-router) prep_ru_router ;;
   esac
+  [[ "$stage" == "00-bootstrap" ]] && prep_orchestrator_key
 
   local hosts; hosts=$(expand_hosts "$group" 2>/dev/null)
+  # Стадии независимы по нодам — гоняем хосты параллельно. Каждый
+  # run_stage_on_host уходит в свой субшелл (из-за `&`), поэтому глобалы
+  # load_env (SSH_HOST/SSH_PASS/...) не пересекаются между нодами.
+  local pids=() rc=0
   for h in $hosts; do
-    run_stage_on_host "$stage" "$h"
+    run_stage_on_host "$stage" "$h" &
+    pids+=("$!")
   done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || rc=1
+  done
+  [[ $rc -eq 0 ]] || die "стадия $stage: одна или несколько нод завершились с ошибкой"
 
   local elapsed=$(( $(date +%s) - t0 ))
   local mins=$(( elapsed / 60 )) secs=$(( elapsed % 60 ))

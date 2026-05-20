@@ -69,14 +69,27 @@ _ssh_opts=(
   -o PreferredAuthentications=publickey,password
   -o PubkeyAuthentication=yes
   -o ConnectTimeout=10
+  -o ConnectionAttempts=3
   -o ServerAliveInterval=15
 )
 
 # Run a command on the current $SSH_HOST. Args are passed to ssh.
+# Ретраит транзиентные сбои соединения: у VPS-экзитов SSH иногда флапает
+# (таймаут / "connection closed" / banner exchange), и один такой сбой
+# посреди стадии не должен ронять весь деплой.
 ssh_exec() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
-      "${SSH_USER}@${SSH_HOST}" "$@"
+  local attempt rc=0
+  for attempt in 1 2 3 4 5; do
+    rc=0
+    SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
+        "${SSH_USER}@${SSH_HOST}" "$@" || rc=$?
+    # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
+    # удалённой команды (напр. `test -f` в stage_done), отдаём как есть.
+    [[ $rc -ne 255 ]] && return $rc
+    [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
+  done
+  return $rc
 }
 
 # Copy a local file/dir to the host's /tmp/anysda.
@@ -92,8 +105,15 @@ push() {
   if [[ -d "$src" ]]; then
     ssh_exec "rm -rf '$target'"
   fi
-  SSHPASS="$SSH_PASS" sshpass -e scp -q "${_ssh_opts[@]}" -r \
-      "$src" "${SSH_USER}@${SSH_HOST}:$target"
+  local attempt rc=0
+  for attempt in 1 2 3 4 5; do
+    rc=0
+    SSHPASS="$SSH_PASS" sshpass -e scp -q "${_ssh_opts[@]}" -r \
+        "$src" "${SSH_USER}@${SSH_HOST}:$target" || rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    [[ $attempt -lt 5 ]] && { warn "scp → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
+  done
+  return $rc
 }
 
 # Render a config template (envsubst) into secrets/rendered/<host>/.

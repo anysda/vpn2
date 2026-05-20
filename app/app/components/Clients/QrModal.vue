@@ -87,21 +87,24 @@ async function sendToTelegram() {
           >
             Копировать
           </UButton>
-          <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
-            <UButton
-              block
-              icon="i-lucide-send"
-              variant="soft"
-              color="neutral"
-              class="h-full justify-center"
-              :disabled="!ssUrl || !canSendTg"
-              :loading="sendingTg"
-              @click="sendToTelegram"
-            >
-              В TG
-            </UButton>
-          </UTooltip>
+          <UButton
+            block
+            icon="i-lucide-send"
+            variant="soft"
+            color="neutral"
+            :disabled="!ssUrl || !canSendTg"
+            :loading="sendingTg"
+            @click="sendToTelegram"
+          >
+            В TG
+          </UButton>
         </div>
+        <p
+          v-if="!canSendTg"
+          class="text-xs text-(--ui-text-muted) text-center"
+        >
+          {{ tgReason }}
+        </p>
       </div>
     </template>
   </UModal>

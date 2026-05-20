@@ -66,6 +66,10 @@ async function sendToTelegram() {
           <span class="font-semibold text-(--ui-text-highlighted)">Outline</span>
         </div>
 
+        <p class="text-xs text-(--ui-text-muted) text-center">
+          Ключ доступа Outline — скопируй и добавь сервер в приложении Outline.
+        </p>
+
         <UInput
           :model-value="ssUrl"
           readonly
@@ -89,6 +93,7 @@ async function sendToTelegram() {
               icon="i-lucide-send"
               variant="soft"
               color="neutral"
+              class="h-full justify-center"
               :disabled="!ssUrl || !canSendTg"
               :loading="sendingTg"
               @click="sendToTelegram"

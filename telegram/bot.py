@@ -124,29 +124,6 @@ async def tg_send_document(chat_id: int, filename: str, content: bytes, caption:
     return r.json()
 
 
-async def tg_send_media_group(chat_id: int, items: list[tuple[str, bytes, str]],
-                              caption: str = '') -> dict:
-    """Send several files as ONE grouped message (media group of documents).
-
-    Telegram не позволяет смешивать photo и document в одной media group, поэтому
-    QR уходит тоже как document — так WireGuard-конфиг и QR приходят одним
-    сообщением. items: список (filename, content, mime). caption — на первом файле.
-    """
-    media: list[dict] = []
-    files: dict = {}
-    for i, (filename, content, mime) in enumerate(items):
-        key = f'file{i}'
-        files[key] = (filename, content, mime)
-        m: dict = {'type': 'document', 'media': f'attach://{key}'}
-        if i == 0 and caption:
-            m['caption'] = caption
-            m['parse_mode'] = 'Markdown'
-        media.append(m)
-    data = {'chat_id': str(chat_id), 'media': json.dumps(media)}
-    r = await _tg.post('/sendMediaGroup', data=data, files=files, timeout=40)
-    return r.json()
-
-
 async def tg_reply(update: Update, text: str, parse_mode: str | None = None) -> dict:
     return await tg_send(update.effective_chat.id, text, parse_mode)
 
@@ -353,24 +330,22 @@ async def handle_event(request: web.Request) -> web.Response:
         name = data.get('name', '?')
         ss_url = data.get('ssUrl', '')
         if ss_url:
-            # Outline: только ключ текстом, без QR.
+            # Outline: ключ текстом без QR, подпись под ключом.
             asyncio.create_task(tg_send(
-                CHAT_ID, f'*{name}* — Outline\n\n`{ss_url}`', 'Markdown',
+                CHAT_ID, f'`{ss_url}`\n\n*{name}* — Outline', 'Markdown',
             ))
     elif evt == 'client_send_wireguard':
         name = data.get('name', '?')
         conf = data.get('conf', '')
         if conf:
-            # WireGuard: QR + .conf одним сообщением (media group из двух документов).
-            qr_png = _make_qr_png(conf)
-            asyncio.create_task(tg_send_media_group(
-                CHAT_ID,
-                [
-                    (f'{name}.conf', conf.encode('utf-8'), 'application/octet-stream'),
-                    (f'{name}-qr.png', qr_png, 'image/png'),
-                ],
-                caption=f'*{name}* — WireGuard',
-            ))
+            # WireGuard: два сообщения — сначала QR как фото, затем .conf файлом.
+            async def _send_wg():
+                await tg_send_qr(CHAT_ID, conf, f'*{name}* — WireGuard')
+                await tg_send_document(
+                    CHAT_ID, f'{name}.conf', conf.encode('utf-8'),
+                    caption=f'*{name}* — WireGuard',
+                )
+            asyncio.create_task(_send_wg())
     elif evt == 'client_send_openvpn':
         name = data.get('name', '?')
         conf = data.get('conf', '')

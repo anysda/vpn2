@@ -2,17 +2,19 @@
  * Копирование текста в буфер обмена с фолбэком для небезопасного контекста.
  *
  * `navigator.clipboard` доступен только в secure context (HTTPS или localhost).
- * Панель на стенде отдаётся по HTTP на IP — там Clipboard API отсутствует,
- * и прямой вызов `navigator.clipboard.writeText` молча падал. Фолбэк через
- * скрытый textarea + `execCommand('copy')` работает и по HTTP.
+ * Панель на стенде отдаётся по HTTP на IP — там Clipboard API отсутствует.
+ * Фолбэк: скрытый textarea + `execCommand('copy')`. Чтобы execCommand реально
+ * скопировал (а не вернул true вхолостую), textarea должен быть в DOM,
+ * сфокусирован и с выделенным текстом — поэтому `focus()` обязателен, а позиция
+ * не уносится далеко за экран (иначе фокус не встаёт).
  *
- * @returns true — скопировано, false — не удалось (вызывающий показывает ошибку).
+ * @returns true — текст реально скопирован; false — не удалось (показать ошибку).
  */
 export async function copyText(text: string): Promise<boolean> {
-  if (!text) return false
+  if (!text || !import.meta.client) return false
 
-  // Быстрый путь — современный Clipboard API (secure context).
-  if (import.meta.client && window.isSecureContext && navigator.clipboard) {
+  // Secure context — современный Clipboard API.
+  if (window.isSecureContext && navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text)
       return true
@@ -22,26 +24,28 @@ export async function copyText(text: string): Promise<boolean> {
     }
   }
 
-  // Фолбэк для HTTP: скрытый textarea + execCommand.
-  if (import.meta.client) {
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      ta.setAttribute('readonly', '')
-      ta.style.position = 'fixed'
-      ta.style.top = '0'
-      ta.style.left = '-9999px'
-      document.body.appendChild(ta)
-      ta.select()
-      ta.setSelectionRange(0, text.length)
-      const ok = document.execCommand('copy')
-      document.body.removeChild(ta)
-      return ok
-    }
-    catch {
-      return false
-    }
-  }
+  // HTTP / без secure context — legacy execCommand.
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.cssText
+    = 'position:fixed;top:0;left:0;width:2em;height:2em;padding:0;'
+    + 'border:none;outline:none;box-shadow:none;background:transparent;'
+    + 'opacity:0;z-index:-1;'
+  document.body.appendChild(ta)
 
-  return false
+  let ok = false
+  try {
+    ta.focus()
+    ta.select()
+    ta.setSelectionRange(0, text.length)
+    ok = document.execCommand('copy')
+  }
+  catch {
+    ok = false
+  }
+  finally {
+    ta.remove()
+  }
+  return ok
 }

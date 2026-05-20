@@ -22,7 +22,7 @@ STAGE='27-shadowsocks'
 STAMP_DIR=/var/anysda/.stamps
 mkdir -p "$STAMP_DIR" /etc/outline-ss-server
 
-OSS_VERSION='v1.7.0'
+OSS_VERSION='v1.7.3'
 OSS_BIN='/usr/local/bin/outline-ss-server'
 
 # 1. Create system user (no login, no home dir)

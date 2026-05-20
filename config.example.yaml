@@ -47,9 +47,14 @@ admin:
 #   chat_id: 123456789
 
 # Кастомные порты (опционально). Дефолты подходят для большинства настроек.
+# ВАЖНО про shadowsocks: НЕ держать на 443 — TCP/443 ожидает TLS-handshake,
+# а Shadowsocks шлёт высокоэнтропийный «мусор» → DPI помечает поток как прокси.
+# На 443 режется жёстко; на не-443 порту лучше, но плейн-Shadowsocks всё равно
+# DPI-детектируется (поток случайных байт без рукопожатия) и периодически
+# режется. Полное решение — обфускация SS либо другой клиентский протокол.
 # ports:
-#   shadowsocks: 443                                # SS-сервер (outline-ss-server)
+#   shadowsocks: 28443                              # SS-сервер (outline-ss-server) — не 443!
 #   shadowsocks_cipher: chacha20-ietf-poly1305      # AEAD-шифр
-#   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit)
+#   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit) — UDP/QUIC, 443 ок
 #   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
 #   mgmt: 51900                                     # WG-mesh между нодами (служебный)

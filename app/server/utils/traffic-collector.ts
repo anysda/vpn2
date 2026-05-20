@@ -19,13 +19,18 @@ const execFileP = promisify(execFile)
  * теряя максимум один интервал данных. Накопленные тоталы в БД сохраняются.
  *
  * Соглашение направлений: rx = загрузка клиента (download), tx = отдача
- * клиента (upload) — как в shadowsocks-метриках (p>c / c>p).
+ * клиента (upload).
  */
 const lastSeen = new Map<string, { rx: number, tx: number }>()
 
 interface Sample { clientId: number, proto: string, rx: number, tx: number }
 
-/** SS: outline-ss-server Prometheus. dir c>p = upload(tx), p>c = download(rx). */
+/**
+ * SS: outline-ss-server Prometheus. Метки dir:
+ *   c<p — байты client←proxy = download клиента (rx)
+ *   c>p — байты client→proxy = upload клиента (tx)
+ *   p<t / p>t — плечо proxy↔target, не клиентское, игнорируем.
+ */
 async function sampleSs(): Promise<Sample[]> {
   const url = String(useRuntimeConfig().ssPrometheusUrl ?? 'http://127.0.0.1:9091')
   let text: string
@@ -47,7 +52,7 @@ async function sampleSs(): Promise<Sample[]> {
     const id = Number(ak[1])
     const slot = acc.get(id) ?? { rx: 0, tx: 0 }
     if (dir[1] === 'c>p') slot.tx += value
-    else if (dir[1] === 'p>c') slot.rx += value
+    else if (dir[1] === 'c<p') slot.rx += value
     acc.set(id, slot)
   }
   return [...acc].map(([clientId, v]) => ({ clientId, proto: 'ss', rx: v.rx, tx: v.tx }))
@@ -97,6 +102,7 @@ async function sampleOvpn(): Promise<Sample[]> {
 }
 
 export async function collectTraffic(): Promise<void> {
+  const log = useLogger()
   const db = useDb()
 
   // pubkey → clientId для WG
@@ -106,11 +112,12 @@ export async function collectTraffic(): Promise<void> {
   const clientByPubkey = new Map<string, number>()
   for (const r of rows) if (r.pk) clientByPubkey.set(r.pk, r.id)
 
-  const samples = (await Promise.all([
+  const [ss, wg, ovpn] = await Promise.all([
     sampleSs(),
     sampleWg(clientByPubkey),
     sampleOvpn(),
-  ])).flat()
+  ])
+  const samples = [...ss, ...wg, ...ovpn]
 
   // дельты по клиенту
   const deltas = new Map<number, { rx: number, tx: number }>()
@@ -138,4 +145,9 @@ export async function collectTraffic(): Promise<void> {
       })
       .where(eq(clients.id, id))
   }
+
+  log.info(
+    { ss: ss.length, wg: wg.length, ovpn: ovpn.length, updated: deltas.size },
+    'traffic: collected',
+  )
 }

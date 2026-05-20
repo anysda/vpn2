@@ -115,8 +115,11 @@ Wants=network-online.target
 Type=simple
 User=root
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
-Restart=on-failure
-RestartSec=5s
+# Restart=always (а не on-failure): роутер обязан подниматься после ЛЮБОЙ
+# остановки, включая чистый SIGTERM — иначе случайный `systemctl stop`/`kill`
+# (или pkill по имени) кладёт маршрутизацию насовсем.
+Restart=always
+RestartSec=2s
 LimitNOFILE=1048576
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW

@@ -156,7 +156,8 @@ Wants=network-online.target
 Type=simple
 User=root
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
-Restart=on-failure
+# Restart=always — exit поднимается после любой остановки, не только краша.
+Restart=always
 RestartSec=5s
 LimitNOFILE=1048576
 # Need NET_ADMIN to manage WireGuard userspace outbound + bind low ports

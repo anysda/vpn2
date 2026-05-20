@@ -14,5 +14,6 @@ export default defineEventHandler(async (event) => {
     rxMbps: metrics[i]?.rxBps != null ? metrics[i]!.rxBps! * 8 / 1e6 : null,
     txMbps: metrics[i]?.txBps != null ? metrics[i]!.txBps! * 8 / 1e6 : null,
     uptimeSec: metrics[i]?.uptimeSec ?? null,
+    staleSec: metrics[i]?.staleSec ?? null,
   }))
 })

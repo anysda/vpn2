@@ -36,7 +36,8 @@ fi
 if [[ "$need_install" -eq 1 ]]; then
   ARCH='linux_amd64'
   TMP=$(mktemp -d)
-  curl -sSL "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}/AdGuardHome_${ARCH}.tar.gz" \
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}/AdGuardHome_${ARCH}.tar.gz" \
     | tar -xz -C "$TMP"
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"
   rm -rf "$TMP"

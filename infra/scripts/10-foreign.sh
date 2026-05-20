@@ -27,7 +27,8 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box /var/lib/sing-box/acme
 echo "[$HOST_TAG] [1/4] wgcf"
 WGCF_VER='2.2.27'
 if [[ ! -x /usr/local/bin/wgcf ]] || ! /usr/local/bin/wgcf --version 2>&1 | grep -q "$WGCF_VER"; then
-  curl -sSL -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
   chmod +x /usr/local/bin/wgcf
 fi
 
@@ -83,7 +84,8 @@ fi
 echo "[$HOST_TAG] [2/4] sing-box"
 SB_VER='1.10.3'
 if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep -q "$SB_VER"; then
-  curl -sSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"

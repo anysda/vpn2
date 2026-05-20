@@ -82,13 +82,20 @@ for _t in $EXIT_TAGS; do
   eval "export ${_T}_HY2_DIRECT_PORT=\${${_T}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT}}"
 done
 
-python3 "$GEN" > /etc/sing-box/config.json
-chmod 600 /etc/sing-box/config.json
+# Write the BASE config (without manual routes). The manual-routes watcher
+# derives /etc/sing-box/config.json = config-base.json + panel rules, so
+# config-base.json MUST be refreshed on every run — a stale base silently
+# drops inbounds added to gen-router-config.py since it was first
+# snapshotted (this is how the wg/ovpn TPROXY :7898 inbound got lost).
+python3 "$GEN" > /etc/sing-box/config-base.json
+chmod 600 /etc/sing-box/config-base.json
 
-if ! /usr/local/bin/sing-box check -c /etc/sing-box/config.json; then
+if ! /usr/local/bin/sing-box check -c /etc/sing-box/config-base.json; then
   echo "[$HOST_TAG] конфиг невалиден — сервис не трогаю"
   exit 1
 fi
+cp /etc/sing-box/config-base.json /etc/sing-box/config.json
+chmod 600 /etc/sing-box/config.json
 
 # ----------------------------------------------------------------------------
 # 5. systemd service + iptables (user-owner REDIRECT + fwmark TPROXY)
@@ -316,6 +323,10 @@ EOF
 systemctl daemon-reload
 systemctl enable anysda-apply-routes.path >/dev/null 2>&1
 systemctl start  anysda-apply-routes.path
+
+# Derive config.json = fresh config-base.json + current manual routes and
+# restart sing-box, so a re-run immediately reflects the regenerated base.
+/usr/local/sbin/anysda-apply-routes.py || true
 
 echo "[$HOST_TAG] iptables OUTPUT --uid-owner outline:"
 iptables -t nat -L OUTPUT -n -v --line-numbers | grep outline | sed "s/^/[$HOST_TAG]   /" || \

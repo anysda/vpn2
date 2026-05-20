@@ -23,7 +23,8 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box
 echo "[$HOST_TAG] [1/6] sing-box"
 SB_VER='1.10.3'
 if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep -q "$SB_VER"; then
-  curl -sSL "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
@@ -35,8 +36,10 @@ fi
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/6] GeoIP/Geosite"
 if [[ ! -f /var/lib/sing-box/geoip.db || $(find /var/lib/sing-box/geoip.db -mtime +7 2>/dev/null) ]]; then
-  curl -sSL -o /var/lib/sing-box/geoip.db   'https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db'
-  curl -sSL -o /var/lib/sing-box/geosite.db 'https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db'
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o /var/lib/sing-box/geoip.db   'https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db'
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o /var/lib/sing-box/geosite.db 'https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db'
 fi
 ls -la /var/lib/sing-box/{geoip,geosite}.db | sed "s/^/[$HOST_TAG]   /"
 

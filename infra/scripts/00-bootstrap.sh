@@ -169,7 +169,8 @@ systemctl restart fail2ban
 echo "[$HOST_TAG] [6/6] node_exporter"
 NE_VERSION='1.8.2'
 if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep -q "$NE_VERSION"; then
-  curl -sSL "https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}/node_exporter-${NE_VERSION}.linux-amd64.tar.gz" \
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}/node_exporter-${NE_VERSION}.linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m 0755 "/tmp/node_exporter-${NE_VERSION}.linux-amd64/node_exporter" /usr/local/bin/node_exporter
   rm -rf "/tmp/node_exporter-${NE_VERSION}.linux-amd64"

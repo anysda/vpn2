@@ -132,13 +132,20 @@ do_check() {
   [[ $fail -eq 0 ]] || die "не хватает env-файлов — запусти ./setup.sh"
 
   printf '\n%b==>%b доступность SSH (root@<host>)\n' "$C_B" "$C_END"
+  local ssh_tries="${PREFLIGHT_ATTEMPTS:-5}"
   for host in $all_hosts; do
     load_env "$host"
     if [[ -z "${SSH_PASS:-}" ]]; then
       printf '  %-28s %b✗ SSH_PASS пустой — перезапусти ./setup.sh%b\n' \
         "${SSH_USER}@${SSH_HOST}" "$C_R" "$C_END"; fail=1; continue
     fi
-    if ssh_exec 'echo ok' >/dev/null 2>&1; then
+    # Ретраим как preflight_ssh — единичный блип не должен валить деплой.
+    local ssh_ok=0 i
+    for ((i=1; i<=ssh_tries; i++)); do
+      if ssh_exec 'echo ok' >/dev/null 2>&1; then ssh_ok=1; break; fi
+      [[ $i -lt $ssh_tries ]] && sleep 3
+    done
+    if [[ $ssh_ok -eq 1 ]]; then
       printf '  %-28s %b✓%b\n' "${SSH_USER}@${SSH_HOST}" "$C_G" "$C_END"
     else
       printf '  %-28s %b✗ не пускает (IP/пароль/PasswordAuthentication?)%b\n' \

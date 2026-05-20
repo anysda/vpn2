@@ -136,6 +136,10 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
     `nobind`,
     `persist-key`,
     `persist-tun`,
+    // Туннель только IPv4 (tun0 10.67.67.0/24). Без этого IPv6-трафик клиента
+    // уходит мимо туннеля напрямую (leak) — block-ipv6 заставляет приложения
+    // падать на IPv4, который идёт через VPN.
+    `block-ipv6`,
     `remote-cert-tls server`,
     `cipher AES-256-GCM`,
     `auth SHA256`,

@@ -352,7 +352,7 @@ _tcp22_open() {
 
 preflight_ssh() {
   printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
-  local attempts="${PREFLIGHT_ATTEMPTS:-10}"
+  local attempts="${PREFLIGHT_ATTEMPTS:-5}"
 
   # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
   local hosts; hosts=$(expand_hosts all)

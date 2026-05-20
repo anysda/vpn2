@@ -48,7 +48,7 @@ export default defineNuxtConfig({
     wgServerIp: '10.66.66.1',
     wgSubnetPrefix: '10.66.66.',
     wgPublicHost: '',
-    wgDns: '1.1.1.1',
+    wgDns: '10.99.0.1',
     wgMtu: 1420,
     ovpnEnabled: true,
     ovpnPort: 1194,

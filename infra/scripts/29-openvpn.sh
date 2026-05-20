@@ -145,7 +145,7 @@ persist-tun
 user nobody
 group nogroup
 push "redirect-gateway def1 bypass-dhcp"
-push "dhcp-option DNS 1.1.1.1"
+push "dhcp-option DNS 10.99.0.1"
 status /run/openvpn-server/status-server.log
 verb 3
 EOF
@@ -154,6 +154,9 @@ mkdir -p /run/openvpn-server
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
 ufw allow "${OVPN_PORT}/${OVPN_PROTO}" comment 'openvpn listener' >/dev/null 2>&1 || true
+# OpenVPN clients (10.67.67.0/24) resolve via AdGuard on the entry mgmt IP
+ufw allow proto udp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
+ufw allow proto tcp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
@@ -200,6 +203,8 @@ if [[ "$ACTION" == "up" ]]; then
 
   iptables -t mangle -N ANYSDA_OVPN_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_OVPN_TPROXY
+  # DNS to AdGuard (entry mgmt IP) must be delivered locally, not TPROXY'd.
+  iptables -t mangle -A ANYSDA_OVPN_TPROXY -d 10.99.0.1 -j RETURN
   iptables -t mangle -A ANYSDA_OVPN_TPROXY -p tcp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
   iptables -t mangle -A ANYSDA_OVPN_TPROXY -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
 

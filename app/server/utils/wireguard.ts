@@ -52,7 +52,7 @@ export interface WgClientConfigParams {
 
 /** Render a client-facing wg-quick .conf string. */
 export function buildWgClientConfig(p: WgClientConfigParams): string {
-  const dns = p.dns ?? '1.1.1.1'
+  const dns = p.dns ?? '10.99.0.1'
   const mtu = p.mtu ?? 1420
   return [
     `[Interface]`,

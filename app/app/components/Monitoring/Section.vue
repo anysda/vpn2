@@ -4,29 +4,28 @@ import {
   formatMbps,
   formatPercent,
   formatUptime,
+  nodeState,
   sparklinePath,
   useMonitoring,
 } from '~/composables/useMonitoring'
 
 const { nodes, cpuHistory } = useMonitoring()
 
-const sortedNodes = computed(() => {
-  return [...nodes.value].sort((a, b) => {
-    if (a.tag === 'ru') return -1
-    if (b.tag === 'ru') return 1
-    return a.tag.localeCompare(b.tag)
-  })
-})
+const sortedNodes = computed(() =>
+  [...nodes.value]
+    .sort((a, b) => {
+      if (a.tag === 'ru') return -1
+      if (b.tag === 'ru') return 1
+      return a.tag.localeCompare(b.tag)
+    })
+    .map(n => ({ ...n, state: nodeState(n.staleSec) })),
+)
 
 function loadColor(v: number | null): string {
   if (v == null) return 'text-(--ui-text-dimmed)'
   if (v >= 80) return 'text-rose-400'
   if (v >= 60) return 'text-amber-400'
   return 'text-(--ui-text)'
-}
-
-function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: number | null }): boolean {
-  return n.cpu == null && n.ram == null && n.uptimeSec == null
 }
 </script>
 
@@ -53,8 +52,11 @@ function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: numbe
         v-for="n in sortedNodes"
         :key="n.tag"
         class="relative rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5"
+        :class="{ 'node-warn': n.state === 'warning' }"
       >
-        <div :class="isOffline(n) ? 'opacity-30' : ''">
+        <!-- warning: метрики устарели ≥15с (нода потеряла связь, трафик уже
+             увёл watchdog) — весь текст карточки красный. offline ≥3мин. -->
+        <div :class="n.state === 'offline' ? 'opacity-30' : ''">
           <div class="flex items-center justify-between text-xs mb-2">
             <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
             <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
@@ -93,7 +95,7 @@ function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: numbe
           </svg>
         </div>
         <div
-          v-if="isOffline(n)"
+          v-if="n.state === 'offline'"
           class="absolute inset-0 flex items-center justify-center pointer-events-none"
         >
           <span class="font-black text-red-600 text-xl tracking-wider">ОФФЛАЙН</span>
@@ -102,3 +104,11 @@ function isOffline(n: { cpu: number | null, ram: number | null, uptimeSec: numbe
     </div>
   </UCard>
 </template>
+
+<style scoped>
+/* warning-нода: весь текст и спарклайн карточки — красные */
+.node-warn,
+.node-warn :deep(*) {
+  color: rgb(239 68 68) !important;
+}
+</style>

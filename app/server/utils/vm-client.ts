@@ -20,6 +20,10 @@ export interface NodeMetrics {
   rxBps: number | null
   txBps: number | null
   uptimeSec: number | null
+  // Возраст последнего сэмпла метрик ноды, сек. null — данных нет вовсе.
+  // Драйвит индикацию online/warning/offline (НЕ хранится в holdover —
+  // нужен реальный возраст, иначе мёртвая нода вечно «свежая»).
+  staleSec: number | null
 }
 
 const PROMQL = {
@@ -28,6 +32,8 @@ const PROMQL = {
   rx: 'sum by(instance) (irate(node_network_receive_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
   tx: 'sum by(instance) (irate(node_network_transmit_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
   uptime: 'node_time_seconds - node_boot_time_seconds',
+  // Возраст последнего сэмпла: time() минус метка времени метрики.
+  stale: 'time() - timestamp(node_time_seconds)',
 }
 
 // holdover[instance][metricKey] = last successful value
@@ -86,12 +92,13 @@ function withHoldover(
 }
 
 export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics[]> {
-  const [cpu, ram, rx, tx, uptime] = await Promise.all([
+  const [cpu, ram, rx, tx, uptime, stale] = await Promise.all([
     instantQuery(PROMQL.cpu),
     instantQuery(PROMQL.ram),
     instantQuery(PROMQL.rx),
     instantQuery(PROMQL.tx),
     instantQuery(PROMQL.uptime),
+    instantQuery(PROMQL.stale),
   ])
 
   const cpuH = withHoldover(cpu, instances, 'cpu')
@@ -107,6 +114,8 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
     rxBps: rxH.get(inst) ?? null,
     txBps: txH.get(inst) ?? null,
     uptimeSec: upH.get(inst) ?? null,
+    // staleSec — БЕЗ holdover: реальный возраст последнего сэмпла.
+    staleSec: stale.get(inst) ?? null,
   }))
 }
 

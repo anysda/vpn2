@@ -7,6 +7,23 @@ export interface NodeMetric {
   rxMbps: number | null
   txMbps: number | null
   uptimeSec: number | null
+  // возраст последних метрик ноды, сек (null — данных нет)
+  staleSec: number | null
+}
+
+export type NodeState = 'online' | 'warning' | 'offline'
+
+// Метрики скрейпятся раз в 5с. Здоровая нода — staleSec ~0-7с.
+// warning: метрики не обновляются ≥15с — нода потеряла связь (трафик уже
+//          увёл watchdog), но ещё не офлайн → карточку красим красным.
+// offline: ≥3 мин без метрик.
+const WARN_AFTER_SEC = 15
+const OFFLINE_AFTER_SEC = 180
+
+export function nodeState(staleSec: number | null | undefined): NodeState {
+  if (staleSec == null || staleSec >= OFFLINE_AFTER_SEC) return 'offline'
+  if (staleSec >= WARN_AFTER_SEC) return 'warning'
+  return 'online'
 }
 
 export interface OutboundMetric {

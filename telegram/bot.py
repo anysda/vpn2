@@ -3,13 +3,15 @@
 anysda-vpn Telegram bot.
 
 Commands:
-  /status   — system overview (servers + outbounds RTT)
+  /status   — system overview (nodes CPU/RAM + outbounds RTT)
   /nodes    — per-exit-node RTT
   /clients  — WG client list
 
-Background: monitors outbound health every 60 s.
-  Sends alert if RTT=0 for ≥3 consecutive checks (~3 min).
-  Clears alert when node recovers.
+Background monitor (every ALERT_INTERVAL_SEC, default 30 s):
+  - alerts when a node's metrics go stale for > ALERT_NODE_DOWN_SEC
+    (default 5 min) — i.e. the node/VM is down;
+  - alerts on high CPU / RAM.
+  Each alert is cleared when the node recovers.
 
 Listens on TGBOT_EVENT_PORT for events from Nuxt:
   POST /event  {"type": "client_created", "name": "..."}
@@ -135,16 +137,31 @@ async def tg_edit(chat_id: int, message_id: int, text: str, parse_mode: str | No
     r = await _tg.post('/editMessageText', json=payload, timeout=20)
     return r.json()
 
-# Down-count tracking per outbound tag
-_down: dict[str, int] = {}
-_alerted: set[str] = set()
+# Счётчики «нода лежит» — по tag ноды: сколько проверок подряд она down
+# и для каких уже отправлен алерт (чтобы не спамить).
+_node_down: dict[str, int] = {}
+_node_alerted: set[str] = set()
 
 
 async def api_status() -> dict:
     headers = {'Authorization': f'Bearer {SECRET}'} if SECRET else {}
-    r = await _local.get('/api/ops/bot', headers=headers)
+    r = await _local.get('/api/ops/bot-snapshot', headers=headers)
     r.raise_for_status()
     return r.json()
+
+
+def _ob_label(name: str) -> str:
+    """hy2-us-direct → US, hy2-de-warp → DE WARP."""
+    s = name[4:] if name.startswith('hy2-') else name
+    if s.endswith('-warp'):
+        return s[:-5].upper() + ' WARP'
+    if s.endswith('-direct'):
+        return s[:-7].upper()
+    return s.upper()
+
+
+def _pct(v) -> str:
+    return f'{v:.0f}%' if isinstance(v, (int, float)) else '—'
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
@@ -163,18 +180,21 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def build_status_text(header: str = '*Состояние системы*') -> str:
     data = await api_status()
     lines = [header + '\n']
-    for s in data.get('servers', []):
-        net = s.get('rxMbps', 0) + s.get('txMbps', 0)
+    for n in data.get('nodes', []):
+        net = (n.get('rxMbps') or 0) + (n.get('txMbps') or 0)
         lines.append(
-            f"🖥 *{s['tag'].upper()}*: CPU {s['cpuPct']:.0f}%"
-            f" | RAM {s['ramPct']:.0f}%"
+            f"🖥 *{n.get('tag', '?').upper()}*: CPU {_pct(n.get('cpu'))}"
+            f" | RAM {_pct(n.get('ram'))}"
             f" | ↕ {net:.1f} Mbps"
         )
     lines.append('')
     for o in data.get('outbounds', []):
-        icon = '🟢' if o['status'] == 'up' else '🔴'
-        kbps = o.get('throughputKbps', 0)
-        lines.append(f"{icon} `{o['label']}`: {o['rttMs']} ms | {kbps} Kbps")
+        if o.get('name') == 'direct-ru':
+            continue
+        rtt = o.get('rttMs')
+        icon = '🟢' if rtt else '🔴'
+        rtt_txt = f'{rtt} ms' if rtt else 'нет связи'
+        lines.append(f"{icon} `{_ob_label(o.get('name', '?'))}`: {rtt_txt}")
     return '\n'.join(lines)
 
 
@@ -191,10 +211,12 @@ async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         data = await api_status()
         lines = ['*Exit-ноды*\n']
         for o in data.get('outbounds', []):
-            if o['tag'] == 'direct-ru':
+            if o.get('name') == 'direct-ru':
                 continue
-            icon = '🟢' if o['status'] == 'up' else '🔴'
-            lines.append(f"{icon} `{o['label']}`: {o['rttMs']} ms")
+            rtt = o.get('rttMs')
+            icon = '🟢' if rtt else '🔴'
+            rtt_txt = f'{rtt} ms' if rtt else 'нет связи'
+            lines.append(f"{icon} `{_ob_label(o.get('name', '?'))}`: {rtt_txt}")
         await tg_reply(
             update,
             '\n'.join(lines) if len(lines) > 1 else 'Нет нод',
@@ -227,12 +249,15 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 # Алерты: проверки каждые MONITOR_INTERVAL сек, ALERT_HITS подряд = триггер.
 # Снятие — когда метрика опускается ниже (порог - HYSTERESIS).
-# По умолчанию: 30с * 2 = ~60с до алерта.
+# По умолчанию: 30с * 2 = ~60с до CPU/RAM-алерта.
 MONITOR_INTERVAL = int(os.environ.get('ALERT_INTERVAL_SEC', '30'))
 ALERT_HITS       = int(os.environ.get('ALERT_HITS',         '2'))
 CPU_HIGH = float(os.environ.get('ALERT_CPU_PCT', '80'))
 RAM_HIGH = float(os.environ.get('ALERT_RAM_PCT', '80'))
 HYSTERESIS = 10.0
+# Нода считается «лежит», когда её метрики устарели больше чем на столько
+# секунд (или их нет вовсе). По умолчанию 5 минут.
+NODE_DOWN_SEC = int(os.environ.get('ALERT_NODE_DOWN_SEC', '300'))
 
 _load_hits: dict[str, int] = {}     # key = f'{tag}:cpu' / f'{tag}:ram'
 _load_alerted: set[str] = set()
@@ -269,40 +294,47 @@ async def monitor_loop(app: Application) -> None:
         await asyncio.sleep(MONITOR_INTERVAL)
         try:
             data = await api_status()
+            nodes = data.get('nodes', [])
 
-            # Outbound up/down
-            for o in data.get('outbounds', []):
-                tag = o['tag']
-                if tag == 'direct-ru':
-                    continue
-                label = o.get('label', tag)
-                if o['status'] == 'down':
-                    _down[tag] = _down.get(tag, 0) + 1
-                    if _down[tag] >= ALERT_HITS and tag not in _alerted:
-                        _alerted.add(tag)
+            # Нода лежит: метрики устарели > NODE_DOWN_SEC (или их нет вовсе —
+            # staleSec=None, VM уже не отдаёт серию). staleSec — реальный
+            # возраст последнего сэмпла node_exporter. ALERT_HITS подряд —
+            # отсекаем кратковременный рестарт VM, когда staleSec мигает в None.
+            for n in nodes:
+                tag = n.get('tag', '?')
+                stale = n.get('staleSec')
+                down = stale is None or stale >= NODE_DOWN_SEC
+                if down:
+                    _node_down[tag] = _node_down.get(tag, 0) + 1
+                    if _node_down[tag] >= ALERT_HITS and tag not in _node_alerted:
+                        _node_alerted.add(tag)
+                        log.info('ALERT: нода %s лежит — отправляю алерт', tag)
                         await tg_send(
                             CHAT_ID,
-                            f'🔴 *Нода {label} недоступна* '
-                            f'(порог {ALERT_HITS}× по {MONITOR_INTERVAL}с)',
+                            f'🔴 *Нода {tag.upper()} лежит* — '
+                            f'метрик нет больше {NODE_DOWN_SEC // 60} мин',
                             'Markdown',
                         )
                 else:
-                    if tag in _alerted:
-                        _alerted.discard(tag)
+                    if tag in _node_alerted:
+                        _node_alerted.discard(tag)
+                        log.info('нода %s восстановилась — отправляю алерт', tag)
                         await tg_send(
                             CHAT_ID,
-                            f'🟢 *Нода {label} восстановлена*',
+                            f'🟢 *Нода {tag.upper()} восстановилась*',
                             'Markdown',
                         )
-                    _down[tag] = 0
+                    _node_down[tag] = 0
 
             # CPU / RAM на каждой ноде
-            for s in data.get('servers', []):
-                tag = s.get('tag', '?')
-                cpu = float(s.get('cpuPct', 0))
-                ram = float(s.get('ramPct', 0))
-                await _check_load(tag, 'cpu', cpu, CPU_HIGH, 'CPU')
-                await _check_load(tag, 'ram', ram, RAM_HIGH, 'RAM')
+            for n in nodes:
+                tag = n.get('tag', '?')
+                cpu = n.get('cpu')
+                ram = n.get('ram')
+                if isinstance(cpu, (int, float)):
+                    await _check_load(tag, 'cpu', float(cpu), CPU_HIGH, 'CPU')
+                if isinstance(ram, (int, float)):
+                    await _check_load(tag, 'ram', float(ram), RAM_HIGH, 'RAM')
         except Exception as e:
             log.warning('monitor error: %s', e)
 

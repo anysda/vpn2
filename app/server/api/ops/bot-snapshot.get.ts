@@ -40,6 +40,8 @@ export default defineEventHandler(async (event) => {
     rxMbps: nodes[i]?.rxBps != null ? nodes[i]!.rxBps! * 8 / 1e6 : null,
     txMbps: nodes[i]?.txBps != null ? nodes[i]!.txBps! * 8 / 1e6 : null,
     uptimeSec: nodes[i]?.uptimeSec ?? null,
+    // возраст последних метрик ноды, сек — бот алертит при staleSec > 5 мин
+    staleSec: nodes[i]?.staleSec ?? null,
   }))
 
   const outboundsPayload = proxies

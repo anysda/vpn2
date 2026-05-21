@@ -151,6 +151,10 @@ cat > /etc/systemd/system/sing-box.service <<'EOF'
 Description=sing-box (anysda-vpn foreign exit)
 After=network-online.target nss-lookup.target
 Wants=network-online.target
+# StartLimitIntervalSec=0 — НИКОГДА не сдаваться: systemd по умолчанию
+# перестаёт рестартить после 5 крашей за 10с. Для экзита это смерти подобно —
+# отключаем лимит, sing-box рестартится всегда (RestartSec=5s пейсит).
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

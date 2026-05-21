@@ -110,6 +110,9 @@ cat > /etc/systemd/system/sing-box.service <<'EOF'
 Description=sing-box (anysda-vpn2 RU router)
 After=network-online.target nss-lookup.target
 Wants=network-online.target
+# StartLimitIntervalSec=0 — роутер обязан подниматься ВСЕГДА: убираем лимит
+# systemd «5 крашей за 10с → сдаться», иначе при краш-цикле весь VPN ляжет.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

@@ -19,6 +19,11 @@ sing-box urltest снимается с мёртвой ноды ~33с: он оп�
   INTERVAL          период опроса, сек              3
   PROBE_TIMEOUT_MS  таймаут delay-теста, мс         2000
   TOLERANCE_MS      порог переключения по латентности, мс  50
+  DEAD_AFTER        промахов пробы подряд до признания экзита мёртвым  2
+
+Анти-флап: одиночный транзиентный промах delay-пробы (QUIC-потеря, разовый
+таймаут) НЕ вызывает переключение — экзит признаётся мёртвым только после
+DEAD_AFTER промахов подряд.
 """
 import json
 import os
@@ -37,6 +42,10 @@ PROBE_URL  = os.environ.get('PROBE_URL', 'http://www.gstatic.com/generate_204')
 INTERVAL   = float(os.environ.get('INTERVAL', '3'))
 TIMEOUT_MS = int(os.environ.get('PROBE_TIMEOUT_MS', '2000'))
 TOLERANCE  = int(os.environ.get('TOLERANCE_MS', '50'))
+# дебаунс: экзит мёртв только после DEAD_AFTER промахов пробы ПОДРЯД —
+# одиночный транзиентный промах не дёргает selector (анти-флап).
+DEAD_AFTER = int(os.environ.get('DEAD_AFTER', '2'))
+_fail: dict = {}  # member -> счётчик промахов пробы подряд
 
 
 def _req(method, path, body=None):
@@ -77,17 +86,33 @@ def tick():
     for t in threads:
         t.join()
 
+    # счётчики промахов подряд (дебаунс)
+    for m in members:
+        _fail[m] = 0 if delays.get(m) is not None else _fail.get(m, 0) + 1
+    for m in list(_fail):
+        if m not in members:
+            del _fail[m]
+
     alive = {m: d for m, d in delays.items() if d is not None}
     if not alive:
         print('все экзиты не отвечают — выбор не трогаю', flush=True)
         return
 
     best = min(alive, key=alive.get)
-    # текущий жив и не медленнее лучшего больше чем на TOLERANCE — оставляем
-    if now in alive and alive[best] + TOLERANCE >= alive[now]:
-        return
 
-    reason = 'мёртв' if now not in alive else f'{alive[now]}ms'
+    if now in alive:
+        # текущий отвечает — переключаемся лишь если best заметно быстрее
+        if alive[best] + TOLERANCE >= alive[now]:
+            return
+        reason = f'{alive[now]}ms медленнее'
+    else:
+        # текущий не ответил — ждём DEAD_AFTER промахов подряд (анти-флап)
+        if _fail.get(now, 0) < DEAD_AFTER:
+            print(f'{now}: промах пробы {_fail.get(now, 0)}/{DEAD_AFTER} '
+                  f'— жду подтверждения, selector не трогаю', flush=True)
+            return
+        reason = f'мёртв ({_fail.get(now, 0)}× подряд)'
+
     _req('PUT', f'/proxies/{urllib.parse.quote(GROUP)}', {'name': best})
     print(f'switch {now} ({reason}) -> {best} ({alive[best]}ms); alive={sorted(alive)}',
           flush=True)

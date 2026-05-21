@@ -136,7 +136,9 @@ dh none
 tls-crypt ${PKI}/tls-crypt.key
 crl-verify ${PKI}/crl.pem
 client-config-dir ${OVPN_DIR}/ccd
-keepalive 10 60
+# keepalive 5 30: пуш клиентам ping 5 / ping-restart 30 — детект мёртвого
+# entry за ~30с и быстрый реконнект (было 10/60 → ~62с простоя после ребута).
+keepalive 5 30
 cipher AES-256-GCM
 data-ciphers AES-256-GCM:CHACHA20-POLY1305
 auth SHA256

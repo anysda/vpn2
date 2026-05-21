@@ -13,11 +13,11 @@ export interface NodeMetric {
 
 export type NodeState = 'online' | 'warning' | 'offline'
 
-// Метрики скрейпятся раз в 5с. Здоровая нода — staleSec ~0-7с.
-// warning: метрики не обновляются ≥15с — нода потеряла связь (трафик уже
-//          увёл watchdog), но ещё не офлайн → карточку красим красным.
+// Метрики скрейпятся раз в 2с (VM latencyOffset 1с) — здоровая нода держит
+// staleSec ~0-3с. warning: метрики не обновляются ≥5с — нода потеряла связь
+//          (трафик уже увёл watchdog) → красим карточку красным почти сразу.
 // offline: ≥3 мин без метрик.
-const WARN_AFTER_SEC = 15
+const WARN_AFTER_SEC = 5
 const OFFLINE_AFTER_SEC = 180
 
 export function nodeState(staleSec: number | null | undefined): NodeState {

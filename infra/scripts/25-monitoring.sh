@@ -39,7 +39,8 @@ fi
 mkdir -p /etc/anysda /var/lib/vmsingle
 
 {
-  printf 'global:\n  scrape_interval: 5s\n  scrape_timeout: 4s\n\n'
+  # 2s scrape — чтобы потерю ноды замечать за ~5с, а не за полминуты.
+  printf 'global:\n  scrape_interval: 2s\n  scrape_timeout: 1s\n\n'
   printf 'scrape_configs:\n  - job_name: node\n    static_configs:\n'
   printf "      - targets: ['%s:9100']\n        labels: { host: ru }\n" "$MGMT_IP_RU"
   for _t in $EXIT_TAGS; do
@@ -59,6 +60,8 @@ grep 'targets:' /etc/anysda/vmsingle-scrape.yml | sed "s/^/[$HOST_TAG]   /"
 
 # ----------------------------------------------------------------------------
 # 3. vmsingle container (idempotent recreate)
+# latencyOffset=1s: дефолт VM — 30с, инстант-запросы тогда смотрят на now-30с
+# и панель видит метрики с задержкой полминуты (мёртвая нода «живёт» ~40с).
 # ----------------------------------------------------------------------------
 docker rm -f vmsingle >/dev/null 2>&1 || true
 docker run -d \
@@ -72,6 +75,7 @@ docker run -d \
   -storageDataPath=/storage \
   -httpListenAddr=127.0.0.1:8428 \
   -retentionPeriod=7d \
+  -search.latencyOffset=1s \
   -promscrape.config=/etc/vm/scrape.yml \
   >/dev/null
 

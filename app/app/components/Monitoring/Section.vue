@@ -54,7 +54,7 @@ function loadColor(v: number | null): string {
         class="relative rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5"
         :class="{ 'node-warn': n.state === 'warning' }"
       >
-        <!-- warning: метрики устарели ≥15с (нода потеряла связь, трафик уже
+        <!-- warning: метрики устарели ≥5с (нода потеряла связь, трафик уже
              увёл watchdog) — весь текст карточки красный. offline ≥3мин. -->
         <div :class="n.state === 'offline' ? 'opacity-30' : ''">
           <div class="flex items-center justify-between text-xs mb-2">

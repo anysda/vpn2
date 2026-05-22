@@ -122,11 +122,6 @@ useVisibleRefresh(refresh)
           placeholder="@username"
           class="w-full font-mono text-xs"
         />
-        <template #help>
-          <span class="text-xs text-(--ui-text-muted)">
-            Бот укажет его людям без доступа — «напишите администратору».
-          </span>
-        </template>
       </UFormField>
 
       <div class="flex justify-end">

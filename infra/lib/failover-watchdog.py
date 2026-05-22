@@ -25,9 +25,15 @@ type=selector (см. gen-router-config.py) — управляется через
   PROBE_URL         URL для delay-теста             http://www.gstatic.com/generate_204
   INTERVAL          период опроса, сек              2
   PROBE_TIMEOUT_MS  таймаут delay-теста, мс         1500
-  TOLERANCE_MS      порог переключения по латентности, мс  50
+  TOLERANCE_MS      порог переключения по латентности, мс  120
   DEAD_AFTER        промахов подряд до признания экзита мёртвым  2
   CONFIRM_GAP       зазор между до-проверками, сек  0.4
+  LATENCY_HOLD      тиков подряд с преимуществом до switch-по-латентности  4
+
+Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
+вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
+происходит лишь когда один и тот же экзит лучше текущего на >TOLERANCE
+LATENCY_HOLD тиков ПОДРЯД. Смерть экзита по-прежнему переключает сразу.
 """
 import json
 import os
@@ -45,10 +51,15 @@ GROUP       = os.environ.get('WATCH_GROUP', 'foreign-best')
 PROBE_URL   = os.environ.get('PROBE_URL', 'http://www.gstatic.com/generate_204')
 INTERVAL    = float(os.environ.get('INTERVAL', '2'))
 TIMEOUT_MS  = int(os.environ.get('PROBE_TIMEOUT_MS', '1500'))
-TOLERANCE   = int(os.environ.get('TOLERANCE_MS', '50'))
+TOLERANCE   = int(os.environ.get('TOLERANCE_MS', '120'))
 # анти-флап: экзит мёртв только после DEAD_AFTER промахов ПОДРЯД.
 DEAD_AFTER  = int(os.environ.get('DEAD_AFTER', '2'))
 CONFIRM_GAP = float(os.environ.get('CONFIRM_GAP', '0.4'))
+# анти-флап по латентности: switch-по-скорости лишь после LATENCY_HOLD
+# тиков подряд с устойчивым преимуществом одного и того же экзита.
+LATENCY_HOLD = int(os.environ.get('LATENCY_HOLD', '4'))
+_lat_cand: str = ''   # экзит-кандидат на switch-по-латентности
+_lat_streak = 0       # сколько тиков подряд он держит преимущество
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -115,11 +126,22 @@ def tick():
         return
     best = min(alive, key=alive.get)
 
+    global _lat_cand, _lat_streak
     if now in alive:
-        # текущий жив — переключаемся лишь если best заметно быстрее
-        if alive[best] + TOLERANCE < alive[now]:
-            _switch(best, alive[best], f'{alive[now]}ms медленнее')
+        # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
+        # один и тот же экзит лучше на >TOLERANCE LATENCY_HOLD тиков подряд
+        # (анти-флап — замеры delay через QUIC шумят).
+        if best != now and alive[best] + TOLERANCE < alive[now]:
+            _lat_streak = _lat_streak + 1 if best == _lat_cand else 1
+            _lat_cand = best
+            if _lat_streak >= LATENCY_HOLD:
+                _switch(best, alive[best],
+                        f'{alive[now]}ms медленнее, устойчиво ×{_lat_streak}')
+                _lat_cand, _lat_streak = '', 0
+        else:
+            _lat_cand, _lat_streak = '', 0
         return
+    _lat_cand, _lat_streak = '', 0   # текущий не ответил — копилку латентности сбросить
 
     if now not in members:
         # выбора нет / он не из группы — просто берём лучший
@@ -146,7 +168,8 @@ def main():
         sys.exit(1)
     print(f'failover-watchdog: group={GROUP} interval={INTERVAL}s '
           f'probe_timeout={TIMEOUT_MS}ms dead_after={DEAD_AFTER} '
-          f'tolerance={TOLERANCE}ms api={CLASH}', flush=True)
+          f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} api={CLASH}',
+          flush=True)
     while True:
         try:
             tick()

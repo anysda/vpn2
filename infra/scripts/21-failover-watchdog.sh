@@ -46,9 +46,10 @@ WATCH_GROUP=foreign-best
 PROBE_URL=http://www.gstatic.com/generate_204
 INTERVAL=2
 PROBE_TIMEOUT_MS=1500
-TOLERANCE_MS=50
+TOLERANCE_MS=120
 DEAD_AFTER=2
 CONFIRM_GAP=0.4
+LATENCY_HOLD=4
 EOF
 chmod 600 /etc/anysda/failover-watchdog.env
 

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
-: "${HOST_TAG:?}" "${ENTRY_HOST:?}" "${SS_PORT:?}" "${SS_CIPHER:?}" "${AGH_PORT:?}"
+: "${HOST_TAG:?}" "${ENTRY_HOST:?}" "${AGH_PORT:?}"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 30-frontend is ru-only — skipping"; exit 0;; esac
 
@@ -55,7 +55,6 @@ SESSION_SECRET=$(cat /etc/anysda/session-secret.txt)
 
 echo "[$HOST_TAG]   admin user:  $ADMIN_USER"
 echo "[$HOST_TAG]   admin pass:  $ADMIN_PASS"
-echo "[$HOST_TAG]   ss endpoint: ${ENTRY_HOST}:${SS_PORT} (${SS_CIPHER})"
 
 # ----------------------------------------------------------------------------
 # 3. Caddy (reverse-proxy + optional LE)
@@ -113,8 +112,8 @@ caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
 echo "[$HOST_TAG] [4/4] run container"
 docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 
-# host networking — panel needs to write SS config + SIGHUP outline-ss-server.
-# NET_ADMIN is enough; no SYS_MODULE, no /etc/wireguard mount.
+# host networking — panel manages WG/OpenVPN configs and talks to sing-box
+# clash-api. NET_ADMIN is enough; no SYS_MODULE.
 docker run -d \
   --name anysda-vpn2 \
   --restart unless-stopped \
@@ -124,7 +123,6 @@ docker run -d \
   --cap-add NET_ADMIN \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
-  -v /etc/outline-ss-server:/etc/outline-ss-server \
   -v /etc/wireguard:/etc/wireguard \
   -v /etc/openvpn:/etc/openvpn \
   -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
@@ -135,10 +133,6 @@ docker run -d \
   -e NUXT_SESSION_COOKIE_SECURE="$([[ -n "${PANEL_DOMAIN:-}" ]] && echo true || echo false)" \
   -e NUXT_DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
   -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
-  -e NUXT_SS_CONFIG_PATH=/etc/outline-ss-server/config.yml \
-  -e NUXT_SS_PORT="${SS_PORT}" \
-  -e NUXT_SS_CIPHER="${SS_CIPHER}" \
-  -e NUXT_SS_PUBLIC_HOST="${ENTRY_HOST}" \
   -e NUXT_WG_ENABLED=true \
   -e NUXT_WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}" \
   -e NUXT_WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}" \
@@ -175,10 +169,6 @@ docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}
 echo "[$HOST_TAG] /api/version:"
 curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | sed "s/^/[$HOST_TAG]   /"
 
-# Refresh anysda-iptables after the panel writes initial SS config (the user
-# `outline` already exists from stage 27; iptables rules are safe to refresh).
-systemctl restart anysda-iptables >/dev/null 2>&1 || true
-
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"
 echo "[$HOST_TAG] $STAGE done"
@@ -190,5 +180,4 @@ else
   echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
 fi
 echo "[$HOST_TAG]  Логин:         $ADMIN_USER / $ADMIN_PASS"
-echo "[$HOST_TAG]  SS-сервер:     ${ENTRY_HOST}:${SS_PORT} (${SS_CIPHER})"
 echo "[$HOST_TAG] -------------------------------------------------------------"

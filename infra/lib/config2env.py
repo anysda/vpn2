@@ -128,11 +128,6 @@ def main():
     entry_host = entry['host']
 
     # Дефолтные порты
-    # SS-порт по умолчанию НЕ 443: на 443 DPI режет Shadowsocks жёстко (там
-    # ожидается TLS). Не-443 порт — лучше, но плейн-Shadowsocks всё равно
-    # DPI-детектируется. См. config.example.yaml.
-    ss_port    = ports.get('shadowsocks', ports.get('wireguard', '28443'))  # legacy wg key fallback
-    ss_cipher  = ports.get('shadowsocks_cipher', 'chacha20-ietf-poly1305')
     hy2_direct = ports.get('hy2_direct', '443')
     hy2_warp   = ports.get('hy2_warp',   '8443')
     mgmt_port  = ports.get('mgmt',       '51900')
@@ -150,9 +145,6 @@ def main():
         '',
         f'MGMT_NET=10.99.0.0/24',
         f'MGMT_PORT={mgmt_port}',
-        '',
-        f'SS_PORT={ss_port}',
-        f'SS_CIPHER={ss_cipher}',
         '',
         f'AGH_PORT=3000',
         '',

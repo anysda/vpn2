@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Stage 20 — sing-box роутер на RU-ноде.
-# Заворачивает исходящий трафик outline-ss-server'а (user `outline`) в sing-box
-# через iptables REDIRECT (TCP) и fwmark+TPROXY (UDP). Sing-box роутит по
-# geoip/geosite в hy2-туннели до exit-нод (см. gen-router-config.py).
-# Идемпотентен.
+# Поднимает sing-box: трафик клиентов (WG/OpenVPN, заведённый стадиями 28/29
+# в sing-box TPROXY :7898) роутится по geoip/geosite в hy2-туннели до
+# exit-нод (см. gen-router-config.py). Идемпотентен.
 
 set -euo pipefail
 
@@ -101,9 +100,24 @@ cp /etc/sing-box/config-base.json /etc/sing-box/config.json
 chmod 600 /etc/sing-box/config.json
 
 # ----------------------------------------------------------------------------
-# 5. systemd service + iptables (user-owner REDIRECT + fwmark TPROXY)
+# 5. systemd service для sing-box
 # ----------------------------------------------------------------------------
-echo "[$HOST_TAG] [5/6] systemd + iptables"
+echo "[$HOST_TAG] [5/6] sing-box service"
+
+# Очистка legacy Shadowsocks/Outline — SS выпилен из проекта. Снимаем
+# артефакты прошлых деплоев (стадия 27, anysda-iptables --uid-owner outline),
+# если они ещё остались на ноде. Идемпотентно: на чистой ноде — no-op.
+for _u in anysda-iptables outline-ss-server; do
+  if [[ -f "/etc/systemd/system/${_u}.service" ]]; then
+    echo "[$HOST_TAG]   снимаю legacy ${_u}.service"
+    systemctl disable --now "$_u" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${_u}.service"
+  fi
+done
+[[ -x /usr/local/sbin/anysda-iptables.sh ]] && /usr/local/sbin/anysda-iptables.sh down >/dev/null 2>&1 || true
+rm -f /usr/local/sbin/anysda-iptables.sh /usr/local/bin/outline-ss-server
+rm -rf /etc/outline-ss-server
+id outline >/dev/null 2>&1 && userdel outline >/dev/null 2>&1 || true
 
 cat > /etc/systemd/system/sing-box.service <<'EOF'
 [Unit]
@@ -140,115 +154,11 @@ systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 ufw allow proto tcp from 10.99.0.0/24 to any port 9090 comment 'sing-box clash-api mesh' >/dev/null 2>&1 || true
 ufw reload >/dev/null
 
+# route_localnet — нужен TPROXY WG/OpenVPN (--on-ip 127.0.0.1, стадии 28/29).
 cat > /etc/sysctl.d/99-anysda-vpn.conf <<'EOF'
 net.ipv4.conf.all.route_localnet=1
 EOF
 sysctl -p /etc/sysctl.d/99-anysda-vpn.conf >/dev/null
-
-cat > /etc/systemd/system/anysda-iptables.service <<'EOF'
-[Unit]
-Description=anysda-vpn2 — iptables rules for outline-ss-server -> sing-box redirect/tproxy
-After=network-online.target outline-ss-server.service sing-box.service
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/sbin/anysda-iptables.sh up
-ExecStop=/usr/local/sbin/anysda-iptables.sh down
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /usr/local/sbin/anysda-iptables.sh <<'IPTSEOF'
-#!/usr/bin/env bash
-# Catch outbound TCP/UDP from `outline` user → REDIRECT/TPROXY → sing-box.
-# Uses custom chains because nftables backend rejects multiple -d/! -d on
-# a single rule.
-set -euo pipefail
-ACTION=${1:-up}
-
-OWNER_USER='outline'
-REDIRECT_PORT=7895
-TPROXY_PORT=7896
-MARK=0x1
-TABLE=100
-
-PRIVATE_NETS=(
-  '127.0.0.0/8'
-  '10.0.0.0/8'
-  '172.16.0.0/12'
-  '192.168.0.0/16'
-  '169.254.0.0/16'
-  '224.0.0.0/4'
-)
-
-if [[ "$ACTION" == "up" ]]; then
-  sysctl -w net.ipv4.conf.all.route_localnet=1 >/dev/null
-
-  # ─── TCP custom chain in nat OUTPUT ───────────────────────────────────
-  iptables -t nat -N ANYSDA_OUTLINE_TCP 2>/dev/null || true
-  iptables -t nat -F ANYSDA_OUTLINE_TCP
-  for net in "${PRIVATE_NETS[@]}"; do
-    iptables -t nat -A ANYSDA_OUTLINE_TCP -d "$net" -j RETURN
-  done
-  iptables -t nat -A ANYSDA_OUTLINE_TCP -p tcp -j REDIRECT --to-port "$REDIRECT_PORT"
-
-  iptables -t nat -C OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP 2>/dev/null || \
-    iptables -t nat -A OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP
-
-  # ─── UDP custom chain in mangle OUTPUT (mark + route table trick) ─────
-  iptables -t mangle -N ANYSDA_OUTLINE_UDP 2>/dev/null || true
-  iptables -t mangle -F ANYSDA_OUTLINE_UDP
-  for net in "${PRIVATE_NETS[@]}"; do
-    iptables -t mangle -A ANYSDA_OUTLINE_UDP -d "$net" -j RETURN
-  done
-  iptables -t mangle -A ANYSDA_OUTLINE_UDP -p udp -j MARK --set-mark "$MARK"
-
-  iptables -t mangle -C OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP 2>/dev/null || \
-    iptables -t mangle -A OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP
-
-  ip rule list 2>/dev/null | grep -q "fwmark $MARK lookup $TABLE" || \
-    ip rule add fwmark "$MARK" lookup "$TABLE"
-  ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
-    ip route add local 0.0.0.0/0 dev lo table "$TABLE"
-
-  iptables -t mangle -C PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" 2>/dev/null || \
-    iptables -t mangle -A PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT"
-
-  iptables -C INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || \
-    iptables -I INPUT 1 -m mark --mark "${MARK}/${MARK}" -j ACCEPT
-
-  # Block external access to the redirect port — but ONLY from non-loopback.
-  # Redirected traffic from outline (uid-owner) lands here too, we must accept it.
-  iptables -C INPUT -p tcp --dport "$REDIRECT_PORT" ! -i lo -j REJECT 2>/dev/null || \
-    iptables -I INPUT 2 -p tcp --dport "$REDIRECT_PORT" ! -i lo -j REJECT
-
-  echo "anysda-iptables up (user=$OWNER_USER, redirect=$REDIRECT_PORT, tproxy=$TPROXY_PORT)"
-
-elif [[ "$ACTION" == "down" ]]; then
-  iptables -t nat -D OUTPUT -m owner --uid-owner "$OWNER_USER" -p tcp -j ANYSDA_OUTLINE_TCP 2>/dev/null || true
-  iptables -t nat -F ANYSDA_OUTLINE_TCP 2>/dev/null || true
-  iptables -t nat -X ANYSDA_OUTLINE_TCP 2>/dev/null || true
-
-  iptables -t mangle -D OUTPUT -m owner --uid-owner "$OWNER_USER" -p udp -j ANYSDA_OUTLINE_UDP 2>/dev/null || true
-  iptables -t mangle -F ANYSDA_OUTLINE_UDP 2>/dev/null || true
-  iptables -t mangle -X ANYSDA_OUTLINE_UDP 2>/dev/null || true
-
-  iptables -t mangle -D PREROUTING -m mark --mark "$MARK" -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" 2>/dev/null || true
-  iptables -D INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || true
-  iptables -D INPUT -p tcp --dport "$REDIRECT_PORT" -j REJECT 2>/dev/null || true
-  ip rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
-  ip route flush table "$TABLE" 2>/dev/null || true
-  echo "anysda-iptables down"
-fi
-IPTSEOF
-chmod +x /usr/local/sbin/anysda-iptables.sh
-
-systemctl daemon-reload
-systemctl enable anysda-iptables >/dev/null 2>&1
-systemctl restart anysda-iptables
 
 # ----------------------------------------------------------------------------
 # 6. Sing-box manual routes: host-side apply script + systemd.path watcher
@@ -336,10 +246,6 @@ systemctl start  anysda-apply-routes.path
 # Derive config.json = fresh config-base.json + current manual routes and
 # restart sing-box, so a re-run immediately reflects the regenerated base.
 /usr/local/sbin/anysda-apply-routes.py || true
-
-echo "[$HOST_TAG] iptables OUTPUT --uid-owner outline:"
-iptables -t nat -L OUTPUT -n -v --line-numbers | grep outline | sed "s/^/[$HOST_TAG]   /" || \
-  echo "[$HOST_TAG]   (no outline owner rules yet — will apply on next outline-ss-server restart)"
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

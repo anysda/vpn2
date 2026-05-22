@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   if (!cfg.wgEnabled) {
     throw createError({ statusCode: 503, statusMessage: 'WireGuard выключен' })
   }
-  const endpoint = String(cfg.wgPublicHost || cfg.ssPublicHost || '')
+  const endpoint = String(cfg.wgPublicHost || '')
   if (!endpoint) {
     throw createError({ statusCode: 500, statusMessage: 'wg_public_host_not_configured' })
   }

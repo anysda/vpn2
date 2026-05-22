@@ -1,6 +1,6 @@
-import { count, eq, gt, isNotNull, sql } from 'drizzle-orm'
+import { count, eq, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { clients, oneTimeLinks, routes } from '../database/schema'
+import { clients, routes } from '../database/schema'
 
 const startedAt = Date.now()
 
@@ -11,12 +11,10 @@ export default defineEventHandler(async (event) => {
   const [
     [enabledRow],
     [disabledRow],
-    [activeOtlRow],
     [routesRow],
   ] = await Promise.all([
     db.select({ n: count() }).from(clients).where(eq(clients.enabled, true)),
     db.select({ n: count() }).from(clients).where(eq(clients.enabled, false)),
-    db.select({ n: count() }).from(oneTimeLinks).where(gt(oneTimeLinks.expiresAt, now)),
     db.select({ n: count() }).from(routes),
   ])
 
@@ -30,7 +28,7 @@ export default defineEventHandler(async (event) => {
   const uptimeSec = (Date.now() - startedAt) / 1000
 
   const lines: string[] = [
-    '# HELP anysda_vpn2_clients_total Number of SS clients by enabled status',
+    '# HELP anysda_vpn2_clients_total Number of clients by enabled status',
     '# TYPE anysda_vpn2_clients_total gauge',
     `anysda_vpn2_clients_total{enabled="true"} ${enabledRow?.n ?? 0}`,
     `anysda_vpn2_clients_total{enabled="false"} ${disabledRow?.n ?? 0}`,
@@ -38,10 +36,6 @@ export default defineEventHandler(async (event) => {
     '# HELP anysda_vpn2_clients_expiring_7d Clients expiring within 7 days',
     '# TYPE anysda_vpn2_clients_expiring_7d gauge',
     `anysda_vpn2_clients_expiring_7d ${expiringRow?.n ?? 0}`,
-    '',
-    '# HELP anysda_vpn2_one_time_links_active One-time links not yet expired',
-    '# TYPE anysda_vpn2_one_time_links_active gauge',
-    `anysda_vpn2_one_time_links_active ${activeOtlRow?.n ?? 0}`,
     '',
     '# HELP anysda_vpn2_routes_total Manual routing rules in DB',
     '# TYPE anysda_vpn2_routes_total gauge',

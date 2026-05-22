@@ -65,14 +65,13 @@ case "$HOST_TAG" in
     else
       echo "[$HOST_TAG] sing-box:    неактивен (стадия 20 не применена)"
     fi
-    if systemctl is-active --quiet outline-ss-server 2>/dev/null; then
-      _sp="${SS_PORT:-443}"
-      echo "[$HOST_TAG] outline-ss:  active, listening:"
-      ss -ltn 2>/dev/null | awk -v p="$_sp" '$4 ~ ":"p"$" {print}' | sed "s/^/[$HOST_TAG]   /"
-      ss -lun 2>/dev/null | awk -v p="$_sp" '$5 ~ ":"p"$" {print}' | sed "s/^/[$HOST_TAG]   /"
-    else
-      echo "[$HOST_TAG] outline-ss:  неактивен (стадия 27 не применена)"
-    fi
+    for _svc in wg-quick@wg0 openvpn-server@server; do
+      if systemctl is-active --quiet "$_svc" 2>/dev/null; then
+        echo "[$HOST_TAG] ${_svc}: active"
+      else
+        echo "[$HOST_TAG] ${_svc}: неактивен"
+      fi
+    done
     ;;
   *)
     # Любая выходная нода

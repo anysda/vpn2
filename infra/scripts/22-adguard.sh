@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Stage 22 — AdGuard Home on RU server.
-# Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh).
-# DNS for SS-clients flows: client → outline-ss-server → DNS query intercepted
-# by iptables OUTPUT --uid-owner outline → sing-box DNS resolver. AdGuard is
-# AVAILABLE on loopback if sing-box config is later wired to upstream it.
+# Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh). WG/OpenVPN-клиенты
+# резолвят через него (см. ufw-правила → 10.99.0.1:53 в стадиях 28/29);
+# sing-box тоже использует его как DNS-резолвер (gen-router-config.py).
 # Web UI on 127.0.0.1:${AGH_PORT} — proxied by Caddy at :3001 (stage 30).
 
 set -euo pipefail

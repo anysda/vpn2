@@ -10,8 +10,8 @@ const execFileP = promisify(execFile)
 /**
  * Накопительный сборщик трафика по всем протоколам.
  *
- * Каждый прогон снимает текущие байт-счётчики SS / WireGuard / OpenVPN,
- * считает дельту относительно прошлого снимка и прибавляет её к
+ * Каждый прогон снимает текущие байт-счётчики WireGuard / OpenVPN, считает
+ * дельту относительно прошлого снимка и прибавляет её к
  * clients.rx_total / tx_total в БД. Итог переживает рестарты сервисов.
  *
  * Прошлый снимок держится в памяти процесса (`lastSeen`). При рестарте
@@ -24,39 +24,6 @@ const execFileP = promisify(execFile)
 const lastSeen = new Map<string, { rx: number, tx: number }>()
 
 interface Sample { clientId: number, proto: string, rx: number, tx: number }
-
-/**
- * SS: outline-ss-server Prometheus. Метки dir:
- *   c<p — байты client←proxy = download клиента (rx)
- *   c>p — байты client→proxy = upload клиента (tx)
- *   p<t / p>t — плечо proxy↔target, не клиентское, игнорируем.
- */
-async function sampleSs(): Promise<Sample[]> {
-  const url = String(useRuntimeConfig().ssPrometheusUrl ?? 'http://127.0.0.1:9091')
-  let text: string
-  try {
-    text = await $fetch<string>(`${url}/metrics`, { timeout: 2500, responseType: 'text' })
-  }
-  catch {
-    return []
-  }
-  const acc = new Map<number, { rx: number, tx: number }>()
-  const re = /shadowsocks_data_bytes(?:_per_location)?\{([^}]+)\}\s+([0-9eE.+-]+)/g
-  let m: RegExpExecArray | null
-  while ((m = re.exec(text)) !== null) {
-    const value = Number(m[2])
-    if (!Number.isFinite(value)) continue
-    const ak = m[1]!.match(/access_key="client_(\d+)"/)
-    const dir = m[1]!.match(/dir="([^"]+)"/)
-    if (!ak || !dir) continue
-    const id = Number(ak[1])
-    const slot = acc.get(id) ?? { rx: 0, tx: 0 }
-    if (dir[1] === 'c>p') slot.tx += value
-    else if (dir[1] === 'c<p') slot.rx += value
-    acc.set(id, slot)
-  }
-  return [...acc].map(([clientId, v]) => ({ clientId, proto: 'ss', rx: v.rx, tx: v.tx }))
-}
 
 /** WireGuard: `wg show wg0 transfer` → "<pubkey>\t<rx>\t<tx>" (со стороны сервера). */
 async function sampleWg(clientByPubkey: Map<string, number>): Promise<Sample[]> {
@@ -112,12 +79,11 @@ export async function collectTraffic(): Promise<void> {
   const clientByPubkey = new Map<string, number>()
   for (const r of rows) if (r.pk) clientByPubkey.set(r.pk, r.id)
 
-  const [ss, wg, ovpn] = await Promise.all([
-    sampleSs(),
+  const [wg, ovpn] = await Promise.all([
     sampleWg(clientByPubkey),
     sampleOvpn(),
   ])
-  const samples = [...ss, ...wg, ...ovpn]
+  const samples = [...wg, ...ovpn]
 
   // дельты по клиенту
   const deltas = new Map<number, { rx: number, tx: number }>()
@@ -147,7 +113,7 @@ export async function collectTraffic(): Promise<void> {
   }
 
   log.info(
-    { ss: ss.length, wg: wg.length, ovpn: ovpn.length, updated: deltas.size },
+    { wg: wg.length, ovpn: ovpn.length, updated: deltas.size },
     'traffic: collected',
   )
 }

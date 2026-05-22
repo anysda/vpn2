@@ -4,11 +4,10 @@ import { requireAuth } from '../../utils/auth'
 
 /**
  * Накопительный трафик по клиентам — суммарно за всё время по всем
- * протоколам (Shadowsocks + WireGuard + OpenVPN).
+ * протоколам (WireGuard + OpenVPN).
  *
  * Источник — колонки clients.rx_total / tx_total, которые наполняет фоновый
  * сборщик (server/utils/traffic-collector.ts, вызывается из cron-плагина).
- * Поэтому трафик виден у всех клиентов, а не только подключённых по Outline.
  *
  * Returns { [clientId]: { rxBytes, txBytes } }.
  */

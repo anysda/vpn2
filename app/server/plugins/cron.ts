@@ -1,11 +1,10 @@
 import { and, eq, isNotNull, lt } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { clients, oneTimeLinks } from '../database/schema'
-import { syncShadowsocksConfig } from '../utils/shadowsocks'
+import { clients } from '../database/schema'
+import { syncWireguardConfig } from '../utils/wireguard'
 import { collectTraffic } from '../utils/traffic-collector'
 
 const INTERVAL_MS = 60_000
-const OTL_GRACE_MS = 60_000
 
 export default defineNitroPlugin(() => {
   const log = useLogger()
@@ -24,22 +23,12 @@ export default defineNitroPlugin(() => {
 
     if (expired.length > 0) {
       log.info({ count: expired.length }, 'cron: clients expired')
-      await syncShadowsocksConfig().catch(err =>
-        log.error({ err }, 'cron: ss sync after expire failed'),
+      await syncWireguardConfig().catch(err =>
+        log.error({ err }, 'cron: wg sync after expire failed'),
       )
     }
 
-    const cleanupThreshold = new Date(now.getTime() - OTL_GRACE_MS)
-    const deleted = await db
-      .delete(oneTimeLinks)
-      .where(lt(oneTimeLinks.expiresAt, cleanupThreshold))
-      .returning({ id: oneTimeLinks.id })
-
-    if (deleted.length > 0) {
-      log.debug({ count: deleted.length }, 'cron: OTLs cleaned')
-    }
-
-    // Накопительный трафик по всем протоколам (SS+WG+OpenVPN).
+    // Накопительный трафик по всем протоколам (WG+OpenVPN).
     await collectTraffic().catch(err =>
       log.error({ err }, 'cron: traffic collection failed'),
     )

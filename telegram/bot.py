@@ -358,14 +358,6 @@ async def handle_event(request: web.Request) -> web.Response:
                 'Markdown',
             )
         )
-    elif evt == 'client_send_config':
-        name = data.get('name', '?')
-        ss_url = data.get('ssUrl', '')
-        if ss_url:
-            # Outline: ключ текстом без QR, подпись под ключом.
-            asyncio.create_task(tg_send(
-                CHAT_ID, f'`{ss_url}`\n\n*{name}* — Outline', 'Markdown',
-            ))
     elif evt == 'client_send_wireguard':
         name = data.get('name', '?')
         conf = data.get('conf', '')

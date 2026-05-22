@@ -42,7 +42,6 @@ const ConfigSchema = z.object({
     .optional(),
   ports: z
     .object({
-      shadowsocks: z.number().optional(),
       hy2_direct: z.number().optional(),
       hy2_warp: z.number().optional(),
       mgmt: z.number().optional(),

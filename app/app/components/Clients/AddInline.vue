@@ -102,7 +102,7 @@ function reset() {
       <UFormField label="Имя">
         <UInput
           v-model="name"
-          placeholder="напр. Dima"
+          placeholder="Иван Иванов"
           autofocus
           class="w-full"
         />
@@ -110,11 +110,7 @@ function reset() {
 
       <div class="grid grid-cols-2 gap-2">
         <UFormField label="Срок действия">
-          <UInput
-            v-model="expiresAt"
-            placeholder="ДД.ММ.ГГГГ"
-            class="w-full"
-          />
+          <DateInput v-model="expiresAt" class="w-full" />
         </UFormField>
         <UFormField label="Лимит девайсов">
           <div class="flex gap-1">

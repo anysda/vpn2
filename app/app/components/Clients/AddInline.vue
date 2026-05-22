@@ -8,6 +8,9 @@ const toast = useToast()
 
 const DEFAULT_DEVICE_LIMIT = 3
 
+// Минимальная дата истечения — завтра (раньше ставить нельзя).
+const minExpiry = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+
 const open = ref(false)
 const name = ref('')
 const filterTraffic = ref(true)
@@ -105,6 +108,7 @@ function reset() {
           <UInput
             v-model="expiresAt"
             type="date"
+            :min="minExpiry"
             class="w-full"
           />
         </UFormField>
@@ -112,8 +116,8 @@ function reset() {
           <div class="flex gap-1">
             <UInput
               v-model.number="limitInput"
-              type="number"
-              :min="1"
+              type="text"
+              inputmode="numeric"
               :disabled="unlimited"
               :placeholder="unlimited ? '∞' : ''"
               class="flex-1 min-w-0"

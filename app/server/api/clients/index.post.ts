@@ -4,6 +4,7 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { notifyBot } from '../../utils/bot-events'
+import { minExpiryMs } from '../../utils/expiry'
 import { generateClientPassword } from '../../utils/password'
 
 // Создание клиента: имя, фильтрация, срок действия, лимит девайсов.
@@ -19,6 +20,14 @@ export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const body = await readValidatedBody(event, Body.parse)
   const db = useDb()
+
+  // Срок действия нельзя поставить раньше завтрашней даты.
+  if (body.expiresAt && new Date(body.expiresAt).getTime() < minExpiryMs()) {
+    throw createError({
+      statusCode: 422,
+      statusMessage: 'Срок действия не может быть раньше завтрашней даты',
+    })
+  }
 
   const name = body.name.trim()
   const dup = await db.select({ id: clients.id }).from(clients).where(eq(clients.name, name)).limit(1)

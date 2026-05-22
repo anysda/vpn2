@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
-import { notifyBot } from '../../utils/bot-events'
+import { notifyClient } from '../../utils/bot-events'
+import { minExpiryMs } from '../../utils/expiry'
 import { syncWireguardConfig } from '../../utils/wireguard'
 import { syncOpenvpnConfig } from '../../utils/openvpn'
 
@@ -22,6 +23,14 @@ export default defineEventHandler(async (event) => {
 
   const body = await readValidatedBody(event, Body.parse)
   const db = useDb()
+
+  // Срок действия нельзя поставить раньше завтрашней даты.
+  if (body.expiresAt && new Date(body.expiresAt).getTime() < minExpiryMs()) {
+    throw createError({
+      statusCode: 422,
+      statusMessage: 'Срок действия не может быть раньше завтрашней даты',
+    })
+  }
 
   const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
   if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
@@ -65,18 +74,36 @@ export default defineEventHandler(async (event) => {
     await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after patch failed'))
   }
 
-  // Изменение лимита девайсов → уведомить привязанного клиента в боте
-  // (только смена квоты — прочих алертов клиентам не шлём).
-  if (body.deviceLimit !== undefined && before.tgChatId) {
-    // null (безлимит) считаем «выше» любого числа.
-    const rank = (v: number | null) => (v === null ? Infinity : v)
-    const oldR = rank(before.deviceLimit)
-    const newR = rank(row.deviceLimit)
-    if (newR > oldR) {
-      void notifyBot('client_quota_raised', { chatId: before.tgChatId, deviceLimit: row.deviceLimit })
+  // Уведомления привязанному клиенту об изменениях его аккаунта.
+  const chat = before.tgChatId
+  if (chat) {
+    if (body.deviceLimit !== undefined) {
+      // null (безлимит) считаем «выше» любого числа.
+      const rank = (v: number | null) => (v === null ? Infinity : v)
+      const oldR = rank(before.deviceLimit)
+      const newR = rank(row.deviceLimit)
+      if (newR > oldR) {
+        notifyClient(chat, row.deviceLimit === null
+          ? '📈 Лимит устройств снят — теперь без ограничений.'
+          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`)
+      }
+      else if (newR < oldR) {
+        notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`)
+      }
     }
-    else if (newR < oldR) {
-      void notifyBot('client_quota_lowered', { chatId: before.tgChatId, deviceLimit: row.deviceLimit })
+    if (body.frozenManual !== undefined && body.frozenManual !== before.frozenManual) {
+      notifyClient(chat, body.frozenManual
+        ? '❄️ Ваш доступ к VPN приостановлен администратором.'
+        : '✅ Ваш доступ к VPN восстановлен.')
+    }
+    if (body.expiresAt !== undefined) {
+      const oldT = before.expiresAt ? before.expiresAt.getTime() : null
+      const newT = row.expiresAt ? row.expiresAt.getTime() : null
+      if (oldT !== newT) {
+        notifyClient(chat, row.expiresAt
+          ? `🗓 Срок действия вашего ключа: до ${row.expiresAt.toLocaleDateString('ru-RU')}.`
+          : '🗓 Срок действия ключа снят — доступ бессрочный.')
+      }
     }
   }
 

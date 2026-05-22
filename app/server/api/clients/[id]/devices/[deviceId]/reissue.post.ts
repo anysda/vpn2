@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
-import { notifyBot } from '../../../../../utils/bot-events'
+import { notifyClient } from '../../../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../../utils/openvpn'
 
@@ -30,7 +30,11 @@ export default defineEventHandler(async (event) => {
   const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
     .where(eq(clients.id, clientId)).limit(1)
   if (client?.tgChatId) {
-    void notifyBot('client_keys_reissued', { chatId: client.tgChatId, deviceName: device.name })
+    notifyClient(
+      client.tgChatId,
+      `🔄 Администратор перевыпустил ключи устройства «${device.name}». `
+      + 'Старый конфиг больше не работает — скачайте новый в «📱 Мои устройства».',
+    )
   }
 
   return { ok: true }

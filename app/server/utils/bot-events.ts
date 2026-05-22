@@ -21,3 +21,11 @@ export async function notifyBot(type: string, payload: Record<string, unknown>):
     // bot not running / refused — silent
   }
 }
+
+/**
+ * Уведомление привязанному клиенту в его Telegram-чате. Текст готовит
+ * вызывающий (панель знает контекст изменения). Fire-and-forget.
+ */
+export function notifyClient(chatId: number, text: string): void {
+  void notifyBot('client_notify', { chatId, text })
+}

@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../database/client'
-import { devices } from '../../../../database/schema'
+import { clients, devices } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
+import { notifyClient } from '../../../../utils/bot-events'
 import { syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../../../utils/openvpn'
 
@@ -26,6 +27,16 @@ export default defineEventHandler(async (event) => {
     await revokeClientCert(device.ovpnCert).catch(err =>
       useLogger().error({ err }, 'ovpn revoke after device delete failed'))
     await setCcdDisabled(ovpnCn(device.id), false).catch(() => {})
+  }
+
+  // Уведомить привязанного клиента — устройство удалил администратор.
+  const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
+    .where(eq(clients.id, clientId)).limit(1)
+  if (client?.tgChatId) {
+    notifyClient(
+      client.tgChatId,
+      `🗑 Администратор удалил ваше устройство «${device.name}» — его конфиг VPN больше не действует.`,
+    )
   }
 
   return { ok: true }

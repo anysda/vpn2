@@ -2,10 +2,10 @@
 # Stage 21 — failover watchdog на RU-роутере.
 #
 # Ставит лёгкий сервис anysda-failover-watchdog: он активно опрашивает экзиты
-# через clash-api раз в ~3с и сразу переключает selector-группу foreign-best
-# на живой экзит с наименьшей задержкой. Заменяет медленный (~33с) авто-
-# failover urltest (см. lib/failover-watchdog.py и gen-router-config.py —
-# foreign-best там должен быть type=selector).
+# через clash-api раз в ~2с и сразу переключает selector-группу foreign-best
+# на живой экзит с наименьшей задержкой. Мёртвый экзит подтверждается
+# до-проверками на месте — failover ~5-7с (см. lib/failover-watchdog.py и
+# gen-router-config.py — foreign-best там должен быть type=selector).
 #
 # Должен идти ПОСЛЕ 20-ru-router: тот пишет /etc/anysda/clash-secret.txt и
 # поднимает sing-box с clash-api.
@@ -44,9 +44,11 @@ CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}
 WATCH_GROUP=foreign-best
 PROBE_URL=http://www.gstatic.com/generate_204
-INTERVAL=3
-PROBE_TIMEOUT_MS=2000
+INTERVAL=2
+PROBE_TIMEOUT_MS=1500
 TOLERANCE_MS=50
+DEAD_AFTER=2
+CONFIRM_GAP=0.4
 EOF
 chmod 600 /etc/anysda/failover-watchdog.env
 

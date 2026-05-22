@@ -920,6 +920,15 @@ async def handle_event(request: web.Request) -> web.Response:
             else:
                 msg = f'📈 Ваш лимит устройств повышен до {device_limit}.'
             asyncio.create_task(tg_send(int(chat_id), msg))
+    elif evt == 'client_quota_lowered':
+        # Лимит устройств клиента понижен — уведомить клиентский чат.
+        chat_id = data.get('chatId')
+        device_limit = data.get('deviceLimit')
+        if chat_id:
+            asyncio.create_task(tg_send(
+                int(chat_id),
+                f'📉 Ваш лимит устройств понижен до {device_limit}.',
+            ))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

@@ -34,6 +34,7 @@ export async function botClientView(clientId: number) {
     id: c.id,
     name: c.name,
     deviceLimit: c.deviceLimit,
+    expiresAt: c.expiresAt,
     devices: devRows.map(d => ({
       id: d.id,
       name: d.name,

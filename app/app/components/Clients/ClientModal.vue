@@ -2,7 +2,6 @@
 import type { ClientDetail } from '~/composables/useClients'
 import { fmtBytes, useClientDetail, useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
-import { copyText } from '~/utils/clipboard'
 
 const props = defineProps<{ clientId: number | null }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -104,6 +103,9 @@ async function saveExpiry() {
 // --- Device limit ---------------------------------------------------------
 const savingLimit = ref(false)
 
+// Лимит нельзя опустить ниже текущего числа девайсов клиента.
+const minLimit = computed(() => Math.max(1, detail.value?.devices.length ?? 1))
+
 // Значение в поле ввода: при безлимите поле disabled и пустое, чтобы
 // показывался плейсхолдер «∞»; иначе — число.
 const limitInput = computed<number | undefined>({
@@ -121,7 +123,9 @@ function toggleUnlimited() {
 
 async function saveLimit() {
   if (!detail.value) return
-  const next = unlimited.value ? null : Math.max(1, Math.floor(deviceLimit.value || DEFAULT_DEVICE_LIMIT))
+  const next = unlimited.value
+    ? null
+    : Math.max(minLimit.value, Math.floor(deviceLimit.value || DEFAULT_DEVICE_LIMIT))
   if (!unlimited.value) deviceLimit.value = next as number
   if (next === detail.value.deviceLimit) return
   savingLimit.value = true
@@ -140,22 +144,14 @@ async function saveLimit() {
   }
 }
 
-// --- Password -------------------------------------------------------------
-async function copyPassword() {
-  if (!detail.value) return
-  if (await copyText(detail.value.password))
-    toast.add({ title: 'Пароль скопирован', color: 'success' })
-  else
-    toast.add({ title: 'Не удалось скопировать', color: 'error' })
-}
-
+// --- Доступ к боту --------------------------------------------------------
 const sendingPwd = ref(false)
 async function sendPassword() {
   if (!detail.value) return
   sendingPwd.value = true
   try {
     await sendPasswordToTg(detail.value.id)
-    toast.add({ title: 'Пароль отправлен в Telegram', color: 'success' })
+    toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' })
   }
   catch (e) {
     const err = e as { statusMessage?: string }
@@ -326,36 +322,22 @@ const limitReached = computed(() => {
 
         <USeparator />
 
-        <!-- Password -->
-        <UFormField label="Пароль клиента">
-          <div class="flex gap-2">
-            <UInput
-              :model-value="detail.password"
-              readonly
-              class="flex-1 font-mono"
-            />
-            <UTooltip text="Копировать пароль">
-              <UButton
-                icon="i-lucide-copy"
-                color="neutral"
-                variant="soft"
-                @click="copyPassword"
-              />
-            </UTooltip>
-            <UTooltip :text="canSendTg ? 'Отправить пароль в Telegram' : tgReason" :disabled="false">
-              <UButton
-                icon="i-lucide-send"
-                color="neutral"
-                variant="soft"
-                :disabled="!canSendTg"
-                :loading="sendingPwd"
-                @click="sendPassword"
-              >
-                В TG
-              </UButton>
-            </UTooltip>
-          </div>
-        </UFormField>
+        <!-- Доступ к боту -->
+        <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
+          <UButton
+            color="neutral"
+            variant="soft"
+            block
+            :disabled="!canSendTg"
+            :loading="sendingPwd"
+            @click="sendPassword"
+          >
+            <template #leading>
+              <UIcon name="i-simple-icons-telegram" class="size-5 text-[#26A5E4]" />
+            </template>
+            Отправить доступ к боту
+          </UButton>
+        </UTooltip>
 
         <!-- Device limit -->
         <UFormField label="Лимит девайсов">
@@ -365,13 +347,13 @@ const limitReached = computed(() => {
                 icon="i-lucide-minus"
                 color="neutral"
                 variant="soft"
-                :disabled="unlimited || deviceLimit <= 1"
-                @click="deviceLimit = Math.max(1, deviceLimit - 1); saveLimit()"
+                :disabled="unlimited || deviceLimit <= minLimit"
+                @click="deviceLimit = Math.max(minLimit, deviceLimit - 1); saveLimit()"
               />
               <UInput
                 v-model.number="limitInput"
                 type="number"
-                :min="1"
+                :min="minLimit"
                 class="w-20"
                 :disabled="unlimited"
                 :placeholder="unlimited ? '∞' : ''"

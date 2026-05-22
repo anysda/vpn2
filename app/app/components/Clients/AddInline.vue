@@ -14,7 +14,13 @@ const filterTraffic = ref(true)
 const sendPwdToTg = ref(false)
 const expiresAt = ref('')
 const deviceLimit = ref<number>(DEFAULT_DEVICE_LIMIT)
+const unlimited = ref(false)
 const loading = ref(false)
+
+function toggleUnlimited() {
+  unlimited.value = !unlimited.value
+  if (!unlimited.value) deviceLimit.value = DEFAULT_DEVICE_LIMIT
+}
 
 async function submit() {
   if (!name.value.trim()) return
@@ -24,7 +30,9 @@ async function submit() {
       name: name.value.trim(),
       filterTraffic: filterTraffic.value,
       expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
-      deviceLimit: Math.max(1, Math.floor(deviceLimit.value || DEFAULT_DEVICE_LIMIT)),
+      deviceLimit: unlimited.value
+        ? null
+        : Math.max(1, Math.floor(deviceLimit.value || DEFAULT_DEVICE_LIMIT)),
     })
     if (sendPwdToTg.value && canSendTg.value) {
       try {
@@ -52,6 +60,7 @@ function reset() {
   sendPwdToTg.value = false
   expiresAt.value = ''
   deviceLimit.value = DEFAULT_DEVICE_LIMIT
+  unlimited.value = false
   open.value = false
 }
 </script>
@@ -83,27 +92,6 @@ function reset() {
         />
       </UFormField>
 
-      <div class="flex items-center justify-between pt-1">
-        <label class="text-sm flex items-center gap-2 cursor-pointer">
-          <UIcon name="i-simple-icons-adguard" class="size-4 text-[#67b279]" />
-          Фильтровать трафик (AdGuard)
-        </label>
-        <USwitch v-model="filterTraffic" />
-      </div>
-
-      <div class="flex items-center justify-between">
-        <UTooltip :text="tgReason" :disabled="canSendTg">
-          <label
-            class="text-sm flex items-center gap-2"
-            :class="canSendTg ? 'cursor-pointer' : 'opacity-60'"
-          >
-            <UIcon name="i-lucide-send" class="size-4 text-(--ui-text-muted)" />
-            Отправить пароль в Telegram
-          </label>
-        </UTooltip>
-        <USwitch v-model="sendPwdToTg" :disabled="!canSendTg" />
-      </div>
-
       <div class="grid grid-cols-2 gap-2">
         <UFormField label="Срок действия">
           <UInput
@@ -113,13 +101,48 @@ function reset() {
           />
         </UFormField>
         <UFormField label="Лимит девайсов">
-          <UInput
-            v-model.number="deviceLimit"
-            type="number"
-            :min="1"
-            class="w-full"
-          />
+          <div class="flex gap-1">
+            <UInput
+              v-model.number="deviceLimit"
+              type="number"
+              :min="1"
+              :disabled="unlimited"
+              :placeholder="unlimited ? '∞' : ''"
+              class="flex-1 min-w-0"
+            />
+            <UTooltip text="Безлимитно">
+              <UButton
+                icon="i-lucide-infinity"
+                :color="unlimited ? 'primary' : 'neutral'"
+                :variant="unlimited ? 'solid' : 'soft'"
+                @click="toggleUnlimited"
+              />
+            </UTooltip>
+          </div>
         </UFormField>
+      </div>
+
+      <div class="flex items-center justify-between pt-1">
+        <label class="text-sm flex items-center gap-2 cursor-pointer">
+          <UIcon name="i-simple-icons-adguard" class="size-4 text-[#67b279]" />
+          Фильтровать трафик (AdGuard)
+        </label>
+        <USwitch v-model="filterTraffic" />
+      </div>
+
+      <USeparator />
+
+      <div class="flex items-center justify-between">
+        <UTooltip :text="tgReason" :disabled="canSendTg">
+          <label
+            class="text-sm flex items-center gap-2"
+            :class="canSendTg ? 'cursor-pointer' : 'opacity-60'"
+          >
+            <UIcon name="i-simple-icons-telegram" class="size-4 text-[#26A5E4]" />
+            Отправить пароль в Telegram
+          </label>
+        </UTooltip>
+        <USwitch v-model="sendPwdToTg" :disabled="!canSendTg" />
       </div>
 
       <div class="flex gap-2">

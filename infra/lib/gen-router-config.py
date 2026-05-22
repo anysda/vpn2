@@ -153,6 +153,17 @@ def main():
 
         'inbounds': [
             {
+                # Локальный forward-прокси (HTTP CONNECT + SOCKS) для
+                # Telegram-бота: RU-нода в Москве api.telegram.org напрямую
+                # не достаёт, поэтому бот ходит в Telegram через этот прокси.
+                # Трафик маршрутизируется как обычный заграничный →
+                # foreign-best → экзит. Слушает только loopback.
+                'type': 'mixed',
+                'tag': 'tg-proxy',
+                'listen': '127.0.0.1',
+                'listen_port': 7897,
+            },
+            {
                 # Forwarded wg0/tun0 traffic lands here via TPROXY (PREROUTING).
                 # `network` is omitted on purpose — sing-box rejects "tcp,udp"
                 # and accepting a single side wouldn't cover WG clients;

@@ -16,12 +16,19 @@ Background monitor (every ALERT_INTERVAL_SEC, default 30 s):
 Listens on TGBOT_EVENT_PORT for events from Nuxt:
   POST /event  {"type": "client_created", "name": "..."}
 
+Telegram API traffic egresses through an exit node: the RU entry node
+in Moscow can't reach api.telegram.org directly, so the bot's
+Telegram-facing httpx clients route through the local HTTP proxy that
+sing-box exposes (→ foreign-best → exit). Only calls to the Nuxt API on
+127.0.0.1 stay direct.
+
 Env vars:
   TELEGRAM_BOT_TOKEN  — required
   TELEGRAM_CHAT_ID    — required (integer)
   TGBOT_SECRET        — shared secret with Nuxt (Bearer token)
   TGBOT_EVENT_PORT    — HTTP port for Nuxt→bot events (default 8877)
   ANYSDA_URL          — Nuxt API base (default http://127.0.0.1:51821)
+  TG_PROXY            — HTTP proxy for Telegram API (default http://127.0.0.1:7897)
 """
 
 import asyncio
@@ -70,15 +77,21 @@ TOKEN, CHAT_ID = _load_token_chat()
 SECRET     = os.environ.get('TGBOT_SECRET', '')
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
+# Telegram API egress: RU-нода в Москве api.telegram.org напрямую не достаёт,
+# поэтому Telegram-клиенты бота ходят через этот локальный HTTP-прокси
+# (sing-box mixed-инбаунд → foreign-best → экзит). Обращения к Nuxt API на
+# 127.0.0.1 проксировать НЕ нужно — _local идёт напрямую.
+TG_PROXY   = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
 
-# Local client — for Nuxt API on 127.0.0.1
+# Local client — for Nuxt API on 127.0.0.1 (direct, no proxy)
 _local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=5.0)
 
-# Telegram API напрямую — обходит python-telegram-bot pool (получали PoolTimeout
-# даже с pool_size=50). Этот клиент используется ТОЛЬКО для send_message,
-# polling getUpdates делает Application через свой HTTPXRequest.
+# Отдельный httpx-клиент для send-методов Telegram — в обход пула
+# python-telegram-bot (с ним ловили PoolTimeout). polling getUpdates идёт
+# через свой HTTPXRequest в Application. Оба ходят через TG_PROXY → экзит.
 _tg = httpx.AsyncClient(
     base_url=f'https://api.telegram.org/bot{TOKEN}',
+    proxy=TG_PROXY,
     timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0),
     limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
 )
@@ -387,22 +400,21 @@ async def _announce_deploy() -> None:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    # Telegram API доступен с RU напрямую (на этом хостинге не блокируется)
-    # — ходим без SOCKS5. httpx-socks через sing-box создавал ложные
-    # PoolTimeout даже при connection_pool_size=8: похоже SOCKS5-туннель
-    # сериализует requests через single CONNECT, и keep-alive ломается.
-    # Если в дальнейшем нужно будет скрыть RU IP — добавим обратно прокси
-    # и разберёмся с httpx-socks отдельно.
+    # Telegram egress — через TG_PROXY (HTTP-CONNECT прокси sing-box →
+    # foreign-best → экзит): RU-нода в Москве api.telegram.org напрямую не
+    # достаёт. Используем HTTP-CONNECT, а не SOCKS5: httpx-socks давал
+    # ложные PoolTimeout, тогда как CONNECT-туннели httpx пулит надёжно.
     # connection_pool_size + pool_timeout default'ы в HTTPXRequest очень
     # маленькие (1 и 1.0с) — при любой задержке handler-команд получаем
     # PoolTimeout. Поднимаем с запасом, чтобы команды + monitor_loop +
     # event_server жили вместе.
-    poll_req = HTTPXRequest(connection_pool_size=4, read_timeout=40)
+    poll_req = HTTPXRequest(connection_pool_size=4, read_timeout=40, proxy=TG_PROXY)
     send_req = HTTPXRequest(
         connection_pool_size=50,
         pool_timeout=20.0,
         connect_timeout=10.0,
         read_timeout=20.0,
+        proxy=TG_PROXY,
     )
     tgapp = (
         Application.builder()
@@ -448,7 +460,7 @@ async def main() -> None:
         asyncio.create_task(_supervised_monitor())
         asyncio.create_task(_config_watcher())
         await tgapp.updater.start_polling(drop_pending_updates=True)
-        log.info('Bot started, polling Telegram')
+        log.info('Bot started, polling Telegram via %s', TG_PROXY)
         await asyncio.Event().wait()  # run forever
         await tgapp.updater.stop()
         await tgapp.stop()

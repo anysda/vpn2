@@ -314,7 +314,7 @@ const limitReached = computed(() => {
                 Привязан к Telegram<template v-if="detail.tgUsername"> · @{{ detail.tgUsername }}</template>
               </template>
               <template v-else>
-                Telegram не привязан — отправь пароль, чтобы клиент подключился
+                Telegram не привязан
               </template>
             </span>
           </div>
@@ -354,10 +354,10 @@ const limitReached = computed(() => {
                 v-model.number="limitInput"
                 type="number"
                 :min="minLimit"
-                class="w-20"
+                class="w-16"
                 :disabled="unlimited"
                 :placeholder="unlimited ? '∞' : ''"
-                :ui="{ base: 'text-center' }"
+                :ui="{ base: 'text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none' }"
                 @change="saveLimit"
               />
               <UButton

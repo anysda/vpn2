@@ -65,15 +65,18 @@ export default defineEventHandler(async (event) => {
     await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after patch failed'))
   }
 
-  // Повышение лимита девайсов → уведомить привязанного клиента в боте.
-  // Понижение/прочие правки клиенту не шлём — клиентам алертов не отправляем.
+  // Изменение лимита девайсов → уведомить привязанного клиента в боте
+  // (только смена квоты — прочих алертов клиентам не шлём).
   if (body.deviceLimit !== undefined && before.tgChatId) {
-    const oldL = before.deviceLimit
-    const newL = row.deviceLimit
-    const raised = (newL === null && oldL !== null)
-      || (typeof newL === 'number' && typeof oldL === 'number' && newL > oldL)
-    if (raised) {
-      void notifyBot('client_quota_raised', { chatId: before.tgChatId, deviceLimit: newL })
+    // null (безлимит) считаем «выше» любого числа.
+    const rank = (v: number | null) => (v === null ? Infinity : v)
+    const oldR = rank(before.deviceLimit)
+    const newR = rank(row.deviceLimit)
+    if (newR > oldR) {
+      void notifyBot('client_quota_raised', { chatId: before.tgChatId, deviceLimit: row.deviceLimit })
+    }
+    else if (newR < oldR) {
+      void notifyBot('client_quota_lowered', { chatId: before.tgChatId, deviceLimit: row.deviceLimit })
     }
   }
 

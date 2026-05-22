@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -18,24 +18,51 @@ export const users = sqliteTable('users', {
   ...timestamps,
 })
 
+/**
+ * Клиент = человек. Его устройства — в таблице `devices`.
+ * Статус («активен» / «заморожен») НЕ хранится — вычисляется из
+ * frozenManual + expiresAt, см. server/utils/client-status.ts.
+ */
 export const clients = sqliteTable('clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  // Фильтрация трафика (AdGuard DNS) — задаётся при создании, наследуется
+  // всеми девайсами клиента.
+  filterTraffic: integer('filter_traffic', { mode: 'boolean' }).notNull().default(true),
+  // Срок действия. null — бессрочно. По истечении клиент попадает в
+  // «заморозку» (не удаляется); продление срока возвращает в «активен».
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
+  // Лимит девайсов. null — безлимит.
+  deviceLimit: integer('device_limit').default(3),
+  // Ручная заморозка. Эффективный статус «заморожен» = frozenManual ИЛИ
+  // истёкший срок.
+  frozenManual: integer('frozen_manual', { mode: 'boolean' }).notNull().default(false),
+  // Пароль доступа клиента — 20 символов [A-Za-z]. Задел под будущую фичу.
+  password: text('password').notNull(),
+  ...timestamps,
+})
+
+/** Девайс = устройство клиента, со своими ключами WG/OVPN. */
+export const devices = sqliteTable('devices', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  clientId: integer('client_id')
+    .notNull()
+    .references(() => clients.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
   wgPrivateKey: text('wg_private_key'),
   wgPublicKey: text('wg_public_key'),
   wgPresharedKey: text('wg_preshared_key'),
   wgIp: text('wg_ip'),
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
-  filterTraffic: integer('filter_traffic', { mode: 'boolean' }).notNull().default(true),
-  // Накопительный трафик за всё время по всем протоколам (WG+OpenVPN),
-  // байты. Копит фоновый сборщик (server/utils/traffic-collector.ts).
+  // Накопительный трафик девайса за всё время (WG+OpenVPN), байты.
+  // Копит фоновый сборщик (server/utils/traffic-collector.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),
   ...timestamps,
-})
+}, table => [
+  index('devices_client_idx').on(table.clientId),
+])
 
 export const routes = sqliteTable('routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -51,5 +78,7 @@ export type User = typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Client = typeof clients.$inferSelect
 export type NewClient = typeof clients.$inferInsert
+export type Device = typeof devices.$inferSelect
+export type NewDevice = typeof devices.$inferInsert
 export type Route = typeof routes.$inferSelect
 export type NewRoute = typeof routes.$inferInsert

@@ -1,6 +1,7 @@
 import { desc } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
+import { clientStatus } from '../../utils/client-status'
 import { fetchConnections, fetchProxies } from '../../utils/clash-client'
 import { fetchNodeMetrics, nodeInstances } from '../../utils/vm-client'
 
@@ -22,7 +23,7 @@ export default defineEventHandler(async (event) => {
     db.select({
       id: clients.id,
       name: clients.name,
-      enabled: clients.enabled,
+      frozenManual: clients.frozenManual,
       expiresAt: clients.expiresAt,
       createdAt: clients.createdAt,
     }).from(clients).orderBy(desc(clients.createdAt)),
@@ -57,7 +58,7 @@ export default defineEventHandler(async (event) => {
     clients: allClients.map(c => ({
       id: c.id,
       name: c.name,
-      enabled: c.enabled,
+      status: clientStatus(c),
       expiresAt: c.expiresAt,
       createdAt: c.createdAt,
     })),

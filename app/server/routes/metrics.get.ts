@@ -1,37 +1,47 @@
-import { count, eq, sql } from 'drizzle-orm'
+import { count, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { clients, routes } from '../database/schema'
+import { clients, devices, routes } from '../database/schema'
 
 const startedAt = Date.now()
 
 export default defineEventHandler(async (event) => {
   const db = useDb()
-  const now = new Date()
+  const nowSec = Math.floor(Date.now() / 1000)
+  const soonSec = nowSec + 7 * 86_400
+
+  // Активен = не заморожен вручную И срок не истёк (см. utils/client-status.ts).
+  const activeCond = sql`${clients.frozenManual} = 0 AND (${clients.expiresAt} IS NULL OR ${clients.expiresAt} > ${nowSec})`
 
   const [
-    [enabledRow],
-    [disabledRow],
+    [totalRow],
+    [activeRow],
+    [devicesRow],
     [routesRow],
+    [expiringRow],
   ] = await Promise.all([
-    db.select({ n: count() }).from(clients).where(eq(clients.enabled, true)),
-    db.select({ n: count() }).from(clients).where(eq(clients.enabled, false)),
+    db.select({ n: count() }).from(clients),
+    db.select({ n: count() }).from(clients).where(activeCond),
+    db.select({ n: count() }).from(devices),
     db.select({ n: count() }).from(routes),
+    db.select({ n: count() }).from(clients).where(
+      sql`${clients.expiresAt} IS NOT NULL AND ${clients.expiresAt} > ${nowSec} AND ${clients.expiresAt} < ${soonSec}`,
+    ),
   ])
 
-  const [expiringRow] = await db
-    .select({ n: count() })
-    .from(clients)
-    .where(sql`${clients.enabled} = 1 AND ${clients.expiresAt} IS NOT NULL AND ${clients.expiresAt} < ${
-      new Date(now.getTime() + 7 * 86_400_000)
-    }`)
-
+  const total = totalRow?.n ?? 0
+  const active = activeRow?.n ?? 0
+  const frozen = total - active
   const uptimeSec = (Date.now() - startedAt) / 1000
 
   const lines: string[] = [
-    '# HELP anysda_vpn2_clients_total Number of clients by enabled status',
+    '# HELP anysda_vpn2_clients_total Number of clients by status',
     '# TYPE anysda_vpn2_clients_total gauge',
-    `anysda_vpn2_clients_total{enabled="true"} ${enabledRow?.n ?? 0}`,
-    `anysda_vpn2_clients_total{enabled="false"} ${disabledRow?.n ?? 0}`,
+    `anysda_vpn2_clients_total{status="active"} ${active}`,
+    `anysda_vpn2_clients_total{status="frozen"} ${frozen}`,
+    '',
+    '# HELP anysda_vpn2_devices_total Number of devices across all clients',
+    '# TYPE anysda_vpn2_devices_total gauge',
+    `anysda_vpn2_devices_total ${devicesRow?.n ?? 0}`,
     '',
     '# HELP anysda_vpn2_clients_expiring_7d Clients expiring within 7 days',
     '# TYPE anysda_vpn2_clients_expiring_7d gauge',

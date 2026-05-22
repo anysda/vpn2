@@ -3,7 +3,7 @@ import { useClients } from '~/composables/useClients'
 
 useHead({ title: 'anysda-vpn2' })
 
-const { clients } = useClients()
+const { clients, refresh: refreshClients } = useClients()
 const search = ref('')
 
 const filtered = computed(() => {
@@ -11,6 +11,14 @@ const filtered = computed(() => {
   if (!q) return clients.value
   return clients.value.filter(c => c.name.toLowerCase().includes(q))
 })
+
+// Модалка клиента, открывается кликом по карточке.
+const modalOpen = ref(false)
+const selectedClientId = ref<number | null>(null)
+function openClient(id: number) {
+  selectedClientId.value = id
+  modalOpen.value = true
+}
 
 const { data: trafficMap, refresh: refreshTraffic } = useFetch<Record<number, { rxBytes: number, txBytes: number }>>('/api/clients/traffic', {
   default: () => ({}),
@@ -54,10 +62,17 @@ useVisibleRefresh(refreshTraffic)
               :key="client.id"
               :client="client"
               :traffic="trafficMap?.[client.id] ?? null"
+              @open="openClient"
             />
           </div>
         </div>
       </UCard>
+
+      <ClientsClientModal
+        v-model:open="modalOpen"
+        :client-id="selectedClientId"
+        @changed="refreshClients"
+      />
 
       <BotsSection />
     </div>

@@ -5,7 +5,7 @@ anysda-vpn Telegram bot.
 Commands:
   /status   — system overview (nodes CPU/RAM + outbounds RTT)
   /nodes    — per-exit-node RTT
-  /clients  — WG client list
+  /clients  — client list
 
 Background monitor (every ALERT_INTERVAL_SEC, default 30 s):
   - alerts when a node's metrics go stale for > ALERT_NODE_DOWN_SEC
@@ -172,7 +172,7 @@ async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         '*anysda-vpn*\n\n'
         '/status — состояние системы\n'
         '/nodes  — RTT по exit-нодам\n'
-        '/clients — WG клиенты',
+        '/clients — клиенты',
         'Markdown',
     )
 
@@ -231,9 +231,9 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         data = await api_status()
         clients = data.get('clients', [])
-        lines = [f'*WG клиенты* ({len(clients)} шт.)\n']
+        lines = [f'*Клиенты* ({len(clients)} шт.)\n']
         for c in clients:
-            icon = '✅' if c.get('enabled') else '❌'
+            icon = '✅' if c.get('status') == 'active' else '❄️'
             lines.append(f"{icon} `{c.get('name', '?')}`")
         await tg_reply(
             update,
@@ -378,6 +378,15 @@ async def handle_event(request: web.Request) -> web.Response:
             asyncio.create_task(tg_send_document(
                 CHAT_ID, f'{name}.ovpn', conf.encode('utf-8'),
                 caption=f'*{name}* — OpenVPN',
+            ))
+    elif evt == 'client_send_password':
+        name = data.get('name', '?')
+        password = data.get('password', '')
+        if password:
+            asyncio.create_task(tg_send(
+                CHAT_ID,
+                f'🔑 *{name}* — пароль\n`{password}`',
+                'Markdown',
             ))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())

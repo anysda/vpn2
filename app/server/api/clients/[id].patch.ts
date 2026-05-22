@@ -4,20 +4,20 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncWireguardConfig } from '../../utils/wireguard'
-import { ovpnCn, setCcdDisabled } from '../../utils/openvpn'
+import { syncOpenvpnConfig } from '../../utils/openvpn'
 
 const Body = z.object({
   name: z.string().min(1).max(64).optional(),
-  enabled: z.boolean().optional(),
   expiresAt: z.iso.datetime().nullable().optional(),
+  // null — безлимит.
+  deviceLimit: z.number().int().min(1).max(999).nullable().optional(),
+  frozenManual: z.boolean().optional(),
 })
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const id = Number(getRouterParam(event, 'id'))
-  if (!Number.isFinite(id)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  }
+  if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
 
   const body = await readValidatedBody(event, Body.parse)
   const db = useDb()
@@ -33,26 +33,20 @@ export default defineEventHandler(async (event) => {
     }
     patch.name = name
   }
-  if (body.enabled !== undefined) patch.enabled = body.enabled
   if (body.expiresAt !== undefined) {
     patch.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null
   }
+  if (body.deviceLimit !== undefined) patch.deviceLimit = body.deviceLimit
+  if (body.frozenManual !== undefined) patch.frozenManual = body.frozenManual
 
   const [row] = await db.update(clients).set(patch).where(eq(clients.id, id)).returning()
-  if (!row) {
-    throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  }
+  if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
-  if (body.enabled !== undefined) {
-    await syncWireguardConfig().catch((err) => {
-      useLogger().error({ err }, 'failed to sync wg config after enable toggle')
-    })
-    // OpenVPN: flip the client-config-dir disable flag (only if a cert exists).
-    if (row.ovpnCert) {
-      await setCcdDisabled(ovpnCn(row.id), !row.enabled).catch((err) => {
-        useLogger().error({ err }, 'failed to sync ovpn ccd after enable toggle')
-      })
-    }
+  // Смена ручной заморозки или срока меняет активность клиента —
+  // пере-синхроним девайсы (wg0.conf / CCD).
+  if (body.frozenManual !== undefined || body.expiresAt !== undefined) {
+    await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after patch failed'))
+    await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after patch failed'))
   }
 
   return row

@@ -1,13 +1,12 @@
+import { sql } from 'drizzle-orm'
 import { useDb } from '../../database/client'
-import { clients } from '../../database/schema'
+import { devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 
 /**
- * Накопительный трафик по клиентам — суммарно за всё время по всем
- * протоколам (WireGuard + OpenVPN).
- *
- * Источник — колонки clients.rx_total / tx_total, которые наполняет фоновый
- * сборщик (server/utils/traffic-collector.ts, вызывается из cron-плагина).
+ * Накопительный трафик по клиентам — сумма по их девайсам, за всё время,
+ * по всем протоколам (WireGuard + OpenVPN). Источник — devices.rx_total /
+ * tx_total, наполняет фоновый сборщик (server/utils/traffic-collector.ts).
  *
  * Returns { [clientId]: { rxBytes, txBytes } }.
  */
@@ -16,12 +15,17 @@ export default defineEventHandler(async (event) => {
 
   const db = useDb()
   const rows = await db
-    .select({ id: clients.id, rx: clients.rxTotal, tx: clients.txTotal })
-    .from(clients)
+    .select({
+      clientId: devices.clientId,
+      rx: sql<number>`coalesce(sum(${devices.rxTotal}), 0)`,
+      tx: sql<number>`coalesce(sum(${devices.txTotal}), 0)`,
+    })
+    .from(devices)
+    .groupBy(devices.clientId)
 
   const result: Record<number, { rxBytes: number, txBytes: number }> = {}
   for (const r of rows) {
-    result[r.id] = { rxBytes: r.rx, txBytes: r.tx }
+    result[r.clientId] = { rxBytes: Number(r.rx), txBytes: Number(r.tx) }
   }
   return result
 })

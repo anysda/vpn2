@@ -5,7 +5,8 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { clients as clientsTable } from '../database/schema'
+import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { isClientActive } from './client-status'
 
 const exec = promisify(execFile)
 
@@ -20,9 +21,9 @@ const TLS_CRYPT = `${PKI_DIR}/tls-crypt.key`
 const OSSL_CNF = `${PKI_DIR}/openssl.cnf`
 const CRL_PEM = `${PKI_DIR}/crl.pem`
 
-/** OpenVPN cert CN for a client — stable, derived from the DB id. */
-export function ovpnCn(clientId: number): string {
-  return `client_${clientId}`
+/** OpenVPN cert CN for a device — stable, derived from the DB device id. */
+export function ovpnCn(deviceId: number): string {
+  return `dev_${deviceId}`
 }
 
 /** True once stage 29-openvpn has seeded the CA. */
@@ -97,7 +98,7 @@ export async function regenCrl(): Promise<void> {
 }
 
 /**
- * Enable/disable a client without touching its cert: OpenVPN's client-config-dir
+ * Enable/disable a device without touching its cert: OpenVPN's client-config-dir
  * `disable` directive blocks new connections and is fully reversible (unlike a
  * CRL revoke). Active on the next connection attempt.
  */
@@ -166,38 +167,82 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
 }
 
 /**
- * Make sure the client has an OpenVPN cert. If absent, issue one and persist
- * the cert + key on the row. Returns the (possibly updated) record.
+ * Make sure the DEVICE has an OpenVPN cert. If absent, issue one and persist
+ * the cert + key on the device row. Returns the (possibly updated) record.
  */
-export async function ensureClientOvpn(clientId: number) {
+export async function ensureDeviceOvpn(deviceId: number) {
   const db = useDb()
-  const [row] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId)).limit(1)
-  if (!row) throw new Error(`client ${clientId} not found`)
+  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+  if (!row) throw new Error(`device ${deviceId} not found`)
   if (row.ovpnCert && row.ovpnKey) return row
 
-  const { cert, key } = await issueClientCert(ovpnCn(clientId))
+  const { cert, key } = await issueClientCert(ovpnCn(deviceId))
   const [updated] = await db
-    .update(clientsTable)
+    .update(devicesTable)
     .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
-    .where(eq(clientsTable.id, clientId))
+    .where(eq(devicesTable.id, deviceId))
     .returning()
-  // New cert → make sure no stale CCD-disable lingers for this CN.
-  await setCcdDisabled(ovpnCn(clientId), !updated.enabled).catch(() => {})
+  // New cert → set the CCD disable flag to match the client's current status.
+  const [client] = await db
+    .select({ frozenManual: clientsTable.frozenManual, expiresAt: clientsTable.expiresAt })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, row.clientId))
+    .limit(1)
+  await setCcdDisabled(ovpnCn(deviceId), client ? !isClientActive(client) : false).catch(() => {})
   return updated
 }
 
-/** Reconcile CCD enable/disable flags for every client with an issued cert. */
+/** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
+export async function reissueDeviceOvpn(deviceId: number) {
+  const db = useDb()
+  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+  if (!row) throw new Error(`device ${deviceId} not found`)
+
+  const ready = await caReady()
+  if (row.ovpnCert && ready) {
+    await revokeClientCert(row.ovpnCert).catch(() => {})
+  }
+  if (!ready) {
+    // CA ещё не готов — просто чистим, ensureDeviceOvpn выдаст cert позже.
+    const [cleared] = await db
+      .update(devicesTable)
+      .set({ ovpnCert: null, ovpnKey: null, updatedAt: new Date() })
+      .where(eq(devicesTable.id, deviceId))
+      .returning()
+    return cleared
+  }
+
+  const { cert, key } = await issueClientCert(ovpnCn(deviceId))
+  const [updated] = await db
+    .update(devicesTable)
+    .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
+    .where(eq(devicesTable.id, deviceId))
+    .returning()
+  return updated
+}
+
+/** Reconcile CCD enable/disable flags for every device with an issued cert. */
 export async function syncOpenvpnConfig(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.ovpnEnabled) return
   if (!(await caReady())) return
 
   const db = useDb()
-  const all = await db.select().from(clientsTable)
-  for (const c of all) {
-    if (!c.ovpnCert) continue
-    await setCcdDisabled(ovpnCn(c.id), !c.enabled).catch((err) => {
-      useLogger().warn({ err: (err as Error).message, id: c.id }, 'ovpn ccd sync failed')
+  const rows = await db
+    .select({
+      id: devicesTable.id,
+      ovpnCert: devicesTable.ovpnCert,
+      frozenManual: clientsTable.frozenManual,
+      expiresAt: clientsTable.expiresAt,
+    })
+    .from(devicesTable)
+    .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
+
+  for (const r of rows) {
+    if (!r.ovpnCert) continue
+    const disabled = !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
+    await setCcdDisabled(ovpnCn(r.id), disabled).catch((err) => {
+      useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn ccd sync failed')
     })
   }
 }

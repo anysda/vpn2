@@ -5,7 +5,8 @@ import { promisify } from 'node:util'
 import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { clients as clientsTable } from '../database/schema'
+import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { isClientActive } from './client-status'
 
 const exec = promisify(execFile)
 
@@ -85,8 +86,7 @@ interface ServerConfigParams {
 /**
  * Atomically rewrite /etc/wireguard/wg0.conf and run `wg syncconf` so the
  * kernel interface picks up the new peer list without dropping existing
- * sessions. Skipped (with a log warning) if wireguard-tools isn't available
- * — useful for dev where you don't want to require WG userland locally.
+ * sessions. Skipped (with a log warning) if wireguard-tools isn't available.
  */
 export async function writeWgServerConfig(
   p: ServerConfigParams,
@@ -135,8 +135,7 @@ const SERVER_PUBKEY_PATH = '/etc/wireguard/server.pub'
 
 /**
  * Load the server's WG keypair from /etc/wireguard. The keys are seeded by
- * stage 28 and read by the panel for peer-config rendering. Throws if the
- * server keys aren't present yet.
+ * stage 28 and read by the panel for peer-config rendering.
  */
 export async function loadServerKeys(): Promise<{ privateKey: string, publicKey: string }> {
   const [priv, pub] = await Promise.all([
@@ -148,23 +147,23 @@ export async function loadServerKeys(): Promise<{ privateKey: string, publicKey:
 }
 
 /**
- * Ensure the given client has WG keys + an IP. If missing, fill them in and
- * persist. Returns the (possibly newly-populated) record.
+ * Ensure the given DEVICE has WG keys + an IP. If missing, fill them in and
+ * persist. Returns the (possibly newly-populated) device record.
  */
-export async function ensureClientWg(clientId: number) {
+export async function ensureDeviceWg(deviceId: number) {
   const db = useDb()
-  const [row] = await db.select().from(clientsTable).where(eq(clientsTable.id, clientId)).limit(1)
-  if (!row) throw new Error(`client ${clientId} not found`)
+  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+  if (!row) throw new Error(`device ${deviceId} not found`)
 
   if (row.wgPrivateKey && row.wgPublicKey && row.wgPresharedKey && row.wgIp) return row
 
-  const all = await db.select({ ip: clientsTable.wgIp }).from(clientsTable)
+  const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
   const kp = generateWgKeypair()
   const psk = generateWgPresharedKey()
   const ip = nextAvailableWgIp(all.map(r => r.ip))
 
   const [updated] = await db
-    .update(clientsTable)
+    .update(devicesTable)
     .set({
       wgPrivateKey: row.wgPrivateKey ?? kp.privateKey,
       wgPublicKey: row.wgPublicKey ?? kp.publicKey,
@@ -172,14 +171,43 @@ export async function ensureClientWg(clientId: number) {
       wgIp: row.wgIp ?? ip,
       updatedAt: new Date(),
     })
-    .where(eq(clientsTable.id, clientId))
+    .where(eq(devicesTable.id, deviceId))
+    .returning()
+  return updated
+}
+
+/** Перевыпуск WG-ключей девайса: новый keypair + PSK, IP сохраняется. */
+export async function reissueDeviceWg(deviceId: number) {
+  const db = useDb()
+  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+  if (!row) throw new Error(`device ${deviceId} not found`)
+
+  const kp = generateWgKeypair()
+  const psk = generateWgPresharedKey()
+  let ip = row.wgIp
+  if (!ip) {
+    const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
+    ip = nextAvailableWgIp(all.map(r => r.ip))
+  }
+
+  const [updated] = await db
+    .update(devicesTable)
+    .set({
+      wgPrivateKey: kp.privateKey,
+      wgPublicKey: kp.publicKey,
+      wgPresharedKey: psk,
+      wgIp: ip,
+      updatedAt: new Date(),
+    })
+    .where(eq(devicesTable.id, deviceId))
     .returning()
   return updated
 }
 
 /**
- * Pull all enabled clients with WG bound, render the server config and apply
- * it via `wg syncconf`. Call after any change touching the peer set.
+ * Render the WG server config from ALL devices and apply it via `wg syncconf`.
+ * A device's peer is included only if its client is active (not frozen and
+ * not expired). Call after any change touching devices or client status.
  */
 export async function syncWireguardConfig(): Promise<void> {
   const cfg = useRuntimeConfig()
@@ -194,14 +222,24 @@ export async function syncWireguardConfig(): Promise<void> {
   }
 
   const db = useDb()
-  const all = await db.select().from(clientsTable)
-  const peers = all
-    .filter(c => c.wgPublicKey && c.wgPresharedKey && c.wgIp)
-    .map(c => ({
-      publicKey: c.wgPublicKey!,
-      presharedKey: c.wgPresharedKey!,
-      allowedIp: c.wgIp!,
-      enabled: c.enabled,
+  const rows = await db
+    .select({
+      wgPublicKey: devicesTable.wgPublicKey,
+      wgPresharedKey: devicesTable.wgPresharedKey,
+      wgIp: devicesTable.wgIp,
+      frozenManual: clientsTable.frozenManual,
+      expiresAt: clientsTable.expiresAt,
+    })
+    .from(devicesTable)
+    .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
+
+  const peers = rows
+    .filter(r => r.wgPublicKey && r.wgPresharedKey && r.wgIp)
+    .map(r => ({
+      publicKey: r.wgPublicKey!,
+      presharedKey: r.wgPresharedKey!,
+      allowedIp: r.wgIp!,
+      enabled: isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
     }))
 
   await writeWgServerConfig({

@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { useClients } from '~/composables/useClients'
-import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const { create } = useClients()
-const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
 const open = ref(false)
 const name = ref('')
-const expiresAt = ref<string>('')
 const filterTraffic = ref(true)
-const sendWgToTg = ref(false)
-const sendOvpnToTg = ref(false)
 const loading = ref(false)
 
 async function submit() {
@@ -20,27 +15,10 @@ async function submit() {
   try {
     await create({
       name: name.value.trim(),
-      expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
       filterTraffic: filterTraffic.value,
-      sendWgToTg: sendWgToTg.value,
-      sendOvpnToTg: sendOvpnToTg.value,
     })
-    const tgParts = [
-      sendWgToTg.value && 'WireGuard',
-      sendOvpnToTg.value && 'OpenVPN',
-    ].filter(Boolean)
-    toast.add({
-      title: tgParts.length
-        ? `Клиент «${name.value}» создан, ${tgParts.join(' + ')} отправлены в Telegram`
-        : `Клиент «${name.value}» создан`,
-      color: 'success',
-    })
-    name.value = ''
-    expiresAt.value = ''
-    filterTraffic.value = true
-    sendWgToTg.value = false
-    sendOvpnToTg.value = false
-    open.value = false
+    toast.add({ title: `Клиент «${name.value.trim()}» создан`, color: 'success' })
+    reset()
   }
   catch (e) {
     const err = e as { statusMessage?: string, message?: string }
@@ -53,10 +31,7 @@ async function submit() {
 
 function reset() {
   name.value = ''
-  expiresAt.value = ''
   filterTraffic.value = true
-  sendWgToTg.value = false
-  sendOvpnToTg.value = false
   open.value = false
 }
 </script>
@@ -82,15 +57,8 @@ function reset() {
       <UFormField label="Имя">
         <UInput
           v-model="name"
-          placeholder="напр. anysda-phone"
+          placeholder="напр. Dima"
           autofocus
-          class="w-full"
-        />
-      </UFormField>
-      <UFormField label="Истекает (опционально)">
-        <UInput
-          v-model="expiresAt"
-          type="date"
           class="w-full"
         />
       </UFormField>
@@ -100,29 +68,6 @@ function reset() {
           Фильтровать трафик (AdGuard)
         </label>
         <USwitch v-model="filterTraffic" />
-      </div>
-
-      <USeparator />
-
-      <div class="space-y-2 pt-1">
-        <UTooltip :text="tgReason" :disabled="canSendTg">
-          <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">
-            <label class="text-sm flex items-center gap-2 cursor-pointer">
-              <WireguardLogo class="size-4" />
-              Отправить WireGuard в Telegram
-            </label>
-            <USwitch v-model="sendWgToTg" :disabled="!canSendTg" />
-          </div>
-        </UTooltip>
-        <UTooltip :text="tgReason" :disabled="canSendTg">
-          <div :class="['flex items-center justify-between', !canSendTg && 'opacity-50']">
-            <label class="text-sm flex items-center gap-2 cursor-pointer">
-              <OpenVpnLogo class="size-4" />
-              Отправить OpenVPN в Telegram
-            </label>
-            <USwitch v-model="sendOvpnToTg" :disabled="!canSendTg" />
-          </div>
-        </UTooltip>
       </div>
       <div class="flex gap-2">
         <UButton

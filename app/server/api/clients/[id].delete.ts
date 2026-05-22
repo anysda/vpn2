@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { useDb } from '../../database/client'
-import { clients } from '../../database/schema'
+import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncWireguardConfig } from '../../utils/wireguard'
 import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../utils/openvpn'
@@ -8,27 +8,25 @@ import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../utils/o
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const id = Number(getRouterParam(event, 'id'))
-  if (!Number.isFinite(id)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  }
+  if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
 
   const db = useDb()
-  const result = await db.delete(clients).where(eq(clients.id, id)).returning()
-  if (result.length === 0) {
-    throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  }
-  const removed = result[0]!
+  // Девайсы нужны ДО удаления — отозвать их OpenVPN-сертификаты.
+  const devRows = await db.select().from(devices).where(eq(devices.clientId, id))
 
-  await syncWireguardConfig().catch((err) => {
-    useLogger().error({ err }, 'failed to sync wg config after delete')
-  })
-  // OpenVPN: a deleted client's cert stays cryptographically valid until
-  // revoked — push it into the CRL, and drop any stale CCD file.
-  if (removed.ovpnCert && await caReady()) {
-    await revokeClientCert(removed.ovpnCert).catch((err) => {
-      useLogger().error({ err }, 'failed to revoke ovpn cert after delete')
-    })
-    await setCcdDisabled(ovpnCn(removed.id), false).catch(() => {})
+  const result = await db.delete(clients).where(eq(clients.id, id)).returning()
+  if (result.length === 0) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+  // devices удаляются каскадом (FK ON DELETE CASCADE).
+
+  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client delete failed'))
+
+  if (devRows.length && await caReady()) {
+    for (const d of devRows) {
+      if (!d.ovpnCert) continue
+      await revokeClientCert(d.ovpnCert).catch(err =>
+        useLogger().error({ err }, 'ovpn revoke after client delete failed'))
+      await setCcdDisabled(ovpnCn(d.id), false).catch(() => {})
+    }
   }
 
   return { ok: true }

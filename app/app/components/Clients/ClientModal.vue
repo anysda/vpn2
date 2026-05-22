@@ -543,7 +543,8 @@ const limitReached = computed(() => {
       <p class="text-sm">
         Отвязать Telegram клиента
         <span class="font-semibold">«{{ detail?.name }}»</span>?
-        Он потеряет доступ к самообслуживанию в боте. Конфиги VPN продолжат работать.
+        Он потеряет доступ к самообслуживанию в боте, а старая ссылка-приглашение
+        перестанет работать. Конфиги VPN продолжат работать.
       </p>
     </template>
     <template #footer>

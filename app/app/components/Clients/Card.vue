@@ -36,6 +36,9 @@ const trafficTotal = computed(() => rx.value + tx.value)
             />
           </UTooltip>
           <span class="truncate">{{ client.name }}</span>
+          <UTooltip v-if="client.tgLinked" text="Привязан к Telegram">
+            <UIcon name="i-simple-icons-telegram" class="size-3.5 text-[#26A5E4] shrink-0" />
+          </UTooltip>
         </div>
         <div class="text-xs text-(--ui-text-muted) flex gap-3 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>

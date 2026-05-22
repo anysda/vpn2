@@ -14,6 +14,7 @@ export interface Client {
   frozenManual: boolean
   createdAt: string
   status: 'active' | 'frozen'
+  tgLinked: boolean
   deviceCount: number
   rxTotal: number
   txTotal: number
@@ -43,6 +44,8 @@ export interface ClientDetail {
   password: string
   createdAt: string
   status: 'active' | 'frozen'
+  tgLinked: boolean
+  tgUsername: string | null
   rxTotal: number
   txTotal: number
   devices: Device[]

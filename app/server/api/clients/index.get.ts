@@ -33,6 +33,7 @@ export default defineEventHandler(async (event) => {
       frozenManual: c.frozenManual,
       createdAt: c.createdAt,
       status: clientStatus(c),
+      tgLinked: !!c.tgChatId,
       deviceCount: a ? Number(a.cnt) : 0,
       rxTotal: a ? Number(a.rx) : 0,
       txTotal: a ? Number(a.tx) : 0,

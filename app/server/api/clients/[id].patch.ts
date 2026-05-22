@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
+import { notifyBot } from '../../utils/bot-events'
 import { syncWireguardConfig } from '../../utils/wireguard'
 import { syncOpenvpnConfig } from '../../utils/openvpn'
 
@@ -21,6 +22,9 @@ export default defineEventHandler(async (event) => {
 
   const body = await readValidatedBody(event, Body.parse)
   const db = useDb()
+
+  const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
+  if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const patch: Partial<typeof clients.$inferInsert> = { updatedAt: new Date() }
   if (body.name !== undefined) {
@@ -47,6 +51,18 @@ export default defineEventHandler(async (event) => {
   if (body.frozenManual !== undefined || body.expiresAt !== undefined) {
     await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after patch failed'))
     await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after patch failed'))
+  }
+
+  // Повышение лимита девайсов → уведомить привязанного клиента в боте.
+  // Понижение/прочие правки клиенту не шлём — клиентам алертов не отправляем.
+  if (body.deviceLimit !== undefined && before.tgChatId) {
+    const oldL = before.deviceLimit
+    const newL = row.deviceLimit
+    const raised = (newL === null && oldL !== null)
+      || (typeof newL === 'number' && typeof oldL === 'number' && newL > oldL)
+    if (raised) {
+      void notifyBot('client_quota_raised', { chatId: before.tgChatId, deviceLimit: newL })
+    }
   }
 
   return row

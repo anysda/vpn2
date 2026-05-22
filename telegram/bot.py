@@ -2,12 +2,20 @@
 """
 anysda-vpn Telegram bot.
 
-Commands:
+Мультипользовательский: обслуживает админа (чат TELEGRAM_CHAT_ID) и
+конечных клиентов VPN (любой другой чат — самообслуживание).
+
+Админ-команды (только из админского чата):
   /status   — system overview (nodes CPU/RAM + outbounds RTT)
   /nodes    — per-exit-node RTT
   /clients  — client list
 
-Background monitor (every ALERT_INTERVAL_SEC, default 30 s):
+Клиент (любой другой чат):
+  /start <пароль>  — привязать чат к клиенту по диплинку-приглашению
+  /start           — открыть меню (если чат уже привязан)
+  инлайн-меню — устройства, выдача WG/OVPN конфигов, перевыпуск, удаление
+
+Background monitor (every ALERT_INTERVAL_SEC, default 30 s) — только админу:
   - alerts when a node's metrics go stale for > ALERT_NODE_DOWN_SEC
     (default 5 min) — i.e. the node/VM is down;
   - alerts on high CPU / RAM.
@@ -42,7 +50,14 @@ import httpx
 import qrcode
 from aiohttp import web
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
 logging.basicConfig(
@@ -83,8 +98,11 @@ ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
 # 127.0.0.1 проксировать НЕ нужно — _local идёт напрямую.
 TG_PROXY   = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
 
+# username бота — заполняется в main() через getMe; нужен для диплинков-приглашений.
+BOT_USERNAME: str | None = None
+
 # Local client — for Nuxt API on 127.0.0.1 (direct, no proxy)
-_local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=5.0)
+_local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=10.0)
 
 # Отдельный httpx-клиент для send-методов Telegram — в обход пула
 # python-telegram-bot (с ним ловили PoolTimeout). polling getUpdates идёт
@@ -97,11 +115,41 @@ _tg = httpx.AsyncClient(
 )
 
 
-async def tg_send(chat_id: int, text: str, parse_mode: str | None = None) -> dict:
+# ── Telegram API helpers (raw httpx через TG_PROXY) ────────────────────────────
+
+async def tg_send(chat_id: int, text: str, parse_mode: str | None = None,
+                   reply_markup: dict | None = None) -> dict:
     payload: dict = {'chat_id': chat_id, 'text': text}
     if parse_mode:
         payload['parse_mode'] = parse_mode
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
     r = await _tg.post('/sendMessage', json=payload, timeout=20)
+    return r.json()
+
+
+async def tg_edit(chat_id: int, message_id: int, text: str,
+                  parse_mode: str | None = None,
+                  reply_markup: dict | None = None) -> dict:
+    """editMessageText — для перерисовки инлайн-меню без новых сообщений."""
+    payload: dict = {'chat_id': chat_id, 'message_id': message_id, 'text': text}
+    if parse_mode:
+        payload['parse_mode'] = parse_mode
+    if reply_markup is not None:
+        payload['reply_markup'] = reply_markup
+    r = await _tg.post('/editMessageText', json=payload, timeout=20)
+    return r.json()
+
+
+async def tg_answer_callback(callback_id: str, text: str = '',
+                             show_alert: bool = False) -> dict:
+    """answerCallbackQuery — гасит «часики» на нажатой инлайн-кнопке."""
+    payload: dict = {'callback_query_id': callback_id}
+    if text:
+        payload['text'] = text
+    if show_alert:
+        payload['show_alert'] = True
+    r = await _tg.post('/answerCallbackQuery', json=payload, timeout=20)
     return r.json()
 
 
@@ -133,8 +181,9 @@ async def tg_send_document(chat_id: int, filename: str, content: bytes, caption:
     return r.json()
 
 
-async def tg_reply(update: Update, text: str, parse_mode: str | None = None) -> dict:
-    return await tg_send(update.effective_chat.id, text, parse_mode)
+async def tg_reply(update: Update, text: str, parse_mode: str | None = None,
+                   reply_markup: dict | None = None) -> dict:
+    return await tg_send(update.effective_chat.id, text, parse_mode, reply_markup)
 
 
 # Счётчики «нода лежит» — по tag ноды: сколько проверок подряд она down
@@ -164,17 +213,234 @@ def _pct(v) -> str:
     return f'{v:.0f}%' if isinstance(v, (int, float)) else '—'
 
 
-# ── Commands ──────────────────────────────────────────────────────────────────
+# ── Client API (Nuxt /api/bot/*) ───────────────────────────────────────────────
 
-async def cmd_start(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    await tg_reply(
-        update,
-        '*anysda-vpn*\n\n'
-        '/status — состояние системы\n'
-        '/nodes  — RTT по exit-нодам\n'
-        '/clients — клиенты',
-        'Markdown',
+class BotApiError(Exception):
+    """Ошибка вызова /api/bot/* — message человекочитаемый, для показа клиенту."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def _bot_headers() -> dict:
+    return {'Authorization': f'Bearer {SECRET}'} if SECRET else {}
+
+
+def _extract_error(r: httpx.Response) -> BotApiError:
+    """Из 4xx-ответа Nuxt вытащить человекочитаемый текст."""
+    msg = ''
+    try:
+        body = r.json()
+        if isinstance(body, dict):
+            msg = body.get('message') or body.get('statusMessage') or body.get('error') or ''
+    except Exception:
+        msg = (r.text or '').strip()
+    if not msg:
+        msg = f'Ошибка сервера ({r.status_code})'
+    return BotApiError(r.status_code, msg)
+
+
+async def _bot_request(method: str, path: str, *, json_body: dict | None = None) -> httpx.Response:
+    r = await _local.request(method, path, headers=_bot_headers(), json=json_body)
+    if r.status_code >= 400:
+        raise _extract_error(r)
+    return r
+
+
+async def api_link(chat_id: int, password: str, username: str | None) -> dict:
+    body: dict = {'password': password, 'chatId': chat_id}
+    if username:
+        body['username'] = username
+    r = await _bot_request('POST', '/api/bot/link', json_body=body)
+    return r.json()
+
+
+async def api_client(chat_id: int) -> dict:
+    r = await _bot_request('GET', f'/api/bot/client?chatId={chat_id}')
+    return r.json()
+
+
+async def api_add_device(chat_id: int, name: str) -> dict:
+    r = await _bot_request('POST', '/api/bot/devices',
+                           json_body={'chatId': chat_id, 'name': name})
+    return r.json()
+
+
+async def api_delete_device(chat_id: int, device_id: str) -> dict:
+    r = await _bot_request('DELETE', f'/api/bot/devices/{device_id}?chatId={chat_id}')
+    return r.json()
+
+
+async def api_reissue_device(chat_id: int, device_id: str) -> dict:
+    r = await _bot_request('POST', f'/api/bot/devices/{device_id}/reissue',
+                           json_body={'chatId': chat_id})
+    return r.json()
+
+
+async def api_wg_config(chat_id: int, device_id: str) -> str:
+    r = await _bot_request('GET', f'/api/bot/devices/{device_id}/wg-config?chatId={chat_id}')
+    return r.text
+
+
+async def api_ovpn_config(chat_id: int, device_id: str) -> str:
+    r = await _bot_request('GET', f'/api/bot/devices/{device_id}/ovpn-config?chatId={chat_id}')
+    return r.text
+
+
+# ── Client menu rendering ──────────────────────────────────────────────────────
+
+# Чаты, ожидающие ввода названия устройства (после нажатия «Добавить устройство»).
+# Простое in-memory состояние — переживать рестарт не нужно.
+_awaiting_device_name: set[int] = set()
+
+
+def _limit_label(device_limit) -> str:
+    return '∞' if device_limit is None else str(device_limit)
+
+
+def _menu_markup() -> dict:
+    return {'inline_keyboard': [[
+        {'text': '📱 Мои устройства', 'callback_data': 'devs'},
+        {'text': '➕ Добавить устройство', 'callback_data': 'add'},
+    ]]}
+
+
+def _menu_text(view: dict) -> str:
+    name = view.get('name', '?')
+    count = len(view.get('devices', []))
+    limit = _limit_label(view.get('deviceLimit'))
+    return (
+        f'🔐 *VPN-доступ* для *{name}*.\n'
+        f'Устройства: {count} из {limit}.'
     )
+
+
+def _devices_markup(view: dict) -> dict:
+    rows = []
+    for d in view.get('devices', []):
+        rows.append([{
+            'text': f'📱 {d.get("name", "?")}',
+            'callback_data': f'dev:{d.get("id")}',
+        }])
+    rows.append([{'text': '‹ Назад', 'callback_data': 'menu'}])
+    return {'inline_keyboard': rows}
+
+
+def _devices_text(view: dict) -> str:
+    devices = view.get('devices', [])
+    if not devices:
+        return 'У вас пока нет устройств. Нажмите «➕ Добавить устройство» в меню.'
+    return f'📱 *Ваши устройства* ({len(devices)} шт.)\nВыберите устройство:'
+
+
+def _find_device(view: dict, device_id: str) -> dict | None:
+    for d in view.get('devices', []):
+        if str(d.get('id')) == str(device_id):
+            return d
+    return None
+
+
+def _device_card_text(device: dict) -> str:
+    name = device.get('name', '?')
+    parts = []
+    if device.get('hasWg'):
+        parts.append('WireGuard')
+    if device.get('hasOvpn'):
+        parts.append('OpenVPN')
+    proto = ', '.join(parts) if parts else 'нет конфигов'
+    return f'📱 *{name}*\nПротоколы: {proto}\n\nВыберите действие:'
+
+
+def _device_card_markup(device_id: str) -> dict:
+    return {'inline_keyboard': [
+        [
+            {'text': 'WireGuard', 'callback_data': f'wg:{device_id}'},
+            {'text': 'OpenVPN', 'callback_data': f'ovpn:{device_id}'},
+        ],
+        [
+            {'text': '🔄 Перевыпустить ключи', 'callback_data': f'reic:{device_id}'},
+            {'text': '🗑 Удалить', 'callback_data': f'del:{device_id}'},
+        ],
+        [{'text': '‹ Назад', 'callback_data': 'devs'}],
+    ]}
+
+
+def _confirm_markup(yes_data: str, no_data: str) -> dict:
+    return {'inline_keyboard': [[
+        {'text': '✅ Да', 'callback_data': yes_data},
+        {'text': '✖ Отмена', 'callback_data': no_data},
+    ]]}
+
+
+# ── Commands ───────────────────────────────────────────────────────────────────
+
+ADMIN_START_TEXT = (
+    '*anysda-vpn*\n\n'
+    '/status — состояние системы\n'
+    '/nodes  — RTT по exit-нодам\n'
+    '/clients — клиенты'
+)
+
+
+async def _send_client_menu(chat_id: int, view: dict) -> None:
+    await tg_send(chat_id, _menu_text(view), 'Markdown', _menu_markup())
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+
+    # Админский чат — текущее админское приветствие, без изменений.
+    if chat_id == CHAT_ID:
+        await tg_reply(update, ADMIN_START_TEXT, 'Markdown')
+        return
+
+    payload = context.args[0] if context.args else None
+    username = update.effective_user.username if update.effective_user else None
+
+    if payload:
+        # Диплинк-приглашение: t.me/bot?start=<пароль> → привязка чата.
+        try:
+            view = await api_link(chat_id, payload, username)
+        except BotApiError as e:
+            if e.status == 404:
+                await tg_reply(
+                    update,
+                    'Ссылка недействительна. Запросите новое приглашение у администратора.',
+                )
+            else:
+                await tg_reply(update, f'❌ {e.message}')
+            return
+        except Exception as e:
+            log.exception('cmd_start link failed')
+            await tg_reply(update, f'❌ Ошибка: {e}')
+            return
+        await tg_send(
+            chat_id,
+            f'✅ Доступ к VPN активирован для *{view.get("name", "?")}*.',
+            'Markdown',
+        )
+        await _send_client_menu(chat_id, view)
+        return
+
+    # /start без payload — открыть меню, если чат уже привязан.
+    try:
+        view = await api_client(chat_id)
+    except BotApiError as e:
+        if e.status == 404:
+            await tg_reply(
+                update,
+                'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
+            )
+        else:
+            await tg_reply(update, f'❌ {e.message}')
+        return
+    except Exception as e:
+        log.exception('cmd_start client failed')
+        await tg_reply(update, f'❌ Ошибка: {e}')
+        return
+    await _send_client_menu(chat_id, view)
 
 
 async def build_status_text(header: str = '*Состояние системы*') -> str:
@@ -198,7 +464,13 @@ async def build_status_text(header: str = '*Состояние системы*')
     return '\n'.join(lines)
 
 
+def _admin_only(update: Update) -> bool:
+    return update.effective_chat.id == CHAT_ID
+
+
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _admin_only(update):
+        return
     try:
         await tg_reply(update, await build_status_text(), 'Markdown')
     except Exception as e:
@@ -207,6 +479,8 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _admin_only(update):
+        return
     try:
         data = await api_status()
         lines = ['*Exit-ноды*\n']
@@ -228,6 +502,8 @@ async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _admin_only(update):
+        return
     try:
         data = await api_status()
         clients = data.get('clients', [])
@@ -245,7 +521,221 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         await tg_reply(update, f'❌ Ошибка: {e}')
 
 
-# ── Background monitor ────────────────────────────────────────────────────────
+# ── Client text messages ───────────────────────────────────────────────────────
+
+async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    """Текстовые сообщения от клиентов. Админский чат — игнор (там команды)."""
+    chat_id = update.effective_chat.id
+    if chat_id == CHAT_ID:
+        return
+    text = (update.message.text or '').strip() if update.message else ''
+
+    # Чат ждёт название устройства — обрабатываем как имя.
+    if chat_id in _awaiting_device_name:
+        _awaiting_device_name.discard(chat_id)
+        if not text:
+            await tg_send(chat_id, 'Название не распознано. Откройте меню: /start')
+            return
+        try:
+            view = await api_add_device(chat_id, text)
+        except BotApiError as e:
+            await tg_send(chat_id, f'❌ {e.message}')
+            return
+        except Exception as e:
+            log.exception('add_device failed')
+            await tg_send(chat_id, f'❌ Ошибка: {e}')
+            return
+        await tg_send(chat_id, f'✅ Устройство «{text}» добавлено.')
+        await _send_client_menu(chat_id, view)
+        return
+
+    # Обычное текстовое сообщение от привязанного клиента — показать меню.
+    try:
+        view = await api_client(chat_id)
+    except BotApiError as e:
+        if e.status == 404:
+            await tg_send(
+                chat_id,
+                'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
+            )
+        else:
+            await tg_send(chat_id, f'❌ {e.message}')
+        return
+    except Exception as e:
+        log.exception('on_text client failed')
+        await tg_send(chat_id, f'❌ Ошибка: {e}')
+        return
+    await _send_client_menu(chat_id, view)
+
+
+# ── Client callback queries (инлайн-кнопки) ─────────────────────────────────────
+
+async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    chat_id = update.effective_chat.id
+    callback_id = query.id
+    message_id = query.message.message_id if query.message else None
+    data = query.data or ''
+
+    # Админский чат инлайн-кнопками не пользуется — просто гасим «часики».
+    if chat_id == CHAT_ID:
+        await tg_answer_callback(callback_id)
+        return
+
+    try:
+        await _handle_callback(chat_id, message_id, callback_id, data)
+    except BotApiError as e:
+        await tg_answer_callback(callback_id, e.message, show_alert=True)
+    except Exception as e:
+        log.exception('callback failed: %s', data)
+        await tg_answer_callback(callback_id, f'Ошибка: {e}', show_alert=True)
+
+
+async def _handle_callback(chat_id: int, message_id: int | None,
+                           callback_id: str, data: str) -> None:
+    action, _, arg = data.partition(':')
+
+    # Любое действие требует привязанного клиента.
+    if action == 'menu':
+        view = await api_client(chat_id)
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(chat_id, message_id, _menu_text(view), 'Markdown', _menu_markup())
+        return
+
+    if action == 'devs':
+        view = await api_client(chat_id)
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(chat_id, message_id, _devices_text(view), 'Markdown',
+                          _devices_markup(view))
+        return
+
+    if action == 'dev':
+        view = await api_client(chat_id)
+        device = _find_device(view, arg)
+        if device is None:
+            await tg_answer_callback(callback_id, 'Устройство не найдено', show_alert=True)
+            if message_id:
+                await tg_edit(chat_id, message_id, _devices_text(view), 'Markdown',
+                              _devices_markup(view))
+            return
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(chat_id, message_id, _device_card_text(device), 'Markdown',
+                          _device_card_markup(arg))
+        return
+
+    if action == 'add':
+        view = await api_client(chat_id)
+        limit = view.get('deviceLimit')
+        if limit is not None and len(view.get('devices', [])) >= limit:
+            await tg_answer_callback(
+                callback_id,
+                'Достигнут лимит устройств. Обратитесь к администратору.',
+                show_alert=True,
+            )
+            return
+        _awaiting_device_name.add(chat_id)
+        await tg_answer_callback(callback_id)
+        await tg_send(
+            chat_id,
+            'Пришлите название устройства (например: Телефон, Ноутбук).',
+        )
+        return
+
+    if action == 'wg':
+        view = await api_client(chat_id)
+        device = _find_device(view, arg)
+        if device is None:
+            await tg_answer_callback(callback_id, 'Устройство не найдено', show_alert=True)
+            return
+        await tg_answer_callback(callback_id, 'Готовлю конфиг WireGuard…')
+        conf = await api_wg_config(chat_id, arg)
+        config_name = device.get('configName') or device.get('name') or 'wireguard'
+        await tg_send_qr(chat_id, conf, f'*{device.get("name", "?")}* — WireGuard')
+        await tg_send_document(
+            chat_id, f'{config_name}.conf', conf.encode('utf-8'),
+            caption=f'*{device.get("name", "?")}* — WireGuard',
+        )
+        return
+
+    if action == 'ovpn':
+        view = await api_client(chat_id)
+        device = _find_device(view, arg)
+        if device is None:
+            await tg_answer_callback(callback_id, 'Устройство не найдено', show_alert=True)
+            return
+        await tg_answer_callback(callback_id, 'Готовлю конфиг OpenVPN…')
+        conf = await api_ovpn_config(chat_id, arg)
+        config_name = device.get('configName') or device.get('name') or 'openvpn'
+        await tg_send_document(
+            chat_id, f'{config_name}.ovpn', conf.encode('utf-8'),
+            caption=f'*{device.get("name", "?")}* — OpenVPN',
+        )
+        return
+
+    if action == 'reic':
+        # Запрос подтверждения перевыпуска.
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(
+                chat_id, message_id,
+                '🔄 *Перевыпустить ключи?*\n\n'
+                'Старые конфиги перестанут работать — '
+                'нужно будет выдать новые на все устройства.',
+                'Markdown',
+                _confirm_markup(f'reicyes:{arg}', f'dev:{arg}'),
+            )
+        return
+
+    if action == 'reicyes':
+        await tg_answer_callback(callback_id, 'Перевыпускаю ключи…')
+        view = await api_reissue_device(chat_id, arg)
+        device = _find_device(view, arg)
+        if message_id and device is not None:
+            await tg_edit(
+                chat_id, message_id,
+                f'✅ Ключи перевыпущены.\n\n{_device_card_text(device)}',
+                'Markdown',
+                _device_card_markup(arg),
+            )
+        elif message_id:
+            await tg_edit(chat_id, message_id, _devices_text(view), 'Markdown',
+                          _devices_markup(view))
+        return
+
+    if action == 'del':
+        # Запрос подтверждения удаления.
+        view = await api_client(chat_id)
+        device = _find_device(view, arg)
+        dev_name = device.get('name', '?') if device else '?'
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(
+                chat_id, message_id,
+                f'🗑 *Удалить устройство «{dev_name}»?*\n\n'
+                'Конфиги этого устройства перестанут работать.',
+                'Markdown',
+                _confirm_markup(f'delyes:{arg}', f'dev:{arg}'),
+            )
+        return
+
+    if action == 'delyes':
+        await tg_answer_callback(callback_id, 'Удаляю устройство…')
+        view = await api_delete_device(chat_id, arg)
+        if message_id:
+            await tg_edit(chat_id, message_id, _devices_text(view), 'Markdown',
+                          _devices_markup(view))
+        return
+
+    # Неизвестное действие — просто гасим «часики».
+    await tg_answer_callback(callback_id)
+
+
+# ── Background monitor ──────────────────────────────────────────────────────────
 
 # Алерты: проверки каждые MONITOR_INTERVAL сек, ALERT_HITS подряд = триггер.
 # Снятие — когда метрика опускается ниже (порог - HYSTERESIS).
@@ -339,7 +829,7 @@ async def monitor_loop(app: Application) -> None:
             log.warning('monitor error: %s', e)
 
 
-# ── HTTP server for Nuxt events ───────────────────────────────────────────────
+# ── HTTP server for Nuxt events ────────────────────────────────────────────────
 
 async def handle_event(request: web.Request) -> web.Response:
     if SECRET and request.headers.get('X-Tgbot-Secret') != SECRET:
@@ -380,17 +870,49 @@ async def handle_event(request: web.Request) -> web.Response:
                 caption=f'*{name}* — OpenVPN',
             ))
     elif evt == 'client_send_password':
+        # Приглашение клиенту: бот шлёт в АДМИНСКИЙ чат два сообщения —
+        # (1) пояснение админу, (2) готовое приветствие с диплинком, которое
+        # админ пересылает клиенту.
         name = data.get('name', '?')
         password = data.get('password', '')
         if password:
-            asyncio.create_task(tg_send(
-                CHAT_ID,
-                f'🔑 *{name}* — пароль\n`{password}`',
-                'Markdown',
-            ))
+            asyncio.create_task(_send_invite(name, password))
+    elif evt == 'client_quota_raised':
+        # Лимит устройств клиента повышен — уведомить сам клиентский чат.
+        chat_id = data.get('chatId')
+        device_limit = data.get('deviceLimit')
+        if chat_id:
+            if device_limit is None:
+                msg = '📈 Ваш лимит устройств снят — теперь безлимит.'
+            else:
+                msg = f'📈 Ваш лимит устройств повышен до {device_limit}.'
+            asyncio.create_task(tg_send(int(chat_id), msg))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')
+
+
+async def _send_invite(name: str, password: str) -> None:
+    """Два сообщения в админский чат: пояснение + готовое приглашение клиенту."""
+    await tg_send(
+        CHAT_ID,
+        f'📨 Приглашение для «{name}». Перешлите клиенту сообщение ниже ↓',
+    )
+    if BOT_USERNAME:
+        deeplink = f'https://t.me/{BOT_USERNAME}?start={password}'
+        invite = (
+            '🔐 Вам предоставлен доступ к VPN. '
+            'Откройте ссылку и нажмите «Запустить»:\n'
+            f'{deeplink}'
+        )
+    else:
+        # Фолбэк: username бота неизвестен — даём текстовую инструкцию.
+        invite = (
+            '🔐 Вам предоставлен доступ к VPN.\n'
+            'Найдите нашего бота в Telegram и отправьте ему сообщение:\n'
+            f'/start {password}'
+        )
+    await tg_send(CHAT_ID, invite)
 
 
 async def _announce_deploy() -> None:
@@ -406,7 +928,22 @@ async def _announce_deploy() -> None:
     await tg_send(CHAT_ID, text, 'Markdown')
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
+# ── main ────────────────────────────────────────────────────────────────────────
+
+async def _fetch_bot_username() -> None:
+    """getMe → BOT_USERNAME, для построения диплинков-приглашений."""
+    global BOT_USERNAME
+    try:
+        r = await _tg.get('/getMe', timeout=20)
+        body = r.json()
+        if body.get('ok'):
+            BOT_USERNAME = body.get('result', {}).get('username')
+            log.info('BOT_USERNAME=%s', BOT_USERNAME)
+        else:
+            log.warning('getMe не ok: %s', body)
+    except Exception as e:
+        log.warning('getMe failed: %s — диплинки будут с фолбэк-инструкцией', e)
+
 
 async def main() -> None:
     # Telegram egress — через TG_PROXY (HTTP-CONNECT прокси sing-box →
@@ -437,6 +974,12 @@ async def main() -> None:
     tgapp.add_handler(CommandHandler('status',  cmd_status))
     tgapp.add_handler(CommandHandler('nodes',   cmd_nodes))
     tgapp.add_handler(CommandHandler('clients', cmd_clients))
+    # Клиентское инлайн-меню + ввод названия устройства.
+    tgapp.add_handler(CallbackQueryHandler(on_callback))
+    tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+
+    # username бота для диплинков-приглашений.
+    await _fetch_bot_username()
 
     # aiohttp event server for Nuxt callbacks
     webapp = web.Application()

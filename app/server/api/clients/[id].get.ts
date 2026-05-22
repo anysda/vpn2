@@ -46,6 +46,8 @@ export default defineEventHandler(async (event) => {
     password: client.password,
     createdAt: client.createdAt,
     status: clientStatus(client),
+    tgLinked: !!client.tgChatId,
+    tgUsername: client.tgUsername,
     rxTotal,
     txTotal,
     devices: deviceList,

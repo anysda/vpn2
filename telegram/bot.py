@@ -16,22 +16,20 @@ Background monitor (every ALERT_INTERVAL_SEC, default 30 s):
 Listens on TGBOT_EVENT_PORT for events from Nuxt:
   POST /event  {"type": "client_created", "name": "..."}
 
-All Telegram traffic goes through SOCKS5_PROXY
-(sing-box local SOCKS5 on 127.0.0.1:7897 → foreign-best exit).
-
 Env vars:
   TELEGRAM_BOT_TOKEN  — required
   TELEGRAM_CHAT_ID    — required (integer)
   TGBOT_SECRET        — shared secret with Nuxt (Bearer token)
   TGBOT_EVENT_PORT    — HTTP port for Nuxt→bot events (default 8877)
   ANYSDA_URL          — Nuxt API base (default http://127.0.0.1:51821)
-  SOCKS5_PROXY        — socks5://127.0.0.1:7897
 """
 
 import asyncio
 import io
+import json
 import logging
 import os
+import pathlib
 
 import httpx
 import qrcode
@@ -48,11 +46,8 @@ log = logging.getLogger('tgbot')
 
 # Runtime config поверх env-vars: если файл существует — он перебивает токен/чат_id.
 # Используется панелью (Боты): при сохранении в UI Nuxt пишет сюда, бот сам
-# делает sys.exit() при изменении mtime, docker --restart unless-stopped
+# делает os._exit(0) при изменении mtime, docker --restart unless-stopped
 # перезапускает контейнер с новыми значениями.
-import json
-import pathlib
-import sys
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
 
 
@@ -75,7 +70,6 @@ TOKEN, CHAT_ID = _load_token_chat()
 SECRET     = os.environ.get('TGBOT_SECRET', '')
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
-SOCKS5     = os.environ.get('SOCKS5_PROXY', 'socks5://127.0.0.1:7897')
 
 # Local client — for Nuxt API on 127.0.0.1
 _local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=5.0)
@@ -99,16 +93,16 @@ async def tg_send(chat_id: int, text: str, parse_mode: str | None = None) -> dic
 
 
 def _make_qr_png(data: str) -> bytes:
-    """Render an ss:// URL into a PNG QR — black on white, big margin so phones lock onto it."""
+    """Render a config string into a PNG QR — black on white, big margin so phones lock onto it."""
     img = qrcode.make(data, box_size=10, border=4)
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     return buf.getvalue()
 
 
-async def tg_send_qr(chat_id: int, ss_url: str, caption: str) -> dict:
+async def tg_send_qr(chat_id: int, payload: str, caption: str) -> dict:
     """Send a QR PNG with caption as photo — phones can scan straight from chat."""
-    png = _make_qr_png(ss_url)
+    png = _make_qr_png(payload)
     files = {'photo': ('qr.png', png, 'image/png')}
     data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
     r = await _tg.post('/sendPhoto', data=data, files=files, timeout=30)
@@ -129,13 +123,6 @@ async def tg_send_document(chat_id: int, filename: str, content: bytes, caption:
 async def tg_reply(update: Update, text: str, parse_mode: str | None = None) -> dict:
     return await tg_send(update.effective_chat.id, text, parse_mode)
 
-
-async def tg_edit(chat_id: int, message_id: int, text: str, parse_mode: str | None = None) -> dict:
-    payload: dict = {'chat_id': chat_id, 'message_id': message_id, 'text': text}
-    if parse_mode:
-        payload['parse_mode'] = parse_mode
-    r = await _tg.post('/editMessageText', json=payload, timeout=20)
-    return r.json()
 
 # Счётчики «нода лежит» — по tag ноды: сколько проверок подряд она down
 # и для каких уже отправлен алерт (чтобы не спамить).
@@ -461,7 +448,7 @@ async def main() -> None:
         asyncio.create_task(_supervised_monitor())
         asyncio.create_task(_config_watcher())
         await tgapp.updater.start_polling(drop_pending_updates=True)
-        log.info('Bot started, polling Telegram via %s', SOCKS5)
+        log.info('Bot started, polling Telegram')
         await asyncio.Event().wait()  # run forever
         await tgapp.updater.stop()
         await tgapp.stop()

@@ -4,13 +4,6 @@ declare module '#auth-utils' {
     username: string
     totpEnabled: boolean
   }
-
-  interface UserSession {
-    pendingTotp?: {
-      userId: number
-      issuedAt: number
-    }
-  }
 }
 
 export {}

@@ -4,7 +4,7 @@
 автоматическим geoip-роутингом, drag-n-drop ручными правилами и реал-тайм
 мониторингом.
 
-> **Статус:** в разработке (Phase D ops-features завершены).
+> **Статус:** развёрнут и работает; в активной разработке.
 > **Лицензия:** MIT.
 > **Clean-room:** проект написан с нуля, не использует AGPL-код wg-easy.
 
@@ -60,7 +60,7 @@ vpn2/
 │   ├── deploy.sh             # главный pipeline
 │   ├── lib/                  # config2env.py, gen-router-config.py, ssh.sh
 │   ├── configs/              # шаблоны для envsubst
-│   └── scripts/              # стадии: 00→05→10→20→21→22→25→28→29→30→35→99
+│   └── scripts/              # стадии: 00→05→10→28→29→20→21→22→25→35→30→99
 ├── telegram/                 # Python бот (опциональный)
 ├── deploy.sh                 # entry-point, делегирует infra/deploy.sh
 ├── setup.sh                  # интерактивный мастер config.yaml
@@ -130,7 +130,6 @@ POST/PATCH/DELETE /api/routes               + outbounds from clash
 GET    /api/routes/outbounds
 
 GET    /api/ops/nodes                       cpu/ram/net/uptime via VM
-GET    /api/ops/outbounds                   rtt + kbps via clash API
 GET    /api/ops/adguard                     queries/blocked stats
 
 GET    /api/admin/telegram                  bot config + status

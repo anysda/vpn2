@@ -49,8 +49,8 @@ expand_hosts() {
              echo "$exits" ;;
     all)     [[ -n "$exits" ]] || die "EXIT_TAGS пустой — перезапусти ./deploy.sh"
              echo "ru $exits" ;;
-    *)       # Конкретный тег — проверяем что он есть в списке
-             if [[ "$group" == "ru" ]] || echo "$exits" | grep -qw "$group"; then
+    *)       # Конкретный тег — проверяем что он есть в списке экзитов
+             if echo "$exits" | grep -qw "$group"; then
                echo "$group"
              else
                die "unknown host group: $group (доступные: ru foreign all или тег из config.yaml)"
@@ -85,7 +85,7 @@ ssh_exec() {
     SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
         "${SSH_USER}@${SSH_HOST}" "$@" || rc=$?
     # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
-    # удалённой команды (напр. `test -f` в stage_done), отдаём как есть.
+    # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть.
     [[ $rc -ne 255 ]] && return $rc
     [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
@@ -114,23 +114,4 @@ push() {
     [[ $attempt -lt 5 ]] && { warn "scp → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
   return $rc
-}
-
-# Render a config template (envsubst) into secrets/rendered/<host>/.
-render_template() {
-  local src="$1" out="$2"
-  mkdir -p "$(dirname "$out")"
-  envsubst < "$src" > "$out"
-}
-
-# Mark a stage as applied on the remote host (idempotency stamp).
-mark_stage() {
-  local stage="$1"
-  ssh_exec "mkdir -p /var/anysda/.stamps && touch /var/anysda/.stamps/${stage}"
-}
-
-# Check whether a stage has already been applied on the remote host.
-stage_done() {
-  local stage="$1"
-  ssh_exec "test -f /var/anysda/.stamps/${stage}"
 }

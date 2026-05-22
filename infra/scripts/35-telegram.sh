@@ -3,15 +3,12 @@
 #
 # Pulls the bot image from the public GitLab Container Registry
 # (registry.anysda.space/anysda/vpn2/tgbot) and runs it with
-# --network host so it can reach:
-#   - 127.0.0.1:51821  (anysda-vpn Nuxt API)
-#   - 127.0.0.1:7897   (sing-box SOCKS5 inbound → foreign-best exit)
+# --network host so it can reach the anysda-vpn Nuxt API on 127.0.0.1:51821.
 #
-# Traffic to Telegram API goes via the SOCKS5 proxy, so the bot appears
-# to Telegram as a foreign IP, not the RU datacenter.
+# The bot talks to the Telegram API directly — this hosting reaches
+# api.telegram.org from RU without a proxy.
 #
 # Skipped automatically if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set.
-# Prerequisites: stage 20 (sing-box with SOCKS5 inbound).
 
 set -euo pipefail
 
@@ -82,7 +79,6 @@ docker run -d \
   -e TGBOT_SECRET="$TGBOT_SECRET" \
   -e TGBOT_EVENT_PORT=8877 \
   -e ANYSDA_URL=http://127.0.0.1:51821 \
-  -e SOCKS5_PROXY=socks5://127.0.0.1:7897 \
   "$TGBOT_IMAGE" >/dev/null
 
 echo "[$HOST_TAG] жду пока бот запустится..."

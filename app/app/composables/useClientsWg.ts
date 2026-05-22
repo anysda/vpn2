@@ -1,6 +1,6 @@
 /**
  * Per-client WireGuard helpers — separate from useClients so its polling
- * lifecycle is independent and the SS-only paths don't pull in WG code.
+ * lifecycle is independent of the client list.
  */
 export function useClientsWg() {
   async function getWgConfig(id: number) {

@@ -1,5 +1,6 @@
 import QRCode from 'qrcode-svg'
 import { requireAuth } from '../../../utils/auth'
+import { clientDns } from '../../../utils/client-dns'
 import { buildWgClientConfig, ensureClientWg, loadServerKeys, syncWireguardConfig } from '../../../utils/wireguard'
 
 export default defineEventHandler(async (event) => {
@@ -29,7 +30,7 @@ export default defineEventHandler(async (event) => {
     serverPublicKey: server.publicKey,
     serverEndpoint: endpoint,
     serverPort: Number(cfg.wgListenPort),
-    dns: String(cfg.wgDns),
+    dns: clientDns(client.filterTraffic).join(', '),
     mtu: Number(cfg.wgMtu),
   })
 

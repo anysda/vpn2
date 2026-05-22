@@ -153,12 +153,6 @@ def main():
 
         'inbounds': [
             {
-                'type': 'socks',
-                'tag': 'socks-local',
-                'listen': '127.0.0.1',
-                'listen_port': 7897,
-            },
-            {
                 # Forwarded wg0/tun0 traffic lands here via TPROXY (PREROUTING).
                 # `network` is omitted on purpose — sing-box rejects "tcp,udp"
                 # and accepting a single side wouldn't cover WG clients;
@@ -181,7 +175,7 @@ def main():
             #   1. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)
             #   2. category-gov-ru → direct-ru (госуслуги и т.п.)
             #   3. geoip:ru / private → direct-ru (физически в РФ)
-            #   4. всё остальное → foreign-best (urltest всех hy2 outbounds, самый быстрый)
+            #   4. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
             'rules': [
                 {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'outbound': 'block-out'},

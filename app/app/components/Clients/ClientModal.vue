@@ -306,9 +306,8 @@ const limitReached = computed(() => {
 
           <div class="grid grid-cols-2 gap-3">
             <UFormField label="Истекает (пусто = бессрочно)">
-              <UInput
+              <DateInput
                 v-model="expiresAt"
-                placeholder="ДД.ММ.ГГГГ"
                 class="w-full"
                 :loading="savingExpiry"
                 @change="saveExpiry"

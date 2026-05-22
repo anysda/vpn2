@@ -29,11 +29,19 @@ type=selector (см. gen-router-config.py) — управляется через
   DEAD_AFTER        промахов подряд до признания экзита мёртвым  2
   CONFIRM_GAP       зазор между до-проверками, сек  0.4
   LATENCY_HOLD      тиков подряд с преимуществом до switch-по-латентности  4
+  COOLDOWN_S        сек штрафной для умершего экзита  60
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
 происходит лишь когда один и тот же экзит лучше текущего на >TOLERANCE
 LATENCY_HOLD тиков ПОДРЯД. Смерть экзита по-прежнему переключает сразу.
+
+Штрафная скамья (см. test-notes #16): экзит, признанный мёртвым,
+COOLDOWN_S секунд НЕ выбирается обратно как foreign-best. Без этого при
+flap-шторме (экзит дёргается up/down) вотчдог оптимистично возвращался на
+него, едва тот поднимался, и ловил компаундные простои. В штрафной экзит
+игнорируется при выборе best; если ВСЕ живые в штрафной — берётся лучший
+среди всех (не стрэндим).
 """
 import json
 import os
@@ -60,6 +68,9 @@ CONFIRM_GAP = float(os.environ.get('CONFIRM_GAP', '0.4'))
 LATENCY_HOLD = int(os.environ.get('LATENCY_HOLD', '4'))
 _lat_cand: str = ''   # экзит-кандидат на switch-по-латентности
 _lat_streak = 0       # сколько тиков подряд он держит преимущество
+# штрафная скамья: умерший экзит COOLDOWN секунд не выбирается обратно.
+COOLDOWN     = float(os.environ.get('COOLDOWN_S', '60'))
+_penalty: dict = {}   # member -> monotonic-дедлайн пребывания в штрафной
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -110,6 +121,15 @@ def _switch(target, delay_ms, reason):
     print(f'switch -> {target} ({delay_ms}ms; {reason})', flush=True)
 
 
+def _pick_best(alive):
+    """Лучший по латентности экзит из НЕ-оштрафованных. Если все живые в
+    штрафной — берём лучший среди всех живых (не стрэндим трафик)."""
+    t = time.monotonic()
+    free = {m: d for m, d in alive.items() if _penalty.get(m, 0.0) <= t}
+    pool = free or alive
+    return min(pool, key=pool.get)
+
+
 def tick():
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
@@ -124,7 +144,7 @@ def tick():
     if not alive:
         print('все экзиты не отвечают — выбор не трогаю', flush=True)
         return
-    best = min(alive, key=alive.get)
+    best = _pick_best(alive)   # лучший из не-оштрафованных
 
     global _lat_cand, _lat_streak
     if now in alive:
@@ -159,7 +179,10 @@ def tick():
                   f'({c[now]}ms) — транзиент, selector не трогаю', flush=True)
             return
 
-    _switch(best, alive[best], f'{now} мёртв ({DEAD_AFTER}× промахов подряд)')
+    # умерший экзит — в штрафную: COOLDOWN сек не вернёмся на него (анти-flap)
+    _penalty[now] = time.monotonic() + COOLDOWN
+    _switch(best, alive[best],
+            f'{now} мёртв ({DEAD_AFTER}× промахов) — в штрафной {COOLDOWN:.0f}с')
 
 
 def main():
@@ -168,8 +191,8 @@ def main():
         sys.exit(1)
     print(f'failover-watchdog: group={GROUP} interval={INTERVAL}s '
           f'probe_timeout={TIMEOUT_MS}ms dead_after={DEAD_AFTER} '
-          f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} api={CLASH}',
-          flush=True)
+          f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} '
+          f'cooldown={COOLDOWN:.0f}s api={CLASH}', flush=True)
     while True:
         try:
             tick()

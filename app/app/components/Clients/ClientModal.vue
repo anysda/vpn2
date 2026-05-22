@@ -168,12 +168,14 @@ async function sendPassword() {
 
 // --- Client actions -------------------------------------------------------
 const reissuing = ref(false)
+const confirmReissue = ref(false)
 async function doReissueAll() {
   if (!detail.value) return
   reissuing.value = true
   try {
     const res = await reissueAll(detail.value.id)
     toast.add({ title: `Перевыпущены ключи всех девайсов (${res.devices})`, color: 'success' })
+    confirmReissue.value = false
     await load()
     emit('changed')
   }
@@ -390,8 +392,7 @@ const limitReached = computed(() => {
             icon="i-lucide-rotate-cw"
             color="neutral"
             variant="soft"
-            :loading="reissuing"
-            @click="doReissueAll"
+            @click="confirmReissue = true"
           >
             Перевыпустить все ключи
           </UButton>
@@ -469,6 +470,26 @@ const limitReached = computed(() => {
     :client-id="detail.id"
     @added="onDevicesChanged"
   />
+
+  <!-- Reissue-all confirm -->
+  <UModal v-model:open="confirmReissue" title="Перевыпустить все ключи?">
+    <template #body>
+      <p class="text-sm">
+        Перевыпустить ключи всех девайсов клиента
+        <span class="font-semibold">«{{ detail?.name }}»</span>?
+        Старые конфиги WireGuard и OpenVPN сразу перестанут работать —
+        нужно будет раздать новые.
+      </p>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="soft" @click="confirmReissue = false">
+        Отмена
+      </UButton>
+      <UButton color="primary" :loading="reissuing" @click="doReissueAll">
+        Перевыпустить
+      </UButton>
+    </template>
+  </UModal>
 
   <!-- Delete confirm -->
   <UModal v-model:open="confirmDelete" title="Удалить клиента?">

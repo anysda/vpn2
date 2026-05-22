@@ -22,6 +22,14 @@ function toggleUnlimited() {
   if (!unlimited.value) deviceLimit.value = DEFAULT_DEVICE_LIMIT
 }
 
+// При безлимите поле пустое — тогда виден плейсхолдер «∞».
+const limitInput = computed<number | undefined>({
+  get: () => (unlimited.value ? undefined : deviceLimit.value),
+  set: (v) => {
+    if (typeof v === 'number' && !Number.isNaN(v)) deviceLimit.value = v
+  },
+})
+
 async function submit() {
   if (!name.value.trim()) return
   loading.value = true
@@ -103,7 +111,7 @@ function reset() {
         <UFormField label="Лимит девайсов">
           <div class="flex gap-1">
             <UInput
-              v-model.number="deviceLimit"
+              v-model.number="limitInput"
               type="number"
               :min="1"
               :disabled="unlimited"

@@ -138,6 +138,7 @@ async function sendOvpn() {
 
 // --- Reissue / delete -----------------------------------------------------
 const reissuing = ref(false)
+const confirmReissue = ref(false)
 async function doReissue() {
   reissuing.value = true
   try {
@@ -146,6 +147,7 @@ async function doReissue() {
     wgConf.value = ''
     ovpnConf.value = ''
     toast.add({ title: `Ключи девайса «${props.device.name}» перевыпущены`, color: 'success' })
+    confirmReissue.value = false
     emit('changed')
   }
   catch (e) {
@@ -218,7 +220,7 @@ async function doDelete() {
           color="neutral"
           variant="ghost"
           :loading="reissuing"
-          @click="doReissue"
+          @click="confirmReissue = true"
         />
       </UTooltip>
       <UTooltip text="Удалить девайс">
@@ -354,6 +356,25 @@ async function doDelete() {
             {{ tgReason }}
           </p>
         </div>
+      </template>
+    </UModal>
+
+    <!-- Reissue confirm -->
+    <UModal v-model:open="confirmReissue" title="Перевыпустить ключи девайса?">
+      <template #body>
+        <p class="text-sm">
+          Перевыпустить ключи девайса
+          <span class="font-semibold">«{{ device.name }}»</span>?
+          Старые конфиги WireGuard и OpenVPN сразу перестанут работать.
+        </p>
+      </template>
+      <template #footer>
+        <UButton color="neutral" variant="soft" @click="confirmReissue = false">
+          Отмена
+        </UButton>
+        <UButton color="primary" :loading="reissuing" @click="doReissue">
+          Перевыпустить
+        </UButton>
       </template>
     </UModal>
 

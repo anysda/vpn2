@@ -149,8 +149,18 @@ export async function deleteClient(id: number): Promise<void> {
   const db = useDb()
   const devRows = await db.select().from(devices).where(eq(devices.clientId, id))
 
-  const result = await db.delete(clients).where(eq(clients.id, id)).returning()
-  if (result.length === 0) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+  const [removed] = await db.delete(clients).where(eq(clients.id, id)).returning()
+  if (!removed) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+
+  // Уведомить привязанного клиента об удалении профиля. Ждём отправки
+  // события боту (не fire-and-forget): иначе POST к боту может не успеть
+  // выполниться до завершения запроса на удаление.
+  if (removed.tgChatId) {
+    await notifyBot('client_notify', {
+      chatId: removed.tgChatId,
+      text: '🗑 Ваш профиль удалён администратором. Доступ к VPN прекращён.',
+    })
+  }
 
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client delete failed'))
 

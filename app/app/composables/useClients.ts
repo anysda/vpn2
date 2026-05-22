@@ -66,7 +66,12 @@ export function useClients() {
 
   useVisibleRefresh(refresh)
 
-  async function create(payload: { name: string, filterTraffic?: boolean }) {
+  async function create(payload: {
+    name: string
+    filterTraffic?: boolean
+    expiresAt?: string | null
+    deviceLimit?: number | null
+  }) {
     const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
     await refresh()
     return created

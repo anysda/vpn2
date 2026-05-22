@@ -6,11 +6,13 @@ import { requireAuth } from '../../utils/auth'
 import { notifyBot } from '../../utils/bot-events'
 import { generateClientPassword } from '../../utils/password'
 
-// Создание клиента: только имя + флаг фильтрации. Девайсы добавляются
-// потом, в модалке. Пароль генерится автоматически.
+// Создание клиента: имя, фильтрация, срок действия, лимит девайсов.
+// Девайсы добавляются потом, в модалке. Пароль генерится автоматически.
 const Body = z.object({
   name: z.string().min(1).max(64),
   filterTraffic: z.boolean().optional(),
+  expiresAt: z.iso.datetime().nullable().optional(),
+  deviceLimit: z.number().int().min(1).max(999).nullable().optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -24,14 +26,17 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: `Клиент с именем «${name}» уже существует` })
   }
 
-  const [row] = await db
-    .insert(clients)
-    .values({
-      name,
-      filterTraffic: body.filterTraffic ?? true,
-      password: generateClientPassword(),
-    })
-    .returning()
+  const values: typeof clients.$inferInsert = {
+    name,
+    filterTraffic: body.filterTraffic ?? true,
+    password: generateClientPassword(),
+  }
+  if (body.expiresAt !== undefined) {
+    values.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null
+  }
+  if (body.deviceLimit !== undefined) values.deviceLimit = body.deviceLimit
+
+  const [row] = await db.insert(clients).values(values).returning()
 
   void notifyBot('client_created', { name: row.name })
   return row

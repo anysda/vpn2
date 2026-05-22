@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
-import { devices } from '../../../../../database/schema'
+import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
+import { notifyBot } from '../../../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../../utils/openvpn'
 
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = useDb()
-  const [device] = await db.select({ id: devices.id }).from(devices)
+  const [device] = await db.select({ id: devices.id, name: devices.name }).from(devices)
     .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
     .limit(1)
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
@@ -24,6 +25,13 @@ export default defineEventHandler(async (event) => {
   await reissueDeviceOvpn(deviceId)
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device reissue failed'))
   await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after device reissue failed'))
+
+  // Уведомить привязанного клиента — ключи перевыпустил администратор.
+  const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
+    .where(eq(clients.id, clientId)).limit(1)
+  if (client?.tgChatId) {
+    void notifyBot('client_keys_reissued', { chatId: client.tgChatId, deviceName: device.name })
+  }
 
   return { ok: true }
 })

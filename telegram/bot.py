@@ -929,6 +929,18 @@ async def handle_event(request: web.Request) -> web.Response:
                 int(chat_id),
                 f'📉 Ваш лимит устройств понижен до {device_limit}.',
             ))
+    elif evt == 'client_keys_reissued':
+        # Администратор перевыпустил ключи клиента — старые конфиги мертвы.
+        chat_id = data.get('chatId')
+        device_name = data.get('deviceName')
+        if chat_id:
+            if device_name:
+                msg = (f'🔄 Администратор перевыпустил ключи устройства «{device_name}».\n'
+                       'Старый конфиг больше не работает — скачайте новый: /start')
+            else:
+                msg = ('🔄 Администратор перевыпустил ключи всех ваших устройств.\n'
+                       'Старые конфиги больше не работают — скачайте новые: /start')
+            asyncio.create_task(tg_send(int(chat_id), msg))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

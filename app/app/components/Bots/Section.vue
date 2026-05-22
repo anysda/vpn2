@@ -15,7 +15,6 @@ const toast = useToast()
 
 const newToken = ref('')
 const newChatId = ref('')
-const showToken = ref(false)
 const saving = ref(false)
 
 watch(data, (d) => {
@@ -87,20 +86,10 @@ useVisibleRefresh(refresh)
       <UFormField label="Token" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput
           v-model="newToken"
-          :type="showToken ? 'text' : 'password'"
+          type="text"
           :placeholder="data?.bot_token_masked || ''"
           class="w-full font-mono text-xs"
-        >
-          <template #trailing>
-            <UButton
-              :icon="showToken ? 'i-lucide-eye-off' : 'i-lucide-eye'"
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              @click="showToken = !showToken"
-            />
-          </template>
-        </UInput>
+        />
       </UFormField>
 
       <UFormField label="Chat ID" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">

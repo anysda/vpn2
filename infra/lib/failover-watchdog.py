@@ -29,7 +29,9 @@ type=selector (см. gen-router-config.py) — управляется через
   DEAD_AFTER        промахов подряд до признания экзита мёртвым  2
   CONFIRM_GAP       зазор между до-проверками, сек  0.4
   LATENCY_HOLD      тиков подряд с преимуществом до switch-по-латентности  4
-  COOLDOWN_S        сек штрафной для умершего экзита  60
+  COOLDOWN_S        базовый штраф для умершего экзита, сек  60
+  MAX_COOLDOWN_S    потолок штрафа при рецидивах, сек  600
+  PENALTY_RESET_S   стабильности до сброса эскалации, сек  300
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -41,7 +43,9 @@ COOLDOWN_S секунд НЕ выбирается обратно как foreign-
 flap-шторме (экзит дёргается up/down) вотчдог оптимистично возвращался на
 него, едва тот поднимался, и ловил компаундные простои. В штрафной экзит
 игнорируется при выборе best; если ВСЕ живые в штрафной — берётся лучший
-среди всех (не стрэндим).
+среди всех (не стрэндим). При рецидиве (экзит умер снова вскоре после
+окончания штрафа) срок удваивается до MAX_COOLDOWN_S — хронически
+нестабильный экзит быстро паркуется надолго, система садится на стабильный.
 """
 import json
 import os
@@ -69,8 +73,14 @@ LATENCY_HOLD = int(os.environ.get('LATENCY_HOLD', '4'))
 _lat_cand: str = ''   # экзит-кандидат на switch-по-латентности
 _lat_streak = 0       # сколько тиков подряд он держит преимущество
 # штрафная скамья: умерший экзит COOLDOWN секунд не выбирается обратно.
-COOLDOWN     = float(os.environ.get('COOLDOWN_S', '60'))
+# При рецидиве штраф удваивается (до MAX_COOLDOWN) — хронически нестабильный
+# экзит паркуется надолго. PENALTY_RESET — после стольких секунд стабильной
+# работы рецидив-счётчик сбрасывается на базовый COOLDOWN.
+COOLDOWN      = float(os.environ.get('COOLDOWN_S', '60'))
+MAX_COOLDOWN  = float(os.environ.get('MAX_COOLDOWN_S', '600'))
+PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
 _penalty: dict = {}   # member -> monotonic-дедлайн пребывания в штрафной
+_pen_dur: dict = {}   # member -> текущая длительность штрафа (растёт при рецидиве)
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -130,6 +140,21 @@ def _pick_best(alive):
     return min(pool, key=pool.get)
 
 
+def _penalize(member):
+    """Отправить экзит в штрафную. При рецидиве (умер снова вскоре после
+    окончания прошлого штрафа) длительность удваивается до MAX_COOLDOWN —
+    хронически нестабильный экзит быстро паркуется надолго."""
+    t = time.monotonic()
+    prev_dur = _pen_dur.get(member, 0.0)
+    if prev_dur and (t - _penalty.get(member, 0.0)) < PENALTY_RESET:
+        dur = min(prev_dur * 2, MAX_COOLDOWN)   # рецидив — эскалация
+    else:
+        dur = COOLDOWN                          # давно стабилен — базовый штраф
+    _pen_dur[member] = dur
+    _penalty[member] = t + dur
+    return dur
+
+
 def tick():
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
@@ -179,10 +204,10 @@ def tick():
                   f'({c[now]}ms) — транзиент, selector не трогаю', flush=True)
             return
 
-    # умерший экзит — в штрафную: COOLDOWN сек не вернёмся на него (анти-flap)
-    _penalty[now] = time.monotonic() + COOLDOWN
+    # умерший экзит — в штрафную (анти-flap); при рецидиве срок растёт
+    dur = _penalize(now)
     _switch(best, alive[best],
-            f'{now} мёртв ({DEAD_AFTER}× промахов) — в штрафной {COOLDOWN:.0f}с')
+            f'{now} мёртв ({DEAD_AFTER}× промахов) — в штрафной {dur:.0f}с')
 
 
 def main():
@@ -192,7 +217,7 @@ def main():
     print(f'failover-watchdog: group={GROUP} interval={INTERVAL}s '
           f'probe_timeout={TIMEOUT_MS}ms dead_after={DEAD_AFTER} '
           f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} '
-          f'cooldown={COOLDOWN:.0f}s api={CLASH}', flush=True)
+          f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH}', flush=True)
     while True:
         try:
             tick()

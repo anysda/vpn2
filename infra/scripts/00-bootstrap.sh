@@ -140,8 +140,7 @@ ufw allow 22/tcp comment 'ssh'
 
 case "$HOST_TAG" in
   ru)
-    ufw allow "${SS_PORT}/tcp"  comment 'shadowsocks (outline-ss-server) TCP'
-    ufw allow "${SS_PORT}/udp"  comment 'shadowsocks (outline-ss-server) UDP'
+    # WG/OpenVPN listener-порты открывают сами стадии 28/29.
     ufw allow 80/tcp            comment 'caddy HTTP панель'
     ;;
   *)

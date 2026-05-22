@@ -1,8 +1,6 @@
 export interface Client {
   id: number
   name: string
-  ssSecret: string
-  cipher: string
   enabled: boolean
   expiresAt: string | null
   filterTraffic: boolean
@@ -34,17 +32,12 @@ export function useClients() {
     name: string
     expiresAt: string | null
     filterTraffic?: boolean
-    sendSsToTg?: boolean
     sendWgToTg?: boolean
     sendOvpnToTg?: boolean
   }) {
     const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
     await refresh()
     return created
-  }
-
-  async function sendToTg(id: number) {
-    return $fetch<{ ok: true }>(`/api/clients/${id}/send-to-tg`, { method: 'POST' })
   }
 
   async function update(id: number, patch: { name?: string, enabled?: boolean, expiresAt?: string | null }) {
@@ -58,18 +51,7 @@ export function useClients() {
     await refresh()
   }
 
-  async function getSsUrl(id: number) {
-    return $fetch<string>(`/api/clients/${id}/ss-url`)
-  }
-
-  async function generateOneTimeLink(id: number) {
-    return $fetch<{ token: string, url: string, expiresAt: string, ttlSeconds: number }>(
-      `/api/clients/${id}/one-time-link`,
-      { method: 'POST' },
-    )
-  }
-
-  return { clients: data, refresh, status, error, create, update, remove, getSsUrl, generateOneTimeLink, sendToTg }
+  return { clients: data, refresh, status, error, create, update, remove }
 }
 
 export function relativeTime(date: Date | string | null | undefined): string {

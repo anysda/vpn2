@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 
   const cfg = useRuntimeConfig()
   if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'OpenVPN выключен' })
-  const endpoint = String(cfg.ovpnPublicHost || cfg.ssPublicHost || '')
+  const endpoint = String(cfg.ovpnPublicHost || '')
   if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'ovpn_public_host_not_configured' })
 
   const secret = String(cfg.tgbotSecret ?? '')

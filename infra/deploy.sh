@@ -6,7 +6,7 @@
 #   ./deploy.sh <stage> <group>   одна стадия на группу нод
 #
 # Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 20-ru-router |
-#           27-shadowsocks | 28-wireguard | 29-openvpn | 22-adguard
+#           28-wireguard | 29-openvpn | 21-failover-watchdog | 22-adguard
 #           25-monitoring | 35-telegram | 30-frontend | 99-verify
 # Группы:   ru | foreign | all | <конкретный тег экзита>
 
@@ -553,7 +553,6 @@ do_all() {
   run_stage 00-bootstrap     all
   run_stage 05-mgmt-mesh     all
   run_stage 10-foreign       foreign
-  run_stage 27-shadowsocks   ru
   run_stage 28-wireguard     ru
   run_stage 29-openvpn       ru
   run_stage 20-ru-router     ru

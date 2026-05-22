@@ -139,9 +139,8 @@ def main():
             'servers': [
                 {'tag': 'ru-dns', 'address': '77.88.8.8', 'detour': 'direct-ru'},
                 # AdGuard Home on the entry mgmt IP — sing-box resolves through
-                # it so SS/Outline clients (no DNS field in ss://) still get
-                # ad/tracker filtering. .ru stays on Yandex DNS for correct
-                # Russian CDN IPs (geoip routing depends on it).
+                # it so clients get ad/tracker filtering. .ru stays on Yandex
+                # DNS for correct Russian CDN IPs (geoip routing depends on it).
                 {'tag': 'adguard', 'address': '10.99.0.1', 'detour': 'direct-ru'},
             ],
             'rules': [
@@ -154,30 +153,13 @@ def main():
 
         'inbounds': [
             {
-                'type': 'redirect',
-                'tag': 'redirect-in',
-                'listen': '0.0.0.0',
-                'listen_port': 7895,
-                'sniff': True,
-                'sniff_override_destination': True,
-            },
-            {
-                'type': 'tproxy',
-                'tag': 'tproxy-udp-in',
-                'listen': '0.0.0.0',
-                'listen_port': 7896,
-                'network': 'udp',
-                'sniff': True,
-                'sniff_override_destination': True,
-            },
-            {
                 'type': 'socks',
                 'tag': 'socks-local',
                 'listen': '127.0.0.1',
                 'listen_port': 7897,
             },
             {
-                # Forwarded wg0 traffic lands here via TPROXY (PREROUTING -i wg0).
+                # Forwarded wg0/tun0 traffic lands here via TPROXY (PREROUTING).
                 # `network` is omitted on purpose — sing-box rejects "tcp,udp"
                 # and accepting a single side wouldn't cover WG clients;
                 # omitting the filter accepts both protocols.

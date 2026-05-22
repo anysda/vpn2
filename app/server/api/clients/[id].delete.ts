@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
-import { syncShadowsocksConfig } from '../../utils/shadowsocks'
 import { syncWireguardConfig } from '../../utils/wireguard'
 import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../utils/openvpn'
 
@@ -20,9 +19,6 @@ export default defineEventHandler(async (event) => {
   }
   const removed = result[0]!
 
-  await syncShadowsocksConfig().catch((err) => {
-    useLogger().error({ err }, 'failed to sync ss config after delete')
-  })
   await syncWireguardConfig().catch((err) => {
     useLogger().error({ err }, 'failed to sync wg config after delete')
   })

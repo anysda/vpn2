@@ -26,7 +26,6 @@ async function onToggle(next: boolean) {
 }
 
 const confirmDelete = ref(false)
-const showQr = ref(false)
 const showWg = ref(false)
 const showOvpn = ref(false)
 const showEdit = ref(false)
@@ -107,11 +106,6 @@ const trafficTotal = computed(() =>
           <OpenVpnLogo class="size-4" />
         </UButton>
       </UTooltip>
-      <UTooltip text="Outline — копировать URL или отправить в Telegram">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showQr = true">
-          <OutlineLogo class="size-4" />
-        </UButton>
-      </UTooltip>
       <UTooltip text="Редактировать">
         <UButton icon="i-lucide-pencil" size="xs" color="neutral" variant="ghost" @click="showEdit = true" />
       </UTooltip>
@@ -120,7 +114,6 @@ const trafficTotal = computed(() =>
       </UTooltip>
     </div>
 
-    <ClientsQrModal v-model:open="showQr" :client="client" />
     <ClientsWireguardModal v-model:open="showWg" :client="client" />
     <ClientsOpenVpnModal v-model:open="showOvpn" :client="client" />
     <ClientsEditDialog v-model:open="showEdit" :client="client" />
@@ -129,7 +122,7 @@ const trafficTotal = computed(() =>
       <template #body>
         <p class="text-sm">
           Удалить <span class="font-semibold">«{{ client.name }}»</span>?
-          Действие необратимо, ss-URL клиента сразу перестанет работать.
+          Действие необратимо, конфиги клиента сразу перестанут работать.
         </p>
       </template>
       <template #footer>

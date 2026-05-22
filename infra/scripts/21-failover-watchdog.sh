@@ -50,6 +50,7 @@ TOLERANCE_MS=120
 DEAD_AFTER=2
 CONFIRM_GAP=0.4
 LATENCY_HOLD=4
+COOLDOWN_S=60
 EOF
 chmod 600 /etc/anysda/failover-watchdog.env
 

@@ -42,6 +42,12 @@ const trafficTotal = computed(() => rx.value + tx.value)
         </div>
         <div class="text-xs text-(--ui-text-muted) flex gap-3 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>
+          <UTooltip text="Девайсы: добавлено / лимит">
+            <span class="flex items-center gap-0.5">
+              <UIcon name="i-lucide-smartphone" class="size-3 shrink-0" />
+              {{ client.deviceCount }}/{{ client.deviceLimit === null ? '∞' : client.deviceLimit }}
+            </span>
+          </UTooltip>
           <UTooltip
             v-if="trafficTotal > 0"
             :text="`Трафик за всё время (все девайсы) · ↓ ${fmtBytes(rx)} ↑ ${fmtBytes(tx)}`"
@@ -49,12 +55,6 @@ const trafficTotal = computed(() => rx.value + tx.value)
             <span class="flex items-center gap-0.5">
               <UIcon name="i-lucide-arrow-down" class="size-3 shrink-0" />
               {{ fmtBytes(trafficTotal) }}
-            </span>
-          </UTooltip>
-          <UTooltip text="Девайсы: добавлено / лимит">
-            <span class="flex items-center gap-0.5">
-              <UIcon name="i-lucide-smartphone" class="size-3 shrink-0" />
-              {{ client.deviceCount }}/{{ client.deviceLimit === null ? '∞' : client.deviceLimit }}
             </span>
           </UTooltip>
         </div>

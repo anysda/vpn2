@@ -214,6 +214,8 @@ def main():
             f"TELEGRAM_BOT_TOKEN='{tg['bot_token']}'",
             f"TELEGRAM_CHAT_ID='{tg['chat_id']}'",
         ]
+        if tg.get('admin_username'):
+            lines.append(f"TELEGRAM_ADMIN_USERNAME='{tg['admin_username']}'")
 
     ru_env = envs_dir / 'ru.env'
     ru_env.write_text('\n'.join(lines) + '\n')

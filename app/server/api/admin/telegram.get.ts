@@ -10,5 +10,6 @@ export default defineEventHandler(async (event) => {
     running,
     bot_token_masked: maskToken(cfg.bot_token),
     chat_id: cfg.chat_id,
+    admin_username: cfg.admin_username,
   }
 })

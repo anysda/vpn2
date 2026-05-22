@@ -5,6 +5,7 @@ import { readTelegramRuntime, writeTelegramRuntime } from '../../utils/telegram-
 const Body = z.object({
   bot_token: z.string().optional(),
   chat_id: z.union([z.string(), z.number()]).optional(),
+  admin_username: z.string().optional(),
 })
 
 export default defineEventHandler(async (event) => {
@@ -15,6 +16,10 @@ export default defineEventHandler(async (event) => {
   const next = {
     bot_token: body.bot_token !== undefined ? body.bot_token : cur.bot_token,
     chat_id: body.chat_id !== undefined ? String(body.chat_id) : cur.chat_id,
+    // Никнейм храним без ведущего @ — бот добавит его при показе.
+    admin_username: body.admin_username !== undefined
+      ? body.admin_username.trim().replace(/^@+/, '')
+      : cur.admin_username,
   }
 
   writeTelegramRuntime(next)

@@ -7,21 +7,24 @@ const RUNTIME_PATH = '/etc/anysda/telegram-runtime.json'
 export interface TelegramRuntime {
   bot_token: string
   chat_id: string | number | ''
+  // Никнейм администратора бота (без @) — бот указывает его людям без доступа.
+  admin_username: string
 }
 
 export function readTelegramRuntime(): TelegramRuntime {
   try {
-    if (!existsSync(RUNTIME_PATH)) return { bot_token: '', chat_id: '' }
+    if (!existsSync(RUNTIME_PATH)) return { bot_token: '', chat_id: '', admin_username: '' }
     const raw = readFileSync(RUNTIME_PATH, 'utf-8')
     const parsed = JSON.parse(raw)
     return {
       bot_token: String(parsed.bot_token ?? ''),
       chat_id: parsed.chat_id ?? '',
+      admin_username: String(parsed.admin_username ?? ''),
     }
   }
   catch (err) {
     useLogger().warn({ err }, 'failed to read telegram-runtime.json')
-    return { bot_token: '', chat_id: '' }
+    return { bot_token: '', chat_id: '', admin_username: '' }
   }
 }
 

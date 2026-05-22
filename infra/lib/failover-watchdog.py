@@ -79,8 +79,11 @@ _lat_streak = 0       # сколько тиков подряд он держит
 COOLDOWN      = float(os.environ.get('COOLDOWN_S', '60'))
 MAX_COOLDOWN  = float(os.environ.get('MAX_COOLDOWN_S', '600'))
 PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
-_penalty: dict = {}   # member -> monotonic-дедлайн пребывания в штрафной
-_pen_dur: dict = {}   # member -> текущая длительность штрафа (растёт при рецидиве)
+# Штраф — по УЗЛУ экзита, не по тегу: у ноды несколько outbound-ов
+# (hy2-<node>-direct, hy2-<node>-warp) — они на одной ноде и умирают вместе,
+# иначе watchdog обошёл бы штраф, перескочив на соседний тег того же узла.
+_penalty: dict = {}   # node -> monotonic-дедлайн пребывания в штрафной
+_pen_dur: dict = {}   # node -> текущая длительность штрафа (растёт при рецидиве)
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -131,28 +134,35 @@ def _switch(target, delay_ms, reason):
     print(f'switch -> {target} ({delay_ms}ms; {reason})', flush=True)
 
 
+def _node_of(tag):
+    """Узел экзита из тега hy2-<node>-<kind>. Для нестандартного — сам тег."""
+    p = tag.split('-')
+    return p[1] if len(p) >= 3 else tag
+
+
 def _pick_best(alive):
-    """Лучший по латентности экзит из НЕ-оштрафованных. Если все живые в
-    штрафной — берём лучший среди всех живых (не стрэндим трафик)."""
+    """Лучший по латентности экзит из НЕ-оштрафованных (штраф — по узлу).
+    Если узлы всех живых в штрафной — берём лучший среди всех (не стрэндим)."""
     t = time.monotonic()
-    free = {m: d for m, d in alive.items() if _penalty.get(m, 0.0) <= t}
+    free = {m: d for m, d in alive.items() if _penalty.get(_node_of(m), 0.0) <= t}
     pool = free or alive
     return min(pool, key=pool.get)
 
 
 def _penalize(member):
-    """Отправить экзит в штрафную. При рецидиве (умер снова вскоре после
-    окончания прошлого штрафа) длительность удваивается до MAX_COOLDOWN —
-    хронически нестабильный экзит быстро паркуется надолго."""
+    """Отправить УЗЕЛ экзита в штрафную (все его теги сразу). При рецидиве
+    (умер снова вскоре после окончания прошлого штрафа) длительность
+    удваивается до MAX_COOLDOWN — нестабильный узел паркуется надолго."""
+    node = _node_of(member)
     t = time.monotonic()
-    prev_dur = _pen_dur.get(member, 0.0)
-    if prev_dur and (t - _penalty.get(member, 0.0)) < PENALTY_RESET:
+    prev_dur = _pen_dur.get(node, 0.0)
+    if prev_dur and (t - _penalty.get(node, 0.0)) < PENALTY_RESET:
         dur = min(prev_dur * 2, MAX_COOLDOWN)   # рецидив — эскалация
     else:
         dur = COOLDOWN                          # давно стабилен — базовый штраф
-    _pen_dur[member] = dur
-    _penalty[member] = t + dur
-    return dur
+    _pen_dur[node] = dur
+    _penalty[node] = t + dur
+    return node, dur
 
 
 def tick():
@@ -204,10 +214,10 @@ def tick():
                   f'({c[now]}ms) — транзиент, selector не трогаю', flush=True)
             return
 
-    # умерший экзит — в штрафную (анти-flap); при рецидиве срок растёт
-    dur = _penalize(now)
+    # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
+    node, dur = _penalize(now)
     _switch(best, alive[best],
-            f'{now} мёртв ({DEAD_AFTER}× промахов) — в штрафной {dur:.0f}с')
+            f'{now} мёртв ({DEAD_AFTER}× промахов) — узел {node} в штрафной {dur:.0f}с')
 
 
 def main():

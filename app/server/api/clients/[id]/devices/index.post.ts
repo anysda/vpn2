@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../../../database/client'
 import { clients, devices } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
+import { notifyClient } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 
@@ -36,6 +37,15 @@ export default defineEventHandler(async (event) => {
     await ensureDeviceOvpn(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceOvpn on add failed'))
   }
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device add failed'))
+
+  // Уведомить привязанного клиента — устройство добавил администратор.
+  if (client.tgChatId) {
+    notifyClient(
+      client.tgChatId,
+      `➕ Администратор добавил вам устройство «${name}». `
+      + 'Откройте «📱 Мои устройства», чтобы получить конфиг.',
+    )
+  }
 
   return { id: device.id, clientId, name: device.name, createdAt: device.createdAt }
 })

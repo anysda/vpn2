@@ -910,37 +910,14 @@ async def handle_event(request: web.Request) -> web.Response:
         password = data.get('password', '')
         if password:
             asyncio.create_task(_send_invite(name, password))
-    elif evt == 'client_quota_raised':
-        # Лимит устройств клиента повышен — уведомить сам клиентский чат.
+    elif evt == 'client_notify':
+        # Уведомление привязанному клиенту об изменении его аккаунта
+        # (квота, заморозка, девайсы, срок, перевыпуск ключей). Текст
+        # готовит панель — бот просто доставляет в клиентский чат.
         chat_id = data.get('chatId')
-        device_limit = data.get('deviceLimit')
-        if chat_id:
-            if device_limit is None:
-                msg = '📈 Ваш лимит устройств снят — теперь безлимит.'
-            else:
-                msg = f'📈 Ваш лимит устройств повышен до {device_limit}.'
-            asyncio.create_task(tg_send(int(chat_id), msg))
-    elif evt == 'client_quota_lowered':
-        # Лимит устройств клиента понижен — уведомить клиентский чат.
-        chat_id = data.get('chatId')
-        device_limit = data.get('deviceLimit')
-        if chat_id:
-            asyncio.create_task(tg_send(
-                int(chat_id),
-                f'📉 Ваш лимит устройств понижен до {device_limit}.',
-            ))
-    elif evt == 'client_keys_reissued':
-        # Администратор перевыпустил ключи клиента — старые конфиги мертвы.
-        chat_id = data.get('chatId')
-        device_name = data.get('deviceName')
-        if chat_id:
-            if device_name:
-                msg = (f'🔄 Администратор перевыпустил ключи устройства «{device_name}».\n'
-                       'Старый конфиг больше не работает — скачайте новый: /start')
-            else:
-                msg = ('🔄 Администратор перевыпустил ключи всех ваших устройств.\n'
-                       'Старые конфиги больше не работают — скачайте новые: /start')
-            asyncio.create_task(tg_send(int(chat_id), msg))
+        text = data.get('text', '')
+        if chat_id and text:
+            asyncio.create_task(tg_send(int(chat_id), text))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     return web.Response(text='ok')

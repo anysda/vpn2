@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../../../database/client'
 import { clients, devices } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
-import { notifyBot } from '../../../utils/bot-events'
+import { notifyClient } from '../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../utils/openvpn'
 
@@ -28,7 +28,11 @@ export default defineEventHandler(async (event) => {
 
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
   if (client.tgChatId) {
-    void notifyBot('client_keys_reissued', { chatId: client.tgChatId })
+    notifyClient(
+      client.tgChatId,
+      '🔄 Администратор перевыпустил ключи всех ваших устройств. '
+      + 'Старые конфиги больше не работают — скачайте новые в «📱 Мои устройства».',
+    )
   }
 
   return { ok: true, devices: devRows.length }

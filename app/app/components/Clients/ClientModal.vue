@@ -14,6 +14,9 @@ const toast = useToast()
 
 const DEFAULT_DEVICE_LIMIT = 3
 
+// Минимальная дата истечения — завтра (раньше ставить нельзя).
+const minExpiry = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
+
 const detail = ref<ClientDetail | null>(null)
 const loading = ref(false)
 
@@ -277,6 +280,7 @@ const limitReached = computed(() => {
               <UInput
                 v-model="expiresAt"
                 type="date"
+                :min="minExpiry"
                 class="w-full"
                 :loading="savingExpiry"
                 @change="saveExpiry"
@@ -352,12 +356,12 @@ const limitReached = computed(() => {
               />
               <UInput
                 v-model.number="limitInput"
-                type="number"
-                :min="minLimit"
+                type="text"
+                inputmode="numeric"
                 class="w-16"
                 :disabled="unlimited"
                 :placeholder="unlimited ? '∞' : ''"
-                :ui="{ base: 'text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none' }"
+                :ui="{ base: 'text-center' }"
                 @change="saveLimit"
               />
               <UButton

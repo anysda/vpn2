@@ -106,7 +106,12 @@ export function useClients() {
     return $fetch<{ ok: true }>(`/api/clients/${id}/send-password-to-tg`, { method: 'POST' })
   }
 
-  return { clients: data, refresh, status, error, create, update, remove, reissueAll, sendPasswordToTg }
+  async function unlink(id: number) {
+    await $fetch(`/api/clients/${id}/unlink`, { method: 'POST' })
+    await refresh()
+  }
+
+  return { clients: data, refresh, status, error, create, update, remove, reissueAll, sendPasswordToTg, unlink }
 }
 
 /** Загрузка детальной карточки клиента (по требованию, без поллинга). */
@@ -152,6 +157,28 @@ export function relativeTime(date: Date | string | null | undefined): string {
   if (sec < 3600) return `${Math.floor(sec / 60)} мин назад`
   if (sec < 86400) return `${Math.floor(sec / 3600)} ч назад`
   return `${Math.floor(sec / 86400)} дн назад`
+}
+
+/** «31.12.2026» → ISO-строка (UTC-полночь). null — если формат не распознан. */
+export function parseRuDate(s: string): string | null {
+  const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
+  if (!m) return null
+  const dd = Number(m[1])
+  const mm = Number(m[2])
+  const yyyy = Number(m[3])
+  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
+  // Отсеять несуществующие даты (напр. 31.02.2026).
+  if (d.getUTCDate() !== dd || d.getUTCMonth() !== mm - 1) return null
+  return d.toISOString()
+}
+
+/** ISO-строка → «31.12.2026» (пусто, если даты нет). */
+export function formatRuDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`
 }
 
 export function expiryLabel(expiresAt: string | null | undefined): string {

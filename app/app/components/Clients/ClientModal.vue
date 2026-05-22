@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ClientDetail } from '~/composables/useClients'
-import { fmtBytes, useClientDetail, useClients } from '~/composables/useClients'
+import { fmtBytes, formatRuDate, parseRuDate, useClientDetail, useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const props = defineProps<{ clientId: number | null }>()
@@ -8,14 +8,11 @@ const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ changed: [] }>()
 
 const { fetchDetail } = useClientDetail()
-const { update, remove, reissueAll, sendPasswordToTg } = useClients()
+const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
 const DEFAULT_DEVICE_LIMIT = 3
-
-// Минимальная дата истечения — завтра (раньше ставить нельзя).
-const minExpiry = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
 
 const detail = ref<ClientDetail | null>(null)
 const loading = ref(false)
@@ -46,7 +43,7 @@ async function load() {
 
 function syncForm(d: ClientDetail) {
   name.value = d.name
-  expiresAt.value = d.expiresAt ? d.expiresAt.slice(0, 10) : ''
+  expiresAt.value = formatRuDate(d.expiresAt)
   unlimited.value = d.deviceLimit === null
   deviceLimit.value = d.deviceLimit ?? DEFAULT_DEVICE_LIMIT
 }
@@ -83,9 +80,19 @@ async function saveName() {
 const savingExpiry = ref(false)
 async function saveExpiry() {
   if (!detail.value) return
-  const next = expiresAt.value ? new Date(expiresAt.value).toISOString() : null
+  const raw = expiresAt.value.trim()
+  let next: string | null = null
+  if (raw) {
+    next = parseRuDate(raw)
+    if (!next) {
+      toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
+      expiresAt.value = formatRuDate(detail.value.expiresAt)
+      return
+    }
+  }
   const cur = detail.value.expiresAt
-  if (next === cur) return
+  const same = (next ? new Date(next).getTime() : null) === (cur ? new Date(cur).getTime() : null)
+  if (same) return
   savingExpiry.value = true
   try {
     await update(detail.value.id, { expiresAt: next })
@@ -96,7 +103,7 @@ async function saveExpiry() {
   catch (e) {
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Ошибка сохранения', color: 'error' })
-    expiresAt.value = cur ? cur.slice(0, 10) : ''
+    expiresAt.value = formatRuDate(detail.value.expiresAt)
   }
   finally {
     savingExpiry.value = false
@@ -162,6 +169,28 @@ async function sendPassword() {
   }
   finally {
     sendingPwd.value = false
+  }
+}
+
+const revoking = ref(false)
+const confirmRevoke = ref(false)
+async function doRevoke() {
+  if (!detail.value) return
+  revoking.value = true
+  try {
+    await unlink(detail.value.id)
+    detail.value.tgLinked = false
+    detail.value.tgUsername = null
+    confirmRevoke.value = false
+    toast.add({ title: 'Доступ к боту отозван', color: 'success' })
+    emit('changed')
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
+  }
+  finally {
+    revoking.value = false
   }
 }
 
@@ -279,8 +308,7 @@ const limitReached = computed(() => {
             <UFormField label="Истекает (пусто = бессрочно)">
               <UInput
                 v-model="expiresAt"
-                type="date"
-                :min="minExpiry"
+                placeholder="ДД.ММ.ГГГГ"
                 class="w-full"
                 :loading="savingExpiry"
                 @change="saveExpiry"
@@ -327,7 +355,7 @@ const limitReached = computed(() => {
         <USeparator />
 
         <!-- Доступ к боту -->
-        <UTooltip :text="tgReason" :disabled="canSendTg" class="block">
+        <div class="space-y-2">
           <UButton
             color="neutral"
             variant="soft"
@@ -336,12 +364,28 @@ const limitReached = computed(() => {
             :loading="sendingPwd"
             @click="sendPassword"
           >
-            <template #leading>
+            <span class="inline-flex items-center gap-2">
               <UIcon name="i-simple-icons-telegram" class="size-5 text-[#26A5E4]" />
-            </template>
-            Отправить доступ к боту
+              Отправить доступ к боту
+            </span>
           </UButton>
-        </UTooltip>
+          <UButton
+            v-if="detail.tgLinked"
+            color="error"
+            variant="soft"
+            block
+            :loading="revoking"
+            @click="confirmRevoke = true"
+          >
+            <span class="inline-flex items-center gap-2">
+              <UIcon name="i-lucide-unlink" class="size-4" />
+              Отозвать доступ к боту
+            </span>
+          </UButton>
+          <p v-if="!canSendTg" class="text-xs text-(--ui-text-muted)">
+            {{ tgReason }}
+          </p>
+        </div>
 
         <!-- Device limit -->
         <UFormField label="Лимит девайсов">
@@ -489,6 +533,25 @@ const limitReached = computed(() => {
       </UButton>
       <UButton color="primary" :loading="reissuing" @click="doReissueAll">
         Перевыпустить
+      </UButton>
+    </template>
+  </UModal>
+
+  <!-- Revoke confirm -->
+  <UModal v-model:open="confirmRevoke" title="Отозвать доступ к боту?">
+    <template #body>
+      <p class="text-sm">
+        Отвязать Telegram клиента
+        <span class="font-semibold">«{{ detail?.name }}»</span>?
+        Он потеряет доступ к самообслуживанию в боте. Конфиги VPN продолжат работать.
+      </p>
+    </template>
+    <template #footer>
+      <UButton color="neutral" variant="soft" @click="confirmRevoke = false">
+        Отмена
+      </UButton>
+      <UButton color="error" :loading="revoking" @click="doRevoke">
+        Отозвать
       </UButton>
     </template>
   </UModal>

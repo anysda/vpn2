@@ -52,7 +52,11 @@ if [[ ! -f /etc/anysda/telegram-runtime.json ]]; then
   python3 - <<PYEOF
 import json
 json.dump(
-  {'bot_token': '${TELEGRAM_BOT_TOKEN}', 'chat_id': '${TELEGRAM_CHAT_ID}'},
+  {
+    'bot_token': '${TELEGRAM_BOT_TOKEN}',
+    'chat_id': '${TELEGRAM_CHAT_ID}',
+    'admin_username': '${TELEGRAM_ADMIN_USERNAME:-}',
+  },
   open('/etc/anysda/telegram-runtime.json', 'w'),
 )
 PYEOF

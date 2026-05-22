@@ -1,8 +1,8 @@
-import { requireAuth } from '../../utils/auth'
-import { deleteClient } from '../../utils/client-ops'
+import { deleteClient } from '../../../../utils/client-ops'
+import { requireBotAuth } from '../../../../utils/bot-api'
 
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  requireBotAuth(event)
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   await deleteClient(id)

@@ -74,22 +74,30 @@ log = logging.getLogger('tgbot')
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
 
 
-def _load_token_chat() -> tuple[str, int]:
+def _load_runtime() -> tuple[str, int, str]:
+    """Прочитать bot_token / chat_id / admin_username (env + runtime.json).
+
+    runtime.json перебивает env. admin_username — никнейм админа без @,
+    используется в сообщении непривязанным людям («напишите администратору»).
+    """
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     chat = os.environ.get('TELEGRAM_CHAT_ID', '0')
+    admin = os.environ.get('TELEGRAM_ADMIN_USERNAME', '')
     if RUNTIME_PATH.exists():
         try:
             data = json.loads(RUNTIME_PATH.read_text())
             token = (data.get('bot_token') or token).strip()
             chat = str(data.get('chat_id') or chat).strip()
+            admin = (data.get('admin_username') or admin or '').strip()
         except Exception:
             pass
+    admin = admin.lstrip('@').strip()
     if not token:
         raise RuntimeError('TELEGRAM_BOT_TOKEN не задан (ни env, ни runtime.json)')
-    return token, int(chat)
+    return token, int(chat), admin
 
 
-TOKEN, CHAT_ID = _load_token_chat()
+TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
 SECRET     = os.environ.get('TGBOT_SECRET', '')
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
@@ -290,11 +298,44 @@ async def api_ovpn_config(chat_id: int, device_id: str) -> str:
     return r.text
 
 
+# ── Admin client API (Nuxt /api/bot/admin/clients) ─────────────────────────────
+
+async def api_admin_clients() -> list[dict]:
+    r = await _bot_request('GET', '/api/bot/admin/clients')
+    return r.json()
+
+
+async def api_admin_client(client_id: str) -> dict:
+    r = await _bot_request('GET', f'/api/bot/admin/clients/{client_id}')
+    return r.json()
+
+
+async def api_admin_create_client(name: str) -> dict:
+    r = await _bot_request('POST', '/api/bot/admin/clients', json_body={'name': name})
+    return r.json()
+
+
+async def api_admin_patch_client(client_id: str, patch: dict) -> dict:
+    r = await _bot_request('PATCH', f'/api/bot/admin/clients/{client_id}', json_body=patch)
+    return r.json()
+
+
+async def api_admin_delete_client(client_id: str) -> dict:
+    r = await _bot_request('DELETE', f'/api/bot/admin/clients/{client_id}')
+    return r.json()
+
+
 # ── Client menu rendering ──────────────────────────────────────────────────────
 
 # Чаты, ожидающие ввода названия устройства (после нажатия «Добавить устройство»).
 # Простое in-memory состояние — переживать рестарт не нужно.
 _awaiting_device_name: set[int] = set()
+
+# Состояние ожидания ввода в АДМИНСКОМ чате. Значение:
+#   ('new_client', None)   — ждём имя нового клиента;
+#   ('expiry', '<id>')     — ждём дату срока действия для клиента <id>.
+# Только один контекст ожидания одновременно (админский чат один).
+_admin_await: dict | None = None
 
 
 def _limit_label(device_limit) -> str:
@@ -347,7 +388,8 @@ def _devices_text(view: dict) -> str:
     devices = view.get('devices', [])
     if not devices:
         return 'У вас пока нет устройств. Нажмите «➕ Добавить устройство» в меню.'
-    return f'📱 *Ваши устройства* ({len(devices)} шт.)\nВыберите устройство:'
+    limit = _limit_label(view.get('deviceLimit'))
+    return f'📱 *Ваши устройства* ({len(devices)}/{limit})\nВыберите устройство:'
 
 
 def _find_device(view: dict, device_id: str) -> dict | None:
@@ -423,13 +465,23 @@ async def _start_add_device(chat_id: int, view: dict) -> None:
     await tg_send(chat_id, 'Пришлите название устройства (например: Телефон, Ноутбук).')
 
 
+def _no_access_text() -> str:
+    """Сообщение непривязанному человеку: как получить доступ к VPN.
+
+    Если известен никнейм админа — предлагаем написать ему напрямую,
+    иначе фолбэк-инструкция про ссылку-приглашение."""
+    if ADMIN_USERNAME:
+        return (
+            '🔑 Чтобы получить доступ к VPN, напишите администратору: '
+            f'@{ADMIN_USERNAME}'
+        )
+    return 'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.'
+
+
 async def _client_error_reply(chat_id: int, e: 'BotApiError') -> None:
     """Единый ответ клиенту на ошибку /api/bot/*."""
     if e.status == 404:
-        await tg_send(
-            chat_id,
-            'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
-        )
+        await tg_send(chat_id, _no_access_text())
     else:
         await tg_send(chat_id, f'❌ {e.message}')
 
@@ -475,10 +527,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         view = await api_client(chat_id)
     except BotApiError as e:
         if e.status == 404:
-            await tg_reply(
-                update,
-                'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
-            )
+            await tg_reply(update, _no_access_text())
         else:
             await tg_reply(update, f'❌ {e.message}')
         return
@@ -551,17 +600,11 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     if not _admin_only(update):
         return
     try:
-        data = await api_status()
-        clients = data.get('clients', [])
-        lines = [f'*Клиенты* ({len(clients)} шт.)\n']
-        for c in clients:
-            icon = '✅' if c.get('status') == 'active' else '❄️'
-            lines.append(f"{icon} `{c.get('name', '?')}`")
-        await tg_reply(
-            update,
-            '\n'.join(lines) if clients else 'Нет клиентов',
-            'Markdown',
-        )
+        # Интерактивный список: каждый клиент — инлайн-кнопка с drill-down
+        # в карточку управления (заморозка / лимит / срок / приглашение).
+        await cmd_clients_interactive()
+    except BotApiError as e:
+        await tg_reply(update, f'❌ {e.message}')
     except Exception as e:
         log.exception('cmd_clients failed')
         await tg_reply(update, f'❌ Ошибка: {e}')
@@ -571,11 +614,23 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Текст от клиентов: reply-кнопки навигации, ввод имени устройства, прочее.
-    Админский чат — игнор (там команды)."""
+    Админский чат — обрабатывается только при активном ожидании ввода
+    (имя нового клиента / дата срока), иначе игнор (там команды)."""
     chat_id = update.effective_chat.id
-    if chat_id == CHAT_ID:
-        return
     text = (update.message.text or '').strip() if update.message else ''
+
+    if chat_id == CHAT_ID:
+        # При активном ожидании ввода _handle_admin_text обрабатывает текст
+        # (имя нового клиента / дата срока); иначе обычный текст в админ-чате
+        # игнорируется (там команды). В обоих случаях далее не идём.
+        try:
+            await _handle_admin_text(text)
+        except BotApiError as e:
+            await tg_send(CHAT_ID, f'❌ {e.message}')
+        except Exception as e:
+            log.exception('admin text failed')
+            await tg_send(CHAT_ID, f'❌ Ошибка: {e}')
+        return
 
     # Reply-кнопки навигации имеют приоритет — даже если ждём имя устройства.
     if text in (NAV_DEVICES, NAV_ADD):
@@ -638,9 +693,15 @@ async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     message_id = query.message.message_id if query.message else None
     data = query.data or ''
 
-    # Админский чат инлайн-кнопками не пользуется — просто гасим «часики».
+    # Админский чат — управление клиентами; остальные — клиентское меню.
     if chat_id == CHAT_ID:
-        await tg_answer_callback(callback_id)
+        try:
+            await _handle_admin_callback(message_id, callback_id, data)
+        except BotApiError as e:
+            await tg_answer_callback(callback_id, e.message, show_alert=True)
+        except Exception as e:
+            log.exception('admin callback failed: %s', data)
+            await tg_answer_callback(callback_id, f'Ошибка: {e}', show_alert=True)
         return
 
     try:
@@ -766,6 +827,275 @@ async def _handle_callback(chat_id: int, message_id: int | None,
 
     # Неизвестное действие — просто гасим «часики».
     await tg_answer_callback(callback_id)
+
+
+# ── Admin client management (только из чата CHAT_ID) ───────────────────────────
+
+def _client_status_icon(status: str) -> str:
+    return '✅' if status == 'active' else '❄️'
+
+
+def _admin_list_text(clients: list[dict]) -> str:
+    return f'👥 *Клиенты* ({len(clients)} шт.)\nВыберите клиента для управления:'
+
+
+def _admin_list_markup(clients: list[dict]) -> dict:
+    rows = []
+    for c in clients:
+        icon = _client_status_icon(c.get('status', ''))
+        limit = _limit_label(c.get('deviceLimit'))
+        count = c.get('deviceCount', 0)
+        rows.append([{
+            'text': f'{icon} {c.get("name", "?")} — {count}/{limit} девайс.',
+            'callback_data': f'acl:{c.get("id")}',
+        }])
+    rows.append([{'text': '➕ Создать клиента', 'callback_data': 'anew'}])
+    return {'inline_keyboard': rows}
+
+
+def _admin_card_text(c: dict) -> str:
+    status = c.get('status', '')
+    status_txt = 'активен ✅' if status == 'active' else 'заморожен ❄️'
+    limit = _limit_label(c.get('deviceLimit'))
+    count = c.get('deviceCount', 0)
+    expires = c.get('expiresAt')
+    if expires:
+        try:
+            d = datetime.fromisoformat(str(expires).replace('Z', '+00:00'))
+            exp_txt = d.strftime('%d.%m.%Y')
+        except Exception:
+            exp_txt = str(expires)
+    else:
+        exp_txt = 'бессрочно'
+    tg_txt = 'привязан ✅' if c.get('tgLinked') else 'не привязан ✖'
+    return (
+        f'👤 *{c.get("name", "?")}*\n'
+        f'Статус: {status_txt}\n'
+        f'Устройств: {count}/{limit}\n'
+        f'Срок действия: {exp_txt}\n'
+        f'Telegram: {tg_txt}'
+    )
+
+
+def _admin_card_markup(c: dict) -> dict:
+    cid = c.get('id')
+    frozen = bool(c.get('frozenManual')) or c.get('status') == 'frozen'
+    freeze_btn = ({'text': '☀️ Разморозить', 'callback_data': f'afz:{cid}'}
+                  if frozen else
+                  {'text': '❄️ Заморозить', 'callback_data': f'afz:{cid}'})
+    return {'inline_keyboard': [
+        [freeze_btn],
+        [
+            {'text': '➖ Лимит', 'callback_data': f'alm-:{cid}'},
+            {'text': '➕ Лимит', 'callback_data': f'alm+:{cid}'},
+        ],
+        [{'text': '🗓 Срок', 'callback_data': f'aexp:{cid}'}],
+        [{'text': '📨 Отправить приглашение', 'callback_data': f'ainv:{cid}'}],
+        [{'text': '🗑 Удалить', 'callback_data': f'adel:{cid}'}],
+        [{'text': '‹ К списку', 'callback_data': 'acl'}],
+    ]}
+
+
+async def _admin_show_list(message_id: int | None) -> None:
+    """Перерисовать сообщение в список клиентов (или прислать новое)."""
+    clients = await api_admin_clients()
+    text = _admin_list_text(clients)
+    markup = _admin_list_markup(clients)
+    if message_id:
+        await tg_edit(CHAT_ID, message_id, text, 'Markdown', markup)
+    else:
+        await tg_send(CHAT_ID, text, 'Markdown', markup)
+
+
+async def _admin_show_card(message_id: int | None, client_id: str) -> None:
+    """Перерисовать сообщение в карточку клиента (или прислать новое)."""
+    c = await api_admin_client(client_id)
+    text = _admin_card_text(c)
+    markup = _admin_card_markup(c)
+    if message_id:
+        await tg_edit(CHAT_ID, message_id, text, 'Markdown', markup)
+    else:
+        await tg_send(CHAT_ID, text, 'Markdown', markup)
+
+
+async def cmd_clients_interactive(message_id: int | None = None) -> None:
+    """Интерактивный /clients — список с инлайн-кнопками по каждому клиенту."""
+    await _admin_show_list(message_id)
+
+
+async def _handle_admin_callback(message_id: int | None, callback_id: str,
+                                  data: str) -> None:
+    """Роутер инлайн-кнопок админского управления клиентами."""
+    global _admin_await
+    action, _, arg = data.partition(':')
+
+    if action == 'acl' and not arg:
+        await tg_answer_callback(callback_id)
+        await _admin_show_list(message_id)
+        return
+
+    if action == 'acl':
+        await tg_answer_callback(callback_id)
+        await _admin_show_card(message_id, arg)
+        return
+
+    if action == 'anew':
+        _admin_await = {'kind': 'new_client', 'client_id': None}
+        await tg_answer_callback(callback_id)
+        await tg_send(CHAT_ID, '➕ Пришлите имя нового клиента.')
+        return
+
+    if action == 'afz':
+        # Toggle frozenManual: читаем текущее состояние и инвертируем.
+        c = await api_admin_client(arg)
+        new_frozen = not bool(c.get('frozenManual'))
+        try:
+            await api_admin_patch_client(arg, {'frozenManual': new_frozen})
+        except BotApiError as e:
+            await tg_answer_callback(callback_id, e.message, show_alert=True)
+            return
+        await tg_answer_callback(
+            callback_id, 'Клиент заморожен' if new_frozen else 'Клиент разморожен')
+        await _admin_show_card(message_id, arg)
+        return
+
+    if action in ('alm+', 'alm-'):
+        c = await api_admin_client(arg)
+        cur_limit = c.get('deviceLimit')
+        dev_count = c.get('deviceCount', 0)
+        if action == 'alm+':
+            # ➕: безлимит остаётся безлимитом; иначе +1.
+            if cur_limit is None:
+                await tg_answer_callback(callback_id, 'Лимит уже безлимитный')
+                return
+            new_limit = cur_limit + 1
+        else:
+            # ➖: при безлимите ставим число = кол-во устройств (мин. 1);
+            # иначе -1. Ниже текущего кол-ва не опускаем сами — но бэк всё
+            # равно проверит и вернёт 409.
+            if cur_limit is None:
+                new_limit = max(dev_count, 1)
+            else:
+                new_limit = cur_limit - 1
+        try:
+            await api_admin_patch_client(arg, {'deviceLimit': new_limit})
+        except BotApiError as e:
+            await tg_answer_callback(callback_id, e.message, show_alert=True)
+            return
+        await tg_answer_callback(callback_id, f'Лимит: {new_limit}')
+        await _admin_show_card(message_id, arg)
+        return
+
+    if action == 'aexp':
+        _admin_await = {'kind': 'expiry', 'client_id': arg}
+        await tg_answer_callback(callback_id)
+        await tg_send(
+            CHAT_ID,
+            '🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* '
+            'или слово «бессрочно».',
+            'Markdown',
+        )
+        return
+
+    if action == 'ainv':
+        c = await api_admin_client(arg)
+        password = c.get('password', '')
+        if not password:
+            await tg_answer_callback(
+                callback_id, 'У клиента нет пароля для приглашения', show_alert=True)
+            return
+        await tg_answer_callback(callback_id, 'Отправляю приглашение…')
+        await _send_invite(c.get('name', '?'), password)
+        return
+
+    if action == 'adel':
+        c = await api_admin_client(arg)
+        await tg_answer_callback(callback_id)
+        if message_id:
+            await tg_edit(
+                CHAT_ID, message_id,
+                f'🗑 *Удалить клиента «{c.get("name", "?")}»?*\n\n'
+                'Все его устройства и конфиги перестанут работать.',
+                'Markdown',
+                _confirm_markup(f'adyes:{arg}', f'acl:{arg}'),
+            )
+        return
+
+    if action == 'adyes':
+        try:
+            await api_admin_delete_client(arg)
+        except BotApiError as e:
+            await tg_answer_callback(callback_id, e.message, show_alert=True)
+            return
+        await tg_answer_callback(callback_id, 'Клиент удалён')
+        await _admin_show_list(message_id)
+        return
+
+    # Неизвестное действие — гасим «часики».
+    await tg_answer_callback(callback_id)
+
+
+async def _handle_admin_text(text: str) -> bool:
+    """Текст из админского чата при активном ожидании ввода.
+
+    Возвращает True, если сообщение обработано (был активный ввод),
+    иначе False — вызывающий обрабатывает как обычно (return)."""
+    global _admin_await
+    if _admin_await is None:
+        return False
+
+    kind = _admin_await.get('kind')
+
+    if kind == 'new_client':
+        name = text.strip()
+        if not name:
+            await tg_send(CHAT_ID, 'Имя не распознано. Пришлите имя клиента ещё раз.')
+            return True
+        _admin_await = None
+        try:
+            c = await api_admin_create_client(name)
+        except BotApiError as e:
+            await tg_send(CHAT_ID, f'❌ {e.message}')
+            return True
+        await tg_send(CHAT_ID, f'✅ Клиент «{name}» создан.')
+        await _admin_show_card(None, str(c.get('id')))
+        return True
+
+    if kind == 'expiry':
+        client_id = _admin_await.get('client_id')
+        raw = text.strip()
+        low = raw.lower()
+        if low in ('бессрочно', 'безсрочно', 'infinite', 'never'):
+            expires_iso = None
+        else:
+            try:
+                d = datetime.strptime(raw, '%d.%m.%Y')
+                expires_iso = d.strftime('%Y-%m-%dT00:00:00.000Z')
+            except ValueError:
+                await tg_send(
+                    CHAT_ID,
+                    '⚠️ Неверный формат. Пришлите дату как *ДД.ММ.ГГГГ* '
+                    'или слово «бессрочно».',
+                    'Markdown',
+                )
+                return True
+        _admin_await = None
+        try:
+            await api_admin_patch_client(str(client_id), {'expiresAt': expires_iso})
+        except BotApiError as e:
+            await tg_send(CHAT_ID, f'❌ {e.message}')
+            return True
+        await tg_send(
+            CHAT_ID,
+            'Срок действия снят (бессрочно).' if expires_iso is None
+            else 'Срок действия обновлён.',
+        )
+        await _admin_show_card(None, str(client_id))
+        return True
+
+    # Неизвестный вид ожидания — сбрасываем.
+    _admin_await = None
+    return False
 
 
 # ── Background monitor ──────────────────────────────────────────────────────────

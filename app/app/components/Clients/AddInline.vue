@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useClients } from '~/composables/useClients'
+import { parseRuDate, useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const { create, sendPasswordToTg } = useClients()
@@ -7,9 +7,6 @@ const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
 const DEFAULT_DEVICE_LIMIT = 3
-
-// Минимальная дата истечения — завтра (раньше ставить нельзя).
-const minExpiry = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)
 
 const open = ref(false)
 const name = ref('')
@@ -35,12 +32,20 @@ const limitInput = computed<number | undefined>({
 
 async function submit() {
   if (!name.value.trim()) return
+  let expiresIso: string | null = null
+  if (expiresAt.value.trim()) {
+    expiresIso = parseRuDate(expiresAt.value)
+    if (!expiresIso) {
+      toast.add({ title: 'Срок действия — в формате ДД.ММ.ГГГГ', color: 'error' })
+      return
+    }
+  }
   loading.value = true
   try {
     const client = await create({
       name: name.value.trim(),
       filterTraffic: filterTraffic.value,
-      expiresAt: expiresAt.value ? new Date(expiresAt.value).toISOString() : null,
+      expiresAt: expiresIso,
       deviceLimit: unlimited.value
         ? null
         : Math.max(1, Math.floor(deviceLimit.value || DEFAULT_DEVICE_LIMIT)),
@@ -107,8 +112,7 @@ function reset() {
         <UFormField label="Срок действия">
           <UInput
             v-model="expiresAt"
-            type="date"
-            :min="minExpiry"
+            placeholder="ДД.ММ.ГГГГ"
             class="w-full"
           />
         </UFormField>

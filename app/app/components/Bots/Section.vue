@@ -4,10 +4,11 @@ interface TgStatus {
   running: boolean
   bot_token_masked: string
   chat_id: string | number | ''
+  admin_username: string
 }
 
 const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
-  default: () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '' }),
+  default: () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '', admin_username: '' }),
   server: false,
 })
 
@@ -15,11 +16,13 @@ const toast = useToast()
 
 const newToken = ref('')
 const newChatId = ref('')
+const newAdminUsername = ref('')
 const saving = ref(false)
 
 watch(data, (d) => {
   if (d) {
     newChatId.value = String(d.chat_id ?? '')
+    newAdminUsername.value = String(d.admin_username ?? '')
     newToken.value = ''
   }
 }, { immediate: true })
@@ -30,6 +33,12 @@ const statusBadge = computed(() => {
   return { label: 'ОФФЛАЙН', color: 'error' as const }
 })
 
+const dirty = computed(() =>
+  !!newToken.value.trim()
+  || newChatId.value.trim() !== String(data.value?.chat_id ?? '')
+  || newAdminUsername.value.trim() !== String(data.value?.admin_username ?? ''),
+)
+
 async function save() {
   saving.value = true
   try {
@@ -37,6 +46,9 @@ async function save() {
     if (newToken.value.trim()) body.bot_token = newToken.value.trim()
     if (newChatId.value.trim() !== String(data.value?.chat_id ?? '')) {
       body.chat_id = newChatId.value.trim()
+    }
+    if (newAdminUsername.value.trim() !== String(data.value?.admin_username ?? '')) {
+      body.admin_username = newAdminUsername.value.trim()
     }
     if (Object.keys(body).length === 0) {
       saving.value = false
@@ -101,11 +113,27 @@ useVisibleRefresh(refresh)
         />
       </UFormField>
 
+      <UFormField
+        label="Никнейм админа бота"
+        :ui="{ label: 'text-xs text-(--ui-text-muted)' }"
+      >
+        <UInput
+          v-model="newAdminUsername"
+          placeholder="@username"
+          class="w-full font-mono text-xs"
+        />
+        <template #help>
+          <span class="text-xs text-(--ui-text-muted)">
+            Бот укажет его людям без доступа — «напишите администратору».
+          </span>
+        </template>
+      </UFormField>
+
       <div class="flex justify-end">
         <UButton
           size="xs"
           :loading="saving"
-          :disabled="!newToken.trim() && newChatId.trim() === String(data?.chat_id ?? '')"
+          :disabled="!dirty"
           @click="save"
         >
           Сохранить

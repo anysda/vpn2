@@ -265,6 +265,7 @@ hint "Уведомления: новый WG клиент, exit-нода упал
 hint "Нужно: создать бота через @BotFather, узнать свой Chat ID через @userinfobot"
 tg_token=""
 tg_chat_id=""
+tg_admin_username=""
 tg_enable=$(ask_yn "Включить Telegram-бот?" "n")
 if [[ "$tg_enable" == "y" ]]; then
   while true; do
@@ -279,6 +280,10 @@ if [[ "$tg_enable" == "y" ]]; then
     if [[ "$tg_chat_id" =~ ^-?[0-9]+$ ]]; then break; fi
     fail "Chat ID — целое число (может быть отрицательным для группы)"
   done
+  hint "Никнейм админа бота — его бот укажет людям без доступа («напишите @...»)"
+  tg_admin_username=$(ask "Никнейм админа бота (@username, опционально)")
+  tg_admin_username=$(sanitize "$tg_admin_username")
+  tg_admin_username="${tg_admin_username#@}"
   ok "Telegram-бот настроен"
 else
   hint "Пропущено. Можно добавить позже через setup.sh"
@@ -331,6 +336,7 @@ ADMIN_PASS="$admin_pass" \
 PANEL_DOMAIN="$panel_domain" \
 TG_TOKEN="$tg_token" \
 TG_CHAT_ID="$tg_chat_id" \
+TG_ADMIN_USERNAME="$tg_admin_username" \
 ORCH_KEY="$orch_key" \
 ORCH_PUBKEY="$orch_pubkey" \
 CONFIG_FILE="$config_file" \
@@ -365,11 +371,14 @@ if pd:
 
 tt = os.environ.get('TG_TOKEN', '')
 tc = os.environ.get('TG_CHAT_ID', '')
+ta = os.environ.get('TG_ADMIN_USERNAME', '')
 if tt and tc:
     lines.append('')
     lines.append('telegram:')
     lines.append('  bot_token: ' + tt)
     lines.append('  chat_id: ' + tc)
+    if ta:
+        lines.append('  admin_username: ' + ta)
 
 orch_key = os.environ.get('ORCH_KEY', '')
 orch_pubkey = os.environ.get('ORCH_PUBKEY', '')

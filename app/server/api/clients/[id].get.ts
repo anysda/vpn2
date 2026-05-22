@@ -3,6 +3,7 @@ import { useDb } from '../../database/client'
 import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { clientStatus } from '../../utils/client-status'
+import { deviceConfigName } from '../../utils/naming'
 
 /** Детали клиента + его девайсы — для модалки. */
 export default defineEventHandler(async (event) => {
@@ -26,6 +27,7 @@ export default defineEventHandler(async (event) => {
     return {
       id: d.id,
       name: d.name,
+      configName: deviceConfigName(client.name, d.name),
       createdAt: d.createdAt,
       rxTotal: d.rxTotal,
       txTotal: d.txTotal,

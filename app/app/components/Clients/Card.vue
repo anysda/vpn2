@@ -48,10 +48,12 @@ const trafficTotal = computed(() => rx.value + tx.value)
               {{ fmtBytes(trafficTotal) }}
             </span>
           </UTooltip>
-          <span class="flex items-center gap-0.5">
-            <UIcon name="i-lucide-smartphone" class="size-3 shrink-0" />
-            {{ client.deviceCount }}
-          </span>
+          <UTooltip text="Девайсы: добавлено / лимит">
+            <span class="flex items-center gap-0.5">
+              <UIcon name="i-lucide-smartphone" class="size-3 shrink-0" />
+              {{ client.deviceCount }}/{{ client.deviceLimit === null ? '∞' : client.deviceLimit }}
+            </span>
+          </UTooltip>
         </div>
       </div>
       <UBadge

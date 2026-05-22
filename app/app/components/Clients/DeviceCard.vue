@@ -58,7 +58,7 @@ function downloadWg() {
   const blob = new Blob([wgConf.value], { type: 'text/plain' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = `${props.device.name}.conf`
+  a.download = `${props.device.configName}.conf`
   a.click()
   URL.revokeObjectURL(a.href)
 }
@@ -116,7 +116,7 @@ function downloadOvpn() {
   const blob = new Blob([ovpnConf.value], { type: 'application/x-openvpn-profile' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
-  a.download = `${props.device.name}.ovpn`
+  a.download = `${props.device.configName}.ovpn`
   a.click()
   URL.revokeObjectURL(a.href)
 }

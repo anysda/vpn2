@@ -23,6 +23,8 @@ export interface Client {
 export interface Device {
   id: number
   name: string
+  /** Имя файла конфига латиницей — «<клиент>-<девайс>». */
+  configName: string
   createdAt: string
   rxTotal: number
   txTotal: number

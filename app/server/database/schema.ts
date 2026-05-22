@@ -37,8 +37,13 @@ export const clients = sqliteTable('clients', {
   // Ручная заморозка. Эффективный статус «заморожен» = frozenManual ИЛИ
   // истёкший срок.
   frozenManual: integer('frozen_manual', { mode: 'boolean' }).notNull().default(false),
-  // Пароль доступа клиента — 20 символов [A-Za-z]. Задел под будущую фичу.
+  // Пароль доступа клиента — 20 символов [A-Za-z]. Им же клиент привязывает
+  // свой Telegram к боту (диплинк ?start=<password>).
   password: text('password').notNull(),
+  // Telegram привязанного клиента — для самообслуживания в боте.
+  // null — клиент ещё не привязал свой Telegram.
+  tgChatId: integer('tg_chat_id'),
+  tgUsername: text('tg_username'),
   ...timestamps,
 })
 

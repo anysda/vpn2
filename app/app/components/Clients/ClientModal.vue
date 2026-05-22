@@ -306,6 +306,22 @@ const limitReached = computed(() => {
               (↓ {{ fmtBytes(detail.rxTotal) }} ↑ {{ fmtBytes(detail.txTotal) }})
             </span>
           </div>
+
+          <div class="flex items-center gap-2 text-sm">
+            <UIcon
+              name="i-simple-icons-telegram"
+              class="size-4"
+              :class="detail.tgLinked ? 'text-[#26A5E4]' : 'text-(--ui-text-muted)'"
+            />
+            <span class="text-(--ui-text-muted)">
+              <template v-if="detail.tgLinked">
+                Привязан к Telegram<template v-if="detail.tgUsername"> · @{{ detail.tgUsername }}</template>
+              </template>
+              <template v-else>
+                Telegram не привязан — отправь пароль, чтобы клиент подключился
+              </template>
+            </span>
+          </div>
         </div>
 
         <USeparator />

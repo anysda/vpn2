@@ -1,7 +1,7 @@
-import { and, eq, ne } from 'drizzle-orm'
+import { and, count, eq, ne } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
-import { clients } from '../../database/schema'
+import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { notifyBot } from '../../utils/bot-events'
 import { syncWireguardConfig } from '../../utils/wireguard'
@@ -25,6 +25,18 @@ export default defineEventHandler(async (event) => {
 
   const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
   if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+
+  // Лимит девайсов нельзя опустить ниже текущего числа устройств клиента.
+  if (typeof body.deviceLimit === 'number') {
+    const [dc] = await db.select({ n: count() }).from(devices).where(eq(devices.clientId, id))
+    const have = Number(dc?.n ?? 0)
+    if (body.deviceLimit < have) {
+      throw createError({
+        statusCode: 409,
+        statusMessage: `У клиента уже ${have} устройств — лимит не может быть меньше`,
+      })
+    }
+  }
 
   const patch: Partial<typeof clients.$inferInsert> = { updatedAt: new Date() }
   if (body.name !== undefined) {

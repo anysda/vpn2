@@ -45,6 +45,7 @@ import json
 import logging
 import os
 import pathlib
+from datetime import datetime
 
 import httpx
 import qrcode
@@ -300,11 +301,25 @@ def _limit_label(device_limit) -> str:
     return '∞' if device_limit is None else str(device_limit)
 
 
-def _menu_markup() -> dict:
-    return {'inline_keyboard': [[
-        {'text': '📱 Мои устройства', 'callback_data': 'devs'},
-        {'text': '➕ Добавить устройство', 'callback_data': 'add'},
-    ]]}
+def _expiry_label(expires_at) -> str:
+    """Строка о сроке действия ключа — показывается клиенту в меню/приветствии."""
+    if not expires_at:
+        return 'Доступ бессрочный.'
+    try:
+        d = datetime.fromisoformat(str(expires_at).replace('Z', '+00:00'))
+        return f'🗓 Ключ действует до {d.strftime("%d.%m.%Y")}.'
+    except Exception:
+        return ''
+
+
+# Навигация клиента — постоянная reply-клавиатура прямо над полем ввода.
+NAV_DEVICES = '📱 Мои устройства'
+NAV_ADD = '➕ Добавить устройство'
+REPLY_KB = {
+    'keyboard': [[NAV_DEVICES, NAV_ADD]],
+    'resize_keyboard': True,
+    'is_persistent': True,
+}
 
 
 def _menu_text(view: dict) -> str:
@@ -313,7 +328,8 @@ def _menu_text(view: dict) -> str:
     limit = _limit_label(view.get('deviceLimit'))
     return (
         f'🔐 *VPN-доступ* для *{name}*.\n'
-        f'Устройства: {count} из {limit}.'
+        f'Устройства: {count} из {limit}.\n'
+        f'{_expiry_label(view.get("expiresAt"))}'
     )
 
 
@@ -324,7 +340,6 @@ def _devices_markup(view: dict) -> dict:
             'text': f'📱 {d.get("name", "?")}',
             'callback_data': f'dev:{d.get("id")}',
         }])
-    rows.append([{'text': '‹ Назад', 'callback_data': 'menu'}])
     return {'inline_keyboard': rows}
 
 
@@ -385,7 +400,38 @@ ADMIN_START_TEXT = (
 
 
 async def _send_client_menu(chat_id: int, view: dict) -> None:
-    await tg_send(chat_id, _menu_text(view), 'Markdown', _menu_markup())
+    """Меню клиента — текст + постоянная reply-клавиатура навигации."""
+    await tg_send(chat_id, _menu_text(view), 'Markdown', REPLY_KB)
+
+
+async def _send_device_list(chat_id: int, view: dict) -> None:
+    """Список устройств — инлайн-кнопки (drill-down к карточке устройства)."""
+    devices = view.get('devices', [])
+    if devices:
+        await tg_send(chat_id, _devices_text(view), 'Markdown', _devices_markup(view))
+    else:
+        await tg_send(chat_id, _devices_text(view), 'Markdown')
+
+
+async def _start_add_device(chat_id: int, view: dict) -> None:
+    """Начать добавление устройства: проверить лимит, запросить название."""
+    limit = view.get('deviceLimit')
+    if limit is not None and len(view.get('devices', [])) >= limit:
+        await tg_send(chat_id, 'Достигнут лимит устройств. Обратитесь к администратору.')
+        return
+    _awaiting_device_name.add(chat_id)
+    await tg_send(chat_id, 'Пришлите название устройства (например: Телефон, Ноутбук).')
+
+
+async def _client_error_reply(chat_id: int, e: 'BotApiError') -> None:
+    """Единый ответ клиенту на ошибку /api/bot/*."""
+    if e.status == 404:
+        await tg_send(
+            chat_id,
+            'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
+        )
+    else:
+        await tg_send(chat_id, f'❌ {e.message}')
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -524,11 +570,30 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 # ── Client text messages ───────────────────────────────────────────────────────
 
 async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    """Текстовые сообщения от клиентов. Админский чат — игнор (там команды)."""
+    """Текст от клиентов: reply-кнопки навигации, ввод имени устройства, прочее.
+    Админский чат — игнор (там команды)."""
     chat_id = update.effective_chat.id
     if chat_id == CHAT_ID:
         return
     text = (update.message.text or '').strip() if update.message else ''
+
+    # Reply-кнопки навигации имеют приоритет — даже если ждём имя устройства.
+    if text in (NAV_DEVICES, NAV_ADD):
+        _awaiting_device_name.discard(chat_id)
+        try:
+            view = await api_client(chat_id)
+        except BotApiError as e:
+            await _client_error_reply(chat_id, e)
+            return
+        except Exception as e:
+            log.exception('on_text nav failed')
+            await tg_send(chat_id, f'❌ Ошибка: {e}')
+            return
+        if text == NAV_DEVICES:
+            await _send_device_list(chat_id, view)
+        else:
+            await _start_add_device(chat_id, view)
+        return
 
     # Чат ждёт название устройства — обрабатываем как имя.
     if chat_id in _awaiting_device_name:
@@ -549,17 +614,11 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         await _send_client_menu(chat_id, view)
         return
 
-    # Обычное текстовое сообщение от привязанного клиента — показать меню.
+    # Прочий текст от привязанного клиента — показать меню.
     try:
         view = await api_client(chat_id)
     except BotApiError as e:
-        if e.status == 404:
-            await tg_send(
-                chat_id,
-                'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.',
-            )
-        else:
-            await tg_send(chat_id, f'❌ {e.message}')
+        await _client_error_reply(chat_id, e)
         return
     except Exception as e:
         log.exception('on_text client failed')
@@ -597,14 +656,6 @@ async def _handle_callback(chat_id: int, message_id: int | None,
                            callback_id: str, data: str) -> None:
     action, _, arg = data.partition(':')
 
-    # Любое действие требует привязанного клиента.
-    if action == 'menu':
-        view = await api_client(chat_id)
-        await tg_answer_callback(callback_id)
-        if message_id:
-            await tg_edit(chat_id, message_id, _menu_text(view), 'Markdown', _menu_markup())
-        return
-
     if action == 'devs':
         view = await api_client(chat_id)
         await tg_answer_callback(callback_id)
@@ -626,24 +677,6 @@ async def _handle_callback(chat_id: int, message_id: int | None,
         if message_id:
             await tg_edit(chat_id, message_id, _device_card_text(device), 'Markdown',
                           _device_card_markup(arg))
-        return
-
-    if action == 'add':
-        view = await api_client(chat_id)
-        limit = view.get('deviceLimit')
-        if limit is not None and len(view.get('devices', [])) >= limit:
-            await tg_answer_callback(
-                callback_id,
-                'Достигнут лимит устройств. Обратитесь к администратору.',
-                show_alert=True,
-            )
-            return
-        _awaiting_device_name.add(chat_id)
-        await tg_answer_callback(callback_id)
-        await tg_send(
-            chat_id,
-            'Пришлите название устройства (например: Телефон, Ноутбук).',
-        )
         return
 
     if action == 'wg':

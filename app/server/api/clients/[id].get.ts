@@ -43,7 +43,6 @@ export default defineEventHandler(async (event) => {
     expiresAt: client.expiresAt,
     deviceLimit: client.deviceLimit,
     frozenManual: client.frozenManual,
-    password: client.password,
     createdAt: client.createdAt,
     status: clientStatus(client),
     tgLinked: !!client.tgChatId,

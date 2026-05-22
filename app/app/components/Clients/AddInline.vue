@@ -147,7 +147,7 @@ function reset() {
             :class="canSendTg ? 'cursor-pointer' : 'opacity-60'"
           >
             <UIcon name="i-simple-icons-telegram" class="size-4 text-[#26A5E4]" />
-            Отправить пароль в Telegram
+            Отправить доступ к боту
           </label>
         </UTooltip>
         <USwitch v-model="sendPwdToTg" :disabled="!canSendTg" />

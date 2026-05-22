@@ -41,7 +41,6 @@ export interface ClientDetail {
   expiresAt: string | null
   deviceLimit: number | null
   frozenManual: boolean
-  password: string
   createdAt: string
   status: 'active' | 'frozen'
   tgLinked: boolean

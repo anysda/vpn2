@@ -8,7 +8,6 @@ set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?HOST_TAG must be set}"
 : "${MGMT_NET:?MGMT_NET must be set}"
-: "${SS_PORT:?SS_PORT must be set}"
 : "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${MGMT_PORT:?}"
 
 STAMP_DIR=/var/anysda/.stamps

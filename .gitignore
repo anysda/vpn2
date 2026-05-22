@@ -12,6 +12,8 @@ test-notes.md
 config.yaml
 anysda-config.yaml
 credentials.md
+# env-файлы нод (пароли/секреты нод) — генерит config2env.py на каждый деплой
+infra/envs/
 
 # ── Nuxt / Node ───────────────────────────────────────────────────────────
 node_modules/

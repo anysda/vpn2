@@ -24,7 +24,6 @@ logs
 !.env.example
 
 # Dev runtime artifacts
-local-ss-config.yml
 local-anysda-config.yaml
 local-manual-routes.json
 local.db

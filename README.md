@@ -1,23 +1,37 @@
 # anysda-vpn2
 
-Веб-панель для управления многонодным VPN-стеком (WireGuard + OpenVPN) с
-автоматическим geoip-роутингом, drag-n-drop ручными правилами и реал-тайм
-мониторингом.
+Веб-панель для управления многонодным VPN-стеком (WireGuard + OpenVPN)
+с авто-geoip-роутингом, ручными правилами (drag-and-drop), мониторингом
+и Telegram-ботом для админа и для конечных клиентов.
 
-> **Статус:** развёрнут и работает; в активной разработке.
-> **Лицензия:** MIT.
-> **Clean-room:** проект написан с нуля, не использует AGPL-код wg-easy.
+## Что внутри
+
+- **Веб-панель (Nuxt 4):** клиенты, устройства, маршрутизация, графики,
+  AdGuard, Telegram-настройки. Один admin, опционально TOTP.
+- **Двухуровневая модель:** клиент (человек) → его устройства. У каждого
+  устройства свои WG-ключи и OpenVPN-сертификат.
+- **Авто-роутинг (sing-box):** RU-трафик через WAN entry, заграница
+  через Hysteria2 на лучший exit; быстрый failover (~5–7с).
+- **Ручные правила:** домен/IP → конкретный outbound, drag-and-drop в
+  UI; sing-box подхватывает без рестарта клиентов.
+- **AdGuard Home:** DNS + блок-лист для VPN-клиентов с включённой
+  фильтрацией.
+- **Telegram-бот:** админ управляет клиентами командами `/clients`,
+  получает алерты; конечные клиенты сами получают конфиги, добавляют
+  устройства и видят уведомления об изменениях.
+- **Мониторинг:** карточки нод (CPU/RAM/RX/TX), RTT по выходам, графики;
+  `node_exporter` → VictoriaMetrics + clash-api sing-box.
+- **Деплой одной командой:** `./setup.sh` → `./deploy.sh`. 12 стадий,
+  идемпотентно, без ручных шагов на нодах.
 
 ## Стек
 
-- **Web:** Nuxt 4 + Vue 3 + TS strict, Nuxt UI 3 (Tailwind v4)
-- **API:** Nitro server routes, nuxt-auth-utils (session cookies + Argon2id)
-- **DB:** Drizzle ORM + libSQL (SQLite). Single-row admin user table.
-- **TOTP:** свой RFC 6238 в `server/utils/totp.ts` (40 строк, без внешних зависимостей).
-- **Клиентские протоколы:** WireGuard (kernel) + OpenVPN — серверы на entry-ноде.
-- **Транспорт между нодами:** sing-box + Hysteria2.
-- **Логи:** pino → JSON в проде, pino-pretty в dev.
-- **Контейнер:** `node:22-slim` (нужен glibc для @node-rs/argon2 prebuilts).
+Nuxt 4 (Vue 3, TS strict) · Nuxt UI 3 (Tailwind v4) · Nitro · Drizzle
+ORM + libSQL (SQLite) · nuxt-auth-utils (cookie-сессии + Argon2id) ·
+свой TOTP (RFC 6238) · sing-box (Hysteria2) · WireGuard (kernel) +
+OpenVPN · AdGuard Home · VictoriaMetrics + node_exporter · Caddy
+(reverse-proxy + Let's Encrypt) · Python (`python-telegram-bot`) для
+бота. Образы — `node:22-slim` (панель), `python:3.13-slim` (бот).
 
 ## Архитектура
 
@@ -25,26 +39,18 @@
 WireGuard client  ·  OpenVPN client
    │ wg0 udp/51820        tun0 udp/1194
    ▼
-[entry-нода: vpn-stand-ru (или прод)]
- ├─ WireGuard (wg0) + OpenVPN (tun0) серверы
- │    iptables PREROUTING -i wg0/tun0 → TPROXY → sing-box :7898
- │    ▼
+[entry-нода]
+ ├─ WireGuard (wg0) + OpenVPN (tun0)
+ │   iptables PREROUTING -i wg0/tun0 → TPROXY → sing-box :7898
  ├─ sing-box роутер
- │    geoip:ru / .ru/.рф → direct-ru (WAN entry)
- │    остальное → foreign-best (hy2-* экзиты; выбор — failover-watchdog)
- │    ручные правила → /etc/anysda/manual-routes.json (watched by systemd.path)
- │    ▼
- ├─ hy2-{tag}-direct → exit-нода (US/GB/NL/DE/...) → internet
- │
- ├─ anysda-vpn2 panel container :51821 (Caddy на :80 / :443)
- │    пишет /etc/wireguard/wg0.conf (wg syncconf), выпускает OpenVPN-сертификаты
- │    пишет /etc/anysda/manual-routes.json
- │    читает VictoriaMetrics + sing-box Clash API + AdGuard /control/stats
- │
- ├─ VictoriaMetrics (node_exporter scraping по mgmt-mesh 10.99.0.0/24)
- ├─ AdGuard Home (DNS)
- ├─ Caddy (reverse-proxy + опционально HTTPS через LE)
- └─ Telegram bot (отдельный python-контейнер)
+ │   geoip:ru / .ru/.рф → direct-ru (WAN entry)
+ │   остальное → foreign-best (hy2-* exit'ы; выбирает failover-watchdog)
+ │   ручные правила → /etc/anysda/manual-routes.json
+ ├─ anysda-vpn2 panel  (Caddy → :51821)
+ ├─ AdGuard Home + Caddy
+ ├─ VictoriaMetrics (scraping mgmt-mesh 10.99.0.0/24)
+ └─ Telegram-бот (контейнер) — егрессит в Telegram через exit
+       hy2-{tag}-direct → exit-нода → internet
 ```
 
 ## Структура
@@ -52,96 +58,138 @@ WireGuard client  ·  OpenVPN client
 ```
 vpn2/
 ├── app/                      # Nuxt 4 панель
-│   ├── Dockerfile            # multi-stage build + sed-патч h3 cookie.secure
-│   ├── app/                  # srcDir: pages/components/layouts/composables
-│   ├── server/               # Nitro: api/* routes/* utils/* plugins/* database/*
-│   └── nuxt.config.ts
 ├── infra/                    # bash + python оркестратор деплоя
 │   ├── deploy.sh             # главный pipeline
-│   ├── lib/                  # config2env.py, gen-router-config.py, ssh.sh
-│   ├── configs/              # шаблоны для envsubst
-│   └── scripts/              # стадии: 00→05→10→28→29→20→21→22→25→35→30→99
+│   ├── lib/                  # config2env, gen-router-config, failover-watchdog, ssh
+│   ├── configs/              # шаблоны конфигов (envsubst)
+│   └── scripts/              # стадии 00 / 05 / 10 / 20 / 21 / 22 / 25 / 28 / 29 / 30 / 35 / 99
 ├── telegram/                 # Python бот (опциональный)
 ├── deploy.sh                 # entry-point, делегирует infra/deploy.sh
 ├── setup.sh                  # интерактивный мастер config.yaml
 └── config.example.yaml       # шаблон конфигурации
 ```
 
-## Quickstart (с нуля на свежих Ubuntu 24.04 нодах)
+---
 
-1. **Подготовь ноды.** 1 entry (4 ГБ RAM, 20 ГБ диск) + N exit (1 ГБ, 5 ГБ).
-   Root SSH с парольной авторизацией.
+## Quickstart — развернуть с нуля
 
-2. **Клонируй репу** на свою dev-машину (с Docker Desktop и rsync):
-   ```bash
-   git clone https://gitlab.anysda.space/anysda/vpn2 && cd vpn2
-   ```
+Нужны: 1 entry-нода в России (4 ГБ RAM, 20 ГБ диск) и
+N exit-нод (минимум 1, рекомендую 2–3 для failover; 1 ГБ RAM, 5 ГБ
+диск). Все — **Ubuntu 24.04 LTS, чистая установка**, root по SSH-паролю.
+Разворачивается с entry-ноды — она же оркестратор.
 
-3. **Создай `config.yaml`** через мастер:
-   ```bash
-   ./setup.sh
-   ```
+### 1. Подключиться к entry-ноде
 
-4. **Собери и запушь образ панели** в реестр:
-   ```bash
-   docker buildx build --platform linux/amd64 --push \
-     -t registry.anysda.space/anysda/vpn2/panel:dev app/
-   ```
+```bash
+ssh root@<entry-ip>
+```
 
-5. **Разверни:**
-   ```bash
-   ./deploy.sh
-   ```
+> *(Опционально, до подключения)* `ssh-copy-id root@<entry-ip>` — кладёт
+> твой публичный ключ на entry. Деплой подхватит его и при бутстрапе
+> раскатает на все exit-ноды — после этого по всему стенду ходишь по
+> ключу. Без этого шага деплой тоже работает: оркестратор сам сгенерит
+> ключ на entry и распространит уже свой.
 
-6. **Открой панель** на `http://<entry-ip>/` — логин `admin` с паролем из `config.yaml`
-   (или `/etc/anysda/admin-password.txt` если был сгенерирован).
+### 2. Склонировать репозиторий 
 
-7. **Создай клиента** → получи WireGuard `.conf` / QR или OpenVPN `.ovpn` →
-   импортируй в клиент.
+```bash
+git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
+cd /opt/anysda-vpn2
+```
+
+### 3. Заполнить конфиг мастером
+
+```bash
+./setup.sh
+```
+
+Записывает в `config.yaml`
+
+### 4. Запустить деплой
+
+```bash
+./deploy.sh
+```
+
+Сам поставит локальные зависимости, проверит SSH ко всем нодам,
+развернёт mgmt-mesh, поднимет Hysteria2 на exit'ах, WG + OVPN +
+sing-box-роутер + failover-watchdog + AdGuard + VictoriaMetrics +
+панель + бота на entry. Идемпотентно — можно перезапускать.
+
+### 5. Создать первого клиента
+
+В панели: «➕ Новый клиент» → имя → «Создать» → откроется карточка
+клиента → «➕ Добавить устройство» → имя → «Создать». Дальше — кнопки
+«Скачать WG / .conf / QR» или «Скачать OVPN».
+
+---
 
 ## Перезапуск отдельных стадий
 
+С entry-ноды:
+
 ```bash
 ./deploy.sh 30-frontend ru       # пересобрать панель
-./deploy.sh 10-foreign foreign   # exits
-./deploy.sh 99-verify all        # smoke-тест всех нод
+./deploy.sh 35-telegram ru       # перезапустить бота
+./deploy.sh 10-foreign foreign   # все exit-ноды
+./deploy.sh 99-verify all        # smoke-тест
 ```
 
-## Что есть в API
 
-```
-POST   /api/auth/{login,logout}             session cookies
-POST   /api/auth/password                   change password
-POST   /api/auth/totp/{setup,confirm,disable}
-GET    /api/auth/me
+---
 
-GET    /api/clients                         list
-POST   /api/clients                         create
-PATCH  /api/clients/:id                     enable/expiry/rename
-DELETE /api/clients/:id
-GET    /api/clients/:id/wg-config           text/plain WireGuard .conf
-GET    /api/clients/:id/wg-qrcode.svg       WireGuard QR
-GET    /api/clients/:id/ovpn-config         text/plain OpenVPN .ovpn
-POST   /api/clients/:id/send-wg-to-tg       отправить WG-конфиг в Telegram
-POST   /api/clients/:id/send-ovpn-to-tg     отправить OpenVPN-конфиг в Telegram
+## Как пользоваться админским ботом
 
-GET    /api/routes                          manual rules
-POST/PATCH/DELETE /api/routes               + outbounds from clash
-GET    /api/routes/outbounds
+Бот опционален; включается, если в `setup.sh` (или в разделе «Боты»
+веб-панели) заданы `bot_token` и `chat_id`. Админский чат — тот, чей
+`chat_id` указан (своя личка с ботом или приватная группа с
+выключенным Group Privacy у `@BotFather`).
 
-GET    /api/ops/nodes                       cpu/ram/net/uptime via VM
-GET    /api/ops/adguard                     queries/blocked stats
+### Команды
 
-GET    /api/admin/telegram                  bot config + status
-PUT    /api/admin/telegram
-GET    /api/ops/bot-snapshot                Bearer auth, for bot
+| Команда | Что делает |
+|---|---|
+| `/clients` | управление клиентами (список + создание + действия) |
+| `/status` | статус нод (CPU/RAM/трафик) и outbound'ов (RTT) |
+| `/nodes` | список exit-нод с RTT |
+| `/start`, `/help` | админское приветствие |
 
-GET    /metrics                             Prometheus exposition
-GET    /api/version
-```
+### `/clients` — управление клиентами
 
-## Лицензия
+Бот пришлёт список — каждый клиент это кнопка вида
+`✅ Иван Иванов — 3/3 девайс.` (`✅` активен, `❄️` заморожен; `3/3` —
+устройств/лимит). Внизу — кнопка `➕ Создать клиента`.
 
-MIT — см. [LICENSE](LICENSE). Этот проект НЕ является форком wg-easy и не содержит AGPL-кода.
-Инфраструктурные скрипты (`infra/`, `telegram/`, `setup.sh`, `deploy.sh`) перенесены из
-предыдущей версии (anysda-vpn v1), где они написаны с нуля автором проекта.
+Тапни клиента → откроется карточка с кнопками:
+
+| Кнопка | Действие |
+|---|---|
+| `❄️ Заморозить` / `☀️ Разморозить` | приостановить/вернуть доступ |
+| `➖ Лимит` / `➕ Лимит` | изменить лимит устройств на ±1 |
+| `🗓 Срок` | задать дату окончания (`ДД.ММ.ГГГГ` или `бессрочно`) |
+| `📨 Отправить приглашение` | бот пришлёт готовое сообщение-инвайт для пересылки клиенту |
+| `🗑 Удалить` | удалить клиента (со спросом подтверждения) |
+| `‹ К списку` | назад |
+
+Создать: `➕ Создать клиента` → бот спросит имя → клиент создан, сразу
+открыта его карточка (фильтрация трафика включается по умолчанию).
+
+### Конечный клиент в боте
+
+Когда админ нажмёт «📨 Отправить приглашение» — бот пришлёт в админский
+чат **готовый текст с ссылкой**
+`t.me/<bot>?start=<password>` для пересылки клиенту. Клиент жмёт
+ссылку, бот привязывает его чат, открывает меню устройств — дальше он
+сам качает WG/OVPN-конфиги, добавляет устройства и видит уведомления
+(смена имени, лимита, срока, заморозка, удаление профиля).
+
+«Отозвать доступ к боту» в карточке клиента в панели — отвязывает
+Telegram **и перевыпускает пароль клиента**: старая инвайт-ссылка
+становится недействительной.
+
+### Чего бот не делает (это только в веб-панели)
+
+- Перевыпуск ключей устройств/клиента.
+- Манипуляции с маршрутизацией.
+- Управление настройками бота (токен, chat_id, admin_username).
+

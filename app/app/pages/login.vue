@@ -66,7 +66,6 @@ function reset() {
           <UInput
             v-model="state.username"
             :disabled="needsTotp || loading"
-            placeholder="admin"
             autocomplete="username"
             class="w-full"
           />

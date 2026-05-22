@@ -272,8 +272,8 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
             _load_alerted.add(key)
             await tg_send(
                 CHAT_ID,
-                f'⚠️ *{tag.upper()}*: {label} {value:.0f}{unit} ≥ {threshold:.0f}{unit} '
-                f'(порог {ALERT_HITS}× по {MONITOR_INTERVAL}с)',
+                f'⚠️ *{tag.upper()}*: нагрузка на {label} выше '
+                f'{threshold:.0f}{unit} ({value:.0f}{unit})',
                 'Markdown',
             )
     elif value < threshold - HYSTERESIS:

@@ -1,5 +1,4 @@
-import { randomBytes } from 'node:crypto'
-import { generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'

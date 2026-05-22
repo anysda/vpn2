@@ -43,8 +43,8 @@ admin:
 # Telegram-бот (опционально).
 # Если задан — стейдж 35-telegram развернёт бот; иначе skip.
 # telegram:
-#   bot_token: 1234567890:AAEhBOweik9ai2-_ABCD
-#   chat_id: 123456789
+#   bot_token: <telegram-bot-token>
+#   chat_id: <telegram-chat-id>
 
 # Кастомные порты (опционально). Дефолты подходят для большинства настроек.
 # ports:

@@ -9,7 +9,6 @@ node_modules
 !.env.example
 local.db
 local.db-journal
-local-ss-config.yml
 local-anysda-config.yaml
 local-manual-routes.json
 *.log

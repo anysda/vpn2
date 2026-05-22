@@ -26,23 +26,10 @@ export function nodeState(staleSec: number | null | undefined): NodeState {
   return 'online'
 }
 
-export interface OutboundMetric {
-  name: string
-  rttMs: number | null
-  status: 'up' | 'down' | 'warn'
-  upKbps: number
-  downKbps: number
-  isWarp: boolean
-}
-
 const HISTORY_LEN = 60
 
 export function useMonitoring() {
   const { data: nodes, refresh: refreshNodes } = useFetch<NodeMetric[]>('/api/ops/nodes', {
-    default: () => [],
-    server: false,
-  })
-  const { data: outbounds, refresh: refreshOutbounds } = useFetch<OutboundMetric[]>('/api/ops/outbounds', {
     default: () => [],
     server: false,
   })
@@ -66,7 +53,6 @@ export function useMonitoring() {
     if (!timer) {
       timer = setInterval(() => {
         void refreshNodes()
-        void refreshOutbounds()
       }, 2000)
     }
   })
@@ -74,10 +60,9 @@ export function useMonitoring() {
 
   useVisibleRefresh(() => {
     void refreshNodes()
-    void refreshOutbounds()
   })
 
-  return { nodes, outbounds, cpuHistory, refreshNodes, refreshOutbounds }
+  return { nodes, cpuHistory, refreshNodes }
 }
 
 export function formatUptime(sec: number | null | undefined): string {

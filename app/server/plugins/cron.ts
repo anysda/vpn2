@@ -2,6 +2,7 @@ import { and, eq, isNotNull, lt } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients } from '../database/schema'
 import { syncWireguardConfig } from '../utils/wireguard'
+import { syncOpenvpnConfig } from '../utils/openvpn'
 import { collectTraffic } from '../utils/traffic-collector'
 
 const INTERVAL_MS = 60_000
@@ -25,6 +26,9 @@ export default defineNitroPlugin(() => {
       log.info({ count: expired.length }, 'cron: clients expired')
       await syncWireguardConfig().catch(err =>
         log.error({ err }, 'cron: wg sync after expire failed'),
+      )
+      await syncOpenvpnConfig().catch(err =>
+        log.error({ err }, 'cron: openvpn sync after expire failed'),
       )
     }
 

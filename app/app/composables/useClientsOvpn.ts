@@ -1,6 +1,6 @@
 /**
- * Per-client OpenVPN helpers — kept separate from useClients so its code
- * isn't pulled into the SS-only paths.
+ * Per-client OpenVPN helpers — kept separate from useClients so its
+ * polling lifecycle is independent of the client list.
  */
 export function useClientsOvpn() {
   async function getOvpnConfig(id: number) {

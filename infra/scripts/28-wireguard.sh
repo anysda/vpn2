@@ -4,7 +4,7 @@
 # Brings up kernel WireGuard on wg0 (10.66.66.1/24, udp/51820), generates
 # the server keypair on first run, and wires forwarded wg0 traffic into
 # the existing sing-box TPROXY chain so WG clients pick the same exit
-# routing as SS clients (geoip rules → direct-ru / hy2-* outbounds).
+# routing as OpenVPN clients (geoip rules → direct-ru / hy2-* outbounds).
 #
 # The panel (stage 30) writes /etc/wireguard/wg0.conf with the enabled
 # clients' WG peers and hot-reloads via `wg syncconf`.
@@ -97,7 +97,7 @@ EOF
 cat > /usr/local/sbin/anysda-wg-routing.sh <<'IPTSEOF'
 #!/usr/bin/env bash
 # Divert wg0 forwarded TCP+UDP into sing-box TPROXY on :7898 so WG clients
-# pick the same geoip routing as SS clients.
+# pick the same geoip routing as OpenVPN clients.
 set -euo pipefail
 ACTION=${1:-up}
 WG_IF='wg0'

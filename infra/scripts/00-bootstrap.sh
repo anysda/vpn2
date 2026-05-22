@@ -49,7 +49,7 @@ apt-get install -y -qq \
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/6] sysctl"
 cat > /etc/sysctl.d/99-anysda.conf <<EOF
-# anysda-vpn — set by deployment/scripts/00-bootstrap.sh
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
@@ -160,7 +160,7 @@ ufw status verbose | sed "s/^/[$HOST_TAG]   /"
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [5/6] fail2ban"
 cat > /etc/fail2ban/jail.d/anysda.local <<EOF
-# anysda-vpn — set by deployment/scripts/00-bootstrap.sh
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
 [DEFAULT]
 bantime = 1h
 findtime = 10m

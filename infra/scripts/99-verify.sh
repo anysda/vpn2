@@ -65,13 +65,31 @@ case "$HOST_TAG" in
     else
       echo "[$HOST_TAG] sing-box:    неактивен (стадия 20 не применена)"
     fi
-    for _svc in wg-quick@wg0 openvpn-server@server; do
+    for _svc in wg-quick@wg0 openvpn-server@server strongswan-starter anysda-ikev2-routing; do
       if systemctl is-active --quiet "$_svc" 2>/dev/null; then
         echo "[$HOST_TAG] ${_svc}: active"
       else
         echo "[$HOST_TAG] ${_svc}: неактивен"
       fi
     done
+    # IKEv2: порты слушают + conn anysda-ikev2 в swanctl.
+    if command -v swanctl >/dev/null 2>&1; then
+      if swanctl --list-conns 2>/dev/null | grep -q '^anysda-ikev2:'; then
+        echo "[$HOST_TAG] ikev2:       anysda-ikev2 conn loaded"
+      else
+        echo "[$HOST_TAG] ikev2:       conn НЕ загружен (стадия 27 не применена?)"
+      fi
+      if ss -lun 2>/dev/null | grep -qE ':500 |:4500 '; then
+        echo "[$HOST_TAG] ikev2 ports: udp/500 + udp/4500 слушают"
+      else
+        echo "[$HOST_TAG] ikev2 ports: udp/500 или udp/4500 НЕ слушают"
+      fi
+      if ip link show xfrm0 >/dev/null 2>&1; then
+        echo "[$HOST_TAG] ikev2 xfrm:  xfrm0 up"
+      else
+        echo "[$HOST_TAG] ikev2 xfrm:  xfrm0 ОТСУТСТВУЕТ (anysda-ikev2-routing не отработал?)"
+      fi
+    fi
     ;;
   *)
     # Любая выходная нода

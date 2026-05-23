@@ -36,6 +36,11 @@ export default defineNuxtConfig({
     aghPassword: '',
     exitTags: '',
     mgmtMeshIpPrefix: '10.99.0.',
+    // Stable tag→mgmt_ip mapping, "tag:ip,tag:ip,...". Source of truth for
+    // nodeInstances() — индексы не пересчитываются при exclusion экзитов
+    // (см. vm-client.ts комментарий). Заполняется в 30-frontend.sh из
+    // envs/all.env (MGMT_IP_*).
+    mgmtIps: '',
     tgbotEventPort: 8877,
     tgbotSecret: '',
     wgEnabled: true,

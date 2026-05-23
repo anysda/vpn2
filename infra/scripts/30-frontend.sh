@@ -127,6 +127,8 @@ docker run -d \
   -v /etc/anysda:/etc/anysda \
   -v /etc/wireguard:/etc/wireguard \
   -v /etc/openvpn:/etc/openvpn \
+  -v /etc/strongswan:/etc/strongswan \
+  -v /etc/swanctl:/etc/swanctl \
   -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
   -e NODE_ENV=production \
   -e PORT=51821 \

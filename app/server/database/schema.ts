@@ -47,7 +47,7 @@ export const clients = sqliteTable('clients', {
   ...timestamps,
 })
 
-/** Девайс = устройство клиента, со своими ключами WG/OVPN. */
+/** Девайс = устройство клиента, со своими ключами WG/OVPN/IKEv2. */
 export const devices = sqliteTable('devices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   clientId: integer('client_id')
@@ -60,7 +60,14 @@ export const devices = sqliteTable('devices', {
   wgIp: text('wg_ip'),
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
-  // Накопительный трафик девайса за всё время (WG+OpenVPN), байты.
+  // IKEv2 EAP-MSCHAPv2 креды. username — slug «<клиент>-<девайс>» через
+  // naming.ts, стабилен на всю жизнь устройства; password — 20 символов
+  // [A-Za-z0-9], меняется при reissue; ip — статический /32 из пула
+  // 10.68.68.0/24 (.1 — server). См. server/utils/ikev2.ts.
+  ikev2Username: text('ikev2_username'),
+  ikev2Password: text('ikev2_password'),
+  ikev2Ip: text('ikev2_ip'),
+  // Накопительный трафик девайса за всё время (WG+OpenVPN+IKEv2), байты.
   // Копит фоновый сборщик (server/utils/traffic-collector.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),

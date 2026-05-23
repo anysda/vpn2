@@ -252,7 +252,7 @@ cd /opt/anysda-vpn2
 scp config.yaml-сохранённый-где-то root@<новый-entry-ip>:/opt/anysda-vpn2/config.yaml
 chmod 600 /opt/anysda-vpn2/config.yaml
 
-# 4. Стандартный деплой (15-25 мин) — поднимает весь стек на пустой ноде
+# 4. Стандартный деплой (2-5 мин) — поднимает весь стек на пустой ноде
 ./deploy.sh
 
 # 5. Кладём свежий backup-файл (если нет в /var/backups уже) или используем S3

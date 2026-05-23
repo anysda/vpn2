@@ -5,6 +5,7 @@ import { devices } from '../../../../database/schema'
 import { botClientView, clientByChat, requireBotAuth } from '../../../../utils/bot-api'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../utils/openvpn'
+import { reissueDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
 
 const Body = z.object({ chatId: z.number().int() })
 
@@ -24,8 +25,10 @@ export default defineEventHandler(async (event) => {
 
   await reissueDeviceWg(deviceId)
   await reissueDeviceOvpn(deviceId)
+  await reissueDeviceIkev2(deviceId)
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'bot: wg sync after reissue failed'))
   await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'bot: ovpn sync after reissue failed'))
+  await syncIkev2().catch(err => useLogger().error({ err }, 'bot: ikev2 sync after reissue failed'))
 
   return botClientView(client.id)
 })

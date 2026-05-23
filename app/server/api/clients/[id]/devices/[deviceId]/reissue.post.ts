@@ -5,6 +5,7 @@ import { requireAuth } from '../../../../../utils/auth'
 import { notifyClient } from '../../../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../../utils/openvpn'
+import { reissueDeviceIkev2, syncIkev2 } from '../../../../../utils/ikev2'
 
 /** Перевыпуск ключей одного девайса (кнопка на карточке девайса). */
 export default defineEventHandler(async (event) => {
@@ -23,8 +24,10 @@ export default defineEventHandler(async (event) => {
 
   await reissueDeviceWg(deviceId)
   await reissueDeviceOvpn(deviceId)
+  await reissueDeviceIkev2(deviceId)
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device reissue failed'))
   await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after device reissue failed'))
+  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device reissue failed'))
 
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
   const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)

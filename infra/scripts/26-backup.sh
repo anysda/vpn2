@@ -111,10 +111,13 @@ EOF
 
 cat > /etc/systemd/system/anysda-backup.timer <<'EOF'
 [Unit]
-Description=Daily anysda-vpn2 backup at 02:00 UTC
+Description=Daily anysda-vpn2 backup at 02:00 (local time of entry node)
 
 [Timer]
-OnCalendar=*-*-* 02:00:00 UTC
+# OnCalendar без суффикса TZ → systemd берёт системную таймзону entry-ноды.
+# Хочешь МСК — `timedatectl set-timezone Europe/Moscow` на entry, таймер
+# подхватит автоматически после daemon-reload.
+OnCalendar=*-*-* 02:00:00
 Persistent=true
 Unit=anysda-backup.service
 RandomizedDelaySec=300

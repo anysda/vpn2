@@ -210,11 +210,18 @@ Pre-restore safety snapshots складываются в `/var/backups/anysda-vp
 
 ### Расписание
 
-Бэкап раз в сутки в **02:00 UTC** — `systemd.timer` с `Persistent=true` (если
-нода была выключена в 02:00, прогон случится после загрузки). Включается через
-`backup.schedule: daily` в config.yaml (или в setup.sh «Ежедневный бэкап?»).
-По умолчанию — `off`. Юнит: `anysda-backup.timer` / `.service`,
-журнал — `journalctl -u anysda-backup`.
+Бэкап раз в сутки в **02:00 по локальной TZ entry-ноды** — `systemd.timer`
+с `Persistent=true` (если нода была выключена в 02:00, прогон случится
+после загрузки). По умолчанию **включено** (`backup.schedule: daily`);
+отключить — `schedule: off` в config.yaml или ответом «n» в setup.sh.
+
+Юнит читает системную таймзону через `timedatectl`. Хочешь МСК вместо UTC —
+один раз на entry:
+```bash
+ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
+./deploy.sh 26-backup ru   # daemon-reload подхватит новую TZ
+```
+Юнит: `anysda-backup.timer` / `.service`, журнал — `journalctl -u anysda-backup`.
 
 ### Ротация
 
@@ -283,8 +290,9 @@ exit-нод. `chmod 600`, не коммитить в git, не пересыла�
 
 Заполняется интерактивно через `./setup.sh` (вопросы про бэкап появляются
 после Telegram-настройки). Все настройки можно пропустить нажатием Enter:
-включён по умолчанию, backend=local, schedule=off, passphrase auto-генерится
-и распечатывается **один раз** в выводе мастера.
+включён по умолчанию, backend=local, **schedule=daily** (02:00 по локальной
+TZ entry), passphrase auto-генерится и распечатывается **один раз** в выводе
+мастера.
 
 Прямой вид в `config.yaml` (см. [config.example.yaml](config.example.yaml)):
 
@@ -294,7 +302,7 @@ backup:
   backend: local              # local | s3
   passphrase: ABC123XYZ...    # age symmetric passphrase
   retention: 10
-  schedule: off               # off | daily
+  schedule: daily             # off | daily — 02:00 по локальной TZ entry-ноды
   local:
     dir: /var/backups/anysda-vpn2
   # s3:                       # раскомментировать когда backend: s3

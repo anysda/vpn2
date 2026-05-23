@@ -285,7 +285,7 @@ def main():
             f"BACKUP_BACKEND='{backup.get('backend', 'local')}'",
             f"BACKUP_PASSPHRASE={shq(backup.get('passphrase', ''))}",
             f"BACKUP_RETENTION='{backup.get('retention', '10')}'",
-            f"BACKUP_SCHEDULE='{backup.get('schedule', 'off')}'",
+            f"BACKUP_SCHEDULE='{backup.get('schedule', 'daily')}'",
             f"BACKUP_LOCAL_DIR='{backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2')}'",
         ]
         s3 = backup.get('s3', {})

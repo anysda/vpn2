@@ -289,6 +289,66 @@ else
   hint "Пропущено. Можно добавить позже через setup.sh"
 fi
 
+# ── Backup секция ───────────────────────────────────────────────────────────
+# Опциональная, но ВКЛЮЧЕНА по умолчанию — local backend без внешних зависимостей.
+# Прометы строго по паттерну telegram/panel-domain: Enter-через-всё → enabled,
+# local, off, auto-gen passphrase. S3-вопросы появляются только при выборе s3.
+header "Бэкапы БД (опционально)"
+hint "Архив: db.sqlite + /etc/anysda/* + WG server key + OpenVPN CA, шифруется"
+hint "age. Backend local — без внешних зависимостей; S3 — любой S3-совместимый."
+backup_enabled='y'
+backup_backend='local'
+backup_passphrase=''
+backup_schedule='off'
+backup_s3_endpoint=''
+backup_s3_bucket=''
+backup_s3_access_key=''
+backup_s3_secret_key=''
+backup_enabled_q=$(ask_yn "Включить бэкапы?" "y")
+if [[ "$backup_enabled_q" == "y" ]]; then
+  backup_schedule_q=$(ask_yn "Ежедневный бэкап в 02:00 UTC (systemd-timer)?" "n")
+  [[ "$backup_schedule_q" == "y" ]] && backup_schedule='daily'
+
+  while true; do
+    backup_backend=$(ask "Backend (local/s3)" "local")
+    backup_backend=$(sanitize "$backup_backend")
+    case "$backup_backend" in local|s3) break;; esac
+    fail "только local или s3"
+  done
+
+  hint "Passphrase для шифрования архивов. Enter — сгенерировать."
+  hint "⚠ Лишишься passphrase — лишишься возможности восстановить бэкапы."
+  printf '  %b%s%b: ' "$Y" "Backup passphrase (Enter — auto-gen)" "$E" >&2
+  read -rs backup_passphrase; printf '\n' >&2
+  backup_passphrase=$(sanitize "$backup_passphrase")
+  if [[ -z "$backup_passphrase" ]]; then
+    backup_passphrase=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40)
+    warn "Сгенерирован passphrase: $backup_passphrase"
+    warn "Сохраните где-то ВНЕ entry-ноды. Дубль лежит в config.yaml (chmod 600)."
+  fi
+
+  if [[ "$backup_backend" == "s3" ]]; then
+    hint "Endpoint любого S3-совместимого: MinIO/B2/R2/Yandex/Cloud.ru/AWS"
+    while true; do
+      backup_s3_endpoint=$(ask "S3 endpoint URL")
+      backup_s3_endpoint=$(sanitize "$backup_s3_endpoint")
+      [[ "$backup_s3_endpoint" =~ ^https?:// ]] && break
+      fail "Endpoint должен начинаться с http:// или https://"
+    done
+    while true; do
+      backup_s3_bucket=$(ask "S3 bucket")
+      backup_s3_bucket=$(sanitize "$backup_s3_bucket")
+      [[ -n "$backup_s3_bucket" ]] && break
+    done
+    backup_s3_access_key=$(ask "S3 access key ID")
+    backup_s3_access_key=$(sanitize "$backup_s3_access_key")
+    backup_s3_secret_key=$(ask_password_once "S3 secret access key")
+  fi
+  ok "Бэкапы настроены (backend=$backup_backend, schedule=$backup_schedule)"
+else
+  hint "Пропущено. Можно включить позже через setup.sh"
+fi
+
 printf '\n' >&2
 for _tag in "${!exit_ips[@]}"; do
   export "_EXIT_IP_${_tag}=${exit_ips[$_tag]}"
@@ -337,6 +397,14 @@ PANEL_DOMAIN="$panel_domain" \
 TG_TOKEN="$tg_token" \
 TG_CHAT_ID="$tg_chat_id" \
 TG_ADMIN_USERNAME="$tg_admin_username" \
+BACKUP_ENABLED="$backup_enabled_q" \
+BACKUP_BACKEND="$backup_backend" \
+BACKUP_PASSPHRASE="$backup_passphrase" \
+BACKUP_SCHEDULE="$backup_schedule" \
+BACKUP_S3_ENDPOINT="$backup_s3_endpoint" \
+BACKUP_S3_BUCKET="$backup_s3_bucket" \
+BACKUP_S3_ACCESS_KEY="$backup_s3_access_key" \
+BACKUP_S3_SECRET_KEY="$backup_s3_secret_key" \
 ORCH_KEY="$orch_key" \
 ORCH_PUBKEY="$orch_pubkey" \
 CONFIG_FILE="$config_file" \
@@ -379,6 +447,27 @@ if tt and tc:
     lines.append('  chat_id: ' + tc)
     if ta:
         lines.append('  admin_username: ' + ta)
+
+# Backup-секция: если включена — записываем. Если выключена — секция не
+# пишется вообще, чтобы 26-backup увидел отсутствие блока и пропустился.
+be = os.environ.get('BACKUP_ENABLED', '')
+if be == 'y':
+    bb     = os.environ.get('BACKUP_BACKEND', 'local')
+    bpwd   = os.environ.get('BACKUP_PASSPHRASE', '')
+    bsched = os.environ.get('BACKUP_SCHEDULE', 'off')
+    lines.append('')
+    lines.append('backup:')
+    lines.append('  enabled: true')
+    lines.append('  backend: ' + bb)
+    lines.append('  passphrase: ' + bpwd)
+    lines.append('  retention: 10')
+    lines.append('  schedule: ' + bsched)
+    if bb == 's3':
+        lines.append('  s3:')
+        lines.append('    endpoint: '   + os.environ.get('BACKUP_S3_ENDPOINT', ''))
+        lines.append('    bucket: '     + os.environ.get('BACKUP_S3_BUCKET',   ''))
+        lines.append('    access_key: ' + os.environ.get('BACKUP_S3_ACCESS_KEY', ''))
+        lines.append('    secret_key: ' + os.environ.get('BACKUP_S3_SECRET_KEY', ''))
 
 orch_key = os.environ.get('ORCH_KEY', '')
 orch_pubkey = os.environ.get('ORCH_PUBKEY', '')

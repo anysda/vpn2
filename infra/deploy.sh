@@ -86,7 +86,7 @@ print_summary() {
   _rows+=("  Password: ${_admin_pass}")
   local W=0 r
   for r in "${_rows[@]}"; do (( ${#r} > W )) && W=${#r}; done
-  W=$(( W + 2 ))                                  # +2 для воздуха справа
+  W=$(( W + 12 ))                                 # запас по правому краю для воздуха
   local BAR; BAR=$(printf '─%.0s' $(seq 1 $W))
 
   _row() {

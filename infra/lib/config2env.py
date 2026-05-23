@@ -13,9 +13,11 @@ from pathlib import Path
 
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
-    cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {}, 'panel': {}}
+    cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
+           'panel': {}, 'backup': {}}
     context = None
     current_exit = None
+    backup_sub = None    # 's3' или 'local' внутри backup: блока
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
@@ -43,6 +45,9 @@ def parse_yaml(text):
                 context = 'admin'
             elif content.startswith('panel:'):
                 context = 'panel'
+            elif content.startswith('backup:'):
+                context = 'backup'
+                backup_sub = None
             else:
                 k, v = kv(content)
                 if v:
@@ -71,10 +76,21 @@ def parse_yaml(text):
             elif context == 'panel':
                 k, v = kv(content)
                 cfg['panel'][k] = v
+            elif context == 'backup':
+                # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
+                if content.endswith(':') and ':' not in content[:-1]:
+                    backup_sub = content[:-1]
+                    cfg['backup'].setdefault(backup_sub, {})
+                else:
+                    k, v = kv(content)
+                    cfg['backup'][k] = v
         elif indent == 4:
             if context == 'exits' and current_exit is not None:
                 k, v = kv(content)
                 current_exit[k] = v
+            elif context == 'backup' and backup_sub is not None:
+                k, v = kv(content)
+                cfg['backup'][backup_sub][k] = v
 
     return cfg
 
@@ -254,6 +270,32 @@ def main():
         ]
         if tg.get('admin_username'):
             lines.append(f"TELEGRAM_ADMIN_USERNAME='{tg['admin_username']}'")
+
+    # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
+    # enabled=false → ничего не пишем, 26-backup увидит отсутствие и пропустится.
+    backup = cfg.get('backup', {})
+    if backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1'):
+        # Простое экранирование одинарных кавычек (passphrase '). Случается редко
+        # (auto-gen ограничен [A-Za-z0-9]), но при ручном вводе может быть.
+        def shq(v):
+            return "'" + str(v).replace("'", "'\\''") + "'"
+        lines += [
+            '',
+            f"BACKUP_ENABLED='true'",
+            f"BACKUP_BACKEND='{backup.get('backend', 'local')}'",
+            f"BACKUP_PASSPHRASE={shq(backup.get('passphrase', ''))}",
+            f"BACKUP_RETENTION='{backup.get('retention', '10')}'",
+            f"BACKUP_SCHEDULE='{backup.get('schedule', 'off')}'",
+            f"BACKUP_LOCAL_DIR='{backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2')}'",
+        ]
+        s3 = backup.get('s3', {})
+        if backup.get('backend') == 's3' and s3:
+            lines += [
+                f"BACKUP_S3_ENDPOINT='{s3.get('endpoint', '')}'",
+                f"BACKUP_S3_BUCKET='{s3.get('bucket', '')}'",
+                f"BACKUP_S3_ACCESS_KEY={shq(s3.get('access_key', ''))}",
+                f"BACKUP_S3_SECRET_KEY={shq(s3.get('secret_key', ''))}",
+            ]
 
     ru_env = envs_dir / 'ru.env'
     ru_env.write_text('\n'.join(lines) + '\n')

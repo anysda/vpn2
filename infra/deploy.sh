@@ -374,6 +374,16 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl"
   fi
 
+  # 26-backup кладёт скрипты в /usr/local/bin на entry. Передаём их как
+  # вспомогательные файлы, сама стадия install'ит install -m 0755.
+  if [[ "$stage" == "26-backup" ]]; then
+    for f in anysda-backup.sh anysda-restore.sh anysda-backup-list.sh; do
+      local lib="$DEPLOY_ROOT/lib/$f"
+      [[ -f "$lib" ]] || die "lib/$f не найден"
+      push "$lib" "$f"
+    done
+  fi
+
   ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env"
 
   ok "[$stage → $host] done"
@@ -706,6 +716,7 @@ do_all() {
   run_stage 21-failover-watchdog ru
   run_stage 22-adguard       ru
   run_stage 25-monitoring    ru
+  run_stage 26-backup        ru
   run_stage 35-telegram      ru
   run_stage 30-frontend      ru
   run_stage 99-verify        all
@@ -737,15 +748,53 @@ usage() {
   cat <<EOF
 anysda-vpn2 — деплой
 
-  ./deploy.sh                   полный pipeline: prereqs → проверки → деплой
-  ./deploy.sh <stage> <group>   запустить одну стадию на группу нод
+  ./deploy.sh                              полный pipeline: prereqs → проверки → деплой
+  ./deploy.sh <stage> <group>              запустить одну стадию на группу нод
+  ./deploy.sh backup                       снять зашифрованный backup сейчас
+  ./deploy.sh restore [<name>|latest] [--force]
+                                           восстановить из backup (default: latest)
+  ./deploy.sh backup-list                  список доступных backup'ов
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
           29-openvpn | 20-ru-router | 21-failover-watchdog | 22-adguard |
-          25-monitoring | 35-telegram | 30-frontend | 99-verify
+          25-monitoring | 26-backup | 35-telegram | 30-frontend | 99-verify
 Группы:   ru | foreign | all | <конкретный тег экзита>
 EOF
   exit 0
+}
+
+# ----------------------------------------------------------------------------
+# backup/restore/backup-list — выполняются на entry через ssh_exec.
+# ----------------------------------------------------------------------------
+do_backup() {
+  load_env ru
+  ssh_exec '/usr/local/bin/anysda-backup.sh'
+}
+
+do_backup_list() {
+  load_env ru
+  ssh_exec '/usr/local/bin/anysda-backup-list.sh'
+}
+
+do_restore() {
+  local archive="${1:-latest}"
+  local force_flag="${2:-}"
+  load_env ru
+  # Если архив — локальный путь на оркестраторе, scp'им на entry.
+  # Иначе (имя файла или 'latest') — entry резолвит сам.
+  if [[ "$archive" != "latest" && -f "$archive" ]]; then
+    local base; base=$(basename "$archive")
+    log "scp локального архива на entry: $base"
+    ssh_exec "mkdir -p \${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2} 2>/dev/null || mkdir -p /var/backups/anysda-vpn2"
+    push "$archive" "$base"
+    ssh_exec "mv /tmp/anysda/'$base' '/var/backups/anysda-vpn2/$base' && chmod 600 '/var/backups/anysda-vpn2/$base'"
+    archive="$base"
+  fi
+  if [[ -n "$force_flag" ]]; then
+    ssh_exec "/usr/local/bin/anysda-restore.sh '$archive' '$force_flag'"
+  else
+    ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'"
+  fi
 }
 
 # Читает список тегов выходных нод из envs/exits.env
@@ -765,8 +814,11 @@ exit_tags() {
 # С двумя аргументами → одна стадия на группу.
 # -h / --help → подсказка.
 case "${1:-}" in
-  '')        do_all ;;
-  -h|--help) usage ;;
+  '')          do_all ;;
+  -h|--help)   usage ;;
+  backup)      do_backup ;;
+  backup-list) do_backup_list ;;
+  restore)     do_restore "${2:-latest}" "${3:-}" ;;
   *)
     [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     run_stage "$1" "$2"

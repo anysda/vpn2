@@ -51,3 +51,35 @@ admin:
 #   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit) — UDP/QUIC, 443 ок
 #   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
 #   mgmt: 51900                                     # WG-mesh между нодами (служебный)
+
+# Бэкапы (опционально, по умолчанию ВКЛЮЧЕНЫ с backend=local).
+# Архив включает: db.sqlite (через sqlite3 .backup), /etc/anysda/* (секреты
+# панели и бота), WG server private key (/etc/wireguard/wg0.conf), OpenVPN
+# CA + PKI (/etc/openvpn/pki/, server.conf, ccd/, crl.pem) + manifest.json
+# с SHA-256 каждого компонента. Архив шифруется age (symmetric passphrase)
+# на entry ДО записи на диск/выгрузки в S3 — plaintext .tar.gz никогда не
+# покидает mktemp-dir и не остаётся в файловой системе.
+#
+# passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
+# Если оставить пустым — setup.sh сгенерит крепкий и распечатает один раз;
+# далее лежит в config.yaml (chmod 600), как и admin.password / root-пароли
+# нод. На компрометацию оркестратора — ротировать passphrase И re-encrypt
+# существующие бэкапы (см. README §Backup & Disaster Recovery).
+backup:
+  enabled: true                # отключить — backup: { enabled: false }
+  backend: local               # local | s3
+  passphrase: ""               # age symmetric passphrase; пусто → setup.sh auto-gen
+  retention: 10                # keep last N; «последний успешный» защищён от удаления
+  schedule: off                # off | daily — daily ставит systemd-timer на 02:00 UTC
+  local:
+    dir: /var/backups/anysda-vpn2
+
+  # S3 — только если backend: s3. aws-cli ставится 26-backup, поддерживает любой
+  # S3-совместимый endpoint: AWS, MinIO, Backblaze B2, Cloudflare R2, Yandex
+  # Object Storage, Cloud.ru и т.д. Креды кладёт setup.sh, доставляет 26-backup
+  # в /etc/anysda/backup.env (chmod 600), systemd читает через EnvironmentFile.
+  # s3:
+  #   endpoint: https://s3.eu-central-1.amazonaws.com
+  #   bucket:   my-anysda-backups
+  #   access_key: ""
+  #   secret_key: ""

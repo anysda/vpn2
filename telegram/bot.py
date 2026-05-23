@@ -1250,6 +1250,13 @@ async def handle_event(request: web.Request) -> web.Response:
             asyncio.create_task(tg_send(int(chat_id), text))
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
+    elif evt == 'system_alert':
+        # Алерт от системы (backup-фейл, scheduled job упал и т.п.) →
+        # в админский чат. subject/detail — текстовые поля, без markup.
+        subject = data.get('subject', 'system alert')
+        detail = data.get('detail', '')
+        text = f'⚠️ *{subject}*' + (f'\n\n{detail}' if detail else '')
+        asyncio.create_task(tg_send(CHAT_ID, text, 'Markdown'))
     return web.Response(text='ok')
 
 

@@ -157,6 +157,159 @@ sing-box-роутер + failover-watchdog + AdGuard + VictoriaMetrics +
 ./deploy.sh 99-verify all        # smoke-тест
 ```
 
+---
+
+## Backup & Disaster Recovery
+
+`./deploy.sh backup` снимает **один зашифрованный архив** всего, что нужно для
+полного восстановления entry-ноды: `db.sqlite` (через `sqlite3 .backup` — без
+даунтайма панели), `/etc/anysda/*` (admin-password, tgbot-secret, clash-secret,
+telegram-runtime, manual-routes, session-secret), **серверный приватный ключ
+WireGuard** (`/etc/wireguard/wg0.conf` — без него клиентские `.conf` ломаются),
+**OpenVPN CA + PKI** (`/etc/openvpn/pki/`, `server.conf`, `ccd/`, `crl.pem` —
+без них существующие `.ovpn` ломаются), и `manifest.json` с SHA-256 каждого
+компонента. Архив шифруется [`age`](https://github.com/FiloSottile/age)
+(symmetric passphrase) на entry **до** записи на диск — plaintext `.tar.gz`
+никогда не попадает в `/var/backups/...` или в S3.
+
+### Команды
+
+```bash
+./deploy.sh backup                    # снять архив сейчас, в active backend
+./deploy.sh backup-list               # список доступных архивов
+./deploy.sh restore                   # восстановить из latest (default)
+./deploy.sh restore <archive-name>    # из конкретного архива
+./deploy.sh restore <archive> --force # перетереть не-пустую db.sqlite
+```
+
+Пример вывода `backup`:
+
+```
+backup:       /var/backups/anysda-vpn2/anysda-vpn2-2026-05-23T020000Z.tar.gz.age
+size:         245 678 bytes
+hash:         sha256:7f8a...
+backend:      local
+retention:    keep last 10
+```
+
+### Где хранятся
+
+| Backend | Куда | Конфиг |
+|---|---|---|
+| `local` (default) | `/var/backups/anysda-vpn2/*.tar.gz.age` (chmod 700) | `backup.local.dir` |
+| `s3` | объект `s3://<bucket>/<name>.tar.gz.age`, любой S3-совместимый endpoint | `backup.s3.*` |
+
+`/var/backups/anysda-vpn2/` — стандартный путь Linux: можешь натравить туда
+свой внешний backup-агент (Restic, BorgBackup, rsync.net) — он будет видеть
+готовые `.tar.gz.age` и тянуть их куда угодно. Этот путь и предполагает
+свободное использование сторонних инструментов.
+
+Pre-restore safety snapshots складываются в `/var/backups/anysda-vpn2/.pre-restore/`
+и **исключены из ротации** — пока их вручную не удалят, они никуда не денутся.
+Если restore прошёл криво — пригодится восстановиться обратно.
+
+### Расписание
+
+Бэкап раз в сутки в **02:00 UTC** — `systemd.timer` с `Persistent=true` (если
+нода была выключена в 02:00, прогон случится после загрузки). Включается через
+`backup.schedule: daily` в config.yaml (или в setup.sh «Ежедневный бэкап?»).
+По умолчанию — `off`. Юнит: `anysda-backup.timer` / `.service`,
+журнал — `journalctl -u anysda-backup`.
+
+### Ротация
+
+- Локально: keep last `backup.retention` (default 10), удаляются самые старые.
+  **Последний успешный бэкап никогда не удаляется** — даже если он выходит
+  за лимит retention, остаётся.
+- S3: тот же `retention` применяется client-side при следующей выгрузке.
+  Дополнительно **рекомендуется поставить S3 lifecycle policy** на bucket
+  (например `Expiration: Days=30`) — это belt-and-suspenders на случай если
+  client-side ротация по какой-то причине не сработала.
+
+### Runbook — entry с нуля
+
+После полной потери entry-ноды (хостер пересоздал / диск убит / DC сгорел):
+
+```bash
+# 1. На свежей Ubuntu 24.04 entry: ставим SSH-ключ оркестратора
+#    (или будем заходить паролем — config.yaml содержит его)
+ssh root@<новый-entry-ip>
+
+# 2. Клонируем репозиторий
+git clone https://gitlab.example.com/anysda/vpn2 /opt/anysda-vpn2
+cd /opt/anysda-vpn2
+
+# 3. Кладём резервную копию config.yaml с оркестратора (он же — мастер-секрет)
+#    config.yaml содержит backup.passphrase, который ОБЯЗАТЕЛЕН для restore.
+#    Переноси его на новую entry безопасным каналом (scp с старой машины, USB и т.п.).
+scp config.yaml-сохранённый-где-то root@<новый-entry-ip>:/opt/anysda-vpn2/config.yaml
+chmod 600 /opt/anysda-vpn2/config.yaml
+
+# 4. Стандартный деплой (15-25 мин) — поднимает весь стек на пустой ноде
+./deploy.sh
+
+# 5. Кладём свежий backup-файл (если нет в /var/backups уже) или используем S3
+./deploy.sh backup-list                       # посмотреть что есть
+./deploy.sh restore latest --force            # --force т.к. свежая db.sqlite не пустая после deploy
+
+# 6. Существующие клиенты переподключаются со СВОИМИ старыми WG/OVPN-конфигами,
+#    БЕЗ перевыпуска ключей. Если CA OpenVPN или server-private-key WG не
+#    восстановились — клиенты увидят rejected handshakes; это значит backup
+#    был сделан до того, как ключи были инициализированы — пересоздавай клиентов.
+```
+
+`config.yaml` — **мастер-секрет файл**. Помимо backup.passphrase в нём root-пароли
+всех нод (`entry.password`, `exits[].password`), `admin.password` панели,
+Telegram bot_token, и сохранённый `orchestrator_key` для повторного бутстрапа
+exit-нод. `chmod 600`, не коммитить в git, не пересылать по неконтролируемым
+каналам. **На компрометацию оркестратора:** ротируй config.yaml (новые пароли
++ новый passphrase) И **перешифруй существующие backup'ы новым passphrase**,
+иначе у нападающего остаётся возможность их расшифровать.
+
+### Безопасность хранения
+
+⚠️ **Backup-таргет должен жить на отдельной инфраструктуре от entry-ноды.**
+Если backup в `/var/backups/anysda-vpn2/` — стандартное это нормально для
+повседневной работы (rollback), но **это не disaster-recovery**: пожар в DC
+заберёт и entry, и его локальные `.tar.gz.age`. Для DR нужен внешний:
+- S3 (через настройку backend) на другом провайдере / в другом регионе
+- ИЛИ `rsync` / `restic` / `borg` из `/var/backups/anysda-vpn2/` на удалённое хранилище
+
+⚠️ **age-passphrase — единственный секрет.** Если потерян — все архивы
+становятся нечитаемыми. Сохраняй где-то ВНЕ entry-ноды (1Password, KeePassXC,
+бумажка в сейфе).
+
+### Конфигурация
+
+Заполняется интерактивно через `./setup.sh` (вопросы про бэкап появляются
+после Telegram-настройки). Все настройки можно пропустить нажатием Enter:
+включён по умолчанию, backend=local, schedule=off, passphrase auto-генерится
+и распечатывается **один раз** в выводе мастера.
+
+Прямой вид в `config.yaml` (см. [config.example.yaml](config.example.yaml)):
+
+```yaml
+backup:
+  enabled: true
+  backend: local              # local | s3
+  passphrase: ABC123XYZ...    # age symmetric passphrase
+  retention: 10
+  schedule: off               # off | daily
+  local:
+    dir: /var/backups/anysda-vpn2
+  # s3:                       # раскомментировать когда backend: s3
+  #   endpoint: https://s3.example.com
+  #   bucket: anysda-vpn2-backups
+  #   access_key: ""
+  #   secret_key: ""
+```
+
+Стадия `26-backup` (между `25-monitoring` и `30-frontend`) сама ставит `age`,
+`expect`, `sqlite3` (и `awscli` если backend: s3), кладёт скрипты в
+`/usr/local/bin/anysda-{backup,restore,backup-list}.sh`, рендерит секреты
+в `/etc/anysda/backup.env` (chmod 600), и (опционально) включает systemd-timer.
+Идемпотентна — повторный запуск только перезаписывает env и скрипты.
+
 
 ---
 

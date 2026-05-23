@@ -460,13 +460,14 @@ preflight_ssh() {
 HY2_PORT_CANDIDATES=(443 4443 4444 8443 8444 21345)
 
 # Печатает delay (ms) и возвращает 0 если туннель ответил, 1 при таймауте/ошибке.
+# kind: direct | warp — какой outbound экзита проверять.
 _clash_delay() {
-  local tag="$1"
+  local tag="$1" kind="${2:-direct}"
   load_env ru
   local secret resp d
   secret=$(ssh_exec 'cat /etc/anysda/clash-secret.txt 2>/dev/null') || return 1
   [[ -z "$secret" ]] && return 1
-  resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-direct/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null") || return 1
+  resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-${kind}/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null") || return 1
   d=$(printf '%s' "$resp" | grep -oE '"delay":[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
   if [[ "$d" =~ ^[1-9][0-9]*$ ]]; then
     printf '%s' "$d"
@@ -485,48 +486,107 @@ _current_port() {
 }
 
 verify_and_rotate_ports() {
-  printf '%b==>%b verifying Hysteria2 direct tunnels via clash API\n' "$C_B" "$C_END"
+  printf '%b==>%b verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n' "$C_B" "$C_END"
   local t0; t0=$(date +%s)
   local exits; exits=$(exit_tags)
   local rotated_any=0
+  local fully_dead=()     # tags, у которых ВЕСЬ UDP-путь RU↔exit фильтруется
 
   for tag in $exits; do
     local delay current
     current=$(_current_port "$tag")
-    if delay=$(_clash_delay "$tag"); then
+    # 1. Быстрый путь: туннель отвечает на текущем порту → OK
+    if delay=$(_clash_delay "$tag" direct); then
       printf '  %-16s port=%-5s %bRTT=%sms ✓%b\n' "hy2-${tag}-direct" "$current" "$C_G" "$delay" "$C_END"
       continue
     fi
-    printf '  %-16s port=%-5s %b× — провайдер фильтрует, перебираю порты%b\n' "hy2-${tag}-direct" "$current" "$C_Y" "$C_END"
+    printf '  %-16s port=%-5s %b×%b\n' "hy2-${tag}-direct" "$current" "$C_Y" "$C_END"
 
-    local found=0 port
+    # 2. Активная UDP-проверка: 5 случайных high-портов с python echo. Если
+    # ни на одном из них пакет не дошёл — UDP-путь физически отрезан, exit
+    # мертвый, исключаем. Если хоть один сработал — UDP проходит, hyt-rotation
+    # имеет смысл (хостер режет конкретные порты вроде 443/8443).
+    local exit_host
+    load_env "$tag"; exit_host="$SSH_HOST"
+    local probe_ports=(33445 39847 41001 51234 60123)
+    local udp_alive=""
+    printf '    UDP-пробник: '
+    for p in "${probe_ports[@]}"; do
+      if _probe_udp_one_port "$tag" "$exit_host" "$p"; then
+        udp_alive="$p"
+        break
+      fi
+    done
+    if [[ -z "$udp_alive" ]]; then
+      printf '%bвсе 5 портов фильтруются → exit МЁРТВ, исключаю%b\n' "$C_R" "$C_END"
+      fully_dead+=("$tag")
+      continue
+    fi
+    printf '%bUDP проходит на :%s%b — пробую hy2 rotation\n' "$C_G" "$udp_alive" "$C_END"
+
+    # 3. UDP-путь жив → перебираем hy2-кандидаты до 2 попыток
+    local found=0 port tries=0 max_tries=2
     for port in "${HY2_PORT_CANDIDATES[@]}"; do
       [[ "$port" == "$current" ]] && continue
-      printf '    → пробую :%s ' "$port"
+      tries=$((tries + 1))
+      [[ $tries -gt $max_tries ]] && break
+      printf '    → пробую hy2 :%s ' "$port"
       python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "$port" >/dev/null || true
       python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null || true
-      # 10-foreign сам открывает UFW для HY2_DIRECT_PORT (с фикса bug-17), так
-      # что bootstrap ре-deploy не нужен — он бы снёс перебинд node_exporter
-      # на mgmt IP из стейджа 05.
-      run_stage_on_host 10-foreign    "$tag" >/dev/null 2>&1 || true   # sing-box на новом порту
-      run_stage_on_host 20-ru-router  ru     >/dev/null 2>&1 || true   # RU роутер пересобрать с новым портом
+      run_stage_on_host 10-foreign    "$tag" >/dev/null 2>&1 || true
+      run_stage_on_host 20-ru-router  ru     >/dev/null 2>&1 || true
       sleep 4
-      if delay=$(_clash_delay "$tag"); then
+      if delay=$(_clash_delay "$tag" direct); then
         printf '%bRTT=%sms ✓%b\n' "$C_G" "$delay" "$C_END"
-        found=1
-        rotated_any=1
+        found=1; rotated_any=1
         break
       fi
       printf '%b×%b\n' "$C_R" "$C_END"
     done
-
     if [[ $found -eq 0 ]]; then
-      printf '\n%b✗ Не подобрался ни один рабочий UDP-порт для %s%b\n' "$C_R" "$tag" "$C_END"
-      printf '  Кандидаты: %s\n' "${HY2_PORT_CANDIDATES[*]}"
-      printf '  Хостер режет UDP-трафик с RU направления — замени сервер.\n'
-      die "verify_and_rotate_ports failed for $tag"
+      printf '  %b⚠ hy2 rotation не подобрала рабочий порт для %s (UDP-путь есть, но\n' "$C_Y" "$tag"
+      printf '    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.%b\n' "$C_END"
+      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "${HY2_DIRECT_PORT:-443}" >/dev/null 2>&1 || true
+      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null 2>&1 || true
     fi
   done
+
+  # Persist excluded exits + регенерим envs + redeploy 20-ru-router чтобы
+  # sing-box, vmagent (25-monitoring) и панель (30-frontend) увидели
+  # отфильтрованный EXIT_TAGS на последующих стадиях.
+  local state_dir="$DEPLOY_ROOT/state"
+  local state_file="$state_dir/excluded-exits.txt"
+  mkdir -p "$state_dir"
+  if [[ ${#fully_dead[@]} -gt 0 ]]; then
+    {
+      echo "# Экзиты, исключённые verify_and_rotate_ports."
+      echo "# config2env.py читает этот файл и убирает их из EXIT_TAGS на каждом"
+      echo "# деплое. Чтобы попробовать снова — удалить тег (или весь файл) и"
+      echo "# перезапустить ./deploy.sh — verify прогонится заново."
+      echo "# Сгенерировано $(date -u +%FT%TZ)."
+      for tag in "${fully_dead[@]}"; do echo "$tag"; done
+    } > "$state_file"
+    chmod 644 "$state_file"
+    printf '\n  %b⚠ Полностью недостижимые экзиты исключены из деплоя: %s%b\n' \
+      "$C_Y" "${fully_dead[*]}" "$C_END"
+    printf '    Записано в %s\n' "$state_file"
+    printf '    Регенерирую envs и пересобираю 20-ru-router чтобы\n'
+    printf '    стадии 25-monitoring / 30-frontend / 35-telegram\n'
+    printf '    не настраивались с мёртвыми нодами.\n'
+    python3 "$DEPLOY_ROOT/lib/config2env.py" "$DEPLOY_ROOT/.." >/dev/null
+    run_stage_on_host 20-ru-router ru >/dev/null 2>&1 || true
+  else
+    # Чистим state-файл если все живы — на случай если предыдущий deploy
+    # пометил экзит как мёртвый, а сейчас он ожил.
+    [[ -f "$state_file" ]] && rm -f "$state_file"
+  fi
+
+  # Если ВСЕ экзиты мертвы — система не функциональна.
+  local exits_count=0 dead_count=${#fully_dead[@]}
+  for _ in $exits; do exits_count=$((exits_count + 1)); done
+  if [[ $dead_count -gt 0 ]] && [[ $dead_count -eq $exits_count ]]; then
+    die "verify_and_rotate_ports: все экзиты недостижимы по UDP с RU направления"
+  fi
 
   local elapsed=$(( $(date +%s) - t0 ))
   local secs=$elapsed mins=0
@@ -535,7 +595,58 @@ verify_and_rotate_ports() {
   if [[ $rotated_any -eq 1 ]]; then
     _STAGE_LOG+=("$(printf '%-18s  %-10s  %6s' '[port-rotate]' 'foreign' "$t")")
   fi
+  if [[ ${#fully_dead[@]} -gt 0 ]]; then
+    _STAGE_LOG+=("$(printf '%-18s  %-10s  %6s' '[excluded]' "${fully_dead[*]}" "$t")")
+  fi
   printf '\n'
+}
+
+# ----------------------------------------------------------------------------
+# UDP-пробник между RU entry и exit на одном порту. Используется внутри
+# verify_and_rotate_ports как ground-truth: "UDP-путь физически существует
+# или нет". Не зависит от sing-box / hy2 / warp — обычный python echo.
+# Возвращает 0 если пакет проехал туда-обратно, 1 иначе.
+# ----------------------------------------------------------------------------
+_probe_udp_one_port() {
+  local exit_tag="$1" exit_host="$2" port="$3"
+  # 1. На exit: открыть UFW, запустить python UDP echo с таймаутом
+  load_env "$exit_tag"
+  ssh_exec "
+    ufw allow ${port}/udp >/dev/null 2>&1 || true
+    nohup python3 -c 'import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(8)
+s.bind((\"\", ${port}))
+try:
+    data, addr = s.recvfrom(1024)
+    s.sendto(b\"PONG-\" + data, addr)
+except Exception:
+    pass
+' </dev/null >/dev/null 2>&1 &
+    sleep 1
+  " >/dev/null 2>&1 || return 1
+
+  # 2. С RU entry: отправить UDP-пробу, ждать echo
+  load_env "ru"
+  local result
+  result=$(ssh_exec "
+    timeout 5 python3 -c 'import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(4)
+try:
+    s.sendto(b\"PING-${port}\", (\"${exit_host}\", ${port}))
+    data, _ = s.recvfrom(1024)
+    sys.stdout.write(data.decode())
+except Exception:
+    sys.stdout.write(\"TIMEOUT\")
+' 2>/dev/null
+  " 2>/dev/null) || true
+
+  # 3. Cleanup: убрать UFW-правило
+  load_env "$exit_tag"
+  ssh_exec "ufw delete allow ${port}/udp >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+
+  [[ "$result" == "PONG-PING-${port}" ]]
 }
 
 # ----------------------------------------------------------------------------

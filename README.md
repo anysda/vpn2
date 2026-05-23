@@ -1,8 +1,8 @@
 # anysda-vpn2
 
-Веб-панель для управления многонодным VPN-стеком (WireGuard + OpenVPN)
-с авто-geoip-роутингом, ручными правилами (drag-and-drop), мониторингом
-и Telegram-ботом для админа и для конечных клиентов.
+Веб-панель для управления многонодным VPN-стеком (WireGuard + OpenVPN +
+IKEv2/IPsec) с авто-geoip-роутингом, ручными правилами (drag-and-drop),
+мониторингом и Telegram-ботом для админа и для конечных клиентов.
 
 > 🚀 **Сразу деплоить →** [Quickstart](#-quickstart--развернуть-с-нуля)
 
@@ -18,15 +18,16 @@
 
 Карточка клиента: имя, срок, суммарный трафик, привязка к Telegram-боту,
 лимит устройств, заморозка/перевыпуск/удаление. Снизу — список устройств
-с per-device трафиком и кнопками (скачать WG `.conf`/QR, OVPN `.ovpn`,
-перевыпустить ключи, удалить устройство).
+с per-device трафиком и кнопками: WG (`.conf`/QR), OVPN (`.ovpn`), IKEv2
+(server/login/password + `.mobileconfig` для Apple), перевыпустить ключи,
+удалить устройство.
 
 ## Что внутри
 
 - **Веб-панель (Nuxt 4):** клиенты, устройства, маршрутизация, графики,
   AdGuard, Telegram-настройки. Один admin, опционально TOTP.
 - **Двухуровневая модель:** клиент (человек) → его устройства. У каждого
-  устройства свои WG-ключи и OpenVPN-сертификат.
+  устройства свои WG-ключи, OpenVPN-сертификат и IKEv2-логин/пароль.
 - **Авто-роутинг (sing-box):** RU-трафик через WAN entry, заграница
   через Hysteria2 на лучший exit; быстрый failover (~5–7с).
 - **Ручные правила:** домен/IP → конкретный outbound, drag-and-drop в
@@ -46,19 +47,20 @@
 Nuxt 4 (Vue 3, TS strict) · Nuxt UI 3 (Tailwind v4) · Nitro · Drizzle
 ORM + libSQL (SQLite) · nuxt-auth-utils (cookie-сессии + Argon2id) ·
 свой TOTP (RFC 6238) · sing-box (Hysteria2) · WireGuard (kernel) +
-OpenVPN · AdGuard Home · VictoriaMetrics + node_exporter · Caddy
+OpenVPN + strongSwan (IKEv2/IPsec, EAP-MSCHAPv2) · AdGuard Home ·
+VictoriaMetrics + node_exporter · Caddy
 (reverse-proxy + Let's Encrypt) · Python (`python-telegram-bot`) для
 бота. Образы — `node:22-slim` (панель), `python:3.13-slim` (бот).
 
 ## Архитектура
 
 ```
-WireGuard client  ·  OpenVPN client
-   │ wg0 udp/51820        tun0 udp/1194
+WireGuard client  ·  OpenVPN client  ·  IKEv2 client (iOS/macOS/Win/Android)
+   │ wg0 udp/51820        tun0 udp/1194    udp/500 IKE + udp/4500 ESP/NAT-T
    ▼
 [entry-нода]
- ├─ WireGuard (wg0) + OpenVPN (tun0)
- │   iptables PREROUTING -i wg0/tun0 → TPROXY → sing-box :7898
+ ├─ WireGuard (wg0) + OpenVPN (tun0) + strongSwan (xfrm0)
+ │   iptables PREROUTING -i wg0/tun0/xfrm0 → TPROXY → sing-box :7898
  ├─ sing-box роутер
  │   geoip:ru / .ru/.рф → direct-ru (WAN entry)
  │   остальное → foreign-best (hy2-* exit'ы; выбирает failover-watchdog)
@@ -167,8 +169,9 @@ sing-box-роутер + failover-watchdog + AdGuard + VictoriaMetrics +
 telegram-runtime, manual-routes, session-secret), **серверный приватный ключ
 WireGuard** (`/etc/wireguard/wg0.conf` — без него клиентские `.conf` ломаются),
 **OpenVPN CA + PKI** (`/etc/openvpn/pki/`, `server.conf`, `ccd/`, `crl.pem` —
-без них существующие `.ovpn` ломаются), и `manifest.json` с SHA-256 каждого
-компонента. Архив шифруется [`age`](https://github.com/FiloSottile/age)
+без них существующие `.ovpn` ломаются), **IKEv2 CA + server cert/key + swanctl
+conf'ы** (`/etc/strongswan`, `/etc/swanctl` — без них клиенты не доверят
+сертификату сервера) и `manifest.json` с SHA-256 каждого компонента. Архив шифруется [`age`](https://github.com/FiloSottile/age)
 (symmetric passphrase) на entry **до** записи на диск — plaintext `.tar.gz`
 никогда не попадает в `/var/backups/...` или в S3.
 

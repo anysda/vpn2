@@ -60,7 +60,7 @@ print_summary() {
   done
   printf '%b  ├────────────────────────────────────────────────┤%b\n' "$C_G" "$C_END"
   # shellcheck disable=SC1091
-  local _ru_host _panel_url _agh_url
+  local _ru_host _panel_url
   source "$DEPLOY_ROOT/envs/all.env" 2>/dev/null || true
   source "$DEPLOY_ROOT/envs/ru.env"  2>/dev/null || true
   _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
@@ -69,9 +69,7 @@ print_summary() {
   else
     _panel_url="http://${_ru_host}/"
   fi
-  _agh_url="http://${_ru_host}:3001/"
   printf '%b  │%b  Panel:    %-38s %b│%b\n' "$C_G" "$C_END" "$_panel_url" "$C_G" "$C_END"
-  printf '%b  │%b  AdGuard:  %-38s %b│%b\n' "$C_G" "$C_END" "$_agh_url"  "$C_G" "$C_END"
   printf '%b  └────────────────────────────────────────────────┘%b\n' "$C_G" "$C_END"
   printf '\n'
 }

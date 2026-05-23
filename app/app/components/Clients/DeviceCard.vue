@@ -16,7 +16,7 @@ const emit = defineEmits<{ changed: [] }>()
 const { removeDevice, reissueDevice } = useClientDevices()
 const { getWgConfig, sendWgToTg, wgQrUrl } = useClientsWg()
 const { getOvpnConfig, sendOvpnToTg } = useClientsOvpn()
-const { getIkev2Credentials, ikev2MobileconfigUrl, ikev2CaCrtUrl, sendIkev2ToTg } = useClientsIkev2()
+const { getIkev2Credentials, ikev2CaCrtUrl, sendIkev2ToTg } = useClientsIkev2()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
@@ -142,7 +142,7 @@ async function sendOvpn() {
 const showIkev2 = ref(false)
 const ikev2Creds = ref<{ server: string, username: string, password: string } | null>(null)
 const ikev2Loading = ref(false)
-const ikev2Sending = ref<null | 'ios' | 'android' | 'windows'>(null)
+const ikev2Sending = ref(false)
 const showIkev2Pass = ref(false)
 
 async function loadIkev2() {
@@ -171,18 +171,18 @@ async function copyIkev2Field(label: string, value: string | undefined) {
   else toast.add({ title: 'Не удалось скопировать', color: 'error' })
 }
 
-async function sendIkev2(platform: 'ios' | 'android' | 'windows') {
-  ikev2Sending.value = platform
+async function sendIkev2() {
+  ikev2Sending.value = true
   try {
-    await sendIkev2ToTg(props.clientId, props.device.id, platform)
-    toast.add({ title: `IKEv2 (${platform}) отправлен в Telegram`, color: 'success' })
+    await sendIkev2ToTg(props.clientId, props.device.id)
+    toast.add({ title: 'IKEv2 отправлен в Telegram', color: 'success' })
   }
   catch (e) {
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Ошибка отправки', color: 'error' })
   }
   finally {
-    ikev2Sending.value = null
+    ikev2Sending.value = false
   }
 }
 
@@ -425,15 +425,15 @@ async function doDelete() {
           </div>
 
           <p class="text-xs text-(--ui-text-muted) text-center">
-            Нативный IKEv2 в iOS / macOS / Android / Windows. Введи три поля
-            вручную — или скачай <span class="font-mono">.mobileconfig</span> для Apple.
+            Нативный IKEv2 в iOS / macOS / Android / Windows. Введи поля в
+            настройках VPN, CA-сертификат — доверить в системе.
           </p>
 
           <div v-if="ikev2Loading" class="text-(--ui-text-muted) text-sm text-center py-4">
             генерирую креды…
           </div>
 
-          <div v-else-if="ikev2Creds" class="space-y-2">
+          <div v-else-if="ikev2Creds" class="space-y-3">
             <div class="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-sm">
               <span class="text-(--ui-text-muted)">Сервер:</span>
               <span class="font-mono truncate">{{ ikev2Creds.server }}</span>
@@ -475,67 +475,27 @@ async function doDelete() {
               </div>
             </div>
 
-            <p class="text-xs text-(--ui-text-muted)">
-              Windows / Linux: скачай CA-сертификат и добавь его в Trusted Root перед коннектом.
-            </p>
-            <UButton
-              block
-              icon="i-lucide-file-key-2"
-              variant="soft"
-              color="neutral"
-              :to="ikev2CaCrtUrl()"
-              external
-            >
-              Скачать CA cert
-            </UButton>
-
-            <p class="text-xs text-(--ui-text-muted) pt-1">
-              iOS / macOS: тапни <span class="font-mono">.mobileconfig</span> — креды и CA импортнутся одним профилем.
-            </p>
-            <UButton
-              block
-              icon="i-lucide-download"
-              variant="soft"
-              color="neutral"
-              :to="ikev2MobileconfigUrl(clientId, device.id)"
-              external
-            >
-              Скачать .mobileconfig (iOS / macOS)
-            </UButton>
-
-            <div class="grid grid-cols-3 gap-2 pt-2">
+            <div class="grid grid-cols-2 gap-2">
               <UButton
-                size="xs"
                 block
+                icon="i-lucide-file-key-2"
                 variant="soft"
                 color="neutral"
-                :disabled="!canSendTg"
-                :loading="ikev2Sending === 'ios'"
-                @click="sendIkev2('ios')"
+                :to="ikev2CaCrtUrl()"
+                external
               >
-                В TG: iOS
+                Скачать CA
               </UButton>
               <UButton
-                size="xs"
                 block
+                icon="i-lucide-send"
                 variant="soft"
                 color="neutral"
                 :disabled="!canSendTg"
-                :loading="ikev2Sending === 'android'"
-                @click="sendIkev2('android')"
+                :loading="ikev2Sending"
+                @click="sendIkev2"
               >
-                В TG: Android
-              </UButton>
-              <UButton
-                size="xs"
-                block
-                variant="soft"
-                color="neutral"
-                :disabled="!canSendTg"
-                :loading="ikev2Sending === 'windows'"
-                @click="sendIkev2('windows')"
-              >
-                В TG: Windows
+                В TG
               </UButton>
             </div>
             <p v-if="!canSendTg" class="text-xs text-(--ui-text-muted) text-center">

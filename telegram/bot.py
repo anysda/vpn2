@@ -1291,44 +1291,28 @@ async def _send_invite(name: str, password: str) -> None:
 
 
 async def _send_ikev2(data: dict) -> None:
-    """IKEv2 → админский чат. iOS — 1 сообщение (.mobileconfig). Android/Windows —
-    4 сообщения (server / login / password моноширинными + ca.crt файлом).
+    """IKEv2 → админский чат. Два сообщения (как WG: QR + .conf):
+       1) текст с server/login/password + caption '<username> — IKEv2'
+       2) ca.crt файлом + caption '<username> — CA-сертификат IKEv2'
     """
-    name = data.get('name', '?')
-    platform = (data.get('platform') or '').lower()
-    server = data.get('server', '?')
+    client_name = data.get('clientName', '?')
     username = data.get('username', '?')
+    server = data.get('server', '?')
     password = data.get('password', '?')
     ca_pem = data.get('caCertPem') or ''
 
-    if platform == 'ios':
-        mobileconfig = data.get('mobileconfig') or ''
-        filename = data.get('fileName') or f'anysda-ikev2-{username}.mobileconfig'
-        if mobileconfig:
-            await tg_send_document(
-                CHAT_ID, filename, mobileconfig.encode('utf-8'),
-                caption=f'*{name}* — IKEv2 (iOS / macOS)',
-            )
-        return
-
-    # Android / Windows: показываем три копируемых поля + CA файлом.
-    header = f'*{name}* — IKEv2 ({platform or "android/windows"})'
-    if platform == 'windows':
-        hint = ('Settings → VPN → Add a VPN connection → IKEv2 → '
-                'Server name = тот что выше, Sign-in info = Username + password.\n'
-                'CA-сертификат (вложение) поставь в Trusted Root Certification Authorities.')
-    else:
-        hint = ('strongSwan-app → Profiles → ➕ → IKEv2 EAP → '
-                'Server / Username / Password (поля выше).\n'
-                'CA-сертификат (вложение) импортируй там же.')
-    await tg_send(CHAT_ID, f'{header}\n\n{hint}', 'Markdown')
-    await tg_send(CHAT_ID, f'`{server}`', 'Markdown')
-    await tg_send(CHAT_ID, f'`{username}`', 'Markdown')
-    await tg_send(CHAT_ID, f'`{password}`', 'Markdown')
+    creds = (
+        f'{client_name}:\n'
+        f'Сервер: `{server}`\n'
+        f'Логин: `{username}`\n'
+        f'Пароль: `{password}`\n\n'
+        f'*{username}* — IKEv2'
+    )
+    await tg_send(CHAT_ID, creds, 'Markdown')
     if ca_pem:
         await tg_send_document(
-            CHAT_ID, 'anysda-ikev2-ca.crt', ca_pem.encode('utf-8'),
-            caption='CA-сертификат для Trusted Root',
+            CHAT_ID, f'{username}-ca.crt', ca_pem.encode('utf-8'),
+            caption=f'*{username}* — CA-сертификат IKEv2',
         )
 
 

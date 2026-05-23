@@ -81,6 +81,8 @@ docker run -d \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   -v /etc/anysda:/etc/anysda:ro \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \

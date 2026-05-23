@@ -57,6 +57,13 @@
       "when": 1779490000000,
       "tag": "0007_client_telegram",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779560400000,
+      "tag": "0008_ikev2_credentials",
+      "breakpoints": true
     }
   ]
 }

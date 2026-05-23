@@ -302,6 +302,7 @@ backup_passphrase=''
 backup_schedule='off'
 backup_s3_endpoint=''
 backup_s3_bucket=''
+backup_s3_region=''
 backup_s3_access_key=''
 backup_s3_secret_key=''
 backup_enabled_q=$(ask_yn "Включить бэкапы?" "y")
@@ -340,6 +341,9 @@ if [[ "$backup_enabled_q" == "y" ]]; then
       backup_s3_bucket=$(sanitize "$backup_s3_bucket")
       [[ -n "$backup_s3_bucket" ]] && break
     done
+    hint "Region: cloud.ru→ru-central-1, yandex→ru-central1, selectel→ru-1, AWS→из endpoint"
+    backup_s3_region=$(ask "S3 region" "us-east-1")
+    backup_s3_region=$(sanitize "$backup_s3_region")
     backup_s3_access_key=$(ask "S3 access key ID")
     backup_s3_access_key=$(sanitize "$backup_s3_access_key")
     backup_s3_secret_key=$(ask_password_once "S3 secret access key")
@@ -403,6 +407,7 @@ BACKUP_PASSPHRASE="$backup_passphrase" \
 BACKUP_SCHEDULE="$backup_schedule" \
 BACKUP_S3_ENDPOINT="$backup_s3_endpoint" \
 BACKUP_S3_BUCKET="$backup_s3_bucket" \
+BACKUP_S3_REGION="$backup_s3_region" \
 BACKUP_S3_ACCESS_KEY="$backup_s3_access_key" \
 BACKUP_S3_SECRET_KEY="$backup_s3_secret_key" \
 ORCH_KEY="$orch_key" \
@@ -466,6 +471,7 @@ if be == 'y':
         lines.append('  s3:')
         lines.append('    endpoint: '   + os.environ.get('BACKUP_S3_ENDPOINT', ''))
         lines.append('    bucket: '     + os.environ.get('BACKUP_S3_BUCKET',   ''))
+        lines.append('    region: '     + os.environ.get('BACKUP_S3_REGION', 'us-east-1'))
         lines.append('    access_key: ' + os.environ.get('BACKUP_S3_ACCESS_KEY', ''))
         lines.append('    secret_key: ' + os.environ.get('BACKUP_S3_SECRET_KEY', ''))
 

@@ -23,6 +23,9 @@ source "$ENV_FILE"
 
 : "${BACKUP_BACKEND:?BACKUP_BACKEND не задан}"
 : "${BACKUP_LOCAL_DIR:=/var/backups/anysda-vpn2}"
+# Region обязателен у cloud.ru/yandex/selectel (SigV4). Если backend=local —
+# переменная просто игнорируется.
+[[ "$BACKUP_BACKEND" == "s3" ]] && export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-us-east-1}"
 
 ARCHIVE_REQ="${1:-latest}"
 FORCE=0

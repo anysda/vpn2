@@ -70,7 +70,8 @@ backup:
   backend: local               # local | s3
   passphrase: ""               # age symmetric passphrase; пусто → setup.sh auto-gen
   retention: 10                # keep last N; «последний успешный» защищён от удаления
-  schedule: off                # off | daily — daily ставит systemd-timer на 02:00 UTC
+  schedule: daily              # off | daily — daily ставит systemd-timer на 02:00
+                               # по локальной TZ entry-ноды (timedatectl)
   local:
     dir: /var/backups/anysda-vpn2
 

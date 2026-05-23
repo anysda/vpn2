@@ -119,11 +119,43 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
   }))
 }
 
-/** Map MGMT_IPs to {tag, ip}. Tags from runtimeConfig.exitTags + 'ru' for .1 */
+/**
+ * Map exit tags → MGMT IPs. Источник истины — runtimeConfig.mgmtIps (env
+ * `NUXT_MGMT_IPS`), формат "tag:ip,tag:ip,...", приходит из 30-frontend.sh
+ * со СТАБИЛЬНЫМИ индексами из config.yaml (исключённые экзиты резервируют
+ * свой индекс, не сдвигая соседей). Это критично: wgmgmt-туннель на ноде
+ * физически прописан на конкретный 10.99.0.X — если посчитать индекс
+ * динамически (i+2 от текущей exitTags), при exclusion одного экзита
+ * остальные «съезжают» в коде, но не на нодах, и scrape промахивается.
+ *
+ * Fallback (для совместимости со старыми деплоями без NUXT_MGMT_IPS):
+ * считаем индексы из exitTags по позиции — старое поведение.
+ */
 export function nodeInstances(): Array<{ tag: string, instance: string, label: string }> {
   const cfg = useRuntimeConfig()
-  const prefix = cfg.mgmtMeshIpPrefix as string
+  const mgmtIpsRaw = String(cfg.mgmtIps || '').trim()
   const tags = String(cfg.exitTags || '').trim().split(/\s+/).filter(Boolean)
+
+  if (mgmtIpsRaw) {
+    const ipByTag = new Map<string, string>()
+    for (const pair of mgmtIpsRaw.split(',')) {
+      const [t, ip] = pair.split(':').map(s => s.trim())
+      if (t && ip) ipByTag.set(t, ip)
+    }
+    const ruIp = ipByTag.get('ru') ?? '10.99.0.1'
+    const nodes: Array<{ tag: string, instance: string, label: string }> = [
+      { tag: 'ru', instance: `${ruIp}:9100`, label: 'RU entry' },
+    ]
+    for (const tag of tags) {
+      const ip = ipByTag.get(tag)
+      if (!ip) continue // фильтруем неизвестные теги — exclusion обрабатывается через config2env, тег исчезнет из exitTags
+      nodes.push({ tag, instance: `${ip}:9100`, label: `${tag.toUpperCase()} exit` })
+    }
+    return nodes
+  }
+
+  // Fallback (legacy): динамическая нумерация. Сломается при exclusion.
+  const prefix = cfg.mgmtMeshIpPrefix as string
   const nodes: Array<{ tag: string, instance: string, label: string }> = [
     { tag: 'ru', instance: `${prefix}1:9100`, label: 'RU entry' },
   ]

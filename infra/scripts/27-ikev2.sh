@@ -151,12 +151,14 @@ sysctl -w net.ipv4.ip_forward=1 >/dev/null
 sysctl -w net.ipv4.conf.all.rp_filter=2 >/dev/null
 sysctl -w net.ipv4.conf.default.rp_filter=2 >/dev/null
 
-# ── 6. systemd: strongswan ──────────────────────────────────────────────────
-echo "[$HOST_TAG] [6/6] strongswan service"
-systemctl enable strongswan >/dev/null 2>&1 || true
-systemctl restart strongswan
+# ── 6. systemd: strongswan-starter (Ubuntu 24.04 / strongSwan 5.9) ──────────
+# На свежих стронгсванах сервис называется strongswan-starter.service (alias —
+# ipsec.service). Юнит strongswan.service отсутствует.
+echo "[$HOST_TAG] [6/6] strongswan-starter service"
+systemctl enable strongswan-starter >/dev/null 2>&1 || true
+systemctl restart strongswan-starter
 sleep 2
-systemctl status strongswan --no-pager -n 4 2>/dev/null | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | head -6 | sed "s/^/[$HOST_TAG]   /"
 
 # Применяем CA + creds + conns в работающий daemon.
 swanctl --load-creds >/dev/null

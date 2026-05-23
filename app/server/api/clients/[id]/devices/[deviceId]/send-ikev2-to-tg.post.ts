@@ -39,18 +39,17 @@ export default defineEventHandler(async (event) => {
   const db = useDb()
   const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  if (!client.tgChatId) {
-    throw createError({ statusCode: 409, statusMessage: 'У клиента не привязан Telegram' })
-  }
   const [device] = await db.select().from(devices)
     .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
     .limit(1)
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const info = await buildIkev2ClientInfo(deviceId, serverIp)
+  // Шлём в АДМИНСКИЙ чат (как WG/OVPN) — админ пересылает клиенту.
+  // Имя в caption — «<клиент> · <устройство>» для понятности при пересылке.
+  const name = `${client.name} · ${device.name}`
   const payload: Record<string, unknown> = {
-    chatId: client.tgChatId,
-    deviceName: device.name,
+    name,
     platform: body.platform,
     server: info.server,
     username: info.username,

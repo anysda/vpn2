@@ -12,6 +12,8 @@
 #                        session-secret, anysda-config.yaml)
 #   - etc-wireguard/wg0.conf       — серверный приватный ключ WG
 #   - etc-openvpn/     — CA + серверный сертификат + ccd/ + crl.pem
+#   - etc-strongswan/  — IKEv2 CA + server cert/key
+#   - etc-swanctl/     — IKEv2 conn-конфиг + загруженные creds
 #   - manifest.json    — версии + SHA-256 каждого компонента
 #
 # Plaintext tar.gz живёт ТОЛЬКО в mktemp-dir chmod 700, удаляется trap EXIT.
@@ -101,6 +103,15 @@ mkdir -p "$BUNDLE_DIR/etc-wireguard"
 # 4. OpenVPN PKI + конфиг + CCD + CRL
 if [[ -d /etc/openvpn ]]; then
   cp -a /etc/openvpn "$BUNDLE_DIR/etc-openvpn"
+fi
+
+# 5. strongSwan (IKEv2) — CA key/cert + server cert/key + swanctl conf'ы.
+#    Без них клиенты не подключатся (CA-pubkey зашит в их .mobileconfig'ах).
+if [[ -d /etc/strongswan ]]; then
+  cp -a /etc/strongswan "$BUNDLE_DIR/etc-strongswan"
+fi
+if [[ -d /etc/swanctl ]]; then
+  cp -a /etc/swanctl "$BUNDLE_DIR/etc-swanctl"
 fi
 
 # ── Manifest с SHA-256 каждого компонента ───────────────────────────────────

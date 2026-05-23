@@ -69,6 +69,33 @@ echo "[$HOST_TAG]   $AGH_USER / $AGH_PASS"
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/4] config"
 AGH_CFG=$AGH_DIR/AdGuardHome.yaml
+
+# Idempotent-патчи для уже существующего конфига (не перезаписываем
+# полностью — пользователь может что-то менять в UI). Применяются ПЕРЕД
+# первичной генерацией, чтобы для новых установок дефолты были правильные.
+patch_agh_config() {
+  local cfg="$1"
+  [[ ! -f "$cfg" ]] && return 0
+  local changed=0
+  # aaaa_disabled: true — иначе VPN-клиент получает AAAA, идёт через тоннель
+  # IPv6, на entry нет v6-форвардинга/TPROXY → пакет уходит нативно, manual-
+  # routes обходятся (см. деталь в фикс-блоке). Возвращать v6 — только после
+  # полной поддержки v6 на entry.
+  if grep -q '^  aaaa_disabled:' "$cfg"; then
+    if ! grep -q '^  aaaa_disabled: true$' "$cfg"; then
+      sed -i 's/^  aaaa_disabled: .*/  aaaa_disabled: true/' "$cfg"
+      changed=1
+    fi
+  else
+    # вставляем после строки `dns:` (на верхнем уровне)
+    sed -i '/^dns:$/a\  aaaa_disabled: true' "$cfg"
+    changed=1
+  fi
+  if [[ $changed -eq 1 ]]; then
+    echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
+  fi
+}
+
 if [[ ! -f "$AGH_CFG" ]]; then
 cat > "$AGH_CFG" <<YAML
 http:
@@ -103,6 +130,15 @@ dns:
   blocked_response_ttl: 10
   filtering_enabled: true
   filters_update_interval: 24
+  # IPv6 AAAA-leak: на entry нет IPv6 forwarding (wg0 без v6, ip6tables
+  # PREROUTING пустой, sing-box слушает только v4). Если AdGuard отдаёт
+  # AAAA — телефон/клиент пытается v6 через тоннель, на entry пакет либо
+  # дропается, либо уходит нативно (sniff обходит manual-routes), и
+  # назначения вроде gemini.google.com блокируют по RU IP. Режем AAAA
+  # на стороне DNS — клиент получает только A, manual-routes и authoritative
+  # роутинг работают штатно. Чтобы вернуть v6 — нужно поднимать v6-стек
+  # на entry полностью (wg0 v6 + ip6tables TPROXY + sing-box v6 listen).
+  aaaa_disabled: true
 
 filters:
   - enabled: true
@@ -128,17 +164,21 @@ YAML
 chmod 600 "$AGH_CFG"
 else
   # Config exists — sync credentials (user/password may have changed)
+  # + idempotent-патчи поверх (aaaa_disabled и т.п. — см. patch_agh_config)
   python3 - <<PYEOF
 import yaml, sys
 cfg_path = "$AGH_CFG"
 with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
+# Гарантируем aaaa_disabled: true (мерджим в dns секцию)
+cfg.setdefault("dns", {})["aaaa_disabled"] = True
 with open(cfg_path, "w") as f:
     yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-print("credentials synced")
+print("credentials + aaaa_disabled synced")
 PYEOF
 fi
+patch_agh_config "$AGH_CFG"
 
 # ----------------------------------------------------------------------------
 # 4. systemd service

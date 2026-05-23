@@ -36,14 +36,28 @@ STAGE='26-backup'
 mkdir -p "$STAMP_DIR" /etc/anysda "$BACKUP_LOCAL_DIR" "$BACKUP_LOCAL_DIR/.pre-restore"
 chmod 700 "$BACKUP_LOCAL_DIR" "$BACKUP_LOCAL_DIR/.pre-restore"
 
-# ── 1. Apt deps: age + expect + sqlite3 (+ aws-cli если s3) ────────────────
-echo "[$HOST_TAG] [1/4] apt deps (age, expect, sqlite3$([[ "$BACKUP_BACKEND" == "s3" ]] && echo ', awscli'))"
+# ── 1. Apt deps: age + expect + sqlite3 ─────────────────────────────────────
+# aws-cli ставится отдельно (Ubuntu 24.04 выкинул пакет awscli из репов —
+# используем официальный бинарь aws-cli v2 от Amazon).
+echo "[$HOST_TAG] [1/4] apt deps (age, expect, sqlite3$([[ "$BACKUP_BACKEND" == "s3" ]] && echo ' + aws-cli v2'))"
 APT_PKGS="age expect sqlite3"
-[[ "$BACKUP_BACKEND" == "s3" ]] && APT_PKGS="$APT_PKGS awscli"
+[[ "$BACKUP_BACKEND" == "s3" ]] && APT_PKGS="$APT_PKGS unzip curl"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 # shellcheck disable=SC2086
 apt-get install -y -qq $APT_PKGS >/dev/null
+
+if [[ "$BACKUP_BACKEND" == "s3" ]] && ! command -v aws >/dev/null 2>&1; then
+  echo "[$HOST_TAG]   download aws-cli v2…"
+  TMPD=$(mktemp -d)
+  trap 'rm -rf "$TMPD"' EXIT
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TMPD/awscli.zip"
+  unzip -q "$TMPD/awscli.zip" -d "$TMPD"
+  "$TMPD/aws/install" --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update >/dev/null
+  rm -rf "$TMPD"
+  trap - EXIT
+  aws --version
+fi
 
 # ── 2. Раскатываем скрипты (push'нуты из infra/lib/ оркестратором) ──────────
 echo "[$HOST_TAG] [2/4] /usr/local/bin/anysda-{backup,restore,backup-list}.sh"

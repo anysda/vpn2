@@ -243,7 +243,7 @@ ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
 ssh root@<новый-entry-ip>
 
 # 2. Клонируем репозиторий
-git clone https://gitlab.example.com/anysda/vpn2 /opt/anysda-vpn2
+git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 
 # 3. Кладём резервную копию config.yaml с оркестратора (он же — мастер-секрет)
@@ -292,7 +292,9 @@ exit-нод. `chmod 600`, не коммитить в git, не пересыла�
 после Telegram-настройки). Все настройки можно пропустить нажатием Enter:
 включён по умолчанию, backend=local, **schedule=daily** (02:00 по локальной
 TZ entry), passphrase auto-генерится и распечатывается **один раз** в выводе
-мастера.
+мастера — **запиши её в этот момент в менеджер паролей и храни ВНЕ
+entry-ноды**: больше она нигде открыто не покажется, а потеря = потеря
+всех существующих архивов (см. предупреждение ниже).
 
 Прямой вид в `config.yaml` (см. [config.example.yaml](config.example.yaml)):
 

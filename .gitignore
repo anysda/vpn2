@@ -3,6 +3,7 @@ spec.md
 stand.md
 test.md
 deploy.md
+/tests
 
 # ── Личные конфиги / секреты ──────────────────────────────────────────────
 .env
@@ -44,3 +45,6 @@ __pycache__/
 *.sqlite
 *.sqlite-journal
 *.db
+
+# probe_udp_or_exclude — persistent UDP-фильтр для экзитов
+infra/state/

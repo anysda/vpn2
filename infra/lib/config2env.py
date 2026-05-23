@@ -103,6 +103,22 @@ def materialize_orchestrator_key(cfg):
     print('orchestrator-ключ восстановлен из config.yaml')
 
 
+def load_excluded_exits(repo_root):
+    """Читает infra/state/excluded-exits.txt — список тегов экзитов, которые
+    probe_udp_or_exclude() (в deploy.sh) пометил как недостижимые по UDP с
+    RU направления. Эти экзиты исключаются из всех env-файлов на каждой
+    регенерации envs (одиночные стадии тоже подхватывают)."""
+    state_file = repo_root / 'infra' / 'state' / 'excluded-exits.txt'
+    if not state_file.exists():
+        return set()
+    excluded = set()
+    for line in state_file.read_text().splitlines():
+        tag = line.strip()
+        if tag and not tag.startswith('#'):
+            excluded.add(tag)
+    return excluded
+
+
 def main():
     repo_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     config_path = repo_root / 'config.yaml'
@@ -117,6 +133,28 @@ def main():
     entry = cfg.get('entry', {})
     exits = cfg.get('exits', [])
     ports = cfg.get('ports', {})
+
+    # STABLE INDEXING: первый exit в config.yaml всегда получает MGMT_IP
+    # 10.99.0.2, второй — .3, и так далее, НЕЗАВИСИМО от того, какие
+    # экзиты исключены. Иначе при exclusion индексы съезжают, и wgmgmt-
+    # туннели нод (физически прописаны на остатке от прошлого деплоя)
+    # перестают соответствовать ожидаемым адресам в новой конфигурации.
+    for i, e in enumerate(exits, start=2):
+        e['_mgmt_idx'] = i
+
+    # Применить persistent UDP-фильтр от verify_and_rotate_ports. Эти экзиты
+    # деплой не настраивает ни в одной стадии, пока verify не подтвердит
+    # обратное (для re-include — удалить тег из excluded-exits.txt и
+    # перезапустить ./deploy.sh; verify прогонится заново при do_all).
+    excluded = load_excluded_exits(repo_root)
+    if excluded:
+        kept = [e for e in exits if e.get('tag') not in excluded]
+        skipped = [e['tag'] for e in exits if e.get('tag') in excluded]
+        if skipped:
+            print(f'config2env: исключены по UDP-фильтру: {", ".join(skipped)} '
+                  f'(infra/state/excluded-exits.txt) — '
+                  f'их MGMT_IP-индексы зарезервированы и не переиспользуются')
+        exits = kept
 
     if not entry.get('host'):
         print('ERROR: entry.host не задан в config.yaml', file=sys.stderr)
@@ -159,12 +197,12 @@ def main():
         tag = ex['tag'].upper()
         lines.append(f"DOMAIN_{tag}={ex['host']}")
 
-    # Per-host MGMT IPs
+    # Per-host MGMT IPs (используем СТАБИЛЬНЫЙ индекс из config.yaml).
     lines.append('')
     lines.append('MGMT_IP_RU=10.99.0.1')
-    for i, ex in enumerate(exits, start=2):
+    for ex in exits:
         tag = ex['tag'].upper()
-        lines.append(f'MGMT_IP_{tag}=10.99.0.{i}')
+        lines.append(f"MGMT_IP_{tag}=10.99.0.{ex['_mgmt_idx']}")
 
     # Per-exit Hysteria2 direct port
     lines.append('')
@@ -222,13 +260,13 @@ def main():
     ru_env.chmod(0o600)
 
     # ------------------------------------------------------------------
-    # Per-exit env files
+    # Per-exit env files (используем СТАБИЛЬНЫЙ индекс из config.yaml).
     # ------------------------------------------------------------------
-    for i, ex in enumerate(exits, start=2):
+    for ex in exits:
         tag      = ex['tag']
         host     = ex['host']
         password = ex.get('password', '')
-        mgmt_ip  = f'10.99.0.{i}'
+        mgmt_ip  = f"10.99.0.{ex['_mgmt_idx']}"
         hy2_port = ex.get('hy2_direct_port', hy2_direct)
 
         if not password:

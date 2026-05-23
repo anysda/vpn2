@@ -7,6 +7,7 @@ import { minExpiryMs } from './expiry'
 import { generateClientPassword } from './password'
 import { syncWireguardConfig } from './wireguard'
 import { caReady, ovpnCn, revokeClientCert, setCcdDisabled, syncOpenvpnConfig } from './openvpn'
+import { syncIkev2, terminateIkev2Sa } from './ikev2'
 
 /**
  * Общие операции над клиентами — используются и панелью (session-auth),
@@ -104,6 +105,18 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
   if (patch.frozenManual !== undefined || patch.expiresAt !== undefined) {
     await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client update failed'))
     await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after client update failed'))
+    // IKEv2: при заморозке клиента терминируем все его активные SA — иначе
+    // charon держит туннель до rekey. syncIkev2 затем выпиливает secrets.
+    if (patch.frozenManual === true) {
+      const devs = await db.select({ username: devices.ikev2Username })
+        .from(devices).where(eq(devices.clientId, id))
+      for (const d of devs) {
+        if (!d.username) continue
+        await terminateIkev2Sa(d.username).catch(err =>
+          useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after freeze skipped'))
+      }
+    }
+    await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client update failed'))
   }
 
   // Уведомления привязанному клиенту об изменениях аккаунта.
@@ -172,4 +185,12 @@ export async function deleteClient(id: number): Promise<void> {
       await setCcdDisabled(ovpnCn(d.id), false).catch(() => {})
     }
   }
+
+  // IKEv2: терминируем SA каждого устройства + syncIkev2 убирает secrets.
+  for (const d of devRows) {
+    if (!d.ikev2Username) continue
+    await terminateIkev2Sa(d.ikev2Username).catch(err =>
+      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after client delete skipped'))
+  }
+  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client delete failed'))
 }

@@ -5,6 +5,7 @@ import { requireAuth } from '../../../../utils/auth'
 import { notifyClient } from '../../../../utils/bot-events'
 import { syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ovpnCn, revokeClientCert, setCcdDisabled } from '../../../../utils/openvpn'
+import { syncIkev2, terminateIkev2Sa } from '../../../../utils/ikev2'
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -28,6 +29,14 @@ export default defineEventHandler(async (event) => {
       useLogger().error({ err }, 'ovpn revoke after device delete failed'))
     await setCcdDisabled(ovpnCn(device.id), false).catch(() => {})
   }
+
+  // IKEv2: терминировать активную SA устройства до syncIkev2 — иначе
+  // charon ещё держит соединение пока не истечёт rekey.
+  if (device.ikev2Username) {
+    await terminateIkev2Sa(device.ikev2Username).catch(err =>
+      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate-sa after device delete skipped'))
+  }
+  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device delete failed'))
 
   // Уведомить привязанного клиента — устройство удалил администратор.
   const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)

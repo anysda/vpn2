@@ -5,6 +5,7 @@ import { devices } from '../../../database/schema'
 import { botClientView, clientByChat, requireBotAuth } from '../../../utils/bot-api'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../utils/openvpn'
+import { ensureDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
 
 const Body = z.object({
   chatId: z.number().int(),
@@ -33,7 +34,9 @@ export default defineEventHandler(async (event) => {
   if (await caReady()) {
     await ensureDeviceOvpn(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceOvpn failed'))
   }
+  await ensureDeviceIkev2(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceIkev2 failed'))
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'bot: wg sync failed'))
+  await syncIkev2().catch(err => useLogger().error({ err }, 'bot: ikev2 sync failed'))
 
   return botClientView(client.id)
 })

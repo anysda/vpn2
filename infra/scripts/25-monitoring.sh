@@ -69,6 +69,8 @@ docker run -d \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   -v /var/lib/vmsingle:/storage \
   -v /etc/anysda/vmsingle-scrape.yml:/etc/vm/scrape.yml:ro \
   victoriametrics/victoria-metrics:latest \

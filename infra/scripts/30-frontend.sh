@@ -121,6 +121,8 @@ docker run -d \
   --pid host \
   --security-opt apparmor=unconfined \
   --cap-add NET_ADMIN \
+  -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/timezone:/etc/timezone:ro \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
   -v /etc/wireguard:/etc/wireguard \

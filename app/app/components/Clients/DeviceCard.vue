@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Device } from '~/composables/useClients'
 import { fmtBytes, useClientDevices } from '~/composables/useClients'
+import { useClientsIkev2 } from '~/composables/useClientsIkev2'
 import { useClientsOvpn } from '~/composables/useClientsOvpn'
 import { useClientsWg } from '~/composables/useClientsWg'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
@@ -15,6 +16,7 @@ const emit = defineEmits<{ changed: [] }>()
 const { removeDevice, reissueDevice } = useClientDevices()
 const { getWgConfig, sendWgToTg, wgQrUrl } = useClientsWg()
 const { getOvpnConfig, sendOvpnToTg } = useClientsOvpn()
+const { getIkev2Credentials, ikev2MobileconfigUrl, ikev2CaCrtUrl, sendIkev2ToTg } = useClientsIkev2()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
@@ -136,6 +138,54 @@ async function sendOvpn() {
   }
 }
 
+// --- IKEv2 modal ----------------------------------------------------------
+const showIkev2 = ref(false)
+const ikev2Creds = ref<{ server: string, username: string, password: string } | null>(null)
+const ikev2Loading = ref(false)
+const ikev2Sending = ref<null | 'ios' | 'android' | 'windows'>(null)
+const showIkev2Pass = ref(false)
+
+async function loadIkev2() {
+  if (ikev2Creds.value) return
+  ikev2Loading.value = true
+  try {
+    const r = await getIkev2Credentials(props.clientId, props.device.id)
+    ikev2Creds.value = { server: r.server, username: r.username, password: r.password }
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Не удалось получить IKEv2-креды', color: 'error' })
+  }
+  finally {
+    ikev2Loading.value = false
+  }
+}
+
+watch(showIkev2, (now) => {
+  if (now) loadIkev2()
+})
+
+async function copyIkev2Field(label: string, value: string | undefined) {
+  if (!value) return
+  if (await copyText(value)) toast.add({ title: `${label} скопирован`, color: 'success' })
+  else toast.add({ title: 'Не удалось скопировать', color: 'error' })
+}
+
+async function sendIkev2(platform: 'ios' | 'android' | 'windows') {
+  ikev2Sending.value = platform
+  try {
+    await sendIkev2ToTg(props.clientId, props.device.id, platform)
+    toast.add({ title: `IKEv2 (${platform}) отправлен в Telegram`, color: 'success' })
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка отправки', color: 'error' })
+  }
+  finally {
+    ikev2Sending.value = null
+  }
+}
+
 // --- Reissue / delete -----------------------------------------------------
 const reissuing = ref(false)
 const confirmReissue = ref(false)
@@ -146,6 +196,7 @@ async function doReissue() {
     // Сброс кешей конфигов — ключи изменились.
     wgConf.value = ''
     ovpnConf.value = ''
+    ikev2Creds.value = null
     toast.add({ title: `Ключи девайса «${props.device.name}» перевыпущены`, color: 'success' })
     confirmReissue.value = false
     emit('changed')
@@ -211,6 +262,11 @@ async function doDelete() {
       <UTooltip text="OpenVPN — .ovpn-файл, копировать, отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showOvpn = true">
           <OpenVpnLogo class="size-4" />
+        </UButton>
+      </UTooltip>
+      <UTooltip text="IKEv2 — сервер/логин/пароль + .mobileconfig для iOS">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showIkev2 = true">
+          <UIcon name="i-lucide-shield-check" class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="Перевыпустить ключи девайса">
@@ -355,6 +411,137 @@ async function doDelete() {
           >
             {{ tgReason }}
           </p>
+        </div>
+      </template>
+    </UModal>
+
+    <!-- IKEv2 modal -->
+    <UModal v-model:open="showIkev2" :title="device.name" :ui="{ content: 'max-w-md' }">
+      <template #body>
+        <div class="space-y-4">
+          <div class="flex items-center justify-center gap-2">
+            <UIcon name="i-lucide-shield-check" class="size-6" />
+            <span class="font-semibold text-(--ui-text-highlighted)">IKEv2</span>
+          </div>
+
+          <p class="text-xs text-(--ui-text-muted) text-center">
+            Нативный IKEv2 в iOS / macOS / Android / Windows. Введи три поля
+            вручную — или скачай <span class="font-mono">.mobileconfig</span> для Apple.
+          </p>
+
+          <div v-if="ikev2Loading" class="text-(--ui-text-muted) text-sm text-center py-4">
+            генерирую креды…
+          </div>
+
+          <div v-else-if="ikev2Creds" class="space-y-2">
+            <div class="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-sm">
+              <span class="text-(--ui-text-muted)">Сервер:</span>
+              <span class="font-mono truncate">{{ ikev2Creds.server }}</span>
+              <UButton
+                icon="i-lucide-copy"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                @click="copyIkev2Field('Сервер', ikev2Creds.server)"
+              />
+
+              <span class="text-(--ui-text-muted)">Логин:</span>
+              <span class="font-mono truncate">{{ ikev2Creds.username }}</span>
+              <UButton
+                icon="i-lucide-copy"
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                @click="copyIkev2Field('Логин', ikev2Creds.username)"
+              />
+
+              <span class="text-(--ui-text-muted)">Пароль:</span>
+              <span class="font-mono truncate">{{ showIkev2Pass ? ikev2Creds.password : '•'.repeat(20) }}</span>
+              <div class="flex">
+                <UButton
+                  :icon="showIkev2Pass ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  @click="showIkev2Pass = !showIkev2Pass"
+                />
+                <UButton
+                  icon="i-lucide-copy"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  @click="copyIkev2Field('Пароль', ikev2Creds.password)"
+                />
+              </div>
+            </div>
+
+            <p class="text-xs text-(--ui-text-muted)">
+              Windows / Linux: скачай CA-сертификат и добавь его в Trusted Root перед коннектом.
+            </p>
+            <UButton
+              block
+              icon="i-lucide-file-key-2"
+              variant="soft"
+              color="neutral"
+              :to="ikev2CaCrtUrl()"
+              external
+            >
+              Скачать CA cert
+            </UButton>
+
+            <p class="text-xs text-(--ui-text-muted) pt-1">
+              iOS / macOS: тапни <span class="font-mono">.mobileconfig</span> — креды и CA импортнутся одним профилем.
+            </p>
+            <UButton
+              block
+              icon="i-lucide-download"
+              variant="soft"
+              color="neutral"
+              :to="ikev2MobileconfigUrl(clientId, device.id)"
+              external
+            >
+              Скачать .mobileconfig (iOS / macOS)
+            </UButton>
+
+            <div class="grid grid-cols-3 gap-2 pt-2">
+              <UButton
+                size="xs"
+                block
+                variant="soft"
+                color="neutral"
+                :disabled="!canSendTg"
+                :loading="ikev2Sending === 'ios'"
+                @click="sendIkev2('ios')"
+              >
+                В TG: iOS
+              </UButton>
+              <UButton
+                size="xs"
+                block
+                variant="soft"
+                color="neutral"
+                :disabled="!canSendTg"
+                :loading="ikev2Sending === 'android'"
+                @click="sendIkev2('android')"
+              >
+                В TG: Android
+              </UButton>
+              <UButton
+                size="xs"
+                block
+                variant="soft"
+                color="neutral"
+                :disabled="!canSendTg"
+                :loading="ikev2Sending === 'windows'"
+                @click="sendIkev2('windows')"
+              >
+                В TG: Windows
+              </UButton>
+            </div>
+            <p v-if="!canSendTg" class="text-xs text-(--ui-text-muted) text-center">
+              {{ tgReason }}
+            </p>
+          </div>
         </div>
       </template>
     </UModal>

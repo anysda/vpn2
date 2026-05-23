@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -255,10 +255,169 @@ export async function buildIkev2ClientInfo(deviceId: number, serverIp: string): 
 /**
  * Apple .mobileconfig (XML) с зашитыми Server/Username/Password + CA cert.
  * Импорт в один тык в iOS/macOS, без ручного ввода.
- * Реализация — этап 4 (нужны Settings → VPN payload UUID-ы и base64 CA).
+ *
+ * Структура — два payload'а: первый ставит trust на наш CA, второй
+ * добавляет IKEv2 VPN-конфигурацию. PayloadUUID детерминированный
+ * (deterministic от deviceId+serverIp), чтобы повторный импорт обновлял
+ * существующий профиль, а не плодил дубликаты.
  */
-export async function renderClientMobileconfig(_deviceId: number, _serverIp: string): Promise<string> {
-  throw new Error('renderClientMobileconfig: not implemented yet (этап 4)')
+export async function renderClientMobileconfig(deviceId: number, serverIp: string): Promise<string> {
+  const info = await buildIkev2ClientInfo(deviceId, serverIp)
+  if (!info.caCertPem) {
+    throw new Error('CA cert недоступен — стадия 27-ikev2 не отработала')
+  }
+
+  // CA в base64 (без PEM-обёртки и переносов — Apple ждёт raw DER в Data,
+  // но точнее принимает PEM-DATA целиком. Используем PEM как есть в base64.).
+  const caDer = pemToDer(info.caCertPem)
+  const caBase64 = caDer.toString('base64').match(/.{1,52}/g)?.join('\n\t\t\t') ?? ''
+
+  // Детерминированный UUID на основе deviceId+serverIp (RFC4122 v5-style hash).
+  // Apple требует именно UUID-формат; SHA-1 первых 16 байт + namespace fix.
+  const seed = `anysda-ikev2-${serverIp}-${deviceId}`
+  const profileUuid = pseudoUuid(seed + ':profile')
+  const vpnUuid = pseudoUuid(seed + ':vpn')
+  const caUuid = pseudoUuid(seed + ':ca')
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>PayloadContent</key>
+\t<array>
+\t\t<dict>
+\t\t\t<key>PayloadCertificateFileName</key>
+\t\t\t<string>anysda-ikev2-ca.crt</string>
+\t\t\t<key>PayloadContent</key>
+\t\t\t<data>
+\t\t\t${caBase64}
+\t\t\t</data>
+\t\t\t<key>PayloadDescription</key>
+\t\t\t<string>anysda-vpn2 IKEv2 CA</string>
+\t\t\t<key>PayloadDisplayName</key>
+\t\t\t<string>anysda-vpn2 IKEv2 CA</string>
+\t\t\t<key>PayloadIdentifier</key>
+\t\t\t<string>space.anysda.ikev2.ca</string>
+\t\t\t<key>PayloadType</key>
+\t\t\t<string>com.apple.security.root</string>
+\t\t\t<key>PayloadUUID</key>
+\t\t\t<string>${caUuid}</string>
+\t\t\t<key>PayloadVersion</key>
+\t\t\t<integer>1</integer>
+\t\t</dict>
+\t\t<dict>
+\t\t\t<key>IKEv2</key>
+\t\t\t<dict>
+\t\t\t\t<key>AuthenticationMethod</key>
+\t\t\t\t<string>None</string>
+\t\t\t\t<key>ExtendedAuthEnabled</key>
+\t\t\t\t<integer>1</integer>
+\t\t\t\t<key>AuthName</key>
+\t\t\t\t<string>${escapeXml(info.username)}</string>
+\t\t\t\t<key>AuthPassword</key>
+\t\t\t\t<string>${escapeXml(info.password)}</string>
+\t\t\t\t<key>RemoteAddress</key>
+\t\t\t\t<string>${escapeXml(info.server)}</string>
+\t\t\t\t<key>RemoteIdentifier</key>
+\t\t\t\t<string>${escapeXml(info.remoteId)}</string>
+\t\t\t\t<key>ServerCertificateIssuerCommonName</key>
+\t\t\t\t<string>anysda-vpn2 IKEv2 CA</string>
+\t\t\t\t<key>DeadPeerDetectionRate</key>
+\t\t\t\t<string>Medium</string>
+\t\t\t\t<key>DisableMOBIKE</key>
+\t\t\t\t<integer>0</integer>
+\t\t\t\t<key>DisableRedirect</key>
+\t\t\t\t<integer>0</integer>
+\t\t\t\t<key>EnableCertificateRevocationCheck</key>
+\t\t\t\t<integer>0</integer>
+\t\t\t\t<key>EnablePFS</key>
+\t\t\t\t<integer>1</integer>
+\t\t\t\t<key>IKESecurityAssociationParameters</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>EncryptionAlgorithm</key>
+\t\t\t\t\t<string>AES-256-GCM</string>
+\t\t\t\t\t<key>IntegrityAlgorithm</key>
+\t\t\t\t\t<string>SHA2-384</string>
+\t\t\t\t\t<key>DiffieHellmanGroup</key>
+\t\t\t\t\t<integer>20</integer>
+\t\t\t\t\t<key>LifeTimeInMinutes</key>
+\t\t\t\t\t<integer>1440</integer>
+\t\t\t\t</dict>
+\t\t\t\t<key>ChildSecurityAssociationParameters</key>
+\t\t\t\t<dict>
+\t\t\t\t\t<key>EncryptionAlgorithm</key>
+\t\t\t\t\t<string>AES-256-GCM</string>
+\t\t\t\t\t<key>IntegrityAlgorithm</key>
+\t\t\t\t\t<string>SHA2-384</string>
+\t\t\t\t\t<key>DiffieHellmanGroup</key>
+\t\t\t\t\t<integer>20</integer>
+\t\t\t\t\t<key>LifeTimeInMinutes</key>
+\t\t\t\t\t<integer>1440</integer>
+\t\t\t\t</dict>
+\t\t\t</dict>
+\t\t\t<key>PayloadDescription</key>
+\t\t\t<string>anysda-vpn2 IKEv2</string>
+\t\t\t<key>PayloadDisplayName</key>
+\t\t\t<string>anysda-vpn2 IKEv2</string>
+\t\t\t<key>PayloadIdentifier</key>
+\t\t\t<string>space.anysda.ikev2.vpn</string>
+\t\t\t<key>PayloadType</key>
+\t\t\t<string>com.apple.vpn.managed</string>
+\t\t\t<key>PayloadUUID</key>
+\t\t\t<string>${vpnUuid}</string>
+\t\t\t<key>PayloadVersion</key>
+\t\t\t<integer>1</integer>
+\t\t\t<key>UserDefinedName</key>
+\t\t\t<string>anysda-vpn2</string>
+\t\t\t<key>VPNType</key>
+\t\t\t<string>IKEv2</string>
+\t\t</dict>
+\t</array>
+\t<key>PayloadDisplayName</key>
+\t<string>anysda-vpn2 (${escapeXml(info.username)})</string>
+\t<key>PayloadIdentifier</key>
+\t<string>space.anysda.ikev2.profile.${escapeXml(String(deviceId))}</string>
+\t<key>PayloadType</key>
+\t<string>Configuration</string>
+\t<key>PayloadUUID</key>
+\t<string>${profileUuid}</string>
+\t<key>PayloadVersion</key>
+\t<integer>1</integer>
+</dict>
+</plist>
+`
+  return xml
+}
+
+function pemToDer(pem: string): Buffer {
+  const m = pem.match(/-----BEGIN CERTIFICATE-----([\s\S]+?)-----END CERTIFICATE-----/)
+  if (!m) throw new Error('invalid PEM cert')
+  return Buffer.from(m[1].replace(/\s+/g, ''), 'base64')
+}
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * Псевдо-UUID v5 (SHA-1 от seed → формат 8-4-4-4-12 hex). RFC4122 v5
+ * требует namespace + name; нам достаточно детерминированной строки —
+ * Apple-у важен только формат, не криптография namespace'ов.
+ */
+function pseudoUuid(seed: string): string {
+  const hash = createHash('sha1').update(seed).digest('hex')
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    `5${hash.substring(13, 16)}`, // version nibble = 5
+    `${(parseInt(hash.substring(16, 17), 16) & 0x3 | 0x8).toString(16)}${hash.substring(17, 20)}`, // variant
+    hash.substring(20, 32),
+  ].join('-')
 }
 
 /** strongSwan конфиг сервера ещё не разворачивается на этапе 1 — заглушка. */

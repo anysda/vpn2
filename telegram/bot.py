@@ -1295,14 +1295,12 @@ async def _send_ikev2(data: dict) -> None:
        1) текст с server/login/password + caption '<username> — IKEv2'
        2) ca.crt файлом + caption '<username> — CA-сертификат IKEv2'
     """
-    client_name = data.get('clientName', '?')
     username = data.get('username', '?')
     server = data.get('server', '?')
     password = data.get('password', '?')
     ca_pem = data.get('caCertPem') or ''
 
     creds = (
-        f'{client_name}:\n'
         f'Сервер: `{server}`\n'
         f'Логин: `{username}`\n'
         f'Пароль: `{password}`\n\n'

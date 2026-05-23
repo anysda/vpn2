@@ -1232,6 +1232,13 @@ async def handle_event(request: web.Request) -> web.Response:
                 CHAT_ID, f'{name}.ovpn', conf.encode('utf-8'),
                 caption=f'*{name}* — OpenVPN',
             ))
+    elif evt == 'client_send_ikev2':
+        # IKEv2 (EAP-MSCHAPv2 + серверный CA). Шлём в АДМИНСКИЙ чат —
+        # админ пересылает клиенту. Поведение зависит от платформы:
+        #   ios     → 1 сообщение: .mobileconfig файлом (всё внутри)
+        #   android → 4 сообщения: server / login / password / ca.crt
+        #   windows → 4 сообщения: server / login / password / ca.crt
+        asyncio.create_task(_send_ikev2(data))
     elif evt == 'client_send_password':
         # Приглашение клиенту: бот шлёт в АДМИНСКИЙ чат два сообщения —
         # (1) пояснение админу, (2) готовое приветствие с диплинком, которое
@@ -1281,6 +1288,48 @@ async def _send_invite(name: str, password: str) -> None:
             f'/start {password}'
         )
     await tg_send(CHAT_ID, invite)
+
+
+async def _send_ikev2(data: dict) -> None:
+    """IKEv2 → админский чат. iOS — 1 сообщение (.mobileconfig). Android/Windows —
+    4 сообщения (server / login / password моноширинными + ca.crt файлом).
+    """
+    name = data.get('name', '?')
+    platform = (data.get('platform') or '').lower()
+    server = data.get('server', '?')
+    username = data.get('username', '?')
+    password = data.get('password', '?')
+    ca_pem = data.get('caCertPem') or ''
+
+    if platform == 'ios':
+        mobileconfig = data.get('mobileconfig') or ''
+        filename = data.get('fileName') or f'anysda-ikev2-{username}.mobileconfig'
+        if mobileconfig:
+            await tg_send_document(
+                CHAT_ID, filename, mobileconfig.encode('utf-8'),
+                caption=f'*{name}* — IKEv2 (iOS / macOS)',
+            )
+        return
+
+    # Android / Windows: показываем три копируемых поля + CA файлом.
+    header = f'*{name}* — IKEv2 ({platform or "android/windows"})'
+    if platform == 'windows':
+        hint = ('Settings → VPN → Add a VPN connection → IKEv2 → '
+                'Server name = тот что выше, Sign-in info = Username + password.\n'
+                'CA-сертификат (вложение) поставь в Trusted Root Certification Authorities.')
+    else:
+        hint = ('strongSwan-app → Profiles → ➕ → IKEv2 EAP → '
+                'Server / Username / Password (поля выше).\n'
+                'CA-сертификат (вложение) импортируй там же.')
+    await tg_send(CHAT_ID, f'{header}\n\n{hint}', 'Markdown')
+    await tg_send(CHAT_ID, f'`{server}`', 'Markdown')
+    await tg_send(CHAT_ID, f'`{username}`', 'Markdown')
+    await tg_send(CHAT_ID, f'`{password}`', 'Markdown')
+    if ca_pem:
+        await tg_send_document(
+            CHAT_ID, 'anysda-ikev2-ca.crt', ca_pem.encode('utf-8'),
+            caption='CA-сертификат для Trusted Root',
+        )
 
 
 async def _announce_deploy() -> None:

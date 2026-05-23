@@ -251,6 +251,8 @@ systemctl stop anysda-failover-watchdog 2>/dev/null || true
 systemctl stop sing-box 2>/dev/null || true
 systemctl stop wg-quick@wg0 2>/dev/null || true
 systemctl stop openvpn-server@server 2>/dev/null || true
+systemctl stop anysda-ikev2-routing 2>/dev/null || true
+systemctl stop strongswan-starter 2>/dev/null || true
 docker stop anysda-vpn2 anysda-tgbot 2>/dev/null || true
 
 # ── Применение ──────────────────────────────────────────────────────────────
@@ -273,6 +275,17 @@ fi
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
   cp -a "$BUNDLE_DIR/etc-openvpn/." /etc/openvpn/
 fi
+# IKEv2 (strongSwan + swanctl). Восстанавливаем CA, server cert/key, conf'ы.
+# Если IP entry поменялся — server cert умрёт по SAN; стадия 27-ikev2 при
+# следующем прогоне перевыпустит его тем же CA.
+if [[ -d "$BUNDLE_DIR/etc-strongswan" ]]; then
+  mkdir -p /etc/strongswan
+  cp -a "$BUNDLE_DIR/etc-strongswan/." /etc/strongswan/
+fi
+if [[ -d "$BUNDLE_DIR/etc-swanctl" ]]; then
+  mkdir -p /etc/swanctl
+  cp -a "$BUNDLE_DIR/etc-swanctl/." /etc/swanctl/
+fi
 
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
 echo "anysda-restore: запускаю сервисы…"
@@ -280,6 +293,10 @@ systemctl start sing-box 2>/dev/null || true
 systemctl start wg-quick@wg0 2>/dev/null || true
 systemctl start openvpn-server@server 2>/dev/null || true
 systemctl start anysda-failover-watchdog 2>/dev/null || true
+systemctl start strongswan-starter 2>/dev/null || true
+systemctl start anysda-ikev2-routing 2>/dev/null || true
+# Reload swanctl creds/conns/pools после восстановления конфигов.
+command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1 || true
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────

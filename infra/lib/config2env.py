@@ -293,6 +293,9 @@ def main():
             lines += [
                 f"BACKUP_S3_ENDPOINT='{s3.get('endpoint', '')}'",
                 f"BACKUP_S3_BUCKET='{s3.get('bucket', '')}'",
+                # region — обязателен для cloud.ru/yandex/selectel и т.п. (SigV4).
+                # Пустое значение оставит дефолт aws-cli (us-east-1).
+                f"BACKUP_S3_REGION='{s3.get('region', '')}'",
                 f"BACKUP_S3_ACCESS_KEY={shq(s3.get('access_key', ''))}",
                 f"BACKUP_S3_SECRET_KEY={shq(s3.get('secret_key', ''))}",
             ]

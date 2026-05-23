@@ -81,5 +81,8 @@ backup:
   # s3:
   #   endpoint: https://s3.eu-central-1.amazonaws.com
   #   bucket:   my-anysda-backups
+  #   region:   eu-central-1     # ОБЯЗАТЕЛЕН для cloud.ru (ru-central-1),
+  #                              # yandex (ru-central1), selectel (ru-1) и др.
+  #                              # AWS — региона из endpoint (eu-central-1 и т.п.)
   #   access_key: ""
   #   secret_key: ""

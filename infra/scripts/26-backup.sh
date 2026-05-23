@@ -86,6 +86,7 @@ if [[ "$BACKUP_BACKEND" == "s3" ]]; then
   cat >> /etc/anysda/backup.env <<EOF
 BACKUP_S3_ENDPOINT='$BACKUP_S3_ENDPOINT'
 BACKUP_S3_BUCKET='$BACKUP_S3_BUCKET'
+BACKUP_S3_REGION='${BACKUP_S3_REGION:-}'
 ANYSDA_S3_ACCESS_KEY='$(printf '%s' "$BACKUP_S3_ACCESS_KEY" | sed "s/'/'\\\\''/g")'
 ANYSDA_S3_SECRET_KEY='$(printf '%s' "$BACKUP_S3_SECRET_KEY" | sed "s/'/'\\\\''/g")'
 EOF

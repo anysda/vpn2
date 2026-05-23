@@ -298,14 +298,18 @@ backup:
   local:
     dir: /var/backups/anysda-vpn2
   # s3:                       # раскомментировать когда backend: s3
-  #   endpoint: https://s3.example.com
+  #   endpoint: https://s3.cloud.ru     # любой S3-совместимый
   #   bucket: anysda-vpn2-backups
+  #   region: ru-central-1              # ОБЯЗАТЕЛЕН: cloud.ru→ru-central-1,
+  #                                     # yandex→ru-central1, selectel→ru-1,
+  #                                     # AWS→регион из endpoint
   #   access_key: ""
   #   secret_key: ""
 ```
 
 Стадия `26-backup` (между `25-monitoring` и `30-frontend`) сама ставит `age`,
-`expect`, `sqlite3` (и `awscli` если backend: s3), кладёт скрипты в
+`expect`, `sqlite3` (и официальный бинарь aws-cli v2 из репозитория Amazon, если
+backend: s3 — apt-пакет `awscli` выкинут из репов Ubuntu 24.04), кладёт скрипты в
 `/usr/local/bin/anysda-{backup,restore,backup-list}.sh`, рендерит секреты
 в `/etc/anysda/backup.env` (chmod 600), и (опционально) включает systemd-timer.
 Идемпотентна — повторный запуск только перезаписывает env и скрипты.

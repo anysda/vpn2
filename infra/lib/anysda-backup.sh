@@ -230,6 +230,8 @@ if [[ "$BACKUP_BACKEND" == "s3" ]]; then
   : "${BACKUP_S3_BUCKET:?BACKUP_S3_BUCKET не задан}"
   : "${ANYSDA_S3_ACCESS_KEY:?ANYSDA_S3_ACCESS_KEY не задан (из $ENV_FILE)}"
   : "${ANYSDA_S3_SECRET_KEY:?ANYSDA_S3_SECRET_KEY не задан (из $ENV_FILE)}"
+  # Region обязателен у cloud.ru/yandex/selectel (SigV4). Пусто → дефолт.
+  export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-us-east-1}"
 
   S3_KEY="$BUNDLE.tar.gz.age"
   echo "anysda-backup: uploading to s3://$BACKUP_S3_BUCKET/$S3_KEY"

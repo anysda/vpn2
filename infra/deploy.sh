@@ -51,16 +51,8 @@ print_summary() {
   local timing="${mins}m ${secs}s"
   [[ "$mins" -eq 0 ]] && timing="${secs}s"
 
-  printf '\n'
-  printf '%b  ┌────────────────────────────────────────────────┐%b\n' "$C_G" "$C_END"
-  printf '%b  │%b  деплой завершён  ·  %-6s                 %b│%b\n' "$C_G" "$C_END" "$timing" "$C_G" "$C_END"
-  printf '%b  ├────────────────────────────────────────────────┤%b\n' "$C_G" "$C_END"
-  for entry in "${_STAGE_LOG[@]}"; do
-    printf '%b  │%b  %s%b  │%b\n' "$C_G" "$C_END" "$entry" "$C_G" "$C_END"
-  done
-  printf '%b  ├────────────────────────────────────────────────┤%b\n' "$C_G" "$C_END"
   # shellcheck disable=SC1091
-  local _ru_host _panel_url _agh_url
+  local _ru_host _panel_url _agh_url _admin_user _admin_pass
   source "$DEPLOY_ROOT/envs/all.env" 2>/dev/null || true
   source "$DEPLOY_ROOT/envs/ru.env"  2>/dev/null || true
   _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
@@ -71,10 +63,52 @@ print_summary() {
     _panel_url="http://${_ru_host}/"
     _agh_url="http://${_ru_host}:3001/"
   fi
-  printf '%b  │%b  Panel:    %-38s %b│%b\n' "$C_G" "$C_END" "$_panel_url" "$C_G" "$C_END"
-  printf '%b  │%b  AdGuard:  %-38s %b│%b\n' "$C_G" "$C_END" "$_agh_url"  "$C_G" "$C_END"
-  printf '%b  └────────────────────────────────────────────────┘%b\n' "$C_G" "$C_END"
+  _admin_user="${ADMIN_USER:-admin}"
+  # Пароль: из ru.env (если был задан в config.yaml) либо с entry-ноды
+  # (автоген в /etc/anysda/admin-password.txt при первом 22-adguard/30-frontend).
+  _admin_pass="${ADMIN_PASSWORD:-}"
+  if [[ -z "$_admin_pass" ]]; then
+    _admin_pass=$(load_env ru 2>/dev/null; ssh_exec 'cat /etc/anysda/admin-password.txt 2>/dev/null' 2>/dev/null) || _admin_pass=""
+  fi
+  [[ -z "$_admin_pass" ]] && _admin_pass="(см. /etc/anysda/admin-password.txt на entry)"
+
+  # Считаем макс. display-ширину по всем будущим строкам (UTF-8 char count
+  # через bash ${#var} в LC_ALL=C.UTF-8). Затем рисуем рамку по этой ширине,
+  # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
+  local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
+  local title_str="  деплой завершён  ·  ${timing}  "
+  local _rows=("$title_str")
+  local entry
+  for entry in "${_STAGE_LOG[@]}"; do _rows+=("  ${entry}  "); done
+  _rows+=("  Panel:    ${_panel_url}")
+  _rows+=("  AdGuard:  ${_agh_url}")
+  _rows+=("  Login:    ${_admin_user}")
+  _rows+=("  Password: ${_admin_pass}")
+  local W=0 r
+  for r in "${_rows[@]}"; do (( ${#r} > W )) && W=${#r}; done
+  W=$(( W + 2 ))                                  # +2 для воздуха справа
+  local BAR; BAR=$(printf '─%.0s' $(seq 1 $W))
+
+  _row() {
+    local text="$1"
+    local pad=$(( W - ${#text} ))
+    (( pad < 0 )) && pad=0
+    printf '%b  │%b%s%*s%b│%b\n' "$C_G" "$C_END" "$text" "$pad" "" "$C_G" "$C_END"
+  }
+
   printf '\n'
+  printf '%b  ┌%s┐%b\n' "$C_G" "$BAR" "$C_END"
+  _row "$title_str"
+  printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
+  for entry in "${_STAGE_LOG[@]}"; do _row "  ${entry}  "; done
+  printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
+  _row "  Panel:    ${_panel_url}"
+  _row "  AdGuard:  ${_agh_url}"
+  _row "  Login:    ${_admin_user}"
+  _row "  Password: ${_admin_pass}"
+  printf '%b  └%s┘%b\n' "$C_G" "$BAR" "$C_END"
+  printf '\n'
+  LC_ALL="$_LC_PREV"
 }
 
 # ----------------------------------------------------------------------------

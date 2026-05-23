@@ -99,6 +99,9 @@ trap cleanup EXIT
 
 ARCHIVE_PLAIN="$WORK/restore.tar.gz"
 export ANYSDA_BACKUP_PASSPHRASE
+# expect может вернуть non-zero (age decrypt failed) — не даём set -e оборвать
+# тихо, ловим код и печатаем человеческое сообщение.
+set +e
 expect <<EXPECT > /dev/null
 log_user 0
 set timeout 60
@@ -111,10 +114,21 @@ expect {
 catch wait result
 exit [lindex \$result 3]
 EXPECT
-[[ -s "$ARCHIVE_PLAIN" ]] || { echo "anysda-restore: дешифровка провалилась (неверный passphrase или повреждённый архив)" >&2; exit 4; }
+AGE_RC=$?
+set -e
+if [[ $AGE_RC -ne 0 || ! -s "$ARCHIVE_PLAIN" ]]; then
+  echo "anysda-restore: дешифровка провалилась (age exit=$AGE_RC) — неверный passphrase или повреждённый архив" >&2
+  exit 4
+fi
 
 # ── Распаковка ──────────────────────────────────────────────────────────────
-tar -C "$WORK" -xzf "$ARCHIVE_PLAIN"
+if ! tar -C "$WORK" -xzf "$ARCHIVE_PLAIN" 2>/tmp/anysda-restore-tar.err; then
+  echo "anysda-restore: tar -xzf провалился — архив повреждён (после успешной дешифровки)" >&2
+  sed 's/^/  /' /tmp/anysda-restore-tar.err >&2 || true
+  rm -f /tmp/anysda-restore-tar.err
+  exit 5
+fi
+rm -f /tmp/anysda-restore-tar.err
 shred -uz "$ARCHIVE_PLAIN" 2>/dev/null || rm -f "$ARCHIVE_PLAIN"
 
 BUNDLE_DIR=$(find "$WORK" -maxdepth 1 -mindepth 1 -type d -name 'anysda-vpn2-*' | head -1)

@@ -2,19 +2,21 @@ import { randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { isClientActive } from './client-status'
 import { slugify } from './naming'
 
 const exec = promisify(execFile)
 
-// strongSwan конфиги/ключи (стадия 27-ikev2 их раскатывает на entry).
-// Панель работает с этими путями из своего контейнера (bind-mount через
-// 30-frontend, аналогично /etc/openvpn). SS_CONF (/etc/swanctl/conf.d/anysda.conf)
-// добавим в этап 2 когда появится render-логика.
+// strongSwan/swanctl пути. Стадия 27-ikev2 раскатывает CA + базовый conf;
+// панель добавляет динамику в anysda-clients.conf (eap secrets из БД).
+// Bind-mount в контейнер панели — см. infra/scripts/30-frontend.sh.
 const SS_PKI_DIR = '/etc/strongswan/pki'
 const CA_CERT = `${SS_PKI_DIR}/ca.crt`
+const SS_CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
 
 // IKEv2 IP-пул (per-device static). .1 — gateway (anysda на entry).
 const IKEV2_SUBNET = '10.68.68.'
@@ -151,15 +153,71 @@ export async function reissueDeviceIkev2(deviceId: number) {
 }
 
 /**
- * Атомарная переписка /etc/swanctl/conf.d/anysda.conf из БД + swanctl --load-*.
- * Заглушка для этапа 1 — рендер conf.d вынесем на этап 2 (когда swanctl будет
- * установлен на entry). Сейчас просто no-op если CA нет.
+ * Атомарная переписка /etc/swanctl/conf.d/anysda-clients.conf из БД +
+ * `swanctl --load-creds` (только credentials меняются, conns/pools статичны
+ * из стадии 27-ikev2). Включаются только активные клиенты (frozen/expired
+ * не попадают в secrets — попытка логина отбивается EAP-фейлом).
+ *
+ * NB: терминацию активной SA при изменении (reissue/delete/freeze) делает
+ * вызывающий код через terminateIkev2Sa(username); syncIkev2 только пишет
+ * актуальный secrets-блок и перегружает credentials.
  */
 export async function syncIkev2(): Promise<void> {
   if (!(await ikev2CaReady())) return
-  // TODO (этап 2-3): рендер /etc/swanctl/conf.d/anysda.conf из БД,
-  //                  swanctl --load-creds --load-pools --load-conns.
-  useLogger().debug('syncIkev2: stub (этап 1) — conf rendering выйдет в этапе 2')
+
+  const db = useDb()
+  const rows = await db
+    .select({
+      username: devicesTable.ikev2Username,
+      password: devicesTable.ikev2Password,
+      ip: devicesTable.ikev2Ip,
+      frozenManual: clientsTable.frozenManual,
+      expiresAt: clientsTable.expiresAt,
+    })
+    .from(devicesTable)
+    .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
+
+  const active = rows.filter(r =>
+    r.username && r.password && r.ip
+    && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
+  )
+
+  // Каждое устройство — отдельная секция eap-XXX в secrets {} (имя секции
+  // не несёт смысла; charon матчит по `id = <username>`).
+  const lines: string[] = [
+    '# Managed by anysda-vpn2 panel — НЕ редактировать вручную.',
+    '# secrets для EAP-MSCHAPv2 клиентов IKEv2. Перегенерируется на каждое',
+    '# изменение клиента/устройства (server/utils/ikev2.ts → syncIkev2()).',
+    '',
+    'secrets {',
+  ]
+  for (const r of active) {
+    // shell-escape не нужен — swanctl format «id = ...» / «secret = "..."»
+    // экранирует двойные кавычки и обратные слеши.
+    const safePass = r.password!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    const safeUser = r.username!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    lines.push(
+      `  eap-${r.username} {`,
+      `    id = "${safeUser}"`,
+      `    secret = "${safePass}"`,
+      `  }`,
+    )
+  }
+  lines.push('}', '')
+
+  const body = lines.join('\n')
+  const tmp = `${SS_CLIENTS_CONF}.tmp-${process.pid}`
+  await fs.mkdir(path.dirname(SS_CLIENTS_CONF), { recursive: true })
+  await fs.writeFile(tmp, body, { mode: 0o600 })
+  await fs.rename(tmp, SS_CLIENTS_CONF)
+
+  // Перегружаем credentials. conns/pools статичны (из 27-ikev2.sh) — не трогаем.
+  await exec('swanctl', ['--load-creds'], { timeout: 10_000 }).catch((err) => {
+    useLogger().warn(
+      { err: (err as Error).message },
+      'ikev2 swanctl --load-creds skipped (binary missing / charon down?)',
+    )
+  })
 }
 
 /** swanctl --terminate ike-id=<username>: рвёт активную SA конкретного устройства. */

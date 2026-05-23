@@ -3,12 +3,9 @@
 #
 # Аутентификация: сервер — pubkey (свой CA + server-cert на $ENTRY_HOST в SAN),
 # клиент — EAP-MSCHAPv2 (логин+пароль). Креды устройств живут в БД панели и
-# раскатываются панелью в /etc/swanctl/conf.d/anysda.conf на следующих этапах
-# (этап 4 — render из БД). Тут — серверный PKI + базовый swanctl conn без
-# клиентов.
-#
-# TPROXY-зацеп туннельного интерфейса (xfrm0) → sing-box :7898 будет на
-# отдельной стадии-наследнике / расширении этого скрипта (этап 3 IKEv2-фичи).
+# раскатываются панелью в /etc/swanctl/conf.d/anysda-clients.conf через
+# server/utils/ikev2.ts → syncIkev2(). Тут — серверный PKI + conn без клиентов
+# + xfrm0-интерфейс + TPROXY-хук в sing-box :7898 (как у wg0/tun0).
 #
 # Идемпотентно: CA генерится один раз (НЕ ПЕРЕТИРАЕТСЯ — выдачи бы умерли).
 # Server-cert ПЕРЕВЫПУСКАЕТСЯ если CN не равен текущему $ENTRY_HOST (смена IP
@@ -32,7 +29,7 @@ CONF=/etc/swanctl/conf.d/anysda.conf
 mkdir -p /var/anysda/.stamps "$PKI" /etc/swanctl/conf.d
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
-echo "[$HOST_TAG] [1/6] strongswan apt"
+echo "[$HOST_TAG] [1/7] strongswan apt"
 if ! command -v swanctl >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
@@ -42,7 +39,7 @@ if ! command -v swanctl >/dev/null 2>&1; then
 fi
 
 # ── 2. CA (один раз — не перетирать!) ────────────────────────────────────────
-echo "[$HOST_TAG] [2/6] CA"
+echo "[$HOST_TAG] [2/7] CA"
 if [[ ! -f "$PKI/ca.key" ]]; then
   echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
   pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key"
@@ -54,7 +51,7 @@ chmod 600 "$PKI/ca.key"
 chmod 644 "$PKI/ca.crt"
 
 # ── 3. Server cert (CN/SAN = $ENTRY_HOST, перевыпуск при смене IP) ──────────
-echo "[$HOST_TAG] [3/6] server cert (CN=$ENTRY_HOST)"
+echo "[$HOST_TAG] [3/7] server cert (CN=$ENTRY_HOST)"
 NEED_SERVER=0
 if [[ ! -f "$PKI/server.crt" ]]; then
   NEED_SERVER=1
@@ -92,7 +89,7 @@ install -m 644 "$PKI/server.crt"  /etc/swanctl/x509/anysda-server.crt
 install -m 600 "$PKI/server.key"  /etc/swanctl/private/anysda-server.key
 
 # ── 4. swanctl conf — базовый conn без клиентов (этап 4 наполнит динамику) ──
-echo "[$HOST_TAG] [4/6] swanctl conf"
+echo "[$HOST_TAG] [4/7] swanctl conf"
 cat > "$CONF" <<EOF
 # Managed by stage 27-ikev2 — НЕ редактировать вручную.
 # Динамический conf с клиент-кредами раскатывает панель (server/utils/ikev2.ts)
@@ -123,7 +120,10 @@ connections {
         local_ts      = 0.0.0.0/0
         esp_proposals = aes256gcm16-ecp384
         rekey_time    = 0s
-        # mark будем включать на этапе 3 (xfrm0 + TPROXY).
+        # XFRM-interface if_id=42 — pakets из IPsec policy кладутся в xfrm0.
+        # iptables PREROUTING -i xfrm0 ставит mark 0x42 → TPROXY 7898 (sing-box).
+        if_id_in  = 42
+        if_id_out = 42
       }
     }
   }
@@ -141,7 +141,7 @@ EOF
 chmod 644 "$CONF"
 
 # ── 5. ufw 500 + 4500 ──────────────────────────────────────────────────────
-echo "[$HOST_TAG] [5/6] ufw 500/udp + 4500/udp"
+echo "[$HOST_TAG] [5/7] ufw 500/udp + 4500/udp"
 ufw allow 500/udp  comment 'ikev2 IKE'    >/dev/null 2>&1 || true
 ufw allow 4500/udp comment 'ikev2 NAT-T'  >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
@@ -154,7 +154,7 @@ sysctl -w net.ipv4.conf.default.rp_filter=2 >/dev/null
 # ── 6. systemd: strongswan-starter (Ubuntu 24.04 / strongSwan 5.9) ──────────
 # На свежих стронгсванах сервис называется strongswan-starter.service (alias —
 # ipsec.service). Юнит strongswan.service отсутствует.
-echo "[$HOST_TAG] [6/6] strongswan-starter service"
+echo "[$HOST_TAG] [6/7] strongswan-starter service"
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
 systemctl restart strongswan-starter
 sleep 2
@@ -170,6 +170,84 @@ echo "[$HOST_TAG]   conns:"
 swanctl --list-conns 2>/dev/null | grep -E '^[a-z]|local|remote|child' | head -10 | sed "s/^/[$HOST_TAG]     /"
 echo "[$HOST_TAG]   listening:"
 ss -lun 2>/dev/null | awk '/:500 |:4500 /{print "    " $0}' | sed "s/^/[$HOST_TAG]/"
+
+# ── 7. xfrm0 + TPROXY hook (как anysda-ovpn-routing для tun0) ──────────────
+echo "[$HOST_TAG] [7/7] xfrm0 + anysda-ikev2-routing"
+WAN_IF=$(ip route show default | awk '/default/{print $5; exit}')
+: "${WAN_IF:?не определился WAN-интерфейс по default route}"
+
+cat > /etc/systemd/system/anysda-ikev2-routing.service <<EOF
+[Unit]
+Description=anysda-vpn2 — xfrm0 (IKEv2) + TPROXY to sing-box
+After=network-online.target sing-box.service strongswan-starter.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-ikev2-routing.sh up
+ExecStop=/usr/local/sbin/anysda-ikev2-routing.sh down
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /usr/local/sbin/anysda-ikev2-routing.sh <<IPTSEOF
+#!/usr/bin/env bash
+# xfrm0-interface + TPROXY-зацеп IPsec-трафика в sing-box :7898.
+# IPsec policies (swanctl conn anysda-ikev2 с if_id_in/out=42) кладут
+# расшифрованные пакеты в xfrm0; PREROUTING -i xfrm0 шлёт их в TPROXY.
+set -euo pipefail
+ACTION=\${1:-up}
+
+XFRM_IF='xfrm0'
+WAN_IF='$WAN_IF'
+MARK='0x42'
+TABLE=101
+TPROXY_PORT=7898
+IKEV2_SUBNET='${IKEV2_SUBNET%/*}/24'
+
+if [[ "\$ACTION" == "up" ]]; then
+  # xfrm0 интерфейс (idempotent)
+  if ! ip link show "\$XFRM_IF" >/dev/null 2>&1; then
+    ip link add "\$XFRM_IF" type xfrm dev "\$WAN_IF" if_id 42
+  fi
+  ip link set "\$XFRM_IF" mtu 1400 up
+  # IP на xfrm0 не нужен — TPROXY работает по mark'у, не по адресу интерфейса.
+
+  # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
+  ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\
+    ip rule add fwmark "\$MARK" lookup "\$TABLE"
+  ip route show table "\$TABLE" 2>/dev/null | grep -q 'local default' || \\
+    ip route add local 0.0.0.0/0 dev lo table "\$TABLE"
+
+  iptables -t mangle -N ANYSDA_IKEV2_TPROXY 2>/dev/null || true
+  iptables -t mangle -F ANYSDA_IKEV2_TPROXY
+  # DNS клиентам резолвится AdGuard'ом на entry mgmt IP — он local, не TPROXY.
+  iptables -t mangle -A ANYSDA_IKEV2_TPROXY -d 10.99.0.1 -j RETURN
+  iptables -t mangle -A ANYSDA_IKEV2_TPROXY -p tcp -j TPROXY --tproxy-mark "\${MARK}/\${MARK}" --on-port "\$TPROXY_PORT" --on-ip 127.0.0.1
+  iptables -t mangle -A ANYSDA_IKEV2_TPROXY -p udp -j TPROXY --tproxy-mark "\${MARK}/\${MARK}" --on-port "\$TPROXY_PORT" --on-ip 127.0.0.1
+
+  iptables -t mangle -C PREROUTING -i "\$XFRM_IF" -j ANYSDA_IKEV2_TPROXY 2>/dev/null || \\
+    iptables -t mangle -I PREROUTING 1 -i "\$XFRM_IF" -j ANYSDA_IKEV2_TPROXY
+
+  iptables -C INPUT -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT 2>/dev/null || \\
+    iptables -I INPUT 1 -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT
+
+  echo "anysda-ikev2-routing up (xfrm=\$XFRM_IF dev=\$WAN_IF if_id=42, mark=\$MARK)"
+
+elif [[ "\$ACTION" == "down" ]]; then
+  iptables -t mangle -D PREROUTING -i "\$XFRM_IF" -j ANYSDA_IKEV2_TPROXY 2>/dev/null || true
+  iptables -t mangle -F ANYSDA_IKEV2_TPROXY 2>/dev/null || true
+  iptables -t mangle -X ANYSDA_IKEV2_TPROXY 2>/dev/null || true
+  ip link del "\$XFRM_IF" 2>/dev/null || true
+fi
+IPTSEOF
+
+chmod +x /usr/local/sbin/anysda-ikev2-routing.sh
+systemctl daemon-reload
+systemctl enable anysda-ikev2-routing >/dev/null 2>&1 || true
+systemctl restart anysda-ikev2-routing
 
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — strongSwan up, server-cert CN=$ENTRY_HOST"

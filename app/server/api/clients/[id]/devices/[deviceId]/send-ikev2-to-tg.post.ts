@@ -1,21 +1,16 @@
-import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
 import { notifyBot } from '../../../../../utils/bot-events'
-import { buildIkev2ClientInfo, ikev2CaReady, renderClientMobileconfig } from '../../../../../utils/ikev2'
-
-const Body = z.object({ platform: z.enum(['ios', 'android', 'windows']) })
+import { buildIkev2ClientInfo, ikev2CaReady } from '../../../../../utils/ikev2'
 
 /**
- * Послать клиенту IKEv2 в Telegram:
- *   - ios     → 1 сообщение: .mobileconfig файлом
- *   - android → 4 сообщения: server / username / password / ca.crt
- *   - windows → 4 сообщения: server / username / password / ca.crt
- *
- * Сам бот рендерит сообщения; панель шлёт payload через /event с одним
- * типом и payload'ом, бот разруливает по platform.
+ * Послать IKEv2-доступ в Telegram (админский чат). Два сообщения:
+ *   1) текст с server/login/password (caption '<username> — IKEv2')
+ *   2) ca.crt файлом (caption '<username> — CA-сертификат IKEv2')
+ * Платформы не различаем — у нативного IKEv2 на всех ОС одинаковый набор
+ * полей и одинаковый CA. Сами .mobileconfig/.sswan не делаем.
  */
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -24,7 +19,6 @@ export default defineEventHandler(async (event) => {
   if (!Number.isFinite(clientId) || !Number.isFinite(deviceId)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
-  const body = await readValidatedBody(event, Body.parse)
 
   if (!(await ikev2CaReady())) {
     throw createError({ statusCode: 503, statusMessage: 'IKEv2 CA ещё не инициализирован (стадия 27-ikev2)' })
@@ -45,23 +39,13 @@ export default defineEventHandler(async (event) => {
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const info = await buildIkev2ClientInfo(deviceId, serverIp)
-  // Шлём в АДМИНСКИЙ чат (как WG/OVPN) — админ пересылает клиенту.
-  // Имя в caption — «<клиент> · <устройство>» для понятности при пересылке.
-  const name = `${client.name} · ${device.name}`
-  const payload: Record<string, unknown> = {
-    name,
-    platform: body.platform,
-    server: info.server,
+  await notifyBot('client_send_ikev2', {
+    clientName: client.name,
     username: info.username,
+    server: info.server,
     password: info.password,
     caCertPem: info.caCertPem,
-  }
-  if (body.platform === 'ios') {
-    payload.mobileconfig = await renderClientMobileconfig(deviceId, serverIp)
-    payload.fileName = `anysda-ikev2-${info.username}.mobileconfig`
-  }
-
-  await notifyBot('client_send_ikev2', payload).catch((err) => {
+  }).catch((err) => {
     useLogger().error({ err: (err as Error).message }, 'send-ikev2-to-tg bot event failed')
     throw createError({ statusCode: 502, statusMessage: 'Ошибка передачи в бота' })
   })

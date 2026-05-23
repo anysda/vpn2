@@ -60,6 +60,7 @@ resolve_archive() {
       AWS_ACCESS_KEY_ID="$ANYSDA_S3_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$ANYSDA_S3_SECRET_KEY" \
         aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 cp \
         "s3://$BACKUP_S3_BUCKET/$s3_name" "$BACKUP_LOCAL_DIR/$s3_name" --only-show-errors
+      chmod 600 "$BACKUP_LOCAL_DIR/$s3_name"   # aws s3 cp следует umask → выставляем явно
       found="$BACKUP_LOCAL_DIR/$s3_name"
     fi
     [[ -z "$found" ]] && { echo "anysda-restore: $BACKUP_LOCAL_DIR пуст — нечего восстанавливать" >&2; exit 3; }
@@ -77,6 +78,7 @@ resolve_archive() {
       aws --endpoint-url "${BACKUP_S3_ENDPOINT:?}" s3 cp \
       "s3://${BACKUP_S3_BUCKET:?}/$base" "$BACKUP_LOCAL_DIR/$base" --only-show-errors \
       || { echo "anysda-restore: $base не найден ни локально, ни в S3" >&2; exit 3; }
+    chmod 600 "$BACKUP_LOCAL_DIR/$base"   # aws s3 cp следует umask → выставляем явно
     echo "$BACKUP_LOCAL_DIR/$base"; return
   fi
   echo "anysda-restore: архив $base не найден в $BACKUP_LOCAL_DIR" >&2

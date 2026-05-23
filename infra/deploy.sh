@@ -717,6 +717,7 @@ do_all() {
   run_stage 22-adguard       ru
   run_stage 25-monitoring    ru
   run_stage 26-backup        ru
+  run_stage 27-ikev2         ru
   run_stage 35-telegram      ru
   run_stage 30-frontend      ru
   run_stage 99-verify        all

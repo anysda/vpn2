@@ -256,6 +256,11 @@ async function doDelete() {
     </div>
 
     <div class="flex gap-1 mt-1.5 justify-end">
+      <UTooltip text="IKEv2 — сервер/логин/пароль, нативный VPN-клиент iOS/macOS/Windows/Android">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showIkev2 = true">
+          <UIcon name="i-lucide-shield-check" class="size-4" />
+        </UButton>
+      </UTooltip>
       <UTooltip text="WireGuard — QR, .conf, копировать, отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showWg = true">
           <WireguardLogo class="size-4" />
@@ -264,11 +269,6 @@ async function doDelete() {
       <UTooltip text="OpenVPN — .ovpn-файл, копировать, отправить в Telegram">
         <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showOvpn = true">
           <OpenVpnLogo class="size-4" />
-        </UButton>
-      </UTooltip>
-      <UTooltip text="IKEv2 — сервер/логин/пароль + .mobileconfig для iOS">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showIkev2 = true">
-          <UIcon name="i-lucide-shield-check" class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="Перевыпустить ключи девайса">

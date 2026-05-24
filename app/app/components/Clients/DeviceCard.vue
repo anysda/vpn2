@@ -442,23 +442,32 @@ async function doDelete() {
             <div class="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-sm">
               <span class="text-(--ui-text-muted)">Сервер:</span>
               <span class="font-mono truncate">{{ ikev2Creds.server }}</span>
-              <UButton
-                icon="i-lucide-copy"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                @click="copyIkev2Field('Сервер', ikev2Creds.server)"
-              />
+              <div class="flex">
+                <!-- invisible-плейсхолдер ровно той же ширины что и eye-кнопка
+                     у строки пароля — чтобы copy всех трёх строк стоял на
+                     одной вертикали. -->
+                <UButton icon="i-lucide-eye" size="xs" variant="ghost" class="invisible" tabindex="-1" />
+                <UButton
+                  icon="i-lucide-copy"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  @click="copyIkev2Field('Сервер', ikev2Creds.server)"
+                />
+              </div>
 
               <span class="text-(--ui-text-muted)">Логин:</span>
               <span class="font-mono truncate">{{ ikev2Creds.username }}</span>
-              <UButton
-                icon="i-lucide-copy"
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                @click="copyIkev2Field('Логин', ikev2Creds.username)"
-              />
+              <div class="flex">
+                <UButton icon="i-lucide-eye" size="xs" variant="ghost" class="invisible" tabindex="-1" />
+                <UButton
+                  icon="i-lucide-copy"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  @click="copyIkev2Field('Логин', ikev2Creds.username)"
+                />
+              </div>
 
               <span class="text-(--ui-text-muted)">Пароль:</span>
               <span class="font-mono truncate">{{ showIkev2Pass ? ikev2Creds.password : '•'.repeat(20) }}</span>

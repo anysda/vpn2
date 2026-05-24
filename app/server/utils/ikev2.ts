@@ -18,6 +18,40 @@ const SS_PKI_DIR = '/etc/strongswan/pki'
 const CA_CERT = `${SS_PKI_DIR}/ca.crt`
 const SS_CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
 
+// Маркеры режима (стадия 27 пишет в /etc/anysda/, оно bind-mount'нуто).
+const MODE_FILE   = '/etc/anysda/ikev2-mode'         // letsencrypt | self-signed
+const HOST_FILE   = '/etc/anysda/ikev2-server-host'  // <domain> или <ip entry>
+
+/**
+ * Режим IKEv2-сервера: 'letsencrypt' если PANEL_DOMAIN задан И Caddy выдал
+ * cert, иначе 'self-signed'. В LE-режиме клиенту НЕ нужен CA (LE-корень
+ * уже в trust-store iOS/macOS/Win/Android).
+ */
+export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
+  try {
+    const s = (await fs.readFile(MODE_FILE, 'utf8')).trim()
+    return s === 'letsencrypt' ? 'letsencrypt' : 'self-signed'
+  }
+  catch {
+    return 'self-signed'
+  }
+}
+
+/**
+ * Server-address который клиент впишет в поле «Server» VPN-настроек. В LE —
+ * domain (panel.domain), в self-signed — IP entry. Стадия 27 записывает в
+ * /etc/anysda/ikev2-server-host; fallback: ENTRY_HOST env, wgPublicHost cfg.
+ */
+export async function ikev2ServerHost(): Promise<string> {
+  try {
+    const s = (await fs.readFile(HOST_FILE, 'utf8')).trim()
+    if (s) return s
+  }
+  catch { /* fall through */ }
+  const cfg = useRuntimeConfig()
+  return String(process.env.ENTRY_HOST || cfg.wgPublicHost || '').trim()
+}
+
 // IKEv2 IP-пул (per-device static). .1 — gateway (anysda на entry).
 const IKEV2_SUBNET = '10.68.68.'
 
@@ -239,13 +273,24 @@ export interface Ikev2ClientInfo {
   caCertPem: string | null
 }
 
-/** Собрать поля для отображения клиенту. */
-export async function buildIkev2ClientInfo(deviceId: number, serverIp: string): Promise<Ikev2ClientInfo> {
+/**
+ * Собрать поля для отображения клиенту. server = ikev2ServerHost() (domain
+ * в LE-режиме, IP в self-signed). caCertPem = null в LE-режиме — клиенту
+ * НЕ нужен анысда-CA, LE-корень уже в trust-store.
+ *
+ * Параметр `_serverIp` оставлен для обратной совместимости вызывающего кода;
+ * фактический host теперь резолвится из /etc/anysda/ikev2-server-host
+ * (стадия 27 ставит) — это даёт consistency между сервером и панелью.
+ */
+export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string): Promise<Ikev2ClientInfo> {
   const device = await ensureDeviceIkev2(deviceId)
-  const ca = (await ikev2CaReady()) ? await readIkev2CaPem() : null
+  const [mode, host] = await Promise.all([ikev2Mode(), ikev2ServerHost()])
+  const ca = mode === 'letsencrypt'
+    ? null
+    : ((await ikev2CaReady()) ? await readIkev2CaPem() : null)
   return {
-    server: serverIp,
-    remoteId: serverIp,
+    server: host,
+    remoteId: host,
     username: device.ikev2Username!,
     password: device.ikev2Password!,
     caCertPem: ca,

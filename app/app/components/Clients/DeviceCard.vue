@@ -140,7 +140,7 @@ async function sendOvpn() {
 
 // --- IKEv2 modal ----------------------------------------------------------
 const showIkev2 = ref(false)
-const ikev2Creds = ref<{ server: string, username: string, password: string } | null>(null)
+const ikev2Creds = ref<{ server: string, username: string, password: string, hasCa: boolean } | null>(null)
 const ikev2Loading = ref(false)
 const ikev2Sending = ref(false)
 const showIkev2Pass = ref(false)
@@ -150,7 +150,9 @@ async function loadIkev2() {
   ikev2Loading.value = true
   try {
     const r = await getIkev2Credentials(props.clientId, props.device.id)
-    ikev2Creds.value = { server: r.server, username: r.username, password: r.password }
+    // hasCa=true → self-signed режим, нужна кнопка «Скачать CA».
+    // hasCa=false → letsencrypt, корень в trust-store клиента, кнопка скрыта.
+    ikev2Creds.value = { server: r.server, username: r.username, password: r.password, hasCa: r.caCertPem !== null }
   }
   catch (e) {
     const err = e as { statusMessage?: string }
@@ -426,7 +428,10 @@ async function doDelete() {
 
           <p class="text-xs text-(--ui-text-muted) text-center">
             Нативный IKEv2 в iOS / macOS / Android / Windows. Введи поля в
-            настройках VPN, CA-сертификат — доверить в системе.
+            настройках VPN.
+            <template v-if="ikev2Creds?.hasCa">
+              CA-сертификат — доверить в системе (для self-signed-сервера).
+            </template>
           </p>
 
           <div v-if="ikev2Loading" class="text-(--ui-text-muted) text-sm text-center py-4">
@@ -475,8 +480,9 @@ async function doDelete() {
               </div>
             </div>
 
-            <div class="grid grid-cols-2 gap-2">
+            <div :class="ikev2Creds.hasCa ? 'grid grid-cols-2 gap-2' : ''">
               <UButton
+                v-if="ikev2Creds.hasCa"
                 block
                 icon="i-lucide-file-key-2"
                 variant="soft"

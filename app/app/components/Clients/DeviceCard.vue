@@ -173,6 +173,13 @@ async function copyIkev2Field(label: string, value: string | undefined) {
   else toast.add({ title: 'Не удалось скопировать', color: 'error' })
 }
 
+async function copyIkev2All() {
+  if (!ikev2Creds.value) return
+  const text = `Сервер: ${ikev2Creds.value.server}\nЛогин: ${ikev2Creds.value.username}\nПароль: ${ikev2Creds.value.password}`
+  if (await copyText(text)) toast.add({ title: 'IKEv2 креды скопированы', color: 'success' })
+  else toast.add({ title: 'Не удалось скопировать', color: 'error' })
+}
+
 async function sendIkev2() {
   ikev2Sending.value = true
   try {
@@ -489,7 +496,14 @@ async function doDelete() {
               </div>
             </div>
 
-            <div :class="ikev2Creds.hasCa ? 'grid grid-cols-2 gap-2' : ''">
+            <div :class="`grid ${ikev2Creds.hasCa ? 'grid-cols-3' : 'grid-cols-2'} gap-2`">
+              <UButton
+                block
+                icon="i-lucide-copy"
+                @click="copyIkev2All"
+              >
+                Копировать
+              </UButton>
               <UButton
                 v-if="ikev2Creds.hasCa"
                 block

@@ -1,13 +1,18 @@
 import { requireAuth } from '../../utils/auth'
-import { ikev2CaReady, readIkev2CaPem } from '../../utils/ikev2'
+import { ikev2CaReady, ikev2Mode, readIkev2CaPem } from '../../utils/ikev2'
 
 /**
- * Скачать серверный CA как PEM. Нужен Windows/Linux-клиенту чтобы
- * доверить нашему self-signed CA до подключения. На iOS/macOS CA уже
- * зашит внутрь .mobileconfig — этот endpoint там не используется.
+ * Скачать серверный CA как PEM. Нужен только в self-signed-режиме.
+ * В letsencrypt-режиме — 404: LE-корень уже в trust-store клиентов.
  */
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
+  if ((await ikev2Mode()) === 'letsencrypt') {
+    throw createError({
+      statusCode: 404,
+      statusMessage: 'CA не нужен в letsencrypt-режиме (корневой Let\'s Encrypt уже в trust-store iOS/macOS/Windows/Android)',
+    })
+  }
   if (!(await ikev2CaReady())) {
     throw createError({ statusCode: 503, statusMessage: 'IKEv2 CA ещё не инициализирован (стадия 27-ikev2)' })
   }

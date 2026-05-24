@@ -1,15 +1,27 @@
 #!/usr/bin/env bash
 # Stage 27 — IKEv2/IPsec server on RU (strongSwan + swanctl).
 #
-# Аутентификация: сервер — pubkey (свой CA + server-cert на $ENTRY_HOST в SAN),
-# клиент — EAP-MSCHAPv2 (логин+пароль). Креды устройств живут в БД панели и
-# раскатываются панелью в /etc/swanctl/conf.d/anysda-clients.conf через
-# server/utils/ikev2.ts → syncIkev2(). Тут — серверный PKI + conn без клиентов
-# + xfrm0-интерфейс + TPROXY-хук в sing-box :7898 (как у wg0/tun0).
+# Аутентификация: сервер — pubkey, клиент — EAP-MSCHAPv2 (логин+пароль).
+# Креды устройств живут в БД панели и раскатываются панелью в
+# /etc/swanctl/conf.d/anysda-clients.conf через server/utils/ikev2.ts.
 #
-# Идемпотентно: CA генерится один раз (НЕ ПЕРЕТИРАЕТСЯ — выдачи бы умерли).
-# Server-cert ПЕРЕВЫПУСКАЕТСЯ если CN не равен текущему $ENTRY_HOST (смена IP
-# entry — клиентам надо просто сменить «Server» в профиле; логин/пароль живут).
+# Server-cert — ДВА режима:
+#   1) letsencrypt: PANEL_DOMAIN задан И Caddy уже выдал LE-cert на него.
+#      Берём cert/key из /var/lib/caddy/.local/share/caddy/certificates/...
+#      CA клиенту не нужен (LE-корень в trust-store iOS/macOS/Win/Android).
+#      systemd path-watcher на Caddy-cert: ротация Caddy → re-copy + reload.
+#   2) self-signed: иначе. Свой ECDSA CA + server-cert на $ENTRY_HOST.
+#      Клиенту нужно скачать CA и доверить вручную.
+#
+# Режим записывается в /etc/anysda/ikev2-mode (letsencrypt|self-signed) и
+# /etc/anysda/ikev2-server-host (домен или IP) — панель читает оба, чтобы
+# показать клиенту правильный server-address и решить включать ли CA.
+#
+# Идемпотентно: CA генерится один раз. Server-cert перевыпускается если
+# (self-signed) SAN не равен $ENTRY_HOST или (letsencrypt) Caddy выдал
+# обновлённый cert. Переключения self→LE происходит автоматически когда
+# Caddy выдаст cert; обратное (LE→self) — никогда без явного удаления
+# PANEL_DOMAIN из config.yaml.
 
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
@@ -25,8 +37,34 @@ IKEV2_SUBNET="${IKEV2_SUBNET:-10.68.68.0/24}"
 IKEV2_DNS="${IKEV2_DNS:-10.99.0.1}"
 PKI=/etc/strongswan/pki
 CONF=/etc/swanctl/conf.d/anysda.conf
+CADDY_CERT_DIR="/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
 
-mkdir -p /var/anysda/.stamps "$PKI" /etc/swanctl/conf.d
+mkdir -p /var/anysda/.stamps "$PKI" /etc/swanctl/conf.d /etc/anysda
+
+# ── Detect mode: letsencrypt (если есть PANEL_DOMAIN И Caddy выдал cert) ───
+LE_CERT=""
+LE_KEY=""
+if [[ -n "${PANEL_DOMAIN:-}" ]]; then
+  LE_CERT="${CADDY_CERT_DIR}/${PANEL_DOMAIN}/${PANEL_DOMAIN}.crt"
+  LE_KEY="${CADDY_CERT_DIR}/${PANEL_DOMAIN}/${PANEL_DOMAIN}.key"
+fi
+if [[ -n "$LE_CERT" && -r "$LE_CERT" && -r "$LE_KEY" ]]; then
+  IKEV2_MODE="letsencrypt"
+  IKEV2_SERVER_HOST="$PANEL_DOMAIN"
+else
+  IKEV2_MODE="self-signed"
+  IKEV2_SERVER_HOST="$ENTRY_HOST"
+  if [[ -n "${PANEL_DOMAIN:-}" ]]; then
+    echo "[$HOST_TAG] PANEL_DOMAIN=$PANEL_DOMAIN задан, но Caddy ещё не выдал LE-cert"
+    echo "[$HOST_TAG]   → fallback на self-signed; повторный запуск 27-ikev2 после Caddy auto-issue переключит в letsencrypt"
+  fi
+fi
+echo "[$HOST_TAG] mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"
+
+# Маркеры для панели (читает server/utils/ikev2.ts)
+echo -n "$IKEV2_MODE"        > /etc/anysda/ikev2-mode
+echo -n "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
+chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
 echo "[$HOST_TAG] [1/7] strongswan apt"
@@ -38,55 +76,91 @@ if ! command -v swanctl >/dev/null 2>&1; then
     libcharon-extra-plugins libstrongswan-extra-plugins >/dev/null
 fi
 
-# ── 2. CA (один раз — не перетирать!) ────────────────────────────────────────
-echo "[$HOST_TAG] [2/7] CA"
-if [[ ! -f "$PKI/ca.key" ]]; then
-  echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
-  pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key"
-  pki --self --in "$PKI/ca.key" --type ecdsa \
-      --dn "CN=anysda-vpn2 IKEv2 CA" --ca \
-      --lifetime 3650 --outform pem > "$PKI/ca.crt"
-fi
-chmod 600 "$PKI/ca.key"
-chmod 644 "$PKI/ca.crt"
-
-# ── 3. Server cert (CN/SAN = $ENTRY_HOST, перевыпуск при смене IP) ──────────
-echo "[$HOST_TAG] [3/7] server cert (CN=$ENTRY_HOST)"
-NEED_SERVER=0
-if [[ ! -f "$PKI/server.crt" ]]; then
-  NEED_SERVER=1
-else
-  # Сверяем SAN текущего cert с $ENTRY_HOST. Если не совпадает — перевыпустить.
-  if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
-        | grep -qE "IP Address:${ENTRY_HOST}( |$|,)"; then
-    echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
-    NEED_SERVER=1
-  fi
-fi
-
-if [[ "$NEED_SERVER" == "1" ]]; then
-  TMP=$(mktemp -d)
-  trap 'rm -rf "$TMP"' EXIT
-  pki --gen --type ecdsa --size 256 --outform pem > "$TMP/server.key"
-  pki --pub --in "$TMP/server.key" --type ecdsa --outform pem > "$TMP/server.pub"
-  pki --issue --cacert "$PKI/ca.crt" --cakey "$PKI/ca.key" \
-      --in "$TMP/server.pub" --type pub \
-      --dn "CN=$ENTRY_HOST" \
-      --san "$ENTRY_HOST" \
-      --flag serverAuth --flag ikeIntermediate \
-      --lifetime 1825 \
-      --outform pem > "$TMP/server.crt"
-  install -m 0600 "$TMP/server.key" "$PKI/server.key"
-  install -m 0644 "$TMP/server.crt" "$PKI/server.crt"
-  rm -rf "$TMP"
-  trap - EXIT
-fi
-
-# Раскладываем по местам, которые swanctl читает по умолчанию.
+# ── 2. Server certs — раскладка по режиму ─────────────────────────────────
 install -d -m 700 /etc/swanctl/x509ca /etc/swanctl/x509 /etc/swanctl/private
-install -m 644 "$PKI/ca.crt"      /etc/swanctl/x509ca/anysda-ca.crt
-install -m 644 "$PKI/server.crt"  /etc/swanctl/x509/anysda-server.crt
-install -m 600 "$PKI/server.key"  /etc/swanctl/private/anysda-server.key
+
+if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
+  echo "[$HOST_TAG] [2/7] LE-cert от Caddy ($PANEL_DOMAIN)"
+  # Copy Caddy LE-cert/key. Caddy chmod 0600 caddy:caddy — копируем
+  # рутом, ставим root:root 0644/0600.
+  install -m 0644 "$LE_CERT" /etc/swanctl/x509/anysda-server.crt
+  install -m 0600 "$LE_KEY"  /etc/swanctl/private/anysda-server.key
+  # CA в x509ca не нужен — strongSwan client'у его всё равно не отправляем
+  # (LE-корень в trust-store). Но если remaining self-signed CA лежит от
+  # прошлых запусков — удалим, чтобы не путал charon при поиске цепочки.
+  rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
+
+  # ── 3. path-watcher: Caddy ротирует cert раз в 60 дней ────────────────
+  echo "[$HOST_TAG] [3/7] systemd path-watcher на Caddy-cert (LE-ротация)"
+  cat > /etc/systemd/system/anysda-ikev2-cert-sync.service <<EOF
+[Unit]
+Description=anysda-vpn2 — sync Caddy LE-cert into swanctl + reload
+After=strongswan-starter.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'install -m 0644 "$LE_CERT" /etc/swanctl/x509/anysda-server.crt && install -m 0600 "$LE_KEY" /etc/swanctl/private/anysda-server.key && swanctl --load-creds'
+EOF
+  cat > /etc/systemd/system/anysda-ikev2-cert-sync.path <<EOF
+[Unit]
+Description=anysda-vpn2 — watch Caddy LE-cert file for changes
+
+[Path]
+PathChanged=$LE_CERT
+Unit=anysda-ikev2-cert-sync.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now anysda-ikev2-cert-sync.path >/dev/null 2>&1
+else
+  echo "[$HOST_TAG] [2/7] self-signed CA"
+  if [[ ! -f "$PKI/ca.key" ]]; then
+    echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
+    pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key"
+    pki --self --in "$PKI/ca.key" --type ecdsa \
+        --dn "CN=anysda-vpn2 IKEv2 CA" --ca \
+        --lifetime 3650 --outform pem > "$PKI/ca.crt"
+  fi
+  chmod 600 "$PKI/ca.key"
+  chmod 644 "$PKI/ca.crt"
+
+  echo "[$HOST_TAG] [3/7] self-signed server cert (CN=$ENTRY_HOST)"
+  NEED_SERVER=0
+  if [[ ! -f "$PKI/server.crt" ]]; then
+    NEED_SERVER=1
+  else
+    if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
+          | grep -qE "IP Address:${ENTRY_HOST}( |$|,)"; then
+      echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
+      NEED_SERVER=1
+    fi
+  fi
+  if [[ "$NEED_SERVER" == "1" ]]; then
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    pki --gen --type ecdsa --size 256 --outform pem > "$TMP/server.key"
+    pki --pub --in "$TMP/server.key" --type ecdsa --outform pem > "$TMP/server.pub"
+    pki --issue --cacert "$PKI/ca.crt" --cakey "$PKI/ca.key" \
+        --in "$TMP/server.pub" --type pub \
+        --dn "CN=$ENTRY_HOST" \
+        --san "$ENTRY_HOST" \
+        --flag serverAuth --flag ikeIntermediate \
+        --lifetime 1825 \
+        --outform pem > "$TMP/server.crt"
+    install -m 0600 "$TMP/server.key" "$PKI/server.key"
+    install -m 0644 "$TMP/server.crt" "$PKI/server.crt"
+    rm -rf "$TMP"
+    trap - EXIT
+  fi
+  install -m 644 "$PKI/ca.crt"      /etc/swanctl/x509ca/anysda-ca.crt
+  install -m 644 "$PKI/server.crt"  /etc/swanctl/x509/anysda-server.crt
+  install -m 600 "$PKI/server.key"  /etc/swanctl/private/anysda-server.key
+  # Снять watcher если переходили из LE → self-signed (downgrade — не
+  # автоматический, но если файл удалили вручную — корректно почистим).
+  systemctl disable --now anysda-ikev2-cert-sync.path 2>/dev/null || true
+fi
 
 # ── 4. swanctl conf — базовый conn без клиентов (этап 4 наполнит динамику) ──
 echo "[$HOST_TAG] [4/7] swanctl conf"
@@ -109,7 +183,7 @@ connections {
     local-server {
       auth  = pubkey
       certs = anysda-server.crt
-      id    = $ENTRY_HOST
+      id    = $IKEV2_SERVER_HOST
     }
     remote-client {
       auth   = eap-mschapv2
@@ -250,4 +324,4 @@ systemctl enable anysda-ikev2-routing >/dev/null 2>&1 || true
 systemctl restart anysda-ikev2-routing
 
 touch /var/anysda/.stamps/27-ikev2
-echo "[$HOST_TAG] 27-ikev2 done — strongSwan up, server-cert CN=$ENTRY_HOST"
+echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

@@ -299,6 +299,20 @@ systemctl start anysda-ikev2-routing 2>/dev/null || true
 command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1 || true
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 
+# ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а
+#    /opt/AdGuardHome/AdGuardHome.yaml — нет, и hash остался от старого
+#    пароля → 403). Стадия 22-adguard идемпотентно перевыпустит hash. ─────
+AGH_STAGE=/opt/anysda-vpn2/infra/scripts/22-adguard.sh
+AGH_ENV=/opt/anysda-vpn2/infra/envs/ru.env
+if [[ -x "$AGH_STAGE" && -r "$AGH_ENV" ]]; then
+  echo "anysda-restore: re-sync AdGuard creds через 22-adguard…"
+  if "$AGH_STAGE" "$AGH_ENV" >/dev/null 2>&1; then
+    echo "anysda-restore: AdGuard re-synced"
+  else
+    echo "anysda-restore: WARN: 22-adguard вернул ошибку — проверь руками" >&2
+  fi
+fi
+
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────
 VERIFY=/opt/anysda-vpn2/infra/scripts/99-verify.sh
 VERIFY_ENV=/opt/anysda-vpn2/infra/envs/ru.env

@@ -5,6 +5,8 @@ test.md
 deploy.md
 /tests
 IKEV2_TZ.md
+IKEV2_TEST.md
+test-logs/
 
 # ── Личные конфиги / секреты ──────────────────────────────────────────────
 .env

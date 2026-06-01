@@ -40,4 +40,10 @@ EXPOSE 51821
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -fsS http://127.0.0.1:51821/api/version || exit 1
 
+# TODO (security audit H10): сейчас контейнер бежит как root + bind-mount
+# /etc/anysda rw + CAP_NET_ADMIN — RCE в Nuxt = full disclosure всех секретов
+# (admin-password.txt, tgbot-secret.txt, WG/IKEv2 ключей). Перевод на USER node
+# требует переноса wg-команд в host-side helper (через `pkexec`/привилегированный
+# socket) и точечного :ro-mount файлов из /etc/anysda. Делается отдельным PR
+# с обязательным прогоном test.md L4-routing на стенде. См. SECURITY-AUDIT-2026-06-01.md.
 CMD ["node", ".output/server/index.mjs"]

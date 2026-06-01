@@ -40,6 +40,7 @@ Env vars:
 """
 
 import asyncio
+import hmac
 import io
 import json
 import logging
@@ -99,6 +100,16 @@ def _load_runtime() -> tuple[str, int, str]:
 
 TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
 SECRET     = os.environ.get('TGBOT_SECRET', '')
+if not SECRET:
+    raise RuntimeError(
+        'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
+        'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.'
+    )
+if CHAT_ID <= 0:
+    raise RuntimeError(
+        'TELEGRAM_CHAT_ID не задан или = 0 — admin-команды не смогут быть авторизованы. '
+        'Задай chat_id через /etc/anysda/telegram-runtime.json.'
+    )
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
 # Telegram API egress: RU-нода в Москве api.telegram.org напрямую не достаёт,
@@ -1195,7 +1206,11 @@ async def monitor_loop(app: Application) -> None:
 # ── HTTP server for Nuxt events ────────────────────────────────────────────────
 
 async def handle_event(request: web.Request) -> web.Response:
-    if SECRET and request.headers.get('X-Tgbot-Secret') != SECRET:
+    # SECRET гарантированно непустой (startup-check выше). Сравниваем константно
+    # по времени, чтобы убрать timing-leak; encode в bytes — compare_digest требует
+    # одинаковый тип на обоих аргументах.
+    provided = request.headers.get('X-Tgbot-Secret', '')
+    if not hmac.compare_digest(provided.encode(), SECRET.encode()):
         return web.Response(status=403)
     try:
         data = await request.json()

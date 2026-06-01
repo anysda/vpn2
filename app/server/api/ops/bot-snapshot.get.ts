@@ -1,23 +1,13 @@
 import { desc } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
+import { requireBotAuth } from '../../utils/bot-api'
 import { clientStatus } from '../../utils/client-status'
 import { fetchConnections, fetchProxies } from '../../utils/clash-client'
 import { fetchNodeMetrics, nodeInstances } from '../../utils/vm-client'
 
 export default defineEventHandler(async (event) => {
-  const cfg = useRuntimeConfig()
-  const expected = String(cfg.tgbotSecret ?? '')
-  if (!expected) {
-    throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
-  }
-
-  const auth = getHeader(event, 'authorization') ?? ''
-  const provided = auth.replace(/^Bearer\s+/i, '')
-  if (provided !== expected) {
-    throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
-  }
-
+  requireBotAuth(event)
   const db = useDb()
   const [allClients, nodes, proxies, connections] = await Promise.all([
     db.select({

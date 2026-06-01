@@ -104,20 +104,22 @@ function cancelSetup() {
 
 const disableConfirm = ref(false)
 const disablePwd = ref('')
+const disableTotpCode = ref('')
 const disableLoading = ref(false)
 
 async function disableTotp() {
-  if (!disablePwd.value) return
+  if (!disablePwd.value || !disableTotpCode.value) return
   disableLoading.value = true
   try {
     await $fetch('/api/auth/totp/disable', {
       method: 'POST',
-      body: { currentPassword: disablePwd.value },
+      body: { currentPassword: disablePwd.value, totpCode: disableTotpCode.value },
     })
     await refreshSession()
     toast.add({ title: '2FA выключена', color: 'success' })
     disableConfirm.value = false
     disablePwd.value = ''
+    disableTotpCode.value = ''
   }
   catch (e) {
     const err = e as { statusMessage?: string, message?: string }
@@ -253,13 +255,20 @@ async function disableTotp() {
       <template #body>
         <div class="space-y-3">
           <p class="text-sm">
-            Введите текущий пароль для подтверждения.
+            Введите текущий пароль и код из аутентификатора.
           </p>
           <UInput
             v-model="disablePwd"
             type="password"
             autocomplete="current-password"
             placeholder="Пароль"
+            class="w-full"
+          />
+          <UInput
+            v-model="disableTotpCode"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            placeholder="Код 2FA (6 цифр)"
             class="w-full"
           />
         </div>
@@ -271,7 +280,7 @@ async function disableTotp() {
         <UButton
           color="error"
           :loading="disableLoading"
-          :disabled="!disablePwd"
+          :disabled="!disablePwd || !disableTotpCode"
           @click="disableTotp"
         >
           Выключить

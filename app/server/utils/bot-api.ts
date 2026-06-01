@@ -1,15 +1,35 @@
+import { timingSafeEqual } from 'node:crypto'
 import { asc, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import { deviceConfigName } from './naming'
 
-/** Bearer-аутентификация бота по TGBOT_SECRET (общий с панелью секрет). */
+const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+function isLoopback(event: H3Event): boolean {
+  const ip = event.node.req.socket.remoteAddress ?? ''
+  return LOOPBACK_ADDRS.has(ip)
+}
+
+/**
+ * Bearer-аутентификация бота по TGBOT_SECRET. Дополнительно требует, чтобы
+ * запрос пришёл с loopback (бот сидит на той же ноде, что и панель). Это
+ * закрывает сценарий, в котором Caddy случайно проксирует /api/bot/** наружу.
+ * См. SECURITY-AUDIT-2026-06-01.md (H3, H4).
+ */
 export function requireBotAuth(event: H3Event): void {
+  if (!isLoopback(event)) {
+    throw createError({ statusCode: 403, statusMessage: 'loopback_only' })
+  }
   const expected = String(useRuntimeConfig().tgbotSecret ?? '')
   if (!expected) throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
   const provided = (getHeader(event, 'authorization') ?? '').replace(/^Bearer\s+/i, '')
-  if (provided !== expected) throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
+  const a = Buffer.from(provided)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+    throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
+  }
 }
 
 /** Клиент, привязанный к данному Telegram-чату. 404 `not_linked`, если нет. */

@@ -3,10 +3,8 @@ spec.md
 stand.md
 test.md
 deploy.md
-/tests
-IKEV2_TZ.md
-IKEV2_TEST.md
 test-logs/
+AD_TZ.md
 
 # ── Личные конфиги / секреты ──────────────────────────────────────────────
 .env
@@ -17,6 +15,8 @@ anysda-config.yaml
 credentials.md
 # env-файлы нод (пароли/секреты нод) — генерит config2env.py на каждый деплой
 infra/envs/
+# TOFU-пин SSH host-keys (растёт при первом подключении к новой ноде)
+infra/.known_hosts
 
 # ── Nuxt / Node ───────────────────────────────────────────────────────────
 node_modules/

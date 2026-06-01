@@ -35,9 +35,20 @@ fi
 if [[ "$need_install" -eq 1 ]]; then
   ARCH='linux_amd64'
   TMP=$(mktemp -d)
+  # Скачиваем архив и checksums-файл по отдельности и проверяем SHA-256 перед
+  # распаковкой — `curl | tar -xz` уязвим к compromise CDN (см. SECURITY-AUDIT
+  # 2026-06-01.md / H8). checksums.txt подписан тем же релизом — атакеру нужно
+  # подменить оба файла одновременно (всё ещё уязвимо к compromise GitHub
+  # releases, но не к одностороннему MITM/CDN-corruption).
+  REL_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}"
+  ARCHIVE="AdGuardHome_${ARCH}.tar.gz"
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}/AdGuardHome_${ARCH}.tar.gz" \
-    | tar -xz -C "$TMP"
+    "$REL_URL/$ARCHIVE" -o "$TMP/$ARCHIVE"
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
+  ( cd "$TMP" && grep -E "[[:space:]]\*?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
+    || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
+  tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"
   rm -rf "$TMP"
 fi
@@ -62,7 +73,7 @@ elif [[ ! -f /etc/anysda/admin-password.txt ]]; then
 fi
 AGH_PASS=$(cat /etc/anysda/admin-password.txt)
 AGH_PASS_HASH=$(htpasswd -bnBC 10 "" "$AGH_PASS" | tr -d ':\n' | sed 's/$2y/$2a/')
-echo "[$HOST_TAG]   $AGH_USER / $AGH_PASS"
+echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)"
 
 # ----------------------------------------------------------------------------
 # 3. Write config (only on first install; never overwrite live config)

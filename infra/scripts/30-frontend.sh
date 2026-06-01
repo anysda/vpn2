@@ -54,7 +54,7 @@ fi
 SESSION_SECRET=$(cat /etc/anysda/session-secret.txt)
 
 echo "[$HOST_TAG]   admin user:  $ADMIN_USER"
-echo "[$HOST_TAG]   admin pass:  $ADMIN_PASS"
+echo "[$HOST_TAG]   admin pass:  (см. /etc/anysda/admin-password.txt на ноде)"
 
 # ----------------------------------------------------------------------------
 # 3. Caddy (reverse-proxy + optional LE)
@@ -184,5 +184,5 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
 else
   echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
 fi
-echo "[$HOST_TAG]  Логин:         $ADMIN_USER / $ADMIN_PASS"
+echo "[$HOST_TAG]  Логин:         $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"
 echo "[$HOST_TAG] -------------------------------------------------------------"

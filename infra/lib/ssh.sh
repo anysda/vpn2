@@ -62,9 +62,15 @@ expand_hosts() {
 # sshpass. Это позволяет 00-bootstrap залить публичный ключ оркестратора на
 # ноду и отключить парольный вход — последующие стадии пойдут по ключу.
 # SSHPASS экспортируется per-call чтобы пароль не светился в `ps aux`.
+#
+# Host-key policy: первое подключение к ноде закрепляет её host-key в
+# $DEPLOY_ROOT/.known_hosts (TOFU). При повторном деплое подмена ключа =
+# отказ соединения. См. SECURITY-AUDIT-2026-06-01.md (C1).
+_known_hosts="${DEPLOY_ROOT}/.known_hosts"
+[[ -f "$_known_hosts" ]] || { touch "$_known_hosts"; chmod 600 "$_known_hosts"; }
 _ssh_opts=(
-  -o StrictHostKeyChecking=no
-  -o UserKnownHostsFile=/dev/null
+  -o StrictHostKeyChecking=accept-new
+  -o UserKnownHostsFile="$_known_hosts"
   -o LogLevel=ERROR
   -o PreferredAuthentications=publickey,password
   -o PubkeyAuthentication=yes

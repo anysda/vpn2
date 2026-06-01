@@ -62,9 +62,22 @@ def main():
         pwd_warp = require(f'{T}_WARP')
         pwd_obfs = require(f'{T}_OBFS')
 
-        # Self-signed cert на exit-нодах → insecure (своя инфраструктура)
-        tls_direct = {'enabled': True, 'server_name': domain, 'insecure': True}
-        tls_warp   = {'enabled': True, 'server_name': domain, 'insecure': True}
+        # Self-signed cert на exit-нодах. Если orchestrator опубликовал
+        # PEM-сертификат экзита (см. SECURITY-AUDIT-2026-06-01.md H5) и
+        # 20-ru-router положил его в /etc/sing-box/exit-certs/{tag}.pem,
+        # пинимся к нему через `certificate_path` (sing-box принимает ТОЛЬКО
+        # этот cert). Иначе — fallback к insecure=true (backward-compat).
+        cert_path = os.environ.get(f'{T}_HY2_CERT_PATH', '').strip()
+        if cert_path:
+            tls_common = {
+                'enabled': True,
+                'server_name': domain,
+                'certificate_path': cert_path,
+            }
+        else:
+            tls_common = {'enabled': True, 'server_name': domain, 'insecure': True}
+        tls_direct = dict(tls_common)
+        tls_warp   = dict(tls_common)
 
         outbounds.append({
             'type': 'hysteria2',

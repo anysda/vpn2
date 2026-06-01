@@ -84,6 +84,24 @@ for _t in $EXIT_TAGS; do
   eval "export ${_T}_HY2_DIRECT_PORT=\${${_T}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT}}"
 done
 
+# TLS pinning Hysteria2 outbound: если orchestrator push'нул cert экзита в
+# /tmp/anysda/exit-certs/{tag}.pem — кладём его в /etc/sing-box/exit-certs
+# и экспортируем {T}_HY2_CERT_PATH; gen-router-config.py подставит
+# tls.certificate_path и снимет insecure. Backward-compat: если cert'а нет,
+# RU-роутер продолжает работать с insecure=true (см. H5).
+mkdir -p /etc/sing-box/exit-certs
+chmod 700 /etc/sing-box/exit-certs
+if [[ -d /tmp/anysda/exit-certs ]]; then
+  for _t in $EXIT_TAGS; do
+    _T=$(echo "$_t" | tr a-z A-Z)
+    _src="/tmp/anysda/exit-certs/${_t}.pem"
+    if [[ -f "$_src" ]]; then
+      install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.pem"
+      eval "export ${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
+    fi
+  done
+fi
+
 # Write the BASE config (without manual routes). The manual-routes watcher
 # derives /etc/sing-box/config.json = config-base.json + panel rules, so
 # config-base.json MUST be refreshed on every run — a stale base silently

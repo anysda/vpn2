@@ -135,6 +135,15 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
 chmod 600 /etc/sing-box/tls.key /etc/sing-box/tls.crt
 echo "[$HOST_TAG]   cert SAN: IP:${PUB_IP}"
 
+# Публикуем self-signed cert (только публичный PEM, без приватного ключа) —
+# prep_ru_router забирает его и кладёт в /etc/sing-box/exit-certs/{tag}.pem
+# на RU. gen-router-config.py подставляет его как `tls.certificate` в Hysteria2
+# outbound — тогда RU-роутер принимает только этот конкретный cert и MITM на
+# RU→exit невозможен. См. SECURITY-AUDIT-2026-06-01.md (H5).
+cp /etc/sing-box/tls.crt /etc/anysda/hy2-tls.crt
+chmod 644 /etc/anysda/hy2-tls.crt
+echo "[$HOST_TAG]   tls fingerprint: $(openssl x509 -in /etc/anysda/hy2-tls.crt -noout -fingerprint -sha256)"
+
 TPL=/tmp/anysda/sing-box-server.json.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 envsubst < "$TPL" > /etc/sing-box/config.json

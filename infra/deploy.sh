@@ -139,8 +139,23 @@ install_prereqs() {
     if [[ ! -f /etc/debian_version ]]; then
       die "docker не установлен; на не-Debian/Ubuntu поставь руками."
     fi
-    printf '  ставлю docker (через get.docker.com)\n'
-    curl -fsSL https://get.docker.com | sh >/dev/null 2>&1
+    # Официальное APT-репо Docker'а (signed-by GPG из download.docker.com) —
+    # вместо `curl get.docker.com | sh`, который исполняет произвольный
+    # shell-код с CDN без проверки. Совпадает с тем, как ставит docker на
+    # ноды стадия 25-monitoring. См. SECURITY-AUDIT-2026-06-01.md (H8).
+    printf '  ставлю docker (через APT-репо download.docker.com)\n'
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+    install -m 0755 -d /etc/apt/keyrings
+    if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+    fi
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update -qq
+    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
     systemctl enable --now docker >/dev/null 2>&1 || true
   fi
 
@@ -209,6 +224,19 @@ prep_ru_router() {
       echo "OBFS=$(cat /etc/anysda/hy2-obfs.pwd)"
       echo "CLASH=$(cat /etc/anysda/clash-secret.txt)"
     ')
+
+    # PEM-сертификат экзита — для TLS-pinning на RU-роутере (см. H5).
+    # На старых нодах файл /etc/anysda/hy2-tls.crt отсутствует — пропускаем,
+    # тогда gen-router-config.py откатывается на insecure=true (backward-compat).
+    mkdir -p "$DEPLOY_ROOT/secrets/exit-certs"
+    chmod 700 "$DEPLOY_ROOT/secrets/exit-certs"
+    if ssh_exec 'test -f /etc/anysda/hy2-tls.crt'; then
+      ssh_exec 'cat /etc/anysda/hy2-tls.crt' > "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
+      chmod 600 "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
+      log "забрал TLS-cert экзита $host"
+    else
+      warn "на $host нет /etc/anysda/hy2-tls.crt — pin не применён (передеплой 10-foreign)"
+    fi
     while IFS='=' read -r k v; do
       [[ -n "$k" ]] && printf '%s_%s=%s\n' "$(echo "$host" | tr a-z A-Z)" "$k" "$v" >> "$sec"
     done <<<"$payload"
@@ -358,6 +386,11 @@ run_stage_on_host() {
     [[ -f "$gen" ]] || die "lib/gen-router-config.py не найден"
     push "$sec" "foreign-secrets.env"
     push "$gen" "gen-router-config.py"
+    # TLS-pin для Hysteria2 outbound: cert каждого экзита (если уже опубликован
+    # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
+    if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
+      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs"
+    fi
   fi
 
   if [[ "$stage" == "21-failover-watchdog" ]]; then

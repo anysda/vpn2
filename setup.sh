@@ -354,6 +354,24 @@ else
   hint "Пропущено. Можно включить позже через setup.sh"
 fi
 
+# ── YouTube мимо экзитов ────────────────────────────────────────────────────
+# YouTube не крутит рекламу на российских IP, поэтому гнать его через
+# зарубежный экзит — значит включить её себе руками. Штатный режим: выпускать
+# YouTube прямо с entry (РФ-адрес), а DPI провайдера обходить десинком
+# (nfqws2, стадия 19-yt-zapret). Стадия сама проверяет A/B и валит деплой,
+# если обход не заработал, — без неё YouTube лёг бы у всех клиентов.
+header "YouTube (опционально)"
+hint "Выпускать YouTube с entry-ноды (РФ-IP → без рекламы) + обход DPI десинком."
+hint "Иначе YouTube поедет на экзит вместе со всем остальным — с рекламой."
+youtube_route='off'
+yt_q=$(ask_yn "Вывести YouTube на РФ-выход entry с обходом DPI?" "y")
+if [[ "$yt_q" == "y" ]]; then
+  youtube_route='zapret'
+  ok "YouTube: РФ-выход + десинк (стадия 19-yt-zapret соберёт nfqws2 на entry)"
+else
+  hint "Пропущено. YouTube пойдёт через экзиты (с рекламой)."
+fi
+
 printf '\n' >&2
 for _tag in "${!exit_ips[@]}"; do
   export "_EXIT_IP_${_tag}=${exit_ips[$_tag]}"
@@ -411,6 +429,7 @@ BACKUP_S3_BUCKET="$backup_s3_bucket" \
 BACKUP_S3_REGION="$backup_s3_region" \
 BACKUP_S3_ACCESS_KEY="$backup_s3_access_key" \
 BACKUP_S3_SECRET_KEY="$backup_s3_secret_key" \
+YOUTUBE_ROUTE="$youtube_route" \
 ORCH_KEY="$orch_key" \
 ORCH_PUBKEY="$orch_pubkey" \
 CONFIG_FILE="$config_file" \
@@ -475,6 +494,15 @@ if be == 'y':
         lines.append('    region: '     + os.environ.get('BACKUP_S3_REGION', 'us-east-1'))
         lines.append('    access_key: ' + os.environ.get('BACKUP_S3_ACCESS_KEY', ''))
         lines.append('    secret_key: ' + os.environ.get('BACKUP_S3_SECRET_KEY', ''))
+
+# YouTube-секция: пишем только когда фича включена — отсутствие блока
+# читается как youtube.route=off, то есть поведение до появления фичи.
+yr = os.environ.get('YOUTUBE_ROUTE', 'off')
+if yr and yr != 'off':
+    lines.append('')
+    lines.append('youtube:')
+    lines.append('  route: ' + yr)
+    lines.append('  quic: block')
 
 orch_key = os.environ.get('ORCH_KEY', '')
 orch_pubkey = os.environ.get('ORCH_PUBKEY', '')

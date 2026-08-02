@@ -65,6 +65,19 @@ case "$HOST_TAG" in
     else
       echo "[$HOST_TAG] sing-box:    неактивен (стадия 20 не применена)"
     fi
+    # YouTube-десинк (стадия 19). Статус юнита ничего не доказывает — nfqws2
+    # поднимается и с нерабочей стратегией, поэтому гоняем A/B-проверку.
+    if [[ -x /usr/local/bin/anysda-yt-check ]]; then
+      if /usr/local/bin/anysda-yt-check >/tmp/yt-check.out 2>&1; then
+        echo "[$HOST_TAG] yt-zapret:   ✓ $(head -2 /tmp/yt-check.out | tr '\n' ' ')"
+      else
+        echo "[$HOST_TAG] yt-zapret:   ✗ ОБХОД НЕ РАБОТАЕТ — YouTube у клиентов ляжет"
+        sed "s/^/[$HOST_TAG]   /" /tmp/yt-check.out
+      fi
+      rm -f /tmp/yt-check.out
+    else
+      echo "[$HOST_TAG] yt-zapret:   не развёрнут (youtube.route=off)"
+    fi
     for _svc in wg-quick@wg0 openvpn-server@server strongswan-starter anysda-ikev2-routing; do
       if systemctl is-active --quiet "$_svc" 2>/dev/null; then
         echo "[$HOST_TAG] ${_svc}: active"

@@ -14,7 +14,7 @@ from pathlib import Path
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
-           'panel': {}, 'backup': {}}
+           'panel': {}, 'backup': {}, 'youtube': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -48,6 +48,8 @@ def parse_yaml(text):
             elif content.startswith('backup:'):
                 context = 'backup'
                 backup_sub = None
+            elif content.startswith('youtube:'):
+                context = 'youtube'
             else:
                 k, v = kv(content)
                 if v:
@@ -76,6 +78,9 @@ def parse_yaml(text):
             elif context == 'panel':
                 k, v = kv(content)
                 cfg['panel'][k] = v
+            elif context == 'youtube':
+                k, v = kv(content)
+                cfg['youtube'][k] = v
             elif context == 'backup':
                 # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
                 if content.endswith(':') and ':' not in content[:-1]:
@@ -271,14 +276,44 @@ def main():
         if tg.get('admin_username'):
             lines.append(f"TELEGRAM_ADMIN_USERNAME='{tg['admin_username']}'")
 
+    # Простое экранирование одинарных кавычек для значений, которые попадают
+    # в *.env как '...' (passphrase, ключи S3, стратегия nfqws2).
+    def shq(v):
+        return "'" + str(v).replace("'", "'\\''") + "'"
+
+    # YouTube-секция. Читают обе стадии: 20-ru-router (gen-router-config.py
+    # строит outbound youtube-ru и правила) и 19-yt-zapret (десинк). Пустая
+    # секция → YT_ROUTE=off, поведение ровно как до появления фичи.
+    yt = cfg.get('youtube', {})
+    yt_route = (yt.get('route', '') or 'off').lower()
+    if yt_route not in ('off', 'zapret', 'direct'):
+        print(f"ERROR: youtube.route='{yt_route}' — допустимо off | zapret | direct",
+              file=sys.stderr)
+        sys.exit(1)
+    yt_quic = (yt.get('quic', '') or 'block').lower()
+    if yt_quic not in ('block', 'allow'):
+        print(f"ERROR: youtube.quic='{yt_quic}' — допустимо block | allow", file=sys.stderr)
+        sys.exit(1)
+    lines += [
+        '',
+        f"YT_ROUTE='{yt_route}'",
+        f"YT_QUIC='{yt_quic}'",
+        f"YT_MARK='{yt.get('mark', '256') or '256'}'",
+        f"YT_ZAPRET_OFFLOAD='{(yt.get('offload', '') or 'keep').lower()}'",
+    ]
+    # Необязательные переопределения — пишем только если заданы, чтобы дефолты
+    # жили в одном месте (в стадии 19), а не размножались по конфигам.
+    if yt.get('strategy'):
+        lines.append(f"YT_ZAPRET_STRATEGY={shq(yt['strategy'])}")
+    if yt.get('zapret_ref'):
+        lines.append(f"YT_ZAPRET_REF={shq(yt['zapret_ref'])}")
+    if yt.get('domains'):
+        lines.append(f"YT_DOMAINS={shq(yt['domains'])}")
+
     # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
     # enabled=false → ничего не пишем, 26-backup увидит отсутствие и пропустится.
     backup = cfg.get('backup', {})
     if backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1'):
-        # Простое экранирование одинарных кавычек (passphrase '). Случается редко
-        # (auto-gen ограничен [A-Za-z0-9]), но при ручном вводе может быть.
-        def shq(v):
-            return "'" + str(v).replace("'", "'\\''") + "'"
         lines += [
             '',
             f"BACKUP_ENABLED='true'",

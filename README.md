@@ -30,6 +30,9 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
   устройства свои WG-ключи, OpenVPN-сертификат и IKEv2-логин/пароль.
 - **Авто-роутинг (sing-box):** RU-трафик через WAN entry, заграница
   через Hysteria2 на лучший exit; быстрый failover (~5–7с).
+- **YouTube мимо экзитов (опционально):** выходит с РФ-адреса entry —
+  YouTube не крутит рекламу на российских IP, — а DPI обходится десинком
+  TLS (nfqws2/zapret2), отбор трафика по SO_MARK от sing-box.
 - **Ручные правила:** домен/IP → конкретный outbound, drag-and-drop в
   UI; sing-box подхватывает без рестарта клиентов.
 - **AdGuard Home:** DNS + блок-лист для VPN-клиентов с включённой
@@ -39,7 +42,7 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
   устройства и видят уведомления об изменениях.
 - **Мониторинг:** карточки нод (CPU/RAM/RX/TX), RTT по выходам, графики;
   `node_exporter` → VictoriaMetrics + clash-api sing-box.
-- **Деплой одной командой:** `./setup.sh` → `./deploy.sh`. 12 стадий,
+- **Деплой одной командой:** `./setup.sh` → `./deploy.sh`. 13 стадий,
   идемпотентно, без ручных шагов на нодах.
 
 ## Стек
@@ -62,9 +65,11 @@ WireGuard client  ·  OpenVPN client  ·  IKEv2 client (iOS/macOS/Win/Android)
  ├─ WireGuard (wg0) + OpenVPN (tun0) + strongSwan (xfrm0)
  │   iptables PREROUTING -i wg0/tun0/xfrm0 → TPROXY → sing-box :7898
  ├─ sing-box роутер
+ │   YouTube → youtube-ru (WAN entry, РФ-IP) + метка → nfqws2-десинк
  │   geoip:ru / .ru/.рф → direct-ru (WAN entry)
  │   остальное → foreign-best (hy2-* exit'ы; выбирает failover-watchdog)
  │   ручные правила → /etc/anysda/manual-routes.json
+ ├─ nfqws2 (zapret2) — обход DPI для YouTube, только помеченный трафик
  ├─ anysda-vpn2 panel  (Caddy → :51821)
  ├─ AdGuard Home + Caddy
  ├─ VictoriaMetrics (scraping mgmt-mesh 10.99.0.0/24)
@@ -81,7 +86,7 @@ vpn2/
 │   ├── deploy.sh             # главный pipeline
 │   ├── lib/                  # config2env, gen-router-config, failover-watchdog, ssh
 │   ├── configs/              # шаблоны конфигов (envsubst)
-│   └── scripts/              # стадии 00 / 05 / 10 / 20 / 21 / 22 / 25 / 28 / 29 / 30 / 35 / 99
+│   └── scripts/              # стадии 00 / 05 / 10 / 19 / 20 / 21 / 22 / 25 / 28 / 29 / 30 / 35 / 99
 ├── telegram/                 # Python бот (опциональный)
 ├── deploy.sh                 # entry-point, делегирует infra/deploy.sh
 ├── setup.sh                  # интерактивный мастер config.yaml
@@ -156,8 +161,66 @@ sing-box-роутер + failover-watchdog + AdGuard + VictoriaMetrics +
 ./deploy.sh 30-frontend ru       # пересобрать панель
 ./deploy.sh 35-telegram ru       # перезапустить бота
 ./deploy.sh 10-foreign foreign   # все exit-ноды
+./deploy.sh 19-yt-zapret ru      # пересобрать/перенастроить обход DPI YouTube
 ./deploy.sh 99-verify all        # smoke-тест
 ```
+
+---
+
+## YouTube — почему он идёт мимо экзитов
+
+Включается секцией `youtube:` в `config.yaml` (`route: zapret`), по умолчанию
+выключено.
+
+**Смысл.** YouTube не крутит рекламу на российских IP. Через зарубежный экзит
+сайт видит иностранный адрес — и реклама включается. То есть VPN «чинит»
+доступ и ломает ровно то, ради чего его ставили семье. Поэтому YouTube
+выводится **прямо с entry-ноды** (московский адрес), а блокировка DPI
+обходится **десинком TLS**, а не туннелем. Побочный плюс: самый тяжёлый
+трафик перестаёт есть канал экзита.
+
+**Как отбирается трафик.** sing-box (стадия 20) отправляет YouTube в отдельный
+outbound `youtube-ru` с `routing_mark`. Ядро ставит метку на сокет, а
+nft-цепочки стадии 19 забирают в `nfqueue` **ровно помеченный** TCP/443 —
+ничего больше с ноды в очередь не попадает. Списки IP/CIDR вести не нужно:
+что считать YouTube, решает роутер по домену (`geosite:youtube` + суффиксы,
+включая `googlevideo.com` — это само видео).
+
+**Порядок правил критичен.** YouTube-правила стоят выше `geoip: ru`. GGC-хосты
+(`rrN---sn-*.googlevideo.com`) физически стоят у российских провайдеров, и
+geoip увёл бы их в `direct-ru` — тот же выход, но **без метки**, то есть без
+десинка. Симптом: «морда открывается, видео виснет».
+
+**QUIC режется намеренно** (`quic: block`): десинк проверен на TCP-TLS, а на
+UDP/443 плеер висит до таймаута. Блок заставляет откатиться на TCP сразу.
+
+**Проверка — только A/B.** Статус юнита ничего не доказывает: nfqws2
+поднимается и с нерабочей стратегией. На entry лежит `anysda-yt-check`: он
+дёргает один и тот же хост из-под диаг-юзера (его трафик nft метит той же
+меткой — это ровно клиентский путь) и из-под root (чистый путь провайдера).
+
+```bash
+ssh root@<entry> anysda-yt-check          # 0 = обход живой
+ssh root@<entry> 'nft list table inet ytzapret'      # счётчики очереди
+ssh root@<entry> 'journalctl -u anysda-yt-nfqws -n 30'
+```
+
+Стадия 19 гоняет эту проверку сама и **валит деплой**, если обход не
+заработал. Это защита: без неё стадия 20 увела бы YouTube на РФ-выход, где его
+режет DPI, и он лёг бы у всех клиентов разом. Стадия 19 поэтому и стоит в
+пайплайне **до** стадии 20.
+
+**Если A/B не проходит:**
+
+1. `youtube.offload: off` — TSO/GSO на WAN может склеить ClientHello в
+   super-пакет, и резать будет нечего;
+2. подобрать стратегию: `/opt/zapret2/blockcheck2.sh` на entry, результат — в
+   `youtube.strategy`;
+3. `youtube.route: off` — откат к прежнему поведению (YouTube через экзиты,
+   с рекламой, но работает).
+
+Дома этот же приём применён на отдельном боксе (CT302 за VyOS); там отбор идёт
+списками сетей, и они протухают молча. Здесь этой проблемы нет by design.
 
 ---
 

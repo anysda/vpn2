@@ -5,9 +5,9 @@
 #   ./deploy.sh                   полный pipeline: prereqs → проверки → деплой
 #   ./deploy.sh <stage> <group>   одна стадия на группу нод
 #
-# Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 20-ru-router |
-#           28-wireguard | 29-openvpn | 21-failover-watchdog | 22-adguard
-#           25-monitoring | 35-telegram | 30-frontend | 99-verify
+# Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 19-yt-zapret |
+#           20-ru-router | 28-wireguard | 29-openvpn | 21-failover-watchdog |
+#           22-adguard | 25-monitoring | 35-telegram | 30-frontend | 99-verify
 # Группы:   ru | foreign | all | <конкретный тег экзита>
 
 set -euo pipefail
@@ -744,6 +744,11 @@ do_all() {
   run_stage 10-foreign       foreign
   run_stage 28-wireguard     ru
   run_stage 29-openvpn       ru
+  # 19 строго ДО 20: сначала готовим путь десинка YouTube, потом sing-box
+  # начинает на него маршрутизировать. Обратный порядок = окно, в котором
+  # YouTube уже на РФ-выходе, а обходить DPI ещё нечем. Стадия сама валит
+  # деплой, если A/B-проверка не прошла.
+  run_stage 19-yt-zapret     ru
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
   run_stage 21-failover-watchdog ru
@@ -790,8 +795,9 @@ anysda-vpn2 — деплой
   ./deploy.sh backup-list                  список доступных backup'ов
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
-          29-openvpn | 20-ru-router | 21-failover-watchdog | 22-adguard |
-          25-monitoring | 26-backup | 35-telegram | 30-frontend | 99-verify
+          29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
+          22-adguard | 25-monitoring | 26-backup | 35-telegram | 30-frontend |
+          99-verify
 Группы:   ru | foreign | all | <конкретный тег экзита>
 EOF
   exit 0

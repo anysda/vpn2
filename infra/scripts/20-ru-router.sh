@@ -76,6 +76,12 @@ WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
 export WG_OUT_IFACE="$WAN_IFACE"
 
 export RU_CLASH_SECRET EXIT_TAGS HY2_DIRECT_PORT HY2_WARP_PORT MGMT_IP
+# YouTube (стадия 19-yt-zapret). `source` env-файла делает переменные
+# ЛОКАЛЬНЫМИ для шелла — до python-генератора они без export не доезжают, и
+# конфиг молча собирается без YouTube-правил (стадия при этом отрабатывает
+# «успешно»). Дефолты — на случай env-файла, сгенерённого старым config2env.py.
+export YT_ROUTE="${YT_ROUTE:-off}" YT_QUIC="${YT_QUIC:-block}" YT_MARK="${YT_MARK:-256}"
+[[ -n "${YT_DOMAINS:-}" ]] && export YT_DOMAINS
 
 for _t in $EXIT_TAGS; do
   _T=$(echo "$_t" | tr a-z A-Z)

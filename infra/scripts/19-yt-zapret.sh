@@ -334,11 +334,14 @@ set -u
 HOST="\${1:-https://www.youtube.com/}"
 TMO="\${YT_CHECK_TIMEOUT:-15}"
 
-probe() { curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null || echo 000; }
+# curl сам печатает 000 при неудаче, поэтому вторым 000 не дополняем —
+# иначе в отчёте получается «000000» и непонятно, что это.
+probe() { curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null; }
 
 A=\$(setpriv --reuid=$DIAG_UID --regid=$(id -g "$DIAG_USER") --clear-groups \\
-      curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null || echo 000)
+      curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null)
 B=\$(probe)
+A=\${A:-000}; B=\${B:-000}
 
 echo "zapret (метка $YT_MARK): \$A"
 echo "контроль (без метки):    \$B"

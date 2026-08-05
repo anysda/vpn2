@@ -37,6 +37,8 @@ Env vars:
   TGBOT_EVENT_PORT    — HTTP port for Nuxt→bot events (default 8877)
   ANYSDA_URL          — Nuxt API base (default http://127.0.0.1:51821)
   TG_PROXY            — HTTP proxy for Telegram API (default http://127.0.0.1:7897)
+  TGBOT_POLL_STALL_SEC — poller watchdog: exit if no successful getUpdates for
+                         this long (default 300, 0 = off)
 """
 
 import asyncio
@@ -46,6 +48,7 @@ import json
 import logging
 import os
 import pathlib
+import time
 from datetime import datetime
 
 import httpx
@@ -117,9 +120,64 @@ ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
 # (sing-box mixed-инбаунд → foreign-best → экзит). Обращения к Nuxt API на
 # 127.0.0.1 проксировать НЕ нужно — _local идёт напрямую.
 TG_PROXY   = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
+# Сторож поллера: сколько секунд без успешного getUpdates считать зависанием.
+# 03-08-2026 после флапа экзитов sing-box порвал CONNECT-тоннели, сокеты бота
+# остались в CLOSE-WAIT, а поллер молча встал: процесс жив, monitor_loop тикает,
+# апдейты из Telegram не забираются ~38 часов и НИ ОДНОЙ ошибки в логе. Лечится
+# только рестартом, поэтому сторож роняет процесс — docker поднимет заново.
+# Нормальный интервал long-poll ≈ 10с, так что 300с — заведомо аномалия. 0 = выкл.
+POLL_STALL_SEC = int(os.environ.get('TGBOT_POLL_STALL_SEC', '300'))
 
 # username бота — заполняется в main() через getMe; нужен для диплинков-приглашений.
 BOT_USERNAME: str | None = None
+
+# monotonic-время последнего успешного ответа Telegram на getUpdates.
+# Пишет _mark_poll_ok, читают _poll_watchdog и /health.
+LAST_POLL_OK: float = time.monotonic()
+
+
+def _mark_poll_ok() -> None:
+    global LAST_POLL_OK
+    LAST_POLL_OK = time.monotonic()
+
+
+class _WatchedRequest(HTTPXRequest):
+    """HTTPXRequest под getUpdates, отмечающий каждый успешный ответ Telegram.
+
+    Этот экземпляр отдаётся Application только под поллинг, поэтому любой
+    долетевший до нас ответ означает: тоннель до api.telegram.org живой и
+    поллер крутится. HTTP-код не важен — важен сам факт ответа.
+    """
+
+    async def do_request(self, *args, **kwargs):
+        result = await super().do_request(*args, **kwargs)
+        _mark_poll_ok()
+        return result
+
+
+WATCHDOG_TICK_SEC = 30
+
+
+async def poll_watchdog() -> None:
+    """Уронить процесс, если getUpdates перестал отвечать.
+
+    Из зависшего поллинга бот сам не выбирается (03-08-2026 висел 38 часов),
+    поэтому единственное лечение — выход: docker --restart unless-stopped
+    поднимет контейнер, и поллинг начнётся заново.
+    """
+    if POLL_STALL_SEC <= 0:
+        log.info('poll watchdog выключен (TGBOT_POLL_STALL_SEC=0)')
+        return
+    while True:
+        await asyncio.sleep(WATCHDOG_TICK_SEC)
+        idle = time.monotonic() - LAST_POLL_OK
+        if idle > POLL_STALL_SEC:
+            log.error(
+                'poller завис: %.0fс без ответа на getUpdates (лимит %dс) — '
+                'выхожу, docker перезапустит контейнер', idle, POLL_STALL_SEC,
+            )
+            os._exit(1)
+
 
 # Local client — for Nuxt API on 127.0.0.1 (direct, no proxy)
 _local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=10.0)
@@ -1205,6 +1263,17 @@ async def monitor_loop(app: Application) -> None:
 
 # ── HTTP server for Nuxt events ────────────────────────────────────────────────
 
+async def handle_health(request: web.Request) -> web.Response:
+    """GET /health — жив ли поллер. Дёргает docker HEALTHCHECK, слушаем только
+    на 127.0.0.1, поэтому без секрета. 503, если getUpdates давно не отвечал."""
+    idle = round(time.monotonic() - LAST_POLL_OK, 1)
+    stalled = POLL_STALL_SEC > 0 and idle > POLL_STALL_SEC
+    return web.json_response(
+        {'ok': not stalled, 'poll_idle_sec': idle, 'poll_stall_sec': POLL_STALL_SEC},
+        status=503 if stalled else 200,
+    )
+
+
 async def handle_event(request: web.Request) -> web.Response:
     # SECRET гарантированно непустой (startup-check выше). Сравниваем константно
     # по времени, чтобы убрать timing-leak; encode в bytes — compare_digest требует
@@ -1368,7 +1437,7 @@ async def main() -> None:
     # маленькие (1 и 1.0с) — при любой задержке handler-команд получаем
     # PoolTimeout. Поднимаем с запасом, чтобы команды + monitor_loop +
     # event_server жили вместе.
-    poll_req = HTTPXRequest(connection_pool_size=4, read_timeout=40, proxy=TG_PROXY)
+    poll_req = _WatchedRequest(connection_pool_size=4, read_timeout=40, proxy=TG_PROXY)
     send_req = HTTPXRequest(
         connection_pool_size=50,
         pool_timeout=20.0,
@@ -1399,6 +1468,7 @@ async def main() -> None:
     webapp = web.Application()
     webapp['tgapp'] = tgapp
     webapp.router.add_post('/event', handle_event)
+    webapp.router.add_get('/health', handle_health)
     runner = web.AppRunner(webapp)
     await runner.setup()
     await web.TCPSite(runner, '127.0.0.1', EVENT_PORT).start()
@@ -1426,6 +1496,8 @@ async def main() -> None:
         asyncio.create_task(_supervised_monitor())
         asyncio.create_task(_config_watcher())
         await tgapp.updater.start_polling(drop_pending_updates=True)
+        _mark_poll_ok()
+        asyncio.create_task(poll_watchdog())
         log.info('Bot started, polling Telegram via %s', TG_PROXY)
         await asyncio.Event().wait()  # run forever
         await tgapp.updater.stop()

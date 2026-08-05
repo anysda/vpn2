@@ -88,6 +88,7 @@ docker run -d \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
   -e TGBOT_SECRET="$TGBOT_SECRET" \
   -e TGBOT_EVENT_PORT=8877 \
+  -e TGBOT_POLL_STALL_SEC="${TGBOT_POLL_STALL_SEC:-300}" \
   -e ANYSDA_URL=http://127.0.0.1:51821 \
   -e TG_PROXY=http://127.0.0.1:7897 \
   "$TGBOT_IMAGE" >/dev/null

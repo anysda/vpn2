@@ -42,6 +42,8 @@ export default defineEventHandler(async (event) => {
     serverPort: Number(cfg.ovpnPort),
     proto: String(cfg.ovpnProto),
     dns: clientDns(client.filterTraffic),
+    splitLocal: cfg.wgSplitLocal !== false,
+    tunnelPrefixes: [String(cfg.mgmtMeshIpPrefix)],
   })
 
   const name = deviceConfigName(client.name, device.name)

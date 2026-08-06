@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
 
 const exec = promisify(execFile)
@@ -120,6 +121,10 @@ export interface OvpnConfigParams {
   serverPort: number
   proto: string
   dns: string[]
+  /** true (по умолчанию) — локалка клиента остаётся мимо туннеля. */
+  splitLocal?: boolean
+  /** Сети, которые всё-таки должны идти В туннель: mgmt (DNS AdGuard). */
+  tunnelPrefixes?: string[]
 }
 
 /** Render a unified .ovpn with inline ca / cert / key / tls-crypt blocks. */
@@ -149,6 +154,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
     `auth SHA256`,
     `verb 3`,
     ...p.dns.map(d => `dhcp-option DNS ${d}`),
+    ...ovpnLocalRoutes(p.splitLocal ?? true, p.tunnelPrefixes ?? ['10.99.0.']),
     ``,
     `<ca>`,
     ca.trim(),

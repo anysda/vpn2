@@ -316,7 +316,7 @@ async function doDelete() {
             <img
               :src="wgQrUrl(clientId, device.id)"
               alt="WireGuard QR"
-              class="w-64 h-64 rounded-md bg-white p-2"
+              class="w-80 h-80 rounded-md bg-white p-2"
             >
           </div>
 

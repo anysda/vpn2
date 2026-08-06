@@ -43,6 +43,8 @@ export default defineEventHandler(async (event) => {
     serverPort: Number(cfg.wgListenPort),
     dns: clientDns(client.filterTraffic).join(', '),
     mtu: Number(cfg.wgMtu),
+    splitLocal: cfg.wgSplitLocal !== false,
+    tunnelPrefixes: [String(cfg.wgSubnetPrefix), String(cfg.mgmtMeshIpPrefix)],
   })
 
   setHeader(event, 'content-type', 'text/plain; charset=utf-8')

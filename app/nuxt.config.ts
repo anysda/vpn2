@@ -50,6 +50,10 @@ export default defineNuxtConfig({
     wgPublicHost: '',
     wgDns: '10.99.0.1',
     wgMtu: 1420,
+    // Сплит-туннель: локальные сети клиента (RFC1918, CGNAT, multicast) не
+    // уезжают в VPN — см. server/utils/allowed-ips.ts. NUXT_WG_SPLIT_LOCAL=false
+    // возвращает классический full-tunnel 0.0.0.0/0.
+    wgSplitLocal: true,
     ovpnEnabled: true,
     ovpnPort: 1194,
     ovpnProto: 'udp',

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { wgAllowedIps } from './allowed-ips'
 import { isClientActive } from './client-status'
 
 const exec = promisify(execFile)
@@ -48,12 +49,24 @@ export interface WgClientConfigParams {
   serverPort: number
   dns?: string
   mtu?: number
+  /**
+   * true (по умолчанию) — локальные сети клиента остаются мимо туннеля,
+   * см. `wgAllowedIps`. false — классический full-tunnel 0.0.0.0/0.
+   */
+  splitLocal?: boolean
+  /** Сети, которые всё-таки должны идти В туннель: wg-сегмент и mgmt (DNS). */
+  tunnelPrefixes?: string[]
 }
 
 /** Render a client-facing wg-quick .conf string. */
 export function buildWgClientConfig(p: WgClientConfigParams): string {
   const dns = p.dns ?? '10.99.0.1'
   const mtu = p.mtu ?? 1420
+  const allowed = wgAllowedIps(
+    p.splitLocal ?? true,
+    p.tunnelPrefixes ?? ['10.66.66.', '10.99.0.'],
+    p.serverEndpoint,
+  )
   return [
     `[Interface]`,
     `PrivateKey = ${p.clientPrivateKey}`,
@@ -65,7 +78,7 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
     `PublicKey = ${p.serverPublicKey}`,
     `PresharedKey = ${p.clientPresharedKey}`,
     `Endpoint = ${p.serverEndpoint}:${p.serverPort}`,
-    `AllowedIPs = 0.0.0.0/0, ::/0`,
+    `AllowedIPs = ${allowed}`,
     `PersistentKeepalive = 25`,
     ``,
   ].join('\n')

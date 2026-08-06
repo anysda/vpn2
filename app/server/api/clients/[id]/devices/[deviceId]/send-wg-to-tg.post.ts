@@ -47,6 +47,8 @@ export default defineEventHandler(async (event) => {
     serverPort: Number(cfg.wgListenPort),
     dns: clientDns(client.filterTraffic).join(', '),
     mtu: Number(cfg.wgMtu),
+    splitLocal: cfg.wgSplitLocal !== false,
+    tunnelPrefixes: [String(cfg.wgSubnetPrefix), String(cfg.mgmtMeshIpPrefix)],
   })
 
   const name = deviceConfigName(client.name, device.name)

@@ -44,14 +44,19 @@ export default defineEventHandler(async (event) => {
     serverPort: Number(cfg.wgListenPort),
     dns: clientDns(client.filterTraffic).join(', '),
     mtu: Number(cfg.wgMtu),
+    splitLocal: cfg.wgSplitLocal !== false,
+    tunnelPrefixes: [String(cfg.wgSubnetPrefix), String(cfg.mgmtMeshIpPrefix)],
   })
 
+  // Сплит-туннель раздувает конфиг с ~330 до ~950 байт (42 префикса в
+  // AllowedIPs), поэтому ecl 'L' и 512px: при 'M'/320px QR получается
+  // настолько плотным, что телефон его с экрана уже не берёт.
   const svg = new QRCode({
     content: conf,
     padding: 2,
-    width: 320,
-    height: 320,
-    ecl: 'M',
+    width: 512,
+    height: 512,
+    ecl: 'L',
   }).svg()
 
   setHeader(event, 'content-type', 'image/svg+xml; charset=utf-8')

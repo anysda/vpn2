@@ -35,6 +35,12 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
   TLS (nfqws2/zapret2), отбор трафика по SO_MARK от sing-box.
 - **Ручные правила:** домен/IP → конкретный outbound, drag-and-drop в
   UI; sing-box подхватывает без рестарта клиентов.
+- **Сплит-туннель по локалкам (по умолчанию вкл.):** RFC1918, CGNAT
+  (`100.64/10`) и multicast не уезжают в VPN — роутер, NAS, принтер,
+  Chromecast и docker-сети остаются доступны при поднятом туннеле.
+  В WG это дополнение `0.0.0.0/0` в `AllowedIPs` (с дыркой под endpoint,
+  иначе wg-quick ловит петлю), в OpenVPN — `route … net_gateway`.
+  Выключается `WG_SPLIT_LOCAL=false`, см. `server/utils/allowed-ips.ts`.
 - **AdGuard Home:** DNS + блок-лист для VPN-клиентов с включённой
   фильтрацией.
 - **Telegram-бот:** админ управляет клиентами командами `/clients`,

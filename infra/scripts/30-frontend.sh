@@ -23,7 +23,15 @@ mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 # ----------------------------------------------------------------------------
 PANEL_IMAGE="${PANEL_IMAGE:-registry.anysda.space/anysda/vpn2/panel:dev}"
 echo "[$HOST_TAG] [1/4] docker pull ${PANEL_IMAGE}"
-docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
+# Registry живёт дома, за домашним каналом: если он лёг (или образ собрали и
+# загрузили на ноду напрямую через `docker save | ssh … docker load`), стадия
+# не должна ронять деплой — берём уже лежащий локально образ. Нет ни там, ни
+# там — вот тогда падаем.
+if ! docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+  docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
+    || { echo "[$HOST_TAG] ✗ образа ${PANEL_IMAGE} нет ни в registry, ни локально"; exit 1; }
+  echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${PANEL_IMAGE}"
+fi
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password, render anysda-config.yaml
@@ -144,6 +152,7 @@ docker run -d \
   -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
   -e NUXT_WG_DNS="${WG_DNS:-10.99.0.1}" \
   -e NUXT_WG_MTU="${WG_MTU:-1420}" \
+  -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
   -e NUXT_OVPN_ENABLED=true \
   -e NUXT_OVPN_PORT="${OVPN_PORT:-1194}" \
   -e NUXT_OVPN_PROTO="${OVPN_PROTO:-udp}" \

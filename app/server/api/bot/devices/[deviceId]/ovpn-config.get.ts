@@ -35,6 +35,8 @@ export default defineEventHandler(async (event) => {
     serverPort: Number(cfg.ovpnPort),
     proto: String(cfg.ovpnProto),
     dns: clientDns(client.filterTraffic),
+    splitLocal: cfg.wgSplitLocal !== false,
+    tunnelPrefixes: [String(cfg.mgmtMeshIpPrefix)],
   })
 
   setHeader(event, 'content-type', 'text/plain; charset=utf-8')

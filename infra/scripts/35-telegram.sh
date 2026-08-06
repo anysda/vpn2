@@ -100,9 +100,13 @@ docker logs --tail 6 anysda-tgbot 2>&1 | sed "s/^/[$HOST_TAG]   /"
 
 # Restart anysda-vpn so it picks up TGBOT_SECRET (if it was already running)
 # This is needed when stage 35 is re-run independently after stage 30.
-if docker ps --filter name=anysda-vpn --format '{{.Names}}' | grep -q anysda-vpn; then
-  echo "[$HOST_TAG] перезапуск anysda-vpn для передачи TGBOT_SECRET..."
-  docker restart anysda-vpn >/dev/null 2>&1 || true
+# Контейнер зовут anysda-vpn2 — `docker restart anysda-vpn` (без двойки) молча
+# падал в `|| true`, и панель секрет не подхватывала. Заодно не глушим ошибку
+# насовсем: если рестарт не удался, это видно в логе стадии.
+if docker ps --filter name=anysda-vpn2 --format '{{.Names}}' | grep -q anysda-vpn2; then
+  echo "[$HOST_TAG] перезапуск anysda-vpn2 для передачи TGBOT_SECRET..."
+  docker restart anysda-vpn2 >/dev/null \
+    || echo "[$HOST_TAG]   ⚠ рестарт anysda-vpn2 не удался — панель могла остаться со старым TGBOT_SECRET"
 fi
 
 mkdir -p "$STAMP_DIR"

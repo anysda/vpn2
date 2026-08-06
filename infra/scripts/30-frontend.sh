@@ -22,12 +22,20 @@ mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 # 1. Pull panel image from the public GitLab Container Registry
 # ----------------------------------------------------------------------------
 PANEL_IMAGE="${PANEL_IMAGE:-registry.anysda.space/anysda/vpn2/panel:dev}"
+PANEL_IMAGE_PULL="${PANEL_IMAGE_PULL:-true}"
 echo "[$HOST_TAG] [1/4] docker pull ${PANEL_IMAGE}"
 # Registry живёт дома, за домашним каналом: если он лёг (или образ собрали и
 # загрузили на ноду напрямую через `docker save | ssh … docker load`), стадия
 # не должна ронять деплой — берём уже лежащий локально образ. Нет ни там, ни
 # там — вот тогда падаем.
-if ! docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+#
+# PANEL_IMAGE_PULL=false — не ходить в registry вообще: образ уже загружен на
+# ноду руками и pull его молча перезатрёт старым слепком того же тега.
+if [[ "$PANEL_IMAGE_PULL" == "false" ]]; then
+  docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
+    || { echo "[$HOST_TAG] ✗ PANEL_IMAGE_PULL=false, но образа ${PANEL_IMAGE} на ноде нет"; exit 1; }
+  echo "[$HOST_TAG]   pull пропущен (PANEL_IMAGE_PULL=false), беру локальный образ"
+elif ! docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
   docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
     || { echo "[$HOST_TAG] ✗ образа ${PANEL_IMAGE} нет ни в registry, ни локально"; exit 1; }
   echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${PANEL_IMAGE}"

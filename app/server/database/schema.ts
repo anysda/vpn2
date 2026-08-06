@@ -15,6 +15,11 @@ export const users = sqliteTable('users', {
   username: text('username').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   totpSecret: text('totp_secret'),
+  // Привязка учётки к пользователю IdP (Authentik) по НЕИЗМЕНЯЕМОМУ `sub`
+  // (у провайдера sub_mode=user_uuid). Не по имени и не по почте: имя человек
+  // меняет сам, почта в панели и в IdP расходится, а auto-link по почте — это
+  // вектор захвата. null — учётка к SSO не привязана.
+  oidcSub: text('oidc_sub').unique(),
   ...timestamps,
 })
 

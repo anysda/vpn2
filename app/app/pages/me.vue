@@ -5,6 +5,10 @@ useHead({ title: 'Профиль — anysda-vpn2' })
 
 const { user, fetch: refreshSession } = useUserSession()
 const toast = useToast()
+const { sso } = useRuntimeConfig().public
+
+// via отсутствует у сессий, выданных до появления SSO — это парольный вход.
+const viaSso = computed(() => user.value?.via === 'sso')
 
 // ---------------------- Password change ----------------------
 const pwd = reactive({ current: '', next: '', confirm: '' })
@@ -143,8 +147,11 @@ async function disableTotp() {
           Логин
         </div>
       </template>
-      <div class="text-sm">
+      <div class="text-sm flex items-center gap-2">
         {{ user?.username ?? '—' }}
+        <UBadge v-if="viaSso" color="primary" variant="subtle" size="sm">
+          вход через {{ sso.label }}
+        </UBadge>
       </div>
     </UCard>
 
@@ -154,6 +161,15 @@ async function disableTotp() {
           Смена пароля
         </div>
       </template>
+      <UAlert
+        v-if="sso.enabled"
+        class="mb-4"
+        color="neutral"
+        variant="soft"
+        icon="i-lucide-life-buoy"
+        title="Пароль — аварийный вход"
+        description="Обычный вход идёт через Authentik. Пароль остаётся рабочим на случай, когда Authentik недоступен: форма открывается по адресу /login?direct=1"
+      />
       <form class="space-y-3" @submit.prevent="changePassword">
         <UFormField label="Текущий пароль">
           <UInput v-model="pwd.current" type="password" autocomplete="current-password" class="w-full" />

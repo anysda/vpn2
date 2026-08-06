@@ -12,7 +12,10 @@ async function logout() {
   }
   finally {
     await clear()
-    await navigateTo('/login')
+    // ?direct=1, а не просто /login: сессия в самом Authentik живёт дальше, и
+    // без этого авторедирект внёс бы обратно тем же кликом — «выйти» выглядело
+    // бы как «ничего не произошло».
+    await navigateTo('/login?direct=1')
   }
 }
 

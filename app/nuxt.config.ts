@@ -25,6 +25,32 @@ export default defineNuxtConfig({
         secure: false,
       },
     },
+    // --- OIDC / Authentik -----------------------------------------------------
+    // Заполняется стадией 30-frontend из блока `sso:` в config.yaml:
+    //   NUXT_OAUTH_OIDC_CLIENT_ID / _CLIENT_SECRET / _OPENID_CONFIG / _REDIRECT_URL
+    // Обработчик — server/routes/auth/authentik.get.ts (generic OIDC из
+    // nuxt-auth-utils: state + PKCE + nonce, в отличие от провайдера `authentik`
+    // из той же библиотеки, где нет ни того, ни другого).
+    oauth: {
+      oidc: {
+        // ⚠️ 'openid' здесь НЕТ намеренно. defineOAuthOidcEventHandler делает
+        // defu(config, runtimeConfig, { scope: ['openid'] }), а defu массивы
+        // СКЛЕИВАЕТ, а не перекрывает: напиши здесь 'openid' — уедет
+        // "openid profile email openid". Базовый scope добавит сам обработчик.
+        scope: ['profile', 'email'],
+      },
+    },
+    // Настройки SSO, не относящиеся к самому протоколу. Секретов тут нет,
+    // кроме allowedSubs (не секрет, но и светить в браузере незачем).
+    sso: {
+      // uuid'ы пользователей Authentik, которым разрешён вход, в виде
+      // «<sub>» или «<sub>:<локальный логин>» через запятую. Пустая строка —
+      // не пустит НИКОГО: новые учётки из IdP панель не заводит никогда.
+      allowedSubs: '',
+      // Парольный вход. По стандарту флота он не удаляется, а прячется с формы
+      // (см. public.sso.autoRedirect) — false здесь рубит его наглухо.
+      passwordLogin: true,
+    },
     databaseUrl: 'file:./local.db',
     anysdaConfigPath: '/etc/anysda/config.yaml',
     routesFilePath: '/etc/anysda/manual-routes.json',
@@ -61,6 +87,14 @@ export default defineNuxtConfig({
     logLevel: 'info',
     public: {
       panelName: 'anysda-vpn2',
+      sso: {
+        // NUXT_PUBLIC_SSO_ENABLED — общий рубильник (и кнопка, и авторедирект).
+        enabled: false,
+        // Бесшовность: неавторизованного сразу уносит в IdP, формы он не видит.
+        // false — форма остаётся, но с кнопкой «Войти через Authentik».
+        autoRedirect: true,
+        label: 'Authentik',
+      },
     },
   },
 

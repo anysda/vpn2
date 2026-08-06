@@ -14,7 +14,7 @@ from pathlib import Path
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
-           'panel': {}, 'backup': {}, 'youtube': {}}
+           'panel': {}, 'backup': {}, 'youtube': {}, 'sso': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -50,6 +50,8 @@ def parse_yaml(text):
                 backup_sub = None
             elif content.startswith('youtube:'):
                 context = 'youtube'
+            elif content.startswith('sso:'):
+                context = 'sso'
             else:
                 k, v = kv(content)
                 if v:
@@ -81,6 +83,9 @@ def parse_yaml(text):
             elif context == 'youtube':
                 k, v = kv(content)
                 cfg['youtube'][k] = v
+            elif context == 'sso':
+                k, v = kv(content)
+                cfg['sso'][k] = v
             elif context == 'backup':
                 # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
                 if content.endswith(':') and ':' not in content[:-1]:
@@ -309,6 +314,52 @@ def main():
         lines.append(f"YT_ZAPRET_REF={shq(yt['zapret_ref'])}")
     if yt.get('domains'):
         lines.append(f"YT_DOMAINS={shq(yt['domains'])}")
+
+    # SSO-секция (Authentik / OIDC). Читает стадия 30-frontend. Пустая секция
+    # или enabled=false → SSO_ENABLED='false', панель ведёт себя ровно как до
+    # появления фичи (форма с логином и паролем).
+    sso = cfg.get('sso', {})
+    sso_on = (sso.get('enabled', '') or '').lower() in ('true', 'yes', 'y', '1')
+    lines += ['', f"SSO_ENABLED='{'true' if sso_on else 'false'}'"]
+    if sso_on:
+        # discovery_url можно задать целиком; иначе собираем из адреса IdP и
+        # slug'а приложения — у Authentik ручка ВСЕГДА такая.
+        discovery = sso.get('discovery_url', '')
+        if not discovery:
+            base = (sso.get('base_url', '') or '').rstrip('/')
+            slug = sso.get('app_slug', '') or 'vpn2'
+            if not base:
+                print('ERROR: sso.enabled=true, но не задан ни sso.discovery_url, '
+                      'ни sso.base_url', file=sys.stderr)
+                sys.exit(1)
+            discovery = f'{base}/application/o/{slug}/.well-known/openid-configuration'
+        client_id = sso.get('client_id', '') or 'vpn2'
+        client_secret = sso.get('client_secret', '')
+        allowed_subs = sso.get('allowed_subs', '')
+        if not client_secret:
+            print('ERROR: sso.client_secret не задан — панель не сможет обменять '
+                  'код на токен', file=sys.stderr)
+            sys.exit(1)
+        if not allowed_subs:
+            # Пустой список — не «всех пустить», а «никого». Молча выкатывать
+            # такое нельзя: вход просто перестанет работать, и искать причину
+            # будешь в Authentik, а она здесь.
+            print('ERROR: sso.allowed_subs пуст — войти не сможет никто. Укажи uuid '
+                  'пользователя Authentik (sub), см. docs/sso.md', file=sys.stderr)
+            sys.exit(1)
+        lines += [
+            f'SSO_DISCOVERY_URL={shq(discovery)}',
+            f'SSO_CLIENT_ID={shq(client_id)}',
+            f'SSO_CLIENT_SECRET={shq(client_secret)}',
+            f'SSO_ALLOWED_SUBS={shq(allowed_subs)}',
+            f"SSO_LABEL={shq(sso.get('label', '') or 'Authentik')}",
+            # Бесшовность (форму не видно вообще). false — форма остаётся, но с
+            # кнопкой входа через IdP.
+            f"SSO_AUTO_REDIRECT='{'false' if (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true'}'",
+            # Парольный вход. Стандарт флота — «спрятан, но жив», поэтому по
+            # умолчанию true; false рубит его наглухо (и break-glass тоже!).
+            f"SSO_PASSWORD_LOGIN='{'false' if (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true'}'",
+        ]
 
     # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
     # enabled=false → ничего не пишем, 26-backup увидит отсутствие и пропустится.

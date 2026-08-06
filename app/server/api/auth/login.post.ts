@@ -4,6 +4,7 @@ import { useDb } from '../../database/client'
 import { users } from '../../database/schema'
 import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
+import { ssoSettings } from '../../utils/sso'
 import { verifyTotpToken } from '../../utils/totp'
 
 const Body = z.object({
@@ -17,6 +18,13 @@ const Body = z.object({
 const RL = { scope: 'login', maxAttempts: 10, windowMs: 5 * 60_000, lockoutMs: 5 * 60_000 }
 
 export default defineEventHandler(async (event) => {
+  // Парольный вход по стандарту флота не удаляется, а прячется с формы: при
+  // включённом SSO сюда попадают только через break-glass /login?direct=1.
+  // NUXT_SSO_PASSWORD_LOGIN=false рубит его наглухо — осознанно и отдельным
+  // рычагом, чтобы это нельзя было сделать «заодно».
+  if (!ssoSettings().passwordLogin) {
+    throw createError({ statusCode: 403, statusMessage: 'password_login_disabled' })
+  }
   rateLimitGuard(event, RL)
   const body = await readValidatedBody(event, Body.parse)
   const db = useDb()
@@ -50,6 +58,7 @@ export default defineEventHandler(async (event) => {
       id: user.id,
       username: user.username,
       totpEnabled: !!user.totpSecret,
+      via: 'password',
     },
   })
 

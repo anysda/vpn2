@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
     .where(eq(users.id, u.id))
 
   await setUserSession(event, {
-    user: { id: u.id, username: u.username, totpEnabled: false },
+    user: { id: u.id, username: u.username, totpEnabled: false, via: u.via },
   })
 
   return { ok: true }

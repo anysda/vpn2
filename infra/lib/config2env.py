@@ -253,6 +253,10 @@ def main():
     admin_password = admin.get('password', '')  # пусто → auto-gen в 22-adguard
 
     panel_domain = cfg.get('panel', {}).get('domain', '')
+    # Образ панели. Пусто → дефолт стадии 30 (…/panel:dev). Пин нужен, когда на
+    # проде осознанно крутится не dev-линия: без него обычный прогон 30-frontend
+    # молча утащит панель обратно на :dev.
+    panel_image = cfg.get('panel', {}).get('image', '')
 
     lines = [
         "HOST_TAG='ru'",
@@ -271,6 +275,8 @@ def main():
         f"ADMIN_PASSWORD='{admin_password}'",
         f"PANEL_DOMAIN='{panel_domain}'",
     ]
+    if panel_image:
+        lines.append(f"PANEL_IMAGE='{panel_image}'")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [

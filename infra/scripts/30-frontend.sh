@@ -55,6 +55,34 @@ fi
 ADMIN_PASS=$(cat /etc/anysda/admin-password.txt)
 ADMIN_USER="${ADMIN_USER:-anysda}"
 
+# --- SSO (Authentik / OIDC) -------------------------------------------------
+# Приезжает из блока `sso:` в config.yaml через config2env.py. Выключено —
+# панель ведёт себя ровно как раньше (форма логин/пароль).
+SSO_ENABLED="${SSO_ENABLED:-false}"
+if [[ "$SSO_ENABLED" == "true" ]]; then
+  # ⚠️ ЖЁСТКАЯ ЗАВИСИМОСТЬ ОТ HTTPS. Куки state/PKCE/nonce обработчик OIDC
+  # ставит с флагом Secure (в nuxt-auth-utils это `secure: !isDevelopment`, и
+  # sed-патч из Dockerfile его не трогает — он про куку сессии). По HTTP они
+  # просто не сохранятся, и КАЖДЫЙ вход будет падать в «state mismatch».
+  # Симптом выглядит как поломка Authentik, а причина здесь — поэтому падаем
+  # заранее и вслух, а не выкатываем заведомо мёртвый вход.
+  [[ -n "${PANEL_DOMAIN:-}" ]] || {
+    echo "[$HOST_TAG] ✗ sso.enabled=true, но panel.domain не задан."
+    echo "[$HOST_TAG]   SSO работает только по HTTPS: куки state/PKCE — Secure-only."
+    exit 1
+  }
+  : "${SSO_DISCOVERY_URL:?SSO_DISCOVERY_URL пуст}" \
+    "${SSO_CLIENT_ID:?SSO_CLIENT_ID пуст}" \
+    "${SSO_CLIENT_SECRET:?SSO_CLIENT_SECRET пуст}" \
+    "${SSO_ALLOWED_SUBS:?SSO_ALLOWED_SUBS пуст — войти не сможет никто}"
+  SSO_REDIRECT_URL="https://${PANEL_DOMAIN}/auth/authentik"
+  echo "[$HOST_TAG]   SSO: ${SSO_CLIENT_ID} @ ${SSO_DISCOVERY_URL}"
+  echo "[$HOST_TAG]   SSO redirect_uri: ${SSO_REDIRECT_URL} (должен совпадать с провайдером в Authentik)"
+else
+  SSO_REDIRECT_URL=""
+  echo "[$HOST_TAG]   SSO: выключен"
+fi
+
 TPL=/tmp/anysda/anysda-config.yaml.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 
@@ -177,6 +205,15 @@ docker run -d \
   -e NUXT_VM_URL="http://127.0.0.1:8428" \
   -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
   -e NUXT_TGBOT_EVENT_PORT=8877 \
+  -e NUXT_PUBLIC_SSO_ENABLED="${SSO_ENABLED}" \
+  -e NUXT_PUBLIC_SSO_AUTO_REDIRECT="${SSO_AUTO_REDIRECT:-true}" \
+  -e NUXT_PUBLIC_SSO_LABEL="${SSO_LABEL:-Authentik}" \
+  -e NUXT_SSO_ALLOWED_SUBS="${SSO_ALLOWED_SUBS:-}" \
+  -e NUXT_SSO_PASSWORD_LOGIN="${SSO_PASSWORD_LOGIN:-true}" \
+  -e NUXT_OAUTH_OIDC_CLIENT_ID="${SSO_CLIENT_ID:-}" \
+  -e NUXT_OAUTH_OIDC_CLIENT_SECRET="${SSO_CLIENT_SECRET:-}" \
+  -e NUXT_OAUTH_OIDC_OPENID_CONFIG="${SSO_DISCOVERY_URL:-}" \
+  -e NUXT_OAUTH_OIDC_REDIRECT_URL="${SSO_REDIRECT_URL}" \
   -e LOG_LEVEL=info \
   "$PANEL_IMAGE" \
   >/dev/null
@@ -201,5 +238,11 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
 else
   echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
 fi
-echo "[$HOST_TAG]  Логин:         $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"
+if [[ "$SSO_ENABLED" == "true" ]]; then
+  echo "[$HOST_TAG]  Вход:          через Authentik (бесшовно)"
+  echo "[$HOST_TAG]  Break-glass:   https://${PANEL_DOMAIN}/login?direct=1"
+  echo "[$HOST_TAG]                 $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"
+else
+  echo "[$HOST_TAG]  Логин:         $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"
+fi
 echo "[$HOST_TAG] -------------------------------------------------------------"

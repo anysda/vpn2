@@ -40,6 +40,28 @@ admin:
 # panel:
 #   domain: vpn.example.com
 
+# SSO через OIDC-провайдера (проверено на Authentik). Опционально, по умолчанию
+# ВЫКЛЮЧЕНО — панель живёт на своём логине и пароле. Подробности и порядок
+# подключения — docs/sso.md.
+#
+# ⚠️ Требует panel.domain: вход идёт по HTTPS, куки state/PKCE — Secure-only.
+# ⚠️ allowed_subs обязателен. Панель НИКОГДА не заводит учётку из IdP: вход
+#    пускается только к уже существующей и только по uuid из этого списка.
+#    Пустой список = не войдёт никто (стадия падает заранее, а не молча).
+# sso:
+#   enabled: true
+#   base_url: https://auth.example.com      # адрес IdP; discovery собирается как
+#                                           # {base_url}/application/o/{app_slug}/.well-known/openid-configuration
+#   app_slug: vpn2                          # slug приложения в Authentik
+#   client_id: vpn2
+#   client_secret: "<секрет OIDC-клиента>"
+#   allowed_subs: "<uuid пользователя в IdP>"   # «<sub>» или «<sub>:<логин в панели>»,
+#                                               # несколько — через запятую
+#   auto_redirect: true                     # true — формы не видно вообще
+#   password_login: true                    # пароль спрятан, но ЖИВ: /login?direct=1
+#   label: Authentik
+#   # discovery_url: https://…/.well-known/openid-configuration   # если IdP не Authentik
+
 # Telegram-бот (опционально).
 # Если задан — стейдж 35-telegram развернёт бот; иначе skip.
 # telegram:

@@ -33,7 +33,9 @@ export default defineEventHandler(async (event) => {
   // полностью заменяет сессию — иначе defu в setUserSession не позволяет
   // выкинуть pendingTotpSecret (merge не умеет deletion).
   await replaceUserSession(event, {
-    user: { id: u.id, username: u.username, totpEnabled: true },
+    // via переносим из текущей сессии: replaceUserSession стирает всё, а способ
+    // входа от включения TOTP не меняется.
+    user: { id: u.id, username: u.username, totpEnabled: true, via: u.via },
   })
 
   return { ok: true }

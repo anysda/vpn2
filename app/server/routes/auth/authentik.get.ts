@@ -15,7 +15,23 @@ import { resolveSsoUser, SsoDenied, ssoConfigured, ssoSettings } from '../../uti
 
 const LOGIN_FORM = '/login?direct=1'
 
-const oidcHandler = defineOAuthOidcEventHandler({
+/**
+ * ⚠️ Обработчик создаётся НА КАЖДЫЙ запрос, а не один раз на модуль.
+ *
+ * Внутри `defineOAuthOidcEventHandler` (nuxt-auth-utils 0.5.29) первой строкой
+ * стоит `config = defu(config, runtimeConfig.oauth.oidc, { scope: ['openid'] })`
+ * — присваивание в ЗАМЫКАНИЕ. defu массивы склеивает, поэтому у живущего между
+ * запросами обработчика scope растёт на `profile email openid` с каждого входа:
+ * первый заход — 3 элемента, сотый — 300. URL авторизации пухнет на 21 байт за
+ * заход и однажды перестаёт лезть в буфер заголовков openresty перед Authentik:
+ * вместо формы входа человек получает «414 Request-URI Too Large»
+ * (прод, 14-08-2026, панель провисела 8 суток).
+ *
+ * Свежее замыкание на запрос — единственная защита, не зависящая от версии
+ * библиотеки: чинить чужой defu мы не можем, а обнулять `config.scope` снаружи
+ * нечего — переменная приватная. Стоимость — создание объекта на вход.
+ */
+const makeOidcHandler = () => defineOAuthOidcEventHandler({
   async onSuccess(event, { user: claims }) {
     const log = useLogger()
     const sub = String((claims as Record<string, unknown>)?.sub ?? '')
@@ -64,5 +80,5 @@ export default defineEventHandler(async (event) => {
     useLogger().warn({ enabled, configured: ssoConfigured() }, 'sso: запрос при выключенном SSO')
     return sendRedirect(event, `${LOGIN_FORM}&error=sso_off`)
   }
-  return oidcHandler(event)
+  return makeOidcHandler()(event)
 })

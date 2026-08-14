@@ -37,6 +37,8 @@ export default defineNuxtConfig({
         // defu(config, runtimeConfig, { scope: ['openid'] }), а defu массивы
         // СКЛЕИВАЕТ, а не перекрывает: напиши здесь 'openid' — уедет
         // "openid profile email openid". Базовый scope добавит сам обработчик.
+        // Тот же defu склеивает scope и МЕЖДУ запросами, если обработчик живёт
+        // дольше запроса — см. комментарий в server/routes/auth/authentik.get.ts.
         scope: ['profile', 'email'],
       },
     },

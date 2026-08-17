@@ -3,7 +3,7 @@ import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
 import { notifyBot } from '../../../../../utils/bot-events'
-import { buildIkev2ClientInfo, ikev2CaReady } from '../../../../../utils/ikev2'
+import { buildIkev2ClientInfo, ikev2ServerReady } from '../../../../../utils/ikev2'
 
 /**
  * Послать IKEv2-доступ в Telegram (админский чат). Два сообщения:
@@ -20,8 +20,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
 
-  if (!(await ikev2CaReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'IKEv2 CA ещё не инициализирован (стадия 27-ikev2)' })
+  if (!(await ikev2ServerReady())) {
+    throw createError({ statusCode: 503, statusMessage: 'IKEv2-сервер ещё не развёрнут (стадия 27-ikev2)' })
   }
 
   const cfg = useRuntimeConfig()

@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
-import { buildIkev2ClientInfo, ikev2CaReady } from '../../../../../utils/ikev2'
+import { buildIkev2ClientInfo, ikev2ServerReady } from '../../../../../utils/ikev2'
 
 /**
  * Возвращает JSON с server/username/password/remoteId + CA cert (PEM).
@@ -16,8 +16,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
 
-  if (!(await ikev2CaReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'IKEv2 CA ещё не инициализирован (запусти стадию 27-ikev2)' })
+  if (!(await ikev2ServerReady())) {
+    throw createError({ statusCode: 503, statusMessage: 'IKEv2-сервер ещё не развёрнут (запусти стадию 27-ikev2)' })
   }
 
   const cfg = useRuntimeConfig()

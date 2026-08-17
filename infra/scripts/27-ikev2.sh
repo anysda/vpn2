@@ -409,15 +409,18 @@ RE_SECRET = re.compile(r'^\s*secret\s*=\s*"?(.*?)"?\s*$')
 # Разбор `swanctl --list-sas`. Биндингов python3-vici в Ubuntu 24.04 нет,
 # поэтому состояние читаем из человекочитаемого вывода:
 #
-#   anysda-ikev2: #7, ESTABLISHED, IKEv2, ...
-#     remote 'phone' @ 1.2.3.4[4500] EAP: 'phone'
+#   anysda-ikev2: #7, ESTABLISHED, IKEv2, cbd5867eca6763b0_i 0cf6cdcbdda975d6_r*
+#     remote '192.168.1.210' @ 109.252.101.47[1445] EAP: 'phone' [10.68.68.1]
 #     net: #7, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256
-#       in  c0ffee11,   1234 bytes,    12 packets, 1s ago
-#       out deadbeef,   5678 bytes,    20 packets, 1s ago
+#       in  c6cbc42a (-|0x0000002a),  50650 bytes,   540 packets,    11s ago
+#       out ceebcf43 (-|0x0000002a), 1023795 bytes,  1100 packets,    11s ago
+#
+# ⚠️ После SPI может стоять «(-|0x…)» с if_id — до числа байт идёт не один
+# токен, а произвольный кусок до первой запятой.
 RE_SA_HEAD = re.compile(r'^(\S+):\s+#(\d+),\s+(\S+?),')
 RE_EAP_ID = re.compile(r"EAP:\s+'([^']+)'")
 RE_REMOTE_ID = re.compile(r"^\s+remote\s+'([^']+)'")
-RE_BYTES = re.compile(r'^\s+(in|out)\s+\S+,\s+(\d+)\s+bytes')
+RE_BYTES = re.compile(r'^\s+(in|out)\s+.*?,\s*(\d+)\s+bytes')
 
 
 def parse_clients(path):

@@ -325,6 +325,11 @@ if [[ "\$ACTION" == "up" ]]; then
   fi
   ip link set "\$XFRM_IF" mtu 1400 up
   # IP на xfrm0 не нужен — TPROXY работает по mark'у, не по адресу интерфейса.
+  # А вот МАРШРУТ на пул нужен: обратные пакеты (ответы sing-box и AdGuard)
+  # адресованы 10.68.68.x, и без него ядро не знает, куда их слать — SA
+  # поднимается, трафик уходит в sing-box, а ответы молча дохнут на xfrm0
+  # (TX errors). Через xfrm0 они попадают в out-политику и шифруются.
+  ip route replace "\$IKEV2_SUBNET" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
   ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\

@@ -288,10 +288,24 @@ export async function syncIkev2(): Promise<void> {
  */
 export async function terminateIkev2Sa(username: string): Promise<void> {
   if (!(await ikev2ServerReady())) return
-  const { stdout } = await exec('swanctl', ['--list-sas', '--raw'], { timeout: 10_000 })
-  const ids = [...stdout.matchAll(/uniqueid=(\d+)[\s\S]{0,2000}?remote-eap-id=(\S+)/g)]
-    .filter(m => m[2] === username)
-    .map(m => m[1])
+  const { stdout } = await exec('swanctl', ['--list-sas'], { timeout: 10_000 })
+  // Блок SA начинается со строки без отступа «<conn>: #<uniqueid>, ...»,
+  // EAP-логин идёт ниже в строке remote — тот же разбор, что в
+  // /usr/local/sbin/anysda-ikev2-sync.py на хосте.
+  const ids: string[] = []
+  let current: string | null = null
+  for (const line of stdout.split('\n')) {
+    const head = line.match(/^\S+:\s+#(\d+),/)
+    if (head) {
+      current = head[1]
+      continue
+    }
+    const eap = line.match(/EAP:\s+'([^']+)'/)
+    if (eap && current && eap[1] === username) {
+      ids.push(current)
+      current = null
+    }
+  }
   for (const id of ids) {
     await exec('swanctl', ['--terminate', '--ike-id', id], { timeout: 10_000 })
   }

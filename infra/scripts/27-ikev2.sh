@@ -67,15 +67,15 @@ echo -n "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
 chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
-# python3-vici — биндинги к vici-сокету charon: на них работает
-# anysda-ikev2-sync (шаг 8), который применяет креды панели и снимает счётчики.
+# ⚠️ python3-vici (биндинги к сокету charon) в Ubuntu 24.04 НЕТ ни в одном
+# компоненте — anysda-ikev2-sync (шаг 8) читает состояние через swanctl.
 echo "[$HOST_TAG] [1/8] strongswan apt"
-if ! command -v swanctl >/dev/null 2>&1 || ! python3 -c 'import vici' 2>/dev/null; then
+if ! command -v swanctl >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq \
     strongswan strongswan-pki strongswan-swanctl \
-    libcharon-extra-plugins libstrongswan-extra-plugins python3-vici >/dev/null
+    libcharon-extra-plugins libstrongswan-extra-plugins >/dev/null
 fi
 
 # ── 2. Server certs — раскладка по режиму ─────────────────────────────────
@@ -365,14 +365,25 @@ import sys
 import tempfile
 import time
 
-import vici
-
 CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
 STATE_FILE = '/var/anysda/ikev2-clients.state.json'
 STATUS_FILE = '/etc/anysda/ikev2-status.json'
 
 RE_ID = re.compile(r'^\s*id\s*=\s*"?([^"]+?)"?\s*$')
 RE_SECRET = re.compile(r'^\s*secret\s*=\s*"?(.*?)"?\s*$')
+
+# Разбор `swanctl --list-sas`. Биндингов python3-vici в Ubuntu 24.04 нет,
+# поэтому состояние читаем из человекочитаемого вывода:
+#
+#   anysda-ikev2: #7, ESTABLISHED, IKEv2, ...
+#     remote 'phone' @ 1.2.3.4[4500] EAP: 'phone'
+#     net: #7, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256
+#       in  c0ffee11,   1234 bytes,    12 packets, 1s ago
+#       out deadbeef,   5678 bytes,    20 packets, 1s ago
+RE_SA_HEAD = re.compile(r'^(\S+):\s+#(\d+),\s+(\S+?),')
+RE_EAP_ID = re.compile(r"EAP:\s+'([^']+)'")
+RE_REMOTE_ID = re.compile(r"^\s+remote\s+'([^']+)'")
+RE_BYTES = re.compile(r'^\s+(in|out)\s+\S+,\s+(\d+)\s+bytes')
 
 
 def parse_clients(path):
@@ -411,32 +422,45 @@ def write_json(path, data, mode):
     os.replace(tmp, path)
 
 
-def decode(value):
-    return value.decode() if isinstance(value, bytes) else value
+def live_sas():
+    """[{uniqueid, username, rx, tx}] по живым IKE_SA (rx/tx — в терминах клиента).
 
+    `in` в выводе — принято сервером от клиента, то есть отдача клиента (tx);
+    `out` — отдано клиенту, то есть его скачивание (rx). Это то же соглашение,
+    что у сборщика трафика панели.
+    """
+    try:
+        out = subprocess.run(['swanctl', '--list-sas'], timeout=30,
+                             capture_output=True, text=True, check=True).stdout
+    except (subprocess.SubprocessError, OSError) as exc:
+        print(f'swanctl --list-sas: {exc}', file=sys.stderr)
+        return None
 
-def live_sas(session):
-    """[(uniqueid, eap-id, bytes_in, bytes_out)] по всем IKE_SA anysda-ikev2."""
-    out = []
-    for block in session.list_sas():
-        for _conn, sa in block.items():
-            ident = decode(sa.get('remote-eap-id') or sa.get('remote-id') or b'')
-            uniqueid = decode(sa.get('uniqueid') or b'')
-            rx = tx = 0
-            for _name, child in (sa.get('child-sas') or {}).items():
-                tx += int(decode(child.get('bytes-in') or b'0'))
-                rx += int(decode(child.get('bytes-out') or b'0'))
-            out.append((uniqueid, ident, rx, tx))
-    return out
+    sas, cur = [], None
+    for line in out.splitlines():
+        head = RE_SA_HEAD.match(line)
+        if head:
+            cur = {'uniqueid': head.group(2), 'username': '', 'rx': 0, 'tx': 0}
+            sas.append(cur)
+            continue
+        if cur is None:
+            continue
+        eap = RE_EAP_ID.search(line)
+        if eap:
+            cur['username'] = eap.group(1)
+            continue
+        remote = RE_REMOTE_ID.match(line)
+        if remote and not cur['username']:
+            cur['username'] = remote.group(1)
+            continue
+        counter = RE_BYTES.match(line)
+        if counter:
+            key = 'tx' if counter.group(1) == 'in' else 'rx'
+            cur[key] += int(counter.group(2))
+    return sas
 
 
 def main():
-    try:
-        session = vici.Session()
-    except Exception as exc:  # charon лежит — это авария, пусть видно в journal
-        print(f'vici недоступен: {exc}', file=sys.stderr)
-        return 1
-
     current = parse_clients(CLIENTS_CONF)
     previous = read_json(STATE_FILE, {})
 
@@ -447,22 +471,21 @@ def main():
         # иначе старая сессия висит до перезагрузки (rekey_time = 0s).
         stale = {u for u, h in previous.items() if current.get(u) != h}
         if stale:
-            for uniqueid, ident, _rx, _tx in live_sas(session):
-                if ident in stale and uniqueid:
-                    print(f'terminate ike-id={uniqueid} ({ident})')
+            for sa in live_sas() or []:
+                if sa['username'] in stale and sa['uniqueid']:
+                    print(f'terminate ike-id={sa["uniqueid"]} ({sa["username"]})')
                     # --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, не EAP-логин.
                     rc = subprocess.run(
-                        ['swanctl', '--terminate', '--ike-id', uniqueid],
+                        ['swanctl', '--terminate', '--ike-id', sa['uniqueid']],
                         stdout=subprocess.DEVNULL, timeout=30).returncode
                     if rc != 0:
-                        print(f'terminate {ident} rc={rc}', file=sys.stderr)
+                        print(f'terminate {sa["username"]} rc={rc}', file=sys.stderr)
         write_json(STATE_FILE, current, 0o600)
 
-    sessions = [
-        {'uniqueid': uniqueid, 'username': ident, 'rx': rx, 'tx': tx}
-        for uniqueid, ident, rx, tx in live_sas(session)
-        if ident
-    ]
+    sas = live_sas()
+    if sas is None:  # charon не отвечает — это авария, пусть видно в journal
+        return 1
+    sessions = [sa for sa in sas if sa['username']]
     write_json(STATUS_FILE, {'updated': int(time.time()), 'sessions': sessions}, 0o644)
     return 0
 

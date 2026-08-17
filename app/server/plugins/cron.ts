@@ -23,7 +23,7 @@ export default defineNitroPlugin(() => {
       log.error({ err }, 'cron: ikev2 sync failed'),
     )
 
-    // Накопительный трафик по всем протоколам (WG+OpenVPN), per-device.
+    // Накопительный трафик по всем протоколам (WG+OpenVPN+IKEv2), per-device.
     await collectTraffic().catch(err =>
       log.error({ err }, 'cron: traffic collection failed'),
     )

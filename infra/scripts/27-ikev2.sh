@@ -67,20 +67,22 @@ echo -n "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
 chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
-echo "[$HOST_TAG] [1/7] strongswan apt"
-if ! command -v swanctl >/dev/null 2>&1; then
+# python3-vici — биндинги к vici-сокету charon: на них работает
+# anysda-ikev2-sync (шаг 8), который применяет креды панели и снимает счётчики.
+echo "[$HOST_TAG] [1/8] strongswan apt"
+if ! command -v swanctl >/dev/null 2>&1 || ! python3 -c 'import vici' 2>/dev/null; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq \
     strongswan strongswan-pki strongswan-swanctl \
-    libcharon-extra-plugins libstrongswan-extra-plugins >/dev/null
+    libcharon-extra-plugins libstrongswan-extra-plugins python3-vici >/dev/null
 fi
 
 # ── 2. Server certs — раскладка по режиму ─────────────────────────────────
 install -d -m 700 /etc/swanctl/x509ca /etc/swanctl/x509 /etc/swanctl/private
 
 if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
-  echo "[$HOST_TAG] [2/7] LE-cert от Caddy ($PANEL_DOMAIN)"
+  echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($PANEL_DOMAIN)"
   # Copy Caddy LE-cert/key. Caddy chmod 0600 caddy:caddy — копируем
   # рутом, ставим root:root 0644/0600.
   install -m 0644 "$LE_CERT" /etc/swanctl/x509/anysda-server.crt
@@ -91,7 +93,7 @@ if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
   rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
 
   # ── 3. path-watcher: Caddy ротирует cert раз в 60 дней ────────────────
-  echo "[$HOST_TAG] [3/7] systemd path-watcher на Caddy-cert (LE-ротация)"
+  echo "[$HOST_TAG] [3/8] systemd path-watcher на Caddy-cert (LE-ротация)"
   cat > /etc/systemd/system/anysda-ikev2-cert-sync.service <<EOF
 [Unit]
 Description=anysda-vpn2 — sync Caddy LE-cert into swanctl + reload
@@ -115,7 +117,7 @@ EOF
   systemctl daemon-reload
   systemctl enable --now anysda-ikev2-cert-sync.path >/dev/null 2>&1
 else
-  echo "[$HOST_TAG] [2/7] self-signed CA"
+  echo "[$HOST_TAG] [2/8] self-signed CA"
   if [[ ! -f "$PKI/ca.key" ]]; then
     echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
     pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key"
@@ -126,7 +128,7 @@ else
   chmod 600 "$PKI/ca.key"
   chmod 644 "$PKI/ca.crt"
 
-  echo "[$HOST_TAG] [3/7] self-signed server cert (CN=$ENTRY_HOST)"
+  echo "[$HOST_TAG] [3/8] self-signed server cert (CN=$ENTRY_HOST)"
   NEED_SERVER=0
   if [[ ! -f "$PKI/server.crt" ]]; then
     NEED_SERVER=1
@@ -163,7 +165,7 @@ else
 fi
 
 # ── 4. swanctl conf — базовый conn без клиентов (этап 4 наполнит динамику) ──
-echo "[$HOST_TAG] [4/7] swanctl conf"
+echo "[$HOST_TAG] [4/8] swanctl conf"
 cat > "$CONF" <<EOF
 # Managed by stage 27-ikev2 — НЕ редактировать вручную.
 # Динамический conf с клиент-кредами раскатывает панель (server/utils/ikev2.ts)
@@ -215,9 +217,15 @@ EOF
 chmod 644 "$CONF"
 
 # ── 5. ufw 500 + 4500 ──────────────────────────────────────────────────────
-echo "[$HOST_TAG] [5/7] ufw 500/udp + 4500/udp"
+echo "[$HOST_TAG] [5/8] ufw 500/udp + 4500/udp"
 ufw allow 500/udp  comment 'ikev2 IKE'    >/dev/null 2>&1 || true
 ufw allow 4500/udp comment 'ikev2 NAT-T'  >/dev/null 2>&1 || true
+# DNS клиентам отдаётся AdGuard на mgmt-адресе entry, а он для пакетов из
+# xfrm0 — форвардинг, а ufw по умолчанию routed=deny. Без этих двух правил
+# туннель поднимется, но резолва у клиента не будет. Ровно так же сделано
+# для wg0 (стадия 28) и tun0 (стадия 29).
+ufw allow proto udp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
+ufw allow proto tcp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
 ufw reload >/dev/null 2>&1 || true
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
@@ -228,7 +236,7 @@ sysctl -w net.ipv4.conf.default.rp_filter=2 >/dev/null
 # ── 6. systemd: strongswan-starter (Ubuntu 24.04 / strongSwan 5.9) ──────────
 # На свежих стронгсванах сервис называется strongswan-starter.service (alias —
 # ipsec.service). Юнит strongswan.service отсутствует.
-echo "[$HOST_TAG] [6/7] strongswan-starter service"
+echo "[$HOST_TAG] [6/8] strongswan-starter service"
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
 systemctl restart strongswan-starter
 sleep 2
@@ -246,7 +254,7 @@ echo "[$HOST_TAG]   listening:"
 ss -lun 2>/dev/null | awk '/:500 |:4500 /{print "    " $0}' | sed "s/^/[$HOST_TAG]/"
 
 # ── 7. xfrm0 + TPROXY hook (как anysda-ovpn-routing для tun0) ──────────────
-echo "[$HOST_TAG] [7/7] xfrm0 + anysda-ikev2-routing"
+echo "[$HOST_TAG] [7/8] xfrm0 + anysda-ikev2-routing"
 WAN_IF=$(ip route show default | awk '/default/{print $5; exit}')
 : "${WAN_IF:?не определился WAN-интерфейс по default route}"
 
@@ -322,6 +330,177 @@ chmod +x /usr/local/sbin/anysda-ikev2-routing.sh
 systemctl daemon-reload
 systemctl enable anysda-ikev2-routing >/dev/null 2>&1 || true
 systemctl restart anysda-ikev2-routing
+
+# ── 8. anysda-ikev2-sync: применение кредов панели + счётчики ──────────────
+# Панель живёт в контейнере, где нет ни swanctl, ни сокета charon.vici:
+# её вызовы swanctl (server/utils/ikev2.ts) — best-effort и молча
+# пропускаются. Реальный применитель — этот таймер на хосте: он видит
+# переписанный панелью anysda-clients.conf и грузит его в charon, рвёт SA
+# устройств с изменённым/удалённым паролем и выкладывает счётчики байт
+# в /etc/anysda/ikev2-status.json (панель читает его как status-файл
+# OpenVPN — см. server/utils/traffic-collector.ts).
+echo "[$HOST_TAG] [8/8] anysda-ikev2-sync (creds + counters)"
+
+cat > /usr/local/sbin/anysda-ikev2-sync.py <<'PYEOF'
+#!/usr/bin/env python3
+"""anysda-vpn2 — применение IKEv2-кредов панели и снятие счётчиков.
+
+Раскатывается стадией 27-ikev2, гоняется таймером anysda-ikev2-sync.timer.
+
+  1. /etc/swanctl/conf.d/anysda-clients.conf изменился (панель переписала) →
+     `swanctl --load-creds` + разрыв SA тех устройств, чей пароль изменился
+     или чья запись исчезла (удаление / заморозка / истёкший срок);
+  2. каждый прогон → счётчики байт по каждой живой SA в
+     /etc/anysda/ikev2-status.json.
+
+Снимок кредов держится в /var/anysda/ikev2-clients.state.json как
+username → sha256(пароль): сам пароль на диск вне swanctl не кладём.
+"""
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+
+import vici
+
+CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
+STATE_FILE = '/var/anysda/ikev2-clients.state.json'
+STATUS_FILE = '/etc/anysda/ikev2-status.json'
+
+RE_ID = re.compile(r'^\s*id\s*=\s*"?([^"]+?)"?\s*$')
+RE_SECRET = re.compile(r'^\s*secret\s*=\s*"?(.*?)"?\s*$')
+
+
+def parse_clients(path):
+    """secrets-блок swanctl → {username: sha256(secret)}."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            text = f.read()
+    except OSError:
+        return {}
+    out, ident = {}, None
+    for line in text.splitlines():
+        m = RE_ID.match(line)
+        if m:
+            ident = m.group(1)
+            continue
+        m = RE_SECRET.match(line)
+        if m and ident:
+            out[ident] = hashlib.sha256(m.group(1).encode()).hexdigest()
+            ident = None
+    return out
+
+
+def read_json(path, default):
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path, data, mode):
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path))
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        json.dump(data, f)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def decode(value):
+    return value.decode() if isinstance(value, bytes) else value
+
+
+def live_sas(session):
+    """[(uniqueid, eap-id, bytes_in, bytes_out)] по всем IKE_SA anysda-ikev2."""
+    out = []
+    for block in session.list_sas():
+        for _conn, sa in block.items():
+            ident = decode(sa.get('remote-eap-id') or sa.get('remote-id') or b'')
+            uniqueid = decode(sa.get('uniqueid') or b'')
+            rx = tx = 0
+            for _name, child in (sa.get('child-sas') or {}).items():
+                tx += int(decode(child.get('bytes-in') or b'0'))
+                rx += int(decode(child.get('bytes-out') or b'0'))
+            out.append((uniqueid, ident, rx, tx))
+    return out
+
+
+def main():
+    try:
+        session = vici.Session()
+    except Exception as exc:  # charon лежит — это авария, пусть видно в journal
+        print(f'vici недоступен: {exc}', file=sys.stderr)
+        return 1
+
+    current = parse_clients(CLIENTS_CONF)
+    previous = read_json(STATE_FILE, {})
+
+    if current != previous:
+        subprocess.run(['swanctl', '--load-creds'], check=True,
+                       stdout=subprocess.DEVNULL, timeout=30)
+        # Пароль сменился или устройство исчезло из secrets → рвём живую SA,
+        # иначе старая сессия висит до перезагрузки (rekey_time = 0s).
+        stale = {u for u, h in previous.items() if current.get(u) != h}
+        if stale:
+            for uniqueid, ident, _rx, _tx in live_sas(session):
+                if ident in stale and uniqueid:
+                    print(f'terminate ike-id={uniqueid} ({ident})')
+                    # --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, не EAP-логин.
+                    rc = subprocess.run(
+                        ['swanctl', '--terminate', '--ike-id', uniqueid],
+                        stdout=subprocess.DEVNULL, timeout=30).returncode
+                    if rc != 0:
+                        print(f'terminate {ident} rc={rc}', file=sys.stderr)
+        write_json(STATE_FILE, current, 0o600)
+
+    sessions = [
+        {'uniqueid': uniqueid, 'username': ident, 'rx': rx, 'tx': tx}
+        for uniqueid, ident, rx, tx in live_sas(session)
+        if ident
+    ]
+    write_json(STATUS_FILE, {'updated': int(time.time()), 'sessions': sessions}, 0o644)
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
+PYEOF
+chmod +x /usr/local/sbin/anysda-ikev2-sync.py
+
+cat > /etc/systemd/system/anysda-ikev2-sync.service <<'EOF'
+[Unit]
+Description=anysda-vpn2 — apply panel IKEv2 creds + dump traffic counters
+After=strongswan-starter.service
+Requires=strongswan-starter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-ikev2-sync.py
+EOF
+
+cat > /etc/systemd/system/anysda-ikev2-sync.timer <<'EOF'
+[Unit]
+Description=anysda-vpn2 — IKEv2 creds/counters sync every 10s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=anysda-ikev2-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now anysda-ikev2-sync.timer >/dev/null 2>&1 || true
+systemctl start anysda-ikev2-sync.service || true
+systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null | head -5 | sed "s/^/[$HOST_TAG]   /"
 
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

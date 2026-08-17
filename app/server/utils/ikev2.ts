@@ -100,7 +100,24 @@ export function buildIkev2Username(
   throw new Error(`unable to allocate unique ikev2 username for ${base}`)
 }
 
-/** True если стадия 27-ikev2 уже раскатала server CA. Иначе issue/sync no-op. */
+/**
+ * True если стадия 27-ikev2 отработала на сервере — в ЛЮБОМ из двух режимов.
+ * Маркер — /etc/anysda/ikev2-mode: стадия пишет его и в letsencrypt, и в
+ * self-signed. Проверять по CA нельзя: в LE-режиме своего CA нет вообще
+ * (сертификат сервера от Let's Encrypt), и sync/terminate молча
+ * превращались бы в no-op на боевом контуре.
+ */
+export async function ikev2ServerReady(): Promise<boolean> {
+  try {
+    await fs.access(MODE_FILE)
+    return true
+  }
+  catch {
+    return ikev2CaReady()
+  }
+}
+
+/** True если на сервере есть СВОЙ CA (self-signed-режим): его отдаём клиенту. */
 export async function ikev2CaReady(): Promise<boolean> {
   try {
     await fs.access(CA_CERT)
@@ -197,7 +214,7 @@ export async function reissueDeviceIkev2(deviceId: number) {
  * актуальный secrets-блок и перегружает credentials.
  */
 export async function syncIkev2(): Promise<void> {
-  if (!(await ikev2CaReady())) return
+  if (!(await ikev2ServerReady())) return
 
   const db = useDb()
   const rows = await db
@@ -246,18 +263,38 @@ export async function syncIkev2(): Promise<void> {
   await fs.rename(tmp, SS_CLIENTS_CONF)
 
   // Перегружаем credentials. conns/pools статичны (из 27-ikev2.sh) — не трогаем.
+  //
+  // В контейнере панели swanctl'а нет и сокет charon.vici внутрь не проброшен,
+  // поэтому этот вызов на боевом хабе — no-op. Настоящий применитель —
+  // хостовый таймер anysda-ikev2-sync (стадия 27, шаг 8): он видит изменение
+  // этого файла, делает `swanctl --load-creds` и рвёт SA устройств с
+  // изменённым/удалённым паролем. Вызов оставлен для стендов, где панель
+  // запущена не в контейнере.
   await exec('swanctl', ['--load-creds'], { timeout: 10_000 }).catch((err) => {
-    useLogger().warn(
+    useLogger().debug(
       { err: (err as Error).message },
-      'ikev2 swanctl --load-creds skipped (binary missing / charon down?)',
+      'ikev2 swanctl --load-creds skipped (применит anysda-ikev2-sync на хосте)',
     )
   })
 }
 
-/** swanctl --terminate ike-id=<username>: рвёт активную SA конкретного устройства. */
+/**
+ * Разрыв активной SA устройства. Работает только там, где панели доступен
+ * swanctl; в контейнере — no-op, разрыв делает anysda-ikev2-sync на хосте по
+ * изменению secrets-файла (см. syncIkev2).
+ *
+ * ⚠️ swanctl --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, а не EAP-логин, так что
+ * здесь сперва ищем SA по имени пользователя.
+ */
 export async function terminateIkev2Sa(username: string): Promise<void> {
-  if (!(await ikev2CaReady())) return
-  await exec('swanctl', ['--terminate', '--ike-id', username], { timeout: 10_000 })
+  if (!(await ikev2ServerReady())) return
+  const { stdout } = await exec('swanctl', ['--list-sas', '--raw'], { timeout: 10_000 })
+  const ids = [...stdout.matchAll(/uniqueid=(\d+)[\s\S]{0,2000}?remote-eap-id=(\S+)/g)]
+    .filter(m => m[2] === username)
+    .map(m => m[1])
+  for (const id of ids) {
+    await exec('swanctl', ['--terminate', '--ike-id', id], { timeout: 10_000 })
+  }
 }
 
 /**

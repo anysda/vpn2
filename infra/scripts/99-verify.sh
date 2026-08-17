@@ -102,6 +102,18 @@ case "$HOST_TAG" in
       else
         echo "[$HOST_TAG] ikev2 xfrm:  xfrm0 ОТСУТСТВУЕТ (anysda-ikev2-routing не отработал?)"
       fi
+      # Применитель кредов панели: без него новые устройства не пускаются,
+      # а счётчики трафика IKEv2 в панели стоят на нуле.
+      if systemctl is-active --quiet anysda-ikev2-sync.timer 2>/dev/null; then
+        _age=$(( $(date +%s) - $(python3 -c 'import json;print(json.load(open("/etc/anysda/ikev2-status.json"))["updated"])' 2>/dev/null || echo 0) ))
+        if [[ "$_age" -lt 120 ]]; then
+          echo "[$HOST_TAG] ikev2 sync:  таймер active, статус свежий (${_age}s)"
+        else
+          echo "[$HOST_TAG] ikev2 sync:  таймер active, но /etc/anysda/ikev2-status.json протух (${_age}s)"
+        fi
+      else
+        echo "[$HOST_TAG] ikev2 sync:  anysda-ikev2-sync.timer НЕ активен — креды панели не применяются"
+      fi
     fi
     ;;
   *)

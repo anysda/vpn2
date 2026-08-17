@@ -83,14 +83,43 @@ install -d -m 700 /etc/swanctl/x509ca /etc/swanctl/x509 /etc/swanctl/private
 
 if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
   echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($PANEL_DOMAIN)"
-  # Copy Caddy LE-cert/key. Caddy chmod 0600 caddy:caddy — копируем
-  # рутом, ставим root:root 0644/0600.
-  install -m 0644 "$LE_CERT" /etc/swanctl/x509/anysda-server.crt
-  install -m 0600 "$LE_KEY"  /etc/swanctl/private/anysda-server.key
-  # CA в x509ca не нужен — strongSwan client'у его всё равно не отправляем
-  # (LE-корень в trust-store). Но если remaining self-signed CA лежит от
-  # прошлых запусков — удалим, чтобы не путал charon при поиске цепочки.
+  # ⚠️ В файле Caddy лежит ЦЕПОЧКА (leaf + промежуточный + кросс-подписи), а
+  # swanctl из `certs = ...` берёт только ПЕРВЫЙ сертификат. Раскладываем
+  # руками: leaf → x509, всё остальное → x509ca. Иначе charon шлёт клиенту
+  # голый leaf, и цепочка не сходится ни у strongSwan, ни у нативных
+  # клиентов: в trust-store лежит корень ISRG, а промежуточный (LE «YE1»,
+  # «E5» и т.п.) обязан прийти от сервера — иначе AUTH_FAILED.
+  cat > /usr/local/sbin/anysda-ikev2-le-sync.sh <<'LESYNC'
+#!/usr/bin/env bash
+# Раскладка LE-cert Caddy в swanctl: leaf → x509, промежуточные → x509ca.
+# Зовётся стадией 27-ikev2 и path-юнитом anysda-ikev2-cert-sync (ротация LE).
+set -euo pipefail
+LE_CERT="$1"
+LE_KEY="$2"
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+csplit -sz -f "$TMP/cert-" -b '%02d.pem' "$LE_CERT" '/-----BEGIN CERTIFICATE-----/' '{*}'
+install -m 0644 "$TMP/cert-00.pem" /etc/swanctl/x509/anysda-server.crt
+install -m 0600 "$LE_KEY"          /etc/swanctl/private/anysda-server.key
+
+rm -f /etc/swanctl/x509ca/anysda-le-chain-*.crt
+n=1
+for f in "$TMP"/cert-*.pem; do
+  [[ "$f" == "$TMP/cert-00.pem" ]] && continue
+  install -m 0644 "$f" "/etc/swanctl/x509ca/anysda-le-chain-${n}.crt"
+  n=$((n + 1))
+done
+
+# На первом прогоне стадии charon ещё не запущен (это делает шаг 6, который
+# сам перечитает creds) — здесь неудача не повод валить деплой.
+swanctl --load-creds >/dev/null 2>&1 || true
+LESYNC
+  chmod +x /usr/local/sbin/anysda-ikev2-le-sync.sh
+  # Свой CA из self-signed-режима больше не нужен — иначе путает charon при
+  # поиске цепочки.
   rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
+  /usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY"
 
   # ── 3. path-watcher: Caddy ротирует cert раз в 60 дней ────────────────
   echo "[$HOST_TAG] [3/8] systemd path-watcher на Caddy-cert (LE-ротация)"
@@ -101,7 +130,7 @@ After=strongswan-starter.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'install -m 0644 "$LE_CERT" /etc/swanctl/x509/anysda-server.crt && install -m 0600 "$LE_KEY" /etc/swanctl/private/anysda-server.key && swanctl --load-creds'
+ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY"
 EOF
   cat > /etc/systemd/system/anysda-ikev2-cert-sync.path <<EOF
 [Unit]

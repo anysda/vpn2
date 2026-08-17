@@ -523,7 +523,10 @@ EOF
 systemctl daemon-reload
 systemctl enable --now anysda-ikev2-sync.timer >/dev/null 2>&1 || true
 systemctl start anysda-ikev2-sync.service || true
-systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null | head -5 | sed "s/^/[$HOST_TAG]   /"
+# ⚠️ `systemctl status` у отработавшего oneshot возвращает 3, а в стадии
+# включён pipefail — без `|| true` стадия падала уже ПОСЛЕ всей работы.
+{ systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null || true; } \
+  | head -5 | sed "s/^/[$HOST_TAG]   /"
 
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

@@ -204,7 +204,16 @@ cat > "$CONF" <<EOF
 connections {
   anysda-ikev2 {
     version       = 2
-    proposals     = aes256gcm16-prfsha384-ecp384
+    # Набор ОБЯЗАН перекрываться с нативными клиентами, иначе IKE_SA_INIT
+    # отлетает с NO_PROPOSAL_CHOSEN (Windows рисует «Policy match error»).
+    # ⚠️ Windows 10/11 в дефолтной политике предлагает ЕДИНСТВЕННУЮ DH-группу
+    # MODP_1024 (group 2) — ни ecp384, ни modp2048 в его списке нет вообще,
+    # поднять её можно только реестром/PowerShell на каждой машине. Поэтому
+    # modp1024 держим последним запасным вариантом: шифр при этом остаётся
+    # AES-GCM-256/SHA-384, слабое место только обмен ключами.
+    # Порядок = приоритет (charon.prefer_configured_proposals): сильное первым,
+    # клиент послабее сам сползёт вниз по списку.
+    proposals     = aes256gcm16-prfsha384-ecp384,aes256gcm16-prfsha384-modp2048,aes256gcm16-prfsha256-ecp256,aes256-sha256-ecp256,aes256-sha256-modp2048,aes256gcm16-prfsha384-modp1024,aes256-sha256-modp1024,aes128-sha256-modp1024
     dpd_delay     = 30s
     pools         = anysda-ikev2-pool
     fragmentation = yes
@@ -223,7 +232,11 @@ connections {
     children {
       net {
         local_ts      = 0.0.0.0/0
-        esp_proposals = aes256gcm16-ecp384
+        # ⚠️ Нативные клиенты не делают PFS в CHILD_SA (KE-payload не шлют),
+        # поэтому варианты БЕЗ DH-группы обязаны быть в списке, иначе SA
+        # развалится уже после успешной аутентификации. esn-noesn — оба
+        # режима, Windows просит ESN, strongSwan по умолчанию только noesn.
+        esp_proposals = aes256gcm16-ecp384-esn-noesn,aes256gcm16-esn-noesn,aes128gcm16-esn-noesn,aes256-sha256-esn-noesn,aes256-sha1-esn-noesn,aes128-sha256-esn-noesn,aes128-sha1-esn-noesn
         rekey_time    = 0s
         # XFRM-interface if_id=42 — pakets из IPsec policy кладутся в xfrm0.
         # iptables PREROUTING -i xfrm0 ставит mark 0x42 → TPROXY 7898 (sing-box).

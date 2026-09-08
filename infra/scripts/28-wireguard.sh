@@ -43,12 +43,17 @@ fi
 chmod 0600 /etc/wireguard/server.priv /etc/wireguard/server.pub
 SERVER_PRIV=$(cat /etc/wireguard/server.priv)
 
+# ULA fast-fail: единый источник fd66:66::1 в паре с 10.66.66.1, чтобы
+# v6-пакет клиента получал ICMPv6 unreachable за один RTT вместо таймаута
+# (см. wgUlaAddress в server/utils/wireguard.ts).
+WG_SERVER_ULA="fd66:66::1"
+
 # Initial wg0.conf — panel rewrites it later with real peers
 if [[ ! -f /etc/wireguard/wg0.conf ]]; then
   cat > /etc/wireguard/wg0.conf <<EOF
 # Initial config — panel will overwrite via syncWireguardConfig().
 [Interface]
-Address = ${WG_SERVER_IP}/24
+Address = ${WG_SERVER_IP}/24, ${WG_SERVER_ULA}/64
 ListenPort = ${WG_PORT}
 PrivateKey = ${SERVER_PRIV}
 EOF
@@ -60,6 +65,11 @@ echo "[$HOST_TAG] [3/5] sysctl + ufw"
 cat > /etc/sysctl.d/98-wg-forward.conf <<'EOF'
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.forwarding=1
+# Узкий wg0.forwarding=1 сам по себе не форвардит, на стенде подтверждено,
+# что ядро форвардит только когда all.forwarding=1 (интерфейсный флаг его не
+# заменяет). Разрешённый диапазон держит не sysctl, а ip6tables FORWARD
+# (policy DROP + REJECT только для wg0, см. anysda-wg-routing.sh).
+net.ipv6.conf.all.forwarding=1
 EOF
 sysctl -p /etc/sysctl.d/98-wg-forward.conf >/dev/null
 
@@ -97,7 +107,9 @@ EOF
 cat > /usr/local/sbin/anysda-wg-routing.sh <<'IPTSEOF'
 #!/usr/bin/env bash
 # Divert wg0 forwarded TCP+UDP into sing-box TPROXY on :7898 so WG clients
-# pick the same geoip routing as OpenVPN clients.
+# pick the same geoip routing as OpenVPN clients. Also: ULA fast-fail для
+# v6 (см. 28-wireguard.sh): FORWARD ставится в DROP и v6 с wg0 отбивается
+# REJECT, чтобы клиент получал icmp6-addr-unreachable, а не таймаут.
 set -euo pipefail
 ACTION=${1:-up}
 WG_IF='wg0'
@@ -124,7 +136,14 @@ if [[ "$ACTION" == "up" ]]; then
   iptables -C INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || \
     iptables -I INPUT 1 -m mark --mark "${MARK}/${MARK}" -j ACCEPT
 
-  echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT)"
+  # v6: FORWARD по умолчанию DROP, форвардинг с любого другого интерфейса
+  # (WAN, exit) остаётся закрыт независимо от sysctl. wg0 получает явный
+  # REJECT, остальным ходу нет вообще.
+  ip6tables -P FORWARD DROP
+  ip6tables -C FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null || \
+    ip6tables -A FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable
+
+  echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT, v6-fastfail=on)"
 
 elif [[ "$ACTION" == "down" ]]; then
   iptables -t mangle -D PREROUTING -i "$WG_IF" -j ANYSDA_WG_TPROXY 2>/dev/null || true
@@ -132,6 +151,9 @@ elif [[ "$ACTION" == "down" ]]; then
   iptables -t mangle -X ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -D INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || true
   ip rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
+  ip6tables -D FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null || true
+  # Policy DROP на FORWARD осознанно не откатываем, так безопаснее и вне
+  # активного окна службы.
 fi
 IPTSEOF
 

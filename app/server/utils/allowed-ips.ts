@@ -23,7 +23,9 @@
  * остаются без резолвера и «интернет пропадает по именам».
  *
  * IPv6 — не дополнение (там 133 префикса), а `2000::/3`: ровно всё глобально
- * маршрутизируемое, `fc00::/7` и `fe80::/10` отваливаются сами.
+ * маршрутизируемое, `fc00::/7` и `fe80::/10` отваливаются сами. Обратно
+ * пробит `fd66:66::/64` (ULA fast-fail), иначе REJECT хаба до клиента не
+ * доходит, см. `WG_ULA_NET`.
  *
  * Побочный эффект, ради которого это в том числе и делается: у WireGuard for
  * Windows `AllowedIPs = 0.0.0.0/0` включает kill-switch (block untunneled
@@ -43,6 +45,14 @@ const PUBLIC_V4 = [
 ]
 
 const PUBLIC_V6 = '2000::/3'
+
+/**
+ * ULA fast-fail (см. wgUlaAddress в wireguard.ts): хаб отвечает на v6-пакет
+ * REJECT'ом с адреса `fd66:66::1`, а не адреса назначения. Без этой дырки
+ * в AllowedIPs клиент сам отбрасывает ответ на своей src-проверке, ICMP
+ * до приложения не доходит, и дефект просто переезжает на обратный путь.
+ */
+const WG_ULA_NET = 'fd66:66::/64'
 
 const FULL_TUNNEL = '0.0.0.0/0, ::/0'
 
@@ -120,7 +130,7 @@ export function wgAllowedIps(
 ): string {
   if (!splitLocal) return FULL_TUNNEL
   const nets = tunnelPrefixes.map(prefixToNet).filter(Boolean) as string[]
-  return [...excludeHost(PUBLIC_V4, endpointHost), ...nets, PUBLIC_V6].join(', ')
+  return [...excludeHost(PUBLIC_V4, endpointHost), ...nets, PUBLIC_V6, WG_ULA_NET].join(', ')
 }
 
 /**

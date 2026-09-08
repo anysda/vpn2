@@ -138,10 +138,14 @@ if [[ "$ACTION" == "up" ]]; then
 
   # v6: FORWARD по умолчанию DROP, форвардинг с любого другого интерфейса
   # (WAN, exit) остаётся закрыт независимо от sysctl. wg0 получает явный
-  # REJECT, остальным ходу нет вообще.
+  # REJECT первой строкой: перед ним у ufw уже стоят терминальные ACCEPT
+  # для ICMPv6, append в конец эти ACCEPT не обгонит. Снимаем все копии
+  # (в т.ч. дописанные append'ом раньше) и вставляем заново на позицию 1.
   ip6tables -P FORWARD DROP
-  ip6tables -C FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null || \
-    ip6tables -A FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable
+  while ip6tables -C FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null; do
+    ip6tables -D FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable
+  done
+  ip6tables -I FORWARD 1 -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable
 
   echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT, v6-fastfail=on)"
 

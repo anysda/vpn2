@@ -34,7 +34,8 @@ export function generateWgPresharedKey(): string {
  */
 export function wgUlaAddress(wgIp: string): string {
   const m = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/.exec(wgIp)
-  return `fd66:66::${m ? m[1] : '1'}`
+  if (!m) throw new Error(`wgUlaAddress: не разобран v4-адрес "${wgIp}"`)
+  return `fd66:66::${m[1]}`
 }
 
 /**

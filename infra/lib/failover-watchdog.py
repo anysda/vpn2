@@ -49,9 +49,11 @@ flap-шторме (экзит дёргается up/down) вотчдог опт�
 """
 import json
 import os
+import socket
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -103,30 +105,49 @@ def _req(method, path, body=None, timeout=API_TIMEOUT):
     return json.loads(raw) if raw else {}
 
 
-def _probe(tag, out):
-    """delay-тест одного outbound; out[tag] = delay(ms) либо None если мёртв."""
+def _classify_probe_error(e):
+    """Текст причины промаха для журнала: таймаут / отказ соединения / код
+    ответа, иначе следующий разбор снова упрётся в «следов нет»."""
+    if isinstance(e, urllib.error.HTTPError):
+        return f'код {e.code}'
+    reason = getattr(e, 'reason', e)
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return 'таймаут'
+    if isinstance(reason, ConnectionRefusedError):
+        return 'отказ соединения'
+    return f'ошибка: {reason}'
+
+
+def _probe(tag, out, errs=None):
+    """delay-тест одного outbound; out[tag] = delay(ms) либо None если мёртв.
+    errs[tag], если передан, получает причину промаха (см. _classify_probe_error)."""
     q = urllib.parse.urlencode({'url': PROBE_URL, 'timeout': TIMEOUT_MS})
     try:
         d = _req('GET', f'/proxies/{urllib.parse.quote(tag)}/delay?{q}',
                  timeout=PROBE_HTTP_TIMEOUT)
         v = d.get('delay')
         out[tag] = v if isinstance(v, int) and v > 0 else None
-    except Exception:
+        if out[tag] is None and errs is not None:
+            errs[tag] = f'clash-api без delay: {d!r}'
+    except Exception as e:
         out[tag] = None
+        if errs is not None:
+            errs[tag] = _classify_probe_error(e)
 
 
 def _probe_all(members):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
     мёртвый экзит не тормозит остальных."""
     out: dict = {}
-    threads = [threading.Thread(target=_probe, args=(m, out), daemon=True)
+    errs: dict = {}
+    threads = [threading.Thread(target=_probe, args=(m, out, errs), daemon=True)
                for m in members]
     for t in threads:
         t.start()
     deadline = time.monotonic() + JOIN_DEADLINE
     for t in threads:
         t.join(max(0.0, deadline - time.monotonic()))
-    return {m: out.get(m) for m in members}
+    return {m: out.get(m) for m in members}, errs
 
 
 def _switch(target, delay_ms, reason):
@@ -174,10 +195,11 @@ def tick():
     if not members:
         return
 
-    delays = _probe_all(members)
+    delays, errs = _probe_all(members)
     alive = {m: d for m, d in delays.items() if d is not None}
     if not alive:
-        print('все экзиты не отвечают — выбор не трогаю', flush=True)
+        detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
+        print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
         return
     best = _pick_best(alive)   # лучший из не-оштрафованных
 
@@ -205,19 +227,23 @@ def tick():
 
     # Текущий — член группы, но не ответил. НЕ ждём следующий тик: тут же
     # до-проверяем его ещё (DEAD_AFTER-1) раз подряд. Ожил на любой — транзиент.
+    last_err = errs.get(now, '?')
     for k in range(1, DEAD_AFTER):
         time.sleep(CONFIRM_GAP)
         c: dict = {}
-        _probe(now, c)
+        e: dict = {}
+        _probe(now, c, e)
         if c.get(now) is not None:
-            print(f'{now}: промах, но до-проверка {k}/{DEAD_AFTER - 1} ожила '
-                  f'({c[now]}ms) — транзиент, selector не трогаю', flush=True)
+            print(f'{now}: промах ({last_err}), но до-проверка {k}/{DEAD_AFTER - 1} '
+                  f'ожила ({c[now]}ms), транзиент, selector не трогаю', flush=True)
             return
+        last_err = e.get(now, last_err)
 
     # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
     node, dur = _penalize(now)
     _switch(best, alive[best],
-            f'{now} мёртв ({DEAD_AFTER}× промахов) — узел {node} в штрафной {dur:.0f}с')
+            f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
+            f'узел {node} в штрафной {dur:.0f}с')
 
 
 def main():

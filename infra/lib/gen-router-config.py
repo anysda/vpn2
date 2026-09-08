@@ -292,6 +292,12 @@ def main():
                 'listen_port': 7898,
                 'sniff': True,
                 'sniff_override_destination': True,
+                # tproxy обязан слать ОТВЕТНЫЙ UDP-пакет с адреса-источника,
+                # равного назначению; при override_destination назначение -
+                # домен (не IP), запись молча не выходит. Правила по домену
+                # (YouTube QUIC-блок) матчат сниффнутый домен из метаданных
+                # независимо от этого флага, не ломаются.
+                'udp_disable_domain_unmapping': True,
             },
         ],
 

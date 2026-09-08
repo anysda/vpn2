@@ -128,7 +128,7 @@ ssh root@<entry-ip>
 ### 2. Склонировать репозиторий 
 
 ```bash
-git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 ```
 
@@ -315,7 +315,7 @@ ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
 ssh root@<новый-entry-ip>
 
 # 2. Клонируем репозиторий
-git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 
 # 3. Кладём резервную копию config.yaml с оркестратора (он же — мастер-секрет)

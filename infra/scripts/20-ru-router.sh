@@ -224,8 +224,21 @@ for row in rows:
 
 cfg['route']['rules'] = manual_rules + cfg['route']['rules']
 
+new_body = json.dumps(cfg, indent=2)
+
+# Панель при сохранении пишет manual-routes.json несколько раз подряд, и
+# .path-юнит дёргает нас на каждую запись. Без этой проверки каждый холостой
+# вызов рестартовал sing-box, рвя всем клиентам живые соединения, а заодно
+# упирался в StartLimitBurst и укладывал .service в failed (см. VPN2-5).
+try:
+    if open(SB_CONFIG).read() == new_body:
+        print(f'{len(manual_rules)} manual route(s), конфиг не изменился — sing-box не трогаю')
+        sys.exit(0)
+except FileNotFoundError:
+    pass
+
 with tempfile.NamedTemporaryFile('w', dir='/etc/sing-box', delete=False, suffix='.tmp') as tmp:
-    json.dump(cfg, tmp, indent=2); tmp_path = tmp.name
+    tmp.write(new_body); tmp_path = tmp.name
 
 try:
     subprocess.run([SB_BIN, 'check', '-c', tmp_path], check=True, capture_output=True)
@@ -242,9 +255,18 @@ cat > /etc/systemd/system/anysda-apply-routes.service << 'EOF'
 [Unit]
 Description=anysda-vpn2 — apply manual sing-box routes from panel
 After=sing-box.service
+# Дефолтный лимит (5 стартов за 10с) выбивался одной правкой в панели: она
+# пишет manual-routes.json несколько раз подряд, .path триггерит нас на каждую
+# запись, и юнит навсегда уходил в failed (start-limit-hit) — правки маршрутов
+# переставали применяться молча. Скрипт идемпотентен и при отсутствии изменений
+# не трогает sing-box, поэтому лимит здесь не нужен.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
+# Дебаунс: пока мы спим, повторные срабатывания .path схлопываются systemd'ом
+# в одно отложенное задание вместо пачки отдельных запусков.
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/local/sbin/anysda-apply-routes.py
 EOF
 

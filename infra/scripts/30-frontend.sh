@@ -117,6 +117,15 @@ fi
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then
   echo "[$HOST_TAG]   домен панели: ${PANEL_DOMAIN} (HTTPS через Let's Encrypt)"
   cat > /etc/caddy/Caddyfile <<EOF
+{
+    # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
+    # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
+    # Порт занят -> `bind: address already in use`, и QUIC-ответы не доходят
+    # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
+    servers {
+        protocols h1 h2
+    }
+}
 ${PANEL_DOMAIN} {
     encode gzip
     reverse_proxy 127.0.0.1:51821
@@ -133,6 +142,15 @@ else
   # Note: h3's DEFAULT_COOKIE.secure=true is patched to false at image build
   # time (see app/Dockerfile sed step). So the session cookie works over HTTP.
   cat > /etc/caddy/Caddyfile <<EOF
+{
+    # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
+    # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
+    # Порт занят -> `bind: address already in use`, и QUIC-ответы не доходят
+    # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
+    servers {
+        protocols h1 h2
+    }
+}
 :80 {
     encode gzip
     reverse_proxy 127.0.0.1:51821

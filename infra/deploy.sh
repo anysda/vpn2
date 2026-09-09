@@ -407,6 +407,16 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl"
   fi
 
+  # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен генератор
+  # и снапшот списка префиксов (fallback, если gstatic недоступен при прогоне).
+  if [[ "$stage" == "19-yt-zapret" ]]; then
+    for f in gen-yt-quic-nft.py google-prefixes.json; do
+      local lib="$DEPLOY_ROOT/lib/$f"
+      [[ -f "$lib" ]] || die "lib/$f не найден"
+      push "$lib" "$f"
+    done
+  fi
+
   # 26-backup кладёт скрипты в /usr/local/bin на entry. Передаём их как
   # вспомогательные файлы, сама стадия install'ит install -m 0755.
   if [[ "$stage" == "26-backup" ]]; then

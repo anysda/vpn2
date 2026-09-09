@@ -60,6 +60,8 @@ YT_ZAPRET_OFFLOAD="${YT_ZAPRET_OFFLOAD:-keep}"
 DIAG_USER='ytzdiag'
 NFT_CONF='/etc/nftables-yt-zapret.conf'
 SYSCTL_CONF='/etc/sysctl.d/97-anysda-yt-zapret.conf'
+QUIC_NFT_CONF='/etc/nftables-yt-quic.conf'
+QUIC_PREFIXES='/var/lib/anysda/google-prefixes.json'
 
 WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
 : "${WAN_IFACE:?не удалось определить WAN-интерфейс}"
@@ -71,15 +73,21 @@ mkdir -p "$STAMP_DIR"
 # ----------------------------------------------------------------------------
 teardown() {
   echo "[$HOST_TAG] YT_ROUTE=$YT_ROUTE — снимаю десинк (если был развёрнут)"
-  for _u in anysda-yt-nfqws anysda-yt-nft anysda-yt-offload; do
+  for _u in anysda-yt-nfqws anysda-yt-nft anysda-yt-offload anysda-yt-quic; do
     systemctl disable --now "$_u.service" >/dev/null 2>&1 || true
   done
+  systemctl disable --now anysda-yt-quic-refresh.timer >/dev/null 2>&1 || true
   nft delete table inet ytzapret >/dev/null 2>&1 || true
+  nft delete table inet anysda_ytquic >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/anysda-yt-nfqws.service \
         /etc/systemd/system/anysda-yt-nft.service \
         /etc/systemd/system/anysda-yt-offload.service \
+        /etc/systemd/system/anysda-yt-quic.service \
+        /etc/systemd/system/anysda-yt-quic-refresh.service \
+        /etc/systemd/system/anysda-yt-quic-refresh.timer \
+        /usr/local/sbin/anysda-yt-quic-refresh.sh \
         /usr/local/bin/anysda-yt-check \
-        "$NFT_CONF" "$SYSCTL_CONF"
+        "$NFT_CONF" "$SYSCTL_CONF" "$QUIC_NFT_CONF"
   systemctl daemon-reload
   # Исходники и бинарь НЕ трогаем: пересборка занимает минуты, а место они
   # занимают копеечное. Обратное включение должно быть мгновенным.
@@ -272,6 +280,109 @@ else
     rm -f /etc/systemd/system/anysda-yt-offload.service
   fi
 fi
+
+
+# ----------------------------------------------------------------------------
+# 5b. Второй рубеж: QUIC (UDP/443) к Google режем по IP-принадлежности
+# ----------------------------------------------------------------------------
+# Первый рубеж — правило sing-box `domain_suffix=[youtube...] network=udp
+# port=443 => block-out`. Оно работает по SNI из QUIC Initial и ловит
+# подавляющее большинство случаев (проверено: www.youtube.com, googlevideo.com,
+# i.ytimg.com, yt3.ggpht.com, youtubei.googleapis.com — все blocked).
+#
+# Но оно верно ровно пока сниффер видит домен. Фрагментированный ClientHello,
+# 0-RTT или обращение на голый IP — домена нет, правило не матчится, QUIC
+# утекает мимо десинка. Десинк работает только по TCP, поэтому утечка = YouTube
+# без обхода: реклама и потеря российского GGC.
+#
+# 09-09-2026 это выстрелило на проде: после освобождения UDP/443 (до того порт
+# занимал Caddy с h3, и QUIC был мёртв у всех) клиент ушёл качать видео с
+# 74.125.108.34 (lcfraa-ak-in-f2.1e100.net) потоками QUIC по 1250 байт.
+#
+# Цена ошибки несимметрична: лишний раз отрезанный QUIC к Google — это откат
+# на TCP, всё работает штатно. Пропущенный — сломанный YouTube у всех сразу.
+echo "[$HOST_TAG] [5b/7] блокировка QUIC к Google"
+mkdir -p "$(dirname "$QUIC_PREFIXES")"
+
+install -m 0755 /dev/stdin /usr/local/sbin/anysda-yt-quic-refresh.sh <<'QREFRESH'
+#!/usr/bin/env bash
+# Обновляет список IP-диапазонов Google и перезаливает nft-таблицу.
+# Свежий список тянем у Google; если не вышло — остаёмся на том, что уже есть.
+# Пустой/битый ответ не должен превращаться в дыру, поэтому файл заменяем
+# только после успешной генерации конфига из него.
+set -euo pipefail
+PREFIXES='/var/lib/anysda/google-prefixes.json'
+NFT_CONF='/etc/nftables-yt-quic.conf'
+GEN='/usr/local/sbin/gen-yt-quic-nft.py'
+TMP=$(mktemp); TMP_NFT=$(mktemp)
+trap 'rm -f "$TMP" "$TMP_NFT"' EXIT
+
+if curl -fsS --max-time 30 https://www.gstatic.com/ipranges/goog.json -o "$TMP" \
+   && python3 "$GEN" "$TMP" > "$TMP_NFT" 2>/dev/null \
+   && nft -c -f "$TMP_NFT"; then
+  install -m 0644 "$TMP" "$PREFIXES"
+  echo "список обновлён с gstatic"
+else
+  echo "gstatic недоступен или ответ битый — остаюсь на сохранённом списке" >&2
+  python3 "$GEN" "$PREFIXES" > "$TMP_NFT"
+  nft -c -f "$TMP_NFT"
+fi
+
+install -m 0644 "$TMP_NFT" "$NFT_CONF"
+nft -f "$NFT_CONF"
+echo "QUIC-блокировка применена: $(nft list table inet anysda_ytquic | grep -c 'udp dport 443') правил"
+QREFRESH
+
+install -m 0755 /tmp/anysda/gen-yt-quic-nft.py /usr/local/sbin/gen-yt-quic-nft.py
+
+# Снапшот из репы — стартовое наполнение. Дальше его обновляет таймер, но
+# даже если gstatic недоступен в момент прогона стадии, дыры не будет.
+[[ -f "$QUIC_PREFIXES" ]] || install -m 0644 /tmp/anysda/google-prefixes.json "$QUIC_PREFIXES"
+
+cat > /etc/systemd/system/anysda-yt-quic.service <<'EOF'
+[Unit]
+Description=anysda-vpn2 — nft-блокировка QUIC (UDP/443) к Google
+After=network-online.target
+Wants=network-online.target
+Before=sing-box.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-yt-quic-refresh.sh
+ExecStop=/usr/sbin/nft delete table inet anysda_ytquic
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/anysda-yt-quic-refresh.service <<'EOF'
+[Unit]
+Description=anysda-vpn2 — обновление списка IP-диапазонов Google
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-yt-quic-refresh.sh
+EOF
+
+cat > /etc/systemd/system/anysda-yt-quic-refresh.timer <<'EOF'
+[Unit]
+Description=anysda-vpn2 — обновлять диапазоны Google раз в сутки
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now anysda-yt-quic.service >/dev/null 2>&1 || true
+systemctl restart anysda-yt-quic.service
+systemctl enable --now anysda-yt-quic-refresh.timer >/dev/null 2>&1 || true
+echo "[$HOST_TAG]   $(nft list table inet anysda_ytquic 2>/dev/null | grep -c 'udp dport 443') правил, префиксов: $(python3 -c "import json;d=json.load(open('$QUIC_PREFIXES'));print(len(d.get('prefixes',[])))")"
 
 # ----------------------------------------------------------------------------
 # 6. Демон nfqws2

@@ -41,6 +41,16 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
   В WG это дополнение `0.0.0.0/0` в `AllowedIPs` (с дыркой под endpoint,
   иначе wg-quick ловит петлю), в OpenVPN — `route … net_gateway`.
   Выключается `WG_SPLIT_LOCAL=false`, см. `server/utils/allowed-ips.ts`.
+- **ULA fast-fail для IPv6 (WireGuard):** `AllowedIPs` пропускает клиента
+  в `2000::/3` (реальный интернет, чтобы v6 не утёк мимо VPN к оператору),
+  но v6-адреса на туннельных интерфейсах нет, поэтому раньше пакет уходил
+  в туннель и там молча пропадал (клиент ждёт таймаут, у Telegram на
+  IPv6-only сотовых сетях так падало каждое третье соединение). Теперь у
+  клиента и у хаба есть парный ULA-адрес `fd66:66::N/64` (N тот же, что в
+  `10.66.66.N`), а хаб отвечает на любой v6 с `wg0` мгновенным ICMPv6
+  `destination unreachable`: приложение получает отказ за один RTT и тут
+  же берёт v4. **Старым клиентам нужно перекачать `.conf`/QR**, новый
+  ULA-адрес прописывается только в свежем конфиге.
 - **AdGuard Home:** DNS + блок-лист для VPN-клиентов с включённой
   фильтрацией.
 - **Telegram-бот:** админ управляет клиентами командами `/clients`,
@@ -128,7 +138,7 @@ ssh root@<entry-ip>
 ### 2. Склонировать репозиторий 
 
 ```bash
-git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 ```
 
@@ -230,6 +240,40 @@ ssh root@<entry> 'journalctl -u anysda-yt-nfqws -n 30'
 
 ---
 
+## Failover-вотчдог экзитов
+
+**`interrupt_exist_connections: false`** на всех трёх группах sing-box
+(`direct-best`, `warp-best`, `foreign-best`). Переключение на новый экзит
+берёт только НОВЫЕ соединения; живые (в т.ч. идущая загрузка) дорабатывают на
+старом. Раньше каждое переключение рвало всё сразу - при 63 переключениях за
+7 дней это било по всем клиентам, а не только по тем, чей экзит правда умер.
+
+**Пороги вотчдога** (`infra/scripts/21-failover-watchdog.sh`):
+`PROBE_TIMEOUT_MS=3000`, `DEAD_AFTER=3` - отсекают короткие всплески (2
+промаха по 1500 мс с возвратом через 2 минуты), не удлиняя признание
+настоящего простоя больше, чем на один лишний тик.
+
+**Журнал вотчдога** (`infra/lib/failover-watchdog.py`) пишет причину каждого
+промаха зонда: `таймаут`, `отказ соединения`, `код <N>` или текст исключения -
+раньше писался только факт промаха без причины, и разбор простоев упирался в
+«следов нет».
+
+---
+
+## QUIC (UDP/443) через туннель
+
+tproxy-вход (`wg-tproxy-in`) держит `udp_disable_domain_unmapping: true`.
+Причина: при `sniff_override_destination: true` sniffer подменяет назначение
+UDP-потока на сниффнутый домен, а tproxy обязан слать ответный пакет с
+адреса-источника, равного назначению - то есть с домена, а не с IP, и запись
+молча не проходит (QUIC-хендшейк = 100% таймаут). `udp_disable_domain_unmapping`
+возвращает в ответный пакет исходный IP-адрес, не трогая остальное. Правила
+маршрута по домену (блок YouTube QUIC и вывод YouTube на РФ-выход) матчат
+сниффнутый домен из метаданных соединения и от этого флага не зависят - не
+ломаются.
+
+---
+
 ## Backup & Disaster Recovery
 
 `./deploy.sh backup` снимает **один зашифрованный архив** всего, что нужно для
@@ -315,7 +359,7 @@ ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
 ssh root@<новый-entry-ip>
 
 # 2. Клонируем репозиторий
-git clone https://gitlab.anysda.space/anysda/vpn2 /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 
 # 3. Кладём резервную копию config.yaml с оркестратора (он же — мастер-секрет)

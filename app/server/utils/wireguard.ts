@@ -28,6 +28,17 @@ export function generateWgPresharedKey(): string {
 }
 
 /**
+ * ULA-адрес клиента в туннеле, парный к его `10.66.66.N`. Один и тот же
+ * последний октет на обоих концах, единственный ULA-источник у хаба, чтобы
+ * стеки Apple/Android по RFC 6724 сами предпочли v4 живому пиру.
+ */
+export function wgUlaAddress(wgIp: string): string {
+  const m = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/.exec(wgIp)
+  if (!m) throw new Error(`wgUlaAddress: не разобран v4-адрес "${wgIp}"`)
+  return `fd66:66::${m[1]}`
+}
+
+/**
  * Pick the next free /32 inside the WG subnet (default 10.66.66.0/24).
  * .1 is the server, clients start at .2.
  */
@@ -70,7 +81,7 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
   return [
     `[Interface]`,
     `PrivateKey = ${p.clientPrivateKey}`,
-    `Address = ${p.clientIp}/24`,
+    `Address = ${p.clientIp}/24, ${wgUlaAddress(p.clientIp)}/64`,
     `DNS = ${dns}`,
     `MTU = ${mtu}`,
     ``,
@@ -105,10 +116,11 @@ export async function writeWgServerConfig(
   p: ServerConfigParams,
   confPath = '/etc/wireguard/wg0.conf',
 ): Promise<void> {
+  const serverUla = wgUlaAddress(p.serverIp)
   const lines: string[] = [
     `# Managed by anysda-vpn2 panel. Do not edit by hand.`,
     `[Interface]`,
-    `Address = ${p.serverIp}/24`,
+    `Address = ${p.serverIp}/24, ${serverUla}/64`,
     `ListenPort = ${p.listenPort}`,
     `PrivateKey = ${p.serverPrivateKey}`,
     ``,
@@ -119,7 +131,7 @@ export async function writeWgServerConfig(
       `[Peer]`,
       `PublicKey = ${peer.publicKey}`,
       `PresharedKey = ${peer.presharedKey}`,
-      `AllowedIPs = ${peer.allowedIp}/32`,
+      `AllowedIPs = ${peer.allowedIp}/32, ${wgUlaAddress(peer.allowedIp)}/128`,
       ``,
     )
   }
@@ -132,8 +144,11 @@ export async function writeWgServerConfig(
 
   try {
     // `wg-quick strip` emits only [Interface] + [Peer] (no PostUp/PostDown
-    // hooks), which is exactly what `wg syncconf` accepts.
+    // hooks), which is exactly what `wg syncconf` accepts. `syncconf` does
+    // NOT touch interface addresses, поэтому ULA на wg0 ставим отдельно:
+    // `replace` идемпотентен и не рвёт существующие сессии пиров.
     await exec('bash', ['-c', `wg-quick strip wg0 | wg syncconf wg0 /dev/stdin`], { timeout: 10_000 })
+    await exec('ip', ['-6', 'addr', 'replace', `${serverUla}/64`, 'dev', 'wg0'], { timeout: 5_000 })
   }
   catch (err) {
     // wg0 may not exist (cold start before 28-wireguard ran) or wg binary

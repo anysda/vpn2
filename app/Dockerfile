@@ -14,8 +14,12 @@ RUN pnpm build
 # --- runtime ---------------------------------------------------------------
 FROM node:22-slim AS runtime
 
+# iproute2 нужен для `ip -6 addr replace` в writeWgServerConfig(): wg syncconf
+# адреса интерфейса не трогает, поэтому ULA fd66:66::1/64 ставится отдельной
+# командой. Без пакета она падает с `spawn ip ENOENT`, ошибка глотается catch'ем
+# и ULA молча не появляется на wg0 — телега продолжает висеть в таймаутах.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools openssl \
+  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools iproute2 openssl \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -185,7 +185,11 @@ def main():
             'interval': '10s',
             'tolerance': 50,
             'idle_timeout': '5m',
-            'interrupt_exist_connections': True,
+            # false: живые соединения (в т.ч. идущая загрузка) дорабатывают на
+            # старом экзите, на новый уходят только НОВЫЕ соединения. Иначе
+            # каждое переключение рвёт всё сразу (infra/reports/05-09-2026
+            # -vpn2-audit-problemy.md, п. 3).
+            'interrupt_exist_connections': False,
         },
         {
             'type': 'urltest',
@@ -198,7 +202,7 @@ def main():
             'interval': '10s',
             'tolerance': 50,
             'idle_timeout': '5m',
-            'interrupt_exist_connections': True,
+            'interrupt_exist_connections': False,
         },
         {
             # foreign-best — selector, а НЕ urltest: им управляет
@@ -211,7 +215,7 @@ def main():
             'tag': 'foreign-best',
             'outbounds': all_hy2,
             'default': all_hy2[0],
-            'interrupt_exist_connections': True,
+            'interrupt_exist_connections': False,
         },
         {'type': 'block', 'tag': 'block-out'},
     ]
@@ -288,6 +292,12 @@ def main():
                 'listen_port': 7898,
                 'sniff': True,
                 'sniff_override_destination': True,
+                # tproxy обязан слать ОТВЕТНЫЙ UDP-пакет с адреса-источника,
+                # равного назначению; при override_destination назначение -
+                # домен (не IP), запись молча не выходит. Правила по домену
+                # (YouTube QUIC-блок) матчат сниффнутый домен из метаданных
+                # независимо от этого флага, не ломаются.
+                'udp_disable_domain_unmapping': True,
             },
         ],
 

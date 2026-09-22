@@ -228,6 +228,26 @@ if [[ -n "$admin_pass" ]]; then
 fi
 [[ -z "$admin_pass" ]] && ok "Будет сгенерирован случайный пароль на ноде"
 
+hint "SSH-ключ админа (опционально, но рекомендуется)."
+hint "Вставь свой ПУБЛИЧНЫЙ ключ (~/.ssh/id_ed25519.pub) — он ляжет на все ноды,"
+hint "а вход по паролю отключится. Пусто — пароль останется (VPN2-31: без ключа"
+hint "ноду не запираем, иначе после переустановки на неё не зайти)."
+printf '  %b%s%b: ' "$Y" "SSH pubkey (Enter — пропустить)" "$E" >&2
+read -r admin_sshpubkey
+# trim пробелов по краям (сам ключ пробелы внутри содержит — их не трогаем)
+admin_sshpubkey="${admin_sshpubkey#"${admin_sshpubkey%%[![:space:]]*}"}"
+admin_sshpubkey="${admin_sshpubkey%"${admin_sshpubkey##*[![:space:]]}"}"
+if [[ -n "$admin_sshpubkey" ]]; then
+  case "$admin_sshpubkey" in
+    "ssh-ed25519 "*|"ssh-rsa "*|"ecdsa-"*" "*|"sk-"*" "*)
+      ok "Ключ принят — вход по паролю на нодах отключится" ;;
+    *)
+      fail "Не похоже на SSH-ключ (ожидается 'ssh-ed25519 AAAA...') — пропускаю"
+      admin_sshpubkey="" ;;
+  esac
+fi
+[[ -z "$admin_sshpubkey" ]] && ok "Без ключа админа — вход по паролю останется"
+
 header "Домен для веб-панели (опционально)"
 hint "Если задан — Caddy получит Let's Encrypt сертификат на http://<домен>/"
 hint "A-запись должна указывать на IP входной ноды: $entry_ip"
@@ -416,6 +436,7 @@ ENTRY_PASS="$entry_pass" \
 EXITS_YAML="$(printf '%b' "$exits_yaml")" \
 ADMIN_USER="$admin_user" \
 ADMIN_PASS="$admin_pass" \
+ADMIN_SSH_PUBKEY="$admin_sshpubkey" \
 PANEL_DOMAIN="$panel_domain" \
 TG_TOKEN="$tg_token" \
 TG_CHAT_ID="$tg_chat_id" \
@@ -455,6 +476,10 @@ if ap:
     lines.append('  password: ' + ap)
 else:
     lines.append('  # password не задан — будет сгенерирован при первом деплое')
+sk = os.environ.get('ADMIN_SSH_PUBKEY', '').strip()
+if sk:
+    esc = sk.replace('\\', '\\\\').replace('"', '\\"')
+    lines.append('  ssh_pubkey: "' + esc + '"')
 
 pd = os.environ.get('PANEL_DOMAIN', '')
 if pd:

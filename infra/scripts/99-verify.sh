@@ -22,29 +22,26 @@ echo "[$HOST_TAG] fail2ban: $(systemctl is-active fail2ban)"
 NE_STATUS=$(systemctl is-active node_exporter 2>/dev/null || echo 'inactive')
 echo "[$HOST_TAG] node_exporter: $NE_STATUS"
 
-# --- mgmt mesh (если поднят — пингуем все остальные ноды)
-if ip link show wgmgmt >/dev/null 2>&1; then
-  echo "[$HOST_TAG] wgmgmt:        UP, address $(ip -4 -o addr show wgmgmt | awk '{print $4}')"
-
-  # Собираем список MGMT IP всех нод из env (MGMT_IP_RU + MGMT_IP_{TAG} для каждого exit)
-  _ALL_PEERS="${MGMT_IP_RU:-10.99.0.1}"
-  for _t in ${EXIT_TAGS:-}; do
-    _T=$(echo "$_t" | tr a-z A-Z)
-    _var="MGMT_IP_${_T}"
-    _ip="${!_var:-}"
-    [[ -n "$_ip" ]] && _ALL_PEERS="$_ALL_PEERS $_ip"
-  done
-
-  for peer_ip in $_ALL_PEERS; do
-    [[ "$peer_ip" == "$MGMT_IP" ]] && continue
-    if ping -c1 -W2 "$peer_ip" >/dev/null 2>&1; then
-      echo "[$HOST_TAG]   peer $peer_ip: reachable"
-    else
-      echo "[$HOST_TAG]   peer $peer_ip: UNREACHABLE"
-    fi
-  done
+# --- mgmt transport: скрейп node_exporter идёт по служебному hy2-туннелю
+# (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md). На entry сквозной
+# сигнал — здоровье scrape-таргетов VictoriaMetrics; на экзите — что служебный
+# hy2-инбаунд слушает UDP.
+if [[ "$HOST_TAG" == "ru" ]]; then
+  if curl -fsS --max-time 5 http://127.0.0.1:8428/api/v1/targets 2>/dev/null | jq -e . >/dev/null 2>&1; then
+    echo "[$HOST_TAG] mgmt scrape targets:"
+    curl -sS http://127.0.0.1:8428/api/v1/targets \
+      | jq -r '.data.activeTargets[] | "  " + (.labels.host // "?") + ": " + .health' \
+      | sed "s/^/[$HOST_TAG] /"
+  else
+    echo "[$HOST_TAG] mgmt scrape:  VictoriaMetrics не поднят (стадия 25 не применена)"
+  fi
 else
-  echo "[$HOST_TAG] wgmgmt:        ещё не настроен (запусти стадию 05)"
+  _mp="${HY2_MGMT_PORT:-}"
+  if [[ -n "$_mp" ]] && ss -lun 2>/dev/null | awk -v p="$_mp" '$5 ~ ":"p"$"{f=1} END{exit !f}'; then
+    echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp} слушает"
+  else
+    echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp:-?} НЕ слушает (стадия 10 не применена?)"
+  fi
 fi
 
 # --- host-specific

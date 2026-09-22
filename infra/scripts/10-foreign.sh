@@ -12,7 +12,7 @@
 set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
-: "${HOST_TAG:?}" "${PUB_IP:?}" "${MGMT_IP:?}" "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}"
+: "${HOST_TAG:?}" "${PUB_IP:?}" "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${HY2_MGMT_PORT:?}"
 
 case "$HOST_TAG" in ru) echo "[$HOST_TAG] 10-foreign is foreign-only — skipping"; exit 0;; esac
 
@@ -100,25 +100,29 @@ gen_pwd() { openssl rand -base64 32 | tr -d '\n=' | head -c 32; }
 [[ -f /etc/anysda/hy2-direct.pwd ]]  || gen_pwd > /etc/anysda/hy2-direct.pwd
 [[ -f /etc/anysda/hy2-warp.pwd ]]    || gen_pwd > /etc/anysda/hy2-warp.pwd
 [[ -f /etc/anysda/hy2-obfs.pwd ]]    || gen_pwd > /etc/anysda/hy2-obfs.pwd
+# hy2-mgmt.pwd — пароль ОТДЕЛЬНОГО служебного Hysteria2-инбаунда (мониторинг).
+# Отдельный от клиентских: ротация hy2-direct/warp его не трогает, и по
+# клиентским кредам метрики не достать. См. docs/mgmt-over-hysteria2-design.md.
+[[ -f /etc/anysda/hy2-mgmt.pwd ]]    || gen_pwd > /etc/anysda/hy2-mgmt.pwd
 [[ -f /etc/anysda/clash-secret.txt ]] || gen_pwd > /etc/anysda/clash-secret.txt
 chmod 600 /etc/anysda/hy2-*.pwd /etc/anysda/clash-secret.txt
 
 HY2_PWD_DIRECT=$(cat /etc/anysda/hy2-direct.pwd)
 HY2_PWD_WARP=$(cat /etc/anysda/hy2-warp.pwd)
 HY2_OBFS_PWD=$(cat /etc/anysda/hy2-obfs.pwd)
+HY2_PWD_MGMT=$(cat /etc/anysda/hy2-mgmt.pwd)
 CLASH_SECRET=$(cat /etc/anysda/clash-secret.txt)
 
 # Note: these passwords MUST be communicated back to the RU router (stage 20).
-# We expose them via the mgmt mesh — see deploy.sh post-step that fetches them.
+# prep_ru_router (deploy.sh) забирает их по SSH при подготовке стадии 20.
 
 # ----------------------------------------------------------------------------
 # 4. TLS cert + sing-box config + systemd service
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] TLS + sing-box config + service"
 
-export MGMT_IP \
-       HY2_DIRECT_PORT HY2_WARP_PORT \
-       HY2_PWD_DIRECT HY2_PWD_WARP HY2_OBFS_PWD CLASH_SECRET \
+export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT \
+       HY2_PWD_DIRECT HY2_PWD_WARP HY2_PWD_MGMT HY2_OBFS_PWD CLASH_SECRET \
        WGCF_PRIVKEY WGCF_LOCAL_IPV4 WGCF_PEER_PUBKEY \
        WGCF_PEER_ENDPOINT_HOST WGCF_PEER_ENDPOINT_PORT \
        WGCF_RESERVED_JSON
@@ -186,17 +190,19 @@ systemctl restart sing-box
 sleep 2
 
 # UFW: Hysteria2 порты (00-bootstrap открывает дефолтные; здесь — для per-exit
-# override) + clash-api на 9090 в mgmt-сеть.
+# override). Служебный hy2-mgmt-in (мониторинг) — свой UDP-порт. clash-api
+# ушёл на 127.0.0.1 (mgmt-mesh снят), наружу его больше не открываем.
 ufw allow "${HY2_DIRECT_PORT}/udp" comment 'hysteria2 direct' >/dev/null 2>&1 || true
 ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'   >/dev/null 2>&1 || true
-ufw allow proto tcp from 10.99.0.0/24 to any port 9090 comment 'sing-box clash-api mesh' >/dev/null 2>&1 || true
+ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt (monitoring)' >/dev/null 2>&1 || true
+ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 ufw reload >/dev/null
 
 # Verify
 echo "[$HOST_TAG] статус sing-box:"
 systemctl status sing-box --no-pager -n 5 | head -10 | sed "s/^/[$HOST_TAG]   /"
 echo "[$HOST_TAG] слушаемые UDP порты:"
-ss -lun | awk -v p="$HY2_DIRECT_PORT|$HY2_WARP_PORT" '$5 ~ ":(" p ")$"' | sed "s/^/[$HOST_TAG]   /"
+ss -lun | awk -v p="$HY2_DIRECT_PORT|$HY2_WARP_PORT|$HY2_MGMT_PORT" '$5 ~ ":(" p ")$"' | sed "s/^/[$HOST_TAG]   /"
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

@@ -12,7 +12,10 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   HY2_WARP_PORT          — порт warp (общий для всех нод)
   {TAG}_DIRECT           — пароль Hysteria2 direct
   {TAG}_WARP             — пароль Hysteria2 warp
+  {TAG}_MGMT             — пароль служебного Hysteria2 (скрейп node_exporter)
   {TAG}_OBFS             — пароль salamander obfs
+  HY2_MGMT_PORT          — порт служебного hy2 (или {TAG}_HY2_MGMT_PORT на ноду)
+  MGMT_IP_{TAG}          — служебный IP экзита; последний октет задаёт mon-порт
   WG_OUT_IFACE           — WAN-интерфейс для direct-ru (привязка сокета)
   RU_CLASH_SECRET        — секрет clash API
 
@@ -66,6 +69,10 @@ def main():
 
     hy2_direct_port_global = int(require('HY2_DIRECT_PORT'))
     hy2_warp_port = int(require('HY2_WARP_PORT'))
+    # Служебный Hysteria2-туннель до экзитов: по нему (и только по нему) идёт
+    # заграничный скрейп node_exporter. WG-mesh через границу блокируется, hy2
+    # мимикрирует под TLS — см. docs/mgmt-over-hysteria2-design.md.
+    hy2_mgmt_port_global = int(require('HY2_MGMT_PORT'))
     wg_out_iface = require('WG_OUT_IFACE')
     ru_clash_secret = require('RU_CLASH_SECRET')
     mgmt_ip = os.environ.get('MGMT_IP', '10.99.0.1')
@@ -124,14 +131,24 @@ def main():
 
     direct_tags = []
     warp_tags = []
+    # Служебный слой: на каждый экзит — свой hy2-{tag}-mgmt outbound и локальный
+    # SOCKS-инбаунд mon-{tag}, через который VictoriaMetrics скребёт node_exporter
+    # экзита. Порт mon-инбаунда выводится детерминированно из последнего октета
+    # MGMT_IP_{TAG} — та же формула в 25-monitoring.sh, чтобы стороны сошлись
+    # без общего конфига.
+    mon_inbounds = []
+    mon_route_rules = []
 
     for tag in exit_tags:
         T = tag.upper()
         domain = require(f'DOMAIN_{T}')
         direct_port = int(os.environ.get(f'{T}_HY2_DIRECT_PORT') or hy2_direct_port_global)
+        mgmt_port = int(os.environ.get(f'{T}_HY2_MGMT_PORT') or hy2_mgmt_port_global)
         pwd_direct = require(f'{T}_DIRECT')
         pwd_warp = require(f'{T}_WARP')
+        pwd_mgmt = require(f'{T}_MGMT')
         pwd_obfs = require(f'{T}_OBFS')
+        mon_port = 10100 + int(require(f'MGMT_IP_{T}').split('.')[-1])
 
         # Self-signed cert на exit-нодах. Если orchestrator опубликовал
         # PEM-сертификат экзита (см. SECURITY-AUDIT-2026-06-01.md H5) и
@@ -168,6 +185,29 @@ def main():
             'obfs': {'type': 'salamander', 'password': pwd_obfs},
             'tls': tls_warp,
         })
+        # Служебный туннель до экзита. Тот же self-signed cert/obfs, что и у
+        # рабочих hy2, но отдельный порт/пароль и своя пара outbound↔inbound,
+        # чтобы служебный трафик не делил сессию с пользовательским.
+        outbounds.append({
+            'type': 'hysteria2',
+            'tag': f'hy2-{tag}-mgmt',
+            'server': domain,
+            'server_port': mgmt_port,
+            'password': pwd_mgmt,
+            'obfs': {'type': 'salamander', 'password': pwd_obfs},
+            'tls': dict(tls_common),
+        })
+        # Локальный SOCKS/HTTP-инбаунд: VictoriaMetrics ходит сюда как через
+        # прокси (proxy_url: socks5://127.0.0.1:mon_port), запрос уезжает в
+        # hy2-{tag}-mgmt и на экзите бьёт в node_exporter 127.0.0.1:9100.
+        mon_inbounds.append({
+            'type': 'mixed',
+            'tag': f'mon-{tag}',
+            'listen': '127.0.0.1',
+            'listen_port': mon_port,
+        })
+        mon_route_rules.append({'inbound': f'mon-{tag}', 'outbound': f'hy2-{tag}-mgmt'})
+
         direct_tags.append(f'hy2-{tag}-direct')
         warp_tags.append(f'hy2-{tag}-warp')
 
@@ -299,7 +339,7 @@ def main():
                 # независимо от этого флага, не ломаются.
                 'udp_disable_domain_unmapping': True,
             },
-        ],
+        ] + mon_inbounds,
 
         'outbounds': outbounds,
 
@@ -313,7 +353,10 @@ def main():
             #   4. geoip:ru / private → direct-ru (физически в РФ)
             #   5. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
-            'rules': [
+            'rules': mon_route_rules + [
+                # mon-{tag} матчатся по inbound-тегу ВЫШЕ блока 127.0.0.0/8:
+                # цель служебного запроса — 127.0.0.1:9100 (loopback экзита),
+                # иначе его срезало бы правило ниже.
                 {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'outbound': 'block-out'},
                 {
                     'port': [853],

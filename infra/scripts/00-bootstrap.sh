@@ -7,8 +7,7 @@ set -euo pipefail
 # Env file is passed as $1; source it
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?HOST_TAG must be set}"
-: "${MGMT_NET:?MGMT_NET must be set}"
-: "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${MGMT_PORT:?}"
+: "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${HY2_MGMT_PORT:?}"
 
 STAMP_DIR=/var/anysda/.stamps
 mkdir -p "$STAMP_DIR" /etc/anysda /var/lib/anysda
@@ -70,39 +69,46 @@ EOF
 sysctl --quiet --system
 
 # ----------------------------------------------------------------------------
-# 3. SSH hardening + переход на ключевой вход (если оркестратор дал ключи)
+# 3. SSH hardening + переход на ключевой вход
 #
-# Логика:
-#   - Если есть /tmp/anysda/orchestrator_keys — мерджим в /root/.ssh/authorized_keys
-#     и отключаем PasswordAuthentication (ключевой вход).
-#   - Если ключей нет — оставляем PasswordAuthentication=yes (деплой по паролю).
+# Ключи ставим всегда, какие есть: ключ(и) оркестратора (/tmp/anysda/
+# orchestrator_keys) — чтобы деплой продолжал ходить, и ключ человека-админа
+# (ADMIN_SSH_PUBKEY из config.yaml → all.env).
 #
-# В обоих случаях challenge/keyboard-interactive выключены, fail2ban (шаг 5)
-# защищает от брутфорса.
+# VPN2-31: парольный вход отключаем ТОЛЬКО когда у ЧЕЛОВЕКА-АДМИНА есть ключ.
+# Ключ оркестратора для этого не считается. Иначе после ротации/переустановки
+# нода запиралась и для админа тоже: пароль отключён, а человеческого ключа на
+# ноде нет — залезть нельзя ничем (именно так залочило NL). Нет админского
+# ключа → оставляем пароль (fail-open), fail2ban (шаг 5) прикрывает брутфорс.
 # ----------------------------------------------------------------------------
 SSHD=/etc/ssh/sshd_config
 ORCH_KEYS=/tmp/anysda/orchestrator_keys
-ENABLE_PUBKEY_AUTH=0
-if [[ -s "$ORCH_KEYS" ]]; then
-  ENABLE_PUBKEY_AUTH=1
-fi
+ADMIN_PUBKEY="${ADMIN_SSH_PUBKEY:-}"
 
-if [[ "$ENABLE_PUBKEY_AUTH" -eq 1 ]]; then
-  echo "[$HOST_TAG] [3/6] sshd_config: устанавливаю ключи + отключаю парольный вход"
+# Собираем все ключи, которые надо положить в authorized_keys.
+KEYSRC=$(mktemp)
+[[ -s "$ORCH_KEYS" ]] && cat "$ORCH_KEYS" >> "$KEYSRC"
+[[ -n "$ADMIN_PUBKEY" ]] && printf '%s\n' "$ADMIN_PUBKEY" >> "$KEYSRC"
+
+if [[ -s "$KEYSRC" ]]; then
   mkdir -p /root/.ssh
   chmod 700 /root/.ssh
   touch /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
-  # Мерджим: уникальные ключи из существующих + от оркестратора
-  cat /root/.ssh/authorized_keys "$ORCH_KEYS" | awk 'NF && !seen[$0]++' > /root/.ssh/authorized_keys.new
+  # Мерджим: уникальные ключи из существующих + оркестратор + админ.
+  cat /root/.ssh/authorized_keys "$KEYSRC" | awk 'NF && !seen[$0]++' > /root/.ssh/authorized_keys.new
   mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys
   echo "[$HOST_TAG]   ключей в /root/.ssh/authorized_keys: $(wc -l < /root/.ssh/authorized_keys)"
+fi
+rm -f "$KEYSRC"
 
+if [[ -n "$ADMIN_PUBKEY" ]]; then
+  echo "[$HOST_TAG] [3/6] sshd_config: есть ключ админа — отключаю парольный вход"
   sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD"
   sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' "$SSHD"
 else
-  echo "[$HOST_TAG] [3/6] sshd_config: оставляю PasswordAuthentication=yes (нет ключей у оркестратора)"
+  echo "[$HOST_TAG] [3/6] sshd_config: ключа админа нет — оставляю PasswordAuthentication=yes (VPN2-31)"
   sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD"
   sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD"
 fi
@@ -147,11 +153,12 @@ case "$HOST_TAG" in
     # 10-foreign (он видит финальные значения после rotation).
     ufw allow "${HY2_DIRECT_PORT}/udp" comment 'hysteria2 direct'
     ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'
+    # Служебный hy2-туннель (скрейп node_exporter из-за границы вместо WG-mesh).
+    ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt'
     ufw allow 80/tcp                   comment 'caddy decoy (HTTP)'
     ufw allow 443/tcp                  comment 'caddy decoy (TLS handshake)'
     ;;
 esac
-# Management mesh accepts from peers only — opened by stage 05, not here.
 ufw --force enable
 ufw status verbose | sed "s/^/[$HOST_TAG]   /"
 
@@ -175,7 +182,9 @@ systemctl enable fail2ban >/dev/null 2>&1
 systemctl restart fail2ban
 
 # ----------------------------------------------------------------------------
-# 6. node_exporter (initially on loopback; rebinds to mgmt-iface in stage 05)
+# 6. node_exporter — слушает ТОЛЬКО loopback. Раньше стадия 05 перевешивала его
+# на mgmt-iface (WG-mesh); теперь скрейп экзитов идёт через служебный hy2-туннель
+# и приходит на 127.0.0.1:9100 с самого экзита, поэтому наружу порт не смотрит.
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/6] node_exporter"
 NE_VERSION='1.8.2'
@@ -197,7 +206,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=node_exporter
-# Bind to loopback until stage 05 reconfigures to the mgmt iface.
+# Слушаем только loopback: entry скребёт локально, экзиты — через hy2-туннель,
+# который на самом экзите бьёт в 127.0.0.1:9100. Наружу порт не открываем.
 ExecStart=/usr/local/bin/node_exporter --web.listen-address=127.0.0.1:9100
 Restart=on-failure
 RestartSec=5s

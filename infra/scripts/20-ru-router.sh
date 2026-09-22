@@ -7,7 +7,7 @@
 set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
-: "${HOST_TAG:?}" "${PUB_IP_OUT:?}" "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${EXIT_TAGS:?}"
+: "${HOST_TAG:?}" "${PUB_IP_OUT:?}" "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${HY2_MGMT_PORT:?}" "${EXIT_TAGS:?}"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 20-ru-router is ru-only — skipping"; exit 0;; esac
 
@@ -60,6 +60,7 @@ for _t in $EXIT_TAGS; do
   _T=$(echo "$_t" | tr a-z A-Z)
   eval ": \"\${${_T}_DIRECT:?секрет ${_t} DIRECT не найден в foreign-secrets.env}\""
   eval ": \"\${${_T}_WARP:?секрет ${_t} WARP не найден в foreign-secrets.env}\""
+  eval ": \"\${${_T}_MGMT:?секрет ${_t} MGMT не найден в foreign-secrets.env}\""
   eval ": \"\${${_T}_OBFS:?секрет ${_t} OBFS не найден в foreign-secrets.env}\""
 done
 
@@ -75,7 +76,7 @@ WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
 # Backward-compat: gen-router-config.py читает WG_OUT_IFACE (имя из v1).
 export WG_OUT_IFACE="$WAN_IFACE"
 
-export RU_CLASH_SECRET EXIT_TAGS HY2_DIRECT_PORT HY2_WARP_PORT MGMT_IP
+export RU_CLASH_SECRET EXIT_TAGS HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT MGMT_IP
 # YouTube (стадия 19-yt-zapret). `source` env-файла делает переменные
 # ЛОКАЛЬНЫМИ для шелла — до python-генератора они без export не доезжают, и
 # конфиг молча собирается без YouTube-правил (стадия при этом отрабатывает
@@ -86,8 +87,11 @@ export YT_ROUTE="${YT_ROUTE:-off}" YT_QUIC="${YT_QUIC:-block}" YT_MARK="${YT_MAR
 for _t in $EXIT_TAGS; do
   _T=$(echo "$_t" | tr a-z A-Z)
   export "DOMAIN_${_T}"
-  export "${_T}_DIRECT" "${_T}_WARP" "${_T}_OBFS"
+  export "${_T}_DIRECT" "${_T}_WARP" "${_T}_MGMT" "${_T}_OBFS"
+  # MGMT_IP_{T} задаёт mon-порт локального SOCKS-инбаунда (см. генератор).
+  export "MGMT_IP_${_T}"
   eval "export ${_T}_HY2_DIRECT_PORT=\${${_T}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT}}"
+  eval "export ${_T}_HY2_MGMT_PORT=\${${_T}_HY2_MGMT_PORT:-${HY2_MGMT_PORT}}"
 done
 
 # TLS pinning Hysteria2 outbound: если orchestrator push'нул cert экзита в
@@ -174,8 +178,10 @@ systemctl restart sing-box
 sleep 2
 systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
-# ufw: clash-api на 9090, только mgmt-сеть
-ufw allow proto tcp from 10.99.0.0/24 to any port 9090 comment 'sing-box clash-api mesh' >/dev/null 2>&1 || true
+# clash-api слушает 10.99.0.1:9090 — это lo-алиас на самой entry, наружу не
+# торчит. Снимаем legacy mesh-правило ufw (mesh снят, служебный трафик ушёл на
+# Hysteria2, см. стадию 05 и docs/mgmt-over-hysteria2-design.md).
+ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 ufw reload >/dev/null
 
 # route_localnet — нужен TPROXY WG/OpenVPN (--on-ip 127.0.0.1, стадии 28/29).

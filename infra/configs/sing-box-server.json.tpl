@@ -27,11 +27,25 @@
         "certificate_path": "/etc/sing-box/tls.crt",
         "key_path": "/etc/sing-box/tls.key"
       }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hy2-mgmt-in",
+      "listen": "::",
+      "listen_port": ${HY2_MGMT_PORT},
+      "users": [{ "password": "${HY2_PWD_MGMT}" }],
+      "obfs": { "type": "salamander", "password": "${HY2_OBFS_PWD}" },
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/sing-box/tls.crt",
+        "key_path": "/etc/sing-box/tls.key"
+      }
     }
   ],
 
   "outbounds": [
     { "type": "direct", "tag": "direct" },
+    { "type": "block",  "tag": "block-out" },
     {
       "type": "wireguard",
       "tag": "warp",
@@ -48,13 +62,15 @@
   "route": {
     "rules": [
       { "inbound": "hy2-direct-in", "outbound": "direct" },
-      { "inbound": "hy2-warp-in",   "outbound": "warp"   }
+      { "inbound": "hy2-warp-in",   "outbound": "warp"   },
+      { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100], "outbound": "direct" },
+      { "inbound": "hy2-mgmt-in", "outbound": "block-out" }
     ]
   },
 
   "experimental": {
     "clash_api": {
-      "external_controller": "${MGMT_IP}:9090",
+      "external_controller": "127.0.0.1:9090",
       "secret": "${CLASH_SECRET}"
     }
   }

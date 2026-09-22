@@ -222,6 +222,7 @@ prep_ru_router() {
       echo "DIRECT=$(cat /etc/anysda/hy2-direct.pwd)"
       echo "WARP=$(cat /etc/anysda/hy2-warp.pwd)"
       echo "OBFS=$(cat /etc/anysda/hy2-obfs.pwd)"
+      echo "MGMT=$(cat /etc/anysda/hy2-mgmt.pwd)"
       echo "CLASH=$(cat /etc/anysda/clash-secret.txt)"
     ')
 
@@ -243,50 +244,6 @@ prep_ru_router() {
   done
   chmod 600 "$sec"
   ok "секреты записаны в secrets/foreign-secrets.env"
-}
-
-# ----------------------------------------------------------------------------
-# Pre-stage hook for 05-mgmt-mesh: orchestrate WG key generation & distribution.
-# ----------------------------------------------------------------------------
-prep_mgmt_mesh() {
-  log "prep: проверяю keypair wgmgmt на каждой ноде, собираю pubkey-и"
-  local secrets="$DEPLOY_ROOT/secrets/wg-mesh"
-  mkdir -p "$secrets"
-
-  for host in ru $(exit_tags); do
-    load_env "$host"
-    log "проверяю keypair на $host"
-    local pubkey
-    pubkey=$(ssh_exec '
-      set -e
-      umask 077
-      mkdir -p /etc/wireguard
-      if [ ! -f /etc/wireguard/wgmgmt.privkey ]; then
-        wg genkey > /etc/wireguard/wgmgmt.privkey
-        chmod 600 /etc/wireguard/wgmgmt.privkey
-      fi
-      wg pubkey < /etc/wireguard/wgmgmt.privkey
-    ')
-    echo "$pubkey" > "$secrets/${host}.pubkey"
-    log "  $host → $pubkey"
-  done
-
-  local peers="$secrets/peers.env"
-  {
-    echo "# Сгенерировано deploy.sh prep_mgmt_mesh — не редактируй"
-    for host in ru $(exit_tags); do
-      local tag_upper; tag_upper=$(echo "$host" | tr a-z A-Z)
-      echo "PUBKEY_${tag_upper}=$(cat "$secrets/${host}.pubkey")"
-    done
-    for host in ru $(exit_tags); do
-      local tag_upper; tag_upper=$(echo "$host" | tr a-z A-Z)
-      # shellcheck disable=SC1091
-      source "$DEPLOY_ROOT/envs/${host}.env"
-      echo "EP_${tag_upper}=${SSH_HOST}:${MGMT_PORT:-51900}"
-    done
-    printf 'EXIT_TAGS="%s"\n' "$(exit_tags)"
-  } > "$peers"
-  ok "peers.env записан в secrets/wg-mesh/peers.env"
 }
 
 # ----------------------------------------------------------------------------
@@ -367,12 +324,6 @@ run_stage_on_host() {
     fi
   fi
 
-  if [[ "$stage" == "05-mgmt-mesh" ]]; then
-    local peers="$DEPLOY_ROOT/secrets/wg-mesh/peers.env"
-    [[ -f "$peers" ]] || die "secrets/wg-mesh/peers.env не найден — prep_mgmt_mesh не запускался?"
-    push "$peers" "peers.env"
-  fi
-
   if [[ "$stage" == "10-foreign" ]]; then
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
@@ -440,7 +391,6 @@ run_stage() {
   local t0; t0=$(date +%s)
 
   case "$stage" in
-    05-mgmt-mesh) prep_mgmt_mesh ;;
     20-ru-router) prep_ru_router ;;
   esac
   [[ "$stage" == "00-bootstrap" ]] && prep_orchestrator_key

@@ -32,6 +32,11 @@ exits:
 admin:
   user: anysda
   # password: my-secret
+  # ssh_pubkey опционально, но РЕКОМЕНДУЕТСЯ. Если задан — при деплое ключ
+  # кладётся в /root/.ssh/authorized_keys на всех нодах и парольный вход по SSH
+  # отключается. Если пусто — парольный вход остаётся (VPN2-31: без ключа
+  # админа ноду нельзя запирать, иначе после переустановки на неё не зайти).
+  # ssh_pubkey: "ssh-ed25519 AAAA... you@host"
 
 # Домен для веб-панели (опционально).
 # Если задан — Caddy получит Let's Encrypt сертификат, панель доступна по
@@ -112,7 +117,7 @@ admin:
 # ports:
 #   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit) — UDP/QUIC, 443 ок
 #   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
-#   mgmt: 51900                                     # WG-mesh между нодами (служебный)
+#   hy2_mgmt: 8444                                  # Hysteria2 служебный (скрейп node_exporter из-за границы)
 
 # Бэкапы (опционально, по умолчанию ВКЛЮЧЕНЫ с backend=local).
 # Архив включает: db.sqlite (через sqlite3 .backup), /etc/anysda/* (секреты

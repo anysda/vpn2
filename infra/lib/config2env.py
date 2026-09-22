@@ -194,7 +194,13 @@ def main():
     # Дефолтные порты
     hy2_direct = ports.get('hy2_direct', '443')
     hy2_warp   = ports.get('hy2_warp',   '8443')
-    mgmt_port  = ports.get('mgmt',       '51900')
+    # Служебный Hysteria2 (скрейп node_exporter из-за границы вместо WG-mesh).
+    hy2_mgmt   = ports.get('hy2_mgmt',   '8444')
+
+    # Ключ человека-админа: если задан, 00-bootstrap отключает парольный вход;
+    # если пусто — пароль остаётся (VPN2-31, чтобы не запереть себя без ключа).
+    admin_cfg = cfg.get('admin', {}) or {}
+    admin_ssh_pubkey = (admin_cfg.get('ssh_pubkey') or '').strip()
 
     envs_dir = repo_root / 'infra' / 'envs'
     envs_dir.mkdir(parents=True, exist_ok=True)
@@ -204,16 +210,20 @@ def main():
     # ------------------------------------------------------------------
     # all.env
     # ------------------------------------------------------------------
+    # ssh-ключ может содержать пробелы (comment) — заворачиваем в одинарные
+    # кавычки для source в bash, экранируя одиночную кавычку по классике.
+    admin_pubkey_q = "'" + admin_ssh_pubkey.replace("'", "'\\''") + "'"
+
     lines = [
         f'ENTRY_HOST={entry_host}',
-        '',
-        f'MGMT_NET=10.99.0.0/24',
-        f'MGMT_PORT={mgmt_port}',
         '',
         f'AGH_PORT=3000',
         '',
         f'HY2_DIRECT_PORT={hy2_direct}',
         f'HY2_WARP_PORT={hy2_warp}',
+        f'HY2_MGMT_PORT={hy2_mgmt}',
+        '',
+        f'ADMIN_SSH_PUBKEY={admin_pubkey_q}',
         '',
         f'EXIT_TAGS="{exit_tags}"',
     ]

@@ -219,12 +219,12 @@ systemctl restart adguardhome
 sleep 2
 systemctl status adguardhome --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
-# ufw: AdGuard listens only on 127.0.0.1 and mgmt mesh (${MGMT_IP})
-# Both are reachable from inside the host (sing-box) and from peer nodes via wgmgmt.
-# No firewall opening needed for client traffic — clients hit AdGuard indirectly
-# through sing-box DNS forwarding, not directly.
-ufw allow proto udp from "${MGMT_NET}" to "${MGMT_IP}" port 53 comment 'AdGuard DNS mgmt mesh UDP' >/dev/null 2>&1 || true
-ufw allow proto tcp from "${MGMT_NET}" to "${MGMT_IP}" port 53 comment 'AdGuard DNS mgmt mesh TCP' >/dev/null 2>&1 || true
+# AdGuard слушает 127.0.0.1 и ${MGMT_IP} (lo-алиас на самой entry) — оба адреса
+# локальны, наружу не торчат. Клиенты ходят в DNS не напрямую, а через
+# sing-box, поэтому открывать порт в firewall не нужно. Снимаем legacy
+# mesh-правила ufw (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md).
+ufw delete allow proto udp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
+ufw delete allow proto tcp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
 ufw reload >/dev/null
 
 mkdir -p "$STAMP_DIR"

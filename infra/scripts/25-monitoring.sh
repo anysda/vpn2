@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Stage 25 — VictoriaMetrics single-node на RU.
-# Scrape node_exporter со всех нод через mgmt mesh (10.99.0.0/24).
-# Зависит от: 00-bootstrap (node_exporter), 05-mgmt-mesh.
+# Скрейп node_exporter: entry — локально (127.0.0.1:9100), экзиты — через
+# служебный Hysteria2-туннель. WG-mesh через границу блокируется, поэтому VM
+# ходит к экзиту как через SOCKS-прокси (proxy_url: socks5://127.0.0.1:<port>),
+# который sing-box (стадия 20, инбаунд mon-{tag}) заворачивает в hy2-{tag}-mgmt
+# и бьёт в 127.0.0.1:9100 на экзите. См. docs/mgmt-over-hysteria2-design.md.
+# Зависит от: 00-bootstrap (node_exporter), 20-ru-router (mon-инбаунды).
 
 set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
-: "${HOST_TAG:?}" "${EXIT_TAGS:?}" "${MGMT_IP_RU:?}"
+: "${HOST_TAG:?}" "${EXIT_TAGS:?}"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 25-monitoring is ru-only — skipping"; exit 0;; esac
 
@@ -35,23 +39,34 @@ fi
 
 # ----------------------------------------------------------------------------
 # 2. VictoriaMetrics scrape config (динамический по EXIT_TAGS + MGMT_IP_*)
+#
+# entry — прямой скрейп по loopback. Каждый экзит — отдельный job со своим
+# proxy_url: socks5://127.0.0.1:<mon_port>; mon_port выводится из последнего
+# октета MGMT_IP_{T} той же формулой, что и в gen-router-config.py (инбаунд
+# mon-{tag}), чтобы стороны сошлись без общего конфига. Цель у всех экзитов —
+# 127.0.0.1:9100: это loopback НА ЭКЗИТЕ, куда туннель приводит запрос.
 # ----------------------------------------------------------------------------
 mkdir -p /etc/anysda /var/lib/vmsingle
 
 {
   # 2s scrape — чтобы потерю ноды замечать за ~5с, а не за полминуты.
   printf 'global:\n  scrape_interval: 2s\n  scrape_timeout: 1s\n\n'
-  printf 'scrape_configs:\n  - job_name: node\n    static_configs:\n'
-  printf "      - targets: ['%s:9100']\n        labels: { host: ru }\n" "$MGMT_IP_RU"
+  printf 'scrape_configs:\n'
+  printf '  - job_name: node-ru\n    static_configs:\n'
+  printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: ru }\n"
   for _t in $EXIT_TAGS; do
     _T=$(echo "$_t" | tr a-z A-Z)
     _var="MGMT_IP_${_T}"
     _ip="${!_var:-}"
-    if [[ -n "$_ip" ]]; then
-      printf "      - targets: ['%s:9100']\n        labels: { host: %s }\n" "$_ip" "$_t"
-    else
+    if [[ -z "$_ip" ]]; then
       echo "[$HOST_TAG] ВНИМАНИЕ: MGMT_IP_${_T} не задан — ${_t} пропущен в scrape config" >&2
+      continue
     fi
+    _mon_port=$(( 10100 + ${_ip##*.} ))
+    printf '  - job_name: node-%s\n' "$_t"
+    printf "    proxy_url: 'socks5://127.0.0.1:%s'\n" "$_mon_port"
+    printf '    static_configs:\n'
+    printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: %s }\n" "$_t"
   done
 } > /etc/anysda/vmsingle-scrape.yml
 

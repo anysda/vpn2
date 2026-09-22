@@ -46,7 +46,7 @@ if [[ "$need_install" -eq 1 ]]; then
     "$REL_URL/$ARCHIVE" -o "$TMP/$ARCHIVE"
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
-  ( cd "$TMP" && grep -E "[[:space:]]\*?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
+  ( cd "$TMP" && grep -E "[[:space:]]\*?(\./)?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
     || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
   tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"

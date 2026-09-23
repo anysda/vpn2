@@ -99,7 +99,13 @@ export function flagFor(tag: string): string {
   }
   // `us2` / `de3` etc. — strip the trailing index so multi-node countries
   // still resolve to the right flag.
-  return flags[tag] ?? flags[tag.replace(/[0-9]+$/, '')] ?? '🌍'
+  const base = tag.replace(/[0-9]+$/, '')
+  if (flags[tag] ?? flags[base]) return flags[tag] ?? flags[base]
+  // Тег из двух латинских букв считаем кодом страны (cy, lv, ...) и собираем
+  // флаг из regional indicator symbols, чтобы не дописывать таблицу на каждую.
+  if (/^[a-z]{2}$/.test(base))
+    return String.fromCodePoint(...[...base.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65))
+  return '🌍'
 }
 
 /** Russian plural: pluralRu(1, ['правило','правила','правил']) → 'правило' */

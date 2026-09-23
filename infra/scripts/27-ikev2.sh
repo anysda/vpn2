@@ -69,13 +69,18 @@ chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
 # ⚠️ python3-vici (биндинги к сокету charon) в Ubuntu 24.04 НЕТ ни в одном
 # компоненте — anysda-ikev2-sync (шаг 8) читает состояние через swanctl.
+# strongswan-starter называем явно: в Ubuntu 26.04 (strongSwan 6) метапакет
+# strongswan тянет charon-systemd вместо него, и шаг 6 не находит юнит.
+# Второй charon рядом со starter'ом дрался бы за 500/4500, поэтому
+# charon-systemd, если его успели поставить, снимаем.
 echo "[$HOST_TAG] [1/8] strongswan apt"
-if ! command -v swanctl >/dev/null 2>&1; then
+if ! dpkg -s strongswan-starter >/dev/null 2>&1 || dpkg -s charon-systemd >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq \
-    strongswan strongswan-pki strongswan-swanctl \
+    strongswan strongswan-starter strongswan-pki strongswan-swanctl \
     libcharon-extra-plugins libstrongswan-extra-plugins >/dev/null
+  apt-get purge -y -qq charon-systemd >/dev/null 2>&1 || true
 fi
 
 # ── 2. Server certs — раскладка по режиму ─────────────────────────────────

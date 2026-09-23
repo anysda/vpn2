@@ -112,6 +112,24 @@ print_summary() {
 }
 
 # ----------------------------------------------------------------------------
+# На свежей Ubuntu unattended-upgrades стартует сразу после загрузки и минутами
+# держит блокировки apt/dpkg: первый же apt-get стадии падает с «Could not get
+# lock». Ждём, пока apt освободится (до 20 минут), и ставим DPkg::Lock::Timeout
+# на случай, если apt-daily проснётся посреди деплоя. Lock::Timeout не спасает
+# `apt-get update` (блокировку lists он не ждёт), поэтому нужен и цикл.
+# Выполняется и локально, и на нодах через ssh_exec.
+# ----------------------------------------------------------------------------
+APT_WAIT_IDLE='
+printf "DPkg::Lock::Timeout \"600\";\n" > /etc/apt/apt.conf.d/90anysda-lock-timeout
+for i in $(seq 1 240); do
+  fuser -s /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || exit 0
+  [ "$i" = 1 ] && echo "  apt занят (unattended-upgrades?), жду освобождения"
+  sleep 5
+done
+echo "  apt так и не освободился за 20 минут, продолжаю"
+'
+
+# ----------------------------------------------------------------------------
 # Установка локальных пререквизитов (на самом оркестраторе).
 # Apt-пакеты + Docker (для pull/run, build больше не нужен).
 # Идемпотентна — если всё уже стоит, no-op за секунду.
@@ -130,6 +148,7 @@ install_prereqs() {
     printf '  ставлю недостающее: %s\n' "${missing[*]}"
     # envsubst живёт в gettext-base
     local apt_pkgs="${missing[*]/envsubst/gettext-base}"
+    bash -c "$APT_WAIT_IDLE"
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
       $apt_pkgs ca-certificates >/dev/null
@@ -145,6 +164,7 @@ install_prereqs() {
     # ноды стадия 25-monitoring. См. SECURITY-AUDIT-2026-06-01.md (H8).
     printf '  ставлю docker (через APT-репо download.docker.com)\n'
     export DEBIAN_FRONTEND=noninteractive
+    bash -c "$APT_WAIT_IDLE"
     apt-get install -y -qq ca-certificates curl gnupg >/dev/null
     install -m 0755 -d /etc/apt/keyrings
     if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
@@ -378,6 +398,7 @@ run_stage_on_host() {
     done
   fi
 
+  ssh_exec "$APT_WAIT_IDLE" | sed "s/^/[$host]/"
   ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env"
 
   ok "[$stage → $host] done"

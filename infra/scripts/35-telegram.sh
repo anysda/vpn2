@@ -76,13 +76,15 @@ docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/3] run container"
 docker rm -f anysda-tgbot >/dev/null 2>&1 || true
+# /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
+# месте каталог и контейнер не стартует. Время берут из /etc/localtime.
+[[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
 docker run -d \
   --name anysda-tgbot \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \
   -v /etc/localtime:/etc/localtime:ro \
-  -v /etc/timezone:/etc/timezone:ro \
   -v /etc/anysda:/etc/anysda:ro \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \

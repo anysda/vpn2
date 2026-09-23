@@ -37,7 +37,7 @@ if [[ "$HOST_TAG" == "ru" ]]; then
   fi
 else
   _mp="${HY2_MGMT_PORT:-}"
-  if [[ -n "$_mp" ]] && ss -lun 2>/dev/null | awk -v p="$_mp" '$5 ~ ":"p"$"{f=1} END{exit !f}'; then
+  if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep -q .; then
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp} слушает"
   else
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp:-?} НЕ слушает (стадия 10 не применена?)"
@@ -47,12 +47,12 @@ fi
 # --- host-specific
 case "$HOST_TAG" in
   ru)
-    if curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:80/ 2>/dev/null; then
+    if curl -fsS -o /dev/null http://127.0.0.1:80/ 2>/dev/null; then
       echo "[$HOST_TAG] frontend:    127.0.0.1:80 responds (via Caddy)"
     else
       echo "[$HOST_TAG] frontend:    не запущен (стадия 30 не применена)"
     fi
-    if curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8428/-/healthy 2>/dev/null; then
+    if curl -fsS -o /dev/null http://127.0.0.1:8428/-/healthy 2>/dev/null; then
       echo "[$HOST_TAG] vmsingle:    127.0.0.1:8428 healthy"
     else
       echo "[$HOST_TAG] vmsingle:    не запущен (стадия 25 не применена)"
@@ -124,8 +124,7 @@ case "$HOST_TAG" in
     _dp="${HY2_DIRECT_PORT:-443}"
     _wp="${HY2_WARP_PORT:-8443}"
     echo "[$HOST_TAG] UDP ports (Hysteria2):"
-    ss -lun 2>/dev/null \
-      | awk -v dp="$_dp" -v wp="$_wp" '$5 ~ ":"dp"$" || $5 ~ ":"wp"$" {print}' \
+    ss -H -lun "( sport = :$_dp or sport = :$_wp )" 2>/dev/null \
       | sed "s/^/[$HOST_TAG]   /"
     ;;
 esac

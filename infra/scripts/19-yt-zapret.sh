@@ -304,7 +304,9 @@ fi
 echo "[$HOST_TAG] [5b/7] блокировка QUIC к Google"
 mkdir -p "$(dirname "$QUIC_PREFIXES")"
 
-install -m 0755 /dev/stdin /usr/local/sbin/anysda-yt-quic-refresh.sh <<'QREFRESH'
+# Не `install /dev/stdin`: uutils-install в Ubuntu 26.04 падает с «No such file
+# or directory», если целевой файл уже есть, и повторный прогон стадии валится.
+cat > /usr/local/sbin/anysda-yt-quic-refresh.sh <<'QREFRESH'
 #!/usr/bin/env bash
 # Обновляет список IP-диапазонов Google и перезаливает nft-таблицу.
 # Свежий список тянем у Google; если не вышло — остаёмся на том, что уже есть.
@@ -332,6 +334,7 @@ install -m 0644 "$TMP_NFT" "$NFT_CONF"
 nft -f "$NFT_CONF"
 echo "QUIC-блокировка применена: $(nft list table inet anysda_ytquic | grep -c 'udp dport 443') правил"
 QREFRESH
+chmod 0755 /usr/local/sbin/anysda-yt-quic-refresh.sh
 
 install -m 0755 /tmp/anysda/gen-yt-quic-nft.py /usr/local/sbin/gen-yt-quic-nft.py
 
@@ -434,7 +437,7 @@ systemctl is-active anysda-yt-nft.service anysda-yt-nfqws.service | tr '\n' ' ' 
 # ----------------------------------------------------------------------------
 # 7. A/B-проверка: тот же хост по помеченному пути и мимо него
 # ----------------------------------------------------------------------------
-install -m 0755 /dev/stdin /usr/local/bin/anysda-yt-check <<EOF
+cat > /usr/local/bin/anysda-yt-check <<EOF
 #!/usr/bin/env bash
 # A/B-проверка десинка YouTube. Статус юнита ничего не доказывает — nfqws2
 # поднимается и с нерабочей стратегией. Сравниваем ОДИН И ТОТ ЖЕ хост:
@@ -473,6 +476,7 @@ echo "  подбор стратегии: $YT_ZAPRET_BASE/blockcheck2.sh"
 echo "  первое, что пробовать: YT_ZAPRET_OFFLOAD=off (TSO/GSO склеивает ClientHello)"
 exit 1
 EOF
+chmod 0755 /usr/local/bin/anysda-yt-check
 
 echo "[$HOST_TAG] [7/7] A/B-проверка"
 if /usr/local/bin/anysda-yt-check 2>&1 | sed "s/^/[$HOST_TAG]   /"; then

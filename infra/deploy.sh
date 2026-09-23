@@ -407,7 +407,8 @@ run_stage() {
   for pid in "${pids[@]}"; do
     wait "$pid" || rc=1
   done
-  [[ $rc -eq 0 ]] || die "стадия $stage: одна или несколько нод завершились с ошибкой"
+  # HOST_TAG тут остаётся от последнего source-нутого env, подпись была чужой ноды
+  [[ $rc -eq 0 ]] || HOST_TAG=deploy die "стадия $stage: одна или несколько нод завершились с ошибкой"
 
   local elapsed=$(( $(date +%s) - t0 ))
   local mins=$(( elapsed / 60 )) secs=$(( elapsed % 60 ))

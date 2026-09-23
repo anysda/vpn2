@@ -79,13 +79,15 @@ grep 'targets:' /etc/anysda/vmsingle-scrape.yml | sed "s/^/[$HOST_TAG]   /"
 # и панель видит метрики с задержкой полминуты (мёртвая нода «живёт» ~40с).
 # ----------------------------------------------------------------------------
 docker rm -f vmsingle >/dev/null 2>&1 || true
+# /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
+# месте каталог и контейнер не стартует. Время берут из /etc/localtime.
+[[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
 docker run -d \
   --name vmsingle \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \
   -v /etc/localtime:/etc/localtime:ro \
-  -v /etc/timezone:/etc/timezone:ro \
   -v /var/lib/vmsingle:/storage \
   -v /etc/anysda/vmsingle-scrape.yml:/etc/vm/scrape.yml:ro \
   victoriametrics/victoria-metrics:latest \

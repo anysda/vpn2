@@ -120,7 +120,7 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
 {
     # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
     # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
-    # Порт занят -> `bind: address already in use`, и QUIC-ответы не доходят
+    # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
     # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
     servers {
         protocols h1 h2
@@ -145,7 +145,7 @@ else
 {
     # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
     # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
-    # Порт занят -> `bind: address already in use`, и QUIC-ответы не доходят
+    # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
     # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
     servers {
         protocols h1 h2
@@ -173,6 +173,9 @@ caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] run container"
 docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
+# /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
+# месте каталог и контейнер не стартует. Время берут из /etc/localtime.
+[[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
 
 # host networking — panel manages WG/OpenVPN configs and talks to sing-box
 # clash-api. NET_ADMIN is enough; no SYS_MODULE.
@@ -184,7 +187,6 @@ docker run -d \
   --security-opt apparmor=unconfined \
   --cap-add NET_ADMIN \
   -v /etc/localtime:/etc/localtime:ro \
-  -v /etc/timezone:/etc/timezone:ro \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
   -v /etc/wireguard:/etc/wireguard \

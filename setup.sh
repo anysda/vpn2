@@ -344,7 +344,8 @@ if [[ "$backup_enabled_q" == "y" ]]; then
   read -rs backup_passphrase; printf '\n' >&2
   backup_passphrase=$(sanitize "$backup_passphrase")
   if [[ -z "$backup_passphrase" ]]; then
-    backup_passphrase=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40)
+    # tr из /dev/urandom под pipefail ловит SIGPIPE от head и роняет мастер
+    backup_passphrase=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(40)))')
     warn "Сгенерирован passphrase: $backup_passphrase"
     warn "Сохраните где-то ВНЕ entry-ноды. Дубль лежит в config.yaml (chmod 600)."
   fi

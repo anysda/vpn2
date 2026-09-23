@@ -243,6 +243,10 @@ connections {
         # режима, Windows просит ESN, strongSwan по умолчанию только noesn.
         esp_proposals = aes256gcm16-ecp384-esn-noesn,aes256gcm16-esn-noesn,aes128gcm16-esn-noesn,aes256-sha256-esn-noesn,aes256-sha1-esn-noesn,aes128-sha256-esn-noesn,aes128-sha1-esn-noesn
         rekey_time    = 0s
+        # DF во внешний ESP не копируем: на пути с MTU меньше ~1465 пакет
+        # с DF молча теряется (ICMP до entry не доходит), и HTTPS у клиента
+        # виснет на первом полном сегменте. Без DF роутер его дробит, как у WG.
+        copy_df       = no
         # XFRM-interface if_id=42 — pakets из IPsec policy кладутся в xfrm0.
         # iptables PREROUTING -i xfrm0 ставит mark 0x42 → TPROXY 7898 (sing-box).
         if_id_in  = 42

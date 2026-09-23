@@ -45,6 +45,8 @@ fi
 # октета MGMT_IP_{T} той же формулой, что и в gen-router-config.py (инбаунд
 # mon-{tag}), чтобы стороны сошлись без общего конфига. Цель у всех экзитов —
 # 127.0.0.1:9100: это loopback НА ЭКЗИТЕ, куда туннель приводит запрос.
+# instance задаём явно = MGMT_IP:9100: панель и бот ищут ноду по нему
+# (NUXT_MGMT_IPS в 30-frontend.sh), а по адресу цели все ноды одинаковые.
 # ----------------------------------------------------------------------------
 mkdir -p /etc/anysda /var/lib/vmsingle
 
@@ -53,7 +55,7 @@ mkdir -p /etc/anysda /var/lib/vmsingle
   printf 'global:\n  scrape_interval: 2s\n  scrape_timeout: 1s\n\n'
   printf 'scrape_configs:\n'
   printf '  - job_name: node-ru\n    static_configs:\n'
-  printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: ru }\n"
+  printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: ru, instance: '%s:9100' }\n" "${MGMT_IP_RU:-10.99.0.1}"
   for _t in $EXIT_TAGS; do
     _T=$(echo "$_t" | tr a-z A-Z)
     _var="MGMT_IP_${_T}"
@@ -66,7 +68,7 @@ mkdir -p /etc/anysda /var/lib/vmsingle
     printf '  - job_name: node-%s\n' "$_t"
     printf "    proxy_url: 'socks5://127.0.0.1:%s'\n" "$_mon_port"
     printf '    static_configs:\n'
-    printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: %s }\n" "$_t"
+    printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: %s, instance: '%s:9100' }\n" "$_t" "$_ip"
   done
 } > /etc/anysda/vmsingle-scrape.yml
 

@@ -117,16 +117,23 @@ print_summary() {
 # lock». Ждём, пока apt освободится (до 20 минут), и ставим DPkg::Lock::Timeout
 # на случай, если apt-daily проснётся посреди деплоя. Lock::Timeout не спасает
 # `apt-get update` (блокировку lists он не ждёт), поэтому нужен и цикл.
+# Если хостер перезагрузил машину посреди установки пакетов, dpkg остаётся
+# прерванным и любой apt-get падает с «dpkg was interrupted» - доводим его.
 # Выполняется и локально, и на нодах через ssh_exec.
 # ----------------------------------------------------------------------------
 APT_WAIT_IDLE='
 printf "DPkg::Lock::Timeout \"600\";\n" > /etc/apt/apt.conf.d/90anysda-lock-timeout
 for i in $(seq 1 240); do
-  fuser -s /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || exit 0
+  fuser -s /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || break
   [ "$i" = 1 ] && echo "  apt занят (unattended-upgrades?), жду освобождения"
+  [ "$i" = 240 ] && echo "  apt так и не освободился за 20 минут, продолжаю"
   sleep 5
 done
-echo "  apt так и не освободился за 20 минут, продолжаю"
+if [ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]; then
+  echo "  dpkg был прерван, довожу: dpkg --configure -a"
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
+fi
+exit 0
 '
 
 # ----------------------------------------------------------------------------

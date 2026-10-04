@@ -8,9 +8,9 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # Color helpers (terminal-safe)
 if [[ -t 1 ]]; then
-  C_R='\033[31m' C_G='\033[32m' C_Y='\033[33m' C_B='\033[34m' C_DIM='\033[2m' C_END='\033[0m'
+  C_R='\033[31m' C_G='\033[32m' C_Y='\033[33m' C_B='\033[34m' C_END='\033[0m'
 else
-  C_R= C_G= C_Y= C_B= C_DIM= C_END=
+  C_R= C_G= C_Y= C_B= C_END=
 fi
 log()  { printf '%b[%s]%b %s\n' "$C_B" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
 ok()   { printf '%b[%s]%b %s\n' "$C_G" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }

@@ -278,13 +278,11 @@ def main():
 
     lines = [
         "HOST_TAG='ru'",
-        "HOST_LABEL='RU entry'",
         '',
         "SSH_USER='root'",
         f"SSH_HOST='{entry_host}'",
         f"SSH_PASS='{entry_pass}'",
         '',
-        f"PUB_IP_IN='{entry_host}'",
         f"PUB_IP_OUT='{entry_host}'",
         '',
         "MGMT_IP='10.99.0.1'",
@@ -431,7 +429,6 @@ def main():
 
         lines = [
             f"HOST_TAG='{tag}'",
-            f"HOST_LABEL='{tag.upper()} exit'",
             '',
             "SSH_USER='root'",
             f"SSH_HOST='{host}'",

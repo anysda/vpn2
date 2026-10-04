@@ -119,18 +119,6 @@ APP_VERSION=$(docker exec anysda-vpn2 sh -c 'cat /app/.output/.config/.json 2>/d
 GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)
 SCHEMA_VER=$(sqlite3 "$DB" 'PRAGMA schema_version;' 2>/dev/null || echo 0)
 
-# Hash файла или директории (тар-stream sha256 для директории).
-_hash() {
-  local p="$1"
-  if [[ -d "$p" ]]; then
-    (cd "$(dirname "$p")" && tar -cf - "$(basename "$p")" 2>/dev/null | sha256sum | awk '{print $1}')
-  elif [[ -f "$p" ]]; then
-    sha256sum "$p" | awk '{print $1}'
-  else
-    echo ""
-  fi
-}
-
 python3 - "$BUNDLE_DIR" "$APP_VERSION" "$GIT_COMMIT" "$SCHEMA_VER" "$TS" <<'PY' > "$BUNDLE_DIR/manifest.json"
 import hashlib, json, os, subprocess, sys, tarfile, io
 bdir, ver, commit, schema, ts = sys.argv[1:6]
@@ -182,7 +170,6 @@ PY
 # ── Архив tar.gz внутри WORK (НЕ в /var/backups!) ───────────────────────────
 ARCHIVE_PLAIN="$WORK/$BUNDLE.tar.gz"
 tar -C "$WORK" -czf "$ARCHIVE_PLAIN" "$BUNDLE"
-SIZE_PLAIN=$(stat -c %s "$ARCHIVE_PLAIN")
 
 # ── Шифрование age с passphrase из ENV через expect (age читает /dev/tty) ───
 ARCHIVE_AGE="$WORK/$BUNDLE.tar.gz.age"

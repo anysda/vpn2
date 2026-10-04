@@ -238,7 +238,7 @@ docker run -d \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null && break
   sleep 1
 done

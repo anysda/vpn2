@@ -65,10 +65,22 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s — %(message)s',
-)
+class _RedactTokenFormatter(logging.Formatter):
+    """Вырезает токен бота из любой строки лога, включая трассировки:
+    python-telegram-bot кладёт токен прямо в текст InvalidToken."""
+    token = ''
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        return text.replace(self.token, '<token>') if self.token else text
+
+
+logging.basicConfig(level=logging.INFO)
+for _h in logging.getLogger().handlers:
+    _h.setFormatter(_RedactTokenFormatter('%(asctime)s %(levelname)s %(name)s — %(message)s'))
+# httpx на INFO пишет URL каждого запроса, а в URL Telegram API сидит токен.
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('httpcore').setLevel(logging.WARNING)
 log = logging.getLogger('tgbot')
 
 # Runtime config поверх env-vars: если файл существует — он перебивает токен/чат_id.
@@ -102,6 +114,7 @@ def _load_runtime() -> tuple[str, int, str]:
 
 
 TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
+_RedactTokenFormatter.token = TOKEN
 SECRET     = os.environ.get('TGBOT_SECRET', '')
 if not SECRET:
     raise RuntimeError(
@@ -1507,4 +1520,9 @@ async def main() -> None:
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception:
+        # Через логгер, а не голой трассировкой в stderr: так токен вырезается.
+        log.exception('бот остановлен ошибкой')
+        raise SystemExit(1) from None

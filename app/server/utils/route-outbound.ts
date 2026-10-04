@@ -6,9 +6,9 @@ import { fetchProxies, userVisibleOutbounds } from './clash-client'
 export async function assertKnownOutbound(outbound: string): Promise<void> {
   const names = userVisibleOutbounds(await fetchProxies()).map(p => p.name)
   if (names.length === 0) {
-    throw createError({ statusCode: 503, statusMessage: 'outbounds_unavailable: sing-box clash-api is down' })
+    throw createError({ statusCode: 503, statusMessage: 'outbounds_unavailable', message: 'Список выходов недоступен: sing-box не отвечает' })
   }
   if (!names.includes(outbound)) {
-    throw createError({ statusCode: 400, statusMessage: `unknown_outbound: ${outbound}`, data: { known: names } })
+    throw createError({ statusCode: 400, statusMessage: 'unknown_outbound', message: `Выхода «${outbound}» нет`, data: { known: names } })
   }
 }

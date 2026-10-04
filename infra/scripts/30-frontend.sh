@@ -135,10 +135,19 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
     @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
     respond @internal 404
 }
+# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
+# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
+# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
 ${PANEL_DOMAIN} {
     import internal_only
     encode gzip
-    reverse_proxy 127.0.0.1:51821
+    import to_panel
 }
 :80 {
     redir https://${PANEL_DOMAIN}{uri} permanent
@@ -170,10 +179,19 @@ else
     @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
     respond @internal 404
 }
+# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
+# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
+# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
 :80 {
     import internal_only
     encode gzip
-    reverse_proxy 127.0.0.1:51821
+    import to_panel
 }
 :3001 {
     reverse_proxy 127.0.0.1:${AGH_PORT}

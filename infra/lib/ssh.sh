@@ -50,7 +50,7 @@ expand_hosts() {
     all)     [[ -n "$exits" ]] || die "EXIT_TAGS пустой — перезапусти ./deploy.sh"
              echo "ru $exits" ;;
     *)       # Конкретный тег — проверяем что он есть в списке экзитов
-             if echo "$exits" | grep -qw "$group"; then
+             if grep -qw -- "$group" <<<"$exits"; then
                echo "$group"
              else
                die "unknown host group: $group (доступные: ru foreign all или тег из config.yaml)"

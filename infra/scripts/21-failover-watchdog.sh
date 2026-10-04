@@ -107,14 +107,21 @@ cat > /usr/local/sbin/anysda-tproxy-watchdog.sh <<'WDEOF'
 set -uo pipefail
 MARK='0x42'
 TABLE=101
+PREF=32765
 PORT=7898
 STUCK_BYTES=65536
 
 if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]+_TPROXY' >/dev/null; then
-  if ! ip rule list | grep "fwmark $MARK lookup $TABLE" >/dev/null; then
-    ip rule add fwmark "$MARK" lookup "$TABLE" \
-      && echo "правило fwmark $MARK lookup $TABLE пропало, вернул"
+  # pref тот же, что ставят anysda-{wg,ovpn,ikev2}-routing; без него правило
+  # вставало на 219, выше strongSwan 220, и так там и оставалось.
+  if ! ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null; then
+    ip rule add fwmark "$MARK" lookup "$TABLE" pref "$PREF" \
+      && echo "правило fwmark $MARK lookup $TABLE пропало с приоритета $PREF, вернул"
   fi
+  for p in $(ip rule list | awk -F: -v m="fwmark $MARK lookup $TABLE" -v k="$PREF" 'index($0, m) && $1 != k {print $1}'); do
+    ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" \
+      && echo "копия правила fwmark $MARK lookup $TABLE на приоритете $p, убрал"
+  done
   if ! ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null; then
     ip route add local 0.0.0.0/0 dev lo table "$TABLE" \
       && echo "маршрут local default в таблице $TABLE пропал, вернул"

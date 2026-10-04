@@ -284,9 +284,9 @@ for _ in $(seq 1 60); do
   if curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then http_up=1; break; fi
   sleep 1
 done
-# Битый anysda-config.yaml панель не роняет: init пишет ошибку в свой журнал,
-# админ не синхронизируется, и войти паролем из config.yaml нельзя. Без этой
-# проверки стадия выглядела бы зелёной.
+# Битый anysda-config.yaml роняет init панели (process.exit(1) в
+# server/plugins/init.ts). Причину печатаем раньше общей проверки ниже:
+# чинить надо конфиг, а не панель.
 if bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
   echo "[$HOST_TAG] ✗ панель не разобрала /etc/anysda/anysda-config.yaml, пароль админа не применён:"
   echo "[$HOST_TAG]   ${bad:0:400}"

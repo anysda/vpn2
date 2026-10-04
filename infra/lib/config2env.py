@@ -49,7 +49,7 @@ def unquote_scalar(v):
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
-           'panel': {}, 'backup': {}, 'youtube': {}, 'sso': {}}
+           'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -86,6 +86,8 @@ def parse_yaml(text):
                 context = 'admin'
             elif content.startswith('panel:'):
                 context = 'panel'
+            elif content.startswith('tgbot:'):
+                context = 'tgbot'
             elif content.startswith('backup:'):
                 context = 'backup'
                 backup_sub = None
@@ -121,6 +123,9 @@ def parse_yaml(text):
             elif context == 'panel':
                 k, v = kv(content)
                 cfg['panel'][k] = v
+            elif context == 'tgbot':
+                k, v = kv(content)
+                cfg['tgbot'][k] = v
             elif context == 'youtube':
                 k, v = kv(content)
                 cfg['youtube'][k] = v
@@ -304,6 +309,8 @@ def main():
     # проде осознанно крутится не dev-линия: без него обычный прогон 30-frontend
     # молча утащит панель обратно на :dev.
     panel_image = cfg.get('panel', {}).get('image', '')
+    # Образ бота — то же для стадии 35-telegram (…/tgbot:dev).
+    tgbot_image = cfg.get('tgbot', {}).get('image', '')
 
     lines = [
         "HOST_TAG='ru'",
@@ -324,6 +331,8 @@ def main():
     ]
     if panel_image:
         lines.append(f"PANEL_IMAGE={shq(panel_image)}")
+    if tgbot_image:
+        lines.append(f"TGBOT_IMAGE={shq(tgbot_image)}")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [

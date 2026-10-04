@@ -3,6 +3,7 @@ name: images
 on:
   push:
     branches: [dev, main]
+    tags: ['v*']
     paths:
       - app/**
       - telegram/**
@@ -35,13 +36,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Тег sha-<ветка>-<коммит>: dev и main на одном коммите не перетирают
+      # друг друга. У тега v* ветки нет, там хватает номера версии.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}/${{ matrix.name }}
           tags: |
             type=ref,event=branch
-            type=sha
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-{{branch}}-,enable=${{ github.ref_type == 'branch' }}
 
       - name: build
         uses: docker/build-push-action@v6
@@ -57,7 +61,7 @@ jobs:
         if: matrix.name == 'panel'
         run: |
           docker run -d --name smoke -p 51821:51821 smoke/panel
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -fsS http://127.0.0.1:51821/api/version && exit 0
             sleep 1
           done
@@ -71,6 +75,7 @@ jobs:
           "import ast, telegram, aiohttp, qrcode; ast.parse(open('bot.py').read())"
 
       - name: push
+        id: push
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
@@ -80,3 +85,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      # Digest в аннотации: логи прогона без токена закрыты, а аннотации
+      # публичны — по ним сверяют то, что нода стянула, с тем, что собрали.
+      - name: digest
+        run: echo "::notice title=${{ matrix.name }}:${{ steps.meta.outputs.version }}::${{ steps.push.outputs.digest }}"

@@ -24,9 +24,9 @@ pnpm db:generate    # сгенерировать drizzle-миграцию из s
 
 Образ собирает GitHub Actions (`.github/workflows/images.yml`) на каждый пуш в `dev`/`main`
 и кладёт в `ghcr.io/anysda/vpn2/panel` с тегом ветки; нода тянет его (стадия `30-frontend`).
-Собрать руками:
+Собрать руками (без пуша: в GHCR пушит только Actions):
 
 ```bash
-docker buildx build --platform linux/amd64 --push \
+docker buildx build --platform linux/amd64 --load \
   -t ghcr.io/anysda/vpn2/panel:dev .
 ```

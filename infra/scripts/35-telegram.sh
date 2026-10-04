@@ -68,8 +68,19 @@ fi
 # 2. Pull bot image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
 TGBOT_IMAGE="${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}"
+TGBOT_IMAGE_PULL="${TGBOT_IMAGE_PULL:-true}"
 echo "[$HOST_TAG] [2/3] docker pull ${TGBOT_IMAGE}"
-docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
+# Как у панели (30-frontend): registry недоступен — берём образ, который уже
+# лежит на ноде; TGBOT_IMAGE_PULL=false — в registry не ходим вовсе.
+if [[ "$TGBOT_IMAGE_PULL" == "false" ]]; then
+  docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
+    || { echo "[$HOST_TAG] ✗ TGBOT_IMAGE_PULL=false, но образа ${TGBOT_IMAGE} на ноде нет"; exit 1; }
+  echo "[$HOST_TAG]   pull пропущен (TGBOT_IMAGE_PULL=false), беру локальный образ"
+elif ! docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+  docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
+    || { echo "[$HOST_TAG] ✗ образа ${TGBOT_IMAGE} нет ни в registry, ни локально"; exit 1; }
+  echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${TGBOT_IMAGE}"
+fi
 
 # ----------------------------------------------------------------------------
 # 3. Run bot container

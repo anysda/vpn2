@@ -3,11 +3,13 @@ import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
-import { eq } from 'drizzle-orm'
-import { useDb } from '../database/client'
+import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
+import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { isClientActive } from './client-status'
 import { slugify } from './naming'
+import { coalesceRuns } from './coalesce'
+
 
 const exec = promisify(execFile)
 
@@ -137,6 +139,23 @@ export async function readIkev2CaPem(): Promise<string> {
  * Возвращает (возможно обновлённую) запись device. Безопасно вызывать многократно.
  */
 export async function ensureDeviceIkev2(deviceId: number) {
+  // Повтор при конфликте UNIQUE на ikev2_ip или ikev2_username — та же гонка
+  // выбора свободного значения, что и у адреса WG (VPN2-50, VPN2-70), см.
+  // ensureDeviceWg. На повторе занятые перечитываются заново.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const updated = await claimDeviceIkev2(deviceId)
+      if (updated) return updated
+    }
+    catch (err) {
+      if (!isUniqueViolation(err)) throw err
+    }
+    if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять логин и адрес IKEv2`)
+  }
+}
+
+/** Одна попытка выдать креды. undefined — строку успел дописать параллельный вызов. */
+async function claimDeviceIkev2(deviceId: number) {
   const db = useDb()
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
@@ -167,7 +186,11 @@ export async function ensureDeviceIkev2(deviceId: number) {
       ikev2Ip: ip,
       updatedAt: new Date(),
     })
-    .where(eq(devicesTable.id, deviceId))
+    .where(and(
+      eq(devicesTable.id, deviceId),
+      row.ikev2Ip ? eq(devicesTable.ikev2Ip, row.ikev2Ip) : isNull(devicesTable.ikev2Ip),
+      row.ikev2Username ? eq(devicesTable.ikev2Username, row.ikev2Username) : isNull(devicesTable.ikev2Username),
+    ))
     .returning()
   if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
@@ -214,10 +237,27 @@ export async function reissueDeviceIkev2(deviceId: number) {
  * вызывающий код через terminateIkev2Sa(username); syncIkev2 только пишет
  * актуальный secrets-блок и перегружает credentials.
  */
-export async function syncIkev2(): Promise<void> {
+async function syncIkev2Once(): Promise<void> {
   if (!(await ikev2ServerReady())) return
 
   const db = useDb()
+
+  // Креды выданы не целиком: адрес сняла миграция 0010 с устройства-дубля
+  // (VPN2-50), логин и пароль — миграция 0012 (VPN2-70). Выдаём недостающее
+  // здесь, а не ждём, пока кто-то откроет креды: адрес назначает сервер, а
+  // дублю логина без нового логина вход всё равно не светит.
+  const orphans = await db
+    .select({ id: devicesTable.id })
+    .from(devicesTable)
+    .where(or(
+      and(isNotNull(devicesTable.ikev2Username), isNull(devicesTable.ikev2Ip)),
+      and(isNull(devicesTable.ikev2Username), isNotNull(devicesTable.ikev2Ip)),
+    ))
+  for (const o of orphans) {
+    await ensureDeviceIkev2(o.id).catch(err =>
+      useLogger().warn({ err: (err as Error).message, id: o.id }, 'ikev2: адрес устройству не выдан'))
+  }
+
   const rows = await db
     .select({
       username: devicesTable.ikev2Username,
@@ -278,6 +318,9 @@ export async function syncIkev2(): Promise<void> {
     )
   })
 }
+
+/** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */
+export const syncIkev2 = coalesceRuns(syncIkev2Once)
 
 /**
  * Разрыв активной SA устройства. Работает только там, где панели доступен

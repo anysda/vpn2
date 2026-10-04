@@ -154,6 +154,13 @@ push "redirect-gateway def1 bypass-dhcp"
 # трафика панели читает отсюда per-client байты.
 status /etc/openvpn/server/status-server.log
 status-version 2
+# Management на unix-сокете, не TCP. Через него панель рвёт уже установленные
+# сессии при заморозке, истечении, удалении и перевыпуске: ccd `disable` и CRL
+# OpenVPN проверяет только на НОВОМ подключении (VPN2-39). Сокет OpenVPN
+# создаёт с правами 0777, поэтому пускаем только root (панель в контейнере
+# тоже root) - иначе любой локальный пользователь ноды рвал бы сессии.
+management /etc/openvpn/server/mgmt.sock unix
+management-client-user root
 verb 3
 EOF
 

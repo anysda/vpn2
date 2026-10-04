@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { readBodyAs } from '../../utils/validate'
 import { users } from '../../database/schema'
-import { hashAdminPassword, requireAuth, verifyAdminPassword } from '../../utils/auth'
+import { bumpSessionVersion, hashAdminPassword, requireAuth, verifyAdminPassword } from '../../utils/auth'
 
 const Body = z.object({
   currentPassword: z.string().min(1),
@@ -24,6 +24,11 @@ export default defineEventHandler(async (event) => {
     .update(users)
     .set({ passwordHash: await hashAdminPassword(body.newPassword), updatedAt: new Date() })
     .where(eq(users.id, u.id))
+
+  // Все остальные сессии этой учётки отзываются; текущая получает новое
+  // поколение и остаётся в системе.
+  const sv = await bumpSessionVersion(u.id)
+  await replaceUserSession(event, { user: { ...u, sv } })
 
   return { ok: true }
 })

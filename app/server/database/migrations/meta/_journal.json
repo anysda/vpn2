@@ -71,6 +71,27 @@
       "when": 1786014174392,
       "tag": "0009_oidc_sub",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791140067750,
+      "tag": "0010_session_version_unique_ips",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791149151789,
+      "tag": "0011_totp_last_step",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791150852022,
+      "tag": "0012_ikev2_username_unique",
+      "breakpoints": true
     }
   ]
 }

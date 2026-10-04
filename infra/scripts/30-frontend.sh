@@ -129,9 +129,28 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
         protocols h1 h2
     }
 }
+# Пути бота и метрики — только для самой ноды: бот ходит на 127.0.0.1:51821
+# мимо Caddy, метрики снаружи никто не забирает. Caddy сам подключается к
+# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
+# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# браузер админа со страницы мониторинга — его не трогаем.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
+    respond @internal 404
+}
+# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
+# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
+# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
 ${PANEL_DOMAIN} {
+    import internal_only
     encode gzip
-    reverse_proxy 127.0.0.1:51821
+    import to_panel
 }
 :80 {
     redir https://${PANEL_DOMAIN}{uri} permanent
@@ -154,9 +173,28 @@ else
         protocols h1 h2
     }
 }
+# Пути бота и метрики — только для самой ноды: бот ходит на 127.0.0.1:51821
+# мимо Caddy, метрики снаружи никто не забирает. Caddy сам подключается к
+# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
+# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# браузер админа со страницы мониторинга — его не трогаем.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
+    respond @internal 404
+}
+# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
+# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
+# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+    }
+}
 :80 {
+    import internal_only
     encode gzip
-    reverse_proxy 127.0.0.1:51821
+    import to_panel
 }
 :3001 {
     reverse_proxy 127.0.0.1:${AGH_PORT}

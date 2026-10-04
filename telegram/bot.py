@@ -56,6 +56,7 @@ import httpx
 import qrcode
 from aiohttp import web
 from telegram import Update
+from telegram.error import InvalidToken
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -150,6 +151,8 @@ TG_PROXY   = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
 # только рестартом, поэтому сторож роняет процесс — docker поднимет заново.
 # Нормальный интервал long-poll ≈ 10с, так что 300с — заведомо аномалия. 0 = выкл.
 POLL_STALL_SEC = int(os.environ.get('TGBOT_POLL_STALL_SEC', '300'))
+# Отвергнутый токен сам не починится: сколько ждать перед выходом под рестарт.
+INVALID_TOKEN_PAUSE_SEC = int(os.environ.get('TGBOT_INVALID_TOKEN_PAUSE_SEC', '300'))
 
 # username бота — заполняется в main() через getMe; нужен для диплинков-приглашений.
 BOT_USERNAME: str | None = None
@@ -1569,9 +1572,35 @@ async def main() -> None:
     await runner.cleanup()
 
 
+def _wait_token_fix(limit_sec: int) -> None:
+    """Пауза перед перезапуском с отвергнутым токеном.
+
+    Без неё docker --restart поднимает бот через секунды, и тот снова бьётся
+    в Telegram с тем же токеном. Новый токен из панели приходит правкой
+    telegram-runtime.json: тогда выходим сразу, не досиживая паузу.
+    """
+    def mtime():
+        return RUNTIME_PATH.stat().st_mtime if RUNTIME_PATH.exists() else None
+
+    initial = mtime()
+    deadline = time.monotonic() + limit_sec
+    while time.monotonic() < deadline:
+        time.sleep(5)
+        if mtime() != initial:
+            return
+
+
 if __name__ == '__main__':
     try:
         asyncio.run(main())
+    except InvalidToken:
+        log.error(
+            'Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
+            'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
+            INVALID_TOKEN_PAUSE_SEC,
+        )
+        _wait_token_fix(INVALID_TOKEN_PAUSE_SEC)
+        raise SystemExit(1) from None
     except Exception:
         # Через логгер, а не голой трассировкой в stderr: так токен вырезается.
         log.exception('бот остановлен ошибкой')

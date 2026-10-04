@@ -103,7 +103,12 @@ docker run -d \
 # ----------------------------------------------------------------------------
 # 4. Проверка targets
 # ----------------------------------------------------------------------------
-sleep 5
+# Ждём первый опрос всех целей (scrape_interval 2s), не дольше прежних 5 с.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  _t=$(curl -sS http://127.0.0.1:8428/api/v1/targets 2>/dev/null || true)
+  [[ "$_t" == *'"health":"'* && "$_t" != *'"health":"unknown"'* ]] && break
+  sleep 0.5
+done
 echo "[$HOST_TAG] scrape health:"
 if command -v jq >/dev/null 2>&1; then
   curl -sS http://127.0.0.1:8428/api/v1/targets \

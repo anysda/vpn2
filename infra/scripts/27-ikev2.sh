@@ -365,7 +365,7 @@ if [[ "\$ACTION" == "up" ]]; then
   ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\
     ip rule add fwmark "\$MARK" lookup "\$TABLE"
   ip route show table "\$TABLE" 2>/dev/null | grep -q 'local default' || \\
-    ip route add local 0.0.0.0/0 dev lo table "\$TABLE"
+    ip route replace local 0.0.0.0/0 dev lo table "\$TABLE"
 
   iptables -t mangle -N ANYSDA_IKEV2_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_IKEV2_TPROXY

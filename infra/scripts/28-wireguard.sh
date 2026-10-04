@@ -120,8 +120,10 @@ TPROXY_PORT=7898
 if [[ "$ACTION" == "up" ]]; then
   ip rule list | grep -q "fwmark $MARK lookup $TABLE" || \
     ip rule add fwmark "$MARK" lookup "$TABLE"
+  # replace, не add: на загрузке wg/ovpn/ikev2-routing стартуют разом, и
+  # проигравший гонку add падал с File exists, не поставив свой TPROXY.
   ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
-    ip route add local 0.0.0.0/0 dev lo table "$TABLE"
+    ip route replace local 0.0.0.0/0 dev lo table "$TABLE"
 
   iptables -t mangle -N ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY

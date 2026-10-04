@@ -36,6 +36,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Тег sha-<ветка>-<коммит>: dev и main на одном коммите не перетирают
+      # друг друга. У тега v* ветки нет, там хватает номера версии.
       - id: meta
         uses: docker/metadata-action@v5
         with:
@@ -43,7 +45,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
-            type=sha
+            type=sha,prefix=sha-{{branch}}-,enable=${{ github.ref_type == 'branch' }}
 
       - name: build
         uses: docker/build-push-action@v6

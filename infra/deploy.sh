@@ -18,7 +18,8 @@ export DEPLOY_ROOT
 # shellcheck source=lib/ssh.sh
 source "$DEPLOY_ROOT/lib/ssh.sh"
 
-# Accumulated stage log for the final summary (populated by run_stage)
+# Accumulated stage log for the final summary (populated by run_stage):
+# «стадия<TAB>группа<TAB>время», колонки выравнивает print_summary
 _STAGE_LOG=()
 _TOTAL_T0=0
 
@@ -78,8 +79,20 @@ print_summary() {
   local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
   local title_str="  деплой завершён  ·  ${timing}  "
   local _rows=("$title_str")
-  local entry
-  for entry in "${_STAGE_LOG[@]}"; do _rows+=("  ${entry}  "); done
+  # Колонки стадий: ширина по самому длинному значению в символах, а не
+  # зашитая (21-failover-watchdog не влезал в %-18s и сдвигал свою строку).
+  local entry s g t w1=0 w2=0 w3=0 _stages=()
+  for entry in "${_STAGE_LOG[@]}"; do
+    IFS=$'\t' read -r s g t <<< "$entry"
+    (( ${#s} > w1 )) && w1=${#s}
+    (( ${#g} > w2 )) && w2=${#g}
+    (( ${#t} > w3 )) && w3=${#t}
+  done
+  for entry in "${_STAGE_LOG[@]}"; do
+    IFS=$'\t' read -r s g t <<< "$entry"
+    _stages+=("$s$(printf '%*s' $(( w1 - ${#s} + 2 )) '')$g$(printf '%*s' $(( w2 - ${#g} + w3 - ${#t} + 2 )) '')$t")
+  done
+  for entry in "${_stages[@]}"; do _rows+=("  ${entry}  "); done
   _rows+=("  Panel:    ${_panel_url}")
   _rows+=("  AdGuard:  ${_agh_url}")
   _rows+=("  Login:    ${_admin_user}")
@@ -100,7 +113,7 @@ print_summary() {
   printf '%b  ┌%s┐%b\n' "$C_G" "$BAR" "$C_END"
   _row "$title_str"
   printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
-  for entry in "${_STAGE_LOG[@]}"; do _row "  ${entry}  "; done
+  for entry in "${_stages[@]}"; do _row "  ${entry}  "; done
   printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
   _row "  Panel:    ${_panel_url}"
   _row "  AdGuard:  ${_agh_url}"
@@ -486,7 +499,7 @@ run_stage() {
   local elapsed=$(( $(date +%s) - t0 ))
   local mins=$(( elapsed / 60 )) secs=$(( elapsed % 60 ))
   local t="${mins}m ${secs}s"; [[ "$mins" -eq 0 ]] && t="${secs}s"
-  _STAGE_LOG+=("$(printf '%-18s  %-10s  %6s' "$stage" "$group" "$t")")
+  _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$t")
 }
 
 # ----------------------------------------------------------------------------
@@ -729,10 +742,10 @@ verify_and_rotate_ports() {
   if [[ $secs -ge 60 ]]; then mins=$((secs/60)); secs=$((secs%60)); fi
   local t="${secs}s"; [[ $mins -gt 0 ]] && t="${mins}m ${secs}s"
   if [[ $rotated_any -eq 1 ]]; then
-    _STAGE_LOG+=("$(printf '%-18s  %-10s  %6s' '[port-rotate]' 'foreign' "$t")")
+    _STAGE_LOG+=($'[port-rotate]\tforeign\t'"$t")
   fi
   if [[ ${#fully_dead[@]} -gt 0 ]]; then
-    _STAGE_LOG+=("$(printf '%-18s  %-10s  %6s' '[excluded]' "${fully_dead[*]}" "$t")")
+    _STAGE_LOG+=($'[excluded]\t'"${fully_dead[*]}"$'\t'"$t")
   fi
   printf '\n'
 }

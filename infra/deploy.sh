@@ -377,7 +377,7 @@ run_stage_on_host() {
     push "$wd" "failover-watchdog.py"
   fi
 
-  # Panel + tgbot images live in the public GitLab Container Registry now —
+  # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
   # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
   # thing 30-frontend still needs from the orchestrator side is the rails
   # template (anysda-config.yaml.tpl).

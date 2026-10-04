@@ -150,6 +150,12 @@ dns:
   # роутинг работают штатно. Чтобы вернуть v6 — нужно поднимать v6-стек
   # на entry полностью (wg0 v6 + ip6tables TPROXY + sing-box v6 listen).
   aaaa_disabled: true
+  # ECS не добавляем: апстримам незачем знать подсеть клиента. ECS, который
+  # клиент прислал сам, AdGuard всё равно пробрасывает как есть.
+  edns_client_subnet:
+    custom_ip: ""
+    enabled: false
+    use_custom: false
 
 filters:
   - enabled: true
@@ -184,9 +190,10 @@ with open(cfg_path) as f:
 cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
 # Гарантируем aaaa_disabled: true (мерджим в dns секцию)
 cfg.setdefault("dns", {})["aaaa_disabled"] = True
+cfg["dns"].setdefault("edns_client_subnet", {})["enabled"] = False
 with open(cfg_path, "w") as f:
     yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-print("credentials + aaaa_disabled synced")
+print("credentials + aaaa_disabled + ecs off synced")
 PYEOF
 fi
 patch_agh_config "$AGH_CFG"

@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
+import type { SQLiteUpdateSetSource } from 'drizzle-orm/sqlite-core'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { users } from '../database/schema'
-import { hashAdminPassword } from '../utils/auth'
+import { hashAdminPassword, verifyAdminPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 
 function generatePassword(): string {
@@ -72,12 +73,18 @@ export default defineNitroPlugin(async () => {
   }
   else {
     const current = existing[0]!
-    const updates: Partial<typeof users.$inferInsert> = {}
+    const updates: SQLiteUpdateSetSource<typeof users> = {}
     if (yamlConfig?.admin?.user && current.username !== yamlConfig.admin.user) {
       updates.username = yamlConfig.admin.user
     }
-    if (yamlConfig?.admin?.password) {
-      updates.passwordHash = await hashAdminPassword(yamlConfig.admin.password)
+    // Пароль из конфига перезаписывается только при настоящей смене, и вместе
+    // с ним поднимается поколение сессий, как при смене в панели (VPN2-49):
+    // старые сессии со старым паролем больше не пускают. Тот же пароль на
+    // каждом перезапуске сессии не трогает.
+    const yamlPassword = yamlConfig?.admin?.password
+    if (yamlPassword && !(await verifyAdminPassword(current.passwordHash, yamlPassword))) {
+      updates.passwordHash = await hashAdminPassword(yamlPassword)
+      updates.sessionVersion = sql`${users.sessionVersion} + 1`
     }
     if (Object.keys(updates).length > 0) {
       updates.updatedAt = new Date()

@@ -76,7 +76,6 @@ export default defineNuxtConfig({
     wgServerIp: '10.66.66.1',
     wgSubnetPrefix: '10.66.66.',
     wgPublicHost: '',
-    wgDns: '10.99.0.1',
     wgMtu: 1420,
     // Сплит-туннель: локальные сети клиента (RFC1918, CGNAT, multicast) не
     // уезжают в VPN — см. server/utils/allowed-ips.ts. NUXT_WG_SPLIT_LOCAL=false
@@ -86,9 +85,7 @@ export default defineNuxtConfig({
     ovpnPort: 1194,
     ovpnProto: 'udp',
     ovpnPublicHost: '',
-    logLevel: 'info',
     public: {
-      panelName: 'anysda-vpn2',
       sso: {
         // NUXT_PUBLIC_SSO_ENABLED — общий рубильник (и кнопка, и авторедирект).
         enabled: false,

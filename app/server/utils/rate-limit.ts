@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import { isLoopbackAddr } from './bot-api'
 
 /**
  * In-memory sliding-window rate-limit for unauthenticated endpoints (login,
@@ -8,11 +9,23 @@ import type { H3Event } from 'h3'
 type Bucket = { hits: number[]; lockedUntil: number }
 const buckets = new Map<string, Bucket>()
 
+/**
+ * Чей это запрос. X-Forwarded-For принимается только с loopback, то есть от
+ * Caddy на этой же ноде, и берётся его ПОСЛЕДНИЙ адрес — тот, что дописал сам
+ * Caddy. Caddy вдобавок перезаписывает заголовок (header_up в
+ * infra/scripts/30-frontend.sh), так что подставленный клиентом XFF до
+ * панели не доходит. Раньше брался первый адрес из заголовка от кого угодно:
+ * своё значение на каждую попытку — и лимит входа не срабатывал никогда
+ * (VPN2-63), а уже заблокированный выходил из блокировки одним заголовком.
+ */
 function clientKey(event: H3Event, scope: string): string {
-  const ip
-    = getRequestHeader(event, 'x-forwarded-for')?.split(',')[0]?.trim()
-    ?? event.node.req.socket.remoteAddress
-    ?? 'unknown'
+  const peer = event.node.req.socket.remoteAddress
+  let ip = peer ?? 'unknown'
+  if (isLoopbackAddr(peer)) {
+    const forwarded = getRequestHeader(event, 'x-forwarded-for')
+      ?.split(',').map(s => s.trim()).filter(Boolean).at(-1)
+    if (forwarded) ip = forwarded
+  }
   return `${scope}:${ip}`
 }
 

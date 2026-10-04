@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promises as fs } from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -21,6 +22,8 @@ const CA_KEY = `${PKI_DIR}/ca.key`
 const TLS_CRYPT = `${PKI_DIR}/tls-crypt.key`
 const OSSL_CNF = `${PKI_DIR}/openssl.cnf`
 const CRL_PEM = `${PKI_DIR}/crl.pem`
+// Management-сокет сервера (stage 29-openvpn, `management ... unix`).
+const MGMT_SOCK = `${OVPN_DIR}/mgmt.sock`
 
 /** OpenVPN cert CN for a device — stable, derived from the DB device id. */
 export function ovpnCn(deviceId: number): string {
@@ -96,6 +99,85 @@ export async function revokeClientCert(certPem: string): Promise<void> {
 /** Rebuild crl.pem from the CA index. OpenVPN re-reads it per new connection. */
 export async function regenCrl(): Promise<void> {
   await exec('openssl', ['ca', '-config', OSSL_CNF, '-gencrl', '-out', CRL_PEM], { timeout: 15_000 })
+}
+
+// Management OpenVPN обслуживает одно подключение за раз — команды панели
+// выстраиваем в очередь.
+let mgmtQueue: Promise<unknown> = Promise.resolve()
+
+/**
+ * Одна команда management-интерфейса. Шлём её и сразу `quit`, читаем до
+ * закрытия соединения; строки уведомлений (`>INFO:` и т.п.) отбрасываем.
+ */
+function ovpnMgmt(command: string, timeoutMs = 5_000): Promise<string[]> {
+  const run = () => new Promise<string[]>((resolve, reject) => {
+    const sock = net.createConnection(MGMT_SOCK)
+    let buf = ''
+    const timer = setTimeout(() => {
+      sock.destroy()
+      reject(new Error(`openvpn management: нет ответа на «${command}»`))
+    }, timeoutMs)
+    sock.setEncoding('utf8')
+    // `quit` нельзя слать вместе с командой: OpenVPN 2.7 закрывает сокет, не
+    // отдав ответ, и `status 2` приходит пустым. Ждём конец ответа — `END`
+    // у многострочных, `SUCCESS:`/`ERROR:` у остальных — и только потом выходим.
+    sock.on('connect', () => sock.write(`${command}\n`))
+    sock.on('data', (chunk: string) => {
+      buf += chunk
+      const lines = buf.split(/\r?\n/).filter(l => l && !l.startsWith('>'))
+      if (lines.some(l => l === 'END' || /^(SUCCESS|ERROR):/.test(l))) {
+        clearTimeout(timer)
+        sock.end('quit\n')
+        resolve(lines)
+      }
+    })
+    sock.on('error', (err) => {
+      clearTimeout(timer)
+      reject(err)
+    })
+    sock.on('close', () => {
+      clearTimeout(timer)
+      reject(new Error(`openvpn management: сокет закрыт без ответа на «${command}»`))
+    })
+  })
+  const p = mgmtQueue.then(run, run)
+  mgmtQueue = p.catch(() => {})
+  return p
+}
+
+/**
+ * Рвёт все установленные сессии устройства. Без этого заморозка/удаление
+ * действуют только на следующее подключение, а уже подключённый клиент
+ * сидит в туннеле до своего переподключения (VPN2-39). true — кого-то выбили.
+ */
+export async function killOvpnClient(cn: string): Promise<boolean> {
+  const out = await ovpnMgmt(`kill ${cn}`)
+  if (out.some(l => l.startsWith('SUCCESS:'))) {
+    useLogger().info({ cn }, 'ovpn: сессия разорвана')
+    return true
+  }
+  // «ERROR: common name 'dev_N' not found» — не подключён, это норма.
+  return false
+}
+
+/** CN всех подключённых сейчас клиентов (management `status 2`). */
+async function connectedOvpnCns(): Promise<Set<string>> {
+  const out = await ovpnMgmt('status 2')
+  const cns = new Set<string>()
+  for (const l of out) {
+    if (l.startsWith('CLIENT_LIST,')) {
+      const cn = l.split(',')[1]
+      if (cn) cns.add(cn)
+    }
+  }
+  return cns
+}
+
+/** Рвёт сессии без падения вызывающего: сервер не поднят или старый (без management). */
+export async function killOvpnClientQuiet(cn: string): Promise<void> {
+  await killOvpnClient(cn).catch((err) => {
+    useLogger().warn({ err: (err as Error).message, cn }, 'ovpn: kill через management не удался')
+  })
 }
 
 /**
@@ -208,6 +290,9 @@ export async function reissueDeviceOvpn(deviceId: number) {
   const ready = await caReady()
   if (row.ovpnCert && ready) {
     await revokeClientCert(row.ovpnCert).catch(() => {})
+    // CRL проверяется только при подключении — живую сессию со старым
+    // сертификатом рвём сами.
+    await killOvpnClientQuiet(ovpnCn(deviceId))
   }
   if (!ready) {
     // CA ещё не готов — просто чистим, ensureDeviceOvpn выдаст cert позже.
@@ -246,11 +331,29 @@ export async function syncOpenvpnConfig(): Promise<void> {
     .from(devicesTable)
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
 
+  const disabledCns: string[] = []
   for (const r of rows) {
     if (!r.ovpnCert) continue
     const disabled = !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
+    if (disabled) disabledCns.push(ovpnCn(r.id))
     await setCcdDisabled(ovpnCn(r.id), disabled).catch((err) => {
       useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn ccd sync failed')
     })
+  }
+
+  // ccd `disable` не трогает уже подключённых: выбиваем их явно. Через список
+  // подключённых, а не kill по каждому замороженному — синк идёт каждую минуту
+  // (cron), и истёкший по сроку клиент вылетает в пределах одного тика.
+  if (disabledCns.length === 0) return
+  let connected: Set<string>
+  try {
+    connected = await connectedOvpnCns()
+  }
+  catch (err) {
+    useLogger().warn({ err: (err as Error).message }, 'ovpn: management недоступен, подключённые замороженные не выбиты')
+    return
+  }
+  for (const cn of disabledCns) {
+    if (connected.has(cn)) await killOvpnClientQuiet(cn)
   }
 }

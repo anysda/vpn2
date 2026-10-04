@@ -3,8 +3,8 @@ import { z } from 'zod'
 import { useDb } from '../../../database/client'
 import { readBodyAs } from '../../../utils/validate'
 import { users } from '../../../database/schema'
-import { requireAuth } from '../../../utils/auth'
-import { verifyTotpToken } from '../../../utils/totp'
+import { bumpSessionVersion, requireAuth } from '../../../utils/auth'
+import { matchTotpStep } from '../../../utils/totp'
 
 const Body = z.object({ code: z.string().min(6).max(8) })
 
@@ -20,15 +20,22 @@ export default defineEventHandler(async (event) => {
   if (!pending) {
     throw createError({ statusCode: 400, statusMessage: 'totp_not_initiated' })
   }
-  if (!verifyTotpToken(body.code, pending)) {
+  const step = matchTotpStep(body.code, pending)
+  if (step === null) {
     throw createError({ statusCode: 401, statusMessage: 'invalid_totp' })
   }
 
   const db = useDb()
   await db
     .update(users)
-    .set({ totpSecret: pending, updatedAt: new Date() })
+    // Код подтверждения сразу считается использованным: им нельзя войти
+    // повторно (VPN2-62).
+    .set({ totpSecret: pending, totpLastStep: step, updatedAt: new Date() })
     .where(eq(users.id, u.id))
+
+  // Включение второго фактора отзывает остальные сессии: вошедшие без него
+  // больше не должны оставаться внутри.
+  const sv = await bumpSessionVersion(u.id)
 
   // Обновляем user.totpEnabled и сбрасываем pending. replaceUserSession
   // полностью заменяет сессию — иначе defu в setUserSession не позволяет
@@ -36,7 +43,7 @@ export default defineEventHandler(async (event) => {
   await replaceUserSession(event, {
     // via переносим из текущей сессии: replaceUserSession стирает всё, а способ
     // входа от включения TOTP не меняется.
-    user: { id: u.id, username: u.username, totpEnabled: true, via: u.via },
+    user: { id: u.id, username: u.username, totpEnabled: true, via: u.via, sv },
   })
 
   return { ok: true }

@@ -69,9 +69,9 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
   }
   const db = useDb()
 
-  const [linked] = await db.select().from(users).where(eq(users.oidcSub, sub)).limit(1)
-  if (linked) return linked
-
+  // Список проверяется ПЕРВЫМ, и для уже привязанных тоже: привязка в БД
+  // переживает удаление sub из sso.allowed_subs, и без этой проверки убранный
+  // из списка человек продолжал бы входить (VPN2-43).
   const { allowed } = ssoSettings()
   if (!allowed.has(sub)) {
     throw new SsoDenied(
@@ -79,6 +79,9 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
       `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`,
     )
   }
+
+  const [linked] = await db.select().from(users).where(eq(users.oidcSub, sub)).limit(1)
+  if (linked) return linked
 
   const wantUsername = allowed.get(sub)
   let target: typeof users.$inferSelect | undefined

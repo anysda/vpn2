@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -15,11 +15,19 @@ export const users = sqliteTable('users', {
   username: text('username').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   totpSecret: text('totp_secret'),
+  // Последний принятый 30-секундный шаг TOTP. Код этого и более раннего шага
+  // второй раз не принимается (RFC 6238, 5.2): подсмотренный или перехваченный
+  // код не годится на повторный вход, пока окно ещё открыто.
+  totpLastStep: integer('totp_last_step'),
   // Привязка учётки к пользователю IdP (Authentik) по НЕИЗМЕНЯЕМОМУ `sub`
   // (у провайдера sub_mode=user_uuid). Не по имени и не по почте: имя человек
   // меняет сам, почта в панели и в IdP расходится, а auto-link по почте — это
   // вектор захвата. null — учётка к SSO не привязана.
   oidcSub: text('oidc_sub').unique(),
+  // Поколение сессий: кладётся в cookie при входе и сверяется в requireAuth.
+  // Смена пароля и вкл/выкл TOTP его увеличивают — все прежние сессии
+  // (cookie без состояния, отозвать их иначе нечем) получают 401.
+  sessionVersion: integer('session_version').notNull().default(0),
   ...timestamps,
 })
 
@@ -79,6 +87,14 @@ export const devices = sqliteTable('devices', {
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),
+  // Адрес туннеля один на устройство: без UNIQUE два параллельных создания
+  // выбирали один и тот же свободный адрес (VPN2-50).
+  uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
+  uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
+  // Логин IKEv2 — id в secrets swanctl: на одинаковом логине пускает только
+  // одного. buildIkev2Username выбирает свободный, но без UNIQUE два
+  // параллельных создания брали один и тот же (VPN2-70).
+  uniqueIndex('devices_ikev2_username_unique').on(table.ikev2Username),
 ])
 
 export const routes = sqliteTable('routes', {

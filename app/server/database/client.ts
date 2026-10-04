@@ -14,3 +14,21 @@ export function useDb() {
 }
 
 export { schema }
+
+/**
+ * Нарушение UNIQUE. drizzle заворачивает ошибку libsql в свою, поэтому
+ * смотрим всю цепочку `cause`.
+ */
+export function isUniqueViolation(err: unknown): boolean {
+  for (let e = err as { code?: unknown, message?: unknown, cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
+    if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(String(e.message ?? ''))) return true
+  }
+  return false
+}
+
+/**
+ * Сколько раз пробовать занять адрес из пула. Каждый конфликт значит, что
+ * параллельный запрос успел занять свой, так что запас ограничен только
+ * числом одновременных созданий.
+ */
+export const IP_CLAIM_ATTEMPTS = 50

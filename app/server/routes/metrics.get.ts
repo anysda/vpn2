@@ -1,10 +1,16 @@
 import { count, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, devices, routes } from '../database/schema'
+import { isDirectLocal } from '../utils/bot-api'
 
 const startedAt = Date.now()
 
 export default defineEventHandler(async (event) => {
+  // Метрики без авторизации — только с самой ноды, наружу через Caddy их нет
+  // (VPN2-51). Снаружи — тот же 404, что и у несуществующего пути.
+  if (!isDirectLocal(event)) {
+    throw createError({ statusCode: 404, statusMessage: 'Not Found' })
+  }
   const db = useDb()
   const nowSec = Math.floor(Date.now() / 1000)
   const soonSec = nowSec + 7 * 86_400

@@ -6,7 +6,7 @@ import { users } from '../../database/schema'
 import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
 import { ssoSettings } from '../../utils/sso'
-import { verifyTotpToken } from '../../utils/totp'
+import { consumeTotpCode } from '../../utils/totp'
 
 const Body = z.object({
   username: z.string().min(1).max(64),
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
     if (!body.totpCode) {
       return { needsTotp: true }
     }
-    if (!verifyTotpToken(body.totpCode, user.totpSecret)) {
+    if (!(await consumeTotpCode(user.id, body.totpCode, user.totpSecret))) {
       rateLimitRecordFailure(event, RL)
       // Один и тот же statusMessage для password/TOTP — убирает password-oracle
       // из M4. Бэкенду все равно, какой фактор сломан; клиент UX тоже опирается
@@ -60,6 +60,7 @@ export default defineEventHandler(async (event) => {
       username: user.username,
       totpEnabled: !!user.totpSecret,
       via: 'password',
+      sv: user.sessionVersion,
     },
   })
 

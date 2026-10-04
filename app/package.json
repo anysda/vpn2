@@ -28,7 +28,6 @@
     "@nuxt/ui": "^3.3.3",
     "drizzle-orm": "^0.45.2",
     "js-yaml": "^4.1.1",
-    "nanoid": "^5.1.11",
     "nuxt": "^4.1.2",
     "nuxt-auth-utils": "^0.5.29",
     "pino": "^10.3.1",

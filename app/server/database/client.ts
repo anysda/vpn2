@@ -13,8 +13,6 @@ export function useDb() {
   return _db
 }
 
-export { schema }
-
 /**
  * Нарушение UNIQUE. drizzle заворачивает ошибку libsql в свою, поэтому
  * смотрим всю цепочку `cause`.

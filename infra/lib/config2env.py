@@ -314,13 +314,11 @@ def main():
 
     lines = [
         "HOST_TAG='ru'",
-        "HOST_LABEL='RU entry'",
         '',
         "SSH_USER='root'",
         f"SSH_HOST={shq(entry_host)}",
         f"SSH_PASS={shq(entry_pass)}",
         '',
-        f"PUB_IP_IN={shq(entry_host)}",
         f"PUB_IP_OUT={shq(entry_host)}",
         '',
         "MGMT_IP='10.99.0.1'",
@@ -465,7 +463,6 @@ def main():
 
         lines = [
             f"HOST_TAG={shq(tag)}",
-            f"HOST_LABEL={shq(tag.upper() + ' exit')}",
             '',
             "SSH_USER='root'",
             f"SSH_HOST={shq(host)}",

@@ -1272,7 +1272,7 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
         _load_hits[key] = 0
 
 
-async def monitor_loop(app: Application) -> None:
+async def monitor_loop() -> None:
     log.info('monitor_loop started: interval=%ds, hits=%d, cpu_high=%.0f, ram_high=%.0f',
              MONITOR_INTERVAL, ALERT_HITS, CPU_HIGH, RAM_HIGH)
     while True:
@@ -1326,7 +1326,7 @@ async def monitor_loop(app: Application) -> None:
 
 # ── HTTP server for Nuxt events ────────────────────────────────────────────────
 
-async def handle_health(request: web.Request) -> web.Response:
+async def handle_health(_request: web.Request) -> web.Response:
     """GET /health — жив ли поллер. Дёргает docker HEALTHCHECK, слушаем только
     на 127.0.0.1, поэтому без секрета. 503, если getUpdates давно не отвечал."""
     idle = round(time.monotonic() - LAST_POLL_OK, 1)
@@ -1539,7 +1539,7 @@ async def main() -> None:
 
     async def _supervised_monitor():
         try:
-            await monitor_loop(tgapp)
+            await monitor_loop()
         except Exception:
             log.exception('monitor_loop crashed')
 

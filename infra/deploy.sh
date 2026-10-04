@@ -904,10 +904,6 @@ exit_tags() {
   echo "${EXIT_TAGS:-}"
 }
 
-# BASH_SOURCE_ONLY=1 — загружает функции без выполнения CLI-логики.
-# Полезно для тестов: source deploy.sh; verify_and_rotate_ports
-[[ -n "${BASH_SOURCE_ONLY:-}" ]] && return 0
-
 # Без аргументов → полный pipeline.
 # С двумя аргументами → одна стадия на группу.
 # -h / --help → подсказка.

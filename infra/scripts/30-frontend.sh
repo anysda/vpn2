@@ -247,7 +247,6 @@ docker run -d \
   -e NUXT_WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}" \
   -e NUXT_WG_SUBNET_PREFIX="${WG_SUBNET_PREFIX:-10.66.66.}" \
   -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
-  -e NUXT_WG_DNS="${WG_DNS:-10.99.0.1}" \
   -e NUXT_WG_MTU="${WG_MTU:-1420}" \
   -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
   -e NUXT_OVPN_ENABLED=true \
@@ -281,7 +280,7 @@ docker run -d \
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
 http_up=0
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   if curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then http_up=1; break; fi
   sleep 1
 done

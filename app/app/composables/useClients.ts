@@ -148,17 +148,6 @@ export function useClientDevices() {
   return { addDevice, removeDevice, reissueDevice }
 }
 
-export function relativeTime(date: Date | string | null | undefined): string {
-  if (!date) return ''
-  const d = typeof date === 'string' ? new Date(date) : date
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000)
-  if (sec < 0) return 'в будущем'
-  if (sec < 60) return `${sec} сек назад`
-  if (sec < 3600) return `${Math.floor(sec / 60)} мин назад`
-  if (sec < 86400) return `${Math.floor(sec / 3600)} ч назад`
-  return `${Math.floor(sec / 86400)} дн назад`
-}
-
 /** «31.12.2026» → ISO-строка (UTC-полночь). null — если формат не распознан. */
 export function parseRuDate(s: string): string | null {
   const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)

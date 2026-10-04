@@ -24,6 +24,10 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   YT_MARK                — SO_MARK для YouTube-трафика (дефолт 256 = 0x100)
   YT_QUIC                — block | allow           (дефолт block)
   YT_DOMAINS             — пробельный список доменных суффиксов (переопределяет дефолт)
+
+С ключом --agh-yt-upstream печатает строку апстрима AdGuard для YouTube-доменов
+(`[/домены/]<RU_DNS>`) или пустоту при YT_ROUTE=off - её берёт стадия 22, чтобы
+список доменов и российский резолвер жили только здесь.
 """
 
 import json
@@ -51,6 +55,33 @@ YT_DOMAIN_SUFFIXES = [
     'youtubei.googleapis.com',
     'jnn-pa.googleapis.com',
 ]
+
+
+# Российский резолвер: отдаёт YouTube адреса GGC внутри РФ-провайдеров.
+RU_DNS = '77.88.8.8'
+
+
+def yt_settings():
+    """YT_ROUTE и список доменов из окружения; общий для main и AdGuard."""
+    yt_route = (os.environ.get('YT_ROUTE') or 'off').strip().lower()
+    if yt_route not in ('off', 'zapret', 'direct'):
+        print(f'ERROR: YT_ROUTE={yt_route!r} — допустимо off | zapret | direct',
+              file=sys.stderr)
+        sys.exit(1)
+    yt_domains = (os.environ.get('YT_DOMAINS') or '').split() or YT_DOMAIN_SUFFIXES
+    return yt_route, yt_domains
+
+
+def agh_yt_upstream():
+    """Апстрим AdGuard: YouTube-домены резолвит только RU_DNS.
+
+    Клиенты туннелей спрашивают DNS у AdGuard напрямую, а у него
+    upstream_mode: parallel и среди апстримов DoH Cloudflare/Google: ответ мог
+    прийти от зарубежного узла и увести видео с GGC внутри РФ на далёкий кеш.
+    """
+    yt_route, yt_domains = yt_settings()
+    if yt_route != 'off':
+        print('[/' + '/'.join(d.strip('.') for d in yt_domains) + '/]' + RU_DNS)
 
 
 def require(key):
@@ -104,11 +135,7 @@ def main():
     #   zapret — РФ-выход + метка → десинк nfqws2 (штатный режим);
     #   direct — РФ-выход без метки (десинк не нужен / диагностика);
     #   off    — как раньше, YouTube уезжает на экзит вместе со всем остальным.
-    yt_route = (os.environ.get('YT_ROUTE') or 'off').strip().lower()
-    if yt_route not in ('off', 'zapret', 'direct'):
-        print(f'ERROR: YT_ROUTE={yt_route!r} — допустимо off | zapret | direct',
-              file=sys.stderr)
-        sys.exit(1)
+    yt_route, yt_domains = yt_settings()
     yt_quic = (os.environ.get('YT_QUIC') or 'block').strip().lower()
     if yt_quic not in ('block', 'allow'):
         print(f'ERROR: YT_QUIC={yt_quic!r} — допустимо block | allow', file=sys.stderr)
@@ -118,7 +145,6 @@ def main():
     except ValueError:
         print('ERROR: YT_MARK должен быть числом', file=sys.stderr)
         sys.exit(1)
-    yt_domains = (os.environ.get('YT_DOMAINS') or '').split() or YT_DOMAIN_SUFFIXES
     yt_tag = 'youtube-ru'
 
     if yt_route != 'off':
@@ -268,14 +294,13 @@ def main():
         {'type': 'block', 'tag': 'block-out'},
     ]
 
-    # ── YouTube: правила маршрута и DNS ──────────────────────────────────────
+    # ── YouTube: правила маршрута ──────────────────────────────────────
     # Порядок в route.rules критичен: YouTube обязан стоять ВЫШЕ правила
     # `geoip: ru`. GGC-хосты (rrN---sn-*.googlevideo.com) физически стоят у
     # российских провайдеров, и geoip отправил бы их в direct-ru — выход тот же
     # самый, но БЕЗ метки, то есть без десинка. Симптом был бы «морда
     # открывается, видео виснет» — ровно тот, что уже ловили дома.
     yt_route_rules = []
-    yt_dns_rules = []
     if yt_route != 'off':
         if yt_quic == 'block':
             # QUIC (UDP/443) режем: десинк проверен на TCP-TLS, а QUIC-поток
@@ -291,25 +316,24 @@ def main():
             })
         yt_route_rules.append({'domain_suffix': yt_domains, 'outbound': yt_tag})
         yt_route_rules.append({'geosite': ['youtube'], 'outbound': yt_tag})
-        # Резолвим YouTube российским резолвером: он отдаёт РФ-овский GGC,
-        # то есть кеш видео внутри страны. Через AdGuard (upstream_mode:
-        # parallel, среди upstream'ов DoH Cloudflare/Google) ответ мог бы
-        # прийти от зарубежного узла — и «российский выход» терял бы смысл.
-        yt_dns_rules.append({'domain_suffix': yt_domains, 'server': 'ru-dns'})
-        yt_dns_rules.append({'geosite': ['youtube'], 'server': 'ru-dns'})
+        # Адрес YouTube клиент туннеля берёт у AdGuard, а не у sing-box:
+        # инбаунд tproxy только сниффит домен и не резолвит его. Поэтому
+        # YouTube -> RU_DNS задан апстримом AdGuard (стадия 22,
+        # agh_yt_upstream), а не DNS-правилом здесь.
 
     cfg = {
         'log': {'level': 'error', 'timestamp': True},
 
         'dns': {
             'servers': [
-                {'tag': 'ru-dns', 'address': '77.88.8.8', 'detour': 'direct-ru'},
-                # AdGuard Home on the entry mgmt IP — sing-box resolves through
-                # it so clients get ad/tracker filtering. .ru stays on Yandex
-                # DNS for correct Russian CDN IPs (geoip routing depends on it).
+                {'tag': 'ru-dns', 'address': RU_DNS, 'detour': 'direct-ru'},
+                # Этот DNS нужен только самому sing-box: имена из tg-proxy
+                # (бот). Клиенты туннелей спрашивают AdGuard напрямую, и их
+                # ответы эти правила не трогают; для бота .ru идёт через
+                # Яндекс, остальное через AdGuard.
                 {'tag': 'adguard', 'address': mgmt_ip, 'detour': 'local-dns'},
             ],
-            'rules': yt_dns_rules + [
+            'rules': [
                 {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
                 {'geosite': ['category-gov-ru'], 'server': 'ru-dns'},
             ],
@@ -401,4 +425,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:] == ['--agh-yt-upstream']:
+        agh_yt_upstream()
+    else:
+        main()

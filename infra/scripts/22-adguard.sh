@@ -81,6 +81,18 @@ echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)
 echo "[$HOST_TAG] [3/4] config"
 AGH_CFG=$AGH_DIR/AdGuardHome.yaml
 
+# YouTube -> российский резолвер (только при youtube.route != off). Клиенты
+# туннелей спрашивают DNS у AdGuard напрямую, а upstream_mode: parallel с DoH
+# Cloudflare/Google мог отдать зарубежный кеш видео вместо GGC внутри РФ.
+# Строку `[/домены/]резолвер` даёт генератор sing-box: один список на оба.
+GEN=/tmp/anysda/gen-router-config.py
+[[ -f "$GEN" ]] || { echo "[$HOST_TAG] $GEN не найден"; exit 1; }
+YT_UPSTREAM=$(YT_ROUTE="${YT_ROUTE:-off}" YT_DOMAINS="${YT_DOMAINS:-}" python3 "$GEN" --agh-yt-upstream)
+YT_UPSTREAM_YAML=''
+[[ -n "$YT_UPSTREAM" ]] && YT_UPSTREAM_YAML="    - '$YT_UPSTREAM'"
+YT_STATE=/etc/anysda/agh-yt-upstream
+YT_UPSTREAM_PREV=$(cat "$YT_STATE" 2>/dev/null || true)
+
 # Idempotent-патчи для уже существующего конфига (не перезаписываем
 # полностью — пользователь может что-то менять в UI). Применяются ПЕРЕД
 # первичной генерацией, чтобы для новых установок дефолты были правильные.
@@ -128,6 +140,7 @@ dns:
     - 77.88.8.8
     - https://1.1.1.1/dns-query
     - https://dns.google/dns-query
+${YT_UPSTREAM_YAML}
   bootstrap_dns:
     - 77.88.8.8
     - 8.8.8.8
@@ -191,12 +204,25 @@ cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
 # Гарантируем aaaa_disabled: true (мерджим в dns секцию)
 cfg.setdefault("dns", {})["aaaa_disabled"] = True
 cfg["dns"].setdefault("edns_client_subnet", {})["enabled"] = False
+# Апстрим YouTube: снимаем прежний свой (строка, поставленная прошлым прогоном,
+# или любая [/...youtube.com.../]) и ставим текущий, если опция включена.
+# Чужие [/домен/] пользователя не трогаем.
+yt_up = "$YT_UPSTREAM"
+prev = "$YT_UPSTREAM_PREV"
+def is_yt(u):
+    return u == prev or (u.startswith("[/") and "/]" in u
+                         and "youtube.com" in u[2:u.index("/]")].split("/"))
+ups = [u for u in cfg["dns"].get("upstream_dns") or [] if not is_yt(u)]
+if yt_up:
+    ups.append(yt_up)
+cfg["dns"]["upstream_dns"] = ups
 with open(cfg_path, "w") as f:
     yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-print("credentials + aaaa_disabled + ecs off synced")
+print("credentials + aaaa_disabled + ecs off + youtube upstream synced")
 PYEOF
 fi
 patch_agh_config "$AGH_CFG"
+printf '%s' "$YT_UPSTREAM" > "$YT_STATE"
 
 # ----------------------------------------------------------------------------
 # 4. systemd service

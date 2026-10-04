@@ -192,7 +192,6 @@ async function claimDeviceIkev2(deviceId: number) {
       row.ikev2Username ? eq(devicesTable.ikev2Username, row.ikev2Username) : isNull(devicesTable.ikev2Username),
     ))
     .returning()
-  if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
 }
 

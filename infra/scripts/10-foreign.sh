@@ -26,7 +26,7 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box /var/lib/sing-box/acme
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/4] wgcf"
 WGCF_VER='2.2.27'
-if [[ ! -x /usr/local/bin/wgcf ]] || ! /usr/local/bin/wgcf --version 2>&1 | grep -q "$WGCF_VER"; then
+if [[ ! -x /usr/local/bin/wgcf ]] || ! /usr/local/bin/wgcf --version 2>&1 | grep "$WGCF_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
   chmod +x /usr/local/bin/wgcf
@@ -52,7 +52,7 @@ fi
 
 if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-profile.conf ]]; then
   WGCF_PRIVKEY=$(awk -F' = ' '/^PrivateKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
-  WGCF_LOCAL_IPV4=$(awk -F' = ' '/^Address/{print $2}' /etc/anysda/wgcf-profile.conf | head -1 | cut -d, -f1 | cut -d/ -f1 | tr -d '\r ')
+  WGCF_LOCAL_IPV4=$(awk -F' = ' '/^Address/{print $2; exit}' /etc/anysda/wgcf-profile.conf | cut -d, -f1 | cut -d/ -f1 | tr -d '\r ')
   WGCF_PEER_PUBKEY=$(awk -F' = ' '/^PublicKey/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r')
   WGCF_PEER_EP=$(awk -F' = ' '/^Endpoint/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r ')
   WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_EP%:*}
@@ -83,14 +83,14 @@ fi
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/4] sing-box"
 SB_VER='1.10.3'
-if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep -q "$SB_VER"; then
+if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep "$SB_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
 fi
-/usr/local/bin/sing-box version | sed "s/^/[$HOST_TAG]   /" | head -1
+/usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
 # 3. Secrets (Hysteria2 passwords + obfs + clash-api)
@@ -127,15 +127,32 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT \
        WGCF_PEER_ENDPOINT_HOST WGCF_PEER_ENDPOINT_PORT \
        WGCF_RESERVED_JSON
 
-# Self-signed TLS cert (SAN = server IP, 10 лет)
-echo "[$HOST_TAG]   генерирую self-signed TLS cert для $PUB_IP"
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout /etc/sing-box/tls.key \
-  -out    /etc/sing-box/tls.crt \
-  -days   3650 -nodes \
-  -subj   "/CN=${PUB_IP}" \
-  -addext "subjectAltName=IP:${PUB_IP}" \
-  2>/dev/null
+# Self-signed TLS cert (SAN = server IP, 10 лет). entry пинит именно этот
+# сертификат, поэтому перевыпуск на каждом прогоне ронял туннели до следующего
+# 20-ru-router (VPN2-40). Перевыпускаем, только если серта нет, ключ к нему
+# не подходит, SAN не тот IP или до конца срока меньше 30 дней.
+cert_ok() {
+  local crt=/etc/sing-box/tls.crt key=/etc/sing-box/tls.key
+  [[ -s "$crt" && -s "$key" ]] || return 1
+  openssl x509 -in "$crt" -noout -checkend $((30*86400)) >/dev/null 2>&1 || return 1
+  # Без `| grep -q`: под pipefail ранний выход grep даёт SIGPIPE (141), и серт
+  # перевыпускался бы через раз.
+  local san; san=$(openssl x509 -in "$crt" -noout -ext subjectAltName 2>/dev/null) || return 1
+  [[ "$san" =~ IP\ Address:${PUB_IP//./\\.}(,|$'\n'|$) ]] || return 1
+  [[ "$(openssl x509 -in "$crt" -noout -pubkey 2>/dev/null)" == "$(openssl pkey -in "$key" -pubout 2>/dev/null)" ]]
+}
+if cert_ok; then
+  echo "[$HOST_TAG]   TLS cert для $PUB_IP на месте — оставляю (entry его пинит)"
+else
+  echo "[$HOST_TAG]   генерирую self-signed TLS cert для $PUB_IP"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout /etc/sing-box/tls.key \
+    -out    /etc/sing-box/tls.crt \
+    -days   3650 -nodes \
+    -subj   "/CN=${PUB_IP}" \
+    -addext "subjectAltName=IP:${PUB_IP}" \
+    2>/dev/null
+fi
 chmod 600 /etc/sing-box/tls.key /etc/sing-box/tls.crt
 echo "[$HOST_TAG]   cert SAN: IP:${PUB_IP}"
 
@@ -200,7 +217,7 @@ ufw reload >/dev/null
 
 # Verify
 echo "[$HOST_TAG] статус sing-box:"
-systemctl status sing-box --no-pager -n 5 | head -10 | sed "s/^/[$HOST_TAG]   /"
+systemctl status sing-box --no-pager -n 5 | sed -n "1,10s/^/[$HOST_TAG]   /p"
 echo "[$HOST_TAG] слушаемые UDP порты:"
 ss -lun | awk -v p="$HY2_DIRECT_PORT|$HY2_WARP_PORT|$HY2_MGMT_PORT" '$5 ~ ":(" p ")$"' | sed "s/^/[$HOST_TAG]   /"
 

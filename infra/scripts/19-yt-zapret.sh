@@ -63,7 +63,7 @@ SYSCTL_CONF='/etc/sysctl.d/97-anysda-yt-zapret.conf'
 QUIC_NFT_CONF='/etc/nftables-yt-quic.conf'
 QUIC_PREFIXES='/var/lib/anysda/google-prefixes.json'
 
-WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
+WAN_IFACE=$(ip -4 -o route show default | awk '!f {print $5; f=1}')
 : "${WAN_IFACE:?не удалось определить WAN-интерфейс}"
 
 mkdir -p "$STAMP_DIR"
@@ -152,7 +152,7 @@ if [[ $SRC_CHANGED -eq 1 || ! -x "$YT_ZAPRET_BIN" ]]; then
     echo "[$HOST_TAG] сборка упала, хвост лога:"; tail -25 /tmp/anysda-nfqws2-build.log; exit 1; }
 fi
 [[ -x "$YT_ZAPRET_BIN" ]] || { echo "[$HOST_TAG] $YT_ZAPRET_BIN не собрался"; exit 1; }
-"$YT_ZAPRET_BIN" --version 2>&1 | head -1 | sed "s/^/[$HOST_TAG]   /"
+"$YT_ZAPRET_BIN" --version 2>&1 | sed -n "1s/^/[$HOST_TAG]   /p"
 
 LUA_INIT=""
 for _l in zapret-lib zapret-antidpi zapret-auto; do

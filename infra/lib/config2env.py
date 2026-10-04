@@ -12,6 +12,40 @@ import sys
 from pathlib import Path
 
 
+def shq(v):
+    """Значение для *.env в одинарных кавычках: `source` вернёт его байт в байт."""
+    return "'" + str(v).replace("'", "'\\''") + "'"
+
+
+def unquote_scalar(v):
+    """Снимает YAML-кавычки: '..' ('' внутри = '), ".." (escape-последовательности).
+
+    Хвостовой комментарий после закрывающей кавычки отбрасывается. Незакрытая
+    кавычка — ошибка: молча обрезанный пароль хуже упавшего деплоя.
+    """
+    q = v[0]
+    i, out = 1, []
+    while i < len(v):
+        c = v[i]
+        if q == "'" and c == "'":
+            if v[i + 1:i + 2] == "'":
+                out.append("'")
+                i += 2
+                continue
+            return ''.join(out)
+        if q == '"' and c == '\\':
+            nxt = v[i + 1:i + 2]
+            out.append({'n': '\n', 't': '\t', '"': '"', '\\': '\\', '/': '/'}.get(nxt, '\\' + nxt))
+            i += 2
+            continue
+        if q == '"' and c == '"':
+            return ''.join(out)
+        out.append(c)
+        i += 1
+    print(f'ERROR: config.yaml: незакрытая кавычка в значении {v!r}', file=sys.stderr)
+    sys.exit(1)
+
+
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
@@ -32,8 +66,7 @@ def parse_yaml(text):
             k, _, v = s.partition(':')
             v = v.strip()
             if v[:1] in ('"', "'"):
-                end = v.find(v[0], 1)
-                v = v[1:end] if end > 0 else v.strip("'\"")
+                v = unquote_scalar(v)
             else:
                 # `us   # короткий тег` — комментарий после значения не часть значения
                 v = re.sub(r'\s+#.*$', '', v)
@@ -218,12 +251,8 @@ def main():
     # ------------------------------------------------------------------
     # all.env
     # ------------------------------------------------------------------
-    # ssh-ключ может содержать пробелы (comment) — заворачиваем в одинарные
-    # кавычки для source в bash, экранируя одиночную кавычку по классике.
-    admin_pubkey_q = "'" + admin_ssh_pubkey.replace("'", "'\\''") + "'"
-
     lines = [
-        f'ENTRY_HOST={entry_host}',
+        f'ENTRY_HOST={shq(entry_host)}',
         '',
         'AGH_PORT=3000',
         '',
@@ -231,7 +260,7 @@ def main():
         f'HY2_WARP_PORT={hy2_warp}',
         f'HY2_MGMT_PORT={hy2_mgmt}',
         '',
-        f'ADMIN_SSH_PUBKEY={admin_pubkey_q}',
+        f'ADMIN_SSH_PUBKEY={shq(admin_ssh_pubkey)}',
         '',
         f'EXIT_TAGS="{exit_tags}"',
     ]
@@ -281,34 +310,30 @@ def main():
         "HOST_LABEL='RU entry'",
         '',
         "SSH_USER='root'",
-        f"SSH_HOST='{entry_host}'",
-        f"SSH_PASS='{entry_pass}'",
+        f"SSH_HOST={shq(entry_host)}",
+        f"SSH_PASS={shq(entry_pass)}",
         '',
-        f"PUB_IP_IN='{entry_host}'",
-        f"PUB_IP_OUT='{entry_host}'",
+        f"PUB_IP_IN={shq(entry_host)}",
+        f"PUB_IP_OUT={shq(entry_host)}",
         '',
         "MGMT_IP='10.99.0.1'",
         '',
-        f"ADMIN_USER='{admin_user}'",
-        f"ADMIN_PASSWORD='{admin_password}'",
-        f"PANEL_DOMAIN='{panel_domain}'",
+        f"ADMIN_USER={shq(admin_user)}",
+        f"ADMIN_PASSWORD={shq(admin_password)}",
+        f"PANEL_DOMAIN={shq(panel_domain)}",
     ]
     if panel_image:
-        lines.append(f"PANEL_IMAGE='{panel_image}'")
+        lines.append(f"PANEL_IMAGE={shq(panel_image)}")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [
             '',
-            f"TELEGRAM_BOT_TOKEN='{tg['bot_token']}'",
-            f"TELEGRAM_CHAT_ID='{tg['chat_id']}'",
+            f"TELEGRAM_BOT_TOKEN={shq(tg['bot_token'])}",
+            f"TELEGRAM_CHAT_ID={shq(tg['chat_id'])}",
         ]
         if tg.get('admin_username'):
-            lines.append(f"TELEGRAM_ADMIN_USERNAME='{tg['admin_username']}'")
+            lines.append(f"TELEGRAM_ADMIN_USERNAME={shq(tg['admin_username'])}")
 
-    # Простое экранирование одинарных кавычек для значений, которые попадают
-    # в *.env как '...' (passphrase, ключи S3, стратегия nfqws2).
-    def shq(v):
-        return "'" + str(v).replace("'", "'\\''") + "'"
 
     # YouTube-секция. Читают обе стадии: 20-ru-router (gen-router-config.py
     # строит outbound youtube-ru и правила) и 19-yt-zapret (десинк). Пустая
@@ -325,10 +350,10 @@ def main():
         sys.exit(1)
     lines += [
         '',
-        f"YT_ROUTE='{yt_route}'",
-        f"YT_QUIC='{yt_quic}'",
-        f"YT_MARK='{yt.get('mark', '256') or '256'}'",
-        f"YT_ZAPRET_OFFLOAD='{(yt.get('offload', '') or 'keep').lower()}'",
+        f"YT_ROUTE={shq(yt_route)}",
+        f"YT_QUIC={shq(yt_quic)}",
+        f"YT_MARK={shq(yt.get('mark', '256') or '256')}",
+        f"YT_ZAPRET_OFFLOAD={shq((yt.get('offload', '') or 'keep').lower())}",
     ]
     # Необязательные переопределения — пишем только если заданы, чтобы дефолты
     # жили в одном месте (в стадии 19), а не размножались по конфигам.
@@ -344,7 +369,7 @@ def main():
     # появления фичи (форма с логином и паролем).
     sso = cfg.get('sso', {})
     sso_on = (sso.get('enabled', '') or '').lower() in ('true', 'yes', 'y', '1')
-    lines += ['', f"SSO_ENABLED='{'true' if sso_on else 'false'}'"]
+    lines += ['', f"SSO_ENABLED={shq('true' if sso_on else 'false')}"]
     if sso_on:
         # discovery_url можно задать целиком; иначе собираем из адреса IdP и
         # slug'а приложения — у Authentik ручка ВСЕГДА такая.
@@ -379,10 +404,10 @@ def main():
             f"SSO_LABEL={shq(sso.get('label', '') or 'Authentik')}",
             # Бесшовность (форму не видно вообще). false — форма остаётся, но с
             # кнопкой входа через IdP.
-            f"SSO_AUTO_REDIRECT='{'false' if (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true'}'",
+            f"SSO_AUTO_REDIRECT={shq('false' if (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
             # Парольный вход. Стандарт флота — «спрятан, но жив», поэтому по
             # умолчанию true; false рубит его наглухо (и break-glass тоже!).
-            f"SSO_PASSWORD_LOGIN='{'false' if (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true'}'",
+            f"SSO_PASSWORD_LOGIN={shq('false' if (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
         ]
 
     # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
@@ -392,20 +417,20 @@ def main():
         lines += [
             '',
             "BACKUP_ENABLED='true'",
-            f"BACKUP_BACKEND='{backup.get('backend', 'local')}'",
+            f"BACKUP_BACKEND={shq(backup.get('backend', 'local'))}",
             f"BACKUP_PASSPHRASE={shq(backup.get('passphrase', ''))}",
-            f"BACKUP_RETENTION='{backup.get('retention', '10')}'",
-            f"BACKUP_SCHEDULE='{backup.get('schedule', 'daily')}'",
-            f"BACKUP_LOCAL_DIR='{backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2')}'",
+            f"BACKUP_RETENTION={shq(backup.get('retention', '10'))}",
+            f"BACKUP_SCHEDULE={shq(backup.get('schedule', 'daily'))}",
+            f"BACKUP_LOCAL_DIR={shq(backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2'))}",
         ]
         s3 = backup.get('s3', {})
         if backup.get('backend') == 's3' and s3:
             lines += [
-                f"BACKUP_S3_ENDPOINT='{s3.get('endpoint', '')}'",
-                f"BACKUP_S3_BUCKET='{s3.get('bucket', '')}'",
+                f"BACKUP_S3_ENDPOINT={shq(s3.get('endpoint', ''))}",
+                f"BACKUP_S3_BUCKET={shq(s3.get('bucket', ''))}",
                 # region — обязателен для cloud.ru/yandex/selectel и т.п. (SigV4).
                 # Пустое значение оставит дефолт aws-cli (us-east-1).
-                f"BACKUP_S3_REGION='{s3.get('region', '')}'",
+                f"BACKUP_S3_REGION={shq(s3.get('region', ''))}",
                 f"BACKUP_S3_ACCESS_KEY={shq(s3.get('access_key', ''))}",
                 f"BACKUP_S3_SECRET_KEY={shq(s3.get('secret_key', ''))}",
             ]
@@ -430,16 +455,16 @@ def main():
             sys.exit(1)
 
         lines = [
-            f"HOST_TAG='{tag}'",
-            f"HOST_LABEL='{tag.upper()} exit'",
+            f"HOST_TAG={shq(tag)}",
+            f"HOST_LABEL={shq(tag.upper() + ' exit')}",
             '',
             "SSH_USER='root'",
-            f"SSH_HOST='{host}'",
-            f"SSH_PASS='{password}'",
+            f"SSH_HOST={shq(host)}",
+            f"SSH_PASS={shq(password)}",
             '',
-            f"PUB_IP='{host}'",
+            f"PUB_IP={shq(host)}",
             '',
-            f"MGMT_IP='{mgmt_ip}'",
+            f"MGMT_IP={shq(mgmt_ip)}",
         ]
         if str(hy2_port) != str(hy2_direct):
             lines.append(f'HY2_DIRECT_PORT={hy2_port}')

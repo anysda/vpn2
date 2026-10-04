@@ -23,7 +23,7 @@ if [[ -d "$BACKUP_LOCAL_DIR" ]]; then
     [[ -z "$f" ]] && continue
     name=$(basename "$f")
     # Имя формата anysda-vpn2-2026-05-23T020000Z.tar.gz.age → выдёргиваем TS
-    ts=$(echo "$name" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z' | head -1)
+    ts=$(echo "$name" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z' | sed -n 1p)
     [[ -z "$ts" ]] && ts="?"
     sz=$(stat -c %s "$f" 2>/dev/null)
     printf '%-50s %-22s %12s\n' "$name" "$ts" "$(numfmt --to=iec "$sz" 2>/dev/null || echo "$sz")"

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
+import { assertKnownOutbound } from '../../utils/route-outbound'
 import { syncRoutesFile } from '../../utils/routes-sync'
 
 const Body = z.object({ outbound: z.string().min(1).max(64) })
@@ -15,6 +16,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readValidatedBody(event, Body.parse)
+  await assertKnownOutbound(body.outbound)
   const db = useDb()
 
   const [row] = await db

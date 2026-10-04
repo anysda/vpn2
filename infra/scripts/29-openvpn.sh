@@ -171,7 +171,7 @@ echo "[$HOST_TAG] [5/6] openvpn-server@server"
 systemctl enable openvpn-server@server >/dev/null 2>&1 || true
 systemctl restart openvpn-server@server
 sleep 2
-systemctl status openvpn-server@server --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status openvpn-server@server --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # ── 6. tun0 → sing-box TPROXY (same mark/table/port as wg0) ─────────────────
 echo "[$HOST_TAG] [6/6] anysda-ovpn-routing"
@@ -200,12 +200,19 @@ ACTION=${1:-up}
 TUN_IF='tun0'
 MARK='0x42'
 TABLE=101
+PREF=32765
 TPROXY_PORT=7898
 
 if [[ "$ACTION" == "up" ]]; then
-  ip rule list | grep -q "fwmark $MARK lookup $TABLE" || \
-    ip rule add fwmark "$MARK" lookup "$TABLE"
-  ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
+  # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
+  # strongSwan 220), а юниты wg/ovpn/ikev2 на загрузке в гонке добавляют копии.
+  ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null || \
+    ip rule add fwmark "$MARK" lookup "$TABLE" pref "$PREF" 2>/dev/null || \
+    ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null
+  for p in $(ip rule list | awk -F: -v m="fwmark $MARK lookup $TABLE" -v k="$PREF" 'index($0, m) && $1 != k {print $1}'); do
+    ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
+  done
+  ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \
     ip route add local 0.0.0.0/0 dev lo table "$TABLE"
 
   iptables -t mangle -N ANYSDA_OVPN_TPROXY 2>/dev/null || true

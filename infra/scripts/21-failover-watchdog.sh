@@ -86,7 +86,7 @@ systemctl daemon-reload
 systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
 systemctl restart anysda-failover-watchdog
 sleep 3
-systemctl status anysda-failover-watchdog --no-pager -n 5 | head -8 | sed "s/^/[$HOST_TAG]   /"
+systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n "1,8s/^/[$HOST_TAG]   /p"
 
 # 4. Сторож TPROXY: раз в минуту проверяет то, без чего клиенты wg0/OpenVPN/
 # IKEv2 молча теряют интернет, и чинит на месте.
@@ -107,15 +107,22 @@ cat > /usr/local/sbin/anysda-tproxy-watchdog.sh <<'WDEOF'
 set -uo pipefail
 MARK='0x42'
 TABLE=101
+PREF=32765
 PORT=7898
 STUCK_BYTES=65536
 
-if iptables -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-j ANYSDA_[A-Z0-9]+_TPROXY'; then
-  if ! ip rule list | grep -q "fwmark $MARK lookup $TABLE"; then
-    ip rule add fwmark "$MARK" lookup "$TABLE" \
-      && echo "правило fwmark $MARK lookup $TABLE пропало, вернул"
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]+_TPROXY' >/dev/null; then
+  # pref тот же, что ставят anysda-{wg,ovpn,ikev2}-routing; без него правило
+  # вставало на 219, выше strongSwan 220, и так там и оставалось.
+  if ! ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null; then
+    ip rule add fwmark "$MARK" lookup "$TABLE" pref "$PREF" \
+      && echo "правило fwmark $MARK lookup $TABLE пропало с приоритета $PREF, вернул"
   fi
-  if ! ip route show table "$TABLE" 2>/dev/null | grep -q 'local default'; then
+  for p in $(ip rule list | awk -F: -v m="fwmark $MARK lookup $TABLE" -v k="$PREF" 'index($0, m) && $1 != k {print $1}'); do
+    ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" \
+      && echo "копия правила fwmark $MARK lookup $TABLE на приоритете $p, убрал"
+  done
+  if ! ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null; then
     ip route add local 0.0.0.0/0 dev lo table "$TABLE" \
       && echo "маршрут local default в таблице $TABLE пропал, вернул"
   fi
@@ -124,7 +131,7 @@ fi
 systemctl is-active --quiet sing-box || exit 0
 
 recvq() {
-  ss -H -uln "sport = :$PORT" 2>/dev/null | awk '$4 ~ /^127\.0\.0\.1:/ {print $2; exit}'
+  ss -H -uln "sport = :$PORT" 2>/dev/null | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}'
 }
 
 # Живой sing-box вычитывает сокет за миллисекунды: три замера подряд за 10 с

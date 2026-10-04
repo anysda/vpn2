@@ -28,7 +28,7 @@ STAGE='05-mgmt-mesh'
 # ----------------------------------------------------------------------------
 # 1. Снос старого WireGuard-mesh (миграция с mesh-эпохи; на чистой ноде no-op)
 # ----------------------------------------------------------------------------
-if systemctl list-unit-files 'wg-quick@wgmgmt.service' 2>/dev/null | grep -q wgmgmt \
+if systemctl list-unit-files 'wg-quick@wgmgmt.service' 2>/dev/null | grep wgmgmt >/dev/null \
    || ip link show wgmgmt >/dev/null 2>&1; then
   echo "[$HOST_TAG] снимаю устаревший wgmgmt (mesh переехал на Hysteria2)"
   systemctl disable --now wg-quick@wgmgmt >/dev/null 2>&1 || true

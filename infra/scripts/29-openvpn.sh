@@ -29,8 +29,15 @@ mkdir -p /var/anysda/.stamps "$PKI" "$PKI/newcerts" "$OVPN_DIR/ccd"
 # ── 1. openvpn + openssl ────────────────────────────────────────────────────
 echo "[$HOST_TAG] [1/6] openvpn"
 if ! command -v openvpn >/dev/null 2>&1; then
-  apt-get update -qq
-  apt-get install -y -qq openvpn openssl >/dev/null
+  # Списки обновлял 00-bootstrap этого же деплоя минуты назад - второй
+  # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
+  # пакет не нашёлся по старым спискам - обновляем и ставим ещё раз.
+  apt_install() {
+    [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt-get update -qq
+    apt-get install -y -qq "$@" >/dev/null 2>&1 && return 0
+    apt-get update -qq && apt-get install -y -qq "$@" >/dev/null
+  }
+  apt_install openvpn openssl
 fi
 
 # ── 2. openssl.cnf for `openssl ca` (used by the panel to sign/revoke) ──────

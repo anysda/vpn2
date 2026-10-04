@@ -294,6 +294,15 @@ sysctl -w net.ipv4.conf.default.rp_filter=2 >/dev/null
 # На свежих стронгсванах сервис называется strongswan-starter.service (alias —
 # ipsec.service). Юнит strongswan.service отсутствует.
 echo "[$HOST_TAG] [6/8] strongswan-starter service"
+# starter swanctl.conf сам не читает: без start-scripts после перезагрузки
+# charon поднимается пустым и IKEv2 молчит до следующего деплоя.
+cat > /etc/strongswan.d/anysda-swanctl-load.conf <<'EOF'
+charon {
+    start-scripts {
+        anysda-swanctl = /usr/sbin/swanctl --load-all --noprompt
+    }
+}
+EOF
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
 systemctl restart strongswan-starter
 sleep 2

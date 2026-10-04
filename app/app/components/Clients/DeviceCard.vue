@@ -43,8 +43,14 @@ async function loadWg() {
   }
 }
 
+// Адрес QR постоянный, и после перевыпуска ключей браузер показывал картинку
+// из кэша со старым ключом. Новый адрес на каждое открытие модалки.
+const wgQrSrc = ref('')
+
 watch(showWg, (now) => {
-  if (now) loadWg()
+  if (!now) return
+  wgQrSrc.value = `${wgQrUrl(props.clientId, props.device.id)}?t=${Date.now()}`
+  loadWg()
 })
 
 async function copyWg() {
@@ -314,7 +320,7 @@ async function doDelete() {
 
           <div class="flex justify-center">
             <img
-              :src="wgQrUrl(clientId, device.id)"
+              :src="wgQrSrc"
               alt="WireGuard QR"
               class="w-80 h-80 rounded-md bg-white p-2"
             >

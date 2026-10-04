@@ -14,3 +14,5 @@ local-manual-routes.json
 *.log
 .DS_Store
 Thumbs.db
+playwright-report
+test-results

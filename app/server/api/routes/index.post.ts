@@ -25,7 +25,7 @@ export default defineEventHandler(async (event) => {
   // can't be matched on err.message; a SELECT is the reliable way to 409.
   const dup = await db.select({ id: routes.id }).from(routes).where(eq(routes.value, value)).limit(1)
   if (dup.length > 0) {
-    throw createError({ statusCode: 409, statusMessage: `Правило «${value}» уже существует` })
+    throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
   }
 
   const [row] = await db

@@ -23,10 +23,10 @@ export default defineEventHandler(async (event) => {
   const existing = await db.select({ name: devices.name }).from(devices)
     .where(eq(devices.clientId, client.id))
   if (existing.some(d => d.name === name)) {
-    throw createError({ statusCode: 409, statusMessage: 'Девайс с таким названием уже есть' })
+    throw createError({ statusCode: 409, statusMessage: 'device_exists', message: 'Девайс с таким названием уже есть' })
   }
   if (client.deviceLimit != null && existing.length >= client.deviceLimit) {
-    throw createError({ statusCode: 409, statusMessage: 'Достигнут лимит устройств — обратитесь к администратору' })
+    throw createError({ statusCode: 409, statusMessage: 'device_limit', message: 'Достигнут лимит устройств — обратитесь к администратору' })
   }
 
   const [device] = await db.insert(devices).values({ clientId: client.id, name }).returning()

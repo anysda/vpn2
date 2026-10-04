@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const cfg = useRuntimeConfig()
-  if (!cfg.wgEnabled) throw createError({ statusCode: 503, statusMessage: 'WireGuard выключен' })
+  if (!cfg.wgEnabled) throw createError({ statusCode: 503, statusMessage: 'wg_disabled', message: 'WireGuard выключен' })
   const endpoint = String(cfg.wgPublicHost || '')
   if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'wg_public_host_not_configured' })
 
@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const server = await loadServerKeys().catch(() => null)
-  if (!server) throw createError({ statusCode: 503, statusMessage: 'WireGuard server-ключи не готовы' })
+  if (!server) throw createError({ statusCode: 503, statusMessage: 'wg_keys_not_ready', message: 'WireGuard server-ключи не готовы' })
 
   const dev = await ensureDeviceWg(deviceId)
   await syncWireguardConfig().catch(() => {})

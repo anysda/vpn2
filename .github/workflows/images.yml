@@ -43,7 +43,35 @@ jobs:
             type=ref,event=branch
             type=sha
 
-      - uses: docker/build-push-action@v6
+      - name: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          load: true
+          tags: smoke/${{ matrix.name }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+
+      # Образ, который не стартует, в реестр не уезжает: нода стянет его при деплое.
+      - name: smoke panel
+        if: matrix.name == 'panel'
+        run: |
+          docker run -d --name smoke -p 51821:51821 smoke/panel
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:51821/api/version && exit 0
+            sleep 1
+          done
+          docker logs smoke
+          exit 1
+
+      - name: smoke tgbot
+        if: matrix.name == 'tgbot'
+        run: >
+          docker run --rm --entrypoint python smoke/tgbot -c
+          "import ast, telegram, aiohttp, qrcode; ast.parse(open('bot.py').read())"
+
+      - name: push
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           platforms: linux/amd64

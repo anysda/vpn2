@@ -241,6 +241,9 @@ def tick():
 
     # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
     node, dur = _penalize(now)
+    # best выбран до штрафа: без перевыбора уходили на соседний тег того же
+    # узла (nl-direct -> nl-warp), и смерть узла давала второй простой.
+    best = _pick_best(alive)
     _switch(best, alive[best],
             f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
             f'узел {node} в штрафной {dur:.0f}с')

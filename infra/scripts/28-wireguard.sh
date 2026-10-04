@@ -127,8 +127,10 @@ if [[ "$ACTION" == "up" ]]; then
   for p in $(ip rule list | awk -F: -v m="fwmark $MARK lookup $TABLE" -v k="$PREF" 'index($0, m) && $1 != k {print $1}'); do
     ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
   done
+  # replace, не add: на загрузке wg/ovpn/ikev2-routing стартуют разом, и
+  # проигравший гонку add падал с File exists, не поставив свой TPROXY.
   ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \
-    ip route add local 0.0.0.0/0 dev lo table "$TABLE"
+    ip route replace local 0.0.0.0/0 dev lo table "$TABLE"
 
   iptables -t mangle -N ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY

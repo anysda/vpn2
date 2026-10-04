@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck -S error $(git ls-files '*.sh')
+      - name: мёртвые переменные и функции
+        run: shellcheck -i SC2034,SC2317,SC2329 $(git ls-files '*.sh')
 
   python:
     runs-on: ubuntu-latest
@@ -23,7 +25,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: ruff
-        run: pipx run ruff check --isolated --select E9,F $(git ls-files '*.py')
+        run: pipx run --spec ruff==0.13.3 ruff check --isolated --select E9,F,ARG,ERA $(git ls-files '*.py')
+      - name: vulture
+        run: pipx run --spec vulture==2.14 vulture --min-confidence 0 $(git ls-files '*.py')
       - name: config2env на config.example.yaml
         run: |
           d=$(mktemp -d)
@@ -49,3 +53,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: eslint
         run: pnpm lint
+      # Плагин nuxt в knip читает .vue через vue/compiler-sfc; под pnpm vue не
+      # лежит в корне node_modules, без NODE_PATH knip молча считает все
+      # компоненты и composables мёртвыми.
+      - name: knip
+        env:
+          NODE_PATH: ${{ github.workspace }}/app/node_modules/.pnpm/node_modules
+        run: |
+          pnpm dlx knip@6.39.0
+          pnpm dlx knip@6.39.0 --production --exclude dependencies,unlisted,binaries

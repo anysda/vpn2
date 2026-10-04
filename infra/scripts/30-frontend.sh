@@ -242,8 +242,9 @@ docker run -d \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
+http_up=0
 for i in $(seq 1 60); do
-  curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null && break
+  if curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then http_up=1; break; fi
   sleep 1
 done
 # Битый anysda-config.yaml панель не роняет: init пишет ошибку в свой журнал,
@@ -252,6 +253,13 @@ done
 if bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
   echo "[$HOST_TAG] ✗ панель не разобрала /etc/anysda/anysda-config.yaml, пароль админа не применён:"
   echo "[$HOST_TAG]   ${bad:0:400}"
+  exit 1
+fi
+if [[ $http_up -ne 1 ]] || docker logs anysda-vpn2 2>&1 | grep 'panel init failed' >/dev/null; then
+  echo "[$HOST_TAG] ✗ панель не поднялась: /api/version не ответил 2xx за 60 с или init упал"
+  echo "[$HOST_TAG]   контейнер: $(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Status}}')"
+  echo "[$HOST_TAG]   хвост журнала панели:"
+  docker logs --tail 30 anysda-vpn2 2>&1 | sed "s/^/[$HOST_TAG]     /"
   exit 1
 fi
 echo "[$HOST_TAG] статус контейнера:"

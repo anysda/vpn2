@@ -14,6 +14,21 @@ function generatePassword(): string {
 }
 
 export default defineNitroPlugin(async () => {
+  // Nitro не ждёт async-плагин: брошенная здесь ошибка уходила в
+  // unhandledRejection, а панель продолжала отвечать без миграций или с
+  // несинхронизированным админом. Падаем процессом — контейнер это покажет,
+  // а 30-frontend напечатает журнал.
+  try {
+    await initPanel()
+  }
+  catch (err) {
+    useLogger().fatal({ err }, 'panel init failed')
+    console.error('panel init failed:', err)
+    process.exit(1)
+  }
+})
+
+async function initPanel() {
   const log = useLogger()
   const cfg = useRuntimeConfig()
 
@@ -85,4 +100,4 @@ export default defineNitroPlugin(async () => {
       log.info({ keys: Object.keys(updates) }, 'admin user synced from config.yaml')
     }
   }
-})
+}

@@ -127,15 +127,32 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT \
        WGCF_PEER_ENDPOINT_HOST WGCF_PEER_ENDPOINT_PORT \
        WGCF_RESERVED_JSON
 
-# Self-signed TLS cert (SAN = server IP, 10 лет)
-echo "[$HOST_TAG]   генерирую self-signed TLS cert для $PUB_IP"
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
-  -keyout /etc/sing-box/tls.key \
-  -out    /etc/sing-box/tls.crt \
-  -days   3650 -nodes \
-  -subj   "/CN=${PUB_IP}" \
-  -addext "subjectAltName=IP:${PUB_IP}" \
-  2>/dev/null
+# Self-signed TLS cert (SAN = server IP, 10 лет). entry пинит именно этот
+# сертификат, поэтому перевыпуск на каждом прогоне ронял туннели до следующего
+# 20-ru-router (VPN2-40). Перевыпускаем, только если серта нет, ключ к нему
+# не подходит, SAN не тот IP или до конца срока меньше 30 дней.
+cert_ok() {
+  local crt=/etc/sing-box/tls.crt key=/etc/sing-box/tls.key
+  [[ -s "$crt" && -s "$key" ]] || return 1
+  openssl x509 -in "$crt" -noout -checkend $((30*86400)) >/dev/null 2>&1 || return 1
+  # Без `| grep -q`: под pipefail ранний выход grep даёт SIGPIPE (141), и серт
+  # перевыпускался бы через раз.
+  local san; san=$(openssl x509 -in "$crt" -noout -ext subjectAltName 2>/dev/null) || return 1
+  [[ "$san" =~ IP\ Address:${PUB_IP//./\\.}(,|$'\n'|$) ]] || return 1
+  [[ "$(openssl x509 -in "$crt" -noout -pubkey 2>/dev/null)" == "$(openssl pkey -in "$key" -pubout 2>/dev/null)" ]]
+}
+if cert_ok; then
+  echo "[$HOST_TAG]   TLS cert для $PUB_IP на месте — оставляю (entry его пинит)"
+else
+  echo "[$HOST_TAG]   генерирую self-signed TLS cert для $PUB_IP"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 \
+    -keyout /etc/sing-box/tls.key \
+    -out    /etc/sing-box/tls.crt \
+    -days   3650 -nodes \
+    -subj   "/CN=${PUB_IP}" \
+    -addext "subjectAltName=IP:${PUB_IP}" \
+    2>/dev/null
+fi
 chmod 600 /etc/sing-box/tls.key /etc/sing-box/tls.crt
 echo "[$HOST_TAG]   cert SAN: IP:${PUB_IP}"
 

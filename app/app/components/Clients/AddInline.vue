@@ -89,7 +89,7 @@ function reset() {
       icon="i-lucide-plus"
       color="primary"
       variant="soft"
-      @click="open = true"
+      @click="() => { open = true }"
     >
       Новый клиент
     </UButton>

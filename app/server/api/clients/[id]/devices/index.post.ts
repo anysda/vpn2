@@ -31,6 +31,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const [device] = await db.insert(devices).values({ clientId, name }).returning()
+  if (!device) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
 
   // Сразу минтим ключи, чтобы девайс был готов к выдаче конфигов.
   await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceWg on add failed'))

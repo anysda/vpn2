@@ -132,7 +132,7 @@ sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "
 # деплой встаёт. Отключаем — но только если sshd знает эту директиву
 # (на 24.04 / OpenSSH 9.6 её нет, и неизвестная опция роняет sshd).
 mkdir -p /etc/ssh/sshd_config.d
-if sshd -T 2>/dev/null | grep -qi '^persourcepenalties '; then
+if sshd -T 2>/dev/null | grep -i '^persourcepenalties ' >/dev/null; then
   printf 'PerSourcePenalties no\n' > /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
 else
   rm -f /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
@@ -201,7 +201,7 @@ systemctl restart fail2ban
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/6] node_exporter"
 NE_VERSION='1.8.2'
-if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep -q "$NE_VERSION"; then
+if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep "$NE_VERSION" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}/node_exporter-${NE_VERSION}.linux-amd64.tar.gz" \
     | tar -xz -C /tmp

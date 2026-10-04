@@ -249,7 +249,7 @@ done
 # Битый anysda-config.yaml панель не роняет: init пишет ошибку в свой журнал,
 # админ не синхронизируется, и войти паролем из config.yaml нельзя. Без этой
 # проверки стадия выглядела бы зелёной.
-if bad=$(docker logs anysda-vpn2 2>&1 | grep -m1 'anysda config .* is invalid'); then
+if bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
   echo "[$HOST_TAG] ✗ панель не разобрала /etc/anysda/anysda-config.yaml, пароль админа не применён:"
   echo "[$HOST_TAG]   ${bad:0:400}"
   exit 1

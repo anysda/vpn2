@@ -28,7 +28,7 @@ need_install=0
 if [[ ! -x "$AGH_BIN" ]]; then
   need_install=1
 else
-  installed=$("$AGH_BIN" --version 2>/dev/null | grep -oP 'v[\d.]+' | head -1 || echo "")
+  installed=$("$AGH_BIN" --version 2>/dev/null | grep -oP 'v[\d.]+' | sed -n 1p || echo "")
   [[ "$installed" == "$AGH_VER" ]] || need_install=1
 fi
 
@@ -217,7 +217,7 @@ systemctl daemon-reload
 systemctl enable adguardhome >/dev/null 2>&1
 systemctl restart adguardhome
 sleep 2
-systemctl status adguardhome --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # AdGuard слушает 127.0.0.1 и ${MGMT_IP} (lo-алиас на самой entry) — оба адреса
 # локальны, наружу не торчат. Клиенты ходят в DNS не напрямую, а через

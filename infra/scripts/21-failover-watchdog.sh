@@ -86,7 +86,7 @@ systemctl daemon-reload
 systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
 systemctl restart anysda-failover-watchdog
 sleep 3
-systemctl status anysda-failover-watchdog --no-pager -n 5 | head -8 | sed "s/^/[$HOST_TAG]   /"
+systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n "1,8s/^/[$HOST_TAG]   /p"
 
 # 4. Сторож TPROXY: раз в минуту проверяет то, без чего клиенты wg0/OpenVPN/
 # IKEv2 молча теряют интернет, и чинит на месте.
@@ -110,12 +110,12 @@ TABLE=101
 PORT=7898
 STUCK_BYTES=65536
 
-if iptables -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-j ANYSDA_[A-Z0-9]+_TPROXY'; then
-  if ! ip rule list | grep -q "fwmark $MARK lookup $TABLE"; then
+if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]+_TPROXY' >/dev/null; then
+  if ! ip rule list | grep "fwmark $MARK lookup $TABLE" >/dev/null; then
     ip rule add fwmark "$MARK" lookup "$TABLE" \
       && echo "правило fwmark $MARK lookup $TABLE пропало, вернул"
   fi
-  if ! ip route show table "$TABLE" 2>/dev/null | grep -q 'local default'; then
+  if ! ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null; then
     ip route add local 0.0.0.0/0 dev lo table "$TABLE" \
       && echo "маршрут local default в таблице $TABLE пропал, вернул"
   fi
@@ -124,7 +124,7 @@ fi
 systemctl is-active --quiet sing-box || exit 0
 
 recvq() {
-  ss -H -uln "sport = :$PORT" 2>/dev/null | awk '$4 ~ /^127\.0\.0\.1:/ {print $2; exit}'
+  ss -H -uln "sport = :$PORT" 2>/dev/null | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}'
 }
 
 # Живой sing-box вычитывает сокет за миллисекунды: три замера подряд за 10 с

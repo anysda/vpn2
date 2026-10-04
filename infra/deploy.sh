@@ -535,7 +535,7 @@ _clash_delay() {
   secret=$(ssh_exec 'cat /etc/anysda/clash-secret.txt 2>/dev/null') || return 1
   [[ -z "$secret" ]] && return 1
   resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-${kind}/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null") || return 1
-  d=$(printf '%s' "$resp" | grep -oE '"delay":[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+  d=$(printf '%s' "$resp" | grep -oE '"delay":[0-9]+' | sed -n 1p | grep -oE '[0-9]+' || true)
   if [[ "$d" =~ ^[1-9][0-9]*$ ]]; then
     printf '%s' "$d"
     return 0

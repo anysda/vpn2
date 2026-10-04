@@ -13,7 +13,7 @@ echo
 echo "[$HOST_TAG] sysctl net.ipv4.ip_forward: $(sysctl -n net.ipv4.ip_forward)"
 
 # --- ufw
-echo "[$HOST_TAG] ufw status: $(ufw status | head -1)"
+echo "[$HOST_TAG] ufw status: $(ufw status | sed -n 1p)"
 
 # --- fail2ban
 echo "[$HOST_TAG] fail2ban: $(systemctl is-active fail2ban)"
@@ -37,7 +37,7 @@ if [[ "$HOST_TAG" == "ru" ]]; then
   fi
 else
   _mp="${HY2_MGMT_PORT:-}"
-  if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep -q .; then
+  if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep . >/dev/null; then
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp} слушает"
   else
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp:-?} НЕ слушает (стадия 10 не применена?)"
@@ -64,13 +64,13 @@ case "$HOST_TAG" in
     fi
     # TPROXY клиентов: без правила 0x42 → 101 и local default в таблице 101
     # интернет у всех клиентов пропадает, а все юниты при этом active.
-    if ip rule list | grep -q 'fwmark 0x42 lookup 101' \
-       && ip route show table 101 2>/dev/null | grep -q 'local default'; then
+    if ip rule list | grep 'fwmark 0x42 lookup 101' >/dev/null \
+       && ip route show table 101 2>/dev/null | grep 'local default' >/dev/null; then
       echo "[$HOST_TAG] tproxy:      правило 0x42 → table 101 на месте"
     else
       echo "[$HOST_TAG] tproxy:      ✗ НЕТ правила 0x42 → table 101 или local default — клиенты без интернета"
     fi
-    _q=$(ss -H -uln 'sport = :7898' 2>/dev/null | awk '$4 ~ /^127\.0\.0\.1:/ {print $2; exit}')
+    _q=$(ss -H -uln 'sport = :7898' 2>/dev/null | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}')
     echo "[$HOST_TAG] tproxy udp:  Recv-Q ${_q:-нет сокета} (держится выше 0 — sing-box не читает UDP)"
     if systemctl is-active --quiet anysda-tproxy-watchdog.timer 2>/dev/null; then
       echo "[$HOST_TAG] tproxy wd:   таймер active"
@@ -104,12 +104,12 @@ case "$HOST_TAG" in
     done
     # IKEv2: порты слушают + conn anysda-ikev2 в swanctl.
     if command -v swanctl >/dev/null 2>&1; then
-      if swanctl --list-conns 2>/dev/null | grep -q '^anysda-ikev2:'; then
+      if swanctl --list-conns 2>/dev/null | grep '^anysda-ikev2:' >/dev/null; then
         echo "[$HOST_TAG] ikev2:       anysda-ikev2 conn loaded"
       else
         echo "[$HOST_TAG] ikev2:       conn НЕ загружен (стадия 27 не применена?)"
       fi
-      if ss -lun 2>/dev/null | grep -qE ':500 |:4500 '; then
+      if ss -lun 2>/dev/null | grep -E ':500 |:4500 ' >/dev/null; then
         echo "[$HOST_TAG] ikev2 ports: udp/500 + udp/4500 слушают"
       else
         echo "[$HOST_TAG] ikev2 ports: udp/500 или udp/4500 НЕ слушают"

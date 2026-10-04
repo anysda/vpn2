@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Сквозные тесты панели без стенда: собрать образ, поднять контейнер с
-# одноразовым паролем, разложить ключи WG, CA OpenVPN и пометки IKEv2 теми же
+# одноразовым паролем за Caddy, как ставит стадия 30, разложить ключи WG, CA OpenVPN и пометки IKEv2 теми же
 # командами, что стадии 27-29, подставить VictoriaMetrics и clash API, прогнать
 # Playwright. Аргументы уходят в `playwright test`.
 #
 #   DOCKER="sudo -n docker" bash e2e/run-local.sh            # всё
 #   E2E_SKIP_BUILD=1 bash e2e/run-local.sh e2e/routes.spec.ts
 #
-# E2E_IMAGE, E2E_CONTAINER, E2E_PORT — имя образа, контейнера, порт на 127.0.0.1;
+# E2E_IMAGE, E2E_CONTAINER, E2E_PORT — имя образа, контейнера, порт Caddy на 127.0.0.1;
 # E2E_KEEP=1 оставляет контейнер после прогона.
 set -euo pipefail
 
@@ -30,12 +30,15 @@ fi
 PASS=$(openssl rand -hex 12)
 cleanup() {
   [[ -n ${E2E_KEEP:-} ]] && { echo "контейнер $NAME оставлен, пароль admin: $PASS"; return; }
-  dk rm -f "$NAME" >/dev/null 2>&1 || true
+  dk rm -f "$NAME" "$NAME-caddy" >/dev/null 2>&1 || true
+  dk network rm "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-dk rm -f "$NAME" >/dev/null 2>&1 || true
-dk run -d --name "$NAME" -p "127.0.0.1:$PORT:51821" \
+dk rm -f "$NAME" "$NAME-caddy" >/dev/null 2>&1 || true
+dk network rm "$NAME" >/dev/null 2>&1 || true
+dk network create "$NAME" >/dev/null
+dk run -d --name "$NAME" --network "$NAME" --network-alias panel \
   --tmpfs /var/lib/anysda-vpn2 \
   -e HOST=0.0.0.0 -e PORT=51821 \
   -e NUXT_SESSION_PASSWORD="$(openssl rand -hex 32)" -e NUXT_SESSION_COOKIE_SECURE=false \
@@ -89,6 +92,21 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout /etc/strongswan/pki/ca.key -out /etc/strongswan/pki/ca.crt -days 30 \
   -subj "/CN=anysda-vpn2 IKEv2 CA" 2>/dev/null
 IN
+
+# Caddy перед панелью, как на ноде: он подменяет текст статуса ответа на
+# стандартный («401 Unauthorized»), и фронт обязан это пережить.
+CADDYFILE='{
+    servers {
+        protocols h1 h2
+    }
+}
+:80 {
+    encode gzip
+    reverse_proxy panel:51821
+}'
+dk run -d --name "$NAME-caddy" --network "$NAME" -p "127.0.0.1:$PORT:80" \
+  -e CADDYFILE="$CADDYFILE" caddy:2 \
+  sh -c 'printf "%s\n" "$CADDYFILE" > /tmp/Caddyfile && exec caddy run --adapter caddyfile --config /tmp/Caddyfile' >/dev/null
 
 for _ in $(seq 60); do
   curl -fsS "http://127.0.0.1:$PORT/api/version" >/dev/null 2>&1 && break

@@ -49,7 +49,7 @@ test.describe('2FA', () => {
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
   })
 
-  test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard }) => {
+  test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard, request }) => {
     guard.allow(401, /\/api\/auth\/login$/, 'POST')
     guard.allow(401, /\/api\/auth\/totp\/(confirm|disable)$/, 'POST')
     await loginApi(page)
@@ -102,9 +102,17 @@ test.describe('2FA', () => {
       await code.fill(wrong())
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
-      await code.fill(await fresh())
+      const loginCode = await fresh()
+      await code.fill(loginCode)
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page).toHaveURL(/\/$/)
+
+      // VPN2-62: принятый код второй раз не пускает, даже с верным паролем и в окне шага.
+      const replay = await request.post('/api/auth/login', {
+        data: { username: ADMIN_USER, password: ADMIN_PASSWORD, totpCode: loginCode },
+      })
+      expect(replay.status()).toBe(401)
+      expect(await replay.json()).toMatchObject({ statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
 
       // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
       const again = await page.request.post('/api/auth/totp/setup')

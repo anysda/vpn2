@@ -59,6 +59,7 @@ export default defineEventHandler(async (event) => {
       username: user.username,
       totpEnabled: !!user.totpSecret,
       via: 'password',
+      sv: user.sessionVersion,
     },
   })
 

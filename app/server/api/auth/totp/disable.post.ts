@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
-import { requireAuth, verifyAdminPassword } from '../../../utils/auth'
+import { bumpSessionVersion, requireAuth, verifyAdminPassword } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
 
 // Чтобы отключить 2FA, нужны оба фактора: текущий пароль И валидный TOTP-код.
@@ -31,8 +31,9 @@ export default defineEventHandler(async (event) => {
     .set({ totpSecret: null, updatedAt: new Date() })
     .where(eq(users.id, u.id))
 
+  const sv = await bumpSessionVersion(u.id)
   await setUserSession(event, {
-    user: { id: u.id, username: u.username, totpEnabled: false, via: u.via },
+    user: { id: u.id, username: u.username, totpEnabled: false, via: u.via, sv },
   })
 
   return { ok: true }

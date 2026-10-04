@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
-import { requireAuth } from '../../../utils/auth'
+import { bumpSessionVersion, requireAuth } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
 
 const Body = z.object({ code: z.string().min(6).max(8) })
@@ -29,13 +29,17 @@ export default defineEventHandler(async (event) => {
     .set({ totpSecret: pending, updatedAt: new Date() })
     .where(eq(users.id, u.id))
 
+  // Включение второго фактора отзывает остальные сессии: вошедшие без него
+  // больше не должны оставаться внутри.
+  const sv = await bumpSessionVersion(u.id)
+
   // Обновляем user.totpEnabled и сбрасываем pending. replaceUserSession
   // полностью заменяет сессию — иначе defu в setUserSession не позволяет
   // выкинуть pendingTotpSecret (merge не умеет deletion).
   await replaceUserSession(event, {
     // via переносим из текущей сессии: replaceUserSession стирает всё, а способ
     // входа от включения TOTP не меняется.
-    user: { id: u.id, username: u.username, totpEnabled: true, via: u.via },
+    user: { id: u.id, username: u.username, totpEnabled: true, via: u.via, sv },
   })
 
   return { ok: true }

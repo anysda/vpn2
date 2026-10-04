@@ -4,7 +4,9 @@ import { readTelegramRuntime, writeTelegramRuntime } from '../../utils/telegram-
 
 const Body = z.object({
   bot_token: z.string().optional(),
-  chat_id: z.union([z.string(), z.number()]).optional(),
+  // Только числовой id чата (у групп отрицательный); «@channel» бот не поймёт.
+  // Пустая строка — «взять из env».
+  chat_id: z.union([z.string().trim().regex(/^(-?\d+)?$/), z.number().int()]).optional(),
   admin_username: z.string().optional(),
 })
 

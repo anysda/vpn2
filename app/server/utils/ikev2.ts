@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
-import { and, eq, isNotNull, isNull } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { isClientActive } from './client-status'
@@ -140,8 +140,9 @@ export async function readIkev2CaPem(): Promise<string> {
  * Возвращает (возможно обновлённую) запись device. Безопасно вызывать многократно.
  */
 export async function ensureDeviceIkev2(deviceId: number) {
-  // Повтор при конфликте UNIQUE на ikev2_ip — та же гонка выбора адреса, что
-  // и у WG (VPN2-50), см. ensureDeviceWg.
+  // Повтор при конфликте UNIQUE на ikev2_ip или ikev2_username — та же гонка
+  // выбора свободного значения, что и у адреса WG (VPN2-50, VPN2-70), см.
+  // ensureDeviceWg. На повторе занятые перечитываются заново.
   for (let attempt = 1; ; attempt++) {
     try {
       const updated = await claimDeviceIkev2(deviceId)
@@ -150,7 +151,7 @@ export async function ensureDeviceIkev2(deviceId: number) {
     catch (err) {
       if (!isUniqueViolation(err)) throw err
     }
-    if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять адрес IKEv2`)
+    if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять логин и адрес IKEv2`)
   }
 }
 
@@ -189,6 +190,7 @@ async function claimDeviceIkev2(deviceId: number) {
     .where(and(
       eq(devicesTable.id, deviceId),
       row.ikev2Ip ? eq(devicesTable.ikev2Ip, row.ikev2Ip) : isNull(devicesTable.ikev2Ip),
+      row.ikev2Username ? eq(devicesTable.ikev2Username, row.ikev2Username) : isNull(devicesTable.ikev2Username),
     ))
     .returning()
   return updated
@@ -239,13 +241,17 @@ async function syncIkev2Once(): Promise<void> {
 
   const db = useDb()
 
-  // Креды есть, а адреса нет — его сняла миграция 0010 с устройства-дубля
-  // (VPN2-50). Адрес назначает сервер, в конфиге клиента его нет, поэтому
-  // выдаём новый здесь, а не ждём, пока кто-то откроет креды.
+  // Креды выданы не целиком: адрес сняла миграция 0010 с устройства-дубля
+  // (VPN2-50), логин и пароль — миграция 0012 (VPN2-70). Выдаём недостающее
+  // здесь, а не ждём, пока кто-то откроет креды: адрес назначает сервер, а
+  // дублю логина без нового логина вход всё равно не светит.
   const orphans = await db
     .select({ id: devicesTable.id })
     .from(devicesTable)
-    .where(and(isNotNull(devicesTable.ikev2Username), isNull(devicesTable.ikev2Ip)))
+    .where(or(
+      and(isNotNull(devicesTable.ikev2Username), isNull(devicesTable.ikev2Ip)),
+      and(isNull(devicesTable.ikev2Username), isNotNull(devicesTable.ikev2Ip)),
+    ))
   for (const o of orphans) {
     await ensureDeviceIkev2(o.id).catch(err =>
       useLogger().warn({ err: (err as Error).message, id: o.id }, 'ikev2: адрес устройству не выдан'))

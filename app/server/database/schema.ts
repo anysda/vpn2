@@ -91,6 +91,10 @@ export const devices = sqliteTable('devices', {
   // выбирали один и тот же свободный адрес (VPN2-50).
   uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
   uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
+  // Логин IKEv2 — id в secrets swanctl: на одинаковом логине пускает только
+  // одного. buildIkev2Username выбирает свободный, но без UNIQUE два
+  // параллельных создания брали один и тот же (VPN2-70).
+  uniqueIndex('devices_ikev2_username_unique').on(table.ikev2Username),
 ])
 
 export const routes = sqliteTable('routes', {

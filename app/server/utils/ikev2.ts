@@ -61,9 +61,8 @@ const IKEV2_SUBNET = '10.68.68.'
  */
 export function generateIkev2Password(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  const bytes = randomBytes(20)
   let out = ''
-  for (let i = 0; i < 20; i++) out += alphabet[bytes[i] % alphabet.length]
+  for (const b of randomBytes(20)) out += alphabet.charAt(b % alphabet.length)
   return out
 }
 
@@ -170,6 +169,7 @@ export async function ensureDeviceIkev2(deviceId: number) {
     })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
 }
 
@@ -192,6 +192,7 @@ export async function reissueDeviceIkev2(deviceId: number) {
     .set({ ikev2Password: newPassword, updatedAt: new Date() })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
 
   // Терминируем активную SA — клиенту придётся переподключиться с новым паролем.
   await terminateIkev2Sa(row.ikev2Username).catch((err) => {
@@ -296,7 +297,7 @@ export async function terminateIkev2Sa(username: string): Promise<void> {
   let current: string | null = null
   for (const line of stdout.split('\n')) {
     const head = line.match(/^\S+:\s+#(\d+),/)
-    if (head) {
+    if (head?.[1]) {
       current = head[1]
       continue
     }

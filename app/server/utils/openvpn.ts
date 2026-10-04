@@ -188,6 +188,7 @@ export async function ensureDeviceOvpn(deviceId: number) {
     .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
   // New cert → set the CCD disable flag to match the client's current status.
   const [client] = await db
     .select({ frozenManual: clientsTable.frozenManual, expiresAt: clientsTable.expiresAt })
@@ -224,6 +225,7 @@ export async function reissueDeviceOvpn(deviceId: number) {
     .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
 }
 

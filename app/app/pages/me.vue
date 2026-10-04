@@ -260,7 +260,7 @@ async function disableTotp() {
           color="error"
           variant="soft"
           icon="i-lucide-shield-off"
-          @click="disableConfirm = true"
+          @click="() => { disableConfirm = true }"
         >
           Выключить 2FA
         </UButton>
@@ -290,7 +290,7 @@ async function disableTotp() {
         </div>
       </template>
       <template #footer>
-        <UButton color="neutral" variant="soft" @click="disableConfirm = false">
+        <UButton color="neutral" variant="soft" @click="() => { disableConfirm = false }">
           Отмена
         </UButton>
         <UButton

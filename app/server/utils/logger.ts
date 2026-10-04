@@ -1,6 +1,6 @@
-import { pino } from 'pino'
+import { pino, type Logger } from 'pino'
 
-let _logger: pino.Logger | null = null
+let _logger: Logger | null = null
 
 export function useLogger() {
   if (!_logger) {

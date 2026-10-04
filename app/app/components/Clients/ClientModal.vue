@@ -374,7 +374,7 @@ const limitReached = computed(() => {
             variant="soft"
             block
             :loading="revoking"
-            @click="confirmRevoke = true"
+            @click="() => { confirmRevoke = true }"
           >
             <span class="inline-flex items-center gap-2">
               <UIcon name="i-lucide-unlink" class="size-4" />
@@ -437,7 +437,7 @@ const limitReached = computed(() => {
             icon="i-lucide-rotate-cw"
             color="neutral"
             variant="soft"
-            @click="confirmReissue = true"
+            @click="() => { confirmReissue = true }"
           >
             Перевыпустить все ключи
           </UButton>
@@ -454,7 +454,7 @@ const limitReached = computed(() => {
             icon="i-lucide-trash-2"
             color="error"
             variant="soft"
-            @click="confirmDelete = true"
+            @click="() => { confirmDelete = true }"
           >
             Удалить клиента
           </UButton>
@@ -481,7 +481,7 @@ const limitReached = computed(() => {
                 color="primary"
                 variant="soft"
                 :disabled="limitReached"
-                @click="showAddDevice = true"
+                @click="() => { showAddDevice = true }"
               >
                 девайс
               </UButton>
@@ -527,7 +527,7 @@ const limitReached = computed(() => {
       </p>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="confirmReissue = false">
+      <UButton color="neutral" variant="soft" @click="() => { confirmReissue = false }">
         Отмена
       </UButton>
       <UButton color="primary" :loading="reissuing" @click="doReissueAll">
@@ -547,7 +547,7 @@ const limitReached = computed(() => {
       </p>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="confirmRevoke = false">
+      <UButton color="neutral" variant="soft" @click="() => { confirmRevoke = false }">
         Отмена
       </UButton>
       <UButton color="error" :loading="revoking" @click="doRevoke">
@@ -566,7 +566,7 @@ const limitReached = computed(() => {
       </p>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="confirmDelete = false">
+      <UButton color="neutral" variant="soft" @click="() => { confirmDelete = false }">
         Отмена
       </UButton>
       <UButton color="error" :loading="deleting" @click="doDelete">

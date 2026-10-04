@@ -100,7 +100,8 @@ export function flagFor(tag: string): string {
   // `us2` / `de3` etc. — strip the trailing index so multi-node countries
   // still resolve to the right flag.
   const base = tag.replace(/[0-9]+$/, '')
-  if (flags[tag] ?? flags[base]) return flags[tag] ?? flags[base]
+  const known = flags[tag] ?? flags[base]
+  if (known) return known
   // Тег из двух латинских букв считаем кодом страны (cy, lv, ...) и собираем
   // флаг из regional indicator symbols, чтобы не дописывать таблицу на каждую.
   if (/^[a-z]{2}$/.test(base))

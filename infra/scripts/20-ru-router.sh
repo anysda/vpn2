@@ -197,7 +197,7 @@ echo "[$HOST_TAG] [6/6] sing-box manual-routes watcher"
 
 cat > /usr/local/sbin/anysda-apply-routes.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, subprocess, sys, tempfile, os
+import ipaddress, json, subprocess, sys, tempfile, os
 
 MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
 SB_CONFIG     = '/etc/sing-box/config.json'
@@ -218,14 +218,26 @@ except (FileNotFoundError, json.JSONDecodeError):
 
 with open(SB_CONFIG_BASE) as f: cfg = json.load(f)
 
+# Правило на outbound, которого нет в конфиге (экзит убрали, опечатка в
+# панели), sing-box check отвергает целиком — и вместе с ним все остальные
+# ручные маршруты. Такие строки пропускаем по одной и пишем в журнал.
+known = {o.get('tag') for o in cfg.get('outbounds', []) + cfg.get('endpoints', [])}
 manual_rules = []
-for row in rows:
-    rule = {'outbound': row['outbound']}
-    if row['type'] == 'domain':
-        val = row['value']
-        rule['domain_suffix'] = [val[2:] if val.startswith('*.') else val]
-    else:
-        rule['ip_cidr'] = [row['value']]
+for row in rows if isinstance(rows, list) else []:
+    try:
+        out, kind, val = row['outbound'], row['type'], str(row['value'])
+        if out not in known:
+            raise ValueError(f'outbound {out!r} нет в конфиге')
+        if kind == 'domain':
+            rule = {'outbound': out, 'domain_suffix': [val[2:] if val.startswith('*.') else val]}
+        elif kind == 'ip_cidr':
+            ipaddress.ip_network(val, strict=False)
+            rule = {'outbound': out, 'ip_cidr': [val]}
+        else:
+            raise ValueError(f'тип {kind!r} неизвестен')
+    except (KeyError, TypeError, ValueError) as e:
+        print(f'пропускаю маршрут {row!r}: {e}', file=sys.stderr)
+        continue
     manual_rules.append(rule)
 
 cfg['route']['rules'] = manual_rules + cfg['route']['rules']
@@ -250,7 +262,9 @@ try:
     subprocess.run([SB_BIN, 'check', '-c', tmp_path], check=True, capture_output=True)
     os.replace(tmp_path, SB_CONFIG)
 except subprocess.CalledProcessError as e:
-    os.unlink(tmp_path); print(f'Config check failed: {e}', file=sys.stderr); sys.exit(1)
+    os.unlink(tmp_path)
+    print(f'Config check failed: {e}: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
+    sys.exit(1)
 
 subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
 print(f'Applied {len(manual_rules)} manual route(s), sing-box restarted')

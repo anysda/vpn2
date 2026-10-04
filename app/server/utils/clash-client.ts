@@ -76,11 +76,13 @@ export async function fetchConnections(): Promise<ConnectionsResponse | null> {
 /**
  * The proxies we expose as drag targets in the panel: anything starting with
  * `hy2-` (per-exit, direct or warp) plus `direct-ru`. Skips internal urltest
- * groups (`*-best`, `block-out`, etc.).
+ * groups (`*-best`, `block-out`, etc.) and the service `hy2-{tag}-mgmt`
+ * outbounds: they reach only the exit's own metrics port, a user route there
+ * would black-hole its traffic.
  */
 export function userVisibleOutbounds(proxies: ClashProxy[]): ClashProxy[] {
   return proxies
-    .filter(p => p.name === 'direct-ru' || p.name.startsWith('hy2-'))
+    .filter(p => p.name === 'direct-ru' || (p.name.startsWith('hy2-') && !p.name.endsWith('-mgmt')))
     .sort((a, b) => {
       // direct-ru first, then per-exit direct, then per-exit warp
       if (a.name === 'direct-ru') return -1

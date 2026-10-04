@@ -1,0 +1,51 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -S error $(git ls-files '*.sh')
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: ruff
+        run: pipx run ruff check --isolated --select E9,F $(git ls-files '*.py')
+      - name: config2env на config.example.yaml
+        run: |
+          d=$(mktemp -d)
+          cp config.example.yaml "$d/config.yaml"
+          python3 infra/lib/config2env.py "$d"
+          test -s "$d/infra/envs/all.env"
+
+  panel:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: eslint
+        run: pnpm lint

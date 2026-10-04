@@ -7,6 +7,7 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
 """
 
 import base64
+import re
 import sys
 from pathlib import Path
 
@@ -29,7 +30,14 @@ def parse_yaml(text):
 
         def kv(s):
             k, _, v = s.partition(':')
-            return k.strip(), v.strip().strip("'\"")
+            v = v.strip()
+            if v[:1] in ('"', "'"):
+                end = v.find(v[0], 1)
+                v = v[1:end] if end > 0 else v.strip("'\"")
+            else:
+                # `us   # короткий тег` — комментарий после значения не часть значения
+                v = re.sub(r'\s+#.*$', '', v)
+            return k.strip(), v
 
         if indent == 0:
             if content.startswith('exits:'):
@@ -217,7 +225,7 @@ def main():
     lines = [
         f'ENTRY_HOST={entry_host}',
         '',
-        f'AGH_PORT=3000',
+        'AGH_PORT=3000',
         '',
         f'HY2_DIRECT_PORT={hy2_direct}',
         f'HY2_WARP_PORT={hy2_warp}',
@@ -383,7 +391,7 @@ def main():
     if backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1'):
         lines += [
             '',
-            f"BACKUP_ENABLED='true'",
+            "BACKUP_ENABLED='true'",
             f"BACKUP_BACKEND='{backup.get('backend', 'local')}'",
             f"BACKUP_PASSPHRASE={shq(backup.get('passphrase', ''))}",
             f"BACKUP_RETENTION='{backup.get('retention', '10')}'",

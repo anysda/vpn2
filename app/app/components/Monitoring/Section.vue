@@ -27,6 +27,14 @@ function loadColor(v: number | null): string {
   if (v >= 60) return 'text-amber-400'
   return 'text-(--ui-text)'
 }
+
+// iowait/steal: уже 10% — заметная беда (диск или соседи по гипервизору).
+function waitColor(v: number | null): string {
+  if (v == null) return 'text-(--ui-text-dimmed)'
+  if (v >= 30) return 'text-rose-400'
+  if (v >= 10) return 'text-amber-400'
+  return 'text-(--ui-text-muted)'
+}
 </script>
 
 <template>
@@ -65,6 +73,14 @@ function loadColor(v: number | null): string {
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">CPU</span>
               <span :class="loadColor(n.cpu)">{{ formatPercent(n.cpu) }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">iowait</span>
+              <span :class="waitColor(n.iowait)">{{ formatPercent(n.iowait) }}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-(--ui-text-muted)">steal</span>
+              <span :class="waitColor(n.steal)">{{ formatPercent(n.steal) }}</span>
             </div>
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">RAM</span>

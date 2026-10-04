@@ -173,6 +173,9 @@ case "$HOST_TAG" in
     ;;
 esac
 ufw --force enable
+# VPN2-33: без журнала. Иначе каждый пакет сканера портов — строка
+# [UFW BLOCK] в kern.log и журнале, это лишняя запись на медленный диск.
+ufw logging off >/dev/null
 ufw status verbose | sed "s/^/[$HOST_TAG]   /"
 
 # ----------------------------------------------------------------------------

@@ -62,6 +62,26 @@ case "$HOST_TAG" in
     else
       echo "[$HOST_TAG] sing-box:    неактивен (стадия 20 не применена)"
     fi
+    # TPROXY клиентов: без правила 0x42 → 101 и local default в таблице 101
+    # интернет у всех клиентов пропадает, а все юниты при этом active.
+    if ip rule list | grep -q 'fwmark 0x42 lookup 101' \
+       && ip route show table 101 2>/dev/null | grep -q 'local default'; then
+      echo "[$HOST_TAG] tproxy:      правило 0x42 → table 101 на месте"
+    else
+      echo "[$HOST_TAG] tproxy:      ✗ НЕТ правила 0x42 → table 101 или local default — клиенты без интернета"
+    fi
+    _q=$(ss -H -uln 'sport = :7898' 2>/dev/null | awk '$4 ~ /^127\.0\.0\.1:/ {print $2; exit}')
+    echo "[$HOST_TAG] tproxy udp:  Recv-Q ${_q:-нет сокета} (держится выше 0 — sing-box не читает UDP)"
+    if systemctl is-active --quiet anysda-tproxy-watchdog.timer 2>/dev/null; then
+      echo "[$HOST_TAG] tproxy wd:   таймер active"
+    else
+      echo "[$HOST_TAG] tproxy wd:   anysda-tproxy-watchdog.timer НЕ активен (стадия 21 не применена)"
+    fi
+    if [[ -f /etc/systemd/networkd.conf.d/60-anysda-foreign.conf ]]; then
+      echo "[$HOST_TAG] networkd:    чужие правила и маршруты не трогает"
+    else
+      echo "[$HOST_TAG] networkd:    drop-in 60-anysda-foreign.conf НЕТ — рестарт networkd снесёт TPROXY (стадия 00)"
+    fi
     # YouTube-десинк (стадия 19). Статус юнита ничего не доказывает — nfqws2
     # поднимается и с нерабочей стратегией, поэтому гоняем A/B-проверку.
     if [[ -x /usr/local/bin/anysda-yt-check ]]; then

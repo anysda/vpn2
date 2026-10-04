@@ -253,9 +253,10 @@ sleep 2
 systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # AdGuard слушает 127.0.0.1 и ${MGMT_IP} (lo-алиас на самой entry) — оба адреса
-# локальны, наружу не торчат. Клиенты ходят в DNS не напрямую, а через
-# sing-box, поэтому открывать порт в firewall не нужно. Снимаем legacy
-# mesh-правила ufw (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md).
+# локальны, наружу не торчат. Клиенты WG/OpenVPN/IKEv2 спрашивают AdGuard
+# напрямую (DNS 10.99.0.1 в их конфигах, sing-box этот трафик не трогает);
+# порт для подсетей туннелей открывают стадии 27/28/29. Здесь только снимаем
+# legacy mesh-правила ufw (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md).
 ufw delete allow proto udp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
 ufw delete allow proto tcp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
 ufw reload >/dev/null

@@ -23,7 +23,7 @@ export default defineEventHandler(async (event) => {
   if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
 
   if (!(await caReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (29-openvpn)' })
+    throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (стадия 29-openvpn)' })
   }
 
   const db = useDb()

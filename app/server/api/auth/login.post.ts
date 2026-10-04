@@ -6,6 +6,7 @@ import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
 import { ssoSettings } from '../../utils/sso'
 import { verifyTotpToken } from '../../utils/totp'
+import { zodBody } from '../../utils/validate'
 
 const Body = z.object({
   username: z.string().min(1).max(64),
@@ -26,7 +27,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'password_login_disabled' })
   }
   rateLimitGuard(event, RL)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const db = useDb()
   const [user] = await db
     .select()
@@ -36,7 +37,7 @@ export default defineEventHandler(async (event) => {
 
   if (!user || !(await verifyAdminPassword(user.passwordHash, body.password))) {
     rateLimitRecordFailure(event, RL)
-    throw createError({ statusCode: 401, statusMessage: 'invalid_credentials' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
   }
 
   if (user.totpSecret) {
@@ -48,7 +49,7 @@ export default defineEventHandler(async (event) => {
       // Один и тот же statusMessage для password/TOTP — убирает password-oracle
       // из M4. Бэкенду все равно, какой фактор сломан; клиент UX тоже опирается
       // на needsTotp/ok, а не на текст ошибки.
-      throw createError({ statusCode: 401, statusMessage: 'invalid_credentials' })
+      throw createError({ statusCode: 401, statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
     }
   }
 

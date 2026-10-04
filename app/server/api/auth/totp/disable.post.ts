@@ -4,6 +4,7 @@ import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
 import { requireAuth, verifyAdminPassword } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
+import { zodBody } from '../../../utils/validate'
 
 // Чтобы отключить 2FA, нужны оба фактора: текущий пароль И валидный TOTP-код.
 // Без TOTP-проверки украденная сессия + leaked password могут снести 2FA — что
@@ -15,7 +16,7 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const db = useDb()
 
   const [row] = await db.select().from(users).where(eq(users.id, u.id)).limit(1)

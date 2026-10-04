@@ -136,7 +136,7 @@ test.describe('маршрутизация', () => {
     const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
     await input.fill('not a domain')
     await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
-    await expect(toast(page, /invalid_value/)).toBeVisible()
+    await expect(toast(page, 'Нужен домен или IPv4/CIDR').getByText('Нужен домен или IPv4/CIDR', { exact: true })).toBeVisible()
     await expect(input).toHaveValue('not a domain')
   })
 

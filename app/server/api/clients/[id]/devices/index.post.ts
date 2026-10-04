@@ -7,6 +7,7 @@ import { notifyClient } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
+import { zodBody } from '../../../../utils/validate'
 
 const Body = z.object({ name: z.string().min(1).max(64) })
 
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const clientId = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(clientId)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const db = useDb()
 
   const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)

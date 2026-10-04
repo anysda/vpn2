@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { users } from '../../database/schema'
 import { hashAdminPassword, requireAuth, verifyAdminPassword } from '../../utils/auth'
+import { zodBody } from '../../utils/validate'
 
 const Body = z.object({
   currentPassword: z.string().min(1),
@@ -11,7 +12,7 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const db = useDb()
 
   const [row] = await db.select().from(users).where(eq(users.id, u.id)).limit(1)

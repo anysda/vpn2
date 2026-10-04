@@ -6,6 +6,7 @@ import { botClientView, clientByChat, requireBotAuth } from '../../../utils/bot-
 import { ensureDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
+import { zodBody } from '../../../utils/validate'
 
 const Body = z.object({
   chatId: z.number().int(),
@@ -15,7 +16,7 @@ const Body = z.object({
 // Клиент добавляет себе девайс через бота.
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const client = await clientByChat(body.chatId)
   const db = useDb()
 

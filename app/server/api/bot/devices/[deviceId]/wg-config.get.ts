@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const server = await loadServerKeys().catch(() => null)
-  if (!server) throw createError({ statusCode: 503, statusMessage: 'wg_keys_not_ready', message: 'WireGuard server-ключи не готовы' })
+  if (!server) throw createError({ statusCode: 503, statusMessage: 'wg_keys_not_ready', message: 'WireGuard server-ключи ещё не инициализированы (стадия 28-wireguard)' })
 
   const dev = await ensureDeviceWg(deviceId)
   await syncWireguardConfig().catch(() => {})

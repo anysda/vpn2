@@ -6,14 +6,20 @@
  * `err.statusMessage` во фронте показывал человеку «Unauthorized» или пустой тост.
  *
  * Берём текст из тела ответа и отдаём его через `statusText`: ofetch читает
- * `statusMessage` ошибки именно оттуда, и все места фронта видят его. У ошибки
- * валидации h3 в `message` дамп zod, ей оставляем код «Validation Error».
+ * `statusMessage` ошибки именно оттуда, и все места фронта видят его.
+ * Запросы с `responseType: 'text'` (.conf, .ovpn) получают тело ошибки
+ * строкой — разбираем её сами.
  */
 export default defineNuxtPlugin(() => {
   globalThis.$fetch = globalThis.$fetch.create({
     onResponseError({ response }) {
-      const data = response._data as { statusMessage?: unknown, message?: unknown } | undefined
-      const text = (data?.statusMessage !== 'Validation Error' && data?.message) || data?.statusMessage
+      let raw: unknown = response._data
+      if (typeof raw === 'string') {
+        try { raw = JSON.parse(raw) }
+        catch { return }
+      }
+      const data = raw as { statusMessage?: unknown, message?: unknown } | null | undefined
+      const text = data?.message || data?.statusMessage
       if (typeof text === 'string' && text) {
         Object.defineProperty(response, 'statusText', { value: text, configurable: true })
       }

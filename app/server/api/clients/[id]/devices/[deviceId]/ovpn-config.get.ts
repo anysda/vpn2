@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
   const endpoint = String(cfg.ovpnPublicHost || '')
   if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'ovpn_public_host_not_configured' })
   if (!(await caReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (29-openvpn)' })
+    throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (стадия 29-openvpn)' })
   }
 
   const db = useDb()

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { updateClient } from '../../../../utils/client-ops'
 import { requireBotAuth } from '../../../../utils/bot-api'
+import { zodBody } from '../../../../utils/validate'
 
 const Body = z.object({
   name: z.string().min(1).max(64).optional(),
@@ -13,6 +14,6 @@ export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   return updateClient(id, body)
 })

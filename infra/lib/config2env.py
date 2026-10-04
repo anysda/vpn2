@@ -186,6 +186,43 @@ def load_excluded_exits(repo_root):
     return excluded
 
 
+def assign_mgmt_octets(repo_root, exits):
+    """Закрепляет за тегом экзита последний октет MGMT_IP (10.99.0.N).
+
+    Октет хранится в infra/state/mgmt-ips.txt (`тег октет`) и от порядка
+    exits в config.yaml больше не зависит: убрали экзит из середины — у
+    остальных адреса и mon-порты (10100+N) те же. Файла нет (первый деплой
+    или обновление со старой версии) — засеваем прежней формулой «позиция в
+    списке + 2», поэтому уже поставленные установки адресов не меняют.
+    Новый тег берёт наименьший свободный октет; октет убранного тега
+    остаётся за ним и никому не переходит.
+    """
+    state_file = repo_root / 'infra' / 'state' / 'mgmt-ips.txt'
+    pinned = {}
+    if state_file.exists():
+        for line in state_file.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 2 and not parts[0].startswith('#') and parts[1].isdigit():
+                pinned[parts[0]] = int(parts[1])
+    else:
+        pinned = {e['tag']: i for i, e in enumerate(exits, start=2)}
+
+    changed = not state_file.exists()
+    for e in exits:
+        if e['tag'] not in pinned:
+            used = set(pinned.values())
+            pinned[e['tag']] = next(n for n in range(2, 255) if n not in used)
+            changed = True
+        e['_mgmt_idx'] = pinned[e['tag']]
+
+    if changed:
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(
+            '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\n'
+            '# Не перенумеровывать: на октет завязаны метки метрик и mon-порт.\n'
+            + ''.join(f'{t} {n}\n' for t, n in sorted(pinned.items(), key=lambda kv: kv[1])))
+
+
 def main():
     repo_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     config_path = repo_root / 'config.yaml'
@@ -201,13 +238,9 @@ def main():
     exits = cfg.get('exits', [])
     ports = cfg.get('ports', {})
 
-    # STABLE INDEXING: первый exit в config.yaml всегда получает MGMT_IP
-    # 10.99.0.2, второй — .3, и так далее, НЕЗАВИСИМО от того, какие
-    # экзиты исключены. Иначе при exclusion индексы съезжают, и wgmgmt-
-    # туннели нод (физически прописаны на остатке от прошлого деплоя)
-    # перестают соответствовать ожидаемым адресам в новой конфигурации.
-    for i, e in enumerate(exits, start=2):
-        e['_mgmt_idx'] = i
+    # MGMT_IP закреплён за тегом (до исключения по UDP-фильтру), а не за
+    # позицией в списке: см. assign_mgmt_octets.
+    assign_mgmt_octets(repo_root, exits)
 
     # Применить persistent UDP-фильтр от verify_and_rotate_ports. Эти экзиты
     # деплой не настраивает ни в одной стадии, пока verify не подтвердит
@@ -270,7 +303,7 @@ def main():
         tag = ex['tag'].upper()
         lines.append(f"DOMAIN_{tag}={ex['host']}")
 
-    # Per-host MGMT IPs (используем СТАБИЛЬНЫЙ индекс из config.yaml).
+    # Per-host MGMT IPs (октет закреплён за тегом, см. assign_mgmt_octets).
     lines.append('')
     lines.append('MGMT_IP_RU=10.99.0.1')
     for ex in exits:
@@ -440,7 +473,7 @@ def main():
     ru_env.chmod(0o600)
 
     # ------------------------------------------------------------------
-    # Per-exit env files (используем СТАБИЛЬНЫЙ индекс из config.yaml).
+    # Per-exit env files (октет закреплён за тегом, см. assign_mgmt_octets).
     # ------------------------------------------------------------------
     for ex in exits:
         tag      = ex['tag']

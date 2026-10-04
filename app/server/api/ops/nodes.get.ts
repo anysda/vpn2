@@ -10,6 +10,8 @@ export default defineEventHandler(async (event) => {
     label: n.label,
     instance: n.instance,
     cpu: metrics[i]?.cpuPct ?? null,
+    iowait: metrics[i]?.iowaitPct ?? null,
+    steal: metrics[i]?.stealPct ?? null,
     ram: metrics[i]?.ramPct ?? null,
     rxMbps: metrics[i]?.rxBps != null ? metrics[i]!.rxBps! * 8 / 1e6 : null,
     txMbps: metrics[i]?.txBps != null ? metrics[i]!.txBps! * 8 / 1e6 : null,

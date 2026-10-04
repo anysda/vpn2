@@ -3,6 +3,9 @@ export interface NodeMetric {
   label: string
   instance: string
   cpu: number | null
+  // ожидание диска и украденное гипервизором время, % (в cpu не входят)
+  iowait: number | null
+  steal: number | null
   ram: number | null
   rxMbps: number | null
   txMbps: number | null

@@ -15,7 +15,11 @@ interface VmResponse {
 
 export interface NodeMetrics {
   instance: string
+  // Занятость ЦПУ (user+system+softirq+irq+nice), средняя по ядрам. Ожидание
+  // диска и украденное гипервизором время сюда не входят — отдельные поля.
   cpuPct: number | null
+  iowaitPct: number | null
+  stealPct: number | null
   ramPct: number | null
   rxBps: number | null
   txBps: number | null
@@ -27,7 +31,10 @@ export interface NodeMetrics {
 }
 
 const PROMQL = {
-  cpu: '100 * (1 - avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[30s])))',
+  // Сумма по ядрам, делённая на число ядер: 100% = все ядра заняты.
+  cpu: '100 * sum by(instance) (rate(node_cpu_seconds_total{mode=~"user|system|softirq|irq|nice"}[30s])) / count by(instance) (node_cpu_seconds_total{mode="idle"})',
+  iowait: '100 * avg by(instance) (rate(node_cpu_seconds_total{mode="iowait"}[30s]))',
+  steal: '100 * avg by(instance) (rate(node_cpu_seconds_total{mode="steal"}[30s]))',
   ram: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)',
   rx: 'sum by(instance) (irate(node_network_receive_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
   tx: 'sum by(instance) (irate(node_network_transmit_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
@@ -92,8 +99,10 @@ function withHoldover(
 }
 
 export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics[]> {
-  const [cpu, ram, rx, tx, uptime, stale] = await Promise.all([
+  const [cpu, iowait, steal, ram, rx, tx, uptime, stale] = await Promise.all([
     instantQuery(PROMQL.cpu),
+    instantQuery(PROMQL.iowait),
+    instantQuery(PROMQL.steal),
     instantQuery(PROMQL.ram),
     instantQuery(PROMQL.rx),
     instantQuery(PROMQL.tx),
@@ -102,6 +111,8 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
   ])
 
   const cpuH = withHoldover(cpu, instances, 'cpu')
+  const iowaitH = withHoldover(iowait, instances, 'iowait')
+  const stealH = withHoldover(steal, instances, 'steal')
   const ramH = withHoldover(ram, instances, 'ram')
   const rxH = withHoldover(rx, instances, 'rx')
   const txH = withHoldover(tx, instances, 'tx')
@@ -110,6 +121,8 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
   return instances.map(inst => ({
     instance: inst,
     cpuPct: cpuH.get(inst) ?? null,
+    iowaitPct: iowaitH.get(inst) ?? null,
+    stealPct: stealH.get(inst) ?? null,
     ramPct: ramH.get(inst) ?? null,
     rxBps: rxH.get(inst) ?? null,
     txBps: txH.get(inst) ?? null,

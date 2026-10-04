@@ -1,4 +1,7 @@
 import { createHmac, randomBytes } from 'node:crypto'
+import { and, eq, isNull, lt, or } from 'drizzle-orm'
+import { useDb } from '../database/client'
+import { users } from '../database/schema'
 
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
@@ -50,15 +53,37 @@ function hotpCode(key: Buffer, counter: number): string {
   return (code % 1_000_000).toString().padStart(6, '0')
 }
 
-export function verifyTotpToken(token: string, secret: string, window = 1): boolean {
+/**
+ * Номер 30-секундного шага, которому соответствует код (±window шагов на
+ * расхождение часов), или null, если код не подходит.
+ */
+export function matchTotpStep(token: string, secret: string, window = 1): number | null {
   const cleaned = token.replace(/\s/g, '')
-  if (!/^\d{6}$/.test(cleaned)) return false
+  if (!/^\d{6}$/.test(cleaned)) return null
   const key = base32Decode(secret)
   const t = Math.floor(Date.now() / 1000 / 30)
   for (let i = -window; i <= window; i++) {
-    if (hotpCode(key, t + i) === cleaned) return true
+    if (hotpCode(key, t + i) === cleaned) return t + i
   }
-  return false
+  return null
+}
+
+/**
+ * Проверяет код включённого второго фактора и «гасит» его: шаг пишется в
+ * users.totp_last_step, и код этого или более раннего шага второй раз не
+ * пройдёт (VPN2-62). Без этого один код годился на любое число входов, пока
+ * открыто окно (до 90 с). Запись условная — из двух параллельных запросов с
+ * одним кодом пройдёт ровно один.
+ */
+export async function consumeTotpCode(userId: number, token: string, secret: string): Promise<boolean> {
+  const step = matchTotpStep(token, secret)
+  if (step === null) return false
+  const won = await useDb()
+    .update(users)
+    .set({ totpLastStep: step })
+    .where(and(eq(users.id, userId), or(isNull(users.totpLastStep), lt(users.totpLastStep, step))))
+    .returning({ id: users.id })
+  return won.length === 1
 }
 
 export function buildTotpUri(username: string, secret: string): string {

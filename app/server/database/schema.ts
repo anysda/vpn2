@@ -15,6 +15,10 @@ export const users = sqliteTable('users', {
   username: text('username').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
   totpSecret: text('totp_secret'),
+  // Последний принятый 30-секундный шаг TOTP. Код этого и более раннего шага
+  // второй раз не принимается (RFC 6238, 5.2): подсмотренный или перехваченный
+  // код не годится на повторный вход, пока окно ещё открыто.
+  totpLastStep: integer('totp_last_step'),
   // Привязка учётки к пользователю IdP (Authentik) по НЕИЗМЕНЯЕМОМУ `sub`
   // (у провайдера sub_mode=user_uuid). Не по имени и не по почте: имя человек
   // меняет сам, почта в панели и в IdP расходится, а auto-link по почте — это

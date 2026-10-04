@@ -382,6 +382,14 @@ def main():
         },
 
         'experimental': {
+            # Выбор foreign-best, сделанный сторожем через clash API, иначе
+            # терялся при каждом перезапуске sing-box: selector вставал на
+            # первый тег, даже если тот мёртв. В 1.10 выбор селекторов
+            # хранится в cache_file сам, отдельного store_selected нет.
+            'cache_file': {
+                'enabled': True,
+                'path': '/var/lib/sing-box/cache.db',
+            },
             'clash_api': {
                 'external_controller': f'{mgmt_ip}:9090',
                 'secret': ru_clash_secret,

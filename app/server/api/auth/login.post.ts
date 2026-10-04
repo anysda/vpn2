@@ -6,7 +6,7 @@ import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
 import { ssoSettings } from '../../utils/sso'
 import { verifyTotpToken } from '../../utils/totp'
-import { zodBody } from '../../utils/validate'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
   username: z.string().min(1).max(64),
@@ -24,10 +24,10 @@ export default defineEventHandler(async (event) => {
   // NUXT_SSO_PASSWORD_LOGIN=false рубит его наглухо — осознанно и отдельным
   // рычагом, чтобы это нельзя было сделать «заодно».
   if (!ssoSettings().passwordLogin) {
-    throw createError({ statusCode: 403, statusMessage: 'password_login_disabled' })
+    throw createError({ statusCode: 403, statusMessage: 'password_login_disabled', message: 'Вход по паролю отключён' })
   }
   rateLimitGuard(event, RL)
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
   const db = useDb()
   const [user] = await db
     .select()

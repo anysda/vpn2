@@ -4,7 +4,7 @@ import { useDb } from '../../database/client'
 import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { detectRouteType, syncRoutesFile } from '../../utils/routes-sync'
-import { zodBody } from '../../utils/validate'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
   value: z.string().min(1).max(255),
@@ -13,7 +13,7 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
 
   const value = body.value.trim()
   const type = detectRouteType(value)

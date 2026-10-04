@@ -16,15 +16,27 @@ const LABELS: Record<string, string> = {
 }
 
 /**
- * Валидатор тела для readValidatedBody. С `Schema.parse` h3 кладёт в `message`
- * дамп zod в JSON, и его видел человек в тосте и в Telegram; здесь — одно
- * поле по-русски.
+ * Тело запроса по схеме zod. readValidatedBody отдаёт человеку английское
+ * «Invalid JSON body», а с `Schema.parse` — дамп zod в JSON; оба доходили до
+ * тоста и до Telegram. Здесь код в `statusMessage`, текст по-русски в `message`.
  */
-export function zodBody<T>(schema: ZodType<T>) {
-  return (body: unknown): T => {
-    const r = schema.safeParse(body)
-    if (r.success) return r.data
-    const key = r.error.issues[0]?.path[0]
-    throw new Error(key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${LABELS[String(key)] ?? String(key)}»`)
+export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schema: ZodType<T>): Promise<T> {
+  let body: unknown
+  try {
+    body = await readBody(event, { strict: true })
   }
+  catch (e) {
+    if (isError(e) && e.statusCode === 400) {
+      throw createError({ statusCode: 400, statusMessage: 'invalid_json', message: 'Запрос не в формате JSON' })
+    }
+    throw e
+  }
+  const r = schema.safeParse(body)
+  if (r.success) return r.data
+  const key = r.error.issues[0]?.path[0]
+  throw createError({
+    statusCode: 400,
+    statusMessage: 'invalid_body',
+    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${LABELS[String(key)] ?? String(key)}»`,
+  })
 }

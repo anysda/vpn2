@@ -31,6 +31,7 @@ export function rateLimitGuard(event: H3Event, opts: Opts): void {
     throw createError({
       statusCode: 429,
       statusMessage: 'too_many_requests',
+      message: 'Слишком много попыток, попробуйте позже',
       data: { retryAfterSec: Math.ceil((b.lockedUntil - now) / 1000) },
     })
   }

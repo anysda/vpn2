@@ -6,7 +6,7 @@ import { botClientView, clientByChat, requireBotAuth } from '../../../../utils/b
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../utils/openvpn'
 import { reissueDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
-import { zodBody } from '../../../../utils/validate'
+import { readBodyAs } from '../../../../utils/validate'
 
 const Body = z.object({ chatId: z.number().int() })
 
@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const deviceId = Number(getRouterParam(event, 'deviceId'))
   if (!Number.isFinite(deviceId)) throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
   const client = await clientByChat(body.chatId)
   const db = useDb()
 

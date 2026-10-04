@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { requireAuth } from '../../utils/auth'
 import { readTelegramRuntime, writeTelegramRuntime } from '../../utils/telegram-config'
-import { zodBody } from '../../utils/validate'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
   bot_token: z.string().optional(),
@@ -11,7 +11,7 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
 
   const cur = readTelegramRuntime()
   const next = {

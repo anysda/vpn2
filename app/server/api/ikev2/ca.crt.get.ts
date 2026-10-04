@@ -10,11 +10,11 @@ export default defineEventHandler(async (event) => {
   if ((await ikev2Mode()) === 'letsencrypt') {
     throw createError({
       statusCode: 404,
-      statusMessage: 'CA не нужен в letsencrypt-режиме (корневой Let\'s Encrypt уже в trust-store iOS/macOS/Windows/Android)',
+      statusMessage: 'ca_not_needed', message: 'CA не нужен в letsencrypt-режиме (корневой Let\'s Encrypt уже в trust-store iOS/macOS/Windows/Android)',
     })
   }
   if (!(await ikev2CaReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'IKEv2 CA ещё не инициализирован (стадия 27-ikev2)' })
+    throw createError({ statusCode: 503, statusMessage: 'ikev2_ca_not_ready', message: 'IKEv2 CA ещё не инициализирован (стадия 27-ikev2)' })
   }
   const pem = await readIkev2CaPem()
   setHeader(event, 'content-type', 'application/x-pem-file')

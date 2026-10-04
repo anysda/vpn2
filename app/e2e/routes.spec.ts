@@ -139,4 +139,22 @@ test.describe('маршрутизация', () => {
     await expect(toast(page, /invalid_value/)).toBeVisible()
     await expect(input).toHaveValue('not a domain')
   })
+
+  // VPN2-67: русский текст ошибки шёл в statusMessage, а h3 и Caddy оставляют
+  // от него в строке статуса латиницу или «Conflict». Тост обязан показать
+  // текст сервера дословно.
+  test('дубль правила показывает русскую ошибку сервера дословно', async ({ page, guard }) => {
+    guard.allow(409, /\/api\/routes$/, 'POST')
+    await openRoutes(page)
+    const value = `e2e-dup-${stamp()}.example.net`
+    await addRule(page, value, /NL$/)
+    const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+    await input.fill(value)
+    const resp = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/routes')
+    await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
+    expect((await resp).status()).toBe(409)
+    const text = `Правило «${value}» уже существует`
+    await expect(toast(page, text)).toBeVisible()
+    await expect(toast(page, text).getByText(text, { exact: true })).toBeVisible()
+  })
 })

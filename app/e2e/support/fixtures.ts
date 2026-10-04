@@ -1,6 +1,5 @@
 import { readFile } from 'node:fs/promises'
 import { test as base, expect, type Download, type Page } from '@playwright/test'
-import { totp } from './totp'
 
 export const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 export const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || ''
@@ -66,10 +65,8 @@ export const test = base.extend<{ guard: Guard }>({
 export { expect }
 
 /** Вход через API: для тестов, где сам вход не предмет проверки. */
-export async function loginApi(page: Page, totpSecret?: string) {
-  const data: Record<string, string> = { username: ADMIN_USER, password: ADMIN_PASSWORD }
-  if (totpSecret) data.totpCode = totp(totpSecret)
-  const r = await page.request.post('/api/auth/login', { data })
+export async function loginApi(page: Page) {
+  const r = await page.request.post('/api/auth/login', { data: { username: ADMIN_USER, password: ADMIN_PASSWORD } })
   expect(r.status(), await r.text()).toBe(200)
   const body = await r.json()
   expect(body.needsTotp, 'у admin осталась включённая 2FA от прошлого прогона').toBeFalsy()

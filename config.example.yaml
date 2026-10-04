@@ -44,7 +44,7 @@ admin:
 # Hysteria2-туннели НЕ зависят от домена и остаются на self-signed TLS (IP).
 # panel:
 #   domain: vpn.example.com
-#   image: registry.example.com/anysda/vpn2/panel:dev   # пин образа панели.
+#   image: ghcr.io/anysda/vpn2/panel:dev   # пин образа панели.
 #          # Не задан — стадия 30-frontend берёт свой дефолт (:dev). Задавать,
 #          # когда на проде осознанно крутится не dev-линия: иначе обычный
 #          # прогон стадии молча утащит панель обратно на :dev.

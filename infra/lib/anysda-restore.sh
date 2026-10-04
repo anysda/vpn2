@@ -136,7 +136,7 @@ fi
 rm -f /tmp/anysda-restore-tar.err
 shred -uz "$ARCHIVE_PLAIN" 2>/dev/null || rm -f "$ARCHIVE_PLAIN"
 
-BUNDLE_DIR=$(find "$WORK" -maxdepth 1 -mindepth 1 -type d -name 'anysda-vpn2-*' | head -1)
+BUNDLE_DIR=$(find "$WORK" -maxdepth 1 -mindepth 1 -type d -name 'anysda-vpn2-*' -print -quit)
 [[ -d "$BUNDLE_DIR" ]] || { echo "anysda-restore: в архиве нет ожидаемой папки anysda-vpn2-*" >&2; exit 5; }
 
 # ── Проверка manifest.json + SHA-256 каждого компонента ────────────────────

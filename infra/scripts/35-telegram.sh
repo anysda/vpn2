@@ -105,7 +105,7 @@ docker logs --tail 6 anysda-tgbot 2>&1 | sed "s/^/[$HOST_TAG]   /"
 # Контейнер зовут anysda-vpn2 — `docker restart anysda-vpn` (без двойки) молча
 # падал в `|| true`, и панель секрет не подхватывала. Заодно не глушим ошибку
 # насовсем: если рестарт не удался, это видно в логе стадии.
-if docker ps --filter name=anysda-vpn2 --format '{{.Names}}' | grep -q anysda-vpn2; then
+if docker ps --filter name=anysda-vpn2 --format '{{.Names}}' | grep anysda-vpn2 >/dev/null; then
   echo "[$HOST_TAG] перезапуск anysda-vpn2 для передачи TGBOT_SECRET..."
   docker restart anysda-vpn2 >/dev/null \
     || echo "[$HOST_TAG]   ⚠ рестарт anysda-vpn2 не удался — панель могла остаться со старым TGBOT_SECRET"

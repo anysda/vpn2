@@ -116,10 +116,10 @@ except Exception:
 detect_entry_ip() {
   local ip=""
   local iface
-  iface=$(ip -4 route show default 2>/dev/null | awk '/default/ {print $5; exit}')
+  iface=$(ip -4 route show default 2>/dev/null | awk '!f && /default/ {print $5; f=1}')
   if [[ -n "$iface" ]]; then
     ip=$(ip -4 addr show dev "$iface" 2>/dev/null \
-         | awk '/inet / {print $2; exit}' | cut -d/ -f1)
+         | awk '!f && /inet / {print $2; f=1}' | cut -d/ -f1)
   fi
   if [[ -z "$ip" ]] || [[ "$ip" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.) ]]; then
     local ext
@@ -435,8 +435,8 @@ config_file="${REPO_ROOT}/config.yaml"
 # setup.sh он не должен потеряться, иначе повторный деплой сломает доступ.
 orch_key=''; orch_pubkey=''
 if [[ -f "$config_file" ]]; then
-  orch_key=$(sed -n 's/^orchestrator_key:[[:space:]]*//p' "$config_file" | head -1)
-  orch_pubkey=$(sed -n 's/^orchestrator_pubkey:[[:space:]]*//p' "$config_file" | head -1)
+  orch_key=$(sed -n '/^orchestrator_key:/{s/^orchestrator_key:[[:space:]]*//p;q}' "$config_file")
+  orch_pubkey=$(sed -n '/^orchestrator_pubkey:/{s/^orchestrator_pubkey:[[:space:]]*//p;q}' "$config_file")
 fi
 
 ENTRY_IP="$entry_ip" \

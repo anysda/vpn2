@@ -21,14 +21,14 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] sing-box"
 SB_VER='1.10.3'
-if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep -q "$SB_VER"; then
+if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep "$SB_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
 fi
-/usr/local/bin/sing-box version | head -1 | sed "s/^/[$HOST_TAG]   /"
+/usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
 # 2. GeoIP / Geosite DB
@@ -71,7 +71,7 @@ echo "[$HOST_TAG] [4/6] sing-box router config"
 GEN=/tmp/anysda/gen-router-config.py
 [[ -f "$GEN" ]] || { echo "[$HOST_TAG] $GEN не найден"; exit 1; }
 
-WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
+WAN_IFACE=$(ip -4 -o route show default | awk '!f {print $5; f=1}')
 : "${WAN_IFACE:?}"
 # Backward-compat: gen-router-config.py читает WG_OUT_IFACE (имя из v1).
 export WG_OUT_IFACE="$WAN_IFACE"
@@ -324,7 +324,7 @@ if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_
 fi
 systemctl restart sing-box
 sleep 2
-systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status sing-box --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

@@ -337,6 +337,7 @@ XFRM_IF='xfrm0'
 WAN_IF='$WAN_IF'
 MARK='0x42'
 TABLE=101
+PREF=32765
 TPROXY_PORT=7898
 IKEV2_SUBNET='${IKEV2_SUBNET%/*}/24'
 
@@ -354,8 +355,14 @@ if [[ "\$ACTION" == "up" ]]; then
   ip route replace "\$IKEV2_SUBNET" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
-  ip rule list | grep "fwmark \$MARK lookup \$TABLE" >/dev/null || \\
-    ip rule add fwmark "\$MARK" lookup "\$TABLE"
+  # Явный pref: без него правило встаёт выше strongSwan 220 (219), а юниты
+  # wg/ovpn/ikev2 на загрузке в гонке добавляют копии.
+  ip rule list pref "\$PREF" | grep "fwmark \$MARK lookup \$TABLE" >/dev/null || \\
+    ip rule add fwmark "\$MARK" lookup "\$TABLE" pref "\$PREF" 2>/dev/null || \\
+    ip rule list pref "\$PREF" | grep "fwmark \$MARK lookup \$TABLE" >/dev/null
+  for p in \$(ip rule list | awk -F: -v m="fwmark \$MARK lookup \$TABLE" -v k="\$PREF" 'index(\$0, m) && \$1 != k {print \$1}'); do
+    ip rule del pref "\$p" fwmark "\$MARK" lookup "\$TABLE" 2>/dev/null || true
+  done
   ip route show table "\$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \\
     ip route add local 0.0.0.0/0 dev lo table "\$TABLE"
 

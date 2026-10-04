@@ -719,6 +719,29 @@ except Exception:
 # ----------------------------------------------------------------------------
 # Full ordered pipeline
 # ----------------------------------------------------------------------------
+# Несколько цепочек стадий параллельно; внутри цепочки стадии идут по порядку.
+# Цепочка - строка "стадия:группа стадия:группа". Ждём все цепочки, потом
+# падаем, если упала хоть одна: брошенная на полпути цепочка хуже ожидания.
+run_tracks() {
+  local track pids=() outs=() rc=0 i
+  for track in "$@"; do
+    local out; out=$(mktemp)
+    outs+=("$out")
+    (
+      _STAGE_LOG=()
+      for s in $track; do run_stage "${s%%:*}" "${s#*:}"; done
+      printf '%s\n' "${_STAGE_LOG[@]}" > "$out"
+    ) &
+    pids+=("$!")
+  done
+  for i in "${!pids[@]}"; do
+    wait "${pids[$i]}" || rc=1
+    [[ -s "${outs[$i]}" ]] && mapfile -t -O "${#_STAGE_LOG[@]}" _STAGE_LOG < "${outs[$i]}"
+    rm -f "${outs[$i]}"
+  done
+  [[ $rc -eq 0 ]] || HOST_TAG=deploy die "параллельные стадии ($*): одна из цепочек завершилась с ошибкой"
+}
+
 do_all() {
   print_banner
   _TOTAL_T0=$(date +%s)
@@ -730,14 +753,14 @@ do_all() {
 
   run_stage 00-bootstrap     all
   run_stage 05-mgmt-mesh     all
-  run_stage 10-foreign       foreign
-  run_stage 28-wireguard     ru
-  run_stage 29-openvpn       ru
+  # 28/29/19 на ru от экзитов не зависят (секреты экзитов забирает только
+  # prep_ru_router перед 20) - гоняем их, пока экзиты ставят 10-foreign.
   # 19 строго ДО 20: сначала готовим путь десинка YouTube, потом sing-box
   # начинает на него маршрутизировать. Обратный порядок = окно, в котором
   # YouTube уже на РФ-выходе, а обходить DPI ещё нечем. Стадия сама валит
   # деплой, если A/B-проверка не прошла.
-  run_stage 19-yt-zapret     ru
+  run_tracks "10-foreign:foreign" \
+             "28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
   run_stage 21-failover-watchdog ru

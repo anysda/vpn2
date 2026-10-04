@@ -37,7 +37,7 @@ if [[ "$HOST_TAG" == "ru" ]]; then
   fi
 else
   _mp="${HY2_MGMT_PORT:-}"
-  if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep -q .; then
+  if [[ -n "$_mp" ]] && grep -q . <<<"$(ss -H -lun "sport = :$_mp" 2>/dev/null)"; then
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp} слушает"
   else
     echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp:-?} НЕ слушает (стадия 10 не применена?)"
@@ -64,8 +64,10 @@ case "$HOST_TAG" in
     fi
     # TPROXY клиентов: без правила 0x42 → 101 и local default в таблице 101
     # интернет у всех клиентов пропадает, а все юниты при этом active.
-    if ip rule list | grep -q 'fwmark 0x42 lookup 101' \
-       && ip route show table 101 2>/dev/null | grep -q 'local default'; then
+    # grep -q по here-string, не по трубе: под pipefail grep выходит на первом
+    # совпадении, ip получает SIGPIPE, и проверка врёт «нет правила» (~1 из 4).
+    if grep -q 'fwmark 0x42 lookup 101' <<<"$(ip rule list)" \
+       && grep -q 'local default' <<<"$(ip route show table 101 2>/dev/null)"; then
       echo "[$HOST_TAG] tproxy:      правило 0x42 → table 101 на месте"
     else
       echo "[$HOST_TAG] tproxy:      ✗ НЕТ правила 0x42 → table 101 или local default — клиенты без интернета"
@@ -104,12 +106,12 @@ case "$HOST_TAG" in
     done
     # IKEv2: порты слушают + conn anysda-ikev2 в swanctl.
     if command -v swanctl >/dev/null 2>&1; then
-      if swanctl --list-conns 2>/dev/null | grep -q '^anysda-ikev2:'; then
+      if grep -q '^anysda-ikev2:' <<<"$(swanctl --list-conns 2>/dev/null)"; then
         echo "[$HOST_TAG] ikev2:       anysda-ikev2 conn loaded"
       else
         echo "[$HOST_TAG] ikev2:       conn НЕ загружен (стадия 27 не применена?)"
       fi
-      if ss -lun 2>/dev/null | grep -qE ':500 |:4500 '; then
+      if grep -qE ':500 |:4500 ' <<<"$(ss -lun 2>/dev/null)"; then
         echo "[$HOST_TAG] ikev2 ports: udp/500 + udp/4500 слушают"
       else
         echo "[$HOST_TAG] ikev2 ports: udp/500 или udp/4500 НЕ слушают"

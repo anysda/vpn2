@@ -371,7 +371,7 @@ if [[ "\$ACTION" == "up" ]]; then
   ip -6 route replace "\$IKEV2_SUBNET6" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
-  ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\
+  grep -q "fwmark \$MARK lookup \$TABLE" <<<"\$(ip rule list)" || \\
     ip rule add fwmark "\$MARK" lookup "\$TABLE"
   ip route show table "\$TABLE" 2>/dev/null | grep -q 'local default' || \\
     ip route replace local 0.0.0.0/0 dev lo table "\$TABLE"

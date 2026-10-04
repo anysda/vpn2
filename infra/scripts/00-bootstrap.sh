@@ -181,7 +181,10 @@ systemctl reload ssh
 # 4. ufw firewall — role-specific
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/6] ufw"
-ufw --force reset >/dev/null
+# VPN2-41: без `ufw --force reset`. Он стирал порты, которые открывают
+# стадии 27/28/29/30 (IKEv2, WireGuard, OpenVPN, HTTPS панели): повторный
+# 00-bootstrap отрезал всех клиентов. `ufw allow` на уже существующее правило
+# ничего не добавляет, так что повтор стадии идемпотентен.
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'

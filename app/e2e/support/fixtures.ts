@@ -78,6 +78,8 @@ export async function loginApi(page: Page, totpSecret?: string) {
 /** Вход формой /login. */
 export async function loginUi(page: Page, password = ADMIN_PASSWORD) {
   await page.goto('/login')
+  // До гидратации v-model не связан: поля заполняются, а форма уходит пустой.
+  await hydrated(page)
   await page.getByLabel('Логин').fill(ADMIN_USER)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти' }).click()

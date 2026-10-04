@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
+import { assertKnownOutbound } from '../../utils/route-outbound'
 import { detectRouteType, syncRoutesFile } from '../../utils/routes-sync'
 
 const Body = z.object({
@@ -19,6 +20,8 @@ export default defineEventHandler(async (event) => {
   if (!type) {
     throw createError({ statusCode: 400, statusMessage: 'invalid_value (expected domain or ipv4/cidr)' })
   }
+
+  await assertKnownOutbound(body.outbound)
 
   const db = useDb()
   // Explicit pre-check — libsql wraps the UNIQUE constraint error so it

@@ -36,7 +36,7 @@ apt-get install -y -qq \
   curl wget ca-certificates gnupg lsb-release \
   ufw fail2ban \
   jq qrencode unzip git \
-  iptables \
+  iptables netcat-openbsd \
   python3 python3-yaml \
   >/dev/null
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
@@ -115,6 +115,22 @@ if [[ -s "$KEYSRC" ]]; then
   echo "[$HOST_TAG]   ключей в /root/.ssh/authorized_keys: $(wc -l < /root/.ssh/authorized_keys)"
 fi
 rm -f "$KEYSRC"
+
+# Ключ entry для ssh через служебный hy2-туннель (VPN2-38; на экзиты его
+# кладёт deploy.sh, см. prep_entry_mgmt_key). Опознаём по комментарию:
+# прежний ключ entry снимаем, текущий ставим один раз, поэтому повтор
+# стадии не плодит строки, а пересозданная entry вытесняет старый ключ.
+ENTRY_KEY=/tmp/anysda/entry_mgmt_key
+if [[ "$HOST_TAG" != ru && -s "$ENTRY_KEY" ]]; then
+  mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  touch /root/.ssh/authorized_keys
+  { awk '$NF != "anysda-entry-mgmt"' /root/.ssh/authorized_keys
+    head -n1 "$ENTRY_KEY"
+  } > /root/.ssh/authorized_keys.new
+  mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+  echo "[$HOST_TAG]   ключ entry (anysda-entry-mgmt) в authorized_keys"
+fi
 
 if [[ -n "$ADMIN_PUBKEY" ]]; then
   echo "[$HOST_TAG] [3/6] sshd_config: есть ключ админа — отключаю парольный вход"

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  "ignoreDependencies": [
+    // @nuxt/icon (из @nuxt/ui, режим local) берёт коллекцию по имени иконки
+    // в шаблонах: i-lucide-copy, i-lucide-x и т.д. Импорта в коде нет.
+    "@iconify-json/lucide",
+    // То же для i-simple-icons-telegram и i-simple-icons-adguard.
+    "@iconify-json/simple-icons",
+    // server/utils/logger.ts: pino грузит transport строкой
+    // target: 'pino-pretty' (вне production). Импорта в коде нет.
+    "pino-pretty",
+    // server/utils/{auth,bot-api,rate-limit}.ts: import type { H3Event } from 'h3'.
+    // Пакет приносит Nitro, Nuxt разрешает его через paths в .nuxt/tsconfig.json;
+    // автоимпорт отдаёт H3Event только значением, тип нужен явным импортом.
+    "h3"
+  ]
+}

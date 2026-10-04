@@ -73,21 +73,6 @@ yq() {
   printf "'%s'" "${1//\'/\'\'}"
 }
 
-ask_password() {
-  local prompt="$1" p1 p2
-  while true; do
-    printf '  %b%s%b: ' "$Y" "$prompt" "$E" >&2
-    read -rs p1; printf '\n' >&2
-    p1=$(sanitize "$p1")
-    [[ -z "$p1" ]] && { fail "Пароль не может быть пустым"; continue; }
-    printf '  %b%s (повтор)%b: ' "$Y" "$prompt" "$E" >&2
-    read -rs p2; printf '\n' >&2
-    p2=$(sanitize "$p2")
-    if [[ "$p1" == "$p2" ]]; then printf '%s' "$p1"; return; fi
-    fail "Пароли не совпадают"
-  done
-}
-
 ask_password_once() {
   local prompt="$1" p1
   while true; do
@@ -185,7 +170,6 @@ entry_pass=$(ask_password_once "root password")
 exits_yaml=""
 used_tags=""
 declare -A exit_ips=()
-declare -A exit_pass=()
 
 for i in $(seq 1 "$n_exits"); do
   header "Выходная нода $i / $n_exits"
@@ -214,7 +198,6 @@ for i in $(seq 1 "$n_exits"); do
 
   used_tags="$used_tags $ex_tag"
   exit_ips["$ex_tag"]="$ex_ip"
-  exit_pass["$ex_tag"]="$ex_pass"
 
   exits_yaml+="  - tag: ${ex_tag}"$'\n'"    host: $(yq "$ex_ip")"$'\n'"    password: $(yq "$ex_pass")"$'\n\n'
 done
@@ -325,7 +308,6 @@ fi
 header "Бэкапы БД (опционально)"
 hint "Архив: db.sqlite + /etc/anysda/* + WG server key + OpenVPN CA, шифруется"
 hint "age. Backend local — без внешних зависимостей; S3 — любой S3-совместимый."
-backup_enabled='y'
 backup_backend='local'
 backup_passphrase=''
 backup_schedule='off'

@@ -193,12 +193,10 @@ fi
 
 # ── Защита от перетирания не-пустой БД ─────────────────────────────────────
 LIVE_DB=/var/lib/anysda-vpn2/db.sqlite
-LIVE_DB_NONEMPTY=0
 if [[ -f "$LIVE_DB" ]]; then
   LIVE_DB_SIZE=$(stat -c %s "$LIVE_DB")
   LIVE_CLIENTS=$(sqlite3 "$LIVE_DB" 'SELECT COUNT(*) FROM clients;' 2>/dev/null || echo 0)
   if (( LIVE_DB_SIZE > 0 )) && (( LIVE_CLIENTS > 0 )); then
-    LIVE_DB_NONEMPTY=1
     if (( FORCE == 0 )); then
       cat >&2 <<-MSG
 	anysda-restore: ABORT — текущая db.sqlite не пустая ($LIVE_CLIENTS клиентов, $LIVE_DB_SIZE байт).

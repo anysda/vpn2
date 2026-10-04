@@ -68,6 +68,19 @@ net.ipv4.tcp_congestion_control = bbr
 EOF
 sysctl --quiet --system
 
+# systemd-networkd при каждом перезапуске (needrestart после unattended-upgrades
+# дёргает его сам) по умолчанию сносит «чужие» ip rule и маршруты — в том числе
+# fwmark 0x42 → table 101, на которой держится TPROXY клиентов wg0/OpenVPN/IKEv2.
+# Без них у всех клиентов пропадает интернет до ребута. Чужое не трогать.
+# Перезапускать networkd не нужно: файл читается при следующем старте.
+mkdir -p /etc/systemd/networkd.conf.d
+cat > /etc/systemd/networkd.conf.d/60-anysda-foreign.conf <<'EOF'
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+[Network]
+ManageForeignRoutingPolicyRules=no
+ManageForeignRoutes=no
+EOF
+
 # ----------------------------------------------------------------------------
 # 3. SSH hardening + переход на ключевой вход
 #

@@ -31,25 +31,6 @@ jobs:
           python3 infra/lib/config2env.py "$d"
           test -s "$d/infra/envs/all.env"
 
-  panel:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: app/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - name: eslint
-        run: pnpm lint
-
   panel-e2e:
     runs-on: ubuntu-latest
     defaults:
@@ -79,3 +60,22 @@ jobs:
             app/playwright-report
             app/test-results
           retention-days: 14
+
+  panel:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: eslint
+        run: pnpm lint

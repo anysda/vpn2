@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
+import { readBodyAs } from '../../../utils/validate'
 import { users } from '../../../database/schema'
 import { requireAuth, verifyAdminPassword } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
-import { readBodyAs } from '../../../utils/validate'
 
 // Чтобы отключить 2FA, нужны оба фактора: текущий пароль И валидный TOTP-код.
 // Без TOTP-проверки украденная сессия + leaked password могут снести 2FA — что
@@ -24,7 +24,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 401, statusMessage: 'invalid_current_password', message: 'Неверный текущий пароль' })
   }
   if (!row.totpSecret || !verifyTotpToken(body.totpCode, row.totpSecret)) {
-    throw createError({ statusCode: 401, statusMessage: 'invalid_totp', message: 'Код не подошёл' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_totp' })
   }
 
   await db

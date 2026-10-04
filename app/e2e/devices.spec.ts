@@ -43,7 +43,7 @@ async function qrLoaded(dlg: Locator) {
 }
 
 test.describe('девайсы', () => {
-  test('WG: QR, .conf, перевыпуск меняет ключ, удаление', async ({ page }) => {
+  test('WG: QR, .conf, перевыпуск меняет ключ и QR, удаление', async ({ page }) => {
     const qrs = qrResponses(page)
     await openHome(page)
     const client = uniq('wg')
@@ -75,7 +75,8 @@ test.describe('девайсы', () => {
     expect(field(first.text, 'PublicKey')).toMatch(/^[A-Za-z0-9+/]{43}=$/)
     expect(field(first.text, 'Endpoint')).toMatch(new RegExp(`^${PUBLIC_HOST.replace(/\./g, '\\.')}:\\d+$`))
     expect(qrs.length).toBeGreaterThan(0)
-    expect(qrs.at(-1)!.body).toContain('<svg')
+    const qr1 = qrs.at(-1)!.body
+    expect(qr1).toContain('<svg')
     await closeBtn(wg).click()
     await expect(wg).toBeHidden()
 
@@ -93,12 +94,16 @@ test.describe('девайсы', () => {
     await expect(toast(page, `Ключи девайса «${device}» перевыпущены`)).toBeVisible()
     await expect(confirm).toBeHidden()
 
+    const before = qrs.length
     await dc.wg.click()
     await qrLoaded(wg)
     const second = await download(page, wg)
     const key2 = field(second.text, 'PrivateKey')
     expect(key2).toMatch(/^[A-Za-z0-9+/]{43}=$/)
     expect(key2).not.toBe(key1)
+    // QR в модалке должен показывать новый конфиг, а не картинку из кэша.
+    await expect.poll(() => qrs.length, { message: 'QR не перезапрошен после перевыпуска' }).toBeGreaterThan(before)
+    expect(qrs.at(-1)!.body).not.toBe(qr1)
     await page.keyboard.press('Escape')
     await expect(wg).toBeHidden()
 

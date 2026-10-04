@@ -26,7 +26,9 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box /var/lib/sing-box/acme
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/4] wgcf"
 WGCF_VER='2.2.27'
-if [[ ! -x /usr/local/bin/wgcf ]] || ! /usr/local/bin/wgcf --version 2>&1 | grep "$WGCF_VER" >/dev/null; then
+# Версию wgcf не печатает (ни `version`, ни `--version`), сверяем по sha256 релиза.
+WGCF_SHA256='b6564872ed33bc09f75f57d54952b2dda0910f28ec06b0a80c7283b3904523e2'
+if [[ "$(sha256sum /usr/local/bin/wgcf 2>/dev/null | cut -d' ' -f1)" != "$WGCF_SHA256" ]]; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
   chmod +x /usr/local/bin/wgcf
@@ -36,7 +38,8 @@ cd /etc/anysda
 WGCF_OK=1
 if [[ ! -f wgcf-account.toml ]]; then
   echo "[$HOST_TAG]   регистрирую WARP устройство"
-  if ! /usr/local/bin/wgcf register --accept-tos; then
+  # Без таймаута register при фильтрации Cloudflare висит ~145 с на TCP connect.
+  if ! timeout 15 /usr/local/bin/wgcf register --accept-tos; then
     echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
     WGCF_OK=0
   fi

@@ -49,7 +49,7 @@ async function submit() {
       </form>
     </template>
     <template #footer>
-      <UButton color="neutral" variant="soft" @click="open = false">
+      <UButton color="neutral" variant="soft" @click="() => { open = false }">
         Отмена
       </UButton>
       <UButton

@@ -264,17 +264,17 @@ async function doDelete() {
 
     <div class="flex gap-1 mt-1.5 justify-end">
       <UTooltip text="IKEv2 — сервер/логин/пароль, нативный VPN-клиент iOS/macOS/Windows/Android">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showIkev2 = true">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="() => { showIkev2 = true }">
           <UIcon name="i-lucide-shield-check" class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="WireGuard — QR, .conf, копировать, отправить в Telegram">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showWg = true">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="() => { showWg = true }">
           <WireguardLogo class="size-4" />
         </UButton>
       </UTooltip>
       <UTooltip text="OpenVPN — .ovpn-файл, копировать, отправить в Telegram">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="showOvpn = true">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="() => { showOvpn = true }">
           <OpenVpnLogo class="size-4" />
         </UButton>
       </UTooltip>
@@ -285,7 +285,7 @@ async function doDelete() {
           color="neutral"
           variant="ghost"
           :loading="reissuing"
-          @click="confirmReissue = true"
+          @click="() => { confirmReissue = true }"
         />
       </UTooltip>
       <UTooltip text="Удалить девайс">
@@ -294,7 +294,7 @@ async function doDelete() {
           size="xs"
           color="error"
           variant="ghost"
-          @click="confirmDelete = true"
+          @click="() => { confirmDelete = true }"
         />
       </UTooltip>
     </div>
@@ -484,7 +484,7 @@ async function doDelete() {
                   size="xs"
                   color="neutral"
                   variant="ghost"
-                  @click="showIkev2Pass = !showIkev2Pass"
+                  @click="() => { showIkev2Pass = !showIkev2Pass }"
                 />
                 <UButton
                   icon="i-lucide-copy"
@@ -545,7 +545,7 @@ async function doDelete() {
         </p>
       </template>
       <template #footer>
-        <UButton color="neutral" variant="soft" @click="confirmReissue = false">
+        <UButton color="neutral" variant="soft" @click="() => { confirmReissue = false }">
           Отмена
         </UButton>
         <UButton color="primary" :loading="reissuing" @click="doReissue">
@@ -563,7 +563,7 @@ async function doDelete() {
         </p>
       </template>
       <template #footer>
-        <UButton color="neutral" variant="soft" @click="confirmDelete = false">
+        <UButton color="neutral" variant="soft" @click="() => { confirmDelete = false }">
           Отмена
         </UButton>
         <UButton color="error" :loading="deleting" @click="doDelete">

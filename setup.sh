@@ -134,7 +134,9 @@ detect_entry_ip() {
 suggest_tag() {
   local cc="$1" used="$2" tag n=2
   tag="$cc"
-  while echo " $used " | grep -qw " $tag "; do
+  # Пробелы по краям — граница тега; grep -w здесь не годился: он требует
+  # не-букву и вокруг пробелов, и занятый тег ловился, только когда он один.
+  while [[ " $used " == *" $tag "* ]]; do
     tag="${cc}${n}"; (( n++ ))
   done
   printf '%s' "$tag"
@@ -148,7 +150,7 @@ validate_tag() {
   if [[ "$tag" == "ru" ]]; then
     fail "Тег 'ru' зарезервирован для входной ноды"; return 1
   fi
-  if echo " $used " | grep -qw " $tag "; then
+  if [[ " $used " == *" $tag "* ]]; then
     fail "Тег '$tag' уже используется"; return 1
   fi
   return 0

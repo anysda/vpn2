@@ -218,6 +218,50 @@ _tg = httpx.AsyncClient(
 
 # ── Telegram API helpers (raw httpx через TG_PROXY) ────────────────────────────
 
+# Разметка — legacy Markdown. Имена клиентов и устройств приходят от людей,
+# а «_», «*», «`», «[» в них ломают разбор: Telegram отвечает ok:false и
+# сообщение не уходит вовсе (клиент ivan_petrov оставался без меню).
+_MD_SPECIAL = re.compile(r'([_*`\[])')
+
+
+def md(text: object) -> str:
+    """Экранировать текст для Markdown вне сущностей."""
+    return _MD_SPECIAL.sub(r'\\\1', str(text))
+
+
+def md_bold(text: object) -> str:
+    """Жирный текст с любыми символами. Внутри сущности экранировать нельзя,
+    поэтому спецсимвол выносится наружу: «a_b» → «*a*\\_*b*»."""
+    out = []
+    for part in _MD_SPECIAL.split(str(text)):
+        if not part:
+            continue
+        out.append('\\' + part if _MD_SPECIAL.fullmatch(part) else f'*{part}*')
+    return ''.join(out)
+
+
+async def _tg_post(method: str, payload: dict, files: dict | None = None,
+                   timeout: float = 20) -> dict:
+    """Вызов Bot API с проверкой ok. Если не разобралась разметка, повтор
+    без неё: пусть со звёздочками, но сообщение дойдёт."""
+    for attempt in range(2):
+        if files is None:
+            r = await _tg.post(f'/{method}', json=payload, timeout=timeout)
+        else:
+            r = await _tg.post(f'/{method}', data=payload, files=files, timeout=timeout)
+        body = r.json()
+        if body.get('ok'):
+            return body
+        desc = str(body.get('description', ''))
+        if 'message is not modified' in desc:
+            return body
+        log.warning('%s не ok: %s', method, desc)
+        if attempt or 'parse_mode' not in payload or "can't parse" not in desc:
+            return body
+        payload = {k: v for k, v in payload.items() if k != 'parse_mode'}
+    return body
+
+
 async def tg_send(chat_id: int, text: str, parse_mode: str | None = None,
                    reply_markup: dict | None = None) -> dict:
     payload: dict = {'chat_id': chat_id, 'text': text}
@@ -225,8 +269,7 @@ async def tg_send(chat_id: int, text: str, parse_mode: str | None = None,
         payload['parse_mode'] = parse_mode
     if reply_markup is not None:
         payload['reply_markup'] = reply_markup
-    r = await _tg.post('/sendMessage', json=payload, timeout=20)
-    return r.json()
+    return await _tg_post('sendMessage', payload)
 
 
 async def tg_edit(chat_id: int, message_id: int, text: str,
@@ -238,8 +281,7 @@ async def tg_edit(chat_id: int, message_id: int, text: str,
         payload['parse_mode'] = parse_mode
     if reply_markup is not None:
         payload['reply_markup'] = reply_markup
-    r = await _tg.post('/editMessageText', json=payload, timeout=20)
-    return r.json()
+    return await _tg_post('editMessageText', payload)
 
 
 async def tg_answer_callback(callback_id: str, text: str = '',
@@ -267,8 +309,7 @@ async def tg_send_qr(chat_id: int, payload: str, caption: str) -> dict:
     png = _make_qr_png(payload)
     files = {'photo': ('qr.png', png, 'image/png')}
     data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
-    r = await _tg.post('/sendPhoto', data=data, files=files, timeout=30)
-    return r.json()
+    return await _tg_post('sendPhoto', data, files, timeout=30)
 
 
 async def tg_send_document(chat_id: int, filename: str, content: bytes, caption: str = '') -> dict:
@@ -278,8 +319,7 @@ async def tg_send_document(chat_id: int, filename: str, content: bytes, caption:
     if caption:
         data['caption'] = caption
         data['parse_mode'] = 'Markdown'
-    r = await _tg.post('/sendDocument', data=data, files=files, timeout=30)
-    return r.json()
+    return await _tg_post('sendDocument', data, files, timeout=30)
 
 
 async def tg_reply(update: Update, text: str, parse_mode: str | None = None,
@@ -460,7 +500,7 @@ def _menu_text(view: dict) -> str:
     count = len(view.get('devices', []))
     limit = _limit_label(view.get('deviceLimit'))
     return (
-        f'🔐 *VPN-доступ* для *{name}*.\n'
+        f'🔐 *VPN-доступ* для {md_bold(name)}.\n'
         f'Устройства: {count} из {limit}.\n'
         f'{_expiry_label(view.get("expiresAt"))}'
     )
@@ -499,7 +539,7 @@ def _device_card_text(device: dict) -> str:
     if device.get('hasOvpn'):
         parts.append('OpenVPN')
     proto = ', '.join(parts) if parts else 'нет конфигов'
-    return f'📱 *{name}*\nПротоколы: {proto}\n\nВыберите действие:'
+    return f'📱 {md_bold(name)}\nПротоколы: {proto}\n\nВыберите действие:'
 
 
 def _device_card_markup(device_id: str) -> dict:
@@ -608,7 +648,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         await tg_send(
             chat_id,
-            f'✅ Доступ к VPN активирован для *{view.get("name", "?")}*.',
+            f'✅ Доступ к VPN активирован для {md_bold(view.get("name", "?"))}.',
             'Markdown',
         )
         await _send_client_menu(chat_id, view)
@@ -841,10 +881,10 @@ async def _handle_callback(chat_id: int, message_id: int | None,
         await tg_answer_callback(callback_id, 'Готовлю конфиг WireGuard…')
         conf = await api_wg_config(chat_id, arg)
         config_name = device.get('configName') or device.get('name') or 'wireguard'
-        await tg_send_qr(chat_id, conf, f'*{device.get("name", "?")}* — WireGuard')
+        await tg_send_qr(chat_id, conf, f'{md_bold(device.get("name", "?"))} — WireGuard')
         await tg_send_document(
             chat_id, f'{config_name}.conf', conf.encode('utf-8'),
-            caption=f'*{device.get("name", "?")}* — WireGuard',
+            caption=f'{md_bold(device.get("name", "?"))} — WireGuard',
         )
         return
 
@@ -859,7 +899,7 @@ async def _handle_callback(chat_id: int, message_id: int | None,
         config_name = device.get('configName') or device.get('name') or 'openvpn'
         await tg_send_document(
             chat_id, f'{config_name}.ovpn', conf.encode('utf-8'),
-            caption=f'*{device.get("name", "?")}* — OpenVPN',
+            caption=f'{md_bold(device.get("name", "?"))} — OpenVPN',
         )
         return
 
@@ -902,7 +942,7 @@ async def _handle_callback(chat_id: int, message_id: int | None,
         if message_id:
             await tg_edit(
                 chat_id, message_id,
-                f'🗑 *Удалить устройство «{dev_name}»?*\n\n'
+                f'🗑 {md_bold(f"Удалить устройство «{dev_name}»?")}\n\n'
                 'Конфиги этого устройства перестанут работать.',
                 'Markdown',
                 _confirm_markup(f'delyes:{arg}', f'dev:{arg}'),
@@ -961,10 +1001,10 @@ def _admin_card_text(c: dict) -> str:
         exp_txt = 'бессрочно'
     tg_txt = 'привязан ✅' if c.get('tgLinked') else 'не привязан ✖'
     return (
-        f'👤 *{c.get("name", "?")}*\n'
+        f'👤 {md_bold(c.get("name", "?"))}\n'
         f'Статус: {status_txt}\n'
         f'Устройств: {count}/{limit}\n'
-        f'Срок действия: {exp_txt}\n'
+        f'Срок действия: {md(exp_txt)}\n'
         f'Telegram: {tg_txt}'
     )
 
@@ -1106,7 +1146,7 @@ async def _handle_admin_callback(message_id: int | None, callback_id: str,
         if message_id:
             await tg_edit(
                 CHAT_ID, message_id,
-                f'🗑 *Удалить клиента «{c.get("name", "?")}»?*\n\n'
+                '🗑 ' + md_bold(f'Удалить клиента «{c.get("name", "?")}»?') + '\n\n'
                 'Все его устройства и конфиги перестанут работать.',
                 'Markdown',
                 _confirm_markup(f'adyes:{arg}', f'acl:{arg}'),
@@ -1314,7 +1354,7 @@ async def handle_event(request: web.Request) -> web.Response:
         asyncio.create_task(
             tg_send(
                 CHAT_ID,
-                f'👤 Новый клиент: *{name}*',
+                f'👤 Новый клиент: {md_bold(name)}',
                 'Markdown',
             )
         )
@@ -1324,10 +1364,10 @@ async def handle_event(request: web.Request) -> web.Response:
         if conf:
             # WireGuard: два сообщения — сначала QR как фото, затем .conf файлом.
             async def _send_wg():
-                await tg_send_qr(CHAT_ID, conf, f'*{name}* — WireGuard')
+                await tg_send_qr(CHAT_ID, conf, f'{md_bold(name)} — WireGuard')
                 await tg_send_document(
                     CHAT_ID, f'{name}.conf', conf.encode('utf-8'),
-                    caption=f'*{name}* — WireGuard',
+                    caption=f'{md_bold(name)} — WireGuard',
                 )
             asyncio.create_task(_send_wg())
     elif evt == 'client_send_openvpn':
@@ -1337,7 +1377,7 @@ async def handle_event(request: web.Request) -> web.Response:
             # .ovpn carries inline certs — too large for a QR, send as a file.
             asyncio.create_task(tg_send_document(
                 CHAT_ID, f'{name}.ovpn', conf.encode('utf-8'),
-                caption=f'*{name}* — OpenVPN',
+                caption=f'{md_bold(name)} — OpenVPN',
             ))
     elif evt == 'client_send_ikev2':
         # IKEv2 (EAP-MSCHAPv2 + серверный CA). Шлём в АДМИНСКИЙ чат —
@@ -1369,7 +1409,7 @@ async def handle_event(request: web.Request) -> web.Response:
         # в админский чат. subject/detail — текстовые поля, без markup.
         subject = data.get('subject', 'system alert')
         detail = data.get('detail', '')
-        text = f'⚠️ *{subject}*' + (f'\n\n{detail}' if detail else '')
+        text = f'⚠️ {md_bold(subject)}' + (f'\n\n{md(detail)}' if detail else '')
         asyncio.create_task(tg_send(CHAT_ID, text, 'Markdown'))
     return web.Response(text='ok')
 
@@ -1411,13 +1451,13 @@ async def _send_ikev2(data: dict) -> None:
         f'Сервер: `{server}`\n'
         f'Логин: `{username}`\n'
         f'Пароль: `{password}`\n\n'
-        f'*{username}* — IKEv2'
+        f'{md_bold(username)} — IKEv2'
     )
     await tg_send(CHAT_ID, creds, 'Markdown')
     if ca_pem:
         await tg_send_document(
             CHAT_ID, f'{username}-ca.crt', ca_pem.encode('utf-8'),
-            caption=f'*{username}* — CA-сертификат IKEv2',
+            caption=f'{md_bold(username)} — CA-сертификат IKEv2',
         )
 
 

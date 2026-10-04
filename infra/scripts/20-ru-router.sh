@@ -299,5 +299,65 @@ systemctl start  anysda-apply-routes.path
 # restart sing-box, so a re-run immediately reflects the regenerated base.
 /usr/local/sbin/anysda-apply-routes.py || true
 
+# ----------------------------------------------------------------------------
+# ssh <tag> на экзиты через служебный hy2-туннель (VPN2-38). nc идёт в
+# локальный SOCKS-инбаунд mon-{tag} (порт = 10100 + последний октет
+# MGMT_IP_{T}, как в gen-router-config.py), туннель приводит на 127.0.0.1:22
+# экзита. Ключ entry (/root/.ssh/id_ed25519_mgmt) раскладывает 00-bootstrap.
+# Адрес у всех экзитов 127.0.0.1, поэтому хост-ключ сверяем по псевдониму
+# anysda-<tag>; known_hosts собирается заново с ключей, которые deploy.sh
+# снял с экзитов, — переустановленный экзит не упрётся в старый ключ.
+# ----------------------------------------------------------------------------
+echo "[$HOST_TAG] ssh-конфиг на экзиты через служебный туннель"
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+SSH_MGMT_CONF=/root/.ssh/anysda-mgmt.conf
+SSH_MGMT_KNOWN=/root/.ssh/known_hosts_mgmt
+{
+  echo "# anysda-vpn — генерирует infra/scripts/20-ru-router.sh, руками не править"
+  for _t in $EXIT_TAGS; do
+    _T=$(echo "$_t" | tr a-z A-Z)
+    _var="MGMT_IP_${_T}"
+    _ip="${!_var:-}"
+    if [[ -z "$_ip" ]]; then
+      echo "[$HOST_TAG]   ВНИМАНИЕ: MGMT_IP_${_T} не задан — ssh ${_t} не настроен" >&2
+      continue
+    fi
+    cat <<EOF
+
+Host ${_t}
+  HostName 127.0.0.1
+  Port 22
+  User root
+  IdentityFile /root/.ssh/id_ed25519_mgmt
+  IdentitiesOnly yes
+  HostKeyAlias anysda-${_t}
+  UserKnownHostsFile ${SSH_MGMT_KNOWN}
+  StrictHostKeyChecking accept-new
+  ServerAliveInterval 15
+  ProxyCommand nc -X 5 -x 127.0.0.1:$(( 10100 + ${_ip##*.} )) %h %p
+EOF
+  done
+} > "$SSH_MGMT_CONF"
+chmod 600 "$SSH_MGMT_CONF"
+
+: > "$SSH_MGMT_KNOWN"
+for _t in $EXIT_TAGS; do
+  _hk="/tmp/anysda/exit-hostkeys/${_t}.pub"
+  if [[ -s "$_hk" ]]; then
+    awk -v h="anysda-${_t}" 'NF >= 2 {print h, $1, $2; exit}' "$_hk" >> "$SSH_MGMT_KNOWN"
+  fi
+done
+chmod 600 "$SSH_MGMT_KNOWN"
+
+touch /root/.ssh/config
+chmod 600 /root/.ssh/config
+if ! grep -qxF "Include ${SSH_MGMT_CONF}" /root/.ssh/config; then
+  # Include обязан стоять до первого Host, иначе попадёт внутрь его блока.
+  { echo "Include ${SSH_MGMT_CONF}"; cat /root/.ssh/config; } > /root/.ssh/config.new
+  mv /root/.ssh/config.new /root/.ssh/config
+  chmod 600 /root/.ssh/config
+fi
+echo "[$HOST_TAG]   хосты: $(awk '$1 == "Host" {printf "%s ", $2}' "$SSH_MGMT_CONF")"
+
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

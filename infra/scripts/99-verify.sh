@@ -35,6 +35,16 @@ if [[ "$HOST_TAG" == "ru" ]]; then
   else
     echo "[$HOST_TAG] mgmt scrape:  VictoriaMetrics не поднят (стадия 25 не применена)"
   fi
+  # ssh <tag> через служебный туннель (VPN2-38, ~/.ssh/config пишет стадия 20).
+  SSH_FAIL=''
+  for _t in ${EXIT_TAGS:-}; do
+    if ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$_t" true 2>/dev/null; then
+      echo "[$HOST_TAG] ssh $_t:      вход через hy2-mgmt работает"
+    else
+      echo "[$HOST_TAG] ssh $_t:      НЕ входит через hy2-mgmt"
+      SSH_FAIL+=" $_t"
+    fi
+  done
 else
   _mp="${HY2_MGMT_PORT:-}"
   if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep -q .; then
@@ -149,4 +159,8 @@ case "$HOST_TAG" in
     ;;
 esac
 
+if [[ -n "${SSH_FAIL:-}" ]]; then
+  echo "[$HOST_TAG] verify: ssh через служебный туннель не работает на:${SSH_FAIL}"
+  exit 1
+fi
 echo "[$HOST_TAG] verify done"

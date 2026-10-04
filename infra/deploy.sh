@@ -265,6 +265,12 @@ prep_ru_router() {
     else
       warn "на $host нет /etc/anysda/hy2-tls.crt — pin не применён (передеплой 10-foreign)"
     fi
+    # Хост-ключ экзита для known_hosts entry: ssh <tag> ходит на 127.0.0.1
+    # через служебный туннель, сверять ключ по адресу нельзя (у всех один).
+    mkdir -p "$DEPLOY_ROOT/secrets/exit-hostkeys"
+    ssh_exec 'cat /etc/ssh/ssh_host_ed25519_key.pub' \
+      > "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" 2>/dev/null \
+      || rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
     while IFS='=' read -r k v; do
       [[ -n "$k" ]] && printf '%s_%s=%s\n' "$(echo "$host" | tr a-z A-Z)" "$k" "$v" >> "$sec"
     done <<<"$payload"
@@ -315,6 +321,33 @@ prep_orchestrator_key() {
 }
 
 # ----------------------------------------------------------------------------
+# Свой ключ entry для ssh на экзиты через служебный hy2-туннель (стадия 20
+# пишет ~/.ssh/config с хостами по тегам). Генерится на самой entry, а не
+# на машине деплоя. Публичная часть уходит на экзиты в 00-bootstrap; там она
+# заменяет прежний ключ entry по комментарию anysda-entry-mgmt, так что
+# пересозданная entry не копит старые ключи.
+# ----------------------------------------------------------------------------
+ENTRY_MGMT_KEY_COMMENT='anysda-entry-mgmt'
+
+prep_entry_mgmt_key() {
+  local out="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
+  mkdir -p "$(dirname "$out")"
+  rm -f "$out"
+  local pub
+  pub=$(load_env ru && ssh_exec "
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    [ -f /root/.ssh/id_ed25519_mgmt ] || ssh-keygen -t ed25519 -N '' -q \
+      -C '$ENTRY_MGMT_KEY_COMMENT' -f /root/.ssh/id_ed25519_mgmt
+    cat /root/.ssh/id_ed25519_mgmt.pub") || pub=''
+  if [[ "$pub" != ssh-ed25519\ *" $ENTRY_MGMT_KEY_COMMENT" ]]; then
+    HOST_TAG=deploy warn "ключ entry для ssh на экзиты не получен — на экзитах остаётся прежний"
+    return 0
+  fi
+  printf '%s\n' "$pub" > "$out"
+  chmod 600 "$out"
+}
+
+# ----------------------------------------------------------------------------
 # Run a stage on one host
 # ----------------------------------------------------------------------------
 run_stage_on_host() {
@@ -349,6 +382,10 @@ run_stage_on_host() {
       log "[$stage → $host] раскатываю $(wc -l < "$combined") ключ(а/ей)"
       push "$combined" "orchestrator_keys"
     fi
+    local entry_key="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
+    if [[ "$host" != ru && -s "$entry_key" ]]; then
+      push "$entry_key" "entry_mgmt_key"
+    fi
   fi
 
   if [[ "$stage" == "10-foreign" ]]; then
@@ -368,6 +405,9 @@ run_stage_on_host() {
     # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
     if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
       push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs"
+    fi
+    if [[ -d "$DEPLOY_ROOT/secrets/exit-hostkeys" ]]; then
+      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys"
     fi
   fi
 
@@ -421,7 +461,10 @@ run_stage() {
   case "$stage" in
     20-ru-router) prep_ru_router ;;
   esac
-  [[ "$stage" == "00-bootstrap" ]] && prep_orchestrator_key
+  if [[ "$stage" == "00-bootstrap" ]]; then
+    prep_orchestrator_key
+    prep_entry_mgmt_key
+  fi
 
   local hosts; hosts=$(expand_hosts "$group" 2>/dev/null)
   # Стадии независимы по нодам — гоняем хосты параллельно. Каждый

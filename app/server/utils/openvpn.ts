@@ -150,7 +150,7 @@ function ovpnMgmt(command: string, timeoutMs = 5_000): Promise<string[]> {
  * действуют только на следующее подключение, а уже подключённый клиент
  * сидит в туннеле до своего переподключения (VPN2-39). true — кого-то выбили.
  */
-export async function killOvpnClient(cn: string): Promise<boolean> {
+async function killOvpnClient(cn: string): Promise<boolean> {
   const out = await ovpnMgmt(`kill ${cn}`)
   if (out.some(l => l.startsWith('SUCCESS:'))) {
     useLogger().info({ cn }, 'ovpn: сессия разорвана')

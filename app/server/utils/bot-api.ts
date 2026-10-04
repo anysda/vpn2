@@ -22,7 +22,7 @@ export function isLoopbackAddr(ip: string | undefined): boolean {
  * заголовка не шлют. Основной замок — 404 на эти пути в Caddyfile
  * (infra/scripts/30-frontend.sh), это второй.
  */
-export function isDirectLocal(event: H3Event): boolean {
+function isDirectLocal(event: H3Event): boolean {
   if (!isLoopbackAddr(event.node.req.socket.remoteAddress)) return false
   const h = event.node.req.headers
   return !h['x-forwarded-for'] && !h['x-forwarded-host'] && !h.forwarded && !h.via

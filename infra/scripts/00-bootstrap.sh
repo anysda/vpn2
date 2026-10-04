@@ -132,14 +132,30 @@ if [[ "$HOST_TAG" != ru && -s "$ENTRY_KEY" ]]; then
   echo "[$HOST_TAG]   ключ entry (anysda-entry-mgmt) в authorized_keys"
 fi
 
+# VPN2-47: значения пишем в свой drop-in 00-anysda.conf. sshd берёт ПЕРВОЕ
+# встреченное значение, а sshd_config.d/*.conf подключается в начале
+# sshd_config: правка только основного файла проигрывала 50-cloud-init.conf
+# с PasswordAuthentication yes. 00- идёт раньше 50-, поэтому побеждает.
+# Основной файл правим тоже — на случай sshd без Include sshd_config.d.
+SSHD_DROPIN=/etc/ssh/sshd_config.d/00-anysda.conf
+mkdir -p /etc/ssh/sshd_config.d
+write_sshd_auth() {  # $1 = yes|no — парольный вход
+  local root_login=prohibit-password
+  [[ "$1" == yes ]] && root_login=yes
+  printf '%s\n' \
+    "# anysda-vpn — set by infra/scripts/00-bootstrap.sh" \
+    "PasswordAuthentication $1" \
+    "PermitRootLogin $root_login" \
+    "KbdInteractiveAuthentication no" > "$SSHD_DROPIN"
+  sed -i "s/^#\?PasswordAuthentication.*/PasswordAuthentication $1/" "$SSHD"
+  sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin $root_login/" "$SSHD"
+}
 if [[ -n "$ADMIN_PUBKEY" ]]; then
-  echo "[$HOST_TAG] [3/6] sshd_config: есть ключ админа — отключаю парольный вход"
-  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD"
-  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' "$SSHD"
+  echo "[$HOST_TAG] [3/6] sshd: есть ключ админа — отключаю парольный вход"
+  write_sshd_auth no
 else
-  echo "[$HOST_TAG] [3/6] sshd_config: ключа админа нет — оставляю PasswordAuthentication=yes (VPN2-31)"
-  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD"
-  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD"
+  echo "[$HOST_TAG] [3/6] sshd: ключа админа нет — оставляю PasswordAuthentication=yes (VPN2-31)"
+  write_sshd_auth yes
 fi
 sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD"
 sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "$SSHD"
@@ -147,7 +163,6 @@ sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "
 # за "crashed" коннект. Несколько неудачных sshpass-ов лочат source IP и весь
 # деплой встаёт. Отключаем — но только если sshd знает эту директиву
 # (на 24.04 / OpenSSH 9.6 её нет, и неизвестная опция роняет sshd).
-mkdir -p /etc/ssh/sshd_config.d
 if sshd -T 2>/dev/null | grep -qi '^persourcepenalties '; then
   printf 'PerSourcePenalties no\n' > /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
 else
@@ -156,8 +171,7 @@ fi
 if ! sshd -t 2>&1; then
   echo "[$HOST_TAG] конфиг sshd невалиден — откатываюсь"
   # safe fallback: оставляем парольный вход чтобы не запереть себя
-  sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' "$SSHD"
-  sed -i 's/^PermitRootLogin prohibit-password/PermitRootLogin yes/' "$SSHD"
+  write_sshd_auth yes
   rm -f /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
   exit 1
 fi

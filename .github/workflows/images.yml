@@ -59,7 +59,7 @@ jobs:
         if: matrix.name == 'panel'
         run: |
           docker run -d --name smoke -p 51821:51821 smoke/panel
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             curl -fsS http://127.0.0.1:51821/api/version && exit 0
             sleep 1
           done

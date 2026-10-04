@@ -406,7 +406,9 @@ run_stage_on_host() {
   fi
 
   ssh_exec "$APT_WAIT_IDLE" | sed "s/^/[$host]/"
-  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env"
+  # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
+  # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
+  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || return 1
 
   ok "[$stage → $host] done"
 }
@@ -657,7 +659,15 @@ verify_and_rotate_ports() {
     printf '    стадии 25-monitoring / 30-frontend / 35-telegram\n'
     printf '    не настраивались с мёртвыми нодами.\n'
     python3 "$DEPLOY_ROOT/lib/config2env.py" "$DEPLOY_ROOT/.." >/dev/null
-    run_stage_on_host 20-ru-router ru >/dev/null 2>&1 || true
+    # 20-ru-router идёт только на entry и секреты экзитов берёт из файла, с
+    # мёртвыми нодами не связывается — недоступный экзит уронить её не может.
+    # Упала — значит сломан entry, и sing-box мог остаться на старом конфиге.
+    local reroute_log="$state_dir/excluded-reroute.log"
+    if ! run_stage_on_host 20-ru-router ru >"$reroute_log" 2>&1; then
+      printf '%b    ✗ 20-ru-router без исключённых экзитов упал, полный вывод: %s%b\n' "$C_R" "$reroute_log" "$C_END"
+      tail -n 15 "$reroute_log" | sed 's/^/      /'
+      die "verify_and_rotate_ports: entry не пересобран после исключения экзитов"
+    fi
   else
     # Чистим state-файл если все живы — на случай если предыдущий deploy
     # пометил экзит как мёртвый, а сейчас он ожил.

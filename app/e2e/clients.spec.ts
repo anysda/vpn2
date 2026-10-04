@@ -70,4 +70,20 @@ test.describe('клиенты', () => {
     list = await (await page.request.get('/api/clients')).json()
     expect(list.map(c => c.name)).not.toContain(renamed)
   })
+
+  // VPN2-69: 76 мест бросали код без текста, и тост, и бот показывали
+  // «not_found», «invalid_id». Код остаётся в statusMessage, текст — из словаря.
+  test('ошибки API без своего текста приходят по-русски, код в statusMessage', async ({ page, request }) => {
+    await openHome(page)
+    const missing = await page.request.get('/api/clients/999999999')
+    expect(missing.status()).toBe(404)
+    expect(await missing.json()).toMatchObject({ statusMessage: 'not_found', message: 'Не найдено' })
+    const bad = await page.request.get('/api/clients/abc')
+    expect(bad.status()).toBe(400)
+    expect(await bad.json()).toMatchObject({ statusMessage: 'invalid_id', message: 'Неверный идентификатор' })
+    // Без сессии.
+    const anon = await request.get('/api/clients')
+    expect(anon.status()).toBe(401)
+    expect(await anon.json()).toMatchObject({ statusMessage: 'Unauthorized', message: 'Нужно войти' })
+  })
 })

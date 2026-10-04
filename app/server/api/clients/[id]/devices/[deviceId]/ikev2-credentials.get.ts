@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   }
 
   if (!(await ikev2ServerReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'IKEv2-сервер ещё не развёрнут (запусти стадию 27-ikev2)' })
+    throw createError({ statusCode: 503, statusMessage: 'ikev2_not_deployed', message: 'IKEv2-сервер ещё не развёрнут (стадия 27-ikev2)' })
   }
 
   const cfg = useRuntimeConfig()

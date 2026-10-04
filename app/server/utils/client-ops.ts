@@ -34,7 +34,7 @@ function assertExpiryAllowed(expiresAt: string | null | undefined): void {
   if (expiresAt && new Date(expiresAt).getTime() < minExpiryMs()) {
     throw createError({
       statusCode: 422,
-      statusMessage: 'Срок действия не может быть раньше завтрашней даты',
+      statusMessage: 'invalid_expiry', message: 'Срок действия не может быть раньше завтрашней даты',
     })
   }
 }
@@ -47,7 +47,7 @@ export async function createClient(input: ClientCreateInput): Promise<Client> {
   const name = input.name.trim()
   const dup = await db.select({ id: clients.id }).from(clients).where(eq(clients.name, name)).limit(1)
   if (dup.length > 0) {
-    throw createError({ statusCode: 409, statusMessage: `Клиент с именем «${name}» уже существует` })
+    throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
   }
 
   const values: typeof clients.$inferInsert = {
@@ -79,7 +79,7 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
     if (patch.deviceLimit < have) {
       throw createError({
         statusCode: 409,
-        statusMessage: `У клиента уже ${have} устройств — лимит не может быть меньше`,
+        statusMessage: 'device_limit_below_count', message: `У клиента уже ${have} устройств — лимит не может быть меньше`,
       })
     }
   }
@@ -91,7 +91,7 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
       .where(and(eq(clients.name, name), ne(clients.id, id)))
       .limit(1)
     if (dup.length > 0) {
-      throw createError({ statusCode: 409, statusMessage: `Клиент с именем «${name}» уже существует` })
+      throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
     }
     upd.name = name
   }

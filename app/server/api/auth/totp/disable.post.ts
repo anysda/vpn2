@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
+import { readBodyAs } from '../../../utils/validate'
 import { users } from '../../../database/schema'
 import { requireAuth, verifyAdminPassword } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
@@ -15,12 +16,12 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
   const db = useDb()
 
   const [row] = await db.select().from(users).where(eq(users.id, u.id)).limit(1)
   if (!row || !(await verifyAdminPassword(row.passwordHash, body.currentPassword))) {
-    throw createError({ statusCode: 401, statusMessage: 'invalid_current_password' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_current_password', message: 'Неверный текущий пароль' })
   }
   if (!row.totpSecret || !verifyTotpToken(body.totpCode, row.totpSecret)) {
     throw createError({ statusCode: 401, statusMessage: 'invalid_totp' })

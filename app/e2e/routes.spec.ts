@@ -136,7 +136,34 @@ test.describe('маршрутизация', () => {
     const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
     await input.fill('not a domain')
     await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
-    await expect(toast(page, /invalid_value/)).toBeVisible()
+    await expect(toast(page, 'Нужен домен или IPv4/CIDR').getByText('Нужен домен или IPv4/CIDR', { exact: true })).toBeVisible()
     await expect(input).toHaveValue('not a domain')
+  })
+
+  // VPN2-69: битое тело h3 отвечал английским «Invalid JSON body», и бот
+  // пересылал его в Telegram как есть.
+  test('битый JSON в запросе — ответ по-русски с кодом в statusMessage', async ({ page }) => {
+    await openRoutes(page)
+    const r = await page.request.post('/api/routes', { headers: { 'content-type': 'application/json' }, data: Buffer.from('{"value": ') })
+    expect(r.status()).toBe(400)
+    expect(await r.json()).toMatchObject({ statusMessage: 'invalid_json', message: 'Запрос не в формате JSON' })
+  })
+
+  // VPN2-67: русский текст ошибки шёл в statusMessage, а h3 и Caddy оставляют
+  // от него в строке статуса латиницу или «Conflict». Тост обязан показать
+  // текст сервера дословно.
+  test('дубль правила показывает русскую ошибку сервера дословно', async ({ page, guard }) => {
+    guard.allow(409, /\/api\/routes$/, 'POST')
+    await openRoutes(page)
+    const value = `e2e-dup-${stamp()}.example.net`
+    await addRule(page, value, /NL$/)
+    const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+    await input.fill(value)
+    const resp = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/routes')
+    await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
+    expect((await resp).status()).toBe(409)
+    const text = `Правило «${value}» уже существует`
+    await expect(toast(page, text)).toBeVisible()
+    await expect(toast(page, text).getByText(text, { exact: true })).toBeVisible()
   })
 })

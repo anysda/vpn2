@@ -23,7 +23,7 @@ test.describe('вход', () => {
   test('неверный пароль показывает ошибку и не пускает', async ({ page, guard }) => {
     guard.allow(401, /\/api\/auth\/login$/, 'POST')
     await loginUi(page, `${ADMIN_PASSWORD}-wrong`)
-    await expect(page.getByText('invalid_credentials')).toBeVisible()
+    await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
     await expect(page).toHaveURL(/\/login/)
     // Счётчик неудач на этот адрес сбрасывается успешным входом.
     await loginUi(page)
@@ -32,8 +32,26 @@ test.describe('вход', () => {
 })
 
 test.describe('2FA', () => {
+  // VPN2-69: короткий код фронт пропускает, сервер режет схемой zod. Человек
+  // видел «Validation Error» (а бот в Telegram — дамп zod), теперь — поле по-русски.
+  test('слишком короткий код при включении — понятная ошибка, а не дамп схемы', async ({ page, guard }) => {
+    guard.allow(400, /\/api\/auth\/totp\/confirm$/, 'POST')
+    await loginApi(page)
+    await page.goto('/me')
+    await hydrated(page)
+    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await page.getByLabel('Введи 6-значный код из приложения').fill('123')
+    const resp = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/totp/confirm')
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    expect((await resp).status()).toBe(400)
+    await expect(toast(page, 'Неверный код').getByText('Проверьте поле «Код»', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Отмена' }).click()
+    await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
+  })
+
   test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard }) => {
     guard.allow(401, /\/api\/auth\/login$/, 'POST')
+    guard.allow(401, /\/api\/auth\/totp\/(confirm|disable)$/, 'POST')
     await loginApi(page)
     await page.goto('/me')
     await hydrated(page)
@@ -48,8 +66,14 @@ test.describe('2FA', () => {
     const secretInput = page.locator('input[readonly]')
     await expect(secretInput).toHaveValue(/^[A-Z2-7]{16,}$/)
     const secret = await secretInput.inputValue()
+    // Код, который сейчас точно неверен.
+    const wrong = () => String((Number(totp(secret)) + 500_000) % 1_000_000).padStart(6, '0')
     try {
       await expect(page.locator('svg').filter({ has: page.locator('rect') }).first()).toBeVisible()
+      // VPN2-69: неверный код показывался голым «invalid_totp».
+      await page.getByLabel('Введи 6-значный код из приложения').fill(wrong())
+      await page.getByRole('button', { name: 'Подтвердить' }).click()
+      await expect(toast(page, 'Неверный код').getByText('Код не подошёл', { exact: true })).toBeVisible()
       await page.getByLabel('Введи 6-значный код из приложения').fill(totp(secret))
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(toast(page, '2FA включена')).toBeVisible()
@@ -63,13 +87,17 @@ test.describe('2FA', () => {
       const code = page.getByPlaceholder('123 456')
       await expect(code).toBeVisible()
       // Неверный код — ошибка, форма остаётся на шаге кода.
-      const bad = String((Number(totp(secret)) + 500_000) % 1_000_000).padStart(6, '0')
-      await code.fill(bad)
+      await code.fill(wrong())
       await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page.getByText('invalid_credentials')).toBeVisible()
+      await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
       await code.fill(totp(secret))
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page).toHaveURL(/\/$/)
+
+      // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
+      const again = await page.request.post('/api/auth/totp/setup')
+      expect(again.status()).toBe(409)
+      expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
 
       // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
       await page.goto('/me')
@@ -81,8 +109,16 @@ test.describe('2FA', () => {
       await expect(dlg).toBeHidden()
       await expect(page.getByText('Включена', { exact: true })).toBeVisible()
 
+      // VPN2-69: ошибки модалки шли голыми кодами; тост виден поверх открытой модалки.
       await page.getByRole('button', { name: 'Выключить 2FA' }).click()
+      await dlg.getByPlaceholder('Пароль').fill(`${ADMIN_PASSWORD}-wrong`)
+      await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(totp(secret))
+      await dlg.getByRole('button', { name: 'Выключить' }).click()
+      await expect(toast(page, 'Ошибка').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
       await dlg.getByPlaceholder('Пароль').fill(ADMIN_PASSWORD)
+      await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(wrong())
+      await dlg.getByRole('button', { name: 'Выключить' }).click()
+      await expect(toast(page, 'Код не подошёл').getByText('Ошибка', { exact: true })).toBeVisible()
       await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(totp(secret))
       await dlg.getByRole('button', { name: 'Выключить' }).click()
       await expect(toast(page, '2FA выключена')).toBeVisible()

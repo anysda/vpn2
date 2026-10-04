@@ -7,6 +7,7 @@ import { notifyClient } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
+import { readBodyAs } from '../../../../utils/validate'
 
 const Body = z.object({ name: z.string().min(1).max(64) })
 
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const clientId = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(clientId)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
   const db = useDb()
 
   const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
@@ -24,10 +25,10 @@ export default defineEventHandler(async (event) => {
   const name = body.name.trim()
   const existing = await db.select({ name: devices.name }).from(devices).where(eq(devices.clientId, clientId))
   if (existing.some(d => d.name === name)) {
-    throw createError({ statusCode: 409, statusMessage: `Девайс «${name}» у клиента уже есть` })
+    throw createError({ statusCode: 409, statusMessage: 'device_exists', message: `Девайс «${name}» у клиента уже есть` })
   }
   if (client.deviceLimit != null && existing.length >= client.deviceLimit) {
-    throw createError({ statusCode: 409, statusMessage: `Достигнут лимит девайсов (${client.deviceLimit})` })
+    throw createError({ statusCode: 409, statusMessage: 'device_limit', message: `Достигнут лимит девайсов (${client.deviceLimit})` })
   }
 
   const [device] = await db.insert(devices).values({ clientId, name }).returning()

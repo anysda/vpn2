@@ -32,7 +32,7 @@ sing-box exposes (→ foreign-best → exit). Only calls to the Nuxt API on
 
 Env vars:
   TELEGRAM_BOT_TOKEN  — required
-  TELEGRAM_CHAT_ID    — required (integer)
+  TELEGRAM_CHAT_ID    — required (integer; у группы отрицательный, -100…)
   TGBOT_SECRET        — shared secret with Nuxt (Bearer token)
   TGBOT_EVENT_PORT    — HTTP port for Nuxt→bot events (default 8877)
   ANYSDA_URL          — Nuxt API base (default http://127.0.0.1:51821)
@@ -108,7 +108,7 @@ if not SECRET:
         'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
         'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.'
     )
-if CHAT_ID <= 0:
+if CHAT_ID == 0:
     raise RuntimeError(
         'TELEGRAM_CHAT_ID не задан или = 0 — admin-команды не смогут быть авторизованы. '
         'Задай chat_id через /etc/anysda/telegram-runtime.json.'

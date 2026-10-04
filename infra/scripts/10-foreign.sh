@@ -36,7 +36,8 @@ cd /etc/anysda
 WGCF_OK=1
 if [[ ! -f wgcf-account.toml ]]; then
   echo "[$HOST_TAG]   регистрирую WARP устройство"
-  if ! /usr/local/bin/wgcf register --accept-tos; then
+  # Без таймаута register при фильтрации Cloudflare висит ~145 с на TCP connect.
+  if ! timeout 15 /usr/local/bin/wgcf register --accept-tos; then
     echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
     WGCF_OK=0
   fi

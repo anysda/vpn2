@@ -28,3 +28,7 @@ local-anysda-config.yaml
 local-manual-routes.json
 local.db
 local.db-journal
+
+# Playwright
+playwright-report
+test-results

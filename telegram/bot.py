@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import pathlib
+import re
 import time
 from datetime import datetime
 
@@ -97,20 +98,29 @@ def _load_runtime() -> tuple[str, int, str]:
     используется в сообщении непривязанным людям («напишите администратору»).
     """
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-    chat = os.environ.get('TELEGRAM_CHAT_ID', '0')
+    env_chat = os.environ.get('TELEGRAM_CHAT_ID', '0').strip()
+    chat = ''
     admin = os.environ.get('TELEGRAM_ADMIN_USERNAME', '')
     if RUNTIME_PATH.exists():
         try:
             data = json.loads(RUNTIME_PATH.read_text())
             token = (data.get('bot_token') or token).strip()
-            chat = str(data.get('chat_id') or chat).strip()
+            chat = str(data.get('chat_id') or '').strip()
             admin = (data.get('admin_username') or admin or '').strip()
         except Exception:
             pass
     admin = admin.lstrip('@').strip()
     if not token:
         raise RuntimeError('TELEGRAM_BOT_TOKEN не задан (ни env, ни runtime.json)')
-    return token, int(chat), admin
+    # Кривой chat_id (например «@mychannel») не должен ронять бота по кругу:
+    # откат на env; если и там не число — 0, дальше та же ошибка, что и без env.
+    for source, raw in (('telegram-runtime.json', chat), ('TELEGRAM_CHAT_ID', env_chat)):
+        if not raw:
+            continue
+        if re.fullmatch(r'-?[0-9]+', raw):
+            return token, int(raw), admin
+        log.error('chat_id %r из %s не число', raw, source)
+    return token, 0, admin
 
 
 TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()

@@ -1,12 +1,12 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
+import { readBodyAs } from '../../utils/validate'
 import { users } from '../../database/schema'
 import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
 import { ssoSettings } from '../../utils/sso'
 import { verifyTotpToken } from '../../utils/totp'
-import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
   username: z.string().min(1).max(64),

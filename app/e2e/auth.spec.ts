@@ -94,6 +94,11 @@ test.describe('2FA', () => {
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page).toHaveURL(/\/$/)
 
+      // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
+      const again = await page.request.post('/api/auth/totp/setup')
+      expect(again.status()).toBe(409)
+      expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
+
       // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
       await page.goto('/me')
       await hydrated(page)

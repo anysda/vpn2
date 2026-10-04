@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
+import { readBodyAs } from '../../../utils/validate'
 import { users } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
-import { readBodyAs } from '../../../utils/validate'
 
 const Body = z.object({ code: z.string().min(6).max(8) })
 
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'totp_not_initiated' })
   }
   if (!verifyTotpToken(body.code, pending)) {
-    throw createError({ statusCode: 401, statusMessage: 'invalid_totp', message: 'Код не подошёл' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_totp' })
   }
 
   const db = useDb()

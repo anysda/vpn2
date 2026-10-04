@@ -16,7 +16,9 @@ watch(outbounds, (list) => {
 }, { immediate: true })
 
 async function add() {
-  if (!newValue.value.trim() || !newOutbound.value) return
+  // Второй Enter, пока первый запрос в полёте, слал дубль и ловил 409 поверх
+  // уже добавленного правила.
+  if (adding.value || !newValue.value.trim() || !newOutbound.value) return
   adding.value = true
   try {
     await create(newValue.value.trim(), newOutbound.value)

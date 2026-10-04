@@ -810,7 +810,7 @@ prefetch_images() {
     load_env ru
     local imgs=()
     [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
-    [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]] \
+    [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" || "${TGBOT_IMAGE_PULL:-true}" == false ]] \
       || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
     [[ ${#imgs[@]} -gt 0 ]] || exit 0
     if ssh_exec "for i in ${imgs[*]}; do docker pull -q \"\$i\" || exit 1; done" >/dev/null 2>&1; then

@@ -107,7 +107,11 @@ docker run -d \
   "$TGBOT_IMAGE" >/dev/null
 
 echo "[$HOST_TAG] жду пока бот запустится..."
-sleep 6
+# Бот поднят, когда открыл сервер событий (после getMe); ждём до тех же 6 с.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  [[ "$(docker logs anysda-tgbot 2>&1)" == *'Event server on'* ]] && break
+  sleep 0.5
+done
 echo "[$HOST_TAG] последние логи:"
 docker logs --tail 6 anysda-tgbot 2>&1 | sed "s/^/[$HOST_TAG]   /"
 

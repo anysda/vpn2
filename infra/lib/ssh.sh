@@ -79,6 +79,19 @@ _ssh_opts=(
   -o ServerAliveInterval=15
 )
 
+# Одно ssh-соединение на ноду вместо нового рукопожатия на каждый вызов: стадия
+# на ноде - это 5-7 вызовов ssh/scp (push env, push скрипта, ожидание apt,
+# запуск), по полсекунды на каждый. Master живёт 60 с после последнего вызова.
+# Сбой master'а ssh_exec/push видят как rc=255 и ретраят новым соединением.
+_ssh_mux_dir="/tmp/anysda-ssh-$(id -u)"
+if { [[ -d "$_ssh_mux_dir" ]] || mkdir -m 700 "$_ssh_mux_dir" 2>/dev/null; } && [[ -O "$_ssh_mux_dir" ]]; then
+  _ssh_opts+=(
+    -o ControlMaster=auto
+    -o ControlPath="$_ssh_mux_dir/%C"
+    -o ControlPersist=60
+  )
+fi
+
 # Run a command on the current $SSH_HOST. Args are passed to ssh.
 # Ретраит транзиентные сбои соединения: у VPS-экзитов SSH иногда флапает
 # (таймаут / "connection closed" / banner exchange), и один такой сбой

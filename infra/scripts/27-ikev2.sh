@@ -76,10 +76,17 @@ chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 echo "[$HOST_TAG] [1/8] strongswan apt"
 if ! dpkg -s strongswan-starter >/dev/null 2>&1 || dpkg -s charon-systemd >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq \
+  # Списки обновлял 00-bootstrap этого же деплоя минуты назад - второй
+  # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
+  # пакет не нашёлся по старым спискам - обновляем и ставим ещё раз.
+  apt_install() {
+    [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt-get update -qq
+    apt-get install -y -qq "$@" >/dev/null 2>&1 && return 0
+    apt-get update -qq && apt-get install -y -qq "$@" >/dev/null
+  }
+  apt_install \
     strongswan strongswan-starter strongswan-pki strongswan-swanctl \
-    libcharon-extra-plugins libstrongswan-extra-plugins >/dev/null
+    libcharon-extra-plugins libstrongswan-extra-plugins
   apt-get purge -y -qq charon-systemd >/dev/null 2>&1 || true
 fi
 

@@ -83,7 +83,15 @@ def main():
             'tag': 'direct-ru',
             'bind_interface': wg_out_iface,
             'domain_strategy': 'ipv4_only',
-        }
+        },
+        # AdGuard слушает mgmt-IP на этой же ноде (lo). Через direct-ru
+        # (bind net0) до него не достучаться, а auto_detect_interface
+        # прибил бы к net0 и голый direct - поэтому явно lo.
+        {
+            'type': 'direct',
+            'tag': 'local-dns',
+            'bind_interface': 'lo',
+        },
     ]
 
     # ── YouTube: отдельный выход мимо экзитов ────────────────────────────────
@@ -299,7 +307,7 @@ def main():
                 # AdGuard Home on the entry mgmt IP — sing-box resolves through
                 # it so clients get ad/tracker filtering. .ru stays on Yandex
                 # DNS for correct Russian CDN IPs (geoip routing depends on it).
-                {'tag': 'adguard', 'address': '10.99.0.1', 'detour': 'direct-ru'},
+                {'tag': 'adguard', 'address': mgmt_ip, 'detour': 'local-dns'},
             ],
             'rules': yt_dns_rules + [
                 {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
@@ -332,6 +340,11 @@ def main():
                 'listen_port': 7898,
                 'sniff': True,
                 'sniff_override_destination': True,
+                # После override назначение - домен, и `geoip: ru` не видит
+                # IP: российские сайты не в .ru (yandex.net, vk.com) уезжали
+                # на экзит. Резолв перед маршрутом даёт правилам IP; сам
+                # запрос к экзиту по-прежнему уходит по имени.
+                'domain_strategy': 'ipv4_only',
                 # tproxy обязан слать ОТВЕТНЫЙ UDP-пакет с адреса-источника,
                 # равного назначению; при override_destination назначение -
                 # домен (не IP), запись молча не выходит. Правила по домену

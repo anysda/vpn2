@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { botClientView, requireBotAuth } from '../../utils/bot-api'
+import { zodBody } from '../../utils/validate'
 
 // Привязка Telegram клиента к аккаунту по паролю (диплинк ?start=<password>).
 const Body = z.object({
@@ -13,7 +14,7 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   const db = useDb()
 
   const [client] = await db.select().from(clients)

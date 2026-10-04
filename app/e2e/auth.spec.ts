@@ -23,7 +23,7 @@ test.describe('вход', () => {
   test('неверный пароль показывает ошибку и не пускает', async ({ page, guard }) => {
     guard.allow(401, /\/api\/auth\/login$/, 'POST')
     await loginUi(page, `${ADMIN_PASSWORD}-wrong`)
-    await expect(page.getByText('invalid_credentials')).toBeVisible()
+    await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
     await expect(page).toHaveURL(/\/login/)
     // Счётчик неудач на этот адрес сбрасывается успешным входом.
     await loginUi(page)
@@ -32,6 +32,23 @@ test.describe('вход', () => {
 })
 
 test.describe('2FA', () => {
+  // VPN2-69: короткий код фронт пропускает, сервер режет схемой zod. Человек
+  // видел «Validation Error» (а бот в Telegram — дамп zod), теперь — поле по-русски.
+  test('слишком короткий код при включении — понятная ошибка, а не дамп схемы', async ({ page, guard }) => {
+    guard.allow(400, /\/api\/auth\/totp\/confirm$/, 'POST')
+    await loginApi(page)
+    await page.goto('/me')
+    await hydrated(page)
+    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await page.getByLabel('Введи 6-значный код из приложения').fill('123')
+    const resp = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/totp/confirm')
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    expect((await resp).status()).toBe(400)
+    await expect(toast(page, 'Неверный код').getByText('Проверьте поле «Код»', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Отмена' }).click()
+    await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
+  })
+
   test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard }) => {
     guard.allow(401, /\/api\/auth\/login$/, 'POST')
     await loginApi(page)
@@ -66,7 +83,7 @@ test.describe('2FA', () => {
       const bad = String((Number(totp(secret)) + 500_000) % 1_000_000).padStart(6, '0')
       await code.fill(bad)
       await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page.getByText('invalid_credentials')).toBeVisible()
+      await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
       await code.fill(totp(secret))
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page).toHaveURL(/\/$/)

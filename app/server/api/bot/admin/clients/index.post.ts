@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { createClient } from '../../../../utils/client-ops'
 import { requireBotAuth } from '../../../../utils/bot-api'
+import { zodBody } from '../../../../utils/validate'
 
 // Создание клиента из админского чата бота — имя + фильтрация.
 // Срок/лимит админ задаёт потом через карточку клиента (PATCH).
@@ -11,6 +12,6 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readValidatedBody(event, zodBody(Body))
   return createClient(body)
 })

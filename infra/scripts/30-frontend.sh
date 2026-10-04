@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 30 — anysda-vpn2 panel container on RU.
-# Pulls the panel image from the public GitLab Container Registry
-# (registry.anysda.space/anysda/vpn2/panel), renders /etc/anysda/config.yaml
+# Pulls the panel image from the GitHub Container Registry (ghcr.io)
+# (ghcr.io/anysda/vpn2/panel), renders /etc/anysda/config.yaml
 # from admin secrets, installs Caddy, runs the panel as host-network
 # container on :51821 (Caddy reverse-proxies :80). NET_ADMIN cap only —
 # NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules.
@@ -19,12 +19,12 @@ STAGE='30-frontend'
 mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 
 # ----------------------------------------------------------------------------
-# 1. Pull panel image from the public GitLab Container Registry
+# 1. Pull panel image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
-PANEL_IMAGE="${PANEL_IMAGE:-registry.anysda.space/anysda/vpn2/panel:dev}"
+PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}"
 PANEL_IMAGE_PULL="${PANEL_IMAGE_PULL:-true}"
 echo "[$HOST_TAG] [1/4] docker pull ${PANEL_IMAGE}"
-# Registry живёт дома, за домашним каналом: если он лёг (или образ собрали и
+# Registry может быть недоступен с ноды: если он лёг (или образ собрали и
 # загрузили на ноду напрямую через `docker save | ssh … docker load`), стадия
 # не должна ронять деплой — берём уже лежащий локально образ. Нет ни там, ни
 # там — вот тогда падаем.

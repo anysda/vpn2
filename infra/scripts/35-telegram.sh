@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Stage 35 — Telegram bot on RU.
 #
-# Pulls the bot image from the public GitLab Container Registry
-# (registry.anysda.space/anysda/vpn2/tgbot) and runs it with
+# Pulls the bot image from the GitHub Container Registry (ghcr.io)
+# (ghcr.io/anysda/vpn2/tgbot) and runs it with
 # --network host so it can reach:
 #   - 127.0.0.1:51821  (anysda-vpn Nuxt API — direct)
 #   - 127.0.0.1:7897   (sing-box HTTP proxy → foreign-best exit)
@@ -65,9 +65,9 @@ PYEOF
 fi
 
 # ----------------------------------------------------------------------------
-# 2. Pull bot image from the public GitLab Container Registry
+# 2. Pull bot image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
-TGBOT_IMAGE="${TGBOT_IMAGE:-registry.anysda.space/anysda/vpn2/tgbot:dev}"
+TGBOT_IMAGE="${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}"
 echo "[$HOST_TAG] [2/3] docker pull ${TGBOT_IMAGE}"
 docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"
 

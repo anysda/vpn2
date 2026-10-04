@@ -22,9 +22,11 @@ pnpm db:generate    # сгенерировать drizzle-миграцию из s
 
 ## Деплой
 
-Образ собирается и пушится в реестр, нода тянет его (стадия `30-frontend`):
+Образ собирает GitHub Actions (`.github/workflows/images.yml`) на каждый пуш в `dev`/`main`
+и кладёт в `ghcr.io/anysda/vpn2/panel` с тегом ветки; нода тянет его (стадия `30-frontend`).
+Собрать руками:
 
 ```bash
 docker buildx build --platform linux/amd64 --push \
-  -t registry.anysda.space/anysda/vpn2/panel:dev .
+  -t ghcr.io/anysda/vpn2/panel:dev .
 ```

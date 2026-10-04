@@ -22,9 +22,8 @@ const TEXT: Record<string, string> = {
   totp_already_enabled: '2FA уже включена',
   totp_not_initiated: 'Настройка 2FA не начата, начните заново',
   invalid_totp: 'Код не подошёл',
-  // Бросают обработчики из work/panel-sec: поколение сессий и /metrics снаружи.
   session_revoked: 'Сессия завершена, войдите заново',
-  'Not Found': 'Не найдено',
+  insert_failed: 'Не удалось сохранить запись',
 }
 
 export default defineNitroPlugin((nitroApp) => {

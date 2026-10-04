@@ -338,19 +338,14 @@ def main():
                 'tag': 'wg-tproxy-in',
                 'listen': '127.0.0.1',
                 'listen_port': 7898,
+                # Только sniff, БЕЗ sniff_override_destination. Правила по
+                # домену матчат сниффнутый домен (SNI/Host/QUIC) и без подмены,
+                # а подмена стирала исходный IP: ip_cidr из панели и
+                # geoip ru/private не матчились ни на одном HTTP/HTTPS/QUIC
+                # (VPN2-61). Назначение остаётся тем IP, куда шёл клиент, и
+                # tproxy отвечает на UDP с него же - udp_disable_domain_unmapping
+                # больше не нужен.
                 'sniff': True,
-                'sniff_override_destination': True,
-                # После override назначение - домен, и `geoip: ru` не видит
-                # IP: российские сайты не в .ru (yandex.net, vk.com) уезжали
-                # на экзит. Резолв перед маршрутом даёт правилам IP; сам
-                # запрос к экзиту по-прежнему уходит по имени.
-                'domain_strategy': 'ipv4_only',
-                # tproxy обязан слать ОТВЕТНЫЙ UDP-пакет с адреса-источника,
-                # равного назначению; при override_destination назначение -
-                # домен (не IP), запись молча не выходит. Правила по домену
-                # (YouTube QUIC-блок) матчат сниффнутый домен из метаданных
-                # независимо от этого флага, не ломаются.
-                'udp_disable_domain_unmapping': True,
             },
         ] + mon_inbounds,
 

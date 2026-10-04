@@ -118,7 +118,7 @@ TABLE=101
 TPROXY_PORT=7898
 
 if [[ "$ACTION" == "up" ]]; then
-  ip rule list | grep -q "fwmark $MARK lookup $TABLE" || \
+  grep -q "fwmark $MARK lookup $TABLE" <<<"$(ip rule list)" || \
     ip rule add fwmark "$MARK" lookup "$TABLE"
   # replace, не add: на загрузке wg/ovpn/ikev2-routing стартуют разом, и
   # проигравший гонку add падал с File exists, не поставив свой TPROXY.

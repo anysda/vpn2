@@ -110,12 +110,14 @@ TABLE=101
 PORT=7898
 STUCK_BYTES=65536
 
-if iptables -t mangle -S PREROUTING 2>/dev/null | grep -qE -- '-j ANYSDA_[A-Z0-9]+_TPROXY'; then
-  if ! ip rule list | grep -q "fwmark $MARK lookup $TABLE"; then
+# here-string, не труба: под pipefail grep -q роняет ip/iptables в SIGPIPE,
+# и сторож видел «правила нет» там, где оно есть, - ставил дубль.
+if grep -qE -- '-j ANYSDA_[A-Z0-9]+_TPROXY' <<<"$(iptables -t mangle -S PREROUTING 2>/dev/null)"; then
+  if ! grep -q "fwmark $MARK lookup $TABLE" <<<"$(ip rule list)"; then
     ip rule add fwmark "$MARK" lookup "$TABLE" \
       && echo "правило fwmark $MARK lookup $TABLE пропало, вернул"
   fi
-  if ! ip route show table "$TABLE" 2>/dev/null | grep -q 'local default'; then
+  if ! grep -q 'local default' <<<"$(ip route show table "$TABLE" 2>/dev/null)"; then
     ip route add local 0.0.0.0/0 dev lo table "$TABLE" \
       && echo "маршрут local default в таблице $TABLE пропал, вернул"
   fi

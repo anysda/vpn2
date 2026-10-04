@@ -205,7 +205,7 @@ MSS=1340
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
 
 if [[ "$ACTION" == "up" ]]; then
-  ip rule list | grep -q "fwmark $MARK lookup $TABLE" || \
+  grep -q "fwmark $MARK lookup $TABLE" <<<"$(ip rule list)" || \
     ip rule add fwmark "$MARK" lookup "$TABLE"
   ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
     ip route replace local 0.0.0.0/0 dev lo table "$TABLE"

@@ -15,7 +15,7 @@ const exec = promisify(execFile)
  * WireGuard keypair. Uses Node's native X25519 — no `wg` binary required.
  * Both fields are 32-byte raw keys encoded as base64.
  */
-export function generateWgKeypair(): { privateKey: string, publicKey: string } {
+function generateWgKeypair(): { privateKey: string, publicKey: string } {
   const { privateKey, publicKey } = generateKeyPairSync('x25519')
   // X25519 raw key sits at the tail of the DER export (last 32 bytes).
   const priv = (privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).subarray(-32)
@@ -23,7 +23,7 @@ export function generateWgKeypair(): { privateKey: string, publicKey: string } {
   return { privateKey: priv.toString('base64'), publicKey: pub.toString('base64') }
 }
 
-export function generateWgPresharedKey(): string {
+function generateWgPresharedKey(): string {
   return randomBytes(32).toString('base64')
 }
 
@@ -32,7 +32,7 @@ export function generateWgPresharedKey(): string {
  * последний октет на обоих концах, единственный ULA-источник у хаба, чтобы
  * стеки Apple/Android по RFC 6724 сами предпочли v4 живому пиру.
  */
-export function wgUlaAddress(wgIp: string): string {
+function wgUlaAddress(wgIp: string): string {
   const m = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/.exec(wgIp)
   if (!m) throw new Error(`wgUlaAddress: не разобран v4-адрес "${wgIp}"`)
   return `fd66:66::${m[1]}`
@@ -42,7 +42,7 @@ export function wgUlaAddress(wgIp: string): string {
  * Pick the next free /32 inside the WG subnet (default 10.66.66.0/24).
  * .1 is the server, clients start at .2.
  */
-export function nextAvailableWgIp(usedIps: Array<string | null | undefined>, subnetPrefix = '10.66.66.'): string {
+function nextAvailableWgIp(usedIps: Array<string | null | undefined>, subnetPrefix = '10.66.66.'): string {
   const used = new Set(usedIps.filter(Boolean) as string[])
   for (let i = 2; i <= 254; i++) {
     const ip = `${subnetPrefix}${i}`
@@ -112,7 +112,7 @@ interface ServerConfigParams {
  * kernel interface picks up the new peer list without dropping existing
  * sessions. Skipped (with a log warning) if wireguard-tools isn't available.
  */
-export async function writeWgServerConfig(
+async function writeWgServerConfig(
   p: ServerConfigParams,
   confPath = '/etc/wireguard/wg0.conf',
 ): Promise<void> {

@@ -12,5 +12,3 @@ export function useDb() {
   }
   return _db
 }
-
-export { schema }

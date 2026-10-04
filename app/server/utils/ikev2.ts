@@ -42,7 +42,7 @@ export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
  * domain (panel.domain), в self-signed — IP entry. Стадия 27 записывает в
  * /etc/anysda/ikev2-server-host; fallback: ENTRY_HOST env, wgPublicHost cfg.
  */
-export async function ikev2ServerHost(): Promise<string> {
+async function ikev2ServerHost(): Promise<string> {
   try {
     const s = (await fs.readFile(HOST_FILE, 'utf8')).trim()
     if (s) return s
@@ -59,7 +59,7 @@ const IKEV2_SUBNET = '10.68.68.'
  * Сгенерировать 20-символьный alnum-пароль (как у clients.password). Не используем
  * никакие спецсимволы — пароль вводится руками в нативный VPN-клиент iOS/Win.
  */
-export function generateIkev2Password(): string {
+function generateIkev2Password(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   const bytes = randomBytes(20)
   let out = ''
@@ -71,7 +71,7 @@ export function generateIkev2Password(): string {
  * Подобрать свободный /32 в IKEv2-сабнете. .1 — gateway, клиенты с .2.
  * Логика идентична nextAvailableWgIp в wireguard.ts.
  */
-export function nextAvailableIkev2Ip(usedIps: Array<string | null | undefined>): string {
+function nextAvailableIkev2Ip(usedIps: Array<string | null | undefined>): string {
   const used = new Set(usedIps.filter(Boolean) as string[])
   for (let i = 2; i <= 254; i++) {
     const ip = `${IKEV2_SUBNET}${i}`
@@ -85,7 +85,7 @@ export function nextAvailableIkev2Ip(usedIps: Array<string | null | undefined>):
  * (не только этого клиента) — иначе swanctl secrets конфликтнут. При коллизии
  * добавляем числовой суффикс «-2», «-3», и т.д.
  */
-export function buildIkev2Username(
+function buildIkev2Username(
   clientName: string,
   deviceName: string,
   takenUsernames: Array<string | null | undefined>,
@@ -351,8 +351,3 @@ export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string):
 // .mobileconfig-рендер удалён намеренно — UX упрощён до одного TG-сообщения
 // + ca.crt файла (как у WG: один файл, никаких xml/UUID/Apple-payload'ов).
 // Клиент вводит server/login/password руками в нативный IKEv2-клиент.
-
-/** strongSwan конфиг сервера ещё не разворачивается на этапе 1 — заглушка. */
-export async function ensureIkev2Server(): Promise<void> {
-  // Этап 2: PKI bootstrap + swanctl conn. Сейчас no-op.
-}

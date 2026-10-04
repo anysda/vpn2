@@ -43,7 +43,7 @@ export async function caReady(): Promise<boolean> {
  * which records the cert in the CA index so it can later be revoked into a
  * CRL. Returns the PEM cert + key.
  */
-export async function issueClientCert(cn: string): Promise<{ cert: string, key: string }> {
+async function issueClientCert(cn: string): Promise<{ cert: string, key: string }> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ovpn-'))
   try {
     const keyPath = path.join(tmp, 'key.pem')
@@ -94,7 +94,7 @@ export async function revokeClientCert(certPem: string): Promise<void> {
 }
 
 /** Rebuild crl.pem from the CA index. OpenVPN re-reads it per new connection. */
-export async function regenCrl(): Promise<void> {
+async function regenCrl(): Promise<void> {
   await exec('openssl', ['ca', '-config', OSSL_CNF, '-gencrl', '-out', CRL_PEM], { timeout: 15_000 })
 }
 

@@ -7,6 +7,11 @@ import { deviceConfigName } from './naming'
 
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
+/** Адрес сокета — loopback этой ноды. */
+export function isLoopbackAddr(ip: string | undefined): boolean {
+  return !!ip && LOOPBACK_ADDRS.has(ip)
+}
+
 /**
  * Запрос пришёл напрямую с этой ноды, а не снаружи через Caddy.
  *
@@ -18,8 +23,7 @@ const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
  * (infra/scripts/30-frontend.sh), это второй.
  */
 export function isDirectLocal(event: H3Event): boolean {
-  const ip = event.node.req.socket.remoteAddress ?? ''
-  if (!LOOPBACK_ADDRS.has(ip)) return false
+  if (!isLoopbackAddr(event.node.req.socket.remoteAddress)) return false
   const h = event.node.req.headers
   return !h['x-forwarded-for'] && !h['x-forwarded-host'] && !h.forwarded && !h.via
 }

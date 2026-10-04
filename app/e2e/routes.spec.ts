@@ -101,8 +101,11 @@ test.describe('маршрутизация', () => {
     expect(left.filter(r => cases.some(c => c.value === r.value))).toEqual([])
   })
 
-  // Двойной клик по «Добавить»: кнопка в загрузке, второго POST быть не должно.
-  for (const how of ['двойной клик по «Добавить»'] as const) {
+  // VPN2-55: «правило появилось в списке, и тут же ошибка». Форма уходит по
+  // Enter и по кнопке, а флаг загрузки не мешает второй отправке, пока первая
+  // в полёте: второй POST получает 409 «уже существует» (или 500, если оба
+  // прошли проверку на дубль раньше вставки).
+  for (const how of ['двойной Enter', 'двойной клик по «Добавить»'] as const) {
     test(`${how} добавляет правило один раз и без ошибки`, async ({ page }) => {
       const posts = countPosts(page)
       await openRoutes(page)
@@ -111,7 +114,13 @@ test.describe('маршрутизация', () => {
         const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
         await input.fill(value)
         const before = posts.length
-        await routesForm(page).getByRole('button', { name: 'Добавить' }).dblclick()
+        if (how === 'двойной Enter') {
+          // Два submit подряд в одном такте — как второй Enter или автоповтор клавиши.
+          await routesForm(page).evaluate((f: HTMLFormElement) => { f.requestSubmit(); f.requestSubmit() })
+        }
+        else {
+          await routesForm(page).getByRole('button', { name: 'Добавить' }).dblclick()
+        }
         await expect(chip(page, value)).toBeVisible()
         await expect(input).toHaveValue('')
         await page.waitForLoadState('networkidle')

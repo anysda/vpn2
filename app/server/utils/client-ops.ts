@@ -59,6 +59,7 @@ export async function createClient(input: ClientCreateInput): Promise<Client> {
   if (input.deviceLimit !== undefined) values.deviceLimit = input.deviceLimit
 
   const [row] = await db.insert(clients).values(values).returning()
+  if (!row) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
   void notifyBot('client_created', { name: row.name })
   return row
 }

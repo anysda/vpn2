@@ -34,8 +34,8 @@ const LOGIN_FORM = '/login?direct=1'
 const makeOidcHandler = () => defineOAuthOidcEventHandler({
   async onSuccess(event, { user: claims }) {
     const log = useLogger()
-    const sub = String((claims as Record<string, unknown>)?.sub ?? '')
-    const preferred = (claims as Record<string, unknown>)?.preferred_username as string | undefined
+    const sub = String(claims.sub ?? '')
+    const preferred = claims.preferred_username
 
     try {
       const user = await resolveSsoUser(sub, preferred)

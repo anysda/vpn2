@@ -201,6 +201,7 @@ export async function ensureDeviceWg(deviceId: number) {
     })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
 }
 
@@ -229,6 +230,7 @@ export async function reissueDeviceWg(deviceId: number) {
     })
     .where(eq(devicesTable.id, deviceId))
     .returning()
+  if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
 }
 

@@ -30,6 +30,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const [device] = await db.insert(devices).values({ clientId: client.id, name }).returning()
+  if (!device) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
   await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceWg failed'))
   if (await caReady()) {
     await ensureDeviceOvpn(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceOvpn failed'))

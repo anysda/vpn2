@@ -126,7 +126,17 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
         protocols h1 h2
     }
 }
+# Пути бота и метрики — только для самой ноды: бот ходит на 127.0.0.1:51821
+# мимо Caddy, метрики снаружи никто не забирает. Caddy сам подключается к
+# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
+# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# браузер админа со страницы мониторинга — его не трогаем.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
+    respond @internal 404
+}
 ${PANEL_DOMAIN} {
+    import internal_only
     encode gzip
     reverse_proxy 127.0.0.1:51821
 }
@@ -151,7 +161,17 @@ else
         protocols h1 h2
     }
 }
+# Пути бота и метрики — только для самой ноды: бот ходит на 127.0.0.1:51821
+# мимо Caddy, метрики снаружи никто не забирает. Caddy сам подключается к
+# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
+# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# браузер админа со страницы мониторинга — его не трогаем.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot /metrics /metrics/*
+    respond @internal 404
+}
 :80 {
+    import internal_only
     encode gzip
     reverse_proxy 127.0.0.1:51821
 }

@@ -4,8 +4,20 @@ node_modules
 .data
 .cache
 .git
-.env
-.env.*
+# Секреты и состояние ноды: в контекст сборки не берём. config.yaml панель
+# читает при работе из /etc/anysda, на сборке он не нужен.
+**/.env
+**/.env.*
+**/config.yaml
+**/anysda-config.yaml
+**/*.db
+**/*.db-journal
+**/*.pem
+**/*.key
+**/*.p12
+**/id_rsa*
+**/id_ed25519*
+**/id_ecdsa*
 !.env.example
 local.db
 local.db-journal

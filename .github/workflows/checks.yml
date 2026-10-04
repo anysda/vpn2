@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -S error $(git ls-files '*.sh')
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
 
   python:
     runs-on: ubuntu-latest
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: ruff
-        run: pipx run ruff check --isolated --select E9,F $(git ls-files '*.py')
+        run: git ls-files -z '*.py' | xargs -0 pipx run ruff check --isolated --select E9,F
       - name: config2env на config.example.yaml
         run: |
           d=$(mktemp -d)

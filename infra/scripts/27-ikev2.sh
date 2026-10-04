@@ -35,6 +35,9 @@ fi
 : "${ENTRY_HOST:?ENTRY_HOST not set (envs/all.env)}"
 IKEV2_SUBNET="${IKEV2_SUBNET:-10.68.68.0/24}"
 IKEV2_DNS="${IKEV2_DNS:-10.99.0.1}"
+# v6-пул только для fast-fail, как fd66:66:: у WG: без него ::/0 в туннель
+# не попадает, и v6 клиента уходит мимо VPN со своим настоящим адресом.
+IKEV2_SUBNET6="fd68:68::/112"
 PKI=/etc/strongswan/pki
 CONF=/etc/swanctl/conf.d/anysda.conf
 CADDY_CERT_DIR="/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
@@ -220,7 +223,7 @@ connections {
     # клиент послабее сам сползёт вниз по списку.
     proposals     = aes256gcm16-prfsha384-ecp384,aes256gcm16-prfsha384-modp2048,aes256gcm16-prfsha256-ecp256,aes256-sha256-ecp256,aes256-sha256-modp2048,aes256gcm16-prfsha384-modp1024,aes256-sha256-modp1024,aes128-sha256-modp1024
     dpd_delay     = 30s
-    pools         = anysda-ikev2-pool
+    pools         = anysda-ikev2-pool, anysda-ikev2-pool6
     fragmentation = yes
     encap         = yes
     rekey_time    = 0s
@@ -236,7 +239,7 @@ connections {
     }
     children {
       net {
-        local_ts      = 0.0.0.0/0
+        local_ts      = 0.0.0.0/0, ::/0
         # ⚠️ Нативные клиенты не делают PFS в CHILD_SA (KE-payload не шлют),
         # поэтому варианты БЕЗ DH-группы обязаны быть в списке, иначе SA
         # развалится уже после успешной аутентификации. esn-noesn - оба
@@ -260,6 +263,9 @@ pools {
   anysda-ikev2-pool {
     addrs = $IKEV2_SUBNET
     dns   = $IKEV2_DNS
+  }
+  anysda-ikev2-pool6 {
+    addrs = $IKEV2_SUBNET6
   }
 }
 
@@ -339,6 +345,7 @@ MARK='0x42'
 TABLE=101
 TPROXY_PORT=7898
 IKEV2_SUBNET='${IKEV2_SUBNET%/*}/24'
+IKEV2_SUBNET6='$IKEV2_SUBNET6'
 
 if [[ "\$ACTION" == "up" ]]; then
   # xfrm0 интерфейс (idempotent)
@@ -352,6 +359,7 @@ if [[ "\$ACTION" == "up" ]]; then
   # поднимается, трафик уходит в sing-box, а ответы молча дохнут на xfrm0
   # (TX errors). Через xfrm0 они попадают в out-политику и шифруются.
   ip route replace "\$IKEV2_SUBNET" dev "\$XFRM_IF"
+  ip -6 route replace "\$IKEV2_SUBNET6" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
   ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\
@@ -372,12 +380,21 @@ if [[ "\$ACTION" == "up" ]]; then
   iptables -C INPUT -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT 2>/dev/null || \\
     iptables -I INPUT 1 -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT
 
+  # v6 в туннеле никуда не ведём: REJECT первой строкой, клиент сразу
+  # получает icmp6-addr-unreachable и уходит на v4 (как wg0 в 28-wireguard).
+  ip6tables -P FORWARD DROP
+  while ip6tables -C FORWARD -i "\$XFRM_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null; do
+    ip6tables -D FORWARD -i "\$XFRM_IF" -j REJECT --reject-with icmp6-addr-unreachable
+  done
+  ip6tables -I FORWARD 1 -i "\$XFRM_IF" -j REJECT --reject-with icmp6-addr-unreachable
+
   echo "anysda-ikev2-routing up (xfrm=\$XFRM_IF dev=\$WAN_IF if_id=42, mark=\$MARK)"
 
 elif [[ "\$ACTION" == "down" ]]; then
   iptables -t mangle -D PREROUTING -i "\$XFRM_IF" -j ANYSDA_IKEV2_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_IKEV2_TPROXY 2>/dev/null || true
   iptables -t mangle -X ANYSDA_IKEV2_TPROXY 2>/dev/null || true
+  ip6tables -D FORWARD -i "\$XFRM_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null || true
   ip link del "\$XFRM_IF" 2>/dev/null || true
 fi
 IPTSEOF

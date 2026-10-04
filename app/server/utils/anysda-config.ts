@@ -62,15 +62,16 @@ export function loadAnysdaConfig(): AnysdaConfig | null {
     return null
   }
 
+  // Файл есть, но не разбирается (пароль `12345678` стал числом, `!x` — тегом):
+  // null здесь означал бы «конфига нет», и init молча завёл бы admin со
+  // случайным паролем. Падаем громко — пусть деплой увидит, что шаблон битый.
   try {
-    const raw = readFileSync(path, 'utf-8')
-    const parsed = parseYaml(raw)
-    _cached = ConfigSchema.parse(parsed)
+    _cached = ConfigSchema.parse(parseYaml(readFileSync(path, 'utf-8')))
     return _cached
   }
   catch (err) {
-    useLogger().error({ err, path }, 'failed to load anysda config')
-    return null
+    useLogger().error({ err, path }, 'anysda config is invalid')
+    throw new Error(`anysda config ${path} is invalid: ${(err as Error).message}`, { cause: err })
   }
 }
 

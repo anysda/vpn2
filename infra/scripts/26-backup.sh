@@ -131,7 +131,7 @@ if [[ "$BACKUP_SCHEDULE" == "daily" ]]; then
   systemctl enable --now anysda-backup.timer >/dev/null 2>&1
   echo "[$HOST_TAG]   timer enabled, next run:"
   systemctl list-timers anysda-backup.timer --no-pager 2>/dev/null \
-    | grep -v '^$' | head -3 | sed "s/^/[$HOST_TAG]   /" || true
+    | grep -v '^$' | sed -n "1,3s/^/[$HOST_TAG]   /p" || true
 else
   systemctl disable --now anysda-backup.timer >/dev/null 2>&1 || true
   echo "[$HOST_TAG]   timer disabled (schedule: off)"

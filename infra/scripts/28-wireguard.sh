@@ -84,7 +84,7 @@ echo "[$HOST_TAG] [4/5] wg-quick@wg0 service"
 systemctl enable wg-quick@wg0 >/dev/null 2>&1 || true
 systemctl restart wg-quick@wg0
 sleep 1
-systemctl status wg-quick@wg0 --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status wg-quick@wg0 --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # ── 5. TPROXY: forwarded wg0 traffic → sing-box :7898 ──────────────────────
 echo "[$HOST_TAG] [5/5] anysda-wg-routing"
@@ -115,12 +115,19 @@ ACTION=${1:-up}
 WG_IF='wg0'
 MARK='0x42'
 TABLE=101
+PREF=32765
 TPROXY_PORT=7898
 
 if [[ "$ACTION" == "up" ]]; then
-  ip rule list | grep -q "fwmark $MARK lookup $TABLE" || \
-    ip rule add fwmark "$MARK" lookup "$TABLE"
-  ip route show table "$TABLE" 2>/dev/null | grep -q 'local default' || \
+  # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
+  # strongSwan 220), а юниты wg/ovpn/ikev2 на загрузке в гонке добавляют копии.
+  ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null || \
+    ip rule add fwmark "$MARK" lookup "$TABLE" pref "$PREF" 2>/dev/null || \
+    ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null
+  for p in $(ip rule list | awk -F: -v m="fwmark $MARK lookup $TABLE" -v k="$PREF" 'index($0, m) && $1 != k {print $1}'); do
+    ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
+  done
+  ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \
     ip route add local 0.0.0.0/0 dev lo table "$TABLE"
 
   iptables -t mangle -N ANYSDA_WG_TPROXY 2>/dev/null || true

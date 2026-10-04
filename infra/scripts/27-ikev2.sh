@@ -168,7 +168,7 @@ else
     NEED_SERVER=1
   else
     if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
-          | grep -qE "IP Address:${ENTRY_HOST}( |$|,)"; then
+          | grep -E "IP Address:${ENTRY_HOST}( |$|,)" >/dev/null; then
       echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
       NEED_SERVER=1
     fi
@@ -291,7 +291,7 @@ echo "[$HOST_TAG] [6/8] strongswan-starter service"
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
 systemctl restart strongswan-starter
 sleep 2
-systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | head -6 | sed "s/^/[$HOST_TAG]   /"
+systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # Применяем CA + creds + conns в работающий daemon.
 swanctl --load-creds >/dev/null
@@ -300,13 +300,13 @@ swanctl --load-conns >/dev/null
 
 # Sanity: conn anysda-ikev2 в списке, порты слушают.
 echo "[$HOST_TAG]   conns:"
-swanctl --list-conns 2>/dev/null | grep -E '^[a-z]|local|remote|child' | head -10 | sed "s/^/[$HOST_TAG]     /"
+swanctl --list-conns 2>/dev/null | grep -E '^[a-z]|local|remote|child' | sed -n "1,10s/^/[$HOST_TAG]     /p"
 echo "[$HOST_TAG]   listening:"
 ss -lun 2>/dev/null | awk '/:500 |:4500 /{print "    " $0}' | sed "s/^/[$HOST_TAG]/"
 
 # ── 7. xfrm0 + TPROXY hook (как anysda-ovpn-routing для tun0) ──────────────
 echo "[$HOST_TAG] [7/8] xfrm0 + anysda-ikev2-routing"
-WAN_IF=$(ip route show default | awk '/default/{print $5; exit}')
+WAN_IF=$(ip route show default | awk '!f && /default/{print $5; f=1}')
 : "${WAN_IF:?не определился WAN-интерфейс по default route}"
 
 cat > /etc/systemd/system/anysda-ikev2-routing.service <<EOF
@@ -337,6 +337,7 @@ XFRM_IF='xfrm0'
 WAN_IF='$WAN_IF'
 MARK='0x42'
 TABLE=101
+PREF=32765
 TPROXY_PORT=7898
 IKEV2_SUBNET='${IKEV2_SUBNET%/*}/24'
 
@@ -354,9 +355,15 @@ if [[ "\$ACTION" == "up" ]]; then
   ip route replace "\$IKEV2_SUBNET" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)
-  ip rule list | grep -q "fwmark \$MARK lookup \$TABLE" || \\
-    ip rule add fwmark "\$MARK" lookup "\$TABLE"
-  ip route show table "\$TABLE" 2>/dev/null | grep -q 'local default' || \\
+  # Явный pref: без него правило встаёт выше strongSwan 220 (219), а юниты
+  # wg/ovpn/ikev2 на загрузке в гонке добавляют копии.
+  ip rule list pref "\$PREF" | grep "fwmark \$MARK lookup \$TABLE" >/dev/null || \\
+    ip rule add fwmark "\$MARK" lookup "\$TABLE" pref "\$PREF" 2>/dev/null || \\
+    ip rule list pref "\$PREF" | grep "fwmark \$MARK lookup \$TABLE" >/dev/null
+  for p in \$(ip rule list | awk -F: -v m="fwmark \$MARK lookup \$TABLE" -v k="\$PREF" 'index(\$0, m) && \$1 != k {print \$1}'); do
+    ip rule del pref "\$p" fwmark "\$MARK" lookup "\$TABLE" 2>/dev/null || true
+  done
+  ip route show table "\$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \\
     ip route add local 0.0.0.0/0 dev lo table "\$TABLE"
 
   iptables -t mangle -N ANYSDA_IKEV2_TPROXY 2>/dev/null || true
@@ -585,7 +592,7 @@ systemctl start anysda-ikev2-sync.service || true
 # ⚠️ `systemctl status` у отработавшего oneshot возвращает 3, а в стадии
 # включён pipefail — без `|| true` стадия падала уже ПОСЛЕ всей работы.
 { systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null || true; } \
-  | head -5 | sed "s/^/[$HOST_TAG]   /"
+  | sed -n "1,5s/^/[$HOST_TAG]   /p"
 
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

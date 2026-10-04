@@ -115,7 +115,7 @@ if [[ -d /etc/swanctl ]]; then
 fi
 
 # ── Manifest с SHA-256 каждого компонента ───────────────────────────────────
-APP_VERSION=$(docker exec anysda-vpn2 sh -c 'cat /app/.output/.config/.json 2>/dev/null; node -e "console.log(require(\"/app/package.json\").version)" 2>/dev/null' 2>/dev/null | grep -oE '"version":[[:space:]]*"[^"]+"' | head -1 | sed 's/.*"\([^"]*\)"/\1/' || echo unknown)
+APP_VERSION=$(docker exec anysda-vpn2 sh -c 'cat /app/.output/.config/.json 2>/dev/null; node -e "console.log(require(\"/app/package.json\").version)" 2>/dev/null' 2>/dev/null | grep -oE '"version":[[:space:]]*"[^"]+"' | sed -n '1s/.*"\([^"]*\)"/\1/p' || echo unknown)
 GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)
 SCHEMA_VER=$(sqlite3 "$DB" 'PRAGMA schema_version;' 2>/dev/null || echo 0)
 

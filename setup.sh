@@ -66,6 +66,13 @@ sanitize() {
   printf '%s' "$1" | tr -d '\000-\010\013\014\016-\037\177' | sed 's/[[:space:]]*$//'
 }
 
+# Значение для config.yaml в одинарных YAML-кавычках (внутри '' = '): пароль
+# вида `x #y`, `!Qwerty1` или `12345678` иначе читается как комментарий, тег
+# или число.
+yq() {
+  printf "'%s'" "${1//\'/\'\'}"
+}
+
 ask_password() {
   local prompt="$1" p1 p2
   while true; do
@@ -109,10 +116,10 @@ except Exception:
 detect_entry_ip() {
   local ip=""
   local iface
-  iface=$(ip -4 route show default 2>/dev/null | awk '/default/ {print $5; exit}')
+  iface=$(ip -4 route show default 2>/dev/null | awk '!f && /default/ {print $5; f=1}')
   if [[ -n "$iface" ]]; then
     ip=$(ip -4 addr show dev "$iface" 2>/dev/null \
-         | awk '/inet / {print $2; exit}' | cut -d/ -f1)
+         | awk '!f && /inet / {print $2; f=1}' | cut -d/ -f1)
   fi
   if [[ -z "$ip" ]] || [[ "$ip" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.) ]]; then
     local ext
@@ -127,7 +134,9 @@ detect_entry_ip() {
 suggest_tag() {
   local cc="$1" used="$2" tag n=2
   tag="$cc"
-  while echo " $used " | grep -qw " $tag "; do
+  # Пробелы по краям — граница тега; grep -w здесь не годился: он требует
+  # не-букву и вокруг пробелов, и занятый тег ловился, только когда он один.
+  while [[ " $used " == *" $tag "* ]]; do
     tag="${cc}${n}"; (( n++ ))
   done
   printf '%s' "$tag"
@@ -141,7 +150,7 @@ validate_tag() {
   if [[ "$tag" == "ru" ]]; then
     fail "Тег 'ru' зарезервирован для входной ноды"; return 1
   fi
-  if echo " $used " | grep -qw " $tag "; then
+  if [[ " $used " == *" $tag "* ]]; then
     fail "Тег '$tag' уже используется"; return 1
   fi
   return 0
@@ -207,7 +216,7 @@ for i in $(seq 1 "$n_exits"); do
   exit_ips["$ex_tag"]="$ex_ip"
   exit_pass["$ex_tag"]="$ex_pass"
 
-  exits_yaml+="  - tag: ${ex_tag}\n    host: ${ex_ip}\n    password: ${ex_pass}\n\n"
+  exits_yaml+="  - tag: ${ex_tag}"$'\n'"    host: $(yq "$ex_ip")"$'\n'"    password: $(yq "$ex_pass")"$'\n\n'
 done
 
 header "Учётка администратора (веб-панель + AdGuard UI)"
@@ -428,13 +437,13 @@ config_file="${REPO_ROOT}/config.yaml"
 # setup.sh он не должен потеряться, иначе повторный деплой сломает доступ.
 orch_key=''; orch_pubkey=''
 if [[ -f "$config_file" ]]; then
-  orch_key=$(sed -n 's/^orchestrator_key:[[:space:]]*//p' "$config_file" | head -1)
-  orch_pubkey=$(sed -n 's/^orchestrator_pubkey:[[:space:]]*//p' "$config_file" | head -1)
+  orch_key=$(sed -n '/^orchestrator_key:/{s/^orchestrator_key:[[:space:]]*//p;q}' "$config_file")
+  orch_pubkey=$(sed -n '/^orchestrator_pubkey:/{s/^orchestrator_pubkey:[[:space:]]*//p;q}' "$config_file")
 fi
 
 ENTRY_IP="$entry_ip" \
 ENTRY_PASS="$entry_pass" \
-EXITS_YAML="$(printf '%b' "$exits_yaml")" \
+EXITS_YAML="$exits_yaml" \
 ADMIN_USER="$admin_user" \
 ADMIN_PASS="$admin_pass" \
 ADMIN_SSH_PUBKEY="$admin_sshpubkey" \
@@ -458,23 +467,29 @@ CONFIG_FILE="$config_file" \
 python3 <<'PYEOF'
 import os, datetime
 
+
+def q(v):
+    """Строка в одинарных YAML-кавычках: config2env вернёт её как есть."""
+    return "'" + v.replace("'", "''") + "'"
+
+
 lines = []
 lines.append('# anysda-vpn — конфигурация (chmod 600 — содержит пароли)')
 lines.append('# Создано ./setup.sh ' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M'))
 lines.append('')
 lines.append('entry:')
-lines.append('  host: ' + os.environ['ENTRY_IP'])
-lines.append('  password: ' + os.environ['ENTRY_PASS'])
+lines.append('  host: ' + q(os.environ['ENTRY_IP']))
+lines.append('  password: ' + q(os.environ['ENTRY_PASS']))
 lines.append('')
 lines.append('exits:')
 exits_block = os.environ.get('EXITS_YAML', '')
 lines.append(exits_block.rstrip())
 lines.append('')
 lines.append('admin:')
-lines.append('  user: ' + os.environ['ADMIN_USER'])
+lines.append('  user: ' + q(os.environ['ADMIN_USER']))
 ap = os.environ.get('ADMIN_PASS', '')
 if ap:
-    lines.append('  password: ' + ap)
+    lines.append('  password: ' + q(ap))
 else:
     lines.append('  # password не задан — будет сгенерирован при первом деплое')
 sk = os.environ.get('ADMIN_SSH_PUBKEY', '').strip()
@@ -486,7 +501,7 @@ pd = os.environ.get('PANEL_DOMAIN', '')
 if pd:
     lines.append('')
     lines.append('panel:')
-    lines.append('  domain: ' + pd)
+    lines.append('  domain: ' + q(pd))
 
 tt = os.environ.get('TG_TOKEN', '')
 tc = os.environ.get('TG_CHAT_ID', '')
@@ -494,10 +509,10 @@ ta = os.environ.get('TG_ADMIN_USERNAME', '')
 if tt and tc:
     lines.append('')
     lines.append('telegram:')
-    lines.append('  bot_token: ' + tt)
-    lines.append('  chat_id: ' + tc)
+    lines.append('  bot_token: ' + q(tt))
+    lines.append('  chat_id: ' + q(tc))
     if ta:
-        lines.append('  admin_username: ' + ta)
+        lines.append('  admin_username: ' + q(ta))
 
 # Backup-секция: если включена — записываем. Если выключена — секция не
 # пишется вообще, чтобы 26-backup увидел отсутствие блока и пропустился.
@@ -510,16 +525,16 @@ if be == 'y':
     lines.append('backup:')
     lines.append('  enabled: true')
     lines.append('  backend: ' + bb)
-    lines.append('  passphrase: ' + bpwd)
+    lines.append('  passphrase: ' + q(bpwd))
     lines.append('  retention: 10')
     lines.append('  schedule: ' + bsched)
     if bb == 's3':
         lines.append('  s3:')
-        lines.append('    endpoint: '   + os.environ.get('BACKUP_S3_ENDPOINT', ''))
-        lines.append('    bucket: '     + os.environ.get('BACKUP_S3_BUCKET',   ''))
-        lines.append('    region: '     + os.environ.get('BACKUP_S3_REGION', 'us-east-1'))
-        lines.append('    access_key: ' + os.environ.get('BACKUP_S3_ACCESS_KEY', ''))
-        lines.append('    secret_key: ' + os.environ.get('BACKUP_S3_SECRET_KEY', ''))
+        lines.append('    endpoint: '   + q(os.environ.get('BACKUP_S3_ENDPOINT', '')))
+        lines.append('    bucket: '     + q(os.environ.get('BACKUP_S3_BUCKET',   '')))
+        lines.append('    region: '     + q(os.environ.get('BACKUP_S3_REGION', 'us-east-1')))
+        lines.append('    access_key: ' + q(os.environ.get('BACKUP_S3_ACCESS_KEY', '')))
+        lines.append('    secret_key: ' + q(os.environ.get('BACKUP_S3_SECRET_KEY', '')))
 
 # YouTube-секция: пишем только когда фича включена — отсутствие блока
 # читается как youtube.route=off, то есть поведение до появления фичи.

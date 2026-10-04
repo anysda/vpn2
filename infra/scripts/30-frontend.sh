@@ -86,8 +86,11 @@ fi
 TPL=/tmp/anysda/anysda-config.yaml.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 
-export ADMIN_USER ADMIN_PASS
-envsubst < "$TPL" > /etc/anysda/anysda-config.yaml
+yaml_str() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"; }
+ADMIN_USER_YAML=$(yaml_str "$ADMIN_USER")
+ADMIN_PASS_YAML=$(yaml_str "$ADMIN_PASS")
+export ADMIN_USER_YAML ADMIN_PASS_YAML
+envsubst '${ADMIN_USER_YAML} ${ADMIN_PASS_YAML}' < "$TPL" > /etc/anysda/anysda-config.yaml
 chmod 600 /etc/anysda/anysda-config.yaml
 
 # Session secret — random 64-char hex, persisted so cookies survive container rebuilds
@@ -239,10 +242,26 @@ docker run -d \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
+http_up=0
 for i in $(seq 1 60); do
-  curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null && break
+  if curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then http_up=1; break; fi
   sleep 1
 done
+# Битый anysda-config.yaml панель не роняет: init пишет ошибку в свой журнал,
+# админ не синхронизируется, и войти паролем из config.yaml нельзя. Без этой
+# проверки стадия выглядела бы зелёной.
+if bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
+  echo "[$HOST_TAG] ✗ панель не разобрала /etc/anysda/anysda-config.yaml, пароль админа не применён:"
+  echo "[$HOST_TAG]   ${bad:0:400}"
+  exit 1
+fi
+if [[ $http_up -ne 1 ]] || docker logs anysda-vpn2 2>&1 | grep 'panel init failed' >/dev/null; then
+  echo "[$HOST_TAG] ✗ панель не поднялась: /api/version не ответил 2xx за 60 с или init упал"
+  echo "[$HOST_TAG]   контейнер: $(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Status}}')"
+  echo "[$HOST_TAG]   хвост журнала панели:"
+  docker logs --tail 30 anysda-vpn2 2>&1 | sed "s/^/[$HOST_TAG]     /"
+  exit 1
+fi
 echo "[$HOST_TAG] статус контейнера:"
 docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}}' | sed "s/^/[$HOST_TAG]   /"
 echo "[$HOST_TAG] /api/version:"

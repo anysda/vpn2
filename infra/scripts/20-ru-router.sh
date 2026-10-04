@@ -21,14 +21,14 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] sing-box"
 SB_VER='1.10.3'
-if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep -q "$SB_VER"; then
+if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep "$SB_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
     | tar -xz -C /tmp
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
 fi
-/usr/local/bin/sing-box version | head -1 | sed "s/^/[$HOST_TAG]   /"
+/usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
 # 2. GeoIP / Geosite DB
@@ -71,7 +71,7 @@ echo "[$HOST_TAG] [4/6] sing-box router config"
 GEN=/tmp/anysda/gen-router-config.py
 [[ -f "$GEN" ]] || { echo "[$HOST_TAG] $GEN не найден"; exit 1; }
 
-WAN_IFACE=$(ip -4 -o route show default | awk '{print $5; exit}')
+WAN_IFACE=$(ip -4 -o route show default | awk '!f {print $5; f=1}')
 : "${WAN_IFACE:?}"
 # Backward-compat: gen-router-config.py читает WG_OUT_IFACE (имя из v1).
 export WG_OUT_IFACE="$WAN_IFACE"
@@ -124,8 +124,8 @@ if ! /usr/local/bin/sing-box check -c /etc/sing-box/config-base.json; then
   echo "[$HOST_TAG] конфиг невалиден — сервис не трогаю"
   exit 1
 fi
-cp /etc/sing-box/config-base.json /etc/sing-box/config.json
-chmod 600 /etc/sing-box/config.json
+# config.json (база + ручные маршруты панели) собирается в шаге 6, и sing-box
+# перезапускается один раз уже на нём (VPN2-52).
 
 # ----------------------------------------------------------------------------
 # 5. systemd service для sing-box
@@ -174,9 +174,6 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable sing-box >/dev/null 2>&1
-systemctl restart sing-box
-sleep 2
-systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
 # clash-api слушает 10.99.0.1:9090 — это lo-алиас на самой entry, наружу не
 # торчит. Снимаем legacy mesh-правило ufw (mesh снят, служебный трафик ушёл на
@@ -197,7 +194,11 @@ echo "[$HOST_TAG] [6/6] sing-box manual-routes watcher"
 
 cat > /usr/local/sbin/anysda-apply-routes.py << 'PYEOF'
 #!/usr/bin/env python3
-import json, subprocess, sys, tempfile, os
+import ipaddress, json, subprocess, sys, tempfile, os
+
+# --no-restart: только собрать config.json (стадия 20 перезапускает sing-box
+# сама, один раз на итоговом конфиге).
+NO_RESTART = '--no-restart' in sys.argv[1:]
 
 MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
 SB_CONFIG     = '/etc/sing-box/config.json'
@@ -218,14 +219,26 @@ except (FileNotFoundError, json.JSONDecodeError):
 
 with open(SB_CONFIG_BASE) as f: cfg = json.load(f)
 
+# Правило на outbound, которого нет в конфиге (экзит убрали, опечатка в
+# панели), sing-box check отвергает целиком — и вместе с ним все остальные
+# ручные маршруты. Такие строки пропускаем по одной и пишем в журнал.
+known = {o.get('tag') for o in cfg.get('outbounds', []) + cfg.get('endpoints', [])}
 manual_rules = []
-for row in rows:
-    rule = {'outbound': row['outbound']}
-    if row['type'] == 'domain':
-        val = row['value']
-        rule['domain_suffix'] = [val[2:] if val.startswith('*.') else val]
-    else:
-        rule['ip_cidr'] = [row['value']]
+for row in rows if isinstance(rows, list) else []:
+    try:
+        out, kind, val = row['outbound'], row['type'], str(row['value'])
+        if out not in known:
+            raise ValueError(f'outbound {out!r} нет в конфиге')
+        if kind == 'domain':
+            rule = {'outbound': out, 'domain_suffix': [val[2:] if val.startswith('*.') else val]}
+        elif kind == 'ip_cidr':
+            ipaddress.ip_network(val, strict=False)
+            rule = {'outbound': out, 'ip_cidr': [val]}
+        else:
+            raise ValueError(f'тип {kind!r} неизвестен')
+    except (KeyError, TypeError, ValueError) as e:
+        print(f'пропускаю маршрут {row!r}: {e}', file=sys.stderr)
+        continue
     manual_rules.append(rule)
 
 cfg['route']['rules'] = manual_rules + cfg['route']['rules']
@@ -238,7 +251,8 @@ new_body = json.dumps(cfg, indent=2)
 # упирался в StartLimitBurst и укладывал .service в failed (см. VPN2-5).
 try:
     if open(SB_CONFIG).read() == new_body:
-        print(f'{len(manual_rules)} manual route(s), конфиг не изменился — sing-box не трогаю')
+        tail = 'config.json уже собран' if NO_RESTART else 'конфиг не изменился — sing-box не трогаю'
+        print(f'{len(manual_rules)} manual route(s), {tail}')
         sys.exit(0)
 except FileNotFoundError:
     pass
@@ -250,8 +264,14 @@ try:
     subprocess.run([SB_BIN, 'check', '-c', tmp_path], check=True, capture_output=True)
     os.replace(tmp_path, SB_CONFIG)
 except subprocess.CalledProcessError as e:
-    os.unlink(tmp_path); print(f'Config check failed: {e}', file=sys.stderr); sys.exit(1)
+    os.unlink(tmp_path)
+    print(f'Config check failed: {e}: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
+    sys.exit(1)
+os.chmod(SB_CONFIG, 0o600)
 
+if NO_RESTART:
+    print(f'{len(manual_rules)} manual route(s), config.json собран')
+    sys.exit(0)
 subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
 print(f'Applied {len(manual_rules)} manual route(s), sing-box restarted')
 PYEOF
@@ -295,9 +315,16 @@ systemctl daemon-reload
 systemctl enable anysda-apply-routes.path >/dev/null 2>&1
 systemctl start  anysda-apply-routes.path
 
-# Derive config.json = fresh config-base.json + current manual routes and
-# restart sing-box, so a re-run immediately reflects the regenerated base.
-/usr/local/sbin/anysda-apply-routes.py || true
+# config.json = свежая config-base.json + ручные маршруты панели, затем ОДИН
+# рестарт sing-box уже на итоговом конфиге (раньше было два: на голой базе,
+# которая на секунды сносила ручные маршруты, и ещё один из apply-routes).
+if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+  echo "[$HOST_TAG]   ⚠ ручные маршруты не применились — sing-box поднимаю на базовом конфиге"
+  install -m 600 /etc/sing-box/config-base.json /etc/sing-box/config.json
+fi
+systemctl restart sing-box
+sleep 2
+systemctl status sing-box --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
 # ssh <tag> на экзиты через служебный hy2-туннель (VPN2-38). nc идёт в

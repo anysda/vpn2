@@ -63,7 +63,7 @@
     "rules": [
       { "inbound": "hy2-direct-in", "outbound": "direct" },
       { "inbound": "hy2-warp-in",   "outbound": "warp"   },
-      { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100], "outbound": "direct" },
+      { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100, 22], "outbound": "direct" },
       { "inbound": "hy2-mgmt-in", "outbound": "block-out" }
     ]
   },

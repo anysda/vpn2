@@ -36,7 +36,7 @@ apt-get install -y -qq \
   curl wget ca-certificates gnupg lsb-release \
   ufw fail2ban \
   jq qrencode unzip git \
-  iptables \
+  iptables netcat-openbsd \
   python3 python3-yaml \
   >/dev/null
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
@@ -116,14 +116,46 @@ if [[ -s "$KEYSRC" ]]; then
 fi
 rm -f "$KEYSRC"
 
+# Ключ entry для ssh через служебный hy2-туннель (VPN2-38; на экзиты его
+# кладёт deploy.sh, см. prep_entry_mgmt_key). Опознаём по комментарию:
+# прежний ключ entry снимаем, текущий ставим один раз, поэтому повтор
+# стадии не плодит строки, а пересозданная entry вытесняет старый ключ.
+ENTRY_KEY=/tmp/anysda/entry_mgmt_key
+if [[ "$HOST_TAG" != ru && -s "$ENTRY_KEY" ]]; then
+  mkdir -p /root/.ssh && chmod 700 /root/.ssh
+  touch /root/.ssh/authorized_keys
+  { awk '$NF != "anysda-entry-mgmt"' /root/.ssh/authorized_keys
+    head -n1 "$ENTRY_KEY"
+  } > /root/.ssh/authorized_keys.new
+  mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
+  chmod 600 /root/.ssh/authorized_keys
+  echo "[$HOST_TAG]   ключ entry (anysda-entry-mgmt) в authorized_keys"
+fi
+
+# VPN2-47: значения пишем в свой drop-in 00-anysda.conf. sshd берёт ПЕРВОЕ
+# встреченное значение, а sshd_config.d/*.conf подключается в начале
+# sshd_config: правка только основного файла проигрывала 50-cloud-init.conf
+# с PasswordAuthentication yes. 00- идёт раньше 50-, поэтому побеждает.
+# Основной файл правим тоже — на случай sshd без Include sshd_config.d.
+SSHD_DROPIN=/etc/ssh/sshd_config.d/00-anysda.conf
+mkdir -p /etc/ssh/sshd_config.d
+write_sshd_auth() {  # $1 = yes|no — парольный вход
+  local root_login=prohibit-password
+  [[ "$1" == yes ]] && root_login=yes
+  printf '%s\n' \
+    "# anysda-vpn — set by infra/scripts/00-bootstrap.sh" \
+    "PasswordAuthentication $1" \
+    "PermitRootLogin $root_login" \
+    "KbdInteractiveAuthentication no" > "$SSHD_DROPIN"
+  sed -i "s/^#\?PasswordAuthentication.*/PasswordAuthentication $1/" "$SSHD"
+  sed -i "s/^#\?PermitRootLogin.*/PermitRootLogin $root_login/" "$SSHD"
+}
 if [[ -n "$ADMIN_PUBKEY" ]]; then
-  echo "[$HOST_TAG] [3/6] sshd_config: есть ключ админа — отключаю парольный вход"
-  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' "$SSHD"
-  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin prohibit-password/' "$SSHD"
+  echo "[$HOST_TAG] [3/6] sshd: есть ключ админа — отключаю парольный вход"
+  write_sshd_auth no
 else
-  echo "[$HOST_TAG] [3/6] sshd_config: ключа админа нет — оставляю PasswordAuthentication=yes (VPN2-31)"
-  sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD"
-  sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD"
+  echo "[$HOST_TAG] [3/6] sshd: ключа админа нет — оставляю PasswordAuthentication=yes (VPN2-31)"
+  write_sshd_auth yes
 fi
 sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD"
 sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "$SSHD"
@@ -131,7 +163,6 @@ sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "
 # за "crashed" коннект. Несколько неудачных sshpass-ов лочат source IP и весь
 # деплой встаёт. Отключаем — но только если sshd знает эту директиву
 # (на 24.04 / OpenSSH 9.6 её нет, и неизвестная опция роняет sshd).
-mkdir -p /etc/ssh/sshd_config.d
 if sshd -T 2>/dev/null | grep -qi '^persourcepenalties '; then
   printf 'PerSourcePenalties no\n' > /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
 else
@@ -140,8 +171,7 @@ fi
 if ! sshd -t 2>&1; then
   echo "[$HOST_TAG] конфиг sshd невалиден — откатываюсь"
   # safe fallback: оставляем парольный вход чтобы не запереть себя
-  sed -i 's/^PasswordAuthentication no/PasswordAuthentication yes/' "$SSHD"
-  sed -i 's/^PermitRootLogin prohibit-password/PermitRootLogin yes/' "$SSHD"
+  write_sshd_auth yes
   rm -f /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
   exit 1
 fi
@@ -151,7 +181,10 @@ systemctl reload ssh
 # 4. ufw firewall — role-specific
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/6] ufw"
-ufw --force reset >/dev/null
+# VPN2-41: без `ufw --force reset`. Он стирал порты, которые открывают
+# стадии 27/28/29/30 (IKEv2, WireGuard, OpenVPN, HTTPS панели): повторный
+# 00-bootstrap отрезал всех клиентов. `ufw allow` на уже существующее правило
+# ничего не добавляет, так что повтор стадии идемпотентен.
 ufw default deny incoming
 ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'
@@ -173,6 +206,9 @@ case "$HOST_TAG" in
     ;;
 esac
 ufw --force enable
+# VPN2-33: без журнала. Иначе каждый пакет сканера портов — строка
+# [UFW BLOCK] в kern.log и журнале, это лишняя запись на медленный диск.
+ufw logging off >/dev/null
 ufw status verbose | sed "s/^/[$HOST_TAG]   /"
 
 # ----------------------------------------------------------------------------

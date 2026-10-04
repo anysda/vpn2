@@ -124,8 +124,8 @@ if ! /usr/local/bin/sing-box check -c /etc/sing-box/config-base.json; then
   echo "[$HOST_TAG] конфиг невалиден — сервис не трогаю"
   exit 1
 fi
-cp /etc/sing-box/config-base.json /etc/sing-box/config.json
-chmod 600 /etc/sing-box/config.json
+# config.json (база + ручные маршруты панели) собирается в шаге 6, и sing-box
+# перезапускается один раз уже на нём (VPN2-52).
 
 # ----------------------------------------------------------------------------
 # 5. systemd service для sing-box
@@ -174,9 +174,6 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable sing-box >/dev/null 2>&1
-systemctl restart sing-box
-sleep 2
-systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
 # clash-api слушает 10.99.0.1:9090 — это lo-алиас на самой entry, наружу не
 # торчит. Снимаем legacy mesh-правило ufw (mesh снят, служебный трафик ушёл на
@@ -198,6 +195,10 @@ echo "[$HOST_TAG] [6/6] sing-box manual-routes watcher"
 cat > /usr/local/sbin/anysda-apply-routes.py << 'PYEOF'
 #!/usr/bin/env python3
 import ipaddress, json, subprocess, sys, tempfile, os
+
+# --no-restart: только собрать config.json (стадия 20 перезапускает sing-box
+# сама, один раз на итоговом конфиге).
+NO_RESTART = '--no-restart' in sys.argv[1:]
 
 MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
 SB_CONFIG     = '/etc/sing-box/config.json'
@@ -250,7 +251,8 @@ new_body = json.dumps(cfg, indent=2)
 # упирался в StartLimitBurst и укладывал .service в failed (см. VPN2-5).
 try:
     if open(SB_CONFIG).read() == new_body:
-        print(f'{len(manual_rules)} manual route(s), конфиг не изменился — sing-box не трогаю')
+        tail = 'config.json уже собран' if NO_RESTART else 'конфиг не изменился — sing-box не трогаю'
+        print(f'{len(manual_rules)} manual route(s), {tail}')
         sys.exit(0)
 except FileNotFoundError:
     pass
@@ -265,7 +267,11 @@ except subprocess.CalledProcessError as e:
     os.unlink(tmp_path)
     print(f'Config check failed: {e}: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
     sys.exit(1)
+os.chmod(SB_CONFIG, 0o600)
 
+if NO_RESTART:
+    print(f'{len(manual_rules)} manual route(s), config.json собран')
+    sys.exit(0)
 subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
 print(f'Applied {len(manual_rules)} manual route(s), sing-box restarted')
 PYEOF
@@ -309,9 +315,16 @@ systemctl daemon-reload
 systemctl enable anysda-apply-routes.path >/dev/null 2>&1
 systemctl start  anysda-apply-routes.path
 
-# Derive config.json = fresh config-base.json + current manual routes and
-# restart sing-box, so a re-run immediately reflects the regenerated base.
-/usr/local/sbin/anysda-apply-routes.py || true
+# config.json = свежая config-base.json + ручные маршруты панели, затем ОДИН
+# рестарт sing-box уже на итоговом конфиге (раньше было два: на голой базе,
+# которая на секунды сносила ручные маршруты, и ещё один из apply-routes).
+if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+  echo "[$HOST_TAG]   ⚠ ручные маршруты не применились — sing-box поднимаю на базовом конфиге"
+  install -m 600 /etc/sing-box/config-base.json /etc/sing-box/config.json
+fi
+systemctl restart sing-box
+sleep 2
+systemctl status sing-box --no-pager -n 4 | head -6 | sed "s/^/[$HOST_TAG]   /"
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

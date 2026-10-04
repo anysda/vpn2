@@ -424,6 +424,12 @@ run_stage_on_host() {
     fi
   fi
 
+  # 22-adguard берёт из генератора апстрим YouTube -> российский резолвер:
+  # список доменов и адрес резолвера живут только в gen-router-config.py.
+  if [[ "$stage" == "22-adguard" ]]; then
+    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py"
+  fi
+
   if [[ "$stage" == "21-failover-watchdog" ]]; then
     local wd="$DEPLOY_ROOT/lib/failover-watchdog.py"
     [[ -f "$wd" ]] || die "lib/failover-watchdog.py не найден"

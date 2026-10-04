@@ -45,6 +45,7 @@ const makeOidcHandler = () => defineOAuthOidcEventHandler({
           username: user.username,
           totpEnabled: !!user.totpSecret,
           via: 'sso',
+          sv: user.sessionVersion,
         },
       })
       log.info({ sub, username: user.username }, 'sso: вход через Authentik')

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -20,6 +20,10 @@ export const users = sqliteTable('users', {
   // меняет сам, почта в панели и в IdP расходится, а auto-link по почте — это
   // вектор захвата. null — учётка к SSO не привязана.
   oidcSub: text('oidc_sub').unique(),
+  // Поколение сессий: кладётся в cookie при входе и сверяется в requireAuth.
+  // Смена пароля и вкл/выкл TOTP его увеличивают — все прежние сессии
+  // (cookie без состояния, отозвать их иначе нечем) получают 401.
+  sessionVersion: integer('session_version').notNull().default(0),
   ...timestamps,
 })
 
@@ -79,6 +83,10 @@ export const devices = sqliteTable('devices', {
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),
+  // Адрес туннеля один на устройство: без UNIQUE два параллельных создания
+  // выбирали один и тот же свободный адрес (VPN2-50).
+  uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
+  uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
 ])
 
 export const routes = sqliteTable('routes', {

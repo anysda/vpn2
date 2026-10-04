@@ -3,11 +3,13 @@ import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
-import { eq } from 'drizzle-orm'
-import { useDb } from '../database/client'
+import { and, eq, isNull } from 'drizzle-orm'
+import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { wgAllowedIps } from './allowed-ips'
 import { isClientActive } from './client-status'
+import { coalesceRuns } from './coalesce'
+
 
 const exec = promisify(execFile)
 
@@ -177,46 +179,60 @@ export async function loadServerKeys(): Promise<{ privateKey: string, publicKey:
 /**
  * Ensure the given DEVICE has WG keys + an IP. If missing, fill them in and
  * persist. Returns the (possibly newly-populated) device record.
+ *
+ * Адрес выбирается по снимку занятых, а между снимком и записью параллельный
+ * запрос может занять тот же. Защита — UNIQUE на devices.wg_ip: проигравший
+ * получает конфликт и берёт следующий свободный (VPN2-50). Запись условная
+ * (адрес у строки ещё тот, что мы прочли), чтобы параллельный вызов для того
+ * же устройства не перетёр уже выданные ключи.
  */
 export async function ensureDeviceWg(deviceId: number) {
   const db = useDb()
-  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-  if (!row) throw new Error(`device ${deviceId} not found`)
+  for (let attempt = 1; ; attempt++) {
+    const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+    if (!row) throw new Error(`device ${deviceId} not found`)
 
-  if (row.wgPrivateKey && row.wgPublicKey && row.wgPresharedKey && row.wgIp) return row
+    if (row.wgPrivateKey && row.wgPublicKey && row.wgPresharedKey && row.wgIp) return row
 
-  const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
-  const kp = generateWgKeypair()
-  const psk = generateWgPresharedKey()
-  const ip = nextAvailableWgIp(all.map(r => r.ip))
+    const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
+    const kp = generateWgKeypair()
+    const psk = generateWgPresharedKey()
+    const ip = row.wgIp ?? nextAvailableWgIp(all.map(r => r.ip))
 
-  const [updated] = await db
-    .update(devicesTable)
-    .set({
-      wgPrivateKey: row.wgPrivateKey ?? kp.privateKey,
-      wgPublicKey: row.wgPublicKey ?? kp.publicKey,
-      wgPresharedKey: row.wgPresharedKey ?? psk,
-      wgIp: row.wgIp ?? ip,
-      updatedAt: new Date(),
-    })
-    .where(eq(devicesTable.id, deviceId))
-    .returning()
-  return updated
+    try {
+      const [updated] = await db
+        .update(devicesTable)
+        .set({
+          wgPrivateKey: row.wgPrivateKey ?? kp.privateKey,
+          wgPublicKey: row.wgPublicKey ?? kp.publicKey,
+          wgPresharedKey: row.wgPresharedKey ?? psk,
+          wgIp: ip,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(devicesTable.id, deviceId),
+          row.wgIp ? eq(devicesTable.wgIp, row.wgIp) : isNull(devicesTable.wgIp),
+        ))
+        .returning()
+      if (updated) return updated
+      // Строку успел дописать параллельный вызов — перечитываем.
+    }
+    catch (err) {
+      if (!isUniqueViolation(err)) throw err
+    }
+    if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять адрес WG`)
+  }
 }
 
 /** Перевыпуск WG-ключей девайса: новый keypair + PSK, IP сохраняется. */
 export async function reissueDeviceWg(deviceId: number) {
   const db = useDb()
-  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-  if (!row) throw new Error(`device ${deviceId} not found`)
+  // Адреса ещё нет — занимаем его тем же путём, что и при выдаче (с повтором
+  // при конфликте), ключи ниже всё равно перевыпускаются.
+  const row = await ensureDeviceWg(deviceId)
 
   const kp = generateWgKeypair()
   const psk = generateWgPresharedKey()
-  let ip = row.wgIp
-  if (!ip) {
-    const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
-    ip = nextAvailableWgIp(all.map(r => r.ip))
-  }
 
   const [updated] = await db
     .update(devicesTable)
@@ -224,7 +240,7 @@ export async function reissueDeviceWg(deviceId: number) {
       wgPrivateKey: kp.privateKey,
       wgPublicKey: kp.publicKey,
       wgPresharedKey: psk,
-      wgIp: ip,
+      wgIp: row.wgIp,
       updatedAt: new Date(),
     })
     .where(eq(devicesTable.id, deviceId))
@@ -237,7 +253,7 @@ export async function reissueDeviceWg(deviceId: number) {
  * A device's peer is included only if its client is active (not frozen and
  * not expired). Call after any change touching devices or client status.
  */
-export async function syncWireguardConfig(): Promise<void> {
+async function syncWireguardConfigOnce(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.wgEnabled) return
 
@@ -277,3 +293,6 @@ export async function syncWireguardConfig(): Promise<void> {
     peers,
   })
 }
+
+/** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */
+export const syncWireguardConfig = coalesceRuns(syncWireguardConfigOnce)

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { requireAuth } from '../../utils/auth'
 import { createClient } from '../../utils/client-ops'
-import { zodBody } from '../../utils/validate'
+import { readBodyAs } from '../../utils/validate'
 
 // Создание клиента: имя, фильтрация, срок действия, лимит девайсов.
 // Девайсы добавляются потом, в модалке. Пароль генерится автоматически.
@@ -14,6 +14,6 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
   return createClient(body)
 })

@@ -140,6 +140,15 @@ test.describe('маршрутизация', () => {
     await expect(input).toHaveValue('not a domain')
   })
 
+  // VPN2-69: битое тело h3 отвечал английским «Invalid JSON body», и бот
+  // пересылал его в Telegram как есть.
+  test('битый JSON в запросе — ответ по-русски с кодом в statusMessage', async ({ page }) => {
+    await openRoutes(page)
+    const r = await page.request.post('/api/routes', { headers: { 'content-type': 'application/json' }, data: Buffer.from('{"value": ') })
+    expect(r.status()).toBe(400)
+    expect(await r.json()).toMatchObject({ statusMessage: 'invalid_json', message: 'Запрос не в формате JSON' })
+  })
+
   // VPN2-67: русский текст ошибки шёл в statusMessage, а h3 и Caddy оставляют
   // от него в строке статуса латиницу или «Conflict». Тост обязан показать
   // текст сервера дословно.

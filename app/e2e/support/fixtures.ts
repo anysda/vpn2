@@ -97,7 +97,10 @@ export async function hydrated(page: Page) {
   await page.waitForLoadState('networkidle')
 }
 
-/** Тост Nuxt UI: reka ToastRoot — li внутри ol области уведомлений. */
+/**
+ * Тост Nuxt UI: reka ToastRoot — li внутри ol области уведомлений. Открытая
+ * модалка прячет соседей через aria-hidden, поэтому область ищется и скрытой.
+ */
 export function toast(page: Page, title: string | RegExp) {
-  return page.getByRole('region').locator('ol > li').filter({ hasText: title }).first()
+  return page.getByRole('region', { includeHidden: true }).locator('ol > li').filter({ hasText: title }).first()
 }

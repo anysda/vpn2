@@ -4,7 +4,7 @@ import { useDb } from '../../../database/client'
 import { users } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
-import { zodBody } from '../../../utils/validate'
+import { readBodyAs } from '../../../utils/validate'
 
 const Body = z.object({ code: z.string().min(6).max(8) })
 
@@ -13,7 +13,7 @@ const Body = z.object({ code: z.string().min(6).max(8) })
 // Только после этого следующий логин начинает требовать TOTP.
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
 
   const sess = await getUserSession(event)
   const pending = sess.secure?.pendingTotpSecret
@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'totp_not_initiated' })
   }
   if (!verifyTotpToken(body.code, pending)) {
-    throw createError({ statusCode: 401, statusMessage: 'invalid_totp' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_totp', message: 'Код не подошёл' })
   }
 
   const db = useDb()

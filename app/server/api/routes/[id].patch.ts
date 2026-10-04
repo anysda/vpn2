@@ -4,7 +4,7 @@ import { useDb } from '../../database/client'
 import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { syncRoutesFile } from '../../utils/routes-sync'
-import { zodBody } from '../../utils/validate'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({ outbound: z.string().min(1).max(64) })
 
@@ -15,7 +15,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
 
-  const body = await readValidatedBody(event, zodBody(Body))
+  const body = await readBodyAs(event, Body)
   const db = useDb()
 
   const [row] = await db

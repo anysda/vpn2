@@ -5,6 +5,7 @@ import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { assertKnownOutbound } from '../../utils/route-outbound'
 import { detectRouteType, syncRoutesFile } from '../../utils/routes-sync'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
   value: z.string().min(1).max(255),
@@ -13,12 +14,12 @@ const Body = z.object({
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
 
   const value = body.value.trim()
   const type = detectRouteType(value)
   if (!type) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_value (expected domain or ipv4/cidr)' })
+    throw createError({ statusCode: 400, statusMessage: 'invalid_value', message: 'Нужен домен или IPv4/CIDR' })
   }
 
   await assertKnownOutbound(body.outbound)
@@ -28,7 +29,7 @@ export default defineEventHandler(async (event) => {
   // can't be matched on err.message; a SELECT is the reliable way to 409.
   const dup = await db.select({ id: routes.id }).from(routes).where(eq(routes.value, value)).limit(1)
   if (dup.length > 0) {
-    throw createError({ statusCode: 409, statusMessage: `Правило «${value}» уже существует` })
+    throw createError({ statusCode: 409, statusMessage: 'route_exists', message: `Правило «${value}» уже существует` })
   }
 
   const [row] = await db

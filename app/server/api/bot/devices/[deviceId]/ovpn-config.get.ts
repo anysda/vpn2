@@ -15,10 +15,10 @@ export default defineEventHandler(async (event) => {
   }
 
   const cfg = useRuntimeConfig()
-  if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'OpenVPN выключен' })
+  if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'ovpn_disabled', message: 'OpenVPN выключен' })
   const endpoint = String(cfg.ovpnPublicHost || '')
   if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'ovpn_public_host_not_configured' })
-  if (!(await caReady())) throw createError({ statusCode: 503, statusMessage: 'OpenVPN CA не готов' })
+  if (!(await caReady())) throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (стадия 29-openvpn)' })
 
   const client = await clientByChat(chatId)
   const db = useDb()

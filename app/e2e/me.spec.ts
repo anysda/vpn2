@@ -1,7 +1,8 @@
 import { ADMIN_PASSWORD, ADMIN_USER, expect, hydrated, loginApi, loginUi, test, toast } from './support/fixtures'
 
 test.describe('страница «Я»', () => {
-  test('логин виден, смена пароля проверяет поля, меняет и возвращает пароль', async ({ page }) => {
+  test('логин виден, смена пароля проверяет поля, меняет и возвращает пароль', async ({ page, guard }) => {
+    guard.allow(401, /\/api\/auth\/password$/, 'POST')
     await loginApi(page)
     await page.goto('/')
     await hydrated(page)
@@ -29,6 +30,14 @@ test.describe('страница «Я»', () => {
     await expect(toast(page, 'Пароль должен быть ≥ 8 символов')).toBeVisible()
 
     const temp = `${ADMIN_PASSWORD}-e2e`
+    // VPN2-69: неверный текущий пароль показывался голым «invalid_current_password».
+    await cur.fill(`${ADMIN_PASSWORD}-wrong`)
+    await next.fill(temp)
+    await again.fill(temp)
+    await save.click()
+    await expect(toast(page, 'Ошибка').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
+    await cur.fill(ADMIN_PASSWORD)
+
     let changed = false
     try {
       await next.fill(temp)

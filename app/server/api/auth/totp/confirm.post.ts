@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../database/client'
+import { readBodyAs } from '../../../utils/validate'
 import { users } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
 import { verifyTotpToken } from '../../../utils/totp'
@@ -12,7 +13,7 @@ const Body = z.object({ code: z.string().min(6).max(8) })
 // Только после этого следующий логин начинает требовать TOTP.
 export default defineEventHandler(async (event) => {
   const u = await requireAuth(event)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
 
   const sess = await getUserSession(event)
   const pending = sess.secure?.pendingTotpSecret

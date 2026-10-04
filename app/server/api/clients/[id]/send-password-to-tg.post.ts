@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
 
   const cfg = useRuntimeConfig()
   const secret = String(cfg.tgbotSecret ?? '')
-  if (!secret) throw createError({ statusCode: 503, statusMessage: 'Telegram-бот не настроен' })
+  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
 
   const db = useDb()
   const [client] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
   catch (e) {
     throw createError({
       statusCode: 502,
-      statusMessage: 'Бот не отвечает — проверь /api/admin/telegram',
+      statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram',
       cause: e,
     })
   }

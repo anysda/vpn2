@@ -5,6 +5,7 @@ import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { assertKnownOutbound } from '../../utils/route-outbound'
 import { syncRoutesFile } from '../../utils/routes-sync'
+import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({ outbound: z.string().min(1).max(64) })
 
@@ -15,7 +16,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
 
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
   await assertKnownOutbound(body.outbound)
   const db = useDb()
 

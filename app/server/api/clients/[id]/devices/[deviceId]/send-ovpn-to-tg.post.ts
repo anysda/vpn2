@@ -15,15 +15,15 @@ export default defineEventHandler(async (event) => {
   }
 
   const cfg = useRuntimeConfig()
-  if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'OpenVPN выключен' })
+  if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'ovpn_disabled', message: 'OpenVPN выключен' })
   const endpoint = String(cfg.ovpnPublicHost || '')
   if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'ovpn_public_host_not_configured' })
 
   const secret = String(cfg.tgbotSecret ?? '')
-  if (!secret) throw createError({ statusCode: 503, statusMessage: 'Telegram-бот не настроен' })
+  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
 
   if (!(await caReady())) {
-    throw createError({ statusCode: 503, statusMessage: 'OpenVPN CA ещё не инициализирован (29-openvpn)' })
+    throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (стадия 29-openvpn)' })
   }
 
   const db = useDb()
@@ -59,7 +59,7 @@ export default defineEventHandler(async (event) => {
   catch (e) {
     throw createError({
       statusCode: 502,
-      statusMessage: 'Бот не отвечает — проверь /api/admin/telegram',
+      statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram',
       cause: e,
     })
   }

@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
+import { readBodyAs } from '../../utils/validate'
 import { users } from '../../database/schema'
 import { verifyAdminPassword } from '../../utils/auth'
 import { rateLimitClear, rateLimitGuard, rateLimitRecordFailure } from '../../utils/rate-limit'
@@ -23,10 +24,10 @@ export default defineEventHandler(async (event) => {
   // NUXT_SSO_PASSWORD_LOGIN=false рубит его наглухо — осознанно и отдельным
   // рычагом, чтобы это нельзя было сделать «заодно».
   if (!ssoSettings().passwordLogin) {
-    throw createError({ statusCode: 403, statusMessage: 'password_login_disabled' })
+    throw createError({ statusCode: 403, statusMessage: 'password_login_disabled', message: 'Вход по паролю отключён' })
   }
   rateLimitGuard(event, RL)
-  const body = await readValidatedBody(event, Body.parse)
+  const body = await readBodyAs(event, Body)
   const db = useDb()
   const [user] = await db
     .select()
@@ -36,7 +37,7 @@ export default defineEventHandler(async (event) => {
 
   if (!user || !(await verifyAdminPassword(user.passwordHash, body.password))) {
     rateLimitRecordFailure(event, RL)
-    throw createError({ statusCode: 401, statusMessage: 'invalid_credentials' })
+    throw createError({ statusCode: 401, statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
   }
 
   if (user.totpSecret) {
@@ -48,7 +49,7 @@ export default defineEventHandler(async (event) => {
       // Один и тот же statusMessage для password/TOTP — убирает password-oracle
       // из M4. Бэкенду все равно, какой фактор сломан; клиент UX тоже опирается
       // на needsTotp/ok, а не на текст ошибки.
-      throw createError({ statusCode: 401, statusMessage: 'invalid_credentials' })
+      throw createError({ statusCode: 401, statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
     }
   }
 

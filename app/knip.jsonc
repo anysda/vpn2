@@ -1,5 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Сквозные тесты (e2e/*.spec.ts) knip берёт сам через плагин playwright.
+  // Подставные VictoriaMetrics и clash API e2e/run-local.sh копирует в контейнер
+  // панели по пути и запускает node, импорта нет.
+  "entry": ["e2e/support/fake-backends.mjs"],
+  // Суффикс ! — шаблон для --production. Там тесты не входы, и e2e/support
+  // выглядел бы мёртвым; без ! у первого шаблона прод-прогон не видит ни одного файла.
+  "project": ["**/*.{js,mjs,cjs,ts,mts,cts,vue,css}!", "!e2e/**!"],
   "ignoreDependencies": [
     // @nuxt/icon (из @nuxt/ui, режим local) берёт коллекцию по имени иконки
     // в шаблонах: i-lucide-copy, i-lucide-x и т.д. Импорта в коде нет.
@@ -12,6 +19,9 @@
     // server/utils/{auth,bot-api,rate-limit}.ts: import type { H3Event } from 'h3'.
     // Пакет приносит Nitro, Nuxt разрешает его через paths в .nuxt/tsconfig.json;
     // автоимпорт отдаёт H3Event только значением, тип нужен явным импортом.
-    "h3"
+    "h3",
+    // Скрипт typecheck = `nuxt typecheck`, а тот запускает vue-tsc из
+    // node_modules сам; ни скрипта, ни импорта с этим именем нет.
+    "vue-tsc"
   ]
 }

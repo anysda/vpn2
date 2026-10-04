@@ -552,12 +552,28 @@ _current_port() {
   ( source "$DEPLOY_ROOT/envs/all.env"; eval "echo \${${upper}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT:-443}}" )
 }
 
+# Перекатывает порт экзита на нодах: 10-foreign на экзите, свежие секреты и
+# сертификаты с экзитов (prep_ru_router), 20-ru-router на entry. Без prep
+# entry собирался со старыми секретами — ротация не проходила никогда, а
+# `>/dev/null || true` это прятал (VPN2-40). Вывод — в лог, на ошибке хвост.
+_redeploy_exit_port() {
+  local tag="$1" log="$2"
+  if ( run_stage_on_host 10-foreign "$tag" && prep_ru_router && run_stage_on_host 20-ru-router ru ) >"$log" 2>&1; then
+    return 0
+  fi
+  printf '%b    ✗ перекатка %s упала, полный вывод: %s%b\n' "$C_R" "$tag" "$log" "$C_END"
+  tail -n 5 "$log" | sed 's/^/      /'
+  return 1
+}
+
 verify_and_rotate_ports() {
   printf '%b==>%b verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n' "$C_B" "$C_END"
   local t0; t0=$(date +%s)
   local exits; exits=$(exit_tags)
   local rotated_any=0
   local fully_dead=()     # tags, у которых ВЕСЬ UDP-путь RU↔exit фильтруется
+  local state_dir="$DEPLOY_ROOT/state"
+  mkdir -p "$state_dir"
 
   for tag in $exits; do
     local delay current
@@ -598,10 +614,9 @@ verify_and_rotate_ports() {
       tries=$((tries + 1))
       [[ $tries -gt $max_tries ]] && break
       printf '    → пробую hy2 :%s ' "$port"
-      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "$port" >/dev/null || true
-      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null || true
-      run_stage_on_host 10-foreign    "$tag" >/dev/null 2>&1 || true
-      run_stage_on_host 20-ru-router  ru     >/dev/null 2>&1 || true
+      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "$port" >/dev/null
+      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null
+      _redeploy_exit_port "$tag" "$state_dir/rotate-${tag}-${port}.log" || continue
       sleep 4
       if delay=$(_clash_delay "$tag" direct); then
         printf '%bRTT=%sms ✓%b\n' "$C_G" "$delay" "$C_END"
@@ -613,17 +628,18 @@ verify_and_rotate_ports() {
     if [[ $found -eq 0 ]]; then
       printf '  %b⚠ hy2 rotation не подобрала рабочий порт для %s (UDP-путь есть, но\n' "$C_Y" "$tag"
       printf '    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.%b\n' "$C_END"
-      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "${HY2_DIRECT_PORT:-443}" >/dev/null 2>&1 || true
-      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null 2>&1 || true
+      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "${HY2_DIRECT_PORT:-443}" >/dev/null
+      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null
+      # Откат только в config.yaml оставлял экзит и entry на последнем
+      # кандидате — до следующего деплоя ноды и конфиг расходились.
+      _redeploy_exit_port "$tag" "$state_dir/rotate-${tag}-rollback.log" || true
     fi
   done
 
   # Persist excluded exits + регенерим envs + redeploy 20-ru-router чтобы
   # sing-box, vmagent (25-monitoring) и панель (30-frontend) увидели
   # отфильтрованный EXIT_TAGS на последующих стадиях.
-  local state_dir="$DEPLOY_ROOT/state"
   local state_file="$state_dir/excluded-exits.txt"
-  mkdir -p "$state_dir"
   if [[ ${#fully_dead[@]} -gt 0 ]]; then
     {
       echo "# Экзиты, исключённые verify_and_rotate_ports."

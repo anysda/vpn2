@@ -216,6 +216,8 @@ MARK='0x42'
 TABLE=101
 PREF=32765
 TPROXY_PORT=7898
+MSS=1340
+MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
 
 if [[ "$ACTION" == "up" ]]; then
   # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
@@ -227,12 +229,20 @@ if [[ "$ACTION" == "up" ]]; then
     ip rule del pref "$p" fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
   done
   ip route show table "$TABLE" 2>/dev/null | grep 'local default' >/dev/null || \
-    ip route add local 0.0.0.0/0 dev lo table "$TABLE"
+    ip route replace local 0.0.0.0/0 dev lo table "$TABLE"
 
   iptables -t mangle -N ANYSDA_OVPN_TPROXY 2>/dev/null || true
   iptables -t mangle -F ANYSDA_OVPN_TPROXY
   # DNS to AdGuard (entry mgmt IP) must be delivered locally, not TPROXY'd.
   iptables -t mangle -A ANYSDA_OVPN_TPROXY -d 10.99.0.1 -j RETURN
+  # MSS режем сами: при DCO (ядро ovpn) mssfix не работает, клиент на
+  # DCO шлёт MSS 1460, sing-box отвечает полными сегментами, туннельный
+  # UDP выходит за 1500, фрагменты теряются в пути - HTTPS виснет.
+  # 1340 = путь с MTU 1440 минус оверхед OpenVPN и TCP/IP.
+  iptables -t mangle -A ANYSDA_OVPN_TPROXY -p tcp --tcp-flags SYN,RST SYN \
+    -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS"
+  iptables -t mangle -C POSTROUTING -o "$TUN_IF" "${MSS_OUT[@]}" 2>/dev/null || \
+    iptables -t mangle -A POSTROUTING -o "$TUN_IF" "${MSS_OUT[@]}"
   iptables -t mangle -A ANYSDA_OVPN_TPROXY -p tcp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
   iptables -t mangle -A ANYSDA_OVPN_TPROXY -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
 
@@ -246,6 +256,7 @@ if [[ "$ACTION" == "up" ]]; then
 
 elif [[ "$ACTION" == "down" ]]; then
   iptables -t mangle -D PREROUTING -i "$TUN_IF" -j ANYSDA_OVPN_TPROXY 2>/dev/null || true
+  iptables -t mangle -D POSTROUTING -o "$TUN_IF" "${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_OVPN_TPROXY 2>/dev/null || true
   iptables -t mangle -X ANYSDA_OVPN_TPROXY 2>/dev/null || true
 fi

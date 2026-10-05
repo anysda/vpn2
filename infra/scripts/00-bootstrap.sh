@@ -120,12 +120,14 @@ rm -f "$KEYSRC"
 # кладёт deploy.sh, см. prep_entry_mgmt_key). Опознаём по комментарию:
 # прежний ключ entry снимаем, текущий ставим один раз, поэтому повтор
 # стадии не плодит строки, а пересозданная entry вытесняет старый ключ.
+# Ключ приходит только через hy2-mgmt-in, а он отдаёт соединение sshd с
+# 127.0.0.1: from= не пускает этот ключ с публичного адреса экзита.
 ENTRY_KEY=/tmp/anysda/entry_mgmt_key
 if [[ "$HOST_TAG" != ru && -s "$ENTRY_KEY" ]]; then
   mkdir -p /root/.ssh && chmod 700 /root/.ssh
   touch /root/.ssh/authorized_keys
   { awk '$NF != "anysda-entry-mgmt"' /root/.ssh/authorized_keys
-    head -n1 "$ENTRY_KEY"
+    printf 'from="127.0.0.1,::1" %s\n' "$(head -n1 "$ENTRY_KEY")"
   } > /root/.ssh/authorized_keys.new
   mv /root/.ssh/authorized_keys.new /root/.ssh/authorized_keys
   chmod 600 /root/.ssh/authorized_keys

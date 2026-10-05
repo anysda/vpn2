@@ -201,8 +201,10 @@ case "$HOST_TAG" in
     ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'
     # Служебный hy2-туннель (скрейп node_exporter из-за границы вместо WG-mesh).
     ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt'
-    ufw allow 80/tcp                   comment 'caddy decoy (HTTP)'
-    ufw allow 443/tcp                  comment 'caddy decoy (TLS handshake)'
+    # Caddy-обманки на экзитах нет, а 80/443 tcp открывались под неё:
+    # снимаем правила с нод, поставленных раньше.
+    ufw delete allow 80/tcp  >/dev/null 2>&1 || true
+    ufw delete allow 443/tcp >/dev/null 2>&1 || true
     ;;
 esac
 ufw --force enable

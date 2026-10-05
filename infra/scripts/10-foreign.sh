@@ -3,7 +3,7 @@
 # Provisions:
 #   - wgcf: register Cloudflare WARP, generate wg profile
 #   - sing-box: install binary, 2 Hysteria2 inbounds (direct + warp)
-#                with built-in ACME (HTTP-01 on :80 for TLS cert)
+#                с самоподписанным TLS-сертификатом (entry пинит его)
 #   - systemd unit
 # Orchestrator must push: /etc/anysda/sing-box.json (rendered)
 #                         /etc/anysda/clash-secret.txt (rendered)

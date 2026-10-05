@@ -53,7 +53,16 @@ RU_CLASH_SECRET=$(cat /etc/anysda/clash-secret.txt)
 
 FS=/tmp/anysda/foreign-secrets.env
 [[ -f "$FS" ]] || { echo "[$HOST_TAG] $FS не найден — оркестратор должен был его загрузить"; exit 1; }
-source "$FS"
+# Не source: значения пришли с экзитов. Берём только TAG_KEY=пароль в
+# алфавите gen_pwd из 10-foreign, на остальном стадия падает.
+while IFS= read -r _line || [[ -n "$_line" ]]; do
+  [[ -z "$_line" ]] && continue
+  if [[ ! "$_line" =~ ^([A-Z0-9]+_(DIRECT|WARP|OBFS|MGMT|CLASH))=([A-Za-z0-9+/]{16,128})$ ]]; then
+    echo "[$HOST_TAG] в $FS чужая строка (${_line%%=*}) — экзит отдал не пароль, стадию прерываю"
+    exit 1
+  fi
+  printf -v "${BASH_REMATCH[1]}" '%s' "${BASH_REMATCH[3]}"
+done < "$FS"
 
 # Проверяем, что для каждой выходной ноды есть все нужные секреты
 for _t in $EXIT_TAGS; do

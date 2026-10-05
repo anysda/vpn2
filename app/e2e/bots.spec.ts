@@ -42,4 +42,32 @@ test.describe('настройки Telegram', () => {
     const st = await (await page.request.get('/api/admin/telegram')).json()
     expect(st.admin_username).toBe(original)
   })
+  // Бейдж — по /health бота, а не по открытому порту: бот с отвергнутым
+  // токеном держит порт, но не отвечает (подставной бот в fake-backends так же).
+  test('бейдж бота: принятый токен — ОНЛАЙН, отвергнутый — ОФФЛАЙН', async ({ page }) => {
+    await openHome(page)
+    const before = await (await page.request.get('/api/admin/telegram')).json()
+    test.skip(before.configured, 'на стенде настоящий токен — маска не даст его вернуть')
+    const card = botsCard(page)
+    const setToken = async (bot_token: string, chat_id: string) => {
+      const res = await page.request.put('/api/admin/telegram', { data: { bot_token, chat_id } })
+      expect(res.ok()).toBe(true)
+    }
+    try {
+      await setToken('123456789:E2E_ACCEPTED_aaaaaaaaaaaaaaaaaaaaaaaaaa', '123456789')
+      await page.reload()
+      await expect(card.getByText('ОНЛАЙН', { exact: true })).toBeVisible()
+      expect((await (await page.request.get('/api/admin/telegram')).json()).running).toBe(true)
+
+      await setToken('123456789:E2E_REJECTED_bbbbbbbbbbbbbbbbbbbbbbbbbb', '123456789')
+      await page.reload()
+      await expect(card.getByText('ОФФЛАЙН', { exact: true })).toBeVisible()
+      expect((await (await page.request.get('/api/admin/telegram')).json()).running).toBe(false)
+    }
+    finally {
+      await setToken('', String(before.chat_id ?? ''))
+    }
+    await page.reload()
+    await expect(card.getByText('НЕНАСТРОЕН', { exact: true })).toBeVisible()
+  })
 })

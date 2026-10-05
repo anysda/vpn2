@@ -1,6 +1,7 @@
 // Подставные VictoriaMetrics (:8428) и clash API sing-box (:9090) для локального
 // прогона e2e. Запускается внутри контейнера панели, поэтому слушает только
 // 127.0.0.1. Ноды и выходы — из тех же NUXT_MGMT_IPS / NUXT_EXIT_TAGS, что у панели.
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 
 const mgmt = Object.fromEntries(
@@ -59,6 +60,25 @@ function notFound(res) {
   res.end()
 }
 
+// Бот (:8877): токен с E2E_ACCEPTED Telegram «принял» — /health 200. Любой
+// другой «отвергнут»: настоящий бот тогда ждёт исправления токена, порт открыт,
+// но HTTP никто не отвечает. Так и здесь — соединение принято и молчит.
+function bot(req, res) {
+  let token = ''
+  try {
+    token = JSON.parse(readFileSync('/etc/anysda/telegram-runtime.json', 'utf8')).bot_token || ''
+  }
+  catch {
+    // файла ещё нет — бот не настроен
+  }
+  if (token.includes('E2E_ACCEPTED')) {
+    res.writeHead(req.url === '/health' ? 200 : 404)
+    return res.end()
+  }
+  setTimeout(() => req.socket.destroy(), 5000)
+}
+
 createServer(vm).listen(8428, '127.0.0.1')
 createServer(clash).listen(9090, '127.0.0.1')
-console.log(`fake backends: vm :8428 (${instances.join(' ')}), clash :9090 (${tags.join(' ')})`)
+createServer(bot).listen(8877, '127.0.0.1')
+console.log(`fake backends: vm :8428 (${instances.join(' ')}), clash :9090 (${tags.join(' ')}), bot :8877`)

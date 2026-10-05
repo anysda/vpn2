@@ -487,7 +487,14 @@ run_stage_on_host() {
   ssh_exec "$APT_WAIT_IDLE" | sed "s/^/[$host]/"
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
-  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || return 1
+  local rc=0
+  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=1
+  # Экзиту env с адресами entry и соседей нужен только на время стадии:
+  # каждая стадия кладёт свои файлы заново. На entry /tmp/anysda не трогаем.
+  if [[ "$host" != ru ]]; then
+    ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
+  fi
+  [[ $rc -eq 0 ]] || return 1
 
   ok "[$stage → $host] done"
 }

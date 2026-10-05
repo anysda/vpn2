@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { createConnection } from 'node:net'
 
 const RUNTIME_PATH = '/etc/anysda/telegram-runtime.json'
 
@@ -40,12 +39,16 @@ export function maskToken(token: string): string {
   return `${token.slice(0, 6)}..${token.slice(-4)}`
 }
 
+// Жив = /health бота ответил 200, как у docker HEALTHCHECK. Голого TCP-connect
+// мало: с отвергнутым токеном бот ждёт перезапуска, его порт остаётся в LISTEN
+// без обработчика, ядро принимает соединение, и панель писала «ОНЛАЙН».
 export async function botRunning(): Promise<boolean> {
   const port = Number(useRuntimeConfig().tgbotEventPort ?? 8877)
-  return new Promise((resolve) => {
-    const sock = createConnection({ host: '127.0.0.1', port, timeout: 500 })
-    sock.once('connect', () => { sock.destroy(); resolve(true) })
-    sock.once('error', () => resolve(false))
-    sock.once('timeout', () => { sock.destroy(); resolve(false) })
-  })
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })
+    return res.ok
+  }
+  catch {
+    return false
+  }
 }

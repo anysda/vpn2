@@ -42,7 +42,12 @@ import sys
 #     уедет только морда, а видео пойдёт через экзит и с рекламой;
 #   • youtubei.googleapis.com — API плеера, jnn-pa — аттестация плеера: если
 #     они уходят за границу, YouTube считает клиента зарубежным и крутит
-#     рекламу, даже когда видео идёт с РФ-IP.
+#     рекламу, даже когда видео идёт с РФ-IP;
+#   • тот же список — апстрим AdGuard на RU_DNS, а AdGuard сверяет с ним имя
+#     из запроса: имя, которого тут нет, резолвит кто угодно из parallel.
+#     Поэтому сюда же youtube.googleapis.com, встроенный плеер, аватарки
+#     yt3.googleusercontent.com и yt.be. Страновые youtube.<cc> не нужны:
+#     они только редиректят на www.youtube.com.
 # ----------------------------------------------------------------------------
 YT_DOMAIN_SUFFIXES = [
     'youtube.com',
@@ -54,6 +59,10 @@ YT_DOMAIN_SUFFIXES = [
     'googlevideo.com',
     'youtubei.googleapis.com',
     'jnn-pa.googleapis.com',
+    'youtube.googleapis.com',
+    'youtubeembeddedplayer.googleapis.com',
+    'yt3.googleusercontent.com',
+    'yt.be',
 ]
 
 

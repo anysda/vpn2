@@ -157,7 +157,7 @@ exit 0
 install_prereqs() {
   printf '%b==>%b проверяю локальные зависимости\n' "$C_B" "$C_END"
   local missing=()
-  for cmd in ssh scp sshpass envsubst curl python3 rsync; do
+  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
@@ -199,7 +199,7 @@ install_prereqs() {
     systemctl enable --now docker >/dev/null 2>&1 || true
   fi
 
-  for cmd in ssh scp sshpass envsubst curl python3 rsync docker; do
+  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl docker; do
     printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
   done
 }
@@ -284,9 +284,29 @@ prep_ru_router() {
     ssh_exec 'cat /etc/ssh/ssh_host_ed25519_key.pub' \
       > "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" 2>/dev/null \
       || rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
+    # Экзит доверен меньше entry, а 20-ru-router читает этот файл от root.
+    # Пропускаем только известные ключи со значением в алфавите gen_pwd
+    # из 10-foreign; сертификат и хост-ключ должны разбираться как есть.
+    if [[ -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" ]] \
+       && ! openssl x509 -noout -in "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" 2>/dev/null; then
+      rm -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
+      die "$host отдал не PEM-сертификат в /etc/anysda/hy2-tls.crt"
+    fi
+    if [[ -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" ]] \
+       && ! ssh-keygen -lf "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" >/dev/null 2>&1; then
+      rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
+      die "$host отдал не ssh-ключ в /etc/ssh/ssh_host_ed25519_key.pub"
+    fi
+    local k v seen=0
     while IFS='=' read -r k v; do
-      [[ -n "$k" ]] && printf '%s_%s=%s\n' "$(echo "$host" | tr a-z A-Z)" "$k" "$v" >> "$sec"
+      [[ -n "$k" ]] || continue
+      case "$k" in DIRECT|WARP|OBFS|MGMT|CLASH) ;; *) die "$host отдал лишний ключ секретов: $k" ;; esac
+      [[ "$v" =~ ^[A-Za-z0-9+/]{16,128}$ ]] \
+        || die "$host: секрет $k не похож на пароль из 10-foreign (16-128 знаков A-Z a-z 0-9 + /), стадию 20 не запускаю"
+      printf '%s_%s=%s\n' "$(echo "$host" | tr a-z A-Z)" "$k" "$v" >> "$sec"
+      seen=$((seen + 1))
     done <<<"$payload"
+    [[ $seen -eq 5 ]] || die "$host отдал $seen секретов из 5"
   done
   chmod 600 "$sec"
   ok "секреты записаны в secrets/foreign-secrets.env"

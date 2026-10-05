@@ -28,8 +28,9 @@ if [[ -z ${E2E_SKIP_BUILD:-} ]]; then
 fi
 
 PASS=$(openssl rand -hex 12)
-# Зовёт trap EXIT ниже; shellcheck 0.11 при `exit $rc` в конце файла этого не видит.
-# shellcheck disable=SC2329
+# Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за
+# `exit $rc` в конце файла), 0.9-0.10 на раннере CI - SC2317 на теле функции.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
   [[ -n ${E2E_KEEP:-} ]] && { echo "контейнер $NAME оставлен, пароль admin: $PASS"; return; }
   dk rm -f "$NAME" "$NAME-caddy" >/dev/null 2>&1 || true

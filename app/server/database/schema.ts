@@ -57,6 +57,10 @@ export const clients = sqliteTable('clients', {
   // null — клиент ещё не привязал свой Telegram.
   tgChatId: integer('tg_chat_id'),
   tgUsername: text('tg_username'),
+  // Предпочитаемый экзит (тег узла, напр. «ch»). null — авто: трафик идёт по
+  // дорожкам. Пока узел выключен или мёртв — через foreign-best (переключает
+  // failover-watchdog, см. server/utils/client-prefs.ts).
+  preferredExit: text('preferred_exit'),
   ...timestamps,
 })
 

@@ -1,10 +1,39 @@
 <script setup lang="ts">
 import { useClients } from '~/composables/useClients'
 import type { ClientTraffic } from '~/composables/useClients'
+import type { Outbound } from '~/composables/useRoutes'
+import { flagFor, parseOutbound } from '~/composables/useRoutes'
 
 useHead({ title: 'anysda-vpn2' })
 
-const { clients, refresh: refreshClients } = useClients()
+const { clients, refresh: refreshClients, update: updateClient } = useClients()
+const toast = useToast()
+
+// Экзиты для выпадашки «предпочитаемый экзит» в карточках (direct-выходы, без RU).
+const { data: outboundList } = useFetch<Outbound[]>('/api/routes/outbounds', {
+  default: () => [],
+  server: false,
+})
+const exitTags = computed(() => [...new Set(
+  outboundList.value
+    .map(o => parseOutbound(o.name))
+    .filter(p => p && p.variant === 'direct' && p.tag !== 'ru')
+    .map(p => p!.tag),
+)].sort())
+
+async function setPreferredExit(id: number, tag: string | null) {
+  try {
+    await updateClient(id, { preferredExit: tag })
+    toast.add({
+      title: tag ? `Предпочитаемый экзит: ${flagFor(tag)} ${tag.toUpperCase()}` : 'Предпочитаемый экзит: авто',
+      color: 'success',
+    })
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
+  }
+}
 const search = ref('')
 
 // Сверху — кто «в сети» (трафик за 5 мин), дальше по объёму за сутки, затем по имени.
@@ -70,7 +99,9 @@ useVisibleRefresh(refreshTraffic)
               :key="client.id"
               :client="client"
               :traffic="trafficMap?.[client.id] ?? null"
+              :exits="exitTags"
               @open="openClient"
+              @prefer="setPreferredExit"
             />
           </div>
         </div>

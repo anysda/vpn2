@@ -1,12 +1,33 @@
 <script setup lang="ts">
 import type { Client, ClientTraffic } from '~/composables/useClients'
 import { expiryLabel, fmtBytes } from '~/composables/useClients'
+import { flagFor } from '~/composables/useRoutes'
 
 const props = defineProps<{
   client: Client
   traffic?: ClientTraffic | null
+  /** Теги экзитов для выпадашки предпочитаемого экзита. */
+  exits?: string[]
 }>()
-const emit = defineEmits<{ open: [id: number] }>()
+const emit = defineEmits<{ open: [id: number], prefer: [id: number, tag: string | null] }>()
+
+// Предпочитаемый экзит: «auto» — значение «авто» в USelect (null он не держит).
+const AUTO = 'auto'
+const preferItems = computed(() => [
+  { label: '🌐', value: AUTO },
+  ...(props.exits ?? []).map(t => ({ label: flagFor(t), value: t })),
+])
+const preferValue = computed(() => props.client.preferredExit ?? AUTO)
+const preferTip = computed(() => {
+  const t = props.client.preferredExit
+  return t
+    ? `Предпочитаемый экзит: ${flagFor(t)} ${t.toUpperCase()}. Если выключен или недоступен — трафик идёт по общим правилам. OpenVPN не учитывается.`
+    : 'Предпочитаемый экзит: авто (по общим правилам). Выберите флаг, чтобы клиент ходил через этот экзит, пока он доступен.'
+})
+function onPrefer(v: string) {
+  const tag = v === AUTO ? null : v
+  if (tag !== props.client.preferredExit) emit('prefer', props.client.id, tag)
+}
 
 // Live-трафик из /api/clients/traffic перекрывает снапшот rxTotal/txTotal.
 const rx = computed(() => props.traffic?.rxBytes ?? props.client.rxTotal)
@@ -60,7 +81,7 @@ const online = computed(() => props.traffic?.online ?? false)
             <UIcon name="i-simple-icons-telegram" class="size-3.5 text-[#26A5E4] shrink-0" />
           </UTooltip>
         </div>
-        <div class="text-xs text-(--ui-text-muted) flex gap-3 items-center mt-0.5">
+        <div class="text-xs text-(--ui-text-muted) flex flex-wrap gap-x-3 gap-y-0.5 items-center mt-0.5">
           <span>{{ expiryLabel(client.expiresAt) }}</span>
           <UTooltip text="Девайсы: добавлено / лимит">
             <span class="flex items-center gap-0.5">
@@ -81,10 +102,24 @@ const online = computed(() => props.traffic?.online ?? false)
             v-if="trafficTotal > 0"
             :text="`Трафик за всё время (все девайсы) · ↓ ${fmtBytes(rx)} ↑ ${fmtBytes(tx)}`"
           >
-            <span class="text-(--ui-text-dimmed)">всего {{ fmtBytes(trafficTotal) }}</span>
+            <span class="text-(--ui-text-dimmed) whitespace-nowrap">всего {{ fmtBytes(trafficTotal) }}</span>
           </UTooltip>
         </div>
       </div>
+      <UTooltip v-if="(exits ?? []).length" :text="preferTip">
+        <div class="shrink-0" @click.stop @keydown.stop>
+          <USelect
+            :model-value="preferValue"
+            :items="preferItems"
+            size="xs"
+            variant="ghost"
+            class="w-14"
+            :aria-label="`Предпочитаемый экзит клиента ${client.name}`"
+            data-testid="client-preferred-exit"
+            @update:model-value="onPrefer"
+          />
+        </div>
+      </UTooltip>
       <UBadge
         v-if="client.status === 'frozen'"
         color="neutral"

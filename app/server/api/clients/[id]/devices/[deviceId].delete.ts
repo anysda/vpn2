@@ -6,6 +6,7 @@ import { notifyClient } from '../../../../utils/bot-events'
 import { syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, killOvpnClientQuiet, ovpnCn, revokeClientCert, setCcdDisabled } from '../../../../utils/openvpn'
 import { syncIkev2, terminateIkev2Sa } from '../../../../utils/ikev2'
+import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -38,6 +39,7 @@ export default defineEventHandler(async (event) => {
       useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate-sa after device delete skipped'))
   }
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device delete failed'))
+  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
 
   // Уведомить привязанного клиента — устройство удалил администратор.
   const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)

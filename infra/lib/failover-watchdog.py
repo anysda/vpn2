@@ -46,6 +46,7 @@ type=selector (см. gen-router-config.py) — управляется через
   TG_PROBE_URL      проба Bot API через экзит      https://api.telegram.org
   TG_INTERVAL_S     период проверки Bot API, сек    30
   WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
+                    (повторный возврат за MIN_DWELL_S — не раньше стоянки)
   LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
 
 Выход бота (tg-best): Bot API (api.telegram.org) на одних экзитах режут, на
@@ -145,9 +146,14 @@ IDLE_DWELL         = float(os.environ.get('IDLE_DWELL_S', '600'))   # неакт
 RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаживание нагрузки (EWMA)
 # Дорожка, уведённая на warp своего узла (direct был мёртв), сама на direct не
 # вернётся: warp жив, узел в балансировке. Возвращаем, когда direct жив без
-# перерыва WARP_RETURN_S (не один удачный замер) и у дорожки прошла MIN_DWELL.
+# перерыва WARP_RETURN_S (не один удачный замер). Стоянку MIN_DWELL не ждём:
+# увод был аварийным (перезапуск sing-box на выходе при деплое уводил все
+# дорожки на полчаса), и чем дольше на warp, тем больше сессий успевает
+# привязаться к чужому IP. Но если дорожка уже возвращалась с warp меньше
+# MIN_DWELL назад — direct мигает, и следующий возврат ждёт полную стоянку.
 WARP_RETURN        = float(os.environ.get('WARP_RETURN_S', '600'))
 _direct_since: dict = {}  # direct-выход -> monotonic, с которого он жив без перерыва
+_lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
 # SLOW_HOLD_S подряд: вывод узла из балансировки двигает все его дорожки.
@@ -717,14 +723,17 @@ def lanes_tick(conns):
         print(f'{len(ls)} дорожек без соединений ({",".join(ls)}) — {what}', flush=True)
 
     # 1б. Возврат с warp на direct того же узла: direct жив без перерыва
-    #     WARP_RETURN и дорожка отстояла MIN_DWELL. Нагрузка узла не меняется.
+    #     WARP_RETURN; стоянку ждём, только если дорожка недавно уже
+    #     возвращалась (см. WARP_RETURN выше). Нагрузка узла не меняется.
     for l in lanes:
         tag = cur[l] or ''
         direct = targets.get(_node_of(tag), ('',))[0]
         up = t - _direct_since.get(direct, t)
+        calm = l not in _lane_back or t - _lane_back[l] >= MIN_DWELL
         if (tag.endswith('-warp') and direct.endswith('-direct') and up >= WARP_RETURN
-                and t - _lane_moved[l] >= MIN_DWELL):
+                and (calm or t - _lane_moved[l] >= MIN_DWELL)):
             _move_lane(l, direct, f'возврат с {tag}, прямой жив без перерыва {up / 60:.1f} мин', ips)
+            _lane_back[l] = t
             cur[l] = direct
 
     if t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:

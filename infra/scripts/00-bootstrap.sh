@@ -33,11 +33,32 @@ export NEEDRESTART_MODE=a   # needrestart: рестартить службы с�
 systemctl mask --now esm-cache.service >/dev/null 2>&1 || true
 
 # ----------------------------------------------------------------------------
+# 0. Автообновления Ubuntu - на паузу до конца деплоя
+# ----------------------------------------------------------------------------
+# Через минуту после загрузки apt-daily запускает unattended-upgrade, и
+# следующие стадии минутами стоят на блокировке apt. Выключаем только на время
+# деплоя, не насовсем: своей политики обновлений у узлов нет, патчи
+# безопасности ставит только unattended-upgrades. Маска --runtime живёт до
+# перезагрузки, а через час её снимает таймер, даже если деплой упал.
+echo "[$HOST_TAG] [0/6] автообновления на паузу до конца деплоя"
+APT_AUTO=(apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service)
+systemctl mask --runtime --now apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+# Уже идущий unattended-upgrade дожидаемся, а не рвём посреди dpkg: стоп
+# unattended-upgrades.service при идущем обновлении молча ждёт его сам.
+apt_wait_idle
+systemctl mask --runtime --now unattended-upgrades.service >/dev/null 2>&1 || true
+systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
+systemd-run --quiet --unit=anysda-apt-resume --on-active=1h \
+  /bin/sh -c "systemctl unmask --runtime ${APT_AUTO[*]}
+    for u in ${APT_AUTO[*]}; do if systemctl is-enabled --quiet \$u; then systemctl start \$u; fi; done" \
+  || echo "[$HOST_TAG]   таймер возврата автообновлений не поставлен, вернутся после перезагрузки"
+
+# ----------------------------------------------------------------------------
 # 1. apt update + base packages
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] apt пакеты"
-apt-get update -qq
-apt-get install -y -qq \
+apt_get update -qq
+apt_get install -y -qq \
   wireguard wireguard-tools \
   curl wget ca-certificates gnupg lsb-release \
   ufw fail2ban \

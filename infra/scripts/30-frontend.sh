@@ -128,7 +128,7 @@ if ! command -v caddy >/dev/null 2>&1; then
     "$REL_URL/caddy_${CADDY_VER}_checksums.txt" -o "$TMP/checksums.txt"
   ( cd "$TMP" && grep -E "[[:space:]]${DEB}\$" checksums.txt | sha512sum -c - ) \
     || { rm -rf "$TMP"; echo "[$HOST_TAG] caddy SHA-512 mismatch — abort" >&2; exit 1; }
-  apt-get install -y -qq "$TMP/$DEB" >/dev/null
+  apt_get install -y -qq "$TMP/$DEB" >/dev/null
   rm -rf "$TMP"
 fi
 

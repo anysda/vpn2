@@ -108,7 +108,7 @@ CADDYFILE='{
     reverse_proxy panel:51821
 }'
 dk run -d --name "$NAME-caddy" --network "$NAME" -p "127.0.0.1:$PORT:80" \
-  -e CADDYFILE="$CADDYFILE" caddy:2 \
+  -e CADDYFILE="$CADDYFILE" mirror.gcr.io/library/caddy:2 \
   sh -c 'printf "%s\n" "$CADDYFILE" > /tmp/Caddyfile && exec caddy run --adapter caddyfile --config /tmp/Caddyfile' >/dev/null
 
 for _ in $(seq 60); do

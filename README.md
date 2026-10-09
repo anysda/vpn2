@@ -81,10 +81,12 @@ WireGuard client  ·  OpenVPN client  ·  IKEv2 client (iOS/macOS/Win/Android)
  ├─ WireGuard (wg0) + OpenVPN (tun0) + strongSwan (xfrm0)
  │   iptables PREROUTING -i wg0/tun0/xfrm0 → TPROXY → sing-box :7898
  ├─ sing-box роутер
+ │   ручные правила → /etc/anysda/manual-routes.json
  │   YouTube → youtube-ru (WAN entry, РФ-IP) + метка → nfqws2-десинк
  │   geoip:ru / .ru/.рф → direct-ru (WAN entry)
+ │   клиентский VPN-IP → lane-00..31 (дорожки; экзит каждой выбирает watchdog,
+ │                       BALANCE=on — активные устройства по быстрым экзитам)
  │   остальное → foreign-best (hy2-* exit'ы; выбирает failover-watchdog)
- │   ручные правила → /etc/anysda/manual-routes.json
  ├─ nfqws2 (zapret2) — обход DPI для YouTube, только помеченный трафик
  ├─ anysda-vpn2 panel  (Caddy → :51821)
  ├─ AdGuard Home + Caddy
@@ -265,6 +267,25 @@ ssh root@<entry> 'journalctl -u anysda-yt-nfqws -n 30'
 раньше писался только факт промаха без причины, и разбор простоев упирался в
 «следов нет».
 
+**Ручное выключение экзита** — переключатель в карточке экзита в панели
+(`PATCH /api/ops/exits/:tag`) пишет `/etc/anysda/exits-disabled.json`; вотчдог
+обходит выключенный узел как мёртвый: уводит выбор сразу и рвёт его
+соединения (кроме mgmt). Последний включённый экзит выключить нельзя.
+
+**Балансировка по дорожкам** (`BALANCE=on|off` в
+`/etc/anysda/failover-watchdog.env`, переживает передеплой, по умолчанию
+`off`). Клиентские устройства разложены по 32 selector'ам `lane-NN` по VPN-IP
+(октет mod 32). Вотчдог держит каждую дорожку на «быстром» экзите
+(EWMA-задержка ≤ лучшей + 150 мс; медленным узел считается после 60 с подряд).
+Переезды — при смерти или выключении узла (сразу), при дисбалансе > 35% и
+> 5 Мбит/с (раз в 5 мин, по одной дорожке, не чаще раза в 30 мин на дорожку);
+спящие дорожки (без соединений) выравниваются тихо. `BALANCE=off` — дорожки
+повторяют `foreign-best`. Переехавшее устройство получает другой внешний IP
+для новых соединений.
+
+**Панель → Мониторинг**: по каждой ноде трафик за сутки с 00:00 МСК (↓/↑ GB по
+WAN), число активных устройств на экзите и переключатель экзита.
+
 ---
 
 ## QUIC (UDP/443) через туннель
@@ -380,11 +401,15 @@ chmod 600 /opt/anysda-vpn2/config.yaml
 # 5. Кладём свежий backup-файл (если нет в /var/backups уже) или используем S3
 ./deploy.sh backup-list                       # посмотреть что есть
 ./deploy.sh restore latest --force            # --force т.к. свежая db.sqlite не пустая после deploy
+#    restore сам пересобирает стадии 29/20/21/26/27/35/30 под восстановленные
+#    секреты /etc/anysda (без этого бот, вотчдог и management OpenVPN отваливаются)
 
 # 6. Существующие клиенты переподключаются со СВОИМИ старыми WG/OVPN-конфигами,
 #    БЕЗ перевыпуска ключей. Если CA OpenVPN или server-private-key WG не
 #    восстановились — клиенты увидят rejected handshakes; это значит backup
 #    был сделан до того, как ключи были инициализированы — пересоздавай клиентов.
+#    Если у entry сменился IP, а в конфигах клиентов он прописан напрямую, им
+#    нужны свежие конфиги; с entry.public_host (домен) хватит A-записи.
 ```
 
 `config.yaml` — **мастер-секрет файл**. Помимо backup.passphrase в нём root-пароли

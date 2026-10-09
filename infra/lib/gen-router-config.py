@@ -30,6 +30,7 @@ gen-router-config.py — генерирует sing-box конфиг роутер
 список доменов и российский резолвер жили только здесь.
 """
 
+import ipaddress
 import json
 import os
 import sys
@@ -256,6 +257,32 @@ def main():
 
     all_hy2 = direct_tags + warp_tags
 
+    # Дорожки (lanes) — балансировка активных устройств по экзитам. Устройство
+    # попадает в lane-NN по VPN-IP: последний октет mod LANES (подсети WG/OVPN/
+    # IKEv2). Каждая дорожка — selector со всеми hy2-выходами; на какой экзит
+    # её направить, решает failover-watchdog (clash-api PUT, без рестарта
+    # sing-box). Списки статические: новые устройства раскладываются сами.
+    lanes = int(os.environ.get('LANES') or 32)
+    lane_subnets = (os.environ.get('LANE_SUBNETS')
+                    or '10.66.66.0/24 10.67.67.0/24 10.68.68.0/24').split()
+    lane_ips = [[] for _ in range(lanes)]
+    for net in map(ipaddress.ip_network, lane_subnets):
+        for host in net.hosts():
+            lane_ips[int(host) % 256 % lanes].append(f'{host}/32')
+    lane_tags = [f'lane-{i:02d}' for i in range(lanes)]
+    lane_outbounds = [{
+        'type': 'selector',
+        'tag': t,
+        'outbounds': all_hy2,
+        # стартовый выбор до первого тика вотчдога — разносим по direct-выходам
+        'default': direct_tags[i % len(direct_tags)],
+        'interrupt_exist_connections': False,
+    } for i, t in enumerate(lane_tags)]
+    lane_route_rules = [
+        {'source_ip_cidr': ips, 'outbound': t}
+        for t, ips in zip(lane_tags, lane_ips) if ips
+    ]
+
     outbounds += [
         {
             'type': 'urltest',
@@ -301,7 +328,7 @@ def main():
             'interrupt_exist_connections': False,
         },
         {'type': 'block', 'tag': 'block-out'},
-    ]
+    ] + lane_outbounds
 
     # ── YouTube: правила маршрута ──────────────────────────────────────
     # Порядок в route.rules критичен: YouTube обязан стоять ВЫШЕ правила
@@ -392,7 +419,8 @@ def main():
             #   2. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)
             #   3. category-gov-ru → direct-ru (госуслуги и т.п.)
             #   4. geoip:ru / private → direct-ru (физически в РФ)
-            #   5. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
+            #   5. клиентские VPN-IP → lane-NN (selector; экзит дорожки выбирает watchdog)
+            #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
             'rules': mon_route_rules + [
                 # mon-{tag} матчатся по inbound-тегу ВЫШЕ блока 127.0.0.0/8:
@@ -409,7 +437,7 @@ def main():
                 {'domain_suffix': ['.ru', '.рф', '.su'],     'outbound': 'direct-ru'},
                 {'geosite': ['category-gov-ru'],             'outbound': 'direct-ru'},
                 {'geoip':   ['ru', 'private'],               'outbound': 'direct-ru'},
-            ],
+            ] + lane_route_rules,
             'final': 'foreign-best',
             'auto_detect_interface': True,
         },

@@ -42,6 +42,9 @@ MGMT="${MGMT_IP:-10.99.0.1}"
 
 # 2. Env + systemd unit
 echo "[$HOST_TAG] [2/4] env + systemd unit"
+# BALANCE (балансировка дорожек lane-NN) переключается руками в env-файле —
+# переносим текущее значение через передеплой, по умолчанию off.
+BALANCE_CUR=$(sed -n 's/^BALANCE=\(on\|off\)$/\1/p' /etc/anysda/failover-watchdog.env 2>/dev/null | tail -1)
 cat > /etc/anysda/failover-watchdog.env <<EOF
 CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}
@@ -56,6 +59,17 @@ LATENCY_HOLD=4
 COOLDOWN_S=60
 MAX_COOLDOWN_S=600
 PENALTY_RESET_S=300
+BALANCE=${BALANCE_CUR:-off}
+BALANCE_MARGIN_MS=150
+ACTIVE_BPS=20000
+REBALANCE_INTERVAL_S=300
+IMBALANCE_SHARE=0.35
+IMBALANCE_MIN_MBPS=5
+MIN_DWELL_S=1800
+IDLE_DWELL_S=600
+RATE_TAU_S=300
+LAT_TAU_S=30
+SLOW_HOLD_S=60
 EOF
 chmod 600 /etc/anysda/failover-watchdog.env
 

@@ -238,6 +238,10 @@ for row in rows if isinstance(rows, list) else []:
         out, kind, val = row['outbound'], row['type'], str(row['value'])
         if out not in known:
             raise ValueError(f'outbound {out!r} нет в конфиге')
+        # Ручной маршрут на экзит — через pin-<выход>: вотчдог переводит его на
+        # foreign-best, пока узел выключен или выход мёртв (иначе маршрут рвётся).
+        if f'pin-{out}' in known:
+            out = f'pin-{out}'
         if kind == 'domain':
             rule = {'outbound': out, 'domain_suffix': [val[2:] if val.startswith('*.') else val]}
         elif kind == 'ip_cidr':
@@ -250,7 +254,15 @@ for row in rows if isinstance(rows, list) else []:
         continue
     manual_rules.append(rule)
 
-cfg['route']['rules'] = manual_rules + cfg['route']['rules']
+# Ручные маршруты — сразу за служебной головой списка (mon-*, блокировки
+# loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
+# дорожки). Выше головы маршрут панели на домен или подсеть перехватывал бы
+# скрейп экзитов и бота, а 0.0.0.0/0 на экзит открывал бы его loopback.
+rules = cfg['route']['rules']
+head = 0
+while head < len(rules) and ('inbound' in rules[head] or rules[head].get('outbound') == 'block-out'):
+    head += 1
+cfg['route']['rules'] = rules[:head] + manual_rules + rules[head:]
 
 new_body = json.dumps(cfg, indent=2)
 

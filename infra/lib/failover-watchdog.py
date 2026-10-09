@@ -33,7 +33,7 @@ type=selector (см. gen-router-config.py) — управляется через
   MAX_COOLDOWN_S    потолок штрафа при рецидивах, сек  600
   PENALTY_RESET_S   стабильности до сброса эскалации, сек  300
   DISABLED_EXITS_FILE  узлы, выключенные из панели  /etc/anysda/exits-disabled.json
-  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  off
+  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  on
   BALANCE_MARGIN_MS узел «быстрый», если задержка ≤ лучшей + N мс  150
   ACTIVE_BPS        порог активности дорожки, байт/с  20000
   REBALANCE_INTERVAL_S  период проверки дисбаланса, сек  300
@@ -46,6 +46,7 @@ type=selector (см. gen-router-config.py) — управляется через
   TG_PROBE_URL      проба Bot API через экзит      https://api.telegram.org
   TG_INTERVAL_S     период проверки Bot API, сек    30
   WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
+                    (повторный возврат за MIN_DWELL_S — не раньше стоянки)
   LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
 
 Выход бота (tg-best): Bot API (api.telegram.org) на одних экзитах режут, на
@@ -123,6 +124,7 @@ _pen_dur: dict = {}   # node -> текущая длительность штра
 DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
 _disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
 _disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
+_disabled_unknown: set = set()   # выключенные, которых нет среди узлов (пишем только смену)
 _spared: set = set()     # выключенные узлы, через которые идём за неимением живых невыключенных
 
 # Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
@@ -133,7 +135,7 @@ _spared: set = set()     # выключенные узлы, через кото�
 # или при сильном дисбалансе (раз в REBALANCE_INTERVAL_S, по одной дорожке,
 # не чаще MIN_DWELL_S на дорожку). Переключение selector'а трогает только
 # НОВЫЕ соединения — текущие доживают на старом выходе.
-BALANCE            = os.environ.get('BALANCE', 'off').strip().lower() == 'on'
+BALANCE            = os.environ.get('BALANCE', 'on').strip().lower() == 'on'
 BALANCE_MARGIN_MS  = int(os.environ.get('BALANCE_MARGIN_MS', '150'))
 ACTIVE_BPS         = float(os.environ.get('ACTIVE_BPS', '20000'))   # байт/с — дорожка «активна»
 REBALANCE_INTERVAL = float(os.environ.get('REBALANCE_INTERVAL_S', '300'))
@@ -144,9 +146,14 @@ IDLE_DWELL         = float(os.environ.get('IDLE_DWELL_S', '600'))   # неакт
 RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаживание нагрузки (EWMA)
 # Дорожка, уведённая на warp своего узла (direct был мёртв), сама на direct не
 # вернётся: warp жив, узел в балансировке. Возвращаем, когда direct жив без
-# перерыва WARP_RETURN_S (не один удачный замер) и у дорожки прошла MIN_DWELL.
+# перерыва WARP_RETURN_S (не один удачный замер). Стоянку MIN_DWELL не ждём:
+# увод был аварийным (перезапуск sing-box на выходе при деплое уводил все
+# дорожки на полчаса), и чем дольше на warp, тем больше сессий успевает
+# привязаться к чужому IP. Но если дорожка уже возвращалась с warp меньше
+# MIN_DWELL назад — direct мигает, и следующий возврат ждёт полную стоянку.
 WARP_RETURN        = float(os.environ.get('WARP_RETURN_S', '600'))
 _direct_since: dict = {}  # direct-выход -> monotonic, с которого он жив без перерыва
+_lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
 # SLOW_HOLD_S подряд: вывод узла из балансировки двигает все его дорожки.
@@ -289,9 +296,11 @@ def _penalize(member):
     return node, dur
 
 
-def _read_disabled():
-    """Узлы, выключенные вручную из панели. Логирует только изменения."""
-    global _disabled, _disabled_warn
+def _read_disabled(nodes):
+    """Узлы, выключенные вручную из панели. Логирует только изменения.
+    nodes — узлы группы: имя не из них (опечатка в файле) иначе молча ничего
+    бы не выключало."""
+    global _disabled, _disabled_warn, _disabled_unknown
     warn = ''
     try:
         with open(DISABLED_FILE, encoding='utf-8') as f:
@@ -315,6 +324,12 @@ def _read_disabled():
     if cur != _disabled:
         print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
         _disabled = cur
+    unknown = cur - nodes
+    if unknown != _disabled_unknown:
+        if unknown:
+            print(f'{DISABLED_FILE}: таких узлов нет, ничего не выключают: '
+                  f'{", ".join(sorted(unknown))} (узлы: {", ".join(sorted(nodes)) or "нет"})', flush=True)
+        _disabled_unknown = unknown
     return cur
 
 
@@ -376,8 +391,8 @@ def tick():
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
-    disabled = _read_disabled()
     everyone = group.get('all', [])
+    disabled = _read_disabled({_node_of(m) for m in everyone})
     members = [m for m in everyone if _node_of(m) not in disabled]
     now = group.get('now')
     if not everyone:
@@ -708,14 +723,17 @@ def lanes_tick(conns):
         print(f'{len(ls)} дорожек без соединений ({",".join(ls)}) — {what}', flush=True)
 
     # 1б. Возврат с warp на direct того же узла: direct жив без перерыва
-    #     WARP_RETURN и дорожка отстояла MIN_DWELL. Нагрузка узла не меняется.
+    #     WARP_RETURN; стоянку ждём, только если дорожка недавно уже
+    #     возвращалась (см. WARP_RETURN выше). Нагрузка узла не меняется.
     for l in lanes:
         tag = cur[l] or ''
         direct = targets.get(_node_of(tag), ('',))[0]
         up = t - _direct_since.get(direct, t)
+        calm = l not in _lane_back or t - _lane_back[l] >= MIN_DWELL
         if (tag.endswith('-warp') and direct.endswith('-direct') and up >= WARP_RETURN
-                and t - _lane_moved[l] >= MIN_DWELL):
+                and (calm or t - _lane_moved[l] >= MIN_DWELL)):
             _move_lane(l, direct, f'возврат с {tag}, прямой жив без перерыва {up / 60:.1f} мин', ips)
+            _lane_back[l] = t
             cur[l] = direct
 
     if t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
@@ -780,6 +798,13 @@ def pins_tick(proxies):
         base = name[len(PIN_PREFIX):]
         _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
         node = _node_of(base)
+        # Выход не основной — tick() его смерть не штрафует, и маршрут вернулся
+        # бы на первом же удачном замере. Штрафуем узел в момент признания
+        # смерти; долгая смерть штраф не наращивает.
+        if (_pin_miss[base] == DEAD_AFTER and node not in _excluded()
+                and _penalty.get(node, 0.0) <= t):
+            _, dur = _penalize(base)
+            print(f'{base} мёртв ({DEAD_AFTER}× промахов), узел {node} в штрафной {dur:.0f}с', flush=True)
         if node in _excluded():
             why = 'узел выключен вручную'
         elif _pin_miss[base] >= DEAD_AFTER:

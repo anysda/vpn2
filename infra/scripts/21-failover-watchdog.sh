@@ -42,50 +42,58 @@ MGMT="${MGMT_IP:-10.99.0.1}"
 
 # 2. Env + systemd unit
 echo "[$HOST_TAG] [2/4] env + systemd unit"
-# BALANCE (балансировка дорожек lane-NN) и TG_* (выход бота) правятся руками в
-# env-файле — переносим текущие значения через передеплой; битое значение
-# заменяется умолчанием. На новой ноде env-файла ещё нет: sed без файла даёт
-# rc=2, и под pipefail + set -e стадия падала, поэтому читаем только существующий.
+# Настройки сторожа правятся руками в env-файле — переносим текущие значения
+# через передеплой; нет строки или значение битое — умолчание. Адрес и секрет
+# clash-api, группа и файл стоянки задаёт сам деплой. На новой ноде env-файла
+# ещё нет: sed без файла даёт rc=2, и под pipefail + set -e стадия падала,
+# поэтому читаем только существующий.
 WD_ENV=/etc/anysda/failover-watchdog.env
 env_cur() {
   [[ -f "$WD_ENV" ]] || return 0
   sed -n "s#^$1=\($2\)\$#\1#p" "$WD_ENV" | tail -1
 }
-BALANCE_CUR=$(env_cur BALANCE 'on\|off')
-TG_GROUP_CUR=$(env_cur TG_GROUP '[A-Za-z0-9_-]\+')
-TG_PROBE_URL_CUR=$(env_cur TG_PROBE_URL 'https://[^[:space:]]\+')
-TG_INTERVAL_CUR=$(env_cur TG_INTERVAL_S '[0-9]\+\(\.[0-9]\+\)\?')
-cat > "$WD_ENV" <<EOF
-CLASH_API=http://${MGMT}:9090
+INT='[0-9]\+'
+NUM='[0-9]\+\(\.[0-9]\+\)\?'
+# имя, умолчание, допустимое значение (sed BRE)
+WD_SETTINGS=(
+  "PROBE_URL http://www.gstatic.com/generate_204 https\?://[^[:space:]]\+"
+  "INTERVAL 2 $NUM"
+  "PROBE_TIMEOUT_MS 3000 $INT"
+  "TOLERANCE_MS 120 $INT"
+  "DEAD_AFTER 3 $INT"
+  "CONFIRM_GAP 0.4 $NUM"
+  "LATENCY_HOLD 4 $INT"
+  "COOLDOWN_S 60 $NUM"
+  "MAX_COOLDOWN_S 600 $NUM"
+  "PENALTY_RESET_S 300 $NUM"
+  "BALANCE on on\|off"
+  "BALANCE_MARGIN_MS 150 $INT"
+  "ACTIVE_BPS 20000 $NUM"
+  "REBALANCE_INTERVAL_S 300 $NUM"
+  "IMBALANCE_SHARE 0.35 $NUM"
+  "IMBALANCE_MIN_MBPS 5 $NUM"
+  "MIN_DWELL_S 1800 $NUM"
+  "IDLE_DWELL_S 600 $NUM"
+  "RATE_TAU_S 300 $NUM"
+  "WARP_RETURN_S 600 $NUM"
+  "LAT_TAU_S 30 $NUM"
+  "SLOW_HOLD_S 60 $NUM"
+  "TG_GROUP tg-best [A-Za-z0-9_-]\+"
+  "TG_PROBE_URL https://api.telegram.org https://[^[:space:]]\+"
+  "TG_INTERVAL_S 30 $NUM"
+)
+# Сначала читаем всё из старого файла, потом пишем: перенаправление в тот же
+# файл обнулило бы его до чтения.
+WD_BODY="CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}
 WATCH_GROUP=foreign-best
-PROBE_URL=http://www.gstatic.com/generate_204
-INTERVAL=2
-PROBE_TIMEOUT_MS=3000
-TOLERANCE_MS=120
-DEAD_AFTER=3
-CONFIRM_GAP=0.4
-LATENCY_HOLD=4
-COOLDOWN_S=60
-MAX_COOLDOWN_S=600
-PENALTY_RESET_S=300
-BALANCE=${BALANCE_CUR:-off}
-BALANCE_MARGIN_MS=150
-ACTIVE_BPS=20000
-REBALANCE_INTERVAL_S=300
-IMBALANCE_SHARE=0.35
-IMBALANCE_MIN_MBPS=5
-MIN_DWELL_S=1800
-IDLE_DWELL_S=600
-RATE_TAU_S=300
-WARP_RETURN_S=600
-LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json
-LAT_TAU_S=30
-SLOW_HOLD_S=60
-TG_GROUP=${TG_GROUP_CUR:-tg-best}
-TG_PROBE_URL=${TG_PROBE_URL_CUR:-https://api.telegram.org}
-TG_INTERVAL_S=${TG_INTERVAL_CUR:-30}
-EOF
+LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json"
+for s in "${WD_SETTINGS[@]}"; do
+  read -r key def re <<<"$s"
+  cur=$(env_cur "$key" "$re")
+  WD_BODY+=$'\n'"$key=${cur:-$def}"
+done
+printf '%s\n' "$WD_BODY" > "$WD_ENV"
 chmod 600 "$WD_ENV"
 
 cat > /etc/systemd/system/anysda-failover-watchdog.service <<'EOF'

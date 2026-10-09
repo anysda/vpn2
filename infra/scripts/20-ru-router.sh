@@ -203,7 +203,7 @@ echo "[$HOST_TAG] [6/6] sing-box manual-routes watcher"
 
 cat > /usr/local/sbin/anysda-apply-routes.py << 'PYEOF'
 #!/usr/bin/env python3
-import ipaddress, json, subprocess, sys, tempfile, os
+import ipaddress, json, os, subprocess, sys, tempfile
 
 # --no-restart: только собрать config.json (стадия 20 перезапускает sing-box
 # сама, один раз на итоговом конфиге).
@@ -212,6 +212,7 @@ NO_RESTART = '--no-restart' in sys.argv[1:]
 MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
 SB_CONFIG     = '/etc/sing-box/config.json'
 SB_CONFIG_BASE= '/etc/sing-box/config-base.json'
+RULES_DIR     = '/etc/sing-box/manual-routes'
 SB_BIN        = '/usr/local/bin/sing-box'
 
 if not os.path.exists(SB_CONFIG_BASE) and os.path.exists(SB_CONFIG):
@@ -229,10 +230,10 @@ except (FileNotFoundError, json.JSONDecodeError):
 with open(SB_CONFIG_BASE) as f: cfg = json.load(f)
 
 # Правило на outbound, которого нет в конфиге (экзит убрали, опечатка в
-# панели), sing-box check отвергает целиком — и вместе с ним все остальные
-# ручные маршруты. Такие строки пропускаем по одной и пишем в журнал.
+# панели), sing-box отвергает целиком — и вместе с ним все остальные ручные
+# маршруты. Такие строки пропускаем по одной и пишем в журнал.
 known = {o.get('tag') for o in cfg.get('outbounds', []) + cfg.get('endpoints', [])}
-manual_rules = []
+manual = []
 for row in rows if isinstance(rows, list) else []:
     try:
         out, kind, val = row['outbound'], row['type'], str(row['value'])
@@ -243,58 +244,111 @@ for row in rows if isinstance(rows, list) else []:
         if f'pin-{out}' in known:
             out = f'pin-{out}'
         if kind == 'domain':
-            rule = {'outbound': out, 'domain_suffix': [val[2:] if val.startswith('*.') else val]}
+            rule = {'domain_suffix': [val[2:] if val.startswith('*.') else val]}
         elif kind == 'ip_cidr':
             ipaddress.ip_network(val, strict=False)
-            rule = {'outbound': out, 'ip_cidr': [val]}
+            rule = {'ip_cidr': [val]}
         else:
             raise ValueError(f'тип {kind!r} неизвестен')
     except (KeyError, TypeError, ValueError) as e:
         print(f'пропускаю маршрут {row!r}: {e}', file=sys.stderr)
         continue
-    manual_rules.append(rule)
+    manual.append((out, rule))
+
+# Маршруты лежат в local rule-set'ах, по набору на выход, а config.json на них
+# только ссылается. sing-box сам перечитывает изменённый файл набора и
+# подменяет правила на ходу, соединения не рвутся; SIGHUP и рестарт рвут все.
+# Наборы заведены на каждый выход, который предлагает панель, даже пустые:
+# тогда правка маршрута меняет только файлы, а config.json остаётся прежним.
+targets = []
+for o in cfg.get('outbounds', []):
+    t = o.get('tag', '')
+    if t == 'direct-ru' or (t.startswith('hy2-') and not t.endswith('-mgmt')):
+        targets.append(f'pin-{t}' if f'pin-{t}' in known else t)
+for out, _ in manual:
+    if out not in targets:
+        targets.append(out)
+pos = {t: i for i, t in enumerate(targets)}
+
+# Побеждает первая строка панели. Наборы же стоят в порядке выходов, поэтому
+# из строки вычитаем более ранние строки тех наборов, что стоят ниже её.
+sets = {t: [] for t in targets}
+for i, (out, rule) in enumerate(manual):
+    earlier = {}
+    for o, r in manual[:i]:
+        if pos[o] > pos[out]:
+            for k, v in r.items():
+                earlier.setdefault(k, []).extend(v)
+    if earlier:
+        rule = {'type': 'logical', 'mode': 'and', 'rules': [rule, dict(earlier, invert=True)]}
+    sets[out].append(rule)
+
+def rules_path(t):
+    return os.path.join(RULES_DIR, f'{t}.json')
 
 # Ручные маршруты — сразу за служебной головой списка (mon-*, блокировки
 # loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
 # дорожки). Выше головы маршрут панели на домен или подсеть перехватывал бы
 # скрейп экзитов и бота, а 0.0.0.0/0 на экзит открывал бы его loopback.
-rules = cfg['route']['rules']
+route = cfg['route']
+route['rule_set'] = route.get('rule_set', []) + [
+    {'type': 'local', 'tag': f'manual-{t}', 'format': 'source', 'path': rules_path(t)}
+    for t in targets]
+rules = route['rules']
 head = 0
 while head < len(rules) and ('inbound' in rules[head] or rules[head].get('outbound') == 'block-out'):
     head += 1
-cfg['route']['rules'] = rules[:head] + manual_rules + rules[head:]
+route['rules'] = rules[:head] + [{'rule_set': [f'manual-{t}'], 'outbound': t} for t in targets] + rules[head:]
 
 new_body = json.dumps(cfg, indent=2)
 
-# Панель при сохранении пишет manual-routes.json несколько раз подряд, и
-# .path-юнит дёргает нас на каждую запись. Без этой проверки каждый холостой
-# вызов рестартовал sing-box, рвя всем клиентам живые соединения, а заодно
-# упирался в StartLimitBurst и укладывал .service в failed (см. VPN2-5).
-try:
-    if open(SB_CONFIG).read() == new_body:
-        tail = 'config.json уже собран' if NO_RESTART else 'конфиг не изменился — sing-box не трогаю'
-        print(f'{len(manual_rules)} manual route(s), {tail}')
-        sys.exit(0)
-except FileNotFoundError:
-    pass
+def read(path):
+    try:
+        with open(path) as f: return f.read()
+    except FileNotFoundError:
+        return None
 
-with tempfile.NamedTemporaryFile('w', dir='/etc/sing-box', delete=False, suffix='.tmp') as tmp:
-    tmp.write(new_body); tmp_path = tmp.name
+def put(path, body, check):
+    """Атомарно (tmp + rename в том же каталоге) заменить файл, если изменился."""
+    if read(path) == body:
+        return False
+    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(path), delete=False, suffix='.tmp') as tmp:
+        tmp.write(body); tmp_path = tmp.name
+    try:
+        subprocess.run(check + [tmp_path], check=True, capture_output=True)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    except subprocess.CalledProcessError as e:
+        os.unlink(tmp_path)
+        print(f'{path}: проверка не прошла: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
+        sys.exit(1)
+    return True
 
-try:
-    subprocess.run([SB_BIN, 'check', '-c', tmp_path], check=True, capture_output=True)
-    os.replace(tmp_path, SB_CONFIG)
-except subprocess.CalledProcessError as e:
-    os.unlink(tmp_path)
-    print(f'Config check failed: {e}: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
-    sys.exit(1)
-os.chmod(SB_CONFIG, 0o600)
+# Сначала наборы: и живой sing-box, и проверка нового config.json читают их
+# с диска. Панель при сохранении пишет manual-routes.json несколько раз
+# подряд, неизменённые файлы не трогаем.
+os.makedirs(RULES_DIR, mode=0o700, exist_ok=True)
+changed = [t for t in targets
+           if put(rules_path(t), json.dumps({'version': 2, 'rules': sets[t]}, indent=2),
+                  [SB_BIN, 'rule-set', 'compile', '-o', os.devnull])]
+for name in os.listdir(RULES_DIR):
+    if name.endswith('.json') and name[:-5] not in pos:
+        os.unlink(os.path.join(RULES_DIR, name))
 
+summary = f'{len(manual)} manual route(s), наборов изменено: {len(changed)}'
+if read(SB_CONFIG) == new_body:
+    tail = 'config.json уже собран' if NO_RESTART else 'sing-box перечитает их сам, без перезапуска'
+    print(f'{summary}, {tail}')
+    sys.exit(0)
+
+# config.json меняется только при смене выходов в базе (передеплой) — тогда
+# без перезапуска не обойтись.
+put(SB_CONFIG, new_body, [SB_BIN, 'check', '-c'])
 if NO_RESTART:
-    print(f'{len(manual_rules)} manual route(s), config.json собран')
+    print(f'{summary}, config.json собран')
     sys.exit(0)
 subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
-print(f'Applied {len(manual_rules)} manual route(s), sing-box restarted')
+print(f'{summary}, config.json изменился, sing-box restarted')
 PYEOF
 chmod +x /usr/local/sbin/anysda-apply-routes.py
 

@@ -33,8 +33,8 @@ chmod 0700 /etc/wireguard
 # ── 1. wireguard-tools ──────────────────────────────────────────────────────
 echo "[$HOST_TAG] [1/5] wireguard-tools"
 if ! command -v wg >/dev/null 2>&1; then
-  apt-get update -qq
-  apt-get install -y -qq wireguard-tools >/dev/null
+  apt_get update -qq
+  apt_get install -y -qq wireguard-tools >/dev/null
 fi
 modprobe wireguard 2>/dev/null || true
 

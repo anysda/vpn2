@@ -14,6 +14,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Ожидание блокировок apt с понятной строкой в лог (infra/lib/anysda-svc.sh):
+# деплой кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 26-backup is ru-only — skipping"; exit 0;; esac
 
@@ -47,9 +53,9 @@ export DEBIAN_FRONTEND=noninteractive
 # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
 # пакет не нашёлся по старым спискам - обновляем и ставим ещё раз.
 apt_install() {
-  [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt-get update -qq
-  apt-get install -y -qq "$@" >/dev/null 2>&1 && return 0
-  apt-get update -qq && apt-get install -y -qq "$@" >/dev/null
+  [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt_get update -qq
+  apt_get install -y -qq "$@" >/dev/null 2>&1 && return 0
+  apt_get update -qq && apt_get install -y -qq "$@" >/dev/null
 }
 # shellcheck disable=SC2086
 apt_install $APT_PKGS

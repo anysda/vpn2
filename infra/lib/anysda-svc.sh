@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# Общие приёмы стадий деплоя и anysda-restore: не рвать клиентов зря.
+# Общие приёмы стадий деплоя и anysda-restore: не рвать клиентов зря и не
+# стоять молча на блокировке apt.
 #
 # Рестарт службы обрывает сессии: IKEv2-устройства после рестарта strongswan
 # сами не переподключаются, у WireGuard обнуляются рукопожатия. Поэтому
@@ -57,5 +58,53 @@ wg0_apply() {
   else
     systemctl restart wg-quick@wg0 || return
     svc_say "wg-quick@wg0 перезапущен"
+  fi
+}
+
+# ── apt/dpkg ────────────────────────────────────────────────────────────────
+# На свежей Ubuntu apt-daily и unattended-upgrades минутами держат блокировки
+# apt/dpkg. Штатный DPkg::Lock::Timeout ждёт их молча, а `apt-get update`
+# (блокировку списков) не ждёт вовсе и сразу падает, поэтому перед apt
+# ждём сами и раз в 20 с пишем, кого ждём. Пишем в stdout стадии, каким он был
+# при подключении библиотеки: `apt_get install ... >/dev/null` не глушит строку.
+exec {APT_LOG_FD}>&1
+APT_LOCKS=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock)
+APT_LOCK_TIMEOUT=1200
+
+apt_wait_idle() {
+  local t0=$SECONDS said=-20 holders pid
+  while holders=$(fuser "${APT_LOCKS[@]}" 2>/dev/null); do
+    if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
+      svc_say "apt так и не освободился за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
+      return 0
+    fi
+    if (( SECONDS - said >= 20 )); then
+      said=$SECONDS
+      for pid in $(tr -s ' ' '\n' <<<"$holders" | sort -un); do
+        svc_say "apt занят, жду $pid $(tr '\0' ' ' </proc/"$pid"/cmdline 2>/dev/null)$(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
+      done
+    fi
+    sleep 5
+  done
+  (( SECONDS - t0 < 5 )) || svc_say "apt освободился через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
+}
+
+# apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
+# стартом закрывает штатный DPkg::Lock::Timeout.
+apt_get() {
+  apt_wait_idle
+  apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
+}
+
+# apt_prepare — перед стадией: Lock::Timeout для любого apt на узле, ожидание
+# блокировок, и если хостер перезагрузил машину посреди установки пакетов,
+# dpkg остаётся прерванным и любой apt-get падает с «dpkg was interrupted» -
+# доводим его.
+apt_prepare() {
+  printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > /etc/apt/apt.conf.d/90anysda-lock-timeout
+  apt_wait_idle
+  if [[ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]]; then
+    svc_say "dpkg был прерван, довожу: dpkg --configure -a"
+    DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
   fi
 }

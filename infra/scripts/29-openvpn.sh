@@ -178,7 +178,6 @@ ufw allow "${OVPN_PORT}/${OVPN_PROTO}" comment 'openvpn listener' >/dev/null 2>&
 # OpenVPN clients (10.67.67.0/24) resolve via AdGuard on the entry mgmt IP
 ufw allow proto udp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
 ufw allow proto tcp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
-ufw reload >/dev/null 2>&1 || true
 
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"

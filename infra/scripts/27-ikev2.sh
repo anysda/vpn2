@@ -290,7 +290,6 @@ ufw allow 4500/udp comment 'ikev2 NAT-T'  >/dev/null 2>&1 || true
 # для wg0 (стадия 28) и tun0 (стадия 29).
 ufw allow proto udp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
 ufw allow proto tcp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
-ufw reload >/dev/null 2>&1 || true
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 # Loose RPF: policy-routing IPsec иначе режется reverse-path filter.

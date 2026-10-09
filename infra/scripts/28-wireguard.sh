@@ -89,30 +89,8 @@ echo "[$HOST_TAG] [4/5] wg-quick@wg0 service"
 systemctl enable wg-quick@wg0 >/dev/null 2>&1 || true
 
 # Рестарт wg-quick рвёт туннель всем WG-клиентам, а на повторном деплое
-# wg0.conf обычно прежний. Рестарт нужен, только если интерфейса нет или в
-# wg0.conf другие адреса/порт; ключи и пиры применяет `wg syncconf` без обрыва.
-wg_conf_iface() {
-  awk -F= '
-    /^\[/ { sec = $0; next }
-    sec == "[Interface]" {
-      k = $1; v = $2; gsub(/[ \t]/, "", k); gsub(/[ \t]/, "", v)
-      if (k == "Address") { n = split(v, a, ","); for (i = 1; i <= n; i++) print "addr " a[i] }
-      if (k == "ListenPort") print "port " v
-    }' /etc/wireguard/wg0.conf | sort
-}
-wg_live_iface() {
-  { ip -o addr show dev wg0 scope global | awk '{print "addr " $4}'
-    echo "port $(wg show wg0 listen-port)"; } | sort
-}
-if systemctl is-active --quiet wg-quick@wg0 && ip link show wg0 >/dev/null 2>&1 \
-   && [[ "$(wg_conf_iface)" == "$(wg_live_iface)" ]]; then
-  wg syncconf wg0 <(wg-quick strip wg0)
-  echo "[$HOST_TAG]   адреса и порт wg0 прежние — wg syncconf без рестарта"
-else
-  systemctl restart wg-quick@wg0
-  sleep 1
-  systemctl status wg-quick@wg0 --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
-fi
+# wg0.conf обычно прежний: wg0_apply применяет ключи и пиры `wg syncconf`.
+wg0_apply
 
 # ── 5. TPROXY: forwarded wg0 traffic → sing-box :7898 ──────────────────────
 echo "[$HOST_TAG] [5/5] anysda-wg-routing"

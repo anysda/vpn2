@@ -42,6 +42,21 @@ type=selector (см. gen-router-config.py) — управляется через
   MIN_DWELL_S       активную дорожку не двигать чаще, сек  1800
   IDLE_DWELL_S      неактивную — не чаще, сек  600
   RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
+  TG_GROUP          selector выхода бота (inbound tg-proxy)  tg-best
+  TG_PROBE_URL      проба Bot API через экзит      https://api.telegram.org
+  TG_INTERVAL_S     период проверки Bot API, сек    30
+
+Выход бота (tg-best): Bot API (api.telegram.org) на одних экзитах режут, на
+других нет, а gstatic-проба этого не видит. Поэтому раз в TG_INTERVAL_S
+вотчдог проверяет Bot API через экзит бота; после DEAD_AFTER промахов подряд
+(или сразу, если узел выключили вручную) ищет экзит, где Bot API отвечает. Если
+Bot API молчит везде — повторяет поиск раз в TG_INTERVAL_S, а с мёртвого экзита
+уводит бота туда же, куда основной выбор.
+
+Ручные маршруты панели (pin-<выход>): у каждого есть запасной путь —
+foreign-best. Пока узел выключен вручную, выход мёртв или узел в штрафной
+после падения, маршрут идёт через foreign-best, потом возвращается на свой
+выход. Без этого ручной маршрут на упавший экзит просто рвался бы.
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -99,9 +114,14 @@ _pen_dur: dict = {}   # node -> текущая длительность штра
 # Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
 # Выключенный узел — как мёртвый: в выборе не участвует, если сейчас выбран —
 # уводим сразу (без до-проверок), висящие через него соединения рвём.
-# Нет файла / битый JSON — ничего не выключено.
+# Выключение — предпочтение, а не запрет ценой простоя: если живых
+# невыключенных нет, трафик идёт через живой выключенный и его соединения
+# не рвём, пока не появится живой невыключенный.
+# Нет файла / битый JSON / не список — ничего не выключено.
 DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
 _disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
+_disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
+_spared: set = set()     # выключенные узлы, через которые идём за неимением живых невыключенных
 
 # Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
 # по selector'ам по VPN-IP; здесь решаем, на какой экзит смотрит каждая.
@@ -140,6 +160,24 @@ _tag_delay: dict = {}     # выход -> последняя удачная за
 _elig_init = False        # первый удачный тик уже наполнил _elig
 _last_rebalance = time.monotonic()
 
+TG_GROUP     = os.environ.get('TG_GROUP', 'tg-best')
+TG_PROBE_URL = os.environ.get('TG_PROBE_URL', 'https://api.telegram.org')
+# Проба Bot API — тот же delay-тест clash-api: HEAD без перехода по редиректам,
+# код ответа sing-box не смотрит и наружу не отдаёт. Смысл ответу даёт https:
+# задержку вернёт только рукопожатие с настоящим сертификатом Telegram, заглушка
+# блокировки так не ответит. Адрес на http:// clash-api молча меняет на свой
+# gstatic, и Bot API тогда не проверялся бы вовсе.
+if not TG_PROBE_URL.startswith('https://'):
+    print(f'TG_PROBE_URL={TG_PROBE_URL}: нужен https://, беру https://api.telegram.org',
+          file=sys.stderr, flush=True)
+    TG_PROBE_URL = 'https://api.telegram.org'
+TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
+_tg_next = -1e9           # monotonic следующей плановой проверки Bot API
+_tg_miss = 0              # промахов текущего выхода tg-best подряд
+_tg_silent = False        # последний обход: Bot API не ответил ни через один выход
+PIN_PREFIX = 'pin-'
+_pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
+
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
 PROBE_HTTP_TIMEOUT = TIMEOUT_MS / 1000.0 + 0.5   # таймаут urlopen для delay-пробы
@@ -171,10 +209,10 @@ def _classify_probe_error(e):
     return f'ошибка: {reason}'
 
 
-def _probe(tag, out, errs=None):
+def _probe(tag, out, errs=None, url=PROBE_URL):
     """delay-тест одного outbound; out[tag] = delay(ms) либо None если мёртв.
     errs[tag], если передан, получает причину промаха (см. _classify_probe_error)."""
-    q = urllib.parse.urlencode({'url': PROBE_URL, 'timeout': TIMEOUT_MS})
+    q = urllib.parse.urlencode({'url': url, 'timeout': TIMEOUT_MS})
     try:
         d = _req('GET', f'/proxies/{urllib.parse.quote(tag)}/delay?{q}',
                  timeout=PROBE_HTTP_TIMEOUT)
@@ -188,12 +226,12 @@ def _probe(tag, out, errs=None):
             errs[tag] = _classify_probe_error(e)
 
 
-def _probe_all(members):
+def _probe_all(members, url=PROBE_URL):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
     мёртвый экзит не тормозит остальных."""
     out: dict = {}
     errs: dict = {}
-    threads = [threading.Thread(target=_probe, args=(m, out, errs), daemon=True)
+    threads = [threading.Thread(target=_probe, args=(m, out, errs, url), daemon=True)
                for m in members]
     for t in threads:
         t.start()
@@ -241,17 +279,51 @@ def _penalize(member):
 
 def _read_disabled():
     """Узлы, выключенные вручную из панели. Логирует только изменения."""
-    global _disabled
+    global _disabled, _disabled_warn
+    warn = ''
     try:
         with open(DISABLED_FILE, encoding='utf-8') as f:
-            raw = json.load(f).get('disabled', [])
-        cur = {t for t in raw if isinstance(t, str)}
-    except (OSError, ValueError, AttributeError):
-        cur = set()
+            data = json.load(f)
+        raw = data.get('disabled', []) if isinstance(data, dict) else None
+    except FileNotFoundError:
+        raw = []
+    except (OSError, ValueError) as e:
+        raw, warn = [], f'не читается ({e})'
+    if not isinstance(raw, list):
+        warn = f'ожидался {{"disabled": [узлы]}}, получено {json.dumps(data, ensure_ascii=False)[:200]}'
+        raw = []
+    cur = {t for t in raw if isinstance(t, str)}
+    if not warn and any(not isinstance(t, str) for t in raw):
+        warn = f'не-строки в списке отброшены: {json.dumps(raw, ensure_ascii=False)[:200]}'
+    if warn != _disabled_warn:
+        if warn:
+            print(f'{DISABLED_FILE}: {warn}; считаю выключенными: '
+                  f'{", ".join(sorted(cur)) or "нет"}', flush=True)
+        _disabled_warn = warn
     if cur != _disabled:
         print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
         _disabled = cur
     return cur
+
+
+def _excluded():
+    """Узлы, которых сейчас избегаем: выключенные, кроме пощажённых."""
+    return _disabled - _spared
+
+
+def _spare(nodes):
+    """Запомнить, через какие выключенные узлы идём (пусто — ни через какие).
+    В журнал — только смена, одной строкой."""
+    global _spared
+    if nodes == _spared:
+        return
+    if nodes:
+        print(f'живых невыключенных экзитов нет — трафик идёт через выключенные вручную '
+              f'({", ".join(sorted(nodes))}), их соединения не рву', flush=True)
+    else:
+        print(f'есть живой невыключенный экзит — ухожу с выключенных вручную '
+              f'({", ".join(sorted(_spared))})', flush=True)
+    _spared = nodes
 
 
 def _fetch_conns():
@@ -268,12 +340,13 @@ def _drop_disabled_conns(conns):
     """Рвём соединения, ещё идущие через выключенные узлы — как при сбое ноды
     (иначе долгие сессии текли бы через «выключенный» экзит до закрытия).
     mgmt-туннели не трогаем: по ним панель скрейпит метрики самого узла."""
-    if not _disabled or conns is None:
+    drop = _excluded()   # через пощажённые идёт трафик — их не трогаем
+    if not drop or conns is None:
         return
     closed = 0
     for c in conns:
         out = (c.get('chains') or [''])[0]
-        if out.endswith('-mgmt') or _node_of(out) not in _disabled or not c.get('id'):
+        if out.endswith('-mgmt') or _node_of(out) not in drop or not c.get('id'):
             continue
         try:
             _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
@@ -282,7 +355,7 @@ def _drop_disabled_conns(conns):
             pass
     if closed:
         print(f'закрыто {closed} соединений через выключенные узлы '
-              f'({", ".join(sorted(_disabled))})', flush=True)
+              f'({", ".join(sorted(drop))})', flush=True)
 
 
 def tick():
@@ -292,25 +365,42 @@ def tick():
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
     disabled = _read_disabled()
-    members = [m for m in group.get('all', []) if _node_of(m) not in disabled]
+    everyone = group.get('all', [])
+    members = [m for m in everyone if _node_of(m) not in disabled]
     now = group.get('now')
-    if not members:
+    if not everyone:
         return
 
     delays, errs = _probe_all(members)
     alive = {m: d for m, d in delays.items() if d is not None}
+    # Живых невыключенных нет — выбираем из живых выключенных: выключение не
+    # стоит простоя. Пощажённые запоминаем, лишь решив идти через них (ниже):
+    # транзиентный промах текущего не должен отменять обрыв соединений.
+    fallback = not alive
+    if fallback:
+        members = everyone
+        d2, e2 = _probe_all([m for m in everyone if _node_of(m) in disabled])
+        errs.update(e2)
+        alive = {m: d for m, d in d2.items() if d is not None}
+    else:
+        _spare(set())
     _tick_alive = alive
     if not alive:
         detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
         print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
         return
     best = _pick_best(alive)   # лучший из не-оштрафованных
+    spare = {_node_of(m) for m in alive} if fallback else set()
 
     global _lat_cand, _lat_streak
-    if now and _node_of(now) in disabled:
+    if now in alive and fallback:
+        _spare(spare)   # текущий выключен, но жив, а живых невыключенных нет — остаёмся
+    if now and _node_of(now) in disabled and now not in alive:
         # текущий выключен вручную — уводим сразу, без до-проверок и штрафа
+        _spare(spare)
         _lat_cand, _lat_streak = '', 0
-        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную')
+        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную'
+                                   f'{" и не отвечает" if fallback else ""}')
         return
     if now in alive:
         # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
@@ -330,6 +420,7 @@ def tick():
 
     if now not in members:
         # выбора нет / он не из группы — просто берём лучший
+        _spare(spare)
         _switch(best, alive[best], 'выбор не задан')
         return
 
@@ -352,6 +443,7 @@ def tick():
     # best выбран до штрафа: без перевыбора уходили на соседний тег того же
     # узла (nl-direct -> nl-warp), и смерть узла давала второй простой.
     best = _pick_best(alive)
+    _spare(spare)
     _switch(best, alive[best],
             f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
             f'узел {node} в штрафной {dur:.0f}с')
@@ -396,7 +488,8 @@ def _update_lane_rates(conns):
 def _effective_alive(alive, all_tags):
     """Живые выходы с анти-флапом: одиночный промах пробы не роняет выход —
     мёртвым он считается после DEAD_AFTER промахов подряд (до того берём
-    последнюю удачную задержку). Выключенные вручную в alive уже не попадают."""
+    последнюю удачную задержку). Выключенные вручную отбрасываем, кроме
+    пощажённых (живых невыключенных нет — см. _spare)."""
     for tag in all_tags:
         if tag in alive:
             _tag_miss[tag] = 0
@@ -405,7 +498,7 @@ def _effective_alive(alive, all_tags):
             _tag_miss[tag] = _tag_miss.get(tag, DEAD_AFTER) + 1
     return {t: _tag_delay[t] for t in all_tags
             if _tag_miss.get(t, DEAD_AFTER) < DEAD_AFTER and t in _tag_delay
-            and _node_of(t) not in _disabled}
+            and _node_of(t) not in _excluded()}
 
 
 def _node_targets(alive):
@@ -441,12 +534,12 @@ def _update_eligible(targets):
             if best is not None and lat[n] <= best + BALANCE_MARGIN_MS
             and _penalty.get(n, 0.0) <= t}
     for node in set(want) | set(_elig):
-        hard_out = node in _disabled or node not in targets
+        hard_out = node in _excluded() or node not in targets
         if hard_out:
             if node in _elig:
                 _elig.discard(node)
                 print(f'дорожки: узел {node} выбыл '
-                      f'({"выключен вручную" if node in _disabled else "нет живых выходов"})', flush=True)
+                      f'({"выключен вручную" if node in _excluded() else "нет живых выходов"})', flush=True)
             _state_since.pop(node, None)
             continue
         if (node in want) == (node in _elig):
@@ -534,7 +627,7 @@ def lanes_tick(conns):
     for l in sorted(broken, key=lambda x: -rate[x]):
         old = _node_of(cur[l] or '?')
         dst = lightest()
-        why = ('узел выключен вручную' if old in _disabled
+        why = ('узел выключен вручную' if old in _excluded()
                else 'выход мёртв' if cur[l] not in alive and old in elig
                else 'узел недоступен/медленный')
         quiet = l not in ips
@@ -596,6 +689,109 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
+def pins_tick(proxies):
+    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён, выход
+    жив (DEAD_AFTER промахов подряд — мёртв) и узел не в штрафной, иначе — на
+    foreign-best. Штрафную берём ту же, что у основного выбора: узел, только
+    что упавший и поднявшийся, на флапе не дёргает ручные маршруты туда-сюда."""
+    if _tick_alive is None:
+        return   # замеров нет (ошибка тика) — ничего не двигаем
+    t = time.monotonic()
+    for name, p in proxies.items():
+        if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
+            continue
+        base = name[len(PIN_PREFIX):]
+        _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
+        node = _node_of(base)
+        if node in _excluded():
+            why = 'узел выключен вручную'
+        elif _pin_miss[base] >= DEAD_AFTER:
+            why = 'выход мёртв'
+        elif _penalty.get(node, 0.0) > t:
+            why = f'узел в штрафной ещё {_penalty[node] - t:.0f}с'
+        else:
+            why = ''
+        want = GROUP if why else base
+        if p.get('now') != want:
+            _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
+            print(f'{name} -> {want}: {why or "выход снова доступен"}', flush=True)
+
+
+def tg_tick(proxies):
+    """tg-best (выход бота): на экзите, с которого отвечает Bot API.
+
+    Текущий выход проверяем раз в TG_INTERVAL. Не ответил Bot API или сам
+    выход — перепроверяем каждый цикл и переезжаем после DEAD_AFTER промахов
+    подряд, как основной выбор: одиночный таймаут бота не уводит. С выключенного
+    вручную узла уводим сразу.
+
+    Если Bot API молчит через все выходы, обход повторяем не чаще раза в
+    TG_INTERVAL: каждая проба стоит таймаута, и обход на каждом цикле тормозил
+    бы весь вотчдог. С мёртвого или выключенного выхода при этом всё равно
+    уходим — на живой выход foreign-best."""
+    global _tg_next, _tg_miss, _tg_silent
+    grp = proxies.get(TG_GROUP)
+    if not grp or str(grp.get('type', '')).lower() != 'selector' or _tick_alive is None:
+        return
+    now = grp.get('now') or ''
+    t = time.monotonic()
+    retry = False   # плановый повтор обхода после «молчит везде»
+    if _node_of(now) in _excluded():
+        why = 'узел выключен вручную'
+    elif _tg_silent and now in _tick_alive:
+        if t < _tg_next:
+            return
+        retry, why = True, 'Bot API не отвечал ни через один выход'
+    else:
+        if now not in _tick_alive:
+            err = 'выход мёртв'
+        elif _tg_miss or t >= _tg_next:
+            res, errs = _probe_all([now], TG_PROBE_URL)
+            _tg_next = t + TG_INTERVAL
+            if res.get(now) is not None:
+                if _tg_miss:
+                    print(f'{TG_GROUP}: {now}: Bot API снова отвечает (промахов подряд '
+                          f'было {_tg_miss}), выбор не трогаю', flush=True)
+                _tg_miss = 0
+                return
+            err = f'Bot API не отвечает ({errs.get(now, "?")})'
+        else:
+            return
+        _tg_miss += 1
+        if _tg_miss < DEAD_AFTER:
+            return
+        why = f'{err}, {_tg_miss}× подряд'
+    _tg_miss = 0
+    # живые и не исключённые; текущий — только при повторе обхода
+    cands = [m for m in grp.get('all', []) if m in _tick_alive and (m != now or retry)]
+    ok: dict = {}
+    if cands and (not _tg_silent or t >= _tg_next):
+        res, _ = _probe_all(cands, TG_PROBE_URL)
+        ok = {m: d for m, d in res.items() if d is not None}
+        _tg_next = t + TG_INTERVAL
+        if not ok and not _tg_silent:
+            print(f'{TG_GROUP}: Bot API не отвечает ни через один экзит, '
+                  f'повторю через {TG_INTERVAL:.0f}с', flush=True)
+        elif ok and _tg_silent:
+            print(f'{TG_GROUP}: Bot API снова отвечает ({", ".join(sorted(ok))})', flush=True)
+        _tg_silent = not ok
+    if now in ok:
+        return
+    fb = (proxies.get(GROUP) or {}).get('now')
+    if ok:
+        target = fb if fb in ok else min(ok, key=ok.get)
+        how = f'{ok[target]}ms'
+    elif not retry and fb in _tick_alive and fb != now:
+        # Bot API не отвечает нигде, а текущий выход мёртв или выключен:
+        # стоять на нём незачем — живой выход хотя бы довезёт бота, когда
+        # Bot API вернётся.
+        target, how = fb, 'Bot API пока не отвечает нигде, беру выход foreign-best'
+    else:
+        return
+    _req('PUT', f'/proxies/{urllib.parse.quote(TG_GROUP)}', {'name': target})
+    print(f'{TG_GROUP} -> {target} ({how}): {now or "—"}: {why}', flush=True)
+
+
 def main():
     if not SECRET:
         print('CLASH_SECRET не задан', file=sys.stderr)
@@ -606,7 +802,7 @@ def main():
           f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH} '
           f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
-          f'dwell={MIN_DWELL:.0f}s', flush=True)
+          f'dwell={MIN_DWELL:.0f}s tg={TG_GROUP}/{TG_INTERVAL:.0f}s', flush=True)
     while True:
         try:
             tick()
@@ -617,6 +813,12 @@ def main():
             lanes_tick(conns)
         except Exception as e:
             print(f'lanes error: {e}', file=sys.stderr, flush=True)
+        try:
+            proxies = _req('GET', '/proxies').get('proxies') or {}
+            pins_tick(proxies)
+            tg_tick(proxies)
+        except Exception as e:
+            print(f'pins/tg error: {e}', file=sys.stderr, flush=True)
         # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
         _drop_disabled_conns(conns)
         time.sleep(INTERVAL)

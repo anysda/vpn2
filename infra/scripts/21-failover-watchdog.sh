@@ -42,15 +42,20 @@ MGMT="${MGMT_IP:-10.99.0.1}"
 
 # 2. Env + systemd unit
 echo "[$HOST_TAG] [2/4] env + systemd unit"
-# BALANCE (балансировка дорожек lane-NN) переключается руками в env-файле —
-# переносим текущее значение через передеплой, по умолчанию off. На новой
-# ноде env-файла ещё нет: sed без файла даёт rc=2, и под pipefail + set -e
-# стадия падала, поэтому читаем только существующий.
-BALANCE_CUR=''
-if [[ -f /etc/anysda/failover-watchdog.env ]]; then
-  BALANCE_CUR=$(sed -n 's/^BALANCE=\(on\|off\)$/\1/p' /etc/anysda/failover-watchdog.env | tail -1)
-fi
-cat > /etc/anysda/failover-watchdog.env <<EOF
+# BALANCE (балансировка дорожек lane-NN) и TG_* (выход бота) правятся руками в
+# env-файле — переносим текущие значения через передеплой; битое значение
+# заменяется умолчанием. На новой ноде env-файла ещё нет: sed без файла даёт
+# rc=2, и под pipefail + set -e стадия падала, поэтому читаем только существующий.
+WD_ENV=/etc/anysda/failover-watchdog.env
+env_cur() {
+  [[ -f "$WD_ENV" ]] || return 0
+  sed -n "s#^$1=\($2\)\$#\1#p" "$WD_ENV" | tail -1
+}
+BALANCE_CUR=$(env_cur BALANCE 'on\|off')
+TG_GROUP_CUR=$(env_cur TG_GROUP '[A-Za-z0-9_-]\+')
+TG_PROBE_URL_CUR=$(env_cur TG_PROBE_URL 'https://[^[:space:]]\+')
+TG_INTERVAL_CUR=$(env_cur TG_INTERVAL_S '[0-9]\+\(\.[0-9]\+\)\?')
+cat > "$WD_ENV" <<EOF
 CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}
 WATCH_GROUP=foreign-best
@@ -75,8 +80,11 @@ IDLE_DWELL_S=600
 RATE_TAU_S=300
 LAT_TAU_S=30
 SLOW_HOLD_S=60
+TG_GROUP=${TG_GROUP_CUR:-tg-best}
+TG_PROBE_URL=${TG_PROBE_URL_CUR:-https://api.telegram.org}
+TG_INTERVAL_S=${TG_INTERVAL_CUR:-30}
 EOF
-chmod 600 /etc/anysda/failover-watchdog.env
+chmod 600 "$WD_ENV"
 
 cat > /etc/systemd/system/anysda-failover-watchdog.service <<'EOF'
 [Unit]

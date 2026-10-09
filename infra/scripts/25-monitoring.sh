@@ -11,6 +11,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}" "${EXIT_TAGS:?}"
+# Ожидание блокировок apt с понятной строкой в лог (infra/lib/anysda-svc.sh):
+# деплой кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 25-monitoring is ru-only — skipping"; exit 0;; esac
 
@@ -23,15 +29,15 @@ STAGE='25-monitoring'
 if ! command -v docker >/dev/null 2>&1; then
   echo "[$HOST_TAG] устанавливаю docker"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y -qq ca-certificates curl >/dev/null
+  apt_get install -y -qq ca-certificates curl >/dev/null
   install -m 0755 -d /etc/apt/keyrings
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
     | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
   chmod a+r /etc/apt/keyrings/docker.gpg
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update -qq
-  apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+  apt_get update -qq
+  apt_get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
   systemctl enable --now docker >/dev/null
 else
   echo "[$HOST_TAG] docker уже установлен: $(docker --version)"

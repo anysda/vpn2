@@ -127,30 +127,11 @@ print_summary() {
 }
 
 # ----------------------------------------------------------------------------
-# На свежей Ubuntu unattended-upgrades стартует сразу после загрузки и минутами
-# держит блокировки apt/dpkg: первый же apt-get стадии падает с «Could not get
-# lock». Ждём, пока apt освободится (до 20 минут), и ставим DPkg::Lock::Timeout
-# на те же 20 минут на случай, если apt-daily проснётся посреди деплоя: прогон
-# apt-daily-upgrade после загрузки держит dpkg 11-12 минут. Lock::Timeout не спасает
-# `apt-get update` (блокировку lists он не ждёт), поэтому нужен и цикл.
-# Если хостер перезагрузил машину посреди установки пакетов, dpkg остаётся
-# прерванным и любой apt-get падает с «dpkg was interrupted» - доводим его.
-# Выполняется и локально, и на нодах через ssh_exec.
+# Ожидание блокировок apt/dpkg (unattended-upgrades на свежей Ubuntu) - общие
+# apt_prepare/apt_get из lib/anysda-svc.sh: и здесь, и на нодах перед стадией.
 # ----------------------------------------------------------------------------
-APT_WAIT_IDLE='
-printf "DPkg::Lock::Timeout \"1200\";\n" > /etc/apt/apt.conf.d/90anysda-lock-timeout
-for i in $(seq 1 240); do
-  fuser -s /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || break
-  [ "$i" = 1 ] && echo "  apt занят (unattended-upgrades?), жду освобождения"
-  [ "$i" = 240 ] && echo "  apt так и не освободился за 20 минут, продолжаю"
-  sleep 5
-done
-if [ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]; then
-  echo "  dpkg был прерван, довожу: dpkg --configure -a"
-  DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
-fi
-exit 0
-'
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$DEPLOY_ROOT/lib/anysda-svc.sh"
 
 # ----------------------------------------------------------------------------
 # Установка локальных пререквизитов (на самом оркестраторе).
@@ -171,9 +152,9 @@ install_prereqs() {
     printf '  ставлю недостающее: %s\n' "${missing[*]}"
     # envsubst живёт в gettext-base
     local apt_pkgs="${missing[*]/envsubst/gettext-base}"
-    bash -c "$APT_WAIT_IDLE"
-    apt-get update -qq
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    apt_prepare
+    apt_get update -qq
+    DEBIAN_FRONTEND=noninteractive apt_get install -y -qq \
       $apt_pkgs ca-certificates >/dev/null
   fi
 
@@ -187,8 +168,8 @@ install_prereqs() {
     # ноды стадия 25-monitoring. См. SECURITY-AUDIT-2026-06-01.md (H8).
     printf '  ставлю docker (через APT-репо download.docker.com)\n'
     export DEBIAN_FRONTEND=noninteractive
-    bash -c "$APT_WAIT_IDLE"
-    apt-get install -y -qq ca-certificates curl gnupg >/dev/null
+    apt_prepare
+    apt_get install -y -qq ca-certificates curl gnupg >/dev/null
     install -m 0755 -d /etc/apt/keyrings
     if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -197,8 +178,8 @@ install_prereqs() {
     fi
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list
-    apt-get update -qq
-    apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+    apt_get update -qq
+    apt_get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
     systemctl enable --now docker >/dev/null 2>&1 || true
   fi
 
@@ -495,7 +476,7 @@ run_stage_on_host() {
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
   # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
   ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-$APT_WAIT_IDLE" | sed "s/^/[$host]/"
+bash -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh && apt_prepare; exit 0'" | sed -u "s/^/[$host]/"
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0

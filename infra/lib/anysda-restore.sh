@@ -300,30 +300,59 @@ docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 # ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а
 #    /opt/AdGuardHome/AdGuardHome.yaml — нет, и hash остался от старого
 #    пароля → 403). Стадия 22-adguard идемпотентно перевыпустит hash. ─────
+# Стадии при деплое получают склейку envs/all.env + envs/ru.env (run_stage в
+# infra/deploy.sh): AGH_PORT и прочие общие переменные лежат в all.env, и на
+# одном ru.env 22-adguard падает сразу. Собираем env так же, как деплой.
+ENVS_DIR=/opt/anysda-vpn2/infra/envs
+STAGE_ENV="$WORK/ru.env"
+if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
+  { cat "$ENVS_DIR/all.env"; echo; grep -v '^SSH_PASS=' "$ENVS_DIR/ru.env"; } > "$STAGE_ENV"
+  chmod 600 "$STAGE_ENV"
+fi
+
 AGH_STAGE=/opt/anysda-vpn2/infra/scripts/22-adguard.sh
-AGH_ENV=/opt/anysda-vpn2/infra/envs/ru.env
-if [[ -x "$AGH_STAGE" && -r "$AGH_ENV" ]]; then
+AGH_LOG="$WORK/22-adguard.log"
+AGH_FAIL=""
+if [[ ! -x "$AGH_STAGE" ]]; then
+  AGH_FAIL="нет $AGH_STAGE"
+elif [[ ! -s "$STAGE_ENV" ]]; then
+  AGH_FAIL="нет $ENVS_DIR/all.env или $ENVS_DIR/ru.env (их пишет ./deploy.sh из config.yaml)"
+else
   echo "anysda-restore: re-sync AdGuard creds через 22-adguard…"
-  if "$AGH_STAGE" "$AGH_ENV" >/dev/null 2>&1; then
+  if "$AGH_STAGE" "$STAGE_ENV" >"$AGH_LOG" 2>&1; then
     echo "anysda-restore: AdGuard re-synced"
   else
-    echo "anysda-restore: WARN: 22-adguard вернул ошибку — проверь руками" >&2
+    AGH_FAIL="22-adguard завершился с ошибкой, хвост вывода:"$'\n'"$(tail -n 15 "$AGH_LOG" | sed 's/^/    /')"
   fi
+fi
+if [[ -n "$AGH_FAIL" ]]; then
+  echo "anysda-restore: ERROR: пароль AdGuard не пересинхронизирован — $AGH_FAIL" >&2
 fi
 
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────
 VERIFY=/opt/anysda-vpn2/infra/scripts/99-verify.sh
-VERIFY_ENV=/opt/anysda-vpn2/infra/envs/ru.env
-if [[ -x "$VERIFY" && -r "$VERIFY_ENV" ]]; then
+if [[ -x "$VERIFY" && -s "$STAGE_ENV" ]]; then
   echo "anysda-restore: 99-verify…"
-  if "$VERIFY" "$VERIFY_ENV"; then
+  if "$VERIFY" "$STAGE_ENV"; then
     echo "anysda-restore: 99-verify PASSED"
   else
     echo "anysda-restore: 99-verify FAILED — проверь руками; pre-restore снимок: $PRESNAP_FINAL" >&2
     exit 7
   fi
 else
-  echo "anysda-restore: WARN: 99-verify ($VERIFY) не найден — пропуск smoke-test" >&2
+  echo "anysda-restore: WARN: нет 99-verify ($VERIFY) или env стадий — пропуск smoke-test" >&2
+fi
+
+# Данные восстановлены, но вход в AdGuard с паролем из бэкапа не пройдёт —
+# это не SUCCESS. Повтор: ./deploy.sh 22-adguard ru.
+if [[ -n "$AGH_FAIL" ]]; then
+  cat >&2 <<-EOM
+
+	anysda-restore: FAILED — данные восстановлены, но пароль AdGuard не пересинхронизирован:
+	  $AGH_FAIL
+	  Почини причину и прогони ./deploy.sh 22-adguard ru; pre-restore снимок: $PRESNAP_FINAL
+	EOM
+  exit 8
 fi
 
 cat <<-EOM

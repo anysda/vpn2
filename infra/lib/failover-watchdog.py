@@ -43,6 +43,7 @@ type=selector (см. gen-router-config.py) — управляется через
   IDLE_DWELL_S      неактивную — не чаще, сек  600
   RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
   WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
+  LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -142,6 +143,11 @@ LANE_PREFIX = 'lane-'
 _tick_alive = None        # {тег: задержка} живых невыключенных выходов последнего тика
 _lane_rate: dict = {}     # lane -> EWMA байт/с
 _lane_moved: dict = {}    # lane -> monotonic последнего переезда
+# Время переезда переживает перезапуск: на диске — настенное время. Нет файла,
+# битый или дорожки в нём нет — последним переездом считаем запуск вотчдога.
+LANE_STATE_FILE = os.environ.get('LANE_STATE_FILE', '/var/lib/anysda-failover-watchdog/lanes.json')
+_started = 0.0            # monotonic запуска (см. _load_lane_moved)
+_lane_saved: dict = {}    # что лежит на диске (пишем только изменения)
 _conn_seen: dict = {}     # conn id -> (up+down) на прошлом тике
 _rate_t = None            # monotonic прошлого замера нагрузки
 _elig: set = set()        # узлы, участвующие в балансировке (с гистерезисом)
@@ -546,6 +552,50 @@ def _lane_ips(conns):
     return ips
 
 
+def _load_lane_moved():
+    """Время последнего переезда дорожек из LANE_STATE_FILE (настенное время
+    переводим в monotonic). Битый файл — одна строка в журнал, отсчёт от запуска."""
+    global _started, _lane_saved
+    _started = time.monotonic()
+    _lane_moved.clear()
+    try:
+        with open(LANE_STATE_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError) as e:
+        data = e
+    if not isinstance(data, dict) or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in data.values()):
+        print(f'{LANE_STATE_FILE}: не читается ({str(data)[:200]}), '
+              f'стоянку дорожек отсчитываю от запуска', flush=True)
+        data = {}
+    wall = time.time()
+    for lane, ts in data.items():
+        _lane_moved[lane] = _started - max(0.0, wall - ts)   # из будущего — как «только что»
+    _lane_saved = dict(_lane_moved)
+
+
+def _persist_lanes():
+    """Записать время переездов, если изменилось: .tmp + os.replace — вотчдог,
+    убитый посреди записи, не оставит полфайла."""
+    global _lane_saved
+    if _lane_moved == _lane_saved:
+        return
+    _lane_saved = dict(_lane_moved)
+    shift = time.time() - time.monotonic()
+    tmp = LANE_STATE_FILE + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({l: round(m + shift, 1) for l, m in sorted(_lane_moved.items())}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, LANE_STATE_FILE)
+    except OSError as e:
+        print(f'{LANE_STATE_FILE}: не записать ({e}), стоянка не переживёт перезапуск',
+              file=sys.stderr, flush=True)
+
+
 def _move_lane(lane, tag, reason, ips, quiet=False):
     """quiet — дорожка без соединений: в журнал не пишем поштучно (сводка у вызывающего)."""
     _req('PUT', f'/proxies/{urllib.parse.quote(lane)}', {'name': tag})
@@ -571,6 +621,11 @@ def lanes_tick(conns):
             if fb and cur[l] != fb:
                 _req('PUT', f'/proxies/{urllib.parse.quote(l)}', {'name': fb})
         return
+
+    # дорожка без записи — последним переездом считаем запуск; пропавшие выбрасываем
+    moved = {l: _lane_moved.get(l, _started) for l in lanes}
+    _lane_moved.clear()
+    _lane_moved.update(moved)
 
     if conns is not None:
         _update_lane_rates(conns)
@@ -626,7 +681,7 @@ def lanes_tick(conns):
         direct = targets.get(_node_of(tag), ('',))[0]
         up = t - _direct_since.get(direct, t)
         if (tag.endswith('-warp') and direct.endswith('-direct') and up >= WARP_RETURN
-                and t - _lane_moved.get(l, -1e9) >= MIN_DWELL):
+                and t - _lane_moved[l] >= MIN_DWELL):
             _move_lane(l, direct, f'возврат с {tag}, прямой жив без перерыва {up / 60:.1f} мин', ips)
             cur[l] = direct
 
@@ -642,7 +697,7 @@ def lanes_tick(conns):
     if total > 0 and gap > IMBALANCE_SHARE * total and gap > IMBALANCE_MIN_BPS:
         cand = [l for l in lanes
                 if _node_of(cur[l] or '') == hi and ACTIVE_BPS <= rate[l] < gap
-                and t - _lane_moved.get(l, -1e9) >= MIN_DWELL]
+                and t - _lane_moved[l] >= MIN_DWELL]
         if cand:
             l = min(cand, key=lambda x: abs(rate[x] - gap / 2))
             _move_lane(l, targets[lo][0],
@@ -666,7 +721,7 @@ def lanes_tick(conns):
     levelled = []
     for l in idle:
         n = _node_of(cur[l] or '')
-        if l in ips or t - _lane_moved.get(l, -1e9) < IDLE_DWELL:
+        if l in ips or t - _lane_moved[l] < IDLE_DWELL:
             continue
         dst = min(proj, key=proj.get)
         if dst != n and n in proj and proj[n] - ACTIVE_BPS > proj[dst]:
@@ -689,6 +744,7 @@ def main():
           f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
           f'dwell={MIN_DWELL:.0f}s warp_return={WARP_RETURN:.0f}s', flush=True)
+    _load_lane_moved()
     while True:
         try:
             tick()
@@ -699,6 +755,7 @@ def main():
             lanes_tick(conns)
         except Exception as e:
             print(f'lanes error: {e}', file=sys.stderr, flush=True)
+        _persist_lanes()
         # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
         _drop_disabled_conns(conns)
         time.sleep(INTERVAL)

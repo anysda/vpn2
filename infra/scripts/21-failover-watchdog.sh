@@ -43,8 +43,13 @@ MGMT="${MGMT_IP:-10.99.0.1}"
 # 2. Env + systemd unit
 echo "[$HOST_TAG] [2/4] env + systemd unit"
 # BALANCE (балансировка дорожек lane-NN) переключается руками в env-файле —
-# переносим текущее значение через передеплой, по умолчанию off.
-BALANCE_CUR=$(sed -n 's/^BALANCE=\(on\|off\)$/\1/p' /etc/anysda/failover-watchdog.env 2>/dev/null | tail -1)
+# переносим текущее значение через передеплой, по умолчанию off. На новой
+# ноде env-файла ещё нет: sed без файла даёт rc=2, и под pipefail + set -e
+# стадия падала, поэтому читаем только существующий.
+BALANCE_CUR=''
+if [[ -f /etc/anysda/failover-watchdog.env ]]; then
+  BALANCE_CUR=$(sed -n 's/^BALANCE=\(on\|off\)$/\1/p' /etc/anysda/failover-watchdog.env | tail -1)
+fi
 cat > /etc/anysda/failover-watchdog.env <<EOF
 CLASH_API=http://${MGMT}:9090
 CLASH_SECRET=${CLASH_SECRET}

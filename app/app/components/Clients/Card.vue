@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import type { Client } from '~/composables/useClients'
+import type { Client, ClientTraffic } from '~/composables/useClients'
 import { expiryLabel, fmtBytes } from '~/composables/useClients'
 
 const props = defineProps<{
   client: Client
-  traffic?: { rxBytes: number, txBytes: number } | null
+  traffic?: ClientTraffic | null
 }>()
 const emit = defineEmits<{ open: [id: number] }>()
 
@@ -12,6 +12,10 @@ const emit = defineEmits<{ open: [id: number] }>()
 const rx = computed(() => props.traffic?.rxBytes ?? props.client.rxTotal)
 const tx = computed(() => props.traffic?.txBytes ?? props.client.txTotal)
 const trafficTotal = computed(() => rx.value + tx.value)
+const dayRx = computed(() => props.traffic?.dayRx ?? 0)
+const dayTx = computed(() => props.traffic?.dayTx ?? 0)
+const dayTotal = computed(() => dayRx.value + dayTx.value)
+const online = computed(() => props.traffic?.online ?? false)
 </script>
 
 <template>
@@ -24,6 +28,22 @@ const trafficTotal = computed(() => rx.value + tx.value)
     @keydown.space.prevent="emit('open', client.id)"
   >
     <div class="flex items-center gap-3">
+      <UTooltip
+        :text="online
+          ? `В сети · за 5 мин ${fmtBytes(traffic?.recentBytes)}`
+          : 'Не в сети · за 5 мин нет трафика'"
+      >
+        <span class="relative flex size-2.5 shrink-0" data-testid="client-online">
+          <span
+            v-if="online"
+            class="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 animate-ping"
+          />
+          <span
+            class="relative inline-flex size-2.5 rounded-full"
+            :class="online ? 'bg-emerald-400' : 'bg-(--ui-text-dimmed)/40'"
+          />
+        </span>
+      </UTooltip>
       <div class="flex-1 min-w-0">
         <div class="font-medium text-(--ui-text-highlighted) leading-tight flex items-center gap-1.5">
           <UTooltip
@@ -48,23 +68,30 @@ const trafficTotal = computed(() => rx.value + tx.value)
               {{ client.deviceCount }}/{{ client.deviceLimit === null ? '∞' : client.deviceLimit }}
             </span>
           </UTooltip>
+          <UTooltip :text="`За сутки (с 00:00 МСК) · ↓ ${fmtBytes(dayRx)} ↑ ${fmtBytes(dayTx)}`">
+            <span
+              class="flex items-center gap-0.5"
+              :class="dayTotal > 0 ? 'text-(--ui-text)' : ''"
+            >
+              <UIcon name="i-lucide-arrow-down-up" class="size-3 shrink-0" />
+              {{ fmtBytes(dayTotal) }}
+            </span>
+          </UTooltip>
           <UTooltip
             v-if="trafficTotal > 0"
             :text="`Трафик за всё время (все девайсы) · ↓ ${fmtBytes(rx)} ↑ ${fmtBytes(tx)}`"
           >
-            <span class="flex items-center gap-0.5">
-              <UIcon name="i-lucide-arrow-down" class="size-3 shrink-0" />
-              {{ fmtBytes(trafficTotal) }}
-            </span>
+            <span class="text-(--ui-text-dimmed)">всего {{ fmtBytes(trafficTotal) }}</span>
           </UTooltip>
         </div>
       </div>
       <UBadge
-        :color="client.status === 'active' ? 'success' : 'neutral'"
+        v-if="client.status === 'frozen'"
+        color="neutral"
         variant="subtle"
         size="sm"
       >
-        {{ client.status === 'active' ? 'Активен' : 'Заморожен' }}
+        Заморожен
       </UBadge>
     </div>
   </div>

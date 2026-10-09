@@ -20,7 +20,9 @@ test.describe('клиенты', () => {
     await createClientUi(page, name, { expires })
     await page.getByPlaceholder('Поиск...').fill(name)
     await expect(clientCard(page, name)).toHaveCount(1)
-    await expect(clientCard(page, name)).toContainText('Активен')
+    // Бейдж подписки — только «Заморожен»; у нового клиента вместо него точка «в сети».
+    await expect(clientCard(page, name)).not.toContainText('Заморожен')
+    await expect(clientCard(page, name).getByTestId('client-online')).toBeVisible()
 
     const dlg = await openClient(page, name)
     await expect(dlg.getByPlaceholder('ДД.ММ.ГГГГ')).toHaveValue(expires)
@@ -46,8 +48,10 @@ test.describe('клиенты', () => {
     // Заморозить и разморозить.
     await dlg.getByRole('button', { name: 'Заморозить' }).click()
     await expect(toast(page, 'Клиент заморожен')).toBeVisible()
+    await expect(clientCard(page, renamed)).toContainText('Заморожен')
     await dlg.getByRole('button', { name: 'Разморозить' }).click()
     await expect(toast(page, 'Клиент разморожен')).toBeVisible()
+    await expect(clientCard(page, renamed)).not.toContainText('Заморожен')
 
     // «Отмена» в подтверждениях.
     await dlg.getByRole('button', { name: 'Перевыпустить все ключи' }).click()

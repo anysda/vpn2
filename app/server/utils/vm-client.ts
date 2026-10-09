@@ -1,4 +1,5 @@
 import { useLogger } from './logger'
+import { MSK_OFFSET_SEC, mskDay } from './msk-day'
 
 interface VmInstantResult {
   metric: Record<string, string>
@@ -136,7 +137,6 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
 // чем у rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на
 // eth0 — считаем только физический интерфейс, иначе сумма удвоится.
 const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
-const MSK_OFFSET_SEC = 3 * 3600 // Москва — UTC+3 круглый год
 const DAILY_CACHE_MS = 30_000
 
 /** Секунд с 00:00 по Москве; не меньше 60, чтобы окно increase() не было пустым. */
@@ -154,7 +154,6 @@ export interface DailyTraffic {
 // /api/ops/nodes раз в 2с, поэтому результат держим 30с.
 let dailyCache: { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> } | null = null
 
-const mskDay = (ms: number) => Math.floor((ms / 1000 + MSK_OFFSET_SEC) / 86400)
 
 export async function fetchDailyTraffic(instances: string[]): Promise<Map<string, DailyTraffic>> {
   const now = Date.now()

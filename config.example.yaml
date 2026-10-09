@@ -119,7 +119,9 @@ admin:
 #   offload: keep       # keep | off — TSO/GSO на WAN entry. Первое, что стоит
 #                       # попробовать, если A/B-проверка не проходит.
 #   # strategy: "--lua-desync=..."      # переопределить стратегию nfqws2
-#   #                                   # (подбирается blockcheck2.sh на entry)
+#   #                                   # (подбирается blockcheck2.sh на entry;
+#   #                                   # scale из wssize задаёт поправку окна
+#   #                                   # в nft — см. README, раздел YouTube)
 #   # zapret_ref: "2c21faa8..."         # пин коммита bol-van/zapret2
 #   # domains: "youtube.com googlevideo.com ..."   # заменить список суффиксов
 

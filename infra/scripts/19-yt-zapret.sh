@@ -50,12 +50,24 @@ YT_ZAPRET_REPO="${YT_ZAPRET_REPO:-https://github.com/bol-van/zapret2}"
 YT_ZAPRET_REF="${YT_ZAPRET_REF:-2c21faa80e1acb71ddceb8b49176f266b7d33f05}"
 YT_ZAPRET_BASE="${YT_ZAPRET_BASE:-/opt/zapret2}"
 YT_ZAPRET_BIN="$YT_ZAPRET_BASE/binaries/my/nfqws2"
-# Стратегия десинка. Дома проверено экспериментально (31-07-2026): наш DPI
-# берёт ТОЛЬКО split; fake (в т.ч. sni=www.google.com) и circular — хуже или
-# не берут вовсе, не возвращать. wssize — анти-троттл (лечит замедление, а не
-# блокировку). Если DPI у провайдера entry другой — подбирать через
-# $YT_ZAPRET_BASE/blockcheck2.sh и переопределять YT_ZAPRET_STRATEGY.
-YT_ZAPRET_STRATEGY="${YT_ZAPRET_STRATEGY:---lua-desync=wssize:wsize=1:scale=6 --payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1}"
+# Стратегия десинка. Две части, обе обязательны:
+#   wssize:wsize=1:scale=1 — ТСПУ режет не только ClientHello, но и ответ
+#     сервера (ServerHello) у части узлов googlevideo. Помогает только окно
+#     клиента не больше 2 байт на первых пакетах: сервер шлёт ServerHello
+#     крошечными сегментами, и DPI его не собирает. Окно = wsize << scale, так
+#     что scale=6 даёт 64 байта и ServerHello уже не дробит (0-1 из 35
+#     проблемных узлов против 35/35 с scale=1).
+#   multisplit:pos=10,midsld:seqovl=1 — режет ClientHello. Наш DPI берёт ТОЛЬКО
+#     split; fake (в т.ч. sni=www.google.com) и circular хуже или не берут
+#     вовсе, не возвращать.
+# Цена малого scale — скорость: он подменяется в SYN и действует на всё
+# соединение, а ядро пишет окно под свой масштаб. Это чинит поправка окна в nft
+# (шаг 5), сдвиг считается из scale этой стратегии. Если DPI у провайдера entry
+# другой — подбирать через $YT_ZAPRET_BASE/blockcheck2.sh и переопределять
+# YT_ZAPRET_STRATEGY (youtube.strategy в config.yaml).
+YT_ZAPRET_STRATEGY="${YT_ZAPRET_STRATEGY:---lua-desync=wssize:wsize=1:scale=1 --payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1}"
+# Масштаб окна, который ядро ставит в свой SYN. Пусто — замерить (шаг 5).
+YT_ZAPRET_WSCALE="${YT_ZAPRET_WSCALE:-}"
 # TSO/GSO на WAN: при офлоаде ядро может отдать в очередь склеенный
 # super-пакет, и резать ClientHello будет нечего. На практике ClientHello
 # меньше MSS и всё работает с офлоадом (проверяется A/B-тестом ниже), а
@@ -192,6 +204,50 @@ net.netfilter.nf_conntrack_tcp_be_liberal=1
 EOF
 sysctl -p "$SYSCTL_CONF" >/dev/null
 
+# Поправка окна. wssize подменяет масштаб окна в SYN на scale из стратегии, и
+# сервер до конца соединения читает окно клиента как window << scale. Ядро же
+# об этом не знает и пишет окно под СВОЙ масштаб: window = свободно >> wscale.
+# Итог — сервер видит окно в 2^(wscale-scale) раз меньше настоящего, видео
+# ползёт на единицах КБ/с. Возвращаем недостающий сдвиг на каждом исходящем
+# не-SYN пакете; первые пакеты всё равно перезапишет nfqws2 (wsize=1).
+WIN_SCALE=''
+if [[ " $YT_ZAPRET_STRATEGY " =~ [[:space:]]--lua-desync=wssize(:[^[:space:]]*)?[[:space:]] ]] \
+   && [[ "${BASH_REMATCH[1]}:" =~ :scale=([0-9]+): ]]; then
+  WIN_SCALE=${BASH_REMATCH[1]}
+fi
+NFT_WIN_RULES=''
+if [[ -n "$WIN_SCALE" ]]; then
+  # Масштаб ядра: max(tcp_rmem[2], rmem_max) → ilog2 − 15, но формула менялась
+  # от версии к версии, поэтому не считаем, а замеряем: соединение по loopback
+  # строится той же функцией ядра, TCP_INFO отдаёт его rcv_wscale. Меняли
+  # rmem/tcp_rmem — перезапустить стадию.
+  if [[ -z "$YT_ZAPRET_WSCALE" ]]; then
+    YT_ZAPRET_WSCALE=$(python3 - <<'PY' 2>/dev/null || true
+import socket
+srv = socket.create_server(('127.0.0.1', 0))
+cli = socket.create_connection(srv.getsockname())
+# struct tcp_info: 7-й байт — snd_wscale:4, rcv_wscale:4.
+print(cli.getsockopt(socket.IPPROTO_TCP, socket.TCP_INFO, 8)[6] >> 4)
+PY
+)
+  fi
+  if [[ ! "$YT_ZAPRET_WSCALE" =~ ^([0-9]|1[0-4])$ ]]; then
+    # 9 — замер на проде: rmem_max=16 МБ из 00-bootstrap.
+    echo "[$HOST_TAG]   масштаб окна ядра не определился ('$YT_ZAPRET_WSCALE') — беру 9"
+    YT_ZAPRET_WSCALE=9
+  fi
+  WIN_SHIFT=$(( YT_ZAPRET_WSCALE - WIN_SCALE ))
+  _m="meta mark $YT_MARK oifname \"$WAN_IFACE\" tcp dport 443 tcp flags & syn == 0"
+  if (( WIN_SHIFT > 0 )); then
+    # Окно, которое после сдвига не влезает в 16 бит, — потолок 65535.
+    NFT_WIN_RULES="        $_m tcp window > $(( 65535 >> WIN_SHIFT )) counter tcp window set 65535
+        $_m tcp window <= $(( 65535 >> WIN_SHIFT )) counter tcp window set tcp window << $WIN_SHIFT"
+  elif (( WIN_SHIFT < 0 )); then
+    NFT_WIN_RULES="        $_m counter tcp window set tcp window >> $(( -WIN_SHIFT ))"
+  fi
+  echo "[$HOST_TAG]   окно: scale=$WIN_SCALE, ядро=$YT_ZAPRET_WSCALE, сдвиг=$WIN_SHIFT"
+fi
+
 cat > "$NFT_CONF" <<EOF
 #!/usr/sbin/nft -f
 # Managed by anysda-vpn2 stage 19-yt-zapret. Не редактировать руками —
@@ -216,6 +272,9 @@ table inet ytzapret {
         # Метка живёт на исходящем пакете, но ответы сервера приходят без неё.
         # Переносим её в conntrack — по ct mark ловим обратное направление.
         meta mark $YT_MARK ct mark set $YT_MARK counter
+        # Поправка окна под scale из стратегии (см. шаг 5 стадии). Стоит ДО
+        # очереди: пакет, вернувшийся из nfqws2, остаток цепочки не проходит.
+${NFT_WIN_RULES:-        # (стратегия не меняет масштаб окна — поправка не нужна)}
         # Десинк нужен только в начале соединения: ClientHello и первые
         # сегменты. Остальное идёт мимо очереди на полной скорости.
         meta mark $YT_MARK oifname "$WAN_IFACE" tcp dport 443 ct original packets 1-12 counter queue num $YT_ZAPRET_QUEUE bypass

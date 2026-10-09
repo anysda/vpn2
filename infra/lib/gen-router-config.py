@@ -453,7 +453,6 @@ def main():
             #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
             'rules': mon_route_rules + [
-                {'inbound': ['tg-proxy'], 'outbound': 'tg-best'},
                 # mon-{tag} матчатся по inbound-тегу ВЫШЕ блока 127.0.0.0/8:
                 # цель служебного запроса — 127.0.0.1:9100 (loopback экзита),
                 # иначе его срезало бы правило ниже.
@@ -463,6 +462,10 @@ def main():
                     'ip_cidr': ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8'],
                     'outbound': 'block-out',
                 },
+                # Выход бота — только ПОСЛЕ блокировок выше: прокси бота слушает
+                # loopback роутера, и любой локальный процесс через него дошёл
+                # бы до loopback экзита (sshd, node_exporter, clash-api).
+                {'inbound': ['tg-proxy'], 'outbound': 'tg-best'},
                 {'protocol': 'dns',                          'outbound': 'direct-ru'},
             ] + yt_route_rules + [
                 # Telegram при блокировке маскирует соединения: идёт на свои IP,

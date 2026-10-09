@@ -16,6 +16,20 @@ export default defineEventHandler(async (event) => {
   ])
   // Узел, через который сейчас уходит иностранный трафик вне дорожек (foreign-best).
   const activeNode = exitNodeOf(proxies.find(p => p.name === 'foreign-best')?.now)
+  // Дорожки lane-NN: сколько смотрит на каждый узел и сколько из них — через
+  // его warp. При BALANCE=off дорожки повторяют foreign-best и все стоят на
+  // одном узле — так и показываем. Дорожек нет (старый конфиг, clash API
+  // молчит) — null, а не ноль.
+  const lanes = proxies.filter(p => p.name.startsWith('lane-'))
+  const lanesByNode = new Map<string, { total: number, warp: number }>()
+  for (const l of lanes) {
+    const node = exitNodeOf(l.now)
+    if (!node) continue
+    const s = lanesByNode.get(node) ?? { total: 0, warp: 0 }
+    s.total++
+    if (l.now!.endsWith('-warp')) s.warp++
+    lanesByNode.set(node, s)
+  }
   // Активные устройства на экзите: разные клиентские VPN-IP среди текущих
   // соединений через узел (mgmt-туннели — служебные, не считаем).
   const devicesByNode = new Map<string, Set<string>>()
@@ -45,5 +59,7 @@ export default defineEventHandler(async (event) => {
     disabled: n.tag !== 'ru' && disabled.includes(n.tag),
     active: n.tag !== 'ru' && n.tag === activeNode,
     activeDevices: n.tag !== 'ru' ? (devicesByNode.get(n.tag)?.size ?? 0) : null,
+    lanes: n.tag !== 'ru' && lanes.length ? (lanesByNode.get(n.tag)?.total ?? 0) : null,
+    lanesWarp: n.tag !== 'ru' && lanes.length ? (lanesByNode.get(n.tag)?.warp ?? 0) : null,
   }))
 })

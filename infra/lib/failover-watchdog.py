@@ -99,10 +99,14 @@ _pen_dur: dict = {}   # node -> текущая длительность штра
 # Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
 # Выключенный узел — как мёртвый: в выборе не участвует, если сейчас выбран —
 # уводим сразу (без до-проверок), висящие через него соединения рвём.
+# Выключение — предпочтение, а не запрет ценой простоя: если живых
+# невыключенных нет, трафик идёт через живой выключенный и его соединения
+# не рвём, пока не появится живой невыключенный.
 # Нет файла / битый JSON / не список — ничего не выключено.
 DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
 _disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
 _disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
+_spared: set = set()     # выключенные узлы, через которые идём за неимением живых невыключенных
 
 # Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
 # по selector'ам по VPN-IP; здесь решаем, на какой экзит смотрит каждая.
@@ -269,6 +273,26 @@ def _read_disabled():
     return cur
 
 
+def _excluded():
+    """Узлы, которых сейчас избегаем: выключенные, кроме пощажённых."""
+    return _disabled - _spared
+
+
+def _spare(nodes):
+    """Запомнить, через какие выключенные узлы идём (пусто — ни через какие).
+    В журнал — только смена, одной строкой."""
+    global _spared
+    if nodes == _spared:
+        return
+    if nodes:
+        print(f'живых невыключенных экзитов нет — трафик идёт через выключенные вручную '
+              f'({", ".join(sorted(nodes))}), их соединения не рву', flush=True)
+    else:
+        print(f'есть живой невыключенный экзит — ухожу с выключенных вручную '
+              f'({", ".join(sorted(_spared))})', flush=True)
+    _spared = nodes
+
+
 def _fetch_conns():
     """Снимок /connections на цикл (общий для учёта нагрузки дорожек и
     обрыва соединений через выключенные узлы). None — clash-api не ответил."""
@@ -283,12 +307,13 @@ def _drop_disabled_conns(conns):
     """Рвём соединения, ещё идущие через выключенные узлы — как при сбое ноды
     (иначе долгие сессии текли бы через «выключенный» экзит до закрытия).
     mgmt-туннели не трогаем: по ним панель скрейпит метрики самого узла."""
-    if not _disabled or conns is None:
+    drop = _excluded()   # через пощажённые идёт трафик — их не трогаем
+    if not drop or conns is None:
         return
     closed = 0
     for c in conns:
         out = (c.get('chains') or [''])[0]
-        if out.endswith('-mgmt') or _node_of(out) not in _disabled or not c.get('id'):
+        if out.endswith('-mgmt') or _node_of(out) not in drop or not c.get('id'):
             continue
         try:
             _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
@@ -297,7 +322,7 @@ def _drop_disabled_conns(conns):
             pass
     if closed:
         print(f'закрыто {closed} соединений через выключенные узлы '
-              f'({", ".join(sorted(_disabled))})', flush=True)
+              f'({", ".join(sorted(drop))})', flush=True)
 
 
 def tick():
@@ -307,25 +332,42 @@ def tick():
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
     disabled = _read_disabled()
-    members = [m for m in group.get('all', []) if _node_of(m) not in disabled]
+    everyone = group.get('all', [])
+    members = [m for m in everyone if _node_of(m) not in disabled]
     now = group.get('now')
-    if not members:
+    if not everyone:
         return
 
     delays, errs = _probe_all(members)
     alive = {m: d for m, d in delays.items() if d is not None}
+    # Живых невыключенных нет — выбираем из живых выключенных: выключение не
+    # стоит простоя. Пощажённые запоминаем, лишь решив идти через них (ниже):
+    # транзиентный промах текущего не должен отменять обрыв соединений.
+    fallback = not alive
+    if fallback:
+        members = everyone
+        d2, e2 = _probe_all([m for m in everyone if _node_of(m) in disabled])
+        errs.update(e2)
+        alive = {m: d for m, d in d2.items() if d is not None}
+    else:
+        _spare(set())
     _tick_alive = alive
     if not alive:
         detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
         print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
         return
     best = _pick_best(alive)   # лучший из не-оштрафованных
+    spare = {_node_of(m) for m in alive} if fallback else set()
 
     global _lat_cand, _lat_streak
-    if now and _node_of(now) in disabled:
+    if now in alive and fallback:
+        _spare(spare)   # текущий выключен, но жив, а живых невыключенных нет — остаёмся
+    if now and _node_of(now) in disabled and now not in alive:
         # текущий выключен вручную — уводим сразу, без до-проверок и штрафа
+        _spare(spare)
         _lat_cand, _lat_streak = '', 0
-        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную')
+        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную'
+                                   f'{" и не отвечает" if fallback else ""}')
         return
     if now in alive:
         # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
@@ -345,6 +387,7 @@ def tick():
 
     if now not in members:
         # выбора нет / он не из группы — просто берём лучший
+        _spare(spare)
         _switch(best, alive[best], 'выбор не задан')
         return
 
@@ -367,6 +410,7 @@ def tick():
     # best выбран до штрафа: без перевыбора уходили на соседний тег того же
     # узла (nl-direct -> nl-warp), и смерть узла давала второй простой.
     best = _pick_best(alive)
+    _spare(spare)
     _switch(best, alive[best],
             f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
             f'узел {node} в штрафной {dur:.0f}с')
@@ -411,7 +455,8 @@ def _update_lane_rates(conns):
 def _effective_alive(alive, all_tags):
     """Живые выходы с анти-флапом: одиночный промах пробы не роняет выход —
     мёртвым он считается после DEAD_AFTER промахов подряд (до того берём
-    последнюю удачную задержку). Выключенные вручную в alive уже не попадают."""
+    последнюю удачную задержку). Выключенные вручную отбрасываем, кроме
+    пощажённых (живых невыключенных нет — см. _spare)."""
     for tag in all_tags:
         if tag in alive:
             _tag_miss[tag] = 0
@@ -420,7 +465,7 @@ def _effective_alive(alive, all_tags):
             _tag_miss[tag] = _tag_miss.get(tag, DEAD_AFTER) + 1
     return {t: _tag_delay[t] for t in all_tags
             if _tag_miss.get(t, DEAD_AFTER) < DEAD_AFTER and t in _tag_delay
-            and _node_of(t) not in _disabled}
+            and _node_of(t) not in _excluded()}
 
 
 def _node_targets(alive):
@@ -456,12 +501,12 @@ def _update_eligible(targets):
             if best is not None and lat[n] <= best + BALANCE_MARGIN_MS
             and _penalty.get(n, 0.0) <= t}
     for node in set(want) | set(_elig):
-        hard_out = node in _disabled or node not in targets
+        hard_out = node in _excluded() or node not in targets
         if hard_out:
             if node in _elig:
                 _elig.discard(node)
                 print(f'дорожки: узел {node} выбыл '
-                      f'({"выключен вручную" if node in _disabled else "нет живых выходов"})', flush=True)
+                      f'({"выключен вручную" if node in _excluded() else "нет живых выходов"})', flush=True)
             _state_since.pop(node, None)
             continue
         if (node in want) == (node in _elig):

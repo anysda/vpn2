@@ -107,14 +107,23 @@ echo "[$HOST_TAG]   admin pass:  (см. /etc/anysda/admin-password.txt на но
 # 3. Caddy (reverse-proxy + optional LE)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/4] caddy"
+# APT-репо Caddy на Cloudsmith отвечает 402 Payment Required: apt-get update
+# с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
+# пользователем caddy), а список Cloudsmith со старых нод убираем.
+rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
 if ! command -v caddy >/dev/null 2>&1; then
-  apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-    | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
-    > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -qq
-  apt-get install -y -qq caddy >/dev/null
+  CADDY_VER='2.11.4'
+  TMP=$(mktemp -d)
+  REL_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
+  DEB="caddy_${CADDY_VER}_linux_amd64.deb"
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "$REL_URL/$DEB" -o "$TMP/$DEB"
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "$REL_URL/caddy_${CADDY_VER}_checksums.txt" -o "$TMP/checksums.txt"
+  ( cd "$TMP" && grep -E "[[:space:]]${DEB}\$" checksums.txt | sha512sum -c - ) \
+    || { rm -rf "$TMP"; echo "[$HOST_TAG] caddy SHA-512 mismatch — abort" >&2; exit 1; }
+  apt-get install -y -qq "$TMP/$DEB" >/dev/null
+  rm -rf "$TMP"
 fi
 
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then

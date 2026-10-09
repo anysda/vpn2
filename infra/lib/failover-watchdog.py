@@ -780,6 +780,13 @@ def pins_tick(proxies):
         base = name[len(PIN_PREFIX):]
         _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
         node = _node_of(base)
+        # Выход не основной — tick() его смерть не штрафует, и маршрут вернулся
+        # бы на первом же удачном замере. Штрафуем узел в момент признания
+        # смерти; долгая смерть штраф не наращивает.
+        if (_pin_miss[base] == DEAD_AFTER and node not in _excluded()
+                and _penalty.get(node, 0.0) <= t):
+            _, dur = _penalize(base)
+            print(f'{base} мёртв ({DEAD_AFTER}× промахов), узел {node} в штрафной {dur:.0f}с', flush=True)
         if node in _excluded():
             why = 'узел выключен вручную'
         elif _pin_miss[base] >= DEAD_AFTER:

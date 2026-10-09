@@ -99,6 +99,13 @@
       "when": 1791536794604,
       "tag": "0013_device_traffic_hourly",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791560100310,
+      "tag": "0014_collector_state",
+      "breakpoints": true
     }
   ]
 }

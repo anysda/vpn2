@@ -116,6 +116,15 @@ export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
   index('device_traffic_hourly_hour_idx').on(table.hour),
 ])
 
+/**
+ * Состояние сборщиков, которое должно пережить рестарт панели: name → JSON.
+ * 'ikev2' — последние байт-счётчики живых IKE_SA (server/utils/ikev2-counters.ts).
+ */
+export const collectorState = sqliteTable('collector_state', {
+  name: text('name').primaryKey(),
+  value: text('value').notNull(),
+})
+
 export const routes = sqliteTable('routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   type: text('type', { enum: ['domain', 'ip_cidr'] }).notNull(),

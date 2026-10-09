@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { flagFor } from '~/composables/useRoutes'
 import {
+  formatBytes,
   formatMbps,
   formatPercent,
   formatUptime,
@@ -8,8 +9,36 @@ import {
   sparklinePath,
   useMonitoring,
 } from '~/composables/useMonitoring'
+import type { NodeMetric } from '~/composables/useMonitoring'
 
-const { nodes, cpuHistory } = useMonitoring()
+const { nodes, cpuHistory, setExitDisabled } = useMonitoring()
+const toast = useToast()
+const toggling = ref<string | null>(null)
+
+const ERRORS: Record<string, string> = {
+  last_enabled_exit: 'Нельзя выключить последний включённый экзит',
+  unknown_exit: 'Неизвестный экзит',
+}
+
+async function toggleExit(n: NodeMetric, enabled: boolean) {
+  const disabled = !enabled
+  if (disabled && (n.active || n.activeDevices)
+    && !confirm(`Через ${n.tag.toUpperCase()} сейчас идёт трафик. Выключить? Watchdog уведёт его на другие экзиты, текущие соединения оборвутся.`)) {
+    return
+  }
+  toggling.value = n.tag
+  try {
+    await setExitDisabled(n.tag, disabled)
+    toast.add({ title: `${n.tag.toUpperCase()} ${disabled ? 'выключен' : 'включён'}`, color: 'success' })
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: ERRORS[err.statusMessage ?? ''] ?? err.statusMessage ?? 'Ошибка', color: 'error' })
+  }
+  finally {
+    toggling.value = null
+  }
+}
 
 const sortedNodes = computed(() =>
   [...nodes.value]
@@ -40,8 +69,13 @@ function waitColor(v: number | null): string {
 <template>
   <UCard>
     <template #header>
-      <div class="font-semibold">
-        Мониторинг
+      <div class="flex items-baseline justify-between gap-2">
+        <div class="font-semibold">
+          Мониторинг
+        </div>
+        <div class="text-xs text-(--ui-text-muted)">
+          трафик за сутки — с 00:00 МСК
+        </div>
       </div>
     </template>
 
@@ -64,11 +98,47 @@ function waitColor(v: number | null): string {
       >
         <!-- warning: метрики устарели ≥5с (нода потеряла связь, трафик уже
              увёл watchdog) — весь текст карточки красный. offline ≥3мин. -->
-        <div :class="n.state === 'offline' ? 'opacity-30' : ''">
-          <div class="flex items-center justify-between text-xs mb-2">
+        <div :class="n.state === 'offline' ? 'opacity-30' : n.disabled ? 'opacity-50' : ''">
+          <div class="flex items-center justify-between text-xs mb-1">
             <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
             <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
           </div>
+          <div
+            v-if="n.tag !== 'ru'"
+            class="flex items-center justify-between mb-2 min-h-5"
+          >
+            <UBadge
+              v-if="n.disabled"
+              color="neutral"
+              variant="subtle"
+              size="sm"
+            >
+              ВЫКЛ
+            </UBadge>
+            <UBadge
+              v-else-if="n.activeDevices"
+              color="success"
+              variant="subtle"
+              size="sm"
+              title="Устройств с соединениями через этот экзит сейчас"
+            >
+              {{ n.activeDevices }} устр.
+            </UBadge>
+            <span v-else />
+            <USwitch
+              :model-value="!n.disabled"
+              :loading="toggling === n.tag"
+              :disabled="toggling !== null"
+              size="xs"
+              :aria-label="`Экзит ${n.tag.toUpperCase()} включён`"
+              @update:model-value="(v: boolean) => toggleExit(n, v)"
+            />
+          </div>
+          <!-- у RU выключателя нет — держим ту же высоту, чтобы строки карточек совпадали -->
+          <div
+            v-else
+            class="mb-2 min-h-5"
+          />
           <div class="space-y-0.5 text-xs">
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">CPU</span>
@@ -93,6 +163,21 @@ function waitColor(v: number | null): string {
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">↑</span>
               <span class="text-(--ui-text)">{{ formatMbps(n.txMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
+            </div>
+            <div class="border-t border-(--ui-border) my-1" />
+            <div
+              class="flex justify-between"
+              title="Принято нодой с 00:00 МСК"
+            >
+              <span class="text-(--ui-text-muted)">сутки ↓</span>
+              <span class="text-(--ui-text)">{{ formatBytes(n.rxTodayBytes) }}</span>
+            </div>
+            <div
+              class="flex justify-between"
+              title="Отдано нодой с 00:00 МСК"
+            >
+              <span class="text-(--ui-text-muted)">сутки ↑</span>
+              <span class="text-(--ui-text)">{{ formatBytes(n.txTodayBytes) }}</span>
             </div>
           </div>
           <svg

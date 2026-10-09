@@ -148,6 +148,54 @@ export function useClientDevices() {
   return { addDevice, removeDevice, reissueDevice }
 }
 
+/** Трафик клиента из `GET /api/clients/traffic` (опрос каждые 3 с). */
+export interface ClientTraffic {
+  /** За всё время. */
+  rxBytes: number
+  txBytes: number
+  /** С 00:00 МСК. */
+  dayRx: number
+  dayTx: number
+  /** За последние 5 минут. */
+  recentBytes: number
+  /** «В сети»: recentBytes выше порога keepalive-шума. */
+  online: boolean
+}
+
+export type TopPeriod = 'day' | 'week'
+
+/** `GET /api/clients/top`. */
+export interface ClientsTop {
+  period: TopPeriod
+  /** Начало периода, unix-секунды. */
+  since: number
+  /** Первый час почасовой истории (unix-секунды) или null. */
+  historyStart: number | null
+  clients: Array<{ id: number, name: string, rx: number, tx: number, total: number }>
+  counts: { total: number, onlineNow: number, activeDay: number, activeWeek: number }
+}
+
+const TOP_POLL_INTERVAL_MS = 15_000
+
+/** ТОП клиентов по трафику за сутки/неделю + счётчики активности. */
+export function useClientsTop(period: Ref<TopPeriod>) {
+  const { data, refresh } = useFetch<ClientsTop>('/api/clients/top', {
+    query: { period },
+    server: false,
+  })
+
+  let timer: ReturnType<typeof setInterval> | null = null
+  onMounted(() => {
+    if (!timer) timer = setInterval(() => { void refresh() }, TOP_POLL_INTERVAL_MS)
+  })
+  onUnmounted(() => {
+    if (timer) { clearInterval(timer); timer = null }
+  })
+  useVisibleRefresh(refresh)
+
+  return { top: data, refresh }
+}
+
 /** «31.12.2026» → ISO-строка (UTC-полночь). null — если формат не распознан. */
 export function parseRuDate(s: string): string | null {
   const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)

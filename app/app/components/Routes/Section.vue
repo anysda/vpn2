@@ -22,6 +22,7 @@ async function add() {
   adding.value = true
   try {
     await create(newValue.value.trim(), newOutbound.value)
+    expandCell(newOutbound.value)   // добавленное правило должно быть видно
     toast.add({ title: 'Правило добавлено', color: 'success' })
     newValue.value = ''
   }
@@ -67,6 +68,25 @@ function rulesFor(outboundName: string | null | undefined): Route[] {
   return rules.value.filter(r => r.outbound === outboundName)
 }
 
+// Длинный список правил ячейки сворачивается: видно первые COLLAPSED_RULES,
+// остальное — по «ещё N». Иначе выход с десятком правил растягивал блок на
+// пол-экрана. Бросать правило на свёрнутую ячейку можно, как и раньше.
+const COLLAPSED_RULES = 3
+const expandedCells = ref(new Set<string>())
+function visibleRules(outboundName: string): Route[] {
+  const all = rulesFor(outboundName)
+  return expandedCells.value.has(outboundName) ? all : all.slice(0, COLLAPSED_RULES)
+}
+function expandCell(outboundName: string) {
+  if (!expandedCells.value.has(outboundName)) expandedCells.value = new Set(expandedCells.value).add(outboundName)
+}
+function toggleCell(outboundName: string) {
+  const next = new Set(expandedCells.value)
+  if (next.has(outboundName)) next.delete(outboundName)
+  else next.add(outboundName)
+  expandedCells.value = next
+}
+
 // Drag state
 const dragging = ref<{ id: number, value: string } | null>(null)
 const dragOver = ref<string | null>(null)
@@ -91,6 +111,7 @@ async function onDrop(targetOutbound: string) {
   if (!cur || cur.outbound === targetOutbound) return
   try {
     await patch(m.id, targetOutbound)
+    expandCell(targetOutbound)
     toast.add({ title: `«${m.value}» → ${outboundLabel(targetOutbound)}`, color: 'success' })
   }
   catch (e) {
@@ -210,7 +231,7 @@ function outboundLabel(name: string): string {
             </div>
             <div class="space-y-1">
               <div
-                v-for="rule in rulesFor(col.direct.name)"
+                v-for="rule in visibleRules(col.direct.name)"
                 :key="rule.id"
                 draggable="true"
                 class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
@@ -227,6 +248,18 @@ function outboundLabel(name: string): string {
                   @click="deleteRule(rule)"
                 />
               </div>
+              <button
+                v-if="rulesFor(col.direct.name).length > COLLAPSED_RULES"
+                type="button"
+                class="w-full text-[11px] text-(--ui-text-muted) hover:text-(--ui-text) flex items-center justify-center gap-1 py-0.5"
+                @click="toggleCell(col.direct.name)"
+              >
+                <UIcon
+                  :name="expandedCells.has(col.direct.name) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                  class="size-3"
+                />
+                {{ expandedCells.has(col.direct.name) ? 'свернуть' : `ещё ${rulesFor(col.direct.name).length - COLLAPSED_RULES}` }}
+              </button>
               <!-- Invisible placeholder chips so the cell holds height of ≥2 rules at all times.
                    Same markup as a real chip → identical pixel footprint, no math required. -->
               <div
@@ -269,7 +302,7 @@ function outboundLabel(name: string): string {
             </div>
             <div class="space-y-1">
               <div
-                v-for="rule in rulesFor(col.warp.name)"
+                v-for="rule in visibleRules(col.warp.name)"
                 :key="rule.id"
                 draggable="true"
                 class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
@@ -286,6 +319,18 @@ function outboundLabel(name: string): string {
                   @click="deleteRule(rule)"
                 />
               </div>
+              <button
+                v-if="rulesFor(col.warp.name).length > COLLAPSED_RULES"
+                type="button"
+                class="w-full text-[11px] text-(--ui-text-muted) hover:text-(--ui-text) flex items-center justify-center gap-1 py-0.5"
+                @click="toggleCell(col.warp.name)"
+              >
+                <UIcon
+                  :name="expandedCells.has(col.warp.name) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                  class="size-3"
+                />
+                {{ expandedCells.has(col.warp.name) ? 'свернуть' : `ещё ${rulesFor(col.warp.name).length - COLLAPSED_RULES}` }}
+              </button>
               <!-- Same trick as direct cell: pad to a base size of 1 rule. -->
               <div
                 v-for="i in Math.max(0, 1 - rulesFor(col.warp.name).length)"

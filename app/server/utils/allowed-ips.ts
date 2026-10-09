@@ -120,17 +120,20 @@ function excludeHost(cidrs: string[], host: string): string[] {
  * Строка для `AllowedIPs =`.
  *  - splitLocal=false → классический full-tunnel `0.0.0.0/0, ::/0`
  *  - splitLocal=true  → интернет без локальных сетей + дырки в `tunnelPrefixes`,
- *    минус сам endpoint (см. `excludeHost`). Если endpoint задан именем, а не
- *    IP, дырку выбить не из чего — Linux-клиентам такого конфига грозит петля.
+ *    минус сам endpoint (см. `excludeHost`). Если endpoint задан именем
+ *    (`public_host`), вычитается `endpointIp` — IP входа, на который это имя
+ *    указывает; без него Linux-клиентам такого конфига грозит петля.
  */
 export function wgAllowedIps(
   splitLocal: boolean,
   tunnelPrefixes: string[] = [],
   endpointHost = '',
+  endpointIp = '',
 ): string {
   if (!splitLocal) return FULL_TUNNEL
   const nets = tunnelPrefixes.map(prefixToNet).filter(Boolean) as string[]
-  return [...excludeHost(PUBLIC_V4, endpointHost), ...nets, PUBLIC_V6, WG_ULA_NET].join(', ')
+  const host = isIpv4(endpointHost) ? endpointHost : endpointIp.trim()
+  return [...excludeHost(PUBLIC_V4, host), ...nets, PUBLIC_V6, WG_ULA_NET].join(', ')
 }
 
 /**

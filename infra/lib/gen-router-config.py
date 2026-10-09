@@ -70,6 +70,15 @@ YT_DOMAIN_SUFFIXES = [
 # Российский резолвер: отдаёт YouTube адреса GGC внутри РФ-провайдеров.
 RU_DNS = '77.88.8.8'
 
+# Сети Telegram — https://core.telegram.org/resources/cidr.txt (2026-10-09).
+TELEGRAM_CIDRS = [
+    '91.105.192.0/23', '91.108.4.0/22', '91.108.8.0/22', '91.108.12.0/22',
+    '91.108.16.0/22', '91.108.20.0/22', '91.108.56.0/22', '149.154.160.0/20',
+    '185.76.151.0/24',
+    '2001:67c:4e8::/48', '2001:b28:f23c::/48', '2001:b28:f23d::/48',
+    '2001:b28:f23f::/48', '2a0a:f280::/32',
+]
+
 
 def yt_settings():
     """YT_ROUTE и список доменов из окружения; общий для main и AdGuard."""
@@ -327,8 +336,29 @@ def main():
             'default': all_hy2[0],
             'interrupt_exist_connections': False,
         },
+        {
+            # Выход бота (inbound tg-proxy). Отдельно от foreign-best: Bot API
+            # (api.telegram.org) режется не на всех экзитах — вотчдог держит
+            # tg-best на экзите, с которого Bot API отвечает.
+            'type': 'selector',
+            'tag': 'tg-best',
+            'outbounds': all_hy2,
+            'default': all_hy2[0],
+            'interrupt_exist_connections': False,
+        },
         {'type': 'block', 'tag': 'block-out'},
-    ] + lane_outbounds
+    ] + lane_outbounds + [
+        # pin-<выход> — для ручных маршрутов панели (anysda-apply-routes
+        # подменяет hy2-X на pin-hy2-X). Пока узел выключен или выход мёртв,
+        # вотчдог переводит pin на foreign-best: маршрут не рвётся.
+        {
+            'type': 'selector',
+            'tag': f'pin-{t}',
+            'outbounds': [t, 'foreign-best'],
+            'default': t,
+            'interrupt_exist_connections': False,
+        } for t in all_hy2
+    ]
 
     # ── YouTube: правила маршрута ──────────────────────────────────────
     # Порядок в route.rules критичен: YouTube обязан стоять ВЫШЕ правила
@@ -423,6 +453,7 @@ def main():
             #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
             'rules': mon_route_rules + [
+                {'inbound': ['tg-proxy'], 'outbound': 'tg-best'},
                 # mon-{tag} матчатся по inbound-тегу ВЫШЕ блока 127.0.0.0/8:
                 # цель служебного запроса — 127.0.0.1:9100 (loopback экзита),
                 # иначе его срезало бы правило ниже.
@@ -434,7 +465,20 @@ def main():
                 },
                 {'protocol': 'dns',                          'outbound': 'direct-ru'},
             ] + yt_route_rules + [
-                {'domain_suffix': ['.ru', '.рф', '.su'],     'outbound': 'direct-ru'},
+                # Telegram при блокировке маскирует соединения: идёт на свои IP,
+                # а в SNI ставит чужой домен (вплоть до *.ru, напр. sprinthost.ru).
+                # Сниффер видит .ru и увёл бы такой трафик в direct-ru — то есть
+                # в Telegram из РФ, где он режется. IP Telegram из правила .ru
+                # исключаем: дальше их подхватят дорожки / foreign-best.
+                {
+                    'type': 'logical',
+                    'mode': 'and',
+                    'rules': [
+                        {'domain_suffix': ['.ru', '.рф', '.su']},
+                        {'ip_cidr': TELEGRAM_CIDRS, 'invert': True},
+                    ],
+                    'outbound': 'direct-ru',
+                },
                 {'geosite': ['category-gov-ru'],             'outbound': 'direct-ru'},
                 {'geoip':   ['ru', 'private'],               'outbound': 'direct-ru'},
             ] + lane_route_rules,

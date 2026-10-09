@@ -42,6 +42,17 @@ type=selector (см. gen-router-config.py) — управляется через
   MIN_DWELL_S       активную дорожку не двигать чаще, сек  1800
   IDLE_DWELL_S      неактивную — не чаще, сек  600
   RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
+  TG_GROUP          selector выхода бота (inbound tg-proxy)  tg-best
+  TG_PROBE_URL      проба Bot API через экзит      https://api.telegram.org
+  TG_INTERVAL_S     период проверки Bot API, сек    30
+
+Выход бота (tg-best): Bot API (api.telegram.org) режется не везде одинаково —
+gstatic-проба этого не видит. tg-best держим на экзите, с которого Bot API
+отвечает: раз в TG_INTERVAL_S и сразу, если его узел выключен или выход мёртв.
+
+Ручные маршруты панели (pin-<выход>): selector [выход, foreign-best]. Пока
+узел выключен вручную или выход мёртв — смотрит на foreign-best, иначе
+ручной маршрут без запасного выхода просто рвался бы.
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -140,6 +151,13 @@ _tag_delay: dict = {}     # выход -> последняя удачная за
 _elig_init = False        # первый удачный тик уже наполнил _elig
 _last_rebalance = time.monotonic()
 
+TG_GROUP     = os.environ.get('TG_GROUP', 'tg-best')
+TG_PROBE_URL = os.environ.get('TG_PROBE_URL', 'https://api.telegram.org')
+TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
+_tg_last = -1e9           # monotonic последней проверки Bot API
+PIN_PREFIX = 'pin-'
+_pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
+
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
 PROBE_HTTP_TIMEOUT = TIMEOUT_MS / 1000.0 + 0.5   # таймаут urlopen для delay-пробы
@@ -171,10 +189,10 @@ def _classify_probe_error(e):
     return f'ошибка: {reason}'
 
 
-def _probe(tag, out, errs=None):
+def _probe(tag, out, errs=None, url=PROBE_URL):
     """delay-тест одного outbound; out[tag] = delay(ms) либо None если мёртв.
     errs[tag], если передан, получает причину промаха (см. _classify_probe_error)."""
-    q = urllib.parse.urlencode({'url': PROBE_URL, 'timeout': TIMEOUT_MS})
+    q = urllib.parse.urlencode({'url': url, 'timeout': TIMEOUT_MS})
     try:
         d = _req('GET', f'/proxies/{urllib.parse.quote(tag)}/delay?{q}',
                  timeout=PROBE_HTTP_TIMEOUT)
@@ -188,12 +206,12 @@ def _probe(tag, out, errs=None):
             errs[tag] = _classify_probe_error(e)
 
 
-def _probe_all(members):
+def _probe_all(members, url=PROBE_URL):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
     мёртвый экзит не тормозит остальных."""
     out: dict = {}
     errs: dict = {}
-    threads = [threading.Thread(target=_probe, args=(m, out, errs), daemon=True)
+    threads = [threading.Thread(target=_probe, args=(m, out, errs, url), daemon=True)
                for m in members]
     for t in threads:
         t.start()
@@ -596,6 +614,55 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
+def pins_tick(proxies):
+    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён и выход
+    жив (DEAD_AFTER промахов подряд — мёртв), иначе — на foreign-best."""
+    if _tick_alive is None:
+        return   # замеров нет (ошибка тика) — ничего не двигаем
+    for name, p in proxies.items():
+        if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
+            continue
+        base = name[len(PIN_PREFIX):]
+        _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
+        disabled = _node_of(base) in _disabled
+        want = GROUP if disabled or _pin_miss[base] >= DEAD_AFTER else base
+        if p.get('now') != want:
+            _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
+            why = ('узел выключен вручную' if disabled else 'выход мёртв') if want == GROUP else 'выход снова доступен'
+            print(f'{name} -> {want}: {why}', flush=True)
+
+
+def tg_tick(proxies):
+    """tg-best (выход бота): на экзите, с которого отвечает Bot API."""
+    global _tg_last
+    grp = proxies.get(TG_GROUP)
+    if not grp or str(grp.get('type', '')).lower() != 'selector' or _tick_alive is None:
+        return
+    now = grp.get('now') or ''
+    t = time.monotonic()
+    now_bad = _node_of(now) in _disabled or now not in _tick_alive
+    if not now_bad and t - _tg_last < TG_INTERVAL:
+        return
+    _tg_last = t
+    cands = [m for m in grp.get('all', []) if m in _tick_alive]   # живые и не выключенные
+    if not cands:
+        return
+    res, errs = _probe_all(cands, TG_PROBE_URL)
+    ok = {m: d for m, d in res.items() if d is not None}
+    if now in ok:
+        return
+    if not ok:
+        print(f'{TG_GROUP}: Bot API не отвечает ни через один экзит, выбор не трогаю', flush=True)
+        return
+    fb = (proxies.get(GROUP) or {}).get('now')
+    target = fb if fb in ok else min(ok, key=ok.get)
+    _req('PUT', f'/proxies/{urllib.parse.quote(TG_GROUP)}', {'name': target})
+    why = ('узел выключен вручную' if _node_of(now) in _disabled
+           else 'выход мёртв' if now not in _tick_alive
+           else f'Bot API не отвечает ({errs.get(now, "?")})')
+    print(f'{TG_GROUP} -> {target} ({ok[target]}ms): {now or "—"}: {why}', flush=True)
+
+
 def main():
     if not SECRET:
         print('CLASH_SECRET не задан', file=sys.stderr)
@@ -606,7 +673,7 @@ def main():
           f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH} '
           f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
-          f'dwell={MIN_DWELL:.0f}s', flush=True)
+          f'dwell={MIN_DWELL:.0f}s tg={TG_GROUP}/{TG_INTERVAL:.0f}s', flush=True)
     while True:
         try:
             tick()
@@ -617,6 +684,12 @@ def main():
             lanes_tick(conns)
         except Exception as e:
             print(f'lanes error: {e}', file=sys.stderr, flush=True)
+        try:
+            proxies = _req('GET', '/proxies').get('proxies') or {}
+            pins_tick(proxies)
+            tg_tick(proxies)
+        except Exception as e:
+            print(f'pins/tg error: {e}', file=sys.stderr, flush=True)
         # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
         _drop_disabled_conns(conns)
         time.sleep(INTERVAL)

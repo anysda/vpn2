@@ -238,6 +238,10 @@ for row in rows if isinstance(rows, list) else []:
         out, kind, val = row['outbound'], row['type'], str(row['value'])
         if out not in known:
             raise ValueError(f'outbound {out!r} нет в конфиге')
+        # Ручной маршрут на экзит — через pin-<выход>: вотчдог переводит его на
+        # foreign-best, пока узел выключен или выход мёртв (иначе маршрут рвётся).
+        if f'pin-{out}' in known:
+            out = f'pin-{out}'
         if kind == 'domain':
             rule = {'outbound': out, 'domain_suffix': [val[2:] if val.startswith('*.') else val]}
         elif kind == 'ip_cidr':

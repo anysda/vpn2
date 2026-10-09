@@ -111,6 +111,31 @@ ssh_exec() {
   return $rc
 }
 
+# Короткая проверка «нода пускает по ssh»: одна попытка с общим потолком
+# времени, причина отказа - в stdout. ConnectTimeout ограничивает только
+# TCP-коннект и ожидание баннера: если фильтр по пути пропускает их, а пакеты
+# обмена ключами режет, ssh висит, а ssh_exec повторяет это 5 раз. Потолок 30 с:
+# у живой, но медленной ноды коннект и баннер укладываются в ConnectTimeout=10,
+# KEX и вход по паролю - в единицы секунд, остаётся запас на DNS у sshd.
+# Свежее соединение без мультиплексора: зависший master не должен отвечать
+# за ноду, а опции до _ssh_opts, потому что у ssh побеждает первое значение.
+ssh_probe() {
+  : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
+  local limit="${SSH_PROBE_TIMEOUT:-30}" err rc=0
+  err=$(SSHPASS="$SSH_PASS" timeout -k 5 "$limit" sshpass -e ssh \
+      -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
+      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" 'echo ok' 2>&1 >/dev/null) || rc=$?
+  [[ $rc -eq 0 ]] && return 0
+  err=$(printf '%s\n' "$err" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1)
+  case $rc in
+    124|137) echo "нет ответа за ${limit} с${err:+ ($err)}: соединение или обмен ключами ssh висит, пакеты режутся по пути" ;;
+    5)       echo "неверный пароль" ;;
+    6)       echo "host-key ноды не принят${err:+: $err}" ;;
+    *)       echo "${err:-ssh завершился с кодом $rc}" ;;
+  esac
+  return 1
+}
+
 # Copy a local file/dir to the host's /tmp/anysda.
 # При push'е директории сначала удаляем target — иначе scp -r кладёт src
 # ВНУТРЬ существующего dst (получаем /tmp/anysda/telegram/telegram/...) и

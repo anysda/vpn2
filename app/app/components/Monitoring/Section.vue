@@ -49,6 +49,7 @@ const sortedNodes = computed(() =>
     })
     .map(n => ({ ...n, state: nodeState(n.staleSec) })),
 )
+const hasLanes = computed(() => nodes.value.some(n => n.lanes != null))
 
 function loadColor(v: number | null): string {
   if (v == null) return 'text-(--ui-text-dimmed)'
@@ -164,6 +165,19 @@ function waitColor(v: number | null): string {
               <span class="text-(--ui-text-muted)">↑</span>
               <span class="text-(--ui-text)">{{ formatMbps(n.txMbps) }} <span class="text-(--ui-text-muted)">Mbps</span></span>
             </div>
+            <div
+              v-if="n.lanes != null"
+              class="flex justify-between"
+              title="Дорожек (lane-NN), направленных на узел; warp — из них через warp узла. Без балансировки все дорожки повторяют основной выход."
+            >
+              <span class="text-(--ui-text-muted)">полос</span>
+              <span class="text-(--ui-text)">{{ n.lanes }} <span class="text-(--ui-text-muted)">(warp {{ n.lanesWarp }})</span></span>
+            </div>
+            <!-- у RU дорожек нет — пустая строка той же высоты, чтобы итоги за сутки стояли вровень -->
+            <div
+              v-else-if="hasLanes"
+              class="h-4"
+            />
             <div class="border-t border-(--ui-border) my-1" />
             <div
               class="flex justify-between"

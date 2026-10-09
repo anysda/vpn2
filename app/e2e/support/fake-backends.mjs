@@ -42,6 +42,12 @@ function clash(req, res) {
         proxies[name] = { name, type: v === 'direct' ? 'Hysteria2' : 'WireGuard', history: [{ time: new Date().toISOString(), delay: 40 + i * 10 }] }
       }
     })
+    // 32 дорожки как у gen-router-config: lane-NN смотрит на tags[N % узлов],
+    // каждая седьмая — через warp. Ту же раскладку считает monitoring.spec.ts.
+    for (let i = 0; tags.length && i < 32; i++) {
+      const name = `lane-${String(i).padStart(2, '0')}`
+      proxies[name] = { name, type: 'Selector', now: `hy2-${tags[i % tags.length]}-${i % 7 === 0 ? 'warp' : 'direct'}`, history: [] }
+    }
     return json(res, { proxies })
   }
   if (url.pathname === '/connections') return json(res, { downloadTotal: 0, uploadTotal: 0, connections: [] })

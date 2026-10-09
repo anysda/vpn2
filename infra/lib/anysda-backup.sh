@@ -114,6 +114,11 @@ if [[ -d /etc/swanctl ]]; then
   cp -a /etc/swanctl "$BUNDLE_DIR/etc-swanctl"
 fi
 
+# cp -a переносит и сокеты (mgmt.sock OpenVPN), и FIFO, а tar их молча
+# пропускает: манифест считал файл, которого в архиве нет, и restore свежего
+# бэкапа падал на проверке. В бандле остаются только то, что ляжет в архив.
+find "$BUNDLE_DIR" \( -type s -o -type p -o -type b -o -type c \) -delete
+
 # ── Manifest с SHA-256 каждого компонента ───────────────────────────────────
 APP_VERSION=$(docker exec anysda-vpn2 sh -c 'cat /app/.output/.config/.json 2>/dev/null; node -e "console.log(require(\"/app/package.json\").version)" 2>/dev/null' 2>/dev/null | grep -oE '"version":[[:space:]]*"[^"]+"' | sed -n '1s/.*"\([^"]*\)"/\1/p' || echo unknown)
 GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)

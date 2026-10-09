@@ -30,6 +30,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 19-yt-zapret is ru-only — skipping"; exit 0;; esac
 
@@ -415,8 +421,11 @@ EOF
 
 systemctl daemon-reload
 systemctl enable anysda-yt-nft.service anysda-yt-nfqws.service >/dev/null 2>&1
-systemctl restart anysda-yt-nft.service
-systemctl restart anysda-yt-nfqws.service
+# Пока nfqws2 перезапускается, `queue ... bypass` пропускает YouTube мимо
+# десинка. Рестарт nft-цепочек systemd через Requires= тянет и nfqws2.
+svc_restart_if_changed anysda-yt-nft.service /etc/systemd/system/anysda-yt-nft.service "$NFT_CONF"
+svc_restart_if_changed anysda-yt-nfqws.service /etc/systemd/system/anysda-yt-nfqws.service \
+  "$YT_ZAPRET_BIN" "$YT_ZAPRET_BASE"/lua/*.lua
 sleep 2
 
 # Инвариант: демон исполняет ИМЕННО тот файл, что лежит на диске. После

@@ -26,6 +26,12 @@
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 27-ikev2: skipped (only RU)"
@@ -310,7 +316,13 @@ charon {
 }
 EOF
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
-systemctl restart strongswan-starter
+# Рестарт charon рвёт все IKEv2-сессии, а телефоны и маки сами после этого не
+# переподключаются. Сертификаты, conns и пулы swanctl ниже грузит в живой
+# charon без рестарта (так же path-юнит применяет ротацию LE), поэтому в
+# отпечатке только то, что charon читает при старте.
+svc_restart_if_changed strongswan-starter /usr/lib/ipsec/charon /usr/lib/ipsec/starter \
+  /usr/lib/systemd/system/strongswan-starter.service /etc/strongswan.conf \
+  /etc/strongswan.d/*.conf /etc/strongswan.d/charon/*.conf
 sleep 2
 systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
@@ -424,7 +436,9 @@ IPTSEOF
 chmod +x /usr/local/sbin/anysda-ikev2-routing.sh
 systemctl daemon-reload
 systemctl enable anysda-ikev2-routing >/dev/null 2>&1 || true
-systemctl restart anysda-ikev2-routing
+# Рестарт = down + up, а down удаляет xfrm0 из-под живых SA.
+svc_restart_if_changed anysda-ikev2-routing /etc/systemd/system/anysda-ikev2-routing.service \
+  /usr/local/sbin/anysda-ikev2-routing.sh
 
 # ── 8. anysda-ikev2-sync: применение кредов панели + счётчики ──────────────
 # Панель живёт в контейнере, где нет ни swanctl, ни сокета charon.vici:

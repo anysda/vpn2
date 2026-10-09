@@ -12,6 +12,12 @@
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 28-wireguard: skipped (only RU)"
@@ -195,7 +201,8 @@ IPTSEOF
 chmod +x /usr/local/sbin/anysda-wg-routing.sh
 systemctl daemon-reload
 systemctl enable anysda-wg-routing >/dev/null 2>&1 || true
-systemctl restart anysda-wg-routing
+svc_restart_if_changed anysda-wg-routing /etc/systemd/system/anysda-wg-routing.service \
+  /usr/local/sbin/anysda-wg-routing.sh
 
 touch /var/anysda/.stamps/28-wireguard
 echo "[$HOST_TAG] 28-wireguard done"

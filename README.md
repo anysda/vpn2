@@ -181,7 +181,13 @@ sing-box-роутер + failover-watchdog + AdGuard + VictoriaMetrics +
 ./deploy.sh 10-foreign foreign   # все exit-ноды
 ./deploy.sh 19-yt-zapret ru      # пересобрать/перенастроить обход DPI YouTube
 ./deploy.sh 99-verify all        # smoke-тест
+./deploy.sh 20-ru-router ru && ./deploy.sh 21-failover-watchdog ru   # маршрутизация и вотчдог
 ```
+
+Стадии 20 и 21 обновляйте вместе. Группы `tg-best` и `pin-*` создаёт стадия 20,
+а ведёт их вотчдог из стадии 21: новый конфиг со старым вотчдогом оставит бота
+на первом попавшемся выходе, а ручные маршруты без запасного; новый вотчдог со
+старым конфигом не найдёт, чем управлять.
 
 ---
 

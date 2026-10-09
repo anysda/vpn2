@@ -170,6 +170,7 @@ if not TG_PROBE_URL.startswith('https://'):
 TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
 _tg_next = -1e9           # monotonic следующей плановой проверки Bot API
 _tg_miss = 0              # промахов текущего выхода tg-best подряд
+_tg_silent = False        # последний обход: Bot API не ответил ни через один выход
 PIN_PREFIX = 'pin-'
 _pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
 
@@ -708,15 +709,25 @@ def tg_tick(proxies):
     Текущий выход проверяем раз в TG_INTERVAL. Не ответил Bot API или сам
     выход — перепроверяем каждый цикл и переезжаем после DEAD_AFTER промахов
     подряд, как основной выбор: одиночный таймаут бота не уводит. С выключенного
-    вручную узла уводим сразу."""
-    global _tg_next, _tg_miss
+    вручную узла уводим сразу.
+
+    Если Bot API молчит через все выходы, обход повторяем не чаще раза в
+    TG_INTERVAL: каждая проба стоит таймаута, и обход на каждом цикле тормозил
+    бы весь вотчдог. С мёртвого или выключенного выхода при этом всё равно
+    уходим — на живой выход foreign-best."""
+    global _tg_next, _tg_miss, _tg_silent
     grp = proxies.get(TG_GROUP)
     if not grp or str(grp.get('type', '')).lower() != 'selector' or _tick_alive is None:
         return
     now = grp.get('now') or ''
     t = time.monotonic()
+    retry = False   # плановый повтор обхода после «молчит везде»
     if _node_of(now) in _excluded():
         why = 'узел выключен вручную'
+    elif _tg_silent and now in _tick_alive:
+        if t < _tg_next:
+            return
+        retry, why = True, 'Bot API не отвечал ни через один выход'
     else:
         if now not in _tick_alive:
             err = 'выход мёртв'
@@ -737,18 +748,34 @@ def tg_tick(proxies):
             return
         why = f'{err}, {_tg_miss}× подряд'
     _tg_miss = 0
-    cands = [m for m in grp.get('all', []) if m in _tick_alive and m != now]   # живые и не исключённые
-    if not cands:
-        return
-    res, _ = _probe_all(cands, TG_PROBE_URL)
-    ok = {m: d for m, d in res.items() if d is not None}
-    if not ok:
-        print(f'{TG_GROUP}: Bot API не отвечает ни через один экзит, выбор не трогаю', flush=True)
+    # живые и не исключённые; текущий — только при повторе обхода
+    cands = [m for m in grp.get('all', []) if m in _tick_alive and (m != now or retry)]
+    ok: dict = {}
+    if cands and (not _tg_silent or t >= _tg_next):
+        res, _ = _probe_all(cands, TG_PROBE_URL)
+        ok = {m: d for m, d in res.items() if d is not None}
+        _tg_next = t + TG_INTERVAL
+        if not ok and not _tg_silent:
+            print(f'{TG_GROUP}: Bot API не отвечает ни через один экзит, '
+                  f'повторю через {TG_INTERVAL:.0f}с', flush=True)
+        elif ok and _tg_silent:
+            print(f'{TG_GROUP}: Bot API снова отвечает ({", ".join(sorted(ok))})', flush=True)
+        _tg_silent = not ok
+    if now in ok:
         return
     fb = (proxies.get(GROUP) or {}).get('now')
-    target = fb if fb in ok else min(ok, key=ok.get)
+    if ok:
+        target = fb if fb in ok else min(ok, key=ok.get)
+        how = f'{ok[target]}ms'
+    elif not retry and fb in _tick_alive and fb != now:
+        # Bot API не отвечает нигде, а текущий выход мёртв или выключен:
+        # стоять на нём незачем — живой выход хотя бы довезёт бота, когда
+        # Bot API вернётся.
+        target, how = fb, 'Bot API пока не отвечает нигде, беру выход foreign-best'
+    else:
+        return
     _req('PUT', f'/proxies/{urllib.parse.quote(TG_GROUP)}', {'name': target})
-    print(f'{TG_GROUP} -> {target} ({ok[target]}ms): {now or "—"}: {why}', flush=True)
+    print(f'{TG_GROUP} -> {target} ({how}): {now or "—"}: {why}', flush=True)
 
 
 def main():

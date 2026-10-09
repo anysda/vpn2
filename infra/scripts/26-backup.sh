@@ -71,6 +71,8 @@ echo "[$HOST_TAG] [2/4] /usr/local/bin/anysda-{backup,restore,backup-list}.sh"
 install -m 0755 /tmp/anysda/anysda-backup.sh      /usr/local/bin/anysda-backup.sh
 install -m 0755 /tmp/anysda/anysda-restore.sh     /usr/local/bin/anysda-restore.sh
 install -m 0755 /tmp/anysda/anysda-backup-list.sh /usr/local/bin/anysda-backup-list.sh
+# Общие функции стадий: anysda-restore берёт отсюда wg0_apply.
+install -D -m 0644 /tmp/anysda/anysda-svc.sh     /usr/local/lib/anysda/anysda-svc.sh
 
 # ── 3. /etc/anysda/backup.env — единственное место где passphrase живёт на ─
 #    entry. chmod 600, root:root.

@@ -17,6 +17,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 21-failover-watchdog: skipped (only RU)"
@@ -123,7 +129,8 @@ EOF
 echo "[$HOST_TAG] [3/4] запуск"
 systemctl daemon-reload
 systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
-systemctl restart anysda-failover-watchdog
+svc_restart_if_changed anysda-failover-watchdog /usr/local/bin/anysda-failover-watchdog \
+  /etc/systemd/system/anysda-failover-watchdog.service /etc/anysda/failover-watchdog.env
 sleep 3
 systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n "1,8s/^/[$HOST_TAG]   /p"
 

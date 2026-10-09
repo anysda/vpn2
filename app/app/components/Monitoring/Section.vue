@@ -89,7 +89,7 @@ function waitColor(v: number | null): string {
     <div
       v-else
       class="grid gap-2"
-      :style="`grid-template-columns: repeat(${sortedNodes.length}, minmax(120px, 1fr))`"
+      style="grid-template-columns: repeat(auto-fit, minmax(132px, 1fr))"
     >
       <div
         v-for="n in sortedNodes"
@@ -171,7 +171,7 @@ function waitColor(v: number | null): string {
               title="Дорожек (lane-NN), направленных на узел; warp — из них через warp узла. Без балансировки все дорожки повторяют основной выход."
             >
               <span class="text-(--ui-text-muted)">полос</span>
-              <span class="text-(--ui-text)">{{ n.lanes }} <span class="text-(--ui-text-muted)">(warp {{ n.lanesWarp }})</span></span>
+              <span class="text-(--ui-text) whitespace-nowrap">{{ n.lanes }} <span class="text-(--ui-text-muted)">(warp {{ n.lanesWarp }})</span></span>
             </div>
             <!-- у RU дорожек нет — пустая строка той же высоты, чтобы итоги за сутки стояли вровень -->
             <div

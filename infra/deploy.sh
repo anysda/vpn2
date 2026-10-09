@@ -231,16 +231,18 @@ do_check() {
         "${SSH_USER}@${SSH_HOST}" "$C_R" "$C_END"; fail=1; continue
     fi
     # Ретраим как preflight_ssh — единичный блип не должен валить деплой.
-    local ssh_ok=0 i
+    local ssh_ok=0 i reason='' t0=$SECONDS
     for ((i=1; i<=ssh_tries; i++)); do
-      if ssh_exec 'echo ok' >/dev/null 2>&1; then ssh_ok=1; break; fi
-      [[ $i -lt $ssh_tries ]] && sleep 3
+      if reason=$(ssh_probe); then ssh_ok=1; break; fi
+      (( i < ssh_tries )) || break
+      (( SECONDS - t0 + 3 + ${SSH_PROBE_TIMEOUT:-30} <= ${PREFLIGHT_BUDGET:-90} )) || break
+      sleep 3
     done
     if [[ $ssh_ok -eq 1 ]]; then
       printf '  %-28s %b✓%b\n' "${SSH_USER}@${SSH_HOST}" "$C_G" "$C_END"
     else
-      printf '  %-28s %b✗ не пускает (IP/пароль/PasswordAuthentication?)%b\n' \
-        "${SSH_USER}@${SSH_HOST}" "$C_R" "$C_END"; fail=1
+      printf '  %-28s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
+        "${SSH_USER}@${SSH_HOST}" "$C_R" "$host" "$SSH_HOST" "$reason" "$C_END"; fail=1
     fi
   done
   [[ $fail -eq 0 ]] || die "SSH-проверка не пройдена — исправь пункты со ✗"
@@ -553,27 +555,34 @@ _tcp22_open() {
 preflight_ssh() {
   printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
   local attempts="${PREFLIGHT_ATTEMPTS:-5}"
+  # Потолок на ноду: быстрые отказы (refused, флап sshd) успевают пройти все
+  # попытки, а висящая нода отпускается после двух таймаутов ssh_probe.
+  local budget="${PREFLIGHT_BUDGET:-90}"
 
   # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
   local hosts; hosts=$(expand_hosts all)
-  local unreachable=()
+  local reasons=()
   for h in $hosts; do
     load_env "$h"
-    local ok=0 try
+    local ok=0 try reason='' t0=$SECONDS
     for ((try=1; try<=attempts; try++)); do
-      if ssh_exec 'echo ok' >/dev/null 2>&1; then ok=1; break; fi
-      sleep 2
+      if reason=$(ssh_probe); then ok=1; break; fi
+      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
+      (( try < attempts )) || break
+      (( SECONDS - t0 + try * 3 + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+      sleep $((try * 3))
     done
     if [[ $ok -eq 1 ]]; then
       printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
     else
-      printf '  %-30s %b✗ (%s попыток)%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$attempts" "$C_END"
-      unreachable+=("$h ($SSH_HOST)")
+      printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
+        "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
+      reasons+=("нода $h ($SSH_HOST) недоступна по ssh с entry: $reason")
     fi
   done
 
   # Все ноды доступны — эталон не нужен, идём дальше.
-  if [[ ${#unreachable[@]} -eq 0 ]]; then
+  if [[ ${#reasons[@]} -eq 0 ]]; then
     printf '\n'
     return 0
   fi
@@ -592,8 +601,8 @@ preflight_ssh() {
     sleep 2
   done
 
-  printf '\n%b✗ Недоступны по SSH после %s попыток:%b %s\n' \
-    "$C_R" "$attempts" "$C_END" "${unreachable[*]}"
+  printf '\n%b✗ Недоступны по SSH:%b\n' "$C_R" "$C_END"
+  printf '  %s\n' "${reasons[@]}"
   if [[ $ref_ok -eq 0 ]]; then
     printf '  Эталонные github.com:22 / gitlab.com:22 тоже недоступны.\n'
     printf '  %bВероятно%b провайдер центральной ноды режет исходящий :22\n' "$C_Y" "$C_END"
@@ -607,7 +616,7 @@ preflight_ssh() {
   printf '    1. пароль/IP в config.yaml\n'
   printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
   printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
-  die "pre-flight failed — деплой не запускался"
+  HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"
 }
 
 # ----------------------------------------------------------------------------

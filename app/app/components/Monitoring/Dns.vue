@@ -43,8 +43,8 @@ function fmt(n: number | undefined | null): string {
       AdGuard недоступен (нет соединения / неверные креды)
     </div>
     <div v-else class="space-y-3">
-      <div class="flex items-end gap-4 text-sm">
-        <div class="grid grid-cols-3 gap-3 flex-1">
+      <div class="flex flex-wrap items-end gap-4 text-sm">
+        <div class="grid grid-cols-3 gap-3 flex-1 min-w-64">
           <div>
             <div class="text-(--ui-text-muted) text-xs">
               Запросов сегодня

@@ -180,7 +180,7 @@ function outboundLabel(name: string): string {
       <!-- Columns: one per exit, direct cell on top, warp cell below -->
       <div
         v-if="columns.length > 0"
-        class="grid gap-2"
+        class="grid gap-2 overflow-x-auto"
         :style="`grid-template-columns: repeat(${columns.length}, minmax(120px, 1fr))`"
       >
         <div

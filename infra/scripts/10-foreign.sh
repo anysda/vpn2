@@ -228,7 +228,6 @@ ufw allow "${HY2_DIRECT_PORT}/udp" comment 'hysteria2 direct' >/dev/null 2>&1 ||
 ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'   >/dev/null 2>&1 || true
 ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt (monitoring)' >/dev/null 2>&1 || true
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
-ufw reload >/dev/null
 
 # Verify
 echo "[$HOST_TAG] статус sing-box:"

@@ -203,8 +203,12 @@ echo "[$HOST_TAG] [4/6] ufw"
 # стадии 27/28/29/30 (IKEv2, WireGuard, OpenVPN, HTTPS панели): повторный
 # 00-bootstrap отрезал всех клиентов. `ufw allow` на уже существующее правило
 # ничего не добавляет, так что повтор стадии идемпотентен.
-ufw default deny incoming
-ufw default allow outgoing
+# На включённом ufw `ufw allow`/`ufw delete` применяются сразу, поэтому стадии
+# не зовут `ufw reload`: он, как и `ufw default`, перегружает весь фаервол, и на
+# эти доли секунды теряются пакеты туннелей клиентов. Политику меняем, только
+# если она другая.
+grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw 2>/dev/null || ufw default deny incoming
+grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw 2>/dev/null || ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'
 
 case "$HOST_TAG" in

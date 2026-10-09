@@ -77,7 +77,6 @@ ufw allow "${WG_PORT}/udp" comment 'wireguard listener' >/dev/null 2>&1 || true
 # WireGuard clients (10.66.66.0/24) resolve via AdGuard on the entry mgmt IP
 ufw allow proto udp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
 ufw allow proto tcp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
-ufw reload >/dev/null 2>&1 || true
 
 # ── 4. wg-quick@wg0 ────────────────────────────────────────────────────────
 echo "[$HOST_TAG] [4/5] wg-quick@wg0 service"

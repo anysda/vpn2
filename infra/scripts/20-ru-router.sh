@@ -188,7 +188,6 @@ systemctl enable sing-box >/dev/null 2>&1
 # торчит. Снимаем legacy mesh-правило ufw (mesh снят, служебный трафик ушёл на
 # Hysteria2, см. стадию 05 и docs/mgmt-over-hysteria2-design.md).
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
-ufw reload >/dev/null
 
 # route_localnet — нужен TPROXY WG/OpenVPN (--on-ip 127.0.0.1, стадии 28/29).
 cat > /etc/sysctl.d/99-anysda-vpn.conf <<'EOF'

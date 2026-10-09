@@ -213,7 +213,6 @@ fi
 ufw allow 80/tcp   comment 'caddy HTTP + ACME challenge' || true
 ufw allow 443/tcp  comment 'caddy HTTPS панель'          || true
 ufw allow 3001/tcp comment 'AdGuard Home web UI'         || true
-ufw reload >/dev/null
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
   && systemctl restart caddy \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }

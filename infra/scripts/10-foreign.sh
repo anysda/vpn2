@@ -206,8 +206,20 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable sing-box >/dev/null 2>&1
-systemctl restart sing-box
-sleep 2
+# Перезапуск рвёт все туннели entry→экзит, у клиентов это секунды без сети.
+# Поэтому только если sing-box читает уже не то, с чем стартовал: отпечаток
+# бинарника, юнита, конфига и TLS сверяем с записанным при прошлом старте.
+SB_FP_FILE=/var/lib/sing-box/applied.sha256
+sb_fp=$({ cat /usr/local/bin/sing-box /etc/systemd/system/sing-box.service \
+  /etc/sing-box/config.json /etc/sing-box/tls.crt /etc/sing-box/tls.key 2>/dev/null || true; } \
+  | sha256sum | cut -d' ' -f1)
+if systemctl is-active --quiet sing-box && [[ "$(cat "$SB_FP_FILE" 2>/dev/null)" == "$sb_fp" ]]; then
+  echo "[$HOST_TAG]   конфиг, сертификат и бинарник прежние — sing-box не перезапускаю"
+else
+  systemctl restart sing-box
+  echo "$sb_fp" > "$SB_FP_FILE"
+  sleep 2
+fi
 
 # UFW: Hysteria2 порты (00-bootstrap открывает дефолтные; здесь — для per-exit
 # override). Служебный hy2-mgmt-in (мониторинг) — свой UDP-порт. clash-api

@@ -69,6 +69,7 @@ MIN_DWELL_S=1800
 IDLE_DWELL_S=600
 RATE_TAU_S=300
 WARP_RETURN_S=600
+LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json
 LAT_TAU_S=30
 SLOW_HOLD_S=60
 EOF
@@ -87,6 +88,8 @@ EnvironmentFile=/etc/anysda/failover-watchdog.env
 Restart=always
 RestartSec=2
 DynamicUser=yes
+# время переездов дорожек (LANE_STATE_FILE) — /var/lib/anysda-failover-watchdog
+StateDirectory=anysda-failover-watchdog
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

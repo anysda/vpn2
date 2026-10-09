@@ -11,7 +11,7 @@
 #   - проверка совместимости версии
 #   - refuse без --force если db.sqlite не пустая
 #   - pre-restore safety snapshot в .pre-restore/ (исключён из ротации)
-#   - стоп → swap → start affected services
+#   - стоп → swap → start affected services, стадии 22/30/35 с паролями из бэкапа
 #   - 99-verify по завершению (если найден)
 
 set -euo pipefail
@@ -310,24 +310,27 @@ if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
   chmod 600 "$STAGE_ENV"
 fi
 
-AGH_STAGE=/opt/anysda-vpn2/infra/scripts/22-adguard.sh
-AGH_LOG="$WORK/22-adguard.log"
-AGH_FAIL=""
-if [[ ! -x "$AGH_STAGE" ]]; then
-  AGH_FAIL="нет $AGH_STAGE"
-elif [[ ! -s "$STAGE_ENV" ]]; then
-  AGH_FAIL="нет $ENVS_DIR/all.env или $ENVS_DIR/ru.env (их пишет ./deploy.sh из config.yaml)"
-else
-  echo "anysda-restore: re-sync AdGuard creds через 22-adguard…"
-  if "$AGH_STAGE" "$STAGE_ENV" >"$AGH_LOG" 2>&1; then
-    echo "anysda-restore: AdGuard re-synced"
+# Контейнеры панели и бота получают пароль админа, секреты clash и бота через
+# env при создании, `docker start` выше оставил им значения прежнего деплоя:
+# панель не входила в AdGuard паролем из бэкапа. Стадии 30 и 35 пересоздают их.
+STAGE_FAIL=""
+for stage in 22-adguard 30-frontend 35-telegram; do
+  script=/opt/anysda-vpn2/infra/scripts/$stage.sh
+  if [[ ! -x "$script" ]]; then
+    STAGE_FAIL="нет $script"
+  elif [[ ! -s "$STAGE_ENV" ]]; then
+    STAGE_FAIL="нет $ENVS_DIR/all.env или $ENVS_DIR/ru.env (их пишет ./deploy.sh из config.yaml)"
   else
-    AGH_FAIL="22-adguard завершился с ошибкой, хвост вывода:"$'\n'"$(tail -n 15 "$AGH_LOG" | sed 's/^/    /')"
+    echo "anysda-restore: $stage с восстановленными паролями…"
+    if "$script" "$STAGE_ENV" >"$WORK/$stage.log" 2>&1; then
+      echo "anysda-restore: $stage re-synced"
+      continue
+    fi
+    STAGE_FAIL="$stage завершился с ошибкой, хвост вывода:"$'\n'"$(tail -n 15 "$WORK/$stage.log" | sed 's/^/    /')"
   fi
-fi
-if [[ -n "$AGH_FAIL" ]]; then
-  echo "anysda-restore: ERROR: пароль AdGuard не пересинхронизирован — $AGH_FAIL" >&2
-fi
+  echo "anysda-restore: ERROR: пароли не пересинхронизированы — $STAGE_FAIL" >&2
+  break
+done
 
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────
 VERIFY=/opt/anysda-vpn2/infra/scripts/99-verify.sh
@@ -343,14 +346,13 @@ else
   echo "anysda-restore: WARN: нет 99-verify ($VERIFY) или env стадий — пропуск smoke-test" >&2
 fi
 
-# Данные восстановлены, но вход в AdGuard с паролем из бэкапа не пройдёт —
-# это не SUCCESS. Повтор: ./deploy.sh 22-adguard ru.
-if [[ -n "$AGH_FAIL" ]]; then
+# Данные восстановлены, но вход с паролем из бэкапа не пройдёт — это не SUCCESS.
+if [[ -n "$STAGE_FAIL" ]]; then
   cat >&2 <<-EOM
 
-	anysda-restore: FAILED — данные восстановлены, но пароль AdGuard не пересинхронизирован:
-	  $AGH_FAIL
-	  Почини причину и прогони ./deploy.sh 22-adguard ru; pre-restore снимок: $PRESNAP_FINAL
+	anysda-restore: FAILED — данные восстановлены, но пароли не пересинхронизированы:
+	  $STAGE_FAIL
+	  Почини причину и прогони ./deploy.sh <стадия> ru; pre-restore снимок: $PRESNAP_FINAL
 	EOM
   exit 8
 fi

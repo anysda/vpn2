@@ -686,21 +686,31 @@ def lanes_tick(conns):
 
 
 def pins_tick(proxies):
-    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён и выход
-    жив (DEAD_AFTER промахов подряд — мёртв), иначе — на foreign-best."""
+    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён, выход
+    жив (DEAD_AFTER промахов подряд — мёртв) и узел не в штрафной, иначе — на
+    foreign-best. Штрафную берём ту же, что у основного выбора: узел, только
+    что упавший и поднявшийся, на флапе не дёргает ручные маршруты туда-сюда."""
     if _tick_alive is None:
         return   # замеров нет (ошибка тика) — ничего не двигаем
+    t = time.monotonic()
     for name, p in proxies.items():
         if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
             continue
         base = name[len(PIN_PREFIX):]
         _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
-        disabled = _node_of(base) in _excluded()
-        want = GROUP if disabled or _pin_miss[base] >= DEAD_AFTER else base
+        node = _node_of(base)
+        if node in _excluded():
+            why = 'узел выключен вручную'
+        elif _pin_miss[base] >= DEAD_AFTER:
+            why = 'выход мёртв'
+        elif _penalty.get(node, 0.0) > t:
+            why = f'узел в штрафной ещё {_penalty[node] - t:.0f}с'
+        else:
+            why = ''
+        want = GROUP if why else base
         if p.get('now') != want:
             _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
-            why = ('узел выключен вручную' if disabled else 'выход мёртв') if want == GROUP else 'выход снова доступен'
-            print(f'{name} -> {want}: {why}', flush=True)
+            print(f'{name} -> {want}: {why or "выход снова доступен"}', flush=True)
 
 
 def tg_tick(proxies):

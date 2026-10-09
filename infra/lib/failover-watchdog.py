@@ -123,6 +123,7 @@ _pen_dur: dict = {}   # node -> текущая длительность штра
 DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
 _disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
 _disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
+_disabled_unknown: set = set()   # выключенные, которых нет среди узлов (пишем только смену)
 _spared: set = set()     # выключенные узлы, через которые идём за неимением живых невыключенных
 
 # Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
@@ -289,9 +290,11 @@ def _penalize(member):
     return node, dur
 
 
-def _read_disabled():
-    """Узлы, выключенные вручную из панели. Логирует только изменения."""
-    global _disabled, _disabled_warn
+def _read_disabled(nodes):
+    """Узлы, выключенные вручную из панели. Логирует только изменения.
+    nodes — узлы группы: имя не из них (опечатка в файле) иначе молча ничего
+    бы не выключало."""
+    global _disabled, _disabled_warn, _disabled_unknown
     warn = ''
     try:
         with open(DISABLED_FILE, encoding='utf-8') as f:
@@ -315,6 +318,12 @@ def _read_disabled():
     if cur != _disabled:
         print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
         _disabled = cur
+    unknown = cur - nodes
+    if unknown != _disabled_unknown:
+        if unknown:
+            print(f'{DISABLED_FILE}: таких узлов нет, ничего не выключают: '
+                  f'{", ".join(sorted(unknown))} (узлы: {", ".join(sorted(nodes)) or "нет"})', flush=True)
+        _disabled_unknown = unknown
     return cur
 
 
@@ -376,8 +385,8 @@ def tick():
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
-    disabled = _read_disabled()
     everyone = group.get('all', [])
+    disabled = _read_disabled({_node_of(m) for m in everyone})
     members = [m for m in everyone if _node_of(m) not in disabled]
     now = group.get('now')
     if not everyone:

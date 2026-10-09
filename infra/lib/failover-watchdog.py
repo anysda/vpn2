@@ -32,6 +32,16 @@ type=selector (см. gen-router-config.py) — управляется через
   COOLDOWN_S        базовый штраф для умершего экзита, сек  60
   MAX_COOLDOWN_S    потолок штрафа при рецидивах, сек  600
   PENALTY_RESET_S   стабильности до сброса эскалации, сек  300
+  DISABLED_EXITS_FILE  узлы, выключенные из панели  /etc/anysda/exits-disabled.json
+  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  off
+  BALANCE_MARGIN_MS узел «быстрый», если задержка ≤ лучшей + N мс  150
+  ACTIVE_BPS        порог активности дорожки, байт/с  20000
+  REBALANCE_INTERVAL_S  период проверки дисбаланса, сек  300
+  IMBALANCE_SHARE   разрыв max−min от общей нагрузки для переезда  0.35
+  IMBALANCE_MIN_MBPS  и не меньше стольких Мбит/с  5
+  MIN_DWELL_S       активную дорожку не двигать чаще, сек  1800
+  IDLE_DWELL_S      неактивную — не чаще, сек  600
+  RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -86,6 +96,49 @@ PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
 # иначе watchdog обошёл бы штраф, перескочив на соседний тег того же узла.
 _penalty: dict = {}   # node -> monotonic-дедлайн пребывания в штрафной
 _pen_dur: dict = {}   # node -> текущая длительность штрафа (растёт при рецидиве)
+# Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
+# Выключенный узел — как мёртвый: в выборе не участвует, если сейчас выбран —
+# уводим сразу (без до-проверок), висящие через него соединения рвём.
+# Нет файла / битый JSON — ничего не выключено.
+DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
+_disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
+
+# Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
+# по selector'ам по VPN-IP; здесь решаем, на какой экзит смотрит каждая.
+# BALANCE=off — дорожки просто повторяют foreign-best (поведение «один выход»).
+# BALANCE=on  — активные устройства размазываются по «быстрым» узлам (задержка
+# ≤ лучшей + BALANCE_MARGIN_MS); переезд — только при проблеме узла (сразу)
+# или при сильном дисбалансе (раз в REBALANCE_INTERVAL_S, по одной дорожке,
+# не чаще MIN_DWELL_S на дорожку). Переключение selector'а трогает только
+# НОВЫЕ соединения — текущие доживают на старом выходе.
+BALANCE            = os.environ.get('BALANCE', 'off').strip().lower() == 'on'
+BALANCE_MARGIN_MS  = int(os.environ.get('BALANCE_MARGIN_MS', '150'))
+ACTIVE_BPS         = float(os.environ.get('ACTIVE_BPS', '20000'))   # байт/с — дорожка «активна»
+REBALANCE_INTERVAL = float(os.environ.get('REBALANCE_INTERVAL_S', '300'))
+IMBALANCE_SHARE    = float(os.environ.get('IMBALANCE_SHARE', '0.35'))
+IMBALANCE_MIN_BPS  = float(os.environ.get('IMBALANCE_MIN_MBPS', '5')) * 1e6 / 8
+MIN_DWELL          = float(os.environ.get('MIN_DWELL_S', '1800'))   # активную дорожку не двигаем чаще
+IDLE_DWELL         = float(os.environ.get('IDLE_DWELL_S', '600'))   # неактивную — чаще можно
+RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаживание нагрузки (EWMA)
+# «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
+# одиночный всплеск в 1-2с — норма) и только если она держится за порогом
+# SLOW_HOLD_S подряд: вывод узла из балансировки двигает все его дорожки.
+LAT_TAU            = float(os.environ.get('LAT_TAU_S', '30'))
+SLOW_HOLD          = float(os.environ.get('SLOW_HOLD_S', '60'))
+_lat_ewma: dict = {}      # узел -> сглаженная задержка, мс
+_state_since: dict = {}   # узел -> monotonic, с которого статус «хочет» смениться
+LANE_PREFIX = 'lane-'
+_tick_alive = None        # {тег: задержка} живых невыключенных выходов последнего тика
+_lane_rate: dict = {}     # lane -> EWMA байт/с
+_lane_moved: dict = {}    # lane -> monotonic последнего переезда
+_conn_seen: dict = {}     # conn id -> (up+down) на прошлом тике
+_rate_t = None            # monotonic прошлого замера нагрузки
+_elig: set = set()        # узлы, участвующие в балансировке (с гистерезисом)
+
+_tag_miss: dict = {}      # выход -> промахов подряд (мёртв после DEAD_AFTER)
+_tag_delay: dict = {}     # выход -> последняя удачная задержка
+_elig_init = False        # первый удачный тик уже наполнил _elig
+_last_rebalance = time.monotonic()
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -186,17 +239,67 @@ def _penalize(member):
     return node, dur
 
 
+def _read_disabled():
+    """Узлы, выключенные вручную из панели. Логирует только изменения."""
+    global _disabled
+    try:
+        with open(DISABLED_FILE, encoding='utf-8') as f:
+            raw = json.load(f).get('disabled', [])
+        cur = {t for t in raw if isinstance(t, str)}
+    except (OSError, ValueError, AttributeError):
+        cur = set()
+    if cur != _disabled:
+        print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
+        _disabled = cur
+    return cur
+
+
+def _fetch_conns():
+    """Снимок /connections на цикл (общий для учёта нагрузки дорожек и
+    обрыва соединений через выключенные узлы). None — clash-api не ответил."""
+    try:
+        return _req('GET', '/connections').get('connections') or []
+    except Exception as e:
+        print(f'не смог получить соединения: {e}', file=sys.stderr, flush=True)
+        return None
+
+
+def _drop_disabled_conns(conns):
+    """Рвём соединения, ещё идущие через выключенные узлы — как при сбое ноды
+    (иначе долгие сессии текли бы через «выключенный» экзит до закрытия).
+    mgmt-туннели не трогаем: по ним панель скрейпит метрики самого узла."""
+    if not _disabled or conns is None:
+        return
+    closed = 0
+    for c in conns:
+        out = (c.get('chains') or [''])[0]
+        if out.endswith('-mgmt') or _node_of(out) not in _disabled or not c.get('id'):
+            continue
+        try:
+            _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
+            closed += 1
+        except Exception:
+            pass
+    if closed:
+        print(f'закрыто {closed} соединений через выключенные узлы '
+              f'({", ".join(sorted(_disabled))})', flush=True)
+
+
 def tick():
+    global _tick_alive
+    _tick_alive = None   # дорожки балансируем только по замерам удачного тика
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
-    members = group.get('all', [])
+    disabled = _read_disabled()
+    members = [m for m in group.get('all', []) if _node_of(m) not in disabled]
     now = group.get('now')
     if not members:
         return
 
     delays, errs = _probe_all(members)
     alive = {m: d for m, d in delays.items() if d is not None}
+    _tick_alive = alive
     if not alive:
         detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
         print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
@@ -204,6 +307,11 @@ def tick():
     best = _pick_best(alive)   # лучший из не-оштрафованных
 
     global _lat_cand, _lat_streak
+    if now and _node_of(now) in disabled:
+        # текущий выключен вручную — уводим сразу, без до-проверок и штрафа
+        _lat_cand, _lat_streak = '', 0
+        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную')
+        return
     if now in alive:
         # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
         # один и тот же экзит лучше на >TOLERANCE LATENCY_HOLD тиков подряд
@@ -249,6 +357,245 @@ def tick():
             f'узел {node} в штрафной {dur:.0f}с')
 
 
+def _lane_of(conn):
+    """Дорожка соединения — последний элемент chains (группа, через которую
+    его провёл роутер): ['hy2-gb-direct', 'lane-07'] → 'lane-07'."""
+    chains = conn.get('chains') or []
+    return chains[-1] if chains and chains[-1].startswith(LANE_PREFIX) else None
+
+
+def _update_lane_rates(conns):
+    """EWMA нагрузки (байт/с, up+down) по дорожкам из дельт счётчиков
+    соединений. Новое соединение берётся за базу (первые ≤2с не считаем) —
+    иначе после рестарта вотчдога долгие соединения дали бы ложный всплеск."""
+    global _rate_t
+    t = time.monotonic()
+    dt = (t - _rate_t) if _rate_t else 0.0
+    _rate_t = t
+    inst: dict = {}
+    seen: dict = {}
+    for c in conns:
+        cid, lane = c.get('id'), _lane_of(c)
+        if not cid or not lane:
+            continue
+        total = int(c.get('upload') or 0) + int(c.get('download') or 0)
+        prev = _conn_seen.get(cid)
+        seen[cid] = total
+        if prev is not None and total >= prev:
+            inst[lane] = inst.get(lane, 0) + (total - prev)
+    _conn_seen.clear()
+    _conn_seen.update(seen)
+    if dt <= 0:
+        return
+    k = 1 - pow(2.718281828, -dt / RATE_TAU)
+    for lane in set(_lane_rate) | set(inst):
+        x = inst.get(lane, 0) / dt
+        _lane_rate[lane] = _lane_rate.get(lane, 0.0) + (x - _lane_rate.get(lane, 0.0)) * k
+
+
+def _effective_alive(alive, all_tags):
+    """Живые выходы с анти-флапом: одиночный промах пробы не роняет выход —
+    мёртвым он считается после DEAD_AFTER промахов подряд (до того берём
+    последнюю удачную задержку). Выключенные вручную в alive уже не попадают."""
+    for tag in all_tags:
+        if tag in alive:
+            _tag_miss[tag] = 0
+            _tag_delay[tag] = alive[tag]
+        else:
+            _tag_miss[tag] = _tag_miss.get(tag, DEAD_AFTER) + 1
+    return {t: _tag_delay[t] for t in all_tags
+            if _tag_miss.get(t, DEAD_AFTER) < DEAD_AFTER and t in _tag_delay
+            and _node_of(t) not in _disabled}
+
+
+def _node_targets(alive):
+    """Для каждого живого узла — выход, на который направляем дорожки
+    (direct; warp — только если direct мёртв), и его задержка."""
+    nodes: dict = {}
+    for tag, d in alive.items():
+        node = _node_of(tag)
+        cur = nodes.get(node)
+        is_direct = tag.endswith('-direct')
+        if cur is None or (is_direct and not cur[0].endswith('-direct')):
+            nodes[node] = (tag, d)
+    return nodes
+
+
+def _update_eligible(targets):
+    """Множество «быстрых» узлов с гистерезисом. Выключенный вручную или без
+    живых выходов (targets уже учитывают DEAD_AFTER) — вон сразу. По задержке
+    решаем по EWMA (LAT_TAU): выход из балансировки — если сглаженная
+    задержка хуже лучшей на > BALANCE_MARGIN_MS непрерывно SLOW_HOLD секунд;
+    возврат — после LATENCY_HOLD тиков подряд в норме (он устройства не двигает)."""
+    global _elig_init
+    t = time.monotonic()
+    k = 1 - pow(2.718281828, -INTERVAL / LAT_TAU)
+    for n, (_, d) in targets.items():
+        _lat_ewma[n] = d if n not in _lat_ewma else _lat_ewma[n] + (d - _lat_ewma[n]) * k
+    for n in list(_lat_ewma):
+        if n not in targets:
+            del _lat_ewma[n]   # узел пропал — при возвращении начнём с чистого замера
+    lat = {n: round(_lat_ewma[n]) for n in targets}
+    best = min(lat.values(), default=None)
+    want = {n for n in targets
+            if best is not None and lat[n] <= best + BALANCE_MARGIN_MS
+            and _penalty.get(n, 0.0) <= t}
+    for node in set(want) | set(_elig):
+        hard_out = node in _disabled or node not in targets
+        if hard_out:
+            if node in _elig:
+                _elig.discard(node)
+                print(f'дорожки: узел {node} выбыл '
+                      f'({"выключен вручную" if node in _disabled else "нет живых выходов"})', flush=True)
+            _state_since.pop(node, None)
+            continue
+        if (node in want) == (node in _elig):
+            _state_since.pop(node, None)
+            continue
+        since = _state_since.setdefault(node, t)
+        hold = LATENCY_HOLD * INTERVAL if node in want else SLOW_HOLD
+        # первичное наполнение (первый удачный тик после старта) — без
+        # ожидания, иначе первые секунды все дорожки свалились бы на один узел
+        if t - since >= hold or not _elig_init:
+            _state_since.pop(node, None)
+            if node in want:
+                _elig.add(node)
+                print(f'дорожки: узел {node} в балансировке (~{lat[node]}ms)', flush=True)
+            else:
+                _elig.discard(node)
+                print(f'дорожки: узел {node} вне балансировки — медленный '
+                      f'(~{lat[node]}ms сглаж. ≥{SLOW_HOLD:.0f}с, лучший ~{best}ms)', flush=True)
+    _elig_init = _elig_init or bool(targets)
+    # не стрэндим: если «быстрых» не осталось — любой живой не выключенный
+    return (_elig & set(targets)) or set(targets)
+
+
+def _lane_ips(conns):
+    ips: dict = {}
+    for c in conns:
+        lane = _lane_of(c)
+        ip = (c.get('metadata') or {}).get('sourceIP')
+        if lane and ip:
+            ips.setdefault(lane, set()).add(ip)
+    return ips
+
+
+def _move_lane(lane, tag, reason, ips, quiet=False):
+    """quiet — дорожка без соединений: в журнал не пишем поштучно (сводка у вызывающего)."""
+    _req('PUT', f'/proxies/{urllib.parse.quote(lane)}', {'name': tag})
+    _lane_moved[lane] = time.monotonic()
+    if not quiet:
+        who = ','.join(sorted(ips.get(lane, ()))[:3])
+        print(f'{lane} ({who}) -> {tag}: {reason}', flush=True)
+
+
+def lanes_tick(conns):
+    """Раскладка дорожек по экзитам (см. описание BALANCE выше)."""
+    global _last_rebalance
+    proxies = _req('GET', '/proxies').get('proxies') or {}
+    lanes = sorted(n for n, p in proxies.items()
+                   if n.startswith(LANE_PREFIX) and str(p.get('type', '')).lower() == 'selector')
+    if not lanes:
+        return
+    cur = {l: proxies[l].get('now') for l in lanes}
+
+    if not BALANCE:
+        fb = (proxies.get(GROUP) or {}).get('now')
+        for l in lanes:
+            if fb and cur[l] != fb:
+                _req('PUT', f'/proxies/{urllib.parse.quote(l)}', {'name': fb})
+        return
+
+    if conns is not None:
+        _update_lane_rates(conns)
+    if _tick_alive is None:
+        return   # замеров нет (ошибка тика) — ничего не двигаем
+    all_tags = (proxies.get(lanes[0]) or {}).get('all') or []
+    alive = _effective_alive(_tick_alive, all_tags)
+    targets = _node_targets(alive)
+    elig = _update_eligible(targets)
+    if not elig:
+        return   # ни одного живого экзита — «выбор не трогаю», как foreign-best
+    ips = _lane_ips(conns or [])
+    rate = {l: _lane_rate.get(l, 0.0) for l in lanes}
+    load = {n: 0.0 for n in elig}
+    count = {n: 0 for n in elig}   # дорожек на узле — тай-брейк при равной нагрузке
+    broken = [l for l in lanes if _node_of(cur[l] or '') not in elig or cur[l] not in alive]
+    for l in lanes:
+        n = _node_of(cur[l] or '')
+        if n in load and l not in broken:
+            load[n] += rate[l]
+            count[n] += 1
+    lightest = lambda: min(load, key=lambda n: (load[n], count[n]))
+
+    # 1. Проблема узла/выхода: дорожка не на «быстром» узле или её выход мёртв —
+    #    уводим сразу, тяжёлые первыми, каждую на самый лёгкий узел.
+    quiet_moves: dict = {}
+    for l in sorted(broken, key=lambda x: -rate[x]):
+        old = _node_of(cur[l] or '?')
+        dst = lightest()
+        why = ('узел выключен вручную' if old in _disabled
+               else 'выход мёртв' if cur[l] not in alive and old in elig
+               else 'узел недоступен/медленный')
+        quiet = l not in ips
+        _move_lane(l, targets[dst][0], f'{old}→{dst}: {why}', ips, quiet)
+        if quiet:
+            quiet_moves.setdefault(f'{old}→{dst}: {why}', []).append(l[len(LANE_PREFIX):])
+        load[dst] += rate[l]
+        count[dst] += 1
+        cur[l] = targets[dst][0]
+    for what, ls in quiet_moves.items():
+        print(f'{len(ls)} дорожек без соединений ({",".join(ls)}) — {what}', flush=True)
+
+    t = time.monotonic()
+    if t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
+        return
+    _last_rebalance = t
+
+    # 2. Дисбаланс: одна активная дорожка с самого нагруженного узла на самый
+    #    лёгкий — та, чья нагрузка ближе всего к половине разрыва.
+    total = sum(load.values())
+    hi, lo = max(load, key=load.get), min(load, key=load.get)
+    gap = load[hi] - load[lo]
+    if total > 0 and gap > IMBALANCE_SHARE * total and gap > IMBALANCE_MIN_BPS:
+        cand = [l for l in lanes
+                if _node_of(cur[l] or '') == hi and ACTIVE_BPS <= rate[l] < gap
+                and t - _lane_moved.get(l, -1e9) >= MIN_DWELL]
+        if cand:
+            l = min(cand, key=lambda x: abs(rate[x] - gap / 2))
+            _move_lane(l, targets[lo][0],
+                       f'{hi}→{lo}: дисбаланс {load[hi] * 8 / 1e6:.1f}/{load[lo] * 8 / 1e6:.1f} Mbps', ips)
+            load[hi] -= rate[l]
+            load[lo] += rate[l]
+            count[hi] -= 1
+            count[lo] += 1
+            cur[l] = targets[lo][0]
+
+    # 3. Спящие дорожки — тихо разносим по узлам с упором на лёгкие:
+    #    проснувшееся устройство попадёт туда, где свободнее. Двигаем ТОЛЬКО
+    #    дорожки без единого соединения: устройство в сети, но с малым
+    #    трафиком (мессенджер, фон) не должно менять внешний IP.
+    idle = [l for l in lanes if rate[l] < ACTIVE_BPS]
+    proj = dict(load)
+    for l in idle:
+        n = _node_of(cur[l] or '')
+        if n in proj:
+            proj[n] += ACTIVE_BPS   # вес «спящего» устройства
+    levelled = []
+    for l in idle:
+        n = _node_of(cur[l] or '')
+        if l in ips or t - _lane_moved.get(l, -1e9) < IDLE_DWELL:
+            continue
+        dst = min(proj, key=proj.get)
+        if dst != n and n in proj and proj[n] - ACTIVE_BPS > proj[dst]:
+            proj[n] -= ACTIVE_BPS
+            proj[dst] += ACTIVE_BPS
+            _move_lane(l, targets[dst][0], '', ips, quiet=True)
+            levelled.append(f'{l[len(LANE_PREFIX):]}:{n}→{dst}')
+    if levelled:
+        print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
+
+
 def main():
     if not SECRET:
         print('CLASH_SECRET не задан', file=sys.stderr)
@@ -256,12 +603,22 @@ def main():
     print(f'failover-watchdog: group={GROUP} interval={INTERVAL}s '
           f'probe_timeout={TIMEOUT_MS}ms dead_after={DEAD_AFTER} '
           f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} '
-          f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH}', flush=True)
+          f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH} '
+          f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
+          f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
+          f'dwell={MIN_DWELL:.0f}s', flush=True)
     while True:
         try:
             tick()
         except Exception as e:
             print(f'tick error: {e}', file=sys.stderr, flush=True)
+        conns = _fetch_conns()
+        try:
+            lanes_tick(conns)
+        except Exception as e:
+            print(f'lanes error: {e}', file=sys.stderr, flush=True)
+        # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
+        _drop_disabled_conns(conns)
         time.sleep(INTERVAL)
 
 

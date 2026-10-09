@@ -1,9 +1,9 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { eq, sql } from 'drizzle-orm'
+import { eq, lt, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { devices } from '../database/schema'
+import { deviceTrafficHourly, devices } from '../database/schema'
 
 const execFileP = promisify(execFile)
 
@@ -22,6 +22,29 @@ const execFileP = promisify(execFile)
  * клиента (upload).
  */
 const lastSeen = new Map<string, { rx: number, tx: number }>()
+
+/**
+ * Скользящее окно последних дельт per-device — для статуса «в сети» (трафик
+ * за RECENT_WINDOW_MS). Только память: после рестарта панели окно пустое
+ * один-два прогона, это допустимо.
+ */
+const RECENT_WINDOW_MS = 5 * 60_000
+const recent = new Map<number, Array<{ at: number, bytes: number }>>()
+
+/** Байты (rx+tx) каждого девайса за последние 5 минут. */
+export function recentBytesByDevice(nowMs = Date.now()): Map<number, number> {
+  const out = new Map<number, number>()
+  for (const [id, list] of recent) {
+    const sum = list.reduce((acc, e) => (nowMs - e.at <= RECENT_WINDOW_MS ? acc + e.bytes : acc), 0)
+    if (sum > 0) out.set(id, sum)
+  }
+  return out
+}
+
+// Почасовая история хранится 35 дней: хватает на неделю с запасом и на
+// месячные отчёты, если понадобятся. Чистим раз в час.
+const HOURLY_RETENTION_SEC = 35 * 86400
+let lastPrunedHour = 0
 
 interface Sample {
   deviceId: number
@@ -160,14 +183,45 @@ export async function collectTraffic(): Promise<void> {
     deltas.set(s.deviceId, d)
   }
 
+  const now = Date.now()
+  const hour = Math.floor(now / 3_600_000) * 3600
   for (const [id, d] of deltas) {
+    const rx = Math.round(d.rx)
+    const tx = Math.round(d.tx)
     await db
       .update(devices)
       .set({
-        rxTotal: sql`${devices.rxTotal} + ${Math.round(d.rx)}`,
-        txTotal: sql`${devices.txTotal} + ${Math.round(d.tx)}`,
+        rxTotal: sql`${devices.rxTotal} + ${rx}`,
+        txTotal: sql`${devices.txTotal} + ${tx}`,
       })
       .where(eq(devices.id, id))
+    await db
+      .insert(deviceTrafficHourly)
+      .values({ deviceId: id, hour, rx, tx })
+      .onConflictDoUpdate({
+        target: [deviceTrafficHourly.deviceId, deviceTrafficHourly.hour],
+        set: {
+          rx: sql`${deviceTrafficHourly.rx} + ${rx}`,
+          tx: sql`${deviceTrafficHourly.tx} + ${tx}`,
+        },
+      })
+    const list = recent.get(id) ?? []
+    list.push({ at: now, bytes: rx + tx })
+    recent.set(id, list)
+  }
+
+  // Окно «в сети»: выкидываем старое и девайсы, у которых в окне ничего нет.
+  for (const [id, list] of recent) {
+    const fresh = list.filter(e => now - e.at <= RECENT_WINDOW_MS)
+    if (fresh.length) recent.set(id, fresh)
+    else recent.delete(id)
+  }
+
+  if (hour !== lastPrunedHour) {
+    lastPrunedHour = hour
+    await db
+      .delete(deviceTrafficHourly)
+      .where(lt(deviceTrafficHourly.hour, hour - HOURLY_RETENTION_SEC))
   }
 
   log.info(

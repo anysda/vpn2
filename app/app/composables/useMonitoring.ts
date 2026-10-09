@@ -12,6 +12,15 @@ export interface NodeMetric {
   uptimeSec: number | null
   // возраст последних метрик ноды, сек (null — данных нет)
   staleSec: number | null
+  // байты через WAN ноды с 00:00 МСК (вход / выход)
+  rxTodayBytes: number | null
+  txTodayBytes: number | null
+  // экзит выключен вручную из панели (watchdog обходит его как мёртвый)
+  disabled: boolean
+  // через этот экзит сейчас идёт иностранный трафик вне дорожек (foreign-best)
+  active: boolean
+  // клиентских устройств с соединениями через экзит (null у RU)
+  activeDevices: number | null
 }
 
 export type NodeState = 'online' | 'warning' | 'offline'
@@ -65,7 +74,15 @@ export function useMonitoring() {
     void refreshNodes()
   })
 
-  return { nodes, cpuHistory, refreshNodes }
+  async function setExitDisabled(tag: string, disabled: boolean) {
+    await $fetch(`/api/ops/exits/${encodeURIComponent(tag)}`, {
+      method: 'PATCH',
+      body: { disabled },
+    })
+    await refreshNodes()
+  }
+
+  return { nodes, cpuHistory, refreshNodes, setExitDisabled }
 }
 
 export function formatUptime(sec: number | null | undefined): string {
@@ -87,6 +104,12 @@ export function formatMbps(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—'
   if (v < 0.01) return '0'
   return v.toFixed(2)
+}
+
+export function formatBytes(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—'
+  if (v < 1e9) return `${(v / 1e6).toFixed(0)} MB`
+  return `${(v / 1e9).toFixed(2)} GB`
 }
 
 export function sparklinePath(values: number[], width = 80, height = 24): string {

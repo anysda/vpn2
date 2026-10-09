@@ -92,6 +92,13 @@
       "when": 1791150852022,
       "tag": "0012_ikev2_username_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791536794604,
+      "tag": "0013_device_traffic_hourly",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { useLogger } from './logger'
+import { MSK_OFFSET_SEC, mskDay } from './msk-day'
 
 interface VmInstantResult {
   metric: Record<string, string>
@@ -130,6 +131,52 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
     // staleSec — БЕЗ holdover: реальный возраст последнего сэмпла.
     staleSec: stale.get(inst) ?? null,
   }))
+}
+
+// Суточный трафик ноды: increase() WAN-счётчиков с 00:00 МСК. Фильтр строже,
+// чем у rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на
+// eth0 — считаем только физический интерфейс, иначе сумма удвоится.
+const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
+const DAILY_CACHE_MS = 30_000
+
+/** Секунд с 00:00 по Москве; не меньше 60, чтобы окно increase() не было пустым. */
+function secondsSinceMskMidnight(nowMs = Date.now()): number {
+  const sec = Math.floor(nowMs / 1000)
+  return Math.max(60, (sec + MSK_OFFSET_SEC) % 86400)
+}
+
+export interface DailyTraffic {
+  rxBytes: number | null
+  txBytes: number | null
+}
+
+// increase() за сутки на 2с-скрейпе — тяжёлый запрос; панель опрашивает
+// /api/ops/nodes раз в 2с, поэтому результат держим 30с.
+let dailyCache: { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> } | null = null
+
+
+export async function fetchDailyTraffic(instances: string[]): Promise<Map<string, DailyTraffic>> {
+  const now = Date.now()
+  const day = mskDay(now)
+  if (dailyCache && dailyCache.day !== day) {
+    // Полночь МСК: ни кэш, ни holdover не должны показывать вчерашние сутки.
+    dailyCache = null
+    for (const m of holdover.values()) { m.delete('rxDay'); m.delete('txDay') }
+  }
+  if (!dailyCache || now - dailyCache.at > DAILY_CACHE_MS) {
+    const range = `${secondsSinceMskMidnight(now)}s`
+    const [rx, tx] = await Promise.all([
+      instantQuery(`sum by(instance) (increase(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
+      instantQuery(`sum by(instance) (increase(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
+    ])
+    dailyCache = { at: now, day, rx, tx }
+  }
+  const rxH = withHoldover(dailyCache.rx, instances, 'rxDay')
+  const txH = withHoldover(dailyCache.tx, instances, 'txDay')
+  return new Map(instances.map(inst => [inst, {
+    rxBytes: rxH.get(inst) ?? null,
+    txBytes: txH.get(inst) ?? null,
+  }]))
 }
 
 /**

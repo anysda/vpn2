@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -95,6 +95,25 @@ export const devices = sqliteTable('devices', {
   // одного. buildIkev2Username выбирает свободный, но без UNIQUE два
   // параллельных создания брали один и тот же (VPN2-70).
   uniqueIndex('devices_ikev2_username_unique').on(table.ikev2Username),
+])
+
+/**
+ * Почасовой трафик девайса (WG+OpenVPN+IKEv2), байты. Наполняет тот же сборщик,
+ * что и devices.rx_total/tx_total (server/utils/traffic-collector.ts); из него
+ * считаются трафик клиента за сутки/неделю и ТОП. Час — unix-секунды начала
+ * часа (UTC): полночь МСК (UTC+3) совпадает с границей часа. Старше 35 дней
+ * сборщик удаляет.
+ */
+export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
+  deviceId: integer('device_id')
+    .notNull()
+    .references(() => devices.id, { onDelete: 'cascade' }),
+  hour: integer('hour').notNull(),
+  rx: integer('rx').notNull().default(0),
+  tx: integer('tx').notNull().default(0),
+}, table => [
+  primaryKey({ columns: [table.deviceId, table.hour] }),
+  index('device_traffic_hourly_hour_idx').on(table.hour),
 ])
 
 export const routes = sqliteTable('routes', {

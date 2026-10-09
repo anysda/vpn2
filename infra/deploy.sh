@@ -986,6 +986,16 @@ do_restore() {
   else
     ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'"
   fi
+  # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
+  # которого он снят, а запущенные службы собраны под секреты текущего: бот
+  # отвечает панели 403, вотчдог получает 401 от clash-api, у OpenVPN из
+  # старого server.conf пропадает management, сертификат IKEv2 выписан на
+  # прежний IP. Пересобираем всё, что читает восстановленное (ключи и PKI
+  # стадии не трогают).
+  local s
+  for s in 29-openvpn 20-ru-router 21-failover-watchdog 26-backup 27-ikev2 35-telegram 30-frontend; do
+    run_stage "$s" ru
+  done
 }
 
 # Читает список тегов выходных нод из envs/exits.env

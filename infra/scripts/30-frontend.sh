@@ -10,6 +10,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}" "${ENTRY_HOST:?}" "${AGH_PORT:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 30-frontend is ru-only — skipping"; exit 0;; esac
 
@@ -214,8 +220,8 @@ ufw allow 80/tcp   comment 'caddy HTTP + ACME challenge' || true
 ufw allow 443/tcp  comment 'caddy HTTPS панель'          || true
 ufw allow 3001/tcp comment 'AdGuard Home web UI'         || true
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
-  && systemctl restart caddy \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }
+svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile
 
 # ----------------------------------------------------------------------------
 # 4. Run container

@@ -9,6 +9,12 @@ set -euo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}" "${AGH_PORT:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 22-adguard is ru-only — skipping"; exit 0;; esac
 
@@ -72,7 +78,18 @@ elif [[ ! -f /etc/anysda/admin-password.txt ]]; then
   chmod 600 /etc/anysda/admin-password.txt
 fi
 AGH_PASS=$(cat /etc/anysda/admin-password.txt)
-AGH_PASS_HASH=$(htpasswd -bnBC 10 "" "$AGH_PASS" | tr -d ':\n' | sed 's/$2y/$2a/')
+# Соль bcrypt случайная: новый хэш на каждом прогоне менял конфиг, и AdGuard
+# перезапускался зря. Хэш из конфига оставляем, если он подходит к паролю.
+AGH_PASS_HASH=$(python3 -c 'import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1])) or {}
+print(next((u.get("password") or "" for u in cfg.get("users") or [] if u.get("name") == sys.argv[2]), ""))' \
+  "$AGH_DIR/AdGuardHome.yaml" "$AGH_USER" 2>/dev/null || true)
+AGH_HTP=$(mktemp)
+printf '%s:%s\n' "$AGH_USER" "$AGH_PASS_HASH" > "$AGH_HTP"
+if [[ -z "$AGH_PASS_HASH" ]] || ! htpasswd -vb "$AGH_HTP" "$AGH_USER" "$AGH_PASS" >/dev/null 2>&1; then
+  AGH_PASS_HASH=$(htpasswd -bnBC 10 "" "$AGH_PASS" | tr -d ':\n' | sed 's/$2y/$2a/')
+fi
+rm -f "$AGH_HTP"
 echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)"
 
 # ----------------------------------------------------------------------------
@@ -116,6 +133,7 @@ patch_agh_config() {
   fi
   if [[ $changed -eq 1 ]]; then
     echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
+    svc_forget adguardhome
   fi
 }
 
@@ -192,14 +210,18 @@ log:
 schema_version: 28
 YAML
 chmod 600 "$AGH_CFG"
+svc_forget adguardhome
 else
   # Config exists — sync credentials (user/password may have changed)
   # + idempotent-патчи поверх (aaaa_disabled и т.п. — см. patch_agh_config)
-  python3 - <<PYEOF
-import yaml, sys
+  # Конфиг AdGuard читает только при старте: переписали — нужен рестарт.
+  # Пишем лишь при смысловой разнице, формат yaml AdGuard ведёт сам.
+  agh_sync=$(python3 - <<PYEOF
+import copy, yaml
 cfg_path = "$AGH_CFG"
 with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
+before = copy.deepcopy(cfg)
 cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
 # Гарантируем aaaa_disabled: true (мерджим в dns секцию)
 cfg.setdefault("dns", {})["aaaa_disabled"] = True
@@ -216,10 +238,18 @@ ups = [u for u in cfg["dns"].get("upstream_dns") or [] if not is_yt(u)]
 if yt_up:
     ups.append(yt_up)
 cfg["dns"]["upstream_dns"] = ups
-with open(cfg_path, "w") as f:
-    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-print("credentials + aaaa_disabled + ecs off + youtube upstream synced")
+if cfg != before:
+    with open(cfg_path, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+    print("changed")
 PYEOF
+)
+  if [[ "$agh_sync" == changed ]]; then
+    echo "[$HOST_TAG]   credentials + aaaa_disabled + ecs off + youtube upstream synced"
+    svc_forget adguardhome
+  else
+    echo "[$HOST_TAG]   конфиг уже такой, как нужно"
+  fi
 fi
 patch_agh_config "$AGH_CFG"
 printf '%s' "$YT_UPSTREAM" > "$YT_STATE"
@@ -248,7 +278,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable adguardhome >/dev/null 2>&1
-systemctl restart adguardhome
+svc_restart_if_changed adguardhome "$AGH_BIN" /etc/systemd/system/adguardhome.service
 sleep 2
 systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 

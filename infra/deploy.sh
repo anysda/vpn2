@@ -411,6 +411,8 @@ run_stage_on_host() {
 
   push "$rendered_env" "${host}.env"
   push "$script"
+  # Общие функции стадий (перезапуск службы только при смене её входов).
+  push "$DEPLOY_ROOT/lib/anysda-svc.sh"
 
   # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
   # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).

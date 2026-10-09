@@ -247,7 +247,6 @@ echo "anysda-restore: pre-restore snapshot saved ($(stat -c %s "$PRESNAP_FINAL")
 echo "anysda-restore: останавливаю сервисы…"
 systemctl stop anysda-failover-watchdog 2>/dev/null || true
 systemctl stop sing-box 2>/dev/null || true
-systemctl stop wg-quick@wg0 2>/dev/null || true
 systemctl stop openvpn-server@server 2>/dev/null || true
 systemctl stop anysda-ikev2-routing 2>/dev/null || true
 systemctl stop strongswan-starter 2>/dev/null || true
@@ -288,7 +287,17 @@ fi
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
 echo "anysda-restore: запускаю сервисы…"
 systemctl start sing-box 2>/dev/null || true
-systemctl start wg-quick@wg0 2>/dev/null || true
+# wg0 не останавливаем: рестарт обнуляет рукопожатия всем WG-клиентам. При
+# прежних адресах и порте wg0_apply кладёт ключи и пиры `wg syncconf`.
+if [[ -f /etc/wireguard/wg0.conf ]]; then
+  if [[ -r /usr/local/lib/anysda/anysda-svc.sh ]]; then
+    # shellcheck source=infra/lib/anysda-svc.sh
+    source /usr/local/lib/anysda/anysda-svc.sh
+    wg0_apply || echo "anysda-restore: WARN: wg0 не применился" >&2
+  else
+    systemctl restart wg-quick@wg0 2>/dev/null || true
+  fi
+fi
 systemctl start openvpn-server@server 2>/dev/null || true
 systemctl start anysda-failover-watchdog 2>/dev/null || true
 systemctl start strongswan-starter 2>/dev/null || true

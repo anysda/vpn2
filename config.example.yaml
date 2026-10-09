@@ -12,6 +12,9 @@
 entry:
   host: 1.2.3.4
   password: <root-password>
+  # public_host: vpn.example.com   # опционально: адрес сервера в клиентских
+  #                                # WG/OVPN-конфигах вместо IP; при смене IP
+  #                                # entry хватит поменять A-запись
 
 # Выходные ноды — Hysteria2 серверы. Минимум 1, рекомендуется 2+.
 exits:

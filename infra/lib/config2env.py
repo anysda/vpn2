@@ -303,6 +303,12 @@ def main():
         f'EXIT_TAGS="{exit_tags}"',
     ]
 
+    # Адрес сервера в клиентских WG/OVPN-конфигах. Домен вместо IP: при смене
+    # IP entry хватает A-записи, конфиги у клиентов не перевыпускаются.
+    public_host = str(entry.get('public_host') or '').strip()
+    if public_host:
+        lines += ['', f'WG_PUBLIC_HOST={shq(public_host)}', f'OVPN_PUBLIC_HOST={shq(public_host)}']
+
     # Per-exit server IP (используется как адрес для подключения Hysteria2)
     for ex in exits:
         tag = ex['tag'].upper()

@@ -2,8 +2,10 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
 import { eq, lt, sql } from 'drizzle-orm'
+import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
-import { deviceTrafficHourly, devices } from '../database/schema'
+import { collectorState, deviceTrafficHourly, devices } from '../database/schema'
+import { ikev2Deltas, type SaCounters, type SaSample } from './ikev2-counters'
 
 const execFileP = promisify(execFile)
 
@@ -14,9 +16,10 @@ const execFileP = promisify(execFile)
  * дельту относительно прошлого снимка и прибавляет её к
  * devices.rx_total / tx_total в БД. Итог переживает рестарты сервисов.
  *
- * Прошлый снимок держится в памяти процесса (`lastSeen`). При рестарте
- * панели он теряется → первый прогон после рестарта ре-базируется (дельта 0),
- * теряя максимум один интервал данных. Накопленные тоталы в БД сохраняются.
+ * Прошлый снимок WG/OpenVPN держится в памяти процесса (`lastSeen`). При
+ * рестарте панели он теряется → первый прогон после рестарта ре-базируется
+ * (дельта 0), теряя максимум один интервал данных. Снимок IKEv2 лежит в БД
+ * (см. ikev2-counters.ts). Накопленные тоталы в БД сохраняются.
  *
  * Соглашение направлений: rx = загрузка клиента (download), tx = отдача
  * клиента (upload).
@@ -51,12 +54,6 @@ interface Sample {
   proto: string
   rx: number
   tx: number
-  /**
-   * Счётчик источника заведомо начинается с нуля при появлении ключа
-   * (у IKEv2 — новая SA). Тогда первое наблюдение можно засчитать целиком,
-   * а не терять интервал на ре-базирование.
-   */
-  baseZero?: boolean
 }
 
 /** WireGuard: `wg show wg0 transfer` → "<pubkey>\t<rx>\t<tx>" (со стороны сервера). */
@@ -108,26 +105,29 @@ async function sampleOvpn(): Promise<Sample[]> {
  * контейнера панели swanctl'а нет, поэтому счётчики приходят файлом — ровно
  * как status-файл OpenVPN.
  *
- * Ключ дельты — per-SA (proto = «ikev2:<uniqueid>»), а не per-device: при
- * переподключении charon заводит новую SA со счётчиками с нуля, и общая сумма
- * по устройству просела бы, что выглядело бы как сброс счётчика.
+ * Ключ дельты — per-SA (uniqueid), а не per-device: при переподключении
+ * charon заводит новую SA со счётчиками с нуля, и общая сумма по устройству
+ * просела бы, что выглядело бы как сброс счётчика.
+ *
+ * null — файла нет или он битый: снимок не трогаем, иначе все SA на следующем
+ * прогоне выглядели бы новыми и засчитались бы целиком второй раз.
  */
-async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<Sample[]> {
+async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSample[] | null> {
   let raw: string
   try {
     raw = await readFile('/etc/anysda/ikev2-status.json', 'utf8')
   }
   catch {
-    return []
+    return null
   }
   let parsed: { sessions?: Array<{ uniqueid?: string, username?: string, rx?: number, tx?: number }> }
   try {
     parsed = JSON.parse(raw)
   }
   catch {
-    return []
+    return null
   }
-  const samples: Sample[] = []
+  const samples: SaSample[] = []
   for (const s of parsed.sessions ?? []) {
     const id = s.username ? usernameToDevice.get(s.username) : undefined
     if (!id) continue
@@ -135,10 +135,9 @@ async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<Sampl
     // клиентом (bytes-out сервера), tx = отдано клиентом (bytes-in).
     samples.push({
       deviceId: id,
-      proto: `ikev2:${s.uniqueid ?? '0'}`,
+      uniqueid: s.uniqueid ?? '0',
       rx: Number(s.rx) || 0,
       tx: Number(s.tx) || 0,
-      baseZero: true,
     })
   }
   return samples
@@ -164,49 +163,76 @@ export async function collectTraffic(): Promise<void> {
     sampleOvpn(),
     sampleIkev2(deviceByIkev2User),
   ])
-  const samples = [...wg, ...ovpn, ...ikev2]
 
   // дельты по девайсу
   const deltas = new Map<number, { rx: number, tx: number }>()
-  for (const s of samples) {
+  function add(deviceId: number, dRx: number, dTx: number) {
+    if (dRx <= 0 && dTx <= 0) return
+    const d = deltas.get(deviceId) ?? { rx: 0, tx: 0 }
+    d.rx += dRx
+    d.tx += dTx
+    deltas.set(deviceId, d)
+  }
+  for (const s of [...wg, ...ovpn]) {
     const key = `${s.deviceId}:${s.proto}`
-    const last = lastSeen.get(key) ?? (s.baseZero ? { rx: 0, tx: 0 } : undefined)
+    const last = lastSeen.get(key)
     lastSeen.set(key, { rx: s.rx, tx: s.tx })
     if (!last) continue // первое наблюдение — только базируемся
     // счётчик мог обнулиться (рестарт сервиса) → берём текущее значение целиком
-    const dRx = s.rx >= last.rx ? s.rx - last.rx : s.rx
-    const dTx = s.tx >= last.tx ? s.tx - last.tx : s.tx
-    if (dRx <= 0 && dTx <= 0) continue
-    const d = deltas.get(s.deviceId) ?? { rx: 0, tx: 0 }
-    d.rx += dRx
-    d.tx += dTx
-    deltas.set(s.deviceId, d)
+    add(s.deviceId, s.rx >= last.rx ? s.rx - last.rx : s.rx, s.tx >= last.tx ? s.tx - last.tx : s.tx)
+  }
+  let ikev2Next: SaCounters | null = null
+  if (ikev2) {
+    const [row] = await db.select().from(collectorState).where(eq(collectorState.name, 'ikev2'))
+    const res = ikev2Deltas(row ? JSON.parse(row.value) as SaCounters : null, ikev2)
+    res.deltas.forEach(d => add(d.deviceId, d.rx, d.tx))
+    ikev2Next = res.next
   }
 
   const now = Date.now()
   const hour = Math.floor(now / 3_600_000) * 3600
+  // Тоталы и снимок IKEv2 — одним батчем (BEGIN..COMMIT на том же соединении):
+  // упади запись между ними, следующий прогон засчитал бы тот же интервал
+  // второй раз или потерял его. db.transaction у libsql на файле открывает
+  // второе соединение — параллельная запись из API ловила бы SQLITE_BUSY.
+  const writes: BatchItem<'sqlite'>[] = []
   for (const [id, d] of deltas) {
     const rx = Math.round(d.rx)
     const tx = Math.round(d.tx)
-    await db
-      .update(devices)
-      .set({
-        rxTotal: sql`${devices.rxTotal} + ${rx}`,
-        txTotal: sql`${devices.txTotal} + ${tx}`,
-      })
-      .where(eq(devices.id, id))
-    await db
-      .insert(deviceTrafficHourly)
-      .values({ deviceId: id, hour, rx, tx })
-      .onConflictDoUpdate({
-        target: [deviceTrafficHourly.deviceId, deviceTrafficHourly.hour],
-        set: {
-          rx: sql`${deviceTrafficHourly.rx} + ${rx}`,
-          tx: sql`${deviceTrafficHourly.tx} + ${tx}`,
-        },
-      })
+    writes.push(
+      db
+        .update(devices)
+        .set({
+          rxTotal: sql`${devices.rxTotal} + ${rx}`,
+          txTotal: sql`${devices.txTotal} + ${tx}`,
+        })
+        .where(eq(devices.id, id)),
+      db
+        .insert(deviceTrafficHourly)
+        .values({ deviceId: id, hour, rx, tx })
+        .onConflictDoUpdate({
+          target: [deviceTrafficHourly.deviceId, deviceTrafficHourly.hour],
+          set: {
+            rx: sql`${deviceTrafficHourly.rx} + ${rx}`,
+            tx: sql`${deviceTrafficHourly.tx} + ${tx}`,
+          },
+        }),
+    )
+  }
+  if (ikev2Next) {
+    const value = JSON.stringify(ikev2Next)
+    writes.push(
+      db
+        .insert(collectorState)
+        .values({ name: 'ikev2', value })
+        .onConflictDoUpdate({ target: collectorState.name, set: { value } }),
+    )
+  }
+  const [first, ...rest] = writes
+  if (first) await db.batch([first, ...rest])
+  for (const [id, d] of deltas) {
     const list = recent.get(id) ?? []
-    list.push({ at: now, bytes: rx + tx })
+    list.push({ at: now, bytes: Math.round(d.rx) + Math.round(d.tx) })
     recent.set(id, list)
   }
 
@@ -225,7 +251,7 @@ export async function collectTraffic(): Promise<void> {
   }
 
   log.info(
-    { wg: wg.length, ovpn: ovpn.length, ikev2: ikev2.length, updated: deltas.size },
+    { wg: wg.length, ovpn: ovpn.length, ikev2: ikev2?.length ?? null, updated: deltas.size },
     'traffic: collected',
   )
 }

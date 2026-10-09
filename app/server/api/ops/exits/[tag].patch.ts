@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { requireAuth } from '../../../utils/auth'
-import { readDisabledExits, writeDisabledExits } from '../../../utils/exit-control'
+import { toggleExit } from '../../../utils/exit-control'
 import { nodeInstances } from '../../../utils/vm-client'
 
 const Body = z.object({ disabled: z.boolean() })
@@ -14,17 +14,11 @@ export default defineEventHandler(async (event) => {
   }
 
   const body = await readValidatedBody(event, Body.parse)
-  const current = new Set(await readDisabledExits())
-  if (body.disabled) current.add(tag)
-  else current.delete(tag)
-
   // Хотя бы один экзит должен остаться включённым — иначе watchdog'у некуда
   // уводить иностранный трафик.
-  if (exits.every(t => current.has(t))) {
+  if (!await toggleExit(tag, body.disabled, exits)) {
     throw createError({ statusCode: 409, statusMessage: 'last_enabled_exit' })
   }
-
-  await writeDisabledExits([...current].filter(t => exits.includes(t)))
   useLogger().info({ tag, disabled: body.disabled }, 'exit toggled manually')
   return { tag, disabled: body.disabled }
 })

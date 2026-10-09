@@ -21,6 +21,10 @@ export interface NodeMetric {
   active: boolean
   // клиентских устройств с соединениями через экзит (null у RU)
   activeDevices: number | null
+  // дорожек lane-NN, направленных на узел, и сколько из них через его warp
+  // (null у RU и когда дорожек в конфиге нет)
+  lanes: number | null
+  lanesWarp: number | null
 }
 
 export type NodeState = 'online' | 'warning' | 'offline'

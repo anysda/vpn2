@@ -1,6 +1,8 @@
 export interface NodeMetric {
   tag: string
   label: string
+  // публичный адрес ноды (из config.yaml), null — не задан
+  host: string | null
   instance: string
   cpu: number | null
   // ожидание диска и украденное гипервизором время, % (в cpu не входят)
@@ -10,6 +12,9 @@ export interface NodeMetric {
   rxMbps: number | null
   txMbps: number | null
   uptimeSec: number | null
+  // свободно на корневой ФС: байты и % от размера
+  diskFreeBytes: number | null
+  diskFreePct: number | null
   // возраст последних метрик ноды, сек (null — данных нет)
   staleSec: number | null
   // байты через WAN ноды с 00:00 МСК (вход / выход)

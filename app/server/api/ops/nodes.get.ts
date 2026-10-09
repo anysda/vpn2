@@ -6,6 +6,11 @@ import { fetchDailyTraffic, fetchNodeMetrics, nodeInstances } from '../../utils/
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const nodes = nodeInstances()
+  const hosts = new Map(
+    String(useRuntimeConfig().nodeHosts || '').split(',')
+      .map(kv => kv.split('=').map(s => s.trim()))
+      .filter((kv): kv is [string, string] => kv.length === 2 && !!kv[0] && !!kv[1]),
+  )
   const instances = nodes.map(n => n.instance)
   const [metrics, daily, disabled, proxies, conns] = await Promise.all([
     fetchNodeMetrics(instances),
@@ -31,6 +36,7 @@ export default defineEventHandler(async (event) => {
   return nodes.map((n, i) => ({
     tag: n.tag,
     label: n.label,
+    host: hosts.get(n.tag) ?? null,
     instance: n.instance,
     cpu: metrics[i]?.cpuPct ?? null,
     iowait: metrics[i]?.iowaitPct ?? null,
@@ -39,6 +45,10 @@ export default defineEventHandler(async (event) => {
     rxMbps: metrics[i]?.rxBps != null ? metrics[i]!.rxBps! * 8 / 1e6 : null,
     txMbps: metrics[i]?.txBps != null ? metrics[i]!.txBps! * 8 / 1e6 : null,
     uptimeSec: metrics[i]?.uptimeSec ?? null,
+    diskFreeBytes: metrics[i]?.diskFreeBytes ?? null,
+    diskFreePct: metrics[i]?.diskFreeBytes != null && metrics[i]?.diskSizeBytes
+      ? 100 * metrics[i]!.diskFreeBytes! / metrics[i]!.diskSizeBytes!
+      : null,
     staleSec: metrics[i]?.staleSec ?? null,
     rxTodayBytes: daily.get(n.instance)?.rxBytes ?? null,
     txTodayBytes: daily.get(n.instance)?.txBytes ?? null,

@@ -57,6 +57,18 @@ function loadColor(v: number | null): string {
   return 'text-(--ui-text)'
 }
 
+// Свободное место: меньше 20% — пора чистить, меньше 10% — горит.
+function diskColor(freePct: number | null): string {
+  if (freePct == null) return 'text-(--ui-text-dimmed)'
+  if (freePct < 10) return 'text-rose-400'
+  if (freePct < 20) return 'text-amber-400'
+  return 'text-(--ui-text)'
+}
+
+function formatDiskFree(bytes: number | null): string {
+  return bytes == null ? '—' : `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
+
 // iowait/steal: уже 10% — заметная беда (диск или соседи по гипервизору).
 function waitColor(v: number | null): string {
   if (v == null) return 'text-(--ui-text-dimmed)'
@@ -102,6 +114,13 @@ function waitColor(v: number | null): string {
           <div class="flex items-center justify-between text-xs mb-1">
             <span class="font-semibold">{{ flagFor(n.tag) }} {{ n.tag.toUpperCase() }}</span>
             <span class="text-(--ui-text-muted)">{{ formatUptime(n.uptimeSec) }}</span>
+          </div>
+          <div
+            v-if="n.host"
+            class="text-[11px] font-mono text-(--ui-text-muted) truncate select-all -mt-0.5 mb-1"
+            :title="n.host"
+          >
+            {{ n.host }}
           </div>
           <div
             v-if="n.tag !== 'ru'"
@@ -155,6 +174,16 @@ function waitColor(v: number | null): string {
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">RAM</span>
               <span :class="loadColor(n.ram)">{{ formatPercent(n.ram) }}</span>
+            </div>
+            <div
+              class="flex justify-between gap-1"
+              title="Свободно на корневом разделе"
+            >
+              <span class="text-(--ui-text-muted)">HDD</span>
+              <span :class="diskColor(n.diskFreePct)" class="whitespace-nowrap">
+                {{ formatDiskFree(n.diskFreeBytes) }}
+                <span class="text-(--ui-text-muted)">{{ formatPercent(n.diskFreePct) }}</span>
+              </span>
             </div>
             <div class="flex justify-between">
               <span class="text-(--ui-text-muted)">↓</span>

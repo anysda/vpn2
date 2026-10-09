@@ -612,7 +612,7 @@ def lanes_tick(conns):
     for l in sorted(broken, key=lambda x: -rate[x]):
         old = _node_of(cur[l] or '?')
         dst = lightest()
-        why = ('узел выключен вручную' if old in _disabled
+        why = ('узел выключен вручную' if old in _excluded()
                else 'выход мёртв' if cur[l] not in alive and old in elig
                else 'узел недоступен/медленный')
         quiet = l not in ips
@@ -684,7 +684,7 @@ def pins_tick(proxies):
             continue
         base = name[len(PIN_PREFIX):]
         _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
-        disabled = _node_of(base) in _disabled
+        disabled = _node_of(base) in _excluded()
         want = GROUP if disabled or _pin_miss[base] >= DEAD_AFTER else base
         if p.get('now') != want:
             _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
@@ -700,7 +700,7 @@ def tg_tick(proxies):
         return
     now = grp.get('now') or ''
     t = time.monotonic()
-    now_bad = _node_of(now) in _disabled or now not in _tick_alive
+    now_bad = _node_of(now) in _excluded() or now not in _tick_alive
     if not now_bad and t - _tg_last < TG_INTERVAL:
         return
     _tg_last = t
@@ -717,7 +717,7 @@ def tg_tick(proxies):
     fb = (proxies.get(GROUP) or {}).get('now')
     target = fb if fb in ok else min(ok, key=ok.get)
     _req('PUT', f'/proxies/{urllib.parse.quote(TG_GROUP)}', {'name': target})
-    why = ('узел выключен вручную' if _node_of(now) in _disabled
+    why = ('узел выключен вручную' if _node_of(now) in _excluded()
            else 'выход мёртв' if now not in _tick_alive
            else f'Bot API не отвечает ({errs.get(now, "?")})')
     print(f'{TG_GROUP} -> {target} ({ok[target]}ms): {now or "—"}: {why}', flush=True)

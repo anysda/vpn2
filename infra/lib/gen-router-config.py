@@ -409,11 +409,11 @@ def main():
 
         'inbounds': [
             {
-                # Локальный forward-прокси (HTTP CONNECT + SOCKS) для
-                # Telegram-бота: RU-нода в Москве api.telegram.org напрямую
-                # не достаёт, поэтому бот ходит в Telegram через этот прокси.
-                # Трафик маршрутизируется как обычный заграничный →
-                # foreign-best → экзит. Слушает только loopback.
+                # Локальный прокси (HTTP CONNECT + SOCKS) для Telegram-бота:
+                # из Москвы api.telegram.org напрямую не открывается, поэтому
+                # бот ходит в Telegram через экзит. Весь трафик этого входа
+                # уходит в tg-best — экзит, на котором вотчдог проверил Bot API.
+                # Слушает только loopback.
                 'type': 'mixed',
                 'tag': 'tg-proxy',
                 'listen': '127.0.0.1',

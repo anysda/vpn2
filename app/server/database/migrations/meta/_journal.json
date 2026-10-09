@@ -99,6 +99,13 @@
       "when": 1791536794604,
       "tag": "0013_device_traffic_hourly",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791570580318,
+      "tag": "0014_client_preferred_exit",
+      "breakpoints": true
     }
   ]
 }

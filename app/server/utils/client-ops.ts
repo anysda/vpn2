@@ -8,6 +8,8 @@ import { generateClientPassword } from './password'
 import { syncWireguardConfig } from './wireguard'
 import { caReady, killOvpnClientQuiet, ovpnCn, revokeClientCert, setCcdDisabled, syncOpenvpnConfig } from './openvpn'
 import { syncIkev2, terminateIkev2Sa } from './ikev2'
+import { syncClientPrefsFile } from './client-prefs'
+import { assertKnownOutbound } from './route-outbound'
 
 /**
  * Общие операции над клиентами — используются и панелью (session-auth),
@@ -20,6 +22,8 @@ export interface ClientPatch {
   expiresAt?: string | null
   deviceLimit?: number | null
   frozenManual?: boolean
+  // тег узла экзита или null — «авто»
+  preferredExit?: string | null
 }
 
 export interface ClientCreateInput {
@@ -98,6 +102,10 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
   if (patch.expiresAt !== undefined) upd.expiresAt = patch.expiresAt ? new Date(patch.expiresAt) : null
   if (patch.deviceLimit !== undefined) upd.deviceLimit = patch.deviceLimit
   if (patch.frozenManual !== undefined) upd.frozenManual = patch.frozenManual
+  if (patch.preferredExit !== undefined) {
+    if (patch.preferredExit) await assertKnownOutbound(`hy2-${patch.preferredExit}-direct`)
+    upd.preferredExit = patch.preferredExit || null
+  }
 
   const [row] = await db.update(clients).set(upd).where(eq(clients.id, id)).returning()
   if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
@@ -118,6 +126,10 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
       }
     }
     await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client update failed'))
+  }
+
+  if (patch.preferredExit !== undefined) {
+    await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
   }
 
   // Уведомления привязанному клиенту об изменениях аккаунта.

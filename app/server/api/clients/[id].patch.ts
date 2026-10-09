@@ -9,6 +9,8 @@ const Body = z.object({
   // null — безлимит.
   deviceLimit: z.number().int().min(1).max(999).nullable().optional(),
   frozenManual: z.boolean().optional(),
+  // тег узла экзита (hy2-<тег>-direct должен существовать) или null — авто
+  preferredExit: z.string().regex(/^[a-z0-9-]{1,32}$/).nullable().optional(),
 })
 
 export default defineEventHandler(async (event) => {

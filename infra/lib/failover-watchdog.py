@@ -54,6 +54,10 @@ gstatic-проба этого не видит. tg-best держим на экз�
 узел выключен вручную или выход мёртв — смотрит на foreign-best, иначе
 ручной маршрут без запасного выхода просто рвался бы.
 
+Предпочитаемый экзит клиента (pref-<узел>-lane-NN, собирает anysda-apply-
+routes): selector [hy2-<узел>-direct, lane-NN] — та же логика: экзит, пока
+он включён и жив, иначе дорожка устройства (обычная балансировка).
+
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
 происходит лишь когда один и тот же экзит лучше текущего на >TOLERANCE
@@ -155,7 +159,7 @@ TG_GROUP     = os.environ.get('TG_GROUP', 'tg-best')
 TG_PROBE_URL = os.environ.get('TG_PROBE_URL', 'https://api.telegram.org')
 TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
 _tg_last = -1e9           # monotonic последней проверки Bot API
-PIN_PREFIX = 'pin-'
+PIN_PREFIXES = ('pin-', 'pref-')
 _pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
@@ -379,7 +383,9 @@ def _lane_of(conn):
     """Дорожка соединения — последний элемент chains (группа, через которую
     его провёл роутер): ['hy2-gb-direct', 'lane-07'] → 'lane-07'."""
     chains = conn.get('chains') or []
-    return chains[-1] if chains and chains[-1].startswith(LANE_PREFIX) else None
+    # Ищем по всей цепочке: у трафика, провалившегося из pref-* в дорожку,
+    # последним элементом будет pref-*, а не lane-NN.
+    return next((c for c in chains if c.startswith(LANE_PREFIX)), None)
 
 
 def _update_lane_rates(conns):
@@ -614,22 +620,41 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
-def pins_tick(proxies):
-    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён и выход
-    жив (DEAD_AFTER промахов подряд — мёртв), иначе — на foreign-best."""
+def pins_tick(proxies, conns=None):
+    """pin-<выход> (ручные маршруты) и pref-<узел>-<дорожка> (предпочитаемый
+    экзит клиента): selector [выход, запасной]. На выходе, пока узел включён и
+    выход жив (DEAD_AFTER промахов подряд — мёртв), иначе — на запасном
+    (foreign-best у pin, дорожка устройства у pref). При возврате на выход
+    закрываем соединения, ушедшие за время отсутствия на запасной: иначе
+    долгоживущие (push, мессенджеры) часами оставались бы не на своём экзите."""
     if _tick_alive is None:
         return   # замеров нет (ошибка тика) — ничего не двигаем
-    for name, p in proxies.items():
-        if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
-            continue
-        base = name[len(PIN_PREFIX):]
+    groups = [(name, p, (p.get('all') or [])[:2]) for name, p in proxies.items()
+              if name.startswith(PIN_PREFIXES) and str(p.get('type', '')).lower() == 'selector'
+              and len(p.get('all') or []) >= 2]
+    # Промахи считаем один раз на выход за тик: на один выход ссылается
+    # несколько групп (pin-hy2-uz-direct, pref-uz-lane-NN…).
+    for base in {m[0] for _, _, m in groups}:
         _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
+    for name, p, (base, fallback) in groups:
         disabled = _node_of(base) in _disabled
-        want = GROUP if disabled or _pin_miss[base] >= DEAD_AFTER else base
+        want = fallback if disabled or _pin_miss[base] >= DEAD_AFTER else base
         if p.get('now') != want:
             _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
-            why = ('узел выключен вручную' if disabled else 'выход мёртв') if want == GROUP else 'выход снова доступен'
+            why = ('узел выключен вручную' if disabled else 'выход мёртв') if want == fallback else 'выход снова доступен'
             print(f'{name} -> {want}: {why}', flush=True)
+            if want == base and conns:
+                closed = 0
+                for c in conns:
+                    chains = c.get('chains') or []
+                    if name in chains and chains[0] != base and c.get('id'):
+                        try:
+                            _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
+                            closed += 1
+                        except Exception:
+                            pass
+                if closed:
+                    print(f'{name}: закрыто {closed} соединений с запасного выхода', flush=True)
 
 
 def tg_tick(proxies):
@@ -686,7 +711,7 @@ def main():
             print(f'lanes error: {e}', file=sys.stderr, flush=True)
         try:
             proxies = _req('GET', '/proxies').get('proxies') or {}
-            pins_tick(proxies)
+            pins_tick(proxies, conns)
             tg_tick(proxies)
         except Exception as e:
             print(f'pins/tg error: {e}', file=sys.stderr, flush=True)

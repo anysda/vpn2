@@ -99,9 +99,10 @@ _pen_dur: dict = {}   # node -> текущая длительность штра
 # Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
 # Выключенный узел — как мёртвый: в выборе не участвует, если сейчас выбран —
 # уводим сразу (без до-проверок), висящие через него соединения рвём.
-# Нет файла / битый JSON — ничего не выключено.
+# Нет файла / битый JSON / не список — ничего не выключено.
 DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
 _disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
+_disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
 
 # Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
 # по selector'ам по VPN-IP; здесь решаем, на какой экзит смотрит каждая.
@@ -241,13 +242,27 @@ def _penalize(member):
 
 def _read_disabled():
     """Узлы, выключенные вручную из панели. Логирует только изменения."""
-    global _disabled
+    global _disabled, _disabled_warn
+    warn = ''
     try:
         with open(DISABLED_FILE, encoding='utf-8') as f:
-            raw = json.load(f).get('disabled', [])
-        cur = {t for t in raw if isinstance(t, str)}
-    except (OSError, ValueError, AttributeError):
-        cur = set()
+            data = json.load(f)
+        raw = data.get('disabled', []) if isinstance(data, dict) else None
+    except FileNotFoundError:
+        raw = []
+    except (OSError, ValueError) as e:
+        raw, warn = [], f'не читается ({e})'
+    if not isinstance(raw, list):
+        warn = f'ожидался {{"disabled": [узлы]}}, получено {json.dumps(data, ensure_ascii=False)[:200]}'
+        raw = []
+    cur = {t for t in raw if isinstance(t, str)}
+    if not warn and any(not isinstance(t, str) for t in raw):
+        warn = f'не-строки в списке отброшены: {json.dumps(raw, ensure_ascii=False)[:200]}'
+    if warn != _disabled_warn:
+        if warn:
+            print(f'{DISABLED_FILE}: {warn}; считаю выключенными: '
+                  f'{", ".join(sorted(cur)) or "нет"}', flush=True)
+        _disabled_warn = warn
     if cur != _disabled:
         print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
         _disabled = cur

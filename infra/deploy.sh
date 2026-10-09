@@ -485,7 +485,11 @@ run_stage_on_host() {
     done
   fi
 
-  ssh_exec "$APT_WAIT_IDLE" | sed "s/^/[$host]/"
+  # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
+  # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
+  # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
+  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+$APT_WAIT_IDLE" | sed "s/^/[$host]/"
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0

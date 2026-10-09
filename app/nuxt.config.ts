@@ -56,6 +56,7 @@ export default defineNuxtConfig({
     databaseUrl: 'file:./local.db',
     anysdaConfigPath: '/etc/anysda/config.yaml',
     routesFilePath: '/etc/anysda/manual-routes.json',
+    clientPrefsFilePath: '/etc/anysda/client-prefs.json',
     vmUrl: 'http://127.0.0.1:8428',
     clashApiUrl: 'http://10.99.0.1:9090',
     clashSecret: '',

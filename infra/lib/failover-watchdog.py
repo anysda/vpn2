@@ -59,7 +59,9 @@ Bot API молчит везде — повторяет поиск раз в TG_I
 Ручные маршруты панели (pin-<выход>): у каждого есть запасной путь —
 foreign-best. Пока узел выключен вручную, выход мёртв или узел в штрафной
 после падения, маршрут идёт через foreign-best, потом возвращается на свой
-выход. Без этого ручной маршрут на упавший экзит просто рвался бы.
+выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Через те
+же pin-* идёт предпочитаемый экзит клиента (наборы client-pref-<узел>). При
+возврате на выход соединения, открытые через запасной путь, закрываются.
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -784,11 +786,16 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
-def pins_tick(proxies):
-    """pin-<выход> (ручные маршруты): на своём выходе, пока узел включён, выход
-    жив (DEAD_AFTER промахов подряд — мёртв) и узел не в штрафной, иначе — на
-    foreign-best. Штрафную берём ту же, что у основного выбора: узел, только
-    что упавший и поднявшийся, на флапе не дёргает ручные маршруты туда-сюда."""
+def pins_tick(proxies, conns=None):
+    """pin-<выход> (ручные маршруты и предпочитаемый экзит клиента): на своём
+    выходе, пока узел включён, выход жив (DEAD_AFTER промахов подряд — мёртв) и
+    узел не в штрафной, иначе — на foreign-best. Штрафную берём ту же, что у
+    основного выбора: узел, только что упавший и поднявшийся, на флапе не
+    дёргает ручные маршруты туда-сюда.
+
+    Selector меняет выход только новым соединениям. При возврате pin на свой
+    выход закрываем те, что открылись через запасной: иначе долгоживущие (push,
+    мессенджеры) часами шли бы не через выбранный экзит."""
     if _tick_alive is None:
         return   # замеров нет (ошибка тика) — ничего не двигаем
     t = time.monotonic()
@@ -817,6 +824,23 @@ def pins_tick(proxies):
         if p.get('now') != want:
             _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
             print(f'{name} -> {want}: {why or "выход снова доступен"}', flush=True)
+            if want == base:
+                _drop_pin_fallback_conns(name, base, conns)
+
+
+def _drop_pin_fallback_conns(name, base, conns):
+    closed = 0
+    for c in conns or []:
+        chains = c.get('chains') or []
+        if name not in chains or chains[0] == base or not c.get('id'):
+            continue
+        try:
+            _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
+            closed += 1
+        except Exception:
+            pass
+    if closed:
+        print(f'{name}: закрыто {closed} соединений с запасного выхода', flush=True)
 
 
 def tg_tick(proxies):
@@ -920,7 +944,7 @@ def main():
         _persist_lanes()
         try:
             proxies = _req('GET', '/proxies').get('proxies') or {}
-            pins_tick(proxies)
+            pins_tick(proxies, conns)
             tg_tick(proxies)
         except Exception as e:
             print(f'pins/tg error: {e}', file=sys.stderr, flush=True)

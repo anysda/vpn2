@@ -134,8 +134,8 @@ for p in "${NEED_PKGS[@]}"; do
 done
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "[$HOST_TAG]   ставлю: ${MISSING[*]}"
-  apt-get update -qq
-  apt-get install -y -qq "${MISSING[@]}" >/dev/null
+  apt_get update -qq
+  apt_get install -y -qq "${MISSING[@]}" >/dev/null
 fi
 
 # ----------------------------------------------------------------------------

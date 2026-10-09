@@ -89,14 +89,14 @@ if ! dpkg -s strongswan-starter >/dev/null 2>&1 || dpkg -s charon-systemd >/dev/
   # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
   # пакет не нашёлся по старым спискам - обновляем и ставим ещё раз.
   apt_install() {
-    [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt-get update -qq
-    apt-get install -y -qq "$@" >/dev/null 2>&1 && return 0
-    apt-get update -qq && apt-get install -y -qq "$@" >/dev/null
+    [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt_get update -qq
+    apt_get install -y -qq "$@" >/dev/null 2>&1 && return 0
+    apt_get update -qq && apt_get install -y -qq "$@" >/dev/null
   }
   apt_install \
     strongswan strongswan-starter strongswan-pki strongswan-swanctl \
     libcharon-extra-plugins libstrongswan-extra-plugins
-  apt-get purge -y -qq charon-systemd >/dev/null 2>&1 || true
+  apt_get purge -y -qq charon-systemd >/dev/null 2>&1 || true
 fi
 
 # ── 2. Server certs — раскладка по режиму ─────────────────────────────────

@@ -79,6 +79,8 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
     p.splitLocal ?? true,
     p.tunnelPrefixes ?? ['10.66.66.', '10.99.0.'],
     p.serverEndpoint,
+    // IP входа из стадии 30-frontend: Endpoint бывает именем (public_host).
+    process.env.NUXT_WG_ENDPOINT_IP || '',
   )
   return [
     `[Interface]`,

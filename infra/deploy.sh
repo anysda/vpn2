@@ -65,13 +65,15 @@ print_summary() {
     _agh_url="http://${_ru_host}:3001/"
   fi
   _admin_user="${ADMIN_USER:-admin}"
-  # Пароль: из ru.env (если был задан в config.yaml) либо с entry-ноды
-  # (автоген в /etc/anysda/admin-password.txt при первом 22-adguard/30-frontend).
-  _admin_pass="${ADMIN_PASSWORD:-}"
-  if [[ -z "$_admin_pass" ]]; then
-    _admin_pass=$(load_env ru 2>/dev/null; ssh_exec 'cat /etc/anysda/admin-password.txt 2>/dev/null' 2>/dev/null) || _admin_pass=""
+  # Сам пароль в рамку не выводим: она остаётся в логах деплоя и в истории
+  # терминала. Заданный в config.yaml человек ввёл сам в ./setup.sh, а
+  # сгенерированный (22-adguard/30-frontend) лежит на entry, куда у него есть
+  # root-доступ по ssh, — печатаем, откуда его взять.
+  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
+    _admin_pass="задан в config.yaml (admin.password)"
+  else
+    _admin_pass="ssh ${SSH_USER:-root}@${_ru_host} cat /etc/anysda/admin-password.txt"
   fi
-  [[ -z "$_admin_pass" ]] && _admin_pass="(см. /etc/anysda/admin-password.txt на entry)"
 
   # Считаем макс. display-ширину по всем будущим строкам (UTF-8 char count
   # через bash ${#var} в LC_ALL=C.UTF-8). Затем рисуем рамку по этой ширине,

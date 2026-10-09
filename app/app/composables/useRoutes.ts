@@ -83,6 +83,7 @@ export function flagFor(tag: string): string {
     fi: '🇫🇮',
     pl: '🇵🇱',
     kz: '🇰🇿',
+    almaty: '🇰🇿',
     ua: '🇺🇦',
     tr: '🇹🇷',
     am: '🇦🇲',

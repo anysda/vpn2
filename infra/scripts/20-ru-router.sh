@@ -210,6 +210,7 @@ import ipaddress, json, subprocess, sys, tempfile, os
 NO_RESTART = '--no-restart' in sys.argv[1:]
 
 MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
+CLIENT_PREFS  = '/etc/anysda/client-prefs.json'
 SB_CONFIG     = '/etc/sing-box/config.json'
 SB_CONFIG_BASE= '/etc/sing-box/config-base.json'
 SB_BIN        = '/usr/local/bin/sing-box'
@@ -254,7 +255,49 @@ for row in rows if isinstance(rows, list) else []:
         continue
     manual_rules.append(rule)
 
-cfg['route']['rules'] = manual_rules + cfg['route']['rules']
+# Предпочитаемые экзиты клиентов (панель пишет client-prefs.json:
+# {"<узел>": ["<IP устройства>", ...]}). На каждую пару (узел, дорожка IP) —
+# selector pref-<узел>-<дорожка> = [hy2-<узел>-direct, <дорожка>]; вотчдог
+# держит его на экзите, пока узел включён и жив, иначе — на дорожке
+# устройства (обычная логика). Правила по IP — перед правилами дорожек: после
+# ручных маршрутов, YouTube и РФ-правил, т. е. меняется только то, что ушло
+# бы в дорожку.
+try:
+    with open(CLIENT_PREFS) as f: prefs = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    prefs = {}
+lanes = sorted(o['tag'] for o in cfg.get('outbounds', [])
+               if str(o.get('tag', '')).startswith('lane-') and o.get('type') == 'selector')
+pref_outbounds, pref_rules = [], []
+for node, ips in sorted(prefs.items()) if isinstance(prefs, dict) else []:
+    direct = f'hy2-{node}-direct'
+    if direct not in known:
+        print(f'пропускаю предпочтение {node!r}: выхода {direct!r} нет в конфиге', file=sys.stderr)
+        continue
+    groups = {}
+    for ip in ips if isinstance(ips, list) else []:
+        try:
+            addr = ipaddress.ip_address(str(ip))
+        except ValueError:
+            print(f'пропускаю IP {ip!r} предпочтения {node!r}', file=sys.stderr)
+            continue
+        # та же раскладка, что в gen-router-config.py: последний октет mod число дорожек
+        fallback = f'lane-{int(addr) % 256 % len(lanes):02d}' if lanes else 'foreign-best'
+        groups.setdefault(fallback, set()).add(f'{addr}/32')
+    for fallback, cidrs in sorted(groups.items()):
+        tag = f'pref-{node}-{fallback}'
+        pref_outbounds.append({
+            'type': 'selector', 'tag': tag, 'outbounds': [direct, fallback],
+            'default': direct, 'interrupt_exist_connections': False,
+        })
+        pref_rules.append({'source_ip_cidr': sorted(cidrs), 'outbound': tag})
+base_rules = cfg['route']['rules']
+at = next((i for i, r in enumerate(base_rules) if str(r.get('outbound', '')).startswith('lane-')),
+          len(base_rules))
+base_rules[at:at] = pref_rules
+cfg['outbounds'] = cfg.get('outbounds', []) + pref_outbounds
+
+cfg['route']['rules'] = manual_rules + base_rules
 
 new_body = json.dumps(cfg, indent=2)
 
@@ -265,7 +308,7 @@ new_body = json.dumps(cfg, indent=2)
 try:
     if open(SB_CONFIG).read() == new_body:
         tail = 'config.json уже собран' if NO_RESTART else 'конфиг не изменился — sing-box не трогаю'
-        print(f'{len(manual_rules)} manual route(s), {tail}')
+        print(f'{len(manual_rules)} manual route(s), {len(pref_rules)} pref rule(s), {tail}')
         sys.exit(0)
 except FileNotFoundError:
     pass
@@ -283,10 +326,10 @@ except subprocess.CalledProcessError as e:
 os.chmod(SB_CONFIG, 0o600)
 
 if NO_RESTART:
-    print(f'{len(manual_rules)} manual route(s), config.json собран')
+    print(f'{len(manual_rules)} manual route(s), {len(pref_rules)} pref rule(s), config.json собран')
     sys.exit(0)
 subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
-print(f'Applied {len(manual_rules)} manual route(s), sing-box restarted')
+print(f'Applied {len(manual_rules)} manual route(s), {len(pref_rules)} pref rule(s), sing-box restarted')
 PYEOF
 chmod +x /usr/local/sbin/anysda-apply-routes.py
 
@@ -311,10 +354,11 @@ EOF
 
 cat > /etc/systemd/system/anysda-apply-routes.path << 'EOF'
 [Unit]
-Description=Watch /etc/anysda/manual-routes.json for changes
+Description=Watch /etc/anysda/manual-routes.json and client-prefs.json for changes
 
 [Path]
 PathModified=/etc/anysda/manual-routes.json
+PathModified=/etc/anysda/client-prefs.json
 Unit=anysda-apply-routes.service
 
 [Install]
@@ -323,6 +367,7 @@ EOF
 
 # Touch empty file so the path-watcher is happy on first boot
 [[ -f /etc/anysda/manual-routes.json ]] || echo '[]' > /etc/anysda/manual-routes.json
+[[ -f /etc/anysda/client-prefs.json ]] || echo '{}' > /etc/anysda/client-prefs.json
 
 systemctl daemon-reload
 systemctl enable anysda-apply-routes.path >/dev/null 2>&1

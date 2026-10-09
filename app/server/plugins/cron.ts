@@ -2,6 +2,7 @@ import { syncWireguardConfig } from '../utils/wireguard'
 import { syncOpenvpnConfig } from '../utils/openvpn'
 import { syncIkev2 } from '../utils/ikev2'
 import { collectTraffic } from '../utils/traffic-collector'
+import { syncClientPrefsFile } from '../utils/client-prefs'
 
 const INTERVAL_MS = 60_000
 
@@ -21,6 +22,12 @@ export default defineNitroPlugin(() => {
     )
     await syncIkev2().catch(err =>
       log.error({ err }, 'cron: ikev2 sync failed'),
+    )
+
+    // Предпочитаемые экзиты: самоисцеление файла (устройства, добавленные
+    // ботом, удалённые клиенты). Без изменений файл не переписывается.
+    await syncClientPrefsFile().catch(err =>
+      log.error({ err }, 'cron: client prefs sync failed'),
     )
 
     // Накопительный трафик по всем протоколам (WG+OpenVPN+IKEv2), per-device.

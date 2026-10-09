@@ -15,6 +15,8 @@ export interface Client {
   createdAt: string
   status: 'active' | 'frozen'
   tgLinked: boolean
+  /** Предпочитаемый экзит (тег узла) или null — авто. */
+  preferredExit: string | null
   deviceCount: number
   rxTotal: number
   txTotal: number
@@ -45,6 +47,7 @@ export interface ClientDetail {
   status: 'active' | 'frozen'
   tgLinked: boolean
   tgUsername: string | null
+  preferredExit: string | null
   rxTotal: number
   txTotal: number
   devices: Device[]
@@ -86,6 +89,7 @@ export function useClients() {
     expiresAt?: string | null
     deviceLimit?: number | null
     frozenManual?: boolean
+    preferredExit?: string | null
   }) {
     const updated = await $fetch<Client>(`/api/clients/${id}`, { method: 'PATCH', body: patch })
     await refresh()

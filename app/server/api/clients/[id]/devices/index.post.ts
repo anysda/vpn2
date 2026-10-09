@@ -7,6 +7,7 @@ import { notifyClient } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
+import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 import { readBodyAs } from '../../../../utils/validate'
 
 const Body = z.object({ name: z.string().min(1).max(64) })
@@ -42,6 +43,7 @@ export default defineEventHandler(async (event) => {
   await ensureDeviceIkev2(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceIkev2 on add failed'))
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device add failed'))
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device add failed'))
+  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
 
   // Уведомить привязанного клиента — устройство добавил администратор.
   if (client.tgChatId) {

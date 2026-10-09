@@ -33,7 +33,7 @@ type=selector (см. gen-router-config.py) — управляется через
   MAX_COOLDOWN_S    потолок штрафа при рецидивах, сек  600
   PENALTY_RESET_S   стабильности до сброса эскалации, сек  300
   DISABLED_EXITS_FILE  узлы, выключенные из панели  /etc/anysda/exits-disabled.json
-  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  off
+  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  on
   BALANCE_MARGIN_MS узел «быстрый», если задержка ≤ лучшей + N мс  150
   ACTIVE_BPS        порог активности дорожки, байт/с  20000
   REBALANCE_INTERVAL_S  период проверки дисбаланса, сек  300
@@ -134,7 +134,7 @@ _spared: set = set()     # выключенные узлы, через кото�
 # или при сильном дисбалансе (раз в REBALANCE_INTERVAL_S, по одной дорожке,
 # не чаще MIN_DWELL_S на дорожку). Переключение selector'а трогает только
 # НОВЫЕ соединения — текущие доживают на старом выходе.
-BALANCE            = os.environ.get('BALANCE', 'off').strip().lower() == 'on'
+BALANCE            = os.environ.get('BALANCE', 'on').strip().lower() == 'on'
 BALANCE_MARGIN_MS  = int(os.environ.get('BALANCE_MARGIN_MS', '150'))
 ACTIVE_BPS         = float(os.environ.get('ACTIVE_BPS', '20000'))   # байт/с — дорожка «активна»
 REBALANCE_INTERVAL = float(os.environ.get('REBALANCE_INTERVAL_S', '300'))

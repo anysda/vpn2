@@ -158,6 +158,15 @@ _last_rebalance = time.monotonic()
 
 TG_GROUP     = os.environ.get('TG_GROUP', 'tg-best')
 TG_PROBE_URL = os.environ.get('TG_PROBE_URL', 'https://api.telegram.org')
+# Проба Bot API — тот же delay-тест clash-api: HEAD без перехода по редиректам,
+# код ответа sing-box не смотрит и наружу не отдаёт. Смысл ответу даёт https:
+# задержку вернёт только рукопожатие с настоящим сертификатом Telegram, заглушка
+# блокировки так не ответит. Адрес на http:// clash-api молча меняет на свой
+# gstatic, и Bot API тогда не проверялся бы вовсе.
+if not TG_PROBE_URL.startswith('https://'):
+    print(f'TG_PROBE_URL={TG_PROBE_URL}: нужен https://, беру https://api.telegram.org',
+          file=sys.stderr, flush=True)
+    TG_PROBE_URL = 'https://api.telegram.org'
 TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
 _tg_last = -1e9           # monotonic последней проверки Bot API
 PIN_PREFIX = 'pin-'

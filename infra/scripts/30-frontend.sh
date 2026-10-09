@@ -109,8 +109,8 @@ echo "[$HOST_TAG]   admin pass:  (см. /etc/anysda/admin-password.txt на но
 echo "[$HOST_TAG] [3/4] caddy"
 # APT-репо Caddy на Cloudsmith отвечает 402 Payment Required: apt-get update
 # с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
-# пользователем caddy), а список Cloudsmith со старых нод убираем.
-rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+# пользователем caddy). Список Cloudsmith со старых нод убирает deploy.sh
+# перед каждой стадией.
 if ! command -v caddy >/dev/null 2>&1; then
   CADDY_VER='2.11.4'
   TMP=$(mktemp -d)

@@ -254,7 +254,15 @@ for row in rows if isinstance(rows, list) else []:
         continue
     manual_rules.append(rule)
 
-cfg['route']['rules'] = manual_rules + cfg['route']['rules']
+# Ручные маршруты — сразу за служебной головой списка (mon-*, блокировки
+# loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
+# дорожки). Выше головы маршрут панели на домен или подсеть перехватывал бы
+# скрейп экзитов и бота, а 0.0.0.0/0 на экзит открывал бы его loopback.
+rules = cfg['route']['rules']
+head = 0
+while head < len(rules) and ('inbound' in rules[head] or rules[head].get('outbound') == 'block-out'):
+    head += 1
+cfg['route']['rules'] = rules[:head] + manual_rules + rules[head:]
 
 new_body = json.dumps(cfg, indent=2)
 

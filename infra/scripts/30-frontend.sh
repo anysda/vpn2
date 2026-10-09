@@ -227,6 +227,12 @@ svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.servic
 # 4. Run container
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] run container"
+# Публичные адреса нод для карточек мониторинга: «ru=<entry>,<тег>=<ip>,…».
+NODE_HOSTS="ru=${ENTRY_HOST}"
+for _t in ${EXIT_TAGS:-}; do
+  _v="DOMAIN_$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]')"
+  NODE_HOSTS+=",${_t}=${!_v:-}"
+done
 docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
@@ -262,6 +268,7 @@ docker run -d \
   -e NUXT_WG_SUBNET_PREFIX="${WG_SUBNET_PREFIX:-10.66.66.}" \
   -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
   -e NUXT_WG_ENDPOINT_IP="$ENTRY_HOST" \
+  -e NUXT_NODE_HOSTS="$NODE_HOSTS" \
   -e NUXT_WG_MTU="${WG_MTU:-1420}" \
   -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
   -e NUXT_OVPN_ENABLED=true \

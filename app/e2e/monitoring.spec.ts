@@ -28,6 +28,20 @@ test.describe('мониторинг нод', () => {
     await expect(spark.locator('path')).toHaveAttribute('d', /^M[\d.]+[ ,][\d.]+\s*L/)
   })
 
+  test('раскладка дорожек по экзитам: полос N (warp M)', async ({ page }) => {
+    await openHome(page)
+    await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
+    // раскладка подставного clash API (e2e/support/fake-backends.mjs)
+    const exits = NODES.filter(t => t !== 'ru')
+    for (const [k, tag] of exits.entries()) {
+      const lanes = Array.from({ length: 32 }, (_, i) => i).filter(i => i % exits.length === k)
+      const warp = lanes.filter(i => i % 7 === 0).length
+      await expect(nodeTile(page, tag), `нода ${tag}`).toContainText(new RegExp(`полос\\s*${lanes.length}\\s*\\(warp ${warp}\\)`))
+    }
+    // у RU дорожек нет — строки нет
+    if (NODES.includes('ru')) await expect(nodeTile(page, 'ru')).not.toContainText('полос')
+  })
+
   test('параллельные переключения экзитов не теряются и не падают', async ({ page }) => {
     const exits = NODES.filter(t => t !== 'ru')
     test.skip(exits.length < 3, 'нужно три экзита')

@@ -1,5 +1,5 @@
 # --- builder ---------------------------------------------------------------
-FROM node:22-slim AS builder
+FROM mirror.gcr.io/library/node:22-slim AS builder
 
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
@@ -12,7 +12,7 @@ COPY . .
 RUN pnpm build
 
 # --- runtime ---------------------------------------------------------------
-FROM node:22-slim AS runtime
+FROM mirror.gcr.io/library/node:22-slim AS runtime
 
 # iproute2 нужен для `ip -6 addr replace` в writeWgServerConfig(): wg syncconf
 # адреса интерфейса не трогает, поэтому ULA fd66:66::1/64 ставится отдельной

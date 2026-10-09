@@ -42,6 +42,7 @@ type=selector (см. gen-router-config.py) — управляется через
   MIN_DWELL_S       активную дорожку не двигать чаще, сек  1800
   IDLE_DWELL_S      неактивную — не чаще, сек  600
   RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
+  WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
 
 Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
 вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
@@ -125,6 +126,11 @@ IMBALANCE_MIN_BPS  = float(os.environ.get('IMBALANCE_MIN_MBPS', '5')) * 1e6 / 8
 MIN_DWELL          = float(os.environ.get('MIN_DWELL_S', '1800'))   # активную дорожку не двигаем чаще
 IDLE_DWELL         = float(os.environ.get('IDLE_DWELL_S', '600'))   # неактивную — чаще можно
 RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаживание нагрузки (EWMA)
+# Дорожка, уведённая на warp своего узла (direct был мёртв), сама на direct не
+# вернётся: warp жив, узел в балансировке. Возвращаем, когда direct жив без
+# перерыва WARP_RETURN_S (не один удачный замер) и у дорожки прошла MIN_DWELL.
+WARP_RETURN        = float(os.environ.get('WARP_RETURN_S', '600'))
+_direct_since: dict = {}  # direct-выход -> monotonic, с которого он жив без перерыва
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
 # SLOW_HOLD_S подряд: вывод узла из балансировки двигает все его дорожки.
@@ -572,6 +578,12 @@ def lanes_tick(conns):
         return   # замеров нет (ошибка тика) — ничего не двигаем
     all_tags = (proxies.get(lanes[0]) or {}).get('all') or []
     alive = _effective_alive(_tick_alive, all_tags)
+    t = time.monotonic()
+    for tag in all_tags:
+        if tag.endswith('-direct') and tag in alive:
+            _direct_since.setdefault(tag, t)
+        else:
+            _direct_since.pop(tag, None)   # промах (по DEAD_AFTER) — отсчёт заново
     targets = _node_targets(alive)
     elig = _update_eligible(targets)
     if not elig:
@@ -607,7 +619,17 @@ def lanes_tick(conns):
     for what, ls in quiet_moves.items():
         print(f'{len(ls)} дорожек без соединений ({",".join(ls)}) — {what}', flush=True)
 
-    t = time.monotonic()
+    # 1б. Возврат с warp на direct того же узла: direct жив без перерыва
+    #     WARP_RETURN и дорожка отстояла MIN_DWELL. Нагрузка узла не меняется.
+    for l in lanes:
+        tag = cur[l] or ''
+        direct = targets.get(_node_of(tag), ('',))[0]
+        up = t - _direct_since.get(direct, t)
+        if (tag.endswith('-warp') and direct.endswith('-direct') and up >= WARP_RETURN
+                and t - _lane_moved.get(l, -1e9) >= MIN_DWELL):
+            _move_lane(l, direct, f'возврат с {tag}, прямой жив без перерыва {up / 60:.1f} мин', ips)
+            cur[l] = direct
+
     if t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
         return
     _last_rebalance = t
@@ -666,7 +688,7 @@ def main():
           f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH} '
           f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
-          f'dwell={MIN_DWELL:.0f}s', flush=True)
+          f'dwell={MIN_DWELL:.0f}s warp_return={WARP_RETURN:.0f}s', flush=True)
     while True:
         try:
             tick()

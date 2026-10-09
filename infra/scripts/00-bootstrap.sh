@@ -7,6 +7,12 @@ set -euo pipefail
 # Env file is passed as $1; source it
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?HOST_TAG must be set}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 : "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${HY2_MGMT_PORT:?}"
 
 STAMP_DIR=/var/anysda/.stamps
@@ -252,7 +258,8 @@ port = ssh
 backend = systemd
 EOF
 systemctl enable fail2ban >/dev/null 2>&1
-systemctl restart fail2ban
+svc_restart_if_changed fail2ban /usr/bin/fail2ban-server /usr/lib/systemd/system/fail2ban.service \
+  /etc/fail2ban/jail.d/anysda.local
 
 # ----------------------------------------------------------------------------
 # 6. node_exporter — слушает ТОЛЬКО loopback. Раньше стадия 05 перевешивала его
@@ -290,7 +297,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable node_exporter >/dev/null 2>&1
-systemctl restart node_exporter
+svc_restart_if_changed node_exporter /usr/local/bin/node_exporter /etc/systemd/system/node_exporter.service
 
 # ----------------------------------------------------------------------------
 # Stamp

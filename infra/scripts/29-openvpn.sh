@@ -12,6 +12,12 @@
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
+# Перезапуск служб только при смене их входов (infra/lib/anysda-svc.sh): деплой
+# кладёт библиотеку рядом со стадией, anysda-restore зовёт стадию из клона репо.
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 29-openvpn: skipped (only RU)"
@@ -182,7 +188,11 @@ ufw allow proto tcp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn →
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"
 systemctl enable openvpn-server@server >/dev/null 2>&1 || true
-systemctl restart openvpn-server@server
+# Рестарт рвёт всех OpenVPN-клиентов. CRL и ccd OpenVPN перечитывает сам на
+# каждом подключении, их в отпечатке нет.
+svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
+  /usr/lib/systemd/system/openvpn-server@.service "$OVPN_DIR/server.conf" \
+  "$PKI/ca.crt" "$PKI/server.crt" "$PKI/server.key" "$PKI/tls-crypt.key"
 sleep 2
 systemctl status openvpn-server@server --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
@@ -264,7 +274,8 @@ IPTSEOF
 chmod +x /usr/local/sbin/anysda-ovpn-routing.sh
 systemctl daemon-reload
 systemctl enable anysda-ovpn-routing >/dev/null 2>&1 || true
-systemctl restart anysda-ovpn-routing
+svc_restart_if_changed anysda-ovpn-routing /etc/systemd/system/anysda-ovpn-routing.service \
+  /usr/local/sbin/anysda-ovpn-routing.sh
 
 touch /var/anysda/.stamps/29-openvpn
 echo "[$HOST_TAG] 29-openvpn done"

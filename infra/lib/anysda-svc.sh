@@ -165,6 +165,19 @@ apt_get() {
     apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
 }
 
+# deb_install FILE — локальный .deb. Без зависимостей - сразу dpkg -i: apt-get
+# install ./x.deb сначала читает все списки (~3 с на ядро). С зависимостями -
+# через apt. Блокировки те же, что у apt_get.
+deb_install() {
+  if [[ -n "$(dpkg-deb -f "$1" Depends Pre-Depends 2>/dev/null)" ]]; then
+    apt_get install -y -qq "$1"
+    return
+  fi
+  apt_wait_idle
+  DEBIAN_FRONTEND=noninteractive flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
+    dpkg --force-confdef --force-confold -i "$1"
+}
+
 # apt_have PKG... — все пакеты уже установлены. apt-get install поверх
 # установленного всё равно читает списки и кэш (~2-3 с на ядро) и держит
 # блокировку apt, а параллельные стадии её ждут.

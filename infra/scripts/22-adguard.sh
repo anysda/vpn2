@@ -279,7 +279,7 @@ EOF
 systemctl daemon-reload
 systemctl enable adguardhome >/dev/null 2>&1
 svc_restart_if_changed adguardhome "$AGH_BIN" /etc/systemd/system/adguardhome.service
-sleep 2
+svc_settle 2
 systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # AdGuard слушает 127.0.0.1 и ${MGMT_IP} (lo-алиас на самой entry) — оба адреса

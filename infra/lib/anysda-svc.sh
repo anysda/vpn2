@@ -11,6 +11,9 @@ SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
+# Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
+SVC_RESTARTED=0
+
 # svc_restart_if_changed UNIT FILE...
 # FILE — всё, что служба читает при старте: бинарник, юнит, конфиги,
 # сертификаты. Отпечаток их содержимого сверяем с записанным при прошлом
@@ -25,9 +28,17 @@ svc_restart_if_changed() {
     return 0
   fi
   systemctl restart "$unit" || return
+  SVC_RESTARTED=1
   mkdir -p "$SVC_FP_DIR"
   echo "$fp" > "$fp_file"
   svc_say "$unit перезапущен"
+}
+
+# svc_settle SEC — дать только что перезапущенной службе подняться (или
+# упасть) до показа статуса. Если ничего не перезапускали, ждать нечего.
+svc_settle() {
+  (( SVC_RESTARTED )) && sleep "$1"
+  SVC_RESTARTED=0
 }
 
 # svc_forget UNIT — вход службы поменялся так, что отпечаток файлов этого не

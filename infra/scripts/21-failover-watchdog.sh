@@ -131,7 +131,7 @@ systemctl daemon-reload
 systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
 svc_restart_if_changed anysda-failover-watchdog /usr/local/bin/anysda-failover-watchdog \
   /etc/systemd/system/anysda-failover-watchdog.service /etc/anysda/failover-watchdog.env
-sleep 3
+svc_settle 3
 systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n "1,8s/^/[$HOST_TAG]   /p"
 
 # 4. Сторож TPROXY: раз в минуту проверяет то, без чего клиенты wg0/OpenVPN/

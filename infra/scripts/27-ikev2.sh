@@ -325,7 +325,8 @@ systemctl enable strongswan-starter >/dev/null 2>&1 || true
 svc_restart_if_changed strongswan-starter /usr/lib/ipsec/charon /usr/lib/ipsec/starter \
   /usr/lib/systemd/system/strongswan-starter.service /etc/strongswan.conf \
   /etc/strongswan.d/*.conf /etc/strongswan.d/charon/*.conf
-svc_settle 2
+# Готов — когда charon отвечает по vici: им ниже грузятся creds и conns.
+svc_settle 2 eval 'swanctl --stats >/dev/null 2>&1'
 systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # Применяем CA + creds + conns в работающий daemon.

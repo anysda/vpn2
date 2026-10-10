@@ -58,7 +58,7 @@ apt_install() {
   apt_get update -qq && apt_get install -y -qq "$@" >/dev/null
 }
 # shellcheck disable=SC2086
-apt_install $APT_PKGS
+apt_have $APT_PKGS || apt_install $APT_PKGS
 
 if [[ "$BACKUP_BACKEND" == "s3" ]] && ! command -v aws >/dev/null 2>&1; then
   echo "[$HOST_TAG]   download aws-cli v2…"

@@ -44,7 +44,6 @@ apt_auto_pause
 # 1. apt update + base packages
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] apt пакеты"
-apt_update_if_stale
 PKGS=(wireguard wireguard-tools
       curl wget ca-certificates gnupg lsb-release
       ufw fail2ban
@@ -64,7 +63,12 @@ if [[ "$HOST_TAG" == ru ]]; then
     libluajit-5.1-dev luajit nftables ethtool)
   [[ "${BACKUP_ENABLED:-}" == true ]] && PKGS+=(age expect sqlite3)
 fi
-apt_get install -y -qq "${PKGS[@]}" >/dev/null
+# Повторный деплой: всё уже стоит - ни update, ни install. Обновления пакетов
+# ставят автообновления, а не деплой.
+if ! apt_have "${PKGS[@]}"; then
+  apt_update_if_stale
+  apt_get install -y -qq "${PKGS[@]}" >/dev/null
+fi
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
 # ufw for the firewall and manage routing-specific iptables rules via systemd
 # oneshot units (later stages).

@@ -165,6 +165,15 @@ apt_get() {
     apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
 }
 
+# apt_have PKG... — все пакеты уже установлены. apt-get install поверх
+# установленного всё равно читает списки и кэш (~2-3 с на ядро) и держит
+# блокировку apt, а параллельные стадии её ждут.
+apt_have() {
+  local st
+  st=$(dpkg-query -W -f='${db:Status-Status}\n' "$@" 2>/dev/null) || return 1
+  ! grep -qvx installed <<<"$st"
+}
+
 # apt_update_if_stale — apt-get update, только если списки старше часа или
 # источники правили после них (свежее репо docker). Правило то же, что в
 # 26/27/29: на чистой установке entry обновляет списки в install_prereqs,

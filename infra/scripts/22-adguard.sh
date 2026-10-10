@@ -64,7 +64,7 @@ fi
 # 2. Generate or load admin password + bcrypt hash
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/4] credentials"
-apt_get install -y -qq apache2-utils >/dev/null 2>&1
+apt_have apache2-utils || apt_get install -y -qq apache2-utils >/dev/null 2>&1
 # Единый логин/пароль для веб-панели и AdGuard.
 # ADMIN_USER / ADMIN_PASSWORD приходят из config.yaml через ru.env.
 # Если ADMIN_PASSWORD пуст — генерим один раз и кладём в admin-password.txt,

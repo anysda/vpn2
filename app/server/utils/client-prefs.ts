@@ -10,21 +10,21 @@ import { clients, devices } from '../database/schema'
  * anysda-apply-routes (стадия 20) кладёт IP каждого узла в свой набор правил
  * client-pref-<узел> с выходом pin-hy2-<узел>-direct: sing-box перечитывает
  * набор на ходу, соединения не рвутся. Пока узел выключен, мёртв или в
- * штрафной, failover-watchdog держит pin на foreign-best. Берём статические IP
- * WireGuard и IKEv2; OpenVPN выдаёт адрес из пула при подключении — его не
- * покрываем.
+ * штрафной, failover-watchdog держит pin на foreign-best. Берём постоянные IP
+ * устройства во всех трёх протоколах: WireGuard, OpenVPN (ccd ifconfig-push)
+ * и IKEv2 (пул из одного адреса на устройство).
  */
 async function writePrefs(): Promise<void> {
   const path = useRuntimeConfig().clientPrefsFilePath as string
   const rows = await useDb()
-    .select({ node: clients.preferredExit, wg: devices.wgIp, ikev2: devices.ikev2Ip })
+    .select({ node: clients.preferredExit, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
     .from(devices)
     .innerJoin(clients, eq(clients.id, devices.clientId))
     .where(isNotNull(clients.preferredExit))
 
   const byNode: Record<string, Set<string>> = {}
   for (const r of rows) {
-    for (const ip of [r.wg, r.ikev2]) {
+    for (const ip of [r.wg, r.ovpn, r.ikev2]) {
       if (r.node && ip) (byNode[r.node] ??= new Set()).add(ip)
     }
   }

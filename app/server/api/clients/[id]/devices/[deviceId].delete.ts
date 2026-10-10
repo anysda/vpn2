@@ -4,7 +4,7 @@ import { clients, devices } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
 import { notifyClient } from '../../../../utils/bot-events'
 import { syncWireguardConfig } from '../../../../utils/wireguard'
-import { caReady, killOvpnClientQuiet, ovpnCn, revokeClientCert, setCcdDisabled } from '../../../../utils/openvpn'
+import { caReady, killOvpnClientQuiet, ovpnCn, removeCcd, revokeClientCert } from '../../../../utils/openvpn'
 import { syncIkev2, terminateIkev2Sa } from '../../../../utils/ikev2'
 import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 
@@ -28,7 +28,7 @@ export default defineEventHandler(async (event) => {
   if (device.ovpnCert && await caReady()) {
     await revokeClientCert(device.ovpnCert).catch(err =>
       useLogger().error({ err }, 'ovpn revoke after device delete failed'))
-    await setCcdDisabled(ovpnCn(device.id), false).catch(() => {})
+    await removeCcd(ovpnCn(device.id)).catch(() => {})
     await killOvpnClientQuiet(ovpnCn(device.id))
   }
 

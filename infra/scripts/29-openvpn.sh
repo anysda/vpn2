@@ -141,7 +141,11 @@ port ${OVPN_PORT}
 proto ${OVPN_PROTO}
 dev tun0
 topology subnet
-server ${OVPN_SUBNET} 255.255.255.0
+# Постоянные адреса устройств .2-.239 панель раздаёт через ccd
+# (ifconfig-push). Общий пул только .240-.253 для устройств, которым панель
+# ещё не выдала адрес, чтобы он не пересекался с закреплёнными (VPN2-115).
+server ${OVPN_SUBNET} 255.255.255.0 nopool
+ifconfig-pool ${OVPN_SUBNET%.*}.240 ${OVPN_SUBNET%.*}.253 255.255.255.0
 ca   ${PKI}/ca.crt
 cert ${PKI}/server.crt
 key  ${PKI}/server.key

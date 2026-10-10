@@ -227,14 +227,24 @@ export async function reissueDeviceIkev2(deviceId: number) {
 }
 
 /**
- * Атомарная переписка /etc/swanctl/conf.d/anysda-clients.conf из БД +
- * `swanctl --load-creds` (только credentials меняются, conns/pools статичны
- * из стадии 27-ikev2). Включаются только активные клиенты (frozen/expired
- * не попадают в secrets — попытка логина отбивается EAP-фейлом).
+ * Атомарная переписка /etc/swanctl/conf.d/anysda-clients.conf из БД.
+ * Включаются только активные клиенты (frozen/expired не попадают в файл —
+ * попытка логина отбивается).
+ *
+ * Постоянный адрес устройства (VPN2-115). Нативные клиенты iOS, macOS и
+ * Windows шлют IKE-идентификатором свой IP, имя приходит только по
+ * EAP-Identity, поэтому выбрать conn по имени заранее нельзя. Общая conn
+ * стадии 27 (eap_id = %any) спрашивает имя и проверяет пароль, но здесь ей
+ * дописано требование группы, которой ни у кого нет. После EAP charon ищет
+ * другую подходящую conn и берёт conn устройства с этим eap_id, а её пул —
+ * один постоянный адрес устройства. conn и пул устройства наследуют всё
+ * остальное от общих (`имя : connections.anysda-ikev2`), swanctl сливает
+ * разделы из всех файлов conf.d. Старая стадия 27 с этим файлом и новая
+ * стадия 27 со старым файлом работают как раньше, с общим пулом.
  *
  * NB: терминацию активной SA при изменении (reissue/delete/freeze) делает
  * вызывающий код через terminateIkev2Sa(username); syncIkev2 только пишет
- * актуальный secrets-блок и перегружает credentials.
+ * актуальный файл, перегрузку делает хостовый anysda-ikev2-sync.
  */
 async function syncIkev2Once(): Promise<void> {
   if (!(await ikev2ServerReady())) return
@@ -259,6 +269,7 @@ async function syncIkev2Once(): Promise<void> {
 
   const rows = await db
     .select({
+      id: devicesTable.id,
       username: devicesTable.ikev2Username,
       password: devicesTable.ikev2Password,
       ip: devicesTable.ikev2Ip,
@@ -273,18 +284,44 @@ async function syncIkev2Once(): Promise<void> {
     && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
   )
 
-  // Каждое устройство — отдельная секция eap-XXX в secrets {} (имя секции
-  // не несёт смысла; charon матчит по `id = <username>`).
+  // shell-escape не нужен — swanctl format «id = ...» / «secret = "..."»
+  // экранирует двойные кавычки и обратные слеши.
+  const quote = (v: string) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
   const lines: string[] = [
     '# Managed by anysda-vpn2 panel — НЕ редактировать вручную.',
-    '# secrets для EAP-MSCHAPv2 клиентов IKEv2. Перегенерируется на каждое',
+    '# conn, пул и secret каждого устройства IKEv2. Перегенерируется на каждое',
     '# изменение клиента/устройства (server/utils/ikev2.ts → syncIkev2()).',
     '',
-    'secrets {',
+    'connections {',
+    '  anysda-ikev2 {',
+    '    remote-client {',
+    '      groups = anysda-device-conn-only',
+    '    }',
+    '  }',
   ]
   for (const r of active) {
-    // shell-escape не нужен — swanctl format «id = ...» / «secret = "..."»
-    // экранирует двойные кавычки и обратные слеши.
+    lines.push(
+      `  anysda-dev-${r.id} : connections.anysda-ikev2 {`,
+      `    pools = anysda-dev-${r.id}, anysda-ikev2-pool6`,
+      `    remote-client {`,
+      `      eap_id = ${quote(r.username!)}`,
+      `      groups =`,
+      `    }`,
+      `  }`,
+    )
+  }
+  lines.push('}', '', 'pools {')
+  for (const r of active) {
+    lines.push(
+      `  anysda-dev-${r.id} : pools.anysda-ikev2-pool {`,
+      `    addrs = ${r.ip}-${r.ip}`,
+      `  }`,
+    )
+  }
+  // Каждое устройство — отдельная секция eap-XXX в secrets {} (имя секции
+  // не несёт смысла; charon матчит по `id = <username>`).
+  lines.push('}', '', 'secrets {')
+  for (const r of active) {
     const safePass = r.password!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     const safeUser = r.username!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     lines.push(
@@ -302,18 +339,16 @@ async function syncIkev2Once(): Promise<void> {
   await fs.writeFile(tmp, body, { mode: 0o600 })
   await fs.rename(tmp, SS_CLIENTS_CONF)
 
-  // Перегружаем credentials. conns/pools статичны (из 27-ikev2.sh) — не трогаем.
-  //
   // В контейнере панели swanctl'а нет и сокет charon.vici внутрь не проброшен,
   // поэтому этот вызов на боевом хабе — no-op. Настоящий применитель —
   // хостовый таймер anysda-ikev2-sync (стадия 27, шаг 8): он видит изменение
-  // этого файла, делает `swanctl --load-creds` и рвёт SA устройств с
-  // изменённым/удалённым паролем. Вызов оставлен для стендов, где панель
+  // этого файла, делает `swanctl --load-all` и рвёт SA устройств с
+  // изменённым/удалённым паролем или не на своём адресе. Вызов оставлен для стендов, где панель
   // запущена не в контейнере.
-  await exec('swanctl', ['--load-creds'], { timeout: 10_000 }).catch((err) => {
+  await exec('swanctl', ['--load-all', '--noprompt'], { timeout: 10_000 }).catch((err) => {
     useLogger().debug(
       { err: (err as Error).message },
-      'ikev2 swanctl --load-creds skipped (применит anysda-ikev2-sync на хосте)',
+      'ikev2 swanctl --load-all skipped (применит anysda-ikev2-sync на хосте)',
     )
   })
 }

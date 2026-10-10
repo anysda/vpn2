@@ -77,6 +77,10 @@ export const devices = sqliteTable('devices', {
   wgIp: text('wg_ip'),
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
+  // Постоянный адрес OpenVPN: ccd устройства пушит его через ifconfig-push,
+  // по нему роутер узнаёт устройство (предпочитаемый экзит). Выдаёт
+  // server/utils/openvpn.ts из 10.67.67.2-239.
+  ovpnIp: text('ovpn_ip'),
   // IKEv2 EAP-MSCHAPv2 креды. username — slug «<клиент>-<девайс>» через
   // naming.ts, стабилен на всю жизнь устройства; password — 20 символов
   // [A-Za-z0-9], меняется при reissue; ip — статический /32 из пула
@@ -95,6 +99,7 @@ export const devices = sqliteTable('devices', {
   // выбирали один и тот же свободный адрес (VPN2-50).
   uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
   uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
+  uniqueIndex('devices_ovpn_ip_unique').on(table.ovpnIp),
   // Логин IKEv2 — id в secrets swanctl: на одинаковом логине пускает только
   // одного. buildIkev2Username выбирает свободный, но без UNIQUE два
   // параллельных создания брали один и тот же (VPN2-70).

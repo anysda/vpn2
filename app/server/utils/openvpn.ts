@@ -4,8 +4,8 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { eq } from 'drizzle-orm'
-import { useDb } from '../database/client'
+import { and, eq, isNull } from 'drizzle-orm'
+import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
@@ -24,6 +24,47 @@ const OSSL_CNF = `${PKI_DIR}/openssl.cnf`
 const CRL_PEM = `${PKI_DIR}/crl.pem`
 // Management-сокет сервера (stage 29-openvpn, `management ... unix`).
 const MGMT_SOCK = `${OVPN_DIR}/mgmt.sock`
+
+// Постоянные адреса устройств: 10.67.67.2-239, .1 у сервера. Хвост .240-.253
+// стадия 29 отдаёт пулу сервера (ifconfig-pool): туда попадёт устройство, чей
+// ccd ещё не записан. Синк ниже выдаст ему адрес и переподключит.
+const OVPN_SUBNET = '10.67.67.'
+const OVPN_PINNED_LAST = 239
+
+function nextAvailableOvpnIp(usedIps: Array<string | null | undefined>): string {
+  const used = new Set(usedIps.filter(Boolean) as string[])
+  for (let i = 2; i <= OVPN_PINNED_LAST; i++) {
+    const ip = `${OVPN_SUBNET}${i}`
+    if (!used.has(ip)) return ip
+  }
+  throw new Error(`OpenVPN: свободных адресов нет (${OVPN_SUBNET}2-${OVPN_PINNED_LAST})`)
+}
+
+/**
+ * Выдать устройству постоянный адрес OpenVPN, если его нет. Повтор при
+ * конфликте UNIQUE — та же гонка выбора свободного адреса, что у WG и IKEv2.
+ */
+async function ensureDeviceOvpnIp(deviceId: number) {
+  const db = useDb()
+  for (let attempt = 1; ; attempt++) {
+    const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
+    if (!row) throw new Error(`device ${deviceId} not found`)
+    if (row.ovpnIp) return row
+    const all = await db.select({ ip: devicesTable.ovpnIp }).from(devicesTable)
+    try {
+      const [updated] = await db
+        .update(devicesTable)
+        .set({ ovpnIp: nextAvailableOvpnIp(all.map(r => r.ip)), updatedAt: new Date() })
+        .where(and(eq(devicesTable.id, deviceId), isNull(devicesTable.ovpnIp)))
+        .returning()
+      if (updated) return updated
+    }
+    catch (err) {
+      if (!isUniqueViolation(err)) throw err
+    }
+    if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять адрес OpenVPN`)
+  }
+}
 
 /** OpenVPN cert CN for a device — stable, derived from the DB device id. */
 export function ovpnCn(deviceId: number): string {
@@ -160,17 +201,20 @@ async function killOvpnClient(cn: string): Promise<boolean> {
   return false
 }
 
-/** CN всех подключённых сейчас клиентов (management `status 2`). */
-async function connectedOvpnCns(): Promise<Set<string>> {
+/**
+ * Подключённые сейчас клиенты: CN → адрес в туннеле (management `status 2`,
+ * CLIENT_LIST,<CN>,<реальный адрес>,<адрес в туннеле>,...).
+ */
+async function connectedOvpnClients(): Promise<Map<string, string>> {
   const out = await ovpnMgmt('status 2')
-  const cns = new Set<string>()
+  const clients = new Map<string, string>()
   for (const l of out) {
     if (l.startsWith('CLIENT_LIST,')) {
-      const cn = l.split(',')[1]
-      if (cn) cns.add(cn)
+      const [, cn, , vaddr] = l.split(',')
+      if (cn) clients.set(cn, vaddr ?? '')
     }
   }
-  return cns
+  return clients
 }
 
 /** Рвёт сессии без падения вызывающего: сервер не поднят или старый (без management). */
@@ -181,19 +225,29 @@ export async function killOvpnClientQuiet(cn: string): Promise<void> {
 }
 
 /**
- * Enable/disable a device without touching its cert: OpenVPN's client-config-dir
- * `disable` directive blocks new connections and is fully reversible (unlike a
- * CRL revoke). Active on the next connection attempt.
+ * ccd устройства: постоянный адрес (`ifconfig-push`) и, у замороженного,
+ * `disable`. Обе директивы OpenVPN читает при каждом новом подключении, так
+ * что заморозка обратима без отзыва сертификата. Файл переписываем, только
+ * если он изменился.
  */
-export async function setCcdDisabled(cn: string, disabled: boolean): Promise<void> {
-  await fs.mkdir(CCD_DIR, { recursive: true })
+async function writeCcd(cn: string, ip: string | null, disabled: boolean): Promise<void> {
+  const body = [
+    ip ? `ifconfig-push ${ip} 255.255.255.0` : '',
+    disabled ? 'disable' : '',
+  ].filter(Boolean).map(l => `${l}\n`).join('')
   const file = path.join(CCD_DIR, cn)
-  if (disabled) {
-    await fs.writeFile(file, 'disable\n')
+  if (!body) {
+    await removeCcd(cn)
+    return
   }
-  else {
-    await fs.rm(file, { force: true }).catch(() => {})
-  }
+  if (await fs.readFile(file, 'utf8').catch(() => null) === body) return
+  await fs.mkdir(CCD_DIR, { recursive: true })
+  await fs.writeFile(file, body)
+}
+
+/** Удаление устройства: его ccd больше не нужен, адрес освобождается вместе со строкой. */
+export async function removeCcd(cn: string): Promise<void> {
+  await fs.rm(path.join(CCD_DIR, cn), { force: true }).catch(() => {})
 }
 
 export interface OvpnConfigParams {
@@ -262,22 +316,26 @@ export async function ensureDeviceOvpn(deviceId: number) {
   const db = useDb()
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
-  if (row.ovpnCert && row.ovpnKey) return row
+  if (row.ovpnCert && row.ovpnKey && row.ovpnIp) return row
 
-  const { cert, key } = await issueClientCert(ovpnCn(deviceId))
-  const [updated] = await db
-    .update(devicesTable)
-    .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
-    .where(eq(devicesTable.id, deviceId))
-    .returning()
-  if (!updated) throw new Error(`device ${deviceId} not found`)
-  // New cert → set the CCD disable flag to match the client's current status.
+  if (!row.ovpnCert || !row.ovpnKey) {
+    const { cert, key } = await issueClientCert(ovpnCn(deviceId))
+    const [issued] = await db
+      .update(devicesTable)
+      .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
+      .where(eq(devicesTable.id, deviceId))
+      .returning()
+    if (!issued) throw new Error(`device ${deviceId} not found`)
+  }
+  // Адрес и ccd — до того, как клиент получит конфиг: первое же подключение
+  // идёт с постоянным адресом.
+  const updated = await ensureDeviceOvpnIp(deviceId)
   const [client] = await db
     .select({ frozenManual: clientsTable.frozenManual, expiresAt: clientsTable.expiresAt })
     .from(clientsTable)
     .where(eq(clientsTable.id, row.clientId))
     .limit(1)
-  await setCcdDisabled(ovpnCn(deviceId), client ? !isClientActive(client) : false).catch(() => {})
+  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, client ? !isClientActive(client) : false).catch(() => {})
   return updated
 }
 
@@ -314,7 +372,13 @@ export async function reissueDeviceOvpn(deviceId: number) {
   return updated
 }
 
-/** Reconcile CCD enable/disable flags for every device with an issued cert. */
+/**
+ * Сверка ccd с базой для всех устройств с сертификатом: постоянный адрес
+ * (устройствам до VPN2-115 выдаётся здесь), флаг disable, удаление ccd
+ * исчезнувших устройств. Подключённых замороженных и тех, кто сидит не на
+ * своём адресе (подключился до записи ccd), выбиваем: и то и другое OpenVPN
+ * применяет только при новом подключении.
+ */
 export async function syncOpenvpnConfig(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.ovpnEnabled) return
@@ -325,35 +389,55 @@ export async function syncOpenvpnConfig(): Promise<void> {
     .select({
       id: devicesTable.id,
       ovpnCert: devicesTable.ovpnCert,
+      ovpnIp: devicesTable.ovpnIp,
       frozenManual: clientsTable.frozenManual,
       expiresAt: clientsTable.expiresAt,
     })
     .from(devicesTable)
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
 
-  const disabledCns: string[] = []
+  const pinned = new Map<string, string | null>()
+  const disabledCns = new Set<string>()
   for (const r of rows) {
     if (!r.ovpnCert) continue
+    const cn = ovpnCn(r.id)
+    let ip = r.ovpnIp
+    if (!ip) {
+      ip = (await ensureDeviceOvpnIp(r.id).catch((err) => {
+        useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn: адрес устройству не выдан')
+        return null
+      }))?.ovpnIp ?? null
+    }
     const disabled = !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
-    if (disabled) disabledCns.push(ovpnCn(r.id))
-    await setCcdDisabled(ovpnCn(r.id), disabled).catch((err) => {
+    if (disabled) disabledCns.add(cn)
+    pinned.set(cn, ip)
+    await writeCcd(cn, ip, disabled).catch((err) => {
       useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn ccd sync failed')
     })
   }
 
-  // ccd `disable` не трогает уже подключённых: выбиваем их явно. Через список
-  // подключённых, а не kill по каждому замороженному — синк идёт каждую минуту
-  // (cron), и истёкший по сроку клиент вылетает в пределах одного тика.
-  if (disabledCns.length === 0) return
-  let connected: Set<string>
+  const files = await fs.readdir(CCD_DIR).catch(() => [] as string[])
+  for (const f of files) {
+    if (/^dev_\d+$/.test(f) && !pinned.has(f)) await removeCcd(f)
+  }
+
+  let connected: Map<string, string>
   try {
-    connected = await connectedOvpnCns()
+    connected = await connectedOvpnClients()
   }
   catch (err) {
-    useLogger().warn({ err: (err as Error).message }, 'ovpn: management недоступен, подключённые замороженные не выбиты')
+    // Сервер ещё не поднят или без management: без подключённых выбивать некого.
+    if (disabledCns.size) useLogger().warn({ err: (err as Error).message }, 'ovpn: management недоступен, подключённые замороженные не выбиты')
     return
   }
-  for (const cn of disabledCns) {
-    if (connected.has(cn)) await killOvpnClientQuiet(cn)
+  for (const [cn, vaddr] of connected) {
+    const ip = pinned.get(cn)
+    if (disabledCns.has(cn)) {
+      await killOvpnClientQuiet(cn)
+    }
+    else if (ip && vaddr && vaddr !== ip) {
+      useLogger().info({ cn, vaddr, ip }, 'ovpn: устройство не на своём адресе, переподключаю')
+      await killOvpnClientQuiet(cn)
+    }
   }
 }

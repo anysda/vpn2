@@ -6,7 +6,7 @@ import { notifyBot, notifyClient } from './bot-events'
 import { minExpiryMs } from './expiry'
 import { generateClientPassword } from './password'
 import { syncWireguardConfig } from './wireguard'
-import { caReady, killOvpnClientQuiet, ovpnCn, revokeClientCert, setCcdDisabled, syncOpenvpnConfig } from './openvpn'
+import { caReady, killOvpnClientQuiet, ovpnCn, removeCcd, revokeClientCert, syncOpenvpnConfig } from './openvpn'
 import { syncIkev2, terminateIkev2Sa } from './ikev2'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
@@ -195,7 +195,7 @@ export async function deleteClient(id: number): Promise<void> {
       if (!d.ovpnCert) continue
       await revokeClientCert(d.ovpnCert).catch(err =>
         useLogger().error({ err }, 'ovpn revoke after client delete failed'))
-      await setCcdDisabled(ovpnCn(d.id), false).catch(() => {})
+      await removeCcd(ovpnCn(d.id)).catch(() => {})
       await killOvpnClientQuiet(ovpnCn(d.id))
     }
   }

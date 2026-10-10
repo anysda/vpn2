@@ -21,7 +21,7 @@ const preferValue = computed(() => props.client.preferredExit ?? AUTO)
 const preferTip = computed(() => {
   const t = props.client.preferredExit
   return t
-    ? `Предпочитаемый экзит: ${flagFor(t)} ${t.toUpperCase()}. Если выключен или недоступен — трафик идёт по общим правилам. OpenVPN не учитывается.`
+    ? `Предпочитаемый экзит: ${flagFor(t)} ${t.toUpperCase()}. Если выключен или недоступен — трафик идёт по общим правилам.`
     : 'Предпочитаемый экзит: авто (по общим правилам). Выберите флаг, чтобы клиент ходил через этот экзит, пока он доступен.'
 })
 function onPrefer(v: string) {

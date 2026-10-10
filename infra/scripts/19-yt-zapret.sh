@@ -520,10 +520,22 @@ TMO="\${YT_CHECK_TIMEOUT:-15}"
 # иначе в отчёте получается «000000» и непонятно, что это.
 probe() { curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null; }
 
+t0=\$(date +%s%N)
 A=\$(setpriv --reuid=$DIAG_UID --regid=$(id -g "$DIAG_USER") --clear-groups \\
       curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null)
-B=\$(probe)
-A=\${A:-000}; B=\${B:-000}
+A=\${A:-000}
+# Вердикт решает A, контроль B только поясняет его. Где DPI режет, B висит
+# до таймаута. Если A прошёл, нерезаный B уложился бы во время того же
+# запроса, поэтому ждём его втрое дольше A, но не меньше 3 с и не больше TMO.
+# Если A упал, B нужен для разбора — ждём полный TMO.
+btmo=\$TMO
+if [[ "\$A" =~ ^(200|204|30[0-9])\$ ]]; then
+  ms=\$(( (\$(date +%s%N) - t0) / 1000000 * 3 ))
+  (( ms < 3000 )) && ms=3000
+  (( ms < TMO * 1000 )) && btmo=\$(( ms / 1000 )).\$(printf %03d \$(( ms % 1000 )))
+fi
+B=\$(TMO=\$btmo probe)
+B=\${B:-000}
 
 echo "zapret (метка $YT_MARK): \$A"
 echo "контроль (без метки):    \$B"

@@ -166,31 +166,41 @@ install_prereqs() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    if [[ ! -f /etc/debian_version ]]; then
-      die "не хватает: ${missing[*]}. На не-Debian/Ubuntu поставь руками."
-    fi
-    printf '  ставлю недостающее: %s\n' "${missing[*]}"
-    # envsubst живёт в gettext-base
-    local apt_pkgs="${missing[*]/envsubst/gettext-base}"
-    apt_prepare
-    apt_get update -qq
-    DEBIAN_FRONTEND=noninteractive apt_get install -y -qq \
-      $apt_pkgs ca-certificates >/dev/null
+  # Недостающее и docker ставим одним заходом apt: отдельные update и
+  # install на каждое - лишние ~7 с на чистой установке.
+  local pkgs=()
+  [[ ${#missing[@]} -gt 0 ]] && pkgs+=(${missing[*]/envsubst/gettext-base} ca-certificates)
+  if ! command -v docker >/dev/null 2>&1; then
+    pkgs+=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
   fi
+  [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
+
+  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl docker; do
+    printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
+  done
+}
+
+_install_prereq_pkgs() {
+  local pkgs=("$@") missing=()
+  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
+    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+  done
+  [[ -f /etc/debian_version ]] \
+    || die "не хватает: ${missing[*]} ${pkgs[*]}. На не-Debian/Ubuntu поставь руками."
+  [[ ${#missing[@]} -gt 0 ]] && printf '  ставлю недостающее: %s\n' "${missing[*]}"
+  export DEBIAN_FRONTEND=noninteractive
+  apt_prepare
 
   if ! command -v docker >/dev/null 2>&1; then
-    if [[ ! -f /etc/debian_version ]]; then
-      die "docker не установлен; на не-Debian/Ubuntu поставь руками."
-    fi
     # Официальное APT-репо Docker'а (signed-by GPG из download.docker.com) —
     # вместо `curl get.docker.com | sh`, который исполняет произвольный
     # shell-код с CDN без проверки. Совпадает с тем, как ставит docker на
     # ноды стадия 25-monitoring. См. SECURITY-AUDIT-2026-06-01.md (H8).
     printf '  ставлю docker (через APT-репо download.docker.com)\n'
-    export DEBIAN_FRONTEND=noninteractive
-    apt_prepare
-    apt_get install -y -qq ca-certificates curl gnupg >/dev/null
+    if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
+      apt_get update -qq
+      apt_get install -y -qq ca-certificates curl gnupg >/dev/null
+    fi
     install -m 0755 -d /etc/apt/keyrings
     if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
       curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
@@ -199,14 +209,10 @@ install_prereqs() {
     fi
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list
-    apt_get update -qq
-    apt_get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
-    systemctl enable --now docker >/dev/null 2>&1 || true
   fi
-
-  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl docker; do
-    printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
-  done
+  apt_get update -qq
+  apt_get install -y -qq "${pkgs[@]}" >/dev/null
+  systemctl enable --now docker >/dev/null 2>&1 || true
 }
 
 # ----------------------------------------------------------------------------

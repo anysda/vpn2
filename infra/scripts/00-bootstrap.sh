@@ -44,28 +44,27 @@ apt_auto_pause
 # 1. apt update + base packages
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] apt пакеты"
-apt_get update -qq
-apt_get install -y -qq \
-  wireguard wireguard-tools \
-  curl wget ca-certificates gnupg lsb-release \
-  ufw fail2ban \
-  jq qrencode unzip git \
-  iptables netcat-openbsd \
-  python3 python3-yaml \
-  >/dev/null
+apt_update_if_stale
+PKGS=(wireguard wireguard-tools
+      curl wget ca-certificates gnupg lsb-release
+      ufw fail2ban
+      jq qrencode unzip git
+      iptables netcat-openbsd
+      python3 python3-yaml)
 # Пакеты стадий ru (29, 19, 22, 26, 27) - сюда же: entry кончает bootstrap
 # раньше экзитов и ждёт их, а потом стадии ставили бы своё по одному apt на
 # критическом пути (~33 с на чистой). Свои проверки стадии сохраняют.
+# Одним вызовом: каждый заход dpkg - свой прогон триггеров (~3 с на ядро).
 if [[ "$HOST_TAG" == ru ]]; then
-  RU_PKGS=(openvpn openssl strongswan strongswan-starter strongswan-pki
-           strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins
-           apache2-utils)
-  [[ "${YT_ROUTE:-off}" == zapret ]] && RU_PKGS+=(build-essential libcap-dev
+  PKGS+=(openvpn openssl strongswan strongswan-starter strongswan-pki
+         strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins
+         apache2-utils)
+  [[ "${YT_ROUTE:-off}" == zapret ]] && PKGS+=(build-essential libcap-dev
     libnetfilter-queue-dev libnfnetlink-dev libmnl-dev zlib1g-dev
     libluajit-5.1-dev luajit nftables ethtool)
-  [[ "${BACKUP_ENABLED:-}" == true ]] && RU_PKGS+=(age expect sqlite3)
-  apt_get install -y -qq "${RU_PKGS[@]}" >/dev/null
+  [[ "${BACKUP_ENABLED:-}" == true ]] && PKGS+=(age expect sqlite3)
 fi
+apt_get install -y -qq "${PKGS[@]}" >/dev/null
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
 # ufw for the firewall and manage routing-specific iptables rules via systemd
 # oneshot units (later stages).

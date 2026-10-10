@@ -154,6 +154,19 @@ apt_get() {
     apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
 }
 
+# apt_update_if_stale — apt-get update, только если списки старше часа или
+# источники правили после них (свежее репо docker). Правило то же, что в
+# 26/27/29: на чистой установке entry обновляет списки в install_prereqs,
+# и bootstrap через полминуты повторял бы то же самое (~4 с).
+apt_update_if_stale() {
+  local lists=/var/lib/apt/lists
+  if [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] &&
+     [[ -z "$(find /etc/apt/sources.list /etc/apt/sources.list.d -newer "$lists" 2>/dev/null | head -1)" ]]; then
+    return 0
+  fi
+  apt_get update -qq
+}
+
 # apt_prepare — перед стадией: Lock::Timeout для любого apt на узле, ожидание
 # блокировок, и если хостер перезагрузил машину посреди установки пакетов,
 # dpkg остаётся прерванным и любой apt-get падает с «dpkg was interrupted» -

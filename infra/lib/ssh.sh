@@ -137,31 +137,37 @@ ssh_probe() {
 }
 
 # Copy a local file/dir to the host's /tmp/anysda.
-# При push'е директории сначала удаляем target — иначе scp -r кладёт src
-# ВНУТРЬ существующего dst (получаем /tmp/anysda/telegram/telegram/...) и
-# docker build берёт устаревший верхний файл. Файл-target смело перезаписывается.
+# Один вызов ssh на файл: scp ходит по SFTP и до экзита стоит ~0,55 с против
+# ~0,12 с у exec через тот же мультиплексор, а с mkdir и mv push был тремя
+# вызовами. Файл пишем под временным именем и переименовываем: стадии одного
+# узла идут параллельно и шлют общие файлы (anysda-svc.sh, ru.env), читатель
+# не должен застать файл недописанным. Режим - как у источника (env с
+# секретами - 600). Каталог заменяется целиком, а не вкладывается внутрь
+# старого.
 push() {
   local src="$1" dst="${2:-}"
   local target="/tmp/anysda/$(basename "$src")"
   [[ -n "$dst" ]] && target="/tmp/anysda/$dst"
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  ssh_exec "mkdir -p $(dirname "$target")"
+  local tmp="${target}.$BASHPID.$RANDOM" cmd
   if [[ -d "$src" ]]; then
-    ssh_exec "rm -rf '$target'"
+    cmd="umask 077 && mkdir -p '$tmp' && tar -xmf - --no-same-owner -C '$tmp' && chmod $(stat -c %a "$src") '$tmp' && rm -rf '$target' && mv '$tmp' '$target'"
+  else
+    cmd="mkdir -p '$(dirname "$target")' && umask 077 && cat > '$tmp' && chmod $(stat -c %a "$src") '$tmp' && mv -f '$tmp' '$target'"
   fi
-  # Файл кладём под временным именем и переименовываем: стадии одного узла
-  # идут параллельно и шлют общие файлы (anysda-svc.sh, ru.env), читатель не
-  # должен застать файл недописанным.
-  local dest="$target"
-  [[ -d "$src" ]] || dest="${target}.$BASHPID.$RANDOM"
   local attempt rc=0
   for attempt in 1 2 3 4 5; do
     rc=0
-    SSHPASS="$SSH_PASS" sshpass -e scp -q "${_ssh_opts[@]}" -r \
-        "$src" "${SSH_USER}@${SSH_HOST}:$dest" || rc=$?
-    [[ $rc -eq 0 && "$dest" != "$target" ]] && { ssh_exec "mv -f '$dest' '$target'" || rc=$?; }
+    if [[ -d "$src" ]]; then
+      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
+          "${SSH_USER}@${SSH_HOST}" "$cmd" || rc=$?
+    else
+      SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
+          "${SSH_USER}@${SSH_HOST}" "$cmd" < "$src" || rc=$?
+    fi
     [[ $rc -eq 0 ]] && return 0
-    [[ $attempt -lt 5 ]] && { warn "scp → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
+    ssh_exec "rm -rf '$tmp'" >/dev/null 2>&1 || true
+    [[ $attempt -lt 5 ]] && { warn "push → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
   return $rc
 }

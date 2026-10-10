@@ -62,6 +62,11 @@ if [[ "$HOST_TAG" == ru ]]; then
     libnetfilter-queue-dev libnfnetlink-dev libmnl-dev zlib1g-dev
     libluajit-5.1-dev luajit nftables ethtool)
   [[ "${BACKUP_ENABLED:-}" == true ]] && PKGS+=(age expect sqlite3)
+  # Docker для 25/30/35 - тем же заходом.
+  if ! command -v docker >/dev/null 2>&1; then
+    docker_apt_source
+    PKGS+=("${DOCKER_PKGS[@]}")
+  fi
 fi
 # Повторный деплой: всё уже стоит - ни update, ни install. Обновления пакетов
 # ставят автообновления, а не деплой.
@@ -69,6 +74,7 @@ if ! apt_have "${PKGS[@]}"; then
   apt_update_if_stale
   apt_get install -y -qq "${PKGS[@]}" >/dev/null
 fi
+[[ "$HOST_TAG" != ru ]] || systemctl enable --now docker >/dev/null 2>&1 || true
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
 # ufw for the firewall and manage routing-specific iptables rules via systemd
 # oneshot units (later stages).

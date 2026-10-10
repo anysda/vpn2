@@ -29,15 +29,9 @@ STAGE='25-monitoring'
 if ! command -v docker >/dev/null 2>&1; then
   echo "[$HOST_TAG] устанавливаю docker"
   export DEBIAN_FRONTEND=noninteractive
-  apt_get install -y -qq ca-certificates curl >/dev/null
-  install -m 0755 -d /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-  chmod a+r /etc/apt/keyrings/docker.gpg
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-    > /etc/apt/sources.list.d/docker.list
+  docker_apt_source
   apt_get update -qq
-  apt_get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null
+  apt_get install -y -qq "${DOCKER_PKGS[@]}" >/dev/null
   systemctl enable --now docker >/dev/null
 else
   echo "[$HOST_TAG] docker уже установлен: $(docker --version)"

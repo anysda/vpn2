@@ -166,16 +166,14 @@ install_prereqs() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
 
-  # Недостающее и docker ставим одним заходом apt: отдельные update и
-  # install на каждое - лишние ~7 с на чистой установке.
+  # Docker оркестратору не нужен: образы тянут 30/35 на самом entry, и ставит
+  # его там 00-bootstrap одним заходом apt с остальными пакетами (отдельный
+  # заход dpkg ~3 с на ядро).
   local pkgs=()
   [[ ${#missing[@]} -gt 0 ]] && pkgs+=(${missing[*]/envsubst/gettext-base} ca-certificates)
-  if ! command -v docker >/dev/null 2>&1; then
-    pkgs+=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
-  fi
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
 
-  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl docker; do
+  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
     printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
   done
 }
@@ -186,33 +184,17 @@ _install_prereq_pkgs() {
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   [[ -f /etc/debian_version ]] \
-    || die "не хватает: ${missing[*]} ${pkgs[*]}. На не-Debian/Ubuntu поставь руками."
-  [[ ${#missing[@]} -gt 0 ]] && printf '  ставлю недостающее: %s\n' "${missing[*]}"
+    || die "не хватает: ${missing[*]}. На не-Debian/Ubuntu поставь руками."
+  printf '  ставлю недостающее: %s\n' "${missing[*]}"
   export DEBIAN_FRONTEND=noninteractive
   apt_prepare
-
-  if ! command -v docker >/dev/null 2>&1; then
-    # Официальное APT-репо Docker'а (signed-by GPG из download.docker.com) —
-    # вместо `curl get.docker.com | sh`, который исполняет произвольный
-    # shell-код с CDN без проверки. Совпадает с тем, как ставит docker на
-    # ноды стадия 25-monitoring. См. SECURITY-AUDIT-2026-06-01.md (H8).
-    printf '  ставлю docker (через APT-репо download.docker.com)\n'
-    if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
-      apt_get update -qq
-      apt_get install -y -qq ca-certificates curl gnupg >/dev/null
-    fi
-    install -m 0755 -d /etc/apt/keyrings
-    if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-        | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-      chmod a+r /etc/apt/keyrings/docker.gpg
-    fi
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-      > /etc/apt/sources.list.d/docker.list
+  # Оркестратор на самом entry: репо docker - до update, тогда 00-bootstrap
+  # ставит docker по свежим спискам без второго update.
+  if entry_is_local && ! command -v docker >/dev/null 2>&1; then
+    docker_apt_source
   fi
   apt_get update -qq
   apt_get install -y -qq "${pkgs[@]}" >/dev/null
-  systemctl enable --now docker >/dev/null 2>&1 || true
 }
 
 # ----------------------------------------------------------------------------

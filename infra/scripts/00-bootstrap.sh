@@ -50,6 +50,7 @@ PKGS=(wireguard wireguard-tools
       jq qrencode unzip git
       iptables netcat-openbsd
       python3 python3-yaml)
+SKIP=()
 # Пакеты стадий ru (29, 19, 22, 26, 27) - сюда же: entry кончает bootstrap
 # раньше экзитов и ждёт их, а потом стадии ставили бы своё по одному apt на
 # критическом пути (~33 с на чистой). Свои проверки стадии сохраняют.
@@ -58,7 +59,8 @@ if [[ "$HOST_TAG" == ru ]]; then
   PKGS+=(openvpn openssl strongswan strongswan-starter strongswan-pki
          strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins
          apache2-utils)
-  [[ "${YT_ROUTE:-off}" == zapret ]] && PKGS+=(build-essential libcap-dev
+  # zapret2 - чистый C: g++ из build-essential не нужен.
+  [[ "${YT_ROUTE:-off}" == zapret ]] && PKGS+=(gcc make libc6-dev libcap-dev
     libnetfilter-queue-dev libnfnetlink-dev libmnl-dev zlib1g-dev
     libluajit-5.1-dev luajit nftables ethtool)
   [[ "${BACKUP_ENABLED:-}" == true ]] && PKGS+=(age expect sqlite3)
@@ -66,13 +68,14 @@ if [[ "$HOST_TAG" == ru ]]; then
   if ! command -v docker >/dev/null 2>&1; then
     docker_apt_source
     PKGS+=("${DOCKER_PKGS[@]}")
+    SKIP+=("${DOCKER_SKIP[@]}")
   fi
 fi
 # Повторный деплой: всё уже стоит - ни update, ни install. Обновления пакетов
 # ставят автообновления, а не деплой.
 if ! apt_have "${PKGS[@]}"; then
   apt_update_if_stale
-  apt_get install -y -qq "${PKGS[@]}" >/dev/null
+  apt_get install -y -qq "${PKGS[@]}" "${SKIP[@]}" >/dev/null
 fi
 [[ "$HOST_TAG" != ru ]] || systemctl enable --now docker >/dev/null 2>&1 || true
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use

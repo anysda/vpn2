@@ -167,32 +167,26 @@ apt_auto_pause() {
 }
 
 # apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
-# стартом закрывает штатный DPkg::Lock::Timeout. Он ждёт только dpkg, а
-# блокировки списков и архива apt не ждёт (rc=100 сразу), поэтому стадии,
-# идущие на узле параллельно, ставят пакеты по очереди через общий flock.
-APT_FLOCK=/run/anysda-apt.lock
+# стартом закрывает штатный DPkg::Lock::Timeout.
 apt_get() {
   apt_wait_idle
-  flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
-    apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
+  apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
 }
 
 # deb_install FILE — локальный .deb. Без зависимостей - сразу dpkg -i: apt-get
 # install ./x.deb сначала читает все списки (~3 с на ядро). С зависимостями -
-# через apt. Блокировки те же, что у apt_get.
+# через apt. Перед ним то же ожидание блокировок, что у apt_get.
 deb_install() {
   if [[ -n "$(dpkg-deb -f "$1" Depends Pre-Depends 2>/dev/null)" ]]; then
     apt_get install -y -qq "$1"
     return
   fi
   apt_wait_idle
-  DEBIAN_FRONTEND=noninteractive flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
-    dpkg --force-confdef --force-confold -i "$1"
+  DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold -i "$1"
 }
 
 # apt_have PKG... — все пакеты уже установлены. apt-get install поверх
-# установленного всё равно читает списки и кэш (~2-3 с на ядро) и держит
-# блокировку apt, а параллельные стадии её ждут.
+# установленного всё равно читает списки и кэш (~2-3 с на ядро).
 apt_have() {
   local st
   st=$(dpkg-query -W -f='${db:Status-Status}\n' "$@" 2>/dev/null) || return 1
@@ -247,7 +241,6 @@ apt_prepare() {
   apt_wait_idle
   if [[ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]]; then
     svc_say "dpkg был прерван, довожу: dpkg --configure -a"
-    DEBIAN_FRONTEND=noninteractive flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
-      dpkg --configure -a --force-confdef --force-confold
+    DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
   fi
 }

@@ -369,15 +369,12 @@ run_stage_on_host() {
   local rendered_env="$DEPLOY_ROOT/secrets/rendered/${host}.env"
   mkdir -p "$(dirname "$rendered_env")"
   chmod 700 "$(dirname "$rendered_env")" 2>/dev/null || true
-  # Через временный файл: параллельные цепочки рендерят один и тот же env.
-  local tmp_env="${rendered_env}.$BASHPID"
   {
     cat "$DEPLOY_ROOT/envs/all.env"
     echo
     grep -v '^SSH_PASS=' "$DEPLOY_ROOT/envs/${host}.env"
-  } > "$tmp_env"
-  chmod 600 "$tmp_env"
-  mv -f "$tmp_env" "$rendered_env"
+  } > "$rendered_env"
+  chmod 600 "$rendered_env"
 
   push "$rendered_env" "${host}.env"
   push "$script"
@@ -843,7 +840,7 @@ except Exception:
 # ----------------------------------------------------------------------------
 # Full ordered pipeline
 # ----------------------------------------------------------------------------
-# Образы панели и бота тянем в фоне, пока ru занята стадиями 21-27:
+# Образы панели и бота тянем в фоне, пока ru занята apt-стадиями 26/27:
 # 30/35 потом делают свой docker pull по уже скачанным слоям. Сбой
 # предзагрузки не страшен - стадии тянут образ сами и сами падают без него.
 # Имена образов - те же умолчания, что в 30-frontend.sh / 35-telegram.sh.
@@ -909,13 +906,12 @@ do_all() {
              "28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
-  # 21-27 друг от друга не зависят (21 берёт clash-secret от 20, 22 - свой
-  # пароль панели), а подряд шли ~27 с на чистой. Две цепочки на ru: apt
-  # стадий идёт через общий flock (anysda-svc.sh), файлы в /tmp/anysda
-  # приходят переименованием. 35 и 30 читают итоги всех пяти - после.
+  run_stage 21-failover-watchdog ru
+  run_stage 22-adguard       ru
+  run_stage 25-monitoring    ru
   prefetch_images
-  run_tracks "25-monitoring:ru 26-backup:ru 27-ikev2:ru" \
-             "21-failover-watchdog:ru 22-adguard:ru"
+  run_stage 26-backup        ru
+  run_stage 27-ikev2         ru
   wait "$_PREFETCH_PID" || true
   run_stage 35-telegram      ru
   run_stage 30-frontend      ru

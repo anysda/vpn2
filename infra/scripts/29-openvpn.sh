@@ -197,7 +197,7 @@ systemctl enable openvpn-server@server >/dev/null 2>&1 || true
 svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
   /usr/lib/systemd/system/openvpn-server@.service "$OVPN_DIR/server.conf" \
   "$PKI/ca.crt" "$PKI/server.crt" "$PKI/server.key" "$PKI/tls-crypt.key"
-sleep 2
+svc_settle 2
 systemctl status openvpn-server@server --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 
 # ── 6. tun0 → sing-box TPROXY (same mark/table/port as wg0) ─────────────────

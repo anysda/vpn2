@@ -485,7 +485,7 @@ systemctl enable anysda-yt-nft.service anysda-yt-nfqws.service >/dev/null 2>&1
 svc_restart_if_changed anysda-yt-nft.service /etc/systemd/system/anysda-yt-nft.service "$NFT_CONF"
 svc_restart_if_changed anysda-yt-nfqws.service /etc/systemd/system/anysda-yt-nfqws.service \
   "$YT_ZAPRET_BIN" "$YT_ZAPRET_BASE"/lua/*.lua
-sleep 2
+svc_settle 2
 
 # Инвариант: демон исполняет ИМЕННО тот файл, что лежит на диске. После
 # пересборки (make = clean + build) живой процесс может держать удалённый

@@ -563,7 +563,7 @@ def live_sas():
         head = RE_SA_HEAD.match(line)
         if head:
             cur = {'conn': head.group(1), 'uniqueid': head.group(2),
-                   'username': '', 'rx': 0, 'tx': 0}
+                   'state': head.group(3), 'username': '', 'rx': 0, 'tx': 0}
             sas.append(cur)
             continue
         if cur is None:
@@ -635,7 +635,9 @@ def main():
         return 1
     if RE_DEVICE_CONN.search(text):
         for sa in sas:
-            if sa['conn'] == SHARED_CONN and sa['uniqueid']:
+            # До EAP рукопожатие тоже идёт на общей conn — его не трогаем.
+            if (sa['conn'] == SHARED_CONN and sa['state'] == 'ESTABLISHED'
+                    and sa['uniqueid']):
                 terminate(sa, 'не на своём адресе')
                 torn = True
     if torn:

@@ -144,10 +144,14 @@ apt_auto_pause() {
 }
 
 # apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
-# стартом закрывает штатный DPkg::Lock::Timeout.
+# стартом закрывает штатный DPkg::Lock::Timeout. Он ждёт только dpkg, а
+# блокировки списков и архива apt не ждёт (rc=100 сразу), поэтому стадии,
+# идущие на узле параллельно, ставят пакеты по очереди через общий flock.
+APT_FLOCK=/run/anysda-apt.lock
 apt_get() {
   apt_wait_idle
-  apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
+  flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
+    apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
 }
 
 # apt_prepare — перед стадией: Lock::Timeout для любого apt на узле, ожидание
@@ -159,6 +163,7 @@ apt_prepare() {
   apt_wait_idle
   if [[ -n "$(ls -A /var/lib/dpkg/updates 2>/dev/null)" ]]; then
     svc_say "dpkg был прерван, довожу: dpkg --configure -a"
-    DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
+    DEBIAN_FRONTEND=noninteractive flock -w "$APT_LOCK_TIMEOUT" "$APT_FLOCK" \
+      dpkg --configure -a --force-confdef --force-confold
   fi
 }

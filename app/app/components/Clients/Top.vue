@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { TopPeriod } from '~/composables/useClients'
-import { fmtBytes, formatRuDate, useClientsTop } from '~/composables/useClients'
+import { PERIOD_META, fmtBytes, formatRuDate, useClientsTop, useTrafficPeriod } from '~/composables/useClients'
 
 const emit = defineEmits<{ open: [id: number] }>()
 
-const period = ref<TopPeriod>('day')
+// Тот же период управляет трафиком нод в «Мониторинге».
+const period = useTrafficPeriod()
 const { top } = useClientsTop(period)
 
 const COLLAPSED = 10
@@ -24,10 +25,7 @@ const partialSince = computed(() => {
   return formatRuDate(new Date(t.historyStart * 1000).toISOString())
 })
 
-const PERIODS: Array<{ value: TopPeriod, label: string }> = [
-  { value: 'day', label: 'Сутки' },
-  { value: 'week', label: 'Неделя' },
-]
+const PERIODS = (Object.keys(PERIOD_META) as TopPeriod[]).map(value => ({ value, label: PERIOD_META[value].button }))
 </script>
 
 <template>
@@ -39,7 +37,7 @@ const PERIODS: Array<{ value: TopPeriod, label: string }> = [
         </div>
         <div class="flex items-center gap-3">
           <span class="text-xs text-(--ui-text-muted)">
-            {{ period === 'day' ? 'с 00:00 МСК' : '7 суток МСК' }}<template v-if="partialSince">
+            {{ PERIOD_META[period].note }}<template v-if="partialSince">
               · данные с {{ partialSince }}</template>
           </span>
           <div class="flex rounded-md border border-(--ui-border) overflow-hidden">

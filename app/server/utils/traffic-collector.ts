@@ -57,7 +57,7 @@ interface Sample {
 }
 
 /** WireGuard: `wg show wg0 transfer` → "<pubkey>\t<rx>\t<tx>" (со стороны сервера). */
-async function sampleWg(deviceByPubkey: Map<string, number>): Promise<Sample[]> {
+export async function sampleWg(deviceByPubkey: Map<string, number>): Promise<Sample[]> {
   let out: string
   try {
     out = (await execFileP('wg', ['show', 'wg0', 'transfer'], { timeout: 4000 })).stdout
@@ -78,7 +78,7 @@ async function sampleWg(deviceByPubkey: Map<string, number>): Promise<Sample[]> 
 }
 
 /** OpenVPN: status-version 2 файл. CLIENT_LIST,CN,real,vaddr,v6,bytesRecv,bytesSent,... */
-async function sampleOvpn(): Promise<Sample[]> {
+export async function sampleOvpn(): Promise<Sample[]> {
   let text: string
   try {
     text = await readFile('/etc/openvpn/server/status-server.log', 'utf8')
@@ -112,7 +112,7 @@ async function sampleOvpn(): Promise<Sample[]> {
  * null — файла нет или он битый: снимок не трогаем, иначе все SA на следующем
  * прогоне выглядели бы новыми и засчитались бы целиком второй раз.
  */
-async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSample[] | null> {
+export async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSample[] | null> {
   let raw: string
   try {
     raw = await readFile('/etc/anysda/ikev2-status.json', 'utf8')

@@ -1,4 +1,4 @@
-import { eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, lt, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { deviceTrafficHourly, devices } from '../database/schema'
 import { mskDayStartSec } from './msk-day'
@@ -14,15 +14,21 @@ export const ONLINE_MIN_BYTES = 20 * 1024
 /** «Активен за сутки/неделю» — от 1 МБ за период (keepalive за сутки ~0,2 МБ). */
 export const PERIOD_ACTIVE_MIN_BYTES = 1024 ** 2
 
-export type ActivityPeriod = 'day' | 'week'
+export type ActivityPeriod = 'day' | 'yesterday' | 'week'
+export const ACTIVITY_PERIODS: readonly ActivityPeriod[] = ['day', 'yesterday', 'week']
 
-/** Начало периода, unix-секунды: сутки — с 00:00 МСК, неделя — 7 суток МСК. */
-export function periodStartSec(period: ActivityPeriod, nowMs = Date.now()): number {
-  return mskDayStartSec(nowMs, period === 'week' ? 6 : 0)
+/**
+ * Границы периода, unix-секунды (МСК): сутки — с 00:00 сегодня; вчера —
+ * [00:00 вчера, 00:00 сегодня); неделя — 7 календарных суток, с 00:00 шесть
+ * суток назад. `until` = null — по сейчас.
+ */
+export function periodRange(period: ActivityPeriod, nowMs = Date.now()): { since: number, until: number | null } {
+  if (period === 'yesterday') return { since: mskDayStartSec(nowMs, 1), until: mskDayStartSec(nowMs, 0) }
+  return { since: mskDayStartSec(nowMs, period === 'week' ? 6 : 0), until: null }
 }
 
-/** Трафик клиентов с `sinceSec` по почасовой истории: clientId → { rx, tx }. */
-export async function periodTotalsByClient(sinceSec: number): Promise<Map<number, { rx: number, tx: number }>> {
+/** Трафик клиентов за [sinceSec, untilSec) по почасовой истории: clientId → { rx, tx }. */
+export async function periodTotalsByClient(sinceSec: number, untilSec: number | null = null): Promise<Map<number, { rx: number, tx: number }>> {
   const rows = await useDb()
     .select({
       clientId: devices.clientId,
@@ -31,7 +37,9 @@ export async function periodTotalsByClient(sinceSec: number): Promise<Map<number
     })
     .from(deviceTrafficHourly)
     .innerJoin(devices, eq(devices.id, deviceTrafficHourly.deviceId))
-    .where(gte(deviceTrafficHourly.hour, sinceSec))
+    .where(untilSec == null
+      ? gte(deviceTrafficHourly.hour, sinceSec)
+      : and(gte(deviceTrafficHourly.hour, sinceSec), lt(deviceTrafficHourly.hour, untilSec)))
     .groupBy(devices.clientId)
   return new Map(rows.map(r => [r.clientId, { rx: Number(r.rx), tx: Number(r.tx) }]))
 }

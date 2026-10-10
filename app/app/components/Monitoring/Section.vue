@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PERIOD_META, useTrafficPeriod } from '~/composables/useClients'
 import { flagFor } from '~/composables/useRoutes'
 import {
   formatBytes,
@@ -6,12 +7,14 @@ import {
   formatPercent,
   formatUptime,
   nodeState,
-  sparklinePath,
   useMonitoring,
 } from '~/composables/useMonitoring'
 import type { NodeMetric } from '~/composables/useMonitoring'
 
-const { nodes, cpuHistory, setExitDisabled } = useMonitoring()
+const { nodes, hourly, bucketUnit, setExitDisabled } = useMonitoring()
+// Период трафика нод — общий с селектором «ТОП клиентов».
+const period = useTrafficPeriod()
+const periodMeta = computed(() => PERIOD_META[period.value])
 const toast = useToast()
 const toggling = ref<string | null>(null)
 
@@ -87,7 +90,7 @@ function waitColor(v: number | null): string {
           Мониторинг
         </div>
         <div class="text-xs text-(--ui-text-muted)">
-          трафик за сутки — с 00:00 МСК
+          трафик за период: {{ periodMeta.short }} — {{ periodMeta.note }}
         </div>
       </div>
     </template>
@@ -210,33 +213,30 @@ function waitColor(v: number | null): string {
             <div class="border-t border-(--ui-border) my-1" />
             <div
               class="flex justify-between"
-              title="Принято нодой с 00:00 МСК"
+              :title="`Принято нодой: ${periodMeta.short} (${periodMeta.note})`"
             >
-              <span class="text-(--ui-text-muted)">сутки ↓</span>
-              <span class="text-(--ui-text)">{{ formatBytes(n.rxTodayBytes) }}</span>
+              <span class="text-(--ui-text-muted)">{{ periodMeta.short }} ↓</span>
+              <span class="text-(--ui-text)">{{ formatBytes(n.rxPeriodBytes) }}</span>
             </div>
             <div
               class="flex justify-between"
-              title="Отдано нодой с 00:00 МСК"
+              :title="`Отдано нодой: ${periodMeta.short} (${periodMeta.note})`"
             >
-              <span class="text-(--ui-text-muted)">сутки ↑</span>
-              <span class="text-(--ui-text)">{{ formatBytes(n.txTodayBytes) }}</span>
+              <span class="text-(--ui-text-muted)">{{ periodMeta.short }} ↑</span>
+              <span class="text-(--ui-text)">{{ formatBytes(n.txPeriodBytes) }}</span>
             </div>
           </div>
-          <svg
-            v-if="(cpuHistory.get(n.tag) ?? []).length > 1"
-            viewBox="0 0 80 16"
-            class="w-full h-4 mt-2"
-            preserveAspectRatio="none"
-          >
-            <path
-              :d="sparklinePath(cpuHistory.get(n.tag) ?? [], 80, 16)"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.2"
-              class="text-violet-500/80"
-            />
-          </svg>
+          <MonitoringHourlyBars
+            v-if="hourly.get(n.tag)?.length"
+            :buckets="hourly.get(n.tag)!"
+            :unit="bucketUnit"
+            class="mt-2"
+          />
+          <!-- место под диаграмму, пока грузится другой период: карточка не прыгает -->
+          <div
+            v-else
+            class="mt-2 h-[46px]"
+          />
         </div>
         <div
           v-if="n.state === 'offline'"
@@ -250,7 +250,7 @@ function waitColor(v: number | null): string {
 </template>
 
 <style scoped>
-/* warning-нода: весь текст и спарклайн карточки — красные */
+/* warning-нода: весь текст и диаграмма карточки — красные */
 .node-warn,
 .node-warn :deep(*) {
   color: rgb(239 68 68) !important;

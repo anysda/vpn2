@@ -86,7 +86,9 @@ mkdir -p "$BUNDLE_DIR"
 # 1. SQLite — консистентный снимок (без даунтайма)
 DB=/var/lib/anysda-vpn2/db.sqlite
 if [[ -r "$DB" ]]; then
-  sqlite3 "$DB" ".backup $BUNDLE_DIR/db.sqlite"
+  # Панель пишет в БД каждую минуту — без .timeout sqlite3 сразу падает
+  # «database is locked», если ночной запуск попал на запись.
+  sqlite3 -cmd '.timeout 30000' "$DB" ".backup $BUNDLE_DIR/db.sqlite"
 else
   echo "anysda-backup: WARN: $DB не найден — пропускаю db.sqlite" >&2
 fi
@@ -125,7 +127,7 @@ find "$BUNDLE_DIR" \( -type s -o -type p -o -type b -o -type c \) -delete
 APP_VERSION=$(curl -fsS --max-time 10 http://127.0.0.1:51821/api/version 2>/dev/null \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo unknown)
 GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)
-SCHEMA_VER=$(sqlite3 "$DB" 'PRAGMA schema_version;' 2>/dev/null || echo 0)
+SCHEMA_VER=$(sqlite3 -cmd '.timeout 30000' "$DB" 'PRAGMA schema_version;' 2>/dev/null || echo 0)
 
 python3 - "$BUNDLE_DIR" "$APP_VERSION" "$GIT_COMMIT" "$SCHEMA_VER" "$TS" <<'PY' > "$BUNDLE_DIR/manifest.json"
 import hashlib, json, os, subprocess, sys, tarfile, io

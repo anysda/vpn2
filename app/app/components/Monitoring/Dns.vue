@@ -20,7 +20,10 @@ onMounted(() => {
 onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
 useVisibleRefresh(refresh)
 
+// Свой адрес UI (напр. только изнутри VPN) — из config.yaml panel.adguard_url.
+const aghUiUrl = String(useRuntimeConfig().public.aghUiUrl || '')
 const aghOrigin = computed(() => {
+  if (aghUiUrl) return aghUiUrl
   if (typeof window === 'undefined') return ''
   return `${window.location.protocol}//${window.location.hostname}:3001`
 })

@@ -37,6 +37,11 @@ const dayRx = computed(() => props.traffic?.dayRx ?? 0)
 const dayTx = computed(() => props.traffic?.dayTx ?? 0)
 const dayTotal = computed(() => dayRx.value + dayTx.value)
 const online = computed(() => props.traffic?.online ?? false)
+// Текущая скорость (Мбит/с) — показываем только у активных клиентов.
+const rxMbps = computed(() => (props.traffic?.rxBps ?? 0) * 8 / 1e6)
+const txMbps = computed(() => (props.traffic?.txBps ?? 0) * 8 / 1e6)
+const showSpeed = computed(() => online.value && rxMbps.value + txMbps.value >= 0.01)
+const mbps = (v: number) => (v >= 10 ? v.toFixed(0) : v >= 1 ? v.toFixed(1) : v.toFixed(2))
 </script>
 
 <template>
@@ -103,6 +108,18 @@ const online = computed(() => props.traffic?.online ?? false)
             :text="`Трафик за всё время (все девайсы) · ↓ ${fmtBytes(rx)} ↑ ${fmtBytes(tx)}`"
           >
             <span class="text-(--ui-text-dimmed) whitespace-nowrap">всего {{ fmtBytes(trafficTotal) }}</span>
+          </UTooltip>
+          <!-- Место под скорость держим у всех клиентов в сети, даже в простое
+               (invisible), и ширину фиксируем: иначе строка то переносится, то нет,
+               высота карточки скачет при каждом обновлении, и список дёргается. -->
+          <UTooltip v-if="online" text="Текущая скорость клиента (все устройства, сглажено ~6 с)">
+            <span
+              class="whitespace-nowrap text-emerald-400 tabular-nums inline-block min-w-[20ch]"
+              :class="{ invisible: !showSpeed }"
+              data-testid="client-speed"
+            >
+              ↓ {{ mbps(rxMbps) }} ↑ {{ mbps(txMbps) }} Мбит/с
+            </span>
           </UTooltip>
         </div>
       </div>

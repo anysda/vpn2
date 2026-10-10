@@ -1,5 +1,5 @@
 import { useLogger } from './logger'
-import { MSK_OFFSET_SEC, mskDay } from './msk-day'
+import { MSK_OFFSET_SEC, mskDay, mskDayStartSec } from './msk-day'
 
 interface VmInstantResult {
   metric: Record<string, string>
@@ -144,11 +144,12 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
   }))
 }
 
-// Суточный трафик ноды: increase() WAN-счётчиков с 00:00 МСК. Фильтр строже,
-// чем у rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на
-// eth0 — считаем только физический интерфейс, иначе сумма удвоится.
+// Трафик ноды за период: increase() WAN-счётчиков. Фильтр строже, чем у
+// rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на eth0 —
+// считаем только физический интерфейс, иначе сумма удвоится.
 const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
-const DAILY_CACHE_MS = 30_000
+
+export type TrafficPeriod = 'day' | 'yesterday' | 'week'
 
 /** Секунд с 00:00 по Москве; не меньше 60, чтобы окно increase() не было пустым. */
 function secondsSinceMskMidnight(nowMs = Date.now()): number {
@@ -156,38 +157,214 @@ function secondsSinceMskMidnight(nowMs = Date.now()): number {
   return Math.max(60, (sec + MSK_OFFSET_SEC) % 86400)
 }
 
+/**
+ * Окно и сдвиг increase() для периода (МСК): сутки — с полуночи; вчера —
+ * 86400 с, сдвинутые на время с полуночи; неделя — с полуночи 6 суток назад.
+ * VictoriaMetrics хранит 7 дней (-retentionPeriod=7d): неделя впритык.
+ */
+function periodWindow(period: TrafficPeriod, nowMs: number): { range: string, offset: string } {
+  const sinceMidnight = secondsSinceMskMidnight(nowMs)
+  if (period === 'yesterday') return { range: '86400s', offset: ` offset ${sinceMidnight}s` }
+  if (period === 'week') return { range: `${sinceMidnight + 6 * 86400}s`, offset: '' }
+  return { range: `${sinceMidnight}s`, offset: '' }
+}
+
+// increase() на 2с-скрейпе — тяжёлый запрос, а панель опрашивает /api/ops/nodes
+// раз в 2с. Кэш по периоду: сутки — 30с, неделя — 5 мин, вчера не меняется до
+// полуночи. На смене суток МСК кэш и holdover сбрасываются.
+const PERIOD_CACHE_MS: Record<TrafficPeriod, number> = { day: 30_000, yesterday: 86_400_000, week: 300_000 }
+
 export interface DailyTraffic {
   rxBytes: number | null
   txBytes: number | null
 }
 
-// increase() за сутки на 2с-скрейпе — тяжёлый запрос; панель опрашивает
-// /api/ops/nodes раз в 2с, поэтому результат держим 30с.
-let dailyCache: { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> } | null = null
+const periodCache = new Map<TrafficPeriod, { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> }>()
 
-
-export async function fetchDailyTraffic(instances: string[]): Promise<Map<string, DailyTraffic>> {
+export async function fetchPeriodTraffic(instances: string[], period: TrafficPeriod): Promise<Map<string, DailyTraffic>> {
   const now = Date.now()
   const day = mskDay(now)
-  if (dailyCache && dailyCache.day !== day) {
-    // Полночь МСК: ни кэш, ни holdover не должны показывать вчерашние сутки.
-    dailyCache = null
-    for (const m of holdover.values()) { m.delete('rxDay'); m.delete('txDay') }
+  let cached = periodCache.get(period)
+  if (cached && cached.day !== day) {
+    // Полночь МСК: ни кэш, ни holdover не должны показывать прошлый период.
+    periodCache.clear()
+    cached = undefined
+    for (const m of holdover.values()) {
+      for (const k of [...m.keys()]) if (k.startsWith('rxP:') || k.startsWith('txP:')) m.delete(k)
+    }
   }
-  if (!dailyCache || now - dailyCache.at > DAILY_CACHE_MS) {
-    const range = `${secondsSinceMskMidnight(now)}s`
+  if (!cached || now - cached.at > PERIOD_CACHE_MS[period]) {
+    const { range, offset } = periodWindow(period, now)
     const [rx, tx] = await Promise.all([
-      instantQuery(`sum by(instance) (increase(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
-      instantQuery(`sum by(instance) (increase(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
+      instantQuery(`sum by(instance) (increase(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]${offset}))`),
+      instantQuery(`sum by(instance) (increase(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]${offset}))`),
     ])
-    dailyCache = { at: now, day, rx, tx }
+    cached = { at: now, day, rx, tx }
+    periodCache.set(period, cached)
   }
-  const rxH = withHoldover(dailyCache.rx, instances, 'rxDay')
-  const txH = withHoldover(dailyCache.tx, instances, 'txDay')
+  const rxH = withHoldover(cached.rx, instances, `rxP:${period}`)
+  const txH = withHoldover(cached.tx, instances, `txP:${period}`)
   return new Map(instances.map(inst => [inst, {
     rxBytes: rxH.get(inst) ?? null,
     txBytes: txH.get(inst) ?? null,
   }]))
+}
+
+interface VmRangeResponse {
+  status: 'success' | 'error'
+  data: { result: Array<{ metric: Record<string, string>, values: Array<[number, string]> }> }
+}
+
+/** query_range: instance → (unix-секунды точки → значение). Ошибка — пустая карта, как у instantQuery. */
+async function rangeQuery(promql: string, start: number, end: number, step: number): Promise<Map<string, Map<number, number>>> {
+  const url = useRuntimeConfig().vmUrl as string
+  const result = new Map<string, Map<number, number>>()
+  try {
+    const data = await $fetch<VmRangeResponse>(`${url}/api/v1/query_range`, {
+      query: { query: promql, start, end, step },
+      timeout: 5000,
+    })
+    if (data.status !== 'success') return result
+    for (const row of data.data.result) {
+      const instance = row.metric.instance
+      if (!instance) continue
+      const points = new Map<number, number>()
+      for (const [t, v] of row.values) {
+        const value = Number(v)
+        if (Number.isFinite(value)) points.set(Math.round(t), value)
+      }
+      result.set(instance, points)
+    }
+  }
+  catch (err) {
+    useLogger().warn({ err, promql }, 'VM range query failed')
+  }
+  return result
+}
+
+// Трафик ноды для диаграммы в карточке — по тому же периоду, что и итоги:
+// сутки — 24 часа с 00:00 МСК (текущий час онлайн, будущие пустые), вчера —
+// 24 часа вчерашних суток, неделя — 7 суток (сегодня онлайн). Основа — часы:
+// объём — increase() за час, пик — максимальная средняя за минуту скорость
+// внутри часа (подзапрос с шагом 30с; 2-секундный всплеск не рисует ложный
+// пик). Сутки недели собираются из часов: объём — сумма, пик — максимум.
+// Фильтр интерфейсов — как у трафика за период.
+const HOUR = 3600
+const DAY = 86400
+
+type Dir = 'receive' | 'transmit'
+const volumeExpr = (dir: Dir, range: string) =>
+  `sum by(instance) (increase(node_network_${dir}_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`
+const peakExpr = (dir: Dir, range: string) =>
+  `max_over_time(sum by(instance) (rate(node_network_${dir}_bytes_total{${DAILY_DEVICE_FILTER}}[1m]))[${range}:30s])`
+
+export interface TrafficBucket {
+  // unix-секунды границ корзины [start, end) — час или сутки МСК
+  start: number
+  end: number
+  // null — данных нет (нода лежала / VM не ответила / вне хранения VM), не ноль
+  rxBytes: number | null
+  txBytes: number | null
+  rxPeakBps: number | null
+  txPeakBps: number | null
+  // текущая, ещё не закончившаяся корзина (обновляется онлайн)
+  current: boolean
+  // ещё не наступила (часы суток после текущего)
+  future: boolean
+}
+
+// Полные часы периода не меняются до смены часа — запрос раз в час на период.
+// Текущий час — кэш 5с (панель опрашивает раз в 5с, вкладок может быть несколько).
+const fullHoursCache = new Map<TrafficPeriod, { hour: number, series: Map<string, Map<number, number>>[] }>()
+let currentHourCache: { at: number, hour: number, series: Map<string, number>[] } | null = null
+const CURRENT_CACHE_MS = 5_000
+
+/** Часовая сетка периода: [from, slotsEnd), полные часы — до `to`, есть ли текущий час. */
+function periodGrid(period: TrafficPeriod, nowSec: number) {
+  const hour = Math.floor(nowSec / HOUR) * HOUR
+  const today = mskDayStartSec(nowSec * 1000)
+  if (period === 'yesterday') return { from: today - DAY, to: today, slotsEnd: today, hour, live: false }
+  if (period === 'week') return { from: today - 6 * DAY, to: hour, slotsEnd: today + DAY, hour, live: true }
+  return { from: today, to: hour, slotsEnd: today + DAY, hour, live: true }
+}
+
+async function fullHours(period: TrafficPeriod, from: number, to: number, hour: number) {
+  const cached = fullHoursCache.get(period)
+  if (cached?.hour === hour) return cached.series
+  if (to <= from) return [] // сутки только начались — полных часов нет
+  // Точка t в query_range — значение за (t−1ч, t]: точки from+1ч..to покрывают часы [from, to).
+  const series = await Promise.all([
+    rangeQuery(volumeExpr('receive', '1h'), from + HOUR, to, HOUR),
+    rangeQuery(volumeExpr('transmit', '1h'), from + HOUR, to, HOUR),
+    rangeQuery(peakExpr('receive', '1h'), from + HOUR, to, HOUR),
+    rangeQuery(peakExpr('transmit', '1h'), from + HOUR, to, HOUR),
+  ])
+  // Пустой ответ (VM недоступна) не кэшируем — повторим на следующем опросе.
+  if (series.some(m => m.size > 0)) fullHoursCache.set(period, { hour, series })
+  return series
+}
+
+async function currentHour(hour: number, nowMs: number) {
+  if (currentHourCache && currentHourCache.hour !== hour) {
+    // Новый час: значения прошлого часа не должны всплыть через holdover.
+    for (const m of holdover.values()) {
+      for (const k of [...m.keys()]) if (k.startsWith('hourCur:')) m.delete(k)
+    }
+  }
+  if (!currentHourCache || currentHourCache.hour !== hour || nowMs - currentHourCache.at > CURRENT_CACHE_MS) {
+    const range = `${Math.max(60, Math.floor(nowMs / 1000) - hour)}s`
+    const series = await Promise.all([
+      instantQuery(volumeExpr('receive', range)),
+      instantQuery(volumeExpr('transmit', range)),
+      instantQuery(peakExpr('receive', range)),
+      instantQuery(peakExpr('transmit', range)),
+    ])
+    currentHourCache = { at: nowMs, hour, series }
+  }
+  return currentHourCache.series
+}
+
+const sumOrNull = (vs: Array<number | null>) => (vs.every(v => v == null) ? null : vs.reduce<number>((a, v) => a + (v ?? 0), 0))
+const maxOrNull = (vs: Array<number | null>) => (vs.every(v => v == null) ? null : Math.max(...vs.map(v => v ?? 0)))
+
+/** Сутки МСК из часов: объём — сумма, пик — максимум; будущие часы не входят. */
+function toDays(hours: TrafficBucket[], from: number): TrafficBucket[] {
+  const days: TrafficBucket[] = []
+  for (let start = from; start < from + 7 * DAY; start += DAY) {
+    const hs = hours.filter(h => h.start >= start && h.start < start + DAY && !h.future)
+    days.push({
+      start,
+      end: start + DAY,
+      rxBytes: sumOrNull(hs.map(h => h.rxBytes)),
+      txBytes: sumOrNull(hs.map(h => h.txBytes)),
+      rxPeakBps: maxOrNull(hs.map(h => h.rxPeakBps)),
+      txPeakBps: maxOrNull(hs.map(h => h.txPeakBps)),
+      current: hs.some(h => h.current),
+      future: false,
+    })
+  }
+  return days
+}
+
+export async function fetchTrafficBuckets(instances: string[], period: TrafficPeriod): Promise<Map<string, TrafficBucket[]>> {
+  const nowMs = Date.now()
+  const { from, to, slotsEnd, hour, live } = periodGrid(period, Math.floor(nowMs / 1000))
+  const [full, cur] = await Promise.all([
+    fullHours(period, from, to, hour),
+    live ? currentHour(hour, nowMs) : Promise.resolve(null),
+  ])
+  return new Map(instances.map((inst) => {
+    // Текущий час — с holdover: короткий сбой VM не должен обнулять растущие столбцы.
+    const curH = cur?.map((m, k) => withHoldover(m, [inst], `hourCur:${k}`).get(inst) ?? null)
+    const hours: TrafficBucket[] = []
+    for (let start = from; start < slotsEnd; start += HOUR) {
+      const current = live && start === hour
+      const future = live && start > hour
+      const at = (k: number) => (current ? curH?.[k] ?? null : future ? null : full[k]?.get(inst)?.get(start + HOUR) ?? null)
+      hours.push({ start, end: start + HOUR, rxBytes: at(0), txBytes: at(1), rxPeakBps: at(2), txPeakBps: at(3), current, future })
+    }
+    return [inst, period === 'week' ? toDays(hours, from) : hours]
+  }))
 }
 
 /**

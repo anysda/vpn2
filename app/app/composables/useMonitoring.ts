@@ -1,3 +1,4 @@
+import { useTrafficPeriod } from '~/composables/useClients'
 export interface NodeMetric {
   tag: string
   label: string
@@ -17,9 +18,10 @@ export interface NodeMetric {
   diskFreePct: number | null
   // возраст последних метрик ноды, сек (null — данных нет)
   staleSec: number | null
-  // байты через WAN ноды с 00:00 МСК (вход / выход)
-  rxTodayBytes: number | null
-  txTodayBytes: number | null
+  // байты через WAN ноды за выбранный период (сутки / вчера / неделя), вход / выход
+  trafficPeriod: 'day' | 'yesterday' | 'week'
+  rxPeriodBytes: number | null
+  txPeriodBytes: number | null
   // экзит выключен вручную из панели (watchdog обходит его как мёртвый)
   disabled: boolean
   // через этот экзит сейчас идёт иностранный трафик вне дорожек (foreign-best)
@@ -47,40 +49,71 @@ export function nodeState(staleSec: number | null | undefined): NodeState {
   return 'online'
 }
 
-const HISTORY_LEN = 60
+// Трафик ноды по корзинам периода — диаграмма в карточке: сутки и вчера —
+// по часам, неделя — по суткам МСК.
+export interface TrafficBucket {
+  // unix-секунды границ корзины [start, end)
+  start: number
+  end: number
+  // null — данных нет (не ноль)
+  rxBytes: number | null
+  txBytes: number | null
+  rxPeakBps: number | null
+  txPeakBps: number | null
+  // текущая, ещё не закончившаяся корзина
+  current: boolean
+  // ещё не наступила (часы суток после текущего)
+  future: boolean
+}
+
+export type BucketUnit = 'hour' | 'day'
+
+const HOURLY_REFRESH_MS = 5000
 
 export function useMonitoring() {
+  // Период трафика нод — общий с селектором ТОП клиентов.
+  const period = useTrafficPeriod()
   const { data: nodes, refresh: refreshNodes } = useFetch<NodeMetric[]>('/api/ops/nodes', {
+    query: { period },
     default: () => [],
     server: false,
   })
 
-  // sparkline history per node CPU
-  const cpuHistory = ref<Map<string, number[]>>(new Map())
-
-  function pushHistory(tag: string, cpu: number | null) {
-    const h = cpuHistory.value.get(tag) ?? []
-    h.push(cpu ?? 0)
-    while (h.length > HISTORY_LEN) h.shift()
-    cpuHistory.value.set(tag, h)
-  }
-
-  watch(nodes, (list) => {
-    list.forEach(n => pushHistory(n.tag, n.cpu))
-  }, { deep: true })
+  // Диаграмма трафика по тому же периоду: отдельный эндпоинт и свой, более
+  // редкий опрос — текущий час на сервере кэшируется на 5с, полные часы — до
+  // смены часа. Смена периода перезапрашивает сразу (query реактивный).
+  const { data: bucketsResp, refresh: refreshHourly } = useFetch<{ period: string, unit: BucketUnit, nodes: Array<{ tag: string, buckets: TrafficBucket[] }> }>('/api/ops/nodes/hourly', {
+    query: { period },
+    server: false,
+  })
+  // Пока ответ не совпал с выбранным периодом — не показываем старую диаграмму под новой подписью.
+  const hourly = computed(() => (bucketsResp.value?.period === period.value
+    ? new Map(bucketsResp.value.nodes.map(n => [n.tag, n.buckets]))
+    : new Map<string, TrafficBucket[]>()))
+  const bucketUnit = computed<BucketUnit>(() => bucketsResp.value?.unit ?? 'hour')
 
   let timer: ReturnType<typeof setInterval> | null = null
+  let hourlyTimer: ReturnType<typeof setInterval> | null = null
   onMounted(() => {
     if (!timer) {
       timer = setInterval(() => {
         void refreshNodes()
       }, 2000)
     }
+    if (!hourlyTimer) {
+      hourlyTimer = setInterval(() => {
+        void refreshHourly()
+      }, HOURLY_REFRESH_MS)
+    }
   })
-  onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
+  onUnmounted(() => {
+    if (timer) { clearInterval(timer); timer = null }
+    if (hourlyTimer) { clearInterval(hourlyTimer); hourlyTimer = null }
+  })
 
   useVisibleRefresh(() => {
     void refreshNodes()
+    void refreshHourly()
   })
 
   async function setExitDisabled(tag: string, disabled: boolean) {
@@ -91,7 +124,7 @@ export function useMonitoring() {
     await refreshNodes()
   }
 
-  return { nodes, cpuHistory, refreshNodes, setExitDisabled }
+  return { nodes, hourly, bucketUnit, refreshNodes, setExitDisabled }
 }
 
 export function formatUptime(sec: number | null | undefined): string {
@@ -119,17 +152,4 @@ export function formatBytes(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—'
   if (v < 1e9) return `${(v / 1e6).toFixed(0)} MB`
   return `${(v / 1e9).toFixed(2)} GB`
-}
-
-export function sparklinePath(values: number[], width = 80, height = 24): string {
-  if (values.length === 0) return ''
-  const max = Math.max(...values, 1)
-  const step = width / Math.max(values.length - 1, 1)
-  return values
-    .map((v, i) => {
-      const x = i * step
-      const y = height - (v / max) * height
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
 }

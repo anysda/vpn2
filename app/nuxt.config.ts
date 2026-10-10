@@ -90,6 +90,9 @@ export default defineNuxtConfig({
     ovpnProto: 'udp',
     ovpnPublicHost: '',
     public: {
+      // Адрес кнопки «AdGuard Home» (NUXT_PUBLIC_AGH_UI_URL). Пусто —
+      // https://<хост панели>:3001, как раньше.
+      aghUiUrl: '',
       sso: {
         // NUXT_PUBLIC_SSO_ENABLED — общий рубильник (и кнопка, и авторедирект).
         enabled: false,

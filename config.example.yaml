@@ -49,6 +49,9 @@ admin:
 # Hysteria2-туннели НЕ зависят от домена и остаются на self-signed TLS (IP).
 # panel:
 #   domain: vpn.example.com
+#   adguard_url: http://10.99.0.1:3080     # адрес кнопки «AdGuard Home» в панели, если
+#                                          # UI AdGuard открыт только изнутри VPN (по умолчанию —
+#                                          # https://<domain>:3001)
 #   image: ghcr.io/anysda/vpn2/panel:dev   # пин образа панели.
 #          # Не задан — стадия 30-frontend берёт свой дефолт (:dev). Задавать,
 #          # когда на проде осознанно крутится не dev-линия: иначе обычный

@@ -1,10 +1,20 @@
 import { requireAuth } from '../../utils/auth'
 import { fetchConnections, fetchProxies } from '../../utils/clash-client'
 import { exitNodeOf, readDisabledExits } from '../../utils/exit-control'
-import { fetchDailyTraffic, fetchNodeMetrics, nodeInstances } from '../../utils/vm-client'
+import { fetchNodeMetrics, fetchPeriodTraffic, nodeInstances } from '../../utils/vm-client'
+import type { TrafficPeriod } from '../../utils/vm-client'
+
+const PERIODS: readonly TrafficPeriod[] = ['day', 'yesterday', 'week']
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
+  // Период для трафика ноды (?period=day|yesterday|week, по умолчанию сутки) —
+  // тот же селектор, что у ТОП клиентов.
+  const q = getQuery(event).period
+  if (q !== undefined && !PERIODS.includes(q as TrafficPeriod)) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid_period' })
+  }
+  const period = (q ?? 'day') as TrafficPeriod
   const nodes = nodeInstances()
   const hosts = new Map(
     String(useRuntimeConfig().nodeHosts || '').split(',')
@@ -14,7 +24,7 @@ export default defineEventHandler(async (event) => {
   const instances = nodes.map(n => n.instance)
   const [metrics, daily, disabled, proxies, conns] = await Promise.all([
     fetchNodeMetrics(instances),
-    fetchDailyTraffic(instances),
+    fetchPeriodTraffic(instances, period),
     readDisabledExits(),
     fetchProxies(),
     fetchConnections(),
@@ -64,8 +74,9 @@ export default defineEventHandler(async (event) => {
       ? 100 * metrics[i]!.diskFreeBytes! / metrics[i]!.diskSizeBytes!
       : null,
     staleSec: metrics[i]?.staleSec ?? null,
-    rxTodayBytes: daily.get(n.instance)?.rxBytes ?? null,
-    txTodayBytes: daily.get(n.instance)?.txBytes ?? null,
+    trafficPeriod: period,
+    rxPeriodBytes: daily.get(n.instance)?.rxBytes ?? null,
+    txPeriodBytes: daily.get(n.instance)?.txBytes ?? null,
     disabled: n.tag !== 'ru' && disabled.includes(n.tag),
     active: n.tag !== 'ru' && n.tag === activeNode,
     activeDevices: n.tag !== 'ru' ? (devicesByNode.get(n.tag)?.size ?? 0) : null,

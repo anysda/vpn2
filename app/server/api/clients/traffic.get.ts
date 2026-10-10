@@ -2,7 +2,8 @@ import { sql } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
-import { ONLINE_MIN_BYTES, periodStartSec, periodTotalsByClient, recentBytesByClient } from '../../utils/client-activity'
+import { ONLINE_MIN_BYTES, periodRange, periodTotalsByClient, recentBytesByClient } from '../../utils/client-activity'
+import { currentRatesByClient } from '../../utils/client-rates'
 
 /**
  * Трафик по клиентам — сумма по их девайсам, по всем протоколам
@@ -14,13 +15,14 @@ import { ONLINE_MIN_BYTES, periodStartSec, periodTotalsByClient, recentBytesByCl
  *   dayRx, dayTx       — с 00:00 МСК (почасовая история),
  *   recentBytes        — за последние 5 минут,
  *   online             — recentBytes ≥ ONLINE_MIN_BYTES,
+ *   rxBps, txBps       — текущая скорость (байт/с, сглажено ~6 с),
  * } }.
  */
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
 
   const db = useDb()
-  const [rows, day, recent] = await Promise.all([
+  const [rows, day, recent, rates] = await Promise.all([
     db
       .select({
         clientId: devices.clientId,
@@ -29,8 +31,9 @@ export default defineEventHandler(async (event) => {
       })
       .from(devices)
       .groupBy(devices.clientId),
-    periodTotalsByClient(periodStartSec('day')),
+    periodTotalsByClient(periodRange('day').since),
     recentBytesByClient(),
+    currentRatesByClient(),
   ])
 
   const result: Record<number, {
@@ -40,6 +43,8 @@ export default defineEventHandler(async (event) => {
     dayTx: number
     recentBytes: number
     online: boolean
+    rxBps: number
+    txBps: number
   }> = {}
   for (const r of rows) {
     const d = day.get(r.clientId)
@@ -51,6 +56,8 @@ export default defineEventHandler(async (event) => {
       dayTx: d?.tx ?? 0,
       recentBytes,
       online: recentBytes >= ONLINE_MIN_BYTES,
+      rxBps: Math.round(rates.get(r.clientId)?.rxBps ?? 0),
+      txBps: Math.round(rates.get(r.clientId)?.txBps ?? 0),
     }
   }
   return result

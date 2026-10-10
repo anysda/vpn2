@@ -164,15 +164,32 @@ export interface ClientTraffic {
   recentBytes: number
   /** «В сети»: recentBytes выше порога keepalive-шума. */
   online: boolean
+  /** Текущая скорость, байт/с (сглажено ~6 с): rx — download, tx — upload клиента. */
+  rxBps: number
+  txBps: number
 }
 
-export type TopPeriod = 'day' | 'week'
+export type TopPeriod = 'day' | 'yesterday' | 'week'
+
+/** Подписи периодов: кнопка селектора, короткая метка строк, пояснение. */
+export const PERIOD_META: Record<TopPeriod, { button: string, short: string, note: string }> = {
+  day: { button: 'Сутки', short: 'сутки', note: 'с 00:00 МСК' },
+  yesterday: { button: 'Вчера', short: 'вчера', note: 'вчера, МСК' },
+  week: { button: 'Неделя', short: 'неделя', note: '7 суток МСК' },
+}
+
+/** Общий период «сутки / вчера / неделя» — один селектор для ТОП клиентов и трафика нод. */
+export function useTrafficPeriod() {
+  return useState<TopPeriod>('traffic-period', () => 'day')
+}
 
 /** `GET /api/clients/top`. */
 export interface ClientsTop {
   period: TopPeriod
   /** Начало периода, unix-секунды. */
   since: number
+  /** Конец периода (не включая), unix-секунды; null — по сейчас. */
+  until: number | null
   /** Первый час почасовой истории (unix-секунды) или null. */
   historyStart: number | null
   clients: Array<{ id: number, name: string, rx: number, tx: number, total: number }>

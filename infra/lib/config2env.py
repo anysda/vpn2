@@ -350,6 +350,9 @@ def main():
     panel_image = cfg.get('panel', {}).get('image', '')
     # Образ бота — то же для стадии 35-telegram (…/tgbot:dev).
     tgbot_image = cfg.get('tgbot', {}).get('image', '')
+    # Адрес кнопки «AdGuard Home» в панели. Пусто → https://<домен>:3001.
+    # Нужен, когда UI AdGuard открыт только изнутри VPN (напр. http://10.99.0.1:3080).
+    agh_ui_url = cfg.get('panel', {}).get('adguard_url', '')
 
     lines = [
         "HOST_TAG='ru'",
@@ -370,6 +373,8 @@ def main():
         lines.append(f"PANEL_IMAGE={shq(panel_image)}")
     if tgbot_image:
         lines.append(f"TGBOT_IMAGE={shq(tgbot_image)}")
+    if agh_ui_url:
+        lines.append(f"AGH_UI_URL={shq(agh_ui_url)}")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [

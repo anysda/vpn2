@@ -34,10 +34,22 @@ svc_restart_if_changed() {
   svc_say "$unit перезапущен"
 }
 
-# svc_settle SEC — дать только что перезапущенной службе подняться (или
-# упасть) до показа статуса. Если ничего не перезапускали, ждать нечего.
+# svc_settle SEC [ПРОБА...] — дать только что перезапущенной службе подняться
+# (или упасть) до показа статуса. С пробой ждём, пока она пройдёт, но не
+# дольше SEC; без пробы — ровно SEC. Если ничего не перезапускали, ждать нечего.
 svc_settle() {
-  (( SVC_RESTARTED )) && sleep "$1"
+  local sec=$1 i
+  shift
+  if (( SVC_RESTARTED )); then
+    if (( $# )); then
+      for (( i = 0; i < sec * 5; i++ )); do
+        "$@" && break
+        sleep 0.2
+      done
+    else
+      sleep "$sec"
+    fi
+  fi
   SVC_RESTARTED=0
 }
 

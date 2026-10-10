@@ -485,7 +485,14 @@ systemctl enable anysda-yt-nft.service anysda-yt-nfqws.service >/dev/null 2>&1
 svc_restart_if_changed anysda-yt-nft.service /etc/systemd/system/anysda-yt-nft.service "$NFT_CONF"
 svc_restart_if_changed anysda-yt-nfqws.service /etc/systemd/system/anysda-yt-nfqws.service \
   "$YT_ZAPRET_BIN" "$YT_ZAPRET_BASE"/lua/*.lua
-svc_settle 2
+# Готов — когда сам демон держит свою очередь (portid в nfnetlink_queue = PID).
+nfqws_bound() {
+  local pid
+  pid=$(systemctl show -p MainPID --value anysda-yt-nfqws.service 2>/dev/null)
+  [[ -n "$pid" && "$pid" != 0 ]] && awk -v q="$YT_ZAPRET_QUEUE" -v p="$pid" \
+    '$1 == q && $2 == p { f = 1 } END { exit !f }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null
+}
+svc_settle 2 nfqws_bound
 
 # Инвариант: демон исполняет ИМЕННО тот файл, что лежит на диске. После
 # пересборки (make = clean + build) живой процесс может держать удалённый

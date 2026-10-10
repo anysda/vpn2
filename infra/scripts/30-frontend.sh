@@ -302,9 +302,9 @@ docker run -d \
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
 http_up=0
-for _ in $(seq 1 60); do
+for _ in $(seq 1 300); do
   if curl -fsS -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then http_up=1; break; fi
-  sleep 1
+  sleep 0.2
 done
 # Битый anysda-config.yaml роняет init панели (process.exit(1) в
 # server/plugins/init.ts). Причину печатаем раньше общей проверки ниже:

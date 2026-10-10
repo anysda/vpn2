@@ -125,7 +125,7 @@ echo "[$HOST_TAG] $STAGE: WAN=$WAN_IFACE mark=$YT_MARK queue=$YT_ZAPRET_QUEUE"
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/7] apt deps"
 export DEBIAN_FRONTEND=noninteractive
-NEED_PKGS=(build-essential git ca-certificates libcap-dev libnetfilter-queue-dev
+NEED_PKGS=(gcc make libc6-dev git ca-certificates libcap-dev libnetfilter-queue-dev
            libnfnetlink-dev libmnl-dev zlib1g-dev libluajit-5.1-dev luajit
            nftables ethtool curl)
 MISSING=()

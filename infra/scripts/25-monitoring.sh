@@ -31,7 +31,7 @@ if ! command -v docker >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   docker_apt_source
   apt_get update -qq
-  apt_get install -y -qq "${DOCKER_PKGS[@]}" >/dev/null
+  apt_get install -y -qq "${DOCKER_PKGS[@]}" "${DOCKER_SKIP[@]}" >/dev/null
   systemctl enable --now docker >/dev/null
 else
   echo "[$HOST_TAG] docker уже установлен: $(docker --version)"

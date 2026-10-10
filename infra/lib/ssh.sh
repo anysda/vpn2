@@ -149,11 +149,17 @@ push() {
   if [[ -d "$src" ]]; then
     ssh_exec "rm -rf '$target'"
   fi
+  # Файл кладём под временным именем и переименовываем: стадии одного узла
+  # идут параллельно и шлют общие файлы (anysda-svc.sh, ru.env), читатель не
+  # должен застать файл недописанным.
+  local dest="$target"
+  [[ -d "$src" ]] || dest="${target}.$BASHPID.$RANDOM"
   local attempt rc=0
   for attempt in 1 2 3 4 5; do
     rc=0
     SSHPASS="$SSH_PASS" sshpass -e scp -q "${_ssh_opts[@]}" -r \
-        "$src" "${SSH_USER}@${SSH_HOST}:$target" || rc=$?
+        "$src" "${SSH_USER}@${SSH_HOST}:$dest" || rc=$?
+    [[ $rc -eq 0 && "$dest" != "$target" ]] && { ssh_exec "mv -f '$dest' '$target'" || rc=$?; }
     [[ $rc -eq 0 ]] && return 0
     [[ $attempt -lt 5 ]] && { warn "scp → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done

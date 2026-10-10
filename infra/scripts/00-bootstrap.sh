@@ -53,12 +53,13 @@ apt_get install -y -qq \
   iptables netcat-openbsd \
   python3 python3-yaml \
   >/dev/null
-# Пакеты стадий ru (29, 19, 26, 27) - сюда же: entry кончает bootstrap
+# Пакеты стадий ru (29, 19, 22, 26, 27) - сюда же: entry кончает bootstrap
 # раньше экзитов и ждёт их, а потом стадии ставили бы своё по одному apt на
 # критическом пути (~33 с на чистой). Свои проверки стадии сохраняют.
 if [[ "$HOST_TAG" == ru ]]; then
   RU_PKGS=(openvpn openssl strongswan strongswan-starter strongswan-pki
-           strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins)
+           strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins
+           apache2-utils)
   [[ "${YT_ROUTE:-off}" == zapret ]] && RU_PKGS+=(build-essential libcap-dev
     libnetfilter-queue-dev libnfnetlink-dev libmnl-dev zlib1g-dev
     libluajit-5.1-dev luajit nftables ethtool)

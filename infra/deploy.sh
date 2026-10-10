@@ -210,7 +210,7 @@ install_prereqs() {
 }
 
 # ----------------------------------------------------------------------------
-# Проверка env-файлов + SSH-доступа на всех нодах. die при первой ошибке.
+# Проверка env-файлов всех нод. die при первой ошибке.
 # ----------------------------------------------------------------------------
 do_check() {
   printf '\n%b==>%b env-файлы\n' "$C_B" "$C_END"
@@ -226,30 +226,7 @@ do_check() {
   done
   [[ $fail -eq 0 ]] || die "не хватает env-файлов — запусти ./setup.sh"
 
-  printf '\n%b==>%b доступность SSH (root@<host>)\n' "$C_B" "$C_END"
-  local ssh_tries="${PREFLIGHT_ATTEMPTS:-5}"
-  for host in $all_hosts; do
-    load_env "$host"
-    if [[ -z "${SSH_PASS:-}" ]]; then
-      printf '  %-28s %b✗ SSH_PASS пустой — перезапусти ./setup.sh%b\n' \
-        "${SSH_USER}@${SSH_HOST}" "$C_R" "$C_END"; fail=1; continue
-    fi
-    # Ретраим как preflight_ssh — единичный блип не должен валить деплой.
-    local ssh_ok=0 i reason='' t0=$SECONDS
-    for ((i=1; i<=ssh_tries; i++)); do
-      if reason=$(ssh_probe); then ssh_ok=1; break; fi
-      (( i < ssh_tries )) || break
-      (( SECONDS - t0 + 3 + ${SSH_PROBE_TIMEOUT:-30} <= ${PREFLIGHT_BUDGET:-90} )) || break
-      sleep 3
-    done
-    if [[ $ssh_ok -eq 1 ]]; then
-      printf '  %-28s %b✓%b\n' "${SSH_USER}@${SSH_HOST}" "$C_G" "$C_END"
-    else
-      printf '  %-28s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
-        "${SSH_USER}@${SSH_HOST}" "$C_R" "$host" "$SSH_HOST" "$reason" "$C_END"; fail=1
-    fi
-  done
-  [[ $fail -eq 0 ]] || die "SSH-проверка не пройдена — исправь пункты со ✗"
+  # Доступность SSH проверяет preflight_ssh следом, всех нод сразу.
   printf '\n'
 }
 
@@ -562,6 +539,33 @@ _tcp22_open() {
   timeout 8 bash -c "exec 3<>/dev/tcp/${hostport}" 2>/dev/null
 }
 
+# Одна нода для preflight_ssh, в фоне: строки для человека - в stdout,
+# итог - файлом <host>.ok или <host>.fail с причиной в каталоге $4.
+_preflight_host() {
+  local h="$1" attempts="$2" budget="$3" dir="$4"
+  load_env "$h"
+  local ok=0 try reason='' t0=$SECONDS
+  if [[ -z "${SSH_PASS:-}" ]]; then
+    reason='SSH_PASS пустой — перезапусти ./setup.sh'
+  else
+    for ((try=1; try<=attempts; try++)); do
+      if reason=$(ssh_probe); then ok=1; break; fi
+      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
+      (( try < attempts )) || break
+      (( SECONDS - t0 + try * 3 + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+      sleep $((try * 3))
+    done
+  fi
+  if [[ $ok -eq 1 ]]; then
+    printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
+    : >"$dir/$h.ok"
+  else
+    printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
+      "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
+    echo "нода $h ($SSH_HOST) недоступна по ssh с entry: $reason" >"$dir/$h.fail"
+  fi
+}
+
 preflight_ssh() {
   printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
   local attempts="${PREFLIGHT_ATTEMPTS:-5}"
@@ -570,26 +574,20 @@ preflight_ssh() {
   local budget="${PREFLIGHT_BUDGET:-90}"
 
   # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
+  # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
+  # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
   local hosts; hosts=$(expand_hosts all)
-  local reasons=()
+  local reasons=() h dir; dir=$(mktemp -d)
   for h in $hosts; do
-    load_env "$h"
-    local ok=0 try reason='' t0=$SECONDS
-    for ((try=1; try<=attempts; try++)); do
-      if reason=$(ssh_probe); then ok=1; break; fi
-      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
-      (( try < attempts )) || break
-      (( SECONDS - t0 + try * 3 + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
-      sleep $((try * 3))
-    done
-    if [[ $ok -eq 1 ]]; then
-      printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
-    else
-      printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
-        "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
-      reasons+=("нода $h ($SSH_HOST) недоступна по ssh с entry: $reason")
-    fi
+    _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
   done
+  wait
+  for h in $hosts; do
+    cat "$dir/$h.log"
+    [[ -f "$dir/$h.ok" ]] && continue
+    reasons+=("$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")")
+  done
+  rm -rf "$dir"
 
   # Все ноды доступны — эталон не нужен, идём дальше.
   if [[ ${#reasons[@]} -eq 0 ]]; then

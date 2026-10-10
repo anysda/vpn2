@@ -218,9 +218,11 @@ fi
 echo "[$HOST_TAG] [4/8] swanctl conf"
 cat > "$CONF" <<EOF
 # Managed by stage 27-ikev2 — НЕ редактировать вручную.
-# Динамический conf с клиент-кредами раскатывает панель (server/utils/ikev2.ts)
-# в /etc/swanctl/conf.d/anysda-clients.conf (этап 4); этот файл — только conn
-# и pool.
+# Динамический conf раскатывает панель (server/utils/ikev2.ts) в
+# /etc/swanctl/conf.d/anysda-clients.conf: секреты, а также conn и пул из
+# одного адреса на каждое устройство, унаследованные от conn и пула ниже.
+# Там же общей conn дописано требование группы, чтобы после EAP charon
+# переходил на conn устройства (постоянный адрес, VPN2-115).
 
 connections {
   anysda-ikev2 {
@@ -282,7 +284,7 @@ pools {
   }
 }
 
-# secrets {} — раскатывает панель (этап 4) в conf.d/anysda-clients.conf.
+# secrets {} и conn устройств — раскатывает панель в conf.d/anysda-clients.conf.
 EOF
 chmod 644 "$CONF"
 
@@ -457,13 +459,18 @@ cat > /usr/local/sbin/anysda-ikev2-sync.py <<'PYEOF'
 Раскатывается стадией 27-ikev2, гоняется таймером anysda-ikev2-sync.timer.
 
   1. /etc/swanctl/conf.d/anysda-clients.conf изменился (панель переписала) →
-     `swanctl --load-creds` + разрыв SA тех устройств, чей пароль изменился
-     или чья запись исчезла (удаление / заморозка / истёкший срок);
-  2. каждый прогон → счётчики байт по каждой живой SA в
+     `swanctl --load-all` (секреты, conn и пул каждого устройства) + разрыв
+     SA тех устройств, чей пароль изменился или чья запись исчезла
+     (удаление / заморозка / истёкший срок);
+  2. каждый прогон → разрыв SA, которые сидят не на conn своего устройства
+     (подключились до постоянных адресов, VPN2-115): клиент переподключится
+     и получит свой адрес;
+  3. каждый прогон → счётчики байт по каждой живой SA в
      /etc/anysda/ikev2-status.json.
 
 Снимок кредов держится в /var/anysda/ikev2-clients.state.json как
 username → sha256(пароль): сам пароль на диск вне swanctl не кладём.
+Отпечаток всего файла — в /var/anysda/ikev2-clients.conf.sha256.
 """
 import hashlib
 import json
@@ -476,6 +483,9 @@ import time
 
 CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
 STATE_FILE = '/var/anysda/ikev2-clients.state.json'
+DIGEST_FILE = '/var/anysda/ikev2-clients.conf.sha256'
+SHARED_CONN = 'anysda-ikev2'
+RE_DEVICE_CONN = re.compile(r'^\s*(anysda-dev-\d+)\s*:', re.M)
 STATUS_FILE = '/etc/anysda/ikev2-status.json'
 
 RE_ID = re.compile(r'^\s*id\s*=\s*"?([^"]+?)"?\s*$')
@@ -552,7 +562,8 @@ def live_sas():
     for line in out.splitlines():
         head = RE_SA_HEAD.match(line)
         if head:
-            cur = {'uniqueid': head.group(2), 'username': '', 'rx': 0, 'tx': 0}
+            cur = {'conn': head.group(1), 'uniqueid': head.group(2),
+                   'username': '', 'rx': 0, 'tx': 0}
             sas.append(cur)
             continue
         if cur is None:
@@ -572,32 +583,67 @@ def live_sas():
     return sas
 
 
+def swanctl(*args):
+    rc = subprocess.run(['swanctl', *args], stdout=subprocess.DEVNULL,
+                        timeout=30).returncode
+    if rc != 0:
+        print(f'swanctl {" ".join(args)} rc={rc}', file=sys.stderr)
+    return rc
+
+
+def terminate(sa, why):
+    print(f'terminate ike-id={sa["uniqueid"]} ({sa["username"]}): {why}')
+    # --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, не EAP-логин.
+    swanctl('--terminate', '--ike-id', sa['uniqueid'])
+
+
+def read_text(path):
+    try:
+        with open(path, encoding='utf-8') as f:
+            return f.read()
+    except OSError:
+        return ''
+
+
 def main():
+    text = read_text(CLIENTS_CONF)
+    digest = hashlib.sha256(text.encode()).hexdigest()
     current = parse_clients(CLIENTS_CONF)
     previous = read_json(STATE_FILE, {})
+    torn = False
 
-    if current != previous:
-        subprocess.run(['swanctl', '--load-creds'], check=True,
-                       stdout=subprocess.DEVNULL, timeout=30)
+    if digest != read_json(DIGEST_FILE, ''):
+        # Секреты, conn и пулы устройств. Пул устройства, которое ещё сидит
+        # на своём адресе, выгрузить нельзя — его догрузит повтор ниже.
+        loaded = swanctl('--load-all', '--noprompt') == 0
         # Пароль сменился или устройство исчезло из secrets → рвём живую SA,
         # иначе старая сессия висит до перезагрузки (rekey_time = 0s).
         stale = {u for u, h in previous.items() if current.get(u) != h}
         if stale:
             for sa in live_sas() or []:
                 if sa['username'] in stale and sa['uniqueid']:
-                    print(f'terminate ike-id={sa["uniqueid"]} ({sa["username"]})')
-                    # --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, не EAP-логин.
-                    rc = subprocess.run(
-                        ['swanctl', '--terminate', '--ike-id', sa['uniqueid']],
-                        stdout=subprocess.DEVNULL, timeout=30).returncode
-                    if rc != 0:
-                        print(f'terminate {sa["username"]} rc={rc}', file=sys.stderr)
+                    terminate(sa, 'креды изменились')
+                    torn = True
         write_json(STATE_FILE, current, 0o600)
+        if loaded:  # иначе повторим на следующем прогоне
+            write_json(DIGEST_FILE, digest, 0o600)
 
+    # Пока у устройств есть свои conn, общая conn вход не пускает: всё, что на
+    # ней висит, подключилось раньше и сидит на адресе из общего пула.
     sas = live_sas()
     if sas is None:  # charon не отвечает — это авария, пусть видно в journal
         return 1
-    sessions = [sa for sa in sas if sa['username']]
+    if RE_DEVICE_CONN.search(text):
+        for sa in sas:
+            if sa['conn'] == SHARED_CONN and sa['uniqueid']:
+                terminate(sa, 'не на своём адресе')
+                torn = True
+    if torn:
+        swanctl('--load-pools')
+        sas = live_sas() or []
+
+    sessions = [{k: sa[k] for k in ('uniqueid', 'username', 'rx', 'tx')}
+                for sa in sas if sa['username']]
     write_json(STATUS_FILE, {'updated': int(time.time()), 'sessions': sessions}, 0o644)
     return 0
 

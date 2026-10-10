@@ -89,6 +89,60 @@ apt_wait_idle() {
   (( SECONDS - t0 < 5 )) || svc_say "apt освободился через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
 }
 
+# apt_auto_pause — автообновления Ubuntu на паузу до конца деплоя.
+# Через минуту после загрузки apt-daily запускает unattended-upgrade, и
+# следующие стадии минутами стоят на блокировке apt. Выключаем только на время
+# деплоя, не насовсем: своей политики обновлений у узлов нет, патчи
+# безопасности ставит только unattended-upgrades. Маска --runtime живёт до
+# перезагрузки, а через час её снимает таймер, даже если деплой упал.
+apt_auto_pause() {
+  local timers=(apt-daily.timer apt-daily-upgrade.timer)
+  local jobs=(apt-daily.service apt-daily-upgrade.service)
+  local units=("${timers[@]}" "${jobs[@]}" unattended-upgrades.service)
+  local t0=$SECONDS said=-20 j busy
+  systemctl mask --runtime --now "${timers[@]}" >/dev/null 2>&1 || true
+  # Сработавший таймер оставляет службу в ExecStartPre: она до 30 с ждёт
+  # сеть и apt ещё не держит, а через минуту схватит его посреди деплоя.
+  # Такую снимаем, ничего не начато. Уже идущую дожидаемся, а не рвём
+  # посреди dpkg.
+  for j in "${jobs[@]}"; do
+    if [[ "$(systemctl show -P SubState "$j" 2>/dev/null)" == start-pre ]]; then
+      systemctl stop "$j" >/dev/null 2>&1 || true
+    fi
+  done
+  # Обе службы oneshot: пока работают, они в activating, а не active.
+  while busy=$(for j in "${jobs[@]}"; do
+      [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]] && printf '%s ' "$j"
+    done) && [[ -n "$busy" ]]; do
+    if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
+      svc_say "автообновление так и не закончилось за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
+      break
+    fi
+    if (( SECONDS - said >= 20 )); then
+      said=$SECONDS
+      svc_say "идёт автообновление, жду ${busy}$(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
+    fi
+    sleep 2
+  done
+  (( SECONDS - t0 < 5 )) || svc_say "автообновление закончилось через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
+  # Маску на службы - только когда они стоят: маска перечитывает юнит, и у
+  # идущей oneshot-службы TimeoutStartSec падает с infinity до 90 с - systemd
+  # убил бы unattended-upgrade посреди установки.
+  for j in "${jobs[@]}"; do
+    [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]] \
+      || systemctl mask --runtime "$j" >/dev/null 2>&1 || true
+  done
+  apt_wait_idle
+  systemctl mask --runtime --now unattended-upgrades.service >/dev/null 2>&1 || true
+  systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
+  # Возврат: снять все маски, запустить снова таймеры и службу
+  # unattended-upgrades (она только доводит обновление при выключении).
+  systemd-run --quiet --unit=anysda-apt-resume --on-active=1h \
+    /bin/sh -c "systemctl unmask --runtime ${units[*]}
+      for u in ${timers[*]} unattended-upgrades.service; do if systemctl is-enabled --quiet \$u; then systemctl start \$u; fi; done" \
+    || svc_say "таймер возврата автообновлений не поставлен, вернутся после перезагрузки"
+}
+
 # apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
 # стартом закрывает штатный DPkg::Lock::Timeout.
 apt_get() {

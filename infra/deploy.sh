@@ -134,6 +134,27 @@ print_summary() {
 source "$DEPLOY_ROOT/lib/anysda-svc.sh"
 
 # ----------------------------------------------------------------------------
+# Оркестратор обычно запускают на самом entry. Свежий entry через минуту после
+# загрузки уходит в unattended-upgrade, и install_prereqs ждал его до 15 минут
+# раньше, чем 00-bootstrap успевал поставить паузу. Поэтому на entry пауза
+# идёт первым делом; на чужом оркестраторе её ставит 00-bootstrap.
+# ----------------------------------------------------------------------------
+entry_is_local() {
+  local host
+  # shellcheck disable=SC1091
+  host=$(source "$DEPLOY_ROOT/envs/ru.env" 2>/dev/null; echo "${SSH_HOST:-}")
+  [[ -n "$host" ]] || return 1
+  [[ "$host" == 127.* || "$host" == localhost ]] && return 0
+  [[ " $(hostname -I 2>/dev/null) " == *" $host "* ]]
+}
+
+pause_entry_auto_updates() {
+  [[ -d /run/systemd/system ]] && entry_is_local || return 0
+  printf '%b==>%b автообновления entry на паузу до конца деплоя\n' "$C_B" "$C_END"
+  HOST_TAG=ru apt_auto_pause
+}
+
+# ----------------------------------------------------------------------------
 # Установка локальных пререквизитов (на самом оркестраторе).
 # Apt-пакеты + Docker (для pull/run, build больше не нужен).
 # Идемпотентна — если всё уже стоит, no-op за секунду.
@@ -882,6 +903,7 @@ do_all() {
   _TOTAL_T0=$(date +%s)
   _STAGE_LOG=()
 
+  pause_entry_auto_updates
   install_prereqs
   do_check
   preflight_ssh

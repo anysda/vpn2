@@ -457,7 +457,12 @@ if systemctl is-active --quiet sing-box && [[ "$(cat "$SB_FP_FILE" 2>/dev/null)"
 else
   systemctl restart sing-box
   echo "$sb_fp" > "$SB_FP_FILE"
-  sleep 2
+  # Ждём, пока поднимется clash-api (по нему verify сразу после стадии), а не
+  # слепые 2 с. Упал sing-box - через 10 с статус ниже это покажет.
+  for _i in $(seq 1 50); do
+    [[ -n "$(ss -Hltn 'sport = :9090')" ]] && break
+    sleep 0.2
+  done
 fi
 systemctl status sing-box --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 

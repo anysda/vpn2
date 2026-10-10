@@ -174,6 +174,28 @@ apt_have() {
   ! grep -qvx installed <<<"$st"
 }
 
+# docker_apt_source — официальное APT-репо Docker (ключ download.docker.com),
+# а не `curl get.docker.com | sh` (SECURITY-AUDIT-2026-06-01.md, H8). Файл
+# источника переписываем только при отличии: иначе apt_update_if_stale
+# решит, что списки устарели. Docker нужен только entry (25/30/35).
+# shellcheck disable=SC2034  # читают 00-bootstrap и 25-monitoring
+DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin)
+docker_apt_source() {
+  local list=/etc/apt/sources.list.d/docker.list line
+  if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
+    apt_get update -qq
+    apt_get install -y -qq ca-certificates curl gnupg >/dev/null
+  fi
+  install -m 0755 -d /etc/apt/keyrings
+  if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+      | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+  fi
+  line="deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+  [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
+}
+
 # apt_update_if_stale — apt-get update, только если списки старше часа или
 # источники правили после них (свежее репо docker). Правило то же, что в
 # 26/27/29: на чистой установке entry обновляет списки в install_prereqs,

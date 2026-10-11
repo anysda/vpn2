@@ -180,15 +180,26 @@ async function main() {
     + `маршрутов ${ROUTES.length}, часов истории ${hourly.length}, в сети устройств ${live.length}`)
 
   // Сборщик трафика панели ходит раз в минуту: ждём, пока клиенты станут «в сети».
+  // Ожидание необязательное, сбой запроса его не роняет. Запись в БД выше
+  // синхронная и держит цикл событий дольше keep-alive сервера (5 с): первый
+  // запрос уходит в уже закрытое соединение, «other side closed».
+  let failed = ''
   for (let i = 0; i < 40; i++) {
-    const top = await api('GET', '/api/clients/top')
-    if (top.counts.onlineNow > 0) {
-      console.log(`в сети клиентов: ${top.counts.onlineNow}`)
-      return
+    try {
+      const top = await api('GET', '/api/clients/top')
+      if (top.counts.onlineNow > 0) {
+        console.log(`в сети клиентов: ${top.counts.onlineNow}`)
+        return
+      }
+      failed = ''
+    }
+    catch (e) {
+      failed = e.cause?.message || e.message
     }
     await new Promise(r => setTimeout(r, 3000))
   }
-  console.log('клиенты пока не в сети: сборщик трафика панели не успел, обновите страницу через минуту')
+  console.log(`клиенты пока не в сети${failed ? ` (${failed})` : ''}: `
+    + 'сборщик трафика панели не успел, обновите страницу через минуту')
 }
 
 await main()

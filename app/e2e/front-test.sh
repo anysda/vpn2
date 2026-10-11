@@ -14,8 +14,10 @@
 # копии (в том же образе: node 22 и wg/openssl/ip, нужные серверу панели):
 # правка файла в app/ сразу видна в браузере (HMR), node_modules и .nuxt лежат
 # в томах docker, а не в рабочей копии.
-# FRONT_TEST_PORT - порт на 0.0.0.0 (8080), FRONT_TEST_PASSWORD - пароль admin
-# (иначе случайный), FRONT_TEST_CONTAINER - имя контейнера;
+# Вход admin / admin: стенд с выдуманными данными, пароль печатает итог и его не
+# надо доставать из контейнера, если скрипт не дошёл до конца. Обычный setup.sh
+# так не ставит. FRONT_TEST_PORT - порт на 0.0.0.0 (8080), FRONT_TEST_PASSWORD -
+# другой пароль admin, FRONT_TEST_CONTAINER - имя контейнера;
 # DOCKER - команда docker («sudo -n docker»).
 set -euo pipefail
 
@@ -102,7 +104,7 @@ if [[ "${FRONT_TEST_DEV:-}" == 1 ]]; then
   WAIT=600
 fi
 
-PASS=${FRONT_TEST_PASSWORD:-$(openssl rand -hex 8)}
+PASS=${FRONT_TEST_PASSWORD:-admin}
 fresh
 dk volume create "$VOLUME" >/dev/null
 stand_up "$NAME" "$IMAGE" "0.0.0.0:$PORT" "$PASS" \

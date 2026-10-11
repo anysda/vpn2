@@ -15,7 +15,7 @@ test.describe('настройки Telegram', () => {
     const save = card.getByRole('button', { name: 'Сохранить' })
     await expect(save).toBeDisabled()
 
-    const nick = card.getByPlaceholder('@username')
+    const nick = card.getByLabel('Никнейм админа бота', { exact: true })
     const original = await nick.inputValue()
     const temp = `e2e_admin_${Date.now().toString(36)}`
     try {

@@ -212,10 +212,15 @@ done
 header "Учётка администратора (веб-панель + AdGuard UI)"
 admin_user=$(ask "Логин" "admin")
 admin_user=$(sanitize "$admin_user")
-hint "Пароль: Enter — сгенерировать случайный 18-символьный, иначе свой"
-printf '  %b%s%b: ' "$Y" "Пароль (Enter — сгенерировать)" "$E" >&2
-read -rs admin_pass; printf '\n' >&2
-admin_pass=$(sanitize "$admin_pass")
+hint "Пароль: Enter — сгенерировать случайный 18-символьный, иначе свой от 8 символов"
+# Короче 8 панель не примет при смене пароля, ставить такой мастером тоже нельзя
+while true; do
+  printf '  %b%s%b: ' "$Y" "Пароль (Enter — сгенерировать)" "$E" >&2
+  read -rs admin_pass; printf '\n' >&2
+  admin_pass=$(sanitize "$admin_pass")
+  [[ -z "$admin_pass" || ${#admin_pass} -ge 8 ]] && break
+  fail "Пароль короче 8 символов — введите длиннее или Enter, чтобы сгенерировать"
+done
 if [[ -n "$admin_pass" ]]; then
   printf '  %b%s%b: ' "$Y" "Пароль (повтор)" "$E" >&2
   read -rs admin_pass2; printf '\n' >&2

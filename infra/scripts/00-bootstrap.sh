@@ -101,6 +101,14 @@ net.ipv6.conf.all.disable_ipv6 = 0
 # способность QUIC; sing-box без них сам ругается в логи.
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
+# hy2 с obfs salamander: обёртка сокета прячет SetReadBuffer, и quic-go молча
+# остаётся на системном дефолте (~208 КБ), rmem_max ему не помогает. Поэтому
+# поднимаем сам дефолт; UDP-пакеты экзита и хаба на 200+ Мбит/с иначе
+# теряются в UdpRcvbufErrors. Сокеты берут его при создании: sing-box
+# перезапускается по отпечатку в 10-foreign и 20-ru-router, куда входит этот файл.
+net.core.rmem_default = 8388608
+net.core.wmem_default = 8388608
+net.core.netdev_max_backlog = 5000
 # BBR + fq — выше throughput TCP (и внутри туннеля, и между нодами).
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr

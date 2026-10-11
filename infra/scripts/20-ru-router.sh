@@ -445,12 +445,14 @@ if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_
 fi
 # Перезапуск рвёт все соединения клиентов, поэтому только если sing-box читает
 # уже не то, с чем стартовал: отпечаток бинарника, юнита, конфига, сертификатов
-# экзитов и geo-баз сверяем с записанным при прошлом старте. Наборы ручных
+# экзитов, geo-баз и sysctl (буферы сокетов) сверяем с записанным при прошлом
+# старте. Наборы ручных
 # маршрутов не считаем: их sing-box перечитывает сам.
 SB_FP_FILE=/var/lib/sing-box/applied.sha256
 sb_fp=$({ cat /usr/local/bin/sing-box /etc/systemd/system/sing-box.service \
   /etc/sing-box/config.json /etc/sing-box/exit-certs/*.pem \
-  /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db 2>/dev/null || true; } \
+  /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db \
+  /etc/sysctl.d/99-anysda.conf 2>/dev/null || true; } \
   | sha256sum | cut -d' ' -f1)
 if systemctl is-active --quiet sing-box && [[ "$(cat "$SB_FP_FILE" 2>/dev/null)" == "$sb_fp" ]]; then
   echo "[$HOST_TAG]   конфиг, сертификаты и бинарник прежние — sing-box не перезапускаю"

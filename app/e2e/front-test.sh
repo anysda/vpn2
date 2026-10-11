@@ -28,9 +28,15 @@ VOLUME=$NAME-data
 DEV_VOLUMES=("$NAME-node-modules" "$NAME-nuxt")
 DATA=/var/lib/anysda-vpn2
 
-down() {
+# fresh - контейнеры и данные заново; тома dev (node_modules, .nuxt) остаются,
+# повторный запуск в dev не ставит пакеты с нуля. down - убрать всё.
+fresh() {
   stand_down "$NAME"
-  dk volume rm -f "$VOLUME" "${DEV_VOLUMES[@]}" >/dev/null 2>&1 || true
+  dk volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+}
+down() {
+  fresh
+  dk volume rm -f "${DEV_VOLUMES[@]}" >/dev/null 2>&1 || true
 }
 
 case ${1:-up} in
@@ -97,7 +103,7 @@ if [[ "${FRONT_TEST_DEV:-}" == 1 ]]; then
 fi
 
 PASS=${FRONT_TEST_PASSWORD:-$(openssl rand -hex 8)}
-down
+fresh
 dk volume create "$VOLUME" >/dev/null
 stand_up "$NAME" "$IMAGE" "0.0.0.0:$PORT" "$PASS" \
   -v "$VOLUME:$DATA" \

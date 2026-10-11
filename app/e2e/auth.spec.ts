@@ -121,7 +121,7 @@ test.describe('2FA', () => {
       // Неверный код — ошибка, форма остаётся на шаге кода.
       await code.fill(wrong())
       await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page.getByText('Код не подошёл', { exact: true })).toBeVisible()
+      await expect(page.locator('form').getByText('Код не подошёл', { exact: true })).toBeVisible()
       const loginCode = await fresh()
       await code.fill(loginCode)
       await page.getByRole('button', { name: 'Подтвердить' }).click()

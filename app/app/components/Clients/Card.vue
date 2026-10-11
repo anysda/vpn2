@@ -1,33 +1,12 @@
 <script setup lang="ts">
 import type { Client, ClientTraffic } from '~/composables/useClients'
 import { expiryLabel, fmtBytes } from '~/composables/useClients'
-import { flagFor } from '~/composables/useRoutes'
 
 const props = defineProps<{
   client: Client
   traffic?: ClientTraffic | null
-  /** Теги экзитов для выпадашки предпочитаемого экзита. */
-  exits?: string[]
 }>()
-const emit = defineEmits<{ open: [id: number], prefer: [id: number, tag: string | null] }>()
-
-// Предпочитаемый экзит: «auto» — значение «авто» в USelect (null он не держит).
-const AUTO = 'auto'
-const preferItems = computed(() => [
-  { label: '🌐', value: AUTO },
-  ...(props.exits ?? []).map(t => ({ label: flagFor(t), value: t })),
-])
-const preferValue = computed(() => props.client.preferredExit ?? AUTO)
-const preferTip = computed(() => {
-  const t = props.client.preferredExit
-  return t
-    ? `Предпочитаемый экзит: ${flagFor(t)} ${t.toUpperCase()}. Если выключен или недоступен — трафик идёт по общим правилам.`
-    : 'Предпочитаемый экзит: авто (по общим правилам). Выберите флаг, чтобы клиент ходил через этот экзит, пока он доступен.'
-})
-function onPrefer(v: string) {
-  const tag = v === AUTO ? null : v
-  if (tag !== props.client.preferredExit) emit('prefer', props.client.id, tag)
-}
+const emit = defineEmits<{ open: [id: number] }>()
 
 // Live-трафик из /api/clients/traffic перекрывает снапшот rxTotal/txTotal.
 const rx = computed(() => props.traffic?.rxBytes ?? props.client.rxTotal)
@@ -49,22 +28,6 @@ const online = computed(() => props.traffic?.online ?? false)
     @keydown.space.prevent="emit('open', client.id)"
   >
     <div class="flex items-center gap-3">
-      <UTooltip
-        :text="online
-          ? `В сети · за 5 мин ${fmtBytes(traffic?.recentBytes)}`
-          : 'Не в сети · за 5 мин нет трафика'"
-      >
-        <span class="relative flex size-2.5 shrink-0" data-testid="client-online">
-          <span
-            v-if="online"
-            class="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 animate-ping"
-          />
-          <span
-            class="relative inline-flex size-2.5 rounded-full"
-            :class="online ? 'bg-emerald-400' : 'bg-(--ui-text-dimmed)/40'"
-          />
-        </span>
-      </UTooltip>
       <div class="flex-1 min-w-0">
         <div class="font-medium text-(--ui-text-highlighted) leading-tight flex items-center gap-1.5">
           <UTooltip
@@ -106,28 +69,32 @@ const online = computed(() => props.traffic?.online ?? false)
           </UTooltip>
         </div>
       </div>
-      <UTooltip v-if="(exits ?? []).length" :text="preferTip">
-        <div class="shrink-0" @click.stop @keydown.stop>
-          <USelect
-            :model-value="preferValue"
-            :items="preferItems"
-            size="xs"
-            variant="ghost"
-            class="w-14"
-            :aria-label="`Предпочитаемый экзит клиента ${client.name}`"
-            data-testid="client-preferred-exit"
-            @update:model-value="onPrefer"
-          />
-        </div>
-      </UTooltip>
       <UBadge
         v-if="client.status === 'frozen'"
         color="neutral"
         variant="subtle"
         size="sm"
+        class="mr-2"
       >
         Заморожен
       </UBadge>
+      <UTooltip
+        v-else
+        :text="online
+          ? `В сети · за 5 мин ${fmtBytes(traffic?.recentBytes)}`
+          : 'Не в сети · за 5 мин нет трафика'"
+      >
+        <span class="relative flex size-2.5 shrink-0 mr-2" data-testid="client-online">
+          <span
+            v-if="online"
+            class="absolute inline-flex size-full rounded-full bg-emerald-400 opacity-60 animate-ping"
+          />
+          <span
+            class="relative inline-flex size-2.5 rounded-full"
+            :class="online ? 'bg-emerald-400' : 'bg-(--ui-text-dimmed)/40'"
+          />
+        </span>
+      </UTooltip>
     </div>
   </div>
 </template>

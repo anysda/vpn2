@@ -2,14 +2,14 @@
 import { useClients } from '~/composables/useClients'
 import type { ClientTraffic } from '~/composables/useClients'
 import type { Outbound } from '~/composables/useRoutes'
-import { flagFor, parseOutbound } from '~/composables/useRoutes'
+import { parseOutbound } from '~/composables/useRoutes'
+import { useScreenLayout } from '~/composables/useScreenLayout'
 
 useHead({ title: 'anysda-vpn2' })
 
-const { clients, refresh: refreshClients, update: updateClient } = useClients()
-const toast = useToast()
-
-// Экзиты для выпадашки «предпочитаемый экзит» в карточках (direct-выходы, без RU).
+const { clients, refresh: refreshClients } = useClients()
+const { layout } = useScreenLayout()
+// Экзиты для выпадашки «предпочитаемый экзит» в модалке клиента (direct-выходы, без RU).
 const { data: outboundList } = useFetch<Outbound[]>('/api/routes/outbounds', {
   default: () => [],
   server: false,
@@ -21,19 +21,6 @@ const exitTags = computed(() => [...new Set(
     .map(p => p!.tag),
 )].sort())
 
-async function setPreferredExit(id: number, tag: string | null) {
-  try {
-    await updateClient(id, { preferredExit: tag })
-    toast.add({
-      title: tag ? `Предпочитаемый экзит: ${flagFor(tag)} ${tag.toUpperCase()}` : 'Предпочитаемый экзит: авто',
-      color: 'success',
-    })
-  }
-  catch (e) {
-    const err = e as { statusMessage?: string }
-    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
-  }
-}
 const search = ref('')
 
 // Сверху — кто «в сети» (трафик за 5 мин), дальше по объёму за сутки, затем по имени.
@@ -71,59 +58,60 @@ useVisibleRefresh(refreshTraffic)
 </script>
 
 <template>
+  <!-- Колонки по раскладке пользователя («Настроить экран»); на телефоне одна: левая, под ней правая. -->
   <div class="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-6 max-w-[1600px] mx-auto">
-    <div class="space-y-6">
-      <UCard>
-        <template #header>
-          <div class="font-semibold">
-            Клиенты <span class="text-(--ui-text-muted) text-xs ml-1">{{ clients.length }}</span>
-          </div>
-        </template>
+    <div
+      v-for="side in (['left', 'right'] as const)"
+      :key="side"
+      :data-side="side"
+      class="space-y-6"
+    >
+      <div v-for="id in layout[side]" :key="id">
+        <UCard v-if="id === 'clients'">
+          <template #header>
+            <div class="font-semibold">
+              Клиенты <span class="text-(--ui-text-muted) text-xs ml-1">{{ clients.length }}</span>
+            </div>
+          </template>
 
-        <div class="space-y-3">
-          <UInput
-            v-model="search"
-            placeholder="Поиск..."
-            icon="i-lucide-search"
-            size="sm"
-            class="w-full"
-          />
-          <ClientsAddInline />
-          <div v-if="filtered.length === 0" class="text-(--ui-text-muted) text-sm py-4 text-center">
-            {{ search ? 'Ничего не найдено' : 'Пока нет клиентов' }}
-          </div>
-          <!-- список расширяется до ~5 карточек, дальше — скролл -->
-          <div v-else class="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-            <ClientsCard
-              v-for="client in filtered"
-              :key="client.id"
-              :client="client"
-              :traffic="trafficMap?.[client.id] ?? null"
-              :exits="exitTags"
-              @open="openClient"
-              @prefer="setPreferredExit"
+          <div class="space-y-3">
+            <UInput
+              v-model="search"
+              placeholder="Поиск..."
+              icon="i-lucide-search"
+              size="sm"
+              class="w-full"
             />
+            <ClientsAddInline />
+            <div v-if="filtered.length === 0" class="text-(--ui-text-muted) text-sm py-4 text-center">
+              {{ search ? 'Ничего не найдено' : 'Пока нет клиентов' }}
+            </div>
+            <!-- список расширяется до ~5 карточек, дальше — скролл -->
+            <div v-else class="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+              <ClientsCard
+                v-for="client in filtered"
+                :key="client.id"
+                :client="client"
+                :traffic="trafficMap?.[client.id] ?? null"
+                @open="openClient"
+              />
+            </div>
           </div>
-        </div>
-      </UCard>
-
-      <ClientsClientModal
-        v-model:open="modalOpen"
-        :client-id="selectedClientId"
-        @changed="refreshClients"
-      />
-
-      <BotsSection />
+        </UCard>
+        <BotsSection v-else-if="id === 'bots'" />
+        <RoutesSection v-else-if="id === 'routes'" />
+        <MonitoringSection v-else-if="id === 'monitoring'" />
+        <ClientsTop v-else-if="id === 'top'" @open="openClient" />
+        <MonitoringDns v-else-if="id === 'dns'" />
+      </div>
     </div>
 
-    <div class="space-y-6">
-      <RoutesSection />
-
-      <MonitoringSection />
-
-      <ClientsTop @open="openClient" />
-
-      <MonitoringDns />
-    </div>
+    <!-- Вне колонок: открывается и из ТОПа, когда модуля «Клиенты» на экране нет. -->
+    <ClientsClientModal
+      v-model:open="modalOpen"
+      :client-id="selectedClientId"
+      :exits="exitTags"
+      @changed="refreshClients"
+    />
   </div>
 </template>

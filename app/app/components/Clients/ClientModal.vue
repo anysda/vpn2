@@ -1,9 +1,14 @@
 <script setup lang="ts">
 import type { ClientDetail } from '~/composables/useClients'
 import { fmtBytes, formatRuDate, parseRuDate, useClientDetail, useClients } from '~/composables/useClients'
+import { flagFor } from '~/composables/useRoutes'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
-const props = defineProps<{ clientId: number | null }>()
+const props = defineProps<{
+  clientId: number | null
+  /** Теги экзитов для выпадашки предпочитаемого экзита. */
+  exits?: string[]
+}>()
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ changed: [] }>()
 
@@ -213,6 +218,36 @@ async function doReissueAll() {
   }
   finally {
     reissuing.value = false
+  }
+}
+
+// Предпочитаемый экзит: «auto» — значение «авто» в USelect (null он не держит).
+const AUTO = 'auto'
+const exitItems = computed(() => [
+  { label: '🌐 Авто', value: AUTO },
+  ...(props.exits ?? []).map(t => ({ label: `${flagFor(t)} ${t.toUpperCase()}`, value: t })),
+])
+const savingExit = ref(false)
+async function saveExit(v: string) {
+  if (!detail.value) return
+  const tag = v === AUTO ? null : v
+  if (tag === detail.value.preferredExit) return
+  savingExit.value = true
+  try {
+    await update(detail.value.id, { preferredExit: tag })
+    detail.value.preferredExit = tag
+    toast.add({
+      title: tag ? `Предпочитаемый экзит: ${flagFor(tag)} ${tag.toUpperCase()}` : 'Предпочитаемый экзит: авто',
+      color: 'success',
+    })
+    emit('changed')
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
+  }
+  finally {
+    savingExit.value = false
   }
 }
 
@@ -427,6 +462,20 @@ const limitReached = computed(() => {
               лимит снят (∞)
             </span>
           </div>
+        </UFormField>
+
+        <UFormField
+          v-if="(exits ?? []).length"
+          label="Предпочитаемый экзит"
+        >
+          <USelect
+            :model-value="detail.preferredExit ?? AUTO"
+            :items="exitItems"
+            :loading="savingExit"
+            class="w-full"
+            data-testid="client-preferred-exit"
+            @update:model-value="saveExit"
+          />
         </UFormField>
 
         <USeparator />

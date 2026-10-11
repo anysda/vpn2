@@ -20,7 +20,10 @@ async function logout() {
 }
 
 const menuItems = computed(() => [
-  [{ label: 'Мой профиль', icon: 'i-lucide-user', to: '/me' }],
+  [
+    { label: 'Мой профиль', icon: 'i-lucide-user', to: '/me' },
+    { label: 'Настроить экран', icon: 'i-lucide-layout-dashboard', to: '/screen' },
+  ],
   [{ label: 'Выйти', icon: 'i-lucide-log-out', onSelect: logout, color: 'error' as const }],
 ])
 </script>

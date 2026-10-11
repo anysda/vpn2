@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import type { ScreenLayout } from '../../shared/screen-layout'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -28,6 +29,8 @@ export const users = sqliteTable('users', {
   // Смена пароля и вкл/выкл TOTP его увеличивают — все прежние сессии
   // (cookie без состояния, отозвать их иначе нечем) получают 401.
   sessionVersion: integer('session_version').notNull().default(0),
+  // Раскладка главной, своя у каждого (shared/screen-layout.ts). null - по умолчанию.
+  screenLayout: text('screen_layout', { mode: 'json' }).$type<ScreenLayout>(),
   ...timestamps,
 })
 

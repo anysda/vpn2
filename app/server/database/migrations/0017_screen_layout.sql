@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `screen_layout` text;

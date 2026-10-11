@@ -92,7 +92,8 @@ net.ipv4.ip_forward = 1
 net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
-# AdGuard binds to 10.8.0.1:53, но wg0 поднимается позже (stage 30).
+# AdGuard слушает MGMT_IP (10.99.0.1, lo-алиас из 05-mgmt-mesh), а стадия 22
+# может стартовать его раньше, чем алиас поднят после ребута.
 # nonlocal_bind разрешает создать сокет на IP, которого ещё нет на интерфейсах.
 net.ipv4.ip_nonlocal_bind = 1
 # IPv6 left enabled (kernel default); we just don't use it in the app
@@ -112,8 +113,47 @@ net.core.netdev_max_backlog = 5000
 # BBR + fq — выше throughput TCP (и внутри туннеля, и между нодами).
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
+# Соединения внутри туннеля живут долго и простаивают: окно после паузы не
+# сбрасываем. PMTU ищем зондированием, если ICMP по пути режут. Неотправленное
+# в сокете держим коротким, чтобы мелкие ответы не стояли за закачкой.
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_notsent_lowat = 131072
 EOF
 sysctl --quiet --system
+
+# fq на основном интерфейсе. default_qdisc = fq до него не доходит: устройство
+# создаётся раньше, чем systemd-sysctl, и остаётся на pfifo_fast. flow_limit
+# 1000 вместо 100: один поток туннеля hy2 несёт трафик всех клиентов, и с
+# дефолтом fq режет его пакеты как «жадный поток».
+cat > /usr/local/sbin/anysda-fq <<'EOF'
+#!/bin/sh
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+dev=$(ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+[ -n "$dev" ] || { echo "anysda-fq: нет маршрута по умолчанию" >&2; exit 1; }
+tc qdisc show dev "$dev" root | grep -q '^qdisc fq .*flow_limit 1000p' && exit 0
+tc qdisc replace dev "$dev" root fq flow_limit 1000
+echo "anysda-fq: $dev -> fq flow_limit 1000"
+EOF
+chmod 755 /usr/local/sbin/anysda-fq
+cat > /etc/systemd/system/anysda-fq.service <<'EOF'
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+[Unit]
+Description=anysda-vpn: fq flow_limit 1000 on the default route interface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-fq
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable anysda-fq >/dev/null 2>&1
+/usr/local/sbin/anysda-fq | sed "s/^/[$HOST_TAG]   /"
 
 # systemd-networkd при каждом перезапуске (needrestart после unattended-upgrades
 # дёргает его сам) по умолчанию сносит «чужие» ip rule и маршруты — в том числе

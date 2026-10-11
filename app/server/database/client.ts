@@ -7,7 +7,9 @@ let _db: ReturnType<typeof drizzle<typeof schema>> | null = null
 export function useDb() {
   if (!_db) {
     const config = useRuntimeConfig()
-    const client = createClient({ url: config.databaseUrl })
+    // С 0.18 локальный клиент держит пул до 20 соединений к файлу; панель
+    // пишет из параллельных запросов и рассчитана на одно, как было до 0.18.
+    const client = createClient({ url: config.databaseUrl, concurrency: 1 })
     _db = drizzle(client, { schema })
   }
   return _db

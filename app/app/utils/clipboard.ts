@@ -53,7 +53,7 @@ export async function copyText(text: string): Promise<boolean> {
     ok = document.activeElement === ta && document.execCommand('copy')
   }
   catch {
-    ok = false
+    // ok остаётся false
   }
   finally {
     ta.remove()

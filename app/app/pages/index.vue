@@ -58,8 +58,8 @@ useVisibleRefresh(refreshTraffic)
 </script>
 
 <template>
-  <!-- Колонки по раскладке пользователя («Настроить экран»); на телефоне одна: левая, под ней правая. -->
   <div class="grid grid-cols-1 lg:grid-cols-[360px_minmax(0,1fr)] gap-6 max-w-[1600px] mx-auto">
+    <!-- Колонки по раскладке пользователя («Настроить экран»); на телефоне одна: левая, под ней правая. -->
     <div
       v-for="side in (['left', 'right'] as const)"
       :key="side"

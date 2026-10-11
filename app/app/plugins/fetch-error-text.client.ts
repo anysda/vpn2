@@ -7,22 +7,26 @@
  *
  * Берём текст из тела ответа и отдаём его через `statusText`: ofetch читает
  * `statusMessage` ошибки именно оттуда, и все места фронта видят его.
- * Запросы с `responseType: 'text'` (.conf, .ovpn) получают тело ошибки
- * строкой — разбираем её сами.
+ * Оборачиваем `fetch`, а не `$fetch`: Nuxt запоминает `$fetch` при импорте,
+ * и подмена `globalThis.$fetch` из плагина до него не доходит, а `fetch`
+ * ofetch берёт из `globalThis` на каждый запрос.
  */
 export default defineNuxtPlugin(() => {
-  globalThis.$fetch = globalThis.$fetch.create({
-    onResponseError({ response }) {
-      let raw: unknown = response._data
-      if (typeof raw === 'string') {
-        try { raw = JSON.parse(raw) }
-        catch { return }
-      }
-      const data = raw as { statusMessage?: unknown, message?: unknown } | null | undefined
-      const text = data?.message || data?.statusMessage
-      if (typeof text === 'string' && text) {
-        Object.defineProperty(response, 'statusText', { value: text, configurable: true })
-      }
-    },
-  })
+  const baseFetch = globalThis.fetch
+  globalThis.fetch = async (...args: Parameters<typeof fetch>) => {
+    const res = await baseFetch(...args)
+    if (res.ok || res.status < 400) return res
+    let text: unknown
+    try {
+      const data = JSON.parse(await res.clone().text()) as { statusMessage?: unknown, message?: unknown } | null
+      text = data?.message || data?.statusMessage
+    }
+    catch {
+      return res
+    }
+    if (typeof text === 'string' && text) {
+      Object.defineProperty(res, 'statusText', { value: text, configurable: true })
+    }
+    return res
+  }
 })

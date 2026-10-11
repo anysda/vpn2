@@ -41,7 +41,7 @@ async function initPanel() {
 
   // 1. Run migrations
   const dbUrl = cfg.databaseUrl
-  const localClient = createClient({ url: dbUrl })
+  const localClient = createClient({ url: dbUrl, concurrency: 1 })
   const localDb = drizzle(localClient)
 
   const migrationsFolder = resolve(process.cwd(), 'server/database/migrations')

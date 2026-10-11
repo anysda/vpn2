@@ -22,7 +22,7 @@ STAMP_DIR=/var/anysda/.stamps
 STAGE='22-adguard'
 AGH_DIR=/opt/AdGuardHome
 AGH_BIN=$AGH_DIR/AdGuardHome
-AGH_VER='v0.107.61'
+AGH_VER='v0.107.79'
 
 mkdir -p "$AGH_DIR" /etc/anysda
 

@@ -124,7 +124,7 @@ admin:
 #   #                                   # (подбирается blockcheck2.sh на entry;
 #   #                                   # scale из wssize задаёт поправку окна
 #   #                                   # в nft — см. README, раздел YouTube)
-#   # zapret_ref: "2c21faa8..."         # пин коммита bol-van/zapret2
+#   # zapret_ref: "6b6c63e3..."         # пин коммита bol-van/zapret2 (v1.0.5.2)
 #   # domains: "youtube.com googlevideo.com ..."   # заменить список суффиксов
 
 # Кастомные порты (опционально). Дефолты подходят для большинства настроек.

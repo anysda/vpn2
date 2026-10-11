@@ -46,8 +46,9 @@ YT_ROUTE="${YT_ROUTE:-off}"
 YT_MARK="${YT_MARK:-256}"
 YT_ZAPRET_QUEUE="${YT_ZAPRET_QUEUE:-200}"
 YT_ZAPRET_REPO="${YT_ZAPRET_REPO:-https://github.com/bol-van/zapret2}"
-# Пин коммита — воспроизводимость сборки. Тот же, что проверен дома (CT302).
-YT_ZAPRET_REF="${YT_ZAPRET_REF:-2c21faa80e1acb71ddceb8b49176f266b7d33f05}"
+# Пин коммита — воспроизводимость сборки. Релиз v1.0.5.2 (тег лёгкий, сам
+# коммит здесь — с ним сравнивается rev-parse HEAD ниже).
+YT_ZAPRET_REF="${YT_ZAPRET_REF:-6b6c63e3385fa73f8af3be4a69171e947f5a319d}"
 YT_ZAPRET_BASE="${YT_ZAPRET_BASE:-/opt/zapret2}"
 YT_ZAPRET_BIN="$YT_ZAPRET_BASE/binaries/my/nfqws2"
 # Стратегия десинка. Две части, обе обязательны:
@@ -153,7 +154,7 @@ elif [[ "$(git -C "$YT_ZAPRET_BASE" rev-parse HEAD)" != "$YT_ZAPRET_REF" ]]; the
   git -C "$YT_ZAPRET_BASE" checkout -q "$YT_ZAPRET_REF"
   SRC_CHANGED=1
 fi
-echo "[$HOST_TAG]   HEAD=$(git -C "$YT_ZAPRET_BASE" rev-parse --short HEAD)"
+echo "[$HOST_TAG]   HEAD=$(git -C "$YT_ZAPRET_BASE" describe --tags --always) ($(git -C "$YT_ZAPRET_BASE" rev-parse --short HEAD))"
 
 # ----------------------------------------------------------------------------
 # 3. Сборка nfqws2

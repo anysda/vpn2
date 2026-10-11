@@ -80,6 +80,9 @@ grep 'targets:' /etc/anysda/vmsingle-scrape.yml | sed "s/^/[$HOST_TAG]   /"
 # latencyOffset=1s: дефолт VM — 30с, инстант-запросы тогда смотрят на now-30с
 # и панель видит метрики с задержкой полминуты (мёртвая нода «живёт» ~40с).
 # ----------------------------------------------------------------------------
+# Пин версии: с :latest docker run брал образ, скачанный когда-то первым, и
+# узлы жили на разных версиях.
+VM_VER='v1.153.0'
 docker rm -f vmsingle >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
@@ -92,7 +95,7 @@ docker run -d \
   -v /etc/localtime:/etc/localtime:ro \
   -v /var/lib/vmsingle:/storage \
   -v /etc/anysda/vmsingle-scrape.yml:/etc/vm/scrape.yml:ro \
-  victoriametrics/victoria-metrics:latest \
+  "victoriametrics/victoria-metrics:${VM_VER}" \
   -storageDataPath=/storage \
   -httpListenAddr=127.0.0.1:8428 \
   -retentionPeriod=7d \

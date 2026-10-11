@@ -3,8 +3,8 @@
 // она сама), а то, чего API не позволяет (просроченный срок, привязка Telegram,
 // давность, история трафика), - через схему БД панели.
 //
-// Запускается в образе стадии builder (там исходники и node_modules) в одной
-// сети с панелью и с её томом /var/lib/anysda-vpn2:
+// Запускается в контейнере панели (e2e/front-test.sh кладёт его и schema.ts в
+// /app/.output/server/front-test, к модулям сервера; в dev-режиме - прямо из app/):
 //   PANEL_URL, ADMIN_PASSWORD, DB_URL, LIVE_FILE, EXIT_TAGS
 import { writeFileSync } from 'node:fs'
 import { createClient } from '@libsql/client'

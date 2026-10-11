@@ -8,8 +8,14 @@
 #   ./setup.sh --front-test          поднять (или пересоздать)
 #   ./setup.sh --front-test-down     остановить и удалить
 #
+# Образ панели тот же, что ставит стадия 30-frontend: PANEL_IMAGE
+# (ghcr.io/anysda/vpn2/panel:dev), docker pull, без сборки.
+# FRONT_TEST_DEV=1 - вместо собранной панели `nuxt dev` из app/ этой рабочей
+# копии (в том же образе: node 22 и wg/openssl/ip, нужные серверу панели):
+# правка файла в app/ сразу видна в браузере (HMR), node_modules и .nuxt лежат
+# в томах docker, а не в рабочей копии.
 # FRONT_TEST_PORT - порт на 0.0.0.0 (8080), FRONT_TEST_PASSWORD - пароль admin
-# (иначе случайный), FRONT_TEST_CONTAINER, FRONT_TEST_IMAGE - имена;
+# (иначе случайный), FRONT_TEST_CONTAINER - имя контейнера;
 # DOCKER - команда docker («sudo -n docker»).
 set -euo pipefail
 
@@ -17,20 +23,20 @@ APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source-path=SCRIPTDIR source=support/panel-stand.sh
 source "$APP_DIR/e2e/support/panel-stand.sh"
 NAME=${FRONT_TEST_CONTAINER:-vpn2-front-test}
-IMAGE=${FRONT_TEST_IMAGE:-vpn2-panel:front-test}
 PORT=${FRONT_TEST_PORT:-8080}
 VOLUME=$NAME-data
+DEV_VOLUMES=("$NAME-node-modules" "$NAME-nuxt")
 DATA=/var/lib/anysda-vpn2
 
 down() {
   stand_down "$NAME"
-  dk volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+  dk volume rm -f "$VOLUME" "${DEV_VOLUMES[@]}" >/dev/null 2>&1 || true
 }
 
 case ${1:-up} in
   down)
     down
-    echo "front-test остановлен: контейнеры $NAME, $NAME-caddy и том $VOLUME удалены"
+    echo "front-test остановлен: контейнеры $NAME, $NAME-caddy и тома $VOLUME ${DEV_VOLUMES[*]} удалены"
     exit 0
     ;;
   up) ;;
@@ -69,10 +75,26 @@ ensure_host_tools() {
 }
 ensure_host_tools
 
-dk build -t "$IMAGE" "$APP_DIR"
-# Стадия builder того же Dockerfile (из кэша): в ней исходники и node_modules,
-# наполнитель пишет через схему БД панели.
-dk build --target builder -t "$IMAGE-seed" "$APP_DIR"
+# Как 30-frontend: registry недоступен - берём образ, если он уже есть.
+IMAGE=${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}
+dk pull "$IMAGE" || dk image inspect "$IMAGE" >/dev/null \
+  || { echo "образа $IMAGE нет ни в registry, ни локально" >&2; exit 1; }
+
+# Собранная панель: наполнитель кладём к модулям сервера (.output/server/
+# node_modules, там есть drizzle-orm и @libsql/client). Dev: всё из app/.
+SEED=/app/.output/server/front-test
+EXTRA=()
+WAIT=60
+if [[ "${FRONT_TEST_DEV:-}" == 1 ]]; then
+  SEED=/src
+  # pnpm 10, как в Dockerfile и CI; хранилище пакетов в том же томе.
+  EXTRA=(-w /src -e NODE_ENV=development -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+    -v "$APP_DIR:/src" -v "${DEV_VOLUMES[0]}:/src/node_modules" -v "${DEV_VOLUMES[1]}:/src/.nuxt")
+  STAND_CMD=(sh -c 'corepack pnpm@10 install --frozen-lockfile --store-dir /src/node_modules/.pnpm-store \
+    && exec corepack pnpm@10 exec nuxt dev --host 0.0.0.0 --port 51821')
+  # первый запуск ставит node_modules в пустой том
+  WAIT=600
+fi
 
 PASS=${FRONT_TEST_PASSWORD:-$(openssl rand -hex 8)}
 down
@@ -81,13 +103,17 @@ stand_up "$NAME" "$IMAGE" "0.0.0.0:$PORT" "$PASS" \
   -v "$VOLUME:$DATA" \
   -e FAKE_DEMO=1 -e FAKE_LIVE_FILE=$DATA/front-test-live.json \
   -e NUXT_TGBOT_SECRET="$(openssl rand -hex 16)" \
-  -e NUXT_NODE_HOSTS="ru=203.0.113.10,nl=198.51.100.21,fi=198.51.100.37,us=192.0.2.54"
-stand_wait "$NAME" "http://127.0.0.1:$PORT"
+  -e NUXT_NODE_HOSTS="ru=203.0.113.10,nl=198.51.100.21,fi=198.51.100.37,us=192.0.2.54" \
+  ${EXTRA[@]+"${EXTRA[@]}"}
+stand_wait "$NAME" "http://127.0.0.1:$PORT" "$WAIT"
 
-dk run --rm --network "$NAME" -v "$VOLUME:$DATA" \
-  -e PANEL_URL=http://panel:51821 -e ADMIN_PASSWORD="$PASS" -e EXIT_TAGS="$EXIT_TAGS" \
+# Наполнитель пишет через схему БД панели и идёт в контейнере панели;
+# schema.ts node 22 читает сам.
+[[ "$SEED" == /src ]] || tar -c -C "$APP_DIR" e2e/support/front-test-seed.mjs server/database/schema.ts \
+  | dk exec -i "$NAME" sh -c "mkdir -p $SEED && tar -x -C $SEED"
+dk exec -e PANEL_URL=http://127.0.0.1:51821 -e ADMIN_PASSWORD="$PASS" -e EXIT_TAGS="$EXIT_TAGS" \
   -e DB_URL=file:$DATA/db.sqlite -e LIVE_FILE=$DATA/front-test-live.json \
-  "$IMAGE-seed" node e2e/support/front-test-seed.mjs
+  "$NAME" node --experimental-strip-types $SEED/e2e/support/front-test-seed.mjs
 
 HOST_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo

@@ -22,7 +22,8 @@ stand_down() {
 }
 
 # stand_up <имя> <образ> <адрес:порт Caddy на хосте> <пароль admin> [аргументы docker run панели...]
-# Хранилище /var/lib/anysda-vpn2 (tmpfs, том) и лишние -e передаёт вызывающий.
+# Хранилище /var/lib/anysda-vpn2 (tmpfs, том) и лишние -e передаёт вызывающий,
+# команду вместо штатной (если нужна) - массив STAND_CMD.
 stand_up() {
   local name=$1 image=$2 publish=$3 pass=$4
   shift 4
@@ -38,7 +39,7 @@ stand_up() {
     -e NUXT_EXIT_TAGS="$EXIT_TAGS" -e NUXT_MGMT_IPS="$MGMT_IPS" \
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
-    "$@" "$image" >/dev/null
+    "$@" "$image" ${STAND_CMD[@]+"${STAND_CMD[@]}"} >/dev/null
 
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"
   dk exec -d "$name" node /tmp/fake-backends.mjs
@@ -98,11 +99,11 @@ IN
     sh -c 'printf "%s\n" "$CADDYFILE" > /tmp/Caddyfile && exec caddy run --adapter caddyfile --config /tmp/Caddyfile' >/dev/null
 }
 
-# stand_wait <имя> <url>: дождаться /api/version, напечатать его. Не дождались -
-# хвост журнала панели и код 1.
+# stand_wait <имя> <url> [секунд, 60]: дождаться /api/version, напечатать его.
+# Не дождались - хвост журнала панели и код 1.
 stand_wait() {
-  local name=$1 url=$2
-  for _ in $(seq 60); do
+  local name=$1 url=$2 sec=${3:-60}
+  for _ in $(seq "$sec"); do
     curl -fsS "$url/api/version" >/dev/null 2>&1 && break
     sleep 1
   done

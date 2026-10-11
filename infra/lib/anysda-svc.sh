@@ -204,18 +204,22 @@ DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io)
 # shellcheck disable=SC2034
 DOCKER_SKIP=(docker-ce-rootless-extras- docker-buildx-plugin- docker-compose-plugin-)
 docker_apt_source() {
-  local list=/etc/apt/sources.list.d/docker.list line
+  local list=/etc/apt/sources.list.d/docker.list line distro
+  # узлы - Ubuntu, стенд фронта (--front-test) бывает и на Debian: у Docker
+  # отдельное репо под каждую
+  distro=$(. /etc/os-release && echo "$ID")
+  [[ "$distro" == debian ]] || distro=ubuntu
   if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
     apt_get update -qq
     apt_get install -y -qq ca-certificates curl gnupg >/dev/null
   fi
   install -m 0755 -d /etc/apt/keyrings
   if [[ ! -s /etc/apt/keyrings/docker.gpg ]]; then
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    curl -fsSL "https://download.docker.com/linux/$distro/gpg" \
       | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
   fi
-  line="deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+  line="deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
   [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
 }
 

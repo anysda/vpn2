@@ -169,9 +169,6 @@ ${PANEL_DOMAIN} {
 :80 {
     redir https://${PANEL_DOMAIN}{uri} permanent
 }
-${PANEL_DOMAIN}:3001 {
-    reverse_proxy 127.0.0.1:${AGH_PORT}
-}
 EOF
 else
   echo "[$HOST_TAG]   домен не задан — HTTP на :80"
@@ -210,14 +207,13 @@ else
     encode gzip
     import to_panel
 }
-:3001 {
-    reverse_proxy 127.0.0.1:${AGH_PORT}
-}
 EOF
 fi
 ufw allow 80/tcp   comment 'caddy HTTP + ACME challenge' || true
 ufw allow 443/tcp  comment 'caddy HTTPS панель'          || true
-ufw allow 3001/tcp comment 'AdGuard Home web UI'         || true
+# AdGuard открывается через панель по /adguard/ (её сессия, VPN2-142).
+# Отдельный порт 3001 с прошлых установок закрываем.
+ufw delete allow 3001/tcp >/dev/null 2>&1 || true
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }
 svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile

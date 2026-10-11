@@ -180,3 +180,21 @@ test.describe('2FA', () => {
     await loginApi(page)
   })
 })
+
+test.describe('AdGuard под /adguard/', () => {
+  test('без сессии панели уводит на вход, с сессией пускает', async ({ page }) => {
+    const anon = await page.request.get('/adguard/', { headers: { accept: 'text/html' }, maxRedirects: 0 })
+    expect(anon.status()).toBe(302)
+    expect(anon.headers().location).toBe('/login')
+    const api = await page.request.get('/adguard/control/status', { maxRedirects: 0 })
+    expect(api.status()).toBe(401)
+
+    await loginApi(page)
+    const authed = await page.request.get('/adguard/', { headers: { accept: 'text/html' }, maxRedirects: 0 })
+    // В e2e у AdGuard нет учётки: 503 значит, что запрос дошёл до прокси, а не
+    // до страницы 404 или входа.
+    expect(authed.status()).toBe(503)
+    const authedApi = await page.request.get('/adguard/control/status', { maxRedirects: 0 })
+    expect(authedApi.status()).toBe(503)
+  })
+})

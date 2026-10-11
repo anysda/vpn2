@@ -20,11 +20,6 @@ onMounted(() => {
 onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
 useVisibleRefresh(refresh)
 
-const aghOrigin = computed(() => {
-  if (typeof window === 'undefined') return ''
-  return `${window.location.protocol}//${window.location.hostname}:3001`
-})
-
 function fmt(n: number | undefined | null): string {
   if (n == null) return '—'
   return new Intl.NumberFormat('ru-RU').format(Math.floor(n))
@@ -79,8 +74,7 @@ function fmt(n: number | undefined | null): string {
           <span class="ml-1">({{ data.topBlocked.count }})</span>
         </div>
         <a
-          v-if="aghOrigin"
-          :href="aghOrigin"
+          href="/adguard/"
           target="_blank"
           rel="noopener"
           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[#00ab5a] hover:bg-[#019a51] text-white text-sm font-medium transition-colors shrink-0"

@@ -59,11 +59,10 @@ print_summary() {
   _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
   if [[ -n "${PANEL_DOMAIN:-}" ]]; then
     _panel_url="https://${PANEL_DOMAIN}/"
-    _agh_url="https://${PANEL_DOMAIN}:3001/"
   else
     _panel_url="http://${_ru_host}/"
-    _agh_url="http://${_ru_host}:3001/"
   fi
+  _agh_url="${_panel_url}adguard/"
   _admin_user="${ADMIN_USER:-admin}"
   # Сам пароль в рамку не выводим: она остаётся в логах деплоя и в истории
   # терминала. Заданный в config.yaml человек ввёл сам в ./setup.sh, а

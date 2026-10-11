@@ -3,7 +3,7 @@
 # Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh). WG/OpenVPN-клиенты
 # резолвят через него (см. ufw-правила → 10.99.0.1:53 в стадиях 28/29);
 # sing-box тоже использует его как DNS-резолвер (gen-router-config.py).
-# Web UI on 127.0.0.1:${AGH_PORT} — proxied by Caddy at :3001 (stage 30).
+# Web UI on 127.0.0.1:${AGH_PORT} — панель отдаёт его по /adguard/ под своей сессией.
 
 set -euo pipefail
 
@@ -293,4 +293,4 @@ ufw delete allow proto tcp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"
-echo "[$HOST_TAG] $STAGE done — AdGuard UI proxied via Caddy after stage 30"
+echo "[$HOST_TAG] $STAGE done — веб-интерфейс AdGuard открывает панель по /adguard/"

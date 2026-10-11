@@ -89,7 +89,7 @@ WireGuard client  ·  OpenVPN client  ·  IKEv2 client (iOS/macOS/Win/Android)
  │   остальное → foreign-best (hy2-* exit'ы; выбирает failover-watchdog)
  ├─ nfqws2 (zapret2) — обход DPI для YouTube, только помеченный трафик
  ├─ anysda-vpn2 panel  (Caddy → :51821)
- ├─ AdGuard Home + Caddy
+ ├─ AdGuard Home (интерфейс — в панели по /adguard/)
  ├─ VictoriaMetrics (scraping mgmt-mesh 10.99.0.0/24)
  └─ Telegram-бот (контейнер) — егрессит в Telegram через exit
        hy2-{tag}-direct → exit-нода → internet

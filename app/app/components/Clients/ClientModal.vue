@@ -424,7 +424,7 @@ const limitReached = computed(() => {
         <!-- Device limit -->
         <UFormField label="Лимит девайсов">
           <div class="flex gap-2 items-center">
-            <UButtonGroup>
+            <UFieldGroup>
               <UButton
                 icon="i-lucide-minus"
                 color="neutral"
@@ -449,7 +449,7 @@ const limitReached = computed(() => {
                 :disabled="unlimited"
                 @click="deviceLimit = deviceLimit + 1; saveLimit()"
               />
-            </UButtonGroup>
+            </UFieldGroup>
             <UButton
               :color="unlimited ? 'primary' : 'neutral'"
               :variant="unlimited ? 'solid' : 'soft'"

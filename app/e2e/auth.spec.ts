@@ -196,5 +196,10 @@ test.describe('AdGuard под /adguard/', () => {
     expect(authed.status()).toBe(503)
     const authedApi = await page.request.get('/adguard/control/status', { maxRedirects: 0 })
     expect(authedApi.status()).toBe(503)
+    // Выход и форма входа самого AdGuard не открываются: вели бы в тупик.
+    const logout = await page.request.get('/adguard/control/logout', { maxRedirects: 0 })
+    expect([logout.status(), logout.headers().location]).toEqual([302, '/'])
+    const form = await page.request.get('/adguard/login.html', { maxRedirects: 0 })
+    expect([form.status(), form.headers().location]).toEqual([302, '/adguard/'])
   })
 })

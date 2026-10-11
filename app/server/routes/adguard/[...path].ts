@@ -40,6 +40,10 @@ export default defineEventHandler(async (event) => {
   const url = getRequestURL(event)
   const rest = url.pathname.slice(PREFIX.length)
   if (!rest) return sendRedirect(event, `${PREFIX}/${url.search}`)
+  // Своего входа и выхода у AdGuard здесь нет: учётку подставляет панель, а его
+  // форма вела бы в тупик — пароля AdGuard человек не знает.
+  if (rest === '/control/logout') return sendRedirect(event, '/')
+  if (rest === '/login.html') return sendRedirect(event, `${PREFIX}/`)
 
   const auth = basicAuth()
   if (!auth) throw createError({ statusCode: 503, statusMessage: 'AdGuard не настроен' })

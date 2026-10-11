@@ -141,6 +141,13 @@ validate_tag() {
   return 0
 }
 
+# Панель с выдуманными данными в docker на этой машине, без вопросов и без
+# config.yaml: посмотреть фронт в браузере. Подробности в app/e2e/front-test.sh.
+case "${1:-}" in
+  --front-test)      exec bash "$REPO_ROOT/app/e2e/front-test.sh" up ;;
+  --front-test-down) exec bash "$REPO_ROOT/app/e2e/front-test.sh" down ;;
+esac
+
 printf '
 ' >&2
 printf '%b  ┌────────────────────────────────────────────┐%b

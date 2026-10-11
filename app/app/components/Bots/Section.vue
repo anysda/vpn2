@@ -74,6 +74,26 @@ onMounted(() => {
 })
 onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
 useVisibleRefresh(refresh)
+
+const message = ref('')
+const sending = ref(false)
+async function sendMessage() {
+  const text = message.value.trim()
+  if (!text) return
+  sending.value = true
+  try {
+    const res = await $fetch<{ recipients: number }>('/api/admin/broadcast', { method: 'POST', body: { text } })
+    toast.add({ title: `Отправлено: ${res.recipients}`, color: 'success' })
+    message.value = ''
+  }
+  catch (e) {
+    const err = e as { statusMessage?: string }
+    toast.add({ title: 'Ошибка', color: 'error', description: err.statusMessage })
+  }
+  finally {
+    sending.value = false
+  }
+}
 </script>
 
 <template>
@@ -98,6 +118,10 @@ useVisibleRefresh(refresh)
       <UFormField label="Token" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput
           v-model="newToken"
+          autocomplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
           type="text"
           :placeholder="data?.bot_token_masked || ''"
           class="w-full font-mono text-xs"
@@ -107,6 +131,10 @@ useVisibleRefresh(refresh)
       <UFormField label="Chat ID" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput
           v-model="newChatId"
+          autocomplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
           placeholder=""
           inputmode="numeric"
           class="w-full font-mono text-xs"
@@ -119,7 +147,11 @@ useVisibleRefresh(refresh)
       >
         <UInput
           v-model="newAdminUsername"
-          placeholder="@username"
+          autocomplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          placeholder="@ник"
           class="w-full font-mono text-xs"
         />
       </UFormField>
@@ -132,6 +164,31 @@ useVisibleRefresh(refresh)
           @click="save"
         >
           Сохранить
+        </UButton>
+      </div>
+
+      <UFormField label="Сообщение юзерам" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
+        <UTextarea
+          v-model="message"
+          autocomplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          autoresize
+          :rows="2"
+          :maxlength="4096"
+          class="w-full text-xs"
+        />
+      </UFormField>
+
+      <div v-if="message.trim()" class="flex justify-end">
+        <UButton
+          size="xs"
+          icon="i-lucide-send"
+          :loading="sending"
+          @click="sendMessage"
+        >
+          Отправить
         </UButton>
       </div>
     </div>

@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import type { H3Event } from 'h3'
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { accounts, users } from '../database/schema'
@@ -15,11 +18,36 @@ import { accounts, users } from '../database/schema'
  *     из IdP: имя человек меняет сам, а auto-link по почте — вектор захвата.
  *     Почту better-auth получает от нас (синтетическую почту выбранной учётки),
  *     не от IdP.
- *  3. Кто вообще может войти — задаётся явным списком uuid (`sso.allowedSubs`).
+ *  3. Кто вообще может войти — задаётся явным списком uuid (`allowedSubs`).
  *     Пустой список = не пустит никого; отсутствие привязки — не повод её создать.
  */
 
 export const SSO_PROVIDER = 'authentik'
+
+/**
+ * Настройки SSO задаются в профиле панели и лежат здесь. Блок `sso:` в
+ * config.yaml (через env стадии 30) только засевает их, пока файла нет: после
+ * первого сохранения из профиля главнее панель, повторный деплой файл не трогает.
+ */
+const RUNTIME_PATH = '/etc/anysda/sso-runtime.json'
+
+/** То, что хранится и правится в профиле. */
+export interface SsoStored {
+  enabled: boolean
+  /** адрес Authentik (https://auth.example.com) или сразу discovery URL */
+  authentikUrl: string
+  /** slug приложения в Authentik; не нужен, если authentikUrl — discovery URL */
+  appSlug: string
+  clientId: string
+  clientSecret: string
+  /** «<sub>» или «<sub>:<логин>» через запятую */
+  allowedSubs: string
+  label: string
+  autoRedirect: boolean
+  passwordLogin: boolean
+  /** адрес возврата, его же надо прописать у провайдера в Authentik */
+  redirectUrl: string
+}
 
 export interface SsoSettings {
   enabled: boolean
@@ -34,7 +62,7 @@ export interface SsoSettings {
   redirectUrl: string
 }
 
-function parseAllowedSubs(raw: string): Map<string, string | null> {
+export function parseAllowedSubs(raw: string): Map<string, string | null> {
   const allowed = new Map<string, string | null>()
   for (const part of raw.split(',')) {
     const item = part.trim()
@@ -46,19 +74,98 @@ function parseAllowedSubs(raw: string): Map<string, string | null> {
   return allowed
 }
 
-export function ssoSettings(): SsoSettings {
+const WELL_KNOWN = '/.well-known/openid-configuration'
+const AUTHENTIK_DISCOVERY = /^(.+?)\/application\/o\/([^/]+)\/\.well-known\/openid-configuration$/
+
+/** Discovery URL из адреса Authentik и slug — как в config2env.py. */
+export function discoveryFrom(authentikUrl: string, appSlug: string): string {
+  const url = authentikUrl.trim().replace(/\/+$/, '')
+  if (!url) return ''
+  if (url.includes(WELL_KNOWN)) return url
+  return `${url}/application/o/${appSlug.trim() || 'vpn2'}${WELL_KNOWN}`
+}
+
+/** Засев из env стадии 30: так было до настроек в профиле. */
+function seedFromConfig(): SsoStored {
   const cfg = useRuntimeConfig()
   const oidc = cfg.oauth.oidc
+  const discovery = String(oidc.openidConfig ?? '')
+  const m = AUTHENTIK_DISCOVERY.exec(discovery)
   return {
     enabled: !!cfg.public.sso.enabled,
-    autoRedirect: !!cfg.public.sso.autoRedirect,
-    passwordLogin: cfg.sso.passwordLogin !== false,
-    label: String(cfg.public.sso.label || 'Authentik'),
-    allowed: parseAllowedSubs(String(cfg.sso.allowedSubs ?? '')),
-    discoveryUrl: String(oidc.openidConfig ?? ''),
+    authentikUrl: m ? m[1]! : discovery,
+    appSlug: m ? m[2]! : '',
     clientId: String(oidc.clientId ?? ''),
     clientSecret: String(oidc.clientSecret ?? ''),
+    allowedSubs: String(cfg.sso.allowedSubs ?? ''),
+    label: String(cfg.public.sso.label || 'Authentik'),
+    autoRedirect: !!cfg.public.sso.autoRedirect,
+    passwordLogin: cfg.sso.passwordLogin !== false,
     redirectUrl: String(oidc.redirectURL ?? ''),
+  }
+}
+
+let cached: { stored: SsoStored, fromPanel: boolean } | null = null
+
+function load(): { stored: SsoStored, fromPanel: boolean } {
+  if (cached) return cached
+  const seed = seedFromConfig()
+  try {
+    if (existsSync(RUNTIME_PATH)) {
+      const parsed = JSON.parse(readFileSync(RUNTIME_PATH, 'utf-8')) as Partial<SsoStored>
+      const stored = { ...seed }
+      for (const key of Object.keys(seed) as (keyof SsoStored)[]) {
+        if (typeof parsed[key] === typeof seed[key]) (stored as Record<string, unknown>)[key] = parsed[key]
+      }
+      cached = { stored, fromPanel: true }
+      return cached
+    }
+  }
+  catch (err) {
+    // Битый файл — не повод запереть панель: живём на засеве из config.yaml.
+    useLogger().warn({ err }, 'failed to read sso-runtime.json')
+  }
+  cached = { stored: seed, fromPanel: false }
+  return cached
+}
+
+/** Настройки как в профиле; `fromPanel` — сохранены ли они уже из панели. */
+export function readSsoStored() {
+  const { stored, fromPanel } = load()
+  return { stored: { ...stored }, fromPanel }
+}
+
+export function writeSsoStored(data: SsoStored) {
+  const dir = dirname(RUNTIME_PATH)
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  writeFileSync(RUNTIME_PATH, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
+  cached = { stored: { ...data }, fromPanel: true }
+}
+
+export function maskSecret(secret: string): string {
+  if (!secret) return ''
+  if (secret.length < 12) return '••••••'
+  return `${secret.slice(0, 4)}••••••${secret.slice(-2)}`
+}
+
+/** Адрес возврата по адресу, с которого открыт профиль: его вписывают в провайдер. */
+export function defaultRedirectUrl(event: H3Event): string {
+  const proto = useRuntimeConfig().session.cookie.secure ? 'https' : getRequestProtocol(event, { xForwardedProto: true })
+  return `${proto}://${getRequestHost(event, { xForwardedHost: true })}/auth/authentik`
+}
+
+export function ssoSettings(): SsoSettings {
+  const s = load().stored
+  return {
+    enabled: s.enabled,
+    autoRedirect: s.autoRedirect,
+    passwordLogin: s.passwordLogin,
+    label: s.label || 'Authentik',
+    allowed: parseAllowedSubs(s.allowedSubs),
+    discoveryUrl: discoveryFrom(s.authentikUrl, s.appSlug),
+    clientId: s.clientId,
+    clientSecret: s.clientSecret,
+    redirectUrl: s.redirectUrl,
   }
 }
 
@@ -142,4 +249,25 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
   }
 
   return target
+}
+
+/**
+ * Читает discovery: отвечает ли там OpenID-провайдер. Для кнопки «Проверить»
+ * в профиле и перед выключением парольного входа.
+ */
+export async function probeDiscovery(url: string): Promise<{ ok: true, issuer: string } | { ok: false, message: string }> {
+  let res: Response
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { accept: 'application/json' } })
+  }
+  catch (err) {
+    const reason = err instanceof Error && err.name === 'TimeoutError' ? 'нет ответа за 5 секунд' : 'адрес недоступен'
+    return { ok: false, message: `Discovery не прочитан: ${reason}` }
+  }
+  if (!res.ok) return { ok: false, message: `Discovery не прочитан: HTTP ${res.status}` }
+  const doc = await res.json().catch(() => null) as { issuer?: unknown, authorization_endpoint?: unknown } | null
+  if (!doc || typeof doc.issuer !== 'string' || typeof doc.authorization_endpoint !== 'string') {
+    return { ok: false, message: 'По адресу не discovery OpenID: нет issuer или authorization_endpoint' }
+  }
+  return { ok: true, issuer: doc.issuer }
 }

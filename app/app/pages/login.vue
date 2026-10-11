@@ -3,7 +3,9 @@ definePageMeta({ layout: false })
 
 const { loggedIn, fetch: refreshSession } = useAuthSession()
 const route = useRoute()
-const { sso } = useRuntimeConfig().public
+// Свежие настройки SSO: их могли поменять в профиле перед выходом.
+const { sso, load: loadSso } = useSsoPublic()
+await loadSso()
 
 if (loggedIn.value) {
   await navigateTo('/')
@@ -12,9 +14,9 @@ if (loggedIn.value) {
 // Break-glass: /login?direct=1 показывает форму даже при включённом SSO. Сюда же
 // приводит любая ошибка входа через IdP — иначе авторедирект зациклил бы её.
 const ssoError = computed(() => (route.query.error as string | undefined) ?? null)
-const showForm = computed(() => !sso.enabled || !sso.autoRedirect || route.query.direct !== undefined || !!ssoError.value)
+const showForm = computed(() => !sso.value.enabled || !sso.value.autoRedirect || route.query.direct !== undefined || !!ssoError.value)
 
-if (sso.enabled && !showForm.value) {
+if (sso.value.enabled && !showForm.value) {
   await navigateTo('/auth/authentik', { external: true })
 }
 

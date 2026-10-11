@@ -7,8 +7,8 @@ export default defineNuxtRouteMiddleware((to) => {
   // Бесшовность: неавторизованного уносим прямо в Authentik, формы он не видит
   // вообще. external — потому что /auth/authentik это серверный маршрут (там
   // 302 в IdP), а не страница Nuxt.
-  const { sso } = useRuntimeConfig().public
-  if (sso.enabled && sso.autoRedirect) {
+  const { sso } = useSsoPublic()
+  if (sso.value.enabled && sso.value.autoRedirect) {
     return navigateTo('/auth/authentik', { external: true })
   }
 

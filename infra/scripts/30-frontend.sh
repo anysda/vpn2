@@ -87,6 +87,12 @@ else
   SSO_REDIRECT_URL=""
   echo "[$HOST_TAG]   SSO: выключен"
 fi
+# После первого сохранения в профиле панели главнее её настройки: env выше
+# только засевает их, файл стадия не трогает.
+SSO_RUNTIME=/etc/anysda/sso-runtime.json
+if [[ -f "$SSO_RUNTIME" ]]; then
+  echo "[$HOST_TAG]   SSO: настроен в профиле панели ($SSO_RUNTIME), блок sso: из config.yaml не применяется"
+fi
 
 TPL=/tmp/anysda/anysda-config.yaml.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
@@ -331,7 +337,10 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
 else
   echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
 fi
-if [[ "$SSO_ENABLED" == "true" ]]; then
+if [[ -f "$SSO_RUNTIME" ]]; then
+  echo "[$HOST_TAG]  Вход:          как настроен в профиле панели; break-glass /login?direct=1"
+  echo "[$HOST_TAG]                 $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"
+elif [[ "$SSO_ENABLED" == "true" ]]; then
   echo "[$HOST_TAG]  Вход:          через Authentik (бесшовно)"
   echo "[$HOST_TAG]  Break-glass:   https://${PANEL_DOMAIN}/login?direct=1"
   echo "[$HOST_TAG]                 $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"

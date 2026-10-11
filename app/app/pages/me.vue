@@ -5,7 +5,7 @@ useHead({ title: 'Профиль — anysda-vpn2' })
 
 const { user, loginMethod, fetch: refreshSession } = useAuthSession()
 const toast = useToast()
-const { sso } = useRuntimeConfig().public
+const { sso, load: loadSso } = useSsoPublic()
 
 const viaSso = computed(() => loginMethod.value === 'sso')
 
@@ -135,6 +135,73 @@ async function disableTotp() {
   }
   finally {
     disableLoading.value = false
+  }
+}
+// ---------------------- Вход через Authentik ----------------------
+interface SsoForm {
+  enabled: boolean
+  authentikUrl: string
+  appSlug: string
+  clientId: string
+  clientSecret: string
+  allowedSubs: string
+  label: string
+  autoRedirect: boolean
+  passwordLogin: boolean
+  redirectUrl: string
+}
+const ssoForm = reactive<SsoForm>({
+  enabled: false, authentikUrl: '', appSlug: '', clientId: '', clientSecret: '',
+  allowedSubs: '', label: 'Authentik', autoRedirect: true, passwordLogin: true, redirectUrl: '',
+})
+const ssoSecretMasked = ref('')
+const ssoSaving = ref(false)
+const ssoChecking = ref(false)
+const ssoCheck = ref<{ ok: boolean, text: string } | null>(null)
+
+async function loadSsoForm() {
+  const r = await $fetch<Omit<SsoForm, 'clientSecret'> & { clientSecretMasked: string }>('/api/admin/sso')
+  const { clientSecretMasked, ...rest } = r
+  Object.assign(ssoForm, rest, { clientSecret: '' })
+  ssoSecretMasked.value = clientSecretMasked
+}
+onMounted(() => loadSsoForm().catch(() => {}))
+
+function apiError(e: unknown): string {
+  const err = e as { data?: { message?: string }, statusMessage?: string, message?: string }
+  return err.data?.message ?? err.statusMessage ?? err.message ?? 'Ошибка'
+}
+
+async function checkSso() {
+  ssoChecking.value = true
+  ssoCheck.value = null
+  try {
+    const r = await $fetch<{ issuer: string }>('/api/admin/sso/check', {
+      method: 'POST',
+      body: { authentikUrl: ssoForm.authentikUrl, appSlug: ssoForm.appSlug },
+    })
+    ssoCheck.value = { ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }
+  }
+  catch (e) {
+    ssoCheck.value = { ok: false, text: apiError(e) }
+  }
+  finally {
+    ssoChecking.value = false
+  }
+}
+
+async function saveSso() {
+  ssoSaving.value = true
+  try {
+    await $fetch('/api/admin/sso', { method: 'PUT', body: ssoForm })
+    toast.add({ title: 'Настройки входа сохранены', color: 'success' })
+    await Promise.all([loadSsoForm(), loadSso()])
+  }
+  catch (e) {
+    toast.add({ title: 'Не сохранено', color: 'error', description: apiError(e) })
+  }
+  finally {
+    ssoSaving.value = false
   }
 }
 </script>
@@ -279,6 +346,81 @@ async function disableTotp() {
           Выключить 2FA
         </UButton>
       </div>
+    </UCard>
+
+    <UCard class="mt-6">
+      <template #header>
+        <div class="font-medium flex items-center gap-2">
+          Вход через Authentik
+          <UBadge :color="sso.enabled ? 'success' : 'neutral'" :variant="sso.enabled ? 'subtle' : 'soft'" size="sm">
+            {{ sso.enabled ? 'Включён' : 'Выключен' }}
+          </UBadge>
+        </div>
+      </template>
+      <form class="space-y-3" @submit.prevent="saveSso">
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-sm">Вход через Authentik</span>
+          <USwitch v-model="ssoForm.enabled" aria-label="Вход через Authentik" />
+        </div>
+        <UFormField label="Адрес Authentik или discovery URL">
+          <UInput v-model="ssoForm.authentikUrl" placeholder="https://auth.example.com" class="w-full" />
+        </UFormField>
+        <UFormField label="Slug приложения" hint="не нужен, если выше discovery URL">
+          <UInput v-model="ssoForm.appSlug" placeholder="vpn2" class="w-full" />
+        </UFormField>
+        <div class="flex flex-wrap items-center gap-2">
+          <UButton
+            color="neutral"
+            variant="soft"
+            icon="i-lucide-plug-zap"
+            :loading="ssoChecking"
+            :disabled="!ssoForm.authentikUrl"
+            @click="checkSso"
+          >
+            Проверить
+          </UButton>
+          <span v-if="ssoCheck" class="text-sm" :class="ssoCheck.ok ? 'text-(--ui-success)' : 'text-(--ui-error)'">
+            {{ ssoCheck.text }}
+          </span>
+        </div>
+        <UFormField label="client_id">
+          <UInput v-model="ssoForm.clientId" class="w-full" autocomplete="off" />
+        </UFormField>
+        <UFormField label="client_secret" :hint="ssoSecretMasked ? `сохранён: ${ssoSecretMasked}` : undefined">
+          <UInput
+            v-model="ssoForm.clientSecret"
+            type="password"
+            autocomplete="new-password"
+            :placeholder="ssoSecretMasked ? 'оставить прежний' : ''"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Кого пускать" help="uuid пользователя Authentik (sub), через запятую; с логином панели: uuid:логин">
+          <UInput v-model="ssoForm.allowedSubs" class="w-full font-mono text-xs" />
+        </UFormField>
+        <UFormField label="Адрес возврата" help="Его же впишите в Redirect URI провайдера в Authentik">
+          <UInput v-model="ssoForm.redirectUrl" class="w-full font-mono text-xs" />
+        </UFormField>
+        <UFormField label="Подпись кнопки">
+          <UInput v-model="ssoForm.label" placeholder="Authentik" class="w-full" />
+        </UFormField>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-sm">Бесшовный вход: сразу уводить в Authentik</span>
+          <USwitch v-model="ssoForm.autoRedirect" aria-label="Бесшовный вход" />
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-sm">Оставить вход по паролю</span>
+          <USwitch v-model="ssoForm.passwordLogin" aria-label="Оставить вход по паролю" />
+        </div>
+        <p v-if="!ssoForm.passwordLogin" class="text-xs text-(--ui-text-muted)">
+          Без пароля аварийного входа /login?direct=1 нет. Выключается отдельным сохранением, после входа через Authentik.
+        </p>
+        <div class="flex justify-end">
+          <UButton type="submit" :loading="ssoSaving">
+            Сохранить
+          </UButton>
+        </div>
+      </form>
     </UCard>
 
     <UModal v-model:open="disableConfirm" title="Выключить 2FA?" :ui="{ content: 'max-w-md' }">

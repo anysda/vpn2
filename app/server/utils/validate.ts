@@ -1,7 +1,7 @@
 import type { ZodType } from 'zod'
 
 // Подписи полей для человека; поля без подписи называются как в запросе.
-const LABELS: Record<string, string> = {
+export const FIELD_LABELS: Record<string, string> = {
   name: 'Имя',
   value: 'Правило',
   outbound: 'Выход',
@@ -37,6 +37,6 @@ export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schem
   throw createError({
     statusCode: 400,
     statusMessage: 'invalid_body',
-    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${LABELS[String(key)] ?? String(key)}»`,
+    message: key === undefined ? 'Проверьте данные запроса' : `Проверьте поле «${FIELD_LABELS[String(key)] ?? String(key)}»`,
   })
 }

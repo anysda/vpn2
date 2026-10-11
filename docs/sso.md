@@ -146,13 +146,14 @@ break-glass**. Ставить осознанно и только когда ес
 | файл | что делает |
 |---|---|
 | `app/server/routes/auth/authentik.get.ts` | точка входа и callback `/auth/authentik` |
+| `app/server/utils/auth.ts` | better-auth: провайдер `authentik` (genericOAuth), сессии |
 | `app/server/utils/sso.ts` | allow-список, привязка по `sub`, отказы |
 | `app/app/middleware/auth.global.ts` | авторедирект неавторизованного в IdP |
 | `app/app/pages/login.vue` | форма break-glass, кнопка входа, коды ошибок |
 | `infra/scripts/30-frontend.sh` | env контейнера + защёлка «SSO без HTTPS» |
 | `infra/lib/config2env.py` | блок `sso:` из `config.yaml` → `ru.env` |
 
-Взят **общий** обработчик OIDC из `nuxt-auth-utils`
-(`defineOAuthOidcEventHandler`), а не готовый `defineOAuthAuthentikEventHandler`
-из той же библиотеки: у второго нет ни `state`, ни PKCE, ни `nonce` — то есть
-нет защиты от login-CSRF. Цена — один запрос за discovery-документом на вход.
+Протокол ведёт [better-auth](https://www.better-auth.com/) (плагин
+`genericOAuth` с discovery): `state`, PKCE и обмен кода — его, свой код только
+решает, кого пускать. Адрес возврата у провайдера прежний, `/auth/authentik`:
+он пересылает код в колбэк библиотеки.

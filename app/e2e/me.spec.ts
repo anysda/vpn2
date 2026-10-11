@@ -1,9 +1,12 @@
-import { ADMIN_PASSWORD, ADMIN_USER, expect, hydrated, loginApi, loginUi, test, toast } from './support/fixtures'
+import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, loginUi, test, toast } from './support/fixtures'
 
 test.describe('страница «Я»', () => {
-  test('логин виден, смена пароля проверяет поля, меняет и возвращает пароль', async ({ page, guard }) => {
-    guard.allow(401, /\/api\/auth\/password$/, 'POST')
+  test('логин виден, смена пароля проверяет поля, меняет и возвращает пароль', async ({ page, guard, request }) => {
+    guard.allow(400, /\/api\/auth\/change-password$/, 'POST')
     await loginApi(page)
+    // Вторая сессия той же учётки: смена пароля обязана её закрыть.
+    const other = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+    expect(other.status(), await other.text()).toBe(200)
     await page.goto('/')
     await hydrated(page)
     await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
@@ -46,6 +49,8 @@ test.describe('страница «Я»', () => {
       await expect(toast(page, 'Пароль обновлён')).toBeVisible()
       changed = true
       await expect(cur).toHaveValue('')
+      const otherSession = await (await request.get('/api/auth/get-session')).json()
+      expect(otherSession, 'другая сессия пережила смену пароля').toBeNull()
 
       // Новый пароль действительно работает для входа.
       await page.context().clearCookies()
@@ -64,10 +69,8 @@ test.describe('страница «Я»', () => {
     finally {
       if (changed) {
         // Вернуть пароль admin, даже если тест упал посередине.
-        await page.request.post('/api/auth/login', { data: { username: ADMIN_USER, password: temp } }).catch(() => {})
-        await page.request.post('/api/auth/password', {
-          data: { currentPassword: temp, newPassword: ADMIN_PASSWORD },
-        }).catch(() => {})
+        await authPost(page.request, '/sign-in/username', { username: ADMIN_USER, password: temp }).catch(() => {})
+        await authPost(page.request, '/change-password', { currentPassword: temp, newPassword: ADMIN_PASSWORD }).catch(() => {})
       }
     }
     await page.context().clearCookies()

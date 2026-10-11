@@ -4,7 +4,6 @@ export default defineNuxtConfig({
   modules: [
     '@nuxt/ui',
     '@nuxt/eslint',
-    'nuxt-auth-utils',
   ],
 
   css: ['~/assets/css/main.css'],
@@ -15,31 +14,27 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
-    // nuxt-auth-utils session cookie defaults. `secure: false` by default
-    // because the stand runs HTTP-only (Caddy on :80 without TLS). For prod
-    // with HTTPS, set NUXT_SESSION_COOKIE_SECURE=true.
+    // Сессии панели (better-auth, server/utils/auth.ts).
     session: {
-      maxAge: 60 * 60 * 24,
-      cookie: {
-        sameSite: 'lax',
-        secure: false,
-      },
+      // NUXT_SESSION_PASSWORD — секрет подписи cookie и шифрования 2FA-секретов.
+      password: '',
+      // NUXT_SESSION_COOKIE_SECURE — флаг Secure у cookie. Стенд ходит по
+      // HTTP (Caddy на :80 без TLS), поэтому по умолчанию выключен; стадия 30
+      // включает его, когда у панели есть домен.
+      cookie: { secure: false },
     },
+    // Попыток входа (пароль или код 2FA) за 5 минут с одного адреса.
+    authLoginMaxAttempts: 10,
     // --- OIDC / Authentik -----------------------------------------------------
     // Заполняется стадией 30-frontend из блока `sso:` в config.yaml:
     //   NUXT_OAUTH_OIDC_CLIENT_ID / _CLIENT_SECRET / _OPENID_CONFIG / _REDIRECT_URL
-    // Обработчик — server/routes/auth/authentik.get.ts (generic OIDC из
-    // nuxt-auth-utils: state + PKCE + nonce, в отличие от провайдера `authentik`
-    // из той же библиотеки, где нет ни того, ни другого).
+    // Протокол ведёт better-auth, вход и возврат — server/routes/auth/authentik.get.ts.
     oauth: {
       oidc: {
-        // ⚠️ 'openid' здесь НЕТ намеренно. defineOAuthOidcEventHandler делает
-        // defu(config, runtimeConfig, { scope: ['openid'] }), а defu массивы
-        // СКЛЕИВАЕТ, а не перекрывает: напиши здесь 'openid' — уедет
-        // "openid profile email openid". Базовый scope добавит сам обработчик.
-        // Тот же defu склеивает scope и МЕЖДУ запросами, если обработчик живёт
-        // дольше запроса — см. комментарий в server/routes/auth/authentik.get.ts.
-        scope: ['profile', 'email'],
+        clientId: '',
+        clientSecret: '',
+        openidConfig: '',
+        redirectURL: '',
       },
     },
     // Настройки SSO, не относящиеся к самому протоколу. Секретов тут нет,

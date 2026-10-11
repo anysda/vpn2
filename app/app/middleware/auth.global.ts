@@ -1,7 +1,7 @@
 export default defineNuxtRouteMiddleware((to) => {
   if (to.path === '/login') return
 
-  const { loggedIn } = useUserSession()
+  const { loggedIn } = useAuthSession()
   if (loggedIn.value) return
 
   // Бесшовность: неавторизованного уносим прямо в Authentik, формы он не видит

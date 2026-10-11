@@ -1,13 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
-import type { SQLiteUpdateSetSource } from 'drizzle-orm/sqlite-core'
 import { migrate } from 'drizzle-orm/libsql/migrator'
-import { users } from '../database/schema'
-import { hashAdminPassword, verifyAdminPassword } from '../utils/auth'
+import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
+import { accounts, sessions, twoFactors, users } from '../database/schema'
+import { hashPassword, useAuth, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 
 function generatePassword(): string {
@@ -32,12 +32,6 @@ export default defineNitroPlugin(async () => {
 async function initPanel() {
   const log = useLogger()
   const cfg = useRuntimeConfig()
-
-  // Note: session cookie's `Secure` flag is handled by a build-time sed patch
-  // in Dockerfile against /app/.output/.../nitro.mjs (h3's DEFAULT_COOKIE).
-  // Reason: nuxt-auth-utils' module-time defu strips arbitrary keys we set
-  // through nuxt.config.runtimeConfig.session, so we can't toggle Secure at
-  // config or runtime — only at compile time.
 
   // 1. Run migrations
   const dbUrl = cfg.databaseUrl
@@ -80,31 +74,76 @@ async function initPanel() {
         log.warn({ password: desiredPassword }, 'GENERATED ADMIN PASSWORD (could not write file) — save it now')
       }
     }
-    await localDb.insert(users).values({
-      username: desiredUser,
-      passwordHash: await hashAdminPassword(desiredPassword),
+    const passwordHash = await hashPassword(desiredPassword)
+    await localDb.transaction(async (tx) => {
+      // Почта учётки синтетическая и привязана к id (см. schema.ts), а id
+      // известен только после вставки.
+      const [row] = await tx.insert(users).values({
+        username: desiredUser,
+        name: desiredUser,
+        email: `new-${randomBytes(8).toString('hex')}@panel.invalid`,
+      }).returning({ id: users.id })
+      const id = row!.id
+      await tx.update(users).set({ email: `u${id}@panel.invalid` }).where(eq(users.id, id))
+      await tx.insert(accounts).values({
+        accountId: String(id),
+        providerId: 'credential',
+        userId: id,
+        password: passwordHash,
+      })
     })
     log.info({ username: desiredUser }, 'admin user created')
   }
   else {
     const current = existing[0]!
-    const updates: SQLiteUpdateSetSource<typeof users> = {}
+    const changed: string[] = []
     if (yamlConfig?.admin?.user && current.username !== yamlConfig.admin.user) {
-      updates.username = yamlConfig.admin.user
+      await localDb.update(users)
+        .set({ username: yamlConfig.admin.user, name: yamlConfig.admin.user, updatedAt: new Date() })
+        .where(eq(users.id, current.id))
+      changed.push('username')
     }
     // Пароль из конфига перезаписывается только при настоящей смене, и вместе
-    // с ним поднимается поколение сессий, как при смене в панели (VPN2-49):
-    // старые сессии со старым паролем больше не пускают. Тот же пароль на
-    // каждом перезапуске сессии не трогает.
+    // с ним рвутся все сессии, как при смене в панели (VPN2-49). Тот же пароль
+    // на каждом перезапуске сессии не трогает.
     const yamlPassword = yamlConfig?.admin?.password
-    if (yamlPassword && !(await verifyAdminPassword(current.passwordHash, yamlPassword))) {
-      updates.passwordHash = await hashAdminPassword(yamlPassword)
-      updates.sessionVersion = sql`${users.sessionVersion} + 1`
+    if (yamlPassword) {
+      const [credential] = await localDb.select().from(accounts)
+        .where(and(eq(accounts.userId, current.id), eq(accounts.providerId, 'credential')))
+        .limit(1)
+      if (!credential?.password || !(await verifyPassword(credential.password, yamlPassword))) {
+        const password = await hashPassword(yamlPassword)
+        if (credential) {
+          await localDb.update(accounts).set({ password, updatedAt: new Date() }).where(eq(accounts.id, credential.id))
+        }
+        else {
+          await localDb.insert(accounts).values({ accountId: String(current.id), providerId: 'credential', userId: current.id, password })
+        }
+        await localDb.delete(sessions).where(eq(sessions.userId, current.id))
+        changed.push('password')
+      }
     }
-    if (Object.keys(updates).length > 0) {
-      updates.updatedAt = new Date()
-      await localDb.update(users).set(updates).where(eq(users.id, current.id))
-      log.info({ keys: Object.keys(updates) }, 'admin user synced from config.yaml')
+    if (changed.length > 0) log.info({ keys: changed }, 'admin user synced from config.yaml')
+  }
+
+  // 3. 2FA, включённая до better-auth: секрет остаётся в users.totp_secret и
+  // проверяется хуком в utils/auth.ts, а библиотеке нужна своя строка, чтобы
+  // она спрашивала код при входе. Её секрет случайный: коды человека он не
+  // проверяет, только код, который подставляет хук.
+  const legacy = await localDb.select({ id: users.id }).from(users)
+    .leftJoin(twoFactors, eq(twoFactors.userId, users.id))
+    .where(and(isNotNull(users.legacyTotpSecret), isNull(twoFactors.id)))
+  if (legacy.length > 0) {
+    const { secretConfig } = await useAuth().$context
+    for (const { id } of legacy) {
+      await localDb.insert(twoFactors).values({
+        userId: id,
+        secret: await symmetricEncrypt({ key: secretConfig, data: generateRandomString(32) }),
+        backupCodes: await symmetricEncrypt({ key: secretConfig, data: '[]' }),
+        verified: true,
+      })
+      await localDb.update(users).set({ twoFactorEnabled: true }).where(eq(users.id, id))
     }
+    log.info({ count: legacy.length }, '2FA migrated to better-auth')
   }
 }

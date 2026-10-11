@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { ADMIN_PASSWORD, ADMIN_USER, expect, hydrated, loginApi, loginUi, test, toast } from './support/fixtures'
+import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, loginUi, test, toast } from './support/fixtures'
 import { totp } from './support/totp'
 
 async function logoutUi(page: Page) {
@@ -7,6 +7,12 @@ async function logoutUi(page: Page) {
   await page.getByRole('menuitem', { name: 'Выйти' }).click()
   await expect(page).toHaveURL(/\/login/)
   await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
+}
+
+/** Начать включение 2FA: библиотека просит текущий пароль. */
+async function startSetup(page: Page) {
+  await page.getByPlaceholder('Текущий пароль').fill(ADMIN_PASSWORD)
+  await page.getByRole('button', { name: 'Включить 2FA' }).click()
 }
 
 test.describe('вход', () => {
@@ -21,11 +27,10 @@ test.describe('вход', () => {
   })
 
   test('неверный пароль показывает ошибку и не пускает', async ({ page, guard }) => {
-    guard.allow(401, /\/api\/auth\/login$/, 'POST')
+    guard.allow(401, /\/api\/auth\/sign-in\/username$/, 'POST')
     await loginUi(page, `${ADMIN_PASSWORD}-wrong`)
     await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
     await expect(page).toHaveURL(/\/login/)
-    // Счётчик неудач на этот адрес сбрасывается успешным входом.
     await loginUi(page)
     await expect(page).toHaveURL(/\/$/)
   })
@@ -35,13 +40,13 @@ test.describe('2FA', () => {
   // VPN2-69: короткий код фронт пропускает, сервер режет схемой zod. Человек
   // видел «Validation Error» (а бот в Telegram — дамп zod), теперь — поле по-русски.
   test('слишком короткий код при включении — понятная ошибка, а не дамп схемы', async ({ page, guard }) => {
-    guard.allow(400, /\/api\/auth\/totp\/confirm$/, 'POST')
+    guard.allow(400, /\/api\/auth\/two-factor\/verify-totp$/, 'POST')
     await loginApi(page)
     await page.goto('/me')
     await hydrated(page)
-    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await startSetup(page)
     await page.getByLabel('Введи 6-значный код из приложения').fill('123')
-    const resp = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/totp/confirm')
+    const resp = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/two-factor/verify-totp')
     await page.getByRole('button', { name: 'Подтвердить' }).click()
     expect((await resp).status()).toBe(400)
     await expect(toast(page, 'Неверный код').getByText('Проверьте поле «Код»', { exact: true })).toBeVisible()
@@ -49,20 +54,34 @@ test.describe('2FA', () => {
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
   })
 
-  test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard, request }) => {
-    guard.allow(401, /\/api\/auth\/login$/, 'POST')
-    guard.allow(401, /\/api\/auth\/totp\/(confirm|disable)$/, 'POST')
+  test('неверный пароль при включении — понятная ошибка', async ({ page, guard }) => {
+    guard.allow(400, /\/api\/auth\/two-factor\/enable$/, 'POST')
     await loginApi(page)
+    await page.goto('/me')
+    await hydrated(page)
+    await page.getByPlaceholder('Текущий пароль').fill(`${ADMIN_PASSWORD}-wrong`)
+    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await expect(toast(page, 'Ошибка setup').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
+  })
+
+  test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard, request }) => {
+    guard.allow(401, /\/api\/auth\/two-factor\/(verify-totp|disable)$/, 'POST')
+    guard.allow(400, /\/api\/auth\/two-factor\/disable$/, 'POST')
+    await loginApi(page)
+    // Вторая сессия той же учётки: включение 2FA обязано её закрыть.
+    const other = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+    expect(other.status(), await other.text()).toBe(200)
     await page.goto('/me')
     await hydrated(page)
 
     // «Отмена» на шаге с QR возвращает исходное состояние.
-    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await startSetup(page)
     await expect(page.getByLabel('Введи 6-значный код из приложения')).toBeVisible()
     await page.getByRole('button', { name: 'Отмена' }).click()
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
 
-    await page.getByRole('button', { name: 'Включить 2FA' }).click()
+    await startSetup(page)
     const secretInput = page.locator('input[readonly]')
     await expect(secretInput).toHaveValue(/^[A-Z2-7]{16,}$/)
     const secret = await secretInput.inputValue()
@@ -90,6 +109,7 @@ test.describe('2FA', () => {
       enabled = true
       await expect(toast(page, '2FA включена')).toBeVisible()
       await expect(page.getByText('Включена', { exact: true })).toBeVisible()
+      expect(await (await request.get('/api/auth/get-session')).json(), 'другая сессия пережила включение 2FA').toBeNull()
 
       // Выход и вход: после пароля спрашивают код.
       await logoutUi(page)
@@ -101,22 +121,22 @@ test.describe('2FA', () => {
       // Неверный код — ошибка, форма остаётся на шаге кода.
       await code.fill(wrong())
       await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page.getByText('Неверный логин или пароль', { exact: true })).toBeVisible()
+      await expect(page.getByText('Код не подошёл', { exact: true })).toBeVisible()
       const loginCode = await fresh()
       await code.fill(loginCode)
       await page.getByRole('button', { name: 'Подтвердить' }).click()
       await expect(page).toHaveURL(/\/$/)
 
       // VPN2-62: принятый код второй раз не пускает, даже с верным паролем и в окне шага.
-      const replay = await request.post('/api/auth/login', {
-        data: { username: ADMIN_USER, password: ADMIN_PASSWORD, totpCode: loginCode },
-      })
+      const first = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+      expect(await first.json()).toMatchObject({ twoFactorRedirect: true })
+      const replay = await authPost(request, '/two-factor/verify-totp', { code: loginCode })
       expect(replay.status()).toBe(401)
-      expect(await replay.json()).toMatchObject({ statusMessage: 'invalid_credentials', message: 'Неверный логин или пароль' })
+      expect(await replay.json()).toMatchObject({ statusMessage: 'invalid_code', message: 'Код не подошёл' })
 
       // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
-      const again = await page.request.post('/api/auth/totp/setup')
-      expect(again.status()).toBe(409)
+      const again = await authPost(page.request, '/two-factor/enable', { password: ADMIN_PASSWORD })
+      expect(again.status()).toBe(400)
       expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
 
       // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
@@ -148,14 +168,12 @@ test.describe('2FA', () => {
     }
     finally {
       // Упавший посреди тест не должен оставить admin с 2FA: войти с кодом
-      // (без 2FA код игнорируется) и выключить; если уже выключена — 4xx, не беда.
+      // и выключить; если уже выключена — 4xx, не беда.
       if (enabled) {
-        await page.request.post('/api/auth/login', {
-          data: { username: ADMIN_USER, password: ADMIN_PASSWORD, totpCode: await fresh() },
-        }).catch(() => {})
-        await page.request.post('/api/auth/totp/disable', {
-          data: { currentPassword: ADMIN_PASSWORD, totpCode: await fresh() },
-        }).catch(() => {})
+        await page.context().clearCookies()
+        await authPost(page.request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD }).catch(() => {})
+        await authPost(page.request, '/two-factor/verify-totp', { code: await fresh() }).catch(() => {})
+        await authPost(page.request, '/two-factor/disable', { password: ADMIN_PASSWORD, code: await fresh() }).catch(() => {})
       }
     }
     // Вход снова без кода.

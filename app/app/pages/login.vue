@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ layout: false })
 
-const { loggedIn, fetch: refreshSession } = useUserSession()
+const { loggedIn, fetch: refreshSession } = useAuthSession()
 const route = useRoute()
 const { sso } = useRuntimeConfig().public
 
@@ -41,21 +41,27 @@ const needsTotp = ref(false)
 const error = ref<string | null>(null)
 const loading = ref(false)
 
+// Вход в два шага, как его ведёт better-auth: логин и пароль, затем, если у
+// учётки включена 2FA, код — уже без пароля, по cookie первого шага.
 async function submit() {
   error.value = null
   loading.value = true
   try {
-    const res = await $fetch<{ ok?: boolean, needsTotp?: boolean }>('/api/auth/login', {
-      method: 'POST',
-      body: {
-        username: state.username,
-        password: state.password,
-        totpCode: needsTotp.value ? state.totpCode : undefined,
-      },
-    })
-    if (res.needsTotp) {
-      needsTotp.value = true
-      return
+    if (needsTotp.value) {
+      await $fetch('/api/auth/two-factor/verify-totp', {
+        method: 'POST',
+        body: { code: state.totpCode.replace(/\s/g, '') },
+      })
+    }
+    else {
+      const res = await $fetch<{ twoFactorRedirect?: boolean }>('/api/auth/sign-in/username', {
+        method: 'POST',
+        body: { username: state.username, password: state.password },
+      })
+      if (res?.twoFactorRedirect) {
+        needsTotp.value = true
+        return
+      }
     }
     await refreshSession()
     await navigateTo('/')

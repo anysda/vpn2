@@ -66,12 +66,11 @@ ADMIN_USER="${ADMIN_USER:-anysda}"
 # панель ведёт себя ровно как раньше (форма логин/пароль).
 SSO_ENABLED="${SSO_ENABLED:-false}"
 if [[ "$SSO_ENABLED" == "true" ]]; then
-  # ⚠️ ЖЁСТКАЯ ЗАВИСИМОСТЬ ОТ HTTPS. Куки state/PKCE/nonce обработчик OIDC
-  # ставит с флагом Secure (в nuxt-auth-utils это `secure: !isDevelopment`, и
-  # sed-патч из Dockerfile его не трогает — он про куку сессии). По HTTP они
-  # просто не сохранятся, и КАЖДЫЙ вход будет падать в «state mismatch».
-  # Симптом выглядит как поломка Authentik, а причина здесь — поэтому падаем
-  # заранее и вслух, а не выкатываем заведомо мёртвый вход.
+  # ⚠️ ЖЁСТКАЯ ЗАВИСИМОСТЬ ОТ HTTPS. Адрес возврата у провайдера в Authentik
+  # строится от домена панели (https://<домен>/auth/authentik), а куки
+  # state/PKCE получают флаг Secure вместе с доменом (NUXT_SESSION_COOKIE_SECURE
+  # ниже). Без домена вход падал бы на возврате, и симптом выглядел бы как
+  # поломка Authentik — поэтому падаем заранее и вслух.
   [[ -n "${PANEL_DOMAIN:-}" ]] || {
     echo "[$HOST_TAG] ✗ sso.enabled=true, но panel.domain не задан."
     echo "[$HOST_TAG]   SSO работает только по HTTPS: куки state/PKCE — Secure-only."

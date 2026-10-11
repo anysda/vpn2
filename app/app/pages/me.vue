@@ -3,12 +3,11 @@ import QRCode from 'qrcode-svg'
 
 useHead({ title: 'Профиль — anysda-vpn2' })
 
-const { user, fetch: refreshSession } = useUserSession()
+const { user, loginMethod, fetch: refreshSession } = useAuthSession()
 const toast = useToast()
 const { sso } = useRuntimeConfig().public
 
-// via отсутствует у сессий, выданных до появления SSO — это парольный вход.
-const viaSso = computed(() => user.value?.via === 'sso')
+const viaSso = computed(() => loginMethod.value === 'sso')
 
 // ---------------------- Password change ----------------------
 const pwd = reactive({ current: '', next: '', confirm: '' })
@@ -26,7 +25,8 @@ async function changePassword() {
   }
   pwdLoading.value = true
   try {
-    await $fetch('/api/auth/password', {
+    // Остальные сессии сервер рвёт всегда, эта остаётся.
+    await $fetch('/api/auth/change-password', {
       method: 'POST',
       body: { currentPassword: pwd.current, newPassword: pwd.next },
     })
@@ -43,12 +43,13 @@ async function changePassword() {
 }
 
 // ---------------------- TOTP ----------------------
-const totpEnabled = computed(() => user.value?.totpEnabled ?? false)
+const totpEnabled = computed(() => user.value?.twoFactorEnabled ?? false)
 
 const setupState = ref<'idle' | 'setup' | 'confirming'>('idle')
 const totpSecret = ref('')
 const totpUri = ref('')
 const totpCode = ref('')
+const setupPwd = ref('')
 const totpLoading = ref(false)
 
 const totpQrSvg = computed(() => {
@@ -59,11 +60,13 @@ const totpQrSvg = computed(() => {
 async function startSetup() {
   totpLoading.value = true
   try {
-    const r = await $fetch<{ secret: string, otpauthUrl: string }>('/api/auth/totp/setup', {
+    const r = await $fetch<{ totpURI: string }>('/api/auth/two-factor/enable', {
       method: 'POST',
+      body: { password: setupPwd.value },
     })
-    totpSecret.value = r.secret
-    totpUri.value = r.otpauthUrl
+    totpSecret.value = new URL(r.totpURI).searchParams.get('secret') ?? ''
+    totpUri.value = r.totpURI
+    setupPwd.value = ''
     setupState.value = 'setup'
   }
   catch (e) {
@@ -79,9 +82,10 @@ async function confirmSetup() {
   if (!totpCode.value.trim()) return
   totpLoading.value = true
   try {
-    await $fetch('/api/auth/totp/confirm', {
+    // Первый код включает 2FA; остальные сессии сервер рвёт.
+    await $fetch('/api/auth/two-factor/verify-totp', {
       method: 'POST',
-      body: { code: totpCode.value.trim() },
+      body: { code: totpCode.value.replace(/\s/g, '') },
     })
     await refreshSession()
     toast.add({ title: '2FA включена', color: 'success' })
@@ -115,9 +119,9 @@ async function disableTotp() {
   if (!disablePwd.value || !disableTotpCode.value) return
   disableLoading.value = true
   try {
-    await $fetch('/api/auth/totp/disable', {
+    await $fetch('/api/auth/two-factor/disable', {
       method: 'POST',
-      body: { currentPassword: disablePwd.value, totpCode: disableTotpCode.value },
+      body: { password: disablePwd.value, code: disableTotpCode.value.replace(/\s/g, '') },
     })
     await refreshSession()
     toast.add({ title: '2FA выключена', color: 'success' })
@@ -210,15 +214,25 @@ async function disableTotp() {
         <p class="text-sm text-(--ui-text-muted) mb-3">
           Добавьте код из приложения-аутентификатора (Aegis, Google Authenticator, 1Password) при входе.
         </p>
-        <UButton
-          color="primary"
-          variant="soft"
-          icon="i-lucide-shield-plus"
-          :loading="totpLoading"
-          @click="startSetup"
-        >
-          Включить 2FA
-        </UButton>
+        <form class="flex flex-wrap gap-2" @submit.prevent="startSetup">
+          <UInput
+            v-model="setupPwd"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Текущий пароль"
+            class="flex-1 min-w-48"
+          />
+          <UButton
+            type="submit"
+            color="primary"
+            variant="soft"
+            icon="i-lucide-shield-plus"
+            :loading="totpLoading"
+            :disabled="!setupPwd"
+          >
+            Включить 2FA
+          </UButton>
+        </form>
       </div>
 
       <div v-else-if="!totpEnabled && setupState === 'setup'" class="space-y-4">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { user, clear } = useUserSession()
+const { user, clear } = useAuthSession()
 const colorMode = useColorMode()
 
 function toggleTheme() {
@@ -8,10 +8,10 @@ function toggleTheme() {
 
 async function logout() {
   try {
-    await $fetch('/api/auth/logout', { method: 'POST' })
+    await $fetch('/api/auth/sign-out', { method: 'POST', body: {} })
   }
   finally {
-    await clear()
+    clear()
     // ?direct=1, а не просто /login: сессия в самом Authentik живёт дальше, и
     // без этого авторедирект внёс бы обратно тем же кликом — «выйти» выглядело
     // бы как «ничего не произошло».

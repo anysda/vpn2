@@ -1,85 +1,45 @@
-import { resolveSsoUser, SsoDenied, ssoConfigured, ssoSettings } from '../../utils/sso'
+import { LOGIN_FORM, resetAuth, useAuth } from '../../utils/auth'
+import { SSO_PROVIDER, ssoConfigured, ssoSettings } from '../../utils/sso'
 
 /**
- * Точка входа и callback SSO: GET /auth/authentik.
+ * Точка входа и адрес возврата SSO: GET /auth/authentik.
  *
- * Взят ОБЩИЙ обработчик OIDC (`defineOAuthOidcEventHandler`), а не готовый
- * `defineOAuthAuthentikEventHandler` из той же nuxt-auth-utils: у провайдера
- * `authentik` нет ни state, ни PKCE, ни nonce — то есть нет защиты от login-CSRF
- * и от подмены кода. Общий обработчик делает всё три, а Authentik ими умеет.
- * Ценой одного лишнего запроса за discovery-документом на каждый вход.
- *
- * Всё, что связано с «кого пускаем», живёт в utils/sso.ts — здесь только
- * протокол и посадка в сессию.
+ * Протокол (state, PKCE, nonce, обмен кода) ведёт better-auth. Адрес возврата
+ * у провайдера в Authentik прежний — /auth/authentik (NUXT_OAUTH_OIDC_REDIRECT_URL),
+ * поэтому пришедший с кодом запрос пересылаем в колбэк библиотеки как есть.
  */
-
-const LOGIN_FORM = '/login?direct=1'
-
-/**
- * ⚠️ Обработчик создаётся НА КАЖДЫЙ запрос, а не один раз на модуль.
- *
- * Внутри `defineOAuthOidcEventHandler` (nuxt-auth-utils 0.5.29) первой строкой
- * стоит `config = defu(config, runtimeConfig.oauth.oidc, { scope: ['openid'] })`
- * — присваивание в ЗАМЫКАНИЕ. defu массивы склеивает, поэтому у живущего между
- * запросами обработчика scope растёт на `profile email openid` с каждого входа:
- * первый заход — 3 элемента, сотый — 300. URL авторизации пухнет на 21 байт за
- * заход и однажды перестаёт лезть в буфер заголовков openresty перед Authentik:
- * вместо формы входа человек получает «414 Request-URI Too Large»
- * (прод, 14-08-2026, панель провисела 8 суток).
- *
- * Свежее замыкание на запрос — единственная защита, не зависящая от версии
- * библиотеки: чинить чужой defu мы не можем, а обнулять `config.scope` снаружи
- * нечего — переменная приватная. Стоимость — создание объекта на вход.
- */
-const makeOidcHandler = () => defineOAuthOidcEventHandler({
-  async onSuccess(event, { user: claims }) {
-    const log = useLogger()
-    const sub = String(claims.sub ?? '')
-    const preferred = claims.preferred_username
-
-    try {
-      const user = await resolveSsoUser(sub, preferred)
-      await setUserSession(event, {
-        user: {
-          id: user.id,
-          username: user.username,
-          totpEnabled: !!user.totpSecret,
-          via: 'sso',
-          sv: user.sessionVersion,
-        },
-      })
-      log.info({ sub, username: user.username }, 'sso: вход через Authentik')
-      return sendRedirect(event, '/')
-    }
-    catch (err) {
-      if (err instanceof SsoDenied) {
-        // Причину пишем в лог, наружу отдаём только код: в браузере человеку
-        // незачем знать, есть ли в панели такая учётка.
-        log.warn({ sub, preferred, reason: err.message }, 'sso: вход отклонён')
-        return sendRedirect(event, `${LOGIN_FORM}&error=${err.code}`)
-      }
-      log.error({ err, sub }, 'sso: ошибка при посадке в сессию')
-      return sendRedirect(event, `${LOGIN_FORM}&error=sso_failed`)
-    }
-  },
-
-  async onError(event, error) {
-    // Сюда приходят отказ на стороне IdP, несовпадение state/nonce и падение
-    // обмена кода на токен. Ни в одном из случаев нельзя оставлять человека на
-    // экране 500: возвращаем на форму — она и есть break-glass.
-    useLogger().error({ err: error }, 'sso: обмен с Authentik не удался')
-    return sendRedirect(event, `${LOGIN_FORM}&error=sso_failed`)
-  },
-})
-
 export default defineEventHandler(async (event) => {
-  const { enabled } = ssoSettings()
-  if (!enabled || !ssoConfigured()) {
+  const s = ssoSettings()
+  if (!s.enabled || !ssoConfigured(s)) {
     // Рубильник выключен или клиент недонастроен — молча возвращаем на форму.
     // Ровно этот путь не даёт зациклиться: middleware шлёт сюда, мы шлём на
     // /login?direct=1, а там авторедирект уже не срабатывает.
-    useLogger().warn({ enabled, configured: ssoConfigured() }, 'sso: запрос при выключенном SSO')
+    useLogger().warn({ enabled: s.enabled, configured: ssoConfigured(s) }, 'sso: запрос при выключенном SSO')
     return sendRedirect(event, `${LOGIN_FORM}&error=sso_off`)
   }
-  return makeOidcHandler()(event)
+
+  const query = getQuery(event)
+  if (query.code || query.error) {
+    const qs = new URLSearchParams(query as Record<string, string>).toString()
+    return sendRedirect(event, `/api/auth/callback/${SSO_PROVIDER}?${qs}`)
+  }
+
+  try {
+    const { headers, response } = await useAuth().api.signInSocial({
+      body: { provider: SSO_PROVIDER, callbackURL: '/', errorCallbackURL: LOGIN_FORM, disableRedirect: true },
+      headers: event.headers,
+      returnHeaders: true,
+    })
+    if (!response.url) throw new Error('better-auth не вернул адрес IdP')
+    for (const cookie of headers.getSetCookie()) appendResponseHeader(event, 'set-cookie', cookie)
+    return sendRedirect(event, response.url)
+  }
+  catch (err) {
+    // Authentik недоступен или discovery не прочитался — форма и есть break-glass.
+    // Discovery библиотека читает один раз при сборке экземпляра: пересобираем,
+    // чтобы следующая попытка прочитала его заново, а не до рестарта панели.
+    useLogger().error({ err }, 'sso: не удалось начать вход через Authentik')
+    resetAuth()
+    return sendRedirect(event, `${LOGIN_FORM}&error=sso_failed`)
+  }
 })

@@ -21,15 +21,16 @@
     "e2e:local": "bash e2e/run-local.sh"
   },
   "dependencies": {
+    "@better-auth/utils": "0.4.2",
     "@iconify-json/lucide": "^1.2.142",
     "@iconify-json/simple-icons": "^1.2.99",
     "@libsql/client": "^0.18.0",
     "@node-rs/argon2": "^2.2.2",
     "@nuxt/ui": "^4.11.3",
+    "better-auth": "1.7.7",
     "drizzle-orm": "^0.45.4",
     "js-yaml": "^5.4.3",
     "nuxt": "^4.6.1",
-    "nuxt-auth-utils": "^0.5.31",
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "qrcode-svg": "^1.1.0",
@@ -53,6 +54,9 @@
       "esbuild",
       "unrs-resolver",
       "vue-demi"
-    ]
+    ],
+    "overrides": {
+      "better-call>@better-auth/utils": "0.4.2"
+    }
   }
 }

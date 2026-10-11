@@ -11,28 +11,85 @@ const timestamps = {
     .default(sql`(strftime('%s','now'))`),
 }
 
+/**
+ * Учётки панели. Вход, сессии, 2FA и SSO ведёт better-auth (server/utils/auth.ts):
+ * таблица у него называется моделью `user`, поля name/email/emailVerified/image
+ * обязательны для библиотеки. Почта у учёток не настоящая (`u<id>@panel.invalid`):
+ * по ней better-auth привязывает вход через Authentik к уже выбранной учётке.
+ */
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   username: text('username').notNull().unique(),
-  passwordHash: text('password_hash').notNull(),
-  totpSecret: text('totp_secret'),
+  displayUsername: text('display_username'),
+  name: text('name').notNull(),
+  email: text('email').notNull().unique(),
+  emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(true),
+  image: text('image'),
+  twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).notNull().default(false),
+  // Секрет 2FA, заведённый до better-auth (base32 от 20 байт). Библиотека хранит
+  // ключ строкой и такой секрет проверить не может; его проверяет хук в
+  // server/utils/auth.ts, пока человек не перевыпустит 2FA. null - 2FA новая или нет.
+  legacyTotpSecret: text('totp_secret'),
   // Последний принятый 30-секундный шаг TOTP. Код этого и более раннего шага
-  // второй раз не принимается (RFC 6238, 5.2): подсмотренный или перехваченный
-  // код не годится на повторный вход, пока окно ещё открыто.
+  // второй раз не принимается (RFC 6238, 5.2, VPN2-62): better-auth сам повтор
+  // кода в окне не гасит.
   totpLastStep: integer('totp_last_step'),
-  // Привязка учётки к пользователю IdP (Authentik) по НЕИЗМЕНЯЕМОМУ `sub`
-  // (у провайдера sub_mode=user_uuid). Не по имени и не по почте: имя человек
-  // меняет сам, почта в панели и в IdP расходится, а auto-link по почте — это
-  // вектор захвата. null — учётка к SSO не привязана.
-  oidcSub: text('oidc_sub').unique(),
-  // Поколение сессий: кладётся в cookie при входе и сверяется в requireAuth.
-  // Смена пароля и вкл/выкл TOTP его увеличивают — все прежние сессии
-  // (cookie без состояния, отозвать их иначе нечем) получают 401.
-  sessionVersion: integer('session_version').notNull().default(0),
   // Раскладка главной, своя у каждого (shared/screen-layout.ts). null - по умолчанию.
   screenLayout: text('screen_layout', { mode: 'json' }).$type<ScreenLayout>(),
   ...timestamps,
 })
+
+export const sessions = sqliteTable('sessions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  token: text('token').notNull().unique(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  ipAddress: text('ip_address'),
+  userAgent: text('user_agent'),
+  // 'password' или 'sso' - чем вошли; показывается в профиле.
+  loginMethod: text('login_method'),
+  ...timestamps,
+}, table => [index('sessions_user_idx').on(table.userId)])
+
+/** Способы входа учётки: providerId 'credential' - пароль (argon2), 'authentik' - SSO по sub. */
+export const accounts = sqliteTable('accounts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  accountId: text('account_id').notNull(),
+  providerId: text('provider_id').notNull(),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: integer('access_token_expires_at', { mode: 'timestamp' }),
+  refreshTokenExpiresAt: integer('refresh_token_expires_at', { mode: 'timestamp' }),
+  scope: text('scope'),
+  password: text('password'),
+  ...timestamps,
+}, table => [
+  index('accounts_user_idx').on(table.userId),
+  uniqueIndex('accounts_provider_account_unique').on(table.providerId, table.accountId),
+])
+
+export const verifications = sqliteTable('verifications', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  identifier: text('identifier').notNull(),
+  value: text('value').notNull(),
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+  ...timestamps,
+}, table => [index('verifications_identifier_idx').on(table.identifier)])
+
+export const twoFactors = sqliteTable('two_factors', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: integer('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  secret: text('secret').notNull(),
+  backupCodes: text('backup_codes').notNull(),
+  verified: integer('verified', { mode: 'boolean' }).default(true),
+  failedVerificationCount: integer('failed_verification_count'),
+  lockedUntil: integer('locked_until', { mode: 'timestamp' }),
+}, table => [
+  index('two_factors_user_idx').on(table.userId),
+  index('two_factors_secret_idx').on(table.secret),
+])
 
 /**
  * Клиент = человек. Его устройства — в таблице `devices`.

@@ -62,7 +62,8 @@ let cookie = ''
 async function api(method, path, body) {
   const res = await fetch(PANEL + path, {
     method,
-    headers: { 'content-type': 'application/json', cookie },
+    // Origin - как у браузера: ручки входа без него POST не принимают.
+    headers: { 'content-type': 'application/json', 'origin': new URL(PANEL).origin, cookie },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const set = res.headers.getSetCookie()
@@ -85,7 +86,7 @@ const isoDays = d => new Date((now + d * DAY) * 1000).toISOString()
 const CURVE = [3, 2, 1.5, 1, 1, 1, 1.5, 3, 5, 6, 6, 6.5, 7, 7, 6.5, 6.5, 7, 8, 9.5, 11, 12, 12, 10, 6]
 
 async function main() {
-  await api('POST', '/api/auth/login', { username: 'admin', password: process.env.ADMIN_PASSWORD })
+  await api('POST', '/api/auth/sign-in/username', { username: 'admin', password: process.env.ADMIN_PASSWORD })
 
   await api('PUT', '/api/admin/telegram', {
     bot_token: '7714523096:AAHk3xQ9pLmZr0aVdW8sNfTq2YbC4eJ1u5o',

@@ -12,10 +12,11 @@ export default async function teardown() {
   if (!baseURL || !password) return
   const api = await request.newContext({ baseURL })
   try {
-    const login = await api.post('/api/auth/login', {
+    const login = await api.post('/api/auth/sign-in/username', {
       data: { username: process.env.E2E_ADMIN_USER || 'admin', password },
+      headers: { origin: new URL(baseURL).origin },
     })
-    if (!login.ok() || (await login.json()).needsTotp) {
+    if (!login.ok() || (await login.json()).twoFactorRedirect) {
       console.error(`teardown: вход не удался (${login.status()}), уборка пропущена`)
       return
     }

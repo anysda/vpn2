@@ -19,10 +19,6 @@ const TEXT: Record<string, string> = {
   wg_public_host_not_configured: 'Не задан публичный адрес WireGuard в конфиге',
   ovpn_public_host_not_configured: 'Не задан публичный адрес OpenVPN в конфиге',
   entry_host_not_configured: 'Не задан публичный адрес сервера в конфиге',
-  totp_already_enabled: '2FA уже включена',
-  totp_not_initiated: 'Настройка 2FA не начата, начните заново',
-  invalid_totp: 'Код не подошёл',
-  session_revoked: 'Сессия завершена, войдите заново',
   insert_failed: 'Не удалось сохранить запись',
 }
 

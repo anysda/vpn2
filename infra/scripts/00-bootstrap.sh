@@ -348,13 +348,20 @@ svc_restart_if_changed fail2ban /usr/bin/fail2ban-server /usr/lib/systemd/system
 # и приходит на 127.0.0.1:9100 с самого экзита, поэтому наружу порт не смотрит.
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/6] node_exporter"
-NE_VERSION='1.8.2'
-if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep "$NE_VERSION" >/dev/null; then
+NE_VERSION='1.12.1'
+if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep "version $NE_VERSION " >/dev/null; then
+  TMP=$(mktemp -d)
+  REL_URL="https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}"
+  ARCHIVE="node_exporter-${NE_VERSION}.linux-amd64.tar.gz"
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}/node_exporter-${NE_VERSION}.linux-amd64.tar.gz" \
-    | tar -xz -C /tmp
-  install -m 0755 "/tmp/node_exporter-${NE_VERSION}.linux-amd64/node_exporter" /usr/local/bin/node_exporter
-  rm -rf "/tmp/node_exporter-${NE_VERSION}.linux-amd64"
+    "$REL_URL/$ARCHIVE" -o "$TMP/$ARCHIVE"
+  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
+  ( cd "$TMP" && grep -E "[[:space:]]${ARCHIVE}\$" sha256sums.txt | sha256sum -c - ) \
+    || { rm -rf "$TMP"; echo "[$HOST_TAG] node_exporter SHA-256 mismatch — abort" >&2; exit 1; }
+  tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
+  install -m 0755 "$TMP/node_exporter-${NE_VERSION}.linux-amd64/node_exporter" /usr/local/bin/node_exporter
+  rm -rf "$TMP"
 fi
 id node_exporter >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin node_exporter
 

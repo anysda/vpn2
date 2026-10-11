@@ -25,9 +25,9 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box /var/lib/sing-box/acme
 # 1. wgcf — register WARP and generate WG profile
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/4] wgcf"
-WGCF_VER='2.2.27'
+WGCF_VER='2.3.0'
 # Версию wgcf не печатает (ни `version`, ни `--version`), сверяем по sha256 релиза.
-WGCF_SHA256='b6564872ed33bc09f75f57d54952b2dda0910f28ec06b0a80c7283b3904523e2'
+WGCF_SHA256='01614e38c0eb5f3405232e71cfaf02d64d4809e4988ad8f5a8071af16d193405'
 if [[ "$(sha256sum /usr/local/bin/wgcf 2>/dev/null | cut -d' ' -f1)" != "$WGCF_SHA256" ]]; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     -o /usr/local/bin/wgcf "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
@@ -47,6 +47,10 @@ fi
 if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-account.toml ]]; then
   if /usr/local/bin/wgcf generate >/dev/null 2>&1; then
     chmod 600 wgcf-account.toml wgcf-profile.conf
+  elif [[ -s wgcf-profile.conf ]]; then
+    # wgcf 2.3 не читает устройство, зарегистрированное до 2.3 (в ответе API
+    # нет key_type). Профиль прошлого прогона того же аккаунта рабочий.
+    echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — оставляю профиль прошлого прогона"
   else
     echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — WARP outbound будет placeholder"
     WGCF_OK=0

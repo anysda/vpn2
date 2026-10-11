@@ -122,8 +122,10 @@ echo "[$HOST_TAG] [3/4] caddy"
 # с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
 # пользователем caddy). Список Cloudsmith со старых нод убирает deploy.sh
 # перед каждой стадией.
-if ! command -v caddy >/dev/null 2>&1; then
-  CADDY_VER='2.11.4'
+# Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
+# что встала первой.
+CADDY_VER='2.11.7'
+if [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]]; then
   TMP=$(mktemp -d)
   REL_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
   DEB="caddy_${CADDY_VER}_linux_amd64.deb"

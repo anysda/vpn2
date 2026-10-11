@@ -85,7 +85,10 @@ fi
 # 2. sing-box install
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/4] sing-box"
-SB_VER='1.10.3'
+# Выше 1.12 не берём: в 1.13 и 1.14 отправитель hysteria2 на канале с потерями
+# отдаёт в 1.5-4 раза меньше, 1.13 ещё и подвисает на десятки секунд
+# (тот же экзит и канал; 1.12.25 держит уровень 1.10, с obfs и без).
+SB_VER='1.12.25'
 if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep "$SB_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \

@@ -44,17 +44,24 @@
   ],
 
   "outbounds": [
-    { "type": "direct", "tag": "direct" },
-    { "type": "block",  "tag": "block-out" },
+    { "type": "direct", "tag": "direct" }
+  ],
+
+  "endpoints": [
     {
       "type": "wireguard",
       "tag": "warp",
-      "server": "${WGCF_PEER_ENDPOINT_HOST}",
-      "server_port": ${WGCF_PEER_ENDPOINT_PORT},
-      "local_address": ["${WGCF_LOCAL_IPV4}/32"],
+      "address": ["${WGCF_LOCAL_IPV4}/32"],
       "private_key": "${WGCF_PRIVKEY}",
-      "peer_public_key": "${WGCF_PEER_PUBKEY}",
-      "reserved": ${WGCF_RESERVED_JSON},
+      "peers": [
+        {
+          "address": "${WGCF_PEER_ENDPOINT_HOST}",
+          "port": ${WGCF_PEER_ENDPOINT_PORT},
+          "public_key": "${WGCF_PEER_PUBKEY}",
+          "allowed_ips": ["0.0.0.0/0", "::/0"],
+          "reserved": ${WGCF_RESERVED_JSON}
+        }
+      ],
       "mtu": 1280
     }
   ],
@@ -64,7 +71,7 @@
       { "inbound": "hy2-direct-in", "outbound": "direct" },
       { "inbound": "hy2-warp-in",   "outbound": "warp"   },
       { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100, 22], "outbound": "direct" },
-      { "inbound": "hy2-mgmt-in", "outbound": "block-out" }
+      { "inbound": "hy2-mgmt-in", "action": "reject" }
     ]
   },
 

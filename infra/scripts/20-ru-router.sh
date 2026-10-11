@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 20 — sing-box роутер на RU-ноде.
 # Поднимает sing-box: трафик клиентов (WG/OpenVPN, заведённый стадиями 28/29
-# в sing-box TPROXY :7898) роутится по geoip/geosite в hy2-туннели до
+# в sing-box TPROXY :7898) роутится по наборам geoip/geosite в hy2-туннели до
 # exit-нод (см. gen-router-config.py). Идемпотентен.
 
 set -euo pipefail
@@ -20,7 +20,10 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box
 # 1. sing-box install
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/6] sing-box"
-SB_VER='1.10.3'
+# Выше 1.12 не берём: в 1.13 и 1.14 отправитель hysteria2 на канале с потерями
+# отдаёт в 1.5-4 раза меньше, 1.13 ещё и подвисает на десятки секунд
+# (тот же экзит и канал; 1.12.25 держит уровень 1.10, с obfs и без).
+SB_VER='1.12.25'
 if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 | grep "$SB_VER" >/dev/null; then
   curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz" \
@@ -31,16 +34,24 @@ fi
 /usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
-# 2. GeoIP / Geosite DB
+# 2. Наборы правил geoip/geosite (.srs)
 # ----------------------------------------------------------------------------
-echo "[$HOST_TAG] [2/6] GeoIP/Geosite"
-if [[ ! -f /var/lib/sing-box/geoip.db || $(find /var/lib/sing-box/geoip.db -mtime +7 2>/dev/null) ]]; then
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    -o /var/lib/sing-box/geoip.db   'https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db'
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    -o /var/lib/sing-box/geosite.db 'https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db'
-fi
-ls -la /var/lib/sing-box/{geoip,geosite}.db | sed "s/^/[$HOST_TAG]   /"
+# geoip.db/geosite.db sing-box 1.12+ не читает. Имена наборов берём у
+# генератора конфига, чтобы список был в одном месте. Файл кладём через mv:
+# sing-box следит за локальными наборами и перечитывает их сам, недокачанный
+# файл он бы прочитал.
+echo "[$HOST_TAG] [2/6] rule-set geoip/geosite"
+RS_DIR=/var/lib/sing-box/rule-set
+mkdir -p "$RS_DIR"
+for _rs in $(python3 /tmp/anysda/gen-router-config.py --rule-sets); do
+  _f="$RS_DIR/${_rs}.srs"
+  [[ -f "$_f" && -z $(find "$_f" -mtime +7 2>/dev/null) ]] && continue
+  curl -sSfL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o "$_f.new" "https://raw.githubusercontent.com/SagerNet/sing-${_rs%%-*}/rule-set/${_rs}.srs"
+  mv -f "$_f.new" "$_f"
+done
+rm -f /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db
+ls -la "$RS_DIR" | sed -n "/\.srs$/s/^/[$HOST_TAG]   /p"
 
 # ----------------------------------------------------------------------------
 # 3. Secrets: clash-api на RU + пароли Hysteria2 с выходных нод
@@ -287,8 +298,8 @@ for i, (out, rule) in enumerate(manual):
 def rules_path(t):
     return os.path.join(RULES_DIR, f'{t}.json')
 
-# Ручные маршруты — сразу за служебной головой списка (mon-*, блокировки
-# loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
+# Ручные маршруты — сразу за служебной головой списка (sniff, mon-*,
+# блокировки loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
 # дорожки). Выше головы маршрут панели на домен или подсеть перехватывал бы
 # скрейп экзитов и бота, а 0.0.0.0/0 на экзит открывал бы его loopback.
 route = cfg['route']
@@ -297,7 +308,7 @@ route['rule_set'] = route.get('rule_set', []) + [
     for t in targets]
 rules = route['rules']
 head = 0
-while head < len(rules) and ('inbound' in rules[head] or rules[head].get('outbound') == 'block-out'):
+while head < len(rules) and ('inbound' in rules[head] or rules[head].get('action') == 'reject'):
     head += 1
 route['rules'] = rules[:head] + [{'rule_set': [f'manual-{t}'], 'outbound': t} for t in targets] + rules[head:]
 
@@ -445,13 +456,12 @@ if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_
 fi
 # Перезапуск рвёт все соединения клиентов, поэтому только если sing-box читает
 # уже не то, с чем стартовал: отпечаток бинарника, юнита, конфига, сертификатов
-# экзитов, geo-баз и sysctl (буферы сокетов) сверяем с записанным при прошлом
-# старте. Наборы ручных
-# маршрутов не считаем: их sing-box перечитывает сам.
+# экзитов и sysctl (буферы сокетов) сверяем с записанным при прошлом старте.
+# Наборы ручных маршрутов и geoip/geosite не считаем: локальные наборы
+# sing-box перечитывает сам.
 SB_FP_FILE=/var/lib/sing-box/applied.sha256
 sb_fp=$({ cat /usr/local/bin/sing-box /etc/systemd/system/sing-box.service \
   /etc/sing-box/config.json /etc/sing-box/exit-certs/*.pem \
-  /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db \
   /etc/sysctl.d/99-anysda.conf 2>/dev/null || true; } \
   | sha256sum | cut -d' ' -f1)
 if systemctl is-active --quiet sing-box && [[ "$(cat "$SB_FP_FILE" 2>/dev/null)" == "$sb_fp" ]]; then

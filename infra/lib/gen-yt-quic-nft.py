@@ -2,7 +2,7 @@
 """Генератор nft-таблицы, режущей QUIC (UDP/443) к Google из туннелей.
 
 Зачем это нужно, если QUIC для YouTube уже режет sing-box правилом
-`domain_suffix=[youtube...] network=udp port=443 => block-out`:
+`domain_suffix=[youtube...] network=udp port=443 => reject`:
 
 Правило sing-box работает по SNI, добытому сниффером из QUIC Initial. Это
 верно ровно до тех пор, пока сниффер видит домен. Если ClientHello приедет

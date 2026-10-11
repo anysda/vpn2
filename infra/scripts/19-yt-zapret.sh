@@ -351,7 +351,7 @@ fi
 # 5b. Второй рубеж: QUIC (UDP/443) к Google режем по IP-принадлежности
 # ----------------------------------------------------------------------------
 # Первый рубеж — правило sing-box `domain_suffix=[youtube...] network=udp
-# port=443 => block-out`. Оно работает по SNI из QUIC Initial и ловит
+# port=443 => reject`. Оно работает по SNI из QUIC Initial и ловит
 # подавляющее большинство случаев (проверено: www.youtube.com, googlevideo.com,
 # i.ytimg.com, yt3.ggpht.com, youtubei.googleapis.com — все blocked).
 #

@@ -25,6 +25,9 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   YT_QUIC                — block | allow           (дефолт block)
   YT_DOMAINS             — пробельный список доменных суффиксов (переопределяет дефолт)
 
+С ключом --rule-sets печатает имена наборов правил, которые стадия 20 качает
+в /var/lib/sing-box/rule-set (имя.srs).
+
 С ключом --agh-yt-upstream печатает строку апстрима AdGuard для YouTube-доменов
 (`[/домены/]<RU_DNS>`) или пустоту при YT_ROUTE=off - её берёт стадия 22, чтобы
 список доменов и российский резолвер жили только здесь.
@@ -38,7 +41,7 @@ import sys
 # ----------------------------------------------------------------------------
 # YouTube: домены, которые уводятся с экзитов на РФ-выход (см. yt_block ниже).
 # geosite:youtube ловит основную массу, но список нужен и сам по себе:
-#   • geosite обновляется раз в неделю (стадия 20 качает *.db) и отстаёт;
+#   • geosite обновляется раз в неделю (стадия 20 качает .srs) и отстаёт;
 #   • googlevideo.com — это САМО видео (GGC внутри РФ-провайдера), без него
 #     уедет только морда, а видео пойдёт через экзит и с рекламой;
 #   • youtubei.googleapis.com — API плеера, jnn-pa — аттестация плеера: если
@@ -69,6 +72,12 @@ YT_DOMAIN_SUFFIXES = [
 
 # Российский резолвер: отдаёт YouTube адреса GGC внутри РФ-провайдеров.
 RU_DNS = '77.88.8.8'
+
+# Наборы правил sing-geoip/sing-geosite (geoip.db/geosite.db убраны в
+# sing-box 1.12). Список и каталог общие со стадией 20, она их и качает:
+# `gen-router-config.py --rule-sets` печатает имена.
+RULE_SET_DIR = '/var/lib/sing-box/rule-set'
+RULE_SETS = ['geoip-ru', 'geosite-youtube', 'geosite-category-gov-ru']
 
 # Сети Telegram — https://core.telegram.org/resources/cidr.txt (2026-10-09).
 TELEGRAM_CIDRS = [
@@ -132,7 +141,6 @@ def main():
             'type': 'direct',
             'tag': 'direct-ru',
             'bind_interface': wg_out_iface,
-            'domain_strategy': 'ipv4_only',
         },
         # AdGuard слушает mgmt-IP на этой же ноде (lo). Через direct-ru
         # (bind net0) до него не достучаться, а auto_detect_interface
@@ -171,7 +179,6 @@ def main():
             'type': 'direct',
             'tag': yt_tag,
             'bind_interface': wg_out_iface,
-            'domain_strategy': 'ipv4_only',
         }
         if yt_route == 'zapret':
             # SO_MARK на сокете. Единственный признак, по которому nft-цепочки
@@ -346,7 +353,6 @@ def main():
             'default': all_hy2[0],
             'interrupt_exist_connections': False,
         },
-        {'type': 'block', 'tag': 'block-out'},
     ] + lane_outbounds + [
         # pin-<выход> — для ручных маршрутов панели (anysda-apply-routes
         # подменяет hy2-X на pin-hy2-X). Пока узел выключен или выход мёртв,
@@ -374,14 +380,14 @@ def main():
             # таймаута. Блок заставляет плеер откатиться на TCP сразу.
             yt_route_rules.append({
                 'domain_suffix': yt_domains, 'network': 'udp', 'port': [443],
-                'outbound': 'block-out',
+                'action': 'reject',
             })
             yt_route_rules.append({
-                'geosite': ['youtube'], 'network': 'udp', 'port': [443],
-                'outbound': 'block-out',
+                'rule_set': ['geosite-youtube'], 'network': 'udp', 'port': [443],
+                'action': 'reject',
             })
         yt_route_rules.append({'domain_suffix': yt_domains, 'outbound': yt_tag})
-        yt_route_rules.append({'geosite': ['youtube'], 'outbound': yt_tag})
+        yt_route_rules.append({'rule_set': ['geosite-youtube'], 'outbound': yt_tag})
         # Адрес YouTube клиент туннеля берёт у AdGuard, а не у sing-box:
         # инбаунд tproxy только сниффит домен и не резолвит его. Поэтому
         # YouTube -> RU_DNS задан апстримом AdGuard (стадия 22,
@@ -392,16 +398,16 @@ def main():
 
         'dns': {
             'servers': [
-                {'tag': 'ru-dns', 'address': RU_DNS, 'detour': 'direct-ru'},
+                {'type': 'udp', 'tag': 'ru-dns', 'server': RU_DNS, 'detour': 'direct-ru'},
                 # Этот DNS нужен только самому sing-box: имена из tg-proxy
                 # (бот). Клиенты туннелей спрашивают AdGuard напрямую, и их
                 # ответы эти правила не трогают; для бота .ru идёт через
                 # Яндекс, остальное через AdGuard.
-                {'tag': 'adguard', 'address': mgmt_ip, 'detour': 'local-dns'},
+                {'type': 'udp', 'tag': 'adguard', 'server': mgmt_ip, 'detour': 'local-dns'},
             ],
             'rules': [
                 {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
-                {'geosite': ['category-gov-ru'], 'server': 'ru-dns'},
+                {'rule_set': ['geosite-category-gov-ru'], 'server': 'ru-dns'},
             ],
             'final': 'adguard',
             'strategy': 'ipv4_only',
@@ -428,39 +434,46 @@ def main():
                 'tag': 'wg-tproxy-in',
                 'listen': '127.0.0.1',
                 'listen_port': 7898,
-                # Только sniff, БЕЗ sniff_override_destination. Правила по
-                # домену матчат сниффнутый домен (SNI/Host/QUIC) и без подмены,
-                # а подмена стирала исходный IP: ip_cidr из панели и
-                # geoip ru/private не матчились ни на одном HTTP/HTTPS/QUIC
-                # (VPN2-61). Назначение остаётся тем IP, куда шёл клиент, и
-                # tproxy отвечает на UDP с него же - udp_disable_domain_unmapping
-                # больше не нужен.
-                'sniff': True,
+                # Сниффинг - действием sniff первым правилом route ниже.
             },
         ] + mon_inbounds,
 
         'outbounds': outbounds,
 
         'route': {
-            'geoip':   {'path': '/var/lib/sing-box/geoip.db'},
-            'geosite': {'path': '/var/lib/sing-box/geosite.db'},
+            # Наборы sing-geoip/sing-geosite, их качает стадия 20. Локальные
+            # файлы sing-box перечитывает сам, когда стадия их обновит.
+            'rule_set': [
+                {'type': 'local', 'tag': t, 'format': 'binary',
+                 'path': f'{RULE_SET_DIR}/{t}.srs'}
+                for t in RULE_SETS
+            ],
             # Маршрутизация:
             #   1. YouTube (если YT_ROUTE != off) → youtube-ru, РФ-выход + десинк
             #   2. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)
             #   3. category-gov-ru → direct-ru (госуслуги и т.п.)
-            #   4. geoip:ru / private → direct-ru (физически в РФ)
+            #   4. geoip-ru / частные сети → direct-ru (физически в РФ)
             #   5. клиентские VPN-IP → lane-NN (selector; экзит дорожки выбирает watchdog)
             #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
-            'rules': mon_route_rules + [
+            'rules': [
+                # Только sniff, БЕЗ подмены назначения (override_destination).
+                # Правила по домену матчат сниффнутый домен (SNI/Host/QUIC) и
+                # без подмены, а подмена стирала исходный IP: ip_cidr из панели
+                # и geoip ru/private не матчились ни на одном HTTP/HTTPS/QUIC
+                # (VPN2-61). Назначение остаётся тем IP, куда шёл клиент, и
+                # tproxy отвечает на UDP с него же. Сниффинг обязан стоять до
+                # любого правила по домену, в том числе ручных маршрутов.
+                {'inbound': ['wg-tproxy-in'], 'action': 'sniff'},
+            ] + mon_route_rules + [
                 # mon-{tag} матчатся по inbound-тегу ВЫШЕ блока 127.0.0.0/8:
                 # цель служебного запроса — 127.0.0.1:9100 (loopback экзита),
                 # иначе его срезало бы правило ниже.
-                {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'outbound': 'block-out'},
+                {'ip_cidr': ['127.0.0.0/8', '0.0.0.0/8'], 'action': 'reject'},
                 {
                     'port': [853],
                     'ip_cidr': ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8'],
-                    'outbound': 'block-out',
+                    'action': 'reject',
                 },
                 # Выход бота — только ПОСЛЕ блокировок выше: прокси бота слушает
                 # loopback роутера, и любой локальный процесс через него дошёл
@@ -482,18 +495,23 @@ def main():
                     ],
                     'outbound': 'direct-ru',
                 },
-                {'geosite': ['category-gov-ru'],             'outbound': 'direct-ru'},
-                {'geoip':   ['ru', 'private'],               'outbound': 'direct-ru'},
+                {'rule_set': ['geosite-category-gov-ru'],    'outbound': 'direct-ru'},
+                {'rule_set': ['geoip-ru'],                   'outbound': 'direct-ru'},
+                {'ip_is_private': True,                      'outbound': 'direct-ru'},
             ] + lane_route_rules,
             'final': 'foreign-best',
             'auto_detect_interface': True,
+            # Имена в адресах экзитов (DOMAIN_{TAG} может быть доменом)
+            # резолвит AdGuard, как раньше делал dns.final. При двух
+            # DNS-серверах sing-box 1.14 без явного резолвера не стартует.
+            'default_domain_resolver': {'server': 'adguard'},
         },
 
         'experimental': {
             # Выбор foreign-best, сделанный сторожем через clash API, иначе
             # терялся при каждом перезапуске sing-box: selector вставал на
-            # первый тег, даже если тот мёртв. В 1.10 выбор селекторов
-            # хранится в cache_file сам, отдельного store_selected нет.
+            # первый тег, даже если тот мёртв. Выбор селекторов хранится в
+            # cache_file сам, отдельного store_selected нет.
             'cache_file': {
                 'enabled': True,
                 'path': '/var/lib/sing-box/cache.db',
@@ -511,5 +529,7 @@ def main():
 if __name__ == '__main__':
     if sys.argv[1:] == ['--agh-yt-upstream']:
         agh_yt_upstream()
+    elif sys.argv[1:] == ['--rule-sets']:
+        print(' '.join(RULE_SETS))
     else:
         main()

@@ -8,7 +8,7 @@
 # gen-router-config.py — foreign-best там должен быть type=selector).
 #
 # Рядом ставит таймер anysda-tproxy-watchdog: возвращает снесённую
-# маршрутизацию TPROXY и перезапускает sing-box, если тот перестал читать UDP.
+# маршрутизацию TPROXY.
 #
 # Должен идти ПОСЛЕ 20-ru-router: тот пишет /etc/anysda/clash-secret.txt и
 # поднимает sing-box с clash-api.
@@ -141,21 +141,14 @@ cat > /usr/local/sbin/anysda-tproxy-watchdog.sh <<'WDEOF'
 #!/usr/bin/env bash
 # Сторож TPROXY на entry (anysda-tproxy-watchdog.timer, раз в минуту).
 #
-# 1. Маршрутизация fwmark 0x42 → table 101 → local default. Её ставят
-#    anysda-{wg,ovpn,ikev2}-routing один раз при старте; перезапуск
-#    systemd-networkd её стирает, TPROXY метит пакеты, а доставить их в
-#    sing-box некуда. Возвращаем на место.
-# 2. sing-box 1.10 перестаёт вычитывать UDP-сокет :7898: единственный цикл
-#    приёма встаёт на блокирующей отправке в udpnat одной зависшей сессии
-#    (дамп 04-10-2026: chan send 439 мин), очередь сокета стоит полной, весь
-#    UDP клиентов теряется, TCP при этом работает. Ловим по Recv-Q, SIGQUIT
-#    кладёт дамп горутин в журнал, systemd поднимает sing-box (Restart=always).
+# Маршрутизация fwmark 0x42 → table 101 → local default. Её ставят
+# anysda-{wg,ovpn,ikev2}-routing один раз при старте; перезапуск
+# systemd-networkd её стирает, TPROXY метит пакеты, а доставить их в sing-box
+# некуда. Возвращаем на место.
 set -uo pipefail
 MARK='0x42'
 TABLE=101
 PREF=32765
-PORT=7898
-STUCK_BYTES=65536
 
 if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]+_TPROXY' >/dev/null; then
   # pref тот же, что ставят anysda-{wg,ovpn,ikev2}-routing; без него правило
@@ -173,42 +166,12 @@ if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]
       && echo "маршрут local default в таблице $TABLE пропал, вернул"
   fi
 fi
-
-systemctl is-active --quiet sing-box || exit 0
-
-recvq() {
-  ss -H -uln "sport = :$PORT" 2>/dev/null | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}'
-}
-
-# Живой sing-box вычитывает сокет за миллисекунды: три замера подряд за 10 с
-# с полной очередью бывают только у зависшего.
-samples=()
-for i in 1 2 3; do
-  q=$(recvq)
-  [[ "${q:-0}" -ge "$STUCK_BYTES" ]] || exit 0
-  samples+=("$q")
-  [[ $i -lt 3 ]] && sleep 5
-done
-
-pid=$(systemctl show -p MainPID --value sing-box)
-echo "UDP-сокет :$PORT не вычитывается (Recv-Q ${samples[*]}), дамп горутин и перезапуск sing-box"
-kill -QUIT "$pid"
-for _ in $(seq 1 15); do
-  sleep 1
-  new=$(systemctl show -p MainPID --value sing-box)
-  if [[ "$new" != 0 && "$new" != "$pid" ]] && systemctl is-active --quiet sing-box; then
-    echo "sing-box поднят заново (pid $new)"
-    exit 0
-  fi
-done
-systemctl restart sing-box
-echo "sing-box не поднялся сам за 15 с, перезапущен"
 WDEOF
 chmod 755 /usr/local/sbin/anysda-tproxy-watchdog.sh
 
 cat > /etc/systemd/system/anysda-tproxy-watchdog.service <<'EOF'
 [Unit]
-Description=anysda-vpn TPROXY watchdog (маршрутизация 0x42 и UDP-сокет sing-box)
+Description=anysda-vpn TPROXY watchdog (маршрутизация 0x42)
 After=sing-box.service
 
 [Service]

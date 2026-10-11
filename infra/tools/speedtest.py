@@ -125,7 +125,8 @@ jar=$(mktemp); trap 'rm -f "$jar"' EXIT
 pw=$(cat /etc/anysda/admin-password.txt)
 user=$(awk '/^admin:/{a=1;next} a&&/^[^ ]/{a=0} a&&/user:/{print $2; exit}' /opt/anysda-vpn2/config.yaml)
 python3 -c 'import json,sys; print(json.dumps({"username": sys.argv[1] or "anysda", "password": sys.argv[2]}))' "$user" "$pw" \
-  | curl -fsS -c "$jar" -H 'Content-Type: application/json' --data @- http://127.0.0.1:51821/api/auth/login >/dev/null
+  | curl -fsS -c "$jar" -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:51821' \
+    --data @- http://127.0.0.1:51821/api/auth/sign-in/username >/dev/null
 curl -fsS -b "$jar" http://127.0.0.1:51821/api/clients > /tmp/.speedtest-clients.json
 for pair in $PATCHES; do
   id=${pair%%=*}; exit_tag=${pair#*=}

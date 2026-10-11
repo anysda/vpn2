@@ -11,7 +11,7 @@
 # Образ панели тот же, что ставит стадия 30-frontend: PANEL_IMAGE
 # (ghcr.io/anysda/vpn2/panel:dev), docker pull, без сборки.
 # FRONT_TEST_DEV=1 - вместо собранной панели `nuxt dev` из app/ этой рабочей
-# копии (в том же образе: node 22 и wg/openssl/ip, нужные серверу панели):
+# копии (в том же образе: node 24 и wg/openssl/ip, нужные серверу панели):
 # правка файла в app/ сразу видна в браузере (HMR), node_modules и .nuxt лежат
 # в томах docker, а не в рабочей копии.
 # Вход admin / admin: стенд с выдуманными данными, пароль печатает итог и его не
@@ -116,7 +116,7 @@ stand_up "$NAME" "$IMAGE" "0.0.0.0:$PORT" "$PASS" \
 stand_wait "$NAME" "http://127.0.0.1:$PORT" "$WAIT"
 
 # Наполнитель пишет через схему БД панели и идёт в контейнере панели;
-# schema.ts node 22 читает сам.
+# schema.ts node 24 читает сам.
 [[ "$SEED" == /src ]] || tar -c -C "$APP_DIR" e2e/support/front-test-seed.mjs server/database/schema.ts \
   | dk exec -i "$NAME" sh -c "mkdir -p $SEED && tar -x -C $SEED"
 dk exec -e PANEL_URL=http://127.0.0.1:51821 -e ADMIN_PASSWORD="$PASS" -e EXIT_TAGS="$EXIT_TAGS" \

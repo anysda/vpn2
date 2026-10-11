@@ -69,7 +69,7 @@ ORM + libSQL (SQLite) · nuxt-auth-utils (cookie-сессии + Argon2id) ·
 OpenVPN + strongSwan (IKEv2/IPsec, EAP-MSCHAPv2) · AdGuard Home ·
 VictoriaMetrics + node_exporter · Caddy
 (reverse-proxy + Let's Encrypt) · Python (`python-telegram-bot`) для
-бота. Образы — `node:22-slim` (панель), `python:3.13-slim` (бот).
+бота. Образы — `node:24-slim` (панель), `python:3.13-slim` (бот).
 
 ## Архитектура
 

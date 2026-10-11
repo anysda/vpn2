@@ -42,11 +42,11 @@ function fmt(n: number | undefined | null): string {
     <div v-if="!data?.available" class="text-(--ui-text-muted) text-sm text-center py-3">
       AdGuard недоступен (нет соединения / неверные креды)
     </div>
-    <div v-else class="space-y-3">
+    <div v-else class="space-y-3 pb-3">
       <div class="flex flex-wrap items-end gap-4 text-sm">
-        <div class="grid grid-cols-3 gap-3 flex-1 min-w-64">
+        <div class="grid grid-cols-[auto_auto_auto] justify-between gap-3 flex-1 min-w-64">
           <div>
-            <div class="text-(--ui-text-muted) text-xs">
+            <div class="text-(--ui-text-muted) text-xs whitespace-nowrap">
               Запросов сегодня
             </div>
             <div class="font-semibold">
@@ -54,7 +54,7 @@ function fmt(n: number | undefined | null): string {
             </div>
           </div>
           <div>
-            <div class="text-(--ui-text-muted) text-xs">
+            <div class="text-(--ui-text-muted) text-xs whitespace-nowrap">
               Заблокировано
             </div>
             <div class="font-semibold">
@@ -65,13 +65,18 @@ function fmt(n: number | undefined | null): string {
             </div>
           </div>
           <div>
-            <div class="text-(--ui-text-muted) text-xs">
+            <div class="text-(--ui-text-muted) text-xs whitespace-nowrap">
               Avg мс
             </div>
             <div class="font-semibold">
               {{ (data.avgMs ?? 0).toFixed(1) }}
             </div>
           </div>
+        </div>
+        <div v-if="data.topBlocked" class="basis-full text-xs text-(--ui-text-muted)">
+          Топ блокировки:
+          <span class="text-(--ui-text)">{{ data.topBlocked.domain }}</span>
+          <span class="ml-1">({{ data.topBlocked.count }})</span>
         </div>
         <a
           v-if="aghOrigin"
@@ -84,11 +89,6 @@ function fmt(n: number | undefined | null): string {
           AdGuard Home
           <UIcon name="i-lucide-external-link" class="size-3.5 opacity-80" />
         </a>
-      </div>
-      <div v-if="data.topBlocked" class="text-xs text-(--ui-text-muted)">
-        Топ блокировки:
-        <span class="text-(--ui-text)">{{ data.topBlocked.domain }}</span>
-        <span class="ml-1">({{ data.topBlocked.count }})</span>
       </div>
     </div>
   </UCard>

@@ -7,7 +7,7 @@ const emit = defineEmits<{ open: [id: number] }>()
 const period = ref<TopPeriod>('day')
 const { top } = useClientsTop(period)
 
-const COLLAPSED = 10
+const COLLAPSED = 5
 const expanded = ref(false)
 function toggleExpanded() { expanded.value = !expanded.value }
 function setPeriod(p: TopPeriod) { period.value = p }
@@ -59,7 +59,7 @@ const PERIODS: Array<{ value: TopPeriod, label: string }> = [
       </div>
     </template>
 
-    <div v-if="counts" class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+    <div v-if="counts" class="grid grid-cols-3 gap-2 mb-4">
       <div class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5">
         <div class="text-xs text-(--ui-text-muted) flex items-center gap-1.5">
           <span class="inline-flex size-2 rounded-full bg-emerald-400" />в сети сейчас
@@ -68,7 +68,7 @@ const PERIODS: Array<{ value: TopPeriod, label: string }> = [
           {{ counts.onlineNow }}
         </div>
       </div>
-      <div class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5">
+      <div v-if="period === 'day'" class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5">
         <div class="text-xs text-(--ui-text-muted)">
           активны за сутки
         </div>
@@ -76,7 +76,7 @@ const PERIODS: Array<{ value: TopPeriod, label: string }> = [
           {{ counts.activeDay }}
         </div>
       </div>
-      <div class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5">
+      <div v-else class="rounded-md border border-(--ui-border) bg-(--ui-page) p-2.5">
         <div class="text-xs text-(--ui-text-muted)">
           активны за неделю
         </div>

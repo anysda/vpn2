@@ -70,6 +70,11 @@ function formatDiskFree(bytes: number | null): string {
   return bytes == null ? '—' : `${(bytes / 1024 ** 3).toFixed(1)} GB`
 }
 
+function sparkValues(tag: string): number[] {
+  const h = cpuHistory.value.get(tag) ?? []
+  return h.length === 1 ? [h[0]!, h[0]!] : h
+}
+
 // iowait/steal: уже 10% — заметная беда (диск или соседи по гипервизору).
 function waitColor(v: number | null): string {
   if (v == null) return 'text-(--ui-text-dimmed)'
@@ -223,14 +228,14 @@ function waitColor(v: number | null): string {
               <span class="text-(--ui-text)">{{ formatBytes(n.txTodayBytes) }}</span>
             </div>
           </div>
+          <!-- линия видна с первого замера: одна точка рисуется ровной чертой -->
           <svg
-            v-if="(cpuHistory.get(n.tag) ?? []).length > 1"
             viewBox="0 0 80 16"
             class="w-full h-4 mt-2"
             preserveAspectRatio="none"
           >
             <path
-              :d="sparklinePath(cpuHistory.get(n.tag) ?? [], 80, 16)"
+              :d="sparklinePath(sparkValues(n.tag), 80, 16)"
               fill="none"
               stroke="currentColor"
               stroke-width="1.2"

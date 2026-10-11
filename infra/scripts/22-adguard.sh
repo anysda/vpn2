@@ -131,10 +131,36 @@ patch_agh_config() {
     sed -i '/^dns:$/a\  aaaa_disabled: true' "$cfg"
     changed=1
   fi
-  if [[ $changed -eq 1 ]]; then
-    echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
-    svc_forget adguardhome
+  [[ $changed -eq 1 ]] && echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
+  # ratelimit_whitelist: пулы туннелей. AdGuard считает лимит (20 rps) на
+  # подсеть /24, а клиенты WG/OpenVPN/IKEv2 сидят каждый в своей /24 и делят
+  # одно ведро на всех. Поле принимает только адреса, не CIDR, поэтому пулы
+  # раскрываем. Пулы - из тех же переменных, что в 28/29/27. Чужие адреса
+  # в списке не трогаем, лимит для остальных остаётся.
+  local pools="${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
+  local wl
+  wl=$(CFG="$cfg" POOLS="$pools" python3 - <<'PYEOF'
+import ipaddress, os, yaml
+with open(os.environ["CFG"]) as f:
+    cfg = yaml.safe_load(f)
+dns = cfg.setdefault("dns", {})
+have = [str(a) for a in dns.get("ratelimit_whitelist") or []]
+need = [str(h) for p in os.environ["POOLS"].split()
+        for h in ipaddress.ip_network(p, strict=False).hosts()]
+missing = [a for a in need if a not in set(have)]
+if missing:
+    dns["ratelimit_whitelist"] = have + missing
+    with open(os.environ["CFG"], "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    print(len(missing))
+PYEOF
+)
+  if [[ -n "$wl" ]]; then
+    echo "[$HOST_TAG]   patched: ratelimit_whitelist += $wl адресов пулов туннелей"
+    changed=1
   fi
+  [[ $changed -eq 1 ]] && svc_forget adguardhome
+  return 0
 }
 
 if [[ ! -f "$AGH_CFG" ]]; then
@@ -240,7 +266,7 @@ if yt_up:
 cfg["dns"]["upstream_dns"] = ups
 if cfg != before:
     with open(cfg_path, "w") as f:
-        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
     print("changed")
 PYEOF
 )

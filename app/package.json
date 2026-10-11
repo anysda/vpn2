@@ -27,7 +27,7 @@
     "@node-rs/argon2": "^2.2.2",
     "@nuxt/ui": "^4.11.3",
     "drizzle-orm": "^0.45.4",
-    "js-yaml": "^4.3.2",
+    "js-yaml": "^5.4.3",
     "nuxt": "^4.6.1",
     "nuxt-auth-utils": "^0.5.31",
     "pino": "^10.4.0",
@@ -40,7 +40,6 @@
   "devDependencies": {
     "@nuxt/eslint": "^1.17.0",
     "@playwright/test": "1.64.0",
-    "@types/js-yaml": "^4.0.9",
     "@types/qrcode-svg": "^1.1.5",
     "@types/sortablejs": "^1.15.9",
     "drizzle-kit": "^0.31.11",

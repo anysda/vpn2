@@ -253,7 +253,7 @@ docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 docker run -d \
   --name anysda-vpn2 \
   "${ENTRY_DOCKER_ARGS[@]}" \
-  --restart unless-stopped \
+  --restart always \
   --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --network host \
   --pid host \

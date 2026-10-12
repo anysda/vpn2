@@ -89,7 +89,7 @@ class RouterConfigTests(unittest.TestCase):
             env = {
                 'HY2_DIRECT_PORT': '1443', 'HY2_WARP_PORT': '2443', 'HY2_MGMT_PORT': '3443',
                 'WGCF_LOCAL_IPV4': '192.0.2.10', 'WGCF_PEER_ENDPOINT_HOST': '127.0.0.1',
-                'WGCF_PEER_ENDPOINT_PORT': '2408', 'WGCF_RESERVED_JSON': '[0,0,0]',
+                'WGCF_PEER_ENDPOINT_PORT': '2408', 'WGCF_RESERVED_JSON': '[0,0,0]', 'HY2_BANDWIDTH_FIELDS': '',
                 'WGCF_PRIVKEY': 'wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0=',
                 'WGCF_PEER_PUBKEY': 'wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0=',
             }

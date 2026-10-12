@@ -43,6 +43,7 @@ class ConfigPublishTests(unittest.TestCase):
         source = source.replace('/etc/sing-box', str(directory))
         source = source.replace('/tmp/anysda/sing-box-server.json.tpl', str(directory / 'template'))
         source = source.replace('/usr/local/bin/sing-box', '"$SING_BOX_BIN"')
+        source = source.replace('/tmp/anysda/hy2_bandwidth.py', str(ROOT / 'infra/lib/hy2_bandwidth.py'))
         (directory / 'template').write_text(body)
         generator = directory / 'generate.py'
         generator.write_text(f'print({body!r})\n')

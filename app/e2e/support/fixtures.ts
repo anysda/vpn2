@@ -26,12 +26,17 @@ interface Allowed { status: number, url: RegExp, method?: string }
 export class Guard {
   readonly problems: string[] = []
   private allowed: Allowed[] = []
+  private signedOut = false
 
   allow(status: number, url: RegExp, method?: string) {
     this.allowed.push({ status, url, method })
   }
 
   private isAllowed(status: number, url: string, method?: string) {
+    // Боты могут закончить отложенный GET уже после удаления сессии.
+    // Исключение действует только после успешного выхода и до нового входа.
+    if (this.signedOut && status === 401 && /\/api\/admin\/telegram$/.test(url)
+      && (!method || method === 'GET')) return true
     return this.allowed.some(a => a.status === status && a.url.test(url) && (!a.method || !method || a.method === method))
   }
 
@@ -46,8 +51,12 @@ export class Guard {
     })
     page.on('response', (r) => {
       const status = r.status()
-      if (status < 400) return
       const method = r.request().method()
+      if (status >= 200 && status < 300 && method === 'POST') {
+        if (/\/api\/auth\/sign-out$/.test(r.url())) this.signedOut = true
+        if (/\/api\/auth\/(sign-in\/|two-factor\/verify-)/.test(r.url())) this.signedOut = false
+      }
+      if (status < 400) return
       if (this.isAllowed(status, r.url(), method)) return
       this.problems.push(`http ${status} ${method} ${r.url()}`)
     })

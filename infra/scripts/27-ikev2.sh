@@ -6,7 +6,8 @@
 # /etc/swanctl/conf.d/anysda-clients.conf через server/utils/ikev2.ts.
 #
 # Server-cert — ДВА режима:
-#   1) letsencrypt: PANEL_DOMAIN задан И Caddy уже выдал LE-cert на него.
+#   1) letsencrypt: PANEL_DOMAIN задан И Caddy уже выдал LE-cert на него
+#      (либо его cert/key/chain восстановлены из бэкапа в swanctl).
 #      Берём cert/key из /var/lib/caddy/.local/share/caddy/certificates/...
 #      CA клиенту не нужен (LE-корень в trust-store iOS/macOS/Win/Android).
 #      systemd path-watcher на Caddy-cert: ротация Caddy → re-copy + reload.
@@ -61,6 +62,14 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
   LE_KEY="${CADDY_CERT_DIR}/${PANEL_DOMAIN}/${PANEL_DOMAIN}.key"
 fi
 if [[ -n "$LE_CERT" && -r "$LE_CERT" && -r "$LE_KEY" ]]; then
+  IKEV2_MODE="letsencrypt"
+  IKEV2_SERVER_HOST="$PANEL_DOMAIN"
+elif [[ -n "${PANEL_DOMAIN:-}" &&
+        "$(cat /etc/anysda/ikev2-mode 2>/dev/null)" == "letsencrypt" &&
+        "$(cat /etc/anysda/ikev2-server-host 2>/dev/null)" == "$PANEL_DOMAIN" &&
+        -s /etc/swanctl/x509/anysda-server.crt && -s /etc/swanctl/private/anysda-server.key ]]; then
+  # Restore возвращает действующий LE-cert/key/chain в swanctl, но Caddy
+  # на чистом хосте может ещё не получить свой cert. Не меняем доверие клиентов.
   IKEV2_MODE="letsencrypt"
   IKEV2_SERVER_HOST="$PANEL_DOMAIN"
 else
@@ -143,7 +152,11 @@ LESYNC
   # Свой CA из self-signed-режима больше не нужен — иначе путает charon при
   # поиске цепочки.
   rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
-  /usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY"
+  if [[ -r "$LE_CERT" && -r "$LE_KEY" ]]; then
+    /usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY"
+  else
+    echo "[$HOST_TAG]   сохраняю восстановленные LE-cert/key/chain из swanctl до выдачи Caddy"
+  fi
 
   # ── 3. path-watcher: Caddy ротирует cert раз в 60 дней ────────────────
   echo "[$HOST_TAG] [3/8] systemd path-watcher на Caddy-cert (LE-ротация)"

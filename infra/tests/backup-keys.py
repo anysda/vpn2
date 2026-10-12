@@ -1,7 +1,7 @@
 """Disposable container only: real age/tar/sqlite/WG/OpenSSL backup and restore.
 
 Run with VPN2_BACKUP_TEST_CONTAINER=1; dependencies: bash, age, expect, sqlite3,
-wireguard-tools, openssl, python3. SOURCE_ROOT selects scripts under test;
+wireguard-tools, openssl, python3, Node 24. SOURCE_ROOT selects scripts under test;
 LEGACY_ROOT optionally selects an older checkout for the legacy archive case.
 Service/network commands are stubbed; no tunnel traffic is claimed here.
 """
@@ -169,6 +169,35 @@ class BackupRestore(unittest.TestCase):
         self.assertNotIn('останавливаю сервисы', result.stdout)
         self.assertFalse(Path('/test-panel-started').exists())
         self.assertTrue(identity() == original)
+
+    def test_ikev2_le_archive_without_caddy_storage(self):
+        put('/etc/anysda/ikev2-mode', 'letsencrypt')
+        put('/etc/anysda/ikev2-server-host', 'vpn.example.test')
+        put('/etc/swanctl/x509ca/anysda-le-chain-1.crt', (IKE / 'ca.crt').read_text())
+        paths = [Path('/etc/swanctl') / name for name in
+                 ('x509/anysda-server.crt', 'private/anysda-server.key', 'x509ca/anysda-le-chain-1.crt')]
+        original = {p: p.read_bytes() for p in paths}
+        put('/test-expected.pub', (WG / 'server.pub').read_text())
+        run('bash', str(ROOT / 'infra/lib/anysda-backup.sh'))
+        clean_host()
+        fixture()
+        result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force')
+        self.assertIn('anysda-restore: SUCCESS', result.stdout)
+        # Настоящая стадия 27 после restore; службы/сеть/наличие пакетов — заглушки.
+        Path('/etc/strongswan.d').mkdir(exist_ok=True)
+        put('/test-bin/dpkg', '#!/bin/sh\n[ "$2" = strongswan-starter ]\n', 0o755)
+        put('/test-bin/swanctl', '#!/bin/sh\necho anysda-ikev2\n', 0o755)
+        put('/test-bin/ss', '#!/bin/sh\nexit 0\n', 0o755)
+        put('/test-bin/ip', '#!/bin/sh\necho "default via 192.0.2.1 dev eth0"\n', 0o755)
+        put('/test-stage.env', 'HOST_TAG=ru\nENTRY_HOST=192.0.2.10\nPANEL_DOMAIN=vpn.example.test\n')
+        self.assertFalse(Path('/var/lib/caddy/.local/share/caddy/certificates').exists())
+        result = run('bash', str(ROOT / 'infra/scripts/27-ikev2.sh'), '/test-stage.env', check=False)
+        self.assertEqual(Path('/etc/anysda/ikev2-mode').read_text(), 'letsencrypt', result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for path, body in original.items():
+            self.assertTrue(path.read_bytes() == body, f'LE identity changed: {path}')
+        self.assertIn('27-ikev2 done', result.stdout)
+        print('PASS: real stage 27 preserves restored LE cert/key/chain without Caddy storage', flush=True)
 
 
 if __name__ == '__main__':

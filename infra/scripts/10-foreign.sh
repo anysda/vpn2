@@ -194,14 +194,19 @@ echo "[$HOST_TAG]   tls fingerprint: $(openssl x509 -in /etc/anysda/hy2-tls.crt 
 
 TPL=/tmp/anysda/sing-box-server.json.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
-envsubst < "$TPL" > /etc/sing-box/config.json
-chmod 600 /etc/sing-box/config.json
+# Проверяем приватный кандидат; неудачный рендер/проверка сохраняет конфиг,
+# с которым сервис сможет снова стартовать после сбоя или перезагрузки.
+SB_CONFIG_TMP=$(mktemp /etc/sing-box/.config.json.XXXXXX)
+trap 'rm -f -- "$SB_CONFIG_TMP"' EXIT
+envsubst < "$TPL" > "$SB_CONFIG_TMP"
 
 # Validate
-if ! /usr/local/bin/sing-box check -c /etc/sing-box/config.json; then
+if ! /usr/local/bin/sing-box check -c "$SB_CONFIG_TMP"; then
   echo "[$HOST_TAG] конфиг sing-box невалиден — сервис не трогаю"
   exit 1
 fi
+mv -f -- "$SB_CONFIG_TMP" /etc/sing-box/config.json
+trap - EXIT
 
 cat > /etc/systemd/system/sing-box.service <<'EOF'
 [Unit]

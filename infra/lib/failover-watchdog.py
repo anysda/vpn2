@@ -462,6 +462,9 @@ def tick():
         e: dict = {}
         _probe(now, c, e)
         if c.get(now) is not None:
+            # До-проверка — свежий успешный замер и для дорожек/пинов.
+            # Иначе они накопят DEAD_AFTER промахов и уведут живой выход.
+            alive[now] = c[now]
             print(f'{now}: промах ({last_err}), но до-проверка {k}/{DEAD_AFTER - 1} '
                   f'ожила ({c[now]}ms), транзиент, selector не трогаю', flush=True)
             return
@@ -632,7 +635,6 @@ def _persist_lanes():
     global _lane_saved
     if _lane_moved == _lane_saved:
         return
-    _lane_saved = dict(_lane_moved)
     shift = time.time() - time.monotonic()
     tmp = LANE_STATE_FILE + '.tmp'
     try:
@@ -641,6 +643,7 @@ def _persist_lanes():
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, LANE_STATE_FILE)
+        _lane_saved = dict(_lane_moved)
     except OSError as e:
         print(f'{LANE_STATE_FILE}: не записать ({e}), стоянка не переживёт перезапуск',
               file=sys.stderr, flush=True)
@@ -738,7 +741,9 @@ def lanes_tick(conns):
             _lane_back[l] = t
             cur[l] = direct
 
-    if t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
+    # Ошибка /connections — не пустой снимок: активные дорожки неизвестны,
+    # а нагрузки устарели. Аварийные переезды выше от снимка не зависят.
+    if conns is None or t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
         return
     _last_rebalance = t
 

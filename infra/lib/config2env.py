@@ -286,6 +286,19 @@ def config_error(key, reason):
     sys.exit(f'ERROR: config.yaml: {key}: {reason}')
 
 
+def normalize_domain(value, key):
+    """Каноническое DNS-имя для Caddy и OIDC redirect_uri."""
+    try:
+        value = value.encode('idna').decode('ascii').lower().rstrip('.')
+    except UnicodeError:
+        config_error(key, 'неверное DNS-имя')
+    labels = value.split('.')
+    if (len(value) > 253 or len(labels) < 2 or not re.search(r'[a-z]', labels[-1]) or
+            not all(re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', label) for label in labels)):
+        config_error(key, 'ожидается DNS-имя без схемы, порта и пробелов')
+    return value
+
+
 def validate_network(cfg):
     """Проверить идентификаторы и адреса до любых записей на диск."""
     def host(value, key):
@@ -327,6 +340,8 @@ def validate_network(cfg):
             port(ex['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in cfg['ports'].items():
         port(value, 'ports.' + name)
+    if cfg['panel'].get('domain'):
+        cfg['panel']['domain'] = normalize_domain(cfg['panel']['domain'], 'panel.domain')
 
 
 def materialize_orchestrator_key(cfg):

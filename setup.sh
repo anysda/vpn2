@@ -287,7 +287,11 @@ if [[ "$domain_enable" == "y" ]]; then
   while true; do
     panel_domain=$(ask "Домен (например vpn.example.com)")
     panel_domain=$(sanitize "$panel_domain")
-    if [[ "$panel_domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    if panel_domain=$(python3 - "$REPO_ROOT/infra/lib/config2env.py" "$panel_domain" <<'PYDOMAIN'
+import runpy, sys
+print(runpy.run_path(sys.argv[1])['normalize_domain'](sys.argv[2], 'panel.domain'))
+PYDOMAIN
+    ); then
       printf '  %bпроверяю DNS...%b ' "$D" "$E" >&2
       resolved=$(dig +short +time=3 +tries=1 "$panel_domain" @8.8.8.8 2>/dev/null | tail -1)
       if [[ "$resolved" == "$entry_ip" ]]; then

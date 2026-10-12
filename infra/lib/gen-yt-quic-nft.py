@@ -33,15 +33,23 @@ TUN_IFACES = ('wg0', 'xfrm0', 'tun0')
 def load(path):
     with open(path) as f:
         data = json.load(f)
+    if not isinstance(data, dict) or not isinstance(data.get('prefixes'), list):
+        raise ValueError(f'{path}: ожидается объект со списком prefixes')
     v4, v6 = set(), set()
-    for row in data.get('prefixes', []):
-        if 'ipv4Prefix' in row:
-            v4.add(str(ipaddress.IPv4Network(row['ipv4Prefix'], strict=False)))
-        elif 'ipv6Prefix' in row:
-            v6.add(str(ipaddress.IPv6Network(row['ipv6Prefix'], strict=False)))
-    if not v4:
-        raise SystemExit(f'{path}: не разобрано ни одного IPv4-префикса')
-    return sorted(v4), sorted(v6)
+    for row in data['prefixes']:
+        if not isinstance(row, dict) or ('ipv4Prefix' in row) == ('ipv6Prefix' in row):
+            raise ValueError(f'{path}: запись должна содержать ровно один префикс')
+        key, network, target = ('ipv4Prefix', ipaddress.IPv4Network, v4) if 'ipv4Prefix' in row else (
+            'ipv6Prefix', ipaddress.IPv6Network, v6)
+        prefix = network(row[key], strict=True)
+        if prefix.prefixlen == 0:
+            raise ValueError(f'{path}: маршрут по умолчанию недопустим')
+        target.add(prefix)
+    if not v4 or not v6:
+        raise ValueError(f'{path}: требуются непустые списки IPv4 и IPv6')
+    # Пересекающиеся интервалы иначе отклонит nft. Сохраняем точное покрытие.
+    return tuple([str(prefix) for prefix in ipaddress.collapse_addresses(family)]
+                 for family in (v4, v6))
 
 
 def main():

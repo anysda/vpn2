@@ -319,7 +319,7 @@ tg_admin_username=""
 tg_enable=$(ask_yn "Включить Telegram-бот?" "n")
 if [[ "$tg_enable" == "y" ]]; then
   while true; do
-    tg_token=$(ask "Токен бота (@BotFather)")
+    tg_token=$(ask_password_once "Токен бота (@BotFather)")
     tg_token=$(sanitize "$tg_token")
     [[ -n "$tg_token" ]] && break
     fail "Токен не может быть пустым"

@@ -74,6 +74,20 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
+class FrontendLiteralTests(unittest.TestCase):
+    def test_management_pairs(self):
+        text = source('30-frontend.sh')
+        line = next(line for line in text.splitlines() if '-e NUXT_MGMT_IPS=' in line)
+        expression = line.split('NUXT_MGMT_IPS=', 1)[1].removesuffix(' \\')
+        for value in [*VALUES, '*', 'two  words']:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                (Path(work) / 'glob-match').touch()
+                result = run('printf "%s" ' + expression, work, EXIT_TAGS='test tail',
+                             MGMT_IP_RU='192.0.2.1', MGMT_IP_TEST=value, MGMT_IP_TAIL='192.0.2.3')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, f'ru:192.0.2.1,test:{value},tail:192.0.2.3')
+
+
 class RouterExportLiteralTests(unittest.TestCase):
     def test_default_ports_are_data(self):
         text = source('20-ru-router.sh')

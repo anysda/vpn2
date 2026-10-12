@@ -309,6 +309,11 @@ fi
 if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   mkdir -p /etc/anysda
   cp -a "$BUNDLE_DIR/etc-anysda/." /etc/anysda/
+  # Старые архивы не содержат настроек SSO из профиля. Их отсутствие тоже
+  # восстанавливаем, иначе настройки текущей панели перекроют архивный засев.
+  if [[ ! -f "$BUNDLE_DIR/etc-anysda/sso-runtime.json" ]]; then
+    rm -f /etc/anysda/sso-runtime.json
+  fi
   # backup.env мог не быть в архиве (старый формат) — оставляем текущий нетронутым
 fi
 if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then

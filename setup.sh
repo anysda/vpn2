@@ -29,14 +29,14 @@ ask() {
   else
     printf '  %b%s%b: ' "$Y" "$prompt" "$E" >&2
   fi
-  read -r answer
+  IFS= read -r answer || { fail "EOF: $prompt — ввод прерван"; return 1; }
   printf '%s' "${answer:-$default}"
 }
 
 ask_ip() {
   local prompt="$1" val
   while true; do
-    val=$(ask "$prompt")
+    val=$(ask "$prompt") || return 1
     if [[ "$val" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
       printf '%s' "$val"; return
     fi
@@ -47,7 +47,7 @@ ask_ip() {
 ask_int() {
   local prompt="$1" default="$2" val
   while true; do
-    val=$(ask "$prompt" "$default")
+    val=$(ask "$prompt" "$default") || return 1
     if [[ "$val" =~ ^[1-9][0-9]*$ ]]; then printf '%s' "$val"; return; fi
     fail "Введите целое число ≥ 1"
   done
@@ -56,7 +56,7 @@ ask_int() {
 ask_yn() {
   local prompt="$1" default="${2:-n}" val
   while true; do
-    val=$(ask "$prompt (y/n)" "$default")
+    val=$(ask "$prompt (y/n)" "$default") || return 1
     case "${val,,}" in y|yes) printf 'y'; return;; n|no) printf 'n'; return;; esac
     fail "Введите y или n"
   done
@@ -77,7 +77,8 @@ ask_password_once() {
   local prompt="$1" p1
   while true; do
     printf '  %b%s%b: ' "$Y" "$prompt" "$E" >&2
-    read -rs p1; printf '\n' >&2
+    IFS= read -rs p1 || { fail "EOF: $prompt — ввод прерван"; return 1; }
+    printf '\n' >&2
     p1=$(sanitize "$p1")
     [[ -z "$p1" ]] && { fail "Пароль не может быть пустым"; continue; }
     printf '%s' "$p1"; return

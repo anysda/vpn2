@@ -699,25 +699,13 @@ def main():
         if not discovery:
             base = (sso.get('base_url', '') or '').rstrip('/')
             slug = sso.get('app_slug', '') or 'vpn2'
-            if not base:
-                print('ERROR: sso.enabled=true, но не задан ни sso.discovery_url, '
-                      'ни sso.base_url', file=sys.stderr)
-                sys.exit(1)
-            discovery = f'{base}/application/o/{slug}/.well-known/openid-configuration'
+            if base:
+                discovery = f'{base}/application/o/{slug}/.well-known/openid-configuration'
         client_id = sso.get('client_id', '') or 'vpn2'
         client_secret = sso.get('client_secret', '')
         allowed_subs = sso.get('allowed_subs', '')
-        if not client_secret:
-            print('ERROR: sso.client_secret не задан — панель не сможет обменять '
-                  'код на токен', file=sys.stderr)
-            sys.exit(1)
-        if not allowed_subs:
-            # Пустой список — не «всех пустить», а «никого». Молча выкатывать
-            # такое нельзя: вход просто перестанет работать, и искать причину
-            # будешь в Authentik, а она здесь.
-            print('ERROR: sso.allowed_subs пуст — войти не сможет никто. Укажи uuid '
-                  'пользователя Authentik (sub), см. docs/sso.md', file=sys.stderr)
-            sys.exit(1)
+        # Проверять полноту засева можно только на entry: стадия 30 знает,
+        # сохранены ли уже приоритетные настройки в профиле панели.
         lines += [
             f'SSO_DISCOVERY_URL={shq(discovery)}',
             f'SSO_CLIENT_ID={shq(client_id)}',

@@ -71,7 +71,16 @@ ADMIN_USER="${ADMIN_USER:-anysda}"
 # Приезжает из блока `sso:` в config.yaml через config2env.py. Выключено —
 # панель ведёт себя ровно как раньше (форма логин/пароль).
 SSO_ENABLED="${SSO_ENABLED:-false}"
-if [[ "$SSO_ENABLED" == "true" ]]; then
+# После первого сохранения в профиле панели главнее её настройки: env
+# только засевает их, файл стадия не трогает и не проверяет неиспользуемый засев.
+SSO_RUNTIME=/etc/anysda/sso-runtime.json
+SSO_REDIRECT_URL=""
+if [[ "$SSO_ENABLED" == "true" && -n "${PANEL_DOMAIN:-}" ]]; then
+  SSO_REDIRECT_URL="https://${PANEL_DOMAIN}/auth/authentik"
+fi
+if [[ -f "$SSO_RUNTIME" ]]; then
+  echo "[$HOST_TAG]   SSO: настроен в профиле панели ($SSO_RUNTIME), блок sso: из config.yaml не применяется"
+elif [[ "$SSO_ENABLED" == "true" ]]; then
   # ⚠️ ЖЁСТКАЯ ЗАВИСИМОСТЬ ОТ HTTPS. Адрес возврата у провайдера в Authentik
   # строится от домена панели (https://<домен>/auth/authentik), а куки
   # state/PKCE получают флаг Secure вместе с доменом (NUXT_SESSION_COOKIE_SECURE
@@ -86,20 +95,12 @@ if [[ "$SSO_ENABLED" == "true" ]]; then
     "${SSO_CLIENT_ID:?SSO_CLIENT_ID пуст}" \
     "${SSO_CLIENT_SECRET:?SSO_CLIENT_SECRET пуст}" \
     "${SSO_ALLOWED_SUBS:?SSO_ALLOWED_SUBS пуст — войти не сможет никто}"
-  SSO_REDIRECT_URL="https://${PANEL_DOMAIN}/auth/authentik"
   echo "[$HOST_TAG]   SSO: ${SSO_CLIENT_ID} @ ${SSO_DISCOVERY_URL}"
   echo "[$HOST_TAG]   SSO redirect_uri: ${SSO_REDIRECT_URL} (должен совпадать с провайдером в Authentik)"
 else
   SSO_REDIRECT_URL=""
   echo "[$HOST_TAG]   SSO: выключен"
 fi
-# После первого сохранения в профиле панели главнее её настройки: env выше
-# только засевает их, файл стадия не трогает.
-SSO_RUNTIME=/etc/anysda/sso-runtime.json
-if [[ -f "$SSO_RUNTIME" ]]; then
-  echo "[$HOST_TAG]   SSO: настроен в профиле панели ($SSO_RUNTIME), блок sso: из config.yaml не применяется"
-fi
-
 TPL=/tmp/anysda/anysda-config.yaml.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 

@@ -1,166 +1,102 @@
 #!/usr/bin/env bash
-# Stage 99 — smoke-проверка всей системы после деплоя.
-
-set -euo pipefail
+# Stage 99 — обязательные smoke-проверки роли; любой отказ валит деплой.
+set -Eeuo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}" "${MGMT_IP:?}"
+trap 'echo "[$HOST_TAG] verify: ошибка команды в строке $LINENO" >&2' ERR
+
+FAILURES=0
+fail() {
+  echo "[$HOST_TAG] ✗ $*" >&2
+  FAILURES=$((FAILURES + 1))
+}
+check() {
+  local label=$1
+  shift
+  if "$@"; then
+    echo "[$HOST_TAG] ✓ $label"
+  else
+    fail "$label"
+  fi
+}
+service() { systemctl is-active --quiet "$1"; }
+forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
+firewall() { LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null; }
+udp() { ss -H -lun "sport = :$1" | grep . >/dev/null; }
+tproxy_rule() { ip rule list | grep -E 'fwmark 0x42 lookup 101([[:space:]]|$)' >/dev/null; }
+tproxy_route() { ip route show table 101 | grep -E '^local default dev lo([[:space:]]|$)' >/dev/null; }
+ikev2_conn() { swanctl --list-conns | grep '^anysda-ikev2:' >/dev/null; }
 
 echo "[$HOST_TAG] verify — basic checks"
-echo
+check 'sysctl net.ipv4.ip_forward = 1' forwarding
+check 'ufw active' firewall
+check 'fail2ban active' service fail2ban
+check 'node_exporter active' service node_exporter
+check 'sing-box active' service sing-box
 
-# --- sysctl
-echo "[$HOST_TAG] sysctl net.ipv4.ip_forward: $(sysctl -n net.ipv4.ip_forward)"
-
-# --- ufw
-echo "[$HOST_TAG] ufw status: $(ufw status | sed -n 1p)"
-
-# --- fail2ban
-echo "[$HOST_TAG] fail2ban: $(systemctl is-active fail2ban)"
-
-# --- node_exporter
-NE_STATUS=$(systemctl is-active node_exporter 2>/dev/null || echo 'inactive')
-echo "[$HOST_TAG] node_exporter: $NE_STATUS"
-
-# --- mgmt transport: скрейп node_exporter идёт по служебному hy2-туннелю
-# (WG-mesh снят). На entry сквозной
-# сигнал — здоровье scrape-таргетов VictoriaMetrics; на экзите — что служебный
-# hy2-инбаунд слушает UDP.
-if [[ "$HOST_TAG" == "ru" ]]; then
-  if curl -fsS --max-time 5 http://127.0.0.1:8428/api/v1/targets 2>/dev/null | jq -e . >/dev/null 2>&1; then
-    echo "[$HOST_TAG] mgmt scrape targets:"
-    curl -sS http://127.0.0.1:8428/api/v1/targets \
-      | jq -r '.data.activeTargets[] | "  " + (.labels.host // "?") + ": " + .health' \
-      | sed "s/^/[$HOST_TAG] /"
+if [[ "$HOST_TAG" == ru ]]; then
+  # Один снимок API: пустой список и отсутствующий ожидаемый host — тоже отказ.
+  if targets=$(curl -fsS --max-time 5 http://127.0.0.1:8428/api/v1/targets) \
+     && jq -e '.status == "success" and (.data.activeTargets | type == "array" and length > 0)' <<<"$targets" >/dev/null; then
+    check 'mgmt scrape: все targets up' jq -e \
+      'all(.data.activeTargets[]; .health == "up")' <<<"$targets"
+    for tag in ru ${EXIT_TAGS:-}; do
+      check "mgmt scrape: $tag присутствует и up" jq -e --arg host "$tag" \
+        'any(.data.activeTargets[]; .labels.host == $host and .health == "up")' <<<"$targets"
+    done
   else
-    echo "[$HOST_TAG] mgmt scrape:  VictoriaMetrics не поднят (стадия 25 не применена)"
+    fail 'mgmt scrape: VictoriaMetrics недоступен или список targets пуст/некорректен'
   fi
-  # ssh <tag> через служебный туннель (VPN2-38, ~/.ssh/config пишет стадия 20).
-  SSH_FAIL=''
-  for _t in ${EXIT_TAGS:-}; do
-    if ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$_t" true 2>/dev/null; then
-      echo "[$HOST_TAG] ssh $_t:      вход через hy2-mgmt работает"
-    else
-      echo "[$HOST_TAG] ssh $_t:      НЕ входит через hy2-mgmt"
-      SSH_FAIL+=" $_t"
-    fi
+  for tag in ${EXIT_TAGS:-}; do
+    check "ssh $tag через hy2-mgmt" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$tag" true
   done
-else
-  _mp="${HY2_MGMT_PORT:-}"
-  if [[ -n "$_mp" ]] && ss -H -lun "sport = :$_mp" 2>/dev/null | grep . >/dev/null; then
-    echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp} слушает"
+  check 'frontend: 127.0.0.1:80 отвечает через Caddy' curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:80/
+  check 'vmsingle: 127.0.0.1:8428 healthy' curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8428/-/healthy
+  check 'tproxy: правило fwmark 0x42 → table 101' tproxy_rule
+  check 'tproxy: local default dev lo в table 101' tproxy_route
+  if queue=$(ss -H -uln 'sport = :7898' | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}') && [[ -n "$queue" ]]; then
+    echo "[$HOST_TAG] tproxy udp: Recv-Q $queue (устойчивый рост означает, что sing-box не читает UDP)"
   else
-    echo "[$HOST_TAG] hy2-mgmt:    udp/${_mp:-?} НЕ слушает (стадия 10 не применена?)"
+    fail 'tproxy udp: нет сокета 127.0.0.1:7898 или ss завершился ошибкой'
   fi
+  check 'tproxy wd: таймер active' service anysda-tproxy-watchdog.timer
+  check 'networkd: drop-in 60-anysda-foreign.conf существует' test -f /etc/systemd/networkd.conf.d/60-anysda-foreign.conf
+
+  # Выключенный YouTube — штатный пропуск; включённый требует A/B-проверку.
+  if [[ "${YT_ROUTE:-off}" == zapret ]]; then
+    check 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
+  else
+    echo "[$HOST_TAG] yt-zapret: пропущен (youtube.route=${YT_ROUTE:-off})"
+  fi
+  for svc in wg-quick@wg0 openvpn-server@server strongswan-starter anysda-ikev2-routing; do
+    check "$svc active" service "$svc"
+  done
+  check 'ikev2: swanctl установлен, conn anysda-ikev2 загружен' ikev2_conn
+  check 'ikev2: udp/500 слушает' udp 500
+  check 'ikev2: udp/4500 слушает' udp 4500
+  check 'ikev2: интерфейс xfrm0 существует' ip link show xfrm0
+  check 'ikev2 sync: таймер active' service anysda-ikev2-sync.timer
+  # Ошибка чтения/JSON и время из будущего не должны давать свежий статус.
+  check 'ikev2 sync: статус обновлён менее 120 секунд назад' python3 -c '
+import json, time
+with open("/etc/anysda/ikev2-status.json") as status_file:
+    age = time.time() - json.load(status_file)["updated"]
+print(f"ikev2 status age: {age:.0f}s")
+raise SystemExit(0 if 0 <= age < 120 else 1)
+'
+else
+  if [[ -n "${HY2_MGMT_PORT:-}" ]]; then
+    check "hy2-mgmt: udp/$HY2_MGMT_PORT слушает" udp "$HY2_MGMT_PORT"
+  else
+    fail 'hy2-mgmt: HY2_MGMT_PORT не задан'
+  fi
+  check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
+  check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
 fi
 
-# --- host-specific
-case "$HOST_TAG" in
-  ru)
-    if curl -fsS -o /dev/null http://127.0.0.1:80/ 2>/dev/null; then
-      echo "[$HOST_TAG] frontend:    127.0.0.1:80 responds (via Caddy)"
-    else
-      echo "[$HOST_TAG] frontend:    не запущен (стадия 30 не применена)"
-    fi
-    if curl -fsS -o /dev/null http://127.0.0.1:8428/-/healthy 2>/dev/null; then
-      echo "[$HOST_TAG] vmsingle:    127.0.0.1:8428 healthy"
-    else
-      echo "[$HOST_TAG] vmsingle:    не запущен (стадия 25 не применена)"
-    fi
-    if systemctl is-active --quiet sing-box 2>/dev/null; then
-      echo "[$HOST_TAG] sing-box:    active (router)"
-    else
-      echo "[$HOST_TAG] sing-box:    неактивен (стадия 20 не применена)"
-    fi
-    # TPROXY клиентов: без правила 0x42 → 101 и local default в таблице 101
-    # интернет у всех клиентов пропадает, а все юниты при этом active.
-    if ip rule list | grep 'fwmark 0x42 lookup 101' >/dev/null \
-       && ip route show table 101 2>/dev/null | grep 'local default' >/dev/null; then
-      echo "[$HOST_TAG] tproxy:      правило 0x42 → table 101 на месте"
-    else
-      echo "[$HOST_TAG] tproxy:      ✗ НЕТ правила 0x42 → table 101 или local default — клиенты без интернета"
-    fi
-    _q=$(ss -H -uln 'sport = :7898' 2>/dev/null | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}')
-    echo "[$HOST_TAG] tproxy udp:  Recv-Q ${_q:-нет сокета} (держится выше 0 — sing-box не читает UDP)"
-    if systemctl is-active --quiet anysda-tproxy-watchdog.timer 2>/dev/null; then
-      echo "[$HOST_TAG] tproxy wd:   таймер active"
-    else
-      echo "[$HOST_TAG] tproxy wd:   anysda-tproxy-watchdog.timer НЕ активен (стадия 21 не применена)"
-    fi
-    if [[ -f /etc/systemd/networkd.conf.d/60-anysda-foreign.conf ]]; then
-      echo "[$HOST_TAG] networkd:    чужие правила и маршруты не трогает"
-    else
-      echo "[$HOST_TAG] networkd:    drop-in 60-anysda-foreign.conf НЕТ — рестарт networkd снесёт TPROXY (стадия 00)"
-    fi
-    # YouTube-десинк (стадия 19). Статус юнита ничего не доказывает — nfqws2
-    # поднимается и с нерабочей стратегией, поэтому гоняем A/B-проверку.
-    if [[ -x /usr/local/bin/anysda-yt-check ]]; then
-      if /usr/local/bin/anysda-yt-check >/tmp/yt-check.out 2>&1; then
-        echo "[$HOST_TAG] yt-zapret:   ✓ $(head -2 /tmp/yt-check.out | tr '\n' ' ')"
-      else
-        echo "[$HOST_TAG] yt-zapret:   ✗ ОБХОД НЕ РАБОТАЕТ — YouTube у клиентов ляжет"
-        sed "s/^/[$HOST_TAG]   /" /tmp/yt-check.out
-      fi
-      rm -f /tmp/yt-check.out
-    else
-      echo "[$HOST_TAG] yt-zapret:   не развёрнут (youtube.route=off)"
-    fi
-    for _svc in wg-quick@wg0 openvpn-server@server strongswan-starter anysda-ikev2-routing; do
-      if systemctl is-active --quiet "$_svc" 2>/dev/null; then
-        echo "[$HOST_TAG] ${_svc}: active"
-      else
-        echo "[$HOST_TAG] ${_svc}: неактивен"
-      fi
-    done
-    # IKEv2: порты слушают + conn anysda-ikev2 в swanctl.
-    if command -v swanctl >/dev/null 2>&1; then
-      if swanctl --list-conns 2>/dev/null | grep '^anysda-ikev2:' >/dev/null; then
-        echo "[$HOST_TAG] ikev2:       anysda-ikev2 conn loaded"
-      else
-        echo "[$HOST_TAG] ikev2:       conn НЕ загружен (стадия 27 не применена?)"
-      fi
-      if ss -lun 2>/dev/null | grep -E ':500 |:4500 ' >/dev/null; then
-        echo "[$HOST_TAG] ikev2 ports: udp/500 + udp/4500 слушают"
-      else
-        echo "[$HOST_TAG] ikev2 ports: udp/500 или udp/4500 НЕ слушают"
-      fi
-      if ip link show xfrm0 >/dev/null 2>&1; then
-        echo "[$HOST_TAG] ikev2 xfrm:  xfrm0 up"
-      else
-        echo "[$HOST_TAG] ikev2 xfrm:  xfrm0 ОТСУТСТВУЕТ (anysda-ikev2-routing не отработал?)"
-      fi
-      # Применитель кредов панели: без него новые устройства не пускаются,
-      # а счётчики трафика IKEv2 в панели стоят на нуле.
-      if systemctl is-active --quiet anysda-ikev2-sync.timer 2>/dev/null; then
-        _age=$(( $(date +%s) - $(python3 -c 'import json;print(json.load(open("/etc/anysda/ikev2-status.json"))["updated"])' 2>/dev/null || echo 0) ))
-        if [[ "$_age" -lt 120 ]]; then
-          echo "[$HOST_TAG] ikev2 sync:  таймер active, статус свежий (${_age}s)"
-        else
-          echo "[$HOST_TAG] ikev2 sync:  таймер active, но /etc/anysda/ikev2-status.json протух (${_age}s)"
-        fi
-      else
-        echo "[$HOST_TAG] ikev2 sync:  anysda-ikev2-sync.timer НЕ активен — креды панели не применяются"
-      fi
-    fi
-    ;;
-  *)
-    # Любая выходная нода
-    if systemctl is-active --quiet sing-box 2>/dev/null; then
-      echo "[$HOST_TAG] sing-box:    active"
-    else
-      echo "[$HOST_TAG] sing-box:    неактивен (стадия 10 не применена)"
-    fi
-    # Проверяем порты Hysteria2
-    _dp="${HY2_DIRECT_PORT:-443}"
-    _wp="${HY2_WARP_PORT:-8443}"
-    echo "[$HOST_TAG] UDP ports (Hysteria2):"
-    ss -H -lun "( sport = :$_dp or sport = :$_wp )" 2>/dev/null \
-      | sed "s/^/[$HOST_TAG]   /"
-    ;;
-esac
-
-if [[ -n "${SSH_FAIL:-}" ]]; then
-  echo "[$HOST_TAG] verify: ssh через служебный туннель не работает на:${SSH_FAIL}"
+if (( FAILURES > 0 )); then
+  echo "[$HOST_TAG] verify FAILED: проверок не пройдено: $FAILURES" >&2
   exit 1
 fi
 echo "[$HOST_TAG] verify done"

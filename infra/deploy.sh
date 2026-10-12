@@ -404,6 +404,7 @@ run_stage_on_host() {
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
     push "$tpl" "sing-box-server.json.tpl" || return
+    push "$DEPLOY_ROOT/lib/warp-watchdog.py" "warp-watchdog.py" || return
   fi
 
   if [[ "$stage" == "20-ru-router" ]]; then

@@ -233,6 +233,50 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 [Install]
 WantedBy=multi-user.target
 EOF
+# Общий бюджет для таймера и ожидания WARP при деплое. Состояние не удаляем
+# даже при отключении WARP: повторная установка не должна обнулять лимиты.
+WARP_WD_SRC=/tmp/anysda/warp-watchdog.py
+[[ -f "$WARP_WD_SRC" ]] || WARP_WD_SRC=$(dirname "$0")/../lib/warp-watchdog.py
+install -m755 "$WARP_WD_SRC" /usr/local/bin/anysda-warp-watchdog
+WARP_WD_ENABLED=0
+if /usr/local/bin/anysda-warp-watchdog --enabled; then
+  WARP_WD_ENABLED=1
+  cat > /etc/systemd/system/anysda-warp-watchdog.service <<'EOF'
+[Unit]
+Description=Recover stalled WARP on the sing-box exit
+After=network-online.target sing-box.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/anysda-warp-watchdog
+TimeoutStartSec=45
+StateDirectory=anysda-warp-watchdog
+StateDirectoryMode=0700
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=anysda-warp-watchdog
+EOF
+  cat > /etc/systemd/system/anysda-warp-watchdog.timer <<'EOF'
+[Unit]
+Description=Check exit WARP every 30 seconds
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=30
+AccuracySec=1
+Unit=anysda-warp-watchdog.service
+
+[Install]
+WantedBy=timers.target
+EOF
+else
+  systemctl disable --now anysda-warp-watchdog.timer >/dev/null 2>&1 || true
+  systemctl stop anysda-warp-watchdog.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/anysda-warp-watchdog.timer \
+    /etc/systemd/system/anysda-warp-watchdog.service /usr/local/bin/anysda-warp-watchdog
+fi
+
 systemctl daemon-reload
 systemctl enable sing-box >/dev/null 2>&1
 # Перезапуск рвёт все туннели entry→экзит, у клиентов это секунды без сети.
@@ -250,6 +294,16 @@ else
   systemctl restart sing-box
   echo "$sb_fp" > "$SB_FP_FILE"
   sleep 2
+fi
+
+# Даже при неизменном конфиге проверяем WARP. Bootstrap и timer используют
+# один flock и бюджет: максимум две дополнительные попытки за этот прогон,
+# не более трёх за скользящий час; окно ожидания 9 минут + текущая проба.
+if [[ "$WARP_WD_ENABLED" == 1 ]]; then
+  if ! /usr/local/bin/anysda-warp-watchdog --bootstrap; then
+    echo "[$HOST_TAG] WARNING: проверка WARP не удалась; экзит продолжает работу"
+  fi
+  systemctl enable --now anysda-warp-watchdog.timer >/dev/null
 fi
 
 # UFW: Hysteria2 порты (00-bootstrap открывает дефолтные; здесь — для per-exit

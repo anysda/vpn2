@@ -47,11 +47,20 @@ jobs:
         run: |
           python3 -m pip install -r telegram/requirements.txt
           python3 -m unittest discover -s telegram/tests -v
-      - name: регрессии развёртывания
+      - name: регрессии развёртывания и маршрутов sing-box
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn
           python3 -m pip install PyYAML==6.0.3
+          d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
+          version=$(sed -n "s/^SB_VER='\([^']*\)'/\1/p" infra/scripts/20-ru-router.sh)
+          curl -fsSL --retry 3 -o "$d/sing-box.tar.gz" \
+            "https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-amd64.tar.gz"
+          tar -xzf "$d/sing-box.tar.gz" -C "$d"
+          export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
+          export RUN_NETNS_TESTS=1
+          "$SING_BOX_BIN" version
           python3 -m unittest discover -s infra/tests -v
 
   backup-restore:

@@ -20,6 +20,9 @@ async function noHorizontalOverflow(page: Page, where: string) {
 
 test.describe('телефон 390px', () => {
   test('главная, «Я», вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
+    // Очередь уведомлений боту копят соседние тесты: их тосты на узком экране
+    // накрывают кнопки девайса. Здесь проверяется вёрстка, очередь не нужна.
+    await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: [] }))
     await page.goto('/login')
     await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
     await noHorizontalOverflow(page, '/login')

@@ -175,14 +175,21 @@ def _mark_poll_ok() -> None:
 class _WatchedRequest(HTTPXRequest):
     """HTTPXRequest под getUpdates, отмечающий каждый успешный ответ Telegram.
 
-    Этот экземпляр отдаётся Application только под поллинг, поэтому любой
-    долетевший до нас ответ означает: тоннель до api.telegram.org живой и
-    поллер крутится. HTTP-код не важен — важен сам факт ответа.
+    Только успешный Bot API ответ с массивом updates подтверждает поллинг.
+    Ошибка прокси или Telegram не должна удерживать /health в зелёном состоянии.
     """
 
     async def do_request(self, *args, **kwargs):
         result = await super().do_request(*args, **kwargs)
-        _mark_poll_ok()
+        status, payload = result
+        if status == 200:
+            try:
+                body = json.loads(payload)
+            except (ValueError, UnicodeError):
+                body = None
+            if (isinstance(body, dict) and body.get('ok') is True
+                    and isinstance(body.get('result'), list)):
+                _mark_poll_ok()
         return result
 
 

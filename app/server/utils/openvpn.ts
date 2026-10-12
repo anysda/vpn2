@@ -401,7 +401,15 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
 
 /** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
 export function reissueDeviceOvpn(deviceId: number) {
-  return withCaLock(() => reissueDeviceOvpnOnce(deviceId))
+  return withCaLock(async () => {
+    try {
+      return await reissueDeviceOvpnOnce(deviceId)
+    }
+    catch (err) {
+      useLogger().error({ err, deviceId }, 'ovpn reissue failed')
+      throw createError({ statusCode: 503, statusMessage: 'ovpn_reissue_failed', message: 'Ошибка перевыпуска' })
+    }
+  })
 }
 
 async function reissueDeviceOvpnOnce(deviceId: number) {
@@ -409,22 +417,16 @@ async function reissueDeviceOvpnOnce(deviceId: number) {
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
 
-  const ready = await caReady()
-  if (row.ovpnCert && ready) {
+  // Неготовая CA не отменяет отзыв: до публикации CRL и успешной выдачи
+  // нового сертификата сохраняем старую пару в БД для повтора.
+  if (row.ovpnCert) {
     await revokeClientCertOnce(row.ovpnCert)
     // CRL проверяется только при подключении — живую сессию со старым
     // сертификатом рвём сами.
     await killOvpnClientQuiet(ovpnCn(deviceId))
   }
-  if (!ready) {
-    // CA ещё не готов — просто чистим, ensureDeviceOvpn выдаст cert позже.
-    const [cleared] = await db
-      .update(devicesTable)
-      .set({ ovpnCert: null, ovpnKey: null, updatedAt: new Date() })
-      .where(eq(devicesTable.id, deviceId))
-      .returning()
-    return cleared
-  }
+  // Без ранее выданного сертификата OpenVPN остаётся необязательным.
+  if (!row.ovpnCert && !(await caReady())) return row
 
   const { cert, key } = await issueClientCert(ovpnCn(deviceId))
   const [updated] = await db

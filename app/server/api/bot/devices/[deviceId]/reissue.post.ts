@@ -24,8 +24,8 @@ export default defineEventHandler(async (event) => {
     .limit(1)
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
-  await reissueDeviceWg(deviceId)
   await reissueDeviceOvpn(deviceId)
+  await reissueDeviceWg(deviceId)
   await reissueDeviceIkev2(deviceId)
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'bot: wg sync after reissue failed'))
   await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'bot: ovpn sync after reissue failed'))

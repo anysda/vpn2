@@ -18,10 +18,12 @@ export default defineEventHandler(async (event) => {
     .from(clients).where(eq(clients.id, id)).limit(1)
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
-  const devRows = await db.select({ id: devices.id }).from(devices).where(eq(devices.clientId, id))
+  const devRows = await db.select({ id: devices.id }).from(devices).where(eq(devices.clientId, id)).orderBy(devices.id)
+  // Сбой CA на любом устройстве не должен менять ключи WG/IKEv2 до синка.
+  // Уже перевыпущенные OVPN-пары сохранены; повтор отзовёт и их.
+  for (const d of devRows) await reissueDeviceOvpn(d.id)
   for (const d of devRows) {
     await reissueDeviceWg(d.id)
-    await reissueDeviceOvpn(d.id)
     await reissueDeviceIkev2(d.id)
   }
 

@@ -17,7 +17,12 @@ test.describe('клиенты', () => {
     await openHome(page)
     const name = uniq('client')
     const expires = nextYear()
+    const creating = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/clients')
     await createClientUi(page, name, { expires })
+    const created = await creating
+    expect(created.status()).toBe(200)
+    const client = await created.json()
+    expect(client.expiresAt).toBeTruthy()
     await page.getByPlaceholder('Поиск...').fill(name)
     await expect(clientCard(page, name)).toHaveCount(1)
     // Бейдж подписки — только «Заморожен»; у нового клиента вместо него точка «в сети».
@@ -40,6 +45,12 @@ test.describe('клиенты', () => {
     await date.fill('')
     await date.press('Tab')
     await expect(toast(page, 'Срок действия сохранён')).toBeVisible()
+    const saved = await page.request.get(`/api/clients/${client.id}`)
+    expect(saved.status()).toBe(200)
+    expect((await saved.json()).expiresAt, 'снятый срок должен сохраниться на сервере').toBeNull()
+    await page.reload()
+    await openClient(page, renamed)
+    await expect(date).toHaveValue('')
 
     // Безлимит.
     await dlg.getByRole('button', { name: 'Безлимитно' }).click()

@@ -71,10 +71,14 @@ class _RedactTokenFormatter(logging.Formatter):
     """Вырезает токен бота из любой строки лога, включая трассировки:
     python-telegram-bot кладёт токен прямо в текст InvalidToken."""
     token = ''
+    secret = ''
 
     def format(self, record: logging.LogRecord) -> str:
         text = super().format(record)
-        return text.replace(self.token, '<token>') if self.token else text
+        for value in (self.token, self.secret):
+            if value:
+                text = text.replace(value, '<secret>')
+        return re.sub(r'(https?://)[^/\s@]+@', r'\1<credentials>@', text)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -127,6 +131,7 @@ def _load_runtime() -> tuple[str, int, str]:
 TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
 _RedactTokenFormatter.token = TOKEN
 SECRET     = os.environ.get('TGBOT_SECRET', '')
+_RedactTokenFormatter.secret = SECRET
 if not SECRET:
     raise RuntimeError(
         'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
@@ -375,13 +380,15 @@ def _bot_headers() -> dict:
 def _extract_error(r: httpx.Response) -> BotApiError:
     """Из 4xx-ответа Nuxt вытащить человекочитаемый текст."""
     msg = ''
+    if r.status_code >= 500:
+        return BotApiError(r.status_code, 'Панель временно недоступна. Попробуйте позже.')
     try:
         body = r.json()
         if isinstance(body, dict):
             msg = body.get('message') or body.get('statusMessage') or body.get('error') or ''
     except Exception:
-        msg = (r.text or '').strip()
-    if not msg:
+        pass
+    if not isinstance(msg, str) or not msg:
         msg = f'Ошибка сервера ({r.status_code})'
     return BotApiError(r.status_code, msg)
 
@@ -568,6 +575,8 @@ def _confirm_markup(yes_data: str, no_data: str) -> dict:
 
 # ── Commands ───────────────────────────────────────────────────────────────────
 
+UNEXPECTED_ERROR = 'Сервис временно недоступен. Попробуйте позже.'
+
 ADMIN_START_TEXT = (
     '*anysda-vpn*\n\n'
     '/status — состояние системы\n'
@@ -648,8 +657,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await tg_reply(update, f'❌ {e.message}')
             return
         except Exception as e:
-            log.exception('cmd_start link failed')
-            await tg_reply(update, f'❌ Ошибка: {e}')
+            log.error('cmd_start link failed (%s)', type(e).__name__)
+            await tg_reply(update, f'❌ {UNEXPECTED_ERROR}')
             return
         await tg_send(
             chat_id,
@@ -669,8 +678,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await tg_reply(update, f'❌ {e.message}')
         return
     except Exception as e:
-        log.exception('cmd_start client failed')
-        await tg_reply(update, f'❌ Ошибка: {e}')
+        log.error('cmd_start client failed (%s)', type(e).__name__)
+        await tg_reply(update, f'❌ {UNEXPECTED_ERROR}')
         return
     await _send_client_menu(chat_id, view)
 
@@ -732,8 +741,8 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await tg_reply(update, await build_status_text(), 'Markdown')
     except Exception as e:
-        log.exception('cmd_status failed')
-        await tg_reply(update, f'❌ Ошибка: {e}')
+        log.error('cmd_status failed (%s)', type(e).__name__)
+        await tg_reply(update, f'❌ {UNEXPECTED_ERROR}')
 
 
 async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -755,8 +764,8 @@ async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
             'Markdown',
         )
     except Exception as e:
-        log.exception('cmd_nodes failed')
-        await tg_reply(update, f'❌ Ошибка: {e}')
+        log.error('cmd_nodes failed (%s)', type(e).__name__)
+        await tg_reply(update, f'❌ {UNEXPECTED_ERROR}')
 
 
 async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
@@ -769,8 +778,8 @@ async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     except BotApiError as e:
         await tg_reply(update, f'❌ {e.message}')
     except Exception as e:
-        log.exception('cmd_clients failed')
-        await tg_reply(update, f'❌ Ошибка: {e}')
+        log.error('cmd_clients failed (%s)', type(e).__name__)
+        await tg_reply(update, f'❌ {UNEXPECTED_ERROR}')
 
 
 # ── Client text messages ───────────────────────────────────────────────────────
@@ -793,8 +802,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         except BotApiError as e:
             await tg_send(CHAT_ID, f'❌ {e.message}')
         except Exception as e:
-            log.exception('admin text failed')
-            await tg_send(CHAT_ID, f'❌ Ошибка: {e}')
+            log.error('admin text failed (%s)', type(e).__name__)
+            await tg_send(CHAT_ID, f'❌ {UNEXPECTED_ERROR}')
         return
 
     # Reply-кнопки навигации имеют приоритет — даже если ждём имя устройства.
@@ -806,8 +815,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
             await _client_error_reply(chat_id, e)
             return
         except Exception as e:
-            log.exception('on_text nav failed')
-            await tg_send(chat_id, f'❌ Ошибка: {e}')
+            log.error('on_text nav failed (%s)', type(e).__name__)
+            await tg_send(chat_id, f'❌ {UNEXPECTED_ERROR}')
             return
         if text == NAV_DEVICES:
             await _send_device_list(chat_id, view)
@@ -827,8 +836,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
             await tg_send(chat_id, f'❌ {e.message}')
             return
         except Exception as e:
-            log.exception('add_device failed')
-            await tg_send(chat_id, f'❌ Ошибка: {e}')
+            log.error('add_device failed (%s)', type(e).__name__)
+            await tg_send(chat_id, f'❌ {UNEXPECTED_ERROR}')
             return
         await tg_send(chat_id, f'✅ Устройство «{text}» добавлено.')
         await _send_client_menu(chat_id, view)
@@ -841,8 +850,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         await _client_error_reply(chat_id, e)
         return
     except Exception as e:
-        log.exception('on_text client failed')
-        await tg_send(chat_id, f'❌ Ошибка: {e}')
+        log.error('on_text client failed (%s)', type(e).__name__)
+        await tg_send(chat_id, f'❌ {UNEXPECTED_ERROR}')
         return
     await _send_client_menu(chat_id, view)
 
@@ -867,8 +876,8 @@ async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         except BotApiError as e:
             await tg_answer_callback(callback_id, e.message, show_alert=True)
         except Exception as e:
-            log.exception('admin callback failed: %s', data)
-            await tg_answer_callback(callback_id, f'Ошибка: {e}', show_alert=True)
+            log.error('admin callback failed (%s)', type(e).__name__)
+            await tg_answer_callback(callback_id, UNEXPECTED_ERROR, show_alert=True)
         return
 
     try:
@@ -876,8 +885,8 @@ async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     except BotApiError as e:
         await tg_answer_callback(callback_id, e.message, show_alert=True)
     except Exception as e:
-        log.exception('callback failed: %s', data)
-        await tg_answer_callback(callback_id, f'Ошибка: {e}', show_alert=True)
+        log.error('callback failed (%s)', type(e).__name__)
+        await tg_answer_callback(callback_id, UNEXPECTED_ERROR, show_alert=True)
 
 
 async def _handle_callback(chat_id: int, message_id: int | None,
@@ -1596,7 +1605,7 @@ async def main() -> None:
         await tgapp.updater.start_polling(drop_pending_updates=True)
         _mark_poll_ok()
         asyncio.create_task(poll_watchdog())
-        log.info('Bot started, polling Telegram via %s', TG_PROXY)
+        log.info('Bot started, polling Telegram via configured TG_PROXY')
         await asyncio.Event().wait()  # run forever
         await tgapp.updater.stop()
         await tgapp.stop()

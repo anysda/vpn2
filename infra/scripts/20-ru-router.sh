@@ -35,9 +35,19 @@ RS_DIR=/var/lib/sing-box/rule-set
 mkdir -p "$RS_DIR"
 for _rs in $(python3 /tmp/anysda/gen-router-config.py --rule-sets); do
   _f="$RS_DIR/${_rs}.srs"
-  [[ -f "$_f" && -z $(find "$_f" -mtime +7 2>/dev/null) ]] && continue
+  if [[ -f "$_f" && -z $(find "$_f" -mtime +7 2>/dev/null) ]] \
+    && /usr/local/bin/sing-box rule-set decompile --output /dev/null "$_f" >/dev/null 2>&1; then
+    continue
+  fi
   curl -sSfL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     -o "$_f.new" "https://raw.githubusercontent.com/SagerNet/sing-${_rs%%-*}/rule-set/${_rs}.srs"
+  # HTTP 200 не гарантирует SRS: проверяем до rename, пока живой sing-box
+  # ещё читает предыдущий набор. Свежий, но повреждённый кеш тоже заменяем.
+  if ! /usr/local/bin/sing-box rule-set decompile --output /dev/null "$_f.new"; then
+    rm -f "$_f.new"
+    echo "[$HOST_TAG] набор $_rs повреждён — сохраняю предыдущий файл"
+    exit 1
+  fi
   mv -f "$_f.new" "$_f"
 done
 rm -f /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db

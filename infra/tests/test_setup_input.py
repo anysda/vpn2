@@ -31,6 +31,7 @@ def prepare(directory):
     shutil.copy(ROOT / 'setup.sh', root)
     (root / 'infra/lib').mkdir(parents=True)
     shutil.copy(ROOT / 'infra/lib/config2env.py', root / 'infra/lib')
+    shutil.copy(ROOT / 'infra/lib/hy2_bandwidth.py', root / 'infra/lib')
     return root
 
 

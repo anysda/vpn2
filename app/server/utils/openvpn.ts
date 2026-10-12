@@ -286,6 +286,11 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
     `route-ipv6 ::/1`,
     `route-ipv6 8000::/1`,
     `remote-cert-tls server`,
+    // Буферы сокета системные, а не мелкие встроенные; fast-io - запись в
+    // UDP без лишнего poll. OpenVPN Connect эти опции молча пропускает.
+    `sndbuf 0`,
+    `rcvbuf 0`,
+    ...(p.proto.startsWith('udp') ? ['fast-io'] : []),
     `cipher AES-256-GCM`,
     `auth SHA256`,
     `verb 3`,

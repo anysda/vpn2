@@ -136,6 +136,8 @@ chmod 644 "$PKI/ca.crt" "$PKI/server.crt" "$PKI/crl.pem"
 
 # ── 4. server.conf ──────────────────────────────────────────────────────────
 echo "[$HOST_TAG] [4/6] server.conf"
+OVPN_FASTIO=''
+[[ "$OVPN_PROTO" == udp* ]] && OVPN_FASTIO=fast-io
 cat > "$OVPN_DIR/server.conf" <<EOF
 port ${OVPN_PORT}
 proto ${OVPN_PROTO}
@@ -161,6 +163,11 @@ data-ciphers AES-256-GCM:CHACHA20-POLY1305
 auth SHA256
 persist-key
 persist-tun
+# Буферы сокета системные (0 - не трогать, после 00-bootstrap это 8 МиБ);
+# fast-io - запись в UDP без лишнего poll, на TCP опции нет.
+sndbuf 0
+rcvbuf 0
+${OVPN_FASTIO}
 user nobody
 group nogroup
 push "redirect-gateway def1 bypass-dhcp"

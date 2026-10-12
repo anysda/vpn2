@@ -94,7 +94,9 @@ wg0_apply
 
 # ── 5. TPROXY: forwarded wg0 traffic → sing-box :7898 ──────────────────────
 echo "[$HOST_TAG] [5/5] anysda-wg-routing"
-cat > /etc/systemd/system/anysda-wg-routing.service <<'EOF'
+# MSS под MTU, который панель пишет в конфиг клиента (NUXT_WG_MTU в 30-frontend).
+WG_MSS=$(( ${WG_MTU:-1420} - 40 ))
+cat > /etc/systemd/system/anysda-wg-routing.service <<EOF
 [Unit]
 Description=anysda-vpn2 — wg0 forwarded traffic → sing-box TPROXY
 After=network-online.target sing-box.service wg-quick@wg0.service
@@ -103,6 +105,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Environment=WG_MSS=$WG_MSS
 ExecStart=/usr/local/sbin/anysda-wg-routing.sh up
 ExecStop=/usr/local/sbin/anysda-wg-routing.sh down
 
@@ -123,6 +126,8 @@ MARK='0x42'
 TABLE=101
 PREF=32765
 TPROXY_PORT=7898
+MSS=${WG_MSS:-1380}
+MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
 
 if [[ "$ACTION" == "up" ]]; then
   # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
@@ -142,6 +147,13 @@ if [[ "$ACTION" == "up" ]]; then
   iptables -t mangle -F ANYSDA_WG_TPROXY
   # DNS to AdGuard (entry mgmt IP) must be delivered locally, not TPROXY'd.
   iptables -t mangle -A ANYSDA_WG_TPROXY -d 10.99.0.1 -j RETURN
+  # MSS режем в обе стороны, как у OpenVPN: TCP клиента заканчивается в
+  # sing-box, и сегменты к клиенту он режет по MSS из его SYN. Клиент с MTU
+  # больше, чем держит его путь (PPPoE 1492 и т.п.), иначе получает
+  # туннельный UDP крупнее пути, фрагменты теряются, HTTPS виснет.
+  iptables -t mangle -A ANYSDA_WG_TPROXY "${MSS_OUT[@]}"
+  iptables -t mangle -C POSTROUTING -o "$WG_IF" "${MSS_OUT[@]}" 2>/dev/null || \
+    iptables -t mangle -A POSTROUTING -o "$WG_IF" "${MSS_OUT[@]}"
   iptables -t mangle -A ANYSDA_WG_TPROXY -p tcp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
   iptables -t mangle -A ANYSDA_WG_TPROXY -p udp -j TPROXY --tproxy-mark "${MARK}/${MARK}" --on-port "$TPROXY_PORT" --on-ip 127.0.0.1
 
@@ -162,10 +174,11 @@ if [[ "$ACTION" == "up" ]]; then
   done
   ip6tables -I FORWARD 1 -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable
 
-  echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT, v6-fastfail=on)"
+  echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT, mss=$MSS, v6-fastfail=on)"
 
 elif [[ "$ACTION" == "down" ]]; then
   iptables -t mangle -D PREROUTING -i "$WG_IF" -j ANYSDA_WG_TPROXY 2>/dev/null || true
+  iptables -t mangle -D POSTROUTING -o "$WG_IF" "${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -X ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -D INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || true

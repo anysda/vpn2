@@ -23,7 +23,7 @@ def shq(v):
     return "'" + str(v).replace("'", "'\\''") + "'"
 
 
-def unquote_scalar(v):
+def unquote_scalar(v, key='значение'):
     """Снимает YAML-кавычки: '..' ('' внутри = '), ".." (escape-последовательности).
 
     Хвостовой комментарий после закрывающей кавычки отбрасывается. Незакрытая
@@ -38,22 +38,29 @@ def unquote_scalar(v):
                 out.append("'")
                 i += 2
                 continue
+            if v[i + 1:].strip() and not v[i + 1:].lstrip().startswith('#'):
+                config_error(key, 'лишний текст после закрывающей кавычки')
             return ''.join(out)
         if q == '"' and c == '\\':
             nxt = v[i + 1:i + 2]
-            out.append({'n': '\n', 't': '\t', '"': '"', '\\': '\\', '/': '/'}.get(nxt, '\\' + nxt))
+            escapes = {'n': '\n', 'r': '\r', 't': '\t', '"': '"', '\\': '\\', '/': '/'}
+            if nxt not in escapes:
+                config_error(key, 'неподдерживаемая escape-последовательность')
+            out.append(escapes[nxt])
             i += 2
             continue
         if q == '"' and c == '"':
+            if v[i + 1:].strip() and not v[i + 1:].lstrip().startswith('#'):
+                config_error(key, 'лишний текст после закрывающей кавычки')
             return ''.join(out)
         out.append(c)
         i += 1
-    print('ERROR: config.yaml: незакрытая кавычка в значении (значение скрыто)', file=sys.stderr)
-    sys.exit(1)
+    config_error(key, 'незакрытая кавычка (значение скрыто)')
 
 
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
+    validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
            'entry_resources': {}}
@@ -77,6 +84,8 @@ def parse_yaml(text):
             else:
                 # `us   # короткий тег` — комментарий после значения не часть значения
                 v = re.sub(r'\s+#.*$', '', v)
+                if v.startswith('#'):
+                    v = ''
             return k.strip(), v
 
         if indent == 0:
@@ -146,11 +155,11 @@ def parse_yaml(text):
                 cfg['entry_resources'][k] = v
             elif context == 'backup':
                 # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
-                if content.endswith(':') and ':' not in content[:-1]:
-                    backup_sub = content[:-1]
+                k, v = kv(content)
+                if k in ('local', 's3'):
+                    backup_sub = k
                     cfg['backup'].setdefault(backup_sub, {})
                 else:
-                    k, v = kv(content)
                     cfg['backup'][k] = v
         elif indent == 4:
             if context == 'exits' and current_exit is not None:
@@ -161,6 +170,105 @@ def parse_yaml(text):
                 cfg['backup'][backup_sub][k] = v
 
     return cfg
+
+
+def validate_yaml(text):
+    """Не угадывать смысл YAML за пределами поддерживаемого формата.
+
+    Схема также не даёт опечаткам и неправильному отступу выключать функции.
+    Все ошибки проверяются до разбора и до изменения env/state/SSH-ключей.
+    """
+    schema = {
+        'entry': {'host', 'password', 'public_host'},
+        'exits': {'tag', 'host', 'password', 'hy2_direct_port'},
+        'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt'},
+        'admin': {'user', 'password', 'ssh_pubkey'},
+        'panel': {'domain', 'image'}, 'tgbot': {'image'},
+        'telegram': {'bot_token', 'chat_id', 'admin_username'},
+        'youtube': {'route', 'quic', 'mark', 'offload', 'strategy', 'zapret_ref', 'domains'},
+        'sso': {'enabled', 'base_url', 'app_slug', 'client_id', 'client_secret',
+                'allowed_subs', 'auto_redirect', 'password_login', 'label', 'discovery_url'},
+        'backup': {'enabled', 'backend', 'passphrase', 'retention', 'schedule', 'local', 's3'},
+        'backup.local': {'dir'},
+        'backup.s3': {'endpoint', 'bucket', 'region', 'access_key', 'secret_key'},
+        # Значения проверяет entry_resources.py на целевой машине.
+        'entry_resources': {'panel_memory_mib', 'panel_old_space_mib', 'bot_memory_mib',
+                            'vm_memory_mib', 'vm_cache_mib', 'vm_query_mib',
+                            'vm_concurrent_requests', 'agh_memory_mib', 'agh_high_mib',
+                            'agh_go_mib', 'retention_days', 'adaway_enabled', 'querylog_size'},
+    }
+    booleans = {'backup.enabled', 'sso.enabled', 'sso.auto_redirect', 'sso.password_login',
+                'entry_resources.adaway_enabled'}
+    boolean_values = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
+    seen = set()
+    context = ''
+    sub = ''
+    exit_index = -1
+    for number, raw in enumerate(text.splitlines(), 1):
+        content = raw.lstrip(' ')
+        if not content or content.startswith('#'):
+            continue
+        indent = len(raw) - len(content)
+        item = content.startswith('- ')
+        if item:
+            content = content[2:]
+        name, sep, value = content.partition(':')
+        name, value = name.strip(), value.strip()
+        if indent == 0:
+            key = name
+            if name not in schema and name not in ('orchestrator_key', 'orchestrator_pubkey'):
+                config_error(key, f'неизвестный ключ, строка {number}')
+            context, sub = name, ''
+            exit_index = -1
+        else:
+            if context == 'exits':
+                if item and indent == 2:
+                    exit_index += 1
+                key = f'exits[{max(exit_index, 0)}].{name}'
+                valid_indent = (item and indent == 2) or (not item and indent == 4 and exit_index >= 0)
+                parent = 'exits'
+            else:
+                if indent == 2:
+                    sub = ''
+                parent = context + ('.' + sub if sub else '')
+                key = parent + '.' + name
+                valid_indent = indent == (4 if sub else 2) and not item
+            if not valid_indent:
+                config_error(key, f'неверный отступ или структура, строка {number}')
+            if name not in schema.get(parent, set()):
+                config_error(key, f'неизвестный ключ, строка {number}')
+        if not sep or '\t' in raw[:len(raw) - len(raw.lstrip())] or (item and indent == 0):
+            config_error(key, f'неверный формат, строка {number}')
+        if key in seen:
+            config_error(key, f'повтор ключа, строка {number}')
+        seen.add(key)
+        if key in schema:
+            if value and not value.startswith('#'):
+                config_error(key, 'ожидается блок с отступами, как в config.example.yaml')
+            if key.startswith('backup.'):
+                sub = name
+            continue
+        quoted = value[:1] in ('"', "'")
+        if quoted:
+            value = unquote_scalar(value, key)
+        else:
+            value = re.sub(r'\s+#.*$', '', value)
+            if value.startswith('#'):
+                value = ''
+            if value[:1] in ('[', '{', '|', '>', '!', '&', '*') or value.lower() in ('null', '~'):
+                config_error(key, 'ожидается скаляр; сложный YAML не поддерживается')
+            if key not in booleans and value.lower() in ('true', 'false', 'yes', 'no'):
+                config_error(key, 'ожидается строка; заключите значение в кавычки')
+        if '\0' in value:
+            config_error(key, 'нулевой байт недопустим в env')
+        if key in booleans and value.lower() not in boolean_values:
+            config_error(key, 'ожидается true или false')
+        # Тот же контракт, что в entry_resources.py: ошибка до записи env.
+        if key == 'entry_resources.adaway_enabled' and value.lower() not in ('true', 'false'):
+            config_error(key, 'ожидается true или false')
+        if key.startswith('entry_resources.') and key != 'entry_resources.adaway_enabled' and (
+                not value.isdigit() or (key == 'entry_resources.retention_days' and int(value) == 0)):
+            config_error(key, 'ожидается целое число' + (' > 0' if key.endswith('retention_days') else ' >= 0'))
 
 
 def prepare_private(path):

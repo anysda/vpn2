@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { isIPv4 } from 'node:net'
 import { asc } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { routes } from '../database/schema'
@@ -33,7 +34,11 @@ const DOMAIN_RE = /^\*?\.?[a-z0-9-]+(?:\.[a-z0-9-]+)+$/i
 const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}(?:\/(?:\d|[12]\d|3[0-2]))?$/
 
 export function detectRouteType(value: string): 'domain' | 'ip_cidr' | null {
-  if (CIDR_RE.test(value)) return 'ip_cidr'
+  // Числовой адрес не должен становиться доменом, если октеты или маска
+  // неверны: применитель маршрутов отвергнет его после успешного ответа API.
+  if (/^[\d.]+(?:\/.*)?$/.test(value)) {
+    return CIDR_RE.test(value) && isIPv4(value.split('/')[0]!) ? 'ip_cidr' : null
+  }
   if (DOMAIN_RE.test(value)) return 'domain'
   return null
 }

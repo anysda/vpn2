@@ -24,8 +24,9 @@ source "$SVC_LIB"
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 26-backup is ru-only — skipping"; exit 0;; esac
 
 # Если backup-секция в config.yaml отсутствует или enabled != true — стадия
-# фактически no-op (не валит деплой, но и ничего не разворачивает).
+# снимаем прежний таймер; архивы и passphrase нужны для восстановления.
 if [[ "${BACKUP_ENABLED:-}" != "true" ]]; then
+  systemctl disable --now anysda-backup.timer >/dev/null 2>&1 || true
   echo "[$HOST_TAG] 26-backup: backup.enabled != true — пропуск"
   exit 0
 fi

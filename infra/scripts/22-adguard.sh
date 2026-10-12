@@ -176,13 +176,16 @@ PYEOF
 agh_fresh=()
 if [[ ! -f "$AGH_CFG" ]]; then
 agh_fresh=(--fresh)
+# JSON-строки являются YAML-скалярами: сохраняют тип, кавычки и переводы строк.
+AGH_USER_YAML=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$AGH_USER")
+AGH_HASH_YAML=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$AGH_PASS_HASH")
 cat > "$AGH_CFG" <<YAML
 http:
   address: 127.0.0.1:${AGH_PORT}
 
 users:
-  - name: ${AGH_USER}
-    password: '${AGH_PASS_HASH}'
+  - name: ${AGH_USER_YAML}
+    password: ${AGH_HASH_YAML}
 
 auth_attempts: 5
 block_auth_min: 15

@@ -26,6 +26,21 @@ def run(script, directory, **values):
 
 
 class AdguardLiteralTests(unittest.TestCase):
+    def test_fresh_credentials(self):
+        text = source('22-adguard.sh')
+        block = text[text.index('agh_fresh=()'):text.index('\nelse\n  # Config exists')]
+        for value in [*VALUES, 'true', 'name: value', '*alias']:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                path = Path(work) / 'fresh.yaml'
+                result = run('svc_forget() { :; }\n' + block + '\nfi', work,
+                             AGH_CFG=str(path), AGH_USER=value, AGH_PASS_HASH='test-hash',
+                             AGH_PORT='3000', MGMT_IP='192.0.2.1',
+                             AGH_ADAWAY='true', AGH_QUERYLOG='1000')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                cfg = yaml.safe_load(path.read_text())
+                self.assertEqual(cfg['users'], [{'name': value, 'password': 'test-hash'}])
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
     def test_sync_credentials(self):
         text = source('22-adguard.sh')
         block = text[text.index('  agh_sync=$('):text.index('\npatch_agh_config "$AGH_CFG"')]

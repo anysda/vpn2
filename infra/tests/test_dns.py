@@ -82,6 +82,7 @@ class AdguardPatchTests(unittest.TestCase):
         template_script = Path(os.environ.get("AGH_TEMPLATE_SCRIPT", ADGUARD)).read_text()
         template = template_script.split('cat > "$AGH_CFG" <<YAML\n', 1)[1].split('\nYAML\n', 1)[0]
         for key, value in {"AGH_PORT": "3000", "AGH_USER": "test-user",
+                           "AGH_USER_YAML": '"test-user"', "AGH_HASH_YAML": '"test-hash"',
                            "AGH_PASS_HASH": "test-hash", "MGMT_IP": "192.0.2.1",
                            "YT_UPSTREAM_YAML": ""}.items():
             template = template.replace("${" + key + "}", value)

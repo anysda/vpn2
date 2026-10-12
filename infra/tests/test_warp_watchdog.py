@@ -24,6 +24,8 @@ def rendered(peer_host):
     """The real exit template as 10-foreign renders it."""
     template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
     template = template.replace('${WGCF_PEER_ENDPOINT_HOST}', peer_host)
+    # Штатный режим BBR: hy2_bandwidth.py отдаёт пустой фрагмент.
+    template = template.replace('${HY2_BANDWIDTH_FIELDS}', '')
     config = json.loads(re.sub(r'\$\{\w+\}', '1', template))
     config['experimental']['clash_api'] = {'external_controller': '127.0.0.1:9090', 'secret': 'test-only'}
     return config

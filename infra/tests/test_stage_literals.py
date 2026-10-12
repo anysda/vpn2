@@ -150,7 +150,9 @@ class IkeRoutingLiteralTests(unittest.TestCase):
                      text.index('chmod +x /usr/local/sbin/anysda-ikev2-routing.sh')]
         for value in [*VALUES, "'; touch INJECTED; #"]:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                result = run(block.replace('/usr/local/sbin/anysda-ikev2-routing.sh', 'routing.sh'),
+                block_local = block.replace('/usr/local/sbin/anysda-ikev2-routing.sh', 'routing.sh')
+                block_local = block_local.replace('/run/anysda-vpn-routing.lock', work + '/routing.lock')
+                result = run(block_local,
                              work, WAN_IF=value, IKEV2_SUBNET=value + '/24', IKEV2_SUBNET6=value)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 # Unknown action executes assignments without touching networking.

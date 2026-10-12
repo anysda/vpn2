@@ -622,6 +622,8 @@ async def _client_error_reply(chat_id: int, e: 'BotApiError') -> None:
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _allowed_chat(update):
+        return
     chat_id = update.effective_chat.id
 
     # Админский чат — текущее админское приветствие, без изменений.
@@ -694,12 +696,38 @@ async def build_status_text(header: str = '*Состояние системы*')
     return '\n'.join(lines)
 
 
-def _admin_only(update: Update) -> bool:
-    return update.effective_chat.id == CHAT_ID
+async def _admin_only(update: Update) -> bool:
+    chat, user = update.effective_chat, update.effective_user
+    if chat is None or user is None or user.is_bot or chat.id != CHAT_ID:
+        return False
+    if chat.type == 'private':
+        return user.id == chat.id
+    if chat.type not in ('group', 'supergroup'):
+        return False
+    # Анонимные сообщения от имени группы не удостоверяют отправителя.
+    if update.message and update.message.sender_chat:
+        return False
+    try:
+        member = await _tg_post('getChatMember', {'chat_id': chat.id, 'user_id': user.id})
+        return bool(member.get('ok') and member.get('result', {}).get('status')
+                    in ('creator', 'administrator'))
+    except Exception:
+        log.warning('Не удалось проверить администратора Telegram-чата')
+        return False
+
+
+async def _allowed_chat(update: Update) -> bool:
+    chat, user = update.effective_chat, update.effective_user
+    if chat is None or user is None or user.is_bot:
+        return False
+    if chat.id == CHAT_ID:
+        return await _admin_only(update)
+    # Клиентская привязка chatId удостоверяет владельца только в личном чате.
+    return chat.type == 'private' and user.id == chat.id
 
 
 async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _admin_only(update):
+    if not await _admin_only(update):
         return
     try:
         await tg_reply(update, await build_status_text(), 'Markdown')
@@ -709,7 +737,7 @@ async def cmd_status(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _admin_only(update):
+    if not await _admin_only(update):
         return
     try:
         data = await api_status()
@@ -732,7 +760,7 @@ async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_clients(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _admin_only(update):
+    if not await _admin_only(update):
         return
     try:
         # Интерактивный список: каждый клиент — инлайн-кнопка с drill-down
@@ -751,6 +779,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     """Текст от клиентов: reply-кнопки навигации, ввод имени устройства, прочее.
     Админский чат — обрабатывается только при активном ожидании ввода
     (имя нового клиента / дата срока), иначе игнор (там команды)."""
+    if not await _allowed_chat(update):
+        return
     chat_id = update.effective_chat.id
     text = (update.message.text or '').strip() if update.message else ''
 
@@ -822,6 +852,8 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None:
+        return
+    if not await _allowed_chat(update):
         return
     chat_id = update.effective_chat.id
     callback_id = query.id

@@ -83,7 +83,7 @@ if [[ "$TGBOT_IMAGE_PULL" == "false" ]]; then
   docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
     || { echo "[$HOST_TAG] ✗ TGBOT_IMAGE_PULL=false, но образа ${TGBOT_IMAGE} на ноде нет"; exit 1; }
   echo "[$HOST_TAG]   pull пропущен (TGBOT_IMAGE_PULL=false), беру локальный образ"
-elif ! docker pull "$TGBOT_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+elif ! docker pull "$TGBOT_IMAGE" 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
     || { echo "[$HOST_TAG] ✗ образа ${TGBOT_IMAGE} нет ни в registry, ни локально"; exit 1; }
   echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${TGBOT_IMAGE}"
@@ -124,7 +124,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 0.5
 done
 echo "[$HOST_TAG] последние логи:"
-docker logs --tail 6 anysda-tgbot 2>&1 | sed "s/^/[$HOST_TAG]   /"
+docker logs --tail 6 anysda-tgbot 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # Restart anysda-vpn so it picks up TGBOT_SECRET (if it was already running)
 # This is needed when stage 35 is re-run independently after stage 30.

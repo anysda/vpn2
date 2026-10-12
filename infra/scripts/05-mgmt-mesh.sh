@@ -78,7 +78,7 @@ EOF
   systemctl daemon-reload
   systemctl enable --now anysda-mgmt-loopback >/dev/null 2>&1 || true
   echo "[$HOST_TAG] lo:"
-  ip -4 -o addr show dev lo | sed "s/^/[$HOST_TAG]   /"
+  ip -4 -o addr show dev lo | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 fi
 
 mkdir -p "$STAMP_DIR"

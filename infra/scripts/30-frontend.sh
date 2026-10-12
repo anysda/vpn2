@@ -47,7 +47,7 @@ if [[ "$PANEL_IMAGE_PULL" == "false" ]]; then
   docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
     || { echo "[$HOST_TAG] ✗ PANEL_IMAGE_PULL=false, но образа ${PANEL_IMAGE} на ноде нет"; exit 1; }
   echo "[$HOST_TAG]   pull пропущен (PANEL_IMAGE_PULL=false), беру локальный образ"
-elif ! docker pull "$PANEL_IMAGE" 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+elif ! docker pull "$PANEL_IMAGE" 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
     || { echo "[$HOST_TAG] ✗ образа ${PANEL_IMAGE} нет ни в registry, ни локально"; exit 1; }
   echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${PANEL_IMAGE}"
@@ -329,13 +329,13 @@ if [[ $http_up -ne 1 ]] || docker logs anysda-vpn2 2>&1 | grep 'panel init faile
   echo "[$HOST_TAG] ✗ панель не поднялась: /api/version не ответил 2xx за 60 с или init упал"
   echo "[$HOST_TAG]   контейнер: $(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Status}}')"
   echo "[$HOST_TAG]   хвост журнала панели:"
-  docker logs --tail 30 anysda-vpn2 2>&1 | sed "s/^/[$HOST_TAG]     /"
+  docker logs --tail 30 anysda-vpn2 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]     " $0}'
   exit 1
 fi
 echo "[$HOST_TAG] статус контейнера:"
-docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}}' | sed "s/^/[$HOST_TAG]   /"
+docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}}' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 echo "[$HOST_TAG] /api/version:"
-curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | sed "s/^/[$HOST_TAG]   /"
+curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

@@ -228,7 +228,7 @@ svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
   "$PKI/ca.crt" "$PKI/server.crt" "$PKI/server.key" "$PKI/tls-crypt.key"
 # Type=notify: restart вернулся после READY=1, проба только ловит падение.
 svc_settle 2 systemctl is-active --quiet openvpn-server@server
-systemctl status openvpn-server@server --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
+systemctl status openvpn-server@server --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ── 6. tun0 → sing-box TPROXY (same mark/table/port as wg0) ─────────────────
 echo "[$HOST_TAG] [6/6] anysda-ovpn-routing"

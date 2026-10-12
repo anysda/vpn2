@@ -117,7 +117,7 @@ if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
 fi
-/usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
+/usr/local/bin/sing-box version | sed -n '1p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 3. Secrets (Hysteria2 passwords + obfs + clash-api)
@@ -320,9 +320,9 @@ ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 ||
 
 # Verify
 echo "[$HOST_TAG] статус sing-box:"
-systemctl status sing-box --no-pager -n 5 | sed -n "1,10s/^/[$HOST_TAG]   /p"
+systemctl status sing-box --no-pager -n 5 | sed -n '1,10p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 echo "[$HOST_TAG] слушаемые UDP порты:"
-ss -lun | awk -v p="$HY2_DIRECT_PORT|$HY2_WARP_PORT|$HY2_MGMT_PORT" '$5 ~ ":(" p ")$"' | sed "s/^/[$HOST_TAG]   /"
+ss -lun | awk -v p="$HY2_DIRECT_PORT|$HY2_WARP_PORT|$HY2_MGMT_PORT" '$5 ~ ":(" p ")$"' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

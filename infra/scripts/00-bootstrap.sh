@@ -169,7 +169,7 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable anysda-fq >/dev/null 2>&1
-/usr/local/sbin/anysda-fq "$WAN_QDISC" | sed "s/^/[$HOST_TAG]   /"
+/usr/local/sbin/anysda-fq "$WAN_QDISC" | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # systemd-networkd при каждом перезапуске (needrestart после unattended-upgrades
 # дёргает его сам) по умолчанию сносит «чужие» ip rule и маршруты — в том числе
@@ -336,7 +336,7 @@ ufw --force enable
 # VPN2-33: без журнала. Иначе каждый пакет сканера портов — строка
 # [UFW BLOCK] в kern.log и журнале, это лишняя запись на медленный диск.
 ufw logging off >/dev/null
-ufw status verbose | sed "s/^/[$HOST_TAG]   /"
+ufw status verbose | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 5. fail2ban

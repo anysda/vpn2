@@ -184,7 +184,7 @@ if [[ $SRC_CHANGED -eq 1 || ! -x "$YT_ZAPRET_BIN" ]]; then
     echo "[$HOST_TAG] сборка упала, хвост лога:"; tail -25 /tmp/anysda-nfqws2-build.log; exit 1; }
 fi
 [[ -x "$YT_ZAPRET_BIN" ]] || { echo "[$HOST_TAG] $YT_ZAPRET_BIN не собрался"; exit 1; }
-"$YT_ZAPRET_BIN" --version 2>&1 | sed -n "1s/^/[$HOST_TAG]   /p"
+"$YT_ZAPRET_BIN" --version 2>&1 | sed -n '1p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 LUA_INIT=""
 for _l in zapret-lib zapret-antidpi zapret-auto; do
@@ -524,7 +524,7 @@ if [[ -n "$_pid" && "$_pid" != "0" ]]; then
     sleep 2
   fi
 fi
-systemctl is-active anysda-yt-nft.service anysda-yt-nfqws.service | tr '\n' ' ' | sed "s/^/[$HOST_TAG]   nft+nfqws: /"; echo
+systemctl is-active anysda-yt-nft.service anysda-yt-nfqws.service | tr '\n' ' ' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   nft+nfqws: " $0}'; echo
 
 # ----------------------------------------------------------------------------
 # 7. A/B-проверка: тот же хост по помеченному пути и мимо него
@@ -583,7 +583,7 @@ EOF
 chmod 0755 /usr/local/bin/anysda-yt-check
 
 echo "[$HOST_TAG] [7/7] A/B-проверка"
-if /usr/local/bin/anysda-yt-check 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+if /usr/local/bin/anysda-yt-check 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   touch "$STAMP_DIR/$STAGE"
   echo "[$HOST_TAG] $STAGE done"
 else

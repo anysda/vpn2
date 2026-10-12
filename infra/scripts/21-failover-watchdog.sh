@@ -132,7 +132,7 @@ systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
 svc_restart_if_changed anysda-failover-watchdog /usr/local/bin/anysda-failover-watchdog \
   /etc/systemd/system/anysda-failover-watchdog.service /etc/anysda/failover-watchdog.env
 svc_settle 3
-systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n "1,8s/^/[$HOST_TAG]   /p"
+systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n '1,8p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # 4. Сторож TPROXY: раз в минуту проверяет то, без чего клиенты wg0/OpenVPN/
 # IKEv2 молча теряют интернет, и чинит на месте.
@@ -194,7 +194,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable --now anysda-tproxy-watchdog.timer >/dev/null 2>&1
-systemctl is-active anysda-tproxy-watchdog.timer | sed "s/^/[$HOST_TAG]   tproxy watchdog timer: /"
+systemctl is-active anysda-tproxy-watchdog.timer | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   tproxy watchdog timer: " $0}'
 
 touch "$STAMP_DIR/$STAGE"
 echo "[$HOST_TAG] $STAGE done"

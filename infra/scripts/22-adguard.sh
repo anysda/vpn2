@@ -63,7 +63,7 @@ if [[ "$need_install" -eq 1 ]]; then
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"
   rm -rf "$TMP"
 fi
-"$AGH_BIN" --version | sed "s/^/[$HOST_TAG]   /"
+"$AGH_BIN" --version | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password + bcrypt hash
@@ -459,7 +459,7 @@ svc_restart_if_changed adguardhome "$AGH_BIN" /etc/systemd/system/adguardhome.se
 svc_restart_if_changed adguardhome-unfiltered "$AGH_BIN" /etc/systemd/system/adguardhome-unfiltered.service
 agh_listening() { [[ "$(ss -Hlunp 'sport = :53' 2>/dev/null)" == *'"AdGuardHome"'* ]]; }
 svc_settle 2 agh_listening
-systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
+systemctl status adguardhome --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # AdGuard слушает 127.0.0.1 и ${MGMT_IP} (lo-алиас на самой entry) — оба адреса
 # локальны, наружу не торчат. Клиенты WG/OpenVPN/IKEv2 спрашивают AdGuard

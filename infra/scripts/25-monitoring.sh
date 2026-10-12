@@ -79,7 +79,7 @@ mkdir -p /etc/anysda /var/lib/vmsingle
 } > /etc/anysda/vmsingle-scrape.yml
 
 echo "[$HOST_TAG] scrape targets:"
-grep 'targets:' /etc/anysda/vmsingle-scrape.yml | sed "s/^/[$HOST_TAG]   /"
+grep 'targets:' /etc/anysda/vmsingle-scrape.yml | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 3. vmsingle container (idempotent recreate)

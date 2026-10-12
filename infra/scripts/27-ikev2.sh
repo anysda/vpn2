@@ -336,7 +336,7 @@ svc_restart_if_changed strongswan-starter /usr/lib/ipsec/charon /usr/lib/ipsec/s
   /etc/strongswan.d/*.conf /etc/strongswan.d/charon/*.conf
 # Готов — когда charon отвечает по vici: им ниже грузятся creds и conns.
 svc_settle 2 eval 'swanctl --stats >/dev/null 2>&1'
-systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | sed -n "1,6s/^/[$HOST_TAG]   /p"
+systemctl status strongswan-starter --no-pager -n 4 2>/dev/null | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # Применяем CA + creds + conns в работающий daemon.
 swanctl --load-creds >/dev/null
@@ -345,9 +345,9 @@ swanctl --load-conns >/dev/null
 
 # Sanity: conn anysda-ikev2 в списке, порты слушают.
 echo "[$HOST_TAG]   conns:"
-swanctl --list-conns 2>/dev/null | grep -E '^[a-z]|local|remote|child' | sed -n "1,10s/^/[$HOST_TAG]     /p"
+swanctl --list-conns 2>/dev/null | grep -E '^[a-z]|local|remote|child' | sed -n '1,10p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]     " $0}'
 echo "[$HOST_TAG]   listening:"
-ss -lun 2>/dev/null | awk '/:500 |:4500 /{print "    " $0}' | sed "s/^/[$HOST_TAG]/"
+ss -lun 2>/dev/null | awk '/:500 |:4500 /{print "    " $0}' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]" $0}'
 
 # ── 7. xfrm0 + TPROXY hook (как anysda-ovpn-routing для tun0) ──────────────
 echo "[$HOST_TAG] [7/8] xfrm0 + anysda-ikev2-routing"
@@ -706,7 +706,7 @@ systemctl start anysda-ikev2-sync.service || true
 # ⚠️ `systemctl status` у отработавшего oneshot возвращает 3, а в стадии
 # включён pipefail — без `|| true` стадия падала уже ПОСЛЕ всей работы.
 { systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null || true; } \
-  | sed -n "1,5s/^/[$HOST_TAG]   /p"
+  | sed -n '1,5p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

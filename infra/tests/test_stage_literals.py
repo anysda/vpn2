@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,27 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertNotIn('restart', second.stdout)
                 self.assertEqual(before, path.read_bytes())
                 self.assertFalse((Path(work) / 'INJECTED').exists())
+
+
+class LogLiteralTests(unittest.TestCase):
+    def test_all_stage_log_prefixes(self):
+        count = 0
+        for path in sorted((ROOT / 'infra/scripts').glob('*.sh')):
+            # Execute the actual filter, retaining its line selection and indentation.
+            filters = re.findall(r'\| (sed(?: -n)? "[^"\n]*\$HOST_TAG[^"\n]*"|'
+                                 r'HOST_TAG="\$HOST_TAG" awk \'[^\'\n]*\')', path.read_text())
+            for command in filters:
+                count += 1
+                with tempfile.TemporaryDirectory() as work:
+                    script = "printf 'one\\nfile.srs\\nthree\\n' | " + command
+                    normal = run(script, work, HOST_TAG='plain')
+                    self.assertEqual(normal.returncode, 0, normal.stderr)
+                    for value in [*VALUES, 'tag/with&delimiter']:
+                        with self.subTest(stage=path.name, command=command, value=value):
+                            result = run(script, work, HOST_TAG=value)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
+        self.assertGreater(count, 20)
 
 
 class IkeRoutingLiteralTests(unittest.TestCase):

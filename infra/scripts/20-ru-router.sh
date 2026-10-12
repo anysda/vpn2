@@ -31,7 +31,7 @@ if [[ ! -x /usr/local/bin/sing-box ]] || ! /usr/local/bin/sing-box version 2>&1 
   install -m0755 "/tmp/sing-box-${SB_VER}-linux-amd64/sing-box" /usr/local/bin/sing-box
   rm -rf "/tmp/sing-box-${SB_VER}-linux-amd64"
 fi
-/usr/local/bin/sing-box version | sed -n "1s/^/[$HOST_TAG]   /p"
+/usr/local/bin/sing-box version | sed -n '1p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 2. Наборы правил geoip/geosite (.srs)
@@ -51,7 +51,7 @@ for _rs in $(python3 /tmp/anysda/gen-router-config.py --rule-sets); do
   mv -f "$_f.new" "$_f"
 done
 rm -f /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db
-ls -la "$RS_DIR" | sed -n "/\.srs$/s/^/[$HOST_TAG]   /p"
+ls -la "$RS_DIR" | sed -n '/\.srs$/p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 3. Secrets: clash-api на RU + пароли Hysteria2 с выходных нод
@@ -451,7 +451,7 @@ systemctl start  anysda-apply-routes.path
 # config.json = свежая config-base.json + ручные маршруты панели, затем ОДИН
 # рестарт sing-box уже на итоговом конфиге (раньше было два: на голой базе,
 # которая на секунды сносила ручные маршруты, и ещё один из apply-routes).
-if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | sed "s/^/[$HOST_TAG]   /"; then
+if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   echo "[$HOST_TAG]   ⚠ ручные маршруты не применились — sing-box поднимаю на базовом конфиге"
   install -m 600 /etc/sing-box/config-base.json /etc/sing-box/config.json
 fi
@@ -477,7 +477,7 @@ else
     sleep 0.2
   done
 fi
-systemctl status sing-box --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
+systemctl status sing-box --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # ssh <tag> на экзиты через служебный hy2-туннель (VPN2-38). nc идёт в

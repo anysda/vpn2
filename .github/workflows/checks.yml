@@ -45,6 +45,8 @@ jobs:
           test -s "$d/infra/envs/all.env"
       - name: регрессии инфраструктуры
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn
           python3 -m pip install PyYAML==6.0.3
           python3 -m unittest discover -s infra/tests -v
       - name: регрессии Telegram-бота
@@ -53,8 +55,6 @@ jobs:
           python3 -m unittest discover -s telegram/tests -v
       - name: регрессии развёртывания и маршрутов sing-box
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           version=$(sed -n "s/^readonly SB_VER='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)

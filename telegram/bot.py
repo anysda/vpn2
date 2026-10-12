@@ -218,7 +218,7 @@ async def poll_watchdog() -> None:
 
 
 # Local client — for Nuxt API on 127.0.0.1 (direct, no proxy)
-_local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=10.0)
+_local = httpx.AsyncClient(base_url=ANYSDA_URL, timeout=10.0, trust_env=False)
 
 # Отдельный httpx-клиент для send-методов Telegram — в обход пула
 # python-telegram-bot (с ним ловили PoolTimeout). polling getUpdates идёт

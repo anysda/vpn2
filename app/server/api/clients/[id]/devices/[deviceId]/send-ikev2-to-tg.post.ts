@@ -2,7 +2,6 @@ import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
-import { notifyBot } from '../../../../../utils/bot-events'
 import { buildIkev2ClientInfo, ikev2ServerReady } from '../../../../../utils/ikev2'
 
 /**
@@ -25,6 +24,8 @@ export default defineEventHandler(async (event) => {
   }
 
   const cfg = useRuntimeConfig()
+  const secret = String(cfg.tgbotSecret ?? '')
+  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
   const serverIp = String(process.env.ENTRY_HOST || cfg.wgPublicHost || '').trim()
   if (!serverIp) {
     throw createError({ statusCode: 500, statusMessage: 'entry_host_not_configured' })
@@ -39,16 +40,25 @@ export default defineEventHandler(async (event) => {
   if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const info = await buildIkev2ClientInfo(deviceId, serverIp)
-  await notifyBot('client_send_ikev2', {
-    clientName: client.name,
-    username: info.username,
-    server: info.server,
-    password: info.password,
-    caCertPem: info.caCertPem,
-  }).catch((err) => {
-    useLogger().error({ err: (err as Error).message }, 'send-ikev2-to-tg bot event failed')
-    throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Ошибка передачи в бота' })
-  })
+  const port = Number(cfg.tgbotEventPort ?? 8877)
+  try {
+    await $fetch(`http://127.0.0.1:${port}/event`, {
+      method: 'POST',
+      headers: { 'X-Tgbot-Secret': secret },
+      body: {
+        type: 'client_send_ikev2',
+        clientName: client.name,
+        username: info.username,
+        server: info.server,
+        password: info.password,
+        caCertPem: info.caCertPem,
+      },
+      timeout: 8000,
+    })
+  }
+  catch {
+    throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram' })
+  }
 
   return { ok: true as const }
 })

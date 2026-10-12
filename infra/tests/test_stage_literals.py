@@ -83,12 +83,19 @@ class YoutubeLiteralTests(unittest.TestCase):
                      text.index('chmod 0755 /usr/local/bin/anysda-yt-check')]
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                result = run('id() { printf 123; }\n' +
-                             block.replace('/usr/local/bin/anysda-yt-check', 'check.sh'), work,
-                             DIAG_USER='test', DIAG_UID='123', YT_MARK='256', YT_ZAPRET_BASE=value)
+                local = block.replace('/usr/local/bin/anysda-yt-check', 'check.sh')
+                local = local.replace('/proc/net/netfilter/nfnetlink_queue', work + '/queue')
+                result = run('id() { printf 123; }\n' + local, work, DIAG_USER='test', DIAG_UID='123',
+                             YT_MARK='256', YT_ZAPRET_QUEUE='200', YT_ZAPRET_BASE=value)
                 self.assertEqual(result.returncode, 0, result.stderr)
+                (Path(work) / 'queue').write_text('200 123 0 2 65531 0 0 1 1\n')
+                # Очередь готова и счётчик растёт: вердикт решают коды HTTP.
                 checked = run('curl() { printf 000; }; setpriv() { printf 000; }; '
-                              'export -f curl setpriv; bash check.sh', work)
+                              'systemctl() { [[ $1 == is-active ]] || echo 123; }; '
+                              'nft() { n=$(cat n 2>/dev/null || echo 0); echo $((n + 1)) > n; '
+                              'printf \'{"nftables":[{"rule":{"expr":[{"counter":{"packets":%s}},'
+                              '{"queue":{"num":200}}]}}]}\' "$n"; }; '
+                              'export -f curl setpriv systemctl nft; bash check.sh', work)
                 self.assertEqual(checked.returncode, 1, checked.stderr)
                 self.assertIn('  подбор стратегии: ' + value + '/blockcheck2.sh\n', checked.stdout)
                 self.assertFalse((Path(work) / 'INJECTED').exists())

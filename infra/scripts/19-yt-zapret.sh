@@ -562,6 +562,7 @@ YT_MARK=$(printf '%q' "$YT_MARK")
 YT_ZAPRET_BASE=$(printf '%q' "$YT_ZAPRET_BASE")
 DIAG_UID=$(printf '%q' "$DIAG_UID")
 DIAG_GID=$(printf '%q' "$(id -g "$DIAG_USER")")
+YT_ZAPRET_QUEUE=$(printf '%q' "$YT_ZAPRET_QUEUE")
 EOF
 cat >> /usr/local/bin/anysda-yt-check <<'EOF'
 # A/B-проверка десинка YouTube. Статус юнита ничего не доказывает — nfqws2
@@ -569,18 +570,49 @@ cat >> /usr/local/bin/anysda-yt-check <<'EOF'
 #   A — из-под $DIAG_USER: nft метит его трафик меткой $YT_MARK → десинк;
 #   B — из-под root: метки нет → чистый путь провайдера (контроль).
 # Коды выхода: 0 — путь десинка живой; 1 — не живой (обход не работает).
-set -u
+set -uo pipefail
 HOST="${1:-https://www.youtube.com/}"
 TMO="${YT_CHECK_TIMEOUT:-15}"
 
+# HTTP-ответ сам по себе не доказывает прохождение очереди: DPI может не
+# резать выбранный хост, а nft-таблица или демон уже исчезли.
+path_ready() {
+  systemctl is-active --quiet anysda-yt-nft.service anysda-yt-nfqws.service || return 1
+  local pid
+  pid=$(systemctl show -p MainPID --value anysda-yt-nfqws.service) || return 1
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  awk -v q="$YT_ZAPRET_QUEUE" -v p="$pid" \
+    '$1 == q && $2 == p { found = 1 } END { exit !found }' /proc/net/netfilter/nfnetlink_queue
+}
+queued_packets() {
+  nft -j list table inet ytzapret | python3 -c '
+import json, sys
+queue = int(sys.argv[1])
+rules = [item["rule"]["expr"] for item in json.load(sys.stdin)["nftables"] if "rule" in item]
+counters = [expr["counter"]["packets"] for rule in rules
+            if any(expr.get("queue", {}).get("num") == queue for expr in rule)
+            for expr in rule if "counter" in expr]
+if not counters:
+    sys.exit(1)
+print(sum(counters))' "$YT_ZAPRET_QUEUE"
+}
+if ! path_ready || ! before=$(queued_packets); then
+  echo "FAIL: nft-правила или очередь nfqws2 не готовы."
+  exit 1
+fi
+
 # curl сам печатает 000 при неудаче, поэтому вторым 000 не дополняем —
 # иначе в отчёте получается «000000» и непонятно, что это.
-probe() { curl -4 -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null; }
+probe() { curl -q -4 --noproxy '*' -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null; }
 
 t0=$(date +%s%N)
 A=$(setpriv --reuid="$DIAG_UID" --regid="$DIAG_GID" --clear-groups \
-      curl -4 -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null)
+      curl -q -4 --noproxy '*' -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null) || A=000
 A=${A:-000}
+if ! path_ready || ! after=$(queued_packets) || (( after <= before )); then
+  echo "FAIL: проба не подтвердила прохождение очереди nfqws2."
+  exit 1
+fi
 # Вердикт решает A, контроль B только поясняет его. Где DPI режет, B висит
 # до таймаута. Если A прошёл, нерезаный B уложился бы во время того же
 # запроса, поэтому ждём его втрое дольше A, но не меньше 3 с и не больше TMO.
@@ -591,11 +623,12 @@ if [[ "$A" =~ ^(200|204|30[0-9])$ ]]; then
   (( ms < 3000 )) && ms=3000
   (( ms < TMO * 1000 )) && btmo=$(( ms / 1000 )).$(printf %03d $(( ms % 1000 )))
 fi
-B=$(TMO=$btmo probe)
+B=$(TMO=$btmo probe) || B=000
 B=${B:-000}
 
 echo "zapret (метка $YT_MARK): $A"
 echo "контроль (без метки):    $B"
+echo "Проверен только $HOST по IPv4; CDN-видео и путь VPN-клиента проверяются отдельно."
 
 if [[ "$A" =~ ^(200|204|30[0-9])$ ]]; then
   if [[ "$B" =~ ^(200|204|30[0-9])$ ]]; then

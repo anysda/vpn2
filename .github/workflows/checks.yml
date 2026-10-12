@@ -20,6 +20,11 @@ jobs:
         run: python3 infra/tests/test_aws_cli.py
       - name: зависимости Debian и Ubuntu
         run: bash infra/tests/debian-compat.sh
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: мастер на Python из Debian 12
+        run: bash infra/tests/setup-compat.sh
 
   python:
     runs-on: ubuntu-latest

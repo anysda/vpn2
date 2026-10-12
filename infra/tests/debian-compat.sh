@@ -22,7 +22,7 @@ curl() { printf '%s\n' "$*" >> "$FIXTURE/curl.calls"; echo public-key; }
 # shellcheck disable=SC2317,SC2329
 gpg() { [[ "$1 $2 $3" == '--dearmor --yes -o' ]]; command cat > "$4"; }
 
-for release in 'debian trixie' 'ubuntu noble' 'ubuntu resolute'; do
+for release in 'debian bookworm' 'debian trixie' 'ubuntu noble' 'ubuntu resolute'; do
   read -r distro codename <<<"$release"
   printf 'ID=%s\nVERSION_CODENAME=%s\n' "$distro" "$codename" > "$FIXTURE/etc/os-release"
   rm -f "$FIXTURE/etc/apt/keyrings/docker.gpg" "$FIXTURE/curl.calls"

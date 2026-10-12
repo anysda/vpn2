@@ -437,15 +437,16 @@ def pad(t):
     return t + ' ' * max(0, W - vis(t))
 def row(t):
     return f"{B}  \u2502{E}{pad(t)}{B}\u2502{E}"
-print(f"{B}  \u250c{'\u2500'*W}\u2510{E}")
+line = '\u2500' * W
+print(f"{B}  \u250c{line}\u2510{E}")
 print(row("  Конфигурация"))
-print(f"{B}  \u251c{'\u2500'*W}\u2524{E}")
+print(f"{B}  \u251c{line}\u2524{E}")
 print(row(f"  Входная нода:  {entry_ip}"))
 tags = tags_str.split() if tags_str.strip() else []
 for tag in tags:
     ip = os.environ.get(f"_EXIT_IP_{tag}", "")
     print(row(f"  Выход {tag}: {ip}"))
-print(f"{B}  \u2514{'\u2500'*W}\u2518{E}")
+print(f"{B}  \u2514{line}\u2518{E}")
 PYINNER
 
 printf '\n' >&2

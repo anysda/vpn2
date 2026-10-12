@@ -26,6 +26,8 @@ fi
 # Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
 dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
+dk run --rm --name "$NAME-config" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
+  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/config-error-check.mjs"
 
 PASS=$(openssl rand -hex 12)
 # Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за

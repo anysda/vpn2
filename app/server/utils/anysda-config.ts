@@ -34,8 +34,9 @@ export function loadAnysdaConfig(): AnysdaConfig | null {
     _cached = ConfigSchema.parse(parseYaml(readFileSync(path, 'utf-8')))
     return _cached
   }
-  catch (err) {
-    useLogger().error({ err, path }, 'anysda config is invalid')
-    throw new Error(`anysda config ${path} is invalid: ${(err as Error).message}`, { cause: err })
+  catch {
+    // js-yaml кладёт в message/mark исходные строки, включая пароль.
+    // Не передаём raw exception даже в cause: init также пишет его в журнал.
+    throw new Error(`anysda config ${path} is invalid: check YAML syntax and admin field types`)
   }
 }

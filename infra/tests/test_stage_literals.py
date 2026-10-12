@@ -46,9 +46,11 @@ class AdguardLiteralTests(unittest.TestCase):
         text = source('22-adguard.sh')
         block = text[text.index('  agh_sync=$('):text.index('\npatch_agh_config "$AGH_CFG"')]
         block = block.rsplit('\nfi', 1)[0]
-        for value in VALUES:
-            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                path = Path(work) / 'config"\\$.yaml'
+        cases = [(value, 'AdGuardHome.yaml') for value in VALUES]
+        cases.append(('plain', 'config"\\$.yaml'))
+        for value, filename in cases:
+            with self.subTest(value=value, filename=filename), tempfile.TemporaryDirectory() as work:
+                path = Path(work) / filename
                 path.write_text(yaml.safe_dump({'users': [], 'custom': 'keep'}))
                 # Exercise config2env as well as source of its shell assignments.
                 config = ('entry:\n  host: entry.example.test\n  password: fake\n'

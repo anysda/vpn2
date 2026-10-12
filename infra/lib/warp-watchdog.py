@@ -31,10 +31,13 @@ def log(message, journal=False):
 
 
 def enabled(config):
-    for outbound in config.get('outbounds', []):
-        if outbound.get('tag') != 'warp' or outbound.get('type') != 'wireguard':
+    # sing-box 1.11+ keeps WireGuard in endpoints; the disabled exit renders
+    # a placeholder peer on the loopback address.
+    for endpoint in config.get('endpoints', []):
+        if endpoint.get('tag') != 'warp' or endpoint.get('type') != 'wireguard':
             continue
-        server = outbound.get('server', '')
+        peers = endpoint.get('peers') or [{}]
+        server = peers[0].get('address', '')
         try:
             address = ipaddress.ip_address(server)
             return not (address.is_loopback or address.is_unspecified)

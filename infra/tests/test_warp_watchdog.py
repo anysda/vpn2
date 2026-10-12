@@ -5,6 +5,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -16,6 +17,16 @@ import urllib.parse
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
+
+
+
+def rendered(peer_host):
+    """The real exit template as 10-foreign renders it."""
+    template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
+    template = template.replace('${WGCF_PEER_ENDPOINT_HOST}', peer_host)
+    config = json.loads(re.sub(r'\$\{\w+\}', '1', template))
+    config['experimental']['clash_api'] = {'external_controller': '127.0.0.1:9090', 'secret': 'test-only'}
+    return config
 
 
 class TestWarpWatchdog(unittest.TestCase):
@@ -30,10 +41,7 @@ class TestWarpWatchdog(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name)
         self.state = self.directory / 'state.json'
-        self.config = {
-            'outbounds': [{'type': 'wireguard', 'tag': 'warp', 'server': 'engage.cloudflareclient.com'}],
-            'experimental': {'clash_api': {'external_controller': '127.0.0.1:9090', 'secret': 'test-only'}},
-        }
+        self.config = rendered('engage.cloudflareclient.com')
 
     def ticks(self, statuses, clock):
         with patch.object(self.wd, 'probe', side_effect=statuses), \
@@ -181,10 +189,11 @@ class TestWarpWatchdog(unittest.TestCase):
 
     def test_disabled_and_placeholder(self):
         self.assertTrue(self.wd.enabled(self.config))
-        for outbounds in ([], [{'type': 'direct', 'tag': 'warp'}],
-                          [{'type': 'wireguard', 'tag': 'warp', 'server': '127.0.0.1'}],
-                          [{'type': 'wireguard', 'tag': 'warp', 'server': '::1'}]):
-            self.assertFalse(self.wd.enabled({'outbounds': outbounds}))
+        self.assertFalse(self.wd.enabled(rendered('127.0.0.1')))
+        self.assertFalse(self.wd.enabled(rendered('::1')))
+        for endpoints in ([], [{'type': 'direct', 'tag': 'warp'}],
+                          [{'type': 'wireguard', 'tag': 'warp', 'peers': []}]):
+            self.assertFalse(self.wd.enabled({'endpoints': endpoints}))
 
     def test_cli_disabled_does_not_create_state(self):
         config = self.directory / 'config.json'

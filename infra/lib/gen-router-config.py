@@ -378,6 +378,30 @@ def main():
         yt_route_rules.append({'rule_set': ['geosite-youtube'], 'outbound': yt_tag})
         # DNS делится по российским зонам независимо от маршрута YouTube.
 
+    # Telegram может маскировать TLS чужим SNI. Не только .ru: имя YouTube
+    # тоже не должно отправлять его в РФ (или в блок UDP/443). GeoIP/geosite
+    # также не должны перебивать известные сети Telegram. Исключаем их из
+    # всех автоматических РФ-правил, сохраняя дальнейший выбор выхода:
+    # предпочтение клиента -> дорожка -> foreign-best. Ручные маршруты
+    # стадии 20 по-прежнему выше этих правил; tg-best обслуживает только бота.
+    # Действие (outbound или reject) остаётся на логическом правиле, внутри
+    # только условия.
+    action_keys = ('action', 'outbound')
+    domestic_route_rules = [{
+        'type': 'logical',
+        'mode': 'and',
+        'rules': [
+            {key: value for key, value in rule.items() if key not in action_keys},
+            {'ip_cidr': TELEGRAM_CIDRS, 'invert': True},
+        ],
+        **{key: value for key, value in rule.items() if key in action_keys},
+    } for rule in yt_route_rules + [
+        {'domain_suffix': ['.ru', '.рф', '.su'], 'outbound': 'direct-ru'},
+        {'rule_set': ['geosite-category-gov-ru'], 'outbound': 'direct-ru'},
+        {'rule_set': ['geoip-ru'], 'outbound': 'direct-ru'},
+        {'ip_is_private': True, 'outbound': 'direct-ru'},
+    ]]
+
     cfg = {
         'log': {'level': 'error', 'timestamp': True},
 
@@ -445,6 +469,7 @@ def main():
             #   4. geoip-ru / частные сети → direct-ru (физически в РФ)
             #   5. клиентские VPN-IP → lane-NN (selector; экзит дорожки выбирает watchdog)
             #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
+            # Telegram пропускает пункты 1–4 и доходит до выбора экзита клиента.
             # warp-best / hy2-*-warp используются ТОЛЬКО через ручные правила (UI).
             'rules': [
                 # Только sniff, БЕЗ подмены назначения (override_destination).
@@ -481,25 +506,7 @@ def main():
                 {'inbound': ['wg-tproxy-in'], 'protocol': 'dns',
                  'action': 'route', 'outbound': 'dns-unfiltered',
                  'override_address': '127.0.0.2', 'override_port': 53},
-            ] + yt_route_rules + [
-                # Telegram при блокировке маскирует соединения: идёт на свои IP,
-                # а в SNI ставит чужой домен (вплоть до *.ru, напр. sprinthost.ru).
-                # Сниффер видит .ru и увёл бы такой трафик в direct-ru — то есть
-                # в Telegram из РФ, где он режется. IP Telegram из правила .ru
-                # исключаем: дальше их подхватят дорожки / foreign-best.
-                {
-                    'type': 'logical',
-                    'mode': 'and',
-                    'rules': [
-                        {'domain_suffix': ['.ru', '.рф', '.su']},
-                        {'ip_cidr': TELEGRAM_CIDRS, 'invert': True},
-                    ],
-                    'outbound': 'direct-ru',
-                },
-                {'rule_set': ['geosite-category-gov-ru'],    'outbound': 'direct-ru'},
-                {'rule_set': ['geoip-ru'],                   'outbound': 'direct-ru'},
-                {'ip_is_private': True,                      'outbound': 'direct-ru'},
-            ] + lane_route_rules,
+            ] + domestic_route_rules + lane_route_rules,
             'final': 'foreign-best',
             'auto_detect_interface': True,
             # Имена в адресах экзитов (DOMAIN_{TAG} может быть доменом)

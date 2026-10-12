@@ -65,7 +65,7 @@ expand_hosts() {
 #
 # Host-key policy: первое подключение к ноде закрепляет её host-key в
 # $DEPLOY_ROOT/.known_hosts (TOFU). При повторном деплое подмена ключа =
-# отказ соединения. См. SECURITY-AUDIT-2026-06-01.md (C1).
+# отказ соединения.
 _known_hosts="${DEPLOY_ROOT}/.known_hosts"
 [[ -f "$_known_hosts" ]] || { touch "$_known_hosts"; chmod 600 "$_known_hosts"; }
 _ssh_opts=(

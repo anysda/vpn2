@@ -129,7 +129,7 @@ gen_pwd() { openssl rand -base64 32 | tr -d '\n=' | head -c 32; }
 [[ -f /etc/anysda/hy2-obfs.pwd ]]    || gen_pwd > /etc/anysda/hy2-obfs.pwd
 # hy2-mgmt.pwd — пароль ОТДЕЛЬНОГО служебного Hysteria2-инбаунда (мониторинг).
 # Отдельный от клиентских: ротация hy2-direct/warp его не трогает, и по
-# клиентским кредам метрики не достать. См. docs/mgmt-over-hysteria2-design.md.
+# клиентским кредам метрики не достать.
 [[ -f /etc/anysda/hy2-mgmt.pwd ]]    || gen_pwd > /etc/anysda/hy2-mgmt.pwd
 [[ -f /etc/anysda/clash-secret.txt ]] || gen_pwd > /etc/anysda/clash-secret.txt
 chmod 600 /etc/anysda/hy2-*.pwd /etc/anysda/clash-secret.txt
@@ -187,7 +187,7 @@ echo "[$HOST_TAG]   cert SAN: IP:${PUB_IP}"
 # prep_ru_router забирает его и кладёт в /etc/sing-box/exit-certs/{tag}.pem
 # на RU. gen-router-config.py подставляет его как `tls.certificate` в Hysteria2
 # outbound — тогда RU-роутер принимает только этот конкретный cert и MITM на
-# RU→exit невозможен. См. SECURITY-AUDIT-2026-06-01.md (H5).
+# RU→exit невозможен.
 cp /etc/sing-box/tls.crt /etc/anysda/hy2-tls.crt
 chmod 644 /etc/anysda/hy2-tls.crt
 echo "[$HOST_TAG]   tls fingerprint: $(openssl x509 -in /etc/anysda/hy2-tls.crt -noout -fingerprint -sha256)"

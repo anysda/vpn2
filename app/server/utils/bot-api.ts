@@ -31,7 +31,7 @@ function isDirectLocal(event: H3Event): boolean {
 /**
  * Bearer-аутентификация бота по TGBOT_SECRET. Дополнительно требует, чтобы
  * запрос пришёл напрямую с этой ноды (бот сидит на той же ноде, что и панель,
- * и ходит на 127.0.0.1:51821). См. SECURITY-AUDIT-2026-06-01.md (H3, H4).
+ * и ходит на 127.0.0.1:51821).
  */
 export function requireBotAuth(event: H3Event): void {
   if (!isDirectLocal(event)) {

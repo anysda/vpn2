@@ -196,7 +196,7 @@ apt_have() {
 }
 
 # docker_apt_source — официальное APT-репо Docker (ключ download.docker.com),
-# а не `curl get.docker.com | sh` (SECURITY-AUDIT-2026-06-01.md, H8). Файл
+# а не `curl get.docker.com | sh`. Файл
 # источника переписываем только при отличии: иначе apt_update_if_stale
 # решит, что списки устарели. Docker нужен только entry (25/30/35).
 # shellcheck disable=SC2034  # читают 00-bootstrap и 25-monitoring

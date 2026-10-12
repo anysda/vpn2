@@ -197,7 +197,7 @@ systemctl enable sing-box >/dev/null 2>&1
 
 # clash-api слушает 10.99.0.1:9090 — это lo-алиас на самой entry, наружу не
 # торчит. Снимаем legacy mesh-правило ufw (mesh снят, служебный трафик ушёл на
-# Hysteria2, см. стадию 05 и docs/mgmt-over-hysteria2-design.md).
+# Hysteria2, см. стадию 05).
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 
 # route_localnet — нужен TPROXY WG/OpenVPN (--on-ip 127.0.0.1, стадии 28/29).

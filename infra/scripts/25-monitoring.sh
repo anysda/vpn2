@@ -4,7 +4,7 @@
 # служебный Hysteria2-туннель. WG-mesh через границу блокируется, поэтому VM
 # ходит к экзиту как через SOCKS-прокси (proxy_url: socks5://127.0.0.1:<port>),
 # который sing-box (стадия 20, инбаунд mon-{tag}) заворачивает в hy2-{tag}-mgmt
-# и бьёт в 127.0.0.1:9100 на экзите. См. docs/mgmt-over-hysteria2-design.md.
+# и бьёт в 127.0.0.1:9100 на экзите.
 # Зависит от: 00-bootstrap (node_exporter), 20-ru-router (mon-инбаунды).
 
 set -euo pipefail

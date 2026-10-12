@@ -42,8 +42,7 @@ if [[ "$need_install" -eq 1 ]]; then
   ARCH='linux_amd64'
   TMP=$(mktemp -d)
   # Скачиваем архив и checksums-файл по отдельности и проверяем SHA-256 перед
-  # распаковкой — `curl | tar -xz` уязвим к compromise CDN (см. SECURITY-AUDIT
-  # 2026-06-01.md / H8). checksums.txt подписан тем же релизом — атакеру нужно
+  # распаковкой — `curl | tar -xz` уязвим к compromise CDN. checksums.txt подписан тем же релизом — атакеру нужно
   # подменить оба файла одновременно (всё ещё уязвимо к compromise GitHub
   # releases, но не к одностороннему MITM/CDN-corruption).
   REL_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}"
@@ -313,7 +312,7 @@ systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"
 # локальны, наружу не торчат. Клиенты WG/OpenVPN/IKEv2 спрашивают AdGuard
 # напрямую (DNS 10.99.0.1 в их конфигах, sing-box этот трафик не трогает);
 # порт для подсетей туннелей открывают стадии 27/28/29. Здесь только снимаем
-# legacy mesh-правила ufw (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md).
+# legacy mesh-правила ufw (WG-mesh снят).
 ufw delete allow proto udp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
 ufw delete allow proto tcp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 2>&1 || true
 

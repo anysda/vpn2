@@ -39,5 +39,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 # (admin-password.txt, tgbot-secret.txt, WG/IKEv2 ключей). Перевод на USER node
 # требует переноса wg-команд в host-side helper (через `pkexec`/привилегированный
 # socket) и точечного :ro-mount файлов из /etc/anysda. Делается отдельным PR
-# с обязательным прогоном test.md L4-routing на стенде. См. SECURITY-AUDIT-2026-06-01.md.
+# с обязательным прогоном test.md L4-routing на стенде.
 CMD ["node", ".output/server/index.mjs"]

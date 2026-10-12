@@ -23,7 +23,7 @@ NE_STATUS=$(systemctl is-active node_exporter 2>/dev/null || echo 'inactive')
 echo "[$HOST_TAG] node_exporter: $NE_STATUS"
 
 # --- mgmt transport: скрейп node_exporter идёт по служебному hy2-туннелю
-# (WG-mesh снят, см. docs/mgmt-over-hysteria2-design.md). На entry сквозной
+# (WG-mesh снят). На entry сквозной
 # сигнал — здоровье scrape-таргетов VictoriaMetrics; на экзите — что служебный
 # hy2-инбаунд слушает UDP.
 if [[ "$HOST_TAG" == "ru" ]]; then

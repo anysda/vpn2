@@ -130,7 +130,7 @@ def main():
     hy2_warp_port = int(require('HY2_WARP_PORT'))
     # Служебный Hysteria2-туннель до экзитов: по нему (и только по нему) идёт
     # заграничный скрейп node_exporter. WG-mesh через границу блокируется, hy2
-    # мимикрирует под TLS — см. docs/mgmt-over-hysteria2-design.md.
+    # мимикрирует под TLS.
     hy2_mgmt_port_global = int(require('HY2_MGMT_PORT'))
     wg_out_iface = require('WG_OUT_IFACE')
     ru_clash_secret = require('RU_CLASH_SECRET')
@@ -211,7 +211,7 @@ def main():
         mon_port = 10100 + int(require(f'MGMT_IP_{T}').split('.')[-1])
 
         # Self-signed cert на exit-нодах. Если orchestrator опубликовал
-        # PEM-сертификат экзита (см. SECURITY-AUDIT-2026-06-01.md H5) и
+        # PEM-сертификат экзита и
         # 20-ru-router положил его в /etc/sing-box/exit-certs/{tag}.pem,
         # пинимся к нему через `certificate_path` (sing-box принимает ТОЛЬКО
         # этот cert). Иначе — fallback к insecure=true (backward-compat).

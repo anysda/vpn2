@@ -1325,15 +1325,17 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
                 'Markdown',
             )
             _load_alerted.add(key)
-    elif value < threshold - HYSTERESIS:
-        if key in _load_alerted:
+    else:
+        # Гистерезис удерживает уже отправленный алерт, но не серию пиков.
+        # Любое значение ниже порога прерывает последовательные превышения.
+        _load_hits[key] = 0
+        if value < threshold - HYSTERESIS and key in _load_alerted:
             await tg_send(
                 CHAT_ID,
                 f'✅ *{tag.upper()}*: {label} вернулся в норму ({value:.0f}{unit})',
                 'Markdown',
             )
             _load_alerted.discard(key)
-        _load_hits[key] = 0
 
 
 async def monitor_loop() -> None:

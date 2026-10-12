@@ -8,6 +8,27 @@ from support import load_bot
 
 
 class AlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_load_alert_requires_consecutive_threshold_hits(self):
+        for metric in ('cpu', 'ram'):
+            for dip in (69, 70, 75, 79.9):
+                with self.subTest(metric=metric, dip=dip):
+                    bot = load_bot()
+                    self.addAsyncCleanup(bot._local.aclose)
+                    self.addAsyncCleanup(bot._tg.aclose)
+                    bot.ALERT_HITS = 2
+                    with patch.object(bot, 'tg_send', AsyncMock()) as send:
+                        for value in (85, dip, 85):
+                            await bot._check_load('test', metric, value, 80, metric.upper())
+                        self.assertEqual(send.await_count, 0)
+                        await bot._check_load('test', metric, 80, 80, metric.upper())
+                        self.assertEqual(send.await_count, 1)
+                        for value in (75, 85, 70):
+                            await bot._check_load('test', metric, value, 80, metric.upper())
+                        self.assertEqual(send.await_count, 1)
+                        await bot._check_load('test', metric, 69, 80, metric.upper())
+                        self.assertEqual(send.await_count, 2)
+                        self.assertNotIn(f'test:{metric}', bot._load_alerted)
+
     async def test_rejected_telegram_message_is_an_error(self):
         bot = load_bot()
         self.addAsyncCleanup(bot._local.aclose)

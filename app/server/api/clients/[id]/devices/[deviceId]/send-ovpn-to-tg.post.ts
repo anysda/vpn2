@@ -46,7 +46,7 @@ export default defineEventHandler(async (event) => {
     tunnelPrefixes: [String(cfg.mgmtMeshIpPrefix)],
   })
 
-  const name = deviceConfigName(client.name, device.name)
+  const name = deviceConfigName(client.name, device.name, device.id)
   const port = Number(cfg.tgbotEventPort ?? 8877)
   try {
     await $fetch(`http://127.0.0.1:${port}/event`, {

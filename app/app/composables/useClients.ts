@@ -26,7 +26,7 @@ export interface Client {
 export interface Device {
   id: number
   name: string
-  /** Имя файла конфига латиницей — «<клиент>-<девайс>». */
+  /** Имя файла конфига: до 15 ASCII-символов, с уникальным суффиксом устройства. */
   configName: string
   createdAt: string
   rxTotal: number

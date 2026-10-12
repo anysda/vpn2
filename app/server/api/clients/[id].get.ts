@@ -27,7 +27,7 @@ export default defineEventHandler(async (event) => {
     return {
       id: d.id,
       name: d.name,
-      configName: deviceConfigName(client.name, d.name),
+      configName: deviceConfigName(client.name, d.name, d.id),
       createdAt: d.createdAt,
       rxTotal: d.rxTotal,
       txTotal: d.txTotal,

@@ -18,10 +18,12 @@ export function slugify(s: string): string {
 }
 
 /**
- * Идентичность конфига девайса — «<клиент>-<девайс>» латиницей.
- * Имя файла конфига (.conf / .ovpn) и подпись при отправке в Telegram.
- * Напр.: клиент «Артём Фёдоров» + девайс «телефон» → «artem-fedorov-telefon».
+ * Общее имя файла (.conf / .ovpn) и подпись при отправке в Telegram.
+ * wg-quick использует его как имя интерфейса: максимум 15 ASCII-символов.
+ * Суффикс из ID различает устройства даже при совпадении/сокращении слагов.
  */
-export function deviceConfigName(clientName: string, deviceName: string): string {
-  return `${slugify(clientName)}-${slugify(deviceName)}`
+export function deviceConfigName(clientName: string, deviceName: string, deviceId: number): string {
+  const suffix = `-${deviceId.toString(36)}`
+  const label = `${slugify(clientName)}-${slugify(deviceName)}`
+  return `${label.slice(0, 15 - suffix.length)}${suffix}`
 }

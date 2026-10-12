@@ -73,7 +73,7 @@ export async function botClientView(clientId: number) {
     devices: devRows.map(d => ({
       id: d.id,
       name: d.name,
-      configName: deviceConfigName(c.name, d.name),
+      configName: deviceConfigName(c.name, d.name, d.id),
       hasWg: !!(d.wgPrivateKey && d.wgPublicKey && d.wgIp),
       hasOvpn: !!(d.ovpnCert && d.ovpnKey),
     })),

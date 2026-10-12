@@ -230,10 +230,23 @@ if not os.path.exists(SB_CONFIG_BASE) and os.path.exists(SB_CONFIG):
 if not os.path.exists(SB_CONFIG_BASE):
     print('config-base.json missing', file=sys.stderr); sys.exit(1)
 
-try:
-    with open(MANUAL_ROUTES) as f: rows = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    rows = []
+def load_input(path, expected):
+    try:
+        with open(path) as f:
+            value = json.load(f)
+        if not isinstance(value, expected):
+            raise ValueError(f'ожидался {expected.__name__}')
+        return value
+    except FileNotFoundError:
+        return expected()
+    except (ValueError, OSError) as e:
+        print(f'{path}: не читается список маршрутов: {e}; сохраняю действующие правила', file=sys.stderr)
+        sys.exit(1)
+
+# Читаем оба входа до записи любых наборов. Повреждённый/недописанный JSON
+# не означает удаление правил: только явные [] и {} очищают списки.
+rows = load_input(MANUAL_ROUTES, list)
+prefs = load_input(CLIENT_PREFS, dict)
 
 with open(SB_CONFIG_BASE) as f: cfg = json.load(f)
 
@@ -315,10 +328,6 @@ route['rules'] = rules[:head] + [{'rule_set': [f'manual-{t}'], 'outbound': t} fo
 # пустые, и перечитываются на ходу: смена предпочтения не трогает config.json
 # и не рвёт соединения. Правила — перед дорожками, то есть после ручных
 # маршрутов, YouTube и РФ: меняется только то, что ушло бы в дорожку.
-try:
-    with open(CLIENT_PREFS) as f: prefs = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    prefs = {}
 nodes = sorted(t[len('pin-hy2-'):-len('-direct')] for t in known
                if t.startswith('pin-hy2-') and t.endswith('-direct'))
 pref_sets = {n: set() for n in nodes}
@@ -447,8 +456,8 @@ systemctl start  anysda-apply-routes.path
 # рестарт sing-box уже на итоговом конфиге (раньше было два: на голой базе,
 # которая на секунды сносила ручные маршруты, и ещё один из apply-routes).
 if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
-  echo "[$HOST_TAG]   ⚠ ручные маршруты не применились — sing-box поднимаю на базовом конфиге"
-  install -m 600 /etc/sing-box/config-base.json /etc/sing-box/config.json
+  echo "[$HOST_TAG]   ручные маршруты не применились — сохраняю действующий конфиг, сервис не трогаю"
+  exit 1
 fi
 # Перезапуск рвёт все соединения клиентов, поэтому только если sing-box читает
 # уже не то, с чем стартовал: отпечаток бинарника, юнита, конфига, сертификатов

@@ -50,12 +50,12 @@ class ConfigPermissionTests(unittest.TestCase):
 
     def test_setup_config_is_private_before_write(self):
         setup = source('setup.sh')
-        code = setup.split("python3 <<'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
+        code = setup.split(" <<'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
         for existing in (False, True):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
                 target = Path(directory) / 'config.yaml'
                 if existing:
-                    target.write_text('old config\n')
+                    target.write_text("youtube:\n  route: 'off'\n")
                     target.chmod(0o644)
                 original = os.fdopen
                 written = []
@@ -76,7 +76,8 @@ class ConfigPermissionTests(unittest.TestCase):
                            EXITS_YAML='', ADMIN_USER='admin', ADMIN_PASS='CANARY_SECRET')
                 mask = os.umask(0o022)
                 try:
-                    with patch.dict(os.environ, env, clear=True), patch('os.fdopen', private_fdopen):
+                    with patch.dict(os.environ, env, clear=True), patch('os.fdopen', private_fdopen), \
+                            patch('sys.argv', ['-', str(ROOT / 'infra/lib/config2env.py')]):
                         exec(compile(code, 'setup.sh', 'exec'), {})
                     self.assertEqual(len(written), 1)
                     self.assertIn('CANARY_SECRET', target.read_text())

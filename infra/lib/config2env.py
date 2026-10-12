@@ -281,6 +281,66 @@ def prepare_private(path):
     path.chmod(0o600)
 
 
+def merge_setup_config(previous, answers):
+    """Обновляет только ответы мастера, сохраняя остальные строки YAML.
+
+    Работаем с тем же форматом, что parse_yaml: блоки с отступом в два
+    пробела и список exits. Неподдерживаемый YAML отклоняем ДО записи.
+    Экзиты сопоставляем по тегу, а не по позиции; удалённые в мастере
+    экзиты удаляются, дополнительные поля оставшихся сохраняются.
+    """
+    old_config = parse_yaml(previous)
+    new_config = parse_yaml(answers)
+    tags = [entry.get('tag') for entry in old_config['exits']]
+    if any(not tag for tag in tags) or len(tags) != len(set(tags)):
+        config_error('exits', 'для сохранения настроек нужны уникальные непустые теги')
+
+    def blocks(text, pattern):
+        matches = list(re.finditer(pattern, text, re.MULTILINE))
+        prefix = text[:matches[0].start()] if matches else text
+        parts = [text[match.start():matches[index + 1].start()
+                      if index + 1 < len(matches) else len(text)]
+                 for index, match in enumerate(matches)]
+        return prefix, parts
+
+    def merge_mapping(old, new, indent):
+        pattern = r'^' + ' ' * indent + r'[^ #\n][^:\n]*:'
+        prefix, old_parts = blocks(old, pattern)
+        _, new_parts = blocks(new, pattern)
+        keyed = {part.split(':', 1)[0].strip(): part for part in old_parts}
+        for part in new_parts:
+            name = part.split(':', 1)[0].strip()
+            if name not in keyed:
+                keyed[name] = part
+                continue
+            old_head, _, old_body = keyed[name].partition('\n')
+            new_head, _, new_body = part.partition('\n')
+            if indent == 0 and name == 'exits':
+                old_prefix, old_exits = blocks(old_body, r'^  - ')
+                _, new_exits = blocks(new_body, r'^  - ')
+                by_tag = {entry['tag']: text for entry, text in zip(old_config['exits'], old_exits)}
+                merged = []
+                for entry, text in zip(new_config['exits'], new_exits):
+                    # Первый ключ элемента может быть не tag. Превращаем
+                    # обе записи в обычные mapping-блоки перед слиянием.
+                    old_text = by_tag.get(entry['tag'], '')
+                    result = merge_mapping(old_text.replace('  - ', '    ', 1),
+                                           text.replace('  - ', '    ', 1), 4)
+                    merged.append(result.replace('    ', '  - ', 1))
+                keyed[name] = old_head + '\n' + old_prefix + ''.join(merged)
+            elif (not new_head.partition(':')[2].strip()
+                    or new_head.partition(':')[2].lstrip().startswith('#')):
+                keyed[name] = old_head + '\n' + merge_mapping(old_body, new_body, indent + 2)
+            else:
+                # У скаляра old_body содержит только комментарии и пустые строки.
+                keyed[name] = new_head + '\n' + old_body
+        return prefix + ''.join(keyed.values())
+
+    result = merge_mapping(previous.rstrip() + '\n', answers, 0)
+    validate_yaml(result)
+    return result
+
+
 def config_error(key, reason):
     # Значения могут содержать секреты: в диагностике только путь ключа.
     sys.exit(f'ERROR: config.yaml: {key}: {reason}')

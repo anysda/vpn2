@@ -457,14 +457,6 @@ confirm=$(ask_yn "Сохранить config.yaml и сгенерировать e
 
 config_file="${REPO_ROOT}/config.yaml"
 
-# Если config.yaml уже есть — сохраняем orchestrator-ключ: при перезапуске
-# setup.sh он не должен потеряться, иначе повторный деплой сломает доступ.
-orch_key=''; orch_pubkey=''
-if [[ -f "$config_file" ]]; then
-  orch_key=$(sed -n '/^orchestrator_key:/{s/^orchestrator_key:[[:space:]]*//p;q}' "$config_file")
-  orch_pubkey=$(sed -n '/^orchestrator_pubkey:/{s/^orchestrator_pubkey:[[:space:]]*//p;q}' "$config_file")
-fi
-
 ENTRY_IP="$entry_ip" \
 ENTRY_PASS="$entry_pass" \
 EXITS_YAML="$exits_yaml" \
@@ -485,11 +477,10 @@ BACKUP_S3_REGION="$backup_s3_region" \
 BACKUP_S3_ACCESS_KEY="$backup_s3_access_key" \
 BACKUP_S3_SECRET_KEY="$backup_s3_secret_key" \
 YOUTUBE_ROUTE="$youtube_route" \
-ORCH_KEY="$orch_key" \
-ORCH_PUBKEY="$orch_pubkey" \
 CONFIG_FILE="$config_file" \
-python3 <<'PYEOF'
-import os, datetime
+python3 - "$REPO_ROOT/infra/lib/config2env.py" <<'PYEOF'
+import os, datetime, runpy, sys, tempfile
+from pathlib import Path
 
 
 def q(v):
@@ -515,43 +506,41 @@ ap = os.environ.get('ADMIN_PASS', '')
 if ap:
     lines.append('  password: ' + q(ap))
 else:
+    lines.append("  password: ''")
     lines.append('  # password не задан — будет сгенерирован при первом деплое')
 sk = os.environ.get('ADMIN_SSH_PUBKEY', '').strip()
 if sk:
     esc = sk.replace('\\', '\\\\').replace('"', '\\"')
     lines.append('  ssh_pubkey: "' + esc + '"')
+else:
+    lines.append("  ssh_pubkey: ''")
 
 pd = os.environ.get('PANEL_DOMAIN', '')
-if pd:
-    lines.append('')
-    lines.append('panel:')
-    lines.append('  domain: ' + q(pd))
+lines.append('')
+lines.append('panel:')
+lines.append('  domain: ' + q(pd))
 
 tt = os.environ.get('TG_TOKEN', '')
 tc = os.environ.get('TG_CHAT_ID', '')
 ta = os.environ.get('TG_ADMIN_USERNAME', '')
-if tt and tc:
-    lines.append('')
-    lines.append('telegram:')
-    lines.append('  bot_token: ' + q(tt))
-    lines.append('  chat_id: ' + q(tc))
-    if ta:
-        lines.append('  admin_username: ' + q(ta))
+lines.append('')
+lines.append('telegram:')
+lines.append('  bot_token: ' + q(tt))
+lines.append('  chat_id: ' + q(tc))
+lines.append('  admin_username: ' + q(ta))
 
-# Backup-секция: если включена — записываем. Если выключена — секция не
-# пишется вообще, чтобы 26-backup увидел отсутствие блока и пропустился.
+# Явное false перекрывает старый ответ, сохраняя незаданные настройки.
 be = os.environ.get('BACKUP_ENABLED', '')
+lines.append('')
+lines.append('backup:')
+lines.append('  enabled: ' + ('true' if be == 'y' else 'false'))
 if be == 'y':
     bb     = os.environ.get('BACKUP_BACKEND', 'local')
     bpwd   = os.environ.get('BACKUP_PASSPHRASE', '')
     bsched = os.environ.get('BACKUP_SCHEDULE', 'off')
-    lines.append('')
-    lines.append('backup:')
-    lines.append('  enabled: true')
     lines.append('  backend: ' + bb)
     lines.append('  passphrase: ' + q(bpwd))
-    lines.append('  retention: 10')
-    lines.append('  schedule: ' + bsched)
+    lines.append('  schedule: ' + q(bsched))
     if bb == 's3':
         lines.append('  s3:')
         lines.append('    endpoint: '   + q(os.environ.get('BACKUP_S3_ENDPOINT', '')))
@@ -560,28 +549,28 @@ if be == 'y':
         lines.append('    access_key: ' + q(os.environ.get('BACKUP_S3_ACCESS_KEY', '')))
         lines.append('    secret_key: ' + q(os.environ.get('BACKUP_S3_SECRET_KEY', '')))
 
-# YouTube-секция: пишем только когда фича включена — отсутствие блока
-# читается как youtube.route=off, то есть поведение до появления фичи.
+# quic/retention не спрашиваются: существующие значения сохраняются,
+# для нового конфига значения по умолчанию берёт config2env.
 yr = os.environ.get('YOUTUBE_ROUTE', 'off')
-if yr and yr != 'off':
-    lines.append('')
-    lines.append('youtube:')
-    lines.append('  route: ' + yr)
-    lines.append('  quic: block')
+lines.append('')
+lines.append('youtube:')
+lines.append('  route: ' + q(yr))
 
-orch_key = os.environ.get('ORCH_KEY', '')
-orch_pubkey = os.environ.get('ORCH_PUBKEY', '')
-if orch_key:
-    lines.append('')
-    lines.append('# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя.')
-    lines.append('orchestrator_key: ' + orch_key)
-    if orch_pubkey:
-        lines.append('orchestrator_pubkey: ' + orch_pubkey)
+config = Path(os.environ['CONFIG_FILE'])
+text = '\n'.join(lines) + '\n'
+if config.exists():
+    merge = runpy.run_path(sys.argv[1])['merge_setup_config']
+    text = merge(config.read_text(encoding='utf-8'), text)
 
-fd = os.open(os.environ['CONFIG_FILE'], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, 'w', encoding='utf-8') as f:
-    os.fchmod(f.fileno(), 0o600)
-    f.write('\n'.join(lines) + '\n')
+# Разбор и слияние завершаются до записи; замена атомарна, файл сразу 0600.
+fd, temporary = tempfile.mkstemp(prefix='.config-', suffix='.yaml', dir=config.parent)
+try:
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
+        f.write(text)
+    os.replace(temporary, config)
+finally:
+    if os.path.exists(temporary):
+        os.unlink(temporary)
 PYEOF
 
 chmod 600 "$config_file"

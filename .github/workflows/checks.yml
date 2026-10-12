@@ -43,6 +43,18 @@ jobs:
       - name: регрессии развёртывания
         run: python3 -m unittest discover -s infra/tests -v
 
+  backup-restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: SQLite WAL и полный цикл backup/restore
+        run: |
+          docker run --rm -e VPN2_BACKUP_TEST=1 -v "$PWD:/src:ro" debian:13 sh -ec '
+            apt-get update -qq
+            apt-get install -y -qq python3 sqlite3 age expect curl git
+            python3 /src/infra/tests/backup-restore.py /src
+          '
+
   panel:
     runs-on: ubuntu-latest
     defaults:

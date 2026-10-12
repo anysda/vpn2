@@ -15,6 +15,7 @@
 #   - 99-verify по завершению (если найден)
 
 set -euo pipefail
+umask 077
 
 ENV_FILE=/etc/anysda/backup.env
 [[ -r "$ENV_FILE" ]] || { echo "anysda-restore: $ENV_FILE не доступен" >&2; exit 2; }
@@ -200,7 +201,7 @@ if [[ -f "$LIVE_DB" ]]; then
     if (( FORCE == 0 )); then
       cat >&2 <<-MSG
 	anysda-restore: ABORT — текущая db.sqlite не пустая ($LIVE_CLIENTS клиентов, $LIVE_DB_SIZE байт).
-	Будут перетёрты: db.sqlite, /etc/anysda/*, /etc/wireguard/wg0.conf, /etc/openvpn/*
+	Будут перетёрты: db.sqlite, /etc/anysda/*, /etc/wireguard/wg0.conf, /etc/openvpn/*, конфиги и ключи IKEv2
 	Запусти повторно с --force чтобы согласиться.
 	MSG
       exit 6
@@ -211,26 +212,37 @@ fi
 # ── Pre-restore safety snapshot — отдельная директория, исключена из ротации ─
 PRESNAP_DIR="$BACKUP_LOCAL_DIR/.pre-restore"
 mkdir -p "$PRESNAP_DIR"; chmod 700 "$PRESNAP_DIR"
-PRESNAP_TS=$(date -u +%Y-%m-%dT%H%M%SZ)
+PRESNAP_TS=$(date -u +%Y-%m-%dT%H%M%S.%NZ)
 PRESNAP_TAR="$WORK/pre-restore-$PRESNAP_TS.tar.gz"
 PRESNAP_FINAL="$PRESNAP_DIR/pre-restore-$PRESNAP_TS.tar.gz.age"
 
 echo "anysda-restore: pre-restore snapshot → $PRESNAP_FINAL"
-# Снимок текущего состояния в plaintext tar.gz внутри WORK
-{
-  cd /
-  tar -czf "$PRESNAP_TAR" \
-    var/lib/anysda-vpn2/db.sqlite \
-    etc/anysda \
-    etc/wireguard/wg0.conf \
-    etc/openvpn 2>/dev/null || true
-}
+# Панель ещё пишет в WAL: архивировать один db.sqlite нельзя. Сначала
+# собираем самостоятельную SQLite-копию и все заменяемые файлы в WORK.
+# Ошибка копирования/архивирования прерывает restore ДО остановки и swap.
+PRESNAP_ROOT="$WORK/pre-restore"
+mkdir -p "$PRESNAP_ROOT/var/lib/anysda-vpn2"
+if [[ -f "$LIVE_DB" ]]; then
+  sqlite3 "$LIVE_DB" ".timeout 10000" ".backup '$PRESNAP_ROOT/var/lib/anysda-vpn2/db.sqlite'"
+fi
+for path in \
+  etc/anysda etc/wireguard/wg0.conf etc/openvpn \
+  etc/strongswan etc/swanctl etc/strongswan.conf etc/strongswan.d \
+  etc/ipsec.conf etc/ipsec.secrets \
+  etc/caddy opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
+  if [[ -e "/$path" || -L "/$path" ]]; then
+    (cd / && cp -a --parents "$path" "$PRESNAP_ROOT/")
+  fi
+done
+# Runtime-сокеты/FIFO не являются конфигурацией и не попадают в tar.
+find "$PRESNAP_ROOT" \( -type s -o -type p -o -type b -o -type c \) -delete
+tar -C "$PRESNAP_ROOT" -czf "$PRESNAP_TAR" .
 # Шифруем (тот же passphrase)
 expect <<EXPECT > /dev/null
 log_user 0
 set timeout 60
 set pass \$env(ANYSDA_BACKUP_PASSPHRASE)
-spawn -noecho age -p -o "$PRESNAP_FINAL" "$PRESNAP_TAR"
+spawn -noecho age -p -o "$WORK/pre-restore.tar.gz.age" "$PRESNAP_TAR"
 expect {
   "Enter passphrase*"   { send -- "\$pass\r"; exp_continue }
   "Confirm passphrase*" { send -- "\$pass\r"; exp_continue }
@@ -239,6 +251,8 @@ expect {
 catch wait result
 exit [lindex \$result 3]
 EXPECT
+[[ -s "$WORK/pre-restore.tar.gz.age" ]] || { echo "anysda-restore: пустой страховочный архив" >&2; exit 5; }
+mv "$WORK/pre-restore.tar.gz.age" "$PRESNAP_FINAL"
 shred -uz "$PRESNAP_TAR" 2>/dev/null || rm -f "$PRESNAP_TAR"
 chmod 600 "$PRESNAP_FINAL"
 echo "anysda-restore: pre-restore snapshot saved ($(stat -c %s "$PRESNAP_FINAL") bytes)"
@@ -250,13 +264,25 @@ systemctl stop sing-box 2>/dev/null || true
 systemctl stop openvpn-server@server 2>/dev/null || true
 systemctl stop anysda-ikev2-routing 2>/dev/null || true
 systemctl stop strongswan-starter 2>/dev/null || true
-docker stop anysda-vpn2 anysda-tgbot 2>/dev/null || true
+for container in anysda-vpn2 anysda-tgbot; do
+  # Отсутствующий контейнер допустим на новой ноде; работающий писатель — нет.
+  if docker container inspect "$container" >/dev/null 2>&1; then
+    docker stop "$container" >/dev/null
+  else
+    # Отличаем отсутствие контейнера от недоступного Docker daemon.
+    docker info >/dev/null
+  fi
+done
 
 # ── Применение ──────────────────────────────────────────────────────────────
 # Каждый блок защищён от отсутствия файла в архиве — допускаем частичные бэкапы
 if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then
   mkdir -p /var/lib/anysda-vpn2
-  cp -a "$BUNDLE_DIR/db.sqlite" /var/lib/anysda-vpn2/db.sqlite
+  # После остановки писателей старые WAL/SHM не должны примениться к новой
+  # базе. Сначала готовим файл рядом, затем атомарно заменяем основной файл.
+  install -m 600 "$BUNDLE_DIR/db.sqlite" /var/lib/anysda-vpn2/.db-restore.sqlite
+  rm -f /var/lib/anysda-vpn2/db.sqlite-wal /var/lib/anysda-vpn2/db.sqlite-shm /var/lib/anysda-vpn2/db.sqlite-journal
+  mv /var/lib/anysda-vpn2/.db-restore.sqlite /var/lib/anysda-vpn2/db.sqlite
   chown root:root /var/lib/anysda-vpn2/db.sqlite
 fi
 if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
@@ -270,6 +296,7 @@ if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then
   chmod 600 /etc/wireguard/wg0.conf
 fi
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
+  mkdir -p /etc/openvpn
   cp -a "$BUNDLE_DIR/etc-openvpn/." /etc/openvpn/
 fi
 # IKEv2 (strongSwan + swanctl). Восстанавливаем CA, server cert/key, conf'ы.
@@ -283,6 +310,14 @@ if [[ -d "$BUNDLE_DIR/etc-swanctl" ]]; then
   mkdir -p /etc/swanctl
   cp -a "$BUNDLE_DIR/etc-swanctl/." /etc/swanctl/
 fi
+for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
+  if [[ -d "$BUNDLE_DIR/etc-$name" ]]; then
+    mkdir -p "/etc/$name"
+    cp -a "$BUNDLE_DIR/etc-$name/." "/etc/$name/"
+  elif [[ -f "$BUNDLE_DIR/etc-$name" ]]; then
+    cp -a "$BUNDLE_DIR/etc-$name" "/etc/$name"
+  fi
+done
 
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
 echo "anysda-restore: запускаю сервисы…"

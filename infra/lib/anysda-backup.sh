@@ -23,6 +23,7 @@
 # Файл (chmod 600) рендерится стадией 26-backup из config.yaml.
 
 set -euo pipefail
+umask 077
 
 ENV_FILE=/etc/anysda/backup.env
 [[ -r "$ENV_FILE" ]] || { echo "anysda-backup: $ENV_FILE отсутствует или unreadable" >&2; exit 2; }
@@ -86,7 +87,7 @@ mkdir -p "$BUNDLE_DIR"
 # 1. SQLite — консистентный снимок (без даунтайма)
 DB=/var/lib/anysda-vpn2/db.sqlite
 if [[ -r "$DB" ]]; then
-  sqlite3 "$DB" ".backup $BUNDLE_DIR/db.sqlite"
+  sqlite3 "$DB" ".timeout 10000" ".backup '$BUNDLE_DIR/db.sqlite'"
 else
   echo "anysda-backup: WARN: $DB не найден — пропускаю db.sqlite" >&2
 fi
@@ -113,6 +114,12 @@ fi
 if [[ -d /etc/swanctl ]]; then
   cp -a /etc/swanctl "$BUNDLE_DIR/etc-swanctl"
 fi
+# Настройки starter/charon и автозагрузка swanctl лежат вне этих каталогов.
+for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
+  if [[ -e "/etc/$name" ]]; then
+    cp -a "/etc/$name" "$BUNDLE_DIR/etc-$name"
+  fi
+done
 
 # cp -a переносит и сокеты (mgmt.sock OpenVPN), и FIFO, а tar их молча
 # пропускает: манифест считал файл, которого в архиве нет, и restore свежего
@@ -125,7 +132,10 @@ find "$BUNDLE_DIR" \( -type s -o -type p -o -type b -o -type c \) -delete
 APP_VERSION=$(curl -fsS --max-time 10 http://127.0.0.1:51821/api/version 2>/dev/null \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo unknown)
 GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)
-SCHEMA_VER=$(sqlite3 "$DB" 'PRAGMA schema_version;' 2>/dev/null || echo 0)
+SCHEMA_VER=0
+if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then
+  SCHEMA_VER=$(sqlite3 "$BUNDLE_DIR/db.sqlite" 'PRAGMA schema_version;')
+fi
 
 python3 - "$BUNDLE_DIR" "$APP_VERSION" "$GIT_COMMIT" "$SCHEMA_VER" "$TS" <<'PY' > "$BUNDLE_DIR/manifest.json"
 import hashlib, json, os, subprocess, sys, tarfile, io

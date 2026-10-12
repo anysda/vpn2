@@ -29,9 +29,12 @@ class TproxyLifecycleTests(unittest.TestCase):
             functions.append(f'{name}() {{ bash -s -- "$1" <<\'ROUTING\'\n{routing}\nROUTING\n}}')
         shell = '\n'.join(functions) + '''
 set -euo pipefail
+export WG_SUBNETS='10.66.66.0/24'
 ip link set lo up
 ip link add wg0 type dummy
 ip link add tun0 type dummy
+ip link set wg0 up
+ip link set tun0 up
 wg up
 ovpn up
 before=$(iptables -t mangle -S)

@@ -350,8 +350,8 @@ if [[ "$backup_enabled_q" == "y" ]]; then
   if [[ -z "$backup_passphrase" ]]; then
     # tr из /dev/urandom под pipefail ловит SIGPIPE от head и роняет мастер
     backup_passphrase=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(40)))')
-    warn "Сгенерирован passphrase: $backup_passphrase"
-    warn "Сохраните где-то ВНЕ entry-ноды. Дубль лежит в config.yaml (chmod 600)."
+    warn "Passphrase сгенерирован; после сохранения он будет в config.yaml (chmod 600)."
+    warn "Сохраните config.yaml в защищённом месте ВНЕ entry-ноды."
   fi
 
   if [[ "$backup_backend" == "s3" ]]; then

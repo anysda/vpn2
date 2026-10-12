@@ -42,7 +42,7 @@ def unquote_scalar(v):
             return ''.join(out)
         out.append(c)
         i += 1
-    print(f'ERROR: config.yaml: незакрытая кавычка в значении {v!r}', file=sys.stderr)
+    print('ERROR: config.yaml: незакрытая кавычка в значении (значение скрыто)', file=sys.stderr)
     sys.exit(1)
 
 

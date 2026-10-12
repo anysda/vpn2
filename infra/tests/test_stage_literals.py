@@ -74,6 +74,24 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
+class YoutubeLiteralTests(unittest.TestCase):
+    def test_generated_diagnostic_shell(self):
+        text = source('19-yt-zapret.sh')
+        block = text[text.index('cat > /usr/local/bin/anysda-yt-check'):
+                     text.index('chmod 0755 /usr/local/bin/anysda-yt-check')]
+        for value in VALUES:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                result = run('id() { printf 123; }\n' +
+                             block.replace('/usr/local/bin/anysda-yt-check', 'check.sh'), work,
+                             DIAG_USER='test', DIAG_UID='123', YT_MARK='256', YT_ZAPRET_BASE=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                checked = run('curl() { printf 000; }; setpriv() { printf 000; }; '
+                              'export -f curl setpriv; bash check.sh', work)
+                self.assertEqual(checked.returncode, 1, checked.stderr)
+                self.assertIn('  подбор стратегии: ' + value + '/blockcheck2.sh\n', checked.stdout)
+                self.assertFalse((Path(work) / 'INJECTED').exists())
+
+
 class FrontendLiteralTests(unittest.TestCase):
     def test_management_pairs(self):
         text = source('30-frontend.sh')

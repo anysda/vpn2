@@ -531,41 +531,47 @@ systemctl is-active anysda-yt-nft.service anysda-yt-nfqws.service | tr '\n' ' ' 
 # ----------------------------------------------------------------------------
 cat > /usr/local/bin/anysda-yt-check <<EOF
 #!/usr/bin/env bash
+YT_MARK=$(printf '%q' "$YT_MARK")
+YT_ZAPRET_BASE=$(printf '%q' "$YT_ZAPRET_BASE")
+DIAG_UID=$(printf '%q' "$DIAG_UID")
+DIAG_GID=$(printf '%q' "$(id -g "$DIAG_USER")")
+EOF
+cat >> /usr/local/bin/anysda-yt-check <<'EOF'
 # A/B-проверка десинка YouTube. Статус юнита ничего не доказывает — nfqws2
 # поднимается и с нерабочей стратегией. Сравниваем ОДИН И ТОТ ЖЕ хост:
 #   A — из-под $DIAG_USER: nft метит его трафик меткой $YT_MARK → десинк;
 #   B — из-под root: метки нет → чистый путь провайдера (контроль).
 # Коды выхода: 0 — путь десинка живой; 1 — не живой (обход не работает).
 set -u
-HOST="\${1:-https://www.youtube.com/}"
-TMO="\${YT_CHECK_TIMEOUT:-15}"
+HOST="${1:-https://www.youtube.com/}"
+TMO="${YT_CHECK_TIMEOUT:-15}"
 
 # curl сам печатает 000 при неудаче, поэтому вторым 000 не дополняем —
 # иначе в отчёте получается «000000» и непонятно, что это.
-probe() { curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null; }
+probe() { curl -4 -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null; }
 
-t0=\$(date +%s%N)
-A=\$(setpriv --reuid=$DIAG_UID --regid=$(id -g "$DIAG_USER") --clear-groups \\
-      curl -4 -sS -o /dev/null -m "\$TMO" -w '%{http_code}' "\$HOST" 2>/dev/null)
-A=\${A:-000}
+t0=$(date +%s%N)
+A=$(setpriv --reuid="$DIAG_UID" --regid="$DIAG_GID" --clear-groups \
+      curl -4 -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null)
+A=${A:-000}
 # Вердикт решает A, контроль B только поясняет его. Где DPI режет, B висит
 # до таймаута. Если A прошёл, нерезаный B уложился бы во время того же
 # запроса, поэтому ждём его втрое дольше A, но не меньше 3 с и не больше TMO.
 # Если A упал, B нужен для разбора — ждём полный TMO.
-btmo=\$TMO
-if [[ "\$A" =~ ^(200|204|30[0-9])\$ ]]; then
-  ms=\$(( (\$(date +%s%N) - t0) / 1000000 * 3 ))
+btmo=$TMO
+if [[ "$A" =~ ^(200|204|30[0-9])$ ]]; then
+  ms=$(( ($(date +%s%N) - t0) / 1000000 * 3 ))
   (( ms < 3000 )) && ms=3000
-  (( ms < TMO * 1000 )) && btmo=\$(( ms / 1000 )).\$(printf %03d \$(( ms % 1000 )))
+  (( ms < TMO * 1000 )) && btmo=$(( ms / 1000 )).$(printf %03d $(( ms % 1000 )))
 fi
-B=\$(TMO=\$btmo probe)
-B=\${B:-000}
+B=$(TMO=$btmo probe)
+B=${B:-000}
 
-echo "zapret (метка $YT_MARK): \$A"
-echo "контроль (без метки):    \$B"
+echo "zapret (метка $YT_MARK): $A"
+echo "контроль (без метки):    $B"
 
-if [[ "\$A" =~ ^(200|204|30[0-9])\$ ]]; then
-  if [[ "\$B" =~ ^(200|204|30[0-9])\$ ]]; then
+if [[ "$A" =~ ^(200|204|30[0-9])$ ]]; then
+  if [[ "$B" =~ ^(200|204|30[0-9])$ ]]; then
     echo "OK: путь десинка работает. Контроль тоже прошёл — DPI сейчас не режет,"
     echo "    тест десинк не доказывает, но и не опровергает."
   else

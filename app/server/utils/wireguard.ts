@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import path from 'node:path'
+import { isIP } from 'node:net'
 import { and, eq, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
@@ -75,6 +76,7 @@ export interface WgClientConfigParams {
 export function buildWgClientConfig(p: WgClientConfigParams): string {
   const dns = p.dns ?? '10.99.0.1'
   const mtu = p.mtu ?? 1420
+  const endpoint = isIP(p.serverEndpoint) === 6 ? `[${p.serverEndpoint}]` : p.serverEndpoint
   const allowed = wgAllowedIps(
     p.splitLocal ?? true,
     p.tunnelPrefixes ?? ['10.66.66.', '10.99.0.'],
@@ -92,7 +94,7 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
     `[Peer]`,
     `PublicKey = ${p.serverPublicKey}`,
     `PresharedKey = ${p.clientPresharedKey}`,
-    `Endpoint = ${p.serverEndpoint}:${p.serverPort}`,
+    `Endpoint = ${endpoint}:${p.serverPort}`,
     `AllowedIPs = ${allowed}`,
     `PersistentKeepalive = 25`,
     ``,

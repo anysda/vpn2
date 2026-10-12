@@ -70,6 +70,8 @@
 
   "route": {
     "rules": [
+      { "inbound": "hy2-direct-in", "action": "resolve" },
+      { "inbound": "hy2-direct-in", "ip_cidr": ["127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"], "action": "reject" },
       { "inbound": "hy2-direct-in", "outbound": "direct" },
       { "inbound": "hy2-warp-in",   "outbound": "warp"   },
       { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100, 22], "outbound": "direct" },

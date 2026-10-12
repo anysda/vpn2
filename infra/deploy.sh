@@ -398,6 +398,10 @@ run_stage_on_host() {
     10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" ;;
   esac
 
+  if [[ "$stage" == "10-foreign" || "$stage" == "20-ru-router" ]]; then
+    push "$DEPLOY_ROOT/lib/install-sing-box.sh" || return 1
+  fi
+
   # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
   # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).
   if [[ "$stage" == "00-bootstrap" ]]; then

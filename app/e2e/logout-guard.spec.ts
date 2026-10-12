@@ -57,3 +57,27 @@ test('сторож: после выхода посторонние ошибки 
   })
   expect(guard.problems.filter(p => p.startsWith('http 401'))).toHaveLength(2)
 })
+
+for (const { status, path } of [
+  { status: 500, path: '/api/admin/telegram' },
+  { status: 401, path: '/api/admin/telegram/settings' },
+]) {
+  test(`сторож: после выхода GET ${path} со статусом ${status} остаётся ошибкой`, async ({ page }) => {
+    const guard = new Guard()
+    guard.attach(page)
+    await page.route('**/*', route => route.fulfill({
+      status: new URL(route.request().url()).pathname === path ? status : 200,
+      contentType: 'application/json',
+      body: '{}',
+    }))
+    await page.goto('/')
+    await page.evaluate(async (path) => {
+      await fetch('/api/auth/sign-out', { method: 'POST' })
+      await fetch(path)
+    }, path)
+    // Проверяем конкретный ответ: посторонняя ошибка не должна озеленять тест.
+    await expect.poll(() => guard.problems.filter(p => p.startsWith('http '))).toEqual([
+      `http ${status} GET ${new URL(path, page.url()).href}`,
+    ])
+  })
+}

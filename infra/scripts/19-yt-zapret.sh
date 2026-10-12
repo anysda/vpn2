@@ -129,6 +129,8 @@ teardown() {
         /etc/systemd/system/anysda-yt-nft.service \
         /etc/systemd/system/anysda-yt-offload.service \
         /etc/systemd/system/nftables.service.d/90-anysda-youtube.conf \
+        /etc/systemd/system/sing-box.service.d/90-anysda-youtube.conf \
+        /usr/local/sbin/anysda-yt-nfqws-ready \
         /usr/local/bin/anysda-yt-check \
         "$NFT_CONF" "$SYSCTL_CONF" "$QUIC_NFT_CONF"
   systemctl daemon-reload
@@ -500,6 +502,29 @@ fi
 # 6. Демон nfqws2
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/7] nfqws2 service"
+# Type=simple объявляет старт сразу после fork, когда очередь ещё не занята.
+# ExecStartPost задерживает следующие по After службы до привязки очереди.
+cat > /usr/local/sbin/anysda-yt-nfqws-ready <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for (( i=0; i<50; i++ )); do
+  if awk -v q=$YT_ZAPRET_QUEUE -v p="\${1:?PID nfqws2}" \\
+    '\$1 == q && \$2 == p { found = 1 } END { exit !found }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+    exit 0
+  fi
+  sleep 0.1
+done
+echo 'nfqws2 не занял свою очередь за 5 секунд' >&2
+exit 1
+EOF
+chmod 0755 /usr/local/sbin/anysda-yt-nfqws-ready
+mkdir -p /etc/systemd/system/sing-box.service.d
+cat > /etc/systemd/system/sing-box.service.d/90-anysda-youtube.conf <<'EOF'
+[Unit]
+Wants=anysda-yt-nfqws.service
+After=anysda-yt-nfqws.service
+EOF
+
 cat > /etc/systemd/system/anysda-yt-nfqws.service <<EOF
 [Unit]
 Description=anysda-vpn2 — nfqws2 (DPI-десинк YouTube на РФ-выходе)
@@ -513,6 +538,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 ExecStart=$YT_ZAPRET_BIN --qnum=$YT_ZAPRET_QUEUE$LUA_INIT $YT_ZAPRET_STRATEGY
+ExecStartPost=/usr/local/sbin/anysda-yt-nfqws-ready \$MAINPID
 Restart=always
 RestartSec=3
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
@@ -528,7 +554,7 @@ systemctl enable anysda-yt-nft.service anysda-yt-nfqws.service >/dev/null 2>&1
 # десинка. Рестарт nft-цепочек systemd через Requires= тянет и nfqws2.
 svc_restart_if_changed anysda-yt-nft.service /etc/systemd/system/anysda-yt-nft.service "$NFT_CONF"
 svc_restart_if_changed anysda-yt-nfqws.service /etc/systemd/system/anysda-yt-nfqws.service \
-  "$YT_ZAPRET_BIN" "$YT_ZAPRET_BASE"/lua/*.lua
+  /usr/local/sbin/anysda-yt-nfqws-ready "$YT_ZAPRET_BIN" "$YT_ZAPRET_BASE"/lua/*.lua
 # Готов — когда сам демон держит свою очередь (portid в nfnetlink_queue = PID).
 nfqws_bound() {
   local pid

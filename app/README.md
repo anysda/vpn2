@@ -17,7 +17,7 @@ pnpm db:generate    # сгенерировать drizzle-миграцию из s
 ## Стек
 
 - Nuxt 4 + Vue 3 (TS strict), Nuxt UI 3
-- Nitro server routes, better-auth (сессии, TOTP, ограничитель попыток, OIDC), пароли Argon2id
+- Nitro server routes, better-auth (сессии, TOTP, OIDC), свой лимит неудачных входов, пароли Argon2id
 - Drizzle ORM + libSQL (SQLite), миграции в `server/database/migrations/`
 
 ## Деплой

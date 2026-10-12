@@ -242,8 +242,6 @@ const panelGuard = (): BetterAuthPlugin => ({
 function buildAuth() {
   const cfg = useRuntimeConfig()
   const sso = ssoSettings()
-  const maxAttempts = Number(cfg.authLoginMaxAttempts) || 10
-  const loginLimit = { window: 300, max: maxAttempts }
 
   return betterAuth({
     appName: TOTP_ISSUER,
@@ -304,12 +302,13 @@ function buildAuth() {
       storage: 'memory',
       window: 60,
       max: 100,
-      // Всё, что проверяет пароль или код 2FA, — один лимит на адрес. Без этого
-      // включение и выключение 2FA жили бы по правилу плагина (3 за 10 с).
+      // Всё, что проверяет пароль или код 2FA, считает неудачи сама ручка
+      // /api/auth/* (server/utils/login-limit.ts): библиотека считала бы и
+      // удачные попытки.
       customRules: {
-        '/sign-in/username': loginLimit,
-        '/change-password': loginLimit,
-        '/two-factor/*': loginLimit,
+        '/sign-in/username': false,
+        '/change-password': false,
+        '/two-factor/*': false,
         '/get-session': false,
       },
     },

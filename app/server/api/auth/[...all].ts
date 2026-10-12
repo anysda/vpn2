@@ -1,4 +1,5 @@
 import { isLoopbackAddr } from '../../utils/bot-api'
+import { loginAttempt, loginFinish } from '../../utils/login-limit'
 import { SSO_PROVIDER } from '../../utils/sso'
 import { FIELD_LABELS } from '../../utils/validate'
 
@@ -13,7 +14,9 @@ import { FIELD_LABELS } from '../../utils/validate'
  *    Остальным заголовок заменяем адресом сокета: своё значение на каждую
  *    попытку — и лимит не сработал бы никогда (VPN2-63).
  * 2. Список открытых ручек и проверка Origin — см. OPEN ниже.
- * 3. Вид ошибок. Фронт и бот ждут код в `statusMessage` и русский текст в
+ * 3. Лимит попыток для всего, что проверяет пароль или код 2FA: считаются
+ *    только неудачи, окно от первой неудачи (server/utils/login-limit.ts).
+ * 4. Вид ошибок. Фронт и бот ждут код в `statusMessage` и русский текст в
  *    `message`, как у остальных ручек панели.
  */
 
@@ -91,6 +94,13 @@ const OPEN: Record<string, ReadonlySet<string>> = {
   ]),
 }
 
+/** Ручки, где перебирают пароль или код. Лимит у каждой свой, на адрес. */
+function limited(path: string): boolean {
+  return path === '/sign-in/username' || path === '/change-password' || path.startsWith('/two-factor/')
+}
+
+const LOGIN_WINDOW_SEC = 300
+
 /** Запрос со страницы этой же панели: Origin (или Referer) того же хоста. */
 function sameOrigin(event: Parameters<Parameters<typeof defineEventHandler>[0]>[0]): boolean {
   const from = getRequestHeader(event, 'origin') || getRequestHeader(event, 'referer')
@@ -111,9 +121,28 @@ export default defineEventHandler(async (event) => {
   if (event.method !== 'GET' && !sameOrigin(event)) {
     throw createError({ statusCode: 403, statusMessage: 'invalid_origin', message: 'Запрос не со страницы панели' })
   }
-  const request = toWebRequest(event)
-  const headers = new Headers(request.headers)
-  headers.set('x-forwarded-for', clientAddress(event))
-  const res = await useAuth().handler(new Request(request, { headers }))
+  const ip = clientAddress(event)
+  const key = limited(path) ? `${ip}|${path}` : null
+  if (key) {
+    const max = Number(useRuntimeConfig().authLoginMaxAttempts) || 10
+    const retryAfter = loginAttempt(key, max, LOGIN_WINDOW_SEC)
+    if (retryAfter !== null) {
+      return humanError(new Response(JSON.stringify({ code: 'TOO_MANY_REQUESTS' }), {
+        status: 429,
+        headers: { 'content-type': 'application/json', 'x-retry-after': String(retryAfter) },
+      }))
+    }
+  }
+  let res: Response | undefined
+  try {
+    const request = toWebRequest(event)
+    const headers = new Headers(request.headers)
+    headers.set('x-forwarded-for', ip)
+    res = await useAuth().handler(new Request(request, { headers }))
+  }
+  finally {
+    // Ошибка сервера (5xx, исключение) — не неудача человека, её не считаем.
+    if (key) loginFinish(key, !res || res.status < 400 || res.status >= 500)
+  }
   return res.status >= 400 ? humanError(res) : res
 })

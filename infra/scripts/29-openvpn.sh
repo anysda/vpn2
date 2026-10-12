@@ -254,6 +254,9 @@ cat > /usr/local/sbin/anysda-ovpn-routing.sh <<'IPTSEOF'
 # fwmark/table with wg0 so OpenVPN clients get the same geoip exit routing.
 set -euo pipefail
 ACTION=${1:-up}
+# Общий замок с WG и IKEv2: ip rule add допускает одинаковые правила.
+exec 9>/run/anysda-vpn-routing.lock
+flock -x 9
 TUN_IF='tun0'
 MARK='0x42'
 TABLE=101

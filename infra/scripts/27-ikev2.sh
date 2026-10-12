@@ -390,6 +390,9 @@ cat > /usr/local/sbin/anysda-ikev2-routing.sh <<IPTSEOF
 # расшифрованные пакеты в xfrm0; PREROUTING -i xfrm0 шлёт их в TPROXY.
 set -euo pipefail
 ACTION=\${1:-up}
+# Общий замок с WG и OpenVPN охватывает проверку и добавление правил.
+exec 9>/run/anysda-vpn-routing.lock
+flock -x 9
 
 XFRM_IF='xfrm0'
 WAN_IF=$(printf '%q' "$WAN_IF")

@@ -9,6 +9,7 @@ class RoutingTests(unittest.TestCase):
         stage = source('infra/scripts/28-wireguard.sh')
         routing = stage.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
+            routing = routing.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
             result = bash('''
 ip() { echo "ip $*"; }
 iptables() { echo "iptables $*"; }

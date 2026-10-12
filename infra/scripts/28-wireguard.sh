@@ -148,6 +148,10 @@ cat > /usr/local/sbin/anysda-wg-routing.sh <<'IPTSEOF'
 # REJECT, чтобы клиент получал icmp6-addr-unreachable, а не таймаут.
 set -euo pipefail
 ACTION=${1:-up}
+# Все VPN-службы меняют общие mark/table и INPUT. Проверка и добавление
+# правила должны идти под одним замком, включая параллельный старт при boot.
+exec 9>/run/anysda-vpn-routing.lock
+flock -x 9
 WG_IF='wg0'
 MARK='0x42'
 TABLE=101

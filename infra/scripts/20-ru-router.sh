@@ -78,10 +78,13 @@ done < "$FS"
 # Проверяем, что для каждой выходной ноды есть все нужные секреты
 for _t in $EXIT_TAGS; do
   _T=$(echo "$_t" | tr a-z A-Z)
-  eval ": \"\${${_T}_DIRECT:?секрет ${_t} DIRECT не найден в foreign-secrets.env}\""
-  eval ": \"\${${_T}_WARP:?секрет ${_t} WARP не найден в foreign-secrets.env}\""
-  eval ": \"\${${_T}_MGMT:?секрет ${_t} MGMT не найден в foreign-secrets.env}\""
-  eval ": \"\${${_T}_OBFS:?секрет ${_t} OBFS не найден в foreign-secrets.env}\""
+  for _kind in DIRECT WARP MGMT OBFS; do
+    _key="${_T}_${_kind}"
+    [[ -n "${!_key:-}" ]] || {
+      echo "[$HOST_TAG] секрет ${_t} ${_kind} не найден в foreign-secrets.env" >&2
+      exit 1
+    }
+  done
 done
 
 # ----------------------------------------------------------------------------
@@ -111,8 +114,10 @@ for _t in $EXIT_TAGS; do
   # MGMT_IP_{T} задаёт mon-порт локального SOCKS-инбаунда (см. генератор).
   export "MGMT_IP_${_T}"
   export "${_T}_HY2_UP_MBPS" "${_T}_HY2_DOWN_MBPS"
-  eval "export ${_T}_HY2_DIRECT_PORT=\${${_T}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT}}"
-  eval "export ${_T}_HY2_MGMT_PORT=\${${_T}_HY2_MGMT_PORT:-${HY2_MGMT_PORT}}"
+  _key="${_T}_HY2_DIRECT_PORT"
+  export "$_key=${!_key:-$HY2_DIRECT_PORT}"
+  _key="${_T}_HY2_MGMT_PORT"
+  export "$_key=${!_key:-$HY2_MGMT_PORT}"
 done
 
 # TLS pinning Hysteria2 outbound: если orchestrator push'нул cert экзита в
@@ -128,7 +133,7 @@ if [[ -d /tmp/anysda/exit-certs ]]; then
     _src="/tmp/anysda/exit-certs/${_t}.pem"
     if [[ -f "$_src" ]]; then
       install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.pem"
-      eval "export ${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
+      export "${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
     fi
   done
 fi

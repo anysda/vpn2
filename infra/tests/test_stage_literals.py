@@ -74,6 +74,20 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
+class RouterExportLiteralTests(unittest.TestCase):
+    def test_default_ports_are_data(self):
+        text = source('20-ru-router.sh')
+        start = text.index('for _t in $EXIT_TAGS;', text.index('export YT_ROUTE='))
+        block = text[start:text.index('\n# TLS pinning', start)]
+        for value in VALUES:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                result = run(block + '\nprintf "%s\\0" "$TEST_HY2_DIRECT_PORT" "$TEST_HY2_MGMT_PORT"',
+                             work, EXIT_TAGS='test', HY2_DIRECT_PORT=value, HY2_MGMT_PORT=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.split('\0')[:-1], [value, value])
+                self.assertFalse((Path(work) / 'INJECTED').exists())
+
+
 class LogLiteralTests(unittest.TestCase):
     def test_all_stage_log_prefixes(self):
         count = 0

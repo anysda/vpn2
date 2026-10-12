@@ -9,6 +9,8 @@
 #   E2E_SKIP_BUILD=1 bash e2e/run-local.sh e2e/routes.spec.ts
 #
 # E2E_IMAGE, E2E_CONTAINER, E2E_PORT — имя образа, контейнера, порт Caddy на 127.0.0.1;
+# E2E_BROWSER_IMAGE — образ Playwright той же версии, что в node_modules;
+# E2E_BROWSER_PORT — порт браузерного сервера на 127.0.0.1 (E2E_PORT + 1).
 # E2E_KEEP=1 оставляет контейнер после прогона.
 set -euo pipefail
 
@@ -18,6 +20,9 @@ source "$APP_DIR/e2e/support/panel-stand.sh"
 IMAGE=${E2E_IMAGE:-vpn2-panel:e2e}
 NAME=${E2E_CONTAINER:-vpn2-panel-e2e}
 PORT=${E2E_PORT:-51899}
+BROWSER_PORT=${E2E_BROWSER_PORT:-$((PORT + 1))}
+PW_VERSION=$(node -p 'require(process.argv[1]).version' "$APP_DIR/node_modules/@playwright/test/package.json")
+BROWSER_IMAGE=${E2E_BROWSER_IMAGE:-mcr.microsoft.com/playwright:v$PW_VERSION-noble}
 
 if [[ -z ${E2E_SKIP_BUILD:-} ]]; then
   dk build -t "$IMAGE" "$APP_DIR"
@@ -40,6 +45,7 @@ eval "$resource_args"
 # `exit $rc` в конце файла), 0.9-0.10 на раннере CI - SC2317 на теле функции.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
+  dk rm -f "$NAME-browser" >/dev/null 2>&1 || true
   [[ -n ${E2E_KEEP:-} ]] && { echo "контейнер $NAME оставлен, пароль admin: $PASS"; return; }
   stand_down "$NAME"
 }
@@ -52,10 +58,29 @@ stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"
 
+# Chromium слушает netlink: смена интерфейсов хоста обрывает даже запросы к
+# localhost (ERR_NETWORK_CHANGED). У браузера своя сеть; exposeNetwork в
+# playwright.config.ts передаёт localhost тестового процесса через Playwright.
+# Только браузер в контейнере: тесты отказов по-прежнему управляют Docker с хоста.
+dk run -d --rm --init --name "$NAME-browser" --network "$NAME" --shm-size=1g \
+  -p "127.0.0.1:$BROWSER_PORT:3000" \
+  -v "$APP_DIR/node_modules:/app/node_modules:ro" \
+  "$BROWSER_IMAGE" node /app/node_modules/@playwright/test/cli.js \
+  run-server --host 0.0.0.0 --port 3000 >/dev/null
+for _ in $(seq 30); do
+  curl -fsS "http://127.0.0.1:$BROWSER_PORT/json" >/dev/null 2>&1 && break
+  sleep 1
+done
+if ! curl -fsS "http://127.0.0.1:$BROWSER_PORT/json" >/dev/null; then
+  dk logs "$NAME-browser"
+  exit 1
+fi
+
 rc=0
 (
   cd "$APP_DIR"
   E2E_BASE_URL="http://127.0.0.1:$PORT" E2E_ADMIN_PASSWORD="$PASS" \
+  E2E_BROWSER_WS="ws://127.0.0.1:$BROWSER_PORT/" \
   E2E_FAULT_CONTAINER="$NAME" \
   E2E_PUBLIC_HOST=$PUBLIC_HOST E2E_NODES="ru $EXIT_TAGS" \
     ./node_modules/.bin/playwright test "$@"

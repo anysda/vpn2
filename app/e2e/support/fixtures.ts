@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises'
 import { test as base, expect, type APIRequestContext, type Download, type Page } from '@playwright/test'
 
 export const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
@@ -102,8 +101,11 @@ export async function loginUi(page: Page, password = ADMIN_PASSWORD) {
 }
 
 export async function downloadText(d: Download): Promise<string> {
-  const p = await d.path()
-  return readFile(p, 'utf8')
+  // path() недоступен у удалённого браузера; поток работает и в Docker, и локально.
+  const stream = await d.createReadStream()
+  const chunks: Buffer[] = []
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
+  return Buffer.concat(chunks).toString('utf8')
 }
 
 /** Дождаться, пока Nuxt гидратирует страницу: до этого клики уходят в пустоту. */

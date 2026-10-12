@@ -132,10 +132,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: браузер Playwright
-        run: pnpm exec playwright install --with-deps chromium
-      - name: сквозные тесты на собранном образе
-        run: pnpm e2e:local
+      - name: сквозные тесты на собранном образе при смене сети хоста
+        env:
+          E2E_IP: sudo -n ip
+        run: python3 e2e/with-network-churn.py pnpm e2e:local
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v4

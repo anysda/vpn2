@@ -20,6 +20,9 @@ export default defineConfig({
     baseURL,
     // APIRequestContext, в отличие от браузера, сам Origin не выставляет.
     extraHTTPHeaders: { origin: new URL(baseURL).origin },
+    connectOptions: process.env.E2E_BROWSER_WS
+      ? { wsEndpoint: process.env.E2E_BROWSER_WS, exposeNetwork: '<loopback>' }
+      : undefined,
     locale: 'ru-RU',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

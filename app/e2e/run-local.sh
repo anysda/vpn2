@@ -28,6 +28,8 @@ dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
 dk run --rm --name "$NAME-config" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/config-error-check.mjs"
+dk run --rm --name "$NAME-password" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
+  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/long-password-check.mjs"
 
 PASS=$(openssl rand -hex 12)
 # Проверяем панель именно с установочным профилем entry 2 ГБ.

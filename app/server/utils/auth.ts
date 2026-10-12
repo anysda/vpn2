@@ -191,9 +191,12 @@ const panelGuard = (): BetterAuthPlugin => ({
       {
         // Смена пароля всегда рвёт остальные сессии.
         matcher: ctx => ctx.path === '/change-password',
-        handler: createAuthMiddleware(async ctx => ({
-          context: { body: { ...(ctx.body ?? {}), revokeOtherSessions: true } },
-        })),
+        handler: createAuthMiddleware(async (ctx) => {
+          if (typeof ctx.body?.newPassword === 'string' && ctx.body.newPassword.length > 256) {
+            throw APIError.from('BAD_REQUEST', { code: 'PASSWORD_TOO_LONG', message: 'Password is too long' })
+          }
+          return { context: { body: { ...(ctx.body ?? {}), revokeOtherSessions: true } } }
+        }),
       },
     ],
     after: [
@@ -284,7 +287,10 @@ function buildAuth() {
       enabled: true,
       disableSignUp: true,
       minPasswordLength: 8,
-      maxPasswordLength: 256,
+      // В config.yaml и старом входе длина пароля не ограничивалась. Лимит
+      // библиотеки применяется и при проверке существующего пароля, поэтому
+      // ограничиваем только новый пароль в хуке /change-password выше.
+      maxPasswordLength: Number.MAX_SAFE_INTEGER,
       password: {
         hash: hashPassword,
         verify: ({ hash, password }) => verifyPassword(hash, password),

@@ -359,7 +359,7 @@ backup_s3_secret_key=''
 backup_enabled_q=$(ask_yn "Включить бэкапы?" "y")
 if [[ "$backup_enabled_q" == "y" ]]; then
   # Дефолт — daily в 02:00 по локальной TZ entry-ноды. Выключить можно явным "n".
-  backup_schedule_q=$(ask_yn "Ежедневный бэкап в 02:00 (по локальной TZ entry, systemd-timer)?" "y")
+  backup_schedule_q=$(ask_yn "Ежедневный бэкап с 02:00 (TZ entry, случайная задержка до 5 мин)?" "y")
   [[ "$backup_schedule_q" == "y" ]] && backup_schedule='daily'
 
   while true; do

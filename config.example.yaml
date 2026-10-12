@@ -172,26 +172,28 @@ admin:
 #   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
 #   hy2_mgmt: 8444                                  # Hysteria2 служебный (скрейп node_exporter из-за границы)
 
-# Бэкапы (опционально, по умолчанию ВКЛЮЧЕНЫ с backend=local).
+# Бэкапы (в примере и мастере ВКЛЮЧЕНЫ с backend=local; без блока выключены).
 # Архив включает: db.sqlite (через sqlite3 .backup), /etc/anysda/* (секреты
 # панели и бота), WG server private key (/etc/wireguard/wg0.conf), OpenVPN
-# CA + PKI (/etc/openvpn/pki/, server.conf, ccd/, crl.pem) + manifest.json
+# CA + PKI (/etc/openvpn/server/pki/, server.conf, ccd/), IKEv2
+# (/etc/strongswan/, /etc/swanctl/) + manifest.json
 # с SHA-256 каждого компонента. Архив шифруется age (symmetric passphrase)
 # на entry ДО записи на диск/выгрузки в S3 — plaintext .tar.gz никогда не
 # покидает mktemp-dir и не остаётся в файловой системе.
 #
 # passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
 # Если оставить пустым — setup.sh сгенерит крепкий и распечатает один раз;
-# далее лежит в config.yaml (chmod 600), как и admin.password / root-пароли
+# при ручном заполнении config.yaml passphrase надо задать до деплоя.
+# Далее лежит в config.yaml (chmod 600), как и admin.password / root-пароли
 # нод. На компрометацию оркестратора — ротировать passphrase И re-encrypt
 # существующие бэкапы (см. README §Backup & Disaster Recovery).
 backup:
-  enabled: true                # отключить — backup: { enabled: false }
+  enabled: true                # отключить — заменить true на false в этой строке
   backend: local               # local | s3
   passphrase: ""               # age symmetric passphrase; пусто → setup.sh auto-gen
   retention: 10                # keep last N; «последний успешный» защищён от удаления
-  schedule: daily              # off | daily — daily ставит systemd-timer на 02:00
-                               # по локальной TZ entry-ноды (timedatectl)
+  schedule: daily              # off | daily — таймер на 02:00 по локальной TZ entry
+                               # (timedatectl), случайная задержка до 5 минут
   local:
     dir: /var/backups/anysda-vpn2
 

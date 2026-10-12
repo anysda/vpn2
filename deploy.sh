@@ -9,6 +9,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Справка оркестратора не требует конфига и генерации env.
+case "${1:-}" in
+  -h|--help) exec "${REPO_ROOT}/infra/deploy.sh" "$@" ;;
+esac
+
 if [[ -t 1 ]]; then
   G='\033[32m' R='\033[31m' Y='\033[33m' E='\033[0m'
 else

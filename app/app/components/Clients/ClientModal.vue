@@ -27,22 +27,26 @@ const name = ref('')
 const expiresAt = ref('')
 const deviceLimit = ref<number>(DEFAULT_DEVICE_LIMIT)
 const unlimited = ref(false)
+let loadVersion = 0
 
 async function load() {
   if (props.clientId == null) return
+  const version = ++loadVersion
   loading.value = true
   try {
     const d = await fetchDetail(props.clientId)
+    if (version !== loadVersion) return
     detail.value = d
     syncForm(d)
   }
   catch (e) {
+    if (version !== loadVersion) return
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Не удалось загрузить клиента', color: 'error' })
     open.value = false
   }
   finally {
-    loading.value = false
+    if (version === loadVersion) loading.value = false
   }
 }
 
@@ -53,12 +57,16 @@ function syncForm(d: ClientDetail) {
   deviceLimit.value = d.deviceLimit ?? DEFAULT_DEVICE_LIMIT
 }
 
-watch(open, (now) => {
-  if (now) {
+watch([open, () => props.clientId], () => {
+  // Ответ закрытой карточки не должен менять следующую открытую карточку.
+  loadVersion++
+  loading.value = false
+  if (open.value) {
     detail.value = null
     load()
   }
 })
+onUnmounted(() => { loadVersion++ })
 
 // --- Header edits ---------------------------------------------------------
 const savingName = ref(false)

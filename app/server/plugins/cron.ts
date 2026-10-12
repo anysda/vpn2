@@ -6,7 +6,7 @@ import { syncClientPrefsFile } from '../utils/client-prefs'
 
 const INTERVAL_MS = 60_000
 
-export default defineNitroPlugin(() => {
+export default defineNitroPlugin((nitroApp) => {
   const log = useLogger()
 
   async function tick() {
@@ -40,7 +40,7 @@ export default defineNitroPlugin(() => {
   // the first tick races and fails with "no such table" on a fresh DB.
   const FIRST_TICK_DELAY_MS = 5_000
 
-  setTimeout(() => {
+  const firstTick = setTimeout(() => {
     tick().catch(err => log.error({ err }, 'cron: initial tick failed'))
   }, FIRST_TICK_DELAY_MS)
 
@@ -48,7 +48,8 @@ export default defineNitroPlugin(() => {
     tick().catch(err => log.error({ err }, 'cron: tick failed'))
   }, INTERVAL_MS)
 
-  if (typeof process !== 'undefined') {
-    process.on('beforeExit', () => clearInterval(handle))
-  }
+  nitroApp.hooks.hook('close', () => {
+    clearTimeout(firstTick)
+    clearInterval(handle)
+  })
 })

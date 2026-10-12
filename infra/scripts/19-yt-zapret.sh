@@ -128,6 +128,7 @@ teardown() {
   rm -f /etc/systemd/system/anysda-yt-nfqws.service \
         /etc/systemd/system/anysda-yt-nft.service \
         /etc/systemd/system/anysda-yt-offload.service \
+        /etc/systemd/system/nftables.service.d/90-anysda-youtube.conf \
         /usr/local/bin/anysda-yt-check \
         "$NFT_CONF" "$SYSCTL_CONF" "$QUIC_NFT_CONF"
   systemctl daemon-reload
@@ -324,10 +325,20 @@ ${NFT_WIN_RULES:-        # (стратегия не меняет масштаб 
 EOF
 nft -c -f "$NFT_CONF"
 
+# nftables.service стирает ruleset при restart, а штатный nftables.conf —
+# также при reload. Уже активные oneshot-службы этого не замечают. Вернуть
+# сохранённые таблицы после обеих операций, без сети и рестарта nfqws2.
+mkdir -p /etc/systemd/system/nftables.service.d
+cat > /etc/systemd/system/nftables.service.d/90-anysda-youtube.conf <<'EOF'
+[Service]
+ExecStartPost=/bin/sh -ec 'for f in /etc/nftables-yt-zapret.conf /etc/nftables-yt-quic.conf; do if [ -f "$f" ]; then /usr/sbin/nft -f "$f"; fi; done'
+ExecReload=/bin/sh -ec 'for f in /etc/nftables-yt-zapret.conf /etc/nftables-yt-quic.conf; do if [ -f "$f" ]; then /usr/sbin/nft -f "$f"; fi; done'
+EOF
+
 cat > /etc/systemd/system/anysda-yt-nft.service <<EOF
 [Unit]
 Description=anysda-vpn2 — nft-цепочки десинка YouTube (+ conntrack be_liberal)
-After=network-online.target
+After=network-online.target nftables.service
 Wants=network-online.target
 Before=anysda-yt-nfqws.service
 

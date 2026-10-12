@@ -183,10 +183,10 @@ admin:
 # покидает mktemp-dir и не остаётся в файловой системе.
 #
 # passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
-# Если оставить пустым — setup.sh сгенерит крепкий и распечатает один раз;
-# при ручном заполнении config.yaml passphrase надо задать до деплоя.
-# Далее лежит в config.yaml (chmod 600), как и admin.password / root-пароли
-# нод. На компрометацию оркестратора — ротировать passphrase И re-encrypt
+# Если оставить пустым — setup.sh сгенерит крепкий и запишет в config.yaml
+# (chmod 600), как и admin.password / root-пароли нод; на экран не выводится.
+# При ручном заполнении config.yaml passphrase надо задать до деплоя.
+# На компрометацию оркестратора — ротировать passphrase И re-encrypt
 # существующие бэкапы (см. README §Backup & Disaster Recovery).
 backup:
   enabled: true                # отключить — заменить true на false в этой строке

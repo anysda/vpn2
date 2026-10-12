@@ -12,6 +12,17 @@ import { isClientActive } from './client-status'
 
 const exec = promisify(execFile)
 
+// openssl ca не блокирует общие index.txt/serial/crlnumber. Выдачу,
+// перевыпуск и отзыв выполняем по очереди, включая чтение/запись устройства:
+// два запроса одного конфига не должны выпускать два разных сертификата.
+let caQueue: Promise<unknown> = Promise.resolve()
+
+function withCaLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = caQueue.then(fn)
+  caQueue = run.catch(() => {})
+  return run
+}
+
 // CA + server PKI laid down by stage 29-openvpn; mounted into the panel
 // container at the same path so the panel can issue/revoke client certs.
 const OVPN_DIR = '/etc/openvpn/server'
@@ -124,7 +135,11 @@ async function issueClientCert(cn: string): Promise<{ cert: string, key: string 
 }
 
 /** Revoke a client cert and regenerate the CRL OpenVPN reads via crl-verify. */
-export async function revokeClientCert(certPem: string): Promise<void> {
+export function revokeClientCert(certPem: string): Promise<void> {
+  return withCaLock(() => revokeClientCertOnce(certPem))
+}
+
+async function revokeClientCertOnce(certPem: string): Promise<void> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ovpn-rev-'))
   try {
     const certPath = path.join(tmp, 'cert.pem')
@@ -317,7 +332,11 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
  * Make sure the DEVICE has an OpenVPN cert. If absent, issue one and persist
  * the cert + key on the device row. Returns the (possibly updated) record.
  */
-export async function ensureDeviceOvpn(deviceId: number) {
+export function ensureDeviceOvpn(deviceId: number) {
+  return withCaLock(() => ensureDeviceOvpnOnce(deviceId))
+}
+
+async function ensureDeviceOvpnOnce(deviceId: number) {
   const db = useDb()
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
@@ -345,14 +364,18 @@ export async function ensureDeviceOvpn(deviceId: number) {
 }
 
 /** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
-export async function reissueDeviceOvpn(deviceId: number) {
+export function reissueDeviceOvpn(deviceId: number) {
+  return withCaLock(() => reissueDeviceOvpnOnce(deviceId))
+}
+
+async function reissueDeviceOvpnOnce(deviceId: number) {
   const db = useDb()
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
 
   const ready = await caReady()
   if (row.ovpnCert && ready) {
-    await revokeClientCert(row.ovpnCert).catch(() => {})
+    await revokeClientCertOnce(row.ovpnCert)
     // CRL проверяется только при подключении — живую сессию со старым
     // сертификатом рвём сами.
     await killOvpnClientQuiet(ovpnCn(deviceId))

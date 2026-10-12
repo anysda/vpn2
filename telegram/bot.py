@@ -261,11 +261,10 @@ async def _tg_post(method: str, payload: dict, files: dict | None = None,
         if body.get('ok'):
             return body
         desc = str(body.get('description', ''))
-        if 'message is not modified' in desc:
+        if method == 'editMessageText' and 'message is not modified' in desc:
             return body
-        log.warning('%s не ok: %s', method, desc)
         if attempt or 'parse_mode' not in payload or "can't parse" not in desc:
-            return body
+            raise RuntimeError(f'Telegram {method} failed (HTTP {r.status_code})')
         payload = {k: v for k, v in payload.items() if k != 'parse_mode'}
     return body
 
@@ -1298,21 +1297,21 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
     if value >= threshold:
         _load_hits[key] = _load_hits.get(key, 0) + 1
         if _load_hits[key] >= ALERT_HITS and key not in _load_alerted:
-            _load_alerted.add(key)
             await tg_send(
                 CHAT_ID,
                 f'⚠️ *{tag.upper()}*: нагрузка на {label} выше '
                 f'{threshold:.0f}{unit} ({value:.0f}{unit})',
                 'Markdown',
             )
+            _load_alerted.add(key)
     elif value < threshold - HYSTERESIS:
         if key in _load_alerted:
-            _load_alerted.discard(key)
             await tg_send(
                 CHAT_ID,
                 f'✅ *{tag.upper()}*: {label} вернулся в норму ({value:.0f}{unit})',
                 'Markdown',
             )
+            _load_alerted.discard(key)
         _load_hits[key] = 0
 
 
@@ -1336,7 +1335,6 @@ async def monitor_loop() -> None:
                 if down:
                     _node_down[tag] = _node_down.get(tag, 0) + 1
                     if _node_down[tag] >= ALERT_HITS and tag not in _node_alerted:
-                        _node_alerted.add(tag)
                         log.info('ALERT: нода %s лежит — отправляю алерт', tag)
                         await tg_send(
                             CHAT_ID,
@@ -1344,15 +1342,16 @@ async def monitor_loop() -> None:
                             f'метрик нет больше {NODE_DOWN_SEC // 60} мин',
                             'Markdown',
                         )
+                        _node_alerted.add(tag)
                 else:
                     if tag in _node_alerted:
-                        _node_alerted.discard(tag)
                         log.info('нода %s восстановилась — отправляю алерт', tag)
                         await tg_send(
                             CHAT_ID,
                             f'🟢 *Нода {tag.upper()} восстановилась*',
                             'Markdown',
                         )
+                        _node_alerted.discard(tag)
                     _node_down[tag] = 0
 
             # CPU / RAM на каждой ноде

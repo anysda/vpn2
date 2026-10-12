@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -19,9 +20,12 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
         for response in responses:
             with self.subTest(response=response), patch.object(
                     bot.HTTPXRequest, 'do_request', AsyncMock(return_value=response)):
-                bot.LAST_POLL_OK = 0
+                # monotonic() считает от загрузки машины: 0 на свежем раннере
+                # ещё не «давно», поэтому отметка заведомо старше лимита.
+                stale = time.monotonic() - bot.POLL_STALL_SEC - 10
+                bot.LAST_POLL_OK = stale
                 await request.do_request(url='https://api.telegram.org/test', method='POST')
-                self.assertEqual(bot.LAST_POLL_OK, 0)
+                self.assertEqual(bot.LAST_POLL_OK, stale)
                 health = await bot.handle_health(None)
                 self.assertEqual(health.status, 503)
 
@@ -33,16 +37,17 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(request.shutdown)
         with patch.object(bot.HTTPXRequest, 'do_request', AsyncMock(
                 return_value=(200, json.dumps({'ok': True, 'result': []}).encode()))):
-            bot.LAST_POLL_OK = 0
+            stale = time.monotonic() - bot.POLL_STALL_SEC - 10
+            bot.LAST_POLL_OK = stale
             await request.do_request(url='https://api.telegram.org/test', method='POST')
-            self.assertGreater(bot.LAST_POLL_OK, 0)
+            self.assertGreater(bot.LAST_POLL_OK, stale)
             self.assertEqual((await bot.handle_health(None)).status, 200)
 
     async def test_stalled_watchdog_exits(self):
         bot = load_bot()
         self.addAsyncCleanup(bot._local.aclose)
         self.addAsyncCleanup(bot._tg.aclose)
-        bot.LAST_POLL_OK = 0
+        bot.LAST_POLL_OK = time.monotonic() - bot.POLL_STALL_SEC - 10
         with patch.object(bot.asyncio, 'sleep', AsyncMock()), \
                 patch.object(bot.os, '_exit', side_effect=asyncio.CancelledError) as exit_process:
             with self.assertRaises(asyncio.CancelledError):

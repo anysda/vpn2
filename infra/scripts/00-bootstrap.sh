@@ -110,7 +110,7 @@ net.core.wmem_max = 16777216
 net.core.rmem_default = 8388608
 net.core.wmem_default = 8388608
 net.core.netdev_max_backlog = 5000
-# BBR + fq — выше throughput TCP (и внутри туннеля, и между нодами).
+# BBR + fq для новых интерфейсов; WAN хаба настроен отдельно ниже (IKEv2).
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 # Соединения внутри туннеля живут долго и простаивают: окно после паузы не
@@ -122,38 +122,54 @@ net.ipv4.tcp_notsent_lowat = 131072
 EOF
 sysctl --quiet --system
 
-# fq на основном интерфейсе. default_qdisc = fq до него не доходит: устройство
-# создаётся раньше, чем systemd-sysctl, и остаётся на pfifo_fast. flow_limit
-# 1000 вместо 100: один поток туннеля hy2 несёт трафик всех клиентов, и с
-# дефолтом fq режет его пакеты как «жадный поток».
+# default_qdisc не меняет уже созданный WAN. На экзитах сохраняем fq с
+# flow_limit 1000: один hy2-поток несёт трафик всех клиентов. На WAN хаба
+# возвращаем pfifo_fast: fq снижает IKEv2 tcp8_down (VPN2-163). TCP BBR,
+# буферы и fq на остальных интерфейсах/экзитах остаются прежними.
+WAN_QDISC=fq
+[[ "$HOST_TAG" != ru ]] || WAN_QDISC=pfifo_fast
 cat > /usr/local/sbin/anysda-fq <<'EOF'
 #!/bin/sh
 # anysda-vpn — set by infra/scripts/00-bootstrap.sh
+set -eu
 dev=$(ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
 [ -n "$dev" ] || { echo "anysda-fq: нет маршрута по умолчанию" >&2; exit 1; }
-tc qdisc show dev "$dev" root | grep -q '^qdisc fq .*flow_limit 1000p' && exit 0
-tc qdisc replace dev "$dev" root fq flow_limit 1000
-echo "anysda-fq: $dev -> fq flow_limit 1000"
+case "${1:?ожидается fq или pfifo_fast}" in
+  pfifo_fast)
+    tc qdisc show dev "$dev" root | grep -q '^qdisc pfifo_fast ' && exit 0
+    tc qdisc replace dev "$dev" root pfifo_fast
+    ;;
+  fq)
+    current=$(tc qdisc show dev "$dev" root)
+    if echo "$current" | grep -q '^qdisc fq .*flow_limit 1000p' &&
+       ! echo "$current" | grep -q 'nopacing'; then
+      exit 0
+    fi
+    tc qdisc replace dev "$dev" root fq flow_limit 1000 pacing
+    ;;
+  *) echo "anysda-fq: неизвестная очередь $1" >&2; exit 1 ;;
+esac
+echo "anysda-fq: $dev -> $1"
 EOF
 chmod 755 /usr/local/sbin/anysda-fq
-cat > /etc/systemd/system/anysda-fq.service <<'EOF'
+cat > /etc/systemd/system/anysda-fq.service <<EOF
 # anysda-vpn — set by infra/scripts/00-bootstrap.sh
 [Unit]
-Description=anysda-vpn: fq flow_limit 1000 on the default route interface
+Description=anysda-vpn: $WAN_QDISC on the default route interface
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/anysda-fq
+ExecStart=/usr/local/sbin/anysda-fq $WAN_QDISC
 
 [Install]
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable anysda-fq >/dev/null 2>&1
-/usr/local/sbin/anysda-fq | sed "s/^/[$HOST_TAG]   /"
+/usr/local/sbin/anysda-fq "$WAN_QDISC" | sed "s/^/[$HOST_TAG]   /"
 
 # systemd-networkd при каждом перезапуске (needrestart после unattended-upgrades
 # дёргает его сам) по умолчанию сносит «чужие» ip rule и маршруты — в том числе

@@ -194,6 +194,10 @@ echo "[$HOST_TAG]   tls fingerprint: $(openssl x509 -in /etc/anysda/hy2-tls.crt 
 
 TPL=/tmp/anysda/sing-box-server.json.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
+# Пустая пара сохраняет BBR. Настройка не затрагивает служебный hy2-mgmt.
+export HY2_UP_MBPS="${HY2_UP_MBPS:-}" HY2_DOWN_MBPS="${HY2_DOWN_MBPS:-}"
+HY2_BANDWIDTH_FIELDS=$(python3 /tmp/anysda/hy2_bandwidth.py)
+export HY2_BANDWIDTH_FIELDS
 # Проверяем приватный кандидат; неудачный рендер/проверка сохраняет конфиг,
 # с которым сервис сможет снова стартовать после сбоя или перезагрузки.
 SB_CONFIG_TMP=$(mktemp /etc/sing-box/.config.json.XXXXXX)

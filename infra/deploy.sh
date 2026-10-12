@@ -386,6 +386,11 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/entry_resources.py" || return
   fi
 
+  # Общая валидация bandwidth; 22 импортирует тот же генератор для AdGuard.
+  case "$stage" in
+    10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" ;;
+  esac
+
   # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
   # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).
   if [[ "$stage" == "00-bootstrap" ]]; then

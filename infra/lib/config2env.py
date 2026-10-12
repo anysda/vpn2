@@ -12,6 +12,8 @@ import re
 import sys
 from pathlib import Path
 
+from hy2_bandwidth import bandwidth_fields
+
 
 def shq(v):
     """Значение для *.env в одинарных кавычках: `source` вернёт его байт в байт."""
@@ -256,6 +258,15 @@ def main():
     exits = cfg.get('exits', [])
     ports = cfg.get('ports', {})
 
+    # Проверяем до записи env/state: неполная пара не должна молча включать
+    # разные алгоритмы в двух направлениях. Скорости заданы со стороны экзита.
+    for ex in exits:
+        try:
+            bandwidth_fields(ex.get('hy2_up_mbps'), ex.get('hy2_down_mbps'),
+                             label=f'exits[{ex.get("tag", "?")}]')
+        except ValueError as error:
+            sys.exit(f'ERROR: {error}')
+
     # MGMT_IP закреплён за тегом (до исключения по UDP-фильтру), а не за
     # позицией в списке: см. assign_mgmt_octets.
     assign_mgmt_octets(repo_root, exits)
@@ -326,6 +337,8 @@ def main():
     for ex in exits:
         tag = ex['tag'].upper()
         lines.append(f"DOMAIN_{tag}={ex['host']}")
+        for key in ('up', 'down'):
+            lines.append(f"{tag}_HY2_{key.upper()}_MBPS={shq(ex.get(f'hy2_{key}_mbps', ''))}")
 
     # Per-host MGMT IPs (октет закреплён за тегом, см. assign_mgmt_octets).
     lines.append('')
@@ -531,6 +544,8 @@ def main():
             f"PUB_IP={shq(host)}",
             '',
             f"MGMT_IP={shq(mgmt_ip)}",
+            f"HY2_UP_MBPS={shq(ex.get('hy2_up_mbps', ''))}",
+            f"HY2_DOWN_MBPS={shq(ex.get('hy2_down_mbps', ''))}",
         ]
         if str(hy2_port) != str(hy2_direct):
             lines.append(f'HY2_DIRECT_PORT={hy2_port}')

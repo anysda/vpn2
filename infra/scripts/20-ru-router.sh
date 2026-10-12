@@ -110,6 +110,7 @@ for _t in $EXIT_TAGS; do
   export "${_T}_DIRECT" "${_T}_WARP" "${_T}_MGMT" "${_T}_OBFS"
   # MGMT_IP_{T} задаёт mon-порт локального SOCKS-инбаунда (см. генератор).
   export "MGMT_IP_${_T}"
+  export "${_T}_HY2_UP_MBPS" "${_T}_HY2_DOWN_MBPS"
   eval "export ${_T}_HY2_DIRECT_PORT=\${${_T}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT}}"
   eval "export ${_T}_HY2_MGMT_PORT=\${${_T}_HY2_MGMT_PORT:-${HY2_MGMT_PORT}}"
 done

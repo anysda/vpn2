@@ -34,6 +34,8 @@ import json
 import os
 import sys
 
+from hy2_bandwidth import bandwidth_fields
+
 # ----------------------------------------------------------------------------
 # YouTube: домены, которые уводятся с экзитов на РФ-выход (см. yt_block ниже).
 # geosite:youtube ловит основную массу, но список нужен и сам по себе:
@@ -197,6 +199,12 @@ def main():
         pwd_mgmt = require(f'{T}_MGMT')
         pwd_obfs = require(f'{T}_OBFS')
         mon_port = 10100 + int(require(f'MGMT_IP_{T}').split('.')[-1])
+        try:
+            bandwidth = bandwidth_fields(os.environ.get(f'{T}_HY2_UP_MBPS'),
+                                         os.environ.get(f'{T}_HY2_DOWN_MBPS'),
+                                         label=f'Hysteria2 {tag}', client=True)
+        except ValueError as error:
+            sys.exit(f'ERROR: {error}')
 
         # Self-signed cert на exit-нодах. Если orchestrator опубликовал
         # PEM-сертификат экзита и
@@ -218,6 +226,7 @@ def main():
         outbounds.append({
             'type': 'hysteria2',
             'tag': f'hy2-{tag}-direct',
+            **bandwidth,
             'server': domain,
             'server_port': direct_port,
             'password': pwd_direct,
@@ -227,6 +236,7 @@ def main():
         outbounds.append({
             'type': 'hysteria2',
             'tag': f'hy2-{tag}-warp',
+            **bandwidth,
             'server': domain,
             'server_port': hy2_warp_port,
             'password': pwd_warp,

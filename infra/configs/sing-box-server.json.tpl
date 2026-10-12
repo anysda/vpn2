@@ -5,6 +5,7 @@
     {
       "type": "hysteria2",
       "tag": "hy2-direct-in",
+      ${HY2_BANDWIDTH_FIELDS}
       "listen": "::",
       "listen_port": ${HY2_DIRECT_PORT},
       "users": [{ "password": "${HY2_PWD_DIRECT}" }],
@@ -18,6 +19,7 @@
     {
       "type": "hysteria2",
       "tag": "hy2-warp-in",
+      ${HY2_BANDWIDTH_FIELDS}
       "listen": "::",
       "listen_port": ${HY2_WARP_PORT},
       "users": [{ "password": "${HY2_PWD_WARP}" }],

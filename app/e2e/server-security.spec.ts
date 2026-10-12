@@ -85,6 +85,13 @@ test('все маршруты панели требуют сессию до чт
     if (!match) continue
     const path = `/api/${match[1]!.replace(/\/index$/, '').replace(/\[id\]|\[deviceId\]/g, '999999').replace('[tag]', 'nl')}`
     const response = await request.fetch(path, { method: match[2]!.toUpperCase() })
+    // Фоновый опрос уведомлений переживает выход без 401, как get-session,
+    // но без сессии отдаёт только пустой список.
+    if (file === 'admin/bot-deliveries.get.ts') {
+      expect(response.status(), file).toBe(200)
+      expect(await response.json(), file).toEqual([])
+      continue
+    }
     expect(response.status(), `${file}: ${await response.text()}`).toBe(401)
     checked++
   }

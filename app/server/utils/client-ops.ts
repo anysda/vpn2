@@ -1,4 +1,4 @@
-import { and, count, eq, ne, notExists } from 'drizzle-orm'
+import { and, count, eq, ne, notExists, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import type { Client } from '../database/schema'
 import { clients, devices } from '../database/schema'
@@ -108,17 +108,31 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
   }
 
   // Проверка sing-box выше уступает управление другим запросам. Имя могло
-  // стать занятым: проверяем его в том же SQL, который записывает изменения.
+  // стать занятым, а число устройств вырасти: проверяем ограничения в том
+  // же SQL, который записывает изменения, без отдельной write-транзакции.
   const conditions = [eq(clients.id, id)]
   if (upd.name !== undefined) {
     conditions.push(notExists(db.select({ id: clients.id }).from(clients)
       .where(and(eq(clients.name, upd.name), ne(clients.id, id)))))
   }
+  if (typeof patch.deviceLimit === 'number') {
+    conditions.push(sql`(select count(*) from ${devices} where ${devices.clientId} = ${id}) <= ${patch.deviceLimit}`)
+  }
   const [row] = await db.update(clients).set(upd).where(and(...conditions)).returning()
   if (!row) {
     const [exists] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).limit(1)
     if (!exists) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-    throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${upd.name}» уже существует` })
+    if (upd.name !== undefined) {
+      const dup = await db.select({ id: clients.id }).from(clients)
+        .where(and(eq(clients.name, upd.name), ne(clients.id, id))).limit(1)
+      if (dup.length) {
+        throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${upd.name}» уже существует` })
+      }
+    }
+    throw createError({
+      statusCode: 409,
+      statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента',
+    })
   }
 
   // Смена заморозки/срока меняет активность — пере-синхроним девайсы.

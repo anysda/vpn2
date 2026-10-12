@@ -19,7 +19,7 @@
 # показать клиенту правильный server-address и решить включать ли CA.
 #
 # Идемпотентно: CA генерится один раз. Server-cert перевыпускается если
-# (self-signed) SAN не равен $ENTRY_HOST или (letsencrypt) Caddy выдал
+# (self-signed) истёк срок действия или SAN не равен $ENTRY_HOST, либо Caddy выдал
 # обновлённый cert. Переключения self→LE происходит автоматически когда
 # Caddy выдаст cert; обратное (LE→self) — никогда без явного удаления
 # PANEL_DOMAIN из config.yaml.

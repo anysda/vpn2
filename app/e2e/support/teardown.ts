@@ -10,7 +10,7 @@ export default async function teardown() {
   const baseURL = process.env.E2E_BASE_URL
   const password = process.env.E2E_ADMIN_PASSWORD
   if (!baseURL || !password) return
-  const api = await request.newContext({ baseURL })
+  const api = await request.newContext({ baseURL, extraHTTPHeaders: { origin: new URL(baseURL).origin } })
   try {
     const login = await api.post('/api/auth/sign-in/username', {
       data: { username: process.env.E2E_ADMIN_USER || 'admin', password },

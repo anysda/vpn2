@@ -18,6 +18,8 @@ export default defineConfig({
   globalTeardown: './e2e/support/teardown.ts',
   use: {
     baseURL,
+    // APIRequestContext, в отличие от браузера, сам Origin не выставляет.
+    extraHTTPHeaders: { origin: new URL(baseURL).origin },
     locale: 'ru-RU',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

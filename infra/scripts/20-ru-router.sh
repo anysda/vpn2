@@ -143,13 +143,15 @@ fi
 # config-base.json MUST be refreshed on every run — a stale base silently
 # drops inbounds added to gen-router-config.py since it was first
 # snapshotted (this is how the wg/ovpn TPROXY :7898 inbound got lost).
-python3 "$GEN" > /etc/sing-box/config-base.json
-chmod 600 /etc/sing-box/config-base.json
-
-if ! /usr/local/bin/sing-box check -c /etc/sing-box/config-base.json; then
+_cfg_tmp=$(mktemp /etc/sing-box/.config-base.XXXXXX)
+if ! python3 "$GEN" > "$_cfg_tmp" \
+  || ! /usr/local/bin/sing-box check -c "$_cfg_tmp"; then
+  rm -f "$_cfg_tmp"
   echo "[$HOST_TAG] конфиг невалиден — сервис не трогаю"
   exit 1
 fi
+chmod 600 "$_cfg_tmp"
+mv -f "$_cfg_tmp" /etc/sing-box/config-base.json
 # config.json (база + ручные маршруты панели) собирается в шаге 6, и sing-box
 # перезапускается один раз уже на нём (VPN2-52).
 

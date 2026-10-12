@@ -8,6 +8,16 @@ const INTERVAL_MS = 60_000
 
 export default defineNitroPlugin((nitroApp) => {
   const log = useLogger()
+  let running: Promise<void> | null = null
+
+  function runTick() {
+    // Медленный helper не должен накапливать параллельные тики и записи
+    // счётчиков. Следующий интервал перечитает актуальное состояние.
+    if (running) return
+    running = tick()
+      .catch(err => log.error({ err }, 'cron: tick failed'))
+      .finally(() => { running = null })
+  }
 
   async function tick() {
     // Статус клиента вычисляемый (frozenManual + срок) — отдельного
@@ -40,16 +50,12 @@ export default defineNitroPlugin((nitroApp) => {
   // the first tick races and fails with "no such table" on a fresh DB.
   const FIRST_TICK_DELAY_MS = 5_000
 
-  const firstTick = setTimeout(() => {
-    tick().catch(err => log.error({ err }, 'cron: initial tick failed'))
-  }, FIRST_TICK_DELAY_MS)
+  const firstTick = setTimeout(runTick, FIRST_TICK_DELAY_MS)
+  const handle = setInterval(runTick, INTERVAL_MS)
 
-  const handle = setInterval(() => {
-    tick().catch(err => log.error({ err }, 'cron: tick failed'))
-  }, INTERVAL_MS)
-
-  nitroApp.hooks.hook('close', () => {
+  nitroApp.hooks.hook('close', async () => {
     clearTimeout(firstTick)
     clearInterval(handle)
+    await running
   })
 })

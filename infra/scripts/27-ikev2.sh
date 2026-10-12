@@ -627,7 +627,7 @@ def swanctl(*args):
 def terminate(sa, why):
     print(f'terminate ike-id={sa["uniqueid"]} ({sa["username"]}): {why}')
     # --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, не EAP-логин.
-    swanctl('--terminate', '--ike-id', sa['uniqueid'])
+    return swanctl('--terminate', '--ike-id', sa['uniqueid']) == 0
 
 
 def read_text(path):
@@ -653,13 +653,20 @@ def main():
         # иначе старая сессия висит до перезагрузки (rekey_time = 0s).
         stale = {u for u, h in previous.items() if current.get(u) != h}
         if stale:
-            for sa in live_sas() or []:
+            sas = live_sas()
+            if sas is None:
+                return 1
+            for sa in sas:
                 if sa['username'] in stale and sa['uniqueid']:
-                    terminate(sa, 'креды изменились')
+                    if not terminate(sa, 'креды изменились'):
+                        return 1
                     torn = True
+        # Снимок нужен для повтора отзыва: нельзя забывать старый пароль,
+        # пока загрузка или разрыв SA не подтверждены charon.
+        if not loaded:
+            return 1
         write_json(STATE_FILE, current, 0o600)
-        if loaded:  # иначе повторим на следующем прогоне
-            write_json(DIGEST_FILE, digest, 0o600)
+        write_json(DIGEST_FILE, digest, 0o600)
 
     # Пока у устройств есть свои conn, общая conn вход не пускает: всё, что на
     # ней висит, подключилось раньше и сидит на адресе из общего пула.

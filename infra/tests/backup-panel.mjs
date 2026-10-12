@@ -9,6 +9,7 @@ registerHooks({
   resolve(specifier, context, nextResolve) {
     const stubs = {
       'drizzle-orm': 'export const and=()=>{}, eq=()=>{}, isNull=()=>{};',
+      h3: 'export const createError=(e)=>Object.assign(new Error(e.message), e);',
       '../database/client': `export const IP_CLAIM_ATTEMPTS=1, isUniqueViolation=()=>false;
         export const useDb=()=>({select:()=>({from:()=>({innerJoin:async()=>[]})})});`,
       '../database/schema': 'export const clients={}, devices={};',
@@ -18,7 +19,9 @@ registerHooks({
     if (specifier in stubs) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true }
     }
-    return nextResolve(specifier === './coalesce' ? './coalesce.ts' : specifier, context)
+    // Nuxt импортирует свои модули без расширения, Node без сборки - нет.
+    const local = /^\.\.?\//.test(specifier) && !/\.[cm]?[jt]s(on)?$/.test(specifier)
+    return nextResolve(local ? `${specifier}.ts` : specifier, context)
   },
 })
 globalThis.useRuntimeConfig = () => ({ wgEnabled: true, wgServerIp: '192.0.2.1' })

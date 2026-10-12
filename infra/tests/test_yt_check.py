@@ -25,10 +25,14 @@ cat <<EOF
             self.assertEqual(render.returncode, 0, render.stderr)
             (root / 'queue').write_text('200 123 0 2 65531 0 0 1 1\n' if scenario != 'no_queue' else '')
             for name, count in (('before', 0), ('after', 12 if scenario != 'no_packets' else 0)):
-                (root / name).write_text(json.dumps({'nftables': [{'rule': {'expr': [
+                (root / name).write_text(json.dumps({'nftables': [] if scenario == 'no_rules' else [{'rule': {'expr': [
                     {'counter': {'packets': count}}, {'queue': {'num': 200}}
                 ]}}]}))
             mocks = '''
+command() {
+  if [[ $1 == -v && $SCENARIO == missing_$2 ]]; then return 1; fi
+  builtin command "$@"
+}
 systemctl() {
   if [[ $1 == is-active ]]; then [[ $SCENARIO != inactive ]]; else echo 123; fi
 }
@@ -36,8 +40,18 @@ nft() {
   [[ $SCENARIO != no_table ]] || return 1
   if [[ -f sampled ]]; then cat after; else cat before; touch sampled; fi
 }
-curl() { printf 200; [[ $SCENARIO != partial ]]; }
-setpriv() { while [[ $1 != curl ]]; do shift; done; "$@"; }
+curl() {
+  case $SCENARIO in
+    dns) printf 000; return 6 ;;
+    certificate) printf 000; return 60 ;;
+    http_refusal) printf 429 ;;
+    *) printf 200; [[ $SCENARIO != partial ]] ;;
+  esac
+}
+setpriv() {
+  [[ $SCENARIO != bad_setpriv ]] || return 1
+  while [[ $1 != curl ]]; do shift; done; "$@"
+}
 '''
             script = (render.stdout + body + '\n').replace('/proc/net/netfilter/nfnetlink_queue', str(root / 'queue'))
             return bash(f'SCENARIO={scenario}\n' + mocks + 'set +e\n' + script, directory)

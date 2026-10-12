@@ -42,8 +42,9 @@ class YoutubeFailoverTests(unittest.TestCase):
                 self.assertEqual(outs['youtube-ru']['routing_mark'], 256)
                 rules = [r for r in cfg['route']['rules'] if r.get('outbound') == 'youtube-auto']
                 self.assertEqual(len(rules), 2)
-                rejects = [r for r in cfg['route']['rules']
-                           if r.get('network') == 'udp' and r.get('port') == [443]]
+                rejects = [r for r in cfg['route']['rules'] if r.get('action') == 'reject'
+                           and any(c.get('network') == 'udp' and c.get('port') == [443]
+                                   for c in r.get('rules', [r]))]
                 self.assertEqual(len(rejects), 2 if quic == 'block' else 0)
 
     def test_off_and_direct_do_not_gain_watchdog_selector(self):

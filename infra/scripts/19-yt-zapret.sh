@@ -602,10 +602,15 @@ cat >> /usr/local/bin/anysda-yt-check <<'EOF'
 # поднимается и с нерабочей стратегией. Сравниваем ОДИН И ТОТ ЖЕ хост:
 #   A — из-под $DIAG_USER: nft метит его трафик меткой $YT_MARK → десинк;
 #   B — из-под root: метки нет → чистый путь провайдера (контроль).
-# Коды выхода: 0 — путь десинка живой; 1 — не живой (обход не работает).
+# Коды выхода: 0 — путь живой; 1 — обход сломан; 2 — не измерено.
 set -uo pipefail
 HOST="${1:-https://www.youtube.com/}"
 TMO="${YT_CHECK_TIMEOUT:-15}"
+
+# Отсутствие самого измерителя не доказывает поломку очереди/сети.
+for tool in systemctl awk nft python3 setpriv curl date; do
+  command -v "$tool" >/dev/null || { echo "UNKNOWN: нет утилиты $tool."; exit 2; }
+done
 
 # HTTP-ответ сам по себе не доказывает прохождение очереди: DPI может не
 # резать выбранный хост, а nft-таблица или демон уже исчезли.
@@ -639,9 +644,21 @@ fi
 probe() { curl -q -4 --noproxy '*' -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null; }
 
 t0=$(date +%s%N)
+arc=0
 A=$(setpriv --reuid="$DIAG_UID" --regid="$DIAG_GID" --clear-groups \
-      curl -q -4 --noproxy '*' -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null) || A=000
+      curl -q -4 --noproxy '*' -sS -o /dev/null -m "$TMO" -w '%{http_code}' "$HOST" 2>/dev/null) || arc=$?
 A=${A:-000}
+# Ошибка запуска setpriv/curl, DNS, сертификат и HTTP-отказ сервиса —
+# не свидетельства сетевой поломки. Не превращаем их в «нет пакетов».
+case $arc in
+  0|7|18|28|35|52|55|56) ;;
+  *) echo "UNKNOWN: диагностика не выполнена, curl/setpriv=$arc."; exit 2 ;;
+esac
+if [[ $A != 000 && ! $A =~ ^(200|204|30[0-9])$ ]]; then
+  echo "UNKNOWN: HTTP $A не позволяет измерить обход."
+  exit 2
+fi
+(( arc == 0 )) || A=000
 if ! path_ready || ! after=$(queued_packets) || (( after <= before )); then
   echo "FAIL: проба не подтвердила прохождение очереди nfqws2."
   exit 1

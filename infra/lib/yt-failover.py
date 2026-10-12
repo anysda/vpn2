@@ -10,7 +10,7 @@ YT_PROBE_VIDEO позволяет выбрать другой общедосту
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
 счётчики и маршрут; уведомления — только при входе и выходе из этого состояния.
 --probe-only проверяет поток без изменения маршрута или состояния.
-Коды пробы: 0 — успех, 1 — сетевой провал видео, 2 — не измерено.
+Коды пробы: 0 — успех, 1 — поломка обхода/сетевой провал видео, 2 — не измерено.
 --probe-quic отдельно измеряет QUIC (нужен curl с HTTP3); результат не меняет
 selector: при allow владелец допускает задержку до отката плеера на TCP.
 --status читает текущий selector и результат последней пробы без изменений.
@@ -74,9 +74,11 @@ def media_ok(returncode, stats):
         return None
     if code == 206 and not str(stats.get('content_type', '')).startswith('video/'):
         return None
-    # Только сетевые ошибки curl на загрузке видео: connect, short read,
-    # timeout, empty reply, send/receive failure. DNS/TLS/config не доказательство.
-    if returncode in (7, 18, 28, 52, 55, 56):
+    # URL Googlevideo уже получен через YouTube: сброс TLS (35) после
+    # ClientHello, таймаут (28) и обрыв потока (18/56) — признаки отказа пути.
+    # Это не устанавливает виновника (DPI/CDN), но требует запасного маршрута.
+    # DNS (6), сертификат (60) и локальные ошибки curl остаются неизмеренными.
+    if returncode in (7, 18, 28, 35, 52, 55, 56):
         return False
     if returncode != 0 or code != 206:
         return None
@@ -92,8 +94,10 @@ def probe(quic=False):
         # Службы, очередь и счётчики: ответ CDN без живого десинка не успех.
         ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
                                capture_output=True, timeout=35, check=False)
+        if ready.returncode == 1:
+            return False, 'очередь, nft-правила или TCP-путь обхода не работают'
         if ready.returncode:
-            return None, 'очередь или TCP-путь обхода не прошли A/B-проверку; проверить диагностику'
+            return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
         user = pwd.getpwnam('ytzdiag')
         prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
         info = subprocess.run(prefix + [

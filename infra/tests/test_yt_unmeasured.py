@@ -41,7 +41,8 @@ class UnmeasuredTests(unittest.TestCase):
                 self.assertNotIn('secret=hidden', detail)
 
     def test_diagnostic_and_local_errors_are_unmeasured(self):
-        for ready in (subprocess.CompletedProcess([], 1), FileNotFoundError('secret=hidden'),
+        for ready in (subprocess.CompletedProcess([], 2), subprocess.CompletedProcess([], 127),
+                      FileNotFoundError('secret=hidden'),
                       PermissionError('secret=hidden'), subprocess.TimeoutExpired('check', 35)):
             with self.subTest(ready=ready):
                 good, detail = self.probe(ready=ready)
@@ -63,8 +64,9 @@ class UnmeasuredTests(unittest.TestCase):
         # Отказы сервиса/авторизации, неподдерживаемый Range и ошибки curl
         # не доказывают сетевую поломку обхода.
         cases += [(code, dict(healthy, http_code=http), None)
-                  for code in (0, 22, 28, 56) for http in (200, 302, 403, 404, 429, 500, 503)]
-        cases += [(code, healthy, None) for code in (2, 3, 6, 23, 35, 60, 63, 77, 127)]
+                  for code in (0, 22, 28, 35, 56) for http in (200, 302, 403, 404, 429, 500, 503)]
+        cases += [(code, healthy, None) for code in (2, 3, 6, 23, 60, 63, 77, 127)]
+        cases += [(code, {'http_code': 0}, None) for code in (6, 60)]
         cases += [(0, dict(healthy, **{key: value}), None) for key, value in (
             ('content_type', 'text/html'), ('size_download', None), ('speed_download', 'fast'),
             ('speed_download', float('nan')), ('size_download', -1), ('http_code', '206'))]

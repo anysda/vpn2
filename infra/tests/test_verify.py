@@ -89,6 +89,9 @@ class VerifyTest(unittest.TestCase):
             if fault != 'missing-yt':
                 yt.write_text('#!/bin/sh\nexit ' + ('1' if fault == 'yt-failed' else '0') + '\n')
                 yt.chmod(0o755)
+            failover = root / 'yt-failover'
+            failover.write_text('#!/bin/sh\nexit ' + ('1' if fault == 'yt-failover' else '0') + '\n')
+            failover.chmod(0o755)
             ref = os.environ.get('VERIFY_REF')
             source = subprocess.check_output(
                 ['git', 'show', f'{ref}:infra/scripts/99-verify.sh'], cwd=ROOT, text=True,
@@ -96,6 +99,7 @@ class VerifyTest(unittest.TestCase):
             source = source.replace('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf', str(networkd))
             source = source.replace('/etc/anysda/ikev2-status.json', str(status))
             source = source.replace('/usr/local/bin/anysda-yt-check', str(yt))
+            source = source.replace('/usr/local/bin/anysda-yt-failover', str(failover))
             source = source.replace('/tmp/yt-check.out', str(root / 'yt-check.out'))
             script = root / 'verify.sh'
             script.write_text(source)
@@ -155,11 +159,12 @@ class VerifyTest(unittest.TestCase):
                 self.assertNotIn('verify done', result.stdout)
 
     def test_enabled_youtube_failures(self):
-        for fault in ('missing-yt', 'yt-failed'):
+        for fault, check in (('missing-yt', 'yt-zapret'), ('yt-failed', 'yt-zapret'),
+                             ('yt-failover', 'yt-failover')):
             with self.subTest(fault=fault):
                 result = self.run_verify(fault, youtube='zapret')
                 self.assertNotEqual(result.returncode, 0, result.stdout)
-                self.assertIn('✗ yt-zapret:', result.stdout)
+                self.assertIn(f'✗ {check}:', result.stdout)
 
     def test_individual_exit_failures(self):
         for fault in ('port-443', 'port-8443', 'port-9443', 'missing-mgmt-port', 'sing-box', 'ss-error'):

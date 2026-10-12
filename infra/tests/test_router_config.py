@@ -31,7 +31,7 @@ class RouterConfigTests(unittest.TestCase):
         # Российские правила обёрнуты в logical с исключением сетей Telegram:
         # условие лежит первым вложенным правилом.
         conds = [r['rules'][0] if r.get('type') == 'logical' else r for r in rules]
-        youtube = next(i for i, r in enumerate(rules) if r.get('outbound') == 'youtube-ru')
+        youtube = next(i for i, r in enumerate(rules) if r.get('outbound') == 'youtube-auto')
         geoip = next(i for i, c in enumerate(conds) if c.get('rule_set') == ['geoip-ru'])
         lane = next(i for i, r in enumerate(rules) if r.get('outbound', '').startswith('lane-'))
         self.assertLess(youtube, geoip)

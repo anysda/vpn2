@@ -125,7 +125,8 @@ class TelegramRoutingTest(unittest.TestCase):
             self.assertEqual(route(cfg, ip='203.0.113.1', protocol='dns'), 'dns-unfiltered')
             for quic in ('block', 'allow'):
                 cfg = generate(mode, quic)
-                target = 'lane-07' if mode == 'off' else 'youtube-ru'
+                # zapret ведёт YouTube через selector с запасным выходом на VPN.
+                target = {'off': 'lane-07', 'direct': 'youtube-ru'}.get(mode, 'youtube-auto')
                 self.assertEqual(route(cfg, ip='203.0.113.1', domain='youtube.com'), target)
                 self.assertEqual(route(cfg, ip='203.0.113.1', domain='youtube.com', network='udp'),
                                  'reject' if mode != 'off' and quic == 'block' else target)
@@ -144,7 +145,7 @@ class TelegramRoutingTest(unittest.TestCase):
         self.assertEqual(route(cfg, ip='91.108.4.1', domain='youtube.com'), 'pin-hy2-aa-direct')
         self.assertEqual(route(cfg, domain='youtube.com'), 'pin-hy2-bb-direct')
         self.assertEqual(route(cfg, inbound='tg-proxy'), 'tg-best')
-        self.assertEqual(route(cfg, ip='203.0.113.1', domain='youtube.com'), 'youtube-ru')
+        self.assertEqual(route(cfg, ip='203.0.113.1', domain='youtube.com'), 'youtube-auto')
 
     def test_tproxy_preserves_destination_and_both_transports(self):
         cfg = generate('zapret')
@@ -153,7 +154,10 @@ class TelegramRoutingTest(unittest.TestCase):
         self.assertEqual(cfg['route']['rules'][0], {'inbound': ['wg-tproxy-in'], 'action': 'sniff'})
         for outbound in cfg['outbounds']:
             if outbound['type'] in ('selector', 'urltest'):
-                self.assertFalse(outbound['interrupt_exist_connections'])
+                # Только YouTube рвёт соединения при уходе на VPN: иначе плеер
+                # держит сломанный поток через обход.
+                self.assertEqual(outbound['interrupt_exist_connections'],
+                                 outbound['tag'] == 'youtube-auto')
 
 
 if __name__ == '__main__':

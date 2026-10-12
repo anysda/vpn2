@@ -744,7 +744,7 @@ if /usr/local/bin/anysda-yt-check 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" EN
   touch "$STAMP_DIR/$STAGE"
   echo "[$HOST_TAG] $STAGE done"
 else
-  echo "[$HOST_TAG] $STAGE: десинк НЕ работает — сторож переведёт YouTube на запасной VPN-путь."
-  echo "[$HOST_TAG] Возврат на обход — только после трёх успешных видеопроб."
+  echo "[$HOST_TAG] $STAGE: A/B-проверка не прошла — видеопроба не измерена; проверь диагностику."
+  echo "[$HOST_TAG] Сторож меняет маршрут только по измеренным загрузкам видео (три провала/успеха)."
   touch "$STAMP_DIR/$STAGE"
 fi

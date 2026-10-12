@@ -37,7 +37,7 @@ class YoutubeFailoverTests(unittest.TestCase):
                 outs = {o['tag']: o for o in cfg['outbounds']}
                 self.assertIn('youtube-auto', outs, 'нет запасного пути YouTube')
                 self.assertEqual(outs['youtube-auto']['outbounds'], ['youtube-ru', 'foreign-best'])
-                self.assertEqual(outs['youtube-auto']['default'], 'foreign-best')
+                self.assertEqual(outs['youtube-auto']['default'], 'youtube-ru')
                 self.assertTrue(outs['youtube-auto']['interrupt_exist_connections'])
                 self.assertEqual(outs['youtube-ru']['routing_mark'], 256)
                 rules = [r for r in cfg['route']['rules'] if r.get('outbound') == 'youtube-auto']

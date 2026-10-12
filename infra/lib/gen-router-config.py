@@ -185,9 +185,10 @@ def main():
             outbounds.append({
                 'type': 'selector', 'tag': 'youtube-auto',
                 'outbounds': [yt_tag, 'foreign-best'],
-                # До трёх успешных видеопроб используем рабочий VPN-путь.
+                # VPN — только после трёх измеренных сетевых провалов видео.
+                # Антибот/ошибка экстрактора на первом запуске не повод для VPN.
                 # cache_file сохраняет выбор при рестарте роутера.
-                'default': 'foreign-best',
+                'default': yt_tag,
                 'interrupt_exist_connections': True,
             })
             yt_tag = 'youtube-auto'

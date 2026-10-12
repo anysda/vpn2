@@ -7,12 +7,16 @@
 не обещая HD/4K. До 5.7 ГиБ/сутки при минутном периоде; фактически меньше,
 поскольку таймер отсчитывает минуту от окончания предыдущей проверки.
 YT_PROBE_VIDEO позволяет выбрать другой общедоступный длинный ролик.
+Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
+счётчики и маршрут; уведомления — только при входе и выходе из этого состояния.
 --probe-only проверяет поток без изменения маршрута или состояния.
+Коды пробы: 0 — успех, 1 — сетевой провал видео, 2 — не измерено.
 --probe-quic отдельно измеряет QUIC (нужен curl с HTTP3); результат не меняет
 selector: при allow владелец допускает задержку до отката плеера на TCP.
 --status читает текущий selector и результат последней пробы без изменений.
 """
 import json
+import math
 import os
 from pathlib import Path
 import pwd
@@ -61,10 +65,26 @@ def notify(detail):
 
 
 def media_ok(returncode, stats):
-    return (returncode == 0 and stats.get('http_code') == 206
-            and stats.get('size_download', 0) == SAMPLE_BYTES
-            and stats.get('speed_download', 0) >= MIN_BPS
-            and str(stats.get('content_type', '')).startswith('video/'))
+    """True/False — измеренная загрузка; None — недостаточно сетевых данных."""
+    if not isinstance(stats, dict):
+        return None
+    code = stats.get('http_code')
+    if type(code) is not int or code not in (0, 206):
+        # В том числе HTTP 403/429/5xx, редирект и игнорирование Range (200).
+        return None
+    if code == 206 and not str(stats.get('content_type', '')).startswith('video/'):
+        return None
+    # Только сетевые ошибки curl на загрузке видео: connect, short read,
+    # timeout, empty reply, send/receive failure. DNS/TLS/config не доказательство.
+    if returncode in (7, 18, 28, 52, 55, 56):
+        return False
+    if returncode != 0 or code != 206:
+        return None
+    size, speed = stats.get('size_download'), stats.get('speed_download')
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0
+           for value in (size, speed)) or size > SAMPLE_BYTES:
+        return None
+    return size == SAMPLE_BYTES and speed >= MIN_BPS
 
 
 def probe(quic=False):
@@ -73,7 +93,7 @@ def probe(quic=False):
         ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
                                capture_output=True, timeout=35, check=False)
         if ready.returncode:
-            return False, 'очередь или TCP-путь обхода не прошли A/B-проверку'
+            return None, 'очередь или TCP-путь обхода не прошли A/B-проверку; проверить диагностику'
         user = pwd.getpwnam('ytzdiag')
         prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
         info = subprocess.run(prefix + [
@@ -85,32 +105,41 @@ def probe(quic=False):
         ], capture_output=True, text=True, timeout=60, check=False)
         if info.returncode:
             if 'Sign in to confirm' in (info.stderr or ''):
-                return False, 'YouTube требует входа; обход не измерен'
-            return False, 'не удалось получить URL видеопотока (yt-dlp); проверить ролик/экстрактор'
+                return None, 'YouTube требует входа (антибот); обход не измерен'
+            return None, 'не удалось получить URL видеопотока (yt-dlp); проверить ролик/экстрактор/JS-рантайм'
         media = json.loads(info.stdout)
+        if not isinstance(media, dict) or not isinstance(media.get('url'), str):
+            return None, 'экстрактор не вернул URL видеопотока'
         url = media['url']
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.googlevideo.com'):
-            return False, 'экстрактор не вернул HTTPS-видеопоток Googlevideo'
+            return None, 'экстрактор не вернул HTTPS-видеопоток Googlevideo'
         # Range ограничивает расход трафика. --max-filesize также защищает от
         # CDN, игнорирующего Range. Ни HTTP 200, ни оборванная передача не OK.
         cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http3-only' if quic else '--http1.1',
                         '--silent', '--show-error', '--fail', '--connect-timeout', '5',
                         '--max-time', '20', '--range', f'0-{SAMPLE_BYTES - 1}',
                         '--max-filesize', str(SAMPLE_BYTES), '-o', '/dev/null', '-w', '%{json}']
-        for key, value in media.get('http_headers', {}).items():
+        headers = media.get('http_headers', {})
+        if not isinstance(headers, dict) or any(not isinstance(value, str) for value in headers.values()):
+            return None, 'экстрактор вернул некорректные HTTP-заголовки'
+        for key, value in headers.items():
             if key.lower() in ('user-agent', 'referer', 'origin'):
                 cmd += ['-H', f'{key}: {value}']
         result = subprocess.run(cmd + [url], capture_output=True, text=True, timeout=25, check=False)
         stats = json.loads(result.stdout or '{}')
         good = media_ok(result.returncode, stats)
+        if not isinstance(stats, dict):
+            return None, 'curl не вернул объект статистики видеопотока'
         transport = 'QUIC' if quic else 'TCP'
         return good, (f'{transport} video: HTTP {stats.get("http_code", 0)}, '
                       f'{stats.get("size_download", 0)} байт, '
                       f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}')
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         # stdout yt-dlp и подписанные URL не пишем в журнал.
-        return False, f'видеопроба не завершена: {type(error).__name__}'
+        # Внешний timeout может означать зависание утилиты. Сетевой таймаут
+        # подтверждает только собственный --max-time curl (код 28).
+        return None, f'видеопроба не завершена: {type(error).__name__}'
 
 
 def save(path, state):
@@ -132,11 +161,20 @@ def tick(path, sample):
         state = {'good': 0, 'bad': 0, 'pending': []}
     current = api('GET')['now']
     good, detail = sample()
-    state['good'] = min(HITS, state['good'] + 1) if good else 0
-    state['bad'] = min(HITS, state['bad'] + 1) if not good else 0
+    unmeasured = good is None
+    if unmeasured != state.get('unmeasured', False):
+        event = (f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'
+                 if unmeasured else f'измерение возобновлено: {detail}. Автопереключение снова активно.')
+        print('YouTube: ' + event, flush=True)
+        state['pending'].append(event)
+    state['unmeasured'] = unmeasured
+    if not unmeasured:
+        state['good'] = min(HITS, state['good'] + 1) if good else 0
+        state['bad'] = min(HITS, state['bad'] + 1) if not good else 0
     state['last_probe'] = detail
     save(path, state)
-    target = ('youtube-ru' if state['good'] >= HITS else
+    target = (current if unmeasured else
+              'youtube-ru' if state['good'] >= HITS else
               'foreign-best' if state['bad'] >= HITS else current)
     if target != current:
         api('PUT', {'name': target})
@@ -148,14 +186,15 @@ def tick(path, sample):
         save(path, state)
     state['pending'] = [event for event in state['pending'] if not notify(event)]
     save(path, state)
-    print(f'YouTube: {target}; good={state["good"]} bad={state["bad"]}; {detail}', flush=True)
+    print(f'YouTube: {target}; good={state["good"]} bad={state["bad"]}; '
+          f'{"не измерено: " if unmeasured else ""}{detail}', flush=True)
 
 
 def main():
     if sys.argv[1:] in (['--probe-only'], ['--probe-quic']):
         good, detail = probe(quic=sys.argv[1] == '--probe-quic')
-        print(detail)
-        return 0 if good else 1
+        print(('не измерено: ' if good is None else '') + detail)
+        return 2 if good is None else 0 if good else 1
     cfg = json.loads(CONFIG.read_text())
     if not any(o.get('tag') == 'youtube-auto' for o in cfg.get('outbounds', [])):
         # Стадия 19 предшествует 20: старый роутер пока без selector.
@@ -165,7 +204,9 @@ def main():
         print('YouTube selector: ' + api('GET')['now'])
         if STATE.exists():
             state = json.loads(STATE.read_text())
-            print(f'good={state["good"]} bad={state["bad"]}; {state.get("last_probe", "нет измерений")}')
+            print(f'good={state["good"]} bad={state["bad"]}; '
+                  f'{"не измерено: " if state.get("unmeasured") else ""}'
+                  f'{state.get("last_probe", "нет измерений")}')
         return 0
     tick(STATE, probe)
     return 0

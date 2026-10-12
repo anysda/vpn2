@@ -83,7 +83,6 @@ async function saveName() {
   catch (e) {
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Ошибка сохранения', color: 'error' })
-    name.value = detail.value.name
   }
   finally {
     savingName.value = false
@@ -99,7 +98,6 @@ async function saveExpiry() {
     next = parseRuDate(raw)
     if (!next) {
       toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
-      expiresAt.value = formatRuDate(detail.value.expiresAt)
       return
     }
   }
@@ -116,7 +114,6 @@ async function saveExpiry() {
   catch (e) {
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Ошибка сохранения', color: 'error' })
-    expiresAt.value = formatRuDate(detail.value.expiresAt)
   }
   finally {
     savingExpiry.value = false
@@ -160,7 +157,8 @@ async function saveLimit() {
   catch (e) {
     const err = e as { statusMessage?: string }
     toast.add({ title: err.statusMessage ?? 'Ошибка сохранения лимита', color: 'error' })
-    syncForm(detail.value)
+    unlimited.value = detail.value.deviceLimit === null
+    deviceLimit.value = detail.value.deviceLimit ?? DEFAULT_DEVICE_LIMIT
   }
   finally {
     savingLimit.value = false

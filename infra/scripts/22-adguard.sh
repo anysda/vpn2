@@ -258,13 +258,13 @@ else
   # + idempotent-патчи поверх (aaaa_disabled и т.п. — см. patch_agh_config)
   # Конфиг AdGuard читает только при старте: переписали — нужен рестарт.
   # Пишем лишь при смысловой разнице, формат yaml AdGuard ведёт сам.
-  agh_sync=$(python3 - <<PYEOF
-import copy, yaml
-cfg_path = "$AGH_CFG"
+  agh_sync=$(python3 - "$AGH_CFG" "$AGH_USER" "$AGH_PASS_HASH" <<'PYEOF'
+import copy, sys, yaml
+cfg_path, user, password = sys.argv[1:]
 with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 before = copy.deepcopy(cfg)
-cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
+cfg["users"] = [{"name": user, "password": password}]
 # Гарантируем aaaa_disabled: true (мерджим в dns секцию)
 cfg.setdefault("dns", {})["aaaa_disabled"] = True
 cfg["dns"].setdefault("edns_client_subnet", {})["enabled"] = False

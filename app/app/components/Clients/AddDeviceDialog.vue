@@ -16,7 +16,7 @@ watch(open, (now) => {
 })
 
 async function submit() {
-  if (!name.value.trim()) return
+  if (loading.value || !name.value.trim()) return
   loading.value = true
   try {
     await addDevice(props.clientId, name.value.trim())

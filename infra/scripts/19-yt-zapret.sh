@@ -43,6 +43,8 @@ STAMP_DIR=/var/anysda/.stamps
 STAGE='19-yt-zapret'
 
 YT_ROUTE="${YT_ROUTE:-off}"
+YT_QUIC="${YT_QUIC:-block}"
+case "$YT_QUIC" in block|allow) ;; *) echo "неверный YT_QUIC=$YT_QUIC" >&2; exit 1;; esac
 YT_MARK="${YT_MARK:-256}"
 YT_ZAPRET_QUEUE="${YT_ZAPRET_QUEUE:-200}"
 YT_ZAPRET_REPO="${YT_ZAPRET_REPO:-https://github.com/bol-van/zapret2}"
@@ -103,21 +105,29 @@ mkdir -p "$STAMP_DIR"
 # ----------------------------------------------------------------------------
 # 0. Выключено → снять всё развёрнутое и выйти
 # ----------------------------------------------------------------------------
+quic_teardown() {
+  # Сначала остановить и таймер, и уже запущенное им обновление: иначе оно
+  # может вернуть таблицу после её удаления при block → allow/off.
+  systemctl disable --now anysda-yt-quic-refresh.timer >/dev/null 2>&1 || true
+  systemctl stop anysda-yt-quic-refresh.service >/dev/null 2>&1 || true
+  systemctl disable --now anysda-yt-quic.service >/dev/null 2>&1 || true
+  nft delete table inet anysda_ytquic >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/anysda-yt-quic.service \
+        /etc/systemd/system/anysda-yt-quic-refresh.service \
+        /etc/systemd/system/anysda-yt-quic-refresh.timer \
+        /usr/local/sbin/anysda-yt-quic-refresh.sh "$QUIC_NFT_CONF"
+}
+
 teardown() {
   echo "[$HOST_TAG] YT_ROUTE=$YT_ROUTE — снимаю десинк (если был развёрнут)"
-  for _u in anysda-yt-nfqws anysda-yt-nft anysda-yt-offload anysda-yt-quic; do
+  quic_teardown
+  for _u in anysda-yt-nfqws anysda-yt-nft anysda-yt-offload; do
     systemctl disable --now "$_u.service" >/dev/null 2>&1 || true
   done
-  systemctl disable --now anysda-yt-quic-refresh.timer >/dev/null 2>&1 || true
   nft delete table inet ytzapret >/dev/null 2>&1 || true
-  nft delete table inet anysda_ytquic >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/anysda-yt-nfqws.service \
         /etc/systemd/system/anysda-yt-nft.service \
         /etc/systemd/system/anysda-yt-offload.service \
-        /etc/systemd/system/anysda-yt-quic.service \
-        /etc/systemd/system/anysda-yt-quic-refresh.service \
-        /etc/systemd/system/anysda-yt-quic-refresh.timer \
-        /usr/local/sbin/anysda-yt-quic-refresh.sh \
         /usr/local/bin/anysda-yt-check \
         "$NFT_CONF" "$SYSCTL_CONF" "$QUIC_NFT_CONF"
   systemctl daemon-reload
@@ -384,6 +394,7 @@ fi
 # Цена ошибки несимметрична: лишний раз отрезанный QUIC к Google — это откат
 # на TCP, всё работает штатно. Пропущенный — сломанный YouTube у всех сразу.
 echo "[$HOST_TAG] [5b/7] блокировка QUIC к Google"
+if [[ "$YT_QUIC" == block ]]; then
 mkdir -p "$(dirname "$QUIC_PREFIXES")"
 
 # Не `install /dev/stdin`: uutils-install в Ubuntu 26.04 падает с «No such file
@@ -468,6 +479,11 @@ systemctl enable --now anysda-yt-quic.service >/dev/null 2>&1 || true
 systemctl restart anysda-yt-quic.service
 systemctl enable --now anysda-yt-quic-refresh.timer >/dev/null 2>&1 || true
 echo "[$HOST_TAG]   $(nft list table inet anysda_ytquic 2>/dev/null | grep -c 'udp dport 443') правил, префиксов: $(python3 -c "import json;d=json.load(open('$QUIC_PREFIXES'));print(len(d.get('prefixes',[])))")"
+else
+  quic_teardown
+  systemctl daemon-reload
+  echo "[$HOST_TAG]   YT_QUIC=allow — IP-блокировка QUIC снята"
+fi
 
 # ----------------------------------------------------------------------------
 # 6. Демон nfqws2

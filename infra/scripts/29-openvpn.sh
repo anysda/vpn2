@@ -213,7 +213,13 @@ EOF
 mkdir -p /run/openvpn-server
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
-ufw allow "${OVPN_PORT}/${OVPN_PROTO}" comment 'openvpn listener' >/dev/null 2>&1 || true
+# OpenVPN различает udp4/udp6 и tcp[46]-server; UFW принимает только udp/tcp.
+case "$OVPN_PROTO" in
+  udp*) OVPN_FW_PROTO=udp ;;
+  tcp*) OVPN_FW_PROTO=tcp ;;
+  *) echo "[$HOST_TAG] unsupported OpenVPN protocol: $OVPN_PROTO" >&2; exit 1 ;;
+esac
+ufw allow "${OVPN_PORT}/${OVPN_FW_PROTO}" comment 'openvpn listener' >/dev/null 2>&1 || true
 # OpenVPN clients (10.67.67.0/24) resolve via AdGuard on the entry mgmt IP
 ufw allow proto udp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
 ufw allow proto tcp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true

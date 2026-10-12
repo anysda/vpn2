@@ -10,7 +10,7 @@
 #   - etc-anysda/      — секреты панели/бота (admin-password, tgbot-secret,
 #                        clash-secret, telegram-runtime.json, manual-routes,
 #                        session-secret, anysda-config.yaml)
-#   - etc-wireguard/wg0.conf       — серверный приватный ключ WG
+#   - etc-wireguard/   — wg0.conf + server.priv/server.pub (ключи для панели)
 #   - etc-openvpn/     — CA + серверный сертификат + ccd/ + crl.pem
 #   - etc-strongswan/  — IKEv2 CA + server cert/key
 #   - etc-swanctl/     — IKEv2 conn-конфиг + загруженные creds
@@ -97,9 +97,11 @@ if [[ -d /etc/anysda ]]; then
   cp -a /etc/anysda "$BUNDLE_DIR/etc-anysda"
 fi
 
-# 3. WireGuard server key — wg0.conf
+# 3. WireGuard: конфиг и исходная пара ключей стадии 28, которую читает панель.
 mkdir -p "$BUNDLE_DIR/etc-wireguard"
-[[ -r /etc/wireguard/wg0.conf ]] && cp -a /etc/wireguard/wg0.conf "$BUNDLE_DIR/etc-wireguard/"
+for file in wg0.conf server.priv server.pub; do
+  [[ ! -f /etc/wireguard/$file ]] || cp -a "/etc/wireguard/$file" "$BUNDLE_DIR/etc-wireguard/"
+done
 
 # 4. OpenVPN PKI + конфиг + CCD + CRL
 if [[ -d /etc/openvpn ]]; then

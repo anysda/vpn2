@@ -192,6 +192,27 @@ if [[ "$MANIFEST_SPEC" != "1" ]]; then
   echo "anysda-restore: WARN: archive spec_version=$MANIFEST_SPEC, current code понимает 1" >&2
 fi
 
+# Старые архивы содержали только wg0.conf. Восстанавливаем исходный ключ
+# для стадии 28 и панели ДО остановки/применения, не берём ключ свежего деплоя.
+# Проверка манифеста выше должна пройти до изменения содержимого бандла.
+WG_BUNDLE="$BUNDLE_DIR/etc-wireguard"
+if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
+  if [[ ! -s "$WG_BUNDLE/server.priv" ]]; then
+    awk '
+      /^[[:space:]]*\[/ { interface = ($0 ~ /^[[:space:]]*\[Interface\][[:space:]]*$/) }
+      interface && /^[[:space:]]*PrivateKey[[:space:]]*=/ {
+        sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print
+      }
+    ' "$WG_BUNDLE/wg0.conf" > "$WG_BUNDLE/server.priv"
+  fi
+  # pub выводим заново: не оставляем ключ B даже при отсутствии pub в архиве.
+  if ! wg pubkey < "$WG_BUNDLE/server.priv" > "$WG_BUNDLE/server.pub"; then
+    echo "anysda-restore: неверный или отсутствующий приватный ключ WG в архиве" >&2
+    exit 5
+  fi
+  chmod 600 "$WG_BUNDLE/server.priv" "$WG_BUNDLE/server.pub"
+fi
+
 # ── Защита от перетирания не-пустой БД ─────────────────────────────────────
 LIVE_DB=/var/lib/anysda-vpn2/db.sqlite
 if [[ -f "$LIVE_DB" ]]; then
@@ -294,6 +315,11 @@ if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then
   mkdir -p /etc/wireguard
   cp -a "$BUNDLE_DIR/etc-wireguard/wg0.conf" /etc/wireguard/wg0.conf
   chmod 600 /etc/wireguard/wg0.conf
+fi
+if [[ -f "$WG_BUNDLE/server.priv" ]]; then
+  install -d -m 700 /etc/wireguard
+  install -m 600 "$WG_BUNDLE/server.priv" /etc/wireguard/server.priv
+  install -m 600 "$WG_BUNDLE/server.pub" /etc/wireguard/server.pub
 fi
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
   mkdir -p /etc/openvpn

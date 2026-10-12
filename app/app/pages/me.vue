@@ -54,7 +54,7 @@ const totpLoading = ref(false)
 
 const totpQrSvg = computed(() => {
   if (!totpUri.value) return ''
-  return new QRCode({ content: totpUri.value, width: 192, height: 192, padding: 2, ecl: 'M' }).svg()
+  return new QRCode({ content: totpUri.value, width: 192, height: 192, padding: 4, ecl: 'M', swap: true }).svg()
 })
 
 async function startSetup() {

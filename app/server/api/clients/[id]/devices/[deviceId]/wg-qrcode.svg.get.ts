@@ -62,7 +62,7 @@ export default defineEventHandler(async (event) => {
  * тёмные модули строки сливаются в один отрезок, размер задаёт CSS через viewBox.
  */
 function qrSvg(content: string): string {
-  const pad = 2
+  const pad = 4
   const qr = new QRCode({ content, padding: 0, ecl: 'L' }) as unknown as {
     qrcode: { modules: boolean[][] }
   }
@@ -71,9 +71,9 @@ function qrSvg(content: string): string {
   let d = ''
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
-      if (!m[x]![y]) continue
+      if (!m[y]![x]) continue
       const x0 = x
-      while (x + 1 < n && m[x + 1]![y]) x++
+      while (x + 1 < n && m[y]![x + 1]) x++
       d += `M${x0 + pad} ${y + pad}h${x - x0 + 1}v1h-${x - x0 + 1}z`
     }
   }

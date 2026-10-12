@@ -101,31 +101,11 @@ echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)
 # 3. Write config (only on first install; never overwrite live config)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/4] config"
-AGH_CFG=$AGH_DIR/AdGuardHome.yaml
-
-# AGH сохраняет YAML при остановке. Проверяем ресурсные правки до остальных
-# патчей и останавливаем до записи, чтобы shutdown не затёр новые настройки.
-if [[ -f "$AGH_CFG" ]]; then
-  agh_memory=$(entry_adguard_resources "$AGH_CFG" --check)
-  if [[ "$agh_memory" == changed ]]; then
-    if systemctl is-active --quiet adguardhome; then
-      systemctl stop adguardhome
-    fi
-    svc_forget adguardhome
-  fi
-fi
-
-# YouTube -> российский резолвер (только при youtube.route != off). Клиенты
-# туннелей спрашивают DNS у AdGuard напрямую, а upstream_mode: parallel с DoH
-# Cloudflare/Google мог отдать зарубежный кеш видео вместо GGC внутри РФ.
-# Строку `[/домены/]резолвер` даёт генератор sing-box: один список на оба.
-GEN=/tmp/anysda/gen-router-config.py
-[[ -f "$GEN" ]] || { echo "[$HOST_TAG] $GEN не найден"; exit 1; }
-YT_UPSTREAM=$(YT_ROUTE="${YT_ROUTE:-off}" YT_DOMAINS="${YT_DOMAINS:-}" python3 "$GEN" --agh-yt-upstream)
-YT_UPSTREAM_YAML=''
-[[ -n "$YT_UPSTREAM" ]] && YT_UPSTREAM_YAML="    - '$YT_UPSTREAM'"
-YT_STATE=/etc/anysda/agh-yt-upstream
-YT_UPSTREAM_PREV=$(cat "$YT_STATE" 2>/dev/null || true)
+AGH_WORK=$(mktemp -d)
+AGH_CFG=$AGH_WORK/AdGuardHome.yaml
+AGH_PLAIN_CFG=$AGH_WORK/AdGuardHome-unfiltered.yaml
+trap 'rm -f "$AGH_CFG" "$AGH_PLAIN_CFG"; rmdir "$AGH_WORK"' EXIT
+[[ ! -f "$AGH_DIR/AdGuardHome.yaml" ]] || cp "$AGH_DIR/AdGuardHome.yaml" "$AGH_CFG"
 
 # Idempotent-патчи для уже существующего конфига (не перезаписываем
 # полностью — пользователь может что-то менять в UI). Применяются ПЕРЕД
@@ -157,23 +137,36 @@ patch_agh_config() {
   local pools="${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
   local wl
   wl=$(CFG="$cfg" POOLS="$pools" python3 - <<'PYEOF'
-import ipaddress, os, yaml
+import copy, ipaddress, os, yaml
 with open(os.environ["CFG"]) as f:
     cfg = yaml.safe_load(f)
+before = copy.deepcopy(cfg)
 dns = cfg.setdefault("dns", {})
+# Политика общая для новых и установленных хабов. Убираем также прежние
+# глобальный fallback Яндекса и исключение YouTube: они обходили разделение.
+dns["upstream_dns"] = ["[/ru/рф/xn--p1ai/su/]77.88.8.8",
+                       "https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
+dns["upstream_dns_file"] = ""
+dns["fallback_dns"] = []
+dns["bootstrap_dns"] = ["8.8.8.8", "8.8.4.4"]
+dns["upstream_mode"] = "parallel"
+dns["cache_optimistic"] = True
+# OUTPUT перехватывает TCP; не позволяем включённому в UI HTTP/3 обойти его.
+dns["use_http3_upstreams"] = False
 have = [str(a) for a in dns.get("ratelimit_whitelist") or []]
 need = [str(h) for p in os.environ["POOLS"].split()
         for h in ipaddress.ip_network(p, strict=False).hosts()]
 missing = [a for a in need if a not in set(have)]
 if missing:
     dns["ratelimit_whitelist"] = have + missing
+if cfg != before:
     with open(os.environ["CFG"], "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    print(len(missing))
+    print("DNS policy synced; ratelimit_whitelist +=", len(missing))
 PYEOF
 )
   if [[ -n "$wl" ]]; then
-    echo "[$HOST_TAG]   patched: ratelimit_whitelist += $wl адресов пулов туннелей"
+    echo "[$HOST_TAG]   patched: $wl"
     changed=1
   fi
   [[ $changed -eq 1 ]] && svc_forget adguardhome
@@ -200,16 +193,17 @@ dns:
     - ${MGMT_IP}
   port: 53
   upstream_dns:
-    - 77.88.8.8
+    - '[/ru/рф/xn--p1ai/su/]77.88.8.8'
     - https://1.1.1.1/dns-query
     - https://dns.google/dns-query
-${YT_UPSTREAM_YAML}
+  upstream_dns_file: ''
   bootstrap_dns:
-    - 77.88.8.8
     - 8.8.8.8
-  fallback_dns:
-    - 77.88.8.8
+    - 8.8.4.4
+  fallback_dns: []
   upstream_mode: parallel
+  cache_optimistic: true
+  use_http3_upstreams: false
   cache_size: 4194304
   cache_ttl_min: 0
   cache_ttl_max: 0
@@ -274,18 +268,6 @@ cfg["users"] = [{"name": "$AGH_USER", "password": "$AGH_PASS_HASH"}]
 # Гарантируем aaaa_disabled: true (мерджим в dns секцию)
 cfg.setdefault("dns", {})["aaaa_disabled"] = True
 cfg["dns"].setdefault("edns_client_subnet", {})["enabled"] = False
-# Апстрим YouTube: снимаем прежний свой (строка, поставленная прошлым прогоном,
-# или любая [/...youtube.com.../]) и ставим текущий, если опция включена.
-# Чужие [/домен/] пользователя не трогаем.
-yt_up = "$YT_UPSTREAM"
-prev = "$YT_UPSTREAM_PREV"
-def is_yt(u):
-    return u == prev or (u.startswith("[/") and "/]" in u
-                         and "youtube.com" in u[2:u.index("/]")].split("/"))
-ups = [u for u in cfg["dns"].get("upstream_dns") or [] if not is_yt(u)]
-if yt_up:
-    ups.append(yt_up)
-cfg["dns"]["upstream_dns"] = ups
 if cfg != before:
     with open(cfg_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -293,26 +275,133 @@ if cfg != before:
 PYEOF
 )
   if [[ "$agh_sync" == changed ]]; then
-    echo "[$HOST_TAG]   credentials + aaaa_disabled + ecs off + youtube upstream synced"
+    echo "[$HOST_TAG]   credentials + aaaa_disabled + ecs off synced"
     svc_forget adguardhome
   else
     echo "[$HOST_TAG]   конфиг уже такой, как нужно"
   fi
 fi
 patch_agh_config "$AGH_CFG"
-agh_memory=$(entry_adguard_resources "$AGH_CFG" "${agh_fresh[@]}")
-[[ "$agh_memory" != changed ]] || svc_forget adguardhome
-printf '%s' "$YT_UPSTREAM" > "$YT_STATE"
+entry_adguard_resources "$AGH_CFG" "${agh_fresh[@]}" >/dev/null
+
+# Вариант без фильтра: отдельный loopback-слушатель, отдельные данные.
+# Берём только DNS-транспорт и кеш; списки, rewrites и настройки клиентов
+# основного экземпляра сюда не переносятся.
+AGH_PLAIN_DIR=/opt/AdGuardHome-unfiltered
+mkdir -p "$AGH_PLAIN_DIR"
+[[ ! -f "$AGH_PLAIN_DIR/AdGuardHome.yaml" ]] || cp "$AGH_PLAIN_DIR/AdGuardHome.yaml" "$AGH_PLAIN_CFG"
+plain_sync=$(python3 - "$AGH_CFG" "$AGH_PLAIN_CFG" "$AGH_PORT" <<'PYEOF'
+import copy, sys, yaml
+with open(sys.argv[1]) as f:
+    filtered = yaml.safe_load(f)
+dns_keys = ("upstream_dns", "upstream_dns_file", "bootstrap_dns", "fallback_dns",
+            "upstream_mode", "cache_size", "cache_ttl_min", "cache_ttl_max",
+            "cache_optimistic", "aaaa_disabled", "edns_client_subnet",
+            "use_http3_upstreams")
+cfg = {
+    "http": {"address": "127.0.0.2:" + sys.argv[3]},
+    "users": filtered["users"],
+    "dns": {k: filtered["dns"][k] for k in dns_keys if k in filtered["dns"]},
+    "filtering": {"protection_enabled": False, "filtering_enabled": False,
+                  "parental_enabled": False, "safebrowsing_enabled": False,
+                  "safe_search": {"enabled": False}},
+    "filters": [], "whitelist_filters": [], "user_rules": [],
+    "clients": {"persistent": []},
+    "schema_version": 29,
+}
+# Журнал в памяти - по тому же ресурсному профилю entry, что и основной.
+if "size_memory" in (filtered.get("querylog") or {}):
+    cfg["querylog"] = {"size_memory": filtered["querylog"]["size_memory"]}
+cfg["dns"].update(bind_hosts=["127.0.0.2"], port=53, ratelimit=0)
+try:
+    with open(sys.argv[2]) as f:
+        before = yaml.safe_load(f)
+except FileNotFoundError:
+    before = {}
+# Не откатываем миграцию схемы, которую выполнил сам AdGuard.
+cfg["schema_version"] = max(cfg["schema_version"], before.get("schema_version", 0))
+# AdGuard дописывает значения по умолчанию. Сравниваем только управляемые
+# поля, сохраняя остальные, иначе повторный деплой всегда давал бы рестарт.
+def merge(have, want):
+    for key, value in want.items():
+        if isinstance(value, dict):
+            merge(have.setdefault(key, {}), value)
+        else:
+            have[key] = value
+after = copy.deepcopy(before)
+merge(after, cfg)
+if after != before:
+    with open(sys.argv[2], "w") as f:
+        yaml.safe_dump(after, f, allow_unicode=True, sort_keys=False)
+    print("changed")
+PYEOF
+)
+chmod 600 "$AGH_PLAIN_CFG"
+[[ "$plain_sync" != changed ]] || svc_forget adguardhome-unfiltered
+
+# AdGuard сохраняет YAML при остановке. Сначала готовим патч на копии,
+# затем останавливаем только изменившийся экземпляр и публикуем файл.
+publish_agh_config() {
+  local unit=$1 staged=$2 target=$3
+  if ! cmp -s "$staged" "$target"; then
+    if systemctl is-active --quiet "$unit"; then
+      systemctl stop "$unit"
+    fi
+    install -m600 "$staged" "$target"
+    svc_forget "$unit"
+  fi
+}
+publish_agh_config adguardhome "$AGH_CFG" "$AGH_DIR/AdGuardHome.yaml"
+publish_agh_config adguardhome-unfiltered "$AGH_PLAIN_CFG" "$AGH_PLAIN_DIR/AdGuardHome.yaml"
 
 # ----------------------------------------------------------------------------
 # 4. systemd service
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] systemd"
+# AdGuard создаёт DoH-сокеты локально: клиентский PREROUTING их не видит.
+# Только адреса Cloudflare/Google и TCP/443 попадают в redirect sing-box.
+# UDP/53 (Яндекс и bootstrap) остаётся прямым. IPv6 Google тоже перехватываем.
+cat > /usr/local/sbin/anysda-doh-routing <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+for cmd in iptables ip6tables; do
+  "$cmd" -w -t nat -N ANYSDA_DOH 2>/dev/null || true
+  "$cmd" -w -t nat -F ANYSDA_DOH
+  if [[ "$cmd" == iptables ]]; then
+    addresses=(1.1.1.1 8.8.8.8 8.8.4.4)
+  else
+    addresses=(2001:4860:4860::8888 2001:4860:4860::8844)
+  fi
+  for address in "${addresses[@]}"; do
+    "$cmd" -w -t nat -A ANYSDA_DOH -p tcp -d "$address" --dport 443 -j REDIRECT --to-ports 7899
+  done
+  "$cmd" -w -t nat -C OUTPUT -j ANYSDA_DOH 2>/dev/null || \
+    "$cmd" -w -t nat -A OUTPUT -j ANYSDA_DOH
+done
+EOF
+chmod 755 /usr/local/sbin/anysda-doh-routing
+cat > /etc/systemd/system/anysda-doh-routing.service <<'EOF'
+[Unit]
+Description=DoH upstream routing through sing-box
+After=network-online.target ufw.service sing-box.service
+Wants=sing-box.service
+Before=adguardhome.service adguardhome-unfiltered.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-doh-routing
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 cat > /etc/systemd/system/adguardhome.service <<EOF
 [Unit]
 Description=AdGuard Home (anysda-vpn DNS)
-After=network-online.target
+After=network-online.target anysda-doh-routing.service
 Wants=network-online.target
+Requires=anysda-doh-routing.service
 
 [Service]
 Type=simple
@@ -333,9 +422,38 @@ MemorySwapMax=${AGH_SWAP_MAX}
 [Install]
 WantedBy=multi-user.target
 EOF
+cat > /etc/systemd/system/adguardhome-unfiltered.service <<EOF
+[Unit]
+Description=AdGuard Home (DNS without filters)
+After=network-online.target anysda-doh-routing.service
+Requires=anysda-doh-routing.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/AdGuardHome-unfiltered
+ExecStart=/opt/AdGuardHome/AdGuardHome --no-check-update --config /opt/AdGuardHome-unfiltered/AdGuardHome.yaml --work-dir /opt/AdGuardHome-unfiltered
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+# Go начинает GC до cgroup pressure; запас до MemoryMax нужен при обновлении
+# фильтров (старый и новый индексы кратковременно живут одновременно).
+Environment=GOMEMLIMIT=${AGH_GO_LIMIT}
+MemoryAccounting=true
+MemoryHigh=${AGH_MEMORY_HIGH}
+MemoryMax=${AGH_MEMORY_MAX}
+MemorySwapMax=${AGH_SWAP_MAX}
+
+[Install]
+WantedBy=multi-user.target
+EOF
 systemctl daemon-reload
-systemctl enable adguardhome >/dev/null 2>&1
+systemctl enable anysda-doh-routing adguardhome adguardhome-unfiltered >/dev/null 2>&1
+# Восстанавливаем правила также после внешнего сброса firewall.
+/usr/local/sbin/anysda-doh-routing
+systemctl start anysda-doh-routing
 svc_restart_if_changed adguardhome "$AGH_BIN" /etc/systemd/system/adguardhome.service
+svc_restart_if_changed adguardhome-unfiltered "$AGH_BIN" /etc/systemd/system/adguardhome-unfiltered.service
 agh_listening() { [[ "$(ss -Hlunp 'sport = :53' 2>/dev/null)" == *'"AdGuardHome"'* ]]; }
 svc_settle 2 agh_listening
 systemctl status adguardhome --no-pager -n 4 | sed -n "1,6s/^/[$HOST_TAG]   /p"

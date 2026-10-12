@@ -27,10 +27,6 @@ gen-router-config.py — генерирует sing-box конфиг роутер
 
 С ключом --rule-sets печатает имена наборов правил, которые стадия 20 качает
 в /var/lib/sing-box/rule-set (имя.srs).
-
-С ключом --agh-yt-upstream печатает строку апстрима AdGuard для YouTube-доменов
-(`[/домены/]<RU_DNS>`) или пустоту при YT_ROUTE=off - её берёт стадия 22, чтобы
-список доменов и российский резолвер жили только здесь.
 """
 
 import ipaddress
@@ -47,10 +43,8 @@ import sys
 #   • youtubei.googleapis.com — API плеера, jnn-pa — аттестация плеера: если
 #     они уходят за границу, YouTube считает клиента зарубежным и крутит
 #     рекламу, даже когда видео идёт с РФ-IP;
-#   • тот же список — апстрим AdGuard на RU_DNS, а AdGuard сверяет с ним имя
-#     из запроса: имя, которого тут нет, резолвит кто угодно из parallel.
-#     Поэтому сюда же youtube.googleapis.com, встроенный плеер, аватарки
-#     yt3.googleusercontent.com и yt.be. Страновые youtube.<cc> не нужны:
+#   • сюда же входят встроенный плеер, аватарки и yt.be.
+#     Страновые youtube.<cc> не нужны:
 #     они только редиректят на www.youtube.com.
 # ----------------------------------------------------------------------------
 YT_DOMAIN_SUFFIXES = [
@@ -70,7 +64,7 @@ YT_DOMAIN_SUFFIXES = [
 ]
 
 
-# Российский резолвер: отдаёт YouTube адреса GGC внутри РФ-провайдеров.
+# Российский резолвер для зон ru / рф / xn--p1ai / su.
 RU_DNS = '77.88.8.8'
 
 # Наборы правил sing-geoip/sing-geosite (geoip.db/geosite.db убраны в
@@ -90,7 +84,7 @@ TELEGRAM_CIDRS = [
 
 
 def yt_settings():
-    """YT_ROUTE и список доменов из окружения; общий для main и AdGuard."""
+    """YT_ROUTE и список доменов маршрутизации из окружения."""
     yt_route = (os.environ.get('YT_ROUTE') or 'off').strip().lower()
     if yt_route not in ('off', 'zapret', 'direct'):
         print(f'ERROR: YT_ROUTE={yt_route!r} — допустимо off | zapret | direct',
@@ -98,18 +92,6 @@ def yt_settings():
         sys.exit(1)
     yt_domains = (os.environ.get('YT_DOMAINS') or '').split() or YT_DOMAIN_SUFFIXES
     return yt_route, yt_domains
-
-
-def agh_yt_upstream():
-    """Апстрим AdGuard: YouTube-домены резолвит только RU_DNS.
-
-    Клиенты туннелей спрашивают DNS у AdGuard напрямую, а у него
-    upstream_mode: parallel и среди апстримов DoH Cloudflare/Google: ответ мог
-    прийти от зарубежного узла и увести видео с GGC внутри РФ на далёкий кеш.
-    """
-    yt_route, yt_domains = yt_settings()
-    if yt_route != 'off':
-        print('[/' + '/'.join(d.strip('.') for d in yt_domains) + '/]' + RU_DNS)
 
 
 def require(key):
@@ -148,6 +130,12 @@ def main():
         {
             'type': 'direct',
             'tag': 'local-dns',
+            'bind_interface': 'lo',
+        },
+        # Отдельный AdGuard без фильтров (127.0.0.2:53). Адрес подменяет
+        # правило route ниже: поля override_* у direct sing-box 1.13 убрал.
+        {
+            'type': 'direct', 'tag': 'dns-unfiltered',
             'bind_interface': 'lo',
         },
     ]
@@ -388,10 +376,7 @@ def main():
             })
         yt_route_rules.append({'domain_suffix': yt_domains, 'outbound': yt_tag})
         yt_route_rules.append({'rule_set': ['geosite-youtube'], 'outbound': yt_tag})
-        # Адрес YouTube клиент туннеля берёт у AdGuard, а не у sing-box:
-        # инбаунд tproxy только сниффит домен и не резолвит его. Поэтому
-        # YouTube -> RU_DNS задан апстримом AdGuard (стадия 22,
-        # agh_yt_upstream), а не DNS-правилом здесь.
+        # DNS делится по российским зонам независимо от маршрута YouTube.
 
     cfg = {
         'log': {'level': 'error', 'timestamp': True},
@@ -399,6 +384,7 @@ def main():
         'dns': {
             'servers': [
                 {'type': 'udp', 'tag': 'ru-dns', 'server': RU_DNS, 'detour': 'direct-ru'},
+                {'type': 'udp', 'tag': 'bootstrap-dns', 'server': '8.8.8.8', 'detour': 'direct-ru'},
                 # Этот DNS нужен только самому sing-box: имена из tg-proxy
                 # (бот). Клиенты туннелей спрашивают AdGuard напрямую, и их
                 # ответы эти правила не трогают; для бота .ru идёт через
@@ -406,14 +392,18 @@ def main():
                 {'type': 'udp', 'tag': 'adguard', 'server': mgmt_ip, 'detour': 'local-dns'},
             ],
             'rules': [
-                {'domain_suffix': ['.ru', '.рф', '.su'], 'server': 'ru-dns'},
-                {'rule_set': ['geosite-category-gov-ru'], 'server': 'ru-dns'},
+                {'domain_suffix': ['.ru', '.рф', '.xn--p1ai', '.su'], 'server': 'ru-dns'},
             ],
             'final': 'adguard',
             'strategy': 'ipv4_only',
         },
 
         'inbounds': [
+            # NAT OUTPUT стадии 22 заводит сюда только DoH-апстримы.
+            {'type': 'redirect', 'tag': 'agh-doh-v4',
+             'listen': '127.0.0.1', 'listen_port': 7899},
+            {'type': 'redirect', 'tag': 'agh-doh-v6',
+             'listen': '::1', 'listen_port': 7899},
             {
                 # Локальный прокси (HTTP CONNECT + SOCKS) для Telegram-бота:
                 # из Москвы api.telegram.org напрямую не открывается, поэтому
@@ -479,7 +469,18 @@ def main():
                 # loopback роутера, и любой локальный процесс через него дошёл
                 # бы до loopback экзита (sshd, node_exporter, clash-api).
                 {'inbound': ['tg-proxy'], 'outbound': 'tg-best'},
-                {'protocol': 'dns',                          'outbound': 'direct-ru'},
+                # Правила со своим inbound остаются в служебной голове при
+                # наложении ручных маршрутов (включая 0.0.0.0/0 из панели).
+                {'inbound': ['agh-doh-v4', 'agh-doh-v6'], 'port': [443],
+                 'ip_cidr': ['1.1.1.1/32', '8.8.8.8/32', '8.8.4.4/32',
+                             '2001:4860:4860::8888/128', '2001:4860:4860::8844/128'],
+                 'outbound': 'foreign-best'},
+                {'inbound': ['agh-doh-v4', 'agh-doh-v6'], 'action': 'reject'},
+                # TPROXY сохраняет для клиента исходный адрес DNS, поэтому
+                # ранее выданные конфиги тоже работают.
+                {'inbound': ['wg-tproxy-in'], 'protocol': 'dns',
+                 'action': 'route', 'outbound': 'dns-unfiltered',
+                 'override_address': '127.0.0.2', 'override_port': 53},
             ] + yt_route_rules + [
                 # Telegram при блокировке маскирует соединения: идёт на свои IP,
                 # а в SNI ставит чужой домен (вплоть до *.ru, напр. sprinthost.ru).
@@ -502,9 +503,10 @@ def main():
             'final': 'foreign-best',
             'auto_detect_interface': True,
             # Имена в адресах экзитов (DOMAIN_{TAG} может быть доменом)
-            # резолвит AdGuard, как раньше делал dns.final. При двух
-            # DNS-серверах sing-box 1.14 без явного резолвера не стартует.
-            'default_domain_resolver': {'server': 'adguard'},
+            # резолвит bootstrap-dns, а не AdGuard: DoH-апстримы AdGuard
+            # сами идут через экзиты. При двух DNS-серверах sing-box 1.14
+            # без явного резолвера не стартует.
+            'default_domain_resolver': {'server': 'bootstrap-dns'},
         },
 
         'experimental': {
@@ -527,9 +529,7 @@ def main():
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--agh-yt-upstream']:
-        agh_yt_upstream()
-    elif sys.argv[1:] == ['--rule-sets']:
+    if sys.argv[1:] == ['--rule-sets']:
         print(' '.join(RULE_SETS))
     else:
         main()

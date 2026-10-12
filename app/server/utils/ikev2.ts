@@ -9,6 +9,7 @@ import { clients as clientsTable, devices as devicesTable } from '../database/sc
 import { isClientActive } from './client-status'
 import { slugify } from './naming'
 import { coalesceRuns } from './coalesce'
+import { clientDns } from './client-dns'
 
 
 const exec = promisify(execFile)
@@ -275,6 +276,7 @@ async function syncIkev2Once(): Promise<void> {
       ip: devicesTable.ikev2Ip,
       frozenManual: clientsTable.frozenManual,
       expiresAt: clientsTable.expiresAt,
+      filterTraffic: clientsTable.filterTraffic,
     })
     .from(devicesTable)
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
@@ -315,6 +317,7 @@ async function syncIkev2Once(): Promise<void> {
     lines.push(
       `  anysda-dev-${r.id} : pools.anysda-ikev2-pool {`,
       `    addrs = ${r.ip}-${r.ip}`,
+      `    dns = ${clientDns(r.filterTraffic).join(', ')}`,
       `  }`,
     )
   }

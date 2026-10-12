@@ -129,11 +129,11 @@ suggest_tag() {
 
 validate_tag() {
   local tag="$1" used="$2"
-  if ! [[ "$tag" =~ ^[a-z][a-z0-9-]*$ ]]; then
-    fail "Тег: только строчные буквы, цифры, дефис (пример: us, se2)"; return 1
+  if ! [[ "$tag" =~ ^[a-z][a-z0-9]*$ ]]; then
+    fail "Тег: только строчные буквы и цифры (пример: us, se2)"; return 1
   fi
-  if [[ "$tag" == "ru" ]]; then
-    fail "Тег 'ru' зарезервирован для входной ноды"; return 1
+  if [[ "$tag" == "ru" || "$tag" == "all" || "$tag" == "exits" || "$tag" == "foreign" ]]; then
+    fail "Тег '$tag' зарезервирован"; return 1
   fi
   if [[ " $used " == *" $tag "* ]]; then
     fail "Тег '$tag' уже используется"; return 1

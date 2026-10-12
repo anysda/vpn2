@@ -7,6 +7,7 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
 """
 
 import base64
+import ipaddress
 import json
 import re
 import sys
@@ -168,6 +169,54 @@ def prepare_private(path):
     path.chmod(0o600)
 
 
+def config_error(key, reason):
+    # Значения могут содержать секреты: в диагностике только путь ключа.
+    sys.exit(f'ERROR: config.yaml: {key}: {reason}')
+
+
+def validate_network(cfg):
+    """Проверить идентификаторы и адреса до любых записей на диск."""
+    def host(value, key):
+        try:
+            ipaddress.ip_address(value)
+            return
+        except ValueError:
+            pass
+        if (not value or len(value) > 253 or
+                not all(re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+                        for label in value.rstrip('.').split('.')) or
+                re.fullmatch(r'[0-9.]+', value)):
+            config_error(key, 'ожидается IP-адрес или DNS-имя')
+
+    def port(value, key):
+        if not re.fullmatch(r'[0-9]+', value) or not 1 <= int(value) <= 65535:
+            config_error(key, 'порт должен быть целым числом от 1 до 65535')
+
+    entry = cfg['entry']
+    host(entry.get('host', ''), 'entry.host')
+    if not entry.get('password'):
+        config_error('entry.password', 'обязательное непустое значение')
+    if entry.get('public_host'):
+        host(entry['public_host'], 'entry.public_host')
+    if not cfg['exits']:
+        config_error('exits', 'нужна хотя бы одна выходная нода')
+    tags = set()
+    for index, ex in enumerate(cfg['exits']):
+        key = f'exits[{index}]'
+        tag = ex.get('tag', '')
+        if (not re.fullmatch(r'[a-z][a-z0-9]*', tag) or
+                tag in ('ru', 'all', 'exits', 'foreign') or tag in tags):
+            config_error(key + '.tag', 'нужен уникальный незарезервированный тег: [a-z][a-z0-9]*')
+        tags.add(tag)
+        host(ex.get('host', ''), key + '.host')
+        if not ex.get('password'):
+            config_error(key + '.password', 'обязательное непустое значение')
+        if 'hy2_direct_port' in ex:
+            port(ex['hy2_direct_port'], key + '.hy2_direct_port')
+    for name, value in cfg['ports'].items():
+        port(value, 'ports.' + name)
+
+
 def materialize_orchestrator_key(cfg):
     """Раскладывает orchestrator SSH-ключ из config.yaml в ~/.ssh/id_ed25519.
 
@@ -254,6 +303,7 @@ def main():
         sys.exit(1)
 
     cfg = parse_yaml(config_path.read_text())
+    validate_network(cfg)
     materialize_orchestrator_key(cfg)
 
     entry = cfg.get('entry', {})
@@ -326,7 +376,7 @@ def main():
         '',
         f'ADMIN_SSH_PUBKEY={shq(admin_ssh_pubkey)}',
         '',
-        f'EXIT_TAGS="{exit_tags}"',
+        f'EXIT_TAGS={shq(exit_tags)}',
     ]
 
     # Адрес сервера в клиентских WG/OVPN-конфигах. Домен вместо IP: при смене
@@ -340,7 +390,7 @@ def main():
     # Per-exit server IP (используется как адрес для подключения Hysteria2)
     for ex in exits:
         tag = ex['tag'].upper().replace('-', '_')
-        lines.append(f"DOMAIN_{tag}={ex['host']}")
+        lines.append(f"DOMAIN_{tag}={shq(ex['host'])}")
         for key in ('up', 'down'):
             lines.append(f"{tag}_HY2_{key.upper()}_MBPS={shq(ex.get(f'hy2_{key}_mbps', ''))}")
 
@@ -561,7 +611,7 @@ def main():
     # ------------------------------------------------------------------
     # exits.env
     # ------------------------------------------------------------------
-    (envs_dir / 'exits.env').write_text(f'EXIT_TAGS="{exit_tags}"\n')
+    (envs_dir / 'exits.env').write_text(f'EXIT_TAGS={shq(exit_tags)}\n')
 
     print(f'Сгенерировано: all.env, ru.env, '
           f'{", ".join(e["tag"] + ".env" for e in exits)}, exits.env')

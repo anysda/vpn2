@@ -124,6 +124,19 @@ print_summary() {
   printf '%b  └%s┘%b\n' "$C_G" "$BAR" "$C_END"
   printf '\n'
   LC_ALL="$_LC_PREV"
+  print_sso_notice
+}
+
+# Засев решается на entry: локальное отсутствие секрета не означает, что
+# SSO выключен, если там уже сохранены настройки профиля панели.
+print_sso_notice() {
+  (
+    load_env ru
+    if [[ "${SSO_ENABLED:-false}" == true && -z "${SSO_CLIENT_SECRET:-}" ]] \
+       && ssh_exec 'test ! -f /etc/anysda/sso-runtime.json' >/dev/null 2>&1; then
+      printf '%s\n' 'SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.'
+    fi
+  )
 }
 
 # ----------------------------------------------------------------------------
@@ -1049,5 +1062,8 @@ case "${1:-}" in
   *)
     [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     run_stage "$1" "$2"
+    if [[ "$1" == 30-frontend && ( "$2" == ru || "$2" == all ) ]]; then
+      print_sso_notice
+    fi
     ;;
 esac

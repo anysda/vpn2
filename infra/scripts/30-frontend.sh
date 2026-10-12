@@ -80,6 +80,13 @@ if [[ "$SSO_ENABLED" == "true" && -n "${PANEL_DOMAIN:-}" ]]; then
 fi
 if [[ -f "$SSO_RUNTIME" ]]; then
   echo "[$HOST_TAG]   SSO: настроен в профиле панели ($SSO_RUNTIME), блок sso: из config.yaml не применяется"
+elif [[ "$SSO_ENABLED" == "true" && -z "${SSO_CLIENT_SECRET:-}" ]]; then
+  # Без секрета устанавливаем панель с парольным входом, даже если засев
+  # запрещал его. Runtime не создаём: после заполнения секрета повтор стадии
+  # должен применить засев. Причину оркестратор покажет в итоговом выводе.
+  SSO_ENABLED=false
+  SSO_PASSWORD_LOGIN=true
+  SSO_REDIRECT_URL=""
 elif [[ "$SSO_ENABLED" == "true" ]]; then
   # ⚠️ ЖЁСТКАЯ ЗАВИСИМОСТЬ ОТ HTTPS. Адрес возврата у провайдера в Authentik
   # строится от домена панели (https://<домен>/auth/authentik), а куки

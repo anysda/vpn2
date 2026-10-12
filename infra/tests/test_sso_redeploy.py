@@ -41,7 +41,7 @@ class SsoRedeployTests(unittest.TestCase):
                     env = good | ({empty: ''} if empty else {})
                     script = 'HOST_TAG=ru\n' + '\n'.join(f"{key}='{value}'" for key, value in env.items())
                     result = bash(script + '\n' + block.replace('/etc/anysda', directory), directory)
-                    if runtime is not None or empty is None:
+                    if runtime is not None or empty in (None, 'SSO_CLIENT_SECRET'):
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     else:
                         self.assertNotEqual(result.returncode, 0, 'first-install validation was skipped')

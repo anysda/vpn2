@@ -94,9 +94,21 @@ exec {APT_LOG_FD}>&1
 APT_LOCKS=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock)
 APT_LOCK_TIMEOUT=1200
 
+# В минимальном Debian нет psmisc/fuser. lslocks из util-linux видит те же
+# блокировки ядра; без него отсутствие fuser выглядело как свободный apt.
+apt_lock_holders() {
+  if command -v fuser >/dev/null 2>&1; then
+    fuser "${APT_LOCKS[@]}" 2>/dev/null
+  else
+    lslocks --noheadings --notruncate --output PID,PATH | awk -v locks=" ${APT_LOCKS[*]} " '
+      NF == 2 && index(locks, " " $2 " ") { print $1; found = 1 }
+      END { exit !found }'
+  fi
+}
+
 apt_wait_idle() {
   local t0=$SECONDS said=-20 holders pid
-  while holders=$(fuser "${APT_LOCKS[@]}" 2>/dev/null); do
+  while holders=$(apt_lock_holders); do
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "apt так и не освободился за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
       return 0
@@ -206,12 +218,20 @@ DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io)
 # shellcheck disable=SC2034
 DOCKER_SKIP=(docker-ce-rootless-extras- docker-buildx-plugin- docker-compose-plugin-)
 docker_apt_source() {
-  local list=/etc/apt/sources.list.d/docker.list line distro
-  # узлы - Ubuntu, стенд фронта (--front-test) бывает и на Debian: у Docker
-  # отдельное репо под каждую
-  distro=$(. /etc/os-release && echo "$ID")
-  [[ "$distro" == debian ]] || distro=ubuntu
-  if ! command -v curl >/dev/null 2>&1 || ! command -v gpg >/dev/null 2>&1; then
+  local list=/etc/apt/sources.list.d/docker.list line distro codename release
+  # Debian и Ubuntu имеют разные репозитории, включая ключ. Не подставлять
+  # Ubuntu для неизвестной ОС: это создаёт несуществующий suite в APT.
+  release=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${VERSION_CODENAME:-}") || return
+  read -r distro codename <<<"$release"
+  case "$distro" in
+    debian|ubuntu) ;;
+    *) svc_say "Docker: неподдерживаемый ID в /etc/os-release: $distro" >&2; return 1 ;;
+  esac
+  if [[ ! "$codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
+    svc_say "Docker: нет корректного VERSION_CODENAME в /etc/os-release" >&2
+    return 1
+  fi
+  if ! apt_have ca-certificates curl gnupg; then
     apt_get update -qq
     apt_get install -y -qq ca-certificates curl gnupg >/dev/null
   fi
@@ -221,7 +241,7 @@ docker_apt_source() {
       | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
     chmod a+r /etc/apt/keyrings/docker.gpg
   fi
-  line="deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $(. /etc/os-release && echo "$VERSION_CODENAME") stable"
+  line="deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$distro $codename stable"
   [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
 }
 

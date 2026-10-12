@@ -148,6 +148,32 @@ case "${1:-}" in
   --front-test-down) exec bash "$REPO_ROOT/app/e2e/front-test.sh" down ;;
 esac
 
+# Мастер запускается до bootstrap: на минимальной системе его утилиты ещё
+# никто не установил. В частности, отсутствие dig не означает ошибку DNS.
+setup_prereqs() {
+  local cmd pkgs=()
+  for cmd in curl ip python3 dig; do
+    command -v "$cmd" >/dev/null 2>&1 && continue
+    case "$cmd" in
+      ip) pkgs+=(iproute2) ;;
+      dig) pkgs+=(bind9-dnsutils) ;;
+      *) pkgs+=("$cmd") ;;
+    esac
+  done
+  ((${#pkgs[@]})) || return 0
+  if [[ $EUID -ne 0 || ! -f /etc/debian_version ]]; then
+    fail "До запуска мастера установите пакеты: ${pkgs[*]}"
+    return 1
+  fi
+  # shellcheck source=infra/lib/anysda-svc.sh
+  source "$REPO_ROOT/infra/lib/anysda-svc.sh"
+  export DEBIAN_FRONTEND=noninteractive
+  apt_prepare
+  apt_get update -qq
+  apt_get install -y -qq "${pkgs[@]}" ca-certificates
+}
+setup_prereqs
+
 printf '
 ' >&2
 printf '%b  ┌────────────────────────────────────────────┐%b

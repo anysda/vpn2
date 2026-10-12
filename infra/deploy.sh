@@ -169,7 +169,14 @@ install_prereqs() {
   # его там 00-bootstrap одним заходом apt с остальными пакетами (отдельный
   # заход dpkg ~3 с на ядро).
   local pkgs=()
-  [[ ${#missing[@]} -gt 0 ]] && pkgs+=(${missing[*]/envsubst/gettext-base} ca-certificates)
+  for cmd in "${missing[@]}"; do
+    case "$cmd" in
+      ssh|scp) pkgs+=(openssh-client) ;;
+      envsubst) pkgs+=(gettext-base) ;;
+      *) pkgs+=("$cmd") ;;
+    esac
+  done
+  [[ ${#pkgs[@]} -eq 0 ]] || pkgs+=(ca-certificates)
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
 
   for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do

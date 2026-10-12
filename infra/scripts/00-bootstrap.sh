@@ -46,6 +46,7 @@ apt_auto_pause
 echo "[$HOST_TAG] [1/6] apt пакеты"
 PKGS=(wireguard wireguard-tools
       curl wget ca-certificates gnupg lsb-release
+      openssl gettext-base iproute2 procps kmod
       ufw fail2ban
       jq qrencode unzip git
       iptables netcat-openbsd

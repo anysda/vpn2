@@ -254,6 +254,7 @@ docker run -d \
   --name anysda-vpn2 \
   "${ENTRY_DOCKER_ARGS[@]}" \
   --restart unless-stopped \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --network host \
   --pid host \
   --security-opt apparmor=unconfined \

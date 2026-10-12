@@ -43,6 +43,8 @@ jobs:
           cp config.example.yaml "$d/config.yaml"
           python3 infra/lib/config2env.py "$d"
           test -s "$d/infra/envs/all.env"
+      - name: регрессии инфраструктуры
+        run: python3 -m unittest discover -s infra/tests -v
       - name: регрессии Telegram-бота
         run: |
           python3 -m pip install -r telegram/requirements.txt

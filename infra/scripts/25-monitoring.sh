@@ -98,6 +98,7 @@ docker run -d \
   --name vmsingle \
   "${ENTRY_DOCKER_ARGS[@]}" \
   --restart unless-stopped \
+  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --network host \
   --security-opt apparmor=unconfined \
   -v /etc/localtime:/etc/localtime:ro \

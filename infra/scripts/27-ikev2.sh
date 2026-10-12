@@ -170,7 +170,7 @@ else
   echo "[$HOST_TAG] [2/8] self-signed CA"
   if [[ ! -f "$PKI/ca.key" ]]; then
     echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
-    pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key"
+    ( umask 077; pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key" )
     pki --self --in "$PKI/ca.key" --type ecdsa \
         --dn "CN=anysda-vpn2 IKEv2 CA" --ca \
         --lifetime 3650 --outform pem > "$PKI/ca.crt"

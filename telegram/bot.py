@@ -1341,10 +1341,31 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
 async def monitor_loop() -> None:
     log.info('monitor_loop started: interval=%ds, hits=%d, cpu_high=%.0f, ram_high=%.0f',
              MONITOR_INTERVAL, ALERT_HITS, CPU_HIGH, RAM_HIGH)
+    panel_failed_since = None
+    panel_alerted = False
     while True:
         await asyncio.sleep(MONITOR_INTERVAL)
         try:
             data = await api_status()
+        except Exception as e:
+            log.warning('panel poll error: %s', e)
+            now = time.monotonic()
+            if panel_failed_since is None:
+                panel_failed_since = now
+            if now - panel_failed_since >= 300 and not panel_alerted:
+                try:
+                    await tg_send(CHAT_ID, '🔴 Панель недоступна — мониторинговые данные не поступают')
+                    panel_alerted = True
+                except Exception as error:
+                    log.warning('panel alert delivery error: %s', error)
+            continue
+        # Ошибка отправки в Telegram или обработки метрик не означает,
+        # что сама панель недоступна. Успешный опрос прерывает серию сразу.
+        panel_failed_since = None
+        try:
+            if panel_alerted:
+                await tg_send(CHAT_ID, '🟢 Панель снова доступна')
+                panel_alerted = False
             nodes = data.get('nodes', [])
 
             # Нода лежит: метрики устарели > NODE_DOWN_SEC (или их нет вовсе —

@@ -1406,6 +1406,8 @@ async def handle_event(request: web.Request) -> web.Response:
         data = await request.json()
     except Exception:
         return web.Response(status=400)
+    if not isinstance(data, dict):
+        return web.Response(status=400)
     evt = data.get('type')
     if evt == 'client_created':
         name = data.get('name', '?')

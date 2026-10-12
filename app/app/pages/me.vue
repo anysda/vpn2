@@ -355,7 +355,7 @@ async function saveSso() {
 
       <div v-else class="space-y-3">
         <p class="text-sm text-(--ui-text-muted)">
-          2FA активна. Для отключения подтверди пароль.
+          2FA активна. Для отключения подтверди пароль и код из аутентификатора.
         </p>
         <UButton
           color="error"

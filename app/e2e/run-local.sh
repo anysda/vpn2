@@ -30,6 +30,10 @@ dk run --rm --name "$NAME-config" --read-only --tmpfs /var/lib/anysda-vpn2 --tmp
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/config-error-check.mjs"
 
 PASS=$(openssl rand -hex 12)
+# Проверяем панель именно с установочным профилем entry 2 ГБ.
+resource_args=$(python3 "$APP_DIR/../infra/lib/entry_resources.py" \
+  --ram-mib 2048 --free-mib 8192 --service panel)
+eval "$resource_args"
 # Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за
 # `exit $rc` в конце файла), 0.9-0.10 на раннере CI - SC2317 на теле функции.
 # shellcheck disable=SC2317,SC2329
@@ -42,6 +46,7 @@ trap cleanup EXIT
 # Все тесты входят с одного адреса (Caddy в docker), а лимит входов панели -
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
 stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
+  "${ENTRY_DOCKER_ARGS[@]}" \
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"
 

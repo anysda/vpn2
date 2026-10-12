@@ -19,6 +19,12 @@ source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 30-frontend is ru-only — skipping"; exit 0;; esac
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+entry_resources panel
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='30-frontend'
 
@@ -243,8 +249,10 @@ docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 
 # host networking — panel manages WG/OpenVPN configs and talks to sing-box
 # clash-api. NET_ADMIN is enough; no SYS_MODULE.
+# Runtime-бюджет рассчитан на entry; сборка Nuxt остаётся в CI.
 docker run -d \
   --name anysda-vpn2 \
+  "${ENTRY_DOCKER_ARGS[@]}" \
   --restart unless-stopped \
   --network host \
   --pid host \

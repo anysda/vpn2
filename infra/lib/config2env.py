@@ -7,6 +7,7 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
 """
 
 import base64
+import json
 import re
 import sys
 from pathlib import Path
@@ -49,7 +50,8 @@ def unquote_scalar(v):
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
-           'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {}}
+           'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
+           'entry_resources': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -95,6 +97,8 @@ def parse_yaml(text):
                 context = 'youtube'
             elif content.startswith('sso:'):
                 context = 'sso'
+            elif content.startswith('entry_resources:'):
+                context = 'entry_resources'
             else:
                 k, v = kv(content)
                 if v:
@@ -132,6 +136,9 @@ def parse_yaml(text):
             elif context == 'sso':
                 k, v = kv(content)
                 cfg['sso'][k] = v
+            elif context == 'entry_resources':
+                k, v = kv(content)
+                cfg['entry_resources'][k] = v
             elif context == 'backup':
                 # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
                 if content.endswith(':') and ':' not in content[:-1]:
@@ -371,6 +378,8 @@ def main():
         f"ADMIN_USER={shq(admin_user)}",
         f"ADMIN_PASSWORD={shq(admin_password)}",
         f"PANEL_DOMAIN={shq(panel_domain)}",
+        # Только явные значения. Характеристики читают стадии на entry.
+        f"ENTRY_RESOURCE_OVERRIDES={shq(json.dumps(cfg['entry_resources']))}",
     ]
     if panel_image:
         lines.append(f"PANEL_IMAGE={shq(panel_image)}")

@@ -83,6 +83,34 @@ admin:
 #   label: Authentik
 #   # discovery_url: https://…/.well-known/openid-configuration   # если IdP не Authentik
 
+# Ресурсы entry рассчитываются на самой ноде при каждом прогоне 22/25/30/35:
+# RAM из /proc/meminfo, свободный диск раздела /var/lib/vmsingle.
+# 1/2/3 ГБ: лимиты памяти 0.5x/1x/2x от профиля 2 ГБ ниже; 4 ГБ+:
+# штатная автоматика runtime без дополнительных лимитов. Допуск RAM 1/16
+# на резерв ядра. Retention по RAM 1/3/5/7 суток, по диску максимум
+# floor(свободно ГиБ)-1 суток, минимум 1. AdAway: от 3 ГБ RAM и 2 ГиБ
+# свободного диска. Querylog: 50/100/500/1000 записей.
+# Только раскомментированные поля перекрывают расчёт. Память в МиБ,
+# 0 = штатная автоматика без лимита; querylog_size: 0 передаётся как есть.
+# Docker swap запрещён при конечном лимите; AGH аналогично. Поля AGH,
+# изменённые в UI, сохраняются; явные поля здесь имеют приоритет над UI.
+# На старой установке без истории автоподбора сохраняются все существующие
+# querylog/filters; явные поля ниже позволяют начать управлять ими из config.
+# entry_resources:
+#   panel_memory_mib: 384
+#   panel_old_space_mib: 256
+#   bot_memory_mib: 128
+#   vm_memory_mib: 256
+#   vm_cache_mib: 64
+#   vm_query_mib: 16
+#   vm_concurrent_requests: 4
+#   agh_memory_mib: 256
+#   agh_high_mib: 192
+#   agh_go_mib: 160
+#   retention_days: 3
+#   adaway_enabled: false
+#   querylog_size: 100
+
 # Telegram-бот (опционально).
 # Если задан — стейдж 35-telegram развернёт бот; иначе skip.
 # telegram:

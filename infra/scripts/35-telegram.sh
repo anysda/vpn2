@@ -30,6 +30,12 @@ fi
 STAMP_DIR=/var/anysda/.stamps
 STAGE='35-telegram'
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+entry_resources bot
+
 mkdir -p /etc/anysda
 
 # ----------------------------------------------------------------------------
@@ -91,8 +97,10 @@ docker rm -f anysda-tgbot >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
 [[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
+# Runtime-бюджет рассчитан на entry, swap не скрывает превышение бюджета.
 docker run -d \
   --name anysda-tgbot \
+  "${ENTRY_DOCKER_ARGS[@]}" \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \

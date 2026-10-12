@@ -20,6 +20,12 @@ source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 25-monitoring is ru-only — skipping"; exit 0;; esac
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+entry_resources vm
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='25-monitoring'
 
@@ -87,8 +93,10 @@ docker rm -f vmsingle >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
 [[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
+# Бюджеты и retention пересчитываются на entry при каждом прогоне стадии.
 docker run -d \
   --name vmsingle \
+  "${ENTRY_DOCKER_ARGS[@]}" \
   --restart unless-stopped \
   --network host \
   --security-opt apparmor=unconfined \
@@ -98,7 +106,7 @@ docker run -d \
   "victoriametrics/victoria-metrics:${VM_VER}" \
   -storageDataPath=/storage \
   -httpListenAddr=127.0.0.1:8428 \
-  -retentionPeriod=7d \
+  "${ENTRY_RUNTIME_ARGS[@]}" \
   -search.latencyOffset=1s \
   -promscrape.config=/etc/vm/scrape.yml \
   >/dev/null

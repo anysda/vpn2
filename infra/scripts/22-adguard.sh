@@ -18,6 +18,12 @@ source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 22-adguard is ru-only — skipping"; exit 0;; esac
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+entry_resources agh
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='22-adguard'
 AGH_DIR=/opt/AdGuardHome
@@ -97,6 +103,18 @@ echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)
 echo "[$HOST_TAG] [3/4] config"
 AGH_CFG=$AGH_DIR/AdGuardHome.yaml
 
+# AGH сохраняет YAML при остановке. Проверяем ресурсные правки до остальных
+# патчей и останавливаем до записи, чтобы shutdown не затёр новые настройки.
+if [[ -f "$AGH_CFG" ]]; then
+  agh_memory=$(entry_adguard_resources "$AGH_CFG" --check)
+  if [[ "$agh_memory" == changed ]]; then
+    if systemctl is-active --quiet adguardhome; then
+      systemctl stop adguardhome
+    fi
+    svc_forget adguardhome
+  fi
+fi
+
 # YouTube -> российский резолвер (только при youtube.route != off). Клиенты
 # туннелей спрашивают DNS у AdGuard напрямую, а upstream_mode: parallel с DoH
 # Cloudflare/Google мог отдать зарубежный кеш видео вместо GGC внутри РФ.
@@ -162,7 +180,9 @@ PYEOF
   return 0
 }
 
+agh_fresh=()
 if [[ ! -f "$AGH_CFG" ]]; then
+agh_fresh=(--fresh)
 cat > "$AGH_CFG" <<YAML
 http:
   address: 127.0.0.1:${AGH_PORT}
@@ -218,10 +238,13 @@ filters:
     url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
     name: AdGuard DNS filter
     id: 1
-  - enabled: true
+  - enabled: ${AGH_ADAWAY}
     url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_2.txt
     name: AdAway Default Blocklist
     id: 2
+
+querylog:
+  size_memory: ${AGH_QUERYLOG}
 
 log:
   file: ''
@@ -277,13 +300,15 @@ PYEOF
   fi
 fi
 patch_agh_config "$AGH_CFG"
+agh_memory=$(entry_adguard_resources "$AGH_CFG" "${agh_fresh[@]}")
+[[ "$agh_memory" != changed ]] || svc_forget adguardhome
 printf '%s' "$YT_UPSTREAM" > "$YT_STATE"
 
 # ----------------------------------------------------------------------------
 # 4. systemd service
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] systemd"
-cat > /etc/systemd/system/adguardhome.service <<'EOF'
+cat > /etc/systemd/system/adguardhome.service <<EOF
 [Unit]
 Description=AdGuard Home (anysda-vpn DNS)
 After=network-online.target
@@ -297,6 +322,13 @@ ExecStart=/opt/AdGuardHome/AdGuardHome --no-check-update --config /opt/AdGuardHo
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65536
+# Go начинает GC до cgroup pressure; запас до MemoryMax нужен при обновлении
+# фильтров (старый и новый индексы кратковременно живут одновременно).
+Environment=GOMEMLIMIT=${AGH_GO_LIMIT}
+MemoryAccounting=true
+MemoryHigh=${AGH_MEMORY_HIGH}
+MemoryMax=${AGH_MEMORY_MAX}
+MemorySwapMax=${AGH_SWAP_MAX}
 
 [Install]
 WantedBy=multi-user.target

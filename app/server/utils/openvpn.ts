@@ -12,6 +12,7 @@ import type { Device } from '../database/schema'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
+import { nextPoolAddress } from './address-pools'
 
 const exec = promisify(execFile)
 
@@ -45,17 +46,6 @@ const MGMT_SOCK = `${OVPN_DIR}/mgmt.sock`
 // Постоянные адреса устройств: 10.67.67.2-239, .1 у сервера. Хвост .240-.253
 // стадия 29 отдаёт пулу сервера (ifconfig-pool): туда попадёт устройство, чей
 // ccd ещё не записан. Синк ниже выдаст ему адрес и переподключит.
-const OVPN_SUBNET = '10.67.67.'
-const OVPN_PINNED_LAST = 239
-
-function nextAvailableOvpnIp(usedIps: Array<string | null | undefined>): string {
-  const used = new Set(usedIps.filter(Boolean) as string[])
-  for (let i = 2; i <= OVPN_PINNED_LAST; i++) {
-    const ip = `${OVPN_SUBNET}${i}`
-    if (!used.has(ip)) return ip
-  }
-  throw new Error(`OpenVPN: свободных адресов нет (${OVPN_SUBNET}2-${OVPN_PINNED_LAST})`)
-}
 
 /**
  * Выдать устройству постоянный адрес OpenVPN, если его нет. Повтор при
@@ -71,7 +61,7 @@ async function ensureDeviceOvpnIp(deviceId: number) {
     try {
       const [updated] = await db
         .update(devicesTable)
-        .set({ ovpnIp: nextAvailableOvpnIp(all.map(r => r.ip)), updatedAt: new Date() })
+        .set({ ovpnIp: nextPoolAddress('ovpn', all.map(r => r.ip)), updatedAt: new Date() })
         .where(and(eq(devicesTable.id, deviceId), isNull(devicesTable.ovpnIp)))
         .returning()
       if (updated) return updated
@@ -286,7 +276,9 @@ export async function killOvpnClientQuiet(cn: string): Promise<void> {
  */
 async function writeCcd(cn: string, ip: string | null, disabled: boolean): Promise<void> {
   const body = [
-    ip ? `ifconfig-push ${ip} 255.255.255.0` : '',
+    // У прежних устройств маска неизменна. Для новых /24 gateway .67.1
+    // должен оставаться on-link, поэтому им выдаётся охватывающая /21.
+    ip ? `ifconfig-push ${ip} ${ip.startsWith('10.67.67.') ? '255.255.255.0' : '255.255.248.0'}` : '',
     disabled ? 'disable' : '',
   ].filter(Boolean).map(l => `${l}\n`).join('')
   const file = path.join(CCD_DIR, cn)

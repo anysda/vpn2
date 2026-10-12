@@ -25,8 +25,8 @@ async function submit() {
     emit('added')
   }
   catch (e) {
-    const err = e as { statusMessage?: string }
-    toast.add({ title: err.statusMessage ?? 'Не удалось добавить девайс', color: 'error' })
+    const err = e as { data?: { message?: string }, statusMessage?: string }
+    toast.add({ title: err.data?.message ?? err.statusMessage ?? 'Не удалось добавить девайс', color: 'error' })
   }
   finally {
     loading.value = false

@@ -393,6 +393,7 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/entry-resources.sh" || return
     push "$DEPLOY_ROOT/lib/entry_resources.py" || return
   fi
+  push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return
 
   # Общая валидация bandwidth; 22 импортирует тот же генератор для AdGuard.
   case "$stage" in

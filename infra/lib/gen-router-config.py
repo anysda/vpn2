@@ -32,6 +32,7 @@ gen-router-config.py — генерирует sing-box конфиг роутер
 import ipaddress
 import json
 import os
+from pathlib import Path
 import sys
 
 # Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
@@ -279,8 +280,15 @@ def main():
     # её направить, решает failover-watchdog (clash-api PUT, без рестарта
     # sing-box). Списки статические: новые устройства раскладываются сами.
     lanes = int(os.environ.get('LANES') or 32)
-    lane_subnets = (os.environ.get('LANE_SUBNETS')
-                    or '10.66.66.0/24 10.67.67.0/24 10.68.68.0/24').split()
+    pools_file = Path(__file__).with_name('vpn-pools.json')
+    if not pools_file.exists():
+        pools_file = Path(__file__).resolve().parents[2] / 'app/shared/vpn-pools.json'
+    pools = json.loads(pools_file.read_text())
+    # Старая LANE_SUBNETS не должна исключить расширение после обновления.
+    lane_subnets = list(dict.fromkeys([
+        *(n for key in ('wg', 'ovpn', 'ikev2') for n in pools[key]['subnets']),
+        *os.environ.get('LANE_SUBNETS', '').split(),
+    ]))
     lane_ips = [[] for _ in range(lanes)]
     for net in map(ipaddress.ip_network, lane_subnets):
         for host in net.hosts():

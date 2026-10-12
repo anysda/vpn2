@@ -125,6 +125,7 @@ install -m 0755 /tmp/anysda/anysda-restore.sh     /usr/local/bin/anysda-restore.
 install -m 0755 /tmp/anysda/anysda-backup-list.sh /usr/local/bin/anysda-backup-list.sh
 # Общие функции стадий: anysda-restore берёт отсюда wg0_apply.
 install -D -m 0644 /tmp/anysda/anysda-svc.sh     /usr/local/lib/anysda/anysda-svc.sh
+install -m 0644 /tmp/anysda/vpn-pools.json       /usr/local/lib/anysda/vpn-pools.json
 
 # ── 3. /etc/anysda/backup.env — единственное место где passphrase живёт на ─
 #    entry. chmod 600, root:root.

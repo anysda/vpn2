@@ -29,6 +29,7 @@ fi
 
 WG_PORT="${WG_LISTEN_PORT:-51820}"
 WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}"
+WG_SUBNETS=$(vpn_pool_subnets wg)
 
 mkdir -p /var/anysda/.stamps /etc/wireguard
 chmod 0700 /etc/wireguard
@@ -108,8 +109,10 @@ sysctl -p /etc/sysctl.d/98-wg-forward.conf >/dev/null
 
 ufw allow "${WG_PORT}/udp" comment 'wireguard listener' >/dev/null 2>&1 || true
 # WireGuard clients (10.66.66.0/24) resolve via AdGuard on the entry mgmt IP
-ufw allow proto udp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
-ufw allow proto tcp from 10.66.66.0/24 to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
+for subnet in $WG_SUBNETS; do
+  ufw allow proto udp from "$subnet" to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
+  ufw allow proto tcp from "$subnet" to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
+done
 
 # ── 4. wg-quick@wg0 ────────────────────────────────────────────────────────
 echo "[$HOST_TAG] [4/5] wg-quick@wg0 service"
@@ -133,6 +136,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 Environment=WG_MSS=$WG_MSS
+Environment="WG_SUBNETS=$WG_SUBNETS"
 ExecStart=/usr/local/sbin/anysda-wg-routing.sh up
 ExecStop=/usr/local/sbin/anysda-wg-routing.sh down
 
@@ -161,6 +165,10 @@ MSS=${WG_MSS:-1380}
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
 
 if [[ "$ACTION" == "up" ]]; then
+  # Нужны и при syncconf, и после reboot до появления первого нового пира.
+  for subnet in ${WG_SUBNETS:?}; do
+    ip route replace "$subnet" dev "$WG_IF"
+  done
   # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
   # strongSwan 220), а юниты wg/ovpn/ikev2 на загрузке в гонке добавляют копии.
   ip rule list pref "$PREF" | grep "fwmark $MARK lookup $TABLE" >/dev/null || \

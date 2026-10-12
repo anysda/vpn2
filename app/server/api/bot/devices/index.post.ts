@@ -7,6 +7,7 @@ import { ensureDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
 import { readBodyAs } from '../../../utils/validate'
+import { createDeviceWithAddresses } from '../../../utils/create-device'
 
 const Body = z.object({
   chatId: z.number().int(),
@@ -30,10 +31,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'device_limit', message: 'Достигнут лимит устройств — обратитесь к администратору' })
   }
 
-  const [device] = await db.insert(devices).values({ clientId: client.id, name }).returning()
-  if (!device) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
-  await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceWg failed'))
-  if (await caReady()) {
+  const cfg = useRuntimeConfig()
+  const ovpnReady = cfg.ovpnEnabled && await caReady()
+  const device = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady })
+  if (cfg.wgEnabled) {
+    await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceWg failed'))
+  }
+  if (ovpnReady) {
     await ensureDeviceOvpn(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceOvpn failed'))
   }
   await ensureDeviceIkev2(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceIkev2 failed'))

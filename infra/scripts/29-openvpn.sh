@@ -30,6 +30,7 @@ fi
 OVPN_PORT="${OVPN_PORT:-1194}"
 OVPN_PROTO="${OVPN_PROTO:-udp}"
 OVPN_SUBNET="${OVPN_SUBNET:-10.67.67.0}"
+OVPN_SUBNETS=$(vpn_pool_subnets ovpn)
 OVPN_DIR=/etc/openvpn/server
 PKI=$OVPN_DIR/pki
 
@@ -210,6 +211,13 @@ management-client-user root
 verb 3
 EOF
 
+# tun0 и адреса прежних клиентов остаются /24. Дополнительные подсети
+# маршрутизируются в тот же tun0; новые CCD получают маску /21 и старый gateway.
+for subnet in $OVPN_SUBNETS; do
+  [[ "$subnet" == "$OVPN_SUBNET/24" ]] && continue
+  printf 'route %s 255.255.255.0\n' "${subnet%/*}" >> "$OVPN_DIR/server.conf"
+done
+
 mkdir -p /run/openvpn-server
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
@@ -221,8 +229,10 @@ case "$OVPN_PROTO" in
 esac
 ufw allow "${OVPN_PORT}/${OVPN_FW_PROTO}" comment 'openvpn listener' >/dev/null 2>&1 || true
 # OpenVPN clients (10.67.67.0/24) resolve via AdGuard on the entry mgmt IP
-ufw allow proto udp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
-ufw allow proto tcp from 10.67.67.0/24 to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
+for subnet in $OVPN_SUBNETS; do
+  ufw allow proto udp from "$subnet" to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
+  ufw allow proto tcp from "$subnet" to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
+done
 
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"

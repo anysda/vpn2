@@ -9,6 +9,14 @@
 
 SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
+# Единственный список пулов общий с панелью. При деплое файл лежит рядом
+# с библиотекой; при restore — в app/shared исходного дерева.
+VPN_POOLS_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/vpn-pools.json
+[[ -f "$VPN_POOLS_FILE" ]] || VPN_POOLS_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/../../app/shared/vpn-pools.json
+vpn_pool_subnets() {
+  python3 -c 'import json, sys; p=json.load(open(sys.argv[1])); print(" ".join(n for k in sys.argv[2:] for n in p[k]["subnets"]))' "$VPN_POOLS_FILE" "$@"
+}
+
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.

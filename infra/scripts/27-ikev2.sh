@@ -44,6 +44,7 @@ fi
 
 : "${ENTRY_HOST:?ENTRY_HOST not set (envs/all.env)}"
 IKEV2_SUBNET="${IKEV2_SUBNET:-10.68.68.0/24}"
+IKEV2_SUBNETS=$(vpn_pool_subnets ikev2)
 IKEV2_DNS="${IKEV2_DNS:-10.99.0.1}"
 # v6-пул только для fast-fail, как fd66:66:: у WG: без него ::/0 в туннель
 # не попадает, и v6 клиента уходит мимо VPN со своим настоящим адресом.
@@ -321,8 +322,10 @@ ufw allow 4500/udp comment 'ikev2 NAT-T'  >/dev/null 2>&1 || true
 # xfrm0 — форвардинг, а ufw по умолчанию routed=deny. Без этих двух правил
 # туннель поднимется, но резолва у клиента не будет. Ровно так же сделано
 # для wg0 (стадия 28) и tun0 (стадия 29).
-ufw allow proto udp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
-ufw allow proto tcp from "$IKEV2_SUBNET" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
+for subnet in $IKEV2_SUBNETS; do
+  ufw allow proto udp from "$subnet" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
+  ufw allow proto tcp from "$subnet" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
+done
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 # Loose RPF: policy-routing IPsec иначе режется reverse-path filter.
@@ -403,7 +406,7 @@ MARK='0x42'
 TABLE=101
 PREF=32765
 TPROXY_PORT=7898
-IKEV2_SUBNET=$(printf '%q' "${IKEV2_SUBNET%/*}/24")
+IKEV2_SUBNETS=$(printf '%q' "$IKEV2_SUBNETS")
 IKEV2_SUBNET6=$(printf '%q' "$IKEV2_SUBNET6")
 # MSS под mtu xfrm0 ниже: 1400 - 40.
 MSS=1360
@@ -420,7 +423,9 @@ if [[ "\$ACTION" == "up" ]]; then
   # адресованы 10.68.68.x, и без него ядро не знает, куда их слать — SA
   # поднимается, трафик уходит в sing-box, а ответы молча дохнут на xfrm0
   # (TX errors). Через xfrm0 они попадают в out-политику и шифруются.
-  ip route replace "\$IKEV2_SUBNET" dev "\$XFRM_IF"
+  for subnet in \$IKEV2_SUBNETS; do
+    ip route replace "\$subnet" dev "\$XFRM_IF"
+  done
   ip -6 route replace "\$IKEV2_SUBNET6" dev "\$XFRM_IF"
 
   # Маршрут для пакетов с mark — в local lookup (TPROXY ловит)

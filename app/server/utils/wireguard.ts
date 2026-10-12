@@ -10,6 +10,8 @@ import { clients as clientsTable, devices as devicesTable } from '../database/sc
 import { wgAllowedIps } from './allowed-ips'
 import { isClientActive } from './client-status'
 import { coalesceRuns } from './coalesce'
+import { nextPoolAddress } from './address-pools'
+import pools from '../../shared/vpn-pools.json' with { type: 'json' }
 
 
 const exec = promisify(execFile)
@@ -38,20 +40,10 @@ function generateWgPresharedKey(): string {
 function wgUlaAddress(wgIp: string): string {
   const m = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/.exec(wgIp)
   if (!m) throw new Error(`wgUlaAddress: не разобран v4-адрес "${wgIp}"`)
-  return `fd66:66::${m[1]}`
-}
-
-/**
- * Pick the next free /32 inside the WG subnet (default 10.66.66.0/24).
- * .1 is the server, clients start at .2.
- */
-function nextAvailableWgIp(usedIps: Array<string | null | undefined>, subnetPrefix = '10.66.66.'): string {
-  const used = new Set(usedIps.filter(Boolean) as string[])
-  for (let i = 2; i <= 254; i++) {
-    const ip = `${subnetPrefix}${i}`
-    if (!used.has(ip)) return ip
-  }
-  throw new Error('WireGuard subnet exhausted (10.66.66.0/24)')
+  // Сохраняем ULA старой /24 побайтно. Новые /24 получают отдельное поле,
+  // иначе .2 из разных подсетей претендовали бы на один AllowedIPs /128.
+  const subnet = wgIp.split('.')[2]
+  return wgIp.startsWith('10.66.66.') ? `fd66:66::${m[1]}` : `fd66:66::${subnet}:${m[1]}`
 }
 
 export interface WgClientConfigParams {
@@ -155,6 +147,10 @@ async function writeWgServerConfig(
     // `replace` идемпотентен и не рвёт существующие сессии пиров.
     await exec('bash', ['-c', `wg-quick strip wg0 | wg syncconf wg0 /dev/stdin`], { timeout: 10_000 })
     await exec('ip', ['-6', 'addr', 'replace', `${serverUla}/64`, 'dev', 'wg0'], { timeout: 5_000 })
+    // syncconf не добавляет маршруты для новых пиров, в отличие от wg-quick.
+    for (const subnet of pools.wg.subnets) {
+      await exec('ip', ['route', 'replace', subnet, 'dev', 'wg0'], { timeout: 5_000 })
+    }
   }
   catch (err) {
     // wg0 may not exist (cold start before 28-wireguard ran) or wg binary
@@ -201,7 +197,7 @@ export async function ensureDeviceWg(deviceId: number) {
     const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
     const kp = generateWgKeypair()
     const psk = generateWgPresharedKey()
-    const ip = row.wgIp ?? nextAvailableWgIp(all.map(r => r.ip))
+    const ip = row.wgIp ?? nextPoolAddress('wg', all.map(r => r.ip))
 
     try {
       const [updated] = await db

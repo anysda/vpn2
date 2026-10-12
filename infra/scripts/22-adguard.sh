@@ -134,7 +134,8 @@ patch_agh_config() {
   # одно ведро на всех. Поле принимает только адреса, не CIDR, поэтому пулы
   # раскрываем. Пулы - из тех же переменных, что в 28/29/27. Чужие адреса
   # в списке не трогаем, лимит для остальных остаётся.
-  local pools="${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
+  local pools
+  pools="$(vpn_pool_subnets wg ovpn ikev2) ${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
   local wl
   wl=$(CFG="$cfg" POOLS="$pools" python3 - <<'PYEOF'
 import copy, ipaddress, os, yaml
@@ -154,9 +155,10 @@ dns["cache_optimistic"] = True
 # OUTPUT перехватывает TCP; не позволяем включённому в UI HTTP/3 обойти его.
 dns["use_http3_upstreams"] = False
 have = [str(a) for a in dns.get("ratelimit_whitelist") or []]
-need = [str(h) for p in os.environ["POOLS"].split()
-        for h in ipaddress.ip_network(p, strict=False).hosts()]
-missing = [a for a in need if a not in set(have)]
+need = dict.fromkeys(str(h) for p in os.environ["POOLS"].split()
+                     for h in ipaddress.ip_network(p, strict=False).hosts())
+have_set = set(have)
+missing = [a for a in need if a not in have_set]
 if missing:
     dns["ratelimit_whitelist"] = have + missing
 if cfg != before:

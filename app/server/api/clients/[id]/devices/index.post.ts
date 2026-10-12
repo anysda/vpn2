@@ -9,6 +9,7 @@ import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
 import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 import { readBodyAs } from '../../../../utils/validate'
+import { createDeviceWithAddresses } from '../../../../utils/create-device'
 
 const Body = z.object({ name: z.string().trim().min(1).max(64) })
 
@@ -32,12 +33,15 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 409, statusMessage: 'device_limit', message: `Достигнут лимит девайсов (${client.deviceLimit})` })
   }
 
-  const [device] = await db.insert(devices).values({ clientId, name }).returning()
-  if (!device) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
+  const cfg = useRuntimeConfig()
+  const ovpnReady = cfg.ovpnEnabled && await caReady()
+  const device = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady })
 
   // Сразу минтим ключи, чтобы девайс был готов к выдаче конфигов.
-  await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceWg on add failed'))
-  if (await caReady()) {
+  if (cfg.wgEnabled) {
+    await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceWg on add failed'))
+  }
+  if (ovpnReady) {
     await ensureDeviceOvpn(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceOvpn on add failed'))
   }
   await ensureDeviceIkev2(device.id).catch(err => useLogger().error({ err }, 'ensureDeviceIkev2 on add failed'))

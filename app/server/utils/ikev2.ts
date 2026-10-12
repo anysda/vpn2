@@ -10,6 +10,7 @@ import { isClientActive } from './client-status'
 import { slugify } from './naming'
 import { coalesceRuns } from './coalesce'
 import { clientDns } from './client-dns'
+import { nextPoolAddress } from './address-pools'
 
 
 const exec = promisify(execFile)
@@ -55,9 +56,6 @@ async function ikev2ServerHost(): Promise<string> {
   return String(process.env.ENTRY_HOST || cfg.wgPublicHost || '').trim()
 }
 
-// IKEv2 IP-пул (per-device static). .1 — gateway (anysda на entry).
-const IKEV2_SUBNET = '10.68.68.'
-
 /**
  * Сгенерировать 20-символьный alnum-пароль (как у clients.password). Не используем
  * никакие спецсимволы — пароль вводится руками в нативный VPN-клиент iOS/Win.
@@ -67,19 +65,6 @@ function generateIkev2Password(): string {
   let out = ''
   for (const b of randomBytes(20)) out += alphabet.charAt(b % alphabet.length)
   return out
-}
-
-/**
- * Подобрать свободный /32 в IKEv2-сабнете. .1 — gateway, клиенты с .2.
- * Логика идентична nextAvailableWgIp в wireguard.ts.
- */
-function nextAvailableIkev2Ip(usedIps: Array<string | null | undefined>): string {
-  const used = new Set(usedIps.filter(Boolean) as string[])
-  for (let i = 2; i <= 254; i++) {
-    const ip = `${IKEV2_SUBNET}${i}`
-    if (!used.has(ip)) return ip
-  }
-  throw new Error('IKEv2 subnet exhausted (10.68.68.0/24)')
 }
 
 /**
@@ -177,7 +162,7 @@ async function claimDeviceIkev2(deviceId: number) {
   const username = row.ikev2Username
     ?? buildIkev2Username(client.name, row.name, all.map(r => r.username))
   const password = row.ikev2Password ?? generateIkev2Password()
-  const ip = row.ikev2Ip ?? nextAvailableIkev2Ip(all.map(r => r.ip))
+  const ip = row.ikev2Ip ?? nextPoolAddress('ikev2', all.map(r => r.ip))
 
   const [updated] = await db
     .update(devicesTable)

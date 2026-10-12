@@ -747,7 +747,7 @@ Description=anysda-vpn2 — периодическая проверка виде
 
 [Timer]
 OnBootSec=1min
-OnUnitInactiveSec=1min
+OnUnitInactiveSec=5min
 AccuracySec=1s
 
 [Install]

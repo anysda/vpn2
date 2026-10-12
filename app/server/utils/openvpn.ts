@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { X509Certificate } from 'node:crypto'
+import { X509Certificate, randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -36,6 +36,9 @@ const CA_KEY = `${PKI_DIR}/ca.key`
 const TLS_CRYPT = `${PKI_DIR}/tls-crypt.key`
 const OSSL_CNF = `${PKI_DIR}/openssl.cnf`
 const CRL_PEM = `${PKI_DIR}/crl.pem`
+// Стадия 29 под этой же блокировкой проверяет и атомарно заменяет PKI.
+// Файл вне pki: замена каталога не должна создавать новую блокировку.
+const PKI_LOCK = `${OVPN_DIR}/.pki.lock`
 // Management-сокет сервера (stage 29-openvpn, `management ... unix`).
 const MGMT_SOCK = `${OVPN_DIR}/mgmt.sock`
 
@@ -118,7 +121,7 @@ async function issueClientCert(cn: string): Promise<{ cert: string, key: string 
       'req', '-new', '-key', keyPath, '-out', csrPath, '-subj', `/CN=${cn}`,
     ], { timeout: 15_000 })
 
-    await exec('openssl', [
+    await exec('flock', ['-x', PKI_LOCK, 'openssl',
       'ca', '-batch', '-notext', '-config', OSSL_CNF,
       '-extensions', 'client_ext', '-days', '3650',
       '-in', csrPath, '-out', certPath,
@@ -171,7 +174,7 @@ async function revokeClientCertOnce(certPem: string): Promise<void> {
       return fields[0] === 'R' && fields[3]?.toUpperCase() === serial.toUpperCase()
     })
     if (!revoked) {
-      await exec('openssl', ['ca', '-config', OSSL_CNF, '-revoke', certPath], { timeout: 15_000 })
+      await exec('flock', ['-x', PKI_LOCK, 'openssl', 'ca', '-config', OSSL_CNF, '-revoke', certPath], { timeout: 15_000 })
     }
     await regenCrl()
   }
@@ -182,9 +185,9 @@ async function revokeClientCertOnce(certPem: string): Promise<void> {
 
 /** Rebuild crl.pem from the CA index. OpenVPN re-reads it per new connection. */
 async function regenCrl(): Promise<void> {
-  const tmp = `${CRL_PEM}.tmp`
+  const tmp = `${CRL_PEM}.${randomUUID()}.tmp`
   try {
-    await exec('openssl', ['ca', '-config', OSSL_CNF, '-gencrl', '-out', tmp], { timeout: 15_000 })
+    await exec('flock', ['-x', PKI_LOCK, 'openssl', 'ca', '-config', OSSL_CNF, '-gencrl', '-out', tmp], { timeout: 15_000 })
     await fs.chmod(tmp, 0o644)
     await fs.rename(tmp, CRL_PEM)
   }

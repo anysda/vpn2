@@ -18,6 +18,9 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
+# shellcheck source=infra/lib/anysda-pki.sh
+source "$PKI_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 29-openvpn: skipped (only RU)"
@@ -47,8 +50,10 @@ if ! command -v openvpn >/dev/null 2>&1; then
 fi
 
 # ── 2. openssl.cnf for `openssl ca` (used by the panel to sign/revoke) ──────
-echo "[$HOST_TAG] [2/6] openssl.cnf"
-cat > "$PKI/openssl.cnf" <<'EOF'
+openvpn_pki_build() {
+  local PKI=$1
+  echo "[$HOST_TAG] [2/6] openssl.cnf"
+  cat > "$PKI/openssl.cnf" <<'EOF'
 [ca]
 default_ca = CA_default
 
@@ -104,35 +109,52 @@ subjectKeyIdentifier   = hash
 authorityKeyIdentifier = keyid,issuer
 EOF
 
-# ── 3. CA + server cert + tls-crypt (idempotent — keep keys across reruns) ──
-echo "[$HOST_TAG] [3/6] PKI"
-[[ -f "$PKI/index.txt" ]] || : > "$PKI/index.txt"
-[[ -f "$PKI/serial"    ]] || echo 01 > "$PKI/serial"
-[[ -f "$PKI/crlnumber" ]] || echo 01 > "$PKI/crlnumber"
+  # ── 3. CA + server cert + tls-crypt (idempotent — keep keys across reruns) ──
+  echo "[$HOST_TAG] [3/6] PKI"
+  [[ -f "$PKI/index.txt" ]] || : > "$PKI/index.txt"
+  [[ -f "$PKI/serial"    ]] || echo 01 > "$PKI/serial"
+  [[ -f "$PKI/crlnumber" ]] || echo 01 > "$PKI/crlnumber"
 
-if [[ ! -f "$PKI/ca.key" ]]; then
-  echo "[$HOST_TAG]   generating CA"
-  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$PKI/ca.key"
-  openssl req -x509 -new -key "$PKI/ca.key" -days 3650 -sha256 \
-    -out "$PKI/ca.crt" -subj "/CN=anysda-vpn2 CA" \
-    -config "$PKI/openssl.cnf" -extensions v3_ca
-fi
+  pki_require_key "$PKI/ca.key" "$PKI/ca.crt"
+  if ! pki_cert_valid "$PKI/ca.crt"; then
+    echo "[$HOST_TAG]   generating CA"
+    openssl req -x509 -new -key "$PKI/ca.key" -days 3650 -sha256 \
+      -out "$PKI/ca.crt" -subj "/CN=anysda-vpn2 CA" \
+      -config "$PKI/openssl.cnf" -extensions v3_ca
+  fi
+  pki_check_pair "$PKI/ca.key" "$PKI/ca.crt"
+  openssl verify -CAfile "$PKI/ca.crt" "$PKI/ca.crt" >/dev/null
+  # openssl ca должен менять только временную копию базы, не рабочую PKI.
+  sed "s|^dir .*|dir = $PKI|" "$PKI/openssl.cnf" > "$PKI/build.cnf"
 
-if [[ ! -f "$PKI/server.key" ]]; then
-  echo "[$HOST_TAG]   generating server cert"
-  openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:prime256v1 -out "$PKI/server.key"
-  openssl req -new -key "$PKI/server.key" -out "$PKI/server.csr" \
-    -subj "/CN=anysda-vpn2-server" -config "$PKI/openssl.cnf"
-  openssl ca -batch -notext -config "$PKI/openssl.cnf" \
-    -extensions server_ext -days 3650 -in "$PKI/server.csr" -out "$PKI/server.crt"
-  rm -f "$PKI/server.csr"
-fi
+  pki_require_key "$PKI/server.key" "$PKI/server.crt"
+  if ! pki_pair_valid "$PKI/server.key" "$PKI/server.crt" || \
+      ! openssl verify -CAfile "$PKI/ca.crt" "$PKI/server.crt" >/dev/null 2>&1; then
+    echo "[$HOST_TAG]   generating server cert"
+    openssl req -new -key "$PKI/server.key" -out "$PKI/server.csr" \
+      -subj "/CN=anysda-vpn2-server" -config "$PKI/openssl.cnf"
+    openssl ca -batch -notext -config "$PKI/build.cnf" \
+      -extensions server_ext -days 3650 -in "$PKI/server.csr" -out "$PKI/server.crt"
+    rm -f "$PKI/server.csr"
+  fi
 
-[[ -f "$PKI/tls-crypt.key" ]] || openvpn --genkey secret "$PKI/tls-crypt.key"
-[[ -f "$PKI/crl.pem" ]] || openssl ca -config "$PKI/openssl.cnf" -gencrl -out "$PKI/crl.pem"
+  # Проверяем формат статического ключа, а не только наличие файла.
+  if ! pki_tls_crypt_valid "$PKI/tls-crypt.key"; then
+    openvpn --genkey secret "$PKI/tls-crypt.key"
+  fi
+  if ! openssl crl -in "$PKI/crl.pem" -noout -verify -CAfile "$PKI/ca.crt" >/dev/null 2>&1; then
+    openssl ca -config "$PKI/build.cnf" -gencrl -out "$PKI/crl.pem"
+  fi
+  pki_check_pair "$PKI/server.key" "$PKI/server.crt"
+  openssl verify -CAfile "$PKI/ca.crt" -purpose sslserver "$PKI/server.crt" >/dev/null
+  openssl crl -in "$PKI/crl.pem" -noout -verify -CAfile "$PKI/ca.crt"
+  pki_tls_crypt_valid "$PKI/tls-crypt.key"
+  rm -f "$PKI/build.cnf"
 
-chmod 600 "$PKI/ca.key" "$PKI/server.key" "$PKI/tls-crypt.key"
-chmod 644 "$PKI/ca.crt" "$PKI/server.crt" "$PKI/crl.pem"
+  chmod 600 "$PKI/ca.key" "$PKI/server.key" "$PKI/tls-crypt.key"
+  chmod 644 "$PKI/ca.crt" "$PKI/server.crt" "$PKI/crl.pem"
+}
+pki_transaction "$PKI" openvpn_pki_build
 
 # ── 4. server.conf ──────────────────────────────────────────────────────────
 echo "[$HOST_TAG] [4/6] server.conf"

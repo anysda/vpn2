@@ -18,6 +18,9 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
+# shellcheck source=infra/lib/anysda-pki.sh
+source "$PKI_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 28-wireguard: skipped (only RU)"
@@ -40,12 +43,36 @@ modprobe wireguard 2>/dev/null || true
 
 # ── 2. Server keypair (idempotent — survives reruns) ────────────────────────
 echo "[$HOST_TAG] [2/5] server keys"
-if [[ ! -f /etc/wireguard/server.priv ]]; then
-  umask 077
-  wg genkey > /etc/wireguard/server.priv
-  wg pubkey < /etc/wireguard/server.priv > /etc/wireguard/server.pub
-  echo "[$HOST_TAG]   keys generated"
-fi
+wireguard_keys_build() {
+  local work=$1
+  # Миграция плоской раскладки: приватный ключ не меняется.
+  if [[ ! -s "$work/server.priv" && -s /etc/wireguard/server.priv ]]; then
+    cp /etc/wireguard/server.priv "$work/server.priv"
+  fi
+  if [[ ! -s "$work/server.priv" && -s /etc/wireguard/wg0.conf ]]; then
+    sed -n 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*//p' \
+      /etc/wireguard/wg0.conf > "$work/server.priv"
+  fi
+  # Сбой вычисления public key не означает, что нужно ротировать private.
+  # WG private key — 32 байта в base64; пустой/оборванный старый файл можно
+  # восстановить только если ещё нет признаков действующей идентичности.
+  if [[ ! $(cat "$work/server.priv" 2>/dev/null) =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+    if [[ -s /etc/wireguard/server.pub || -s /etc/wireguard/wg0.conf ]]; then
+      echo 'PKI: cannot replace an active WireGuard private key' >&2
+      return 1
+    fi
+    wg genkey > "$work/server.priv"
+  fi
+  wg pubkey < "$work/server.priv" > "$work/server.pub"
+  [[ -s "$work/server.pub" ]]
+  chmod 600 "$work/server.priv" "$work/server.pub"
+}
+# Не заменяем /etc/wireguard: это bind mount панели, содержащий wg0.conf.
+pki_transaction /etc/wireguard/keys wireguard_keys_build
+for key in server.priv server.pub; do
+  ln -sfn "keys/$key" "/etc/wireguard/.$key.link"
+  mv -Tf "/etc/wireguard/.$key.link" "/etc/wireguard/$key"
+done
 chmod 0600 /etc/wireguard/server.priv /etc/wireguard/server.pub
 SERVER_PRIV=$(cat /etc/wireguard/server.priv)
 

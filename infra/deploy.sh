@@ -380,6 +380,7 @@ run_stage_on_host() {
   push "$script" || return
   # Общие функции стадий (перезапуск службы только при смене её входов).
   push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return
+  push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return
 
   # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
   # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).

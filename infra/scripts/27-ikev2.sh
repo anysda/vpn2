@@ -32,6 +32,9 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
+# shellcheck source=infra/lib/anysda-pki.sh
+source "$PKI_LIB"
 
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 27-ikev2: skipped (only RU)"
@@ -168,44 +171,50 @@ EOF
   systemctl enable --now anysda-ikev2-cert-sync.path >/dev/null 2>&1
 else
   echo "[$HOST_TAG] [2/8] self-signed CA"
-  if [[ ! -f "$PKI/ca.key" ]]; then
-    echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
-    ( umask 077; pki --gen --type ecdsa --size 256 --outform pem > "$PKI/ca.key" )
-    pki --self --in "$PKI/ca.key" --type ecdsa \
-        --dn "CN=anysda-vpn2 IKEv2 CA" --ca \
-        --lifetime 3650 --outform pem > "$PKI/ca.crt"
-  fi
-  chmod 600 "$PKI/ca.key"
-  chmod 644 "$PKI/ca.crt"
-
-  echo "[$HOST_TAG] [3/8] self-signed server cert (CN=$ENTRY_HOST)"
-  NEED_SERVER=0
-  if [[ ! -f "$PKI/server.crt" ]]; then
-    NEED_SERVER=1
-  else
-    if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
-          | grep -E "IP Address:${ENTRY_HOST}( |$|,)" >/dev/null; then
-      echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
-      NEED_SERVER=1
+  ikev2_pki_build() {
+    local PKI=$1
+    pki_require_key "$PKI/ca.key" "$PKI/ca.crt"
+    if ! pki_cert_valid "$PKI/ca.crt"; then
+      echo "[$HOST_TAG]   generating CA (ECDSA P-256, 10y)"
+      pki --self --in "$PKI/ca.key" --type ecdsa \
+          --dn "CN=anysda-vpn2 IKEv2 CA" --ca \
+          --lifetime 3650 --outform pem > "$PKI/ca.crt"
     fi
-  fi
-  if [[ "$NEED_SERVER" == "1" ]]; then
-    TMP=$(mktemp -d)
-    trap 'rm -rf "$TMP"' EXIT
-    pki --gen --type ecdsa --size 256 --outform pem > "$TMP/server.key"
-    pki --pub --in "$TMP/server.key" --type ecdsa --outform pem > "$TMP/server.pub"
-    pki --issue --cacert "$PKI/ca.crt" --cakey "$PKI/ca.key" \
-        --in "$TMP/server.pub" --type pub \
-        --dn "CN=$ENTRY_HOST" \
-        --san "$ENTRY_HOST" \
-        --flag serverAuth --flag ikeIntermediate \
-        --lifetime 1825 \
-        --outform pem > "$TMP/server.crt"
-    install -m 0600 "$TMP/server.key" "$PKI/server.key"
-    install -m 0644 "$TMP/server.crt" "$PKI/server.crt"
-    rm -rf "$TMP"
-    trap - EXIT
-  fi
+    chmod 600 "$PKI/ca.key"
+    chmod 644 "$PKI/ca.crt"
+    pki_check_pair "$PKI/ca.key" "$PKI/ca.crt"
+    openssl verify -CAfile "$PKI/ca.crt" "$PKI/ca.crt" >/dev/null
+
+    echo "[$HOST_TAG] [3/8] self-signed server cert (CN=$ENTRY_HOST)"
+    local NEED_SERVER=0
+    pki_require_key "$PKI/server.key" "$PKI/server.crt"
+    if ! pki_pair_valid "$PKI/server.key" "$PKI/server.crt" || \
+        ! openssl verify -CAfile "$PKI/ca.crt" "$PKI/server.crt" >/dev/null 2>&1; then
+      NEED_SERVER=1
+    else
+      if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
+            | grep -E "IP Address:${ENTRY_HOST}( |$|,)" >/dev/null; then
+        echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
+        NEED_SERVER=1
+      fi
+    fi
+    if [[ "$NEED_SERVER" == "1" ]]; then
+      pki --pub --in "$PKI/server.key" --type ecdsa --outform pem > "$PKI/server.pub"
+      pki --issue --cacert "$PKI/ca.crt" --cakey "$PKI/ca.key" \
+          --in "$PKI/server.pub" --type pub \
+          --dn "CN=$ENTRY_HOST" \
+          --san "$ENTRY_HOST" \
+          --flag serverAuth --flag ikeIntermediate \
+          --lifetime 1825 \
+          --outform pem > "$PKI/server.crt"
+      rm -f "$PKI/server.pub"
+    fi
+    pki_check_pair "$PKI/server.key" "$PKI/server.crt"
+    openssl verify -CAfile "$PKI/ca.crt" -purpose sslserver "$PKI/server.crt" >/dev/null
+    chmod 600 "$PKI/ca.key" "$PKI/server.key"
+    chmod 644 "$PKI/ca.crt" "$PKI/server.crt"
+  }
+  pki_transaction "$PKI" ikev2_pki_build
   install -m 644 "$PKI/ca.crt"      /etc/swanctl/x509ca/anysda-ca.crt
   install -m 644 "$PKI/server.crt"  /etc/swanctl/x509/anysda-server.crt
   install -m 600 "$PKI/server.key"  /etc/swanctl/private/anysda-server.key

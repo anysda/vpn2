@@ -19,7 +19,7 @@ FROM mirror.gcr.io/library/node:24-slim AS runtime
 # командой. Без пакета она падает с `spawn ip ENOENT`, ошибка глотается catch'ем
 # и ULA молча не появляется на wg0 — телега продолжает висеть в таймаутах.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools iproute2 openssl \
+  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools iproute2 openssl util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

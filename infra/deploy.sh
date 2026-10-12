@@ -360,25 +360,25 @@ run_stage_on_host() {
   local script="$DEPLOY_ROOT/scripts/${stage}.sh"
   [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
 
-  load_env "$host"
+  load_env "$host" || return
   log "[$stage → $host] starting"
 
   # Ship a self-contained env file alongside the stage script.
   # SSH_PASS — локальный секрет оркестратора, не должен покидать машину деплоя.
   local rendered_env="$DEPLOY_ROOT/secrets/rendered/${host}.env"
-  mkdir -p "$(dirname "$rendered_env")"
-  chmod 700 "$(dirname "$rendered_env")" 2>/dev/null || true
+  mkdir -p "$(dirname "$rendered_env")" || return
+  chmod 700 "$(dirname "$rendered_env")" || return
   {
-    cat "$DEPLOY_ROOT/envs/all.env"
+    cat "$DEPLOY_ROOT/envs/all.env" || return
     echo
     grep -v '^SSH_PASS=' "$DEPLOY_ROOT/envs/${host}.env"
-  } > "$rendered_env"
-  chmod 600 "$rendered_env"
+  } > "$rendered_env" || return
+  chmod 600 "$rendered_env" || return
 
-  push "$rendered_env" "${host}.env"
-  push "$script"
+  push "$rendered_env" "${host}.env" || return
+  push "$script" || return
   # Общие функции стадий (перезапуск службы только при смене её входов).
-  push "$DEPLOY_ROOT/lib/anysda-svc.sh"
+  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return
 
   # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
   # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).
@@ -386,18 +386,18 @@ run_stage_on_host() {
     local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
     if [[ -s "$combined" ]]; then
       log "[$stage → $host] раскатываю $(wc -l < "$combined") ключ(а/ей)"
-      push "$combined" "orchestrator_keys"
+      push "$combined" "orchestrator_keys" || return
     fi
     local entry_key="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
     if [[ "$host" != ru && -s "$entry_key" ]]; then
-      push "$entry_key" "entry_mgmt_key"
+      push "$entry_key" "entry_mgmt_key" || return
     fi
   fi
 
   if [[ "$stage" == "10-foreign" ]]; then
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
-    push "$tpl" "sing-box-server.json.tpl"
+    push "$tpl" "sing-box-server.json.tpl" || return
   fi
 
   if [[ "$stage" == "20-ru-router" ]]; then
@@ -405,28 +405,28 @@ run_stage_on_host() {
     [[ -f "$sec" ]] || die "secrets/foreign-secrets.env не найден — prep_ru_router не запускался?"
     local gen="$DEPLOY_ROOT/lib/gen-router-config.py"
     [[ -f "$gen" ]] || die "lib/gen-router-config.py не найден"
-    push "$sec" "foreign-secrets.env"
-    push "$gen" "gen-router-config.py"
+    push "$sec" "foreign-secrets.env" || return
+    push "$gen" "gen-router-config.py" || return
     # TLS-pin для Hysteria2 outbound: cert каждого экзита (если уже опубликован
     # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
     if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs"
+      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs" || return
     fi
     if [[ -d "$DEPLOY_ROOT/secrets/exit-hostkeys" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys"
+      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys" || return
     fi
   fi
 
   # 22-adguard берёт из генератора апстрим YouTube -> российский резолвер:
   # список доменов и адрес резолвера живут только в gen-router-config.py.
   if [[ "$stage" == "22-adguard" ]]; then
-    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py"
+    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py" || return
   fi
 
   if [[ "$stage" == "21-failover-watchdog" ]]; then
     local wd="$DEPLOY_ROOT/lib/failover-watchdog.py"
     [[ -f "$wd" ]] || die "lib/failover-watchdog.py не найден"
-    push "$wd" "failover-watchdog.py"
+    push "$wd" "failover-watchdog.py" || return
   fi
 
   # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
@@ -434,7 +434,7 @@ run_stage_on_host() {
   # thing 30-frontend still needs from the orchestrator side is the rails
   # template (anysda-config.yaml.tpl).
   if [[ "$stage" == "30-frontend" ]]; then
-    push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl"
+    push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl" || return
   fi
 
   # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен генератор
@@ -443,7 +443,7 @@ run_stage_on_host() {
     for f in gen-yt-quic-nft.py google-prefixes.json; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f"
+      push "$lib" "$f" || return
     done
   fi
 
@@ -453,15 +453,15 @@ run_stage_on_host() {
     for f in anysda-backup.sh anysda-restore.sh anysda-backup-list.sh; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f"
+      push "$lib" "$f" || return
     done
   fi
 
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
   # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
-  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-bash -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh && apt_prepare; exit 0'" | sed -u "s/^/[$host]/"
+  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
+bash -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0

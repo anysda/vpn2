@@ -22,10 +22,10 @@ load_env() {
   local host="$1"
   set -a
   # shellcheck disable=SC1091
-  source "$DEPLOY_ROOT/envs/all.env"
+  source "$DEPLOY_ROOT/envs/all.env" || { set +a; return 1; }
   if [[ -f "$DEPLOY_ROOT/envs/$host.env" ]]; then
     # shellcheck disable=SC1091
-    source "$DEPLOY_ROOT/envs/$host.env"
+    source "$DEPLOY_ROOT/envs/$host.env" || { set +a; return 1; }
   else
     die "no env for host '$host'"
   fi

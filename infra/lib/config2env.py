@@ -19,8 +19,12 @@ from hy2_bandwidth import bandwidth_fields  # noqa: E402
 
 
 def shq(v):
-    """Значение для *.env в одинарных кавычках: `source` вернёт его байт в байт."""
-    return "'" + str(v).replace("'", "'\\''") + "'"
+    """Одна строка присваивания; Bash source вернёт значение байт в байт.
+
+    Деплой удаляет SSH_PASS построчно перед передачей env удалённой стадии.
+    Переводы строк поэтому записываются как ANSI-C литералы, а не буквально.
+    """
+    return "'" + str(v).replace("'", "'\\''").replace('\n', "'$'\\n''").replace('\r', "'$'\\r''") + "'"
 
 
 def unquote_scalar(v, key='значение'):

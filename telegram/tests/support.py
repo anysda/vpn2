@@ -20,7 +20,8 @@ def load_bot(extra_env=None):
     }
     bot = ModuleType('audit_bot')
     with patch.dict(os.environ, env, clear=True), patch.object(Path, 'exists', return_value=False):
-        exec(compile(source, str(path), 'exec'), bot.__dict__)
+        filename = f'{path}@{revision}' if revision else str(path)
+        exec(compile(source, filename, 'exec'), bot.__dict__)
     return bot
 
 

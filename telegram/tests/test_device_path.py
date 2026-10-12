@@ -35,7 +35,8 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         for helper in (bot.api_delete_device, bot.api_reissue_device,
                        bot.api_wg_config, bot.api_ovpn_config):
             with self.subTest(helper=helper.__name__), \
-                    patch.object(bot, '_bot_request', AsyncMock()) as request:
+                    patch.object(bot, '_bot_request', AsyncMock(
+                        return_value=httpx.Response(200, json={}))) as request:
                 with self.assertRaises(bot.BotApiError):
                     await helper(200, '7?chatId=999#')
                 request.assert_not_awaited()

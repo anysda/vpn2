@@ -6,6 +6,7 @@ import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
 import { collectorState, deviceTrafficHourly, devices } from '../database/schema'
 import { ikev2Deltas, type SaCounters, type SaSample } from './ikev2-counters'
+import { coalesceRuns } from './coalesce'
 
 const execFileP = promisify(execFile)
 
@@ -143,7 +144,7 @@ async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSam
   return samples
 }
 
-export async function collectTraffic(): Promise<void> {
+export const collectTraffic = coalesceRuns(async (): Promise<void> => {
   const log = useLogger()
   const db = useDb()
 
@@ -176,7 +177,6 @@ export async function collectTraffic(): Promise<void> {
   for (const s of [...wg, ...ovpn]) {
     const key = `${s.deviceId}:${s.proto}`
     const last = lastSeen.get(key)
-    lastSeen.set(key, { rx: s.rx, tx: s.tx })
     if (!last) continue // первое наблюдение — только базируемся
     // счётчик мог обнулиться (рестарт сервиса) → берём текущее значение целиком
     add(s.deviceId, s.rx >= last.rx ? s.rx - last.rx : s.rx, s.tx >= last.tx ? s.tx - last.tx : s.tx)
@@ -230,6 +230,11 @@ export async function collectTraffic(): Promise<void> {
   }
   const [first, ...rest] = writes
   if (first) await db.batch([first, ...rest])
+  // Продвигаем снимок только после COMMIT: SQLITE_FULL/BUSY не должны
+  // съедать интервал WG/OpenVPN. Прогоны последовательны через coalesceRuns.
+  for (const s of [...wg, ...ovpn]) {
+    lastSeen.set(`${s.deviceId}:${s.proto}`, { rx: s.rx, tx: s.tx })
+  }
   for (const [id, d] of deltas) {
     const list = recent.get(id) ?? []
     list.push({ at: now, bytes: Math.round(d.rx) + Math.round(d.tx) })
@@ -254,4 +259,4 @@ export async function collectTraffic(): Promise<void> {
     { wg: wg.length, ovpn: ovpn.length, ikev2: ikev2?.length ?? null, updated: deltas.size },
     'traffic: collected',
   )
-}
+})

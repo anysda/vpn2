@@ -135,7 +135,9 @@ apt_auto_pause() {
   done
   # Обе службы oneshot: пока работают, они в activating, а не active.
   while busy=$(for j in "${jobs[@]}"; do
-      [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]] && printf '%s ' "$j"
+      if [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]]; then
+        printf '%s ' "$j"
+      fi
     done) && [[ -n "$busy" ]]; do
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "автообновление так и не закончилось за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"

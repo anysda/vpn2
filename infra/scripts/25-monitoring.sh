@@ -115,19 +115,28 @@ docker run -d \
 # ----------------------------------------------------------------------------
 # 4. Проверка targets
 # ----------------------------------------------------------------------------
-# Ждём первый опрос всех целей (scrape_interval 2s), не дольше прежних 5 с.
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  _t=$(curl -sS http://127.0.0.1:8428/api/v1/targets 2>/dev/null || true)
-  [[ "$_t" == *'"health":"'* && "$_t" != *'"health":"unknown"'* ]] && break
-  sleep 0.5
+# jq ставит bootstrap. HTTP 200 и health=down не означают, что мониторинг
+# работает: ждём успешный скрейп entry и КАЖДОГО настроенного экзита.
+_expected=1
+for _ in $EXIT_TAGS; do ((_expected+=1)); done
+_health_ok=false
+for _ in $(seq 1 30); do
+  _t=$(curl -fsS --max-time 3 http://127.0.0.1:8428/api/v1/targets 2>/dev/null || true)
+  if jq -e --argjson expected "$_expected" '
+    .status == "success" and (.data.activeTargets | length) == $expected
+    and all(.data.activeTargets[]; .health == "up")
+  ' <<< "$_t" >/dev/null 2>&1; then
+    _health_ok=true
+    break
+  fi
+  sleep 1
 done
 echo "[$HOST_TAG] scrape health:"
-if command -v jq >/dev/null 2>&1; then
-  curl -sS http://127.0.0.1:8428/api/v1/targets \
-    | jq -r '.data.activeTargets[] | "  " + (.labels.host // "?") + " (" + .scrapeUrl + "): " + .health'
-else
-  curl -sS http://127.0.0.1:8428/api/v1/targets \
-    | grep -oE '"health":"[a-z]+"' | sort | uniq -c | sed "s/^/  /"
+jq -r '.data.activeTargets[] | "  " + (.labels.host // "?") + " (" + .scrapeUrl + "): " + .health' \
+  <<< "$_t" 2>/dev/null || true
+if [[ "$_health_ok" != true ]]; then
+  echo "[$HOST_TAG] мониторинг не готов: ожидается $_expected доступных scrape-целей" >&2
+  exit 1
 fi
 
 mkdir -p "$STAMP_DIR"

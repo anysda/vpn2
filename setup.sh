@@ -141,11 +141,38 @@ validate_tag() {
   return 0
 }
 
-# Панель с выдуманными данными в docker на этой машине, без вопросов и без
-# config.yaml: посмотреть фронт в браузере. Подробности в app/e2e/front-test.sh.
+usage() {
+  cat <<'EOF'
+anysda-vpn — интерактивный конфигуратор
+Задаёт вопросы → записывает config.yaml → генерирует infra/envs/*.env
+
+Команды:
+  ./setup.sh                    Запустить мастер настройки
+  ./setup.sh --front-test       Запустить тестовую панель
+  ./setup.sh --front-test-down  Остановить тестовую панель
+  ./setup.sh -h | --help        Показать справку
+EOF
+}
+
+# Все аргументы проверяем до запуска мастера или тестовой панели.
+if (( $# > 1 )); then
+  printf 'Неожиданный аргумент: %s\n' "$2" >&2
+  usage >&2
+  exit 1
+fi
+
 case "${1:-}" in
+  -h|--help)        usage; exit 0 ;;
+  # Панель с выдуманными данными, без вопросов и без config.yaml.
   --front-test)      exec bash "$REPO_ROOT/app/e2e/front-test.sh" up ;;
   --front-test-down) exec bash "$REPO_ROOT/app/e2e/front-test.sh" down ;;
+  *)
+    if (( $# > 0 )); then
+      printf 'Неизвестный аргумент: %s\n' "$1" >&2
+      usage >&2
+      exit 1
+    fi
+    ;;
 esac
 
 # Мастер запускается до bootstrap: на минимальной системе его утилиты ещё

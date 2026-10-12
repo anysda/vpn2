@@ -27,6 +27,18 @@ const showWg = ref(false)
 const wgConf = ref('')
 const wgLoading = ref(false)
 const wgSending = ref(false)
+const wgHasAAAA = ref(false)
+let wgWarningRequest = 0
+
+async function loadWgWarning() {
+  const request = ++wgWarningRequest
+  wgHasAAAA.value = false
+  const result = await $fetch<{ hasAAAA: boolean }>('/api/wg-endpoint-warning', {
+    timeout: 1000,
+    retry: 0,
+  }).catch(() => ({ hasAAAA: false }))
+  if (request === wgWarningRequest) wgHasAAAA.value = result.hasAAAA
+}
 
 async function loadWg() {
   wgConf.value = ''
@@ -51,6 +63,7 @@ watch(showWg, (now) => {
   if (!now) return
   wgQrSrc.value = `${wgQrUrl(props.clientId, props.device.id)}?t=${Date.now()}`
   loadWg()
+  loadWgWarning()
 })
 
 async function copyWg() {
@@ -317,6 +330,13 @@ async function doDelete() {
           <p class="text-xs text-(--ui-text-muted) text-center">
             Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
           </p>
+
+          <UAlert
+            v-if="wgHasAAAA"
+            color="warning"
+            icon="i-lucide-triangle-alert"
+            description="Уберите у домена IPv6-запись (AAAA), иначе у клиентов на Linux VPN может не заработать."
+          />
 
           <div class="flex justify-center">
             <img

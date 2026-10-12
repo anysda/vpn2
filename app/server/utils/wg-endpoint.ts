@@ -17,7 +17,7 @@ function isPublicIpv4(address: string): boolean {
  * IPv6 endpoint попадает в split-local 2000::/3. Используем IPv4 входа;
  * при IPv6 в entry.host — единственный публичный IPv4 интерфейсов сервера
  * (панель разворачивается с --network host). За NAT нужен явный IPv4 входа.
- * Политика доменных endpoint остаётся отдельным решением владельца.
+ * Домены сохраняем; о наличии AAAA отдельно предупреждаем в панели.
  */
 export function wgEndpoint(host: string): string {
   const literal = host.trim().replace(/^\[(.*)\]$/, '$1')

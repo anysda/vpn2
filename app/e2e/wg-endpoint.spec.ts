@@ -65,7 +65,7 @@ test('WireGuard: без публичного IPv4 профиль не выдаё
   }
 })
 
-test('WireGuard: доменный endpoint сохранён до решения владельца', () => {
+test('WireGuard: доменный endpoint сохраняется в профиле', () => {
   const conf = buildWgClientConfig({ ...params, serverEndpoint: 'vpn.example.test' })
   expect(conf).toContain('Endpoint = vpn.example.test:51900\n')
 })

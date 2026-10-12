@@ -223,8 +223,9 @@ do_check() {
 prep_ru_router() {
   log "prep: тяну секреты Hysteria2 + clash-api с экзит-нод"
   local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
-  mkdir -p "$DEPLOY_ROOT/secrets"
-  : > "$sec"
+  # Права закрываем до записи: сбор может оборваться между экзитами.
+  install -d -m 700 "$DEPLOY_ROOT/secrets" || return
+  install -m 600 /dev/null "$sec" || return
 
   for host in $(exit_tags); do
     load_env "$host"

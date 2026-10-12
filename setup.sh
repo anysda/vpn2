@@ -549,7 +549,9 @@ if orch_key:
     if orch_pubkey:
         lines.append('orchestrator_pubkey: ' + orch_pubkey)
 
-with open(os.environ['CONFIG_FILE'], 'w', encoding='utf-8') as f:
+fd = os.open(os.environ['CONFIG_FILE'], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w', encoding='utf-8') as f:
+    os.fchmod(f.fileno(), 0o600)
     f.write('\n'.join(lines) + '\n')
 PYEOF
 

@@ -151,6 +151,12 @@ def parse_yaml(text):
     return cfg
 
 
+def prepare_private(path):
+    """Новый файл сразу 0600; существующий закрываем до записи секретов."""
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+
+
 def materialize_orchestrator_key(cfg):
     """Раскладывает orchestrator SSH-ключ из config.yaml в ~/.ssh/id_ed25519.
 
@@ -165,8 +171,8 @@ def materialize_orchestrator_key(cfg):
     ssh_dir = Path.home() / '.ssh'
     ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     priv = ssh_dir / 'id_ed25519'
+    prepare_private(priv)
     priv.write_bytes(base64.b64decode(key_b64))
-    priv.chmod(0o600)
     pub_line = cfg.get('orchestrator_pubkey', '')
     if pub_line:
         pub = ssh_dir / 'id_ed25519.pub'
@@ -482,8 +488,8 @@ def main():
             ]
 
     ru_env = envs_dir / 'ru.env'
+    prepare_private(ru_env)
     ru_env.write_text('\n'.join(lines) + '\n')
-    ru_env.chmod(0o600)
 
     # ------------------------------------------------------------------
     # Per-exit env files (октет закреплён за тегом, см. assign_mgmt_octets).
@@ -515,8 +521,8 @@ def main():
             lines.append(f'HY2_DIRECT_PORT={hy2_port}')
 
         ex_env = envs_dir / f'{tag}.env'
+        prepare_private(ex_env)
         ex_env.write_text('\n'.join(lines) + '\n')
-        ex_env.chmod(0o600)
 
     # ------------------------------------------------------------------
     # exits.env

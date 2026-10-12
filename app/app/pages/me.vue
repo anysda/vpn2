@@ -259,7 +259,7 @@ async function saveSso() {
         variant="soft"
         icon="i-lucide-life-buoy"
         title="Пароль — аварийный вход"
-        description="Обычный вход идёт через Authentik. Пароль остаётся рабочим на случай, когда Authentik недоступен: форма открывается по адресу /login?direct=1"
+        description="Форма входа по паролю открывается по адресу /login?direct=1, если включено «Оставить вход по паролю». При выключенной настройке аварийный вход тоже недоступен."
       />
       <form class="space-y-3" @submit.prevent="changePassword">
         <UFormField label="Текущий пароль">

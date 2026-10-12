@@ -12,11 +12,13 @@ class OpenvpnFirewallTests(unittest.TestCase):
             with self.subTest(proto=proto), tempfile.TemporaryDirectory() as directory:
                 result = bash(f'OVPN_PROTO={proto}\n' + '''
 OVPN_PORT=1194
+OVPN_SUBNETS='10.67.67.0/24 10.67.68.0/24'
 sysctl() { :; }
 ufw() { echo "$*" >> calls; }
 ''' + block + '\ncat calls\n', directory)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(f'allow 1194/{transport} comment', result.stdout)
+                self.assertIn('allow proto udp from 10.67.68.0/24 to 10.99.0.1 port 53', result.stdout)
 
 
 if __name__ == '__main__':

@@ -26,7 +26,8 @@ fi
 ''')
             fake_ip.chmod(0o755)
             processes = []
-            env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', RULES=str(root / 'rules'))
+            env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', RULES=str(root / 'rules'),
+                       WG_SUBNETS='10.66.66.0/24')
             for stage in ('28-wireguard', '29-openvpn'):
                 routing = source(f'infra/scripts/{stage}.sh').split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
                 routing = routing.replace('/run/anysda-vpn-routing.lock', str(root / 'routing.lock'))

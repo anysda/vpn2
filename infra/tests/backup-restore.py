@@ -29,6 +29,18 @@ EXTRA = ('/etc/caddy/Caddyfile', '/opt/AdGuardHome/AdGuardHome.yaml',
          '/var/anysda/.stamps/30-frontend')
 
 
+# restore выводит server.pub из PrivateKey wg0.conf, поэтому ключ должен быть
+# настоящим; метка состояния остаётся в комментарии.
+WG_KEYS = {'archived': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+           'live': 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='}
+
+
+def body(path, state):
+    if path.endswith('/wg0.conf'):
+        return f'[Interface]\nPrivateKey = {WG_KEYS[state]}\n# {state}:{path}\n'
+    return f'{state}:{path}'
+
+
 def write(path, content, mode=0o600):
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +76,7 @@ class BackupRestore(unittest.TestCase):
             shutil.rmtree(path, ignore_errors=True)
             path.mkdir(parents=True)
         for path in (*FILES, *EXTRA):
-            write(path, 'archived:' + path)
+            write(path, body(path, 'archived'))
         write('/etc/anysda/backup.env', '''BACKUP_BACKEND=local
 BACKUP_LOCAL_DIR=/var/backups/anysda-vpn2
 BACKUP_RETENTION=2
@@ -120,7 +132,7 @@ exit 0
     def test_safety_wal_and_all_overwritten_files(self):
         self.backup()
         for path in (*FILES, *EXTRA):
-            write(path, 'live:' + path)
+            write(path, body(path, 'live'))
         # Stop failure keeps the writer alive and lets us inspect the safety
         # snapshot made before any swap. Exactly one committed row is in WAL.
         write('/test-output/stop-fails', '1')
@@ -136,9 +148,9 @@ exit 0
         self.assertEqual(count, 1)
         self.assertEqual(missing, [])
         for path in (*FILES, *EXTRA):
-            self.assertEqual((snapshot / path.lstrip('/')).read_text(), 'live:' + path)
+            self.assertEqual((snapshot / path.lstrip('/')).read_text(), body(path, 'live'))
         self.assertNotEqual(result.returncode, 0, 'must abort if writer cannot stop')
-        self.assertEqual(Path(FILES[0]).read_text(), 'live:' + FILES[0])
+        self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'live'))
 
     def test_full_round_trip_and_stale_wal(self):
         bundle = self.backup()
@@ -162,7 +174,7 @@ sys.stdin.read()
         self.assertEqual(writer.stdout.readline(), 'ready\n')
         write('/test-output/writer.pid', str(writer.pid))
         for path in FILES:
-            write(path, 'live:' + path)
+            write(path, body(path, 'live'))
         result = self.script('restore', 'latest', '--force')
         self.assertEqual(result.returncode, 0, result.stdout)
         with sqlite3.connect(DB) as restored:
@@ -172,7 +184,7 @@ sys.stdin.read()
         self.assertEqual(rows, [('archived-client',)])
         self.assertEqual(integrity, 'ok')
         for path in FILES:
-            self.assertEqual(Path(path).read_text(), 'archived:' + path)
+            self.assertEqual(Path(path).read_text(), body(path, 'archived'))
         snapshot = self.safety()
         with sqlite3.connect(snapshot / str(DB).lstrip('/')) as saved:
             self.assertEqual(saved.execute('SELECT name FROM clients').fetchall(),

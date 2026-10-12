@@ -42,13 +42,14 @@ trap cleanup EXIT
 # Все тесты входят с одного адреса (Caddy в docker), а лимит входов панели -
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
 stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
-  -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000
+  -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"
 
 rc=0
 (
   cd "$APP_DIR"
   E2E_BASE_URL="http://127.0.0.1:$PORT" E2E_ADMIN_PASSWORD="$PASS" \
+  E2E_FAULT_CONTAINER="$NAME" \
   E2E_PUBLIC_HOST=$PUBLIC_HOST E2E_NODES="ru $EXIT_TAGS" \
     ./node_modules/.bin/playwright test "$@"
 ) || rc=$?

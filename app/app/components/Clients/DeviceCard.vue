@@ -236,9 +236,8 @@ async function doDelete() {
     confirmDelete.value = false
     emit('changed')
   }
-  catch (e) {
-    const err = e as { statusMessage?: string }
-    toast.add({ title: err.statusMessage ?? 'Ошибка удаления', color: 'error' })
+  catch {
+    toast.add({ title: 'Ошибка удаления', color: 'error' })
   }
   finally {
     deleting.value = false

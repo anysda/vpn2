@@ -6,7 +6,7 @@ import { notifyBot, notifyClient } from './bot-events'
 import { minExpiryMs } from './expiry'
 import { generateClientPassword } from './password'
 import { syncWireguardConfig } from './wireguard'
-import { caReady, killOvpnClientQuiet, ovpnCn, removeCcd, revokeClientCert, syncOpenvpnConfig } from './openvpn'
+import { killOvpnClientQuiet, ovpnCn, removeCcd, syncOpenvpnConfig, withRevokedDeviceCerts } from './openvpn'
 import { syncIkev2, terminateIkev2Sa } from './ikev2'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
@@ -173,9 +173,12 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
 /** Удалить клиента: каскадно девайсы, ресинк WG, отзыв OVPN-сертификатов. */
 export async function deleteClient(id: number): Promise<void> {
   const db = useDb()
-  const devRows = await db.select().from(devices).where(eq(devices.clientId, id))
-
-  const [removed] = await db.delete(clients).where(eq(clients.id, id)).returning()
+  // При частичном отзыве оставляем ВСЕ записи: повтор проходит уже отозванные
+  // серийники и доводит оставшиеся до CRL, прежде чем сработает каскад DELETE.
+  const { removed, devRows } = await withRevokedDeviceCerts(eq(devices.clientId, id), async (devRows) => {
+    const [removed] = await db.delete(clients).where(eq(clients.id, id)).returning()
+    return { removed, devRows }
+  })
   if (!removed) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   // Уведомить привязанного клиента об удалении профиля. Ждём отправки
@@ -190,14 +193,9 @@ export async function deleteClient(id: number): Promise<void> {
 
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client delete failed'))
 
-  if (devRows.length && await caReady()) {
-    for (const d of devRows) {
-      if (!d.ovpnCert) continue
-      await revokeClientCert(d.ovpnCert).catch(err =>
-        useLogger().error({ err }, 'ovpn revoke after client delete failed'))
-      await removeCcd(ovpnCn(d.id)).catch(() => {})
-      await killOvpnClientQuiet(ovpnCn(d.id))
-    }
+  for (const d of devRows) {
+    await removeCcd(ovpnCn(d.id)).catch(() => {})
+    await killOvpnClientQuiet(ovpnCn(d.id))
   }
 
   // IKEv2: терминируем SA каждого устройства + syncIkev2 убирает secrets.
@@ -207,4 +205,25 @@ export async function deleteClient(id: number): Promise<void> {
       useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after client delete skipped'))
   }
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client delete failed'))
+  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+}
+
+/** Общее удаление устройства из панели и бота; ошибка CA оставляет запись для повтора. */
+export async function deleteDevice(clientId: number, deviceId: number) {
+  const db = useDb()
+  const device = await withRevokedDeviceCerts(and(eq(devices.id, deviceId), eq(devices.clientId, clientId))!, async ([device]) => {
+    if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+    await db.delete(devices).where(eq(devices.id, deviceId))
+    return device
+  })
+  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device delete failed'))
+  await removeCcd(ovpnCn(device.id)).catch(() => {})
+  await killOvpnClientQuiet(ovpnCn(device.id))
+  if (device.ikev2Username) {
+    await terminateIkev2Sa(device.ikev2Username).catch(err =>
+      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after device delete skipped'))
+  }
+  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device delete failed'))
+  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+  return device
 }

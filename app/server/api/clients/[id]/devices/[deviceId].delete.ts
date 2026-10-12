@@ -1,12 +1,9 @@
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { useDb } from '../../../../database/client'
-import { clients, devices } from '../../../../database/schema'
+import { clients } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
 import { notifyClient } from '../../../../utils/bot-events'
-import { syncWireguardConfig } from '../../../../utils/wireguard'
-import { caReady, killOvpnClientQuiet, ovpnCn, removeCcd, revokeClientCert } from '../../../../utils/openvpn'
-import { syncIkev2, terminateIkev2Sa } from '../../../../utils/ikev2'
-import { syncClientPrefsFile } from '../../../../utils/client-prefs'
+import { deleteDevice } from '../../../../utils/client-ops'
 
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -17,29 +14,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const db = useDb()
-  const [device] = await db.select().from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
-    .limit(1)
-  if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  await db.delete(devices).where(eq(devices.id, deviceId))
-  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device delete failed'))
-
-  if (device.ovpnCert && await caReady()) {
-    await revokeClientCert(device.ovpnCert).catch(err =>
-      useLogger().error({ err }, 'ovpn revoke after device delete failed'))
-    await removeCcd(ovpnCn(device.id)).catch(() => {})
-    await killOvpnClientQuiet(ovpnCn(device.id))
-  }
-
-  // IKEv2: терминировать активную SA устройства до syncIkev2 — иначе
-  // charon ещё держит соединение пока не истечёт rekey.
-  if (device.ikev2Username) {
-    await terminateIkev2Sa(device.ikev2Username).catch(err =>
-      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate-sa after device delete skipped'))
-  }
-  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device delete failed'))
-  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+  const device = await deleteDevice(clientId, deviceId)
 
   // Уведомить привязанного клиента — устройство удалил администратор.
   const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)

@@ -1,11 +1,14 @@
 import { execFile } from 'node:child_process'
+import { X509Certificate } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { and, eq, isNull } from 'drizzle-orm'
+import type { SQL } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
+import type { Device } from '../database/schema'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
@@ -134,9 +137,24 @@ async function issueClientCert(cn: string): Promise<{ cert: string, key: string 
   }
 }
 
-/** Revoke a client cert and regenerate the CRL OpenVPN reads via crl-verify. */
-export function revokeClientCert(certPem: string): Promise<void> {
-  return withCaLock(() => revokeClientCertOnce(certPem))
+/** Сохраняем записи до публикации CRL; выдача/перевыпуск не вклинится перед DELETE. */
+export function withRevokedDeviceCerts<T>(where: SQL, remove: (rows: Device[]) => Promise<T>): Promise<T> {
+  return withCaLock(async () => {
+    // Читаем всю выборку внутри очереди, включая устройства, чья выдача
+    // сертификата закончилась, пока удаление ожидало предыдущую операцию CA.
+    const rows = await useDb().select().from(devicesTable).where(where).orderBy(devicesTable.id)
+    try {
+      for (const row of rows) {
+        // Даже при недоступной CA нельзя потерять сохранённый сертификат.
+        if (row.ovpnCert) await revokeClientCertOnce(row.ovpnCert)
+      }
+    }
+    catch (err) {
+      useLogger().error({ err }, 'ovpn revoke before delete failed')
+      throw createError({ statusCode: 503, statusMessage: 'ovpn_revoke_failed', message: 'Ошибка удаления' })
+    }
+    return remove(rows)
+  })
 }
 
 async function revokeClientCertOnce(certPem: string): Promise<void> {
@@ -144,7 +162,17 @@ async function revokeClientCertOnce(certPem: string): Promise<void> {
   try {
     const certPath = path.join(tmp, 'cert.pem')
     await fs.writeFile(certPath, certPem)
-    await exec('openssl', ['ca', '-config', OSSL_CNF, '-revoke', certPath], { timeout: 15_000 })
+    // После сбоя gencrl или частичного удаления клиента индекс уже содержит R.
+    // Проверяем серийник, а не текст ошибки openssl; CRL всё равно пересобираем.
+    const serial = new X509Certificate(certPem).serialNumber
+    const index = await fs.readFile(`${PKI_DIR}/index.txt`, 'utf8')
+    const revoked = index.split('\n').some((line) => {
+      const fields = line.split('\t')
+      return fields[0] === 'R' && fields[3]?.toUpperCase() === serial.toUpperCase()
+    })
+    if (!revoked) {
+      await exec('openssl', ['ca', '-config', OSSL_CNF, '-revoke', certPath], { timeout: 15_000 })
+    }
     await regenCrl()
   }
   finally {
@@ -154,7 +182,15 @@ async function revokeClientCertOnce(certPem: string): Promise<void> {
 
 /** Rebuild crl.pem from the CA index. OpenVPN re-reads it per new connection. */
 async function regenCrl(): Promise<void> {
-  await exec('openssl', ['ca', '-config', OSSL_CNF, '-gencrl', '-out', CRL_PEM], { timeout: 15_000 })
+  const tmp = `${CRL_PEM}.tmp`
+  try {
+    await exec('openssl', ['ca', '-config', OSSL_CNF, '-gencrl', '-out', tmp], { timeout: 15_000 })
+    await fs.chmod(tmp, 0o644)
+    await fs.rename(tmp, CRL_PEM)
+  }
+  finally {
+    await fs.rm(tmp, { force: true })
+  }
 }
 
 // Management OpenVPN обслуживает одно подключение за раз — команды панели

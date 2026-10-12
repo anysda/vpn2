@@ -29,7 +29,7 @@ const wgLoading = ref(false)
 const wgSending = ref(false)
 
 async function loadWg() {
-  if (wgConf.value) return
+  wgConf.value = ''
   wgLoading.value = true
   try {
     wgConf.value = await getWgConfig(props.clientId, props.device.id)
@@ -93,7 +93,7 @@ const ovpnLoading = ref(false)
 const ovpnSending = ref(false)
 
 async function loadOvpn() {
-  if (ovpnConf.value) return
+  ovpnConf.value = ''
   ovpnLoading.value = true
   try {
     ovpnConf.value = await getOvpnConfig(props.clientId, props.device.id)
@@ -152,7 +152,8 @@ const ikev2Sending = ref(false)
 const showIkev2Pass = ref(false)
 
 async function loadIkev2() {
-  if (ikev2Creds.value) return
+  ikev2Creds.value = null
+  showIkev2Pass.value = false
   ikev2Loading.value = true
   try {
     const r = await getIkev2Credentials(props.clientId, props.device.id)

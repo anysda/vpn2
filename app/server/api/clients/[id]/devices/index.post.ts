@@ -10,7 +10,7 @@ import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
 import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 import { readBodyAs } from '../../../../utils/validate'
 
-const Body = z.object({ name: z.string().min(1).max(64) })
+const Body = z.object({ name: z.string().trim().min(1).max(64) })
 
 /** Добавить девайс клиенту. Сразу выдаёт ключи WG/OVPN. */
 export default defineEventHandler(async (event) => {

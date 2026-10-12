@@ -4,7 +4,7 @@ import { updateClient } from '../../utils/client-ops'
 import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
-  name: z.string().min(1).max(64).optional(),
+  name: z.string().trim().min(1).max(64).optional(),
   expiresAt: z.iso.datetime().nullable().optional(),
   // null — безлимит.
   deviceLimit: z.number().int().min(1).max(999).nullable().optional(),

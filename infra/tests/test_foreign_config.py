@@ -27,6 +27,7 @@ class TestForeignConfigAudit(unittest.TestCase):
                     'chmod 600 config.json',
                     "printf '%s' new-config > sing-box-server.json.tpl",
                     'envsubst() { cat; }',
+                    'python3() { :; }',
                     'check_config() {',
                     # Validation must observe the old published file until success.
                     '  test "$(cat config.json)" = old-config || return 71',

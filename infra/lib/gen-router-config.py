@@ -34,7 +34,9 @@ import json
 import os
 import sys
 
-from hy2_bandwidth import bandwidth_fields
+# Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hy2_bandwidth import bandwidth_fields  # noqa: E402
 
 # ----------------------------------------------------------------------------
 # YouTube: домены, которые уводятся с экзитов на РФ-выход (см. yt_block ниже).

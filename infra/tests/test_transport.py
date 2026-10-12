@@ -112,7 +112,7 @@ RU_CLASH_SECRET=test-clash-secret
 
                 stage = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
                 exports = stage[stage.index('export HY2_UP_MBPS='):
-                                stage.index('envsubst < "$TPL"')]
+                                stage.index('SB_CONFIG_TMP=')]
                 exports = exports.replace('/tmp/anysda/hy2_bandwidth.py',
                                           str(ROOT / 'infra/lib/hy2_bandwidth.py'))
                 env = dict(os.environ, HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',

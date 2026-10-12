@@ -12,7 +12,9 @@ import re
 import sys
 from pathlib import Path
 
-from hy2_bandwidth import bandwidth_fields
+# Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from hy2_bandwidth import bandwidth_fields  # noqa: E402
 
 
 def shq(v):

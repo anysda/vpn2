@@ -501,7 +501,9 @@ export async function syncOpenvpnConfig(): Promise<void> {
   }
   for (const [cn, vaddr] of connected) {
     const ip = pinned.get(cn)
-    if (disabledCns.has(cn)) {
+    // DELETE мог закоммититься перед падением панели или отказом management.
+    // Повторяем разрыв оставшейся сессии по отсутствию устройства в БД.
+    if (disabledCns.has(cn) || (/^dev_\d+$/.test(cn) && !pinned.has(cn))) {
       await killOvpnClientQuiet(cn)
     }
     else if (ip && vaddr && vaddr !== ip) {

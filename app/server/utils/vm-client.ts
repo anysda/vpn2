@@ -62,12 +62,12 @@ function recallValue(instance: string, metricKey: string): number | null {
   return holdover.get(instance)?.get(metricKey) ?? null
 }
 
-async function instantQuery(promql: string): Promise<Map<string, number>> {
+async function instantQuery(promql: string, time?: number): Promise<Map<string, number>> {
   const url = useRuntimeConfig().vmUrl as string
   const result = new Map<string, number>()
   try {
     const data = await $fetch<VmResponse>(`${url}/api/v1/query`, {
-      query: { query: promql },
+      query: { query: promql, ...(time === undefined ? {} : { time }) },
       timeout: 3000,
     })
     if (data.status !== 'success') return result
@@ -153,10 +153,10 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
 const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
 const DAILY_CACHE_MS = 30_000
 
-/** Секунд с 00:00 по Москве; не меньше 60, чтобы окно increase() не было пустым. */
+/** Полных секунд с 00:00 по Москве, без захвата конца вчерашних суток. */
 function secondsSinceMskMidnight(nowMs = Date.now()): number {
   const sec = Math.floor(nowMs / 1000)
-  return Math.max(60, (sec + MSK_OFFSET_SEC) % 86400)
+  return (sec + MSK_OFFSET_SEC) % 86400
 }
 
 export interface DailyTraffic {
@@ -178,10 +178,18 @@ export async function fetchDailyTraffic(instances: string[]): Promise<Map<string
     for (const m of holdover.values()) { m.delete('rxDay'); m.delete('txDay') }
   }
   if (!dailyCache || now - dailyCache.at > DAILY_CACHE_MS) {
-    const range = `${secondsSinceMskMidnight(now)}s`
+    const seconds = secondsSinceMskMidnight(now)
+    // Окно [0s] VM интерпретирует автоматически. В первую секунду суток
+    // возвращаем ноль без запроса и не кэшируем его на следующие 30 секунд.
+    if (seconds === 0) return new Map(instances.map(inst => [inst, { rxBytes: 0, txBytes: 0 }]))
+    const range = `${seconds}s`
+    const time = Math.floor(now / 1000)
+    // increase_prometheus не берёт сэмпл перед окном (из вчерашнего дня).
+    // Фиксируем время вычисления вместе с длиной окна, чтобы его начало
+    // не сдвинулось, пока запрос идёт до VM.
     const [rx, tx] = await Promise.all([
-      instantQuery(`sum by(instance) (increase(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
-      instantQuery(`sum by(instance) (increase(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`),
+      instantQuery(`sum by(instance) (increase_prometheus(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
+      instantQuery(`sum by(instance) (increase_prometheus(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
     ])
     dailyCache = { at: now, day, rx, tx }
   }

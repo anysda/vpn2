@@ -133,7 +133,7 @@ function demoMetric(tag, q, t) {
   // карточка краснеет, потом приходит в себя.
   const flap = tag === DEGRADED && t % 120 < 20
   if (q.includes('timestamp(')) return flap ? 6 + (t % 120) / 4 : 0.4 + (t % 2)
-  if (q.includes('increase(')) {
+  if (q.includes('increase(') || q.includes('increase_prometheus(')) {
     const sinceMidnight = Math.max(60, (t + MSK_OFFSET_SEC) % 86400)
     const share = q.includes('receive') ? 1 : 0.38
     return p.mbps * 1e6 / 8 * sinceMidnight * share * 0.55

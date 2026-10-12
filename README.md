@@ -63,7 +63,7 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
 
 ## Стек
 
-Nuxt 4 (Vue 3, TS strict) · Nuxt UI 3 (Tailwind v4) · Nitro · Drizzle
+Nuxt 4 (Vue 3, TS strict) · Nuxt UI 4 (Tailwind v4) · Nitro · Drizzle
 ORM + libSQL (SQLite) · better-auth (сессии, TOTP, OIDC; пароли Argon2id) ·
 sing-box (Hysteria2) · WireGuard (kernel) +
 OpenVPN + strongSwan (IKEv2/IPsec, EAP-MSCHAPv2) · AdGuard Home ·

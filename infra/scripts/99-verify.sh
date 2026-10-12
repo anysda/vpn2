@@ -66,6 +66,9 @@ if [[ "$HOST_TAG" == ru ]]; then
   # Выключенный YouTube — штатный пропуск; включённый требует A/B-проверку.
   if [[ "${YT_ROUTE:-off}" == zapret ]]; then
     check 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
+    # Запасной маршрут: при сбое видеопробы YouTube уходит на VPN.
+    check 'yt-failover: selector доступен' /usr/local/bin/anysda-yt-failover --status
+    check 'yt-failover: таймер active' service anysda-yt-failover.timer
   else
     echo "[$HOST_TAG] yt-zapret: пропущен (youtube.route=${YT_ROUTE:-off})"
   fi

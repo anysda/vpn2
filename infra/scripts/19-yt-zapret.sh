@@ -120,6 +120,12 @@ quic_teardown() {
 
 teardown() {
   echo "[$HOST_TAG] YT_ROUTE=$YT_ROUTE — снимаю десинк (если был развёрнут)"
+  systemctl disable --now anysda-yt-failover.timer >/dev/null 2>&1 || true
+  systemctl stop anysda-yt-failover.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/anysda-yt-failover.timer \
+        /etc/systemd/system/anysda-yt-failover.service \
+        /usr/local/bin/anysda-yt-failover \
+        /var/lib/anysda-yt-failover/state.json
   quic_teardown
   for _u in anysda-yt-nfqws anysda-yt-nft anysda-yt-offload; do
     systemctl disable --now "$_u.service" >/dev/null 2>&1 || true
@@ -154,7 +160,7 @@ echo "[$HOST_TAG] [1/7] apt deps"
 export DEBIAN_FRONTEND=noninteractive
 NEED_PKGS=(gcc make libc6-dev git ca-certificates libcap-dev libnetfilter-queue-dev
            libnfnetlink-dev libmnl-dev zlib1g-dev libluajit-5.1-dev luajit
-           nftables ethtool curl)
+           nftables ethtool curl python3-venv xz-utils)
 MISSING=()
 for p in "${NEED_PKGS[@]}"; do
   dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")
@@ -496,6 +502,7 @@ else
   quic_teardown
   systemctl daemon-reload
   echo "[$HOST_TAG]   YT_QUIC=allow — IP-блокировка QUIC снята"
+  echo "[$HOST_TAG] Внимание: Видео YouTube может стартовать с задержкой, если провайдер режет QUIC."
 fi
 
 # ----------------------------------------------------------------------------
@@ -674,12 +681,70 @@ exit 1
 EOF
 chmod 0755 /usr/local/bin/anysda-yt-check
 
+# Проверка видео независимо от выбранного selector: диаг-юзер всегда идёт
+# напрямую с меткой, иначе успешный VPN ошибочно означал бы восстановление.
+# Пин yt-dlp включает EJS; отдельный Node исполняет задачи извлечения URL под
+# непривилегированным пользователем, без cookies и удалённых плагинов.
+YT_PROBE_VENV=/opt/anysda-yt-probe
+if [[ ! -x "$YT_PROBE_VENV/bin/yt-dlp" ]] \
+   || [[ "$("$YT_PROBE_VENV/bin/yt-dlp" --version)" != 2026.08.19 ]]; then
+  python3 -m venv "$YT_PROBE_VENV"
+  "$YT_PROBE_VENV/bin/pip" install --disable-pip-version-check 'yt-dlp[default]==2026.8.19'
+fi
+# EJS требует Node >=22, а системный пакет Ubuntu/Debian может быть старее.
+# Роутер поддерживает linux-amd64; не меняем Node других приложений на узле.
+if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
+   || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v24.21.0 ]]; then
+  YT_NODE_TMP=$(mktemp -d)
+  trap 'rm -rf "$YT_NODE_TMP"' EXIT
+  curl -fsSL --retry 3 --connect-timeout 20 --max-time 180 \
+    https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz -o "$YT_NODE_TMP/node.tar.xz"
+  printf '%s  %s\n' fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 \
+    "$YT_NODE_TMP/node.tar.xz" | sha256sum -c -
+  tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" node-v24.21.0-linux-x64/bin/node
+  install -m 0755 "$YT_NODE_TMP/node-v24.21.0-linux-x64/bin/node" "$YT_PROBE_VENV/bin/node"
+  rm -rf "$YT_NODE_TMP"
+  trap - EXIT
+fi
+install -m 0755 /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover
+cat > /etc/systemd/system/anysda-yt-failover.service <<'EOF'
+[Unit]
+Description=anysda-vpn2 — видеопроба YouTube и запасной VPN-путь
+After=sing-box.service
+ConditionPathExists=/etc/sing-box/config.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/bin/anysda-yt-failover
+TimeoutStartSec=150
+StateDirectory=anysda-yt-failover
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+EOF
+cat > /etc/systemd/system/anysda-yt-failover.timer <<'EOF'
+[Unit]
+Description=anysda-vpn2 — периодическая проверка видеопотока YouTube
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now anysda-yt-failover.timer >/dev/null
+
 echo "[$HOST_TAG] [7/7] A/B-проверка"
 if /usr/local/bin/anysda-yt-check 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   touch "$STAMP_DIR/$STAGE"
   echo "[$HOST_TAG] $STAGE done"
 else
-  echo "[$HOST_TAG] $STAGE: десинк НЕ работает — стадия 20 не должна уводить YouTube на РФ-выход."
-  echo "[$HOST_TAG] Деплой остановлен намеренно: иначе YouTube ляжет у всех клиентов."
-  exit 1
+  echo "[$HOST_TAG] $STAGE: десинк НЕ работает — сторож переведёт YouTube на запасной VPN-путь."
+  echo "[$HOST_TAG] Возврат на обход — только после трёх успешных видеопроб."
+  touch "$STAMP_DIR/$STAGE"
 fi

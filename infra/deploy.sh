@@ -478,7 +478,7 @@ run_stage_on_host() {
   # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен генератор
   # и снапшот списка префиксов (fallback, если gstatic недоступен при прогоне).
   if [[ "$stage" == "19-yt-zapret" ]]; then
-    for f in gen-yt-quic-nft.py google-prefixes.json; do
+    for f in gen-yt-quic-nft.py google-prefixes.json yt-failover.py; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
       push "$lib" "$f" || return

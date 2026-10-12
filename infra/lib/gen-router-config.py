@@ -181,6 +181,16 @@ def main():
             # WG/OpenVPN) и с 0x40000000 (пакеты, которые генерит сам nfqws2).
             yt_outbound['routing_mark'] = yt_mark
         outbounds.append(yt_outbound)
+        if yt_route == 'zapret':
+            outbounds.append({
+                'type': 'selector', 'tag': 'youtube-auto',
+                'outbounds': [yt_tag, 'foreign-best'],
+                # До трёх успешных видеопроб используем рабочий VPN-путь.
+                # cache_file сохраняет выбор при рестарте роутера.
+                'default': 'foreign-best',
+                'interrupt_exist_connections': True,
+            })
+            yt_tag = 'youtube-auto'
 
     direct_tags = []
     warp_tags = []

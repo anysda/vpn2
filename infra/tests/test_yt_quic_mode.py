@@ -41,6 +41,7 @@ nft() { echo "nft $*" >> calls; echo 'udp dport 443'; }
             self.assertIn('stop anysda-yt-quic-refresh.service', calls)
             self.assertIn('delete table inet anysda_ytquic', calls)
             self.assertFalse(stale.exists())
+            self.assertIn('Видео YouTube может стартовать с задержкой, если провайдер режет QUIC.', result.stdout)
 
 
 if __name__ == '__main__':

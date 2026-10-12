@@ -7,7 +7,7 @@ FIXTURE=$(mktemp -d)
 trap 'rm -rf "$FIXTURE"' EXIT
 mkdir -p "$FIXTURE/infra/lib"
 cp "$ROOT/setup.sh" "$FIXTURE/"
-cp "$ROOT/infra/lib/config2env.py" "$FIXTURE/infra/lib/"
+cp "$ROOT/infra/lib/config2env.py" "$ROOT/infra/lib/hy2_bandwidth.py" "$FIXTURE/infra/lib/"
 
 # Не обращаться к сети и не устанавливать пакеты на машине теста.
 # shellcheck disable=SC2317,SC2329
@@ -34,7 +34,7 @@ for run in 1 2; do
   grep -F 'Выход de: 198.51.100.2' "$FIXTURE/output" >/dev/null
   test "$(stat -c %a "$FIXTURE/config.yaml")" = 600
   test -s "$FIXTURE/infra/envs/all.env"
-  grep -Fx 'EXIT_TAGS="de"' "$FIXTURE/infra/envs/exits.env" >/dev/null
+  grep -Fx "EXIT_TAGS='de'" "$FIXTURE/infra/envs/exits.env" >/dev/null
   echo "setup.sh save/repeat $run: OK"
 done
 python3 --version

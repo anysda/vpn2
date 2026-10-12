@@ -7,7 +7,8 @@
 #
 # Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 19-yt-zapret |
 #           20-ru-router | 28-wireguard | 29-openvpn | 21-failover-watchdog |
-#           22-adguard | 25-monitoring | 35-telegram | 30-frontend | 99-verify
+#           22-adguard | 25-monitoring | 26-backup | 27-ikev2 |
+#           35-telegram | 30-frontend | 99-verify
 # Группы:   ru | foreign | all | <конкретный тег экзита>
 
 set -euo pipefail
@@ -975,7 +976,7 @@ anysda-vpn2 — деплой
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
           29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
-          22-adguard | 25-monitoring | 26-backup | 35-telegram | 30-frontend |
+          22-adguard | 25-monitoring | 26-backup | 27-ikev2 | 35-telegram | 30-frontend |
           99-verify
 Группы:   ru | foreign | all | <конкретный тег экзита>
 EOF

@@ -86,6 +86,7 @@ fi
 # 3. Run bot container
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/3] run container"
+install -d -m 700 /var/lib/anysda-tgbot
 docker rm -f anysda-tgbot >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
@@ -97,6 +98,7 @@ docker run -d \
   --security-opt apparmor=unconfined \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/anysda:/etc/anysda:ro \
+  -v /var/lib/anysda-tgbot:/var/lib/anysda-tgbot \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
   -e TGBOT_SECRET="$TGBOT_SECRET" \
@@ -107,7 +109,7 @@ docker run -d \
   "$TGBOT_IMAGE" >/dev/null
 
 echo "[$HOST_TAG] жду пока бот запустится..."
-# Бот поднят, когда открыл сервер событий (после getMe); ждём до тех же 6 с.
+# Сервер событий поднимается до getMe, даже если Telegram недоступен.
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
   [[ "$(docker logs anysda-tgbot 2>&1)" == *'Event server on'* ]] && break
   sleep 0.5

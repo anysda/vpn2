@@ -35,6 +35,7 @@ Env vars:
   TELEGRAM_CHAT_ID    — required (integer; у группы отрицательный, -100…)
   TGBOT_SECRET        — shared secret with Nuxt (Bearer token)
   TGBOT_EVENT_PORT    — HTTP port for Nuxt→bot events (default 8877)
+  TGBOT_OUTBOX_PATH   — durable notification DB (default /var/lib/anysda-tgbot/outbox.sqlite)
   ANYSDA_URL          — Nuxt API base (default http://127.0.0.1:51821)
   TG_PROXY            — HTTP proxy for Telegram API (default http://127.0.0.1:7897)
   TGBOT_POLL_STALL_SEC — poller watchdog: exit if no successful getUpdates for
@@ -49,14 +50,16 @@ import logging
 import os
 import pathlib
 import re
+import sqlite3
 import time
+from contextlib import suppress
 from datetime import datetime
 
 import httpx
 import qrcode
 from aiohttp import web
 from telegram import Update
-from telegram.error import InvalidToken
+from telegram.error import InvalidToken, NetworkError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -66,6 +69,7 @@ from telegram.ext import (
     filters,
 )
 from telegram.request import HTTPXRequest
+from outbox import Outbox, QueueFull, TelegramSendError
 
 class _RedactTokenFormatter(logging.Formatter):
     """Вырезает токен бота из любой строки лога, включая трассировки:
@@ -271,7 +275,9 @@ async def _tg_post(method: str, payload: dict, files: dict | None = None,
         if method == 'editMessageText' and 'message is not modified' in desc:
             return body
         if attempt or 'parse_mode' not in payload or "can't parse" not in desc:
-            raise RuntimeError(f'Telegram {method} failed (HTTP {r.status_code})')
+            retry_after = body.get('parameters', {}).get('retry_after', 0)
+            raise TelegramSendError(body.get('error_code', r.status_code),
+                                    float(retry_after) if isinstance(retry_after, (int, float)) else 0)
         payload = {k: v for k, v in payload.items() if k != 'parse_mode'}
     return body
 
@@ -1384,6 +1390,33 @@ async def monitor_loop() -> None:
 
 # ── HTTP server for Nuxt events ────────────────────────────────────────────────
 
+OUTBOX_KEY = web.AppKey('outbox', Outbox)
+
+
+async def event_outbox(webapp):
+    queue = await asyncio.to_thread(
+        Outbox, os.environ.get('TGBOT_OUTBOX_PATH', '/var/lib/anysda-tgbot/outbox.sqlite'))
+    webapp[OUTBOX_KEY] = queue
+    worker = asyncio.create_task(queue.run(tg_send))
+    try:
+        yield
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
+
+
+async def enqueue_notification(request, payload):
+    try:
+        event_id = await asyncio.to_thread(request.app[OUTBOX_KEY].enqueue, payload)
+    except (ValueError, UnicodeError):
+        return web.Response(status=400, text='invalid notification')
+    except (QueueFull, sqlite3.Error, OSError):
+        log.error('outbox cannot accept notification')
+        return web.Response(status=503, text='notification queue unavailable')
+    return web.json_response({'ok': True, 'event_id': event_id})
+
+
 async def handle_health(_request: web.Request) -> web.Response:
     """GET /health — жив ли поллер. Дёргает docker HEALTHCHECK, слушаем только
     на 127.0.0.1, поэтому без секрета. 503, если getUpdates давно не отвечал."""
@@ -1460,8 +1493,11 @@ async def handle_event(request: web.Request) -> web.Response:
         # готовит панель — бот просто доставляет в клиентский чат.
         chat_id = data.get('chatId')
         text = data.get('text', '')
-        if chat_id and text:
-            asyncio.create_task(tg_send(int(chat_id), text))
+        if isinstance(chat_id, bool) or not re.fullmatch(r'-?[0-9]{1,16}', str(chat_id)):
+            return web.Response(status=400)
+        if not int(chat_id):
+            return web.Response(status=400)
+        return await enqueue_notification(request, {'chat_id': int(chat_id), 'text': text})
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     elif evt == 'system_alert':
@@ -1469,8 +1505,12 @@ async def handle_event(request: web.Request) -> web.Response:
         # в админский чат. subject/detail — текстовые поля, без markup.
         subject = data.get('subject', 'system alert')
         detail = data.get('detail', '')
+        if not isinstance(subject, str) or not isinstance(detail, str):
+            return web.Response(status=400)
         text = f'⚠️ {md_bold(subject)}' + (f'\n\n{md(detail)}' if detail else '')
-        asyncio.create_task(tg_send(CHAT_ID, text, 'Markdown'))
+        return await enqueue_notification(request, {
+            'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'Markdown',
+        })
     return web.Response(text='ok')
 
 
@@ -1584,11 +1624,9 @@ async def main() -> None:
     tgapp.add_handler(CallbackQueryHandler(on_callback))
     tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
 
-    # username бота для диплинков-приглашений.
-    await _fetch_bot_username()
-
     # aiohttp event server for Nuxt callbacks
     webapp = web.Application()
+    webapp.cleanup_ctx.append(event_outbox)
     webapp['tgapp'] = tgapp
     webapp.router.add_post('/event', handle_event)
     webapp.router.add_get('/health', handle_health)
@@ -1614,19 +1652,32 @@ async def main() -> None:
                 log.info('telegram-runtime.json изменён — выхожу для рестарта')
                 os._exit(0)
 
-    async with tgapp:
-        await tgapp.start()
-        asyncio.create_task(_supervised_monitor())
-        asyncio.create_task(_config_watcher())
-        await tgapp.updater.start_polling(drop_pending_updates=True)
-        _mark_poll_ok()
-        asyncio.create_task(poll_watchdog())
-        log.info('Bot started, polling Telegram via configured TG_PROXY')
-        await asyncio.Event().wait()  # run forever
-        await tgapp.updater.stop()
-        await tgapp.stop()
-
-    await runner.cleanup()
+    tasks = [asyncio.create_task(_config_watcher()), asyncio.create_task(poll_watchdog())]
+    try:
+        # Accept durable events even when Telegram is unavailable at startup.
+        while True:
+            try:
+                await tgapp.initialize()
+                break
+            except NetworkError:
+                log.warning('Telegram initialization unavailable; retry in 5s')
+                await asyncio.sleep(5)
+        await _fetch_bot_username()
+        async with tgapp:
+            await tgapp.start()
+            tasks.append(asyncio.create_task(_supervised_monitor()))
+            await tgapp.updater.start_polling(drop_pending_updates=True)
+            log.info('Bot started, polling Telegram via configured TG_PROXY')
+            try:
+                await asyncio.Event().wait()  # run forever
+            finally:
+                await tgapp.updater.stop()
+                await tgapp.stop()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await runner.cleanup()
 
 
 def _wait_token_fix(limit_sec: int) -> None:

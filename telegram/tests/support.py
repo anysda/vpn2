@@ -2,9 +2,11 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def load_bot(extra_env=None):
     path = Path(__file__).resolve().parents[1] / 'bot.py'

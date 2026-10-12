@@ -2,7 +2,7 @@ FROM mirror.gcr.io/library/python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY bot.py .
+COPY bot.py outbox.py ./
 # Проверяем не «жив ли процесс», а «жив ли поллер»: 03-08-2026 контейнер 38 часов
 # показывал Up, пока getUpdates молча не работал. /health отдаёт 503, если ответа
 # от Telegram давно не было. Рестарт делает внутренний сторож (os._exit + docker

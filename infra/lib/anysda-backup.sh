@@ -44,7 +44,7 @@ if [[ -z "${ANYSDA_BACKUP_PASSPHRASE:-}" ]]; then
 	Ожидается в $ENV_FILE. Источник:
 	  config.yaml (backup.passphrase)  →  config2env.py  →
 	  стадия 26-backup рендерит /etc/anysda/backup.env (chmod 600)  →
-	  systemd EnvironmentFile= для anysda-backup.service.
+	  source в Bash-скрипте anysda-backup.sh (вручную или из systemd).
 
 	Действия:
 	  1. Запусти ./setup.sh (на оркестраторе) — заполни backup.passphrase.

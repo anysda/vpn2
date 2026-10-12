@@ -164,6 +164,8 @@ class IkeRoutingLiteralTests(unittest.TestCase):
 class BackupLiteralTests(unittest.TestCase):
     def test_backup_env_roundtrip(self):
         text = source('26-backup.sh')
+        unit = text.split("cat > /etc/systemd/system/anysda-backup.service <<'EOF'", 1)[1].split('\nEOF', 1)[0]
+        self.assertNotIn('\nEnvironmentFile=', unit, 'Bash %q is not systemd EnvironmentFile syntax')
         block = text[text.index('echo "[$HOST_TAG] [3/4]'):text.index('# ── 4. Systemd')]
         keys = ['BACKUP_LOCAL_DIR', 'BACKUP_RETENTION', 'BACKUP_PASSPHRASE',
                 'BACKUP_S3_ENDPOINT', 'BACKUP_S3_BUCKET', 'BACKUP_S3_REGION',

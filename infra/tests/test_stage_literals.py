@@ -73,5 +73,26 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
+class TelegramLiteralTests(unittest.TestCase):
+    def test_runtime_json(self):
+        text = source('35-telegram.sh')
+        start = text.index('if [[ ! -f /etc/anysda/telegram-runtime.json')
+        block = text[start:text.index('\nfi', start) + 3]
+        for value in VALUES:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                path = Path(work) / 'telegram-runtime.json'
+                script = block.replace('/etc/anysda/telegram-runtime.json', str(path))
+                result = run(script, work, TELEGRAM_BOT_TOKEN=value, TELEGRAM_CHAT_ID=value,
+                             TELEGRAM_ADMIN_USERNAME=value, HOST_TAG='ru')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(path.read_text()),
+                                 dict(bot_token=value, chat_id=value, admin_username=value))
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                second = run(script, work, HOST_TAG='ru')
+                self.assertEqual(second.returncode, 0, second.stderr)
+                self.assertEqual(json.loads(path.read_text())['bot_token'], value)
+                self.assertFalse((Path(work) / 'INJECTED').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

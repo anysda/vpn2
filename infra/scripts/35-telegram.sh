@@ -55,13 +55,14 @@ TGBOT_SECRET=$(cat /etc/anysda/tgbot-secret.txt)
 # source of truth для отображения. После изменения через UI бот рестартит сам
 # (watcher mtime), наш стейдж его не перетирает на повторном запуске.
 if [[ ! -f /etc/anysda/telegram-runtime.json ]]; then
-  python3 - <<PYEOF
-import json
+  TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
+    TELEGRAM_ADMIN_USERNAME="${TELEGRAM_ADMIN_USERNAME:-}" python3 - <<'PYEOF'
+import json, os
 json.dump(
   {
-    'bot_token': '${TELEGRAM_BOT_TOKEN}',
-    'chat_id': '${TELEGRAM_CHAT_ID}',
-    'admin_username': '${TELEGRAM_ADMIN_USERNAME:-}',
+    'bot_token': os.environ['TELEGRAM_BOT_TOKEN'],
+    'chat_id': os.environ['TELEGRAM_CHAT_ID'],
+    'admin_username': os.environ['TELEGRAM_ADMIN_USERNAME'],
   },
   open('/etc/anysda/telegram-runtime.json', 'w'),
 )

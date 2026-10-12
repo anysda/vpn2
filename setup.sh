@@ -79,7 +79,6 @@ ask_password_once() {
     printf '  %b%s%b: ' "$Y" "$prompt" "$E" >&2
     IFS= read -rs p1 || { fail "EOF: $prompt — ввод прерван"; return 1; }
     printf '\n' >&2
-    p1=$(sanitize "$p1")
     [[ -z "$p1" ]] && { fail "Пароль не может быть пустым"; continue; }
     printf '%s' "$p1"; return
   done
@@ -243,15 +242,13 @@ hint "Пароль: Enter — сгенерировать случайный 18-�
 # Короче 8 панель не примет при смене пароля, ставить такой мастером тоже нельзя
 while true; do
   printf '  %b%s%b: ' "$Y" "Пароль (Enter — сгенерировать)" "$E" >&2
-  read -rs admin_pass; printf '\n' >&2
-  admin_pass=$(sanitize "$admin_pass")
+  IFS= read -rs admin_pass; printf '\n' >&2
   [[ -z "$admin_pass" || ${#admin_pass} -ge 8 ]] && break
   fail "Пароль короче 8 символов — введите длиннее или Enter, чтобы сгенерировать"
 done
 if [[ -n "$admin_pass" ]]; then
   printf '  %b%s%b: ' "$Y" "Пароль (повтор)" "$E" >&2
-  read -rs admin_pass2; printf '\n' >&2
-  admin_pass2=$(sanitize "$admin_pass2")
+  IFS= read -rs admin_pass2; printf '\n' >&2
   if [[ "$admin_pass" != "$admin_pass2" ]]; then
     fail "Пароли не совпадают — пароль будет сгенерирован автоматически"
     admin_pass=""
@@ -373,8 +370,7 @@ if [[ "$backup_enabled_q" == "y" ]]; then
   hint "Passphrase для шифрования архивов. Enter — сгенерировать."
   hint "⚠ Лишишься passphrase — лишишься возможности восстановить бэкапы."
   printf '  %b%s%b: ' "$Y" "Backup passphrase (Enter — auto-gen)" "$E" >&2
-  read -rs backup_passphrase; printf '\n' >&2
-  backup_passphrase=$(sanitize "$backup_passphrase")
+  IFS= read -rs backup_passphrase; printf '\n' >&2
   if [[ -z "$backup_passphrase" ]]; then
     # tr из /dev/urandom под pipefail ловит SIGPIPE от head и роняет мастер
     backup_passphrase=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(40)))')

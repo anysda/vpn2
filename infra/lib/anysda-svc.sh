@@ -135,7 +135,13 @@ apt_auto_pause() {
   local jobs=(apt-daily.service apt-daily-upgrade.service)
   local units=("${timers[@]}" "${jobs[@]}" unattended-upgrades.service)
   local t0=$SECONDS said=-20 j busy
-  systemctl mask --runtime --now "${timers[@]}" >/dev/null 2>&1 || true
+  # mask --now сначала перечитывает замаскированный юнит:
+  # активный таймер теряет Trigger и переходит в failed до остановки.
+  # Сначала остановим таймеры; reset-failed убирает след старого порядка
+  # при повторной установке, не затрагивая ошибки самих APT-служб.
+  systemctl stop "${timers[@]}" >/dev/null 2>&1 || true
+  systemctl mask --runtime "${timers[@]}" >/dev/null 2>&1 || true
+  systemctl reset-failed "${timers[@]}" >/dev/null 2>&1 || true
   # Сработавший таймер оставляет службу в ExecStartPre: она до 30 с ждёт
   # сеть и apt ещё не держит, а через минуту схватит его посреди деплоя.
   # Такую снимаем, ничего не начато. Уже идущую дожидаемся, а не рвём

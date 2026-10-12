@@ -418,6 +418,12 @@ def main():
     ]
     # Необязательные переопределения — пишем только если заданы, чтобы дефолты
     # жили в одном месте (в стадии 19), а не размножались по конфигам.
+    if yt.get('window_scale'):
+        window_scale = yt['window_scale']
+        if not re.fullmatch(r'native|[0-9]|1[0-4]', window_scale):
+            print('ERROR: youtube.window_scale — допустимо native или 0..14', file=sys.stderr)
+            sys.exit(1)
+        lines.append(f"YT_ZAPRET_WINDOW_SCALE={shq(window_scale)}")
     if yt.get('strategy'):
         lines.append(f"YT_ZAPRET_STRATEGY={shq(yt['strategy'])}")
     if yt.get('zapret_ref'):

@@ -62,11 +62,24 @@ YT_ZAPRET_BIN="$YT_ZAPRET_BASE/binaries/my/nfqws2"
 #     split; fake (в т.ч. sni=www.google.com) и circular хуже или не берут
 #     вовсе, не возвращать.
 # Цена малого scale — скорость: он подменяется в SYN и действует на всё
-# соединение, а ядро пишет окно под свой масштаб. Это чинит поправка окна в nft
-# (шаг 5), сдвиг считается из scale этой стратегии. Если DPI у провайдера entry
+# соединение, а ядро пишет окно под свой масштаб. Поправка в nft (шаг 5)
+# компенсирует несовпадение, но НЕ снимает потолок 65535 << scale: при scale=1
+# это 131070 байт. Вернуть scale после TLS нельзя: он согласуется только в SYN.
+# Для A/B: youtube.window_scale = native сохраняет масштаб ядра с самого SYN
+# и убирает поправку nft; 8/9 задают явный масштаб. wsize=1 и multisplit остаются,
+# но начальное окно тоже растёт, поэтому обход надо проверить на googlevideo.
+# Без замера оставляем проверенный scale=1. Явная youtube.strategy имеет приоритет.
+# Если DPI у провайдера entry
 # другой — подбирать через $YT_ZAPRET_BASE/blockcheck2.sh и переопределять
 # YT_ZAPRET_STRATEGY (youtube.strategy в config.yaml).
-YT_ZAPRET_STRATEGY="${YT_ZAPRET_STRATEGY:---lua-desync=wssize:wsize=1:scale=1 --payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1}"
+YT_ZAPRET_WINDOW_SCALE="${YT_ZAPRET_WINDOW_SCALE:-1}"
+if [[ ! "$YT_ZAPRET_WINDOW_SCALE" =~ ^(native|[0-9]|1[0-4])$ ]]; then
+  echo "[$HOST_TAG] YT_ZAPRET_WINDOW_SCALE: допустимо native или 0..14" >&2
+  exit 1
+fi
+_scale_arg=''
+[[ "$YT_ZAPRET_WINDOW_SCALE" == native ]] || _scale_arg=":scale=$YT_ZAPRET_WINDOW_SCALE"
+YT_ZAPRET_STRATEGY="${YT_ZAPRET_STRATEGY:---lua-desync=wssize:wsize=1$_scale_arg --payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1}"
 # Масштаб окна, который ядро ставит в свой SYN. Пусто — замерить (шаг 5).
 YT_ZAPRET_WSCALE="${YT_ZAPRET_WSCALE:-}"
 # TSO/GSO на WAN: при офлоаде ядро может отдать в очередь склеенный
@@ -237,14 +250,17 @@ PY
     echo "[$HOST_TAG]   масштаб окна ядра не определился ('$YT_ZAPRET_WSCALE') — беру 9"
     YT_ZAPRET_WSCALE=9
   fi
+  # zapret2 wsize_rewrite только УМЕНЬШАЕТ scale. Если запрошенный scale выше
+  # ядерного, SYN не меняется и поправка не нужна (иначе сами режем окно).
+  if (( WIN_SCALE > YT_ZAPRET_WSCALE )); then
+    WIN_SCALE=$YT_ZAPRET_WSCALE
+  fi
   WIN_SHIFT=$(( YT_ZAPRET_WSCALE - WIN_SCALE ))
   _m="meta mark $YT_MARK oifname \"$WAN_IFACE\" tcp dport 443 tcp flags & syn == 0"
   if (( WIN_SHIFT > 0 )); then
     # Окно, которое после сдвига не влезает в 16 бит, — потолок 65535.
     NFT_WIN_RULES="        $_m tcp window > $(( 65535 >> WIN_SHIFT )) counter tcp window set 65535
         $_m tcp window <= $(( 65535 >> WIN_SHIFT )) counter tcp window set tcp window << $WIN_SHIFT"
-  elif (( WIN_SHIFT < 0 )); then
-    NFT_WIN_RULES="        $_m counter tcp window set tcp window >> $(( -WIN_SHIFT ))"
   fi
   echo "[$HOST_TAG]   окно: scale=$WIN_SCALE, ядро=$YT_ZAPRET_WSCALE, сдвиг=$WIN_SHIFT"
 fi

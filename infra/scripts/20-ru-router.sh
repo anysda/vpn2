@@ -68,7 +68,7 @@ FS=/tmp/anysda/foreign-secrets.env
 # алфавите gen_pwd из 10-foreign, на остальном стадия падает.
 while IFS= read -r _line || [[ -n "$_line" ]]; do
   [[ -z "$_line" ]] && continue
-  if [[ ! "$_line" =~ ^([A-Z0-9]+_(DIRECT|WARP|OBFS|MGMT|CLASH))=([A-Za-z0-9+/]{16,128})$ ]]; then
+  if [[ ! "$_line" =~ ^([A-Z][A-Z0-9_]*_(DIRECT|WARP|OBFS|MGMT|CLASH))=([A-Za-z0-9+/]{16,128})$ ]]; then
     echo "[$HOST_TAG] в $FS чужая строка (${_line%%=*}) — экзит отдал не пароль, стадию прерываю"
     exit 1
   fi
@@ -77,7 +77,7 @@ done < "$FS"
 
 # Проверяем, что для каждой выходной ноды есть все нужные секреты
 for _t in $EXIT_TAGS; do
-  _T=$(echo "$_t" | tr a-z A-Z)
+  _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
   for _kind in DIRECT WARP MGMT OBFS; do
     _key="${_T}_${_kind}"
     [[ -n "${!_key:-}" ]] || {
@@ -108,7 +108,7 @@ export YT_ROUTE="${YT_ROUTE:-off}" YT_QUIC="${YT_QUIC:-block}" YT_MARK="${YT_MAR
 [[ -n "${YT_DOMAINS:-}" ]] && export YT_DOMAINS
 
 for _t in $EXIT_TAGS; do
-  _T=$(echo "$_t" | tr a-z A-Z)
+  _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
   export "DOMAIN_${_T}"
   export "${_T}_DIRECT" "${_T}_WARP" "${_T}_MGMT" "${_T}_OBFS"
   # MGMT_IP_{T} задаёт mon-порт локального SOCKS-инбаунда (см. генератор).
@@ -129,7 +129,7 @@ mkdir -p /etc/sing-box/exit-certs
 chmod 700 /etc/sing-box/exit-certs
 if [[ -d /tmp/anysda/exit-certs ]]; then
   for _t in $EXIT_TAGS; do
-    _T=$(echo "$_t" | tr a-z A-Z)
+    _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
     _src="/tmp/anysda/exit-certs/${_t}.pem"
     if [[ -f "$_src" ]]; then
       install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.pem"
@@ -511,7 +511,7 @@ SSH_MGMT_KNOWN=/root/.ssh/known_hosts_mgmt
 {
   echo "# anysda-vpn — генерирует infra/scripts/20-ru-router.sh, руками не править"
   for _t in $EXIT_TAGS; do
-    _T=$(echo "$_t" | tr a-z A-Z)
+    _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
     _var="MGMT_IP_${_T}"
     _ip="${!_var:-}"
     if [[ -z "$_ip" ]]; then

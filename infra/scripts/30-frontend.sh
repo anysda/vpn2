@@ -239,7 +239,7 @@ echo "[$HOST_TAG] [4/4] run container"
 # Публичные адреса нод для карточек мониторинга: «ru=<entry>,<тег>=<ip>,…».
 NODE_HOSTS="ru=${ENTRY_HOST}"
 for _t in ${EXIT_TAGS:-}; do
-  _v="DOMAIN_$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]')"
+  _v="DOMAIN_$(printf '%s' "$_t" | tr 'a-z-' 'A-Z_')"
   NODE_HOSTS+=",${_t}=${!_v:-}"
 done
 docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
@@ -295,7 +295,7 @@ docker run -d \
   -e NUXT_AGH_PASSWORD="${ADMIN_PASS}" \
   -e NUXT_EXIT_TAGS="${EXIT_TAGS}" \
   -e NUXT_MGMT_MESH_IP_PREFIX="10.99.0." \
-  -e NUXT_MGMT_IPS="$(_pairs="ru:${MGMT_IP_RU:-10.99.0.1}"; for _t in ${EXIT_TAGS}; do _u=$(echo "$_t" | tr a-z A-Z); _key="MGMT_IP_${_u}"; _v="${!_key:-}"; [ -n "$_v" ] && _pairs="$_pairs,$_t:$_v"; done; printf '%s' "$_pairs")" \
+  -e NUXT_MGMT_IPS="$(_pairs="ru:${MGMT_IP_RU:-10.99.0.1}"; for _t in ${EXIT_TAGS}; do _u=$(echo "$_t" | tr 'a-z-' 'A-Z_'); _key="MGMT_IP_${_u}"; _v="${!_key:-}"; [ -n "$_v" ] && _pairs="$_pairs,$_t:$_v"; done; printf '%s' "$_pairs")" \
   -e NUXT_VM_URL="http://127.0.0.1:8428" \
   -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
   -e NUXT_TGBOT_EVENT_PORT=8877 \

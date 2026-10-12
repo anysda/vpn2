@@ -192,7 +192,7 @@ def main():
     mon_route_rules = []
 
     for tag in exit_tags:
-        T = tag.upper()
+        T = tag.upper().replace('-', '_')
         domain = require(f'DOMAIN_{T}')
         direct_port = int(os.environ.get(f'{T}_HY2_DIRECT_PORT') or hy2_direct_port_global)
         mgmt_port = int(os.environ.get(f'{T}_HY2_MGMT_PORT') or hy2_mgmt_port_global)

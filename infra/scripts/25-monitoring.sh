@@ -63,7 +63,7 @@ mkdir -p /etc/anysda /var/lib/vmsingle
   printf '  - job_name: node-ru\n    static_configs:\n'
   printf "      - targets: ['127.0.0.1:9100']\n        labels: { host: ru, instance: '%s:9100' }\n" "${MGMT_IP_RU:-10.99.0.1}"
   for _t in $EXIT_TAGS; do
-    _T=$(echo "$_t" | tr a-z A-Z)
+    _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
     _var="MGMT_IP_${_T}"
     _ip="${!_var:-}"
     if [[ -z "$_ip" ]]; then

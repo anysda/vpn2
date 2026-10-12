@@ -283,7 +283,7 @@ prep_ru_router() {
       case "$k" in DIRECT|WARP|OBFS|MGMT|CLASH) ;; *) die "$host отдал лишний ключ секретов: $k" ;; esac
       [[ "$v" =~ ^[A-Za-z0-9+/]{16,128}$ ]] \
         || die "$host: секрет $k не похож на пароль из 10-foreign (16-128 знаков A-Z a-z 0-9 + /), стадию 20 не запускаю"
-      printf '%s_%s=%s\n' "$(echo "$host" | tr a-z A-Z)" "$k" "$v" >> "$sec"
+      printf '%s_%s=%s\n' "$(echo "$host" | tr 'a-z-' 'A-Z_')" "$k" "$v" >> "$sec"
       seen=$((seen + 1))
     done <<<"$payload"
     [[ $seen -eq 5 ]] || die "$host отдал $seen секретов из 5"
@@ -667,7 +667,7 @@ _clash_delay() {
 _current_port() {
   local tag="$1"
   local upper
-  upper=$(echo "$tag" | tr a-z A-Z)
+  upper=$(echo "$tag" | tr 'a-z-' 'A-Z_')
   # shellcheck disable=SC1091
   ( source "$DEPLOY_ROOT/envs/all.env"; eval "echo \${${upper}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT:-443}}" )
 }

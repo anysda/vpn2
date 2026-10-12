@@ -335,9 +335,11 @@ def main():
     if public_host:
         lines += ['', f'WG_PUBLIC_HOST={shq(public_host)}', f'OVPN_PUBLIC_HOST={shq(public_host)}']
 
+    # В именах env дефис тега заменяем на _: shell не допускает дефисы.
+    # Сам тег (имена файлов, outbound, метки) сохраняем без изменений.
     # Per-exit server IP (используется как адрес для подключения Hysteria2)
     for ex in exits:
-        tag = ex['tag'].upper()
+        tag = ex['tag'].upper().replace('-', '_')
         lines.append(f"DOMAIN_{tag}={ex['host']}")
         for key in ('up', 'down'):
             lines.append(f"{tag}_HY2_{key.upper()}_MBPS={shq(ex.get(f'hy2_{key}_mbps', ''))}")
@@ -346,13 +348,13 @@ def main():
     lines.append('')
     lines.append('MGMT_IP_RU=10.99.0.1')
     for ex in exits:
-        tag = ex['tag'].upper()
+        tag = ex['tag'].upper().replace('-', '_')
         lines.append(f"MGMT_IP_{tag}=10.99.0.{ex['_mgmt_idx']}")
 
     # Per-exit Hysteria2 direct port
     lines.append('')
     for ex in exits:
-        tag = ex['tag'].upper()
+        tag = ex['tag'].upper().replace('-', '_')
         port = ex.get('hy2_direct_port', hy2_direct)
         lines.append(f'{tag}_HY2_DIRECT_PORT={port}')
 

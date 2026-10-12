@@ -1,4 +1,4 @@
-import { and, count, eq, ne } from 'drizzle-orm'
+import { and, count, eq, ne, notExists } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import type { Client } from '../database/schema'
 import { clients, devices } from '../database/schema'
@@ -107,8 +107,19 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
     upd.preferredExit = patch.preferredExit || null
   }
 
-  const [row] = await db.update(clients).set(upd).where(eq(clients.id, id)).returning()
-  if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+  // Проверка sing-box выше уступает управление другим запросам. Имя могло
+  // стать занятым: проверяем его в том же SQL, который записывает изменения.
+  const conditions = [eq(clients.id, id)]
+  if (upd.name !== undefined) {
+    conditions.push(notExists(db.select({ id: clients.id }).from(clients)
+      .where(and(eq(clients.name, upd.name), ne(clients.id, id)))))
+  }
+  const [row] = await db.update(clients).set(upd).where(and(...conditions)).returning()
+  if (!row) {
+    const [exists] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).limit(1)
+    if (!exists) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+    throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${upd.name}» уже существует` })
+  }
 
   // Смена заморозки/срока меняет активность — пере-синхроним девайсы.
   if (patch.frozenManual !== undefined || patch.expiresAt !== undefined) {

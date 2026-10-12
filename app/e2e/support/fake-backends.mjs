@@ -45,9 +45,25 @@ function vm(req, res) {
   json(res, { status: 'success', data: { resultType: 'vector', result } }, 'application/json')
 }
 
+let holdProxies = false
+const pendingProxies = []
+
 function clash(req, res) {
   const url = new URL(req.url, 'http://x')
+  // Барьер для конкурентных API-тестов: PATCH уже проверил БД и ждёт sing-box.
+  if (url.pathname === '/__test/proxies') {
+    if (req.method === 'POST') holdProxies = true
+    if (req.method === 'DELETE') {
+      holdProxies = false
+      for (const resume of pendingProxies.splice(0)) resume()
+    }
+    return json(res, { pending: pendingProxies.length })
+  }
   if (url.pathname === '/proxies') {
+    if (holdProxies) {
+      pendingProxies.push(() => clash(req, res))
+      return
+    }
     if (DEMO) return json(res, { proxies: demoProxies() })
     const proxies = { 'direct-ru': { name: 'direct-ru', type: 'Direct', history: [] } }
     tags.forEach((t, i) => {

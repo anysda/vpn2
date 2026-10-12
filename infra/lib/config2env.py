@@ -329,9 +329,9 @@ def validate_network(cfg):
     for index, ex in enumerate(cfg['exits']):
         key = f'exits[{index}]'
         tag = ex.get('tag', '')
-        if (not re.fullmatch(r'[a-z][a-z0-9]*', tag) or
+        if (not re.fullmatch(r'[a-z](?:[a-z0-9-]*[a-z0-9])?', tag) or
                 tag in ('ru', 'all', 'exits', 'foreign') or tag in tags):
-            config_error(key + '.tag', 'нужен уникальный незарезервированный тег: [a-z][a-z0-9]*')
+            config_error(key + '.tag', 'нужен уникальный незарезервированный тег: [a-z](?:[a-z0-9-]*[a-z0-9])?')
         tags.add(tag)
         host(ex.get('host', ''), key + '.host')
         if not ex.get('password'):

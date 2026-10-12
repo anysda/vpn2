@@ -45,6 +45,31 @@ def run_setup(directory, answers):
 
 
 class SetupInputTests(unittest.TestCase):
+    def test_exit_tag_syntax(self):
+        body = (ROOT / 'setup.sh').read_text().split('validate_tag() {', 1)[1].split('\n}', 1)[0]
+        script = 'fail() { echo "$*" >&2; }\nvalidate_tag() {' + body + '\n}\nvalidate_tag "$1" "$2"'
+        for tag in ('a', 'us2', 'us-2', 'us--2', '-us', 'us-', 'US', 'us_2',
+                    'ru', 'all', 'exits', 'foreign'):
+            with self.subTest(tag=tag):
+                result = subprocess.run(['bash', '-euc', script, 'tag-test', tag, ''],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode == 0,
+                                 tag in ('a', 'us2', 'us-2', 'us--2'), result.stderr)
+        result = subprocess.run(['bash', '-euc', script, 'tag-test', 'us-2', 'se us-2 us2'],
+                                capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('уже используется', result.stderr)
+
+    def test_hyphenated_tag_through_wizard(self):
+        answers = ['1', 'root secret', '192.0.2.2', 'exit secret', 'us-2',
+                   '', '', '', 'n', 'n', 'n', 'n', 'y']
+        with tempfile.TemporaryDirectory() as directory:
+            root = prepare(directory)
+            code, output = run_setup(directory, '\n'.join(answers) + '\n')
+            self.assertEqual(code, 0, output)
+            self.assertIn('Выход us-2: 192.0.2.2', output)
+            self.assertTrue((root / 'infra/envs/us-2.env').is_file())
+
     def test_bot_token_is_not_echoed_on_terminal(self):
         prompts = [
             ('Количество', '1'), ('root password', 'root secret'),

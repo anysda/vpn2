@@ -49,7 +49,7 @@ class ConfigValidationTests(unittest.TestCase):
         for value in ('0', '65536', '-1', '1.5', 'true', "''"):
             cases.append((CONFIG + f'ports:\n  hy2_warp: {value}\n', 'ports.hy2_warp'))
             cases.append((CONFIG + f'    hy2_direct_port: {value}\n', 'exits[0].hy2_direct_port'))
-        for tag in ('ru', 'all', 'exits', 'foreign', 'se-2', 'SE'):
+        for tag in ('ru', 'all', 'exits', 'foreign', 'SE'):
             cases.append((CONFIG.replace('tag: se', f'tag: {tag}'), 'exits[0].tag'))
         cases.append((CONFIG + '  - tag: se\n    host: 192.0.2.3\n    password: x\n', 'exits[1].tag'))
         cases.append((CONFIG.split('exits:')[0] + 'exits:\n', 'exits'))
@@ -59,6 +59,19 @@ class ConfigValidationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(key, result.stderr)
                 self.assertNotIn('Traceback', result.stderr)
+
+    def test_exit_tag_syntax(self):
+        for tag in ('a', 'us2', 'us-2', 'us--2', '-us', 'us-', 'US', 'us_2'):
+            valid = tag in ('a', 'us2', 'us-2', 'us--2')
+            with self.subTest(tag=tag), tempfile.TemporaryDirectory() as directory:
+                result = self.convert(CONFIG.replace('tag: se', f'tag: {tag}'), directory)
+                self.assertEqual(result.returncode == 0, valid, result.stderr)
+                envs = Path(directory) / 'infra/envs'
+                if valid:
+                    self.assertTrue((envs / f'{tag}.env').is_file())
+                else:
+                    self.assertIn('exits[0].tag', result.stderr)
+                    self.assertFalse(envs.exists())
 
     def test_boundary_ports_ipv6_and_shell_quoted_secrets(self):
         secret = " spaces ' \" $HOME $(touch CANARY)\\nsecond line "

@@ -129,8 +129,8 @@ suggest_tag() {
 
 validate_tag() {
   local tag="$1" used="$2"
-  if ! [[ "$tag" =~ ^[a-z][a-z0-9]*$ ]]; then
-    fail "Тег: только строчные буквы и цифры (пример: us, se2)"; return 1
+  if ! [[ "$tag" =~ ^[a-z]([a-z0-9-]*[a-z0-9])?$ ]]; then
+    fail "Тег: строчная буква в начале, далее строчные буквы, цифры и дефисы; дефис в конце запрещён (пример: us, us-2)"; return 1
   fi
   if [[ "$tag" == "ru" || "$tag" == "all" || "$tag" == "exits" || "$tag" == "foreign" ]]; then
     fail "Тег '$tag' зарезервирован"; return 1
@@ -427,7 +427,7 @@ fi
 
 printf '\n' >&2
 for _tag in "${!exit_ips[@]}"; do
-  export "_EXIT_IP_${_tag}=${exit_ips[$_tag]}"
+  export "_EXIT_IP_${_tag//-/_}=${exit_ips[$_tag]}"
 done
 python3 - "$(printf %b "$B")" "$(printf %b "$E")" "$entry_ip" "${used_tags# }" <<'PYINNER'
 import sys, os, unicodedata
@@ -446,7 +446,7 @@ print(f"{B}  \u251c{line}\u2524{E}")
 print(row(f"  Входная нода:  {entry_ip}"))
 tags = tags_str.split() if tags_str.strip() else []
 for tag in tags:
-    ip = os.environ.get(f"_EXIT_IP_{tag}", "")
+    ip = os.environ.get(f"_EXIT_IP_{tag.replace('-', '_')}", "")
     print(row(f"  Выход {tag}: {ip}"))
 print(f"{B}  \u2514{line}\u2518{E}")
 PYINNER

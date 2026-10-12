@@ -64,7 +64,7 @@ export async function createClient(input: ClientCreateInput): Promise<Client> {
 
   const [row] = await db.insert(clients).values(values).returning()
   if (!row) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
-  void notifyBot('client_created', { name: row.name })
+  await notifyBot('client_created', { name: row.name })
   return row
 }
 
@@ -136,33 +136,33 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
   const chat = before.tgChatId
   if (chat) {
     if (patch.name !== undefined && row.name !== before.name) {
-      notifyClient(chat, `✏️ Имя вашего профиля изменено на «${row.name}».`)
+      await notifyClient(chat, `✏️ Имя вашего профиля изменено на «${row.name}».`, row.name)
     }
     if (patch.deviceLimit !== undefined) {
       const rank = (v: number | null) => (v === null ? Infinity : v)
       const oldR = rank(before.deviceLimit)
       const newR = rank(row.deviceLimit)
       if (newR > oldR) {
-        notifyClient(chat, row.deviceLimit === null
+        await notifyClient(chat, row.deviceLimit === null
           ? '📈 Лимит устройств снят — теперь без ограничений.'
-          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`)
+          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`, row.name)
       }
       else if (newR < oldR) {
-        notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`)
+        await notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`, row.name)
       }
     }
     if (patch.frozenManual !== undefined && patch.frozenManual !== before.frozenManual) {
-      notifyClient(chat, patch.frozenManual
+      await notifyClient(chat, patch.frozenManual
         ? '❄️ Ваш доступ к VPN приостановлен администратором.'
-        : '✅ Ваш доступ к VPN восстановлен.')
+        : '✅ Ваш доступ к VPN восстановлен.', row.name)
     }
     if (patch.expiresAt !== undefined) {
       const oldT = before.expiresAt ? before.expiresAt.getTime() : null
       const newT = row.expiresAt ? row.expiresAt.getTime() : null
       if (oldT !== newT) {
-        notifyClient(chat, row.expiresAt
+        await notifyClient(chat, row.expiresAt
           ? `🗓 Срок действия вашего ключа: до ${row.expiresAt.toLocaleDateString('ru-RU')}.`
-          : '🗓 Срок действия ключа снят — доступ бессрочный.')
+          : '🗓 Срок действия ключа снят — доступ бессрочный.', row.name)
       }
     }
   }
@@ -181,16 +181,6 @@ export async function deleteClient(id: number): Promise<void> {
   })
   if (!removed) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
-  // Уведомить привязанного клиента об удалении профиля. Ждём отправки
-  // события боту (не fire-and-forget): иначе POST к боту может не успеть
-  // выполниться до завершения запроса на удаление.
-  if (removed.tgChatId) {
-    await notifyBot('client_notify', {
-      chatId: removed.tgChatId,
-      text: '🗑 Ваш профиль удалён администратором. Доступ к VPN прекращён.',
-    })
-  }
-
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client delete failed'))
 
   for (const d of devRows) {
@@ -206,6 +196,12 @@ export async function deleteClient(id: number): Promise<void> {
   }
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client delete failed'))
   await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+
+  // Даже переполненная очередь не должна помешать отзыву доступа выше.
+  // Ждём постоянной записи события до завершения запроса.
+  if (removed.tgChatId) {
+    await notifyClient(removed.tgChatId, '🗑 Ваш профиль удалён администратором. Доступ к VPN прекращён.', removed.name)
+  }
 }
 
 /** Общее удаление устройства из панели и бота; ошибка CA оставляет запись для повтора. */

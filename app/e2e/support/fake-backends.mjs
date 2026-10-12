@@ -96,6 +96,7 @@ function bot(req, res) {
     // файла ещё нет — бот не настроен
   }
   if (token.includes('E2E_ACCEPTED')) {
+    if (req.url === '/event' || req.url === '/events') return demoBot(req, res)
     res.writeHead(req.url === '/health' ? 200 : 404)
     return res.end()
   }
@@ -278,13 +279,18 @@ function demoBot(req, res) {
     req.on('data', (c) => { body += c })
     req.on('end', () => {
       try {
-        events.push({ at: new Date().toISOString(), ...JSON.parse(body) })
+        const event = JSON.parse(body)
+        if (!events.some(saved => event.deliveryId && saved.deliveryId === event.deliveryId)) {
+          events.push({ at: new Date().toISOString(), ...event })
+        }
         if (events.length > 500) events.shift()
+        return json(res, { ok: true, delivery_id: event.deliveryId }, 'application/json')
       }
       catch {
         // не JSON - пропускаем
       }
-      json(res, { ok: true }, 'application/json')
+      res.writeHead(400)
+      res.end()
     })
     return
   }

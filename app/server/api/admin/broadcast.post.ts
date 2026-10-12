@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
-import { notifyClient } from '../../utils/bot-events'
+import { notifyBot } from '../../utils/bot-events'
 import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({ text: z.string().trim().min(1).max(4096) })
@@ -18,8 +18,7 @@ export default defineEventHandler(async (event) => {
     .from(clients)
     .where(isNotNull(clients.tgChatId))
 
-  for (const r of rows) notifyClient(r.chatId!, text)
-  useLogger().info({ recipients: rows.length }, 'broadcast sent')
-
-  return { recipients: rows.length }
+  const chatIds = [...new Set(rows.map(row => row.chatId!))]
+  const delivery = chatIds.length ? await notifyBot('broadcast', { chatIds, text }, 'Рассылка') : null
+  return { recipients: chatIds.length, delivery }
 })

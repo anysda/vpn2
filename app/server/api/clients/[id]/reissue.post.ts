@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
 
   const db = useDb()
-  const [client] = await db.select({ id: clients.id, tgChatId: clients.tgChatId })
+  const [client] = await db.select({ id: clients.id, tgChatId: clients.tgChatId, name: clients.name })
     .from(clients).where(eq(clients.id, id)).limit(1)
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
@@ -33,10 +33,11 @@ export default defineEventHandler(async (event) => {
 
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
   if (client.tgChatId) {
-    notifyClient(
+    await notifyClient(
       client.tgChatId,
       '🔄 Администратор перевыпустил ключи всех ваших устройств. '
       + 'Старые конфиги больше не работают — скачайте новые в «📱 Мои устройства».',
+      client.name,
     )
   }
 

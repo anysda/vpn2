@@ -1429,15 +1429,17 @@ async def event_outbox(webapp):
             await worker
 
 
-async def enqueue_notification(request, payload):
+async def enqueue_notification(request, payload, delivery_id=None):
     try:
-        event_id = await asyncio.to_thread(request.app[OUTBOX_KEY].enqueue, payload)
+        queue = request.app[OUTBOX_KEY]
+        enqueue = queue.enqueue_batch if isinstance(payload, list) else queue.enqueue
+        event_id = await asyncio.to_thread(enqueue, payload, delivery_id)
     except (ValueError, UnicodeError):
         return web.Response(status=400, text='invalid notification')
     except (QueueFull, sqlite3.Error, OSError):
         log.error('outbox cannot accept notification')
         return web.Response(status=503, text='notification queue unavailable')
-    return web.json_response({'ok': True, 'event_id': event_id})
+    return web.json_response({'ok': True, 'event_id': event_id, 'delivery_id': delivery_id})
 
 
 async def handle_health(_request: web.Request) -> web.Response:
@@ -1465,15 +1467,22 @@ async def handle_event(request: web.Request) -> web.Response:
     if not isinstance(data, dict):
         return web.Response(status=400)
     evt = data.get('type')
+    delivery_id = data.get('deliveryId')
     if evt == 'client_created':
         name = data.get('name', '?')
-        asyncio.create_task(
-            tg_send(
-                CHAT_ID,
-                f'👤 Новый клиент: {md_bold(name)}',
-                'Markdown',
-            )
-        )
+        return await enqueue_notification(request, {
+            'chat_id': CHAT_ID, 'text': f'👤 Новый клиент: {md_bold(name)}', 'parse_mode': 'Markdown',
+        }, delivery_id)
+    elif evt == 'broadcast':
+        chat_ids = data.get('chatIds')
+        if (not isinstance(chat_ids, list) or not chat_ids
+                or any(isinstance(chat_id, bool) or not re.fullmatch(r'-?[0-9]{1,16}', str(chat_id))
+                       or not int(chat_id) for chat_id in chat_ids)):
+            return web.Response(status=400)
+        return await enqueue_notification(request, [
+            {'chat_id': chat_id, 'text': data.get('text', '')}
+            for chat_id in dict.fromkeys(map(int, chat_ids))
+        ], delivery_id)
     elif evt == 'client_send_wireguard':
         name = data.get('name', '?')
         conf = data.get('conf', '')
@@ -1520,7 +1529,7 @@ async def handle_event(request: web.Request) -> web.Response:
             return web.Response(status=400)
         if not int(chat_id):
             return web.Response(status=400)
-        return await enqueue_notification(request, {'chat_id': int(chat_id), 'text': text})
+        return await enqueue_notification(request, {'chat_id': int(chat_id), 'text': text}, delivery_id)
     elif evt == 'deploy_done':
         asyncio.create_task(_announce_deploy())
     elif evt == 'system_alert':
@@ -1533,7 +1542,7 @@ async def handle_event(request: web.Request) -> web.Response:
         text = f'⚠️ {md_bold(subject)}' + (f'\n\n{md(detail)}' if detail else '')
         return await enqueue_notification(request, {
             'chat_id': CHAT_ID, 'text': text, 'parse_mode': 'Markdown',
-        })
+        }, delivery_id)
     return web.Response(text='ok')
 
 

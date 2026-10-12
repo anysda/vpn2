@@ -1,6 +1,7 @@
 """Bounded, crash-safe outbox for panel notifications (one bot process)."""
 import asyncio
 from contextlib import closing
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -16,6 +17,7 @@ MAX_EVENTS = 1024
 TTL_SEC = 24 * 60 * 60
 MAX_TEXT_BYTES = 16 * 1024
 LEASE_SEC = 120
+MAX_RECEIPTS = 32768
 
 
 class QueueFull(Exception):
@@ -42,6 +44,9 @@ class Outbox:
             db.execute('''CREATE TABLE IF NOT EXISTS throttle (
                 id INTEGER PRIMARY KEY CHECK (id = 1), until REAL NOT NULL)''')
             db.execute('INSERT OR IGNORE INTO throttle VALUES (1, 0)')
+            db.execute('''CREATE TABLE IF NOT EXISTS receipts (
+                delivery_id TEXT PRIMARY KEY, digest TEXT NOT NULL,
+                event_id INTEGER NOT NULL, expires REAL NOT NULL)''')
         Path(path).chmod(0o600)
 
     def connect(self):
@@ -56,23 +61,51 @@ class Outbox:
         if count:
             log.warning('outbox expired=%d', count)
 
-    def enqueue(self, payload: dict) -> int:
+    @staticmethod
+    def validate(payload):
         text = payload['text']
         if (not isinstance(text, str) or not text.strip()
                 or len(text.encode('utf-8')) > MAX_TEXT_BYTES
                 or len(text.encode('utf-16-le')) // 2 > 4096):
             raise ValueError('invalid notification text')
+
+    def enqueue(self, payload: dict, delivery_id=None) -> int:
+        return self.enqueue_batch([payload], delivery_id)
+
+    def enqueue_batch(self, payloads, delivery_id=None) -> int:
+        if not payloads or len(payloads) > MAX_EVENTS:
+            raise QueueFull()
+        for payload in payloads:
+            self.validate(payload)
+        if delivery_id is not None and (not isinstance(delivery_id, str)
+                                       or not 1 <= len(delivery_id) <= 128):
+            raise ValueError('invalid delivery id')
+        digest = hashlib.sha256(json.dumps(payloads, sort_keys=True).encode()).hexdigest()
         now = time.time()
         with closing(self.connect()) as db, db:
             db.execute('BEGIN IMMEDIATE')
             self.expire(db, now)
-            if db.execute('SELECT count(*) FROM events').fetchone()[0] >= MAX_EVENTS:
+            db.execute('DELETE FROM receipts WHERE expires <= ?', (now,))
+            if delivery_id is not None:
+                receipt = db.execute('SELECT digest, event_id FROM receipts WHERE delivery_id = ?',
+                                     (delivery_id,)).fetchone()
+                if receipt:
+                    if receipt[0] != digest:
+                        raise ValueError('delivery id reused with different payload')
+                    return receipt[1]
+                if db.execute('SELECT count(*) FROM receipts').fetchone()[0] >= MAX_RECEIPTS:
+                    raise QueueFull()
+            if db.execute('SELECT count(*) FROM events').fetchone()[0] + len(payloads) > MAX_EVENTS:
                 raise QueueFull()
             due = max(now, db.execute('SELECT until FROM throttle').fetchone()[0])
-            event_id = db.execute(
-                'INSERT INTO events (chat_id, payload, expires, due) VALUES (?, ?, ?, ?)',
-                (payload['chat_id'], json.dumps(payload, ensure_ascii=False), now + TTL_SEC, due),
-            ).lastrowid
+            for payload in payloads:
+                event_id = db.execute(
+                    'INSERT INTO events (chat_id, payload, expires, due) VALUES (?, ?, ?, ?)',
+                    (payload['chat_id'], json.dumps(payload, ensure_ascii=False), now + TTL_SEC, due),
+                ).lastrowid
+            if delivery_id is not None:
+                db.execute('INSERT INTO receipts VALUES (?, ?, ?, ?)',
+                           (delivery_id, digest, event_id, now + TTL_SEC))
         log.info('outbox accepted id=%d', event_id)
         return event_id
 

@@ -30,13 +30,14 @@ export default defineEventHandler(async (event) => {
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device reissue failed'))
 
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
-  const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
+  const [client] = await db.select({ tgChatId: clients.tgChatId, name: clients.name }).from(clients)
     .where(eq(clients.id, clientId)).limit(1)
   if (client?.tgChatId) {
-    notifyClient(
+    await notifyClient(
       client.tgChatId,
       `🔄 Администратор перевыпустил ключи устройства «${device.name}». `
       + 'Старый конфиг больше не работает — скачайте новый в «📱 Мои устройства».',
+      client.name,
     )
   }
 

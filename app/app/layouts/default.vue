@@ -35,6 +35,7 @@ const menuItems = computed(() => [
         anysda-vpn2
       </NuxtLink>
       <div class="flex items-center gap-1">
+        <BotDeliveryStatus />
         <ClientOnly>
           <UButton
             :icon="colorMode.value === 'dark' ? 'i-lucide-moon' : 'i-lucide-sun'"

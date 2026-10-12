@@ -17,12 +17,13 @@ export default defineEventHandler(async (event) => {
   const device = await deleteDevice(clientId, deviceId)
 
   // Уведомить привязанного клиента — устройство удалил администратор.
-  const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
+  const [client] = await db.select({ tgChatId: clients.tgChatId, name: clients.name }).from(clients)
     .where(eq(clients.id, clientId)).limit(1)
   if (client?.tgChatId) {
-    notifyClient(
+    await notifyClient(
       client.tgChatId,
       `🗑 Администратор удалил ваше устройство «${device.name}» — его конфиг VPN больше не действует.`,
+      client.name,
     )
   }
 

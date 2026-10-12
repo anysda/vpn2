@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { botDeliveryText, type BotDelivery } from '#shared/bot-delivery'
 interface TgStatus {
   configured: boolean
   running: boolean
@@ -13,6 +14,7 @@ const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
 })
 
 const toast = useToast()
+const showDelivery = useBotDeliveryToast()
 
 const newToken = ref('')
 const newChatId = ref('')
@@ -82,8 +84,10 @@ async function sendMessage() {
   if (!text) return
   sending.value = true
   try {
-    const res = await $fetch<{ recipients: number }>('/api/admin/broadcast', { method: 'POST', body: { text } })
-    toast.add({ title: `Отправлено: ${res.recipients}`, color: 'success' })
+    const res = await $fetch<{ recipients: number, delivery: BotDelivery | null }>('/api/admin/broadcast', { method: 'POST', body: { text } })
+    if (res.delivery?.status === 'accepted') toast.add({ title: botDeliveryText(res.delivery), color: 'success' })
+    else if (res.delivery) showDelivery(res.delivery)
+    else toast.add({ title: 'Нет получателей рассылки.', color: 'warning' })
     message.value = ''
   }
   catch (e) {

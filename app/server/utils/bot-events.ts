@@ -1,31 +1,106 @@
-/**
- * Fire-and-forget event to the local Telegram bot HTTP server.
- * The bot lives in another container on the same host (--network host),
- * listening on TGBOT_EVENT_PORT (default 8877).
- */
-export async function notifyBot(type: string, payload: Record<string, unknown>): Promise<void> {
-  const cfg = useRuntimeConfig()
-  const port = Number(cfg.tgbotEventPort ?? 8877)
-  const secret = String(cfg.tgbotSecret ?? '')
-  if (!secret) return // bot not configured
+import { randomUUID } from 'node:crypto'
+import { Buffer } from 'node:buffer'
+import { and, asc, count, eq, gt, lt, lte, ne, or } from 'drizzle-orm'
+import { useDb } from '../database/client'
+import { botOutbox } from '../database/schema'
+import type { BotDelivery } from '../../shared/bot-delivery'
 
-  try {
-    await $fetch(`http://127.0.0.1:${port}/event`, {
-      method: 'POST',
-      headers: { 'X-Tgbot-Secret': secret },
-      body: { type, ...payload },
-      timeout: 1500,
-    })
-  }
-  catch {
-    // bot not running / refused — silent
-  }
+const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
+const MAX_ATTEMPTS = DELAYS.length + 1
+const TTL = 60 * 60 * 1000
+const RETENTION = 24 * TTL
+const CAPACITY = 1024
+const inFlight = new Map<string, Promise<void>>()
+
+function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'status' | 'attempts'>): BotDelivery {
+  return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0 }
 }
 
-/**
- * Уведомление привязанному клиенту в его Telegram-чате. Текст готовит
- * вызывающий (панель знает контекст изменения). Fire-and-forget.
- */
-export function notifyClient(chatId: number, text: string): void {
-  void notifyBot('client_notify', { chatId, text })
+/** Запись завершена до первого POST. Один UUID на все попытки, в том числе после рестарта. */
+export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`): Promise<BotDelivery> {
+  const now = Date.now()
+  const body = JSON.stringify({ ...payload, type })
+  if (Buffer.byteLength(body) > 128 * 1024) throw createError({ statusCode: 413, message: 'Уведомление слишком большое. Повторов не будет.' })
+  const row = { id: randomUUID(), label, payload: body, status: 'queued' as const, attempts: 0, due: now, expires: now + TTL, created: now }
+  await useDb().transaction(async (tx) => {
+    await tx.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
+    // Лимит включает историю. При нехватке места освобождаем только
+    // подтверждённую запись; ожидающие и ошибки молча не вытесняем.
+    const [size] = await tx.select({ n: count() }).from(botOutbox)
+    if (Number(size?.n) >= CAPACITY) {
+      const [old] = await tx.select({ id: botOutbox.id }).from(botOutbox).where(eq(botOutbox.status, 'accepted')).orderBy(asc(botOutbox.created)).limit(1)
+      if (!old) throw createError({ statusCode: 503, message: `${label}: очередь заполнена. Повторов не будет.` })
+      await tx.delete(botOutbox).where(eq(botOutbox.id, old.id))
+    }
+    await tx.insert(botOutbox).values(row)
+  })
+  await attempt(row.id)
+  const [saved] = await useDb().select().from(botOutbox).where(eq(botOutbox.id, row.id))
+  // Конкурентная вставка вправе вытеснить только уже подтверждённую запись.
+  return delivery(saved ?? { ...row, status: 'accepted' })
+}
+
+function attempt(id: string): Promise<void> {
+  const pending = inFlight.get(id)
+  if (pending) return pending
+  // Если таймер успел занять новую запись, запрос ждёт его результата,
+  // а не выдаёт «не отправлено» посреди ещё выполняющегося POST.
+  const pendingAttempt = attemptOnce(id).finally(() => { inFlight.delete(id) })
+  inFlight.set(id, pendingAttempt)
+  return pendingAttempt
+}
+
+async function attemptOnce(id: string) {
+  const db = useDb()
+  const now = Date.now()
+  // Атомарная аренда и расход попытки ДО HTTP; два тика/запроса не шлют одновременно.
+  const row = await db.transaction(async (tx) => {
+    const [candidate] = await tx.select().from(botOutbox).where(and(eq(botOutbox.id, id), eq(botOutbox.status, 'queued'), lte(botOutbox.due, now)))
+    if (!candidate) return
+    if (candidate.expires <= now || candidate.attempts >= MAX_ATTEMPTS) {
+      await tx.update(botOutbox).set({ status: 'failed', payload: '' }).where(eq(botOutbox.id, id))
+      return
+    }
+    const attempts = candidate.attempts + 1
+    await tx.update(botOutbox).set({ attempts, due: now + (DELAYS[attempts - 1] ?? 30_000) }).where(eq(botOutbox.id, id))
+    return { ...candidate, attempts }
+  })
+  if (!row) return
+  let accepted = false
+  try {
+    const cfg = useRuntimeConfig()
+    if (!cfg.tgbotSecret) throw new Error('bot not configured')
+    const ack = await $fetch<{ ok: boolean, delivery_id: string }>(`http://127.0.0.1:${Number(cfg.tgbotEventPort ?? 8877)}/event`, {
+      method: 'POST', headers: { 'X-Tgbot-Secret': String(cfg.tgbotSecret) },
+      body: { ...JSON.parse(row.payload), deliveryId: id }, timeout: 1500, retry: 0,
+    })
+    accepted = ack.ok === true && ack.delivery_id === id
+  }
+  catch { /* Очередь и оставшиеся попытки видны администратору. */ }
+  const status = accepted ? 'accepted' : row.attempts >= MAX_ATTEMPTS ? 'failed' : 'queued'
+  await db.update(botOutbox).set({
+    status, due: Date.now() + (DELAYS[row.attempts - 1] ?? 0),
+    ...(!accepted ? { lastFailure: Date.now() } : {}),
+    ...(status === 'queued' ? {} : { payload: '' }),
+  }).where(eq(botOutbox.id, id))
+}
+
+export async function retryBotEvents() {
+  const db = useDb()
+  const now = Date.now()
+  await db.update(botOutbox).set({ status: 'failed', payload: '' }).where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now)))
+  await db.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
+  const rows = await db.select({ id: botOutbox.id }).from(botOutbox)
+    .where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.due, now))).orderBy(asc(botOutbox.created)).limit(16)
+  for (const row of rows) await attempt(row.id)
+}
+
+export async function botDeliveries(): Promise<BotDelivery[]> {
+  const rows = await useDb().select({ id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts })
+    .from(botOutbox).where(or(ne(botOutbox.status, 'queued'), gt(botOutbox.lastFailure, 0))).orderBy(asc(botOutbox.created))
+  return rows.map(delivery)
+}
+
+export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery> {
+  return notifyBot('client_notify', { chatId, text }, `Уведомление клиенту «${name}»`)
 }

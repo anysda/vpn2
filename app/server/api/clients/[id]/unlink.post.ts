@@ -16,13 +16,13 @@ export default defineEventHandler(async (event) => {
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
 
   const db = useDb()
-  const [client] = await db.select({ tgChatId: clients.tgChatId }).from(clients)
+  const [client] = await db.select({ tgChatId: clients.tgChatId, name: clients.name }).from(clients)
     .where(eq(clients.id, id)).limit(1)
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   // Уведомить ДО отвязки — после очистки tgChatId уже не отправить.
   if (client.tgChatId) {
-    notifyClient(client.tgChatId, '🔒 Ваш доступ к этому боту отозван администратором.')
+    await notifyClient(client.tgChatId, '🔒 Ваш доступ к этому боту отозван администратором.', client.name)
   }
   await db.update(clients)
     .set({

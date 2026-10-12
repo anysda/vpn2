@@ -194,6 +194,19 @@ export const collectorState = sqliteTable('collector_state', {
   value: text('value').notNull(),
 })
 
+/** Постоянная очередь панели → бот; payload очищается после завершения. */
+export const botOutbox = sqliteTable('bot_outbox', {
+  id: text('id').primaryKey(),
+  label: text('label').notNull(),
+  payload: text('payload').notNull(),
+  status: text('status', { enum: ['queued', 'accepted', 'failed'] }).notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  lastFailure: integer('last_failure').notNull().default(0),
+  due: integer('due').notNull(),
+  expires: integer('expires').notNull(),
+  created: integer('created').notNull(),
+}, table => [index('bot_outbox_due_idx').on(table.status, table.due)])
+
 export const routes = sqliteTable('routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   type: text('type', { enum: ['domain', 'ip_cidr'] }).notNull(),

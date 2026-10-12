@@ -51,10 +51,11 @@ export default defineEventHandler(async (event) => {
 
   // Уведомить привязанного клиента — устройство добавил администратор.
   if (client.tgChatId) {
-    notifyClient(
+    await notifyClient(
       client.tgChatId,
       `➕ Администратор добавил вам устройство «${name}». `
       + 'Откройте «📱 Мои устройства», чтобы получить конфиг.',
+      client.name,
     )
   }
 

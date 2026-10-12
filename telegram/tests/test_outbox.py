@@ -47,6 +47,52 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(self.queue, 'enqueue', side_effect=error):
                 self.assertEqual((await bot.handle_event(request)).status, 503)
 
+    async def test_panel_retry_after_lost_ack_and_bot_restart_delivers_once(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        request = SimpleNamespace(
+            headers={'X-Tgbot-Secret': bot.SECRET}, app={bot.OUTBOX_KEY: self.queue},
+            json=AsyncMock(return_value={'type': 'client_notify', 'chatId': 200,
+                                        'text': 'once', 'deliveryId': 'retry-test'}))
+        self.assertEqual((await bot.handle_event(request)).status, 200)
+        send = AsyncMock()
+        await self.worker_until(send, lambda: not self.rows())
+        request.app[bot.OUTBOX_KEY] = Outbox(self.queue.path)
+        self.assertEqual((await bot.handle_event(request)).status, 200)
+        self.assertEqual(self.rows(), [])
+        send.assert_awaited_once()
+
+    async def test_broadcast_is_atomic_and_deduplicated(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        request = SimpleNamespace(
+            headers={'X-Tgbot-Secret': bot.SECRET}, app={bot.OUTBOX_KEY: self.queue},
+            json=AsyncMock(return_value={'type': 'broadcast', 'chatIds': [200, 300, 200],
+                                        'text': 'broadcast', 'deliveryId': 'broadcast-test'}))
+        with patch('outbox.MAX_EVENTS', 1):
+            self.assertEqual((await bot.handle_event(request)).status, 503)
+        self.assertEqual(self.rows(), [])
+        for _ in range(2):
+            self.assertEqual((await bot.handle_event(request)).status, 200)
+        self.assertEqual(len(self.rows()), 2)
+        send = AsyncMock()
+        await self.worker_until(send, lambda: not self.rows())
+        self.assertEqual(send.await_count, 2)
+
+    def test_receipt_is_bound_to_payload_and_never_evicted_for_capacity(self):
+        payload = {'chat_id': 200, 'text': 'original'}
+        with patch('outbox.MAX_RECEIPTS', 1):
+            event_id = self.queue.enqueue(payload, 'stable-id')
+            self.queue.remove(event_id)
+            self.assertEqual(Outbox(self.queue.path).enqueue(payload, 'stable-id'), event_id)
+            with self.assertRaises(ValueError):
+                self.queue.enqueue({'chat_id': 200, 'text': 'different'}, 'stable-id')
+            with self.assertRaises(QueueFull):
+                self.queue.enqueue(payload, 'new-id')
+            self.assertEqual(self.rows(), [])
+
     async def test_validation_and_bounded_queue_expiry(self):
         for text in ('', [], 'x' * 4097, '\U0001f600' * 2049):
             with self.assertRaises(ValueError):

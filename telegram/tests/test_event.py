@@ -1,4 +1,3 @@
-import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -27,16 +26,16 @@ class EventInputTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await bot.handle_event(request)).status, 403)
             request.json.assert_not_awaited()
 
-    async def test_authenticated_event_still_sends(self):
+    async def test_authenticated_event_is_queued(self):
         bot = load_bot()
         self.addAsyncCleanup(bot._local.aclose)
         self.addAsyncCleanup(bot._tg.aclose)
-        request = SimpleNamespace(headers={'X-Tgbot-Secret': bot.SECRET}, json=AsyncMock(
+        queue = SimpleNamespace(enqueue=lambda *_args: 1)
+        request = SimpleNamespace(app={bot.OUTBOX_KEY: queue}, headers={'X-Tgbot-Secret': bot.SECRET}, json=AsyncMock(
             return_value={'type': 'client_created', 'name': 'test'}))
         with patch.object(bot, 'tg_send', AsyncMock()) as send:
             self.assertEqual((await bot.handle_event(request)).status, 200)
-            await asyncio.sleep(0)
-            send.assert_awaited_once()
+            send.assert_not_awaited()
 
 
 if __name__ == '__main__':

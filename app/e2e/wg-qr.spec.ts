@@ -1,11 +1,35 @@
 import { BitMatrix, QRCodeReader } from '@zxing/library'
-import { ADMIN_PASSWORD, expect, hydrated, loginApi, test, uniq } from './support/fixtures'
+import { ADMIN_PASSWORD, expect, hydrated, loginApi, test, toast, uniq } from './support/fixtures'
+import { deviceCard, openClient } from './support/clients'
 
 class ModuleReader extends QRCodeReader {
   decodeModules(matrix: BitMatrix) {
     return this.getDecoder().decodeBitMatrix(matrix)
   }
 }
+
+test('WG: панель объясняет отсутствие IPv4 и не даёт скачать пустой профиль', async ({ page, guard }) => {
+  await loginApi(page)
+  const name = uniq('wg-no-ipv4')
+  const client = await (await page.request.post('/api/clients', { data: { name } })).json()
+  const device = await (await page.request.post(`/api/clients/${client.id}/devices`, { data: { name: 'phone' } })).json()
+  const message = 'Не удалось определить IPv4-адрес сервера для WireGuard. Укажите доступный клиентам IPv4 сервера в entry.public_host и примените конфигурацию.'
+  const api = `/api/clients/${client.id}/devices/${device.id}/wg-`
+  guard.allow(422, /\/wg-(config|qrcode\.svg)/)
+  await page.route(`**${api}**`, route => route.fulfill({
+    status: 422,
+    contentType: 'application/json',
+    body: JSON.stringify({ statusCode: 422, statusMessage: 'wg_ipv4_endpoint_unavailable', message }),
+  }))
+  await page.goto('/')
+  await hydrated(page)
+  await openClient(page, name)
+  await deviceCard(page, 'phone').wg.click()
+  await expect(toast(page, message)).toBeVisible()
+  const dialog = page.getByRole('dialog', { name: 'phone' })
+  await expect(dialog.getByRole('button', { name: 'Скачать', exact: true })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Копировать', exact: true })).toBeDisabled()
+})
 
 test('WG QR декодируется в выданный конфиг без зеркального восстановления', async ({ page }) => {
   await loginApi(page)

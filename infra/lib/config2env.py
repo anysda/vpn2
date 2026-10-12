@@ -184,12 +184,13 @@ def validate_yaml(text):
     """
     schema = {
         'entry': {'host', 'password', 'public_host'},
-        'exits': {'tag', 'host', 'password', 'hy2_direct_port'},
+        'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps'},
         'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt'},
         'admin': {'user', 'password', 'ssh_pubkey'},
         'panel': {'domain', 'image'}, 'tgbot': {'image'},
         'telegram': {'bot_token', 'chat_id', 'admin_username'},
-        'youtube': {'route', 'quic', 'mark', 'offload', 'strategy', 'zapret_ref', 'domains'},
+        'youtube': {'route', 'quic', 'mark', 'offload', 'strategy', 'zapret_ref', 'domains',
+                    'window_scale'},
         'sso': {'enabled', 'base_url', 'app_slug', 'client_id', 'client_secret',
                 'allowed_subs', 'auto_redirect', 'password_login', 'label', 'discovery_url'},
         'backup': {'enabled', 'backend', 'passphrase', 'retention', 'schedule', 'local', 's3'},

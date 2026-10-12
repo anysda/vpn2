@@ -1,5 +1,6 @@
 """Опечатки и неподдерживаемый YAML должны давать ошибку с путём ключа."""
 import tempfile
+from pathlib import Path
 import unittest
 
 import test_config_validation as validation
@@ -47,6 +48,16 @@ class ConfigSchemaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = validation.ConfigValidationTests.convert(self, config, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_bandwidth_and_window_scale_accepted(self):
+        config = (CONFIG + '    hy2_up_mbps: 300\n    hy2_down_mbps: 900\n'
+                  'youtube:\n  route: zapret\n  window_scale: 1\n')
+        with tempfile.TemporaryDirectory() as directory:
+            result = validation.ConfigValidationTests.convert(self, config, directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            env = ''.join(p.read_text() for p in (Path(directory) / 'infra/envs').glob('*.env'))
+            self.assertIn('YT_ZAPRET_WINDOW_SCALE=', env)
+            self.assertIn('SE_HY2_UP_MBPS=', env)
 
 
 if __name__ == '__main__':

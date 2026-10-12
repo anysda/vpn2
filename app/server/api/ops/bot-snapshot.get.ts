@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
       expiresAt: clients.expiresAt,
       createdAt: clients.createdAt,
     }).from(clients).orderBy(desc(clients.createdAt)),
-    fetchNodeMetrics(nodeInstances().map(n => n.instance)),
+    fetchNodeMetrics(nodeInstances().map(n => n.instance), false),
     fetchProxies(),
     fetchConnections(),
   ])

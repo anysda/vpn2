@@ -89,6 +89,7 @@ function withHoldover(
   current: Map<string, number>,
   instances: string[],
   metricKey: string,
+  allowHoldover = true,
 ): Map<string, number | null> {
   const result = new Map<string, number | null>()
   for (const inst of instances) {
@@ -98,13 +99,15 @@ function withHoldover(
       result.set(inst, v)
     }
     else {
-      result.set(inst, recallValue(inst, metricKey))
+      result.set(inst, allowHoldover ? recallValue(inst, metricKey) : null)
     }
   }
   return result
 }
 
-export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics[]> {
+// Holdover нужен UI, но не алертам: повтор старого значения не является
+// новым наблюдением нагрузки. Бот запрашивает только текущие результаты VM.
+export async function fetchNodeMetrics(instances: string[], allowHoldover = true): Promise<NodeMetrics[]> {
   const [cpu, iowait, steal, ram, rx, tx, uptime, stale, diskFree, diskSize] = await Promise.all([
     instantQuery(PROMQL.cpu),
     instantQuery(PROMQL.iowait),
@@ -118,15 +121,15 @@ export async function fetchNodeMetrics(instances: string[]): Promise<NodeMetrics
     instantQuery(PROMQL.diskSize),
   ])
 
-  const cpuH = withHoldover(cpu, instances, 'cpu')
-  const iowaitH = withHoldover(iowait, instances, 'iowait')
-  const stealH = withHoldover(steal, instances, 'steal')
-  const ramH = withHoldover(ram, instances, 'ram')
-  const rxH = withHoldover(rx, instances, 'rx')
-  const txH = withHoldover(tx, instances, 'tx')
-  const upH = withHoldover(uptime, instances, 'uptime')
-  const diskFreeH = withHoldover(diskFree, instances, 'diskFree')
-  const diskSizeH = withHoldover(diskSize, instances, 'diskSize')
+  const cpuH = withHoldover(cpu, instances, 'cpu', allowHoldover)
+  const iowaitH = withHoldover(iowait, instances, 'iowait', allowHoldover)
+  const stealH = withHoldover(steal, instances, 'steal', allowHoldover)
+  const ramH = withHoldover(ram, instances, 'ram', allowHoldover)
+  const rxH = withHoldover(rx, instances, 'rx', allowHoldover)
+  const txH = withHoldover(tx, instances, 'tx', allowHoldover)
+  const upH = withHoldover(uptime, instances, 'uptime', allowHoldover)
+  const diskFreeH = withHoldover(diskFree, instances, 'diskFree', allowHoldover)
+  const diskSizeH = withHoldover(diskSize, instances, 'diskSize', allowHoldover)
 
   return instances.map(inst => ({
     instance: inst,

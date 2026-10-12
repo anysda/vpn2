@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../../../database/client'
-import { clients, devices } from '../../../../database/schema'
+import { clients } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
 import { notifyClient } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
@@ -25,17 +25,16 @@ export default defineEventHandler(async (event) => {
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const name = body.name.trim()
-  const existing = await db.select({ name: devices.name }).from(devices).where(eq(devices.clientId, clientId))
-  if (existing.some(d => d.name === name)) {
-    throw createError({ statusCode: 409, statusMessage: 'device_exists', message: `Девайс «${name}» у клиента уже есть` })
-  }
-  if (client.deviceLimit != null && existing.length >= client.deviceLimit) {
-    throw createError({ statusCode: 409, statusMessage: 'device_limit', message: `Достигнут лимит девайсов (${client.deviceLimit})` })
-  }
-
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
-  const device = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady })
+  const device = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names) => {
+    if (names.includes(name)) {
+      throw createError({ statusCode: 409, statusMessage: 'device_exists', message: `Девайс «${name}» у клиента уже есть` })
+    }
+    if (client.deviceLimit != null && names.length >= client.deviceLimit) {
+      throw createError({ statusCode: 409, statusMessage: 'device_limit', message: `Достигнут лимит девайсов (${client.deviceLimit})` })
+    }
+  })
 
   // Сразу минтим ключи, чтобы девайс был готов к выдаче конфигов.
   if (cfg.wgEnabled) {

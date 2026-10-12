@@ -100,7 +100,8 @@ class AdguardPatchTests(unittest.TestCase):
             path.write_text(yaml.safe_dump(before, allow_unicode=True, sort_keys=False))
             env = dict(os.environ, HOST_TAG="test", WG_SERVER_IP="192.0.2.1",
                        OVPN_SUBNET="198.51.100.0", IKEV2_SUBNET="203.0.113.0/24")
-            command = 'set -euo pipefail\nsvc_forget() { :; }\n' + function + '\npatch_agh_config "$1"'
+            command = (f'set -euo pipefail\nsource "{ROOT}/infra/lib/anysda-svc.sh"\n'
+                       'svc_forget() { :; }\n' + function) + '\npatch_agh_config "$1"'
             run = lambda: subprocess.run(["bash", "-c", command, "patch", str(path)],
                                           env=env, text=True, check=True, capture_output=True)
             print(run().stdout, end="")

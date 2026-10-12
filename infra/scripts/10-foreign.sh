@@ -64,7 +64,24 @@ if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-profile.conf ]]; then
   WGCF_PEER_EP=$(awk -F' = ' '/^Endpoint/{print $2}' /etc/anysda/wgcf-profile.conf | tr -d '\r ')
   WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_EP%:*}
   WGCF_PEER_ENDPOINT_PORT=${WGCF_PEER_EP##*:}
-  WGCF_CLIENT_ID=$(awk -F'=' '/^client_id/{gsub(/[" ]/, "", $2); print $2; exit}' /etc/anysda/wgcf-account.toml)
+  # reserved = client_id устройства WARP (3 байта), как у официального клиента.
+  # wgcf его не сохраняет: берём из API регистрации (тот же адрес и токен, что
+  # у wgcf) и кладём рядом с аккаунтом вместе с device_id. Новый аккаунт -
+  # новый запрос. API недоступен - reserved нулевой, следующий прогон повторит.
+  WGCF_DEVICE_ID=$(awk '/^device_id/{sub(/^[^=]*=/, ""); gsub(/["'\'' ]/, ""); print; exit}' wgcf-account.toml)
+  WGCF_CID_FILE=/etc/anysda/wgcf-client-id
+  WGCF_CLIENT_ID=$(awk -v d="$WGCF_DEVICE_ID" '$1 == d {print $2}' "$WGCF_CID_FILE" 2>/dev/null || true)
+  if [[ -z "$WGCF_CLIENT_ID" ]]; then
+    WGCF_CLIENT_ID=$(awk '/^access_token/{sub(/^[^=]*=/, ""); gsub(/["'\'' ]/, ""); printf "Authorization: Bearer %s\n", $0; exit}' wgcf-account.toml \
+      | curl -fsS --max-time 15 -H @- "https://api.cloudflareclient.com/v0a5641/reg/${WGCF_DEVICE_ID}" \
+      | python3 -c 'import json, sys; print(json.load(sys.stdin)["config"]["client_id"])' 2>/dev/null) || WGCF_CLIENT_ID=''
+    if [[ -n "$WGCF_CLIENT_ID" ]]; then
+      echo "$WGCF_DEVICE_ID $WGCF_CLIENT_ID" > "$WGCF_CID_FILE"
+      chmod 600 "$WGCF_CID_FILE"
+    else
+      echo "[$HOST_TAG]   ⚠ client_id WARP из API не получен — reserved нулевой до следующего прогона"
+    fi
+  fi
   WGCF_RESERVED_JSON=''
   if [[ -n "$WGCF_CLIENT_ID" ]]; then
     WGCF_RESERVED_JSON=$(echo "$WGCF_CLIENT_ID" | base64 -d 2>/dev/null \

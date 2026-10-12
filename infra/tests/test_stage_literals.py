@@ -73,6 +73,24 @@ class AdguardLiteralTests(unittest.TestCase):
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
+class IkeRoutingLiteralTests(unittest.TestCase):
+    def test_generated_routing_shell(self):
+        text = source('27-ikev2.sh')
+        block = text[text.index('cat > /usr/local/sbin/anysda-ikev2-routing.sh'):
+                     text.index('chmod +x /usr/local/sbin/anysda-ikev2-routing.sh')]
+        for value in [*VALUES, "'; touch INJECTED; #"]:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                result = run(block.replace('/usr/local/sbin/anysda-ikev2-routing.sh', 'routing.sh'),
+                             work, WAN_IF=value, IKEV2_SUBNET=value + '/24', IKEV2_SUBNET6=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                # Unknown action executes assignments without touching networking.
+                loaded = run('source routing.sh inspect\nprintf "%s\\0" '
+                             '"$WAN_IF" "$IKEV2_SUBNET" "$IKEV2_SUBNET6"', work)
+                self.assertEqual(loaded.returncode, 0, loaded.stderr)
+                self.assertEqual(loaded.stdout.split('\0')[:-1], [value, value + '/24', value])
+                self.assertFalse((Path(work) / 'INJECTED').exists())
+
+
 class BackupLiteralTests(unittest.TestCase):
     def test_backup_env_roundtrip(self):
         text = source('26-backup.sh')

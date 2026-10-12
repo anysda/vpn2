@@ -379,13 +379,13 @@ set -euo pipefail
 ACTION=\${1:-up}
 
 XFRM_IF='xfrm0'
-WAN_IF='$WAN_IF'
+WAN_IF=$(printf '%q' "$WAN_IF")
 MARK='0x42'
 TABLE=101
 PREF=32765
 TPROXY_PORT=7898
-IKEV2_SUBNET='${IKEV2_SUBNET%/*}/24'
-IKEV2_SUBNET6='$IKEV2_SUBNET6'
+IKEV2_SUBNET=$(printf '%q' "${IKEV2_SUBNET%/*}/24")
+IKEV2_SUBNET6=$(printf '%q' "$IKEV2_SUBNET6")
 # MSS под mtu xfrm0 ниже: 1400 - 40.
 MSS=1360
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "\$((MSS + 1)):65535" -j TCPMSS --set-mss "\$MSS")

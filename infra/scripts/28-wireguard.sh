@@ -181,8 +181,8 @@ elif [[ "$ACTION" == "down" ]]; then
   iptables -t mangle -D POSTROUTING -o "$WG_IF" "${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -X ANYSDA_WG_TPROXY 2>/dev/null || true
-  iptables -D INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || true
-  ip rule del fwmark "$MARK" lookup "$TABLE" 2>/dev/null || true
+  # INPUT по mark и правило таблицы 101 общие с OpenVPN/IKEv2: остановка
+  # одного wg0 не должна отрезать остальные туннели.
   ip6tables -D FORWARD -i "$WG_IF" -j REJECT --reject-with icmp6-addr-unreachable 2>/dev/null || true
   # Policy DROP на FORWARD осознанно не откатываем, так безопаснее и вне
   # активного окна службы.

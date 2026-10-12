@@ -425,24 +425,32 @@ async def api_add_device(chat_id: int, name: str) -> dict:
     return r.json()
 
 
+def _device_path(device_id: str) -> str:
+    # callback_data задаёт клиент Telegram: запрещаем path/query/fragment,
+    # иначе ../admin/... меняет маршрут, а ?chatId=... подменяет владельца.
+    if not re.fullmatch(r'[1-9][0-9]*', device_id):
+        raise BotApiError(400, 'Некорректное устройство')
+    return f'/api/bot/devices/{device_id}'
+
+
 async def api_delete_device(chat_id: int, device_id: str) -> dict:
-    r = await _bot_request('DELETE', f'/api/bot/devices/{device_id}?chatId={chat_id}')
+    r = await _bot_request('DELETE', f'{_device_path(device_id)}?chatId={chat_id}')
     return r.json()
 
 
 async def api_reissue_device(chat_id: int, device_id: str) -> dict:
-    r = await _bot_request('POST', f'/api/bot/devices/{device_id}/reissue',
+    r = await _bot_request('POST', f'{_device_path(device_id)}/reissue',
                            json_body={'chatId': chat_id})
     return r.json()
 
 
 async def api_wg_config(chat_id: int, device_id: str) -> str:
-    r = await _bot_request('GET', f'/api/bot/devices/{device_id}/wg-config?chatId={chat_id}')
+    r = await _bot_request('GET', f'{_device_path(device_id)}/wg-config?chatId={chat_id}')
     return r.text
 
 
 async def api_ovpn_config(chat_id: int, device_id: str) -> str:
-    r = await _bot_request('GET', f'/api/bot/devices/{device_id}/ovpn-config?chatId={chat_id}')
+    r = await _bot_request('GET', f'{_device_path(device_id)}/ovpn-config?chatId={chat_id}')
     return r.text
 
 

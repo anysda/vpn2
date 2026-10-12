@@ -71,7 +71,7 @@ async function initPanel() {
         log.warn({ pwdPath }, 'generated admin password — saved to file')
       }
       catch {
-        log.warn({ password: desiredPassword }, 'GENERATED ADMIN PASSWORD (could not write file) — save it now')
+        throw new Error(`Cannot save generated admin password to ${pwdPath}`)
       }
     }
     const passwordHash = await hashPassword(desiredPassword)

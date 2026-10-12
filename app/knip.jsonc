@@ -4,7 +4,7 @@
   // Подставные VictoriaMetrics и clash API e2e/run-local.sh копирует в контейнер
   // панели по пути и запускает node, импорта нет. Наполнитель front-test
   // e2e/front-test.sh запускает node в образе стадии builder, тоже без импорта.
-  "entry": ["e2e/support/fake-backends.mjs", "e2e/support/front-test-seed.mjs"],
+  "entry": ["e2e/support/fake-backends.mjs", "e2e/support/front-test-seed.mjs", "e2e/support/admin-password-check.mjs"],
   // Суффикс ! — шаблон для --production. Там тесты не входы, и e2e/support
   // выглядел бы мёртвым; без ! у первого шаблона прод-прогон не видит ни одного файла.
   "project": ["**/*.{js,mjs,cjs,ts,mts,cts,vue,css}!", "!e2e/**!"],

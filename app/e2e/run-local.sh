@@ -23,6 +23,10 @@ if [[ -z ${E2E_SKIP_BUILD:-} ]]; then
   dk build -t "$IMAGE" "$APP_DIR"
 fi
 
+# Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
+dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
+  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
+
 PASS=$(openssl rand -hex 12)
 # Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за
 # `exit $rc` в конце файла), 0.9-0.10 на раннере CI - SC2317 на теле функции.

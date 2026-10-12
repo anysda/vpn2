@@ -147,6 +147,9 @@ done
 # На первом прогоне стадии charon ещё не запущен (это делает шаг 6, который
 # сам перечитает creds) — здесь неудача не повод валить деплой.
 swanctl --load-creds >/dev/null 2>&1 || true
+# Conn хранит выбранный сертификат: загрузка creds сама по себе его не
+# заменяет. Перечитываем conn, чтобы новые подключения получали новый leaf.
+swanctl --load-conns >/dev/null 2>&1 || true
 LESYNC
   chmod +x /usr/local/sbin/anysda-ikev2-le-sync.sh
   # Свой CA из self-signed-режима больше не нужен — иначе путает charon при

@@ -408,7 +408,8 @@ def main():
         ],
         **{key: value for key, value in rule.items() if key in action_keys},
     } for rule in yt_route_rules + [
-        {'domain_suffix': ['.ru', '.рф', '.su'], 'outbound': 'direct-ru'},
+        # SNI/Host передают IDN как A-label (punycode).
+        {'domain_suffix': ['.ru', '.рф', '.xn--p1ai', '.su'], 'outbound': 'direct-ru'},
         {'rule_set': ['geosite-category-gov-ru'], 'outbound': 'direct-ru'},
         {'rule_set': ['geoip-ru'], 'outbound': 'direct-ru'},
         {'ip_is_private': True, 'outbound': 'direct-ru'},

@@ -1,6 +1,15 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
+/* Модалка уже исключает фоновую область уведомлений из accessibility tree.
+   Постоянный статус очереди не должен закрывать её кнопки на узком экране.
+   Сам тост сохраняется и снова виден после закрытия модалки; ошибки действий
+   остаются видимыми поверх неё. */
+[role="region"][aria-hidden="true"] .bot-queue-toast {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 @theme static {
   --font-sans: 'Inter', 'Public Sans', system-ui, sans-serif;
 

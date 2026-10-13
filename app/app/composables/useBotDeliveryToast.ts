@@ -15,7 +15,7 @@ export function useBotDeliveryToast() {
     }
     const title = botQueueText(queued.value)
     if (current?.title === title) return
-    const options = { title, color: 'warning' as const, duration: 0 }
+    const options = { title, color: 'warning' as const, duration: 0, ui: { root: 'bot-queue-toast' } }
     if (current) toast.update(queueId, options)
     else toast.add({ id: queueId, ...options })
   }

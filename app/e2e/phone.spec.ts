@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, test, uniq } from './support/fixtures'
+import { expect, test, toast, uniq } from './support/fixtures'
 import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
 import { checkBotQueue } from './support/bot-queue'
 
@@ -24,14 +24,16 @@ test.describe('телефон 390px', () => {
     await checkBotQueue(page, () => noHorizontalOverflow(page, 'очередь уведомлений'))
   })
   test('главная, «Я», вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
-    // Очередь уведомлений боту копят соседние тесты: их тосты на узком экране
-    // накрывают кнопки девайса. Здесь проверяется вёрстка, очередь не нужна.
-    await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: [] }))
+    await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: Array.from({ length: 5 }, (_, i) => ({
+      id: `phone-queue-${i}`, label: `Уведомление ${i + 1}`, status: 'queued', remaining: 5,
+    })) }))
+    const queueToast = toast(page, 'Бот недоступен, 5 уведомлений в очереди')
     await page.goto('/login')
     await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
     await noHorizontalOverflow(page, '/login')
 
     await openHome(page)
+    await expect(queueToast).toBeVisible()
     // Дождаться карточек мониторинга и маршрутов — они и есть самые широкие.
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
     await expect(page.getByText('CPU').first()).toBeVisible()
@@ -45,6 +47,7 @@ test.describe('телефон 390px', () => {
     const client = uniq('phone')
     await createClientUi(page, client)
     const dlg = await openClient(page, client)
+    await expect(queueToast, 'фоновая очередь не накрывает кнопки модалки').toBeHidden()
     await addDevice(page, 'e2e-phone')
     await noHorizontalOverflow(page, 'модалка клиента')
 
@@ -69,5 +72,6 @@ test.describe('телефон 390px', () => {
     ])
     expect(removed.status()).toBe(200)
     await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(queueToast).toBeVisible()
   })
 })

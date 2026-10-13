@@ -6,5 +6,5 @@ export default defineEventHandler(() => {
   if (!isPanelReady()) {
     throw createError({ statusCode: 503, statusMessage: 'panel_starting', message: 'Панель запускается' })
   }
-  return { name: 'anysda-vpn2', version: '0.9.1', license: 'MIT' }
+  return { name: 'anysda-vpn2', version: '0.99.99', license: 'MIT' }
 })

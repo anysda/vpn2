@@ -23,10 +23,12 @@ if fault == 'bare' and name not in ('sysctl', 'ufw', 'ss', 'ip'):
     sys.exit(1)
 if fault == name + '-error':
     sys.exit(1)
+if fault == name + '-error2':
+    sys.exit(2)
 if name == 'systemctl':
     sys.exit(3 if fault == sys.argv[-1] else 0)
 elif name == 'sysctl':
-    print(0 if fault == 'forwarding' else 1)
+    print(0 if fault in ('forwarding', 'yt-unknown-and-failed') else 1)
 elif name == 'ufw':
     print('Status: inactive' if fault == 'firewall' else 'Status: active')
 elif name == 'iptables':
@@ -137,10 +139,16 @@ class VerifyTest(unittest.TestCase):
             watch_file.write_text(watch_source)
             state_file = root / 'probe.json'
             state_file.write_text(json.dumps({
-                'good': 0 if fault == 'yt-no-sample' else 3, 'bad': 0,
+                'good': 0 if fault in ('yt-no-sample', 'yt-unknown-and-failed') else 3, 'bad': 0,
                 'last_probe': 'TCP video: HTTP 403' if fault == 'yt-no-sample' else 'TCP video: HTTP 206',
-                'unmeasured': fault == 'yt-no-sample', 'checked_at': time.time(),
+                'unmeasured': fault in ('yt-no-sample', 'yt-unknown-and-failed'), 'checked_at': time.time(),
             }))
+            if fault == 'yt-missing-state':
+                state_file.unlink()
+            elif fault == 'yt-legacy-state':
+                state = json.loads(state_file.read_text())
+                del state['checked_at']
+                state_file.write_text(json.dumps(state))
             config = root / 'router.json'
             config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
             failover.write_text('#!/usr/bin/env python3\nimport runpy\nfrom pathlib import Path\n'
@@ -281,6 +289,14 @@ class VerifyTest(unittest.TestCase):
                 result = self.run_verify(fault, role='exit')
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn('verify FAILED:', result.stdout)
+
+    def test_only_youtube_can_report_unmeasured(self):
+        for fault in ('systemctl-error2', 'ssh-error2', 'curl-error2'):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('✗ ', result.stdout)
+                self.assertNotIn('не проверено: команда', result.stdout)
 
 
 if __name__ == '__main__':

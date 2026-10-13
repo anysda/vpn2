@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stage 99 — обязательные smoke-проверки роли; любой отказ валит деплой.
+# Stage 99 — smoke-проверки роли: 0 успешно, 1 отказ, 2 не проверено.
 set -Eeuo pipefail
 
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
@@ -13,6 +13,8 @@ fail() {
   FAILURES=$((FAILURES + 1))
 }
 check() {
+  local allow_unmeasured=0
+  if [[ "$1" == --allow-unmeasured ]]; then allow_unmeasured=1; shift; fi
   local label=$1 output rc=0
   shift
   output=$("$@" 2>&1) || rc=$?
@@ -20,6 +22,7 @@ check() {
   case $rc in
     0) echo "[$HOST_TAG] ✓ $label" ;;
     2)
+      if [[ $allow_unmeasured -eq 0 ]]; then fail "$label"; return; fi
       output=${output:-команда завершилась с кодом 2}
       echo "[$HOST_TAG] ? $label — не проверено: ${output##*$'\n'}"
       UNMEASURED=$((UNMEASURED + 1)) ;;
@@ -127,9 +130,10 @@ if [[ "$HOST_TAG" == ru ]]; then
 
   # Выключенный YouTube — штатный пропуск; включённый требует A/B-проверку.
   if [[ "${YT_ROUTE:-off}" == zapret ]]; then
-    check 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
+    check --allow-unmeasured 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
     # Запасной маршрут: при сбое видеопробы YouTube уходит на VPN.
-    check 'yt-failover: selector и последняя видеопроба' /usr/local/bin/anysda-yt-failover --status
+    # Пробу (до 120 с) выполняет таймер; отсутствие свежей пробы — код 2.
+    check --allow-unmeasured 'yt-failover: selector и последняя видеопроба' /usr/local/bin/anysda-yt-failover --status
     check 'yt-failover: таймер active' service anysda-yt-failover.timer
   else
     echo "[$HOST_TAG] yt-zapret: пропущен (youtube.route=${YT_ROUTE:-off})"

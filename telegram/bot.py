@@ -1534,7 +1534,7 @@ async def handle_event(request: web.Request) -> web.Response:
             return web.Response(status=400)
         return await enqueue_notification(request, {'chat_id': int(chat_id), 'text': text}, delivery_id)
     elif evt == 'deploy_done':
-        asyncio.create_task(_announce_deploy())
+        asyncio.create_task(_announce_deploy(data.get('verify_unmeasured') is True))
     elif evt == 'system_alert':
         # Алерт от системы (backup-фейл, scheduled job упал и т.п.) →
         # в админский чат. subject/detail — текстовые поля, без markup.
@@ -1596,16 +1596,20 @@ async def _send_ikev2(data: dict) -> None:
         )
 
 
-async def _announce_deploy() -> None:
+async def _announce_deploy(verify_unmeasured: bool = False) -> None:
     # Nuxt API может ещё прогреваться сразу после 30-frontend — ретраим пару раз.
-    text = '✅ *Установка завершена*'
+    title = ('⚠️ *Установка завершена с предупреждениями*' if verify_unmeasured
+             else '✅ *Установка завершена*')
+    text = title
     for attempt in range(5):
         try:
-            text = await build_status_text('✅ *Установка завершена*')
+            text = await build_status_text(title)
             break
         except Exception as e:
             log.warning('announce_deploy: api_status failed (try %d): %s', attempt + 1, e)
             await asyncio.sleep(3)
+    if verify_unmeasured:
+        text += '\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.'
     await tg_send(CHAT_ID, text, 'Markdown')
 
 

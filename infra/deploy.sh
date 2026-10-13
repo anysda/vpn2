@@ -22,6 +22,7 @@ source "$DEPLOY_ROOT/lib/ssh.sh"
 # Accumulated stage log for the final summary (populated by run_stage):
 # «стадия<TAB>группа<TAB>время», колонки выравнивает print_summary
 _STAGE_LOG=()
+_VERIFY_WARNINGS=()
 _TOTAL_T0=0
 
 # ----------------------------------------------------------------------------
@@ -80,6 +81,9 @@ print_summary() {
   # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
   local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
   local title_str="  деплой завершён  ·  ${timing}  "
+  if [[ -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
+    title_str="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
+  fi
   local _rows=("$title_str")
   # Колонки стадий: ширина по самому длинному значению в символах, а не
   # зашитая (21-failover-watchdog не влезал в %-18s и сдвигал свою строку).
@@ -126,6 +130,10 @@ print_summary() {
   LC_ALL="$_LC_PREV"
   print_ikev2_notice
   print_sso_notice
+  if [[ -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
+    warn '99-verify: установка завершена, но не все проверки измерены'
+    printf '%s\n' "${_VERIFY_WARNINGS[@]}"
+  fi
 }
 
 print_ikev2_notice() {
@@ -398,43 +406,44 @@ prep_entry_mgmt_key() {
 # ----------------------------------------------------------------------------
 run_stage_on_host() {
   local stage="$1" host="$2"
+  # Код 2 зарезервирован для результата 99-verify; ошибки подготовки — 1.
 
   local script="$DEPLOY_ROOT/scripts/${stage}.sh"
   [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
 
-  load_env "$host" || return
+  load_env "$host" || return 1
   log "[$stage → $host] starting"
 
   # Ship a self-contained env file alongside the stage script.
   # SSH_PASS — локальный секрет оркестратора, не должен покидать машину деплоя.
   local rendered_env="$DEPLOY_ROOT/secrets/rendered/${host}.env"
-  mkdir -p "$(dirname "$rendered_env")" || return
-  chmod 700 "$(dirname "$rendered_env")" || return
+  mkdir -p "$(dirname "$rendered_env")" || return 1
+  chmod 700 "$(dirname "$rendered_env")" || return 1
   {
-    cat "$DEPLOY_ROOT/envs/all.env" || return
+    cat "$DEPLOY_ROOT/envs/all.env" || return 1
     echo
     grep -v '^SSH_PASS=' "$DEPLOY_ROOT/envs/${host}.env"
     if [[ "${RESTORE_PRESERVE_ADMIN:-0}" == 1 ]]; then
       echo 'unset ADMIN_PASSWORD'
     fi
-  } > "$rendered_env" || return
-  chmod 600 "$rendered_env" || return
+  } > "$rendered_env" || return 1
+  chmod 600 "$rendered_env" || return 1
 
-  push "$rendered_env" "${host}.env" || return
-  push "$script" || return
+  push "$rendered_env" "${host}.env" || return 1
+  push "$script" || return 1
   # Общие функции стадий (перезапуск службы только при смене её входов).
-  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return
-  push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return
-  push "$DEPLOY_ROOT/lib/ufw-rules.py" || return
+  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
+  push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return 1
+  push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then
-    push "$DEPLOY_ROOT/lib/entry-resources.sh" || return
-    push "$DEPLOY_ROOT/lib/entry_resources.py" || return
+    push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
+    push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1
   fi
-  push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return
+  push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
 
   # Общая валидация bandwidth; 22 импортирует тот же генератор для AdGuard.
   case "$stage" in
-    10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" ;;
+    10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" || return 1 ;;
   esac
 
   if [[ "$stage" == "10-foreign" || "$stage" == "20-ru-router" ]]; then
@@ -447,19 +456,19 @@ run_stage_on_host() {
     local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
     if [[ -s "$combined" ]]; then
       log "[$stage → $host] раскатываю $(wc -l < "$combined") ключ(а/ей)"
-      push "$combined" "orchestrator_keys" || return
+      push "$combined" "orchestrator_keys" || return 1
     fi
     local entry_key="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
     if [[ "$host" != ru && -s "$entry_key" ]]; then
-      push "$entry_key" "entry_mgmt_key" || return
+      push "$entry_key" "entry_mgmt_key" || return 1
     fi
   fi
 
   if [[ "$stage" == "10-foreign" ]]; then
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
-    push "$tpl" "sing-box-server.json.tpl" || return
-    push "$DEPLOY_ROOT/lib/warp-watchdog.py" "warp-watchdog.py" || return
+    push "$tpl" "sing-box-server.json.tpl" || return 1
+    push "$DEPLOY_ROOT/lib/warp-watchdog.py" "warp-watchdog.py" || return 1
   fi
 
   if [[ "$stage" == "20-ru-router" ]]; then
@@ -467,28 +476,28 @@ run_stage_on_host() {
     [[ -f "$sec" ]] || die "secrets/foreign-secrets.env не найден — prep_ru_router не запускался?"
     local gen="$DEPLOY_ROOT/lib/gen-router-config.py"
     [[ -f "$gen" ]] || die "lib/gen-router-config.py не найден"
-    push "$sec" "foreign-secrets.env" || return
-    push "$gen" "gen-router-config.py" || return
+    push "$sec" "foreign-secrets.env" || return 1
+    push "$gen" "gen-router-config.py" || return 1
     # TLS-pin для Hysteria2 outbound: cert каждого экзита (если уже опубликован
     # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
     if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs" || return
+      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs" || return 1
     fi
     if [[ -d "$DEPLOY_ROOT/secrets/exit-hostkeys" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys" || return
+      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys" || return 1
     fi
   fi
 
   # 22-adguard берёт из генератора апстрим YouTube -> российский резолвер:
   # список доменов и адрес резолвера живут только в gen-router-config.py.
   if [[ "$stage" == "22-adguard" ]]; then
-    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py" || return
+    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py" || return 1
   fi
 
   if [[ "$stage" == "21-failover-watchdog" ]]; then
     local wd="$DEPLOY_ROOT/lib/failover-watchdog.py"
     [[ -f "$wd" ]] || die "lib/failover-watchdog.py не найден"
-    push "$wd" "failover-watchdog.py" || return
+    push "$wd" "failover-watchdog.py" || return 1
   fi
 
   # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
@@ -496,9 +505,9 @@ run_stage_on_host() {
   # thing 30-frontend still needs from the orchestrator side is the rails
   # template (anysda-config.yaml.tpl).
   if [[ "$stage" == @(30-frontend|35-telegram) ]]; then
-    push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl" || return
+    push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl" || return 1
     if [[ "$stage" == "35-telegram" ]]; then
-      push "$DEPLOY_ROOT/scripts/30-frontend.sh" || return
+      push "$DEPLOY_ROOT/scripts/30-frontend.sh" || return 1
     fi
   fi
 
@@ -508,7 +517,7 @@ run_stage_on_host() {
     for f in gen-yt-quic-nft.py google-prefixes.json yt-failover.py; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f" || return
+      push "$lib" "$f" || return 1
     done
   fi
 
@@ -518,7 +527,7 @@ run_stage_on_host() {
     for f in anysda-backup.sh anysda-restore.sh anysda-backup-list.sh; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f" || return
+      push "$lib" "$f" || return 1
     done
   fi
 
@@ -526,15 +535,19 @@ run_stage_on_host() {
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
   # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
   ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
-bash -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return
+bash -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0
-  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") && /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=1
+  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") || exit 1; /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=$?
   # Экзиту env с адресами entry и соседей нужен только на время стадии:
   # каждая стадия кладёт свои файлы заново. На entry /tmp/anysda не трогаем.
   if [[ "$host" != ru ]]; then
     ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
+  fi
+  if [[ "$stage" == 99-verify && $rc -eq 2 ]]; then
+    warn "[$stage → $host] не все проверки измерены"
+    return 2
   fi
   [[ $rc -eq 0 ]] || return 1
 
@@ -560,14 +573,41 @@ run_stage() {
   # Стадии независимы по нодам — гоняем хосты параллельно. Каждый
   # run_stage_on_host уходит в свой субшелл (из-за `&`), поэтому глобалы
   # load_env (SSH_HOST/SSH_PASS/...) не пересекаются между нодами.
-  local pids=() rc=0
+  local pids=() nodes=() rc=0 host_rc pid i h line
+  local verify_logs=''
+  if [[ "$stage" == 99-verify ]]; then
+    # Причины нужны print_summary в родительском процессе, а вывод идёт сразу.
+    verify_logs=$(mktemp -d)
+  fi
   for h in $hosts; do
-    run_stage_on_host "$stage" "$h" &
+    if [[ -n "$verify_logs" ]]; then
+      run_stage_on_host "$stage" "$h" 2>&1 | tee "$verify_logs/$h" &
+    else
+      run_stage_on_host "$stage" "$h" &
+    fi
     pids+=("$!")
+    nodes+=("$h")
   done
-  for pid in "${pids[@]}"; do
-    wait "$pid" || rc=1
+  for i in "${!pids[@]}"; do
+    pid=${pids[$i]}
+    host_rc=0
+    wait "$pid" || host_rc=$?
+    if [[ "$stage" == 99-verify && $host_rc -eq 2 ]]; then
+      local found=0
+      while IFS= read -r line; do
+        if [[ "$line" == '['*'] ? '*'не проверено:'* ]]; then
+          _VERIFY_WARNINGS+=("$line")
+          found=1
+        fi
+      done < "$verify_logs/${nodes[$i]}"
+      if [[ $found -eq 0 ]]; then
+        _VERIFY_WARNINGS+=("[${nodes[$i]}] ? не проверено: 99-verify вернул код 2; подробности выше")
+      fi
+    elif [[ $host_rc -ne 0 ]]; then
+      rc=1
+    fi
   done
+  [[ -z "$verify_logs" ]] || rm -r -- "$verify_logs"
   # HOST_TAG тут остаётся от последнего source-нутого env, подпись была чужой ноды
   [[ $rc -eq 0 ]] || HOST_TAG=deploy die "стадия $stage: одна или несколько нод завершились с ошибкой"
 
@@ -575,6 +615,9 @@ run_stage() {
   local mins=$(( elapsed / 60 )) secs=$(( elapsed % 60 ))
   local t="${mins}m ${secs}s"; [[ "$mins" -eq 0 ]] && t="${secs}s"
   _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$t")
+  if [[ "$stage" == 99-verify && -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
+    HOST_TAG=deploy warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
+  fi
 }
 
 # ----------------------------------------------------------------------------
@@ -952,6 +995,7 @@ do_all() {
   print_banner
   _TOTAL_T0=$(date +%s)
   _STAGE_LOG=()
+  _VERIFY_WARNINGS=()
 
   pause_entry_auto_updates
   install_prereqs
@@ -994,10 +1038,12 @@ announce_deploy_done() {
   # shellcheck disable=SC1091
   source "$DEPLOY_ROOT/envs/ru.env" 2>/dev/null || return 0
   [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]] || return 0
+  local unmeasured=false
+  [[ -z "${_VERIFY_WARNINGS[*]:-}" ]] || unmeasured=true
   ssh_exec "[ -f /etc/anysda/tgbot-secret.txt ] && curl -fsS --max-time 5 \
       -H 'Content-Type: application/json' \
       -H \"X-Tgbot-Secret: \$(cat /etc/anysda/tgbot-secret.txt)\" \
-      -d '{\"type\":\"deploy_done\"}' \
+      -d '{\"type\":\"deploy_done\",\"verify_unmeasured\":$unmeasured}' \
       http://127.0.0.1:8877/event" >/dev/null 2>&1 || true
 }
 

@@ -489,8 +489,13 @@ if [[ -x "$VERIFY" && -s "$STAGE_ENV" ]]; then
   if "$VERIFY" "$STAGE_ENV"; then
     echo "anysda-restore: 99-verify PASSED"
   else
-    echo "anysda-restore: 99-verify FAILED — проверь руками; pre-restore снимок: $PRESNAP_FINAL" >&2
-    exit 7
+    verify_rc=$?
+    if [[ $verify_rc -eq 2 ]]; then
+      echo 'anysda-restore: ⚠ 99-verify: не все проверки измерены; причины выше' >&2
+    else
+      echo "anysda-restore: 99-verify FAILED — проверь руками; pre-restore снимок: $PRESNAP_FINAL" >&2
+      exit 7
+    fi
   fi
 else
   echo "anysda-restore: WARN: нет 99-verify ($VERIFY) или env стадий — пропуск smoke-test" >&2

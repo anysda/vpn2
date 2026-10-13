@@ -1,8 +1,12 @@
-import { inside } from './openvpn-ca'
+import { execFileSync } from 'node:child_process'
+import { container } from './openvpn-ca'
+
+const docker = (process.env.DOCKER || 'docker').split(/\s+/)
 
 export function proxiesBarrier(method: string) {
-  return JSON.parse(inside(`
-    const response = await fetch('http://127.0.0.1:9090/__test/proxies', { method: JSON.parse(process.argv[1]) });
-    console.log(await response.text());
-  `, method)) as { pending: number }
+  // Не тратим дедлайн заблокированного запроса на запуск Node/undici при
+  // каждом опросе и освобождении барьера. curl уже есть в образе панели.
+  return JSON.parse(execFileSync(docker[0]!, [...docker.slice(1), 'exec', container!,
+    'curl', '-fsS', '--max-time', '10', '-X', method, 'http://127.0.0.1:9090/__test/proxies',
+  ], { encoding: 'utf8' })) as { pending: number }
 }

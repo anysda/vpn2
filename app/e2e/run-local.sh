@@ -12,6 +12,8 @@
 # E2E_BROWSER_IMAGE — образ Playwright той же версии, что в node_modules;
 # E2E_BROWSER_PORT — порт браузерного сервера на 127.0.0.1 (E2E_PORT + 1).
 # E2E_KEEP=1 оставляет контейнер после прогона.
+# Полный прогон: E2E_SHARDS=4 — независимые панели/БД, один worker на каждую.
+# С аргументами Playwright или E2E_KEEP по умолчанию 1 (без пустых шардов).
 set -euo pipefail
 
 APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -23,11 +25,27 @@ PORT=${E2E_PORT:-51899}
 BROWSER_PORT=${E2E_BROWSER_PORT:-$((PORT + 1))}
 PW_VERSION=$(node -p 'require(process.argv[1]).version' "$APP_DIR/node_modules/@playwright/test/package.json")
 BROWSER_IMAGE=${E2E_BROWSER_IMAGE:-mcr.microsoft.com/playwright:v$PW_VERSION-noble}
-
-if [[ -z ${E2E_SKIP_BUILD:-} ]]; then
-  dk build -t "$IMAGE" "$APP_DIR"
+shards=${E2E_SHARDS:-4}
+if (( $# > 0 )) || [[ -n ${E2E_KEEP:-} ]]; then
+  shards=${E2E_SHARDS:-1}
+fi
+if [[ ! $shards =~ ^([1-9]|1[0-6])$ ]]; then
+  echo 'E2E_SHARDS must be between 1 and 16' >&2
+  exit 1
+fi
+if [[ -n ${E2E_KEEP:-} && $shards != 1 ]]; then
+  echo 'E2E_KEEP requires E2E_SHARDS=1' >&2
+  exit 1
 fi
 
+if [[ -z ${E2E_SKIP_BUILD:-} && -z ${E2E_SHARD:-} ]]; then
+  started=$SECONDS
+  dk build -t "$IMAGE" "$APP_DIR"
+  echo "timing: build=$((SECONDS - started))s"
+fi
+
+if [[ -z ${E2E_SHARD:-} ]]; then
+started=$SECONDS
 # Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
 dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
@@ -38,7 +56,15 @@ dk run --rm --name "$NAME-password" --read-only --tmpfs /var/lib/anysda-vpn2 --t
 dk run --rm --name "$NAME-wg-endpoint" --network none --read-only \
   --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/wireguard \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/wg-endpoint-check.mjs"
+echo "timing: image-checks=$((SECONDS - started))s"
 
+if [[ $shards != 1 ]]; then
+  export E2E_IMAGE="$IMAGE" E2E_SHARDS="$shards"
+  exec python3 "$APP_DIR/e2e/run-shards.py" "$@"
+fi
+fi
+
+started=$SECONDS
 PASS=$(openssl rand -hex 12)
 # Проверяем панель именно с установочным профилем entry 2 ГБ.
 resource_args=$(python3 "$APP_DIR/../infra/lib/entry_resources.py" \
@@ -53,6 +79,8 @@ cleanup() {
   stand_down "$NAME"
 }
 trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 
 # Все тесты входят с одного адреса (Caddy в docker), а лимит входов панели -
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
@@ -79,6 +107,8 @@ if ! curl -fsS "http://127.0.0.1:$BROWSER_PORT/json" >/dev/null; then
   exit 1
 fi
 
+echo "timing: stand=$((SECONDS - started))s"
+started=$SECONDS
 rc=0
 (
   cd "$APP_DIR"
@@ -88,6 +118,7 @@ rc=0
   E2E_PUBLIC_HOST=$PUBLIC_HOST E2E_NODES="ru $EXIT_TAGS" \
     ./node_modules/.bin/playwright test "$@"
 ) || rc=$?
+echo "timing: playwright=$((SECONDS - started))s"
 if (( rc != 0 )); then
   echo "--- журнал панели (хвост) ---"
   dk logs "$NAME" 2>&1 | tail -80

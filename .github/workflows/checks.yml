@@ -26,7 +26,7 @@ jobs:
       - name: мастер на Python из Debian 12
         run: bash infra/tests/setup-compat.sh
 
-  python:
+  python-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,20 +40,32 @@ jobs:
       - name: config2env на config.example.yaml
         run: |
           d=$(mktemp -d)
+          trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
           python3 infra/lib/config2env.py "$d"
           test -s "$d/infra/envs/all.env"
-      - name: регрессии инфраструктуры
+
+  infra:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sing-box: [false, true]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: зависимости инфраструктуры
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils
           python3 -m pip install PyYAML==6.0.3
-          python3 -m unittest discover -s infra/tests -v
-      - name: регрессии Telegram-бота
-        run: |
-          python3 -m pip install -r telegram/requirements.txt
-          python3 -m unittest discover -s telegram/tests -v
+      - name: регрессии инфраструктуры без sing-box
+        if: ${{ !matrix.sing-box }}
+        run: python3 -m unittest discover -s infra/tests -v
       - name: регрессии развёртывания и маршрутов sing-box
+        if: matrix.sing-box
         run: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
@@ -67,6 +79,34 @@ jobs:
           "$SING_BOX_BIN" version
           python3 -m unittest discover -s infra/tests -v
 
+  telegram:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: telegram/requirements.txt
+      - name: регрессии Telegram-бота
+        run: |
+          python3 -m pip install -r telegram/requirements.txt
+          python3 -m unittest discover -s telegram/tests -v
+
+  # Сохраняем прежний общий статус python: он зелёный только после всех
+  # наборов, в том числе обеих веток матрицы infra (важно для required checks).
+  python:
+    needs: [python-lint, infra, telegram]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: все проверки Python прошли
+        env:
+          LINT_RESULT: ${{ needs.python-lint.result }}
+          INFRA_RESULT: ${{ needs.infra.result }}
+          BOT_RESULT: ${{ needs.telegram.result }}
+        run: test "$LINT_RESULT,$INFRA_RESULT,$BOT_RESULT" = success,success,success
+
   backup-restore:
     runs-on: ubuntu-latest
     steps:
@@ -75,7 +115,7 @@ jobs:
         run: |
           docker run --rm -e VPN2_BACKUP_TEST=1 -v "$PWD:/src:ro" debian:13 sh -ec '
             apt-get update -qq
-            apt-get install -y -qq python3 sqlite3 age expect curl git wireguard-tools
+            apt-get install -y -qq --no-install-recommends python3 sqlite3 age expect curl git wireguard-tools
             python3 /src/infra/tests/backup-restore.py /src
           '
 
@@ -134,9 +174,26 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+      - name: сборка панели один раз для всех шардов
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          load: true
+          tags: vpn2-panel:e2e
+          cache-from: type=gha,scope=checks-panel
+          cache-to: type=gha,mode=max,scope=checks-panel
+      - name: загрузка браузерного образа
+        run: |
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          docker pull "mcr.microsoft.com/playwright:v${version}-noble"
       - name: сквозные тесты на собранном образе при смене сети хоста
         env:
           E2E_IP: sudo -n ip
+          E2E_SKIP_BUILD: '1'
+          E2E_SHARDS: '4'
         run: python3 e2e/with-network-churn.py pnpm e2e:local
       - name: отчёт и трейсы
         if: failure()

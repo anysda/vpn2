@@ -110,9 +110,15 @@ export async function downloadText(d: Download): Promise<string> {
 
 /** Дождаться, пока Nuxt гидратирует страницу: до этого клики уходят в пустоту. */
 export async function hydrated(page: Page) {
-  await page.waitForFunction(() => (window as unknown as { useNuxtApp?: unknown }).useNuxtApp !== undefined
-    || document.querySelector('#__nuxt')?.hasAttribute('data-v-app'))
-  await page.waitForLoadState('networkidle')
+  // Наличие useNuxtApp ещё не означает гидратацию. Vue публикует приложение
+  // на корневом элементе после mount; Nuxt снимает isHydrating после suspense.
+  // Фоновые запросы не должны добавлять 500 мс тишины к каждому переходу.
+  await page.waitForFunction(() => {
+    const root = document.querySelector('#__nuxt') as (Element & {
+      __vue_app__?: { $nuxt?: { isHydrating: boolean } }
+    }) | null
+    return root?.__vue_app__?.$nuxt?.isHydrating === false
+  })
 }
 
 /**

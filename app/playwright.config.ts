@@ -1,20 +1,22 @@
 import { defineConfig, devices } from '@playwright/test'
+import { join } from 'node:path'
 
 // Адрес панели и пароль admin приходят только из окружения: локально их ставит
 // e2e/run-local.sh, для стенда — тот, кто запускает.
 const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:51899'
+const reportDir = process.env.E2E_REPORT_DIR || '.'
 
 export default defineConfig({
   testDir: './e2e',
-  // Один админ на всю панель: 2FA и пароль тесты меняют по очереди.
+  // Один админ на панель: параллельность — отдельные панели в run-shards.py.
   workers: 1,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
   timeout: 90_000,
   expect: { timeout: 10_000 },
-  reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }]],
-  outputDir: 'test-results',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: join(reportDir, 'playwright-report') }]],
+  outputDir: join(reportDir, 'test-results'),
   globalTeardown: './e2e/support/teardown.ts',
   use: {
     baseURL,

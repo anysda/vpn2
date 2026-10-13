@@ -28,3 +28,6 @@ local-manual-routes.json
 Thumbs.db
 playwright-report
 test-results
+# Тесты и отчёты не входят в runtime: их правки не инвалидируют Nuxt build.
+e2e
+playwright.config.ts

@@ -88,10 +88,14 @@ export WG_OUT_IFACE=lo
             self.assertEqual(result.returncode, 0, result.stderr)
             cfg = json.loads((root / 'router.json').read_text())
             direct = next(o for o in cfg['outbounds'] if o['tag'] == 'hy2-us-2-direct')
+            if direct.get('detour'):
+                direct = next(o for o in cfg['outbounds'] if o['tag'] == direct['detour'])
             self.assertEqual((direct['server'], direct['server_port']), ('192.0.2.2', 1443))
             self.assertEqual(direct['password'], 'ABCDEFGHIJKLMNOP')
             self.assertEqual(direct['tls']['certificate_path'], str(root / 'pinned/us-2.pem'))
             other = next(o for o in cfg['outbounds'] if o['tag'] == 'hy2-us2-direct')
+            if other.get('detour'):
+                other = next(o for o in cfg['outbounds'] if o['tag'] == other['detour'])
             self.assertEqual((other['server'], other['server_port']), ('192.0.2.3', 443))
             self.assertEqual((root / 'port.txt').read_text(), '1443\n')
             self.assertEqual((root / 'hosts.txt').read_text(),

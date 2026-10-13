@@ -40,6 +40,8 @@ class TestFailoverRouting(unittest.TestCase):
                 self.assertFalse(out['interrupt_exist_connections'])
                 for child in out['outbounds']:
                     yield from leaves(child, visited | {tag})
+            elif out.get('detour'):
+                yield from leaves(out['detour'], visited | {tag})
             else:
                 yield out
 

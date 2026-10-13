@@ -3,6 +3,22 @@
 
   "inbounds": [
     {
+      "type": "trojan",
+      "tag": "mux-direct-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10443,
+      "users": [{ "password": "${HY2_PWD_DIRECT}" }],
+      "multiplex": { "enabled": true }
+    },
+    {
+      "type": "trojan",
+      "tag": "mux-warp-in",
+      "listen": "127.0.0.1",
+      "listen_port": 10444,
+      "users": [{ "password": "${HY2_PWD_WARP}" }],
+      "multiplex": { "enabled": true }
+    },
+    {
       "type": "hysteria2",
       "tag": "hy2-direct-in",
       ${HY2_BANDWIDTH_FIELDS}
@@ -70,10 +86,12 @@
 
   "route": {
     "rules": [
-      { "inbound": "hy2-direct-in", "action": "resolve" },
-      { "inbound": "hy2-direct-in", "ip_cidr": ["127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"], "action": "reject" },
-      { "inbound": "hy2-direct-in", "outbound": "direct" },
-      { "inbound": "hy2-warp-in",   "outbound": "warp"   },
+      { "inbound": "hy2-direct-in", "ip_cidr": ["127.0.0.1/32"], "port": [10443], "network": "tcp", "outbound": "direct" },
+      { "inbound": "hy2-warp-in", "ip_cidr": ["127.0.0.1/32"], "port": [10444], "network": "tcp", "outbound": "direct" },
+      { "inbound": ["hy2-direct-in", "mux-direct-in"], "action": "resolve" },
+      { "inbound": ["hy2-direct-in", "mux-direct-in"], "ip_cidr": ["127.0.0.0/8", "::1/128", "0.0.0.0/32", "::/128"], "action": "reject" },
+      { "inbound": ["hy2-direct-in", "mux-direct-in"], "outbound": "direct" },
+      { "inbound": ["hy2-warp-in", "mux-warp-in"], "outbound": "warp" },
       { "inbound": "hy2-mgmt-in", "ip_cidr": ["127.0.0.1/32"], "port": [9100, 22], "outbound": "direct" },
       { "inbound": "hy2-mgmt-in", "action": "reject" }
     ]

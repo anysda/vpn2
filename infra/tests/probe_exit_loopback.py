@@ -4,6 +4,7 @@ import contextlib
 import http.server
 import ipaddress
 import json
+import os
 from pathlib import Path
 import socket
 import socketserver
@@ -146,6 +147,14 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
                     'certificate_path': str(directory / 'tls.crt')},
         })
         client['route']['rules'].append({'inbound': lane, 'outbound': lane})
+    if os.environ.get('HY2_MUX_TEST') == '1':
+        carrier = next(out for out in client['outbounds'] if out['tag'] == 'DIRECT')
+        carrier['tag'] = 'CARRIER'
+        client['outbounds'].append({
+            'type': 'trojan', 'tag': 'DIRECT', 'server': '127.0.0.1', 'server_port': 10443,
+            'password': env['HY2_PWD_DIRECT'], 'detour': 'CARRIER',
+            'multiplex': {'enabled': True, 'protocol': 'h2mux', 'max_connections': 4},
+        })
     processes = []
     for name, config in [('exit', cfg), ('client', client)]:
         path = directory / (name + '.json')

@@ -237,9 +237,24 @@ def main():
         tls_direct = dict(tls_common)
         tls_warp   = dict(tls_common)
 
+        # H2mux drains QUIC into bounded per-stream buffers. In stock 1.12.25
+        # its 1 GiB receive window exceeds 250 concurrent streams * 4 MiB:
+        # frozen readers cannot exhaust the connection window. Recheck these
+        # limits when upgrading sing-mux / x/net. Yamux also isolates readers
+        # but its small stream window severely limits throughput at WAN RTT.
+        # Trojan is only the authenticated inner framing; the wire transport
+        # remains Hysteria2 + Salamander with the same TLS pin and UDP port.
+        for kind, password, inner_port in (
+                ('direct', pwd_direct, 10443), ('warp', pwd_warp, 10444)):
+            outbounds.append({
+                'type': 'trojan', 'tag': f'hy2-{tag}-{kind}',
+                'server': '127.0.0.1', 'server_port': inner_port,
+                'password': password, 'detour': f'transport-hy2-{tag}-{kind}',
+                'multiplex': {'enabled': True, 'protocol': 'h2mux', 'max_connections': 4},
+            })
         outbounds.append({
             'type': 'hysteria2',
-            'tag': f'hy2-{tag}-direct',
+            'tag': f'transport-hy2-{tag}-direct',
             **bandwidth,
             'server': domain,
             'server_port': direct_port,
@@ -249,7 +264,7 @@ def main():
         })
         outbounds.append({
             'type': 'hysteria2',
-            'tag': f'hy2-{tag}-warp',
+            'tag': f'transport-hy2-{tag}-warp',
             **bandwidth,
             'server': domain,
             'server_port': hy2_warp_port,

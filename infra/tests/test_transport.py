@@ -107,7 +107,7 @@ RU_CLASH_SECRET=test-clash-secret
                         continue
                     actual = {k: out[k] for k in ('up_mbps', 'down_mbps') if k in out}
                     expected = {'up_mbps': 120, 'down_mbps': 240} if settings and out[
-                        'tag'] in ('hy2-us-direct', 'hy2-us-warp') else {}
+                        'tag'].removeprefix('transport-') in ('hy2-us-direct', 'hy2-us-warp') else {}
                     self.assertEqual(actual, expected, out['tag'])
 
                 stage = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
@@ -132,7 +132,7 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT
                     for inbound in server['inbounds']:
                         actual = {k: inbound[k] for k in ('up_mbps', 'down_mbps') if k in inbound}
                         expected = {'up_mbps': 240, 'down_mbps': 120} if settings and tag == 'us' and (
-                            inbound['tag'] != 'hy2-mgmt-in') else {}
+                            inbound['tag'] in ('hy2-direct-in', 'hy2-warp-in')) else {}
                         self.assertEqual(actual, expected, inbound['tag'])
 
     def test_reject_invalid_bandwidth_before_writing_env(self):

@@ -366,7 +366,7 @@ backend = systemd
 EOF
 systemctl enable fail2ban >/dev/null 2>&1
 svc_restart_if_changed fail2ban /usr/bin/fail2ban-server /usr/lib/systemd/system/fail2ban.service \
-  /etc/fail2ban/jail.d/anysda.local
+  /etc/fail2ban/jail.d/anysda.local /usr/sbin/nft
 
 # ----------------------------------------------------------------------------
 # 6. node_exporter — слушает ТОЛЬКО loopback. Раньше стадия 05 перевешивала его

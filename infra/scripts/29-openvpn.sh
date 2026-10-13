@@ -29,6 +29,12 @@ fi
 
 OVPN_PORT="${OVPN_PORT:-1194}"
 OVPN_PROTO="${OVPN_PROTO:-udp}"
+case "$OVPN_PROTO" in
+  udp|udp4|udp6) OVPN_SERVER_PROTO=$OVPN_PROTO ;;
+  tcp|tcp4|tcp6) OVPN_SERVER_PROTO=${OVPN_PROTO}-server ;;
+  tcp-server|tcp4-server|tcp6-server) OVPN_SERVER_PROTO=$OVPN_PROTO ;;
+  *) echo "[$HOST_TAG] unsupported OpenVPN protocol: $OVPN_PROTO" >&2; exit 1 ;;
+esac
 OVPN_SUBNET="${OVPN_SUBNET:-10.67.67.0}"
 OVPN_SUBNETS=$(vpn_pool_subnets ovpn)
 OVPN_DIR=/etc/openvpn/server
@@ -163,7 +169,7 @@ OVPN_FASTIO=''
 [[ "$OVPN_PROTO" == udp* ]] && OVPN_FASTIO=fast-io
 cat > "$OVPN_DIR/server.conf" <<EOF
 port ${OVPN_PORT}
-proto ${OVPN_PROTO}
+proto ${OVPN_SERVER_PROTO}
 dev tun0
 topology subnet
 # Постоянные адреса устройств .2-.239 панель раздаёт через ccd
@@ -227,12 +233,10 @@ case "$OVPN_PROTO" in
   tcp*) OVPN_FW_PROTO=tcp ;;
   *) echo "[$HOST_TAG] unsupported OpenVPN protocol: $OVPN_PROTO" >&2; exit 1 ;;
 esac
-ufw allow "${OVPN_PORT}/${OVPN_FW_PROTO}" comment 'openvpn listener' >/dev/null 2>&1 || true
+ufw_sync_rules 'openvpn listener' "${OVPN_PORT}/${OVPN_FW_PROTO}"
 # OpenVPN clients (10.67.67.0/24) resolve via AdGuard on the entry mgmt IP
-for subnet in $OVPN_SUBNETS; do
-  ufw allow proto udp from "$subnet" to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
-  ufw allow proto tcp from "$subnet" to 10.99.0.1 port 53 comment 'openvpn → AdGuard DNS' >/dev/null 2>&1 || true
-done
+# shellcheck disable=SC2086
+ufw_sync_dns 'openvpn → AdGuard DNS' 10.99.0.1 $OVPN_SUBNETS
 
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"

@@ -311,6 +311,13 @@ export interface OvpnConfigParams {
 
 /** Render a unified .ovpn with inline ca / cert / key / tls-crypt blocks. */
 export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
+  // Семейство remote выбирает клиент (IPv4, IPv6 или DNS с A/AAAA).
+  // Суффикс 4/6 ограничивает bind сервера, а -server задаёт роль TCP;
+  // перенос этих ограничений в профиль ломает dual-stack и смену адреса.
+  if (!/^(?:udp[46]?|tcp[46]?(?:-server)?)$/.test(p.proto)) {
+    throw new Error(`unsupported OpenVPN protocol: ${p.proto}`)
+  }
+  const clientProto = p.proto.startsWith('udp') ? 'udp' : 'tcp-client'
   const [ca, tlsCrypt] = await Promise.all([
     fs.readFile(CA_CERT, 'utf8'),
     fs.readFile(TLS_CRYPT, 'utf8'),
@@ -318,7 +325,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
   return [
     `client`,
     `dev tun`,
-    `proto ${p.proto}`,
+    `proto ${clientProto}`,
     `remote ${p.serverHost} ${p.serverPort}`,
     `resolv-retry infinite`,
     `nobind`,

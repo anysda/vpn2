@@ -16,6 +16,11 @@ set -euo pipefail
 
 case "$HOST_TAG" in ru) echo "[$HOST_TAG] 10-foreign is foreign-only — skipping"; exit 0;; esac
 
+SVC_LIB=$(dirname "$0")/anysda-svc.sh
+[[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
+# shellcheck source=infra/lib/anysda-svc.sh
+source "$SVC_LIB"
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='10-foreign'
 
@@ -303,9 +308,9 @@ fi
 # UFW: Hysteria2 порты (00-bootstrap открывает дефолтные; здесь — для per-exit
 # override). Служебный hy2-mgmt-in (мониторинг) — свой UDP-порт. clash-api
 # ушёл на 127.0.0.1 (mgmt-mesh снят), наружу его больше не открываем.
-ufw allow "${HY2_DIRECT_PORT}/udp" comment 'hysteria2 direct' >/dev/null 2>&1 || true
-ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'   >/dev/null 2>&1 || true
-ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt (monitoring)' >/dev/null 2>&1 || true
+ufw_sync_rules 'hysteria2 direct' "${HY2_DIRECT_PORT}/udp"
+ufw_sync_rules 'hysteria2 warp' "${HY2_WARP_PORT}/udp"
+ufw_sync_rules --alias 'hysteria2 mgmt (monitoring)' 'hysteria2 mgmt' "${HY2_MGMT_PORT}/udp"
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 
 # Verify

@@ -234,8 +234,8 @@ else
 }
 EOF
 fi
-ufw allow 80/tcp   comment 'caddy HTTP + ACME challenge' || true
-ufw allow 443/tcp  comment 'caddy HTTPS панель'          || true
+ufw_sync_rules --alias 'caddy HTTP панель' 'caddy HTTP + ACME challenge' 80/tcp
+ufw_sync_rules 'caddy HTTPS панель' 443/tcp
 # AdGuard открывается через панель по /adguard/ (её сессия, VPN2-142).
 # Отдельный порт 3001 с прошлых установок закрываем.
 ufw delete allow 3001/tcp >/dev/null 2>&1 || true

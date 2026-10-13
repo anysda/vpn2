@@ -330,16 +330,14 @@ chmod 644 "$CONF"
 
 # ── 5. ufw 500 + 4500 ──────────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/8] ufw 500/udp + 4500/udp"
-ufw allow 500/udp  comment 'ikev2 IKE'    >/dev/null 2>&1 || true
-ufw allow 4500/udp comment 'ikev2 NAT-T'  >/dev/null 2>&1 || true
+ufw_sync_rules 'ikev2 IKE' 500/udp
+ufw_sync_rules 'ikev2 NAT-T' 4500/udp
 # DNS клиентам отдаётся AdGuard на mgmt-адресе entry, а он для пакетов из
 # xfrm0 — форвардинг, а ufw по умолчанию routed=deny. Без этих двух правил
 # туннель поднимется, но резолва у клиента не будет. Ровно так же сделано
 # для wg0 (стадия 28) и tun0 (стадия 29).
-for subnet in $IKEV2_SUBNETS; do
-  ufw allow proto udp from "$subnet" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
-  ufw allow proto tcp from "$subnet" to "$IKEV2_DNS" port 53 comment 'ikev2 → AdGuard DNS' >/dev/null 2>&1 || true
-done
+# shellcheck disable=SC2086
+ufw_sync_dns 'ikev2 → AdGuard DNS' "$IKEV2_DNS" $IKEV2_SUBNETS
 
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 # Loose RPF: policy-routing IPsec иначе режется reverse-path filter.

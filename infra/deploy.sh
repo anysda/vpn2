@@ -425,6 +425,7 @@ run_stage_on_host() {
   # Общие функции стадий (перезапуск службы только при смене её входов).
   push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return
   push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return
+  push "$DEPLOY_ROOT/lib/ufw-rules.py" || return
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/entry-resources.sh" || return
     push "$DEPLOY_ROOT/lib/entry_resources.py" || return

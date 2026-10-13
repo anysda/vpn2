@@ -9,6 +9,22 @@
 
 SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
+UFW_RULES_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/ufw-rules.py
+ufw_sync_rules() {
+  python3 "$UFW_RULES_FILE" "$@"
+}
+
+ufw_sync_dns() {
+  local comment=$1 destination=$2 subnet
+  shift 2
+  local rules=()
+  for subnet in "$@"; do
+    rules+=("proto udp from $subnet to $destination port 53"
+            "proto tcp from $subnet to $destination port 53")
+  done
+  ufw_sync_rules "$comment" "${rules[@]}"
+}
+
 # Единственный список пулов общий с панелью. При деплое файл лежит рядом
 # с библиотекой; при restore — в app/shared исходного дерева.
 VPN_POOLS_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/vpn-pools.json

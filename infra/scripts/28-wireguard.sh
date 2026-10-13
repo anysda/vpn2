@@ -107,12 +107,10 @@ net.ipv6.conf.all.forwarding=1
 EOF
 sysctl -p /etc/sysctl.d/98-wg-forward.conf >/dev/null
 
-ufw allow "${WG_PORT}/udp" comment 'wireguard listener' >/dev/null 2>&1 || true
+ufw_sync_rules 'wireguard listener' "${WG_PORT}/udp"
 # WireGuard clients (10.66.66.0/24) resolve via AdGuard on the entry mgmt IP
-for subnet in $WG_SUBNETS; do
-  ufw allow proto udp from "$subnet" to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
-  ufw allow proto tcp from "$subnet" to 10.99.0.1 port 53 comment 'wireguard → AdGuard DNS' >/dev/null 2>&1 || true
-done
+# shellcheck disable=SC2086
+ufw_sync_dns 'wireguard → AdGuard DNS' 10.99.0.1 $WG_SUBNETS
 
 # ── 4. wg-quick@wg0 ────────────────────────────────────────────────────────
 echo "[$HOST_TAG] [4/5] wg-quick@wg0 service"

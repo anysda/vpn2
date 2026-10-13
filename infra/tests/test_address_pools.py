@@ -114,12 +114,16 @@ OVPN_DIR=$PWD
         pools = json.loads(source('app/shared/vpn-pools.json'))
         for key, filename, variable in [('wg', '28-wireguard', 'WG_SUBNETS'), ('ovpn', '29-openvpn', 'OVPN_SUBNETS'), ('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
             stage = source(f'infra/scripts/{filename}.sh')
-            start = stage.rfind(f'for subnet in ${variable};')
-            loop = stage[start:].split('\ndone', 1)[0] + '\ndone'
+            loop = next(line for line in stage.splitlines() if line.startswith('ufw_sync_dns '))
             with tempfile.TemporaryDirectory() as directory:
                 result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n{variable}=$(vpn_pool_subnets {key})\n' + '''
 IKEV2_DNS=10.99.0.1
 ufw() { echo "$*" >> rules; }
+ufw_sync_rules() {
+  local comment=$1 rule
+  shift
+  for rule in "$@"; do ufw allow "$rule" comment "$comment"; done
+}
 ''' + loop, directory)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 rules = (Path(directory) / 'rules').read_text()

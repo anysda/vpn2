@@ -319,24 +319,24 @@ echo "[$HOST_TAG] [4/6] ufw"
 firewall_repair_if_lost
 grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw 2>/dev/null || ufw default deny incoming
 grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw 2>/dev/null || ufw default allow outgoing
-ufw allow 22/tcp comment 'ssh'
+ufw_sync_rules 'ssh' 22/tcp
 
 case "$HOST_TAG" in
   ru)
     # WG/OpenVPN listener-порты открывают сами стадии 28/29.
-    ufw allow 80/tcp            comment 'caddy HTTP панель'
+    ufw_sync_rules --alias 'caddy HTTP панель' 'caddy HTTP + ACME challenge' 80/tcp
     ;;
   *)
     # Hysteria2 порты — дефолтные. Per-exit override открывается стейджем
     # 10-foreign (он видит финальные значения после rotation).
-    ufw allow "${HY2_DIRECT_PORT}/udp" comment 'hysteria2 direct'
-    ufw allow "${HY2_WARP_PORT}/udp"   comment 'hysteria2 warp'
+    ufw_sync_rules 'hysteria2 direct' "${HY2_DIRECT_PORT}/udp"
+    ufw_sync_rules 'hysteria2 warp' "${HY2_WARP_PORT}/udp"
     # Служебный hy2-туннель (скрейп node_exporter из-за границы вместо WG-mesh).
-    ufw allow "${HY2_MGMT_PORT}/udp"   comment 'hysteria2 mgmt'
+    ufw_sync_rules --alias 'hysteria2 mgmt (monitoring)' 'hysteria2 mgmt' "${HY2_MGMT_PORT}/udp"
     # Caddy-обманки на экзитах нет, а 80/443 tcp открывались под неё:
     # снимаем правила с нод, поставленных раньше.
-    ufw delete allow 80/tcp  >/dev/null 2>&1 || true
-    ufw delete allow 443/tcp >/dev/null 2>&1 || true
+    ufw_sync_rules --alias 'caddy HTTP панель' 'caddy HTTP + ACME challenge'
+    ufw_sync_rules 'caddy HTTPS панель'
     ;;
 esac
 ufw --force enable

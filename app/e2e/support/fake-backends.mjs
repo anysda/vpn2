@@ -8,6 +8,7 @@
 // FAKE_LIVE_FILE (его пишет front-test-seed.mjs) качают трафик через IKEv2.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { DatabaseSync } from 'node:sqlite'
 
 const mgmt = Object.fromEntries(
   (process.env.NUXT_MGMT_IPS || 'ru:10.99.0.1')
@@ -45,24 +46,45 @@ function vm(req, res) {
   json(res, { status: 'success', data: { resultType: 'vector', result } }, 'application/json')
 }
 
-let holdProxies = false
-const pendingProxies = []
+let proxiesMutation = null
+let insertedId = null
 
 function clash(req, res) {
   const url = new URL(req.url, 'http://x')
-  // Барьер для конкурентных API-тестов: PATCH уже проверил БД и ждёт sing-box.
+  // Конкурентная запись ровно после проверки БД в PATCH, до ответа sing-box.
+  // Не держим HTTP до завершения выпуска ключей/уведомления другого запроса:
+  // это проверяло бы таймаут sing-box, а не атомарность изменения клиента.
   if (url.pathname === '/__test/proxies') {
-    if (req.method === 'POST') holdProxies = true
-    if (req.method === 'DELETE') {
-      holdProxies = false
-      for (const resume of pendingProxies.splice(0)) resume()
+    if (req.method === 'POST') {
+      let body = ''
+      req.on('data', (chunk) => { body += chunk })
+      req.on('end', () => {
+        proxiesMutation = JSON.parse(body)
+        insertedId = null
+        json(res, { insertedId })
+      })
+      return
     }
-    return json(res, { pending: pendingProxies.length })
+    const result = { insertedId }
+    if (req.method === 'DELETE') {
+      proxiesMutation = null
+      insertedId = null
+    }
+    return json(res, result)
   }
   if (url.pathname === '/proxies') {
-    if (holdProxies) {
-      pendingProxies.push(() => clash(req, res))
-      return
+    if (proxiesMutation) {
+      const mutation = proxiesMutation
+      proxiesMutation = null
+      const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite')
+      try {
+        db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON')
+        const result = mutation.clientName
+          ? db.prepare('INSERT INTO clients (name, password) VALUES (?, ?)').run(mutation.clientName, 'e2e-race-password')
+          : db.prepare('INSERT INTO devices (client_id, name) VALUES (?, ?)').run(mutation.device.clientId, mutation.device.name)
+        insertedId = Number(result.lastInsertRowid)
+      }
+      finally { db.close() }
     }
     if (DEMO) return json(res, { proxies: demoProxies() })
     const proxies = { 'direct-ru': { name: 'direct-ru', type: 'Direct', history: [] } }

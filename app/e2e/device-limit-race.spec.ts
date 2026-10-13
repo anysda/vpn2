@@ -11,17 +11,9 @@ test('лимит проверяется при записи после пара�
   const url = `/api/clients/${client.id}`
   try {
     expect((await page.request.post(`${url}/devices`, { data: { name: 'first' } })).status()).toBe(200)
-    proxies('POST')
-    const updating = page.request.patch(url, { data: { deviceLimit: 1, preferredExit: 'nl' } })
-    try {
-      await expect.poll(() => proxies('GET').pending, { timeout: 2000, intervals: [50] }).toBe(1)
-      const added = await page.request.post(`${url}/devices`, { data: { name: 'second' } })
-      expect(added.status(), await added.text()).toBe(200)
-    }
-    finally {
-      proxies('DELETE')
-    }
-    const result = await updating
+    proxies('POST', { device: { clientId: client.id, name: 'second' } })
+    const result = await page.request.patch(url, { data: { deviceLimit: 1, preferredExit: 'nl' } })
+    expect(proxies('GET').insertedId, 'конкурентная запись выполнена после первой проверки лимита').not.toBeNull()
     const after = await (await page.request.get(url)).json()
     console.log(`limit race: PATCH=${result.status()}, limit=${after.deviceLimit}, devices=${after.devices.length}`)
     expect(result.status()).toBe(409)

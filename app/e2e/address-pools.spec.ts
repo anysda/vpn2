@@ -42,9 +42,11 @@ for (const protocol of protocols) {
     const pool = addresses(protocol.octet, protocol.last)
     try {
       database(`const [id, key, pool] = args;
-        const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip) VALUES (?, ?, ?)');
+        const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?)');
         db.exec('BEGIN');
-        for (const ip of pool) add.run(id, 'occupied-' + ip, ip);
+        // Занятый адрес IKEv2 — полный набор учётных данных, не 2000
+        // повреждённых записей, которые syncIkev2 должен восстанавливать.
+        for (const ip of pool) add.run(id, 'occupied-' + ip, ip, key === 'ikev2' ? 'occupied-' + ip : null, key === 'ikev2' ? 'e2e-password' : null);
         db.prepare('UPDATE clients SET tg_chat_id = ? WHERE id = ?').run(700000 + id, id);
         db.exec('COMMIT');`, id, protocol.key, pool)
       const before = database('console.log(db.prepare("SELECT count(*) AS n FROM devices").get().n);')
@@ -110,9 +112,9 @@ test('миграция занятой /24: прежние ключи и конф
     const ccd = file(`/etc/openvpn/server/ccd/dev_${device.id}`)
     const row = database('console.log(JSON.stringify(db.prepare("SELECT * FROM devices WHERE id = ?").get(args[0])));', device.id)
     for (const p of protocols) database(`const [id, key, pool] = args;
-      const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip) VALUES (?, ?, ?)');
+      const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?)');
       db.exec('BEGIN');
-      for (const ip of pool) add.run(id, 'occupied-' + ip, ip);
+      for (const ip of pool) add.run(id, 'occupied-' + ip, ip, key === 'ikev2' ? 'occupied-' + ip : null, key === 'ikev2' ? 'e2e-password' : null);
       db.exec('COMMIT');`, id, p.key, addresses(p.octet, p.last, true))
     const next = await page.request.post(`/api/clients/${id}/devices`, { data: { name: 'expanded' } })
     expect(next.status(), await next.text()).toBe(200)
@@ -139,9 +141,9 @@ test('два параллельных создания на последний �
   const { id } = await created.json()
   try {
     database(`const [id, pools] = args;
-      const insert = db.prepare('INSERT INTO devices (client_id, name, wg_ip, ovpn_ip, ikev2_ip) VALUES (?, ?, ?, ?, ?)');
+      const insert = db.prepare('INSERT INTO devices (client_id, name, wg_ip, ovpn_ip, ikev2_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?, ?, ?)');
       db.exec('BEGIN');
-      for (let i = 0; i < 1999; i++) insert.run(id, 'occupied-' + i, ...pools.map(pool => pool[i]));
+      for (let i = 0; i < 1999; i++) insert.run(id, 'occupied-' + i, ...pools.map(pool => pool[i]), 'occupied-' + pools[2][i], 'e2e-password');
       db.exec('COMMIT');`, id, protocols.map(p => addresses(p.octet, p.last)))
     const responses = await Promise.all(['first', 'second'].map(name => page.request.post(`/api/clients/${id}/devices`, { data: { name } })))
     expect(responses.map(r => r.status()).sort()).toEqual([200, 409])

@@ -10,20 +10,10 @@ test('имя проверяется при переименовании посл
   const client = await created.json()
   const url = `/api/clients/${client.id}`
   const name = uniq('claimed-name')
-  let otherId: number | undefined
   try {
-    proxies('POST')
-    const updating = page.request.patch(url, { data: { name, preferredExit: 'nl' } })
-    try {
-      await expect.poll(() => proxies('GET').pending, { timeout: 2000, intervals: [50] }).toBe(1)
-      const other = await page.request.post('/api/clients', { data: { name } })
-      expect(other.status(), await other.text()).toBe(200)
-      otherId = (await other.json()).id
-    }
-    finally {
-      proxies('DELETE')
-    }
-    const result = await updating
+    proxies('POST', { clientName: name })
+    const result = await page.request.patch(url, { data: { name, preferredExit: 'nl' } })
+    expect(proxies('GET').insertedId, 'конкурентная запись выполнена после первой проверки имени').not.toBeNull()
     const all: Array<{ name: string }> = await (await page.request.get('/api/clients')).json()
     const matching = all.filter(client => client.name === name).length
     console.log(`rename race: PATCH=${result.status()}, clients with requested name=${matching}`)
@@ -35,7 +25,7 @@ test('имя проверяется при переименовании посл
     expect(after.preferredExit).toBeNull()
   }
   finally {
-    proxies('DELETE')
+    const otherId = proxies('DELETE').insertedId
     await page.request.delete(url)
     if (otherId) await page.request.delete(`/api/clients/${otherId}`)
   }

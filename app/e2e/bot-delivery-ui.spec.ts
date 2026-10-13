@@ -31,16 +31,16 @@ test('недоступный бот: тост клиента, рассылки, 
     if (result.changes !== 1) throw new Error('test delivery not found');
   `, id, exhausted)
   try {
-    // Предыдущие сценарии тоже создают уведомления. Доставляем их обычным
-    // обработчиком, чтобы считать только пять уведомлений этого сценария.
-    await token(true)
+    // Это одноразовый контейнер без настоящего бота (проверено выше).
+    // Убираем уведомления других сценариев: попытка «ускорить» их через due
+    // гонялась с уже выполняющимся POST, который возвращал due в будущее.
+    // Доставку пяти НОВЫХ уведомлений ниже проверяем настоящим обработчиком.
     inside(`
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
-      db.exec("PRAGMA busy_timeout=5000; UPDATE bot_outbox SET due = 0 WHERE status = 'queued'");
+      db.exec('PRAGMA busy_timeout=5000; DELETE FROM bot_outbox');
+      db.close();
     `)
-    await expect.poll(async () => (await (await page.request.get('/api/admin/bot-deliveries')).json())
-      .filter((row: { status: string }) => row.status === 'queued').length, { timeout: 30_000 }).toBe(0)
     await token(false)
     const created = await page.request.post('/api/clients', { data: { name } })
     expect(created.ok()).toBe(true)

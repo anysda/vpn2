@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { botDeliveryText, type BotDelivery } from '#shared/bot-delivery'
+import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-delivery'
 interface TgStatus {
   configured: boolean
   running: boolean
@@ -14,7 +14,7 @@ const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
 })
 
 const toast = useToast()
-const showDelivery = useBotDeliveryToast()
+const { queued, show: showDelivery } = useBotDeliveryToast()
 
 const newToken = ref('')
 const newChatId = ref('')
@@ -118,6 +118,8 @@ async function sendMessage() {
           {{ statusBadge.label }}
         </UBadge>
       </div>
+
+      <p v-if="queued" role="status" class="text-(--ui-warning)">{{ botQueueText(queued) }}</p>
 
       <UFormField label="Token" :ui="{ label: 'text-xs text-(--ui-text-muted)' }">
         <UInput

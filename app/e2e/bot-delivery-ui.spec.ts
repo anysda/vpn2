@@ -1,6 +1,11 @@
 import { test, expect, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 import { container, inside } from './support/openvpn-ca'
+import { checkBotQueue } from './support/bot-queue'
+
+test('пять уведомлений: один обновляемый тост очереди исчезает после доставки', async ({ page }) => {
+  await checkBotQueue(page)
+})
 
 test('недоступный бот: тост клиента, рассылки, восстановление и окончательная ошибка', async ({ page, request }) => {
   test.skip(!container, 'нужен одноразовый локальный контейнер с подставным ботом')
@@ -21,37 +26,55 @@ test('недоступный бот: тост клиента, рассылки, 
   const due = (id: string, exhausted = false) => inside(`
     import { DatabaseSync } from 'node:sqlite';
     const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+    db.exec('PRAGMA busy_timeout=5000');
     const result = db.prepare('UPDATE bot_outbox SET due = 0, attempts = ? WHERE id = ?').run(JSON.parse(process.argv[2]) ? 5 : 1, JSON.parse(process.argv[1]));
     if (result.changes !== 1) throw new Error('test delivery not found');
   `, id, exhausted)
   try {
+    // Предыдущие сценарии тоже создают уведомления. Доставляем их обычным
+    // обработчиком, чтобы считать только пять уведомлений этого сценария.
+    await token(true)
+    inside(`
+      import { DatabaseSync } from 'node:sqlite';
+      const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+      db.exec("PRAGMA busy_timeout=5000; UPDATE bot_outbox SET due = 0 WHERE status = 'queued'");
+    `)
+    await expect.poll(async () => (await (await page.request.get('/api/admin/bot-deliveries')).json())
+      .filter((row: { status: string }) => row.status === 'queued').length, { timeout: 30_000 }).toBe(0)
     await token(false)
     const created = await page.request.post('/api/clients', { data: { name } })
     expect(created.ok()).toBe(true)
     clientId = (await created.json()).id
-    await expect(toast(page, `Уведомление о клиенте «${name}»: не отправлено. Ещё попыток: 5.`)).toBeVisible()
+    await expect(toast(page, 'Бот недоступен, 1 уведомлений в очереди')).toBeVisible()
     inside(`
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+      db.exec('PRAGMA busy_timeout=5000');
       db.prepare('UPDATE clients SET tg_chat_id = 123456789 WHERE id = ?').run(JSON.parse(process.argv[1]));
     `, clientId)
     const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
     expect(changed.ok()).toBe(true)
-    await expect(toast(page, `Уведомление клиенту «${name}»: не отправлено. Ещё попыток: 5.`)).toBeVisible()
+    await expect(toast(page, 'Бот недоступен, 2 уведомлений в очереди')).toBeVisible()
 
-    await page.getByLabel('Сообщение юзерам').fill('e2e delivery probe')
-    await page.getByRole('button', { name: 'Отправить', exact: true }).click()
-    await expect(toast(page, 'Рассылка: не отправлено. Ещё попыток: 5.')).toBeVisible()
+    for (let n = 3; n <= 5; n++) {
+      await page.getByLabel('Сообщение юзерам').fill(`e2e delivery probe ${n}`)
+      await page.getByRole('button', { name: 'Отправить', exact: true }).click()
+      await expect(toast(page, `Бот недоступен, ${n} уведомлений в очереди`)).toBeVisible()
+    }
+    const queueToasts = page.getByRole('region', { includeHidden: true }).locator('ol > li').filter({ hasText: /Бот недоступен|не отправлено/ })
+    await expect(queueToasts).toHaveCount(1)
+    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 5 уведомлений в очереди' })).toBeVisible()
+    console.log('Реальная очередь: Бот недоступен, 5 уведомлений в очереди — тостов: 1')
     await expect(toast(page, /^Отправлено:/)).toHaveCount(0)
     const statuses = await (await page.request.get('/api/admin/bot-deliveries')).json()
     expect(await (await request.get('/api/admin/bot-deliveries')).json(), 'без сессии история недоступна').toEqual([])
     const broadcast = statuses.find((row: { label: string }) => row.label === 'Рассылка')
     expect(broadcast).toMatchObject({ status: 'queued', remaining: 5 })
     await token(true)
-    due(broadcast.id)
+    for (const row of statuses.filter((row: { status: string }) => row.status === 'queued')) due(row.id)
     try {
       await expect.poll(async () => (await (await page.request.get('/api/admin/bot-deliveries')).json())
-        .find((row: { id: string }) => row.id === broadcast.id)).toMatchObject({ status: 'accepted' })
+        .filter((row: { status: string }) => row.status === 'queued').length).toBe(0)
     }
     catch (error) {
       console.log(inside(`
@@ -64,9 +87,14 @@ test('недоступный бот: тост клиента, рассылки, 
     }
     const accepted = JSON.parse(inside(`console.log(JSON.stringify(await (await fetch('http://127.0.0.1:8877/events')).json()))`))
     expect(accepted.filter((row: { deliveryId: string }) => row.deliveryId === broadcast.id)).toHaveLength(1)
+    await expect(queueToasts).toHaveCount(0)
+    console.log('Реальная очередь: бот вернулся, очередь доставлена — тостов: 0')
 
     await token(false)
-    const pending = statuses.find((row: { label: string }) => row.label === `Уведомление клиенту «${name}»`)
+    const failed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 5 } })
+    expect(failed.ok()).toBe(true)
+    const pending = (await (await page.request.get('/api/admin/bot-deliveries')).json())
+      .find((row: { status: string }) => row.status === 'queued')
     due(pending.id, true)
     await expect(toast(page, `Уведомление клиенту «${name}»: доставка не удалась. Повторов не будет.`)).toBeVisible()
     await page.reload()

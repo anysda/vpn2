@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test, uniq } from './support/fixtures'
 import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
+import { checkBotQueue } from './support/bot-queue'
 
 /** Ширина документа не больше окна: ничего не вылезает вбок. */
 async function noHorizontalOverflow(page: Page, where: string) {
@@ -19,6 +20,9 @@ async function noHorizontalOverflow(page: Page, where: string) {
 }
 
 test.describe('телефон 390px', () => {
+  test('пять уведомлений сворачиваются в один тост и исчезают после доставки', async ({ page }) => {
+    await checkBotQueue(page, () => noHorizontalOverflow(page, 'очередь уведомлений'))
+  })
   test('главная, «Я», вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
     // Очередь уведомлений боту копят соседние тесты: их тосты на узком экране
     // накрывают кнопки девайса. Здесь проверяется вёрстка, очередь не нужна.

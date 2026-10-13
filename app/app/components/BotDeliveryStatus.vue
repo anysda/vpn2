@@ -1,18 +1,19 @@
 <script setup lang="ts">
-import { botDeliveryText, type BotDelivery } from '#shared/bot-delivery'
+import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-delivery'
 
-const rows = ref<BotDelivery[]>([])
-const show = useBotDeliveryToast()
+const { rows, queued, sync } = useBotDeliveryToast()
 const pending = computed(() => rows.value.filter(row => row.status !== 'accepted'))
 let timer: ReturnType<typeof setInterval> | undefined
 let running = false
 let initialized = false
+let disposed = false
 async function refresh() {
   if (running) return
   running = true
   try {
-    rows.value = await $fetch<BotDelivery[]>('/api/admin/bot-deliveries')
-    for (const row of rows.value) show(row, initialized)
+    const deliveries = await $fetch<BotDelivery[]>('/api/admin/bot-deliveries')
+    if (disposed) return
+    sync(deliveries, initialized)
     initialized = true
   }
   catch { /* При разрыве связи история останется в панели до следующего опроса. */ }
@@ -22,7 +23,11 @@ onMounted(() => {
   void refresh()
   timer = setInterval(refresh, 2000)
 })
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  disposed = true
+  clearInterval(timer)
+  sync([], false)
+})
 </script>
 
 <template>
@@ -32,6 +37,7 @@ onUnmounted(() => clearInterval(timer))
     </UButton>
     <template #content>
       <ul class="max-h-80 max-w-sm overflow-auto p-4 space-y-2 text-sm">
+        <li v-if="queued">{{ botQueueText(queued) }}</li>
         <li v-for="row in pending" :key="row.id">
           {{ botDeliveryText(row) }}
         </li>

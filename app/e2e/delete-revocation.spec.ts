@@ -59,6 +59,7 @@ for (const scenario of scenarios) {
         inside(`
           import { DatabaseSync } from 'node:sqlite';
           const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+          db.exec('PRAGMA busy_timeout = 10000');
           const id = JSON.parse(process.argv[1]);
           db.prepare('UPDATE clients SET tg_chat_id = ? WHERE id = ?').run(id, id);
         `, client.id)

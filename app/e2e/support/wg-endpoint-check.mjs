@@ -103,6 +103,7 @@ try {
       const device = await added.json()
       const { DatabaseSync } = await import('node:sqlite')
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite')
+      db.exec('PRAGMA busy_timeout = 10000')
       db.prepare('UPDATE clients SET tg_chat_id = ? WHERE id = ?').run(client.id, client.id)
       db.close()
       const prefix = `/api/clients/${client.id}/devices/${device.id}`

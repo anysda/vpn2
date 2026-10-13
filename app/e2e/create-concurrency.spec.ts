@@ -41,6 +41,7 @@ test('параллельная выдача адресов всех проток
     const rows: Array<Record<string, string | null>> = JSON.parse(inside(`
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+      db.exec('PRAGMA busy_timeout = 10000');
       console.log(JSON.stringify(db.prepare('SELECT wg_ip, ovpn_ip, ikev2_ip, ikev2_username FROM devices WHERE client_id = ?').all(JSON.parse(process.argv[1]))));
       db.close();
     `, client.id))

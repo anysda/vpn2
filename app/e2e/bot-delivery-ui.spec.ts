@@ -80,6 +80,7 @@ test('недоступный бот: тост клиента, рассылки, 
       console.log(inside(`
         import { DatabaseSync } from 'node:sqlite';
         const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+        db.exec('PRAGMA busy_timeout = 10000');
         console.log(JSON.stringify(db.prepare('SELECT id, status, attempts, due FROM bot_outbox').all()));
         console.log('bot health', (await fetch('http://127.0.0.1:8877/health')).status);
       `))

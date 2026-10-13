@@ -14,6 +14,7 @@ export function rows(clientId: number) {
   return JSON.parse(inside(`
     import { DatabaseSync } from 'node:sqlite';
     const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+    db.exec('PRAGMA busy_timeout = 10000');
     console.log(JSON.stringify(db.prepare('SELECT * FROM devices WHERE client_id = ? ORDER BY id').all(JSON.parse(process.argv[1]))));
   `, clientId)) as Array<{ id: number, ovpn_cert: string, ovpn_key: string, wg_public_key: string, wg_private_key: string, ikev2_username: string, ikev2_password: string }>
 }

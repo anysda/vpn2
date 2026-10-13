@@ -27,6 +27,7 @@ for (let i = 0; ; i++) {
   }
 }
 const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite')
+db.exec('PRAGMA busy_timeout = 10000')
 const snapshotFile = '/var/lib/anysda-vpn2/pool-upgrade.json'
 const hash = text => createHash('sha256').update(text).digest('hex')
 async function snapshot(clientId, deviceId) {

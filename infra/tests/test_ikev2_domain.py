@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_deploy import bash, source, function
+from test_deploy import ROOT, bash, source, function
 
 
 class Ikev2DomainTests(unittest.TestCase):
@@ -14,6 +14,7 @@ class Ikev2DomainTests(unittest.TestCase):
             for child in ('etc/anysda', 'etc/systemd/system', 'var/anysda/.stamps', 'pki'):
                 (root / child).mkdir(parents=True)
             (root / 'pki/ca.crt').write_text('existing CA')
+            (root / 'etc/anysda/ikev2-profile-notice').write_text('old notice')
             # Исполняем финал стадии: именно там должны быть установлены
             # watchers после загрузки charon, независимо от начального режима.
             tail = stage[stage.index('touch /var/anysda/.stamps/27-ikev2'):]
@@ -24,8 +25,9 @@ class Ikev2DomainTests(unittest.TestCase):
             result = bash('''
 HOST_TAG=ru
 IKEV2_MODE=self-signed
-IKEV2_SERVER_HOST=192.0.2.1
+IKEV2_SERVER_HOST=vpn.example.test
 PANEL_DOMAIN=vpn.example.test
+LE_DOMAIN=vpn.example.test
 LE_CERT=/caddy/not-yet-created.crt
 LE_KEY=/caddy/not-yet-created.key
 PKI=$PWD/pki
@@ -37,7 +39,9 @@ systemctl() { echo "$*" >> systemctl.calls; }
             self.assertIn('OnUnitActiveSec=30s', timer.read_text())
             service = (timer.parent / 'anysda-ikev2-cert-sync.service').read_text()
             self.assertIn('"vpn.example.test"', service)
-            self.assertIn('нужно скачать заново', result.stdout)
+            # Профили по IP продолжают работать: старое предупреждение снимается.
+            self.assertFalse((root / 'etc/anysda/ikev2-profile-notice').exists())
+            self.assertEqual((root / 'etc/anysda/ikev2-domain').read_text(), 'vpn.example.test')
 
     def test_appearance_rotation_and_reload_failure(self):
         stage = source('infra/scripts/27-ikev2.sh')
@@ -95,6 +99,88 @@ export -f swanctl
             cancelled = bash(prelude + call, directory)
             self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
             self.assertEqual((root / 'calls').read_text(), before, 'stale watcher must not restore removed domain')
+
+    def test_server_address_follows_client_configs_and_keeps_ip_profiles(self):
+        stage = source('infra/scripts/27-ikev2.sh')
+        start = stage.index('# Адрес сервера в профилях тот же')
+        head = stage[start:stage.index('# ── 1. apt strongswan')]
+        cases = (
+            # (WG_PUBLIC_HOST, прошлые маркеры mode/server-host, есть LE-cert) →
+            # (режим, адрес в профилях, id сервера, домен под LE)
+            ('', None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
+            ('vpn.example.test', None, False,
+             ('self-signed', 'vpn.example.test', '%any', 'vpn.example.test')),
+            ('vpn.example.test', None, True,
+             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
+            # Домен добавлен к серверу, раздававшему профили по IP: свой CA остаётся.
+            ('vpn.example.test', ('self-signed', '192.0.2.1'), True,
+             ('self-signed', 'vpn.example.test', '%any', '')),
+            ('vpn.example.test', ('letsencrypt', 'vpn.example.test'), True,
+             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
+            # Явный public_host важнее домена панели.
+            ('edge.example.net', None, True, ('self-signed', 'edge.example.net', '%any', '')),
+        )
+        for public, previous, issued, expected in cases:
+            with self.subTest(public=public, previous=previous, issued=issued), \
+                    tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'etc/anysda').mkdir(parents=True)
+                if previous:
+                    (root / 'etc/anysda/ikev2-mode').write_text(previous[0])
+                    (root / 'etc/anysda/ikev2-server-host').write_text(previous[1])
+                caddy = root / 'caddy/vpn.example.test'
+                caddy.mkdir(parents=True)
+                if issued:
+                    for suffix in ('crt', 'key'):
+                        (caddy / f'vpn.example.test.{suffix}').write_text('pem')
+                result = bash(f'''
+HOST_TAG=ru
+ENTRY_HOST=192.0.2.1
+PANEL_DOMAIN=vpn.example.test
+WG_PUBLIC_HOST={public}
+CADDY_CERT_DIR=$PWD/caddy
+''' + head.replace('/etc/', directory + '/etc/') + '''
+printf '%s|%s|%s|%s' "$IKEV2_MODE" "$IKEV2_SERVER_HOST" "$IKEV2_LOCAL_ID" "$LE_DOMAIN" > result
+''', directory)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(tuple((root / 'result').read_text().split('|')), expected)
+                # Решение остаться на своём CA не отменяется следующим деплоем.
+                self.assertEqual((root / 'etc/anysda/ikev2-own-ca-kept').exists(),
+                                 previous == ('self-signed', '192.0.2.1'))
+
+    def test_own_certificate_names_domain_and_entry_ip_with_same_ca(self):
+        stage = source('infra/scripts/27-ikev2.sh')
+        block = '  ikev2_pki_build() {' + stage.split('  ikev2_pki_build() {', 1)[1].split(
+            '  pki_transaction', 1)[0]
+        lib = ROOT / 'infra/lib/anysda-pki.sh'
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'pki').mkdir()
+            run = f'source {lib}\nHOST_TAG=ru\nENTRY_HOST=192.0.2.1\nPKI=$PWD/pki\n' + block
+            before = bash(run + 'ikev2_pki_build "$PKI"\n', directory)
+            self.assertEqual(before.returncode, 0, before.stderr)
+            ca = (root / 'pki/ca.crt').read_bytes()
+            old = (root / 'pki/server.crt').read_bytes()
+            after = bash(run.replace('ENTRY_HOST=192.0.2.1\n', 'ENTRY_HOST=192.0.2.1\n'
+                                     'IKEV2_PUBLIC_HOST=vpn.example.test\n')
+                         + 'ikev2_pki_build "$PKI"\n', directory)
+            self.assertEqual(after.returncode, 0, after.stderr)
+            self.assertIn('SAN не содержит vpn.example.test', after.stdout)
+            self.assertEqual((root / 'pki/ca.crt').read_bytes(), ca, 'clients trust the same CA')
+            self.assertNotEqual((root / 'pki/server.crt').read_bytes(), old)
+            text = bash('openssl x509 -in pki/server.crt -noout -text', directory).stdout
+            self.assertIn('Subject: CN=vpn.example.test', text)
+            self.assertIn('DNS:vpn.example.test, IP Address:192.0.2.1', text)
+            for name in ('vpn.example.test', '192.0.2.1'):
+                flag = '-verify_ip' if name[0].isdigit() else '-verify_hostname'
+                check = bash(f'openssl verify -CAfile pki/ca.crt -purpose sslserver {flag} {name} '
+                             'pki/server.crt', directory)
+                self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            again = bash(run.replace('ENTRY_HOST=192.0.2.1\n', 'ENTRY_HOST=192.0.2.1\n'
+                                     'IKEV2_PUBLIC_HOST=vpn.example.test\n')
+                         + 'ikev2_pki_build "$PKI"\n', directory)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertNotIn('перевыпуск', again.stdout, 'certificate with both names is kept')
 
     def test_summary_reads_actual_mode(self):
         deploy = source('infra/deploy.sh')

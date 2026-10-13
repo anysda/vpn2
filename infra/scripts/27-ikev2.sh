@@ -6,23 +6,24 @@
 # /etc/swanctl/conf.d/anysda-clients.conf через server/utils/ikev2.ts.
 #
 # Server-cert — ДВА режима:
-#   1) letsencrypt: PANEL_DOMAIN задан И Caddy уже выдал LE-cert на него
-#      (либо его cert/key/chain восстановлены из бэкапа в swanctl).
+#   1) letsencrypt: адрес профилей = PANEL_DOMAIN, Caddy уже выдал LE-cert
+#      на него (либо его cert/key/chain восстановлены из бэкапа в swanctl), и
+#      профилей по IP со своим CA на сервере ещё не выдавали.
 #      Берём cert/key из /var/lib/caddy/.local/share/caddy/certificates/...
 #      CA клиенту не нужен (LE-корень в trust-store iOS/macOS/Win/Android).
 #      systemd path-watcher на Caddy-cert: ротация Caddy → re-copy + reload.
-#   2) self-signed: иначе. Свой ECDSA CA + server-cert на $ENTRY_HOST.
-#      Клиенту нужно скачать CA и доверить вручную.
+#   2) self-signed: иначе. Свой ECDSA CA + server-cert, SAN = адрес профилей
+#      и IP входа. Клиенту нужно скачать CA и доверить вручную.
 #
 # Режим записывается в /etc/anysda/ikev2-mode (letsencrypt|self-signed) и
 # /etc/anysda/ikev2-server-host (домен или IP) — панель читает оба, чтобы
 # показать клиенту правильный server-address и решить включать ли CA.
 #
 # Идемпотентно: CA генерится один раз. Server-cert перевыпускается если
-# (self-signed) истёк срок действия или SAN не равен $ENTRY_HOST, либо Caddy выдал
-# обновлённый cert. Переключения self→LE происходит автоматически когда
-# Caddy выдаст cert; обратное (LE→self) — никогда без явного удаления
-# PANEL_DOMAIN из config.yaml.
+# (self-signed) истёк срок действия или в SAN нет адреса профилей или IP входа,
+# либо Caddy выдал обновлённый cert. Переключения self→LE происходит
+# автоматически когда Caddy выдаст cert; обратное (LE→self) — никогда без явного
+# удаления PANEL_DOMAIN из config.yaml.
 
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
@@ -58,33 +59,57 @@ mkdir -p /var/anysda/.stamps "$PKI" /etc/swanctl/conf.d /etc/anysda
 exec 8>/run/anysda-ikev2-cert.lock
 flock -x 8
 
-# ── Detect mode: letsencrypt (если есть PANEL_DOMAIN И Caddy выдал cert) ───
+# Адрес сервера в профилях тот же, что у WG и OpenVPN: entry.public_host,
+# иначе домен панели (config2env), иначе IP входа. Сертификат своего CA
+# содержит и этот адрес, и IP входа: профили, выданные по IP, работают дальше.
+IKEV2_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}"
+# Профили по IP со своим CA уже выданы, а сертификат Let's Encrypt не содержит
+# IP: переход на него отрезал бы эти профили. Такой сервер остаётся на своём CA.
+OWN_CA_KEPT=/etc/anysda/ikev2-own-ca-kept
+if [[ "$IKEV2_PUBLIC_HOST" != "$ENTRY_HOST" &&
+      "$(cat /etc/anysda/ikev2-mode 2>/dev/null)" == "self-signed" &&
+      "$(cat /etc/anysda/ikev2-server-host 2>/dev/null)" == "$ENTRY_HOST" ]]; then
+  touch "$OWN_CA_KEPT"
+fi
+LE_DOMAIN=""
+if [[ -n "${PANEL_DOMAIN:-}" && "$IKEV2_PUBLIC_HOST" == "$PANEL_DOMAIN" && ! -e "$OWN_CA_KEPT" ]]; then
+  LE_DOMAIN="$PANEL_DOMAIN"
+fi
+
+# ── Detect mode: letsencrypt (если есть LE_DOMAIN И Caddy выдал cert) ───────
 LE_CERT=""
 LE_KEY=""
-if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-  LE_CERT="${CADDY_CERT_DIR}/${PANEL_DOMAIN}/${PANEL_DOMAIN}.crt"
-  LE_KEY="${CADDY_CERT_DIR}/${PANEL_DOMAIN}/${PANEL_DOMAIN}.key"
+if [[ -n "$LE_DOMAIN" ]]; then
+  LE_CERT="${CADDY_CERT_DIR}/${LE_DOMAIN}/${LE_DOMAIN}.crt"
+  LE_KEY="${CADDY_CERT_DIR}/${LE_DOMAIN}/${LE_DOMAIN}.key"
 fi
 if [[ -n "$LE_CERT" && -r "$LE_CERT" && -r "$LE_KEY" ]]; then
   IKEV2_MODE="letsencrypt"
-  IKEV2_SERVER_HOST="$PANEL_DOMAIN"
-elif [[ -n "${PANEL_DOMAIN:-}" &&
+  IKEV2_SERVER_HOST="$LE_DOMAIN"
+elif [[ -n "$LE_DOMAIN" &&
         "$(cat /etc/anysda/ikev2-mode 2>/dev/null)" == "letsencrypt" &&
-        "$(cat /etc/anysda/ikev2-server-host 2>/dev/null)" == "$PANEL_DOMAIN" &&
+        "$(cat /etc/anysda/ikev2-server-host 2>/dev/null)" == "$LE_DOMAIN" &&
         -s /etc/swanctl/x509/anysda-server.crt && -s /etc/swanctl/private/anysda-server.key ]]; then
   # Restore возвращает действующий LE-cert/key/chain в swanctl, но Caddy
   # на чистом хосте может ещё не получить свой cert. Не меняем доверие клиентов.
   IKEV2_MODE="letsencrypt"
-  IKEV2_SERVER_HOST="$PANEL_DOMAIN"
+  IKEV2_SERVER_HOST="$LE_DOMAIN"
 else
   IKEV2_MODE="self-signed"
-  IKEV2_SERVER_HOST="$ENTRY_HOST"
-  if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-    echo "[$HOST_TAG] PANEL_DOMAIN=$PANEL_DOMAIN задан, но Caddy ещё не выдал LE-cert"
+  IKEV2_SERVER_HOST="$IKEV2_PUBLIC_HOST"
+  if [[ -n "$LE_DOMAIN" ]]; then
+    echo "[$HOST_TAG] PANEL_DOMAIN=$LE_DOMAIN задан, но Caddy ещё не выдал LE-cert"
     echo "[$HOST_TAG]   → временно self-signed; сертификат Caddy применится автоматически (проверка каждые 30 с)"
   fi
 fi
 echo "[$HOST_TAG] mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"
+# Идентификатор сервера берётся из IDr клиента (iOS шлёт свой Remote ID: у
+# старых профилей IP, у новых домен), без IDr - адрес, на который пришёл
+# клиент. Оба есть в SAN своего сертификата. LE-сертификат знает только домен.
+IKEV2_LOCAL_ID="$IKEV2_SERVER_HOST"
+if [[ "$IKEV2_MODE" == "self-signed" && "$IKEV2_PUBLIC_HOST" != "$ENTRY_HOST" ]]; then
+  IKEV2_LOCAL_ID="%any"
+fi
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
 # ⚠️ python3-vici (биндинги к сокету charon) в Ubuntu 24.04 НЕТ ни в одном
@@ -181,9 +206,6 @@ if [[ -n "$DOMAIN" ]]; then
   printf '%s' letsencrypt > /etc/anysda/ikev2-mode
   printf '%s' "$DIGEST" > /etc/anysda/ikev2-cert.sha256
   echo "IKEv2: mode=letsencrypt server-host=$DOMAIN"
-  if [[ -s /etc/anysda/ikev2-profile-notice ]]; then
-    cat /etc/anysda/ikev2-profile-notice
-  fi
 else
   # Стадия сама загрузит creds/conns после создания конфигурации.
   swanctl --load-creds >/dev/null 2>&1 || true
@@ -192,7 +214,7 @@ fi
 LESYNC
   chmod +x /usr/local/sbin/anysda-ikev2-le-sync.sh
 if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
-  echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($PANEL_DOMAIN)"
+  echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($LE_DOMAIN)"
   # Свой CA из self-signed-режима больше не нужен — иначе путает charon при
   # поиске цепочки.
   rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
@@ -218,25 +240,34 @@ else
     pki_check_pair "$PKI/ca.key" "$PKI/ca.crt"
     openssl verify -CAfile "$PKI/ca.crt" "$PKI/ca.crt" >/dev/null
 
-    echo "[$HOST_TAG] [3/8] self-signed server cert (CN=$ENTRY_HOST)"
-    local NEED_SERVER=0
+    local public="${IKEV2_PUBLIC_HOST:-$ENTRY_HOST}"
+    local -a sans=("$public")
+    [[ "$public" == "$ENTRY_HOST" ]] || sans+=("$ENTRY_HOST")
+    echo "[$HOST_TAG] [3/8] self-signed server cert (CN=$public)"
+    local NEED_SERVER=0 name want san
     pki_require_key "$PKI/server.key" "$PKI/server.crt"
     if ! pki_pair_valid "$PKI/server.key" "$PKI/server.crt" || \
         ! openssl verify -CAfile "$PKI/ca.crt" "$PKI/server.crt" >/dev/null 2>&1; then
       NEED_SERVER=1
     else
-      if ! openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
-            | grep -E "IP Address:${ENTRY_HOST}( |$|,)" >/dev/null; then
-        echo "[$HOST_TAG]   SAN не содержит $ENTRY_HOST — перевыпуск server cert"
-        NEED_SERVER=1
-      fi
+      san=$(openssl x509 -in "$PKI/server.crt" -noout -ext subjectAltName 2>/dev/null \
+              | tr ',' '\n' | sed 's/^ *//')
+      for name in "${sans[@]}"; do
+        want="DNS:$name"
+        [[ "$name" =~ ^[0-9.]+$ ]] && want="IP Address:$name"
+        if ! grep -Fx -- "$want" <<< "$san" >/dev/null; then
+          echo "[$HOST_TAG]   SAN не содержит $name — перевыпуск server cert"
+          NEED_SERVER=1
+        fi
+      done
     fi
     if [[ "$NEED_SERVER" == "1" ]]; then
+      # Ключ и CA прежние: профили, которым уже доверен этот CA, не меняются.
       pki --pub --in "$PKI/server.key" --type ecdsa --outform pem > "$PKI/server.pub"
       pki --issue --cacert "$PKI/ca.crt" --cakey "$PKI/ca.key" \
           --in "$PKI/server.pub" --type pub \
-          --dn "CN=$ENTRY_HOST" \
-          --san "$ENTRY_HOST" \
+          --dn "CN=$public" \
+          "${sans[@]/#/--san=}" \
           --flag serverAuth --flag ikeIntermediate \
           --lifetime 1825 \
           --outform pem > "$PKI/server.crt"
@@ -286,7 +317,7 @@ connections {
     local-server {
       auth  = pubkey
       certs = anysda-server.crt
-      id    = $IKEV2_SERVER_HOST
+      id    = $IKEV2_LOCAL_ID
     }
     remote-client {
       auth   = eap-mschapv2
@@ -762,14 +793,12 @@ systemctl start anysda-ikev2-sync.service || true
 # Маркеры публикуем после успешной загрузки конфигурации charon.
 printf '%s' "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
 printf '%s' "$IKEV2_MODE" > /etc/anysda/ikev2-mode
-printf '%s' "${PANEL_DOMAIN:-}" > /etc/anysda/ikev2-domain
+printf '%s' "$LE_DOMAIN" > /etc/anysda/ikev2-domain
 chmod 644 /etc/anysda/ikev2-{mode,server-host,domain}
-if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-  if [[ -s "$PKI/ca.crt" ]]; then
-    printf '%s\n' 'IKEv2-профили, выданные до подключения домена, нужно скачать заново.' > /etc/anysda/ikev2-profile-notice
-    chmod 644 /etc/anysda/ikev2-profile-notice
-    cat /etc/anysda/ikev2-profile-notice
-  fi
+# Профили по IP продолжают работать (SAN своего сертификата), перевыпускать их
+# не нужно. Файл оставался от прежних версий стадии.
+rm -f /etc/anysda/ikev2-profile-notice
+if [[ -n "$LE_DOMAIN" ]]; then
   # Watcher ставится даже когда каталога Caddy ещё нет. Таймер страхует
   # пропущенные события, запись cert/key порознь и временный отказ charon.
   cat > /etc/systemd/system/anysda-ikev2-cert-sync.service <<EOF
@@ -779,7 +808,7 @@ After=strongswan-starter.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY" "$PANEL_DOMAIN"
+ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY" "$LE_DOMAIN"
 EOF
   cat > /etc/systemd/system/anysda-ikev2-cert-sync.path <<EOF
 [Unit]
@@ -810,7 +839,7 @@ EOF
   systemctl enable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer >/dev/null 2>&1
 else
   systemctl disable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer 2>/dev/null || true
-  rm -f /etc/anysda/ikev2-profile-notice /etc/anysda/ikev2-cert.sha256
+  rm -f /etc/anysda/ikev2-cert.sha256
 fi
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

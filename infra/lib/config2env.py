@@ -715,7 +715,9 @@ def main():
 
     # Адрес сервера в клиентских WG/OVPN-конфигах. Домен вместо IP: при смене
     # IP entry хватает A-записи, конфиги у клиентов не перевыпускаются.
-    public_host = str(entry.get('public_host') or '').strip()
+    # Без public_host адресом служит домен панели: он уже указывает на entry.
+    public_host = (str(entry.get('public_host') or '').strip()
+                   or str(cfg['panel'].get('domain') or ''))
     if public_host:
         lines += ['', f'WG_PUBLIC_HOST={shq(public_host)}', f'OVPN_PUBLIC_HOST={shq(public_host)}']
 

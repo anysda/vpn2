@@ -43,7 +43,8 @@ export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
 
 /**
  * Server-address который клиент впишет в поле «Server» VPN-настроек. В LE —
- * domain (panel.domain), в self-signed — IP entry. Стадия 27 записывает в
+ * domain (panel.domain), в self-signed — адрес WG/OVPN (entry.public_host,
+ * panel.domain или IP entry). Стадия 27 записывает в
  * /etc/anysda/ikev2-server-host; fallback: ENTRY_HOST env, wgPublicHost cfg.
  */
 async function ikev2ServerHost(): Promise<string> {
@@ -417,13 +418,12 @@ export interface Ikev2ClientInfo {
   username: string
   password: string
   caCertPem: string | null
-  profileNotice: string | null
   certificatePending: boolean
 }
 
 /**
  * Собрать поля для отображения клиенту. server = ikev2ServerHost() (domain
- * в LE-режиме, IP в self-signed). caCertPem = null в LE-режиме — клиенту
+ * в LE-режиме, адрес WG/OVPN в self-signed). caCertPem = null в LE-режиме — клиенту
  * НЕ нужен анысда-CA, LE-корень уже в trust-store.
  *
  * Параметр `_serverIp` оставлен для обратной совместимости вызывающего кода;
@@ -436,17 +436,13 @@ export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string):
   const ca = mode === 'letsencrypt'
     ? null
     : ((await ikev2CaReady()) ? await readIkev2CaPem() : null)
-  const [notice, domain] = await Promise.all([
-    fs.readFile('/etc/anysda/ikev2-profile-notice', 'utf8').catch(() => ''),
-    fs.readFile('/etc/anysda/ikev2-domain', 'utf8').catch(() => ''),
-  ])
+  const domain = await fs.readFile('/etc/anysda/ikev2-domain', 'utf8').catch(() => '')
   return {
     server: host,
     remoteId: host,
     username: device.ikev2Username!,
     password: device.ikev2Password!,
     caCertPem: ca,
-    profileNotice: notice.trim() || null,
     certificatePending: Boolean(domain.trim() && (mode !== 'letsencrypt' || host !== domain.trim())),
   }
 }

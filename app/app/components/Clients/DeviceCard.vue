@@ -159,7 +159,7 @@ async function sendOvpn() {
 
 // --- IKEv2 modal ----------------------------------------------------------
 const showIkev2 = ref(false)
-const ikev2Creds = ref<{ server: string, remoteId: string, username: string, password: string, hasCa: boolean, profileNotice: string | null, certificatePending: boolean } | null>(null)
+const ikev2Creds = ref<{ server: string, remoteId: string, username: string, password: string, hasCa: boolean, certificatePending: boolean } | null>(null)
 const ikev2Loading = ref(false)
 const ikev2Sending = ref(false)
 const showIkev2Pass = ref(false)
@@ -477,12 +477,6 @@ async function doDelete() {
               color="warning"
               title="Ожидается сертификат Caddy"
               description="IKEv2 автоматически перейдёт на домен после выдачи сертификата. Пока действуют временные настройки ниже. После перехода откройте это окно заново."
-            />
-            <UAlert
-              v-if="ikev2Creds.profileNotice"
-              color="warning"
-              :title="ikev2Creds.profileNotice"
-              description="После перехода на домен заново получите настройки IKEv2 здесь или через Telegram. Замените сервер и Remote ID, включите системное доверие к CA вместо прежнего anysda CA. Логин и пароль менять не нужно."
             />
             <p class="text-sm text-(--ui-text-muted)">
               Remote ID (iOS) / Server identity (Android): <span class="font-mono">{{ ikev2Creds.remoteId }}</span>

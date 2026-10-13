@@ -147,7 +147,6 @@ print_ikev2_notice() {
       if [ -n "$domain" ] && { [ "$mode" != letsencrypt ] || [ "$host" != "$domain" ]; }; then
         printf "IKEv2: ожидается сертификат Caddy для %s; автоматическая проверка каждые 30 с.\n" "$domain"
       fi
-      if [ -s /etc/anysda/ikev2-profile-notice ]; then cat /etc/anysda/ikev2-profile-notice; fi
     ' || warn 'IKEv2: не удалось прочитать состояние сервера'
   )
 }

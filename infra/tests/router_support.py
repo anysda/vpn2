@@ -10,6 +10,15 @@ ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2
 SB = os.environ.get('SING_BOX_BIN')
 
 
+def stop(process):
+    process.terminate()
+    try:
+        process.wait(5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def generate(**overrides):
     env = {
         'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '1443', 'HY2_WARP_PORT': '2443',

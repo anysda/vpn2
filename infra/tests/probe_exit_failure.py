@@ -13,7 +13,7 @@ import threading
 import time
 from string import Template
 
-from router_support import ROOT, SB, generate
+from router_support import ROOT, SB, stop, generate
 
 
 def wait_port(port):
@@ -126,8 +126,7 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
     def start(path):
         log = cleanup.enter_context(open(directory / (path.stem + '.log'), 'w+'))
         proc = subprocess.Popen([SB, 'run', '-c', str(path)], stdout=log, stderr=log)
-        cleanup.callback(proc.wait, 5)
-        cleanup.callback(proc.terminate)
+        cleanup.callback(stop, proc)
         return proc
 
     exit_proc = start(exit_path)

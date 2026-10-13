@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 
-from router_support import ROOT, SB
+from router_support import ROOT, SB, stop
 
 
 class Target(http.server.BaseHTTPRequestHandler):
@@ -163,8 +163,7 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
         log = cleanup.enter_context(open(directory / (name + '.log'), 'w+'))
         process = subprocess.Popen([SB, 'run', '-c', str(path)], stdout=log, stderr=log)
         processes.append(process)
-        cleanup.callback(process.wait, 5)
-        cleanup.callback(process.terminate)
+        cleanup.callback(stop, process)
     # A listening SOCKS port does not mean the remote QUIC listener and TLS
     # handshake are ready. Wait for a complete allowed request on each tunnel.
     for proxy, host in [(17897, '192.0.2.20'), (17898, '127.0.0.1')]:

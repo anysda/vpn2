@@ -67,7 +67,7 @@ def parse_yaml(text):
     validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
-           'entry_resources': {}}
+           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -117,6 +117,10 @@ def parse_yaml(text):
                 context = 'sso'
             elif content.startswith('entry_resources:'):
                 context = 'entry_resources'
+            elif content.startswith('wireguard:'):
+                context = 'wireguard'
+            elif content.startswith('openvpn:'):
+                context = 'openvpn'
             else:
                 k, v = kv(content)
                 if v:
@@ -157,6 +161,9 @@ def parse_yaml(text):
             elif context == 'entry_resources':
                 k, v = kv(content)
                 cfg['entry_resources'][k] = v
+            elif context in ('wireguard', 'openvpn'):
+                k, v = kv(content)
+                cfg[context][k] = v
             elif context == 'backup':
                 # `local:` / `s3:` — суб-блок; иначе обычный ключ верхнего уровня
                 k, v = kv(content)
@@ -185,7 +192,9 @@ def validate_yaml(text):
     schema = {
         'entry': {'host', 'password', 'public_host'},
         'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps'},
-        'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt'},
+        'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt', 'wireguard', 'openvpn'},
+        'wireguard': {'mtu', 'split_local'},
+        'openvpn': {'proto'},
         'admin': {'user', 'password', 'ssh_pubkey'},
         'panel': {'domain', 'image'}, 'tgbot': {'image'},
         'telegram': {'bot_token', 'chat_id', 'admin_username'},
@@ -203,7 +212,7 @@ def validate_yaml(text):
                             'agh_go_mib', 'retention_days', 'adaway_enabled', 'querylog_size'},
     }
     booleans = {'backup.enabled', 'sso.enabled', 'sso.auto_redirect', 'sso.password_login',
-                'entry_resources.adaway_enabled'}
+                'entry_resources.adaway_enabled', 'wireguard.split_local'}
     boolean_values = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
     seen = set()
     context = ''
@@ -406,6 +415,15 @@ def validate_network(cfg):
             port(ex['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in cfg['ports'].items():
         port(value, 'ports.' + name)
+    if 'proto' in cfg['openvpn'] and cfg['openvpn']['proto'] not in (
+            'udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6',
+            'tcp-server', 'tcp4-server', 'tcp6-server'):
+        config_error('openvpn.proto', 'допустимо udp, udp4, udp6, tcp, tcp4, tcp6, '
+                     'tcp-server, tcp4-server, tcp6-server')
+    if 'mtu' in cfg['wireguard']:
+        mtu = cfg['wireguard']['mtu']
+        if not re.fullmatch(r'[0-9]+', mtu) or not 1280 <= int(mtu) <= 9000:
+            config_error('wireguard.mtu', 'ожидается целое число от 1280 до 9000')
     if cfg['panel'].get('domain'):
         cfg['panel']['domain'] = normalize_domain(cfg['panel']['domain'], 'panel.domain')
 
@@ -645,6 +663,18 @@ def main():
         lines.append(f"PANEL_IMAGE={shq(panel_image)}")
     if tgbot_image:
         lines.append(f"TGBOT_IMAGE={shq(tgbot_image)}")
+    # Только явные настройки: без новых ключей env остаются байт в байт
+    # прежними, а умолчания по-прежнему принадлежат стадиям 28/29/30.
+    for key, variable in (('wireguard', 'WG_LISTEN_PORT'), ('openvpn', 'OVPN_PORT')):
+        if key in ports:
+            lines.append(f'{variable}={shq(int(ports[key]))}')
+    if 'proto' in cfg['openvpn']:
+        lines.append(f"OVPN_PROTO={shq(cfg['openvpn']['proto'])}")
+    if 'mtu' in cfg['wireguard']:
+        lines.append(f"WG_MTU={shq(int(cfg['wireguard']['mtu']))}")
+    if 'split_local' in cfg['wireguard']:
+        split_local = cfg['wireguard']['split_local'].lower() in ('true', 'yes', 'y', '1')
+        lines.append(f"WG_SPLIT_LOCAL={shq('true' if split_local else 'false')}")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [

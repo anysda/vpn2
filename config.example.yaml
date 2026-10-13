@@ -172,6 +172,17 @@ admin:
 #   hy2_direct: 443                                 # Hysteria2 прямой (entry → exit) — UDP/QUIC, 443 ок
 #   hy2_warp: 8443                                  # Hysteria2 через Cloudflare WARP
 #   hy2_mgmt: 8444                                  # Hysteria2 служебный (скрейп node_exporter из-за границы)
+#   wireguard: 51820                                # входящий UDP; целое 1..65535
+#   openvpn: 1194                                   # входящий UDP/TCP; целое 1..65535
+# openvpn:
+#   proto: udp       # udp | udp4 | udp6 | tcp | tcp4 | tcp6 |
+#                    # tcp-server | tcp4-server | tcp6-server (TCP-синонимы)
+# wireguard:
+#   mtu: 1420        # 1280..9000; MTU клиента и MSS на сервере
+#   split_local: true  # обход локальных сетей клиента для WG И OpenVPN;
+#                      # false включает полный туннель
+# После изменений: стадии 28-wireguard, 29-openvpn, 30-frontend на ru.
+# Клиентам скачать конфиги заново; ключи перевыпускать не нужно.
 
 # Бэкапы (в примере и мастере ВКЛЮЧЕНЫ с backend=local; без блока выключены).
 # Архив включает: db.sqlite (через sqlite3 .backup), /etc/anysda/* (секреты

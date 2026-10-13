@@ -51,6 +51,41 @@ def run_setup(directory, answers):
 
 
 class SetupInputTests(unittest.TestCase):
+    def test_optional_domain_empty_or_invalid_then_empty(self):
+        for domains in ([''], ['   '], ['https://vpn.example.com', ''],
+                        ['vpn.example.com:443', ''], ['bad domain', '']):
+            with self.subTest(domains=domains), tempfile.TemporaryDirectory() as directory:
+                root = prepare(directory)
+                (root / 'config.yaml').write_text('panel:\n  domain: old.example.test\n')
+                answers = ['1', 'entry secret', '192.0.2.2', 'exit secret', 'se',
+                           '', '', '', 'y', *domains, 'n', 'n', 'n', 'y']
+                code, output = run_setup(directory, '\n'.join(answers) + '\n')
+                self.assertEqual(code, 0, output)
+                self.assertFalse(yaml.safe_load((root / 'config.yaml').read_text())['panel']['domain'])
+                self.assertIn('Enter — без домена', output)
+                self.assertNotIn('ERROR: config.yaml:', output)
+                self.assertNotIn('проверяю DNS', output)
+                self.assertEqual(output.count('Неправильный формат домена'), len(domains) - 1)
+
+    def test_optional_answers_accept_empty_and_defaults(self):
+        answers = ['1', 'entry secret', '192.0.2.2', 'exit secret', 'se',
+                   '', '', '', '', 'y', '123:test-token', '123', '',
+                   '', '', '', '', '', 'y']
+        with tempfile.TemporaryDirectory() as directory:
+            root = prepare(directory)
+            code, output = run_setup(directory, '\n'.join(answers) + '\n')
+            self.assertEqual(code, 0, output)
+            config = yaml.safe_load((root / 'config.yaml').read_text())
+            self.assertEqual(config['admin']['user'], 'admin')
+            self.assertFalse(config['admin']['password'])
+            self.assertFalse(config['admin']['ssh_pubkey'])
+            self.assertFalse(config['panel']['domain'])
+            self.assertFalse(config['telegram']['admin_username'])
+            self.assertEqual(config['backup']['backend'], 'local')
+            self.assertEqual(config['backup']['schedule'], 'daily')
+            self.assertEqual(len(config['backup']['passphrase']), 40)
+            self.assertNotIn('ERROR: config.yaml:', output)
+
     def test_merge_keeps_inline_comments_outside_yaml_quotes(self):
         module = runpy.run_path(str(ROOT / 'infra/lib/config2env.py'))
         for value in ("'old # secret'", "'it''s # secret'", '"escaped \\" # secret"',

@@ -312,11 +312,16 @@ panel_domain=""
 domain_enable=$(ask_yn "Настроить HTTPS-домен для панели?" "n")
 if [[ "$domain_enable" == "y" ]]; then
   while true; do
-    panel_domain=$(ask "Домен (например vpn.example.com)")
+    panel_domain=$(ask "Домен (например vpn.example.com; Enter — без домена)")
     panel_domain=$(sanitize "$panel_domain")
+    [[ -z "$panel_domain" ]] && break
     if panel_domain=$(python3 - "$REPO_ROOT/infra/lib/config2env.py" "$panel_domain" <<'PYDOMAIN'
 import runpy, sys
-print(runpy.run_path(sys.argv[1])['normalize_domain'](sys.argv[2], 'panel.domain'))
+try:
+    domain = runpy.run_path(sys.argv[1])['normalize_domain'](sys.argv[2], 'panel.domain')
+except SystemExit:
+    sys.exit(1)
+print(domain)
 PYDOMAIN
     ); then
       printf '  %bпроверяю DNS...%b ' "$D" "$E" >&2
@@ -334,10 +339,14 @@ PYDOMAIN
         [[ "$confirm_dns" == "y" ]] && break
       fi
     else
-      fail "Неправильный формат домена"
+      fail "Неправильный формат домена: нужно DNS-имя без схемы, порта и пробелов"
     fi
   done
-  ok "Домен: $panel_domain"
+  if [[ -n "$panel_domain" ]]; then
+    ok "Домен: $panel_domain"
+  else
+    ok "Без домена — панель будет доступна по IP"
+  fi
 fi
 
 header "Telegram-бот (опционально)"

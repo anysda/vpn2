@@ -6,6 +6,7 @@ The live installation additionally exercises actual Docker and HTTP auth.
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -67,7 +68,9 @@ class TelegramStageTests(unittest.TestCase):
                 stage = stage.replace(prefix, str(self.root) + prefix)
             (scripts / name).write_text(stage)
         (scripts / 'entry-resources.sh').write_text('entry_resources() { ENTRY_DOCKER_ARGS=(); }\n')
-        (scripts / 'anysda-svc.sh').write_text('svc_restart_if_changed() { :; }\n')
+        (scripts / 'anysda-svc.sh').write_text(
+            f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n'
+            'svc_restart_if_changed() { :; }\n')
         for name in ('etc/caddy', 'tmp/anysda'):
             (self.root / name).mkdir(parents=True)
         (self.root / 'tmp/anysda/anysda-config.yaml.tpl').write_text('admin: fixture\n')

@@ -33,7 +33,14 @@ export async function addDevice(page: Page, name: string) {
   await page.getByRole('button', { name: 'девайс', exact: true }).click()
   const dlg = page.getByRole('dialog', { name: 'Новый девайс' })
   await dlg.getByPlaceholder('напр. iPhone').fill(name)
-  await dlg.getByRole('button', { name: 'Добавить' }).click()
+  // Выдача VPN-ключей и сертификатов может занять дольше UI-ожидания.
+  // Сначала ждём ответ создания, затем проверяем тост и закрытие формы.
+  const [response] = await Promise.all([
+    page.waitForResponse(r => r.request().method() === 'POST'
+      && /^\/api\/clients\/\d+\/devices$/.test(new URL(r.url()).pathname)),
+    dlg.getByRole('button', { name: 'Добавить' }).click(),
+  ])
+  expect(response.status()).toBe(200)
   await expect(toast(page, `Девайс «${name}» добавлен`)).toBeVisible()
   await expect(dlg).toBeHidden()
 }

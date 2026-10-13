@@ -57,7 +57,13 @@ test.describe('телефон 390px', () => {
     await dlg.getByRole('button', { name: 'Удалить клиента' }).click()
     const del = page.getByRole('dialog', { name: 'Удалить клиента?' })
     await noHorizontalOverflow(page, 'подтверждение удаления')
-    await del.getByRole('button', { name: 'Удалить' }).click()
+    // Отзыв сертификатов и синхронизация VPN завершаются до ответа API.
+    const [removed] = await Promise.all([
+      page.waitForResponse(r => r.request().method() === 'DELETE'
+        && /^\/api\/clients\/\d+$/.test(new URL(r.url()).pathname)),
+      del.getByRole('button', { name: 'Удалить' }).click(),
+    ])
+    expect(removed.status()).toBe(200)
     await expect(page.getByRole('dialog')).toHaveCount(0)
   })
 })

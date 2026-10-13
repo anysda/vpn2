@@ -6,6 +6,23 @@ from test_deploy import bash, source
 
 
 class StartupTests(unittest.TestCase):
+    def test_conntrack_is_loaded_before_sysctl_and_at_boot(self):
+        stage = source('infra/scripts/19-yt-zapret.sh')
+        body = stage.split('echo "[$HOST_TAG] [5/7] nftables"\n', 1)[1].split('# Поправка окна.', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'etc/sysctl.d').mkdir(parents=True)
+            script = '''
+MODULES_CONF=/etc/modules-load.d/anysda-yt-zapret.conf
+SYSCTL_CONF=/etc/sysctl.d/97-anysda-yt-zapret.conf
+modprobe() { [[ "$*" == nf_conntrack ]]; touch conntrack-loaded; }
+sysctl() { test -f conntrack-loaded; }
+''' + body
+            result = bash(script.replace('/etc/', directory + '/etc/'), directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((root / 'etc/modules-load.d/anysda-yt-zapret.conf').read_text(),
+                             'nf_conntrack\n')
+
     def test_router_waits_for_owned_queue(self):
         stage = source('infra/scripts/19-yt-zapret.sh')
         self.assertIn('Wants=anysda-yt-nfqws.service', stage)

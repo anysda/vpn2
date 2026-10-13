@@ -145,6 +145,10 @@ class VerifyTest(unittest.TestCase):
             }))
             if fault == 'yt-missing-state':
                 state_file.unlink()
+            elif fault == 'yt-bad-sample':
+                state = json.loads(state_file.read_text())
+                state.update(good=0, bad=1, last_probe='очередь, nft-правила или TCP-путь обхода не работают')
+                state_file.write_text(json.dumps(state))
             elif fault == 'yt-legacy-state':
                 state = json.loads(state_file.read_text())
                 del state['checked_at']
@@ -263,7 +267,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_enabled_youtube_failures(self):
         for fault, check in (('missing-yt', 'yt-zapret'), ('yt-failed', 'yt-zapret'),
-                             ('yt-failover', 'yt-failover')):
+                             ('yt-failover', 'yt-failover'), ('yt-bad-sample', 'yt-failover')):
             with self.subTest(fault=fault):
                 result = self.run_verify(fault, youtube='zapret')
                 self.assertNotEqual(result.returncode, 0, result.stdout)

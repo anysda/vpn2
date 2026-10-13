@@ -12,6 +12,54 @@ from test_yt_failover import load_watch
 
 
 class UnmeasuredTests(unittest.TestCase):
+    def test_probe_uses_embedded_video_instead_of_default_forbidden_client(self):
+        watch = load_watch()
+        downloaded = []
+
+        def run(args, **_kwargs):
+            if args == ['/usr/local/bin/anysda-yt-check']:
+                return subprocess.CompletedProcess(args, 0)
+            if '/opt/anysda-yt-probe/bin/yt-dlp' in args:
+                embedded = ('--extractor-args' in args and
+                            args[args.index('--extractor-args') + 1] == 'youtube:player_client=web_embedded')
+                client = 'WEB_EMBEDDED_PLAYER' if embedded else 'VISIONOS'
+                return subprocess.CompletedProcess(args, 0, json.dumps({
+                    'url': 'https://rr1.example.googlevideo.com/videoplayback?c=' + client,
+                    'format_id': '401', 'protocol': 'https',
+                }))
+            downloaded.append(args[-1])
+            forbidden = 'c=VISIONOS' in args[-1]
+            return subprocess.CompletedProcess(args, 22 if forbidden else 0, json.dumps({
+                'http_code': 403 if forbidden else 206, 'content_type': 'video/mp4',
+                'size_download': 0 if forbidden else 4194304,
+                'speed_download': 0 if forbidden else 500000,
+            }))
+
+        with patch.object(watch.subprocess, 'run', side_effect=run), \
+                patch.object(watch.pwd, 'getpwnam'):
+            good, detail = watch.probe()
+        self.assertIs(good, True, detail)
+        self.assertEqual(len(downloaded), 1)
+        self.assertIn('HTTP 206, 4194304 байт', detail)
+
+    def test_stopped_bypass_never_reports_healthy_status(self):
+        watch = load_watch()
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = Path(directory) / 'config.json'
+            cfg.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
+            state = Path(directory) / 'state.json'
+            with patch.object(watch, 'CONFIG', cfg), patch.object(watch, 'STATE', state), \
+                    patch.object(watch, 'notify', return_value=True), \
+                    patch.object(watch, 'api', return_value={'now': 'youtube-ru'}) as api, \
+                    patch('sys.argv', ['yt-failover', '--status']), \
+                    patch('sys.stdout', new_callable=io.StringIO):
+                watch.tick(state, lambda: (True, 'TCP video: HTTP 206'))
+                for selected in ('youtube-ru', 'foreign-best'):
+                    api.return_value = {'now': selected}
+                    watch.tick(state, lambda: self.probe(ready=subprocess.CompletedProcess([], 1)))
+                    self.assertEqual(watch.main(), 1, selected)
+                    self.assertGreater(json.loads(state.read_text())['bad'], 0)
+
     def probe(self, extraction=None, download=None, ready=None):
         watch = load_watch()
         if extraction is None:
@@ -191,7 +239,7 @@ class UnmeasuredTests(unittest.TestCase):
             state_path = Path(directory) / 'state.json'
             measured = {'good': 1, 'bad': 0, 'last_probe': 'TCP video: HTTP 206',
                         'checked_at': time.time(), 'unmeasured': False}
-            cases = [(measured, 0), (dict(measured, good=0, bad=3), 0),
+            cases = [(measured, 0), (dict(measured, good=0, bad=3), 1),
                      (dict(measured, good=0), 2), (dict(measured, last_probe=''), 2),
                      (dict(measured, checked_at=time.time() - 601), 2),
                      (dict(measured, checked_at=time.time() + 60), 2),

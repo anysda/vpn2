@@ -94,6 +94,7 @@ YT_ZAPRET_OFFLOAD="${YT_ZAPRET_OFFLOAD:-keep}"
 DIAG_USER='ytzdiag'
 NFT_CONF='/etc/nftables-yt-zapret.conf'
 SYSCTL_CONF='/etc/sysctl.d/97-anysda-yt-zapret.conf'
+MODULES_CONF='/etc/modules-load.d/anysda-yt-zapret.conf'
 QUIC_NFT_CONF='/etc/nftables-yt-quic.conf'
 QUIC_PREFIXES='/var/lib/anysda/google-prefixes.json'
 
@@ -138,7 +139,7 @@ teardown() {
         /etc/systemd/system/sing-box.service.d/90-anysda-youtube.conf \
         /usr/local/sbin/anysda-yt-nfqws-ready \
         /usr/local/bin/anysda-yt-check \
-        "$NFT_CONF" "$SYSCTL_CONF" "$QUIC_NFT_CONF"
+        "$NFT_CONF" "$SYSCTL_CONF" "$MODULES_CONF" "$QUIC_NFT_CONF"
   systemctl daemon-reload
   # Исходники и бинарь НЕ трогаем: пересборка занимает минуты, а место они
   # занимают копеечное. Обратное включение должно быть мгновенным.
@@ -160,7 +161,7 @@ echo "[$HOST_TAG] [1/7] apt deps"
 export DEBIAN_FRONTEND=noninteractive
 NEED_PKGS=(gcc make libc6-dev git ca-certificates libcap-dev libnetfilter-queue-dev
            libnfnetlink-dev libmnl-dev zlib1g-dev libluajit-5.1-dev luajit
-           nftables ethtool curl python3-venv xz-utils)
+           nftables ethtool curl python3-venv xz-utils kmod)
 MISSING=()
 for p in "${NEED_PKGS[@]}"; do
   dpkg -s "$p" >/dev/null 2>&1 || MISSING+=("$p")
@@ -229,6 +230,11 @@ DIAG_UID=$(id -u "$DIAG_USER")
 # 5. nftables + sysctl
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [5/7] nftables"
+# На чистой ВМ conntrack ещё не загружен: sysctl появляется только после
+# modprobe. При перезагрузке modules-load должен опередить systemd-sysctl.
+mkdir -p /etc/modules-load.d
+printf '%s\n' nf_conntrack > "$MODULES_CONF"
+modprobe nf_conntrack
 cat > "$SYSCTL_CONF" <<'EOF'
 # Managed by anysda-vpn2 stage 19-yt-zapret.
 # Строгий conntrack считает сегменты десинка INVALID и роняет их — без этого

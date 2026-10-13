@@ -6,7 +6,8 @@
 4 МиБ / минимум 250000 байт/с (2 Мбит/с): отсеиваем сильное замедление,
 не обещая HD/4K. До 1.2 ГиБ/сутки при пятиминутном периоде; фактически меньше,
 поскольку таймер отсчитывает период от окончания предыдущей проверки.
-YT_PROBE_VIDEO позволяет выбрать другой общедоступный длинный ролик.
+YT_PROBE_VIDEO позволяет выбрать другой общедоступный длинный ролик
+с разрешённым встраиванием: клиент web_embedded без cookies и PO-токена.
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
 счётчики и маршрут; уведомления — только при входе и выходе из этого состояния.
 --probe-only проверяет поток без изменения маршрута или состояния.
@@ -33,6 +34,7 @@ VIDEO = os.environ.get('YT_PROBE_VIDEO', 'https://www.youtube.com/watch?v=aqz-KE
 SAMPLE_BYTES = 4 * 1024 * 1024
 MIN_BPS = 250000
 HITS = 3
+PLAYER_CLIENT = 'web_embedded'
 
 
 def request(url, method, body, headers):
@@ -105,13 +107,18 @@ def probe(quic=False):
             '/opt/anysda-yt-probe/bin/yt-dlp', '--ignore-config', '--no-cache-dir',
             '--no-playlist', '--no-warnings', '--proxy', '', '--force-ipv4',
             '--js-runtimes', 'node:/opt/anysda-yt-probe/bin/node',
+            # Набор клиентов по умолчанию меняется вместе с yt-dlp. VISIONOS
+            # может выдать URL без PO-токена, который CDN отвергает с 403.
+            # Embedded получает обычный HTTPS-поток для встраиваемого ролика.
+            '--extractor-args', f'youtube:player_client={PLAYER_CLIENT}',
             '--socket-timeout', '10', '--retries', '0',
             '--extractor-retries', '0', '-f', 'bestvideo[protocol=https]', '-J', VIDEO,
         ], capture_output=True, text=True, timeout=60, check=False)
         if info.returncode:
             if 'Sign in to confirm' in (info.stderr or ''):
                 return None, 'YouTube требует входа (антибот); обход не измерен'
-            return None, 'не удалось получить URL видеопотока (yt-dlp); проверить ролик/экстрактор/JS-рантайм'
+            return None, (f'не удалось получить URL видеопотока (yt-dlp, client={PLAYER_CLIENT}); '
+                          'проверить встраивание ролика/экстрактор/JS-рантайм')
         media = json.loads(info.stdout)
         if not isinstance(media, dict) or not isinstance(media.get('url'), str):
             return None, 'экстрактор не вернул URL видеопотока'
@@ -140,7 +147,7 @@ def probe(quic=False):
         return good, (f'{transport} video: HTTP {stats.get("http_code", 0)}, '
                       f'{stats.get("size_download", 0)} байт, '
                       f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
-                      f'CDN={parsed.hostname}')
+                      f'CDN={parsed.hostname}, client={PLAYER_CLIENT}')
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         # stdout yt-dlp и подписанные URL не пишем в журнал.
         # Внешний timeout может означать зависание утилиты. Сетевой таймаут
@@ -234,6 +241,9 @@ def main():
         if type(stamp) not in (int, float) or not 0 <= time.time() - stamp <= 600:
             print('нет свежего измерения видеопотока (не старше 600 с)')
             return 2
+        if counters[1]:
+            print('последняя проба обхода неуспешна; запасной VPN-путь этой пробой не проверяется')
+            return 1
         return 0
     tick(STATE, probe)
     return 0

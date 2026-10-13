@@ -26,7 +26,12 @@ async function reconcileExits(): Promise<void> {
   if (tags.some(tag => !Object.hasOwn(hosts, tag))) throw new Error('client exit map incomplete: missing exit address')
   const current = Object.fromEntries(tags.sort().map(tag => [tag, hosts[tag]!]))
   const value = JSON.stringify(current)
-  const changes = await useDb().transaction(async (tx) => {
+  const db = useDb()
+  // Обычная синхронизация устройств не должна брать SQLite write-lock:
+  // карта меняется только при деплое. В транзакции проверяем её повторно.
+  const [known] = await db.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
+  if (known?.value === value) return
+  const changes = await db.transaction(async (tx) => {
     const [saved] = await tx.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
     if (saved?.value === value) return []
     // При первом обновлении со старой панели стадия 30 передаёт её NUXT_NODE_HOSTS.

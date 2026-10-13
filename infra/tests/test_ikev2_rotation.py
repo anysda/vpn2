@@ -12,8 +12,10 @@ class Ikev2RotationTests(unittest.TestCase):
             root = Path(directory)
             for child in ('x509', 'x509ca', 'private'):
                 (root / child).mkdir()
-            (root / 'leaf.pem').write_text('-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----\n')
-            (root / 'key.pem').write_text('test-only-key\n')
+            fixture = bash('openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 '
+                           '-nodes -keyout key.pem -out leaf.pem -days 1 -subj /CN=vpn.example.test '
+                           '-addext subjectAltName=DNS:vpn.example.test', directory)
+            self.assertEqual(fixture.returncode, 0, fixture.stderr)
             helper = helper.replace('/etc/swanctl', directory)
             result = bash('''
 set -- leaf.pem key.pem

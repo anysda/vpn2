@@ -384,10 +384,12 @@ export async function terminateIkev2Sa(username: string): Promise<void> {
  */
 export interface Ikev2ClientInfo {
   server: string
-  remoteId: string  // тот же IP (в iOS поле Remote ID)
+  remoteId: string  // тот же IP или домен (в iOS поле Remote ID)
   username: string
   password: string
   caCertPem: string | null
+  profileNotice: string | null
+  certificatePending: boolean
 }
 
 /**
@@ -405,12 +407,18 @@ export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string):
   const ca = mode === 'letsencrypt'
     ? null
     : ((await ikev2CaReady()) ? await readIkev2CaPem() : null)
+  const [notice, domain] = await Promise.all([
+    fs.readFile('/etc/anysda/ikev2-profile-notice', 'utf8').catch(() => ''),
+    fs.readFile('/etc/anysda/ikev2-domain', 'utf8').catch(() => ''),
+  ])
   return {
     server: host,
     remoteId: host,
     username: device.ikev2Username!,
     password: device.ikev2Password!,
     caCertPem: ca,
+    profileNotice: notice.trim() || null,
+    certificatePending: Boolean(domain.trim() && (mode !== 'letsencrypt' || host !== domain.trim())),
   }
 }
 

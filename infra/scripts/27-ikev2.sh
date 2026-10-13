@@ -54,6 +54,9 @@ CONF=/etc/swanctl/conf.d/anysda.conf
 CADDY_CERT_DIR="/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory"
 
 mkdir -p /var/anysda/.stamps "$PKI" /etc/swanctl/conf.d /etc/anysda
+# Не пересекаться с автоматическим применением сертификата.
+exec 8>/run/anysda-ikev2-cert.lock
+flock -x 8
 
 # ── Detect mode: letsencrypt (если есть PANEL_DOMAIN И Caddy выдал cert) ───
 LE_CERT=""
@@ -78,15 +81,10 @@ else
   IKEV2_SERVER_HOST="$ENTRY_HOST"
   if [[ -n "${PANEL_DOMAIN:-}" ]]; then
     echo "[$HOST_TAG] PANEL_DOMAIN=$PANEL_DOMAIN задан, но Caddy ещё не выдал LE-cert"
-    echo "[$HOST_TAG]   → fallback на self-signed; повторный запуск 27-ikev2 после Caddy auto-issue переключит в letsencrypt"
+    echo "[$HOST_TAG]   → временно self-signed; сертификат Caddy применится автоматически (проверка каждые 30 с)"
   fi
 fi
 echo "[$HOST_TAG] mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"
-
-# Маркеры для панели (читает server/utils/ikev2.ts)
-echo -n "$IKEV2_MODE"        > /etc/anysda/ikev2-mode
-echo -n "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
-chmod 644 /etc/anysda/ikev2-mode /etc/anysda/ikev2-server-host
 
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
 # ⚠️ python3-vici (биндинги к сокету charon) в Ubuntu 24.04 НЕТ ни в одном
@@ -115,8 +113,6 @@ fi
 # ── 2. Server certs — раскладка по режиму ─────────────────────────────────
 install -d -m 700 /etc/swanctl/x509ca /etc/swanctl/x509 /etc/swanctl/private
 
-if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
-  echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($PANEL_DOMAIN)"
   # ⚠️ В файле Caddy лежит ЦЕПОЧКА (leaf + промежуточный + кросс-подписи), а
   # swanctl из `certs = ...` берёт только ПЕРВЫЙ сертификат. Раскладываем
   # руками: leaf → x509, всё остальное → x509ca. Иначе charon шлёт клиенту
@@ -130,12 +126,37 @@ if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
 set -euo pipefail
 LE_CERT="$1"
 LE_KEY="$2"
+DOMAIN="${3:-}"
+if [[ -n "$DOMAIN" ]]; then
+  exec 8>/run/anysda-ikev2-cert.lock
+  flock -x 8
+  # Нет пары / Caddy ещё пишет её: таймер повторит попытку.
+  [[ -s "$LE_CERT" && -s "$LE_KEY" ]] || exit 0
+fi
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-csplit -sz -f "$TMP/cert-" -b '%02d.pem' "$LE_CERT" '/-----BEGIN CERTIFICATE-----/' '{*}'
+cp "$LE_CERT" "$TMP/fullchain.pem"
+cp "$LE_KEY" "$TMP/key.pem"
+csplit -sz -f "$TMP/cert-" -b '%02d.pem' "$TMP/fullchain.pem" '/-----BEGIN CERTIFICATE-----/' '{*}'
+# Caddy заменяет cert и key отдельно. Не устанавливаем неполную пару,
+# просроченный сертификат или сертификат другого домена.
+openssl x509 -in "$TMP/cert-00.pem" -noout -checkend 0 >/dev/null
+openssl x509 -in "$TMP/cert-00.pem" -pubkey -noout > "$TMP/cert.pub"
+openssl pkey -in "$TMP/key.pem" -pubout > "$TMP/key.pub"
+cmp -s "$TMP/cert.pub" "$TMP/key.pub"
+if [[ -n "$DOMAIN" ]]; then
+  openssl x509 -in "$TMP/cert-00.pem" -noout -checkhost "$DOMAIN" | grep 'does match' >/dev/null
+  # Отпечаток пишется только после успешного reload; сбой будет повторён.
+  DIGEST=$(cat "$TMP/fullchain.pem" "$TMP/key.pem" | sha256sum | cut -d' ' -f1)
+  if [[ "$(cat /etc/anysda/ikev2-cert.sha256 2>/dev/null)" == "$DIGEST" &&
+        "$(cat /etc/anysda/ikev2-server-host 2>/dev/null)" == "$DOMAIN" &&
+        "$(cat /etc/anysda/ikev2-mode 2>/dev/null)" == letsencrypt ]]; then
+    exit 0
+  fi
+fi
 install -m 0644 "$TMP/cert-00.pem" /etc/swanctl/x509/anysda-server.crt
-install -m 0600 "$LE_KEY"          /etc/swanctl/private/anysda-server.key
+install -m 0600 "$TMP/key.pem"     /etc/swanctl/private/anysda-server.key
 
 rm -f /etc/swanctl/x509ca/anysda-le-chain-*.crt
 n=1
@@ -145,14 +166,31 @@ for f in "$TMP"/cert-*.pem; do
   n=$((n + 1))
 done
 
-# На первом прогоне стадии charon ещё не запущен (это делает шаг 6, который
-# сам перечитает creds) — здесь неудача не повод валить деплой.
-swanctl --load-creds >/dev/null 2>&1 || true
-# Conn хранит выбранный сертификат: загрузка creds сама по себе его не
-# заменяет. Перечитываем conn, чтобы новые подключения получали новый leaf.
-swanctl --load-conns >/dev/null 2>&1 || true
+if [[ -n "$DOMAIN" ]]; then
+  # Все conn устройств наследуют local-server из этой базовой conn.
+  # Домен уже провалидирован config2env, но ограничим sed replacement и здесь.
+  [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]
+  sed "s/^      id    = .*/      id    = $DOMAIN/" /etc/swanctl/conf.d/anysda.conf > "$TMP/anysda.conf"
+  install -m 0644 "$TMP/anysda.conf" /etc/swanctl/conf.d/anysda.conf
+  swanctl --load-creds >/dev/null
+  # Conn хранит выбранный leaf: одного --load-creds недостаточно.
+  swanctl --load-conns >/dev/null
+  printf '%s' "$DOMAIN" > /etc/anysda/ikev2-server-host
+  printf '%s' letsencrypt > /etc/anysda/ikev2-mode
+  printf '%s' "$DIGEST" > /etc/anysda/ikev2-cert.sha256
+  echo "IKEv2: mode=letsencrypt server-host=$DOMAIN"
+  if [[ -s /etc/anysda/ikev2-profile-notice ]]; then
+    cat /etc/anysda/ikev2-profile-notice
+  fi
+else
+  # Стадия сама загрузит creds/conns после создания конфигурации.
+  swanctl --load-creds >/dev/null 2>&1 || true
+  swanctl --load-conns >/dev/null 2>&1 || true
+fi
 LESYNC
   chmod +x /usr/local/sbin/anysda-ikev2-le-sync.sh
+if [[ "$IKEV2_MODE" == "letsencrypt" ]]; then
+  echo "[$HOST_TAG] [2/8] LE-cert от Caddy ($PANEL_DOMAIN)"
   # Свой CA из self-signed-режима больше не нужен — иначе путает charon при
   # поиске цепочки.
   rm -f /etc/swanctl/x509ca/anysda-ca.crt 2>/dev/null || true
@@ -162,30 +200,6 @@ LESYNC
     echo "[$HOST_TAG]   сохраняю восстановленные LE-cert/key/chain из swanctl до выдачи Caddy"
   fi
 
-  # ── 3. path-watcher: Caddy ротирует cert раз в 60 дней ────────────────
-  echo "[$HOST_TAG] [3/8] systemd path-watcher на Caddy-cert (LE-ротация)"
-  cat > /etc/systemd/system/anysda-ikev2-cert-sync.service <<EOF
-[Unit]
-Description=anysda-vpn2 — sync Caddy LE-cert into swanctl + reload
-After=strongswan-starter.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY"
-EOF
-  cat > /etc/systemd/system/anysda-ikev2-cert-sync.path <<EOF
-[Unit]
-Description=anysda-vpn2 — watch Caddy LE-cert file for changes
-
-[Path]
-PathChanged=$LE_CERT
-Unit=anysda-ikev2-cert-sync.service
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable --now anysda-ikev2-cert-sync.path >/dev/null 2>&1
 else
   echo "[$HOST_TAG] [2/8] self-signed CA"
   ikev2_pki_build() {
@@ -235,9 +249,7 @@ else
   install -m 644 "$PKI/ca.crt"      /etc/swanctl/x509ca/anysda-ca.crt
   install -m 644 "$PKI/server.crt"  /etc/swanctl/x509/anysda-server.crt
   install -m 600 "$PKI/server.key"  /etc/swanctl/private/anysda-server.key
-  # Снять watcher если переходили из LE → self-signed (downgrade — не
-  # автоматический, но если файл удалили вручную — корректно почистим).
-  systemctl disable --now anysda-ikev2-cert-sync.path 2>/dev/null || true
+  # Снять watcher можно только при удалении домена, см. конец стадии.
 fi
 
 # ── 4. swanctl conf — базовый conn без клиентов (этап 4 наполнит динамику) ──
@@ -740,5 +752,58 @@ systemctl start anysda-ikev2-sync.service || true
 { systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null || true; } \
   | sed -n '1,5p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
+# Маркеры публикуем после успешной загрузки конфигурации charon.
+printf '%s' "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host
+printf '%s' "$IKEV2_MODE" > /etc/anysda/ikev2-mode
+printf '%s' "${PANEL_DOMAIN:-}" > /etc/anysda/ikev2-domain
+chmod 644 /etc/anysda/ikev2-{mode,server-host,domain}
+if [[ -n "${PANEL_DOMAIN:-}" ]]; then
+  if [[ -s "$PKI/ca.crt" ]]; then
+    printf '%s\n' 'IKEv2-профили, выданные до подключения домена, нужно скачать заново.' > /etc/anysda/ikev2-profile-notice
+    chmod 644 /etc/anysda/ikev2-profile-notice
+    cat /etc/anysda/ikev2-profile-notice
+  fi
+  # Watcher ставится даже когда каталога Caddy ещё нет. Таймер страхует
+  # пропущенные события, запись cert/key порознь и временный отказ charon.
+  cat > /etc/systemd/system/anysda-ikev2-cert-sync.service <<EOF
+[Unit]
+Description=anysda-vpn2 — apply Caddy certificate and IKE identity
+After=strongswan-starter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "$LE_CERT" "$LE_KEY" "$PANEL_DOMAIN"
+EOF
+  cat > /etc/systemd/system/anysda-ikev2-cert-sync.path <<EOF
+[Unit]
+Description=anysda-vpn2 — watch Caddy certificate and key
+
+[Path]
+PathChanged=$LE_CERT
+PathChanged=$LE_KEY
+Unit=anysda-ikev2-cert-sync.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  cat > /etc/systemd/system/anysda-ikev2-cert-sync.timer <<'EOF'
+[Unit]
+Description=anysda-vpn2 — retry Caddy certificate sync every 30s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=anysda-ikev2-cert-sync.service
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer >/dev/null 2>&1
+else
+  systemctl disable --now anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer 2>/dev/null || true
+  rm -f /etc/anysda/ikev2-profile-notice /etc/anysda/ikev2-cert.sha256
+fi
 touch /var/anysda/.stamps/27-ikev2
 echo "[$HOST_TAG] 27-ikev2 done — mode=$IKEV2_MODE server-host=$IKEV2_SERVER_HOST"

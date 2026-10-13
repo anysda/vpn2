@@ -105,6 +105,7 @@ C_G= C_B= C_END=
 load_env() { source "$DEPLOY_ROOT/envs/ru.env"; }
 ssh_exec() { bash -c "$1"; }
 print_banner() { :; }
+print_ikev2_notice() { :; }
 pause_entry_auto_updates() { :; }
 install_prereqs() { :; }
 do_check() { :; }

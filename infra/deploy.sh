@@ -124,7 +124,24 @@ print_summary() {
   printf '%b  └%s┘%b\n' "$C_G" "$BAR" "$C_END"
   printf '\n'
   LC_ALL="$_LC_PREV"
+  print_ikev2_notice
   print_sso_notice
+}
+
+print_ikev2_notice() {
+  (
+    load_env ru
+    ssh_exec '
+      mode=$(cat /etc/anysda/ikev2-mode) || exit 1
+      host=$(cat /etc/anysda/ikev2-server-host) || exit 1
+      domain=$(cat /etc/anysda/ikev2-domain 2>/dev/null || true)
+      printf "IKEv2: mode=%s server-host=%s\n" "$mode" "$host"
+      if [ -n "$domain" ] && { [ "$mode" != letsencrypt ] || [ "$host" != "$domain" ]; }; then
+        printf "IKEv2: ожидается сертификат Caddy для %s; автоматическая проверка каждые 30 с.\n" "$domain"
+      fi
+      if [ -s /etc/anysda/ikev2-profile-notice ]; then cat /etc/anysda/ikev2-profile-notice; fi
+    ' || warn 'IKEv2: не удалось прочитать состояние сервера'
+  )
 }
 
 # Засев решается на entry: локальное отсутствие секрета не означает, что

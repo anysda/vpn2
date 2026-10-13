@@ -159,7 +159,7 @@ async function sendOvpn() {
 
 // --- IKEv2 modal ----------------------------------------------------------
 const showIkev2 = ref(false)
-const ikev2Creds = ref<{ server: string, username: string, password: string, hasCa: boolean } | null>(null)
+const ikev2Creds = ref<{ server: string, remoteId: string, username: string, password: string, hasCa: boolean, profileNotice: string | null, certificatePending: boolean } | null>(null)
 const ikev2Loading = ref(false)
 const ikev2Sending = ref(false)
 const showIkev2Pass = ref(false)
@@ -172,7 +172,7 @@ async function loadIkev2() {
     const r = await getIkev2Credentials(props.clientId, props.device.id)
     // hasCa=true → self-signed режим, нужна кнопка «Скачать CA».
     // hasCa=false → letsencrypt, корень в trust-store клиента, кнопка скрыта.
-    ikev2Creds.value = { server: r.server, username: r.username, password: r.password, hasCa: r.caCertPem !== null }
+    ikev2Creds.value = { ...r, hasCa: r.caCertPem !== null }
   }
   catch (e) {
     const err = e as { statusMessage?: string }
@@ -195,7 +195,7 @@ async function copyIkev2Field(label: string, value: string | undefined) {
 
 async function copyIkev2All() {
   if (!ikev2Creds.value) return
-  const text = `Сервер: ${ikev2Creds.value.server}\nЛогин: ${ikev2Creds.value.username}\nПароль: ${ikev2Creds.value.password}`
+  const text = `Сервер: ${ikev2Creds.value.server}\nRemote ID: ${ikev2Creds.value.remoteId}\nЛогин: ${ikev2Creds.value.username}\nПароль: ${ikev2Creds.value.password}`
   if (await copyText(text)) toast.add({ title: 'IKEv2 креды скопированы', color: 'success' })
   else toast.add({ title: 'Не удалось скопировать', color: 'error' })
 }
@@ -283,7 +283,7 @@ async function doDelete() {
 
     <div class="flex gap-1 mt-1.5 justify-end">
       <UTooltip text="IKEv2 — сервер/логин/пароль, нативный VPN-клиент iOS/macOS/Windows/Android">
-        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" @click="() => { showIkev2 = true }">
+        <UButton size="xs" color="neutral" variant="ghost" class="!px-1" aria-label="IKEv2" @click="() => { showIkev2 = true }">
           <UIcon name="i-lucide-shield-check" class="size-4" />
         </UButton>
       </UTooltip>
@@ -472,6 +472,21 @@ async function doDelete() {
           </div>
 
           <div v-else-if="ikev2Creds" class="space-y-3">
+            <UAlert
+              v-if="ikev2Creds.certificatePending"
+              color="warning"
+              title="Ожидается сертификат Caddy"
+              description="IKEv2 автоматически перейдёт на домен после выдачи сертификата. Пока действуют временные настройки ниже. После перехода откройте это окно заново."
+            />
+            <UAlert
+              v-if="ikev2Creds.profileNotice"
+              color="warning"
+              :title="ikev2Creds.profileNotice"
+              description="После перехода на домен заново получите настройки IKEv2 здесь или через Telegram. Замените сервер и Remote ID, включите системное доверие к CA вместо прежнего anysda CA. Логин и пароль менять не нужно."
+            />
+            <p class="text-sm text-(--ui-text-muted)">
+              Remote ID (iOS) / Server identity (Android): <span class="font-mono">{{ ikev2Creds.remoteId }}</span>
+            </p>
             <div class="grid grid-cols-[5rem_1fr_auto] items-center gap-2 text-sm">
               <span class="text-(--ui-text-muted)">Сервер:</span>
               <span class="font-mono truncate">{{ ikev2Creds.server }}</span>

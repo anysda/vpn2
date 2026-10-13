@@ -4,6 +4,8 @@ export interface Ikev2Credentials {
   username: string
   password: string
   caCertPem: string | null
+  profileNotice: string | null
+  certificatePending: boolean
 }
 
 /**

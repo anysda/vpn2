@@ -47,7 +47,21 @@ def unquote_scalar(v, key='значение'):
             return ''.join(out)
         if q == '"' and c == '\\':
             nxt = v[i + 1:i + 2]
-            escapes = {'n': '\n', 'r': '\r', 't': '\t', '"': '"', '\\': '\\', '/': '/'}
+            # Полный набор escape-последовательностей YAML 1.1: их пишет
+            # yaml.safe_dump для символов вне ASCII и управляющих.
+            escapes = {'0': '\0', 'a': '\a', 'b': '\b', 't': '\t', '\t': '\t', 'n': '\n',
+                       'v': '\v', 'f': '\f', 'r': '\r', 'e': '\x1b', ' ': ' ', '"': '"',
+                       '/': '/', '\\': '\\', 'N': '\x85', '_': '\xa0', 'L': ' ',
+                       'P': ' '}
+            width = {'x': 2, 'u': 4, 'U': 8}.get(nxt)
+            if width:
+                code = v[i + 2:i + 2 + width]
+                if len(code) != width or not all(c in '0123456789abcdefABCDEF' for c in code) \
+                        or int(code, 16) > 0x10FFFF:
+                    config_error(key, 'неподдерживаемая escape-последовательность')
+                out.append(chr(int(code, 16)))
+                i += 2 + width
+                continue
             if nxt not in escapes:
                 config_error(key, 'неподдерживаемая escape-последовательность')
             out.append(escapes[nxt])
@@ -62,8 +76,116 @@ def unquote_scalar(v, key='значение'):
     config_error(key, 'незакрытая кавычка (значение скрыто)')
 
 
+def _key_line(line):
+    """(колонка ключа, значение) для строки `ключ: значение` или `- ключ: ...`."""
+    content = line.lstrip(' ')
+    if not content or content.startswith('#'):
+        return None
+    column = len(line) - len(content)
+    if content.startswith('- '):
+        content, column = content[2:], column + 2
+    name, sep, value = content.partition(':')
+    if not sep or not name.strip():
+        return None
+    return column, value.strip()
+
+
+def _fold(first, rest, quote):
+    """Склеивает перенесённое значение по правилам YAML (перенос = пробел)."""
+    out, pending = first.rstrip(' '), 0
+    for line in rest:
+        part = line.strip(' ')
+        if not part:
+            pending += 1
+            continue
+        if quote == '"' and (len(out) - len(out.rstrip('\\'))) % 2:
+            out = out[:-1] + '\\n' * pending + part.rstrip(' ')
+        elif pending:
+            out += ('\\n' if quote == '"' else '\n') * pending + part.rstrip(' ')
+        else:
+            out += ' ' + part.rstrip(' ')
+        pending = 0
+    if '\n' in out:
+        # Перевод строки держит на одной строке только двойная кавычка.
+        value = unquote_scalar(out) if quote == "'" else out
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+        return '"' + escaped + '"'
+    return out
+
+
+def normalize_yaml(text):
+    """Сводит равнозначные формы YAML к одной; номера строк не меняются.
+
+    yaml.safe_dump пишет список без отступа (`exits:` и `- tag:` в одной
+    колонке) и переносит длинные значения на 80 символах. Такой список
+    сдвигается на два пробела, перенесённое значение склеивается в строку
+    ключа, а строки продолжения становятся пустыми, чтобы ошибки указывали
+    на строку исходного файла. Отступ блоков по-прежнему ровно два пробела.
+    """
+    lines = text.split('\n')
+    changed = True
+    while changed:
+        changed = False
+        for index, line in enumerate(lines):
+            key = _key_line(line)
+            if not key or (key[1] and not key[1].startswith('#')):
+                continue
+            column = key[0]
+            following = [i for i in range(index + 1, len(lines))
+                         if lines[i].strip() and not lines[i].lstrip(' ').startswith('#')]
+            if not following:
+                continue
+            first = lines[following[0]]
+            if len(first) - len(first.lstrip(' ')) != column or not first.lstrip(' ').startswith('-'):
+                continue
+            for i in range(index + 1, len(lines)):
+                content = lines[i].lstrip(' ')
+                indent = len(lines[i]) - len(content)
+                if content and not content.startswith('#') and (
+                        indent < column or (indent == column and not content.startswith('-'))):
+                    break
+                if content and indent >= column:
+                    lines[i] = '  ' + lines[i]
+            changed = True
+            break
+
+    index = 0
+    while index < len(lines):
+        key = _key_line(lines[index])
+        index += 1
+        if not key or not key[1] or key[1].startswith('#'):
+            continue
+        column, value = key
+        quote = value[0] if value[0] in ('"', "'") else ''
+        if not quote and re.search(r'\s#', value):
+            continue
+        rest, end = [], index
+        while end < len(lines):
+            content = lines[end].lstrip(' ')
+            indent = len(lines[end]) - len(content)
+            if content and indent <= column:
+                break
+            if not quote and content and (content.startswith('#') or re.search(r':(\s|$)|\s#', content)):
+                break   # в простом значении это уже не продолжение: пусть отвергнет схема
+            rest.append(lines[end])
+            end += 1
+        while rest and not rest[-1].strip():
+            rest.pop()
+            end -= 1
+        if not rest:
+            continue
+        head = lines[index - 1]
+        start = head.index(':', len(head) - len(head.lstrip(' '))) + 1
+        lines[index - 1] = head[:start] + ' ' + _fold(value, rest, quote)
+        for i in range(index, index + len(rest)):
+            lines[i] = ''
+        index += len(rest)
+    return '\n'.join(lines)
+
+
 def parse_yaml(text):
     """Минимальный парсер для нашего фиксированного формата config.yaml."""
+    text = normalize_yaml(text)
     validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
@@ -299,6 +421,7 @@ def merge_setup_config(previous, answers):
     Экзиты сопоставляем по тегу, а не по позиции; удалённые в мастере
     экзиты удаляются, дополнительные поля оставшихся сохраняются.
     """
+    previous, answers = normalize_yaml(previous), normalize_yaml(answers)
     old_config = parse_yaml(previous)
     new_config = parse_yaml(answers)
     tags = [entry.get('tag') for entry in old_config['exits']]

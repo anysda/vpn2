@@ -37,6 +37,7 @@ stand_up() {
     -e NUXT_WG_ENABLED=true -e NUXT_WG_PUBLIC_HOST=$PUBLIC_HOST \
     -e NUXT_OVPN_ENABLED=true -e NUXT_OVPN_PUBLIC_HOST=$PUBLIC_HOST \
     -e NUXT_EXIT_TAGS="$EXIT_TAGS" -e NUXT_MGMT_IPS="$MGMT_IPS" \
+    -e NUXT_NODE_HOSTS='ru=192.0.2.1,nl=192.0.2.2,fi=192.0.2.3,us=192.0.2.4' \
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
     "$@" "$image" ${STAND_CMD[@]+"${STAND_CMD[@]}"} >/dev/null

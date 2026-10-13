@@ -188,6 +188,7 @@ export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
 /**
  * Состояние сборщиков, которое должно пережить рестарт панели: name → JSON.
  * 'ikev2' — последние байт-счётчики живых IKE_SA (server/utils/ikev2-counters.ts).
+ * 'client-exit-hosts' — последняя карта тег → адрес для переноса выбора клиентов.
  */
 export const collectorState = sqliteTable('collector_state', {
   name: text('name').primaryKey(),

@@ -75,8 +75,10 @@ export default defineNuxtConfig({
     wgSubnetPrefix: '10.66.66.',
     wgPublicHost: '',
     // Публичные адреса нод для карточек мониторинга: «ru=1.2.3.4,uz=5.6.7.8»
-    // (стадия 30 собирает из config.yaml). Только для показа.
+    // (стадия 30 собирает из config.yaml). Также узнаём переименование экзитов.
     nodeHosts: '',
+    // Только для первого обновления: карта из контейнера предыдущей панели.
+    previousNodeHosts: '',
     wgMtu: 1420,
     // Сплит-туннель: локальные сети клиента (RFC1918, CGNAT, multicast) не
     // уезжают в VPN — см. server/utils/allowed-ips.ts. NUXT_WG_SPLIT_LOCAL=false

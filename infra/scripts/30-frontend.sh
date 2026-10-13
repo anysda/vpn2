@@ -253,6 +253,10 @@ for _t in ${EXIT_TAGS:-}; do
   _v="DOMAIN_$(printf '%s' "$_t" | tr 'a-z-' 'A-Z_')"
   NODE_HOSTS+=",${_t}=${!_v:-}"
 done
+# До удаления старого контейнера сохраняем карту для обновления с версии,
+# которая ещё не хранила адреса экзитов в БД. Читаем только нужную переменную.
+PREVIOUS_NODE_HOSTS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' anysda-vpn2 2>/dev/null \
+  | sed -n 's/^NUXT_NODE_HOSTS=//p') || PREVIOUS_NODE_HOSTS=
 docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
@@ -292,6 +296,7 @@ docker run -d \
   -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
   -e NUXT_WG_ENDPOINT_IP="$ENTRY_HOST" \
   -e NUXT_NODE_HOSTS="$NODE_HOSTS" \
+  -e NUXT_PREVIOUS_NODE_HOSTS="$PREVIOUS_NODE_HOSTS" \
   -e NUXT_WG_MTU="${WG_MTU:-1420}" \
   -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
   -e NUXT_OVPN_ENABLED=true \
@@ -345,6 +350,8 @@ if [[ $http_up -ne 1 ]] || docker logs anysda-vpn2 2>&1 | grep 'panel init faile
   exit 1
 fi
 echo "[$HOST_TAG] статус контейнера:"
+# Переносы и сбросы видны и в журнале панели, и в выводе ./deploy.sh.
+docker logs anysda-vpn2 2>&1 | sed -n '/client exit preference:/p'
 docker ps --filter name=anysda-vpn2 --format '  {{.Names}} {{.Status}} {{.Ports}}' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 echo "[$HOST_TAG] /api/version:"
 curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'

@@ -8,6 +8,7 @@ import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
 import { accounts, sessions, twoFactors, users } from '../database/schema'
 import { hashPassword, useAuth, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
+import { syncClientPrefsFile } from '../utils/client-prefs'
 
 function generatePassword(): string {
   return randomBytes(13).toString('base64url').slice(0, 18)
@@ -51,6 +52,8 @@ async function initPanel() {
   else {
     log.warn({ migrationsFolder }, 'migrations folder missing, skipping')
   }
+
+  if (cfg.exitTags) await syncClientPrefsFile()
 
   // 2. Seed/sync admin user from config.yaml (idempotent restore)
   const yamlConfig = loadAnysdaConfig()

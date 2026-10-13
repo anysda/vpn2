@@ -65,6 +65,8 @@ test('HTTP ждёт миграции и администратора при ме
     '../database/schema': schema,
     '../utils/auth': { hashPassword: () => { started(); return password } },
     '../utils/anysda-config': { loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
+    '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
+    '../utils/panel-ready': { markPanelReady: () => {} },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,
     useRuntimeConfig: () => ({ databaseUrl }),

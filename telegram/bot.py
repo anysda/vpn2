@@ -507,6 +507,17 @@ _awaiting_device_name: set[int] = set()
 _admin_await: dict | None = None
 
 
+def plural_ru(n: int, forms: tuple[str, str, str]) -> str:
+    """Форма после целого числа: один, два, пять; как pluralRu в панели."""
+    mod10 = abs(n) % 10
+    mod100 = abs(n) % 100
+    if mod10 == 1 and mod100 != 11:
+        return forms[0]
+    if 2 <= mod10 <= 4 and (mod100 < 10 or mod100 >= 20):
+        return forms[1]
+    return forms[2]
+
+
 def _limit_label(device_limit) -> str:
     return '∞' if device_limit is None else str(device_limit)
 
@@ -1044,8 +1055,9 @@ def _admin_list_markup(clients: list[dict]) -> dict:
         icon = _client_status_icon(c.get('status', ''))
         limit = _limit_label(c.get('deviceLimit'))
         count = c.get('deviceCount', 0)
+        noun = plural_ru(count, ('девайс', 'девайса', 'девайсов'))
         rows.append([{
-            'text': f'{icon} {c.get("name", "?")} — {count}/{limit} девайс.',
+            'text': f'{icon} {c.get("name", "?")} — {count} {noun} · лимит: {limit}',
             'callback_data': f'acl:{c.get("id")}',
         }])
     rows.append([{'text': '➕ Создать клиента', 'callback_data': 'anew'}])

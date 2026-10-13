@@ -10,6 +10,7 @@ import { killOvpnClientQuiet, ovpnCn, removeCcd, syncOpenvpnConfig, withRevokedD
 import { syncIkev2, terminateIkev2Sa } from './ikev2'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
+import { pluralRu } from '../../shared/plural'
 
 /**
  * Общие операции над клиентами — используются и панелью (session-auth),
@@ -83,7 +84,7 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
     if (patch.deviceLimit < have) {
       throw createError({
         statusCode: 409,
-        statusMessage: 'device_limit_below_count', message: `У клиента уже ${have} устройств — лимит не может быть меньше`,
+        statusMessage: 'device_limit_below_count', message: `У клиента уже ${have} ${pluralRu(have, ['устройство', 'устройства', 'устройств'])} — лимит не может быть меньше`,
       })
     }
   }

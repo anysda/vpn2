@@ -18,7 +18,7 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
   }))
   rows = queued(1)
   await expect(toasts).toHaveCount(1)
-  await expect(toasts).toContainText('Бот недоступен, 1 уведомлений в очереди')
+  await expect(toasts).toContainText('Бот недоступен, 1 уведомление в очереди')
   await checkLayout?.()
   rows = queued(5)
   await expect(page.getByRole('button', { name: 'Уведомления: 5', exact: true })).toBeVisible()

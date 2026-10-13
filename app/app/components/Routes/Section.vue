@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Outbound, Route } from '~/composables/useRoutes'
-import { flagFor, parseOutbound, pluralRu, rttColor, useRoutes } from '~/composables/useRoutes'
+import { flagFor, parseOutbound, rttColor, useRoutes } from '~/composables/useRoutes'
+import { pluralRu } from '#shared/plural'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()

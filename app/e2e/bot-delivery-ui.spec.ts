@@ -68,7 +68,12 @@ test('недоступный бот: тост клиента, рассылки, 
     const created = await page.request.post('/api/clients', { data: { name } })
     expect(created.ok()).toBe(true)
     clientId = (await created.json()).id
-    await expect(toast(page, 'Бот недоступен, 1 уведомлений в очереди')).toBeVisible()
+    await expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 1 уведомление в очереди' })).toBeVisible()
+    await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
+    await expect(page.getByRole('dialog').getByText('Бот недоступен, 1 уведомление в очереди', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    console.log('Реальная очередь: Бот недоступен, 1 уведомление в очереди — тост, «Боты», «Уведомления»')
     inside(`
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
@@ -78,6 +83,11 @@ test('недоступный бот: тост клиента, рассылки, 
     const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
     expect(changed.ok()).toBe(true)
     await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 2 уведомления в очереди' })).toBeVisible()
+    await page.getByRole('button', { name: 'Уведомления: 2', exact: true }).click()
+    await expect(page.getByRole('dialog').getByText('Бот недоступен, 2 уведомления в очереди', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    console.log('Реальная очередь: Бот недоступен, 2 уведомления в очереди — «Боты», «Уведомления»')
 
     for (let n = 3; n <= 5; n++) {
       await page.getByLabel('Сообщение юзерам').fill(`e2e delivery probe ${n}`)

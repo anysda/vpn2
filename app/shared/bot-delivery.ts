@@ -1,3 +1,5 @@
+import { pluralRu } from './plural'
+
 export interface BotDelivery {
   id: string
   label: string
@@ -6,7 +8,7 @@ export interface BotDelivery {
 }
 
 export function botQueueText(count: number): string {
-  return `Бот недоступен, ${count} уведомлений в очереди`
+  return `Бот недоступен, ${count} ${pluralRu(count, ['уведомление', 'уведомления', 'уведомлений'])} в очереди`
 }
 
 export function botDeliveryText(row: BotDelivery): string {

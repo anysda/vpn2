@@ -300,7 +300,7 @@ docker run -d \
   -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \
   -e NUXT_AGH_URL="http://127.0.0.1:${AGH_PORT}" \
   -e NUXT_AGH_USER="${ADMIN_USER}" \
-  -e NUXT_AGH_PASSWORD="${ADMIN_PASS}" \
+  -e NUXT_AGH_PASSWORD="$(agh_password "$ADMIN_PASS")" \
   -e NUXT_EXIT_TAGS="${EXIT_TAGS}" \
   -e NUXT_MGMT_MESH_IP_PREFIX="10.99.0." \
   -e NUXT_MGMT_IPS="$(_pairs="ru:${MGMT_IP_RU:-10.99.0.1}"; for _t in ${EXIT_TAGS}; do _u=$(echo "$_t" | tr 'a-z-' 'A-Z_'); _key="MGMT_IP_${_u}"; _v="${!_key:-}"; [ -n "$_v" ] && _pairs="$_pairs,$_t:$_v"; done; printf '%s' "$_pairs")" \

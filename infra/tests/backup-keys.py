@@ -97,6 +97,8 @@ class BackupRestore(unittest.TestCase):
             put(f'/opt/anysda-vpn2/infra/scripts/{stage}.sh', '#!/bin/sh\nexit 0\n', 0o755)
         put('/opt/anysda-vpn2/infra/envs/all.env', 'HOST_TAG=ru\n')
         put('/opt/anysda-vpn2/infra/envs/ru.env', 'ENTRY_HOST=vpn.example.test\n')
+        put('/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl',
+            (ROOT / 'infra/configs/anysda-config.yaml.tpl').read_text())
 
     def roundtrip(self, backup_root, bare=False, legacy=False):
         original = identity()

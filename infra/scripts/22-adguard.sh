@@ -70,7 +70,7 @@ fi
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/4] credentials"
 apt_have apache2-utils || apt_get install -y -qq apache2-utils >/dev/null 2>&1
-# Единый логин/пароль для веб-панели и AdGuard.
+# Единый логин; длинный пароль панели преобразуем для bcrypt в AdGuard.
 # ADMIN_USER / ADMIN_PASSWORD приходят из config.yaml через ru.env.
 # Если ADMIN_PASSWORD пуст — генерим один раз и кладём в admin-password.txt,
 # 30-frontend потом этот файл переиспользует.
@@ -82,7 +82,9 @@ elif [[ ! -f /etc/anysda/admin-password.txt ]]; then
   openssl rand -base64 24 | tr -d '\n/+=' | head -c 18 > /etc/anysda/admin-password.txt
   chmod 600 /etc/anysda/admin-password.txt
 fi
-AGH_PASS=$(cat /etc/anysda/admin-password.txt)
+AGH_PASS=$(agh_password "$(cat /etc/anysda/admin-password.txt)")
+printf '%s' "$AGH_PASS" > /etc/anysda/adguard-password.txt
+chmod 600 /etc/anysda/adguard-password.txt
 # Соль bcrypt случайная: новый хэш на каждом прогоне менял конфиг, и AdGuard
 # перезапускался зря. Хэш из конфига оставляем, если он подходит к паролю.
 AGH_PASS_HASH=$(python3 -c 'import sys, yaml
@@ -95,7 +97,7 @@ if [[ -z "$AGH_PASS_HASH" ]] || ! htpasswd -vb "$AGH_HTP" "$AGH_USER" "$AGH_PASS
   AGH_PASS_HASH=$(htpasswd -bnBC 10 "" "$AGH_PASS" | tr -d ':\n' | sed 's/$2y/$2a/')
 fi
 rm -f "$AGH_HTP"
-echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/admin-password.txt)"
+echo "[$HOST_TAG]   $AGH_USER / (пароль в /etc/anysda/adguard-password.txt)"
 
 # ----------------------------------------------------------------------------
 # 3. Write config (only on first install; never overwrite live config)

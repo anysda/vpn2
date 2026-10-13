@@ -77,6 +77,14 @@ class BackupRestore(unittest.TestCase):
             path.mkdir(parents=True)
         for path in (*FILES, *EXTRA):
             write(path, body(path, 'archived'))
+        # Как на entry: ключи лежат в keys/, верхний уровень — ссылки.
+        for name, value in (('server.priv', WG_KEYS['archived']),
+                            ('server.pub', run('wg', 'pubkey', input=WG_KEYS['archived']).stdout.strip())):
+            key = Path('/etc/wireguard') / name
+            key.unlink(missing_ok=True)
+            write('/etc/wireguard/keys/' + name, value)
+            key.symlink_to('keys/' + name)
+        shutil.rmtree('/tmp/anysda', ignore_errors=True)
         write('/etc/anysda/backup.env', '''BACKUP_BACKEND=local
 BACKUP_LOCAL_DIR=/var/backups/anysda-vpn2
 BACKUP_RETENTION=2
@@ -94,6 +102,7 @@ exit 0
         for stage in ('22-adguard', '30-frontend', '35-telegram', '99-verify'):
             write('/opt/anysda-vpn2/infra/scripts/' + stage + '.sh',
                   '#!/bin/sh\nexit 0\n', 0o755)
+        write('/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl', 'template from installed tree')
         for name in ('all', 'ru'):
             write('/opt/anysda-vpn2/infra/envs/' + name + '.env', 'HOST_TAG=ru\n')
         self.env = dict(os.environ, PATH='/test-bin:' + os.environ['PATH'])
@@ -154,6 +163,10 @@ exit 0
 
     def test_full_round_trip_and_stale_wal(self):
         bundle = self.backup()
+        for name in ('server.priv', 'server.pub'):
+            key = bundle / 'etc-wireguard' / name
+            self.assertFalse(key.is_symlink(), f'{name}: backup must contain key bytes')
+            self.assertTrue(key.read_text())
         with sqlite3.connect(bundle / 'db.sqlite') as saved:
             self.assertEqual(saved.execute('SELECT name FROM clients').fetchall(),
                              [('archived-client',)])
@@ -175,6 +188,7 @@ sys.stdin.read()
         write('/test-output/writer.pid', str(writer.pid))
         for path in FILES:
             write(path, body(path, 'live'))
+        write('/etc/wireguard/keys/server.priv', WG_KEYS['live'])
         result = self.script('restore', 'latest', '--force')
         self.assertEqual(result.returncode, 0, result.stdout)
         with sqlite3.connect(DB) as restored:
@@ -185,12 +199,50 @@ sys.stdin.read()
         self.assertEqual(integrity, 'ok')
         for path in FILES:
             self.assertEqual(Path(path).read_text(), body(path, 'archived'))
+        self.assertEqual(Path('/etc/wireguard/keys/server.priv').read_text().strip(), WG_KEYS['archived'])
         snapshot = self.safety()
         with sqlite3.connect(snapshot / str(DB).lstrip('/')) as saved:
             self.assertEqual(saved.execute('SELECT name FROM clients').fetchall(),
                              [('live-client',)])
         self.assertEqual(list(DB.parent.glob('.*-tmp.*')), [])
         print('backup_restore_sqlite_ikev2=PASS', flush=True)
+
+    def test_legacy_dangling_wg_keys(self):
+        # Воспроизводим старый формат с пропущенным keys/, реальным манифестом
+        # и шифрованием. Работает и при прогоне теста против origin/dev.
+        legacy = REPO / 'infra/lib/anysda-backup.sh'
+        write('/test-output/legacy-backup.sh', legacy.read_text().replace('cp -aL', 'cp -a'))
+        result = run('bash', '/test-output/legacy-backup.sh', env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        result = self.script('restore', 'latest', '--force')
+        print(f'legacy_symlink_restore_rc={result.returncode}', flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path('/etc/wireguard/server.priv').read_text().strip(), WG_KEYS['archived'])
+        expected = run('wg', 'pubkey', input=WG_KEYS['archived']).stdout.strip()
+        self.assertEqual(Path('/etc/wireguard/server.pub').read_text().strip(), expected)
+
+    def test_restore_after_tmp_cleanup_preserves_archived_password(self):
+        # Изолируем зависимость от /tmp от отдельной регрессии ссылок WG.
+        for name in ('server.priv', 'server.pub'):
+            key = Path('/etc/wireguard') / name
+            content = key.read_text()
+            key.unlink()
+            write(str(key), content)
+        self.backup()
+        # Стадия проверяет тот же обязательный вход, что настоящая стадия 30.
+        write('/opt/anysda-vpn2/infra/scripts/30-frontend.sh', '''#!/bin/bash
+set -eu
+source "$1"
+test -s /tmp/anysda/anysda-config.yaml.tpl
+test -z "${ADMIN_PASSWORD:-}"
+cmp /tmp/anysda/anysda-config.yaml.tpl /opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl
+''', 0o755)
+        write('/opt/anysda-vpn2/infra/envs/ru.env', 'HOST_TAG=ru\nADMIN_PASSWORD=current-deploy\n')
+        self.assertFalse(Path('/tmp/anysda').exists())
+        result = self.script('restore', 'latest', '--force')
+        print(f'cold_restore_rc={result.returncode}', flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
     def test_snapshot_failure_preserves_live_data(self):
         self.backup()

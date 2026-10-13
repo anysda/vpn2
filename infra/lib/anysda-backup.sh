@@ -100,7 +100,7 @@ fi
 # 3. WireGuard: конфиг и исходная пара ключей стадии 28, которую читает панель.
 mkdir -p "$BUNDLE_DIR/etc-wireguard"
 for file in wg0.conf server.priv server.pub; do
-  [[ ! -f /etc/wireguard/$file ]] || cp -a "/etc/wireguard/$file" "$BUNDLE_DIR/etc-wireguard/"
+  [[ ! -f /etc/wireguard/$file ]] || cp -aL "/etc/wireguard/$file" "$BUNDLE_DIR/etc-wireguard/"
 done
 
 # 4. OpenVPN PKI + конфиг + CCD + CRL

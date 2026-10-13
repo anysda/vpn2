@@ -196,6 +196,17 @@ fi
 # для стадии 28 и панели ДО остановки/применения, не берём ключ свежего деплоя.
 # Проверка манифеста выше должна пройти до изменения содержимого бандла.
 WG_BUNDLE="$BUNDLE_DIR/etc-wireguard"
+if [[ -L "$WG_BUNDLE/server.priv" && ! -f "$WG_BUNDLE/wg0.conf" ]]; then
+  echo "anysda-restore: ссылка на ключ WG без wg0.conf — приватный ключ восстановить невозможно" >&2
+  exit 5
+fi
+# Старые архивы переносили ссылки в keys/, но не сам каталог. Не читаем и
+# не пишем через ссылки архива (в том числе абсолютные на живой хост).
+for key in server.priv server.pub; do
+  if [[ -L "$WG_BUNDLE/$key" ]]; then
+    rm -- "$WG_BUNDLE/$key"
+  fi
+done
 if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
   if [[ ! -s "$WG_BUNDLE/server.priv" ]]; then
     awk '
@@ -212,6 +223,16 @@ if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
   fi
   chmod 600 "$WG_BUNDLE/server.priv" "$WG_BUNDLE/server.pub"
 fi
+
+# Стадия 30 ждёт шаблон в staging-каталоге run_stage. /tmp может быть tmpfs:
+# готовим его из установленного дерева на каждом restore, ещё до swap.
+FRONTEND_TPL=/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl
+if [[ ! -r "$FRONTEND_TPL" ]]; then
+  echo "anysda-restore: нет шаблона $FRONTEND_TPL — данные не изменены" >&2
+  exit 5
+fi
+install -d -m 700 /tmp/anysda
+install -m 600 "$FRONTEND_TPL" /tmp/anysda/anysda-config.yaml.tpl
 
 # ── Защита от перетирания не-пустой БД ─────────────────────────────────────
 LIVE_DB=/var/lib/anysda-vpn2/db.sqlite
@@ -247,7 +268,7 @@ if [[ -f "$LIVE_DB" ]]; then
   sqlite3 "$LIVE_DB" ".timeout 10000" ".backup '$PRESNAP_ROOT/var/lib/anysda-vpn2/db.sqlite'"
 fi
 for path in \
-  etc/anysda etc/wireguard/wg0.conf etc/openvpn \
+  etc/anysda etc/wireguard etc/openvpn \
   etc/strongswan etc/swanctl etc/strongswan.conf etc/strongswan.d \
   etc/ipsec.conf etc/ipsec.secrets \
   etc/caddy opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
@@ -322,9 +343,13 @@ if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then
   chmod 600 /etc/wireguard/wg0.conf
 fi
 if [[ -f "$WG_BUNDLE/server.priv" ]]; then
-  install -d -m 700 /etc/wireguard
-  install -m 600 "$WG_BUNDLE/server.priv" /etc/wireguard/server.priv
-  install -m 600 "$WG_BUNDLE/server.pub" /etc/wireguard/server.pub
+  # Стадия 28 переиспользует keys/. Если обновить только верхний уровень,
+  # следующий деплой вернёт ключ, который был на хосте до restore.
+  install -d -m 700 /etc/wireguard /etc/wireguard/keys
+  for key in server.priv server.pub; do
+    install -m 600 "$WG_BUNDLE/$key" "/etc/wireguard/keys/$key"
+    ln -sfn "keys/$key" "/etc/wireguard/$key"
+  done
 fi
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
   mkdir -p /etc/openvpn
@@ -381,7 +406,9 @@ docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 ENVS_DIR=/opt/anysda-vpn2/infra/envs
 STAGE_ENV="$WORK/ru.env"
 if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
-  { cat "$ENVS_DIR/all.env"; echo; grep -v '^SSH_PASS=' "$ENVS_DIR/ru.env"; } > "$STAGE_ENV"
+  { cat "$ENVS_DIR/all.env"; echo; grep -v '^SSH_PASS=' "$ENVS_DIR/ru.env";
+    # Стадии должны читать восстановленный файл, а не перетирать его засевом.
+    echo 'unset ADMIN_PASSWORD'; } > "$STAGE_ENV"
   chmod 600 "$STAGE_ENV"
 fi
 

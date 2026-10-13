@@ -19,6 +19,15 @@ vpn_pool_subnets() {
 
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
+# bcrypt ограничен 72 байтами. Короткие пароли совместимы со старыми
+# установками; длинные преобразуем целиком, без усечения UTF-8 или суффикса.
+# Этот же пароль передаёт AdGuard прокси панели (стадия 30).
+agh_password() {
+  printf '%s' "$1" | python3 -c 'import hashlib, sys
+p = sys.stdin.buffer.read()
+sys.stdout.buffer.write(p if len(p) <= 72 else hashlib.sha256(b"vpn2-adguard-v1\0" + p).hexdigest().encode())'
+}
+
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
 SVC_RESTARTED=0
 

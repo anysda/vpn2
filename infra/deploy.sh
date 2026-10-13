@@ -394,6 +394,9 @@ run_stage_on_host() {
     cat "$DEPLOY_ROOT/envs/all.env" || return
     echo
     grep -v '^SSH_PASS=' "$DEPLOY_ROOT/envs/${host}.env"
+    if [[ "${RESTORE_PRESERVE_ADMIN:-0}" == 1 ]]; then
+      echo 'unset ADMIN_PASSWORD'
+    fi
   } > "$rendered_env" || return
   chmod 600 "$rendered_env" || return
 
@@ -1013,6 +1016,7 @@ do_backup_list() {
 do_restore() {
   local archive="${1:-latest}"
   local force_flag="${2:-}"
+  local RESTORE_PRESERVE_ADMIN=1
   load_env ru
   # Если архив — локальный путь на оркестраторе, scp'им на entry.
   # Иначе (имя файла или 'latest') — entry резолвит сам.

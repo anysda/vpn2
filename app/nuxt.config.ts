@@ -8,6 +8,12 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  // Inter уже берётся из Google Fonts. Неиспользуемые каталоги
+  // Fontsource/Fontshare задерживали сборку на ~68 с при их отказе.
+  fonts: {
+    provider: 'google',
+  },
+
   colorMode: {
     preference: 'dark',
     fallback: 'dark',

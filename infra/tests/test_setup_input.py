@@ -51,6 +51,18 @@ def run_setup(directory, answers):
 
 
 class SetupInputTests(unittest.TestCase):
+    def test_invalid_ip_is_retried_before_saving(self):
+        answers = ['1', 'entry secret', '999.2.3.4', '192.0.2.999', '192.0.02.2',
+                   '', '192.0.2.2', 'exit secret', 'se', '', '', '', 'n', 'n', 'n', 'n', 'y']
+        with tempfile.TemporaryDirectory() as directory:
+            root = prepare(directory)
+            code, output = run_setup(directory, '\n'.join(answers) + '\n')
+            self.assertEqual(code, 0, output)
+            config = yaml.safe_load((root / 'config.yaml').read_text())
+            self.assertEqual(config['exits'][0]['host'], '192.0.2.2')
+            self.assertEqual(output.count('Некорректный IP-адрес:'), 4)
+            self.assertNotIn('ERROR: config.yaml:', output)
+
     def test_optional_domain_empty_or_invalid_then_empty(self):
         for domains in ([''], ['   '], ['https://vpn.example.com', ''],
                         ['vpn.example.com:443', ''], ['bad domain', '']):

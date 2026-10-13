@@ -37,7 +37,14 @@ ask_ip() {
   local prompt="$1" val
   while true; do
     val=$(ask "$prompt") || return 1
-    if [[ "$val" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    if python3 - "$val" <<'PYIP'
+import ipaddress, sys
+try:
+    ipaddress.IPv4Address(sys.argv[1])
+except ValueError:
+    sys.exit(1)
+PYIP
+    then
       printf '%s' "$val"; return
     fi
     fail "Некорректный IP-адрес: $val"

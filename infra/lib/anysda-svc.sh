@@ -59,6 +59,23 @@ vpn_routing_ensure() {
   fi
 }
 
+# При обновлении уже пострадавшей установки enabled-флаг ufw остался на
+# диске, но цепочек в ядре нет. Вернуть также динамические правила служб:
+# живой Docker не замечает исчезновения NAT, fail2ban помнит баны в памяти.
+firewall_repair_if_lost() {
+  local unit
+  if grep -qx 'ENABLED=yes' /etc/ufw/ufw.conf 2>/dev/null \
+     && ! iptables -S ufw-user-input >/dev/null 2>&1; then
+    svc_say 'правила ufw пропали, восстанавливаю firewall и активные службы'
+    ufw reload || return
+    for unit in docker fail2ban; do
+      if systemctl is-active --quiet "$unit"; then
+        systemctl restart "$unit" || return
+      fi
+    done
+  fi
+}
+
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
 SVC_RESTARTED=0
 

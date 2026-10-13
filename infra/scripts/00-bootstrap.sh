@@ -316,10 +316,7 @@ echo "[$HOST_TAG] [4/6] ufw"
 # если она другая.
 # Миграция уже пострадавшей ноды: ufw хранит enabled=yes на диске, но его
 # цепочки могли исчезнуть. Иначе первое ufw allow упадёт до восстановления.
-if grep -qx 'ENABLED=yes' /etc/ufw/ufw.conf 2>/dev/null \
-   && ! iptables -S ufw-user-input >/dev/null 2>&1; then
-  ufw reload
-fi
+firewall_repair_if_lost
 grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw 2>/dev/null || ufw default deny incoming
 grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw 2>/dev/null || ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'

@@ -72,6 +72,36 @@ ip() {
             self.assertEqual(restored.read_text(), 'anysda-wg-routing\n')
             self.assertIn('цепочка TPROXY пропала', result.stderr)
 
+    def test_damaged_deploy_restores_dynamic_owners_only_when_needed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'ufw').mkdir()
+            (root / 'ufw/ufw.conf').write_text('ENABLED=yes\n')
+            for role, lost, expected in (
+                ('entry', 'yes', 'ufw reload\nrestart docker\nrestart fail2ban\n'),
+                ('exit', 'yes', 'ufw reload\nrestart fail2ban\n'),
+                ('entry', 'no', ''),
+            ):
+                with self.subTest(role=role, lost=lost):
+                    calls = root / 'calls'
+                    calls.write_text('')
+                    script = source('infra/lib/anysda-svc.sh').replace('/etc/', str(root) + '/') + r'''
+iptables() { [[ "$LOST" == no ]]; }
+ufw() { echo "ufw $*" >> "$CALLS"; }
+systemctl() {
+    if [[ $1 == is-active ]]; then
+        [[ ${@: -1} == fail2ban || "$ROLE" == entry ]]
+    elif [[ $1 == restart ]]; then echo "restart $2" >> "$CALLS";
+    else return 1; fi
+}
+if declare -F firewall_repair_if_lost >/dev/null; then firewall_repair_if_lost; fi
+'''
+                    result = subprocess.run(['bash', '-e', '-c', script], capture_output=True,
+                                            text=True, timeout=5,
+                                            env={**os.environ, 'LOST': lost, 'ROLE': role, 'CALLS': str(calls)})
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(calls.read_text(), expected)
+
     @unittest.skipUnless(os.environ.get('RUN_NETNS_TESTS') == '1', 'set RUN_NETNS_TESTS=1')
     def test_restart_reload_preserve_dynamic_rules_and_bans(self):
         with tempfile.TemporaryDirectory() as directory:

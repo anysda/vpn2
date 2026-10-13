@@ -7,11 +7,12 @@ let timer: ReturnType<typeof setInterval> | undefined
 let running = false
 let initialized = false
 let disposed = false
+const controller = new AbortController()
 async function refresh() {
   if (running) return
   running = true
   try {
-    const deliveries = await $fetch<BotDelivery[]>('/api/admin/bot-deliveries')
+    const deliveries = await $fetch<BotDelivery[]>('/api/admin/bot-deliveries', { signal: controller.signal })
     if (disposed) return
     sync(deliveries, initialized)
     initialized = true
@@ -25,6 +26,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   disposed = true
+  controller.abort()
   clearInterval(timer)
   sync([], false)
 })

@@ -16,6 +16,42 @@ async function startSetup(page: Page) {
 }
 
 test.describe('вход', () => {
+  test('выход отменяет незавершённый опрос до удаления сессии', async ({ page }) => {
+    await page.addInitScript(() => {
+      // Проверяем один опрос, без отмены следующим интервалом (dedupe).
+      window.setInterval = () => 0
+      const original = window.fetch
+      let signal: AbortSignal | null | undefined
+      window.fetch = (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href)
+        if (url.pathname === '/api/ops/nodes') signal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
+        if (url.pathname === '/api/auth/sign-out') Reflect.set(window, '__pollCancelledBeforeLogout', signal?.aborted ?? false)
+        return original(input, init)
+      }
+    })
+    await loginApi(page)
+    await page.goto('/')
+    await hydrated(page)
+    let entered!: () => void
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { entered = resolve })
+    const held = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/api/ops/nodes', async (route) => {
+      entered()
+      await held
+      await route.fulfill({ status: 401, json: {} }).catch(() => {})
+    })
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await pending
+    try {
+      await logoutUi(page)
+      const cancelled = await page.evaluate(() => Reflect.get(window, '__pollCancelledBeforeLogout'))
+      console.log(`Опрос отменён до sign-out: ${cancelled}`)
+      expect(cancelled).toBe(true)
+    }
+    finally { release() }
+  })
+
   test('паролем, затем выход', async ({ page }) => {
     await loginUi(page)
     await expect(page).toHaveURL(/\/$/)

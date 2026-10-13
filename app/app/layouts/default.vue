@@ -1,12 +1,18 @@
 <script setup lang="ts">
 const { user, clear } = useAuthSession()
 const colorMode = useColorMode()
+const loggingOut = ref(false)
 
 function toggleTheme() {
   colorMode.preference = colorMode.value === 'dark' ? 'light' : 'dark'
 }
 
 async function logout() {
+  if (loggingOut.value) return
+  loggingOut.value = true
+  // Снять интервалы и отменить useFetch до удаления сессии: иначе запрос,
+  // начавшийся на главной, догоняет sign-out и получает ложный 401.
+  await nextTick()
   try {
     await $fetch('/api/auth/sign-out', { method: 'POST', body: {} })
   }
@@ -29,7 +35,7 @@ const menuItems = computed(() => [
 </script>
 
 <template>
-  <div class="min-h-screen bg-(--ui-page) text-(--ui-text)">
+  <div v-if="!loggingOut" class="min-h-screen bg-(--ui-page) text-(--ui-text)">
     <header class="border-b border-(--ui-border) px-6 py-3 flex items-center justify-between">
       <NuxtLink to="/" class="font-semibold text-lg">
         anysda-vpn2
@@ -62,4 +68,5 @@ const menuItems = computed(() => [
       <slot />
     </main>
   </div>
+  <p v-else role="status" class="p-6">Выход…</p>
 </template>

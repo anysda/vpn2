@@ -133,6 +133,11 @@ if [[ "$HOST_TAG" == ru ]]; then
     check --allow-unmeasured 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
     # Запасной маршрут: при сбое видеопробы YouTube уходит на VPN.
     # Пробу (до 120 с) выполняет таймер; отсутствие свежей пробы — код 2.
+    # На чистой установке стадия 19 идёт раньше конфига sing-box, и systemd
+    # пропускает пробу по ConditionPathExists — меряем один раз здесь.
+    if /usr/local/bin/anysda-yt-failover --status >/dev/null 2>&1; [[ $? == 2 ]]; then
+      systemctl start anysda-yt-failover.service >/dev/null 2>&1 || true
+    fi
     check --allow-unmeasured 'yt-failover: selector и последняя видеопроба' /usr/local/bin/anysda-yt-failover --status
     check 'yt-failover: таймер active' service anysda-yt-failover.timer
   else

@@ -30,6 +30,24 @@ IKEv2/IPsec) с авто-geoip-роутингом, ручными правила
   устройства свои WG-ключи, OpenVPN-сертификат и IKEv2-логин/пароль.
 - **Авто-роутинг (sing-box):** RU-трафик через WAN entry, заграница
   через Hysteria2 на лучший exit; быстрый failover (~5–7с).
+- **Ping из VPN:** внешний IPv4 ping у WG, OpenVPN и IKEv2 сразу получает
+  от entry `Destination Protocol Unreachable` (ICMP type 3/code 2).
+  Это ограничение транспорта, а не признак недоступности проверяемого адреса:
+  [Hysteria2](https://v2.hysteria.network/docs/developers/Protocol/#proxy-requests)
+  переносит только TCP/UDP; в закреплённом
+  [sing-box 1.12.25](https://github.com/SagerNet/sing-box/blob/v1.12.25/protocol/hysteria2/outbound.go#L89-L101)
+  другие сети отклоняются. Отказ действует и для IP экзита, и для адресов,
+  которые TCP/UDP-правила направляют напрямую. Ответы удалённых адресов не
+  имитируются, ICMP не уходит с IP entry в обход выбранного экзита.
+  Ping собственных адресов entry остаётся локальным; успешный ответ
+  проверяет только туннель до entry. ICMP-ошибки и PMTU этим правилом не
+  блокируются, маршрутизация TCP/UDP прежняя. Для проверки внешнего пути
+  используйте HTTP(S), например `curl -4 https://api.ipify.org`.
+  Правило видно в `iptables -S FORWARD` по комментарию
+  `vpn2: Hysteria2 has no ICMP`. Граница: только IPv4 echo-request,
+  пришедший в VPN; исключённые split-tunnel адреса идут обычным путём клиента.
+  Настоящий ping через выбранный экзит потребует отдельного IP-туннеля
+  entry–exit и согласования его маршрутов с sing-box.
 - **YouTube мимо экзитов (опционально):** выходит с РФ-адреса entry —
   YouTube не крутит рекламу на российских IP, — а DPI обходится десинком
   TLS (nfqws2/zapret2), отбор трафика по SO_MARK от sing-box.

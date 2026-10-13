@@ -284,6 +284,7 @@ PREF=32765
 TPROXY_PORT=7898
 MSS=1340
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
+PING_REJECT=(-p icmp --icmp-type echo-request -m comment --comment 'vpn2: Hysteria2 has no ICMP' -j REJECT --reject-with icmp-proto-unreachable)
 
 if [[ "$ACTION" == "up" ]]; then
   # Явный pref: без него ядро ставит правило выше самого верхнего (219 перед
@@ -318,9 +319,15 @@ if [[ "$ACTION" == "up" ]]; then
   iptables -C INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || \
     iptables -I INPUT 1 -m mark --mark "${MARK}/${MARK}" -j ACCEPT
 
+  # Hysteria2 не переносит ICMP: явный отказ перед ufw/Docker, без выхода
+  # ping через WAN entry. Локальный ping и ICMP-ошибки (PMTU) не меняем.
+  iptables -C FORWARD -i "$TUN_IF" "${PING_REJECT[@]}" 2>/dev/null || \
+    iptables -I FORWARD 1 -i "$TUN_IF" "${PING_REJECT[@]}"
+
   echo "anysda-ovpn-routing up (iface=$TUN_IF, mark=$MARK, tproxy=$TPROXY_PORT)"
 
 elif [[ "$ACTION" == "down" ]]; then
+  iptables -D FORWARD -i "$TUN_IF" "${PING_REJECT[@]}" 2>/dev/null || true
   iptables -t mangle -D PREROUTING -i "$TUN_IF" -j ANYSDA_OVPN_TPROXY 2>/dev/null || true
   iptables -t mangle -D POSTROUTING -o "$TUN_IF" "${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_OVPN_TPROXY 2>/dev/null || true

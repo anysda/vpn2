@@ -161,6 +161,7 @@ PREF=32765
 TPROXY_PORT=7898
 MSS=${WG_MSS:-1380}
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "$((MSS + 1)):65535" -j TCPMSS --set-mss "$MSS")
+PING_REJECT=(-p icmp --icmp-type echo-request -m comment --comment 'vpn2: Hysteria2 has no ICMP' -j REJECT --reject-with icmp-proto-unreachable)
 
 if [[ "$ACTION" == "up" ]]; then
   # Нужны и при syncconf, и после reboot до появления первого нового пира.
@@ -200,6 +201,12 @@ if [[ "$ACTION" == "up" ]]; then
   iptables -C INPUT -m mark --mark "${MARK}/${MARK}" -j ACCEPT 2>/dev/null || \
     iptables -I INPUT 1 -m mark --mark "${MARK}/${MARK}" -j ACCEPT
 
+  # Hysteria2 переносит только TCP/UDP. Отказ до ufw/Docker ACCEPT: ни
+  # тихого DROP, ни обхода выбранного exit через WAN entry. INPUT (ping
+  # самого entry) и ICMP-ошибки, включая PMTU, этим правилом не затронуты.
+  iptables -C FORWARD -i "$WG_IF" "${PING_REJECT[@]}" 2>/dev/null || \
+    iptables -I FORWARD 1 -i "$WG_IF" "${PING_REJECT[@]}"
+
   # v6: FORWARD по умолчанию DROP, форвардинг с любого другого интерфейса
   # (WAN, exit) остаётся закрыт независимо от sysctl. wg0 получает явный
   # REJECT первой строкой: перед ним у ufw уже стоят терминальные ACCEPT
@@ -214,6 +221,7 @@ if [[ "$ACTION" == "up" ]]; then
   echo "anysda-wg-routing up (iface=$WG_IF, mark=$MARK, tproxy=$TPROXY_PORT, mss=$MSS, v6-fastfail=on)"
 
 elif [[ "$ACTION" == "down" ]]; then
+  iptables -D FORWARD -i "$WG_IF" "${PING_REJECT[@]}" 2>/dev/null || true
   iptables -t mangle -D PREROUTING -i "$WG_IF" -j ANYSDA_WG_TPROXY 2>/dev/null || true
   iptables -t mangle -D POSTROUTING -o "$WG_IF" "${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_WG_TPROXY 2>/dev/null || true

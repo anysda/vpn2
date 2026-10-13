@@ -423,6 +423,7 @@ IKEV2_SUBNET6=$(printf '%q' "$IKEV2_SUBNET6")
 # MSS под mtu xfrm0 ниже: 1400 - 40.
 MSS=1360
 MSS_OUT=(-p tcp --tcp-flags SYN,RST SYN -m tcpmss --mss "\$((MSS + 1)):65535" -j TCPMSS --set-mss "\$MSS")
+PING_REJECT=(-p icmp --icmp-type echo-request -m comment --comment 'vpn2: Hysteria2 has no ICMP' -j REJECT --reject-with icmp-proto-unreachable)
 
 if [[ "\$ACTION" == "up" ]]; then
   # xfrm0 интерфейс (idempotent)
@@ -471,6 +472,11 @@ if [[ "\$ACTION" == "up" ]]; then
   iptables -C INPUT -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT 2>/dev/null || \\
     iptables -I INPUT 1 -m mark --mark "\${MARK}/\${MARK}" -j ACCEPT
 
+  # Как WG/OpenVPN: Hysteria2 не несёт ICMP. Отказ перед ufw/Docker,
+  # только внешний echo-request; локальный ping и PMTU не затрагиваем.
+  iptables -C FORWARD -i "\$XFRM_IF" "\${PING_REJECT[@]}" 2>/dev/null || \\
+    iptables -I FORWARD 1 -i "\$XFRM_IF" "\${PING_REJECT[@]}"
+
   # v6 в туннеле никуда не ведём: REJECT первой строкой, клиент сразу
   # получает icmp6-addr-unreachable и уходит на v4 (как wg0 в 28-wireguard).
   ip6tables -P FORWARD DROP
@@ -482,6 +488,7 @@ if [[ "\$ACTION" == "up" ]]; then
   echo "anysda-ikev2-routing up (xfrm=\$XFRM_IF dev=\$WAN_IF if_id=42, mark=\$MARK)"
 
 elif [[ "\$ACTION" == "down" ]]; then
+  iptables -D FORWARD -i "\$XFRM_IF" "\${PING_REJECT[@]}" 2>/dev/null || true
   iptables -t mangle -D PREROUTING -i "\$XFRM_IF" -j ANYSDA_IKEV2_TPROXY 2>/dev/null || true
   iptables -t mangle -D POSTROUTING -o "\$XFRM_IF" "\${MSS_OUT[@]}" 2>/dev/null || true
   iptables -t mangle -F ANYSDA_IKEV2_TPROXY 2>/dev/null || true

@@ -235,6 +235,11 @@ install -d -m 700 /tmp/anysda
 install -m 600 "$FRONTEND_TPL" /tmp/anysda/anysda-config.yaml.tpl
 
 # ── Защита от перетирания не-пустой БД ─────────────────────────────────────
+CADDY_STORAGE=/var/lib/caddy/.local/share/caddy
+if [[ -d "$BUNDLE_DIR/caddy-storage" ]] && ! id caddy >/dev/null 2>&1; then
+  echo "anysda-restore: нет пользователя caddy — сначала выполни деплой без panel.domain; данные не изменены" >&2
+  exit 5
+fi
 LIVE_DB=/var/lib/anysda-vpn2/db.sqlite
 if [[ -f "$LIVE_DB" ]]; then
   LIVE_DB_SIZE=$(stat -c %s "$LIVE_DB")
@@ -243,7 +248,7 @@ if [[ -f "$LIVE_DB" ]]; then
     if (( FORCE == 0 )); then
       cat >&2 <<-MSG
 	anysda-restore: ABORT — текущая db.sqlite не пустая ($LIVE_CLIENTS клиентов, $LIVE_DB_SIZE байт).
-	Будут перетёрты: db.sqlite, /etc/anysda/*, /etc/wireguard/wg0.conf, /etc/openvpn/*, конфиги и ключи IKEv2
+	Будут перетёрты: db.sqlite, /etc/anysda/*, /etc/wireguard/wg0.conf, /etc/openvpn/*, конфиги и ключи IKEv2, хранилище Caddy (если есть в архиве)
 	Запусти повторно с --force чтобы согласиться.
 	MSG
       exit 6
@@ -271,7 +276,8 @@ for path in \
   etc/anysda etc/wireguard etc/openvpn \
   etc/strongswan etc/swanctl etc/strongswan.conf etc/strongswan.d \
   etc/ipsec.conf etc/ipsec.secrets \
-  etc/caddy opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
+  etc/caddy var/lib/caddy/.local/share/caddy \
+  opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
   if [[ -e "/$path" || -L "/$path" ]]; then
     (cd / && cp -a --parents "$path" "$PRESNAP_ROOT/")
   fi
@@ -301,6 +307,22 @@ echo "anysda-restore: pre-restore snapshot saved ($(stat -c %s "$PRESNAP_FINAL")
 
 # ── Остановка сервисов перед swap ───────────────────────────────────────────
 echo "anysda-restore: останавливаю сервисы…"
+# Watcher не должен копировать промежуточную пару cert/key в swanctl.
+# Старый бандл без storage оставляет Caddy и его данные как есть.
+CADDY_SYNC_UNITS=()
+if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
+  for unit in anysda-ikev2-cert-sync.path anysda-ikev2-cert-sync.timer; do
+    if systemctl is-active --quiet "$unit"; then
+      CADDY_SYNC_UNITS+=("$unit")
+      systemctl stop "$unit"
+    fi
+  done
+  if systemctl cat anysda-ikev2-cert-sync.service >/dev/null 2>&1; then
+    systemctl stop anysda-ikev2-cert-sync.service
+  fi
+  # Ошибка stop недопустима: Caddy мог бы перезаписать восстановленный cert.
+  systemctl stop caddy
+fi
 systemctl stop anysda-failover-watchdog 2>/dev/null || true
 systemctl stop sing-box 2>/dev/null || true
 systemctl stop openvpn-server@server 2>/dev/null || true
@@ -375,6 +397,23 @@ for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
   fi
 done
 
+# Применяем до любого старта Caddy (в том числе из стадии 30). UID/GID на
+# новом хосте отличаются; архивные числовые владельцы не годятся.
+if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
+  install -d -m 700 -o caddy -g caddy /var/lib/caddy/.local /var/lib/caddy/.local/share
+  rm -rf -- "$CADDY_STORAGE"
+  cp -a "$BUNDLE_DIR/caddy-storage" "$CADDY_STORAGE"
+  rm -rf -- "$CADDY_STORAGE/locks"
+  chown -R caddy:caddy "$CADDY_STORAGE"
+  find "$CADDY_STORAGE" -type d -exec chmod 700 {} +
+  find "$CADDY_STORAGE" -type f -exec chmod 600 {} +
+  # Маркер из архива не доказывает, что creds загружены в текущий charon.
+  rm -f /etc/anysda/ikev2-cert.sha256
+  echo "anysda-restore: Caddy storage restored (caddy:caddy, dirs=700 files=600)"
+else
+  echo "anysda-restore: Caddy storage отсутствует в архиве — оставляю текущее"
+fi
+
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
 echo "anysda-restore: запускаю сервисы…"
 systemctl start sing-box 2>/dev/null || true
@@ -395,6 +434,15 @@ systemctl start strongswan-starter 2>/dev/null || true
 systemctl start anysda-ikev2-routing 2>/dev/null || true
 # Reload swanctl creds/conns/pools после восстановления конфигов.
 command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1 || true
+if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
+  systemctl start caddy
+  if [[ -s /etc/anysda/ikev2-domain ]] && systemctl cat anysda-ikev2-cert-sync.service >/dev/null 2>&1; then
+    systemctl start anysda-ikev2-cert-sync.service
+  fi
+  if (( ${#CADDY_SYNC_UNITS[@]} )); then
+    systemctl start "${CADDY_SYNC_UNITS[@]}"
+  fi
+fi
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 
 # ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а

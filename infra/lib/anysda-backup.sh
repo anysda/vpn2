@@ -14,6 +14,7 @@
 #   - etc-openvpn/     — CA + серверный сертификат + ccd/ + crl.pem
 #   - etc-strongswan/  — IKEv2 CA + server cert/key
 #   - etc-swanctl/     — IKEv2 conn-конфиг + загруженные creds
+#   - caddy-storage/   — сертификаты, приватные ключи и ACME-аккаунты Caddy
 #   - manifest.json    — версии + SHA-256 каждого компонента
 #
 # Plaintext tar.gz живёт ТОЛЬКО в mktemp-dir chmod 700, удаляется trap EXIT.
@@ -122,6 +123,14 @@ for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
     cp -a "/etc/$name" "$BUNDLE_DIR/etc-$name"
   fi
 done
+
+# 6. Всё постоянное хранилище Caddy, в том числе ACME account keys.
+# Без домена/до первого запуска каталога может не быть. Runtime-locks
+# другого процесса на новом хосте не нужны.
+if [[ -d /var/lib/caddy/.local/share/caddy ]]; then
+  cp -a /var/lib/caddy/.local/share/caddy "$BUNDLE_DIR/caddy-storage"
+  rm -rf -- "$BUNDLE_DIR/caddy-storage/locks"
+fi
 
 # cp -a переносит и сокеты (mgmt.sock OpenVPN), и FIFO, а tar их молча
 # пропускает: манифест считал файл, которого в архиве нет, и restore свежего

@@ -6,6 +6,8 @@ Services and deploy stages are stubs; backup/restore, SQLite, tar and age are re
 """
 
 import os
+import json
+import pwd
 from pathlib import Path
 import shutil
 import sqlite3
@@ -18,6 +20,7 @@ import unittest
 REPO = Path(sys.argv.pop(1)).resolve()
 DB = Path('/var/lib/anysda-vpn2/db.sqlite')
 BACKUPS = Path('/var/backups/anysda-vpn2')
+CADDY = Path('/var/lib/caddy/.local/share/caddy')
 FILES = (
     '/etc/anysda/admin-password.txt', '/etc/wireguard/wg0.conf',
     '/etc/openvpn/server/pki/ca.key', '/etc/strongswan/pki/ca.key',
@@ -72,6 +75,7 @@ exit [lindex $result 3]
 
 class BackupRestore(unittest.TestCase):
     def setUp(self):
+        shutil.rmtree(CADDY, ignore_errors=True)
         for path in (DB.parent, BACKUPS, Path('/test-output'), Path('/test-bin')):
             shutil.rmtree(path, ignore_errors=True)
             path.mkdir(parents=True)
@@ -258,6 +262,72 @@ exec /usr/bin/tar "$@"
                          [('archived-client',)])
         self.assertEqual(list(DB.parent.glob('.*-tmp.*')), [])
         print('snapshot_failure_preserves_live_data=PASS', flush=True)
+
+    def test_caddy_storage_round_trip(self):
+        if run('id', 'caddy').returncode:
+            self.assertEqual(run('useradd', '--system', 'caddy').returncode, 0)
+        files = ('certificates/acme-v02.api.letsencrypt.org-directory/vpn.example.test/'
+                 'vpn.example.test.crt',
+                 'certificates/acme-v02.api.letsencrypt.org-directory/vpn.example.test/'
+                 'vpn.example.test.key', 'acme/account/account.key', 'acme/account/account.json')
+        for name in files:
+            write(str(CADDY / name), 'archived:' + name, 0o644)
+        write(str(CADDY / 'locks/test.lock'), 'runtime lock')
+        bundle = self.backup()
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        print('caddy_storage_in_manifest=' + str('caddy-storage' in manifest['components']), flush=True)
+        self.assertIn('caddy-storage', manifest['components'])
+        self.assertFalse((bundle / 'caddy-storage/locks').exists())
+        for name in files:
+            self.assertEqual((bundle / 'caddy-storage' / name).read_text(), 'archived:' + name)
+            write(str(CADDY / name), 'live:' + name)
+        write(str(CADDY / 'stale.key'), 'must disappear')
+        write('/etc/anysda/ikev2-domain', 'vpn.example.test')
+        write('/etc/anysda/ikev2-cert.sha256', 'stale digest')
+        write('/test-bin/systemctl', '''#!/bin/sh
+echo "$*" >> /test-output/services
+if [ "$1 $2" = 'start caddy' ]; then
+    test ! -e /var/lib/caddy/.local/share/caddy/stale.key || exit 41
+    test ! -e /etc/anysda/ikev2-cert.sha256 || exit 42
+fi
+''', 0o755)
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        owner = pwd.getpwnam('caddy')
+        for name in files:
+            path = CADDY / name
+            self.assertEqual(path.read_text(), 'archived:' + name)
+            self.assertEqual(path.stat().st_uid, owner.pw_uid)
+            self.assertEqual(path.stat().st_gid, owner.pw_gid)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.parent.stat().st_mode & 0o777, 0o700)
+        services = Path('/test-output/services').read_text().splitlines()
+        for unit in ('anysda-ikev2-cert-sync.path', 'anysda-ikev2-cert-sync.timer',
+                     'anysda-ikev2-cert-sync.service'):
+            self.assertLess(services.index('stop ' + unit), services.index('stop caddy'))
+        self.assertLess(services.index('stop caddy'), services.index('start caddy'))
+        self.assertLess(services.index('start strongswan-starter'),
+                        services.index('start anysda-ikev2-cert-sync.service'))
+        snapshot = self.safety() / str(CADDY).lstrip('/')
+        for name in files:
+            self.assertEqual((snapshot / name).read_text(), 'live:' + name)
+        print('caddy_storage_restore_ownership_order_snapshot=PASS', flush=True)
+
+    def test_without_caddy_storage(self):
+        # То же содержимое бандла, что до появления Caddy в формате v1.
+        bundle = self.backup()
+        self.assertNotIn('caddy-storage', json.loads((bundle / 'manifest.json').read_text())['components'])
+        for existing in (False, True):
+            with self.subTest(existing_storage=existing):
+                if existing:
+                    write(str(CADDY / 'existing.key'), 'keep current storage')
+                result = self.script('restore', 'latest', '--force')
+                self.assertEqual(result.returncode, 0, result.stdout)
+                if existing:
+                    self.assertEqual((CADDY / 'existing.key').read_text(), 'keep current storage')
+                else:
+                    self.assertFalse(CADDY.exists())
+        print('no_domain_and_legacy_caddy_restore=PASS', flush=True)
 
 
 if __name__ == '__main__':

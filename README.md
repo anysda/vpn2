@@ -491,7 +491,9 @@ WireGuard** (`/etc/wireguard/wg0.conf` — без него клиентские 
 **OpenVPN CA + PKI** (`/etc/openvpn/pki/`, `server.conf`, `ccd/`, `crl.pem` —
 без них существующие `.ovpn` ломаются), **IKEv2 CA + server cert/key + swanctl
 conf'ы** (`/etc/strongswan`, `/etc/swanctl` — без них клиенты не доверят
-сертификату сервера) и `manifest.json` с SHA-256 каждого компонента. Архив шифруется [`age`](https://github.com/FiloSottile/age)
+сертификату сервера), **хранилище Caddy** (`/var/lib/caddy/.local/share/caddy`:
+сертификаты, приватные ключи, ACME-аккаунты) и `manifest.json` с SHA-256 каждого
+компонента. Архив шифруется [`age`](https://github.com/FiloSottile/age)
 (symmetric passphrase) на entry **до** записи на диск — plaintext `.tar.gz`
 никогда не попадает в `/var/backups/...` или в S3.
 
@@ -577,10 +579,13 @@ cd /opt/anysda-vpn2
 scp config.yaml-сохранённый-где-то root@<новый-entry-ip>:/opt/anysda-vpn2/config.yaml
 chmod 600 /opt/anysda-vpn2/config.yaml
 
-# 4. Стандартный деплой (2-5 мин) — поднимает весь стек на пустой ноде
+# 4. Временно поставь panel.domain: "" в config.yaml, сохранив исходный домен.
+#    Если включён sso.enabled, временно поставь false: SSO требует HTTPS.
+#    Первый деплой поднимет HTTP и не начнёт новый выпуск LE до restore.
 ./deploy.sh
 
-# 5. Кладём свежий backup-файл (если нет в /var/backups уже) или используем S3
+# 5. Верни исходные panel.domain и sso.enabled, затем восстанови бэкап.
+#    Кладём backup-файл (если нет в /var/backups уже) или используем S3.
 ./deploy.sh backup-list                       # посмотреть что есть
 ./deploy.sh restore latest --force            # --force т.к. свежая db.sqlite не пустая после deploy
 #    restore сам пересобирает стадии 29/20/21/26/27/35/30 под восстановленные
@@ -595,6 +600,18 @@ chmod 600 /opt/anysda-vpn2/config.yaml
 #    Если у entry сменился IP, а в конфигах клиентов он прописан напрямую, им
 #    нужны свежие конфиги; с entry.public_host (домен) хватит A-записи.
 ```
+
+Restore останавливает Caddy и cert-sync, возвращает storage с владельцем
+`caddy:caddy` (каталоги `700`, файлы `600`), затем запускает службы; стадия
+27 и cert-sync передают ту же пару в IKEv2. Pre-restore snapshot включает
+прежнее хранилище Caddy. Не запускай первый деплой с доменом: к моменту
+restore новый сертификат уже может быть выпущен.
+
+Без домена хранилище может отсутствовать — это штатно. Старые архивы без
+Caddy восстанавливаются, сохраняя текущее storage; на чистом хосте они не
+могут предотвратить новый выпуск. Сохранённый сертификат должен подходить
+домену и оставаться действующим: при смене домена, истечении срока или
+наступлении срока продления Caddy обратится к ACME.
 
 `config.yaml` — **мастер-секрет файл**. Помимо backup.passphrase в нём root-пароли
 всех нод (`entry.password`, `exits[].password`), `admin.password` панели,

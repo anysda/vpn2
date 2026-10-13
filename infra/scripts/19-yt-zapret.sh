@@ -736,6 +736,8 @@ fi
 POT_INSTALL=$(dirname "$0")/install-yt-pot.sh
 [[ -f "$POT_INSTALL" ]] || POT_INSTALL=$(dirname "$0")/../lib/install-yt-pot.sh
 bash "$POT_INSTALL" "$YT_PROBE_VENV"
+YT_PROBE_CHANGED=0
+cmp -s /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover || YT_PROBE_CHANGED=1
 install -m 0755 /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover
 cat > /etc/systemd/system/anysda-yt-failover.service <<'EOF'
 [Unit]
@@ -768,6 +770,11 @@ WantedBy=timers.target
 EOF
 systemctl daemon-reload
 systemctl enable --now anysda-yt-failover.timer >/dev/null
+# Последний результат в state.json снят прежней версией пробы, а таймер
+# перемерит только через 5 минут — 99-verify в конце деплоя видел бы старое.
+if (( YT_PROBE_CHANGED )); then
+  systemctl start anysda-yt-failover.service || true
+fi
 
 echo "[$HOST_TAG] [7/7] A/B-проверка"
 if /usr/local/bin/anysda-yt-check 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then

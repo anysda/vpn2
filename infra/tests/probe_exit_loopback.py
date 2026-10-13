@@ -55,23 +55,42 @@ def tcp_request(proxy, host, port):
     try:
         with socket.create_connection(('127.0.0.1', proxy), timeout=2) as sock:
             sock.sendall(b'\x05\x01\x00')
-            assert sock.recv(2) == b'\x05\x00'
+            assert read_exact(sock, 2) == b'\x05\x00'
             sock.sendall(b'\x05\x01\x00' + address(host, port))
-            reply = sock.recv(64)
-            if len(reply) < 2 or reply[1] != 0:
+            reply = socks_reply(sock)
+            if reply[1] != 0:
                 return False
             sock.sendall(b'GET /metrics HTTP/1.0\r\nHost: fixture.test\r\n\r\n')
-            return sock.recv(4096).startswith(b'HTTP/')
+            return read_exact(sock, 5) == b'HTTP/'
     except OSError:
         return False
+
+
+def read_exact(sock, length):
+    data = b''
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise ConnectionError('SOCKS reply closed early')
+        data += chunk
+    return data
+
+
+def socks_reply(sock):
+    header = read_exact(sock, 4)
+    length = {1: 4, 4: 16}.get(header[3])
+    if length is None:
+        assert header[3] == 3, header
+        length = read_exact(sock, 1)[0]
+    return header + read_exact(sock, length + 2)
 
 
 def udp_request(host):
     with socket.create_connection(('127.0.0.1', 17897), timeout=2) as control:
         control.sendall(b'\x05\x01\x00')
-        assert control.recv(2) == b'\x05\x00'
+        assert read_exact(control, 2) == b'\x05\x00'
         control.sendall(b'\x05\x03\x00\x01' + b'\x00' * 6)
-        reply = control.recv(64)
+        reply = socks_reply(control)
         assert reply[:4] == b'\x05\x00\x00\x01', reply
         relay = socket.inet_ntoa(reply[4:8]), struct.unpack('!H', reply[8:10])[0]
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -137,11 +156,13 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
         processes.append(process)
         cleanup.callback(process.wait, 5)
         cleanup.callback(process.terminate)
-    for _ in range(100):
-        try:
-            with socket.create_connection(('127.0.0.1', 17898), timeout=.1):
-                break
-        except OSError:
+    # A listening SOCKS port does not mean the remote QUIC listener and TLS
+    # handshake are ready. Wait for a complete allowed request on each tunnel.
+    for proxy, host in [(17897, '192.0.2.20'), (17898, '127.0.0.1')]:
+        deadline = time.monotonic() + 5
+        while not tcp_request(proxy, host, 9100):
+            assert all(p.poll() is None for p in processes), 'sing-box failed to start'
+            assert time.monotonic() < deadline, 'tunnel failed to become ready'
             time.sleep(.05)
     assert all(p.poll() is None for p in processes), 'sing-box failed to start'
     assert tcp_request(17897, '192.0.2.20', 9100), 'public TCP must work'

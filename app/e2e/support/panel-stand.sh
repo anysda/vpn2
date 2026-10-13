@@ -93,24 +93,30 @@ IN
 }
 :80 {
     encode gzip
-    reverse_proxy panel:51821
+    reverse_proxy panel:51821 {
+        transport http {
+            keepalive off
+        }
+    }
 }'
   dk run -d --name "$name-caddy" --network "$name" -p "$publish:80" \
     -e CADDYFILE="$caddyfile" mirror.gcr.io/library/caddy:2 \
     sh -c 'printf "%s\n" "$CADDYFILE" > /tmp/Caddyfile && exec caddy run --adapter caddyfile --config /tmp/Caddyfile' >/dev/null
 }
 
-# stand_wait <имя> <url> [секунд, 60]: дождаться /api/version, напечатать его.
+# stand_wait <имя> <url> [секунд, 60]: дождаться init и /api/version.
 # Не дождались - хвост журнала панели и код 1.
 stand_wait() {
   local name=$1 url=$2 sec=${3:-60}
   for _ in $(seq "$sec"); do
-    curl -fsS "$url/api/version" >/dev/null 2>&1 && break
+    if dk logs "$name" 2>&1 | grep -F 'panel init complete' >/dev/null \
+      && curl -fsS "$url/api/version" >/dev/null 2>&1; then
+      curl -fsS "$url/api/version"
+      echo
+      return 0
+    fi
     sleep 1
   done
-  if ! curl -fsS "$url/api/version"; then
-    dk logs "$name" | tail -50
-    return 1
-  fi
-  echo
+  dk logs "$name" | tail -50
+  return 1
 }

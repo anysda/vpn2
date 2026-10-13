@@ -17,6 +17,15 @@
 set -euo pipefail
 
 APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Optional local gate: the same selector as CI, before Node/Docker setup.
+if [[ ${1:-} == --changed-only ]]; then
+  shift
+  selected=$(python3 "$APP_DIR/../infra/lib/e2e_paths.py")
+  if [[ $selected == false ]]; then
+    echo 'panel-e2e: skipped (no panel dependencies changed)'
+    exit 0
+  fi
+fi
 # shellcheck source-path=SCRIPTDIR source=support/panel-stand.sh
 source "$APP_DIR/e2e/support/panel-stand.sh"
 IMAGE=${E2E_IMAGE:-vpn2-panel:e2e}
@@ -46,6 +55,7 @@ fi
 
 if [[ -z ${E2E_SHARD:-} ]]; then
 started=$SECONDS
+RUN_CADDY_TESTS=1 python3 "$APP_DIR/../infra/tests/test_panel_proxy.py"
 # Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
 dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
@@ -123,7 +133,14 @@ rc=0
 ) || rc=$?
 echo "timing: playwright=$((SECONDS - started))s"
 if (( rc != 0 )); then
+  diagnostics=${E2E_REPORT_DIR:-$APP_DIR/test-results}
+  mkdir -p "$diagnostics"
+  dk logs "$NAME" > "$diagnostics/panel.log" 2>&1 || true
+  dk logs "$NAME-caddy" > "$diagnostics/caddy.log" 2>&1 || true
+  dk inspect --format '{{json .State}}' "$NAME" > "$diagnostics/panel-state.json" || true
   echo "--- журнал панели (хвост) ---"
   dk logs "$NAME" 2>&1 | tail -80
+  echo "--- журнал Caddy (хвост) ---"
+  dk logs "$NAME-caddy" 2>&1 | tail -40
 fi
 exit $rc

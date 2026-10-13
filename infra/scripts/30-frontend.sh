@@ -184,6 +184,10 @@ if [[ -n "${PANEL_DOMAIN:-}" ]]; then
 (to_panel) {
     reverse_proxy 127.0.0.1:51821 {
         header_up X-Forwarded-For {remote_host}
+        # Node closes idle HTTP/1 sockets; never reuse one for a mutating POST.
+        transport http {
+            keepalive off
+        }
     }
 }
 ${PANEL_DOMAIN} {
@@ -225,6 +229,10 @@ else
 (to_panel) {
     reverse_proxy 127.0.0.1:51821 {
         header_up X-Forwarded-For {remote_host}
+        # Node closes idle HTTP/1 sockets; never reuse one for a mutating POST.
+        transport http {
+            keepalive off
+        }
     }
 }
 :80 {

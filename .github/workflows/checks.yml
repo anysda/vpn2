@@ -165,19 +165,35 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Job always exists (including required checks); only its work is skipped.
+      - name: изменения зависимостей панели
+        id: paths
+        run: |
+          selected=$(python3 ../infra/lib/e2e_paths.py --github)
+          echo "run=$selected" >> "$GITHUB_OUTPUT"
+      - name: e2e не требуется
+        if: steps.paths.outputs.run == 'false'
+        run: echo 'panel-e2e skipped — no panel dependencies changed'
       - uses: pnpm/action-setup@v4
+        if: steps.paths.outputs.run == 'true'
         with:
           version: 10
       - uses: actions/setup-node@v4
+        if: steps.paths.outputs.run == 'true'
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+        if: steps.paths.outputs.run == 'true'
       - uses: docker/setup-buildx-action@v3
+        if: steps.paths.outputs.run == 'true'
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели один раз для всех шардов
+        if: steps.paths.outputs.run == 'true'
         uses: docker/build-push-action@v6
         with:
           context: app
@@ -186,10 +202,12 @@ jobs:
           cache-from: type=gha,scope=checks-panel
           cache-to: type=gha,mode=max,scope=checks-panel
       - name: загрузка браузерного образа
+        if: steps.paths.outputs.run == 'true'
         run: |
           version=$(node -p 'require("@playwright/test/package.json").version')
           docker pull "mcr.microsoft.com/playwright:v${version}-noble"
       - name: сквозные тесты на собранном образе при смене сети хоста
+        if: steps.paths.outputs.run == 'true'
         env:
           E2E_IP: sudo -n ip
           E2E_SKIP_BUILD: '1'

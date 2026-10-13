@@ -1,21 +1,23 @@
 import { expect, test } from '@playwright/test'
 import { Guard } from './support/fixtures'
 
-test('сторож: отложенный telegram 401 после успешного выхода ожидаем', async ({ page }) => {
-  const guard = new Guard()
-  guard.attach(page)
-  await page.route('**/*', route => route.fulfill({
-    status: route.request().url().endsWith('/api/admin/telegram') ? 401 : 200,
-    contentType: 'application/json',
-    body: '{}',
-  }))
-  await page.goto('/')
-  await page.evaluate(async () => {
-    await fetch('/api/auth/sign-out', { method: 'POST' })
-    await fetch('/api/admin/telegram')
+for (const path of ['/api/admin/telegram', '/api/ops/nodes', '/api/ops/nodes?refresh=1']) {
+  test(`сторож: отложенный ${path} 401 после успешного выхода ожидаем`, async ({ page }) => {
+    const guard = new Guard()
+    guard.attach(page)
+    await page.route('**/*', route => route.fulfill({
+      status: route.request().url().endsWith(path) ? 401 : 200,
+      contentType: 'application/json',
+      body: '{}',
+    }))
+    await page.goto('/')
+    await page.evaluate(async (path) => {
+      await fetch('/api/auth/sign-out', { method: 'POST' })
+      await fetch(path)
+    }, path)
+    expect(guard.problems).toEqual([])
   })
-  expect(guard.problems).toEqual([])
-})
+}
 
 test('сторож: 401 до выхода, после неудачного выхода и после нового входа остаются ошибками', async ({ page }) => {
   const guard = new Guard()

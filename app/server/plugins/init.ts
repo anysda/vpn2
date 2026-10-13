@@ -20,7 +20,10 @@ export default defineNitroPlugin((nitroApp) => {
   // unhandledRejection, а панель продолжала отвечать без миграций или с
   // несинхронизированным админом. Падаем процессом — контейнер это покажет,
   // а 30-frontend напечатает журнал.
-  const ready = initPanel().then(markPanelReady, (err) => {
+  const ready = initPanel().then(() => {
+    markPanelReady()
+    useLogger().info('panel init complete')
+  }, (err) => {
     useLogger().fatal({ err }, 'panel init failed')
     console.error('panel init failed:', err)
     process.exit(1)

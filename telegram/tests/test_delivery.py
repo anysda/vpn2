@@ -172,7 +172,13 @@ class DeliveryProcessTests(unittest.IsolatedAsyncioTestCase):
                                               headers={'X-Tgbot-Secret': 'TEST_ONLY_EVENT_SECRET'})
             latencies.append(round((time.monotonic() - start) * 1000, 1))
             self.assertEqual(response.status_code, 200)
-        await asyncio.sleep(2)
+        # SIGKILL during claim/send leaves a deliberate 120s lease. Wait for
+        # both failed sends to persist their retry state before this outage
+        # recovery scenario kills the process (lease recovery has unit coverage).
+        async with asyncio.timeout(30):
+            while self.log_path.read_text().count('outbox retry id=') < 2:
+                self.assertIsNone(self.process.returncode, self.log_path.read_text())
+                await asyncio.sleep(0.05)
         self.assertEqual(self.messages, [])
         if restart:
             await self.stop_bot()

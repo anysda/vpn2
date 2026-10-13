@@ -18,11 +18,19 @@ SPEC.loader.exec_module(runner)
 
 
 class ShardTests(unittest.TestCase):
-    def run_gate(self, codes=(0, 0), missing=False, cancel=False, browser_port='52001'):
+    def test_weighted_assignment_never_omits_new_or_renamed_specs(self):
+        files = ['heavy.spec.ts', 'other.spec.ts', 'new.spec.ts', 'nested/new.spec.ts']
+        groups = runner.assign_files(files, 2, {'heavy.spec.ts': 30, 'removed.spec.ts': 999})
+        self.assertEqual(sorted(file for group in groups for file in group), sorted(files))
+        self.assertEqual(groups[0], ['heavy.spec.ts'])
+        self.assertEqual(groups, runner.assign_files(list(reversed(files)), 2, {'heavy.spec.ts': 30}))
+
+    def run_gate(self, codes=(0, 0), missing=False, cancel=False, browser_port='52001', full=False):
         started = []
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
             (app / 'e2e').mkdir()
+            (app / 'e2e/shard-weights.json').write_text('{}')
 
             def launch(args, **kwargs):
                 env = kwargs['env']
@@ -42,7 +50,9 @@ class ShardTests(unittest.TestCase):
                    'E2E_CONTAINER': 'test-panel', 'DOCKER': 'sudo -n docker'}
             with patch.dict(os.environ, env, clear=True), \
                     patch.object(runner, '__file__', str(app / 'e2e/run-shards.py')), \
-                    patch.object(runner.sys, 'argv', [str(SCRIPT), 'e2e/auth.spec.ts']), \
+                    patch.object(runner.sys, 'argv', [str(SCRIPT)] + ([] if full else ['e2e/auth.spec.ts'])), \
+                    patch.object(runner.subprocess, 'check_output', return_value=
+                                 '{"suites": [{"file": "auth.spec.ts"}, {"file": "nested/new.test.js"}]}'), \
                     patch.object(runner.signal, 'signal'), \
                     patch.object(runner.os, 'killpg') as kill, \
                     patch.object(runner.subprocess, 'Popen', side_effect=launch), \
@@ -57,6 +67,14 @@ class ShardTests(unittest.TestCase):
                     result = runner.main()
             calls = [call.args[0] for call in run.call_args_list]
             return result, started, calls
+
+    def test_full_run_uses_every_file_reported_by_playwright(self):
+        code, started, _calls = self.run_gate(full=True)
+        self.assertEqual(code, 0)
+        arguments = [arg for args, _, _ in started for arg in args]
+        self.assertNotIn('--shard', arguments)
+        self.assertEqual(arguments.count(r'e2e/auth\.spec\.ts$'), 1)
+        self.assertEqual(arguments.count(r'e2e/nested/new\.test\.js$'), 1)
 
     def test_shards_have_distinct_panels_ports_and_reports(self):
         code, started, calls = self.run_gate()

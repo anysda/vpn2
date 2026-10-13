@@ -2,13 +2,26 @@
 """Run Playwright shards against separate panels, then merge their reports."""
 
 import os
+import json
 from pathlib import Path
+import re
 import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+
+
+def assign_files(files, count, weights):
+    """Measured seconds only balance work; every discovered spec runs once."""
+    groups = [[] for _ in range(count)]
+    loads = [0.0] * count
+    for file in sorted(files, key=lambda f: (-weights.get(f, 10), f)):
+        index = min(range(count), key=lambda i: (loads[i], i))
+        groups[index].append(file)
+        loads[index] += weights.get(file, 10)
+    return groups
 
 
 def main():
@@ -24,6 +37,21 @@ def main():
     if len(set(ports)) != len(ports) or not all(0 < p < 65536 for p in ports):
         sys.exit("E2E_PORT and E2E_BROWSER_PORT must leave distinct valid ports for every shard")
     processes = []
+    groups = None
+    if len(sys.argv) == 1:
+        # Ask Playwright: filesystem globs could omit future .test.ts/.spec.js
+        # files or disagree with project-specific testMatch/testIgnore rules.
+        listing = json.loads(subprocess.check_output(
+            [str(app / 'node_modules/.bin/playwright'), 'test', '--list', '--reporter=json'],
+            cwd=app, text=True,
+            env={**{key: value for key, value in os.environ.items() if key != 'PLAYWRIGHT_JSON_OUTPUT_FILE'},
+                 'E2E_ADMIN_PASSWORD': 'listing-only'},
+        ))
+        files = sorted({suite['file'] for suite in listing['suites']})
+        weights = json.loads((app / 'e2e/shard-weights.json').read_text())
+        groups = assign_files(files, count, weights)
+        if any(not group for group in groups):
+            sys.exit('Every shard must contain at least one spec')
 
     def terminate(signum, _frame):
         raise SystemExit(128 + signum)
@@ -51,9 +79,10 @@ def main():
                     "PLAYWRIGHT_BLOB_OUTPUT_FILE": str(Path(blobs) / f"report-{index}.zip"),
                 }
                 with (report / "run.log").open("w") as log:
+                    arguments = ([f'e2e/{re.escape(file)}$' for file in groups[index - 1]]
+                                 if groups else [*sys.argv[1:], '--shard', f'{index}/{count}'])
                     command = subprocess.Popen(
-                        ["bash", "e2e/run-local.sh", *sys.argv[1:],
-                         "--shard", f"{index}/{count}", "--reporter=list,blob"],
+                        ["bash", "e2e/run-local.sh", *arguments, "--reporter=list,blob"],
                         cwd=app, env=env, stdout=log, stderr=subprocess.STDOUT,
                         start_new_session=True,
                     )

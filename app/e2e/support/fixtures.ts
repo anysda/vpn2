@@ -32,9 +32,9 @@ export class Guard {
   }
 
   private isAllowed(status: number, url: string, method?: string) {
-    // Боты могут закончить отложенный GET уже после удаления сессии.
+    // Поллеры могут закончить отложенный GET уже после удаления сессии.
     // Исключение действует только после успешного выхода и до нового входа.
-    if (this.signedOut && status === 401 && /\/api\/admin\/telegram$/.test(url)
+    if (this.signedOut && status === 401 && /\/api\/(admin\/telegram|ops\/nodes)(\?.*)?$/.test(url)
       && (!method || method === 'GET')) return true
     return this.allowed.some(a => a.status === status && a.url.test(url) && (!a.method || !method || a.method === method))
   }

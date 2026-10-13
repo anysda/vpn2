@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 
 // Только одноразовый локальный контейнер run-local.sh, никогда внешний стенд.
 export const container = process.env.E2E_FAULT_CONTAINER
@@ -20,16 +20,17 @@ export function rows(clientId: number) {
 }
 
 export function file(path: string) {
-  return inside(`import { readFileSync } from 'node:fs'; console.log(readFileSync(JSON.parse(process.argv[1]), 'utf8'));`, path)
+  return execFileSync(docker[0]!, [...docker.slice(1), 'exec', container!, 'cat', path], { encoding: 'utf8' }).trim()
 }
 
 export function verify(cert: string) {
-  return JSON.parse(inside(`
-    import { spawnSync } from 'node:child_process';
-    const r = spawnSync('/usr/bin/openssl', ['verify', '-CAfile', '${pki}/ca.crt', '-CRLfile', '${pki}/crl.pem', '-crl_check'],
-      { input: JSON.parse(process.argv[1]), encoding: 'utf8' });
-    console.log(JSON.stringify({ status: r.status, output: r.stdout + r.stderr }));
-  `, cert)) as { status: number, output: string }
+  // OpenSSL already reads stdin and returns its status; a new Node process
+  // per certificate only adds CPU contention between the four test panels.
+  const result = spawnSync(docker[0]!, [...docker.slice(1), 'exec', '-i', container!,
+    '/usr/bin/openssl', 'verify', '-CAfile', `${pki}/ca.crt`, '-CRLfile', `${pki}/crl.pem`, '-crl_check',
+  ], { input: cert, encoding: 'utf8' })
+  if (result.error) throw result.error
+  return { status: result.status, output: result.stdout + result.stderr }
 }
 
 export function fault(mode: string, serial: string) {

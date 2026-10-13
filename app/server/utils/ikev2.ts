@@ -248,9 +248,38 @@ async function syncIkev2Once(): Promise<void> {
       and(isNotNull(devicesTable.ikev2Username), isNull(devicesTable.ikev2Ip)),
       and(isNull(devicesTable.ikev2Username), isNotNull(devicesTable.ikev2Ip)),
     ))
-  for (const o of orphans) {
-    await ensureDeviceIkev2(o.id).catch(err =>
-      useLogger().warn({ err: (err as Error).message, id: o.id }, 'ikev2: адрес устройству не выдан'))
+  if (orphans.length) {
+    // Массовое восстановление не должно перечитывать весь пул для каждого
+    // устройства (2000 × 2000 строк блокировали event loop). Снимок и выдача
+    // в одной write-транзакции: параллельный POST не займёт выбранные значения.
+    await db.transaction(async (tx) => {
+      const all = await tx.select({
+        id: devicesTable.id, name: devicesTable.name, clientName: clientsTable.name,
+        username: devicesTable.ikev2Username, password: devicesTable.ikev2Password,
+        ip: devicesTable.ikev2Ip,
+      }).from(devicesTable).innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
+      const usernames = all.map(r => r.username)
+      const ips = all.map(r => r.ip)
+      for (const row of all) {
+        if (Boolean(row.username) === Boolean(row.ip)) continue
+        let ip: string
+        let username: string
+        try {
+          ip = row.ip ?? nextPoolAddress('ikev2', ips)
+          username = row.username ?? buildIkev2Username(row.clientName, row.name, usernames)
+        }
+        catch (err) {
+          useLogger().warn({ err: (err as Error).message, id: row.id }, 'ikev2: адрес устройству не выдан')
+          continue
+        }
+        await tx.update(devicesTable).set({
+          ikev2Username: username, ikev2Ip: ip,
+          ikev2Password: row.password ?? generateIkev2Password(), updatedAt: new Date(),
+        }).where(eq(devicesTable.id, row.id))
+        if (!row.username) usernames.push(username)
+        if (!row.ip) ips.push(ip)
+      }
+    }, { behavior: 'immediate' })
   }
 
   const rows = await db

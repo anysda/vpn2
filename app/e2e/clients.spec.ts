@@ -42,8 +42,14 @@ test.describe('клиенты', () => {
 
     // Срок: очистить = бессрочно.
     const date = dlg.getByPlaceholder('ДД.ММ.ГГГГ')
+    // Сначала сервер завершает синхронизацию VPN, затем UI показывает toast.
+    // Его короткое ожидание не должно включать всю длительность PATCH.
+    const expirySaved = page.waitForResponse(r => r.request().method() === 'PATCH'
+      && new URL(r.url()).pathname === `/api/clients/${client.id}`
+      && r.request().postDataJSON()?.expiresAt === null)
     await date.fill('')
     await date.press('Tab')
+    expect((await expirySaved).status()).toBe(200)
     await expect(toast(page, 'Срок действия сохранён')).toBeVisible()
     const saved = await page.request.get(`/api/clients/${client.id}`)
     expect(saved.status()).toBe(200)

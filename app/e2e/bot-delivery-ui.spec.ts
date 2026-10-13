@@ -3,8 +3,31 @@ import { openHome } from './support/clients'
 import { container, inside } from './support/openvpn-ca'
 import { checkBotQueue } from './support/bot-queue'
 
-test('пять уведомлений: один обновляемый тост очереди исчезает после доставки', async ({ page }) => {
+test('очередь: короткий тост один раз за сессию вкладки', async ({ page }) => {
   await checkBotQueue(page)
+})
+
+test('окончательная ошибка доставки гаснет сама, подробности остаются в уведомлениях', async ({ page }) => {
+  let failed = false
+  await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: failed
+    ? [{ id: 'failed-toast', label: 'Рассылка', status: 'failed', remaining: 0 }]
+    : [] }))
+  await openHome(page)
+  await page.waitForResponse('**/api/admin/bot-deliveries')
+  failed = true
+  const title = 'Рассылка: доставка не удалась. Повторов не будет.'
+  const errorToast = toast(page, title)
+  await expect(errorToast).toBeVisible()
+  await page.mouse.move(0, 0)
+  await expect(errorToast, 'окончательная ошибка тоже не висит вечно').toHaveCount(0)
+  await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
+  await expect(page.getByRole('dialog').getByText(title, { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
+  await expect(page.getByRole('dialog').getByText(title, { exact: true })).toBeVisible()
+  await expect(errorToast, 'история ошибок не объявляется повторно').toHaveCount(0)
+  console.log('Рассылка: доставка не удалась. Повторов не будет. — тост погас сам, история сохранена')
 })
 
 test('недоступный бот: тост клиента, рассылки, восстановление и окончательная ошибка', async ({ page, request }) => {
@@ -19,7 +42,7 @@ test('недоступный бот: тост клиента, рассылки, 
   let clientId: number | undefined
   const token = async (available: boolean) => {
     const response = await page.request.put('/api/admin/telegram', {
-      data: { bot_token: available ? '123456789:E2E_ACCEPTED_aaaaaaaaaaaaaaaaaaaaaaaaaa' : '', chat_id: '123456789' },
+      data: { bot_token: available ? '123456789:E2E_ACCEPTED_aaaaaaaaaaaaaaaaaaaaaaaaaa' : '123456789:E2E_UNAVAILABLE_aaaaaaaaaaaaaaaaaaaaaaa', chat_id: '123456789' },
     })
     expect(response.ok()).toBe(true)
   }
@@ -54,17 +77,21 @@ test('недоступный бот: тост клиента, рассылки, 
     `, clientId)
     const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
     expect(changed.ok()).toBe(true)
-    await expect(toast(page, 'Бот недоступен, 2 уведомлений в очереди')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible()
 
     for (let n = 3; n <= 5; n++) {
       await page.getByLabel('Сообщение юзерам').fill(`e2e delivery probe ${n}`)
       await page.getByRole('button', { name: 'Отправить', exact: true }).click()
-      await expect(toast(page, `Бот недоступен, ${n} уведомлений в очереди`)).toBeVisible()
+      await expect(page.getByRole('button', { name: `Уведомления: ${n}`, exact: true })).toBeVisible()
     }
     const queueToasts = page.getByRole('region', { includeHidden: true }).locator('ol > li').filter({ hasText: /Бот недоступен|не отправлено/ })
-    await expect(queueToasts).toHaveCount(1)
+    await page.mouse.move(0, 0)
+    await expect(queueToasts, 'реальная очередь остаётся, короткий тост гаснет').toHaveCount(0)
     await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 5 уведомлений в очереди' })).toBeVisible()
-    console.log('Реальная очередь: Бот недоступен, 5 уведомлений в очереди — тостов: 1')
+    await page.getByRole('button', { name: 'Уведомления: 5', exact: true }).click()
+    await expect(page.getByRole('dialog').getByText('Бот недоступен, 5 уведомлений в очереди', { exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    console.log('Реальная очередь: Бот недоступен, 5 уведомлений в очереди — в «Уведомлениях»; тостов: 0')
     await expect(toast(page, /^Отправлено:/)).toHaveCount(0)
     const statuses = await (await page.request.get('/api/admin/bot-deliveries')).json()
     expect(await (await request.get('/api/admin/bot-deliveries')).json(), 'без сессии история недоступна').toEqual([])

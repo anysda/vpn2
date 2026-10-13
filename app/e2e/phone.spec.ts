@@ -20,7 +20,7 @@ async function noHorizontalOverflow(page: Page, where: string) {
 }
 
 test.describe('телефон 390px', () => {
-  test('пять уведомлений сворачиваются в один тост и исчезают после доставки', async ({ page }) => {
+  test('очередь: короткий тост один раз за сессию вкладки без горизонтальной прокрутки', async ({ page }) => {
     await checkBotQueue(page, () => noHorizontalOverflow(page, 'очередь уведомлений'))
   })
   test('главная, «Я», вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
@@ -72,6 +72,6 @@ test.describe('телефон 390px', () => {
     ])
     expect(removed.status()).toBe(200)
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(queueToast).toBeVisible()
+    await expect(queueToast, 'переходы и закрытие модалок не повторяют тост очереди').toHaveCount(0)
   })
 })

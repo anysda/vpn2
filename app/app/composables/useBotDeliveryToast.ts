@@ -3,6 +3,7 @@ import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-del
 export function useBotDeliveryToast() {
   const rows = useState<BotDelivery[]>('bot-deliveries', () => [])
   const seen = useState<Record<string, string>>('bot-delivery-seen', () => ({}))
+  const queueShown = useState('bot-queue-shown', () => false)
   const queued = computed(() => rows.value.filter(row => row.status === 'queued').length)
   const toast = useToast()
   const queueId = 'bot-queue'
@@ -13,11 +14,24 @@ export function useBotDeliveryToast() {
       if (current) toast.remove(queueId)
       return
     }
-    const title = botQueueText(queued.value)
-    if (current?.title === title) return
-    const options = { title, color: 'warning' as const, duration: 0, ui: { root: 'bot-queue-toast' } }
-    if (current) toast.update(queueId, options)
-    else toast.add({ id: queueId, ...options })
+    if (!import.meta.client || queueShown.value) return
+    // sessionStorage переживает перезагрузку, но принадлежит одной вкладке.
+    // Если хранилище запрещено, useState предотвращает повторы до перезагрузки.
+    try {
+      queueShown.value = sessionStorage.getItem('bot-queue-shown') === '1'
+      if (queueShown.value) return
+      sessionStorage.setItem('bot-queue-shown', '1')
+    }
+    catch { /* Сохраняем показ в памяти, даже если хранилище недоступно. */ }
+    queueShown.value = true
+    toast.add({
+      id: queueId,
+      title: botQueueText(queued.value),
+      description: 'Подробности — в «Уведомлениях».',
+      color: 'warning',
+      duration: 5000,
+      ui: { root: 'bot-queue-toast' },
+    })
   }
 
   function sync(deliveries: BotDelivery[], announce = true) {

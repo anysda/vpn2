@@ -17,6 +17,7 @@ function addresses(octet: number, last: number, legacy = false) {
 function database(code: string, ...args: unknown[]) {
   return inside(`import { DatabaseSync } from 'node:sqlite';
     const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+    db.exec('PRAGMA busy_timeout=5000');
     const args = process.argv.slice(1).map(JSON.parse);
     ${code}`, ...args)
 }

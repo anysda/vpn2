@@ -2,9 +2,8 @@ import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { and, eq, isNotNull, isNull } from 'drizzle-orm'
-import { createClient } from '@libsql/client'
-import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
+import { useDb } from '../database/client'
 import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
 import { accounts, sessions, twoFactors, users } from '../database/schema'
 import { hashPassword, useAuth, verifyPassword } from '../utils/auth'
@@ -35,8 +34,7 @@ async function initPanel() {
 
   // 1. Run migrations
   const dbUrl = cfg.databaseUrl
-  const localClient = createClient({ url: dbUrl, concurrency: 1 })
-  const localDb = drizzle(localClient)
+  const localDb = useDb()
 
   const migrationsFolder = resolve(process.cwd(), 'server/database/migrations')
   if (existsSync(migrationsFolder)) {

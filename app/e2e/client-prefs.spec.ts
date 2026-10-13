@@ -9,8 +9,6 @@ import { fileURLToPath } from 'node:url'
 import * as schema from '../server/database/schema'
 import { serverModule } from './support/server-module'
 
-const before = 'ru=192.0.2.1,se=192.0.2.2,us=192.0.2.3'
-
 for (const scenario of [
   { name: 'переименование', hosts: 'se1=192.0.2.2,us=192.0.2.3', expected: ['se1', 'us'] },
   { name: 'обмен тегами', hosts: 'us=192.0.2.2,se=192.0.2.3', expected: ['us', 'se'] },
@@ -18,13 +16,17 @@ for (const scenario of [
   { name: 'удаление экзита', hosts: 'us=192.0.2.3', expected: [null, 'us'] },
   { name: 'удаление и новый адрес с новым тегом', hosts: 'se1=192.0.2.4,us=192.0.2.3', expected: [null, 'us'] },
   { name: 'неоднозначный адрес', hosts: 'se1=192.0.2.2,se2=192.0.2.2,us=192.0.2.3', expected: [null, 'us'] },
+  { name: 'тег constructor', hosts: 'constructor=192.0.2.2,us=192.0.2.3', expected: ['constructor', 'us'] },
+  { name: 'удаление тега constructor', initial: ['constructor', 'us'], hosts: 'us=192.0.2.3', expected: [null, 'us'] },
 ]) {
+  const initial = scenario.initial ?? ['se', 'us']
+  const before = `ru=192.0.2.1,${initial[0]}=192.0.2.2,us=192.0.2.3`
   for (const upgrade of [false, true]) {
     test(`предпочтения: ${scenario.name}${upgrade ? ', обновление старой панели' : ''}`, async () => {
       const directory = await mkdtemp(join(tmpdir(), 'vpn2-client-prefs-'))
       const client = createClient({ url: ':memory:' })
       const db = drizzle(client, { schema })
-      const cfg = { exitTags: 'se us', nodeHosts: before, previousNodeHosts: '', clientPrefsFilePath: join(directory, 'prefs.json') }
+      const cfg = { exitTags: initial.join(' '), nodeHosts: before, previousNodeHosts: '', clientPrefsFilePath: join(directory, 'prefs.json') }
       const logs: { oldTag: string, newTag: string | null }[] = []
       const load = () => serverModule<typeof import('../server/utils/client-prefs')>(
         new URL('../server/utils/client-prefs.ts', import.meta.url), {
@@ -33,7 +35,7 @@ for (const scenario of [
       )
       try {
         await migrate(db, { migrationsFolder: fileURLToPath(new URL('../server/database/migrations', import.meta.url)) })
-        for (const [i, tag] of ['se', 'us', null].entries()) {
+        for (const [i, tag] of [...initial, null].entries()) {
           const [owner] = await db.insert(schema.clients).values({ name: `client-${i}`, password: 'unused-test-password', preferredExit: tag }).returning()
           await db.insert(schema.devices).values({ clientId: owner!.id, name: 'device', wgIp: `10.66.66.${i + 2}`, ovpnIp: `10.67.67.${i + 2}`, ikev2Ip: `10.68.68.${i + 2}` })
         }
@@ -45,20 +47,20 @@ for (const scenario of [
           // Ошибка сохранения карты должна откатить и переносы клиентов.
           await client.execute("CREATE TRIGGER fail_map BEFORE INSERT ON collector_state BEGIN SELECT RAISE(ABORT, 'disk is full'); END")
           await expect(Promise.resolve(load().syncClientPrefsFile())).rejects.toThrow()
-          expect((await db.select().from(schema.clients).orderBy(schema.clients.id)).map(row => row.preferredExit)).toEqual(['se', 'us', null])
+          expect((await db.select().from(schema.clients).orderBy(schema.clients.id)).map(row => row.preferredExit)).toEqual([...initial, null])
           expect(logs).toHaveLength(0)
           await client.execute('DROP TRIGGER fail_map')
         }
         await load().syncClientPrefsFile()
         const actual = (await db.select().from(schema.clients).orderBy(schema.clients.id)).map(row => row.preferredExit)
-        console.log(`${scenario.name}: ${JSON.stringify(['se', 'us', null])} → ${JSON.stringify(actual)}`)
+        console.log(`${scenario.name}: ${JSON.stringify([...initial, null])} → ${JSON.stringify(actual)}`)
         expect(actual).toEqual([...scenario.expected, null])
         const prefs = JSON.parse(await readFile(cfg.clientPrefsFilePath, 'utf8'))
         for (const [i, tag] of scenario.expected.entries()) {
           if (tag) expect(prefs[tag]).toEqual([`10.66.66.${i + 2}`, `10.67.67.${i + 2}`, `10.68.68.${i + 2}`])
         }
         expect(Object.keys(prefs).sort()).toEqual(scenario.expected.filter(Boolean).sort())
-        const changed = scenario.expected.filter((tag, i) => tag !== ['se', 'us'][i]).length
+        const changed = scenario.expected.filter((tag, i) => tag !== initial[i]).length
         expect(logs).toHaveLength(changed)
         // Рестарт с прежним bootstrap-env не переносит уже перенесённых клиентов повторно.
         await load().syncClientPrefsFile()

@@ -23,7 +23,7 @@ async function reconcileExits(): Promise<void> {
   // Без списка экзитов (например, отдельный запуск панели) перенос невозможен.
   if (!tags.length) return
   const hosts = exitHosts(String(cfg.nodeHosts || ''))
-  if (tags.some(tag => !hosts[tag])) throw new Error('client exit map incomplete: missing exit address')
+  if (tags.some(tag => !Object.hasOwn(hosts, tag))) throw new Error('client exit map incomplete: missing exit address')
   const current = Object.fromEntries(tags.sort().map(tag => [tag, hosts[tag]!]))
   const value = JSON.stringify(current)
   const changes = await useDb().transaction(async (tx) => {
@@ -40,7 +40,7 @@ async function reconcileExits(): Promise<void> {
       const matches = Object.keys(current).filter(tag => current[tag] === previous[oldTag])
       // Адрес однозначно узнаёт переименование, включая перестановку тегов.
       // Если адрес сменился, существующий тег сохраняет выбор владельца.
-      const newTag = matches.length === 1 ? matches[0]! : oldTag in current ? oldTag : null
+      const newTag = matches.length === 1 ? matches[0]! : Object.hasOwn(current, oldTag) ? oldTag : null
       if (newTag === oldTag) continue
       await tx.update(clients).set({ preferredExit: newTag, updatedAt: new Date() }).where(eq(clients.id, row.id))
       changed.push({ clientId: row.id, oldTag, newTag })
@@ -74,7 +74,7 @@ async function writePrefs(): Promise<void> {
     .innerJoin(clients, eq(clients.id, devices.clientId))
     .where(isNotNull(clients.preferredExit))
 
-  const byNode: Record<string, Set<string>> = {}
+  const byNode: Record<string, Set<string>> = Object.create(null)
   for (const r of rows) {
     for (const ip of [r.wg, r.ovpn, r.ikev2]) {
       if (r.node && ip) (byNode[r.node] ??= new Set()).add(ip)

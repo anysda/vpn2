@@ -56,6 +56,8 @@ systemctl() { echo "$*" >> systemctl.calls; }
             host = root / 'etc/anysda/ikev2-server-host'
             mode.write_text('self-signed')
             host.write_text('192.0.2.1')
+            domain = root / 'etc/anysda/ikev2-domain'
+            domain.write_text('vpn.example.test')
             fixture = bash('''
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout key.pem -out leaf.pem -days 1 -subj /CN=vpn.example.test \
@@ -89,6 +91,10 @@ export -f swanctl
             self.assertNotEqual(invalid.returncode, 0)
             self.assertEqual((root / 'calls').read_text(), before)
             self.assertEqual(mode.read_text(), 'letsencrypt', 'never downgrade while Caddy renews')
+            domain.write_text('')
+            cancelled = bash(prelude + call, directory)
+            self.assertEqual(cancelled.returncode, 0, cancelled.stderr)
+            self.assertEqual((root / 'calls').read_text(), before, 'stale watcher must not restore removed domain')
 
     def test_summary_reads_actual_mode(self):
         deploy = source('infra/deploy.sh')

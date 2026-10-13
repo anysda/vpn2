@@ -130,6 +130,8 @@ DOMAIN="${3:-}"
 if [[ -n "$DOMAIN" ]]; then
   exec 8>/run/anysda-ikev2-cert.lock
   flock -x 8
+  # Деплой мог удалить/сменить домен, пока старый запуск ждал замок.
+  [[ "$(cat /etc/anysda/ikev2-domain 2>/dev/null)" == "$DOMAIN" ]] || exit 0
   # Нет пары / Caddy ещё пишет её: таймер повторит попытку.
   [[ -s "$LE_CERT" && -s "$LE_KEY" ]] || exit 0
 fi

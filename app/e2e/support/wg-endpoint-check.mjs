@@ -13,7 +13,7 @@ for (const name of ['server.priv', 'server.pub']) {
   writeFileSync(`/etc/wireguard/${name}`, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', { mode: 0o600 })
 }
 const password = randomBytes(16).toString('hex')
-const base = 'http://127.0.0.1:51821'
+const base = 'http://127.0.0.1:31821'
 // Локальный DNS: настоящие ответы AAAA / только A и сервер без ответа.
 // Внешняя сеть контейнеру не нужна, production-код не содержит тестовых хуков.
 const dns = createSocket('udp4')
@@ -51,6 +51,7 @@ try {
       env: {
         ...process.env,
         HOST: '127.0.0.1',
+        PORT: '31821',
         NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite',
         NUXT_ADMIN_PASSWORD: password,
         NUXT_SESSION_PASSWORD: password.repeat(2),

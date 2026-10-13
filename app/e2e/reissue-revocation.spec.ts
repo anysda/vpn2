@@ -45,7 +45,7 @@ for (const target of ['device', 'client', 'bot-device']) {
           }
           return JSON.parse(inside(`
             const [deviceId, chatId] = process.argv.slice(1).map(JSON.parse);
-            const r = await fetch('http://127.0.0.1:51821/api/bot/devices/' + deviceId + '/reissue', {
+            const r = await fetch('http://127.0.0.1:31821/api/bot/devices/' + deviceId + '/reissue', {
               method: 'POST', headers: { authorization: 'Bearer ' + process.env.NUXT_TGBOT_SECRET, 'content-type': 'application/json' },
               body: JSON.stringify({ chatId })
             }); console.log(JSON.stringify({ status: r.status, body: await r.json() }));

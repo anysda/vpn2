@@ -30,7 +30,8 @@ fi
 source "$APP_DIR/e2e/support/panel-stand.sh"
 IMAGE=${E2E_IMAGE:-vpn2-panel:e2e}
 NAME=${E2E_CONTAINER:-vpn2-panel-e2e}
-PORT=${E2E_PORT:-51899}
+# 16 пар портов целиком ниже стандартного Linux ip_local_port_range (32768+).
+PORT=${E2E_PORT:-31710}
 BROWSER_PORT=${E2E_BROWSER_PORT:-$((PORT + 1))}
 PW_VERSION=$(node -p 'require(process.argv[1]).version' "$APP_DIR/node_modules/@playwright/test/package.json")
 BROWSER_IMAGE=${E2E_BROWSER_IMAGE:-mcr.microsoft.com/playwright:v$PW_VERSION-noble}

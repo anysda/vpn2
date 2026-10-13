@@ -20,7 +20,7 @@ DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))
 
 
 def proxy_blocks(source):
-    for match in re.finditer(r'reverse_proxy (?:panel|127\.0\.0\.1):51821', source):
+    for match in re.finditer(r'reverse_proxy (?:panel|127\.0\.0\.1):\d+', source):
         start, end = match.span()
         if source[end:].lstrip(' ').startswith('{'):
             end = source.index('{', end) + 1
@@ -72,7 +72,7 @@ class PanelProxyTests(unittest.TestCase):
                         sock.bind(('127.0.0.1', 0))
                         port = sock.getsockname()[1]
                     upstream = f'127.0.0.1:{server.server_port}'
-                    block = re.sub(r'(panel|127\.0\.0\.1):51821', upstream, block)
+                    block = re.sub(r'(panel|127\.0\.0\.1):\d+', upstream, block)
                     config = Path(tmp) / 'Caddyfile'
                     config.write_text(f'{{\n admin off\n}}\n:{port} {{\n{block}\n}}\n')
                     name = f'vpn2-proxy-test-{os.getpid()}'

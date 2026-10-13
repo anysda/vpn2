@@ -27,7 +27,7 @@ def assign_files(files, count, weights):
 def main():
     app = Path(__file__).resolve().parent.parent
     count = int(os.environ.get("E2E_SHARDS", "4"))
-    port = int(os.environ.get("E2E_PORT", "51899"))
+    port = int(os.environ.get("E2E_PORT", "31710"))
     browser_port = int(os.environ.get("E2E_BROWSER_PORT", str(port + 1)))
     name = os.environ.get("E2E_CONTAINER", "vpn2-panel-e2e")
     docker = shlex.split(os.environ.get("DOCKER", "docker"))

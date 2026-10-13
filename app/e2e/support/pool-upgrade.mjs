@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { setTimeout } from 'node:timers/promises'
 
-const origin = 'http://127.0.0.1:51821'
+const origin = 'http://127.0.0.1:31821'
 let cookie
 async function request(path, data) {
   const response = await fetch(origin + path, {

@@ -62,9 +62,9 @@ jobs:
       - name: smoke panel
         if: matrix.name == 'panel'
         run: |
-          docker run -d --name smoke -p 51821:51821 smoke/panel
+          docker run -d --name smoke -e PORT=31821 -p 127.0.0.1:31821:31821 smoke/panel
           for _ in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:51821/api/version && exit 0
+            curl -fsS http://127.0.0.1:31821/api/version && exit 0
             sleep 1
           done
           docker logs smoke

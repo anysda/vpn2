@@ -7,7 +7,7 @@ APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$APP_DIR/e2e/support/panel-stand.sh"
 : "${E2E_UPGRADE_FROM:?}" "${E2E_IMAGE:?}"
 NAME=${E2E_CONTAINER:-vpn2-pool-upgrade}
-PORT=${E2E_PORT:-51967}
+PORT=${E2E_PORT:-31810}
 PASS=$(openssl rand -hex 12)
 MIGRATION_TMP=$(mktemp -d)
 cleanup() {
@@ -22,7 +22,7 @@ stand_wait "$NAME-base" "http://127.0.0.1:$PORT"
 dk exec -i "$NAME-base" node --input-type=module - seed < "$APP_DIR/e2e/support/pool-upgrade.mjs"
 dk stop "$NAME-base" >/dev/null
 dk create --name "$NAME" --network none \
-  -e HOST=0.0.0.0 -e PORT=51821 \
+  -e HOST=0.0.0.0 -e PORT=31821 \
   -e NUXT_DATABASE_URL=file:/var/lib/anysda-vpn2/db.sqlite \
   -e NUXT_ADMIN_USER=admin -e NUXT_ADMIN_PASSWORD="$PASS" \
   -e NUXT_SESSION_COOKIE_SECURE=false -e NUXT_SESSION_PASSWORD="$(openssl rand -hex 32)" \

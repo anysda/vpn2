@@ -99,7 +99,7 @@ if [[ "${FRONT_TEST_DEV:-}" == 1 ]]; then
   EXTRA=(-w /src -e NODE_ENV=development -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0
     -v "$APP_DIR:/src" -v "${DEV_VOLUMES[0]}:/src/node_modules" -v "${DEV_VOLUMES[1]}:/src/.nuxt")
   STAND_CMD=(sh -c 'corepack pnpm@10 install --frozen-lockfile --store-dir /src/node_modules/.pnpm-store \
-    && exec corepack pnpm@10 exec nuxt dev --host 0.0.0.0 --port 51821')
+    && exec corepack pnpm@10 exec nuxt dev --host 0.0.0.0 --port 31821')
   # первый запуск ставит node_modules в пустой том
   WAIT=600
 fi
@@ -119,7 +119,7 @@ stand_wait "$NAME" "http://127.0.0.1:$PORT" "$WAIT"
 # schema.ts node 24 читает сам.
 [[ "$SEED" == /src ]] || tar -c -C "$APP_DIR" e2e/support/front-test-seed.mjs server/database/schema.ts \
   | dk exec -i "$NAME" sh -c "mkdir -p $SEED && tar -x -C $SEED"
-dk exec -e PANEL_URL=http://127.0.0.1:51821 -e ADMIN_PASSWORD="$PASS" -e EXIT_TAGS="$EXIT_TAGS" \
+dk exec -e PANEL_URL=http://127.0.0.1:31821 -e ADMIN_PASSWORD="$PASS" -e EXIT_TAGS="$EXIT_TAGS" \
   -e DB_URL=file:$DATA/db.sqlite -e LIVE_FILE=$DATA/front-test-live.json \
   "$NAME" node --experimental-strip-types $SEED/e2e/support/front-test-seed.mjs
 

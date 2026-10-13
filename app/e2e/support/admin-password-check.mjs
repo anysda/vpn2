@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto'
 const child = spawn(process.execPath, ['.output/server/index.mjs'], {
   env: {
     ...process.env,
+    PORT: '31821',
     NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite',
     NUXT_ANYSDA_CONFIG_PATH: '/nonexistent/config.yaml',
     NUXT_ADMIN_PASSWORD: '',

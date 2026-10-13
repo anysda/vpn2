@@ -55,7 +55,7 @@ for (const protocol of protocols) {
       console.log(`${protocol.name}: create HTTP ${response.status()}, rows before=${before}, after=${database('console.log(db.prepare("SELECT count(*) AS n FROM devices").get().n);')}`)
       expect(response.status()).toBe(409)
       expect((await response.json()).message).toBe(message)
-      const bot = JSON.parse(inside(`const response = await fetch('http://127.0.0.1:51821/api/bot/devices', {
+      const bot = JSON.parse(inside(`const response = await fetch('http://127.0.0.1:31821/api/bot/devices', {
         method: 'POST', headers: { authorization: 'Bearer ' + process.env.NUXT_TGBOT_SECRET, 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatId: 700000 + JSON.parse(process.argv[1]), name: 'bot-overflow' }) });
         console.log(JSON.stringify({ status: response.status, body: await response.json() }));`, id))

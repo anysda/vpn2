@@ -25,7 +25,8 @@ class ShardTests(unittest.TestCase):
         self.assertEqual(groups[0], ['heavy.spec.ts'])
         self.assertEqual(groups, runner.assign_files(list(reversed(files)), 2, {'heavy.spec.ts': 30}))
 
-    def run_gate(self, codes=(0, 0), missing=False, cancel=False, browser_port='52001', full=False):
+    def run_gate(self, codes=(0, 0), missing=False, cancel=False, browser_port='52001', full=False,
+                 default_ports=False):
         started = []
         with tempfile.TemporaryDirectory() as directory:
             app = Path(directory)
@@ -46,8 +47,10 @@ class ShardTests(unittest.TestCase):
                 started.append((args, env, process))
                 return process
 
-            env = {'E2E_SHARDS': '2', 'E2E_PORT': '52000', 'E2E_BROWSER_PORT': browser_port,
+            env = {'E2E_SHARDS': str(len(codes)), 'E2E_PORT': '52000', 'E2E_BROWSER_PORT': browser_port,
                    'E2E_CONTAINER': 'test-panel', 'DOCKER': 'sudo -n docker'}
+            if default_ports:
+                del env['E2E_PORT'], env['E2E_BROWSER_PORT']
             with patch.dict(os.environ, env, clear=True), \
                     patch.object(runner, '__file__', str(app / 'e2e/run-shards.py')), \
                     patch.object(runner.sys, 'argv', [str(SCRIPT)] + ([] if full else ['e2e/auth.spec.ts'])), \
@@ -88,6 +91,16 @@ class ShardTests(unittest.TestCase):
             process.wait.assert_called_once()
         self.assertEqual(sum('merge-reports' in args for args in calls), 1)
         self.assertEqual(sum('rm' in args for args in calls), 4)
+
+    def test_default_ports_stay_below_ephemeral_range_for_every_shard_count(self):
+        for count in range(2, 17):
+            with self.subTest(count=count):
+                code, started, _calls = self.run_gate(codes=(0,) * count, default_ports=True)
+                self.assertEqual(code, 0)
+                ports = [int(env[key]) for _, env, _ in started
+                         for key in ('E2E_PORT', 'E2E_BROWSER_PORT')]
+                self.assertEqual(len(set(ports)), 2 * count)
+                self.assertTrue(all(1024 <= port < 32768 for port in ports), ports)
 
     def test_failure_is_reported_after_waiting_for_every_shard(self):
         code, started, calls = self.run_gate(codes=(1, 0))

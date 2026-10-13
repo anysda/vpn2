@@ -67,7 +67,7 @@ for (const scenario of scenarios) {
       const remove = async () => {
         if (!bot) return (await page.request.delete(apiPath)).status()
         return Number(inside(`
-          const r = await fetch('http://127.0.0.1:51821' + JSON.parse(process.argv[1]), {
+          const r = await fetch('http://127.0.0.1:31821' + JSON.parse(process.argv[1]), {
             method: 'DELETE', headers: { authorization: 'Bearer ' + process.env.NUXT_TGBOT_SECRET }
           }); console.log(r.status);
         `, botPath))

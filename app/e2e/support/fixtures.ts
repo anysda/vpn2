@@ -2,7 +2,7 @@ import { test as base, expect, type APIRequestContext, type Download, type Page 
 
 export const ADMIN_USER = process.env.E2E_ADMIN_USER || 'admin'
 export const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD || ''
-const baseURL = new URL(process.env.E2E_BASE_URL || 'http://127.0.0.1:51899')
+const baseURL = new URL(process.env.E2E_BASE_URL || 'http://127.0.0.1:31710')
 const baseHost = baseURL.hostname
 /** Хост, который панель пишет в Endpoint/remote конфигов. */
 export const PUBLIC_HOST = process.env.E2E_PUBLIC_HOST || baseHost

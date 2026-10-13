@@ -12,7 +12,7 @@ import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/libsql'
 import { clients, collectorState, deviceTrafficHourly, devices } from '../../server/database/schema.ts'
 
-const PANEL = process.env.PANEL_URL || 'http://panel:51821'
+const PANEL = process.env.PANEL_URL || 'http://panel:31821'
 const EXITS = (process.env.EXIT_TAGS || 'nl fi us').split(/\s+/).filter(Boolean)
 const HEALTHY = EXITS.slice(0, -1).length ? EXITS.slice(0, -1) : EXITS
 const DAY = 86400

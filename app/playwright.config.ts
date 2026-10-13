@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 // Адрес панели и пароль admin приходят только из окружения: локально их ставит
 // e2e/run-local.sh, для стенда — тот, кто запускает.
-const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:51899'
+const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:31710'
 const reportDir = process.env.E2E_REPORT_DIR || '.'
 
 export default defineConfig({

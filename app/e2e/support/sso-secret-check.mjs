@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 // Отдельный одноразовый контейнер: проверяем реальный Nitro/Better Auth,
 // включая старый env и runtime из архива, не подменяя API ответами теста.
 const runtime = '/etc/anysda/sso-runtime.json'
-const origin = 'http://127.0.0.1:51821'
+const origin = 'http://127.0.0.1:31821'
 const password = randomBytes(18).toString('hex')
 const profile = {
   enabled: true, authentikUrl: 'https://auth.example.test', appSlug: 'vpn2',
@@ -28,7 +28,7 @@ for (const scenario of ['seed', 'restore-empty', 'restore-whitespace', 'restore-
   }
   const child = spawn(process.execPath, ['.output/server/index.mjs'], {
     env: {
-      ...process.env, HOST: '127.0.0.1', PORT: '51821',
+      ...process.env, HOST: '127.0.0.1', PORT: '31821',
       NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite',
       NUXT_ANYSDA_CONFIG_PATH: '/nonexistent/config.yaml',
       NUXT_ADMIN_USER: 'admin', NUXT_ADMIN_PASSWORD: password,

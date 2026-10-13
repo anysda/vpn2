@@ -5,12 +5,12 @@ import { randomBytes } from 'node:crypto'
 // config.yaml и старый вход не ограничивали длину существующего пароля.
 // Проверяем на одноразовой панели; новый пароль по-прежнему не длиннее 256.
 const password = randomBytes(129).toString('hex')
-const origin = 'http://127.0.0.1:51821'
+const origin = 'http://127.0.0.1:31821'
 const child = spawn(process.execPath, ['.output/server/index.mjs'], {
   env: {
     ...process.env,
     HOST: '127.0.0.1',
-    PORT: '51821',
+    PORT: '31821',
     NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite',
     NUXT_ANYSDA_CONFIG_PATH: '/nonexistent/config.yaml',
     NUXT_ADMIN_USER: 'admin',

@@ -30,7 +30,7 @@ stand_up() {
   stand_down "$name"
   dk network create "$name" >/dev/null
   dk run -d --name "$name" --network "$name" --network-alias panel \
-    -e HOST=0.0.0.0 -e PORT=51821 \
+    -e HOST=0.0.0.0 -e PORT=31821 \
     -e NUXT_SESSION_PASSWORD="$(openssl rand -hex 32)" -e NUXT_SESSION_COOKIE_SECURE=false \
     -e NUXT_DATABASE_URL=file:/var/lib/anysda-vpn2/db.sqlite \
     -e NUXT_ADMIN_USER=admin -e NUXT_ADMIN_PASSWORD="$pass" \
@@ -93,7 +93,7 @@ IN
 }
 :80 {
     encode gzip
-    reverse_proxy panel:51821 {
+    reverse_proxy panel:31821 {
         transport http {
             keepalive off
         }

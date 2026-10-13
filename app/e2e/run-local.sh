@@ -56,6 +56,9 @@ dk run --rm --name "$NAME-password" --read-only --tmpfs /var/lib/anysda-vpn2 --t
 dk run --rm --name "$NAME-wg-endpoint" --network none --read-only \
   --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/wireguard \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/wg-endpoint-check.mjs"
+dk run --rm --name "$NAME-sso-secret" --read-only \
+  --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/anysda \
+  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/sso-secret-check.mjs"
 echo "timing: image-checks=$((SECONDS - started))s"
 
 if [[ $shards != 1 ]]; then
@@ -86,6 +89,10 @@ trap 'exit 130' INT
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
 stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
   "${ENTRY_DOCKER_ARGS[@]}" \
+  -e NUXT_PUBLIC_SSO_ENABLED=true -e NUXT_PUBLIC_SSO_AUTO_REDIRECT=true \
+  -e NUXT_SSO_PASSWORD_LOGIN=false -e NUXT_OAUTH_OIDC_CLIENT_SECRET= \
+  -e NUXT_OAUTH_OIDC_CLIENT_ID=vpn2 \
+  -e NUXT_OAUTH_OIDC_OPENID_CONFIG=https://auth.example.test/application/o/vpn2/.well-known/openid-configuration \
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"
 

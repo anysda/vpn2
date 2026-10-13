@@ -33,7 +33,7 @@ docker run -d \\
 class SsoMissingSecretTests(unittest.TestCase):
     def test_empty_secret_disables_sso_and_allows_password(self):
         for domain in ('vpn.example.test', ''):
-            for secret in ("SSO_CLIENT_SECRET=''", 'unset SSO_CLIENT_SECRET'):
+            for secret in ("SSO_CLIENT_SECRET=''", "SSO_CLIENT_SECRET='  '", 'unset SSO_CLIENT_SECRET'):
                 with self.subTest(domain=domain, secret=secret), tempfile.TemporaryDirectory() as directory:
                     result = bash(f'''
 HOST_TAG=ru
@@ -53,8 +53,9 @@ printf 'effective=%s password=%s redirect=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LO
                     self.assertFalse((Path(directory) / 'sso-runtime.json').exists())
                     args = (Path(directory) / 'docker.args').read_text().splitlines()
                     self.assertIn('NUXT_PUBLIC_SSO_ENABLED=false', args)
+                    self.assertIn('NUXT_PUBLIC_SSO_AUTO_REDIRECT=false', args)
                     self.assertIn('NUXT_SSO_PASSWORD_LOGIN=true', args)
-                    self.assertIn('NUXT_OAUTH_OIDC_CLIENT_SECRET=', args)
+                    self.assertIn('NUXT_OAUTH_OIDC_CLIENT_SECRET=' + ('  ' if "='  '" in secret else ''), args)
 
     def test_runtime_is_preserved_and_complete_seed_still_enables_sso(self):
         for runtime in (None, {'enabled': True, 'passwordLogin': False, 'clientSecret': SECRET}):
@@ -72,14 +73,19 @@ SSO_CLIENT_ID=vpn2
 SSO_CLIENT_SECRET={shlex.quote('' if runtime else SECRET)}
 SSO_DISCOVERY_URL=https://auth.example.test/.well-known/openid-configuration
 SSO_ALLOWED_SUBS=test-sub
-''' + seed_block().replace('/etc/anysda', directory) + '''
+''' + (seed_block() + container_block()).replace('/etc/anysda', directory) + '''
 printf 'effective=%s password=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LOGIN"
 ''', directory)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn('effective=true password=false', result.stdout)
+                expected = 'effective=false password=true' if runtime else 'effective=true password=false'
+                self.assertIn(expected, result.stdout)
                 self.assertNotIn(SECRET, result.stdout + result.stderr)
                 if runtime:
                     self.assertEqual(hashlib.sha256(stored.read_bytes()).hexdigest(), before)
+                    args = (Path(directory) / 'docker.args').read_text().splitlines()
+                    self.assertIn('NUXT_PUBLIC_SSO_ENABLED=false', args)
+                    self.assertIn('NUXT_PUBLIC_SSO_AUTO_REDIRECT=false', args)
+                    self.assertIn('NUXT_SSO_PASSWORD_LOGIN=true', args)
 
     def test_notice_is_once_at_end_of_pipeline_or_frontend_stage(self):
         deploy = source('infra/deploy.sh')

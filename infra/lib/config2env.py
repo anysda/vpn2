@@ -695,9 +695,13 @@ def main():
     # или enabled=false → SSO_ENABLED='false', панель ведёт себя ровно как до
     # появления фичи (форма с логином и паролем).
     sso = cfg.get('sso', {})
-    sso_on = (sso.get('enabled', '') or '').lower() in ('true', 'yes', 'y', '1')
-    lines += ['', f"SSO_ENABLED={shq('true' if sso_on else 'false')}"]
-    if sso_on:
+    sso_requested = (sso.get('enabled', '') or '').lower() in ('true', 'yes', 'y', '1')
+    client_secret = sso.get('client_secret', '') or ''
+    sso_on = sso_requested and bool(client_secret.strip())
+    # Намерение нужно только для итоговой подсказки деплоя; засев всегда безопасен.
+    lines += ['', f"SSO_REQUESTED={shq('true' if sso_requested else 'false')}",
+              f"SSO_ENABLED={shq('true' if sso_on else 'false')}"]
+    if sso_requested:
         # discovery_url можно задать целиком; иначе собираем из адреса IdP и
         # slug'а приложения — у Authentik ручка ВСЕГДА такая.
         discovery = sso.get('discovery_url', '')
@@ -707,7 +711,6 @@ def main():
             if base:
                 discovery = f'{base}/application/o/{slug}/.well-known/openid-configuration'
         client_id = sso.get('client_id', '') or 'vpn2'
-        client_secret = sso.get('client_secret', '')
         allowed_subs = sso.get('allowed_subs', '')
         # Проверять полноту засева можно только на entry: стадия 30 знает,
         # сохранены ли уже приоритетные настройки в профиле панели.
@@ -719,10 +722,10 @@ def main():
             f"SSO_LABEL={shq(sso.get('label', '') or 'Authentik')}",
             # Бесшовность (форму не видно вообще). false — форма остаётся, но с
             # кнопкой входа через IdP.
-            f"SSO_AUTO_REDIRECT={shq('false' if (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
+            f"SSO_AUTO_REDIRECT={shq('false' if not sso_on or (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
             # Парольный вход. Стандарт флота — «спрятан, но жив», поэтому по
             # умолчанию true; false рубит его наглухо (и break-glass тоже!).
-            f"SSO_PASSWORD_LOGIN={shq('false' if (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
+            f"SSO_PASSWORD_LOGIN={shq('false' if sso_on and (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
         ]
 
     # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /

@@ -55,7 +55,7 @@ export default defineEventHandler(async (event) => {
       reject('sso_bad_url', 'Укажите адрес Authentik: https://… или discovery URL')
     }
     if (!next.clientId) reject('sso_no_client_id', 'Укажите client_id провайдера')
-    if (!next.clientSecret) reject('sso_no_client_secret', 'Укажите client_secret провайдера')
+    if (!next.clientSecret.trim()) reject('sso_no_client_secret', 'Укажите client_secret провайдера')
     // Куки state/PKCE защищены флагом Secure: по HTTP возврат из Authentik не сойдётся.
     if (!/^https:\/\/[^/\s]+/.test(next.redirectUrl)) {
       reject('sso_bad_redirect', 'Адрес возврата нужен https://<домен панели>/auth/authentik: вход через Authentik работает только по HTTPS')

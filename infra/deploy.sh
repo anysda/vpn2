@@ -149,7 +149,8 @@ print_ikev2_notice() {
 print_sso_notice() {
   (
     load_env ru
-    if [[ "${SSO_ENABLED:-false}" == true && -z "${SSO_CLIENT_SECRET:-}" ]] \
+    local secret="${SSO_CLIENT_SECRET:-}"
+    if [[ "${SSO_REQUESTED:-${SSO_ENABLED:-false}}" == true && -z "${secret//[[:space:]]/}" ]] \
        && ssh_exec 'test ! -f /etc/anysda/sso-runtime.json' >/dev/null 2>&1; then
       printf '%s\n' 'SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.'
     fi

@@ -20,7 +20,10 @@ class SsoRedeployTests(unittest.TestCase):
                                         text=True, capture_output=True, timeout=10)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 env = (root / 'infra/envs/ru.env').read_text()
-                self.assertIn("SSO_ENABLED='true'", env)
+                self.assertIn("SSO_REQUESTED='true'", env)
+                self.assertIn("SSO_ENABLED='false'", env)
+                self.assertIn("SSO_AUTO_REDIRECT='false'", env)
+                self.assertIn("SSO_PASSWORD_LOGIN='true'", env)
                 self.assertIn("SSO_CLIENT_SECRET=''", env)
 
     def test_runtime_takes_priority_and_missing_runtime_still_validates_seed(self):

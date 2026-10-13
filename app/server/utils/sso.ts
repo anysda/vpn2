@@ -156,13 +156,15 @@ export function defaultRedirectUrl(event: H3Event): string {
 
 export function ssoSettings(): SsoSettings {
   const s = load().stored
+  const discoveryUrl = discoveryFrom(s.authentikUrl, s.appSlug)
+  const enabled = s.enabled && !!s.clientId.trim() && !!discoveryUrl && !!s.clientSecret.trim()
   return {
-    enabled: s.enabled,
-    autoRedirect: s.autoRedirect,
-    passwordLogin: s.passwordLogin,
+    enabled,
+    autoRedirect: enabled && s.autoRedirect,
+    passwordLogin: !enabled || s.passwordLogin,
     label: s.label || 'Authentik',
     allowed: parseAllowedSubs(s.allowedSubs),
-    discoveryUrl: discoveryFrom(s.authentikUrl, s.appSlug),
+    discoveryUrl,
     clientId: s.clientId,
     clientSecret: s.clientSecret,
     redirectUrl: s.redirectUrl,
@@ -174,7 +176,7 @@ export function ssoSettings(): SsoSettings {
  * уходит на Authentik и возвращается в ошибку, вместо того чтобы увидеть форму.
  */
 export function ssoConfigured(s: SsoSettings = ssoSettings()): boolean {
-  return !!s.clientId && !!s.discoveryUrl
+  return !!s.clientId.trim() && !!s.discoveryUrl && !!s.clientSecret.trim()
 }
 
 export class SsoDenied extends Error {

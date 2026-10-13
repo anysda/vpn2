@@ -89,7 +89,7 @@ async function main() {
   await api('POST', '/api/auth/sign-in/username', { username: 'admin', password: process.env.ADMIN_PASSWORD })
 
   await api('PUT', '/api/admin/telegram', {
-    bot_token: '7714523096:AAHk3xQ9pLmZr0aVdW8sNfTq2YbC4eJ1u5o',
+    bot_token: '0000000000:front-test-placeholder',
     chat_id: '-1002318845510',
     admin_username: 'anysda_support',
   })

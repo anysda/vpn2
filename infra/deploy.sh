@@ -474,8 +474,11 @@ run_stage_on_host() {
   # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
   # thing 30-frontend still needs from the orchestrator side is the rails
   # template (anysda-config.yaml.tpl).
-  if [[ "$stage" == "30-frontend" ]]; then
+  if [[ "$stage" == @(30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl" || return
+    if [[ "$stage" == "35-telegram" ]]; then
+      push "$DEPLOY_ROOT/scripts/30-frontend.sh" || return
+    fi
   fi
 
   # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен генератор

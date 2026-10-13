@@ -11,7 +11,7 @@
 # entry node in Moscow can't reach api.telegram.org directly. Only the
 # Nuxt API calls stay local.
 #
-# Skipped automatically if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set.
+# Disables an existing bot if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set.
 # Prerequisites: stage 20 (sing-box with the local tg-proxy inbound).
 
 set -euo pipefail
@@ -21,8 +21,37 @@ set -euo pipefail
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 35-telegram is ru-only — skipping"; exit 0;; esac
 
+# docker restart сохраняет старое окружение. Пересоздаём панель штатной
+# стадией 30, только если секрет изменился. Сохраняем установленный образ:
+# включение бота не должно заодно обновлять панель из registry.
+sync_panel_secret() {
+  local panel current image frontend
+  panel=$(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Names}}')
+  [[ -n "$panel" ]] || return 0 # При полной установке 30 идёт после 35.
+  current=$(docker inspect --format '{{json .Config.Env}}' anysda-vpn2 | python3 -c '
+import json, sys
+print(next((v.split("=", 1)[1] for v in json.load(sys.stdin)
+            if v.startswith("NUXT_TGBOT_SECRET=")), ""))')
+  [[ "$current" != "${TGBOT_SECRET:-}" ]] || return 0
+  image=$(docker inspect --format '{{.Image}}' anysda-vpn2)
+  frontend=$(dirname "$0")/30-frontend.sh
+  echo "[$HOST_TAG] пересоздание anysda-vpn2 для передачи TGBOT_SECRET..."
+  (
+    set --
+    PANEL_IMAGE="$image"
+    PANEL_IMAGE_PULL=false
+    # shellcheck source=infra/scripts/30-frontend.sh
+    source "$frontend"
+  )
+}
+
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-  echo "[$HOST_TAG] 35-telegram: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID не заданы — пропуск"
+  bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
+  if [[ -n "$bot" ]]; then docker rm -f anysda-tgbot >/dev/null; fi
+  rm -f /etc/anysda/tgbot-secret.txt /etc/anysda/telegram-runtime.json
+  TGBOT_SECRET=''
+  sync_panel_secret
+  echo "[$HOST_TAG] 35-telegram: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID не заданы — бот выключен"
   echo "[$HOST_TAG] Чтобы включить бота: добавь секцию telegram: в config.yaml и перезапусти деплой"
   exit 0
 fi
@@ -42,7 +71,7 @@ mkdir -p /etc/anysda
 # 1. Generate shared secret (bot ↔ Nuxt)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/3] tgbot secret"
-if [[ ! -f /etc/anysda/tgbot-secret.txt ]]; then
+if [[ ! -s /etc/anysda/tgbot-secret.txt ]]; then
   openssl rand -base64 32 | tr -d '\n/+=' | head -c 32 > /etc/anysda/tgbot-secret.txt
   chmod 600 /etc/anysda/tgbot-secret.txt
   echo "[$HOST_TAG]   новый секрет создан"
@@ -50,6 +79,7 @@ else
   echo "[$HOST_TAG]   секрет уже существует — не перегенерируем"
 fi
 TGBOT_SECRET=$(cat /etc/anysda/tgbot-secret.txt)
+chmod 600 /etc/anysda/tgbot-secret.txt
 
 # Создаём runtime.json при первом запуске — UI (Nuxt) использует его как
 # source of truth для отображения. После изменения через UI бот рестартит сам
@@ -71,6 +101,30 @@ PYEOF
   echo "[$HOST_TAG]   telegram-runtime.json создан из config.yaml"
 fi
 
+# Изменённые в config.yaml поля применяем и к runtime, иначе старый файл
+# перекроет новые env. Неизменённые поля сохраняют настройки из UI.
+previous_bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
+if [[ -n "$previous_bot" ]]; then
+  previous_env=$(docker inspect --format '{{json .Config.Env}}' anysda-tgbot)
+  PREVIOUS_ENV="$previous_env" TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+    TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" TELEGRAM_ADMIN_USERNAME="${TELEGRAM_ADMIN_USERNAME:-}" python3 - <<'PYEOF'
+import json, os
+from pathlib import Path
+path = Path('/etc/anysda/telegram-runtime.json')
+runtime = json.loads(path.read_text())
+previous = dict(item.split('=', 1) for item in json.loads(os.environ['PREVIOUS_ENV']))
+changed = False
+for field in ('bot_token', 'chat_id', 'admin_username'):
+    key = 'TELEGRAM_' + field.upper()
+    value = os.environ[key]
+    if value != previous.get(key, ''):
+        runtime[field] = value
+        changed = True
+if changed:
+    path.write_text(json.dumps(runtime) + '\n')
+PYEOF
+fi
+
 # ----------------------------------------------------------------------------
 # 2. Pull bot image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
@@ -88,6 +142,10 @@ elif ! docker pull "$TGBOT_IMAGE" 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" EN
     || { echo "[$HOST_TAG] ✗ образа ${TGBOT_IMAGE} нет ни в registry, ни локально"; exit 1; }
   echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${TGBOT_IMAGE}"
 fi
+
+# Панель должна принять новый секрет до первого опроса ботом. Ошибка стадии
+# 30 прерывает деплой: успешный rc при старом env скрывал неработающего бота.
+sync_panel_secret
 
 # ----------------------------------------------------------------------------
 # 3. Run bot container
@@ -111,6 +169,7 @@ docker run -d \
   -v /var/lib/anysda-tgbot:/var/lib/anysda-tgbot \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \
+  -e TELEGRAM_ADMIN_USERNAME="${TELEGRAM_ADMIN_USERNAME:-}" \
   -e TGBOT_SECRET="$TGBOT_SECRET" \
   -e TGBOT_EVENT_PORT=8877 \
   -e TGBOT_POLL_STALL_SEC="${TGBOT_POLL_STALL_SEC:-300}" \
@@ -126,17 +185,6 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
 done
 echo "[$HOST_TAG] последние логи:"
 docker logs --tail 6 anysda-tgbot 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
-
-# Restart anysda-vpn so it picks up TGBOT_SECRET (if it was already running)
-# This is needed when stage 35 is re-run independently after stage 30.
-# Контейнер зовут anysda-vpn2 — `docker restart anysda-vpn` (без двойки) молча
-# падал в `|| true`, и панель секрет не подхватывала. Заодно не глушим ошибку
-# насовсем: если рестарт не удался, это видно в логе стадии.
-if docker ps --filter name=anysda-vpn2 --format '{{.Names}}' | grep anysda-vpn2 >/dev/null; then
-  echo "[$HOST_TAG] перезапуск anysda-vpn2 для передачи TGBOT_SECRET..."
-  docker restart anysda-vpn2 >/dev/null \
-    || echo "[$HOST_TAG]   ⚠ рестарт anysda-vpn2 не удался — панель могла остаться со старым TGBOT_SECRET"
-fi
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"

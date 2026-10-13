@@ -4,6 +4,7 @@ import { and, asc, count, eq, gt, lt, lte, ne, or } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { botOutbox } from '../database/schema'
 import type { BotDelivery } from '../../shared/bot-delivery'
+import { botConfigured } from './telegram-config'
 
 const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
 const MAX_ATTEMPTS = DELAYS.length + 1
@@ -16,8 +17,12 @@ function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'sta
   return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0 }
 }
 
-/** Запись завершена до первого POST. Один UUID на все попытки, в том числе после рестарта. */
-export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`): Promise<BotDelivery> {
+/**
+ * Запись завершена до первого POST. Один UUID на все попытки, в том числе после рестарта.
+ * Без настроенного бота доставлять некому: в очередь не ставим, ответ null.
+ */
+export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`): Promise<BotDelivery | null> {
+  if (!botConfigured()) return null
   const now = Date.now()
   const body = JSON.stringify({ ...payload, type })
   if (Buffer.byteLength(body) > 128 * 1024) throw createError({ statusCode: 413, message: 'Уведомление слишком большое. Повторов не будет.' })
@@ -88,6 +93,9 @@ async function attemptOnce(id: string) {
 export async function retryBotEvents() {
   const db = useDb()
   const now = Date.now()
+  // Ожидающие от времени, когда бот не был настроен (или его сняли), не
+  // доставить: удаляем, а не повторяем и не показываем очередью.
+  if (!botConfigured()) await db.delete(botOutbox).where(eq(botOutbox.status, 'queued'))
   await db.update(botOutbox).set({ status: 'failed', payload: '' }).where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now)))
   await db.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
   const rows = await db.select({ id: botOutbox.id }).from(botOutbox)
@@ -96,11 +104,12 @@ export async function retryBotEvents() {
 }
 
 export async function botDeliveries(): Promise<BotDelivery[]> {
+  const shown = botConfigured() ? or(ne(botOutbox.status, 'queued'), gt(botOutbox.lastFailure, 0)) : ne(botOutbox.status, 'queued')
   const rows = await useDb().select({ id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts })
-    .from(botOutbox).where(or(ne(botOutbox.status, 'queued'), gt(botOutbox.lastFailure, 0))).orderBy(asc(botOutbox.created))
+    .from(botOutbox).where(shown).orderBy(asc(botOutbox.created))
   return rows.map(delivery)
 }
 
-export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery> {
+export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery | null> {
   return notifyBot('client_notify', { chatId, text }, `Уведомление клиенту «${name}»`)
 }

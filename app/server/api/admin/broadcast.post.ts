@@ -4,6 +4,7 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { notifyBot } from '../../utils/bot-events'
+import { botConfigured } from '../../utils/telegram-config'
 import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({ text: z.string().trim().min(1).max(4096) })
@@ -12,6 +13,9 @@ const Body = z.object({ text: z.string().trim().min(1).max(4096) })
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const { text } = await readBodyAs(event, Body)
+  if (!botConfigured()) {
+    throw createError({ statusCode: 409, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен. Рассылка не отправлена.' })
+  }
 
   const rows = await useDb()
     .select({ chatId: clients.tgChatId })

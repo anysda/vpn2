@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, test, toast } from './support/fixtures'
+import { expect, test, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 
 function botsCard(page: Page) {
@@ -103,5 +103,34 @@ test.describe('настройки Telegram', () => {
     }
     await page.reload()
     await expect(card.getByText('НЕНАСТРОЕН', { exact: true })).toBeVisible()
+  })
+
+  test('бот не настроен: новый клиент не встаёт в очередь, рассылка отвечает отказом', async ({ page, guard }) => {
+    guard.allow(409, /\/api\/admin\/broadcast$/, 'POST')
+    await openHome(page)
+    test.skip((await (await page.request.get('/api/admin/telegram')).json()).configured, 'нужна панель без бота')
+    const name = uniq('nobot')
+    const created = await page.request.post('/api/clients', { data: { name } })
+    expect(created.ok()).toBe(true)
+    const clientId = (await created.json()).id
+    try {
+      const deliveries = await (await page.request.get('/api/admin/bot-deliveries')).json()
+      console.log('без бота, очередь после создания клиента:', JSON.stringify(deliveries.filter((row: { status: string }) => row.status === 'queued')))
+      expect(deliveries.filter((row: { label: string }) => row.label === `Уведомление о клиенте «${name}»`)).toEqual([])
+      const card = botsCard(page)
+      const polled = page.waitForResponse(response => response.url().endsWith('/api/admin/bot-deliveries'))
+      await page.reload()
+      await polled
+      await expect(card.getByText('НЕНАСТРОЕН', { exact: true })).toBeVisible()
+      await expect(card.getByText(/уведомлений в очереди/)).toHaveCount(0)
+
+      await page.getByLabel('Сообщение юзерам').fill('e2e без бота')
+      await page.getByRole('button', { name: 'Отправить', exact: true }).click()
+      await expect(toast(page, 'Telegram-бот не настроен. Рассылка не отправлена.')).toBeVisible()
+      console.log('без бота, рассылка:', await toast(page, 'Telegram-бот не настроен.').textContent())
+    }
+    finally {
+      await page.request.delete(`/api/clients/${clientId}`)
+    }
   })
 })

@@ -1,8 +1,10 @@
 """Запуск всего мастера со stdin и PTY; сетевые ответы фиксированы."""
 import importlib.util
+import difflib
 import os
 from pathlib import Path
 import pty
+import runpy
 import select
 import shutil
 import signal
@@ -49,6 +51,16 @@ def run_setup(directory, answers):
 
 
 class SetupInputTests(unittest.TestCase):
+    def test_merge_keeps_inline_comments_outside_yaml_quotes(self):
+        module = runpy.run_path(str(ROOT / 'infra/lib/config2env.py'))
+        for value in ("'old # secret'", "'it''s # secret'", '"escaped \\" # secret"',
+                      'plain#secret', "''", ''):
+            with self.subTest(value=value):
+                original = f'admin:\n  password: {value}  # keep credential note\n'
+                result = module['merge_setup_config'](original, "admin:\n  password: 'new # secret'\n")
+                self.assertEqual(yaml.safe_load(result)['admin']['password'], 'new # secret')
+                self.assertIn('# keep credential note', result)
+
     def test_merge_preserves_example_except_answered_fields(self):
         spec = importlib.util.spec_from_file_location('config2env', ROOT / 'infra/lib/config2env.py')
         module = importlib.util.module_from_spec(spec)
@@ -178,15 +190,15 @@ orchestrator_pubkey: 'ssh-ed25519 fake' # synthetic public key
         existing = '''# Keep this comment
 entry:
   host: 192.0.2.10
-  password: old entry password
+  password: old entry password # entry credential
   public_host: 192.0.2.11 # public endpoint
 exits:
   - tag: se
     host: 192.0.2.2
-    password: old exit password
+    password: 'old # exit password' # exit credential
     hy2_direct_port: 5443 # selected for this exit
 admin:
-  user: oldadmin
+  user: "oldadmin" # panel login
   password: old password
   ssh_pubkey: ssh-ed25519 old
 ports:
@@ -212,9 +224,13 @@ youtube:
             root = prepare(directory)
             config = root / 'config.yaml'
             config.write_text(existing)
-            for _ in range(2):
+            for attempt in range(2):
                 code, output = run_setup(directory, '\n'.join(answers) + '\n')
                 self.assertEqual(code, 0, output)
+                if attempt == 0:
+                    print(''.join(difflib.unified_diff(existing.splitlines(True),
+                                                     config.read_text().splitlines(True),
+                                                     fromfile='config.yaml before', tofile='config.yaml after')))
                 actual = yaml.safe_load(config.read_text())
                 self.assertEqual(actual.get('ports'), {'hy2_direct': 4443})
                 self.assertEqual(actual['panel']['image'], 'example/panel:pinned')
@@ -236,9 +252,12 @@ youtube:
                 self.assertEqual(actual['backup']['passphrase'], 'new backup password')
                 self.assertEqual(actual['backup']['schedule'], 'off')
                 for comment in ('# Keep this comment', '# public endpoint', '# keep this port',
-                                '# selected for this exit', '# custom directory'):
+                                '# selected for this exit', '# custom directory',
+                                '# entry credential', '# exit credential', '# panel login'):
                     self.assertIn(comment, config.read_text())
                 self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                self.assertIn('обновляет только спрошенные поля', output)
+                self.assertIn('остальные настройки и комментарии в config.yaml сохраняются', output)
 
     def test_exit_tag_syntax(self):
         body = (ROOT / 'setup.sh').read_text().split('validate_tag() {', 1)[1].split('\n}', 1)[0]

@@ -10,6 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 MOCK = r'''#!/usr/bin/env python3
+import datetime
 import json
 import os
 from pathlib import Path
@@ -33,16 +34,42 @@ elif name == 'curl':
     if fault == url:
         sys.exit(22)
     if url.endswith('/targets'):
+        counter = Path(os.environ['SCRAPE_COUNTER'])
+        count = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(count))
         if fault == 'bad-json':
             print('{')
         else:
-            targets = [{'labels': {'host': host}, 'health': 'up'} for host in ('ru', 'exit')]
+            stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            targets = [{'labels': {'host': host}, 'health': 'up', 'lastScrape': stamp}
+                       for host in ('ru', 'exit')]
             if fault == 'empty-targets':
                 targets = []
             elif fault == 'missing-target':
                 targets.pop()
             elif fault == 'down-target':
                 targets[1]['health'] = 'down'
+            elif fault == 'warming-up' and count < 4:
+                targets[1]['health'] = 'down'
+                targets[1]['lastScrape'] = '2000-01-01T00:00:00Z'
+            elif fault == 'stale-then-down':
+                targets[1]['health'] = 'up' if count == 1 else 'down'
+                if count == 1:
+                    targets[1]['lastScrape'] = '2000-01-01T00:00:00Z'
+            elif fault == 'stale-scrape':
+                targets[1]['lastScrape'] = '2000-01-01T00:00:00Z'
+            elif fault == 'future-scrape':
+                targets[1]['lastScrape'] = '2999-01-01T00:00:00Z'
+            elif fault == 'missing-scrape':
+                del targets[1]['lastScrape']
+            elif fault == 'invalid-scrape':
+                targets[1]['lastScrape'] = 'unknown'
+            elif fault == 'naive-scrape':
+                targets[1]['lastScrape'] = stamp.split('+')[0]
+            elif fault == 'empty-then-up' and count < 4:
+                targets = []
+            elif fault == 'missing-then-up' and count < 4:
+                targets.pop()
             print(json.dumps({'status': 'success', 'data': {'activeTargets': targets}}))
 elif name == 'ip':
     if fault == 'bare':
@@ -106,10 +133,40 @@ class VerifyTest(unittest.TestCase):
             env = {**os.environ, 'PATH': f'{bin_dir}:' + os.environ['PATH'],
                    'HOST_TAG': role, 'MGMT_IP': '198.51.100.254', 'EXIT_TAGS': '' if fault == 'bare' else 'exit',
                    'YT_ROUTE': youtube, 'FAULT': fault,
+                   'SCRAPE_COUNTER': str(root / 'scrape-counter'),
+                   'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
+                   'VERIFY_SCRAPE_INTERVAL': '0.02',
                    'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443'}
             env.pop('BASH_ENV', None)
-            return subprocess.run(['bash', str(script)], env=env, text=True,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+            result = subprocess.run(['bash', str(script)], env=env, text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+            counter = root / 'scrape-counter'
+            result.scrape_requests = int(counter.read_text()) if counter.exists() else 0
+            return result
+
+    def test_fresh_scrape_after_tunnel_restart_ten_times(self):
+        false_failures = 0
+        for attempt in range(10):
+            result = self.run_verify('warming-up')
+            print(f'10 -> 20 -> 99 simulation {attempt + 1}: exit={result.returncode}, '
+                  f'scrapes={result.scrape_requests}')
+            false_failures += result.returncode != 0
+        print(f'false failures: {false_failures}/10')
+        self.assertEqual(false_failures, 0)
+
+    def test_discovery_settles(self):
+        for fault in ('empty-then-up', 'missing-then-up'):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertGreaterEqual(result.scrape_requests, 4)
+
+    def test_stale_up_cannot_hide_down_target(self):
+        result = self.run_verify('stale-then-down')
+        print(result.stdout, end='')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('verify done', result.stdout)
+        self.assertGreater(result.scrape_requests, 1)
 
     def test_bare_host(self):
         result = self.run_verify('bare')
@@ -142,6 +199,9 @@ class VerifyTest(unittest.TestCase):
             'stale-status': 'ikev2 sync', 'future-status': 'ikev2 sync',
             'empty-targets': 'mgmt scrape', 'missing-target': 'mgmt scrape',
             'down-target': 'mgmt scrape', 'bad-json': 'mgmt scrape',
+            'stale-scrape': 'mgmt scrape', 'future-scrape': 'mgmt scrape',
+            'missing-scrape': 'mgmt scrape', 'invalid-scrape': 'mgmt scrape',
+            'naive-scrape': 'mgmt scrape',
             'http://127.0.0.1:8428/api/v1/targets': 'mgmt scrape',
             'http://127.0.0.1:80/': 'frontend', 'http://127.0.0.1:8428/-/healthy': 'vmsingle',
             'ssh-error': 'ssh exit', 'ss-error': 'tproxy udp', 'ip-error': 'tproxy:',

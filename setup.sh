@@ -211,7 +211,7 @@ printf '%b  └─────────────────────�
 ' "$B" "$E" >&2
 hint "Работает по IP — домены не нужны"
 hint "Деплой идёт от root по SSH-паролю (config.yaml будет chmod 600)"
-hint "Повторный ./setup.sh заново создаёт config.yaml, сохраняя только ключ оркестратора"
+hint "Повторный ./setup.sh обновляет только спрошенные поля; остальные настройки и комментарии в config.yaml сохраняются"
 
 header "Сколько выходных серверов?"
 hint "Минимум 1. Каждый даёт отдельный Hysteria2 endpoint."
@@ -387,7 +387,7 @@ backup_s3_access_key=''
 backup_s3_secret_key=''
 backup_enabled_q=$(ask_yn "Включить бэкапы?" "y")
 if [[ "$backup_enabled_q" == "y" ]]; then
-  # Дефолт — daily в 02:00 по локальной TZ entry-ноды. Выключить можно явным "n".
+  # Daily — с 02:00 по системной TZ entry, задержка до 5 мин. Выключить — "n".
   backup_schedule_q=$(ask_yn "Ежедневный бэкап с 02:00 (TZ entry, случайная задержка до 5 мин)?" "y")
   [[ "$backup_schedule_q" == "y" ]] && backup_schedule='daily'
 

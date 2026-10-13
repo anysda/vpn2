@@ -28,6 +28,52 @@ tproxy_rule() { ip rule list | grep -E 'fwmark 0x42 lookup 101([[:space:]]|$)' >
 tproxy_route() { ip route show table 101 | grep -E '^local default dev lo([[:space:]]|$)' >/dev/null; }
 ikev2_conn() { swanctl --list-conns | grep '^anysda-ikev2:' >/dev/null; }
 
+mgmt_scrape() {
+  local since deadline remaining targets detail='API targets недоступен'
+  since=$(date +%s.%N)
+  deadline=$((SECONDS + ${VERIFY_SCRAPE_TIMEOUT:-30}))
+  echo "[$HOST_TAG] mgmt scrape: жду свежие targets up (до ${VERIFY_SCRAPE_TIMEOUT:-30} с)"
+  while (( SECONDS < deadline )); do
+    remaining=$((deadline - SECONDS))
+    (( remaining <= 5 )) || remaining=5
+    if targets=$(curl -fsS --max-time "$remaining" http://127.0.0.1:8428/api/v1/targets); then
+      if detail=$(python3 -c '
+import datetime, json, sys, time
+since = float(sys.argv[1])
+expected = set(sys.argv[2].split())
+try:
+    data = json.load(sys.stdin)
+    targets = data["data"]["activeTargets"]
+    if data["status"] != "success" or not isinstance(targets, list) or not targets:
+        raise ValueError("пустой/некорректный список targets")
+    seen, failures = set(), []
+    for target in targets:
+        host = target["labels"].get("host", "?")
+        seen.add(host)
+        stamp = datetime.datetime.fromisoformat(target["lastScrape"].replace("Z", "+00:00"))
+        fresh = stamp.tzinfo is not None and since <= stamp.timestamp() <= time.time()
+        health = target["health"]
+        if health != "up" or not fresh:
+            failures.append(f"{host}: health={health}, свежий={fresh}")
+    failures.extend(f"{host}: отсутствует" for host in sorted(expected - seen))
+    if failures:
+        raise ValueError("; ".join(failures))
+except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error:
+    print(f"targets: {error}")
+    sys.exit(1)
+' "$since" "ru ${EXIT_TAGS:-}" <<<"$targets"); then
+        echo "[$HOST_TAG] mgmt scrape: все targets up, скрейпы свежее начала проверки"
+        return 0
+      fi
+    else
+      detail='API targets недоступен'
+    fi
+    (( SECONDS < deadline )) && sleep "${VERIFY_SCRAPE_INTERVAL:-1}"
+  done
+  echo "[$HOST_TAG] mgmt scrape: таймаут — $detail" >&2
+  return 1
+}
+
 echo "[$HOST_TAG] verify — basic checks"
 check 'sysctl net.ipv4.ip_forward = 1' forwarding
 check 'ufw active' firewall
@@ -36,18 +82,9 @@ check 'node_exporter active' service node_exporter
 check 'sing-box active' service sing-box
 
 if [[ "$HOST_TAG" == ru ]]; then
-  # Один снимок API: пустой список и отсутствующий ожидаемый host — тоже отказ.
-  if targets=$(curl -fsS --max-time 5 http://127.0.0.1:8428/api/v1/targets) \
-     && jq -e '.status == "success" and (.data.activeTargets | type == "array" and length > 0)' <<<"$targets" >/dev/null; then
-    check 'mgmt scrape: все targets up' jq -e \
-      'all(.data.activeTargets[]; .health == "up")' <<<"$targets"
-    for tag in ru ${EXIT_TAGS:-}; do
-      check "mgmt scrape: $tag присутствует и up" jq -e --arg host "$tag" \
-        'any(.data.activeTargets[]; .labels.host == $host and .health == "up")' <<<"$targets"
-    done
-  else
-    fail 'mgmt scrape: VictoriaMetrics недоступен или список targets пуст/некорректен'
-  fi
+  # После 10/20 первый снимок ещё может относиться к старому туннелю.
+  # 25-monitoring задаёт интервал 2 с: 30 с хватает на несколько новых проб.
+  check 'mgmt scrape: все ожидаемые targets up после свежего скрейпа' mgmt_scrape
   for tag in ${EXIT_TAGS:-}; do
     check "ssh $tag через hy2-mgmt" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$tag" true
   done

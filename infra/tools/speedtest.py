@@ -120,25 +120,39 @@ def log(msg):
 # --- панель ------------------------------------------------------------------
 
 PANEL_CALL = r'''
-set -e
+set -euo pipefail
 # Сессия живёт между вызовами: панель считает в лимит попыток и удачные входы,
 # и вход на каждое переключение экзита за прогон упирается в 429.
 umask 077
+settings=$(python3 - <<'PY'
+from pathlib import Path
+import runpy, shlex
+root = Path('/opt/anysda-vpn2')
+parser = runpy.run_path(str(root / 'infra/lib/config2env.py'))
+config = parser['parse_yaml']((root / 'config.yaml').read_text())
+domain = config['panel'].get('domain', '')
+origin = 'https://' + parser['normalize_domain'](domain, 'panel.domain') if domain else 'http://127.0.0.1:51821'
+print('origin=' + shlex.quote(origin))
+print('user=' + shlex.quote(config['admin'].get('user') or 'anysda'))
+PY
+)
+eval "$settings"
 jar=/root/.speedtest-panel.jar
-if ! curl -fsS -b "$jar" -c "$jar" http://127.0.0.1:51821/api/clients > /tmp/.speedtest-clients.json 2>/dev/null; then
+clients=$(mktemp)
+trap 'rm -f "$clients"' EXIT
+if ! curl -fsS -b "$jar" -c "$jar" "$origin/api/clients" > "$clients" 2>/dev/null; then
   pw=$(cat /etc/anysda/admin-password.txt)
-  user=$(awk '/^admin:/{a=1;next} a&&/^[^ ]/{a=0} a&&/user:/{print $2; exit}' /opt/anysda-vpn2/config.yaml)
   python3 -c 'import json,sys; print(json.dumps({"username": sys.argv[1] or "anysda", "password": sys.argv[2]}))' "$user" "$pw" \
-    | curl -fsS -c "$jar" -H 'Content-Type: application/json' -H 'Origin: http://127.0.0.1:51821' \
-      --data @- http://127.0.0.1:51821/api/auth/sign-in/username >/dev/null
-  curl -fsS -b "$jar" http://127.0.0.1:51821/api/clients > /tmp/.speedtest-clients.json
+    | curl -fsS -c "$jar" -H 'Content-Type: application/json' -H "Origin: $origin" \
+      --data @- "$origin/api/auth/sign-in/username" >/dev/null
+  curl -fsS -b "$jar" "$origin/api/clients" > "$clients"
 fi
 for pair in $PATCHES; do
   id=${pair%%=*}; exit_tag=${pair#*=}
-  curl -fsS -b "$jar" -X PATCH -H 'Content-Type: application/json' \
-    --data "{\"preferredExit\": \"$exit_tag\"}" "http://127.0.0.1:51821/api/clients/$id" >/dev/null
+  curl -fsS -b "$jar" -X PATCH -H 'Content-Type: application/json' -H "Origin: $origin" \
+    --data "{\"preferredExit\": \"$exit_tag\"}" "$origin/api/clients/$id" >/dev/null
 done
-cat /tmp/.speedtest-clients.json; rm -f /tmp/.speedtest-clients.json
+cat "$clients"
 '''
 
 

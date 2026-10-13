@@ -461,12 +461,14 @@ Pre-restore safety snapshots складываются в `/var/backups/anysda-vp
 
 ### Расписание
 
-Бэкап раз в сутки в **02:00 по локальной TZ entry-ноды** — `systemd.timer`
-с `Persistent=true` (если нода была выключена в 02:00, прогон случится
+Бэкап раз в сутки с **02:00 по системному часовому поясу entry-ноды**,
+со случайной задержкой до 5 минут — `systemd.timer` с
+`OnCalendar=*-*-* 02:00:00`, `RandomizedDelaySec=300`, `AccuracySec=1us` и `Persistent=true`
+(если нода была выключена в 02:00, прогон случится
 после загрузки). По умолчанию **включено** (`backup.schedule: daily`);
 отключить — `schedule: off` в config.yaml или ответом «n» в setup.sh.
 
-Юнит читает системную таймзону через `timedatectl`. Хочешь МСК вместо UTC —
+В `OnCalendar` часовой пояс не указан: systemd использует системный. Хочешь МСК вместо UTC —
 один раз на entry:
 ```bash
 ssh root@<entry> 'timedatectl set-timezone Europe/Moscow'
@@ -546,11 +548,11 @@ exit-нод. Вход по паролю на экзитах отключён (VP
 
 Заполняется интерактивно через `./setup.sh` (вопросы про бэкап появляются
 после Telegram-настройки). Все настройки можно пропустить нажатием Enter:
-включён по умолчанию, backend=local, **schedule=daily** (02:00 по локальной
-TZ entry), passphrase auto-генерится и распечатывается **один раз** в выводе
-мастера — **запиши её в этот момент в менеджер паролей и храни ВНЕ
-entry-ноды**: больше она нигде открыто не покажется, а потеря = потеря
-всех существующих архивов (см. предупреждение ниже).
+включён по умолчанию, backend=local, **schedule=daily** (с 02:00 по системной
+TZ entry, случайная задержка до 5 минут). Passphrase автоматически генерируется
+и сохраняется в `config.yaml` (chmod 600), в выводе мастера её нет.
+**Сохраните config.yaml в защищённом месте ВНЕ entry-ноды**: потеря passphrase
+означает потерю всех существующих архивов (см. предупреждение ниже).
 
 Прямой вид в `config.yaml` (см. [config.example.yaml](config.example.yaml)):
 
@@ -560,7 +562,7 @@ backup:
   backend: local              # local | s3
   passphrase: ABC123XYZ...    # age symmetric passphrase
   retention: 10
-  schedule: daily             # off | daily — 02:00 по локальной TZ entry-ноды
+  schedule: daily             # off | daily — с 02:00 по системной TZ entry, задержка до 5 мин
   local:
     dir: /var/backups/anysda-vpn2
   # s3:                       # раскомментировать когда backend: s3

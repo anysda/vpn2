@@ -2,7 +2,8 @@
 # Stage 26 — backup tooling on RU.
 # Раскатывает /usr/local/bin/anysda-{backup,restore,backup-list}.sh
 # Рендерит /etc/anysda/backup.env (chmod 600) с passphrase + S3-кредами из
-# config.yaml. Опционально ставит systemd timer на ежедневный backup в 02:00 UTC.
+# config.yaml. Опционально ставит systemd timer: ежедневно с 02:00 по системной
+# TZ entry, со случайной задержкой до 5 минут (RandomizedDelaySec=300).
 # Запускается ТОЛЬКО на ru. На exit-нодах skip.
 #
 # Idempotent: повторный запуск перезаписывает скрипты+env, рестартит timer.
@@ -173,7 +174,7 @@ EOF
 
 cat > /etc/systemd/system/anysda-backup.timer <<'EOF'
 [Unit]
-Description=Daily anysda-vpn2 backup at 02:00 (local time of entry node)
+Description=Daily anysda-vpn2 backup from 02:00 (entry system timezone), random delay up to 5 min
 
 [Timer]
 # OnCalendar без суффикса TZ → systemd берёт системную таймзону entry-ноды.
@@ -183,6 +184,8 @@ OnCalendar=*-*-* 02:00:00
 Persistent=true
 Unit=anysda-backup.service
 RandomizedDelaySec=300
+# Не добавлять стандартное окно группировки пробуждений (ещё до минуты).
+AccuracySec=1us
 
 [Install]
 WantedBy=timers.target

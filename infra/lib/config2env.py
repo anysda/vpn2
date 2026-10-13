@@ -334,7 +334,12 @@ def merge_setup_config(previous, answers):
                 keyed[name] = old_head + '\n' + merge_mapping(old_body, new_body, indent + 2)
             else:
                 # У скаляра old_body содержит только комментарии и пустые строки.
-                keyed[name] = new_head + '\n' + old_body
+                # Комментарий в строке значения тоже сохраняем; # внутри
+                # кавычек (в том числе с '' или \" внутри) — часть значения.
+                value = old_head.partition(':')[2].lstrip()
+                match = re.fullmatch(r'''(?:'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|.*?)([ \t]+\#.*)?''', value)
+                comment = (' ' + value) if value.startswith('#') else (match[1] or '')
+                keyed[name] = new_head + comment + '\n' + old_body
         return prefix + ''.join(keyed.values())
 
     result = merge_mapping(previous.rstrip() + '\n', answers, 0)

@@ -83,6 +83,14 @@ try {
         await delay(100)
       }
       assert(ready, 'панель должна запуститься')
+      // /api/version отвечает до завершения async init. На пустой БД ждём
+      // создания администратора, иначе скорость Argon2 определяет исход входа.
+      if (mode === 'aaaa') {
+        for (let attempt = 0; attempt < 100 && !logs.includes('admin user created'); attempt++) {
+          await delay(100)
+        }
+        assert(logs.includes('admin user created'), 'администратор должен быть создан')
+      }
       if (mode) assert.equal((await api('/api/wg-endpoint-warning')).status, 401)
       const login = await api('/api/auth/sign-in/username', { username: 'admin', password })
       assert.equal(login.status, 200)

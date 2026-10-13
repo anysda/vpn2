@@ -581,7 +581,9 @@ run_stage() {
   fi
   for h in $hosts; do
     if [[ -n "$verify_logs" ]]; then
-      run_stage_on_host "$stage" "$h" 2>&1 | tee "$verify_logs/$h" &
+      # Подоболочка: у голого `cmd | tee &` $! — это tee, и bash 5.2
+      # отдаёт wait её код 0, если задание уже завершилось.
+      ( set -o pipefail; run_stage_on_host "$stage" "$h" 2>&1 | tee "$verify_logs/$h" ) &
     else
       run_stage_on_host "$stage" "$h" &
     fi

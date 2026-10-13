@@ -50,6 +50,7 @@ push() { [[ $FAILURE != push ]] || return 2; }
 ssh_exec() {
   if [[ $* == *apt_prepare* ]]; then [[ $FAILURE != apt ]] || return 2
   elif [[ $* == *99-verify.sh* ]]; then
+    [[ $HOST_TAG != ru ]] || sleep 1  # экзит завершается раньше ru: ловит потерю кода в wait
     cat "$DEPLOY_ROOT/$HOST_TAG.out"
     return "$(<"$DEPLOY_ROOT/$HOST_TAG.rc")"
   elif [[ $* == *deploy_done* ]]; then

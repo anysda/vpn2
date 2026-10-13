@@ -121,10 +121,35 @@ class VerifyTest(unittest.TestCase):
                 status.write_text('{' if fault == 'bad-status' else json.dumps({'updated': time.time() - age}))
             yt = root / 'yt-check'
             if fault != 'missing-yt':
-                yt.write_text('#!/bin/sh\nexit ' + ('1' if fault == 'yt-failed' else '0') + '\n')
+                yt.write_text('#!/bin/sh\n' + ('echo "UNKNOWN: HTTP 403 не позволяет измерить обход."\n'
+                              if fault == 'yt-unmeasured' else '')
+                              + 'exit ' + ('2' if fault == 'yt-unmeasured' else
+                                           '1' if fault == 'yt-failed' else '0') + '\n')
                 yt.chmod(0o755)
             failover = root / 'yt-failover'
-            failover.write_text('#!/bin/sh\nexit ' + ('1' if fault == 'yt-failover' else '0') + '\n')
+            # Настоящий --status на фикстуре selector/state: воспроизводит и
+            # старый ложный успех, и новый код «нет измерений» без живого хоста.
+            watch_ref = os.environ.get('VERIFY_REF')
+            watch_source = subprocess.check_output(
+                ['git', 'show', f'{watch_ref}:infra/lib/yt-failover.py'], cwd=ROOT, text=True,
+            ) if watch_ref else (ROOT / 'infra/lib/yt-failover.py').read_text()
+            watch_file = root / 'watch.py'
+            watch_file.write_text(watch_source)
+            state_file = root / 'probe.json'
+            state_file.write_text(json.dumps({
+                'good': 0 if fault == 'yt-no-sample' else 3, 'bad': 0,
+                'last_probe': 'TCP video: HTTP 403' if fault == 'yt-no-sample' else 'TCP video: HTTP 206',
+                'unmeasured': fault == 'yt-no-sample', 'checked_at': time.time(),
+            }))
+            config = root / 'router.json'
+            config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
+            failover.write_text('#!/usr/bin/env python3\nimport runpy\nfrom pathlib import Path\n'
+                                f'watch = runpy.run_path({str(watch_file)!r})\n'
+                                'main = watch["main"]\n'
+                                f'main.__globals__.update(CONFIG=Path({str(config)!r}), '
+                                f'STATE=Path({str(state_file)!r}), api=lambda _: {{"now": "youtube-ru"}})\n'
+                                + ('raise SystemExit(1)\n' if fault == 'yt-failover' else
+                                   'raise SystemExit(main())\n'))
             failover.chmod(0o755)
             ref = os.environ.get('VERIFY_REF')
             source = subprocess.check_output(
@@ -138,7 +163,8 @@ class VerifyTest(unittest.TestCase):
             script = root / 'verify.sh'
             script.write_text(source)
             env = {**os.environ, 'PATH': f'{bin_dir}:' + os.environ['PATH'],
-                   'HOST_TAG': role, 'MGMT_IP': '198.51.100.254', 'EXIT_TAGS': '' if fault == 'bare' else 'exit',
+                   'HOST_TAG': role, 'MGMT_IP': '198.51.100.254',
+                   'EXIT_TAGS': '' if fault in ('bare', 'empty-exits') else 'exit',
                    'YT_ROUTE': youtube, 'FAULT': fault,
                    'SCRAPE_COUNTER': str(root / 'scrape-counter'),
                    'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
@@ -194,6 +220,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_individual_entry_failures(self):
         faults = {
+            'empty-exits': 'ssh экзитов',
             'lost-ufw': 'ufw', 'lost-tproxy': 'tproxy:', 'lost-mark-accept': 'tproxy:',
             'forwarding': 'ip_forward', 'firewall': 'ufw',
             'fail2ban': 'fail2ban', 'node_exporter': 'node_exporter', 'sing-box': 'sing-box',
@@ -233,6 +260,20 @@ class VerifyTest(unittest.TestCase):
                 result = self.run_verify(fault, youtube='zapret')
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn(f'✗ {check}:', result.stdout)
+
+    def test_unmeasured_checks_are_not_green_and_block_verify(self):
+        for fault, label in (('yt-no-sample', 'yt-failover: selector'),
+                             ('yt-unmeasured', 'yt-zapret: A/B-проверка')):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault, youtube='zapret')
+                print('\n'.join(line for line in result.stdout.splitlines()
+                                if label in line or 'good=' in line or 'verify ' in line))
+                print(f'exit={result.returncode}')
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn('не проверено:', result.stdout)
+                self.assertIn('HTTP 403', result.stdout)
+                self.assertNotIn(f'✓ {label}', result.stdout)
+                self.assertNotIn('verify done', result.stdout)
 
     def test_individual_exit_failures(self):
         for fault in ('port-443', 'port-8443', 'port-9443', 'missing-mgmt-port', 'sing-box', 'ss-error'):

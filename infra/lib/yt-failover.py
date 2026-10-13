@@ -13,7 +13,7 @@ YT_PROBE_VIDEO позволяет выбрать другой общедосту
 Коды пробы: 0 — успех, 1 — поломка обхода/сетевой провал видео, 2 — не измерено.
 --probe-quic отдельно измеряет QUIC (нужен curl с HTTP3); результат не меняет
 selector: при allow владелец допускает задержку до отката плеера на TCP.
---status читает текущий selector и результат последней пробы без изменений.
+--status читает selector и последнюю пробу: 2, если свежего измерения нет.
 """
 import json
 import math
@@ -22,6 +22,7 @@ from pathlib import Path
 import pwd
 import subprocess
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -138,7 +139,8 @@ def probe(quic=False):
         transport = 'QUIC' if quic else 'TCP'
         return good, (f'{transport} video: HTTP {stats.get("http_code", 0)}, '
                       f'{stats.get("size_download", 0)} байт, '
-                      f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}')
+                      f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
+                      f'CDN={parsed.hostname}')
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         # stdout yt-dlp и подписанные URL не пишем в журнал.
         # Внешний timeout может означать зависание утилиты. Сетевой таймаут
@@ -176,6 +178,7 @@ def tick(path, sample):
         state['good'] = min(HITS, state['good'] + 1) if good else 0
         state['bad'] = min(HITS, state['bad'] + 1) if not good else 0
     state['last_probe'] = detail
+    state['checked_at'] = time.time()
     save(path, state)
     target = (current if unmeasured else
               'youtube-ru' if state['good'] >= HITS else
@@ -203,14 +206,34 @@ def main():
     if not any(o.get('tag') == 'youtube-auto' for o in cfg.get('outbounds', [])):
         # Стадия 19 предшествует 20: старый роутер пока без selector.
         print('YouTube: ожидаю конфиг youtube-auto от стадии 20', flush=True)
-        return 0
+        return 2 if sys.argv[1:] == ['--status'] else 0
     if sys.argv[1:] == ['--status']:
-        print('YouTube selector: ' + api('GET')['now'])
-        if STATE.exists():
-            state = json.loads(STATE.read_text())
-            print(f'good={state["good"]} bad={state["bad"]}; '
-                  f'{"не измерено: " if state.get("unmeasured") else ""}'
-                  f'{state.get("last_probe", "нет измерений")}')
+        current = api('GET')['now']
+        print('YouTube selector: ' + current)
+        if current not in ('youtube-ru', 'foreign-best'):
+            print('неизвестный выход selector')
+            return 1
+        if not STATE.exists():
+            print('нет измерений видеопотока')
+            return 2
+        state = json.loads(STATE.read_text())
+        if not isinstance(state, dict):
+            print('некорректное состояние видеопробы')
+            return 2
+        detail = state.get('last_probe') or 'нет измерений видеопотока'
+        counters = [state.get(key) for key in ('good', 'bad')]
+        if any(type(value) is not int or not 0 <= value <= HITS for value in counters):
+            print('некорректные счётчики видеопробы')
+            return 2
+        print(f'good={counters[0]} bad={counters[1]}; '
+              f'{"не измерено: " if state.get("unmeasured") else ""}{detail}')
+        if state.get('unmeasured') or not any(counters) or not state.get('last_probe'):
+            return 2
+        stamp = state.get('checked_at')
+        # Период 5 мин + до 150 с на oneshot; старый успех не скрывает остановку проб.
+        if type(stamp) not in (int, float) or not 0 <= time.time() - stamp <= 600:
+            print('нет свежего измерения видеопотока (не старше 600 с)')
+            return 2
         return 0
     tick(STATE, probe)
     return 0

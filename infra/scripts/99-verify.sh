@@ -7,18 +7,24 @@ set -Eeuo pipefail
 trap 'echo "[$HOST_TAG] verify: ошибка команды в строке $LINENO" >&2' ERR
 
 FAILURES=0
+UNMEASURED=0
 fail() {
   echo "[$HOST_TAG] ✗ $*" >&2
   FAILURES=$((FAILURES + 1))
 }
 check() {
-  local label=$1
+  local label=$1 output rc=0
   shift
-  if "$@"; then
-    echo "[$HOST_TAG] ✓ $label"
-  else
-    fail "$label"
-  fi
+  output=$("$@" 2>&1) || rc=$?
+  [[ -z "$output" ]] || printf '%s\n' "$output"
+  case $rc in
+    0) echo "[$HOST_TAG] ✓ $label" ;;
+    2)
+      output=${output:-команда завершилась с кодом 2}
+      echo "[$HOST_TAG] ? $label — не проверено: ${output##*$'\n'}"
+      UNMEASURED=$((UNMEASURED + 1)) ;;
+    *) fail "$label" ;;
+  esac
 }
 service() { systemctl is-active --quiet "$1"; }
 forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
@@ -98,6 +104,9 @@ if [[ "$HOST_TAG" == ru ]]; then
   # После 10/20 первый снимок ещё может относиться к старому туннелю.
   # 25-monitoring задаёт интервал 2 с: 30 с хватает на несколько новых проб.
   check 'mgmt scrape: все ожидаемые targets up после свежего скрейпа' mgmt_scrape
+  if [[ ! ${EXIT_TAGS:-} =~ [^[:space:]] ]]; then
+    fail 'ssh экзитов: EXIT_TAGS пуст — нет узлов для проверки'
+  fi
   for tag in ${EXIT_TAGS:-}; do
     check "ssh $tag через hy2-mgmt" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$tag" true
   done
@@ -120,7 +129,7 @@ if [[ "$HOST_TAG" == ru ]]; then
   if [[ "${YT_ROUTE:-off}" == zapret ]]; then
     check 'yt-zapret: A/B-проверка обхода' /usr/local/bin/anysda-yt-check
     # Запасной маршрут: при сбое видеопробы YouTube уходит на VPN.
-    check 'yt-failover: selector доступен' /usr/local/bin/anysda-yt-failover --status
+    check 'yt-failover: selector и последняя видеопроба' /usr/local/bin/anysda-yt-failover --status
     check 'yt-failover: таймер active' service anysda-yt-failover.timer
   else
     echo "[$HOST_TAG] yt-zapret: пропущен (youtube.route=${YT_ROUTE:-off})"
@@ -152,7 +161,11 @@ else
 fi
 
 if (( FAILURES > 0 )); then
-  echo "[$HOST_TAG] verify FAILED: проверок не пройдено: $FAILURES" >&2
+  echo "[$HOST_TAG] verify FAILED: проверок не пройдено: $FAILURES; не проверено: $UNMEASURED" >&2
   exit 1
+fi
+if (( UNMEASURED > 0 )); then
+  echo "[$HOST_TAG] verify INCOMPLETE: не проверено: $UNMEASURED" >&2
+  exit 2
 fi
 echo "[$HOST_TAG] verify done"

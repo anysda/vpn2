@@ -182,7 +182,7 @@ class YoutubeFailoverTests(unittest.TestCase):
                     patch.object(watch, 'api', return_value={'now': 'foreign-best'}) as api, \
                     patch.object(watch, 'probe') as probe, patch('builtins.print'), \
                     patch('sys.argv', ['yt-failover', '--status']):
-                self.assertEqual(watch.main(), 0)
+                self.assertEqual(watch.main(), 2)
                 api.assert_called_once_with('GET')
                 probe.assert_not_called()
 

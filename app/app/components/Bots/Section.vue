@@ -21,11 +21,11 @@ const newChatId = ref('')
 const newAdminUsername = ref('')
 const saving = ref(false)
 
-watch(data, (d) => {
+watch(data, (d, previous) => {
   if (d) {
-    newChatId.value = String(d.chat_id ?? '')
-    newAdminUsername.value = String(d.admin_username ?? '')
-    newToken.value = ''
+    // Поздний первый GET и поллер обновляют статус, но не черновик пользователя.
+    if (newChatId.value === String(previous?.chat_id ?? '')) newChatId.value = String(d.chat_id ?? '')
+    if (newAdminUsername.value === String(previous?.admin_username ?? '')) newAdminUsername.value = String(d.admin_username ?? '')
   }
 }, { immediate: true })
 
@@ -43,6 +43,7 @@ const dirty = computed(() =>
 
 async function save() {
   saving.value = true
+  const submitted = { token: newToken.value, chatId: newChatId.value, username: newAdminUsername.value }
   try {
     const body: Record<string, string> = {}
     if (newToken.value.trim()) body.bot_token = newToken.value.trim()
@@ -58,7 +59,10 @@ async function save() {
     }
     await $fetch('/api/admin/telegram', { method: 'PUT', body })
     toast.add({ title: 'Сохранено', color: 'success' })
-    newToken.value = ''
+    // Не стираем следующую правку, сделанную, пока PUT был в пути.
+    if (newToken.value === submitted.token) newToken.value = ''
+    if (newChatId.value === submitted.chatId) newChatId.value = submitted.chatId.trim()
+    if (newAdminUsername.value === submitted.username) newAdminUsername.value = submitted.username.trim().replace(/^@+/, '')
     await refresh()
   }
   catch (e) {

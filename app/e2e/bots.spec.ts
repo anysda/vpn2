@@ -8,6 +8,40 @@ function botsCard(page: Page) {
 }
 
 test.describe('настройки Telegram', () => {
+  test('поздний ответ статуса не стирает черновик настроек', async ({ page }) => {
+    let hold = false
+    let entered!: () => void
+    let release!: () => void
+    const requested = new Promise<void>(resolve => { entered = resolve })
+    const released = new Promise<void>(resolve => { release = resolve })
+    await page.route('**/api/admin/telegram', async (route) => {
+      if (hold) { entered(); await released }
+      await route.fulfill({ json: {
+        configured: true, running: hold, bot_token_masked: 'masked',
+        chat_id: '123', admin_username: 'original',
+      } })
+    })
+    try {
+      await openHome(page)
+      const card = botsCard(page)
+      const nick = card.getByLabel('Никнейм админа бота', { exact: true })
+      await expect(nick).toHaveValue('original')
+      hold = true
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+      await requested
+      await nick.fill('@draft')
+      await card.getByLabel('Chat ID', { exact: true }).fill('321')
+      await card.getByLabel('Token', { exact: true }).fill('draft-token')
+      release()
+      await expect(card.getByText('ОНЛАЙН', { exact: true })).toBeVisible()
+      await expect(nick).toHaveValue('@draft')
+      await expect(card.getByLabel('Chat ID', { exact: true })).toHaveValue('321')
+      await expect(card.getByLabel('Token', { exact: true })).toHaveValue('draft-token')
+      await expect(card.getByRole('button', { name: 'Сохранить' })).toBeEnabled()
+    }
+    finally { release() }
+  })
+
   test('никнейм админа сохраняется без @ и возвращается обратно', async ({ page }) => {
     await openHome(page)
     const card = botsCard(page)

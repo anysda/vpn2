@@ -172,7 +172,9 @@ printf '%s|%s|%s|%s' "$IKEV2_MODE" "$IKEV2_SERVER_HOST" "$IKEV2_LOCAL_ID" "$LE_D
             self.assertEqual((root / 'pki/ca.crt').read_bytes(), ca, 'clients trust the same CA')
             self.assertNotEqual((root / 'pki/server.crt').read_bytes(), old)
             text = bash('openssl x509 -in pki/server.crt -noout -text', directory).stdout
-            self.assertIn('Subject: CN=vpn.example.test', text)
+            subject = bash('openssl x509 -in pki/server.crt -noout -subject -nameopt RFC2253',
+                           directory).stdout
+            self.assertEqual(subject.strip(), 'subject=CN=vpn.example.test')
             self.assertIn('DNS:vpn.example.test, IP Address:192.0.2.1', text)
             for name in ('vpn.example.test', '192.0.2.1'):
                 flag = '-verify_ip' if name[0].isdigit() else '-verify_hostname'

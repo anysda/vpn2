@@ -29,6 +29,13 @@ elif name == 'sysctl':
     print(0 if fault == 'forwarding' else 1)
 elif name == 'ufw':
     print('Status: inactive' if fault == 'firewall' else 'Status: active')
+elif name == 'iptables':
+    if fault == 'lost-ufw' and 'ufw-' in args:
+        sys.exit(1)
+    if fault == 'lost-tproxy' and 'TPROXY' in args:
+        sys.exit(1)
+    if fault == 'lost-mark-accept' and 'INPUT -m mark' in args:
+        sys.exit(1)
 elif name == 'curl':
     url = sys.argv[-1]
     if fault == url:
@@ -100,7 +107,7 @@ class VerifyTest(unittest.TestCase):
             root = Path(directory)
             bin_dir = root / 'bin'
             bin_dir.mkdir()
-            for name in ('systemctl', 'sysctl', 'ufw', 'curl', 'ip', 'ss', 'ssh', 'swanctl'):
+            for name in ('systemctl', 'sysctl', 'ufw', 'curl', 'ip', 'ss', 'ssh', 'swanctl', 'iptables'):
                 command = bin_dir / name
                 command.write_text(MOCK)
                 command.chmod(0o755)
@@ -187,6 +194,7 @@ class VerifyTest(unittest.TestCase):
 
     def test_individual_entry_failures(self):
         faults = {
+            'lost-ufw': 'ufw', 'lost-tproxy': 'tproxy:', 'lost-mark-accept': 'tproxy:',
             'forwarding': 'ip_forward', 'firewall': 'ufw',
             'fail2ban': 'fail2ban', 'node_exporter': 'node_exporter', 'sing-box': 'sing-box',
             'wg-quick@wg0': 'wg-quick@wg0', 'openvpn-server@server': 'openvpn-server@server',

@@ -485,6 +485,7 @@ systemctl enable anysda-ikev2-routing >/dev/null 2>&1 || true
 # Рестарт = down + up, а down удаляет xfrm0 из-под живых SA.
 svc_restart_if_changed anysda-ikev2-routing /etc/systemd/system/anysda-ikev2-routing.service \
   /usr/local/sbin/anysda-ikev2-routing.sh
+vpn_routing_ensure anysda-ikev2-routing xfrm0 ANYSDA_IKEV2_TPROXY
 
 # ── 8. anysda-ikev2-sync: применение кредов панели + счётчики ──────────────
 # Панель живёт в контейнере, где нет ни swanctl, ни сокета charon.vici:

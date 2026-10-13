@@ -28,6 +28,37 @@ p = sys.stdin.buffer.read()
 sys.stdout.buffer.write(p if len(p) <= 72 else hashlib.sha256(b"vpn2-adguard-v1\0" + p).hexdigest().encode())'
 }
 
+# nftables — не единственный владелец ruleset: ufw, Docker, fail2ban и
+# routing-службы держат в нём свои таблицы. Даже ExecStop штатного юнита
+# делает глобальный flush (restart = stop + start). Убираем оба сброса;
+# native nft-конфиги должны заменять только собственные таблицы, как YouTube.
+# Вызывается ДО apt/needrestart и после установки пакета на чистой ноде.
+nftables_preserve_rules() {
+  local conf=/etc/nftables.conf
+  if [[ -f "$conf" ]] && grep -Eq '^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$' "$conf"; then
+    [[ -e "$conf.before-vpn2" ]] || cp -a "$conf" "$conf.before-vpn2"
+    sed -i -E 's/^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$/# vpn2: preserve tables owned by ufw, routing, Docker and fail2ban/' "$conf"
+  fi
+  mkdir -p /etc/systemd/system/nftables.service.d
+  cat > /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf <<'EOF'
+[Service]
+# Stopping this loader must not remove rules owned by other services.
+ExecStop=
+EOF
+  systemctl daemon-reload
+}
+
+# Активный oneshot и прежний отпечаток не доказывают наличие правил в ядре.
+# При миграции после старого flush перезапускаем только routing, сохраняя
+# Environment юнита (MSS и все пулы WG), без рестарта VPN-туннеля.
+vpn_routing_ensure() {
+  local unit=$1 iface=$2 chain=$3
+  if ! iptables -t mangle -C PREROUTING -i "$iface" -j "$chain" 2>/dev/null; then
+    svc_say "$unit: цепочка $chain пропала, восстанавливаю"
+    systemctl restart "$unit"
+  fi
+}
+
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
 SVC_RESTARTED=0
 

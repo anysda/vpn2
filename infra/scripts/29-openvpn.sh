@@ -329,6 +329,7 @@ systemctl daemon-reload
 systemctl enable anysda-ovpn-routing >/dev/null 2>&1 || true
 svc_restart_if_changed anysda-ovpn-routing /etc/systemd/system/anysda-ovpn-routing.service \
   /usr/local/sbin/anysda-ovpn-routing.sh
+vpn_routing_ensure anysda-ovpn-routing tun0 ANYSDA_OVPN_TPROXY
 
 touch /var/anysda/.stamps/29-openvpn
 echo "[$HOST_TAG] 29-openvpn done"

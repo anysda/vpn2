@@ -27,6 +27,8 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a   # needrestart: рестартить службы сам, без интерактива
 
+nftables_preserve_rules
+
 # esm-cache.service (Ubuntu Pro) при каждом apt дёргается к esm.ubuntu.com и,
 # когда тот недоступен/медленный, виснет — а apt через needrestart его ждёт,
 # из-за чего деплой стопорится. Маскируем: для VPN-ноды кэш ESM не нужен.
@@ -49,7 +51,7 @@ PKGS=(wireguard wireguard-tools
       openssl gettext-base iproute2 procps kmod
       ufw fail2ban
       jq qrencode unzip git
-      iptables netcat-openbsd
+      iptables nftables netcat-openbsd
       python3 python3-yaml)
 SKIP=()
 # Пакеты стадий ru (29, 19, 22, 26, 27) - сюда же: entry кончает bootstrap
@@ -78,6 +80,7 @@ if ! apt_have "${PKGS[@]}"; then
   apt_update_if_stale
   apt_get install -y -qq "${PKGS[@]}" "${SKIP[@]}" >/dev/null
 fi
+nftables_preserve_rules
 [[ "$HOST_TAG" != ru ]] || systemctl enable --now docker >/dev/null 2>&1 || true
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
 # ufw for the firewall and manage routing-specific iptables rules via systemd
@@ -311,6 +314,12 @@ echo "[$HOST_TAG] [4/6] ufw"
 # не зовут `ufw reload`: он, как и `ufw default`, перегружает весь фаервол, и на
 # эти доли секунды теряются пакеты туннелей клиентов. Политику меняем, только
 # если она другая.
+# Миграция уже пострадавшей ноды: ufw хранит enabled=yes на диске, но его
+# цепочки могли исчезнуть. Иначе первое ufw allow упадёт до восстановления.
+if grep -qx 'ENABLED=yes' /etc/ufw/ufw.conf 2>/dev/null \
+   && ! iptables -S ufw-user-input >/dev/null 2>&1; then
+  ufw reload
+fi
 grep -qx 'DEFAULT_INPUT_POLICY="DROP"' /etc/default/ufw 2>/dev/null || ufw default deny incoming
 grep -qx 'DEFAULT_OUTPUT_POLICY="ACCEPT"' /etc/default/ufw 2>/dev/null || ufw default allow outgoing
 ufw allow 22/tcp comment 'ssh'

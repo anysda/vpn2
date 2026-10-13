@@ -333,7 +333,7 @@ ${NFT_WIN_RULES:-        # (стратегия не меняет масштаб 
 EOF
 nft -c -f "$NFT_CONF"
 
-# nftables.service стирает ruleset при restart, а штатный nftables.conf —
+# На старых установках nftables.service стирал ruleset при restart, а nftables.conf —
 # также при reload. Уже активные oneshot-службы этого не замечают. Вернуть
 # сохранённые таблицы после обеих операций, без сети и рестарта nfqws2.
 mkdir -p /etc/systemd/system/nftables.service.d

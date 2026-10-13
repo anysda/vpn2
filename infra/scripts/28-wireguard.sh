@@ -233,6 +233,7 @@ systemctl daemon-reload
 systemctl enable anysda-wg-routing >/dev/null 2>&1 || true
 svc_restart_if_changed anysda-wg-routing /etc/systemd/system/anysda-wg-routing.service \
   /usr/local/sbin/anysda-wg-routing.sh
+vpn_routing_ensure anysda-wg-routing wg0 ANYSDA_WG_TPROXY
 
 touch /var/anysda/.stamps/28-wireguard
 echo "[$HOST_TAG] 28-wireguard done"

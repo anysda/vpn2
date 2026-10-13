@@ -150,6 +150,18 @@ MARK='0x42'
 TABLE=101
 PREF=32765
 
+# ip rule переживает nft flush; отсутствие PREROUTING раньше выключало
+# проверку целиком. Восстанавливаем цепочки только активных VPN-служб.
+for spec in 'wg wg0 WG' 'ovpn tun0 OVPN' 'ikev2 xfrm0 IKEV2'; do
+  read -r protocol iface chain <<<"$spec"
+  unit="anysda-$protocol-routing"
+  if systemctl is-active --quiet "$unit" \
+     && ! iptables -t mangle -C PREROUTING -i "$iface" -j "ANYSDA_${chain}_TPROXY" 2>/dev/null; then
+    echo "$unit: цепочка TPROXY пропала, восстанавливаю" >&2
+    systemctl restart "$unit" || exit 1
+  fi
+done
+
 if iptables -t mangle -S PREROUTING 2>/dev/null | grep -E -- '-j ANYSDA_[A-Z0-9]+_TPROXY' >/dev/null; then
   # pref тот же, что ставят anysda-{wg,ovpn,ikev2}-routing; без него правило
   # вставало на 219, выше strongSwan 220, и так там и оставалось.

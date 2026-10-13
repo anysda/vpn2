@@ -163,6 +163,8 @@ entry_is_local() {
 
 pause_entry_auto_updates() {
   [[ -d /run/systemd/system ]] && entry_is_local || return 0
+  # install_prereqs тоже может вызвать needrestart до стадии 00.
+  nftables_preserve_rules
   printf '%b==>%b автообновления entry на паузу до конца деплоя\n' "$C_B" "$C_END"
   HOST_TAG=ru apt_auto_pause
 }

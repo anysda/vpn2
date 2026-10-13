@@ -22,7 +22,20 @@ check() {
 }
 service() { systemctl is-active --quiet "$1"; }
 forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
-firewall() { LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null; }
+firewall() {
+  LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null \
+    && iptables -C INPUT -j ufw-before-input \
+    && iptables -S ufw-user-input >/dev/null
+}
+tproxy_chains() {
+  local iface=$1 chain=$2 proto
+  iptables -t mangle -C PREROUTING -i "$iface" -j "$chain" || return
+  for proto in tcp udp; do
+    iptables -t mangle -C "$chain" -p "$proto" -j TPROXY \
+      --tproxy-mark 0x42/0x42 --on-port 7898 --on-ip 127.0.0.1 || return
+  done
+  iptables -C INPUT -m mark --mark 0x42/0x42 -j ACCEPT
+}
 udp() { ss -H -lun "sport = :$1" | grep . >/dev/null; }
 tproxy_rule() { ip rule list | grep -E 'fwmark 0x42 lookup 101([[:space:]]|$)' >/dev/null; }
 tproxy_route() { ip route show table 101 | grep -E '^local default dev lo([[:space:]]|$)' >/dev/null; }
@@ -92,6 +105,9 @@ if [[ "$HOST_TAG" == ru ]]; then
   check 'vmsingle: 127.0.0.1:8428 healthy' curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8428/-/healthy
   check 'tproxy: правило fwmark 0x42 → table 101' tproxy_rule
   check 'tproxy: local default dev lo в table 101' tproxy_route
+  check 'tproxy: wg0 цепочка и TCP/UDP правила' tproxy_chains wg0 ANYSDA_WG_TPROXY
+  check 'tproxy: tun0 цепочка и TCP/UDP правила' tproxy_chains tun0 ANYSDA_OVPN_TPROXY
+  check 'tproxy: xfrm0 цепочка и TCP/UDP правила' tproxy_chains xfrm0 ANYSDA_IKEV2_TPROXY
   if queue=$(ss -H -uln 'sport = :7898' | awk '!f && $4 ~ /^127\.0\.0\.1:/ {print $2; f=1}') && [[ -n "$queue" ]]; then
     echo "[$HOST_TAG] tproxy udp: Recv-Q $queue (устойчивый рост означает, что sing-box не читает UDP)"
   else

@@ -63,7 +63,7 @@ jobs:
           python3 -m pip install PyYAML==6.0.3
       - name: регрессии инфраструктуры без sing-box
         if: ${{ !matrix.sing-box }}
-        run: python3 -m unittest discover -s infra/tests -v
+        run: python3 infra/tests/run_parallel.py
       - name: регрессии развёртывания и маршрутов sing-box
         if: matrix.sing-box
         run: |
@@ -77,7 +77,7 @@ jobs:
           export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
           export RUN_NETNS_TESTS=1
           "$SING_BOX_BIN" version
-          python3 -m unittest discover -s infra/tests -v
+          python3 infra/tests/run_parallel.py
 
   telegram:
     runs-on: ubuntu-latest

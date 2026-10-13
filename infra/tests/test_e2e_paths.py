@@ -55,6 +55,14 @@ class E2ePathsTests(unittest.TestCase):
                     actual = subprocess.check_output(
                         ['python3', str(SCRIPT), '--base', base], cwd=repo, text=True).strip()
                     self.assertEqual(actual, expected)
+                    if expected == 'false':
+                        git('update-ref', 'refs/remotes/origin/dev', base)
+                        local = subprocess.run(
+                            ['bash', str(ROOT / 'app/e2e/run-local.sh'), '--changed-only'],
+                            cwd=repo, text=True, capture_output=True, check=False,
+                            env={**os.environ, 'DOCKER': 'false', 'E2E_SKIP_BUILD': '1'})
+                        self.assertEqual(local.returncode, 0, local.stdout + local.stderr)
+                        self.assertIn('panel-e2e: skipped', local.stdout)
                     for name, event in [
                         ('push', {'before': base, 'after': head}),
                         ('pull_request', {'pull_request': {'base': {'sha': base}, 'head': {'sha': head}}}),

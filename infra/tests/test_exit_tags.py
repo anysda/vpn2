@@ -10,6 +10,21 @@ from test_deploy import ROOT, bash, function, source
 
 
 class ExitTagTests(unittest.TestCase):
+    def test_previous_panel_hosts_survive_failed_upgrade_retry(self):
+        stage = source('infra/scripts/30-frontend.sh')
+        capture = 'PREVIOUS_NODE_HOSTS=' + stage.split('PREVIOUS_NODE_HOSTS=', 1)[1].split('\ndocker rm', 1)[0]
+        for previous in ('', 'ru=192.0.2.1,se=192.0.2.2'):
+            with self.subTest(previous=previous):
+                env = 'NUXT_NODE_HOSTS=ru=192.0.2.1,se1=192.0.2.2\n'
+                env += f'NUXT_PREVIOUS_NODE_HOSTS={previous}\nUNRELATED_SECRET=not-for-output\n'
+                result = bash('docker() { printf "%s" ' + shlex.quote(env) + '; }\n'
+                              + capture + '\nprintf "%s" "$PREVIOUS_NODE_HOSTS"', ROOT)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, previous or 'ru=192.0.2.1,se1=192.0.2.2')
+        result = bash('docker() { return 1; }\n' + capture + '\nprintf "%s" "$PREVIOUS_NODE_HOSTS"', ROOT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '')
+
     def test_hyphenated_tag_through_deploy_consumers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -44,7 +44,7 @@ for (const scenario of [
         if (!upgrade) {
           // Ошибка сохранения карты должна откатить и переносы клиентов.
           await client.execute("CREATE TRIGGER fail_map BEFORE INSERT ON collector_state BEGIN SELECT RAISE(ABORT, 'disk is full'); END")
-          await expect(load().syncClientPrefsFile()).rejects.toThrow()
+          await expect(Promise.resolve(load().syncClientPrefsFile())).rejects.toThrow()
           expect((await db.select().from(schema.clients).orderBy(schema.clients.id)).map(row => row.preferredExit)).toEqual(['se', 'us', null])
           expect(logs).toHaveLength(0)
           await client.execute('DROP TRIGGER fail_map')

@@ -43,7 +43,7 @@ export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
 
 /**
  * Server-address который клиент впишет в поле «Server» VPN-настроек. В LE —
- * domain (panel.domain), в self-signed — адрес WG/OVPN (entry.public_host,
+ * domain (panel.domain), в self-signed: адрес WG/OVPN (entry.public_host,
  * panel.domain или IP entry). Стадия 27 записывает в
  * /etc/anysda/ikev2-server-host; fallback: ENTRY_HOST env, wgPublicHost cfg.
  */
@@ -423,7 +423,7 @@ export interface Ikev2ClientInfo {
 
 /**
  * Собрать поля для отображения клиенту. server = ikev2ServerHost() (domain
- * в LE-режиме, адрес WG/OVPN в self-signed). caCertPem = null в LE-режиме — клиенту
+ * в LE-режиме, адрес WG/OVPN в self-signed). caCertPem = null в LE-режиме: клиенту
  * НЕ нужен анысда-CA, LE-корень уже в trust-store.
  *
  * Параметр `_serverIp` оставлен для обратной совместимости вызывающего кода;

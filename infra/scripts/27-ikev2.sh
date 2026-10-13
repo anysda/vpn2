@@ -22,7 +22,7 @@
 # Идемпотентно: CA генерится один раз. Server-cert перевыпускается если
 # (self-signed) истёк срок действия или в SAN нет адреса профилей или IP входа,
 # либо Caddy выдал обновлённый cert. Переключения self→LE происходит
-# автоматически когда Caddy выдаст cert; обратное (LE→self) — никогда без явного
+# автоматически когда Caddy выдаст cert; обратное (LE→self) никогда без явного
 # удаления PANEL_DOMAIN из config.yaml.
 
 set -euo pipefail
@@ -62,7 +62,7 @@ flock -x 8
 # Адрес сервера в профилях тот же, что у WG и OpenVPN: entry.public_host,
 # иначе домен панели (config2env), иначе IP входа. Сертификат своего CA
 # содержит и этот адрес, и IP входа: профили, выданные по IP, работают дальше.
-IKEV2_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}"
+IKEV2_PUBLIC_HOST="${WG_PUBLIC_HOST:-${PANEL_DOMAIN:-$ENTRY_HOST}}"
 # Профили по IP со своим CA уже выданы, а сертификат Let's Encrypt не содержит
 # IP: переход на него отрезал бы эти профили. Такой сервер остаётся на своём CA.
 OWN_CA_KEPT=/etc/anysda/ikev2-own-ca-kept
@@ -256,7 +256,7 @@ else
         want="DNS:$name"
         [[ "$name" =~ ^[0-9.]+$ ]] && want="IP Address:$name"
         if ! grep -Fx -- "$want" <<< "$san" >/dev/null; then
-          echo "[$HOST_TAG]   SAN не содержит $name — перевыпуск server cert"
+          echo "[$HOST_TAG]   SAN не содержит $name, перевыпуск server cert"
           NEED_SERVER=1
         fi
       done

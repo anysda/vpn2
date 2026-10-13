@@ -107,7 +107,10 @@ export -f swanctl
         cases = (
             # (WG_PUBLIC_HOST, прошлые маркеры mode/server-host, есть LE-cert) →
             # (режим, адрес в профилях, id сервера, домен под LE)
-            ('', None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
+            (None, None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
+            # env без WG_PUBLIC_HOST: адресом всё равно служит домен панели.
+            ('', ('letsencrypt', 'vpn.example.test'), True,
+             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
             ('vpn.example.test', None, False,
              ('self-signed', 'vpn.example.test', '%any', 'vpn.example.test')),
             ('vpn.example.test', None, True,
@@ -136,8 +139,8 @@ export -f swanctl
                 result = bash(f'''
 HOST_TAG=ru
 ENTRY_HOST=192.0.2.1
-PANEL_DOMAIN=vpn.example.test
-WG_PUBLIC_HOST={public}
+PANEL_DOMAIN={'' if public is None else 'vpn.example.test'}
+WG_PUBLIC_HOST={public or ''}
 CADDY_CERT_DIR=$PWD/caddy
 ''' + head.replace('/etc/', directory + '/etc/') + '''
 printf '%s|%s|%s|%s' "$IKEV2_MODE" "$IKEV2_SERVER_HOST" "$IKEV2_LOCAL_ID" "$LE_DOMAIN" > result

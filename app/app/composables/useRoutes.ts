@@ -1,4 +1,4 @@
-export { parseOutbound } from '../../shared/outbounds'
+export { parseOutbound } from '#shared/outbounds'
 
 export interface Route {
   id: number

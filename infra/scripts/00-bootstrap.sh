@@ -50,7 +50,7 @@ PKGS=(wireguard wireguard-tools
       curl wget ca-certificates gnupg lsb-release
       openssl gettext-base iproute2 procps kmod
       ufw fail2ban
-      jq qrencode unzip git
+      jq qrencode unzip git openssh-client
       iptables nftables netcat-openbsd
       python3 python3-yaml)
 SKIP=()
@@ -59,8 +59,9 @@ SKIP=()
 # критическом пути (~33 с на чистой). Свои проверки стадии сохраняют.
 # Одним вызовом: каждый заход dpkg - свой прогон триггеров (~3 с на ядро).
 if [[ "$HOST_TAG" == ru ]]; then
-  PKGS+=(openvpn openssl strongswan strongswan-starter strongswan-pki
-         strongswan-swanctl libcharon-extra-plugins libstrongswan-extra-plugins
+  PKGS+=(openvpn openssl strongswan strongswan-starter strongswan-charon strongswan-pki
+         strongswan-swanctl libcharon-extauth-plugins libcharon-extra-plugins
+         libstrongswan-standard-plugins libstrongswan-extra-plugins
          apache2-utils)
   # zapret2 - чистый C: g++ из build-essential не нужен.
   [[ "${YT_ROUTE:-off}" == zapret ]] && PKGS+=(gcc make libc6-dev libcap-dev

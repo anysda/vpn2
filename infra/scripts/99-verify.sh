@@ -49,6 +49,11 @@ udp() { ss -H -lun "sport = :$1" | grep . >/dev/null; }
 tproxy_rule() { ip rule list | grep -E 'fwmark 0x42 lookup 101([[:space:]]|$)' >/dev/null; }
 tproxy_route() { ip route show table 101 | grep -E '^local default dev lo([[:space:]]|$)' >/dev/null; }
 ikev2_conn() { swanctl --list-conns | grep '^anysda-ikev2:' >/dev/null; }
+ikev2_eap_plugin() {
+  # Статистика живого charon, а не наличие .so или загрузка плагина самим CLI.
+  swanctl --stats | sed -n 's/^[[:space:]]*loaded plugins: *//p' \
+    | tr ' ' '\n' | grep -Fx eap-mschapv2
+}
 
 mgmt_scrape() {
   local since deadline remaining targets detail='API targets недоступен'
@@ -147,6 +152,7 @@ if [[ "$HOST_TAG" == ru ]]; then
     check "$svc active" service "$svc"
   done
   check 'ikev2: swanctl установлен, conn anysda-ikev2 загружен' ikev2_conn
+  check 'ikev2: charon загрузил eap-mschapv2' ikev2_eap_plugin
   check 'ikev2: udp/500 слушает' udp 500
   check 'ikev2: udp/4500 слушает' udp 4500
   check 'ikev2: интерфейс xfrm0 существует' ip link show xfrm0

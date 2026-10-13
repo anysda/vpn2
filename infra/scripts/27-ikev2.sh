@@ -114,12 +114,17 @@ fi
 # ── 1. apt strongswan + плагины ─────────────────────────────────────────────
 # ⚠️ python3-vici (биндинги к сокету charon) в Ubuntu 24.04 НЕТ ни в одном
 # компоненте — anysda-ikev2-sync (шаг 8) читает состояние через swanctl.
-# strongswan-starter называем явно: в Ubuntu 26.04 (strongSwan 6) метапакет
-# strongswan тянет charon-systemd вместо него, и шаг 6 не находит юнит.
+# starter и его charon называем явно: strongSwan 6 по умолчанию выбирает
+# charon-systemd, а starter только рекомендует strongswan-charon.
+# EAP-MSCHAPv2 и стандартные crypto-плагины тоже приходят через Recommends;
+# они нужны даже при APT::Install-Recommends=0.
 # Второй charon рядом со starter'ом дрался бы за 500/4500, поэтому
 # charon-systemd, если его успели поставить, снимаем.
 echo "[$HOST_TAG] [1/8] strongswan apt"
-if ! dpkg -s strongswan-starter >/dev/null 2>&1 || dpkg -s charon-systemd >/dev/null 2>&1; then
+IKEV2_PKGS=(strongswan strongswan-starter strongswan-charon strongswan-pki strongswan-swanctl
+            libcharon-extauth-plugins libcharon-extra-plugins
+            libstrongswan-standard-plugins libstrongswan-extra-plugins)
+if ! apt_have "${IKEV2_PKGS[@]}" || apt_have charon-systemd; then
   export DEBIAN_FRONTEND=noninteractive
   # Списки обновлял 00-bootstrap этого же деплоя минуты назад - второй
   # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
@@ -129,9 +134,7 @@ if ! dpkg -s strongswan-starter >/dev/null 2>&1 || dpkg -s charon-systemd >/dev/
     apt_get install -y -qq "$@" >/dev/null 2>&1 && return 0
     apt_get update -qq && apt_get install -y -qq "$@" >/dev/null
   }
-  apt_install \
-    strongswan strongswan-starter strongswan-pki strongswan-swanctl \
-    libcharon-extra-plugins libstrongswan-extra-plugins
+  apt_install "${IKEV2_PKGS[@]}"
   apt_get purge -y -qq charon-systemd >/dev/null 2>&1 || true
 fi
 
@@ -394,6 +397,7 @@ systemctl enable strongswan-starter >/dev/null 2>&1 || true
 # charon без рестарта (так же path-юнит применяет ротацию LE), поэтому в
 # отпечатке только то, что charon читает при старте.
 svc_restart_if_changed strongswan-starter /usr/lib/ipsec/charon /usr/lib/ipsec/starter \
+  /usr/lib/ipsec/plugins/*.so \
   /usr/lib/systemd/system/strongswan-starter.service /etc/strongswan.conf \
   /etc/strongswan.d/*.conf /etc/strongswan.d/charon/*.conf
 # Готов — когда charon отвечает по vici: им ниже грузятся creds и conns.

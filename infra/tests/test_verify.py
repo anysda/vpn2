@@ -96,6 +96,19 @@ elif name == 'ss':
     for port in ports:
         if fault != 'port-' + port and (':' + port in args or ':' not in args):
             print('UNCONN 0 0 127.0.0.1:' + port + ' 0.0.0.0:*')
+elif name == 'swanctl' and args == '--stats':
+    plugins = 'aes sha1 eap-mschapv2 vici'
+    if fault == 'ikev2-plugin-missing':
+        plugins = 'aes sha1 vici'
+    elif fault == 'ikev2-plugin-substring':
+        plugins = 'aes sha1 eap-mschapv2-extra vici'
+    elif fault == 'ikev2-plugin-error':
+        print('loaded plugins: ' + plugins)
+        sys.exit(1)
+    elif fault == 'ikev2-plugin-stderr':
+        print('plugin eap-mschapv2 failed to load', file=sys.stderr)
+        plugins = 'aes sha1 vici'
+    print('loaded plugins: ' + plugins)
 elif name == 'swanctl' and fault != 'ikev2-conn':
     print('anysda-ikev2: IKEv2')
 if fault == name + '-partial':
@@ -104,6 +117,16 @@ if fault == name + '-partial':
 
 
 class VerifyTest(unittest.TestCase):
+    def test_loaded_eap_mschapv2_is_required(self):
+        for fault in ('', 'ikev2-plugin-missing', 'ikev2-plugin-substring',
+                      'ikev2-plugin-error', 'ikev2-plugin-stderr'):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault)
+                print(f'{fault or "loaded"}: exit={result.returncode}')
+                self.assertEqual(result.returncode, 1 if fault else 0, result.stdout)
+                self.assertIn(('✗' if fault else '✓') +
+                              ' ikev2: charon загрузил eap-mschapv2', result.stdout)
+
     def run_verify(self, fault='', role='ru', youtube='off'):
         with tempfile.TemporaryDirectory(prefix='verify-test-') as directory:
             root = Path(directory)

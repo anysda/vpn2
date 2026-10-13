@@ -4,10 +4,12 @@
 Вызывается systemd-таймером; отдельная служба не задерживает быстрый сторож
 экзитов. Обход проверяется напрямую даже во время работы через VPN.
 4 МиБ / минимум 250000 байт/с (2 Мбит/с): отсеиваем сильное замедление,
-не обещая HD/4K. До 1.2 ГиБ/сутки при пятиминутном периоде; фактически меньше,
+не обещая HD/4K. Обычно до 1.2 ГиБ/сутки при пятиминутном периоде; фактически меньше,
 поскольку таймер отсчитывает период от окончания предыдущей проверки.
 YT_PROBE_VIDEO позволяет выбрать другой общедоступный длинный ролик
 с разрешённым встраиванием: клиент web_embedded без cookies и PO-токена.
+При неизмеренном ответе — другой ролик (YT_PROBE_POT_VIDEO), mweb и локальный
+PO-токен bgutil. Не более двух попыток; сетевой bad повтором не маскируем.
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
 счётчики и маршрут; уведомления — только при входе и выходе из этого состояния.
 --probe-only проверяет поток без изменения маршрута или состояния.
@@ -23,6 +25,7 @@ from pathlib import Path
 import pwd
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -31,6 +34,7 @@ STATE = Path('/var/lib/anysda-yt-failover/state.json')
 CONFIG = Path('/etc/sing-box/config.json')
 BOT_SECRET = Path('/etc/anysda/tgbot-secret.txt')
 VIDEO = os.environ.get('YT_PROBE_VIDEO', 'https://www.youtube.com/watch?v=aqz-KE-bpKQ')
+POT_VIDEO = os.environ.get('YT_PROBE_POT_VIDEO', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
 SAMPLE_BYTES = 4 * 1024 * 1024
 MIN_BPS = 250000
 HITS = 3
@@ -92,32 +96,33 @@ def media_ok(returncode, stats):
     return size == SAMPLE_BYTES and speed >= MIN_BPS
 
 
-def probe(quic=False):
+def probe_media(user, video, client, quic=False, cache=None):
     try:
-        # Службы, очередь и счётчики: ответ CDN без живого десинка не успех.
-        ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
-                               capture_output=True, timeout=35, check=False)
-        if ready.returncode == 1:
-            return False, 'очередь, nft-правила или TCP-путь обхода не работают'
-        if ready.returncode:
-            return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
-        user = pwd.getpwnam('ytzdiag')
         prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
+        extra = []
+        env = dict(os.environ)
+        # Node провайдера тоже обязан идти напрямую, с тем же IPv4 и UID.
+        for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
+                    'http_proxy', 'https_proxy', 'all_proxy'):
+            env.pop(key, None)
+        if cache is not None:
+            env['XDG_CACHE_HOME'] = cache
+            extra = ['--source-address', '0.0.0.0', '--extractor-args',
+                     'youtubepot-bgutilscript:server_home=/opt/anysda-yt-probe/bgutil/server']
         info = subprocess.run(prefix + [
             '/opt/anysda-yt-probe/bin/yt-dlp', '--ignore-config', '--no-cache-dir',
             '--no-playlist', '--no-warnings', '--proxy', '', '--force-ipv4',
             '--js-runtimes', 'node:/opt/anysda-yt-probe/bin/node',
-            # Набор клиентов по умолчанию меняется вместе с yt-dlp. VISIONOS
-            # может выдать URL без PO-токена, который CDN отвергает с 403.
-            # Embedded получает обычный HTTPS-поток для встраиваемого ролика.
-            '--extractor-args', f'youtube:player_client={PLAYER_CLIENT}',
+            '--extractor-args', f'youtube:player_client={client}' + (';fetch_pot=always' if cache else ''),
             '--socket-timeout', '10', '--retries', '0',
-            '--extractor-retries', '0', '-f', 'bestvideo[protocol=https]', '-J', VIDEO,
-        ], capture_output=True, text=True, timeout=60, check=False)
+            '--extractor-retries', '0', '-f', 'bestvideo[protocol=https]', '-J', video,
+        ] + extra, env=env, capture_output=True, text=True, timeout=60, check=False)
         if info.returncode:
             if 'Sign in to confirm' in (info.stderr or ''):
                 return None, 'YouTube требует входа (антибот); обход не измерен'
-            return None, (f'не удалось получить URL видеопотока (yt-dlp, client={PLAYER_CLIENT}); '
+            if 'Requested format is not available' in (info.stderr or ''):
+                return None, f'нет HTTPS-видеоформата (SABR/ограничения ролика), client={client}'
+            return None, (f'не удалось получить URL видеопотока (yt-dlp, client={client}); '
                           'проверить встраивание ролика/экстрактор/JS-рантайм')
         media = json.loads(info.stdout)
         if not isinstance(media, dict) or not isinstance(media.get('url'), str):
@@ -126,32 +131,67 @@ def probe(quic=False):
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != 'https' or not (parsed.hostname or '').endswith('.googlevideo.com'):
             return None, 'экстрактор не вернул HTTPS-видеопоток Googlevideo'
+        if cache is not None and not urllib.parse.parse_qs(parsed.query).get('pot'):
+            return None, f'локальный PO-токен не получен, client={client}'
         # Range ограничивает расход трафика. --max-filesize также защищает от
         # CDN, игнорирующего Range. Ни HTTP 200, ни оборванная передача не OK.
         cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http3-only' if quic else '--http1.1',
                         '--silent', '--show-error', '--fail', '--connect-timeout', '5',
+                        '--location', '--max-redirs', '3', '--proto-redir', '=https',
                         '--max-time', '20', '--range', f'0-{SAMPLE_BYTES - 1}',
                         '--max-filesize', str(SAMPLE_BYTES), '-o', '/dev/null', '-w', '%{json}']
         headers = media.get('http_headers', {})
-        if not isinstance(headers, dict) or any(not isinstance(value, str) for value in headers.values()):
+        if not isinstance(headers, dict) or any(not isinstance(key, str) or not isinstance(value, str)
+                                                for key, value in headers.items()):
             return None, 'экстрактор вернул некорректные HTTP-заголовки'
         for key, value in headers.items():
             if key.lower() in ('user-agent', 'referer', 'origin'):
                 cmd += ['-H', f'{key}: {value}']
-        result = subprocess.run(cmd + [url], capture_output=True, text=True, timeout=25, check=False)
+        result = subprocess.run(cmd + [url], env=env, capture_output=True, text=True, timeout=25, check=False)
         stats = json.loads(result.stdout or '{}')
         good = media_ok(result.returncode, stats)
         if not isinstance(stats, dict):
             return None, 'curl не вернул объект статистики видеопотока'
+        effective_url = stats.get('url_effective', url)
+        if not isinstance(effective_url, str):
+            return None, 'curl не вернул корректный URL конечного CDN'
+        effective = urllib.parse.urlsplit(effective_url)
+        if effective.scheme != 'https' or not (effective.hostname or '').endswith('.googlevideo.com'):
+            return None, 'CDN перенаправил запрос за пределы HTTPS Googlevideo'
         transport = 'QUIC' if quic else 'TCP'
         return good, (f'{transport} video: HTTP {stats.get("http_code", 0)}, '
                       f'{stats.get("size_download", 0)} байт, '
                       f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
-                      f'CDN={parsed.hostname}, client={PLAYER_CLIENT}')
+                      f'CDN={effective.hostname}, client={client}' + (', PO=local' if cache else ''))
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         # stdout yt-dlp и подписанные URL не пишем в журнал.
         # Внешний timeout может означать зависание утилиты. Сетевой таймаут
         # подтверждает только собственный --max-time curl (код 28).
+        return None, f'видеопроба не завершена: {type(error).__name__}'
+
+
+def probe(quic=False):
+    try:
+        # Ответ CDN без живой очереди десинка не считается успехом.
+        ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
+                               capture_output=True, timeout=35, check=False)
+        if ready.returncode == 1:
+            return False, 'очередь, nft-правила или TCP-путь обхода не работают'
+        if ready.returncode:
+            return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
+        user = pwd.getpwnam('ytzdiag')
+        good, detail = probe_media(user, VIDEO, PLAYER_CLIENT, quic)
+        if good is not None:
+            # Медленный/оборванный поток — измеренный bad. Другой CDN не
+            # должен маскировать сетевой провал успехом резервного ролика.
+            return good, detail
+        # Кэш одноразовый: нет зависимости от /root, состояния прошлого
+        # запуска или гонок --probe-only с таймером. Работает с PrivateTmp.
+        with tempfile.TemporaryDirectory(prefix='anysda-yt-pot-') as cache:
+            os.chown(cache, user.pw_uid, user.pw_gid)
+            fallback, fallback_detail = probe_media(user, POT_VIDEO, 'mweb', quic, cache)
+        return fallback, f'{fallback_detail}; первая проба: {detail}'
+    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         return None, f'видеопроба не завершена: {type(error).__name__}'
 
 
@@ -237,7 +277,7 @@ def main():
         if state.get('unmeasured') or not any(counters) or not state.get('last_probe'):
             return 2
         stamp = state.get('checked_at')
-        # Период 5 мин + до 150 с на oneshot; старый успех не скрывает остановку проб.
+        # Период 5 мин + до 240 с на oneshot; старый успех не скрывает остановку проб.
         if type(stamp) not in (int, float) or not 0 <= time.time() - stamp <= 600:
             print('нет свежего измерения видеопотока (не старше 600 с)')
             return 2

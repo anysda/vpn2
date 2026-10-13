@@ -67,7 +67,15 @@ class UnmeasuredTests(unittest.TestCase):
                 'url': 'https://rr1.example.googlevideo.com/videoplayback?secret=hidden'}))
         if ready is None:
             ready = subprocess.CompletedProcess([], 0)
-        with patch.object(watch.subprocess, 'run', side_effect=[ready, extraction, download]), \
+        def run(args, **_kwargs):
+            result = (ready if args == ['/usr/local/bin/anysda-yt-check'] else
+                      extraction if '/opt/anysda-yt-probe/bin/yt-dlp' in args else download)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.object(watch.subprocess, 'run', side_effect=run), \
+                patch.object(watch.os, 'chown'), \
                 patch.object(watch.pwd, 'getpwnam'):
             return watch.probe()
 

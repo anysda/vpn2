@@ -717,6 +717,7 @@ fi
 # EJS требует Node >=22, а системный пакет Ubuntu/Debian может быть старее.
 # Роутер поддерживает linux-amd64; не меняем Node других приложений на узле.
 if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
+   || [[ ! -f "$YT_PROBE_VENV/lib/node_modules/npm/bin/npm-cli.js" ]] \
    || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v24.21.0 ]]; then
   YT_NODE_TMP=$(mktemp -d)
   trap 'rm -rf "$YT_NODE_TMP"' EXIT
@@ -724,11 +725,17 @@ if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
     https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz -o "$YT_NODE_TMP/node.tar.xz"
   printf '%s  %s\n' fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 \
     "$YT_NODE_TMP/node.tar.xz" | sha256sum -c -
-  tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" node-v24.21.0-linux-x64/bin/node
+  tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" \
+    node-v24.21.0-linux-x64/bin/node node-v24.21.0-linux-x64/lib/node_modules/npm
   install -m 0755 "$YT_NODE_TMP/node-v24.21.0-linux-x64/bin/node" "$YT_PROBE_VENV/bin/node"
+  mkdir -p "$YT_PROBE_VENV/lib/node_modules"
+  cp -a "$YT_NODE_TMP/node-v24.21.0-linux-x64/lib/node_modules/npm" "$YT_PROBE_VENV/lib/node_modules/"
   rm -rf "$YT_NODE_TMP"
   trap - EXIT
 fi
+POT_INSTALL=$(dirname "$0")/install-yt-pot.sh
+[[ -f "$POT_INSTALL" ]] || POT_INSTALL=$(dirname "$0")/../lib/install-yt-pot.sh
+bash "$POT_INSTALL" "$YT_PROBE_VENV"
 install -m 0755 /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover
 cat > /etc/systemd/system/anysda-yt-failover.service <<'EOF'
 [Unit]
@@ -739,7 +746,7 @@ ConditionPathExists=/etc/sing-box/config.json
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/bin/anysda-yt-failover
-TimeoutStartSec=150
+TimeoutStartSec=240
 StateDirectory=anysda-yt-failover
 UMask=0077
 NoNewPrivileges=true

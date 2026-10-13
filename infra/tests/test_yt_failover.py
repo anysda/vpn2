@@ -154,13 +154,15 @@ class YoutubeFailoverTests(unittest.TestCase):
         responses = [subprocess.CompletedProcess([], 0),
                      subprocess.CompletedProcess([], 0, json.dumps({
                          'url': 'https://rr1.example.googlevideo.com/videoplayback'})),
-                     subprocess.CompletedProcess([], 2, '')]
+                     subprocess.CompletedProcess([], 2, ''),
+                     subprocess.CompletedProcess([], 1, '', 'no formats')]
         with patch.object(watch.subprocess, 'run', side_effect=responses) as run, \
+                patch.object(watch.os, 'chown'), \
                 patch.object(watch.pwd, 'getpwnam') as user:
             user.return_value.pw_uid = user.return_value.pw_gid = 42
             good, detail = watch.probe(quic=True)
             self.assertFalse(good)
-            self.assertIn('--http3-only', run.call_args.args[0])
+            self.assertIn('--http3-only', run.call_args_list[2].args[0])
             self.assertIn('curl=2', detail)
 
     def test_login_challenge_is_not_reported_as_successful_bypass(self):
@@ -168,7 +170,8 @@ class YoutubeFailoverTests(unittest.TestCase):
         with patch.object(watch.subprocess, 'run', side_effect=[
                 subprocess.CompletedProcess([], 0),
                 subprocess.CompletedProcess([], 1, '', 'Sign in to confirm you are not a bot'),
-        ]), patch.object(watch.pwd, 'getpwnam'):
+                subprocess.CompletedProcess([], 1, '', 'Sign in to confirm you are not a bot'),
+        ]), patch.object(watch.pwd, 'getpwnam'), patch.object(watch.os, 'chown'):
             good, detail = watch.probe()
             self.assertFalse(good)
             self.assertIn('обход не измерен', detail)

@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
 import { sql } from 'drizzle-orm'
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
 import { test, expect } from '@playwright/test'
 import * as schema from '../server/database/schema'
 import { serverModule } from './support/server-module'
@@ -43,6 +45,50 @@ test('SQLite: внешний writer и reader не срывают запрос �
   }
   finally {
     db.$client.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('HTTP ждёт миграции и администратора при медленном старте', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'panel-init-'))
+  const databaseUrl = `file:${join(directory, 'panel.sqlite')}`
+  const client = createClient({ url: databaseUrl, concurrency: 1 })
+  const db = drizzle(client, { schema })
+  let started!: () => void
+  let release!: (value: string) => void
+  const hashing = new Promise<void>(resolve => { started = resolve })
+  const password = new Promise<string>(resolve => { release = resolve })
+  let request = async () => {}
+  const { default: plugin } = serverModule<{ default: (app: object) => Promise<void> }>('server/plugins/init.ts', {
+    '@libsql/client': { createClient: () => client },
+    '../database/client': { useDb: () => db },
+    '../database/schema': schema,
+    '../utils/auth': { hashPassword: () => { started(); return password } },
+    '../utils/anysda-config': { loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
+  }, {
+    defineNitroPlugin: (callback: unknown) => callback,
+    useRuntimeConfig: () => ({ databaseUrl }),
+    useLogger: () => ({ info() {}, warn() {}, error() {}, fatal() {} }),
+    process,
+    console,
+  })
+  const startup = plugin({ hooks: { hook: (name: string, handler: typeof request) => { if (name === 'request') request = handler } } })
+  try {
+    await hashing
+    let answered = false
+    const response = request().then(() => { answered = true })
+    await new Promise(resolve => setImmediate(resolve))
+    console.log(`HTTP ответ до создания администратора: ${answered}`)
+    expect(answered).toBe(false)
+    release('test-hash')
+    await response
+    expect(await db.select().from(schema.users)).toHaveLength(1)
+    expect(await db.select().from(schema.accounts)).toHaveLength(1)
+  }
+  finally {
+    release('test-hash')
+    await startup
+    client.close()
     rmSync(directory, { recursive: true, force: true })
   }
 })

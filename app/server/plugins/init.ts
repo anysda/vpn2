@@ -13,19 +13,20 @@ function generatePassword(): string {
   return randomBytes(13).toString('base64url').slice(0, 18)
 }
 
-export default defineNitroPlugin(async () => {
+export default defineNitroPlugin((nitroApp) => {
   // Nitro не ждёт async-плагин: брошенная здесь ошибка уходила в
   // unhandledRejection, а панель продолжала отвечать без миграций или с
   // несинхронизированным админом. Падаем процессом — контейнер это покажет,
   // а 30-frontend напечатает журнал.
-  try {
-    await initPanel()
-  }
-  catch (err) {
+  const ready = initPanel().catch((err) => {
     useLogger().fatal({ err }, 'panel init failed')
     console.error('panel init failed:', err)
     process.exit(1)
-  }
+  })
+  // Обработчик request Nitro ждёт, в отличие от async-плагина. В том числе
+  // /api/version не должен сообщать о готовности до создания администратора.
+  nitroApp.hooks.hook('request', () => ready)
+  return ready
 })
 
 async function initPanel() {

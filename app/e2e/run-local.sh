@@ -89,10 +89,6 @@ trap 'exit 130' INT
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
 stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
   "${ENTRY_DOCKER_ARGS[@]}" \
-  -e NUXT_PUBLIC_SSO_ENABLED=true -e NUXT_PUBLIC_SSO_AUTO_REDIRECT=true \
-  -e NUXT_SSO_PASSWORD_LOGIN=false -e NUXT_OAUTH_OIDC_CLIENT_SECRET= \
-  -e NUXT_OAUTH_OIDC_CLIENT_ID=vpn2 \
-  -e NUXT_OAUTH_OIDC_OPENID_CONFIG=https://auth.example.test/application/o/vpn2/.well-known/openid-configuration \
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"
 

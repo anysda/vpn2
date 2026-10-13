@@ -131,15 +131,17 @@ patch_agh_config() {
     changed=1
   fi
   [[ $changed -eq 1 ]] && echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
-  # ratelimit_whitelist: пулы туннелей. AdGuard считает лимит (20 rps) на
-  # подсеть /24, а клиенты WG/OpenVPN/IKEv2 сидят каждый в своей /24 и делят
-  # одно ведро на всех. Поле принимает только адреса, не CIDR, поэтому пулы
-  # раскрываем. Пулы - из тех же переменных, что в 28/29/27. Чужие адреса
-  # в списке не трогаем, лимит для остальных остаётся.
+  # whitelist сохраняем для совместимости, включая пользовательские адреса.
+  # В v0.107.79 dnsforward/config.go:newRatelimitMw не передаёт этот список
+  # в dnsproxy AllowlistAddrs: даже один адрес в нём не освобождён от 20 rps.
+  # На закрытом DNS-слушателе отключаем лимит целиком. Он доступен по lo и
+  # служебному адресу; INPUT default deny и стадии 27/28/29 разрешают :53
+  # только пулам туннелей. При патче также возвращаем штатные bind_hosts:
+  # этот режим нельзя переносить на публичный DNS без отдельной защиты.
   local pools
   pools="$(vpn_pool_subnets wg ovpn ikev2) ${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
   local wl
-  wl=$(CFG="$cfg" POOLS="$pools" python3 - <<'PYEOF'
+  wl=$(CFG="$cfg" POOLS="$pools" DNS_BIND="${MGMT_IP:-10.99.0.1}" python3 - <<'PYEOF'
 import copy, ipaddress, os, yaml
 with open(os.environ["CFG"]) as f:
     cfg = yaml.safe_load(f)
@@ -156,6 +158,8 @@ dns["upstream_mode"] = "parallel"
 dns["cache_optimistic"] = True
 # OUTPUT перехватывает TCP; не позволяем включённому в UI HTTP/3 обойти его.
 dns["use_http3_upstreams"] = False
+dns["bind_hosts"] = ["127.0.0.1", os.environ["DNS_BIND"]]
+dns["ratelimit"] = 0
 have = [str(a) for a in dns.get("ratelimit_whitelist") or []]
 need = dict.fromkeys(str(h) for p in os.environ["POOLS"].split()
                      for h in ipaddress.ip_network(p, strict=False).hosts())

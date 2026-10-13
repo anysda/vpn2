@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { chmod, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { parseOutbound } from '../../shared/outbounds'
 
 /**
  * Ручное выключение экзитов из панели.
@@ -62,9 +63,8 @@ export function toggleExit(tag: string, disabled: boolean, exits: string[], file
   return run
 }
 
-/** Узел экзита из тега outbound'а hy2-<node>-<kind> (как _node_of в watchdog). */
+/** Узел только пользовательского выхода; служебные каналы не дают нагрузку экзита. */
 export function exitNodeOf(outbound: string | undefined | null): string | null {
-  if (!outbound) return null
-  const p = outbound.split('-')
-  return p.length >= 3 && p[0] === 'hy2' ? p[1]! : null
+  if (!outbound || outbound === 'direct-ru') return null
+  return parseOutbound(outbound)?.tag ?? null
 }

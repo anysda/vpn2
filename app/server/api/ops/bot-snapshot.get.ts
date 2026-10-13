@@ -3,7 +3,7 @@ import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireBotAuth } from '../../utils/bot-api'
 import { clientStatus } from '../../utils/client-status'
-import { fetchConnections, fetchProxies } from '../../utils/clash-client'
+import { fetchConnections, fetchProxies, userVisibleOutbounds } from '../../utils/clash-client'
 import { fetchNodeMetrics, nodeInstances } from '../../utils/vm-client'
 
 export default defineEventHandler(async (event) => {
@@ -35,8 +35,7 @@ export default defineEventHandler(async (event) => {
     staleSec: nodes[i]?.staleSec ?? null,
   }))
 
-  const outboundsPayload = proxies
-    .filter(p => p.name.startsWith('hy2-') || p.name === 'direct-ru')
+  const outboundsPayload = userVisibleOutbounds(proxies)
     .map((p) => {
       const latest = p.history?.length ? p.history[p.history.length - 1]!.delay : null
       const rtt = p.delay ?? latest

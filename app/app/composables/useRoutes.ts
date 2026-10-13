@@ -1,3 +1,5 @@
+export { parseOutbound } from '../../shared/outbounds'
+
 export interface Route {
   id: number
   type: 'domain' | 'ip_cidr'
@@ -118,12 +120,4 @@ export function pluralRu(n: number, forms: [string, string, string]): string {
   if (mod10 === 1 && mod100 !== 11) return forms[0]
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return forms[1]
   return forms[2]
-}
-
-/** "hy2-us2-direct" → { tag: "us2", variant: "direct" }, "direct-ru" → { tag: "ru", variant: "direct" } */
-export function parseOutbound(name: string): { tag: string, variant: 'direct' | 'warp' } | null {
-  if (name === 'direct-ru') return { tag: 'ru', variant: 'direct' }
-  const m = name.match(/^hy2-([a-z0-9]+)-(direct|warp)$/)
-  if (!m) return null
-  return { tag: m[1]!, variant: m[2] as 'direct' | 'warp' }
 }

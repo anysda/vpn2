@@ -370,6 +370,13 @@ def _ob_label(name: str) -> str:
     return s.upper()
 
 
+def _exit_outbounds(data: dict) -> list:
+    # Контракт app/shared/outbounds.ts; защита и при старой версии панели.
+    return [o for o in data.get('outbounds', [])
+            if re.fullmatch(r'hy2-([a-z](?:[a-z0-9-]*[a-z0-9])?)-(direct|warp)',
+                            o.get('name') or '')]
+
+
 def _pct(v) -> str:
     return f'{v:.0f}%' if isinstance(v, (int, float)) else '—'
 
@@ -715,9 +722,7 @@ async def build_status_text(header: str = '*Состояние системы*')
             f" | ↕ {net:.1f} Mbps"
         )
     lines.append('')
-    for o in data.get('outbounds', []):
-        if o.get('name') == 'direct-ru':
-            continue
+    for o in _exit_outbounds(data):
         rtt = o.get('rttMs')
         icon = '🟢' if rtt else '🔴'
         rtt_txt = f'{rtt} ms' if rtt else 'нет связи'
@@ -771,9 +776,7 @@ async def cmd_nodes(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         data = await api_status()
         lines = ['*Exit-ноды*\n']
-        for o in data.get('outbounds', []):
-            if o.get('name') == 'direct-ru':
-                continue
+        for o in _exit_outbounds(data):
             rtt = o.get('rttMs')
             icon = '🟢' if rtt else '🔴'
             rtt_txt = f'{rtt} ms' if rtt else 'нет связи'

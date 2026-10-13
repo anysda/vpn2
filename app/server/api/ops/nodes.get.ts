@@ -40,7 +40,7 @@ export default defineEventHandler(async (event) => {
   const devicesByNode = new Map<string, Set<string>>()
   for (const c of conns?.connections ?? []) {
     const out = c.chains[0]
-    const node = out && !out.endsWith('-mgmt') ? exitNodeOf(out) : null
+    const node = exitNodeOf(out)
     const ip = c.metadata?.sourceIP
     if (!node || !ip || !/^10\.6[678]\./.test(ip)) continue
     let s = devicesByNode.get(node)

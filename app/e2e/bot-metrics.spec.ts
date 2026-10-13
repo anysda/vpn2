@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import * as mskDay from '../server/utils/msk-day'
+import * as outbounds from '../shared/outbounds'
 import { serverModule } from './support/server-module'
 
 test('бот получает отсутствие CPU/RAM, а не сохранённую нагрузку прошлого опроса', async () => {
@@ -22,7 +23,10 @@ test('бот получает отсутствие CPU/RAM, а не сохран
       '../../database/schema': { clients: {} },
       '../../utils/bot-api': { requireBotAuth: () => {} },
       '../../utils/client-status': { clientStatus: () => 'active' },
-      '../../utils/clash-client': { fetchProxies: async () => [], fetchConnections: async () => null },
+      '../../utils/clash-client': {
+        fetchProxies: async () => [], fetchConnections: async () => null,
+        userVisibleOutbounds: (proxies: Array<{ name: string }>) => proxies.filter(p => outbounds.parseOutbound(p.name)),
+      },
       '../../utils/vm-client': metrics,
     }, { defineEventHandler: (fn: unknown) => fn },
   )

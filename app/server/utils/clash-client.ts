@@ -1,4 +1,5 @@
 import { useLogger } from './logger'
+import { parseOutbound } from '../../shared/outbounds'
 
 export interface ClashProxy {
   name: string
@@ -74,15 +75,12 @@ export async function fetchConnections(): Promise<ConnectionsResponse | null> {
 }
 
 /**
- * The proxies we expose as drag targets in the panel: anything starting with
- * `hy2-` (per-exit, direct or warp) plus `direct-ru`. Skips internal urltest
- * groups (`*-best`, `lane-*`, `pin-*`) and the service `hy2-{tag}-mgmt`
- * outbounds: they reach only the exit's own metrics port, a user route there
- * would black-hole its traffic.
+ * Общий список для панели, API бота и выбора маршрутов: только direct/warp
+ * экзитов и direct-ru. Новые служебные outbound'ы не становятся узлами.
  */
 export function userVisibleOutbounds(proxies: ClashProxy[]): ClashProxy[] {
   return proxies
-    .filter(p => p.name === 'direct-ru' || (p.name.startsWith('hy2-') && !p.name.endsWith('-mgmt')))
+    .filter(p => parseOutbound(p.name) !== null)
     .sort((a, b) => {
       // direct-ru first, then per-exit direct, then per-exit warp
       if (a.name === 'direct-ru') return -1

@@ -177,6 +177,8 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-property:opacity,color,background-color,border-color,box-shadow!important}
+  /* страховка: бесконечное (ореол, пульс, крутилка) играет не дольше одного раза */
+  *,*::before,*::after{animation-iteration-count:1!important}
   .tab.on{animation:tfade .2s}
   .pop{filter:none}
 }

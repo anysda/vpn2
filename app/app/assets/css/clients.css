@@ -159,5 +159,5 @@
 .clm .wait{color:var(--t3);font-size:13px;text-align:center;padding:16px 0 4px}
 
 @media (prefers-reduced-motion:reduce){
-  .clp .av i::after{animation:none}
+  .clp .av i.on::after{content:none}
 }

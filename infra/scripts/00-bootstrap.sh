@@ -305,7 +305,13 @@ if ! sshd -t 2>&1; then
   rm -f /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
   exit 1
 fi
-systemctl reload ssh
+# На Ubuntu 26.04 sshd запускает ssh.socket, а apt при обновлении openssh
+# останавливает ssh.service и не поднимает её: `reload` на остановленной
+# службе падает. reload-or-restart на живой службе тот же reload, на
+# остановленной запускает её (при сокете - с его портом), и новый конфиг
+# читается сразу. try-reload-or-restart оставил бы без sshd хост, где сокета нет.
+# Порт и ListenAddress сокет берёт из генератора: их смена этим не применится.
+systemctl reload-or-restart ssh
 
 # ----------------------------------------------------------------------------
 # 4. ufw firewall — role-specific

@@ -218,7 +218,24 @@ export const routes = sqliteTable('routes', {
     .default(sql`(strftime('%s','now'))`),
 })
 
-export type User = typeof users.$inferSelect
+/**
+ * Журнал событий для ленты на Обзоре (server/utils/events.ts), хранится 30 дней.
+ * level: alarm — тревога, warn — предупреждение, info — запись, ok — восстановление.
+ * key — защита от повтора (напоминание об одном сроке уходит один раз).
+ */
+export const events = sqliteTable('events', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  at: integer('at').notNull(),
+  type: text('type').notNull(),
+  level: text('level', { enum: ['alarm', 'warn', 'info', 'ok'] }).notNull(),
+  object: text('object'),
+  actor: text('actor'),
+  title: text('title').notNull(),
+  detail: text('detail').notNull().default(''),
+  key: text('key').unique(),
+}, table => [index('events_at_idx').on(table.at), index('events_object_idx').on(table.object, table.at)])
+
+export type User =typeof users.$inferSelect
 export type NewUser = typeof users.$inferInsert
 export type Client = typeof clients.$inferSelect
 export type NewClient = typeof clients.$inferInsert

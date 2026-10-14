@@ -84,6 +84,29 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -subj "/CN=anysda-vpn2 IKEv2 CA" 2>/dev/null
 IN
 
+  # стадия 20: снимок маршрутов роутера (route-plan.json) тем же генератором и
+  # скриптом применения, без правил из панели. Без него «Проверить адрес» на
+  # странице маршрутов отвечает 503, как на ноде до первого запуска роутера.
+  SING_BOX_BIN=true python3 - "$STAND_REPO_DIR/infra/tests" "$EXIT_TAGS" <<'PY' \
+    | dk exec -i "$name" sh -c 'cat > /etc/anysda/route-plan.json'
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import router_support as rs
+tags = sys.argv[2].split()
+env = {'EXIT_TAGS': ' '.join(tags)}
+for i, tag in enumerate(t.upper() for t in tags):
+    env[f'DOMAIN_{tag}'] = f'{tag.lower()}.example.test'
+    env[f'MGMT_IP_{tag}'] = f'192.0.2.{i + 2}'
+    for key in ['DIRECT', 'WARP', 'MGMT', 'OBFS']:
+        env[f'{tag}_{key}'] = 'stand-password-0123456789'
+with tempfile.TemporaryDirectory() as d:
+    r = rs.apply(rs.prepare(Path(d), **env))
+    if r.returncode:
+        sys.exit(r.stderr)
+    sys.stdout.write((Path(d) / 'plan.json').read_text())
+PY
+
   # Caddy перед панелью, как на ноде: он подменяет текст статуса ответа на
   # стандартный («401 Unauthorized»), и фронт обязан это пережить.
   local caddyfile='{

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { pluralRu } from '#shared/plural'
+import { activityScale } from '~/utils/activity-scale'
 import { anim } from '~/utils/clients-view'
 import { ru, useWake } from '~/utils/overview'
 
@@ -26,6 +27,12 @@ const val = (day: number) => {
   if (!d) return 0
   return mode.value === 'on' ? d.online : Math.round(d.bytes / 1e8) / 10
 }
+// оттенок — от сырого значения: день с десятками мегабайт не пустой, хотя пишется «0,0 ГБ»
+const raw = (day: number) => {
+  const d = byDay.value.get(day)
+  return d ? mode.value === 'on' ? d.online : d.bytes : 0
+}
+const SHADE = [0.05, 0.14, 0.28, 0.5, 0.9]
 
 // размер клетки — от ширины сетки, как в макете
 const grid = ref<HTMLElement>()
@@ -42,11 +49,13 @@ const geo = computed(() => {
   if (W < 120 || !data.value) return null
   const N = Math.floor((W - 26) / 22), c = (W - 26) / N - 4
   const today = data.value.today, start = today - wd(today) - 7 * (N - 1)
-  const cells: Array<{ w: number, d: number, day: number, v: number }> = []
+  const cells: Array<{ w: number, d: number, day: number, v: number, a: number }> = []
   for (let w = 0; w < N; w++) for (let d = 0; d < 7; d++) {
     const day = start + w * 7 + d
-    if (day <= today) cells.push({ w, d, day, v: val(day) })
+    if (day <= today) cells.push({ w, d, day, v: raw(day), a: 0 })
   }
+  const step = activityScale(cells.map(x => x.v))
+  for (const x of cells) x.a = SHADE[step(x.v)]!
   const months: Array<{ w: number, m: string }> = []
   let lastM = -1
   for (let w = 0; w < N; w++) {
@@ -58,12 +67,8 @@ const geo = computed(() => {
   }
   const mx = Math.max(0, ...cells.map(x => x.v))
   const pk = mx > 0 ? cells.find(x => x.v === mx)!.day : null
-  return { N, c, cells, months, mx, pk }
+  return { N, c, cells, months, pk }
 })
-const level = (v: number, mx: number) => {
-  const t = mx ? v / mx : 0
-  return t < 0.2 ? 0.05 : t < 0.4 ? 0.14 : t < 0.6 ? 0.28 : t < 0.8 ? 0.5 : 0.9
-}
 
 // выбранный день: по умолчанию пик, наведение переносит выбор
 const sel = ref<number | null>(null)
@@ -151,7 +156,7 @@ function pick(m: Mode) {
         <i
           v-for="x in geo.cells" :key="x.day" :data-day="x.day"
           :class="{ pk: x.day === geo.pk, sel: x.day === selDay }"
-          :style="{ '--a': level(x.v, geo.mx), gridRow: x.d + 2, gridColumn: x.w + 2 }"
+          :style="{ '--a': x.a, gridRow: x.d + 2, gridColumn: x.w + 2 }"
           @mouseenter="sel = x.day"
         />
       </template>

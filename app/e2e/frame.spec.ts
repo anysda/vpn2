@@ -37,6 +37,22 @@ test.describe('разделы шапки', () => {
   })
 })
 
+test('экран ошибки: код и текст макета без сообщения фреймворка', async ({ page, guard }) => {
+  guard.allow(404, /\/no-such-page$/, 'GET')
+  await loginApi(page)
+  const response = await page.goto('/no-such-page')
+  expect(response?.status()).toBe(404)
+  await hydrated(page)
+  const card = page.locator('.errp')
+  await expect(card.getByRole('heading', { name: 'Ошибка' })).toBeVisible()
+  await expect(card.getByText('404', { exact: true })).toBeVisible()
+  await expect(card.getByText('Что-то пошло не так.', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Page not found/)).toHaveCount(0)
+  await expect(card.getByRole('button', { name: 'Обновить' })).toBeVisible()
+  await card.getByRole('button', { name: 'На главную' }).click()
+  await expect(page).toHaveURL(/\/$/)
+})
+
 test.describe('тема', () => {
   test('выбор темы переживает перезагрузку и стоит до первой отрисовки', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' })

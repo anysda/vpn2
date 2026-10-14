@@ -6,6 +6,8 @@ useHead({ title: 'DNS — anysda-vpn2' })
 const SUBS = [
   { value: 'sum', label: 'Сводка' },
   { value: 'log', label: 'Журнал' },
+  { value: 'flt', label: 'Фильтры' },
+  { value: 'rules', label: 'Свои правила' },
 ] as const
 type Sub = typeof SUBS[number]['value']
 
@@ -33,6 +35,12 @@ async function pick(v: Sub, dir: 'fwd' | 'back') {
     </section>
     <section v-if="seen.has('log')" class="dpan" :class="{ on: sub === 'log' }">
       <DnsLog />
+    </section>
+    <section v-if="seen.has('flt')" class="dpan" :class="{ on: sub === 'flt' }">
+      <DnsFilters />
+    </section>
+    <section v-if="seen.has('rules')" class="dpan" :class="{ on: sub === 'rules' }">
+      <DnsRules />
     </section>
   </main>
 </template>

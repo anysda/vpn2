@@ -319,6 +319,7 @@ const agh = {
   blocked_services: ['tiktok'],
   upstream_mode: 'load_balance',
 }
+let aghNextId = 1_700_000_000
 // Движок фильтрации: как у настоящего, set_rules и set_url видны в
 // filtering/status сразу, а check_host и журнал — после пересборки (~0,4 с).
 const aghSnap = () => ({ user_rules: [...agh.user_rules], on: new Set(agh.filters.filter(f => f.enabled).map(f => f.id)) })
@@ -455,6 +456,37 @@ async function adguard(req, res) {
         && (!s || e.question.name.includes(s) || e.client.includes(s)))
       const data = all.slice(0, limit)
       return json(res, { data, oldest: data.at(-1)?.time ?? '' }, 'application/json')
+    }
+  }
+  if (req.method === 'POST' && path.startsWith('filtering/') && path !== 'filtering/set_rules') {
+    const b = await aghBody(req)
+    const key = b?.whitelist ? 'whitelist_filters' : 'filters'
+    const fail = (text) => { res.writeHead(400); res.end(text) }
+    if (!b) return fail('bad json')
+    if (path === 'filtering/add_url') {
+      if (agh[key].some(f => f.url === b.url)) return fail(`Filter with URL "${b.url}": url already exists`)
+      // Адрес .invalid AdGuard не скачает — как у настоящего, отказ с текстом.
+      if (/\.invalid(\/|$)/.test(new URL(b.url).hostname + '/')) return fail(`Couldn't fetch filter from URL "${b.url}": no addresses for host`)
+      agh[key].push({ id: aghNextId++, name: b.name, url: b.url, enabled: true, rules_count: 1200, last_updated: new Date().toISOString() })
+      aghApply()
+      res.writeHead(200)
+      return res.end('OK 1200 rules')
+    }
+    if (path === 'filtering/set_url') {
+      const f = agh[key].find(x => x.url === b.url)
+      if (!f) return fail('url doesn\'t exist')
+      Object.assign(f, { name: b.data.name, url: b.data.url, enabled: b.data.enabled })
+      aghApply()
+      return ok()
+    }
+    if (path === 'filtering/remove_url') {
+      agh[key] = agh[key].filter(f => f.url !== b.url)
+      aghApply()
+      return ok()
+    }
+    if (path === 'filtering/refresh') {
+      for (const f of agh[key]) if (f.enabled) f.last_updated = new Date().toISOString()
+      return json(res, { updated: 0 }, 'application/json')
     }
   }
   if (req.method === 'POST' && path === 'filtering/set_rules') {

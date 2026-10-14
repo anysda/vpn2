@@ -57,6 +57,28 @@ export async function serviceNames(): Promise<Map<string, string>> {
   return new Map((await serviceCatalog()).map(s => [s.id, s.name]))
 }
 
+export interface ListRow { name: string, url: string, enabled: boolean, rules: number, updated: string | null }
+
+/** Чёрные и белые списки для вкладки «Фильтры». */
+export function listsView(st: AghFilteringStatus) {
+  const row = (f: AghFilter): ListRow => ({ name: f.name, url: f.url, enabled: f.enabled, rules: f.rules_count, updated: f.last_updated ?? null })
+  return { interval: st.interval, black: (st.filters ?? []).map(row), white: (st.whitelist_filters ?? []).map(row) }
+}
+
+/**
+ * Состояние AdGuard после действия: если /control/filtering/status показывает
+ * не то, что просили, человеку — ошибка, а не тост «готово».
+ */
+export async function confirmFiltering(ok: (st: AghFilteringStatus) => boolean, what: string): Promise<AghFilteringStatus> {
+  const st = await filteringStatus()
+  if (!ok(st)) throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: `AdGuard не применил изменение: ${what}` })
+  return st
+}
+
+export function findList(st: AghFilteringStatus, url: string, white: boolean): AghFilter | undefined {
+  return ((white ? st.whitelist_filters : st.filters) ?? []).find(f => f.url === url)
+}
+
 /**
  * check_host, пока ответ не станет нужным, но не дольше `ms`. Правила и
  * списки AdGuard применяет не сразу: после set_rules / set_url движок

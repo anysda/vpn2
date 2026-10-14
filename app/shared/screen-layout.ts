@@ -1,12 +1,13 @@
 /**
  * Раскладка главной: какие блоки на обзоре и в каком порядке (колонка одна, right пуст).
  * Хранится у пользователя (users.screen_layout), правится в «Настроить экран».
+ * Бывший блок `events` (рассылка и лента) в старых раскладках отсеивается сам:
+ * лента теперь в `traffic`, рассылка не на Обзоре.
  */
 export const SCREEN_MODULES = {
-  traffic: { label: 'Трафик, выходы и DNS', hint: 'волна за сутки, два кольца', column: 'left' },
+  traffic: { label: 'События, трафик, выходы и DNS', hint: 'лента, волна за сутки, два кольца', column: 'left' },
   nodes: { label: 'Узлы', hint: 'Entry и экзиты с метриками', column: 'left' },
   activity: { label: 'Активность и клиенты', hint: 'сетка по дням, онлайн и офлайн', column: 'left' },
-  events: { label: 'Рассылка и события', hint: 'сообщение от бота, лента', column: 'left' },
 } as const
 
 export type ScreenModuleId = keyof typeof SCREEN_MODULES

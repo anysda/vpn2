@@ -20,7 +20,7 @@ const delta = computed(() => {
   const d = data.value
   if (!d?.prev) return null
   const pct = Math.round((d.sum - d.prev) / d.prev * 100)
-  return `${pct > 0 ? '+' : pct < 0 ? '−' : ''}${Math.abs(pct)}% ${d.period === 'day' ? 'ко вчера' : 'к прошлой неделе'}`
+  return `${pct > 0 ? '+' : pct < 0 ? '−' : ''}${Math.abs(pct)}% ${d.period === 'day' ? 'к вчерашнему' : 'к прошлой неделе'}`
 })
 
 const D = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']

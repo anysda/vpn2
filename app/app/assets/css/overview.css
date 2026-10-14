@@ -6,8 +6,10 @@
 .ov .tag,.ov-modal .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
 .ov .tag .q{width:14px;height:14px;border-radius:50%;background:rgba(var(--fg),.12);display:grid;place-items:center;font-size:9px}
 
-/* ряд 1: трафик, выходы, DNS */
-.ov .r1{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px;margin-bottom:12px}
+/* ряд 1: события, трафик, выходы, DNS. Ленте — ширина под строку целиком,
+   остальным — сколько нужно кольцу и легенде; высота ряда от соседей ленты */
+.ov .r1{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px}
+.ov .r1>.ev{height:272px}
 .ov .wave{display:flex;flex-direction:column;height:272px}
 .ov .wave .top{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 .ov .wave .plot{flex:1;min-height:0;width:100%;margin-top:6px}
@@ -61,7 +63,7 @@
 @media (hover:hover){.ov .node:hover .ar{transform:translate(2px,-2px);color:var(--t1);border-color:rgba(var(--fg),.3)}}
 
 /* активность и клиенты */
-.ov .ra{display:grid;grid-template-columns:2.3fr 1fr;gap:12px;margin-bottom:12px;align-items:start}
+.ov .ra{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(0,1.15fr) minmax(0,1fr);gap:12px;margin-bottom:12px;align-items:start}
 .ov .stack{display:grid;gap:12px}
 /* активность: недели столбцами, дни строками */
 .ov .fhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
@@ -90,9 +92,7 @@
 .ov .mini .big{font-size:36px}
 .ov .mini .plot{grid-row:2;width:100%;height:100%;min-height:0}
 
-/* рассылка и место под события */
-.ov .r4{display:grid;grid-template-columns:5fr 7fr;gap:12px}
-.ov .r4>.card{min-height:300px}
+/* рассылка */
 .ov .sc{padding:20px 22px;display:flex;flex-direction:column;min-height:270px}
 .ov .sh{display:flex;justify-content:space-between;align-items:center}
 .ov .sh h3{color:var(--t1);font-size:15px}
@@ -153,6 +153,17 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
 @media (max-width:1360px){
   .ov .big{font-size:40px}
   .ov .node .cpu .big{font-size:34px}
+}
+/* узкое окно: ленте ширину, кольца меньше, имя выхода переносится, а не режется */
+@media (max-width:1180px){
+  .ov .r1{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) minmax(0,1.06fr) minmax(0,1fr)}
+  .ov .r1>.card{padding-left:16px;padding-right:16px}
+  .ov .donut .ring svg{width:124px;height:124px}
+  .ov .donut .ring .ct b{font-size:27px}
+  .ov .donut .ring .ct span{font-size:10px}
+  .ov .leg{gap:6px;font-size:11.5px}
+  .ov .leg div{grid-template-columns:auto minmax(0,1fr) auto auto;gap:6px}
+  .ov .leg .nm{white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 }
 @media (prefers-reduced-motion:reduce){
   .ov .live::after{animation:none!important}

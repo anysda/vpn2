@@ -18,9 +18,9 @@ onMounted(() => {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
   wake.on = true
   wake.t0 = performance.now()
-  const r4 = tab.value?.querySelector('.r4')
-  r4?.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
-    { duration: 600, delay: 1150, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })
+  const ev = tab.value?.querySelector('.r1>.ev')
+  ev?.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
+    { duration: 600, delay: 120, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })
   setTimeout(() => { wake.on = false }, 3000)
 })
 
@@ -42,7 +42,9 @@ const { layout } = useScreenLayout()
 // период графика трафика: сутки по часам или неделя по суткам
 const period = ref<'day' | 'week'>('day')
 
-const KNOWN = new Set(['traffic', 'nodes', 'activity', 'events'])
+// старое `events` (рассылка и лента) из сохранённых раскладок отсеивает
+// normalizeScreenLayout: лента теперь в traffic, рассылка ушла с Обзора
+const KNOWN = new Set(['traffic', 'nodes', 'activity'])
 const blocks = computed(() => [...layout.value.left, ...layout.value.right].filter(id => KNOWN.has(id)))
 </script>
 
@@ -57,6 +59,7 @@ const blocks = computed(() => [...layout.value.left, ...layout.value.right].filt
     </div>
     <template v-for="id in blocks" :key="id">
       <section v-if="id === 'traffic'" class="r1" data-blk="traffic">
+        <EventsFeed />
         <OverviewWave :period="period" />
         <OverviewExits :nodes="sorted" />
         <OverviewDns />
@@ -64,11 +67,8 @@ const blocks = computed(() => [...layout.value.left, ...layout.value.right].filt
       <OverviewNodes v-else-if="id === 'nodes'" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
       <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
         <OverviewActivity />
+        <OverviewTop :period="period" />
         <OverviewClients />
-      </section>
-      <section v-else-if="id === 'events'" class="r4" data-blk="events">
-        <OverviewBroadcast />
-        <EventsFeed />
       </section>
     </template>
   </main>

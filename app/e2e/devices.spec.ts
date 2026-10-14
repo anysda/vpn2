@@ -1,14 +1,9 @@
 import type { Locator, Page, Response } from '@playwright/test'
 import { downloadText, expect, PUBLIC_HOST, test, toast, uniq } from './support/fixtures'
-import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
+import { addDevice, addDeviceButton, configDialog, createClientUi, deviceCard, ikeField, openClient, openHome } from './support/clients'
 
 function closeBtn(dlg: Locator) {
   return dlg.getByRole('button', { name: /Close|Закрыть/ })
-}
-
-/** Модалка конфига девайса: заголовок — имя девайса, внутри — название протокола. */
-function protoDialog(page: Page, device: string, proto: string) {
-  return page.getByRole('dialog', { name: device }).filter({ hasText: proto })
 }
 
 async function download(page: Page, dlg: Locator, name = 'Скачать') {
@@ -52,7 +47,7 @@ test.describe('девайсы', () => {
     await openClient(page, client)
 
     // «Отмена» в «Новый девайс».
-    await page.getByRole('button', { name: 'девайс', exact: true }).click()
+    await addDeviceButton(page).click()
     const add = page.getByRole('dialog', { name: 'Новый девайс' })
     await add.getByPlaceholder('напр. iPhone').fill('lost')
     await add.getByRole('button', { name: 'Отмена' }).click()
@@ -63,7 +58,7 @@ test.describe('девайсы', () => {
     const dc = deviceCard(page, device)
 
     await dc.wg.click()
-    const wg = protoDialog(page, device, 'WireGuard')
+    const wg = configDialog(page, device, 'WireGuard')
     await qrLoaded(wg)
     const first = await download(page, wg)
     expect(first.file).toMatch(/\.conf$/)
@@ -130,7 +125,7 @@ test.describe('девайсы', () => {
     const dc = deviceCard(page, device)
 
     await dc.ovpn.click()
-    const ovpn = protoDialog(page, device, 'OpenVPN')
+    const ovpn = configDialog(page, device, 'OpenVPN')
     await expect(ovpn.getByText('генерирую сертификат…')).toBeHidden({ timeout: 30_000 })
     const first = await download(page, ovpn)
     expect(first.file).toMatch(/\.ovpn$/)
@@ -164,20 +159,20 @@ test.describe('девайсы', () => {
     const dc = deviceCard(page, device)
 
     await dc.ikev2.click()
-    const ike = protoDialog(page, device, 'IKEv2')
-    await expect(ike.getByText('Пароль:')).toBeVisible()
-    const values = ike.locator('div.grid > span.font-mono')
-    await expect(values.nth(0)).toHaveText(PUBLIC_HOST)
-    await expect(values.nth(1)).not.toBeEmpty()
-    await expect(values.nth(2)).toHaveText('•'.repeat(20))
+    const ike = configDialog(page, device, 'IKEv2')
+    const password = ikeField(ike, 'Пароль')
+    await expect(password).toBeVisible()
+    await expect(ikeField(ike, 'Сервер')).toHaveText(PUBLIC_HOST)
+    await expect(ikeField(ike, 'Логин')).not.toBeEmpty()
+    await expect(password).toHaveText('•'.repeat(20))
 
-    const eye = ike.locator('div.grid > div.flex').nth(2).getByRole('button').first()
+    const eye = ike.getByRole('button', { name: 'Показать' })
     await eye.click()
-    const shown = (await values.nth(2).textContent())!.trim()
+    const shown = (await password.textContent())!.trim()
     expect(shown).not.toContain('•')
     expect(shown.length).toBeGreaterThanOrEqual(12)
     await eye.click()
-    await expect(values.nth(2)).toHaveText('•'.repeat(20))
+    await expect(password).toHaveText('•'.repeat(20))
 
     // Self-signed режим: есть «Скачать CA», файл — PEM-сертификат.
     const ca = ike.getByRole('link', { name: 'Скачать CA' }).or(ike.getByRole('button', { name: 'Скачать CA' }))

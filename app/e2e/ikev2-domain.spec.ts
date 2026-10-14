@@ -38,7 +38,7 @@ test('переход IKEv2 на домен сохраняет пароль и н
     await hydrated(page)
     await openClient(page, name)
     await page.getByRole('button', { name: 'IKEv2', exact: true }).click()
-    await expect(page.getByText('Remote ID (iOS) / Server identity (Android):')).toBeVisible()
+    await expect(page.getByText('Remote ID (iOS) / Server identity (Android)', { exact: true })).toBeVisible()
     await expect(page.getByText('нужно скачать заново')).toHaveCount(0)
   }
   finally {

@@ -1,5 +1,5 @@
 import { ADMIN_USER, expect, hydrated, test } from './support/fixtures'
-import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
+import { addDevice, clientName, configDialog, createClientUi, deviceCard, openClient, openHome } from './support/clients'
 
 for (const width of [1400, 390]) {
   test.describe(`безопасность интерфейса, ${width}px`, () => {
@@ -12,15 +12,16 @@ for (const width of [1400, 390]) {
       await createClientUi(page, client)
       const dialog = await openClient(page, client)
       await addDevice(page, device)
-      await expect(dialog.getByRole('heading', { name: client, exact: true })).toBeVisible()
+      await expect(clientName(dialog)).toHaveText(client)
+      await expect(deviceCard(page, device).card).toBeVisible()
+      await expect(page.getByTestId('client-row').getByText(client, { exact: true })).toHaveCount(1)
       await deviceCard(page, device).wg.click()
-      const config = page.getByRole('dialog', { name: device, exact: true })
-      await expect(config.getByRole('heading', { name: device, exact: true })).toBeVisible()
+      const config = configDialog(page, device, 'WireGuard')
+      await expect(config.getByRole('heading', { name: `WireGuard · ${device}`, exact: true })).toBeVisible()
       await expect(config.getByRole('button', { name: 'Скачать', exact: true })).toBeEnabled()
       expect(await page.evaluate(() => Reflect.get(window, '__xss'))).toBeUndefined()
       await expect(page.locator('[onerror], [onload]')).toHaveCount(0)
       await config.getByRole('button', { name: /Close|Закрыть/ }).click()
-      await dialog.getByRole('button', { name: /Close|Закрыть/ }).click()
       await expect(page.getByRole('dialog')).toHaveCount(0)
       const clients: { id: number, name: string }[] = await (await page.request.get('/api/clients')).json()
       const id = clients.find(c => c.name === client)!.id

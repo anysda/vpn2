@@ -1,17 +1,17 @@
 import type { Page } from '@playwright/test'
 import { downloadText, expect, test, toast, uniq } from './support/fixtures'
-import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
+import { addDevice, configDialog, createClientUi, deviceCard, ikeField, openClient, openHome } from './support/clients'
 
 async function config(page: Page, device: string, protocol: 'wg' | 'ovpn' | 'ikev2') {
   await deviceCard(page, device)[protocol].click()
   const label = { wg: 'WireGuard', ovpn: 'OpenVPN', ikev2: 'IKEv2' }[protocol]
-  const dlg = page.getByRole('dialog', { name: device, exact: true }).filter({ hasText: label })
+  const dlg = configDialog(page, device, label)
   let value: string
   if (protocol === 'ikev2') {
-    await expect(dlg.getByText('Пароль:')).toBeVisible()
-    const password = dlg.locator('div.grid > span.font-mono').nth(2)
+    const password = ikeField(dlg, 'Пароль')
+    await expect(password).toBeVisible()
     if ((await password.textContent())!.includes('•')) {
-      await dlg.locator('div.grid > div.flex').nth(2).getByRole('button').first().click()
+      await dlg.getByRole('button', { name: 'Показать' }).click()
     }
     value = (await password.textContent())!.trim()
     expect(value).not.toContain('•')

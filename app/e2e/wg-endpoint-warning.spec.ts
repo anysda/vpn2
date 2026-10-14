@@ -1,5 +1,5 @@
 import { downloadText, expect, hydrated, loginApi, PUBLIC_HOST, test, uniq } from './support/fixtures'
-import { deviceCard, openClient } from './support/clients'
+import { configDialog, deviceCard, openClient } from './support/clients'
 
 const warningText = 'Уберите у домена IPv6-запись (AAAA), иначе у клиентов на Linux VPN может не заработать.'
 
@@ -18,7 +18,7 @@ for (const dns of ['aaaa', 'a-only', 'unavailable']) {
     const checked = page.waitForResponse('**/api/wg-endpoint-warning')
     await deviceCard(page, 'phone').wg.click()
     await checked
-    const dialog = page.getByRole('dialog', { name: 'phone' })
+    const dialog = configDialog(page, 'phone', 'WireGuard')
     const warning = dialog.getByText(warningText, { exact: true })
     if (dns === 'aaaa') await expect(warning).toBeVisible()
     else await expect(warning).toHaveCount(0)
@@ -43,7 +43,7 @@ test('WG: ожидание DNS не задерживает профиль, по�
   await hydrated(page)
   await openClient(page, name)
   await deviceCard(page, 'phone').wg.click()
-  const dialog = page.getByRole('dialog', { name: 'phone' })
+  const dialog = configDialog(page, 'phone', 'WireGuard')
   await expect(dialog.getByText(warningText)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toBeHidden()

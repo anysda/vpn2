@@ -1,6 +1,6 @@
 import { BitMatrix, QRCodeReader } from '@zxing/library'
 import { ADMIN_PASSWORD, expect, hydrated, loginApi, test, toast, uniq } from './support/fixtures'
-import { deviceCard, openClient } from './support/clients'
+import { configDialog, deviceCard, openClient } from './support/clients'
 
 class ModuleReader extends QRCodeReader {
   decodeModules(matrix: BitMatrix) {
@@ -26,7 +26,7 @@ test('WG: панель объясняет отсутствие IPv4 и не да
   await openClient(page, name)
   await deviceCard(page, 'phone').wg.click()
   await expect(toast(page, message)).toBeVisible()
-  const dialog = page.getByRole('dialog', { name: 'phone' })
+  const dialog = configDialog(page, 'phone', 'WireGuard')
   await expect(dialog.getByRole('button', { name: 'Скачать', exact: true })).toBeDisabled()
   await expect(dialog.getByRole('button', { name: 'Копировать', exact: true })).toBeDisabled()
 })

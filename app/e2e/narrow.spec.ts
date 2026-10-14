@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 import { expect, hydrated, test, toast, uniq } from './support/fixtures'
-import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
+import { addDevice, configDialog, createClientUi, deviceCard, openClient, openHome } from './support/clients'
 import { checkBotQueue } from './support/bot-queue'
 
 /** Ширина документа не больше окна: ничего не вылезает вбок. */
@@ -57,12 +57,12 @@ test.describe('окно 1024px', () => {
     const dlg = await openClient(page, client)
     await expect(queueToast, 'фоновая очередь не накрывает кнопки модалки').toBeHidden()
     await addDevice(page, 'e2e-phone')
-    await noHorizontalOverflow(page, 'модалка клиента')
+    await noHorizontalOverflow(page, 'панель клиента')
 
     const dc = deviceCard(page, 'e2e-phone')
     for (const [btn, proto] of [[dc.wg, 'WireGuard'], [dc.ovpn, 'OpenVPN'], [dc.ikev2, 'IKEv2']] as const) {
       await btn.click()
-      const m = page.getByRole('dialog', { name: 'e2e-phone' }).filter({ hasText: proto })
+      const m = configDialog(page, 'e2e-phone', proto)
       await expect(m).toBeVisible()
       await noHorizontalOverflow(page, `модалка ${proto}`)
       await m.getByRole('button', { name: /Close|Закрыть/ }).click()

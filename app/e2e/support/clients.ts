@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, hydrated, loginApi, toast } from './fixtures'
 
 export async function openHome(page: Page, path = '/') {
@@ -17,20 +17,30 @@ export async function createClientUi(page: Page, name: string, opts: { expires?:
 }
 
 export function clientCard(page: Page, name: string) {
-  return page.locator('[role="button"]').filter({ has: page.getByText(name, { exact: true }) })
+  return page.getByTestId('client-row').filter({ has: page.getByText(name, { exact: true }) })
 }
 
-/** Открыть модалку клиента по карточке; вернуть локатор диалога. */
+/** Выбрать клиента в списке; вернуть локатор панели клиента справа. */
 export async function openClient(page: Page, name: string) {
   await page.getByPlaceholder('Поиск...').fill(name)
   await clientCard(page, name).click()
-  const dlg = page.getByRole('dialog').filter({ has: page.getByLabel('Имя клиента') })
-  await expect(dlg.getByLabel('Имя клиента')).toHaveValue(name)
-  return dlg
+  const panel = page.getByTestId('client-detail')
+  await expect(clientName(panel)).toHaveText(name)
+  return panel
+}
+
+/** Имя клиента в шапке панели: редактируется на месте, Enter сохраняет. */
+export function clientName(panel: Locator) {
+  return panel.getByTitle('Имя клиента')
+}
+
+/** Кнопка «+ девайс» в панели клиента. */
+export function addDeviceButton(page: Page) {
+  return page.getByRole('button', { name: '+ девайс', exact: true })
 }
 
 export async function addDevice(page: Page, name: string) {
-  await page.getByRole('button', { name: 'девайс', exact: true }).click()
+  await addDeviceButton(page).click()
   const dlg = page.getByRole('dialog', { name: 'Новый девайс' })
   await dlg.getByPlaceholder('напр. iPhone').fill(name)
   // Выдача VPN-ключей и сертификатов может занять дольше UI-ожидания.
@@ -45,18 +55,27 @@ export async function addDevice(page: Page, name: string) {
   await expect(dlg).toBeHidden()
 }
 
-/** Карточка девайса внутри модалки клиента и её кнопки по порядку. */
+/** Строка девайса в панели клиента и её кнопки. */
 export function deviceCard(page: Page, name: string) {
-  const card = page.locator('div.rounded-md.border.px-3').filter({ has: page.getByText(name, { exact: true }) })
-  const btns = card.locator('div.justify-end').getByRole('button')
+  const card = page.getByTestId('device-row').filter({ has: page.getByText(name, { exact: true }) })
   return {
     card,
-    ikev2: btns.nth(0),
-    wg: btns.nth(1),
-    ovpn: btns.nth(2),
-    reissue: btns.nth(3),
-    remove: btns.nth(4),
+    ikev2: card.getByRole('button', { name: 'IKEv2', exact: true }),
+    wg: card.getByRole('button', { name: 'WG', exact: true }),
+    ovpn: card.getByRole('button', { name: 'OVPN', exact: true }),
+    reissue: card.getByRole('button', { name: 'Перевыпустить ключи девайса' }),
+    remove: card.getByRole('button', { name: 'Удалить девайс' }),
   }
+}
+
+/** Окно конфига девайса: «WireGuard · phone», «OpenVPN · phone», «IKEv2 · phone». */
+export function configDialog(page: Page, device: string, proto: 'WireGuard' | 'OpenVPN' | 'IKEv2') {
+  return page.getByRole('dialog', { name: `${proto} · ${device}`, exact: true })
+}
+
+/** Значение строки окна IKEv2 по подписи: «Сервер», «Логин», «Пароль». */
+export function ikeField(dlg: Locator, label: string) {
+  return dlg.locator('.kvr').filter({ has: dlg.page().getByText(label, { exact: true }) }).locator('code')
 }
 
 /** Дата через год в ДД.ММ.ГГГГ. */

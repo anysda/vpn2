@@ -1,5 +1,11 @@
+import type { Page } from '@playwright/test'
 import { expect, test, toast, uniq } from './support/fixtures'
-import { createClientUi, nextYear, openClient, openHome } from './support/clients'
+import { clientName, createClientUi, nextYear, openClient, openHome } from './support/clients'
+
+async function clientId(page: Page, name: string) {
+  const list: { id: number, name: string }[] = await (await page.request.get('/api/clients')).json()
+  return list.find(c => c.name === name)!.id
+}
 
 for (const width of [1400, 390]) {
   test.describe(`черновик клиента, ${width}px`, () => {
@@ -12,16 +18,18 @@ for (const width of [1400, 390]) {
       await createClientUi(page, name)
       await createClientUi(page, taken)
       const dialog = await openClient(page, name)
-      const input = dialog.getByLabel('Имя клиента')
+      const input = clientName(dialog)
       guard.allow(409, /\/api\/clients\/\d+$/, 'PATCH')
       await input.fill(taken)
       await input.press('Enter')
       await expect(toast(page, `Клиент с именем «${taken}» уже существует`)).toBeVisible()
-      await expect(input).toHaveValue(taken)
-      await expect(dialog.getByRole('heading', { name, exact: true })).toBeVisible()
+      await expect(input).toHaveText(taken)
+      const kept: { name: string } = await (await page.request.get(`/api/clients/${await clientId(page, name)}`)).json()
+      expect(kept.name).toBe(name)
       await input.fill(`${taken}-fixed`)
       await input.press('Enter')
-      await expect(dialog.getByRole('heading', { name: `${taken}-fixed`, exact: true })).toBeVisible()
+      await expect(toast(page, 'Имя сохранено')).toBeVisible()
+      await expect(input).toHaveText(`${taken}-fixed`)
     })
 
     test('422 при сохранении срока сохраняет дату для исправления', async ({ page, guard }) => {
@@ -29,7 +37,7 @@ for (const width of [1400, 390]) {
       const name = uniq('expiry-draft')
       await createClientUi(page, name)
       const dialog = await openClient(page, name)
-      const input = dialog.getByPlaceholder('ДД.ММ.ГГГГ')
+      const input = dialog.getByLabel('Истекает')
       guard.allow(422, /\/api\/clients\/\d+$/, 'PATCH')
       await input.fill('01012000')
       await input.press('Tab')

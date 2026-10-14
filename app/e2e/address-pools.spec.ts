@@ -1,5 +1,5 @@
 import { expect, loginApi, test, uniq, toast } from './support/fixtures'
-import { openClient } from './support/clients'
+import { addDeviceButton, openClient } from './support/clients'
 import { container, inside, file } from './support/openvpn-ca'
 import { buildWgClientConfig } from '../server/utils/wireguard'
 
@@ -68,7 +68,7 @@ for (const protocol of protocols) {
         guard.allow(409, /\/devices$/, 'POST')
         await page.goto('/clients')
         await openClient(page, `${name}-ui`)
-        await page.getByRole('button', { name: 'девайс', exact: true }).click()
+        await addDeviceButton(page).click()
         const dialog = page.getByRole('dialog', { name: 'Новый девайс' })
         await dialog.getByPlaceholder('напр. iPhone').fill('ui-overflow')
         await dialog.getByRole('button', { name: 'Добавить', exact: true }).click()

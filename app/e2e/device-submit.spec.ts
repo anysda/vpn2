@@ -1,5 +1,5 @@
 import { expect, test, toast, uniq } from './support/fixtures'
-import { createClientUi, openClient, openHome } from './support/clients'
+import { addDeviceButton, createClientUi, openClient, openHome } from './support/clients'
 
 for (const width of [1400, 390]) {
   test.describe(`отправка девайса, ${width}px`, () => {
@@ -10,7 +10,7 @@ for (const width of [1400, 390]) {
       const name = uniq('submit')
       await createClientUi(page, name)
       await openClient(page, name)
-      await page.getByRole('button', { name: 'девайс', exact: true }).click()
+      await addDeviceButton(page).click()
       const dialog = page.getByRole('dialog', { name: 'Новый девайс' })
       const input = dialog.getByPlaceholder('напр. iPhone')
       await input.fill('e2e-phone')

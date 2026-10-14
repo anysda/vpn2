@@ -1,5 +1,5 @@
 import { expect, test, toast, uniq } from './support/fixtures'
-import { clientCard, createClientUi, nextYear, openClient, openHome } from './support/clients'
+import { clientCard, clientName, createClientUi, nextYear, openClient, openHome } from './support/clients'
 
 test.describe('клиенты', () => {
   test('«Отмена» в форме нового клиента ничего не создаёт', async ({ page }) => {
@@ -30,18 +30,19 @@ test.describe('клиенты', () => {
     await expect(clientCard(page, name).getByTestId('client-online')).toBeVisible()
 
     const dlg = await openClient(page, name)
-    await expect(dlg.getByPlaceholder('ДД.ММ.ГГГГ')).toHaveValue(expires)
+    await expect(dlg.getByLabel('Истекает')).toHaveValue(expires)
     await expect(dlg.getByText('Пока нет девайсов — добавь первый.')).toBeVisible()
 
     // Переименование по Enter.
     const renamed = `${name}-r`
-    await dlg.getByLabel('Имя клиента').fill(renamed)
-    await dlg.getByLabel('Имя клиента').press('Enter')
+    await clientName(dlg).fill(renamed)
+    await clientName(dlg).press('Enter')
     await expect(toast(page, 'Имя сохранено')).toBeVisible()
-    await expect(page.getByRole('dialog').getByRole('heading', { name: renamed })).toBeVisible()
+    await expect(clientName(dlg)).toHaveText(renamed)
+    await expect(clientCard(page, renamed)).toHaveCount(1)
 
     // Срок: очистить = бессрочно.
-    const date = dlg.getByPlaceholder('ДД.ММ.ГГГГ')
+    const date = dlg.getByLabel('Истекает')
     // Сначала сервер завершает синхронизацию VPN, затем UI показывает toast.
     // Его короткое ожидание не должно включать всю длительность PATCH.
     const expirySaved = page.waitForResponse(r => r.request().method() === 'PATCH'
@@ -64,10 +65,10 @@ test.describe('клиенты', () => {
 
     // Заморозить и разморозить.
     await dlg.getByRole('button', { name: 'Заморозить' }).click()
-    await expect(toast(page, 'Клиент заморожен')).toBeVisible()
+    await expect(toast(page, `Клиент «${renamed}» заморожен`)).toBeVisible()
     await expect(clientCard(page, renamed)).toContainText('Заморожен')
     await dlg.getByRole('button', { name: 'Разморозить' }).click()
-    await expect(toast(page, 'Клиент разморожен')).toBeVisible()
+    await expect(toast(page, `Клиент «${renamed}» разморожен`)).toBeVisible()
     await expect(clientCard(page, renamed)).not.toContainText('Заморожен')
 
     // «Отмена» в подтверждениях.

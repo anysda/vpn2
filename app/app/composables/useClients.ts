@@ -15,6 +15,7 @@ export interface Client {
   createdAt: string
   status: 'active' | 'frozen'
   tgLinked: boolean
+  tgUsername: string | null
   /** Предпочитаемый экзит (тег узла) или null — авто. */
   preferredExit: string | null
   deviceCount: number

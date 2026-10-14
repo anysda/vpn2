@@ -360,12 +360,34 @@ ufw status verbose | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]
 # 5. fail2ban
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [5/6] fail2ban"
+# Адреса entry не баним: деплой ходит на ноду с entry, и ошибка в пароле
+# ноды в config.yaml иначе запирает entry на час. Берём адрес, с которого
+# пришёл этот деплой (за NAT он не совпадает с ENTRY_HOST), и все адреса
+# ENTRY_HOST. Список пересобирается каждой стадией 00, сменившийся адрес
+# entry уходит из него. Ключ оркестратора у entry и так даёт root на ноде,
+# защита от перебора слабее только для адресов самой entry.
+F2B_IGNORE=('127.0.0.1/8' '::1')
+f2b_ignore_add() {
+  local a="$1" have
+  [[ $a =~ ^[0-9A-Fa-f:.]+$ && $a =~ [.:] ]] || return 0
+  [[ $a == 127.* || $a == ::1 ]] && return 0
+  for have in "${F2B_IGNORE[@]}"; do [[ $have == "$a" ]] && return 0; done
+  F2B_IGNORE+=("$a")
+}
+F2B_CLIENT=${SSH_CLIENT:-}
+f2b_ignore_add "${F2B_CLIENT%% *}"
+if [[ ${ENTRY_HOST:-} =~ ^[0-9A-Fa-f:.]+$ ]]; then
+  f2b_ignore_add "$ENTRY_HOST"
+elif [[ -n ${ENTRY_HOST:-} ]]; then
+  while read -r a _; do f2b_ignore_add "$a"; done < <(getent ahosts "$ENTRY_HOST" || true)
+fi
 cat > /etc/fail2ban/jail.d/anysda.local <<EOF
 # anysda-vpn — set by infra/scripts/00-bootstrap.sh
 [DEFAULT]
 bantime = 1h
 findtime = 10m
 maxretry = 5
+ignoreip = ${F2B_IGNORE[*]}
 
 [sshd]
 enabled = true

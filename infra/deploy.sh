@@ -637,20 +637,31 @@ _tcp22_open() {
 _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
-  local ok=0 try reason='' kind=net t0=$SECONDS prc
+  local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
   else
     for ((try=1; try<=attempts; try++)); do
       prc=0; reason=$(ssh_probe) || prc=$?
       if [[ $prc -eq 0 ]]; then ok=1; break; fi
-      case $prc in 2) kind=hostkey ;; 3) kind=auth ;; *) kind=net ;; esac
+      case $prc in 2) kind=hostkey ;; 3) kind=auth; auth_tries=$((auth_tries + 1)) ;; *) kind=net ;; esac
       printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
       # Сменившийся host-key ждать бесполезно: его убирает человек.
       [[ $kind != hostkey ]] || break
+      pause=$((try * 3))
+      # Каждый неверный пароль fail2ban ноды засчитывает адресу entry
+      # (maxretry 5 за 10 минут в 00-bootstrap). Повтор один и с паузой:
+      # после переустановки ОС провайдер выставляет пароль не сразу. Два
+      # запуска подряд дают ноде 4 неудачи - ниже порога бана.
+      if [[ $kind == auth ]]; then
+        (( auth_tries < 2 )) || break
+        pause=${PREFLIGHT_AUTH_PAUSE:-30}
+        printf '  %-30s повтор через %d с: если ОС только что переустановили, пароль мог ещё не выставиться\n' \
+          "${SSH_USER}@${SSH_HOST} ($h)" "$pause"
+      fi
       (( try < attempts )) || break
-      (( SECONDS - t0 + try * 3 + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
-      sleep $((try * 3))
+      (( SECONDS - t0 + pause + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+      sleep "$pause"
     done
   fi
   if [[ $ok -eq 1 ]]; then
@@ -711,6 +722,7 @@ preflight_ssh() {
     printf '  Нода отказала во входе:\n'
     printf '    1. пароль root в config.yaml\n'
     printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
+    printf '    3. если ОС на ноде только что переустановили, пароль мог ещё не выставиться: повтори ./deploy.sh через минуту\n'
   fi
   [[ $net -eq 1 ]] && _preflight_net_hint
   HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"

@@ -106,7 +106,7 @@ ssh_exec() {
     # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
     # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть.
     [[ $rc -ne 255 ]] && return $rc
-    [[ $attempt -eq 1 ]] && _ssh_hostkey_refused && return $rc
+    [[ $attempt -eq 1 ]] && _ssh_refusal_final && return $rc
     [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
   return $rc
@@ -131,14 +131,23 @@ ssh_hostkey_fix() {
   printf 'ssh-keygen -R %s -f %s' "$SSH_HOST" "$_known_hosts"
 }
 
-# После rc=255 у стадии: сменившийся host-key повтором не лечится, а четыре
-# «сбой соединения, повтор» выглядят как флап сети. Одна проба решает.
-_ssh_hostkey_refused() {
+# После rc=255 у стадии: сменившийся host-key и отказ во входе повтором не
+# лечатся, а четыре «сбой соединения, повтор» выглядят как флап сети. Одна
+# проба решает. Отказ во входе повторять нельзя ещё и потому, что fail2ban
+# экзита считает каждый неудачный пароль и банит адрес entry.
+_ssh_refusal_final() {
   local reason prc=0
   reason=$(ssh_probe) || prc=$?
-  [[ $prc -eq 2 ]] || return 1
-  warn "ssh ${SSH_HOST}: ${reason}; новый ключ сам не принимается (защита от подмены ноды)"
-  warn "если ОС на ноде переустанавливали, убери старый ключ и повтори: $(ssh_hostkey_fix)"
+  case $prc in
+    2) warn "ssh ${SSH_HOST}: ${reason}; новый ключ сам не принимается (защита от подмены ноды)"
+       warn "если ОС на ноде переустанавливали, убери старый ключ и повтори: $(ssh_hostkey_fix)" ;;
+    3) _ssh_auth_refused "$reason" ;;
+    *) return 1 ;;
+  esac
+}
+
+_ssh_auth_refused() {
+  warn "ssh ${SSH_HOST}: $1; повтор не нужен: проверь пароль ноды в config.yaml и ключ оркестратора на ноде"
 }
 
 # Короткая проверка «нода пускает по ssh»: одна попытка с общим потолком
@@ -201,7 +210,10 @@ push() {
           "${SSH_USER}@${SSH_HOST}" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
-    [[ $attempt -eq 1 && $rc -eq 255 ]] && _ssh_hostkey_refused && return $rc
+    # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не
+    # выходят): без пробы, она стоила бы ноде ещё одну строку для fail2ban.
+    [[ $rc -eq 5 ]] && { _ssh_auth_refused 'нода отказала во входе: неверный пароль'; return $rc; }
+    [[ $attempt -eq 1 && $rc -eq 255 ]] && _ssh_refusal_final && return $rc
     ssh_exec "rm -rf '$tmp'" >/dev/null 2>&1 || true
     [[ $attempt -lt 5 ]] && { warn "push → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done

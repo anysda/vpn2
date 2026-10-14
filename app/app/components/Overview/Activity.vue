@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { pluralRu } from '#shared/plural'
-import { anim, ru, useWake } from '~/utils/overview'
+import { anim } from '~/utils/clients-view'
+import { ru, useWake } from '~/utils/overview'
 
 // Активность: недели столбцами, дни строками, как в GitHub. «Онлайн» —
 // клиентов в сети за сутки, «Трафик» — ГБ всех клиентов за сутки (МСК).

@@ -1,4 +1,5 @@
 import { inject, type InjectionKey } from 'vue'
+import { anim } from './clients-view'
 
 // Графики и движение обзора, перенесены из макета без изменений.
 
@@ -6,22 +7,7 @@ const EO = 'cubic-bezier(.23,1,.32,1)'
 export const EIO = 'cubic-bezier(.77,0,.175,1)'
 export const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
-export function anim(e: Element | null | undefined, k: Keyframe[], o: KeyframeAnimationOptions) {
-  if (reduced() || !e) return
-  e.animate(k, { easing: EO, fill: 'backwards', ...o })
-}
-
 type Pt = [number, number]
-
-/** Catmull-Rom через кубические Безье. */
-export function smooth(pts: Pt[]): string {
-  let d = `M${pts[0]![0]},${pts[0]![1]}`
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] || pts[i]!, p1 = pts[i]!, p2 = pts[i + 1]!, p3 = pts[i + 2] || p2
-    d += ` C${p1[0] + (p2[0] - p0[0]) / 6},${p1[1] + (p2[1] - p0[1]) / 6} ${p2[0] - (p3[0] - p1[0]) / 6},${p2[1] - (p3[1] - p1[1]) / 6} ${p2[0]},${p2[1]}`
-  }
-  return d
-}
 
 /** Точки линии: значения растянуты между min и max с отступом pad сверху и снизу. */
 export function linePoints(data: number[], W: number, H: number, pad: number): Pt[] {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { anim, ru, useWake } from '~/utils/overview'
+import { anim } from '~/utils/clients-view'
+import { ru, useWake } from '~/utils/overview'
 
 // DNS сегодня: кольцо из 11 сегментов, акцентный первый — как в макете.
 // Данные — та же сводка AdGuard, что в разделе DNS.

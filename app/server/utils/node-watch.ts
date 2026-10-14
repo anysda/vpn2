@@ -17,6 +17,10 @@ const IOWAIT_PCT = 30
 // Пропавшая серия (рестарт VM, сбой скрейпа) — оффлайн только со второй проверки подряд.
 const MISSING_HITS = 2
 const NODE_TYPES = ['node_offline', 'node_lag', 'node_online']
+// «Отстают» перед «оффлайн» — тот же простой, если между ними не дольше этого:
+// отставание растёт с 60 с до 180 с за две-три проверки. Возврат из «отстают»
+// в ленту не пишется, так что давнее «отстают» к новому простою не относится.
+const LAG_TO_OFFLINE_MS = OFFLINE_SEC * 1000
 
 type NodeState = 'online' | 'lagging' | 'offline'
 
@@ -42,7 +46,12 @@ async function trackOf(tag: string): Promise<Track> {
   // и с настоящим началом простоя.
   const last = await lastEventOf(nodeObject(tag), NODE_TYPES)
   const state: NodeState = last?.type === 'node_offline' ? 'offline' : last?.type === 'node_lag' ? 'lagging' : 'online'
-  const track = { state, since: last?.at ?? 0, missing: 0, ioHits: 0, ioAlerted: false }
+  let since = last?.at ?? 0
+  if (last && state === 'offline') {
+    const lag = await lastEventOf(nodeObject(tag), ['node_lag'])
+    if (lag && lag.at <= last.at && last.at - lag.at <= LAG_TO_OFFLINE_MS) since = lag.at
+  }
+  const track = { state, since, missing: 0, ioHits: 0, ioAlerted: false }
   tracks.set(tag, track)
   return track
 }
@@ -73,8 +82,9 @@ export async function checkNodes(now = Date.now()): Promise<void> {
     }
 
     if (observed === 'offline' && track.state !== 'offline') {
+      // Из «отстают» простой уже идёт: отсчёт с первой потери метрик.
+      if (track.state === 'online') track.since = now
       track.state = 'offline'
-      track.since = now
       await recordEvent({ type: 'node_offline', level: 'alarm', object, at: now, title: `${name} оффлайн`, detail: `нет метрик · ${CHECK_NOTE}` })
     }
     else if (observed === 'lagging' && track.state === 'online') {

@@ -163,6 +163,67 @@ test('нода: рестарт панели не повторяет «оффла
   expect(journal[1]).toMatchObject({ type: 'node_online', detail: 'простой 20 мин' })
 })
 
+test('нода: «отстают» → «оффлайн» → в сети — простой с первой потери метрик', async () => {
+  const { vm, journal, watch } = setup()
+  vm.uptime = 10 * 86400
+  let t = 7_000_000_000_000
+  await watch.checkNodes(t)
+  vm.stale = 75
+  await watch.checkNodes(t += 30_000)
+  const lagAt = t
+  vm.stale = 195
+  await watch.checkNodes(t + 2 * MIN)
+  expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline'])
+  vm.stale = 1
+  await watch.checkNodes(lagAt + 4 * MIN + 10_000)
+  expect(journal[2]).toMatchObject({ type: 'node_online', title: 'DE снова в сети', detail: 'простой 4 мин' })
+})
+
+test('нода: «отстают» → в сети, потом «оффлайн» напрямую — простой от «оффлайн»', async () => {
+  const { vm, journal, watch } = setup()
+  vm.uptime = 10 * 86400
+  let t = 8_000_000_000_000
+  vm.stale = 75
+  await watch.checkNodes(t += 30_000)
+  vm.stale = 2
+  await watch.checkNodes(t += 30_000)
+  // Отставание без «оффлайн» — возврат в ленту не пишется.
+  expect(journal.map(r => r.type)).toEqual(['node_lag'])
+
+  vm.stale = 400
+  await watch.checkNodes(t += 30_000)
+  const downAt = t
+  vm.stale = 1
+  await watch.checkNodes(downAt + 3 * MIN)
+  expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline', 'node_online'])
+  expect(journal[2]).toMatchObject({ detail: 'простой 3 мин' })
+})
+
+test('нода: рестарт панели после «отстают» → «оффлайн» — простой с «отстают»', async () => {
+  const lagAt = 9_000_000_000_000
+  const { vm, journal, watch } = setup([
+    { type: 'node_lag', level: 'alarm', object: 'node:de', title: 'DE: метрики отстают', at: lagAt },
+    { type: 'node_offline', level: 'alarm', object: 'node:de', title: 'DE оффлайн', at: lagAt + 2 * MIN },
+  ])
+  vm.uptime = 10 * 86400
+  vm.stale = 1
+  await watch.checkNodes(lagAt + 6 * MIN)
+  expect(journal[2]).toMatchObject({ type: 'node_online', detail: 'простой 6 мин' })
+})
+
+test('нода: рестарт панели — давнее «отстают» перед «оффлайн» к простою не относится', async () => {
+  const lagAt = 9_500_000_000_000
+  const downAt = lagAt + 60 * MIN
+  const { vm, journal, watch } = setup([
+    { type: 'node_lag', level: 'alarm', object: 'node:de', title: 'DE: метрики отстают', at: lagAt },
+    { type: 'node_offline', level: 'alarm', object: 'node:de', title: 'DE оффлайн', at: downAt },
+  ])
+  vm.uptime = 10 * 86400
+  vm.stale = 1
+  await watch.checkNodes(downAt + 5 * MIN)
+  expect(journal[2]).toMatchObject({ type: 'node_online', detail: 'простой 5 мин' })
+})
+
 test('failover: сторож увёл foreign-best на другой узел — тревога', async () => {
   const proxy = { now: 'hy2-de-direct' as string | undefined }
   const { journal, watch } = setup([], proxy)

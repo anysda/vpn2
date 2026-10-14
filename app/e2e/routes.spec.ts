@@ -194,52 +194,36 @@ test.describe('маршрутизация', () => {
     await expect(chain).toBeEmpty()
   })
 
-  test('проверка адреса для выбранного клиента учитывает его экзит', async ({ page }) => {
-    // Клиент без устройств в выборе не нужен: у него нет VPN-адреса.
-    await page.route(/\/api\/clients$/, route => route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify([
-        { id: 901, name: 'Мама', deviceCount: 2, preferredExit: 'nl' },
-        { id: 902, name: 'Пустой', deviceCount: 0, preferredExit: null },
-      ]),
-    }))
+  test('проверка адреса без выбора клиента, с подсказкой chatgpt.com', async ({ page }) => {
     const asked: Array<string | null> = []
     await page.route(/\/api\/routes\/check\?/, async (route) => {
-      const client = new URL(route.request().url()).searchParams.get('client')
-      asked.push(client)
-      const body = client === '901'
-        ? { query: 'chatgpt.com', ip: null, reason: 'client', rule: '', routeId: null, outbound: 'hy2-nl-direct', delay: 41 }
-        : { query: 'chatgpt.com', ip: null, reason: 'default', rule: '', routeId: null, outbound: 'hy2-us-direct', delay: 52 }
+      asked.push(new URL(route.request().url()).searchParams.get('client'))
+      const body = { query: 'chatgpt.com', ip: null, reason: 'default', rule: '', routeId: null, outbound: 'hy2-us-direct', delay: 52 }
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
     })
     await openRoutes(page)
-    const chain = page.getByTestId('route-check')
-    const pick = page.getByRole('combobox', { name: 'Для какого клиента' })
-    await expect(pick).toHaveText('Без клиента')
+    const input = page.getByRole('textbox', { name: 'Проверить адрес' })
+    await expect(input).toHaveAttribute('placeholder', 'chatgpt.com')
+    await expect(page.locator('.chk').getByRole('combobox')).toHaveCount(0)
 
-    await page.getByRole('textbox', { name: 'Проверить адрес' }).fill('chatgpt.com')
+    await input.fill('chatgpt.com')
+    const chain = page.getByTestId('route-check')
     await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
     expect(asked).toEqual([null])
-
-    await pick.click()
-    await expect(page.getByRole('option')).toHaveText(['Без клиента', 'Мама'])
-    await page.getByRole('option', { name: 'Мама' }).click()
-    await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'предпочитаемый экзит', `${exitName('nl')}41 мс`])
-    await expect(chain.locator('.why')).toHaveText('выбран у клиента')
-    expect(asked.at(-1)).toBe('901')
-
-    await pick.click()
-    await page.getByRole('option', { name: 'Без клиента' }).click()
-    await expect(chain.locator('.ch').nth(1)).toHaveText('по умолчанию')
-    expect(asked.at(-1)).toBeNull()
   })
 
-  test('ячейка прокручивается после шести правил', async ({ page }) => {
+  test('ячейка прокручивается после шести правил и не меняет высоту', async ({ page }) => {
     await openRoutes(page)
     const exit = exitName('fi')
     const cell = cellNamed(page, exit)
     const list = cell.locator('.rcs')
     const have = await cell.locator('.rc').count()
+    // Высота ячеек и доски одна при любом числе правил: как при шести.
+    const sizes = () => page.locator('.board').evaluate(b => [b.getBoundingClientRect().height,
+      ...[...b.querySelectorAll('.cell')].map(c => c.getBoundingClientRect().height)])
+    const before = await sizes()
+    const height = (el: Element) => el.getBoundingClientRect().height
+    expect(await cellNamed(page, exitName('fi', true)).evaluate(height)).toBe(await cell.evaluate(height))
     const s = stamp()
     for (let i = 0; have + i < 7 || i < 1; i++) {
       await addRule(page, `e2e-scroll-${i}-${s}.example.com`, exit)
@@ -251,6 +235,7 @@ test.describe('маршрутизация', () => {
     // Последнее добавленное прокручено в вид.
     expect(box.top + box.client).toBeGreaterThanOrEqual(box.scroll - 1)
     await expect(cellOf(page, `e2e-scroll-0-${s}.example.com`)).toHaveCount(1)
+    expect(await sizes()).toEqual(before)
   })
 
   // VPN2-55: «правило появилось в списке, и тут же ошибка». Форма уходит по

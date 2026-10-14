@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { Client } from '~/composables/useClients'
 import type { Outbound, Route } from '~/composables/useRoutes'
 import { parseOutbound, useRoutes } from '~/composables/useRoutes'
 
@@ -228,16 +227,12 @@ const WHY: Record<CheckResult['reason'], string> = {
   default: 'ни одно правило не подошло',
 }
 
+// Пустое поле: под ним разбор примера серым, пока не ввели своё.
+const EXAMPLE = 'chatgpt.com'
 const query = ref('')
-// Для какого клиента проверять: 0 - без клиента, как обычный сайт.
-const forClient = ref(0)
-const { data: clientList } = useFetch<Client[]>('/api/clients', { default: () => [], server: false })
-const clientOptions = computed(() => [
-  { label: 'Без клиента', value: 0 },
-  ...clientList.value.filter(c => c.deviceCount > 0)
-    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
-    .map(c => ({ label: c.name, value: c.id })),
-])
+// Серый, пока на экране ответ для примера: при наборе пример не вспыхивает,
+// а сменяется ответом для введённого адреса.
+const isExample = ref(true)
 const checked = ref<CheckResult | null>(null)
 const checkError = ref('')
 let checkSeq = 0
@@ -258,16 +253,12 @@ const checkOut = computed(() => {
 
 async function runCheck() {
   const seq = ++checkSeq
-  const q = query.value.trim()
-  if (!q) {
-    checked.value = null
-    checkError.value = ''
-    return
-  }
+  const q = query.value.trim() || EXAMPLE
   try {
-    const r = await $fetch<CheckResult>('/api/routes/check', { query: { q, client: forClient.value || undefined } })
+    const r = await $fetch<CheckResult>('/api/routes/check', { query: { q } })
     if (seq !== checkSeq) return
     checked.value = r
+    isExample.value = !query.value.trim()
     checkError.value = ''
   }
   catch (e) {
@@ -284,12 +275,8 @@ function scheduleCheck(delay = 250) {
   checkTimer = setTimeout(() => void runCheck(), delay)
 }
 watch(query, () => scheduleCheck())
-watch(forClient, () => {
-  if (query.value.trim()) scheduleCheck(0)
-})
-watch(() => rules.value.map(r => `${r.id}:${r.outbound}`).join(), () => {
-  if (query.value.trim()) scheduleCheck(0)
-})
+watch(() => rules.value.map(r => `${r.id}:${r.outbound}`).join(), () => scheduleCheck(0))
+onMounted(() => scheduleCheck(0))
 onBeforeUnmount(() => {
   if (checkTimer) clearTimeout(checkTimer)
 })
@@ -299,8 +286,7 @@ onBeforeUnmount(() => {
   <section class="rtop">
     <div class="card chk">
       <h3>Проверить адрес</h3>
-      <div class="crow">
-        <label class="inp big2"><svg
+      <label class="inp big2"><svg
         class="i"
         viewBox="0 0 24 24"
       ><circle
@@ -309,21 +295,12 @@ onBeforeUnmount(() => {
         r="6.5"
       /><path d="M16 16l4 4" /></svg><input
         v-model="query"
+        :placeholder="EXAMPLE"
         spellcheck="false"
         aria-label="Проверить адрес"
       ></label>
-        <USelect
-          v-model="forClient"
-          :items="clientOptions"
-          variant="none"
-          trailing-icon="i-lucide-chevron-down"
-          class="sel"
-          :ui="{ base: 'sel-b', trailing: 'pe-[13px]', trailingIcon: 'size-[17px] text-(--t2)', value: 'text-(--t1)' }"
-          aria-label="Для какого клиента"
-        />
-      </div>
       <div
-        class="chain"
+        :class="['chain', { demo: isExample }]"
         data-testid="route-check"
       >
         <template v-if="checked">
@@ -409,7 +386,7 @@ onBeforeUnmount(() => {
         <div class="cl">
           <span>{{ cell.label }}</span><i :class="rtc(cell.delay)">{{ cell.delay ?? '—' }} мс</i>
         </div>
-        <div :class="['rcs', { scroll: rulesFor(cell.outbound).length > 6 }]">
+        <div :class="['rcs', { scroll: rulesFor(cell.outbound).length > 4 }]">
           <div
             v-for="rule in rulesFor(cell.outbound)"
             :key="rule.id"
@@ -445,7 +422,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .card h3{font-size:14px;font-weight:500;color:var(--t2)}
 .rtop{display:grid;grid-template-columns:7fr 5fr;gap:12px;margin-bottom:12px}
-.chain{display:flex;align-items:center;gap:0;margin-top:16px;min-height:40px;flex-wrap:wrap;row-gap:8px}
+.chain{display:flex;align-items:center;gap:0;margin-top:16px;min-height:40px;flex-wrap:wrap;row-gap:8px;transition:opacity .2s ease}
+.chain.demo{opacity:.45}
 .ch{position:relative;display:flex;align-items:center;gap:10px;height:36px;padding:0 12px 0 14px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12.5px;color:var(--t2);cursor:default;transition:opacity .25s var(--ease),border-color .2s,background .2s;white-space:nowrap}
 .ch::before{content:"";position:absolute;left:6px;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--bar,rgba(var(--fg),.25))}
 .ch b{margin-left:auto;color:var(--t1);font-weight:600;font-size:12.5px}
@@ -460,26 +438,25 @@ onBeforeUnmount(() => {
 .inp.big2{height:50px;border-radius:14px;padding:0 16px;background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));margin-top:14px}
 .inp.big2 input{font-size:16px;width:100%}
 .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
-.crow{display:flex;gap:8px;margin-top:14px;align-items:center}
-.crow .inp.big2{flex:1;min-width:0;margin-top:0}
-.crow :deep(.sel){flex:0 0 180px;min-width:0}
-.crow :deep(.sel-b){height:50px;width:100%;padding:0 38px 0 16px;border-radius:14px;border:1px solid var(--line);background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
 .arow .sel{flex:1;min-width:0}
 .arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
 .arow .pill{height:40px}
 .board{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
-.ex{padding:14px;display:flex;flex-direction:column;gap:10px;min-height:420px}
+/* Шапка, «Напрямую», «WARP» - строки общей сетки доски: шапка в две строки
+   («Соединенные Штаты» на узком окне) не сдвигает и не растягивает ячейки
+   соседних колонок. Единственная ячейка колонки (Россия) занимает обе строки. */
+.ex{padding:14px;display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:10px}
+.ex .cell:nth-child(2):last-child{grid-row:span 2}
 .ex .eh{display:flex;justify-content:space-between;align-items:flex-start;padding:2px 2px 4px}
 .ex .eh b{font-weight:500;font-size:15px;display:block}
 .ex .eh small{font-size:11.5px;color:var(--t3)}
 .ex .eh .rt{font-weight:200;font-size:26px;letter-spacing:-.02em;line-height:1}
 .ex .eh .rt small{font-size:12px;margin-left:2px}
 .ex.badx .eh .rt{color:var(--red-t)}
-.cell{flex:1;border-radius:14px;background:var(--sunk);border:1px dashed rgba(var(--fg),.08);box-shadow:inset 0 2px 12px rgba(0,0,0,calc(.5*var(--shk)));padding:10px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s,background .2s}
+.cell{border-radius:14px;background:var(--sunk);border:1px dashed rgba(var(--fg),.08);box-shadow:inset 0 2px 12px rgba(0,0,0,calc(.5*var(--shk)));padding:10px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s,background .2s}
 .cell.over{border-color:rgba(var(--fg),.45);background:var(--sunk2)}
 .cell .cl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--t3);padding:0 2px 2px}
 .cell .cl i{font-style:normal}
-.cell.empty::after{content:"перетащите сюда";margin:auto;font-size:11.5px;color:var(--t4)}
 .cell.warp .cl span{color:var(--orange)}
 .rc{position:relative;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12px;color:var(--t1);cursor:grab;user-select:none;transition:transform .16s var(--ease),opacity .2s,border-color .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rc:hover{border-color:var(--line2)}.rc:active{cursor:grabbing}
@@ -490,8 +467,11 @@ onBeforeUnmount(() => {
 .rc::before{content:"";width:6px;height:10px;flex:none;opacity:.35;background:radial-gradient(circle,var(--t1) 1px,transparent 1.3px) 0 0/3px 3.4px}
 .rc .x{position:absolute;right:4px;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:7px;border:0;background:var(--tog);color:var(--t2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .15s,color .15s}
 .rc:hover .x{opacity:1}.rc .x:hover{color:var(--red-t)}.rc .x svg{width:11px;height:11px}
-.rcs{display:flex;flex-direction:column;gap:6px}.rcs .rc{flex:none}
-.rcs.scroll{max-height:222px;margin-right:-6px;padding-right:6px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
+/* Место под список - ровно шесть правил (6×32 + 5×6): ячейка не растёт и не
+   сжимается от числа правил, лишние прокручиваются внутри. */
+.rcs{flex:none;height:146px;min-height:0;display:flex;flex-direction:column;gap:6px}.rcs .rc{flex:none}
+.cell.empty .rcs::after{content:"перетащите сюда";margin:auto;font-size:11.5px;color:var(--t4)}
+.rcs.scroll{margin-right:-10px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
 .rcs.scroll::-webkit-scrollbar{width:8px}.rcs.scroll::-webkit-scrollbar-thumb{background:rgba(var(--fg),.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
 .rtv{color:var(--violet)!important}.rta{color:var(--amber)!important}.rtp{color:var(--pink)!important}
 .hint{margin-top:12px;color:var(--t3);font-size:12.5px}

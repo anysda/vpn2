@@ -31,6 +31,8 @@ export default defineNuxtPlugin((nuxtApp) => {
       changeRoute()
       return pageShown
     })
+    // Следующий переход отменяет незаконченный: отказ ready — штатный, не ошибка.
+    transition.ready.catch(() => {})
     void transition.finished.finally(() => {
       delete html.dataset.vt
       delete html.dataset.dir

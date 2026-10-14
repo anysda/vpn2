@@ -35,6 +35,28 @@ test.describe('разделы шапки', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
     expect(await page.evaluate(() => Reflect.get(window, '__sameDocument'))).toBe(true)
   })
+
+  test('переход поверх незаконченного перехода не роняет ошибку на страницу', async ({ page }) => {
+    await loginApi(page)
+    await page.goto('/routes')
+    await hydrated(page)
+    // Вторая вкладка нажата, пока первый переход ещё снимает старую страницу:
+    // браузер отменяет первый переход, его отказ не должен всплыть на страницу.
+    await page.evaluate(() => {
+      const link = (name: string) => [...document.querySelectorAll<HTMLAnchorElement>('nav a')].find(a => a.textContent?.trim() === name)!
+      new MutationObserver((_, observer) => {
+        if (document.documentElement.dataset.vt !== 'page') return
+        observer.disconnect()
+        link('DNS').click()
+      }).observe(document.documentElement, { attributeFilter: ['data-vt'] })
+      link('Клиенты').click()
+    })
+    const nav = page.getByRole('navigation')
+    await expect(page).toHaveURL(/\/dns$/)
+    await expect(page).toHaveTitle(/^DNS — /)
+    await expect(nav.locator('[aria-current="page"]')).toHaveText('DNS')
+    await expect(page.locator('html[data-vt]')).toHaveCount(0)
+  })
 })
 
 test('экран ошибки: код и текст макета без сообщения фреймворка', async ({ page, guard }) => {

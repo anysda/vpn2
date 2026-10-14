@@ -170,8 +170,9 @@ export const devices = sqliteTable('devices', {
  * Почасовой трафик девайса (WG+OpenVPN+IKEv2), байты. Наполняет тот же сборщик,
  * что и devices.rx_total/tx_total (server/utils/traffic-collector.ts); из него
  * считаются трафик клиента за сутки/неделю и ТОП. Час — unix-секунды начала
- * часа (UTC): полночь МСК (UTC+3) совпадает с границей часа. Старше 35 дней
- * сборщик удаляет.
+ * часа (UTC): полночь МСК (UTC+3) совпадает с границей часа. Сутки старше двух
+ * недель сборщик сворачивает в одну запись с hour = 00:00 МСК, старше года
+ * удаляет.
  */
 export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
   deviceId: integer('device_id')

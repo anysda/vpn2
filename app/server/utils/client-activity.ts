@@ -49,7 +49,10 @@ export async function recentBytesByClient(): Promise<Map<number, number>> {
   return out
 }
 
-/** Дата начала почасовой истории (unix-секунды) или null, если её ещё нет. */
+/**
+ * Дата начала истории трафика (unix-секунды) или null, если её ещё нет. Для
+ * истории старше двух недель - 00:00 МСК первых суток (они свёрнуты).
+ */
 export async function historyStartSec(): Promise<number | null> {
   const [row] = await useDb()
     .select({ first: sql<number | null>`min(${deviceTrafficHourly.hour})` })

@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { promisify } from 'node:util'
-import { eq, lt, sql } from 'drizzle-orm'
+import { and, eq, lt, ne, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
 import { collectorState, deviceTrafficHourly, devices } from '../database/schema'
 import { ikev2Deltas, type SaCounters, type SaSample } from './ikev2-counters'
 import { coalesceRuns } from './coalesce'
+import { MSK_OFFSET_SEC, mskDayStartSec } from './msk-day'
 
 const execFileP = promisify(execFile)
 
@@ -45,11 +46,48 @@ export function recentBytesByDevice(nowMs = Date.now()): Map<number, number> {
   return out
 }
 
-// Почасовая история хранится 35 дней: хватает на неделю с запасом и на
-// месячные отчёты, если понадобятся. Чистим раз в час. Стенду - дольше
-// (HOURLY_RETENTION_DAYS), чтобы сетке «Активность» было что показать.
-const HOURLY_RETENTION_SEC = (Number(process.env.HOURLY_RETENTION_DAYS) || 35) * 86400
+// История трафика хранится год (HOURLY_RETENTION_DAYS): сетка «Активность» на
+// обзоре показывает суммы по суткам за всё это время. Почасовая точность нужна
+// только свежим данным: ТОП и трафик клиента считают последние 7 суток МСК,
+// «Клиенты онлайн» - последние 24 часа. Поэтому сутки старше ROLLUP_AFTER_DAYS
+// сворачиваются в одну запись на устройство с hour = 00:00 МСК: суточные суммы
+// не меняются, а база за год меньше в разы. Чистим и сворачиваем раз в час.
+const HOURLY_RETENTION_SEC = (Number(process.env.HOURLY_RETENTION_DAYS) || 365) * 86400
+const ROLLUP_AFTER_DAYS = 14
 let lastPrunedHour = 0
+
+/**
+ * Срок хранения и свёртка старых суток. Идемпотентна: свёрнутые сутки - уже
+ * одна запись на 00:00 МСК, повторный прогон их не трогает. Так же сворачивает
+ * почасовую историю, накопленную до появления свёртки.
+ */
+async function compactTrafficHistory(nowSec: number): Promise<void> {
+  const db = useDb()
+  const t = deviceTrafficHourly
+  const cutoff = mskDayStartSec(nowSec * 1000, ROLLUP_AFTER_DAYS)
+  // Сдвиг вписан в текст запроса: параметром libsql передал бы его дробным, и
+  // деление перестало бы быть целочисленным.
+  const msk = sql.raw(String(MSK_OFFSET_SEC))
+  const dayStart = sql<number>`((${t.hour} + ${msk}) / 86400) * 86400 - ${msk}`
+  const stale = and(lt(t.hour, cutoff), ne(t.hour, dayStart))
+  // Одним батчем: свёртка без удаления удвоила бы сутки, удаление без свёртки
+  // потеряло бы их.
+  await db.batch([
+    db.delete(t).where(lt(t.hour, Math.floor(nowSec / 3600) * 3600 - HOURLY_RETENTION_SEC)),
+    db
+      .insert(t)
+      .select(db
+        .select({ deviceId: t.deviceId, hour: dayStart.as('day_start'), rx: sql<number>`sum(${t.rx})`.as('rx'), tx: sql<number>`sum(${t.tx})`.as('tx') })
+        .from(t)
+        .where(stale)
+        .groupBy(t.deviceId, dayStart))
+      .onConflictDoUpdate({
+        target: [t.deviceId, t.hour],
+        set: { rx: sql`${t.rx} + excluded.rx`, tx: sql`${t.tx} + excluded.tx` },
+      }),
+    db.delete(t).where(stale),
+  ])
+}
 
 interface Sample {
   deviceId: number
@@ -251,9 +289,7 @@ export const collectTraffic = coalesceRuns(async (): Promise<void> => {
 
   if (hour !== lastPrunedHour) {
     lastPrunedHour = hour
-    await db
-      .delete(deviceTrafficHourly)
-      .where(lt(deviceTrafficHourly.hour, hour - HOURLY_RETENTION_SEC))
+    await compactTrafficHistory(Math.floor(now / 1000))
   }
 
   log.info(

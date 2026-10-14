@@ -25,7 +25,7 @@ function foldDays(rows: Array<{ day: number, clientId: number, bytes: number }>)
   return [...out.values()].sort((a, b) => a.day - b.day)
 }
 
-/** Активность по суткам МСК за всю почасовую историю (сборщик держит 35 дней). */
+/** Активность по суткам МСК за всю историю трафика (сборщик держит год, старые сутки свёрнуты). */
 export async function activityDays(nowMs = Date.now()): Promise<{ today: number, days: ActivityDay[] }> {
   const day = sql<number>`cast((${deviceTrafficHourly.hour} + ${MSK_OFFSET_SEC}) / 86400 as integer)`
   const rows = await useDb()

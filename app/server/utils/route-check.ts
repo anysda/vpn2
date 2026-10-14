@@ -7,7 +7,7 @@ import type { ClashProxy } from './clash-client'
 
 export interface CheckQuery { domain?: string, ip?: string, shown: string }
 
-type CheckReason = 'manual' | 'ru' | 'youtube' | 'reject' | 'rule' | 'default'
+type CheckReason = 'manual' | 'client' | 'ru' | 'youtube' | 'reject' | 'rule' | 'default'
 
 export interface CheckResult {
   reason: CheckReason
@@ -57,9 +57,13 @@ function unicodeSuffix(value: string) {
   return `.${domainToUnicode(value.slice(1)) || value.slice(1)}`
 }
 
-/** Соединение клиента VPN на 443/tcp: так панель моделирует обычный сайт. */
-export function clientConn(q: CheckQuery, ip: string | null): Conn {
-  return { inbound: 'wg-tproxy-in', network: 'tcp', protocol: 'tls', port: 443, domain: q.domain, ip: ip ?? q.ip }
+/**
+ * Соединение клиента VPN на 443/tcp: так панель моделирует обычный сайт.
+ * source - VPN-адрес устройства выбранного клиента; без него правила по
+ * источнику (личный выход client-pref-*, дорожки lane-*) не совпадают.
+ */
+export function clientConn(q: CheckQuery, ip: string | null, source?: string): Conn {
+  return { inbound: 'wg-tproxy-in', network: 'tcp', protocol: 'tls', port: 443, domain: q.domain, ip: ip ?? q.ip, source }
 }
 
 export function explain(plan: RoutePlan, conn: Conn, routes: RouteRow[], proxies: ClashProxy[]): CheckResult {
@@ -69,7 +73,9 @@ export function explain(plan: RoutePlan, conn: Conn, routes: RouteRow[], proxies
   let reason: CheckReason = 'default'
   let rule = ''
   let routeId: number | null = null
-  if (hit) {
+  // Дорожка lane-* - обычный путь устройства, когда ничего выше не совпало:
+  // для клиента это и есть «по умолчанию».
+  if (hit && !tag.startsWith('lane-')) {
     if (by?.kind === 'ip_is_private') rule = by.kind
     else if (by) rule = by.sets.at(-1) && !by.sets[0]!.startsWith('manual-') ? by.sets.at(-1)! : unicodeSuffix(by.value)
     if (hit.action === 'reject') reason = 'reject'
@@ -82,6 +88,10 @@ export function explain(plan: RoutePlan, conn: Conn, routes: RouteRow[], proxies
         rule = row.value
         routeId = row.id
       }
+    }
+    else if (by?.sets[0]?.startsWith('client-pref-')) {
+      reason = 'client'
+      rule = ''
     }
     else if (tag.startsWith('youtube-')) reason = 'youtube'
     else if (tag === 'direct-ru') reason = 'ru'

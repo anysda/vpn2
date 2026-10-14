@@ -16,6 +16,8 @@ export interface Conn {
   port: number
   domain?: string
   ip?: string
+  /** VPN-адрес устройства клиента: по нему совпадают client-pref-* и lane-*. */
+  source?: string
 }
 
 /** Что именно совпало: элемент правила и набор, в котором он лежит. */
@@ -60,18 +62,20 @@ function list(value: unknown): string[] {
 }
 
 const cidrCache = new WeakMap<SbRule, BlockList>()
-function cidrs(rule: SbRule): BlockList {
-  let bl = cidrCache.get(rule)
+const sourceCache = new WeakMap<SbRule, BlockList>()
+function cidrs(rule: SbRule, key: 'ip_cidr' | 'source_ip_cidr' = 'ip_cidr'): BlockList {
+  const cache = key === 'ip_cidr' ? cidrCache : sourceCache
+  let bl = cache.get(rule)
   if (!bl) {
     bl = new BlockList()
-    for (const c of list(rule.ip_cidr)) {
+    for (const c of list(rule[key])) {
       const [addr = '', bits] = c.split('/')
       const family = isIP(addr)
       if (!family) continue
       const type = family === 4 ? 'ipv4' : 'ipv6'
       bl.addSubnet(addr, bits === undefined ? (family === 4 ? 32 : 128) : Number(bits), type)
     }
-    cidrCache.set(rule, bl)
+    cache.set(rule, bl)
   }
   return bl
 }
@@ -152,6 +156,17 @@ function destHit(plan: RoutePlan, conn: Conn, rule: SbRule, key: string): Matche
   return null
 }
 
+/** Группа условий по адресу источника: без адреса клиента не совпадает. */
+function sourceHit(conn: Conn, rule: SbRule, keys: string[]): MatchedBy | null {
+  const src = conn.source
+  if (!src) return null
+  for (const k of keys) {
+    if (k === 'source_ip_cidr' && ipIn(cidrs(rule, k), src)) return { kind: k, value: src, sets: [] }
+    if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivate(src)) return { kind: k, value: src, sets: [] }
+  }
+  return null
+}
+
 function otherHit(conn: Conn, rule: SbRule, key: string): boolean {
   switch (key) {
     case 'inbound': return list(rule.inbound).includes(conn.inbound)
@@ -189,10 +204,16 @@ function ruleHit(plan: RoutePlan, conn: Conn, rule: SbRule): MatchedBy | null {
       }
       ok = !!by
     }
-    if (ok && keys.some(k => SOURCE.has(k) || SOURCE_PORT.has(k))) ok = false
+    if (ok && keys.some(k => SOURCE_PORT.has(k))) ok = false
+    const source = keys.filter(k => SOURCE.has(k))
+    if (ok && source.length) {
+      const src = sourceHit(conn, rule, source)
+      ok = !!src
+      by ??= src
+    }
     const ports = keys.filter(k => PORT.has(k))
     if (ok && ports.length) ok = ports.some(k => portHit(conn, rule, k))
-    if (ok) ok = keys.filter(k => !DEST.has(k) && !PORT.has(k)).every(k => otherHit(conn, rule, k))
+    if (ok) ok = keys.filter(k => !DEST.has(k) && !PORT.has(k) && !SOURCE.has(k)).every(k => otherHit(conn, rule, k))
     hit = ok ? (by ?? { kind: '', value: '', sets: [] }) : null
   }
   if (invert) return hit ? null : { kind: '', value: '', sets: [] }

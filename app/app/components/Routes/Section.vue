@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Client } from '~/composables/useClients'
 import type { Outbound, Route } from '~/composables/useRoutes'
 import { parseOutbound, useRoutes } from '~/composables/useRoutes'
 
@@ -211,7 +212,7 @@ async function deleteRule(rule: Route) {
 // ---------- проверка адреса ----------
 interface CheckResult {
   query: string
-  reason: 'manual' | 'ru' | 'youtube' | 'reject' | 'rule' | 'default'
+  reason: 'manual' | 'client' | 'ru' | 'youtube' | 'reject' | 'rule' | 'default'
   rule: string
   routeId: number | null
   outbound: string
@@ -219,6 +220,7 @@ interface CheckResult {
 }
 const WHY: Record<CheckResult['reason'], string> = {
   manual: 'своё правило',
+  client: 'выбран у клиента',
   ru: 'российский адрес',
   youtube: 'YouTube через zapret',
   reject: 'заблокировано',
@@ -227,6 +229,15 @@ const WHY: Record<CheckResult['reason'], string> = {
 }
 
 const query = ref('')
+// Для какого клиента проверять: 0 - без клиента, как обычный сайт.
+const forClient = ref(0)
+const { data: clientList } = useFetch<Client[]>('/api/clients', { default: () => [], server: false })
+const clientOptions = computed(() => [
+  { label: 'Без клиента', value: 0 },
+  ...clientList.value.filter(c => c.deviceCount > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'ru'))
+    .map(c => ({ label: c.name, value: c.id })),
+])
 const checked = ref<CheckResult | null>(null)
 const checkError = ref('')
 let checkSeq = 0
@@ -236,6 +247,7 @@ const checkRule = computed(() => {
   const r = checked.value
   if (!r) return ''
   if (r.reason === 'default') return 'по умолчанию'
+  if (r.reason === 'client') return 'предпочитаемый экзит'
   return r.reason === 'manual' ? `правило ${r.rule}` : r.rule
 })
 const checkOut = computed(() => {
@@ -253,7 +265,7 @@ async function runCheck() {
     return
   }
   try {
-    const r = await $fetch<CheckResult>('/api/routes/check', { query: { q } })
+    const r = await $fetch<CheckResult>('/api/routes/check', { query: { q, client: forClient.value || undefined } })
     if (seq !== checkSeq) return
     checked.value = r
     checkError.value = ''
@@ -272,6 +284,9 @@ function scheduleCheck(delay = 250) {
   checkTimer = setTimeout(() => void runCheck(), delay)
 }
 watch(query, () => scheduleCheck())
+watch(forClient, () => {
+  if (query.value.trim()) scheduleCheck(0)
+})
 watch(() => rules.value.map(r => `${r.id}:${r.outbound}`).join(), () => {
   if (query.value.trim()) scheduleCheck(0)
 })
@@ -284,7 +299,8 @@ onBeforeUnmount(() => {
   <section class="rtop">
     <div class="card chk">
       <h3>Проверить адрес</h3>
-      <label class="inp big2"><svg
+      <div class="crow">
+        <label class="inp big2"><svg
         class="i"
         viewBox="0 0 24 24"
       ><circle
@@ -296,6 +312,16 @@ onBeforeUnmount(() => {
         spellcheck="false"
         aria-label="Проверить адрес"
       ></label>
+        <USelect
+          v-model="forClient"
+          :items="clientOptions"
+          variant="none"
+          trailing-icon="i-lucide-chevron-down"
+          class="sel"
+          :ui="{ base: 'sel-b', trailing: 'pe-[13px]', trailingIcon: 'size-[17px] text-(--t2)', value: 'text-(--t1)' }"
+          aria-label="Для какого клиента"
+        />
+      </div>
       <div
         class="chain"
         data-testid="route-check"
@@ -434,6 +460,10 @@ onBeforeUnmount(() => {
 .inp.big2{height:50px;border-radius:14px;padding:0 16px;background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));margin-top:14px}
 .inp.big2 input{font-size:16px;width:100%}
 .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
+.crow{display:flex;gap:8px;margin-top:14px;align-items:center}
+.crow .inp.big2{flex:1;min-width:0;margin-top:0}
+.crow :deep(.sel){flex:0 0 180px;min-width:0}
+.crow :deep(.sel-b){height:50px;width:100%;padding:0 38px 0 16px;border-radius:14px;border:1px solid var(--line);background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
 .arow .sel{flex:1;min-width:0}
 .arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
 .arow .pill{height:40px}

@@ -194,6 +194,46 @@ test.describe('маршрутизация', () => {
     await expect(chain).toBeEmpty()
   })
 
+  test('проверка адреса для выбранного клиента учитывает его экзит', async ({ page }) => {
+    // Клиент без устройств в выборе не нужен: у него нет VPN-адреса.
+    await page.route(/\/api\/clients$/, route => route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { id: 901, name: 'Мама', deviceCount: 2, preferredExit: 'nl' },
+        { id: 902, name: 'Пустой', deviceCount: 0, preferredExit: null },
+      ]),
+    }))
+    const asked: Array<string | null> = []
+    await page.route(/\/api\/routes\/check\?/, async (route) => {
+      const client = new URL(route.request().url()).searchParams.get('client')
+      asked.push(client)
+      const body = client === '901'
+        ? { query: 'chatgpt.com', ip: null, reason: 'client', rule: '', routeId: null, outbound: 'hy2-nl-direct', delay: 41 }
+        : { query: 'chatgpt.com', ip: null, reason: 'default', rule: '', routeId: null, outbound: 'hy2-us-direct', delay: 52 }
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) })
+    })
+    await openRoutes(page)
+    const chain = page.getByTestId('route-check')
+    const pick = page.getByRole('combobox', { name: 'Для какого клиента' })
+    await expect(pick).toHaveText('Без клиента')
+
+    await page.getByRole('textbox', { name: 'Проверить адрес' }).fill('chatgpt.com')
+    await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
+    expect(asked).toEqual([null])
+
+    await pick.click()
+    await expect(page.getByRole('option')).toHaveText(['Без клиента', 'Мама'])
+    await page.getByRole('option', { name: 'Мама' }).click()
+    await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'предпочитаемый экзит', `${exitName('nl')}41 мс`])
+    await expect(chain.locator('.why')).toHaveText('выбран у клиента')
+    expect(asked.at(-1)).toBe('901')
+
+    await pick.click()
+    await page.getByRole('option', { name: 'Без клиента' }).click()
+    await expect(chain.locator('.ch').nth(1)).toHaveText('по умолчанию')
+    expect(asked.at(-1)).toBeNull()
+  })
+
   test('ячейка прокручивается после шести правил', async ({ page }) => {
     await openRoutes(page)
     const exit = exitName('fi')

@@ -26,15 +26,16 @@ script = rs.prepare(d, **a['env'])
 for tag, rules in a['sets'].items():
     (d / (tag + '.json')).write_text(json.dumps({'version': 2, 'rules': rules}))
 (d / 'manual.json').write_text(json.dumps(a['rows']))
+(d / 'prefs.json').write_text(json.dumps(a['prefs']))
 r = rs.apply(script)
 if r.returncode:
     sys.exit(r.stderr)
 `
 
-function buildPlan(rows: Row[], sets: Record<string, object[]>, env: Record<string, string> = {}): RoutePlan {
+function buildPlan(rows: Row[], sets: Record<string, object[]>, env: Record<string, string> = {}, prefs: Record<string, string[]> = {}): RoutePlan {
   const dir = mkdtempSync(join(tmpdir(), 'route-plan-'))
   try {
-    execFileSync('python3', ['-c', BUILD, infraTests, dir, JSON.stringify({ rows, sets, env })], {
+    execFileSync('python3', ['-c', BUILD, infraTests, dir, JSON.stringify({ rows, sets, env, prefs })], {
       env: { ...process.env, SING_BOX_BIN: 'true' },
     })
     return JSON.parse(readFileSync(join(dir, 'plan.json'), 'utf8'))
@@ -72,13 +73,20 @@ const PROXIES: ClashProxy[] = [
   { name: 'pin-hy2-aa-direct', type: 'Selector', now: 'hy2-aa-direct' },
   { name: 'pin-hy2-bb-direct', type: 'Selector', now: 'hy2-bb-direct' },
   { name: 'pin-hy2-bb-warp', type: 'Selector', now: 'hy2-bb-warp' },
+  { name: 'lane-01', type: 'Selector', now: 'hy2-bb-direct' },
+  { name: 'lane-02', type: 'Selector', now: 'hy2-bb-warp' },
 ]
+// Устройства клиентов из LANE_SUBNETS тестового роутера (192.0.2.0/29, 4 дорожки):
+// .5 - клиент с личным выходом aa (дорожка lane-01), .6 - без него (lane-02).
+const PREFS = { aa: ['192.0.2.5'] }
+const MAMA = '192.0.2.5'
+const OTHER = '192.0.2.6'
 
 test.describe('проверка адреса по снимку маршрутов роутера', () => {
   let plan: RoutePlan
   let rc: RouteCheck
   test.beforeAll(() => {
-    plan = buildPlan(ROWS, SETS, { YT_ROUTE: 'zapret' })
+    plan = buildPlan(ROWS, SETS, { YT_ROUTE: 'zapret' }, PREFS)
     rc = checker()
   })
 
@@ -110,6 +118,28 @@ test.describe('проверка адреса по снимку маршруто�
       expect(check(input, ip)).toMatchObject(want)
     })
   }
+
+  function checkFor(source: string, input: string, ip: string | null = null) {
+    const q = rc.parseQuery(input)!
+    return rc.explain(plan, rc.clientConn(q, ip, source), ROWS, PROXIES)
+  }
+
+  test('клиент с личным выходом идёт в свой экзит', () => {
+    expect(checkFor(MAMA, 'unknown-site.com', '1.0.0.1'))
+      .toMatchObject({ reason: 'client', rule: '', routeId: null, outbound: 'hy2-aa-direct', delay: 40 })
+    expect(check('unknown-site.com', '1.0.0.1')).toMatchObject({ reason: 'default', outbound: 'hy2-bb-direct' })
+  })
+
+  test('личный выход ниже ручных правил, YouTube и РФ', () => {
+    expect(checkFor(MAMA, 'api.openai.com')).toMatchObject({ reason: 'manual', routeId: 2, outbound: 'hy2-bb-warp' })
+    expect(checkFor(MAMA, 'yandex.ru')).toMatchObject({ reason: 'ru', outbound: 'direct-ru' })
+    expect(checkFor(MAMA, 'www.youtube.com')).toMatchObject({ reason: 'youtube', outbound: 'youtube-ru' })
+  })
+
+  test('клиент без личного выхода идёт своей дорожкой', () => {
+    expect(checkFor(OTHER, 'unknown-site.com', '1.0.0.1'))
+      .toMatchObject({ reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-warp', delay: 70 })
+  })
 
   test('ручное правило из одного IP без маски', () => {
     const p = buildPlan([{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], {})

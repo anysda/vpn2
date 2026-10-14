@@ -72,13 +72,6 @@ export function useRoutes() {
   return { rules, outbounds, refreshRules, refreshOutbounds, create, patch, remove }
 }
 
-export function rttColor(delay: number | null): 'success' | 'warning' | 'error' | 'neutral' {
-  if (delay === null || delay <= 0) return 'error'
-  if (delay < 100) return 'success'
-  if (delay < 300) return 'warning'
-  return 'error'
-}
-
 export function flagFor(tag: string): string {
   const flags: Record<string, string> = {
     ru: '🇷🇺',

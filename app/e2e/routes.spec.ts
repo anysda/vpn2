@@ -4,17 +4,30 @@ import { expect, hydrated, loginApi, test, toast } from './support/fixtures'
 // Тестовые значения: домены e2e-*, адреса из TEST-NET (RFC 5737) — их снесёт
 // teardown, а на стенде они никуда не ведут.
 const stamp = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
+const PLACEHOLDER = 'netflix.com / *.openai.com / 8.8.8.8/32'
+
+// Ячейка доски называется по стране экзита: «Нидерланды», «Финляндия · WARP».
+const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
+const exitName = (tag: string, warp = false) => `${regions.of(tag.toUpperCase())}${warp ? ' · WARP' : ''}`
+const exact = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`)
 
 function routesForm(page: Page) {
-  return page.locator('form').filter({ has: page.getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32') })
+  return page.locator('form').filter({ has: page.getByPlaceholder(PLACEHOLDER) })
 }
 
 function chip(page: Page, value: string) {
-  return page.locator('div[draggable="true"]').filter({ has: page.getByText(value, { exact: true }) })
+  return page.locator('.rc[draggable="true"]').filter({ hasText: exact(value) })
 }
 
 function cellOf(page: Page, value: string) {
-  return page.locator('div.rounded-md.p-3').filter({ has: chip(page, value) })
+  return page.locator('.cell').filter({ has: chip(page, value) })
+}
+
+/** Ячейка доски по имени, как в выборе выхода: «Германия» или «Германия · WARP». */
+function cellNamed(page: Page, name: string) {
+  const [country, warp] = name.split(' · ')
+  return page.locator('.ex').filter({ has: page.locator('.eh b', { hasText: exact(country!) }) })
+    .locator('.cell').filter({ has: page.locator('.cl span', { hasText: exact(warp ? 'WARP' : 'Напрямую') }) })
 }
 
 /** Счётчик POST /api/routes — ровно один запрос на одно добавление. */
@@ -31,17 +44,17 @@ async function openRoutes(page: Page) {
   await page.goto('/routes')
   await hydrated(page)
   // Выбор выхода появляется, когда пришёл список выходов sing-box.
-  await expect(routesForm(page).getByRole('combobox')).toContainText(/RU|NL|FI|US/)
+  await expect(routesForm(page).getByRole('combobox')).toContainText(exitName('ru'))
 }
 
-async function pickExit(page: Page, label: RegExp) {
+async function pickExit(page: Page, name: string) {
   await routesForm(page).getByRole('combobox').click()
-  await page.getByRole('option', { name: label }).click()
+  await page.getByRole('option', { name: exact(name) }).click()
 }
 
-async function addRule(page: Page, value: string, exit: RegExp) {
+async function addRule(page: Page, value: string, exit: string) {
   await pickExit(page, exit)
-  const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+  const input = routesForm(page).getByPlaceholder(PLACEHOLDER)
   await input.fill(value)
   const resp = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/routes')
   await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
@@ -57,16 +70,14 @@ test.describe('маршрутизация', () => {
     await openRoutes(page)
     const s = stamp()
     const cases = [
-      { value: `e2e-${s}.example.com`, exit: /NL$/, header: 'NL', warp: false },
-      { value: `198.51.100.${10 + Math.floor(Math.random() * 200)}`, exit: /FI$/, header: 'FI', warp: false },
-      { value: '203.0.113.0/24', exit: /US WARP$/, header: 'US WARP', warp: true },
-      { value: `*.e2e-${s}.example.org`, exit: /RU$/, header: 'RU', warp: false },
+      { value: `e2e-${s}.example.com`, exit: exitName('nl') },
+      { value: `198.51.100.${10 + Math.floor(Math.random() * 200)}`, exit: exitName('fi') },
+      { value: '203.0.113.0/24', exit: exitName('us', true) },
+      { value: `*.e2e-${s}.example.org`, exit: exitName('ru') },
     ]
     for (const c of cases) {
       await addRule(page, c.value, c.exit)
-      const cell = cellOf(page, c.value)
-      await expect(cell).toContainText(c.header)
-      if (!c.warp) await expect(cell).not.toContainText('WARP')
+      await expect(cellNamed(page, c.exit).filter({ has: chip(page, c.value) })).toHaveCount(1)
     }
     expect(posts, 'одно добавление = один POST').toHaveLength(cases.length)
     await expect(page.getByText(/уже существует|Ошибка/)).toHaveCount(0)
@@ -80,12 +91,12 @@ test.describe('маршрутизация', () => {
 
     // Изменение: перенос правила на другой выход перетаскиванием (PATCH).
     const moved = cases[0]!.value
-    const target = page.locator('div.rounded-md.p-3').filter({ hasText: /FI WARP/ })
+    const target = cellNamed(page, exitName('fi', true))
     const patched = page.waitForResponse(r => r.request().method() === 'PATCH' && /\/api\/routes\/\d+$/.test(r.url()))
     await chip(page, moved).dragTo(target)
     expect((await patched).status()).toBe(200)
-    await expect(toast(page, `«${moved}» → 🇫🇮 FI WARP`)).toBeVisible()
-    await expect(cellOf(page, moved)).toContainText('FI WARP')
+    await expect(toast(page, `«${moved}» → ${exitName('fi', true)}`)).toBeVisible()
+    await expect(target.filter({ has: chip(page, moved) })).toHaveCount(1)
     const after: { value: string, outbound: string }[] = await (await page.request.get('/api/routes')).json()
     expect(after.find(r => r.value === moved)?.outbound).toBe('hy2-fi-warp')
 
@@ -101,6 +112,57 @@ test.describe('маршрутизация', () => {
     expect(left.filter(r => cases.some(c => c.value === r.value))).toEqual([])
   })
 
+  // Перенос виден сразу, до ответа сервера; ошибка PATCH возвращает правило
+  // в прежнюю ячейку, а в базе остаётся старый выход.
+  test('перетаскивание переносит сразу и откатывается при ошибке API', async ({ page, guard }) => {
+    guard.allow(500, /\/api\/routes\/\d+$/, 'PATCH')
+    await openRoutes(page)
+    const value = `e2e-drag-${stamp()}.example.com`
+    await addRule(page, value, exitName('nl'))
+    const from = cellNamed(page, exitName('nl'))
+    const to = cellNamed(page, exitName('fi', true))
+
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    await page.route(/\/api\/routes\/\d+$/, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.fallback()
+      await held
+      await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ statusCode: 500, statusMessage: 'boom' }) })
+    })
+    const patched = page.waitForResponse(r => r.request().method() === 'PATCH' && /\/api\/routes\/\d+$/.test(r.url()))
+    await chip(page, value).dragTo(to)
+    // Ответа ещё нет, а правило уже в новой ячейке.
+    await expect(to.filter({ has: chip(page, value) })).toHaveCount(1)
+    await expect(from.filter({ has: chip(page, value) })).toHaveCount(0)
+    release()
+    expect((await patched).status()).toBe(500)
+    await expect(toast(page, 'Ошибка перемещения')).toBeVisible()
+    await expect(from.filter({ has: chip(page, value) })).toHaveCount(1)
+    await expect(to.filter({ has: chip(page, value) })).toHaveCount(0)
+    await page.unroute(/\/api\/routes\/\d+$/)
+    const stored: { value: string, outbound: string }[] = await (await page.request.get('/api/routes')).json()
+    expect(stored.find(r => r.value === value)?.outbound).toBe('hy2-nl-direct')
+  })
+
+  test('ячейка прокручивается после шести правил', async ({ page }) => {
+    await openRoutes(page)
+    const exit = exitName('fi')
+    const cell = cellNamed(page, exit)
+    const list = cell.locator('.rcs')
+    const have = await cell.locator('.rc').count()
+    const s = stamp()
+    for (let i = 0; have + i < 7 || i < 1; i++) {
+      await addRule(page, `e2e-scroll-${i}-${s}.example.com`, exit)
+      if (have + i + 1 === 6) await expect(list).not.toHaveClass(/\bscroll\b/)
+    }
+    await expect(list).toHaveClass(/\bscroll\b/)
+    const box = await list.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight, top: el.scrollTop }))
+    expect(box.scroll).toBeGreaterThan(box.client)
+    // Последнее добавленное прокручено в вид.
+    expect(box.top + box.client).toBeGreaterThanOrEqual(box.scroll - 1)
+    await expect(cellOf(page, `e2e-scroll-0-${s}.example.com`)).toHaveCount(1)
+  })
+
   // VPN2-55: «правило появилось в списке, и тут же ошибка». Форма уходит по
   // Enter и по кнопке, а флаг загрузки не мешает второй отправке, пока первая
   // в полёте: второй POST получает 409 «уже существует» (или 500, если оба
@@ -111,7 +173,7 @@ test.describe('маршрутизация', () => {
       await openRoutes(page)
       for (let i = 0; i < 5; i++) {
         const value = `e2e-dbl-${stamp()}.example.net`
-        const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+        const input = routesForm(page).getByPlaceholder(PLACEHOLDER)
         await input.fill(value)
         const before = posts.length
         if (how === 'двойной Enter') {
@@ -133,7 +195,7 @@ test.describe('маршрутизация', () => {
   test('кривое значение отклоняется понятной ошибкой', async ({ page, guard }) => {
     guard.allow(400, /\/api\/routes$/, 'POST')
     await openRoutes(page)
-    const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+    const input = routesForm(page).getByPlaceholder(PLACEHOLDER)
     await input.fill('not a domain')
     await routesForm(page).getByRole('button', { name: 'Добавить' }).click()
     await expect(toast(page, 'Нужен домен или IPv4/CIDR').getByText('Нужен домен или IPv4/CIDR', { exact: true })).toBeVisible()
@@ -156,8 +218,8 @@ test.describe('маршрутизация', () => {
     guard.allow(409, /\/api\/routes$/, 'POST')
     await openRoutes(page)
     const value = `e2e-dup-${stamp()}.example.net`
-    await addRule(page, value, /NL$/)
-    const input = routesForm(page).getByPlaceholder('netflix.com / *.openai.com / 8.8.8.8/32')
+    await addRule(page, value, exitName('nl'))
+    const input = routesForm(page).getByPlaceholder(PLACEHOLDER)
     await input.fill(value)
     const resp = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/routes')
     await routesForm(page).getByRole('button', { name: 'Добавить' }).click()

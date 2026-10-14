@@ -1,20 +1,111 @@
 <script setup lang="ts">
 import type { Outbound, Route } from '~/composables/useRoutes'
-import { flagFor, parseOutbound, rttColor, useRoutes } from '~/composables/useRoutes'
-import { pluralRu } from '#shared/plural'
+import { parseOutbound, useRoutes } from '~/composables/useRoutes'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()
 
-const newValue = ref('')
-const newOutbound = ref<string>('')
-const adding = ref(false)
+const EASE = 'cubic-bezier(.23,1,.32,1)'
+const reduced = () => import.meta.client && matchMedia('(prefers-reduced-motion: reduce)').matches
 
-watch(outbounds, (list) => {
+interface Cell {
+  outbound: string
+  /** Подпись ячейки: «Напрямую» или «WARP». */
+  label: string
+  /** Имя ячейки в выборе выхода и в тостах: «Германия», «Германия · WARP». */
+  name: string
+  delay: number | null
+  warp: boolean
+  ru: boolean
+}
+
+interface Column {
+  tag: string
+  name: string
+  sub: string
+  /** Задержка в шапке колонки — по прямому выходу. */
+  delay: number | null
+  cells: Cell[]
+}
+
+const regions = new Intl.DisplayNames(['ru'], { type: 'region' })
+
+// Название страны по тегу экзита: «de» → «Германия», «us2» → «США».
+// Тег не из двух букв остаётся как есть.
+function countryName(tag: string): string {
+  const code = tag.replace(/[0-9]+$/, '').toUpperCase()
+  if (/^[A-Z]{2}$/.test(code)) {
+    try {
+      const name = regions.of(code)
+      if (name && name !== code) return name
+    }
+    catch { /* не код страны */ }
+  }
+  return tag.toUpperCase()
+}
+
+const columns = computed<Column[]>(() => {
+  const byTag = new Map<string, { direct: Outbound | null, warp: Outbound | null }>()
+  for (const ob of outbounds.value) {
+    const parsed = parseOutbound(ob.name)
+    if (!parsed) continue
+    const col = byTag.get(parsed.tag) ?? { direct: null, warp: null }
+    col[parsed.variant] = ob
+    byTag.set(parsed.tag, col)
+  }
+  // Россия первой, экзиты по алфавиту тега — как сетка узлов на Обзоре.
+  const tags = [...byTag.keys()].sort((a, b) => a === 'ru' ? -1 : b === 'ru' ? 1 : a.localeCompare(b))
+  return tags.map((tag) => {
+    const { direct, warp } = byTag.get(tag)!
+    const ru = tag === 'ru'
+    const name = countryName(tag)
+    const cells: Cell[] = []
+    if (direct) cells.push({ outbound: direct.name, label: 'Напрямую', name, delay: ruDelay(direct.delay, ru), warp: false, ru })
+    if (warp) cells.push({ outbound: warp.name, label: 'WARP', name: `${name} · WARP`, delay: warp.delay, warp: true, ru })
+    return { tag, name, sub: ru ? 'RU · entry' : tag.toUpperCase(), delay: direct ? ruDelay(direct.delay, ru) : null, cells }
+  })
+})
+
+// direct-ru не проверяется на задержку: выход в интернет с самого входа.
+function ruDelay(delay: number | null, ru: boolean) {
+  return ru && delay === null ? 0 : delay
+}
+
+const cells = computed(() => columns.value.flatMap(c => c.cells))
+const options = computed(() => cells.value.map(c => ({ label: c.name, value: c.outbound })))
+const cellName = (outbound: string) => cells.value.find(c => c.outbound === outbound)?.name ?? outbound
+
+const rtc = (ms: number | null) => ms === null ? '' : ms >= 150 ? 'rtp' : ms >= 100 ? 'rta' : ms >= 60 ? 'rtv' : ''
+
+// Перенос показывается сразу, до ответа сервера; при ошибке правило
+// возвращается в прежнюю ячейку.
+const moving = ref(new Map<number, string>())
+function setMoving(id: number, outbound: string | null) {
+  const next = new Map(moving.value)
+  if (outbound === null) next.delete(id)
+  else next.set(id, outbound)
+  moving.value = next
+}
+
+const shown = computed(() => rules.value.map(r => moving.value.has(r.id) ? { ...r, outbound: moving.value.get(r.id)! } : r))
+function rulesFor(outbound: string): Route[] {
+  return shown.value.filter(r => r.outbound === outbound)
+}
+
+// ---------- новое правило ----------
+const newValue = ref('')
+const newOutbound = ref('')
+const adding = ref(false)
+const fresh = ref<number | null>(null)
+const board = ref<HTMLElement | null>(null)
+
+watch(options, (list) => {
   if (!newOutbound.value && list.length > 0) {
-    newOutbound.value = list.find(o => o.isDirectRu)?.name ?? list[0]!.name
+    newOutbound.value = list.find(o => o.value === 'direct-ru')?.value ?? list[0]!.value
   }
 }, { immediate: true })
+
+const chipEl = (id: number) => board.value?.querySelector<HTMLElement>(`.rc[data-id="${id}"]`) ?? null
 
 async function add() {
   // Второй Enter, пока первый запрос в полёте, слал дубль и ловил 409 поверх
@@ -22,10 +113,14 @@ async function add() {
   if (adding.value || !newValue.value.trim() || !newOutbound.value) return
   adding.value = true
   try {
-    await create(newValue.value.trim(), newOutbound.value)
-    expandCell(newOutbound.value)   // добавленное правило должно быть видно
+    const r = await create(newValue.value.trim(), newOutbound.value)
+    fresh.value = r.id
     toast.add({ title: 'Правило добавлено', color: 'success' })
     newValue.value = ''
+    await nextTick()
+    // Добавленное правило должно быть видно и в длинной ячейке.
+    const list = chipEl(r.id)?.parentElement
+    if (list) list.scrollTop = list.scrollHeight
   }
   catch (e) {
     const err = e as { statusMessage?: string }
@@ -36,326 +131,220 @@ async function add() {
   }
 }
 
-interface Column {
-  tag: string
-  direct: Outbound | null
-  warp: Outbound | null
-}
+// ---------- перетаскивание ----------
+const dragging = ref<number | null>(null)
+const over = ref<string | null>(null)
 
-const columns = computed<Column[]>(() => {
-  const byTag = new Map<string, Column>()
-  for (const ob of outbounds.value) {
-    const parsed = parseOutbound(ob.name)
-    if (!parsed) continue
-    let col = byTag.get(parsed.tag)
-    if (!col) {
-      col = { tag: parsed.tag, direct: null, warp: null }
-      byTag.set(parsed.tag, col)
-    }
-    if (parsed.variant === 'direct') col.direct = ob
-    else col.warp = ob
+function onDragStart(rule: Route, e: DragEvent) {
+  dragging.value = rule.id
+  fresh.value = null
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', rule.value)
   }
-  // RU first, then alphabetical by tag — same order as Monitoring node grid
-  const arr = Array.from(byTag.values())
-  return arr.sort((a, b) => {
-    if (a.tag === 'ru') return -1
-    if (b.tag === 'ru') return 1
-    return a.tag.localeCompare(b.tag)
-  })
-})
-
-function rulesFor(outboundName: string | null | undefined): Route[] {
-  if (!outboundName) return []
-  return rules.value.filter(r => r.outbound === outboundName)
-}
-
-// Длинный список правил ячейки сворачивается: видно первые COLLAPSED_RULES,
-// остальное — по «ещё N». Иначе выход с десятком правил растягивал блок на
-// пол-экрана. Бросать правило на свёрнутую ячейку можно, как и раньше.
-const COLLAPSED_RULES = 3
-const expandedCells = ref(new Set<string>())
-function visibleRules(outboundName: string): Route[] {
-  const all = rulesFor(outboundName)
-  return expandedCells.value.has(outboundName) ? all : all.slice(0, COLLAPSED_RULES)
-}
-function expandCell(outboundName: string) {
-  if (!expandedCells.value.has(outboundName)) expandedCells.value = new Set(expandedCells.value).add(outboundName)
-}
-function toggleCell(outboundName: string) {
-  const next = new Set(expandedCells.value)
-  if (next.has(outboundName)) next.delete(outboundName)
-  else next.add(outboundName)
-  expandedCells.value = next
-}
-
-// Drag state
-const dragging = ref<{ id: number, value: string } | null>(null)
-const dragOver = ref<string | null>(null)
-
-function onDragStart(rule: Route) {
-  dragging.value = { id: rule.id, value: rule.value }
 }
 function onDragEnd() {
   dragging.value = null
-  dragOver.value = null
+  over.value = null
 }
-function onDragOver(target: string, e: DragEvent) {
+function onDragOver(outbound: string, e: DragEvent) {
+  if (dragging.value === null) return
   e.preventDefault()
-  if (dragOver.value !== target) dragOver.value = target
+  over.value = outbound
 }
-async function onDrop(targetOutbound: string) {
-  const m = dragging.value
+
+async function onDrop(outbound: string, e: DragEvent) {
+  const id = dragging.value
+  if (id === null) return
+  e.preventDefault()
   dragging.value = null
-  dragOver.value = null
-  if (!m) return
-  const cur = rules.value.find(r => r.id === m.id)
-  if (!cur || cur.outbound === targetOutbound) return
-  try {
-    await patch(m.id, targetOutbound)
-    expandCell(targetOutbound)
-    toast.add({ title: `«${m.value}» → ${outboundLabel(targetOutbound)}`, color: 'success' })
+  over.value = null
+  const rule = shown.value.find(r => r.id === id)
+  if (!rule || rule.outbound === outbound) return
+  const { clientX: x0, clientY: y0 } = e
+  setMoving(id, outbound)
+  // Правило ложится в ячейку из точки, где его отпустили.
+  if (!reduced()) {
+    void nextTick(() => requestAnimationFrame(() => {
+      const el = chipEl(id)
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      el.animate([
+        { transform: `translate(${x0 - r.left - r.width / 2}px,${y0 - r.top - r.height / 2}px) scale(1.04)`, boxShadow: '0 12px 30px rgba(0,0,0,.5)' },
+        { transform: 'none', boxShadow: '0 0 0 rgba(0,0,0,0)' },
+      ], { duration: 380, easing: EASE })
+    }))
   }
-  catch (e) {
-    toast.add({ title: 'Ошибка перемещения', color: 'error', description: (e as Error).message })
+  try {
+    await patch(id, outbound)
+    toast.add({ title: `«${rule.value}» → ${cellName(outbound)}`, color: 'success' })
+  }
+  catch (err) {
+    toast.add({ title: 'Ошибка перемещения', color: 'error', description: (err as Error).message })
+  }
+  finally {
+    setMoving(id, null)
   }
 }
 
+// ---------- удаление ----------
 async function deleteRule(rule: Route) {
+  const el = chipEl(rule.id)
+  let anim: Animation | null = null
+  if (el && !reduced()) {
+    // Удалённое схлопывается до запроса, чтобы ответ сервера не обрывал движение.
+    el.style.pointerEvents = 'none'
+    anim = el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EASE, fill: 'forwards' })
+    await anim.finished.catch(() => {})
+  }
   try {
     await remove(rule.id)
     toast.add({ title: `«${rule.value}» удалено`, color: 'success' })
   }
   catch (e) {
+    anim?.cancel()
+    if (el) el.style.pointerEvents = ''
     toast.add({ title: 'Ошибка', color: 'error', description: (e as Error).message })
   }
-}
-
-function rttBadge(delay: number | null, kind: 'direct' | 'warp' | 'ru' = 'direct') {
-  if (delay === null) {
-    if (kind === 'ru') return { text: '0ms', cls: 'text-violet-400' }
-    if (kind === 'warp') return { text: '', cls: '' }
-    return { text: '—', cls: 'text-(--ui-text-dimmed)' }
-  }
-  const color = rttColor(delay)
-  const map: Record<string, string> = {
-    success: 'text-violet-400',
-    warning: 'text-amber-400',
-    error: 'text-rose-400',
-    neutral: 'text-(--ui-text-muted)',
-  }
-  return { text: `${delay}ms`, cls: map[color] }
-}
-
-function outboundLabel(name: string): string {
-  const p = parseOutbound(name)
-  if (!p) return name
-  return `${flagFor(p.tag)} ${p.tag.toUpperCase()}${p.variant === 'warp' ? ' WARP' : ''}`
 }
 </script>
 
 <template>
-  <UCard>
-    <template #header>
-      <div class="flex items-center justify-between">
-        <div class="font-semibold">
-          Маршрутизация
-        </div>
-        <span class="text-xs text-(--ui-text-muted)">
-          {{ rules.length }} {{ pluralRu(rules.length, ['правило', 'правила', 'правил']) }}
-        </span>
-      </div>
-    </template>
-
-    <div class="space-y-4">
-      <!-- Add form -->
-      <form
-        class="flex flex-wrap gap-2 items-end"
-        @submit.prevent="add"
-      >
-        <div class="flex-1 min-w-[200px]">
-          <UInput
-            v-model="newValue"
-            placeholder="netflix.com / *.openai.com / 8.8.8.8/32"
-            class="w-full"
-          />
-        </div>
+  <section class="rtop">
+    <form
+      class="card addr"
+      @submit.prevent="add"
+    >
+      <h3>Новое правило</h3>
+      <label class="inp big2"><input
+        v-model="newValue"
+        placeholder="netflix.com / *.openai.com / 8.8.8.8/32"
+        spellcheck="false"
+        aria-label="Новое правило"
+      ></label>
+      <div class="arow">
         <USelect
           v-model="newOutbound"
-          :items="outbounds.map(o => {
-            const p = parseOutbound(o.name)
-            const label = p
-              ? `${flagFor(p.tag)} ${p.tag.toUpperCase()}${p.variant === 'warp' ? ' WARP' : ''}`
-              : o.name
-            return { label, value: o.name }
-          })"
-          class="w-44"
+          :items="options"
+          variant="none"
+          trailing-icon="i-lucide-chevron-down"
+          class="sel"
+          :ui="{ base: 'sel-b', trailing: 'pe-[13px]', trailingIcon: 'size-[17px] text-(--t2)', value: 'text-(--t1)' }"
+          aria-label="Выход"
         />
-        <UButton
+        <button
           type="submit"
-          :loading="adding"
+          class="pill w"
           :disabled="!newValue.trim() || !newOutbound"
         >
           Добавить
-        </UButton>
-      </form>
+        </button>
+      </div>
+    </form>
+  </section>
 
-      <!-- Columns: one per exit, direct cell on top, warp cell below -->
+  <section
+    ref="board"
+    class="board"
+    :style="{ gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},1fr)` }"
+  >
+    <div
+      v-for="col in columns"
+      :key="col.tag"
+      :class="['card', 'ex', { badx: col.delay === null }]"
+    >
+      <div class="eh">
+        <div>
+          <b>{{ col.name }}</b><small>{{ col.sub }}</small>
+        </div>
+        <span :class="['rt', rtc(col.delay)]">{{ col.delay ?? '—' }}<small>мс</small></span>
+      </div>
       <div
-        v-if="columns.length > 0"
-        class="grid gap-2 overflow-x-auto"
-        :style="`grid-template-columns: repeat(${columns.length}, minmax(120px, 1fr))`"
+        v-for="cell in col.cells"
+        :key="cell.outbound"
+        :class="['cell', { empty: !rulesFor(cell.outbound).length, warp: cell.warp, over: over === cell.outbound }]"
+        :data-outbound="cell.outbound"
+        @dragover="onDragOver(cell.outbound, $event)"
+        @drop="onDrop(cell.outbound, $event)"
       >
-        <div
-          v-for="col in columns"
-          :key="col.tag"
-          class="space-y-2"
-        >
-          <!-- Direct cell -->
+        <div class="cl">
+          <span>{{ cell.label }}</span><i :class="rtc(cell.delay)">{{ cell.delay ?? '—' }} мс</i>
+        </div>
+        <div :class="['rcs', { scroll: rulesFor(cell.outbound).length > 6 }]">
           <div
-            v-if="col.direct"
-            :class="[
-              'rounded-md p-3 flex flex-col border transition-colors',
-              dragOver === col.direct.name
-                ? 'border-violet-500 bg-violet-500/10'
-                : 'border-(--ui-border) bg-(--ui-page)',
-            ]"
-            @dragover="onDragOver(col.direct.name, $event)"
-            @drop.prevent="onDrop(col.direct.name)"
+            v-for="rule in rulesFor(cell.outbound)"
+            :key="rule.id"
+            :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id }]"
+            :data-id="rule.id"
+            draggable="true"
+            @dragstart="onDragStart(rule, $event)"
+            @dragend="onDragEnd"
           >
-            <div class="flex items-center justify-between mb-1.5 text-xs">
-              <span class="font-semibold">
-                {{ flagFor(col.tag) }} {{ col.tag.toUpperCase() }}
-              </span>
-              <span :class="rttBadge(col.direct.delay, col.tag === 'ru' ? 'ru' : 'direct').cls">
-                {{ rttBadge(col.direct.delay, col.tag === 'ru' ? 'ru' : 'direct').text }}
-              </span>
-            </div>
-            <div class="space-y-1">
-              <div
-                v-for="rule in visibleRules(col.direct.name)"
-                :key="rule.id"
-                draggable="true"
-                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
-                @dragstart="onDragStart(rule)"
-                @dragend="onDragEnd"
-              >
-                <span class="truncate">{{ rule.value }}</span>
-                <UButton
-                  icon="i-lucide-x"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  class="opacity-0 group-hover:opacity-100"
-                  @click="deleteRule(rule)"
-                />
-              </div>
-              <button
-                v-if="rulesFor(col.direct.name).length > COLLAPSED_RULES"
-                type="button"
-                class="w-full text-[11px] text-(--ui-text-muted) hover:text-(--ui-text) flex items-center justify-center gap-1 py-0.5"
-                @click="toggleCell(col.direct.name)"
-              >
-                <UIcon
-                  :name="expandedCells.has(col.direct.name) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                  class="size-3"
-                />
-                {{ expandedCells.has(col.direct.name) ? 'свернуть' : `ещё ${rulesFor(col.direct.name).length - COLLAPSED_RULES}` }}
-              </button>
-              <!-- Invisible placeholder chips so the cell holds height of ≥2 rules at all times.
-                   Same markup as a real chip → identical pixel footprint, no math required. -->
-              <div
-                v-for="i in Math.max(0, 2 - rulesFor(col.direct.name).length)"
-                :key="`ph-${col.direct.name}-${i}`"
-                aria-hidden="true"
-                class="invisible text-xs px-2 py-1 rounded border border-transparent flex items-center justify-between gap-1"
-              >
-                <span class="truncate">·</span>
-                <UButton
-                  icon="i-lucide-x"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  tabindex="-1"
-                />
-              </div>
-            </div>
-          </div>
-
-          <!-- Warp cell (under direct, same column) -->
-          <div
-            v-if="col.warp"
-            :class="[
-              'rounded-md p-3 flex flex-col border transition-colors',
-              dragOver === col.warp.name
-                ? 'border-violet-500 bg-violet-500/10'
-                : 'border-(--ui-border) bg-(--ui-page)',
-            ]"
-            @dragover="onDragOver(col.warp.name, $event)"
-            @drop.prevent="onDrop(col.warp.name)"
-          >
-            <div class="flex items-center justify-between mb-1.5 text-xs">
-              <span class="font-medium flex items-center gap-1">
-                {{ flagFor(col.tag) }} <span class="text-[#f38020]">{{ col.tag.toUpperCase() }} WARP</span>
-              </span>
-              <span :class="rttBadge(col.warp.delay, 'warp').cls">
-                {{ rttBadge(col.warp.delay, 'warp').text }}
-              </span>
-            </div>
-            <div class="space-y-1">
-              <div
-                v-for="rule in visibleRules(col.warp.name)"
-                :key="rule.id"
-                draggable="true"
-                class="text-xs px-2 py-1 rounded border border-(--ui-border) bg-(--ui-bg) flex items-center justify-between gap-1 group cursor-grab"
-                @dragstart="onDragStart(rule)"
-                @dragend="onDragEnd"
-              >
-                <span class="truncate">{{ rule.value }}</span>
-                <UButton
-                  icon="i-lucide-x"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  class="opacity-0 group-hover:opacity-100"
-                  @click="deleteRule(rule)"
-                />
-              </div>
-              <button
-                v-if="rulesFor(col.warp.name).length > COLLAPSED_RULES"
-                type="button"
-                class="w-full text-[11px] text-(--ui-text-muted) hover:text-(--ui-text) flex items-center justify-center gap-1 py-0.5"
-                @click="toggleCell(col.warp.name)"
-              >
-                <UIcon
-                  :name="expandedCells.has(col.warp.name) ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                  class="size-3"
-                />
-                {{ expandedCells.has(col.warp.name) ? 'свернуть' : `ещё ${rulesFor(col.warp.name).length - COLLAPSED_RULES}` }}
-              </button>
-              <!-- Same trick as direct cell: pad to a base size of 1 rule. -->
-              <div
-                v-for="i in Math.max(0, 1 - rulesFor(col.warp.name).length)"
-                :key="`ph-${col.warp.name}-${i}`"
-                aria-hidden="true"
-                class="invisible text-xs px-2 py-1 rounded border border-transparent flex items-center justify-between gap-1"
-              >
-                <span class="truncate">·</span>
-                <UButton
-                  icon="i-lucide-x"
-                  size="xs"
-                  color="neutral"
-                  variant="ghost"
-                  tabindex="-1"
-                />
-              </div>
-            </div>
+            {{ rule.value }}<button
+              class="x"
+              type="button"
+              aria-label="Удалить"
+              @click="deleteRule(rule)"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+              ><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
           </div>
         </div>
       </div>
-
-      <p class="text-xs text-(--ui-text-muted)">
-        Перетаскивай правила между выходами. Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
-      </p>
     </div>
-  </UCard>
+  </section>
+  <p class="hint">
+    Перетаскивай правила между выходами. Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
+  </p>
 </template>
+
+<style scoped>
+.card h3{font-size:14px;font-weight:500;color:var(--t2)}
+.rtop{display:grid;grid-template-columns:7fr 5fr;gap:12px;margin-bottom:12px}
+.rtop>.addr{grid-column:2}
+.inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
+.inp:focus-within{border-color:rgba(var(--fg),.3)}
+.inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;width:200px}
+.inp input::placeholder{color:var(--t3)}
+.inp.big2{height:50px;border-radius:14px;padding:0 16px;background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));margin-top:14px}
+.inp.big2 input{font-size:16px;width:100%}
+.arow{display:flex;gap:8px;margin-top:12px;align-items:center}
+.arow .sel{flex:1;min-width:0}
+.arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
+.arow .pill{height:40px}
+.board{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+.ex{padding:14px;display:flex;flex-direction:column;gap:10px;min-height:420px}
+.ex .eh{display:flex;justify-content:space-between;align-items:flex-start;padding:2px 2px 4px}
+.ex .eh b{font-weight:500;font-size:15px;display:block}
+.ex .eh small{font-size:11.5px;color:var(--t3)}
+.ex .eh .rt{font-weight:200;font-size:26px;letter-spacing:-.02em;line-height:1}
+.ex .eh .rt small{font-size:12px;margin-left:2px}
+.ex.badx .eh .rt{color:var(--red-t)}
+.cell{flex:1;border-radius:14px;background:var(--sunk);border:1px dashed rgba(var(--fg),.08);box-shadow:inset 0 2px 12px rgba(0,0,0,calc(.5*var(--shk)));padding:10px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s,background .2s}
+.cell.over{border-color:rgba(var(--fg),.45);background:var(--sunk2)}
+.cell .cl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--t3);padding:0 2px 2px}
+.cell .cl i{font-style:normal}
+.cell.empty::after{content:"перетащите сюда";margin:auto;font-size:11.5px;color:var(--t4)}
+.cell.warp .cl span{color:var(--orange)}
+.rc{position:relative;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12px;color:var(--t1);cursor:grab;user-select:none;transition:transform .16s var(--ease),opacity .2s,border-color .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rc:hover{border-color:var(--line2)}.rc:active{cursor:grabbing}
+.rc.drag{opacity:.35}
+.rc.new{animation:pop .5s var(--ease)}
+@keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+.rc::before{content:"";width:6px;height:10px;flex:none;opacity:.35;background:radial-gradient(circle,var(--t1) 1px,transparent 1.3px) 0 0/3px 3.4px}
+.rc .x{position:absolute;right:4px;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:7px;border:0;background:var(--tog);color:var(--t2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .15s,color .15s}
+.rc:hover .x{opacity:1}.rc .x:hover{color:var(--red-t)}.rc .x svg{width:11px;height:11px}
+.rcs{display:flex;flex-direction:column;gap:6px}.rcs .rc{flex:none}
+.rcs.scroll{max-height:222px;margin-right:-6px;padding-right:6px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
+.rcs.scroll::-webkit-scrollbar{width:8px}.rcs.scroll::-webkit-scrollbar-thumb{background:rgba(var(--fg),.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.rtv{color:var(--violet)!important}.rta{color:var(--amber)!important}.rtp{color:var(--pink)!important}
+.hint{margin-top:12px;color:var(--t3);font-size:12.5px}
+@media (max-width:1360px){
+  .ex .eh .rt{font-size:22px}
+}
+</style>

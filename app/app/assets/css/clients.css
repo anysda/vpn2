@@ -27,7 +27,8 @@
 
 /* список и карточка */
 .clp .cgrid{display:grid;grid-template-columns:1fr 440px;gap:12px;align-items:stretch}
-.clp .clist{padding:8px 8px 6px;display:flex;flex-direction:column;min-height:0}
+.clp .clist{flex:1;padding:8px 8px 6px;display:flex;flex-direction:column;min-height:0}
+.clp .ccol{display:flex;flex-direction:column;gap:12px;min-width:0}
 .clp .thead,.clp .crow{display:grid;grid-template-columns:1.6fr .8fr .7fr .9fr .9fr;align-items:center;gap:10px;padding:0 14px}
 .clp .thead{height:40px;color:var(--t3);font-size:12px}
 .clp .crow{height:58px;border-radius:14px;cursor:pointer;color:var(--t2);font-size:13px;outline:0;transition:background-color .2s var(--ease),transform .16s var(--ease)}
@@ -66,17 +67,13 @@
 .clp .kgrid b{font-weight:400;font-size:15px}
 .clp .kgrid em{font-style:normal;font-size:11px;color:var(--t3)}
 .clp .kgrid .in{height:26px;padding:0;background:none;border:0;box-shadow:none;font:400 15px Manrope,system-ui,sans-serif;border-bottom:1px dashed rgba(var(--fg),.18);border-radius:0}
-.clp .wk{display:flex;align-items:flex-end;gap:10px;height:96px;margin:16px 0 4px}
-.clp .wk div{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end}
-.clp .wk i{width:100%;max-width:30px;border-radius:8px;background:linear-gradient(180deg,var(--wk-a),var(--wk-b))}
-.clp .wk div.on i{background:linear-gradient(180deg,var(--acc),var(--wk-on));box-shadow:0 0 18px rgba(var(--glow),calc(.35*var(--gk)))}
-.clp .wk span{font-size:10.5px;color:var(--t3)}
 .clp .sub{display:flex;justify-content:space-between;align-items:baseline;margin-top:18px}
 .clp .sub h3{font-size:14px;font-weight:500;color:var(--t1)}
 .clp .sub>span{font-size:12px;color:var(--t3)}
 .clp .sub .pill{height:28px;font-size:12px;padding:0 12px}
 .clp .crw{display:flex;align-items:center;gap:10px;padding:12px 0;border-top:1px solid rgba(var(--fg),.06);font-size:13px}
 .clp .crw:first-of-type{margin-top:14px}
+.clp .kgrid+.crw{margin-top:12px}
 .clp .crw>span:first-child{flex:1;min-width:0;color:var(--t2)}
 .clp .crw>span:first-child b{color:var(--t1);font-weight:500}
 .clp .crw .pill{height:30px;font-size:12px;padding:0 13px}
@@ -144,6 +141,10 @@
 .clm .kvr>span{color:var(--t3)}
 .clm .kvr code{font:400 12.5px ui-monospace,Menlo,monospace;color:var(--t1);word-break:break-all}
 .clm .kvr .r2{display:flex;gap:6px}
+/* IKEv2: строки на общей сетке. Подпись по своей ширине, кнопки справа в одну вертикаль. */
+.clm .kvl{display:grid;grid-template-columns:fit-content(50%) minmax(0,1fr) 66px;column-gap:10px;margin-top:6px}
+.clm .kvl .kvr{grid-column:1/-1;grid-template-columns:subgrid}
+.clm .kvl .r2{justify-content:flex-end}
 .clm .sub2{color:var(--t3);font-size:12.5px;margin-top:3px}
 .clm .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
 .clm .arow .pill{height:40px}

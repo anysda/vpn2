@@ -59,8 +59,8 @@ const rows = computed(() => {
   )
 })
 
-// Выбранный клиент: по умолчанию первый в списке.
-const selectedId = ref<number | null>(null)
+// Выбранный клиент: из ссылки ?id= (топ на Обзоре), иначе первый в списке.
+const selectedId = ref<number | null>(Number(useRoute().query.id) || null)
 watch(sorted, (list) => {
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   selectedId.value = list[0]?.id ?? null
@@ -170,56 +170,59 @@ function dot(c: Client) {
     </div>
 
     <section class="cgrid">
-      <div class="card clist">
-        <div class="thead">
-          <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
-        </div>
-        <div ref="rowsEl" class="crows scroll">
-          <div v-if="!clients.length" class="more">
-            Пока нет клиентов
+      <div class="ccol">
+        <div class="card clist">
+          <div class="thead">
+            <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
           </div>
-          <div v-else-if="!rows.length" class="more">
-            Ничего не найдено
-          </div>
-          <div
-            v-for="c in rows"
-            v-else
-            :key="c.id"
-            class="crow"
-            :class="{ on: c.id === selectedId }"
-            role="button"
-            tabindex="0"
-            :aria-pressed="c.id === selectedId"
-            data-testid="client-row"
-            @click="select(c.id)"
-            @keydown.enter.prevent="select(c.id)"
-            @keydown.space.prevent="select(c.id)"
-          >
-            <div class="who">
-              <span class="av" :title="dot(c)?.title">{{ initials(c.name) }}<i
-                v-if="dot(c)"
-                :class="dot(c)!.cls"
-                :style="dot(c)!.color ? { background: dot(c)!.color } : undefined"
-                data-testid="client-online"
-              /></span>
-              <div>
-                <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
-                <small>{{ c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram' }}</small>
-              </div>
+          <div ref="rowsEl" class="crows scroll">
+            <div v-if="!clients.length" class="more">
+              Пока нет клиентов
             </div>
-            <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
-            <span
-              class="t1"
-              :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
-            >{{ sizeRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0)) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
-            <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
-            <span>
-              <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
-              <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-              <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
-            </span>
+            <div v-else-if="!rows.length" class="more">
+              Ничего не найдено
+            </div>
+            <div
+              v-for="c in rows"
+              v-else
+              :key="c.id"
+              class="crow"
+              :class="{ on: c.id === selectedId }"
+              role="button"
+              tabindex="0"
+              :aria-pressed="c.id === selectedId"
+              data-testid="client-row"
+              @click="select(c.id)"
+              @keydown.enter.prevent="select(c.id)"
+              @keydown.space.prevent="select(c.id)"
+            >
+              <div class="who">
+                <span class="av" :title="dot(c)?.title">{{ initials(c.name) }}<i
+                  v-if="dot(c)"
+                  :class="dot(c)!.cls"
+                  :style="dot(c)!.color ? { background: dot(c)!.color } : undefined"
+                  data-testid="client-online"
+                /></span>
+                <div>
+                  <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
+                  <small>{{ c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram' }}</small>
+                </div>
+              </div>
+              <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
+              <span
+                class="t1"
+                :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
+              >{{ sizeRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0)) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+              <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
+              <span>
+                <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
+                <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
+                <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
+              </span>
+            </div>
           </div>
         </div>
+        <OverviewBroadcast />
       </div>
       <div class="card cdet lit" data-testid="client-detail">
         <ClientsDetail

@@ -32,15 +32,6 @@ export function inDaysRu(n: number): string {
   return `через ${n} ${pluralRu(n, ['день', 'дня', 'дней'])}`
 }
 
-const WD = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
-const MSK_MS = 3 * 3600_000
-
-/** Подписи 7 последних суток по МСК, последняя — сегодня. */
-export function mskWeekdays(now = Date.now()): string[] {
-  const today = new Date(now + MSK_MS).getUTCDay()
-  return Array.from({ length: 7 }, (_, i) => WD[(today - 6 + i + 7) % 7]!)
-}
-
 const EASE = 'cubic-bezier(.23,1,.32,1)'
 
 /** Анимация из макета: WAAPI, «уменьшить движение» её выключает. */

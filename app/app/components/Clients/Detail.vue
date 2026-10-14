@@ -2,7 +2,7 @@
 import type { ClientDetail, ClientTraffic, Device } from '~/composables/useClients'
 import { formatRuDate, parseRuDate, useClientDetail, useClientDevices, useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
-import { anim, expiringInDays, initials, mskWeekdays, sizeRu } from '~/utils/clients-view'
+import { anim, expiringInDays, initials, sizeRu } from '~/utils/clients-view'
 import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from './DeviceConfig.vue'
 
@@ -29,27 +29,12 @@ function isGone(e: unknown) {
   return (e as { statusCode?: number }).statusCode === 404
 }
 
-// --- Трафик за 7 московских суток, ↓ и ↑ раздельно ---------------------------
-const EMPTY_WEEK = Array.from({ length: 7 }, () => ({ rx: 0, tx: 0 }))
-const week = ref<{ rx: number, tx: number }[]>(EMPTY_WEEK)
-
-async function fetchWeek(id: number) {
-  try {
-    return await $fetch<{ date: string, rx: number, tx: number }[]>(`/api/clients/${id}/traffic`)
-  }
-  catch (e) {
-    if (isGone(e)) throw e
-    return EMPTY_WEEK
-  }
-}
-
 async function load(animate = false) {
   const version = ++loadVersion
   try {
-    const [d, w] = await Promise.all([fetchDetail(props.clientId), fetchWeek(props.clientId)])
+    const d = await fetchDetail(props.clientId)
     if (version !== loadVersion) return
     detail.value = d
-    week.value = w
     syncForm()
     if (animate) {
       nextTick(() => anim(root.value, [
@@ -405,10 +390,6 @@ const rx = computed(() => props.traffic?.rxBytes ?? detail.value?.rxTotal ?? 0)
 const tx = computed(() => props.traffic?.txBytes ?? detail.value?.txTotal ?? 0)
 
 const created = computed(() => (detail.value ? new Date(detail.value.createdAt).toLocaleDateString('ru-RU') : ''))
-
-const weekDays = computed(() => mskWeekdays())
-const weekMax = computed(() => Math.max(...week.value.map(d => d.rx + d.tx), 1))
-const weekSum = computed(() => week.value.reduce((a, d) => a + d.rx + d.tx, 0))
 </script>
 
 <template>
@@ -454,15 +435,6 @@ const weekSum = computed(() => week.value.reduce((a, d) => a + d.rx + d.tx, 0))
         <div>
           <span>Фильтр рекламы</span><b>{{ detail.filterTraffic ? 'включён' : 'выключен' }}</b>
           <em>меняется только при создании</em>
-        </div>
-      </div>
-
-      <div class="sub">
-        <h3>Трафик за 7 дней</h3><span>{{ sizeRu(weekSum) }}</span>
-      </div>
-      <div class="wk">
-        <div v-for="(d, i) in week" :key="i" :class="{ on: i === 6 }" data-testid="week-day" :title="`↓ ${sizeRu(d.rx)} · ↑ ${sizeRu(d.tx)}`">
-          <i :style="{ height: `${Math.max(4, (d.rx + d.tx) / weekMax * 72)}px` }" /><span>{{ weekDays[i] }}</span>
         </div>
       </div>
 

@@ -38,10 +38,10 @@ test('клиента удалили до загрузки карточки: па
     page.on('response', (r) => {
       if (r.status() === 404 && r.url().includes(`/api/clients/${first.id}`)) gone.push(r.url())
     })
-    // Первый запрос карточки (или трафика) выбранного клиента: удалить его и
+    // Первый запрос карточки выбранного клиента: удалить его и
     // только потом пропустить запрос к серверу — он ответит настоящим 404.
     let deleted: Promise<unknown> | null = null
-    await page.route(new RegExp(`/api/clients/${first.id}(/traffic)?$`), async (route) => {
+    await page.route(new RegExp(`/api/clients/${first.id}$`), async (route) => {
       deleted ??= page.request.delete(`/api/clients/${first.id}`)
       await deleted
       await route.continue()

@@ -194,7 +194,7 @@ const ikeRows = computed(() => {
           <b>Ожидается сертификат Caddy</b>
           IKEv2 автоматически перейдёт на домен после выдачи сертификата. Пока действуют временные настройки ниже. После перехода откройте это окно заново.
         </div>
-        <div style="margin-top:6px">
+        <div class="kvl">
           <div v-for="r in ikeRows" :key="r.lab" class="kvr">
             <span>{{ r.k }}</span>
             <code>{{ r.sec && !showPass ? '•'.repeat(20) : r.v }}</code>

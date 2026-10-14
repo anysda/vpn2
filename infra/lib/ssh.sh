@@ -106,9 +106,39 @@ ssh_exec() {
     # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
     # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть.
     [[ $rc -ne 255 ]] && return $rc
+    [[ $attempt -eq 1 ]] && _ssh_hostkey_refused && return $rc
     [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
   return $rc
+}
+
+# Причина отказа ssh по коду выхода и stderr: hostkey | auth | net.
+# Смена host-key - всегда rc=255 с этим текстом у OpenSSH, неверный пароль
+# sshpass отдаёт кодом 5. Всё прочее (refused, таймаут, обрыв) - сеть.
+ssh_fail_kind() {
+  local rc="$1" err="$2"
+  case $rc in 5) echo auth; return ;; 124|137) echo net; return ;; esac
+  case $err in
+    *'REMOTE HOST IDENTIFICATION HAS CHANGED'*|*'Host key verification failed'*) echo hostkey ;;
+    *'Permission denied'*|*'Too many authentication failures'*) echo auth ;;
+    *) echo net ;;
+  esac
+}
+
+# Команда, которой человек сам убирает старый host-key ноды. Сами ключ не
+# принимаем: сменившийся ключ - это и переустановка ОС, и подмена ноды.
+ssh_hostkey_fix() {
+  printf 'ssh-keygen -R %s -f %s' "$SSH_HOST" "$_known_hosts"
+}
+
+# После rc=255 у стадии: сменившийся host-key повтором не лечится, а четыре
+# «сбой соединения, повтор» выглядят как флап сети. Одна проба решает.
+_ssh_hostkey_refused() {
+  local reason prc=0
+  reason=$(ssh_probe) || prc=$?
+  [[ $prc -eq 2 ]] || return 1
+  warn "ssh ${SSH_HOST}: ${reason}; новый ключ сам не принимается (защита от подмены ноды)"
+  warn "если ОС на ноде переустанавливали, убери старый ключ и повтори: $(ssh_hostkey_fix)"
 }
 
 # Короткая проверка «нода пускает по ssh»: одна попытка с общим потолком
@@ -119,19 +149,25 @@ ssh_exec() {
 # KEX и вход по паролю - в единицы секунд, остаётся запас на DNS у sshd.
 # Свежее соединение без мультиплексора: зависший master не должен отвечать
 # за ноду, а опции до _ssh_opts, потому что у ssh побеждает первое значение.
+# Код возврата - класс отказа: 1 сеть или прочее, 2 сменился host-key,
+# 3 нода отказала во входе.
 ssh_probe() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  local limit="${SSH_PROBE_TIMEOUT:-30}" err rc=0
+  local limit="${SSH_PROBE_TIMEOUT:-30}" err last rc=0
   err=$(SSHPASS="$SSH_PASS" timeout -k 5 "$limit" sshpass -e ssh \
       -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
       "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" 'echo ok' 2>&1 >/dev/null) || rc=$?
   [[ $rc -eq 0 ]] && return 0
-  err=$(printf '%s\n' "$err" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1)
+  last=$(printf '%s\n' "$err" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1)
+  case $(ssh_fail_kind "$rc" "$err") in
+    hostkey) echo "сменился host-key ноды (например, после переустановки ОС)${last:+: $last}"; return 2 ;;
+    auth)    [[ $rc -eq 5 ]] && last="неверный пароль"
+             echo "нода отказала во входе: $last"; return 3 ;;
+  esac
   case $rc in
-    124|137) echo "нет ответа за ${limit} с${err:+ ($err)}: соединение или обмен ключами ssh висит, пакеты режутся по пути" ;;
-    5)       echo "неверный пароль" ;;
-    6)       echo "host-key ноды не принят${err:+: $err}" ;;
-    *)       echo "${err:-ssh завершился с кодом $rc}" ;;
+    124|137) echo "нет ответа за ${limit} с${last:+ ($last)}: соединение или обмен ключами ssh висит, пакеты режутся по пути" ;;
+    6)       echo "host-key ноды не принят${last:+: $last}" ;;
+    *)       echo "${last:-ssh завершился с кодом $rc}" ;;
   esac
   return 1
 }
@@ -165,6 +201,7 @@ push() {
           "${SSH_USER}@${SSH_HOST}" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
+    [[ $attempt -eq 1 && $rc -eq 255 ]] && _ssh_hostkey_refused && return $rc
     ssh_exec "rm -rf '$tmp'" >/dev/null 2>&1 || true
     [[ $attempt -lt 5 ]] && { warn "push → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done

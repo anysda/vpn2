@@ -637,13 +637,17 @@ _tcp22_open() {
 _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
-  local ok=0 try reason='' t0=$SECONDS
+  local ok=0 try reason='' kind=net t0=$SECONDS prc
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
   else
     for ((try=1; try<=attempts; try++)); do
-      if reason=$(ssh_probe); then ok=1; break; fi
+      prc=0; reason=$(ssh_probe) || prc=$?
+      if [[ $prc -eq 0 ]]; then ok=1; break; fi
+      case $prc in 2) kind=hostkey ;; 3) kind=auth ;; *) kind=net ;; esac
       printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
+      # Сменившийся host-key ждать бесполезно: его убирает человек.
+      [[ $kind != hostkey ]] || break
       (( try < attempts )) || break
       (( SECONDS - t0 + try * 3 + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
       sleep $((try * 3))
@@ -656,6 +660,8 @@ _preflight_host() {
     printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
       "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
     echo "нода $h ($SSH_HOST) недоступна по ssh с entry: $reason" >"$dir/$h.fail"
+    echo "$kind" >"$dir/$h.kind"
+    [[ $kind != hostkey ]] || ssh_hostkey_fix >"$dir/$h.fix"
   fi
 }
 
@@ -670,7 +676,7 @@ preflight_ssh() {
   # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
   # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
   local hosts; hosts=$(expand_hosts all)
-  local reasons=() h dir; dir=$(mktemp -d)
+  local reasons=() fixes=() auth=0 net=0 h dir; dir=$(mktemp -d)
   for h in $hosts; do
     _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
   done
@@ -679,6 +685,11 @@ preflight_ssh() {
     cat "$dir/$h.log"
     [[ -f "$dir/$h.ok" ]] && continue
     reasons+=("$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")")
+    case $(cat "$dir/$h.kind" 2>/dev/null) in
+      hostkey) fixes+=("$(cat "$dir/$h.fix")") ;;
+      auth)    auth=1 ;;
+      *)       net=1 ;;
+    esac
   done
   rm -rf "$dir"
 
@@ -688,12 +699,32 @@ preflight_ssh() {
     return 0
   fi
 
+  printf '\n%b✗ Недоступны по SSH:%b\n' "$C_R" "$C_END"
+  printf '  %s\n' "${reasons[@]}"
+  if [[ ${#fixes[@]} -gt 0 ]]; then
+    printf '  Сменился host-key ноды: так бывает после переустановки ОС на том же IP.\n'
+    printf '  Новый ключ сам не принимается - это защита от подмены ноды.\n'
+    printf '  Если ОС переустанавливал ты, убери старый ключ и повтори ./deploy.sh:\n'
+    printf '    %s\n' "${fixes[@]}"
+  fi
+  if [[ $auth -eq 1 ]]; then
+    printf '  Нода отказала во входе:\n'
+    printf '    1. пароль root в config.yaml\n'
+    printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
+  fi
+  [[ $net -eq 1 ]] && _preflight_net_hint
+  HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"
+}
+
+# Подсказка для нод, до чьего sshd не дошли: режет ли провайдер entry
+# исходящий :22 или дело в самих нодах.
+_preflight_net_hint() {
   # ── Часть нод не пускает — опрашиваем эталонный :22 ТОЛЬКО для диагноза ────
   # Эталон github/gitlab — диагностический фактор, НЕ блокер. Сюда мы
   # попадаем только когда ноды уже не пустили; эталон лишь помогает понять,
   # режет ли провайдер центральной ноды исходящий :22, или дело в самих
   # нодах. Если github/gitlab заблокированы РКН, но ноды живые — этот код
-  # вообще не выполняется (вышли по return выше).
+  # вообще не выполняется.
   local ref_ok=0 ref i
   for ((i=1; i<=3; i++)); do
     for ref in github.com gitlab.com; do
@@ -702,8 +733,6 @@ preflight_ssh() {
     sleep 2
   done
 
-  printf '\n%b✗ Недоступны по SSH:%b\n' "$C_R" "$C_END"
-  printf '  %s\n' "${reasons[@]}"
   if [[ $ref_ok -eq 0 ]]; then
     printf '  Эталонные github.com:22 / gitlab.com:22 тоже недоступны.\n'
     printf '  %bВероятно%b провайдер центральной ноды режет исходящий :22\n' "$C_Y" "$C_END"
@@ -714,10 +743,9 @@ preflight_ssh() {
   else
     printf '  Исходящий :22 с центральной ноды работает (эталон OK) — дело в нодах:\n'
   fi
-  printf '    1. пароль/IP в config.yaml\n'
-  printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
+  printf '    1. IP ноды в config.yaml\n'
+  printf '    2. sshd на ноде запущен и слушает :22\n'
   printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
-  HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"
 }
 
 # ----------------------------------------------------------------------------

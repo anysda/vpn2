@@ -4,7 +4,7 @@ import { anim } from './clients-view'
 // Графики и движение обзора, перенесены из макета без изменений.
 
 const EO = 'cubic-bezier(.23,1,.32,1)'
-export const EIO = 'cubic-bezier(.77,0,.175,1)'
+const EIO = 'cubic-bezier(.77,0,.175,1)'
 export const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 
 type Pt = [number, number]

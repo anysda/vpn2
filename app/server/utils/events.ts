@@ -72,8 +72,8 @@ export async function recentEvents(limit: number): Promise<PanelEvent[]> {
 }
 
 /** Последнее событие объекта из перечисленных типов — состояние после рестарта панели. */
-export async function lastEventOf(object: string, types: string[]): Promise<{ type: string, at: number } | null> {
-  const [row] = await useDb().select({ type: events.type, at: events.at }).from(events)
+export async function lastEventOf(object: string, types: string[]): Promise<{ type: string, at: number, detail: string } | null> {
+  const [row] = await useDb().select({ type: events.type, at: events.at, detail: events.detail }).from(events)
     .where(and(eq(events.object, object), inArray(events.type, types)))
     .orderBy(desc(events.at), desc(events.id)).limit(1)
   return row ?? null

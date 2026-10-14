@@ -49,7 +49,7 @@ function setup(seed: Row[] = [], foreignBest: { now: string | undefined } = { no
       recordEvent: async (row: Row) => { journal.push(row); return true },
       lastEventOf: async (object: string, types: string[]) => {
         const hit = [...journal].reverse().find(r => r.object === object && types.includes(r.type))
-        return hit ? { type: hit.type, at: hit.at ?? 0 } : null
+        return hit ? { type: hit.type, at: hit.at ?? 0, detail: hit.detail ?? '' } : null
       },
     },
     './clash-client': { fetchProxies: async () => [{ name: 'foreign-best', type: 'Selector', now: foreignBest.now }] },
@@ -78,7 +78,8 @@ test('нода: оффлайн и возврат — по одной запис�
   await watch.checkNodes(t)
   await watch.checkNodes(t + 30_000)
   expect(journal.map(r => r.type)).toEqual(['node_offline', 'node_online'])
-  expect(journal[1]).toMatchObject({ level: 'ok', title: 'DE снова в сети', detail: 'после перезагрузки · простой 4 мин' })
+  // Последняя метрика за 400 с до «оффлайн»: 6 мин 40 с + 4 мин.
+  expect(journal[1]).toMatchObject({ level: 'ok', title: 'DE снова в сети', detail: 'после перезагрузки · простой 10 мин' })
 })
 
 test('нода: пропавшая серия — оффлайн только со второй проверки, одиночный провал не пишется', async () => {
@@ -100,7 +101,8 @@ test('нода: пропавшая серия — оффлайн только с
   vm.stale = 1
   vm.uptime = 10 * 86400
   await watch.checkNodes(t + 2 * MIN)
-  expect(journal[1]).toMatchObject({ type: 'node_online', detail: 'простой 2 мин' })
+  // Последняя метрика за 3 с до первого провала, за минуту до «оффлайн».
+  expect(journal[1]).toMatchObject({ type: 'node_online', detail: 'простой 3 мин' })
 })
 
 test('нода: отставание метрик больше 60 с — одна тревога, без повторов', async () => {
@@ -176,10 +178,11 @@ test('нода: «отстают» → «оффлайн» → в сети — п
   expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline'])
   vm.stale = 1
   await watch.checkNodes(lagAt + 4 * MIN + 10_000)
-  expect(journal[2]).toMatchObject({ type: 'node_online', title: 'DE снова в сети', detail: 'простой 4 мин' })
+  // От последней метрики: 75 с до «отстают» + 4 мин 10 с.
+  expect(journal[2]).toMatchObject({ type: 'node_online', title: 'DE снова в сети', detail: 'простой 5 мин' })
 })
 
-test('нода: «отстают» → в сети, потом «оффлайн» напрямую — простой от «оффлайн»', async () => {
+test('нода: «отстают» → в сети, потом «оффлайн» напрямую — давнее «отстают» к простою не относится', async () => {
   const { vm, journal, watch } = setup()
   vm.uptime = 10 * 86400
   let t = 8_000_000_000_000
@@ -196,7 +199,8 @@ test('нода: «отстают» → в сети, потом «оффлайн�
   vm.stale = 1
   await watch.checkNodes(downAt + 3 * MIN)
   expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline', 'node_online'])
-  expect(journal[2]).toMatchObject({ detail: 'простой 3 мин' })
+  // Последняя метрика за 400 с до «оффлайн», а не с давнего «отстают».
+  expect(journal[2]).toMatchObject({ detail: 'простой 9 мин' })
 })
 
 test('нода: рестарт панели после «отстают» → «оффлайн» — простой с «отстают»', async () => {
@@ -222,6 +226,71 @@ test('нода: рестарт панели — давнее «отстают» 
   vm.stale = 1
   await watch.checkNodes(downAt + 5 * MIN)
   expect(journal[2]).toMatchObject({ type: 'node_online', detail: 'простой 5 мин' })
+})
+
+// Стенд: метрики закрыты 4 мин 10 с, «отстают» заметили с «нет данных 83 с»,
+// возврат через 3 мин после «отстают». Простой — от последней метрики.
+test('нода: «отстают» (нет данных 83 с) → «оффлайн» → в сети — простой от последней метрики', async () => {
+  const { vm, journal, watch } = setup()
+  vm.uptime = 10 * 86400
+  const lastMetric = 10_000_000_000_000
+  // Проверка каждые 30 с, возраст последней метрики растёт вместе со временем.
+  for (const stale of [23, 53, 83, 113, 143, 173, 203]) {
+    vm.stale = stale
+    await watch.checkNodes(lastMetric + stale * 1000)
+  }
+  expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline'])
+  expect(journal[0]).toMatchObject({ detail: 'нет данных 83 с · проверка каждые 30 с' })
+  vm.stale = 233
+  await watch.checkNodes(lastMetric + 233_000)
+  // Метрики вернулись через 4 мин 10 с, проверка заметила через 13 с.
+  vm.stale = 3
+  await watch.checkNodes(lastMetric + 263_000)
+  expect(journal[2]).toMatchObject({ type: 'node_online', detail: 'простой 4 мин' })
+})
+
+test('нода: метрики пропали целиком — «оффлайн» без «отстают», простой от последней метрики', async () => {
+  const { vm, journal, watch } = setup()
+  vm.uptime = 10 * 86400
+  const t = 11_000_000_000_000
+  vm.stale = 10
+  await watch.checkNodes(t)
+  const lastMetric = t - 10_000
+  vm.stale = null
+  await watch.checkNodes(t + 30_000)
+  await watch.checkNodes(t + 60_000)
+  expect(journal.map(r => r.type)).toEqual(['node_offline'])
+  vm.stale = 2
+  await watch.checkNodes(lastMetric + 4 * MIN + 10_000)
+  expect(journal[1]).toMatchObject({ type: 'node_online', detail: 'простой 4 мин' })
+})
+
+test('нода: рестарт панели после «отстают» (нет данных 83 с) → «оффлайн» — простой от последней метрики', async () => {
+  const lastMetric = 12_000_000_000_000
+  const lagAt = lastMetric + 83_000
+  const { vm, journal, watch } = setup([
+    { type: 'node_lag', level: 'alarm', object: 'node:de', title: 'DE: метрики отстают', detail: 'нет данных 83 с · проверка каждые 30 с', at: lagAt },
+    { type: 'node_offline', level: 'alarm', object: 'node:de', title: 'DE оффлайн', detail: 'нет метрик · проверка каждые 30 с', at: lagAt + 2 * MIN },
+  ])
+  vm.uptime = 10 * 86400
+  vm.stale = 3
+  await watch.checkNodes(lastMetric + 263_000)
+  expect(journal[2]).toMatchObject({ type: 'node_online', detail: 'простой 4 мин' })
+})
+
+test('нода: рестарт панели на «отстают», дальше «оффлайн» — простой от последней метрики', async () => {
+  const lastMetric = 13_000_000_000_000
+  const lagAt = lastMetric + 83_000
+  const { vm, journal, watch } = setup([
+    { type: 'node_lag', level: 'alarm', object: 'node:de', title: 'DE: метрики отстают', detail: 'нет данных 83 с · проверка каждые 30 с', at: lagAt },
+  ])
+  vm.uptime = 10 * 86400
+  vm.stale = 203
+  await watch.checkNodes(lastMetric + 203_000)
+  vm.stale = 3
+  await watch.checkNodes(lastMetric + 263_000)
+  expect(journal.map(r => r.type)).toEqual(['node_lag', 'node_offline', 'node_online'])
+  expect(journal[2]).toMatchObject({ detail: 'простой 4 мин' })
 })
 
 test('failover: сторож увёл foreign-best на другой узел — тревога', async () => {

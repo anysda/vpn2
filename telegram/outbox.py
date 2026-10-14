@@ -18,6 +18,9 @@ TTL_SEC = 24 * 60 * 60
 MAX_TEXT_BYTES = 16 * 1024
 LEASE_SEC = 120
 MAX_RECEIPTS = 32768
+# Enqueue and delivery use separate connections. Allow a slow FULL-sync commit
+# to finish, while keeping storage failures bounded for the caller's retry.
+SQLITE_TIMEOUT_SEC = 5
 
 
 class QueueFull(Exception):
@@ -50,9 +53,13 @@ class Outbox:
         Path(path).chmod(0o600)
 
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=0.2)
-        db.execute('PRAGMA synchronous=FULL')
-        db.execute('PRAGMA max_page_count=8192')
+        db = sqlite3.connect(self.path, timeout=SQLITE_TIMEOUT_SEC)
+        try:
+            db.execute('PRAGMA synchronous=FULL')
+            db.execute('PRAGMA max_page_count=8192')
+        except sqlite3.Error:
+            db.close()
+            raise
         return db
 
     @staticmethod

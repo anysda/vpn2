@@ -5,7 +5,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from support import load_bot
 from outbox import Outbox, QueueFull, TelegramSendError
@@ -80,6 +80,97 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         send = AsyncMock()
         await self.worker_until(send, lambda: not self.rows())
         self.assertEqual(send.await_count, 2)
+
+    async def test_broadcast_waits_for_concurrent_writer_and_delivery(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        self.queue.enqueue({'chat_id': 100, 'text': 'pending'})
+        request = SimpleNamespace(
+            headers={'X-Tgbot-Secret': bot.SECRET}, app={bot.OUTBOX_KEY: self.queue},
+            json=AsyncMock(return_value={'type': 'broadcast', 'chatIds': [200, 300, 200],
+                                        'text': 'broadcast', 'deliveryId': 'busy-broadcast'}))
+        send = AsyncMock()
+        with closing(self.queue.connect()) as writer, writer:
+            # Model a slow rollback-journal commit: readers and writers must wait.
+            writer.execute('BEGIN EXCLUSIVE')
+            writer.execute('UPDATE throttle SET until = 0')
+            accepting = asyncio.create_task(bot.handle_event(request))
+            worker = asyncio.create_task(self.queue.run(send))
+            try:
+                await asyncio.sleep(0.5)
+            finally:
+                writer.commit()
+        try:
+            self.assertEqual((await accepting).status, 200)
+            self.assertEqual((await bot.handle_event(request)).status, 200)
+            async with asyncio.timeout(5):
+                while await asyncio.to_thread(self.rows):
+                    await asyncio.sleep(0.01)
+            self.assertCountEqual(
+                [call.kwargs for call in send.await_args_list],
+                [{'chat_id': 100, 'text': 'pending'},
+                 {'chat_id': 200, 'text': 'broadcast'},
+                 {'chat_id': 300, 'text': 'broadcast'}])
+        finally:
+            worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker
+
+    async def test_write_transactions_wait_for_reserved_lock(self):
+        event_id = self.queue.enqueue({'chat_id': 200, 'text': 'pending'})
+        for operation, args in ((self.queue.enqueue, ({'chat_id': 300, 'text': 'new'},)),
+                                (self.queue.claim, ()),
+                                (self.queue.retry, (event_id, 60, True)),
+                                (self.queue.remove, (event_id,))):
+            with self.subTest(operation=operation.__name__):
+                with closing(self.queue.connect()) as writer, writer:
+                    writer.execute('BEGIN IMMEDIATE')
+                    writer.execute('UPDATE throttle SET until = 0')
+                    pending = asyncio.create_task(asyncio.to_thread(operation, *args))
+                    try:
+                        await asyncio.sleep(0.5)
+                    finally:
+                        writer.commit()
+                await pending
+        with closing(self.queue.connect()) as db:
+            self.assertEqual(db.execute('SELECT chat_id FROM events').fetchall(), [(300,)])
+
+    async def test_lock_timeout_returns_503_and_retry_accepts_whole_broadcast(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        request = SimpleNamespace(
+            headers={'X-Tgbot-Secret': bot.SECRET}, app={bot.OUTBOX_KEY: self.queue},
+            json=AsyncMock(return_value={'type': 'broadcast', 'chatIds': [200, 300],
+                                        'text': 'retry', 'deliveryId': 'timeout-broadcast'}))
+        connect = sqlite3.connect
+
+        def short_timeout(*args, **kwargs):
+            return connect(*args, **{**kwargs, 'timeout': 0.05})
+
+        with closing(self.queue.connect()) as writer, writer:
+            writer.execute('BEGIN IMMEDIATE')
+            writer.execute('UPDATE throttle SET until = 0')
+            with patch('outbox.sqlite3.connect', side_effect=short_timeout):
+                response = await bot.handle_event(request)
+            self.assertEqual(response.status, 503)
+            self.assertEqual(response.text, 'notification queue unavailable')
+            self.assertEqual(writer.execute('SELECT count(*) FROM events').fetchone()[0], 0)
+            self.assertEqual(writer.execute('SELECT count(*) FROM receipts').fetchone()[0], 0)
+        for _ in range(2):
+            self.assertEqual((await bot.handle_event(request)).status, 200)
+        send = AsyncMock()
+        await self.worker_until(send, lambda: not self.rows())
+        self.assertCountEqual([call.kwargs['chat_id'] for call in send.await_args_list], [200, 300])
+
+    def test_connection_is_closed_when_configuration_fails(self):
+        db = Mock()
+        db.execute.side_effect = sqlite3.OperationalError('database is locked')
+        with patch('outbox.sqlite3.connect', return_value=db):
+            with self.assertRaises(sqlite3.OperationalError):
+                self.queue.connect()
+        db.close.assert_called_once_with()
 
     def test_receipt_is_bound_to_payload_and_never_evicted_for_capacity(self):
         payload = {'chat_id': 200, 'text': 'original'}

@@ -29,6 +29,8 @@ STAGE='22-adguard'
 AGH_DIR=/opt/AdGuardHome
 AGH_BIN=$AGH_DIR/AdGuardHome
 AGH_VER='v0.107.79'
+# Что стадия сама записала в настройки DNS, которые правятся в панели.
+AGH_DNS_STATE=/etc/anysda/agh-dns.json
 
 mkdir -p "$AGH_DIR" /etc/anysda
 
@@ -112,25 +114,14 @@ trap 'rm -f "$AGH_CFG" "$AGH_PLAIN_CFG"; rmdir "$AGH_WORK"' EXIT
 # Idempotent-патчи для уже существующего конфига (не перезаписываем
 # полностью — пользователь может что-то менять в UI). Применяются ПЕРЕД
 # первичной генерацией, чтобы для новых установок дефолты были правильные.
+#
+# Второй аргумент - файл с тем, что стадия сама записала в поля, которые
+# правятся в панели (вкладка DNS → «Настройки DNS»). Поле обновляется, только
+# если в нём всё ещё значение деплоя; иначе его поменяли в панели, и оно остаётся.
 patch_agh_config() {
-  local cfg="$1"
+  local cfg="$1" state="${2:-}"
   [[ ! -f "$cfg" ]] && return 0
   local changed=0
-  # aaaa_disabled: true — иначе VPN-клиент получает AAAA, идёт через тоннель
-  # IPv6, на entry нет v6-форвардинга/TPROXY → пакет уходит нативно, manual-
-  # routes обходятся (см. деталь в фикс-блоке). Возвращать v6 — только после
-  # полной поддержки v6 на entry.
-  if grep -q '^  aaaa_disabled:' "$cfg"; then
-    if ! grep -q '^  aaaa_disabled: true$' "$cfg"; then
-      sed -i 's/^  aaaa_disabled: .*/  aaaa_disabled: true/' "$cfg"
-      changed=1
-    fi
-  else
-    # вставляем после строки `dns:` (на верхнем уровне)
-    sed -i '/^dns:$/a\  aaaa_disabled: true' "$cfg"
-    changed=1
-  fi
-  [[ $changed -eq 1 ]] && echo "[$HOST_TAG]   patched: aaaa_disabled: true (no AAAA leak through tunnel)"
   # whitelist сохраняем для совместимости, включая пользовательские адреса.
   # В v0.107.79 dnsforward/config.go:newRatelimitMw не передаёт этот список
   # в dnsproxy AllowlistAddrs: даже один адрес в нём не освобождён от 20 rps.
@@ -141,8 +132,8 @@ patch_agh_config() {
   local pools
   pools="$(vpn_pool_subnets wg ovpn ikev2) ${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
   local wl
-  wl=$(CFG="$cfg" POOLS="$pools" DNS_BIND="${MGMT_IP:-10.99.0.1}" WEB_PORT="$AGH_PORT" python3 - <<'PYEOF'
-import copy, ipaddress, os, yaml
+  wl=$(HOST_TAG="$HOST_TAG" CFG="$cfg" STATE="$state" POOLS="$pools" DNS_BIND="${MGMT_IP:-10.99.0.1}" WEB_PORT="$AGH_PORT" python3 - <<'PYEOF'
+import copy, ipaddress, json, os, sys, yaml
 with open(os.environ["CFG"]) as f:
     cfg = yaml.safe_load(f)
 before = copy.deepcopy(cfg)
@@ -150,19 +141,64 @@ before = copy.deepcopy(cfg)
 # могли слушать снаружи; обновление возвращает адрес на loopback.
 cfg.setdefault("http", {})["address"] = "127.0.0.1:" + os.environ["WEB_PORT"]
 dns = cfg.setdefault("dns", {})
-# Политика общая для новых и установленных хабов. Убираем также прежние
-# глобальный fallback Яндекса и исключение YouTube: они обходили разделение.
-dns["upstream_dns"] = ["[/ru/рф/xn--p1ai/su/]77.88.8.8",
-                       "https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
+# Панели этих полей нет: прежние глобальный fallback Яндекса и файл апстримов
+# обходили разделение зон; OUTPUT перехватывает TCP, HTTP/3 обошёл бы его.
 dns["upstream_dns_file"] = ""
 dns["fallback_dns"] = []
-dns["bootstrap_dns"] = ["8.8.8.8", "8.8.4.4"]
-dns["upstream_mode"] = "parallel"
-dns["cache_optimistic"] = True
-# OUTPUT перехватывает TCP; не позволяем включённому в UI HTTP/3 обойти его.
 dns["use_http3_upstreams"] = False
 dns["bind_hosts"] = ["127.0.0.1", os.environ["DNS_BIND"]]
-dns["ratelimit"] = 0
+# Значения по умолчанию для полей, которые админ меняет в панели.
+# aaaa_disabled: на entry нет IPv6-форвардинга, AAAA уводит клиента мимо
+# manual-routes. ratelimit 0: в v0.107.79 whitelist не доходит до dnsproxy
+# (см. ниже), лимит душил бы туннельных клиентов.
+defaults = dict(
+    upstream_dns=["[/ru/рф/xn--p1ai/su/]77.88.8.8",
+                  "https://1.1.1.1/dns-query", "https://dns.google/dns-query"],
+    bootstrap_dns=["8.8.8.8", "8.8.4.4"], upstream_mode="parallel",
+    cache_optimistic=True, ratelimit=0, aaaa_disabled=True)
+# Хаб без файла состояния ставили прежние версии стадии. Своими считаем
+# только значения, которые они писали сами (или AdGuard, пока стадия поле не
+# задавала): их обновляем, всё остальное выбрал админ.
+legacy = {"bootstrap_dns": [["77.88.8.8", "8.8.8.8"]], "cache_optimistic": [False],
+          "ratelimit": [20]}
+legacy_upstreams = {"77.88.8.8", "https://1.1.1.1/dns-query",
+                    "https://dns.google/dns-query", "[/ru/рф/xn--p1ai/su/]77.88.8.8"}
+def youtube_upstream(u):
+    return u.startswith("[/") and "/]" in u and "youtube.com" in u[2:u.index("/]")].split("/")
+def ours(key, state):
+    if key not in dns:
+        return True
+    value = dns[key]
+    if key in state:
+        return value == state[key]
+    if value == defaults[key] or value in legacy.get(key, []):
+        return True
+    return (key == "upstream_dns" and isinstance(value, list)
+            and all(isinstance(u, str) and (u in legacy_upstreams or youtube_upstream(u))
+                    for u in value))
+state_path = os.environ["STATE"]
+try:
+    with open(state_path) as f:
+        state = json.load(f)
+except FileNotFoundError:
+    state = {}
+written, kept = {}, []
+for key, value in defaults.items():
+    if ours(key, state):
+        dns[key] = copy.deepcopy(value)
+        written[key] = value
+    else:
+        kept.append(key)
+        written[key] = state.get(key, value)
+if state_path and (written != state or not os.path.exists(state_path)):
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    with open(state_path, "w") as f:
+        json.dump(written, f, ensure_ascii=False, sort_keys=True)
+        f.write("\n")
+    os.chmod(state_path, 0o600)
+if kept:
+    print(f"[{os.environ['HOST_TAG']}]   настройки из панели оставлены: {', '.join(kept)}",
+          file=sys.stderr)
 have = [str(a) for a in dns.get("ratelimit_whitelist") or []]
 need = dict.fromkeys(str(h) for p in os.environ["POOLS"].split()
                      for h in ipaddress.ip_network(p, strict=False).hosts())
@@ -279,9 +315,8 @@ with open(cfg_path) as f:
     cfg = yaml.safe_load(f)
 before = copy.deepcopy(cfg)
 cfg["users"] = [{"name": user, "password": password}]
-# Гарантируем aaaa_disabled: true (мерджим в dns секцию)
-cfg.setdefault("dns", {})["aaaa_disabled"] = True
-cfg["dns"].setdefault("edns_client_subnet", {})["enabled"] = False
+# aaaa_disabled правится в панели: его ведёт patch_agh_config.
+cfg.setdefault("dns", {}).setdefault("edns_client_subnet", {})["enabled"] = False
 if cfg != before:
     with open(cfg_path, "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
@@ -289,13 +324,13 @@ if cfg != before:
 PYEOF
 )
   if [[ "$agh_sync" == changed ]]; then
-    echo "[$HOST_TAG]   credentials + aaaa_disabled + ecs off synced"
+    echo "[$HOST_TAG]   credentials + ecs off synced"
     svc_forget adguardhome
   else
     echo "[$HOST_TAG]   конфиг уже такой, как нужно"
   fi
 fi
-patch_agh_config "$AGH_CFG"
+patch_agh_config "$AGH_CFG" "$AGH_DNS_STATE"
 entry_adguard_resources "$AGH_CFG" "${agh_fresh[@]}" >/dev/null
 
 # Вариант без фильтра: отдельный loopback-слушатель, отдельные данные.

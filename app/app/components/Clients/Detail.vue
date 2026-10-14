@@ -24,12 +24,26 @@ function errTitle(e: unknown, fallback: string) {
   return (e as { statusMessage?: string }).statusMessage ?? fallback
 }
 
+// --- Трафик за 7 московских суток, ↓ и ↑ раздельно ---------------------------
+const EMPTY_WEEK = Array.from({ length: 7 }, () => ({ rx: 0, tx: 0 }))
+const week = ref<{ rx: number, tx: number }[]>(EMPTY_WEEK)
+
+async function fetchWeek(id: number) {
+  try {
+    return await $fetch<{ date: string, rx: number, tx: number }[]>(`/api/clients/${id}/traffic`)
+  }
+  catch {
+    return EMPTY_WEEK
+  }
+}
+
 async function load(animate = false) {
   const version = ++loadVersion
   try {
-    const d = await fetchDetail(props.clientId)
+    const [d, w] = await Promise.all([fetchDetail(props.clientId), fetchWeek(props.clientId)])
     if (version !== loadVersion) return
     detail.value = d
+    week.value = w
     syncForm()
     if (animate) {
       nextTick(() => anim(root.value, [
@@ -384,10 +398,9 @@ const tx = computed(() => props.traffic?.txBytes ?? detail.value?.txTotal ?? 0)
 
 const created = computed(() => (detail.value ? new Date(detail.value.createdAt).toLocaleDateString('ru-RU') : ''))
 
-const week = ref<number[]>([0, 0, 0, 0, 0, 0, 0])
 const weekDays = computed(() => mskWeekdays())
-const weekMax = computed(() => Math.max(...week.value, 1))
-const weekSum = computed(() => week.value.reduce((a, b) => a + b, 0))
+const weekMax = computed(() => Math.max(...week.value.map(d => d.rx + d.tx), 1))
+const weekSum = computed(() => week.value.reduce((a, d) => a + d.rx + d.tx, 0))
 </script>
 
 <template>
@@ -440,8 +453,8 @@ const weekSum = computed(() => week.value.reduce((a, b) => a + b, 0))
         <h3>Трафик за 7 дней</h3><span>{{ sizeRu(weekSum) }}</span>
       </div>
       <div class="wk">
-        <div v-for="(v, i) in week" :key="i" :class="{ on: i === 6 }">
-          <i :style="{ height: `${Math.max(4, v / weekMax * 72)}px` }" /><span>{{ weekDays[i] }}</span>
+        <div v-for="(d, i) in week" :key="i" :class="{ on: i === 6 }" data-testid="week-day" :title="`↓ ${sizeRu(d.rx)} · ↑ ${sizeRu(d.tx)}`">
+          <i :style="{ height: `${Math.max(4, (d.rx + d.tx) / weekMax * 72)}px` }" /><span>{{ weekDays[i] }}</span>
         </div>
       </div>
 

@@ -62,7 +62,7 @@ function recallValue(instance: string, metricKey: string): number | null {
   return holdover.get(instance)?.get(metricKey) ?? null
 }
 
-async function instantQuery(promql: string, time?: number): Promise<Map<string, number>> {
+async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
   const url = useRuntimeConfig().vmUrl as string
   const result = new Map<string, number>()
   try {
@@ -70,7 +70,10 @@ async function instantQuery(promql: string, time?: number): Promise<Map<string, 
       query: { query: promql, ...(time === undefined ? {} : { time }) },
       timeout: 3000,
     })
-    if (data.status !== 'success') return result
+    if (data.status !== 'success') {
+      if (strict) throw new Error(`VM query status ${data.status}`)
+      return result
+    }
     for (const row of data.data.result) {
       const instance = row.metric.instance
       if (!instance) continue
@@ -80,9 +83,36 @@ async function instantQuery(promql: string, time?: number): Promise<Map<string, 
     }
   }
   catch (err) {
+    if (strict) throw err
     useLogger().warn({ err, promql }, 'VM query failed')
   }
   return result
+}
+
+export interface NodeHealth {
+  instance: string
+  staleSec: number | null
+  iowaitPct: number | null
+  uptimeSec: number | null
+}
+
+/**
+ * Текущее состояние нод без holdover для журнала событий. Недоступная VM —
+ * исключение, а не пустой ответ: иначе сбой самой VM выглядел бы как
+ * «все ноды оффлайн».
+ */
+export async function fetchNodeHealth(instances: string[]): Promise<NodeHealth[]> {
+  const [stale, iowait, uptime] = await Promise.all([
+    instantQuery(PROMQL.stale, undefined, true),
+    instantQuery(PROMQL.iowait, undefined, true),
+    instantQuery(PROMQL.uptime, undefined, true),
+  ])
+  return instances.map(instance => ({
+    instance,
+    staleSec: stale.get(instance) ?? null,
+    iowaitPct: iowait.get(instance) ?? null,
+    uptimeSec: uptime.get(instance) ?? null,
+  }))
 }
 
 function withHoldover(

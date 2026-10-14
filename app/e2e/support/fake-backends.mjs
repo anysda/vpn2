@@ -31,6 +31,7 @@ const SERIES = [
 
 function vm(req, res) {
   const url = new URL(req.url, 'http://x')
+  if (url.pathname === '/api/v1/query_range') return vmRange(url, res)
   if (url.pathname !== '/api/v1/query') return notFound(res)
   const q = url.searchParams.get('query') || ''
   const now = Date.now() / 1000
@@ -44,6 +45,26 @@ function vm(req, res) {
   const hit = SERIES.find(([needle]) => q.includes(needle))
   const result = hit ? instances.map(instance => ({ metric: { instance }, value: [now, String(hit[1])] })) : []
   json(res, { status: 'success', data: { resultType: 'vector', result } }, 'application/json')
+}
+
+// Ряды за период: в живом режиме то же значение, что отдал бы query в каждый
+// момент сетки, иначе ровная линия из SERIES.
+function vmRange(url, res) {
+  const q = url.searchParams.get('query') || ''
+  const start = Number(url.searchParams.get('start'))
+  const end = Number(url.searchParams.get('end'))
+  const step = Number.parseFloat(url.searchParams.get('step') || '60') || 60
+  const times = []
+  for (let t = start; t <= end; t += step) times.push(t)
+  const hit = SERIES.find(([needle]) => q.includes(needle))
+  const result = Object.entries(mgmt).flatMap(([tag, ip]) => {
+    const values = times.flatMap((t) => {
+      const v = DEMO ? demoMetric(tag, q, t) : hit?.[1]
+      return v == null ? [] : [[t, String(v)]]
+    })
+    return values.length ? [{ metric: { instance: `${ip}:9100` }, values }] : []
+  })
+  json(res, { status: 'success', data: { resultType: 'matrix', result } }, 'application/json')
 }
 
 let proxiesMutation = null

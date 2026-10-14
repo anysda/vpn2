@@ -167,40 +167,6 @@ export interface ClientTraffic {
   online: boolean
 }
 
-export type TopPeriod = 'day' | 'week'
-
-/** `GET /api/clients/top`. */
-export interface ClientsTop {
-  period: TopPeriod
-  /** Начало периода, unix-секунды. */
-  since: number
-  /** Первый час почасовой истории (unix-секунды) или null. */
-  historyStart: number | null
-  clients: Array<{ id: number, name: string, rx: number, tx: number, total: number }>
-  counts: { total: number, onlineNow: number, activeDay: number, activeWeek: number }
-}
-
-const TOP_POLL_INTERVAL_MS = 15_000
-
-/** ТОП клиентов по трафику за сутки/неделю + счётчики активности. */
-export function useClientsTop(period: Ref<TopPeriod>) {
-  const { data, refresh } = useFetch<ClientsTop>('/api/clients/top', {
-    query: { period },
-    server: false,
-  })
-
-  let timer: ReturnType<typeof setInterval> | null = null
-  onMounted(() => {
-    if (!timer) timer = setInterval(() => { void refresh() }, TOP_POLL_INTERVAL_MS)
-  })
-  onUnmounted(() => {
-    if (timer) { clearInterval(timer); timer = null }
-  })
-  useVisibleRefresh(refresh)
-
-  return { top: data, refresh }
-}
-
 /** «31.12.2026» → ISO-строка (UTC-полночь). null — если формат не распознан. */
 export function parseRuDate(s: string): string | null {
   const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
@@ -230,10 +196,3 @@ export function expiryLabel(expiresAt: string | null | undefined): string {
 }
 
 /** Человекочитаемый размер в байтах. */
-export function fmtBytes(n: number | undefined | null): string {
-  if (!n) return '0'
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 ** 3) return `${(n / 1024 ** 2).toFixed(1)} MB`
-  return `${(n / 1024 ** 3).toFixed(2)} GB`
-}

@@ -1,14 +1,12 @@
 /**
- * Раскладка главной: какие модули в какой колонке и в каком порядке.
+ * Раскладка главной: какие блоки на обзоре и в каком порядке (колонка одна, right пуст).
  * Хранится у пользователя (users.screen_layout), правится в «Настроить экран».
  */
 export const SCREEN_MODULES = {
-  clients: { label: 'Клиенты', column: 'left' },
-  dns: { label: 'DNS', column: 'left' },
-  bots: { label: 'Боты', column: 'left' },
-  routes: { label: 'Маршрутизация', column: 'right' },
-  monitoring: { label: 'Мониторинг', column: 'right' },
-  top: { label: 'ТОП клиентов', column: 'right' },
+  traffic: { label: 'Трафик, выходы и DNS', hint: 'волна за сутки, два кольца', column: 'left' },
+  nodes: { label: 'Узлы', hint: 'Entry и экзиты с метриками', column: 'left' },
+  activity: { label: 'Активность и клиенты', hint: 'сетка по дням, онлайн и офлайн', column: 'left' },
+  events: { label: 'Рассылка и события', hint: 'сообщение от бота, лента', column: 'left' },
 } as const
 
 export type ScreenModuleId = keyof typeof SCREEN_MODULES

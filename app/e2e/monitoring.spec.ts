@@ -2,44 +2,40 @@ import type { Page } from '@playwright/test'
 import { expect, NODES, test } from './support/fixtures'
 import { openHome } from './support/clients'
 
-/** Плитка ноды: рамка с заголовком «<флаг> TAG» и строками CPU/RAM. */
-function nodeTile(page: Page, tag: string) {
-  const title = page.locator('span.font-semibold', { hasText: new RegExp(`\\s${tag.toUpperCase()}$`) })
-  return page.locator('div.relative.rounded-md').filter({ has: title }).filter({ hasText: 'CPU' })
+/** Карточка узла на Обзоре. */
+function nodeCard(page: Page, tag: string) {
+  return page.locator(`.ov-nodes .node[data-tag="${tag}"]`)
 }
 
 test.describe('мониторинг нод', () => {
   test('все ноды на месте, живые, с метриками и спарклайном', async ({ page }) => {
     await openHome(page)
-    await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
     for (const tag of NODES) {
-      const node = nodeTile(page, tag)
+      const node = nodeCard(page, tag)
       await expect(node, `нода ${tag}`).toHaveCount(1)
-      await expect(node).not.toContainText('ОФФЛАЙН')
-      await expect(node).not.toHaveClass(/node-warn/)
-      await expect(node).toContainText(/CPU\s*\d+(?:[.,]\d+)?\s*%/)
-      await expect(node).toContainText(/RAM\s*\d+(?:[.,]\d+)?\s*%/)
-      await expect(node).toContainText('Mbps')
+      await expect(node.locator('.ft .tag')).not.toHaveText('Офлайн')
+      await expect(node.locator('.cpu .big')).toHaveText(/^\d+%$/)
+      await expect(node.locator('.ft .m')).toContainText(/RAM \d+%/)
     }
-    // Спарклайн CPU появляется со второй точки истории (опрос раз в несколько секунд).
-    // Плоская линия даёт path нулевой высоты, поэтому видимость — у svg.
-    const spark = nodeTile(page, NODES[0]!).locator('svg')
-    await expect(spark).toBeVisible({ timeout: 30_000 })
-    await expect(spark.locator('path')).toHaveAttribute('d', /^M[\d.]+[ ,][\d.]+\s*L/)
+    // Спарклайн CPU: начало из VM, дальше точка на каждый опрос.
+    const spark = nodeCard(page, NODES[0]!).locator('.sp svg path').last()
+    await expect(spark).toHaveAttribute('d', /^M[\d.]+[ ,][\d.]+\s*[LC]/, { timeout: 30_000 })
   })
 
-  test('раскладка дорожек по экзитам: полос N (warp M)', async ({ page }) => {
+  test('раскладка дорожек по экзитам: в окне узла «Полос N», «warp M»', async ({ page }) => {
     await openHome(page)
-    await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
     // раскладка подставного clash API (e2e/support/fake-backends.mjs)
     const exits = NODES.filter(t => t !== 'ru')
     for (const [k, tag] of exits.entries()) {
       const lanes = Array.from({ length: 32 }, (_, i) => i).filter(i => i % exits.length === k)
       const warp = lanes.filter(i => i % 7 === 0).length
-      await expect(nodeTile(page, tag), `нода ${tag}`).toContainText(new RegExp(`полос\\s*${lanes.length}\\s*\\(warp ${warp}\\)`))
+      await nodeCard(page, tag).click()
+      const cell = page.getByRole('dialog').locator('.mgrid > div', { hasText: 'Полос' })
+      await expect(cell.locator('b'), `нода ${tag}`).toHaveText(String(lanes.length))
+      await expect(cell.locator('small')).toHaveText(`warp ${warp}`)
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
     }
-    // у RU дорожек нет — строки нет
-    if (NODES.includes('ru')) await expect(nodeTile(page, 'ru')).not.toContainText('полос')
   })
 
   test('параллельные переключения экзитов не теряются и не падают', async ({ page }) => {

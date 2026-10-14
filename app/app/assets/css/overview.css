@@ -1,0 +1,127 @@
+/* Обзор: правила макета, которых нет в main.css. Всё под .ov (страница) и
+   .ov-modal (модалки узла и подтверждения, они уходят в body). */
+
+.ov .card h3{font-size:14px;font-weight:500;color:var(--t2)}
+.ov .ha{display:flex;gap:8px}
+.ov .tag,.ov-modal .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
+.ov .tag .q{width:14px;height:14px;border-radius:50%;background:rgba(var(--fg),.12);display:grid;place-items:center;font-size:9px}
+
+/* ряд 1: трафик, выходы, DNS */
+.ov .r1{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px;margin-bottom:12px}
+.ov .wave{display:flex;flex-direction:column;height:272px}
+.ov .wave .top{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.ov .wave .plot{flex:1;width:100%;margin-top:6px}
+.ov .donut{display:flex;flex-direction:column;height:272px}
+/* класс макета совпадает с утилитой Tailwind ring — её тень здесь не нужна */
+.ov .donut .ring{position:relative;flex:1;display:grid;place-items:center;box-shadow:none}
+.ov .donut .ring svg{width:150px;height:150px}
+.ov .donut .ring .ct{position:absolute;text-align:center}
+.ov .donut .ring .ct b{display:block;font-weight:300;font-size:34px;letter-spacing:-.02em;line-height:1}
+.ov .donut .ring .ct span{font-size:11px;color:var(--t3)}
+.ov .leg{display:grid;gap:7px;font-size:12px;color:var(--t2)}
+.ov .leg div{display:grid;grid-template-columns:auto 1fr auto 40px;gap:8px;align-items:center}
+.ov .leg em{font-style:normal;color:var(--t1);text-align:right}
+.ov .leg i{font-style:normal;color:var(--t3);text-align:right}
+.ov .leg .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* узлы */
+.ov .r3{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:12px;margin-bottom:12px}
+.ov .node{height:236px;display:flex;flex-direction:column;padding:16px 16px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;
+  transition:opacity .4s var(--ease),filter .4s var(--ease),transform .2s var(--ease),border-color .25s var(--ease)}
+.ov .node:hover{transform:translateY(-2px)}
+.ov .node:active{transform:scale(.985)}
+.ov .node.off{opacity:.5;filter:grayscale(1)}
+.ov .node .nt{display:flex;justify-content:space-between;align-items:flex-start}
+.ov .node .nt div{font-size:15px;font-weight:500}
+.ov .node .nt small{display:block;font-size:11.5px;color:var(--t3);font-weight:400;margin-top:2px}
+.ov .node .ar{width:28px;height:28px;border-radius:50%;border:1px solid var(--line2);display:grid;place-items:center;color:var(--t2);transition:color .2s,border-color .2s,transform .2s var(--ease)}
+.ov .node .ar svg{width:13px;height:13px}
+.ov .node .cpu{display:flex;align-items:baseline;gap:8px;margin-top:14px}
+.ov .node .cpu .big{font-size:40px}
+.ov .node .cpu span{font-size:11.5px;color:var(--t3)}
+.ov .node .sp{width:100%;height:44px;margin-top:auto}
+.ov .node .ft{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--t3)}
+.ov .node .ft .tag{height:22px;font-size:11px}
+.ov .node .ft .m{margin-left:auto;white-space:nowrap}
+.ov .tag.ok{color:var(--green);border:1px solid rgba(var(--grn-rgb),.3);background:rgba(var(--grn-rgb),.06)}
+.ov .tag.badt{color:var(--red);border:1px solid rgba(var(--red-rgb),.35);background:rgba(var(--red-rgb),.08)}
+.ov .node.lit{background:linear-gradient(160deg,var(--lit-a) 0%,var(--lit-b) 38%,var(--lit-c) 100%);border-color:rgba(var(--fg),.14)}
+.ov .node.lit .nt small,.ov .node.lit .cpu span{color:var(--lit-t)}
+@media (hover:hover){.ov .node:hover .ar{transform:translate(2px,-2px);color:var(--t1);border-color:rgba(var(--fg),.3)}}
+
+/* активность и клиенты */
+.ov .ra{display:grid;grid-template-columns:2.3fr 1fr;gap:12px;margin-bottom:12px;align-items:start}
+.ov .stack{display:grid;gap:12px}
+.ov .mini{display:grid;grid-template-rows:auto 1fr auto;row-gap:6px;height:130px;padding:16px 18px}
+.ov .mini .nums{grid-row:3;display:flex;align-items:center;gap:10px}
+.ov .mini .big{font-size:36px}
+.ov .mini .plot{grid-row:2;width:100%;height:100%;min-height:0}
+
+/* рассылка и место под события */
+.ov .r4{display:grid;grid-template-columns:5fr 7fr;gap:12px}
+.ov .r4>.card{min-height:300px}
+.ov .sc{padding:20px 22px;display:flex;flex-direction:column;min-height:270px}
+.ov .sh{display:flex;justify-content:space-between;align-items:center}
+.ov .sh h3{color:var(--t1);font-size:15px}
+.ov .bc{display:flex;flex-direction:column}
+.ov .bc textarea{margin:14px 0 0;flex:1;min-height:120px;resize:none;border-radius:14px;padding:14px 16px;background:var(--sunk);border:1px solid rgba(var(--fg),.05);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));color:var(--t1);font:400 14px/1.5 Manrope,system-ui,sans-serif;outline:0}
+.ov .bc textarea:focus{border-color:rgba(var(--fg),.25)}
+.ov .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
+.ov .arow .pill{height:40px}
+.ov .bc .hint{font-size:12px;color:var(--t3)}
+
+/* графики: точки, живая точка на конце, перекат цифр */
+.ov .plot{position:relative}
+.ov .plot>svg{display:block;width:100%;height:100%;overflow:visible}
+.ov .plot>.pt{position:absolute;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--card-b);border:1.5px solid var(--acc)}
+.ov .live{position:absolute;left:0;top:0;width:7px;height:7px;margin:-3.5px 0 0 -3.5px;border-radius:50%;background:var(--t1);pointer-events:none;z-index:1;transition:transform .7s var(--ease-io)}
+.ov .live.bad{background:var(--red)}
+.ov .live::after{content:"";position:absolute;inset:0;border-radius:50%;background:inherit;animation:ov-halo 2.4s var(--ease) infinite;pointer-events:none}
+@keyframes ov-halo{0%{transform:scale(1);opacity:.6}75%,100%{transform:scale(3);opacity:0}}
+x-d{display:inline-block;position:relative;clip-path:inset(0 -.2em)}
+x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
+
+/* модалки: узел и подтверждение (UModal с классами макета) */
+.ov-modal{position:fixed;left:50%;top:50%;z-index:51;width:min(460px,calc(100vw - 48px));max-width:none;max-height:calc(100vh - 48px);overflow:auto;padding:22px 24px;translate:-50% -50%;
+  background:linear-gradient(180deg,var(--pop-a),var(--pop-b));scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent;outline:0}
+.ov-modal.wide{width:min(620px,calc(100vw - 48px))}
+.ov-modal[data-state=open]{animation:ov-m-in .32s var(--ease)}
+.ov-modal[data-state=closed]{animation:ov-m-out .16s var(--ease) forwards}
+@keyframes ov-m-in{from{opacity:0;transform:translateY(8px) scale(.97)}}
+@keyframes ov-m-out{to{opacity:0;transform:translateY(8px) scale(.97)}}
+.ov-ovl{position:fixed;inset:0;z-index:50;background:var(--ovl);backdrop-filter:blur(6px)}
+.ov-ovl[data-state=open]{animation:ov-o-in .24s var(--ease)}
+.ov-ovl[data-state=closed]{animation:ov-o-out .16s var(--ease) forwards}
+@keyframes ov-o-in{from{opacity:0}}
+@keyframes ov-o-out{to{opacity:0}}
+.ov-modal .mh{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ov-modal .mh h2{font-size:18px;font-weight:500;letter-spacing:-.01em}
+.ov-modal .ha{display:flex;gap:8px}
+.ov-modal .sub2{display:block;color:var(--t3);font-size:12.5px;margin-top:3px}
+.ov-modal .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
+.ov-modal .mt{color:var(--t2);font-size:13px;line-height:1.55;margin-top:8px}
+.ov-modal .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
+.ov-modal .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
+.ov-modal .xb:hover{color:var(--t1)}.ov-modal .xb:active{transform:scale(.9)}.ov-modal .xb svg{width:14px;height:14px}
+.ov-modal .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:16px;background:rgba(var(--fg),.07);border-radius:14px;overflow:hidden}
+.ov-modal .mgrid div{background:var(--kg);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
+.ov-modal .mgrid span{font-size:11.5px;color:var(--t3)}.ov-modal .mgrid b{font-weight:300;font-size:20px;letter-spacing:-.01em}
+.ov-modal .mgrid b.w{color:var(--amber)}.ov-modal .mgrid b.c{color:var(--red-t)}
+.ov-modal .mgrid small{font-size:11px;color:var(--t3)}
+.ov-modal .msp{width:100%;height:70px;margin-top:14px;position:relative}
+.ov-modal .msp>svg{display:block;width:100%;height:100%}
+.ov-modal .tog{width:42px;height:24px;border-radius:999px;background:var(--tog);position:relative;cursor:pointer;flex:none;border:0;padding:0;transition:background-color .2s}
+.ov-modal .tog i{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--tog-k);transition:transform .25s var(--ease),background-color .2s}
+.ov-modal .tog.on{background:var(--acc);box-shadow:0 0 14px rgba(var(--glow),calc(.3*var(--gk)))}.ov-modal .tog.on i{transform:translateX(18px);background:var(--acc-t)}
+.ov-modal .tog:active i{transform:scaleX(1.25);transform-origin:left}
+.ov-modal .tog.on:active i{transform:translateX(18px) scaleX(1.25);transform-origin:right}
+.ov-modal .tog:disabled{cursor:default;opacity:.6}
+
+@media (max-width:1360px){
+  .ov .big{font-size:40px}
+  .ov .node .cpu .big{font-size:34px}
+}
+@media (prefers-reduced-motion:reduce){
+  .ov .live::after{animation:none!important}
+  .ov-modal[data-state],.ov-ovl[data-state]{animation:none}
+}

@@ -72,45 +72,6 @@ export function useRoutes() {
   return { rules, outbounds, refreshRules, refreshOutbounds, create, patch, remove }
 }
 
-export function flagFor(tag: string): string {
-  const flags: Record<string, string> = {
-    ru: '🇷🇺',
-    us: '🇺🇸',
-    gb: '🇬🇧',
-    de: '🇩🇪',
-    nl: '🇳🇱',
-    se: '🇸🇪',
-    fr: '🇫🇷',
-    fi: '🇫🇮',
-    pl: '🇵🇱',
-    kz: '🇰🇿',
-    almaty: '🇰🇿',
-    ua: '🇺🇦',
-    tr: '🇹🇷',
-    am: '🇦🇲',
-    ge: '🇬🇪',
-    ae: '🇦🇪',
-    jp: '🇯🇵',
-    sg: '🇸🇬',
-    hk: '🇭🇰',
-    ca: '🇨🇦',
-    es: '🇪🇸',
-    it: '🇮🇹',
-    ch: '🇨🇭',
-    at: '🇦🇹',
-  }
-  // `us2` / `de3` etc. — strip the trailing index so multi-node countries
-  // still resolve to the right flag.
-  const base = tag.replace(/[0-9]+$/, '')
-  const known = flags[tag] ?? flags[base]
-  if (known) return known
-  // Тег из двух латинских букв считаем кодом страны (cy, lv, ...) и собираем
-  // флаг из regional indicator symbols, чтобы не дописывать таблицу на каждую.
-  if (/^[a-z]{2}$/.test(base))
-    return String.fromCodePoint(...[...base.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65))
-  return '🌍'
-}
-
 /** Экзиты для выпадашки «предпочитаемый экзит» в модалке клиента (direct-выходы, без RU). */
 export function useExitTags() {
   const { data: outboundList } = useFetch<Outbound[]>('/api/routes/outbounds', {

@@ -75,7 +75,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     : null
 
   function cascade(tab: HTMLElement | null) {
-    if (reduced.matches || !tab || tab.classList.contains('login')) return
+    if (reduced.matches || !tab || tab.classList.contains('login') || tab.hasAttribute('data-wake')) return
     const cards = [...tab.querySelectorAll<HTMLElement>('.card, .card-ui')]
       .filter(c => c.offsetWidth && !c.parentElement?.closest('.card, .card-ui'))
     let k = 0

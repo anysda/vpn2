@@ -34,7 +34,7 @@ export interface NodeMetrics {
   staleSec: number | null
 }
 
-const PROMQL = {
+export const PROMQL = {
   // Сумма по ядрам, делённая на число ядер: 100% = все ядра заняты.
   cpu: '100 * sum by(instance) (rate(node_cpu_seconds_total{mode=~"user|system|softirq|irq|nice"}[30s])) / count by(instance) (node_cpu_seconds_total{mode="idle"})',
   iowait: '100 * avg by(instance) (rate(node_cpu_seconds_total{mode="iowait"}[30s]))',

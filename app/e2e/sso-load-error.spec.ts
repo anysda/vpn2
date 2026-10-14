@@ -20,8 +20,11 @@ for (const width of [1400, 390]) {
       await expect(page.getByRole('alert').filter({ hasText: 'Настройки временно недоступны' })).toBeVisible()
       await page.unrouteAll({ behavior: 'wait' })
       await page.getByRole('button', { name: 'Повторить загрузку' }).click()
-      await expect(sso.getByRole('button', { name: 'Сохранить', exact: true })).toBeEnabled()
       await expect(page.getByLabel('Подпись кнопки')).toHaveValue(original.label)
+      // Загруженная форма доступна; «Сохранить» оживает с первой правкой.
+      await expect(sso.getByRole('button', { name: 'Сохранить', exact: true })).toBeDisabled()
+      await page.getByLabel('Подпись кнопки').fill(`${original.label} e2e`)
+      await expect(sso.getByRole('button', { name: 'Сохранить', exact: true })).toBeEnabled()
       await expect(page.getByRole('alert').filter({ hasText: 'Настройки временно недоступны' })).toHaveCount(0)
     })
   })

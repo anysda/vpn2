@@ -12,20 +12,28 @@ test.describe('страница «Я»', () => {
     await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
     await page.getByRole('menuitem', { name: 'Мой профиль' }).click()
     await expect(page).toHaveURL(/\/settings$/)
+    // VPN2-337: заголовок страницы один - «Настройки», профиль стал карточкой.
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText(['Настройки'])
     await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
     await expect(page.getByText(ADMIN_USER, { exact: true })).toBeVisible()
     await expect(page.getByText(/Включена|Выключена/)).toBeVisible()
 
-    const cur = page.getByLabel('Текущий пароль')
-    const next = page.getByLabel('Новый пароль (≥ 8 символов)')
-    const again = page.getByLabel('Повторите')
-    const save = page.getByRole('button', { name: 'Сохранить пароль' })
+    // «Текущий пароль» есть и в блоке 2FA - берём форму смены пароля.
+    const form = page.locator('form').filter({ has: page.getByRole('button', { name: 'Сохранить пароль' }) })
+    const cur = form.getByLabel('Текущий пароль')
+    const next = form.getByLabel('Новый пароль')
+    const again = form.getByLabel('Повторите')
+    const save = form.getByRole('button', { name: 'Сохранить пароль' })
 
-    // Не совпадают — кнопка неактивна.
+    // Пустой текущий - отказ на клиенте.
+    await save.click()
+    await expect(toast(page, 'Введите текущий пароль')).toBeVisible()
+    // Не совпадают - отказ на клиенте.
     await cur.fill(ADMIN_PASSWORD)
     await next.fill('abcdefgh1')
     await again.fill('abcdefgh2')
-    await expect(save).toBeDisabled()
+    await save.click()
+    await expect(toast(page, 'Пароли не совпадают')).toBeVisible()
     // Короткий — отказ на клиенте, запроса нет.
     await next.fill('short')
     await again.fill('short')

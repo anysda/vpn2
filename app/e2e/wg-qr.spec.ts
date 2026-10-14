@@ -63,14 +63,15 @@ test('QR настройки 2FA декодируется без зеркальн
   await loginApi(page)
   await page.goto('/settings')
   await hydrated(page)
-  await page.getByPlaceholder('Текущий пароль', { exact: true }).fill(ADMIN_PASSWORD)
+  await page.locator('#tfa').getByLabel('Текущий пароль', { exact: true }).fill(ADMIN_PASSWORD)
   const response = page.waitForResponse(r => r.url().endsWith('/api/auth/two-factor/enable'))
   await page.getByRole('button', { name: 'Включить 2FA', exact: true }).click()
   const { totpURI } = await (await response).json()
-  const svg = page.locator('div.bg-white > svg')
+  const svg = page.locator('#tfa .qr > svg')
   await expect(svg).toBeVisible()
   const { width, modules } = await svg.evaluate(el => ({
-    width: Number(el.getAttribute('width')),
+    // QR тянется по рамке: размер - из viewBox.
+    width: Number(el.getAttribute('width') ?? el.getAttribute('viewBox')?.split(' ')[2]),
     modules: [...el.querySelectorAll('rect')].slice(1).map(r => ({
       x: Number(r.getAttribute('x')),
       y: Number(r.getAttribute('y')),

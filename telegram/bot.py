@@ -1467,11 +1467,13 @@ async def enqueue_notification(request, payload, delivery_id=None):
 
 async def handle_health(_request: web.Request) -> web.Response:
     """GET /health — жив ли поллер. Дёргает docker HEALTHCHECK, слушаем только
-    на 127.0.0.1, поэтому без секрета. 503, если getUpdates давно не отвечал."""
+    на 127.0.0.1, поэтому без секрета. 503, если getUpdates давно не отвечал.
+    username - имя из getMe, его показывает панель в «Настройках»."""
     idle = round(time.monotonic() - LAST_POLL_OK, 1)
     stalled = POLL_STALL_SEC > 0 and idle > POLL_STALL_SEC
     return web.json_response(
-        {'ok': not stalled, 'poll_idle_sec': idle, 'poll_stall_sec': POLL_STALL_SEC},
+        {'ok': not stalled, 'poll_idle_sec': idle, 'poll_stall_sec': POLL_STALL_SEC,
+         'username': BOT_USERNAME or ''},
         status=503 if stalled else 200,
     )
 

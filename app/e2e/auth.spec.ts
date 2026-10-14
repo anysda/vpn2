@@ -11,7 +11,7 @@ async function logoutUi(page: Page) {
 
 /** Начать включение 2FA: библиотека просит текущий пароль. */
 async function startSetup(page: Page) {
-  await page.getByPlaceholder('Текущий пароль').fill(ADMIN_PASSWORD)
+  await page.locator('#tfa').getByLabel('Текущий пароль').fill(ADMIN_PASSWORD)
   await page.getByRole('button', { name: 'Включить 2FA' }).click()
 }
 
@@ -81,11 +81,14 @@ test.describe('2FA', () => {
     await page.goto('/settings')
     await hydrated(page)
     await startSetup(page)
+    // Не 6 цифр - отказ на клиенте, как в макете.
     await page.getByLabel('Введи 6-значный код из приложения').fill('123')
-    const resp = page.waitForResponse(r => new URL(r.url()).pathname === '/api/auth/two-factor/verify-totp')
     await page.getByRole('button', { name: 'Подтвердить' }).click()
-    expect((await resp).status()).toBe(400)
-    await expect(toast(page, 'Неверный код').getByText('Проверьте поле «Код»', { exact: true })).toBeVisible()
+    await expect(toast(page, 'Код не подошёл')).toBeVisible()
+    // Сервер в обход формы отвечает полем по-русски.
+    const resp = await authPost(page.request, '/two-factor/verify-totp', { code: '123' })
+    expect(resp.status()).toBe(400)
+    expect(JSON.stringify(await resp.json())).toContain('Проверьте поле «Код»')
     await page.getByRole('button', { name: 'Отмена' }).click()
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
   })
@@ -95,7 +98,7 @@ test.describe('2FA', () => {
     await loginApi(page)
     await page.goto('/settings')
     await hydrated(page)
-    await page.getByPlaceholder('Текущий пароль').fill(`${ADMIN_PASSWORD}-wrong`)
+    await page.locator('#tfa').getByLabel('Текущий пароль').fill(`${ADMIN_PASSWORD}-wrong`)
     await page.getByRole('button', { name: 'Включить 2FA' }).click()
     await expect(toast(page, 'Ошибка setup').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
@@ -187,15 +190,15 @@ test.describe('2FA', () => {
 
       // VPN2-69: ошибки модалки шли голыми кодами; тост виден поверх открытой модалки.
       await page.getByRole('button', { name: 'Выключить 2FA' }).click()
-      await dlg.getByPlaceholder('Пароль').fill(`${ADMIN_PASSWORD}-wrong`)
-      await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(totp(secret))
+      await dlg.getByLabel('Пароль', { exact: true }).fill(`${ADMIN_PASSWORD}-wrong`)
+      await dlg.getByLabel('Код 2FA (6 цифр)').fill(totp(secret))
       await dlg.getByRole('button', { name: 'Выключить' }).click()
       await expect(toast(page, 'Ошибка').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
-      await dlg.getByPlaceholder('Пароль').fill(ADMIN_PASSWORD)
-      await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(wrong())
+      await dlg.getByLabel('Пароль', { exact: true }).fill(ADMIN_PASSWORD)
+      await dlg.getByLabel('Код 2FA (6 цифр)').fill(wrong())
       await dlg.getByRole('button', { name: 'Выключить' }).click()
       await expect(toast(page, 'Код не подошёл').getByText('Ошибка', { exact: true })).toBeVisible()
-      await dlg.getByPlaceholder('Код 2FA (6 цифр)').fill(await fresh())
+      await dlg.getByLabel('Код 2FA (6 цифр)').fill(await fresh())
       await dlg.getByRole('button', { name: 'Выключить' }).click()
       await expect(toast(page, '2FA выключена')).toBeVisible()
       enabled = false

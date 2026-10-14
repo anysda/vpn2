@@ -43,6 +43,18 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreater(bot.LAST_POLL_OK, stale)
             self.assertEqual((await bot.handle_health(None)).status, 200)
 
+    async def test_health_reports_bot_username(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        bot.LAST_POLL_OK = time.monotonic()
+        bot.BOT_USERNAME = 'example_vpn_bot'
+        health = await bot.handle_health(None)
+        self.assertEqual(json.loads(health.body)['username'], 'example_vpn_bot')
+        bot.BOT_USERNAME = None
+        health = await bot.handle_health(None)
+        self.assertEqual(json.loads(health.body)['username'], '')
+
     async def test_stalled_watchdog_exits(self):
         bot = load_bot()
         self.addAsyncCleanup(bot._local.aclose)

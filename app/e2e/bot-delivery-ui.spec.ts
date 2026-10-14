@@ -56,7 +56,8 @@ test('недоступный бот: тост клиента, рассылки, 
   const anonymous = await page.request.get('/api/admin/bot-deliveries')
   expect(anonymous.ok()).toBe(true)
   expect(await anonymous.json()).toEqual([])
-  await openHome(page, '/settings')
+  // Рассылка - на Обзоре, очередь бота - в карточке «Настроек».
+  await openHome(page, '/')
   const original = await (await page.request.get('/api/admin/telegram')).json()
   test.skip(original.configured, 'настоящие настройки бота менять нельзя')
   const name = uniq('delivery')
@@ -90,11 +91,10 @@ test('недоступный бот: тост клиента, рассылки, 
     expect(created.ok()).toBe(true)
     clientId = (await created.json()).id
     await expect(toast(page, 'Бот недоступен, 1 уведомление в очереди')).toBeVisible()
-    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 1 уведомление в очереди' })).toBeVisible()
     await page.getByRole('button', { name: 'Уведомления: 1', exact: true }).click()
     await expect(page.getByRole('dialog').getByText('Бот недоступен, 1 уведомление в очереди', { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
-    console.log('Реальная очередь: Бот недоступен, 1 уведомление в очереди — тост, «Боты», «Уведомления»')
+    console.log('Реальная очередь: Бот недоступен, 1 уведомление в очереди — тост, «Уведомления»')
     inside(`
       import { DatabaseSync } from 'node:sqlite';
       const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
@@ -104,11 +104,10 @@ test('недоступный бот: тост клиента, рассылки, 
     const changed = await page.request.patch(`/api/clients/${clientId}`, { data: { deviceLimit: 4 } })
     expect(changed.ok()).toBe(true)
     await expect(page.getByRole('button', { name: 'Уведомления: 2', exact: true })).toBeVisible()
-    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 2 уведомления в очереди' })).toBeVisible()
     await page.getByRole('button', { name: 'Уведомления: 2', exact: true }).click()
     await expect(page.getByRole('dialog').getByText('Бот недоступен, 2 уведомления в очереди', { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
-    console.log('Реальная очередь: Бот недоступен, 2 уведомления в очереди — «Боты», «Уведомления»')
+    console.log('Реальная очередь: Бот недоступен, 2 уведомления в очереди — «Уведомления»')
 
     for (let n = 3; n <= 5; n++) {
       await page.getByLabel('Сообщение юзерам').fill(`e2e delivery probe ${n}`)
@@ -118,11 +117,14 @@ test('недоступный бот: тост клиента, рассылки, 
     const queueToasts = page.getByRole('region', { includeHidden: true }).locator('ol > li').filter({ hasText: /Бот недоступен|не отправлено/ })
     await page.mouse.move(0, 0)
     await expect(queueToasts, 'реальная очередь остаётся, короткий тост гаснет').toHaveCount(0)
-    await expect(page.getByRole('status').filter({ hasText: 'Бот недоступен, 5 уведомлений в очереди' })).toBeVisible()
+    await openHome(page, '/settings')
+    const bot = page.locator('div.card').filter({ has: page.getByRole('heading', { name: 'Бот Telegram', exact: true }) })
+    await expect(bot.getByText('Офлайн', { exact: true })).toBeVisible()
+    await expect(bot.locator('.ys div').filter({ hasText: 'В очереди' }).locator('b')).toHaveText('5')
     await page.getByRole('button', { name: 'Уведомления: 5', exact: true }).click()
     await expect(page.getByRole('dialog').getByText('Бот недоступен, 5 уведомлений в очереди', { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
-    console.log('Реальная очередь: Бот недоступен, 5 уведомлений в очереди — в «Уведомлениях»; тостов: 0')
+    console.log('Реальная очередь: Бот недоступен, 5 уведомлений в очереди — в «Уведомлениях» и карточке бота; тостов: 0')
     await expect(toast(page, /^Отправлено:/)).toHaveCount(0)
     const statuses = await (await page.request.get('/api/admin/bot-deliveries')).json()
     expect(await (await request.get('/api/admin/bot-deliveries')).json(), 'без сессии история недоступна').toEqual([])

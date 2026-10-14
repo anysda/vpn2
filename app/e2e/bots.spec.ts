@@ -3,8 +3,7 @@ import { expect, test, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 
 function botsCard(page: Page) {
-  return page.locator('div').filter({ has: page.getByText('Боты', { exact: true }) })
-    .filter({ has: page.getByText('Chat ID', { exact: true }) }).last()
+  return page.locator('div.card').filter({ has: page.getByRole('heading', { name: 'Бот Telegram', exact: true }) })
 }
 
 test.describe('настройки Telegram', () => {
@@ -33,7 +32,7 @@ test.describe('настройки Telegram', () => {
       await card.getByLabel('Chat ID', { exact: true }).fill('321')
       await card.getByLabel('Token', { exact: true }).fill('draft-token')
       release()
-      await expect(card.getByText('ОНЛАЙН', { exact: true })).toBeVisible()
+      await expect(card.getByText('Онлайн', { exact: true })).toBeVisible()
       await expect(nick).toHaveValue('@draft')
       await expect(card.getByLabel('Chat ID', { exact: true })).toHaveValue('321')
       await expect(card.getByLabel('Token', { exact: true })).toHaveValue('draft-token')
@@ -45,7 +44,7 @@ test.describe('настройки Telegram', () => {
   test('никнейм админа сохраняется без @ и возвращается обратно', async ({ page }) => {
     await openHome(page, '/settings')
     const card = botsCard(page)
-    await expect(card.getByText(/НЕНАСТРОЕН|ОНЛАЙН|ОФФЛАЙН/)).toBeVisible()
+    await expect(card.getByText(/^(Не настроен|Онлайн|Офлайн)$/)).toBeVisible()
     const save = card.getByRole('button', { name: 'Сохранить' })
     await expect(save).toBeDisabled()
 
@@ -56,7 +55,7 @@ test.describe('настройки Telegram', () => {
       await nick.fill(`@${temp}`)
       await expect(save).toBeEnabled()
       await save.click()
-      await expect(toast(page, 'Сохранено')).toBeVisible()
+      await expect(toast(page, 'Настройки бота сохранены')).toBeVisible()
       await expect(nick).toHaveValue(temp)
       await expect(save).toBeDisabled()
       const st = await (await page.request.get('/api/admin/telegram')).json()
@@ -67,7 +66,7 @@ test.describe('настройки Telegram', () => {
       await nick.fill(original)
       if (original !== temp) {
         await save.click()
-        await expect(toast(page, 'Сохранено').last()).toBeVisible()
+        await expect(toast(page, 'Настройки бота сохранены').last()).toBeVisible()
       }
     }
     finally {
@@ -90,19 +89,25 @@ test.describe('настройки Telegram', () => {
     try {
       await setToken('123456789:E2E_ACCEPTED_aaaaaaaaaaaaaaaaaaaaaaaaaa', '123456789')
       await page.reload()
-      await expect(card.getByText('ОНЛАЙН', { exact: true })).toBeVisible()
-      expect((await (await page.request.get('/api/admin/telegram')).json()).running).toBe(true)
+      await expect(card.getByText('Онлайн', { exact: true })).toBeVisible()
+      // Имя бота - из /health (getMe), подписчики и очередь - из базы панели.
+      await expect(card.getByText('@demo_vpn_bot', { exact: true })).toBeVisible()
+      const st = await (await page.request.get('/api/admin/telegram')).json()
+      expect(st).toMatchObject({ running: true, username: 'demo_vpn_bot' })
+      for (const key of ['clients_total', 'clients_subscribed', 'queued', 'delivered_day']) expect(st[key]).toEqual(expect.any(Number))
+      await expect(card.getByText(`${st.clients_subscribed} из ${st.clients_total}`, { exact: true })).toBeVisible()
 
       await setToken('123456789:E2E_REJECTED_bbbbbbbbbbbbbbbbbbbbbbbbbb', '123456789')
       await page.reload()
-      await expect(card.getByText('ОФФЛАЙН', { exact: true })).toBeVisible()
+      await expect(card.getByText('Офлайн', { exact: true })).toBeVisible()
       expect((await (await page.request.get('/api/admin/telegram')).json()).running).toBe(false)
+      await expect(card.getByText('@demo_vpn_bot', { exact: true })).toHaveCount(0)
     }
     finally {
       await setToken('', String(before.chat_id ?? ''))
     }
     await page.reload()
-    await expect(card.getByText('НЕНАСТРОЕН', { exact: true })).toBeVisible()
+    await expect(card.getByText('Не настроен', { exact: true })).toBeVisible()
   })
 
   test('бот не настроен: новый клиент не встаёт в очередь, рассылка отвечает отказом', async ({ page, guard }) => {
@@ -121,13 +126,20 @@ test.describe('настройки Telegram', () => {
       const polled = page.waitForResponse(response => response.url().endsWith('/api/admin/bot-deliveries'))
       await page.reload()
       await polled
-      await expect(card.getByText('НЕНАСТРОЕН', { exact: true })).toBeVisible()
-      await expect(card.getByText(/уведомлений в очереди/)).toHaveCount(0)
+      await expect(card.getByText('Не настроен', { exact: true })).toBeVisible()
+      await expect(card.locator('.ys div').filter({ hasText: 'В очереди' }).locator('b')).toHaveText('0')
 
-      await page.getByLabel('Сообщение юзерам').fill('e2e без бота')
-      await page.getByRole('button', { name: 'Отправить', exact: true }).click()
-      await expect(toast(page, 'Telegram-бот не настроен. Рассылка не отправлена.')).toBeVisible()
-      console.log('без бота, рассылка:', await toast(page, 'Telegram-бот не настроен.').textContent())
+      // Рассылка живёт на Обзоре.
+      await openHome(page, '/')
+      const bc = page.locator('.ov-broadcast')
+      await bc.getByLabel('Сообщение юзерам').fill('e2e без бота')
+      await expect(bc.getByRole('button', { name: 'Отправить', exact: true })).toBeDisabled()
+      await expect(bc.getByText('Сначала настройте Telegram-бота', { exact: true })).toBeVisible()
+      // кнопку можно обойти запросом - сервер всё равно отказывает
+      const sent = await page.request.post('/api/admin/broadcast', { data: { text: 'e2e без бота' } })
+      expect(sent.status()).toBe(409)
+      expect((await sent.json()).message).toBe('Telegram-бот не настроен. Рассылка не отправлена.')
+      console.log('без бота, рассылка:', sent.status(), (await sent.json()).message)
     }
     finally {
       await page.request.delete(`/api/clients/${clientId}`)

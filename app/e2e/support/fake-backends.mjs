@@ -155,8 +155,8 @@ function bot(req, res) {
     // файла ещё нет — бот не настроен
   }
   if (token.includes('E2E_ACCEPTED')) {
-    if (req.url === '/event' || req.url === '/events') return demoBot(req, res)
-    res.writeHead(req.url === '/health' ? 200 : 404)
+    if (req.url === '/event' || req.url === '/events' || req.url === '/health') return demoBot(req, res)
+    res.writeHead(404)
     return res.end()
   }
   setTimeout(() => req.socket.destroy(), 5000)
@@ -329,14 +329,11 @@ function adguard(req, res) {
   }, 'application/json')
 }
 
-// Бот всегда «онлайн»; события панели (POST /event) копит журналом, GET /events
-// отдаёт его.
+// Бот всегда «онлайн» и, как настоящий, называет в /health своё имя; события
+// панели (POST /event) копит журналом, GET /events отдаёт его.
 const events = []
 function demoBot(req, res) {
-  if (req.url === '/health') {
-    res.writeHead(200)
-    return res.end()
-  }
+  if (req.url === '/health') return json(res, { ok: true, username: 'demo_vpn_bot' }, 'application/json')
   if (req.url === '/events') return json(res, events, 'application/json')
   if (req.method === 'POST' && req.url === '/event') {
     let body = ''

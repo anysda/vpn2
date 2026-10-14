@@ -60,6 +60,7 @@ test('клиента удалили до загрузки карточки: па
     expect(await toasts(page).allInnerTexts(), 'тост при пропавшем клиенте').toEqual([])
   }
   finally {
+    await page.unrouteAll({ behavior: 'wait' })
     await page.request.delete(`/api/clients/${first.id}`)
     await page.request.delete(`/api/clients/${second.id}`)
   }
@@ -84,6 +85,7 @@ test('удаление выбранного клиента из своей па�
     expect(missing).toEqual([])
   }
   finally {
+    await page.unrouteAll({ behavior: 'wait' })
     await page.request.delete(`/api/clients/${first.id}`)
     await page.request.delete(`/api/clients/${second.id}`)
   }

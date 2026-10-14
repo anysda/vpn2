@@ -29,6 +29,7 @@ function openClient(id: number) {
         <MonitoringSection v-if="id === 'monitoring'" />
         <ClientsTop v-else-if="id === 'top'" @open="openClient" />
       </div>
+      <EventsFeed />
     </div>
 
     <ClientsClientModal

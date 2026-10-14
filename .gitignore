@@ -19,6 +19,7 @@ credentials.md
 infra/envs/
 # TOFU-пин SSH host-keys (растёт при первом подключении к новой ноде)
 infra/.known_hosts
+infra/.known_hosts.old
 
 # ── Nuxt / Node ───────────────────────────────────────────────────────────
 node_modules/

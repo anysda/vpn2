@@ -4,6 +4,8 @@
 """
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -97,6 +99,15 @@ class SshRefusalTests(unittest.TestCase):
         self.assertIn('повтор 1/4', result.stderr)
         self.assertNotIn('ssh-keygen', result.stderr)
         self.assertGreaterEqual(calls, 5)
+
+    def test_known_hosts_backup_from_suggested_command_is_ignored(self):
+        # ssh-keygen -R из подсказки оставляет рядом <файл>.old: дерево должно остаться чистым.
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['git', 'init', '-q', directory], check=True)
+            shutil.copy(ROOT / '.gitignore', Path(directory, '.gitignore'))
+            for name in ('infra/.known_hosts', 'infra/.known_hosts.old'):
+                result = subprocess.run(['git', '-C', directory, 'check-ignore', '-q', name])
+                self.assertEqual(result.returncode, 0, name)
 
 
 if __name__ == '__main__':

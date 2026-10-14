@@ -285,6 +285,10 @@ else
 fi
 sed -i 's/^#\?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD"
 sed -i 's/^#\?KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' "$SSHD"
+# sshd -t и sshd -T требуют каталог privsep. На Ubuntu 26.04 при обновлении
+# openssh apt его удаляет, а пока ssh.service не перезапущен, вернуть его некому:
+# проверка падала с "Missing privilege separation directory" и роняла установку.
+install -d -m 0755 /run/sshd
 # OpenSSH 9.8+ (Ubuntu 24.10+ / 26.04) включает PerSourcePenalties: 90с штраф
 # за "crashed" коннект. Несколько неудачных sshpass-ов лочат source IP и весь
 # деплой встаёт. Отключаем — но только если sshd знает эту директиву

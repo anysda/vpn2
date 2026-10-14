@@ -207,10 +207,123 @@ async function deleteRule(rule: Route) {
     toast.add({ title: 'Ошибка', color: 'error', description: (e as Error).message })
   }
 }
+
+// ---------- проверка адреса ----------
+interface CheckResult {
+  query: string
+  reason: 'manual' | 'ru' | 'youtube' | 'reject' | 'rule' | 'default'
+  rule: string
+  routeId: number | null
+  outbound: string
+  delay: number | null
+}
+const WHY: Record<CheckResult['reason'], string> = {
+  manual: 'своё правило',
+  ru: 'российский адрес',
+  youtube: 'YouTube через zapret',
+  reject: 'заблокировано',
+  rule: 'правило роутера',
+  default: 'ни одно правило не подошло',
+}
+
+const query = ref('')
+const checked = ref<CheckResult | null>(null)
+const checkError = ref('')
+let checkSeq = 0
+let checkTimer: ReturnType<typeof setTimeout> | null = null
+
+const checkRule = computed(() => {
+  const r = checked.value
+  if (!r) return ''
+  if (r.reason === 'default') return 'по умолчанию'
+  return r.reason === 'manual' ? `правило ${r.rule}` : r.rule
+})
+const checkOut = computed(() => {
+  const ob = checked.value?.outbound ?? ''
+  if (ob === 'youtube-ru') return `${countryName('ru')} · zapret`
+  return cellName(ob)
+})
+
+async function runCheck() {
+  const seq = ++checkSeq
+  const q = query.value.trim()
+  if (!q) {
+    checked.value = null
+    checkError.value = ''
+    return
+  }
+  try {
+    const r = await $fetch<CheckResult>('/api/routes/check', { query: { q } })
+    if (seq !== checkSeq) return
+    checked.value = r
+    checkError.value = ''
+  }
+  catch (e) {
+    if (seq !== checkSeq) return
+    const err = e as { data?: { message?: string }, statusMessage?: string }
+    checked.value = null
+    checkError.value = err.data?.message ?? err.statusMessage ?? 'Ошибка'
+  }
+}
+// Ответ сервера зависит от правил: после переноса, добавления и удаления
+// проверка повторяется.
+function scheduleCheck(delay = 250) {
+  if (checkTimer) clearTimeout(checkTimer)
+  checkTimer = setTimeout(() => void runCheck(), delay)
+}
+watch(query, () => scheduleCheck())
+watch(() => rules.value.map(r => `${r.id}:${r.outbound}`).join(), () => {
+  if (query.value.trim()) scheduleCheck(0)
+})
+onBeforeUnmount(() => {
+  if (checkTimer) clearTimeout(checkTimer)
+})
 </script>
 
 <template>
   <section class="rtop">
+    <div class="card chk">
+      <h3>Проверить адрес</h3>
+      <label class="inp big2"><svg
+        class="i"
+        viewBox="0 0 24 24"
+      ><circle
+        cx="11"
+        cy="11"
+        r="6.5"
+      /><path d="M16 16l4 4" /></svg><input
+        v-model="query"
+        spellcheck="false"
+        aria-label="Проверить адрес"
+      ></label>
+      <div
+        class="chain"
+        data-testid="route-check"
+      >
+        <template v-if="checked">
+          <div
+            class="ch"
+            style="--bar:var(--acc)"
+          >
+            {{ checked.query }}
+          </div><span class="ar2" /><div
+            class="ch"
+            style="--bar:var(--g2)"
+          >
+            {{ checkRule }}
+          </div><span class="ar2" /><div
+            :class="['ch', { bad: checked.delay === null }]"
+            style="--bar:var(--acc)"
+          >
+            {{ checkOut }}<b>{{ checked.delay ?? '—' }} мс</b>
+          </div><span class="why">{{ WHY[checked.reason] }}</span>
+        </template>
+        <span
+          v-else-if="checkError"
+          class="why"
+        >{{ checkError }}</span>
+      </div>
+    </div>
     <form
       class="card addr"
       @submit.prevent="add"
@@ -274,7 +387,7 @@ async function deleteRule(rule: Route) {
           <div
             v-for="rule in rulesFor(cell.outbound)"
             :key="rule.id"
-            :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id }]"
+            :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id, hit: checked?.routeId === rule.id }]"
             :data-id="rule.id"
             draggable="true"
             @dragstart="onDragStart(rule, $event)"
@@ -306,7 +419,14 @@ async function deleteRule(rule: Route) {
 <style scoped>
 .card h3{font-size:14px;font-weight:500;color:var(--t2)}
 .rtop{display:grid;grid-template-columns:7fr 5fr;gap:12px;margin-bottom:12px}
-.rtop>.addr{grid-column:2}
+.chain{display:flex;align-items:center;gap:0;margin-top:16px;min-height:40px;flex-wrap:wrap;row-gap:8px}
+.ch{position:relative;display:flex;align-items:center;gap:10px;height:36px;padding:0 12px 0 14px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12.5px;color:var(--t2);cursor:default;transition:opacity .25s var(--ease),border-color .2s,background .2s;white-space:nowrap}
+.ch::before{content:"";position:absolute;left:6px;top:9px;bottom:9px;width:2px;border-radius:2px;background:var(--bar,rgba(var(--fg),.25))}
+.ch b{margin-left:auto;color:var(--t1);font-weight:600;font-size:12.5px}
+.ch.bad{border-color:rgba(var(--red-rgb),.35);background:linear-gradient(90deg,rgba(var(--red-rgb),.12),var(--chip) 70%);color:var(--red-t2)}
+.chain .ar2{width:34px;height:1px;background:rgba(var(--fg),.25);position:relative}
+.chain .ar2::after{content:"";position:absolute;right:0;top:-3px;border:3.5px solid transparent;border-left:5px solid rgba(var(--fg),.4);border-right:0}
+.chain .why{margin-left:14px;color:var(--t3);font-size:12px}
 .inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
 .inp:focus-within{border-color:rgba(var(--fg),.3)}
 .inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;width:200px}
@@ -334,6 +454,7 @@ async function deleteRule(rule: Route) {
 .rc{position:relative;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12px;color:var(--t1);cursor:grab;user-select:none;transition:transform .16s var(--ease),opacity .2s,border-color .2s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rc:hover{border-color:var(--line2)}.rc:active{cursor:grabbing}
 .rc.drag{opacity:.35}
+.rc.hit{border-color:var(--acc);box-shadow:0 0 16px rgba(var(--glow),calc(.25*var(--gk)))}
 .rc.new{animation:pop .5s var(--ease)}
 @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
 .rc::before{content:"";width:6px;height:10px;flex:none;opacity:.35;background:radial-gradient(circle,var(--t1) 1px,transparent 1.3px) 0 0/3px 3.4px}

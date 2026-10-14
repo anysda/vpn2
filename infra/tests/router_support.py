@@ -39,8 +39,8 @@ def stage_source():
     return (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
 
 
-def prepare(directory):
-    cfg = json.loads(generate())
+def prepare(directory, **overrides):
+    cfg = json.loads(generate(**overrides))
     for item in cfg['route']['rule_set']:
         path = directory / (item['tag'] + '.json')
         path.write_text(json.dumps({'version': 2, 'rules': []}))
@@ -53,6 +53,7 @@ def prepare(directory):
     replacements = {
         '/etc/anysda/manual-routes.json': directory / 'manual.json',
         '/etc/anysda/client-prefs.json': directory / 'prefs.json',
+        '/etc/anysda/route-plan.json': directory / 'plan.json',
         '/etc/sing-box/config-base.json': directory / 'base.json',
         '/etc/sing-box/config.json': directory / 'config.json',
         '/etc/sing-box/manual-routes': directory / 'rules',

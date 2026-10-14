@@ -21,6 +21,9 @@ DEPENDENCIES = {
     'infra/tests/test_panel_proxy.py',
     'infra/lib/config2env.py',
     'infra/lib/hy2_bandwidth.py',
+    'infra/scripts/20-ru-router.sh',
+    'infra/lib/gen-router-config.py',
+    'infra/tests/router_support.py',
 }
 
 

@@ -144,6 +144,56 @@ test.describe('маршрутизация', () => {
     expect(stored.find(r => r.value === value)?.outbound).toBe('hy2-nl-direct')
   })
 
+  test('проверка адреса показывает цепочку и подсвечивает своё правило', async ({ page, guard }) => {
+    guard.allow(503, /\/api\/routes\/check/, 'GET')
+    await openRoutes(page)
+    const value = `e2e-check-${stamp()}.example.com`
+    await addRule(page, value, exitName('nl'))
+    const stored: { id: number, value: string }[] = await (await page.request.get('/api/routes')).json()
+    const id = stored.find(r => r.value === value)!.id
+
+    // Ответ на «slow» держим, пока не придёт следующий ввод: запоздавший
+    // ответ не должен перетереть свежий.
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => { release = resolve })
+    const answers: Record<string, { status: number, body: object }> = {
+      [value]: { status: 200, body: { query: value, ip: null, reason: 'manual', rule: value, routeId: id, outbound: 'hy2-nl-direct', delay: 41 } },
+      'slow.example.com': { status: 200, body: { query: 'slow.example.com', ip: null, reason: 'ru', rule: '.ru', routeId: null, outbound: 'direct-ru', delay: 4 } },
+      'other.example.com': { status: 200, body: { query: 'other.example.com', ip: '192.0.2.1', reason: 'default', rule: '', routeId: null, outbound: 'hy2-fi-direct', delay: null } },
+      'down.example.com': { status: 503, body: { statusCode: 503, statusMessage: 'route_plan_unavailable', message: 'Роутер ещё не выложил маршруты' } },
+    }
+    await page.route(/\/api\/routes\/check\?/, async (route) => {
+      const q = new URL(route.request().url()).searchParams.get('q')!
+      if (q === 'slow.example.com') await held
+      const a = answers[q]!
+      await route.fulfill({ status: a.status, contentType: 'application/json', body: JSON.stringify(a.body) })
+    })
+    const input = page.getByRole('textbox', { name: 'Проверить адрес' })
+    const chain = page.getByTestId('route-check')
+
+    await input.fill(value)
+    await expect(chain.locator('.ch')).toHaveText([value, `правило ${value}`, `${exitName('nl')}41 мс`])
+    await expect(chain.locator('.why')).toHaveText('своё правило')
+    await expect(chip(page, value)).toHaveClass(/\bhit\b/)
+    await expect(page.locator('.rc.hit')).toHaveCount(1)
+
+    await input.fill('slow.example.com')
+    await page.waitForRequest(r => r.url().includes('q=slow.example.com'))
+    await input.fill('other.example.com')
+    await expect(chain.locator('.ch')).toHaveText(['other.example.com', 'по умолчанию', `${exitName('fi')}— мс`])
+    await expect(chain.locator('.ch').nth(2)).toHaveClass(/\bbad\b/)
+    await expect(chain.locator('.why')).toHaveText('ни одно правило не подошло')
+    await expect(page.locator('.rc.hit')).toHaveCount(0)
+    release()
+    await page.waitForResponse(r => r.url().includes('q=slow.example.com'))
+    await expect(chain.locator('.ch').first()).toHaveText('other.example.com')
+
+    await input.fill('down.example.com')
+    await expect(chain).toHaveText('Роутер ещё не выложил маршруты')
+    await input.fill('')
+    await expect(chain).toBeEmpty()
+  })
+
   test('ячейка прокручивается после шести правил', async ({ page }) => {
     await openRoutes(page)
     const exit = exitName('fi')

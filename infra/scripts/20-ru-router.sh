@@ -233,6 +233,7 @@ SB_CONFIG     = '/etc/sing-box/config.json'
 SB_CONFIG_BASE= '/etc/sing-box/config-base.json'
 RULES_DIR     = '/etc/sing-box/manual-routes'
 PREFS_DIR     = '/etc/sing-box/client-prefs'
+ROUTE_PLAN    = '/etc/anysda/route-plan.json'
 SB_BIN        = '/usr/local/bin/sing-box'
 
 if not os.path.exists(SB_CONFIG_BASE) and os.path.exists(SB_CONFIG):
@@ -371,14 +372,15 @@ def read(path):
     except FileNotFoundError:
         return None
 
-def put(path, body, check):
+def put(path, body, check=None):
     """Атомарно (tmp + rename в том же каталоге) заменить файл, если изменился."""
     if read(path) == body:
         return False
     with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(path), delete=False, suffix='.tmp') as tmp:
         tmp.write(body); tmp_path = tmp.name
     try:
-        subprocess.run(check + [tmp_path], check=True, capture_output=True)
+        if check:
+            subprocess.run(check + [tmp_path], check=True, capture_output=True)
         os.chmod(tmp_path, 0o600)
         os.replace(tmp_path, path)
     except subprocess.CalledProcessError as e:
@@ -406,16 +408,39 @@ for name in os.listdir(PREFS_DIR):
     if name.endswith('.json') and name[:-5] not in pref_sets:
         os.unlink(os.path.join(PREFS_DIR, name))
 
+# Снимок того, что получил sing-box: итоговые route.rules и содержимое всех
+# наборов. По нему панель отвечает, через какой выход пойдёт адрес, тем же
+# порядком правил, без своей копии. Пишется только вместе с принятым конфигом.
+def set_rules(item):
+    path = item.get('path', '')
+    if item.get('format') == 'binary':
+        out = subprocess.run([SB_BIN, 'rule-set', 'decompile', '-o', '/dev/stdout', path],
+                             check=True, capture_output=True, text=True).stdout
+        return json.loads(out).get('rules', [])
+    with open(path) as f:
+        return json.load(f).get('rules', [])
+
+def write_plan():
+    try:
+        sets_body = {item['tag']: set_rules(item) for item in route.get('rule_set', [])}
+    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
+        print(f'{ROUTE_PLAN}: набор не читается, снимок маршрутов прежний: {e}', file=sys.stderr)
+        return
+    plan = {'rules': route['rules'], 'final': route.get('final', ''), 'rule_set': sets_body}
+    put(ROUTE_PLAN, json.dumps(plan, ensure_ascii=False, separators=(',', ':')))
+
 summary = (f'{len(manual)} manual route(s), '
            f'{sum(map(len, pref_sets.values()))} IP с предпочтением, наборов изменено: {len(changed)}')
 if read(SB_CONFIG) == new_body:
     tail = 'config.json уже собран' if NO_RESTART else 'sing-box перечитает их сам, без перезапуска'
+    write_plan()
     print(f'{summary}, {tail}')
     sys.exit(0)
 
 # config.json меняется только при смене выходов в базе (передеплой) — тогда
 # без перезапуска не обойтись.
 put(SB_CONFIG, new_body, [SB_BIN, 'check', '-c'])
+write_plan()
 if NO_RESTART:
     print(f'{summary}, config.json собран')
     sys.exit(0)

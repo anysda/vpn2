@@ -26,7 +26,7 @@ class E2ePathsTests(unittest.TestCase):
             git('commit', '--allow-empty', '-qm', 'base')
             base = git('rev-parse', 'HEAD')
             for paths, expected in [
-                (['infra/scripts/20-ru-router.sh'], 'false'),
+                (['infra/scripts/21-failover-watchdog.sh'], 'false'),
                 (['telegram/bot.py', 'README.md'], 'false'),
                 (['app/app/pages/index.vue'], 'true'),
                 (['infra/deploy.sh', 'app/e2e/run-local.sh'], 'true'),
@@ -40,6 +40,9 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/tests/test_speedtest.py'], 'true'),
                 (['infra/tests/test_deploy.py'], 'true'),
                 (['infra/tests/test_panel_proxy.py'], 'true'),
+                (['infra/scripts/20-ru-router.sh'], 'true'),
+                (['infra/lib/gen-router-config.py'], 'true'),
+                (['infra/tests/router_support.py'], 'true'),
                 (['infra/lib/e2e_paths.py'], 'true'),
                 (['.github/workflows/checks.yml'], 'true'),
                 (['app/a\nfile.ts'], 'true'),

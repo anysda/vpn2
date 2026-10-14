@@ -36,7 +36,7 @@ for (const protocol of protocols) {
     test.skip(!container)
     await loginApi(page)
     const name = uniq('pool')
-    const created = await page.request.post('/api/clients', { data: { name, deviceLimit: null } })
+    const created = await page.request.post('/api/clients', { data: { name: `${name}-full`, deviceLimit: null } })
     expect(created.status()).toBe(200)
     const { id } = await created.json()
     const pool = addresses(protocol.octet, protocol.last)
@@ -62,18 +62,24 @@ for (const protocol of protocols) {
       expect(bot.status, JSON.stringify(bot.body)).toBe(409)
       expect(bot.body.message).toBe(message)
       // В браузере открываем отдельного пустого клиента, чтобы не рендерить 2000 карточек.
-      const empty = await page.request.post('/api/clients', { data: { name: `${name}-ui`, deviceLimit: null } })
+      // /clients сам выбирает первого по имени: «-empty» стоит раньше «-full».
+      const empty = await page.request.post('/api/clients', { data: { name: `${name}-empty`, deviceLimit: null } })
       const uiClient = await empty.json()
+      const full: string[] = []
+      page.on('request', (r) => {
+        if (r.method() === 'GET' && new URL(r.url()).pathname === `/api/clients/${id}`) full.push(r.url())
+      })
       try {
         guard.allow(409, /\/devices$/, 'POST')
         await page.goto('/clients')
-        await openClient(page, `${name}-ui`)
+        await openClient(page, `${name}-empty`)
         await addDeviceButton(page).click()
         const dialog = page.getByRole('dialog', { name: 'Новый девайс' })
         await dialog.getByPlaceholder('напр. iPhone').fill('ui-overflow')
         await dialog.getByRole('button', { name: 'Добавить', exact: true }).click()
         await expect(toast(page, message)).toBeVisible()
         await expect(dialog).toBeVisible()
+        expect(full, 'карточка клиента с 2000 устройствами не открывалась').toEqual([])
       }
       finally {
         await page.request.delete(`/api/clients/${uiClient.id}`)

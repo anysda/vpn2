@@ -1,14 +1,11 @@
 // Движение вкладки DNS по макету: появление, лесенка карточек, смена
-// подраздела через View Transitions, кривые графиков.
+// подраздела через View Transitions, кривые графиков. Сама анимация — общая
+// anim из clients-view: то же движение, что на экране клиентов.
+import { anim } from './clients-view'
 
 export const EO = 'cubic-bezier(.23,1,.32,1)'
 
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
-
-export function anim(e: Element | null | undefined, k: Keyframe[], o: KeyframeAnimationOptions) {
-  if (!e || reducedMotion()) return null
-  return e.animate(k, { easing: EO, fill: 'backwards', ...o })
-}
 
 let reveal: IntersectionObserver | null | undefined
 

@@ -89,8 +89,10 @@ const EASE = 'cubic-bezier(.23,1,.32,1)'
 const card = ref<HTMLElement>()
 const codeField = ref<HTMLElement>()
 const codeInput = ref<HTMLInputElement>()
+const userInput = ref<HTMLInputElement>()
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 onMounted(() => {
+  userInput.value?.focus()
   if (still()) return
   card.value?.animate([{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }],
     { duration: 500, easing: EASE, fill: 'backwards' })
@@ -140,6 +142,7 @@ watch(error, (msg) => {
             <label class="fl2">
               <span>Логин</span>
               <input
+                ref="userInput"
                 v-model="state.username"
                 class="in"
                 required

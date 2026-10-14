@@ -134,7 +134,7 @@ useVisibleRefresh(refresh)
         placeholder="@ник"
       ></label>
       <div class="fld">
-        <span /><code class="sub2">Сюда пишут клиенты, у кого вопрос по доступу</code>
+        <span />
         <button type="button" class="pill w" :disabled="!dirty || saving" @click="save">Сохранить</button>
       </div>
     </div>

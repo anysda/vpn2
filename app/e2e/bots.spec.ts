@@ -96,7 +96,7 @@ test.describe('настройки Telegram', () => {
       expect(st).toMatchObject({ running: true, username: 'demo_vpn_bot' })
       for (const key of ['clients_total', 'clients_subscribed', 'queued', 'delivered_day']) expect(st[key]).toEqual(expect.any(Number))
       await expect(card.getByText(`${st.clients_subscribed} из ${st.clients_total}`, { exact: true })).toBeVisible()
-      await openHome(page, '/')
+      await openHome(page, '/clients')
       await expect(page.locator('.ov-broadcast .sh .tag')).toHaveText('@demo_vpn_bot')
       await openHome(page, '/settings')
 
@@ -132,8 +132,8 @@ test.describe('настройки Telegram', () => {
       await expect(card.getByText('Не настроен', { exact: true })).toBeVisible()
       await expect(card.locator('.ys div').filter({ hasText: 'В очереди' }).locator('b')).toHaveText('0')
 
-      // Рассылка живёт на Обзоре.
-      await openHome(page, '/')
+      // Рассылка живёт под списком клиентов.
+      await openHome(page, '/clients')
       const bc = page.locator('.ov-broadcast')
       await bc.getByLabel('Сообщение юзерам').fill('e2e без бота')
       await expect(bc.getByRole('button', { name: 'Отправить', exact: true })).toBeDisabled()

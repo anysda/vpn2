@@ -467,7 +467,7 @@ onBeforeUnmount(() => {
 .rc::before{content:"";width:6px;height:10px;flex:none;opacity:.35;background:radial-gradient(circle,var(--t1) 1px,transparent 1.3px) 0 0/3px 3.4px}
 .rc .x{position:absolute;right:4px;top:50%;width:22px;height:22px;margin-top:-11px;border-radius:7px;border:0;background:var(--tog);color:var(--t2);display:grid;place-items:center;cursor:pointer;opacity:0;transition:opacity .15s,color .15s}
 .rc:hover .x{opacity:1}.rc .x:hover{color:var(--red-t)}.rc .x svg{width:11px;height:11px}
-/* Место под список - ровно шесть правил (6×32 + 5×6): ячейка не растёт и не
+/* Место под список - ровно четыре правила (4×32 + 3×6): ячейка не растёт и не
    сжимается от числа правил, лишние прокручиваются внутри. */
 .rcs{flex:none;height:146px;min-height:0;display:flex;flex-direction:column;gap:6px}.rcs .rc{flex:none}
 .cell.empty .rcs::after{content:"перетащите сюда";margin:auto;font-size:11.5px;color:var(--t4)}

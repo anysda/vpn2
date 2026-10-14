@@ -161,6 +161,8 @@ test.describe('маршрутизация', () => {
       'slow.example.com': { status: 200, body: { query: 'slow.example.com', ip: null, reason: 'ru', rule: '.ru', routeId: null, outbound: 'direct-ru', delay: 4 } },
       'other.example.com': { status: 200, body: { query: 'other.example.com', ip: '192.0.2.1', reason: 'default', rule: '', routeId: null, outbound: 'hy2-fi-direct', delay: null } },
       'down.example.com': { status: 503, body: { statusCode: 503, statusMessage: 'route_plan_unavailable', message: 'Роутер ещё не выложил маршруты' } },
+      // Пустое поле - разбор примера, его же спрашивает новое правило на доске.
+      'chatgpt.com': { status: 200, body: { query: 'chatgpt.com', ip: null, reason: 'default', rule: '', routeId: null, outbound: 'hy2-us-direct', delay: 52 } },
     }
     await page.route(/\/api\/routes\/check\?/, async (route) => {
       const q = new URL(route.request().url()).searchParams.get('q')!
@@ -190,8 +192,10 @@ test.describe('маршрутизация', () => {
 
     await input.fill('down.example.com')
     await expect(chain).toHaveText('Роутер ещё не выложил маршруты')
+    // Поле очищено: вместо ошибки снова серый разбор примера.
     await input.fill('')
-    await expect(chain).toBeEmpty()
+    await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
+    await expect(chain).toHaveClass(/\bdemo\b/)
   })
 
   test('проверка адреса без выбора клиента, с подсказкой chatgpt.com', async ({ page }) => {
@@ -206,28 +210,40 @@ test.describe('маршрутизация', () => {
     await expect(input).toHaveAttribute('placeholder', 'chatgpt.com')
     await expect(page.locator('.chk').getByRole('combobox')).toHaveCount(0)
 
-    await input.fill('chatgpt.com')
+    // До ввода под полем разбор примера, серым.
     const chain = page.getByTestId('route-check')
     await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
-    expect(asked).toEqual([null])
+    await expect(chain).toHaveClass(/\bdemo\b/)
+    await expect(input).toHaveValue('')
+
+    // Введённый адрес - уже не пример: ответ обычным цветом.
+    await input.fill('chatgpt.com')
+    await expect.poll(() => asked.length).toBeGreaterThan(1)
+    await expect(chain).not.toHaveClass(/\bdemo\b/)
+    await expect(chain.locator('.ch')).toHaveText(['chatgpt.com', 'по умолчанию', `${exitName('us')}52 мс`])
+    expect(asked.every(c => c === null), 'клиент в проверку не передаётся').toBe(true)
   })
 
-  test('ячейка прокручивается после шести правил и не меняет высоту', async ({ page }) => {
+  test('ячейка прокручивается после четырёх правил и не меняет высоту', async ({ page }) => {
     await openRoutes(page)
     const exit = exitName('fi')
     const cell = cellNamed(page, exit)
     const list = cell.locator('.rcs')
     const have = await cell.locator('.rc').count()
-    // Высота ячеек и доски одна при любом числе правил: как при шести.
+    // Высота ячеек и доски одна при любом числе правил: как при четырёх.
     const sizes = () => page.locator('.board').evaluate(b => [b.getBoundingClientRect().height,
       ...[...b.querySelectorAll('.cell')].map(c => c.getBoundingClientRect().height)])
     const before = await sizes()
     const height = (el: Element) => el.getBoundingClientRect().height
     expect(await cellNamed(page, exitName('fi', true)).evaluate(height)).toBe(await cell.evaluate(height))
     const s = stamp()
-    for (let i = 0; have + i < 7 || i < 1; i++) {
+    for (let i = 0; have + i < 5 || i < 1; i++) {
       await addRule(page, `e2e-scroll-${i}-${s}.example.com`, exit)
-      if (have + i + 1 === 6) await expect(list).not.toHaveClass(/\bscroll\b/)
+      if (have + i + 1 === 4) {
+        // Четыре правила видны целиком, без прокрутки.
+        await expect(list).not.toHaveClass(/\bscroll\b/)
+        expect(await list.evaluate(el => el.scrollHeight - el.clientHeight)).toBeLessThanOrEqual(0)
+      }
     }
     await expect(list).toHaveClass(/\bscroll\b/)
     const box = await list.evaluate(el => ({ scroll: el.scrollHeight, client: el.clientHeight, top: el.scrollTop }))

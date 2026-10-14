@@ -109,3 +109,61 @@ test.describe('клиенты', () => {
     expect(await anon.json()).toMatchObject({ statusMessage: 'Unauthorized', message: 'Нужно войти' })
   })
 })
+
+test.describe('рассылка под списком клиентов', () => {
+  test('карточка рассылки стоит под списком клиентов', async ({ page }) => {
+    await openHome(page, '/clients')
+    const card = page.locator('.ov-broadcast')
+    await expect(card.getByRole('heading', { name: 'Рассылка от бота', exact: true })).toBeVisible()
+    // В колонке списка ниже самого списка, не в карточке клиента.
+    const list = page.locator('.ccol .clist')
+    const [listBox, cardBox] = [await list.boundingBox(), await card.boundingBox()]
+    expect(cardBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height)
+    await expect(page.locator('.ccol .ov-broadcast')).toHaveCount(1)
+    await expect(page.getByTestId('client-detail').locator('.ov-broadcast')).toHaveCount(0)
+  })
+
+  test('без настроенного бота рассылку не отправить, видна подсказка', async ({ page }) => {
+    await page.route('**/api/admin/telegram', async (route) => {
+      const res = await route.fetch()
+      await route.fulfill({ response: res, json: { ...await res.json(), configured: false } })
+    })
+    await openHome(page, '/clients')
+    const card = page.locator('.ov-broadcast')
+    await card.getByLabel('Сообщение юзерам').fill('e2e без бота')
+    await expect(card.getByRole('button', { name: 'Отправить', exact: true })).toBeDisabled()
+    await expect(card.getByText('Сначала настройте Telegram-бота', { exact: true })).toBeVisible()
+    // опрос может прийти под конец теста — не дать перехвату упасть уже в следующем
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+  })
+
+  test('в шапке рассылки - @имя бота, пока бот его назвал', async ({ page }) => {
+    let username = 'e2e_named_bot'
+    await page.route('**/api/admin/telegram', async (route) => {
+      const res = await route.fetch()
+      await route.fulfill({ response: res, json: { ...await res.json(), configured: true, running: Boolean(username), username } })
+    })
+    await openHome(page, '/clients')
+    const card = page.locator('.ov-broadcast')
+    await expect(card.locator('.sh .tag')).toHaveText('@e2e_named_bot')
+    username = ''
+    await page.reload()
+    await expect(card.getByRole('heading', { name: 'Рассылка от бота', exact: true })).toBeVisible()
+    await expect(card.locator('.sh .tag')).toHaveCount(0)
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+  })
+
+  test('рассылка из-под списка клиентов уходит боту', async ({ page }) => {
+    await openHome(page, '/clients')
+    test.skip(!(await (await page.request.get('/api/admin/telegram')).json()).configured, 'нужна панель с ботом')
+    const card = page.locator('.ov-broadcast')
+    await expect(card.getByText('Сначала настройте Telegram-бота')).toHaveCount(0)
+    const send = card.getByRole('button', { name: 'Отправить', exact: true })
+    await expect(send).toBeDisabled()
+    await card.getByLabel('Сообщение юзерам').fill('e2e рассылка со страницы клиентов')
+    const posted = page.waitForRequest(r => r.url().endsWith('/api/admin/broadcast') && r.method() === 'POST')
+    await send.click()
+    expect((await posted).postDataJSON()).toEqual({ text: 'e2e рассылка со страницы клиентов' })
+    await expect(card.getByLabel('Сообщение юзерам')).toHaveValue('')
+  })
+})

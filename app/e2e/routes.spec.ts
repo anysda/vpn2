@@ -28,7 +28,7 @@ function countPosts(page: Page) {
 
 async function openRoutes(page: Page) {
   await loginApi(page)
-  await page.goto('/')
+  await page.goto('/routes')
   await hydrated(page)
   // Выбор выхода появляется, когда пришёл список выходов sing-box.
   await expect(routesForm(page).getByRole('combobox')).toContainText(/RU|NL|FI|US/)

@@ -12,7 +12,7 @@ for (const dns of ['aaaa', 'a-only', 'unavailable']) {
     await page.route('**/api/wg-endpoint-warning', route => route.fulfill({
       json: { hasAAAA: dns === 'aaaa' },
     }))
-    await page.goto('/')
+    await page.goto('/clients')
     await hydrated(page)
     await openClient(page, name)
     const checked = page.waitForResponse('**/api/wg-endpoint-warning')
@@ -39,7 +39,7 @@ test('WG: ожидание DNS не задерживает профиль, по�
     if (pending) return // запрос висит до клиентского таймаута
     await route.fulfill({ json: { hasAAAA: true } })
   })
-  await page.goto('/')
+  await page.goto('/clients')
   await hydrated(page)
   await openClient(page, name)
   await deviceCard(page, 'phone').wg.click()

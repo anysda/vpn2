@@ -3,6 +3,18 @@ import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-del
 
 const { rows, queued, sync } = useBotDeliveryToast()
 const pending = computed(() => rows.value.filter(row => row.status !== 'accepted'))
+const pop = useHeaderPop()
+const open = computed(() => pop.value === 'bell')
+const list = ref<HTMLElement>()
+
+function toggle() {
+  pop.value = open.value ? null : 'bell'
+  if (!open.value || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  // Строки проявляются лесенкой, как в макете.
+  requestAnimationFrame(() => [...(list.value?.children ?? [])].slice(0, 6).forEach((row, i) =>
+    row.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 240, delay: 40 + i * 30, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })))
+}
 let timer: ReturnType<typeof setInterval> | undefined
 let running = false
 let initialized = false
@@ -33,17 +45,41 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <UPopover v-if="pending.length">
-    <UButton color="warning" variant="soft" icon="i-lucide-bell" :aria-label="`Уведомления: ${pending.length}`">
-      <span class="hidden sm:inline">Уведомления:</span> {{ pending.length }}
-    </UButton>
-    <template #content>
-      <ul class="max-h-80 max-w-sm overflow-auto p-4 space-y-2 text-sm">
-        <li v-if="queued">{{ botQueueText(queued) }}</li>
-        <li v-for="row in pending" :key="row.id">
-          {{ botDeliveryText(row) }}
-        </li>
-      </ul>
-    </template>
-  </UPopover>
+  <div class="pw">
+    <button
+      type="button"
+      class="ib"
+      :title="pending.length ? `Уведомления: ${pending.length}` : 'Уведомления'"
+      :aria-label="pending.length ? `Уведомления: ${pending.length}` : 'Уведомления'"
+      :aria-expanded="open"
+      @click.stop="toggle"
+    >
+      <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15zM10 20.5h4" /></svg>
+      <em v-if="pending.length" class="bd" aria-hidden="true">{{ pending.length }}</em>
+    </button>
+    <div
+      class="card pop"
+      :class="{ on: open }"
+      role="dialog"
+      aria-label="Доставка уведомлений"
+      :aria-hidden="!open"
+      :inert="!open"
+    >
+      <h4>Доставка уведомлений</h4>
+      <div ref="list">
+        <div v-if="!queued && !pending.length" class="bi">
+          <span />
+          <div>Все уведомления доставлены</div>
+        </div>
+        <div v-if="queued" class="bi">
+          <span class="dot" style="background:var(--amber)" />
+          <div>{{ botQueueText(queued) }}</div>
+        </div>
+        <div v-for="row in pending" :key="row.id" class="bi">
+          <span class="dot" :style="{ background: row.status === 'failed' ? 'var(--red)' : 'var(--amber)' }" />
+          <div><b>{{ row.label }}</b>{{ botDeliveryText(row).slice(row.label.length) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>

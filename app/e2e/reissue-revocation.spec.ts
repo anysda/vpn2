@@ -53,7 +53,7 @@ for (const target of ['device', 'client', 'bot-device']) {
         }
         const dialog = page.getByRole('dialog', { name: wholeClient ? 'Перевыпустить все ключи?' : 'Перевыпустить ключи девайса?' })
         if (ui) {
-          await page.goto('/')
+          await page.goto('/clients')
           await hydrated(page)
           const modal = await openClient(page, name)
           if (wholeClient) await modal.getByRole('button', { name: 'Перевыпустить все ключи', exact: true }).click()

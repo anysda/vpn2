@@ -6,7 +6,7 @@ for (const width of [1400, 390]) {
     test.use({ viewport: { width, height: 844 } })
 
     test('повторный Enter во время запроса не отправляет второй POST', async ({ page, guard }) => {
-      await openHome(page)
+      await openHome(page, '/clients')
       const name = uniq('submit')
       await createClientUi(page, name)
       await openClient(page, name)

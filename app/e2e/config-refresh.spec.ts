@@ -27,7 +27,7 @@ async function config(page: Page, device: string, protocol: 'wg' | 'ovpn' | 'ike
 }
 
 test('после общего перевыпуска модалки выдают новые WG, OpenVPN и IKEv2', async ({ page }) => {
-  await openHome(page)
+  await openHome(page, '/clients')
   const client = uniq('refresh')
   const device = 'phone'
   await createClientUi(page, client)

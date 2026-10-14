@@ -3,7 +3,7 @@ import { clientCard, createClientUi, nextYear, openClient, openHome } from './su
 
 test.describe('клиенты', () => {
   test('«Отмена» в форме нового клиента ничего не создаёт', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/clients')
     const name = uniq('cancel')
     await page.getByRole('button', { name: 'Новый клиент' }).click()
     await page.getByPlaceholder('Иван Иванов').fill(name)
@@ -14,7 +14,7 @@ test.describe('клиенты', () => {
   })
 
   test('создать, найти, переименовать, срок, заморозка, удалить', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/clients')
     const name = uniq('client')
     const expires = nextYear()
     const creating = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/clients')
@@ -95,7 +95,7 @@ test.describe('клиенты', () => {
   // VPN2-69: 76 мест бросали код без текста, и тост, и бот показывали
   // «not_found», «invalid_id». Код остаётся в statusMessage, текст — из словаря.
   test('ошибки API без своего текста приходят по-русски, код в statusMessage', async ({ page, request }) => {
-    await openHome(page)
+    await openHome(page, '/clients')
     const missing = await page.request.get('/api/clients/999999999')
     expect(missing.status()).toBe(404)
     expect(await missing.json()).toMatchObject({ statusMessage: 'not_found', message: 'Не найдено' })

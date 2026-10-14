@@ -11,7 +11,7 @@ test.describe('страница «Я»', () => {
     await hydrated(page)
     await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
     await page.getByRole('menuitem', { name: 'Мой профиль' }).click()
-    await expect(page).toHaveURL(/\/me$/)
+    await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
     await expect(page.getByText(ADMIN_USER, { exact: true })).toBeVisible()
     await expect(page.getByText(/Включена|Выключена/)).toBeVisible()
@@ -57,7 +57,7 @@ test.describe('страница «Я»', () => {
       await loginUi(page, temp)
       await expect(page).toHaveURL(/\/$/)
 
-      await page.goto('/me')
+      await page.goto('/settings')
       await hydrated(page)
       await cur.fill(temp)
       await next.fill(ADMIN_PASSWORD)
@@ -96,7 +96,7 @@ test.describe('вход через Authentik из профиля', () => {
     guard.allow(400, /\/api\/admin\/sso(\/check)?$/)
     await loginApi(page)
     try {
-      await page.goto('/me')
+      await page.goto('/settings')
       await hydrated(page)
       const card = page.locator('form').filter({ hasText: 'Кого пускать' })
       await expect(card).toBeVisible()

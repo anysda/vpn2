@@ -8,15 +8,21 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
-  // Inter уже берётся из Google Fonts. Неиспользуемые каталоги
+  // Manrope берётся из Google Fonts. Неиспользуемые каталоги
   // Fontsource/Fontshare задерживали сборку на ~68 с при их отказе.
   fonts: {
     provider: 'google',
+    defaults: {
+      weights: [200, 300, 400, 500, 600],
+      subsets: ['cyrillic', 'latin'],
+    },
   },
 
+  // Тема по умолчанию как в системе; data-theme нужен токенам в main.css.
   colorMode: {
-    preference: 'dark',
+    preference: 'system',
     fallback: 'dark',
+    dataValue: 'theme',
   },
 
   runtimeConfig: {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import QRCode from 'qrcode-svg'
 
-useHead({ title: 'Профиль — anysda-vpn2' })
+useHead({ title: 'Настройки — anysda-vpn2' })
 
 const { user, loginMethod, fetch: refreshSession } = useAuthSession()
 const toast = useToast()
@@ -227,7 +227,14 @@ async function saveSso() {
 </script>
 
 <template>
-  <div class="max-w-xl mx-auto">
+  <main class="tab on">
+    <div class="head">
+      <div>
+        <h1>Настройки</h1>
+        <p>Бот, профиль и вход в панель</p>
+      </div>
+    </div>
+    <div class="max-w-xl mx-auto">
     <h1 class="text-2xl font-semibold mb-6">
       Мой профиль
     </h1>
@@ -493,5 +500,9 @@ async function saveSso() {
         </UButton>
       </template>
     </UModal>
-  </div>
+    </div>
+    <div class="max-w-xl mx-auto mt-6">
+      <BotsSection />
+    </div>
+  </main>
 </template>

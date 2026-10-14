@@ -78,7 +78,7 @@ test.describe('2FA', () => {
   test('слишком короткий код при включении — понятная ошибка, а не дамп схемы', async ({ page, guard }) => {
     guard.allow(400, /\/api\/auth\/two-factor\/verify-totp$/, 'POST')
     await loginApi(page)
-    await page.goto('/me')
+    await page.goto('/settings')
     await hydrated(page)
     await startSetup(page)
     await page.getByLabel('Введи 6-значный код из приложения').fill('123')
@@ -93,7 +93,7 @@ test.describe('2FA', () => {
   test('неверный пароль при включении — понятная ошибка', async ({ page, guard }) => {
     guard.allow(400, /\/api\/auth\/two-factor\/enable$/, 'POST')
     await loginApi(page)
-    await page.goto('/me')
+    await page.goto('/settings')
     await hydrated(page)
     await page.getByPlaceholder('Текущий пароль').fill(`${ADMIN_PASSWORD}-wrong`)
     await page.getByRole('button', { name: 'Включить 2FA' }).click()
@@ -108,7 +108,7 @@ test.describe('2FA', () => {
     // Вторая сессия той же учётки: включение 2FA обязано её закрыть.
     const other = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
     expect(other.status(), await other.text()).toBe(200)
-    await page.goto('/me')
+    await page.goto('/settings')
     await hydrated(page)
 
     // «Отмена» на шаге с QR возвращает исходное состояние.
@@ -176,7 +176,7 @@ test.describe('2FA', () => {
       expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
 
       // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
-      await page.goto('/me')
+      await page.goto('/settings')
       await hydrated(page)
       await page.getByRole('button', { name: 'Выключить 2FA' }).click()
       const dlg = page.getByRole('dialog', { name: 'Выключить 2FA?' })

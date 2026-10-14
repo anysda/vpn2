@@ -22,7 +22,7 @@ test.describe('настройки Telegram', () => {
       } })
     })
     try {
-      await openHome(page)
+      await openHome(page, '/settings')
       const card = botsCard(page)
       const nick = card.getByLabel('Никнейм админа бота', { exact: true })
       await expect(nick).toHaveValue('original')
@@ -43,7 +43,7 @@ test.describe('настройки Telegram', () => {
   })
 
   test('никнейм админа сохраняется без @ и возвращается обратно', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/settings')
     const card = botsCard(page)
     await expect(card.getByText(/НЕНАСТРОЕН|ОНЛАЙН|ОФФЛАЙН/)).toBeVisible()
     const save = card.getByRole('button', { name: 'Сохранить' })
@@ -79,7 +79,7 @@ test.describe('настройки Telegram', () => {
   // Бейдж — по /health бота, а не по открытому порту: бот с отвергнутым
   // токеном держит порт, но не отвечает (подставной бот в fake-backends так же).
   test('бейдж бота: принятый токен — ОНЛАЙН, отвергнутый — ОФФЛАЙН', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/settings')
     const before = await (await page.request.get('/api/admin/telegram')).json()
     test.skip(before.configured, 'на стенде настоящий токен — маска не даст его вернуть')
     const card = botsCard(page)
@@ -107,7 +107,7 @@ test.describe('настройки Telegram', () => {
 
   test('бот не настроен: новый клиент не встаёт в очередь, рассылка отвечает отказом', async ({ page, guard }) => {
     guard.allow(409, /\/api\/admin\/broadcast$/, 'POST')
-    await openHome(page)
+    await openHome(page, '/settings')
     test.skip((await (await page.request.get('/api/admin/telegram')).json()).configured, 'нужна панель без бота')
     const name = uniq('nobot')
     const created = await page.request.post('/api/clients', { data: { name } })

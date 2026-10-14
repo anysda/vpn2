@@ -66,7 +66,7 @@ for (const protocol of protocols) {
       const uiClient = await empty.json()
       try {
         guard.allow(409, /\/devices$/, 'POST')
-        await page.goto('/')
+        await page.goto('/clients')
         await openClient(page, `${name}-ui`)
         await page.getByRole('button', { name: 'девайс', exact: true }).click()
         const dialog = page.getByRole('dialog', { name: 'Новый девайс' })

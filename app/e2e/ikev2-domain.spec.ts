@@ -34,7 +34,7 @@ test('переход IKEv2 на домен сохраняет пароль и н
       server: 'vpn.example.test', remoteId: 'vpn.example.test', caCertPem: null,
       username: old.username, password: old.password, certificatePending: false,
     })
-    await page.goto('/')
+    await page.goto('/clients')
     await hydrated(page)
     await openClient(page, name)
     await page.getByRole('button', { name: 'IKEv2', exact: true }).click()

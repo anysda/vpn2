@@ -6,7 +6,7 @@ for (const width of [1400, 390]) {
     test.use({ viewport: { width, height: 844 } })
 
     test('HTML в именах клиента и девайса остаётся текстом в карточках и модалках', async ({ page }) => {
-      await openHome(page)
+      await openHome(page, '/clients')
       const client = 'e2e-<img src=x onerror="window.__xss=1">'
       const device = 'e2e-<svg onload="window.__xss=2">'
       await createClientUi(page, client)
@@ -27,9 +27,9 @@ for (const width of [1400, 390]) {
       expect((await page.request.delete(`/api/clients/${id}`)).ok()).toBe(true)
     })
 
-    test('после SPA-перехода в профиль таймеры главной и visibilitychange не опрашивают API', async ({ page }) => {
+    for (const from of ['/', '/clients']) test(`после SPA-перехода из ${from} в профиль таймеры раздела и visibilitychange не опрашивают API`, async ({ page }) => {
       await page.clock.install()
-      await openHome(page)
+      await openHome(page, from)
       await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
       await page.getByRole('menuitem', { name: 'Мой профиль' }).click()
       await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
@@ -37,12 +37,13 @@ for (const width of [1400, 390]) {
       const requests: string[] = []
       page.on('request', (request) => {
         const path = new URL(request.url()).pathname
-        if (/^\/api\/(clients|routes|ops\/nodes|admin\/telegram)(\/|$)/.test(path)) requests.push(path)
+        // Статус бота опрашивает сам профиль: настройки ботов живут там.
+        if (/^\/api\/(clients|routes|ops\/nodes)(\/|$)/.test(path)) requests.push(path)
       })
       await page.clock.fastForward(65_000)
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
       await page.waitForLoadState('networkidle')
-      expect(requests, 'подписки и интервалы размонтированной главной должны быть сняты').toEqual([])
+      expect(requests, 'подписки и интервалы размонтированного раздела должны быть сняты').toEqual([])
     })
   })
 }

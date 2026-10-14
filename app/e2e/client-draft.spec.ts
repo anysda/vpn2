@@ -6,7 +6,7 @@ for (const width of [1400, 390]) {
     test.use({ viewport: { width, height: 844 } })
 
     test('409 при переименовании сохраняет введённое имя для исправления', async ({ page, guard }) => {
-      await openHome(page)
+      await openHome(page, '/clients')
       const name = uniq('draft')
       const taken = uniq('taken')
       await createClientUi(page, name)
@@ -25,7 +25,7 @@ for (const width of [1400, 390]) {
     })
 
     test('422 при сохранении срока сохраняет дату для исправления', async ({ page, guard }) => {
-      await openHome(page)
+      await openHome(page, '/clients')
       const name = uniq('expiry-draft')
       await createClientUi(page, name)
       const dialog = await openClient(page, name)

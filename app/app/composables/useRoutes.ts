@@ -1,4 +1,6 @@
-export { parseOutbound } from '#shared/outbounds'
+import { parseOutbound } from '#shared/outbounds'
+
+export { parseOutbound }
 
 export interface Route {
   id: number
@@ -16,8 +18,12 @@ export interface Outbound {
   isDirectRu: boolean
 }
 
+/** Ключ списка правил: заголовок раздела читает его без второго опроса. */
+export const ROUTES_KEY = 'routes'
+
 export function useRoutes() {
   const { data: rules, refresh: refreshRules } = useFetch<Route[]>('/api/routes', {
+    key: ROUTES_KEY,
     default: () => [],
     server: false,
   })
@@ -110,4 +116,18 @@ export function flagFor(tag: string): string {
   if (/^[a-z]{2}$/.test(base))
     return String.fromCodePoint(...[...base.toUpperCase()].map(c => 0x1F1E6 + c.charCodeAt(0) - 65))
   return '🌍'
+}
+
+/** Экзиты для выпадашки «предпочитаемый экзит» в модалке клиента (direct-выходы, без RU). */
+export function useExitTags() {
+  const { data: outboundList } = useFetch<Outbound[]>('/api/routes/outbounds', {
+    default: () => [],
+    server: false,
+  })
+  return computed(() => [...new Set(
+    outboundList.value
+      .map(o => parseOutbound(o.name))
+      .filter(p => p && p.variant === 'direct' && p.tag !== 'ru')
+      .map(p => p!.tag),
+  )].sort())
 }

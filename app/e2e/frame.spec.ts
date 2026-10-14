@@ -1,0 +1,73 @@
+import { ADMIN_USER, expect, hydrated, loginApi, test } from './support/fixtures'
+
+const TABS = [
+  { path: '/', tab: 'Обзор', title: 'Обзор' },
+  { path: '/clients', tab: 'Клиенты', title: 'Клиенты' },
+  { path: '/routes', tab: 'Маршруты', title: 'Маршруты' },
+  { path: '/dns', tab: 'DNS', title: 'DNS' },
+  { path: '/settings', tab: 'Настройки', title: 'Настройки' },
+]
+
+test.describe('разделы шапки', () => {
+  test('каждый раздел открывается прямой ссылкой и отмечен в шапке', async ({ page }) => {
+    await loginApi(page)
+    for (const t of TABS) {
+      await page.goto(t.path)
+      await hydrated(page)
+      await expect(page).toHaveTitle(new RegExp(`^${t.title} — `))
+      const nav = page.getByRole('navigation')
+      await expect(nav.getByRole('link', { name: t.tab, exact: true })).toHaveAttribute('aria-current', 'page')
+      await expect(nav.locator('[aria-current="page"]')).toHaveCount(1)
+    }
+  })
+
+  test('переход по вкладке и «назад» без перезагрузки', async ({ page }) => {
+    await loginApi(page)
+    await page.goto('/routes')
+    await hydrated(page)
+    await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
+    await page.evaluate(() => Reflect.set(window, '__sameDocument', true))
+    await page.getByRole('navigation').getByRole('link', { name: 'Клиенты', exact: true }).click()
+    await expect(page).toHaveURL(/\/clients$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Клиенты и ключи' })).toBeVisible()
+    await page.goBack()
+    await expect(page).toHaveURL(/\/routes$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
+    expect(await page.evaluate(() => Reflect.get(window, '__sameDocument'))).toBe(true)
+  })
+})
+
+test.describe('тема', () => {
+  test('выбор темы переживает перезагрузку и стоит до первой отрисовки', async ({ page }) => {
+    await page.emulateMedia({ colorScheme: 'dark' })
+    // Тема на <html> в момент разбора документа — до скриптов приложения.
+    await page.addInitScript(() => {
+      document.addEventListener('DOMContentLoaded', () => {
+        Reflect.set(window, '__themeAtParse', document.documentElement.dataset.theme ?? null)
+      })
+    })
+    await loginApi(page)
+    await page.goto('/')
+    await hydrated(page)
+    const html = page.locator('html')
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+
+    const choose = async (label: string) => {
+      await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
+      await page.getByRole('group', { name: 'Тема' }).getByRole('button', { name: label, exact: true }).click()
+      await page.keyboard.press('Escape')
+    }
+    await choose('Светлая')
+    await expect(html).toHaveAttribute('data-theme', 'light')
+    await page.reload()
+    await hydrated(page)
+    expect(await page.evaluate(() => Reflect.get(window, '__themeAtParse'))).toBe('light')
+    await expect(html).toHaveAttribute('data-theme', 'light')
+
+    // «Как в системе» следует за сменой темы ОС без перезагрузки.
+    await choose('Как в системе')
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(html).toHaveAttribute('data-theme', 'light')
+  })
+})

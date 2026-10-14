@@ -35,7 +35,7 @@ test('недоступный бот: тост клиента, рассылки, 
   const anonymous = await page.request.get('/api/admin/bot-deliveries')
   expect(anonymous.ok()).toBe(true)
   expect(await anonymous.json()).toEqual([])
-  await openHome(page)
+  await openHome(page, '/settings')
   const original = await (await page.request.get('/api/admin/telegram')).json()
   test.skip(original.configured, 'настоящие настройки бота менять нельзя')
   const name = uniq('delivery')

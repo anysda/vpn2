@@ -4,38 +4,36 @@ defineProps<{ error: { statusCode?: number, message?: string, statusMessage?: st
 function handleError() {
   clearError({ redirect: '/' })
 }
+
+// Карточка поднимается, как карточки разделов.
+const card = ref<HTMLElement>()
+onMounted(() => {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  card.value?.animate([{ opacity: 0, transform: 'translateY(22px)' }, { opacity: 1, transform: 'none' }],
+    { duration: 520, delay: 60, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })
+})
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-(--ui-page) p-4">
-    <UCard class="w-full max-w-md">
-      <template #header>
-        <div class="flex items-center gap-2 font-semibold text-lg">
-          <UIcon name="i-lucide-triangle-alert" class="text-red-500" />
-          Ошибка
-          <span v-if="error.statusCode" class="text-(--ui-text-muted) text-sm">
-            ({{ error.statusCode }})
-          </span>
+  <div>
+    <div class="light" />
+    <div class="wrap">
+      <main class="tab on bare">
+        <div ref="card" class="card lgn errp">
+          <svg class="i tri" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3zM12 10v4.5M12 17.2v.1" /></svg>
+          <h2>Ошибка</h2>
+          <b v-if="error.statusCode" class="big">{{ error.statusCode }}</b>
+          <p>{{ error.statusMessage || error.message || 'Что-то пошло не так.' }}</p>
+          <div class="mf" style="justify-content:center">
+            <button type="button" class="pill" @click="handleError">
+              На главную
+            </button>
+            <button type="button" class="pill w" @click="$router.go(0)">
+              Обновить
+            </button>
+          </div>
         </div>
-      </template>
-
-      <div class="space-y-3 text-sm">
-        <p class="text-(--ui-text-muted)">
-          {{ error.statusMessage || error.message || 'Что-то пошло не так.' }}
-        </p>
-        <div class="flex gap-2">
-          <UButton color="primary" @click="handleError">
-            На главную
-          </UButton>
-          <UButton
-            color="neutral"
-            variant="soft"
-            @click="$router.go(0)"
-          >
-            Обновить
-          </UButton>
-        </div>
-      </div>
-    </UCard>
+      </main>
+    </div>
   </div>
 </template>

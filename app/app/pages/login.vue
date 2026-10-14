@@ -82,102 +82,114 @@ function reset() {
   state.totpCode = ''
   error.value = null
 }
+
+// Движение входа из макета: карточка выплывает, шаг кода выезжает, ошибка
+// коротко встряхивает форму.
+const EASE = 'cubic-bezier(.23,1,.32,1)'
+const card = ref<HTMLElement>()
+const codeField = ref<HTMLElement>()
+const codeInput = ref<HTMLInputElement>()
+const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+onMounted(() => {
+  if (still()) return
+  card.value?.animate([{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }],
+    { duration: 500, easing: EASE, fill: 'backwards' })
+})
+watch(needsTotp, async (on) => {
+  if (!on) return
+  await nextTick()
+  if (!still()) {
+    codeField.value?.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 300, easing: EASE, fill: 'backwards' })
+  }
+  setTimeout(() => codeInput.value?.focus(), 30)
+})
+watch(error, (msg) => {
+  if (!msg || still()) return
+  card.value?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }],
+    { duration: 340, easing: 'ease-out' })
+})
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-(--ui-page) p-4">
-    <UCard class="w-full max-w-sm">
-      <template #header>
-        <div class="text-center font-semibold text-lg">
-          anysda-vpn2
+  <div>
+    <div class="light" />
+    <div class="wrap">
+      <main class="tab on bare login">
+        <div ref="card" class="card lgn">
+          <div class="logo" style="justify-content:center">
+            <span>anysda-vpn2</span>
+          </div>
+          <div v-if="ssoErrorText" class="al red" role="alert">
+            {{ ssoErrorText }}
+          </div>
+
+          <!-- Кнопка нужна и при autoRedirect: на эту страницу попадают только
+               через break-glass (?direct=1) или после ошибки — обратный путь в SSO
+               должен оставаться в один клик. -->
+          <template v-if="sso.enabled && !needsTotp">
+            <a class="pill w lsso" href="/auth/authentik">
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z" /></svg>Войти через {{ sso.label }}
+            </a>
+            <div class="or">
+              <span>или по паролю</span>
+            </div>
+          </template>
+
+          <form @submit.prevent="submit">
+            <label class="fl2">
+              <span>Логин</span>
+              <input
+                v-model="state.username"
+                class="in"
+                required
+                :disabled="needsTotp || loading"
+                autocomplete="username"
+              >
+            </label>
+            <label class="fl2">
+              <span>Пароль</span>
+              <input
+                v-model="state.password"
+                class="in"
+                type="password"
+                required
+                :disabled="needsTotp || loading"
+                autocomplete="current-password"
+              >
+            </label>
+            <label v-if="needsTotp" ref="codeField" class="fl2">
+              <span>Код из аутентификатора</span>
+              <input
+                ref="codeInput"
+                v-model="state.totpCode"
+                class="in mono"
+                required
+                placeholder="123 456"
+                inputmode="numeric"
+                autocomplete="one-time-code"
+              >
+            </label>
+            <div v-if="error" class="al red" role="alert">
+              {{ error }}
+            </div>
+            <div class="mf">
+              <button
+                v-if="needsTotp"
+                type="button"
+                class="pill"
+                :disabled="loading"
+                @click="reset"
+              >
+                Назад
+              </button>
+              <button type="submit" class="pill w lgo" :disabled="loading">
+                {{ needsTotp ? 'Подтвердить' : 'Войти' }}
+              </button>
+            </div>
+          </form>
         </div>
-      </template>
-
-      <UAlert
-        v-if="ssoErrorText"
-        class="mb-4"
-        color="warning"
-        variant="soft"
-        :title="ssoErrorText"
-        icon="i-lucide-shield-alert"
-      />
-
-      <!-- Кнопка нужна и при autoRedirect: на эту страницу попадают только
-           через break-glass (?direct=1) или после ошибки — обратный путь в SSO
-           должен оставаться в один клик. -->
-      <div v-if="sso.enabled && !needsTotp" class="mb-4 space-y-3">
-        <UButton
-          block
-          icon="i-lucide-key-round"
-          :to="'/auth/authentik'"
-          external
-        >
-          Войти через {{ sso.label }}
-        </UButton>
-        <div class="flex items-center gap-2 text-xs text-(--ui-text-muted)">
-          <span class="h-px flex-1 bg-(--ui-border)" />
-          или по паролю
-          <span class="h-px flex-1 bg-(--ui-border)" />
-        </div>
-      </div>
-
-      <form class="space-y-4" @submit.prevent="submit">
-        <UFormField label="Логин" required>
-          <UInput
-            v-model="state.username"
-            :disabled="needsTotp || loading"
-            autocomplete="username"
-            class="w-full"
-          />
-        </UFormField>
-        <UFormField label="Пароль" required>
-          <UInput
-            v-model="state.password"
-            type="password"
-            :disabled="needsTotp || loading"
-            autocomplete="current-password"
-            class="w-full"
-          />
-        </UFormField>
-
-        <UFormField v-if="needsTotp" label="Код из аутентификатора" required>
-          <UInput
-            v-model="state.totpCode"
-            placeholder="123 456"
-            autocomplete="one-time-code"
-            inputmode="numeric"
-            class="w-full"
-            autofocus
-          />
-        </UFormField>
-
-        <UAlert
-          v-if="error"
-          color="error"
-          variant="soft"
-          :title="error"
-          icon="i-lucide-circle-alert"
-        />
-
-        <div class="flex gap-2">
-          <UButton
-            v-if="needsTotp"
-            color="neutral"
-            variant="outline"
-            :disabled="loading"
-            @click="reset"
-          >
-            Назад
-          </UButton>
-          <UButton
-            type="submit"
-            block
-            :loading="loading"
-          >
-            {{ needsTotp ? 'Подтвердить' : 'Войти' }}
-          </UButton>
-        </div>
-      </form>
-    </UCard>
+      </main>
+    </div>
   </div>
 </template>

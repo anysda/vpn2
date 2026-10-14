@@ -21,7 +21,7 @@ test('WG: панель объясняет отсутствие IPv4 и не да
     contentType: 'application/json',
     body: JSON.stringify({ statusCode: 422, statusMessage: 'wg_ipv4_endpoint_unavailable', message }),
   }))
-  await page.goto('/')
+  await page.goto('/clients')
   await hydrated(page)
   await openClient(page, name)
   await deviceCard(page, 'phone').wg.click()
@@ -61,7 +61,7 @@ test('WG QR декодируется в выданный конфиг без з�
 
 test('QR настройки 2FA декодируется без зеркального восстановления', async ({ page }) => {
   await loginApi(page)
-  await page.goto('/me')
+  await page.goto('/settings')
   await hydrated(page)
   await page.getByPlaceholder('Текущий пароль', { exact: true }).fill(ADMIN_PASSWORD)
   const response = page.waitForResponse(r => r.url().endsWith('/api/auth/two-factor/enable'))

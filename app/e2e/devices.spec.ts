@@ -45,7 +45,7 @@ async function qrLoaded(dlg: Locator) {
 test.describe('девайсы', () => {
   test('WG: QR, .conf, перевыпуск меняет ключ и QR, удаление', async ({ page }) => {
     const qrs = qrResponses(page)
-    await openHome(page)
+    await openHome(page, '/clients')
     const client = uniq('wg')
     const device = 'e2e-phone'
     await createClientUi(page, client)
@@ -121,7 +121,7 @@ test.describe('девайсы', () => {
   })
 
   test('OpenVPN: .ovpn с сертификатами, перевыпуск меняет сертификат', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/clients')
     const client = uniq('ovpn')
     const device = 'e2e-laptop'
     await createClientUi(page, client)
@@ -155,7 +155,7 @@ test.describe('девайсы', () => {
   })
 
   test('IKEv2: сервер и логин, пароль скрыт и показывается, CA скачивается', async ({ page }) => {
-    await openHome(page)
+    await openHome(page, '/clients')
     const client = uniq('ikev2')
     const device = 'e2e-mac'
     await createClientUi(page, client)

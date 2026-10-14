@@ -6,7 +6,7 @@ for (const width of [1400, 390]) {
     test.use({ viewport: { width, height: 844 } })
 
     test('запоздавший GET закрытой карточки не подменяет открытого клиента', async ({ page }) => {
-      await openHome(page)
+      await openHome(page, '/clients')
       const first = uniq('first')
       const second = uniq('second')
       await createClientUi(page, first)

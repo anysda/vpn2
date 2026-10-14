@@ -73,7 +73,7 @@ for (const scenario of scenarios) {
         `, botPath))
       }
       if (scenario.ui) {
-        await page.goto('/')
+        await page.goto('/clients')
         await hydrated(page)
         const modal = await openClient(page, name)
         if (wholeClient) await modal.getByRole('button', { name: 'Удалить клиента' }).click()

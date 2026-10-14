@@ -60,10 +60,14 @@ async function submit() {
 </script>
 
 <template>
-  <div class="max-w-xl mx-auto">
-    <h1 class="text-2xl font-semibold mb-6">
-      Настроить экран
-    </h1>
+  <main class="tab on">
+    <div class="head">
+      <div>
+        <h1>Настроить экран</h1>
+        <p>Перетаскивай блоки обзора: порядок сверху вниз, ненужное — в «Скрыто»</p>
+      </div>
+    </div>
+    <div class="max-w-xl mx-auto">
 
     <UCard>
       <div class="space-y-4">
@@ -128,5 +132,6 @@ async function submit() {
         </div>
       </template>
     </UCard>
-  </div>
+    </div>
+  </main>
 </template>

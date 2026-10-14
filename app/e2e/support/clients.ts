@@ -1,9 +1,9 @@
 import type { Page } from '@playwright/test'
 import { expect, hydrated, loginApi, toast } from './fixtures'
 
-export async function openHome(page: Page) {
+export async function openHome(page: Page, path = '/') {
   await loginApi(page)
-  await page.goto('/')
+  await page.goto(path)
   await hydrated(page)
 }
 

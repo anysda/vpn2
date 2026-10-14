@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, test, toast, uniq } from './support/fixtures'
+import { expect, hydrated, test, toast, uniq } from './support/fixtures'
 import { addDevice, createClientUi, deviceCard, openClient, openHome } from './support/clients'
 import { checkBotQueue } from './support/bot-queue'
 
@@ -19,11 +19,11 @@ async function noHorizontalOverflow(page: Page, where: string) {
   expect(m.sw, `${where}: scrollWidth ${m.sw} > ${m.vw}; вылезают: ${m.wide.join('; ')}`).toBeLessThanOrEqual(m.vw)
 }
 
-test.describe('телефон 390px', () => {
+test.describe('окно 1024px', () => {
   test('очередь: короткий тост один раз за сессию вкладки без горизонтальной прокрутки', async ({ page }) => {
     await checkBotQueue(page, () => noHorizontalOverflow(page, 'очередь уведомлений'))
   })
-  test('главная, «Я», вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
+  test('разделы, вход и модалки без горизонтальной прокрутки; модалки закрываются', async ({ page }) => {
     await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: Array.from({ length: 5 }, (_, i) => ({
       id: `phone-queue-${i}`, label: `Уведомление ${i + 1}`, status: 'queued', remaining: 5,
     })) }))
@@ -34,16 +34,24 @@ test.describe('телефон 390px', () => {
 
     await openHome(page)
     await expect(queueToast).toBeVisible()
-    // Дождаться карточек мониторинга и маршрутов — они и есть самые широкие.
+    // Дождаться карточек мониторинга — они и есть самые широкие.
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
     await expect(page.getByText('CPU').first()).toBeVisible()
     await noHorizontalOverflow(page, '/')
 
-    await page.goto('/me')
-    await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
-    await noHorizontalOverflow(page, '/me')
+    await page.goto('/routes')
+    await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
+    await noHorizontalOverflow(page, '/routes')
+    await page.goto('/dns')
+    await expect(page.getByText('DNS').first()).toBeVisible()
+    await noHorizontalOverflow(page, '/dns')
 
-    await page.goto('/')
+    await page.goto('/settings')
+    await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
+    await noHorizontalOverflow(page, '/settings')
+
+    await page.goto('/clients')
+    await hydrated(page)
     const client = uniq('phone')
     await createClientUi(page, client)
     const dlg = await openClient(page, client)

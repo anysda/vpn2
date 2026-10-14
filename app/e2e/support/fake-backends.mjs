@@ -3,8 +3,7 @@
 // 127.0.0.1. Ноды и выходы — из тех же NUXT_MGMT_IPS / NUXT_EXIT_TAGS, что у панели.
 //
 // FAKE_DEMO=1 (e2e/front-test.sh) - живой режим для показа панели: метрики нод
-// и задержки выходов меняются во времени, последний экзит деградирован, есть
-// AdGuard (:3000), бот всегда «онлайн» и копит события, а устройства из
+// и задержки выходов меняются во времени, последний экзит деградирован, бот всегда «онлайн» и копит события, а устройства из
 // FAKE_LIVE_FILE (его пишет front-test-seed.mjs) качают трафик через IKEv2.
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -308,25 +307,167 @@ function writeIkev2Status() {
   renameSync(`${file}.tmp`, file)
 }
 
-// AdGuard Home /control/stats: запросы копятся с полуночи.
-function adguard(req, res) {
-  if (!req.url.startsWith('/control/stats')) return notFound(res)
-  const t = Date.now() / 1000
-  const sinceMidnight = Math.max(60, (t + MSK_OFFSET_SEC) % 86400)
-  const total = Math.round(sinceMidnight * 2.7)
-  json(res, {
-    num_dns_queries: total,
-    num_blocked_filtering: Math.round(total * 0.143),
-    num_replaced_safebrowsing: 12,
+// AdGuard Home (:3000): ручки /control/*, которыми пользуется вкладка DNS,
+// с состоянием в памяти. Вердикт check_host и журнал считаются по тем же
+// правилам, что и у настоящего: свои @@ сильнее списков, сервис сильнее @@.
+const agh = {
+  user_rules: ['||mc.yandex.ru^'],
+  filters: [
+    { id: 1, name: 'AdGuard DNS filter', url: 'https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt', enabled: true, rules_count: 72410, last_updated: new Date().toISOString() },
+  ],
+  whitelist_filters: [],
+  blocked_services: ['tiktok'],
+  upstream_mode: 'load_balance',
+}
+// Движок фильтрации: как у настоящего, set_rules и set_url видны в
+// filtering/status сразу, а check_host и журнал — после пересборки (~0,4 с).
+const aghSnap = () => ({ user_rules: [...agh.user_rules], on: new Set(agh.filters.filter(f => f.enabled).map(f => f.id)) })
+let aghApplied = aghSnap()
+let aghRebuild
+function aghApply() {
+  clearTimeout(aghRebuild)
+  aghRebuild = setTimeout(() => { aghApplied = aghSnap() }, 400)
+}
+// Что «содержат» списки: домен → id списка.
+const AGH_LISTS = { 'ads.example.net': 1, 'app-measurement.com': 1, 'doubleclick.net': 1 }
+const AGH_SERVICES = [
+  { id: 'youtube', name: 'YouTube', domains: ['youtube.com', 'googlevideo.com'] },
+  { id: 'tiktok', name: 'TikTok', domains: ['tiktok.com', 'tiktokcdn.com'] },
+  { id: 'instagram', name: 'Instagram', domains: ['instagram.com'] },
+]
+const under = (name, d) => name === d || name.endsWith(`.${d}`)
+
+function aghCheck(name) {
+  const svc = AGH_SERVICES.find(s => agh.blocked_services.includes(s.id) && s.domains.some(d => under(name, d)))
+  if (svc) return { reason: 'FilteredBlockedService', service_name: svc.id, rules: [{ text: `||${name}^`, filter_list_id: -2 }] }
+  const rule = (allow) => aghApplied.user_rules.find((r) => {
+    const m = r.trim().match(/^(@@)?\|\|([^^$]+)\^/)
+    return m && !!m[1] === allow && under(name, m[2])
+  })
+  const allow = rule(true), deny = rule(false)
+  if (deny && (!allow || deny.includes('$important'))) return { reason: 'FilteredBlackList', rules: [{ text: deny, filter_list_id: 0 }] }
+  if (allow) return { reason: 'NotFilteredWhiteList', rules: [{ text: allow, filter_list_id: 0 }] }
+  const hit = Object.keys(AGH_LISTS).find(d => under(name, d))
+  const list = hit && agh.filters.find(f => f.id === AGH_LISTS[hit] && aghApplied.on.has(f.id))
+  if (list) return { reason: 'FilteredBlackList', rules: [{ text: `||${hit}^`, filter_list_id: list.id }] }
+  return { reason: 'NotFilteredNotFound', rules: [] }
+}
+
+// Адреса устройств панели: AdGuard видит клиентов адресами в туннеле. Берутся
+// на каждый запрос, новые первыми: устройство, заведённое тестом, сразу в журнале.
+function aghClientIps() {
+  try {
+    const db = new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite', { readOnly: true })
+    try { return db.prepare('SELECT wg_ip FROM devices WHERE wg_ip IS NOT NULL ORDER BY id DESC LIMIT 4').all().map(r => r.wg_ip) }
+    finally { db.close() }
+  }
+  catch { return [] }
+}
+
+// Журнал пишется один раз, как у настоящего: правило, добавленное позже, старые
+// строки не меняет.
+const AGH_ASKED = ['ads.example.net', 'github.com', 'mc.yandex.ru', 'www.youtube.com', 'vm.tiktok.com', 'chatgpt.com', 'doubleclick.net', 'test.lan']
+let aghLog = null
+function aghJournal() {
+  if (aghLog) return aghLog
+  const now = Date.now()
+  aghLog = Array.from({ length: 64 }, (_, i) => {
+    const name = AGH_ASKED[i % AGH_ASKED.length]
+    const c = aghCheck(name)
+    const rw = name === 'test.lan'
+    return {
+      time: new Date(now - i * 37_000).toISOString(),
+      question: { name, type: i % 5 ? 'A' : 'AAAA', class: 'IN' },
+      client_info: null,
+      reason: rw ? 'Rewrite' : c.reason,
+      rules: rw ? [] : c.rules,
+      service_name: c.service_name,
+      answer: rw ? [{ type: 'A', value: '192.0.2.1', ttl: 10 }] : [{ type: 'A', value: '203.0.113.7', ttl: 300 }],
+      cached: !rw && c.reason === 'NotFilteredNotFound' && i % 3 === 0,
+      upstream: c.reason === 'NotFilteredNotFound' ? 'https://dns.example:443/dns-query' : '',
+      elapsedMs: String(3 + (i % 7) * 0.9),
+    }
+  })
+  return aghLog
+}
+
+function aghStats() {
+  const q = Array.from({ length: 168 }, (_, i) => i < 144 ? 0 : 60 + Math.round(40 * Math.sin(i / 3)))
+  const b = q.map(v => Math.round(v * 0.12))
+  const top = obj => Object.entries(obj).map(([k, v]) => ({ [k]: v }))
+  const ips = aghClientIps()
+  return {
+    time_units: 'hours',
+    num_dns_queries: q.slice(-24).reduce((a, x) => a + x, 0),
+    num_blocked_filtering: b.slice(-24).reduce((a, x) => a + x, 0),
+    num_replaced_safebrowsing: 2,
     num_replaced_safesearch: 0,
     num_replaced_parental: 0,
-    avg_processing_time: wave(0.0142, 0.004, t, 2),
-    top_blocked_domains: [
-      { 'mc.yandex.ru': Math.round(total * 0.031) },
-      { 'app-measurement.com': Math.round(total * 0.019) },
-      { 'ads.vk.com': Math.round(total * 0.011) },
-    ],
-  }, 'application/json')
+    avg_processing_time: 0.0142,
+    dns_queries: q,
+    blocked_filtering: b,
+    replaced_safebrowsing: q.map((_, i) => i === 160 || i === 165 ? 1 : 0),
+    replaced_parental: q.map(() => 0),
+    top_queried_domains: top({ 'github.com': 120, 'chatgpt.com': 80, 'ads.example.net': 40 }),
+    top_clients: top(Object.fromEntries((ips.length ? ips : ['10.66.66.2']).map((ip, i) => [ip, 300 - i * 50]))),
+    top_blocked_domains: top({ 'mc.yandex.ru': 31, 'ads.example.net': 19, 'doubleclick.net': 11 }),
+    top_upstreams_responses: top({ 'https://dns.example:443/dns-query': 700, '192.0.2.53:53': 300 }),
+    top_upstreams_avg_time: top({ 'https://dns.example:443/dns-query': 0.0041, '192.0.2.53:53': 0.0072 }),
+  }
+}
+
+function aghBody(req) {
+  return new Promise((resolve) => {
+    let body = ''
+    req.on('data', (c) => { body += c })
+    req.on('end', () => {
+      try { resolve(JSON.parse(body || '{}')) }
+      catch { resolve(null) }
+    })
+  })
+}
+
+async function adguard(req, res) {
+  const url = new URL(req.url, 'http://agh')
+  const path = url.pathname.replace(/^\/control\//, '')
+  const ok = () => { res.writeHead(200); res.end('OK') }
+  if (req.method === 'GET') {
+    if (path === 'stats') return json(res, aghStats(), 'application/json')
+    if (path === 'dns_info') return json(res, { upstream_mode: agh.upstream_mode, protection_enabled: true }, 'application/json')
+    if (path === 'filtering/status') {
+      const { user_rules, filters, whitelist_filters } = agh
+      return json(res, { enabled: true, interval: 24, user_rules, filters, whitelist_filters }, 'application/json')
+    }
+    if (path === 'filtering/check_host') return json(res, aghCheck(url.searchParams.get('name') ?? ''), 'application/json')
+    if (path === 'blocked_services/all') {
+      return json(res, { blocked_services: AGH_SERVICES.map(({ id, name }) => ({ id, name, icon_svg: '', rules: [] })), groups: [] }, 'application/json')
+    }
+    if (path === 'querylog') {
+      const p = url.searchParams
+      const status = p.get('response_status') ?? 'all'
+      const s = p.get('search') ?? ''
+      const older = p.get('older_than')
+      const limit = Number(p.get('limit') ?? 500)
+      const ips = aghClientIps()
+      const all = aghJournal().map((e, i) => ({ ...e, client: ips[i % Math.max(1, ips.length)] ?? `10.66.66.${2 + i % 3}` }))
+        .filter(e => (!older || e.time < older)
+        && (status !== 'filtered' || e.reason.startsWith('Filtered') || e.reason === 'Rewrite')
+        && (!s || e.question.name.includes(s) || e.client.includes(s)))
+      const data = all.slice(0, limit)
+      return json(res, { data, oldest: data.at(-1)?.time ?? '' }, 'application/json')
+    }
+  }
+  if (req.method === 'POST' && path === 'filtering/set_rules') {
+    const b = await aghBody(req)
+    if (!b || !Array.isArray(b.rules)) {
+      res.writeHead(400)
+      return res.end('bad rules')
+    }
+    agh.user_rules = b.rules
+    aghApply()
+    return ok()
+  }
+  notFound(res)
 }
 
 // Бот всегда «онлайн» и, как настоящий, называет в /health своё имя; события
@@ -361,8 +502,8 @@ function demoBot(req, res) {
 createServer(vm).listen(8428, '127.0.0.1')
 createServer(clash).listen(9090, '127.0.0.1')
 createServer(bot).listen(8877, '127.0.0.1')
+createServer(adguard).listen(3000, '127.0.0.1')
 if (DEMO) {
-  createServer(adguard).listen(3000, '127.0.0.1')
   setInterval(writeIkev2Status, 5000)
 }
-console.log(`fake backends${DEMO ? ' (demo)' : ''}: vm :8428 (${instances.join(' ')}), clash :9090 (${tags.join(' ')}), bot :8877`)
+console.log(`fake backends${DEMO ? ' (demo)' : ''}: vm :8428 (${instances.join(' ')}), clash :9090 (${tags.join(' ')}), bot :8877, adguard :3000`)

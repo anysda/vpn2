@@ -1,3 +1,5 @@
+import { useLogger } from './logger'
+
 interface AghStats {
   num_dns_queries: number
   num_blocked_filtering: number
@@ -47,5 +49,39 @@ export async function fetchAdguardStats(): Promise<AghSnapshot | null> {
   catch (err) {
     useLogger().debug({ err }, 'agh /control/stats failed')
     return null
+  }
+}
+
+interface AghCall {
+  method?: 'GET' | 'POST' | 'PUT'
+  body?: Record<string, unknown>
+  query?: Record<string, string | number | undefined>
+  timeout?: number
+}
+
+/**
+ * Запрос к API AdGuard Home от имени панели. Отказ AdGuard (4xx с текстом)
+ * уходит человеку как 400 с его текстом, нет связи или неверные креды — 502.
+ */
+export async function agh<T>(path: string, call: AghCall = {}): Promise<T> {
+  const url = useRuntimeConfig().aghUrl as string
+  try {
+    return await $fetch<T>(`${url}/control/${path}`, {
+      method: call.method ?? 'GET',
+      body: call.body,
+      query: call.query,
+      headers: authHeader(),
+      timeout: call.timeout ?? 8000,
+    })
+  }
+  catch (err) {
+    const e = err as { statusCode?: number, data?: unknown }
+    const status = e.statusCode ?? 0
+    if (status >= 400 && status < 500 && status !== 401 && status !== 403) {
+      const text = typeof e.data === 'string' ? e.data.trim() : ''
+      throw createError({ statusCode: 400, statusMessage: 'agh_rejected', message: text || 'AdGuard отклонил запрос' })
+    }
+    useLogger().warn({ err, path }, 'agh request failed')
+    throw createError({ statusCode: 502, statusMessage: 'agh_unavailable', message: 'AdGuard недоступен (нет соединения / неверные креды)' })
   }
 }

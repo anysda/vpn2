@@ -1,0 +1,118 @@
+/* Вкладка DNS по макету. Всё под .dns, чтобы не задеть другие разделы. */
+
+/* ---------- общие кирпичики макета ---------- */
+.dns .ha{display:flex;gap:8px}
+.dns .card h3{font-size:14px;font-weight:500;color:var(--t2)}
+.dns .big small{font-size:18px;color:var(--t3);font-weight:300;letter-spacing:0;margin-left:4px}
+.dns .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
+.dns .tag.ok{color:var(--green);border:1px solid rgba(var(--grn-rgb),.3);background:rgba(var(--grn-rgb),.06)}
+.dns .tag.badt{color:var(--red);border:1px solid rgba(var(--red-rgb),.35);background:rgba(var(--red-rgb),.08)}
+.dns .fhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.dns .fhead h3{color:var(--t1);font-size:15px}
+.dns .fhead .tag{background:none;border:1px solid var(--line);height:28px}
+.dns .bar{position:relative;height:10px;border-radius:999px;background:var(--sunk);border:1px solid rgba(var(--fg),.05);margin-top:auto}
+.dns .bar i{position:absolute;left:0;top:0;bottom:0;width:82%;border-radius:999px;background:linear-gradient(90deg,rgba(var(--fg),.25),var(--acc));box-shadow:0 0 14px rgba(var(--glow),calc(.55*var(--gk))),0 0 34px rgba(var(--glow),calc(.25*var(--gk)))}
+.dns .inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
+.dns .inp:focus-within{border-color:rgba(var(--fg),.3)}
+.dns .inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;width:200px}
+.dns .inp input::placeholder{color:var(--t3)}
+.dns .inp.big2{height:50px;border-radius:14px;padding:0 16px;background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));margin-top:14px}
+.dns .inp.big2 input{font-size:16px;width:100%}
+.dns .seg{display:inline-flex;gap:6px;margin-bottom:14px;position:relative}
+.dns .seg button{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
+.dns .seg button:active{transform:scale(.96)}
+.dns .seg button.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
+.dns .seg.sm{margin:0}.dns .seg.sm button{height:34px;padding:0 14px;font-size:12.5px}
+.dns .seg.gl button.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
+.dns .lit{background:linear-gradient(165deg,var(--lit-a) 0%,var(--lit-b) 30%,var(--lit-c) 100%);border-color:rgba(var(--fg),.13)}
+.dns .scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
+.dns .scroll::-webkit-scrollbar{width:8px}.dns .scroll::-webkit-scrollbar-thumb{background:rgba(var(--fg),.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+.dns .sub2{color:var(--t3);font-size:12.5px;margin-top:3px}
+.dns .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace!important;font-size:12.5px!important}
+.dns .pill svg{transition:transform .2s var(--ease)}
+.dns .spin svg{animation:spin .6s var(--ease)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- подразделы ---------- */
+.dns .dseg{margin:0;flex-wrap:wrap}
+.dns .dpan{display:none}
+.dns .dpan.on{display:block;animation:tfade .2s var(--ease)}
+
+/* ---------- сводка ---------- */
+.dns .dk{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
+.dns .dk .card{height:164px;display:flex;flex-direction:column}
+.dns .dk .nums{display:flex;align-items:center;gap:10px;margin-top:12px}
+.dns .dk .lit h3,.dns .dk .lit .tag{color:var(--lit-t)}
+.dns .dk svg{margin-top:auto;width:100%;height:40px}
+.dns .d2{display:grid;grid-template-columns:7fr 5fr;gap:12px;margin-bottom:12px}
+.dns .qchart{height:316px;display:flex;flex-direction:column}
+.dns .lg{display:flex;gap:18px;font-size:12px;color:var(--t2)}.dns .lg>span{display:flex;align-items:center;gap:7px}
+.dns .plot{position:relative;flex:1;margin-top:10px;background:linear-gradient(rgba(var(--fg),.05) 1px,transparent 1px) 0 0/100% 25%}
+.dns .plot svg{position:absolute;inset:0;width:100%;height:100%}
+.dns .hrs{display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-top:10px}
+.dns .ups{height:316px;display:flex;flex-direction:column}
+.dns .upl{margin-top:6px;display:grid}
+.dns .up{padding:13px 0;border-top:1px solid rgba(var(--fg),.05)}
+.dns .up:first-child{border-top:0}
+.dns .up .u1{display:flex;align-items:baseline;gap:10px}
+.dns .up .u1 b{font-weight:500;font-size:13px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dns .up .u1 span{font-size:12px;color:var(--t3)}.dns .up .u1 em{font-style:normal;font-weight:300;font-size:20px;letter-spacing:-.02em;width:76px;text-align:right}
+.dns .up .bar{height:6px;margin-top:9px}.dns .up .bar i{box-shadow:none}
+.dns .up:first-child .bar i{box-shadow:0 0 12px rgba(var(--glow),calc(.45*var(--gk)))}
+.dns .d3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.dns .tl ul{list-style:none;margin-top:8px}
+.dns .tl li{display:grid;grid-template-columns:1fr auto;row-gap:7px;padding:9px 0;border-top:1px solid rgba(var(--fg),.05);font-size:13px;color:var(--t1)}
+.dns .tl li:first-child{border-top:0}
+.dns .tl li span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.dns .tl li b{font-weight:400;color:var(--t2)}
+.dns .tl .tb{grid-column:1/3;height:3px;border-radius:3px;background:rgba(var(--fg),.05)}
+.dns .tl .tb i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,rgba(var(--fg),.2),var(--acc))}
+.dns .tl .red .tb i{background:linear-gradient(90deg,rgba(var(--red-rgb),.25),var(--red))}
+.dns .tl li:first-child .tb i{box-shadow:0 0 10px rgba(var(--glow),calc(.4*var(--gk)))}.dns .tl .red li:first-child .tb i{box-shadow:0 0 10px rgba(var(--red-rgb),.5)}
+.dns .qtip{position:absolute;transform:translate(-50%,0);pointer-events:none;transition:transform .2s var(--ease),opacity .15s var(--ease)}
+.dns .qtip i{position:absolute;left:-5px;top:-5px;width:10px;height:10px;border-radius:50%;background:var(--card-b);border:1.5px solid var(--t1);box-shadow:0 0 12px rgba(var(--glow),calc(.5*var(--gk)))}
+.dns .qtip div{position:absolute;right:14px;top:-14px;white-space:nowrap;padding:8px 12px;border-radius:12px;background:var(--tip);border:1px solid var(--line2);font-size:12px;color:var(--t2);box-shadow:0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
+.dns .qtip b{color:var(--t1);font-weight:500}.dns .qtip em{font-style:normal;color:var(--red-t)}.dns .qtip small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
+.dns .qtip.r div{right:auto;left:14px}
+.dns .rul{position:absolute;top:0;bottom:0;left:0;width:1px;background:var(--line2);pointer-events:none;opacity:0;transition:opacity .15s var(--ease),transform .2s var(--ease)}
+.dns .hv .rul{opacity:1}
+.dns .qtip.now,.dns .rul.now{transition:none}
+
+/* ---------- журнал ---------- */
+.dns .tbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.dns .tbar .inp input{width:240px}
+.dns .logc{padding:8px 10px 8px}
+.dns .lt>div{display:grid;grid-template-columns:96px 1.5fr 1.4fr 1.1fr 150px;align-items:center;gap:12px;min-height:58px;padding:0 12px;border-top:1px solid rgba(var(--fg),.05);font-size:13px;transition:background-color .15s var(--ease)}
+.dns .lt .th{min-height:40px;border-top:0;color:var(--t3);font-size:12px}
+.dns .lt.scroll{max-height:640px}
+.dns .lt time{color:var(--t3);font-size:12px}
+.dns .lt b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dns .lt small{display:block;color:var(--t3);font-size:11.5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dns .lt .rs{display:flex;align-items:center;gap:10px;min-width:0}.dns .lt .rs>div{min-width:0}
+.dns .lt .tag{height:22px;font-size:11px}
+.dns .lt .ac{justify-self:end;height:30px;font-size:12px;padding:0 12px;opacity:.55;transition:opacity .2s,transform .16s var(--ease)}
+.dns .lt>div:hover .ac{opacity:1}
+.dns .lt>div.blk b{color:var(--red-t2)}
+
+/* ---------- движение ---------- */
+@media (hover:hover) and (pointer:fine){
+  .dns .lt>div:hover{background:var(--chip)}
+  .dns .pill:hover svg{transform:translateX(1px) scale(1.06)}
+}
+
+@media (max-width:1360px){
+  .dns .lt>div{grid-template-columns:86px 1.4fr 1.4fr 1fr 140px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .dns .spin svg{animation:none!important}
+}
+
+/* переход между подразделами: старый уходит, новый въезжает со стороны кнопки */
+@supports (view-transition-name:a){@media (prefers-reduced-motion:no-preference){
+  html[data-vt=sub] .dns .dpan.on{view-transition-name:sub;animation:none}
+  ::view-transition-group(sub){animation:none}
+  ::view-transition-old(sub),::view-transition-new(sub){width:100%;height:100%;object-fit:none;object-position:50% 0}
+  ::view-transition-old(sub){animation:vt-out .2s cubic-bezier(.4,0,1,1) both}
+  ::view-transition-new(sub){animation:vt-in .4s var(--ease) both;--vs:.6}
+}}

@@ -92,6 +92,7 @@ div.light{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
 div.light::before{content:"";position:absolute;left:50%;top:-340px;width:1100px;height:620px;transform:translateX(-50%);background:radial-gradient(closest-side,rgba(255,255,255,.10),rgba(255,255,255,.03) 55%,transparent)}
 div.light::after{content:"";position:absolute;right:-180px;top:-120px;width:620px;height:140px;transform:rotate(-24deg);background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);filter:blur(40px)}
 .wrap{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:22px 40px 48px}
+@media (max-width:1360px){.wrap{padding:20px 28px 40px}}
 /* шапка */
 .wrap>header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:34px}
 .logo{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}

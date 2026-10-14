@@ -57,6 +57,22 @@ test.describe('разделы шапки', () => {
     await expect(nav.locator('[aria-current="page"]')).toHaveText('DNS')
     await expect(page.locator('html[data-vt]')).toHaveCount(0)
   })
+
+  test('боковые поля страницы как в макете: 40 px на 1440, 28 px на 1280', async ({ page }) => {
+    await loginApi(page)
+    for (const [width, side] of [[1440, 40], [1280, 28]] as const) {
+      await page.setViewportSize({ width, height: 900 })
+      for (const t of TABS) {
+        await page.goto(t.path)
+        await hydrated(page)
+        const pad = await page.locator('.wrap').evaluate((el) => {
+          const s = getComputedStyle(el)
+          return [s.paddingLeft, s.paddingRight]
+        })
+        expect(pad, `${t.path} на ${width}`).toEqual([`${side}px`, `${side}px`])
+      }
+    }
+  })
 })
 
 test('экран ошибки: код и текст макета без сообщения фреймворка', async ({ page, guard }) => {

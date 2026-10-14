@@ -638,11 +638,12 @@ _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
   local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0 limit
+  local t1 spent n
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
   else
     for ((try=1; try<=attempts; try++)); do
-      prc=0; reason=$(ssh_probe) || prc=$?
+      t1=$SECONDS; prc=0; reason=$(ssh_probe) || prc=$?
       if [[ $prc -eq 0 ]]; then ok=1; break; fi
       # Предел в строке - тот, которым цикл закончится при таком же ответе:
       # отказ во входе пробуется дважды, host-key - ни разу больше.
@@ -653,6 +654,17 @@ _preflight_host() {
            (( try + 2 - auth_tries >= attempts )) || limit=$((try + 2 - auth_tries)) ;;
         *) kind=net ;;
       esac
+      # И тот, что уместится в PREFLIGHT_BUDGET, если следующие попытки
+      # ответят так же долго: висящая нода съедает таймаут ssh_probe на каждой,
+      # и до пятой не доходит. Расчёт повторяет проверку бюджета ниже.
+      spent=$((SECONDS - t0)); n=$try
+      while (( n < limit )); do
+        pause=$((n * 3))
+        [[ $kind != auth || $n -ne $try ]] || pause=${PREFLIGHT_AUTH_PAUSE:-30}
+        (( spent + pause + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+        spent=$((spent + pause + SECONDS - t1)); n=$((n + 1))
+      done
+      limit=$n
       printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$limit" "$reason"
       # Сменившийся host-key ждать бесполезно: его убирает человек.
       [[ $kind != hostkey ]] || break
@@ -668,7 +680,11 @@ _preflight_host() {
           "${SSH_USER}@${SSH_HOST} ($h)" "$pause"
       fi
       (( try < attempts )) || break
-      (( SECONDS - t0 + pause + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+      if (( SECONDS - t0 + pause + ${SSH_PROBE_TIMEOUT:-30} > budget )); then
+        printf '  %-30s время pre-flight на ноду вышло (%d с), больше попыток не будет\n' \
+          "${SSH_USER}@${SSH_HOST} ($h)" "$budget"
+        break
+      fi
       sleep "$pause"
     done
   fi

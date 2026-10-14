@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
             @dragstart="onDragStart(rule, $event)"
             @dragend="onDragEnd"
           >
-            <span class="rv">{{ rule.value }}</span><button
+            <span class="rtx">{{ rule.value }}</span><button
               class="x"
               type="button"
               aria-label="Удалить"
@@ -466,7 +466,7 @@ onBeforeUnmount(() => {
 .cell.warp .cl span{color:var(--orange)}
 .rc{position:relative;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border-radius:9px;background:var(--chip);border:1px solid var(--line);font-size:12px;color:var(--t1);cursor:grab;user-select:none;transition:transform .16s var(--ease),opacity .2s,border-color .2s;white-space:nowrap;overflow:hidden}
 /* Многоточие только у блока: в flex-контейнере текст режется краем. */
-.rc .rv{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rc .rtx{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .rc:hover{border-color:var(--line2)}.rc:active{cursor:grabbing}
 .rc.drag{opacity:.35}
 .rc.hit{border-color:var(--acc);box-shadow:0 0 16px rgba(var(--glow),calc(.25*var(--gk)))}

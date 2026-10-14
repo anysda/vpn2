@@ -169,7 +169,8 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   transition:transform .32s var(--ease-io),width .32s var(--ease-io)}
 .glide.now{transition:none}
 .tabs.gl a.on{background:none;box-shadow:none;color:var(--t1)}
-/* появление при прокрутке: класс ставит только JS, без JS всё видно */
+/* появление при прокрутке: класс ставит только JS, без JS всё видно; имя
+   глобальное - в компонентах под своё не брать, иначе элемент прозрачен навсегда */
 .rv{opacity:0;transform:translateY(18px)}
 :where(.card){transition:border-color .25s var(--ease)}
 @media (hover:hover) and (pointer:fine){

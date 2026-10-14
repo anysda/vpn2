@@ -64,6 +64,57 @@ function overflows(page: Page) {
   })
 }
 
+/** Чипы, текст правила в которых не виден: прозрачен, сдвинут или пуст. */
+function hiddenRuleText(page: Page) {
+  return page.locator('.board').evaluate((board) => {
+    const bad: string[] = []
+    for (const rc of board.querySelectorAll<HTMLElement>('.rc')) {
+      const value = rc.dataset.value ?? ''
+      const text = [...rc.querySelectorAll<HTMLElement>('*')].find(el => el.textContent?.trim() === value && !el.children.length)
+      if (!value || !text) {
+        bad.push(`${value || rc.dataset.id}: текста правила в чипе нет`)
+        continue
+      }
+      // Видимость - произведение opacity от текста до доски; сдвиг - любой
+      // transform по дороге (класс появления двигает на 18px вниз).
+      let opacity = 1
+      for (let el: HTMLElement | null = text; el && el !== board; el = el.parentElement) {
+        const s = getComputedStyle(el)
+        opacity *= Number(s.opacity)
+        if (s.transform !== 'none') bad.push(`${value}: ${el.tagName.toLowerCase()}.${[...el.classList].join('.')} transform ${s.transform}`)
+      }
+      if (opacity < 1) bad.push(`${value}: opacity ${opacity}`)
+      const r = text.getBoundingClientRect(), box = rc.getBoundingClientRect()
+      if (!r.width || r.top < box.top - 0.5 || r.bottom > box.bottom + 0.5) bad.push(`${value}: текст вне чипа`)
+    }
+    return bad
+  })
+}
+
+test.describe('доска маршрутов: текст правил виден', () => {
+  test('длинное и короткое правило видны в каждой колонке при окне 1024/1280/1400', async ({ page }) => {
+    const list = [...rules(5), ...outbounds(5).map((o, i) => ({ id: 1000 + i, type: 'domain', value: 'x.com', outbound: o.name, createdAt: '2026-01-01T00:00:00.000Z' }))]
+    await page.route(/\/api\/routes\/outbounds(\?.*)?$/, route => route.fulfill({ json: outbounds(5) }))
+    await page.route(/\/api\/routes(\?.*)?$/, route => route.request().method() === 'GET'
+      ? route.fulfill({ json: list })
+      : route.fallback())
+    await loginApi(page)
+    await page.goto('/routes')
+    await hydrated(page)
+    await expect(page.locator('.board .rc')).toHaveCount(list.length)
+    // Значение правила кладём в data-value, чтобы тест искал текст, а не класс.
+    await page.locator('.board .rc').evaluateAll((els, values) => els.forEach((el) => {
+      (el as HTMLElement).dataset.value = values[Number((el as HTMLElement).dataset.id)]!
+    }), Object.fromEntries(list.map(r => [r.id, r.value])))
+
+    for (const width of [1024, 1280, 1400]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect.poll(() => hiddenRuleText(page), { message: `окно ${width}` }).toEqual([])
+      await expect.poll(() => overflows(page), { message: `окно ${width}` }).toEqual([])
+    }
+  })
+})
+
 test.describe('доска маршрутов: ширина колонок', () => {
   for (let columns = 1; columns <= 5; columns++) {
     test(`${columns} колонок: содержимое не шире колонки при окне ${WIDTHS.join('/')}`, async ({ page }) => {

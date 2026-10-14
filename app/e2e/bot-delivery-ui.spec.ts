@@ -30,6 +30,27 @@ test('окончательная ошибка доставки гаснет са
   console.log('Рассылка: доставка не удалась. Повторов не будет. — тост погас сам, история сохранена')
 })
 
+test.describe('время в строках уведомлений', () => {
+  // Часовой пояс браузера нарочно не московский: время панели всегда МСК.
+  test.use({ timezoneId: 'Asia/Vladivostok' })
+  test('сегодня и вчера по МСК, как в макете', async ({ page }) => {
+    await page.clock.setFixedTime(new Date('2026-10-14T11:31:30Z'))
+    await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: [
+      { id: 'yesterday', label: 'Рассылка', status: 'failed', remaining: 0, created: Date.parse('2026-10-13T20:30:00Z') },
+      { id: 'after-midnight', label: 'Уведомление клиенту «Ночь»', status: 'failed', remaining: 0, created: Date.parse('2026-10-13T21:05:00Z') },
+      { id: 'today', label: 'Уведомление клиенту «День»', status: 'queued', remaining: 2, created: Date.parse('2026-10-14T11:31:00Z') },
+    ] }))
+    await openHome(page)
+    await page.getByRole('button', { name: 'Уведомления: 3', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Доставка уведомлений' })
+    const row = (text: string) => dialog.locator('.bi').filter({ hasText: text })
+    await expect(row('Рассылка: доставка не удалась').locator('small')).toHaveText('вчера 23:30')
+    await expect(row('«Ночь»').locator('small')).toHaveText('сегодня 00:05')
+    await expect(row('«День»: не отправлено. Ещё попыток: 2.').locator('small')).toHaveText('сегодня 14:31')
+    console.log('Колокольчик:', (await dialog.locator('.bi small').allTextContents()).join(' | '))
+  })
+})
+
 test('недоступный бот: тост клиента, рассылки, восстановление и окончательная ошибка', async ({ page, request }) => {
   test.skip(!container, 'нужен одноразовый локальный контейнер с подставным ботом')
   const anonymous = await page.request.get('/api/admin/bot-deliveries')
@@ -107,6 +128,8 @@ test('недоступный бот: тост клиента, рассылки, 
     expect(await (await request.get('/api/admin/bot-deliveries')).json(), 'без сессии история недоступна').toEqual([])
     const broadcast = statuses.find((row: { label: string }) => row.label === 'Рассылка')
     expect(broadcast).toMatchObject({ status: 'queued', remaining: 5 })
+    expect(broadcast.created, 'время постановки в очередь, мс').toBeGreaterThan(Date.now() - 5 * 60_000)
+    expect(broadcast.created).toBeLessThanOrEqual(Date.now() + 60_000)
     await token(true)
     for (const row of statuses.filter((row: { status: string }) => row.status === 'queued')) due(row.id)
     try {

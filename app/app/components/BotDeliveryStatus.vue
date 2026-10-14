@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { botDeliveryText, botQueueText, type BotDelivery } from '#shared/bot-delivery'
+import { botDeliveryText, botDeliveryTime, botQueueText, type BotDelivery } from '#shared/bot-delivery'
 
 const { rows, queued, sync } = useBotDeliveryToast()
 const pending = computed(() => rows.value.filter(row => row.status !== 'accepted'))
@@ -77,9 +77,16 @@ onUnmounted(() => {
         </div>
         <div v-for="row in pending" :key="row.id" class="bi">
           <span class="dot" :style="{ background: row.status === 'failed' ? 'var(--red)' : 'var(--amber)' }" />
-          <div><b>{{ row.label }}</b>{{ botDeliveryText(row).slice(row.label.length) }}</div>
+          <div>
+            <span><b>{{ row.label }}</b>{{ botDeliveryText(row).slice(row.label.length) }}</span>
+            <small v-if="row.created">{{ botDeliveryTime(row.created) }}</small>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.pop .bi small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
+</style>

@@ -13,8 +13,8 @@ const RETENTION = 24 * TTL
 const CAPACITY = 1024
 const inFlight = new Map<string, Promise<void>>()
 
-function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'status' | 'attempts'>): BotDelivery {
-  return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0 }
+function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'status' | 'attempts' | 'created'>): BotDelivery {
+  return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0, created: row.created }
 }
 
 /**
@@ -105,7 +105,7 @@ export async function retryBotEvents() {
 
 export async function botDeliveries(): Promise<BotDelivery[]> {
   const shown = botConfigured() ? or(ne(botOutbox.status, 'queued'), gt(botOutbox.lastFailure, 0)) : ne(botOutbox.status, 'queued')
-  const rows = await useDb().select({ id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts })
+  const rows = await useDb().select({ id: botOutbox.id, label: botOutbox.label, status: botOutbox.status, attempts: botOutbox.attempts, created: botOutbox.created })
     .from(botOutbox).where(shown).orderBy(asc(botOutbox.created))
   return rows.map(delivery)
 }

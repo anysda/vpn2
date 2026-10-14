@@ -14,7 +14,7 @@ export async function checkBotQueue(page: Page, checkLayout?: () => Promise<void
   await expect.poll(() => polls).toBeGreaterThan(0)
   const toasts = page.getByRole('region', { includeHidden: true }).locator('ol > li')
   const queued = (count: number): BotDelivery[] => Array.from({ length: count }, (_, i) => ({
-    id: `queue-${i}`, label: `Уведомление ${i + 1}`, status: 'queued', remaining: 5,
+    id: `queue-${i}`, label: `Уведомление ${i + 1}`, status: 'queued', remaining: 5, created: Date.now(),
   }))
   rows = queued(1)
   await expect(toasts).toHaveCount(1)

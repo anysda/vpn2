@@ -39,24 +39,34 @@ const pings = computed(() => {
 })
 
 const { layout } = useScreenLayout()
+// период графика трафика: сутки по часам или неделя по суткам
+const period = ref<'day' | 'week'>('day')
+
 const KNOWN = new Set(['traffic', 'nodes', 'activity', 'events'])
 const blocks = computed(() => [...layout.value.left, ...layout.value.right].filter(id => KNOWN.has(id)))
 </script>
 
 <template>
   <main ref="tab" class="tab on ov" :data-wake="!woke || wake.on ? '' : undefined">
+    <div class="head">
+      <div class="ha" style="margin-left:auto">
+        <button type="button" class="pill" @click="period = period === 'day' ? 'week' : 'day'">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4" /></svg>{{ period === 'day' ? 'Сутки' : 'Неделя' }}
+        </button>
+      </div>
+    </div>
     <template v-for="id in blocks" :key="id">
-      <section v-if="id === 'traffic'" class="r1">
-        <div class="card wave"><h3>Трафик за сутки</h3></div>
+      <section v-if="id === 'traffic'" class="r1" data-blk="traffic">
+        <OverviewWave :period="period" />
         <OverviewExits :nodes="sorted" />
         <OverviewDns />
       </section>
-      <OverviewNodes v-else-if="id === 'nodes'" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-      <section v-else-if="id === 'activity'" class="ra">
-        <div class="card act"><div class="fhead"><h3>Активность</h3></div></div>
+      <OverviewNodes v-else-if="id === 'nodes'" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+      <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
+        <OverviewActivity />
         <OverviewClients />
       </section>
-      <section v-else-if="id === 'events'" class="r4">
+      <section v-else-if="id === 'events'" class="r4" data-blk="events">
         <OverviewBroadcast />
         <EventsFeed />
       </section>

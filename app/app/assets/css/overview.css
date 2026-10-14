@@ -10,7 +10,18 @@
 .ov .r1{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px;margin-bottom:12px}
 .ov .wave{display:flex;flex-direction:column;height:272px}
 .ov .wave .top{display:flex;flex-direction:column;gap:10px;margin-top:10px}
-.ov .wave .plot{flex:1;width:100%;margin-top:6px}
+.ov .wave .plot{flex:1;min-height:0;width:100%;margin-top:6px}
+.ov .big small{font-size:18px;color:var(--t3);font-weight:300;letter-spacing:0;margin-left:4px}
+/* линейка и подсказка на графике трафика */
+.ov .rul{position:absolute;top:0;bottom:0;left:0;width:1px;background:var(--line2);pointer-events:none;opacity:0;transition:opacity .15s var(--ease),transform .2s var(--ease)}
+.ov .hv .rul{opacity:1}
+.ov .qtip{position:absolute;left:0;top:0;pointer-events:none;transition:transform .2s var(--ease),opacity .15s var(--ease)}
+.ov .qtip i{position:absolute;left:-5px;top:-5px;width:10px;height:10px;border-radius:50%;background:var(--card-b);border:1.5px solid var(--t1);box-shadow:0 0 12px rgba(var(--glow),calc(.5*var(--gk)))}
+.ov .qtip div{position:absolute;right:14px;top:-14px;white-space:nowrap;padding:8px 12px;border-radius:12px;background:var(--tip);border:1px solid var(--line2);font-size:12px;color:var(--t2);box-shadow:0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
+.ov .qtip b{color:var(--t1);font-weight:500}.ov .qtip small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
+.ov .qtip.r div{right:auto;left:14px}
+.ov .qtip.wv{opacity:0;z-index:3}.ov .hv .qtip.wv{opacity:1}
+.ov .qtip.now,.ov .rul.now{transition:none}
 .ov .donut{display:flex;flex-direction:column;height:272px}
 /* класс макета совпадает с утилитой Tailwind ring — её тень здесь не нужна */
 .ov .donut .ring{position:relative;flex:1;display:grid;place-items:center;box-shadow:none}
@@ -52,6 +63,28 @@
 /* активность и клиенты */
 .ov .ra{display:grid;grid-template-columns:2.3fr 1fr;gap:12px;margin-bottom:12px;align-items:start}
 .ov .stack{display:grid;gap:12px}
+/* активность: недели столбцами, дни строками */
+.ov .fhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.ov .fhead h3{color:var(--t1);font-size:15px}
+.ov .act{display:flex;flex-direction:column;padding:16px 20px;height:272px}
+.ov .act .fhead{margin-bottom:8px}.ov .act .fhead h3{line-height:28px}
+.ov .agrid{display:grid;gap:4px;align-items:center}
+.ov .agrid .hh{font-size:11px;color:var(--t3);height:13px;white-space:nowrap}
+.ov .agrid .hd{font-size:11px;color:var(--t3)}
+.ov .agrid i{width:100%;height:100%;border-radius:4px;background:rgba(var(--fg),var(--a));cursor:pointer;transition:transform .16s var(--ease)}
+.ov .agrid i:hover{transform:scale(1.18)}
+.ov .agrid i.sel{box-shadow:0 0 0 1.5px var(--card-b),0 0 0 3px var(--acc)}
+.ov .agrid i.pk{box-shadow:0 0 10px rgba(var(--glow),calc(.45*var(--gk)))}
+.ov .afoot{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:10px;font-size:12px;color:var(--t3)}
+.ov .aleg{display:flex;align-items:center;gap:4px}.ov .aleg i{width:11px;height:11px;border-radius:3px;background:rgba(var(--fg),var(--a))}
+.ov .aleg span:first-child{margin-right:4px}.ov .aleg span:last-child{margin-left:4px}
+.ov .afoot b{color:var(--t1);font-weight:500}
+/* сегменты со скользящей пилюлей (сама .glide — в main.css) */
+.ov .seg{position:relative;display:inline-flex;gap:6px}
+.ov .seg button{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 12.5px Manrope,system-ui,sans-serif;cursor:pointer;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
+.ov .seg button:active{transform:scale(.96)}
+.ov .seg button.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
+.ov .seg.gl button.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
 .ov .mini{display:grid;grid-template-rows:auto 1fr auto;row-gap:6px;height:130px;padding:16px 18px}
 .ov .mini .nums{grid-row:3;display:flex;align-items:center;gap:10px}
 .ov .mini .big{font-size:36px}

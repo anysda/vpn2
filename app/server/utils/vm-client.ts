@@ -62,7 +62,7 @@ function recallValue(instance: string, metricKey: string): number | null {
   return holdover.get(instance)?.get(metricKey) ?? null
 }
 
-async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
+export async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
   const url = useRuntimeConfig().vmUrl as string
   const result = new Map<string, number>()
   try {
@@ -180,7 +180,7 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
 // Суточный трафик ноды: increase() WAN-счётчиков с 00:00 МСК. Фильтр строже,
 // чем у rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на
 // eth0 — считаем только физический интерфейс, иначе сумма удвоится.
-const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
+export const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
 const DAILY_CACHE_MS = 30_000
 
 /** Полных секунд с 00:00 по Москве, без захвата конца вчерашних суток. */

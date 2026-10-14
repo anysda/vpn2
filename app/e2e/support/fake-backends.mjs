@@ -34,7 +34,7 @@ function vm(req, res) {
   if (url.pathname === '/api/v1/query_range') return vmRange(url, res)
   if (url.pathname !== '/api/v1/query') return notFound(res)
   const q = url.searchParams.get('query') || ''
-  const now = Date.now() / 1000
+  const now = Number(url.searchParams.get('time')) || Date.now() / 1000
   if (DEMO) {
     const result = Object.entries(mgmt).flatMap(([tag, ip]) => {
       const v = demoMetric(tag, q, now)
@@ -194,9 +194,14 @@ function demoMetric(tag, q, t) {
   const flap = tag === DEGRADED && t % 120 < 20
   if (q.includes('timestamp(')) return flap ? 6 + (t % 120) / 4 : 0.4 + (t % 2)
   if (q.includes('increase(') || q.includes('increase_prometheus(')) {
+    // окно запроса: с полуночи МСК (суточный трафик) или час/сутки рядов обзора
     const sinceMidnight = Math.max(60, (t + MSK_OFFSET_SEC) % 86400)
+    const win = Number(/\[(\d+)s\]/.exec(q)?.[1]) || sinceMidnight
     const share = q.includes('receive') ? 1 : 0.38
-    return p.mbps * 1e6 / 8 * sinceMidnight * share * 0.55
+    // внутри суток трафик дышит: ночью меньше, вечером пик
+    const hour = (t + MSK_OFFSET_SEC) / 3600 % 24
+    const day = win <= 3600 ? 0.3 + 0.7 * Math.max(0, Math.sin((hour - 7) / 15 * Math.PI)) : 1
+    return p.mbps * 1e6 / 8 * Math.max(60, win) * share * 0.55 * day
   }
   if (q.includes('mode="iowait"')) return clamp(wave(p.iowait ?? 0.6, p.iowait ? 6 : 0.4, t, s))
   if (q.includes('mode="steal"')) return clamp(wave(p.steal ?? 0.3, p.steal ? 5 : 0.2, t, s + 1))

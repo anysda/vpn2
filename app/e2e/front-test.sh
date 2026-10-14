@@ -109,7 +109,7 @@ fresh
 dk volume create "$VOLUME" >/dev/null
 stand_up "$NAME" "$IMAGE" "0.0.0.0:$PORT" "$PASS" \
   -v "$VOLUME:$DATA" \
-  -e FAKE_DEMO=1 -e FAKE_LIVE_FILE=$DATA/front-test-live.json \
+  -e FAKE_DEMO=1 -e FAKE_LIVE_FILE=$DATA/front-test-live.json -e HOURLY_RETENTION_DAYS=400 \
   -e NUXT_TGBOT_SECRET="$(openssl rand -hex 16)" \
   -e NUXT_NODE_HOSTS="ru=203.0.113.10,nl=198.51.100.21,fi=198.51.100.37,us=192.0.2.54" \
   ${EXTRA[@]+"${EXTRA[@]}"}

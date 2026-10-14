@@ -46,8 +46,9 @@ export function recentBytesByDevice(nowMs = Date.now()): Map<number, number> {
 }
 
 // Почасовая история хранится 35 дней: хватает на неделю с запасом и на
-// месячные отчёты, если понадобятся. Чистим раз в час.
-const HOURLY_RETENTION_SEC = 35 * 86400
+// месячные отчёты, если понадобятся. Чистим раз в час. Стенду - дольше
+// (HOURLY_RETENTION_DAYS), чтобы сетке «Активность» было что показать.
+const HOURLY_RETENTION_SEC = (Number(process.env.HOURLY_RETENTION_DAYS) || 35) * 86400
 let lastPrunedHour = 0
 
 interface Sample {

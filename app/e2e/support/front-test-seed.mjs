@@ -17,6 +17,8 @@ const EXITS = (process.env.EXIT_TAGS || 'nl fi us').split(/\s+/).filter(Boolean)
 const HEALTHY = EXITS.slice(0, -1).length ? EXITS.slice(0, -1) : EXITS
 const DAY = 86400
 const now = Math.floor(Date.now() / 1000)
+// История с 1 июня: стенд запускает сборщик с HOURLY_RETENTION_DAYS=400.
+const HISTORY_DAYS = Math.ceil((now - Date.UTC(new Date().getUTCFullYear(), 5, 1) / 1000) / DAY)
 
 // Детерминированный ГПСЧ: при перезапуске картина та же, меняется только «сейчас».
 let rnd = 20251011
@@ -94,10 +96,19 @@ async function main() {
     admin_username: 'anysda_support',
   })
 
+  const manual = {}
   for (const [value, spec] of ROUTES) {
     const outbound = routeOutbound(spec)
-    if (outbound) await api('POST', '/api/routes', { value, outbound })
+    if (!outbound) continue
+    await api('POST', '/api/routes', { value, outbound })
+    const match = /^[\d.]+\/\d+$/.test(value) ? { ip_cidr: [value] } : { domain_suffix: [value.replace(/^\*\./, '')] }
+    ;(manual[`manual-${outbound}`] ??= []).push(match)
   }
+  // Снимок маршрутов роутера: без него «Проверить адрес» ответит, что роутер
+  // ещё не выложил маршруты. Только ручные правила наборами manual-<выход>, как
+  // у роутера; остальное - выход по умолчанию.
+  const rules = Object.keys(manual).map(tag => ({ rule_set: [tag], action: 'route', outbound: tag.slice(7) }))
+  writeFileSync('/etc/anysda/route-plan.json', JSON.stringify({ rules, final: 'direct-ru', rule_set: manual }))
 
   const created = []
   for (const p of PEOPLE) {
@@ -115,8 +126,15 @@ async function main() {
     created.push({ ...p, id: c.id })
   }
 
-  const db = drizzle(createClient({ url: process.env.DB_URL }))
+  const sqlite = createClient({ url: process.env.DB_URL })
+  // Панель пишет в ту же базу: ждать её блокировку, а не падать с SQLITE_BUSY.
+  await sqlite.execute('PRAGMA busy_timeout = 30000')
+  const db = drizzle(sqlite)
   const hourly = []
+  // Загрузка суток для сетки «Активность», общая на всех: к июню плавно
+  // спадает, внутри - тихие и пиковые дни; последние двое суток - как обычно.
+  const BUSY = Array.from({ length: HISTORY_DAYS + 1 }, (_, k) =>
+    k < 2 ? 1 : (1 - (k / HISTORY_DAYS) ** 1.2 * 0.5) * (0.5 + rand() * 0.5))
   const live = []
   for (const p of created) {
     const createdAt = new Date((now - p.age * DAY) * 1000)
@@ -132,23 +150,28 @@ async function main() {
     const lastHour = p.expires != null && p.expires <= 0
       ? now + p.expires * DAY
       : now - (p.idleHours ?? 0) * 3600
+    // Сутки клиента: в тихий день он чаще не заходит вовсе и качает меньше.
+    const dayMul = BUSY.map((b, k) => k < 2 ? 1 : rand() < b ? (0.25 + rand() * 1.5) * b : 0)
     for (const [i, d] of devs.entries()) {
       const share = i === 0 ? 1 : 0.35 + rand() * 0.4
       let rx = 0
       let tx = 0
-      // 14 суток (не раньше появления клиента): неделя в ТОПе считается целиком.
-      const from = now - Math.min(14, p.age) * DAY
-      for (let h = Math.floor(from / 3600) * 3600; h <= lastHour; h += 3600) {
+      // Вся почасовая история, что держит сборщик (не раньше появления клиента).
+      const from = now - Math.min(HISTORY_DAYS, p.age) * DAY
+      // Старше двух недель - по записи на 4 часа: сетке хватает сумм за сутки.
+      for (let h = Math.floor(from / 3600) * 3600, step; h <= lastHour; h += step) {
+        step = now - h > 14 * DAY ? 4 * 3600 : 3600
         const mskHour = Math.floor(((h + 3 * 3600) % DAY) / 3600)
-        const part = h + 3600 > now ? (now - h) / 3600 : 1
-        const bytes = Math.round(p.scale * share * CURVE[mskHour] * 9e6 * (0.5 + rand()) * part)
+        const part = h + 3600 > now ? (now - h) / 3600 : step / 3600
+        const mul = dayMul[Math.floor((now - h) / DAY)] ?? 0
+        const bytes = Math.round(p.scale * share * CURVE[mskHour] * 9e6 * (0.5 + rand()) * part * mul)
         if (bytes < 1e5) continue
         const up = Math.round(bytes * (0.1 + rand() * 0.15))
         hourly.push({ deviceId: d.id, hour: h, rx: bytes, tx: up })
         rx += bytes
         tx += up
       }
-      // Трафик до этих двух недель - только в накопительном итоге.
+      // Трафик до почасовой истории - только в накопительном итоге.
       const before = Math.round(p.scale * share * Math.min(p.age, 400) * 1.1e9 * (0.6 + rand() * 0.8))
       const devCreated = new Date((now - Math.max(1, p.age - i * 9) * DAY) * 1000)
       await db.update(devices).set({
@@ -168,9 +191,11 @@ async function main() {
       }
     }
   }
-  for (let i = 0; i < hourly.length; i += 500) {
-    await db.insert(deviceTrafficHourly).values(hourly.slice(i, i + 500)).onConflictDoNothing()
-  }
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < hourly.length; i += 500) {
+      await tx.insert(deviceTrafficHourly).values(hourly.slice(i, i + 500)).onConflictDoNothing()
+    }
+  })
   // Пустой, но существующий снимок IKEv2: сборщик засчитает живые SA с первого
   // же прогона, а не только базируется на них.
   await db.insert(collectorState).values({ name: 'ikev2', value: '{}' })

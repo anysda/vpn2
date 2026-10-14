@@ -140,4 +140,129 @@ test.describe('DNS', () => {
       expect(r.status(), await r.text()).toBe(200)
     }
   })
+
+  test('перезаписи: добавляются, выключаются и удаляются в AdGuard; дубль — отказ', async ({ page, guard }) => {
+    guard.allow(409, /\/api\/dns\/rewrites$/, 'POST')
+    await openHome(page, '/dns')
+    await page.getByRole('tab', { name: 'Перезаписи' }).click()
+    const domain = `${uniq('rw')}.lan`
+    const list = async () => (await (await page.request.get('/api/dns/rewrites')).json()) as Array<{ domain: string, answer: string, enabled: boolean }>
+    const add = async (d: string) => {
+      await page.getByRole('button', { name: 'Добавить перезапись' }).click()
+      const dlg = page.getByRole('dialog', { name: 'Добавить перезапись' })
+      await dlg.getByRole('textbox', { name: 'Домен' }).fill(d)
+      await dlg.getByRole('textbox', { name: 'Ответ' }).fill('192.0.2.10')
+      await dlg.getByRole('button', { name: 'Добавить', exact: true }).click()
+      return dlg
+    }
+    await add(`${domain.toUpperCase()}.`)
+    await expect(toast(page, `Перезапись «${domain}» добавлена`)).toBeVisible()
+    expect((await list()).filter(r => r.domain === domain)).toEqual([{ domain, answer: '192.0.2.10', enabled: true }])
+
+    const dlg = await add(domain)
+    await expect(toast(page, `Перезапись «${domain}» → 192.0.2.10 уже есть`)).toBeVisible()
+    await expect(dlg).toBeVisible()
+    await dlg.getByRole('button', { name: 'Отмена' }).click()
+    expect((await list()).filter(r => r.domain === domain)).toHaveLength(1)
+
+    const sw = page.getByRole('switch', { name: domain })
+    await sw.click()
+    await expect(sw).toHaveAttribute('aria-checked', 'false')
+    await expect.poll(async () => (await list()).find(r => r.domain === domain)?.enabled).toBe(false)
+
+    await page.locator('.dns .rwt > div').filter({ hasText: domain }).getByRole('button', { name: 'Удалить' }).click()
+    await page.getByRole('dialog', { name: 'Удалить перезапись?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
+    await expect(toast(page, `Перезапись «${domain}» удалена`)).toBeVisible()
+    await expect(sw).toHaveCount(0)
+    expect((await list()).some(r => r.domain === domain)).toBe(false)
+  })
+
+  test('сервисы: карточка блокирует сервис в AdGuard и снимает блокировку', async ({ page }) => {
+    await openHome(page, '/dns')
+    await page.getByRole('tab', { name: 'Сервисы' }).click()
+    const blocked = async () => (await (await page.request.get('/api/dns/services')).json()).blocked as string[]
+    const before = await blocked()
+    const sv = page.getByRole('switch', { name: 'Instagram' })
+    await expect(sv).toHaveAttribute('aria-checked', String(before.includes('instagram')))
+    const count = page.locator('.dns .svh .tag')
+    await expect(count).toHaveText(`Заблокировано ${before.length} из 3`)
+    try {
+      await sv.click()
+      await expect(sv).toHaveAttribute('aria-checked', String(!before.includes('instagram')))
+      await expect.poll(async () => (await blocked()).includes('instagram')).toBe(!before.includes('instagram'))
+      await expect(count).not.toHaveText(`Заблокировано ${before.length} из 3`)
+      await expect.poll(async () => (await (await page.request.get('/api/dns/check?name=instagram.com')).json()).label)
+        .toBe(before.includes('instagram') ? 'Не фильтруется' : 'Заблокирован')
+    }
+    finally {
+      const r = await page.request.put('/api/dns/services', { data: { ids: before } })
+      expect(r.status(), await r.text()).toBe(200)
+    }
+  })
+
+  test('клиенты: клиент панели виден по адресу в туннеле', async ({ page }) => {
+    await openHome(page)
+    const name = uniq('dnscl')
+    const c = await page.request.post('/api/clients', { data: { name } })
+    expect(c.status(), await c.text()).toBe(200)
+    const d = await page.request.post(`/api/clients/${(await c.json()).id}/devices`, { data: { name: 'телефон' } })
+    expect(d.status(), await d.text()).toBe(200)
+    const rows = (await (await page.request.get('/api/dns/clients')).json()) as Array<{ name: string, ips: string[] }>
+    const ips = rows.find(r => r.name === name)?.ips ?? []
+    expect(ips.length).toBeGreaterThan(0)
+    await page.goto('/dns')
+    await page.getByRole('tab', { name: 'Клиенты' }).click()
+    const row = page.locator('.dns .dct.scroll > div').filter({ hasText: name })
+    await expect(row).toContainText('без Telegram')
+    await expect(row).toContainText(ips[0]!)
+    await expect(row).toContainText('общие')
+    await expect(row).toContainText('как у всех')
+  })
+
+  test('настройки DNS: переключатель, поле «Изменить», отказ AdGuard и проверка серверов', async ({ page, guard }) => {
+    guard.allow(422, /\/api\/dns\/settings$/, 'PATCH')
+    await openHome(page, '/dns')
+    await page.getByRole('tab', { name: 'Настройки DNS' }).click()
+    const view = async () => (await (await page.request.get('/api/dns/settings')).json()) as Record<string, unknown>
+    const before = await view()
+    try {
+      const sw = page.getByRole('switch', { name: 'DNSSEC' })
+      await sw.click()
+      await expect(sw).toHaveAttribute('aria-checked', String(!before.dnssec))
+      await expect.poll(async () => (await view()).dnssec).toBe(!before.dnssec)
+
+      const limit = page.locator('.dns .fld').filter({ hasText: 'Лимит запросов' })
+      await limit.getByRole('button', { name: 'Изменить' }).click()
+      const dlg = page.getByRole('dialog', { name: 'Лимит запросов' })
+      await dlg.getByRole('textbox', { name: 'Лимит запросов' }).fill('много')
+      await dlg.getByRole('button', { name: 'Сохранить' }).click()
+      await expect(toast(page, /^Лимит запросов:.*числ/)).toBeVisible()
+      await expect(dlg).toBeVisible()
+      await dlg.getByRole('textbox', { name: 'Лимит запросов' }).fill('35')
+      await dlg.getByRole('button', { name: 'Сохранить' }).click()
+      await expect(toast(page, 'Лимит запросов: сохранено')).toBeVisible()
+      await expect(limit.locator('code')).toHaveText('35 в секунду с клиента')
+
+      const ups = page.getByRole('textbox', { name: 'Серверы выше' })
+      await expect(ups).toHaveValue(String(before.upstreams))
+      await page.getByRole('button', { name: 'Проверить' }).click()
+      await expect(toast(page, 'Все 2 сервера отвечают')).toBeVisible()
+      const bad = `${before.upstreams}\nbad host`
+      await ups.fill(bad)
+      await ups.blur()
+      await expect(toast(page, 'Строка 3: AdGuard не понял адрес сервера')).toBeVisible()
+      await expect(ups).toHaveValue(bad)
+      expect((await view()).upstreams).toBe(before.upstreams)
+      await ups.fill(`${before.upstreams}\nhttps://dns.invalid/dns-query`)
+      await page.getByRole('button', { name: 'Проверить' }).click()
+      await expect(toast(page, 'Не отвечают: https://dns.invalid/dns-query')).toBeVisible()
+    }
+    finally {
+      for (const body of [{ dnssec: before.dnssec }, { ratelimit: before.ratelimit }, { upstreams: before.upstreams }]) {
+        const r = await page.request.patch('/api/dns/settings', { data: body })
+        expect(r.status(), await r.text()).toBe(200)
+      }
+    }
+  })
+
 })

@@ -3,7 +3,7 @@
 # Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh). WG/OpenVPN-клиенты
 # резолвят через него (см. ufw-правила → 10.99.0.1:53 в стадиях 28/29);
 # sing-box тоже использует его как DNS-резолвер (gen-router-config.py).
-# Web UI on 127.0.0.1:${AGH_PORT} — панель отдаёт его по /adguard/ под своей сессией.
+# Web UI и API только на 127.0.0.1:${AGH_PORT} — ими пользуется панель (вкладка «DNS»).
 
 set -euo pipefail
 
@@ -141,11 +141,14 @@ patch_agh_config() {
   local pools
   pools="$(vpn_pool_subnets wg ovpn ikev2) ${WG_SERVER_IP:-10.66.66.1}/24 ${OVPN_SUBNET:-10.67.67.0}/24 ${IKEV2_SUBNET:-10.68.68.0/24}"
   local wl
-  wl=$(CFG="$cfg" POOLS="$pools" DNS_BIND="${MGMT_IP:-10.99.0.1}" python3 - <<'PYEOF'
+  wl=$(CFG="$cfg" POOLS="$pools" DNS_BIND="${MGMT_IP:-10.99.0.1}" WEB_PORT="$AGH_PORT" python3 - <<'PYEOF'
 import copy, ipaddress, os, yaml
 with open(os.environ["CFG"]) as f:
     cfg = yaml.safe_load(f)
 before = copy.deepcopy(cfg)
+# Веб-интерфейс и API — только для панели на этом же хосте. Старые установки
+# могли слушать снаружи; обновление возвращает адрес на loopback.
+cfg.setdefault("http", {})["address"] = "127.0.0.1:" + os.environ["WEB_PORT"]
 dns = cfg.setdefault("dns", {})
 # Политика общая для новых и установленных хабов. Убираем также прежние
 # глобальный fallback Яндекса и исключение YouTube: они обходили разделение.
@@ -170,7 +173,7 @@ if missing:
 if cfg != before:
     with open(os.environ["CFG"], "w") as f:
         yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    print("DNS policy synced; ratelimit_whitelist +=", len(missing))
+    print("DNS policy synced (web UI on 127.0.0.1); ratelimit_whitelist +=", len(missing))
 PYEOF
 )
   if [[ -n "$wl" ]]; then
@@ -479,4 +482,4 @@ ufw delete allow proto tcp from 10.99.0.0/24 to "${MGMT_IP}" port 53 >/dev/null 
 
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"
-echo "[$HOST_TAG] $STAGE done — веб-интерфейс AdGuard открывает панель по /adguard/"
+echo "[$HOST_TAG] $STAGE done — AdGuard управляется во вкладке «DNS» панели"

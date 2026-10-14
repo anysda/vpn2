@@ -66,13 +66,15 @@ interface AghCall {
 export async function agh<T>(path: string, call: AghCall = {}): Promise<T> {
   const url = useRuntimeConfig().aghUrl as string
   try {
-    return await $fetch<T>(`${url}/control/${path}`, {
+    // Адрес внешний: типы маршрутов Nitro тут ни при чём, ответ — тот, что ждёт вызов.
+    const res: unknown = await $fetch(`${url}/control/${path}`, {
       method: call.method ?? 'GET',
       body: call.body,
       query: call.query,
       headers: authHeader(),
       timeout: call.timeout ?? 8000,
     })
+    return res as T
   }
   catch (err) {
     const e = err as { statusCode?: number, data?: unknown }

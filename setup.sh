@@ -269,7 +269,7 @@ for i in $(seq 1 "$n_exits"); do
   exits_yaml+="  - tag: ${ex_tag}"$'\n'"    host: $(yq "$ex_ip")"$'\n'"    password: $(yq "$ex_pass")"$'\n\n'
 done
 
-header "Учётка администратора (веб-панель + AdGuard UI)"
+header "Учётка администратора веб-панели"
 admin_user=$(ask "Логин" "admin")
 admin_user=$(sanitize "$admin_user")
 hint "Пароль: Enter — сгенерировать случайный 18-символьный, иначе свой от 8 символов"

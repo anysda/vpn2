@@ -135,7 +135,7 @@ ufw_sync_rules() {
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'AdGuardHome.yaml'
             config.write_text('dns:\n  aaaa_disabled: true\n  ratelimit_whitelist: [203.0.113.1]\n')
-            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\nHOST_TAG=ru\nsvc_forget() {{ :; }}\n' + function + '\npatch_agh_config AdGuardHome.yaml\npatch_agh_config AdGuardHome.yaml', directory)
+            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\nHOST_TAG=ru\nAGH_PORT=3001\nsvc_forget() {{ :; }}\n' + function + '\npatch_agh_config AdGuardHome.yaml\npatch_agh_config AdGuardHome.yaml', directory)
             self.assertEqual(result.returncode, 0, result.stderr)
             import yaml
             addresses = yaml.safe_load(config.read_text())['dns']['ratelimit_whitelist']

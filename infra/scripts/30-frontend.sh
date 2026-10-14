@@ -244,7 +244,7 @@ EOF
 fi
 ufw_sync_rules --alias 'caddy HTTP панель' 'caddy HTTP + ACME challenge' 80/tcp
 ufw_sync_rules 'caddy HTTPS панель' 443/tcp
-# AdGuard открывается через панель по /adguard/ (её сессия, VPN2-142).
+# Веб-интерфейс AdGuard наружу не открыт: только 127.0.0.1, управление — вкладка «DNS».
 # Отдельный порт 3001 с прошлых установок закрываем.
 ufw delete allow 3001/tcp >/dev/null 2>&1 || true
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \

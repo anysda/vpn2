@@ -3,6 +3,7 @@ import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import { agh } from './agh-client'
 import type { CheckHost } from './agh-parse'
+import { sameRewrite, type Rewrite } from './dns-settings'
 
 export interface AghFilter {
   id: number
@@ -97,3 +98,28 @@ export async function checkUntil(name: string, client: string | undefined, done:
 /** Ответ ссылается на своё правило, которого уже нет, — движок ещё старый. */
 export const citesGone = (r: CheckHost, gone: string[]) =>
   !!r.rules?.some(x => x.filter_list_id === 0 && gone.includes(x.text))
+
+/** Перезаписи DNS: AdGuard отдаёт null, когда их нет. */
+export async function rewriteList(): Promise<Rewrite[]> {
+  return (await agh<Rewrite[] | null>('rewrite/list')) ?? []
+}
+
+/** Перезапись, как она лежит в AdGuard, или 404. */
+export async function findRewrite(domain: string, answer: string): Promise<Rewrite> {
+  const cur = (await rewriteList()).find(x => sameRewrite(x, { domain, answer }))
+  if (!cur) throw createError({ statusCode: 404, statusMessage: 'rewrite_not_found', message: `Перезаписи «${domain}» → ${answer} нет` })
+  return cur
+}
+
+/** Список перезаписей после действия; не то, что просили, — 502. */
+export async function confirmRewrites(ok: (l: Rewrite[]) => boolean, what: string): Promise<Rewrite[]> {
+  const l = await rewriteList()
+  if (!ok(l)) throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: `AdGuard не применил изменение: ${what}` })
+  return l
+}
+
+export interface BlockedServices { ids: string[] | null, schedule?: Record<string, unknown> }
+
+export async function blockedServices(): Promise<BlockedServices> {
+  return agh<BlockedServices>('blocked_services/get')
+}

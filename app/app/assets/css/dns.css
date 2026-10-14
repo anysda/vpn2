@@ -94,13 +94,54 @@
 .dns .lt>div:hover .ac{opacity:1}
 .dns .lt>div.blk b{color:var(--red-t2)}
 
+/* ---------- перезаписи, сервисы, клиенты, настройки ---------- */
+.dns .rwt>div{display:grid;grid-template-columns:56px 1.2fr 30px 1fr 1.3fr 40px;align-items:center;gap:12px;min-height:58px;padding:0 6px;border-top:1px solid rgba(var(--fg),.05);font-size:13px}
+.dns .rwt .th{min-height:34px;border-top:0;color:var(--t3);font-size:12px}
+.dns .rwt .mono{color:var(--t1)}
+.dns .rwt .arr{color:var(--t3)}
+.dns .rwt>div>span:nth-child(5){color:var(--t3);font-size:12.5px}
+.dns .rwt>div.off,.dns .rwt>div.off .mono{color:var(--t3)}
+.dns .svh{margin-bottom:12px}
+.dns .svg2{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+.dns .sv{display:flex;flex-direction:column;gap:14px;padding:16px;height:128px;cursor:pointer;transition:transform .2s var(--ease),border-color .25s var(--ease)}
+.dns .sv:active{transform:scale(.98)}
+.dns .sv .st{display:flex;justify-content:space-between;align-items:flex-start}
+.dns .sv .lo{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;font-weight:600;font-size:14px;background:linear-gradient(180deg,var(--chip2),var(--card-a));border:1px solid var(--line);color:var(--t1)}
+.dns .sv b{font-weight:500;font-size:13.5px;margin-top:auto}
+.dns .sv small{color:var(--t3);font-size:11.5px;margin-top:-10px}
+.dns .sv.on{background:linear-gradient(165deg,var(--lit-a) 0%,var(--lit-b) 40%,var(--lit-c) 100%);border-color:rgba(var(--fg),.13)}
+.dns .sv.on small{color:var(--red-t)}
+.dns .dct>div{display:grid;grid-template-columns:1.5fr 1.3fr 1fr 1fr 1fr 90px;align-items:center;gap:12px;min-height:58px;padding:0 6px;border-top:1px solid rgba(var(--fg),.05);font-size:13px;color:var(--t2)}
+.dns .dct .th{min-height:34px;border-top:0;color:var(--t3);font-size:12px}
+.dns .dct.scroll{max-height:620px}
+.dns .dct .tag{height:22px;font-size:11px;justify-self:start}
+.dns .dct>div>span:last-child{color:var(--t1);text-align:right;font-weight:300;font-size:17px}
+.dns .who{display:flex;align-items:center;gap:12px;min-width:0}
+.dns .av{position:relative;width:34px;height:34px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;font-weight:600;color:var(--t1);background:linear-gradient(135deg,var(--av-a),var(--av-b));border:1px solid var(--line)}
+.dns .who b{display:block;color:var(--t1);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dns .who small{display:block;color:var(--t3);font-size:11.5px}
+.dns .sgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.dns .sc{padding:20px 22px;display:flex;flex-direction:column;min-height:270px}
+.dns .sh{display:flex;justify-content:space-between;align-items:center}
+.dns .sh h3{color:var(--t1);font-size:15px}
+.dns .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
+.dns .fld{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid rgba(var(--fg),.05);margin-top:auto}
+.dns .fld+.fld{margin-top:0}
+.dns .sh+.fld{margin-top:14px}
+.dns .fld>span:first-child{color:var(--t3);font-size:12.5px;width:170px;flex:none}
+.dns .fld code{font:400 13px Manrope,system-ui,sans-serif;color:var(--t1);flex:1}
+.dns .fld .pill{height:30px;font-size:12px}
+.dns .fld .seg.sm{margin-left:auto}
+
 /* ---------- движение ---------- */
 @media (hover:hover) and (pointer:fine){
   .dns .lt>div:hover{background:var(--chip)}
   .dns .pill:hover svg{transform:translateX(1px) scale(1.06)}
+  .dns .sv:hover{transform:translateY(-2px)}.dns .sv:active{transform:scale(.98)}
 }
 
 @media (max-width:1360px){
+  .dns .svg2{grid-template-columns:repeat(4,1fr)}
   .dns .lt>div{grid-template-columns:86px 1.4fr 1.4fr 1fr 140px}
 }
 

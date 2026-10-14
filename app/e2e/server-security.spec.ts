@@ -44,7 +44,7 @@ test('CSRF: cookie без Origin и Referer не разрешает измене
   }
 })
 
-test('CSRF: изменяющие запросы требуют источник панели, включая прокси AdGuard', async ({ page }) => {
+test('CSRF: изменяющие запросы требуют источник панели', async ({ page }) => {
   await loginApi(page)
   for (const origin of ['https://attacker.example', 'null']) {
     for (const [method, url] of [
@@ -53,7 +53,6 @@ test('CSRF: изменяющие запросы требуют источник 
       ['DELETE', '/api/clients/999999'],
       ['PUT', '/api/me/layout'],
       ['PUT', '/api/admin/telegram'],
-      ['POST', '/adguard/control/filtering/set_rules'],
     ]) {
       const response = await page.request.fetch(url!, { method, headers: { origin }, data: {} })
       expect(response.status(), `${method} ${url}: ${await response.text()}`).toBe(403)

@@ -55,7 +55,7 @@ print_summary() {
   [[ "$mins" -eq 0 ]] && timing="${secs}s"
 
   # shellcheck disable=SC1091
-  local _ru_host _panel_url _agh_url _admin_user _admin_pass
+  local _ru_host _panel_url _admin_user _admin_pass
   source "$DEPLOY_ROOT/envs/all.env" 2>/dev/null || true
   source "$DEPLOY_ROOT/envs/ru.env"  2>/dev/null || true
   _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
@@ -64,7 +64,6 @@ print_summary() {
   else
     _panel_url="http://${_ru_host}/"
   fi
-  _agh_url="${_panel_url}adguard/"
   _admin_user="${ADMIN_USER:-admin}"
   # Сам пароль в рамку не выводим: она остаётся в логах деплоя и в истории
   # терминала. Заданный в config.yaml человек ввёл сам в ./setup.sh, а
@@ -100,7 +99,6 @@ print_summary() {
   done
   for entry in "${_stages[@]}"; do _rows+=("  ${entry}  "); done
   _rows+=("  Panel:    ${_panel_url}")
-  _rows+=("  AdGuard:  ${_agh_url}")
   _rows+=("  Login:    ${_admin_user}")
   _rows+=("  Password: ${_admin_pass}")
   local W=0 r
@@ -122,7 +120,6 @@ print_summary() {
   for entry in "${_stages[@]}"; do _row "  ${entry}  "; done
   printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
   _row "  Panel:    ${_panel_url}"
-  _row "  AdGuard:  ${_agh_url}"
   _row "  Login:    ${_admin_user}"
   _row "  Password: ${_admin_pass}"
   printf '%b  └%s┘%b\n' "$C_G" "$BAR" "$C_END"

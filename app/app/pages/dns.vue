@@ -8,6 +8,10 @@ const SUBS = [
   { value: 'log', label: 'Журнал' },
   { value: 'flt', label: 'Фильтры' },
   { value: 'rules', label: 'Свои правила' },
+  { value: 'rw', label: 'Перезаписи' },
+  { value: 'svc', label: 'Сервисы' },
+  { value: 'cl', label: 'Клиенты' },
+  { value: 'set', label: 'Настройки DNS' },
 ] as const
 type Sub = typeof SUBS[number]['value']
 
@@ -41,6 +45,18 @@ async function pick(v: Sub, dir: 'fwd' | 'back') {
     </section>
     <section v-if="seen.has('rules')" class="dpan" :class="{ on: sub === 'rules' }">
       <DnsRules />
+    </section>
+    <section v-if="seen.has('rw')" class="dpan" :class="{ on: sub === 'rw' }">
+      <DnsRewrites />
+    </section>
+    <section v-if="seen.has('svc')" class="dpan" :class="{ on: sub === 'svc' }">
+      <DnsServices />
+    </section>
+    <section v-if="seen.has('cl')" class="dpan" :class="{ on: sub === 'cl' }">
+      <DnsClients />
+    </section>
+    <section v-if="seen.has('set')" class="dpan" :class="{ on: sub === 'set' }">
+      <DnsSettings />
     </section>
   </main>
 </template>

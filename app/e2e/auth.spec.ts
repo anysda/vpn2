@@ -220,25 +220,18 @@ test.describe('2FA', () => {
   })
 })
 
-test.describe('AdGuard под /adguard/', () => {
-  test('без сессии панели уводит на вход, с сессией пускает', async ({ page }) => {
-    const anon = await page.request.get('/adguard/', { headers: { accept: 'text/html' }, maxRedirects: 0 })
-    expect(anon.status()).toBe(302)
-    expect(anon.headers().location).toBe('/login')
-    const api = await page.request.get('/adguard/control/status', { maxRedirects: 0 })
-    expect(api.status()).toBe(401)
-
-    await loginApi(page)
-    const authed = await page.request.get('/adguard/', { headers: { accept: 'text/html' }, maxRedirects: 0 })
-    // В e2e у AdGuard нет учётки: 503 значит, что запрос дошёл до прокси, а не
-    // до страницы 404 или входа.
-    expect(authed.status()).toBe(503)
-    const authedApi = await page.request.get('/adguard/control/status', { maxRedirects: 0 })
-    expect(authedApi.status()).toBe(503)
-    // Выход и форма входа самого AdGuard не открываются: вели бы в тупик.
-    const logout = await page.request.get('/adguard/control/logout', { maxRedirects: 0 })
-    expect([logout.status(), logout.headers().location]).toEqual([302, '/'])
-    const form = await page.request.get('/adguard/login.html', { maxRedirects: 0 })
-    expect([form.status(), form.headers().location]).toEqual([302, '/adguard/'])
-  })
+test('родного интерфейса AdGuard в панели нет: /adguard/ отвечает как несуществующий адрес', async ({ page }) => {
+  const paths = ['/adguard/', '/adguard/control/status', '/adguard/login.html']
+  // Без сессии любая страница ведёт на вход — как и выдуманный адрес.
+  for (const path of [...paths, '/no-such-page/']) {
+    const anon = await page.request.get(path, { headers: { accept: 'text/html' }, maxRedirects: 0 })
+    expect([anon.status(), anon.headers().location], path).toEqual([302, '/login'])
+  }
+  await loginApi(page)
+  for (const path of paths) {
+    const authed = await page.request.get(path, { headers: { accept: 'text/html' }, maxRedirects: 0 })
+    expect(authed.status(), path).toBe(404)
+  }
+  const api = await page.request.post('/adguard/control/filtering/set_rules', { data: { rules: [] }, maxRedirects: 0 })
+  expect(api.status()).toBe(404)
 })

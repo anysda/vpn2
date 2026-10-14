@@ -28,7 +28,7 @@ def patch_config(path):
     stage = source('infra/scripts/22-adguard.sh')
     function = re.search(r'^patch_agh_config\(\) \{\n.*?^\}', stage, re.M | re.S).group()
     result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n'
-                  'HOST_TAG=test\nMGMT_IP=192.0.2.53\nsvc_forget() { :; }\n'
+                  'HOST_TAG=test\nMGMT_IP=192.0.2.53\nAGH_PORT=3001\nsvc_forget() { :; }\n'
                   + function + f'\npatch_agh_config "{path}"', path.parent)
     if result.returncode:
         raise AssertionError(result.stderr)

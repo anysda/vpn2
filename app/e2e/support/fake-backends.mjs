@@ -317,7 +317,28 @@ const agh = {
   ],
   whitelist_filters: [],
   blocked_services: ['tiktok'],
-  upstream_mode: 'load_balance',
+  rewrites: [{ domain: 'test.lan', answer: '192.0.2.1', enabled: true }],
+  dns: {
+    upstream_dns: ['https://dns.example/dns-query', '192.0.2.53'],
+    bootstrap_dns: ['192.0.2.53'],
+    upstream_mode: 'load_balance',
+    dnssec_enabled: false,
+    disable_ipv6: true,
+    cache_size: 4 * 1024 * 1024,
+    cache_enabled: true,
+    cache_optimistic: false,
+    ratelimit: 20,
+    blocking_mode: 'default',
+    blocking_ipv4: '',
+    blocking_ipv6: '',
+    protection_enabled: true,
+  },
+  safebrowsing: false,
+  parental: false,
+  safesearch: { enabled: false, bing: true, duckduckgo: true, ecosia: true, google: true, pixabay: true, yandex: true, youtube: true },
+  querylog: { enabled: true, interval: 2160 * 3_600_000, anonymize_client_ip: false, ignored: [], ignored_enabled: false },
+  statsConfig: { enabled: true, interval: 24 * 3_600_000, ignored: [], ignored_enabled: false },
+  clients: [{ name: 'Свой клиент', ids: ['10.66.66.200'], use_global_settings: false, filtering_enabled: true, safe_search: { enabled: true }, use_global_blocked_services: false, blocked_services: ['instagram'] }],
 }
 let aghNextId = 1_700_000_000
 // Движок фильтрации: как у настоящего, set_rules и set_url видны в
@@ -434,7 +455,15 @@ async function adguard(req, res) {
   const ok = () => { res.writeHead(200); res.end('OK') }
   if (req.method === 'GET') {
     if (path === 'stats') return json(res, aghStats(), 'application/json')
-    if (path === 'dns_info') return json(res, { upstream_mode: agh.upstream_mode, protection_enabled: true }, 'application/json')
+    if (path === 'dns_info') return json(res, agh.dns, 'application/json')
+    if (path === 'rewrite/list') return json(res, agh.rewrites.length ? agh.rewrites : null, 'application/json')
+    if (path === 'blocked_services/get') return json(res, { ids: agh.blocked_services, schedule: { time_zone: 'UTC' } }, 'application/json')
+    if (path === 'clients') return json(res, { clients: agh.clients, auto_clients: [], supported_tags: [] }, 'application/json')
+    if (path === 'safebrowsing/status') return json(res, { enabled: agh.safebrowsing }, 'application/json')
+    if (path === 'parental/status') return json(res, { enabled: agh.parental }, 'application/json')
+    if (path === 'safesearch/status') return json(res, agh.safesearch, 'application/json')
+    if (path === 'querylog/config') return json(res, agh.querylog, 'application/json')
+    if (path === 'stats/config') return json(res, agh.statsConfig, 'application/json')
     if (path === 'filtering/status') {
       const { user_rules, filters, whitelist_filters } = agh
       return json(res, { enabled: true, interval: 24, user_rules, filters, whitelist_filters }, 'application/json')
@@ -488,6 +517,71 @@ async function adguard(req, res) {
       for (const f of agh[key]) if (f.enabled) f.last_updated = new Date().toISOString()
       return json(res, { updated: 0 }, 'application/json')
     }
+  }
+  // Перезаписи, сервисы и настройки: ответы и тексты отказов — как у 0.107.79.
+  if (req.method === 'POST' || req.method === 'PUT') {
+    const fail = (code, text) => { res.writeHead(code); res.end(text) }
+    const same = (a, b) => a.domain === b.domain && a.answer === b.answer
+    if (path === 'rewrite/add') {
+      const b = await aghBody(req)
+      agh.rewrites.push({ domain: b.domain, answer: b.answer, enabled: b.enabled ?? true })
+      return ok()
+    }
+    if (path === 'rewrite/update') {
+      const b = await aghBody(req)
+      const i = agh.rewrites.findIndex(r => same(r, b.target))
+      if (i < 0) return fail(400, 'target rule not found')
+      agh.rewrites[i] = { ...b.update }
+      return ok()
+    }
+    if (path === 'rewrite/delete') {
+      const b = await aghBody(req)
+      agh.rewrites = agh.rewrites.filter(r => !same(r, b))
+      return ok()
+    }
+    if (path === 'blocked_services/update') {
+      const b = await aghBody(req)
+      const bad = (b.ids ?? []).find(id => !AGH_SERVICES.some(x => x.id === id))
+      if (bad) return fail(422, `validating: unknown blocked-service "${bad}"`)
+      agh.blocked_services = [...(b.ids ?? [])]
+      return ok()
+    }
+    if (path === 'dns_config') {
+      const b = await aghBody(req)
+      const i = (b.upstream_dns ?? []).findIndex(u => /\s/.test(u) || !u.trim())
+      if (i >= 0) return fail(400, `validating dns config: upstream servers: parsing error at index ${i}: cannot prepare the upstream: invalid address ${b.upstream_dns[i]}`)
+      Object.assign(agh.dns, b)
+      return ok()
+    }
+    if (path === 'test_upstream_dns') {
+      const b = await aghBody(req)
+      // Адрес на .invalid не отвечает — остальные отвечают.
+      return json(res, Object.fromEntries((b.upstream_dns ?? []).map(u => [u, /\.invalid(\/|:|$)/.test(u) ? `couldn't communicate with upstream: no addresses for ${u}` : 'OK'])), 'application/json')
+    }
+    for (const k of ['safebrowsing', 'parental']) {
+      if (path === `${k}/enable` || path === `${k}/disable`) {
+        agh[k] = path.endsWith('enable')
+        return ok()
+      }
+    }
+    if (path === 'safesearch/settings') {
+      agh.safesearch = await aghBody(req)
+      return ok()
+    }
+    if (path === 'querylog/config/update') {
+      agh.querylog = await aghBody(req)
+      return ok()
+    }
+    if (path === 'stats/config/update') {
+      agh.statsConfig = await aghBody(req)
+      return ok()
+    }
+    if (path === 'cache_clear') return ok()
+    if (path === 'querylog_clear') {
+      aghLog = []
+      return ok()
+    }
+    if (path === 'stats_reset') return ok()
   }
   if (req.method === 'POST' && path === 'filtering/set_rules') {
     const b = await aghBody(req)

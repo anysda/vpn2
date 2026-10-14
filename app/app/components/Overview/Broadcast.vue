@@ -10,6 +10,8 @@ const toast = useToast()
 const message = ref('')
 const sending = ref(false)
 const configured = computed(() => Boolean(status.value?.configured))
+// имя бота из getMe; пока бот не отвечает, его нет
+const bot = computed(() => status.value?.username || '')
 
 async function send() {
   const text = message.value.trim()
@@ -34,7 +36,7 @@ async function send() {
 
 <template>
   <div class="card sc bc ov-broadcast">
-    <div class="sh"><h3>Рассылка от бота</h3></div>
+    <div class="sh"><h3>Рассылка от бота</h3><span v-if="bot" class="tag">@{{ bot }}</span></div>
     <textarea v-model="message" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
     <div class="arow">
       <span v-if="!configured" class="hint">Сначала настройте Telegram-бота</span>

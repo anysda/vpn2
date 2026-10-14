@@ -7,6 +7,7 @@
 interface TgStatus {
   configured: boolean
   running: boolean
+  username?: string
   bot_token_masked: string
   chat_id: string | number | ''
 }

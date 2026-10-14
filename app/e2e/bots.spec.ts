@@ -96,6 +96,9 @@ test.describe('настройки Telegram', () => {
       expect(st).toMatchObject({ running: true, username: 'demo_vpn_bot' })
       for (const key of ['clients_total', 'clients_subscribed', 'queued', 'delivered_day']) expect(st[key]).toEqual(expect.any(Number))
       await expect(card.getByText(`${st.clients_subscribed} из ${st.clients_total}`, { exact: true })).toBeVisible()
+      await openHome(page, '/')
+      await expect(page.locator('.ov-broadcast .sh .tag')).toHaveText('@demo_vpn_bot')
+      await openHome(page, '/settings')
 
       await setToken('123456789:E2E_REJECTED_bbbbbbbbbbbbbbbbbbbbbbbbbb', '123456789')
       await page.reload()

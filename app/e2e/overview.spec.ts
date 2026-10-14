@@ -16,6 +16,22 @@ test.describe('Обзор', () => {
     await page.unrouteAll({ behavior: 'ignoreErrors' })
   })
 
+  test('в шапке рассылки - @имя бота, пока бот его назвал', async ({ page }) => {
+    let username = 'e2e_named_bot'
+    await page.route('**/api/admin/telegram', async (route) => {
+      const res = await route.fetch()
+      await route.fulfill({ response: res, json: { ...await res.json(), configured: true, running: Boolean(username), username } })
+    })
+    await openHome(page)
+    const card = page.locator('.ov-broadcast')
+    await expect(card.locator('.sh .tag')).toHaveText('@e2e_named_bot')
+    username = ''
+    await page.reload()
+    await expect(card.getByRole('heading', { name: 'Рассылка от бота', exact: true })).toBeVisible()
+    await expect(card.locator('.sh .tag')).toHaveCount(0)
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
+  })
+
   test('рассылка с Обзора уходит боту', async ({ page }) => {
     await openHome(page)
     test.skip(!(await (await page.request.get('/api/admin/telegram')).json()).configured, 'нужна панель с ботом')

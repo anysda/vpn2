@@ -17,6 +17,29 @@ async function openLog(page: Page) {
 }
 
 test.describe('DNS', () => {
+  // Окно ставит курсор в первое поле с задержкой. Если человек уже перешёл в
+  // другое поле, задержка не должна уводить курсор и текст в первое.
+  test('окно: ввод во второе поле до автофокуса остаётся во втором', async ({ page }) => {
+    await openHome(page, '/dns')
+    await page.getByRole('tab', { name: 'Перезаписи' }).click()
+    await expect(page.getByRole('button', { name: 'Добавить перезапись' })).toBeVisible()
+    await page.clock.install()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+    await page.getByRole('button', { name: 'Добавить перезапись' }).click()
+    const dlg = page.getByRole('dialog', { name: 'Добавить перезапись' })
+    const answer = dlg.getByRole('textbox', { name: 'Ответ' })
+    await answer.fill('192.0.2.10')
+    await page.clock.runFor(500)
+    await expect(answer).toBeFocused()
+    await expect(answer).toHaveValue('192.0.2.10')
+    await expect(dlg.getByRole('textbox', { name: 'Домен' })).toHaveValue('')
+    // Без своего выбора курсор, как и раньше, — в первом поле.
+    await dlg.getByRole('button', { name: 'Отмена' }).click()
+    await page.getByRole('button', { name: 'Добавить перезапись' }).click()
+    await page.clock.runFor(500)
+    await expect(dlg.getByRole('textbox', { name: 'Домен' })).toBeFocused()
+  })
+
   test('сводка: цифры AdGuard на карточках', async ({ page }) => {
     await openHome(page, '/dns')
     const s = await (await page.request.get('/api/dns/summary')).json()

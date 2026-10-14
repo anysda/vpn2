@@ -22,7 +22,11 @@ watch(open, async (v) => {
   if (!el) return
   ;[...el.children].slice(0, 6).forEach((c, i) =>
     anim(c, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 300, delay: 40 + i * 35 }))
-  setTimeout(() => el.querySelector<HTMLInputElement>('input:not([readonly])')?.focus(), 60)
+  // Курсор — в первое поле, если человек ещё не выбрал поле сам: иначе набранное
+  // уйдёт не туда.
+  setTimeout(() => {
+    if (!el.contains(document.activeElement)) el.querySelector<HTMLInputElement>('input:not([readonly])')?.focus()
+  }, 60)
 })
 
 onMounted(() => addEventListener('keydown', onKey))

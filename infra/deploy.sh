@@ -637,15 +637,23 @@ _tcp22_open() {
 _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
-  local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0
+  local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0 limit
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
   else
     for ((try=1; try<=attempts; try++)); do
       prc=0; reason=$(ssh_probe) || prc=$?
       if [[ $prc -eq 0 ]]; then ok=1; break; fi
-      case $prc in 2) kind=hostkey ;; 3) kind=auth; auth_tries=$((auth_tries + 1)) ;; *) kind=net ;; esac
-      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$attempts" "$reason"
+      # Предел в строке - тот, которым цикл закончится при таком же ответе:
+      # отказ во входе пробуется дважды, host-key - ни разу больше.
+      limit=$attempts
+      case $prc in
+        2) kind=hostkey; limit=$try ;;
+        3) kind=auth; auth_tries=$((auth_tries + 1))
+           (( try + 2 - auth_tries >= attempts )) || limit=$((try + 2 - auth_tries)) ;;
+        *) kind=net ;;
+      esac
+      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$limit" "$reason"
       # Сменившийся host-key ждать бесполезно: его убирает человек.
       [[ $kind != hostkey ]] || break
       pause=$((try * 3))

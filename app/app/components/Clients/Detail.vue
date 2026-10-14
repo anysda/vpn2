@@ -7,7 +7,7 @@ import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from './DeviceConfig.vue'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
-const emit = defineEmits<{ changed: [], deleted: [] }>()
+const emit = defineEmits<{ changed: [], deleted: [], gone: [id: number] }>()
 
 const { fetchDetail } = useClientDetail()
 const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
@@ -24,6 +24,11 @@ function errTitle(e: unknown, fallback: string) {
   return (e as { statusMessage?: string }).statusMessage ?? fallback
 }
 
+/** Клиента уже нет: удалён в другой вкладке или другим админом. */
+function isGone(e: unknown) {
+  return (e as { statusCode?: number }).statusCode === 404
+}
+
 // --- Трафик за 7 московских суток, ↓ и ↑ раздельно ---------------------------
 const EMPTY_WEEK = Array.from({ length: 7 }, () => ({ rx: 0, tx: 0 }))
 const week = ref<{ rx: number, tx: number }[]>(EMPTY_WEEK)
@@ -32,7 +37,8 @@ async function fetchWeek(id: number) {
   try {
     return await $fetch<{ date: string, rx: number, tx: number }[]>(`/api/clients/${id}/traffic`)
   }
-  catch {
+  catch (e) {
+    if (isGone(e)) throw e
     return EMPTY_WEEK
   }
 }
@@ -54,6 +60,8 @@ async function load(animate = false) {
   }
   catch (e) {
     if (version !== loadVersion) return
+    // Пропавший клиент — не ошибка: страница молча выберет следующего.
+    if (isGone(e)) return emit('gone', props.clientId)
     toast.add({ title: errTitle(e, 'Не удалось загрузить клиента'), color: 'error' })
   }
 }

@@ -18,6 +18,9 @@ export function uniq(kind: string): string {
 
 interface Allowed { status: number, url: RegExp, method?: string }
 
+/** Карточка и трафик клиента: GET, который гонка с удалением честно отвечает 404. */
+const CLIENT_GET = /\/api\/clients\/(\d+)(\/traffic)?(\?.*)?$/
+
 /**
  * Сторож страницы: ошибки консоли, исключения и HTTP-ответы >= 400. Ответы,
  * которых тест ждёт сам, он объявляет через allow(); остальное валит тест.
@@ -26,6 +29,30 @@ export class Guard {
   readonly problems: string[] = []
   private allowed: Allowed[] = []
   private signedOut = false
+  /** 404 карточки клиента по id; ошибка, только если клиент к концу теста есть. */
+  private gone = new Map<number, string[]>()
+
+  private maybeGone(status: number, url: string, method: string | undefined, problem: string) {
+    const m = CLIENT_GET.exec(url)
+    if (status !== 404 || !m || (method && method !== 'GET')) return false
+    const id = Number(m[1])
+    this.gone.set(id, [...this.gone.get(id) ?? [], problem])
+    return true
+  }
+
+  /**
+   * Клиента удалили (второй админ, тест через API), пока панель грузила его
+   * карточку: 404 — законный ответ, панель молча выбирает следующего. Это
+   * проверяется по факту: клиента с таким id нет (id не переиспользуются).
+   * Существующий клиент с 404 или недоступный API — ошибка, как раньше.
+   */
+  async settle(api: APIRequestContext) {
+    for (const [id, problems] of this.gone) {
+      const status = (await api.get(`/api/clients/${id}`)).status()
+      if (status !== 404) this.problems.push(...problems.map(p => `${p} (клиент ${id}: GET ${status})`))
+    }
+    this.gone.clear()
+  }
 
   allow(status: number, url: RegExp, method?: string) {
     this.allowed.push({ status, url, method })
@@ -46,7 +73,9 @@ export class Guard {
       // «Failed to load resource: ... status of 401» дублирует ответ, разбор — по ответу.
       const s = /status of (\d{3})/.exec(m.text())
       if (s && this.isAllowed(Number(s[1]), m.location().url)) return
-      this.problems.push(`console.error: ${m.text()} @ ${m.location().url}`)
+      const problem = `console.error: ${m.text()} @ ${m.location().url}`
+      if (s && this.maybeGone(Number(s[1]), m.location().url, undefined, problem)) return
+      this.problems.push(problem)
     })
     page.on('response', (r) => {
       const status = r.status()
@@ -57,7 +86,9 @@ export class Guard {
       }
       if (status < 400) return
       if (this.isAllowed(status, r.url(), method)) return
-      this.problems.push(`http ${status} ${method} ${r.url()}`)
+      const problem = `http ${status} ${method} ${r.url()}`
+      if (this.maybeGone(status, r.url(), method, problem)) return
+      this.problems.push(problem)
     })
   }
 }
@@ -67,6 +98,7 @@ export const test = base.extend<{ guard: Guard }>({
     const g = new Guard()
     g.attach(page)
     await use(g)
+    await g.settle(page.request)
     expect(g.problems, 'ошибки консоли, исключения и HTTP >= 400 за тест').toEqual([])
   }, { auto: true }],
 })

@@ -80,6 +80,16 @@ async function onDeleted() {
   await refreshClients()
 }
 
+// Клиента удалили, пока грузилась карточка: выбрать соседа по списку, без тоста.
+async function onGone(id: number) {
+  if (selectedId.value !== id) return
+  const list = sorted.value
+  const at = list.findIndex(c => c.id === id)
+  const rest = list.filter(c => c.id !== id)
+  selectedId.value = rest[Math.min(Math.max(at, 0), rest.length - 1)]?.id ?? null
+  await refreshClients()
+}
+
 // Строки списка появляются каскадом при смене фильтра или поиска.
 const rowsEl = ref<HTMLElement>()
 watch([filter, search], () => nextTick(() => {
@@ -219,6 +229,7 @@ function dot(c: Client) {
           :exits="exitTags"
           @changed="refreshClients"
           @deleted="onDeleted"
+          @gone="onGone"
         />
         <div v-else class="more">
           Выбери клиента в списке

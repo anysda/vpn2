@@ -1431,11 +1431,19 @@ async def monitor_loop() -> None:
 OUTBOX_KEY = web.AppKey('outbox', Outbox)
 
 
+async def report_rejected(payload: dict, status: int) -> None:
+    """Отказ Telegram — тревога в журнал панели. В Telegram бот об этом не пишет."""
+    recipient = 'admin' if payload.get('chat_id') == CHAT_ID else 'client'
+    r = await _local.post('/api/bot/events', headers=_bot_headers(),
+                          json={'type': 'telegram_rejected', 'status': status, 'recipient': recipient})
+    r.raise_for_status()
+
+
 async def event_outbox(webapp):
     queue = await asyncio.to_thread(
         Outbox, os.environ.get('TGBOT_OUTBOX_PATH', '/var/lib/anysda-tgbot/outbox.sqlite'))
     webapp[OUTBOX_KEY] = queue
-    worker = asyncio.create_task(queue.run(tg_send))
+    worker = asyncio.create_task(queue.run(tg_send, report_rejected))
     try:
         yield
     finally:

@@ -19,11 +19,13 @@ test('бот лежит: постоянная очередь, повторы, р
   let attempts = 0
   let whileSending: unknown
   const delivered = new Set<string>()
+  const journal: Array<{ type: string, detail?: string }> = []
   const load = () => serverModule<typeof import('../server/utils/bot-events')>(
     new URL('../server/utils/bot-events.ts', import.meta.url), {
       '../database/client': { useDb: () => db },
       '../database/schema': schema,
       './telegram-config': { botConfigured: () => true },
+      './events': { recordEvent: async (row: { type: string, detail?: string }) => { journal.push(row); return true } },
     }, {
       Date: { now: () => now },
       useRuntimeConfig: () => ({ tgbotSecret: 'test' }),
@@ -74,6 +76,9 @@ test('бот лежит: постоянная очередь, повторы, р
       await load().retryBotEvents()
     }
     expect((await queue.botDeliveries()).find(row => row.id === last.id)).toMatchObject({ status: 'failed', remaining: 0 })
+    expect(journal, 'окончательная ошибка доставки — тревога в журнале').toEqual([
+      expect.objectContaining({ type: 'bot_delivery_failed', detail: 'Уведомление клиенту «Тест»' }),
+    ])
     const exhausted = attempts
     now += 60_000
     await queue.retryBotEvents()
@@ -85,6 +90,7 @@ test('бот лежит: постоянная очередь, повторы, р
     await load().retryBotEvents()
     expect(attempts).toBe(beforeExpiry)
     expect((await queue.botDeliveries()).find(row => row.id === expired.id)?.status).toBe('failed')
+    expect(journal.filter(row => row.type === 'bot_delivery_failed'), 'просроченное — тоже тревога, один раз').toHaveLength(2)
 
     const stored = await db.select().from(schema.botOutbox)
     expect(stored.every(row => row.payload === '')).toBe(true)
@@ -127,6 +133,7 @@ test('бот не настроен: уведомления и рассылка �
       '../database/client': { useDb: () => db },
       '../database/schema': schema,
       './telegram-config': telegram,
+      './events': { recordEvent: async () => true },
     }, globals,
   )
   const broadcast = serverModule<{ default: (event: unknown) => Promise<unknown> }>(

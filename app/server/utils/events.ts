@@ -3,6 +3,7 @@ import { useDb } from '../database/client'
 import { useLogger } from './logger'
 import { events } from '../database/schema'
 import type { EventLevel, PanelEvent } from '../../shared/events'
+import { parseOutbound } from '../../shared/outbounds'
 
 /**
  * Журнал событий панели: лента на Обзоре. Запись в журнал не должна ломать
@@ -16,6 +17,13 @@ export const BOT_ACTOR = 'через бота'
 
 export function actorOf(user: { username: string }): string {
   return user.username ? `@${user.username}` : 'панель'
+}
+
+/** Выход маршрута так, как его подписывает панель: «DE», «DE WARP». */
+export function outboundLabel(outbound: string): string {
+  const parsed = parseOutbound(outbound)
+  if (!parsed) return outbound
+  return `${parsed.tag.toUpperCase()}${parsed.variant === 'warp' ? ' WARP' : ''}`
 }
 
 export interface EventInput {

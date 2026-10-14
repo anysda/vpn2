@@ -1,4 +1,5 @@
 import { isLoopbackAddr } from '../../utils/bot-api'
+import { joinDetail, recordEvent } from '../../utils/events'
 import { loginAttempt, loginFinish } from '../../utils/login-limit'
 import { SSO_PROVIDER } from '../../utils/sso'
 import { FIELD_LABELS } from '../../utils/validate'
@@ -101,6 +102,19 @@ function limited(path: string): boolean {
 
 const LOGIN_WINDOW_SEC = 300
 
+/** Неудачный вход в журнал: неверный пароль или код 2FA. Отказ ограничителя (429) — не новая попытка. */
+async function recordFailedLogin(path: string, request: Request | undefined, status: number, ip: string): Promise<void> {
+  if (status < 400 || status >= 500 || status === 429) return
+  if (path === '/sign-in/username') {
+    const body = await request?.json().catch(() => null) as { username?: unknown } | null | undefined
+    const login = typeof body?.username === 'string' ? body.username.trim().slice(0, 64) : ''
+    await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail(login && `логин «${login}»`, ip) })
+  }
+  else if (path === '/two-factor/verify-totp') {
+    await recordEvent({ type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: joinDetail('неверный код 2FA', ip) })
+  }
+}
+
 /** Запрос со страницы этой же панели: Origin (или Referer) того же хоста. */
 function sameOrigin(event: Parameters<Parameters<typeof defineEventHandler>[0]>[0]): boolean {
   const from = getRequestHeader(event, 'origin') || getRequestHeader(event, 'referer')
@@ -134,15 +148,19 @@ export default defineEventHandler(async (event) => {
     }
   }
   let res: Response | undefined
+  let copy: Request | undefined
   try {
     const request = toWebRequest(event)
     const headers = new Headers(request.headers)
     headers.set('x-forwarded-for', ip)
-    res = await useAuth().handler(new Request(request, { headers }))
+    const forwarded = new Request(request, { headers })
+    if (path === '/sign-in/username') copy = forwarded.clone()
+    res = await useAuth().handler(forwarded)
   }
   finally {
     // Ошибка сервера (5xx, исключение) — не неудача человека, её не считаем.
     if (key) loginFinish(key, !res || res.status < 400 || res.status >= 500)
   }
+  await recordFailedLogin(path, copy, res.status, ip)
   return res.status >= 400 ? humanError(res) : res
 })

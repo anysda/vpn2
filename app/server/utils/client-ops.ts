@@ -10,6 +10,7 @@ import { killOvpnClientQuiet, ovpnCn, removeCcd, syncOpenvpnConfig, withRevokedD
 import { syncIkev2, terminateIkev2Sa } from './ikev2'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
+import { joinDetail, recordEvent } from './events'
 import { pluralRu } from '../../shared/plural'
 
 /**
@@ -34,6 +35,13 @@ export interface ClientCreateInput {
   deviceLimit?: number | null
 }
 
+const devicesText = (n: number) => `${n} ${pluralRu(n, ['устройство', 'устройства', 'устройств'])}`
+
+/** Срок для журнала — дата по Москве, как её видит админ. */
+function termText(expiresAt: Date | null): string {
+  return expiresAt ? `до ${expiresAt.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}` : 'бессрочно'
+}
+
 /** Срок действия нельзя ставить раньше завтрашней даты. */
 function assertExpiryAllowed(expiresAt: string | null | undefined): void {
   if (expiresAt && new Date(expiresAt).getTime() < minExpiryMs()) {
@@ -45,7 +53,7 @@ function assertExpiryAllowed(expiresAt: string | null | undefined): void {
 }
 
 /** Создать клиента (имя + опции). Пароль генерится автоматически. */
-export async function createClient(input: ClientCreateInput): Promise<Client> {
+export async function createClient(input: ClientCreateInput, actor: string): Promise<Client> {
   const db = useDb()
   assertExpiryAllowed(input.expiresAt)
 
@@ -66,11 +74,12 @@ export async function createClient(input: ClientCreateInput): Promise<Client> {
   const [row] = await db.insert(clients).values(values).returning()
   if (!row) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
   await notifyBot('client_created', { name: row.name })
+  await recordEvent({ type: 'client_created', level: 'info', object: `client:${row.id}`, actor, title: `Клиент создан · ${row.name}`, detail: actor })
   return row
 }
 
 /** Обновить клиента: валидация, апдейт, ресинк WG/OVPN, уведомления клиенту. */
-export async function updateClient(id: number, patch: ClientPatch): Promise<Client> {
+export async function updateClient(id: number, patch: ClientPatch, actor: string): Promise<Client> {
   const db = useDb()
   assertExpiryAllowed(patch.expiresAt)
 
@@ -158,6 +167,19 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
     await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
   }
 
+  const object = `client:${row.id}`
+  if (row.frozenManual !== before.frozenManual) {
+    const [dc] = await db.select({ n: count() }).from(devices).where(eq(devices.clientId, id))
+    await recordEvent({
+      type: row.frozenManual ? 'client_frozen' : 'client_unfrozen', level: 'info', object, actor,
+      title: `${row.frozenManual ? 'Клиент заморожен' : 'Клиент разморожен'} · ${row.name}`,
+      detail: joinDetail(devicesText(Number(dc?.n ?? 0)), 'вручную', actor),
+    })
+  }
+  if ((before.expiresAt?.getTime() ?? null) !== (row.expiresAt?.getTime() ?? null)) {
+    await recordEvent({ type: 'client_term', level: 'info', object, actor, title: `Срок изменён · ${row.name}`, detail: joinDetail(termText(row.expiresAt), actor) })
+  }
+
   // Уведомления привязанному клиенту об изменениях аккаунта.
   const chat = before.tgChatId
   if (chat) {
@@ -197,7 +219,7 @@ export async function updateClient(id: number, patch: ClientPatch): Promise<Clie
 }
 
 /** Удалить клиента: каскадно девайсы, ресинк WG, отзыв OVPN-сертификатов. */
-export async function deleteClient(id: number): Promise<void> {
+export async function deleteClient(id: number, actor: string): Promise<void> {
   const db = useDb()
   // При частичном отзыве оставляем ВСЕ записи: повтор проходит уже отозванные
   // серийники и доводит оставшиеся до CRL, прежде чем сработает каскад DELETE.
@@ -222,6 +244,11 @@ export async function deleteClient(id: number): Promise<void> {
   }
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client delete failed'))
   await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
+
+  await recordEvent({
+    type: 'client_deleted', level: 'info', object: `client:${removed.id}`, actor,
+    title: `Клиент удалён · ${removed.name}`, detail: joinDetail(devicesText(devRows.length), actor),
+  })
 
   // Даже переполненная очередь не должна помешать отзыву доступа выше.
   // Ждём постоянной записи события до завершения запроса.

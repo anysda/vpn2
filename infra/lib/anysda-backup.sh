@@ -26,6 +26,20 @@
 set -euo pipefail
 umask 077
 
+# Неудачный бэкап — тревога в ленту «События» панели. Best-effort: панели
+# может и не быть, на исход бэкапа это не влияет. Секрет идёт в curl через
+# stdin, чтобы не светиться в списке процессов.
+FAIL_REASON=
+report_failure() {
+  local rc=$1 secret=/etc/anysda/tgbot-secret.txt
+  [[ $rc -ne 0 && -r $secret ]] || return 0
+  printf 'Authorization: Bearer %s\n' "$(cat "$secret")" | curl -fsS --max-time 5 -H @- \
+    -H 'Content-Type: application/json' \
+    -d "{\"type\":\"backup_failed\",\"detail\":\"${FAIL_REASON:-код выхода $rc}\"}" \
+    http://127.0.0.1:51821/api/bot/events >/dev/null 2>&1 || true
+}
+trap 'report_failure $?' EXIT
+
 ENV_FILE=/etc/anysda/backup.env
 [[ -r "$ENV_FILE" ]] || { echo "anysda-backup: $ENV_FILE отсутствует или unreadable" >&2; exit 2; }
 # shellcheck disable=SC1090
@@ -60,6 +74,7 @@ if [[ -z "${ANYSDA_BACKUP_PASSPHRASE:-}" ]]; then
       -d '{"type":"system_alert","subject":"backup failed","detail":"ANYSDA_BACKUP_PASSPHRASE missing"}' \
       http://127.0.0.1:8877/event >/dev/null 2>&1 || true
   fi
+  FAIL_REASON='нет пароля шифрования'
   exit 2
 fi
 
@@ -77,7 +92,7 @@ cleanup() {
     rm -rf "$WORK"
   fi
 }
-trap cleanup EXIT
+trap 'rc=$?; cleanup; report_failure $rc' EXIT
 
 # ── Снимок данных ───────────────────────────────────────────────────────────
 TS=$(date -u +%Y-%m-%dT%H%M%SZ)

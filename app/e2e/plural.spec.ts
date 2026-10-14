@@ -53,9 +53,10 @@ for (const [n, notification, device] of cases) {
         './ikev2': {},
         './client-prefs': {},
         './route-outbound': {},
+        './events': {},
       }, { createError: (error: object) => Object.assign(new Error(), error) },
     )
-    const error = await updateClient(1, { deviceLimit: n - 1 }).catch(error => error)
+    const error = await updateClient(1, { deviceLimit: n - 1 }, '@admin').catch(error => error)
     console.log(error.message)
     expect(error).toMatchObject({
       statusCode: 409,

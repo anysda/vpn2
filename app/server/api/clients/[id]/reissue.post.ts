@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../../../database/client'
 import { clients, devices } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
+import { actorOf, joinDetail, recordEvent } from '../../../utils/events'
 import { notifyClient } from '../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../utils/openvpn'
@@ -9,7 +10,7 @@ import { reissueDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
 
 /** Перевыпуск ключей ВСЕХ девайсов клиента (кнопка в шапке модалки). */
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  const user = await requireAuth(event)
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
 
@@ -30,6 +31,11 @@ export default defineEventHandler(async (event) => {
   await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client reissue failed'))
   await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after client reissue failed'))
   await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client reissue failed'))
+
+  await recordEvent({
+    type: 'client_reissued', level: 'info', object: `client:${client.id}`, actor: actorOf(user),
+    title: `Ключи перевыпущены · ${client.name}`, detail: joinDetail('все устройства', actorOf(user)),
+  })
 
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
   if (client.tgChatId) {

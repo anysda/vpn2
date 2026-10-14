@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { requireAuth } from '../../utils/auth'
+import { actorOf, joinDetail, recordEvent } from '../../utils/events'
 import { readTelegramRuntime, writeTelegramRuntime } from '../../utils/telegram-config'
 import { readBodyAs } from '../../utils/validate'
 
@@ -12,7 +13,7 @@ const Body = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  const user = await requireAuth(event)
   const body = await readBodyAs(event, Body)
 
   const cur = readTelegramRuntime()
@@ -27,6 +28,17 @@ export default defineEventHandler(async (event) => {
 
   writeTelegramRuntime(next)
   useLogger().info({ chat_id: next.chat_id }, 'telegram runtime updated')
+  const changed = [
+    next.bot_token !== cur.bot_token && 'токен бота',
+    next.chat_id !== cur.chat_id && 'чат админа',
+    next.admin_username !== cur.admin_username && 'ник админа',
+  ].filter(Boolean)
+  if (changed.length) {
+    await recordEvent({
+      type: 'telegram_changed', level: 'alarm', object: 'settings:telegram', actor: actorOf(user),
+      title: 'Изменены настройки Telegram', detail: joinDetail(changed.join(', '), actorOf(user)),
+    })
+  }
 
   return { ok: true }
 })

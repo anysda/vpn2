@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { requireAuth } from '../../utils/auth'
+import { actorOf } from '../../utils/events'
 import { updateClient } from '../../utils/client-ops'
 import { readBodyAs } from '../../utils/validate'
 
@@ -14,9 +15,9 @@ const Body = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  const user = await requireAuth(event)
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   const body = await readBodyAs(event, Body)
-  return updateClient(id, body)
+  return updateClient(id, body, actorOf(user))
 })

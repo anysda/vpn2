@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { accounts, users } from '../../database/schema'
 import { resetAuth, useAuth } from '../../utils/auth'
+import { actorOf, joinDetail, recordEvent } from '../../utils/events'
 import {
   discoveryFrom, parseAllowedSubs, probeDiscovery, readSsoStored, SSO_PROVIDER, writeSsoStored,
   type SsoStored,
@@ -101,6 +102,14 @@ export default defineEventHandler(async (event) => {
   }
 
   writeSsoStored(next)
+  const changed = (Object.keys(next) as (keyof SsoStored)[]).filter(k => next[k] !== cur[k])
+  if (changed.length) {
+    const actor = actorOf({ username: String((session.user as { username?: string }).username ?? '') })
+    await recordEvent({
+      type: 'sso_changed', level: 'alarm', object: 'settings:sso', actor,
+      title: 'Изменены настройки SSO', detail: joinDetail(next.enabled ? 'вход через Authentik включён' : 'вход через Authentik выключен', actor),
+    })
+  }
   // Провайдер better-auth собирается из настроек при создании экземпляра.
   resetAuth()
   useLogger().info(

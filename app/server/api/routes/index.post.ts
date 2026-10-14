@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { routes } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
+import { actorOf, joinDetail, outboundLabel, recordEvent } from '../../utils/events'
 import { assertKnownOutbound } from '../../utils/route-outbound'
 import { detectRouteType, syncRoutesFile } from '../../utils/routes-sync'
 import { readBodyAs } from '../../utils/validate'
@@ -13,7 +14,7 @@ const Body = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  const user = await requireAuth(event)
   const body = await readBodyAs(event, Body)
 
   const value = body.value.trim()
@@ -38,5 +39,11 @@ export default defineEventHandler(async (event) => {
     .returning()
 
   await syncRoutesFile().catch(err => useLogger().error({ err }, 'route sync failed'))
+  if (row) {
+    await recordEvent({
+      type: 'route_added', level: 'info', object: `route:${row.id}`, actor: actorOf(user),
+      title: `Маршрут добавлен · ${row.value}`, detail: joinDetail(`через ${outboundLabel(row.outbound)}`, actorOf(user)),
+    })
+  }
   return row
 })

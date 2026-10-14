@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { createClient } from '../../../../utils/client-ops'
 import { requireBotAuth } from '../../../../utils/bot-api'
+import { BOT_ACTOR } from '../../../../utils/events'
 import { readBodyAs } from '../../../../utils/validate'
 
 // Создание клиента из админского чата бота — имя + фильтрация.
@@ -13,5 +14,5 @@ const Body = z.object({
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const body = await readBodyAs(event, Body)
-  return createClient(body)
+  return createClient(body, BOT_ACTOR)
 })

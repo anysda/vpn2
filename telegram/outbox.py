@@ -146,7 +146,8 @@ class Outbox:
             if rate_limited:
                 db.execute('UPDATE throttle SET until = max(until, ?)', (until,))
 
-    async def run(self, send):
+    async def run(self, send, on_rejected=None):
+        """on_rejected(payload, status) — Telegram окончательно отверг сообщение."""
         while True:
             try:
                 row = await asyncio.to_thread(self.claim)
@@ -174,6 +175,12 @@ class Outbox:
                                     row['id'], row['attempts'] + 1, delay, type(error).__name__)
                         continue
                     log.warning('outbox rejected id=%d status=%d', row['id'], error.status)
+                    if on_rejected is not None:
+                        try:
+                            await on_rejected(json.loads(row['payload']), error.status)
+                        except Exception as report_error:
+                            log.warning('outbox rejection report failed id=%d error=%s',
+                                        row['id'], type(report_error).__name__)
                 else:
                     log.info('outbox delivered id=%d', row['id'])
                 # A successful send must not be repeated just because the ACK

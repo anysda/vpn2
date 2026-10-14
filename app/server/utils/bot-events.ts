@@ -5,6 +5,7 @@ import { useDb } from '../database/client'
 import { botOutbox } from '../database/schema'
 import type { BotDelivery } from '../../shared/bot-delivery'
 import { botConfigured } from './telegram-config'
+import { recordEvent } from './events'
 
 const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
 const MAX_ATTEMPTS = DELAYS.length + 1
@@ -45,6 +46,11 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
   return delivery(saved ?? { ...row, status: 'accepted' })
 }
 
+/** Повторов больше не будет — тревога в журнал. */
+async function deliveryFailed(label: string): Promise<void> {
+  await recordEvent({ type: 'bot_delivery_failed', level: 'alarm', object: 'bot', title: 'Бот не принял уведомление', detail: label })
+}
+
 function attempt(id: string): Promise<void> {
   const pending = inFlight.get(id)
   if (pending) return pending
@@ -64,13 +70,14 @@ async function attemptOnce(id: string) {
     if (!candidate) return
     if (candidate.expires <= now || candidate.attempts >= MAX_ATTEMPTS) {
       await tx.update(botOutbox).set({ status: 'failed', payload: '' }).where(eq(botOutbox.id, id))
-      return
+      return { ...candidate, failed: true }
     }
     const attempts = candidate.attempts + 1
     await tx.update(botOutbox).set({ attempts, due: now + (DELAYS[attempts - 1] ?? 30_000) }).where(eq(botOutbox.id, id))
-    return { ...candidate, attempts }
+    return { ...candidate, attempts, failed: false }
   })
   if (!row) return
+  if (row.failed) return deliveryFailed(row.label)
   let accepted = false
   try {
     const cfg = useRuntimeConfig()
@@ -88,6 +95,7 @@ async function attemptOnce(id: string) {
     ...(!accepted ? { lastFailure: Date.now() } : {}),
     ...(status === 'queued' ? {} : { payload: '' }),
   }).where(eq(botOutbox.id, id))
+  if (status === 'failed') await deliveryFailed(row.label)
 }
 
 export async function retryBotEvents() {
@@ -96,7 +104,9 @@ export async function retryBotEvents() {
   // Ожидающие от времени, когда бот не был настроен (или его сняли), не
   // доставить: удаляем, а не повторяем и не показываем очередью.
   if (!botConfigured()) await db.delete(botOutbox).where(eq(botOutbox.status, 'queued'))
-  await db.update(botOutbox).set({ status: 'failed', payload: '' }).where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now)))
+  const expired = await db.update(botOutbox).set({ status: 'failed', payload: '' })
+    .where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now))).returning({ label: botOutbox.label })
+  for (const row of expired) await deliveryFailed(row.label)
   await db.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
   const rows = await db.select({ id: botOutbox.id }).from(botOutbox)
     .where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.due, now))).orderBy(asc(botOutbox.created)).limit(16)

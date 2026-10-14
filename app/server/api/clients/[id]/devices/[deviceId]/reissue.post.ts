@@ -2,6 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../../database/client'
 import { clients, devices } from '../../../../../database/schema'
 import { requireAuth } from '../../../../../utils/auth'
+import { actorOf, joinDetail, recordEvent } from '../../../../../utils/events'
 import { notifyClient } from '../../../../../utils/bot-events'
 import { reissueDeviceWg, syncWireguardConfig } from '../../../../../utils/wireguard'
 import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../../utils/openvpn'
@@ -9,7 +10,7 @@ import { reissueDeviceIkev2, syncIkev2 } from '../../../../../utils/ikev2'
 
 /** Перевыпуск ключей одного девайса (кнопка на карточке девайса). */
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
+  const user = await requireAuth(event)
   const clientId = Number(getRouterParam(event, 'id'))
   const deviceId = Number(getRouterParam(event, 'deviceId'))
   if (!Number.isFinite(clientId) || !Number.isFinite(deviceId)) {
@@ -32,6 +33,10 @@ export default defineEventHandler(async (event) => {
   // Уведомить привязанного клиента — ключи перевыпустил администратор.
   const [client] = await db.select({ tgChatId: clients.tgChatId, name: clients.name }).from(clients)
     .where(eq(clients.id, clientId)).limit(1)
+  await recordEvent({
+    type: 'client_reissued', level: 'info', object: `client:${clientId}`, actor: actorOf(user),
+    title: `Ключи перевыпущены · ${client?.name ?? device.name}`, detail: joinDetail(`устройство «${device.name}»`, actorOf(user)),
+  })
   if (client?.tgChatId) {
     await notifyClient(
       client.tgChatId,

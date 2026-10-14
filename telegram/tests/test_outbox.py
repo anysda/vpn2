@@ -233,6 +233,39 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         self.queue.enqueue({'chat_id': 200, 'text': 'blocked recipient'})
         await self.worker_until(AsyncMock(side_effect=TelegramSendError(403)), lambda: not self.rows())
 
+    async def test_permanent_rejection_is_reported_once_and_report_failure_is_harmless(self):
+        reported = AsyncMock(side_effect=[RuntimeError('panel down'), None])
+        for text in ('first', 'second'):
+            self.queue.enqueue({'chat_id': 200, 'text': text})
+            worker = asyncio.create_task(self.queue.run(AsyncMock(side_effect=TelegramSendError(403)), reported))
+            try:
+                async with asyncio.timeout(5):
+                    while self.rows():
+                        await asyncio.sleep(0.01)
+            finally:
+                worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker
+        self.assertEqual(reported.await_args_list[0].args, ({'chat_id': 200, 'text': 'first'}, 403))
+        self.assertEqual(reported.await_count, 2)
+        # Повторяемые ошибки — не отказ.
+        self.queue.enqueue({'chat_id': 200, 'text': 'retry'})
+        await self.worker_until(AsyncMock(side_effect=TelegramSendError(503)), lambda: self.rows()[0][1] == 1)
+        self.assertEqual(reported.await_count, 2)
+
+    async def test_bot_reports_rejection_to_panel_journal(self):
+        bot = load_bot()
+        response = Mock(raise_for_status=Mock())
+        with patch.object(bot._local, 'post', AsyncMock(return_value=response)) as post:
+            await bot.report_rejected({'chat_id': bot.CHAT_ID, 'text': 'x'}, 400)
+            await bot.report_rejected({'chat_id': bot.CHAT_ID + 1, 'text': 'x'}, 403)
+        self.assertEqual([c.args[0] for c in post.await_args_list], ['/api/bot/events'] * 2)
+        self.assertEqual([c.kwargs['json'] for c in post.await_args_list], [
+            {'type': 'telegram_rejected', 'status': 400, 'recipient': 'admin'},
+            {'type': 'telegram_rejected', 'status': 403, 'recipient': 'client'},
+        ])
+        self.assertTrue(post.await_args_list[0].kwargs['headers']['Authorization'].startswith('Bearer '))
+
     async def test_retry_after_pauses_all_recipients_and_survives_restart(self):
         self.queue.enqueue({'chat_id': 200, 'text': 'rate limited'})
         send = AsyncMock(side_effect=TelegramSendError(429, 600))

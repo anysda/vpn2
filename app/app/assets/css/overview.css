@@ -166,19 +166,16 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .leg .nm{white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 }
 /* телефон: одна сетка в две колонки, блоки в порядке макета — события, ноды,
-   выходы и DNS рядом, трафик, активность, топ, клиенты. Ряды раскрыты через
-   display:contents, чтобы их карточки встали в общую сетку */
+   выходы и DNS рядом, трафик, активность, топ, клиенты. Порядок задаёт разметка
+   (pages/index.vue), не order. Ряды раскрыты через display:contents, чтобы их
+   карточки встали в общую сетку */
 @media (max-width:720px){
   .ov.tab.on{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
   .ov .r1,.ov .ra{display:contents}
   .ov .r1>*,.ov .ra>*,.ov .r3{grid-column:1/-1;margin:0}
-  .ov .r1>.ev{order:1}
-  .ov .r3{order:2;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
-  .ov .r1>.ov-exits,.ov .r1>.ov-dns{order:3;grid-column:auto;align-self:stretch}
-  .ov .r1>.ov-wave{order:4}
-  .ov .ra>.act{order:5}
-  .ov .ra>.ov-top{order:6}
-  .ov .ra>.ov-clients{order:7;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .ov .r3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .ov .r1>.ov-exits,.ov .r1>.ov-dns{grid-column:auto;align-self:stretch}
+  .ov .ra>.ov-clients{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .ov .r1>.card{padding:18px 20px}
 
   /* ноды: пары, нечётный entry на всю ширину */

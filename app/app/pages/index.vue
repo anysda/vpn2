@@ -13,8 +13,12 @@ const woke = useState('ov-woke', () => false)
 const wake = reactive({ on: false, t0: 0 })
 provide(WAKE, wake)
 const tab = ref<HTMLElement>()
-onMounted(() => {
+// Телефон: блоки в разметке в порядке экрана (Tab и скринридер идут по ней).
+const mobile = useMobile()
+onMounted(async () => {
   if (woke.value) return
+  // мобильная разметка встаёт после монтирования: анимировать уже её
+  await nextTick()
   woke.value = true
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
   wake.on = true
@@ -48,6 +52,7 @@ onUnmounted(() => { period.value = 'day' })
 // normalizeScreenLayout: лента теперь в traffic, рассылка ушла с Обзора
 const KNOWN = new Set(['traffic', 'nodes', 'activity'])
 const blocks = computed(() => [...layout.value.left, ...layout.value.right].filter(id => KNOWN.has(id)))
+const shown = computed(() => new Set(blocks.value))
 </script>
 
 <template>
@@ -59,19 +64,38 @@ const blocks = computed(() => [...layout.value.left, ...layout.value.right].filt
         </button>
       </div>
     </div>
-    <template v-for="id in blocks" :key="id">
-      <section v-if="id === 'traffic'" class="r1" data-blk="traffic">
+    <!-- телефон: события, ноды, выходы и DNS, трафик, активность, топ, клиенты; ряды раскрыты в общую сетку -->
+    <template v-if="mobile">
+      <section v-if="shown.has('traffic')" class="r1" data-blk="traffic">
         <EventsFeed />
-        <OverviewWave :period="period" />
+      </section>
+      <OverviewNodes v-if="shown.has('nodes')" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+      <section v-if="shown.has('traffic')" class="r1">
         <OverviewExits :nodes="sorted" />
         <OverviewDns />
+        <OverviewWave :period="period" />
       </section>
-      <OverviewNodes v-else-if="id === 'nodes'" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-      <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
+      <section v-if="shown.has('activity')" class="ra" data-blk="activity">
         <OverviewActivity />
         <OverviewTop :period="period" />
         <OverviewClients />
       </section>
+    </template>
+    <template v-else>
+      <template v-for="id in blocks" :key="id">
+        <section v-if="id === 'traffic'" class="r1" data-blk="traffic">
+          <EventsFeed />
+          <OverviewWave :period="period" />
+          <OverviewExits :nodes="sorted" />
+          <OverviewDns />
+        </section>
+        <OverviewNodes v-else-if="id === 'nodes'" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+        <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
+          <OverviewActivity />
+          <OverviewTop :period="period" />
+          <OverviewClients />
+        </section>
+      </template>
     </template>
   </main>
 </template>

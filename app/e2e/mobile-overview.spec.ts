@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test'
 import { expect, NODES, test, toast } from './support/fixtures'
 import { openHome } from './support/clients'
 import { noHorizontalOverflow } from './support/overflow'
+import { orderBreaks } from './support/order'
 
 // Обзор на телефоне: блоки в порядке макета, ноды парами, шторка ноды вместо модалки.
 
@@ -68,6 +69,17 @@ for (const width of [360, 402]) {
     })
   }
 }
+
+test('блоки Обзора в разметке идут сверху вниз, как на экране, без order', async ({ page }) => {
+  await openHome(page)
+  for (const tag of NODES) await expect(node(page, tag)).toBeVisible()
+  await settled(page)
+  const main = page.locator('main.tab.on')
+  expect(await orderBreaks(main, 'blocks'), 'блоки по разметке против экрана').toEqual([])
+  const ordered = await main.evaluate(el => [...el.querySelectorAll('*')]
+    .filter(e => getComputedStyle(e).order !== '0').map(e => e.className))
+  expect(ordered, 'перестановка через order').toEqual([])
+})
 
 test('нечётное число нод: entry на всю ширину, экзиты парами', async ({ page }) => {
   test.skip(exits.length < 3, 'нужно три экзита')

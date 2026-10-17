@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
-import { noHorizontalOverflow } from './support/overflow'
+import { noHorizontalOverflow, noVerticalOverflow } from './support/overflow'
 
 // DNS на телефоне: восемь подразделов в одну колонку, окна — нижней шторкой.
 // Длинные имена клиентов и адреса не должны вылезать за край экрана.
@@ -44,6 +44,12 @@ const sheet = (page: Page, name: string) => page.locator('.bsh[role="dialog"]').
 for (const width of [360, 402]) {
   test.describe(`DNS на телефоне ${width}`, () => {
     test.use({ viewport: { width, height: 874 } })
+
+    test('сводка: заголовок, числа и график внутри карточки', async ({ page }) => {
+      await openHome(page, '/dns')
+      await expect(page.locator('.dns .dk > .card')).toHaveCount(4)
+      await noVerticalOverflow(page, '.dns .dk', `сводка ${width}`)
+    })
 
     for (const scheme of ['dark', 'light'] as const) {
       test(`восемь подразделов в ширину экрана, ${scheme}`, async ({ page }) => {

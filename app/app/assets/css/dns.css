@@ -234,7 +234,7 @@
 
   /* сводка */
   .dns .dk{grid-template-columns:repeat(2,minmax(0,1fr));margin:0}
-  .dns .dk .card{height:156px;padding:14px 14px 12px;min-width:0}
+  .dns .dk .card{height:auto;min-height:156px;padding:14px 14px 12px;min-width:0}
   .dns .dk h3{font-size:12.5px;line-height:1.3}
   .dns .dk .nums{flex-direction:column;align-items:flex-start;gap:8px;margin-top:auto;padding-top:8px;min-width:0;max-width:100%}
   .dns .dk .big{font-size:30px}.dns .dk .big small{font-size:14px}

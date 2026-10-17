@@ -41,6 +41,7 @@ const PROTECT: { k: Tog, name: string, note: string }[] = [
 
 const toast = useToast()
 const { data, error, status, refresh } = useFetch<View>('/api/dns/settings', { server: false, lazy: true })
+const latest = latestWins<View>(v => (data.value = v), () => $fetch<View>('/api/dns/settings'))
 // Пока серверы сохраняются, поле только для чтения: ответ PATCH иначе затёр
 // бы допечатанное, а тост «сохранено» говорил бы не о том, что видно.
 const ups = ref('')
@@ -58,13 +59,12 @@ async function patch(body: Partial<Record<keyof View, unknown>>, done?: string):
   const k = Object.keys(body)[0]!
   busy.value.add(k)
   try {
-    data.value = await $fetch<View>('/api/dns/settings', { method: 'PATCH', body })
+    await latest(() => $fetch<View>('/api/dns/settings', { method: 'PATCH', body }))
     if (done) toast.add({ title: done })
     return true
   }
   catch (e) {
     toast.add({ title: errText(e), color: 'error' })
-    await refresh()
     return false
   }
   finally {

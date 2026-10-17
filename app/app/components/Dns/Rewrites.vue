@@ -5,6 +5,7 @@ interface Rewrite { domain: string, answer: string, enabled: boolean }
 
 const toast = useToast()
 const { data, error, status, refresh } = useFetch<Rewrite[]>('/api/dns/rewrites', { server: false, lazy: true })
+const latest = latestWins<Rewrite[]>(v => (data.value = v), () => $fetch<Rewrite[]>('/api/dns/rewrites'))
 const busy = ref(new Set<string>())
 
 const errText = (e: unknown) => {
@@ -20,7 +21,7 @@ async function toggle(r: Rewrite) {
   const want = !r.enabled
   r.enabled = want
   try {
-    data.value = await $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'PATCH', body: { domain: r.domain, answer: r.answer, enabled: want } })
+    await latest(() => $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'PATCH', body: { domain: r.domain, answer: r.answer, enabled: want } }))
   }
   catch (e) {
     r.enabled = !want
@@ -47,7 +48,7 @@ async function add() {
   if (!addReady.value) return
   adding.value = true
   try {
-    data.value = await $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'POST', body: { domain: addDomain.value, answer: addAnswer.value } })
+    await latest(() => $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'POST', body: { domain: addDomain.value, answer: addAnswer.value } }))
     addOpen.value = false
     toast.add({ title: `Перезапись «${addDomain.value.trim().toLowerCase().replace(/\.$/, '')}» добавлена` })
   }
@@ -72,9 +73,11 @@ async function del() {
   delOpen.value = false
   if (!d) return
   try {
-    const v = await $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'DELETE', body: { domain: d.r.domain, answer: d.r.answer } })
-    await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
-    data.value = v
+    await latest(async () => {
+      const v = await $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'DELETE', body: { domain: d.r.domain, answer: d.r.answer } })
+      await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
+      return v
+    })
     toast.add({ title: `Перезапись «${d.r.domain}» удалена` })
   }
   catch (e) {

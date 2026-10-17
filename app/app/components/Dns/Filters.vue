@@ -8,6 +8,10 @@ interface View { interval: number, black: List[], white: List[] }
 
 const toast = useToast()
 const { data, error, status, refresh } = useFetch<View>('/api/dns/filters', { server: false, lazy: true })
+const latest = latestWins<View>(
+  v => (data.value = { interval: v.interval, black: v.black, white: v.white }),
+  () => $fetch<View>('/api/dns/filters'),
+)
 const busy = ref(new Set<string>())
 const updating = ref(false)
 
@@ -60,7 +64,7 @@ async function toggle(l: List, white: boolean) {
   const want = !l.enabled
   l.enabled = want
   try {
-    data.value = await $fetch<View>('/api/dns/filters', { method: 'PATCH', body: { url: l.url, white, enabled: want } })
+    await latest(() => $fetch<View>('/api/dns/filters', { method: 'PATCH', body: { url: l.url, white, enabled: want } }))
   }
   catch (e) {
     l.enabled = !want
@@ -74,8 +78,7 @@ async function toggle(l: List, white: boolean) {
 async function check() {
   updating.value = true
   try {
-    const r = await $fetch<View & { updated: number }>('/api/dns/filters/refresh', { method: 'POST' })
-    data.value = { interval: r.interval, black: r.black, white: r.white }
+    const r = await latest(() => $fetch<View & { updated: number }>('/api/dns/filters/refresh', { method: 'POST' }))
     toast.add({ title: r.updated
       ? `Списки обновлены: ${r.updated} ${pluralRu(r.updated, ['список', 'списка', 'списков'])}`
       : 'Списки обновлены, новых правил нет' })
@@ -108,7 +111,7 @@ async function add() {
   adding.value = true
   const name = addName.value.trim()
   try {
-    data.value = await $fetch<View>('/api/dns/filters', { method: 'POST', body: { name, url: addUrl.value.trim(), white: addWhite.value } })
+    await latest(() => $fetch<View>('/api/dns/filters', { method: 'POST', body: { name, url: addUrl.value.trim(), white: addWhite.value } }))
     addOpen.value = false
     toast.add({ title: `Список «${name}» добавлен` })
   }
@@ -134,9 +137,11 @@ async function del() {
   delOpen.value = false
   if (!d) return
   try {
-    const v = await $fetch<View>('/api/dns/filters', { method: 'DELETE', body: { url: d.l.url, white: d.white } })
-    await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
-    data.value = v
+    await latest(async () => {
+      const v = await $fetch<View>('/api/dns/filters', { method: 'DELETE', body: { url: d.l.url, white: d.white } })
+      await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
+      return v
+    })
     toast.add({ title: `Список «${d.l.name}» удалён` })
   }
   catch (e) {

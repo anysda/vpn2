@@ -530,7 +530,6 @@ async function saveSso() {
 @keyframes stg-m-row{from{opacity:0;transform:translateY(6px)}}
 /* телефон: одна колонка, подпись над значением, ряды и кнопки как в мобильном макете */
 @media (max-width:720px){
-  .stg>.head{display:none}
   .stg .sgrid{grid-template-columns:minmax(0,1fr)}
   .stg .ssso{grid-column:auto;grid-row:auto}
   .stg .sc{padding:20px 18px;min-height:0}

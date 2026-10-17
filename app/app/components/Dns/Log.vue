@@ -139,8 +139,12 @@ onMounted(() => void load())
         <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
         <input v-model="q" placeholder="Домен или клиент" aria-label="Домен или клиент">
       </label>
+      <!-- «Обновить» в разметке там же, где на экране: на телефоне рядом с поиском, на ПК в конце ряда -->
+      <button v-if="mobile" ref="pill" type="button" class="pill" @click="refreshLog">
+        <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Обновить
+      </button>
       <DnsSeg v-model="f" :options="FILTERS" small @pick="v => f = v" />
-      <button ref="pill" type="button" class="pill" style="margin-left:auto" @click="refreshLog">
+      <button v-if="!mobile" ref="pill" type="button" class="pill" style="margin-left:auto" @click="refreshLog">
         <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Обновить
       </button>
     </div>

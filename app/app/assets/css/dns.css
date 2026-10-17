@@ -261,8 +261,8 @@
   /* журнал: поиск и «Обновить» в ряд, фильтр ниже прокручивается вбок */
   .dns .tbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 8px;margin:0}
   .dns .tbar .inp{height:40px;min-width:0}
-  .dns .tbar>.pill{grid-row:1;grid-column:2;height:40px}
-  .dns .tbar .seg{grid-row:2;grid-column:1/-1;display:flex;margin:0 -16px;padding:0 16px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+  .dns .tbar>.pill{height:40px}
+  .dns .tbar .seg{grid-column:1/-1;display:flex;margin:0 -16px;padding:0 16px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
   .dns .tbar .seg::-webkit-scrollbar{display:none}
   .dns .tbar .seg button{flex:none;white-space:nowrap}
   .dns .logc{padding:4px 14px}

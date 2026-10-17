@@ -4,7 +4,6 @@ import { noHorizontalOverflow } from './support/overflow'
 import { totp } from './support/totp'
 
 // Настройки на телефоне: одна колонка, подпись над полем, «Выключить 2FA?» — шторкой.
-test.use({ viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 })
 
 async function openSettings(page: Page) {
   await page.goto('/settings')

@@ -28,8 +28,13 @@ async function typeExpiryRightAway(page: Page, tap: boolean) {
   expect(response.request().postDataJSON().expiresAt).toContain(`${y}-${m}-${d}`)
 }
 
-test('десктоп: срок, набранный сразу после открытия окна, не теряет цифр', async ({ page }) => {
-  await typeExpiryRightAway(page, false)
+test.describe('десктоп', () => {
+  // Файл в проекте mobile: окно — как у проекта desktop.
+  test.use({ viewport: { width: 1400, height: 1000 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 })
+
+  test('срок, набранный сразу после открытия окна, не теряет цифр', async ({ page }) => {
+    await typeExpiryRightAway(page, false)
+  })
 })
 
 /** Длинное имя: 64 знака, предел сервера; префикс e2e- снесёт teardown. */
@@ -76,7 +81,7 @@ async function tapDownload(page: Page, dlg: Locator, name: string) {
 
 for (const width of [360, 402]) {
   test.describe(`телефон ${width}`, () => {
-    test.use({ viewport: { width, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 })
+    test.use({ viewport: { width, height: 874 } })
 
     test('срок, набранный сразу после открытия шторки, не теряет цифр', async ({ page }) => {
       await typeExpiryRightAway(page, true)

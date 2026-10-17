@@ -43,7 +43,7 @@ const sheet = (page: Page, name: string) => page.locator('.bsh[role="dialog"]').
 
 for (const width of [360, 402]) {
   test.describe(`DNS на телефоне ${width}`, () => {
-    test.use({ viewport: { width, height: 874 }, isMobile: true, hasTouch: true })
+    test.use({ viewport: { width, height: 874 } })
 
     for (const scheme of ['dark', 'light'] as const) {
       test(`восемь подразделов в ширину экрана, ${scheme}`, async ({ page }) => {
@@ -72,8 +72,6 @@ for (const width of [360, 402]) {
 }
 
 test.describe('DNS на телефоне: раскладка и шторки', () => {
-  test.use({ viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true })
-
   test('сводка 2×2, журнал строкой с деталями, сервисы в три колонки', async ({ page }) => {
     await openHome(page, '/dns')
     const kpi = page.locator('.dns .dk > .card')

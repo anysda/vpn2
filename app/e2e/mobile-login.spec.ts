@@ -47,7 +47,7 @@ async function touchSized(page: Page, where: string) {
 
 for (const width of [360, 402]) {
   test.describe(`телефон ${width}px`, () => {
-    test.use({ viewport: { width, height: 874 }, isMobile: true, hasTouch: true })
+    test.use({ viewport: { width, height: 874 } })
 
     test('вход: обе темы по макету без горизонтальной прокрутки, пароль и код из аутентификатора, неверный код виден', async ({ page, guard, request }) => {
       test.setTimeout(180_000)

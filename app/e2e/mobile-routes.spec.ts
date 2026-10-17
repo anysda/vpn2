@@ -4,7 +4,6 @@ import { noHorizontalOverflow } from './support/overflow'
 
 // Маршруты на телефоне: доска в одну колонку, перенос правила тапом и шторкой
 // вместо перетаскивания — тем же PATCH, что drag&drop на десктопе.
-test.use({ viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 })
 
 const stamp = () => `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`
 const regions = new Intl.DisplayNames(['ru'], { type: 'region' })

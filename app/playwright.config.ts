@@ -33,18 +33,19 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop',
-      testIgnore: /(narrow|mobile)\.spec\.ts/,
+      testIgnore: [/(^|\/)narrow\.spec\.ts$/, /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/],
       use: { ...devices['Desktop Chrome'], viewport: { width: 1400, height: 1000 } },
     },
     {
       // Узкий десктоп: до 720px включается мобильный каркас, его держит проект mobile.
       name: 'narrow',
-      testMatch: /narrow\.spec\.ts/,
+      testMatch: /(^|\/)narrow\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } },
     },
     {
+      // Все телефонные сценарии: mobile.spec.ts и mobile-<раздел>.spec.ts.
       name: 'mobile',
-      testMatch: /mobile\.spec\.ts/,
+      testMatch: /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
     },
   ],

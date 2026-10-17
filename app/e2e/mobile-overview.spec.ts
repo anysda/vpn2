@@ -4,7 +4,6 @@ import { openHome } from './support/clients'
 import { noHorizontalOverflow } from './support/overflow'
 
 // Обзор на телефоне: блоки в порядке макета, ноды парами, шторка ноды вместо модалки.
-test.use({ viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true })
 
 type Node = { tag: string, disabled: boolean, active?: boolean, activeDevices?: number | null }
 

@@ -12,7 +12,7 @@ interface Row {
   queries: number
 }
 
-const { data, error } = useFetch<Row[]>('/api/dns/clients', { server: false, lazy: true })
+const { data, error, status, refresh } = useFetch<Row[]>('/api/dns/clients', { server: false, lazy: true })
 
 const errText = (e: unknown) => {
   const x = e as { data?: { message?: string }, statusMessage?: string, message?: string }
@@ -32,9 +32,7 @@ const ips = (l: string[]) => l.length ? l.slice(0, 2).join(', ') + (l.length > 2
 
 <template>
   <div>
-    <div v-if="error && !data" class="card">
-      <h3>{{ errText(error) }}</h3>
-    </div>
+    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
     <div class="card fl">
       <div class="fhead">
         <div>

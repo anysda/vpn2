@@ -4,7 +4,7 @@
 interface View { all: { id: string, name: string }[], blocked: string[] }
 
 const toast = useToast()
-const { data, error, refresh } = useFetch<View>('/api/dns/services', { server: false, lazy: true })
+const { data, error, status, refresh } = useFetch<View>('/api/dns/services', { server: false, lazy: true })
 const blocked = ref(new Set<string>())
 watch(data, (v) => {
   if (v) blocked.value = new Set(v.blocked)
@@ -47,9 +47,7 @@ function allOff() {
 
 <template>
   <div>
-    <div v-if="error && !data" class="card">
-      <h3>{{ errText(error) }}</h3>
-    </div>
+    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
     <div class="fhead svh">
       <div>
         <h3>Блокировка сервисов</h3>

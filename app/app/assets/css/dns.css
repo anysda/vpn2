@@ -185,6 +185,7 @@
 
 /* ---------- фильтры ---------- */
 .dns .fl{padding:18px 20px 10px;margin-bottom:12px}
+.dns .lerr{margin-bottom:12px}
 .dns .fl .fhead{margin-bottom:10px}
 .dns .ftab>div{display:grid;grid-template-columns:56px 1fr 120px 150px 40px;align-items:center;gap:12px;min-height:60px;padding:0 6px;border-top:1px solid rgba(var(--fg),.05);font-size:13px}
 .dns .ftab .th{min-height:34px;border-top:0;color:var(--t3);font-size:12px}
@@ -284,6 +285,7 @@
 
   /* фильтры и перезаписи: тумблер | имя | удалить */
   .dns .fl{padding:16px 16px 4px;margin:0}
+  .dns .lerr{margin:0}
   .dns .fl .fhead{margin-bottom:12px}
   .dns .fhead .ha{flex-wrap:wrap}
   .dns .ftab:has(.th){display:none}

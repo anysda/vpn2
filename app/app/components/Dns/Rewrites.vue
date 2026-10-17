@@ -4,7 +4,7 @@
 interface Rewrite { domain: string, answer: string, enabled: boolean }
 
 const toast = useToast()
-const { data, error } = useFetch<Rewrite[]>('/api/dns/rewrites', { server: false, lazy: true })
+const { data, error, status, refresh } = useFetch<Rewrite[]>('/api/dns/rewrites', { server: false, lazy: true })
 const busy = ref(new Set<string>())
 
 const errText = (e: unknown) => {
@@ -85,9 +85,7 @@ async function del() {
 
 <template>
   <div>
-    <div v-if="error && !data" class="card">
-      <h3>{{ errText(error) }}</h3>
-    </div>
+    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
     <div class="card fl">
       <div class="fhead">
         <div>

@@ -40,7 +40,7 @@ const PROTECT: { k: Tog, name: string, note: string }[] = [
 ]
 
 const toast = useToast()
-const { data, error, refresh } = useFetch<View>('/api/dns/settings', { server: false, lazy: true })
+const { data, error, status, refresh } = useFetch<View>('/api/dns/settings', { server: false, lazy: true })
 // Пока серверы сохраняются, поле только для чтения: ответ PATCH иначе затёр
 // бы допечатанное, а тост «сохранено» говорил бы не о том, что видно.
 const ups = ref('')
@@ -151,9 +151,7 @@ async function confirmAsk() {
 
 <template>
   <div>
-    <div v-if="error && !data" class="card">
-      <h3>{{ errText(error) }}</h3>
-    </div>
+    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
     <div v-if="data" class="sgrid">
       <div class="card sc">
         <div class="sh">

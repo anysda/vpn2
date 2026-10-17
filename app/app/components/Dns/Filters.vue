@@ -7,7 +7,7 @@ interface List { name: string, url: string, enabled: boolean, rules: number, upd
 interface View { interval: number, black: List[], white: List[] }
 
 const toast = useToast()
-const { data, error } = useFetch<View>('/api/dns/filters', { server: false, lazy: true })
+const { data, error, status, refresh } = useFetch<View>('/api/dns/filters', { server: false, lazy: true })
 const busy = ref(new Set<string>())
 const updating = ref(false)
 
@@ -154,9 +154,7 @@ const sections = computed(() => data.value
 
 <template>
   <div>
-    <div v-if="error && !data" class="card">
-      <h3>{{ errText(error) }}</h3>
-    </div>
+    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
     <div v-for="s in sections" :key="s.title" class="card fl">
       <div class="fhead">
         <div>

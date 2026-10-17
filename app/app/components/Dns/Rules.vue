@@ -3,12 +3,15 @@
 // AdGuard и остаётся в поле; проверка спрашивает AdGuard о применённых правилах.
 // Поле — весь набор правил целиком: до ответа GET оно закрыто (правка вслепую
 // заменила бы правила, которых человек не видел), а пока идёт «Применить» —
-// только для чтения, чтобы ответ PUT не затёр допечатанное.
+// только для чтения, чтобы ответ PUT не затёр допечатанное. Упавший GET
+// показывает причину и «Повторить загрузку».
 interface Verdict { kind: 'blk' | 'ok' | 'rw', label: string, why: [string, string, string] }
 
 const toast = useToast()
 const text = ref('')
 const loaded = ref(false)
+const loading = ref(false)
+const loadError = ref('')
 const saving = ref(false)
 const q = ref('')
 const res = ref<Verdict | null>(null)
@@ -20,15 +23,21 @@ const errText = (e: unknown) => {
   return x.data?.message ?? x.statusMessage ?? x.message ?? 'Ошибка'
 }
 
-onMounted(async () => {
+async function load() {
+  loading.value = true
   try {
     text.value = (await $fetch<{ text: string }>('/api/dns/rules')).text
     loaded.value = true
+    loadError.value = ''
   }
   catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
+    loadError.value = errText(e)
   }
-})
+  finally {
+    loading.value = false
+  }
+}
+onMounted(load)
 
 // AdGuard пересобирает фильтры в фоне и ещё с полсекунды отвечает по старым
 // правилам: 2 с после «Применить» проверку повторяем, в том числе для домена,
@@ -83,6 +92,7 @@ async function apply() {
 </script>
 
 <template>
+  <DnsLoadError v-if="loadError" :message="loadError" :pending="loading" @retry="load" />
   <div class="rgrid">
     <div class="card cr">
       <div class="fhead">

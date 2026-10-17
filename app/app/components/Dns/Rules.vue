@@ -1,6 +1,9 @@
 <script setup lang="ts">
 // Свои правила AdGuard и проверка фильтрации. Текст с ошибкой не уходит в
 // AdGuard и остаётся в поле; проверка спрашивает AdGuard о применённых правилах.
+// Поле — весь набор правил целиком: до ответа GET оно закрыто (правка вслепую
+// заменила бы правила, которых человек не видел), а пока идёт «Применить» —
+// только для чтения, чтобы ответ PUT не затёр допечатанное.
 interface Verdict { kind: 'blk' | 'ok' | 'rw', label: string, why: [string, string, string] }
 
 const toast = useToast()
@@ -98,7 +101,7 @@ async function apply() {
           Применить
         </button>
       </div>
-      <textarea v-model="text" spellcheck="false" aria-label="Свои правила" />
+      <textarea v-model="text" spellcheck="false" aria-label="Свои правила" :disabled="!loaded" :readonly="saving" />
     </div>
     <div class="rside">
       <div class="card chk2">

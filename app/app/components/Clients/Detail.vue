@@ -35,8 +35,9 @@ async function load(animate = false) {
   try {
     const d = await fetchDetail(props.clientId)
     if (version !== loadVersion) return
+    const prev = detail.value
     detail.value = d
-    syncForm()
+    syncForm(prev)
     if (animate) {
       nextTick(() => anim(root.value, [
         { opacity: 0.2, filter: 'blur(5px)', transform: 'translateY(4px)' },
@@ -126,11 +127,18 @@ async function saveExpiry() {
 const limDraft = ref('')
 const minLimit = computed(() => Math.max(1, detail.value?.devices.length ?? 0))
 
-function syncForm() {
+const expText = (d: ClientDetail) => formatRuDate(d.expiresAt)
+const limText = (d: ClientDetail) => d.deviceLimit === null ? '' : String(d.deviceLimit)
+
+// Карточка перезагружается после сохранения срока или девайса, когда человек
+// уже мог начать править соседнее поле: черновик берёт значение сервера, только
+// если в нём то, что было показано до перезагрузки. Другой клиент — поля заново.
+function syncForm(prev: ClientDetail | null) {
   const d = detail.value
   if (!d) return
-  expDraft.value = formatRuDate(d.expiresAt)
-  limDraft.value = d.deviceLimit === null ? '' : String(d.deviceLimit)
+  const same = prev?.id === d.id ? prev : null
+  if (!same || expDraft.value === expText(same)) expDraft.value = expText(d)
+  if (!same || limDraft.value === limText(same)) limDraft.value = limText(d)
   nextTick(syncName)
 }
 

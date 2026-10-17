@@ -41,6 +41,8 @@ const PROTECT: { k: Tog, name: string, note: string }[] = [
 
 const toast = useToast()
 const { data, error, refresh } = useFetch<View>('/api/dns/settings', { server: false, lazy: true })
+// Пока серверы сохраняются, поле только для чтения: ответ PATCH иначе затёр
+// бы допечатанное, а тост «сохранено» говорил бы не о том, что видно.
 const ups = ref('')
 watch(() => data.value?.upstreams, (v) => {
   if (v !== undefined) ups.value = v
@@ -160,7 +162,7 @@ async function confirmAsk() {
             Проверить
           </button>
         </div>
-        <textarea v-model="ups" class="mono" spellcheck="false" style="min-height:104px;flex:none" aria-label="Серверы выше" @blur="saveUps" />
+        <textarea v-model="ups" class="mono" spellcheck="false" style="min-height:104px;flex:none" aria-label="Серверы выше" :readonly="busy.has('upstreams')" @blur="saveUps" />
         <div class="arow">
           <DnsSeg :model-value="mode" small :options="MODES" @pick="v => patch({ mode: v })" />
         </div>

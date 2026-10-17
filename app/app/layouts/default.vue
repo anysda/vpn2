@@ -13,6 +13,7 @@ const head = computed(() => ({
   sub: pageSub.value.path === route.path ? pageSub.value.text : route.meta.sub,
 }))
 const period = useOverviewPeriod()
+const stack = useBackStack()
 
 async function logout() {
   if (loggingOut.value) return
@@ -26,6 +27,8 @@ async function logout() {
   }
   finally {
     clear()
+    // Сначала шаг назад закрытой шторки меню, иначе он вернёт со входа обратно.
+    await stack.idle()
     // ?direct=1, а не просто /login: сессия в самом Authentik живёт дальше, и
     // без этого авторедирект внёс бы обратно тем же кликом — «выйти» выглядело
     // бы как «ничего не произошло».

@@ -8,7 +8,7 @@ import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/client
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
 
-const { clients, refresh: refreshClients } = useClients()
+const { clients, refresh: refreshClients, status: clientsStatus } = useClients()
 const exitTags = useExitTags()
 
 const { data: trafficMap, refresh: refreshTraffic } = useFetch<Record<number, ClientTraffic>>('/api/clients/traffic', {
@@ -61,29 +61,38 @@ const rows = computed(() => {
   )
 })
 
-// Телефон: список и карточка клиента — два экрана, «Назад» в шапке возвращает к списку.
+const route = useRoute()
+const router = useRouter()
+// Телефон: список и карточка клиента — два экрана. Открытый клиент — ?id= в
+// адресе и запись в истории: системный «назад» и «Назад» в шапке ведут к списку,
+// ссылка и обновление страницы открывают карточку.
 const mobile = useMobile()
-const screen = ref<'list' | 'client'>('list')
-onMounted(() => { if (useRoute().query.id) screen.value = 'client' })
+const screen = computed(() => (route.query.id ? 'client' : 'list'))
+watch(screen, () => { if (mobile.value) scrollTo(0, 0) })
+const stack = useBackStack()
+/** Адрес раздела с карточкой клиента `id` или без неё — список. */
+const urlOf = (id?: number) => {
+  const query = { ...route.query, id: id ? String(id) : undefined }
+  return router.resolve({ path: route.path, query }).fullPath
+}
+const toList = () => stack.leave(urlOf())
 
 // Выбранный клиент: из ссылки ?id= (топ на Обзоре), иначе первый в списке.
-const selectedId = ref<number | null>(Number(useRoute().query.id) || null)
+const selectedId = ref<number | null>(Number(route.query.id) || null)
+watch(() => route.query.id, (id) => { if (Number(id)) selectedId.value = Number(id) })
 watch(sorted, (list) => {
+  // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
+  if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   selectedId.value = list[0]?.id ?? null
   // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
   // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
-  if (screen.value === 'client') show('list')
+  if (mobile.value && screen.value === 'client') void toList()
 }, { immediate: true })
-
-function show(next: 'list' | 'client') {
-  screen.value = next
-  if (mobile.value) scrollTo(0, 0)
-}
 
 function select(id: number) {
   selectedId.value = id
-  if (mobile.value) show('client')
+  if (mobile.value) void stack.push(urlOf(id))
 }
 
 async function onCreated(id: number) {
@@ -93,14 +102,14 @@ async function onCreated(id: number) {
 
 async function onDeleted() {
   selectedId.value = null
-  if (mobile.value) show('list')
+  if (mobile.value) void toList()
   await refreshClients()
 }
 
 // Клиента удалили, пока грузилась карточка: выбрать соседа по списку, без тоста.
 async function onGone(id: number) {
   if (selectedId.value !== id) return
-  if (mobile.value) show('list')
+  if (mobile.value) void toList()
   const list = sorted.value
   const at = list.findIndex(c => c.id === id)
   const rest = list.filter(c => c.id !== id)
@@ -164,7 +173,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
 <template>
   <main class="tab on clp" :class="mobile ? `m-${screen}` : undefined">
     <Teleport v-if="mobile && screen === 'client'" defer to=".wrap>header">
-      <button type="button" class="ib cbk" aria-label="Назад" @click="show('list')">
+      <button type="button" class="ib cbk" aria-label="Назад" @click="toList()">
         <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
       </button>
     </Teleport>

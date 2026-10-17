@@ -9,6 +9,8 @@ const toast = useToast()
 const { sso, load: loadSso } = useSsoPublic()
 
 const viaSso = computed(() => loginMethod.value === 'sso')
+// Телефон: окно «Выключить 2FA?» — нижней шторкой вместо модалки.
+const mobile = useMobile()
 
 // ---------------------- Password change ----------------------
 const pwd = reactive({ current: '', next: '', confirm: '' })
@@ -406,6 +408,7 @@ async function saveSso() {
     </section>
 
     <UModal
+      v-if="!mobile"
       v-model:open="disableConfirm"
       title="Выключить 2FA?"
       :ui="{ overlay: 'stg-ovl', content: 'card stg-modal' }"
@@ -431,6 +434,26 @@ async function saveSso() {
         </form>
       </template>
     </UModal>
+    <BottomSheet v-else :open="disableConfirm" label="Выключить 2FA?" @close="disableConfirm = false">
+      <form class="stg-sheet" @submit.prevent="disableTotp">
+        <div class="mh">
+          <h2>Выключить 2FA?</h2>
+          <button type="button" class="xb" aria-label="Закрыть" @click="disableConfirm = false"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+        </div>
+        <label class="fl2"><span>Пароль</span><input v-model="disablePwd" class="in" type="password" autocomplete="current-password"></label>
+        <label class="fl2"><span>Код 2FA (6 цифр)</span><input
+          v-model="disableTotpCode"
+          class="in mono"
+          placeholder="123 456"
+          inputmode="numeric"
+          autocomplete="one-time-code"
+        ></label>
+        <div class="bsf">
+          <button type="button" class="pill" @click="disableConfirm = false">Отмена</button>
+          <button type="submit" class="pill redw" :disabled="disableLoading">Выключить</button>
+        </div>
+      </form>
+    </BottomSheet>
   </main>
 </template>
 
@@ -476,10 +499,10 @@ async function saveSso() {
 .stg .tog:active i{transform:scaleX(1.25);transform-origin:left}
 .stg .tog.on:active i{transform:translateX(18px) scaleX(1.25);transform-origin:right}
 .stg .tog:disabled{cursor:default}
-.stg .xb,.stg-modal .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
-.stg .xb:hover,.stg-modal .xb:hover{color:var(--t1)}
-.stg .xb:active,.stg-modal .xb:active{transform:scale(.9)}
-.stg .xb svg,.stg-modal .xb svg{width:14px;height:14px}
+.stg .xb,.stg-modal .xb,.stg-sheet .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
+@media (hover:hover){.stg .xb:hover,.stg-modal .xb:hover{color:var(--t1)}}
+.stg .xb:active,.stg-modal .xb:active,.stg-sheet .xb:active{transform:scale(.9)}
+.stg .xb svg,.stg-modal .xb svg,.stg-sheet .xb svg{width:14px;height:14px}
 .stg .pill.red{color:var(--red-t);border-color:rgba(var(--red-rgb),.3)}
 .stg .mt,.stg-modal .mt{color:var(--t2);font-size:13px;line-height:1.55;margin-top:8px}
 .stg #tfa{margin-top:22px}
@@ -500,10 +523,52 @@ async function saveSso() {
 .stg-modal[data-state=open] form>:nth-child(3){animation-delay:110ms}
 .stg-modal[data-state=open] form>:nth-child(4){animation-delay:145ms}
 .stg-modal form>:first-child{animation-delay:40ms}
-.stg-modal .mh{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.stg-modal .mh h2{font-size:18px;font-weight:500;letter-spacing:-.01em}
-.stg-modal .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
+.stg-modal .mh,.stg-sheet .mh{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.stg-modal .mh h2,.stg-sheet .mh h2{font-size:18px;font-weight:500;letter-spacing:-.01em}
+.stg-modal .pill.redw,.stg-sheet .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
 @keyframes stg-m-in{from{transform:translateY(8px) scale(.97)}}
 @keyframes stg-m-row{from{opacity:0;transform:translateY(6px)}}
+/* телефон: одна колонка, подпись над значением, ряды и кнопки как в мобильном макете */
+@media (max-width:720px){
+  .stg>.head{display:none}
+  .stg .sgrid{grid-template-columns:minmax(0,1fr)}
+  .stg .ssso{grid-column:auto;grid-row:auto}
+  .stg .sc{padding:20px 18px;min-height:0}
+  .stg .sh{gap:8px}
+  .stg .sc>.al{margin-top:4px}
+  .stg .sc div.fld:not(:has(>button))>span:first-child{width:120px}
+  /* поле: подпись сверху, под полем подсказка; кнопка «показать» у поля справа */
+  .stg .sc label.fld,.stg .sc .al+.pwf>label.fld:first-child{flex-wrap:wrap;gap:7px 8px;padding:0;margin-top:14px;border-top:0}
+  .stg .sc label.fld>span:first-child{width:auto;flex:1 0 100%;font-size:12px}
+  .stg .sc label.fld .in{height:40px}
+  .stg .sc label.fld .hl{flex:1 0 100%;max-width:none}
+  /* ряд из одних кнопок — справа */
+  .stg .sc div.fld:has(>span:empty),.stg .sc div.fld:has(>code:empty){justify-content:flex-end;gap:8px;padding:0;margin-top:14px;border-top:0}
+  .stg .sc div.fld:has(>code:empty)>span,.stg .sc div.fld>span:empty,.stg .sc div.fld>code:empty{display:none}
+  .stg #tfa div.fld:has(>code:empty){margin-top:12px}
+  /* тумблеры и проверка: подпись и пояснение слева, кнопка справа */
+  .stg .ssso div.fld:not(:has(>code:empty)){display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;padding:12px 0;margin-top:14px;border-top:1px solid rgba(var(--fg),.05)}
+  .stg .ssso div.fld:not(:has(>code:empty))+div.fld{margin-top:0}
+  .stg .ssso div.fld:not(:has(>code:empty))>span:first-child{grid-area:1/1;width:auto;color:var(--t1);font-size:13px}
+  .stg .ssso div.fld:not(:has(>code:empty))>code{grid-area:2/1;color:var(--t3);font-size:11.5px;line-height:1.45}
+  .stg .ssso div.fld:not(:has(>code:empty))>button{grid-area:1/2/3/3}
+  .stg .ssso div.fld:has(>code.sub2){margin-top:12px}
+  .stg .ssso div.fld:has(>code.sub2)>span:first-child{color:var(--t3);font-size:12.5px}
+  .stg .ssso div.fld:has(>code.sub2)>code{font-size:12px}
+  .stg .sc div.fld:has(>code.sub2)+label.fld{margin-top:4px}
+  .stg .ssso fieldset>div.fld:last-child{padding-top:12px;border-top:1px solid rgba(var(--fg),.05)}
+  /* бот: длинный ник и подписи счётчиков не раздвигают карточку */
+  .stg .sbig .big{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stg .ys{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .stg .ys span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* настройка 2FA: QR над секретом */
+  .stg .qrrow{flex-direction:column;align-items:stretch;gap:12px}
+  .stg #tfa .qr{align-self:center}
+  .stg .qrrow .in{margin-bottom:0;height:40px}
+  .stg button{touch-action:manipulation}
+  .stg .pill,.stg .tog,.stg .xb{-webkit-user-select:none;user-select:none}
+  .stg-sheet .fl2 .in{height:44px}
+  .stg-sheet button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+}
 @media (prefers-reduced-motion:reduce){.stg-modal[data-state=open],.stg-modal[data-state=open] form>*{animation:none}}
 </style>

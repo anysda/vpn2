@@ -114,6 +114,8 @@ for (const width of [360, 402]) {
       }
       finally {
         // Упавший тест не оставляет admin с 2FA и включённым SSO.
+        // Выключение 2FA гасит сессию страницы, открытый Обзор поймал бы 401.
+        await page.goto('about:blank')
         if (enabled) {
           const off = await authPost(request, '/two-factor/disable', { password: ADMIN_PASSWORD, code: await fresh() })
           expect(off.status(), await off.text()).toBe(200)

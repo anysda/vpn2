@@ -40,6 +40,17 @@ if [[ "$(sha256sum /usr/local/bin/wgcf 2>/dev/null | cut -d' ' -f1)" != "$WGCF_S
 fi
 
 cd /etc/anysda
+# Возвращает 2 только для аккаунта от wgcf < 2.3: API тогда не отдавал
+# key_type, без которого текущий wgcf не может построить профиль.
+generate_wgcf_profile() {
+  local generate_output
+  if generate_output=$(/usr/local/bin/wgcf generate 2>&1); then
+    return 0
+  fi
+  [[ "$generate_output" == *key_type* ]] && return 2
+  return 1
+}
+
 WGCF_OK=1
 if [[ ! -f wgcf-account.toml ]]; then
   echo "[$HOST_TAG]   регистрирую WARP устройство"
@@ -50,15 +61,38 @@ if [[ ! -f wgcf-account.toml ]]; then
   fi
 fi
 if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-account.toml ]]; then
-  if /usr/local/bin/wgcf generate >/dev/null 2>&1; then
+  if generate_wgcf_profile; then
     chmod 600 wgcf-account.toml wgcf-profile.conf
-  elif [[ -s wgcf-profile.conf ]]; then
-    # wgcf 2.3 не читает устройство, зарегистрированное до 2.3 (в ответе API
-    # нет key_type). Профиль прошлого прогона того же аккаунта рабочий.
-    echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — оставляю профиль прошлого прогона"
   else
-    echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — WARP outbound будет placeholder"
-    WGCF_OK=0
+    generate_status=$?
+    if [[ "$generate_status" == "2" ]]; then
+      # Аккаунт без key_type несовместим с wgcf 2.3. Профиль от него больше не
+      # оставляем навсегда: создаём устройство нового формата и заменяем ключ
+      # WARP в конфиге sing-box свежим профилем.
+      mv -f wgcf-account.toml wgcf-account.toml.old
+      echo "[$HOST_TAG]   регистрирую WARP устройство заново"
+      if timeout 15 /usr/local/bin/wgcf register --accept-tos; then
+        if generate_wgcf_profile; then
+          chmod 600 wgcf-account.toml wgcf-profile.conf
+        else
+          echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл после регистрации — WARP outbound будет placeholder"
+          WGCF_OK=0
+        fi
+      elif [[ -s wgcf-profile.conf ]]; then
+        # Cloudflare недоступен при замене устаревшего устройства: только в
+        # этом случае безопасно сохранить рабочий профиль прошлого прогона.
+        # Аккаунт возвращаем на место, иначе следующий прогон пойдёт по ветке
+        # первой регистрации и при новом сбое потеряет рабочий профиль.
+        mv -f wgcf-account.toml.old wgcf-account.toml
+        echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — оставляю профиль прошлого прогона"
+      else
+        echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
+        WGCF_OK=0
+      fi
+    else
+      echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — WARP outbound будет placeholder"
+      WGCF_OK=0
+    fi
   fi
 fi
 

@@ -19,7 +19,16 @@ function onScroll() {
   edge.end = u.scrollTop + u.clientHeight >= u.scrollHeight - 1
 }
 onMounted(onScroll)
-watch(data, () => nextTick(onScroll))
+
+// «Сегодня» сервер и первая отрисовка браузера считают от одного момента:
+// время рендера едет в payload, иначе при других часах браузера гидратация
+// расходится. После монтирования и на каждом опросе — часы браузера.
+const now = useState('events-feed-now', () => Date.now())
+onMounted(() => { now.value = Date.now() })
+watch(data, () => {
+  now.value = Date.now()
+  void nextTick(onScroll)
+})
 
 const COLOR: Record<EventLevel, string> = { alarm: 'var(--red)', warn: 'var(--amber)', info: 'var(--g2)', ok: 'var(--green)' }
 
@@ -27,7 +36,7 @@ const MSK = 'Europe/Moscow'
 const dayOf = (ms: number) => new Date(ms).toLocaleDateString('ru-RU', { timeZone: MSK })
 /** Сегодня — время, раньше — дата. */
 function when(ms: number): string {
-  if (dayOf(ms) === dayOf(Date.now())) {
+  if (dayOf(ms) === dayOf(now.value)) {
     return new Date(ms).toLocaleTimeString('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
   }
   return new Date(ms).toLocaleDateString('ru-RU', { timeZone: MSK, day: '2-digit', month: '2-digit' })

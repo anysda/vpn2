@@ -1,4 +1,4 @@
-import { test, expect, toast, uniq } from './support/fixtures'
+import { test, expect, loginApi, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 import { container, inside } from './support/openvpn-ca'
 import { checkBotQueue } from './support/bot-queue'
@@ -35,6 +35,12 @@ test.describe('время в строках уведомлений', () => {
   test.use({ timezoneId: 'Asia/Vladivostok' })
   test('сегодня и вчера по МСК, как в макете', async ({ page }) => {
     await page.clock.setFixedTime(new Date('2026-10-14T11:31:30Z'))
+    // Событие «сегодня» по часам сервера: лента главной рендерится на сервере,
+    // часы браузера стоят на 14.10 — гидратация всё равно обязана сойтись.
+    await loginApi(page)
+    const created = await page.request.post('/api/clients', { data: { name: uniq('clock') } })
+    expect(created.status()).toBe(200)
+    const { id } = await created.json()
     await page.route('**/api/admin/bot-deliveries', route => route.fulfill({ json: [
       { id: 'yesterday', label: 'Рассылка', status: 'failed', remaining: 0, created: Date.parse('2026-10-13T20:30:00Z') },
       { id: 'after-midnight', label: 'Уведомление клиенту «Ночь»', status: 'failed', remaining: 0, created: Date.parse('2026-10-13T21:05:00Z') },
@@ -48,6 +54,7 @@ test.describe('время в строках уведомлений', () => {
     await expect(row('«Ночь»').locator('small')).toHaveText('сегодня 00:05')
     await expect(row('«День»: не отправлено. Ещё попыток: 2.').locator('small')).toHaveText('сегодня 14:31')
     console.log('Колокольчик:', (await dialog.locator('.bi small').allTextContents()).join(' | '))
+    expect((await page.request.delete(`/api/clients/${id}`)).status()).toBe(200)
   })
 })
 

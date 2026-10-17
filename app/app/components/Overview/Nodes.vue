@@ -68,7 +68,7 @@ const opened = computed(() => props.nodes.find(n => n.tag === openTag.value) ?? 
   <section ref="box" class="r3 ov-nodes" :style="{ '--n': Math.min(Math.max(nodes.length, 1), 5) }">
     <div
       v-for="(c, i) in cards" :key="c.n.tag"
-      class="card node" :class="{ lit: c.h.lit && !c.n.disabled, off: c.n.disabled }"
+      class="card node" :class="{ lit: c.h.lit && !c.n.disabled, off: c.n.disabled, full: c.n.tag === 'ru' && cards.length % 2 === 1 }"
       role="button" tabindex="0" :aria-label="`${c.name}: подробности`" :data-tag="c.n.tag"
       @click="openTag = c.n.tag" @keydown.enter.prevent="openTag = c.n.tag" @keydown.space.prevent="openTag = c.n.tag"
     >

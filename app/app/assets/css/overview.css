@@ -3,7 +3,7 @@
 
 .ov .card h3{font-size:14px;font-weight:500;color:var(--t2)}
 .ov .ha{display:flex;gap:8px}
-.ov .tag,.ov-modal .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
+.ov .tag,:is(.ov-modal,.ov-sh) .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
 .ov .tag .q{width:14px;height:14px;border-radius:50%;background:rgba(var(--fg),.12);display:grid;place-items:center;font-size:9px}
 
 /* ряд 1: события, трафик, выходы, DNS. Ленте — ширина под строку целиком,
@@ -127,28 +127,28 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
 .ov-ovl[data-state=closed]{animation:ov-o-out .16s var(--ease) forwards}
 @keyframes ov-o-in{from{opacity:0}}
 @keyframes ov-o-out{to{opacity:0}}
-.ov-modal .mh{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.ov-modal .mh h2{font-size:18px;font-weight:500;letter-spacing:-.01em}
-.ov-modal .ha{display:flex;gap:8px}
-.ov-modal .sub2{display:block;color:var(--t3);font-size:12.5px;margin-top:3px}
-.ov-modal .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
-.ov-modal .mt{color:var(--t2);font-size:13px;line-height:1.55;margin-top:8px}
-.ov-modal .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
-.ov-modal .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
-.ov-modal .xb:hover{color:var(--t1)}.ov-modal .xb:active{transform:scale(.9)}.ov-modal .xb svg{width:14px;height:14px}
-.ov-modal .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:16px;background:rgba(var(--fg),.07);border-radius:14px;overflow:hidden}
-.ov-modal .mgrid div{background:var(--kg);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
-.ov-modal .mgrid span{font-size:11.5px;color:var(--t3)}.ov-modal .mgrid b{font-weight:300;font-size:20px;letter-spacing:-.01em}
-.ov-modal .mgrid b.w{color:var(--amber)}.ov-modal .mgrid b.c{color:var(--red-t)}
-.ov-modal .mgrid small{font-size:11px;color:var(--t3)}
-.ov-modal .msp{width:100%;height:70px;margin-top:14px;position:relative}
-.ov-modal .msp>svg{display:block;width:100%;height:100%}
-.ov-modal .tog{width:42px;height:24px;border-radius:999px;background:var(--tog);position:relative;cursor:pointer;flex:none;border:0;padding:0;transition:background-color .2s}
-.ov-modal .tog i{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--tog-k);transition:transform .25s var(--ease),background-color .2s}
-.ov-modal .tog.on{background:var(--acc);box-shadow:0 0 14px rgba(var(--glow),calc(.3*var(--gk)))}.ov-modal .tog.on i{transform:translateX(18px);background:var(--acc-t)}
-.ov-modal .tog:active i{transform:scaleX(1.25);transform-origin:left}
-.ov-modal .tog.on:active i{transform:translateX(18px) scaleX(1.25);transform-origin:right}
-.ov-modal .tog:disabled{cursor:default;opacity:.6}
+:is(.ov-modal,.ov-sh) .mh{display:flex;align-items:center;justify-content:space-between;gap:12px}
+:is(.ov-modal,.ov-sh) .mh h2{font-size:18px;font-weight:500;letter-spacing:-.01em}
+:is(.ov-modal,.ov-sh) .ha{display:flex;gap:8px}
+:is(.ov-modal,.ov-sh) .sub2{display:block;color:var(--t3);font-size:12.5px;margin-top:3px}
+:is(.ov-modal,.ov-sh) .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
+:is(.ov-modal,.ov-sh) .mt{color:var(--t2);font-size:13px;line-height:1.55;margin-top:8px}
+:is(.ov-modal,.ov-sh) .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
+:is(.ov-modal,.ov-sh) .xb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line);background:none;color:var(--t3);cursor:pointer;transition:transform .16s var(--ease),color .2s,background-color .2s}
+:is(.ov-modal,.ov-sh) .xb:hover{color:var(--t1)}:is(.ov-modal,.ov-sh) .xb:active{transform:scale(.9)}:is(.ov-modal,.ov-sh) .xb svg{width:14px;height:14px}
+:is(.ov-modal,.ov-sh) .mgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:16px;background:rgba(var(--fg),.07);border-radius:14px;overflow:hidden}
+:is(.ov-modal,.ov-sh) .mgrid div{background:var(--kg);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
+:is(.ov-modal,.ov-sh) .mgrid span{font-size:11.5px;color:var(--t3)}:is(.ov-modal,.ov-sh) .mgrid b{font-weight:300;font-size:20px;letter-spacing:-.01em}
+:is(.ov-modal,.ov-sh) .mgrid b.w{color:var(--amber)}:is(.ov-modal,.ov-sh) .mgrid b.c{color:var(--red-t)}
+:is(.ov-modal,.ov-sh) .mgrid small{font-size:11px;color:var(--t3)}
+:is(.ov-modal,.ov-sh) .msp{width:100%;height:70px;margin-top:14px;position:relative}
+:is(.ov-modal,.ov-sh) .msp>svg{display:block;width:100%;height:100%}
+:is(.ov-modal,.ov-sh) .tog{width:42px;height:24px;border-radius:999px;background:var(--tog);position:relative;cursor:pointer;flex:none;border:0;padding:0;transition:background-color .2s}
+:is(.ov-modal,.ov-sh) .tog i{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--tog-k);transition:transform .25s var(--ease),background-color .2s}
+:is(.ov-modal,.ov-sh) .tog.on{background:var(--acc);box-shadow:0 0 14px rgba(var(--glow),calc(.3*var(--gk)))}:is(.ov-modal,.ov-sh) .tog.on i{transform:translateX(18px);background:var(--acc-t)}
+:is(.ov-modal,.ov-sh) .tog:active i{transform:scaleX(1.25);transform-origin:left}
+:is(.ov-modal,.ov-sh) .tog.on:active i{transform:translateX(18px) scaleX(1.25);transform-origin:right}
+:is(.ov-modal,.ov-sh) .tog:disabled{cursor:default;opacity:.6}
 
 @media (max-width:1360px){
   .ov .big{font-size:40px}
@@ -164,6 +164,74 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .leg{gap:6px;font-size:11.5px}
   .ov .leg div{grid-template-columns:auto minmax(0,1fr) auto auto;gap:6px}
   .ov .leg .nm{white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+}
+/* телефон: одна сетка в две колонки, блоки в порядке макета — события, ноды,
+   выходы и DNS рядом, трафик, активность, топ, клиенты. Ряды раскрыты через
+   display:contents, чтобы их карточки встали в общую сетку */
+@media (max-width:720px){
+  .ov.tab.on{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;align-items:start}
+  .ov .r1,.ov .ra{display:contents}
+  .ov .r1>*,.ov .ra>*,.ov .r3{grid-column:1/-1;margin:0}
+  .ov .r1>.ev{order:1}
+  .ov .r3{order:2;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .ov .r1>.ov-exits,.ov .r1>.ov-dns{order:3;grid-column:auto;align-self:stretch}
+  .ov .r1>.ov-wave{order:4}
+  .ov .ra>.act{order:5}
+  .ov .ra>.ov-top{order:6}
+  .ov .ra>.ov-clients{order:7;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .ov .r1>.card{padding:18px 20px}
+
+  /* ноды: пары, нечётный entry на всю ширину */
+  .ov .node{height:184px;padding:14px 14px 12px;min-width:0;touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  .ov .node.full{grid-column:1/-1}
+  .ov .node:hover{transform:none}
+  .ov .node:active{transform:scale(.985)}
+  .ov .node .nt{gap:8px}
+  .ov .node .nt div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ov .node .nt small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ov .node .ar{flex:none}
+  .ov .node .cpu{margin-top:12px}
+  .ov .node .cpu .big{font-size:34px}
+  .ov .node .sp{height:36px}
+  .ov .node .ft .m{min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+  /* трафик: высота по содержимому, график 110 */
+  .ov .wave{height:auto}
+  .ov .wave .plot{flex:none;height:110px;margin-top:12px}
+
+  /* выходы и DNS: кольцо 124, легенда в три колонки */
+  .ov .r1>.donut{height:auto;padding:16px 14px 14px}
+  .ov .donut .ring{flex:none;margin:12px 0}
+  .ov .leg div{grid-template-columns:auto minmax(0,1fr) auto}
+  .ov .ov-exits .leg em,.ov .ov-dns .leg i{display:none}
+
+  /* активность: легенда и выбранный день в столбик под сеткой */
+  .ov .act{height:auto;padding:16px}
+  .ov .act .fhead{margin-bottom:10px}
+  .ov .agrid i{touch-action:manipulation}
+  .ov .agrid i:hover{transform:none}
+  .ov .agrid i:active{transform:scale(.9)}
+  .ov .afoot{flex-direction:column;align-items:flex-start;gap:8px;padding-top:12px;font-size:11.5px}
+  .ov .aleg i{width:10px;height:10px}
+  .ov .aleg span:first-child{margin-right:2px}.ov .aleg span:last-child{margin-left:2px}
+  .ov .seg button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+
+  /* клиенты онлайн и офлайн рядом */
+  .ov .mini{padding:16px 16px 14px;min-width:0}
+  .ov .mini h3{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ov .mini .big{font-size:32px}
+
+  /* шторка ноды: сетка 3×3, кнопки футера на всю ширину по 46 */
+  .ov-sh .mh>div:first-child{min-width:0}
+  .ov-sh .mh .ha{flex:none}
+  .ov-sh .sub2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ov-sh .mgrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .ov-sh .mgrid div{padding:11px 12px;min-width:0}
+  .ov-sh .mgrid small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ov-sh .mt{font-size:13.5px;margin:10px 0 0}
+  .ov-sh .mf{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;margin-top:18px}
+  .ov-sh .ov-ask .mf{margin-top:22px}
+  .ov-sh .mf .pill{height:46px;justify-content:center}
 }
 @media (prefers-reduced-motion:reduce){
   .ov .live::after{animation:none!important}

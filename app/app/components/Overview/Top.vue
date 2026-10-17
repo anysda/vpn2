@@ -11,8 +11,11 @@ const props = defineProps<{ period: 'day' | 'week' }>()
 const query = computed(() => ({ period: props.period }))
 const { data } = useFetch<Top>('/api/clients/top', { query, server: false })
 
+// на телефоне — первые три
+const mobile = useMobile()
 const rows = computed(() => {
-  const list = data.value?.clients.filter(c => c.total > 0) ?? []
+  const all = data.value?.clients.filter(c => c.total > 0) ?? []
+  const list = mobile.value ? all.slice(0, 3) : all
   const max = list[0]?.total || 1
   return list.map(c => ({ ...c, w: `${Math.max(2, c.total / max * 100)}%` }))
 })
@@ -61,4 +64,13 @@ watch(rows, (r) => {
 .bar i.lead{background:var(--acc);box-shadow:0 0 8px rgba(var(--glow),calc(.4*var(--gk)))}
 .io{font-size:11px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .empty{flex:1;display:grid;place-items:center;font-size:13px;color:var(--t3)}
+/* телефон: три строки без своей прокрутки, нажатие подсвечивает строку */
+@media (max-width:720px){
+  .top{height:auto;padding:16px 10px 10px}
+  .top .fhead{margin:0 8px 6px}
+  .tl{flex:none;overflow:visible;margin:0}
+  .tr{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  .tr:active{background:rgba(var(--fg),.05)}
+  .empty{min-height:96px}
+}
 </style>

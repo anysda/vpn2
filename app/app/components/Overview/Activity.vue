@@ -33,6 +33,8 @@ const raw = (day: number) => {
   return d ? mode.value === 'on' ? d.online : d.bytes : 0
 }
 const SHADE = [0.05, 0.14, 0.28, 0.5, 0.9]
+// на телефоне всегда 14 недель: клетки делят ширину, как в макете
+const mobile = useMobile()
 
 // размер клетки — от ширины сетки, как в макете
 const grid = ref<HTMLElement>()
@@ -47,7 +49,7 @@ onBeforeUnmount(() => ro?.disconnect())
 const geo = computed(() => {
   const W = width.value
   if (W < 120 || !data.value) return null
-  const N = Math.floor((W - 26) / 22), c = (W - 26) / N - 4
+  const N = mobile.value ? 14 : Math.floor((W - 26) / 22), c = (W - 26) / N - 4
   const today = data.value.today, start = today - wd(today) - 7 * (N - 1)
   const cells: Array<{ w: number, d: number, day: number, v: number, a: number }> = []
   for (let w = 0; w < N; w++) for (let d = 0; d < 7; d++) {
@@ -70,7 +72,7 @@ const geo = computed(() => {
   return { N, c, cells, months, pk }
 })
 
-// выбранный день: по умолчанию пик, наведение переносит выбор
+// выбранный день: по умолчанию пик, наведение или тап переносит выбор
 const sel = ref<number | null>(null)
 const selDay = computed(() => {
   const g = geo.value
@@ -157,7 +159,7 @@ function pick(m: Mode) {
           v-for="x in geo.cells" :key="x.day" :data-day="x.day"
           :class="{ pk: x.day === geo.pk, sel: x.day === selDay }"
           :style="{ '--a': x.a, gridRow: x.d + 2, gridColumn: x.w + 2 }"
-          @mouseenter="sel = x.day"
+          @mouseenter="sel = x.day" @click="sel = x.day"
         />
       </template>
     </div>

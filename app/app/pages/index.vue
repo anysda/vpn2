@@ -52,7 +52,12 @@ onUnmounted(() => { period.value = 'day' })
 // normalizeScreenLayout: лента теперь в traffic, рассылка ушла с Обзора
 const KNOWN = new Set(['traffic', 'nodes', 'activity'])
 const blocks = computed(() => [...layout.value.left, ...layout.value.right].filter(id => KNOWN.has(id)))
-const shown = computed(() => new Set(blocks.value))
+// Телефон: блоки в порядке «Настроить экран», как на ПК. По макету телефона
+// «Узлы», стоящие сразу за трафиком, встают между лентой и выходами.
+const nodesInTraffic = computed(() => {
+  const i = blocks.value.indexOf('traffic')
+  return i >= 0 && blocks.value[i + 1] === 'nodes'
+})
 </script>
 
 <template>
@@ -64,22 +69,27 @@ const shown = computed(() => new Set(blocks.value))
         </button>
       </div>
     </div>
-    <!-- телефон: события, ноды, выходы и DNS, трафик, активность, топ, клиенты; ряды раскрыты в общую сетку -->
+    <!-- телефон: модули в порядке экрана; в трафике события, выходы и DNS, трафик; ряды раскрыты в общую сетку -->
     <template v-if="mobile">
-      <section v-if="shown.has('traffic')" class="r1" data-blk="traffic">
-        <EventsFeed />
-      </section>
-      <OverviewNodes v-if="shown.has('nodes')" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-      <section v-if="shown.has('traffic')" class="r1">
-        <OverviewExits :nodes="sorted" />
-        <OverviewDns />
-        <OverviewWave :period="period" />
-      </section>
-      <section v-if="shown.has('activity')" class="ra" data-blk="activity">
-        <OverviewActivity />
-        <OverviewTop :period="period" />
-        <OverviewClients />
-      </section>
+      <template v-for="id in blocks" :key="id">
+        <template v-if="id === 'traffic'">
+          <section class="r1" data-blk="traffic">
+            <EventsFeed />
+          </section>
+          <OverviewNodes v-if="nodesInTraffic" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+          <section class="r1">
+            <OverviewExits :nodes="sorted" />
+            <OverviewDns />
+            <OverviewWave :period="period" />
+          </section>
+        </template>
+        <OverviewNodes v-else-if="id === 'nodes' && !nodesInTraffic" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+        <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
+          <OverviewActivity />
+          <OverviewTop :period="period" />
+          <OverviewClients />
+        </section>
+      </template>
     </template>
     <template v-else>
       <template v-for="id in blocks" :key="id">

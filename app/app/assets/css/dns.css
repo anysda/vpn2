@@ -205,3 +205,169 @@
 .dns .syn dl{display:grid;grid-template-columns:auto 1fr;gap:10px 16px;margin-top:14px;font-size:12.5px}
 .dns .syn dt{font:400 12.5px ui-monospace,Menlo,monospace;color:var(--t1)}
 .dns .syn dd{color:var(--t3)}
+
+/* ---------- телефон: окно до 720px ----------
+   Раскладка мобильного макета. Шире 720px этих правил нет, десктоп как был.
+   Строки журнала и фильтров берут сводную строку .lm/.fm, на десктопе её нет. */
+.dns .lt .lm,.dns .ftab .fm{display:none}
+@media (max-width:720px){
+  .dns .pill,.dns .seg button,.dns .tog,.dns .xb,.dns .sv{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  .dns .pill:active{transform:scale(.96)}
+  .dns .fhead{gap:12px;align-items:flex-start}
+  .dns .fhead .pill,.dns .sh .pill,.dns .fld .pill{height:30px;font-size:12px;padding:0 13px}
+  .dns .fhead .tag{height:24px;border:0;background:rgba(var(--fg),.06)}
+  .dns .fl .fhead,.dns .svh{flex-direction:column;gap:12px;margin-bottom:12px}
+  .dns .inp input,.dns .tbar .inp input{width:100%;min-width:0;font-size:16px}
+  .dns textarea,.dns .in,.dns .in.mono{font-size:16px}
+  .dns .in{height:44px}
+
+  /* подразделы: ряд прокручивается вбок, кнопки малые */
+  .dns .head{margin:0}
+  .dns .dseg{display:flex;flex-wrap:nowrap;margin:0 -16px;padding:0 16px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+  .dns .dseg::-webkit-scrollbar{display:none}
+  .dns .dseg button{flex:none;white-space:nowrap;height:34px;padding:0 14px;font-size:12.5px}
+  .dns .dpan.on{display:flex;flex-direction:column;gap:12px}
+  .dns .dpan>div{display:flex;flex-direction:column;gap:12px;min-width:0}
+
+  /* сводка */
+  .dns .dk{grid-template-columns:repeat(2,minmax(0,1fr));margin:0}
+  .dns .dk .card{height:156px;padding:14px 14px 12px;min-width:0}
+  .dns .dk h3{font-size:12.5px;line-height:1.3}
+  .dns .dk .nums{flex-direction:column;align-items:flex-start;gap:8px;margin-top:auto;padding-top:8px;min-width:0;max-width:100%}
+  .dns .dk .big{font-size:30px}.dns .dk .big small{font-size:14px}
+  .dns .dk .nums .tag{display:block;max-width:100%;height:22px;line-height:22px;padding:0 8px;font-size:10.5px;overflow:hidden;text-overflow:ellipsis}
+  .dns .dk .nums .tag.badt{line-height:20px}
+  .dns .dk svg{flex:none;height:30px;margin-top:10px}
+  .dns .d2,.dns .d3{display:flex;flex-direction:column;gap:12px;margin:0}
+  .dns .d2>.qchart{display:none}
+  .dns .ups{height:auto;padding:16px 16px 10px}
+  .dns .upl{margin-top:2px;grid-template-columns:minmax(0,1fr)}
+  .dns .up{padding:12px 0 10px;border-top:0;border-bottom:1px solid rgba(var(--fg),.05)}
+  .dns .up .u1 b{font:400 12px ui-monospace,"SF Mono",Menlo,monospace!important;color:var(--t1)}
+  .dns .up .u1 span{color:var(--t2)}
+  .dns .up .u1 em{width:auto;font-size:12.5px;font-weight:400;letter-spacing:0;white-space:nowrap}
+  .dns .up .bar{height:4px;margin-top:8px;border:0;border-radius:2px;background:rgba(var(--fg),.05)}
+  .dns .up .bar i{border-radius:2px}
+  .dns .tl{padding:16px 16px 10px}
+  .dns .tl ul{margin-top:2px}
+  .dns .tl li{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;padding:10px 0;border-top:0;border-bottom:1px solid rgba(var(--fg),.05);font-size:12.5px}
+  .dns .tl li span{color:var(--t2)}
+  .dns .tl li b{font-weight:500;color:var(--t1)}
+  .dns .tl .tb{grid-column:1/-1}
+
+  /* журнал: поиск и «Обновить» в ряд, фильтр ниже прокручивается вбок */
+  .dns .tbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 8px;margin:0}
+  .dns .tbar .inp{height:40px;min-width:0}
+  .dns .tbar>.pill{grid-row:1;grid-column:2;height:40px}
+  .dns .tbar .seg{grid-row:2;grid-column:1/-1;display:flex;margin:0 -16px;padding:0 16px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
+  .dns .tbar .seg::-webkit-scrollbar{display:none}
+  .dns .tbar .seg button{flex:none;white-space:nowrap}
+  .dns .logc{padding:4px 14px}
+  .dns .lt:not(.scroll){display:none}
+  .dns .lt.scroll{max-height:none;overflow:visible}
+  .dns .lt.scroll>div{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"d t" "m m" "x b";gap:0 10px;align-items:center;min-height:0;padding:12px 0;border-top:0;border-bottom:1px solid rgba(var(--fg),.05)}
+  .dns .lt.scroll>div:last-child{border-bottom:0}
+  .dns .lt.scroll>div>time,.dns .lt.scroll>div>div:nth-of-type(1)>small:not(.lm),.dns .lt.scroll>div>div:nth-of-type(3){display:none}
+  .dns .lt.scroll>div>div:nth-of-type(1),.dns .lt.scroll .rs{display:contents}
+  .dns .lt.scroll>div>div:nth-of-type(1)>b{grid-area:d;font-size:13px}
+  .dns .lt .lm{display:block;grid-area:m;margin-top:2px;font-size:11px}
+  .dns .lt .lm .mono{font-size:11px!important}
+  .dns .lt .rs>.tag{grid-area:t;justify-self:end}
+  .dns .lt .rs>div{grid-area:x;margin-top:6px}
+  .dns .lt .rs>div small{font-size:11px}
+  .dns .lt.scroll>div>.ac,.dns .lt.scroll>div>span:last-child{grid-area:b;justify-self:end;margin-top:6px}
+  .dns .lt .ac{height:28px;padding:0 12px;opacity:1}
+  .dns .lt.scroll>div:active{background:rgba(var(--fg),.05)}
+  .dns .lt.scroll>div:not(:has(time)){display:block;padding:16px 0;text-align:center;font-size:12.5px}
+
+  /* фильтры и перезаписи: тумблер | имя | удалить */
+  .dns .fl{padding:16px 16px 4px;margin:0}
+  .dns .fl .fhead{margin-bottom:12px}
+  .dns .fhead .ha{flex-wrap:wrap}
+  .dns .ftab:has(.th){display:none}
+  .dns .ftab>div,.dns .rwt>div{grid-template-columns:auto minmax(0,1fr) auto;gap:12px;min-height:0;padding:12px 0}
+  .dns .ftab>div>span{display:none}
+  .dns .ftab b{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dns .ftab small{font-size:11px}
+  .dns .ftab .fm{display:block}
+  .dns .ftab>div.off{opacity:.55}
+  .dns .rwt:has(.th){display:none}
+  .dns .rwt>div{grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"t d d x" "t r a x";gap:2px 12px}
+  .dns .rwt>div>.tog{grid-area:t}
+  .dns .rwt>div>.mono{grid-area:d;font-size:12.5px!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .dns .rwt>div>.arr{grid-area:r;margin-right:-8px;font:400 12.5px ui-monospace,"SF Mono",Menlo,monospace;color:var(--t2)}
+  .dns .rwt>div>.mono:nth-child(4){grid-area:a;color:var(--t2)}
+  .dns .rwt>div>span:nth-child(5){display:none}
+  .dns .rwt>div>.xb{grid-area:x}
+  .dns .rwt>div.off{opacity:.55}
+
+  /* свои правила */
+  .dns .rgrid{display:flex;flex-direction:column;gap:12px}
+  .dns .cr{min-height:0;padding:16px}
+  .dns .cr .fhead{margin:0}
+  .dns .cr textarea{flex:none;min-height:150px;margin-top:14px;font:400 16px/1.6 ui-monospace,"SF Mono",Menlo,monospace}
+  .dns .chk2,.dns .syn{padding:16px}
+  .dns .inp.big2{height:44px;margin-top:12px;padding:0 14px}
+  .dns .fres .fv .big{font-size:30px}
+  .dns .fres p{margin-top:8px;font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
+  .dns .syn dl{grid-template-columns:auto minmax(0,1fr);gap:10px 14px;margin-top:12px}
+  .dns .syn dt{font-size:12px}
+
+  /* сервисы: сетка в три колонки */
+  .dns .svh{padding:0 2px;margin:0}
+  .dns .svh .ha{align-items:center}
+  .dns .svg2{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+  .dns .sv{height:auto;min-width:0;padding:12px;gap:2px}
+  .dns .sv:active{transform:scale(.97)}
+  .dns .sv .st{align-items:center;margin-bottom:10px}
+  .dns .sv .lo{width:30px;height:30px;border-radius:9px;font-size:13px}
+  .dns .sv .tog{transform:scale(.8);transform-origin:right}
+  .dns .sv b{margin:0;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dns .sv small{margin:0;font-size:11px}
+
+  /* клиенты: аватар | имя, адреса, теги | запросов */
+  .dns .dct:not(.scroll){display:none}
+  .dns .dct.scroll{max-height:none;overflow:visible}
+  .dns .fl:has(.dct){padding:16px 14px 6px}
+  .dns .fl:has(.dct) .fhead{padding:0 2px;margin-bottom:6px}
+  .dns .dct>div{position:relative;display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:0;padding:12px 84px 12px 48px;border-top:1px solid rgba(var(--fg),.05)}
+  .dns .dct .who{display:contents}
+  .dns .dct .av{position:absolute;left:2px;top:50%;margin-top:-17px}
+  .dns .dct .who>div,.dns .dct>div>.mono{flex:0 0 100%;min-width:0}
+  .dns .dct .who b{font-size:13px}
+  .dns .dct .who small:empty{display:none}
+  .dns .dct>div>.mono{font-size:11px!important;margin:-2px 0 2px;overflow-wrap:anywhere}
+  .dns .dct>div>span:nth-child(4) .tag::before{content:"поиск: "}
+  .dns .dct>div>.svc{font-size:11px;color:var(--t3);flex:0 0 100%}
+  .dns .dct>div>.svc.dflt{display:none}
+  .dns .dct>div>span:last-child{position:absolute;right:2px;top:50%;transform:translateY(-50%);font-size:13px;font-weight:500}
+  .dns .dct>div>span:last-child::after{content:"запросов";display:block;font-size:11px;font-weight:400;color:var(--t3)}
+
+  /* настройки DNS: подпись над значением, кнопка справа */
+  .dns .sgrid{display:flex;flex-direction:column;gap:12px}
+  .dns .sc{min-height:0;padding:18px 16px 6px}
+  .dns .sc textarea{min-height:104px;font:400 16px/1.6 ui-monospace,"SF Mono",Menlo,monospace!important}
+  .dns .arow .seg{display:flex;flex:1;gap:4px}
+  .dns .arow .seg button{flex:1 1 auto;justify-content:center;padding:0 4px;font-size:11.5px;white-space:nowrap}
+  .dns .fld{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"s b" "c b";gap:2px 12px;margin-top:0}
+  .dns .sh+.fld{margin-top:6px;border-top:0}
+  .dns .arow+.fld{margin-top:14px;border-top:1px solid rgba(var(--fg),.05)}
+  .dns .fld>span:first-child{grid-area:s;width:auto}
+  .dns .fld>code{grid-area:c;font-size:13px;min-width:0;overflow-wrap:anywhere}
+  .dns .fld>code.mono{font-size:12.5px!important}
+  .dns .fld>.pill,.dns .fld>.tog{grid-area:b}
+  .dns .fld:has(>.tog)>span:first-child{color:var(--t1);font-size:13px}
+  .dns .fld:has(>.tog)>code{color:var(--t3);font-size:11.5px}
+  .dns .fld:has(>.seg){display:block}
+  .dns .fld:has(>.seg)>span:first-child{display:block;margin-bottom:8px}
+  .dns .fld .seg.sm{display:flex;margin:0}
+  .dns .fld .seg.sm button{flex:1;justify-content:center}
+  .dns .fld:has(>.pill+.pill){display:flex;gap:8px}
+  .dns .fld:has(>.pill+.pill)>span:first-child{flex:1}
+  .dns .fld:has(>.pill+.pill)>code{display:none}
+
+  /* окна разделов — в общей шторке */
+  .dns.dsh .mh h2{font-size:18px}
+  .dns.dsh .mt{font-size:13.5px;margin-top:10px}
+  .dns.dsh .bsf{margin-top:20px}
+}

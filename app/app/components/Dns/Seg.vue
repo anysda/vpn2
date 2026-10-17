@@ -17,7 +17,7 @@ function glide(jump = false) {
   const r = on.getBoundingClientRect(), q = b.getBoundingClientRect()
   g.style.height = `${r.height}px`
   g.style.width = `${r.width}px`
-  g.style.transform = `translate(${r.left - q.left - b.clientLeft}px,${r.top - q.top - b.clientTop}px)`
+  g.style.transform = `translate(${r.left - q.left - b.clientLeft + b.scrollLeft}px,${r.top - q.top - b.clientTop + b.scrollTop}px)`
   if (jump) requestAnimationFrame(() => g.classList.remove('now'))
   glided.value = true
 }
@@ -28,7 +28,15 @@ function click(v: T) {
   emit('pick', v, idx(v) > idx(model.value) ? 'fwd' : 'back')
 }
 
-watch(model, () => glide(), { flush: 'post' })
+// Ряд шире окна (телефон) прокручивается сам: выбранная кнопка — в середину.
+function reveal() {
+  const b = box.value
+  const on = b?.querySelector<HTMLElement>(':scope>button.on')
+  if (!b || !on || b.scrollWidth <= b.clientWidth) return
+  b.scrollTo({ left: on.offsetLeft - (b.clientWidth - on.offsetWidth) / 2, behavior: reducedMotion() ? 'auto' : 'smooth' })
+}
+
+watch(model, () => { glide(); reveal() }, { flush: 'post' })
 const onResize = () => glide(true)
 onMounted(() => {
   requestAnimationFrame(() => glide(true))

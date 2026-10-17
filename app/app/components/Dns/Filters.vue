@@ -48,6 +48,12 @@ function updated(l: List) {
   return `${two(d.getDate())}.${two(d.getMonth() + 1)} ${hm}`
 }
 
+// Строка телефона: правил и обновление — одной строкой под адресом.
+function meta(l: List) {
+  if (!l.enabled || !l.rules) return updated(l)
+  return `${grp(l.rules)} ${pluralRu(l.rules, ['правило', 'правила', 'правил'])} · ${updated(l)}`
+}
+
 async function toggle(l: List, white: boolean) {
   const k = key(l, white)
   busy.value.add(k)
@@ -192,6 +198,7 @@ const sections = computed(() => data.value
           </button>
           <div style="min-width:0">
             <b>{{ l.name }}</b><small class="mono" style="font-size:11px!important">{{ l.url.replace(/^https?:\/\//, '') }}</small>
+            <small class="fm">{{ meta(l) }}</small>
           </div>
           <span>{{ l.enabled && l.rules ? grp(l.rules) : '—' }}</span>
           <span>{{ updated(l) }}</span>

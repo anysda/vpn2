@@ -90,6 +90,16 @@ function onScroll() {
   if (el.scrollTop + el.clientHeight > el.scrollHeight - 200) void load(true)
 }
 
+// На телефоне список без своей прокрутки, подгрузка — по прокрутке страницы.
+const mobile = useMobile()
+function onPageScroll() {
+  const el = list.value
+  if (!mobile.value || !el?.offsetHeight || loading.value || !older.value) return
+  if (el.getBoundingClientRect().bottom < innerHeight + 200) void load(true)
+}
+onMounted(() => addEventListener('scroll', onPageScroll, { passive: true }))
+onUnmounted(() => removeEventListener('scroll', onPageScroll))
+
 async function act(r: Row) {
   const block = r.kind === 'ok'
   busy.value = r.domain
@@ -145,6 +155,7 @@ onMounted(() => void load())
           <time :datetime="r.time">{{ when(r.time) }}</time>
           <div style="min-width:0">
             <b>{{ r.domain }}</b><small>{{ r.type }}</small>
+            <small class="lm"><span class="mono">{{ when(r.time) }}</span> · {{ r.type }} · {{ r.client }}</small>
           </div>
           <div class="rs">
             <span :class="TAGS[r.kind].cls">{{ TAGS[r.kind].text }}</span>

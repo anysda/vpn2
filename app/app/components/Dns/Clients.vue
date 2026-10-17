@@ -63,7 +63,7 @@ const ips = (l: string[]) => l.length ? l.slice(0, 2).join(', ') + (l.length > 2
             <span v-else-if="c.safesearch === 'off'" class="tag">выключен</span>
             <span v-else class="tag">как у всех</span>
           </span>
-          <span>{{ c.services ?? 'как у всех' }}</span>
+          <span class="svc" :class="{ dflt: !c.services }">{{ c.services ?? 'как у всех' }}</span>
           <span>{{ grp(c.queries) }}</span>
         </div>
       </div>

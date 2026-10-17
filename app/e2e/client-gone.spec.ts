@@ -21,7 +21,10 @@ async function twoClients(page: Page) {
     if (route.request().method() !== 'GET') return route.fallback()
     const response = await route.fetch()
     const list: { name: string }[] = await response.json()
-    await route.fulfill({ response, json: list.filter(c => c.name.startsWith(prefix)) })
+    // Новый опрос списка обрывает прежний запрос (useFetch отменяет его): отвечать уже некому.
+    await route.fulfill({ response, json: list.filter(c => c.name.startsWith(prefix)) }).catch((e: Error) => {
+      if (!e.message.includes('already handled')) throw e
+    })
   })
   return { first: { id: ids[0]!, name: `${prefix}-a` }, second: { id: ids[1]!, name: `${prefix}-b` } }
 }

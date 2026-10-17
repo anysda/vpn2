@@ -72,6 +72,7 @@ class SkippedExitTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertNotIn('Экзит down пропущен', result.stdout)
         self.assertIn('Нода отказала во входе', result.stdout)
+        self.assertIn('ключ anysda-orchestrator в /root/.ssh/authorized_keys', result.stdout)
         self.assertNotIn('[00-bootstrap] deployed', result.stdout)
 
     def test_unreachable_exit_does_not_stop_full_deploy(self):

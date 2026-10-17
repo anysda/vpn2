@@ -797,9 +797,10 @@ preflight_ssh() {
   fi
   if [[ $auth -eq 1 ]]; then
     printf '  Нода отказала во входе:\n'
-    printf '    1. пароль root в config.yaml\n'
-    printf '    2. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
-    printf '    3. если ОС на ноде только что переустановили, пароль мог ещё не выставиться: повтори ./deploy.sh через минуту\n'
+    printf '    1. ключ anysda-orchestrator в /root/.ssh/authorized_keys на ноде: после 00-bootstrap экзит пускает только по нему\n'
+    printf '    2. пароль root в config.yaml\n'
+    printf '    3. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
+    printf '    4. если ОС на ноде только что переустановили, пароль мог ещё не выставиться: повтори ./deploy.sh через минуту\n'
   fi
   [[ $net -eq 1 ]] && _preflight_net_hint
   HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"

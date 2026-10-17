@@ -14,10 +14,14 @@ const SCROLL_STRIPS = [
  * Ничего не вылезает вбок: ни за окно (ширина документа не больше окна), ни за
  * край ближайшего обрезающего или прокручиваемого предка — такой элемент
  * молча обрезан `overflow: hidden` или уехал в прокрутку внутри блока.
- * `allow` — селекторы лент прокрутки сверх SCROLL_STRIPS.
+ * Мерим после конечных анимаций. `allow` — селекторы лент прокрутки сверх SCROLL_STRIPS.
  */
 export async function noHorizontalOverflow(page: Page, where: string, allow: string[] = []) {
-  const m = await page.evaluate((strips) => {
+  const m = await page.evaluate(async (strips) => {
+    // Въезд экрана (сдвиг вбок на время анимации) — не вылезание: мерить, когда встало.
+    await Promise.all(document.getAnimations()
+      .filter(a => a.effect?.getTiming().iterations !== Infinity)
+      .map(a => a.finished.catch(() => {})))
     const vw = document.documentElement.clientWidth
     const name = (el: Element) => `${el.tagName.toLowerCase()}.${[...el.classList].slice(0, 4).join('.')}`
     const shown = (el: Element) => {

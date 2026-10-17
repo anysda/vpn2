@@ -224,11 +224,13 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
    нижней шторкой. Шире 720px этих правил нет и каркас десктопный. */
 .mhead,.mper,.mbar{display:none}
 @media (max-width:720px){
-  html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+  html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--mglow:radial-gradient(closest-side,rgba(255,255,255,.09),rgba(255,255,255,.025) 55%,transparent)}
   body{min-height:100dvh}
-  div.light{display:none}
+  /* свечение под ширину телефона, как в мобильном макете; шапка рисует свою часть пятна, чтобы не закрывать его */
+  div.light::before{top:-220px;width:620px;height:420px;background:var(--mglow)}
+  div.light::after{display:none}
   .wrap{padding:calc(70px + env(safe-area-inset-top)) 16px calc(128px + env(safe-area-inset-bottom))}
-  .wrap>header{position:fixed;z-index:30;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;margin:0;padding:calc(14px + env(safe-area-inset-top)) 16px 12px;background:var(--bg);-webkit-user-select:none;user-select:none}
+  .wrap>header{position:fixed;z-index:30;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;margin:0;padding:calc(14px + env(safe-area-inset-top)) 16px 12px;background:var(--mglow) 50% -220px/620px 420px no-repeat,var(--bg);-webkit-user-select:none;user-select:none}
   .wrap>header>.logo,.wrap>header>.tabs,.wrap>header .pop{display:none}
   .mhead{display:block;flex:1;min-width:0}
   .mhead h1{margin:0;font-size:22px;font-weight:500;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

@@ -211,13 +211,9 @@ watch(error, (msg) => {
   .lgw .lgn .logo span{font-size:18px}
   .lgw .lgn .lsso{height:46px;font-size:14px}
   .lgw .lgn .in{height:46px;font-size:15px}
-  .lgw .lgn .in.mono{font-size:17px;letter-spacing:.12em}
+  .lgw .lgn .in.mono{font-size:17px!important;letter-spacing:.12em}
   .lgw .lgn .mf .pill{height:46px}
   .lgw .lgn .lgo{font-size:14px}
   .lgw .lgn .pill{touch-action:manipulation;-webkit-user-select:none;user-select:none}
-}
-/* Safari на iPhone увеличивает страницу при фокусе в поле со шрифтом меньше 16px. */
-@media (max-width:720px) and (pointer:coarse){
-  .lgw .lgn .in:not(.mono){font-size:16px}
 }
 </style>

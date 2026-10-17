@@ -257,6 +257,10 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   ol[data-slot="viewport"] [data-slot="title"]{font-size:13px;font-weight:500}
   ol[data-slot="viewport"] [data-slot="description"]{font-size:12.5px}
 }
+/* Safari на iPhone увеличивает страницу при фокусе в поле со шрифтом меньше 16px. */
+@media (pointer:coarse){
+  input,select,textarea{font-size:16px!important}
+}
 @media (max-width:720px) and (prefers-reduced-motion:reduce){
   .tab.on{animation:tfade .25s}
 }

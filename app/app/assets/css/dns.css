@@ -28,7 +28,9 @@
 .dns .scroll{overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent}
 .dns .scroll::-webkit-scrollbar{width:8px}.dns .scroll::-webkit-scrollbar-thumb{background:rgba(var(--fg),.12);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
 .dns .sub2{color:var(--t3);font-size:12.5px;margin-top:3px}
-.dns .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace!important;font-size:12.5px!important}
+.dns .mono:not(input,textarea){font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace!important;font-size:12.5px!important}
+/* поля без !important: на телефоне шрифт им поднимает общее правило из main.css */
+.dns :is(input,textarea).mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
 .dns .pill svg{transition:transform .2s var(--ease)}
 .dns .spin svg{animation:spin .6s var(--ease)}
 @keyframes spin{to{transform:rotate(360deg)}}
@@ -218,8 +220,7 @@
   .dns .fhead .pill,.dns .sh .pill,.dns .fld .pill{height:30px;font-size:12px;padding:0 13px}
   .dns .fhead .tag{height:24px;border:0;background:rgba(var(--fg),.06)}
   .dns .fl .fhead,.dns .svh{flex-direction:column;gap:12px;margin-bottom:12px}
-  .dns .inp input,.dns .tbar .inp input{width:100%;min-width:0;font-size:16px}
-  .dns textarea,.dns .in,.dns .in.mono{font-size:16px}
+  .dns .inp input,.dns .tbar .inp input{width:100%;min-width:0}
   .dns .in{height:44px}
 
   /* подразделы: ряд прокручивается вбок, кнопки малые */

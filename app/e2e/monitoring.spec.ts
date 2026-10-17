@@ -19,7 +19,7 @@ test.describe('мониторинг нод', () => {
     }
     // Спарклайн CPU: начало из VM, дальше точка на каждый опрос.
     const spark = nodeCard(page, NODES[0]!).locator('.sp svg path').last()
-    await expect(spark).toHaveAttribute('d', /^M[\d.]+[ ,][\d.]+\s*[LC]/, { timeout: 30_000 })
+    await expect(spark).toHaveAttribute('d', /^M-?[\d.]+[ ,]-?[\d.]+\s*[LC]/, { timeout: 30_000 })
   })
 
   test('раскладка дорожек по экзитам: в окне узла «Полос N», «warp M»', async ({ page }) => {

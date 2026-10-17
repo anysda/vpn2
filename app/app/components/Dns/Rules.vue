@@ -30,38 +30,32 @@ onMounted(async () => {
   }
 })
 
-async function check(): Promise<boolean> {
+// AdGuard пересобирает фильтры в фоне и ещё с полсекунды отвечает по старым
+// правилам: 2 с после «Применить» проверку повторяем, в том числе для домена,
+// набранного уже после применения.
+let settleUntil = 0
+
+async function check() {
   const name = q.value.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0] ?? ''
   const my = ++seq
   if (!name) {
     res.value = null
-    return false
+    return
   }
   try {
     const v = await $fetch<Verdict>('/api/dns/check', { query: { name } })
-    if (my !== seq) return false
+    if (my !== seq) return
     const changed = v.label !== res.value?.label
-    const same = JSON.stringify(v) === JSON.stringify(res.value)
     res.value = v
+    if (Date.now() < settleUntil) setTimeout(() => my === seq && void check(), 250)
     if (changed) {
       await nextTick()
       anim(fres.value?.firstElementChild, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 220 })
     }
-    return !same
   }
   catch (e) {
     if (my === seq) res.value = null
     if (my === seq && (e as { statusCode?: number }).statusCode !== 400) toast.add({ title: errText(e), color: 'error' })
-    return false
-  }
-}
-
-// AdGuard пересобирает фильтры в фоне и ещё с полсекунды отвечает по старым
-// правилам: после «Применить» спрашиваем, пока ответ не сменится (до 2 с).
-async function recheck() {
-  for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 250))
-    if (await check()) return
   }
 }
 
@@ -76,7 +70,8 @@ async function apply() {
   try {
     text.value = (await $fetch<{ text: string }>('/api/dns/rules', { method: 'PUT', body: { text: text.value } })).text
     toast.add({ title: 'Свои правила применены' })
-    void recheck()
+    settleUntil = Date.now() + 2000
+    void check()
   }
   catch (e) {
     toast.add({ title: errText(e), color: 'error' })

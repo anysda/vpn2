@@ -104,3 +104,29 @@ test('клиент: перезагрузка карточки после сро�
   const id = list.find(c => c.name === name)!.id
   expect((await (await page.request.get(`/api/clients/${id}`)).json()).deviceLimit).toBe(7)
 })
+
+test('проверка домена, набранного сразу после «Применить», дожидается новых правил', async ({ page }) => {
+  await openHome(page, '/dns')
+  const before = (await (await page.request.get('/api/dns/rules')).json()).text as string
+  const host = `${uniq('fresh')}.example`
+  const area = page.getByRole('textbox', { name: 'Свои правила' })
+  try {
+    await page.locator('.dns .dseg').getByRole('tab', { name: 'Свои правила' }).click()
+    await area.fill(`${before}\n||${host}^`)
+    await page.getByRole('button', { name: 'Применить' }).click()
+    await expect(toast(page, 'Свои правила применены')).toBeVisible()
+    // Первые ответы после применения — ещё по старым правилам, как у AdGuard.
+    let stale = 2
+    await page.route(/\/api\/dns\/check\?/, async (route) => {
+      if (stale-- > 0) return route.fulfill({ json: { kind: 'ok', label: 'Не фильтруется', why: ['', '', ''] } })
+      await route.fallback()
+    })
+    await page.getByRole('textbox', { name: 'Домен для проверки' }).fill(host)
+    await expect(page.locator('.dns .fres')).toContainText('Заблокирован')
+    expect(stale).toBeLessThan(0)
+  }
+  finally {
+    const r = await page.request.put('/api/dns/rules', { data: { text: before } })
+    expect(r.status(), await r.text()).toBe(200)
+  }
+})

@@ -15,7 +15,7 @@ def revision(path, ref):
     return (ROOT / path).read_text()
 
 
-def run(ref=None):
+def run(ref=None, down_error='Connection refused', down_rc=1):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'envs').mkdir()
@@ -38,7 +38,7 @@ date() { echo 100; }
 sleep() { :; }
 load_env() { HOST_TAG=$1; SSH_USER=root; SSH_HOST=$1.example; SSH_PASS=fixture; }
 ssh_probe() {
-  if [[ $HOST_TAG == down ]]; then echo 'Connection refused'; return 1; fi
+  if [[ $HOST_TAG == down ]]; then echo "$DOWN_ERROR"; return "$DOWN_RC"; fi
 }
 install_prereqs() { :; }
 pause_entry_auto_updates() { :; }
@@ -62,11 +62,21 @@ do_all
 '''
         result = subprocess.run(['bash', '-c', script], cwd=root, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                env={**os.environ, 'PREFLIGHT_ATTEMPTS': '1'}, timeout=15)
+                                env={**os.environ, 'PREFLIGHT_ATTEMPTS': '1',
+                                     'PREFLIGHT_AUTH_PAUSE': '0', 'DOWN_ERROR': down_error,
+                                     'DOWN_RC': str(down_rc)}, timeout=15)
         return result
 
 
 class SkippedExitTests(unittest.TestCase):
+    def test_exit_refusing_login_still_stops_deploy(self):
+        result = run(down_error='root@down.example: Permission denied (publickey,password).',
+                     down_rc=3)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('Экзит down пропущен', result.stdout)
+        self.assertIn('Нода отказала во входе', result.stdout)
+        self.assertNotIn('[00-bootstrap] deployed', result.stdout)
+
     def test_unreachable_exit_does_not_stop_full_deploy(self):
         before = run('origin/dev')
         self.assertNotEqual(before.returncode, 0, before.stdout)

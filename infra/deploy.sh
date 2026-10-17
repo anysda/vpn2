@@ -758,14 +758,18 @@ preflight_ssh() {
   for h in $hosts; do
     cat "$dir/$h.log"
     [[ -f "$dir/$h.ok" ]] && continue
-    local reason; reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
-    if [[ "$h" != ru ]]; then
+    local reason kind
+    reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
+    kind=$(cat "$dir/$h.kind" 2>/dev/null || true)
+    # Пропускается только экзит, до которого нет сети. Сменённый host-key и
+    # отказ во входе сами не пройдут: это ошибка настройки, деплой стоит.
+    if [[ "$h" != ru && $kind != hostkey && $kind != auth ]]; then
       skipped+=("$h")
       printf '  %b⚠ Экзит %s пропущен: SSH недоступен в pre-flight%b\n' "$C_Y" "$h" "$C_END"
       continue
     fi
     reasons+=("$reason")
-    case $(cat "$dir/$h.kind" 2>/dev/null) in
+    case $kind in
       hostkey) fixes+=("$(cat "$dir/$h.fix")") ;;
       auth)    auth=1 ;;
       *)       net=1 ;;

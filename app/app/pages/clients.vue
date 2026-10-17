@@ -68,8 +68,19 @@ watch(sorted, (list) => {
   selectedId.value = list[0]?.id ?? null
 }, { immediate: true })
 
+// Телефон: список и карточка клиента — два экрана, «Назад» в шапке возвращает к списку.
+const mobile = useMobile()
+const screen = ref<'list' | 'client'>('list')
+onMounted(() => { if (useRoute().query.id) screen.value = 'client' })
+
+function show(next: 'list' | 'client') {
+  screen.value = next
+  if (mobile.value) scrollTo(0, 0)
+}
+
 function select(id: number) {
   selectedId.value = id
+  if (mobile.value) show('client')
 }
 
 async function onCreated(id: number) {
@@ -79,12 +90,14 @@ async function onCreated(id: number) {
 
 async function onDeleted() {
   selectedId.value = null
+  if (mobile.value) show('list')
   await refreshClients()
 }
 
 // Клиента удалили, пока грузилась карточка: выбрать соседа по списку, без тоста.
 async function onGone(id: number) {
   if (selectedId.value !== id) return
+  if (mobile.value) show('list')
   const list = sorted.value
   const at = list.findIndex(c => c.id === id)
   const rest = list.filter(c => c.id !== id)
@@ -138,10 +151,20 @@ function dot(c: Client) {
     title: 'Не в сети · за 5 мин нет трафика',
   }
 }
+
+const today = (c: Client) => sizeRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0))
+const tgText = (c: Client) => (c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram')
+/** Мета строки на телефоне: «3/3 · NL · @nick». */
+const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто'} · ${tgText(c)}`
 </script>
 
 <template>
-  <main class="tab on clp">
+  <main class="tab on clp" :class="mobile ? `m-${screen}` : undefined">
+    <Teleport v-if="mobile && screen === 'client'" defer to=".wrap>header">
+      <button type="button" class="ib cbk" aria-label="Назад" @click="show('list')">
+        <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
+    </Teleport>
     <div class="head">
       <div>
         <h1>Клиенты и ключи</h1>
@@ -184,6 +207,37 @@ function dot(c: Client) {
             <div v-else-if="!rows.length" class="more">
               Ничего не найдено
             </div>
+            <template v-else-if="mobile">
+              <div
+                v-for="c in rows"
+                :key="c.id"
+                class="crow"
+                role="button"
+                tabindex="0"
+                :aria-pressed="c.id === selectedId"
+                data-testid="client-row"
+                @click="select(c.id)"
+                @keydown.enter.prevent="select(c.id)"
+                @keydown.space.prevent="select(c.id)"
+              >
+                <span class="av" :title="dot(c)?.title">{{ initials(c.name) }}<i
+                  v-if="dot(c)"
+                  :class="dot(c)!.cls"
+                  :style="dot(c)!.color ? { background: dot(c)!.color } : undefined"
+                  data-testid="client-online"
+                /></span>
+                <div class="who">
+                  <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
+                  <small>{{ meta(c) }}</small>
+                </div>
+                <div class="crt">
+                  <span class="t1">{{ today(c) }}</span>
+                  <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
+                  <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
+                  <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
+                </div>
+              </div>
+            </template>
             <div
               v-for="c in rows"
               v-else
@@ -207,14 +261,14 @@ function dot(c: Client) {
                 /></span>
                 <div>
                   <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
-                  <small>{{ c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram' }}</small>
+                  <small>{{ tgText(c) }}</small>
                 </div>
               </div>
               <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
               <span
                 class="t1"
                 :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
-              >{{ sizeRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0)) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+              >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
               <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
               <span>
                 <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
@@ -228,7 +282,7 @@ function dot(c: Client) {
       </div>
       <div class="card cdet lit" data-testid="client-detail">
         <ClientsDetail
-          v-if="selectedId !== null"
+          v-if="selectedId !== null && (!mobile || screen === 'client')"
           :client-id="selectedId"
           :traffic="traffic(selectedId)"
           :exits="exitTags"

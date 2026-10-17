@@ -59,4 +59,8 @@ textarea:focus{border-color:rgba(var(--fg),.25)}
 .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
 .arow .pill{height:40px}
 .hint{font-size:12px;color:var(--t3)}
+@media (max-width:720px){
+  .bc{padding:20px 18px;min-height:0}
+  textarea{flex:none}
+}
 </style>

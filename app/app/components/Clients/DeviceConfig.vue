@@ -225,7 +225,7 @@ const ikeRows = computed(() => {
       </template>
     </template>
 
-    <div class="mf">
+    <div class="mf c3">
       <template v-if="kind === 'ike'">
         <button type="button" class="pill" :disabled="!creds" @click="copyAll">
           Копировать

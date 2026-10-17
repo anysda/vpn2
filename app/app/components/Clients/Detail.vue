@@ -14,6 +14,7 @@ const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
 const { removeDevice, reissueDevice } = useClientDevices()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
+const mobile = useMobile()
 
 const root = ref<HTMLElement>()
 const nameEl = ref<HTMLElement>()
@@ -521,42 +522,80 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
       </div>
       <div class="devl scroll">
         <div v-for="dev in detail.devices" :key="dev.id" class="dev" data-testid="device-row">
-          <div>
-            <b>{{ dev.name }}</b>
-            <small
-              :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
-              :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeRu(dev.rxTotal)} ↑ ${sizeRu(dev.txTotal)}` : undefined"
-            >{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-          </div>
-          <div class="kb">
-            <button type="button" @click="openConfig(dev, 'wg')">
-              WG
-            </button>
-            <button type="button" @click="openConfig(dev, 'ovpn')">
-              OVPN
-            </button>
-            <button type="button" @click="openConfig(dev, 'ike')">
-              IKEv2
-            </button>
-            <button
-              type="button"
-              class="ic"
-              title="Перевыпустить ключи девайса"
-              aria-label="Перевыпустить ключи девайса"
-              @click="askReissueDevice(dev)"
-            >
-              <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
-            </button>
-            <button
-              type="button"
-              class="ic"
-              title="Удалить девайс"
-              aria-label="Удалить девайс"
-              @click="askRemoveDevice(dev)"
-            >
-              <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
-            </button>
-          </div>
+          <!-- телефон: имя и ↻ 🗑 строкой, под ними три протокола -->
+          <template v-if="mobile">
+            <div class="kb dvt">
+              <div>
+                <b>{{ dev.name }}</b>
+                <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
+              </div>
+              <button
+                type="button"
+                class="ic"
+                aria-label="Перевыпустить ключи девайса"
+                @click="askReissueDevice(dev)"
+              >
+                <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
+              </button>
+              <button
+                type="button"
+                class="ic"
+                aria-label="Удалить девайс"
+                @click="askRemoveDevice(dev)"
+              >
+                <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
+              </button>
+            </div>
+            <div class="kb dk3">
+              <button type="button" @click="openConfig(dev, 'wg')">
+                WG
+              </button>
+              <button type="button" @click="openConfig(dev, 'ovpn')">
+                OVPN
+              </button>
+              <button type="button" @click="openConfig(dev, 'ike')">
+                IKEv2
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <div>
+              <b>{{ dev.name }}</b>
+              <small
+                :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
+                :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeRu(dev.rxTotal)} ↑ ${sizeRu(dev.txTotal)}` : undefined"
+              >{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
+            </div>
+            <div class="kb">
+              <button type="button" @click="openConfig(dev, 'wg')">
+                WG
+              </button>
+              <button type="button" @click="openConfig(dev, 'ovpn')">
+                OVPN
+              </button>
+              <button type="button" @click="openConfig(dev, 'ike')">
+                IKEv2
+              </button>
+              <button
+                type="button"
+                class="ic"
+                title="Перевыпустить ключи девайса"
+                aria-label="Перевыпустить ключи девайса"
+                @click="askReissueDevice(dev)"
+              >
+                <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
+              </button>
+              <button
+                type="button"
+                class="ic"
+                title="Удалить девайс"
+                aria-label="Удалить девайс"
+                @click="askRemoveDevice(dev)"
+              >
+                <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
+              </button>
+            </div>
+          </template>
         </div>
         <div v-if="!detail.devices.length" class="dev nod">
           Пока нет девайсов — добавь первый.

@@ -116,14 +116,77 @@
   .clp .dev{gap:10px;padding:10px}
 }
 
-/* телефон: до раскладки раздела — одна колонка и сжимаемый поиск, без горизонтального скролла */
+/* телефон (≤720): список и карточка клиента — два экрана, окна — нижние шторки */
 @media (max-width:720px){
+  .wrap>header>.cbk{order:-1;flex:none}
+  .wrap>header>.cbk svg{width:19px;height:19px}
+  .clp .head{margin:0}
+  .clp .head>div:first-child{display:none}
+  .clp .ha{flex:1;min-width:0}
+  .clp .inp{flex:1;min-width:0;height:42px}
+  .clp .inp input{flex:1;min-width:0;width:100%;font-size:14px}
+  .clp .ha .pill{flex:none;height:42px}
+  .clp .seg{display:flex;margin:0}
+  .clp .seg button{flex:1;min-width:0;justify-content:center;height:34px;padding:0 8px;font-size:12.5px}
   .clp .cgrid{grid-template-columns:minmax(0,1fr)}
-  .clp .ha,.clp .inp,.clp .inp input{flex:1;min-width:0}
-  .clp .seg{display:flex}
-  .clp .seg button{flex:1;min-width:0;justify-content:center;padding:0 10px}
-  .clp .crows{flex:none;height:auto}
+  .clp .clist{flex:none;padding:6px}
+  .clp .thead{display:none}
+  .clp .crows{flex:none;height:auto;padding:0}
+  .clp .crow{grid-template-columns:auto minmax(0,1fr) auto;gap:12px;height:auto;padding:10px;color:var(--t3);touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  .clp .crow:hover{background:none}
+  .clp .crow:active{background:rgba(var(--fg),.05);transform:scale(.99)}
+  .clp .crow .who{display:block}
+  .clp .crow .who b{font-size:14px}
+  .clp .crow .who small{margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .clp .crt{display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
+  .clp .crt .t1{font-size:13px}
+  .clp .crt small{color:var(--t3);font-size:11px;white-space:nowrap}
+  .clp .crow .crt .tag{height:24px;font-size:11.5px}
+
+  .clp.m-list .cdet,.clp.m-client .head,.clp.m-client .seg,.clp.m-client .ccol{display:none}
+  .clp .cdet{padding:20px 18px;animation:clp-scr .3s var(--ease)}
+  .clp .cdh>div{flex:1}
+  .clp .cdh h2{font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .clp .cdh .tag{flex:none}
+  .clp .crw.bt{flex-direction:column;align-items:stretch;gap:10px}
+  .clp .crw.bt>span:first-child{flex:none}
+  .clp .crw .bta{margin-left:0}
+  .clp .crw+.sub{margin-top:6px}
+  .clp .devl{height:auto;margin-right:0;padding-right:0;overflow:visible}
+  .clp .dev{display:block;padding:11px 12px}
+  .clp .dev.nod{padding:18px}
+  .clp .kb.dvt{align-items:center;gap:10px}
+  .clp .dvt>div{flex:1;min-width:0}
+  .clp .kb.dvt button.ic{width:34px;height:34px}
+  .clp .kb.dk3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
+  .clp .kb.dk3 button{height:34px;padding:0;font-size:12px}
+  .clp .acts .pill{flex:1;height:40px;padding:0 8px;font-size:13px}
+  .clp .acts .pill:first-child{flex:1 1 100%}
+  .clp button,.clp [role=button],.clm.bs button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+
+  /* шторки: те же окна, что модалки десктопа */
+  .clm.bs .mh h2{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .clm.bs .mt{font-size:13.5px;margin-top:10px}
+  .clm.bs .mf{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;margin-top:20px}
+  .clm.bs .mf .pill{height:46px;justify-content:center;white-space:nowrap}
+  .clm.bs .mt+.mf{margin-top:22px}
+  .clm.bs .crw+.mf{margin-top:16px}
+  .clm.bs .mf.c3 .pill{height:44px;padding:0 4px}
+  .clm.bs .mf>span{display:grid}
+  .clm.bs .fl2 .in{height:44px;font-size:15px}
+  .clm.bs .arow .in{height:40px}
+  .clm.bs .kvr{display:flex;align-items:center}
+  .clm.bs .kvr>span:empty{display:none}
+  .clm.bs .kvl{display:block}
+  .clm.bs .kvl .kvr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"k b" "v b";column-gap:10px}
+  .clm.bs .kvl .kvr>span:first-child{grid-area:k}
+  .clm.bs .kvl .kvr code{grid-area:v;margin-top:2px}
+  .clm.bs .kvl .r2{grid-area:b}
 }
+@media (max-width:720px) and (hover:hover) and (pointer:fine){
+  .clp .crow:hover{background:rgba(var(--fg),.035)}
+}
+@keyframes clp-scr{from{transform:translateX(18px);opacity:0}}
 
 /* модалки */
 .clm.ovl{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:24px;background:var(--ovl);backdrop-filter:blur(6px);opacity:0;pointer-events:none;transition:opacity .16s var(--ease)}
@@ -170,4 +233,5 @@
 
 @media (prefers-reduced-motion:reduce){
   .clp .av i.on::after{content:none}
+  .clp .cdet{animation:none}
 }

@@ -61,17 +61,20 @@ const rows = computed(() => {
   )
 })
 
+// Телефон: список и карточка клиента — два экрана, «Назад» в шапке возвращает к списку.
+const mobile = useMobile()
+const screen = ref<'list' | 'client'>('list')
+onMounted(() => { if (useRoute().query.id) screen.value = 'client' })
+
 // Выбранный клиент: из ссылки ?id= (топ на Обзоре), иначе первый в списке.
 const selectedId = ref<number | null>(Number(useRoute().query.id) || null)
 watch(sorted, (list) => {
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   selectedId.value = list[0]?.id ?? null
+  // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
+  // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
+  if (screen.value === 'client') show('list')
 }, { immediate: true })
-
-// Телефон: список и карточка клиента — два экрана, «Назад» в шапке возвращает к списку.
-const mobile = useMobile()
-const screen = ref<'list' | 'client'>('list')
-onMounted(() => { if (useRoute().query.id) screen.value = 'client' })
 
 function show(next: 'list' | 'client') {
   screen.value = next

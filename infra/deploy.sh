@@ -27,7 +27,7 @@ SKIPPED_EXIT_TAGS=''
 _TOTAL_T0=0
 
 exit_is_skipped() {
-  grep -qw -- "$1" <<<"$SKIPPED_EXIT_TAGS"
+  grep -qw -- "$1" <<<"${SKIPPED_EXIT_TAGS:-}"
 }
 
 active_exit_tags() {
@@ -93,7 +93,7 @@ print_summary() {
   # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
   local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
   local title_str="  деплой завершён  ·  ${timing}  "
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "$SKIPPED_EXIT_TAGS" ]]; then
+  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
     title_str="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
   fi
   local _rows=("$title_str")
@@ -144,7 +144,7 @@ print_summary() {
     warn '99-verify: установка завершена, но не все проверки измерены'
     printf '%s\n' "${_VERIFY_WARNINGS[@]}"
   fi
-  if [[ -n "$SKIPPED_EXIT_TAGS" ]]; then
+  if [[ -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
     HOST_TAG=deploy warn "pre-flight: экзиты пропущены из-за недоступного SSH: $SKIPPED_EXIT_TAGS"
   fi
 }
@@ -606,7 +606,7 @@ run_stage() {
     # Причины нужны print_summary в родительском процессе, а вывод идёт сразу.
     verify_logs=$(mktemp -d)
     local skipped
-    for skipped in $SKIPPED_EXIT_TAGS; do
+    for skipped in ${SKIPPED_EXIT_TAGS:-}; do
       case "$group" in
         all|foreign|"$skipped")
           printf '[%s] ⊘ пропущен: SSH недоступен в pre-flight\n' "$skipped"

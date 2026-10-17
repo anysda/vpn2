@@ -45,11 +45,10 @@ mkdir -p /var/anysda/.stamps "$PKI" "$PKI/newcerts" "$OVPN_DIR/ccd"
 # ── 1. openvpn + openssl ────────────────────────────────────────────────────
 echo "[$HOST_TAG] [1/6] openvpn"
 if ! command -v openvpn >/dev/null 2>&1; then
-  # Списки обновлял 00-bootstrap этого же деплоя минуты назад - второй
-  # apt-get update ~5 с впустую. Каталог списков старше часа - обновляем;
-  # пакет не нашёлся по старым спискам - обновляем и ставим ещё раз.
+  # Списки обновлял 00-bootstrap этого же деплоя минуты назад - второй update
+  # пропускаем только при свежем индексе. Пакет не нашёлся — обновляем и ставим ещё раз.
   apt_install() {
-    [[ -n "$(find /var/lib/apt/lists -maxdepth 0 -mmin -60)" ]] || apt_get update -qq
+    apt_update_if_stale
     apt_get install -y -qq "$@" >/dev/null 2>&1 && return 0
     apt_get update -qq && apt_get install -y -qq "$@" >/dev/null
   }

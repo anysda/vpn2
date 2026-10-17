@@ -330,14 +330,25 @@ docker_apt_source() {
   [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
 }
 
-# apt_update_if_stale — apt-get update, только если списки старше часа или
-# источники правили после них (свежее репо docker). Правило то же, что в
-# 26/27/29: на чистой установке entry обновляет списки в install_prereqs,
-# и bootstrap через полминуты повторял бы то же самое (~4 с).
+# apt_lists_are_fresh LISTS SOURCE... — списки свежие, если каталог обновлён
+# за последний час, ни один источник не новее его и в нём есть индекс
+# (*_Packages* или *_InRelease). Время индекса не годится: apt ставит файлу
+# Last-Modified зеркала, сразу после update он бывает старше месяца. Свежий
+# каталог на только что поднятой машине может держать один partial/.
+apt_lists_are_fresh() {
+  local lists=$1
+  shift
+  [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] || return 1
+  [[ -z "$(find "$@" -newer "$lists" -print -quit 2>/dev/null)" ]] || return 1
+  [[ -n "$(find "$lists" -maxdepth 1 -type f \( -name '*_Packages*' -o -name '*_InRelease' \) -print -quit 2>/dev/null)" ]]
+}
+
+# apt_update_if_stale — apt-get update, если нет свежего индекса или источник
+# менялся после него. После 00-bootstrap свежий индекс пропускает повторный
+# update; пустой lists/partial всегда его запускает.
 apt_update_if_stale() {
   local lists=/var/lib/apt/lists
-  if [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] &&
-     [[ -z "$(find /etc/apt/sources.list /etc/apt/sources.list.d -newer "$lists" 2>/dev/null | head -1)" ]]; then
+  if apt_lists_are_fresh "$lists" /etc/apt/sources.list /etc/apt/sources.list.d; then
     return 0
   fi
   apt_get update -qq

@@ -42,6 +42,12 @@ async function logout() {
 const name = computed(() => user.value?.username ?? 'admin')
 const initial = computed(() => name.value.charAt(0).toUpperCase())
 
+// Пункты меню профиля одни на ПК и в шторке телефона.
+const PROFILE_LINKS = [
+  { to: '/settings', label: 'Мой профиль' },
+  { to: '/screen', label: 'Настроить экран' },
+]
+
 function toggleMenu() {
   pop.value = pop.value === 'me' ? null : 'me'
 }
@@ -159,11 +165,8 @@ onUnmounted(() => {
               :aria-hidden="pop !== 'me'"
               :inert="pop !== 'me'"
             >
-              <NuxtLink to="/settings" role="menuitem">
-                Мой профиль
-              </NuxtLink>
-              <NuxtLink to="/screen" role="menuitem">
-                Настроить экран
+              <NuxtLink v-for="l in PROFILE_LINKS" :key="l.to" :to="l.to" role="menuitem">
+                {{ l.label }}
               </NuxtLink>
               <ThemeSwitch />
               <hr>
@@ -192,8 +195,8 @@ onUnmounted(() => {
           <i aria-hidden="true">{{ initial }}</i>@{{ name }}
         </div>
         <div class="menu" role="menu">
-          <NuxtLink to="/settings" role="menuitem">
-            Мой профиль
+          <NuxtLink v-for="l in PROFILE_LINKS" :key="l.to" :to="l.to" role="menuitem">
+            {{ l.label }}
           </NuxtLink>
           <ThemeSwitch />
           <hr>

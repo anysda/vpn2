@@ -14,6 +14,9 @@ const head = computed(() => ({
 }))
 const period = useOverviewPeriod()
 const stack = useBackStack()
+// «Назад» экрана поверх раздела (карточка клиента) — первым в шапке, как на экране.
+const headerBack = useHeaderBack()
+const backTo = computed(() => (mobile.value && headerBack.value.path === route.path ? headerBack.value.to : ''))
 
 async function logout() {
   if (loggingOut.value) return
@@ -98,6 +101,9 @@ onUnmounted(() => {
     <div class="light" />
     <div class="wrap">
       <header>
+        <button v-if="backTo" type="button" class="ib cbk" aria-label="Назад" @click="stack.leave(backTo)">
+          <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+        </button>
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>

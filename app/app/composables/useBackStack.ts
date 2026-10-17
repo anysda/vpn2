@@ -61,3 +61,8 @@ export function useBackStack() {
     }),
   }
 }
+
+/** Куда ведёт «Назад» в шапке телефона; ставит страница своего пути, читает layout. */
+export function useHeaderBack() {
+  return useState('header-back', () => ({ path: '', to: '' }))
+}

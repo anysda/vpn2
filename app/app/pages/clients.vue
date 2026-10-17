@@ -90,6 +90,12 @@ watch(sorted, (list) => {
   if (mobile.value && screen.value === 'client') void toList()
 }, { immediate: true })
 
+const headerBack = useHeaderBack()
+watchEffect(() => {
+  headerBack.value = { path: route.path, to: mobile.value && screen.value === 'client' ? urlOf() : '' }
+})
+onUnmounted(() => { headerBack.value = { path: '', to: '' } })
+
 function select(id: number) {
   selectedId.value = id
   if (mobile.value) void stack.push(urlOf(id))
@@ -172,11 +178,6 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
 
 <template>
   <main class="tab on clp" :class="mobile ? `m-${screen}` : undefined">
-    <Teleport v-if="mobile && screen === 'client'" defer to=".wrap>header">
-      <button type="button" class="ib cbk" aria-label="Назад" @click="toList()">
-        <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-      </button>
-    </Teleport>
     <div class="head">
       <div>
         <h1>Клиенты и ключи</h1>

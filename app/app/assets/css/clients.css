@@ -118,7 +118,7 @@
 
 /* телефон (≤720): список и карточка клиента — два экрана, окна — нижние шторки */
 @media (max-width:720px){
-  .wrap>header>.cbk{order:-1;flex:none}
+  .wrap>header>.cbk{flex:none}
   .wrap>header>.cbk svg{width:19px;height:19px}
   .clp .head{margin:0}
   .clp .head>div:first-child{display:none}

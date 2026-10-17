@@ -23,7 +23,20 @@ source "$DEPLOY_ROOT/lib/ssh.sh"
 # «стадия<TAB>группа<TAB>время», колонки выравнивает print_summary
 _STAGE_LOG=()
 _VERIFY_WARNINGS=()
+SKIPPED_EXIT_TAGS=''
 _TOTAL_T0=0
+
+exit_is_skipped() {
+  grep -qw -- "$1" <<<"$SKIPPED_EXIT_TAGS"
+}
+
+active_exit_tags() {
+  local tag active=()
+  for tag in $(exit_tags); do
+    exit_is_skipped "$tag" || active+=("$tag")
+  done
+  printf '%s\n' "${active[*]}"
+}
 
 # ----------------------------------------------------------------------------
 # Banner
@@ -80,7 +93,7 @@ print_summary() {
   # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
   local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
   local title_str="  деплой завершён  ·  ${timing}  "
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
+  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "$SKIPPED_EXIT_TAGS" ]]; then
     title_str="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
   fi
   local _rows=("$title_str")
@@ -130,6 +143,9 @@ print_summary() {
   if [[ -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
     warn '99-verify: установка завершена, но не все проверки измерены'
     printf '%s\n' "${_VERIFY_WARNINGS[@]}"
+  fi
+  if [[ -n "$SKIPPED_EXIT_TAGS" ]]; then
+    HOST_TAG=deploy warn "pre-flight: экзиты пропущены из-за недоступного SSH: $SKIPPED_EXIT_TAGS"
   fi
 }
 
@@ -268,11 +284,26 @@ do_check() {
 prep_ru_router() {
   log "prep: тяну секреты Hysteria2 + clash-api с экзит-нод"
   local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
+  # Для временно недоступного экзита нужны секреты прошлого успешного
+  # деплоя: конфигурация хаба сохраняет его outbound до следующего запуска.
+  local cached=''
+  [[ -f "$sec" ]] && cached=$(<"$sec")
   # Права закрываем до записи: сбор может оборваться между экзитами.
   install -d -m 700 "$DEPLOY_ROOT/secrets" || return
   install -m 600 /dev/null "$sec" || return
 
   for host in $(exit_tags); do
+    if exit_is_skipped "$host"; then
+      local upper kept kept_count
+      upper=$(printf '%s' "$host" | tr 'a-z-' 'A-Z_')
+      kept=$(grep -E "^${upper}_(DIRECT|WARP|OBFS|MGMT|CLASH)=" <<<"$cached" || true)
+      kept_count=$(grep -c . <<<"$kept" || true)
+      [[ $kept_count -eq 5 ]] \
+        || die "$host пропущен в pre-flight, но в прошлом деплое нет его 5 секретов; сначала верни SSH и запусти ./deploy.sh"
+      printf '%s\n' "$kept" >> "$sec"
+      warn "prep: $host пропущен, использую сохранённые секреты"
+      continue
+    fi
     load_env "$host"
     log "забираю секреты с $host"
     local payload; payload=$(ssh_exec '
@@ -574,6 +605,14 @@ run_stage() {
   if [[ "$stage" == 99-verify ]]; then
     # Причины нужны print_summary в родительском процессе, а вывод идёт сразу.
     verify_logs=$(mktemp -d)
+    local skipped
+    for skipped in $SKIPPED_EXIT_TAGS; do
+      case "$group" in
+        all|foreign|"$skipped")
+          printf '[%s] ⊘ пропущен: SSH недоступен в pre-flight\n' "$skipped"
+          ;;
+      esac
+    done
   fi
   for h in $hosts; do
     if [[ -n "$verify_logs" ]]; then
@@ -711,7 +750,7 @@ preflight_ssh() {
   # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
   # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
   local hosts; hosts=$(expand_hosts all)
-  local reasons=() fixes=() auth=0 net=0 h dir; dir=$(mktemp -d)
+  local reasons=() fixes=() skipped=() auth=0 net=0 h dir; dir=$(mktemp -d)
   for h in $hosts; do
     _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
   done
@@ -719,7 +758,13 @@ preflight_ssh() {
   for h in $hosts; do
     cat "$dir/$h.log"
     [[ -f "$dir/$h.ok" ]] && continue
-    reasons+=("$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")")
+    local reason; reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
+    if [[ "$h" != ru ]]; then
+      skipped+=("$h")
+      printf '  %b⚠ Экзит %s пропущен: SSH недоступен в pre-flight%b\n' "$C_Y" "$h" "$C_END"
+      continue
+    fi
+    reasons+=("$reason")
     case $(cat "$dir/$h.kind" 2>/dev/null) in
       hostkey) fixes+=("$(cat "$dir/$h.fix")") ;;
       auth)    auth=1 ;;
@@ -728,8 +773,12 @@ preflight_ssh() {
   done
   rm -rf "$dir"
 
-  # Все ноды доступны — эталон не нужен, идём дальше.
+  SKIPPED_EXIT_TAGS="${skipped[*]}"
+
+  # Недоступный экзит не меняет конфигурацию хаба: его пропускают только
+  # fan-out стадии этого запуска. Недоступный entry остаётся стоп-сигналом.
   if [[ ${#reasons[@]} -eq 0 ]]; then
+    [[ ${#skipped[@]} -eq 0 ]] || printf '  %b⚠ Продолжаю без экзитов: %s%b\n' "$C_Y" "${skipped[*]}" "$C_END"
     printf '\n'
     return 0
   fi
@@ -835,7 +884,7 @@ _redeploy_exit_port() {
 verify_and_rotate_ports() {
   printf '%b==>%b verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n' "$C_B" "$C_END"
   local t0; t0=$(date +%s)
-  local exits; exits=$(exit_tags)
+  local exits; exits=$(active_exit_tags)
   local rotated_any=0
   local fully_dead=()     # tags, у которых ВЕСЬ UDP-путь RU↔exit фильтруется
   local state_dir="$DEPLOY_ROOT/state"

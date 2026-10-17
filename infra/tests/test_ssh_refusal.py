@@ -47,7 +47,7 @@ SSH_USER=root SSH_HOST=203.0.113.7 SSH_PASS=secret
 
 PREFLIGHT = (''.join(function(name) for name in
                      re.findall(r'^(_?preflight\w*)\(\) \{', source('infra/deploy.sh'), re.M)) + '''
-expand_hosts() { echo at; }
+expand_hosts() { echo ru; }
 load_env() { :; }
 _tcp22_open() { return 0; }
 preflight_ssh

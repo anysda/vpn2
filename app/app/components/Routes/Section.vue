@@ -4,6 +4,8 @@ import { parseOutbound, useRoutes } from '~/composables/useRoutes'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()
+// На телефоне перетаскивания нет: тап по правилу открывает шторку выбора выхода.
+const mobile = useMobile()
 
 const EASE = 'cubic-bezier(.23,1,.32,1)'
 const reduced = () => import.meta.client && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -162,7 +164,6 @@ async function onDrop(outbound: string, e: DragEvent) {
   const rule = shown.value.find(r => r.id === id)
   if (!rule || rule.outbound === outbound) return
   const { clientX: x0, clientY: y0 } = e
-  setMoving(id, outbound)
   // Правило ложится в ячейку из точки, где его отпустили.
   if (!reduced()) {
     void nextTick(() => requestAnimationFrame(() => {
@@ -175,6 +176,13 @@ async function onDrop(outbound: string, e: DragEvent) {
       ], { duration: 380, easing: EASE })
     }))
   }
+  await move(rule, outbound)
+}
+
+// Перенос на сервере — общий для перетаскивания и шторки телефона.
+async function move(rule: Route, outbound: string) {
+  const id = rule.id
+  setMoving(id, outbound)
   try {
     await patch(id, outbound)
     toast.add({ title: `«${rule.value}» → ${cellName(outbound)}`, color: 'success' })
@@ -185,6 +193,30 @@ async function onDrop(outbound: string, e: DragEvent) {
   finally {
     setMoving(id, null)
   }
+}
+
+// ---------- шторка правила (телефон) ----------
+const picked = ref<number | null>(null)
+const pickedRule = computed(() => shown.value.find(r => r.id === picked.value) ?? null)
+// Последнее открытое правило остаётся в шторке, пока она уезжает вниз.
+const sheetRule = ref<Route | null>(null)
+watch(pickedRule, (r) => { if (r) sheetRule.value = r })
+
+function onRuleTap(rule: Route) {
+  if (mobile.value) picked.value = rule.id
+}
+function pickOutbound(outbound: string) {
+  const rule = pickedRule.value
+  picked.value = null
+  if (!rule || rule.outbound === outbound) return
+  // Без точки отпускания правило просто проявляется в новой ячейке.
+  fresh.value = rule.id
+  void move(rule, outbound)
+}
+function deletePicked() {
+  const rule = pickedRule.value
+  picked.value = null
+  if (rule) void deleteRule(rule)
 }
 
 // ---------- удаление ----------
@@ -392,9 +424,14 @@ onBeforeUnmount(() => {
             :key="rule.id"
             :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id, hit: checked?.routeId === rule.id }]"
             :data-id="rule.id"
-            draggable="true"
+            :draggable="!mobile"
+            :role="mobile ? 'button' : undefined"
+            :tabindex="mobile ? 0 : undefined"
+            :aria-haspopup="mobile ? 'dialog' : undefined"
             @dragstart="onDragStart(rule, $event)"
             @dragend="onDragEnd"
+            @click="onRuleTap(rule)"
+            @keydown.enter="onRuleTap(rule)"
           >
             <span class="rtx">{{ rule.value }}</span><button
               class="x"
@@ -415,8 +452,40 @@ onBeforeUnmount(() => {
     </div>
   </section>
   <p class="hint">
-    Перетаскивай правила между выходами. Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
+    {{ mobile ? 'Нажми на правило, чтобы перенести его на другой выход.' : 'Перетаскивай правила между выходами.' }} Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
   </p>
+  <BottomSheet
+    v-if="mobile"
+    :open="!!pickedRule"
+    label="Перенос правила"
+    @close="picked = null"
+  >
+    <template v-if="sheetRule">
+      <h2 class="rsh">
+        {{ sheetRule.value }}
+      </h2>
+      <p class="rsp">
+        Выход
+      </p>
+      <button
+        v-for="c in cells"
+        :key="c.outbound"
+        type="button"
+        :class="['ro', { on: c.outbound === sheetRule.outbound, warp: c.warp }]"
+        :aria-pressed="c.outbound === sheetRule.outbound"
+        @click="pickOutbound(c.outbound)"
+      >
+        <span>{{ c.name }}</span><i :class="rtc(c.delay)">{{ c.delay ?? '—' }} мс</i>
+      </button>
+      <button
+        type="button"
+        class="pill red rdel"
+        @click="deletePicked"
+      >
+        Удалить
+      </button>
+    </template>
+  </BottomSheet>
 </template>
 
 <style scoped>
@@ -486,4 +555,42 @@ onBeforeUnmount(() => {
 @media (max-width:1360px){
   .ex .eh .rt{font-size:22px}
 }
+/* Телефон: карточки друг под другом, экзиты списком, перенос — тапом и шторкой. */
+@media (max-width:720px){
+  .rtop{grid-template-columns:minmax(0,1fr);margin-bottom:0}
+  .rtop .card{padding:16px}
+  .inp.big2{height:44px;padding:0 14px;margin-top:12px}
+  .chain{margin-top:10px;min-height:0;gap:6px;font-size:12px;color:var(--t2)}
+  .ch{height:28px;padding:0 10px;gap:8px;font-size:12px}
+  .ch::before{display:none}
+  .ch b{font-size:12px}
+  .chain .ar2{width:12px}
+  .chain .why{flex-basis:100%;margin-left:0;font-size:11.5px}
+  .arow{margin-top:10px}
+  /* !important: число колонок десктопа задано на элементе */
+  .board{grid-template-columns:minmax(0,1fr)!important}
+  .ex{grid-row:auto;grid-template-rows:none;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}
+  .ex .eh{grid-column:1/-1;padding:2px}
+  .ex .eh .rt{font-size:26px}
+  .ex .cell:nth-child(2):last-child{grid-column:1/-1;grid-row:auto}
+  .cell{min-width:0}
+  .rcs,.rcs.scroll{height:auto;margin-right:0;overflow:visible}
+  .cell.empty .rcs::after{content:"пусто";margin:0;line-height:32px;text-align:center}
+  .rc{cursor:pointer;touch-action:manipulation;-webkit-touch-callout:none}
+  .rc::before,.rc .x{display:none}
+  .rc:not(.hit):hover{border-color:var(--line)}
+  .rc:active{cursor:pointer;transform:scale(.97)}
+  .hint{margin:0 4px}
+}
+/* шторка правила */
+.rsh{margin:0;font-size:18px;font-weight:500;letter-spacing:-.01em;word-break:break-all}
+.rsp{margin:4px 0 8px;color:var(--t3);font-size:12.5px}
+.ro{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 14px;margin-top:6px;border-radius:14px;border:1px solid var(--line);background:rgba(var(--fg),.03);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;text-align:left;cursor:pointer;transition:transform .16s var(--ease),background-color .2s,border-color .2s}
+.ro span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ro.warp span{color:var(--orange)}
+.ro i{flex:none;font-style:normal;font-size:12px;color:var(--t3)}
+.ro.on{border-color:var(--acc);background:rgba(var(--fg),.08)}
+.ro:active{transform:scale(.98)}
+.pill.red{color:var(--red-t);border-color:rgba(var(--red-rgb),.3)}
+.rdel{width:100%;height:46px;margin-top:16px;justify-content:center}
 </style>

@@ -25,3 +25,10 @@ usePageSub(() => `${count.value} · какой сайт через какой в
     <RoutesSection />
   </main>
 </template>
+
+<style scoped>
+/* заголовок раздела на телефоне в шапке, пустой блок не держит отступ */
+@media (max-width:720px){
+  .head{display:none}
+}
+</style>

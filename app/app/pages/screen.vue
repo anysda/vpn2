@@ -119,4 +119,9 @@ const zoneList: { id: Zone, title: string }[] = [
 .scr .zb b{font-weight:500;font-size:13.5px}
 .scr .zb small{display:block;color:var(--t3);font-size:11.5px}
 .scr .zb.drag{opacity:.35}
+/* телефон: узкая колонка переносит название и подсказку, плашка растёт по тексту */
+@media (max-width:720px){
+  .scr .zb{height:auto;min-height:58px;padding:10px 16px}
+  .scr .zb>div{min-width:0;overflow-wrap:anywhere}
+}
 </style>

@@ -2,6 +2,7 @@ import type { Page } from '@playwright/test'
 import { expect, NODES, test, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 import { orderBreaks } from './support/order'
+import { noVerticalOverflow } from './support/overflow'
 import { TAB_PAGES } from '../app/utils/tab-pages'
 
 // Телефон и «Настроить экран»: пункт меню, порядок блоков Обзора, фокус под шапкой.
@@ -70,6 +71,38 @@ test.describe('порядок блоков Обзора из «Настроит�
       expect(await orderBreaks(main, 'blocks'), 'блоки по разметке против экрана').toEqual([])
     })
   }
+})
+
+test.describe('плашки «Настроить экран»: название и подсказка внутри плашки', () => {
+  test.afterEach(({ page }) => page.request.put('/api/me/layout', { data: defaults }).then(() => undefined))
+
+  // каждая плашка побывает и «На обзоре», и в узкой колонке «Скрыто»
+  const layouts = [defaults, { left: ['nodes'], right: [], hidden: ['traffic', 'activity'] }, { left: ['traffic', 'activity'], right: [], hidden: ['nodes'] }]
+  for (const width of [360, 402]) {
+    test(`телефон ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 874 })
+      await openHome(page)
+      expect(await page.evaluate(() => innerWidth)).toBe(width)
+      for (const data of layouts) {
+        expect((await page.request.put('/api/me/layout', { data })).ok()).toBe(true)
+        await page.goto('/screen')
+        await expect(page.locator('.scr .zb')).toHaveCount(3)
+        const where = `${width}, скрыто ${data.hidden.join(', ') || 'ничего'}`
+        await noVerticalOverflow(page, '.scr .scz', where)
+        for (const zb of await page.locator('.scr .zb').all()) {
+          const [box, text] = await zb.evaluate(el => [el.clientHeight, el.firstElementChild!.scrollHeight])
+          expect(text, `${where}: ${await zb.textContent()}`).toBeLessThanOrEqual(box!)
+        }
+      }
+    })
+  }
+
+  test('ПК: плашки прежней высоты 58px', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await openHome(page, '/screen')
+    await expect(page.locator('.scr .zb')).toHaveCount(3)
+    expect(await page.locator('.scr .zb').evaluateAll(l => l.map(e => (e as HTMLElement).offsetHeight))).toEqual([58, 58, 58])
+  })
 })
 
 /** Где элемент в фокусе против шапки и таб-бара, после прокрутки к нему. */

@@ -56,3 +56,32 @@ export async function noHorizontalOverflow(page: Page, where: string, allow: str
   expect(m.sw, `${where}: scrollWidth ${m.sw} > ${m.vw}; вылезают: ${m.wide.join('; ')}`).toBeLessThanOrEqual(m.vw)
   expect(m.clipped, `${where}: вылезают за край блока`).toEqual([])
 }
+
+/**
+ * Ничего не вылезает вниз за свой блок: каждый элемент внутри `root` целиком
+ * выше нижнего поля родителя. Ловит блоки с жёсткой высотой, в
+ * которых перенесённый текст вылезает или молча обрезан `overflow: hidden`.
+ * Прокручиваемые блоки и вынутые из потока элементы не проверяются. Мерим после конечных анимаций.
+ */
+export async function noVerticalOverflow(page: Page, root: string, where: string) {
+  const out = await page.locator(root).first().evaluate(async (top) => {
+    await Promise.all(document.getAnimations()
+      .filter(a => a.effect?.getTiming().iterations !== Infinity)
+      .map(a => a.finished.catch(() => {})))
+    const name = (el: Element) => `${el.tagName.toLowerCase()}.${[...el.classList].slice(0, 4).join('.')}`
+    const res: string[] = []
+    for (const el of top.querySelectorAll('*')) {
+      if (!(el instanceof HTMLElement || el instanceof SVGSVGElement)) continue
+      const p = el.parentElement!
+      const s = getComputedStyle(el), ps = getComputedStyle(p)
+      if (s.position === 'absolute' || s.position === 'fixed' || ps.overflowY === 'auto' || ps.overflowY === 'scroll') continue
+      const r = el.getBoundingClientRect()
+      if (!r.width || !r.height) continue
+      // край содержимого: при высоте по содержимому ребёнок до него и доходит, дальше — только когда высота зажата
+      const edge = p.getBoundingClientRect().top + p.clientTop + p.clientHeight - Number.parseFloat(ps.paddingBottom)
+      if (r.bottom > edge + 1) res.push(`${name(el)} «${(el.textContent ?? '').trim().slice(0, 30)}» низ ${Math.round(r.bottom)} > ${name(p)} ${Math.round(edge)}`)
+    }
+    return res
+  })
+  expect(out, `${where}: вылезают вниз за свой блок`).toEqual([])
+}

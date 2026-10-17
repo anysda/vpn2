@@ -51,11 +51,22 @@ generate_wgcf_profile() {
   return 1
 }
 
+# Вывод register несёт Id аккаунта и устройства WARP: в лог деплоя его не
+# пишем, при сбое печатаем только хвост с причиной.
+register_wgcf() {
+  local out
+  if out=$(timeout 15 /usr/local/bin/wgcf register --accept-tos 2>&1); then
+    return 0
+  fi
+  printf '%s\n' "$out" | tail -n 3
+  return 1
+}
+
 WGCF_OK=1
 if [[ ! -f wgcf-account.toml ]]; then
   echo "[$HOST_TAG]   регистрирую WARP устройство"
   # Без таймаута register при фильтрации Cloudflare висит ~145 с на TCP connect.
-  if ! timeout 15 /usr/local/bin/wgcf register --accept-tos; then
+  if ! register_wgcf; then
     echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
     WGCF_OK=0
   fi
@@ -71,7 +82,7 @@ if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-account.toml ]]; then
       # WARP в конфиге sing-box свежим профилем.
       mv -f wgcf-account.toml wgcf-account.toml.old
       echo "[$HOST_TAG]   регистрирую WARP устройство заново"
-      if timeout 15 /usr/local/bin/wgcf register --accept-tos; then
+      if register_wgcf; then
         if generate_wgcf_profile; then
           chmod 600 wgcf-account.toml wgcf-profile.conf
         else

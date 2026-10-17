@@ -33,6 +33,7 @@ case "$1" in
     ;;
   register)
     echo register >> "$WGCF_CALLS"
+    echo 'Device Id: fixture-device-id'
     test "${WGCF_REGISTER_FAIL:-0}" = 0 || exit 1
     printf 'device_id = "new-device"\\nkey_type = "curve25519"\\n' > wgcf-account.toml
     ;;
@@ -60,6 +61,7 @@ esac
         self.assertEqual(files['wgcf-account.toml.old'], 'device_id = "old-device"\n')
         self.assertEqual(files['wgcf-profile.conf'], 'PrivateKey = fresh\n')
         self.assertNotIn('оставляю профиль прошлого прогона', result.stdout)
+        self.assertNotIn('fixture-device-id', result.stdout + result.stderr)
 
     def test_current_account_generates_without_reregistration_or_warning(self):
         result, calls, files = self.run_stage('device_id = "current-device"\nkey_type = "curve25519"\n')

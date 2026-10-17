@@ -73,6 +73,12 @@ function glide(jump = false) {
   place(bar.value, barGlideEl.value, barGlided, jump)
 }
 const onResize = () => glide(true)
+
+// Телефон: шапка фиксирована, и отступ контента идёт за её настоящей высотой
+// (подзаголовок, «Назад», вырез экрана), а не за константой.
+const headEl = ref<HTMLElement>()
+const headH = ref(0)
+let headRo: ResizeObserver | undefined
 watch(() => route.path, () => nextTick(() => requestAnimationFrame(() => glide())))
 
 function onDocClick(e: MouseEvent) {
@@ -84,12 +90,15 @@ function onKey(e: KeyboardEvent) {
 }
 onMounted(() => {
   glide(true)
+  headRo = new ResizeObserver(([e]) => { headH.value = e?.borderBoxSize[0]?.blockSize ?? 0 })
+  if (headEl.value) headRo.observe(headEl.value, { box: 'border-box' })
   void document.fonts?.ready.then(() => glide(true))
   addEventListener('resize', onResize)
   document.addEventListener('click', onDocClick)
   document.addEventListener('keydown', onKey)
 })
 onUnmounted(() => {
+  headRo?.disconnect()
   removeEventListener('resize', onResize)
   document.removeEventListener('click', onDocClick)
   document.removeEventListener('keydown', onKey)
@@ -99,8 +108,8 @@ onUnmounted(() => {
 <template>
   <div v-if="!loggingOut">
     <div class="light" />
-    <div class="wrap">
-      <header>
+    <div class="wrap" :style="headH ? { '--mh': `${headH}px` } : undefined">
+      <header ref="headEl">
         <button v-if="backTo" type="button" class="ib cbk" aria-label="Назад" @click="stack.leave(backTo)">
           <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
         </button>

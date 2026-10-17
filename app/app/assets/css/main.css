@@ -229,7 +229,8 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   /* свечение под ширину телефона, как в мобильном макете; шапка рисует свою часть пятна, чтобы не закрывать его */
   div.light::before{top:-220px;width:620px;height:420px;background:var(--mglow)}
   div.light::after{display:none}
-  .wrap{padding:calc(70px + env(safe-area-inset-top)) 16px calc(128px + env(safe-area-inset-bottom))}
+  /* контент на 4px ниже фиксированной шапки; --mh — её высота (layouts/default.vue), до монтирования — шапка без подзаголовка */
+  .wrap{padding:calc(var(--mh,calc(66px + env(safe-area-inset-top))) + 4px) 16px calc(128px + env(safe-area-inset-bottom))}
   .wrap>header{position:fixed;z-index:30;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;margin:0;padding:calc(14px + env(safe-area-inset-top)) 16px 12px;background:var(--mglow) 50% -220px/620px 420px no-repeat,var(--bg);-webkit-user-select:none;user-select:none}
   .wrap>header>.logo,.wrap>header>.tabs,.wrap>header .pop{display:none}
   .mhead{display:block;flex:1;min-width:0}

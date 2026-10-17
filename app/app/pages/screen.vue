@@ -5,6 +5,7 @@ import type { ScreenLayout, ScreenModuleId } from '#shared/screen-layout'
 import { useScreenLayout } from '~/composables/useScreenLayout'
 
 useHead({ title: 'Настроить экран - anysda-vpn2' })
+definePageMeta({ title: 'Настроить экран', sub: 'Перетаскивай блоки обзора: порядок сверху вниз, ненужное — в «Скрыто»' })
 
 type Zone = 'on' | 'off'
 

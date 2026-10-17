@@ -27,6 +27,8 @@ const subtitle = computed(() => {
   const d = clients.value.reduce((sum, c) => sum + c.deviceCount, 0)
   return `${n} ${pluralRu(n, ['клиент', 'клиента', 'клиентов'])} · ${d} ${pluralRu(d, ['устройство', 'устройства', 'устройств'])}`
 })
+definePageMeta({ title: 'Клиенты и ключи' })
+usePageSub(subtitle)
 
 type Filter = 'all' | 'exp' | 'frz'
 const filter = ref<Filter>('all')

@@ -10,6 +10,8 @@ const count = computed(() => {
   const n = rules.value?.length ?? 0
   return `${n} ${pluralRu(n, ['правило', 'правила', 'правил'])}`
 })
+definePageMeta({ title: 'Маршруты' })
+usePageSub(() => `${count.value} · какой сайт через какой выход`)
 </script>
 
 <template>

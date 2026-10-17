@@ -8,6 +8,14 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  // viewport-fit=cover: мобильная шапка и таб-бар сами отступают от выреза
+  // и полоски «домой» через env(safe-area-inset-*).
+  app: {
+    head: {
+      viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
+    },
+  },
+
   // Manrope берётся из Google Fonts. Неиспользуемые каталоги
   // Fontsource/Fontshare задерживали сборку на ~68 с при их отказе.
   fonts: {

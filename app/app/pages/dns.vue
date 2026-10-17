@@ -2,6 +2,7 @@
 import '~/assets/css/dns.css'
 
 useHead({ title: 'DNS — anysda-vpn2' })
+definePageMeta({ title: 'DNS' })
 
 const SUBS = [
   { value: 'sum', label: 'Сводка' },

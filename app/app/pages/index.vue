@@ -5,6 +5,7 @@ import { WAKE } from '~/utils/overview'
 import { sortNodes } from '~/utils/overview-nodes'
 
 useHead({ title: 'Обзор — anysda-vpn2' })
+definePageMeta({ title: 'Обзор' })
 
 // Первый показ Обзора за сессию — сцена «сеть просыпается»: блоки
 // появляются по очереди. Дальше страница открывается сразу.
@@ -39,8 +40,9 @@ const pings = computed(() => {
 })
 
 const { layout } = useScreenLayout()
-// период графика трафика: сутки по часам или неделя по суткам
-const period = ref<'day' | 'week'>('day')
+// период графика трафика: сутки по часам или неделя по суткам; с Обзора уходит вместе с ним
+const period = useOverviewPeriod()
+onUnmounted(() => { period.value = 'day' })
 
 // старое `events` (рассылка и лента) из сохранённых раскладок отсеивает
 // normalizeScreenLayout: лента теперь в traffic, рассылка ушла с Обзора

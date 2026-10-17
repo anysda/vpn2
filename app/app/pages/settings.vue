@@ -2,6 +2,7 @@
 import QRCode from 'qrcode-svg'
 
 useHead({ title: 'Настройки — anysda-vpn2' })
+definePageMeta({ title: 'Настройки', sub: 'Бот, профиль и вход в панель' })
 
 const { user, loginMethod, fetch: refreshSession } = useAuthSession()
 const toast = useToast()

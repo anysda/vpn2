@@ -5,6 +5,14 @@ const { user, clear } = useAuthSession()
 const route = useRoute()
 const loggingOut = ref(false)
 const pop = useHeaderPop()
+// Телефон: заголовок раздела и период Обзора — в шапке, вкладки — в таб-баре снизу.
+const mobile = useMobile()
+const pageSub = usePageSub()
+const head = computed(() => ({
+  title: route.meta.title ?? '',
+  sub: pageSub.value.path === route.path ? pageSub.value.text : route.meta.sub,
+}))
+const period = useOverviewPeriod()
 
 async function logout() {
   if (loggingOut.value) return
@@ -26,36 +34,43 @@ async function logout() {
 }
 
 const name = computed(() => user.value?.username ?? 'admin')
+const initial = computed(() => name.value.charAt(0).toUpperCase())
 
 function toggleMenu() {
   pop.value = pop.value === 'me' ? null : 'me'
 }
 
-// Скользящая пилюля под активной вкладкой, как в макете.
+// Скользящая пилюля под активной вкладкой, как в макете: в шапке и в таб-баре.
 const nav = ref<HTMLElement>()
 const glideEl = ref<HTMLElement>()
 const glided = ref(false)
-function glide(jump = false) {
-  const box = nav.value, g = glideEl.value
+const bar = ref<HTMLElement>()
+const barGlideEl = ref<HTMLElement>()
+const barGlided = ref(false)
+function place(box: HTMLElement | undefined, g: HTMLElement | undefined, done: Ref<boolean>, jump: boolean) {
   const on = box?.querySelector<HTMLElement>(':scope>a.on')
   if (!box || !g || !on || !box.offsetWidth) {
-    glided.value = false
+    done.value = false
     return
   }
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-  g.classList.toggle('now', jump || !glided.value || reduce)
+  g.classList.toggle('now', jump || !done.value || reduce)
   const r = on.getBoundingClientRect(), q = box.getBoundingClientRect()
   g.style.height = `${r.height}px`
   g.style.width = `${r.width}px`
   g.style.transform = `translate(${r.left - q.left - box.clientLeft}px,${r.top - q.top - box.clientTop}px)`
-  if (!glided.value || jump) requestAnimationFrame(() => g.classList.remove('now'))
-  glided.value = true
+  if (!done.value || jump) requestAnimationFrame(() => g.classList.remove('now'))
+  done.value = true
+}
+function glide(jump = false) {
+  place(nav.value, glideEl.value, glided, jump)
+  place(bar.value, barGlideEl.value, barGlided, jump)
 }
 const onResize = () => glide(true)
 watch(() => route.path, () => nextTick(() => requestAnimationFrame(() => glide())))
 
 function onDocClick(e: MouseEvent) {
-  if (!(e.target as Element).closest?.('.pop')) pop.value = null
+  if (!(e.target as Element).closest?.('.pop, .bsh')) pop.value = null
   else if ((e.target as Element).closest('a')) pop.value = null
 }
 function onKey(e: KeyboardEvent) {
@@ -83,6 +98,15 @@ onUnmounted(() => {
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>
+        <div v-if="mobile" class="mhead">
+          <h1>{{ head.title }}</h1>
+          <p v-if="head.sub">
+            {{ head.sub }}
+          </p>
+        </div>
+        <button v-if="mobile && route.path === '/'" type="button" class="pill mper" @click="period = period === 'day' ? 'week' : 'day'">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4" /></svg>{{ period === 'day' ? 'Сутки' : 'Неделя' }}
+        </button>
         <nav ref="nav" class="tabs" :class="{ gl: glided }">
           <NuxtLink
             v-for="t in TAB_PAGES"
@@ -103,9 +127,10 @@ onUnmounted(() => {
               class="me"
               :aria-expanded="pop === 'me'"
               aria-haspopup="menu"
+              :aria-label="mobile ? `Меню @${name}` : undefined"
               @click.stop="toggleMenu"
             >
-              <i aria-hidden="true">{{ name.charAt(0).toUpperCase() }}</i>
+              <i aria-hidden="true">{{ initial }}</i>
               <div>@{{ name }}</div>
               <svg class="i cv" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
             </button>
@@ -130,6 +155,33 @@ onUnmounted(() => {
         </div>
       </header>
       <slot />
+      <div class="mbar">
+        <nav ref="bar" class="tabs" :class="{ gl: barGlided }" aria-label="Разделы">
+          <NuxtLink
+            v-for="t in TAB_PAGES"
+            :key="t.path"
+            :to="t.path"
+            :class="{ on: route.path === t.path }"
+            :aria-current="route.path === t.path ? 'page' : undefined"
+          >
+            {{ t.label }}
+          </NuxtLink>
+          <span ref="barGlideEl" class="glide now" aria-hidden="true" />
+        </nav>
+      </div>
+      <BottomSheet v-if="mobile" :open="pop === 'me'" label="Меню профиля" @close="pop = null">
+        <div class="bsu">
+          <i aria-hidden="true">{{ initial }}</i>@{{ name }}
+        </div>
+        <div class="menu" role="menu">
+          <NuxtLink to="/settings" role="menuitem">
+            Мой профиль
+          </NuxtLink>
+          <ThemeSwitch />
+          <hr>
+          <a class="out" role="menuitem" tabindex="0" @click="logout" @keydown.enter="logout">Выйти</a>
+        </div>
+      </BottomSheet>
     </div>
   </div>
   <p v-else role="status" class="p-6">

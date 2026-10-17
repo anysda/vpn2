@@ -1,17 +1,22 @@
 <script setup lang="ts">
-import { botDeliveryText, botDeliveryTime, botQueueText, type BotDelivery } from '#shared/bot-delivery'
+import type { BotDelivery } from '#shared/bot-delivery'
+import BotDeliveryRows from './BotDeliveryRows.vue'
 
 const { rows, queued, sync } = useBotDeliveryToast()
 const pending = computed(() => rows.value.filter(row => row.status !== 'accepted'))
 const pop = useHeaderPop()
 const open = computed(() => pop.value === 'bell')
-const list = ref<HTMLElement>()
+// На телефоне вместо поповера — нижняя шторка.
+const mobile = useMobile()
+const list = ref<InstanceType<typeof BotDeliveryRows>>()
+const sheetList = ref<InstanceType<typeof BotDeliveryRows>>()
 
 function toggle() {
   pop.value = open.value ? null : 'bell'
   if (!open.value || matchMedia('(prefers-reduced-motion: reduce)').matches) return
   // Строки проявляются лесенкой, как в макете.
-  requestAnimationFrame(() => [...(list.value?.children ?? [])].slice(0, 6).forEach((row, i) =>
+  const box = (mobile.value ? sheetList : list).value?.$el as HTMLElement | undefined
+  requestAnimationFrame(() => [...(box?.children ?? [])].slice(0, 6).forEach((row, i) =>
     row.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }],
       { duration: 240, delay: 40 + i * 30, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })))
 }
@@ -66,27 +71,14 @@ onUnmounted(() => {
       :inert="!open"
     >
       <h4>Доставка уведомлений</h4>
-      <div ref="list">
-        <div v-if="!queued && !pending.length" class="bi">
-          <span />
-          <div>Все уведомления доставлены</div>
-        </div>
-        <div v-if="queued" class="bi">
-          <span class="dot" style="background:var(--amber)" />
-          <div>{{ botQueueText(queued) }}</div>
-        </div>
-        <div v-for="row in pending" :key="row.id" class="bi">
-          <span class="dot" :style="{ background: row.status === 'failed' ? 'var(--red)' : 'var(--amber)' }" />
-          <div>
-            <span><b>{{ row.label }}</b>{{ botDeliveryText(row).slice(row.label.length) }}</span>
-            <small v-if="row.created">{{ botDeliveryTime(row.created) }}</small>
-          </div>
-        </div>
-      </div>
+      <BotDeliveryRows ref="list" :queued="queued" :pending="pending" />
     </div>
+    <BottomSheet v-if="mobile" :open="open" label="Доставка уведомлений" @close="pop = null">
+      <h4 class="bst">
+        Доставка уведомлений
+      </h4>
+      <BotDeliveryRows ref="sheetList" :queued="queued" :pending="pending" />
+    </BottomSheet>
   </div>
 </template>
 
-<style scoped>
-.pop .bi small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
-</style>

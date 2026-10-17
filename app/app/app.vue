@@ -1,4 +1,6 @@
 <script setup lang="ts">
+// На телефоне тосты сверху, под шапкой (main.css).
+const mobile = useMobile()
 useHead({
   link: [
     { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
@@ -7,7 +9,7 @@ useHead({
 </script>
 
 <template>
-  <UApp :toaster="{ position: 'bottom-right' }">
+  <UApp :toaster="{ position: mobile ? 'top-center' : 'bottom-right' }">
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

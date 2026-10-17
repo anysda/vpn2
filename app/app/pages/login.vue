@@ -116,7 +116,7 @@ watch(error, (msg) => {
 <template>
   <div>
     <div class="light" />
-    <div class="wrap">
+    <div class="wrap lgw">
       <main class="tab on bare login">
         <div ref="card" class="card lgn">
           <div class="logo" style="justify-content:center">
@@ -148,6 +148,8 @@ watch(error, (msg) => {
                 required
                 :disabled="needsTotp || loading"
                 autocomplete="username"
+                autocapitalize="none"
+                spellcheck="false"
               >
             </label>
             <label class="fl2">
@@ -170,6 +172,7 @@ watch(error, (msg) => {
                 required
                 placeholder="123 456"
                 inputmode="numeric"
+                enterkeyhint="done"
                 autocomplete="one-time-code"
               >
             </label>
@@ -196,3 +199,25 @@ watch(error, (msg) => {
     </div>
   </div>
 </template>
+
+
+<style>
+/* Вход на телефоне: карточка по центру экрана во всю ширину, поля и кнопки
+   под палец (46px). Шире 720px остаются правила .lgn из main.css. */
+@media (max-width:720px){
+  .wrap.lgw{display:flex;flex-direction:column;min-height:100dvh;padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+  .wrap.lgw>.login{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:stretch;min-height:0}
+  .lgw .lgn{width:auto;padding:30px 22px 24px}
+  .lgw .lgn .logo span{font-size:18px}
+  .lgw .lgn .lsso{height:46px;font-size:14px}
+  .lgw .lgn .in{height:46px;font-size:15px}
+  .lgw .lgn .in.mono{font-size:17px;letter-spacing:.12em}
+  .lgw .lgn .mf .pill{height:46px}
+  .lgw .lgn .lgo{font-size:14px}
+  .lgw .lgn .pill{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+}
+/* Safari на iPhone увеличивает страницу при фокусе в поле со шрифтом меньше 16px. */
+@media (max-width:720px) and (pointer:coarse){
+  .lgw .lgn .in:not(.mono){font-size:16px}
+}
+</style>

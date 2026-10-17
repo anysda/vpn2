@@ -8,14 +8,11 @@ import unittest
 from test_deploy import ROOT, function
 
 
-def revision(path, ref):
-    if ref:
-        return subprocess.check_output(['git', 'show', f'{ref}:{path}'],
-                                       cwd=ROOT, text=True)
+def revision(path):
     return (ROOT / path).read_text()
 
 
-def run(ref=None, down_error='Connection refused', down_rc=1):
+def run(down_error='Connection refused', down_rc=1):
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'envs').mkdir()
@@ -24,9 +21,9 @@ def run(ref=None, down_error='Connection refused', down_rc=1):
         (root / 'envs/exits.env').write_text("EXIT_TAGS='ok down'\n")
         for tag in ('ru', 'ok', 'down'):
             (root / f'envs/{tag}.env').write_text(f'HOST_TAG={tag}\n')
-        (root / 'lib/ssh.sh').write_text(revision('infra/lib/ssh.sh', ref))
-        (root / 'lib/anysda-svc.sh').write_text(revision('infra/lib/anysda-svc.sh', ref))
-        deploy = revision('infra/deploy.sh', ref)
+        (root / 'lib/ssh.sh').write_text(revision('infra/lib/ssh.sh'))
+        (root / 'lib/anysda-svc.sh').write_text(revision('infra/lib/anysda-svc.sh'))
+        deploy = revision('infra/deploy.sh')
         deploy = deploy[deploy.index('_STAGE_LOG='):deploy.index('# Без аргументов → полный pipeline.')]
         script = '''set -euo pipefail
 DEPLOY_ROOT=$PWD
@@ -78,12 +75,6 @@ class SkippedExitTests(unittest.TestCase):
         self.assertNotIn('[00-bootstrap] deployed', result.stdout)
 
     def test_unreachable_exit_does_not_stop_full_deploy(self):
-        before = run('origin/dev')
-        self.assertNotEqual(before.returncode, 0, before.stdout)
-        self.assertIn('[deploy] FATAL: pre-flight: недоступных по ssh нод: 1, деплой не запускался',
-                      before.stdout)
-        self.assertNotIn('[00-bootstrap] deployed', before.stdout)
-
         after = run()
         self.assertEqual(after.returncode, 0, after.stdout)
         self.assertIn('⚠ Экзит down пропущен: SSH недоступен в pre-flight', after.stdout)

@@ -28,6 +28,8 @@ for (const width of [1400, 390]) {
         await page.getByPlaceholder('Поиск...').fill(first)
         await clientCard(page, first).click()
         await ready
+        // До 720px карточка — отдельный экран: к списку возвращает «Назад».
+        if (width <= 720) await page.getByRole('button', { name: 'Назад' }).click()
         await openClient(page, second)
       }
       finally {

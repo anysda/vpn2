@@ -369,6 +369,7 @@ PRESNAP_ROOT="$WORK/pre-restore"
 mkdir -p "$PRESNAP_ROOT/var/lib/anysda-vpn2"
 if [[ -f "$LIVE_DB" ]]; then
   sqlite3 "$LIVE_DB" ".timeout 10000" ".backup '$PRESNAP_ROOT/var/lib/anysda-vpn2/db.sqlite'"
+  LIVE_DB_OWNER=$(stat -c %u:%g "$LIVE_DB") LIVE_DB_MODE=$(stat -c %a "$LIVE_DB")
 fi
 for path in \
   etc/anysda etc/wireguard etc/openvpn \
@@ -403,6 +404,97 @@ mv "$WORK/pre-restore.tar.gz.age" "$PRESNAP_FINAL"
 shred -uz "$PRESNAP_TAR" 2>/dev/null || rm -f "$PRESNAP_TAR"
 chmod 600 "$PRESNAP_FINAL"
 echo "anysda-restore: pre-restore snapshot saved ($(stat -c %s "$PRESNAP_FINAL") bytes)"
+
+# ── Откат при сбое после остановки служб ───────────────────────────────────
+# С этой точки любая ошибка или сигнал возвращают заменённое из страховочной
+# копии ($PRESNAP_ROOT ещё на диске) и запускают службы прежнего состояния.
+STEP="остановка служб"
+TOUCHED=()
+DB_SWAPPED=0
+CONTROL_STOPPED=0
+rollback_path() {
+  local rel=$1
+  rm -rf -- "/${rel:?}" || return
+  [[ -e "$PRESNAP_ROOT/$rel" || -L "$PRESNAP_ROOT/$rel" ]] || return 0
+  mkdir -p "/$(dirname "$rel")" && cp -a "$PRESNAP_ROOT/$rel" "/$(dirname "$rel")/"
+}
+rollback() {
+  local rc=$1 cause=$2 item back=() failed=() down=()
+  local -A seen=()
+  trap - ERR INT TERM
+  set +e
+  echo "anysda-restore: FAILED на шаге «$STEP»: $cause (код $rc) — возвращаю прежнее состояние" >&2
+  for item in "${TOUCHED[@]}"; do
+    [[ -z "${seen[$item]:-}" ]] || continue
+    seen[$item]=1
+    case "$item" in
+      db)
+        if (( DB_SWAPPED )); then
+          if [[ -f "$PRESNAP_ROOT/var/lib/anysda-vpn2/db.sqlite" ]]; then
+            install -m "$LIVE_DB_MODE" -o "${LIVE_DB_OWNER%:*}" -g "${LIVE_DB_OWNER#*:}" \
+              "$PRESNAP_ROOT/var/lib/anysda-vpn2/db.sqlite" /var/lib/anysda-vpn2/.db-rollback.sqlite \
+              && rm -f /var/lib/anysda-vpn2/db.sqlite-wal /var/lib/anysda-vpn2/db.sqlite-shm /var/lib/anysda-vpn2/db.sqlite-journal \
+              && mv /var/lib/anysda-vpn2/.db-rollback.sqlite /var/lib/anysda-vpn2/db.sqlite
+          else
+            rm -f /var/lib/anysda-vpn2/db.sqlite
+          fi
+        else
+          # Основной файл не заменён: возвращаем только отложенные WAL/SHM.
+          [[ ! -d "$WORK/db-before" ]] || cp -a "$WORK/db-before/." /var/lib/anysda-vpn2/
+          rm -f /var/lib/anysda-vpn2/.db-restore.sqlite
+        fi && back+=(/var/lib/anysda-vpn2/db.sqlite) || failed+=(/var/lib/anysda-vpn2/db.sqlite)
+        if [[ -d "$WORK/control-before-restore" ]]; then
+          { rm -rf /var/lib/vpn2-control && mv "$WORK/control-before-restore" /var/lib/vpn2-control; } \
+            && back+=(/var/lib/vpn2-control) || failed+=(/var/lib/vpn2-control)
+        fi
+        ;;
+      *)
+        rollback_path "$item" && back+=("/$item") || failed+=("/$item") ;;
+    esac
+  done
+  for item in sing-box openvpn-server@server anysda-failover-watchdog strongswan-starter anysda-ikev2-routing; do
+    systemctl cat "$item" >/dev/null 2>&1 || continue
+    systemctl start "$item" >/dev/null 2>&1 || down+=("$item")
+  done
+  if [[ -f /etc/wireguard/wg0.conf ]]; then
+    systemctl restart wg-quick@wg0 >/dev/null 2>&1 || down+=(wg-quick@wg0)
+  fi
+  command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1
+  if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
+    for item in caddy "${CADDY_SYNC_UNITS[@]}"; do
+      systemctl start "$item" >/dev/null 2>&1 || down+=("$item")
+    done
+  fi
+  if (( CONTROL_STOPPED )); then
+    systemctl start vpn2-control.socket vpn2-control.service >/dev/null 2>&1 || down+=(vpn2-control)
+  fi
+  for item in anysda-vpn2 anysda-tgbot; do
+    if docker container inspect "$item" >/dev/null 2>&1; then
+      docker start "$item" >/dev/null 2>&1 || down+=("$item")
+    fi
+  done
+  echo "anysda-restore: возвращено из страховочной копии: ${back[*]:-ничего не заменялось}" >&2
+  (( ${#failed[@]} == 0 )) || echo "anysda-restore: НЕ возвращено: ${failed[*]} — бери из $PRESNAP_FINAL" >&2
+  if (( ${#down[@]} )); then
+    echo "anysda-restore: не запустились: ${down[*]}" >&2
+  else
+    echo "anysda-restore: службы и контейнеры прежнего состояния запущены" >&2
+  fi
+  echo "anysda-restore: страховочный снимок: $PRESNAP_FINAL" >&2
+  exit 10
+}
+set -E
+trap 'rollback $? "$BASH_COMMAND"' ERR
+trap 'rollback 130 "получен сигнал INT"' INT
+trap 'rollback 143 "получен сигнал TERM"' TERM
+
+# Сбой запуска существующей службы — тоже сбой восстановления.
+start_unit() {
+  STEP="запуск службы $1"
+  if systemctl cat "$1" >/dev/null 2>&1; then
+    systemctl start "$1"
+  fi
+}
 
 # ── Остановка сервисов перед swap ───────────────────────────────────────────
 echo "anysda-restore: останавливаю сервисы…"
@@ -439,24 +531,34 @@ done
 
 # ── Применение ──────────────────────────────────────────────────────────────
 # Каждый блок защищён от отсутствия файла в архиве — допускаем частичные бэкапы
+STEP="установка БД"
 if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then
+  TOUCHED+=(db)
   if id vpn2-control >/dev/null 2>&1; then
     # An explicitly restored DB starts a new control epoch. Its persisted
     # versions may precede the current service journal (including old backups).
     # Keep the previous journal in the encrypted safety snapshot, not active.
+    CONTROL_STOPPED=1
     systemctl stop vpn2-control.service vpn2-control.socket
     [[ ! -d /var/lib/vpn2-control ]] || mv /var/lib/vpn2-control "$WORK/control-before-restore"
     install -d -o vpn2-control -g vpn2-control -m 0700 /var/lib/vpn2-control
   fi
   mkdir -p /var/lib/anysda-vpn2
   # После остановки писателей старые WAL/SHM не должны примениться к новой
-  # базе. Сначала готовим файл рядом, затем атомарно заменяем основной файл.
+  # базе. Сначала готовим файл рядом, затем атомарно заменяем основной файл;
+  # WAL/SHM откладываем в WORK, чтобы откат вернул базу байт в байт.
   install -m 600 "$BUNDLE_DIR/db.sqlite" /var/lib/anysda-vpn2/.db-restore.sqlite
-  rm -f /var/lib/anysda-vpn2/db.sqlite-wal /var/lib/anysda-vpn2/db.sqlite-shm /var/lib/anysda-vpn2/db.sqlite-journal
+  mkdir -p "$WORK/db-before"
+  for suffix in wal shm journal; do
+    [[ ! -e /var/lib/anysda-vpn2/db.sqlite-$suffix ]] || mv "/var/lib/anysda-vpn2/db.sqlite-$suffix" "$WORK/db-before/"
+  done
   mv /var/lib/anysda-vpn2/.db-restore.sqlite /var/lib/anysda-vpn2/db.sqlite
+  DB_SWAPPED=1
   chown root:root /var/lib/anysda-vpn2/db.sqlite
 fi
+STEP="восстановление /etc/anysda"
 if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
+  TOUCHED+=(etc/anysda)
   mkdir -p /etc/anysda
   cp -a "$BUNDLE_DIR/etc-anysda/." /etc/anysda/
   # Старые архивы не содержат настроек SSO из профиля. Их отсутствие тоже
@@ -466,7 +568,9 @@ if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   fi
   # backup.env мог не быть в архиве (старый формат) — оставляем текущий нетронутым
 fi
+STEP="восстановление WireGuard"
 if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then
+  TOUCHED+=(etc/wireguard)
   mkdir -p /etc/wireguard
   cp -a "$BUNDLE_DIR/etc-wireguard/wg0.conf" /etc/wireguard/wg0.conf
   chmod 600 /etc/wireguard/wg0.conf
@@ -474,39 +578,49 @@ fi
 if [[ -f "$WG_BUNDLE/server.priv" ]]; then
   # Стадия 28 переиспользует keys/. Если обновить только верхний уровень,
   # следующий деплой вернёт ключ, который был на хосте до restore.
+  TOUCHED+=(etc/wireguard)
   install -d -m 700 /etc/wireguard /etc/wireguard/keys
   for key in server.priv server.pub; do
     install -m 600 "$WG_BUNDLE/$key" "/etc/wireguard/keys/$key"
     ln -sfn "keys/$key" "/etc/wireguard/$key"
   done
 fi
+STEP="распаковка PKI OpenVPN"
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
+  TOUCHED+=(etc/openvpn)
   mkdir -p /etc/openvpn
   cp -a "$BUNDLE_DIR/etc-openvpn/." /etc/openvpn/
 fi
 # IKEv2 (strongSwan + swanctl). Восстанавливаем CA, server cert/key, conf'ы.
 # Если IP entry поменялся — server cert умрёт по SAN; стадия 27-ikev2 при
 # следующем прогоне перевыпустит его тем же CA.
+STEP="восстановление IKEv2"
 if [[ -d "$BUNDLE_DIR/etc-strongswan" ]]; then
+  TOUCHED+=(etc/strongswan)
   mkdir -p /etc/strongswan
   cp -a "$BUNDLE_DIR/etc-strongswan/." /etc/strongswan/
 fi
 if [[ -d "$BUNDLE_DIR/etc-swanctl" ]]; then
+  TOUCHED+=(etc/swanctl)
   mkdir -p /etc/swanctl
   cp -a "$BUNDLE_DIR/etc-swanctl/." /etc/swanctl/
 fi
 for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
   if [[ -d "$BUNDLE_DIR/etc-$name" ]]; then
+    TOUCHED+=("etc/$name")
     mkdir -p "/etc/$name"
     cp -a "$BUNDLE_DIR/etc-$name/." "/etc/$name/"
   elif [[ -f "$BUNDLE_DIR/etc-$name" ]]; then
+    TOUCHED+=("etc/$name")
     cp -a "$BUNDLE_DIR/etc-$name" "/etc/$name"
   fi
 done
 
 # Применяем до любого старта Caddy (в том числе из стадии 30). UID/GID на
 # новом хосте отличаются; архивные числовые владельцы не годятся.
+STEP="восстановление хранилища Caddy"
 if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
+  TOUCHED+=("${CADDY_STORAGE#/}" etc/anysda)
   install -d -m 700 -o caddy -g caddy /var/lib/caddy/.local /var/lib/caddy/.local/share
   rm -rf -- "$CADDY_STORAGE"
   cp -a "$BUNDLE_DIR/caddy-storage" "$CADDY_STORAGE"
@@ -523,7 +637,8 @@ fi
 
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
 echo "anysda-restore: запускаю сервисы…"
-systemctl start sing-box 2>/dev/null || true
+STEP="запуск служб"
+start_unit sing-box
 # wg0 не останавливаем: рестарт обнуляет рукопожатия всем WG-клиентам. При
 # прежних адресах и порте wg0_apply кладёт ключи и пиры `wg syncconf`.
 if [[ -f /etc/wireguard/wg0.conf ]]; then
@@ -535,10 +650,10 @@ if [[ -f /etc/wireguard/wg0.conf ]]; then
     systemctl restart wg-quick@wg0 2>/dev/null || true
   fi
 fi
-systemctl start openvpn-server@server 2>/dev/null || true
-systemctl start anysda-failover-watchdog 2>/dev/null || true
-systemctl start strongswan-starter 2>/dev/null || true
-systemctl start anysda-ikev2-routing 2>/dev/null || true
+start_unit openvpn-server@server
+start_unit anysda-failover-watchdog
+start_unit strongswan-starter
+start_unit anysda-ikev2-routing
 # Reload swanctl creds/conns/pools после восстановления конфигов.
 command -v swanctl >/dev/null 2>&1 && swanctl --load-all >/dev/null 2>&1 || true
 if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
@@ -551,6 +666,7 @@ if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
   fi
 fi
 if id vpn2-panel >/dev/null 2>&1; then
+  TOUCHED+=(var/lib/anysda-vpn2/runtime etc/anysda)
   install -d -o vpn2-panel -g vpn2-panel -m 0700 /var/lib/anysda-vpn2/runtime
   for name in sso-runtime.json telegram-runtime.json; do
     runtime=/var/lib/anysda-vpn2/runtime/$name
@@ -568,6 +684,8 @@ if id vpn2-control >/dev/null 2>&1; then
   systemctl start vpn2-control.socket vpn2-control.service
 fi
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
+trap - ERR INT TERM
+set +E
 
 # ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а
 #    /opt/AdGuardHome/AdGuardHome.yaml — нет, и hash остался от старого

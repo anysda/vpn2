@@ -493,6 +493,65 @@ esac
                     self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
 
+    def host_state(self):
+        paths = [Path(p) for p in (*FILES, *EXTRA)] + [Path('/etc/wireguard/keys/server.priv')]
+        paths += sorted(p for p in Path('/etc/openvpn').rglob('*') if p.is_file())
+        return {str(p): p.read_bytes() for p in paths}
+
+    def test_failure_after_stop_rolls_back_and_starts_services(self):
+        write('/etc/openvpn/server/ccd/archived-only', 'must not survive rollback')
+        self.backup()
+        Path('/etc/openvpn/server/ccd/archived-only').unlink()
+        self.conn.execute("INSERT INTO clients VALUES ('live-client')")
+        self.conn.commit()
+        self.conn.close()
+        for path in (*FILES, *EXTRA):
+            write(path, body(path, 'live'))
+        write('/etc/wireguard/keys/server.priv', WG_KEYS['live'])
+        write('/test-bin/docker', '''#!/bin/sh
+echo "docker $*" >> /test-output/services
+exit 0
+''', 0o755)
+        failures = {
+            'db': ('mv', 'case "$*" in *.db-restore.sqlite*) exit 1;; esac; exec /usr/bin/mv "$@"',
+                   'установка БД'),
+            'pki': ('cp', 'case "$*" in */etc-openvpn/.*) exit 1;; esac; exec /usr/bin/cp "$@"',
+                    'распаковка PKI OpenVPN'),
+            'signal': ('cp', 'case "$*" in */etc-openvpn/.*) kill -TERM $PPID;; esac; exec /usr/bin/cp "$@"',
+                       'распаковка PKI OpenVPN'),
+            'service': ('systemctl', 'echo "$*" >> /test-output/services\n'
+                        'if [ "$*" = "start openvpn-server@server" ] && [ ! -e /test-output/failed-once ]; then\n'
+                        '    touch /test-output/failed-once; exit 1\nfi\nexit 0', 'запуск службы openvpn-server@server'),
+        }
+        for name, (command, script, step) in failures.items():
+            with self.subTest(name):
+                for stub in ('mv', 'cp', 'failed-once', 'services'):
+                    Path('/test-bin', stub).unlink(missing_ok=True)
+                    Path('/test-output', stub).unlink(missing_ok=True)
+                write('/test-bin/systemctl', '#!/bin/sh\necho "$*" >> /test-output/services\nexit 0\n', 0o755)
+                write('/test-bin/' + command, '#!/bin/sh\n' + script + '\n', 0o755)
+                shutil.rmtree(BACKUPS / '.pre-restore', ignore_errors=True)
+                before = self.host_state()
+                db_before = DB.read_bytes()
+                result = self.script('restore', 'latest', '--force')
+                print('\n'.join(line for line in result.stdout.splitlines() if 'FAILED' in line
+                                 or 'возвращено' in line or 'запущены' in line), flush=True)
+                self.assertEqual(result.returncode, 10, result.stdout)
+                self.assertIn(f'на шаге «{step}»', result.stdout)
+                self.assertEqual(self.host_state(), before)
+                safety = self.safety() / str(DB).lstrip('/')
+                self.assertIn(DB.read_bytes(), (db_before, safety.read_bytes()))
+                shutil.rmtree('/test-output/safety')
+                with sqlite3.connect(DB) as live:
+                    self.assertEqual(live.execute('SELECT name FROM clients').fetchall(),
+                                     [('archived-client',), ('live-client',)])
+                services = Path('/test-output/services').read_text().splitlines()
+                for started in ('start sing-box', 'start openvpn-server@server', 'start strongswan-starter',
+                                'docker start anysda-vpn2', 'docker start anysda-tgbot'):
+                    self.assertIn(started, services[services.index('docker stop anysda-tgbot'):])
+                self.assertIn('службы и контейнеры прежнего состояния запущены', result.stdout)
+
+
 if __name__ == '__main__':
     if os.environ.get('VPN2_BACKUP_TEST') != '1' or not Path('/.dockerenv').exists():
         sys.exit('Run only inside a disposable Docker container with VPN2_BACKUP_TEST=1')

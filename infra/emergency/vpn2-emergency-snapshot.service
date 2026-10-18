@@ -1,0 +1,28 @@
+[Unit]
+Description=Emergency client snapshot publisher (entry)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Root only for the existing management SSH key; panel data is read by a
+# child process running as the panel user.
+User=root
+UMask=0077
+WorkingDirectory=/opt/vpn2-emergency
+StateDirectory=vpn2-emergency-sender
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 -B -m vpn2_emergency.snapshot_sender run
+Restart=always
+RestartSec=10
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

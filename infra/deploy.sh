@@ -285,6 +285,20 @@ do_check() {
 # ----------------------------------------------------------------------------
 # Pre-stage hook for 20-ru-router: pull Hysteria2 secrets from US/SE.
 # ----------------------------------------------------------------------------
+# Экзиты с exits[].hy2_insecure: true работают без проверки сертификата.
+# Предупреждаем при сборке роутера и в итоге 99-verify.
+warn_insecure_exits() {
+  local env="$DEPLOY_ROOT/envs/all.env" host upper
+  [[ -f "$env" ]] || return 0
+  for host in $(exit_tags); do
+    upper=$(printf '%s' "$host" | tr 'a-z-' 'A-Z_')
+    if grep -qx "${upper}_HY2_INSECURE=1" "$env"; then
+      HOST_TAG=deploy warn "$host: exits[].hy2_insecure: true — сертификат экзита не проверяется, подмену экзита на пути entry → экзит не видно"
+    fi
+  done
+  return 0
+}
+
 prep_ru_router() {
   log "prep: тяну секреты Hysteria2 + clash-api с экзит-нод"
   local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
@@ -318,17 +332,19 @@ prep_ru_router() {
       echo "CLASH=$(cat /etc/anysda/clash-secret.txt)"
     ')
 
-    # PEM-сертификат экзита — для TLS-pinning на RU-роутере (см. H5).
-    # На старых нодах файл /etc/anysda/hy2-tls.crt отсутствует — пропускаем,
-    # тогда gen-router-config.py откатывается на insecure=true (backward-compat).
+    # PEM-сертификат экзита закрепляется на entry: без него генератор роутера
+    # отказывает. Берём тот, что sing-box экзита реально отдаёт; копия
+    # /etc/anysda/hy2-tls.crt есть не на всех установках.
     mkdir -p "$DEPLOY_ROOT/secrets/exit-certs"
     chmod 700 "$DEPLOY_ROOT/secrets/exit-certs"
-    if ssh_exec 'test -f /etc/anysda/hy2-tls.crt'; then
-      ssh_exec 'cat /etc/anysda/hy2-tls.crt' > "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
-      chmod 600 "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
+    local pem="$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
+    if (umask 077; ssh_exec 'cat /etc/sing-box/tls.crt 2>/dev/null || cat /etc/anysda/hy2-tls.crt' \
+          > "$pem.tmp") && [[ -s "$pem.tmp" ]]; then
+      mv -f "$pem.tmp" "$pem"
       log "забрал TLS-cert экзита $host"
     else
-      warn "на $host нет /etc/anysda/hy2-tls.crt — pin не применён (передеплой 10-foreign)"
+      rm -f "$pem.tmp" "$pem"
+      warn "на $host нет сертификата Hysteria2 — закрепится ранее сохранённый на entry, иначе 20-ru-router откажет (передеплой 10-foreign)"
     fi
     # Хост-ключ экзита для known_hosts entry: ssh <tag> ходит на 127.0.0.1
     # через служебный туннель, сверять ключ по адресу нельзя (у всех один).
@@ -342,7 +358,7 @@ prep_ru_router() {
     if [[ -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" ]] \
        && ! openssl x509 -noout -in "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" 2>/dev/null; then
       rm -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
-      die "$host отдал не PEM-сертификат в /etc/anysda/hy2-tls.crt"
+      die "$host отдал не PEM-сертификат Hysteria2"
     fi
     if [[ -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" ]] \
        && ! ssh-keygen -lf "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" >/dev/null 2>&1; then
@@ -619,7 +635,7 @@ run_stage() {
   local t0; t0=$(date +%s)
 
   case "$stage" in
-    20-ru-router) prep_ru_router ;;
+    20-ru-router) prep_ru_router; warn_insecure_exits ;;
     23-emergency) python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
   esac
   if [[ "$stage" == "00-bootstrap" ]]; then
@@ -699,6 +715,7 @@ run_stage() {
   if [[ "$stage" == 99-verify && -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
     HOST_TAG=deploy warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
   fi
+  [[ "$stage" != 99-verify ]] || warn_insecure_exits
   if [[ $incomplete -eq 1 ]]; then return 2; fi
   return 0
 }

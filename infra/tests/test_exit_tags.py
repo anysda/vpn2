@@ -48,6 +48,7 @@ class ExitTagTests(unittest.TestCase):
                 '/tmp/anysda/exit-certs', str(root / 'certs'))
             (root / 'certs').mkdir()
             (root / 'certs/us-2.pem').write_text('fixture-cert')
+            (root / 'certs/us2.pem').write_text('fixture-cert')
             monitoring = source('infra/scripts/25-monitoring.sh').split(
                 '\n{\n', 1)[1].split('\n} > /etc/anysda/vmsingle-scrape.yml', 1)[0]
             ssh = stage.split('  echo "# anysda-vpn — генерирует', 1)[1].split(

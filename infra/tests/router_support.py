@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
 SB = os.environ.get('SING_BOX_BIN')
@@ -19,7 +20,31 @@ def stop(process):
         process.wait()
 
 
+_CERT_DIR = None
+
+
+def exit_cert():
+    """Self-signed PEM как у экзита: генератор требует закреплённый сертификат."""
+    global _CERT_DIR
+    if _CERT_DIR is None:
+        _CERT_DIR = tempfile.TemporaryDirectory()
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt',
+                        'ec_paramgen_curve:P-256', '-nodes', '-days', '1', '-subj', '/CN=exit',
+                        '-keyout', os.path.join(_CERT_DIR.name, 'exit.key'),
+                        '-out', os.path.join(_CERT_DIR.name, 'exit.pem')],
+                       check=True, capture_output=True)
+    return os.path.join(_CERT_DIR.name, 'exit.pem')
+
+
 def generate(**overrides):
+    result = run_generator(**overrides)
+    if result.returncode:
+        raise subprocess.CalledProcessError(result.returncode, result.args,
+                                            result.stdout, result.stderr)
+    return result.stdout
+
+
+def run_generator(**overrides):
     env = {
         'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '1443', 'HY2_WARP_PORT': '2443',
         'HY2_MGMT_PORT': '3443', 'WG_OUT_IFACE': 'lo', 'RU_CLASH_SECRET': 'test',
@@ -27,12 +52,16 @@ def generate(**overrides):
     }
     for tag, suffix in [('AA', '2'), ('BB', '3')]:
         env.update({f'DOMAIN_{tag}': f'{tag.lower()}.example.test',
-                    f'MGMT_IP_{tag}': f'192.0.2.{suffix}'})
+                    f'MGMT_IP_{tag}': f'192.0.2.{suffix}',
+                    f'{tag}_HY2_CERT_PATH': exit_cert()})
         for key in ['DIRECT', 'WARP', 'MGMT', 'OBFS']:
             env[f'{tag}_{key}'] = 'test-password-0123456789'
     env.update(overrides)
+    # Любой набор экзитов (стенд панели берёт свой) получает закреплённый сертификат.
+    for tag in env['EXIT_TAGS'].split():
+        env.setdefault(f'{tag.upper()}_HY2_CERT_PATH', exit_cert())
     return subprocess.run([sys.executable, str(ROOT / 'infra/lib/gen-router-config.py')],
-                          env=env, text=True, capture_output=True, check=True).stdout
+                          env=env, text=True, capture_output=True)
 
 
 def stage_source():

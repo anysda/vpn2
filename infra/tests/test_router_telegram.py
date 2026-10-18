@@ -14,6 +14,8 @@ import subprocess
 import sys
 import unittest
 
+from router_support import exit_cert
+
 
 # sing-box ip_is_private: адрес не публичный (RFC 1918, ULA, loopback, link-local).
 PRIVATE_NETS = [ipaddress.ip_network(net) for net in (
@@ -30,6 +32,7 @@ ENV = {
        for key in ('DIRECT', 'WARP', 'MGMT', 'OBFS')},
     'DOMAIN_AA': 'aa.example.test', 'DOMAIN_BB': 'bb.example.test',
     'MGMT_IP_AA': '192.0.2.2', 'MGMT_IP_BB': '192.0.2.3',
+    'AA_HY2_CERT_PATH': exit_cert(), 'BB_HY2_CERT_PATH': exit_cert(),
 }
 
 

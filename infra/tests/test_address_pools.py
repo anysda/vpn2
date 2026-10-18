@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
+from router_support import exit_cert
 from test_deploy import ROOT, bash, source
 
 
@@ -148,6 +149,7 @@ ufw_sync_rules() {
         env = dict(os.environ, EXIT_TAGS='se', HY2_DIRECT_PORT='443', HY2_WARP_PORT='444', HY2_MGMT_PORT='445',
                    WG_OUT_IFACE='eth0', RU_CLASH_SECRET='test', DOMAIN_SE='exit.example.test',
                    SE_DIRECT='test', SE_WARP='test', SE_MGMT='test', SE_OBFS='test', MGMT_IP_SE='10.99.0.2',
+                   SE_HY2_CERT_PATH=exit_cert(),
                    LANE_SUBNETS='10.66.66.0/24 10.67.67.0/24 10.68.68.0/24')
         result = subprocess.run(['python3', str(ROOT / 'infra/lib/gen-router-config.py')], env=env,
                                 capture_output=True, text=True, timeout=15)

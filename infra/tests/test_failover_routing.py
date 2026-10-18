@@ -8,6 +8,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
+from router_support import exit_cert
+
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -19,7 +21,8 @@ def router_config():
     env = {'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '443', 'HY2_WARP_PORT': '8443',
            'HY2_MGMT_PORT': '9443', 'WG_OUT_IFACE': 'lo', 'RU_CLASH_SECRET': 'test'}
     for n, tag in enumerate(('AA', 'BB'), start=2):
-        env.update({f'DOMAIN_{tag}': '127.0.0.1', f'MGMT_IP_{tag}': f'192.0.2.{n}'})
+        env.update({f'DOMAIN_{tag}': '127.0.0.1', f'MGMT_IP_{tag}': f'192.0.2.{n}',
+                    f'{tag}_HY2_CERT_PATH': exit_cert()})
         for key in ('DIRECT', 'WARP', 'MGMT', 'OBFS'):
             env[f'{tag}_{key}'] = 'test'
     output = io.StringIO()

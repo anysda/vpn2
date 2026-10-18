@@ -19,6 +19,10 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   WG_OUT_IFACE           — WAN-интерфейс для direct-ru (привязка сокета)
   RU_CLASH_SECRET        — секрет clash API
 
+Закрепление сертификата экзита (одно из двух на каждый экзит):
+  {TAG}_HY2_CERT_PATH    — PEM-сертификат экзита, sing-box принимает только его
+  {TAG}_HY2_INSECURE=1   — без проверки (exits[].hy2_insecure: true), с предупреждением
+
 Опциональные (YouTube мимо экзитов, см. стадию 19-yt-zapret):
   YT_ROUTE               — off | zapret | direct   (дефолт off)
   YT_MARK                — SO_MARK для YouTube-трафика (дефолт 256 = 0x100)
@@ -105,6 +109,29 @@ def require(key):
         print(f'ERROR: {key} не задан', file=sys.stderr)
         sys.exit(1)
     return v
+
+
+def exit_tls(tag, T, domain):
+    """TLS Hysteria2 до экзита: только закреплённый сертификат экзита.
+
+    Экзит отдаёт self-signed сертификат; deploy забирает его с экзита, а
+    20-ru-router кладёт в /etc/sing-box/exit-certs/{tag}.pem. С
+    `certificate_path` sing-box принимает только этот сертификат, и подмена
+    экзита на пути entry → экзит рвёт туннель. Без закрепления конфиг не
+    собирается: insecure включает только явный exits[].hy2_insecure.
+    """
+    if os.environ.get(f'{T}_HY2_INSECURE', '').strip() == '1':
+        print(f'WARNING: экзит {tag}: exits[].hy2_insecure: true - сертификат не '
+              f'проверяется, подмена экзита на пути не обнаруживается', file=sys.stderr)
+        return {'enabled': True, 'server_name': domain, 'insecure': True}
+    cert_path = os.environ.get(f'{T}_HY2_CERT_PATH', '').strip()
+    if not cert_path:
+        sys.exit(f'ERROR: экзит {tag}: нет закреплённого сертификата ({T}_HY2_CERT_PATH). '
+                 f'Запусти ./deploy.sh: он забирает сертификат с экзита. Без проверки '
+                 f'сертификата - только явным exits[].hy2_insecure: true в config.yaml')
+    if not os.path.isfile(cert_path):
+        sys.exit(f'ERROR: экзит {tag}: файла закреплённого сертификата {cert_path} нет')
+    return {'enabled': True, 'server_name': domain, 'certificate_path': cert_path}
 
 
 def main():
@@ -220,20 +247,7 @@ def main():
         except ValueError as error:
             sys.exit(f'ERROR: {error}')
 
-        # Self-signed cert на exit-нодах. Если orchestrator опубликовал
-        # PEM-сертификат экзита и
-        # 20-ru-router положил его в /etc/sing-box/exit-certs/{tag}.pem,
-        # пинимся к нему через `certificate_path` (sing-box принимает ТОЛЬКО
-        # этот cert). Иначе — fallback к insecure=true (backward-compat).
-        cert_path = os.environ.get(f'{T}_HY2_CERT_PATH', '').strip()
-        if cert_path:
-            tls_common = {
-                'enabled': True,
-                'server_name': domain,
-                'certificate_path': cert_path,
-            }
-        else:
-            tls_common = {'enabled': True, 'server_name': domain, 'insecure': True}
+        tls_common = exit_tls(tag, T, domain)
         tls_direct = dict(tls_common)
         tls_warp   = dict(tls_common)
 

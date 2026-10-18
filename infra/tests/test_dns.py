@@ -13,6 +13,8 @@ import unittest
 
 import yaml
 
+from router_support import exit_cert
+
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = Path(os.environ.get("GEN_ROUTER_PATH", ROOT / "infra/lib/gen-router-config.py"))
@@ -27,7 +29,7 @@ def generate(mode="off"):
                TEST_OBFS="test-obfs", MGMT_IP_TEST="192.0.2.2", MGMT_IP="192.0.2.1",
                HY2_DIRECT_PORT="443", HY2_WARP_PORT="8443", HY2_MGMT_PORT="9443",
                WG_OUT_IFACE="eth0", RU_CLASH_SECRET="test-secret", YT_ROUTE=mode,
-               LANE_SUBNETS="198.51.100.0/24")
+               LANE_SUBNETS="198.51.100.0/24", TEST_HY2_CERT_PATH=exit_cert())
     return json.loads(subprocess.check_output([sys.executable, str(GENERATOR)], env=env))
 
 

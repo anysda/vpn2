@@ -93,7 +93,8 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
     cleanup.callback(udp_thread.join)
     cleanup.callback(udp.shutdown)
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt',
-                    'ec_paramgen_curve:P-256', '-nodes', '-days', '1', '-subj', '/CN=localhost',
+                    'ec_paramgen_curve:P-256', '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1',
+                    '-addext', 'subjectAltName=IP:127.0.0.1',
                     '-keyout', str(directory / 'tls.key'), '-out', str(directory / 'tls.crt')],
                    check=True, capture_output=True)
     fixture = {'HY2_DIRECT_PORT': '1443', 'HY2_WARP_PORT': '2443', 'HY2_MGMT_PORT': '3443',
@@ -106,7 +107,8 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
     template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
     exit_path = directory / 'exit.json'
     exit_path.write_text(Template(template).substitute(fixture).replace('/etc/sing-box', str(directory)))
-    cfg = json.loads(generate(EXIT_TAGS='aa', DOMAIN_AA='127.0.0.1'))
+    cfg = json.loads(generate(EXIT_TAGS='aa', DOMAIN_AA='127.0.0.1',
+                              AA_HY2_CERT_PATH=str(directory / 'tls.crt')))
     cfg['experimental']['clash_api']['external_controller'] = '127.0.0.1:19090'
     cfg['experimental']['cache_file']['path'] = str(directory / 'cache.db')
     for inbound in cfg['inbounds']:

@@ -120,23 +120,25 @@ for _t in $EXIT_TAGS; do
   export "$_key=${!_key:-$HY2_MGMT_PORT}"
 done
 
-# TLS pinning Hysteria2 outbound: если orchestrator push'нул cert экзита в
+# TLS pinning Hysteria2 outbound: deploy забирает сертификат каждого экзита в
 # /tmp/anysda/exit-certs/{tag}.pem — кладём его в /etc/sing-box/exit-certs
 # и экспортируем {T}_HY2_CERT_PATH; gen-router-config.py подставит
-# tls.certificate_path и снимет insecure. Backward-compat: если cert'а нет,
-# RU-роутер продолжает работать с insecure=true (см. H5).
+# tls.certificate_path. Если в этот раз сертификат не приехал (экзит пропущен,
+# deploy с другой машины), остаётся закреплённый ранее. Без закрепления
+# генератор откажет: insecure — только явным exits[].hy2_insecure.
 mkdir -p /etc/sing-box/exit-certs
 chmod 700 /etc/sing-box/exit-certs
-if [[ -d /tmp/anysda/exit-certs ]]; then
-  for _t in $EXIT_TAGS; do
-    _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
-    _src="/tmp/anysda/exit-certs/${_t}.pem"
-    if [[ -f "$_src" ]]; then
-      install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.pem"
-      export "${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
-    fi
-  done
-fi
+for _t in $EXIT_TAGS; do
+  _T=$(echo "$_t" | tr 'a-z-' 'A-Z_')
+  export "${_T}_HY2_INSECURE"
+  _src="/tmp/anysda/exit-certs/${_t}.pem"
+  if [[ -f "$_src" ]]; then
+    install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.pem"
+  fi
+  if [[ -f "/etc/sing-box/exit-certs/${_t}.pem" ]]; then
+    export "${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
+  fi
+done
 
 # Write the BASE config (without manual routes). The manual-routes watcher
 # derives /etc/sing-box/config.json = config-base.json + panel rules, so

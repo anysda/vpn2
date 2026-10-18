@@ -313,7 +313,8 @@ def validate_yaml(text):
     """
     schema = {
         'entry': {'host', 'password', 'public_host'},
-        'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps'},
+        'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps',
+                  'hy2_insecure'},
         'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt', 'wireguard', 'openvpn'},
         'wireguard': {'mtu', 'split_local'},
         'openvpn': {'proto'},
@@ -334,7 +335,7 @@ def validate_yaml(text):
                             'agh_go_mib', 'retention_days', 'adaway_enabled', 'querylog_size'},
     }
     booleans = {'backup.enabled', 'sso.enabled', 'sso.auto_redirect', 'sso.password_login',
-                'entry_resources.adaway_enabled', 'wireguard.split_local'}
+                'entry_resources.adaway_enabled', 'wireguard.split_local', 'exits[].hy2_insecure'}
     boolean_values = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
     seen = set()
     context = ''
@@ -378,6 +379,7 @@ def validate_yaml(text):
         if key in seen:
             config_error(key, f'повтор ключа, строка {number}')
         seen.add(key)
+        boolean = re.sub(r'^exits\[\d+\]', 'exits[]', key) in booleans
         if key in schema:
             if value and not value.startswith('#'):
                 config_error(key, 'ожидается блок с отступами, как в config.example.yaml')
@@ -393,11 +395,11 @@ def validate_yaml(text):
                 value = ''
             if value[:1] in ('[', '{', '|', '>', '!', '&', '*') or value.lower() in ('null', '~'):
                 config_error(key, 'ожидается скаляр; сложный YAML не поддерживается')
-            if key not in booleans and value.lower() in ('true', 'false', 'yes', 'no'):
+            if not boolean and value.lower() in ('true', 'false', 'yes', 'no'):
                 config_error(key, 'ожидается строка; заключите значение в кавычки')
         if '\0' in value:
             config_error(key, 'нулевой байт недопустим в env')
-        if key in booleans and value.lower() not in boolean_values:
+        if boolean and value.lower() not in boolean_values:
             config_error(key, 'ожидается true или false')
         # Тот же контракт, что в entry_resources.py: ошибка до записи env.
         if key == 'entry_resources.adaway_enabled' and value.lower() not in ('true', 'false'):
@@ -729,6 +731,10 @@ def main():
         lines.append(f"DOMAIN_{tag}={shq(ex['host'])}")
         for key in ('up', 'down'):
             lines.append(f"{tag}_HY2_{key.upper()}_MBPS={shq(ex.get(f'hy2_{key}_mbps', ''))}")
+        # Без закреплённого сертификата экзита генератор роутера отказывает;
+        # insecure — только явным флагом (совместимость, deploy предупреждает).
+        if str(ex.get('hy2_insecure', '')).lower() in ('true', 'yes', 'y', '1'):
+            lines.append(f'{tag}_HY2_INSECURE=1')
 
     # Per-host MGMT IPs (октет закреплён за тегом, см. assign_mgmt_octets).
     lines.append('')

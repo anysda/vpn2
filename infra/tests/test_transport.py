@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from router_support import exit_cert
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -97,8 +99,11 @@ for tag in $EXIT_TAGS; do
 done
 export WG_OUT_IFACE=wan-test
 RU_CLASH_SECRET=test-clash-secret
-''' + exports + '\npython3 "$2/infra/lib/gen-router-config.py"'
-                result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, str(ROOT)],
+''' + exports + '''for tag in $EXIT_TAGS; do
+  export "${tag^^}_HY2_CERT_PATH=$3"
+done
+python3 "$2/infra/lib/gen-router-config.py"'''
+                result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, str(ROOT), exit_cert()],
                                         check=True, capture_output=True, text=True,
                                         env={'PATH': os.environ['PATH']})
                 router = json.loads(result.stdout)

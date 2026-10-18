@@ -46,6 +46,8 @@ class Heartbeat:
         if not state.same_boot:
             state.data.pop('direct', None)
             state.data['last_entry'] = now
+            state.data['monitor_since'] = now
+        self.monitor_since = state.data.setdefault('monitor_since', now)
         self.last_entry = state.data.setdefault('last_entry', now)
 
     def challenge(self, peer, now):
@@ -105,7 +107,7 @@ class Heartbeat:
 
     def poll_due(self, now):
         direct = self.state.data.get('direct')
-        return direct is None or now - direct['at'] >= MISSED
+        return now - (direct['at'] if direct else self.monitor_since) >= MISSED
 
     def emergency_due(self, now):
         return now - self.last_entry >= OUTAGE

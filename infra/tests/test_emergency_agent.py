@@ -188,6 +188,17 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertEqual(hb.response('a', nonce, 2246), 1)
         self.assertIsNone(hb.response('a', nonce, 2246))
 
+    def test_peer_poll_starts_after_three_missed_heartbeats(self):
+        state = State(self.root, clock_boot='boot')
+        hb = Heartbeat(state, 1000)
+        self.assertFalse(hb.poll_due(1000))
+        self.assertFalse(hb.poll_due(1044))
+        self.assertTrue(hb.poll_due(1045))
+        state.save()
+        hb = Heartbeat(State(self.root, clock_boot='boot'), 1040)
+        self.assertFalse(hb.poll_due(1044))
+        self.assertTrue(hb.poll_due(1045))
+
     def test_outage_threshold_simultaneous_start_and_failover(self):
         cluster = self.cluster()
         cluster.stop('entry')

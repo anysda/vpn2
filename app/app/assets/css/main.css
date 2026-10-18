@@ -10,6 +10,9 @@
   pointer-events: none;
 }
 
+/* Manrope по имени - только в этом файле. @nuxt/fonts кладёт полный набор
+   @font-face в каждый CSS, где назван шрифт; страницы и компоненты берут
+   var(--font-sans) (e2e/fonts.spec.ts). */
 @theme static {
   --font-sans: 'Manrope', system-ui, sans-serif;
 }

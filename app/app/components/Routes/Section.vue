@@ -502,13 +502,13 @@ onBeforeUnmount(() => {
 .chain .why{margin-left:14px;color:var(--t3);font-size:12px}
 .inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
 .inp:focus-within{border-color:rgba(var(--fg),.3)}
-.inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;width:200px}
+.inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px var(--font-sans);width:200px}
 .inp input::placeholder{color:var(--t3)}
 .inp.big2{height:50px;border-radius:14px;padding:0 16px;background:var(--sunk);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));margin-top:14px}
 .inp.big2 input{font-size:16px;width:100%}
 .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
 .arow .sel{flex:1;min-width:0}
-.arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
+.arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px var(--font-sans);cursor:pointer;outline:0}
 .arow .pill{height:40px}
 .board{display:grid;grid-template-columns:repeat(5,minmax(min-content,1fr));gap:12px}
 /* Шапка, «Напрямую», «WARP» - строки общей сетки доски: шапка в две строки
@@ -588,7 +588,7 @@ onBeforeUnmount(() => {
 /* шторка правила */
 .rsh{margin:0;font-size:18px;font-weight:500;letter-spacing:-.01em;word-break:break-all}
 .rsp{margin:4px 0 8px;color:var(--t3);font-size:12.5px}
-.ro{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 14px;margin-top:6px;border-radius:14px;border:1px solid var(--line);background:rgba(var(--fg),.03);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;text-align:left;cursor:pointer;transition:transform .16s var(--ease),background-color .2s,border-color .2s}
+.ro{display:flex;align-items:center;gap:10px;width:100%;height:44px;padding:0 14px;margin-top:6px;border-radius:14px;border:1px solid var(--line);background:rgba(var(--fg),.03);color:var(--t1);font:500 13px var(--font-sans);text-align:left;cursor:pointer;transition:transform .16s var(--ease),background-color .2s,border-color .2s}
 .ro span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ro.warp span{color:var(--orange)}
 .ro i{flex:none;font-style:normal;font-size:12px;color:var(--t3)}

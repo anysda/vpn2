@@ -479,7 +479,7 @@ async function saveSso() {
 .stg .fld+.fld{margin-top:0}
 .stg .sh+.fld{margin-top:14px}
 .stg .fld>span:first-child{color:var(--t3);font-size:12.5px;width:170px;flex:none}
-.stg .fld code{font:400 13px Manrope,system-ui,sans-serif;color:var(--t1);flex:1}
+.stg .fld code{font:400 13px var(--font-sans);color:var(--t1);flex:1}
 .stg .fld .pill{height:30px;font-size:12px}
 .stg .fld .in{flex:1;height:36px}
 .stg .fld .hl{flex:none;max-width:210px;font-size:11.5px;color:var(--t3);line-height:1.35}

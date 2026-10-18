@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, hydrated, loginApi, test, toast, uniq } from './support/fixtures'
 import { clientCard, clientName, openHome } from './support/clients'
+import { waitAccess } from './support/access'
 
 // Телефон: экраны поверх раздела (карточка клиента, нижние шторки) живут в
 // истории браузера. Системный «назад» (Android, жест iOS) закрывает верхний
@@ -102,10 +103,16 @@ test('удаление клиента со шторки возвращает к 
   await clientCard(page, c.name).tap()
   await panel(page).getByRole('button', { name: 'Удалить клиента' }).tap()
   const del = page.getByRole('dialog', { name: 'Удалить клиента?' })
+  const accepted = page.waitForResponse(r => r.request().method() === 'DELETE' && r.url().endsWith(`/api/clients/${c.id}`))
   await del.getByRole('button', { name: 'Удалить' }).tap()
-  await expect(toast(page, `Клиент «${c.name}» удалён`)).toBeVisible()
+  const response = await accepted
+  expect(response.status()).toBe(202)
+  const { operation } = await response.json()
+  expect(operation.status).toBe('pending')
+  await expect(toast(page, 'Отключение выполняется')).toBeVisible()
+  await waitAccess(page.request, operation)
   await expect(del).toBeHidden()
-  expect(path(page)).toBe('/clients')
+  await expect(page).toHaveURL(/\/clients$/)
   await expect(page.getByPlaceholder('Поиск...')).toBeVisible()
   await page.goBack()
   await expect(page).toHaveURL(/\/$/)

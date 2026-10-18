@@ -44,7 +44,8 @@ test('выдача сертификата не пересекает принят
       ensureDeviceOvpnIp: async () => (await db.select().from(schema.devices))[0],
       writeCcd: async () => {},
     })
-    await expect(promise).rejects.toThrow()
+    // Promise из vm принадлежит другому realm; matcher получает родной Promise.
+    await expect(Promise.resolve(promise)).rejects.toThrow()
     const [saved] = await db.select().from(schema.devices)
     expect(saved!.ovpnCert).toBeNull()
     expect(saved!.ovpnKey).toBeNull()

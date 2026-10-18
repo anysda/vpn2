@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
-import { downloadText, expect, test, toast, uniq } from './support/fixtures'
+import { downloadText, expect, test, uniq } from './support/fixtures'
 import { addDevice, configDialog, createClientUi, deviceCard, ikeField, openClient, openHome } from './support/clients'
+import { waitAccess } from './support/access'
 
 async function config(page: Page, device: string, protocol: 'wg' | 'ovpn' | 'ikev2') {
   await deviceCard(page, device)[protocol].click()
@@ -37,8 +38,14 @@ test('после общего перевыпуска модалки выдают
   const before: string[] = []
   for (const p of protocols) before.push(await config(page, device, p))
   await clientDlg.getByRole('button', { name: 'Перевыпустить все ключи', exact: true }).click()
+  const accepted = page.waitForResponse(r => r.request().method() === 'POST' && /\/api\/clients\/\d+\/reissue$/.test(r.url()))
   await page.getByRole('dialog', { name: 'Перевыпустить все ключи?' }).getByRole('button', { name: 'Перевыпустить', exact: true }).click()
-  await expect(toast(page, 'Перевыпущены ключи всех девайсов (1)')).toBeVisible()
+  const response = await accepted
+  expect(response.status()).toBe(202)
+  const { operation } = await response.json()
+  expect(operation.status).toBe('pending')
+  await waitAccess(page.request, operation)
+  await expect(clientDlg.getByRole('status')).toContainText('Ключи перевыпущены')
   for (const [i, p] of protocols.entries()) {
     expect.soft(await config(page, device, p), `${p}: показан отозванный конфиг`).not.toBe(before[i])
   }

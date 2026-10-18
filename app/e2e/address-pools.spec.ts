@@ -2,6 +2,7 @@ import { expect, loginApi, test, uniq, toast } from './support/fixtures'
 import { addDeviceButton, openClient } from './support/clients'
 import { container, inside, file } from './support/openvpn-ca'
 import { buildWgClientConfig } from '../server/utils/wireguard'
+import { waitAccess } from './support/access'
 
 const protocols = [
   { key: 'wg', name: 'WireGuard', octet: 66, last: 254 },
@@ -82,7 +83,8 @@ for (const protocol of protocols) {
         expect(full, 'карточка клиента с 2000 устройствами не открывалась').toEqual([])
       }
       finally {
-        await page.request.delete(`/api/clients/${uiClient.id}`)
+        const removed = await (await page.request.delete(`/api/clients/${uiClient.id}`)).json()
+        await waitAccess(page.request, removed.operation)
       }
       expect(database('console.log(db.prepare("SELECT count(*) AS n FROM devices").get().n);')).toBe(before)
       database('db.prepare("DELETE FROM devices WHERE client_id = ? AND name = ?").run(args[0], args[1]);', id, `occupied-${pool.at(-1)}`)
@@ -95,7 +97,8 @@ for (const protocol of protocols) {
     }
     finally {
       database('db.prepare("DELETE FROM devices WHERE client_id = ? AND name LIKE ?").run(args[0], "occupied-%");', id)
-      await page.request.delete(`/api/clients/${id}`)
+      const removed = await (await page.request.delete(`/api/clients/${id}`)).json()
+      await waitAccess(page.request, removed.operation)
     }
   })
 }
@@ -136,7 +139,8 @@ test('миграция занятой /24: прежние ключи и конф
   }
   finally {
     database('db.prepare("DELETE FROM devices WHERE client_id = ? AND name LIKE ?").run(args[0], "occupied-%");', id)
-    await page.request.delete(`/api/clients/${id}`)
+    const removed = await (await page.request.delete(`/api/clients/${id}`)).json()
+    await waitAccess(page.request, removed.operation)
   }
 })
 
@@ -160,6 +164,7 @@ test('два параллельных создания на последний �
   }
   finally {
     database('db.prepare("DELETE FROM devices WHERE client_id = ? AND name LIKE ?").run(args[0], "occupied-%");', id)
-    await page.request.delete(`/api/clients/${id}`)
+    const removed = await (await page.request.delete(`/api/clients/${id}`)).json()
+    await waitAccess(page.request, removed.operation)
   }
 })

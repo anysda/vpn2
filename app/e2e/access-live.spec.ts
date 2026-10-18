@@ -46,13 +46,33 @@ test('живой OpenVPN: заморозка завершает сессию и 
     const log=readFileSync('/tmp/access-openvpn-'+JSON.parse(process.argv[1])+'/log','utf8');
     console.log(/AUTH_FAILED/.test(log)?'denied':/Initialization Sequence Completed/.test(log)?'connected':'pending');
   `, client.id)
+  const connected = () => inside(String.raw`
+    import { createConnection } from 'node:net';
+    const id=JSON.parse(process.argv[1]);
+    const status=await new Promise((resolve,reject)=>{
+      const socket=createConnection('/etc/openvpn/server/mgmt.sock');
+      let text='';
+      socket.setEncoding('utf8');
+      socket.setTimeout(5000,()=>socket.destroy(new Error('management timeout')));
+      socket.on('error',reject);
+      socket.on('connect',()=>socket.write('status 2\n'));
+      socket.on('data',chunk=>{
+        text+=chunk;
+        if(/^END\r?$/m.test(text)) { socket.end('quit\n'); resolve(text); }
+      });
+    });
+    console.log(status.split(/\r?\n/).some(line=>line.startsWith('CLIENT_LIST,dev_'+id+',')));
+  `, device.id)
   try {
     start()
     await expect.poll(state, { timeout: 30_000 }).toBe('connected')
+    await expect.poll(connected).toBe('true')
     const accepted = await (await page.request.patch(`/api/clients/${client.id}`, { data: { frozenManual: true } })).json()
     const frozen = await waitAccess(page.request, accepted.operation)
     expect(frozen.protocols.openvpn.confirmedVersion).toBe(frozen.version)
-    await expect.poll(state, { timeout: 30_000 }).toBe('denied')
+    // Management подтверждает закрытие сразу. Старый клиент узнаёт о нём
+    // лишь по keepalive; его историческая строка Connected не является фактом.
+    await expect.poll(connected).toBe('false')
     stop()
     start()
     await expect.poll(state, { timeout: 30_000 }).toBe('denied')

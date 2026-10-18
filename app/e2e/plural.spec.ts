@@ -48,6 +48,7 @@ for (const [n, notification, device] of cases) {
         './bot-events': {},
         './expiry': {},
         './password': {},
+        './access-operations': {},
         './wireguard': {},
         './openvpn': {},
         './ikev2': {},

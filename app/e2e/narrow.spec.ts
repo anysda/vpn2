@@ -2,6 +2,7 @@ import { expect, hydrated, test, toast, uniq } from './support/fixtures'
 import { addDevice, configDialog, createClientUi, deviceCard, openClient, openHome } from './support/clients'
 import { checkBotQueue } from './support/bot-queue'
 import { noHorizontalOverflow } from './support/overflow'
+import { waitAccess } from './support/access'
 
 test.describe('окно 1024px', () => {
   test('очередь: короткий тост один раз за сессию вкладки без горизонтальной прокрутки', async ({ page }) => {
@@ -56,13 +57,16 @@ test.describe('окно 1024px', () => {
     await dlg.getByRole('button', { name: 'Удалить клиента' }).click()
     const del = page.getByRole('dialog', { name: 'Удалить клиента?' })
     await noHorizontalOverflow(page, 'подтверждение удаления')
-    // Отзыв сертификатов и синхронизация VPN завершаются до ответа API.
+    // Принятие ещё не означает отзыв: ждём подтверждения всех VPN-служб.
     const [removed] = await Promise.all([
       page.waitForResponse(r => r.request().method() === 'DELETE'
         && /^\/api\/clients\/\d+$/.test(new URL(r.url()).pathname)),
       del.getByRole('button', { name: 'Удалить' }).click(),
     ])
-    expect(removed.status()).toBe(200)
+    expect(removed.status()).toBe(202)
+    const { operation } = await removed.json()
+    expect(operation.status).toBe('pending')
+    await waitAccess(page.request, operation)
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(queueToast, 'переходы и закрытие модалок не повторяют тост очереди').toHaveCount(0)
   })

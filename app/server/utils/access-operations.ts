@@ -230,14 +230,15 @@ async function runOnce(adapter: AccessAdapter) {
       state.nextRetry = nextRetry
       try {
         // После потерянного ответа никогда не повторяем изменение вслепую.
-        let matches = await adapter.read(protocol, row, payload).catch(() => false)
+        let unreadable = false
+        let matches = await adapter.read(protocol, row, payload).catch(() => { unreadable = true; return false })
         if (!matches && await current(row)) {
           try { await adapter.apply(protocol, row, payload) }
           catch {
-            state.state = 'failed'
+            state.state = unreadable ? 'unknown' : 'failed'
             state.confirmedVersion = null
             state.checkedAt = null
-            state.error = 'Не удалось применить изменение'
+            state.error = unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение'
             continue
           }
           if (!await current(row)) break

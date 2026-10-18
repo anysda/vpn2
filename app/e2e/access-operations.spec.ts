@@ -194,7 +194,7 @@ test('повторы ограничены по частоте; прежнее п
   expect((await ops.getAccess(operation.id)).status).toBe('confirmed')
   let calls = 0
   adapter.read = async () => { calls++; throw new Error('offline') }
-  adapter.apply = async () => {}
+  adapter.apply = async () => { throw new Error('VPN service unavailable') }
   await due()
   await ops.runAccessOperations(adapter)
   expect(accessStatus(await ops.getAccess(operation.id))).toBe('Состояние не подтверждено')

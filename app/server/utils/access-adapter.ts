@@ -66,7 +66,11 @@ export const accessAdapter: AccessAdapter = {
       const connected = await connectedOvpnClients()
       for (const d of rows) {
         if (!d.ovpnCert) continue
-        const ccd = await fs.readFile(`${OVPN}/ccd/${ovpnCn(d.id)}`, 'utf8')
+        const ccd = await fs.readFile(`${OVPN}/ccd/${ovpnCn(d.id)}`, 'utf8').catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
+          throw error
+        })
+        if (ccd === null) return false
         if (/^disable\s*$/m.test(ccd) === d.enabled) return false
         if (!d.enabled && connected.has(ovpnCn(d.id))) return false
       }

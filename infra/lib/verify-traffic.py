@@ -139,6 +139,26 @@ def probe_internet(ip, host, path, status):
         connection.close()
 
 
+def probe_egress(ip, host):
+    """Код любого HTTP-ответа внешнего адреса или None: важен сам ответ, а не страница.
+
+    Host - метка ручного маршрута экзита, поэтому чужой сервер отвечает 404 или 403,
+    но ответить он может, только если экзит открыл соединение наружу.
+    """
+    connection = http.client.HTTPConnection(ip, 80, timeout=8)
+    try:
+        connection.request('GET', '/', headers={'Host': host, 'User-Agent': 'vpn2-verify'})
+        response = connection.getresponse()
+        response.read(65536)
+        # Соединение держим, пока проверка смотрит в API sing-box.
+        time.sleep(0.8)
+        return response.status
+    except (OSError, http.client.HTTPException):
+        return None
+    finally:
+        connection.close()
+
+
 def probe_dns(server, name, port=53):
     """Сырой DNS-запрос A; ответ - отсортированный список адресов или None."""
     query_id = os.urandom(2)
@@ -177,7 +197,7 @@ def probe_dns(server, name, port=53):
     return sorted(found) or None
 
 
-PROBES = {'echo': probe_echo, 'internet': probe_internet, 'dns': probe_dns}
+PROBES = {'echo': probe_echo, 'internet': probe_internet, 'egress': probe_egress, 'dns': probe_dns}
 
 
 # ----------------------------------------------------------------- sing-box API
@@ -898,7 +918,41 @@ class Verifier:
             self.report.add(f'ручное правило {tag}', name, OK if path_ok and manual else FAIL,
                             'запрос выбрал ручной маршрут панели' if path_ok and manual else
                             'ручной маршрут не сработал')
+        self.egress_check(protocol)
         self.internet_check(protocol)
+
+    def egress_check(self, protocol):
+        """Выход наружу через каждый экзит отдельно.
+
+        Эхо маршрута отвечает с самого экзита и проверяет только туннель до него, а
+        «интернет через экзит» принимает любой экзит. Здесь внешний адрес запрашивается
+        с меткой ручного маршрута экзита: ответ возможен, только если наружу вышел он.
+        """
+        name = protocol.name
+        for tag in self.exits:
+            label = f'интернет через экзит {tag}'
+            expected = f'hy2-{tag}-direct'
+            if tag not in self.markers:
+                self.report.add(label, name, UNKNOWN, 'нет набора pin-hy2-*-direct')
+                continue
+            for ip, _host, _path, _status in self.internet:
+                result, seen = self.probe(protocol, 'egress', [ip, self.markers[tag]], (ip, 80))
+                leaves = {s['chains'][0] for s in seen if s['chains']}
+                if result and leaves == {expected}:
+                    self.report.add(label, name, OK, f'внешний адрес ответил через {expected}')
+                    break
+                if result:
+                    self.report.add(label, name, FAIL, f'внешний адрес ответил мимо экзита: '
+                                    f'{sorted(leaves) or "нет соединения в sing-box"}')
+                    break
+            else:
+                reachable = [host for ip, host, path, status in self.internet if probe_internet(ip, host, path, status)]
+                if reachable:
+                    self.report.add(label, name, FAIL, f'с entry {reachable[0]} открывается, '
+                                    f'через экзит {tag} внешние адреса не отвечают')
+                else:
+                    self.report.add(label, name, UNKNOWN,
+                                    'внешние адреса недоступны и с самого entry - причина неразличима')
         self.dns_check(protocol)
 
     def internet_check(self, protocol):

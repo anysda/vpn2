@@ -209,6 +209,7 @@ class DirectRouteTests(unittest.TestCase):
                 verifier = vt.Verifier(report, ['se'], '198.51.100.7', '198.51.100.7')
                 verifier.targets.start = lambda **_: None
                 verifier.internet_check = verifier.dns_check = lambda _protocol: None
+                verifier.egress_check = lambda _protocol: None
 
                 def probe(_protocol, _kind, args, *_, **__):
                     leaf, rule = self.decide(args[2])
@@ -227,6 +228,61 @@ class DirectRouteTests(unittest.TestCase):
             self.assertEqual(rows['маршрут: прямой'], 'Работает', out.getvalue())
             self.assertEqual(rows['маршрут: через экзит se'], 'Работает', out.getvalue())
             self.assertEqual(report.code(), 0)
+
+
+class ExitEgressTests(unittest.TestCase):
+    """Туннель до экзита жив, а его выход наружу закрыт: эхо на экзите это не видит."""
+
+    def test_closed_exit_egress_is_reported_per_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manual = root / 'manual'
+            manual.mkdir()
+            for name in ('direct-ru', 'pin-hy2-se-direct', 'pin-hy2-fi-direct'):
+                (manual / f'{name}.json').write_text(json.dumps({'version': 2, 'rules': []}))
+            router = root / 'config.json'
+            router.write_text(json.dumps({'outbounds': [{'tag': 'direct-ru', 'type': 'direct'},
+                                                        {'tag': 'hy2-se-direct', 'server': '203.0.113.9'},
+                                                        {'tag': 'hy2-fi-direct', 'server': '203.0.113.10'}]}))
+            closed = {'se'}
+
+            def probe(_protocol, kind, args, *_, **__):
+                if kind == 'internet':
+                    # Без метки sing-box выбирает любой живой экзит - здесь fi.
+                    return True, [{'chains': ['hy2-fi-direct'], 'rule': 'final', 'payload': ''}]
+                host = args[2] if kind == 'echo' else args[1]
+                tag = host.split('.')[1]
+                leaf = 'direct-ru' if tag == 'direct-ru' else f'hy2-{tag}-direct'
+                seen = [{'chains': [leaf], 'rule': f'rule_set=manual-pin-{leaf}', 'payload': ''}]
+                if kind == 'echo':
+                    # Эхо отвечает сам экзит: туннель до него жив и при закрытом выходе.
+                    return {'peer': '10.0.0.2', 'local': True}, seen
+                return (None if tag in closed else 404), seen
+
+            names = 'MANUAL_DIR', 'ROUTER', 'INTERNET', 'probe_dns', 'resolve', 'probe_internet'
+            saved = [getattr(vt, n) for n in names]
+            for n, value in zip(names, (manual, router, (('check.example', '/generate_204', 204),),
+                                        lambda *_: None, lambda _name: '192.0.2.10', lambda *_: True)):
+                setattr(vt, n, value)
+            try:
+                report = vt.Report('ru')
+                verifier = vt.Verifier(report, ['se', 'fi'], '198.51.100.7', '198.51.100.7')
+                verifier.targets.start = lambda **_: None
+                verifier.dns_check = lambda _protocol: None
+                verifier.probe = probe
+                with redirect_stdout(io.StringIO()) as out:
+                    verifier.prepare()
+                    verifier.targets.remote.update(se=None, fi=None)
+                    verifier.targets.exit_ips.update(se='203.0.113.9', fi='203.0.113.10')
+                    verifier.paths(type('Protocol', (), {'name': 'WireGuard'})())
+            finally:
+                for n, value in zip(names, saved):
+                    setattr(vt, n, value)
+            rows = {row['check']: row['result'] for row in report.rows}
+            self.assertEqual(rows['маршрут: через экзит se'], 'Работает', out.getvalue())
+            self.assertEqual(rows.get('интернет через экзит se'), 'Ошибка', out.getvalue())
+            self.assertEqual(rows.get('интернет через экзит fi'), 'Работает', out.getvalue())
+            self.assertEqual(report.code(), 1, out.getvalue())
 
 
 class IKEv2RevokeTests(unittest.TestCase):

@@ -12,7 +12,9 @@ UNMEASURED=0
 # Итог для CI собирается в VERIFY_REPORT; секретов в строках нет.
 VERIFY_REPORT=${VERIFY_REPORT:-/var/lib/anysda/verify-report.json}
 VERIFY_ROWS=$(mktemp)
-trap 'rm -f -- "$VERIFY_ROWS"' EXIT
+# Предупреждения не меняют код, но идут в итог и в отчёт при любом исходе.
+VERIFY_WARNINGS=$(mktemp)
+trap 'rm -f -- "$VERIFY_ROWS" "$VERIFY_WARNINGS"' EXIT
 record() {
   python3 -c '
 import datetime, json, sys
@@ -47,6 +49,20 @@ check() {
       UNMEASURED=$((UNMEASURED + 1)) ;;
     *) fail "$label" "код $rc${output:+: ${output##*$'\n'}}" ;;
   esac
+}
+warning() {
+  echo "[$HOST_TAG] ⚠ $1" >&2
+  printf '%s\n' "$1" >> "$VERIFY_WARNINGS"
+}
+# exits[].hy2_insecure: true - туннель до экзита без проверки сертификата.
+insecure_exits() {
+  local tag var
+  for tag in ${EXIT_TAGS:-}; do
+    var="$(printf '%s' "$tag" | tr 'a-z-' 'A-Z_')_HY2_INSECURE"
+    if [[ "${!var:-}" == 1 ]]; then
+      warning "$tag: exits[].hy2_insecure: true — сертификат экзита не проверяется, подмену экзита на пути entry → экзит не видно"
+    fi
+  done
 }
 service() { systemctl is-active --quiet "$1"; }
 forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
@@ -161,7 +177,8 @@ write_report() {
   if mkdir -p "$(dirname "$VERIFY_REPORT")" && python3 -c '
 import datetime, json, os, sys
 rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
-report = {"host": sys.argv[2], "code": int(sys.argv[3]), "checks": rows,
+warnings = [line.rstrip("\n") for line in open(sys.argv[5], encoding="utf-8") if line.strip()]
+report = {"host": sys.argv[2], "code": int(sys.argv[3]), "checks": rows, "warnings": warnings,
           "time": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
 tmp = sys.argv[4] + ".tmp"
 with open(tmp, "w", encoding="utf-8") as out:
@@ -171,7 +188,7 @@ counts = {}
 for row in rows:
     counts[row["result"]] = counts.get(row["result"], 0) + 1
 print(f"[{sys.argv[2]}] отчёт: {sys.argv[4]} — " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
-' "$VERIFY_ROWS" "$HOST_TAG" "$code" "$VERIFY_REPORT"; then
+' "$VERIFY_ROWS" "$HOST_TAG" "$code" "$VERIFY_REPORT" "$VERIFY_WARNINGS"; then
     :
   else
     echo "[$HOST_TAG] ✗ отчёт: не записан $VERIFY_REPORT" >&2
@@ -244,6 +261,7 @@ with open("/etc/anysda/ikev2-status.json") as status_file:
 print(f"ikev2 status age: {age:.0f}s")
 raise SystemExit(0 if 0 <= age < 120 else 1)
 '
+  insecure_exits
 else
   if [[ -n "${HY2_MGMT_PORT:-}" ]]; then
     check "hy2-mgmt: udp/$HY2_MGMT_PORT слушает" udp "$HY2_MGMT_PORT"

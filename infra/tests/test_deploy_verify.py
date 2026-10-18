@@ -16,12 +16,15 @@ def deploy_source():
                                    cwd=ROOT, text=True) if ref else source('infra/deploy.sh')
 
 
-def orchestrate(ru, foreign, mode='full', failure=''):
+def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
     with tempfile.TemporaryDirectory(prefix='deploy-verify-') as directory:
         root = Path(directory)
         for subdir in ('envs', 'scripts', 'lib', 'configs', 'secrets', 'tmp', 'emergency'):
             (root / subdir).mkdir()
-        (root / 'envs/all.env').write_text('ENTRY_HOST=entry.example\nADMIN_PASSWORD=fixture\n')
+        (root / 'envs/all.env').write_text('ENTRY_HOST=entry.example\nADMIN_PASSWORD=fixture\n'
+                                           + ('EXIT_HY2_INSECURE=1\n' if insecure else ''))
+        if insecure:
+            (root / 'envs/exits.env').write_text('EXIT_TAGS=exit\n')
         for host, result in (('ru', ru), ('exit', foreign)):
             (root / f'envs/{host}.env').write_text(
                 f'HOST_TAG={host}\nTELEGRAM_BOT_TOKEN=fixture\nTELEGRAM_CHAT_ID=1\n')
@@ -133,6 +136,19 @@ class DeployVerifyTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertEqual(result.event, '')
                 self.assertNotIn('деплой завершён', result.stdout)
+
+    def test_insecure_exit_warning_for_every_verify_code(self):
+        healthy = subprocess.CompletedProcess([], 0, '[exit] ✓ sing-box active\n')
+        for code, line in ((0, '[ru] ✓ sing-box active'), (2, '[ru] ? yt — не проверено: HTTP 403'),
+                           (1, '[ru] ✗ sing-box active')):
+            for mode in ('full', 'single'):
+                with self.subTest(code=code, mode=mode):
+                    result = orchestrate(subprocess.CompletedProcess([], code, line + '\n'), healthy, mode,
+                                         insecure=True)
+                    print(f'\n--- insecure exit, verify code {code}, {mode} ---')
+                    print('\n'.join(row for row in result.stdout.splitlines() if 'hy2_insecure' in row))
+                    self.assertEqual(result.returncode, code, result.stdout)
+                    self.assertIn('exit: exits[].hy2_insecure: true', result.stdout)
 
     def test_restore_distinguishes_unknown_from_failure(self):
         body = source('infra/lib/anysda-restore.sh')

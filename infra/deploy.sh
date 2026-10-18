@@ -705,6 +705,8 @@ run_stage() {
     fi
   done
   [[ -z "$verify_logs" ]] || rm -r -- "$verify_logs"
+  # Предупреждение об экзитах без проверки сертификата - при любом исходе verify.
+  [[ "$stage" != 99-verify ]] || warn_insecure_exits
   # HOST_TAG тут остаётся от последнего source-нутого env, подпись была чужой ноды
   [[ $rc -eq 0 ]] || HOST_TAG=deploy die "стадия $stage: одна или несколько нод завершились с ошибкой"
 
@@ -715,7 +717,6 @@ run_stage() {
   if [[ "$stage" == 99-verify && -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
     HOST_TAG=deploy warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
   fi
-  [[ "$stage" != 99-verify ]] || warn_insecure_exits
   if [[ $incomplete -eq 1 ]]; then return 2; fi
   return 0
 }

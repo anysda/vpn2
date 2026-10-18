@@ -155,7 +155,7 @@ class VerifyTest(unittest.TestCase):
                 self.assertIn(('✗' if fault else '✓') +
                               ' ikev2: charon загрузил eap-mschapv2', result.stdout)
 
-    def run_verify(self, fault='', role='ru', youtube='off'):
+    def run_verify(self, fault='', role='ru', youtube='off', extra_env=None):
         with tempfile.TemporaryDirectory(prefix='verify-test-') as directory:
             root = Path(directory)
             bin_dir = root / 'bin'
@@ -236,7 +236,7 @@ class VerifyTest(unittest.TestCase):
                    'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
                    'VERIFY_SCRAPE_INTERVAL': '0.02',
                    'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443',
-                   'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report)}
+                   'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report), **(extra_env or {})}
             env.pop('BASH_ENV', None)
             result = subprocess.run(['bash', str(script)], env=env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
@@ -379,6 +379,20 @@ class VerifyTest(unittest.TestCase):
         self.assertIn('verify FAILED: проверок не пройдено: 3; не проверено: 1', result.stdout)
         crashed = self.run_verify('traffic-crash')
         self.assertIn('verify FAILED: проверок не пройдено: 1; не проверено: 0', crashed.stdout)
+
+    def test_insecure_exit_warning_in_summary_and_report(self):
+        warning = 'exit: exits[].hy2_insecure: true — сертификат экзита не проверяется'
+        for fault, code in (('', 0), ('traffic-unmeasured', 2), ('traffic-failed', 1)):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault, extra_env={'EXIT_HY2_INSECURE': '1'})
+                self.assertEqual(result.returncode, code, result.stdout)
+                self.assertIn('[ru] ⚠ ' + warning, result.stdout)
+                self.assertEqual(len(result.report['warnings']), 1, result.report)
+                self.assertTrue(result.report['warnings'][0].startswith(warning))
+                self.assertEqual(result.report['code'], code)
+        clean = self.run_verify('traffic-failed')
+        self.assertEqual(clean.report['warnings'], [])
+        self.assertNotIn('hy2_insecure', clean.stdout)
 
     def test_report_rows_for_ci(self):
         result = self.run_verify('traffic-mixed')

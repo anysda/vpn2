@@ -53,9 +53,6 @@ importers:
       qrcode-svg:
         specifier: ^1.1.0
         version: 1.1.0
-      sortablejs:
-        specifier: ^1.15.7
-        version: 1.15.7
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3
@@ -72,9 +69,6 @@ importers:
       '@types/qrcode-svg':
         specifier: ^1.1.5
         version: 1.1.5
-      '@types/sortablejs':
-        specifier: ^1.15.9
-        version: 1.15.9
       '@zxing/library':
         specifier: 0.21.3
         version: 0.21.3
@@ -2392,9 +2386,6 @@ packages:
 
   '@types/resolve@1.20.2':
     resolution: {integrity: sha512-60BCwRFOZCQhDncwQdxxeOEEkbc5dIMccYLwbxsS4TUNeVECQ/pBJ0j09mrHOl/JJvpRPGwO9SvE4nR2Nb/a4Q==}
-
-  '@types/sortablejs@1.15.9':
-    resolution: {integrity: sha512-7HP+rZGE2p886PKV9c9OJzLBI6BBJu1O7lJGYnPyG3fS4/duUCcngkNCjsLwIMV+WMqANe3tt4irrXHSIe68OQ==}
 
   '@types/web-bluetooth@0.0.20':
     resolution: {integrity: sha512-g9gZnnXVq7gM7v3tJCWV/qw7w+KeOlSHAhgF9RytFyifW6AF61hdT2ucrYhPq9hLs5JIryeupHV3qGk95dH9ow==}
@@ -8556,8 +8547,6 @@ snapshots:
 
   '@types/resolve@1.20.2': {}
 
-  '@types/sortablejs@1.15.9': {}
-
   '@types/web-bluetooth@0.0.20': {}
 
   '@types/web-bluetooth@0.0.21': {}
@@ -11778,7 +11767,8 @@ snapshots:
     dependencies:
       atomic-sleep: 1.0.0
 
-  sortablejs@1.15.7: {}
+  sortablejs@1.15.7:
+    optional: true
 
   source-map-js@1.2.2: {}
 

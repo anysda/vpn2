@@ -45,7 +45,6 @@ const initial = computed(() => name.value.charAt(0).toUpperCase())
 // Пункты меню профиля одни на ПК и в шторке телефона.
 const PROFILE_LINKS = [
   { to: '/settings', label: 'Мой профиль' },
-  { to: '/screen', label: 'Настроить экран' },
 ]
 
 function toggleMenu() {

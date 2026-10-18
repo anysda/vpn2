@@ -148,6 +148,13 @@
       "when": 1791968706020,
       "tag": "0020_events",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792310644479,
+      "tag": "0021_drop_screen_layout",
+      "breakpoints": true
     }
   ]
 }

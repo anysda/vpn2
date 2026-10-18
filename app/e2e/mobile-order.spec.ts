@@ -7,7 +7,7 @@ import { TAB_PAGES } from '../app/utils/tab-pages'
 // что на экране. Перестановка на экране (order, grid-row) без разметки — дефект.
 test.use({ viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 })
 
-test('разделы таб-бара и /screen: фокусируемое по разметке идёт как на экране', async ({ page }) => {
+test('разделы таб-бара: фокусируемое по разметке идёт как на экране', async ({ page }) => {
   await openHome(page)
   const main = page.locator('main.tab.on')
   const breaks: Record<string, string[]> = {}
@@ -26,8 +26,5 @@ test('разделы таб-бара и /screen: фокусируемое по �
     await expect(t).toHaveAttribute('aria-selected', 'true')
     breaks[`/dns ${tab}`] = await orderBreaks(main, 'focusable')
   }
-  await page.goto('/screen')
-  await expect(main).toBeVisible()
-  breaks['/screen'] = await orderBreaks(main, 'focusable')
   expect(breaks).toEqual(Object.fromEntries(Object.keys(breaks).map(k => [k, []])))
 })

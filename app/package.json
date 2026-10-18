@@ -35,7 +35,6 @@
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "qrcode-svg": "^1.1.0",
-    "sortablejs": "^1.15.7",
     "tailwindcss": "^4.3.3",
     "zod": "^4.6.6"
   },
@@ -43,7 +42,6 @@
     "@nuxt/eslint": "^1.17.0",
     "@playwright/test": "1.64.0",
     "@types/qrcode-svg": "^1.1.5",
-    "@types/sortablejs": "^1.15.9",
     "@zxing/library": "0.21.3",
     "drizzle-kit": "^0.31.11",
     "eslint": "^10.12.0",

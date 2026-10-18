@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
-import type { ScreenLayout } from '../../shared/screen-layout'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -34,8 +33,6 @@ export const users = sqliteTable('users', {
   // второй раз не принимается (RFC 6238, 5.2, VPN2-62): better-auth сам повтор
   // кода в окне не гасит.
   totpLastStep: integer('totp_last_step'),
-  // Раскладка главной, своя у каждого (shared/screen-layout.ts). null - по умолчанию.
-  screenLayout: text('screen_layout', { mode: 'json' }).$type<ScreenLayout>(),
   ...timestamps,
 })
 

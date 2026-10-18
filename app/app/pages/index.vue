@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import '~/assets/css/overview.css'
-import { useScreenLayout } from '~/composables/useScreenLayout'
 import { WAKE } from '~/utils/overview'
 import { sortNodes } from '~/utils/overview-nodes'
 
@@ -43,21 +42,9 @@ const pings = computed(() => {
   return out
 })
 
-const { layout } = useScreenLayout()
 // период графика трафика: сутки по часам или неделя по суткам; с Обзора уходит вместе с ним
 const period = useOverviewPeriod()
 onUnmounted(() => { period.value = 'day' })
-
-// старое `events` (рассылка и лента) из сохранённых раскладок отсеивает
-// normalizeScreenLayout: лента теперь в traffic, рассылка ушла с Обзора
-const KNOWN = new Set(['traffic', 'nodes', 'activity'])
-const blocks = computed(() => [...layout.value.left, ...layout.value.right].filter(id => KNOWN.has(id)))
-// Телефон: блоки в порядке «Настроить экран», как на ПК. По макету телефона
-// «Узлы», стоящие сразу за трафиком, встают между лентой и выходами.
-const nodesInTraffic = computed(() => {
-  const i = blocks.value.indexOf('traffic')
-  return i >= 0 && blocks.value[i + 1] === 'nodes'
-})
 </script>
 
 <template>
@@ -69,43 +56,36 @@ const nodesInTraffic = computed(() => {
         </button>
       </div>
     </div>
-    <!-- телефон: модули в порядке экрана; в трафике события, выходы и DNS, трафик; ряды раскрыты в общую сетку -->
+    <!-- телефон: лента, узлы, выходы и DNS, трафик, активность; ряды раскрыты в общую сетку -->
     <template v-if="mobile">
-      <template v-for="id in blocks" :key="id">
-        <template v-if="id === 'traffic'">
-          <section class="r1" data-blk="traffic">
-            <EventsFeed />
-          </section>
-          <OverviewNodes v-if="nodesInTraffic" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-          <section class="r1">
-            <OverviewExits :nodes="sorted" />
-            <OverviewDns />
-            <OverviewWave :period="period" />
-          </section>
-        </template>
-        <OverviewNodes v-else-if="id === 'nodes' && !nodesInTraffic" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-        <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
-          <OverviewActivity />
-          <OverviewTop :period="period" />
-          <OverviewClients />
-        </section>
-      </template>
+      <section class="r1" data-blk="traffic">
+        <EventsFeed />
+      </section>
+      <OverviewNodes data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+      <section class="r1">
+        <OverviewExits :nodes="sorted" />
+        <OverviewDns />
+        <OverviewWave :period="period" />
+      </section>
+      <section class="ra" data-blk="activity">
+        <OverviewActivity />
+        <OverviewTop :period="period" />
+        <OverviewClients />
+      </section>
     </template>
     <template v-else>
-      <template v-for="id in blocks" :key="id">
-        <section v-if="id === 'traffic'" class="r1" data-blk="traffic">
-          <EventsFeed />
-          <OverviewWave :period="period" />
-          <OverviewExits :nodes="sorted" />
-          <OverviewDns />
-        </section>
-        <OverviewNodes v-else-if="id === 'nodes'" data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
-        <section v-else-if="id === 'activity'" class="ra" data-blk="activity">
-          <OverviewActivity />
-          <OverviewTop :period="period" />
-          <OverviewClients />
-        </section>
-      </template>
+      <section class="r1" data-blk="traffic">
+        <EventsFeed />
+        <OverviewWave :period="period" />
+        <OverviewExits :nodes="sorted" />
+        <OverviewDns />
+      </section>
+      <OverviewNodes data-blk="nodes" :nodes="sorted" :pings="pings" :set-exit-disabled="setExitDisabled" />
+      <section class="ra" data-blk="activity">
+        <OverviewActivity />
+        <OverviewTop :period="period" />
+        <OverviewClients />
+      </section>
     </template>
   </main>
 </template>

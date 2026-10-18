@@ -52,7 +52,7 @@ test('первый блок каждого раздела на одной выс
 /** Низ фиксированной шапки. */
 const headBottom = (page: Page) => page.locator('.wrap>header').evaluate(el => el.getBoundingClientRect().bottom)
 
-test('первый блок на 4px ниже шапки на каждом разделе и /screen, и при выросшей шапке тоже', async ({ page }) => {
+test('первый блок на 4px ниже шапки на каждом разделе и при выросшей шапке тоже', async ({ page }) => {
   await openHome(page)
   const got: Record<string, number> = {}, want: Record<string, number> = {}
   const check = async (key: string) => {
@@ -65,39 +65,11 @@ test('первый блок на 4px ниже шапки на каждом ра�
     await expect(page.locator('main.tab.on')).toBeVisible()
     await check(path)
   }
-  await page.goto('/screen')
-  await expect(page.locator('main.tab.on')).toBeVisible()
-  await check('/screen')
   // шапка любой высоты: отступ идёт за ней
   await page.locator('.wrap>header').evaluate((el) => { el.style.paddingBottom = '40px' })
   await expect.poll(() => headBottom(page)).toBeGreaterThan(90)
   // новая высота шапки доходит до отступа к следующему кадру
   await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))
-  await check('/screen, шапка выше')
+  await check('шапка выше')
   expect(got, 'верх первого блока = низ шапки + 4').toEqual(want)
-})
-
-test('/screen: кнопки страницы целиком ниже шапки и нажимаются', async ({ page }) => {
-  await openHome(page, '/screen')
-  const main = page.locator('main.tab.on')
-  await expect(main).toBeVisible()
-  const bottom = await headBottom(page)
-  const controls = main.locator('.head').locator('button, a')
-  await expect(controls).toHaveCount(3)
-  for (const c of await controls.all()) {
-    await expect(c).toBeVisible()
-    const r = (await c.boundingBox())!
-    expect(r.y, `${await c.textContent()}: верх не выше низа шапки`).toBeGreaterThanOrEqual(bottom)
-    // по верхней кромке нажимается сама кнопка, а не шапка над ней
-    const hit = await c.evaluate((el, y) => {
-      const r = el.getBoundingClientRect()
-      return el.contains(document.elementFromPoint(r.left + r.width / 2, y))
-    }, r.y + 1)
-    expect(hit, `${await c.textContent()}: верхняя кромка под пальцем`).toBe(true)
-  }
-  // тап у верхней кромки «Отмены» уводит на Обзор
-  const cancel = main.getByRole('link', { name: 'Отмена' })
-  const r = (await cancel.boundingBox())!
-  await page.touchscreen.tap(r.x + r.width / 2, r.y + 1)
-  await expect(page).toHaveURL(u => u.pathname === '/')
 })

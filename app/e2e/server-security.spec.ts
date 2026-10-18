@@ -51,7 +51,6 @@ test('CSRF: изменяющие запросы требуют источник 
       ['POST', '/api/clients/999999/unlink'],
       ['PATCH', '/api/clients/999999'],
       ['DELETE', '/api/clients/999999'],
-      ['PUT', '/api/me/layout'],
       ['PUT', '/api/admin/telegram'],
     ]) {
       const response = await page.request.fetch(url!, { method, headers: { origin }, data: {} })

@@ -7,6 +7,45 @@ import { container, inside } from './support/openvpn-ca'
 import { waitAccess } from './support/access'
 import type { AccessOperation } from '../shared/access-operation'
 
+test('остановка Unix API сохраняет операцию и понятную ошибку связи', async ({ page }) => {
+  test.skip(!container, 'остановка службы разрешена только в одноразовом контейнере')
+  await loginApi(page)
+  const client = await (await page.request.post('/api/clients', { data: { name: uniq('control-outage') } })).json()
+  await page.request.post(`/api/clients/${client.id}/devices`, { data: { name: 'Телефон' } })
+  const docker = (process.env.DOCKER || 'docker').split(/\s+/)
+  let stopped = false
+  const start = () => {
+    execFileSync(docker[0]!, [...docker.slice(1), 'exec', '-d', container!, 'python3', '/tmp/control-service.py'])
+    stopped = false
+  }
+  try {
+    inside(String.raw`
+      import { execFileSync } from 'node:child_process';
+      const ids=execFileSync('pgrep',['-f','^python3 /tmp/control-service.py$'],{encoding:'utf8'}).trim().split(/\s+/);
+      for(const id of ids) process.kill(Number(id),'SIGTERM');
+    `)
+    stopped = true
+    const accepted = await page.request.patch(`/api/clients/${client.id}`, { data: { frozenManual: true } })
+    expect(accepted.status()).toBe(202)
+    const { operation } = await accepted.json()
+    await expect.poll(async () => {
+      const state: AccessOperation = await (await page.request.get(`/api/access-operations/${operation.id}`)).json()
+      expect(state.status).toBe('pending')
+      return Object.values(state.protocols).every(p => p.confirmedVersion === null && p.error === 'Нет связи с локальным сервисом управления VPN')
+    }, { timeout: 15_000 }).toBe(true)
+    expect((await page.request.get('/api/version')).status()).toBe(200)
+    start()
+    const recovered = await waitAccess(page.request, operation)
+    expect(recovered.id).toBe(operation.id)
+    console.log('Unix API stopped: HTTP 202, pending + connection error; restart: same operation confirmed, no root fallback')
+  }
+  finally {
+    if (stopped) start()
+    const removed = await (await page.request.delete(`/api/clients/${client.id}`)).json()
+    if (removed.operation) await waitAccess(page.request, removed.operation)
+  }
+})
+
 test('живой OpenVPN: заморозка завершает сессию и запрещает повторное подключение', async ({ page }) => {
   test.setTimeout(180_000)
   test.skip(!container, 'VPN-клиент разрешён только в одноразовом контейнере')

@@ -17,6 +17,8 @@ def run(down_error='Connection refused', down_rc=1):
         root = Path(directory)
         (root / 'envs').mkdir()
         (root / 'lib').mkdir()
+        (root / 'emergency').mkdir()
+        (root / 'emergency/provision.py').touch()
         (root / 'envs/all.env').write_text("EXIT_TAGS='ok down'\nENTRY_HOST=entry.example\n")
         (root / 'envs/exits.env').write_text("EXIT_TAGS='ok down'\n")
         for tag in ('ru', 'ok', 'down'):

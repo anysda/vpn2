@@ -19,7 +19,7 @@ def deploy_source():
 def orchestrate(ru, foreign, mode='full', failure=''):
     with tempfile.TemporaryDirectory(prefix='deploy-verify-') as directory:
         root = Path(directory)
-        for subdir in ('envs', 'scripts', 'lib', 'configs', 'secrets', 'tmp'):
+        for subdir in ('envs', 'scripts', 'lib', 'configs', 'secrets', 'tmp', 'emergency'):
             (root / subdir).mkdir()
         (root / 'envs/all.env').write_text('ENTRY_HOST=entry.example\nADMIN_PASSWORD=fixture\n')
         for host, result in (('ru', ru), ('exit', foreign)):
@@ -30,7 +30,7 @@ def orchestrate(ru, foreign, mode='full', failure=''):
         for path in (ROOT / 'infra/scripts').glob('*.sh'):
             (root / 'scripts' / path.name).touch()
         for path in ('lib/gen-router-config.py', 'lib/failover-watchdog.py',
-                     'lib/anysda-svc.sh',
+                     'lib/anysda-svc.sh', 'emergency/provision.py',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):
             (root / path).touch()

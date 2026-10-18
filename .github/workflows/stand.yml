@@ -1,0 +1,76 @@
+name: stand
+
+# Деплой dev на стенд из двух ВМ внутри раннера и 99-verify с настоящим
+# трафиком WireGuard/OpenVPN/IKEv2. Прогон - около 10 минут на машине с
+# 6 ядрами; запускается на dev и вручную, не на каждый PR.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      stop_openvpn:
+        description: 'Отрицательный контроль: остановить OpenVPN на entry перед проверкой'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stand-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  stand:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+
+      # Панель из этого же коммита: тот же кэш, что у images.yml.
+      - name: panel image
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          platforms: linux/amd64
+          load: true
+          tags: vpn2-stand/panel:${{ github.sha }}
+          cache-from: type=gha,scope=panel
+
+      - name: qemu
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+          ls -l /dev/kvm
+
+      - name: up
+        id: up
+        run: sudo infra/tools/ci-stand.sh up
+
+      - name: deploy
+        run: sudo infra/tools/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
+
+      # Полный деплой сам кончается 99-verify; отдельный прогон нужен для
+      # отрицательного контроля и чтобы отчёт был и при упавшем деплое.
+      - name: verify
+        if: ${{ !cancelled() && steps.up.outcome == 'success' }}
+        run: sudo infra/tools/ci-stand.sh verify ${{ inputs.stop_openvpn && '--stop-openvpn' || '' }}
+
+      - name: collect
+        if: always()
+        run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-report
+          path: stand-report/
+          if-no-files-found: warn
+
+      - name: down
+        if: always()
+        run: sudo infra/tools/ci-stand.sh down

@@ -411,7 +411,8 @@ class EmergencyAgentTests(unittest.TestCase):
         spec.loader.exec_module(module)
         (self.root / 'config.yaml').write_text(
             'entry: {host: 192.0.2.1, password: excluded}\n'
-            'exits: [{tag: a, host: 192.0.2.2, password: excluded}]\n')
+            'exits: [{tag: a, host: 192.0.2.2, password: excluded}, '
+            '{tag: entry, host: 192.0.2.3, password: excluded}]\n')
         module.provision(self.root)
         path = self.root / 'infra/secrets/emergency/a.json'
         before = path.read_bytes()
@@ -420,6 +421,10 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertNotIn('excluded', before.decode())
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(json.loads(before)['node'], 'a')
+        entry = json.loads((path.parent / 'ru.json').read_text())
+        self.assertEqual(entry['node'], entry['entry_id'])
+        exit_config = json.loads((path.parent / 'entry.json').read_text())
+        self.assertNotEqual(exit_config['node'], exit_config['entry_id'])
 
     def test_deploy_declares_agent_for_all_nodes(self):
         stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()

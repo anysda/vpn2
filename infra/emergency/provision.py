@@ -25,14 +25,16 @@ def provision(root):
         else:
             shared = {'installation_id': str(uuid.uuid4()), 'key': secrets.token_hex(32)}
             private_json(identity, shared)
-        nodes = {'entry': {'host': config['entry']['host'], 'port': 51821}}
+        # Underscores cannot occur in user exit tags; "entry" is a valid tag.
+        entry_id = '__entry__'
+        nodes = {entry_id: {'host': config['entry']['host'], 'port': 51821}}
         for item in config['exits']:
             nodes[item['tag']] = {'host': item['host'], 'port': 51821}
         if len(nodes) != len(config['exits']) + 1 or len(nodes) > 65:
             raise ValueError('invalid observer membership')
         for node in nodes:
-            private_json(directory / (('ru' if node == 'entry' else node) + '.json'),
-                         dict(shared, node=node, nodes=nodes))
+            private_json(directory / (('ru' if node == entry_id else node) + '.json'),
+                         dict(shared, node=node, entry_id=entry_id, nodes=nodes))
 
 
 def private_json(path, data):

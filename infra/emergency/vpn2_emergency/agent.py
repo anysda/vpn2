@@ -40,6 +40,7 @@ class Agent:
             self.lock.close()
             raise ValueError('observer already running') from None
         self.node = config['node']
+        self.entry = config.get('entry_id', 'entry')
         self.installation = config['installation_id']
         self.key = bytes.fromhex(config['key'])
         if len(self.key) != 32 or len(config['nodes']) > 65:
@@ -53,7 +54,7 @@ class Agent:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((config.get('bind', '0.0.0.0'), config['nodes'][self.node]['port']))
         self.sock.setblocking(False)
-        if self.node == 'entry':
+        if self.node == self.entry:
             self.state.data['epoch'] = self.state.data.get('epoch', 0) + 1
             self.state.data['run'] = str(uuid.uuid4())
             self.state.data['sequence'] = 0
@@ -75,7 +76,7 @@ class Agent:
         return self.leader.status(now) if self.leader else None
 
     def tick(self, now):
-        if self.node == 'entry':
+        if self.node == self.entry:
             self.state.data['sequence'] += 1
         else:
             snapshot = self.snapshot_loader(self.state.directory)
@@ -94,7 +95,7 @@ class Agent:
             for peer in self.addresses:
                 if peer == self.node:
                     continue
-                if peer != 'entry' and not (self.heartbeat.poll_due(now) or
+                if peer != self.entry and not (self.heartbeat.poll_due(now) or
                                            self.leader and self.leader.data['active']):
                     continue
                 self.send(peer, {'kind': 'poll', 'nonce': self.heartbeat.challenge(peer, now),
@@ -118,11 +119,11 @@ class Agent:
             if not isinstance(nonce, str) or len(nonce) != 48:
                 return
             if message.get('kind') == 'poll':
-                if self.node == 'entry':
+                if self.node == self.entry:
                     evidence = {k: self.state.data[k] for k in ('epoch', 'run', 'sequence')}
                     evidence['age'] = 0
                 else:
-                    if peer == 'entry':
+                    if peer == self.entry:
                         return
                     if self.leader and message.get('candidate') == peer:
                         self.leader.grant(message.get('candidate'), now,
@@ -130,13 +131,13 @@ class Agent:
                     evidence = self.heartbeat.direct_evidence(now)
                 self.send(peer, {'kind': 'reply', 'nonce': nonce, 'evidence': evidence,
                                  'status': self.status(now)})
-            elif message.get('kind') == 'reply' and self.node != 'entry':
+            elif message.get('kind') == 'reply' and self.node != self.entry:
                 transit = self.heartbeat.response(peer, nonce, now)
                 if transit is None:
                     return
                 self.heartbeat.receive(message.get('evidence'), now, transit,
-                                       direct=peer == 'entry', observer=peer)
-                if self.leader and peer != 'entry':
+                                       direct=peer == self.entry, observer=peer)
+                if self.leader and peer != self.entry:
                     self.leader.observe(peer, message.get('status'), now, transit,
                                         allow_activation=now - self.heartbeat.last_entry >= MISSED)
                     # Act on the received lease immediately. Waiting for the

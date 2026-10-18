@@ -30,11 +30,12 @@ source "$ENV_FILE"
 # переменная просто игнорируется.
 [[ "$BACKUP_BACKEND" == "s3" ]] && export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-us-east-1}"
 
-ARCHIVE_REQ="${1:-latest}"
+# Имя архива необязательно, как в `./deploy.sh restore`: `--dry-run` — это latest с флагом.
+ARCHIVE_REQ=latest
+if [[ -n "${1:-}" && "$1" != -* ]]; then ARCHIVE_REQ=$1; shift; fi
 FORCE=0
 DRY_RUN=0
 ALLOW_INCOMPATIBLE=0
-shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force|-f) FORCE=1 ;;

@@ -431,6 +431,18 @@ esac
         self.assertFalse((BACKUPS / '.pre-restore').exists())
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM clients').fetchone()[0], 2)
 
+    def test_dry_run_without_archive_name(self):
+        # Прямой вызов на entry: первый аргумент-флаг — это latest, не имя архива.
+        self.backup()
+        local = next(BACKUPS.glob('*.age'))
+        for args in (('--dry-run',), ('--force', '--dry-run')):
+            with self.subTest(args):
+                result = self.script('restore', *args)
+                print(result.stdout.strip(), flush=True)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn(f'dry-run — восстановил бы {local.name} (local), ничего не изменено', result.stdout)
+        self.assertFalse((BACKUPS / '.pre-restore').exists())
+
 
     def repack(self, bundle):
         archive = next(BACKUPS.glob('*.age'))

@@ -322,7 +322,8 @@ Caddy. Архив шифруется [`age`](https://github.com/FiloSottile/age)
 ```bash
 ./deploy.sh backup                    # снять архив сейчас
 ./deploy.sh backup-list               # список архивов
-./deploy.sh restore                   # восстановить последний
+./deploy.sh restore                   # восстановить последний (локально и в S3)
+./deploy.sh restore latest --dry-run  # только показать, какой архив будет взят
 ./deploy.sh restore <archive> --force # перетереть непустую базу
 ```
 

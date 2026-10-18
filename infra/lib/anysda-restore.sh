@@ -2,9 +2,10 @@
 # anysda-vpn2 restore — восстанавливает entry-ноду из *.tar.gz.age бэкапа.
 #
 # Использование:
-#   /usr/local/bin/anysda-restore.sh [<archive-name|latest>] [--force]
+#   /usr/local/bin/anysda-restore.sh [<archive-name|latest>] [--force] [--dry-run]
 #     archive-name — имя файла из $BACKUP_LOCAL_DIR (только basename) или 'latest'
 #     --force      — overwrite не-пустой db.sqlite без вопросов
+#     --dry-run    — только показать, какой архив и откуда будет взят
 #
 # Безопасность (требования TZ §3.6):
 #   - SHA-256 каждого компонента проверяется ПЕРЕД применением (manifest)
@@ -30,10 +31,12 @@ source "$ENV_FILE"
 
 ARCHIVE_REQ="${1:-latest}"
 FORCE=0
+DRY_RUN=0
 shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force|-f) FORCE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     *) echo "anysda-restore: неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
   shift
@@ -45,51 +48,86 @@ if [[ -z "${ANYSDA_BACKUP_PASSPHRASE:-}" ]]; then
   exit 2
 fi
 
-# ── Резолв архива (latest | имя). Поддерживаем local; для s3 — pull в кеш. ─
-resolve_archive() {
-  local req="$1"
-  if [[ "$req" == "latest" ]]; then
-    # Самый свежий по mtime, без парсинга ls
-    local found
-    found=$(find "$BACKUP_LOCAL_DIR" -maxdepth 1 -type f -name 'anysda-vpn2-*.tar.gz.age' \
-            -printf '%T@\t%p\n' 2>/dev/null | sort -n | tail -1 | cut -f2)
-    if [[ -z "$found" && "$BACKUP_BACKEND" == "s3" ]]; then
-      # Тянем самый свежий ключ из bucket
-      local s3_name
-      s3_name=$(AWS_ACCESS_KEY_ID="${ANYSDA_S3_ACCESS_KEY:?}" AWS_SECRET_ACCESS_KEY="${ANYSDA_S3_SECRET_KEY:?}" \
-        aws --endpoint-url "${BACKUP_S3_ENDPOINT:?}" s3 ls "s3://${BACKUP_S3_BUCKET:?}/" \
-        | awk '{print $NF}' | grep -E '^anysda-vpn2-.*\.tar\.gz\.age$' | sort | tail -1)
-      [[ -z "$s3_name" ]] && { echo "anysda-restore: ни одного backup'а ни локально, ни в S3" >&2; exit 3; }
-      mkdir -p "$BACKUP_LOCAL_DIR"
-      AWS_ACCESS_KEY_ID="$ANYSDA_S3_ACCESS_KEY" AWS_SECRET_ACCESS_KEY="$ANYSDA_S3_SECRET_KEY" \
-        aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 cp \
-        "s3://$BACKUP_S3_BUCKET/$s3_name" "$BACKUP_LOCAL_DIR/$s3_name" --only-show-errors
-      chmod 600 "$BACKUP_LOCAL_DIR/$s3_name"   # aws s3 cp следует umask → выставляем явно
-      found="$BACKUP_LOCAL_DIR/$s3_name"
-    fi
-    [[ -z "$found" ]] && { echo "anysda-restore: $BACKUP_LOCAL_DIR пуст — нечего восстанавливать" >&2; exit 3; }
-    echo "$found"
-    return
-  fi
-  # Явное имя
-  local base; base=$(basename "$req")
-  if [[ -f "$BACKUP_LOCAL_DIR/$base" ]]; then
-    echo "$BACKUP_LOCAL_DIR/$base"; return
-  fi
-  if [[ "$BACKUP_BACKEND" == "s3" ]]; then
-    mkdir -p "$BACKUP_LOCAL_DIR"
-    AWS_ACCESS_KEY_ID="${ANYSDA_S3_ACCESS_KEY:?}" AWS_SECRET_ACCESS_KEY="${ANYSDA_S3_SECRET_KEY:?}" \
-      aws --endpoint-url "${BACKUP_S3_ENDPOINT:?}" s3 cp \
-      "s3://${BACKUP_S3_BUCKET:?}/$base" "$BACKUP_LOCAL_DIR/$base" --only-show-errors \
-      || { echo "anysda-restore: $base не найден ни локально, ни в S3" >&2; exit 3; }
-    chmod 600 "$BACKUP_LOCAL_DIR/$base"   # aws s3 cp следует umask → выставляем явно
-    echo "$BACKUP_LOCAL_DIR/$base"; return
-  fi
-  echo "anysda-restore: архив $base не найден в $BACKUP_LOCAL_DIR" >&2
-  exit 3
+s3() {
+  AWS_ACCESS_KEY_ID="${ANYSDA_S3_ACCESS_KEY:?}" AWS_SECRET_ACCESS_KEY="${ANYSDA_S3_SECRET_KEY:?}" \
+    aws --endpoint-url "${BACKUP_S3_ENDPOINT:?}" s3 "$@"
 }
 
-ARCHIVE=$(resolve_archive "$ARCHIVE_REQ")
+s3_pull() {
+  mkdir -p "$BACKUP_LOCAL_DIR"
+  s3 cp "s3://${BACKUP_S3_BUCKET:?}/$1" "$BACKUP_LOCAL_DIR/$1" --only-show-errors || return
+  chmod 600 "$BACKUP_LOCAL_DIR/$1"   # aws s3 cp следует umask → выставляем явно
+}
+
+# Время создания — метка из имени: бэкап пишет её же в manifest.timestamp,
+# а mtime меняется при копировании и скачивании.
+archive_ts() { [[ "$1" =~ ^anysda-vpn2-([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z)\.tar\.gz\.age$ ]] && echo "${BASH_REMATCH[1]}"; }
+ts_epoch() { date -u -d "${1:0:10} ${1:11:2}:${1:13:2}:${1:15:2}" +%s; }
+age_text() {
+  local s=$1
+  if (( s >= 86400 )); then echo "$((s / 86400)) д $((s % 86400 / 3600)) ч"
+  elif (( s >= 3600 )); then echo "$((s / 3600)) ч $((s % 3600 / 60)) мин"
+  else echo "$((s / 60)) мин"; fi
+}
+
+# latest: самый свежий по времени создания среди локальных архивов и S3.
+resolve_latest() {
+  local name ts best_local="" best_s3="" s3_list
+  while IFS= read -r name; do
+    ts=$(archive_ts "$name") || continue
+    [[ -z "$best_local" || "$ts" > "$(archive_ts "$best_local")" ]] && best_local=$name
+  done < <(find "$BACKUP_LOCAL_DIR" -maxdepth 1 -type f -name 'anysda-vpn2-*.tar.gz.age' -printf '%f\n' 2>/dev/null)
+  if [[ "$BACKUP_BACKEND" == "s3" ]]; then
+    if s3_list=$(s3 ls "s3://${BACKUP_S3_BUCKET:?}/" 2>&1); then
+      while IFS= read -r name; do
+        name=${name##* }
+        ts=$(archive_ts "$name") || continue
+        [[ -z "$best_s3" || "$ts" > "$(archive_ts "$best_s3")" ]] && best_s3=$name
+      done <<< "$s3_list"
+    else
+      echo "anysda-restore: WARN: S3 недоступен — выбираю только среди локальных архивов, в облаке может лежать более свежий:" >&2
+      printf '%s\n' "$s3_list" | tail -n 3 | sed 's/^/  /' >&2
+    fi
+  fi
+  if [[ -z "$best_local" && -z "$best_s3" ]]; then
+    echo "anysda-restore: ни одного backup'а ни в $BACKUP_LOCAL_DIR, ни в S3" >&2
+    exit 3
+  fi
+  local pick=$best_local from=local other="" other_from=""
+  if [[ -n "$best_s3" && ( -z "$best_local" || "$(archive_ts "$best_s3")" > "$(archive_ts "$best_local")" ) ]]; then
+    pick=$best_s3 from=S3 other=$best_local other_from=local
+  elif [[ -n "$best_s3" && "$best_s3" != "$best_local" ]]; then
+    other=$best_s3 other_from=S3
+  fi
+  local pick_epoch; pick_epoch=$(ts_epoch "$(archive_ts "$pick")")
+  echo "anysda-restore: latest = $pick ($from), создан $(archive_ts "$pick"), $(age_text $(( $(date -u +%s) - pick_epoch ))) назад" >&2
+  if [[ -n "$other" ]]; then
+    echo "anysda-restore:   самый свежий $other_from: $other — старше выбранного на $(age_text $(( pick_epoch - $(ts_epoch "$(archive_ts "$other")") )))" >&2
+  fi
+  ARCHIVE_NAME=$pick ARCHIVE_FROM=$from
+}
+
+if [[ "$ARCHIVE_REQ" == "latest" ]]; then
+  resolve_latest
+else
+  ARCHIVE_NAME=$(basename "$ARCHIVE_REQ") ARCHIVE_FROM=local
+  if [[ ! -f "$BACKUP_LOCAL_DIR/$ARCHIVE_NAME" ]]; then
+    if [[ "$BACKUP_BACKEND" != "s3" ]]; then
+      echo "anysda-restore: архив $ARCHIVE_NAME не найден в $BACKUP_LOCAL_DIR" >&2
+      exit 3
+    fi
+    ARCHIVE_FROM=S3
+  fi
+fi
+if (( DRY_RUN )); then
+  echo "anysda-restore: dry-run — восстановил бы $ARCHIVE_NAME ($ARCHIVE_FROM), ничего не изменено"
+  exit 0
+fi
+if [[ "$ARCHIVE_FROM" == S3 ]] && ! s3_pull "$ARCHIVE_NAME"; then
+  echo "anysda-restore: $ARCHIVE_NAME не скачан из S3" >&2
+  exit 3
+fi
+ARCHIVE="$BACKUP_LOCAL_DIR/$ARCHIVE_NAME"
 echo "anysda-restore: source = $ARCHIVE"
 
 # ── Расшифровка во временную dir ────────────────────────────────────────────
@@ -143,11 +181,15 @@ BUNDLE_DIR=$(find "$WORK" -maxdepth 1 -mindepth 1 -type d -name 'anysda-vpn2-*' 
 # ── Проверка manifest.json + SHA-256 каждого компонента ────────────────────
 [[ -r "$BUNDLE_DIR/manifest.json" ]] || { echo "anysda-restore: manifest.json отсутствует — corrupted архив" >&2; exit 5; }
 
-python3 - "$BUNDLE_DIR" <<'PY' || exit 5
+python3 - "$BUNDLE_DIR" "$ARCHIVE_NAME" <<'PY' || exit 5
 import hashlib, json, os, sys
 bdir = sys.argv[1]
 with open(os.path.join(bdir, 'manifest.json')) as f:
     m = json.load(f)
+# latest выбирался по метке в имени: она должна совпадать с манифестом.
+if sys.argv[2] != f'anysda-vpn2-{m.get("timestamp")}.tar.gz.age':
+    print(f'anysda-restore: WARN: имя архива не совпадает с manifest.timestamp={m.get("timestamp")}',
+          file=sys.stderr)
 
 def sha_file(p):
     h = hashlib.sha256()

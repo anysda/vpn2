@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import time
 import unittest
 
 
@@ -328,6 +329,68 @@ fi
                 else:
                     self.assertFalse(CADDY.exists())
         print('no_domain_and_legacy_caddy_restore=PASS', flush=True)
+
+
+    def use_s3(self):
+        write('/etc/anysda/backup.env', '''BACKUP_BACKEND=s3
+BACKUP_LOCAL_DIR=/var/backups/anysda-vpn2
+BACKUP_RETENTION=2
+BACKUP_S3_ENDPOINT=https://s3.example.test
+BACKUP_S3_BUCKET=bucket
+ANYSDA_S3_ACCESS_KEY=key
+ANYSDA_S3_SECRET_KEY=secret
+ANYSDA_BACKUP_PASSPHRASE=test-backup-passphrase
+''')
+        Path('/test-output/s3').mkdir(exist_ok=True)
+        write('/test-bin/aws', '''#!/bin/sh
+if [ -f /test-output/s3-down ]; then
+    echo 'Could not connect to the endpoint URL' >&2; exit 255
+fi
+shift 3
+case "$1" in
+    ls) for f in /test-output/s3/*; do
+            [ -e "$f" ] && echo "2026-01-01 00:00:00 $(stat -c %s "$f") ${f##*/}"
+        done ;;
+    cp) cp "/test-output/s3/${2#s3://bucket/}" "$3" ;;
+esac
+''', 0o755)
+
+    def test_latest_prefers_newer_s3_archive(self):
+        self.backup()
+        local = next(BACKUPS.glob('*.age'))
+        time.sleep(1.1)
+        self.conn.execute("INSERT INTO clients VALUES ('s3-client')")
+        self.conn.commit()
+        self.assertEqual(self.script('backup').returncode, 0)
+        fresh = next(p for p in BACKUPS.glob('*.age') if p != local)
+        self.use_s3()
+        shutil.move(fresh, Path('/test-output/s3') / fresh.name)
+        # mtime не время создания: локальный старый архив "трогали" позже.
+        os.utime(local, (time.time() + 3600, time.time() + 3600))
+        result = self.script('restore', 'latest', '--force')
+        print(result.stdout.strip().splitlines()[0], flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn(f'latest = {fresh.name} (S3)', result.stdout)
+        self.assertIn(f'самый свежий local: {local.name}', result.stdout)
+        with sqlite3.connect(DB) as restored:
+            rows = restored.execute('SELECT name FROM clients').fetchall()
+        print(f'latest_restored_clients={rows}', flush=True)
+        self.assertEqual(rows, [('archived-client',), ('s3-client',)])
+
+    def test_latest_dry_run_and_unreachable_s3(self):
+        self.backup()
+        local = next(BACKUPS.glob('*.age'))
+        self.use_s3()
+        write('/test-output/s3-down', '1')
+        self.conn.execute("INSERT INTO clients VALUES ('live-client')")
+        self.conn.commit()
+        result = self.script('restore', 'latest', '--force', '--dry-run')
+        print(result.stdout, flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('S3 недоступен', result.stdout)
+        self.assertIn(f'dry-run — восстановил бы {local.name} (local)', result.stdout)
+        self.assertFalse((BACKUPS / '.pre-restore').exists())
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM clients').fetchone()[0], 2)
 
 
 if __name__ == '__main__':

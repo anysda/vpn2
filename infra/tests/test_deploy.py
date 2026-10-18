@@ -62,6 +62,19 @@ run_stage 30-frontend ru
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), ['password=archive'] * 7 + ['password=current-seed'])
 
+    def test_restore_dry_run_only_asks_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = function('do_restore') + '''
+load_env() { :; }
+ssh_exec() { echo "ssh: $1"; }
+run_stage() { echo "stage: $1"; }
+do_restore latest --force --dry-run
+'''
+            result = bash(script, directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(),
+                             ["ssh: /usr/local/bin/anysda-restore.sh 'latest' '--force' '--dry-run'"])
+
     def test_failed_upload_never_runs_stale_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

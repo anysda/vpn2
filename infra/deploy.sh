@@ -1240,7 +1240,7 @@ anysda-vpn2 — деплой
   ./deploy.sh --development [stage group]   явный режим разработки с локальными/плавающими образами
   ./deploy.sh <stage> <group>              запустить одну стадию на группу нод
   ./deploy.sh backup                       снять зашифрованный backup сейчас
-  ./deploy.sh restore [<name>|latest] [--force]
+  ./deploy.sh restore [<name>|latest] [--force] [--dry-run]
                                            восстановить из backup (default: latest)
   ./deploy.sh backup-list                  список доступных backup'ов
   ./deploy.sh --manifest <file> recover    проверенный полный повтор после прерывания
@@ -1270,7 +1270,13 @@ do_backup_list() {
 
 do_restore() {
   local archive="${1:-latest}"
-  local force_flag="${2:-}"
+  shift || true
+  local flags="" flag dry_run=0
+  for flag in "$@"; do
+    [[ -n "$flag" ]] || continue
+    flags+=" '$flag'"
+    [[ "$flag" != --dry-run ]] || dry_run=1
+  done
   local RESTORE_PRESERVE_ADMIN=1
   load_env ru
   # Если архив — локальный путь на оркестраторе, scp'им на entry.
@@ -1283,11 +1289,8 @@ do_restore() {
     ssh_exec "mv /tmp/anysda/'$base' '/var/backups/anysda-vpn2/$base' && chmod 600 '/var/backups/anysda-vpn2/$base'"
     archive="$base"
   fi
-  if [[ -n "$force_flag" ]]; then
-    ssh_exec "/usr/local/bin/anysda-restore.sh '$archive' '$force_flag'"
-  else
-    ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'"
-  fi
+  ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'$flags"
+  (( ! dry_run )) || return 0
   # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
   # которого он снят, а запущенные службы собраны под секреты текущего: бот
   # отвечает панели 403, вотчдог получает 401 от clash-api, у OpenVPN из
@@ -1321,7 +1324,7 @@ case "${1:-}" in
   -h|--help)   usage ;;
   backup)      do_backup ;;
   backup-list) do_backup_list ;;
-  restore)     do_restore "${2:-latest}" "${3:-}" ;;
+  restore)     do_restore "${2:-latest}" "${@:3}" ;;
   rollback)    release_rollback ;;
   *)
     [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"

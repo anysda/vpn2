@@ -104,8 +104,13 @@ E91G7bb0hOb/cA==
 =knv7
 -----END PGP PUBLIC KEY BLOCK-----
 AWS_CLI_KEY
-  curl -fsSL "$AWS_CLI_URL" -o "$TMPD/awscli.zip"
-  curl -fsSL "$AWS_CLI_URL.sig" -o "$TMPD/awscli.zip.sig"
+  if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+    release_download aws-cli "$TMPD/awscli.zip" "$AWS_CLI_URL"
+    release_download aws-cli-signature "$TMPD/awscli.zip.sig" "$AWS_CLI_URL.sig"
+  else
+    curl -fsSL "$AWS_CLI_URL" -o "$TMPD/awscli.zip"
+    curl -fsSL "$AWS_CLI_URL.sig" -o "$TMPD/awscli.zip.sig"
+  fi
   if ! gpg --no-options --homedir "$TMPD/gnupg" --batch --no-autostart --no-auto-key-retrieve \
     --verify "$TMPD/awscli.zip.sig" "$TMPD/awscli.zip"; then
     echo "[$HOST_TAG] ERROR: AWS CLI signature verification failed" >&2

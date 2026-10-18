@@ -453,6 +453,9 @@ run_stage_on_host() {
     if [[ "${RESTORE_PRESERVE_ADMIN:-0}" == 1 ]]; then
       echo 'unset ADMIN_PASSWORD'
     fi
+    printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}"
+    printf 'VPN2_PANEL_FOLLOWS=%q\n' "${VPN2_PANEL_FOLLOWS:-false}"
+    echo 'VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json'
   } > "$rendered_env" || return 1
   chmod 600 "$rendered_env" || return 1
 
@@ -461,6 +464,13 @@ run_stage_on_host() {
   # Общие функции стадий (перезапуск службы только при смене её входов).
   push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
   push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return 1
+  push "$DEPLOY_ROOT/lib/release.sh" || return 1
+  push "$DEPLOY_ROOT/lib/release.py" || return 1
+  push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
+  push "$DEPLOY_ROOT/lib/panel-transaction.sh" || return 1
+  if [[ -f "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" ]]; then
+    push "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" release-manifest.json || return 1
+  fi
   push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
@@ -603,6 +613,17 @@ run_stage() {
   fi
 
   local hosts; hosts=$(expand_hosts "$group" 2>/dev/null)
+  if [[ "$stage" == 10-foreign ]]; then
+    local host count=0
+    for host in $(expand_hosts foreign); do count=$((count + 1)); done
+    [[ "$count" != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
+    for host in $hosts; do
+      run_stage_on_host "$stage" "$host" || return 1
+      run_stage_on_host 99-verify "$host" || return 1
+    done
+    _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$(( $(date +%s) - t0 ))s")
+    return 0
+  fi
   # Стадии независимы по нодам — гоняем хосты параллельно. Каждый
   # run_stage_on_host уходит в свой субшелл (из-за `&`), поэтому глобалы
   # load_env (SSH_HOST/SSH_PASS/...) не пересекаются между нодами.
@@ -756,11 +777,13 @@ preflight_ssh() {
   # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
   # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
   local hosts; hosts=$(expand_hosts all)
-  local reasons=() fixes=() skipped=() auth=0 net=0 h dir; dir=$(mktemp -d)
+  local reasons=() fixes=() skipped=() pids=() auth=0 net=0 h dir pid; dir=$(mktemp -d)
   for h in $hosts; do
     _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
+    pids+=("$!")
   done
-  wait
+  # The deploy lock is another long-lived child; it must outlive preflight.
+  for pid in "${pids[@]}"; do wait "$pid" || true; done
   for h in $hosts; do
     cat "$dir/$h.log"
     [[ -f "$dir/$h.ok" ]] && continue
@@ -1076,6 +1099,10 @@ except Exception:
 prefetch_images() {
   (
     load_env ru
+    if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+      ssh_exec 'python3 /tmp/anysda/release.py --manifest /tmp/anysda/release-manifest.json image panel --offline' >/dev/null
+      exit
+    fi
     local imgs=()
     [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
     [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" || "${TGBOT_IMAGE_PULL:-true}" == false ]] \
@@ -1124,15 +1151,21 @@ do_all() {
   do_check
   preflight_ssh
 
-  run_stage 00-bootstrap     all
-  run_stage 05-mgmt-mesh     all
+  run_stage 00-bootstrap     ru
+  run_stage 05-mgmt-mesh     ru
+  # Even bootstrap/firewall and management changes belong to the exit's
+  # sequential update. Stage 10 verifies it before the next exit starts.
+  local exit_track='' tag
+  for tag in $(expand_hosts foreign); do
+    exit_track+="00-bootstrap:$tag 05-mgmt-mesh:$tag 10-foreign:$tag "
+  done
   # 28/29/19 на ru от экзитов не зависят (секреты экзитов забирает только
   # prep_ru_router перед 20) - гоняем их, пока экзиты ставят 10-foreign.
   # 19 строго ДО 20: сначала готовим путь десинка YouTube, потом sing-box
   # начинает на него маршрутизировать. Обратный порядок = окно, в котором
   # YouTube уже на РФ-выходе, а обходить DPI ещё нечем. Стадия сама валит
   # деплой, если A/B-проверка не прошла.
-  run_tracks "10-foreign:foreign" \
+  run_tracks "$exit_track" \
              "28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
@@ -1144,10 +1177,11 @@ do_all() {
   run_stage 26-backup        ru
   run_stage 27-ikev2         ru
   wait "$_PREFETCH_PID" || true
-  run_stage 35-telegram      ru
+  VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
   run_stage 30-frontend      ru
   run_stage 99-verify        all
 
+  release_complete
   print_summary
   announce_deploy_done
 }
@@ -1178,11 +1212,15 @@ usage() {
 anysda-vpn2 — деплой
 
   ./deploy.sh                              полный pipeline: prereqs → проверки → деплой
+  ./deploy.sh --manifest <file>             production: опубликованный манифест релиза
+  ./deploy.sh --development [stage group]   явный режим разработки с локальными/плавающими образами
   ./deploy.sh <stage> <group>              запустить одну стадию на группу нод
   ./deploy.sh backup                       снять зашифрованный backup сейчас
   ./deploy.sh restore [<name>|latest] [--force]
                                            восстановить из backup (default: latest)
   ./deploy.sh backup-list                  список доступных backup'ов
+  ./deploy.sh --manifest <file> recover    проверенный полный повтор после прерывания
+  ./deploy.sh rollback                    совместимый откат панели без отката данных
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
           29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
@@ -1250,12 +1288,17 @@ exit_tags() {
 # Без аргументов → полный pipeline.
 # С двумя аргументами → одна стадия на группу.
 # -h / --help → подсказка.
+case "${1:-}" in -h|--help) usage ;; esac
+# shellcheck source=infra/lib/deploy-release.sh
+source "$DEPLOY_ROOT/lib/deploy-release.sh"
+release_start "${1:-}"
 case "${1:-}" in
-  '')          do_all ;;
+  ''|recover)  do_all ;;
   -h|--help)   usage ;;
   backup)      do_backup ;;
   backup-list) do_backup_list ;;
   restore)     do_restore "${2:-latest}" "${3:-}" ;;
+  rollback)    release_rollback ;;
   *)
     [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     run_stage "$1" "$2"
@@ -1264,3 +1307,4 @@ case "${1:-}" in
     fi
     ;;
 esac
+release_complete

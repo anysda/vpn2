@@ -28,6 +28,7 @@ ENV PORT=51821
 
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/server/database/migrations ./server/database/migrations
+COPY --from=builder /app/scripts/migrate.mjs ./scripts/migrate.mjs
 
 EXPOSE 51821
 

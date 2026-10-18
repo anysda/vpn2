@@ -28,7 +28,7 @@ dk create --name "$NAME" --network none \
   -e NUXT_SESSION_COOKIE_SECURE=false -e NUXT_SESSION_PASSWORD="$(openssl rand -hex 32)" \
   -e NUXT_WG_ENABLED=true -e NUXT_WG_PUBLIC_HOST="$PUBLIC_HOST" \
   -e NUXT_OVPN_ENABLED=true -e NUXT_OVPN_PUBLIC_HOST="$PUBLIC_HOST" \
-  "$E2E_IMAGE" >/dev/null
+  "$E2E_IMAGE" sh -ec 'node scripts/migrate.mjs; exec node .output/server/index.mjs' >/dev/null
 for dir in /var/lib/anysda-vpn2 /etc/wireguard /etc/openvpn /etc/strongswan /etc/swanctl /etc/anysda; do
   dk cp "$NAME-base:$dir" - | tar -x -C "$MIGRATION_TMP"
   dk cp "$MIGRATION_TMP/${dir##*/}" "$NAME:${dir%/*}/"

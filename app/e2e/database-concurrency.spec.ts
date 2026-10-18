@@ -6,6 +6,7 @@ import { once } from 'node:events'
 import { sql } from 'drizzle-orm'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
+import { migrate } from 'drizzle-orm/libsql/migrator'
 import { test, expect } from '@playwright/test'
 import * as schema from '../server/database/schema'
 import { serverModule } from './support/server-module'
@@ -54,6 +55,7 @@ test('HTTP ждёт миграции и администратора при ме
   const databaseUrl = `file:${join(directory, 'panel.sqlite')}`
   const client = createClient({ url: databaseUrl, concurrency: 1 })
   const db = drizzle(client, { schema })
+  await migrate(db, { migrationsFolder: 'server/database/migrations' })
   let started!: () => void
   let release!: (value: string) => void
   const hashing = new Promise<void>(resolve => { started = resolve })

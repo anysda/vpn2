@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+
+// Explicit deploy step before starting the application under test.
+assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
+  env: { ...process.env, NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite' },
+  stdio: 'pipe',
+}).status, 0, 'deploy migration must succeed')
 
 // Отдельный одноразовый контейнер: проверяем реальный Nitro/Better Auth,
 // включая старый env и runtime из архива, не подменяя API ответами теста.

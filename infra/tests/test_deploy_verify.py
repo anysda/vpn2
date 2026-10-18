@@ -69,6 +69,7 @@ prep_entry_mgmt_key() { :; }
 prep_ru_router() { :; }
 verify_and_rotate_ports() { :; }
 run_tracks() { :; }
+release_complete() { :; }
 prefetch_images() { true & _PREFETCH_PID=$!; }
 print_ikev2_notice() { :; }
 print_sso_notice() { :; }

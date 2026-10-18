@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "flock -n .migration.lock node scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio",
     "typecheck": "nuxt typecheck",
     "e2e": "playwright test",

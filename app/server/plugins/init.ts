@@ -1,8 +1,7 @@
-import { randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { createHash, randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { and, eq, isNotNull, isNull } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/libsql/migrator'
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
 import { accounts, sessions, twoFactors, users } from '../database/schema'
@@ -38,24 +37,19 @@ async function initPanel() {
   const log = useLogger()
   const cfg = useRuntimeConfig()
 
-  // 1. Run migrations
-  const dbUrl = cfg.databaseUrl
+  // 1. Verify the deploy executor's migration history before any application write.
   const localDb = useDb()
-
   const migrationsFolder = resolve(process.cwd(), 'server/database/migrations')
-  if (existsSync(migrationsFolder)) {
-    try {
-      await migrate(localDb, { migrationsFolder })
-      log.info({ dbUrl }, 'migrations applied')
-    }
-    catch (err) {
-      log.error({ err }, 'migration failed')
-      throw err
-    }
+  const journal = JSON.parse(readFileSync(resolve(migrationsFolder, 'meta/_journal.json'), 'utf8')) as {
+    entries: { tag: string, when: number }[]
   }
-  else {
-    log.warn({ migrationsFolder }, 'migrations folder missing, skipping')
-  }
+  const applied = await localDb.all<{ hash: string, created_at: number }>(sql`SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at`)
+  if (applied.length !== journal.entries.length || applied.some((row, index) => {
+    const migration = journal.entries[index]!
+    return row.created_at !== migration.when || row.hash !== createHash('sha256')
+      .update(readFileSync(resolve(migrationsFolder, `${migration.tag}.sql`))).digest('hex')
+  })) throw new Error('Database schema incompatible. Run the deploy migration executor before starting the panel.')
+  log.info('migrations applied by deploy executor; schema verified')
 
   if (cfg.exitTags) await syncClientPrefsFile()
 

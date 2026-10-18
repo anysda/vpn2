@@ -13,8 +13,12 @@ if [[ -s "$probe_venv/bgutil/server/build/generate_once.js" && -f "$probe_venv/b
 fi
 pot_tmp=$(mktemp -d "$probe_venv/.pot-install.XXXXXXXX")
 trap 'rm -rf "$pot_tmp"' EXIT
-curl -fsSL --retry 3 --connect-timeout 20 --max-time 180 \
-  "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/$pot_version.tar.gz" -o "$pot_tmp/source.tar.gz"
+if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+  python3 "$(dirname "$0")/release.py" --manifest "$VPN2_RELEASE_MANIFEST" artifact yt-pot "$pot_tmp/source.tar.gz"
+else
+  curl -fsSL --retry 3 --connect-timeout 20 --max-time 180 \
+    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/$pot_version.tar.gz" -o "$pot_tmp/source.tar.gz"
+fi
 printf '%s  %s\n' 1f2ae9ec39405b8e80397dfc2551f58deed09d8dff4b2b8fbc314df8e091c0a1 \
   "$pot_tmp/source.tar.gz" | sha256sum -c -
 tar -xzf "$pot_tmp/source.tar.gz" -C "$pot_tmp"

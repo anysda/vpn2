@@ -9,6 +9,16 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# Явный выбор разработки; остальные запуски требуют опубликованный манифест.
+if [[ "${1:-}" == --development ]]; then
+  export VPN2_DEVELOPMENT=true
+  shift
+elif [[ "${1:-}" == --manifest ]]; then
+  export VPN2_DEVELOPMENT=false
+  export VPN2_RELEASE_MANIFEST="$(realpath "${2:?manifest path required}")"
+  shift 2
+fi
+
 # Справка оркестратора не требует конфига и генерации env.
 case "${1:-}" in
   -h|--help) exec "${REPO_ROOT}/infra/deploy.sh" "$@" ;;
@@ -22,6 +32,11 @@ fi
 
 die()  { printf '%b✗ %s%b\n' "$R" "$*" "$E" >&2; exit 1; }
 ok()   { printf '%b✓ %s%b\n' "$G" "$*" "$E"; }
+
+# Protect generated envs before the entry-side, cross-workstation lock is taken.
+mkdir -p "$REPO_ROOT/infra/state"
+exec {local_deploy_fd}>"$REPO_ROOT/infra/state/deploy.lock"
+flock -n "$local_deploy_fd" || die 'deploy уже выполняется из этого рабочего дерева'
 
 # ── Проверка config.yaml ──────────────────────────────────────────────────────
 if [[ ! -f "${REPO_ROOT}/config.yaml" ]]; then

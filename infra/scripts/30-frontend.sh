@@ -33,25 +33,18 @@ mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
 # ----------------------------------------------------------------------------
 # 1. Pull panel image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}"
-PANEL_IMAGE_PULL="${PANEL_IMAGE_PULL:-true}"
-echo "[$HOST_TAG] [1/4] docker pull ${PANEL_IMAGE}"
-# Registry может быть недоступен с ноды: если он лёг (или образ собрали и
-# загрузили на ноду напрямую через `docker save | ssh … docker load`), стадия
-# не должна ронять деплой — берём уже лежащий локально образ. Нет ни там, ни
-# там — вот тогда падаем.
-#
-# PANEL_IMAGE_PULL=false — не ходить в registry вообще: образ уже загружен на
-# ноду руками и pull его молча перезатрёт старым слепком того же тега.
-if [[ "$PANEL_IMAGE_PULL" == "false" ]]; then
-  docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
-    || { echo "[$HOST_TAG] ✗ PANEL_IMAGE_PULL=false, но образа ${PANEL_IMAGE} на ноде нет"; exit 1; }
-  echo "[$HOST_TAG]   pull пропущен (PANEL_IMAGE_PULL=false), беру локальный образ"
-elif ! docker pull "$PANEL_IMAGE" 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
-  docker image inspect "$PANEL_IMAGE" >/dev/null 2>&1 \
-    || { echo "[$HOST_TAG] ✗ образа ${PANEL_IMAGE} нет ни в registry, ни локально"; exit 1; }
-  echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${PANEL_IMAGE}"
-fi
+RELEASE_LIB=$(dirname "$0")/release.sh
+[[ -f "$RELEASE_LIB" ]] || RELEASE_LIB=$(dirname "$0")/../lib/release.sh
+# shellcheck source=infra/lib/release.sh
+source "$RELEASE_LIB"
+PANEL_IMAGE=$(release_image panel "${PANEL_IMAGE:-}" "${PANEL_IMAGE_PULL:-true}")
+echo "[$HOST_TAG] [1/4] panel image digest verified"
+
+TRANSACTION_LIB=$(dirname "$0")/panel-transaction.sh
+[[ -f "$TRANSACTION_LIB" ]] || TRANSACTION_LIB=$(dirname "$0")/../lib/panel-transaction.sh
+# shellcheck source=infra/lib/panel-transaction.sh
+source "$TRANSACTION_LIB"
+panel_begin
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password, render anysda-config.yaml
@@ -146,12 +139,12 @@ if [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]]; then
   TMP=$(mktemp -d)
   REL_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
   DEB="caddy_${CADDY_VER}_linux_amd64.deb"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/$DEB" -o "$TMP/$DEB"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/caddy_${CADDY_VER}_checksums.txt" -o "$TMP/checksums.txt"
-  ( cd "$TMP" && grep -E "[[:space:]]${DEB}\$" checksums.txt | sha512sum -c - ) \
-    || { rm -rf "$TMP"; echo "[$HOST_TAG] caddy SHA-512 mismatch — abort" >&2; exit 1; }
+  release_download caddy "$TMP/$DEB" "$REL_URL/$DEB"
+  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/caddy_${CADDY_VER}_checksums.txt" -o "$TMP/checksums.txt"
+    ( cd "$TMP" && grep -E "[[:space:]]${DEB}\$" checksums.txt | sha512sum -c - ) \
+      || { rm -rf "$TMP"; echo "[$HOST_TAG] caddy SHA-512 mismatch — abort" >&2; exit 1; }
+  fi
   deb_install "$TMP/$DEB" >/dev/null
   rm -rf "$TMP"
 fi
@@ -265,7 +258,7 @@ done
 # которая ещё не хранила адреса экзитов в БД. Читаем только нужную переменную.
 # При неудачном первом запуске повтор деплоя сохраняет исходную карту;
 # после успешного запуска панель берёт более свежую карту из БД.
-PREVIOUS_NODE_HOSTS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' anysda-vpn2 2>/dev/null \
+PREVIOUS_NODE_HOSTS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' anysda-vpn2-previous 2>/dev/null \
   | awk '/^NUXT_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); current=$0}
          /^NUXT_PREVIOUS_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); previous=$0}
          END {print previous != "" ? previous : current}') || PREVIOUS_NODE_HOSTS=
@@ -371,6 +364,7 @@ curl -sS http://127.0.0.1:51821/api/version 2>/dev/null | HOST_TAG="$HOST_TAG" a
 mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"
 echo "[$HOST_TAG] $STAGE done"
+panel_finish
 echo
 echo "[$HOST_TAG] -------------------------------------------------------------"
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then

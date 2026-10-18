@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+
+// Explicit deploy step before starting the application under test.
+assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
+  env: { ...process.env, NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite' },
+  stdio: 'pipe',
+}).status, 0, 'deploy migration must succeed')
 
 // config.yaml и старый вход не ограничивали длину существующего пароля.
 // Проверяем на одноразовой панели; новый пароль по-прежнему не длиннее 256.

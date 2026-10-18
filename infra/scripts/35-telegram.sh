@@ -25,6 +25,7 @@ case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 35-telegram is ru-only — skipp
 # стадией 30, только если секрет изменился. Сохраняем установленный образ:
 # включение бота не должно заодно обновлять панель из registry.
 sync_panel_secret() {
+  [[ "${VPN2_PANEL_FOLLOWS:-false}" != true ]] || return 0
   local panel current image frontend
   panel=$(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Names}}')
   [[ -n "$panel" ]] || return 0 # При полной установке 30 идёт после 35.
@@ -39,6 +40,8 @@ print(next((v.split("=", 1)[1] for v in json.load(sys.stdin)
   (
     set --
     PANEL_IMAGE="$image"
+    # During an upgrade the old image cannot stand in for the release manifest.
+    [[ "${VPN2_DEVELOPMENT:-false}" == true ]] || PANEL_IMAGE=''
     PANEL_IMAGE_PULL=false
     # shellcheck source=infra/scripts/30-frontend.sh
     source "$frontend"
@@ -128,20 +131,12 @@ fi
 # ----------------------------------------------------------------------------
 # 2. Pull bot image from the GitHub Container Registry (ghcr.io)
 # ----------------------------------------------------------------------------
-TGBOT_IMAGE="${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}"
-TGBOT_IMAGE_PULL="${TGBOT_IMAGE_PULL:-true}"
-echo "[$HOST_TAG] [2/3] docker pull ${TGBOT_IMAGE}"
-# Как у панели (30-frontend): registry недоступен — берём образ, который уже
-# лежит на ноде; TGBOT_IMAGE_PULL=false — в registry не ходим вовсе.
-if [[ "$TGBOT_IMAGE_PULL" == "false" ]]; then
-  docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
-    || { echo "[$HOST_TAG] ✗ TGBOT_IMAGE_PULL=false, но образа ${TGBOT_IMAGE} на ноде нет"; exit 1; }
-  echo "[$HOST_TAG]   pull пропущен (TGBOT_IMAGE_PULL=false), беру локальный образ"
-elif ! docker pull "$TGBOT_IMAGE" 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
-  docker image inspect "$TGBOT_IMAGE" >/dev/null 2>&1 \
-    || { echo "[$HOST_TAG] ✗ образа ${TGBOT_IMAGE} нет ни в registry, ни локально"; exit 1; }
-  echo "[$HOST_TAG]   ⚠ registry недоступен — беру локальный образ ${TGBOT_IMAGE}"
-fi
+RELEASE_LIB=$(dirname "$0")/release.sh
+[[ -f "$RELEASE_LIB" ]] || RELEASE_LIB=$(dirname "$0")/../lib/release.sh
+# shellcheck source=infra/lib/release.sh
+source "$RELEASE_LIB"
+TGBOT_IMAGE=$(release_image tgbot "${TGBOT_IMAGE:-}" "${TGBOT_IMAGE_PULL:-true}")
+echo "[$HOST_TAG] [2/3] bot image digest verified"
 
 # Панель должна принять новый секрет до первого опроса ботом. Ошибка стадии
 # 30 прерывает деплой: успешный rc при старом env скрывал неработающего бота.

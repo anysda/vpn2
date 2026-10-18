@@ -49,6 +49,7 @@ prefetch_images() { true & _PREFETCH_PID=$!; }
 print_ikev2_notice() { :; }
 print_sso_notice() { :; }
 announce_deploy_done() { :; }
+release_complete() { :; }
 run_stage_on_host() {
   if [[ $1 == 20-ru-router ]]; then
     source "$DEPLOY_ROOT/envs/all.env"

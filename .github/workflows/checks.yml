@@ -53,6 +53,9 @@ jobs:
         sing-box: [false, true]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -73,6 +76,8 @@ jobs:
           test -n "$version"
           curl -fsSL --retry 3 -o "$d/sing-box.tar.gz" \
             "https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-amd64.tar.gz"
+          checksum=$(sed -n "s/^readonly SB_SHA256_AMD64='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
+          printf '%s  %s\n' "$checksum" "$d/sing-box.tar.gz" | sha256sum --check --status
           tar -xzf "$d/sing-box.tar.gz" -C "$d"
           export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
           export RUN_NETNS_TESTS=1

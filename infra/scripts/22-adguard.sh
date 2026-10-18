@@ -55,12 +55,12 @@ if [[ "$need_install" -eq 1 ]]; then
   # releases, но не к одностороннему MITM/CDN-corruption).
   REL_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}"
   ARCHIVE="AdGuardHome_${ARCH}.tar.gz"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/$ARCHIVE" -o "$TMP/$ARCHIVE"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
-  ( cd "$TMP" && grep -E "[[:space:]]\*?(\./)?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
-    || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
+  release_download adguard "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
+  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
+    ( cd "$TMP" && grep -E "[[:space:]]\*?(\./)?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
+      || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
+  fi
   tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"
   rm -rf "$TMP"

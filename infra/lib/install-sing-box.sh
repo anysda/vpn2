@@ -30,8 +30,13 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 archive="sing-box-${SB_VER}-linux-${arch}.tar.gz"
-curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-  -o "$work/$archive" "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/$archive"
+if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+  python3 "$(dirname "$0")/release.py" --manifest "$VPN2_RELEASE_MANIFEST" \
+    artifact "sing-box-$arch" "$work/$archive"
+else
+  curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
+    -o "$work/$archive" "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/$archive"
+fi
 printf '%s  %s\n' "$sha256" "$work/$archive" | sha256sum --check --status
 # До проверки digest архив не распаковывается, загруженный код не исполняется.
 tar -xzf "$work/$archive" -C "$work" "sing-box-${SB_VER}-linux-${arch}/sing-box"

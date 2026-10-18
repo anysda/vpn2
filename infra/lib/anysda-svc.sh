@@ -9,6 +9,18 @@
 
 SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
+# Loads lazily: backup/restore also use this library without release artifacts.
+release_download() {
+  local name="$1" destination="$2" url="$3" lib
+  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+    curl -fsSL --retry 5 --connect-timeout 20 --max-time 300 -o "$destination" "$url"
+  else
+    lib=$(dirname "${BASH_SOURCE[0]}")/release.py
+    python3 "$lib" --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
+      artifact "$name" "$destination" --url "$url"
+  fi
+}
+
 UFW_RULES_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/ufw-rules.py
 ufw_sync_rules() {
   python3 "$UFW_RULES_FILE" "$@"

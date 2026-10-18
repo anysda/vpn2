@@ -30,7 +30,9 @@ if args[0] == 'ps':
 elif args[0] == 'inspect':
     container = containers[args[-1]]
     print(container['image'] if args[2] == '{{.Image}}' else json.dumps(container['env']))
-elif args[:2] == ['image', 'inspect'] or args[0] == 'pull':
+elif args[:2] == ['image', 'inspect']:
+    print(args[-1])
+elif args[0] == 'pull':
     pass
 elif args[0] == 'rm':
     containers.pop(args[-1], None)
@@ -68,6 +70,10 @@ class TelegramStageTests(unittest.TestCase):
                 stage = stage.replace(prefix, str(self.root) + prefix)
             (scripts / name).write_text(stage)
         (scripts / 'entry-resources.sh').write_text('entry_resources() { ENTRY_DOCKER_ARGS=(); }\n')
+        # Release transactions have their own failure/rollback suite. This
+        # fixture isolates bot/panel secret propagation with a Docker double.
+        (scripts / 'release.sh').write_text((ROOT / 'infra/lib/release.sh').read_text())
+        (scripts / 'panel-transaction.sh').write_text('panel_begin() { :; }\npanel_finish() { :; }\n')
         (scripts / 'anysda-svc.sh').write_text(
             f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n'
             'svc_restart_if_changed() { :; }\n')
@@ -87,7 +93,8 @@ class TelegramStageTests(unittest.TestCase):
                         DOCKER_STATE=str(self.state), HOST_TAG='ru', ENTRY_HOST='192.0.2.1',
                         AGH_PORT='3000', MGMT_IP='192.0.2.1', EXIT_TAGS='',
                         TELEGRAM_BOT_TOKEN='123456:test-only', TELEGRAM_CHAT_ID='100',
-                        TELEGRAM_ADMIN_USERNAME='operator', TGBOT_IMAGE_PULL='false')
+                        TELEGRAM_ADMIN_USERNAME='operator', TGBOT_IMAGE_PULL='false',
+                        VPN2_DEVELOPMENT='true')
 
     def run_stage(self, **env):
         result = subprocess.run(['bash', str(self.root / 'scripts/35-telegram.sh')],

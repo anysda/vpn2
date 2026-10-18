@@ -26,6 +26,8 @@ stand_down() {
 # команду вместо штатной (если нужна) - массив STAND_CMD.
 stand_up() {
   local name=$1 image=$2 publish=$3 pass=$4
+  local command=(node .output/server/index.mjs)
+  if [[ ${STAND_CMD+x} ]]; then command=("${STAND_CMD[@]}"); fi
   shift 4
   stand_down "$name"
   dk network create "$name" >/dev/null
@@ -40,7 +42,9 @@ stand_up() {
     -e NUXT_NODE_HOSTS='ru=192.0.2.1,nl=192.0.2.2,fi=192.0.2.3,us=192.0.2.4' \
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
-    "$@" "$image" ${STAND_CMD[@]+"${STAND_CMD[@]}"} >/dev/null
+    "$@" "$image" sh -ec \
+    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; exec "$@"' \
+    -- "${command[@]}" >/dev/null
 
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"
   dk exec -d "$name" node /tmp/fake-backends.mjs

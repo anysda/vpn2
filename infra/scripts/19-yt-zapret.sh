@@ -177,7 +177,21 @@ fi
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [2/7] исходники ($YT_ZAPRET_REF)"
 SRC_CHANGED=0
-if [[ ! -d "$YT_ZAPRET_BASE/.git" ]]; then
+if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+  YT_SOURCE_TMP=$(mktemp -d)
+  trap 'rm -rf "$YT_SOURCE_TMP"' EXIT
+  release_download zapret2-source "$YT_SOURCE_TMP/source.tar.gz" "${YT_ZAPRET_REPO}/archive/${YT_ZAPRET_REF}.tar.gz"
+  if [[ ! -f "$YT_ZAPRET_BASE/.release-ref" || "$(cat "$YT_ZAPRET_BASE/.release-ref")" != "$YT_ZAPRET_REF" ]]; then
+    mkdir "$YT_SOURCE_TMP/source"
+    tar -xzf "$YT_SOURCE_TMP/source.tar.gz" --strip-components=1 -C "$YT_SOURCE_TMP/source"
+    mkdir -p "$YT_ZAPRET_BASE"
+    cp -a "$YT_SOURCE_TMP/source/." "$YT_ZAPRET_BASE/"
+    printf '%s\n' "$YT_ZAPRET_REF" > "$YT_ZAPRET_BASE/.release-ref"
+    SRC_CHANGED=1
+  fi
+  rm -rf "$YT_SOURCE_TMP"
+  trap - EXIT
+elif [[ ! -d "$YT_ZAPRET_BASE/.git" ]]; then
   rm -rf "$YT_ZAPRET_BASE"
   git clone -q "$YT_ZAPRET_REPO" "$YT_ZAPRET_BASE"
   git -C "$YT_ZAPRET_BASE" checkout -q "$YT_ZAPRET_REF"
@@ -187,7 +201,7 @@ elif [[ "$(git -C "$YT_ZAPRET_BASE" rev-parse HEAD)" != "$YT_ZAPRET_REF" ]]; the
   git -C "$YT_ZAPRET_BASE" checkout -q "$YT_ZAPRET_REF"
   SRC_CHANGED=1
 fi
-echo "[$HOST_TAG]   HEAD=$(git -C "$YT_ZAPRET_BASE" describe --tags --always) ($(git -C "$YT_ZAPRET_BASE" rev-parse --short HEAD))"
+echo "[$HOST_TAG]   source revision: $YT_ZAPRET_REF"
 
 # ----------------------------------------------------------------------------
 # 3. Сборка nfqws2
@@ -721,8 +735,7 @@ if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
    || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v24.21.0 ]]; then
   YT_NODE_TMP=$(mktemp -d)
   trap 'rm -rf "$YT_NODE_TMP"' EXIT
-  curl -fsSL --retry 3 --connect-timeout 20 --max-time 180 \
-    https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz -o "$YT_NODE_TMP/node.tar.xz"
+  release_download yt-node "$YT_NODE_TMP/node.tar.xz" https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz
   printf '%s  %s\n' fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 \
     "$YT_NODE_TMP/node.tar.xz" | sha256sum -c -
   tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" \

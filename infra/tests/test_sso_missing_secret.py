@@ -100,6 +100,10 @@ printf 'effective=%s password=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LOGIN"
                     with tempfile.TemporaryDirectory() as directory:
                         root = Path(directory)
                         (root / 'envs').mkdir()
+                        (root / 'lib').mkdir()
+                        # Isolate notice placement; release acceptance is tested separately.
+                        (root / 'lib/deploy-release.sh').write_text(
+                            'release_start() { :; }\nrelease_complete() { :; }\n')
                         (root / 'envs/all.env').write_text('')
                         (root / 'envs/ru.env').write_text(
                             f'SSO_ENABLED={str(enabled).lower()}\nSSO_CLIENT_SECRET={shlex.quote(secret)}\n')
@@ -118,6 +122,7 @@ do_check() { :; }
 preflight_ssh() { :; }
 run_stage() { echo "STAGE $*"; }
 run_tracks() { :; }
+expand_hosts() { echo exit; }
 verify_and_rotate_ports() { :; }
 prefetch_images() { _PREFETCH_PID=0; }
 wait() { :; }

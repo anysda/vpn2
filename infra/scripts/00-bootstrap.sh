@@ -409,12 +409,12 @@ if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --v
   TMP=$(mktemp -d)
   REL_URL="https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}"
   ARCHIVE="node_exporter-${NE_VERSION}.linux-amd64.tar.gz"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/$ARCHIVE" -o "$TMP/$ARCHIVE"
-  curl -sSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
-    "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
-  ( cd "$TMP" && grep -E "[[:space:]]${ARCHIVE}\$" sha256sums.txt | sha256sum -c - ) \
-    || { rm -rf "$TMP"; echo "[$HOST_TAG] node_exporter SHA-256 mismatch — abort" >&2; exit 1; }
+  release_download node-exporter "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
+  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
+    ( cd "$TMP" && grep -E "[[:space:]]${ARCHIVE}\$" sha256sums.txt | sha256sum -c - ) \
+      || { rm -rf "$TMP"; echo "[$HOST_TAG] node_exporter SHA-256 mismatch — abort" >&2; exit 1; }
+  fi
   tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m 0755 "$TMP/node_exporter-${NE_VERSION}.linux-amd64/node_exporter" /usr/local/bin/node_exporter
   rm -rf "$TMP"

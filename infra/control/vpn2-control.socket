@@ -1,5 +1,6 @@
 [Unit]
 Description=VPN2 local VPN control socket
+PartOf=vpn2-control.service
 
 [Socket]
 ListenStream=/run/vpn2-control/control.sock

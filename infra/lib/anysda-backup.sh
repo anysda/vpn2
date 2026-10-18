@@ -111,6 +111,16 @@ fi
 # 2. /etc/anysda — все секреты
 if [[ -d /etc/anysda ]]; then
   cp -a /etc/anysda "$BUNDLE_DIR/etc-anysda"
+  # App runtime moved out of /etc. Keep archive format portable and compatible
+  # with old restorers: copy only these two regular app files, never symlink targets.
+  for name in sso-runtime.json telegram-runtime.json; do
+    if [[ -L "$BUNDLE_DIR/etc-anysda/$name" ]]; then
+      rm -f "$BUNDLE_DIR/etc-anysda/$name"
+      runtime=/var/lib/anysda-vpn2/runtime/$name
+      [[ ! -L "$runtime" ]] || { echo 'backup: runtime must be a regular file' >&2; exit 1; }
+      [[ ! -f "$runtime" ]] || cp -p "$runtime" "$BUNDLE_DIR/etc-anysda/$name"
+    fi
+  done
 fi
 
 # 3. WireGuard: конфиг и исходная пара ключей стадии 28, которую читает панель.

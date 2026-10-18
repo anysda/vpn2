@@ -37,23 +37,24 @@ export function fault(mode: string, serial: string) {
   // Подмена только исполняемого openssl в одноразовом контейнере. Проверка
   // старого сертификата всегда вызывает настоящий /usr/bin/openssl.
   inside(`
-    import { writeFileSync, renameSync } from 'node:fs';
+    import { writeFileSync, renameSync, existsSync } from 'node:fs';
     const [mode, serial] = process.argv.slice(1).map(JSON.parse);
     if (mode === 'missing') { renameSync('${pki}/ca.key', '${pki}/ca.key.saved'); }
     else {
       writeFileSync('/tmp/revoke-fault.json', JSON.stringify({ mode, serial }));
-      writeFileSync('/usr/local/bin/openssl', ${JSON.stringify(`#!/usr/bin/env node
+      if (!existsSync('/usr/bin/openssl.real')) renameSync('/usr/bin/openssl', '/usr/bin/openssl.real');
+      writeFileSync('/usr/bin/openssl', ${JSON.stringify(`#!/usr/local/bin/node
 const fs = require('node:fs');
 const cp = require('node:child_process');
 const args = process.argv.slice(2);
 const fault = JSON.parse(fs.readFileSync('/tmp/revoke-fault.json', 'utf8'));
 const revoke = args.indexOf('-revoke');
-const serial = revoke < 0 ? '' : cp.execFileSync('/usr/bin/openssl', ['x509', '-in', args[revoke + 1], '-noout', '-serial'], { encoding: 'utf8' }).trim().split('=')[1];
+const serial = revoke < 0 ? '' : cp.execFileSync('/usr/bin/openssl.real', ['x509', '-in', args[revoke + 1], '-noout', '-serial'], { encoding: 'utf8' }).trim().split('=')[1];
 if ((fault.mode === 'revoke' && serial === fault.serial) || (fault.mode === 'crl' && args.includes('-gencrl')) || (fault.mode === 'issue' && args[0] === 'ca' && args.includes('-in'))) {
   if (fault.mode === 'crl') fs.writeFileSync(args[args.indexOf('-out') + 1], 'incomplete CRL');
   console.error('injected CA failure'); process.exit(1);
 }
-const r = cp.spawnSync('/usr/bin/openssl', args, { stdio: 'inherit' });
+const r = cp.spawnSync('/usr/bin/openssl.real', args, { stdio: 'inherit' });
 process.exit(r.status ?? 1);
 `)}, { mode: 0o755 });
     }
@@ -64,7 +65,7 @@ export function restore() {
   inside(`
     import { existsSync, renameSync, rmSync } from 'node:fs';
     if (existsSync('${pki}/ca.key.saved')) renameSync('${pki}/ca.key.saved', '${pki}/ca.key');
-    rmSync('/usr/local/bin/openssl', { force: true });
+    if (existsSync('/usr/bin/openssl.real')) renameSync('/usr/bin/openssl.real', '/usr/bin/openssl');
     rmSync('/tmp/revoke-fault.json', { force: true });
   `)
 }

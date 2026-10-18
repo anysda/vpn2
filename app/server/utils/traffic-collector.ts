@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { promisify } from 'node:util'
+import { control } from './control'
 import { and, eq, lt, ne, sql } from 'drizzle-orm'
 import type { BatchItem } from 'drizzle-orm/batch'
 import { useDb } from '../database/client'
@@ -9,7 +7,6 @@ import { ikev2Deltas, type SaCounters, type SaSample } from './ikev2-counters'
 import { coalesceRuns } from './coalesce'
 import { MSK_OFFSET_SEC, mskDayStartSec } from './msk-day'
 
-const execFileP = promisify(execFile)
 
 /**
  * Накопительный сборщик трафика по всем протоколам — per-device.
@@ -96,91 +93,34 @@ interface Sample {
   tx: number
 }
 
-/** WireGuard: `wg show wg0 transfer` → "<pubkey>\t<rx>\t<tx>" (со стороны сервера). */
 async function sampleWg(deviceByPubkey: Map<string, number>): Promise<Sample[]> {
-  let out: string
   try {
-    out = (await execFileP('wg', ['show', 'wg0', 'transfer'], { timeout: 4000 })).stdout
-  }
-  catch {
-    return []
-  }
-  const samples: Sample[] = []
-  for (const line of out.trim().split('\n')) {
-    const [pk, rx, tx] = line.split('\t')
-    const id = pk ? deviceByPubkey.get(pk) : undefined
-    if (!id) continue
-    // wg «received» = принято от пира = upload клиента (tx);
-    // wg «sent» = отдано пиру = download клиента (rx).
-    samples.push({ deviceId: id, proto: 'wg', rx: Number(tx) || 0, tx: Number(rx) || 0 })
-  }
-  return samples
-}
-
-/** OpenVPN: status-version 2 файл. CLIENT_LIST,CN,real,vaddr,v6,bytesRecv,bytesSent,... */
-async function sampleOvpn(): Promise<Sample[]> {
-  let text: string
-  try {
-    text = await readFile('/etc/openvpn/server/status-server.log', 'utf8')
-  }
-  catch {
-    return []
-  }
-  const samples: Sample[] = []
-  for (const line of text.split('\n')) {
-    if (!line.startsWith('CLIENT_LIST,')) continue
-    const f = line.split(',')
-    const cn = f[1]?.match(/^dev_(\d+)$/)
-    if (!cn) continue
-    const bytesRecv = Number(f[5]) || 0 // принято сервером от клиента = upload (tx)
-    const bytesSent = Number(f[6]) || 0 // отдано сервером клиенту = download (rx)
-    samples.push({ deviceId: Number(cn[1]), proto: 'ovpn', rx: bytesSent, tx: bytesRecv })
-  }
-  return samples
-}
-
-/**
- * IKEv2: /etc/anysda/ikev2-status.json — его каждые 10 с пишет хостовый
- * anysda-ikev2-sync (стадия 27-ikev2, шаг 8) по данным vici. Внутри
- * контейнера панели swanctl'а нет, поэтому счётчики приходят файлом — ровно
- * как status-файл OpenVPN.
- *
- * Ключ дельты — per-SA (uniqueid), а не per-device: при переподключении
- * charon заводит новую SA со счётчиками с нуля, и общая сумма по устройству
- * просела бы, что выглядело бы как сброс счётчика.
- *
- * null — файла нет или он битый: снимок не трогаем, иначе все SA на следующем
- * прогоне выглядели бы новыми и засчитались бы целиком второй раз.
- */
-async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSample[] | null> {
-  let raw: string
-  try {
-    raw = await readFile('/etc/anysda/ikev2-status.json', 'utf8')
-  }
-  catch {
-    return null
-  }
-  let parsed: { sessions?: Array<{ uniqueid?: string, username?: string, rx?: number, tx?: number }> }
-  try {
-    parsed = JSON.parse(raw)
-  }
-  catch {
-    return null
-  }
-  const samples: SaSample[] = []
-  for (const s of parsed.sessions ?? []) {
-    const id = s.username ? usernameToDevice.get(s.username) : undefined
-    if (!id) continue
-    // Скрипт уже привёл направления к соглашению панели: rx = скачано
-    // клиентом (bytes-out сервера), tx = отдано клиентом (bytes-in).
-    samples.push({
-      deviceId: id,
-      uniqueid: s.uniqueid ?? '0',
-      rx: Number(s.rx) || 0,
-      tx: Number(s.tx) || 0,
+    const { samples } = await control<{ samples: Array<{ key: string, rx: number, tx: number }> }>('traffic.read', { protocol: 'wg' })
+    return samples.flatMap(s => {
+      const deviceId = deviceByPubkey.get(s.key)
+      return deviceId ? [{ deviceId, proto: 'wg', rx: s.rx, tx: s.tx }] : []
     })
   }
-  return samples
+  catch { return [] }
+}
+
+async function sampleOvpn(): Promise<Sample[]> {
+  try {
+    const { samples } = await control<{ samples: Array<{ device_id: number, rx: number, tx: number }> }>('traffic.read', { protocol: 'openvpn' })
+    return samples.map(s => ({ deviceId: s.device_id, proto: 'ovpn', rx: s.rx, tx: s.tx }))
+  }
+  catch { return [] }
+}
+
+async function sampleIkev2(usernameToDevice: Map<string, number>): Promise<SaSample[] | null> {
+  try {
+    const { samples } = await control<{ samples: Array<{ username: string, uniqueid: string, rx: number, tx: number }> }>('traffic.read', { protocol: 'ikev2' })
+    return samples.flatMap(s => {
+      const deviceId = usernameToDevice.get(s.username)
+      return deviceId ? [{ deviceId, uniqueid: s.uniqueid, rx: s.rx, tx: s.tx }] : []
+    })
+  }
+  catch { return null }
 }
 
 export const collectTraffic = coalesceRuns(async (): Promise<void> => {

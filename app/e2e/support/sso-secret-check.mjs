@@ -12,7 +12,7 @@ assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
 
 // Отдельный одноразовый контейнер: проверяем реальный Nitro/Better Auth,
 // включая старый env и runtime из архива, не подменяя API ответами теста.
-const runtime = '/etc/anysda/sso-runtime.json'
+const runtime = '/var/lib/anysda-vpn2/runtime/sso-runtime.json'
 const origin = 'http://127.0.0.1:31821'
 const password = randomBytes(18).toString('hex')
 const profile = {
@@ -20,7 +20,7 @@ const profile = {
   clientId: 'vpn2', clientSecret: '', allowedSubs: 'test-sub', label: 'Authentik',
   autoRedirect: true, passwordLogin: false, redirectUrl: 'https://vpn.example.test/auth/authentik',
 }
-mkdirSync('/etc/anysda', { recursive: true })
+mkdirSync('/var/lib/anysda-vpn2/runtime', { recursive: true })
 
 for (const scenario of ['seed', 'restore-empty', 'restore-whitespace', 'restore-valid', 'reset-runtime']) {
   if (scenario.startsWith('restore-')) {

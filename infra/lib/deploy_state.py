@@ -223,7 +223,8 @@ def main():
         elif args.action == 'backup':
             destination = args.state / 'backups' / str(time.time_ns())
             paths = [Path(p) for p in ('/etc/anysda', '/etc/wireguard', '/etc/openvpn', '/etc/strongswan',
-                                      '/etc/swanctl', '/etc/sing-box', '/etc/caddy', '/opt/AdGuardHome/AdGuardHome.yaml')]
+                                      '/etc/swanctl', '/etc/sing-box', '/etc/caddy', '/opt/AdGuardHome/AdGuardHome.yaml',
+                                      '/var/lib/anysda-vpn2/runtime', '/var/lib/vpn2-control')]
             backup(args.database, destination, paths)
             atomic_json(journal, {'phase': 'backed-up', 'backup': str(destination)})
             print('backup: SQLite WAL, PKI and configuration verified; working data unchanged')

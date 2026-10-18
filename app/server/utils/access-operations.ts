@@ -12,6 +12,7 @@ import { accessAdapter } from './access-adapter'
 import type { AccessAdapter } from './access-adapter'
 import { botConfigured } from './telegram-config'
 import { withAccessLock } from './access-lock'
+import { ControlUnavailable } from './control'
 
 interface RetiredAccess { id: number, wgPublicKey: string | null, ovpnCert: string | null }
 export interface AccessPayload {
@@ -273,11 +274,11 @@ async function runOnce(adapter: AccessAdapter) {
         let matches = await adapter.read(protocol, row, payload).catch(() => { unreadable = true; return false })
         if (!matches && await current(row)) {
           try { await adapter.apply(protocol, row, payload) }
-          catch {
+          catch (error) {
             state.state = unreadable ? 'unknown' : 'failed'
             state.confirmedVersion = null
             state.checkedAt = null
-            state.error = unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение'
+            state.error = error instanceof ControlUnavailable ? error.message : unreadable ? 'Состояние не подтверждено' : 'Не удалось применить изменение'
             continue
           }
           if (!await current(row)) break
@@ -288,12 +289,12 @@ async function runOnce(adapter: AccessAdapter) {
         state.checkedAt = Date.now()
         state.error = matches ? null : 'Изменение не подтверждено VPN-службой'
       }
-      catch {
+      catch (error) {
         // Ни stdout команд, ни пути, ни ключи не выходят в статус/журнал.
         state.state = 'unknown'
         state.confirmedVersion = null
         state.checkedAt = null
-        state.error = 'Состояние не подтверждено'
+        state.error = error instanceof ControlUnavailable ? error.message : 'Состояние не подтверждено'
       }
     }
     await db.transaction(async (tx) => {

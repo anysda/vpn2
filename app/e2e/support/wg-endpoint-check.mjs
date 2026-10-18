@@ -5,6 +5,7 @@ import { createSocket } from 'node:dgram'
 import { once } from 'node:events'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { setTimeout as delay } from 'node:timers/promises'
+import { createServer } from 'node:net'
 
 // Explicit deploy step before starting the application under test.
 assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
@@ -19,6 +20,23 @@ for (const name of ['server.priv', 'server.pub']) {
   writeFileSync(`/etc/wireguard/${name}`, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', { mode: 0o600 })
 }
 const password = randomBytes(16).toString('hex')
+// This fixture tests DNS and profile delivery, with a typed control boundary.
+const controlSocket = '/tmp/wg-endpoint-control.sock'
+let peers = {}
+const controlServer = createServer(socket => {
+  let input = ''
+  socket.on('data', chunk => {
+    input += chunk
+    if (!input.includes('\n')) return
+    const { method, params } = JSON.parse(input)
+    let result = {}
+    if (method === 'profile.read') result = { publicKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' }
+    if (method === 'state.read') result = { peers }
+    if (method === 'wg.apply') peers = Object.fromEntries(params.peers.map(peer => [peer.key, [peer.ip + '/32']]))
+    socket.end(JSON.stringify({ api: 1, ok: true, result }) + '\n')
+  })
+})
+await new Promise(resolve => controlServer.listen(controlSocket, resolve))
 const base = 'http://127.0.0.1:31821'
 // Локальный DNS: настоящие ответы AAAA / только A и сервер без ответа.
 // Внешняя сеть контейнеру не нужна, production-код не содержит тестовых хуков.
@@ -56,6 +74,7 @@ try {
     const child = spawn(process.execPath, ['--import', `data:text/javascript,${encodeURIComponent(dnsSetup)}`, '.output/server/index.mjs'], {
       env: {
         ...process.env,
+        VPN2_CONTROL_SOCKET: controlSocket,
         HOST: '127.0.0.1',
         PORT: '31821',
         NUXT_DATABASE_URL: 'file:/var/lib/anysda-vpn2/db.sqlite',
@@ -163,4 +182,5 @@ try {
 }
 finally {
   dns.close()
+  controlServer.close()
 }

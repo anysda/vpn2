@@ -1,56 +1,24 @@
 import { randomBytes } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
+import { control, controlApply } from './control'
 import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { isClientActive } from './client-status'
 import { slugify } from './naming'
 import { coalesceRuns } from './coalesce'
-import { clientDns } from './client-dns'
 import { nextPoolAddress } from './address-pools'
+import { clientDns } from './client-dns'
 
 
-// strongSwan/swanctl пути. Стадия 27-ikev2 раскатывает CA + базовый conf;
-// панель добавляет динамику в anysda-clients.conf (eap secrets из БД).
-// Bind-mount в контейнер панели — см. infra/scripts/30-frontend.sh.
-const SS_PKI_DIR = '/etc/strongswan/pki'
-const CA_CERT = `${SS_PKI_DIR}/ca.crt`
-const SS_CLIENTS_CONF = '/etc/swanctl/conf.d/anysda-clients.conf'
+interface Ikev2Profile { ready: boolean, mode: 'letsencrypt' | 'self-signed', host: string, domain: string, ca: string }
+function profile(): Promise<Ikev2Profile> { return control('profile.read', { protocol: 'ikev2' }) }
 
-// Маркеры режима (стадия 27 пишет в /etc/anysda/, оно bind-mount'нуто).
-const MODE_FILE   = '/etc/anysda/ikev2-mode'         // letsencrypt | self-signed
-const HOST_FILE   = '/etc/anysda/ikev2-server-host'  // <domain> или <ip entry>
-
-/**
- * Режим IKEv2-сервера: 'letsencrypt' если PANEL_DOMAIN задан И Caddy выдал
- * cert, иначе 'self-signed'. В LE-режиме клиенту НЕ нужен CA (LE-корень
- * уже в trust-store iOS/macOS/Win/Android).
- */
 export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
-  try {
-    const s = (await fs.readFile(MODE_FILE, 'utf8')).trim()
-    return s === 'letsencrypt' ? 'letsencrypt' : 'self-signed'
-  }
-  catch {
-    return 'self-signed'
-  }
+  return (await profile()).mode
 }
 
-/**
- * Server-address который клиент впишет в поле «Server» VPN-настроек. В LE —
- * domain (panel.domain), в self-signed: адрес WG/OVPN (entry.public_host,
- * panel.domain или IP entry). Стадия 27 записывает в
- * /etc/anysda/ikev2-server-host; fallback: ENTRY_HOST env, wgPublicHost cfg.
- */
 async function ikev2ServerHost(): Promise<string> {
-  try {
-    const s = (await fs.readFile(HOST_FILE, 'utf8')).trim()
-    if (s) return s
-  }
-  catch { /* fall through */ }
-  const cfg = useRuntimeConfig()
-  return String(process.env.ENTRY_HOST || cfg.wgPublicHost || '').trim()
+  return (await profile()).host || String(process.env.ENTRY_HOST || useRuntimeConfig().wgPublicHost || '').trim()
 }
 
 /**
@@ -84,38 +52,9 @@ function buildIkev2Username(
   throw new Error(`unable to allocate unique ikev2 username for ${base}`)
 }
 
-/**
- * True если стадия 27-ikev2 отработала на сервере — в ЛЮБОМ из двух режимов.
- * Маркер — /etc/anysda/ikev2-mode: стадия пишет его и в letsencrypt, и в
- * self-signed. Проверять по CA нельзя: в LE-режиме своего CA нет вообще
- * (сертификат сервера от Let's Encrypt), и sync/terminate молча
- * превращались бы в no-op на боевом контуре.
- */
-export async function ikev2ServerReady(): Promise<boolean> {
-  try {
-    await fs.access(MODE_FILE)
-    return true
-  }
-  catch {
-    return ikev2CaReady()
-  }
-}
-
-/** True если на сервере есть СВОЙ CA (self-signed-режим): его отдаём клиенту. */
-export async function ikev2CaReady(): Promise<boolean> {
-  try {
-    await fs.access(CA_CERT)
-    return true
-  }
-  catch {
-    return false
-  }
-}
-
-/** Чтение PEM серверного CA (для вшивания в .mobileconfig и выдачи отдельно). */
-export async function readIkev2CaPem(): Promise<string> {
-  return fs.readFile(CA_CERT, 'utf8')
-}
+export async function ikev2ServerReady(): Promise<boolean> { return (await profile()).ready }
+export async function ikev2CaReady(): Promise<boolean> { return Boolean((await profile()).ca) }
+export async function readIkev2CaPem(): Promise<string> { return (await profile()).ca }
 
 /**
  * Убедиться что у устройства есть IKEv2-креды. Если нет — генерим и пишем в БД.
@@ -199,7 +138,7 @@ async function claimDeviceIkev2(deviceId: number) {
  * Очередь подтверждает операцию только по свежему ответу применителя.
  */
 async function syncIkev2Once(): Promise<void> {
-  if (!(await ikev2ServerReady())) return
+  if (!useRuntimeConfig().ikev2Enabled) return
 
   const db = useDb()
 
@@ -267,63 +206,9 @@ async function syncIkev2Once(): Promise<void> {
     && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
   )
 
-  // shell-escape не нужен — swanctl format «id = ...» / «secret = "..."»
-  // экранирует двойные кавычки и обратные слеши.
-  const quote = (v: string) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-  const lines: string[] = [
-    '# Managed by anysda-vpn2 panel — НЕ редактировать вручную.',
-    '# conn, пул и secret каждого устройства IKEv2. Перегенерируется на каждое',
-    '# изменение клиента/устройства (server/utils/ikev2.ts → syncIkev2()).',
-    '',
-    'connections {',
-    '  anysda-ikev2 {',
-    '    remote-client {',
-    '      groups = anysda-device-conn-only',
-    '    }',
-    '  }',
-  ]
-  for (const r of active) {
-    lines.push(
-      `  anysda-dev-${r.id} : connections.anysda-ikev2 {`,
-      `    pools = anysda-dev-${r.id}, anysda-ikev2-pool6`,
-      `    remote-client {`,
-      `      eap_id = ${quote(r.username!)}`,
-      `      groups =`,
-      `    }`,
-      `  }`,
-    )
-  }
-  lines.push('}', '', 'pools {')
-  for (const r of active) {
-    lines.push(
-      `  anysda-dev-${r.id} : pools.anysda-ikev2-pool {`,
-      `    addrs = ${r.ip}-${r.ip}`,
-      `    dns = ${clientDns(r.filterTraffic).join(', ')}`,
-      `  }`,
-    )
-  }
-  // Каждое устройство — отдельная секция eap-XXX в secrets {} (имя секции
-  // не несёт смысла; charon матчит по `id = <username>`).
-  lines.push('}', '', 'secrets {')
-  for (const r of active) {
-    const safePass = r.password!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-    const safeUser = r.username!.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-    lines.push(
-      `  eap-${r.username} {`,
-      `    id = "${safeUser}"`,
-      `    secret = "${safePass}"`,
-      `  }`,
-    )
-  }
-  lines.push('}', '')
-
-  const body = lines.join('\n')
-  const tmp = `${SS_CLIENTS_CONF}.tmp-${process.pid}`
-  await fs.mkdir(path.dirname(SS_CLIENTS_CONF), { recursive: true })
-  await fs.writeFile(tmp, body, { mode: 0o600 })
-  await fs.rename(tmp, SS_CLIENTS_CONF)
-
-  // Единственный применитель — хостовая служба. Она публикует digest и живые политики.
+  await controlApply('ikev2.apply', {
+    clients: active.map(r => ({ device_id: r.id, username: r.username!, password: r.password!, ip: r.ip!, dns: clientDns(r.filterTraffic) })),
+  })
 }
 
 /** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */
@@ -359,7 +244,7 @@ export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string):
   const ca = mode === 'letsencrypt'
     ? null
     : ((await ikev2CaReady()) ? await readIkev2CaPem() : null)
-  const domain = await fs.readFile('/etc/anysda/ikev2-domain', 'utf8').catch(() => '')
+  const domain = (await profile()).domain
   return {
     server: host,
     remoteId: host,

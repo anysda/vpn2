@@ -1,6 +1,7 @@
 """Fixed protocol adapters. No shell, arbitrary paths, or raw diagnostics API."""
 
 import csv
+import base64
 import fcntl
 import hashlib
 import json
@@ -13,7 +14,7 @@ import subprocess
 import tempfile
 import time
 
-from contract import LIMIT, require
+from contract import API, LIMIT, METHODS, require
 
 
 def atomic(path, body, mode=0o600):
@@ -78,10 +79,11 @@ def peer_addresses(peer):
 
 
 class Backend:
-    def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-control')):
+    def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-control'), pools=None):
         self.root = root
         self.state = state
         self.deadline = 0
+        self.pools = pools
 
     def path(self, name):
         return self.root / name.lstrip('/')
@@ -101,6 +103,36 @@ class Backend:
 
     def execute(self, method, params):
         self.deadline = time.monotonic() + 30
+        if method == 'api.describe':
+            return {'api': API, 'methods': list(METHODS)}
+        if method == 'routes.plan':
+            # A fixed public resource may exceed the per-response limit.
+            # Open once per chunk; an atomic router replacement changes revision.
+            with self.path('/etc/anysda/route-plan.json').open('rb') as source:
+                stat = os.fstat(source.fileno())
+                require(stat.st_size <= 32 * LIMIT, 'limit')
+                revision = f'{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_size}'
+                require(not params['revision'] or params['revision'] == revision, 'stale')
+                source.seek(params['offset'])
+                data = source.read(LIMIT // 4)
+                return {'revision': revision, 'size': stat.st_size, 'data': base64.b64encode(data).decode()}
+        if method == 'profile.read':
+            return self.profile(params['protocol'])
+        if method == 'traffic.read':
+            return self.traffic(params['protocol'])
+        if method in ('settings.read', 'settings.apply'):
+            paths = {'routes': 'manual-routes.json', 'preferences': 'client-prefs.json',
+                     'disabled-exits': 'exits-disabled.json'}
+            path = self.path('/etc/anysda/' + paths[params['resource']])
+            if method == 'settings.apply':
+                self.version('settings-' + params['resource'], params)
+                body = json.dumps(params['config'], sort_keys=True) + '\n'
+                if not path.exists() or path.read_text() != body:
+                    atomic(path, body, 0o644)
+            default = {'disabled': []} if params['resource'] == 'disabled-exits' else {}
+            return {'config': json.loads(path.read_text()) if path.exists() else default}
+        if method in ('openvpn.issue', 'openvpn.revoke', 'openvpn.certificate', 'openvpn.disconnect'):
+            return self.openvpn_resource(method, params)
         if method == 'state.read':
             return self.observe(params['protocol'])
         if method == 'check.run':
@@ -119,6 +151,133 @@ class Backend:
         else:
             result = self.ikev2(params)
         return {'version': params['version'], 'observed': result}
+
+    def profile(self, protocol):
+        if protocol == 'wg':
+            return {'publicKey': self.path('/etc/wireguard/server.pub').read_text().strip()}
+        if protocol == 'openvpn':
+            base = self.path('/etc/openvpn/server/pki')
+            ready = all((base / name).is_file() for name in ('ca.crt', 'ca.key', 'openssl.cnf'))
+            return {'ready': ready, 'ca': (base / 'ca.crt').read_text() if ready else '',
+                    'tlsCrypt': (base / 'tls-crypt.key').read_text() if ready else ''}
+        def marker(name):
+            path = self.path('/etc/anysda/ikev2-' + name)
+            return path.read_text().strip() if path.exists() else ''
+        ca = self.path('/etc/strongswan/pki/ca.crt')
+        return {'ready': bool(marker('mode') or ca.exists()), 'mode': marker('mode') or 'self-signed',
+                'host': marker('server-host'), 'domain': marker('domain'),
+                'ca': ca.read_text() if ca.exists() else ''}
+
+    def pki_lock(self, lock):
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                require(time.monotonic() < self.deadline, 'limit')
+                time.sleep(0.02)
+
+    def crl(self, base):
+        with tempfile.TemporaryDirectory(dir=base / 'pki') as work:
+            crl = Path(work) / 'crl.pem'
+            self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
+                         str(base / 'pki/openssl.cnf'), '-gencrl', '-out', str(crl))
+            self.command('/usr/bin/openssl', 'crl', '-in', str(crl), '-noout',
+                         '-verify', '-CAfile', str(base / 'pki/ca.crt'))
+            atomic(base / 'pki/crl.pem', crl.read_text(), 0o644)
+
+    def openvpn_resource(self, method, params):
+        base = self.path('/etc/openvpn/server')
+        device_id = params['device_id']
+        cn = 'dev_' + str(device_id)
+        if method == 'openvpn.disconnect':
+            present = cn in self.observe('openvpn')['sessions']
+            if present:
+                self.management('kill ' + cn)
+            require(cn not in self.observe('openvpn')['sessions'], 'unavailable')
+            return {'killed': present}
+        with (base / '.pki.lock').open('a') as lock:
+            self.pki_lock(lock)
+            if method == 'openvpn.issue':
+                # The journal retains the same key/CSR across a crash. A crash
+                # after signing is recovered from newcerts by public key.
+                directory = self.state / ('issue-' + str(device_id) + '-' + params['generation'])
+                directory.mkdir(mode=0o700, exist_ok=True)
+                key, csr, cert = (directory / name for name in ('key.pem', 'csr.pem', 'cert.pem'))
+                if not key.exists():
+                    candidate = directory / 'key.tmp'
+                    self.command('/usr/bin/openssl', 'genpkey', '-algorithm', 'EC',
+                                 '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-out', str(candidate))
+                    atomic(key, candidate.read_text())
+                    candidate.unlink()
+                if not cert.exists():
+                    public = self.command('/usr/bin/openssl', 'pkey', '-in', str(key), '-pubout')
+                    for status, serial in self.certificates(device_id):
+                        existing = base / 'pki/newcerts' / (serial + '.pem')
+                        if status == 'V' and self.command('/usr/bin/openssl', 'x509', '-in', str(existing),
+                                                          '-noout', '-pubkey') == public:
+                            atomic(cert, existing.read_text())
+                            break
+                if not cert.exists():
+                    self.command('/usr/bin/openssl', 'req', '-new', '-key', str(key),
+                                 '-out', str(csr), '-subj', '/CN=' + cn)
+                    candidate = directory / 'cert.tmp'
+                    self.command('/usr/bin/openssl', 'ca', '-batch', '-notext', '-config',
+                                 str(base / 'pki/openssl.cnf'), '-extensions', 'client_ext',
+                                 '-days', '3650', '-in', str(csr), '-out', str(candidate))
+                    atomic(cert, candidate.read_text())
+                    candidate.unlink()
+                serial = self.command('/usr/bin/openssl', 'x509', '-in', str(cert), '-noout', '-serial')
+                require(('V', serial.strip().split('=', 1)[1]) in self.certificates(device_id), 'conflict')
+                return {'cert': cert.read_text(), 'key': key.read_text()}
+            matches = [(status, serial) for status, serial in self.certificates(device_id)
+                       if int(serial, 16) == int(params['serial'], 16)]
+            require(len(matches) == 1, 'validation')
+            status, serial = matches[0]
+            cert = base / 'pki/newcerts' / (serial + '.pem')
+            if method == 'openvpn.revoke':
+                if status != 'R':
+                    self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
+                                 str(base / 'pki/openssl.cnf'), '-revoke', str(cert))
+                self.crl(base)
+                return {'revoked': True}
+            # openssl verify uses the published CRL, not just the CA index.
+            from contract import Fault
+            valid = False
+            try:
+                self.command('/usr/bin/openssl', 'verify', '-CAfile', str(base / 'pki/ca.crt'),
+                             '-CRLfile', str(base / 'pki/crl.pem'), '-crl_check', str(cert))
+                valid = True
+            except Fault:
+                pass
+            revoked = False
+            if status == 'R':
+                crl = self.command('/usr/bin/openssl', 'crl', '-in', str(base / 'pki/crl.pem'), '-text', '-noout')
+                revoked = any(int(value, 16) == int(serial, 16) for value in
+                              re.findall(r'Serial Number:\s*([0-9A-Fa-f]+)', crl))
+            ccd = base / 'ccd' / cn
+            text = ccd.read_text() if ccd.exists() else None
+            return {'valid': valid, 'revoked': revoked, 'present': text is not None,
+                    'allowed': text is not None and not re.search(r'(?m)^disable\s*$', text)}
+
+    def traffic(self, protocol):
+        if protocol == 'wg':
+            rows = []
+            for line in self.command('/usr/bin/wg', 'show', 'wg0', 'transfer').splitlines():
+                key, rx, tx = line.split('\t')
+                rows.append({'key': key, 'rx': int(tx), 'tx': int(rx)})
+            return {'samples': rows}
+        if protocol == 'openvpn':
+            rows = []
+            for row in csv.reader(self.management('status 2')):
+                if len(row) >= 7 and row[0] == 'CLIENT_LIST' and re.fullmatch(r'dev_[1-9][0-9]*', row[1]):
+                    rows.append({'device_id': int(row[1][4:]), 'rx': int(row[6]), 'tx': int(row[5])})
+            return {'samples': rows}
+        # The existing host sampler is read-only after the API migration.
+        data = json.loads(self.path('/etc/anysda/ikev2-status.json').read_text())
+        require(time.time() - data['updated'] < 30, 'unavailable')
+        return {'samples': [{name: item[name] for name in ('uniqueid', 'username', 'rx', 'tx')}
+                            for item in data['sessions']]}
 
     def wireguard(self, params):
         path = self.path('/etc/wireguard/wg0.conf')
@@ -151,6 +310,10 @@ class Backend:
         require(loaded_psks == {peer['key']: peer['preshared_key'] for peer in params['peers']},
                 'unavailable')
         atomic(path, header + peers)
+        self.command('/usr/sbin/ip', '-6', 'addr', 'replace', 'fd66:66::1/64', 'dev', 'wg0')
+        from contract import load_pools
+        for subnet in (self.pools or load_pools())['wg']['subnets']:
+            self.command('/usr/sbin/ip', 'route', 'replace', subnet, 'dev', 'wg0')
         return result
 
     def management(self, command):
@@ -258,7 +421,7 @@ class Backend:
         pending = set(json.loads(pending_path.read_text())) if pending_path.exists() else set()
         previous_path = self.state / 'ikev2-identities.json'
         previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
-        current = {client['username']: hashlib.sha256(json.dumps(client, sort_keys=True)
+        current = {client['username']: hashlib.sha256(json.dumps(client, sort_keys=True, separators=(',', ':'))
                                                      .encode()).hexdigest() for client in clients}
         pending.update(name for name, digest in previous.items() if current.get(name) != digest)
         # First migration cannot establish old credential equality, so terminate
@@ -278,7 +441,8 @@ class Backend:
         for client in clients:
             name = 'anysda-dev-' + str(client['device_id'])
             lines += [f'  {name} : pools.anysda-ikev2-pool {{',
-                      f'    addrs = {client["ip"]}-{client["ip"]}', '  }']
+                      f'    addrs = {client["ip"]}-{client["ip"]}',
+                      '    dns = ' + ', '.join(client.get('dns', ['10.99.0.1'])), '  }']
         lines += ['}', 'secrets {']
         for client in clients:
             lines += [f'  eap-{client["device_id"]} {{',
@@ -297,6 +461,7 @@ class Backend:
         require(set(observed['devices']) == {client['device_id'] for client in clients},
                 'unavailable')
         atomic(previous_path, json.dumps(current))
+        atomic(self.state / 'ikev2-config-digest', hashlib.sha256(path.read_bytes()).hexdigest())
         atomic(pending_path, '[]')
         return observed
 
@@ -315,4 +480,11 @@ class Backend:
             return {'sessions': sessions}
         conns = self.command('/usr/sbin/swanctl', '--list-conns')
         devices = [int(value) for value in re.findall(r'^anysda-dev-(\d+):', conns, re.M)]
-        return {'devices': devices, 'sas': self.sas()}
+        credentials = {}
+        saved = self.state / 'ikev2-identities.json'
+        digest = self.state / 'ikev2-config-digest'
+        config = self.path('/etc/swanctl/conf.d/anysda-clients.conf')
+        if saved.exists() and digest.exists() and config.exists() and (
+                digest.read_text() == hashlib.sha256(config.read_bytes()).hexdigest()):
+            credentials = json.loads(saved.read_text())
+        return {'devices': devices, 'sas': self.sas(), 'credentials': credentials}

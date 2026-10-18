@@ -710,7 +710,7 @@ def main():
     previous = read_json(STATE_FILE, {})
     torn = False
 
-    if digest != read_json(DIGEST_FILE, ''):
+    if not os.path.exists('/etc/vpn2-control/api-managed') and digest != read_json(DIGEST_FILE, ''):
         # Секреты, conn и пулы устройств. Пул устройства, которое ещё сидит
         # на своём адресе, выгрузить нельзя — его догрузит повтор ниже.
         loaded = swanctl('--load-all', '--noprompt') == 0
@@ -742,7 +742,7 @@ def main():
     sas = live_sas()
     if sas is None:  # charon не отвечает — это авария, пусть видно в journal
         return 1
-    if RE_DEVICE_CONN.search(text):
+    if not os.path.exists('/etc/vpn2-control/api-managed') and RE_DEVICE_CONN.search(text):
         for sa in sas:
             # До EAP рукопожатие тоже идёт на общей conn — его не трогаем.
             if (sa['conn'] == SHARED_CONN and sa['state'] == 'ESTABLISHED'

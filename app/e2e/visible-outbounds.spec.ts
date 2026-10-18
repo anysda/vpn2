@@ -47,7 +47,7 @@ test('API маршрутов и бота показывают только по�
 
 test('карточки узлов и парсер UI сохраняют тег с дефисом и исключают служебные выходы', () => {
   const control = serverModule<typeof import('../server/utils/exit-control')>(
-    new URL('../server/utils/exit-control.ts', import.meta.url), { '../../shared/outbounds': outbounds },
+    new URL('../server/utils/exit-control.ts', import.meta.url), { '../../shared/outbounds': outbounds, './control': {} },
   )
   const ui = serverModule<typeof import('../app/composables/useRoutes')>(
     new URL('../app/composables/useRoutes.ts', import.meta.url), { '#shared/outbounds': outbounds },

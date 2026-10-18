@@ -36,7 +36,7 @@ stand_up() {
   fi
   stand_down "$name"
   dk network create "$name" >/dev/null
-  dk run -d --name "$name" --network "$name" --network-alias panel \
+  dk run -d --name "$name" --user 0:0 --network "$name" --network-alias panel \
     -e HOST=0.0.0.0 -e PORT=31821 \
     -e NUXT_SESSION_PASSWORD="$(openssl rand -hex 32)" -e NUXT_SESSION_COOKIE_SECURE=false \
     -e NUXT_DATABASE_URL=file:/var/lib/anysda-vpn2/db.sqlite \
@@ -48,7 +48,7 @@ stand_up() {
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
     "${vpn_args[@]}" "$@" "$image" sh -ec \
-    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; exec "$@"' \
+    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime; chown -R 10001:10001 /var/lib/anysda-vpn2; if [ "$PWD" = /src ]; then chown -R 10001:10001 /src/node_modules /src/.nuxt; fi; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
     -- "${command[@]}" >/dev/null
 
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"
@@ -66,6 +66,7 @@ set -euo pipefail
 mkdir -p /etc/wireguard
 ( umask 077; wg genkey > /etc/wireguard/server.priv )
 wg pubkey < /etc/wireguard/server.priv > /etc/wireguard/server.pub
+{ printf '[Interface]\nAddress = 10.66.66.1/24\nPrivateKey = '; cat /etc/wireguard/server.priv; } > /etc/wireguard/wg0.conf
 
 # стадия 29: CA, серверный сертификат, tls-crypt, CRL
 PKI=/etc/openvpn/server/pki
@@ -94,6 +95,12 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
 IN
 
   if [[ ${E2E_VPN_SERVICES:-0} == 1 ]]; then
+    dk exec "$name" mkdir -p /etc/vpn2-control /usr/local/lib/vpn2-control
+    dk exec "$name" touch /etc/vpn2-control/api-managed
+    dk cp "$STAND_REPO_DIR/infra/control/." "$name:/usr/local/lib/vpn2-control/"
+    dk cp "$STAND_APP_DIR/shared/vpn-pools.json" "$name:/usr/local/lib/vpn2-control/vpn-pools.json"
+    dk cp "$STAND_APP_DIR/e2e/support/control-service.py" "$name:/tmp/control-service.py"
+    dk exec -d "$name" python3 /tmp/control-service.py
     awk '/^cat > .*anysda-ikev2-sync.py.*PYEOF/ {f=1; next} f && /^PYEOF$/ {exit} f' \
       "$STAND_REPO_DIR/infra/scripts/27-ikev2.sh" \
       | dk exec -i "$name" sh -c 'cat > /tmp/ikev2-test-sync.py'

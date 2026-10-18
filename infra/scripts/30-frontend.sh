@@ -3,8 +3,7 @@
 # Pulls the panel image from the GitHub Container Registry (ghcr.io)
 # (ghcr.io/anysda/vpn2/panel), renders /etc/anysda/config.yaml
 # from admin secrets, installs Caddy, runs the panel as host-network
-# container on :51821 (Caddy reverse-proxies :80/:443). NET_ADMIN cap only —
-# NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules.
+# container on :51821 (Caddy reverse-proxies :80/:443), without capabilities.
 
 set -euo pipefail
 
@@ -44,7 +43,19 @@ TRANSACTION_LIB=$(dirname "$0")/panel-transaction.sh
 [[ -f "$TRANSACTION_LIB" ]] || TRANSACTION_LIB=$(dirname "$0")/../lib/panel-transaction.sh
 # shellcheck source=infra/lib/panel-transaction.sh
 source "$TRANSACTION_LIB"
+# Candidate code checks its own API requirements using the actual container UID.
+PANEL_UID=$(id -u vpn2-panel)
+PANEL_GID=$(id -g vpn2-panel)
+CONTROL_GID=$(getent group vpn2-control | cut -d: -f3)
+docker run --rm --network none --user "$PANEL_UID:$PANEL_GID" \
+  --group-add "$CONTROL_GID" --cap-drop ALL --security-opt no-new-privileges \
+  -v /run/vpn2-control:/run/vpn2-control:ro \
+  --entrypoint node "$PANEL_IMAGE" scripts/control-probe.mjs
 panel_begin
+chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2
+for name in db.sqlite db.sqlite-wal db.sqlite-shm; do
+  [[ ! -e /var/lib/anysda-vpn2/$name ]] || chown -h vpn2-panel:vpn2-panel "/var/lib/anysda-vpn2/$name"
+done
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password, render anysda-config.yaml
@@ -113,6 +124,8 @@ ADMIN_PASS_YAML=$(yaml_str "$ADMIN_PASS")
 export ADMIN_USER_YAML ADMIN_PASS_YAML
 envsubst '${ADMIN_USER_YAML} ${ADMIN_PASS_YAML}' < "$TPL" > /etc/anysda/anysda-config.yaml
 chmod 600 /etc/anysda/anysda-config.yaml
+chown root:vpn2-panel /etc/anysda/anysda-config.yaml
+chmod 0640 /etc/anysda/anysda-config.yaml
 
 # Session secret — random 64-char hex, persisted so cookies survive container rebuilds
 if [[ ! -f /etc/anysda/session-secret.txt ]]; then
@@ -168,10 +181,12 @@ fi
 # с ней, Caddy перечитывает прежние, таймер TLS снова запущен.
 panel_files_restored() {
   systemctl reload-or-restart caddy || true
+  systemctl try-restart openvpn-server@server || true
   [[ -f /etc/systemd/system/vpn2-tls.timer ]] && systemctl start vpn2-tls.timer || true
 }
 panel_guard_files /etc/caddy/Caddyfile /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf \
-  /etc/vpn2/tls/config.json /etc/vpn2/tls/panel/secure
+  /etc/vpn2/tls/config.json /etc/vpn2/tls/panel/secure /etc/vpn2-control/api-managed \
+  /etc/openvpn/server/server.conf
 TLS_PATHS=(--config /etc/vpn2/tls/config.json --caddy-dir /etc/caddy
   --storage /var/lib/caddy/.local/share/caddy --secure-file /etc/vpn2/tls/panel/secure
   --bot-secret /etc/anysda/tgbot-secret.txt)
@@ -279,8 +294,16 @@ docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
 [[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
 
-# host networking — panel manages WG/OpenVPN configs and talks to sing-box
-# clash-api. NET_ADMIN is enough; no SYS_MODULE.
+# Host networking is retained for loopback AdGuard, metrics and bot HTTP APIs.
+# All VPN system effects use the authenticated Unix socket.
+systemctl stop anysda-ikev2-sync.timer anysda-ikev2-sync.service 2>/dev/null || true
+if [[ -f /etc/openvpn/server/server.conf ]] \
+  && ! grep -qx 'management-client-user vpn2-control' /etc/openvpn/server/server.conf; then
+  sed -i 's/^management-client-user .*/management-client-user vpn2-control/' /etc/openvpn/server/server.conf
+  systemctl restart openvpn-server@server
+fi
+touch /etc/vpn2-control/api-managed
+systemctl start anysda-ikev2-sync.timer 2>/dev/null || true
 # Runtime-бюджет рассчитан на entry; сборка Nuxt остаётся в CI.
 # Флаг Secure cookie (и протокол проверки Origin в CSRF) читается из файла при
 # каждом старте: vpn2_tls.py включает его после первого сертификата и
@@ -291,17 +314,12 @@ docker run -d \
   --restart always \
   --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --network host \
-  --pid host \
-  --security-opt apparmor=unconfined \
-  --cap-add NET_ADMIN \
+  --user "$PANEL_UID:$PANEL_GID" --group-add "$CONTROL_GID" \
+  --cap-drop ALL --security-opt no-new-privileges \
   -v /etc/localtime:/etc/localtime:ro \
   -v /etc/vpn2/tls/panel:/run/vpn2-tls:ro \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
-  -v /etc/anysda:/etc/anysda \
-  -v /etc/wireguard:/etc/wireguard \
-  -v /etc/openvpn:/etc/openvpn \
-  -v /etc/strongswan:/etc/strongswan \
-  -v /etc/swanctl:/etc/swanctl \
+  -v /run/vpn2-control:/run/vpn2-control:ro \
   -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
   -e NODE_ENV=production \
   -e PORT=51821 \

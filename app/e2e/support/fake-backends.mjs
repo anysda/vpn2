@@ -148,7 +148,7 @@ function bot(req, res) {
   if (DEMO) return demoBot(req, res)
   let token = ''
   try {
-    token = JSON.parse(readFileSync('/etc/anysda/telegram-runtime.json', 'utf8')).bot_token || ''
+    token = JSON.parse(readFileSync('/var/lib/anysda-vpn2/runtime/telegram-runtime.json', 'utf8')).bot_token || ''
   }
   catch {
     // файла ещё нет — бот не настроен

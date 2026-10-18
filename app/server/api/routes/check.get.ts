@@ -1,5 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { control } from '../../utils/control'
 import { asc, eq } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { devices, routes } from '../../database/schema'
@@ -9,12 +8,24 @@ import { clientConn, explain, parseQuery, resolveIp } from '../../utils/route-ch
 import type { RoutePlan } from '../../utils/route-match'
 
 // Снимок пишет роутер рядом с manual-routes.json, перечитываем по mtime.
-let cached: { mtime: number, plan: RoutePlan } | null = null
+let cached: { revision: string, plan: RoutePlan } | null = null
 async function loadPlan(): Promise<RoutePlan> {
-  const path = join(dirname(useRuntimeConfig().routesFilePath as string), 'route-plan.json')
   try {
-    const { mtimeMs } = await stat(path)
-    if (cached?.mtime !== mtimeMs) cached = { mtime: mtimeMs, plan: JSON.parse(await readFile(path, 'utf8')) }
+    type Chunk = { revision: string, size: number, data: string }
+    let part = await control<Chunk>('routes.plan', { offset: 0, revision: '' })
+    if (cached?.revision === part.revision) return cached.plan
+    const revision = part.revision
+    const chunks = [Buffer.from(part.data, 'base64')]
+    let offset = chunks[0]!.length
+    if (part.size > 32 * 1024 * 1024) throw new Error('route plan too large')
+    while (offset < part.size) {
+      part = await control<Chunk>('routes.plan', { offset, revision })
+      const chunk = Buffer.from(part.data, 'base64')
+      if (!chunk.length) throw new Error('route plan incomplete')
+      chunks.push(chunk)
+      offset += chunk.length
+    }
+    cached = { revision, plan: JSON.parse(Buffer.concat(chunks).toString('utf8')) }
     return cached.plan
   }
   catch (err) {

@@ -15,6 +15,7 @@ for (const proto of ['udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6', 'tcp-server',
       const profile = await runInNewContext(`${code}\nbuildOvpnConfig(params)`, {
         params: { proto, serverHost: host, serverPort: 1194, dns: [], clientCert: 'cert', clientKey: 'key' },
         fs: { readFile: async () => 'fixture' }, CA_CERT: '', TLS_CRYPT: '',
+        control: async () => ({ ca: 'fixture', tlsCrypt: 'fixture' }),
         ovpnLocalRoutes: () => [],
       })
       expect(profile).toContain(`\nproto ${proto.startsWith('udp') ? 'udp' : 'tcp-client'}\n`)

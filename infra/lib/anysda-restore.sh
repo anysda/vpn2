@@ -443,6 +443,20 @@ if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
     systemctl start "${CADDY_SYNC_UNITS[@]}"
   fi
 fi
+if id vpn2-panel >/dev/null 2>&1; then
+  install -d -o vpn2-panel -g vpn2-panel -m 0700 /var/lib/anysda-vpn2/runtime
+  for name in sso-runtime.json telegram-runtime.json; do
+    runtime=/var/lib/anysda-vpn2/runtime/$name
+    if [[ -f /etc/anysda/$name && ! -L /etc/anysda/$name ]]; then
+      install -o vpn2-panel -g vpn2-panel -m 0640 "/etc/anysda/$name" "$runtime"
+    elif [[ ! -e /etc/anysda/$name ]]; then
+      rm -f "$runtime"
+    fi
+    ln -sfn "$runtime" "/etc/anysda/$name"
+  done
+  chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2
+  [[ ! -f /var/lib/anysda-vpn2/db.sqlite ]] || chown -h vpn2-panel:vpn2-panel /var/lib/anysda-vpn2/db.sqlite
+fi
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 
 # ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а

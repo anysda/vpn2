@@ -9,7 +9,7 @@
 #   ./setup.sh --front-test-down     остановить и удалить
 #
 # Образ панели тот же, что ставит стадия 30-frontend: PANEL_IMAGE
-# (ghcr.io/anysda/vpn2/panel:dev), docker pull, без сборки.
+# (ghcr.io/anysda/vpn2/panel:dev), с отдельным слоем тестовых VPN-служб.
 # FRONT_TEST_DEV=1 - вместо собранной панели `nuxt dev` из app/ этой рабочей
 # копии (в том же образе: node 24 и wg/openssl/ip, нужные серверу панели):
 # правка файла в app/ сразу видна в браузере (HMR), node_modules и .nuxt лежат
@@ -87,6 +87,9 @@ ensure_host_tools
 IMAGE=${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}
 dk pull "$IMAGE" || dk image inspect "$IMAGE" >/dev/null \
   || { echo "образа $IMAGE нет ни в registry, ни локально" >&2; exit 1; }
+dk build --build-arg "PANEL_IMAGE=$IMAGE" -f "$APP_DIR/e2e/Dockerfile.vpn" -t "$NAME-vpn" "$APP_DIR"
+IMAGE=$NAME-vpn
+export E2E_VPN_SERVICES=1
 
 # Собранная панель: наполнитель кладём к модулям сервера (.output/server/
 # node_modules, там есть drizzle-orm и @libsql/client). Dev: всё из app/.

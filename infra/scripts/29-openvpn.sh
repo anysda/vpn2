@@ -39,6 +39,8 @@ OVPN_SUBNET="${OVPN_SUBNET:-10.67.67.0}"
 OVPN_SUBNETS=$(vpn_pool_subnets ovpn)
 OVPN_DIR=/etc/openvpn/server
 PKI=$OVPN_DIR/pki
+OVPN_CONTROL_USER=root
+[[ ! -f /etc/vpn2-control/api-managed ]] || OVPN_CONTROL_USER=vpn2-control
 
 mkdir -p /var/anysda/.stamps "$PKI" "$PKI/newcerts" "$OVPN_DIR/ccd"
 
@@ -209,10 +211,10 @@ status-version 2
 # Management на unix-сокете, не TCP. Через него панель рвёт уже установленные
 # сессии при заморозке, истечении, удалении и перевыпуске: ccd-директиву disable и CRL
 # OpenVPN проверяет только на НОВОМ подключении (VPN2-39). Сокет OpenVPN
-# создаёт с правами 0777, поэтому пускаем только root (панель в контейнере
-# тоже root) - иначе любой локальный пользователь ноды рвал бы сессии.
+# создаёт с правами 0777: разрешён только управляющий UID. До первой миграции
+# остаётся root; стадия панели транзакционно переключает его на сервис.
 management /etc/openvpn/server/mgmt.sock unix
-management-client-user root
+management-client-user ${OVPN_CONTROL_USER}
 verb 3
 EOF
 

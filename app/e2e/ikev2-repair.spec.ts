@@ -4,6 +4,7 @@ import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import * as schema from '../server/database/schema'
 import { nextPoolAddress } from '../server/utils/address-pools'
 import { coalesceRuns } from '../server/utils/coalesce'
@@ -31,6 +32,9 @@ test('массовое восстановление IKEv2 сохраняет к�
         './address-pools': { nextPoolAddress }, './naming': { slugify },
         './coalesce': { coalesceRuns }, './client-status': { isClientActive: () => true },
         './client-dns': { clientDns: () => ['192.0.2.53'] },
+        './control': { controlApply: async (_method: string, params: unknown) => {
+          config = execFileSync('python3', ['e2e/support/render-ikev2.py'], { input: JSON.stringify(params), encoding: 'utf8' })
+        } },
         'node:path': { default: path },
         'node:fs': { promises: {
           readFile: async () => 'self-signed', access: async () => {},
@@ -41,7 +45,7 @@ test('массовое восстановление IKEv2 сохраняет к�
           const callback = args.at(-1) as (error: Error | null, output: string) => void
           callback(null, '')
         } },
-      }, { useLogger: () => ({ debug: () => {}, warn: () => {} }), process },
+      }, { useRuntimeConfig: () => ({ ikev2Enabled: true }), useLogger: () => ({ debug: () => {}, warn: () => {} }), process },
     )
     queries.length = 0
     const start = performance.now()

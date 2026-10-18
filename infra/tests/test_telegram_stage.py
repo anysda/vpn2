@@ -37,6 +37,9 @@ elif args[0] == 'pull':
 elif args[0] == 'rm':
     containers.pop(args[-1], None)
 elif args[0] == 'run':
+    if '--name' not in args:
+        path.write_text(json.dumps(state))
+        raise SystemExit(0)  # Candidate API probe; exercised against real sockets separately.
     name = args[args.index('--name') + 1]
     if state.get('fail_panel') and name == 'anysda-vpn2':
         rc = 1
@@ -70,6 +73,14 @@ class TelegramStageTests(unittest.TestCase):
             stage = (ROOT / 'infra/scripts' / name).read_text()
             for prefix in ('/etc/', '/var/', '/opt/', '/tmp/anysda', '/usr/local/lib/'):
                 stage = stage.replace(prefix, str(self.root) + prefix)
+            # Isolate host account ownership from the secret-propagation test.
+            for account in ('root:vpn2-panel', 'vpn2-panel:vpn2-panel', 'vpn2-bot:vpn2-bot'):
+                stage = stage.replace(account, f'{os.getuid()}:{os.getgid()}')
+            for account in ('vpn2-panel', 'vpn2-bot'):
+                stage = stage.replace('-o ' + account, '-o ' + str(os.getuid()))
+                stage = stage.replace('-g ' + account, '-g ' + str(os.getgid()))
+                stage = stage.replace('id -u ' + account, 'id -u')
+                stage = stage.replace('id -g ' + account, 'id -g')
             (scripts / name).write_text(stage)
         (scripts / 'vpn2_tls.py').write_text((ROOT / 'infra/lib/vpn2_tls.py').read_text())
         (scripts / 'entry-resources.sh').write_text('entry_resources() { ENTRY_DOCKER_ARGS=(); }\n')
@@ -80,7 +91,7 @@ class TelegramStageTests(unittest.TestCase):
         (scripts / 'anysda-svc.sh').write_text(
             f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n'
             'svc_restart_if_changed() { :; }\n')
-        for name in ('etc/caddy', 'etc/systemd/system', 'tmp/anysda'):
+        for name in ('etc/caddy', 'etc/systemd/system', 'etc/vpn2-control', 'tmp/anysda'):
             (self.root / name).mkdir(parents=True)
         (self.root / 'tmp/anysda/anysda-config.yaml.tpl').write_text('admin: fixture\n')
         binaries = self.root / 'bin'
@@ -88,7 +99,8 @@ class TelegramStageTests(unittest.TestCase):
         commands = {'docker': DOCKER, 'caddy': '#!/bin/sh\necho v2.11.7\n',
                     'ufw': '#!/bin/sh\nexit 0\n', 'curl': '#!/bin/sh\nexit 0\n',
                     'envsubst': '#!/bin/sh\ncat\n', 'systemctl': '#!/bin/sh\nexit 0\n',
-                    'journalctl': '#!/bin/sh\nexit 0\n'}
+                    'journalctl': '#!/bin/sh\nexit 0\n',
+                    'getent': f'#!/bin/sh\necho vpn2-control:x:{os.getgid()}:\n'}
         for name, body in commands.items():
             path = binaries / name
             path.write_text(body)

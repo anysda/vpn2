@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { controlApply } from './control'
 import { isIPv4 } from 'node:net'
 import { asc } from 'drizzle-orm'
 import { useDb } from '../database/client'
@@ -17,9 +16,7 @@ export async function syncRoutesFile(): Promise<{ count: number, path: string }>
 
   const path = cfg.routesFilePath as string
   try {
-    const dir = dirname(path)
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-    writeFileSync(path, JSON.stringify(rows, null, 2) + '\n', { mode: 0o644 })
+    await controlApply('settings.apply', { resource: 'routes', config: rows })
   }
   catch (err) {
     log.error({ err, path }, 'failed to write manual-routes.json')

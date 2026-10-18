@@ -1,8 +1,5 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-import path from 'node:path'
+import { control, controlApply } from './control'
 import { and, eq, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
@@ -10,11 +7,8 @@ import { wgAllowedIps } from './allowed-ips'
 import { isClientActive } from './client-status'
 import { coalesceRuns } from './coalesce'
 import { nextPoolAddress } from './address-pools'
-import pools from '../../shared/vpn-pools.json' with { type: 'json' }
 import { wgEndpoint } from './wg-endpoint'
 
-
-const exec = promisify(execFile)
 
 /**
  * WireGuard keypair. Uses Node's native X25519 — no `wg` binary required.
@@ -93,87 +87,9 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
   ].join('\n')
 }
 
-interface ServerConfigParams {
-  serverPrivateKey: string
-  listenPort: number
-  serverIp: string
-  peers: Array<{
-    publicKey: string
-    presharedKey: string
-    allowedIp: string  // single /32
-    enabled: boolean
-  }>
-}
-
-/**
- * Atomically rewrite /etc/wireguard/wg0.conf and run `wg syncconf` so the
- * kernel interface picks up the new peer list without dropping existing
- * sessions. Skipped (with a log warning) if wireguard-tools isn't available.
- */
-async function writeWgServerConfig(
-  p: ServerConfigParams,
-  confPath = '/etc/wireguard/wg0.conf',
-): Promise<void> {
-  const serverUla = wgUlaAddress(p.serverIp)
-  const lines: string[] = [
-    `# Managed by anysda-vpn2 panel. Do not edit by hand.`,
-    `[Interface]`,
-    `Address = ${p.serverIp}/24, ${serverUla}/64`,
-    `ListenPort = ${p.listenPort}`,
-    `PrivateKey = ${p.serverPrivateKey}`,
-    ``,
-  ]
-  for (const peer of p.peers) {
-    if (!peer.enabled) continue
-    lines.push(
-      `[Peer]`,
-      `PublicKey = ${peer.publicKey}`,
-      `PresharedKey = ${peer.presharedKey}`,
-      `AllowedIPs = ${peer.allowedIp}/32, ${wgUlaAddress(peer.allowedIp)}/128`,
-      ``,
-    )
-  }
-  const body = lines.join('\n')
-
-  const tmp = `${confPath}.tmp-${process.pid}`
-  await fs.mkdir(path.dirname(confPath), { recursive: true })
-  await fs.writeFile(tmp, body, { mode: 0o600 })
-  await fs.rename(tmp, confPath)
-
-  try {
-    // `wg-quick strip` emits only [Interface] + [Peer] (no PostUp/PostDown
-    // hooks), which is exactly what `wg syncconf` accepts. `syncconf` does
-    // NOT touch interface addresses, поэтому ULA на wg0 ставим отдельно:
-    // `replace` идемпотентен и не рвёт существующие сессии пиров.
-    await exec('flock', ['-w', '10', '/etc/wireguard/.access-apply.lock', 'bash', '-o', 'pipefail', '-c', `wg-quick strip wg0 | wg syncconf wg0 /dev/stdin`], { timeout: 20_000 })
-    await exec('ip', ['-6', 'addr', 'replace', `${serverUla}/64`, 'dev', 'wg0'], { timeout: 5_000 })
-    // syncconf не добавляет маршруты для новых пиров, в отличие от wg-quick.
-    for (const subnet of pools.wg.subnets) {
-      await exec('ip', ['route', 'replace', subnet, 'dev', 'wg0'], { timeout: 5_000 })
-    }
-  }
-  catch (err) {
-    // wg0 may not exist (cold start before 28-wireguard ran) or wg binary
-    // missing (local dev). Don't fail the API call — the next stage-28 run
-    // will pick the conf up from disk.
-    useLogger().warn({ err: (err as Error).message }, 'wg syncconf skipped')
-  }
-}
-
-const SERVER_PRIVKEY_PATH = '/etc/wireguard/server.priv'
-const SERVER_PUBKEY_PATH = '/etc/wireguard/server.pub'
-
-/**
- * Load the server's WG keypair from /etc/wireguard. The keys are seeded by
- * stage 28 and read by the panel for peer-config rendering.
- */
-export async function loadServerKeys(): Promise<{ privateKey: string, publicKey: string }> {
-  const [priv, pub] = await Promise.all([
-    fs.readFile(SERVER_PRIVKEY_PATH, 'utf8').then(s => s.trim()).catch(() => ''),
-    fs.readFile(SERVER_PUBKEY_PATH, 'utf8').then(s => s.trim()).catch(() => ''),
-  ])
-  if (!priv || !pub) throw new Error('WireGuard server keys not initialised — run stage 28-wireguard')
-  return { privateKey: priv, publicKey: pub }
+/** Only the public server key crosses the privilege boundary. */
+export async function loadServerKeys(): Promise<{ publicKey: string }> {
+  return control('profile.read', { protocol: 'wg' })
 }
 
 /**
@@ -234,14 +150,6 @@ async function syncWireguardConfigOnce(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.wgEnabled) return
 
-  let serverKeys
-  try {
-    serverKeys = await loadServerKeys()
-  }
-  catch {
-    return // stage 28 hasn't run yet
-  }
-
   const db = useDb()
   const rows = await db
     .select({
@@ -256,20 +164,9 @@ async function syncWireguardConfigOnce(): Promise<void> {
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
 
   const peers = rows
-    .filter(r => r.wgPublicKey && r.wgPresharedKey && r.wgIp)
-    .map(r => ({
-      publicKey: r.wgPublicKey!,
-      presharedKey: r.wgPresharedKey!,
-      allowedIp: r.wgIp!,
-      enabled: !r.deleting && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
-    }))
-
-  await writeWgServerConfig({
-    serverPrivateKey: serverKeys.privateKey,
-    listenPort: Number(cfg.wgListenPort ?? 51820),
-    serverIp: String(cfg.wgServerIp ?? '10.66.66.1'),
-    peers,
-  })
+    .filter(r => r.wgPublicKey && r.wgPresharedKey && r.wgIp && !r.deleting && isClientActive(r))
+    .map(r => ({ key: r.wgPublicKey!, preshared_key: r.wgPresharedKey!, ip: r.wgIp! }))
+  await controlApply('wg.apply', { peers })
 }
 
 /** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */

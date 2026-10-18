@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-const RUNTIME_PATH = '/etc/anysda/telegram-runtime.json'
+const RUNTIME_PATH = '/var/lib/anysda-vpn2/runtime/telegram-runtime.json'
 
 export interface TelegramRuntime {
   bot_token: string

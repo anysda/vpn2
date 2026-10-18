@@ -102,7 +102,7 @@ panel_begin() {
   echo 'administrative changes paused for migration; VPN services remain running'
   # Capture changes completed between the first backup and the maintenance window.
   python3 "$panel_lib/deploy_state.py" --state "$panel_state" backup
-  docker run --rm --network none \
+  docker run --rm --network none --user 0:0 \
     -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
     -e NUXT_DATABASE_URL=file:/var/lib/anysda-vpn2/db.sqlite \
     --entrypoint flock "$PANEL_IMAGE" -n /var/lib/anysda-vpn2/.migration.lock node scripts/migrate.mjs

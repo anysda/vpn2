@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,6 +31,9 @@ for (const scenario of [
       const load = () => serverModule<typeof import('../server/utils/client-prefs')>(
         new URL('../server/utils/client-prefs.ts', import.meta.url), {
           '../database/client': { useDb: () => db }, '../database/schema': schema,
+          './control': { controlApply: async (_method: string, params: { config: unknown }) => {
+            await writeFile(cfg.clientPrefsFilePath, JSON.stringify(params.config))
+          } },
         }, { process, useRuntimeConfig: () => cfg, useLogger: () => ({ info: (data: { oldTag: string, newTag: string | null }) => { if (data.oldTag) logs.push(data) } }) },
       )
       try {

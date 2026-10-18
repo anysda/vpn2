@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 
 // Explicit deploy step before starting the application under test.
 assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
@@ -10,6 +11,7 @@ assert.equal(spawnSync(process.execPath, ['scripts/migrate.mjs'], {
 
 // Запускать в одноразовом образе панели с read-only /etc/anysda и пустой БД.
 // Не печатаем журнал дочернего процесса: на старой версии в нём пароль.
+mkdirSync('/var/lib/anysda-vpn2/admin-password.txt')
 const child = spawn(process.execPath, ['.output/server/index.mjs'], {
   env: {
     ...process.env,

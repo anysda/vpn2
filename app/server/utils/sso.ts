@@ -29,7 +29,7 @@ export const SSO_PROVIDER = 'authentik'
  * config.yaml (через env стадии 30) только засевает их, пока файла нет: после
  * первого сохранения из профиля главнее панель, повторный деплой файл не трогает.
  */
-const RUNTIME_PATH = '/etc/anysda/sso-runtime.json'
+const RUNTIME_PATH = '/var/lib/anysda-vpn2/runtime/sso-runtime.json'
 
 /** То, что хранится и правится в профиле. */
 export interface SsoStored {

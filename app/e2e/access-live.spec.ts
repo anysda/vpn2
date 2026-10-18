@@ -131,8 +131,8 @@ test('живые VPN: сбой OpenVPN, честный статус и ручн�
       import { spawn } from 'node:child_process';
       import { rmSync } from 'node:fs';
       rmSync('/tmp/access-hold-ready',{force:true}); rmSync('/tmp/access-hold-release',{force:true});
-      spawn('flock',['/var/lib/anysda-vpn2/access-worker.lock','timeout','30','sh','-c',
-        'touch /tmp/access-hold-ready; while [ ! -f /tmp/access-hold-release ]; do sleep 0.1; done'],
+      spawn(process.execPath,['--input-type=module','-e',
+        "import { DatabaseSync } from 'node:sqlite'; import { writeFileSync,existsSync } from 'node:fs'; const db=new DatabaseSync('/var/lib/anysda-vpn2/access-worker.sqlite'); db.exec('PRAGMA busy_timeout=30000; BEGIN IMMEDIATE'); writeFileSync('/tmp/access-hold-ready',''); const start=Date.now(); const timer=setInterval(()=>{if(existsSync('/tmp/access-hold-release')||Date.now()-start>30000){db.exec('ROLLBACK');db.close();clearInterval(timer)}},100)"],
         {detached:true,stdio:'ignore'}).unref();
     `)
     await expect.poll(() => inside("import { existsSync } from 'node:fs'; console.log(existsSync('/tmp/access-hold-ready'));"), { timeout: 10_000 }).toBe('true')
@@ -188,17 +188,19 @@ test('docker restart во время применения; гонка панел
   await page.request.post(`/api/clients/${c.id}/devices`, { data: { name: 'Телефон' } })
   try {
     inside(String.raw`
-      import { writeFileSync } from 'node:fs';
-      writeFileSync('/usr/local/bin/wg', '#!/bin/sh\n/usr/bin/wg "$@"\nrc=$?\nif [ "$1" = syncconf ]; then touch /tmp/access-applied; sleep 30; fi\nexit "$rc"\n', {mode:0o755});
+      import { writeFileSync, renameSync } from 'node:fs';
+      renameSync('/usr/bin/wg', '/usr/bin/wg.real');
+      writeFileSync('/usr/bin/wg', '#!/bin/sh\n/usr/bin/wg.real "$@"\nrc=$?\nif [ "$1" = syncconf ]; then touch /tmp/access-applied; sleep 30; fi\nexit "$rc"\n', {mode:0o755});
     `)
     const response = await page.request.patch(`/api/clients/${c.id}`, { data: { frozenManual: true } })
     expect(response.status()).toBe(202)
     const { operation } = await response.json()
     await expect.poll(() => inside("import { existsSync } from 'node:fs'; console.log(existsSync('/tmp/access-applied'));"), { timeout: 15_000 }).toBe('true')
     command('restart', '-t', '0', container!)
-    inside("import { rmSync } from 'node:fs'; rmSync('/usr/local/bin/wg', {force:true});")
+    inside("import { renameSync } from 'node:fs'; renameSync('/usr/bin/wg.real','/usr/bin/wg');")
     command('exec', '-d', container!, 'node', '/tmp/fake-backends.mjs')
     command('exec', '-d', container!, 'bash', '/tmp/vpn-services.sh')
+    command('exec', '-d', container!, 'python3', '/tmp/control-service.py')
     await expect.poll(async () => (await page.request.get('/api/version').catch(() => null))?.status(), { timeout: 30_000 }).toBe(200)
     const recovered = await waitAccess(page.request, operation)
     expect(recovered.id).toBe(operation.id)
@@ -228,7 +230,7 @@ test('docker restart во время применения; гонка панел
     console.log('docker restart after WG apply: same operation confirmed; concurrent panel/bot: older=Заменена, latest version confirmed')
   }
   finally {
-    inside("import { rmSync } from 'node:fs'; rmSync('/usr/local/bin/wg', {force:true});")
+    inside("import { existsSync, renameSync } from 'node:fs'; if(existsSync('/usr/bin/wg.real')) renameSync('/usr/bin/wg.real','/usr/bin/wg');")
     const removed = await (await page.request.delete(`/api/clients/${c.id}`)).json()
     if (removed.operation) await waitAccess(page.request, removed.operation)
   }

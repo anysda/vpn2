@@ -41,6 +41,7 @@ class ControlTests(unittest.TestCase):
         self.state = self.root / 'state'
         self.state.mkdir()
         self.backend = self.backend_module.Backend(self.root, self.state)
+        self.backend.pools = self.pools
         self.public = base64.b64encode(bytes(range(32))).decode()
         self.psk = base64.b64encode(bytes(range(1, 33))).decode()
         self.peer = {'key': self.public, 'preshared_key': self.psk, 'ip': '10.66.66.2'}
@@ -259,6 +260,121 @@ class ControlTests(unittest.TestCase):
         self.assertIn('User=vpn2-control', service)
         self.assertIn('ProtectSystem=strict', service)
         self.assertNotIn('CAP_SYS_ADMIN', service)
+
+    def test_panel_api_requirements_and_public_profile_boundary(self):
+        self.file('/etc/wireguard/server.pub', self.public + '\n')
+        self.file('/etc/wireguard/server.priv', 'private-server-key')
+        reply = self.request('profile.read', {'protocol': 'wg'})
+        self.assertEqual(reply, {'api': 1, 'ok': True, 'result': {'publicKey': self.public}})
+        description = self.request('api.describe', {})
+        self.assertTrue(description['ok'])
+        for method in ('openvpn.issue', 'openvpn.revoke', 'traffic.read', 'settings.apply'):
+            self.assertIn(method, description['result']['methods'])
+        self.invalid('profile.read', {'protocol': 'wg', 'path': '/etc/wireguard/server.priv'})
+        self.invalid('profile.read', {'protocol': 'ca-key'})
+
+    def test_settings_validate_before_write_and_preserve_unrelated_files(self):
+        path = self.file('/etc/anysda/manual-routes.json', '[]\n')
+        secret = self.file('/etc/anysda/clash-secret.txt', 'unrelated-secret')
+        params = {'resource': 'routes', 'version': 1,
+                  'config': [{'type': 'domain', 'value': 'example.org', 'outbound': 'direct-ru'}]}
+        self.assertTrue(self.request('settings.apply', params)['ok'])
+        self.assertEqual(json.loads(path.read_text()), params['config'])
+        before = path.read_bytes()
+        for config in ([{'type': 'domain', 'value': 'x\ninclude /etc/shadow', 'outbound': 'direct-ru'}],
+                       [{'type': 'ip_cidr', 'value': '999.1.1.1', 'outbound': 'direct-ru'}]):
+            self.invalid('settings.apply', dict(params, config=config, version=2))
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(secret.read_text(), 'unrelated-secret')
+        self.invalid('settings.apply', dict(params, version=1, config=[]), 'conflict')
+        self.invalid('settings.apply', dict(params, resource='../../etc/shadow'))
+        self.invalid('settings.apply', {'resource': 'preferences', 'version': 1,
+                                       'config': {'exit': ['127.0.0.1']}})
+
+    def test_certificate_api_cannot_revoke_another_device_or_accept_paths(self):
+        self.file('/etc/openvpn/server/pki/index.txt',
+                  'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        self.invalid('openvpn.revoke', {'device_id': 8, 'serial': '0A'})
+        self.invalid('openvpn.revoke', {'device_id': 7, 'serial': '../../ca.key'})
+        self.invalid('openvpn.issue', {'device_id': 7, 'generation': 'x\ncommand'})
+        self.invalid('openvpn.disconnect', {'device_id': '7\nkill all'})
+
+    def test_issue_retry_returns_same_key_and_certificate_after_restart(self):
+        self.file('/etc/openvpn/server/pki/index.txt', '')
+        calls = []
+
+        def command(*args):
+            calls.append(args)
+            if 'genpkey' in args:
+                Path(args[-1]).write_text('device-key')
+            elif '-pubout' in args:
+                return 'public'
+            elif '-pubkey' in args:
+                return 'public'
+            elif 'req' in args:
+                Path(args[args.index('-out') + 1]).write_text('request')
+            elif '-serial' in args:
+                return 'serial=0A\n'
+            elif 'ca' in args:
+                Path(args[-1]).write_text('certificate')
+                self.file('/etc/openvpn/server/pki/newcerts/0A.pem', 'certificate')
+                self.file('/etc/openvpn/server/pki/index.txt',
+                          'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+            return ''
+
+        params = {'device_id': 7, 'generation': 'a' * 64}
+        with patch.object(self.backend, 'command', side_effect=command):
+            first = self.request('openvpn.issue', params)
+        self.assertTrue(first['ok'], first)
+        # Simulate death after CA signing but before publication of the reply.
+        (self.state / ('issue-7-' + 'a' * 64) / 'cert.pem').unlink()
+        self.backend = self.backend_module.Backend(self.root, self.state)
+        self.backend.pools = self.pools
+        with patch.object(self.backend, 'command', side_effect=command):
+            second = self.request('openvpn.issue', params)
+        self.assertEqual(first, second)
+        self.assertEqual(sum('genpkey' in args for args in calls), 1)
+        self.assertEqual(sum('ca' in args for args in calls), 1)
+
+    def test_missing_ccd_is_not_a_confirmed_deny(self):
+        self.file('/etc/openvpn/server/pki/index.txt',
+                  'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        with patch.object(self.backend, 'command', return_value=''):
+            result = self.request('openvpn.certificate', {'device_id': 7, 'serial': '0A'})
+        self.assertTrue(result['ok'], result)
+        self.assertFalse(result['result']['present'])
+
+    def test_management_uid_switch_is_transactional_and_survives_redeploy(self):
+        panel = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
+        stage = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
+        self.assertIn('management-client-user ${OVPN_CONTROL_USER}', stage)
+        self.assertIn('OVPN_CONTROL_USER=vpn2-control', stage)
+        switch = panel.index("sed -i 's/^management-client-user")
+        guard = panel.index('panel_guard_files /etc/caddy')
+        self.assertLess(panel.index('\npanel_begin'), guard)
+        self.assertLess(guard, switch)
+        self.assertIn('/etc/openvpn/server/server.conf', panel[guard:switch])
+        self.assertIn('systemctl try-restart openvpn-server@server', panel)
+        self.assertIn('pwd.getpwnam(\'vpn2-control\').pw_uid',
+                      (ROOT / 'infra/lib/verify-traffic.py').read_text())
+
+    def test_no_system_execution_or_writable_config_mounts_in_panel(self):
+        for path in (ROOT / 'app/server').rglob('*.ts'):
+            self.assertNotIn('node:child_process', path.read_text(), str(path))
+        panel = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
+        bot = (ROOT / 'infra/scripts/35-telegram.sh').read_text()
+        for stage in (panel, bot):
+            self.assertIn('--user ', stage)
+            self.assertIn('--cap-drop ALL', stage)
+            self.assertNotIn('--cap-add', stage)
+            self.assertNotIn('--pid host', stage)
+            self.assertNotIn('docker.sock', stage)
+        for directory in ('wireguard', 'openvpn', 'strongswan', 'swanctl'):
+            self.assertNotIn('-v /etc/' + directory, panel)
+        self.assertNotIn('-v /etc/anysda:/etc/anysda', panel)
+        self.assertLess(panel.index('scripts/control-probe.mjs'), panel.index('\npanel_begin'))
+        socket_unit = (CONTROL / 'vpn2-control.socket').read_text()
+        self.assertIn('PartOf=vpn2-control.service', socket_unit)
 
 
 if __name__ == '__main__':

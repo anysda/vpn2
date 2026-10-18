@@ -1,18 +1,11 @@
-import { execFile } from 'node:child_process'
-import { X509Certificate, randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
-import net from 'node:net'
-import os from 'node:os'
-import path from 'node:path'
-import { promisify } from 'node:util'
+import { createHash, X509Certificate } from 'node:crypto'
+import { control, controlApply } from './control'
 import { and, eq, exists, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
 import { nextPoolAddress } from './address-pools'
-
-const exec = promisify(execFile)
 
 // openssl ca не блокирует общие index.txt/serial/crlnumber. Выдачу,
 // перевыпуск и отзыв выполняем по очереди, включая чтение/запись устройства:
@@ -24,26 +17,6 @@ function withCaLock<T>(fn: () => Promise<T>): Promise<T> {
   caQueue = run.catch(() => {})
   return run
 }
-
-// CA + server PKI laid down by stage 29-openvpn; mounted into the panel
-// container at the same path so the panel can issue/revoke client certs.
-const OVPN_DIR = '/etc/openvpn/server'
-const PKI_DIR = `${OVPN_DIR}/pki`
-const CCD_DIR = `${OVPN_DIR}/ccd`
-const CA_CERT = `${PKI_DIR}/ca.crt`
-const CA_KEY = `${PKI_DIR}/ca.key`
-const TLS_CRYPT = `${PKI_DIR}/tls-crypt.key`
-const OSSL_CNF = `${PKI_DIR}/openssl.cnf`
-const CRL_PEM = `${PKI_DIR}/crl.pem`
-// Стадия 29 под этой же блокировкой проверяет и атомарно заменяет PKI.
-// Файл вне pki: замена каталога не должна создавать новую блокировку.
-const PKI_LOCK = `${OVPN_DIR}/.pki.lock`
-// Management-сокет сервера (stage 29-openvpn, `management ... unix`).
-const MGMT_SOCK = `${OVPN_DIR}/mgmt.sock`
-
-// Постоянные адреса устройств: 10.67.67.2-239, .1 у сервера. Хвост .240-.253
-// стадия 29 отдаёт пулу сервера (ifconfig-pool): туда попадёт устройство, чей
-// ccd ещё не записан. Синк ниже выдаст ему адрес и переподключит.
 
 /**
  * Выдать устройству постоянный адрес OpenVPN, если его нет. Повтор при
@@ -76,207 +49,40 @@ export function ovpnCn(deviceId: number): string {
   return `dev_${deviceId}`
 }
 
-/** True once stage 29-openvpn has seeded the CA. */
+/** Readiness errors propagate: an unreachable service is not a disabled CA. */
 export async function caReady(): Promise<boolean> {
-  try {
-    await Promise.all([fs.access(CA_CERT), fs.access(CA_KEY), fs.access(OSSL_CNF)])
-    return true
-  }
-  catch {
-    return false
-  }
+  return (await control<{ ready: boolean }>('profile.read', { protocol: 'openvpn' })).ready
 }
 
-/**
- * Issue an EC (prime256v1) client keypair signed by the CA via `openssl ca`,
- * which records the cert in the CA index so it can later be revoked into a
- * CRL. Returns the PEM cert + key.
- */
-async function issueClientCert(cn: string): Promise<{ cert: string, key: string }> {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ovpn-'))
-  try {
-    const keyPath = path.join(tmp, 'key.pem')
-    const csrPath = path.join(tmp, 'csr.pem')
-    const certPath = path.join(tmp, 'cert.pem')
-
-    await exec('openssl', [
-      'genpkey', '-algorithm', 'EC',
-      '-pkeyopt', 'ec_paramgen_curve:prime256v1',
-      '-out', keyPath,
-    ], { timeout: 15_000 })
-
-    await exec('openssl', [
-      'req', '-new', '-key', keyPath, '-out', csrPath, '-subj', `/CN=${cn}`,
-    ], { timeout: 15_000 })
-
-    await exec('flock', ['-x', PKI_LOCK, 'openssl',
-      'ca', '-batch', '-notext', '-config', OSSL_CNF,
-      '-extensions', 'client_ext', '-days', '3650',
-      '-in', csrPath, '-out', certPath,
-    ], { timeout: 20_000 })
-
-    const [cert, key] = await Promise.all([
-      fs.readFile(certPath, 'utf8'),
-      fs.readFile(keyPath, 'utf8'),
-    ])
-    // Keep only the PEM block of the cert (openssl ca may prepend metadata).
-    const m = cert.match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/)
-    return { cert: (m ? m[0] : cert).trim() + '\n', key: key.trim() + '\n' }
-  }
-  finally {
-    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
-  }
+async function issueClientCert(deviceId: number, previous = ''): Promise<{ cert: string, key: string }> {
+  return control('openvpn.issue', { device_id: deviceId, generation: createHash('sha256').update(previous).digest('hex') })
 }
-
 
 export function revokeAccessCert(certPem: string): Promise<void> {
-  return withCaLock(() => revokeClientCertOnce(certPem))
+  const cert = new X509Certificate(certPem)
+  const match = cert.subject.match(/(?:^|\n)CN=dev_(\d+)(?:\n|$)/)
+  if (!match) throw new Error('Invalid managed certificate')
+  return control('openvpn.revoke', { device_id: Number(match[1]), serial: cert.serialNumber })
 }
 
-async function revokeClientCertOnce(certPem: string): Promise<void> {
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'ovpn-rev-'))
-  try {
-    const certPath = path.join(tmp, 'cert.pem')
-    await fs.writeFile(certPath, certPem)
-    // После сбоя gencrl или частичного удаления клиента индекс уже содержит R.
-    // Проверяем серийник, а не текст ошибки openssl; CRL всё равно пересобираем.
-    const serial = new X509Certificate(certPem).serialNumber
-    const index = await fs.readFile(`${PKI_DIR}/index.txt`, 'utf8')
-    const revoked = index.split('\n').some((line) => {
-      const fields = line.split('\t')
-      return fields[0] === 'R' && fields[3]?.toUpperCase() === serial.toUpperCase()
-    })
-    if (!revoked) {
-      await exec('flock', ['-x', PKI_LOCK, 'openssl', 'ca', '-config', OSSL_CNF, '-revoke', certPath], { timeout: 15_000 })
-    }
-    await regenCrl()
-  }
-  finally {
-    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {})
-  }
-}
-
-/** Rebuild crl.pem from the CA index. OpenVPN re-reads it per new connection. */
-async function regenCrl(): Promise<void> {
-  const tmp = `${CRL_PEM}.${randomUUID()}.tmp`
-  try {
-    await exec('flock', ['-x', PKI_LOCK, 'openssl', 'ca', '-config', OSSL_CNF, '-gencrl', '-out', tmp], { timeout: 15_000 })
-    await fs.chmod(tmp, 0o644)
-    await fs.rename(tmp, CRL_PEM)
-  }
-  finally {
-    await fs.rm(tmp, { force: true })
-  }
-}
-
-// Management OpenVPN обслуживает одно подключение за раз — команды панели
-// выстраиваем в очередь.
-let mgmtQueue: Promise<unknown> = Promise.resolve()
-
-/**
- * Одна команда management-интерфейса. Шлём её и сразу `quit`, читаем до
- * закрытия соединения; строки уведомлений (`>INFO:` и т.п.) отбрасываем.
- */
-function ovpnMgmt(command: string, timeoutMs = 5_000): Promise<string[]> {
-  const run = () => new Promise<string[]>((resolve, reject) => {
-    const sock = net.createConnection(MGMT_SOCK)
-    let buf = ''
-    const timer = setTimeout(() => {
-      sock.destroy()
-      reject(new Error(`openvpn management: нет ответа на «${command}»`))
-    }, timeoutMs)
-    sock.setEncoding('utf8')
-    // `quit` нельзя слать вместе с командой: OpenVPN 2.7 закрывает сокет, не
-    // отдав ответ, и `status 2` приходит пустым. Ждём конец ответа — `END`
-    // у многострочных, `SUCCESS:`/`ERROR:` у остальных — и только потом выходим.
-    sock.on('connect', () => sock.write(`${command}\n`))
-    sock.on('data', (chunk: string) => {
-      buf += chunk
-      const lines = buf.split(/\r?\n/).filter(l => l && !l.startsWith('>'))
-      if (lines.some(l => l === 'END' || /^(SUCCESS|ERROR):/.test(l))) {
-        clearTimeout(timer)
-        sock.end('quit\n')
-        resolve(lines)
-      }
-    })
-    sock.on('error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
-    sock.on('close', () => {
-      clearTimeout(timer)
-      reject(new Error(`openvpn management: сокет закрыт без ответа на «${command}»`))
-    })
-  })
-  const p = mgmtQueue.then(run, run)
-  mgmtQueue = p.catch(() => {})
-  return p
-}
-
-/**
- * Рвёт все установленные сессии устройства. Без этого заморозка/удаление
- * действуют только на следующее подключение, а уже подключённый клиент
- * сидит в туннеле до своего переподключения (VPN2-39). true — кого-то выбили.
- */
 export async function killOvpnClient(cn: string): Promise<boolean> {
-  const out = await ovpnMgmt(`kill ${cn}`)
-  if (out.some(l => l.startsWith('SUCCESS:'))) {
-    useLogger().info({ cn }, 'ovpn: сессия разорвана')
-    return true
-  }
-  // «ERROR: common name 'dev_N' not found» — не подключён, это норма.
-  return false
+  const match = /^dev_(\d+)$/.exec(cn)
+  if (!match) throw new Error('Invalid managed device')
+  return (await control<{ killed: boolean }>('openvpn.disconnect', { device_id: Number(match[1]) })).killed
 }
 
-/**
- * Подключённые сейчас клиенты: CN → адрес в туннеле (management `status 2`,
- * CLIENT_LIST,<CN>,<реальный адрес>,<адрес в туннеле>,...).
- */
-export async function connectedOvpnClients(): Promise<Map<string, string>> {
-  const out = await ovpnMgmt('status 2')
-  const clients = new Map<string, string>()
-  for (const l of out) {
-    if (l.startsWith('CLIENT_LIST,')) {
-      const [, cn, , vaddr] = l.split(',')
-      if (cn) clients.set(cn, vaddr ?? '')
-    }
-  }
-  return clients
+async function connectedOvpnClients(): Promise<Map<string, string>> {
+  const { sessions } = await control<{ sessions: Record<string, string> }>('state.read', { protocol: 'openvpn' })
+  return new Map(Object.entries(sessions))
 }
 
-/** Рвёт сессии без падения вызывающего: сервер не поднят или старый (без management). */
 async function killOvpnClientQuiet(cn: string): Promise<void> {
-  await killOvpnClient(cn).catch((err) => {
-    useLogger().warn({ err: (err as Error).message, cn }, 'ovpn: kill через management не удался')
-  })
+  await killOvpnClient(cn)
 }
 
-/**
- * ccd устройства: постоянный адрес (`ifconfig-push`) и, у замороженного,
- * `disable`. Обе директивы OpenVPN читает при каждом новом подключении, так
- * что заморозка обратима без отзыва сертификата. Файл переписываем, только
- * если он изменился.
- */
 async function writeCcd(cn: string, ip: string | null, disabled: boolean): Promise<void> {
-  const body = [
-    // У прежних устройств маска неизменна. Для новых /24 gateway .67.1
-    // должен оставаться on-link, поэтому им выдаётся охватывающая /21.
-    ip ? `ifconfig-push ${ip} ${ip.startsWith('10.67.67.') ? '255.255.255.0' : '255.255.248.0'}` : '',
-    disabled ? 'disable' : '',
-  ].filter(Boolean).map(l => `${l}\n`).join('')
-  const file = path.join(CCD_DIR, cn)
-  if (!body) {
-    await removeCcd(cn)
-    return
-  }
-  if (await fs.readFile(file, 'utf8').catch(() => null) === body) return
-  await fs.mkdir(CCD_DIR, { recursive: true })
-  await fs.writeFile(file, body)
-}
-
-/** Удаление устройства: его ccd больше не нужен, адрес освобождается вместе со строкой. */
-async function removeCcd(cn: string): Promise<void> {
-  await fs.rm(path.join(CCD_DIR, cn), { force: true }).catch(() => {})
+  if (!ip) throw new Error('OpenVPN address missing')
+  await controlApply('openvpn.apply', { device_id: Number(cn.slice(4)), ip, action: disabled ? 'deny' : 'allow' })
 }
 
 export interface OvpnConfigParams {
@@ -301,10 +107,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
     throw new Error(`unsupported OpenVPN protocol: ${p.proto}`)
   }
   const clientProto = p.proto.startsWith('udp') ? 'udp' : 'tcp-client'
-  const [ca, tlsCrypt] = await Promise.all([
-    fs.readFile(CA_CERT, 'utf8'),
-    fs.readFile(TLS_CRYPT, 'utf8'),
-  ])
+  const { ca, tlsCrypt } = await control<{ ca: string, tlsCrypt: string }>('profile.read', { protocol: 'openvpn' })
   return [
     `client`,
     `dev tun`,
@@ -368,7 +171,7 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
     if (!owner || owner.deleting || row.deleting || !isClientActive(owner)) {
       throw createError({ statusCode: 409, message: 'Выдача сертификата недоступна до включения доступа' })
     }
-    const { cert, key } = await issueClientCert(ovpnCn(deviceId))
+    const { cert, key } = await issueClientCert(deviceId)
     const [issued] = await db
       .update(devicesTable)
       .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
@@ -416,15 +219,15 @@ async function reissueDeviceOvpnOnce(deviceId: number, clientId: number, version
   // Неготовая CA не отменяет отзыв: до публикации CRL и успешной выдачи
   // нового сертификата сохраняем старую пару в БД для повтора.
   if (row.ovpnCert) {
-    await revokeClientCertOnce(row.ovpnCert)
+    await revokeAccessCert(row.ovpnCert)
     // CRL проверяется только при подключении — живую сессию со старым
     // сертификатом рвём сами.
-    await killOvpnClientQuiet(ovpnCn(deviceId))
+    await killOvpnClient(ovpnCn(deviceId))
   }
   // Без ранее выданного сертификата OpenVPN остаётся необязательным.
   if (!row.ovpnCert && !(await caReady())) return row
 
-  const { cert, key } = await issueClientCert(ovpnCn(deviceId))
+  const { cert, key } = await issueClientCert(deviceId, row.ovpnCert ?? '')
   const [updated] = await db
     .update(devicesTable)
     .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
@@ -464,48 +267,13 @@ async function syncOpenvpnConfigOnce(): Promise<void> {
     .from(devicesTable)
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
 
-  const pinned = new Map<string, string | null>()
-  const disabledCns = new Set<string>()
   for (const r of rows) {
     if (!r.ovpnCert) continue
-    const cn = ovpnCn(r.id)
-    let ip = r.ovpnIp
-    if (!ip) {
-      ip = (await ensureDeviceOvpnIp(r.id).catch((err) => {
-        useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn: адрес устройству не выдан')
-        return null
-      }))?.ovpnIp ?? null
-    }
-    const disabled = r.deleting || !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
-    if (disabled) disabledCns.add(cn)
-    pinned.set(cn, ip)
-    await writeCcd(cn, ip, disabled)
+    const ip = r.ovpnIp ?? (await ensureDeviceOvpnIp(r.id)).ovpnIp
+    await writeCcd(ovpnCn(r.id), ip, r.deleting || !isClientActive(r))
   }
-
-  const files = await fs.readdir(CCD_DIR).catch(() => [] as string[])
-  for (const f of files) {
-    if (/^dev_\d+$/.test(f) && !pinned.has(f)) await removeCcd(f)
-  }
-
-  let connected: Map<string, string>
-  try {
-    connected = await connectedOvpnClients()
-  }
-  catch {
-    // Недоступный management не подтверждает отсутствие живых сессий.
-    if (disabledCns.size) useLogger().warn('ovpn: management недоступен, отключение не подтверждено')
-    throw new Error('OpenVPN management unavailable')
-  }
-  for (const [cn, vaddr] of connected) {
-    const ip = pinned.get(cn)
-    // DELETE мог закоммититься перед падением панели или отказом management.
-    // Повторяем разрыв оставшейся сессии по отсутствию устройства в БД.
-    if (disabledCns.has(cn) || (/^dev_\d+$/.test(cn) && !pinned.has(cn))) {
-      await killOvpnClientQuiet(cn)
-    }
-    else if (ip && vaddr && vaddr !== ip) {
-      useLogger().info({ cn, vaddr, ip }, 'ovpn: устройство не на своём адресе, переподключаю')
-      await killOvpnClientQuiet(cn)
-    }
+  const pinned = new Set(rows.filter(r => r.ovpnCert).map(r => ovpnCn(r.id)))
+  for (const [cn] of await connectedOvpnClients()) {
+    if (/^dev_\d+$/.test(cn) && !pinned.has(cn)) await killOvpnClientQuiet(cn)
   }
 }

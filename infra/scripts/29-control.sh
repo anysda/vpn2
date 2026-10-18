@@ -19,6 +19,26 @@ id vpn2-control >/dev/null 2>&1 || \
 id vpn2-panel >/dev/null 2>&1 || \
   useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin vpn2-panel
 usermod -a -G vpn2-control vpn2-panel
+id vpn2-bot >/dev/null 2>&1 || \
+  useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin vpn2-bot
+
+# App-owned data only. Legacy paths remain readable by backup and old images.
+install -d -o vpn2-panel -g vpn2-panel -m 0700 /var/lib/anysda-vpn2 /var/lib/anysda-vpn2/runtime
+for name in sso-runtime.json telegram-runtime.json; do
+  old=/etc/anysda/$name
+  new=/var/lib/anysda-vpn2/runtime/$name
+  if [[ -f "$old" && ! -L "$old" ]]; then
+    [[ -e "$new" ]] || cp -p "$old" "$new"
+  fi
+  ln -sfn "$new" "$old"
+done
+chown -hR vpn2-panel:vpn2-panel /var/lib/anysda-vpn2/runtime
+for name in db.sqlite db.sqlite-wal db.sqlite-shm access-worker.sqlite access-worker.sqlite-journal; do
+  [[ ! -e /var/lib/anysda-vpn2/$name ]] || chown -h vpn2-panel:vpn2-panel "/var/lib/anysda-vpn2/$name"
+done
+if [[ -f /var/lib/anysda-vpn2/runtime/telegram-runtime.json ]]; then
+  chmod 0640 /var/lib/anysda-vpn2/runtime/telegram-runtime.json
+fi
 
 install -d -o root -g root -m 0755 /usr/local/lib/vpn2-control /etc/vpn2-control
 for source in contract.py backend.py server.py launcher.py; do
@@ -42,6 +62,8 @@ systemctl daemon-reload
 systemctl enable --now vpn2-control.socket
 systemctl restart vpn2-control.service
 /usr/bin/python3 -I /usr/local/lib/vpn2-control/launcher.py --probe
+install -d -m 0755 /etc/vpn2
+printf '1\n' > /etc/vpn2/control-api-version
 install -d /var/anysda/.stamps
 touch /var/anysda/.stamps/29-control
 echo "[$HOST_TAG] 29-control done"

@@ -14,12 +14,9 @@ RUN pnpm build
 # --- runtime ---------------------------------------------------------------
 FROM mirror.gcr.io/library/node:24-slim AS runtime
 
-# iproute2 нужен для `ip -6 addr replace` в writeWgServerConfig(): wg syncconf
-# адреса интерфейса не трогает, поэтому ULA fd66:66::1/64 ставится отдельной
-# командой. Без пакета она падает с `spawn ip ENOENT`, ошибка глотается catch'ем
-# и ULA молча не появляется на wg0 — телега продолжает висеть в таймаутах.
+# VPN utilities and PKI stay on the host; util-linux is used by deploy migration.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends procps ca-certificates curl wireguard-tools iproute2 openssl util-linux \
+  && apt-get install -y --no-install-recommends ca-certificates curl util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,16 +26,14 @@ ENV PORT=51821
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/server/database/migrations ./server/database/migrations
 COPY --from=builder /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --from=builder /app/scripts/control-probe.mjs ./scripts/control-probe.mjs
+
+USER 10001:10001
 
 EXPOSE 51821
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT:-51821}/api/version" || exit 1
 
-# TODO (security audit H10): сейчас контейнер бежит как root + bind-mount
-# /etc/anysda rw + CAP_NET_ADMIN — RCE в Nuxt = full disclosure всех секретов
-# (admin-password.txt, tgbot-secret.txt, WG/IKEv2 ключей). Перевод на USER node
-# требует переноса wg-команд в host-side helper (через `pkexec`/привилегированный
-# socket) и точечного :ro-mount файлов из /etc/anysda. Делается отдельным PR
-# с обязательным прогоном test.md L4-routing на стенде.
+# Deploy maps the dedicated host UID and authorizes it at the Unix socket.
 CMD ["node", ".output/server/index.mjs"]

@@ -26,6 +26,11 @@ for (const proto of ['wg', 'ovpn']) {
           './ikev2-counters': { ikev2Deltas },
           './coalesce': { coalesceRuns },
           './msk-day': mskDay,
+          './control': { control: async (_method: string, params: { protocol: string }) => {
+            if (params.protocol === 'ikev2') throw new Error('no IKEv2 sample')
+            return { samples: params.protocol === (proto === 'ovpn' ? 'openvpn' : proto)
+              ? [{ key: 'test-key', device_id: device!.id, rx: counter * 2, tx: counter }] : [] }
+          } },
           'node:child_process': {
             execFile: (...args: unknown[]) => {
               const callback = args.at(-1) as (err: Error | null, output: { stdout: string }) => void
@@ -95,6 +100,7 @@ test('история трафика: год хранится, сутки ста�
         './ikev2-counters': { ikev2Deltas },
         './coalesce': { coalesceRuns },
         './msk-day': mskDay,
+        './control': { control: async () => { throw new Error('no traffic sample') } },
         'node:child_process': { execFile: (...args: unknown[]) => (args.at(-1) as (e: Error | null, o: { stdout: string }) => void)(null, { stdout: '' }) },
         'node:fs/promises': { readFile: async () => { throw new Error('no status file') } },
       }, { useLogger: () => ({ info: () => {} }), process },

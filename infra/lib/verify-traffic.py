@@ -30,6 +30,7 @@ import http.client
 import ipaddress
 import json
 import os
+import pwd
 from pathlib import Path
 import re
 import secrets
@@ -414,7 +415,13 @@ class OpenVPN:
         (CCD / name).chmod(0o644)
         with socket.socket(socket.AF_UNIX) as sock:
             sock.settimeout(5)
-            sock.connect('/etc/openvpn/server/mgmt.sock')
+            uid = os.geteuid()
+            try:
+                if Path('/etc/vpn2-control/api-managed').exists():
+                    os.seteuid(pwd.getpwnam('vpn2-control').pw_uid)
+                sock.connect('/etc/openvpn/server/mgmt.sock')
+            finally:
+                os.seteuid(uid)
             sock.sendall(f'kill {name}\nquit\n'.encode())
             with contextlib.suppress(OSError):
                 sock.recv(4096)

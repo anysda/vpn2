@@ -6,6 +6,31 @@ from test_deploy import bash, source
 
 
 class RestoreSsoTests(unittest.TestCase):
+    def test_backup_materializes_app_runtime_without_following_arbitrary_links(self):
+        script = source('infra/lib/anysda-backup.sh')
+        block = 'if [[ -d /etc/anysda ]]; then' + script.split(
+            'if [[ -d /etc/anysda ]]; then', 1)[1].split('# 3. WireGuard:', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            live, runtime, bundle = (root / name for name in ('live', 'runtime', 'bundle'))
+            for path in (live, runtime, bundle):
+                path.mkdir()
+            for name in ('sso-runtime.json', 'telegram-runtime.json'):
+                (runtime / name).write_text('preserved runtime')
+                (live / name).symlink_to(runtime / name)
+            result = bash('BUNDLE_DIR="$PWD/bundle"\n' + block.replace(
+                '/etc/anysda', str(live)).replace('/var/lib/anysda-vpn2/runtime', str(runtime)), directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ('sso-runtime.json', 'telegram-runtime.json'):
+                archived = bundle / 'etc-anysda' / name
+                self.assertFalse(archived.is_symlink(), 'archive must survive removal of the old host')
+                self.assertEqual(archived.read_text(), 'preserved runtime')
+            (runtime / 'sso-runtime.json').unlink()
+            (runtime / 'sso-runtime.json').symlink_to('/etc/passwd')
+            result = bash('BUNDLE_DIR="$PWD/bundle2"; mkdir "$BUNDLE_DIR"\n' + block.replace(
+                '/etc/anysda', str(live)).replace('/var/lib/anysda-vpn2/runtime', str(runtime)), directory)
+            self.assertNotEqual(result.returncode, 0, 'app must not trick backup into exporting root files')
+
     def test_runtime_matches_archive_without_removing_other_files(self):
         script = source('infra/lib/anysda-restore.sh')
         block = script.split('if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then', 1)[1]

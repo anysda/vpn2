@@ -51,7 +51,7 @@ print(next((v.split("=", 1)[1] for v in json.load(sys.stdin)
 if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
   bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
   if [[ -n "$bot" ]]; then docker rm -f anysda-tgbot >/dev/null; fi
-  rm -f /etc/anysda/tgbot-secret.txt /etc/anysda/telegram-runtime.json
+  rm -f /etc/anysda/tgbot-secret.txt /etc/anysda/telegram-runtime.json /var/lib/anysda-vpn2/runtime/telegram-runtime.json
   TGBOT_SECRET=''
   sync_panel_secret
   echo "[$HOST_TAG] 35-telegram: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID не заданы — бот выключен"
@@ -146,7 +146,15 @@ sync_panel_secret
 # 3. Run bot container
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/3] run container"
-install -d -m 700 /var/lib/anysda-tgbot
+install -d -o vpn2-bot -g vpn2-bot -m 700 /var/lib/anysda-tgbot
+chown -hR vpn2-bot:vpn2-bot /var/lib/anysda-tgbot
+install -d -o vpn2-panel -g vpn2-panel -m 0700 /var/lib/anysda-vpn2/runtime
+if [[ ! -L /etc/anysda/telegram-runtime.json ]]; then
+  cp -p /etc/anysda/telegram-runtime.json /var/lib/anysda-vpn2/runtime/telegram-runtime.json
+  ln -sfn /var/lib/anysda-vpn2/runtime/telegram-runtime.json /etc/anysda/telegram-runtime.json
+fi
+chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2/runtime/telegram-runtime.json
+chmod 0640 /var/lib/anysda-vpn2/runtime/telegram-runtime.json
 docker rm -f anysda-tgbot >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
@@ -158,9 +166,10 @@ docker run -d \
   --restart always \
   --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
   --network host \
-  --security-opt apparmor=unconfined \
+  --user "$(id -u vpn2-bot):$(id -g vpn2-bot)" --group-add "$(id -g vpn2-panel)" \
+  --cap-drop ALL --security-opt no-new-privileges \
   -v /etc/localtime:/etc/localtime:ro \
-  -v /etc/anysda:/etc/anysda:ro \
+  -v /var/lib/anysda-vpn2/runtime/telegram-runtime.json:/etc/anysda/telegram-runtime.json:ro \
   -v /var/lib/anysda-tgbot:/var/lib/anysda-tgbot \
   -e TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
   -e TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" \

@@ -1,6 +1,4 @@
-import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { controlApply } from './control'
 import { eq, isNotNull } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, collectorState, devices } from '../database/schema'
@@ -72,7 +70,6 @@ async function reconcileExits(): Promise<void> {
  */
 async function writePrefs(): Promise<void> {
   await reconcileExits()
-  const path = useRuntimeConfig().clientPrefsFilePath as string
   const rows = await useDb()
     .select({ node: clients.preferredExit, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
     .from(devices)
@@ -85,24 +82,10 @@ async function writePrefs(): Promise<void> {
       if (r.node && ip) (byNode[r.node] ??= new Set()).add(ip)
     }
   }
-  const body = JSON.stringify(
-    Object.fromEntries(Object.keys(byNode).sort().map(n => [n, [...byNode[n]!].sort()])),
-    null, 2,
-  ) + '\n'
-
-  // Без изменений не пишем: .path-юнит запускает пересборку на каждую запись.
-  if (await readFile(path, 'utf8').catch(() => '') === body) return
-  await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`
-  try {
-    await writeFile(tmp, body, { mode: 0o644 })
-    await rename(tmp, path) // атомарно: роутер не прочитает полузаписанный файл
-  }
-  catch (err) {
-    await rm(tmp, { force: true })
-    throw err
-  }
-  useLogger().info({ path }, 'client prefs synced')
+  await controlApply('settings.apply', {
+    resource: 'preferences',
+    config: Object.fromEntries(Object.keys(byNode).sort().map(n => [n, [...byNode[n]!].sort()])),
+  })
 }
 
 // По очереди: иначе запись по устаревшему снимку базы могла лечь последней.

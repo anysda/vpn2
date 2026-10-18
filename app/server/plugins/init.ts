@@ -9,6 +9,7 @@ import { hashPassword, useAuth, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 import { markPanelReady } from '../utils/panel-ready'
+import { ControlUnavailable } from '../utils/control'
 
 function generatePassword(): string {
   return randomBytes(13).toString('base64url').slice(0, 18)
@@ -51,7 +52,10 @@ async function initPanel() {
   })) throw new Error('Database schema incompatible. Run the deploy migration executor before starting the panel.')
   log.info('migrations applied by deploy executor; schema verified')
 
-  if (cfg.exitTags) await syncClientPrefsFile()
+  if (cfg.exitTags) await syncClientPrefsFile().catch((error) => {
+    if (!(error instanceof ControlUnavailable)) throw error
+    log.warn(error.message)
+  })
 
   // 2. Seed/sync admin user from config.yaml (idempotent restore)
   const yamlConfig = loadAnysdaConfig()
@@ -63,7 +67,7 @@ async function initPanel() {
   if (existing.length === 0) {
     if (!desiredPassword) {
       desiredPassword = generatePassword()
-      const pwdPath = '/etc/anysda/admin-password.txt'
+      const pwdPath = '/var/lib/anysda-vpn2/admin-password.txt'
       try {
         const dir = dirname(pwdPath)
         if (!existsSync(dir)) mkdirSync(dir, { recursive: true })

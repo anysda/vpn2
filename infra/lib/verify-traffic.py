@@ -58,6 +58,8 @@ CCD = Path('/etc/openvpn/server/ccd')
 OVPN_PKI = Path('/etc/openvpn/server/pki')
 MANUAL_DIR = Path('/etc/sing-box/manual-routes')
 ROUTER = Path('/etc/sing-box/config.json')
+# Прямой выход и одноимённый ручной набор панели.
+DIRECT = 'direct-ru'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
 INTERNET = (('connectivitycheck.gstatic.com', '/generate_204', 204),
@@ -707,7 +709,11 @@ class Targets:
 
 
 def manual_markers(exits, add):
-    """Ручное правило: домен-метка в наборе pin-hy2-<экзит>-direct; sing-box перечитывает набор сам."""
+    """Ручное правило: домен-метка в наборе pin-hy2-<экзит>-direct; sing-box перечитывает набор сам.
+
+    Прямой маршрут - так же, меткой в наборе direct-ru (тег DIRECT): адрес entry
+    может не входить в geoip-ru, а ручные наборы стоят выше гео-правил.
+    """
     markers = {}
     for path in sorted(MANUAL_DIR.glob('*.json')) if MANUAL_DIR.is_dir() else []:
         try:
@@ -717,7 +723,7 @@ def manual_markers(exits, add):
         rules = [r for r in data.get('rules', []) if not (isinstance(r, dict) and any(
             str(d).endswith(MARKER) for d in r.get('domain_suffix', [])))]
         tag = path.stem[len('pin-hy2-'):-len('-direct')] if path.stem.startswith('pin-hy2-') and \
-            path.stem.endswith('-direct') else None
+            path.stem.endswith('-direct') else DIRECT if path.stem == DIRECT else None
         if add and tag in exits:
             markers[tag] = f'{secrets.token_hex(6)}.{tag}{MARKER}'
             rules.insert(0, {'domain_suffix': [markers[tag]]})
@@ -795,7 +801,7 @@ class Verifier:
 
     def prepare(self):
         self.targets.start(lifetime=900)
-        self.markers = manual_markers(self.exits, add=True)
+        self.markers = manual_markers(self.exits + [DIRECT], add=True)
         for host, path, status in INTERNET:
             ip = resolve(host)
             if ip:
@@ -823,16 +829,25 @@ class Verifier:
     def paths(self, protocol):
         name = protocol.name
         port = self.targets.port
-        result, seen = self.probe(protocol, 'echo', [self.wan_ip, port, 'direct.vpn2-verify'],
-                                  (self.wan_ip, port))
-        leaves = {s['chains'][0] for s in seen if s['chains']}
-        if result and result['local'] and leaves == {'direct-ru'}:
-            self.report.add('маршрут: прямой', name, OK, 'эхо entry ответило через выход direct-ru')
-        elif result and not seen:
-            self.report.add('маршрут: прямой', name, FAIL, 'ответ пришёл, но запрос не прошёл через sing-box')
+        # Адрес entry не обязан входить в geoip-ru: цель прямого пути - метка в
+        # ручном наборе direct-ru, а не адрес. Набор перечитывается не мгновенно.
+        if DIRECT not in self.markers:
+            self.report.add('маршрут: прямой', name, UNKNOWN, f'нет ручного набора {DIRECT}')
         else:
-            self.report.add('маршрут: прямой', name, FAIL,
-                            f'нет эха или неверный выход: {sorted(leaves) or "нет соединения"}')
+            for _ in range(4):
+                result, seen = self.probe(protocol, 'echo', [self.wan_ip, port, self.markers[DIRECT]],
+                                          (self.wan_ip, port))
+                leaves = {s['chains'][0] for s in seen if s['chains']}
+                if result and result['local'] and leaves == {DIRECT}:
+                    break
+                time.sleep(3)
+            if result and result['local'] and leaves == {DIRECT}:
+                self.report.add('маршрут: прямой', name, OK, f'эхо entry ответило через выход {DIRECT}')
+            elif result and not seen:
+                self.report.add('маршрут: прямой', name, FAIL, 'ответ пришёл, но запрос не прошёл через sing-box')
+            else:
+                self.report.add('маршрут: прямой', name, FAIL,
+                                f'нет эха или неверный выход: {sorted(leaves) or "нет соединения"}')
         for tag in self.exits:
             ip = self.targets.exit_ips.get(tag)
             if tag not in self.targets.remote or tag not in self.markers:

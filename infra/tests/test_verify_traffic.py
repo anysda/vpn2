@@ -179,6 +179,56 @@ class ManualMarkerTests(unittest.TestCase):
                 vt.MANUAL_DIR = original
 
 
+class DirectRouteTests(unittest.TestCase):
+    """Entry вне geoip-ru: его адрес sing-box отправляет в экзит, прямой выход - только по правилу."""
+
+    def decide(self, host):
+        # Порядок роутера: ручные наборы (direct-ru первым, как в 20-ru-router), гео-правила, final.
+        for path in sorted(self.manual.glob('*.json'), key=lambda p: p.stem != 'direct-ru'):
+            for rule in json.loads(path.read_text())['rules']:
+                if any(host == d or host.endswith('.' + d.lstrip('.')) for d in rule.get('domain_suffix', [])):
+                    return path.stem if path.stem == 'direct-ru' else path.stem[len('pin-'):], \
+                        f'rule_set=manual-{path.stem}'
+        # Адрес entry не в geoip-ru и не частный: foreign-best -> экзит.
+        return 'hy2-se-direct', 'final'
+
+    def test_direct_route_does_not_depend_on_entry_geoip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.manual = root / 'manual'
+            self.manual.mkdir()
+            for name in ('direct-ru', 'pin-hy2-se-direct'):
+                (self.manual / f'{name}.json').write_text(json.dumps({'version': 2, 'rules': []}))
+            router = root / 'config.json'
+            router.write_text(json.dumps({'outbounds': [{'tag': 'direct-ru', 'type': 'direct'},
+                                                        {'tag': 'hy2-se-direct', 'server': '203.0.113.9'}]}))
+            saved = vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns
+            vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = self.manual, router, (), lambda *_: None
+            try:
+                report = vt.Report('ru')
+                verifier = vt.Verifier(report, ['se'], '198.51.100.7', '198.51.100.7')
+                verifier.targets.start = lambda **_: None
+                verifier.internet_check = verifier.dns_check = lambda _protocol: None
+
+                def probe(_protocol, _kind, args, *_, **__):
+                    leaf, rule = self.decide(args[2])
+                    return {'peer': '10.0.0.2', 'local': True}, [{'chains': [leaf], 'rule': rule, 'payload': ''}]
+
+                verifier.probe = probe
+                with redirect_stdout(io.StringIO()) as out:
+                    verifier.prepare()
+                    # Эхо на экзите (ssh) в тесте не поднимаем: считаем его запущенным.
+                    verifier.targets.remote['se'] = None
+                    verifier.paths(type('Protocol', (), {'name': 'IKEv2'})())
+                print(out.getvalue().strip())
+            finally:
+                vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = saved
+            rows = {row['check']: row['result'] for row in report.rows}
+            self.assertEqual(rows['маршрут: прямой'], 'Работает', out.getvalue())
+            self.assertEqual(rows['маршрут: через экзит se'], 'Работает', out.getvalue())
+            self.assertEqual(report.code(), 0)
+
+
 # Настоящий сервер wg0 и клиент в netns vpn2-verify, внутри одноразовых сетевого
 # и файлового пространств: на хост CI ничего не попадает.
 NETNS_DRIVER = r'''

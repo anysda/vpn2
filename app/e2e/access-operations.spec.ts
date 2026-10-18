@@ -95,6 +95,10 @@ test('ошибка OpenVPN сохраняет цель удаления, пов�
   expect((await ops.getAccess(operation.id)).status).toBe('confirmed')
   expect((await db.select().from(schema.clients))).toHaveLength(0)
   expect((await db.select().from(schema.botOutbox))).toHaveLength(1)
+  const history = await ops.getAccess(operation.id)
+  for (const state of Object.values(history.protocols)) state.lastAttempt = 0
+  await db.update(schema.accessOperations).set({ protocols: history.protocols }).where(eq(schema.accessOperations.id, operation.id))
+  expect((await ops.retryAccess(operation.id)).status).toBe('confirmed')
   console.log('OpenVPN failure: Отключение не завершено: OpenVPN; credentials retained; notifications=0; retry: confirmed, notifications=1')
 })
 
@@ -223,7 +227,9 @@ test('повторы ограничены по частоте; прежнее п
   await ops.runAccessOperations(adapter)
   expect(accessStatus(await ops.getAccess(operation.id))).toBe('Состояние не подтверждено')
   const attempts = calls
-  await ops.retryAccess(operation.id)
+  const retry = await ops.retryAccess(operation.id)
+  expect(retry.nextRetry - Math.max(...Object.values(retry.protocols).map(p => p.lastAttempt ?? 0))).toBe(5000)
+  expect(retry.protocols.openvpn.nextRetry).toBe(retry.nextRetry)
   await ops.runAccessOperations(adapter)
   expect(calls).toBe(attempts)
   expect((await db.select().from(schema.botOutbox))).toHaveLength(1)

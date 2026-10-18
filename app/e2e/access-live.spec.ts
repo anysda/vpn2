@@ -62,7 +62,7 @@ test('живые VPN: сбой OpenVPN, честный статус и ручн�
     await expect(detail.getByRole('status')).toContainText('Отключение выполняется')
     if (screenshots) await page.screenshot({ path: path.join(screenshots, 'access-pending.png'), fullPage: true })
     inside("import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/access-hold-release','');")
-    await expect(detail.getByRole('status')).toContainText('Отключение не завершено: OpenVPN', { timeout: 30_000 })
+    await expect(detail.getByRole('status').locator('b')).toHaveText('Отключение не завершено: OpenVPN', { timeout: 30_000 })
     const failed = await (await page.request.get(`/api/access-operations/${operation.id}`)).json()
     expect(failed.protocols.wg.confirmedVersion).toBe(operation.version)
     expect(failed.protocols.openvpn.confirmedVersion).toBeNull()

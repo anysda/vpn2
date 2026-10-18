@@ -169,13 +169,20 @@ export async function getAccess(id: string) {
 
 export async function retryAccess(id: string) {
   const db = useDb()
-  const now = Date.now()
-  const operation = await getAccess(id)
-  const lastAttempt = Math.max(0, ...accessProtocols.map(p => operation.protocols[p].lastAttempt ?? 0))
-  if (now - lastAttempt < RETRY_DELAYS[0]!) return operation
-  await db.update(accessOperations).set({ status: 'pending', nextRetry: now })
-    .where(and(eq(accessOperations.id, id), ne(accessOperations.status, 'superseded')))
-  return getAccess(id)
+  return db.transaction(async (tx) => {
+    const [row] = await tx.select().from(accessOperations).where(eq(accessOperations.id, id))
+    if (!row) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+    const operation = operationView(row)
+    if (operation.status === 'superseded' || (operation.status === 'confirmed' && operation.kind === 'delete' && operation.deviceId === null)) return operation
+    const lastAttempt = Math.max(0, ...accessProtocols.map(p => operation.protocols[p].lastAttempt ?? 0))
+    const requested = Math.max(Date.now(), lastAttempt + RETRY_DELAYS[0]!)
+    if (requested >= row.nextRetry) return operation
+    const protocols = structuredClone(row.protocols)
+    for (const state of Object.values(protocols)) if (state.state !== 'not_required') state.nextRetry = requested
+    const [updated] = await tx.update(accessOperations).set({ status: 'pending', nextRetry: requested, protocols })
+      .where(eq(accessOperations.id, id)).returning()
+    return operationView(updated!)
+  }, { behavior: 'immediate' })
 }
 
 /** Истечение срока также получает долговечную операцию, без изменения ручного флага. */

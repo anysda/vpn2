@@ -8,6 +8,19 @@ CONFIG_SOURCE=${EMERGENCY_CONFIG_SOURCE:-/tmp/anysda/emergency.json}
 test -f "$SOURCE_DIR/agent.py"
 test -s "$CONFIG_SOURCE"
 python3 -m json.tool "$CONFIG_SOURCE" >/dev/null
+if command -v ufw >/dev/null; then
+  while read -r peer port; do
+    ufw allow proto udp from "$peer" to any port "$port" comment 'vpn2 emergency observer'
+  done < <(python3 - "$CONFIG_SOURCE" <<'PY'
+import json
+import sys
+config = json.load(open(sys.argv[1]))
+for node, address in config['nodes'].items():
+    if node != config['node']:
+        print(address['host'], config['nodes'][config['node']]['port'])
+PY
+)
+fi
 getent passwd vpn2-emergency >/dev/null || useradd --system --home-dir /var/lib/vpn2-emergency --shell /usr/sbin/nologin vpn2-emergency
 install -d -m 0700 -o vpn2-emergency -g vpn2-emergency /var/lib/vpn2-emergency
 install -d -m 0755 /opt/vpn2-emergency/vpn2_emergency

@@ -7,7 +7,7 @@
 #
 # Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 19-yt-zapret |
 #           20-ru-router | 28-wireguard | 29-openvpn | 21-failover-watchdog |
-#           22-adguard | 25-monitoring | 26-backup | 27-ikev2 |
+#           22-adguard | 23-emergency | 25-monitoring | 26-backup | 27-ikev2 |
 #           35-telegram | 30-frontend | 99-verify
 # Группы:   ru | foreign | all | <конкретный тег экзита>
 
@@ -468,6 +468,11 @@ run_stage_on_host() {
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
 
+  if [[ "$stage" == '23-emergency' ]]; then
+    push "$DEPLOY_ROOT/emergency/vpn2_emergency" || return 1
+    push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
+  fi
+
   # Общая валидация bandwidth; 22 импортирует тот же генератор для AdGuard.
   case "$stage" in
     10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" || return 1 ;;
@@ -590,6 +595,7 @@ run_stage() {
 
   case "$stage" in
     20-ru-router) prep_ru_router ;;
+    23-emergency) python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
   esac
   if [[ "$stage" == "00-bootstrap" ]]; then
     prep_orchestrator_key
@@ -1132,6 +1138,7 @@ do_all() {
   verify_and_rotate_ports
   run_stage 21-failover-watchdog ru
   run_stage 22-adguard       ru
+  run_stage 23-emergency     all
   run_stage 25-monitoring    ru
   prefetch_images
   run_stage 26-backup        ru
@@ -1179,7 +1186,7 @@ anysda-vpn2 — деплой
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
           29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
-          22-adguard | 25-monitoring | 26-backup | 27-ikev2 | 35-telegram | 30-frontend |
+          22-adguard | 23-emergency | 25-monitoring | 26-backup | 27-ikev2 | 35-telegram | 30-frontend |
           99-verify
 Группы:   ru | foreign | all | <конкретный тег экзита>
 EOF

@@ -109,6 +109,8 @@ docs/           инструкции и скриншоты
 | [docs/failover.md](docs/failover.md) | сторож экзитов: пороги, дорожки и балансировка, выход бота, ручное выключение экзита |
 | [docs/youtube.md](docs/youtube.md) | YouTube мимо экзитов: отбор трафика, стратегия десинка, A/B-проверка, видеопроба |
 | [docs/backup.md](docs/backup.md) | состав архива, хранение, ротация, восстановление entry-ноды с нуля |
+| [docs/creation.md](docs/creation.md) | подбор серверов до оплаты: SSH с entry, приёмка, разбор неудачи |
+| [docs/recovery.md](docs/recovery.md) | замена умершего экзита, потеря entry, смена IP |
 | [docs/adguard.md](docs/adguard.md) | AdGuard Home: прямой вход, учётка, лимиты |
 | [docs/sso.md](docs/sso.md) | вход в панель через OIDC (Authentik) |
 | [docs/speedtest.md](docs/speedtest.md) | BBR и Brutal на Hysteria2, замер скорости через туннель на стенде |
@@ -119,7 +121,8 @@ docs/           инструкции и скриншоты
 
 Нужны: одна entry-нода в России и N exit-нод (минимум одна, лучше две-три
 для отказоустойчивости). Чистая Ubuntu 24.04 или 26.04, root по
-SSH-паролю. Деплой запускается с entry-ноды, она же оркестратор.
+SSH-паролю. Деплой запускается с entry-ноды, она же оркестратор. Как
+подобрать серверы до оплаты - [docs/creation.md](docs/creation.md).
 
 | Нода  | Минимум                 | Рекомендуется           |
 |-------|-------------------------|-------------------------|
@@ -280,7 +283,8 @@ recovery архивы должны жить вне entry-ноды: S3 у дру�
 нечитаемы. Храните копию вне entry-ноды, `chmod 600`, не коммитьте.
 
 Состав архива, хранение в S3, ротация и пошаговое восстановление entry-ноды
-с нуля - [docs/backup.md](docs/backup.md).
+с нуля - [docs/backup.md](docs/backup.md). Что делать, когда умер экзит
+или entry, - [docs/recovery.md](docs/recovery.md).
 
 ## Telegram-бот
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Called by emergency deployment after its system user and state directory exist.
+# Called by emergency deployment after stage 23 created its user, state directory
+# and /opt/vpn2-emergency/vpn2_emergency (hy2.py included).
 # Arguments: exit IP; optional dedicated UDP port. Never changes normal sing-box.
 set -euo pipefail
 source_dir=$(dirname "$(readlink -f "$0")")
@@ -9,10 +10,13 @@ getent passwd vpn2-emergency >/dev/null
 if ! getent passwd vpn2-hy2 >/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin vpn2-hy2
 fi
-apt-get install -y -qq qrencode curl openssl nftables sudo
-install -d -m 0755 /usr/local/lib/vpn2-emergency/vpn2_emergency /etc/vpn2
-install -m 0644 "$source_dir/vpn2_emergency/hy2.py" /usr/local/lib/vpn2-emergency/vpn2_emergency/hy2.py
-install -m 0644 "$source_dir/vpn2-emergency-hy2.service" /etc/systemd/system/vpn2-emergency-hy2.service
+apt-get install -y -qq qrencode curl openssl nftables polkitd
+module=/opt/vpn2-emergency/vpn2_emergency/hy2.py
+install -d -m 0755 /opt/vpn2-emergency/vpn2_emergency /etc/vpn2
+install -m 0644 "$source_dir/vpn2_emergency/hy2.py" "$module"
+for unit in vpn2-emergency-hy2.service vpn2-emergency-hy2-probe.service; do
+  install -m 0644 "$source_dir/$unit" "/etc/systemd/system/$unit"
+done
 install -d -o vpn2-emergency -g vpn2-emergency -m 0750 /var/lib/vpn2-emergency/hy2
 active=0
 systemctl is-active --quiet vpn2-emergency-hy2.service && active=1
@@ -33,14 +37,25 @@ if path.exists() and json.loads(path.read_text()) != desired and sys.argv[3] == 
     raise SystemExit('stop emergency role before changing its endpoint settings')
 path.write_text(json.dumps(desired) + '\n')
 PY
-cat > /etc/sudoers.d/vpn2-emergency-hy2 <<'EOF'
-vpn2-emergency ALL=(root) NOPASSWD: /usr/bin/systemctl start vpn2-emergency-hy2.service, /usr/bin/systemctl restart vpn2-emergency-hy2.service, /usr/bin/systemctl stop vpn2-emergency-hy2.service
+# The agent unit has NoNewPrivileges, so sudo is unusable there; polkit is asked
+# over D-Bus by systemd itself and grants exactly these verbs on these units.
+cat > /etc/polkit-1/rules.d/50-vpn2-emergency-hy2.rules <<'EOF'
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.systemd1.manage-units" &&
+      (action.lookup("unit") == "vpn2-emergency-hy2.service" ||
+       action.lookup("unit") == "vpn2-emergency-hy2-probe.service") &&
+      subject.user == "vpn2-emergency") {
+    var verb = action.lookup("verb");
+    if (verb == "start" || verb == "stop" || verb == "restart") {
+      return polkit.Result.YES;
+    }
+  }
+});
 EOF
-chmod 0440 /etc/sudoers.d/vpn2-emergency-hy2
-visudo -cf /etc/sudoers.d/vpn2-emergency-hy2
+chmod 0644 /etc/polkit-1/rules.d/50-vpn2-emergency-hy2.rules
 systemctl daemon-reload
 if ! systemctl is-active --quiet vpn2-emergency-hy2.service; then
-  python3 /usr/local/lib/vpn2-emergency/vpn2_emergency/hy2.py close
+  python3 "$module" close
 fi
 if command -v ufw >/dev/null; then
   ufw allow "$port/udp" comment 'emergency hysteria2'

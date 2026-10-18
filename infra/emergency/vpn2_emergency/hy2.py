@@ -28,6 +28,7 @@ from urllib.parse import quote, urlencode
 STATE = Path('/var/lib/vpn2-emergency')
 OPTIONS = Path('/etc/vpn2/emergency-hy2.json')
 UNIT = 'vpn2-emergency-hy2.service'
+PROBE_UNIT = 'vpn2-emergency-hy2-probe.service'
 MOUNT = Path('/run/vpn2-emergency-hy2')
 LOG = logging.getLogger(__name__)
 
@@ -165,8 +166,20 @@ def server_config(options, users):
 
 class SystemRuntime:
     def service(self, action):
-        prefix = [] if os.geteuid() == 0 else ['sudo', '-n']
-        command([*prefix, '/usr/bin/systemctl', action, UNIT])
+        # The agent runs with NoNewPrivileges, so no sudo: a polkit rule from
+        # install-hy2.sh lets only its user start/stop/restart this one unit.
+        command(['/usr/bin/systemctl', action, UNIT])
+
+    def probe(self, state_dir):
+        if os.geteuid() == 0:
+            return probe(state_dir)
+        # sing-box needs AF_NETLINK, which the agent sandbox does not grant;
+        # the oneshot unit runs probe() and start returns its exit status.
+        try:
+            command(['/usr/bin/systemctl', 'start', PROBE_UNIT])
+        except RuntimeError:
+            return False
+        return True
 
     def restart(self):
         self.service('restart')
@@ -249,7 +262,7 @@ def start(state_dir, generation, devices, *, options=None, runtime=None):
                 runtime.ensure_started()
             else:
                 runtime.restart()
-            if not selftest(state_dir):
+            if not selftest(state_dir, runtime=runtime):
                 raise RuntimeError('emergency hy2: real connection self-test failed')
             return materials(directory, state)
         except BaseException:
@@ -317,7 +330,11 @@ def listening(port):
     return False
 
 
-def selftest(state_dir):
+def selftest(state_dir, *, runtime=None):
+    return (runtime or SystemRuntime()).probe(state_dir)
+
+
+def probe(state_dir):
     """Authenticate via QUIC and fetch a public URL through the actual instance."""
     directory = Path(state_dir) / 'hy2'
     try:
@@ -400,8 +417,10 @@ def firewall(active):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('open', 'close'))
+    parser.add_argument('action', choices=('open', 'close', 'probe'))
     args = parser.parse_args()
+    if args.action == 'probe':
+        raise SystemExit(0 if probe(STATE) else 1)
     if args.action == 'open':
         validate(STATE / 'hy2')
     firewall(args.action == 'open')

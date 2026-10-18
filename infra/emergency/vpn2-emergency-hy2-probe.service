@@ -1,0 +1,17 @@
+[Unit]
+Description=Readiness probe of temporary emergency Hysteria2
+After=vpn2-emergency-hy2.service
+
+[Service]
+Type=oneshot
+User=vpn2-emergency
+Group=vpn2-emergency
+UMask=0077
+ExecStart=/usr/bin/python3 -B /opt/vpn2-emergency/vpn2_emergency/hy2.py probe
+TimeoutStartSec=40
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/vpn2-emergency/hy2
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

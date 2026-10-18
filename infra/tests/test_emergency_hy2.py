@@ -63,7 +63,7 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertNotEqual(*passwords)
         state = self.hy2.read_state(self.state / 'hy2')
         self.assertNotIn(state['probe_password'], passwords)
-        self.ready.assert_called_once_with(self.state)
+        self.ready.assert_called_once_with(self.state, runtime=self.runtime)
 
     def test_generation_survives_restart_but_revocation_is_durable(self):
         first = self.start()
@@ -189,6 +189,40 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertIn('hy2.py close', service)
         self.assertNotIn('WantedBy=', service)
         self.assertNotIn('sing-box.service', service)
+
+    def test_sandboxed_agent_controls_unit_without_privilege_escalation(self):
+        stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
+        self.assertIn('NoNewPrivileges=true', stage)  # sudo cannot work inside the agent
+        with patch.object(self.hy2.os, 'geteuid', return_value=1000), \
+                patch.object(self.hy2, 'command') as run:
+            self.hy2.SystemRuntime().ensure_started()
+        self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.UNIT])
+        # sing-box cannot start without AF_NETLINK, which the agent lacks.
+        self.assertNotIn('AF_NETLINK', stage)
+        with patch.object(self.hy2.os, 'geteuid', return_value=1000), \
+                patch.object(self.hy2, 'command') as run, \
+                patch.object(self.hy2, 'probe', side_effect=AssertionError('probe in sandbox')):
+            self.assertTrue(self.hy2.SystemRuntime().probe(self.state))
+            run.side_effect = RuntimeError('probe failed')
+            self.assertFalse(self.hy2.SystemRuntime().probe(self.state))
+        self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.PROBE_UNIT])
+        probe_unit = (ROOT / 'infra/emergency' / self.hy2.PROBE_UNIT).read_text()
+        for needle in ('Type=oneshot', 'User=vpn2-emergency', 'hy2.py probe', 'AF_NETLINK'):
+            self.assertIn(needle, probe_unit)
+        installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
+        self.assertNotIn('sudoers', installer)
+        for needle in ('org.freedesktop.systemd1.manage-units', '"vpn2-emergency-hy2.service"',
+                       '"vpn2-emergency-hy2-probe.service"',
+                       'subject.user == "vpn2-emergency"', '"start"', '"stop"', '"restart"'):
+            self.assertIn(needle, installer)
+
+    def test_unit_runs_the_module_copy_the_agent_stage_installs(self):
+        stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
+        service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
+        installed = '/opt/vpn2-emergency/vpn2_emergency/'
+        self.assertIn(f'"$module" {installed}', stage)
+        self.assertEqual(service.count(f'{installed}hy2.py'), 2)
+        self.assertNotIn('/usr/local/lib/vpn2-emergency', service)
 
     @unittest.skipUnless(SB and os.environ.get('RUN_NETNS_TESTS') == '1',
                          'set SING_BOX_BIN and RUN_NETNS_TESTS=1')

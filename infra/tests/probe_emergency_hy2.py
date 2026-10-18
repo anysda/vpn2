@@ -91,6 +91,7 @@ def probe():
 
         class Runtime:
             process = None
+            probe = staticmethod(hy2.probe)
 
             def ensure_started(self):
                 if self.process is None or self.process.poll() is not None:

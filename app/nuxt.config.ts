@@ -10,8 +10,10 @@ export default defineNuxtConfig({
 
   // viewport-fit=cover: мобильная шапка и таб-бар сами отступают от выреза
   // и полоски «домой» через env(safe-area-inset-*).
+  // lang="ru": по нему браузер переносит русские слова с дефисом (hyphens:auto).
   app: {
     head: {
+      htmlAttrs: { lang: 'ru' },
       viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
     },
   },

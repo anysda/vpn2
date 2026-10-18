@@ -3,6 +3,7 @@ import { expect, NODES, test, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 import { orderBreaks } from './support/order'
 import { noVerticalOverflow } from './support/overflow'
+import { wordBreaks } from './support/words'
 import { TAB_PAGES } from '../app/utils/tab-pages'
 
 // Телефон и «Настроить экран»: пункт меню, порядок блоков Обзора, фокус под шапкой.
@@ -92,6 +93,24 @@ test.describe('плашки «Настроить экран»: название 
         for (const zb of await page.locator('.scr .zb').all()) {
           const [box, text] = await zb.evaluate(el => [el.clientHeight, el.firstElementChild!.scrollHeight])
           expect(text, `${where}: ${await zb.textContent()}`).toBeLessThanOrEqual(box!)
+        }
+      }
+    })
+  }
+
+  // слово переносится целиком; шире строки — по слогам с дефисом (hyphens:auto по словарю lang),
+  // посреди слова без дефиса не рвётся
+  for (const width of [360, 402]) {
+    test(`телефон ${width}: слова названия и подсказки не рвутся без дефиса`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 874 })
+      await openHome(page)
+      for (const data of layouts) {
+        expect((await page.request.put('/api/me/layout', { data })).ok()).toBe(true)
+        await page.goto('/screen')
+        await expect(page.locator('.scr .zb')).toHaveCount(3)
+        const where = `${width}, скрыто ${data.hidden.join(', ') || 'ничего'}`
+        for (const el of await page.locator('.scr .zb b, .scr .zb small').all()) {
+          expect(await el.evaluate(wordBreaks), `${where}: «${await el.textContent()}»`).toEqual([])
         }
       }
     })

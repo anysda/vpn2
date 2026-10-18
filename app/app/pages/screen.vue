@@ -98,7 +98,7 @@ const zoneList: { id: Zone, title: string }[] = [
           :aria-label="z.title"
         >
           <div v-for="id in draft[z.id]" :key="id" class="zb" role="listitem" :data-module="id">
-            <div><b>{{ SCREEN_MODULES[id].label }}</b><small>{{ SCREEN_MODULES[id].hint }}</small></div>
+            <div><b><WholeWords :text="SCREEN_MODULES[id].label" /></b><small><WholeWords :text="SCREEN_MODULES[id].hint" /></small></div>
           </div>
         </div>
       </div>
@@ -119,9 +119,10 @@ const zoneList: { id: Zone, title: string }[] = [
 .scr .zb b{font-weight:500;font-size:13.5px}
 .scr .zb small{display:block;color:var(--t3);font-size:11.5px}
 .scr .zb.drag{opacity:.35}
-/* телефон: узкая колонка переносит название и подсказку, плашка растёт по тексту */
+/* телефон: узкая колонка переносит название и подсказку по словам (WholeWords), плашка растёт по тексту */
 @media (max-width:720px){
   .scr .zb{height:auto;min-height:58px;padding:10px 16px}
-  .scr .zb>div{min-width:0;overflow-wrap:anywhere}
+  .scr .zb>div{min-width:0}
+  .scr .zb b{display:block}
 }
 </style>

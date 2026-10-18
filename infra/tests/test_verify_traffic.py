@@ -4,6 +4,7 @@ import io
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -318,6 +319,95 @@ class EchoTargetTests(unittest.TestCase):
             for ip, port in sent:
                 self.assertFalse(client_blocked(ip, port, rules), f'{ip}:{port} закрыт клиенту')
                 self.assertNotEqual(ip, wan)
+
+
+class WgApplyTests(unittest.TestCase):
+    """Пункт «WireGuard: применение пира»: тестовый пир через wg.apply службы управления."""
+
+    KEYS = [__import__('base64').b64encode(bytes([n]) * 32).decode() for n in range(1, 8)]
+
+    def serve(self, path, accept):
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(path))
+        listener.listen()
+        requests = []
+
+        def loop():
+            while True:
+                try:
+                    connection, _ = listener.accept()
+                except OSError:
+                    return
+                with connection:
+                    request = json.loads(connection.makefile('rb').readline())
+                    requests.append(request)
+                    if accept:
+                        self.live = [peer['key'] for peer in request['params']['peers']]
+                        reply = {'api': 1, 'ok': True, 'result': {'peers': {}}}
+                    else:
+                        reply = {'api': 1, 'ok': False, 'error': 'unavailable'}
+                    connection.sendall(json.dumps(reply).encode() + b'\n')
+
+        threading.Thread(target=loop, daemon=True).start()
+        return listener, requests
+
+    def fake_run(self, *args, data=None, **_options):
+        out = ''
+        if args[:4] == ('wg', 'show', 'wg0', 'peers'):
+            out = '\n'.join(self.live)
+        elif args[:4] == ('wg', 'show', 'wg0', 'allowed-ips'):
+            out = ''
+        elif args[:2] in (('wg', 'genkey'), ('wg', 'genpsk')):
+            out = self.KEYS[6]
+        elif args[:2] == ('wg', 'pubkey'):
+            out = self.KEYS[5]
+        elif args[:3] == ('wg', 'syncconf', 'wg0'):
+            self.live = re.findall(r'PublicKey = (\S+)', data)
+        elif args[:2] == ('ip', '-j'):
+            out = json.dumps([{'addr_info': [{'local': '10.66.66.1', 'prefixlen': 24}]}])
+        return subprocess.CompletedProcess(args, 0, out, '')
+
+    def check(self, accept):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            conf = root / 'wg0.conf'
+            conf.write_text('[Interface]\nPrivateKey = x\nListenPort = 51820\n' + ''.join(
+                f'\n[Peer]\nPublicKey = {key}\nPresharedKey = {self.KEYS[4]}\nAllowedIPs = 10.66.66.{n + 2}/32, '
+                f'fd66:66::{n + 2}/128\n' for n, key in enumerate(self.KEYS[:2])))
+            state = root / 'wg.json'
+            state.write_text('{"version": 7, "digest": "d"}')
+            before = conf.read_bytes(), state.read_bytes()
+            self.live = self.KEYS[:2]
+            listener, requests = self.serve(root / 'control.sock', accept)
+            saved = vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run
+            vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF = root / 'control.sock', state, conf
+            vt.WORK, vt.run = root / 'work', self.fake_run
+            vt.WORK.mkdir()
+            try:
+                report = vt.Report('ru')
+                with redirect_stdout(io.StringIO()) as out:
+                    vt.wg_apply_check(report)
+            finally:
+                listener.close()
+                vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run = saved
+            print(out.getvalue().strip())
+            self.assertEqual((conf.read_bytes(), state.read_bytes()), before, 'состояние до проверки не вернулось')
+            self.assertEqual(self.live, self.KEYS[:2])
+            return report, requests, out.getvalue()
+
+    def test_refused_apply_is_failure(self):
+        report, requests, out = self.check(accept=False)
+        self.assertEqual([(r['component'], r['check'], r['result']) for r in report.rows],
+                         [('WireGuard', 'применение пира', 'Ошибка')], out)
+        self.assertEqual(report.code(), 1)
+        self.assertEqual(requests[0]['method'], 'wg.apply')
+
+    def test_applied_peer_seen_and_removed(self):
+        report, requests, out = self.check(accept=True)
+        self.assertEqual([r['result'] for r in report.rows], ['Работает'], out)
+        self.assertEqual([r['params']['version'] for r in requests], [8, 9])
+        self.assertEqual([len(r['params']['peers']) for r in requests], [3, 2])
+        self.assertEqual(requests[0]['params']['peers'][2]['ip'], '10.66.66.254')
 
 
 class ExitEgressTests(unittest.TestCase):

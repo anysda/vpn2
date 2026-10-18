@@ -12,7 +12,9 @@
 ручным правилом, выход в интернет через экзит, DNS, отрицательный контроль
 (туннель опущен - пробы обязаны упасть), отзыв (старый доступ не работает,
 новый работает) и внешняя проба портов: клиент подключается через SOCKS
-tg-proxy, то есть пакеты приходят на entry с адреса экзита.
+tg-proxy, то есть пакеты приходят на entry с адреса экзита. Отдельно - путь
+панели: тестовый пир WireGuard через wg.apply службы управления появляется в
+wg0 и тем же методом убирается.
 
 Привязка к пути - по API sing-box (/connections): запрос от адреса клиента
 в туннеле и выход, через который он ушёл. Цели контролируемые: эхо-сервер
@@ -69,6 +71,10 @@ DIRECT = 'direct-ru'
 ECHO_IP = '203.0.113.84'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
+# Служба управления (infra/control): панель применяет пиров WireGuard её методом wg.apply.
+CONTROL_SOCKET = Path('/run/vpn2-control/control.sock')
+CONTROL_WG_STATE = Path('/var/lib/vpn2-control/wg.json')
+WG_CONF = Path('/etc/wireguard/wg0.conf')
 INTERNET = (('connectivitycheck.gstatic.com', '/generate_204', 204),
             ('www.google.com', '/generate_204', 204),
             ('checkip.amazonaws.com', '/', 200))
@@ -324,12 +330,13 @@ class WireGuard:
         self.peers = {}
         self.ports = [('udp', self.port)]
 
-    def free_addresses(self, count):
+    @staticmethod
+    def free_addresses(count):
         iface = json.loads(run('ip', '-j', '-4', 'address', 'show', 'dev', 'wg0').stdout)[0]['addr_info'][0]
         network = ipaddress.ip_interface(f"{iface['local']}/{iface['prefixlen']}").network
         used = set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', run('wg', 'show', 'wg0', 'allowed-ips').stdout))
         with contextlib.suppress(OSError):
-            used |= set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', Path('/etc/wireguard/wg0.conf').read_text()))
+            used |= set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', WG_CONF.read_text()))
         free = [str(a) for a in reversed(list(network.hosts())) if str(a) not in used and str(a) != iface['local']]
         return free[:count]
 
@@ -716,6 +723,147 @@ class Relay:
                 sock.close()
 
 
+# ---------------------------------------------------------------- служба управления
+class ControlError(Exception):
+    pass
+
+
+def control_call(method, params):
+    """Один запрос API службы управления; ошибка - код из ответа, без данных запроса."""
+    with socket.socket(socket.AF_UNIX) as sock:
+        sock.settimeout(40)
+        try:
+            sock.connect(str(CONTROL_SOCKET))
+            sock.sendall(json.dumps({'api': 1, 'method': method, 'params': params}).encode() + b'\n')
+            reply = json.loads(sock.makefile('rb').readline(1024 * 1024 + 1))
+        except (OSError, ValueError) as error:
+            raise ControlError(f'служба не отвечает ({type(error).__name__})') from None
+    if not isinstance(reply, dict) or reply.get('ok') is not True:
+        raise ControlError(str(reply.get('error') if isinstance(reply, dict) else 'неверный ответ'))
+    return reply.get('result')
+
+
+def conf_peers(text):
+    """Пиры wg0.conf: ключ, PSK и AllowedIPs как в файле."""
+    peers = []
+    for block in re.split(r'(?m)^\s*\[Peer\]\s*$', text)[1:]:
+        values = dict(re.findall(r'(?m)^\s*(PublicKey|PresharedKey|AllowedIPs)\s*=\s*(\S.*?)\s*$', block))
+        peers.append({'key': values.get('PublicKey', ''), 'preshared_key': values.get('PresharedKey', ''),
+                      'allowed': values.get('AllowedIPs', '').replace(',', ' ').split()})
+    return peers
+
+
+def apply_peers(text):
+    """Полный набор пиров в форме wg.apply или None, если его так не выразить."""
+    peers = []
+    for peer in conf_peers(text):
+        ips = [a[:-3] for a in peer['allowed'] if re.fullmatch(r'\d+\.\d+\.\d+\.\d+/32', a)]
+        if not peer['key'] or not peer['preshared_key'] or len(ips) != 1:
+            return None
+        peers.append({'key': peer['key'], 'preshared_key': peer['preshared_key'], 'ip': ips[0]})
+    return peers
+
+
+def save_file(path, name):
+    """Копия файла (или отметка, что его нет) в WORK: обрыв посреди проверки восстановит уборка."""
+    target = WORK / name
+    if path.exists():
+        shutil.copy2(path, target)
+        stat = path.stat()
+        (WORK / (name + '.owner')).write_text(f'{stat.st_uid}:{stat.st_gid}')
+    else:
+        (WORK / (name + '.absent')).write_text('')
+
+
+def restore_file(path, name):
+    saved, absent, owner = WORK / name, WORK / (name + '.absent'), WORK / (name + '.owner')
+    if absent.exists():
+        path.unlink(missing_ok=True)
+    elif saved.exists():
+        temporary = path.with_name('.vpn2-verify-' + path.name)
+        shutil.copy2(saved, temporary)
+        uid, gid = owner.read_text().split(':')
+        os.chown(temporary, int(uid), int(gid))
+        temporary.replace(path)
+    for item in (saved, absent, owner):
+        item.unlink(missing_ok=True)
+
+
+def restore_wg_apply():
+    """Возврат пиров wg0, файла wg0.conf и счётчика версий wg.apply к состоянию до проверки.
+
+    Счётчик версий панели живёт в её базе: оставь проверка версию службы выше,
+    следующий wg.apply панели получил бы stale.
+    """
+    if not (WORK / 'wg0.conf').exists():
+        return
+    text = (WORK / 'wg0.conf').read_text()
+    header = re.split(r'(?m)^\s*\[Peer\]\s*$', text)[0]
+    interface = [line for line in header.splitlines() if re.match(r'^\s*(PrivateKey|ListenPort|FwMark)\s*=', line)]
+    peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n'
+                    f'AllowedIPs = {", ".join(peer["allowed"])}\n' for peer in conf_peers(text))
+    run('wg', 'syncconf', 'wg0', '/dev/stdin', data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)
+    restore_file(WG_CONF, 'wg0.conf')
+    restore_file(CONTROL_WG_STATE, 'control-wg.json')
+
+
+def wg_apply_check(report):
+    """Тестовый пир через wg.apply: виден в `wg show wg0`, затем убран тем же методом.
+
+    Метод получает полный набор пиров, поэтому набор берётся из wg0.conf и
+    сверяется с живым wg0. Граница: панель, применившая пиров в те секунды,
+    пока идёт проверка, получает stale или conflict и повторяет позже.
+    """
+    label, component = 'применение пира', 'WireGuard'
+    if not CONTROL_SOCKET.exists():
+        report.add(label, component, FAIL, 'нет сокета службы управления')
+        return
+    try:
+        text = WG_CONF.read_text()
+        live = set(run('wg', 'show', 'wg0', 'peers').stdout.split())
+    except (OSError, RuntimeError):
+        report.add(label, component, FAIL, 'нет wg0 или wg0.conf')
+        return
+    peers = apply_peers(text)
+    if peers is None or {peer['key'] for peer in peers} != live:
+        report.add(label, component, UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')
+        return
+    try:
+        version = json.loads(CONTROL_WG_STATE.read_text())['version'] if CONTROL_WG_STATE.exists() else 0
+    except (OSError, ValueError, KeyError, TypeError):
+        report.add(label, component, FAIL, 'состояние версий службы не читается')
+        return
+    address = next(iter(WireGuard.free_addresses(1)), None)
+    if not address:
+        report.add(label, component, UNKNOWN, 'нет свободного адреса в подсети wg0')
+        return
+    save_file(WG_CONF, 'wg0.conf')
+    save_file(CONTROL_WG_STATE, 'control-wg.json')
+    private = run('wg', 'genkey').stdout.strip()
+    test = {'key': run('wg', 'pubkey', data=private + '\n').stdout.strip(),
+            'preshared_key': run('wg', 'genpsk').stdout.strip(), 'ip': address}
+    try:
+        try:
+            control_call('wg.apply', {'version': version + 1, 'peers': peers + [test]})
+        except ControlError as error:
+            report.add(label, component, FAIL, f'wg.apply с тестовым пиром отклонён: {error}')
+            return
+        if test['key'] not in run('wg', 'show', 'wg0', 'peers').stdout.split():
+            report.add(label, component, FAIL, 'wg.apply ответил успехом, но пира нет в wg show wg0')
+            return
+        try:
+            control_call('wg.apply', {'version': version + 2, 'peers': peers})
+        except ControlError as error:
+            report.add(label, component, FAIL, f'wg.apply без тестового пира отклонён: {error}')
+            return
+        if test['key'] in run('wg', 'show', 'wg0', 'peers').stdout.split():
+            report.add(label, component, FAIL, 'тестовый пир остался в wg0 после wg.apply')
+            return
+        report.add(label, component, OK, 'тестовый пир применён через wg.apply, виден в wg0 и убран')
+    finally:
+        restore_wg_apply()
+
+
 # ---------------------------------------------------------------- контрольные цели
 class Targets:
     def __init__(self, wan_ip, exits, router):
@@ -856,6 +1004,9 @@ def cleanup(protocols=()):
         SWAN_FILE.unlink()
         run('swanctl', '--load-all', '--noprompt', check=False)
     manual_markers((), add=False)
+    if WORK.is_dir():
+        with contextlib.suppress(OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+            restore_wg_apply()
     for iface in echo_addresses():
         run('ip', 'address', 'del', ECHO_IP + '/32', 'dev', iface, check=False)
     if WORK.is_dir():
@@ -1156,6 +1307,10 @@ def verify(report, exits, public_host):
                 report.add('исполнение', protocol.name, FAIL, f'проверка прервана: {error}')
             finally:
                 protocol.cleanup()
+        try:
+            wg_apply_check(report)
+        except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+            report.add('применение пира', 'WireGuard', FAIL, f'проверка прервана: {error}')
     finally:
         if verifier:
             if verifier.relay:

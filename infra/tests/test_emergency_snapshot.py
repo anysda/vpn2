@@ -84,8 +84,8 @@ class Panel:
         with self.db() as db:
             version = db.execute('SELECT access_version FROM clients WHERE id = ?',
                                  (client_id,)).fetchone()[0] + 1
-            db.execute("UPDATE access_operations SET status = 'superseded' "
-                       "WHERE client_id = ? AND status = 'pending'", (client_id,))
+            db.execute("UPDATE access_operations SET status = 'superseded' WHERE client_id = ?",
+                       (client_id,))
             for column, value in columns.items():
                 db.execute(f'UPDATE clients SET {column} = ? WHERE id = ?', (value, client_id))
         self.op(client_id, version, 'confirmed', enabled)
@@ -273,10 +273,13 @@ class SnapshotTests(unittest.TestCase):
     def test_rolled_back_panel_database_holds_grants(self):
         self.panel.client(1, 'A', enabled=False)
         self.panel.edit(1, True)
+        backup = self.root / 'backup.sqlite'
+        with self.panel.db() as db, closing(sqlite3.connect(backup)) as copy:
+            db.backup(copy)
         self.panel.edit(1, False, frozen_manual=1)
         self.run_once()
-        self.panel.set('DELETE FROM access_operations WHERE version = 2')
-        self.panel.set('UPDATE clients SET access_version = 1, frozen_manual = 0')
+        with closing(sqlite3.connect(backup)) as copy, self.panel.db() as db:
+            copy.backup(db)
         self.run_once(NOW + 5)
         self.assertFalse(allowed(self.exits.load('exit-a'))['A'])
         self.panel.edit(1, True)

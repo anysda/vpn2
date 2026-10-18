@@ -7,8 +7,8 @@ exit host keys. Logs contain fixed status counts only.
 
 Access is taken from the panel access model: a client is allowed only when
 its desired state is enabled (not deleting, not frozen, not expired) and the
-latest confirmed access operation also left it enabled. Anything unknown or
-pending denies.
+current access operation (version == clients.access_version) enables it and
+is confirmed by the VPN services. Anything unknown or pending denies.
 """
 
 import argparse
@@ -28,9 +28,10 @@ RECONCILE_SECONDS = 60
 POLL_SECONDS = 5
 SSH_TIMEOUT = 30
 KEEP_PRODUCED = 16
-REMOTE = ('cd /opt/vpn2-emergency && exec runuser -u vpn2-emergency -- /usr/bin/python3 -B '
-          '-m vpn2_emergency.snapshot receive --config /etc/vpn2/emergency/agent.json '
-          '--state-dir /var/lib/vpn2-emergency')
+# setpriv, not runuser: no PAM session lines in the journal on every call.
+REMOTE = ('cd /opt/vpn2-emergency && exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency '
+          '--init-groups -- /usr/bin/python3 -B -m vpn2_emergency.snapshot receive '
+          '--config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency')
 
 
 def _chat_id(value):
@@ -67,14 +68,10 @@ def collect(database, telegram_file, now):
         for device_id, client_id, name in db.execute(
                 'SELECT id, client_id, name FROM devices WHERE deleting = 0 ORDER BY id'):
             devices.setdefault(client_id, []).append({'id': device_id, 'name': name})
-        operations = {}
+        current = {}
         for client_id, version, status, payload in db.execute(
-                "SELECT client_id, version, status, payload FROM access_operations "
-                "WHERE status != 'superseded' ORDER BY client_id, version"):
-            item = operations.setdefault(client_id, {'current': {}, 'confirmed': False})
-            item['current'][version] = _enabled(payload)
-            if status == 'confirmed':
-                item['confirmed'] = _enabled(payload)
+                'SELECT client_id, version, status, payload FROM access_operations'):
+            current[(client_id, version)] = status == 'confirmed' and _enabled(payload)
         for client_id, name, chat_id, frozen, expiry, deleting, version in db.execute(
                 'SELECT id, name, tg_chat_id, frozen_manual, expires_at, deleting, access_version '
                 'FROM clients ORDER BY id'):
@@ -83,13 +80,13 @@ def collect(database, telegram_file, now):
                 expires_at = snapshot.iso_time(expiry) if expiry is not None else None
             except (ValueError, TypeError, OverflowError, OSError):
                 known_expiry, expires_at = False, snapshot.iso_time(0)
-            access = operations.get(client_id, {'current': {}, 'confirmed': False})
-            desired = (deleting == 0 and frozen == 0 and known_expiry
+            # A new operation supersedes all older ones: only the current one counts.
+            allowed = (deleting == 0 and frozen == 0 and known_expiry
                        and (expiry is None or expiry > now)
-                       and access['current'].get(version) is True)
+                       and current.get((client_id, version)) is True)
             clients.append({
                 'id': client_id, 'name': name, 'telegram_chat_id': _chat_id(chat_id),
-                'allowed': desired and access['confirmed'] is True,
+                'allowed': allowed,
                 'expires_at': expires_at, 'devices': devices.get(client_id, []),
                 'access_version': version if type(version) is int else -1,
             })
@@ -109,7 +106,8 @@ def collect_as(user, database, telegram_file, now):
                '--database', str(database), '--telegram-file', str(telegram_file),
                '--now', repr(now)]
     if user:
-        command = ['runuser', '-u', user, '--', *command]
+        command = ['setpriv', f'--reuid={user}', f'--regid={user}', '--init-groups', '--',
+                   *command]
     result = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], input=b'',
                             capture_output=True, timeout=SSH_TIMEOUT, check=False)
     if result.returncode:
@@ -277,8 +275,8 @@ def main():
         sys.stdout.write(snapshot.encode(data).decode())
         return 0
     ssh = ['ssh', '-F', args.ssh_config]
+    last = None
     while True:
-        results = {}
         try:
             config = {'state_dir': args.state_dir,
                       'agent': json.loads(Path(args.agent_config).read_text())}
@@ -288,15 +286,16 @@ def main():
                                        args.telegram_file, now))
             # Fixed vocabulary only: no tokens, names or exception text.
             values = list(results.values())
-            print(json.dumps({status: values.count(status) for status in sorted(set(values))}),
-                  flush=True)
+            line = json.dumps({status: values.count(status) for status in sorted(set(values))})
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            print('snapshot source unavailable', flush=True)
-            results = {'source': 'unavailable'}
+            results, line = {'source': 'unavailable'}, 'snapshot source unavailable'
+        # A quiet journal: deliveries and changes of state only, not every poll.
+        if line != last or 'accepted' in results.values():
+            print(line, flush=True)
+            last = line
         if args.once:
             return 0 if all(v in ('accepted', 'unchanged') for v in results.values()) else 1
         time.sleep(POLL_SECONDS)
-
 
 if __name__ == '__main__':
     raise SystemExit(main())

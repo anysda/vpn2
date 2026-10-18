@@ -31,6 +31,15 @@ class AccessOperationsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Отключение не завершено: OpenVPN', text)
         self.assertNotIn('Доступ отключён', text)
 
+    async def test_admin_list_does_not_mark_pending_enable_as_success(self):
+        bot = load_bot()
+        self.addAsyncCleanup(bot._local.aclose)
+        self.addAsyncCleanup(bot._tg.aclose)
+        row = bot._admin_list_markup([{'id': 1, 'name': 'test', 'status': 'active',
+                                      'accessStatus': 'Включение выполняется'}])['inline_keyboard'][0][0]
+        self.assertIn('Включение выполняется', row['text'])
+        self.assertNotIn('✅', row['text'])
+
 
 if __name__ == '__main__':
     unittest.main()

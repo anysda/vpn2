@@ -1054,11 +1054,15 @@ def _admin_list_markup(clients: list[dict]) -> dict:
     rows = []
     for c in clients:
         icon = _client_status_icon(c.get('status', ''))
+        verified = c.get('accessStatus')
+        if verified and verified not in ('Доступ включён', 'Доступ отключён', 'Ключи перевыпущены'):
+            icon = '⏳'
         limit = _limit_label(c.get('deviceLimit'))
         count = c.get('deviceCount', 0)
         noun = plural_ru(count, ('девайс', 'девайса', 'девайсов'))
         rows.append([{
-            'text': f'{icon} {c.get("name", "?")} — {count} {noun} · лимит: {limit}',
+            'text': f'{icon} {c.get("name", "?")} — {count} {noun} · лимит: {limit}'
+                    + (f' · {verified}' if verified else ''),
             'callback_data': f'acl:{c.get("id")}',
         }])
     rows.append([{'text': '➕ Создать клиента', 'callback_data': 'anew'}])

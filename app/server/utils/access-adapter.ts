@@ -9,9 +9,9 @@ import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import type { AccessPayload } from './access-operations'
 import { isClientActive } from './client-status'
-import { syncWireguardConfig } from './wireguard'
-import { connectedOvpnClients, killOvpnClient, ovpnCn, reissueDeviceOvpn, revokeAccessCert, syncOpenvpnConfig } from './openvpn'
-import { syncIkev2 } from './ikev2'
+import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
+import { connectedOvpnClients, ensureDeviceOvpn, killOvpnClient, ovpnCn, reissueDeviceOvpn, revokeAccessCert, syncOpenvpnConfig } from './openvpn'
+import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
 
 /** Узкий контракт для локального сервиса: только целевое состояние и его проверка. */
 export interface AccessAdapter {
@@ -59,13 +59,19 @@ export const accessAdapter: AccessAdapter = {
     if (protocol === 'wg') {
       const { stdout } = await exec('flock', ['-w', '10', '/etc/wireguard/.access-apply.lock', 'wg', 'show', 'wg0', 'peers'], { timeout: 20_000, maxBuffer: 1024 * 1024 })
       const peers = new Set(stdout.trim().split(/\s+/))
-      return rows.every(d => !d.wgPublicKey || peers.has(d.wgPublicKey) === d.enabled)
+      return rows.every(d => d.enabled
+        ? !!d.wgPublicKey && !!d.wgPresharedKey && !!d.wgIp && peers.has(d.wgPublicKey)
+        : !d.wgPublicKey || !peers.has(d.wgPublicKey))
         && payload.retired.every(d => !d.wgPublicKey || !peers.has(d.wgPublicKey))
     }
     if (protocol === 'openvpn') {
       const connected = await connectedOvpnClients()
       for (const d of rows) {
-        if (!d.ovpnCert) continue
+        if (!d.ovpnCert) {
+          if (d.enabled) return false
+          continue
+        }
+        if (d.deleting && await certificateState(d.ovpnCert) !== 'revoked') return false
         const ccd = await fs.readFile(`${OVPN}/ccd/${ovpnCn(d.id)}`, 'utf8').catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
           throw error
@@ -93,7 +99,10 @@ export const accessAdapter: AccessAdapter = {
     const config = await fs.readFile('/etc/swanctl/conf.d/anysda-clients.conf', 'utf8')
     if (createHash('sha256').update(config).digest('hex') !== status.applied_digest) return false
     for (const d of rows) {
-      if (!d.ikev2Username) continue
+      if (!d.ikev2Username || !d.ikev2Password || !d.ikev2Ip) {
+        if (d.enabled) return false
+        continue
+      }
       if (status.connections.includes(`anysda-dev-${d.id}`) !== d.enabled) return false
       const secret = `id = "${d.ikev2Username}"\n    secret = "${d.ikev2Password}"`
       if (config.includes(secret) !== d.enabled) return false
@@ -103,11 +112,25 @@ export const accessAdapter: AccessAdapter = {
   },
   async apply(protocol, operation, payload) {
     const rows = await desired(operation)
-    if (protocol === 'wg') return syncWireguardConfig()
-    if (protocol === 'ikev2') return syncIkev2()
+    if (protocol === 'wg' || protocol === 'ikev2') {
+      for (const d of rows.filter(d => d.enabled)) {
+        if (protocol === 'wg' && d.wgPublicKey && d.wgPrivateKey && d.wgPresharedKey && d.wgIp) continue
+        if (protocol === 'ikev2' && d.ikev2Username && d.ikev2Password && d.ikev2Ip) continue
+        await desired(operation)
+        if (protocol === 'wg') await ensureDeviceWg(d.id)
+        else await ensureDeviceIkev2(d.id)
+      }
+      await desired(operation)
+      return protocol === 'wg' ? syncWireguardConfig() : syncIkev2()
+    }
     for (const old of payload.retired) {
       await desired(operation)
       if (old.ovpnCert) await revokeAccessCert(old.ovpnCert)
+    }
+    for (const d of rows) {
+      await desired(operation)
+      if (d.deleting && d.ovpnCert && !payload.retired.some(old => old.ovpnCert === d.ovpnCert)) await revokeAccessCert(d.ovpnCert)
+      if (d.enabled && (!d.ovpnCert || !d.ovpnKey)) await ensureDeviceOvpn(d.id)
     }
     for (const pending of payload.rotateOvpn) {
       const currentRows = await desired(operation)

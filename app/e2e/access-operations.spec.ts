@@ -114,6 +114,7 @@ test('панель freeze → бот unfreeze во время применени
   expect(accessStatus(latest)).toBe('Доступ включён')
   expect((await db.select().from(schema.clients))[0]!.accessVersion).toBe(latest.version)
   expect(fact.get(`wg:${c.id}`)).toBe(latest.version)
+  expect((await ops.currentAccessByClient()).get(c.id)?.id).toBe(latest.id)
   console.log('freeze v1: Заменена; unfreeze v2: Доступ включён; stale notifications=0')
 })
 
@@ -172,6 +173,15 @@ test('желаемое состояние и операция откатываю
   expect(saved!.frozenManual).toBe(false)
   expect(saved!.accessVersion).toBe(0)
   expect((await db.select().from(schema.accessOperations))).toHaveLength(0)
+})
+
+test('уведомление о новом сроке сохраняется и доставляется только после подтверждения', async () => {
+  const c = await client()
+  await ops.enqueueAccess({ clientId: c.id, actor: 'panel', patch: { expiresAt: new Date('2031-05-20T12:00:00Z') } })
+  expect((await db.select().from(schema.botOutbox))).toHaveLength(0)
+  await ops.runAccessOperations(adapter)
+  const [notice] = await db.select().from(schema.botOutbox)
+  expect(JSON.parse(notice!.payload).text).toBe('Доступ включён\nСрок действия вашего ключа: до 20.05.2031.')
 })
 
 test('история завершённых удалений не вытесняет живые операции из очереди', async () => {

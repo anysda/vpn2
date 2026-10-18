@@ -364,11 +364,19 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
   if (row.ovpnCert && row.ovpnKey && row.ovpnIp) return row
 
   if (!row.ovpnCert || !row.ovpnKey) {
+    const [owner] = await db.select().from(clientsTable).where(eq(clientsTable.id, row.clientId))
+    if (!owner || owner.deleting || row.deleting || !isClientActive(owner)) {
+      throw createError({ statusCode: 409, message: 'Выдача сертификата недоступна до включения доступа' })
+    }
     const { cert, key } = await issueClientCert(ovpnCn(deviceId))
     const [issued] = await db
       .update(devicesTable)
       .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
-      .where(eq(devicesTable.id, deviceId))
+      .where(and(eq(devicesTable.id, deviceId), eq(devicesTable.deleting, false), exists(
+        db.select({ id: clientsTable.id }).from(clientsTable).where(and(
+          eq(clientsTable.id, owner.id), eq(clientsTable.accessVersion, owner.accessVersion), eq(clientsTable.deleting, false),
+        )),
+      )))
       .returning()
     if (!issued) throw new Error(`device ${deviceId} not found`)
   }
@@ -380,7 +388,7 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
     .from(clientsTable)
     .where(eq(clientsTable.id, row.clientId))
     .limit(1)
-  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true)).catch(() => {})
+  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true))
   return updated
 }
 

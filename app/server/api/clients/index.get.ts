@@ -3,7 +3,7 @@ import { useDb } from '../../database/client'
 import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { clientStatus } from '../../utils/client-status'
-import { latestAccess } from '../../utils/access-operations'
+import { currentAccessByClient } from '../../utils/access-operations'
 import { accessStatus } from '../../../shared/access-operation'
 
 /** Список клиентов: статус, число девайсов и суммарный трафик по девайсам. */
@@ -24,9 +24,10 @@ export default defineEventHandler(async (event) => {
     .groupBy(devices.clientId)
   const byClient = new Map(agg.map(a => [a.clientId, a]))
 
-  return Promise.all(clientRows.map(async (c) => {
+  const operations = await currentAccessByClient()
+  return clientRows.map((c) => {
     const a = byClient.get(c.id)
-    const operation = await latestAccess(c.id)
+    const operation = operations.get(c.id)
     return {
       accessStatus: operation ? accessStatus(operation) : 'Состояние не подтверждено',
       id: c.id,
@@ -44,5 +45,5 @@ export default defineEventHandler(async (event) => {
       rxTotal: a ? Number(a.rx) : 0,
       txTotal: a ? Number(a.tx) : 0,
     }
-  }))
+  })
 })

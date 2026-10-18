@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { and, desc, eq, exists, lte, ne } from 'drizzle-orm'
+import { and, desc, eq, exists, getTableColumns, lte, ne } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shared/access-operation'
@@ -20,6 +20,7 @@ export interface AccessPayload {
   rotateOvpn: Array<{ id: number, cert: string | null }>
   name: string
   chatId: number | null
+  notice?: string
 }
 type StoredOperation = typeof accessOperations.$inferSelect
 const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 300_000]
@@ -99,6 +100,11 @@ export async function enqueueAccess(input: {
       retired: inherited?.retired ?? [], rotateOvpn: inherited?.rotateOvpn ?? [],
       name: client.name, chatId: client.tgChatId,
     }
+    if (input.patch?.expiresAt !== undefined && (before.expiresAt?.getTime() ?? null) !== (client.expiresAt?.getTime() ?? null)) {
+      payload.notice = client.expiresAt
+        ? `Срок действия вашего ключа: до ${client.expiresAt.toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}.`
+        : 'Срок действия ключа снят — доступ бессрочный.'
+    }
     if (kind === 'delete' || kind === 'reissue') {
       for (const d of targets) {
         payload.retired.push({ id: d.id, wgPublicKey: d.wgPublicKey, ovpnCert: d.ovpnCert })
@@ -109,12 +115,12 @@ export async function enqueueAccess(input: {
         else {
           const kp = generateKeyPairSync('x25519')
           await tx.update(devices).set({
-            ...(enabled.wg && d.wgPublicKey ? {
+            ...(enabled.wg ? {
               wgPrivateKey: (kp.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).subarray(-32).toString('base64'),
               wgPublicKey: (kp.publicKey.export({ format: 'der', type: 'spki' }) as Buffer).subarray(-32).toString('base64'),
               wgPresharedKey: randomBytes(32).toString('base64'),
             } : {}),
-            ...(enabled.ikev2 && d.ikev2Username ? { ikev2Password: randomBytes(20).toString('hex') } : {}),
+            ...(enabled.ikev2 ? { ikev2Password: randomBytes(20).toString('hex') } : {}),
             updatedAt: new Date(),
           }).where(eq(devices.id, d.id))
           if (enabled.openvpn) {
@@ -144,6 +150,13 @@ export async function latestAccess(clientId: number) {
   const [row] = await useDb().select().from(accessOperations).where(eq(accessOperations.clientId, clientId))
     .orderBy(desc(accessOperations.version)).limit(1)
   return row ? operationView(row) : null
+}
+
+/** Списки панели и бота читают только текущие версии одним запросом. */
+export async function currentAccessByClient() {
+  const rows = await useDb().select(getTableColumns(accessOperations)).from(accessOperations)
+    .innerJoin(clients, and(eq(clients.id, accessOperations.clientId), eq(clients.accessVersion, accessOperations.version)))
+  return new Map(rows.map(row => [row.clientId, operationView(row)]))
 }
 
 export async function getAccess(id: string) {
@@ -277,7 +290,7 @@ async function runOnce(adapter: AccessAdapter) {
         const now = Date.now()
         await tx.insert(botOutbox).values({
           id: row.id, label: `Уведомление клиенту «${payload.name}»`,
-          payload: JSON.stringify({ type: 'client_notify', chatId: payload.chatId, text: title }),
+          payload: JSON.stringify({ type: 'client_notify', chatId: payload.chatId, text: [title, payload.notice].filter(Boolean).join('\n') }),
           status: 'queued', due: now, expires: now + 3_600_000, created: now,
         }).onConflictDoNothing()
       }

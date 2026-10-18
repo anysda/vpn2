@@ -10,7 +10,8 @@ port 1194
 proto udp
 dev tun
 topology subnet
-server 10.67.67.0 255.255.248.0
+server 10.67.67.0 255.255.255.0 nopool
+ifconfig-pool 10.67.67.240 10.67.67.253 255.255.255.0
 ca /etc/openvpn/server/pki/ca.crt
 cert /etc/openvpn/server/pki/server.crt
 key /etc/openvpn/server/pki/server.key

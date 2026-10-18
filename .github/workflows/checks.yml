@@ -59,7 +59,7 @@ jobs:
       - name: зависимости инфраструктуры
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2
+          sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
           python3 -m pip install PyYAML==6.0.3
       - name: регрессии инфраструктуры без sing-box
         if: ${{ !matrix.sing-box }}

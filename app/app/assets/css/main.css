@@ -253,7 +253,9 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   .tab.on{display:flex;flex-direction:column;gap:12px;animation:tfade .25s var(--ease)}
   .mbar{display:block;position:fixed;z-index:30;left:0;right:0;bottom:0;padding:22px 12px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(180deg,transparent,var(--bg) 46%);pointer-events:none;-webkit-user-select:none;user-select:none}
   .mbar .tabs{display:flex;gap:0;padding:4px;pointer-events:auto;background:linear-gradient(180deg,var(--card-a),var(--card-b));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 18px 40px -10px rgba(0,0,0,calc(.6*var(--shk)))}
-  .mbar .tabs a{flex:1;min-width:0;height:44px;display:grid;place-items:center;padding:0 2px;font-size:11.5px;transition:transform .16s var(--ease),background .25s,color .2s}
+  /* ширина вкладки = слово + поровну свободного места: пилюля облегает слово с одинаковыми
+     отступами, промежутки между словами равны; уже слова вкладка не сжимается */
+  .mbar .tabs a{flex:1 1 auto;height:44px;display:grid;place-items:center;padding:0 2px;font-size:11.5px;transition:transform .16s var(--ease),background .25s,color .2s}
   .mbar .tabs a:not(.on):hover{color:var(--t2)}
   .mbar .tabs a:active,.mper:active{transform:scale(.96)}
   .wrap>header button,.mbar a,.bsh a,.bsh button{touch-action:manipulation}

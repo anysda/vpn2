@@ -313,7 +313,8 @@
   .dns .chk2,.dns .syn{padding:16px}
   .dns .inp.big2{height:44px;margin-top:12px;padding:0 14px}
   .dns .fres .fv .big{font-size:30px}
-  .dns .fres p{margin-top:8px;font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}
+  .dns .fres p{margin-top:8px;font-size:12.5px;line-height:1.5}
+  .dns .fres p code{overflow-wrap:anywhere}
   .dns .syn dl{grid-template-columns:auto minmax(0,1fr);gap:10px 14px;margin-top:12px}
   .dns .syn dt{font-size:12px}
 
@@ -357,7 +358,7 @@
   .dns .sh+.fld{margin-top:6px;border-top:0}
   .dns .arow+.fld{margin-top:14px;border-top:1px solid rgba(var(--fg),.05)}
   .dns .fld>span:first-child{grid-area:s;width:auto}
-  .dns .fld>code{grid-area:c;font-size:13px;min-width:0;overflow-wrap:anywhere}
+  .dns .fld>code{grid-area:c;font-size:13px;min-width:0}
   .dns .fld>code.mono{font-size:12.5px!important}
   .dns .fld>.pill,.dns .fld>.tog{grid-area:b}
   .dns .fld:has(>.tog)>span:first-child{color:var(--t1);font-size:13px}

@@ -394,7 +394,7 @@ onBeforeUnmount(() => {
   <section
     ref="board"
     class="board"
-    :style="{ gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(0,1fr))` }"
+    :style="{ gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(min-content,1fr))` }"
   >
     <div
       v-for="col in columns"
@@ -403,7 +403,7 @@ onBeforeUnmount(() => {
     >
       <div class="eh">
         <div>
-          <b><WholeWords :text="col.name" /></b><small>{{ col.sub }}</small>
+          <b>{{ col.name }}</b><small>{{ col.sub }}</small>
         </div>
         <span :class="['rt', rtc(col.delay)]">{{ col.delay ?? '—' }}<small>мс</small></span>
       </div>
@@ -510,23 +510,26 @@ onBeforeUnmount(() => {
 .arow .sel{flex:1;min-width:0}
 .arow :deep(.sel-b){height:40px;width:100%;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;outline:0}
 .arow .pill{height:40px}
-.board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+.board{display:grid;grid-template-columns:repeat(5,minmax(min-content,1fr));gap:12px}
 /* Шапка, «Напрямую», «WARP» - строки общей сетки доски: шапка в две строки
    («Соединенные Штаты» на узком окне) не сдвигает и не растягивает ячейки
    соседних колонок. Единственная ячейка колонки (Россия) занимает обе строки. */
-/* Колонка не шире своей доли доски (minmax(0,1fr) здесь и у .board): длинное
-   имя переносится, правило и подпись ячейки режутся многоточием, задержка
-   (flex:none) видна целиком. */
-.ex{padding:14px;display:grid;grid-row:span 3;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);row-gap:10px}
+/* Колонка - доля доски, но не уже шапки: имя страны переносится только по
+   словам, самое длинное слово и задержка (flex:none) видны целиком. Ячейки
+   в ширину колонки не вмешиваются (contain:inline-size): правило и подпись
+   режутся многоточием. */
+.ex{padding:14px;display:grid;grid-row:span 3;grid-template-rows:subgrid;grid-template-columns:minmax(min-content,1fr);row-gap:10px}
 .ex .cell:nth-child(2):last-child{grid-row:span 2}
-.ex .eh{display:flex;justify-content:space-between;align-items:flex-start;padding:2px 2px 4px}
-.ex .eh>div{min-width:0}
+/* Имя занимает всё место рядом с задержкой; задержка уходит под имя, только если
+   рядом с ней не встаёт самое длинное слово имени. */
+.ex .eh{display:flex;flex-wrap:wrap;column-gap:8px;justify-content:space-between;align-items:flex-start;padding:2px 2px 4px}
+.ex .eh>div{flex:1 1 0;min-width:min-content}
 .ex .eh b{font-weight:500;font-size:15px;display:block}
 .ex .eh small{font-size:11.5px;color:var(--t3)}
 .ex .eh .rt{flex:none;white-space:nowrap;font-weight:200;font-size:26px;letter-spacing:-.02em;line-height:1}
 .ex .eh .rt small{font-size:12px;margin-left:2px}
 .ex.badx .eh .rt{color:var(--red-t)}
-.cell{border-radius:14px;background:var(--sunk);border:1px dashed rgba(var(--fg),.08);box-shadow:inset 0 2px 12px rgba(0,0,0,calc(.5*var(--shk)));padding:10px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s,background .2s}
+.cell{contain:inline-size;border-radius:14px;background:var(--sunk);border:1px dashed rgba(var(--fg),.08);box-shadow:inset 0 2px 12px rgba(0,0,0,calc(.5*var(--shk)));padding:10px;display:flex;flex-direction:column;gap:6px;transition:border-color .2s,background .2s}
 .cell.over{border-color:rgba(var(--fg),.45);background:var(--sunk2)}
 .cell .cl{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--t3);padding:0 2px 2px}
 .cell .cl span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

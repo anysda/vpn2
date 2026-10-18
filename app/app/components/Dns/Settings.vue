@@ -165,7 +165,7 @@ async function confirmAsk() {
           <DnsSeg :model-value="mode" small :options="MODES" @pick="v => patch({ mode: v })" />
         </div>
         <div class="fld">
-          <span>Bootstrap</span><code class="mono">{{ data.bootstrap }}</code>
+          <span>Bootstrap</span><code class="mono"><WholeWords :text="data.bootstrap" /></code>
           <button type="button" class="pill" @click="openEdit('bootstrap', 'Bootstrap', true)">
             Изменить
           </button>
@@ -187,7 +187,7 @@ async function confirmAsk() {
           <h3>Кэш и ограничения</h3>
         </div>
         <div class="fld">
-          <span>Размер кэша</span><code>{{ data.cache }}</code>
+          <span>Размер кэша</span><code><WholeWords :text="data.cache" /></code>
           <button type="button" class="pill" @click="openAsk('cache')">
             Очистить
           </button>
@@ -199,13 +199,13 @@ async function confirmAsk() {
           </button>
         </div>
         <div class="fld">
-          <span>Лимит запросов</span><code>{{ data.ratelimit }}</code>
+          <span>Лимит запросов</span><code><WholeWords :text="data.ratelimit" /></code>
           <button type="button" class="pill" @click="openEdit('ratelimit', 'Лимит запросов')">
             Изменить
           </button>
         </div>
         <div class="fld">
-          <span>Ответ на блокировку</span><code>{{ data.block }}</code>
+          <span>Ответ на блокировку</span><code><WholeWords :text="data.block" /></code>
           <button type="button" class="pill" @click="openEdit('block', 'Ответ на блокировку')">
             Изменить
           </button>

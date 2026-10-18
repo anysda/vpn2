@@ -98,7 +98,7 @@ const zoneList: { id: Zone, title: string }[] = [
           :aria-label="z.title"
         >
           <div v-for="id in draft[z.id]" :key="id" class="zb" role="listitem" :data-module="id">
-            <div><b><WholeWords :text="SCREEN_MODULES[id].label" /></b><small><WholeWords :text="SCREEN_MODULES[id].hint" /></small></div>
+            <div><b>{{ SCREEN_MODULES[id].label }}</b><small>{{ SCREEN_MODULES[id].hint }}</small></div>
           </div>
         </div>
       </div>
@@ -108,7 +108,8 @@ const zoneList: { id: Zone, title: string }[] = [
 
 <style>
 .scr .ha{display:flex;gap:8px}
-.scr .scz{display:grid;grid-template-columns:1.4fr 1fr;gap:12px;align-items:start}
+/* колонка не уже самого длинного слова своих плашек: слово не делится */
+.scr .scz{display:grid;grid-template-columns:minmax(min-content,1.4fr) minmax(min-content,1fr);gap:12px;align-items:start}
 .scr .zone{min-height:360px}
 .scr .card h3{font-size:14px;font-weight:500;color:var(--t2)}
 .scr .zone.hid{border:1px dashed rgba(var(--red-rgb),.35);background:linear-gradient(180deg,rgba(var(--red-rgb),.04),var(--card-b))}
@@ -119,8 +120,10 @@ const zoneList: { id: Zone, title: string }[] = [
 .scr .zb b{font-weight:500;font-size:13.5px}
 .scr .zb small{display:block;color:var(--t3);font-size:11.5px}
 .scr .zb.drag{opacity:.35}
-/* телефон: узкая колонка переносит название и подсказку по словам (WholeWords), плашка растёт по тексту */
+/* телефон: две колонки не вмещают самое длинное слово плашки, «Скрыто» под «На обзоре»;
+   название и подсказка переносятся по словам, плашка растёт по тексту */
 @media (max-width:720px){
+  .scr .scz{grid-template-columns:minmax(min-content,1fr)}
   .scr .zb{height:auto;min-height:58px;padding:10px 16px}
   .scr .zb>div{min-width:0}
   .scr .zb b{display:block}

@@ -3,6 +3,7 @@ import { expect, NODES, test, toast } from './support/fixtures'
 import { openHome } from './support/clients'
 import { noHorizontalOverflow } from './support/overflow'
 import { orderBreaks } from './support/order'
+import { wordBreaks } from './support/words'
 
 // Обзор на телефоне: блоки в порядке макета, ноды парами, шторка ноды вместо модалки.
 
@@ -157,4 +158,31 @@ test('активность: 14 недель, тап по клетке выбир
   await expect(page.locator('.ov-activity .agrid > i.sel')).toHaveAttribute('data-day', day!)
   await expect(read).toBeVisible()
   expect(await page.locator('.ov-top .tr').count()).toBeLessThanOrEqual(3)
+})
+
+// Лента «События» на узком телефоне: слова заголовка и подробностей целиком, длинный домен,
+// адрес и логин без пробелов рвутся внутри себя, но не вылезают за ленту.
+test('лента событий 360: слова целиком, длинный домен и логин внутри ленты', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 874 })
+  const at = Date.now()
+  const long = 'e2e-feed-unbreakablelonglabelwithoutanydots.very-long-subdomain.example-domain.org'
+  const events = [
+    { id: 1, at, type: 'route_added', level: 'info', title: `Маршрут добавлен · ${long}`, detail: 'через Нидерланды · admin' },
+    { id: 2, at, type: 'login_failed', level: 'alarm', title: 'Неудачный вход в панель', detail: 'логин «averyveryverylongloginwithoutanyspaces» · 2001:db8:85a3::8a2e:370:7334' },
+    { id: 3, at, type: 'client_term', level: 'info', title: 'Ключи перевыпущены · Соединенные Штаты', detail: 'Безопасная навигация, Родительский контроль' },
+  ]
+  await page.route(/\/api\/events(\?.*)?$/, route => route.fulfill({ json: events }))
+  await openHome(page)
+  // первую ленту отдал сервер, подмена - со следующего опроса
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  const lines = page.locator('.ov .ev li>div>*')
+  await expect(lines).toHaveCount(6)
+  for (const el of await lines.all()) {
+    const found = await el.evaluate(wordBreaks)
+    const text = await el.textContent()
+    // рваться может только кусок без пробелов с точкой, двоеточием или длиннее любого слова
+    expect(found.filter(x => !x.startsWith('разрыв посреди слова') || /[а-яё]\|[а-яё]/i.test(x)), `«${text}»`).toEqual([])
+  }
+  expect(await page.locator('.ov .ev .tk').evaluateAll(l => l.map(e => e.textContent)), 'рвутся только не слова')
+    .toEqual([long, '«averyveryverylongloginwithoutanyspaces»', '2001:db8:85a3::8a2e:370:7334'])
 })

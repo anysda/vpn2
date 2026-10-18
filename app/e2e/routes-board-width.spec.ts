@@ -137,9 +137,9 @@ test.describe('доска маршрутов: ширина колонок', () =
   }
 })
 
-// Узкое окно ПК, экзиты стенда: имя страны переносится по словам, длинное слово - по слогам
-// с дефисом, не посреди слова без дефиса («Нидерлан|ды», «Соединен|ные»).
-test('имена стран не рвутся посреди слова без дефиса при окне 721/800/900/1024', async ({ page }) => {
+// Узкое окно ПК, экзиты стенда: имя страны переносится только по словам, ни по слогам
+// с дефисом («Ни-дер-лан-ды»), ни без («Соединен|ные»), и не вылезает за колонку.
+test('имена стран: ни одного разрыва внутри слова, текст внутри колонки при окне 721/800/900/1024', async ({ page }) => {
   await loginApi(page)
   await page.goto('/routes')
   await hydrated(page)
@@ -149,5 +149,10 @@ test('имена стран не рвутся посреди слова без �
     for (const b of await page.locator('.board .ex .eh b').all()) {
       expect.soft(await b.evaluate(wordBreaks), `окно ${width}: «${await b.textContent()}»`).toEqual([])
     }
+    expect.soft(await overflows(page), `окно ${width}`).toEqual([])
+    // доска не шире своего места и окна: колонки по самому длинному слову влезают
+    const [extra, out] = await page.locator('.board').evaluate(b => [b.scrollWidth - b.clientWidth, b.getBoundingClientRect().right - innerWidth])
+    expect.soft(extra, `окно ${width}: доска шире своего места`).toBeLessThanOrEqual(0)
+    expect.soft(out, `окно ${width}: доска за краем окна`).toBeLessThanOrEqual(0)
   }
 })

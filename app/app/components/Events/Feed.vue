@@ -50,7 +50,7 @@ function when(ms: number): string {
       <li v-for="e in data" :key="e.id">
         <time :datetime="new Date(e.at).toISOString()">{{ when(e.at) }}</time>
         <span class="dot" :class="{ pulse: e.level === 'ok' || e.level === 'alarm' }" :style="{ background: COLOR[e.level] }" />
-        <div><b>{{ e.title }}</b><small v-if="e.detail">{{ e.detail }}</small></div>
+        <div><b><WholeWords :text="e.title" /></b><small v-if="e.detail"><WholeWords :text="e.detail" /></small></div>
       </li>
     </ul>
     <p v-else class="empty">
@@ -74,8 +74,8 @@ function when(ms: number): string {
 .ev time{grid-row:1/3;font:400 12px/18px ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;color:var(--t3);white-space:nowrap}
 .ev li>.dot{grid-row:1;margin-top:5px;width:8px;height:8px;justify-self:center}
 .ev li:not(:last-child)::after{content:"";position:absolute;left:53.5px;top:19px;bottom:1px;width:1px;background:rgba(var(--fg),.09)}
-.ev b{display:block;font-weight:500;font-size:13px;line-height:18px;color:var(--t1);overflow-wrap:anywhere}
-.ev small{display:block;margin-top:2px;font-size:11.5px;line-height:16px;color:var(--t3);overflow-wrap:anywhere}
+.ev b{display:block;font-weight:500;font-size:13px;line-height:18px;color:var(--t1)}
+.ev small{display:block;margin-top:2px;font-size:11.5px;line-height:16px;color:var(--t3)}
 .ev li>div{min-width:0}
 .ev .empty{margin-top:12px;font-size:12.5px;color:var(--t3)}
 /* живое: пульс у «снова в сети» и у тревоги, период 2,4 с */

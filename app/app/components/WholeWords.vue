@@ -1,14 +1,17 @@
 <script setup lang="ts">
-// Текст по словам: слово, которое помещается в строку, переносится только целиком, шире
-// строки - по слогам с дефисом (словарь по lang документа). Разрыв без дефиса - лишь когда
-// в строку не входит и слог: иначе текст вылез бы за свой блок.
-defineProps<{ text: string }>()
+// Текст, где слова идут вперемешку с доменами, адресами и ключами. Слово переносится только
+// целиком и посреди не рвётся никогда; в любом месте рвётся лишь не слово - кусок с цифрой,
+// точкой, двоеточием, @, / или _ внутри либо буквы подряд длиннее любого слова, - иначе такой
+// кусок вылез бы за свой блок.
+const props = defineProps<{ text: string }>()
+const NOT_WORD = /[\d.:@/\\_=+#]|\p{L}{25}/u
+const parts = computed(() => props.text.split(/(\s+)/).map(t => ({ t, tk: NOT_WORD.test(t.replace(/[.,:;!?»)]+$/, '')) })))
 </script>
 
 <template>
-  <template v-for="(w, i) in text.split(' ')" :key="i">{{ i ? ' ' : '' }}<span class="wd">{{ w }}</span></template>
+  <template v-for="(p, i) in parts" :key="i"><span v-if="p.tk" class="tk">{{ p.t }}</span><template v-else>{{ p.t }}</template></template>
 </template>
 
 <style>
-.wd{display:inline-block;-webkit-hyphens:auto;hyphens:auto;overflow-wrap:anywhere}
+.tk{overflow-wrap:anywhere}
 </style>

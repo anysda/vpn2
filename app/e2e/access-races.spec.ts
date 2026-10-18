@@ -340,3 +340,70 @@ test('VPN2-468: отзыв бота во время добавления уст�
     close()
   }
 })
+
+test('VPN2-476: отзыв бота во время удаления и перевыпуска через бота не меняет устройства', async () => {
+  const { app, schema, db, route, useBot, close } = await panel()
+  try {
+    // 50 запросов бота стоят между поиском клиента по чату и записью, пока идёт отзыв.
+    const paused = gate(50)
+    app.overrides.set('app/server/utils/access-adapter.ts', { accessAdapter: {
+      enabled: async () => { await paused.caReady(); return { wg: true, openvpn: false, ikev2: true } },
+    } })
+    app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => {} })
+    useBot()
+    const remove = route('bot/devices/[deviceId].delete')
+    const reissue = route('bot/devices/[deviceId]/reissue.post')
+    const unlink = route('clients/[id]/unlink.post')
+    const [client] = await db.insert(schema.clients).values({ name: 'bot-ops', password: 'bot-ops-invite', tgChatId: 556 }).returning()
+    const created = await db.insert(schema.devices).values(Array.from({ length: 5 }, (_, i) => ({
+      clientId: client!.id, name: `dev-${i}`, wgPrivateKey: `priv-${i}`, wgPublicKey: `pub-${i}`, wgPresharedKey: `psk-${i}`, ikev2Password: `ike-${i}`,
+    }))).returning()
+    const requests = Array.from({ length: 50 }, (_, i) => {
+      const deviceId = String(created[i % created.length]!.id)
+      return i % 2
+        ? call(reissue, { params: { deviceId }, body: { chatId: 556 } })
+        : call(remove, { params: { deviceId }, query: { chatId: '556' } })
+    })
+    await paused.waiting
+    const revoked = await call(unlink, { params: { id: String(client!.id) } })
+    paused.open()
+    const results = await Promise.all(requests)
+    const after = await db.select().from(schema.devices).where(eq(schema.devices.clientId, client!.id))
+    const operations = await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.clientId, client!.id))
+    const statuses = results.reduce<Record<string, number>>((acc, r) => {
+      const label = `${r.status} ${r.body.statusMessage ?? ''}`.trim()
+      acc[label] = (acc[label] ?? 0) + 1
+      return acc
+    }, {})
+    console.log('бот удаляет и перевыпускает, бот отозван:', { unlink: revoked.status, results: statuses, operations: operations.length })
+    expect(revoked.status).toBe(200)
+    expect(statuses).toEqual({ '404 not_linked': 50 })
+    expect(operations).toHaveLength(0)
+    expect(after.map(({ id, deleting, wgPublicKey, wgPrivateKey, wgPresharedKey, ikev2Password }) =>
+      ({ id, deleting, wgPublicKey, wgPrivateKey, wgPresharedKey, ikev2Password })))
+      .toEqual(created.map(({ id, deleting, wgPublicKey, wgPrivateKey, wgPresharedKey, ikev2Password }) =>
+        ({ id, deleting, wgPublicKey, wgPrivateKey, wgPresharedKey, ikev2Password })))
+
+    // Привязанный чат те же маршруты пропускают.
+    const [kept] = await db.insert(schema.clients).values({ name: 'bot-kept', password: 'bot-kept-invite', tgChatId: 557 }).returning()
+    const [phone, laptop] = await db.insert(schema.devices).values([
+      { clientId: kept!.id, name: 'phone', wgPublicKey: 'kept-pub-1' },
+      { clientId: kept!.id, name: 'laptop', wgPublicKey: 'kept-pub-2' },
+    ]).returning()
+    const linkedRequests = Promise.all([
+      call(reissue, { params: { deviceId: String(phone!.id) }, body: { chatId: 557 } }),
+      call(remove, { params: { deviceId: String(laptop!.id) }, query: { chatId: '557' } }),
+    ])
+    paused.open()
+    const linked = await linkedRequests
+    const [phoneAfter] = await db.select().from(schema.devices).where(eq(schema.devices.id, phone!.id))
+    const [laptopAfter] = await db.select().from(schema.devices).where(eq(schema.devices.id, laptop!.id))
+    console.log('привязанный чат:', linked.map(r => r.status), { reissued: phoneAfter!.wgPublicKey !== 'kept-pub-1', deleting: laptopAfter!.deleting })
+    expect(linked.map(r => r.status)).toEqual([200, 200])
+    expect(phoneAfter!.wgPublicKey).not.toBe('kept-pub-1')
+    expect(laptopAfter!.deleting).toBe(true)
+  }
+  finally {
+    close()
+  }
+})

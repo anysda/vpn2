@@ -11,7 +11,7 @@ export default defineEventHandler(async (event) => {
   if (!Number.isSafeInteger(deviceId) || deviceId < 1) throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
   const body = await readBodyAs(event, Body)
   const client = await clientByChat(body.chatId)
-  const { operation } = await enqueueAccess({ clientId: client.id, deviceId, kind: 'reissue', actor: 'bot', key: accessRequestKey(event) })
+  const { operation } = await enqueueAccess({ clientId: client.id, chatId: body.chatId, deviceId, kind: 'reissue', actor: 'bot', key: accessRequestKey(event) })
   setResponseStatus(event, 202)
   return { ...await botClientView(client.id), operation }
 })

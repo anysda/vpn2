@@ -67,12 +67,20 @@ export async function enqueueAccess(input: {
   patch?: Partial<typeof clients.$inferInsert>
   condition?: SQL
   initialize?: boolean
+  /** Запрос бота: привязка чата перепроверяется в транзакции записи. */
+  chatId?: number
 }) {
   const db = useDb()
   const key = input.key ?? randomUUID()
   const requestHash = requestFingerprint(input)
   const enabled = await accessAdapter.enabled()
   return db.transaction(async (tx) => {
+    if (input.chatId !== undefined) {
+      // Чат искали до транзакции: пока шли await, администратор мог отозвать бота.
+      const [linked] = await tx.select({ id: clients.id }).from(clients)
+        .where(and(eq(clients.id, input.clientId), eq(clients.tgChatId, input.chatId)))
+      if (!linked) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
+    }
     const [existing] = await tx.select().from(accessOperations).where(eq(accessOperations.idempotencyKey, key))
     if (existing) {
       if (existing.requestHash !== requestHash) throw createError({ statusCode: 409, message: 'Ключ идемпотентности уже использован для другого запроса' })

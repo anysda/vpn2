@@ -13,6 +13,12 @@ import { createDeviceWithAddresses } from '../../../../utils/create-device'
 
 const Body = z.object({ name: z.string().trim().min(1).max(64) })
 
+/** Текст предупреждения: у ошибок очереди он для человека, прочие только в журнал. */
+function notifyFailed(err: unknown): string {
+  useLogger().warn({ err }, 'client notification not queued')
+  return (err as { statusCode?: number }).statusCode && err instanceof Error ? err.message : 'Уведомление клиенту не отправлено'
+}
+
 /** Добавить девайс клиенту. Сразу выдаёт ключи WG/OVPN. */
 export default defineEventHandler(async (event) => {
   await requireAuth(event)
@@ -28,8 +34,11 @@ export default defineEventHandler(async (event) => {
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
   // Лимит берётся из строки клиента внутри транзакции вставки: прочитанный
-  // выше мог устареть, пока шли await (параллельный PATCH лимита).
+  // выше мог устареть, пока шли await (параллельный PATCH лимита). Оттуда
+  // же адресат уведомления: бота могли отвязать.
+  let owner = client
   const device = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
+    owner = fresh
     if (names.includes(name)) {
       throw createError({ statusCode: 409, statusMessage: 'device_exists', message: `Девайс «${name}» у клиента уже есть` })
     }
@@ -51,14 +60,15 @@ export default defineEventHandler(async (event) => {
   await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
 
   // Уведомить привязанного клиента — устройство добавил администратор.
-  if (client.tgChatId) {
-    await notifyClient(
-      client.tgChatId,
-      `➕ Администратор добавил вам устройство «${name}». `
-      + 'Откройте «📱 Мои устройства», чтобы получить конфиг.',
-      client.name,
-    )
-  }
+  // Устройство уже создано: сбой очереди бота — предупреждение, не ошибка.
+  const warning = owner.tgChatId
+    ? await notifyClient(
+        owner.tgChatId,
+        `➕ Администратор добавил вам устройство «${name}». `
+        + 'Откройте «📱 Мои устройства», чтобы получить конфиг.',
+        owner.name,
+      ).then(() => undefined, notifyFailed)
+    : undefined
 
-  return { id: device.id, clientId, name: device.name, createdAt: device.createdAt }
+  return { id: device.id, clientId, name: device.name, createdAt: device.createdAt, ...(warning ? { warning } : {}) }
 })

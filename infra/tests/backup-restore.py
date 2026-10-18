@@ -32,6 +32,9 @@ FILES = (
     '/etc/strongswan.conf', '/etc/strongswan.d/anysda-swanctl-load.conf',
     '/etc/ipsec.conf', '/etc/ipsec.secrets',
 )
+# Каталоги, в которые restore кладёт содержимое архива поверх живого.
+LIVE_DIRS = tuple(Path(p) for p in ('/var/lib/anysda-vpn2', '/etc/anysda', '/etc/wireguard', '/etc/openvpn',
+                                    '/etc/strongswan', '/etc/swanctl', '/etc/strongswan.d'))
 EXTRA = ('/etc/caddy/Caddyfile', '/opt/AdGuardHome/AdGuardHome.yaml',
          '/var/anysda/.stamps/30-frontend')
 
@@ -495,10 +498,39 @@ esac
                     self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
 
+    def foreign_owner(self):
+        """Живые каталоги с владельцем и режимом, которых нет ни в архиве, ни у WORK restore."""
+        saved = {path: path.stat() for path in LIVE_DIRS}
+
+        def put_back():
+            for path, st in saved.items():
+                if path.is_dir():
+                    os.chown(path, st.st_uid, st.st_gid)
+                    path.chmod(st.st_mode & 0o7777)
+        self.addCleanup(put_back)
+        for path in LIVE_DIRS:
+            os.chown(path, 4242, 4242)
+            path.chmod(0o750)
+
+    @staticmethod
+    def dir_state():
+        return {str(p): f'{p.stat().st_uid}:{p.stat().st_gid} {p.stat().st_mode & 0o7777:o}' for p in LIVE_DIRS}
+
     def host_state(self):
         paths = [Path(p) for p in (*FILES, *EXTRA)] + [Path('/etc/wireguard/keys/server.priv')]
         paths += sorted(p for p in Path('/etc/openvpn').rglob('*') if p.is_file())
-        return {str(p): p.read_bytes() for p in paths}
+        return {**{str(p): p.read_bytes() for p in paths}, **self.dir_state()}
+
+    def test_restore_keeps_live_directory_owner_and_mode(self):
+        self.backup()
+        self.foreign_owner()
+        before = self.dir_state()
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        after = self.dir_state()
+        print('changed:', {p: (before[p], after[p]) for p in before if before[p] != after[p]}, flush=True)
+        self.assertEqual(after, before)
+        self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
     def test_failure_after_stop_rolls_back_and_starts_services(self):
         write('/etc/openvpn/server/ccd/archived-only', 'must not survive rollback')
@@ -514,6 +546,8 @@ esac
 echo "docker $*" >> /test-output/services
 exit 0
 ''', 0o755)
+        # Владелец и режим каталога данных — как у панели, а не как у WORK restore.
+        self.foreign_owner()
         failures = {
             'db': ('mv', 'case "$*" in *.db-restore.sqlite*) exit 1;; esac; exec /usr/bin/mv "$@"',
                    'установка БД'),

@@ -54,7 +54,8 @@ class RestoreSsoTests(unittest.TestCase):
     def test_runtime_matches_archive_without_removing_other_files(self):
         script = source('infra/lib/anysda-restore.sh')
         block = script.split('if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then', 1)[1]
-        block = 'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then' + block.split(
+        helper = 'copy_into() {' + script.split('copy_into() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
+        block = helper + 'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then' + block.split(
             'if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then', 1)[0]
         for archived_runtime in (None, '{"passwordLogin":true}'):
             with self.subTest(archived_runtime=archived_runtime), tempfile.TemporaryDirectory() as directory:
@@ -81,7 +82,8 @@ class RestoreSsoTests(unittest.TestCase):
     def test_partial_backup_without_etc_anysda_preserves_runtime(self):
         script = source('infra/lib/anysda-restore.sh')
         block = script.split('if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then', 1)[1]
-        block = 'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then' + block.split(
+        helper = 'copy_into() {' + script.split('copy_into() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
+        block = helper + 'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then' + block.split(
             'if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory) / 'sso-runtime.json'

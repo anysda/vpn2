@@ -427,6 +427,24 @@ STEP="остановка служб"
 TOUCHED=()
 DB_SWAPPED=0
 CONTROL_STOPPED=0
+# Содержимое каталога поверх живого. `cp -a src/. dst/` переносит на dst и
+# владельца с режимом самого src (каталоги в WORK — root:root 0700, панель
+# от vpn2-panel теряет доступ к БД): у живого каталога они остаются прежними.
+# Нового каталога не было — берёт их из src.
+copy_into() {
+  local src=$1 dst=$2 owner="" mode=""
+  if [[ -d "$dst" ]]; then
+    owner=$(stat -Lc %u:%g "$dst") && mode=$(stat -Lc %a "$dst") || return
+  else
+    mkdir -p "$dst" || return
+  fi
+  # Без `|| return`: под ловушкой ERR сбой назовёт саму команду cp, а в
+  # откате (ловушка снята) код вернёт проверка ниже.
+  cp -a "$src/." "$dst/"
+  local rc=$?
+  (( rc == 0 )) || return "$rc"
+  [[ -z "$owner" ]] || { chown "$owner" "$dst" && chmod "$mode" "$dst"; }
+}
 rollback_path() {
   local rel=$1
   rm -rf -- "/${rel:?}" || return
@@ -455,7 +473,7 @@ rollback() {
           fi
         else
           # Основной файл не заменён: возвращаем только отложенные WAL/SHM.
-          [[ ! -d "$WORK/db-before" ]] || cp -a "$WORK/db-before/." /var/lib/anysda-vpn2/
+          [[ ! -d "$WORK/db-before" ]] || copy_into "$WORK/db-before" /var/lib/anysda-vpn2
           rm -f /var/lib/anysda-vpn2/.db-restore.sqlite
         fi && back+=(/var/lib/anysda-vpn2/db.sqlite) || failed+=(/var/lib/anysda-vpn2/db.sqlite)
         if [[ -d "$WORK/control-before-restore" ]]; then
@@ -574,8 +592,7 @@ fi
 STEP="восстановление /etc/anysda"
 if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   TOUCHED+=(etc/anysda)
-  mkdir -p /etc/anysda
-  cp -a "$BUNDLE_DIR/etc-anysda/." /etc/anysda/
+  copy_into "$BUNDLE_DIR/etc-anysda" /etc/anysda
   # Старые архивы не содержат настроек SSO из профиля. Их отсутствие тоже
   # восстанавливаем, иначе настройки текущей панели перекроют архивный засев.
   if [[ ! -f "$BUNDLE_DIR/etc-anysda/sso-runtime.json" ]]; then
@@ -594,7 +611,9 @@ if [[ -f "$WG_BUNDLE/server.priv" ]]; then
   # Стадия 28 переиспользует keys/. Если обновить только верхний уровень,
   # следующий деплой вернёт ключ, который был на хосте до restore.
   TOUCHED+=(etc/wireguard)
-  install -d -m 700 /etc/wireguard /etc/wireguard/keys
+  for dir in /etc/wireguard /etc/wireguard/keys; do
+    [[ -d "$dir" ]] || install -d -m 700 "$dir"
+  done
   for key in server.priv server.pub; do
     install -m 600 "$WG_BUNDLE/$key" "/etc/wireguard/keys/$key"
     ln -sfn "keys/$key" "/etc/wireguard/$key"
@@ -603,8 +622,7 @@ fi
 STEP="распаковка PKI OpenVPN"
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
   TOUCHED+=(etc/openvpn)
-  mkdir -p /etc/openvpn
-  cp -a "$BUNDLE_DIR/etc-openvpn/." /etc/openvpn/
+  copy_into "$BUNDLE_DIR/etc-openvpn" /etc/openvpn
 fi
 # IKEv2 (strongSwan + swanctl). Восстанавливаем CA, server cert/key, conf'ы.
 # Если IP entry поменялся — server cert умрёт по SAN; стадия 27-ikev2 при
@@ -612,19 +630,16 @@ fi
 STEP="восстановление IKEv2"
 if [[ -d "$BUNDLE_DIR/etc-strongswan" ]]; then
   TOUCHED+=(etc/strongswan)
-  mkdir -p /etc/strongswan
-  cp -a "$BUNDLE_DIR/etc-strongswan/." /etc/strongswan/
+  copy_into "$BUNDLE_DIR/etc-strongswan" /etc/strongswan
 fi
 if [[ -d "$BUNDLE_DIR/etc-swanctl" ]]; then
   TOUCHED+=(etc/swanctl)
-  mkdir -p /etc/swanctl
-  cp -a "$BUNDLE_DIR/etc-swanctl/." /etc/swanctl/
+  copy_into "$BUNDLE_DIR/etc-swanctl" /etc/swanctl
 fi
 for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
   if [[ -d "$BUNDLE_DIR/etc-$name" ]]; then
     TOUCHED+=("etc/$name")
-    mkdir -p "/etc/$name"
-    cp -a "$BUNDLE_DIR/etc-$name/." "/etc/$name/"
+    copy_into "$BUNDLE_DIR/etc-$name" "/etc/$name"
   elif [[ -f "$BUNDLE_DIR/etc-$name" ]]; then
     TOUCHED+=("etc/$name")
     cp -a "$BUNDLE_DIR/etc-$name" "/etc/$name"

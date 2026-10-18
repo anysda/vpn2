@@ -7,6 +7,69 @@ import { container, inside } from './support/openvpn-ca'
 import { waitAccess } from './support/access'
 import type { AccessOperation } from '../shared/access-operation'
 
+test('живой OpenVPN: заморозка завершает сессию и запрещает повторное подключение', async ({ page }) => {
+  test.setTimeout(180_000)
+  test.skip(!container, 'VPN-клиент разрешён только в одноразовом контейнере')
+  await loginApi(page)
+  const client = await (await page.request.post('/api/clients', { data: { name: uniq('ovpn-session') } })).json()
+  const device = await (await page.request.post(`/api/clients/${client.id}/devices`, { data: { name: 'Телефон' } })).json()
+  const stop = () => inside(`
+    import { existsSync, readFileSync, rmSync } from 'node:fs';
+    const dir='/tmp/access-openvpn-'+JSON.parse(process.argv[1]);
+    if(existsSync(dir+'/pid')) {
+      const pid=Number(readFileSync(dir+'/pid','utf8'));
+      if(Number.isInteger(pid) && pid>1) try { process.kill(pid,'SIGTERM'); } catch {}
+    }
+    rmSync(dir,{recursive:true,force:true});
+  `, client.id)
+  const start = () => inside(String.raw`
+    import { mkdirSync, writeFileSync } from 'node:fs';
+    import { execFileSync } from 'node:child_process';
+    import { DatabaseSync } from 'node:sqlite';
+    const [clientId,deviceId]=process.argv.slice(1).map(JSON.parse);
+    const dir='/tmp/access-openvpn-'+clientId;
+    const db=new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+    db.exec('PRAGMA busy_timeout=10000');
+    const d=db.prepare('SELECT ovpn_cert,ovpn_key FROM devices WHERE id=? AND client_id=?').get(deviceId,clientId);
+    mkdirSync(dir,{mode:0o700});
+    writeFileSync(dir+'/cert',d.ovpn_cert,{mode:0o600});
+    writeFileSync(dir+'/key',d.ovpn_key,{mode:0o600});
+    const config=['client','dev tun','proto udp','remote 127.0.0.1 1194','nobind',
+      'route-nopull','route-noexec','ifconfig-noexec','auth-nocache','connect-retry 1 1','verb 3',
+      'ca /etc/openvpn/server/pki/ca.crt','tls-crypt /etc/openvpn/server/pki/tls-crypt.key',
+      'cert '+dir+'/cert','key '+dir+'/key','writepid '+dir+'/pid','log '+dir+'/log'].join('\n')+'\n';
+    writeFileSync(dir+'/config',config,{mode:0o600});
+    execFileSync('openvpn',['--config',dir+'/config','--daemon'],{stdio:'pipe'});
+  `, client.id, device.id)
+  const state = () => inside(`
+    import { readFileSync } from 'node:fs';
+    const log=readFileSync('/tmp/access-openvpn-'+JSON.parse(process.argv[1])+'/log','utf8');
+    console.log(/AUTH_FAILED/.test(log)?'denied':/Initialization Sequence Completed/.test(log)?'connected':'pending');
+  `, client.id)
+  try {
+    start()
+    await expect.poll(state, { timeout: 30_000 }).toBe('connected')
+    const accepted = await (await page.request.patch(`/api/clients/${client.id}`, { data: { frozenManual: true } })).json()
+    const frozen = await waitAccess(page.request, accepted.operation)
+    expect(frozen.protocols.openvpn.confirmedVersion).toBe(frozen.version)
+    await expect.poll(state, { timeout: 30_000 }).toBe('denied')
+    stop()
+    start()
+    await expect.poll(state, { timeout: 30_000 }).toBe('denied')
+    stop()
+    const resumed = await (await page.request.patch(`/api/clients/${client.id}`, { data: { frozenManual: false } })).json()
+    await waitAccess(page.request, resumed.operation)
+    start()
+    await expect.poll(state, { timeout: 30_000 }).toBe('connected')
+    console.log('live OpenVPN client: connected → freeze confirmed, active session closed → reconnect AUTH_FAILED → unfreeze, same certificate connected')
+  }
+  finally {
+    stop()
+    const removed = await (await page.request.delete(`/api/clients/${client.id}`)).json()
+    if (removed.operation) await waitAccess(page.request, removed.operation)
+  }
+})
+
 test('живые VPN: сбой OpenVPN, честный статус и ручной повтор', async ({ page }) => {
   test.setTimeout(180_000)
   test.skip(!container, 'изменение файлов разрешено только в одноразовом контейнере')
@@ -119,6 +182,7 @@ test('docker restart во время применения; гонка панел
     await expect.poll(async () => (await page.request.get('/api/version').catch(() => null))?.status(), { timeout: 30_000 }).toBe(200)
     const recovered = await waitAccess(page.request, operation)
     expect(recovered.id).toBe(operation.id)
+    for (const state of Object.values(recovered.protocols)) expect(state.confirmedVersion).toBe(recovered.version)
     const botUnfreeze = () => inside(`
       const r=await fetch('http://127.0.0.1:31821/api/bot/admin/clients/'+JSON.parse(process.argv[1]), {
         method:'PATCH', headers:{authorization:'Bearer '+process.env.NUXT_TGBOT_SECRET,'content-type':'application/json'},body:JSON.stringify({frozenManual:false})
@@ -129,10 +193,18 @@ test('docker restart во время применения; гонка панел
     const panel = await (await freeze).json()
     const ordered = [bot.operation, panel.operation].sort((a, b) => a.version - b.version)
     const latest = await waitAccess(page.request, ordered[1]!)
+    for (const state of Object.values(latest.protocols)) expect(state.confirmedVersion).toBe(latest.version)
     const older = await (await page.request.get(`/api/access-operations/${ordered[0]!.id}`)).json()
     expect(older.status).toBe('superseded')
     const current = await (await page.request.get(`/api/clients/${c.id}`)).json()
     expect(current.frozenManual).toBe(latest.kind === 'freeze')
+    const desiredVersion = Number(inside(`
+      import { DatabaseSync } from 'node:sqlite';
+      const db=new DatabaseSync('/var/lib/anysda-vpn2/db.sqlite');
+      db.exec('PRAGMA busy_timeout=10000');
+      console.log(db.prepare('SELECT access_version FROM clients WHERE id=?').get(JSON.parse(process.argv[1])).access_version);
+    `, c.id))
+    expect(desiredVersion).toBe(latest.version)
     console.log('docker restart after WG apply: same operation confirmed; concurrent panel/bot: older=Заменена, latest version confirmed')
   }
   finally {

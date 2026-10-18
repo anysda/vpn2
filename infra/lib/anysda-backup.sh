@@ -40,17 +40,29 @@ report_failure() {
 }
 trap 'report_failure $?' EXIT
 
-# Сверка среза: каждый действующий сертификат OpenVPN из БД не отозван в CRL
-# того же среза. Иначе восстановленный клиент получит «certificate revoked».
+# Сверка среза с БД того же среза: каждый действующий сертификат OpenVPN не
+# отозван в CRL, у каждого действующего устройства есть пир WireGuard и учётка
+# IKEv2, у отключённого и удалённого их нет. Иначе восстановленный клиент
+# получит «certificate revoked», не подключится или подключится без доступа.
 # Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
 check_bundle() {
   python3 - "$1" <<'PY'
-import base64, pathlib, re, sqlite3, sys
+import base64, calendar, json, pathlib, re, sqlite3, sys, time
 
 root = pathlib.Path(sys.argv[1])
-db, crl = root / 'db.sqlite', root / 'etc-openvpn/server/pki/crl.pem'
-if not db.is_file() or not crl.is_file():
+db = root / 'db.sqlite'
+if not db.is_file():
     sys.exit(0)
+con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+
+
+def columns(table):
+    return {row[1] for row in con.execute(f'PRAGMA table_info({table})')}
+
+
+device_columns = columns('devices')
+deleting = 'd.deleting' if 'deleting' in device_columns else '0'
+bad = []
 
 
 def tlv(data, i=0):
@@ -83,24 +95,99 @@ def serial(pem):
     return int.from_bytes(items[1 if items[0][0] == 0xa0 else 0][1], 'big')
 
 
-revoked = set()
-tbs = tlv(tlv(der(crl.read_text(), 'X509 CRL'))[1])[1]
-for tag, value in children(tbs):
-    # Список отзыва — единственная SEQUENCE из SEQUENCE{INTEGER серийник, ...}.
-    entries = [next(children(v)) for t, v in children(value) if t == 0x30] if tag == 0x30 else []
-    if entries and len(entries) == len(list(children(value))) and all(t == 0x02 for t, _ in entries):
-        revoked |= {int.from_bytes(v, 'big') for _, v in entries}
+crl = root / 'etc-openvpn/server/pki/crl.pem'
+if crl.is_file() and 'ovpn_cert' in device_columns:
+    revoked = set()
+    tbs = tlv(tlv(der(crl.read_text(), 'X509 CRL'))[1])[1]
+    for tag, value in children(tbs):
+        # Список отзыва — единственная SEQUENCE из SEQUENCE{INTEGER серийник, ...}.
+        entries = [next(children(v)) for t, v in children(value) if t == 0x30] if tag == 0x30 else []
+        if entries and len(entries) == len(list(children(value))) and all(t == 0x02 for t, _ in entries):
+            revoked |= {int.from_bytes(v, 'big') for _, v in entries}
+    for device, cert in con.execute(
+            f'SELECT d.id, d.ovpn_cert FROM devices d WHERE d.ovpn_cert IS NOT NULL AND {deleting} = 0'):
+        if (number := serial(cert)) in revoked:
+            bad.append(f'устройство {device}: сертификат {number:X} отозван в CRL')
 
-con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
-columns = {row[1] for row in con.execute('PRAGMA table_info(devices)')}
-if 'ovpn_cert' not in columns:
-    sys.exit(0)
-active = 'deleting = 0' if 'deleting' in columns else '1'
-bad = [(device, number) for device, cert in
-       con.execute(f'SELECT id, ovpn_cert FROM devices WHERE ovpn_cert IS NOT NULL AND {active}')
-       if (number := serial(cert)) in revoked]
-for device, number in bad:
-    print(f'устройство {device}: сертификат {number:X} отозван в CRL')
+# Пиры WireGuard и учётки IKEv2 панель пишет из БД тем же правилом: устройство
+# не удаляется, клиент не заморожен и срок не истёк, ключи выданы целиком.
+# Срок считается на момент среза (у restore — время из манифеста). Переходные
+# устройства не сверяются: клиент с незавершённой операцией доступа (очередь в
+# БД доведёт её после восстановления) и срок, истекающий в пределах двух минут
+# от среза (отключение по сроку ставит в очередь cron раз в минуту).
+now = time.time()
+try:
+    now = calendar.timegm(time.strptime(
+        json.loads((root / 'manifest.json').read_text())['timestamp'], '%Y-%m-%dT%H%M%SZ'))
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+pending, retired_keys, retired_devices = set(), set(), set()
+if {'client_id', 'status', 'payload'} <= columns('access_operations'):
+    for client, payload in con.execute(
+            "SELECT client_id, payload FROM access_operations WHERE status = 'pending'"):
+        pending.add(client)
+        try:
+            retired = json.loads(payload).get('retired') or []
+        except (ValueError, AttributeError):
+            retired = []
+        retired_keys |= {old.get('wgPublicKey') for old in retired if isinstance(old, dict)}
+        retired_devices |= {old.get('id') for old in retired if isinstance(old, dict)}
+joined = 'client_id' in device_columns and {'id', 'frozen_manual', 'expires_at'} <= columns('clients')
+
+
+def devices(*fields):
+    """(устройство, должен быть в конфиге: True/False, None — переходное, поля)."""
+    names = ', '.join('d.' + field for field in fields)
+    query = (f'SELECT d.id, {deleting}, c.frozen_manual, c.expires_at, c.id, {names} '
+             'FROM devices d LEFT JOIN clients c ON c.id = d.client_id') if joined else (
+             f'SELECT d.id, {deleting}, 0, NULL, 0, {names} FROM devices d')
+    for device, removing, frozen, expires, client, *values in con.execute(query):
+        if client in pending or (expires is not None and abs(expires - now) <= 120):
+            yield device, None, values
+        else:
+            active = client is not None and not removing and not frozen and (expires is None or expires > now)
+            yield device, bool(active and all(values)), values
+
+
+wg = root / 'etc-wireguard/wg0.conf'
+if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
+    peers = {}
+    for block in re.split(r'(?m)^\s*\[Peer\]\s*$', wg.read_text())[1:]:
+        fields = dict(re.findall(r'(?m)^\s*(\w+)\s*=\s*(\S+)\s*$', block))
+        if 'PublicKey' in fields:
+            peers[fields['PublicKey']] = fields.get('PresharedKey')
+    known = set()
+    for device, wanted, (key, psk, _) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
+        known.add(key)
+        if wanted and key not in peers:
+            bad.append(f'устройство {device}: нет пира WireGuard')
+        elif wanted and peers[key] != psk:
+            bad.append(f'устройство {device}: ключ пира WireGuard не совпадает с БД')
+        elif wanted is False and key in peers:
+            bad.append(f'устройство {device}: пир WireGuard у отключённого устройства')
+    for key in sorted(set(peers) - known - retired_keys):
+        bad.append(f'пир WireGuard {key}: устройства нет в БД')
+
+swan = root / 'etc-swanctl/conf.d/anysda-clients.conf'
+if swan.is_file() and {'ikev2_username', 'ikev2_password', 'ikev2_ip'} <= device_columns:
+    text = swan.read_text()
+    conns = {int(n) for n in re.findall(r'(?m)^\s*anysda-dev-(\d+)\s*:\s*connections\.', text)}
+    secrets = {int(n): (user, password) for n, user, password in
+               re.findall(r'eap-(\d+)\s*\{\s*id\s*=\s*"([^"]*)"\s*secret\s*=\s*"([^"]*)"', text)}
+    known = set()
+    for device, wanted, (user, password, _) in devices('ikev2_username', 'ikev2_password', 'ikev2_ip'):
+        known.add(device)
+        if wanted and device not in conns:
+            bad.append(f'устройство {device}: нет учётки IKEv2')
+        elif wanted and secrets.get(device) != (user, password):
+            bad.append(f'устройство {device}: учётка IKEv2 не совпадает с БД')
+        elif wanted is False and device in conns:
+            bad.append(f'устройство {device}: учётка IKEv2 у отключённого устройства')
+    for device in sorted(conns - known - retired_devices):
+        bad.append(f'устройство {device}: учётка IKEv2 есть, устройства нет в БД')
+
+for line in bad:
+    print(line)
 sys.exit(3 if bad else 0)
 PY
 }
@@ -185,15 +272,17 @@ if [[ -d /etc/anysda ]]; then
   done
 fi
 
-# 3. WireGuard: снимается вместе с БД (1) и PKI OpenVPN (4) одним срезом под
-# замком PKI, который держат выдача и отзыв сертификатов в vpn2-control.
-# Перевыпуск в панели — это отзыв, выдача и запись в БД отдельными шагами,
-# поэтому срез ещё сверяется (БД против CRL) и при расхождении снимается заново.
+# 3. WireGuard: снимается вместе с БД (1), PKI OpenVPN (4) и IKEv2 (5) одним
+# срезом под замком PKI, который держат выдача и отзыв сертификатов в vpn2-control.
+# Выдача, отзыв и перевыпуск в панели — запись в БД и применение конфига
+# отдельными шагами, поэтому срез ещё сверяется (БД против CRL, пиров WireGuard
+# и учёток IKEv2) и при расхождении снимается заново.
 DB=/var/lib/anysda-vpn2/db.sqlite
 PKI_LOCK=/etc/openvpn/server/.pki.lock
 snapshot_access() {
   local lock=
-  rm -rf "$BUNDLE_DIR/db.sqlite" "$BUNDLE_DIR/etc-wireguard" "$BUNDLE_DIR/etc-openvpn"
+  rm -rf "$BUNDLE_DIR/db.sqlite" "$BUNDLE_DIR/etc-wireguard" "$BUNDLE_DIR/etc-openvpn" \
+    "$BUNDLE_DIR/etc-strongswan" "$BUNDLE_DIR/etc-swanctl"
   if [[ -e "$PKI_LOCK" ]]; then
     exec {lock}<"$PKI_LOCK"
     flock -w 60 -s "$lock" || { FAIL_REASON='замок PKI OpenVPN занят дольше минуты'; exit 1; }
@@ -213,6 +302,15 @@ snapshot_access() {
   if [[ -d /etc/openvpn ]]; then
     cp -a /etc/openvpn "$BUNDLE_DIR/etc-openvpn"
   fi
+  # strongSwan (IKEv2) — CA key/cert + server cert/key + swanctl conf'ы с
+  # учётками устройств. Без CA клиенты не подключатся (он зашит в их
+  # .mobileconfig'ах).
+  if [[ -d /etc/strongswan ]]; then
+    cp -a /etc/strongswan "$BUNDLE_DIR/etc-strongswan"
+  fi
+  if [[ -d /etc/swanctl ]]; then
+    cp -a /etc/swanctl "$BUNDLE_DIR/etc-swanctl"
+  fi
   if [[ -n $lock ]]; then exec {lock}<&-; fi
 }
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
@@ -221,27 +319,19 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   mismatch=$(check_bundle "$BUNDLE_DIR") || rc=$?
   [[ $rc != 0 ]] || break
   if [[ $rc != 3 ]]; then
-    echo "anysda-backup: WARN: сверка БД и CRL OpenVPN не выполнена (код $rc)" >&2
+    echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена (код $rc)" >&2
     break
   fi
-  echo "anysda-backup: срез $attempt: БД и CRL расходятся (идёт перевыпуск?), снимаю заново:" >&2
+  echo "anysda-backup: срез $attempt: БД и конфиги VPN расходятся (идёт выдача или отзыв?), снимаю заново:" >&2
   printf '%s\n' "$mismatch" >&2
   if [[ $attempt == 10 ]]; then
-    FAIL_REASON='БД и CRL OpenVPN расходятся в 10 срезах подряд'
+    FAIL_REASON='БД и конфиги VPN расходятся в 10 срезах подряд'
     exit 1
   fi
   sleep 3
 done
 
-# 5. strongSwan (IKEv2) — CA key/cert + server cert/key + swanctl conf'ы.
-#    Без них клиенты не подключатся (CA-pubkey зашит в их .mobileconfig'ах).
-if [[ -d /etc/strongswan ]]; then
-  cp -a /etc/strongswan "$BUNDLE_DIR/etc-strongswan"
-fi
-if [[ -d /etc/swanctl ]]; then
-  cp -a /etc/swanctl "$BUNDLE_DIR/etc-swanctl"
-fi
-# Настройки starter/charon и автозагрузка swanctl лежат вне этих каталогов.
+# 5. Настройки starter/charon и автозагрузка swanctl лежат вне этих каталогов.
 for name in strongswan.conf strongswan.d ipsec.conf ipsec.secrets; do
   if [[ -e "/etc/$name" ]]; then
     cp -a "/etc/$name" "$BUNDLE_DIR/etc-$name"

@@ -5,6 +5,7 @@ VPN2_BACKUP_TEST=1 python3 infra/tests/backup-restore.py /path/to/repository
 Services and deploy stages are stubs; backup/restore, SQLite, tar and age are real.
 """
 
+import base64
 import hashlib
 import os
 import json
@@ -636,6 +637,98 @@ exec /usr/bin/sqlite3 "$@"
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn('в архиве БД и CRL OpenVPN расходятся', result.stdout)
         self.assertIn('устройство 1: сертификат 10 отозван в CRL', result.stdout)
+
+    @staticmethod
+    def access_configs(devices):
+        """wg0.conf и anysda-clients.conf так, как их пишет vpn2-control."""
+        wg = f'[Interface]\nPrivateKey = {WG_KEYS["archived"]}\n' + ''.join(
+            f'\n[Peer]\nPublicKey = {d["key"]}\nPresharedKey = {d["psk"]}\nAllowedIPs = {d["wg_ip"]}/32\n'
+            for d in devices)
+        conns = ''.join(f'  anysda-dev-{d["id"]} : connections.anysda-ikev2 {{\n'
+                        f'    remote-client {{\n      eap_id = "{d["user"]}"\n    }}\n  }}\n' for d in devices)
+        secrets = ''.join(f'  eap-{d["id"]} {{\n    id = "{d["user"]}"\n    secret = "{d["password"]}"\n  }}\n'
+                          for d in devices)
+        return wg, f'connections {{\n{conns}}}\nsecrets {{\n{secrets}}}\n'
+
+    def test_issue_and_revoke_wg_ikev2_during_backup_give_consistent_archive(self):
+        def device(n, client):
+            return {'id': n, 'client': client, 'key': base64.b64encode(bytes([n]) * 32).decode(),
+                    'psk': base64.b64encode(bytes([n + 100]) * 32).decode(), 'wg_ip': f'10.66.66.{n + 1}',
+                    'user': f'dev{n}', 'password': f'secret{n}', 'ike_ip': f'10.99.1.{n + 1}'}
+        kept, revoked, issued, freezing = device(1, 1), device(2, 1), device(3, 1), device(4, 2)
+        self.conn.execute('DROP TABLE clients')
+        self.conn.execute('CREATE TABLE clients (id INTEGER PRIMARY KEY, frozen_manual INTEGER NOT NULL DEFAULT 0, '
+                          'expires_at INTEGER)')
+        self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL, '
+                          'deleting INTEGER NOT NULL DEFAULT 0, wg_public_key TEXT, wg_preshared_key TEXT, wg_ip TEXT, '
+                          'ikev2_username TEXT, ikev2_password TEXT, ikev2_ip TEXT)')
+        self.conn.execute('CREATE TABLE access_operations (id TEXT PRIMARY KEY, client_id INTEGER NOT NULL, '
+                          'status TEXT NOT NULL, payload TEXT NOT NULL)')
+        # Клиент 2 замораживается: операция доступа ещё в очереди, пир пока на месте.
+        self.conn.execute('INSERT INTO clients VALUES (1, 0, ?), (2, 1, NULL)', (int(time.time()) + 86400,))
+        self.conn.execute("INSERT INTO access_operations VALUES ('op', 2, 'pending', '{\"retired\": []}')")
+        self.conn.executemany('INSERT INTO devices VALUES (:id, :client, 0, :key, :psk, :wg_ip, :user, :password, '
+                              ':ike_ip)', [kept, revoked, freezing])
+        self.conn.commit()
+        before_wg, before_ike = self.access_configs([kept, revoked, freezing])
+        after_wg, after_ike = self.access_configs([kept, issued, freezing])
+        write('/etc/wireguard/wg0.conf', before_wg)
+        write('/etc/swanctl/conf.d/anysda-clients.conf', before_ike)
+        write('/test-output/after-wg', after_wg)
+        write('/test-output/after-ike', after_ike)
+        write('/test-output/issue-revoke.sql', 'DELETE FROM devices WHERE id = 2;\n'
+              f"INSERT INTO devices VALUES (3, 1, 0, '{issued['key']}', '{issued['psk']}', '{issued['wg_ip']}', "
+              f"'dev3', 'secret3', '{issued['ike_ip']}');\n")
+        # Посреди бэкапа панель выдаёт устройство 3 и удаляет 2: БД уже новая,
+        # а конфиги WireGuard и IKEv2 панель применяет отдельным шагом позже.
+        write('/test-bin/sqlite3', f"""#!/bin/sh
+case "$*" in *".backup "*)
+  if [ ! -e /test-output/applied ]; then
+    touch /test-output/applied
+    /usr/bin/sqlite3 {DB} ".timeout 10000" ".read /test-output/issue-revoke.sql" || exit
+    /usr/bin/sqlite3 "$@" || exit
+    (sleep 1; cp /test-output/after-wg /etc/wireguard/wg0.conf
+     cp /test-output/after-ike /etc/swanctl/conf.d/anysda-clients.conf) >/dev/null 2>&1 &
+    exit 0
+  fi;;
+esac
+exec /usr/bin/sqlite3 "$@"
+""", 0o755)
+        bundle = self.backup()
+        db = sqlite3.connect(bundle / 'db.sqlite')
+        archived = sorted(n for (n,) in db.execute('SELECT id FROM devices'))
+        db.close()
+        wg = (bundle / 'etc-wireguard/wg0.conf').read_text()
+        ike = (bundle / 'etc-swanctl/conf.d/anysda-clients.conf').read_text()
+        peers = sorted(d['id'] for d in (kept, revoked, issued, freezing) if d['key'] in wg)
+        accounts = sorted(int(n) for n in re.findall(r'anysda-dev-(\d+) :', ike))
+        print(f'archive_devices={archived} wg_peers={peers} ikev2_accounts={accounts}', flush=True)
+        self.assertEqual(archived, [1, 3, 4])
+        self.assertEqual(peers, [1, 3, 4])
+        self.assertEqual(accounts, [1, 3, 4])
+
+        # Старый архив с расхождением: restore предупреждает и называет устройства.
+        Path('/test-bin/sqlite3').unlink()
+        shutil.copy(REPO / 'infra/lib/anysda-backup.sh', '/usr/local/bin/anysda-backup.sh')
+        Path('/usr/local/bin/anysda-backup.sh').chmod(0o755)
+        self.addCleanup(Path('/usr/local/bin/anysda-backup.sh').unlink)
+        (bundle / 'etc-wireguard/wg0.conf').write_text(before_wg)
+        (bundle / 'etc-swanctl/conf.d/anysda-clients.conf').write_text(before_ike)
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        for name in ('etc-wireguard', 'etc-swanctl'):
+            manifest['components'][name] = self.digest(bundle / name)
+        (bundle / 'manifest.json').write_text(json.dumps(manifest))
+        self.repack(bundle)
+        result = self.script('restore', 'latest', '--force')
+        print('\n'.join(line for line in result.stdout.splitlines()
+                        if 'WireGuard' in line or 'IKEv2' in line), flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('в архиве БД и пиры WireGuard, учётки IKEv2 расходятся', result.stdout)
+        for line in ('устройство 3: нет пира WireGuard', 'устройство 3: нет учётки IKEv2',
+                     f'пир WireGuard {revoked["key"]}: устройства нет в БД',
+                     'устройство 2: учётка IKEv2 есть, устройства нет в БД'):
+            self.assertIn(line, result.stdout)
+        self.assertNotIn('устройство 4', result.stdout)
 
     @staticmethod
     def digest(path):

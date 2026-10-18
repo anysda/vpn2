@@ -290,12 +290,19 @@ PY
   fi
 fi
 
-# Архивы до общего среза могли поймать перевыпуск: сертификат в БД уже отозван
-# в CRL архива. Восстанавливать можно, но такие устройства перевыпустить.
+# Архивы до общего среза могли поймать выдачу, отзыв или перевыпуск: сертификат
+# в БД уже отозван в CRL архива, у устройства нет пира WireGuard или учётки
+# IKEv2, у отключённого они остались. Восстанавливать можно, но такие
+# устройства перевыпустить: перевыпуск заново пишет конфиги из БД.
 CHECK=/usr/local/bin/anysda-backup.sh
-if [[ -x "$CHECK" ]] && ! CRL_MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1); then
-  echo "anysda-restore: WARN: в архиве БД и CRL OpenVPN расходятся — после восстановления перевыпусти эти устройства в панели:" >&2
-  printf '%s\n' "$CRL_MISMATCH" >&2
+if [[ -x "$CHECK" ]] && ! MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1); then
+  WHAT=
+  [[ $MISMATCH != *CRL* ]] || WHAT+=', CRL OpenVPN'
+  [[ $MISMATCH != *WireGuard* ]] || WHAT+=', пиры WireGuard'
+  [[ $MISMATCH != *IKEv2* ]] || WHAT+=', учётки IKEv2'
+  WHAT=${WHAT#, }
+  echo "anysda-restore: WARN: в архиве БД и ${WHAT:-конфиги VPN} расходятся — после восстановления перевыпусти эти устройства в панели:" >&2
+  printf '%s\n' "$MISMATCH" >&2
 fi
 
 # Старые архивы содержали только wg0.conf. Восстанавливаем исходный ключ

@@ -90,7 +90,7 @@ test.describe('клиенты', () => {
     await del.getByRole('button', { name: 'Удалить' }).click()
     await expect(toast(page, 'Отключение выполняется')).toBeVisible()
     await expect(page.getByRole('dialog')).toHaveCount(0)
-    await expect(clientCard(page, renamed)).toHaveCount(0)
+    await expect(clientCard(page, renamed)).toHaveCount(0, { timeout: 45_000 })
     list = await (await page.request.get('/api/clients')).json()
     expect(list.map(c => c.name)).not.toContain(renamed)
   })

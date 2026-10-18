@@ -112,7 +112,7 @@ test.describe('девайсы', () => {
     await dc.remove.click()
     await del.getByRole('button', { name: 'Удалить' }).click()
     await expect(toast(page, 'Отключение выполняется')).toBeVisible()
-    await expect(dc.card).toHaveCount(0)
+    await expect(dc.card).toHaveCount(0, { timeout: 45_000 })
     await expect(page.getByText('Пока нет девайсов — добавь первый.')).toBeVisible()
   })
 

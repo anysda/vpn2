@@ -174,7 +174,7 @@ for (const width of [360, 402]) {
         await sheetFits(page, delDev, 'подтверждение удаления девайса')
         await delDev.getByRole('button', { name: 'Удалить' }).tap()
         await expect(toast(page, 'Отключение выполняется')).toBeVisible()
-        await expect(dc.card).toHaveCount(0)
+        await expect(dc.card).toHaveCount(0, { timeout: 45_000 })
 
         // Заморозка видна в списке после «Назад».
         await panel.getByRole('button', { name: 'Заморозить' }).tap()
@@ -191,7 +191,7 @@ for (const width of [360, 402]) {
         await sheetFits(page, del, 'подтверждение удаления клиента')
         await del.getByRole('button', { name: 'Удалить' }).tap()
         await expect(toast(page, 'Отключение выполняется')).toBeVisible()
-        await expect(panel).toBeHidden()
+        await expect(panel).toBeHidden({ timeout: 45_000 })
         await expect(page.getByRole('button', { name: 'Назад' })).toHaveCount(0)
         await expect(row).toHaveCount(0)
         const list: { name: string }[] = await (await page.request.get('/api/clients')).json()

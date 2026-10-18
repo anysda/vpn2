@@ -42,12 +42,26 @@ test('живые VPN: сбой OpenVPN, честный статус и ручн�
       writeFileSync('/etc/openvpn/server/ccd','injected apply failure');
     `)
     broken = true
+    // Удерживаем только замок одноразового исполнителя, чтобы снять принятие
+    // до первого применения. API и панель при этом продолжают отвечать.
+    inside(`
+      import { spawn } from 'node:child_process';
+      import { rmSync } from 'node:fs';
+      rmSync('/tmp/access-hold-ready',{force:true}); rmSync('/tmp/access-hold-release',{force:true});
+      spawn('flock',['/var/lib/anysda-vpn2/access-worker.lock','timeout','30','sh','-c',
+        'touch /tmp/access-hold-ready; while [ ! -f /tmp/access-hold-release ]; do sleep 0.1; done'],
+        {detached:true,stdio:'ignore'}).unref();
+    `)
+    await expect.poll(() => inside("import { existsSync } from 'node:fs'; console.log(existsSync('/tmp/access-hold-ready'));"), { timeout: 10_000 }).toBe('true')
     const response = page.waitForResponse(r => r.request().method() === 'PATCH' && r.url().endsWith(`/api/clients/${c.id}`))
     await detail.getByRole('button', { name: 'Заморозить', exact: true }).click()
     const accepted = await response
     expect(accepted.status()).toBe(202)
     const { operation } = await accepted.json() as { operation: AccessOperation }
     expect(operation.status).toBe('pending')
+    await expect(detail.getByRole('status')).toContainText('Отключение выполняется')
+    if (screenshots) await page.screenshot({ path: path.join(screenshots, 'access-pending.png'), fullPage: true })
+    inside("import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/access-hold-release','');")
     await expect(detail.getByRole('status')).toContainText('Отключение не завершено: OpenVPN', { timeout: 30_000 })
     const failed = await (await page.request.get(`/api/access-operations/${operation.id}`)).json()
     expect(failed.protocols.wg.confirmedVersion).toBe(operation.version)
@@ -73,6 +87,7 @@ test('живые VPN: сбой OpenVPN, честный статус и ручн�
     console.log('live WG/OpenVPN/IKEv2: pending → Отключение не завершено: OpenVPN → Доступ отключён; confirmedVersion=desiredVersion; bot notifications: 0 → 1')
   }
   finally {
+    inside("import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/access-hold-release','');")
     if (broken) inside(`import { rmSync, renameSync } from 'node:fs'; rmSync('/etc/openvpn/server/ccd'); renameSync('/etc/openvpn/server/ccd.saved','/etc/openvpn/server/ccd');`)
     const removed = await (await page.request.delete(`/api/clients/${c.id}`)).json()
     if (removed.operation) await waitAccess(page.request, removed.operation)

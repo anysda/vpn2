@@ -564,13 +564,34 @@ def _devices_markup(view: dict) -> dict:
     return {'inline_keyboard': rows}
 
 
+def _access_protocol_lines(view: dict) -> str:
+    operation = view.get('operation') or {}
+    states = operation.get('protocols') or {}
+    lines = []
+    for protocol, label in (('wg', 'WireGuard'), ('openvpn', 'OpenVPN'), ('ikev2', 'IKEv2')):
+        state = states.get(protocol)
+        if not state:
+            continue
+        if state.get('state') == 'not_required':
+            text = 'Не требуется'
+        elif operation.get('status') == 'superseded':
+            text = 'Заменена'
+        elif state.get('state') == 'confirmed' and view.get('accessStatus') != 'Состояние не подтверждено':
+            text = 'Подтверждено'
+        else:
+            text = state.get('error') or 'Состояние не подтверждено'
+        lines.append(f'{label}: {text}')
+    return md('\n'.join(lines) + '\n') if lines else ''
+
+
 def _devices_text(view: dict) -> str:
     devices = view.get('devices', [])
     if not devices:
         return 'У вас пока нет устройств. Нажмите «➕ Добавить устройство» в меню.'
     limit = _limit_label(view.get('deviceLimit'))
     return (f'📱 *Ваши устройства* ({len(devices)}/{limit})\n'
-            f'{md(view.get("accessStatus", "Состояние не подтверждено"))}\nВыберите устройство:')
+            f'{md(view.get("accessStatus", "Состояние не подтверждено"))}\n'
+            f'{_access_protocol_lines(view)}Выберите устройство:')
 
 
 def _find_device(view: dict, device_id: str) -> dict | None:
@@ -1088,6 +1109,7 @@ def _admin_card_text(c: dict) -> str:
         f'👤 {md_bold(c.get("name", "?"))}\n'
         f'Желаемое состояние: {status_txt}\n'
         f'{md(c.get("accessStatus", "Состояние не подтверждено"))}\n'
+        f'{_access_protocol_lines(c)}'
         f'Устройств: {count}/{limit}\n'
         f'Срок действия: {md(exp_txt)}\n'
         f'Telegram: {tg_txt}'
@@ -1096,6 +1118,7 @@ def _admin_card_text(c: dict) -> str:
 
 def _admin_card_markup(c: dict) -> dict:
     cid = c.get('id')
+    operation = c.get('operation') or {}
     frozen = bool(c.get('frozenManual')) or c.get('status') == 'frozen'
     freeze_btn = ({'text': '☀️ Разморозить', 'callback_data': f'afz:{cid}'}
                   if frozen else
@@ -1103,7 +1126,8 @@ def _admin_card_markup(c: dict) -> dict:
     return {'inline_keyboard': [
         [freeze_btn],
         *([[{'text': 'Повторить', 'callback_data': f'aretry:{cid}'}]]
-          if (c.get('operation') or {}).get('status') == 'pending' else []),
+          if operation and operation.get('status') != 'superseded'
+          and (operation.get('status') == 'pending' or c.get('accessStatus') == 'Состояние не подтверждено') else []),
         [
             {'text': '➖ Лимит', 'callback_data': f'alm-:{cid}'},
             {'text': '➕ Лимит', 'callback_data': f'alm+:{cid}'},

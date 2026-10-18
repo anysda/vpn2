@@ -9,7 +9,7 @@
 .clp .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
 .clp .tag.ok{color:var(--green);border:1px solid rgba(var(--grn-rgb),.3);background:rgba(var(--grn-rgb),.06)}
 .clp .tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
-.clp .tag.access-tag,.clp .crow .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
+.clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .crt .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
 
 /* фильтр */
 .clp .seg{position:relative;display:inline-flex;gap:6px;margin-bottom:14px}

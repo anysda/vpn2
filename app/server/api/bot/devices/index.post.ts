@@ -20,11 +20,13 @@ export default defineEventHandler(async (event) => {
   const name = body.name.trim()
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
-  const device = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names) => {
+  // Лимит перепроверяем в транзакции вставки: пока шли await, администратор
+  // мог его снизить.
+  const device = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
     if (names.includes(name)) {
       throw createError({ statusCode: 409, statusMessage: 'device_exists', message: 'Девайс с таким названием уже есть' })
     }
-    if (client.deviceLimit != null && names.length >= client.deviceLimit) {
+    if (fresh.deviceLimit != null && names.length >= fresh.deviceLimit) {
       throw createError({ statusCode: 409, statusMessage: 'device_limit', message: 'Достигнут лимит устройств — обратитесь к администратору' })
     }
   })

@@ -121,7 +121,11 @@ class Leader:
     def _become(self, autonomous):
         changed = self.data['owner'] != self.node or self.data.get('credentials_lost', False)
         resumed = self.data['role'] != 'leader'
-        self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous)
+        self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous,
+                         retiring=False, retired=False)
+        # Starting a new local generation replaces the old credentials. Its
+        # predecessor's delayed end event must never stop the new service.
+        self.data.pop('retire_at', None)
         if changed:
             self.data['generation'] += 1
             self.data['issued_generation'] = self.data['generation']

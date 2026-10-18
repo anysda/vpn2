@@ -282,6 +282,28 @@ class EmergencyAgentTests(unittest.TestCase):
         loser.tick(cluster.clock() + 300, True)
         self.assertEqual(sum(call[0] == 'end' for call in cluster.events['a'].calls), 1)
 
+    def test_old_retirement_does_not_stop_a_new_leader_generation(self):
+        cluster = self.cluster()
+        cluster.stop('entry')
+        cluster.advance(1320)
+        for node in ('b', 'c'):
+            cluster.blocked.update({('a', node), (node, 'a')})
+        cluster.advance(390)
+        cluster.agents['b'].leader.bundle_ready(cluster.clock())
+        cluster.blocked.clear()
+        cluster.advance(30)
+        self.assertEqual(cluster.leaders(), ['b'])
+        self.assertIn('retire_at', cluster.agents['a'].leader.data)
+        previous_generation = cluster.agents['a'].leader.data['issued_generation']
+        cluster.stop('b')
+        cluster.advance(90)
+        self.assertEqual(cluster.leaders(), ['a'])
+        self.assertGreater(cluster.agents['a'].leader.data['issued_generation'], previous_generation)
+        events_before = list(cluster.events['a'].calls)
+        cluster.advance(600)
+        self.assertEqual(cluster.leaders(), ['a'])
+        self.assertEqual(cluster.events['a'].calls, events_before)
+
     def test_asymmetric_link_eventually_converges(self):
         cluster = self.cluster(2)
         cluster.stop('entry')

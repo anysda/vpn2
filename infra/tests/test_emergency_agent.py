@@ -291,6 +291,18 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertEqual(cluster.leaders(), ['a'])
         self.assertTrue(cluster.agents['a'].leader.data['autonomous'])
 
+    def test_autonomous_restart_keeps_role_and_does_not_repeat_issuance(self):
+        cluster = self.cluster(1)
+        cluster.stop('entry')
+        cluster.advance(1500)
+        self.assertEqual(cluster.leaders(), ['a'])
+        before = list(cluster.events['a'].calls)
+        cluster.stop('a')
+        cluster.start('a')
+        self.assertEqual(cluster.leaders(), ['a'])
+        cluster.advance(30)
+        self.assertEqual(cluster.events['a'].calls, before)
+
     def test_replayed_candidate_poll_cannot_extend_lease(self):
         cluster = self.cluster()
         cluster.stop('entry')

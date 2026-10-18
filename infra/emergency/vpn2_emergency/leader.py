@@ -42,10 +42,13 @@ class Leader:
             self.data['grant'] = None
             self.data['role'] = 'observer'
             self.data.pop('retire_at', None)
+            self.data.pop('failed_since', None)
+            self.data.pop('failed_rounds', None)
+            self.data.pop('last_round', None)
         self.candidate = None
-        self.failed_since = None
-        self.failed_rounds = 0
-        self.last_round = -math.inf
+        self.data.setdefault('failed_since', None)
+        self.data.setdefault('failed_rounds', 0)
+        self.data.setdefault('last_round', now - 15)
 
     def status(self, now):
         return {key: self.data.get(key) for key in (
@@ -170,8 +173,8 @@ class Leader:
                 if self.data.get('retiring') and status.get('ready'):
                     self.data.setdefault('retire_at', now + TRANSITION)
                     self.data['retiring'] = False
-                self.failed_rounds = 0
-                self.failed_since = None
+                self.data['failed_rounds'] = 0
+                self.data['failed_since'] = None
                 self.state.save()
                 return
             # A merely reachable higher-ranked candidate cannot suppress
@@ -182,16 +185,16 @@ class Leader:
             votes += sum(status['grant'] == self.node and status['lease_until'] > now
                          for status, at in self.peers.values() if now - at < LEASE)
             if len(self.ranks) > 1 and votes >= len(self.ranks) // 2 + 1:
-                self.failed_since = None
-                self.failed_rounds = 0
+                self.data['failed_since'] = None
+                self.data['failed_rounds'] = 0
                 self._become(False)
                 return
-        if self.failed_since is None:
-            self.failed_since = now
-        if now - self.last_round >= 15:
-            self.failed_rounds += 1
-            self.last_round = now
-        if self.failed_rounds >= 3 and now - self.failed_since >= GUARD:
+        if self.data['failed_since'] is None:
+            self.data['failed_since'] = now
+        if now - self.data['last_round'] >= 15:
+            self.data['failed_rounds'] += 1
+            self.data['last_round'] = now
+        if self.data['failed_rounds'] >= 3 and now - self.data['failed_since'] >= GUARD:
             self._become(True)
         elif self.data['role'] == 'leader':
             self._step_down(None)

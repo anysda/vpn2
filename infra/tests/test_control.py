@@ -169,6 +169,17 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.backend_module.peer_addresses(dict(self.peer, ip='10.66.64.12')),
                          ['10.66.64.12/32', 'fd66:66::64:12/128'])
 
+    def test_wg_keys_only_restore_replaces_the_old_hosts_rendered_key(self):
+        path = self.file('/etc/wireguard/wg0.conf',
+                         '[Interface]\nPrivateKey = old-host-key\nListenPort = 51820\n')
+        self.file('/etc/wireguard/server.priv', self.public + '\n')
+        with patch.object(self.backend, 'command', return_value=''):
+            reply = self.request('wg.apply', {'version': 1, 'peers': []})
+        self.assertTrue(reply['ok'], reply)
+        self.assertIn('PrivateKey = ' + self.public + '\n', path.read_text())
+        self.assertNotIn('old-host-key', path.read_text())
+        self.assertNotIn(self.public, json.dumps(reply))
+
     def test_openvpn_revocation_uses_managed_certificate_ids(self):
         self.file('/etc/openvpn/server/pki/index.txt',
                   'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')

@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import time
 
-from contract import API, LIMIT, METHODS, require
+from contract import API, LIMIT, METHODS, key as validate_key, require
 
 
 def atomic(path, body, mode=0o600):
@@ -286,6 +286,14 @@ class Backend:
         previous = path.read_text()
         header = re.split(r'(?m)^\s*\[Peer\]\s*$', previous)[0].rstrip() + '\n'
         require('[Interface]' in header, 'unavailable')
+        # The persisted key pair is authoritative, as in the former panel.
+        # A keys-only restore can leave this host's old rendered wg0.conf.
+        # Never regenerate a key or return it to the API caller.
+        private = self.path('/etc/wireguard/server.priv')
+        if private.exists():
+            canonical = private.read_text().strip()
+            validate_key(canonical)
+            header = re.sub(r'(?m)^\s*PrivateKey\s*=.*$', 'PrivateKey = ' + canonical, header)
         peers = ''.join('\n[Peer]\nPublicKey = ' + peer['key'] +
                         '\nPresharedKey = ' + peer['preshared_key'] +
                         '\nAllowedIPs = ' + ', '.join(peer_addresses(peer)) + '\n'

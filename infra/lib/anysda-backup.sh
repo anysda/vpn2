@@ -22,6 +22,9 @@
 #
 # Источник passphrase: /etc/anysda/backup.env → ANYSDA_BACKUP_PASSPHRASE.
 # Файл (chmod 600) рендерится стадией 26-backup из config.yaml.
+#
+# Код выхода: 0 — архив снят; 4 — архив снят, но БД и конфиги VPN расходятся
+# во всех срезах (перечень устройств в выводе); остальное — архива нет.
 
 set -euo pipefail
 umask 077
@@ -63,6 +66,13 @@ def columns(table):
 device_columns = columns('devices')
 deleting = 'd.deleting' if 'deleting' in device_columns else '0'
 bad = []
+names = dict(con.execute('SELECT id, name FROM devices')) if 'name' in device_columns else {}
+
+
+def label(device):
+    """Номер и название устройства, как их ищут в панели."""
+    name = ' '.join(str(names.get(device) or '').split())
+    return f'устройство {device} «{name}»' if name else f'устройство {device}'
 
 
 def tlv(data, i=0):
@@ -107,7 +117,7 @@ if crl.is_file() and 'ovpn_cert' in device_columns:
     for device, cert in con.execute(
             f'SELECT d.id, d.ovpn_cert FROM devices d WHERE d.ovpn_cert IS NOT NULL AND {deleting} = 0'):
         if (number := serial(cert)) in revoked:
-            bad.append(f'устройство {device}: сертификат {number:X} отозван в CRL')
+            bad.append(f'{label(device)}: сертификат {number:X} отозван в CRL')
 
 # Пиры WireGuard и учётки IKEv2 панель пишет из БД тем же правилом: устройство
 # не удаляется, клиент не заморожен и срок не истёк, ключи выданы целиком.
@@ -160,11 +170,11 @@ if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_col
     for device, wanted, (key, psk, _) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
         known.add(key)
         if wanted and key not in peers:
-            bad.append(f'устройство {device}: нет пира WireGuard')
+            bad.append(f'{label(device)}: нет пира WireGuard')
         elif wanted and peers[key] != psk:
-            bad.append(f'устройство {device}: ключ пира WireGuard не совпадает с БД')
+            bad.append(f'{label(device)}: ключ пира WireGuard не совпадает с БД')
         elif wanted is False and key in peers:
-            bad.append(f'устройство {device}: пир WireGuard у отключённого устройства')
+            bad.append(f'{label(device)}: пир WireGuard у отключённого устройства')
     for key in sorted(set(peers) - known - retired_keys):
         bad.append(f'пир WireGuard {key}: устройства нет в БД')
 
@@ -178,13 +188,13 @@ if swan.is_file() and {'ikev2_username', 'ikev2_password', 'ikev2_ip'} <= device
     for device, wanted, (user, password, _) in devices('ikev2_username', 'ikev2_password', 'ikev2_ip'):
         known.add(device)
         if wanted and device not in conns:
-            bad.append(f'устройство {device}: нет учётки IKEv2')
+            bad.append(f'{label(device)}: нет учётки IKEv2')
         elif wanted and secrets.get(device) != (user, password):
-            bad.append(f'устройство {device}: учётка IKEv2 не совпадает с БД')
+            bad.append(f'{label(device)}: учётка IKEv2 не совпадает с БД')
         elif wanted is False and device in conns:
-            bad.append(f'устройство {device}: учётка IKEv2 у отключённого устройства')
+            bad.append(f'{label(device)}: учётка IKEv2 у отключённого устройства')
     for device in sorted(conns - known - retired_devices):
-        bad.append(f'устройство {device}: учётка IKEv2 есть, устройства нет в БД')
+        bad.append(f'{label(device)}: учётка IKEv2 есть, устройства нет в БД')
 
 for line in bad:
     print(line)
@@ -313,6 +323,7 @@ snapshot_access() {
   fi
   if [[ -n $lock ]]; then exec {lock}<&-; fi
 }
+WARNING=
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
   snapshot_access
   rc=0
@@ -322,12 +333,21 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
     echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена (код $rc)" >&2
     break
   fi
+  if [[ $attempt == 10 ]]; then
+    # Устойчивое расхождение (упала синхронизация конфигов) — не повод
+    # остаться без бэкапов: архив сохраняем с предупреждением, устройства
+    # перевыпускают в панели.
+    echo "anysda-backup: WARN: БД и конфиги VPN расходятся в 10 срезах подряд — сохраняю архив как есть; перевыпусти эти устройства в панели:" >&2
+    printf '%s\n' "$mismatch" >&2
+    # В ленту событий — только номера (панель режет подробности длиннее 200 символов).
+    mapfile -t ids < <(grep -oE '^устройство [0-9]+' <<< "$mismatch" | awk '{print $2}' | sort -un || true)
+    MISMATCH_IDS=$(printf '%s, ' "${ids[@]:0:10}"); MISMATCH_IDS=${MISMATCH_IDS%, }
+    (( ${#ids[@]} <= 10 )) || MISMATCH_IDS+=" и ещё $(( ${#ids[@]} - 10 ))"
+    WARNING="БД и конфиги VPN расходятся${MISMATCH_IDS:+ (устройства: $MISMATCH_IDS)} — перевыпусти в панели"
+    break
+  fi
   echo "anysda-backup: срез $attempt: БД и конфиги VPN расходятся (идёт выдача или отзыв?), снимаю заново:" >&2
   printf '%s\n' "$mismatch" >&2
-  if [[ $attempt == 10 ]]; then
-    FAIL_REASON='БД и конфиги VPN расходятся в 10 срезах подряд'
-    exit 1
-  fi
   sleep 3
 done
 
@@ -504,3 +524,9 @@ printf '%-12s %s bytes\n' 'size:'  "$SIZE"
 printf '%-12s sha256:%s\n' 'hash:' "$HASH"
 printf '%-12s %s\n' 'backend:'     "$BACKUP_BACKEND"
 printf '%-12s %s\n' 'retention:'   "keep last $RETAIN"
+if [[ -n $WARNING ]]; then
+  printf '%-12s %s\n' 'warning:'   "$WARNING"
+  # Тревога в ленту «События» уходит из report_failure по коду выхода.
+  FAIL_REASON="архив сохранён, но $WARNING"
+  exit 4
+fi

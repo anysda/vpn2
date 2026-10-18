@@ -776,6 +776,41 @@ exec /usr/bin/sqlite3 "$@"
             self.assertIn(line, result.stdout)
         self.assertNotIn('устройство 4', result.stdout)
 
+    def test_persistent_mismatch_keeps_archive_with_warning(self):
+        # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.
+        key = base64.b64encode(bytes([7]) * 32).decode()
+        psk = base64.b64encode(bytes([107]) * 32).decode()
+        self.conn.execute('DROP TABLE clients')
+        self.conn.execute('CREATE TABLE clients (id INTEGER PRIMARY KEY, frozen_manual INTEGER NOT NULL DEFAULT 0, '
+                          'expires_at INTEGER)')
+        self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL, '
+                          'deleting INTEGER NOT NULL DEFAULT 0, name TEXT NOT NULL, wg_public_key TEXT, '
+                          'wg_preshared_key TEXT, wg_ip TEXT)')
+        self.conn.execute('INSERT INTO clients VALUES (1, 0, NULL)')
+        self.conn.execute("INSERT INTO devices VALUES (7, 1, 0, 'Телефон Ани', ?, ?, '10.66.66.8')", (key, psk))
+        self.conn.commit()
+        write('/etc/anysda/tgbot-secret.txt', 'test-tgbot-secret')
+        self.addCleanup(Path('/etc/anysda/tgbot-secret.txt').unlink)
+        write('/test-bin/curl', '#!/bin/sh\nprintf "%s\\n" "$@" >> /test-output/curl\n'
+              'echo \'{"version":"test"}\'\n', 0o755)
+        write('/test-bin/sleep', '#!/bin/sh\nexit 0\n', 0o755)
+        result = self.script('backup')
+        print('\n'.join(line for line in result.stdout.splitlines()
+                        if 'срез 10' in line or 'устройство' in line or 'warning' in line or 'backup:' in line),
+              flush=True)
+        self.assertEqual(result.returncode, 4, result.stdout)
+        archives = list(BACKUPS.glob('*.age'))
+        self.assertEqual(len(archives), 1, result.stdout)
+        decrypt(archives[0], '/test-output/backup.tar.gz')
+        self.assertIn('устройство 7 «Телефон Ани»: нет пира WireGuard', result.stdout)
+        self.assertRegex(result.stdout, r'(?m)^warning: +БД и конфиги VPN расходятся')
+        events = Path('/test-output/curl').read_text()
+        self.assertIn('"type":"backup_failed"', events)
+        self.assertIn('расходятся', events)
+        self.assertIn('устройства: 7', events)
+        for secret in (psk, 'test-tgbot-secret'):
+            self.assertNotIn(secret, result.stdout + events)
+
     @staticmethod
     def digest(path):
         def file(p):

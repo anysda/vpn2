@@ -1,30 +1,129 @@
-"""Destructive fixture for a disposable host only: VPN2_CONTROL_TEST=1 required.
+"""Live control API fixture for a test host: VPN2_CONTROL_TEST=1 required.
 
-Run after 29-control with wireguard-tools, OpenVPN, OpenSSL, charon-systemd,
-strongswan-swanctl and libcharon-extra-plugins installed. This tests real VPN
-daemons and the installed systemd boundary, not traffic through an exit.
+Run on an installed entry (or after 29-control with wireguard-tools, OpenVPN,
+OpenSSL and strongswan-starter). This tests real VPN daemons and the installed
+systemd boundary, not traffic through an exit.
+
+The fixture needs its own WG/OpenVPN/IKEv2 configuration. The installation's
+directories are moved aside for the run and moved back afterwards, also on
+failure; the probe then checks them byte for byte and restarts the services
+that were running. An interrupted run is recovered on the next start.
 """
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 import pwd
+import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
 
+ROOT = Path('/')
+# Same unit as 27-ikev2.sh and 99-verify.sh. Ubuntu 26.04 also installs
+# charon-systemd (strongswan.service), a second charon the product never runs.
+STRONGSWAN = 'strongswan-starter'
+PRESERVED = ('/etc/wireguard', '/etc/openvpn/server', '/etc/swanctl', '/var/lib/vpn2-control')
+SAVED = '.vpn2-probe-saved'
+STRANGER = 'control-test-stranger'
+
+
+def at(path):
+    return ROOT / str(path).lstrip('/')
+
 
 def command(*args):
     return subprocess.run(args, check=True, text=True, capture_output=True, timeout=30).stdout
 
 
+def systemctl(*args):
+    return subprocess.run(['systemctl', *args], text=True, capture_output=True, timeout=60)
+
+
 def write(path, body, mode=0o600):
-    target = Path(path)
+    target = at(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(body)
     target.chmod(mode)
+
+
+def manifest():
+    rows = []
+    for top in PRESERVED:
+        base = at(top)
+        for path in sorted([base, *base.rglob('*')]) if base.exists() else []:
+            info = path.lstat()
+            row = [str(path.relative_to(ROOT)), oct(info.st_mode), info.st_uid, info.st_gid]
+            if path.is_symlink():
+                row.append(os.readlink(path))
+            elif path.is_file():
+                row.append(hashlib.sha256(path.read_bytes()).hexdigest())
+            rows.append(row)
+    return rows
+
+
+def put_back():
+    for top in PRESERVED:
+        saved = Path(str(at(top)) + SAVED)
+        if saved.exists():
+            if at(top).exists():
+                shutil.rmtree(at(top))
+            saved.rename(at(top))
+
+
+def runtime_units():
+    return ['wg-quick@wg0.service', 'openvpn-server@server.service', STRONGSWAN + '.service',
+            'vpn2-control.socket', 'vpn2-control.service']
+
+
+def preflight():
+    """Everything that can refuse the run, before anything is changed."""
+    state = systemctl('show', '-p', 'LoadState', '--value', STRONGSWAN + '.service')
+    if state.stdout.strip() != 'loaded':
+        raise SystemExit(f'{STRONGSWAN}.service is not installed; nothing changed')
+
+
+def preserve():
+    if any(Path(str(at(top)) + SAVED).exists() for top in PRESERVED):
+        print('interrupted probe run found: restoring installation first', flush=True)
+        put_back()
+    active = [unit for unit in runtime_units() if systemctl('is-active', '--quiet', unit).returncode == 0]
+    # Stopped first: a running daemon may rewrite its files (status log, wg SaveConfig).
+    systemctl('stop', 'vpn2-control.service', 'vpn2-control.socket',
+              'openvpn-server@server.service', 'wg-quick@wg0.service')
+    before = manifest()
+    stranger = subprocess.run(['id', STRANGER], capture_output=True, timeout=5).returncode == 0
+    for top in PRESERVED:
+        if at(top).exists():
+            info = at(top).stat()
+            at(top).rename(str(at(top)) + SAVED)
+            at(top).mkdir(mode=0o700)
+            os.chown(at(top), info.st_uid, info.st_gid)
+            at(top).chmod(info.st_mode & 0o7777)
+    return {'active': active, 'manifest': before, 'stranger': stranger}
+
+
+def restore(saved):
+    systemctl('stop', 'vpn2-control.service', 'vpn2-control.socket', 'openvpn-server@control-test.service')
+    if subprocess.run(['ip', 'link', 'show', 'wg0'], capture_output=True, timeout=5).returncode == 0:
+        command('ip', 'link', 'delete', 'wg0')
+    if not saved['stranger'] and subprocess.run(['id', STRANGER], capture_output=True, timeout=5).returncode == 0:
+        command('userdel', STRANGER)
+    shutil.rmtree(at('/tmp/vpn2-svc'), ignore_errors=True)
+    put_back()
+    after = manifest()
+    assert after == saved['manifest'], 'installation files differ after restore'
+    print(f'installation restored byte for byte: {len(after)} paths', flush=True)
+    for unit in runtime_units():
+        if unit == STRONGSWAN + '.service':
+            # charon still holds the fixture's credentials and connections.
+            systemctl('restart' if unit in saved['active'] else 'stop', unit).check_returncode()
+        elif unit in saved['active']:
+            systemctl('start', unit).check_returncode()
+    print('services restored: ' + (' '.join(saved['active']) or 'none were active'), flush=True)
 
 
 def request(method, params):
@@ -82,7 +181,7 @@ resolv-retry 1
 ''')
     expect('openvpn.apply', {'version': 1, 'device_id': 7, 'action': 'allow', 'ip': '10.67.67.2'})
     with tempfile.TemporaryFile() as log:
-        process = subprocess.Popen(['openvpn', '--config', '/tmp/vpn2-svc/client.conf'],
+        process = subprocess.Popen(['openvpn', '--config', str(at('/tmp/vpn2-svc/client.conf'))],
                                    stdout=log, stderr=log)
         try:
             wait_session(True)
@@ -97,7 +196,7 @@ resolv-retry 1
             # with the same profile after the administrator unfreezes it.
             process.terminate()
             process.wait(timeout=5)
-            process = subprocess.Popen(['openvpn', '--config', '/tmp/vpn2-svc/client.conf'],
+            process = subprocess.Popen(['openvpn', '--config', str(at('/tmp/vpn2-svc/client.conf'))],
                                        stdout=log, stderr=log)
             wait_session(True)
             print('OpenVPN unfreeze: original client reconnected')
@@ -112,9 +211,7 @@ resolv-retry 1
 
 
 def prepare():
-    command('systemctl', 'stop', 'vpn2-control.service', 'vpn2-control.socket')
-    for name in ('wg.json', 'openvpn-7.json', 'ikev2.json', 'ikev2-pending.json', 'ikev2-identities.json'):
-        (Path('/var/lib/vpn2-control') / name).unlink(missing_ok=True)
+    # preserve() left empty directories and stopped the installation's units.
     if subprocess.run(['ip', 'link', 'show', 'wg0'], capture_output=True, timeout=5).returncode == 0:
         command('ip', 'link', 'delete', 'wg0')
     private = command('wg', 'genkey').strip()
@@ -123,9 +220,9 @@ def prepare():
     command('ip', 'link', 'add', 'wg0', 'type', 'wireguard')
     command('ip', 'address', 'add', '10.66.66.1/24', 'dev', 'wg0')
     command('ip', 'link', 'set', 'wg0', 'up')
-    base = Path('/etc/openvpn/server/pki')
+    base = at('/etc/openvpn/server/pki')
     (base / 'newcerts').mkdir(parents=True, exist_ok=True)
-    Path('/etc/openvpn/server/ccd').mkdir(exist_ok=True)
+    at('/etc/openvpn/server/ccd').mkdir(exist_ok=True)
     write(base / 'index.txt', '')
     write(base / 'serial', '01\n')
     write(base / 'crlnumber', '01\n')
@@ -174,6 +271,7 @@ client-config-dir /etc/openvpn/server/ccd
     for source, destination in [('server.crt', 'x509/server.crt'), ('server.key', 'private/server.key'),
                                 ('ca.crt', 'x509ca/ca.crt')]:
         write('/etc/swanctl/' + destination, (base / source).read_text())
+    write('/etc/swanctl/swanctl.conf', 'include conf.d/*.conf\n', 0o644)
     write('/etc/swanctl/conf.d/control-test.conf', '''connections {
   anysda-ikev2 {
     version = 2
@@ -196,7 +294,7 @@ pools {
   anysda-ikev2-pool6 { addrs = fd68:68::/64 }
 }
 ''')
-    command('systemctl', 'restart', 'strongswan')
+    command('systemctl', 'restart', STRONGSWAN)
     command('systemctl', 'start', 'vpn2-control.socket')
 
 
@@ -217,7 +315,17 @@ def main():
         print('panel: sources/templates/validation read-only; CA key unreadable')
         return
     assert os.getuid() == 0 and os.environ.get('VPN2_CONTROL_TEST') == '1'
-    prepare()
+    preflight()
+    saved = preserve()
+    try:
+        prepare()
+        exercise()
+    finally:
+        restore(saved)
+    print('live control API: PASS')
+
+
+def exercise():
     expect('check.run', {'check': 'readiness'})
     peer = {'key': base64.b64encode(bytes(range(32))).decode(),
             'preshared_key': base64.b64encode(bytes(range(1, 33))).decode(), 'ip': '10.66.66.2'}
@@ -228,9 +336,9 @@ def main():
     print('WireGuard revoked peer absent in kernel: OK')
     openvpn_sessions()
     expect('openvpn.apply', {'version': 5, 'device_id': 7, 'action': 'allow', 'ip': '10.67.67.2'}, 'conflict')
-    verification = subprocess.run(['openssl', 'verify', '-crl_check', '-CAfile',
-                                  '/etc/openvpn/server/pki/ca.crt', '-CRLfile',
-                                  '/etc/openvpn/server/pki/crl.pem', '/etc/openvpn/server/pki/client.crt'],
+    base = at('/etc/openvpn/server/pki')
+    verification = subprocess.run(['openssl', 'verify', '-crl_check', '-CAfile', str(base / 'ca.crt'),
+                                  '-CRLfile', str(base / 'crl.pem'), str(base / 'client.crt')],
                                  capture_output=True, text=True, timeout=5)
     assert verification.returncode != 0 and 'certificate revoked' in verification.stderr
     print('OpenVPN client certificate: certificate revoked')
@@ -249,11 +357,10 @@ def main():
     expect('wg.apply', {'version': 1, 'peers': [peer]}, 'stale')
     for user, flag in [('nobody', '--foreign'), ('vpn2-panel', '--panel')]:
         print(command('runuser', '-u', user, '--', 'python3', __file__, flag).strip())
-    if subprocess.run(['id', 'control-test-stranger'], capture_output=True, timeout=5).returncode:
-        command('useradd', '--system', '--groups', 'vpn2-control', 'control-test-stranger')
-    print(command('runuser', '-u', 'control-test-stranger', '--', 'python3', __file__, '--group-only').strip())
+    if subprocess.run(['id', STRANGER], capture_output=True, timeout=5).returncode:
+        command('useradd', '--system', '--groups', 'vpn2-control', STRANGER)
+    print(command('runuser', '-u', STRANGER, '--', 'python3', __file__, '--group-only').strip())
     assert pwd.getpwnam('vpn2-control').pw_uid != 0
-    print('live control API: PASS')
 
 
 if __name__ == '__main__':

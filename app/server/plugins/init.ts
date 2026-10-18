@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
-import { accounts, sessions, twoFactors, users } from '../database/schema'
+import { accounts, adminConfigPassword, sessions, twoFactors, users } from '../database/schema'
 import { hashPassword, revokeDisallowedSsoSessions, useAuth, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 import { syncClientPrefsFile } from '../utils/client-prefs'
@@ -95,6 +95,7 @@ async function initPanel() {
         userId: id,
         password: passwordHash,
       })
+      if (yamlConfig?.admin?.password) await tx.insert(adminConfigPassword).values({ userId: id, hash: passwordHash })
     })
     log.info({ username: desiredUser }, 'admin user created')
   }
@@ -107,24 +108,34 @@ async function initPanel() {
         .where(eq(users.id, current.id))
       changed.push('username')
     }
-    // Пароль из конфига перезаписывается только при настоящей смене, и вместе
-    // с ним рвутся все сессии, как при смене в панели (VPN2-49). Тот же пароль
-    // на каждом перезапуске сессии не трогает.
+    // Пароль из конфига применяется, только когда сменили сам конфиг: init
+    // сравнивает его с последним применённым значением, а не с паролем
+    // учётки, иначе смена в панели откатывалась бы на каждом перезапуске.
+    // Вместе с применённым паролем рвутся все сессии, как при смене в панели
+    // (VPN2-49). Без записи о прошлом применении (установка до этой схемы)
+    // конфиг применяется, как раньше.
     const yamlPassword = yamlConfig?.admin?.password
     if (yamlPassword) {
-      const [credential] = await localDb.select().from(accounts)
-        .where(and(eq(accounts.userId, current.id), eq(accounts.providerId, 'credential')))
-        .limit(1)
-      if (!credential?.password || !(await verifyPassword(credential.password, yamlPassword))) {
-        const password = await hashPassword(yamlPassword)
-        if (credential) {
-          await localDb.update(accounts).set({ password, updatedAt: new Date() }).where(eq(accounts.id, credential.id))
+      const [applied] = await localDb.select().from(adminConfigPassword)
+        .where(eq(adminConfigPassword.userId, current.id)).limit(1)
+      if (!applied || !(await verifyPassword(applied.hash, yamlPassword))) {
+        const [credential] = await localDb.select().from(accounts)
+          .where(and(eq(accounts.userId, current.id), eq(accounts.providerId, 'credential')))
+          .limit(1)
+        let hash = credential?.password ?? ''
+        if (!hash || !(await verifyPassword(hash, yamlPassword))) {
+          hash = await hashPassword(yamlPassword)
+          if (credential) {
+            await localDb.update(accounts).set({ password: hash, updatedAt: new Date() }).where(eq(accounts.id, credential.id))
+          }
+          else {
+            await localDb.insert(accounts).values({ accountId: String(current.id), providerId: 'credential', userId: current.id, password: hash })
+          }
+          await localDb.delete(sessions).where(eq(sessions.userId, current.id))
+          changed.push('password')
         }
-        else {
-          await localDb.insert(accounts).values({ accountId: String(current.id), providerId: 'credential', userId: current.id, password })
-        }
-        await localDb.delete(sessions).where(eq(sessions.userId, current.id))
-        changed.push('password')
+        await localDb.insert(adminConfigPassword).values({ userId: current.id, hash })
+          .onConflictDoUpdate({ target: adminConfigPassword.userId, set: { hash } })
       }
     }
     if (changed.length > 0) log.info({ keys: changed }, 'admin user synced from config.yaml')

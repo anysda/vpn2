@@ -37,6 +37,15 @@ export const users = sqliteTable('users', {
   ...timestamps,
 })
 
+/**
+ * argon2 последнего применённого admin.password из config.yaml. Отдельно от
+ * пароля учётки: смену в панели init не путает со сменой в конфиге.
+ */
+export const adminConfigPassword = sqliteTable('admin_config_password', {
+  userId: integer('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  hash: text('hash').notNull(),
+})
+
 export const sessions = sqliteTable('sessions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   token: text('token').notNull().unique(),

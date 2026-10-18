@@ -162,6 +162,13 @@
       "when": 1792322534011,
       "tag": "0022_access_operations",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1792345406639,
+      "tag": "0023_admin_config_password",
+      "breakpoints": true
     }
   ]
 }

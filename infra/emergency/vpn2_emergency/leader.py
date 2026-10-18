@@ -112,7 +112,7 @@ class Leader:
         self.state.save()
 
     def _step_down(self, winner):
-        if self.data['role'] == 'leader':
+        if self.data['role'] == 'leader' or self.data.get('redirect') != winner:
             self.events.on_step_down(winner)
         self.data['role'] = 'follower'
         self.data['redirect'] = winner
@@ -215,5 +215,4 @@ class Leader:
         elif self.data['role'] == 'leader':
             self._step_down(None)
         elif self.data.get('redirect'):
-            self.data['redirect'] = None
-            self.state.save()
+            self._step_down(None)

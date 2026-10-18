@@ -4,6 +4,8 @@ Callbacks must be idempotent by (emergency_id, generation). Restarting an
 existing leader restores its state without emitting a new leader event.
 Step-down immediately stops issuance; connection retirement is a separate
 emergency-end event, after the replacement bundle is ready (at most 600 s).
+Follower redirect changes also emit step-down, including the initial leader
+selection and clearing an unreachable target; subscribers need not poll state.
 """
 
 from collections import defaultdict

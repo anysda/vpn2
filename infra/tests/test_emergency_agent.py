@@ -217,10 +217,22 @@ class EmergencyAgentTests(unittest.TestCase):
             cluster.advance()
         self.assertEqual(cluster.leaders(), ['b'])
         self.assertLessEqual(cluster.clock() - started, 90)
-        self.assertEqual(len(cluster.events['b'].calls), 1)
+        self.assertEqual(sum(call[0] == 'leader' for call in cluster.events['b'].calls), 1)
         cluster.start('a')
         cluster.advance(90)
         self.assertEqual(cluster.leaders(), ['b'])
+
+    def test_followers_receive_redirect_and_target_loss_events(self):
+        cluster = self.cluster()
+        cluster.stop('entry')
+        cluster.advance(1320)
+        self.assertIn(('step_down', ('a',)), cluster.events['b'].calls)
+        self.assertIn(('step_down', ('a',)), cluster.events['c'].calls)
+        for peer in ('a', 'c'):
+            cluster.blocked.update({('b', peer), (peer, 'b')})
+        cluster.advance(90)
+        self.assertIn(('step_down', (None,)), cluster.events['b'].calls)
+        self.assertIsNone(cluster.agents['b'].leader.data['redirect'])
 
     def test_partition_guard_merge_retirement_and_no_redirect_cycle(self):
         cluster = self.cluster()

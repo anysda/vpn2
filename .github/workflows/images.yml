@@ -58,7 +58,10 @@ jobs:
       - name: smoke panel
         if: matrix.name == 'panel'
         run: |
-          docker run -d --name smoke -e PORT=31821 -p 127.0.0.1:31821:31821 smoke/panel \
+          trap 'docker rm -f smoke >/dev/null' EXIT
+          docker run -d --name smoke -e PORT=31821 -p 127.0.0.1:31821:31821 \
+            --tmpfs /var/lib/anysda-vpn2:uid=10001,gid=10001,mode=0700 \
+            -e NUXT_DATABASE_URL=file:/var/lib/anysda-vpn2/db.sqlite smoke/panel \
             sh -ec 'node scripts/migrate.mjs; exec node .output/server/index.mjs'
           for _ in $(seq 1 30); do
             curl -fsS http://127.0.0.1:31821/api/version && exit 0

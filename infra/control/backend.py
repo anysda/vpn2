@@ -36,22 +36,35 @@ def atomic(path, body, mode=0o600):
             os.unlink(name)
 
 
-def run(argv, deadline):
+def run(argv, deadline, data=None):
     """Bound both pipes while reading; never retain or publish stderr."""
     deadline = min(deadline, time.monotonic() + 10)
     output = bytearray()
     size = 0
-    with subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    pending = memoryview(data.encode() if data is not None else b'')
+    with subprocess.Popen(argv, stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
+                          stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, env={'PATH': '/usr/sbin:/usr/bin',
                                                       'LC_ALL': 'C'}) as process:
         try:
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
                 selector.register(process.stderr, selectors.EVENT_READ)
+                if process.stdin:
+                    selector.register(process.stdin, selectors.EVENT_WRITE)
                 while selector.get_map():
                     remaining = deadline - time.monotonic()
                     require(remaining > 0, 'limit')
                     for event, _mask in selector.select(remaining):
+                        if event.fileobj is process.stdin:
+                            try:
+                                pending = pending[os.write(process.stdin.fileno(), pending[:8192]):]
+                            except BrokenPipeError:
+                                pending = pending[:0]
+                            if not pending:
+                                selector.unregister(process.stdin)
+                                process.stdin.close()
+                            continue
                         chunk = os.read(event.fileobj.fileno(), 8192)
                         if not chunk:
                             selector.unregister(event.fileobj)
@@ -88,8 +101,8 @@ class Backend:
     def path(self, name):
         return self.root / name.lstrip('/')
 
-    def command(self, *args):
-        return run(list(args), self.deadline)
+    def command(self, *args, data=None):
+        return run(list(args), self.deadline, data)
 
     def version(self, domain, params):
         path = self.state / (domain + '.json')
@@ -306,10 +319,10 @@ class Backend:
                 interface.append(line)
         require(any(re.match(r'^\s*PrivateKey\s*=', line) for line in interface),
                 'unavailable')
-        with tempfile.TemporaryDirectory(dir=self.state) as work:
-            candidate = Path(work) / 'wg.conf'
-            atomic(candidate, '[Interface]\n' + '\n'.join(interface) + '\n' + peers)
-            self.command('/usr/bin/wg', 'syncconf', 'wg0', str(candidate))
+        # Through stdin: the distribution's AppArmor profile for wg lets it
+        # open only /etc/wireguard, which it cannot traverse without root.
+        self.command('/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin',
+                     data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)
         result = self.observe('wg')
         expected = {peer['key']: peer_addresses(peer) for peer in params['peers']}
         require(result['peers'] == expected, 'unavailable')

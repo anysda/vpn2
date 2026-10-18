@@ -141,10 +141,10 @@ class ControlTests(unittest.TestCase):
                          'PrivateKey = server-secret\nListenPort = 51820\n')
         calls = []
 
-        def command(*args):
+        def command(*args, data=None):
             calls.append(args)
             if args[1] == 'syncconf':
-                candidate = Path(args[-1]).read_text()
+                candidate = data
                 self.assertNotIn('Address', candidate)
                 self.assertIn(self.public, candidate)
                 self.assertIn('PresharedKey = ' + self.psk, candidate)
@@ -164,6 +164,27 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(calls[0][:3], ('/usr/bin/wg', 'syncconf', 'wg0'))
         with patch.object(self.backend, 'command', return_value=''):
             self.invalid('wg.apply', {'version': 2, 'peers': [self.peer]}, 'unavailable')
+
+    def test_wg_candidate_goes_through_stdin_for_apparmor(self):
+        # Ubuntu's wg profile lets wg open only /etc/wireguard, closed to the
+        # service user; a candidate file anywhere is unreadable to wg.
+        self.file('/etc/wireguard/wg0.conf', '[Interface]\nPrivateKey = server-secret\n')
+        syncs = []
+
+        def command(*args, data=None):
+            if args[1] == 'syncconf':
+                syncs.append((args, data))
+                return ''
+            if args[-1] == 'preshared-keys':
+                return self.public + '\t' + self.psk + '\n'
+            return self.public + '\t10.66.66.2/32 fd66:66::2/128\n'
+
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.assertTrue(self.request('wg.apply', {'version': 1, 'peers': [self.peer]})['ok'])
+        self.assertEqual(syncs[0][0], ('/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'))
+        self.assertIn('PublicKey = ' + self.public, syncs[0][1])
+        self.assertEqual(self.backend_module.run(['wc', '-c'], time.monotonic() + 5, 'x' * 300000),
+                         '300000\n')
 
     def test_wg_preserves_extended_pool_ula_mapping(self):
         self.assertEqual(self.backend_module.peer_addresses(dict(self.peer, ip='10.66.64.12')),

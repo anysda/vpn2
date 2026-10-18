@@ -5,7 +5,7 @@ const ts = require('typescript')
 const { createRequire } = require('node:module')
 
 // Реальные drizzle/libsql и код очереди; подменена только граница VPN-служб.
-module.exports = function harness(root, database, adapter) {
+module.exports = function harness(root, database, adapter, runtime = {}) {
   const external = createRequire(path.resolve('package.json'))
   const cache = new Map()
   const overrides = new Map([
@@ -30,7 +30,7 @@ module.exports = function harness(root, database, adapter) {
       return load(target)
     }
     const execute = vm.runInThisContext(`(function(require,module,exports,useRuntimeConfig,createError,useLogger,defineEventHandler,getRouterParam,getHeader,getQuery,setResponseStatus){${code}\n})`, { filename })
-    execute(localRequire, mod, mod.exports, () => ({ databaseUrl: `file:${database}` }),
+    execute(localRequire, mod, mod.exports, () => ({ databaseUrl: `file:${database}`, ...runtime }),
       input => Object.assign(new Error(input.message || input.statusMessage), input),
       () => ({ info() {}, warn() {}, error() {} }), handler => handler,
       (event, name) => event.params[name], (event, name) => event.headers?.[name],

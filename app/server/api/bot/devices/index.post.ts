@@ -20,9 +20,10 @@ export default defineEventHandler(async (event) => {
   const name = body.name.trim()
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
-  // Лимит перепроверяем в транзакции вставки: пока шли await, администратор
-  // мог его снизить.
+  // Привязку и лимит перепроверяем в транзакции вставки: пока шли await,
+  // администратор мог отозвать бота или снизить лимит.
   const device = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
+    if (fresh.tgChatId !== body.chatId) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
     if (names.includes(name)) {
       throw createError({ statusCode: 409, statusMessage: 'device_exists', message: 'Девайс с таким названием уже есть' })
     }

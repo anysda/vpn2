@@ -81,7 +81,7 @@ def image(manifest, component, requested='', pull=True, arch=None):
         try:
             command(['docker', 'pull', selected])
         except (ReleaseError, subprocess.TimeoutExpired):
-            pass  # A local image must still pass the exact config digest check.
+            pass  # A local image must still pass the immutable digest check.
     try:
         actual = json.loads(command(['docker', 'image', 'inspect', selected]))[0]
     except ReleaseError:
@@ -90,9 +90,28 @@ def image(manifest, component, requested='', pull=True, arch=None):
         # docker save/load need not preserve RepoDigests. The config digest binds
         # the ordered rootfs DiffIDs as well as the executable configuration.
         actual = json.loads(command(['docker', 'image', 'inspect', expected['config']]))[0]
-    if actual['Id'] != expected['config'] or actual['Architecture'] != arch:
+    descriptor = actual.get('Descriptor') or {}
+    if descriptor.get('mediaType') in ('application/vnd.oci.image.index.v1+json',
+                                      'application/vnd.docker.distribution.manifest.list.v2+json'):
+        # CI tags can point at an index (also for a single architecture plus
+        # attestations). Resolve the selected immutable index locally, never
+        # look up the mutable tag again or substitute an unrelated cached image.
+        actual = json.loads(command(['docker', 'image', 'inspect', '--platform',
+                                     'linux/' + arch, digest(actual['Id'])]))[0]
+    # Classic Docker uses the config digest as Id; the containerd store uses
+    # a manifest/index digest. RepoDigests bind the selected image to the
+    # release on both stores, including when selected is a mutable tag.
+    descriptor = actual.get('Descriptor') or {}
+    matches = (reference in (actual.get('RepoDigests') or [])
+               or descriptor.get('digest') == expected['digest'])
+    # Legacy save/load can lose RepoDigests. Only the classic representation
+    # (no content descriptor) can use Id as the config digest: it binds the
+    # executable configuration and ordered rootfs DiffIDs.
+    if not descriptor:
+        matches = matches or actual['Id'] == expected['config']
+    if not matches or actual['Architecture'] != arch:
         raise ReleaseError(f'{component}: digest mismatch; image rejected')
-    return actual['Id']  # Immutable even if somebody retags during this deploy.
+    return digest(actual['Id'])  # Store-native immutable handle, never a tag.
 
 
 def artifact(manifest, name, cache, destination=None):

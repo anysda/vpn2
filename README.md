@@ -146,12 +146,41 @@ ssh root@<entry-ip>
 ключ и разложит его на все exit-ноды. Без этого оркестратор сгенерирует
 свой.
 
-**2. Склонировать репозиторий.**
+**2. Скачать исходники и манифест одной сборки.**
+
+Для установки используется успешная сборка ветки `dev`. Манифест
+`release-<полный commit>` находится в артефактах workflow
+[images](https://github.com/anysda/vpn2/actions/workflows/images.yml).
+GitHub требует вход для скачивания Actions-артефактов даже публичного
+репозитория; публичного URL для анонимной загрузки сейчас нет.
+Нужна учётная запись GitHub: команда `gh auth login` покажет код для
+входа через браузер. Выпуски и теги для этого пути не нужны.
 
 ```bash
-git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
+apt-get update
+apt-get install -y git gh
+gh auth login --hostname github.com --git-protocol https --web
+git clone --branch dev https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
+
+# Последняя успешная сборка images, а не обязательно текущая вершина dev.
+run_id=$(gh run list --repo anysda/vpn2 --workflow images.yml --branch dev \
+  --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+test -n "$run_id" && test "$run_id" != null || exit 1
+commit=$(gh run view "$run_id" --repo anysda/vpn2 --json headSha --jq .headSha)
+gh run download "$run_id" --repo anysda/vpn2 --name "release-$commit" \
+  --dir "/opt/vpn2-release/$commit" || exit 1
+git checkout --detach "$commit" || exit 1
+cp "/opt/vpn2-release/$commit/release-manifest.json" ./release-manifest.json
+python3 infra/lib/release.py --manifest release-manifest.json check . || exit 1
 ```
+
+Ожидаемый вывод проверки: `release source: verified`. Скачивается
+манифест именно выбранного commit; deploy сверяет хеши стадий и миграций,
+образов и загружаемых компонентов. При ошибке скачивания остановитесь:
+артефакты хранятся 90 дней; выберите более свежую успешную сборку на
+странице `images`. Если успешной сборки с артефактом нет, установка с
+проверкой требует исправленного CI. Не подставляйте манифест другой версии.
 
 **3. Заполнить конфиг мастером.** Ответы попадут в `config.yaml`.
 
@@ -162,13 +191,17 @@ cd /opt/anysda-vpn2
 **4. Запустить деплой.**
 
 ```bash
-./deploy.sh
+./deploy.sh --manifest release-manifest.json
 ```
 
 Деплой ставит зависимости, проверяет SSH ко всем нодам, поднимает
 mgmt-сеть и Hysteria2 на exit-нодах, а на entry-ноде - VPN-серверы, роутер,
 сторож, AdGuard, мониторинг, панель и бота. Повторный запуск безопасен:
 стадии идемпотентны.
+
+`./deploy.sh --development` — отдельный режим разработки: разрешает
+плавающие теги и установку без манифеста. Он не обеспечивает проверку
+состава сборки и не нужен для установки по инструкции выше.
 
 **5. Создать первого клиента.** В панели «Новый клиент» → имя → в карточке
 клиента «+ девайс» → имя. Дальше кнопки WG (`.conf` или QR), OVPN, IKEv2.
@@ -182,7 +215,8 @@ mgmt-сеть и Hysteria2 на exit-нодах, а на entry-ноде - VPN-с
 
 Всё задаётся в `config.yaml`, образец с комментариями -
 [config.example.yaml](config.example.yaml). После правки конфига
-перезапустите `./deploy.sh` целиком или нужную стадию.
+перезапустите `./deploy.sh --manifest release-manifest.json` целиком или
+нужную стадию, например `./deploy.sh --manifest release-manifest.json 30-frontend ru`.
 
 ### Порты и параметры клиентских VPN
 
@@ -222,7 +256,8 @@ TCP 443 — для панели; HTTP/3 выключен, UDP 443 остаётс
 Диагностика: `journalctl -u caddy -u vpn2-tls`, `systemctl list-timers vpn2-tls`.
 Без настроенного Telegram-бота доступны журнал и локальная очередь.
 
-Укажите `panel.domain`, направьте A-запись и запустите `./deploy.sh`.
+Укажите `panel.domain`, направьте A-запись и запустите
+`./deploy.sh --manifest release-manifest.json`.
 Caddy получит сертификат Let's Encrypt на домен. IKEv2 до
 этого работает по IP со своим CA, после - автоматически переключается на
 домен и доверие к Let's Encrypt. **Профили IKEv2, выданные до подключения

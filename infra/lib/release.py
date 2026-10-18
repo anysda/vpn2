@@ -39,7 +39,15 @@ def architecture():
 
 
 def load(path):
-    manifest = read_json(path)
+    try:
+        manifest = read_json(path)
+    except FileNotFoundError as exc:
+        raise ReleaseError(
+            'release manifest not found; download release-<commit> from a successful images workflow '
+            '(GitHub login required), checkout that commit and run '
+            './deploy.sh --manifest <path>/release-manifest.json; '
+            'see README.md Quickstart step 2. For development only: ./deploy.sh --development'
+        ) from exc
     if manifest.get('format') != 1 or not re.fullmatch(r'[a-f0-9]{40}', manifest['commit']):
         raise ReleaseError('unsupported release manifest')
     if manifest['rollback'] != 'backward-compatible':

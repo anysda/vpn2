@@ -53,7 +53,7 @@
 .dns .plot svg{position:absolute;inset:0;width:100%;height:100%}
 .dns .hrs{display:flex;justify-content:space-between;font-size:11px;color:var(--t3);margin-top:10px}
 .dns .ups{height:316px;display:flex;flex-direction:column}
-.dns .upl{margin-top:6px;display:grid}
+.dns .upl{margin-top:6px;display:grid;grid-template-columns:minmax(0,1fr)}
 .dns .up{padding:13px 0;border-top:1px solid rgba(var(--fg),.05)}
 .dns .up:first-child{border-top:0}
 .dns .up .u1{display:flex;align-items:baseline;gap:10px}
@@ -145,6 +145,17 @@
 @media (max-width:1360px){
   .dns .svg2{grid-template-columns:repeat(4,1fr)}
   .dns .lt>div{grid-template-columns:86px 1.4fr 1.4fr 1fr 140px}
+}
+/* узкий ПК: счётчики по два, график и серверы друг под другом, настройки в одну колонку */
+@media (min-width:721px) and (max-width:960px){
+  .dns .dk{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dns .d2{grid-template-columns:minmax(0,1fr)}
+  .dns .sgrid{grid-template-columns:minmax(0,1fr)}
+  /* журнал: поиск и «Обновить» в строку, фильтр под ними */
+  .dns .tbar{display:grid;grid-template-columns:minmax(0,1fr) auto}
+  .dns .tbar .inp input{width:100%;min-width:0}
+  .dns .tbar>.pill{grid-area:1/2}
+  .dns .tbar .seg{grid-area:2/1/3/-1;justify-self:start}
 }
 
 @media (prefers-reduced-motion:reduce){

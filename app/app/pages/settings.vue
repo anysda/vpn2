@@ -528,6 +528,11 @@ async function saveSso() {
 .stg-modal .pill.redw,.stg-sheet .pill.redw{background:var(--red);border-color:var(--red);color:#fff}
 @keyframes stg-m-in{from{transform:translateY(8px) scale(.97)}}
 @keyframes stg-m-row{from{opacity:0;transform:translateY(6px)}}
+/* узкий ПК: в две колонки подписи и поля не вмещаются — карточки одна под другой */
+@media (min-width:721px) and (max-width:1000px){
+  .stg .sgrid{grid-template-columns:minmax(0,1fr)}
+  .stg .ssso{grid-column:auto;grid-row:auto}
+}
 /* телефон: одна колонка, подпись над значением, ряды и кнопки как в мобильном макете */
 @media (max-width:720px){
   .stg .sgrid{grid-template-columns:minmax(0,1fr)}

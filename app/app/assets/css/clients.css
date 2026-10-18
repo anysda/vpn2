@@ -115,6 +115,14 @@
   .clp .kb button{padding:0 7px}
   .clp .dev{gap:10px;padding:10px}
 }
+/* узкий ПК: рядом с карточкой клиента столбцам списка тесно — список, под ним карточка, ниже рассылка */
+@media (min-width:721px) and (max-width:960px){
+  .clp .cgrid{grid-template-columns:minmax(0,1fr)}
+  .clp .ccol{display:contents}
+  .clp .crows{flex:none;height:auto;max-height:45vh}
+  .clp .cgrid>.cdet{order:1}
+  .clp .ccol>:not(.clist){order:2}
+}
 
 /* телефон (≤720): список и карточка клиента — два экрана, окна — нижние шторки */
 @media (max-width:720px){

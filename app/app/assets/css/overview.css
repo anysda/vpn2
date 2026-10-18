@@ -165,6 +165,11 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .leg div{grid-template-columns:auto minmax(0,1fr) auto auto;gap:6px}
   .ov .leg .nm{white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
 }
+/* узкий ПК: четыре карточки в ряд не вмещают подписи — ряд и узлы по две */
+@media (min-width:721px) and (max-width:960px){
+  .ov .r1,.ov .r3{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .ov .r3>.node.full{grid-column:1/-1}
+}
 /* телефон: одна сетка в две колонки, блоки в порядке макета — события, ноды,
    выходы и DNS рядом, трафик, активность, топ, клиенты. Порядок задаёт разметка
    (pages/index.vue), не order. Ряды раскрыты через display:contents, чтобы их

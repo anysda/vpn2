@@ -65,7 +65,8 @@ class PanelProxyTests(unittest.TestCase):
         self.addCleanup(server.shutdown)
         for path in ['app/e2e/support/panel-stand.sh', 'infra/scripts/30-frontend.sh']:
             blocks = list(proxy_blocks((ROOT / path).read_text()))
-            self.assertEqual(len(blocks), 1 if 'panel-stand' in path else 2)
+            # Stage 30 keeps one proxy snippet for domain and IP sites.
+            self.assertEqual(len(blocks), 1)
             for index, block in enumerate(blocks):
                 with self.subTest(path=path, block=index), tempfile.TemporaryDirectory() as tmp:
                     with socket.socket() as sock:

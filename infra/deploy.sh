@@ -76,6 +76,10 @@ print_summary() {
     _panel_url="https://${PANEL_DOMAIN}/"
   else
     _panel_url="http://${_ru_host}/"
+    # Без домена HTTPS по IP включается после первого сертификата.
+    if [[ "$(ssh_exec 'cat /etc/vpn2/tls/panel/secure' 2>/dev/null)" == true ]]; then
+      _panel_url="https://${ENTRY_HOST:-$_ru_host}/"
+    fi
   fi
   _admin_user="${ADMIN_USER:-admin}"
   # Сам пароль в рамку не выводим: она остаётся в логах деплоя и в истории
@@ -472,6 +476,9 @@ run_stage_on_host() {
     push "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" release-manifest.json || return 1
   fi
   push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
+  if [[ "$stage" == 30-frontend ]]; then
+    push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
+  fi
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
     push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1

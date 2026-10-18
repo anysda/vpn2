@@ -3,7 +3,7 @@
 # Pulls the panel image from the GitHub Container Registry (ghcr.io)
 # (ghcr.io/anysda/vpn2/panel), renders /etc/anysda/config.yaml
 # from admin secrets, installs Caddy, runs the panel as host-network
-# container on :51821 (Caddy reverse-proxies :80). NET_ADMIN cap only —
+# container on :51821 (Caddy reverse-proxies :80/:443). NET_ADMIN cap only —
 # NO SYS_MODULE, NO /etc/wireguard, NO /lib/modules.
 
 set -euo pipefail
@@ -149,55 +149,44 @@ if [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]]; then
   rm -rf "$TMP"
 fi
 
+# HTTPS: с доменом — сертификат на домен, без домена — на IP entry (профиль
+# Let's Encrypt shortlived, ~6 дней). Выпускает и обновляет Caddy; окно
+# обновления, выкладку в /etc/vpn2/tls/<ip|domain>, переход на HTTPS после
+# первого сертификата и уведомления о сбое ведёт vpn2_tls.py (он же у экзитов).
+TLS_LIB=$(dirname "$0")/vpn2_tls.py
+[[ -f "$TLS_LIB" ]] || TLS_LIB=$(dirname "$0")/../lib/vpn2_tls.py
+install -D -m 755 "$TLS_LIB" /usr/local/lib/vpn2/vpn2_tls.py
+systemctl stop vpn2-tls.timer vpn2-tls.service 2>/dev/null || true
 if [[ -n "${PANEL_DOMAIN:-}" ]]; then
+  TLS_HOST=$PANEL_DOMAIN SITE=$PANEL_DOMAIN TLS_OUT=/etc/vpn2/tls/domain
   echo "[$HOST_TAG]   домен панели: ${PANEL_DOMAIN} (HTTPS через Let's Encrypt)"
-  cat > /etc/caddy/Caddyfile <<EOF
-{
-    # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
-    # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
-    # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
-    # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
-    servers {
-        protocols h1 h2
-    }
-}
-# Пути бота — только для самой ноды: бот ходит на 127.0.0.1:51821 мимо
-# Caddy. Caddy сам подключается к
-# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
-# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
-# браузер админа со страницы мониторинга — его не трогаем.
-(internal_only) {
-    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot
-    respond @internal 404
-}
-# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
-# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
-# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
-# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
-(to_panel) {
-    reverse_proxy 127.0.0.1:51821 {
-        header_up X-Forwarded-For {remote_host}
-        # Node closes idle HTTP/1 sockets; never reuse one for a mutating POST.
-        transport http {
-            keepalive off
-        }
-    }
-}
-${PANEL_DOMAIN} {
-    import internal_only
-    encode gzip
-    import to_panel
-}
-:80 {
-    redir https://${PANEL_DOMAIN}{uri} permanent
-}
-EOF
 else
-  echo "[$HOST_TAG]   домен не задан — HTTP на :80"
-  # Note: h3's DEFAULT_COOKIE.secure=true is patched to false at image build
-  # time (see app/Dockerfile sed step). So the session cookie works over HTTP.
-  cat > /etc/caddy/Caddyfile <<EOF
+  TLS_HOST=$ENTRY_HOST SITE="https://${ENTRY_HOST}" TLS_OUT=/etc/vpn2/tls/ip
+  echo "[$HOST_TAG]   домен не задан — HTTPS на IP ${ENTRY_HOST} (Let's Encrypt, ~6 дней)"
+fi
+# Вставки TLS принадлежат релизу панели: при откате панели возвращаются вместе
+# с ней, Caddy перечитывает прежние, таймер TLS снова запущен.
+panel_files_restored() {
+  systemctl reload-or-restart caddy || true
+  [[ -f /etc/systemd/system/vpn2-tls.timer ]] && systemctl start vpn2-tls.timer || true
+}
+panel_guard_files /etc/caddy/Caddyfile /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf \
+  /etc/vpn2/tls/config.json /etc/vpn2/tls/panel/secure
+TLS_PATHS=(--config /etc/vpn2/tls/config.json --caddy-dir /etc/caddy
+  --storage /var/lib/caddy/.local/share/caddy --secure-file /etc/vpn2/tls/panel/secure
+  --bot-secret /etc/anysda/tgbot-secret.txt)
+python3 /usr/local/lib/vpn2/vpn2_tls.py --prepare --role panel "${TLS_PATHS[@]}" \
+  --panel-container anysda-vpn2 --host "$TLS_HOST" --output-dir "$TLS_OUT" \
+  --acme-url "${TLS_ACME_URL:-https://acme-v02.api.letsencrypt.org/directory}" \
+  --acme-root "${TLS_ACME_ROOT:-}"
+
+cat > /etc/caddy/Caddyfile <<EOF
 {
+    # :80 до первого сертификата отдаёт панель, после — переадресует на HTTPS
+    # (/etc/caddy/vpn2-http.conf пишет vpn2_tls.py).
+    auto_https disable_redirects
+    # Клиент по IP не шлёт SNI.
+    default_sni ${TLS_HOST}
     # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
     # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
     # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
@@ -228,13 +217,16 @@ else
         }
     }
 }
-:80 {
+${SITE} {
+    import /etc/caddy/vpn2-tls.conf
     import internal_only
     encode gzip
     import to_panel
 }
+:80 {
+    import /etc/caddy/vpn2-http.conf
+}
 EOF
-fi
 ufw_sync_rules --alias 'caddy HTTP панель' 'caddy HTTP + ACME challenge' 80/tcp
 ufw_sync_rules 'caddy HTTPS панель' 443/tcp
 # Веб-интерфейс AdGuard наружу не открыт: только 127.0.0.1, управление — вкладка «DNS».
@@ -242,7 +234,27 @@ ufw_sync_rules 'caddy HTTPS панель' 443/tcp
 ufw delete allow 3001/tcp >/dev/null 2>&1 || true
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }
-svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile
+svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile \
+  /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf
+cat > /etc/systemd/system/vpn2-tls.service <<'EOF'
+[Unit]
+Description=VPN2 TLS certificate export and notifications
+After=caddy.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
+TimeoutStartSec=120
+EOF
+cat > /etc/systemd/system/vpn2-tls.timer <<'EOF'
+[Unit]
+Description=Check VPN2 TLS lifecycle every minute
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
 
 # ----------------------------------------------------------------------------
 # 4. Run container
@@ -270,6 +282,9 @@ docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 # host networking — panel manages WG/OpenVPN configs and talks to sing-box
 # clash-api. NET_ADMIN is enough; no SYS_MODULE.
 # Runtime-бюджет рассчитан на entry; сборка Nuxt остаётся в CI.
+# Флаг Secure cookie (и протокол проверки Origin в CSRF) читается из файла при
+# каждом старте: vpn2_tls.py включает его после первого сертификата и
+# перезапускает контейнер — окружение docker restart не меняет.
 docker run -d \
   --name anysda-vpn2 \
   "${ENTRY_DOCKER_ARGS[@]}" \
@@ -280,6 +295,7 @@ docker run -d \
   --security-opt apparmor=unconfined \
   --cap-add NET_ADMIN \
   -v /etc/localtime:/etc/localtime:ro \
+  -v /etc/vpn2/tls/panel:/run/vpn2-tls:ro \
   -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
   -v /etc/anysda:/etc/anysda \
   -v /etc/wireguard:/etc/wireguard \
@@ -291,7 +307,6 @@ docker run -d \
   -e PORT=51821 \
   -e HOST=127.0.0.1 \
   -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
-  -e NUXT_SESSION_COOKIE_SECURE="$([[ -n "${PANEL_DOMAIN:-}" ]] && echo true || echo false)" \
   -e NUXT_DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
   -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
   -e NUXT_WG_ENABLED=true \
@@ -331,6 +346,7 @@ docker run -d \
   -e NUXT_OAUTH_OIDC_REDIRECT_URL="${SSO_REDIRECT_URL}" \
   -e LOG_LEVEL=info \
   "$PANEL_IMAGE" \
+  sh -ec 'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); exec node .output/server/index.mjs' \
   >/dev/null
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
@@ -365,13 +381,16 @@ mkdir -p "$STAMP_DIR"
 touch "$STAMP_DIR/$STAGE"
 echo "[$HOST_TAG] $STAGE done"
 panel_finish
+# Первый выпуск — после проверенной панели: неудача ACME не откатывает релиз,
+# панель остаётся на HTTP, Caddy повторяет выпуск сам.
+python3 /usr/local/lib/vpn2/vpn2_tls.py --initial --config /etc/vpn2/tls/config.json \
+  --wait "${TLS_INITIAL_WAIT:-60}"
+systemctl enable --now vpn2-tls.timer >/dev/null
 echo
 echo "[$HOST_TAG] -------------------------------------------------------------"
-if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-  echo "[$HOST_TAG]  Панель:        https://${PANEL_DOMAIN}/"
-else
-  echo "[$HOST_TAG]  Панель:        http://${ENTRY_HOST}/"
-fi
+PANEL_SCHEME=http
+[[ "$(cat /etc/vpn2/tls/panel/secure)" == true ]] && PANEL_SCHEME=https
+echo "[$HOST_TAG]  Панель:        ${PANEL_SCHEME}://${PANEL_DOMAIN:-$ENTRY_HOST}/"
 if [[ -f "$SSO_RUNTIME" ]]; then
   echo "[$HOST_TAG]  Вход:          как настроен в профиле панели; break-glass /login?direct=1"
   echo "[$HOST_TAG]                 $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"

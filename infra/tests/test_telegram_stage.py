@@ -41,7 +41,9 @@ elif args[0] == 'run':
     if state.get('fail_panel') and name == 'anysda-vpn2':
         rc = 1
     else:
-        containers[name] = {'image': args[-1],
+        # The panel starts through `IMAGE sh -ec '...'` (TLS Secure flag wrapper).
+        image = args[args.index('sh') - 1] if 'sh' in args else args[-1]
+        containers[name] = {'image': image,
                             'env': [args[i + 1] for i, a in enumerate(args) if a == '-e']}
 elif args[0] == 'logs':
     if args[-1] == 'anysda-tgbot':
@@ -66,25 +68,27 @@ class TelegramStageTests(unittest.TestCase):
         scripts.mkdir()
         for name in ('30-frontend.sh', '35-telegram.sh'):
             stage = (ROOT / 'infra/scripts' / name).read_text()
-            for prefix in ('/etc/', '/var/', '/opt/', '/tmp/anysda'):
+            for prefix in ('/etc/', '/var/', '/opt/', '/tmp/anysda', '/usr/local/lib/'):
                 stage = stage.replace(prefix, str(self.root) + prefix)
             (scripts / name).write_text(stage)
+        (scripts / 'vpn2_tls.py').write_text((ROOT / 'infra/lib/vpn2_tls.py').read_text())
         (scripts / 'entry-resources.sh').write_text('entry_resources() { ENTRY_DOCKER_ARGS=(); }\n')
         # Release transactions have their own failure/rollback suite. This
         # fixture isolates bot/panel secret propagation with a Docker double.
         (scripts / 'release.sh').write_text((ROOT / 'infra/lib/release.sh').read_text())
-        (scripts / 'panel-transaction.sh').write_text('panel_begin() { :; }\npanel_finish() { :; }\n')
+        (scripts / 'panel-transaction.sh').write_text('panel_begin() { :; }\npanel_finish() { :; }\npanel_guard_files() { :; }\n')
         (scripts / 'anysda-svc.sh').write_text(
             f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n'
             'svc_restart_if_changed() { :; }\n')
-        for name in ('etc/caddy', 'tmp/anysda'):
+        for name in ('etc/caddy', 'etc/systemd/system', 'tmp/anysda'):
             (self.root / name).mkdir(parents=True)
         (self.root / 'tmp/anysda/anysda-config.yaml.tpl').write_text('admin: fixture\n')
         binaries = self.root / 'bin'
         binaries.mkdir()
         commands = {'docker': DOCKER, 'caddy': '#!/bin/sh\necho v2.11.7\n',
                     'ufw': '#!/bin/sh\nexit 0\n', 'curl': '#!/bin/sh\nexit 0\n',
-                    'envsubst': '#!/bin/sh\ncat\n'}
+                    'envsubst': '#!/bin/sh\ncat\n', 'systemctl': '#!/bin/sh\nexit 0\n',
+                    'journalctl': '#!/bin/sh\nexit 0\n'}
         for name, body in commands.items():
             path = binaries / name
             path.write_text(body)
@@ -94,7 +98,7 @@ class TelegramStageTests(unittest.TestCase):
                         AGH_PORT='3000', MGMT_IP='192.0.2.1', EXIT_TAGS='',
                         TELEGRAM_BOT_TOKEN='123456:test-only', TELEGRAM_CHAT_ID='100',
                         TELEGRAM_ADMIN_USERNAME='operator', TGBOT_IMAGE_PULL='false',
-                        VPN2_DEVELOPMENT='true')
+                        VPN2_DEVELOPMENT='true', TLS_INITIAL_WAIT='0')
 
     def run_stage(self, **env):
         result = subprocess.run(['bash', str(self.root / 'scripts/35-telegram.sh')],

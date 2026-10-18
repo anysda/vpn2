@@ -40,9 +40,9 @@ export default defineNuxtConfig({
     session: {
       // NUXT_SESSION_PASSWORD — секрет подписи cookie и шифрования 2FA-секретов.
       password: '',
-      // NUXT_SESSION_COOKIE_SECURE — флаг Secure у cookie. Стенд ходит по
-      // HTTP (Caddy на :80 без TLS), поэтому по умолчанию выключен; стадия 30
-      // включает его, когда у панели есть домен.
+      // NUXT_SESSION_COOKIE_SECURE — флаг Secure у cookie. По умолчанию
+      // выключен (HTTP до первого сертификата); стадия 30 включает его, когда
+      // Caddy получил сертификат на домен или IP.
       cookie: { secure: false },
     },
     // Попыток входа (пароль или код 2FA) за 5 минут с одного адреса.

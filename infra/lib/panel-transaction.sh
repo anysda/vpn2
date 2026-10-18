@@ -34,10 +34,35 @@ panel_rollback() {
   echo 'panel rollback verified; current database, revocations, expirations, operations and PKI retained'
 }
 
+# panel_guard_files FILE... — host config that belongs to the panel release
+# (Caddy TLS snippets): a failed deploy restores it, absent files are removed,
+# then the stage's panel_files_restored (if defined) reloads the services.
+panel_files=()
+panel_guard_files() {
+  local file
+  rm -rf "$panel_state/files"
+  install -d -m 700 "$panel_state/files"
+  for file; do
+    panel_files+=("$file")
+    if [[ -e "$file" ]]; then cp -a --parents "$file" "$panel_state/files"; fi
+  done
+}
+
+panel_restore_files() {
+  local file
+  (( ${#panel_files[@]} )) || return 0
+  for file in "${panel_files[@]}"; do
+    if [[ -e "$panel_state/files$file" ]]; then cp -a "$panel_state/files$file" "$file"; else rm -f "$file"; fi
+  done
+  if declare -F panel_files_restored >/dev/null; then panel_files_restored; fi
+  echo 'panel host config restored'
+}
+
 panel_failure() {
   local code=$?
   trap - EXIT
   if [[ "$code" -ne 0 && "$panel_changed" == true ]]; then
+    panel_restore_files || echo 'panel host config restore failed' >&2
     if [[ "$panel_old" == true ]]; then
       panel_rollback || echo 'automatic rollback unavailable; deploy a schema-compatible release; do not restore an old access snapshot' >&2
     else

@@ -352,7 +352,7 @@ PYDOMAIN
   if [[ -n "$panel_domain" ]]; then
     ok "Домен: $panel_domain"
   else
-    ok "Без домена — панель будет доступна по IP"
+    ok "Без домена — панель будет доступна по https://<IP> (Let's Encrypt на IP)"
   fi
 fi
 

@@ -232,6 +232,16 @@ class ControlTests(unittest.TestCase):
         for name, value in [('username', 'evil\ninclude /etc/shadow'), ('password', 'x" } secrets {')]:
             self.invalid('ikev2.apply', {'version': 1, 'clients': [dict(client, **{name: value})]})
 
+    def test_legacy_transliterated_ikev2_username_is_preserved(self):
+        # Two 64-character names can expand threefold during transliteration,
+        # followed by a separator and the existing uniqueness suffix.
+        client = {'device_id': 1, 'username': 'sch' * 64 + '-' + 'sch' * 64 + '-999',
+                  'password': 'valid-password-123', 'ip': '10.68.68.2'}
+        with patch.object(self.backend, 'ikev2', return_value={}) as apply:
+            self.assertTrue(self.request('ikev2.apply', {'version': 1, 'clients': [client]})['ok'])
+        self.assertEqual(apply.call_args.args[0]['clients'][0]['username'], client['username'])
+        self.invalid('ikev2.apply', {'version': 2, 'clients': [dict(client, username='a' * 513)]})
+
     def test_config_routes_to_same_adapter_and_state_is_live(self):
         with patch.object(self.backend, 'wireguard', return_value={'peers': {}}) as apply:
             self.assertTrue(self.request('config.apply', {'resource': 'wg-peers', 'schema': 1,

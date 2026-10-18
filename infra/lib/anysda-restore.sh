@@ -277,6 +277,7 @@ for path in \
   etc/strongswan etc/swanctl etc/strongswan.conf etc/strongswan.d \
   etc/ipsec.conf etc/ipsec.secrets \
   etc/caddy var/lib/caddy/.local/share/caddy \
+  var/lib/anysda-vpn2/runtime var/lib/vpn2-control \
   opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
   if [[ -e "/$path" || -L "/$path" ]]; then
     (cd / && cp -a --parents "$path" "$PRESNAP_ROOT/")
@@ -341,6 +342,14 @@ done
 # ── Применение ──────────────────────────────────────────────────────────────
 # Каждый блок защищён от отсутствия файла в архиве — допускаем частичные бэкапы
 if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then
+  if id vpn2-control >/dev/null 2>&1; then
+    # An explicitly restored DB starts a new control epoch. Its persisted
+    # versions may precede the current service journal (including old backups).
+    # Keep the previous journal in the encrypted safety snapshot, not active.
+    systemctl stop vpn2-control.service vpn2-control.socket
+    [[ ! -d /var/lib/vpn2-control ]] || mv /var/lib/vpn2-control "$WORK/control-before-restore"
+    install -d -o vpn2-control -g vpn2-control -m 0700 /var/lib/vpn2-control
+  fi
   mkdir -p /var/lib/anysda-vpn2
   # После остановки писателей старые WAL/SHM не должны примениться к новой
   # базе. Сначала готовим файл рядом, затем атомарно заменяем основной файл.
@@ -456,6 +465,9 @@ if id vpn2-panel >/dev/null 2>&1; then
   done
   chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2
   [[ ! -f /var/lib/anysda-vpn2/db.sqlite ]] || chown -h vpn2-panel:vpn2-panel /var/lib/anysda-vpn2/db.sqlite
+fi
+if id vpn2-control >/dev/null 2>&1; then
+  systemctl start vpn2-control.socket vpn2-control.service
 fi
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 

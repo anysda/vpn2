@@ -155,7 +155,7 @@ def validate(request, pools):
                 require(client['dns'] in (['10.99.0.1'], ['8.8.8.8', '1.1.1.1']))
             integer(client['device_id'])
             require(type(client['username']) is str and
-                    re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@-]{0,63}', client['username']))
+                    re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.@-]{0,511}', client['username']))
             require(type(client['password']) is str and
                     re.fullmatch(r'[A-Za-z0-9_@%+=:.,/-]{12,128}', client['password']))
             address(client['ip'], 'ikev2', pools)

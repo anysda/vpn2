@@ -6,6 +6,26 @@ from test_deploy import bash, source
 
 
 class RestoreSsoTests(unittest.TestCase):
+    def test_explicit_database_restore_retires_newer_control_versions(self):
+        script = source('infra/lib/anysda-restore.sh')
+        block = 'if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then' + script.split(
+            'if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then', 1)[1].split(
+            'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then', 1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('bundle', 'data', 'control', 'work'):
+                (root / name).mkdir()
+            (root / 'bundle/db.sqlite').write_text('restored database')
+            (root / 'control/wg.json').write_text('{"version":999}')
+            body = block.replace('/var/lib/anysda-vpn2', str(root / 'data')).replace(
+                '/var/lib/vpn2-control', str(root / 'control')).replace('-o vpn2-control -g vpn2-control ', '')
+            result = bash('BUNDLE_DIR="$PWD/bundle"; WORK="$PWD/work"\n'
+                          'id() { return 0; }; chown() { :; }; systemctl() { echo "$*"; }\n' + body, directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / 'control/wg.json').exists(), 'restored versions must not be rejected forever')
+            self.assertEqual((root / 'work/control-before-restore/wg.json').read_text(), '{"version":999}')
+            self.assertIn('stop vpn2-control.service vpn2-control.socket', result.stdout)
+
     def test_backup_materializes_app_runtime_without_following_arbitrary_links(self):
         script = source('infra/lib/anysda-backup.sh')
         block = 'if [[ -d /etc/anysda ]]; then' + script.split(

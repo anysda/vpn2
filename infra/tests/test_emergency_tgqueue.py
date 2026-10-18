@@ -268,6 +268,15 @@ class TelegramQueueTests(unittest.TestCase):
         self.assertEqual(client_file.stat().st_mode & 0o777, 0o600)
         print('admin: ready panel first; retry keeps password; client queue/logs contain no panel password')
 
+    def test_self_signed_admin_message_warns_about_browser_and_gives_fingerprint(self):
+        self.admin(certificate_fingerprint='AB12CD34')
+        self.drain()
+        text = self.bot.calls[0][1]['text']
+        self.assertIn('Для входа нужен только пароль. Сертификат самоподписанный: браузер покажет '
+                      'предупреждение о небезопасном подключении. Продолжайте, только если '
+                      'отпечаток SHA-256 совпадает: AB12CD34' + FOOTER, text)
+        print('admin: self-signed certificate -> browser warning sentence and SHA-256 fingerprint')
+
     def test_exact_leader_recovery_and_cancellation_texts(self):
         self.admin(event='leader_changed')
         self.enqueue(event='leader_changed')

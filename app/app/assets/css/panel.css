@@ -1,0 +1,274 @@
+/* ---------- тема ----------
+   Тёмная по умолчанию; светлая — по data-theme, который ставит color-mode
+   до отрисовки (выбор «как в системе» он сам сводит к light или dark). */
+:root {
+  --bg:#08080a; --c1:#151518; --c2:#101012; --chip:#1b1b1f; --chip2:#222227;
+  --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --t1:#f4f4f5; --t2:#a3a3aa; --t3:#6e6e76;
+  --red:#ff5b52; --amber:#f2b552; --orange:#ff8a3d; --green:#6fd59a; --violet:#a78bfa; --blue:#7cb4ff;
+  --r:22px; --ease:cubic-bezier(.23,1,.32,1); --ease-io:cubic-bezier(.77,0,.175,1);
+  color-scheme:dark;
+  --tabs-bg:rgba(255,255,255,.04); --t4:#55555c; --fg:255,255,255; --glow:255,255,255; --gk:1; --shk:1;
+  --acc:#fff; --acc-t:#0a0a0a; --bd-t:#111;
+  --card-a:#18181b; --card-b:#111113; --sunk:#0c0c0e; --sunk2:#121215; --kg:#19191c;
+  --pop-a:#1c1c20; --pop-b:#121214; --tip:rgba(24,24,27,.92); --toast:rgba(28,28,32,.97); --ovl:rgba(4,4,5,.66);
+  --lit-a:#3c3c42; --lit-b:#232327; --lit-c:#141416; --lit-t:#b9b9c0;
+  --av-a:#3a3a40; --av-b:#1c1c20; --wk-a:#45454c; --wk-b:#26262b; --wk-on:#9a9aa2; --tog:#2a2a2f; --tog-k:#8e8e96;
+  --g1:#b4b4bb; --g2:#8e8e96; --g3:#5d5d64; --g4:#3d3d43; --g5:#2e2e33;
+  --red-rgb:255,91,82; --amb-rgb:242,181,82; --grn-rgb:111,213,154;
+  --red-t:#ff8f88; --red-t2:#ffc9c5; --amb-t2:#f1d7a8; --pink:#ff8fb1;
+}
+:root[data-theme="light"] {
+  --bg:#ececee; --c1:#ffffff; --c2:#f7f7f8; --chip:#f4f4f5; --chip2:#eaeaed;
+  --line:rgba(24,24,27,.09); --line2:rgba(24,24,27,.16);
+  --t1:#18181b; --t2:#4f4f57; --t3:#66666e; --t4:#a1a1aa;
+  --red:#b8251a; --amber:#945705; --orange:#c2410c; --green:#0f6b3d; --violet:#6d4bd6; --blue:#2563c9;
+  color-scheme:light;
+  --tabs-bg:#fff; --fg:24,24,27; --glow:24,24,27; --gk:.22; --shk:.16;
+  --acc:#18181b; --acc-t:#fafafa; --bd-t:#fff;
+  --card-a:#ffffff; --card-b:#fafafa; --sunk:#f3f3f5; --sunk2:#ececef; --kg:#fbfbfc;
+  --pop-a:#ffffff; --pop-b:#fafafa; --tip:rgba(255,255,255,.97); --toast:rgba(255,255,255,.97); --ovl:rgba(39,39,42,.3);
+  --lit-a:#dcdce1; --lit-b:#eeeef1; --lit-c:#fbfbfc; --lit-t:#4f4f57;
+  --av-a:#e4e4e7; --av-b:#d1d1d6; --wk-a:#d4d4d8; --wk-b:#e7e7ea; --wk-on:#71717a; --tog:#d4d4d8; --tog-k:#ffffff;
+  --g1:#52525b; --g2:#71717a; --g3:#a1a1aa; --g4:#c4c4ca; --g5:#e4e4e7;
+  --red-rgb:200,40,30; --amb-rgb:181,110,8; --grn-rgb:15,107,61;
+  --red-t:#b42318; --red-t2:#912018; --amb-t2:#6f4204; --pink:#c11574;
+}
+
+/* Компоненты Nuxt UI в старых экранах красятся теми же токенами. */
+:root, :root.light, :root.dark {
+  --ui-page: var(--bg);
+  --ui-bg: var(--card-b);
+  --ui-bg-muted: var(--chip);
+  --ui-bg-elevated: var(--chip2);
+  --ui-bg-accented: var(--chip2);
+  --ui-bg-inverted: var(--acc);
+  --ui-border: var(--line);
+  --ui-border-muted: var(--line);
+  --ui-border-accented: var(--line2);
+  --ui-border-inverted: var(--acc);
+  --ui-text: var(--t1);
+  --ui-text-muted: var(--t2);
+  --ui-text-toned: var(--t2);
+  --ui-text-dimmed: var(--t3);
+  --ui-text-highlighted: var(--t1);
+  --ui-text-inverted: var(--acc-t);
+  --ui-primary: var(--acc);
+  --ui-error: var(--red);
+  --ui-warning: var(--amber);
+  --ui-success: var(--green);
+  --ui-info: var(--blue);
+}
+.card-ui{border-radius:var(--r);background:linear-gradient(180deg,var(--card-a) 0%,var(--card-b) 100%);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 24px 48px -12px rgba(0,0,0,calc(.5*var(--shk)))}
+
+html.tt,html.tt *,html.tt *::before,html.tt *::after{transition:color .3s ease,background-color .3s ease,border-color .3s ease,fill .3s ease,stroke .3s ease,box-shadow .3s ease!important}
+.thm{display:flex;align-items:center;gap:2px;height:38px;padding:0 4px 0 12px;font-size:13px;color:var(--t1)}
+.thm span{flex:1}
+.thm button{width:30px;height:30px;border-radius:9px;border:0;background:none;color:var(--t3);display:grid;place-items:center;cursor:pointer;transition:color .2s,background-color .2s}
+.thm button:hover{color:var(--t1)}
+.thm button[aria-pressed="true"]{background:rgba(var(--fg),.08);color:var(--t1)}
+.thm svg{width:16px;height:16px}
+html,body{background:var(--bg)}
+body{font-family:Manrope,system-ui,sans-serif;color:var(--t1);font-size:14px;line-height:1.4;min-height:100vh;overflow-x:hidden;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(var(--fg),.2)}
+/* свет */
+div.light{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+div.light::before{content:"";position:absolute;left:50%;top:-340px;width:1100px;height:620px;transform:translateX(-50%);background:radial-gradient(closest-side,rgba(255,255,255,.10),rgba(255,255,255,.03) 55%,transparent)}
+div.light::after{content:"";position:absolute;right:-180px;top:-120px;width:620px;height:140px;transform:rotate(-24deg);background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent);filter:blur(40px)}
+.wrap{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:22px 40px 48px}
+@media (max-width:1360px){.wrap{padding:20px 28px 40px}}
+/* шапка */
+.wrap>header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;margin-bottom:34px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:600;letter-spacing:.02em}
+.logo span{font-size:15px;white-space:nowrap}
+.tabs{display:flex;gap:2px;padding:4px;border-radius:999px;background:var(--tabs-bg);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.tabs a{padding:8px 18px;border-radius:999px;color:var(--t2);text-decoration:none;font-size:13px;font-weight:500;transition:color .2s,background .2s;white-space:nowrap}
+.tabs a:hover{color:var(--t1)}
+.tabs a.on{background:var(--acc);color:var(--acc-t);box-shadow:0 0 24px rgba(var(--glow),calc(.25*var(--gk)))}
+.hr{display:flex;justify-content:flex-end;align-items:center;gap:10px}
+.ib{position:relative;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t2);cursor:pointer;transition:transform .16s var(--ease),color .2s}
+.ib:hover{color:var(--t1)}.ib:active{transform:scale(.96)}
+.me{display:flex;align-items:center;gap:10px;padding:4px 14px 4px 4px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line)}
+.me i{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--av-a),var(--av-b));display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:600}
+.me div{font-size:12px;line-height:1.25}
+/* узкий ПК: вкладки посередине не оставляют места имени — имя только в меню и для чтения с экрана, шапка не шире окна при любом логине */
+@media (min-width:721px) and (max-width:900px){.wrap>header .me div{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}}
+svg.i{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+/* заголовок */
+.head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px}
+.head h1{font-size:22px;font-weight:500;letter-spacing:-.01em}
+.head p{color:var(--t3);font-size:13px;margin-top:4px}
+.pill{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t2);font:500 13px Manrope,system-ui,sans-serif;cursor:pointer;transition:transform .16s var(--ease),background-color .25s,color .2s,border-color .25s,opacity .25s}
+.pill:hover{color:var(--t1)}.pill:active{transform:scale(.97)}
+.pill.w{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
+button.pill:disabled{opacity:.35;cursor:default;transform:none}
+a.pill{text-decoration:none}
+.pill svg{transition:transform .2s var(--ease)}
+/* карточки */
+.card{position:relative;border-radius:var(--r);background:linear-gradient(180deg,var(--card-a) 0%,var(--card-b) 100%);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 24px 48px -12px rgba(0,0,0,calc(.5*var(--shk)));padding:18px 20px;overflow:hidden}
+.big{font-weight:200;font-size:44px;letter-spacing:-.03em;line-height:1}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+/* вкладки */
+.tab{display:block}
+.in{height:38px;width:100%;min-width:0;border-radius:12px;padding:0 13px;background:var(--sunk);border:1px solid var(--line);box-shadow:inset 0 2px 8px rgba(0,0,0,calc(.4*var(--shk)));color:var(--t1);font:500 13px Manrope,system-ui,sans-serif;outline:0;transition:border-color .2s,box-shadow .2s,background-color .2s}
+.in:focus{border-color:rgba(var(--fg),.3)}.in::placeholder{color:var(--t4)}.in:disabled{opacity:.45}
+.in.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
+.fl2{display:flex;flex-direction:column;gap:7px;margin-top:14px}.fl2>span{font-size:12px;color:var(--t3)}
+.al{display:flex;flex-direction:column;gap:3px;padding:12px 14px;margin-top:14px;border-radius:14px;background:rgba(var(--fg),.035);border:1px solid var(--line);color:var(--t2);font-size:12.5px;line-height:1.5}
+.al.red{background:rgba(var(--red-rgb),.08);border-color:rgba(var(--red-rgb),.3);color:var(--red-t2)}
+.mf{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
+/* шапка: поповеры */
+.pw{position:relative}
+.ib .bd{position:absolute;top:-3px;right:-3px;min-width:17px;height:17px;padding:0 4px;border-radius:9px;background:var(--amber);color:var(--bd-t);font:700 10px/17px Manrope,system-ui,sans-serif;font-style:normal;box-shadow:0 0 12px rgba(var(--amb-rgb),.45)}
+button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s var(--ease)}
+.ib:active,button.me:active{transform:scale(.96)}
+.me .cv{width:14px;height:14px;color:var(--t3);margin-left:-2px}
+.pop{position:absolute;top:calc(100% + 10px);right:0;z-index:40;width:360px;padding:10px;opacity:0;pointer-events:none;transform:translateY(-4px) scale(.98);transform-origin:top right;background:linear-gradient(180deg,var(--pop-a),var(--pop-b));filter:blur(2px);transition:opacity .12s var(--ease),transform .12s var(--ease),filter .12s var(--ease)}
+.pop.on{opacity:1;pointer-events:auto;transform:none;filter:none;transition-duration:.2s}
+.pop h4{font-size:12px;font-weight:500;color:var(--t3);padding:4px 8px 8px}
+.pop .bi{display:grid;grid-template-columns:10px 1fr;gap:10px;padding:10px 8px;border-top:1px solid rgba(var(--fg),.05);font-size:12.5px;color:var(--t2);line-height:1.45}
+.pop .bi .dot{margin-top:6px}.pop .bi b{color:var(--t1);font-weight:500}
+.menu{width:210px;padding:6px}
+.menu a{display:flex;align-items:center;height:38px;padding:0 12px;border-radius:10px;color:var(--t1);text-decoration:none;font-size:13px;transition:background .15s;cursor:pointer}
+.menu a:hover{background:rgba(var(--fg),.06)}
+.menu hr{border:0;border-top:1px solid var(--line);margin:6px 4px}
+.menu a.out{color:var(--red-t)}
+/* вход и ошибка */
+.bare{display:grid;place-items:center;min-height:calc(100vh - 70px)}
+.lgn{width:400px;padding:30px 28px}
+.lgn .logo{font-size:18px;margin-bottom:6px}
+.lgn .lsso{width:100%;justify-content:center;height:42px;margin-top:18px}
+.or{display:flex;align-items:center;gap:12px;margin:18px 0 0;color:var(--t3);font-size:12px}.or::before,.or::after{content:"";flex:1;border-top:1px solid var(--line)}
+.lgn .mf .pill{height:40px}.lgn .lgo{flex:1;justify-content:center}
+.errp{text-align:center}.errp .tri{width:40px;height:40px;color:var(--amber);display:inline-block}
+.errp h2{font-size:18px;font-weight:500;margin-top:10px}.errp .big{display:block;margin-top:8px;font-size:64px}
+.errp p{color:var(--t2);margin-top:10px}
+[hidden]{display:none!important}
+
+/* ---------- движение ---------- */
+/* сама вкладка только проявляется, движение несут её карточки (каскад в JS) */
+.tab.on{animation:tfade .2s var(--ease)}
+@keyframes tfade{from{opacity:0}}
+/* скользящая пилюля: белая плашка с difference переворачивает текст под собой */
+.tabs{position:relative}
+.glide{position:absolute;left:0;top:0;border-radius:999px;background:#fff;mix-blend-mode:difference;pointer-events:none;z-index:2;
+  transition:transform .32s var(--ease-io),width .32s var(--ease-io)}
+.glide.now{transition:none}
+.tabs.gl a.on{background:none;box-shadow:none;color:var(--t1)}
+/* появление при прокрутке: класс ставит только JS, без JS всё видно; имя
+   глобальное - в компонентах под своё не брать, иначе элемент прозрачен навсегда */
+.rv{opacity:0;transform:translateY(18px)}
+:where(.card){transition:border-color .25s var(--ease)}
+@media (hover:hover) and (pointer:fine){
+  .card:not(.pop):hover{border-color:var(--line2)}
+  .pill:hover svg{transform:translateX(1px) scale(1.06)}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{transition-property:opacity,color,background-color,border-color,box-shadow!important}
+  /* страховка: бесконечное (ореол, пульс, крутилка) играет не дольше одного раза */
+  *,*::before,*::after{animation-iteration-count:1!important}
+  .tab.on{animation:tfade .2s}
+  .pop{filter:none}
+}
+/* переход между разделами: страница уходит, новая въезжает со стороны пункта меню */
+@supports (view-transition-name:a){@media (prefers-reduced-motion:no-preference){
+  html[data-vt=page] .tab.on{view-transition-name:page;animation:none}
+  ::view-transition-old(root){display:none}::view-transition-new(root){animation:none}
+  ::view-transition-group(page){animation:none}
+  ::view-transition-old(page),::view-transition-new(page){width:100%;height:100%;object-fit:none;object-position:50% 0}
+  ::view-transition-old(page){animation:vt-out .2s cubic-bezier(.4,0,1,1) both}
+  ::view-transition-new(page){animation:vt-in .48s var(--ease) both}
+}}
+:root{--vd:1;--vs:1}:root[data-dir=back]{--vd:-1}
+@keyframes vt-out{to{opacity:0;transform:translateX(calc(var(--vd)*var(--vs)*-56px)) scale(.98);filter:blur(5px)}}
+@keyframes vt-in{from{opacity:0;transform:translateX(calc(var(--vd)*var(--vs)*72px));filter:blur(8px)}}
+
+/* ---------- нижняя шторка ----------
+   Общая для телефона (components/BottomSheet.vue): меню профиля, уведомления,
+   окна разделов. Вход снизу, ручка сверху, кнопки — в .bsf. */
+/* закрытая шторка не рисуется вовсе: невидимое размытие меняло бы сглаживание страницы */
+.bso{position:fixed;inset:0;z-index:50;background:var(--ovl);opacity:0;visibility:hidden;transition:opacity .24s var(--ease),visibility 0s .24s}
+.bso.on{opacity:1;visibility:visible;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);transition-delay:0s}
+.bsh{position:fixed;z-index:51;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));max-height:82dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding:10px 20px 26px;border-radius:30px;background:linear-gradient(180deg,var(--pop-a),var(--pop-b));border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 -20px 60px rgba(0,0,0,calc(.5*var(--shk)));outline:0;opacity:0;transform:translateY(28px);visibility:hidden;transition:transform .32s var(--ease),opacity .32s var(--ease),visibility 0s .32s}
+.bsh.on{opacity:1;transform:none;visibility:visible;transition-delay:0s}
+.bsh::-webkit-scrollbar{display:none}
+.bsh::before{content:"";display:block;width:38px;height:4px;border-radius:2px;background:rgba(var(--fg),.18);margin:0 auto 14px}
+.bsf{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:18px}
+.bsf .pill{height:46px;justify-content:center}
+.bsh .bst{margin:0 0 4px;font-size:12px;font-weight:500;color:var(--t3)}
+.bsh .bi{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;padding:12px 0;border-top:1px solid rgba(var(--fg),.05);font-size:13px;color:var(--t2);line-height:1.45}
+.bsh .bi .dot{margin-top:6px}.bsh .bi b{color:var(--t1);font-weight:500}
+.bsu{display:flex;align-items:center;gap:10px;padding:0 4px 12px;font-size:13px}
+.bsu i{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:linear-gradient(135deg,var(--av-a),var(--av-b));display:grid;place-items:center;font:normal 600 12px Manrope,system-ui,sans-serif}
+.bsh .menu{width:auto;padding:0}
+.bsh .menu a{height:46px}
+.bsh .thm{height:46px}
+.bsh .thm button{width:36px;height:36px}
+
+/* ---------- телефон: окно до 720px ----------
+   Шапка сверху с заголовком раздела, вкладки — в таб-баре снизу, поповеры —
+   нижней шторкой. Шире 720px этих правил нет и каркас десктопный. */
+.mhead,.mper,.mbar{display:none}
+@media (max-width:720px){
+  /* --mtop: контент на 4px ниже фиксированной шапки; --mh — её высота (layouts/default.vue), до монтирования — шапка без подзаголовка.
+     От неё же отступ прокрутки: элемент в фокусе и якорь встают под шапку, а не за неё; снизу так же над таб-баром (--mb) */
+  html{--mtop:calc(var(--mh,calc(66px + env(safe-area-inset-top))) + 4px);scroll-padding:var(--mtop) 0 var(--mb,calc(88px + env(safe-area-inset-bottom)));-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--mglow:radial-gradient(closest-side,rgba(255,255,255,.09),rgba(255,255,255,.025) 55%,transparent)}
+  body{min-height:100dvh}
+  /* свечение под ширину телефона, как в мобильном макете; шапка рисует свою часть пятна, чтобы не закрывать его */
+  div.light::before{top:-220px;width:620px;height:420px;background:var(--mglow)}
+  div.light::after{display:none}
+  .wrap{padding:var(--mtop) 16px calc(128px + env(safe-area-inset-bottom))}
+  .wrap>header{position:fixed;z-index:30;top:0;left:0;right:0;display:flex;align-items:center;gap:8px;margin:0;padding:calc(14px + env(safe-area-inset-top)) 16px 12px;background:var(--mglow) 50% -220px/620px 420px no-repeat,var(--bg);-webkit-user-select:none;user-select:none}
+  .wrap>header>.logo,.wrap>header>.tabs,.wrap>header .pop{display:none}
+  .mhead{display:block;flex:1;min-width:0}
+  .mhead h1{margin:0;font-size:22px;font-weight:500;letter-spacing:-.01em;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mhead p{margin:2px 0 0;color:var(--t3);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mper{display:inline-flex;flex:none;height:40px;padding:0 14px}
+  .wrap>header .hr{gap:8px}
+  .wrap>header .ib{width:40px;height:40px}
+  .wrap>header button.me{padding:0;border:0;background:none}
+  .wrap>header .me i{width:40px;height:40px;border:1px solid var(--line);font-size:13px}
+  .wrap>header .me div,.wrap>header .me .cv{display:none}
+  /* заголовок раздела и кнопка периода переехали в шапку */
+  .head h1,.head h1+p,.ov>.head{display:none}
+  /* в .head остался только заголовок: блок не держит отступ */
+  .head:has(>div:only-child>h1){display:none}
+  .tab.on{display:flex;flex-direction:column;gap:12px;animation:tfade .25s var(--ease)}
+  .mbar{display:block;position:fixed;z-index:30;left:0;right:0;bottom:0;padding:22px 12px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(180deg,transparent,var(--bg) 46%);pointer-events:none;-webkit-user-select:none;user-select:none}
+  .mbar .tabs{display:flex;gap:0;padding:4px;pointer-events:auto;background:linear-gradient(180deg,var(--card-a),var(--card-b));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 18px 40px -10px rgba(0,0,0,calc(.6*var(--shk)))}
+  /* ширина вкладки = слово + поровну свободного места: пилюля облегает слово с одинаковыми
+     отступами, промежутки между словами равны; уже слова вкладка не сжимается */
+  .mbar .tabs a{flex:1 1 auto;height:44px;display:grid;place-items:center;padding:0 2px;font-size:11.5px;transition:transform .16s var(--ease),background .25s,color .2s}
+  .mbar .tabs a:not(.on):hover{color:var(--t2)}
+  .mbar .tabs a:active,.mper:active{transform:scale(.96)}
+  .wrap>header button,.mbar a,.bsh a,.bsh button{touch-action:manipulation}
+  /* тосты Nuxt UI: сверху, плашка с точкой, как в макете */
+  ol[data-slot="viewport"]{top:calc(14px + env(safe-area-inset-top))}
+  ol[data-slot="viewport"]>li{gap:10px;padding:11px 16px;border-radius:16px;background:var(--toast);box-shadow:0 0 0 1px var(--line2),0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
+  ol[data-slot="viewport"]>li::before{content:"";flex:none;align-self:center;width:7px;height:7px;border-radius:50%;background:var(--green)}
+  ol[data-slot="viewport"]>li[class*="outline-error"]::before{background:var(--red)}
+  ol[data-slot="viewport"]>li[class*="outline-warning"]::before{background:var(--amber)}
+  ol[data-slot="viewport"] [data-slot="title"]{font-size:13px;font-weight:500}
+  ol[data-slot="viewport"] [data-slot="description"]{font-size:12.5px}
+}
+/* Safari на iPhone увеличивает страницу при фокусе в поле со шрифтом меньше 16px. */
+@media (pointer:coarse){
+  input,select,textarea{font-size:16px!important}
+}
+@media (max-width:720px) and (prefers-reduced-motion:reduce){
+  .tab.on{animation:tfade .25s}
+}
+/* Вход на телефоне: карточка по центру экрана во всю ширину, поля и кнопки
+   под палец (46px). Шире 720px остаются правила .lgn выше. */
+@media (max-width:720px){
+  .wrap.lgw{display:flex;flex-direction:column;min-height:100dvh;padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
+  .wrap.lgw>.login{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:stretch;min-height:0}
+  .lgw .lgn{width:auto;padding:30px 22px 24px}
+  .lgw .lgn .logo span{font-size:18px}
+  .lgw .lgn .lsso{height:46px;font-size:14px}
+  .lgw .lgn .in{height:46px;font-size:15px}
+  .lgw .lgn .in.mono{font-size:17px!important;letter-spacing:.12em}
+  .lgw .lgn .mf .pill{height:46px}
+  .lgw .lgn .lgo{font-size:14px}
+  .lgw .lgn .pill{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+}

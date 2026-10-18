@@ -54,3 +54,5 @@ __pycache__/
 
 # probe_udp_or_exclude — persistent UDP-фильтр для экзитов
 infra/state/
+# Emergency assets are built before deployment, never on an exit.
+infra/emergency/vpn2_emergency/static/

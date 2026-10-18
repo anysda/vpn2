@@ -38,6 +38,9 @@ RETURN_CANCELLED = ('Возврат отменён: основное VPN-под�
                     'включите аварийное подключение Hysteria2')
 ADMIN = ('Основной VPN недоступен. Аварийная панель запущена на {exit_name}. '
          'Адрес: {panel_url}. Пароль: {panel_password}. Для входа нужен только пароль')
+ADMIN_SELF_SIGNED = ('. Сертификат самоподписанный: браузер покажет предупреждение о '
+                     'небезопасном подключении. Продолжайте, только если отпечаток '
+                     'SHA-256 совпадает: {fingerprint}')
 ADMIN_LEADER_CHANGED = 'Аварийный сервер сменился — новые адрес и пароль. '
 ADMIN_RECOVERED = ('Основной VPN восстановлен. Аварийный режим будет завершён в {deadline}, '
                    'примерно через 10 минут')
@@ -189,7 +192,7 @@ def enqueue_admin(state_dir, *, emergency_id, generation, bundle_version, exit_n
         if event == 'leader_changed':
             text = ADMIN_LEADER_CHANGED + text
         if certificate_fingerprint:
-            text += f'\nОтпечаток сертификата: {certificate_fingerprint}'
+            text += ADMIN_SELF_SIGNED.format(fingerprint=certificate_fingerprint)
     else:
         text = _notification(event, deadline, admin=True)
     snapshot = _snapshot(state_dir)

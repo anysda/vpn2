@@ -419,9 +419,11 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
 <template>
   <div ref="root" class="cdet-in">
     <template v-if="detail">
-      <div class="cdh">
-        <span class="av">{{ initials(detail.name) }}</span>
-        <div style="min-width:0">
+      <PanelClientHeading
+        :initials="initials(detail.name)"
+        :subtitle="detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан'"
+        :status="tag?.text" :status-class="tag ? `access-tag ${tag.cls}` : undefined"
+      >
           <h2
             ref="nameEl"
             contenteditable="plaintext-only"
@@ -430,10 +432,7 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
             @blur="saveName"
             @keydown.enter.prevent="nameEl?.blur()"
           />
-          <small>{{ detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан' }}</small>
-        </div>
-        <span v-if="tag" class="tag access-tag" :class="tag.cls">{{ tag.text }}</span>
-      </div>
+      </PanelClientHeading>
 
       <div class="kgrid">
         <div>
@@ -550,10 +549,9 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
           <!-- телефон: имя и ↻ 🗑 строкой, под ними три протокола -->
           <template v-if="mobile">
             <div class="kb dvt">
-              <div>
-                <b>{{ dev.name }}</b>
+              <PanelDeviceName :name="dev.name">
                 <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-              </div>
+              </PanelDeviceName>
               <button
                 type="button"
                 class="ic"
@@ -584,13 +582,12 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
             </div>
           </template>
           <template v-else>
-            <div>
-              <b>{{ dev.name }}</b>
+            <PanelDeviceName :name="dev.name">
               <small
                 :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
                 :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeRu(dev.rxTotal)} ↑ ${sizeRu(dev.txTotal)}` : undefined"
               >{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-            </div>
+            </PanelDeviceName>
             <div class="kb">
               <button type="button" @click="openConfig(dev, 'wg')">
                 WG

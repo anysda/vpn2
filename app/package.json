@@ -6,6 +6,7 @@
   "author": "anysda",
   "type": "module",
   "scripts": {
+    "emergency:build": "vite build --config emergency/vite.config.ts",
     "build": "nuxt build",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
@@ -16,7 +17,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "flock -n .migration.lock node scripts/migrate.mjs",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "nuxt typecheck",
+    "typecheck": "nuxt typecheck && vue-tsc --noEmit -p emergency/tsconfig.json",
     "e2e": "playwright test",
     "e2e:local": "bash e2e/run-local.sh"
   },
@@ -39,13 +40,17 @@
     "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@fontsource-variable/manrope": "^5.3.0",
     "@nuxt/eslint": "^1.17.0",
     "@playwright/test": "1.64.0",
     "@types/qrcode-svg": "^1.1.5",
+    "@vitejs/plugin-vue": "6.0.10",
     "@zxing/library": "0.21.3",
     "drizzle-kit": "^0.31.11",
     "eslint": "^10.12.0",
     "typescript": "^5.9.3",
+    "vite": "8.3.4",
+    "vue": "3.5.43",
     "vue-tsc": "^3.3.13"
   },
   "pnpm": {

@@ -126,9 +126,7 @@ onUnmounted(() => {
     <div class="light" />
     <div class="wrap">
       <header ref="headEl">
-        <button v-if="backTo" type="button" class="ib cbk" aria-label="Назад" @click="stack.leave(backTo)">
-          <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
-        </button>
+        <PanelBackButton v-if="backTo" @back="stack.leave(backTo)" />
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>

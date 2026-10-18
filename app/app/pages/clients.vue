@@ -3,6 +3,7 @@ import '~/assets/css/clients.css'
 import { pluralRu } from '#shared/plural'
 import { expiryLabel, useClients } from '~/composables/useClients'
 import type { Client, ClientTraffic } from '~/composables/useClients'
+import type { ClientDot } from '~/components/Panel/ClientRow.vue'
 import { useExitTags } from '~/composables/useRoutes'
 import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/clients-view'
 
@@ -159,7 +160,7 @@ onUnmounted(() => removeEventListener('resize', onResize))
 
 const newOpen = ref(false)
 
-function dot(c: Client) {
+function dot(c: Client): ClientDot | null {
   if (c.status === 'frozen') return null
   const t = traffic(c.id)
   if (t?.online) return { cls: 'on', title: `В сети · за 5 мин ${sizeRu(t.recentBytes)}` }
@@ -220,75 +221,39 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
             <div v-else-if="!rows.length" class="more">
               Ничего не найдено
             </div>
-            <template v-else-if="mobile">
-              <div
-                v-for="c in rows"
-                :key="c.id"
-                class="crow"
-                role="button"
-                tabindex="0"
-                :aria-pressed="c.id === selectedId"
-                data-testid="client-row"
-                @click="select(c.id)"
-                @keydown.enter.prevent="select(c.id)"
-                @keydown.space.prevent="select(c.id)"
-              >
-                <span class="av" :title="dot(c)?.title">{{ initials(c.name) }}<i
-                  v-if="dot(c)"
-                  :class="dot(c)!.cls"
-                  :style="dot(c)!.color ? { background: dot(c)!.color } : undefined"
-                  data-testid="client-online"
-                /></span>
-                <div class="who">
-                  <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
-                  <small>{{ meta(c) }}</small>
-                </div>
-                <div class="crt">
-                  <span class="t1">{{ today(c) }}</span>
-                  <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
-                  <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                  <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
-                </div>
-              </div>
-            </template>
-            <div
+            <PanelClientRow
               v-for="c in rows"
               v-else
               :key="c.id"
-              class="crow"
-              :class="{ on: c.id === selectedId }"
-              role="button"
-              tabindex="0"
-              :aria-pressed="c.id === selectedId"
-              data-testid="client-row"
-              @click="select(c.id)"
-              @keydown.enter.prevent="select(c.id)"
-              @keydown.space.prevent="select(c.id)"
+              :name="c.name"
+              :initials="initials(c.name)"
+              :selected="c.id === selectedId"
+              :mobile="mobile"
+              :dot="dot(c)"
+              @select="select(c.id)"
             >
-              <div class="who">
-                <span class="av" :title="dot(c)?.title">{{ initials(c.name) }}<i
-                  v-if="dot(c)"
-                  :class="dot(c)!.cls"
-                  :style="dot(c)!.color ? { background: dot(c)!.color } : undefined"
-                  data-testid="client-online"
-                /></span>
-                <div>
-                  <b><span>{{ c.name }}</span><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></b>
-                  <small>{{ tgText(c) }}</small>
-                </div>
-              </div>
-              <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
-              <span
-                class="t1"
-                :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
-              >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
-              <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
-              <span>
+              <template #icons><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></template>
+              <template #meta>{{ mobile ? meta(c) : tgText(c) }}</template>
+              <div v-if="mobile" class="crt">
+                <span class="t1">{{ today(c) }}</span>
                 <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                 <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
-              </span>
-            </div>
+                <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
+              </div>
+              <template v-else>
+                <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
+                <span
+                  class="t1"
+                  :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
+                >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+                <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
+                <span>
+                  <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
+                  <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
+                  <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
+                </span>
+              </template>
+            </PanelClientRow>
           </div>
         </div>
         <OverviewBroadcast />

@@ -20,8 +20,7 @@
     // server/utils/logger.ts: pino грузит transport строкой
     // target: 'pino-pretty' (вне production). Импорта в коде нет.
     "pino-pretty",
-    // Скрипт typecheck = `nuxt typecheck`, а тот запускает vue-tsc из
-    // node_modules сам; ни скрипта, ни импорта с этим именем нет.
-    "vue-tsc"
+    // Шрифт аварийной панели Vite берёт из url() в CSS, импорта из JS нет.
+    "@fontsource-variable/manrope"
   ]
 }

@@ -1,0 +1,31 @@
+@import 'tailwindcss/preflight.css';
+@import '../app/assets/css/panel.css';
+@import '../app/assets/css/clients.css';
+
+/* Same Manrope variable font, bundled locally; no remote requests on exits. */
+@font-face{font-family:Manrope;src:url('@fontsource-variable/manrope/files/manrope-cyrillic-wght-normal.woff2') format('woff2');font-weight:200 800;font-display:swap;unicode-range:U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116}
+@font-face{font-family:Manrope;src:url('@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2') format('woff2');font-weight:200 800;font-display:swap;unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root{--font-sans:Manrope,system-ui,sans-serif;--acc:var(--red)}
+.emergency-state{margin-bottom:18px}
+.hr .exn{color:var(--t2);font-size:13px}
+.lgsub{text-align:center;color:var(--red-t2);font-size:13px}
+.clp .thead,.clp .crow{grid-template-columns:minmax(0,1.6fr) .8fr 1fr}
+.clp .crows{min-height:180px}
+.clp .devl{height:auto;max-height:65vh}
+.profile{grid-column:1/-1;min-width:0}
+.profile code{overflow-wrap:anywhere}
+.clp .cdh{flex-wrap:wrap}
+.clp .cdh .tag{white-space:normal}
+.guide{max-width:800px;margin:auto}
+.guide h1{font-size:22px;font-weight:500}
+.guide h2{font-size:18px;font-weight:500}
+.guide details,.guide ol,.guide p{margin-top:14px}
+.guide li{margin:12px 0 12px 22px;list-style:decimal}
+.guide a{color:var(--t1);text-decoration:underline}
+.guide summary{cursor:pointer}
+.guide code{overflow-wrap:anywhere}
+@media(max-width:720px){
+  .clp .crow{grid-template-columns:auto minmax(0,1fr) auto}
+  .clp .crows{min-height:0}
+  .emergency-state{margin-bottom:0}
+}

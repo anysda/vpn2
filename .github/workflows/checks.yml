@@ -144,6 +144,8 @@ jobs:
         run: pnpm lint
       - name: typecheck
         run: pnpm typecheck
+      - name: статическая аварийная панель и инструкция
+        run: pnpm emergency:build
       # Плагин nuxt в knip читает .vue через vue/compiler-sfc; под pnpm vue не
       # лежит в корне node_modules, без NODE_PATH knip молча считает все
       # компоненты и composables мёртвыми.

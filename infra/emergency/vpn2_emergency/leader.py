@@ -41,6 +41,7 @@ class Leader:
             self.data['grant_until'] = now + LEASE
             self.data['grant'] = None
             self.data['role'] = 'observer'
+            self.data['ready'] = False
             self.data.pop('retire_at', None)
             self.data.pop('failed_since', None)
             self.data.pop('failed_rounds', None)
@@ -54,7 +55,8 @@ class Leader:
         return {key: self.data.get(key) for key in (
             'role', 'generation', 'active', 'owner', 'emergency_id', 'autonomous', 'ready')} | {
             'grant': self.data['grant'],
-            'lease': max(0, self.data['grant_until'] - now)}
+            'lease': max(0, self.data['grant_until'] - now),
+            'ready_age': max(0, now - self.data['ready_at']) if self.data.get('ready') else None}
 
     def observe(self, node, status, now, transit=0, allow_activation=True):
         if node not in self.ranks or node == self.node or not isinstance(status, dict):
@@ -69,7 +71,11 @@ class Leader:
                 or not isinstance(status.get('emergency_id'), str)
                 or len(status['emergency_id']) > 64):
             return False
-        self.peers[node] = (dict(status, lease_until=now + max(0, status['lease'] - transit)), now)
+        if status.get('ready') and (type(status.get('ready_age')) not in (int, float)
+                                    or not math.isfinite(status['ready_age']) or status['ready_age'] < 0):
+            return False
+        self.peers[node] = (dict(status, lease_until=now + max(0, status['lease'] - transit),
+                                ready_age=status['ready_age'] + transit if status.get('ready') else None), now)
         if allow_activation and status.get('active'):
             self.data['active'] = True
         self.data['generation'] = max(self.data['generation'], status['generation'])
@@ -121,6 +127,7 @@ class Leader:
             self.data['issued_generation'] = self.data['generation']
             self.data['credentials_lost'] = False
             self.data['ready'] = False
+            self.data.pop('ready_at', None)
         if not self.data['emergency_id']:
             self.data['emergency_id'] = str(uuid.uuid5(uuid.NAMESPACE_URL, self.installation + ':' +
                                                      str(self.state.data.get('entry_cursor', [0, '', 0])[:2])))
@@ -141,20 +148,24 @@ class Leader:
 
     def bundle_ready(self, now):
         """Called by integration only after connection self-test and issuance."""
+        if not self.data.get('ready'):
+            self.data['ready_at'] = now
         self.data['ready'] = True
-        self.data['ready_at'] = now
         self.state.save()
 
     def credentials_lost(self):
         self.data['credentials_lost'] = True
         self.state.save()
 
-    def tick(self, now, outage):
+    def _retire(self, now):
         if self.data.get('retire_at') is not None and now >= self.data['retire_at']:
             self.events.on_emergency_end()
             del self.data['retire_at']
             self.data['retired'] = True
             self.state.save()
+
+    def tick(self, now, outage):
+        self._retire(now)
         if not (outage or self.data['active']):
             return
         self.data['active'] = True
@@ -171,8 +182,13 @@ class Leader:
                 if previous_owner == self.node:
                     self.data['retiring'] = True
                 if self.data.get('retiring') and status.get('ready'):
-                    self.data.setdefault('retire_at', now + TRANSITION)
+                    # Ready time is an age, never a remote monotonic timestamp.
+                    # A merge or a delayed poll must not grant another ten
+                    # minutes to credentials whose replacement is already issued.
+                    age = status['ready_age'] + now - self.peers[winner][1]
+                    self.data.setdefault('retire_at', now + max(0, TRANSITION - age))
                     self.data['retiring'] = False
+                    self._retire(now)
                 self.data['failed_rounds'] = 0
                 self.data['failed_since'] = None
                 self.state.save()

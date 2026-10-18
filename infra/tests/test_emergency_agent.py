@@ -242,12 +242,32 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertEqual(cluster.agents['a'].leader.data['redirect'], 'b')
         self.assertIsNone(cluster.agents['b'].leader.data['redirect'])
         self.assertNotIn('retire_at', cluster.agents['a'].leader.data)
-        cluster.agents['b'].leader.bundle_ready(cluster.clock())
+        issued_at = cluster.clock()
+        cluster.agents['b'].leader.bundle_ready(issued_at)
         cluster.advance(30)
         deadline = cluster.agents['a'].leader.data['retire_at']
-        cluster.advance(585)
+        self.assertLessEqual(deadline, issued_at + 600)
+        cluster.advance(555)
         self.assertLessEqual(cluster.clock(), deadline)
         cluster.advance(30)
+        self.assertEqual(sum(call[0] == 'end' for call in cluster.events['a'].calls), 1)
+
+    def test_merge_does_not_restart_old_bundle_transition(self):
+        cluster = self.cluster()
+        cluster.stop('entry')
+        cluster.advance(1320)
+        loser = cluster.agents['a'].leader
+        winner = cluster.agents['b'].leader
+        loser.data['autonomous'] = True
+        winner.data.update(role='leader', owner='b', autonomous=False)
+        winner.bundle_ready(cluster.clock() - 300)
+        winner.bundle_ready(cluster.clock())
+        loser.observe('b', winner.status(cluster.clock()), cluster.clock(), transit=5)
+        loser.tick(cluster.clock(), True)
+        self.assertEqual(loser.data['redirect'], 'b')
+        self.assertLessEqual(loser.data['retire_at'], cluster.clock() + 295)
+        loser.tick(cluster.clock() + 295, True)
+        loser.tick(cluster.clock() + 300, True)
         self.assertEqual(sum(call[0] == 'end' for call in cluster.events['a'].calls), 1)
 
     def test_asymmetric_link_eventually_converges(self):

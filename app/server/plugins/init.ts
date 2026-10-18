@@ -5,7 +5,7 @@ import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { generateRandomString, symmetricEncrypt } from 'better-auth/crypto'
 import { accounts, sessions, twoFactors, users } from '../database/schema'
-import { hashPassword, useAuth, verifyPassword } from '../utils/auth'
+import { hashPassword, revokeDisallowedSsoSessions, useAuth, verifyPassword } from '../utils/auth'
 import { loadAnysdaConfig } from '../utils/anysda-config'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 import { markPanelReady } from '../utils/panel-ready'
@@ -130,7 +130,12 @@ async function initPanel() {
     if (changed.length > 0) log.info({ keys: changed }, 'admin user synced from config.yaml')
   }
 
-  // 3. 2FA, включённая до better-auth: секрет остаётся в users.totp_secret и
+  // 3. Список SSO мог смениться в config.yaml, пока панель стояла: сессии
+  // тех, кого в нём больше нет, не доживают свои сутки.
+  const revoked = await revokeDisallowedSsoSessions()
+  if (revoked > 0) log.info({ count: revoked }, 'sso sessions revoked: sub no longer allowed')
+
+  // 4. 2FA, включённая до better-auth: секрет остаётся в users.totp_secret и
   // проверяется хуком в utils/auth.ts, а библиотеке нужна своя строка, чтобы
   // она спрашивала код при входе. Её секрет случайный: коды человека он не
   // проверяет, только код, который подставляет хук.

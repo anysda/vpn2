@@ -65,7 +65,7 @@ test('HTTP ждёт миграции и администратора при ме
     '@libsql/client': { createClient: () => client },
     '../database/client': { useDb: () => db },
     '../database/schema': schema,
-    '../utils/auth': { hashPassword: () => { started(); return password } },
+    '../utils/auth': { hashPassword: () => { started(); return password }, verifyPassword: async () => false, revokeDisallowedSsoSessions: async () => 0 },
     '../utils/anysda-config': { loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },

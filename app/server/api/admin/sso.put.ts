@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../../database/client'
 import { accounts, users } from '../../database/schema'
-import { resetAuth, useAuth } from '../../utils/auth'
+import { resetAuth, revokeDisallowedSsoSessions, useAuth } from '../../utils/auth'
 import { actorOf, joinDetail, recordEvent } from '../../utils/events'
 import {
   discoveryFrom, parseAllowedSubs, probeDiscovery, readSsoStored, SSO_PROVIDER, writeSsoStored,
@@ -102,6 +102,9 @@ export default defineEventHandler(async (event) => {
   }
 
   writeSsoStored(next)
+  // Список проверяется только при входе: действующие сессии убранных из него
+  // (или все SSO-сессии, если SSO выключили) удаляются здесь же.
+  const revoked = await revokeDisallowedSsoSessions()
   const changed = (Object.keys(next) as (keyof SsoStored)[]).filter(k => next[k] !== cur[k])
   if (changed.length) {
     const actor = actorOf({ username: String((session.user as { username?: string }).username ?? '') })
@@ -113,7 +116,7 @@ export default defineEventHandler(async (event) => {
   // Провайдер better-auth собирается из настроек при создании экземпляра.
   resetAuth()
   useLogger().info(
-    { enabled: next.enabled, clientId: next.clientId, discovery: discoveryFrom(next.authentikUrl, next.appSlug), passwordLogin: next.passwordLogin },
+    { enabled: next.enabled, clientId: next.clientId, discovery: discoveryFrom(next.authentikUrl, next.appSlug), passwordLogin: next.passwordLogin, revokedSessions: revoked },
     'sso settings updated from profile',
   )
   return { ok: true }

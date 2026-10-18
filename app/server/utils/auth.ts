@@ -6,7 +6,7 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api'
 import { symmetricDecrypt } from 'better-auth/crypto'
 import { genericOAuth, twoFactor, username } from 'better-auth/plugins'
-import { and, eq, isNull, lt, ne, or } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, ne, notInArray, or } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import * as schema from '../database/schema'
@@ -19,7 +19,8 @@ import { resolveSsoUser, SSO_PROVIDER, SsoDenied, ssoConfigured, ssoSettings } f
  *  - проверка 2FA-секретов, заведённых до библиотеки, и гашение кода
  *    (код этого и более раннего шага второй раз не пройдёт, VPN2-62);
  *  - правило «кого пускаем через SSO» (utils/sso.ts);
- *  - отзыв остальных сессий при смене пароля и включении/выключении 2FA.
+ *  - отзыв остальных сессий при смене пароля и включении/выключении 2FA;
+ *  - отзыв SSO-сессий тех, кого убрали из списка SSO.
  */
 
 /** Форма входа, где нет авторедиректа в SSO: break-glass. */
@@ -106,6 +107,24 @@ async function revokeOtherSessions(userId: number, keepToken: string) {
   await useDb()
     .delete(schema.sessions)
     .where(and(eq(schema.sessions.userId, userId), ne(schema.sessions.token, keepToken)))
+}
+
+/**
+ * Удаляет SSO-сессии учёток, чей sub больше не в списке SSO; при выключенном
+ * SSO — все SSO-сессии. Список проверяется при входе (resolveSsoUser), а
+ * сессия живёт сутки: без этого убранный продолжал бы работать до её конца.
+ * Вход паролем список SSO не касается. Возвращает число удалённых сессий.
+ */
+export async function revokeDisallowedSsoSessions(sso = ssoSettings()): Promise<number> {
+  const subs = sso.enabled ? [...sso.allowed.keys()] : []
+  const db = useDb()
+  const isSso = eq(schema.sessions.loginMethod, 'sso')
+  const allowedUsers = db.select({ id: schema.accounts.userId }).from(schema.accounts)
+    .where(and(eq(schema.accounts.providerId, SSO_PROVIDER), inArray(schema.accounts.accountId, subs)))
+  const gone = await db.delete(schema.sessions)
+    .where(subs.length ? and(isSso, notInArray(schema.sessions.userId, allowedUsers)) : isSso)
+    .returning({ id: schema.sessions.id })
+  return gone.length
 }
 
 const TWO_FACTOR_COOKIE = 'two_factor'

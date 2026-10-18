@@ -1340,6 +1340,16 @@ exit_tags() {
 case "${1:-}" in -h|--help) usage ;; esac
 # shellcheck source=infra/lib/deploy-release.sh
 source "$DEPLOY_ROOT/lib/deploy-release.sh"
+# Ошибка в аргументах стадии не открывает выпуск: иначе запись остаётся в
+# applying, и следующий деплой требует recover.
+case "${1:-}" in
+  ''|recover|backup|backup-list|restore|rollback) ;;
+  *)
+    [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
+    [[ -f "$DEPLOY_ROOT/scripts/$1.sh" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
+    expand_hosts "$2" >/dev/null
+    ;;
+esac
 release_start "$@"
 case "${1:-}" in
   ''|recover)  do_all ;;
@@ -1349,7 +1359,6 @@ case "${1:-}" in
   restore)     do_restore "${@:2}" ;;
   rollback)    release_rollback ;;
   *)
-    [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     run_stage "$1" "$2"
     if [[ "$1" == 30-frontend && ( "$2" == ru || "$2" == all ) ]]; then
       print_sso_notice

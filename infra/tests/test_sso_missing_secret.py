@@ -102,6 +102,9 @@ printf 'effective=%s password=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LOGIN"
                         root = Path(directory)
                         (root / 'envs').mkdir()
                         (root / 'lib').mkdir()
+                        (root / 'scripts').mkdir()
+                        for stage in ('30-frontend', '99-verify'):
+                            (root / 'scripts' / (stage + '.sh')).touch()
                         # Isolate notice placement; release acceptance is tested separately.
                         (root / 'lib/deploy-release.sh').write_text(
                             'release_start() { :; }\nrelease_complete() { :; }\n')

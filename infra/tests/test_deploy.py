@@ -83,6 +83,8 @@ do_restore latest --force --dry-run
         for path in ('infra/deploy.sh', 'infra/lib/deploy-release.sh'):
             (root / path.removeprefix('infra/')).write_text(source(path))
         (root / 'lib/anysda-svc.sh').write_text('')
+        (root / 'scripts').mkdir()
+        (root / 'scripts/30-frontend.sh').touch()
         for tool in ('ssh', 'scp', 'sshpass', 'envsubst', 'curl', 'rsync', 'openssl'):
             (root / 'bin' / tool).write_text('#!/bin/sh\nexit 0\n')
             (root / 'bin' / tool).chmod(0o755)
@@ -91,7 +93,7 @@ C_R= C_G= C_Y= C_B= C_END=
 log() {{ :; }}; ok() {{ :; }}; warn() {{ :; }}
 die() {{ echo "die: $*" >&2; exit 1; }}
 load_env() {{ HOST_TAG=$1; }}
-expand_hosts() {{ echo ru; }}
+expand_hosts() {{ case $1 in ru|all) echo ru ;; *) die "unknown host group: $1" ;; esac; }}
 push() {{ echo "push: $*" >> "$DEPLOY_ROOT/calls"; }}
 ssh_exec() {{
   echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
@@ -127,6 +129,14 @@ ssh_exec() {{
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, [])
             self.assertIn(archive.name, result.stdout + result.stderr)
+
+    def test_invalid_stage_arguments_open_no_release(self):
+        # Иначе выпуск остаётся в applying, и следующий деплой требует recover.
+        for args in (('30-frontend',), ('30-frontnd', 'ru'), ('30-frontend', 'nosuch')):
+            with self.subTest(args=args), tempfile.TemporaryDirectory() as directory:
+                result, calls = self.run_deploy(directory, *args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, [])
 
     def test_restore_still_opens_release_before_changing_entry(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -193,7 +193,8 @@ def panel_scenario(root, ports, queue, bot_url, ca):
            '-e', 'NUXT_SESSION_PASSWORD=test-session-password-at-least-thirty-two-characters',
            '-e', 'NUXT_ADMIN_USER=admin', '-e', 'NUXT_ADMIN_PASSWORD=test-password-only',
            '-e', 'NUXT_DATABASE_URL=file:/tmp/test.sqlite', PANEL, 'sh', '-ec',
-           'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); exec node .output/server/index.mjs')
+           'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); '
+           'node scripts/migrate.mjs; exec node .output/server/index.mjs')
     caddy = Caddy(root, root / 'Caddyfile')
     state_path = root / 'state.json'
     try:

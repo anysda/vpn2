@@ -1,5 +1,6 @@
 """Exercise the image workflow command and check its non-root storage contract."""
 
+import ast
 import os
 from pathlib import Path
 import shlex
@@ -49,6 +50,17 @@ curl() { return 0; }
         self.assertIn('-a', shlex.split(copy))
         seed = next(line for line in source.splitlines() if ' - seed ' in line)
         self.assertIn('--user 10001:10001', seed)
+
+    def test_tls_probe_migrates_its_fresh_database(self):
+        tree = ast.parse((ROOT / 'infra/tests/probe_tls_live.py').read_text())
+        scenario = next(node for node in tree.body
+                        if isinstance(node, ast.FunctionDef) and node.name == 'panel_scenario')
+        start = next(node for node in ast.walk(scenario)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                     and node.func.id == 'docker' and ast.literal_eval(node.args[0]) == 'run')
+        command = ast.literal_eval(start.args[-1])
+        self.assertIn('node scripts/migrate.mjs;', command)
+        self.assertLess(command.index('node scripts/migrate.mjs;'), command.index('exec node'))
 
 
 if __name__ == '__main__':

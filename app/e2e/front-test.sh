@@ -100,6 +100,7 @@ if [[ "${FRONT_TEST_DEV:-}" == 1 ]]; then
   SEED=/src
   # pnpm 10, как в Dockerfile и CI; хранилище пакетов в том же томе.
   EXTRA=(-w /src -e NODE_ENV=development -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+    -e COREPACK_HOME=/src/node_modules/.corepack
     -v "$APP_DIR:/src" -v "${DEV_VOLUMES[0]}:/src/node_modules" -v "${DEV_VOLUMES[1]}:/src/.nuxt")
   STAND_CMD=(sh -c 'corepack pnpm@10 install --frozen-lockfile --store-dir /src/node_modules/.pnpm-store \
     && exec corepack pnpm@10 exec nuxt dev --host 0.0.0.0 --port 31821')

@@ -414,7 +414,8 @@ class Backend:
             match = re.match(r'^\S+:\s+#(\d+),', line)
             if match:
                 current = int(match[1])
-            identity = re.search(r"EAP:\s+'([^']+)'", line)
+            # swanctl печатает EAP-логин, только если он отличается от IKE-идентификатора.
+            identity = re.search(r"EAP:\s+'([^']+)'", line) or re.match(r"^\s+remote\s+'([^']+)'", line)
             if identity and current:
                 result.append({'id': current, 'username': identity[1]})
                 current = None

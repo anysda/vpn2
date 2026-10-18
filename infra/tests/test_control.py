@@ -238,6 +238,26 @@ class ControlTests(unittest.TestCase):
         self.assertIn(('/usr/sbin/swanctl', '--load-creds', '--clear', '--noprompt'), calls)
         self.assertEqual(json.loads((self.state / 'ikev2-pending.json').read_text()), [])
 
+    def test_ikev2_sa_without_separate_eap_id_is_terminated(self):
+        # Клиент, у которого IKE-идентификатор равен логину: swanctl не печатает «EAP: '...'».
+        self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
+        calls = []
+        live = [True]
+
+        def command(*args):
+            calls.append(args)
+            if '--list-sas' in args:
+                return ("anysda-dev-7: #42, ESTABLISHED, IKEv2, 1_i 2_r*\n"
+                        "  remote 'device7' @ 198.51.100.7[4500] [10.68.68.2]\n") if live[0] else ''
+            if '--terminate' in args:
+                live[0] = False
+            return ''
+
+        with patch.object(self.backend, 'command', side_effect=command):
+            reply = self.request('ikev2.apply', {'version': 1, 'clients': []})
+        self.assertTrue(reply['ok'], reply)
+        self.assertIn(('/usr/sbin/swanctl', '--terminate', '--ike-id', '42'), calls)
+
     def test_ikev2_rejects_config_injection(self):
         client = {'device_id': 1, 'username': 'test', 'password': 'valid-password-123', 'ip': '10.68.68.2'}
         for name, value in [('username', 'evil\ninclude /etc/shadow'), ('password', 'x" } secrets {')]:

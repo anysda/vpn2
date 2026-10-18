@@ -10,6 +10,7 @@ import os
 import json
 import pwd
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -551,6 +552,104 @@ exit 0
                     self.assertIn(started, services[services.index('docker stop anysda-tgbot'):])
                 self.assertIn('службы и контейнеры прежнего состояния запущены', result.stdout)
 
+
+    def pki(self):
+        """CA, сертификаты устройства 0x10 и 0x11, CRL пустой и с отозванным 0x10."""
+        pki = Path('/test-output/pki')
+        pki.mkdir()
+        (pki / 'cnf').write_text('[ca]\ndefault_ca = x\n[x]\ndatabase = index.txt\ncrlnumber = crlnumber\n'
+                                 'default_md = sha256\ndefault_crl_days = 30\n')
+        (pki / 'index.txt').write_text('')
+        (pki / 'crlnumber').write_text('01\n')
+        ec = ('-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes')
+        ca = ('-config', 'cnf', '-keyfile', 'ca.key', '-cert', 'ca.crt')
+        steps = [('req', '-x509', *ec, '-keyout', 'ca.key', '-out', 'ca.crt', '-subj', '/CN=test-ca', '-days', '30')]
+        for serial in ('10', '11'):
+            steps += [('req', '-new', *ec, '-keyout', serial + '.key', '-out', serial + '.csr', '-subj', '/CN=dev_1'),
+                      ('x509', '-req', '-in', serial + '.csr', '-CA', 'ca.crt', '-CAkey', 'ca.key',
+                       '-set_serial', '0x' + serial, '-days', '30', '-out', serial + '.pem')]
+        steps += [('ca', '-batch', *ca, '-gencrl', '-out', 'empty.pem'),
+                  ('ca', '-batch', *ca, '-revoke', '10.pem'),
+                  ('ca', '-batch', *ca, '-gencrl', '-out', 'revoked.pem')]
+        for step in steps:
+            result = run('openssl', *step, cwd=pki)
+            self.assertEqual(result.returncode, 0, result.stdout)
+        return pki
+
+    def revoked_active(self, bundle):
+        """Серийники действующих сертификатов БД архива, отозванные в его CRL (по openssl)."""
+        crl = run('openssl', 'crl', '-noout', '-text', '-in', str(bundle / 'etc-openvpn/server/pki/crl.pem')).stdout
+        revoked = {int(n, 16) for n in re.findall(r'Serial Number: ([0-9A-F]+)', crl)}
+        with sqlite3.connect(bundle / 'db.sqlite') as db:
+            certs = [c for (c,) in db.execute('SELECT ovpn_cert FROM devices WHERE deleting = 0')]
+        serials = {int(run('openssl', 'x509', '-noout', '-serial', input=c).stdout.split('=')[1], 16)
+                   for c in certs}
+        return serials & revoked, serials
+
+    def test_reissue_during_backup_gives_consistent_archive(self):
+        pki = self.pki()
+        write('/etc/openvpn/server/pki/crl.pem', (pki / 'empty.pem').read_text(), 0o644)
+        write('/etc/openvpn/server/.pki.lock', '', 0o644)
+        self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, deleting INTEGER NOT NULL DEFAULT 0, '
+                          'ovpn_cert TEXT)')
+        self.conn.execute('INSERT INTO devices VALUES (1, 0, ?)', ((pki / '10.pem').read_text(),))
+        self.conn.commit()
+        # Перевыпуск посреди бэкапа: отзыв старого сертификата попадает в CRL,
+        # а новый сертификат панель пишет в БД отдельным шагом чуть позже.
+        write('/test-bin/sqlite3', f"""#!/bin/sh
+case "$*" in *".backup "*)
+  if [ ! -e /test-output/reissued ]; then
+    touch /test-output/reissued
+    if flock -n -x /etc/openvpn/server/.pki.lock true; then echo free; else echo held; fi > /test-output/lock
+    cp {pki}/revoked.pem /etc/openvpn/server/pki/crl.pem
+    /usr/bin/sqlite3 "$@" || exit
+    (sleep 1; /usr/bin/sqlite3 {DB} ".timeout 10000" \\
+      "UPDATE devices SET ovpn_cert = CAST(readfile('{pki}/11.pem') AS TEXT) WHERE id = 1") >/dev/null 2>&1 &
+    exit 0
+  fi;;
+esac
+exec /usr/bin/sqlite3 "$@"
+""", 0o755)
+        bundle = self.backup()
+        bad, serials = self.revoked_active(bundle)
+        lock = Path('/test-output/lock').read_text().strip()
+        print(f'archive_active={sorted(serials)} revoked_active={sorted(bad)} lock_during_db_snapshot={lock}', flush=True)
+        self.assertEqual(bad, set())
+        self.assertEqual(serials, {0x11})
+        self.assertEqual(lock, 'held')
+
+        # Старый архив с расхождением: restore предупреждает и называет устройство.
+        Path('/test-bin/sqlite3').unlink()
+        shutil.copy(REPO / 'infra/lib/anysda-backup.sh', '/usr/local/bin/anysda-backup.sh')
+        Path('/usr/local/bin/anysda-backup.sh').chmod(0o755)
+        self.addCleanup(Path('/usr/local/bin/anysda-backup.sh').unlink)
+        shutil.copy(pki / 'revoked.pem', bundle / 'etc-openvpn/server/pki/crl.pem')
+        with sqlite3.connect(bundle / 'db.sqlite') as db:
+            db.execute('UPDATE devices SET ovpn_cert = ? WHERE id = 1', ((pki / '10.pem').read_text(),))
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        for name in ('db.sqlite', 'etc-openvpn'):
+            manifest['components'][name] = self.digest(bundle / name)
+        (bundle / 'manifest.json').write_text(json.dumps(manifest))
+        self.repack(bundle)
+        result = self.script('restore', 'latest', '--force')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'CRL' in line or 'отозван' in line), flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('в архиве БД и CRL OpenVPN расходятся', result.stdout)
+        self.assertIn('устройство 1: сертификат 10 отозван в CRL', result.stdout)
+
+    @staticmethod
+    def digest(path):
+        def file(p):
+            return 'sha256:' + hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        if path.is_file():
+            return file(path)
+        h = hashlib.sha256()
+        for root, dirs, files in os.walk(path):
+            dirs.sort()
+            for name in sorted(files):
+                full = os.path.join(root, name)
+                h.update(os.path.relpath(full, path).encode() + b'\0' + file(full).encode() + b'\n')
+        return 'sha256:' + h.hexdigest()
 
 if __name__ == '__main__':
     if os.environ.get('VPN2_BACKUP_TEST') != '1' or not Path('/.dockerenv').exists():

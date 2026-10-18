@@ -40,6 +40,76 @@ report_failure() {
 }
 trap 'report_failure $?' EXIT
 
+# Сверка среза: каждый действующий сертификат OpenVPN из БД не отозван в CRL
+# того же среза. Иначе восстановленный клиент получит «certificate revoked».
+# Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
+check_bundle() {
+  python3 - "$1" <<'PY'
+import base64, pathlib, re, sqlite3, sys
+
+root = pathlib.Path(sys.argv[1])
+db, crl = root / 'db.sqlite', root / 'etc-openvpn/server/pki/crl.pem'
+if not db.is_file() or not crl.is_file():
+    sys.exit(0)
+
+
+def tlv(data, i=0):
+    tag, size = data[i], data[i + 1]
+    i += 2
+    if size & 0x80:
+        width = size & 0x7f
+        size, i = int.from_bytes(data[i:i + width], 'big'), i + width
+    return tag, data[i:i + size], i + size
+
+
+def children(data):
+    i = 0
+    while i < len(data):
+        tag, value, i = tlv(data, i)
+        yield tag, value
+
+
+def der(pem, label):
+    match = re.search(f'-----BEGIN {label}-----(.*?)-----END {label}-----', pem or '', re.S)
+    return base64.b64decode(''.join(match.group(1).split())) if match else None
+
+
+def serial(pem):
+    data = der(pem, 'CERTIFICATE')
+    if data is None:
+        return None
+    tbs = tlv(tlv(data)[1])[1]
+    items = list(children(tbs))
+    return int.from_bytes(items[1 if items[0][0] == 0xa0 else 0][1], 'big')
+
+
+revoked = set()
+tbs = tlv(tlv(der(crl.read_text(), 'X509 CRL'))[1])[1]
+for tag, value in children(tbs):
+    # Список отзыва — единственная SEQUENCE из SEQUENCE{INTEGER серийник, ...}.
+    entries = [next(children(v)) for t, v in children(value) if t == 0x30] if tag == 0x30 else []
+    if entries and len(entries) == len(list(children(value))) and all(t == 0x02 for t, _ in entries):
+        revoked |= {int.from_bytes(v, 'big') for _, v in entries}
+
+con = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+columns = {row[1] for row in con.execute('PRAGMA table_info(devices)')}
+if 'ovpn_cert' not in columns:
+    sys.exit(0)
+active = 'deleting = 0' if 'deleting' in columns else '1'
+bad = [(device, number) for device, cert in
+       con.execute(f'SELECT id, ovpn_cert FROM devices WHERE ovpn_cert IS NOT NULL AND {active}')
+       if (number := serial(cert)) in revoked]
+for device, number in bad:
+    print(f'устройство {device}: сертификат {number:X} отозван в CRL')
+sys.exit(3 if bad else 0)
+PY
+}
+if [[ ${1:-} == --check-bundle ]]; then
+  trap - EXIT
+  check_bundle "$2"
+  exit
+fi
+
 ENV_FILE=/etc/anysda/backup.env
 [[ -r "$ENV_FILE" ]] || { echo "anysda-backup: $ENV_FILE отсутствует или unreadable" >&2; exit 2; }
 # shellcheck disable=SC1090
@@ -100,14 +170,6 @@ BUNDLE="anysda-vpn2-$TS"
 BUNDLE_DIR="$WORK/$BUNDLE"
 mkdir -p "$BUNDLE_DIR"
 
-# 1. SQLite — консистентный снимок (без даунтайма)
-DB=/var/lib/anysda-vpn2/db.sqlite
-if [[ -r "$DB" ]]; then
-  sqlite3 "$DB" ".timeout 10000" ".backup '$BUNDLE_DIR/db.sqlite'"
-else
-  echo "anysda-backup: WARN: $DB не найден — пропускаю db.sqlite" >&2
-fi
-
 # 2. /etc/anysda — все секреты
 if [[ -d /etc/anysda ]]; then
   cp -a /etc/anysda "$BUNDLE_DIR/etc-anysda"
@@ -123,16 +185,53 @@ if [[ -d /etc/anysda ]]; then
   done
 fi
 
-# 3. WireGuard: конфиг и исходная пара ключей стадии 28, которую читает панель.
-mkdir -p "$BUNDLE_DIR/etc-wireguard"
-for file in wg0.conf server.priv server.pub; do
-  [[ ! -f /etc/wireguard/$file ]] || cp -aL "/etc/wireguard/$file" "$BUNDLE_DIR/etc-wireguard/"
+# 3. WireGuard: снимается вместе с БД (1) и PKI OpenVPN (4) одним срезом под
+# замком PKI, который держат выдача и отзыв сертификатов в vpn2-control.
+# Перевыпуск в панели — это отзыв, выдача и запись в БД отдельными шагами,
+# поэтому срез ещё сверяется (БД против CRL) и при расхождении снимается заново.
+DB=/var/lib/anysda-vpn2/db.sqlite
+PKI_LOCK=/etc/openvpn/server/.pki.lock
+snapshot_access() {
+  local lock=
+  rm -rf "$BUNDLE_DIR/db.sqlite" "$BUNDLE_DIR/etc-wireguard" "$BUNDLE_DIR/etc-openvpn"
+  if [[ -e "$PKI_LOCK" ]]; then
+    exec {lock}<"$PKI_LOCK"
+    flock -w 60 -s "$lock" || { FAIL_REASON='замок PKI OpenVPN занят дольше минуты'; exit 1; }
+  fi
+  # SQLite — консистентный снимок (без даунтайма)
+  if [[ -r "$DB" ]]; then
+    sqlite3 "$DB" ".timeout 10000" ".backup '$BUNDLE_DIR/db.sqlite'"
+  else
+    echo "anysda-backup: WARN: $DB не найден — пропускаю db.sqlite" >&2
+  fi
+  # WireGuard: конфиг и исходная пара ключей стадии 28, которую читает панель.
+  mkdir -p "$BUNDLE_DIR/etc-wireguard"
+  for file in wg0.conf server.priv server.pub; do
+    [[ ! -f /etc/wireguard/$file ]] || cp -aL "/etc/wireguard/$file" "$BUNDLE_DIR/etc-wireguard/"
+  done
+  # OpenVPN PKI + конфиг + CCD + CRL
+  if [[ -d /etc/openvpn ]]; then
+    cp -a /etc/openvpn "$BUNDLE_DIR/etc-openvpn"
+  fi
+  if [[ -n $lock ]]; then exec {lock}<&-; fi
+}
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  snapshot_access
+  rc=0
+  mismatch=$(check_bundle "$BUNDLE_DIR") || rc=$?
+  [[ $rc != 0 ]] || break
+  if [[ $rc != 3 ]]; then
+    echo "anysda-backup: WARN: сверка БД и CRL OpenVPN не выполнена (код $rc)" >&2
+    break
+  fi
+  echo "anysda-backup: срез $attempt: БД и CRL расходятся (идёт перевыпуск?), снимаю заново:" >&2
+  printf '%s\n' "$mismatch" >&2
+  if [[ $attempt == 10 ]]; then
+    FAIL_REASON='БД и CRL OpenVPN расходятся в 10 срезах подряд'
+    exit 1
+  fi
+  sleep 3
 done
-
-# 4. OpenVPN PKI + конфиг + CCD + CRL
-if [[ -d /etc/openvpn ]]; then
-  cp -a /etc/openvpn "$BUNDLE_DIR/etc-openvpn"
-fi
 
 # 5. strongSwan (IKEv2) — CA key/cert + server cert/key + swanctl conf'ы.
 #    Без них клиенты не подключатся (CA-pubkey зашит в их .mobileconfig'ах).

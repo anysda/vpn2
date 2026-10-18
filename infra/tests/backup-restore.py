@@ -5,6 +5,7 @@ VPN2_BACKUP_TEST=1 python3 infra/tests/backup-restore.py /path/to/repository
 Services and deploy stages are stubs; backup/restore, SQLite, tar and age are real.
 """
 
+import hashlib
 import os
 import json
 import pwd
@@ -35,6 +36,15 @@ EXTRA = ('/etc/caddy/Caddyfile', '/opt/AdGuardHome/AdGuardHome.yaml',
 
 # restore выводит server.pub из PrivateKey wg0.conf, поэтому ключ должен быть
 # настоящим; метка состояния остаётся в комментарии.
+MIGRATIONS = Path('/opt/anysda-vpn2/app/server/database/migrations')
+
+
+def journal():
+    entries = json.loads((MIGRATIONS / 'meta/_journal.json').read_text())['entries']
+    return [(hashlib.sha256((MIGRATIONS / (e['tag'] + '.sql')).read_bytes()).hexdigest(), e['when'])
+            for e in entries]
+
+
 WG_KEYS = {'archived': 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
            'live': 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='}
 
@@ -65,6 +75,24 @@ set timeout 60
 spawn age -d -o $env(AGE_TARGET) $env(AGE_SOURCE)
 expect {
     "Enter passphrase*" { send -- "test-backup-passphrase\\r"; exp_continue }
+    eof
+}
+catch wait result
+exit [lindex $result 3]
+''')
+    if result.returncode:
+        raise AssertionError(result.stdout)
+
+
+def encrypt(source, archive):
+    env = dict(os.environ, AGE_SOURCE=str(source), AGE_TARGET=str(archive))
+    result = run('expect', env=env, input='''
+log_user 0
+set timeout 60
+spawn age -p -o $env(AGE_TARGET) $env(AGE_SOURCE)
+expect {
+    "Enter passphrase*" { send -- "test-backup-passphrase\\r"; exp_continue }
+    "Confirm passphrase*" { send -- "test-backup-passphrase\\r"; exp_continue }
     eof
 }
 catch wait result
@@ -116,6 +144,12 @@ exit 0
         self.conn.execute('PRAGMA journal_mode=WAL')
         self.conn.execute('PRAGMA wal_autocheckpoint=0')
         self.conn.execute('CREATE TABLE clients (name TEXT)')
+        # История миграций как у настоящей панели: restore сверяет её с журналом.
+        shutil.rmtree(MIGRATIONS, ignore_errors=True)
+        shutil.copytree(REPO / 'app/server/database/migrations', MIGRATIONS)
+        self.conn.execute('CREATE TABLE __drizzle_migrations '
+                          '(id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT NOT NULL, created_at NUMERIC)')
+        self.conn.executemany('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)', journal())
         self.conn.commit()
         self.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
         self.conn.execute("INSERT INTO clients VALUES ('archived-client')")
@@ -391,6 +425,72 @@ esac
         self.assertIn(f'dry-run — восстановил бы {local.name} (local)', result.stdout)
         self.assertFalse((BACKUPS / '.pre-restore').exists())
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM clients').fetchone()[0], 2)
+
+
+    def repack(self, bundle):
+        archive = next(BACKUPS.glob('*.age'))
+        with tarfile.open('/test-output/repacked.tar.gz', 'w:gz') as tar:
+            tar.add(bundle, arcname=bundle.name)
+        archive.unlink()
+        encrypt('/test-output/repacked.tar.gz', archive)
+
+    def assert_untouched(self, result, reason):
+        print(result.stdout.strip().splitlines()[-1], flush=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn(reason, result.stdout)
+        self.assertFalse((BACKUPS / '.pre-restore').exists())
+        self.assertEqual(self.conn.execute('SELECT name FROM clients').fetchall(),
+                         [('archived-client',), ('live-client',)])
+        self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'live'))
+
+    def test_unknown_spec_version_refused_before_changes(self):
+        bundle = self.backup()
+        manifest = json.loads((bundle / 'manifest.json').read_text())
+        manifest['spec_version'] = 2
+        (bundle / 'manifest.json').write_text(json.dumps(manifest))
+        self.repack(bundle)
+        self.conn.execute("INSERT INTO clients VALUES ('live-client')")
+        self.conn.commit()
+        write(FILES[0], body(FILES[0], 'live'))
+        self.assert_untouched(self.script('restore', 'latest', '--force'), 'spec_version=2')
+        result = self.script('restore', 'latest', '--force', '--allow-incompatible')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
+
+    def test_schema_newer_or_diverged_refused_older_accepted(self):
+        cases = (
+            ('newer', "INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('f' || hex(randomblob(31)), 9999999999999)",
+             'схема БД архива новее'),
+            ('diverged', "UPDATE __drizzle_migrations SET hash = 'other' "
+                         "WHERE id = (SELECT MIN(id) + 1 FROM __drizzle_migrations)", 'расходится'),
+            ('older', 'DELETE FROM __drizzle_migrations WHERE id = (SELECT MAX(id) FROM __drizzle_migrations)', None),
+        )
+        for name, change, reason in cases:
+            with self.subTest(name):
+                shutil.rmtree(BACKUPS, ignore_errors=True)
+                shutil.rmtree('/test-output/backup', ignore_errors=True)
+                # Успешный restore подменяет файл базы: открываем текущий.
+                self.conn.close()
+                self.conn = sqlite3.connect(DB)
+                self.conn.execute('DELETE FROM clients')
+                self.conn.execute('DELETE FROM __drizzle_migrations')
+                self.conn.executemany('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)', journal())
+                self.conn.execute("INSERT INTO clients VALUES ('archived-client')")
+                self.conn.execute(change)
+                self.conn.commit()
+                write(FILES[0], body(FILES[0], 'archived'))
+                self.backup()
+                self.conn.execute("INSERT INTO clients VALUES ('live-client')")
+                self.conn.commit()
+                write(FILES[0], body(FILES[0], 'live'))
+                result = self.script('restore', 'latest', '--force')
+                if reason:
+                    self.assert_untouched(result, reason)
+                else:
+                    print(next(line for line in result.stdout.splitlines() if 'схема БД' in line), flush=True)
+                    self.assertEqual(result.returncode, 0, result.stdout)
+                    self.assertIn('1 догонит стадия 30', result.stdout)
+                    self.assertEqual(Path(FILES[0]).read_text(), body(FILES[0], 'archived'))
 
 
 if __name__ == '__main__':

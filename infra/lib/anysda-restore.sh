@@ -6,6 +6,7 @@
 #     archive-name — имя файла из $BACKUP_LOCAL_DIR (только basename) или 'latest'
 #     --force      — overwrite не-пустой db.sqlite без вопросов
 #     --dry-run    — только показать, какой архив и откуда будет взят
+#     --allow-incompatible — восстановить архив неизвестного формата или схемы БД
 #
 # Безопасность (требования TZ §3.6):
 #   - SHA-256 каждого компонента проверяется ПЕРЕД применением (manifest)
@@ -32,11 +33,13 @@ source "$ENV_FILE"
 ARCHIVE_REQ="${1:-latest}"
 FORCE=0
 DRY_RUN=0
+ALLOW_INCOMPATIBLE=0
 shift 2>/dev/null || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --force|-f) FORCE=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --allow-incompatible) ALLOW_INCOMPATIBLE=1 ;;
     *) echo "anysda-restore: неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
   shift
@@ -228,10 +231,63 @@ print(f'manifest verified: {len(m["components"])} components,'
       f' archive={m.get("timestamp")} app_v={m.get("version")} git={m.get("git_commit")}')
 PY
 
-# ── Проверка совместимости версии (мягкая для v1: только warn) ──────────────
-MANIFEST_SPEC=$(python3 -c "import json; print(json.load(open('$BUNDLE_DIR/manifest.json')).get('spec_version', 1))")
+# ── Совместимость: формат архива и схема БД против текущей версии ──────────
+# До любых изменений: неизвестный формат или схема новее текущего образа
+# оставили бы ноду с данными, которые панель не запустит.
+incompatible() {
+  if (( ALLOW_INCOMPATIBLE )); then
+    echo "anysda-restore: WARN: $1 — продолжаю по --allow-incompatible" >&2
+    return
+  fi
+  echo "anysda-restore: ABORT — $1; данные не изменены (обход: --allow-incompatible)" >&2
+  exit 9
+}
+MANIFEST_SPEC=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("spec_version", 1))' "$BUNDLE_DIR/manifest.json")
 if [[ "$MANIFEST_SPEC" != "1" ]]; then
-  echo "anysda-restore: WARN: archive spec_version=$MANIFEST_SPEC, current code понимает 1" >&2
+  incompatible "формат архива spec_version=$MANIFEST_SPEC, этот restore понимает только 1"
+fi
+if [[ -e "$BUNDLE_DIR/db.sqlite" ]]; then
+  # Журнал миграций образа, который поднимет панель; клон репозитория — запасной.
+  MIGRATIONS=""
+  if docker cp anysda-vpn2:/app/server/database/migrations "$WORK/migrations" >/dev/null 2>&1 \
+     && [[ -r "$WORK/migrations/meta/_journal.json" ]]; then
+    MIGRATIONS="$WORK/migrations"
+  elif [[ -r /opt/anysda-vpn2/app/server/database/migrations/meta/_journal.json ]]; then
+    MIGRATIONS=/opt/anysda-vpn2/app/server/database/migrations
+  fi
+  if [[ -z "$MIGRATIONS" ]]; then
+    incompatible "не найден журнал миграций текущей версии (ни в контейнере anysda-vpn2, ни в /opt/anysda-vpn2)"
+  elif ! SCHEMA_RESULT=$(python3 - "$BUNDLE_DIR/db.sqlite" "$MIGRATIONS" 2>&1 <<'PY'
+import hashlib, json, os, sqlite3, sys
+database, folder = sys.argv[1:]
+entries = json.load(open(os.path.join(folder, 'meta/_journal.json')))['entries']
+journal = [(int(e['when']), hashlib.sha256(open(os.path.join(folder, e['tag'] + '.sql'), 'rb').read()).hexdigest())
+           for e in entries]
+with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as db:
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if '__drizzle_migrations' not in tables:
+        if tables:
+            sys.exit('в базе архива нет истории миграций (__drizzle_migrations)')
+        history = []
+    else:
+        history = [(int(when), digest) for when, digest in
+                   db.execute('SELECT created_at, hash FROM __drizzle_migrations ORDER BY created_at')]
+tags = [e['tag'] for e in entries]
+if len(history) > len(journal) and history[:len(journal)] == journal:
+    sys.exit(f'схема БД архива новее текущей версии: {len(history)} миграций против {len(journal)}')
+for index, row in enumerate(history):
+    if index >= len(journal) or row != journal[index]:
+        name = tags[index] if index < len(journal) else f'#{index + 1}'
+        sys.exit(f'история миграций архива расходится с текущей версией на {name}')
+behind = len(journal) - len(history)
+print(f'схема БД архива: {len(history)} из {len(journal)} миграций текущей версии'
+      + (f', {behind} догонит стадия 30' if behind else ''))
+PY
+  ); then
+    incompatible "$SCHEMA_RESULT"
+  else
+    echo "anysda-restore: $SCHEMA_RESULT"
+  fi
 fi
 
 # Старые архивы содержали только wg0.conf. Восстанавливаем исходный ключ

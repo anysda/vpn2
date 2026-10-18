@@ -5,9 +5,12 @@ wireguard-tools, openssl, python3, Node 24. SOURCE_ROOT selects scripts under te
 LEGACY_ROOT optionally selects an older checkout for the legacy archive case.
 Service/network commands are stubbed; no tunnel traffic is claimed here.
 """
+import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import unittest
 
@@ -59,6 +62,17 @@ def fixture():
     put('/etc/swanctl/conf.d/anysda-clients.conf', 'secrets { eap-test { secret = test } }\n')
     run('sqlite3', str(DATA / 'db.sqlite'),
         'CREATE TABLE clients (id INTEGER); INSERT INTO clients VALUES (1);')
+    # История миграций как у панели: restore сверяет её с журналом версии.
+    migrations = Path('/opt/anysda-vpn2/app/server/database/migrations')
+    shutil.rmtree(migrations, ignore_errors=True)
+    shutil.copytree(ROOT / 'app/server/database/migrations', migrations)
+    entries = json.loads((migrations / 'meta/_journal.json').read_text())['entries']
+    with sqlite3.connect(DATA / 'db.sqlite') as db:
+        db.execute('CREATE TABLE __drizzle_migrations '
+                   '(id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT NOT NULL, created_at NUMERIC)')
+        db.executemany('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)', [
+            (hashlib.sha256((migrations / (e['tag'] + '.sql')).read_bytes()).hexdigest(), e['when'])
+            for e in entries])
 
 
 def clean_host():

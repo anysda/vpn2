@@ -130,6 +130,9 @@ if fault in ('traffic-failed', 'traffic-mixed'):
     rows.append(('Ошибка', 'маршрут: через экзит exit', 'WireGuard', 'нет эха экзита'))
 if fault in ('traffic-unmeasured', 'traffic-mixed'):
     rows.append(('Не проверено', 'внешняя проба портов', 'IKEv2', 'нет внешней точки измерения'))
+if fault == 'traffic-many':
+    rows += [('Ошибка', 'маршрут: прямой', name, 'неверный выход') for name in ('WireGuard', 'OpenVPN', 'IKEv2')]
+    rows.append(('Не проверено', 'внешняя проба портов', 'IKEv2', 'нет внешней точки измерения'))
 with open(report, 'a') as out:
     for result, check, component, reason in rows:
         mark = {'Работает': '✓', 'Ошибка': '✗'}.get(result)
@@ -367,6 +370,15 @@ class VerifyTest(unittest.TestCase):
                 self.assertEqual(result.returncode, code, result.stdout)
                 self.assertIn(line, result.stdout)
                 self.assertEqual(result.report['code'], code)
+
+    def test_summary_counts_every_traffic_row(self):
+        # Три «Ошибка» и одна «Не проверено» от модуля - столько же в итоге, не «1».
+        result = self.run_verify('traffic-many')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'verify ' in line))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('verify FAILED: проверок не пройдено: 3; не проверено: 1', result.stdout)
+        crashed = self.run_verify('traffic-crash')
+        self.assertIn('verify FAILED: проверок не пройдено: 1; не проверено: 0', crashed.stdout)
 
     def test_report_rows_for_ci(self):
         result = self.run_verify('traffic-mixed')

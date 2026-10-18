@@ -123,7 +123,7 @@ except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error
 # Настоящий трафик: временный клиент WireGuard/OpenVPN/IKEv2 в своём netns.
 # Строки отчёта модуль печатает и дописывает сам; код 0/1/2 как у стадии.
 traffic_check() {
-  local module=${VERIFY_TRAFFIC:-} rc=0 dir rows
+  local module=${VERIFY_TRAFFIC:-} rc=0 dir rows failed unmeasured
   dir=$(dirname "${BASH_SOURCE[0]}")
   if [[ -z "$module" ]]; then
     for module in "$dir/verify-traffic.py" "$dir/../lib/verify-traffic.py"; do
@@ -138,10 +138,14 @@ traffic_check() {
   rows=$(wc -l < "$VERIFY_ROWS")
   python3 -I "$module" check --tag "$HOST_TAG" --exits "${EXIT_TAGS:-}" \
     --public-host "${ENTRY_HOST:-}" --report "$VERIFY_ROWS" || rc=$?
+  # Итог считает строки модуля, а не один его код: три «Ошибка» - три провала.
+  failed=$(tail -n "+$((rows + 1))" "$VERIFY_ROWS" | grep -c '"result": "Ошибка"' || true)
+  unmeasured=$(tail -n "+$((rows + 1))" "$VERIFY_ROWS" | grep -c '"result": "Не проверено"' || true)
   case $rc in
     0) ;;
-    2) UNMEASURED=$((UNMEASURED + 1)) ;;
-    *) FAILURES=$((FAILURES + 1))
+    2) UNMEASURED=$((UNMEASURED + (unmeasured > 0 ? unmeasured : 1))) ;;
+    *) FAILURES=$((FAILURES + (failed > 0 ? failed : 1)))
+       UNMEASURED=$((UNMEASURED + unmeasured))
        # Модуль упал до своих строк: без строки отчёт выглядел бы чистым.
        if (( $(wc -l < "$VERIFY_ROWS") <= rows )); then
          echo "[$HOST_TAG] ✗ трафик: контрольный клиент — код $rc"

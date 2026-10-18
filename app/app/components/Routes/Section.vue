@@ -403,7 +403,7 @@ onBeforeUnmount(() => {
     >
       <div class="eh">
         <div>
-          <b>{{ col.name }}</b><small>{{ col.sub }}</small>
+          <b><WholeWords :text="col.name" /></b><small>{{ col.sub }}</small>
         </div>
         <span :class="['rt', rtc(col.delay)]">{{ col.delay ?? '—' }}<small>мс</small></span>
       </div>
@@ -520,7 +520,7 @@ onBeforeUnmount(() => {
 .ex{padding:14px;display:grid;grid-row:span 3;grid-template-rows:subgrid;grid-template-columns:minmax(0,1fr);row-gap:10px}
 .ex .cell:nth-child(2):last-child{grid-row:span 2}
 .ex .eh{display:flex;justify-content:space-between;align-items:flex-start;padding:2px 2px 4px}
-.ex .eh>div{min-width:0;overflow-wrap:anywhere}
+.ex .eh>div{min-width:0}
 .ex .eh b{font-weight:500;font-size:15px;display:block}
 .ex .eh small{font-size:11.5px;color:var(--t3)}
 .ex .eh .rt{flex:none;white-space:nowrap;font-weight:200;font-size:26px;letter-spacing:-.02em;line-height:1}

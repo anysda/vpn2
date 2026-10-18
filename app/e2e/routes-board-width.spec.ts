@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
-import { expect, hydrated, loginApi, test } from './support/fixtures'
+import { expect, hydrated, loginApi, NODES, test } from './support/fixtures'
+import { wordBreaks } from './support/words'
 
 // Доска «Маршрутов» на подменённых данных: от одной до пяти колонок, худший
 // случай по ширине - четырёхзначные задержки, длинные названия стран и правила
@@ -133,5 +134,20 @@ test.describe('доска маршрутов: ширина колонок', () =
         await expect.poll(() => overflows(page), { message: `окно ${width}, колонок ${columns}` }).toEqual([])
       }
     })
+  }
+})
+
+// Узкое окно ПК, экзиты стенда: имя страны переносится по словам, длинное слово - по слогам
+// с дефисом, не посреди слова без дефиса («Нидерлан|ды», «Соединен|ные»).
+test('имена стран не рвутся посреди слова без дефиса при окне 721/800/900/1024', async ({ page }) => {
+  await loginApi(page)
+  await page.goto('/routes')
+  await hydrated(page)
+  await expect(page.locator('.board .ex')).toHaveCount(NODES.length)
+  for (const width of [721, 800, 900, 1024]) {
+    await page.setViewportSize({ width, height: 900 })
+    for (const b of await page.locator('.board .ex .eh b').all()) {
+      expect.soft(await b.evaluate(wordBreaks), `окно ${width}: «${await b.textContent()}»`).toEqual([])
+    }
   }
 })

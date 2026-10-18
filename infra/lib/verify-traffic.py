@@ -524,12 +524,40 @@ class IKEv2:
             run('swanctl', '--terminate', '--ike', 'vpn', '--force', '--timeout', '5', '--uri', self.vici(),
                 check=False)
 
+    @staticmethod
+    def server_sas(eap_id):
+        """uniqueid живых IKE_SA сервера с этим EAP-логином, разбор как у продукта (control/backend.py).
+
+        EAP-логин swanctl печатает, только если он отличается от IKE-идентификатора; у
+        проверочного клиента они совпадают, и логин стоит в «remote '...'».
+        """
+        ids, current = [], None
+        for line in run('swanctl', '--list-sas', check=False).stdout.splitlines():
+            head = re.match(r'^\S+:\s+#(\d+),', line)
+            if head:
+                current = head[1]
+            identity = re.search(r"EAP:\s+'([^']+)'", line) or re.match(r"^\s+remote\s+'([^']+)'", line)
+            if identity and current:
+                if identity[1] == eap_id:
+                    ids.append(current)
+                current = None
+        return ids
+
+    def terminate(self, eap_id, wait=20):
+        # Имя SA - conn, которую выбрал charon: проверочная или общая anysda-ikev2, если
+        # она пустила логин раньше. Поэтому, как продукт, снимаем каждую SA логина по id
+        # и ждём, пока их не останется: «живая сессия» проверяется сразу после.
+        deadline = time.monotonic() + wait
+        while (ids := self.server_sas(eap_id)) and time.monotonic() < deadline:
+            for sa in ids:
+                run('swanctl', '--terminate', '--ike-id', sa, '--force', '--timeout', '5', check=False)
+            time.sleep(0.5)
+
     def revoke(self, identity):
         secret = self.secrets[identity]
         secret['revoked'] = True
         self.server_conf()
-        conn = f'vpn2-verify-{identity}'
-        run('swanctl', '--terminate', '--ike', conn, '--force', '--timeout', '5', check=False)
+        self.terminate(secret['id'])
 
     def cleanup(self):
         self.down()
@@ -543,9 +571,8 @@ class IKEv2:
         if SWAN_FILE.exists():
             SWAN_FILE.unlink()
             run('swanctl', '--load-all', '--noprompt', check=False)
-        sas = run('swanctl', '--list-sas', '--raw', check=False).stdout
-        for conn in sorted(set(re.findall(r'(vpn2-verify-[ab])\s*\{', sas))):
-            run('swanctl', '--terminate', '--ike', conn, '--force', '--timeout', '5', check=False)
+        for secret in self.secrets.values():
+            self.terminate(secret['id'], wait=10)
 
 
 # ------------------------------------------------- ретранслятор через экзит

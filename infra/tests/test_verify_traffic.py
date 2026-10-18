@@ -229,6 +229,43 @@ class DirectRouteTests(unittest.TestCase):
             self.assertEqual(report.code(), 0)
 
 
+class IKEv2RevokeTests(unittest.TestCase):
+    """Отзыв снимает все IKE_SA логина, на какой бы conn charon их ни посадил."""
+
+    def test_revoke_terminates_every_sa_of_identity(self):
+        login = 'vpn2-verify-0a1b2c3d-a'
+        # Две SA одного доступа: одна на общей conn, одна на проверочной; третья - чужая.
+        sas = {'10': ('anysda-ikev2', login), '11': ('vpn2-verify-a', login), '12': ('anysda-dev-7', 'phone')}
+        calls = []
+
+        def fake_run(*args, **_kwargs):
+            calls.append(args)
+            out = ''
+            if args[:2] == ('swanctl', '--list-sas'):
+                # Как настоящий swanctl: EAP-логин виден, только если он не равен IKE-идентификатору.
+                out = ''.join(f"{conn}: #{sa}, ESTABLISHED, IKEv2, 1_i 2_r*\n"
+                              f"  remote '{user}' @ 203.0.113.5[4500] [10.68.68.2]\n"
+                              f"  net: #{sa}, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-256\n"
+                              for sa, (conn, user) in sas.items())
+            elif args[:3] == ('swanctl', '--terminate', '--ike-id'):
+                sas.pop(args[3], None)
+            elif args[:3] == ('swanctl', '--terminate', '--ike'):
+                for sa in [sa for sa, (conn, _user) in sas.items() if conn == args[3]]:
+                    sas.pop(sa)
+            return subprocess.CompletedProcess(args, 0, out, '')
+
+        ikev2 = vt.IKEv2.__new__(vt.IKEv2)
+        ikev2.secrets = {'a': {'id': login, 'secret': 'x', 'revoked': False}}
+        ikev2.server_conf = lambda: None
+        saved = vt.run
+        vt.run = fake_run
+        try:
+            ikev2.revoke('a')
+        finally:
+            vt.run = saved
+        self.assertEqual(sorted(sas), ['12'], calls)
+
+
 # Настоящий сервер wg0 и клиент в netns vpn2-verify, внутри одноразовых сетевого
 # и файлового пространств: на хост CI ничего не попадает.
 NETNS_DRIVER = r'''

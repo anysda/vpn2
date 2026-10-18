@@ -188,6 +188,36 @@ test('уведомление о новом сроке сохраняется и 
   expect(JSON.parse(notice!.payload).text).toBe('Доступ включён\nСрок действия вашего ключа: до 20.05.2031.')
 })
 
+test('истечение срока посреди применения не подтверждает включение', async () => {
+  const c = await client()
+  const clock = Date
+  const deadline = clock.now() + 60_000
+  const { operation } = await ops.enqueueAccess({ clientId: c.id, actor: 'panel', patch: { expiresAt: new Date(deadline) } })
+  const read = adapter.read
+  adapter.read = async (...args) => {
+    globalThis.Date = new Proxy(clock, {
+      construct: (target, args) => Reflect.construct(target, args.length ? args : [deadline + 1000]),
+      get: (target, key) => key === 'now' ? () => deadline + 1000 : Reflect.get(target, key),
+    })
+    return read(...args)
+  }
+  try {
+    await ops.runAccessOperations(adapter)
+    expect((await ops.getAccess(operation.id)).status).toBe('pending')
+    expect(await db.select().from(schema.botOutbox)).toHaveLength(0)
+    await due()
+    await ops.runAccessOperations(adapter)
+    expect((await ops.getAccess(operation.id)).status).toBe('superseded')
+    await ops.runAccessOperations(adapter)
+    expect(accessStatus((await ops.latestAccess(c.id))!)).toBe('Доступ отключён')
+    const notices = await db.select().from(schema.botOutbox)
+    expect(notices).toHaveLength(1)
+    expect(JSON.parse(notices[0]!.payload).text).toBe('Доступ отключён')
+    console.log('expiry during enable: no enabled confirmation or notification; newer freeze confirmed')
+  }
+  finally { globalThis.Date = clock }
+})
+
 test('первичная сверка старой базы идёт через очередь без изменения версии и рассылки', async () => {
   const c = await client()
   await ops.enqueueExpiredAccess()

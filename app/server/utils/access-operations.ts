@@ -299,6 +299,9 @@ async function runOnce(adapter: AccessAdapter) {
     await db.transaction(async (tx) => {
       const [fresh] = await tx.select().from(clients).where(and(eq(clients.id, row.clientId), eq(clients.accessVersion, row.version)))
       if (!fresh) return
+      // Срок мог истечь во время команды без изменения версии в базе.
+      // Следующий проход поставит отзыв; включение подтверждать уже нельзя.
+      if (payload.enabled !== (!fresh.deleting && isClientActive(fresh))) return
       const confirmed = accessProtocols.every(p => protocols[p].state === 'not_required' || protocols[p].confirmedVersion === row.version)
       const status = confirmed ? 'confirmed' : 'pending'
       await tx.update(accessOperations).set({ protocols, status, completionRecorded: confirmed || row.completionRecorded, nextRetry: confirmed ? Date.now() + CONFIRMATION_FRESH_MS / 2 : nextRetry })

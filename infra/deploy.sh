@@ -477,6 +477,9 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
+  if [[ "$stage" == "29-control" ]]; then
+    push "$DEPLOY_ROOT/control" "control" || return 1
+  fi
 
   if [[ "$stage" == '23-emergency' ]]; then
     push "$DEPLOY_ROOT/emergency/vpn2_emergency" || return 1
@@ -1176,6 +1179,7 @@ do_all() {
   prefetch_images
   run_stage 26-backup        ru
   run_stage 27-ikev2         ru
+  run_stage 29-control       ru
   wait "$_PREFETCH_PID" || true
   VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
   run_stage 30-frontend      ru
@@ -1225,7 +1229,7 @@ anysda-vpn2 — деплой
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
           29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
           22-adguard | 23-emergency | 25-monitoring | 26-backup | 27-ikev2 | 35-telegram | 30-frontend |
-          99-verify
+          29-control | 99-verify
 Группы:   ru | foreign | all | <конкретный тег экзита>
 EOF
   exit 0

@@ -1,0 +1,48 @@
+[Unit]
+Description=VPN2 local VPN control API
+Requires=vpn2-control.socket
+After=vpn2-control.socket
+
+[Service]
+Type=simple
+User=vpn2-control
+Group=vpn2-control
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vpn2-control/launcher.py
+StateDirectory=vpn2-control
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/wireguard /etc/openvpn/server /etc/swanctl/conf.d
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ProcSubset=pid
+ProtectProc=invisible
+RemoveIPC=yes
+MemoryMax=128M
+TasksMax=16
+LimitNOFILE=128
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,265 @@
+"""Local control API contract, credential boundary, and failure regressions."""
+import base64
+import importlib.util
+import json
+import os
+from pathlib import Path
+import socket
+import struct
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import Mock, patch
+
+
+ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+CONTROL = ROOT / 'infra/control'
+
+
+def module(name):
+    spec = importlib.util.spec_from_file_location(name, CONTROL / (name + '.py'))
+    result = importlib.util.module_from_spec(spec)
+    sys.modules[name] = result
+    spec.loader.exec_module(result)
+    return result
+
+
+class ControlTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = module('contract')
+        cls.backend_module = module('backend')
+        cls.server = module('server')
+        cls.pools = json.loads((ROOT / 'app/shared/vpn-pools.json').read_text())
+
+    def setUp(self):
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        self.root = Path(self.work.name)
+        self.state = self.root / 'state'
+        self.state.mkdir()
+        self.backend = self.backend_module.Backend(self.root, self.state)
+        self.public = base64.b64encode(bytes(range(32))).decode()
+        self.psk = base64.b64encode(bytes(range(1, 33))).decode()
+        self.peer = {'key': self.public, 'preshared_key': self.psk, 'ip': '10.66.66.2'}
+
+    def request(self, method, params, allowed=True, raw=None, host_uid=None):
+        client, server = socket.socketpair()
+        with client, server:
+            client.settimeout(5)
+            uid = os.getuid() if host_uid is None else host_uid
+            peer = server
+            if host_uid is not None:
+                peer = Mock(wraps=server)
+                peer.getsockopt.return_value = struct.pack('iII', os.getpid(), uid, uid)
+            worker = threading.Thread(target=self.server.handle,
+                                      args=(peer, self.backend,
+                                            {uid} if allowed else {uid + 1},
+                                            self.pools))
+            worker.start()
+            data = raw or json.dumps({'api': 1, 'method': method, 'params': params}).encode() + b'\n'
+            try:
+                client.sendall(data)
+                reply = json.loads(client.makefile('rb').readline())
+            finally:
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            return reply
+
+    def invalid(self, method, params, code='validation'):
+        self.assertEqual(self.request(method, params), {'api': 1, 'ok': False, 'error': code})
+
+    def file(self, name, body):
+        path = self.root / name.lstrip('/')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        return path
+
+    def test_methods_ready_and_no_general_execution(self):
+        self.assertEqual(self.request('check.run', {'check': 'readiness'})['result'],
+                         {'ready': True, 'api': 1})
+        for method in ('shell', 'file.write', 'service.restart', 'secret.read'):
+            self.invalid(method, {})
+
+    def test_path_extra_fields_and_nested_injection(self):
+        self.invalid('config.apply', {'resource': '/etc/shadow', 'schema': 1,
+                                     'version': 1, 'config': {}})
+        self.invalid('config.apply', {'resource': 'wg-peers', 'schema': 1, 'version': 1,
+                                     'config': {'peers': [], 'path': '/etc/shadow'}})
+        self.invalid('wg.apply', {'version': 1, 'peers': [], 'path': '/etc/shadow'})
+        self.invalid('wg.apply', {'version': 1, 'peers': [dict(self.peer, command='id')]})
+        self.invalid('openvpn.apply', {'version': 1, 'device_id': '../../etc/shadow',
+                                       'action': 'deny', 'ip': '10.67.67.2'})
+        self.invalid('check.run', {'check': 'id; touch /tmp/injected'})
+
+    def test_peer_credentials_even_when_socket_is_accessible(self):
+        self.assertEqual(self.request('check.run', {'check': 'readiness'}, allowed=False),
+                         {'api': 1, 'ok': False, 'error': 'forbidden'})
+
+    def test_high_mapped_host_uid_is_not_interpreted_as_signed(self):
+        # Linux uid_t is unsigned, including host IDs mapped from containers.
+        self.assertTrue(self.request('check.run', {'check': 'readiness'}, host_uid=3000000000)['ok'])
+        self.assertEqual(self.request('check.run', {'check': 'readiness'}, allowed=False,
+                                      host_uid=3000000000)['error'], 'forbidden')
+
+    def test_size_and_duplicate_json_fields(self):
+        self.invalid('wg.apply', {'version': 1, 'peers': [], 'padding': 'x' * self.contract.LIMIT},
+                     'limit')
+        result = self.request('', {}, raw=b'{"api":1,"api":1,"method":"check.run",'
+                                         b'"params":{"check":"readiness"}}\n')
+        self.assertEqual(result['error'], 'validation')
+
+    def test_types_keys_addresses_and_versions(self):
+        for version in (True, 0, -1, 1.2, '1', 2**53):
+            self.invalid('wg.apply', {'version': version, 'peers': []})
+        for key in ('bad', base64.b64encode(bytes(32)).decode(), self.public + '\nid'):
+            self.invalid('wg.apply', {'version': 1, 'peers': [dict(self.peer, key=key)]})
+        for ip in ('127.0.0.1', '0.0.0.0/0', '10.66.66.1', '10.66.66.255',
+                   '10.66.66.2\nPostUp=id', '::1'):
+            self.invalid('wg.apply', {'version': 1, 'peers': [dict(self.peer, ip=ip)]})
+        self.invalid('wg.apply', {'version': 1, 'peers': [self.peer, self.peer]})
+        self.invalid('wg.apply', {'version': 1, 'peers': [dict(self.peer, preshared_key='bad')]})
+
+    def test_versions_survive_failure_restart_and_config_alias(self):
+        params = {'version': 4, 'peers': [self.peer]}
+        with patch.object(self.backend, 'wireguard', side_effect=OSError('sensitive value')):
+            self.invalid('wg.apply', params, 'unavailable')
+        self.backend = self.backend_module.Backend(self.root, self.state)
+        self.invalid('wg.apply', dict(params, version=3), 'stale')
+        self.invalid('config.apply', {'resource': 'wg-peers', 'schema': 1, 'version': 4,
+                                     'config': {'peers': []}}, 'conflict')
+        with patch.object(self.backend, 'wireguard', return_value={'peers': {}}) as apply:
+            self.assertTrue(self.request('wg.apply', params)['ok'])
+            self.assertTrue(self.request('wg.apply', params)['ok'])
+            self.assertEqual(apply.call_count, 2)
+
+    def test_wg_verifies_kernel_and_preserves_interface(self):
+        path = self.file('/etc/wireguard/wg0.conf', '[Interface]\nAddress = 10.66.66.1/24\n'
+                         'PrivateKey = server-secret\nListenPort = 51820\n')
+        calls = []
+
+        def command(*args):
+            calls.append(args)
+            if args[1] == 'syncconf':
+                candidate = Path(args[-1]).read_text()
+                self.assertNotIn('Address', candidate)
+                self.assertIn(self.public, candidate)
+                self.assertIn('PresharedKey = ' + self.psk, candidate)
+                self.assertIn('fd66:66::2/128', candidate)
+                return ''
+            if args[-1] == 'preshared-keys':
+                return self.public + '\t' + self.psk + '\n'
+            return self.public + '\t10.66.66.2/32 fd66:66::2/128\n'
+
+        with patch.object(self.backend, 'command', side_effect=command):
+            reply = self.request('wg.apply', {'version': 1, 'peers': [self.peer]})
+        self.assertTrue(reply['ok'], reply)
+        self.assertNotIn('server-secret', json.dumps(reply))
+        self.assertNotIn(self.psk, json.dumps(reply))
+        self.assertIn('Address = 10.66.66.1/24', path.read_text())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(calls[0][:3], ('/usr/bin/wg', 'syncconf', 'wg0'))
+        with patch.object(self.backend, 'command', return_value=''):
+            self.invalid('wg.apply', {'version': 2, 'peers': [self.peer]}, 'unavailable')
+
+    def test_wg_preserves_extended_pool_ula_mapping(self):
+        self.assertEqual(self.backend_module.peer_addresses(dict(self.peer, ip='10.66.64.12')),
+                         ['10.66.64.12/32', 'fd66:66::64:12/128'])
+
+    def test_openvpn_revocation_uses_managed_certificate_ids(self):
+        self.file('/etc/openvpn/server/pki/index.txt',
+                  'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        self.file('/etc/openvpn/server/ccd/dev_7', '')
+        calls = []
+
+        def command(*args):
+            calls.append(args)
+            if '-revoke' in args:
+                self.file('/etc/openvpn/server/pki/index.txt',
+                          'R\t300101000000Z\t260101000000Z\t0A\tunknown\t/CN=dev_7\n')
+            if '-gencrl' in args:
+                Path(args[-1]).write_text('CRL')
+            return ''
+
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            reply = self.request('openvpn.apply', {'version': 1, 'device_id': 7,
+                                                   'action': 'revoke', 'ip': '10.67.67.2'})
+            self.assertTrue(reply['ok'], reply)
+            self.assertTrue(reply['result']['observed']['revoked'])
+            self.invalid('openvpn.apply', {'version': 2, 'device_id': 7,
+                                           'action': 'allow', 'ip': '10.67.67.2'}, 'conflict')
+        self.assertTrue(calls[0][-1].endswith('/pki/newcerts/0A.pem'))
+        self.assertIn('disable', (self.root / 'etc/openvpn/server/ccd/dev_7').read_text())
+
+    def test_openvpn_live_session_must_disappear(self):
+        self.file('/etc/openvpn/server/pki/index.txt',
+                  'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        self.file('/etc/openvpn/server/ccd/dev_7', '')
+        rows = ['CLIENT_LIST,dev_7,192.0.2.2:1,10.67.67.2', 'END']
+        params = {'version': 1, 'device_id': 7, 'action': 'deny', 'ip': '10.67.67.2'}
+        with patch.object(self.backend, 'management', return_value=rows):
+            self.invalid('openvpn.apply', params, 'unavailable')
+        with patch.object(self.backend, 'management', side_effect=[rows, ['SUCCESS: killed'], ['END']]) as call:
+            self.assertTrue(self.request('openvpn.apply', params)['ok'])
+            self.assertIn(unittest.mock.call('kill dev_7'), call.call_args_list)
+
+    def test_ikev2_numeric_sa_and_persistent_retry(self):
+        self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
+        calls = []
+        live = [True]
+
+        def command(*args):
+            calls.append(args)
+            if '--list-sas' in args:
+                return "anysda-dev-7: #42, ESTABLISHED\n  remote EAP: 'device7'\n" if live[0] else ''
+            if '--terminate' in args:
+                live[0] = False
+            return ''
+
+        with patch.object(self.backend, 'command', side_effect=command):
+            reply = self.request('ikev2.apply', {'version': 1, 'clients': []})
+        self.assertTrue(reply['ok'], reply)
+        self.assertIn(('/usr/sbin/swanctl', '--terminate', '--ike-id', '42'), calls)
+        self.assertIn(('/usr/sbin/swanctl', '--load-creds', '--clear', '--noprompt'), calls)
+        self.assertEqual(json.loads((self.state / 'ikev2-pending.json').read_text()), [])
+
+    def test_ikev2_rejects_config_injection(self):
+        client = {'device_id': 1, 'username': 'test', 'password': 'valid-password-123', 'ip': '10.68.68.2'}
+        for name, value in [('username', 'evil\ninclude /etc/shadow'), ('password', 'x" } secrets {')]:
+            self.invalid('ikev2.apply', {'version': 1, 'clients': [dict(client, **{name: value})]})
+
+    def test_config_routes_to_same_adapter_and_state_is_live(self):
+        with patch.object(self.backend, 'wireguard', return_value={'peers': {}}) as apply:
+            self.assertTrue(self.request('config.apply', {'resource': 'wg-peers', 'schema': 1,
+                                                          'version': 1, 'config': {'peers': []}})['ok'])
+            apply.assert_called_once_with({'version': 1, 'peers': []})
+        with patch.object(self.backend, 'observe', side_effect=OSError('private-key')):
+            self.invalid('state.read', {'protocol': 'wg'}, 'unavailable')
+            self.invalid('check.run', {'check': 'wg'}, 'unavailable')
+
+    def test_bounded_command_output_and_timeout(self):
+        with self.assertRaises(self.contract.Fault):
+            self.backend_module.run([sys.executable, '-c', 'print("x" * 1100000)'], time.monotonic() + 2)
+        started = time.monotonic()
+        with self.assertRaises(self.contract.Fault):
+            self.backend_module.run([sys.executable, '-c', 'import time; time.sleep(10)'],
+                                    time.monotonic() + 0.1)
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_deploy_installs_service_in_pipeline(self):
+        deploy = (ROOT / 'infra/deploy.sh').read_text()
+        self.assertIn('run_stage 29-control', deploy)
+        stage = (ROOT / 'infra/scripts/29-control.sh').read_text()
+        self.assertIn('systemctl enable --now vpn2-control.socket', stage)
+        self.assertIn('install -o root -g root -m 0644', stage)
+        service = (CONTROL / 'vpn2-control.service').read_text()
+        self.assertIn('User=vpn2-control', service)
+        self.assertIn('ProtectSystem=strict', service)
+        self.assertNotIn('CAP_SYS_ADMIN', service)
+
+
+if __name__ == '__main__':
+    unittest.main()

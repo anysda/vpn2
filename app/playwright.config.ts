@@ -25,6 +25,9 @@ export default defineConfig({
     connectOptions: process.env.E2E_BROWSER_WS
       ? { wsEndpoint: process.env.E2E_BROWSER_WS, exposeNetwork: '<loopback>' }
       : undefined,
+    // Без флага chromium на Linux хинтует шрифт и округляет ширины букв до целых
+    // пикселей: переносы строк не как на телефоне. Через run-server доходит только с --unsafe.
+    launchOptions: { args: ['--font-render-hinting=none'] },
     locale: 'ru-RU',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

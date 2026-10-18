@@ -107,11 +107,13 @@ stand_wait "$NAME" "http://127.0.0.1:$PORT"
 # localhost (ERR_NETWORK_CHANGED). У браузера своя сеть; exposeNetwork в
 # playwright.config.ts передаёт localhost тестового процесса через Playwright.
 # Только браузер в контейнере: тесты отказов по-прежнему управляют Docker с хоста.
+# --unsafe: без него сервер молча отбрасывает launchOptions.args из playwright.config.ts
+# (флаг отрисовки шрифта); порт слушается только на 127.0.0.1.
 dk run -d --rm --init --name "$NAME-browser" --network "$NAME" --shm-size=1g \
   -p "127.0.0.1:$BROWSER_PORT:3000" \
   -v "$APP_DIR/node_modules:/app/node_modules:ro" \
   "$BROWSER_IMAGE" node /app/node_modules/@playwright/test/cli.js \
-  run-server --host 0.0.0.0 --port 3000 >/dev/null
+  run-server --host 0.0.0.0 --port 3000 --unsafe >/dev/null
 for _ in $(seq 30); do
   curl -fsS "http://127.0.0.1:$BROWSER_PORT/json" >/dev/null 2>&1 && break
   sleep 1

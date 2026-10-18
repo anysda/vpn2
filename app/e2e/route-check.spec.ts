@@ -109,7 +109,8 @@ test.describe('проверка адреса по снимку маршруто�
     ['zapret по списку доменов', 'www.youtube.com', null, { reason: 'youtube', rule: 'youtube.com', outbound: 'youtube-ru', delay: 38 }],
     ['zapret по geosite', 'm.youtube.example', null, { reason: 'youtube', rule: 'geosite-youtube', outbound: 'youtube-ru' }],
     ['Telegram мимо geoip-ru', '149.154.167.50', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
-    ['частная сеть', '172.16.0.10', null, { reason: 'ru', rule: 'ip_is_private', outbound: 'direct-ru' }],
+    ['частная сеть закрыта', '172.16.0.10', null, { reason: 'reject', routeId: null }],
+    ['link-local закрыт', '169.254.169.254', null, { reason: 'reject', routeId: null }],
     ['по умолчанию', 'unknown-site.com', '1.0.0.1', { reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-direct', delay: 50 }],
     ['домен без адреса - по умолчанию', 'unknown-site.com', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
   ]

@@ -118,7 +118,7 @@ class TelegramRoutingTest(unittest.TestCase):
                 self.assertEqual(route(cfg, ip='203.0.113.1', domain=domain), 'direct-ru')
             for labels in ({'geoip': ['ru']}, {'geosite': ['category-gov-ru']}):
                 self.assertEqual(route(cfg, ip='203.0.113.1', **labels), 'direct-ru')
-            self.assertEqual(route(cfg, ip='10.1.2.3'), 'direct-ru')
+            self.assertEqual(route(cfg, ip='10.1.2.3'), 'reject')
             self.assertEqual(route(cfg, ip='203.0.113.1'), 'lane-07')
             self.assertEqual(route(cfg, inbound='tg-proxy'), 'tg-best')
             self.assertEqual(route(cfg, inbound='tg-proxy', ip='127.0.0.1'), 'reject')

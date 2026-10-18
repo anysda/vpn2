@@ -23,6 +23,9 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   {TAG}_HY2_CERT_PATH    — PEM-сертификат экзита, sing-box принимает только его
   {TAG}_HY2_INSECURE=1   — без проверки (exits[].hy2_insecure: true), с предупреждением
 
+Опциональные:
+  ENTRY_ADDRS            — адреса entry: клиентам открыты только TCP 22/80/443
+
 Опциональные (YouTube мимо экзитов, см. стадию 19-yt-zapret):
   YT_ROUTE               — off | zapret | direct   (дефолт off)
   YT_MARK                — SO_MARK для YouTube-трафика (дефолт 256 = 0x100)
@@ -90,6 +93,53 @@ TELEGRAM_CIDRS = [
     '2001:67c:4e8::/48', '2001:b28:f23c::/48', '2001:b28:f23d::/48',
     '2001:b28:f23f::/48', '2a0a:f280::/32',
 ]
+
+
+# Куда клиенту туннеля нельзя: link-local (metadata API хостера 169.254.169.254),
+# частные сети entry и хостера (Docker-мосты, служебная сеть, CGNAT), loopback,
+# мультикаст и IPv6-формы, в которые заворачивается IPv4 (NAT64, 6to4, Teredo).
+# ::ffff:a.b.c.d sing-box сам разворачивает в IPv4, его ловят IPv4-сети.
+# Раньше такие адреса уходили в direct-ru и открывались с entry.
+CLIENT_BLOCKED_CIDRS = [
+    '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
+    '172.16.0.0/12', '192.168.0.0/16', '224.0.0.0/4', '240.0.0.0/4',
+    '::/127', '64:ff9b::/96', '64:ff9b:1::/48', '100::/64',
+    '2001::/32', '2002::/16', 'fc00::/7', 'fe80::/10', 'ff00::/8',
+]
+# Публичные службы на адресах самого entry: SSH и панель (Caddy) и так открыты
+# в интернет. Остальные порты адресов entry клиенту закрыты: соединение от
+# sing-box к своему адресу идёт через lo мимо ufw.
+ENTRY_PUBLIC_TCP_PORTS = [22, 80, 443]
+
+
+def entry_addresses():
+    """Адреса entry (ENTRY_ADDRS от 20-ru-router) как /32 и /128."""
+    nets = []
+    for value in (os.environ.get('ENTRY_ADDRS') or '').split():
+        try:
+            nets.append(str(ipaddress.ip_network(value.split('/')[0])))
+        except ValueError:
+            sys.exit(f'ERROR: ENTRY_ADDRS: {value!r} не IP-адрес')
+    return list(dict.fromkeys(nets))
+
+
+def client_block_rules():
+    """reject-правила для клиентских назначений, раньше любого выбора выхода."""
+    rules = [
+        {'ip_cidr': CLIENT_BLOCKED_CIDRS, 'action': 'reject'},
+        {'ip_is_private': True, 'action': 'reject'},
+    ]
+    addresses = entry_addresses()
+    if addresses:
+        rules.append({
+            'type': 'logical', 'mode': 'and',
+            'rules': [
+                {'ip_cidr': addresses},
+                {'network': ['tcp'], 'port': ENTRY_PUBLIC_TCP_PORTS, 'invert': True},
+            ],
+            'action': 'reject',
+        })
+    return rules
 
 
 def yt_settings():
@@ -460,7 +510,6 @@ def main():
         {'domain_suffix': ['.ru', '.рф', '.xn--p1ai', '.su'], 'outbound': 'direct-ru'},
         {'rule_set': ['geosite-category-gov-ru'], 'outbound': 'direct-ru'},
         {'rule_set': ['geoip-ru'], 'outbound': 'direct-ru'},
-        {'ip_is_private': True, 'outbound': 'direct-ru'},
     ]]
 
     cfg = {
@@ -527,7 +576,8 @@ def main():
             #   1. YouTube (если YT_ROUTE != off) → youtube-ru, РФ-выход + десинк
             #   2. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)
             #   3. category-gov-ru → direct-ru (госуслуги и т.п.)
-            #   4. geoip-ru / частные сети → direct-ru (физически в РФ)
+            #   0. частные сети, link-local, адреса entry → reject (до выходов)
+            #   4. geoip-ru → direct-ru (физически в РФ)
             #   5. клиентские VPN-IP → lane-NN (selector; экзит дорожки выбирает watchdog)
             #   6. всё остальное → foreign-best (selector; экзит выбирает failover-watchdog)
             # Telegram пропускает пункты 1–4 и доходит до выбора экзита клиента.
@@ -567,7 +617,11 @@ def main():
                 {'inbound': ['wg-tproxy-in'], 'protocol': 'dns',
                  'action': 'route', 'outbound': 'dns-unfiltered',
                  'override_address': '127.0.0.2', 'override_port': 53},
-            ] + domestic_route_rules + lane_route_rules,
+                # Блок клиентских назначений - в служебной голове:
+                # ниже идут ручные маршруты панели (их 0.0.0.0/0 на экзит
+                # открыл бы metadata API экзита), YouTube, РФ и дорожки.
+                # Служебные входы (mon-*, tg-proxy, DoH, DNS) решены выше.
+            ] + client_block_rules() + domestic_route_rules + lane_route_rules,
             'final': 'foreign-best',
             'auto_detect_interface': True,
             # Имена в адресах экзитов (DOMAIN_{TAG} может быть доменом)

@@ -145,6 +145,10 @@ done
 # config-base.json MUST be refreshed on every run — a stale base silently
 # drops inbounds added to gen-router-config.py since it was first
 # snapshotted (this is how the wg/ovpn TPROXY :7898 inbound got lost).
+# Адреса самого entry: клиентам VPN до них открыты только публичные порты,
+# панель, API и прочие локальные службы закрыты (правило в генераторе).
+ENTRY_ADDRS=$(ip -o addr show scope global | awk '{sub(/\/.*/, "", $4); print $4}' | tr '\n' ' ')
+export ENTRY_ADDRS
 _cfg_tmp=$(mktemp /etc/sing-box/.config-base.XXXXXX)
 if ! python3 "$GEN" > "$_cfg_tmp" \
   || ! /usr/local/bin/sing-box check -c "$_cfg_tmp"; then

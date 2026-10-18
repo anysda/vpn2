@@ -50,7 +50,7 @@ def load(path):
         ) from exc
     if manifest.get('format') != 1 or not re.fullmatch(r'[a-f0-9]{40}', manifest['commit']):
         raise ReleaseError('unsupported release manifest')
-    if manifest['rollback'] != 'backward-compatible':
+    if manifest['rollback'] not in ('backward-compatible', 'forward-only'):
         raise ReleaseError('unsupported rollback plan')
     for images in manifest['images'].values():
         for item in images.values():

@@ -54,6 +54,16 @@ def compatible(database, contract, migrating=False):
         raise ReleaseError('incompatible database schema; old image must not start')
 
 
+def rollback_warning(database, manifest):
+    """Old images refuse unknown migrations: say so before the deploy changes anything."""
+    applied, target = len(schema(database)), len(manifest['database']['journal'])
+    if applied and applied < target:
+        print(f'WARNING: this release migrates the panel database {applied} -> {target}; '
+              'after it ./deploy.sh rollback to the installed release is impossible '
+              f"(release rollback plan: {manifest['rollback']}). Return path: a later compatible release, "
+              'or restore the pre-deploy backup and lose changes made after it.', file=sys.stderr)
+
+
 def image_contract(reference):
     """Read the actual immutable image, including legacy images without labels."""
     container = command(['docker', 'create', '--network', 'none', reference]).strip()
@@ -128,7 +138,7 @@ def verify_backup(destination):
                 raise ReleaseError('backup is not readable')
 
 
-def preflight(manifest, database, state, os_release=Path('/etc/os-release'), meminfo=Path('/proc/meminfo')):
+def preflight(manifest, database, state, os_release=Path('/etc/os-release'), meminfo=Path('/proc/meminfo'), warn=True):
     os_values = dict(line.split('=', 1) for line in os_release.read_text().splitlines() if '=' in line)
     distro = os_values.get('ID', '').strip('"')
     version = os_values.get('VERSION_ID', '').strip('"')
@@ -142,6 +152,8 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
     if int(memory['MemAvailable'].split()[0]) * 1024 < manifest['min_memory_bytes']:
         raise ReleaseError('insufficient available memory')
     compatible(database, manifest['database'], migrating=True)
+    if warn:
+        rollback_warning(database, manifest)
     api = Path('/etc/vpn2/control-api-version')
     if api.exists():
         version = int(api.read_text())
@@ -204,7 +216,8 @@ def main():
         manifest = load(args.manifest) if args.action in ('preflight', 'prepare', 'complete', 'compatible') else None
         journal = args.state / 'operation.json'
         if args.action in ('preflight', 'prepare'):
-            preflight(manifest, args.database, args.state)
+            # prepare repeats the checks right after preflight: warn once.
+            preflight(manifest, args.database, args.state, warn=args.action == 'preflight')
             if args.partial:
                 installed = args.state / 'installed.json'
                 previous = read_json(installed).get('release') if installed.exists() else None

@@ -387,6 +387,86 @@ panel_rollback
             self.assertIn('current database, revocations, expirations, operations and PKI retained', run.stdout)
             print('rollback: revoked device denied, expiry and pending operations retained; other client allowed')
 
+    def build_manifest(self, work, migrations_after_tag):
+        """Release checkout: tag v1.0.0, then commits; returns the generated manifest."""
+        repo = work / 'repo'
+        folder = repo / 'app/server/database/migrations'
+        (folder / 'meta').mkdir(parents=True)
+        (repo / 'app/package.json').write_text('{"version": "1.0.1"}')
+        git = ['git', '-C', str(repo), '-c', 'user.name=t', '-c', 'user.email=t@t']
+
+        def commit(count, message):
+            entries = [{'idx': i, 'when': 1000 + i, 'tag': f'{i:04d}_m'} for i in range(count)]
+            for entry in entries:
+                (folder / (entry['tag'] + '.sql')).write_text('CREATE TABLE t%d(id);' % entry['idx'])
+            (folder / 'meta/_journal.json').write_text(json.dumps({'entries': entries}))
+            subprocess.run(git[:3] + ['add', '-A'], check=True)
+            subprocess.run(git + ['commit', '-q', '--allow-empty', '-m', message], check=True)
+
+        subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+        commit(2, 'release')
+        subprocess.run(git + ['tag', 'v1.0.0'], check=True)
+        commit(2 + migrations_after_tag, 'next')
+        (repo / 'notes').write_text('later commit')
+        subprocess.run(git[:3] + ['add', '-A'], check=True)
+        subprocess.run(git + ['commit', '-qm', 'later'], check=True)
+        builder = module('build-release')
+        output = work / 'release-manifest.json'
+        argv = ['build-release.py', '--root', str(repo), '--digests', str(work), '--output', str(output)]
+        with patch.object(builder, 'resolve_image', return_value={}), \
+                patch.object(builder, 'binary_specs', return_value={}), \
+                patch.object(builder, 'source_files', return_value={}), \
+                patch.object(sys, 'argv', argv):
+            for name in ('panel', 'tgbot'):
+                (work / (name + '.txt')).write_text('sha256:' + 'a' * 64)
+            builder.main()
+        return json.loads(output.read_text()), output
+
+    def test_release_with_new_migration_does_not_promise_rollback(self):
+        release = module('release')
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, path = self.build_manifest(Path(directory), migrations_after_tag=1)
+            self.assertEqual(manifest['rollback'], 'forward-only',
+                             'manifest promises rollback to the previous release across a new migration')
+            self.assertEqual(release.load(path)['rollback'], 'forward-only')
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, path = self.build_manifest(Path(directory), migrations_after_tag=0)
+            self.assertEqual(manifest['rollback'], 'backward-compatible')
+            release.load(path)
+        print('manifest: new migration -> forward-only; same schema -> backward-compatible')
+
+    def test_deploy_warns_before_migration_that_closes_rollback(self):
+        state = module('deploy_state')
+        release = module('release')
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            database = work / 'db.sqlite'
+            with sqlite3.connect(database) as db:
+                db.execute('CREATE TABLE __drizzle_migrations (hash TEXT, created_at INTEGER)')
+                db.execute("INSERT INTO __drizzle_migrations VALUES ('a', 1)")
+            (work / 'os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            (work / 'meminfo').write_text('MemAvailable: 4000000 kB\n')
+            journal = [{'when': 1, 'sha256': 'a'}, {'when': 2, 'sha256': 'b'}]
+            manifest = {'os': {'ubuntu': ['26.04']}, 'architectures': [release.architecture()],
+                        'min_free_bytes': 0, 'min_memory_bytes': 0, 'local_service_api': {'min': 1, 'max': 1},
+                        'rollback': 'forward-only',
+                        'database': {'min': 2, 'max': 2, 'migrate_from': [0, 2], 'journal': journal}}
+
+            def warning(contract_journal, **options):
+                manifest['database']['journal'] = contract_journal
+                count = len(contract_journal)
+                manifest['database'].update(min=count, max=count, migrate_from=[0, count])
+                with patch('sys.stderr', new_callable=lambda: __import__('io').StringIO()) as err:
+                    state.preflight(manifest, database, work, work / 'os-release', work / 'meminfo', **options)
+                return err.getvalue()
+
+            text = warning(journal)
+            self.assertIn('rollback', text, 'deploy applies a migration that closes rollback without warning')
+            self.assertIn('1 -> 2', text)
+            self.assertEqual(warning(journal[:1]), '', 'same schema must keep rollback without warning')
+            self.assertEqual(warning(journal, warn=False), '', 'prepare repeats the preflight warning')
+        print('deploy preflight: migration 1 -> 2 warns before apply; same schema silent')
+
     def test_migration_is_explicit_idempotent_and_rejects_future_history(self):
         migration = ROOT / 'app/scripts/migrate.mjs'
         self.assertTrue(migration.exists(), 'no explicit deploy migration executor')

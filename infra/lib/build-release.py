@@ -9,7 +9,7 @@ import re
 import subprocess
 import urllib.request
 
-from release import command, digest, sha256, source_files
+from release import ReleaseError, command, digest, sha256, source_files
 
 
 def value(root, path, name):
@@ -89,6 +89,22 @@ def resolve_image(repository, pushed):
     return result
 
 
+def rollback_plan(root, journal):
+    """Rollback to the previous tagged release needs its exact migration history."""
+    migrations = 'app/server/database/migrations/'
+    git = ['git', '-C', str(root)]
+    try:
+        tag = command(git + ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*', 'HEAD^']).strip()
+        entries = json.loads(command(git + ['show', f'{tag}:{migrations}meta/_journal.json']))['entries']
+        previous = [{'when': e['when'], 'sha256': hashlib.sha256(subprocess.run(
+            git + ['show', f"{tag}:{migrations}{e['tag']}.sql"], capture_output=True, check=True, timeout=60).stdout
+        ).hexdigest()} for e in entries]
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError, ReleaseError):
+        return 'forward-only'
+    # Old images refuse a database with migrations they do not know.
+    return 'backward-compatible' if previous == journal else 'forward-only'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[2])
@@ -101,15 +117,16 @@ def main():
               for name in ('panel', 'tgbot')}
     journal = json.loads((root / 'app/server/database/migrations/meta/_journal.json').read_text())
     entries = journal['entries']
+    history = [{'when': e['when'], 'sha256': sha256(root / f"app/server/database/migrations/{e['tag']}.sql")}
+               for e in entries]
     manifest = {
         'format': 1, 'version': json.loads((root / 'app/package.json').read_text())['version'],
         'commit': command(['git', '-C', str(root), 'rev-parse', 'HEAD']).strip(),
         'images': images, 'binaries': binary_specs(root),
         'local_service_api': {'min': 1, 'max': 1},
         'database': {'min': len(entries), 'max': len(entries), 'migrate_from': [0, len(entries)],
-                     'journal': [{'when': e['when'], 'sha256': sha256(root / f"app/server/database/migrations/{e['tag']}.sql")}
-                                 for e in entries]},
-        'rollback': 'backward-compatible', 'stages': source_files(root),
+                     'journal': history},
+        'rollback': rollback_plan(root, history), 'stages': source_files(root),
         'os': {'debian': ['12', '13'], 'ubuntu': ['24.04', '26.04']},
         'architectures': ['amd64'], 'min_free_bytes': 2147483648, 'min_memory_bytes': 268435456,
         'system_packages': {'policy': 'supported distribution repositories; security updates allowed',

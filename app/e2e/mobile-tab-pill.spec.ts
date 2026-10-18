@@ -85,25 +85,27 @@ for (const width of [360, 402]) {
       await openHome(page)
       const nav = page.locator('.mbar nav')
       const from = await settled(page)
-      // покадровая запись пилюли на время перехода
-      await nav.evaluate((el) => {
-        const g = el.querySelector('.glide')!, w = window as unknown as { pillFrames: { left: number, width: number }[] }
-        w.pillFrames = []
-        const t0 = performance.now()
-        const tick = () => {
-          const r = g.getBoundingClientRect()
-          w.pillFrames.push({ left: r.left, width: r.width })
-          if (performance.now() - t0 < 1500) requestAnimationFrame(tick)
-        }
-        requestAnimationFrame(tick)
-      })
+      // Переход пилюли растянут до 10 с: на медленном CI кадр не обязан попасть в 0.32 с пути.
+      // Свойства перехода (transform, width) и прыжок без перехода (.glide.now) - из стилей панели.
+      await page.addStyleTag({ content: '.mbar .tabs .glide{transition-duration:10s!important}' })
       await nav.getByRole('link', { name: 'Настройки' }).tap()
-      const to = await settled(page)
-      const frames = await page.evaluate(() => (window as unknown as { pillFrames: { left: number, width: number }[] }).pillFrames)
-      // в пути: кадры, где пилюля уже не на «Обзоре», но ещё не на «Настройках», и ширина промежуточная
+      await expect.poll(() => nav.evaluate(el => el.querySelector('.glide')!.getAnimations()
+        .map(a => (a as CSSTransition).transitionProperty).sort().join()), 'переход пилюли по положению и ширине').toBe('transform,width')
+      // середина пути: пилюля между «Обзором» и «Настройками», ширина промежуточная
+      const mid = await nav.evaluate((el) => {
+        const g = el.querySelector('.glide')!
+        for (const a of g.getAnimations()) {
+          a.pause()
+          a.currentTime = 5000
+        }
+        const r = g.getBoundingClientRect(), t = el.querySelector(':scope>a.on')!.getBoundingClientRect()
+        for (const a of g.getAnimations()) a.finish()
+        return { left: r.left, width: r.width, toLeft: t.left, toWidth: t.width }
+      })
       const between = (x: number, a: number, b: number) => x > Math.min(a, b) + 1 && x < Math.max(a, b) - 1
-      expect(frames.filter(f => between(f.left, from.pill.left, to.pill.left)).length, 'кадры в пути').toBeGreaterThan(2)
-      expect(frames.filter(f => between(f.width, from.pill.width, to.pill.width)).length, 'ширина меняется плавно').toBeGreaterThan(2)
+      expect(between(mid.left, from.pill.left, mid.toLeft), `в пути: ${round(from.pill.left)} → ${round(mid.left)} → ${round(mid.toLeft)}`).toBe(true)
+      expect(between(mid.width, from.pill.width, mid.toWidth), `ширина: ${round(from.pill.width)} → ${round(mid.width)} → ${round(mid.toWidth)}`).toBe(true)
+      const to = await settled(page)
       expect(to.on).toBe(TAB_PAGES.findIndex(t => t.label === 'Настройки'))
       expect(to.pill.left, 'пилюля уехала вправо').toBeGreaterThan(from.pill.left)
       expect(Math.abs(to.pill.width - from.pill.width), 'ширина пилюли по слову').toBeGreaterThan(5)

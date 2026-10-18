@@ -90,8 +90,9 @@ class DeployVerifyTests(unittest.TestCase):
     def test_real_verify_through_full_and_single_stage(self):
         verifier = test_verify.VerifyTest()
         foreign = verifier.run_verify(role='exit')
-        cases = [('', 0), ('yt-missing-state', 0), ('yt-legacy-state', 0),
-                 ('yt-no-sample', 0), ('yt-unmeasured', 0), ('yt-failed', 1),
+        # 2 — «не проверено»: установка прошла, но код доходит до CI.
+        cases = [('', 0), ('yt-missing-state', 2), ('yt-legacy-state', 2),
+                 ('yt-no-sample', 2), ('yt-unmeasured', 2), ('yt-failed', 1),
                  ('yt-unknown-and-failed', 1)]
         for fault, expected in cases:
             ru = verifier.run_verify(fault, youtube='zapret')
@@ -103,21 +104,21 @@ class DeployVerifyTests(unittest.TestCase):
                         print(result.stdout, end='')
                         print(f'rc={result.returncode}')
                     self.assertEqual(result.returncode, expected, result.stdout)
-                    if fault and expected == 0:
+                    if expected == 2:
                         self.assertIn('⚠', result.stdout)
                         reasons = [line for line in ru.stdout.splitlines() if '] ? ' in line]
                         self.assertTrue(reasons, ru.stdout)
                         for reason in reasons:
                             self.assertEqual(result.stdout.count(reason), 2 if mode == 'full' else 1)
-                    if mode == 'full' and expected == 0:
+                    if mode == 'full' and expected in (0, 2):
                         self.assertIn('деплой завершён', result.stdout)
                         payload = result.event.split("-d '", 1)[1].split("'", 1)[0]
                         self.assertEqual(json.loads(payload), {
-                            'type': 'deploy_done', 'verify_unmeasured': bool(fault),
+                            'type': 'deploy_done', 'verify_unmeasured': expected == 2,
                         })
                     else:
                         self.assertEqual(result.event, '')
-                    if expected:
+                    if expected == 1:
                         self.assertNotIn('деплой завершён', result.stdout)
 
     def test_failure_wins_in_both_host_orders_and_before_verify(self):

@@ -8,8 +8,26 @@ trap 'echo "[$HOST_TAG] verify: ошибка команды в строке $LIN
 
 FAILURES=0
 UNMEASURED=0
+# Строки отчёта (JSON Lines): проверка, компонент, результат, причина, время.
+# Итог для CI собирается в VERIFY_REPORT; секретов в строках нет.
+VERIFY_REPORT=${VERIFY_REPORT:-/var/lib/anysda/verify-report.json}
+VERIFY_ROWS=$(mktemp)
+trap 'rm -f -- "$VERIFY_ROWS"' EXIT
+record() {
+  python3 -c '
+import datetime, json, sys
+label, result, reason = sys.argv[1:4]
+component, _, check = label.partition(": ")
+if not check:
+    component, check = sys.argv[4], label
+print(json.dumps({"check": check, "component": component, "result": result, "reason": reason,
+                  "time": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")},
+                 ensure_ascii=False))
+' "$1" "$2" "$3" "$HOST_TAG" >> "$VERIFY_ROWS"
+}
 fail() {
-  echo "[$HOST_TAG] ✗ $*" >&2
+  echo "[$HOST_TAG] ✗ $1" >&2
+  record "$1" Ошибка "${2:-проверка не прошла}"
   FAILURES=$((FAILURES + 1))
 }
 check() {
@@ -20,13 +38,14 @@ check() {
   output=$("$@" 2>&1) || rc=$?
   [[ -z "$output" ]] || printf '%s\n' "$output"
   case $rc in
-    0) echo "[$HOST_TAG] ✓ $label" ;;
+    0) echo "[$HOST_TAG] ✓ $label"; record "$label" Работает 'проверка прошла' ;;
     2)
-      if [[ $allow_unmeasured -eq 0 ]]; then fail "$label"; return; fi
+      if [[ $allow_unmeasured -eq 0 ]]; then fail "$label" "код $rc"; return; fi
       output=${output:-команда завершилась с кодом 2}
       echo "[$HOST_TAG] ? $label — не проверено: ${output##*$'\n'}"
+      record "$label" 'Не проверено' "${output##*$'\n'}"
       UNMEASURED=$((UNMEASURED + 1)) ;;
-    *) fail "$label" ;;
+    *) fail "$label" "код $rc${output:+: ${output##*$'\n'}}" ;;
   esac
 }
 service() { systemctl is-active --quiet "$1"; }
@@ -101,6 +120,61 @@ except (ValueError, KeyError, TypeError, AttributeError, OverflowError) as error
   return 1
 }
 
+# Настоящий трафик: временный клиент WireGuard/OpenVPN/IKEv2 в своём netns.
+# Строки отчёта модуль печатает и дописывает сам; код 0/1/2 как у стадии.
+traffic_check() {
+  local module=${VERIFY_TRAFFIC:-} rc=0 dir rows
+  dir=$(dirname "${BASH_SOURCE[0]}")
+  if [[ -z "$module" ]]; then
+    for module in "$dir/verify-traffic.py" "$dir/../lib/verify-traffic.py"; do
+      [[ ! -f "$module" ]] || break
+    done
+  fi
+  if [[ ! -f "$module" ]]; then
+    fail 'трафик: контрольный клиент' 'модуль verify-traffic.py не найден'
+    return
+  fi
+  echo "[$HOST_TAG] трафик: контрольный клиент в netns (до нескольких минут)"
+  rows=$(wc -l < "$VERIFY_ROWS")
+  python3 -I "$module" check --tag "$HOST_TAG" --exits "${EXIT_TAGS:-}" \
+    --public-host "${ENTRY_HOST:-}" --report "$VERIFY_ROWS" || rc=$?
+  case $rc in
+    0) ;;
+    2) UNMEASURED=$((UNMEASURED + 1)) ;;
+    *) FAILURES=$((FAILURES + 1))
+       # Модуль упал до своих строк: без строки отчёт выглядел бы чистым.
+       if (( $(wc -l < "$VERIFY_ROWS") <= rows )); then
+         echo "[$HOST_TAG] ✗ трафик: контрольный клиент — код $rc"
+         record 'трафик: контрольный клиент' Ошибка "код $rc"
+       fi ;;
+  esac
+}
+
+write_report() {
+  local code=0
+  (( UNMEASURED == 0 )) || code=2
+  (( FAILURES == 0 )) || code=1
+  if mkdir -p "$(dirname "$VERIFY_REPORT")" && python3 -c '
+import datetime, json, os, sys
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+report = {"host": sys.argv[2], "code": int(sys.argv[3]), "checks": rows,
+          "time": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+tmp = sys.argv[4] + ".tmp"
+with open(tmp, "w", encoding="utf-8") as out:
+    json.dump(report, out, ensure_ascii=False, indent=1)
+os.replace(tmp, sys.argv[4])
+counts = {}
+for row in rows:
+    counts[row["result"]] = counts.get(row["result"], 0) + 1
+print(f"[{sys.argv[2]}] отчёт: {sys.argv[4]} — " + ", ".join(f"{k}: {v}" for k, v in sorted(counts.items())))
+' "$VERIFY_ROWS" "$HOST_TAG" "$code" "$VERIFY_REPORT"; then
+    :
+  else
+    echo "[$HOST_TAG] ✗ отчёт: не записан $VERIFY_REPORT" >&2
+    FAILURES=$((FAILURES + 1))
+  fi
+}
+
 echo "[$HOST_TAG] verify — basic checks"
 check 'sysctl net.ipv4.ip_forward = 1' forwarding
 check 'ufw active' firewall
@@ -157,6 +231,7 @@ if [[ "$HOST_TAG" == ru ]]; then
   check 'ikev2: udp/4500 слушает' udp 4500
   check 'ikev2: интерфейс xfrm0 существует' ip link show xfrm0
   check 'ikev2 sync: таймер active' service anysda-ikev2-sync.timer
+  traffic_check
   # Ошибка чтения/JSON и время из будущего не должны давать свежий статус.
   check 'ikev2 sync: статус обновлён менее 120 секунд назад' python3 -c '
 import json, time
@@ -174,6 +249,8 @@ else
   check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
   check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
 fi
+
+write_report
 
 if (( FAILURES > 0 )); then
   echo "[$HOST_TAG] verify FAILED: проверок не пройдено: $FAILURES; не проверено: $UNMEASURED" >&2

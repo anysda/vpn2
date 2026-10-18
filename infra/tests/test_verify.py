@@ -115,6 +115,31 @@ if fault == name + '-partial':
     sys.exit(1)
 '''
 
+# Модуль трафика на фикстуре: печатает и дописывает строки, как настоящий.
+TRAFFIC = r'''#!/usr/bin/env python3
+import json
+import os
+import sys
+
+fault = os.environ['FAULT']
+report = sys.argv[sys.argv.index('--report') + 1]
+if fault == 'traffic-crash':
+    sys.exit(1)
+rows = [('Работает', 'подключение', 'WireGuard', 'клиент подключён')]
+if fault in ('traffic-failed', 'traffic-mixed'):
+    rows.append(('Ошибка', 'маршрут: через экзит exit', 'WireGuard', 'нет эха экзита'))
+if fault in ('traffic-unmeasured', 'traffic-mixed'):
+    rows.append(('Не проверено', 'внешняя проба портов', 'IKEv2', 'нет внешней точки измерения'))
+with open(report, 'a') as out:
+    for result, check, component, reason in rows:
+        mark = {'Работает': '✓', 'Ошибка': '✗'}.get(result)
+        print(f'[ru] {mark} {component}: {check} — {reason}' if mark else
+              f'[ru] ? {component}: {check} — не проверено: {reason}')
+        out.write(json.dumps({'check': check, 'component': component, 'result': result,
+                              'reason': reason, 'time': '2026-01-01T00:00:00Z'}, ensure_ascii=False) + '\n')
+sys.exit(1 if any(r[0] == 'Ошибка' for r in rows) else 2 if any(r[0] == 'Не проверено' for r in rows) else 0)
+'''
+
 
 class VerifyTest(unittest.TestCase):
     def test_loaded_eap_mschapv2_is_required(self):
@@ -197,6 +222,9 @@ class VerifyTest(unittest.TestCase):
             source = source.replace('/tmp/yt-check.out', str(root / 'yt-check.out'))
             script = root / 'verify.sh'
             script.write_text(source)
+            traffic = root / 'traffic.py'
+            traffic.write_text(TRAFFIC)
+            report = root / 'report' / 'verify-report.json'
             env = {**os.environ, 'PATH': f'{bin_dir}:' + os.environ['PATH'],
                    'HOST_TAG': role, 'MGMT_IP': '198.51.100.254',
                    'EXIT_TAGS': '' if fault in ('bare', 'empty-exits') else 'exit',
@@ -204,12 +232,14 @@ class VerifyTest(unittest.TestCase):
                    'SCRAPE_COUNTER': str(root / 'scrape-counter'),
                    'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
                    'VERIFY_SCRAPE_INTERVAL': '0.02',
-                   'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443'}
+                   'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443',
+                   'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report)}
             env.pop('BASH_ENV', None)
             result = subprocess.run(['bash', str(script)], env=env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
             counter = root / 'scrape-counter'
             result.scrape_requests = int(counter.read_text()) if counter.exists() else 0
+            result.report = json.loads(report.read_text()) if report.exists() else None
             return result
 
     def test_fresh_scrape_after_tunnel_restart_ten_times(self):
@@ -324,6 +354,37 @@ class VerifyTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertIn('✗ ', result.stdout)
                 self.assertNotIn('не проверено: команда', result.stdout)
+
+    def test_traffic_result_decides_exit_code(self):
+        for fault, code, line in (('', 0, '✓ WireGuard: подключение'),
+                                  ('traffic-unmeasured', 2, '? IKEv2: внешняя проба портов — не проверено'),
+                                  ('traffic-failed', 1, '✗ WireGuard: маршрут: через экзит exit'),
+                                  ('traffic-mixed', 1, '✗ WireGuard: маршрут: через экзит exit'),
+                                  ('traffic-crash', 1, '✗ трафик: контрольный клиент')):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault)
+                print(f'{fault or "healthy"}: exit={result.returncode}')
+                self.assertEqual(result.returncode, code, result.stdout)
+                self.assertIn(line, result.stdout)
+                self.assertEqual(result.report['code'], code)
+
+    def test_report_rows_for_ci(self):
+        result = self.run_verify('traffic-mixed')
+        rows = result.report['checks']
+        self.assertEqual(result.report['host'], 'ru')
+        for row in rows:
+            self.assertEqual(set(row), {'check', 'component', 'result', 'reason', 'time'})
+            self.assertIn(row['result'], ('Работает', 'Ошибка', 'Не проверено', 'Не требуется'))
+        by_check = {(row['component'], row['check']): row for row in rows}
+        self.assertEqual(by_check[('ru', 'sing-box active')]['result'], 'Работает')
+        self.assertEqual(by_check[('tproxy', 'правило fwmark 0x42 → table 101')]['result'], 'Работает')
+        self.assertEqual(by_check[('WireGuard', 'маршрут: через экзит exit')]['result'], 'Ошибка')
+        self.assertEqual(by_check[('IKEv2', 'внешняя проба портов')]['result'], 'Не проверено')
+        self.assertIn('отчёт: ', result.stdout)
+        failed = self.run_verify('sing-box')
+        row = next(r for r in failed.report['checks'] if r['check'] == 'sing-box active')
+        self.assertEqual((row['result'], row['reason']), ('Ошибка', 'код 3'))
+        self.assertEqual(failed.report['code'], 1)
 
 
 if __name__ == '__main__':

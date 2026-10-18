@@ -487,6 +487,11 @@ run_stage_on_host() {
   if [[ "$stage" == "29-control" ]]; then
     push "$DEPLOY_ROOT/control" "control" || return 1
   fi
+  # Контрольный клиент и цель проверки трафика: клиент идёт только на entry.
+  if [[ "$stage" == 99-verify && "$host" == ru ]]; then
+    push "$DEPLOY_ROOT/lib/verify-traffic.py" || return 1
+    push "$DEPLOY_ROOT/lib/verify-target.py" || return 1
+  fi
 
   if [[ "$stage" == '23-emergency' ]]; then
     push "$DEPLOY_ROOT/emergency/vpn2_emergency" || return 1
@@ -637,7 +642,7 @@ run_stage() {
   # Стадии независимы по нодам — гоняем хосты параллельно. Каждый
   # run_stage_on_host уходит в свой субшелл (из-за `&`), поэтому глобалы
   # load_env (SSH_HOST/SSH_PASS/...) не пересекаются между нодами.
-  local pids=() nodes=() rc=0 host_rc pid i h line
+  local pids=() nodes=() rc=0 incomplete=0 host_rc pid i h line
   local verify_logs=''
   if [[ "$stage" == 99-verify ]]; then
     # Причины нужны print_summary в родительском процессе, а вывод идёт сразу.
@@ -647,6 +652,7 @@ run_stage() {
       case "$group" in
         all|foreign|"$skipped")
           printf '[%s] ⊘ пропущен: SSH недоступен в pre-flight\n' "$skipped"
+          incomplete=1
           ;;
       esac
     done
@@ -667,6 +673,7 @@ run_stage() {
     host_rc=0
     wait "$pid" || host_rc=$?
     if [[ "$stage" == 99-verify && $host_rc -eq 2 ]]; then
+      incomplete=1
       local found=0
       while IFS= read -r line; do
         if [[ "$line" == '['*'] ? '*'не проверено:'* ]]; then
@@ -692,6 +699,8 @@ run_stage() {
   if [[ "$stage" == 99-verify && -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
     HOST_TAG=deploy warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
   fi
+  if [[ $incomplete -eq 1 ]]; then return 2; fi
+  return 0
 }
 
 # ----------------------------------------------------------------------------
@@ -1190,11 +1199,15 @@ do_all() {
   wait "$_PREFETCH_PID" || true
   VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
   run_stage 30-frontend      ru
-  run_stage 99-verify        all
+  local verify_rc=0
+  run_stage 99-verify        all || verify_rc=$?
+  [[ $verify_rc -ne 1 ]] || return 1
 
   release_complete
   print_summary
   announce_deploy_done
+  # 2 — установка прошла, но не всё измерено: код доходит до CI.
+  return "$verify_rc"
 }
 
 # ----------------------------------------------------------------------------

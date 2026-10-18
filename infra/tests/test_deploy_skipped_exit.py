@@ -80,7 +80,9 @@ class SkippedExitTests(unittest.TestCase):
 
     def test_unreachable_exit_does_not_stop_full_deploy(self):
         after = run()
-        self.assertEqual(after.returncode, 0, after.stdout)
+        # Деплой доходит до конца, но 99-verify пропущенного экзита не измерена: код 2, не 0 и не 1.
+        self.assertEqual(after.returncode, 2, after.stdout)
+        self.assertIn('⚠ деплой завершён с предупреждениями', after.stdout)
         self.assertIn('⚠ Экзит down пропущен: SSH недоступен в pre-flight', after.stdout)
         self.assertIn('⚠ Продолжаю без экзитов: down', after.stdout)
         self.assertIn('[00-bootstrap] deployed to ru', after.stdout)

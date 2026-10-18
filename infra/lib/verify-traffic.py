@@ -60,6 +60,13 @@ MANUAL_DIR = Path('/etc/sing-box/manual-routes')
 ROUTER = Path('/etc/sing-box/config.json')
 # Прямой выход и одноимённый ручной набор панели.
 DIRECT = 'direct-ru'
+# Эхо прямого пути, отзыва и внешней пробы. Адреса entry клиенту закрыты, кроме
+# tcp 22/80/443 (client_block_rules роутера), поэтому эхо слушает отдельный адрес
+# из документационной сети 203.0.113.0/24 (RFC 5737): он не частный, снаружи не
+# маршрутизируется и висит на WAN-интерфейсе прямого выхода со scope host, то есть
+# в ENTRY_ADDRS (scope global) не попадает. В прямой выход запрос уводит метка в
+# ручном наборе direct-ru, а direct-ru привязан к тому же интерфейсу.
+ECHO_IP = '203.0.113.84'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
 INTERNET = (('connectivitycheck.gstatic.com', '/generate_204', 204),
@@ -715,14 +722,27 @@ class Targets:
         self.wan_ip = wan_ip
         self.port = 20000 + secrets.randbelow(30000)
         self.local = None
+        self.echo = None
         self.remote = {}
         self.exit_ips = {tag: router.exit_ip(tag) for tag in exits}
+        self.iface = router.outbounds.get(DIRECT, {}).get('bind_interface')
+
+    def local_target(self, listen, lifetime):
+        process = subprocess.Popen([sys.executable, '-I', str(TARGET), '--listen', listen,
+                                    '--port', str(self.port), '--lifetime', str(lifetime)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.wait_ready(process)
+        return process
 
     def start(self, lifetime):
-        self.local = subprocess.Popen([sys.executable, '-I', str(TARGET), '--listen', self.wan_ip,
-                                       '--port', str(self.port), '--lifetime', str(lifetime)],
-                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        self.wait_ready(self.local)
+        # Эхо на адресе entry - только для ретранслятора (tg-proxy стоит выше блока адресов entry).
+        self.local = self.local_target(self.wan_ip, lifetime)
+        iface = self.iface or wan_device()
+        if iface:
+            run('ip', 'address', 'replace', ECHO_IP + '/32', 'dev', iface, 'scope', 'host')
+            run('iptables', '-w', '-I', 'INPUT', '1', '-d', ECHO_IP, '-p', 'tcp', '--dport', str(self.port),
+                '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
+            self.echo = self.local_target(ECHO_IP, lifetime)
         for tag, ip in self.exit_ips.items():
             if not ip:
                 continue
@@ -744,10 +764,11 @@ class Targets:
         return False
 
     def stop(self):
-        if self.local:
-            self.local.terminate()
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                self.local.wait(timeout=5)
+        for process in (self.local, self.echo):
+            if process:
+                process.terminate()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=5)
         for tag, process in self.remote.items():
             run('ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
                 'pkill -f "^vpn2-verify-target" || true', check=False)
@@ -783,8 +804,20 @@ def manual_markers(exits, add):
     return markers
 
 
+def echo_addresses():
+    """Интерфейсы, на которых висит адрес эха прямого пути (scope host)."""
+    try:
+        entries = json.loads(run('ip', '-j', '-4', 'address', 'show', 'to', ECHO_IP + '/32', check=False).stdout)
+    except ValueError:
+        return []
+    return [entry['ifname'] for entry in entries
+            if any(a.get('local') == ECHO_IP and a.get('scope') == 'host' for a in entry.get('addr_info', []))]
+
+
 def leftovers():
     found = []
+    if echo_addresses():
+        found.append('адрес эха')
     if run('ip', 'netns', 'list', check=False).stdout.split().count(NS):
         found.append('netns')
     if run('ip', 'link', 'show', HOST_IF, check=False).returncode == 0:
@@ -823,6 +856,8 @@ def cleanup(protocols=()):
         SWAN_FILE.unlink()
         run('swanctl', '--load-all', '--noprompt', check=False)
     manual_markers((), add=False)
+    for iface in echo_addresses():
+        run('ip', 'address', 'del', ECHO_IP + '/32', 'dev', iface, check=False)
     if WORK.is_dir():
         peers = run('wg', 'show', 'wg0', 'peers', check=False).stdout.split()
         for path in WORK.glob('wg-*.pub'):
@@ -876,14 +911,13 @@ class Verifier:
     def paths(self, protocol):
         name = protocol.name
         port = self.targets.port
-        # Адрес entry не обязан входить в geoip-ru: цель прямого пути - метка в
-        # ручном наборе direct-ru, а не адрес. Набор перечитывается не мгновенно.
-        if DIRECT not in self.markers:
-            self.report.add('маршрут: прямой', name, UNKNOWN, f'нет ручного набора {DIRECT}')
+        # Адрес эха не входит в geoip-ru: в прямой выход его уводит метка в
+        # ручном наборе direct-ru. Набор перечитывается не мгновенно.
+        if not self.direct_target():
+            self.report.add('маршрут: прямой', name, UNKNOWN, self.direct_missing())
         else:
             for _ in range(4):
-                result, seen = self.probe(protocol, 'echo', [self.wan_ip, port, self.markers[DIRECT]],
-                                          (self.wan_ip, port))
+                result, seen = self.probe(protocol, 'echo', self.echo_args(), (ECHO_IP, port))
                 leaves = {s['chains'][0] for s in seen if s['chains']}
                 if result and result['local'] and leaves == {DIRECT}:
                     break
@@ -1001,7 +1035,7 @@ class Verifier:
     def negative(self, protocol):
         protocol.down()
         leaks = []
-        for kind, args in (('echo', [self.wan_ip, self.targets.port, 'direct.vpn2-verify']),
+        for kind, args in (('echo', self.echo_args()),
                            ('dns', ['10.99.0.1', 'dns.google'])):
             result, _ = self.probe(protocol, kind, args, retry=False)
             if result:
@@ -1010,9 +1044,18 @@ class Verifier:
                         f'при опущенном туннеле прошли: {", ".join(leaks)}' if leaks else
                         'туннель опущен - эхо и DNS недоступны')
 
+    def direct_target(self):
+        return DIRECT in self.markers and self.targets.echo is not None
+
+    def direct_missing(self):
+        return f'нет ручного набора {DIRECT}' if DIRECT not in self.markers else \
+            f'нет интерфейса выхода {DIRECT} для эха'
+
+    def echo_args(self):
+        return [ECHO_IP, self.targets.port, self.markers.get(DIRECT, 'direct' + MARKER)]
+
     def echo_ok(self, protocol, retry=True):
-        result, _ = self.probe(protocol, 'echo', [self.wan_ip, self.targets.port, 'direct.vpn2-verify'],
-                               retry=retry)
+        result, _ = self.probe(protocol, 'echo', self.echo_args(), retry=retry)
         return bool(result)
 
     def revocation(self, protocol):
@@ -1065,18 +1108,30 @@ class Verifier:
         self.report.add('подключение', name, OK, 'временный клиент подключён и получил адрес в туннеле')
         self.paths(protocol)
         self.negative(protocol)
-        if self.revocation(protocol):
+        if not self.direct_target():
+            # Без эха в прямом выходе живой туннель неотличим от мёртвого.
+            for check in ('отзыв', 'внешняя проба портов'):
+                self.report.add(check, name, UNKNOWN, self.direct_missing())
+        elif self.revocation(protocol):
             self.external(protocol)
         else:
             self.report.add('внешняя проба портов', name, UNKNOWN, 'нет действующего доступа')
 
 
-def detect_wan():
+def default_route(field):
     route = run('ip', '-j', '-4', 'route', 'get', '192.0.2.1', check=False)
     try:
-        return json.loads(route.stdout)[0]['prefsrc']
+        return json.loads(route.stdout)[0][field]
     except (ValueError, IndexError, KeyError):
         return None
+
+
+def detect_wan():
+    return default_route('prefsrc')
+
+
+def wan_device():
+    return default_route('dev')
 
 
 def verify(report, exits, public_host):

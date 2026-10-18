@@ -1,6 +1,7 @@
 """Контрольный клиент 99-verify: отчёт, пробы, ручные метки и настоящий WireGuard в netns."""
 import importlib.util
 import io
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -207,7 +208,7 @@ class DirectRouteTests(unittest.TestCase):
             try:
                 report = vt.Report('ru')
                 verifier = vt.Verifier(report, ['se'], '198.51.100.7', '198.51.100.7')
-                verifier.targets.start = lambda **_: None
+                verifier.targets.start = lambda **_: setattr(verifier.targets, 'echo', True)
                 verifier.internet_check = verifier.dns_check = lambda _protocol: None
                 verifier.egress_check = lambda _protocol: None
 
@@ -228,6 +229,95 @@ class DirectRouteTests(unittest.TestCase):
             self.assertEqual(rows['маршрут: прямой'], 'Работает', out.getvalue())
             self.assertEqual(rows['маршрут: через экзит se'], 'Работает', out.getvalue())
             self.assertEqual(report.code(), 0)
+
+
+def client_blocked(ip, port, rules):
+    """Отказ client_block_rules роутера для tcp-назначения (семантика sing-box)."""
+    address = ipaddress.ip_address(ip)
+    # ip_is_private в sing-box - netip.IsPrivate и соседи, без документационных сетей.
+    private = any(address in ipaddress.ip_network(net) for net in (
+        '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '169.254.0.0/16',
+        '224.0.0.0/4', '0.0.0.0/32'))
+
+    def match(rule):
+        if rule.get('type') == 'logical':
+            return all(match(r) for r in rule['rules'])
+        if 'ip_cidr' in rule:
+            return any(address in ipaddress.ip_network(net) for net in rule['ip_cidr'] if ':' not in net)
+        if 'ip_is_private' in rule:
+            return private
+        if 'port' in rule:
+            return (port in rule['port']) != bool(rule.get('invert'))
+        return 'network' in rule and 'tcp' in rule['network']
+    return any(match(rule) for rule in rules)
+
+
+class EchoTargetTests(unittest.TestCase):
+    """Эхо прямого пути, отзыва и отрицательного контроля - цель, которую роутер пускает клиенту."""
+
+    def test_echo_target_is_open_to_client_and_leaves_direct(self):
+        wan = '198.51.100.7'
+        spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/lib/gen-router-config.py')
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        saved_env = os.environ.get('ENTRY_ADDRS')
+        os.environ['ENTRY_ADDRS'] = wan
+        try:
+            rules = gen.client_block_rules()
+        finally:
+            os.environ.pop('ENTRY_ADDRS')
+            if saved_env is not None:
+                os.environ['ENTRY_ADDRS'] = saved_env
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manual = root / 'manual'
+            manual.mkdir()
+            (manual / 'direct-ru.json').write_text(json.dumps({'version': 2, 'rules': []}))
+            router = root / 'config.json'
+            router.write_text(json.dumps({'outbounds': [{'tag': 'direct-ru', 'type': 'direct',
+                                                         'bind_interface': 'eth0'}]}))
+            saved = vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns
+            vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = manual, router, (), lambda *_: None
+            sent = []
+            state = {'up': True}
+            try:
+                report = vt.Report('ru')
+                verifier = vt.Verifier(report, [], wan, wan)
+                verifier.targets.start = lambda **_: setattr(verifier.targets, 'echo', True)
+                verifier.internet_check = verifier.dns_check = verifier.egress_check = lambda _protocol: None
+
+                def probe(_protocol, kind, args, *_, **__):
+                    if kind != 'echo':
+                        return None, []
+                    ip, port, host = args
+                    sent.append((ip, port))
+                    # Отказ роутера или опущенный туннель - ответа нет; без метки direct-ru
+                    # адрес вне geoip-ru ушёл бы в экзит.
+                    if not state['up'] or client_blocked(ip, port, rules):
+                        return None, []
+                    leaf = 'direct-ru' if host == verifier.markers.get('direct-ru') else 'foreign-best'
+                    ok = leaf == 'direct-ru'
+                    return ({'peer': ip, 'local': True} if ok else None), [{'chains': [leaf], 'rule': '',
+                                                                          'payload': ''}]
+
+                verifier.probe = probe
+                protocol = type('Protocol', (), {'name': 'WireGuard',
+                                                 'down': lambda _self: state.update(up=False)})()
+                with redirect_stdout(io.StringIO()) as out:
+                    verifier.prepare()
+                    verifier.paths(protocol)
+                    echo = verifier.echo_ok(protocol, retry=False)
+                    verifier.negative(protocol)
+            finally:
+                vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = saved
+            print(out.getvalue().strip(), sent)
+            rows = {row['check']: row['result'] for row in report.rows}
+            self.assertEqual(rows['маршрут: прямой'], 'Работает', out.getvalue())
+            self.assertTrue(echo, 'эхо отзыва и внешней пробы режет блок адресов entry')
+            self.assertEqual(rows['отрицательный контроль'], 'Работает', out.getvalue())
+            for ip, port in sent:
+                self.assertFalse(client_blocked(ip, port, rules), f'{ip}:{port} закрыт клиенту')
+                self.assertNotEqual(ip, wan)
 
 
 class ExitEgressTests(unittest.TestCase):
@@ -325,7 +415,7 @@ class IKEv2RevokeTests(unittest.TestCase):
 # Настоящий сервер wg0 и клиент в netns vpn2-verify, внутри одноразовых сетевого
 # и файлового пространств: на хост CI ничего не попадает.
 NETNS_DRIVER = r'''
-import importlib.util, json, subprocess, sys, time
+import importlib.util, json, socket, subprocess, sys, time
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('vt', sys.argv[1])
 vt = importlib.util.module_from_spec(spec)
@@ -379,6 +469,19 @@ result['echo_revoked'] = echo()
 wg.issue('b', addresses[1])
 result['connect_b'] = wg.connect('b', (vt.HOST_IP, wg.port))
 result['echo_b'] = echo()
+# Эхо прямого пути: адрес на WAN выхода direct-ru, ответ сокету, привязанному к WAN.
+targets = vt.Targets(WAN, [], type('R', (), {'outbounds': {'direct-ru': {'bind_interface': 'wan0'}}})())
+targets.start(lifetime=60)
+bound = socket.socket()
+bound.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'wan0')
+bound.settimeout(5)
+bound.connect((vt.ECHO_IP, targets.port))
+bound.sendall(f'POST /vpn2-verify/{"0" * 32} HTTP/1.0\r\nContent-Length: 32\r\n\r\n{"0" * 32}'.encode())
+reply = bound.recv(4096).decode()
+result['echo_direct'] = json.loads(reply.split('\r\n\r\n', 1)[1])['local']
+result['echo_global'] = vt.ECHO_IP in run('ip', '-o', 'address', 'show', 'scope', 'global').stdout
+targets.stop()
+result['echo_leftover'] = 'адрес эха' in vt.leftovers()
 # Обрыв посреди проверки: остатки снимает следующий запуск по признакам.
 vt.cleanup()
 result['leftovers'] = vt.leftovers()
@@ -411,6 +514,9 @@ class NetnsWireGuardTests(unittest.TestCase):
             self.assertFalse(data['echo_revoked'])
             self.assertTrue(data['connect_b'])
             self.assertTrue(data['echo_b'])
+            self.assertTrue(data['echo_direct'], 'эхо прямого пути отвечает сокету direct-ru со своего адреса')
+            self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
+            self.assertTrue(data['echo_leftover'])
             self.assertEqual(data['leftovers'], [])
             self.assertEqual(data['peers'], [])
             self.assertEqual(data['input'], 0)

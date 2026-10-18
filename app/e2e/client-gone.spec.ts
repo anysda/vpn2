@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, loginApi, test, uniq } from './support/fixtures'
 import { clientCard, clientName } from './support/clients'
+import { waitAccess } from './support/access'
 
 /**
  * Клиента удаляет второй админ (или тест через API), пока панель грузит его
@@ -45,7 +46,7 @@ test('клиента удалили до загрузки карточки: па
     // только потом пропустить запрос к серверу — он ответит настоящим 404.
     let deleted: Promise<unknown> | null = null
     await page.route(new RegExp(`/api/clients/${first.id}$`), async (route) => {
-      deleted ??= page.request.delete(`/api/clients/${first.id}`)
+      deleted ??= page.request.delete(`/api/clients/${first.id}`).then(async r => waitAccess(page.request, (await r.json()).operation))
       await deleted
       await route.continue()
     })

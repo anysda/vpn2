@@ -4,6 +4,7 @@ import { clients, devices } from '../../database/schema'
 import { requireAuth } from '../../utils/auth'
 import { clientStatus } from '../../utils/client-status'
 import { deviceConfigName } from '../../utils/naming'
+import { latestAccess } from '../../utils/access-operations'
 
 /** Детали клиента + его девайсы — для модалки. */
 export default defineEventHandler(async (event) => {
@@ -37,6 +38,8 @@ export default defineEventHandler(async (event) => {
   })
 
   return {
+    operation: await latestAccess(client.id),
+    deleting: client.deleting,
     id: client.id,
     name: client.name,
     filterTraffic: client.filterTraffic,

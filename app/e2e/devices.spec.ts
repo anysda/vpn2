@@ -86,7 +86,8 @@ test.describe('девайсы', () => {
 
     await dc.reissue.click()
     await confirm.getByRole('button', { name: 'Перевыпустить' }).click()
-    await expect(toast(page, `Ключи девайса «${device}» перевыпущены`)).toBeVisible()
+    await expect(toast(page, 'Перевыпуск выполняется')).toBeVisible()
+    await expect(page.getByTestId('client-detail').getByRole('status')).toContainText('Ключи перевыпущены', { timeout: 45_000 })
     await expect(confirm).toBeHidden()
 
     const before = qrs.length
@@ -110,7 +111,7 @@ test.describe('девайсы', () => {
     await expect(dc.card).toBeVisible()
     await dc.remove.click()
     await del.getByRole('button', { name: 'Удалить' }).click()
-    await expect(toast(page, `Девайс «${device}» удалён`)).toBeVisible()
+    await expect(toast(page, 'Отключение выполняется')).toBeVisible()
     await expect(dc.card).toHaveCount(0)
     await expect(page.getByText('Пока нет девайсов — добавь первый.')).toBeVisible()
   })
@@ -138,7 +139,8 @@ test.describe('девайсы', () => {
 
     await dc.reissue.click()
     await page.getByRole('dialog', { name: 'Перевыпустить ключи девайса?' }).getByRole('button', { name: 'Перевыпустить' }).click()
-    await expect(toast(page, `Ключи девайса «${device}» перевыпущены`)).toBeVisible()
+    await expect(toast(page, 'Перевыпуск выполняется')).toBeVisible()
+    await expect(page.getByTestId('client-detail').getByRole('status')).toContainText('Ключи перевыпущены', { timeout: 45_000 })
 
     await dc.ovpn.click()
     await expect(ovpn.getByText('генерирую сертификат…')).toBeHidden({ timeout: 30_000 })

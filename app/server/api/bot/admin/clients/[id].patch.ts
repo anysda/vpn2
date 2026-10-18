@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { updateClient } from '../../../../utils/client-ops'
+import { accessRequestKey } from '../../../../utils/access-operations'
 import { requireBotAuth } from '../../../../utils/bot-api'
 import { BOT_ACTOR } from '../../../../utils/events'
 import { readBodyAs } from '../../../../utils/validate'
@@ -16,5 +17,7 @@ export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   const body = await readBodyAs(event, Body)
-  return updateClient(id, body, BOT_ACTOR)
+  const result = await updateClient(id, body, BOT_ACTOR, accessRequestKey(event))
+  if (result.operation) setResponseStatus(event, 202)
+  return result
 })

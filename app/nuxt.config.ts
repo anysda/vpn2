@@ -107,6 +107,7 @@ export default defineNuxtConfig({
     // возвращает классический full-tunnel 0.0.0.0/0.
     wgSplitLocal: true,
     ovpnEnabled: true,
+    ikev2Enabled: true,
     ovpnPort: 1194,
     ovpnProto: 'udp',
     ovpnPublicHost: '',

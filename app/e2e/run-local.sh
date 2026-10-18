@@ -55,6 +55,12 @@ if [[ -z ${E2E_SKIP_BUILD:-} && -z ${E2E_SHARD:-} ]]; then
 fi
 
 if [[ -z ${E2E_SHARD:-} ]]; then
+dk build --build-arg PANEL_IMAGE="$IMAGE" -f "$APP_DIR/e2e/Dockerfile.vpn" -t "$IMAGE-vpn" "$APP_DIR/e2e"
+IMAGE="$IMAGE-vpn"
+fi
+export E2E_VPN_SERVICES=1
+
+if [[ -z ${E2E_SHARD:-} ]]; then
 started=$SECONDS
 RUN_CADDY_TESTS=1 python3 "$APP_DIR/../infra/tests/test_panel_proxy.py"
 # Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
@@ -98,7 +104,7 @@ trap 'exit 130' INT
 
 # Все тесты входят с одного адреса (Caddy в docker), а лимит входов панели -
 # 10 неудачных за 5 минут на адрес: прогон упёрся бы в него на середине.
-stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
+stand_up "$NAME" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --mount "type=volume,src=$NAME-data,dst=/var/lib/anysda-vpn2" \
   "${ENTRY_DOCKER_ARGS[@]}" \
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_TGBOT_SECRET="$PASS"
 stand_wait "$NAME" "http://127.0.0.1:$PORT"

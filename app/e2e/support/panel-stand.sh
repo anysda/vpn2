@@ -19,6 +19,7 @@ dk() { "${DK[@]}" "$@"; }
 stand_down() {
   dk rm -f "$1" "$1-caddy" >/dev/null 2>&1 || true
   dk network rm "$1" >/dev/null 2>&1 || true
+  dk volume rm "$1-data" >/dev/null 2>&1 || true
 }
 
 # stand_up <имя> <образ> <адрес:порт Caddy на хосте> <пароль admin> [аргументы docker run панели...]
@@ -29,6 +30,10 @@ stand_up() {
   local command=(node .output/server/index.mjs)
   if [[ ${STAND_CMD+x} ]]; then command=("${STAND_CMD[@]}"); fi
   shift 4
+  local vpn_args=()
+  if [[ ${E2E_VPN_SERVICES:-0} == 1 ]]; then
+    vpn_args=(--cap-add NET_ADMIN --device /dev/net/tun)
+  fi
   stand_down "$name"
   dk network create "$name" >/dev/null
   dk run -d --name "$name" --network "$name" --network-alias panel \
@@ -42,7 +47,7 @@ stand_up() {
     -e NUXT_NODE_HOSTS='ru=192.0.2.1,nl=192.0.2.2,fi=192.0.2.3,us=192.0.2.4' \
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
-    "$@" "$image" sh -ec \
+    "${vpn_args[@]}" "$@" "$image" sh -ec \
     'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; exec "$@"' \
     -- "${command[@]}" >/dev/null
 
@@ -87,6 +92,14 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
   -keyout /etc/strongswan/pki/ca.key -out /etc/strongswan/pki/ca.crt -days 30 \
   -subj "/CN=anysda-vpn2 IKEv2 CA" 2>/dev/null
 IN
+
+  if [[ ${E2E_VPN_SERVICES:-0} == 1 ]]; then
+    awk '/^cat > .*anysda-ikev2-sync.py.*PYEOF/ {f=1; next} f && /^PYEOF$/ {exit} f' \
+      "$STAND_REPO_DIR/infra/scripts/27-ikev2.sh" \
+      | dk exec -i "$name" sh -c 'cat > /tmp/ikev2-test-sync.py'
+    dk exec -i "$name" sh -c 'cat > /tmp/vpn-services.sh' < "$STAND_APP_DIR/e2e/support/vpn-services.sh"
+    dk exec -d "$name" bash /tmp/vpn-services.sh
+  fi
 
   # стадия 20: снимок маршрутов роутера (route-plan.json) тем же генератором и
   # скриптом применения, без правил из панели. Без него «Проверить адрес» на

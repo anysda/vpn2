@@ -569,7 +569,8 @@ def _devices_text(view: dict) -> str:
     if not devices:
         return 'У вас пока нет устройств. Нажмите «➕ Добавить устройство» в меню.'
     limit = _limit_label(view.get('deviceLimit'))
-    return f'📱 *Ваши устройства* ({len(devices)}/{limit})\nВыберите устройство:'
+    return (f'📱 *Ваши устройства* ({len(devices)}/{limit})\n'
+            f'{md(view.get("accessStatus", "Состояние не подтверждено"))}\nВыберите устройство:')
 
 
 def _find_device(view: dict, device_id: str) -> dict | None:
@@ -1002,7 +1003,7 @@ async def _handle_callback(chat_id: int, message_id: int | None,
         if message_id and device is not None:
             await tg_edit(
                 chat_id, message_id,
-                f'✅ Ключи перевыпущены.\n\n{_device_card_text(device)}',
+                f'Перевыпуск выполняется\n\n{_device_card_text(device)}',
                 'Markdown',
                 _device_card_markup(arg),
             )
@@ -1081,7 +1082,8 @@ def _admin_card_text(c: dict) -> str:
     tg_txt = 'привязан ✅' if c.get('tgLinked') else 'не привязан ✖'
     return (
         f'👤 {md_bold(c.get("name", "?"))}\n'
-        f'Статус: {status_txt}\n'
+        f'Желаемое состояние: {status_txt}\n'
+        f'{md(c.get("accessStatus", "Состояние не подтверждено"))}\n'
         f'Устройств: {count}/{limit}\n'
         f'Срок действия: {md(exp_txt)}\n'
         f'Telegram: {tg_txt}'
@@ -1096,6 +1098,8 @@ def _admin_card_markup(c: dict) -> dict:
                   {'text': '❄️ Заморозить', 'callback_data': f'afz:{cid}'})
     return {'inline_keyboard': [
         [freeze_btn],
+        *([[{'text': 'Повторить', 'callback_data': f'aretry:{cid}'}]]
+          if (c.get('operation') or {}).get('status') == 'pending' else []),
         [
             {'text': '➖ Лимит', 'callback_data': f'alm-:{cid}'},
             {'text': '➕ Лимит', 'callback_data': f'alm+:{cid}'},
@@ -1166,7 +1170,19 @@ async def _handle_admin_callback(message_id: int | None, callback_id: str,
             await tg_answer_callback(callback_id, e.message, show_alert=True)
             return
         await tg_answer_callback(
-            callback_id, 'Клиент заморожен' if new_frozen else 'Клиент разморожен')
+            callback_id, 'Отключение запущено' if new_frozen else 'Включение запущено')
+        await _admin_show_card(message_id, arg)
+        return
+
+    if action == 'aretry':
+        c = await api_admin_client(arg)
+        operation = c.get('operation') or {}
+        operation_id = operation.get('id', '')
+        if not re.fullmatch(r'[a-f0-9-]{36}', operation_id):
+            await tg_answer_callback(callback_id, 'Операция не найдена', show_alert=True)
+            return
+        await _bot_request('POST', f'/api/bot/admin/access-operations/{operation_id}/retry')
+        await tg_answer_callback(callback_id, 'Повтор запущен')
         await _admin_show_card(message_id, arg)
         return
 
@@ -1238,7 +1254,7 @@ async def _handle_admin_callback(message_id: int | None, callback_id: str,
         except BotApiError as e:
             await tg_answer_callback(callback_id, e.message, show_alert=True)
             return
-        await tg_answer_callback(callback_id, 'Клиент удалён')
+        await tg_answer_callback(callback_id, 'Отключение запущено')
         await _admin_show_list(message_id)
         return
 

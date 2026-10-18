@@ -90,7 +90,8 @@ class ShardTests(unittest.TestCase):
             self.assertIn('e2e/auth.spec.ts', args)
             process.wait.assert_called_once()
         self.assertEqual(sum('merge-reports' in args for args in calls), 1)
-        self.assertEqual(sum('rm' in args for args in calls), 4)
+        self.assertEqual(sum('rm' in args for args in calls), 6)
+        self.assertEqual(sum('volume' in args and 'rm' in args for args in calls), 2)
 
     def test_default_ports_stay_below_ephemeral_range_for_every_shard_count(self):
         for count in range(2, 17):
@@ -115,7 +116,8 @@ class ShardTests(unittest.TestCase):
     def test_cancellation_stops_children_and_removes_containers(self):
         code, _started, calls = self.run_gate(cancel=True)
         self.assertEqual(code, 143)
-        self.assertEqual(sum('rm' in args for args in calls), 4)
+        self.assertEqual(sum('rm' in args for args in calls), 6)
+        self.assertEqual(sum('volume' in args and 'rm' in args for args in calls), 2)
 
     def test_overlapping_ports_fail_before_start(self):
         with self.assertRaisesRegex(SystemExit, 'distinct valid ports'):

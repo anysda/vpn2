@@ -5,9 +5,8 @@ import { clients, devices } from '../database/schema'
 import { notifyBot, notifyClient } from './bot-events'
 import { minExpiryMs } from './expiry'
 import { generateClientPassword } from './password'
-import { syncWireguardConfig } from './wireguard'
-import { killOvpnClientQuiet, ovpnCn, removeCcd, syncOpenvpnConfig, withRevokedDeviceCerts } from './openvpn'
-import { syncIkev2, terminateIkev2Sa } from './ikev2'
+import { enqueueAccess, replayAccess } from './access-operations'
+import type { AccessOperation } from '../../shared/access-operation'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
 import { joinDetail, recordEvent } from './events'
@@ -79,8 +78,17 @@ export async function createClient(input: ClientCreateInput, actor: string): Pro
 }
 
 /** Обновить клиента: валидация, апдейт, ресинк WG/OVPN, уведомления клиенту. */
-export async function updateClient(id: number, patch: ClientPatch, actor: string): Promise<Client> {
+export async function updateClient(id: number, patch: ClientPatch, actor: string, key?: string): Promise<Partial<Client> & { id: number, operation?: AccessOperation }> {
   const db = useDb()
+  if (key && (patch.frozenManual !== undefined || patch.expiresAt !== undefined)) {
+    const normalized = { ...patch,
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.expiresAt !== undefined ? { expiresAt: patch.expiresAt ? new Date(patch.expiresAt) : null } : {}),
+      ...(patch.preferredExit !== undefined ? { preferredExit: patch.preferredExit || null } : {}),
+    } as Partial<typeof clients.$inferInsert>
+    const replay = await replayAccess(key, { clientId: id, patch: normalized })
+    if (replay) return replay
+  }
   assertExpiryAllowed(patch.expiresAt)
 
   const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
@@ -128,7 +136,9 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   if (typeof patch.deviceLimit === 'number') {
     conditions.push(sql`(select count(*) from ${devices} where ${devices.clientId} = ${id}) <= ${patch.deviceLimit}`)
   }
-  const [row] = await db.update(clients).set(upd).where(and(...conditions)).returning()
+  const changesAccess = patch.frozenManual !== undefined || patch.expiresAt !== undefined
+  const queued = changesAccess ? await enqueueAccess({ clientId: id, actor, key, patch: upd, condition: and(...conditions) }) : null
+  const row = queued ? queued.client : (await db.update(clients).set(upd).where(and(...conditions)).returning())[0]
   if (!row) {
     const [exists] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).limit(1)
     if (!exists) throw createError({ statusCode: 404, statusMessage: 'not_found' })
@@ -145,24 +155,6 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     })
   }
 
-  // Смена заморозки/срока меняет активность — пере-синхроним девайсы.
-  if (patch.frozenManual !== undefined || patch.expiresAt !== undefined) {
-    await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client update failed'))
-    await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'ovpn sync after client update failed'))
-    // IKEv2: при заморозке клиента терминируем все его активные SA — иначе
-    // charon держит туннель до rekey. syncIkev2 затем выпиливает secrets.
-    if (patch.frozenManual === true) {
-      const devs = await db.select({ username: devices.ikev2Username })
-        .from(devices).where(eq(devices.clientId, id))
-      for (const d of devs) {
-        if (!d.username) continue
-        await terminateIkev2Sa(d.username).catch(err =>
-          useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after freeze skipped'))
-      }
-    }
-    await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client update failed'))
-  }
-
   if (patch.preferredExit !== undefined) {
     await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
   }
@@ -172,7 +164,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     const [dc] = await db.select({ n: count() }).from(devices).where(eq(devices.clientId, id))
     await recordEvent({
       type: row.frozenManual ? 'client_frozen' : 'client_unfrozen', level: 'info', object, actor,
-      title: `${row.frozenManual ? 'Клиент заморожен' : 'Клиент разморожен'} · ${row.name}`,
+      title: `${row.frozenManual ? 'Отключение запущено' : 'Включение запущено'} · ${row.name}`,
       detail: joinDetail(devicesText(Number(dc?.n ?? 0)), 'вручную', actor),
     })
   }
@@ -199,80 +191,19 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
         await notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`, row.name)
       }
     }
-    if (patch.frozenManual !== undefined && patch.frozenManual !== before.frozenManual) {
-      await notifyClient(chat, patch.frozenManual
-        ? '❄️ Ваш доступ к VPN приостановлен администратором.'
-        : '✅ Ваш доступ к VPN восстановлен.', row.name)
-    }
-    if (patch.expiresAt !== undefined) {
-      const oldT = before.expiresAt ? before.expiresAt.getTime() : null
-      const newT = row.expiresAt ? row.expiresAt.getTime() : null
-      if (oldT !== newT) {
-        await notifyClient(chat, row.expiresAt
-          ? `🗓 Срок действия вашего ключа: до ${row.expiresAt.toLocaleDateString('ru-RU')}.`
-          : '🗓 Срок действия ключа снят — доступ бессрочный.', row.name)
-      }
-    }
   }
 
-  return row
+  return { ...row, ...(queued ? { operation: queued.operation } : {}) }
 }
 
 /** Удалить клиента: каскадно девайсы, ресинк WG, отзыв OVPN-сертификатов. */
-export async function deleteClient(id: number, actor: string): Promise<void> {
-  const db = useDb()
-  // При частичном отзыве оставляем ВСЕ записи: повтор проходит уже отозванные
-  // серийники и доводит оставшиеся до CRL, прежде чем сработает каскад DELETE.
-  const { removed, devRows } = await withRevokedDeviceCerts(eq(devices.clientId, id), async (devRows) => {
-    const [removed] = await db.delete(clients).where(eq(clients.id, id)).returning()
-    return { removed, devRows }
-  })
-  if (!removed) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after client delete failed'))
-
-  for (const d of devRows) {
-    await removeCcd(ovpnCn(d.id)).catch(() => {})
-    await killOvpnClientQuiet(ovpnCn(d.id))
-  }
-
-  // IKEv2: терминируем SA каждого устройства + syncIkev2 убирает secrets.
-  for (const d of devRows) {
-    if (!d.ikev2Username) continue
-    await terminateIkev2Sa(d.ikev2Username).catch(err =>
-      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after client delete skipped'))
-  }
-  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after client delete failed'))
-  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
-
-  await recordEvent({
-    type: 'client_deleted', level: 'info', object: `client:${removed.id}`, actor,
-    title: `Клиент удалён · ${removed.name}`, detail: joinDetail(devicesText(devRows.length), actor),
-  })
-
-  // Даже переполненная очередь не должна помешать отзыву доступа выше.
-  // Ждём постоянной записи события до завершения запроса.
-  if (removed.tgChatId) {
-    await notifyClient(removed.tgChatId, '🗑 Ваш профиль удалён администратором. Доступ к VPN прекращён.', removed.name)
-  }
+export async function deleteClient(id: number, actor: string, key?: string) {
+  const { operation } = await enqueueAccess({ clientId: id, kind: 'delete', actor, key })
+  return { operation }
 }
 
 /** Общее удаление устройства из панели и бота; ошибка CA оставляет запись для повтора. */
-export async function deleteDevice(clientId: number, deviceId: number) {
-  const db = useDb()
-  const device = await withRevokedDeviceCerts(and(eq(devices.id, deviceId), eq(devices.clientId, clientId))!, async ([device]) => {
-    if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-    await db.delete(devices).where(eq(devices.id, deviceId))
-    return device
-  })
-  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'wg sync after device delete failed'))
-  await removeCcd(ovpnCn(device.id)).catch(() => {})
-  await killOvpnClientQuiet(ovpnCn(device.id))
-  if (device.ikev2Username) {
-    await terminateIkev2Sa(device.ikev2Username).catch(err =>
-      useLogger().warn({ err: (err as Error).message }, 'ikev2 terminate after device delete skipped'))
-  }
-  await syncIkev2().catch(err => useLogger().error({ err }, 'ikev2 sync after device delete failed'))
-  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'client prefs sync failed'))
-  return device
+export async function deleteDevice(clientId: number, deviceId: number, actor: string, key?: string) {
+  const { operation } = await enqueueAccess({ clientId, deviceId, kind: 'delete', actor, key })
+  return { operation }
 }

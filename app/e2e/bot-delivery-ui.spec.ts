@@ -54,7 +54,7 @@ test.describe('время в строках уведомлений', () => {
     await expect(row('«Ночь»').locator('small')).toHaveText('сегодня 00:05')
     await expect(row('«День»: не отправлено. Ещё попыток: 2.').locator('small')).toHaveText('сегодня 14:31')
     console.log('Колокольчик:', (await dialog.locator('.bi small').allTextContents()).join(' | '))
-    expect((await page.request.delete(`/api/clients/${id}`)).status()).toBe(200)
+    expect((await page.request.delete(`/api/clients/${id}`)).status()).toBe(202)
   })
 })
 

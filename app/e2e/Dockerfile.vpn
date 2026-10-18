@@ -1,0 +1,5 @@
+ARG PANEL_IMAGE=vpn2-panel:e2e
+FROM ${PANEL_IMAGE}
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 openvpn strongswan-charon strongswan-swanctl libcharon-extra-plugins libstrongswan-standard-plugins \
+  && rm -rf /var/lib/apt/lists/*

@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
-import { devices } from '../database/schema'
+import { clients, devices } from '../database/schema'
 import { nextPoolAddress } from './address-pools'
 
 /**
@@ -13,6 +13,8 @@ export async function createDeviceWithAddresses(
   guard: (names: string[]) => void,
 ) {
   return useDb().transaction(async (tx) => {
+    const [client] = await tx.select().from(clients).where(eq(clients.id, clientId))
+    if (!client || client.deleting) throw createError({ statusCode: 409, message: 'Клиент удаляется' })
     const own = await tx.select({ name: devices.name }).from(devices).where(eq(devices.clientId, clientId))
     guard(own.map(d => d.name))
     const used = await tx.select({ wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip }).from(devices)

@@ -1,35 +1,17 @@
-import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { useDb } from '../../../../database/client'
-import { devices } from '../../../../database/schema'
 import { botClientView, clientByChat, requireBotAuth } from '../../../../utils/bot-api'
-import { reissueDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
-import { reissueDeviceOvpn, syncOpenvpnConfig } from '../../../../utils/openvpn'
-import { reissueDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
+import { accessRequestKey, enqueueAccess } from '../../../../utils/access-operations'
 import { readBodyAs } from '../../../../utils/validate'
 
 const Body = z.object({ chatId: z.number().int() })
 
-// Клиент перевыпускает ключи своего девайса через бота.
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const deviceId = Number(getRouterParam(event, 'deviceId'))
-  if (!Number.isFinite(deviceId)) throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
+  if (!Number.isSafeInteger(deviceId) || deviceId < 1) throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
   const body = await readBodyAs(event, Body)
   const client = await clientByChat(body.chatId)
-  const db = useDb()
-
-  const [device] = await db.select({ id: devices.id }).from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.clientId, client.id)))
-    .limit(1)
-  if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  await reissueDeviceOvpn(deviceId)
-  await reissueDeviceWg(deviceId)
-  await reissueDeviceIkev2(deviceId)
-  await syncWireguardConfig().catch(err => useLogger().error({ err }, 'bot: wg sync after reissue failed'))
-  await syncOpenvpnConfig().catch(err => useLogger().error({ err }, 'bot: ovpn sync after reissue failed'))
-  await syncIkev2().catch(err => useLogger().error({ err }, 'bot: ikev2 sync after reissue failed'))
-
-  return botClientView(client.id)
+  const { operation } = await enqueueAccess({ clientId: client.id, deviceId, kind: 'reissue', actor: 'bot', key: accessRequestKey(event) })
+  setResponseStatus(event, 202)
+  return { ...await botClientView(client.id), operation }
 })

@@ -117,6 +117,7 @@ def main():
                 subprocess.run([*docker, "rm", "-f", shard_name, f"{shard_name}-caddy",
                                 f"{shard_name}-browser"], capture_output=True, check=False)
                 subprocess.run([*docker, "network", "rm", shard_name], capture_output=True, check=False)
+                subprocess.run([*docker, "volume", "rm", f"{shard_name}-data"], capture_output=True, check=False)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 // Только одноразовый локальный контейнер run-local.sh, никогда внешний стенд.
 export const container = process.env.E2E_FAULT_CONTAINER
 const docker = (process.env.DOCKER || 'docker').split(/\s+/)
-export const pki = '/etc/openvpn/server/pki'
+const pki = '/etc/openvpn/server/pki'
 
 export function inside(code: string, ...args: unknown[]): string {
   return execFileSync(docker[0]!, [...docker.slice(1), 'exec', container!, 'node', '--input-type=module', '-e', code,

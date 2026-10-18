@@ -16,6 +16,7 @@ test('OpenVPN повторяет разрыв удалённого устрой�
     innerJoin: async () => [{ id: 43, ovpnCert: 'cert', ovpnIp: '10.67.67.3', frozenManual: false }],
   }
   await runInNewContext(`${code}\nsyncOpenvpnConfig()`, {
+    withCaLock: (run: () => Promise<void>) => run(),
     useRuntimeConfig: () => ({ ovpnEnabled: true }),
     caReady: async () => true,
     useDb: () => db,

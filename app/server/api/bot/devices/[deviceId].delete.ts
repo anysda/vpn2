@@ -1,5 +1,6 @@
 import { botClientView, clientByChat, requireBotAuth } from '../../../utils/bot-api'
 import { deleteDevice } from '../../../utils/client-ops'
+import { accessRequestKey } from '../../../utils/access-operations'
 
 // Клиент удаляет свой девайс через бота.
 export default defineEventHandler(async (event) => {
@@ -10,7 +11,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
   }
   const client = await clientByChat(chatId)
-  await deleteDevice(client.id, deviceId)
-
-  return botClientView(client.id)
+  const { operation } = await deleteDevice(client.id, deviceId, 'bot', accessRequestKey(event))
+  setResponseStatus(event, 202)
+  return { ...await botClientView(client.id), operation }
 })

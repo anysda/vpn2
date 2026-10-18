@@ -4,6 +4,8 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import { deviceConfigName } from './naming'
+import { latestAccess } from './access-operations'
+import { accessStatus } from '../../shared/access-operation'
 
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
@@ -65,7 +67,10 @@ export async function botClientView(clientId: number) {
     .from(devices)
     .where(eq(devices.clientId, clientId))
     .orderBy(asc(devices.createdAt))
+  const operation = await latestAccess(c.id)
   return {
+    operation,
+    accessStatus: operation ? accessStatus(operation) : 'Состояние не подтверждено',
     id: c.id,
     name: c.name,
     deviceLimit: c.deviceLimit,

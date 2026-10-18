@@ -1,6 +1,7 @@
 import type { APIRequestContext } from '@playwright/test'
 import { ADMIN_USER, NODES, authPost, expect, loginApi, test, uniq } from './support/fixtures'
 import { container, inside } from './support/openvpn-ca'
+import { waitAccess } from './support/access'
 
 interface FeedRow { id: number, at: number, type: string, level: string, title: string, detail: string }
 
@@ -23,6 +24,7 @@ async function lastId(api: APIRequestContext) {
 
 test.describe('журнал событий', () => {
   test('клиент: создание, заморозка, срок, перевыпуск, удаление — с автором', async ({ page }) => {
+    test.setTimeout(180_000)
     await loginApi(page)
     const api = page.request
     const mark = await lastId(api)
@@ -31,24 +33,38 @@ test.describe('журнал событий', () => {
     expect(created.status()).toBe(200)
     const { id } = await created.json()
     const device = await (await api.post(`/api/clients/${id}/devices`, { data: { name: 'phone' } })).json()
-    expect((await api.patch(`/api/clients/${id}`, { data: { frozenManual: true } })).status()).toBe(200)
-    // Повтор того же значения — не событие.
-    expect((await api.patch(`/api/clients/${id}`, { data: { frozenManual: true } })).status()).toBe(200)
-    expect((await api.patch(`/api/clients/${id}`, { data: { frozenManual: false } })).status()).toBe(200)
-    expect((await api.patch(`/api/clients/${id}`, { data: { expiresAt: '2031-05-20T12:00:00.000Z' } })).status()).toBe(200)
-    expect((await api.post(`/api/clients/${id}/devices/${device.id}/reissue`)).status()).toBe(200)
-    expect((await api.post(`/api/clients/${id}/reissue`)).status()).toBe(200)
-    expect((await api.delete(`/api/clients/${id}`)).status()).toBe(200)
+    const freeze = await api.patch(`/api/clients/${id}`, { data: { frozenManual: true }, headers: { 'Idempotency-Key': `events-${id}` } })
+    expect(freeze.status()).toBe(202)
+    const accepted = await freeze.json()
+    await waitAccess(api, accepted.operation)
+    // Повтор принятого запроса — не новая операция и не второе событие.
+    const replay = await api.patch(`/api/clients/${id}`, { data: { frozenManual: true }, headers: { 'Idempotency-Key': `events-${id}` } })
+    expect(replay.status()).toBe(202)
+    expect((await replay.json()).operation.id).toBe(accepted.operation.id)
+    for (const response of [
+      () => api.patch(`/api/clients/${id}`, { data: { frozenManual: false } }),
+      () => api.patch(`/api/clients/${id}`, { data: { expiresAt: '2031-05-20T12:00:00.000Z' } }),
+      () => api.post(`/api/clients/${id}/devices/${device.id}/reissue`),
+      () => api.post(`/api/clients/${id}/reissue`),
+      () => api.delete(`/api/clients/${id}`),
+    ]) {
+      const r = await response()
+      expect(r.status()).toBe(202)
+      await waitAccess(api, (await r.json()).operation)
+    }
 
     const rows = await since(api, mark, r => r.title.endsWith(`· ${name}`))
     expect(rows.map(r => [r.type, r.level, r.title, r.detail])).toEqual([
       ['client_created', 'info', `Клиент создан · ${name}`, ACTOR],
-      ['client_frozen', 'info', `Клиент заморожен · ${name}`, `1 устройство · вручную · ${ACTOR}`],
-      ['client_unfrozen', 'info', `Клиент разморожен · ${name}`, `1 устройство · вручную · ${ACTOR}`],
+      ['client_frozen', 'info', `Отключение запущено · ${name}`, `1 устройство · вручную · ${ACTOR}`],
+      ['access_confirmed', 'info', `Доступ отключён · ${name}`, ACTOR],
+      ['client_unfrozen', 'info', `Включение запущено · ${name}`, `1 устройство · вручную · ${ACTOR}`],
+      ['access_confirmed', 'info', `Доступ включён · ${name}`, ACTOR],
       ['client_term', 'info', `Срок изменён · ${name}`, `до 20.05.2031 · ${ACTOR}`],
-      ['client_reissued', 'info', `Ключи перевыпущены · ${name}`, `устройство «phone» · ${ACTOR}`],
-      ['client_reissued', 'info', `Ключи перевыпущены · ${name}`, `все устройства · ${ACTOR}`],
-      ['client_deleted', 'info', `Клиент удалён · ${name}`, `1 устройство · ${ACTOR}`],
+      ['access_confirmed', 'info', `Доступ включён · ${name}`, ACTOR],
+      ['access_confirmed', 'info', `Ключи перевыпущены · ${name}`, ACTOR],
+      ['access_confirmed', 'info', `Ключи перевыпущены · ${name}`, ACTOR],
+      ['access_confirmed', 'info', `Доступ отключён · ${name}`, ACTOR],
     ])
   })
 

@@ -1,7 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import { promises as fs } from 'node:fs'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import path from 'node:path'
 import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
@@ -12,8 +10,6 @@ import { coalesceRuns } from './coalesce'
 import { clientDns } from './client-dns'
 import { nextPoolAddress } from './address-pools'
 
-
-const exec = promisify(execFile)
 
 // strongSwan/swanctl пути. Стадия 27-ikev2 раскатывает CA + базовый conf;
 // панель добавляет динамику в anysda-clients.conf (eap secrets из БД).
@@ -182,36 +178,6 @@ async function claimDeviceIkev2(deviceId: number) {
   return updated
 }
 
-/**
- * Перевыпуск IKEv2-пароля устройства. Username и IP сохраняются.
- * Активные SA дропаются через `swanctl --terminate ike-id=<username>` (no-op
- * если swanctl недоступен — стадия 27 ещё не отработала).
- */
-export async function reissueDeviceIkev2(deviceId: number) {
-  const db = useDb()
-  const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-  if (!row) throw new Error(`device ${deviceId} not found`)
-
-  // Если кредов ещё нет — просто выдадим первый набор.
-  if (!row.ikev2Username) return ensureDeviceIkev2(deviceId)
-
-  const newPassword = generateIkev2Password()
-  const [updated] = await db
-    .update(devicesTable)
-    .set({ ikev2Password: newPassword, updatedAt: new Date() })
-    .where(eq(devicesTable.id, deviceId))
-    .returning()
-  if (!updated) throw new Error(`device ${deviceId} not found`)
-
-  // Терминируем активную SA — клиенту придётся переподключиться с новым паролем.
-  await terminateIkev2Sa(row.ikev2Username).catch((err) => {
-    useLogger().warn(
-      { err: (err as Error).message, deviceId },
-      'ikev2 terminate-sa skipped (swanctl unavailable?)',
-    )
-  })
-  return updated
-}
 
 /**
  * Атомарная переписка /etc/swanctl/conf.d/anysda-clients.conf из БД.
@@ -229,9 +195,8 @@ export async function reissueDeviceIkev2(deviceId: number) {
  * разделы из всех файлов conf.d. Старая стадия 27 с этим файлом и новая
  * стадия 27 со старым файлом работают как раньше, с общим пулом.
  *
- * NB: терминацию активной SA при изменении (reissue/delete/freeze) делает
- * вызывающий код через terminateIkev2Sa(username); syncIkev2 только пишет
- * актуальный файл, перегрузку делает хостовый anysda-ikev2-sync.
+ * Применение и разрыв устаревших SA выполняет хостовый anysda-ikev2-sync.
+ * Очередь подтверждает операцию только по свежему ответу применителя.
  */
 async function syncIkev2Once(): Promise<void> {
   if (!(await ikev2ServerReady())) return
@@ -287,6 +252,7 @@ async function syncIkev2Once(): Promise<void> {
     .select({
       id: devicesTable.id,
       username: devicesTable.ikev2Username,
+      deleting: devicesTable.deleting,
       password: devicesTable.ikev2Password,
       ip: devicesTable.ikev2Ip,
       frozenManual: clientsTable.frozenManual,
@@ -297,7 +263,7 @@ async function syncIkev2Once(): Promise<void> {
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
 
   const active = rows.filter(r =>
-    r.username && r.password && r.ip
+    !r.deleting && r.username && r.password && r.ip
     && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
   )
 
@@ -357,55 +323,12 @@ async function syncIkev2Once(): Promise<void> {
   await fs.writeFile(tmp, body, { mode: 0o600 })
   await fs.rename(tmp, SS_CLIENTS_CONF)
 
-  // В контейнере панели swanctl'а нет и сокет charon.vici внутрь не проброшен,
-  // поэтому этот вызов на боевом хабе — no-op. Настоящий применитель —
-  // хостовый таймер anysda-ikev2-sync (стадия 27, шаг 8): он видит изменение
-  // этого файла, делает `swanctl --load-all` и рвёт SA устройств с
-  // изменённым/удалённым паролем или не на своём адресе. Вызов оставлен для стендов, где панель
-  // запущена не в контейнере.
-  await exec('swanctl', ['--load-all', '--noprompt'], { timeout: 10_000 }).catch((err) => {
-    useLogger().debug(
-      { err: (err as Error).message },
-      'ikev2 swanctl --load-all skipped (применит anysda-ikev2-sync на хосте)',
-    )
-  })
+  // Единственный применитель — хостовая служба. Она публикует digest и живые политики.
 }
 
 /** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */
 export const syncIkev2 = coalesceRuns(syncIkev2Once)
 
-/**
- * Разрыв активной SA устройства. Работает только там, где панели доступен
- * swanctl; в контейнере — no-op, разрыв делает anysda-ikev2-sync на хосте по
- * изменению secrets-файла (см. syncIkev2).
- *
- * ⚠️ swanctl --ike-id ждёт ЧИСЛОВОЙ uniqueid IKE_SA, а не EAP-логин, так что
- * здесь сперва ищем SA по имени пользователя.
- */
-export async function terminateIkev2Sa(username: string): Promise<void> {
-  if (!(await ikev2ServerReady())) return
-  const { stdout } = await exec('swanctl', ['--list-sas'], { timeout: 10_000 })
-  // Блок SA начинается со строки без отступа «<conn>: #<uniqueid>, ...»,
-  // EAP-логин идёт ниже в строке remote — тот же разбор, что в
-  // /usr/local/sbin/anysda-ikev2-sync.py на хосте.
-  const ids: string[] = []
-  let current: string | null = null
-  for (const line of stdout.split('\n')) {
-    const head = line.match(/^\S+:\s+#(\d+),/)
-    if (head?.[1]) {
-      current = head[1]
-      continue
-    }
-    const eap = line.match(/EAP:\s+'([^']+)'/)
-    if (eap && current && eap[1] === username) {
-      ids.push(current)
-      current = null
-    }
-  }
-  for (const id of ids) {
-    await exec('swanctl', ['--terminate', '--ike-id', id], { timeout: 10_000 })
-  }
-}
 
 /**
  * Структура «инструкция для клиента»: то что показывается в UI/боте.

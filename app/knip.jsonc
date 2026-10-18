@@ -1,5 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
+  // Системная блокировка и проверка CRL; util-linux и openssl есть в Dockerfile.
+  "ignoreBinaries": ["flock", "openssl"],
   // Сквозные тесты (e2e/*.spec.ts) knip берёт сам через плагин playwright.
   // Подставные VictoriaMetrics и clash API e2e/run-local.sh копирует в контейнер
   // панели по пути и запускает node, импорта нет. Наполнитель front-test

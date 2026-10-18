@@ -5,10 +5,8 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { and, eq, isNull } from 'drizzle-orm'
-import type { SQL } from 'drizzle-orm'
+import { and, eq, exists, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
-import type { Device } from '../database/schema'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
 import { isClientActive } from './client-status'
@@ -130,24 +128,9 @@ async function issueClientCert(cn: string): Promise<{ cert: string, key: string 
   }
 }
 
-/** Сохраняем записи до публикации CRL; выдача/перевыпуск не вклинится перед DELETE. */
-export function withRevokedDeviceCerts<T>(where: SQL, remove: (rows: Device[]) => Promise<T>): Promise<T> {
-  return withCaLock(async () => {
-    // Читаем всю выборку внутри очереди, включая устройства, чья выдача
-    // сертификата закончилась, пока удаление ожидало предыдущую операцию CA.
-    const rows = await useDb().select().from(devicesTable).where(where).orderBy(devicesTable.id)
-    try {
-      for (const row of rows) {
-        // Даже при недоступной CA нельзя потерять сохранённый сертификат.
-        if (row.ovpnCert) await revokeClientCertOnce(row.ovpnCert)
-      }
-    }
-    catch (err) {
-      useLogger().error({ err }, 'ovpn revoke before delete failed')
-      throw createError({ statusCode: 503, statusMessage: 'ovpn_revoke_failed', message: 'Ошибка удаления' })
-    }
-    return remove(rows)
-  })
+
+export function revokeAccessCert(certPem: string): Promise<void> {
+  return withCaLock(() => revokeClientCertOnce(certPem))
 }
 
 async function revokeClientCertOnce(certPem: string): Promise<void> {
@@ -235,7 +218,7 @@ function ovpnMgmt(command: string, timeoutMs = 5_000): Promise<string[]> {
  * действуют только на следующее подключение, а уже подключённый клиент
  * сидит в туннеле до своего переподключения (VPN2-39). true — кого-то выбили.
  */
-async function killOvpnClient(cn: string): Promise<boolean> {
+export async function killOvpnClient(cn: string): Promise<boolean> {
   const out = await ovpnMgmt(`kill ${cn}`)
   if (out.some(l => l.startsWith('SUCCESS:'))) {
     useLogger().info({ cn }, 'ovpn: сессия разорвана')
@@ -249,7 +232,7 @@ async function killOvpnClient(cn: string): Promise<boolean> {
  * Подключённые сейчас клиенты: CN → адрес в туннеле (management `status 2`,
  * CLIENT_LIST,<CN>,<реальный адрес>,<адрес в туннеле>,...).
  */
-async function connectedOvpnClients(): Promise<Map<string, string>> {
+export async function connectedOvpnClients(): Promise<Map<string, string>> {
   const out = await ovpnMgmt('status 2')
   const clients = new Map<string, string>()
   for (const l of out) {
@@ -262,7 +245,7 @@ async function connectedOvpnClients(): Promise<Map<string, string>> {
 }
 
 /** Рвёт сессии без падения вызывающего: сервер не поднят или старый (без management). */
-export async function killOvpnClientQuiet(cn: string): Promise<void> {
+async function killOvpnClientQuiet(cn: string): Promise<void> {
   await killOvpnClient(cn).catch((err) => {
     useLogger().warn({ err: (err as Error).message, cn }, 'ovpn: kill через management не удался')
   })
@@ -292,7 +275,7 @@ async function writeCcd(cn: string, ip: string | null, disabled: boolean): Promi
 }
 
 /** Удаление устройства: его ccd больше не нужен, адрес освобождается вместе со строкой. */
-export async function removeCcd(cn: string): Promise<void> {
+async function removeCcd(cn: string): Promise<void> {
   await fs.rm(path.join(CCD_DIR, cn), { force: true }).catch(() => {})
 }
 
@@ -397,25 +380,28 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
     .from(clientsTable)
     .where(eq(clientsTable.id, row.clientId))
     .limit(1)
-  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, client ? !isClientActive(client) : false).catch(() => {})
+  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true)).catch(() => {})
   return updated
 }
 
 /** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
-export function reissueDeviceOvpn(deviceId: number) {
+export function reissueDeviceOvpn(deviceId: number, clientId: number, version: number) {
   return withCaLock(async () => {
     try {
-      return await reissueDeviceOvpnOnce(deviceId)
+      return await reissueDeviceOvpnOnce(deviceId, clientId, version)
     }
-    catch (err) {
-      useLogger().error({ err, deviceId }, 'ovpn reissue failed')
+    catch {
+      useLogger().error({ deviceId }, 'ovpn reissue failed')
       throw createError({ statusCode: 503, statusMessage: 'ovpn_reissue_failed', message: 'Ошибка перевыпуска' })
     }
   })
 }
 
-async function reissueDeviceOvpnOnce(deviceId: number) {
+async function reissueDeviceOvpnOnce(deviceId: number, clientId: number, version: number) {
   const db = useDb()
+  const [owner] = await db.select({ id: clientsTable.id }).from(clientsTable)
+    .where(and(eq(clientsTable.id, clientId), eq(clientsTable.accessVersion, version)))
+  if (!owner) throw new Error('superseded')
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
 
@@ -434,7 +420,8 @@ async function reissueDeviceOvpnOnce(deviceId: number) {
   const [updated] = await db
     .update(devicesTable)
     .set({ ovpnCert: cert, ovpnKey: key, updatedAt: new Date() })
-    .where(eq(devicesTable.id, deviceId))
+    .where(and(eq(devicesTable.id, deviceId), exists(db.select({ id: clientsTable.id }).from(clientsTable)
+      .where(and(eq(clientsTable.id, clientId), eq(clientsTable.accessVersion, version))))))
     .returning()
   if (!updated) throw new Error(`device ${deviceId} not found`)
   return updated
@@ -448,9 +435,13 @@ async function reissueDeviceOvpnOnce(deviceId: number) {
  * применяет только при новом подключении.
  */
 export async function syncOpenvpnConfig(): Promise<void> {
+  return withCaLock(syncOpenvpnConfigOnce)
+}
+
+async function syncOpenvpnConfigOnce(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.ovpnEnabled) return
-  if (!(await caReady())) return
+  if (!(await caReady())) throw new Error('OpenVPN CA unavailable')
 
   const db = useDb()
   const rows = await db
@@ -458,6 +449,7 @@ export async function syncOpenvpnConfig(): Promise<void> {
       id: devicesTable.id,
       ovpnCert: devicesTable.ovpnCert,
       ovpnIp: devicesTable.ovpnIp,
+      deleting: devicesTable.deleting,
       frozenManual: clientsTable.frozenManual,
       expiresAt: clientsTable.expiresAt,
     })
@@ -476,12 +468,10 @@ export async function syncOpenvpnConfig(): Promise<void> {
         return null
       }))?.ovpnIp ?? null
     }
-    const disabled = !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
+    const disabled = r.deleting || !isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt })
     if (disabled) disabledCns.add(cn)
     pinned.set(cn, ip)
-    await writeCcd(cn, ip, disabled).catch((err) => {
-      useLogger().warn({ err: (err as Error).message, id: r.id }, 'ovpn ccd sync failed')
-    })
+    await writeCcd(cn, ip, disabled)
   }
 
   const files = await fs.readdir(CCD_DIR).catch(() => [] as string[])
@@ -493,10 +483,10 @@ export async function syncOpenvpnConfig(): Promise<void> {
   try {
     connected = await connectedOvpnClients()
   }
-  catch (err) {
-    // Сервер ещё не поднят или без management: без подключённых выбивать некого.
-    if (disabledCns.size) useLogger().warn({ err: (err as Error).message }, 'ovpn: management недоступен, подключённые замороженные не выбиты')
-    return
+  catch {
+    // Недоступный management не подтверждает отсутствие живых сессий.
+    if (disabledCns.size) useLogger().warn('ovpn: management недоступен, отключение не подтверждено')
+    throw new Error('OpenVPN management unavailable')
   }
   for (const [cn, vaddr] of connected) {
     const ip = pinned.get(cn)

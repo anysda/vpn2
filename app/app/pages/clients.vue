@@ -245,7 +245,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
                 </div>
                 <div class="crt">
                   <span class="t1">{{ today(c) }}</span>
-                  <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
+                  <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                   <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
                   <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
                 </div>
@@ -284,7 +284,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
               >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
               <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
               <span>
-                <span v-if="c.status === 'frozen'" class="tag">Заморожен</span>
+                <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                 <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
                 <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
               </span>

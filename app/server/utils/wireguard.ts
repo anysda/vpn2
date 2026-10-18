@@ -145,7 +145,7 @@ async function writeWgServerConfig(
     // hooks), which is exactly what `wg syncconf` accepts. `syncconf` does
     // NOT touch interface addresses, поэтому ULA на wg0 ставим отдельно:
     // `replace` идемпотентен и не рвёт существующие сессии пиров.
-    await exec('bash', ['-c', `wg-quick strip wg0 | wg syncconf wg0 /dev/stdin`], { timeout: 10_000 })
+    await exec('flock', ['-w', '10', '/etc/wireguard/.access-apply.lock', 'bash', '-o', 'pipefail', '-c', `wg-quick strip wg0 | wg syncconf wg0 /dev/stdin`], { timeout: 20_000 })
     await exec('ip', ['-6', 'addr', 'replace', `${serverUla}/64`, 'dev', 'wg0'], { timeout: 5_000 })
     // syncconf не добавляет маршруты для новых пиров, в отличие от wg-quick.
     for (const subnet of pools.wg.subnets) {
@@ -224,30 +224,6 @@ export async function ensureDeviceWg(deviceId: number) {
   }
 }
 
-/** Перевыпуск WG-ключей девайса: новый keypair + PSK, IP сохраняется. */
-export async function reissueDeviceWg(deviceId: number) {
-  const db = useDb()
-  // Адреса ещё нет — занимаем его тем же путём, что и при выдаче (с повтором
-  // при конфликте), ключи ниже всё равно перевыпускаются.
-  const row = await ensureDeviceWg(deviceId)
-
-  const kp = generateWgKeypair()
-  const psk = generateWgPresharedKey()
-
-  const [updated] = await db
-    .update(devicesTable)
-    .set({
-      wgPrivateKey: kp.privateKey,
-      wgPublicKey: kp.publicKey,
-      wgPresharedKey: psk,
-      wgIp: row.wgIp,
-      updatedAt: new Date(),
-    })
-    .where(eq(devicesTable.id, deviceId))
-    .returning()
-  if (!updated) throw new Error(`device ${deviceId} not found`)
-  return updated
-}
 
 /**
  * Render the WG server config from ALL devices and apply it via `wg syncconf`.
@@ -272,6 +248,7 @@ async function syncWireguardConfigOnce(): Promise<void> {
       wgPublicKey: devicesTable.wgPublicKey,
       wgPresharedKey: devicesTable.wgPresharedKey,
       wgIp: devicesTable.wgIp,
+      deleting: devicesTable.deleting,
       frozenManual: clientsTable.frozenManual,
       expiresAt: clientsTable.expiresAt,
     })
@@ -284,7 +261,7 @@ async function syncWireguardConfigOnce(): Promise<void> {
       publicKey: r.wgPublicKey!,
       presharedKey: r.wgPresharedKey!,
       allowedIp: r.wgIp!,
-      enabled: isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
+      enabled: !r.deleting && isClientActive({ frozenManual: r.frozenManual, expiresAt: r.expiresAt }),
     }))
 
   await writeWgServerConfig({

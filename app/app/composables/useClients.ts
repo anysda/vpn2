@@ -1,3 +1,5 @@
+import type { AccessOperation } from '#shared/access-operation'
+
 /**
  * Модель «клиент = человек, девайс = устройство».
  * Клиент — человек со сроком действия, статусом, лимитом девайсов и паролем.
@@ -6,6 +8,7 @@
 
 /** Клиент в списке `GET /api/clients`. */
 export interface Client {
+  accessStatus: string
   id: number
   name: string
   filterTraffic: boolean
@@ -38,6 +41,8 @@ export interface Device {
 
 /** Полная карточка клиента `GET /api/clients/:id`. */
 export interface ClientDetail {
+  operation: AccessOperation | null
+  deleting: boolean
   id: number
   name: string
   filterTraffic: boolean
@@ -92,18 +97,19 @@ export function useClients() {
     frozenManual?: boolean
     preferredExit?: string | null
   }) {
-    const updated = await $fetch<Client>(`/api/clients/${id}`, { method: 'PATCH', body: patch })
+    const updated = await $fetch<Client>(`/api/clients/${id}`, { method: 'PATCH', body: patch, headers: { 'Idempotency-Key': crypto.randomUUID() } })
     await refresh()
     return updated
   }
 
   async function remove(id: number) {
-    await $fetch(`/api/clients/${id}`, { method: 'DELETE' })
+    const result = await $fetch<{ operation: AccessOperation }>(`/api/clients/${id}`, { method: 'DELETE', headers: { 'Idempotency-Key': crypto.randomUUID() } })
     await refresh()
+    return result
   }
 
   async function reissueAll(id: number) {
-    const res = await $fetch<{ ok: true, devices: number }>(`/api/clients/${id}/reissue`, { method: 'POST' })
+    const res = await $fetch<{ operation: AccessOperation }>(`/api/clients/${id}/reissue`, { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } })
     return res
   }
 
@@ -139,14 +145,14 @@ export function useClientDevices() {
   async function removeDevice(clientId: number, deviceId: number) {
     return $fetch<{ ok: true }>(
       `/api/clients/${clientId}/devices/${deviceId}`,
-      { method: 'DELETE' },
+      { method: 'DELETE', headers: { 'Idempotency-Key': crypto.randomUUID() } },
     )
   }
 
   async function reissueDevice(clientId: number, deviceId: number) {
     return $fetch<{ ok: true }>(
       `/api/clients/${clientId}/devices/${deviceId}/reissue`,
-      { method: 'POST' },
+      { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } },
     )
   }
 

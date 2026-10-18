@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import type { AccessOperation } from '../../shared/access-operation'
 
 const timestamps = {
   createdAt: integer('created_at', { mode: 'timestamp' })
@@ -95,6 +96,8 @@ export const twoFactors = sqliteTable('two_factors', {
  */
 export const clients = sqliteTable('clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  accessVersion: integer('access_version').notNull().default(0),
+  deleting: integer('deleting', { mode: 'boolean' }).notNull().default(false),
   name: text('name').notNull(),
   // Фильтрация трафика (AdGuard DNS) — задаётся при создании, наследуется
   // всеми девайсами клиента.
@@ -124,6 +127,7 @@ export const clients = sqliteTable('clients', {
 /** Девайс = устройство клиента, со своими ключами WG/OVPN/IKEv2. */
 export const devices = sqliteTable('devices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
+  deleting: integer('deleting', { mode: 'boolean' }).notNull().default(false),
   clientId: integer('client_id')
     .notNull()
     .references(() => clients.id, { onDelete: 'cascade' }),
@@ -192,6 +196,28 @@ export const collectorState = sqliteTable('collector_state', {
   name: text('name').primaryKey(),
   value: text('value').notNull(),
 })
+
+/** Нет каскада: история и реквизиты отзыва переживают удаление цели. Payload не отдаётся API. */
+export const accessOperations = sqliteTable('access_operations', {
+  id: text('id').primaryKey(),
+  clientId: integer('client_id').notNull(),
+  deviceId: integer('device_id'),
+  kind: text('kind').$type<AccessOperation['kind']>().notNull(),
+  version: integer('version').notNull(),
+  idempotencyKey: text('idempotency_key').notNull().unique(),
+  requestHash: text('request_hash').notNull(),
+  completionRecorded: integer('completion_recorded', { mode: 'boolean' }).notNull().default(false),
+  status: text('status').$type<AccessOperation['status']>().notNull(),
+  protocols: text('protocols', { mode: 'json' }).$type<AccessOperation['protocols']>().notNull(),
+  payload: text('payload').notNull(),
+  actor: text('actor').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  nextRetry: integer('next_retry').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  uniqueIndex('access_operations_version').on(table.clientId, table.version),
+  index('access_operations_due').on(table.status, table.nextRetry),
+])
 
 /** Постоянная очередь панели → бот; payload очищается после завершения. */
 export const botOutbox = sqliteTable('bot_outbox', {

@@ -50,7 +50,7 @@ test.describe('клиенты', () => {
       && r.request().postDataJSON()?.expiresAt === null)
     await date.fill('')
     await date.press('Tab')
-    expect((await expirySaved).status()).toBe(200)
+    expect((await expirySaved).status()).toBe(202)
     await expect(toast(page, 'Срок действия сохранён')).toBeVisible()
     const saved = await page.request.get(`/api/clients/${client.id}`)
     expect(saved.status()).toBe(200)
@@ -65,11 +65,13 @@ test.describe('клиенты', () => {
 
     // Заморозить и разморозить.
     await dlg.getByRole('button', { name: 'Заморозить' }).click()
-    await expect(toast(page, `Клиент «${renamed}» заморожен`)).toBeVisible()
-    await expect(clientCard(page, renamed)).toContainText('Заморожен')
+    await expect(toast(page, 'Отключение выполняется')).toBeVisible()
+    await expect(dlg.getByRole('status')).toContainText('Доступ отключён', { timeout: 45_000 })
+    await expect(clientCard(page, renamed)).toContainText('Доступ отключён')
     await dlg.getByRole('button', { name: 'Разморозить' }).click()
-    await expect(toast(page, `Клиент «${renamed}» разморожен`)).toBeVisible()
-    await expect(clientCard(page, renamed)).not.toContainText('Заморожен')
+    await expect(toast(page, 'Включение выполняется')).toBeVisible()
+    await expect(dlg.getByRole('status')).toContainText('Доступ включён', { timeout: 45_000 })
+    await expect(clientCard(page, renamed)).not.toContainText('Доступ отключён')
 
     // «Отмена» в подтверждениях.
     await dlg.getByRole('button', { name: 'Перевыпустить все ключи' }).click()
@@ -86,7 +88,7 @@ test.describe('клиенты', () => {
 
     await dlg.getByRole('button', { name: 'Удалить клиента' }).click()
     await del.getByRole('button', { name: 'Удалить' }).click()
-    await expect(toast(page, `Клиент «${renamed}» удалён`)).toBeVisible()
+    await expect(toast(page, 'Отключение выполняется')).toBeVisible()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(clientCard(page, renamed)).toHaveCount(0)
     list = await (await page.request.get('/api/clients')).json()

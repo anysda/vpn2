@@ -173,15 +173,16 @@ for (const width of [360, 402]) {
         const delDev = page.getByRole('dialog', { name: 'Удалить девайс?' })
         await sheetFits(page, delDev, 'подтверждение удаления девайса')
         await delDev.getByRole('button', { name: 'Удалить' }).tap()
-        await expect(toast(page, `Девайс «${device}» удалён`)).toBeVisible()
+        await expect(toast(page, 'Отключение выполняется')).toBeVisible()
         await expect(dc.card).toHaveCount(0)
 
         // Заморозка видна в списке после «Назад».
         await panel.getByRole('button', { name: 'Заморозить' }).tap()
-        await expect(toast(page, `Клиент «${name}» заморожен`)).toBeVisible()
+        await expect(toast(page, 'Отключение выполняется')).toBeVisible()
+        await expect(panel.getByRole('status')).toContainText('Доступ отключён', { timeout: 45_000 })
         await page.getByRole('button', { name: 'Назад' }).tap()
         await expect(panel).toBeHidden()
-        await expect(row).toContainText('Заморожен')
+        await expect(row).toContainText('Доступ отключён')
         await rowFits(row)
 
         await row.tap()
@@ -189,7 +190,7 @@ for (const width of [360, 402]) {
         const del = page.getByRole('dialog', { name: 'Удалить клиента?' })
         await sheetFits(page, del, 'подтверждение удаления клиента')
         await del.getByRole('button', { name: 'Удалить' }).tap()
-        await expect(toast(page, `Клиент «${name}» удалён`)).toBeVisible()
+        await expect(toast(page, 'Отключение выполняется')).toBeVisible()
         await expect(panel).toBeHidden()
         await expect(page.getByRole('button', { name: 'Назад' })).toHaveCount(0)
         await expect(row).toHaveCount(0)

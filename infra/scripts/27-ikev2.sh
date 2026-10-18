@@ -726,6 +726,10 @@ def main():
                     if not terminate(sa, 'креды изменились'):
                         return 1
                     torn = True
+            revoked_ids = {sa['uniqueid'] for sa in sas if sa['username'] in stale}
+            remaining = live_sas()
+            if remaining is None or any(sa['uniqueid'] in revoked_ids for sa in remaining):
+                return 1
         # Снимок нужен для повтора отзыва: нельзя забывать старый пароль,
         # пока загрузка или разрыв SA не подтверждены charon.
         if not loaded:
@@ -747,11 +751,21 @@ def main():
                 torn = True
     if torn:
         swanctl('--load-pools')
-        sas = live_sas() or []
+        sas = live_sas()
+        if sas is None:
+            return 1
+
+    try:
+        connections = subprocess.run(['swanctl', '--list-conns'], timeout=30,
+                                     capture_output=True, text=True, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return 1
 
     sessions = [{k: sa[k] for k in ('uniqueid', 'username', 'rx', 'tx')}
                 for sa in sas if sa['username']]
-    write_json(STATUS_FILE, {'updated': int(time.time()), 'sessions': sessions}, 0o644)
+    write_json(STATUS_FILE, {'updated': int(time.time()), 'sessions': sessions,
+                            'applied_digest': read_json(DIGEST_FILE, ''),
+                            'connections': re.findall(r'^(anysda-dev-\d+):', connections, re.M)}, 0o644)
     return 0
 
 

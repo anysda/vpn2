@@ -5,6 +5,8 @@ import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { anim, expiringInDays, initials, sizeRu } from '~/utils/clients-view'
 import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from './DeviceConfig.vue'
+import { accessStatus } from '#shared/access-operation'
+import type { AccessOperation } from '#shared/access-operation'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
 const emit = defineEmits<{ changed: [], deleted: [], gone: [id: number] }>()
@@ -33,6 +35,14 @@ function isGone(e: unknown) {
 async function load(animate = false) {
   const version = ++loadVersion
   try {
+    const previous = detail.value
+    if (previous?.id === props.clientId && previous.deleting && previous.operation) {
+      const operation = await $fetch<AccessOperation>(`/api/access-operations/${previous.operation.id}`)
+      if (version !== loadVersion) return
+      if (operation.status === 'confirmed') return emit('deleted')
+      previous.operation = operation
+      return
+    }
     const d = await fetchDetail(props.clientId)
     if (version !== loadVersion) return
     const prev = detail.value
@@ -55,6 +65,9 @@ async function load(animate = false) {
 
 watch(() => props.clientId, () => load(detail.value !== null), { immediate: true })
 onUnmounted(() => { loadVersion++ })
+let operationTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => { operationTimer = setInterval(() => { void load() }, 3000) })
+onUnmounted(() => { clearInterval(operationTimer) })
 
 async function changed() {
   await load()
@@ -288,11 +301,11 @@ function askReissueDevice(dev: Device) {
     title: 'Перевыпустить ключи девайса?',
     pre: 'Перевыпустить ключи девайса ',
     name: dev.name,
-    post: '? Старые конфиги этого девайса сразу перестанут работать.',
+    post: '? После применения старые конфиги этого девайса перестанут работать.',
     act: 'Перевыпустить',
     run: () => guard(async () => {
       await reissueDevice(d.id, dev.id)
-      toast.add({ title: `Ключи девайса «${dev.name}» перевыпущены`, color: 'success' })
+      toast.add({ title: 'Перевыпуск выполняется', color: 'info' })
       await changed()
     }, 'Ошибка перевыпуска'),
   })
@@ -304,12 +317,12 @@ function askRemoveDevice(dev: Device) {
     title: 'Удалить девайс?',
     pre: 'Удалить девайс ',
     name: dev.name,
-    post: '? Действие необратимо, конфиги девайса сразу перестанут работать.',
+    post: '? Действие необратимо; конфиги перестанут работать после подтверждения отключения.',
     act: 'Удалить',
     danger: true,
     run: () => guard(async () => {
       await removeDevice(d.id, dev.id)
-      toast.add({ title: `Девайс «${dev.name}» удалён`, color: 'success' })
+      toast.add({ title: 'Отключение выполняется', color: 'info' })
       await changed()
     }, 'Ошибка удаления'),
   })
@@ -321,11 +334,11 @@ function askReissueAll() {
     title: 'Перевыпустить все ключи?',
     pre: 'Перевыпустить ключи всех девайсов клиента ',
     name: d.name,
-    post: '? Старые конфиги WireGuard и OpenVPN сразу перестанут работать — нужно будет раздать новые.',
+    post: '? После применения старые конфиги перестанут работать — нужно будет раздать новые.',
     act: 'Перевыпустить',
     run: () => guard(async () => {
-      const res = await reissueAll(d.id)
-      toast.add({ title: `Перевыпущены ключи всех девайсов (${res.devices})`, color: 'success' })
+      await reissueAll(d.id)
+      toast.add({ title: 'Перевыпуск выполняется', color: 'info' })
       await changed()
     }, 'Ошибка перевыпуска'),
   })
@@ -337,13 +350,15 @@ function askRemoveClient() {
     title: 'Удалить клиента?',
     pre: 'Удалить клиента ',
     name: d.name,
-    post: ' со всеми девайсами? Действие необратимо, конфиги сразу перестанут работать.',
+    post: ' со всеми девайсами? Действие необратимо; доступ прекратится после подтверждения отключения.',
     act: 'Удалить',
     danger: true,
     run: () => guard(async () => {
-      await remove(d.id)
-      toast.add({ title: `Клиент «${d.name}» удалён`, color: 'success' })
-      emit('deleted')
+      const result = await remove(d.id)
+      d.operation = result.operation
+      d.deleting = true
+      toast.add({ title: 'Отключение выполняется', color: 'info' })
+      await changed()
     }, 'Ошибка удаления'),
   })
 }
@@ -357,7 +372,7 @@ async function toggleFreeze() {
   freezing.value = true
   try {
     await update(d.id, { frozenManual: next })
-    toast.add({ title: `Клиент «${d.name}» ${next ? 'заморожен' : 'разморожен'}`, color: 'success' })
+    toast.add({ title: next ? 'Отключение выполняется' : 'Включение выполняется', color: 'info' })
     await changed()
   }
   catch (e) {
@@ -389,7 +404,7 @@ const limitReached = computed(() => {
 const tag = computed(() => {
   const d = detail.value
   if (!d) return null
-  if (d.status === 'frozen') return { cls: '', text: 'Заморожен' }
+  if (d.status === 'frozen') return { cls: '', text: d.operation ? accessStatus(d.operation) : 'Состояние не подтверждено' }
   if (props.traffic?.online) return { cls: 'ok', text: 'В сети' }
   if (expiringInDays(d.expiresAt, d.status) !== null) return { cls: 'amb', text: 'Истекает' }
   return { cls: '', text: 'Не в сети' }
@@ -417,7 +432,7 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
           />
           <small>{{ detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан' }}</small>
         </div>
-        <span v-if="tag" class="tag" :class="tag.cls">{{ tag.text }}</span>
+        <span v-if="tag" class="tag access-tag" :class="tag.cls">{{ tag.text }}</span>
       </div>
 
       <div class="kgrid">
@@ -446,6 +461,8 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
           <em>меняется только при создании</em>
         </div>
       </div>
+
+      <ClientsOperationStatus :operation="detail.operation" :deleting="detail.deleting" @changed="changed" />
 
       <div class="crw bt">
         <span>Бот · <b>{{ detail.tgLinked ? (detail.tgUsername ? `@${detail.tgUsername}` : 'привязан') : 'не привязан' }}</b></span>

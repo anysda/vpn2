@@ -1,6 +1,4 @@
-import { syncWireguardConfig } from '../utils/wireguard'
-import { syncOpenvpnConfig } from '../utils/openvpn'
-import { syncIkev2 } from '../utils/ikev2'
+import { enqueueExpiredAccess, runAccessOperations } from '../utils/access-operations'
 import { collectTraffic } from '../utils/traffic-collector'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 
@@ -20,19 +18,8 @@ export default defineNitroPlugin((nitroApp) => {
   }
 
   async function tick() {
-    // Статус клиента вычисляемый (frozenManual + срок) — отдельного
-    // «истечения» в БД нет. Пере-синхроним WG/OVPN каждый тик: девайсы
-    // клиентов, у которых истёк срок, выпадут из wg0.conf / попадут в
-    // CCD-disable в пределах одного интервала.
-    await syncWireguardConfig().catch(err =>
-      log.error({ err }, 'cron: wg sync failed'),
-    )
-    await syncOpenvpnConfig().catch(err =>
-      log.error({ err }, 'cron: openvpn sync failed'),
-    )
-    await syncIkev2().catch(err =>
-      log.error({ err }, 'cron: ikev2 sync failed'),
-    )
+    await enqueueExpiredAccess()
+    await runAccessOperations()
 
     // Предпочитаемые экзиты: самоисцеление файла (устройства, добавленные
     // ботом, удалённые клиенты). Без изменений файл не переписывается.

@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { requireAuth } from '../../utils/auth'
 import { actorOf } from '../../utils/events'
 import { updateClient } from '../../utils/client-ops'
+import { accessRequestKey } from '../../utils/access-operations'
 import { readBodyAs } from '../../utils/validate'
 
 const Body = z.object({
@@ -19,5 +20,7 @@ export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(id)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   const body = await readBodyAs(event, Body)
-  return updateClient(id, body, actorOf(user))
+  const result = await updateClient(id, body, actorOf(user), accessRequestKey(event))
+  if (result.operation) setResponseStatus(event, 202)
+  return result
 })

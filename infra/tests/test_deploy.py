@@ -75,6 +75,69 @@ do_restore latest --force --dry-run
             self.assertEqual(result.stdout.splitlines(),
                              ["ssh: /usr/local/bin/anysda-restore.sh 'latest' '--force' '--dry-run'"])
 
+    def run_deploy(self, directory, *args, restore_rc=0):
+        """Настоящие infra/deploy.sh и deploy-release.sh, транспорт до entry подставной."""
+        root = Path(directory)
+        (root / 'lib').mkdir()
+        (root / 'bin').mkdir()
+        for path in ('infra/deploy.sh', 'infra/lib/deploy-release.sh'):
+            (root / path.removeprefix('infra/')).write_text(source(path))
+        (root / 'lib/anysda-svc.sh').write_text('')
+        for tool in ('ssh', 'scp', 'sshpass', 'envsubst', 'curl', 'rsync', 'openssl'):
+            (root / 'bin' / tool).write_text('#!/bin/sh\nexit 0\n')
+            (root / 'bin' / tool).chmod(0o755)
+        (root / 'lib/ssh.sh').write_text(f'''
+C_R= C_G= C_Y= C_B= C_END=
+log() {{ :; }}; ok() {{ :; }}; warn() {{ :; }}
+die() {{ echo "die: $*" >&2; exit 1; }}
+load_env() {{ HOST_TAG=$1; }}
+expand_hosts() {{ echo ru; }}
+push() {{ echo "push: $*" >> "$DEPLOY_ROOT/calls"; }}
+ssh_exec() {{
+  echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
+  if [[ "$1" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
+  if [[ "$1" == *anysda-restore.sh* ]]; then return {restore_rc}; fi
+}}
+''')
+        environment = dict(os.environ, PATH=f'{root / "bin"}:{os.environ["PATH"]}',
+                           VPN2_DEVELOPMENT='true')
+        result = subprocess.run(['bash', str(root / 'deploy.sh'), *args], cwd=directory, env=environment,
+                                text=True, capture_output=True, timeout=15)
+        calls = root / 'calls'
+        return result, calls.read_text().splitlines() if calls.exists() else []
+
+    def test_restore_dry_run_opens_no_release(self):
+        for args, archive in ((('restore', 'latest', '--dry-run'), 'latest'),
+                              (('restore', '--dry-run'), 'latest'),
+                              (('restore', '--dry-run', '--force'), 'latest'),
+                              (('restore', 'anysda-vpn2-x.tar.gz.age', '--force', '--dry-run'),
+                               'anysda-vpn2-x.tar.gz.age')):
+            with self.subTest(args=args), tempfile.TemporaryDirectory() as directory:
+                result, calls = self.run_deploy(directory, *args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(calls), 1, calls)
+                self.assertTrue(calls[0].startswith(f"ssh: /usr/local/bin/anysda-restore.sh '{archive}'"), calls)
+                self.assertIn("'--dry-run'", calls[0])
+
+    def test_restore_dry_run_of_local_archive_uploads_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / 'anysda-vpn2-2026-10-18T000000Z.tar.gz.age'
+            archive.write_bytes(b'archive')
+            result, calls = self.run_deploy(directory, 'restore', str(archive), '--dry-run')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, [])
+            self.assertIn(archive.name, result.stdout + result.stderr)
+
+    def test_restore_still_opens_release_before_changing_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_deploy(directory, 'restore', 'latest', '--force', restore_rc=1)
+            self.assertNotEqual(result.returncode, 0)
+            remote = [call for call in calls if call.startswith('ssh: ')]
+            restore = next(i for i, call in enumerate(remote) if 'anysda-restore.sh' in call)
+            before = '\n'.join(remote[:restore])
+            for step in ('exec flock', 'deploy_state.py backup', 'deploy_state.py phase --phase applying'):
+                self.assertIn(step, before)
+
     def test_failed_upload_never_runs_stale_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

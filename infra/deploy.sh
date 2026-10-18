@@ -1286,8 +1286,9 @@ do_backup_list() {
 }
 
 do_restore() {
-  local archive="${1:-latest}"
-  shift || true
+  # Имя архива необязательно: `restore --dry-run` - это latest с флагом.
+  local archive=latest
+  if [[ -n "${1:-}" && "$1" != -* ]]; then archive=$1; shift; fi
   local flags="" flag dry_run=0
   for flag in "$@"; do
     [[ -n "$flag" ]] || continue
@@ -1300,6 +1301,10 @@ do_restore() {
   # Иначе (имя файла или 'latest') — entry резолвит сам.
   if [[ "$archive" != "latest" && -f "$archive" ]]; then
     local base; base=$(basename "$archive")
+    if (( dry_run )); then
+      echo "restore: dry-run — загрузил бы на entry и восстановил локальный архив $base, ничего не изменено"
+      return 0
+    fi
     log "scp локального архива на entry: $base"
     ssh_exec "mkdir -p \${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2} 2>/dev/null || mkdir -p /var/backups/anysda-vpn2"
     push "$archive" "$base"
@@ -1335,13 +1340,13 @@ exit_tags() {
 case "${1:-}" in -h|--help) usage ;; esac
 # shellcheck source=infra/lib/deploy-release.sh
 source "$DEPLOY_ROOT/lib/deploy-release.sh"
-release_start "${1:-}"
+release_start "$@"
 case "${1:-}" in
   ''|recover)  do_all ;;
   -h|--help)   usage ;;
   backup)      do_backup ;;
   backup-list) do_backup_list ;;
-  restore)     do_restore "${2:-latest}" "${@:3}" ;;
+  restore)     do_restore "${@:2}" ;;
   rollback)    release_rollback ;;
   *)
     [[ $# -lt 2 ]] && die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"

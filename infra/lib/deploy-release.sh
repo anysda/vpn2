@@ -26,6 +26,12 @@ release_unlock() {
 release_start() {
   local action="${1:-}"
   case "$action" in -h|--help|99-verify|backup|backup-list) return ;; esac
+  # Пробный restore только спрашивает entry, какой архив взял бы: ни замка,
+  # ни снимка, ни записи о выпуске.
+  if [[ "$action" == restore ]]; then
+    local arg
+    for arg in "${@:2}"; do [[ "$arg" != --dry-run ]] || return 0; done
+  fi
   if [[ "${VPN2_DEVELOPMENT:-false}" != true && "$action" != rollback ]]; then
     VPN2_RELEASE_MANIFEST=${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}
     python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.."

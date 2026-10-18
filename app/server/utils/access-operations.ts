@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { and, desc, eq, exists, getTableColumns, lte, ne } from 'drizzle-orm'
+import { and, desc, eq, exists, getTableColumns, lte, ne, notExists } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shared/access-operation'
@@ -65,6 +65,7 @@ export async function enqueueAccess(input: {
   key?: string
   patch?: Partial<typeof clients.$inferInsert>
   condition?: SQL
+  initialize?: boolean
 }) {
   const db = useDb()
   const key = input.key ?? randomUUID()
@@ -84,7 +85,7 @@ export async function enqueueAccess(input: {
     const targets = allDevices.filter(d => input.deviceId === undefined || d.id === input.deviceId)
     if (input.deviceId !== undefined && !targets.length) throw createError({ statusCode: 404, statusMessage: 'not_found' })
     if (input.kind === 'reissue' && targets.some(d => d.deleting)) throw createError({ statusCode: 409, message: 'Устройство удаляется' })
-    const version = before.accessVersion + 1
+    const version = before.accessVersion + (input.initialize ? 0 : 1)
     const patch = { ...input.patch, accessVersion: version, updatedAt: new Date() }
     if (input.kind === 'delete' && input.deviceId === undefined) Object.assign(patch, { deleting: true, frozenManual: true })
     const [client] = await tx.update(clients).set(patch)
@@ -98,7 +99,7 @@ export async function enqueueAccess(input: {
     const payload: AccessPayload = {
       enabled: !client.deleting && isClientActive(client),
       retired: inherited?.retired ?? [], rotateOvpn: inherited?.rotateOvpn ?? [],
-      name: client.name, chatId: client.tgChatId,
+      name: client.name, chatId: input.initialize ? null : client.tgChatId,
     }
     if (input.patch?.expiresAt !== undefined && (before.expiresAt?.getTime() ?? null) !== (client.expiresAt?.getTime() ?? null)) {
       payload.notice = client.expiresAt
@@ -140,6 +141,7 @@ export async function enqueueAccess(input: {
     const [row] = await tx.insert(accessOperations).values({
       id: randomUUID(), clientId: before.id, deviceId: input.deviceId ?? null,
       kind, version, idempotencyKey: key, requestHash, status: 'pending', protocols,
+      completionRecorded: Boolean(input.initialize),
       payload: JSON.stringify(payload), actor: input.actor, nextRetry: now, createdAt: now,
     }).returning()
     return { client, operation: operationView(row!) }
@@ -179,6 +181,23 @@ export async function retryAccess(id: string) {
 /** Истечение срока также получает долговечную операцию, без изменения ручного флага. */
 export async function enqueueExpiredAccess() {
   const db = useDb()
+  // Первичная сверка прежней базы сохраняет самовосстановление cron.
+  // Она не меняет желаемое состояние/версию и не отменяет выдачу в процессе.
+  const untracked = await db.select().from(clients).where(notExists(
+    db.select({ id: accessOperations.id }).from(accessOperations).where(eq(accessOperations.clientId, clients.id)),
+  ))
+  for (const client of untracked) {
+    try {
+      await enqueueAccess({ clientId: client.id, actor: 'reconcile', initialize: true,
+        key: `initialize:${client.id}:${client.accessVersion}`,
+        condition: and(eq(clients.accessVersion, client.accessVersion), notExists(
+          db.select({ id: accessOperations.id }).from(accessOperations).where(eq(accessOperations.clientId, client.id)),
+        )) })
+    }
+    catch (error) {
+      if ((error as { statusCode?: number }).statusCode !== 409) throw error
+    }
+  }
   const expired = await db.select().from(clients).where(and(
     eq(clients.frozenManual, false), eq(clients.deleting, false), lte(clients.expiresAt, new Date()),
   ))

@@ -59,18 +59,15 @@ export const accessAdapter: AccessAdapter = {
     if (protocol === 'wg') {
       const { stdout } = await exec('flock', ['-w', '10', '/etc/wireguard/.access-apply.lock', 'wg', 'show', 'wg0', 'peers'], { timeout: 20_000, maxBuffer: 1024 * 1024 })
       const peers = new Set(stdout.trim().split(/\s+/))
-      return rows.every(d => d.enabled
-        ? !!d.wgPublicKey && !!d.wgPresharedKey && !!d.wgIp && peers.has(d.wgPublicKey)
-        : !d.wgPublicKey || !peers.has(d.wgPublicKey))
+      if (operation.kind === 'reissue' && rows.some(d => !d.deleting && (!operation.deviceId || operation.deviceId === d.id)
+        && (!d.wgPublicKey || !d.wgPrivateKey || !d.wgPresharedKey || !d.wgIp))) return false
+      return rows.every(d => !d.wgPublicKey || peers.has(d.wgPublicKey) === d.enabled)
         && payload.retired.every(d => !d.wgPublicKey || !peers.has(d.wgPublicKey))
     }
     if (protocol === 'openvpn') {
       const connected = await connectedOvpnClients()
       for (const d of rows) {
-        if (!d.ovpnCert) {
-          if (d.enabled) return false
-          continue
-        }
+        if (!d.ovpnCert) continue
         if (d.deleting && await certificateState(d.ovpnCert) !== 'revoked') return false
         const ccd = await fs.readFile(`${OVPN}/ccd/${ovpnCn(d.id)}`, 'utf8').catch((error: NodeJS.ErrnoException) => {
           if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null
@@ -99,8 +96,8 @@ export const accessAdapter: AccessAdapter = {
     const config = await fs.readFile('/etc/swanctl/conf.d/anysda-clients.conf', 'utf8')
     if (createHash('sha256').update(config).digest('hex') !== status.applied_digest) return false
     for (const d of rows) {
-      if (!d.ikev2Username || !d.ikev2Password || !d.ikev2Ip) {
-        if (d.enabled) return false
+      if (!d.ikev2Username) {
+        if (operation.kind === 'reissue' && (!operation.deviceId || operation.deviceId === d.id)) return false
         continue
       }
       if (status.connections.includes(`anysda-dev-${d.id}`) !== d.enabled) return false
@@ -113,7 +110,7 @@ export const accessAdapter: AccessAdapter = {
   async apply(protocol, operation, payload) {
     const rows = await desired(operation)
     if (protocol === 'wg' || protocol === 'ikev2') {
-      for (const d of rows.filter(d => d.enabled)) {
+      for (const d of rows.filter(d => operation.kind === 'reissue' && !d.deleting && (!operation.deviceId || operation.deviceId === d.id))) {
         if (protocol === 'wg' && d.wgPublicKey && d.wgPrivateKey && d.wgPresharedKey && d.wgIp) continue
         if (protocol === 'ikev2' && d.ikev2Username && d.ikev2Password && d.ikev2Ip) continue
         await desired(operation)
@@ -130,7 +127,7 @@ export const accessAdapter: AccessAdapter = {
     for (const d of rows) {
       await desired(operation)
       if (d.deleting && d.ovpnCert && !payload.retired.some(old => old.ovpnCert === d.ovpnCert)) await revokeAccessCert(d.ovpnCert)
-      if (d.enabled && (!d.ovpnCert || !d.ovpnKey)) await ensureDeviceOvpn(d.id)
+      if (d.enabled && operation.kind === 'reissue' && (!operation.deviceId || operation.deviceId === d.id) && (!d.ovpnCert || !d.ovpnKey)) await ensureDeviceOvpn(d.id)
     }
     for (const pending of payload.rotateOvpn) {
       const currentRows = await desired(operation)

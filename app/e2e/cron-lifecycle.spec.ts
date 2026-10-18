@@ -7,10 +7,11 @@ function harness(collect?: () => Promise<void>) {
   const process = new EventEmitter()
   const calls: string[] = []
   const imports: Record<string, unknown> = {}
+  imports['../utils/access-operations'] = {
+    enqueueExpiredAccess: async () => { calls.push('enqueueExpiredAccess') },
+    runAccessOperations: async () => { calls.push('runAccessOperations') },
+  }
   for (const [module, method] of [
-    ['wireguard', 'syncWireguardConfig'],
-    ['openvpn', 'syncOpenvpnConfig'],
-    ['ikev2', 'syncIkev2'],
     ['client-prefs', 'syncClientPrefsFile'],
     ['traffic-collector', 'collectTraffic'],
   ]) {
@@ -93,4 +94,35 @@ test('cron: пересоздание Nitro оставляет только од�
   await h.clock.advance(120_000)
   expect(h.calls).toEqual([])
   expect(h.process.listenerCount('beforeExit')).toBe(0)
+})
+
+test('исполнитель доступа ждёт готовности панели и завершает текущую попытку при закрытии', async () => {
+  const clock = new FakeClock()
+  let ready = false
+  let calls = 0
+  let finish!: () => void
+  const held = new Promise<void>(resolve => { finish = resolve })
+  let close!: () => Promise<void>
+  const plugin = serverModule('server/plugins/access-operations.ts', {
+    '../utils/access-operations': { runAccessOperations: async () => { calls++; await held } },
+    '../utils/panel-ready': { isPanelReady: () => ready },
+  }, {
+    defineNitroPlugin: (fn: unknown) => fn,
+    useLogger: () => ({ error: () => {} }),
+    setInterval: clock.setInterval, clearInterval: clock.clearInterval,
+  }).default as (app: unknown) => void
+  plugin({ hooks: { hook: (_name: string, fn: () => Promise<void>) => { close = fn } } })
+  await clock.advance(3000)
+  expect(calls).toBe(0)
+  ready = true
+  await clock.advance(3000)
+  expect(calls).toBe(1)
+  let closed = false
+  const closing = close().then(() => { closed = true })
+  await clock.flush()
+  expect(closed).toBe(false)
+  finish()
+  await closing
+  await clock.advance(3000)
+  expect(calls).toBe(1)
 })

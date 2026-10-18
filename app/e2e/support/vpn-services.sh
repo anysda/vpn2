@@ -23,6 +23,7 @@ management /etc/openvpn/server/mgmt.sock unix
 keepalive 10 60
 verb 3
 EOF
+rm -f /etc/openvpn/server/mgmt.sock
 openvpn --config /tmp/openvpn-test.conf --daemon --log /tmp/openvpn-test.log
 cat > /etc/swanctl/swanctl.conf <<'EOF'
 connections {
@@ -59,6 +60,8 @@ for _ in $(seq 30); do
   if swanctl --list-conns >/dev/null 2>&1; then break; fi
   sleep 1
 done
+# В установке это start-scripts strongSwan из стадии 27.
+swanctl --load-all --noprompt >/tmp/ikev2-test-start.log 2>&1
 while kill -0 "$charon_pid" 2>/dev/null; do
   python3 /tmp/ikev2-test-sync.py >/tmp/ikev2-test-sync.log 2>&1 || true
   sleep 1

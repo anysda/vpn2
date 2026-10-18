@@ -184,6 +184,20 @@ test('уведомление о новом сроке сохраняется и 
   expect(JSON.parse(notice!.payload).text).toBe('Доступ включён\nСрок действия вашего ключа: до 20.05.2031.')
 })
 
+test('первичная сверка старой базы идёт через очередь без изменения версии и рассылки', async () => {
+  const c = await client()
+  await ops.enqueueExpiredAccess()
+  const operation = await ops.latestAccess(c.id)
+  expect(operation?.version).toBe(0)
+  expect(operation?.status).toBe('pending')
+  await ops.runAccessOperations(adapter)
+  expect((await ops.getAccess(operation!.id)).status).toBe('confirmed')
+  await ops.enqueueExpiredAccess()
+  expect((await db.select().from(schema.accessOperations))).toHaveLength(1)
+  expect((await db.select().from(schema.botOutbox))).toHaveLength(0)
+  expect((await db.select().from(schema.events))).toHaveLength(0)
+})
+
 test('история завершённых удалений не вытесняет живые операции из очереди', async () => {
   for (let i = 0; i < 17; i++) {
     const c = await client()

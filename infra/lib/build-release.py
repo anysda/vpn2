@@ -31,13 +31,13 @@ def binary_specs(root):
             'url': f'https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz',
         }
     entries = (
-        ('wgcf', '10-foreign.sh', 'WGCF_VER', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
-        ('caddy', '30-frontend.sh', 'CADDY_VER', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
-        ('node-exporter', '00-bootstrap.sh', 'NE_VERSION', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
-        ('adguard', '22-adguard.sh', 'AGH_VER', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
+        ('wgcf', 'scripts/10-foreign.sh', 'WGCF_VER', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
+        ('caddy', 'lib/anysda-svc.sh', 'CADDY_VER', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
+        ('node-exporter', 'scripts/00-bootstrap.sh', 'NE_VERSION', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
+        ('adguard', 'scripts/22-adguard.sh', 'AGH_VER', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
     )
     for name, stage, variable, repo, tag, asset in entries:
-        version = value(root, stages + stage, variable)
+        version = value(root, 'infra/' + stage, variable)
         filename = asset.format(v=version)
         url = f'https://api.github.com/repos/{repo}/releases/tags/{tag.format(v=version)}'
         with urllib.request.urlopen(url, timeout=60) as response:

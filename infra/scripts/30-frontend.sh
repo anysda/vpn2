@@ -141,26 +141,7 @@ echo "[$HOST_TAG]   admin pass:  (см. /etc/anysda/admin-password.txt на но
 # 3. Caddy (reverse-proxy + optional LE)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [3/4] caddy"
-# APT-репо Caddy на Cloudsmith отвечает 402 Payment Required: apt-get update
-# с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
-# пользователем caddy). Список Cloudsmith со старых нод убирает deploy.sh
-# перед каждой стадией.
-# Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
-# что встала первой.
-CADDY_VER='2.11.7'
-if [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]]; then
-  TMP=$(mktemp -d)
-  REL_URL="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
-  DEB="caddy_${CADDY_VER}_linux_amd64.deb"
-  release_download caddy "$TMP/$DEB" "$REL_URL/$DEB"
-  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/caddy_${CADDY_VER}_checksums.txt" -o "$TMP/checksums.txt"
-    ( cd "$TMP" && grep -E "[[:space:]]${DEB}\$" checksums.txt | sha512sum -c - ) \
-      || { rm -rf "$TMP"; echo "[$HOST_TAG] caddy SHA-512 mismatch — abort" >&2; exit 1; }
-  fi
-  deb_install "$TMP/$DEB" >/dev/null
-  rm -rf "$TMP"
-fi
+caddy_install
 
 # HTTPS: с доменом — сертификат на домен, без домена — на IP entry (профиль
 # Let's Encrypt shortlived, ~6 дней). Выпускает и обновляет Caddy; окно

@@ -53,6 +53,52 @@ emergency_docker_config() {
   if systemctl is-active --quiet docker.service; then systemctl restart docker.service; fi
 }
 
+# Let's Encrypt certificate on the exit IP, kept current in normal operation
+# (shared lifecycle of the entry: shortlived profile, renewal after 5 days).
+# Caddy is only the ACME client: HTTP-01 on :80, its site on loopback, so 443
+# stays free for the emergency panel. The agent reads the exported pair as
+# vpn2-emergency; without a certificate the emergency falls back to a pinned
+# self-signed one.
+emergency_ip_certificate() {
+  local tls_lib
+  tls_lib=$(dirname "$0")/vpn2_tls.py
+  [[ -f "$tls_lib" ]] || tls_lib=$(dirname "$0")/../lib/vpn2_tls.py
+  caddy_install
+  install -D -m 755 "$tls_lib" /usr/local/lib/vpn2/vpn2_tls.py
+  systemctl stop vpn2-tls.timer vpn2-tls.service 2>/dev/null || true
+  python3 /usr/local/lib/vpn2/vpn2_tls.py --prepare --role exit --host "$PUBLIC_IP" \
+    --config /etc/vpn2/tls/config.json --caddy-dir /etc/caddy --output-dir /etc/vpn2/tls/ip \
+    --storage /var/lib/caddy/.local/share/caddy --cert-group vpn2-emergency \
+    --acme-url "${TLS_ACME_URL:-https://acme-v02.api.letsencrypt.org/directory}" \
+    --acme-root "${TLS_ACME_ROOT:-}"
+  if command -v ufw >/dev/null; then ufw allow 80/tcp comment 'vpn2 exit ACME challenge'; fi
+  caddy validate --config /etc/caddy/Caddyfile >/dev/null
+  svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile \
+    /etc/caddy/vpn2-tls.conf
+  cat > /etc/systemd/system/vpn2-tls.service <<'UNIT'
+[Unit]
+Description=VPN2 TLS certificate export
+After=caddy.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
+TimeoutStartSec=120
+UNIT
+  cat > /etc/systemd/system/vpn2-tls.timer <<'UNIT'
+[Unit]
+Description=Check VPN2 TLS lifecycle every minute
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+[Install]
+WantedBy=timers.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable caddy.service >/dev/null 2>&1
+  python3 /usr/local/lib/vpn2/vpn2_tls.py --initial --config /etc/vpn2/tls/config.json --wait "${TLS_INITIAL_WAIT:-60}"
+  systemctl enable --now vpn2-tls.timer
+}
+
 # Docker as the image store; polkitd lets the sandboxed agent start Hysteria2.
 EMERGENCY_PKGS=(qrencode curl openssl nftables polkitd)
 EMERGENCY_SKIP=()
@@ -137,6 +183,7 @@ if [[ "$HOST_TAG" != ru ]]; then
   bash "$STAGING/install-hy2.sh" "$PUBLIC_IP" "${EMERGENCY_HY2_PORT:-18443}"
   # The panel is served by the agent itself and answers only during an emergency.
   if command -v ufw >/dev/null; then ufw allow 443/tcp comment 'vpn2 emergency panel'; fi
+  emergency_ip_certificate
   # Panel certificate in advance; a fallback expiring later is renewed by
   # local openssl at activation, without network access.
   runuser -u vpn2-emergency -- env PYTHONPATH=/opt/vpn2-emergency python3 -B -c '

@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-# Real Caddy (same version as stage 30 CADDY_VER) validates the generated files when present.
+# Real Caddy (same version as CADDY_VER in infra/lib/anysda-svc.sh) validates the generated files when present.
 CADDY = os.environ.get('CADDY_BIN') or shutil.which('caddy')
 # Caddy 2.11.7 journal record for an unreachable ACME directory.
 REFUSED = {'level': 'error', 'logger': 'tls.obtain', 'msg': 'could not get certificate from issuer',

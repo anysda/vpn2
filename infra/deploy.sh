@@ -492,7 +492,7 @@ run_stage_on_host() {
     push "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" release-manifest.json || return 1
   fi
   push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
-  if [[ "$stage" == 30-frontend ]]; then
+  if [[ "$stage" == @(23-emergency|30-frontend) ]]; then
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then

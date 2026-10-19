@@ -157,9 +157,10 @@ def export_certificate(config, cert):
     for a reader that resolved the old link, older ones are removed."""
     target = Path(config['output_dir'])
     target.mkdir(parents=True, exist_ok=True)
-    group = grp.getgrnam(config.get('cert_group', 'root')).gr_gid
+    # Only root changes the group; a test run as a user has no such group.
+    group = grp.getgrnam(config.get('cert_group', 'root')).gr_gid if os.geteuid() == 0 else None
     os.chmod(target, 0o750)
-    if os.geteuid() == 0:
+    if group is not None:
         os.chown(target, -1, group)
     generation = target / cert['fingerprint']
     current = target / 'current'
@@ -168,7 +169,7 @@ def export_certificate(config, cert):
         generation.mkdir(mode=0o750, exist_ok=True)
         atomic(generation / 'fullchain.pem', Path(cert['cert']).read_text(), 0o644)
         atomic(generation / 'privkey.pem', Path(cert['key']).read_text(), 0o640)
-        if os.geteuid() == 0:
+        if group is not None:
             os.chown(generation, -1, group)
             os.chown(generation / 'privkey.pem', -1, group)
         pending = target / 'current.new'
@@ -328,7 +329,11 @@ def tick(config, state_path, initial=False):
     atomic(state_path, json.dumps(state))
     deliver(config, state)
     atomic(state_path, json.dumps(state))
-    if initial:
+    if initial and config.get('role') == 'exit':
+        print(f"TLS: сертификат на IP до {utc(cert['end'])}" if cert
+              else f"TLS: сертификата на IP пока нет; {state.get('error', 'ACME pending')}; "
+                   'Caddy повторит выпуск сам, до него авария на самоподписанном')
+    elif initial:
         print(f"TLS: HTTPS готов, сертификат до {utc(cert['end'])}" if cert
               else f"TLS: HTTP сохранён; {state.get('error', 'ACME pending')}; Caddy повторит выпуск сам")
     return bool(cert)

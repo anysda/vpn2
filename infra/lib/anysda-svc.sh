@@ -296,6 +296,30 @@ deb_install() {
   DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold -i "$1"
 }
 
+# Caddy: панель entry (30) и выпуск сертификата на IP экзита (23).
+# APT-репо Caddy на Cloudsmith отвечает 402 Payment Required: apt-get update
+# с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
+# пользователем caddy). Список Cloudsmith со старых нод убирает deploy.sh
+# перед каждой стадией.
+# Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
+# что встала первой.
+CADDY_VER='2.11.7'
+caddy_install() {
+  local tmp rel_url deb
+  [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]] || return 0
+  tmp=$(mktemp -d)
+  rel_url="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
+  deb="caddy_${CADDY_VER}_linux_amd64.deb"
+  release_download caddy "$tmp/$deb" "$rel_url/$deb" || { rm -rf "$tmp"; return 1; }
+  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+    curl -fsSL --retry 5 --connect-timeout 20 "$rel_url/caddy_${CADDY_VER}_checksums.txt" -o "$tmp/checksums.txt"
+    ( cd "$tmp" && grep -E "[[:space:]]${deb}\$" checksums.txt | sha512sum -c - ) \
+      || { rm -rf "$tmp"; svc_say "caddy SHA-512 mismatch — abort" >&2; return 1; }
+  fi
+  deb_install "$tmp/$deb" >/dev/null || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+}
+
 # apt_have PKG... — все пакеты уже установлены. apt-get install поверх
 # установленного всё равно читает списки и кэш (~2-3 с на ядро).
 apt_have() {

@@ -92,6 +92,16 @@ emergency_standby() {
   [[ -z "$listeners" ]] || { echo "udp/$port уже слушает"; return 1; }
   echo "аварийный Hysteria2: udp/$port закрыт"
 }
+# Сертификат на IP экзита выпускает Caddy, выкладывает vpn2-tls.timer (VPN2-517).
+emergency_acme() {
+  systemctl is-active --quiet caddy.service && systemctl is-active --quiet vpn2-tls.timer
+}
+emergency_ip_certificate() {
+  local host cert=/etc/vpn2/tls/ip/fullchain.pem
+  host=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["host"])' /etc/vpn2/tls/config.json) || return
+  openssl verify -purpose sslserver -verify_ip "$host" -untrusted "$cert" "$cert" >/dev/null 2>&1 \
+    && openssl x509 -in "$cert" -checkend 3600 -noout >/dev/null 2>&1
+}
 # Снимок клиентов для аварийки рассылает служба entry (VPN2-440); экзит
 # ждёт подтверждения раз в период отправки. Предел - два периода; первый
 # снимок после установки или перерыва туннеля ждём не дольше периода.
@@ -346,6 +356,12 @@ else
   check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
   check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
   [[ "$EMERGENCY_IMAGE" != true ]] || check 'аварийка: Hysteria2 в ожидании' emergency_standby
+  # Конфиг TLS появляется со стадией 23 этой версии: verify до её обновления его не ждёт.
+  if [[ "$EMERGENCY_IMAGE" == true && -f /etc/vpn2/tls/config.json ]]; then
+    check 'аварийка: выпуск сертификата на IP (caddy, vpn2-tls.timer) active' emergency_acme
+    # Без сертификата авария работает на самоподписанном с pinSHA256: не ошибка, но видно.
+    emergency_ip_certificate || warning "аварийка: доверенного сертификата на IP экзита пока нет — авария стартует на самоподписанном (pinSHA256 в ссылках)"
+  fi
   # Verify сразу после 10-foreign идёт до стадии 23 на entry: при обновлении
   # со старой версии службы снимка там ещё нет. Снимок проверяет итоговый verify.
   if [[ "$EMERGENCY_IMAGE" == true && "$EMERGENCY_STAMP" -nt /var/anysda/.stamps/10-foreign ]]; then

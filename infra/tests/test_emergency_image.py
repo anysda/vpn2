@@ -143,6 +143,11 @@ for arg in sys.argv[1:]:
 os.execv('/usr/bin/install', ['install', *args])
 '''
 
+CADDY = '''#!/usr/bin/env bash
+echo "caddy $*" >> "$FAKE/calls.log"
+[[ "$1" != version ]] || echo 'v2.11.7 h1:test'
+'''
+
 # The image's own installer is exercised by its own tests; here it only logs.
 HY2_INSTALLER = '''#!/usr/bin/env bash
 echo "install-hy2 $*" >> "$FAKE/calls.log"
@@ -233,16 +238,19 @@ class EmergencyImageTests(unittest.TestCase):
         ref = os.environ.get('STAGE_REF')
         source = subprocess.check_output(['git', 'show', f'{ref}:infra/scripts/23-emergency.sh'], cwd=ROOT,
                                          text=True) if ref else (ROOT / 'infra/scripts/23-emergency.sh').read_text()
-        for path in ('/opt/vpn2-emergency', '/etc/', '/var/lib/vpn2-emergency', '/var/anysda'):
+        for path in ('/opt/vpn2-emergency', '/etc/', '/var/lib/vpn2-emergency', '/var/anysda',
+                     '/usr/local/lib/vpn2', '/var/lib/caddy'):
             source = source.replace(path, str(root) + path)
         (stage_dir / '23-emergency.sh').write_text(source)
         svc = (ROOT / 'infra/lib/anysda-svc.sh').read_text().replace('/etc/', str(root) + '/etc/')
         (stage_dir / 'anysda-svc.sh').write_text(svc)
-        for name in ('release.sh', 'release.py'):
-            shutil.copy(ROOT / 'infra/lib' / name, stage_dir / name)
+        for name in ('release.sh', 'release.py', 'vpn2_tls.py'):
+            if (ROOT / 'infra/lib' / name).exists():
+                shutil.copy(ROOT / 'infra/lib' / name, stage_dir / name)
         env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{fake / 'sbin'}",
                'HOST_TAG': host, 'VPN2_DEVELOPMENT': 'true', 'EMERGENCY_CONFIG_SOURCE': str(config),
-               'FAKE_OFFLINE': '1' if offline else '0'}
+               'FAKE_OFFLINE': '1' if offline else '0', 'SVC_FP_DIR': str(root / 'var/lib/anysda/applied'),
+               'TLS_INITIAL_WAIT': '0'}
         env.pop('BASH_ENV', None)
         (fake / 'calls.log').write_text('')
         result = subprocess.run(['bash', str(stage_dir / '23-emergency.sh')], env=env, text=True,
@@ -269,6 +277,9 @@ class EmergencyImageTests(unittest.TestCase):
             (fake / 'bin' / name).chmod(0o755)
         (fake / 'bin/install').write_text(INSTALL)
         (fake / 'bin/install').chmod(0o755)
+        # Caddy of the pinned version is already installed; validate accepts the config.
+        (fake / 'bin/caddy').write_text(CADDY)
+        (fake / 'bin/caddy').chmod(0o755)
         (fake / 'state.json').write_text(json.dumps(
             {'registry': {}, 'images': {}, 'containers': {}, 'users': [],
              'packages': ['ca-certificates', 'curl', 'gnupg', 'openssl', 'nftables', 'qrencode']}))
@@ -351,6 +362,58 @@ class EmergencyImageTests(unittest.TestCase):
                                       'systemctl is-active --quiet vpn2-emergency-snapshot.service'],
                              result.calls)
 
+
+    def issue(self, root, ip):
+        """Caddy storage holds an IP certificate from the configured ACME directory."""
+        folder = root / 'var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory' / ip
+        folder.mkdir(parents=True)
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                        '-nodes', '-days', '6', '-subj', '/CN=' + ip, '-addext', 'subjectAltName=IP:' + ip,
+                        '-keyout', str(folder / (ip + '.key')), '-out', str(folder / (ip + '.crt'))],
+                       check=True, capture_output=True)
+        (folder / (ip + '.json')).write_text(json.dumps(
+            {'issuer_data': {'ca': 'https://acme-v02.api.letsencrypt.org/directory'}}))
+        return (folder / (ip + '.crt')).read_text()
+
+    def test_exit_keeps_lets_encrypt_ip_certificate_for_the_emergency(self):
+        """VPN2-517: deploy keeps a certificate on the exit IP, the emergency starts with it."""
+        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
+            fake = self.host(directory)
+            root = fake / 'root'
+            issued = self.issue(root, '198.51.100.20')
+            result = self.stage(fake, 'exit', image='sha256:' + '4' * 64)
+            self.assertEqual(result.returncode, 0, result.stdout)
+            tls = root / 'etc/vpn2/tls'
+            self.assertTrue((tls / 'config.json').is_file(), 'stage 23 does not set up the exit IP certificate')
+            config = json.loads((tls / 'config.json').read_text())
+            self.assertEqual((config['role'], config['host'], config['cert_group']),
+                             ('exit', '198.51.100.20', 'vpn2-emergency'))
+            self.assertEqual(config['output_dir'], str(tls / 'ip'))
+            # The agent and Hysteria2 read exactly this pair (web.make_server, hy2 tls_dir).
+            self.assertEqual((tls / 'ip/fullchain.pem').read_text(), issued)
+            self.assertTrue((tls / 'ip/privkey.pem').is_file())
+            # Caddy is only the ACME client: HTTP-01 on :80, 443 stays with the emergency panel.
+            caddyfile = (root / 'etc/caddy/Caddyfile').read_text()
+            self.assertIn('https://198.51.100.20:8443 {\n    bind 127.0.0.1', caddyfile)
+            self.assertIn('profile shortlived', (root / 'etc/caddy/vpn2-tls.conf').read_text())
+            self.assertIn('ufw allow 80/tcp comment vpn2 exit ACME challenge', result.calls)
+            self.assertIn('caddy validate --config ' + str(root / 'etc/caddy/Caddyfile'), result.calls)
+            self.assertIn('systemctl restart caddy', result.calls)
+            # Renewal every minute keeps the exported pair current between deploys.
+            self.assertIn('OnUnitInactiveSec=1min', (root / 'etc/systemd/system/vpn2-tls.timer').read_text())
+            self.assertIn('systemctl enable --now vpn2-tls.timer', result.calls)
+            # The panel certificate is prepared after the export, so it starts on the trusted pair.
+            calls = result.calls
+            self.assertLess(calls.index('systemctl enable --now vpn2-tls.timer'),
+                            next(i for i, c in enumerate(calls) if c.startswith('runuser -u vpn2-emergency')))
+            # The entry has its own Caddy from stage 30: stage 23 leaves it alone.
+            (Path(directory) / 'entry').mkdir()
+            entry = self.host(Path(directory) / 'entry')
+            shutil.copy(entry / 'docker', entry / 'bin/docker')
+            other = self.stage(entry, 'ru', image='sha256:' + '4' * 64)
+            self.assertEqual(other.returncode, 0, other.stdout)
+            self.assertFalse((entry / 'root/etc/vpn2/tls/config.json').exists())
+            self.assertFalse([c for c in other.calls if c.startswith('caddy ') or 'vpn2-tls' in c], other.calls)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

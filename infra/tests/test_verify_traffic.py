@@ -551,30 +551,43 @@ class IKEv2RevokeTests(unittest.TestCase):
 
 
 # Настоящий сервер wg0 и клиент в netns vpn2-verify, внутри одноразовых сетевого
-# и файлового пространств: на хост CI ничего не попадает.
+# и файлового пространств: на хост CI ничего не попадает. У каждого сетевого шага
+# свой срок: зависание называет шаг, а не общий таймаут теста.
 NETNS_DRIVER = r'''
-import importlib.util, json, socket, subprocess, sys, time
+import contextlib, importlib.util, json, signal, socket, subprocess, sys, time
 from pathlib import Path
 spec = importlib.util.spec_from_file_location('vt', sys.argv[1])
 vt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vt)
-tmp = Path(sys.argv[2])
+# Рабочие файлы - в tmpfs /run этого пространства имён: исчезают вместе с ним.
+tmp = Path('/run/vpn2-verify-test')
+tmp.mkdir()
 vt.WORK, vt.CCD, vt.SWAN_FILE, vt.MANUAL_DIR = tmp / 'work', tmp / 'ccd', tmp / 'swan.conf', tmp / 'manual'
 run = vt.run
 WAN = '198.51.100.1'
-run('ip', 'link', 'set', 'lo', 'up')
-run('ip', 'link', 'add', 'wan0', 'type', 'dummy')
-run('ip', 'address', 'add', WAN + '/24', 'dev', 'wan0')
-run('ip', 'link', 'set', 'wan0', 'up')
-run('ip', 'route', 'add', 'default', 'dev', 'wan0')
-run('ip', 'link', 'add', 'wg0', 'type', 'wireguard')
-run('wg', 'set', 'wg0', 'private-key', '/dev/stdin', 'listen-port', '51820', data=run('wg', 'genkey').stdout)
-run('ip', 'address', 'add', '10.66.66.1/24', 'dev', 'wg0')
-run('ip', 'link', 'set', 'wg0', 'up')
-result = {}
-target = subprocess.Popen([sys.executable, '-I', sys.argv[3], '--listen', WAN, '--port', '18080',
-                           '--lifetime', '120'], stdout=subprocess.PIPE, text=True)
-assert target.stdout.readline().strip() == 'ready'
+
+
+class StepTimeout(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def step(name, seconds):
+    started = time.monotonic()
+
+    def expired(*_args):
+        raise StepTimeout(f'шаг «{name}» не уложился в {seconds} с')
+
+    signal.signal(signal.SIGALRM, expired)
+    signal.alarm(seconds)
+    done = False
+    try:
+        yield
+        done = True
+    finally:
+        signal.alarm(0)
+        print(f'шаг «{name}»: {"" if done else "сбой, "}{time.monotonic() - started:.2f} с',
+              file=sys.stderr, flush=True)
 
 
 class Router:
@@ -582,50 +595,80 @@ class Router:
         return []
 
 
-def echo():
-    return bool(vt.in_namespace(Router(), None, 'echo', [WAN, 18080, 'verify'], deadline=8)[0])
+def echo(name):
+    with step(name, 12):
+        return bool(vt.in_namespace(Router(), None, 'echo', [WAN, 18080, 'verify'], deadline=8)[0])
 
 
-vt.cleanup()
-vt.WORK.mkdir(mode=0o700)
-vt.Namespace().up()
-wg = vt.WireGuard()
-addresses = wg.free_addresses(2)
-result['addresses'] = addresses
-wg.issue('a', addresses[0])
-result['connect'] = wg.connect('a', (vt.HOST_IP, wg.port))
-result['source'] = vt.Namespace.source()
-result['echo'] = echo()
-wg.down()
-result['echo_tunnel_down'] = echo()
-# Маршрут хоста есть, но клиенту разрешён только туннель: утечки мимо него нет.
-vt.ns('ip', 'route', 'replace', 'default', 'via', vt.HOST_IP)
-result['echo_host_route'] = echo()
-wg.connect('a', (vt.HOST_IP, wg.port))
-wg.revoke('a')
-result['echo_revoked'] = echo()
-wg.issue('b', addresses[1])
-result['connect_b'] = wg.connect('b', (vt.HOST_IP, wg.port))
-result['echo_b'] = echo()
-# Эхо прямого пути: адрес на WAN выхода direct-ru, ответ сокету, привязанному к WAN.
-targets = vt.Targets(WAN, [], type('R', (), {'outbounds': {'direct-ru': {'bind_interface': 'wan0'}}})())
-targets.start(lifetime=60)
-bound = socket.socket()
-bound.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'wan0')
-bound.settimeout(5)
-bound.connect((vt.ECHO_IP, targets.port))
-bound.sendall(f'POST /vpn2-verify/{"0" * 32} HTTP/1.0\r\nContent-Length: 32\r\n\r\n{"0" * 32}'.encode())
-reply = bound.recv(4096).decode()
-result['echo_direct'] = json.loads(reply.split('\r\n\r\n', 1)[1])['local']
-result['echo_global'] = vt.ECHO_IP in run('ip', '-o', 'address', 'show', 'scope', 'global').stdout
-targets.stop()
-result['echo_leftover'] = 'адрес эха' in vt.leftovers()
-# Обрыв посреди проверки: остатки снимает следующий запуск по признакам.
-vt.cleanup()
-result['leftovers'] = vt.leftovers()
-result['peers'] = run('wg', 'show', 'wg0', 'peers').stdout.split()
-result['input'] = run('iptables-save', '-t', 'filter').stdout.count('vpn2-verify')
-target.terminate()
+result, target, targets = {}, None, None
+try:
+    with step('wan0 и сервер wg0', 15):
+        run('ip', 'link', 'set', 'lo', 'up')
+        run('ip', 'link', 'add', 'wan0', 'type', 'dummy')
+        run('ip', 'address', 'add', WAN + '/24', 'dev', 'wan0')
+        run('ip', 'link', 'set', 'wan0', 'up')
+        run('ip', 'route', 'add', 'default', 'dev', 'wan0')
+        run('ip', 'link', 'add', 'wg0', 'type', 'wireguard')
+        run('wg', 'set', 'wg0', 'private-key', '/dev/stdin', 'listen-port', '51820', data=run('wg', 'genkey').stdout)
+        run('ip', 'address', 'add', '10.66.66.1/24', 'dev', 'wg0')
+        run('ip', 'link', 'set', 'wg0', 'up')
+    with step('цель на WAN', 10):
+        # stderr не наследуется: живая цель не держит канал теста после падения драйвера.
+        target = subprocess.Popen([sys.executable, '-I', sys.argv[2], '--listen', WAN, '--port', '18080',
+                                   '--lifetime', '120'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        assert target.stdout.readline().strip() == 'ready'
+    with step('netns клиента и туннель a', 25):
+        vt.cleanup()
+        vt.WORK.mkdir(mode=0o700)
+        vt.Namespace().up()
+        wg = vt.WireGuard()
+        addresses = wg.free_addresses(2)
+        result['addresses'] = addresses
+        wg.issue('a', addresses[0])
+        result['connect'] = wg.connect('a', (vt.HOST_IP, wg.port))
+        result['source'] = vt.Namespace.source()
+    result['echo'] = echo('эхо через туннель a')
+    wg.down()
+    result['echo_tunnel_down'] = echo('эхо без туннеля')
+    # Маршрут хоста есть, но клиенту разрешён только туннель: утечки мимо него нет.
+    vt.ns('ip', 'route', 'replace', 'default', 'via', vt.HOST_IP)
+    result['echo_host_route'] = echo('эхо по маршруту хоста')
+    with step('отзыв a', 15):
+        wg.connect('a', (vt.HOST_IP, wg.port))
+        wg.revoke('a')
+    result['echo_revoked'] = echo('эхо после отзыва')
+    with step('туннель b', 15):
+        wg.issue('b', addresses[1])
+        result['connect_b'] = wg.connect('b', (vt.HOST_IP, wg.port))
+    result['echo_b'] = echo('эхо через туннель b')
+    # Эхо прямого пути: адрес на WAN выхода direct-ru, ответ сокету, привязанному к WAN.
+    with step('эхо прямого пути: цели', 45):
+        targets = vt.Targets(WAN, [], type('R', (), {'outbounds': {'direct-ru': {'bind_interface': 'wan0'}}})())
+        targets.start(lifetime=60)
+    with step('эхо прямого пути: ответ', 10):
+        bound = socket.socket()
+        bound.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'wan0')
+        bound.settimeout(5)
+        bound.connect((vt.ECHO_IP, targets.port))
+        bound.sendall(f'POST /vpn2-verify/{"0" * 32} HTTP/1.0\r\nContent-Length: 32\r\n\r\n{"0" * 32}'.encode())
+        # Заголовки и тело цель пишет разными send: ответ HTTP/1.0 читаем до закрытия соединения.
+        reply = b''.join(iter(lambda: bound.recv(4096), b'')).decode()
+        bound.close()
+        result['echo_direct'] = json.loads(reply.split('\r\n\r\n', 1)[1])['local']
+        result['echo_global'] = vt.ECHO_IP in run('ip', '-o', 'address', 'show', 'scope', 'global').stdout
+    with step('эхо прямого пути: остановка', 15):
+        targets.stop()
+        result['echo_leftover'] = 'адрес эха' in vt.leftovers()
+    # Обрыв посреди проверки: остатки снимает следующий запуск по признакам.
+    with step('уборка по признакам', 30):
+        vt.cleanup()
+        result['leftovers'] = vt.leftovers()
+        result['peers'] = run('wg', 'show', 'wg0', 'peers').stdout.split()
+        result['input'] = run('iptables-save', '-t', 'filter').stdout.count('vpn2-verify')
+finally:
+    for process in [target] + ([targets.local, targets.echo] if targets else []):
+        if process and process.poll() is None:
+            process.kill()
 print(json.dumps(result))
 '''
 
@@ -634,30 +677,33 @@ print(json.dumps(result))
                      'set RUN_NETNS_TESTS=1 with sudo, iproute2, iptables and wireguard-tools')
 class NetnsWireGuardTests(unittest.TestCase):
     def test_real_tunnel_positive_negative_revocation_cleanup(self):
-        with tempfile.TemporaryDirectory(prefix='verify-traffic-') as directory:
-            shell = ('mount -t tmpfs tmpfs /run && '
-                     f'exec {sys.executable} -I -c "$0" "$@"')
+        shell = ('mount -t tmpfs tmpfs /run && '
+                 f'exec {sys.executable} -I -c "$0" "$@"')
+        try:
             result = subprocess.run(['sudo', '-n', 'unshare', '--net', '--mount', 'sh', '-ec', shell,
-                                     NETNS_DRIVER, str(MODULE), directory, str(TARGET)],
-                                    text=True, capture_output=True, timeout=120)
-            self.assertEqual(result.returncode, 0, result.stderr[-3000:])
-            data = json.loads(result.stdout.splitlines()[-1])
-            print(json.dumps(data, ensure_ascii=False))
-            self.assertEqual(data['addresses'], ['10.66.66.254', '10.66.66.253'])
-            self.assertTrue(data['connect'])
-            self.assertEqual(data['source'], '10.66.66.254')
-            self.assertTrue(data['echo'], 'положительный контроль: туннель передаёт данные')
-            self.assertFalse(data['echo_tunnel_down'], 'отрицательный контроль: без туннеля нет данных')
-            self.assertFalse(data['echo_host_route'], 'маршрут хоста не должен давать ответ')
-            self.assertFalse(data['echo_revoked'])
-            self.assertTrue(data['connect_b'])
-            self.assertTrue(data['echo_b'])
-            self.assertTrue(data['echo_direct'], 'эхо прямого пути отвечает сокету direct-ru со своего адреса')
-            self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
-            self.assertTrue(data['echo_leftover'])
-            self.assertEqual(data['leftovers'], [])
-            self.assertEqual(data['peers'], [])
-            self.assertEqual(data['input'], 0)
+                                     NETNS_DRIVER, str(MODULE), str(TARGET)],
+                                    text=True, capture_output=True, timeout=240)
+        except subprocess.TimeoutExpired as error:
+            stderr = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else error.stderr
+            self.fail(f'драйвер netns не завершился за {error.timeout} с:\n{(stderr or "")[-3000:]}')
+        self.assertEqual(result.returncode, 0, result.stderr[-3000:])
+        data = json.loads(result.stdout.splitlines()[-1])
+        print(json.dumps(data, ensure_ascii=False))
+        self.assertEqual(data['addresses'], ['10.66.66.254', '10.66.66.253'])
+        self.assertTrue(data['connect'])
+        self.assertEqual(data['source'], '10.66.66.254')
+        self.assertTrue(data['echo'], 'положительный контроль: туннель передаёт данные')
+        self.assertFalse(data['echo_tunnel_down'], 'отрицательный контроль: без туннеля нет данных')
+        self.assertFalse(data['echo_host_route'], 'маршрут хоста не должен давать ответ')
+        self.assertFalse(data['echo_revoked'])
+        self.assertTrue(data['connect_b'])
+        self.assertTrue(data['echo_b'])
+        self.assertTrue(data['echo_direct'], 'эхо прямого пути отвечает сокету direct-ru со своего адреса')
+        self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
+        self.assertTrue(data['echo_leftover'])
+        self.assertEqual(data['leftovers'], [])
+        self.assertEqual(data['peers'], [])
+        self.assertEqual(data['input'], 0)
 
 
 if __name__ == '__main__':

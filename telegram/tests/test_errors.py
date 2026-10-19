@@ -41,7 +41,7 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=response.status_code):
                 self.assertNotIn('TEST_ONLY_PASSWORD', bot._extract_error(response).message)
         self.assertEqual(bot._extract_error(httpx.Response(
-            409, json={'message': 'device_limit_reached'})).message, 'device_limit_reached')
+            409, json={'message': 'Клиент удаляется'})).message, 'Клиент удаляется')
 
     async def test_log_formatter_redacts_event_secret_and_proxy_credentials(self):
         bot = load_bot()

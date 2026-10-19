@@ -397,22 +397,70 @@ def _bot_headers() -> dict:
     return {'Authorization': f'Bearer {SECRET}'} if SECRET else {}
 
 
+_ADMIN = 'Обратитесь к администратору.'
+_LATER = 'Попробуйте позже.'
+
+# Коды /api/bot/* (statusMessage панели) → текст для человека в Telegram.
+# Код машинный: показывать его клиенту нельзя, он уходит в журнал.
+ERROR_TEXT = {
+    'not_linked': 'Этот Telegram не привязан к клиенту VPN.',
+    'not_found': 'Не найдено: возможно, его уже удалили.',
+    'invalid_password': 'Ссылка-приглашение недействительна. ' + _ADMIN,
+    'client_exists': 'Такой клиент уже есть.',
+    'device_exists': 'Устройство с таким названием уже есть.',
+    'device_limit': 'Достигнут лимит устройств. ' + _ADMIN,
+    'device_limit_below_count': 'Лимит меньше числа устройств: сначала удалите лишние.',
+    'invalid_expiry': 'Неверный срок доступа.',
+    'invalid_body': 'Неверный запрос. ' + _LATER,
+    'invalid_json': 'Неверный запрос. ' + _LATER,
+    'invalid_params': 'Неверный запрос. ' + _LATER,
+    'invalid_id': 'Неверный запрос. ' + _LATER,
+    'invalid_chat_id': 'Неверный запрос. ' + _LATER,
+    'unknown_outbound': 'Выбранный выход недоступен. ' + _ADMIN,
+    'outbounds_unavailable': 'Выходы сейчас недоступны. ' + _LATER,
+    'wg_disabled': 'WireGuard выключен. ' + _ADMIN,
+    'ovpn_disabled': 'OpenVPN выключен. ' + _ADMIN,
+    'wg_pool_exhausted': 'Свободные адреса WireGuard закончились. ' + _ADMIN,
+    'ovpn_pool_exhausted': 'Свободные адреса OpenVPN закончились. ' + _ADMIN,
+    'ikev2_pool_exhausted': 'Свободные адреса IKEv2 закончились. ' + _ADMIN,
+    'wg_keys_not_ready': 'WireGuard ещё не настроен. ' + _LATER,
+    'ovpn_ca_not_ready': 'OpenVPN ещё не настроен. ' + _LATER,
+    'ovpn_reissue_failed': 'Не удалось перевыпустить ключ OpenVPN. ' + _LATER,
+    'wg_ipv4_endpoint_unavailable': 'У сервера нет адреса IPv4 для WireGuard. ' + _ADMIN,
+    'wg_public_host_not_configured': 'Адрес сервера WireGuard не настроен. ' + _ADMIN,
+    'ovpn_public_host_not_configured': 'Адрес сервера OpenVPN не настроен. ' + _ADMIN,
+    'insert_failed': 'Не удалось сохранить. ' + _LATER,
+    'unauthorized': 'Бот не может связаться с панелью. ' + _ADMIN,
+    'Unauthorized': 'Бот не может связаться с панелью. ' + _ADMIN,
+    'tgbot_secret_not_configured': 'Бот не может связаться с панелью. ' + _ADMIN,
+    'loopback_only': 'Бот не может связаться с панелью. ' + _ADMIN,
+    'invalid_origin': 'Бот не может связаться с панелью. ' + _ADMIN,
+}
+ERROR_FALLBACK = 'Не удалось выполнить запрос. ' + _LATER
+_CODE_RE = re.compile(r'[A-Za-z0-9_]{1,64}')
+_CYRILLIC_RE = re.compile(r'[А-Яа-яЁё]')
+
+
 def _extract_error(r: httpx.Response) -> BotApiError:
-    """Из 4xx-ответа Nuxt вытащить человекочитаемый текст."""
-    msg = ''
-    code = ''
+    """Из 4xx-ответа Nuxt — текст для человека; машинный код только в журнал."""
     if r.status_code >= 500:
         return BotApiError(r.status_code, 'Панель временно недоступна. Попробуйте позже.')
-    try:
+    body = None
+    with suppress(Exception):
         body = r.json()
-        if isinstance(body, dict):
-            msg = body.get('message') or body.get('statusMessage') or body.get('error') or ''
-            code = body.get('statusMessage') or ''
-    except Exception:
-        pass
-    if not isinstance(msg, str) or not msg:
-        msg = f'Ошибка сервера ({r.status_code})'
-    return BotApiError(r.status_code, msg, code if isinstance(code, str) else '')
+    body = body if isinstance(body, dict) else {}
+    code = body.get('statusMessage')
+    code = code if isinstance(code, str) and _CODE_RE.fullmatch(code) else ''
+    message = body.get('message')
+    message = message if isinstance(message, str) else ''
+    code = code or (message if _CODE_RE.fullmatch(message) else '')
+    if code in ERROR_TEXT:
+        return BotApiError(r.status_code, ERROR_TEXT[code], code)
+    # Текст, который обработчик панели написал сам («Клиент удаляется»).
+    if _CYRILLIC_RE.search(message):
+        return BotApiError(r.status_code, message, code)
+    log.warning('панель ответила %s с кодом без текста: %s', r.status_code, code or '—')
+    return BotApiError(r.status_code, ERROR_FALLBACK, code)
 
 
 async def _bot_request(method: str, path: str, *, json_body: dict | None = None) -> httpx.Response:

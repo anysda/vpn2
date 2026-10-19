@@ -278,7 +278,7 @@ def probe():
             return hy2.connections(directory, hy2.read_state(directory / 'hy2')['generation'])
         with socks(17897, 18081, target_host='203.0.113.2') as stream:
             stream.sendall(b'live')
-            assert stream.recv(4) == b'live'
+            assert read_exact(stream, 4, 'session echo, first device') == b'live'
             assert statuses() == {1: 'connected', 2: 'never'}, statuses()
         stop_process(current)
         deadline = time.monotonic() + 5
@@ -295,7 +295,7 @@ def probe():
             assert time.monotonic() < deadline
         with socks(17898, 18081, target_host='203.0.113.2') as stream:
             stream.sendall(b'live')
-            assert stream.recv(4) == b'live'
+            assert read_exact(stream, 4, 'session echo, new generation') == b'live'
             assert statuses() == {1: 'never', 2: 'connected'}
         print('sessions: connected -> seen after disconnect -> unknown without source -> never in a new generation')
         hy2.stop(directory, runtime=runtime)

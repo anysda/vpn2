@@ -10,6 +10,12 @@ permissions:
   contents: read
   packages: write
 
+# Прогоны одной ветки по очереди: прогон старого коммита, закончив позже,
+# перетёр бы плавающий тег (dev, main) образом старого sha.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest

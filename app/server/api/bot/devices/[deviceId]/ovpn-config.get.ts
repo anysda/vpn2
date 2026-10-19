@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { useDb } from '../../../../database/client'
 import { devices } from '../../../../database/schema'
-import { clientByChat, requireBotAuth } from '../../../../utils/bot-api'
+import { clientByChat, requireBotAuth, requireChatLinked } from '../../../../utils/bot-api'
 import { clientDns } from '../../../../utils/client-dns'
 import { buildOvpnConfig, caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 
@@ -39,6 +39,8 @@ export default defineEventHandler(async (event) => {
     tunnelPrefixes: [String(cfg.mgmtMeshIpPrefix)],
   })
 
+  // Последний await перед ответом: отвязанный за время сборки чат конфиг не получает.
+  await requireChatLinked(client.id, chatId)
   setHeader(event, 'content-type', 'text/plain; charset=utf-8')
   return conf
 })

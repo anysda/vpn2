@@ -407,3 +407,93 @@ test('VPN2-476: отзыв бота во время удаления и пере
     close()
   }
 })
+
+test('VPN2-479: отвязка Telegram во время выдачи конфига WG/OpenVPN ботом не отдаёт конфиг', async () => {
+  const { app, schema, db, route, useBot, close } = await panel({
+    wgEnabled: true, wgPublicHost: 'vpn.example', wgListenPort: 51820, wgMtu: 1420, wgSubnetPrefix: '10.66.66.', mgmtMeshIpPrefix: '10.99.0.',
+    ovpnEnabled: true, ovpnPublicHost: 'vpn.example', ovpnPort: 1194, ovpnProto: 'udp',
+  })
+  try {
+    // 50 запросов стоят после поиска клиента по чату: WG - в ленивой записи
+    // ключей, OpenVPN - в выдаче сертификата и в сборке конфига.
+    const paused = gate(50)
+    const pausedCert = new Set<string>()
+    const pausedOvpn = new Set<number>()
+    // Ключи WG пишет настоящий ensureDeviceWg; заглушку из panel() убираем.
+    app.overrides.delete('app/server/utils/wireguard.ts')
+    const { ensureDeviceWg } = app.load('app/server/utils/wireguard.ts')
+    app.patch('app/server/utils/wireguard.ts', {
+      loadServerKeys: async () => ({ publicKey: 'server-pub' }),
+      syncWireguardConfig: async () => {},
+      ensureDeviceWg: async (id: number) => { await paused.caReady(); return ensureDeviceWg(id) },
+    })
+    app.patch('app/server/utils/openvpn.ts', {
+      caReady: async () => true,
+      ensureDeviceOvpn: async (id: number) => {
+        if (pausedOvpn.has(id)) await paused.caReady()
+        const [row] = await db.select().from(schema.devices).where(eq(schema.devices.id, id))
+        return row
+      },
+      buildOvpnConfig: async (p: { clientCert: string, clientKey: string }) => {
+        if (pausedCert.has(p.clientCert)) await paused.caReady()
+        return `client\n<cert>\n${p.clientCert}\n</cert>\n<key>\n${p.clientKey}\n</key>\n`
+      },
+    })
+    useBot()
+    const wg = route('bot/devices/[deviceId]/wg-config.get')
+    const ovpn = route('bot/devices/[deviceId]/ovpn-config.get')
+    const unlink = route('clients/[id]/unlink.post')
+    const [client] = await db.insert(schema.clients).values({ name: 'bot-config', password: 'bot-config-invite', tgChatId: 558 }).returning()
+    // Первый без ключей WG - их запишет сам запрос; второй с готовыми.
+    const created = await db.insert(schema.devices).values([
+      { clientId: client!.id, name: 'wg-lazy' },
+      { clientId: client!.id, name: 'wg-ready', wgPrivateKey: 'wg-priv-ready', wgPublicKey: 'wg-pub-ready', wgPresharedKey: 'wg-psk-ready', wgIp: '10.66.66.50' },
+      { clientId: client!.id, name: 'ovpn-issue', ovpnCert: 'ovpn-cert-issue', ovpnKey: 'ovpn-key-issue' },
+      { clientId: client!.id, name: 'ovpn-build', ovpnCert: 'ovpn-cert-build', ovpnKey: 'ovpn-key-build' },
+    ]).returning()
+    pausedOvpn.add(created[2]!.id)
+    pausedCert.add('ovpn-cert-build')
+    const requests = Array.from({ length: 50 }, (_, i) => {
+      const device = created[i % created.length]!
+      return call(i % 4 < 2 ? wg : ovpn, { params: { deviceId: String(device.id) }, query: { chatId: '558' } })
+    })
+    await paused.waiting
+    const revoked = await call(unlink, { params: { id: String(client!.id) } })
+    paused.open()
+    const results = await Promise.all(requests)
+    const after = await db.select().from(schema.devices).where(eq(schema.devices.clientId, client!.id))
+    const secrets = [...after.flatMap(d => [d.wgPrivateKey, d.wgPresharedKey, d.ovpnKey]).filter((s): s is string => !!s)]
+    const leaked = results.filter(r => typeof r.body === 'string' || secrets.some(s => JSON.stringify(r.body).includes(s)))
+    const statuses = results.reduce<Record<string, number>>((acc, r) => {
+      const label = `${r.status} ${r.body.statusMessage ?? ''}`.trim()
+      acc[label] = (acc[label] ?? 0) + 1
+      return acc
+    }, {})
+    console.log('бот выдаёт конфиг, Telegram отвязан:', { unlink: revoked.status, results: statuses, leaked: leaked.length })
+    expect(revoked.status).toBe(200)
+    expect(secrets).toHaveLength(6)
+    expect(statuses).toEqual({ '404 not_linked': 50 })
+    expect(leaked).toHaveLength(0)
+
+    // Привязанный чат получает оба конфига, ленивые ключи записываются.
+    const [kept] = await db.insert(schema.clients).values({ name: 'bot-config-kept', password: 'bot-config-kept-invite', tgChatId: 559 }).returning()
+    const [phone, laptop] = await db.insert(schema.devices).values([
+      { clientId: kept!.id, name: 'phone' },
+      { clientId: kept!.id, name: 'laptop', ovpnCert: 'kept-cert', ovpnKey: 'kept-ovpn-key' },
+    ]).returning()
+    const linked = await Promise.all([
+      call(wg, { params: { deviceId: String(phone!.id) }, query: { chatId: '559' } }),
+      call(ovpn, { params: { deviceId: String(laptop!.id) }, query: { chatId: '559' } }),
+    ])
+    const [phoneAfter] = await db.select().from(schema.devices).where(eq(schema.devices.id, phone!.id))
+    const configs = linked.map(r => r.body as unknown as string)
+    console.log('привязанный чат:', linked.map(r => r.status), { wgKey: configs[0]!.includes(`PrivateKey = ${phoneAfter!.wgPrivateKey}`), ovpnKey: configs[1]!.includes('kept-ovpn-key') })
+    expect(linked.map(r => r.status)).toEqual([200, 200])
+    expect(phoneAfter!.wgPrivateKey).toBeTruthy()
+    expect(configs[0]).toContain(`PrivateKey = ${phoneAfter!.wgPrivateKey}`)
+    expect(configs[1]).toContain('kept-ovpn-key')
+  }
+  finally {
+    close()
+  }
+})

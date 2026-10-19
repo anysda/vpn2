@@ -29,12 +29,13 @@ module.exports = function harness(root, database, adapter, runtime = {}) {
       if (!path.extname(target)) target += '.ts'
       return load(target)
     }
-    const execute = vm.runInThisContext(`(function(require,module,exports,useRuntimeConfig,createError,useLogger,defineEventHandler,getRouterParam,getHeader,getQuery,setResponseStatus){${code}\n})`, { filename })
+    const execute = vm.runInThisContext(`(function(require,module,exports,useRuntimeConfig,createError,useLogger,defineEventHandler,getRouterParam,getHeader,getQuery,setResponseStatus,setHeader){${code}\n})`, { filename })
     execute(localRequire, mod, mod.exports, () => ({ databaseUrl: `file:${database}`, ...runtime }),
       input => Object.assign(new Error(input.message || input.statusMessage), input),
       () => ({ info() {}, warn() {}, error() {} }), handler => handler,
       (event, name) => event.params[name], (event, name) => event.headers?.[name],
-      event => event.query || {}, (event, status) => { event.status = status })
+      event => event.query || {}, (event, status) => { event.status = status },
+      (event, name, value) => { event.responseHeaders = { ...event.responseHeaders, [name]: value } })
     return mod.exports
   }
   // Подмена части модуля: остальные экспорты настоящие, новый экспорт не ломает тест.

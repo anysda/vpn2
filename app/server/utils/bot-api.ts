@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
@@ -55,6 +55,18 @@ export async function clientByChat(chatId: number) {
   const [c] = await db.select().from(clients).where(eq(clients.tgChatId, chatId)).limit(1)
   if (!c) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
   return c
+}
+
+/**
+ * Чат всё ещё привязан к клиенту. Клиента по чату ищут в начале запроса, а
+ * между этим и ответом идут await: администратор мог отвязать Telegram.
+ * Ответ с секретом (конфиг) перепроверяет привязку последним await перед
+ * возвратом - отвязка, записанная до ответа, его не пропускает.
+ */
+export async function requireChatLinked(clientId: number, chatId: number): Promise<void> {
+  const [linked] = await useDb().select({ id: clients.id }).from(clients)
+    .where(and(eq(clients.id, clientId), eq(clients.tgChatId, chatId))).limit(1)
+  if (!linked) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
 }
 
 /** Сводка клиента для бота: имя, лимит девайсов и список девайсов. */

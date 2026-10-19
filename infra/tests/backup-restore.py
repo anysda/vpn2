@@ -811,6 +811,26 @@ exec /usr/bin/sqlite3 "$@"
         for secret in (psk, 'test-tgbot-secret'):
             self.assertNotIn(secret, result.stdout + events)
 
+    def test_check_bundle_requires_unpacked_bundle(self):
+        # Ручная сверка архива: путь мимо бандла — ошибка, а не «расхождений нет».
+        bundle = self.backup()
+        old = Path('/test-output/old') / bundle.name
+        shutil.copytree(bundle, old)
+        (old / 'db.sqlite').unlink()
+        empty = Path('/test-output/empty')
+        empty.mkdir()
+        for args in ((), ('',), ('/test-output/nonexistent',), (str(empty),),
+                     (str(bundle.parent),), (str(bundle / 'manifest.json'),)):
+            with self.subTest(args=args):
+                result = self.script('backup', '--check-bundle', *args)
+                print(f'--check-bundle {args}: rc={result.returncode} {result.stdout.strip()}', flush=True)
+                self.assertNotIn(result.returncode, (0, 3), result.stdout)
+                self.assertIn('manifest.json', result.stdout)
+        for path in (bundle, old):
+            with self.subTest(path=path):
+                result = self.script('backup', '--check-bundle', str(path))
+                self.assertEqual((result.returncode, result.stdout), (0, ''))
+
     @staticmethod
     def digest(path):
         def file(p):

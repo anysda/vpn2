@@ -203,6 +203,12 @@ PY
 }
 if [[ ${1:-} == --check-bundle ]]; then
   trap - EXIT
+  # Бандл узнаётся по manifest.json (он есть в архиве любой версии, db.sqlite —
+  # нет). Без проверки путь мимо бандла давал «расхождений нет».
+  if [[ ! -f ${2:-}/manifest.json ]]; then
+    echo "anysda-backup: --check-bundle: '${2:-}' — не распакованный бандл (нет manifest.json); укажи каталог anysda-vpn2-* из архива" >&2
+    exit 2
+  fi
   check_bundle "$2"
   exit
 fi

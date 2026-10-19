@@ -92,6 +92,10 @@ class Agent:
         return self.leader.status(now) if self.leader else None
 
     def tick(self, now):
+        if self.lifecycle:
+            # A check stamped one round ago is read now; applied after the
+            # round it would be two rounds old and never count as fresh.
+            self.lifecycle.collect(now)
         if self.node == self.entry:
             self.state.data['sequence'] += 1
             # Exits that still poll an old address learn the new one from this.

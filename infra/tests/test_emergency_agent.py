@@ -702,6 +702,33 @@ class EmergencyAgentTests(unittest.TestCase):
         # Recovery issues nothing: no new generation, no leader event.
         self.assertEqual(sum(call[0] == 'leader' for call in cluster.events['a'].calls), 1)
 
+    def test_recovery_confirmed_through_real_lifecycle_probes(self):
+        # Readiness comes from the lifecycle's probes, not from test flags:
+        # a probe result must reach the round that reads it while still fresh.
+        from vpn2_emergency.lifecycle import Lifecycle
+
+        class Probes(Lifecycle):
+            def _recovered(self, *_args):
+                return None
+
+            def _deliver(self, *_args):
+                return None
+
+        def attach(node):
+            agent = cluster.agents[node]
+            agent.lifecycle = Probes(agent, threaded=False, probe_ready=lambda: True,
+                                     probe_entry=lambda _host: True)
+
+        cluster = self.cluster()
+        for node in 'abc':
+            attach(node)
+        leader = self.outage(cluster)
+        cluster.start('entry')
+        attach('entry')
+        cluster.drain()
+        cluster.advance(180)
+        self.assertIsNotNone(leader.data.get('recovery'))
+
     def test_deadline_ends_emergency_on_every_exit_and_agent_keeps_running(self):
         cluster = self.cluster()
         leader, recovery = self.recovered(cluster)

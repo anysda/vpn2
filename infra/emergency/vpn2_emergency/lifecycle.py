@@ -143,7 +143,8 @@ class Lifecycle:
 
     # Agent loop.
 
-    def tick(self, now):
+    def collect(self, now):
+        """Apply finished probes before the round reads them, not a round later."""
         while True:
             try:
                 key, result = self.results.get_nowait()
@@ -152,6 +153,9 @@ class Lifecycle:
             self.pending.discard(key)
             if result:
                 self._apply(now, *result)
+
+    def tick(self, now):
+        self.collect(now)
         agent = self.agent
         if agent.node == agent.entry:
             self.submit('ready', self._ready)

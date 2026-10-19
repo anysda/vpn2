@@ -9,6 +9,50 @@ async function logoutUi(page: Page) {
   await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
 }
 
+/**
+ * Секрет 2FA, включённой тестом, и последний принятый панелью шаг кода.
+ * Панель гасит принятый шаг (VPN2-62): каждому подтверждению — код шага,
+ * которого она ещё не видела. Сервер принимает шаг вперёд; дальше — ждать.
+ */
+interface Totp { secret: string, usedStep: number }
+
+async function freshCode(state: Totp) {
+  const now = Math.floor(Date.now() / 30_000)
+  const step = Math.max(now, state.usedStep + 1)
+  // Ждём таймером, а не страницей: уборка идёт и тогда, когда страница закрыта.
+  if (step > now + 1) await new Promise(resolve => setTimeout(resolve, (step - 1) * 30_000 - Date.now() + 500))
+  state.usedStep = step
+  return totp(state.secret, step * 30_000)
+}
+
+/**
+ * Уборка 2FA admin после теста, в том числе упавшего или снятого по таймауту.
+ * В finally теста она не годилась: по таймауту контекст страницы уже закрыт,
+ * уборка падала на clearCookies, а оставленная 2FA валила вход всем следующим
+ * тестам шарда. Здесь свой API-контекст, от браузера не зависит.
+ */
+const tfaTest = test.extend<{ tfa: Totp }>({
+  tfa: async ({ playwright, baseURL }, use) => {
+    const state: Totp = { secret: '', usedStep: 0 }
+    await use(state)
+    if (!state.secret) return
+    const api = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { origin: new URL(baseURL!).origin } })
+    try {
+      const login = await authPost(api, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+      expect(login.status(), await login.text()).toBe(200)
+      // Тест дошёл до выключения сам или не успел включить.
+      if (!(await login.json()).twoFactorRedirect) return
+      const verify = await authPost(api, '/two-factor/verify-totp', { code: await freshCode(state) })
+      expect(verify.status(), await verify.text()).toBe(200)
+      const disable = await authPost(api, '/two-factor/disable', { password: ADMIN_PASSWORD, code: await freshCode(state) })
+      expect(disable.status(), await disable.text()).toBe(200)
+    }
+    finally {
+      await api.dispose()
+    }
+  },
+})
+
 /** Начать включение 2FA: библиотека просит текущий пароль. */
 async function startSetup(page: Page) {
   await page.locator('#tfa').getByLabel('Текущий пароль').fill(ADMIN_PASSWORD)
@@ -104,7 +148,9 @@ test.describe('2FA', () => {
     await expect(page.getByRole('button', { name: 'Включить 2FA' })).toBeVisible()
   })
 
-  test('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard, request }) => {
+  tfaTest('включить, войти с кодом, выключить; «Отмена» в настройке и в модалке', async ({ page, guard, request, tfa }) => {
+    // Зависшее действие падает само, а не съедает весь тест: на уборку остаётся время.
+    page.setDefaultTimeout(20_000)
     guard.allow(401, /\/api\/auth\/two-factor\/(verify-totp|disable)$/, 'POST')
     guard.allow(400, /\/api\/auth\/two-factor\/disable$/, 'POST')
     await loginApi(page)
@@ -124,98 +170,94 @@ test.describe('2FA', () => {
     const secretInput = page.locator('input[readonly]')
     await expect(secretInput).toHaveValue(/^[A-Z2-7]{16,}$/)
     const secret = await secretInput.inputValue()
+    tfa.secret = secret
     // Код, который сейчас точно неверен.
     const wrong = () => String((Number(totp(secret)) + 500_000) % 1_000_000).padStart(6, '0')
-    // Панель гасит принятый шаг (VPN2-62): каждому подтверждению — код шага,
-    // которого она ещё не видела. Сервер принимает шаг вперёд; дальше — ждать.
-    let usedStep = 0
-    let enabled = false
-    const fresh = async () => {
-      const now = Math.floor(Date.now() / 30_000)
-      const step = Math.max(now, usedStep + 1)
-      if (step > now + 1) await page.waitForTimeout((step - 1) * 30_000 - Date.now() + 500)
-      usedStep = step
-      return totp(secret, step * 30_000)
-    }
-    try {
-      await expect(page.locator('svg').filter({ has: page.locator('rect') }).first()).toBeVisible()
-      // VPN2-69: неверный код показывался голым «invalid_totp».
-      await page.getByLabel('Введи 6-значный код из приложения').fill(wrong())
-      await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(toast(page, 'Неверный код').getByText('Код не подошёл', { exact: true })).toBeVisible()
-      await page.getByLabel('Введи 6-значный код из приложения').fill(await fresh())
-      await page.getByRole('button', { name: 'Подтвердить' }).click()
-      enabled = true
-      await expect(toast(page, '2FA включена')).toBeVisible()
-      await expect(page.getByText('Включена', { exact: true })).toBeVisible()
-      expect(await (await request.get('/api/auth/get-session')).json(), 'другая сессия пережила включение 2FA').toBeNull()
+    const fresh = () => freshCode(tfa)
+    await expect(page.locator('svg').filter({ has: page.locator('rect') }).first()).toBeVisible()
+    // VPN2-69: неверный код показывался голым «invalid_totp».
+    await page.getByLabel('Введи 6-значный код из приложения').fill(wrong())
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await expect(toast(page, 'Неверный код').getByText('Код не подошёл', { exact: true })).toBeVisible()
+    await page.getByLabel('Введи 6-значный код из приложения').fill(await fresh())
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await expect(toast(page, '2FA включена')).toBeVisible()
+    await expect(page.getByText('Включена', { exact: true })).toBeVisible()
+    expect(await (await request.get('/api/auth/get-session')).json(), 'другая сессия пережила включение 2FA').toBeNull()
 
-      // Выход и вход: после пароля спрашивают код.
-      await logoutUi(page)
-      await page.getByLabel('Логин').fill(ADMIN_USER)
-      await page.getByLabel('Пароль').fill(ADMIN_PASSWORD)
-      await page.getByRole('button', { name: 'Войти' }).click()
-      const code = page.getByPlaceholder('123 456')
-      await expect(code).toBeVisible()
-      // Неверный код — ошибка, форма остаётся на шаге кода.
-      await code.fill(wrong())
-      await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page.locator('form').getByText('Код не подошёл', { exact: true })).toBeVisible()
-      const loginCode = await fresh()
-      await code.fill(loginCode)
-      await page.getByRole('button', { name: 'Подтвердить' }).click()
-      await expect(page).toHaveURL(/\/$/)
+    // Выход и вход: после пароля спрашивают код.
+    await logoutUi(page)
+    await page.getByLabel('Логин').fill(ADMIN_USER)
+    await page.getByLabel('Пароль').fill(ADMIN_PASSWORD)
+    await page.getByRole('button', { name: 'Войти' }).click()
+    const code = page.getByPlaceholder('123 456')
+    await expect(code).toBeVisible()
+    // Неверный код — ошибка, форма остаётся на шаге кода.
+    await code.fill(wrong())
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await expect(page.locator('form').getByText('Код не подошёл', { exact: true })).toBeVisible()
+    const loginCode = await fresh()
+    await code.fill(loginCode)
+    await page.getByRole('button', { name: 'Подтвердить' }).click()
+    await expect(page).toHaveURL(/\/$/)
 
-      // VPN2-62: принятый код второй раз не пускает, даже с верным паролем и в окне шага.
-      const first = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
-      expect(await first.json()).toMatchObject({ twoFactorRedirect: true })
-      const replay = await authPost(request, '/two-factor/verify-totp', { code: loginCode })
-      expect(replay.status()).toBe(401)
-      expect(await replay.json()).toMatchObject({ statusMessage: 'invalid_code', message: 'Код не подошёл' })
+    // VPN2-62: принятый код второй раз не пускает, даже с верным паролем и в окне шага.
+    const first = await authPost(request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD })
+    expect(await first.json()).toMatchObject({ twoFactorRedirect: true })
+    const replay = await authPost(request, '/two-factor/verify-totp', { code: loginCode })
+    expect(replay.status()).toBe(401)
+    expect(await replay.json()).toMatchObject({ statusMessage: 'invalid_code', message: 'Код не подошёл' })
 
-      // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
-      const again = await authPost(page.request, '/two-factor/enable', { password: ADMIN_PASSWORD })
-      expect(again.status()).toBe(400)
-      expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
+    // VPN2-69: повторная настройка при включённой 2FA (вторая вкладка) — был голый код.
+    const again = await authPost(page.request, '/two-factor/enable', { password: ADMIN_PASSWORD })
+    expect(again.status()).toBe(400)
+    expect(await again.json()).toMatchObject({ statusMessage: 'totp_already_enabled', message: '2FA уже включена' })
 
-      // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
-      await page.goto('/settings')
-      await hydrated(page)
-      await page.getByRole('button', { name: 'Выключить 2FA' }).click()
-      const dlg = page.getByRole('dialog', { name: 'Выключить 2FA?' })
-      await expect(dlg).toBeVisible()
-      await dlg.getByRole('button', { name: 'Отмена' }).click()
-      await expect(dlg).toBeHidden()
-      await expect(page.getByText('Включена', { exact: true })).toBeVisible()
+    // Выключение: «Отмена» в модалке ничего не меняет, потом всерьёз.
+    await page.goto('/settings')
+    await hydrated(page)
+    await page.getByRole('button', { name: 'Выключить 2FA' }).click()
+    const dlg = page.getByRole('dialog', { name: 'Выключить 2FA?' })
+    await expect(dlg).toBeVisible()
+    await dlg.getByRole('button', { name: 'Отмена' }).click()
+    await expect(dlg).toBeHidden()
+    await expect(page.getByText('Включена', { exact: true })).toBeVisible()
 
-      // VPN2-69: ошибки модалки шли голыми кодами; тост виден поверх открытой модалки.
-      await page.getByRole('button', { name: 'Выключить 2FA' }).click()
-      await dlg.getByLabel('Пароль', { exact: true }).fill(`${ADMIN_PASSWORD}-wrong`)
-      await dlg.getByLabel('Код 2FA (6 цифр)').fill(totp(secret))
-      await dlg.getByRole('button', { name: 'Выключить' }).click()
-      await expect(toast(page, 'Ошибка').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
-      await dlg.getByLabel('Пароль', { exact: true }).fill(ADMIN_PASSWORD)
-      await dlg.getByLabel('Код 2FA (6 цифр)').fill(wrong())
-      await dlg.getByRole('button', { name: 'Выключить' }).click()
-      await expect(toast(page, 'Код не подошёл').getByText('Ошибка', { exact: true })).toBeVisible()
-      await dlg.getByLabel('Код 2FA (6 цифр)').fill(await fresh())
-      await dlg.getByRole('button', { name: 'Выключить' }).click()
-      await expect(toast(page, '2FA выключена')).toBeVisible()
-      enabled = false
-      await expect(dlg).toBeHidden()
-      await expect(page.getByText('Выключена', { exact: true })).toBeVisible()
-    }
-    finally {
-      // Упавший посреди тест не должен оставить admin с 2FA: войти с кодом
-      // и выключить; если уже выключена — 4xx, не беда.
-      if (enabled) {
-        await page.context().clearCookies()
-        await authPost(page.request, '/sign-in/username', { username: ADMIN_USER, password: ADMIN_PASSWORD }).catch(() => {})
-        await authPost(page.request, '/two-factor/verify-totp', { code: await fresh() }).catch(() => {})
-        await authPost(page.request, '/two-factor/disable', { password: ADMIN_PASSWORD, code: await fresh() }).catch(() => {})
-      }
-    }
+    // VPN2-69: ошибки модалки шли голыми кодами; тост виден поверх открытой модалки.
+    await page.getByRole('button', { name: 'Выключить 2FA' }).click()
+    await dlg.getByLabel('Пароль', { exact: true }).fill(`${ADMIN_PASSWORD}-wrong`)
+    await dlg.getByLabel('Код 2FA (6 цифр)').fill(totp(secret))
+    await dlg.getByRole('button', { name: 'Выключить' }).click()
+    await expect(toast(page, 'Ошибка').getByText('Неверный текущий пароль', { exact: true })).toBeVisible()
+    await dlg.getByLabel('Пароль', { exact: true }).fill(ADMIN_PASSWORD)
+    await dlg.getByLabel('Код 2FA (6 цифр)').fill(wrong())
+    await dlg.getByRole('button', { name: 'Выключить' }).click()
+    await expect(toast(page, 'Код не подошёл').getByText('Ошибка', { exact: true })).toBeVisible()
+    await dlg.getByLabel('Код 2FA (6 цифр)').fill(await fresh())
+    await dlg.getByRole('button', { name: 'Выключить' }).click()
+    await expect(toast(page, '2FA выключена')).toBeVisible()
+    await expect(dlg).toBeHidden()
+    await expect(page.getByText('Выключена', { exact: true })).toBeVisible()
     // Вход снова без кода.
+    await loginApi(page)
+  })
+})
+
+test.describe('2FA: уборка после теста, упавшего на закрытом контексте', () => {
+  tfaTest('тест с включённой 2FA падает, когда контекст страницы уже закрыт', async ({ page, tfa }) => {
+    // Ожидаемый провал, как у 2FA на CI: страница закрыта раньше, чем тест выключил 2FA.
+    tfaTest.fail()
+    await loginApi(page)
+    const setup = await authPost(page.request, '/two-factor/enable', { password: ADMIN_PASSWORD })
+    expect(setup.status(), await setup.text()).toBe(200)
+    tfa.secret = new URL((await setup.json()).totpURI).searchParams.get('secret')!
+    const enable = await authPost(page.request, '/two-factor/verify-totp', { code: await freshCode(tfa) })
+    expect(enable.status(), await enable.text()).toBe(200)
+    await page.context().close()
+    await page.goto('/settings')
+  })
+
+  test('следующий тест входит без кода', async ({ page }) => {
     await loginApi(page)
   })
 })

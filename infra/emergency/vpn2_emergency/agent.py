@@ -101,6 +101,9 @@ class Agent:
                 self.send(peer, {'kind': 'poll', 'nonce': self.heartbeat.challenge(peer, now),
                                  'candidate': self.leader.candidate if self.leader else None})
         self.state.save()
+        self.log_role()
+
+    def log_role(self):
         role = self.leader.data['role'] if self.leader else 'observer'
         autonomous = bool(self.leader and self.leader.data.get('autonomous'))
         summary = (role, autonomous)
@@ -145,6 +148,9 @@ class Agent:
                     # election and can exceed the 90 s failover budget.
                     self.leader.tick(now, self.heartbeat.emergency_due(now))
                 self.state.save()
+                # The role changes here, between rounds; logging it only on
+                # the next round put the journal up to 15 s behind the fact.
+                self.log_role()
         except (ValueError, TypeError, KeyError, OverflowError):
             # Invalid unauthenticated traffic must neither fill logs nor stop
             # observation. Local state/IO errors intentionally fail the service.

@@ -11,7 +11,13 @@ import uuid
 from . import hooks
 from .heartbeat import MISSED
 
-LEASE = 75
+# Failover budget is 90 s. A follower honours the dead leader for LEASE after
+# its last reply and asks for votes only on its own PERIOD round, which can
+# start just before that expiry: worst case (LEASE // PERIOD + 1) * PERIOD =
+# 75 s, leaving one more round for a lost datagram. A working leader renews
+# every vote each round, so a lease is never older than one round plus
+# transit; 60 s still survives two lost rounds before MISSED refuses renewal.
+LEASE = 60
 GUARD = 300
 TRANSITION = 600
 
@@ -65,7 +71,7 @@ class Leader:
                 or type(status.get('generation')) is not int
                 or not 0 <= status['generation'] < 2**53
                 or type(status.get('lease')) not in (int, float)
-                or not math.isfinite(status['lease']) or not 0 <= status['lease'] <= LEASE
+                or not math.isfinite(status['lease']) or status['lease'] < 0
                 or status.get('grant') not in (*self.ranks, None)
                 or status.get('owner') not in (*self.ranks, None)
                 or not isinstance(status.get('emergency_id'), str)
@@ -74,7 +80,9 @@ class Leader:
         if status.get('ready') and (type(status.get('ready_age')) not in (int, float)
                                     or not math.isfinite(status['ready_age']) or status['ready_age'] < 0):
             return False
-        self.peers[node] = (dict(status, lease_until=now + max(0, status['lease'] - transit),
+        # A longer lease from a peer with older constants is cut, never trusted.
+        lease = min(status['lease'], LEASE)
+        self.peers[node] = (dict(status, lease_until=now + max(0, lease - transit),
                                 ready_age=status['ready_age'] + transit if status.get('ready') else None), now)
         if allow_activation and status.get('active'):
             self.data['active'] = True

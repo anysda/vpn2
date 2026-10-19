@@ -5,6 +5,7 @@ The same assertions can target an older tree using VPN2_TEST_ROOT.
 
 import importlib.util
 import json
+import logging
 import os
 from pathlib import Path
 import socket
@@ -18,7 +19,7 @@ sys.path.insert(0, str(ROOT / 'infra/emergency'))
 
 from vpn2_emergency import hooks  # noqa: E402
 from vpn2_emergency.agent import Agent  # noqa: E402
-from vpn2_emergency.heartbeat import Heartbeat, decode, encode  # noqa: E402
+from vpn2_emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
 from vpn2_emergency.leader import GUARD, LEASE, Leader  # noqa: E402
 from vpn2_emergency.state import MAX_STATE_BYTES, State  # noqa: E402
 
@@ -120,6 +121,82 @@ class Cluster:
     def leaders(self):
         return [node for node, agent in self.agents.items()
                 if agent.leader and agent.leader.data['role'] == 'leader']
+
+
+class Network(Cluster):
+    """Agents tick on their own phase like Agent.run and every datagram takes
+    one step to arrive, so lease expiry meets real round boundaries. Role
+    lines are recorded with the clock at the moment they are logged."""
+
+    STEP = 0.25
+
+    def __init__(self, directory, count=3, phases=None):
+        self.queue = []
+        self.next_tick = {}
+        self.journal = []
+        self.current = None
+        self.phases = phases or {}
+        handler = logging.Handler(logging.INFO)
+        handler.emit = lambda record: self.journal.append(
+            (self.clock(), self.current, record.getMessage()))
+        self.handler = handler
+        self.logger = logging.getLogger()
+        self.saved = self.logger.level, self.logger.handlers[:]
+        self.logger.setLevel(logging.INFO)
+        self.logger.handlers[:] = [handler]
+        super().__init__(directory, count)
+        for node in self.agents:
+            self.next_tick[node] = self.clock() + self.phases.get(node, 0)
+
+    def close(self):
+        self.logger.setLevel(self.saved[0])
+        self.logger.handlers[:] = self.saved[1]
+        super().close()
+
+    def start(self, node):
+        agent = Agent(self.configs[node], self.directory / node, clock=self.clock,
+                      snapshot_loader=self.snapshot)
+
+        def send(peer, message):
+            if (node, peer) in self.blocked:
+                return
+            packet = encode(agent.key, message | {'installation_id': agent.installation, 'sender': node})
+            self.queue.append((self.clock() + self.STEP, peer, packet, agent.addresses[node]))
+
+        agent.send = send
+        self.agents[node] = agent
+        self.events.setdefault(node, Events())
+        self.current = node
+        agent.tick(self.clock())
+        self.next_tick[node] = self.clock() + 15
+        if agent.leader:
+            agent.leader.events = self.events[node]
+
+    def step(self):
+        self.clock.now += self.STEP
+        now = self.clock()
+        due = [item for item in self.queue if item[0] <= now]
+        self.queue = [item for item in self.queue if item[0] > now]
+        for _at, peer, packet, address in due:
+            if peer in self.agents:
+                self.current = peer
+                self.agents[peer].receive(packet, address, now)
+        for node, agent in list(self.agents.items()):
+            if now >= self.next_tick[node]:
+                self.current = node
+                agent.tick(now)
+                self.next_tick[node] = now + 15
+
+    def run(self, seconds, check=None):
+        end = self.clock() + seconds
+        while self.clock() < end:
+            self.step()
+            if check:
+                check()
+
+    def announced(self, since, role='leader'):
+        return [(at, node) for at, node, line in self.journal
+                if at >= since and line.startswith(f'role={role} ')]
 
 
 class EmergencyAgentTests(unittest.TestCase):
@@ -416,6 +493,43 @@ class EmergencyAgentTests(unittest.TestCase):
             if cluster.leaders():
                 break
         self.assertEqual(len(cluster.leaders()), 1)
+
+    def network(self):
+        network = Network(self.root, 3, {'a': 0, 'b': 6.5, 'c': 11.25})
+        self.addCleanup(network.close)
+        network.stop('entry')
+        network.run(1500)
+        self.assertEqual(network.leaders(), ['a'])
+        return network
+
+    def test_failover_worst_case_from_constants_fits_ninety_seconds(self):
+        # A follower honours the dead leader for LEASE after its last reply
+        # and asks for votes only on its own round. The reply lands after
+        # that round began, so the expiry is acted on one round later.
+        worst = (LEASE // PERIOD + 1) * PERIOD
+        self.assertLess(worst, 90)
+
+    def test_leader_stop_announced_within_ninety_seconds_at_every_phase(self):
+        network = self.network()
+        delays = []
+        for offset in [index * 1.25 for index in range(12)]:
+            while (network.clock() - 1000) % 15 != offset:
+                network.step()
+            old = network.leaders()[0]
+            network.stop(old)
+            stopped = network.clock()
+
+            def single():
+                self.assertLessEqual(len(network.leaders()), 1)
+
+            while not network.announced(stopped) and network.clock() - stopped < 120:
+                network.run(Network.STEP, single)
+            announced = network.announced(stopped)
+            self.assertTrue(announced, f'no leader after stop at phase {offset}')
+            delays.append(announced[0][0] - stopped)
+            network.start(old)
+            network.run(150, single)
+        self.assertLessEqual(max(delays), 90, delays)
 
     def test_boot_change_expires_evidence_and_quarantines_votes(self):
         state = State(self.root, clock_boot='old')

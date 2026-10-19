@@ -376,6 +376,26 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertTrue(watch.daemon)
         self.assertEqual(self.hy2.SESSIONS_EVERY, 12)
 
+    def test_poller_stop_waits_for_slow_last_pass(self):
+        self.start()
+        writing, release = threading.Event(), threading.Event()
+        atomic = self.hy2.atomic
+
+        def slow(path, data):
+            writing.set()
+            release.wait(30)
+            atomic(path, data)
+        with patch.object(self.hy2, 'atomic', slow):
+            watch = self.hy2.watch(self.state, every=.01, fetch=lambda _state: {2})
+            self.assertTrue(writing.wait(5))
+            # The disk answers later than any fixed wait in stop().
+            timer = threading.Timer(11, release.set)
+            timer.start()
+            self.addCleanup(timer.cancel)
+            watch.stop()
+            self.assertTrue(release.is_set())
+            self.assertFalse(watch.is_alive())
+
     @unittest.skipUnless(SB and os.environ.get('RUN_NETNS_TESTS') == '1',
                          'set SING_BOX_BIN and RUN_NETNS_TESTS=1')
     def test_real_isolation_revocation_and_restart(self):

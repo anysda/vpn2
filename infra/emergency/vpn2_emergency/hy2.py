@@ -534,11 +534,15 @@ class SessionWatch(threading.Thread):
             if self.stopped.wait(self.every):
                 return
 
-    def stop(self, timeout=10):
-        """Stop and wait for the last pass, so nothing writes into the state directory afterwards."""
+    def stop(self):
+        """Stop and wait for the last pass, so nothing writes into the state directory afterwards.
+
+        No time limit: a pass is bounded by the API timeout, and a slow disk
+        must not let a write land after the caller has moved on.
+        """
         self.stopped.set()
         if self.is_alive() and self is not threading.current_thread():
-            self.join(timeout)
+            self.join()
 
 
 _watches, _watches_lock = {}, threading.Lock()

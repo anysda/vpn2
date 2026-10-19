@@ -15,7 +15,8 @@ import threading
 from urllib import request
 
 from . import hooks, hy2, tgqueue, web
-from .leader import NOTICE
+from .heartbeat import MISSED
+from .leader import GUARD, NOTICE
 
 LOG = logging.getLogger(__name__)
 # The snapshot carries no time zone; notices and the panel name one explicitly.
@@ -101,6 +102,10 @@ class Lifecycle:
         self.server = None
         self.sessions = None
         self.retry = None
+        # Announcements of an autonomous leader: see _announce.
+        self.round_at = -math.inf
+        self.reach = None
+        self.held_since = None
         self.profiles = {}
         self.pending = set()
         self.restored = False
@@ -161,6 +166,7 @@ class Lifecycle:
 
     def tick(self, now):
         self.collect(now)
+        previous, self.round_at = self.round_at, now
         agent = self.agent
         if agent.node == agent.entry:
             self.submit('ready', self._ready)
@@ -210,13 +216,49 @@ class Lifecycle:
         if recovery:
             round_ = recovery['round'] if recovery['deadline'] is None else None
             deadline = recovery['deadline'] or deadline_after(agent.wall())
-        self.submit('deliver', self._deliver, data['emergency_id'], deadline, round_)
+        if self._announce(now, previous):
+            self.submit('deliver', self._deliver, data['emergency_id'], deadline, round_)
+
+    def _announce(self, now, previous):
+        """Whether this leader may hand its notices to Telegram now.
+
+        An autonomous leader may be a cut-off exit whose role is about to be
+        settled by the others. Answers from exits mean that round is under way:
+        it ends in a majority (autonomy off) or a step-down (notices cancelled).
+        Without answers, a lost poll and a link that is just coming back look
+        the same, so Telegram must answer first and then one whole round must
+        pass with no exit answering; connectivity that returns in one piece
+        reaches the exits within that round.
+        """
+        leader = self.agent.leader
+        # A single configured exit has nobody to settle its role with.
+        if not leader.data.get('autonomous') or len(leader.ranks) == 1:
+            self.held_since = None
+            return True
+        heard = max((at for _status, at in leader.peers.values()), default=-math.inf)
+        if now - heard < MISSED:
+            self.reach = None
+            if self.held_since is None:
+                self.held_since = now
+                LOG.info('emergency notices held: exits answer, role not settled')
+            # Asymmetric links can keep a reachable exit from ever settling it.
+            return now - self.held_since >= GUARD
+        self.held_since = None
+        if self.reach is None:
+            self.submit('reach', self._reach)
+            return False
+        if self.reach > previous:
+            return False
+        self.reach = None
+        return True
 
     def _apply(self, now, kind, *args):
         agent = self.agent
         leader = agent.leader
         if kind == 'ready':
             agent.ready = args[0]
+        elif kind == 'reach':
+            self.reach = now if args[0] else None
         elif kind == 'entry':
             agent.entry_check = args
         elif leader is None:
@@ -257,11 +299,11 @@ class Lifecycle:
                                                   event=event, autonomous=autonomous)
         self.agent.state.save()
         self.restored = True
-        self.retry = None
+        self.retry = self.reach = self.held_since = None
         self.submit(f'issue:{generation}', self._issue, emergency_id, generation, autonomous, event)
 
     def on_step_down(self, winner):
-        self.retry = None
+        self.retry = self.reach = self.held_since = None
         if self.server:
             self.server.panel.on_step_down(winner)
         record = self.record
@@ -286,6 +328,9 @@ class Lifecycle:
 
     def _ready(self):
         return ('ready', bool(self.probe_ready()))
+
+    def _reach(self):
+        return ('reach', self.tg.reachable(self.directory, api_base=self.api_base))
 
     def _check_entry(self, host, now):
         return ('entry', bool(self.probe_entry(host)), now)

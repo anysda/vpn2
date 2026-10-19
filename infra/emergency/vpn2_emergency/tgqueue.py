@@ -450,6 +450,23 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
         os.close(fd)
 
 
+def reachable(state_dir, *, api_base='https://api.telegram.org', timeout=5):
+    """Whether the Bot API answers at all; sends nothing to anyone."""
+    token = _snapshot(state_dir).get('bot_token')
+    if not token:
+        # Without a token nothing can go out anyway.
+        return True
+    req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/getMe')
+    try:
+        with request.build_opener(_NoRedirect()).open(req, timeout=timeout):
+            return True
+    except error.HTTPError as exc:
+        exc.close()
+        return True
+    except (OSError, HTTPException, ValueError):
+        return False
+
+
 def cancel(state_dir, *, emergency_id, generation=None, events=None):
     """Stop pending sends on step-down/end; retain dedup tombstones, erase secrets.
 

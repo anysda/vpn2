@@ -13,12 +13,15 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/emergency'))
 
-from vpn2_emergency import hooks  # noqa: E402
+from vpn2_emergency import hooks, lifecycle, tgqueue, web  # noqa: E402
 from vpn2_emergency.agent import Agent  # noqa: E402
 from vpn2_emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
 from vpn2_emergency.leader import GUARD, LEASE, Leader  # noqa: E402
@@ -629,6 +632,82 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertFalse(cluster.agents['a'].leader.data['autonomous'])
         self.assertFalse(cluster.agents['a'].leader.status(cluster.clock())['autonomous'])
         self.assertIn('INFO:root:role=follower autonomous=false', logs.output)
+
+    def announcer(self, cluster, node):
+        """An exit with the real lifecycle and Telegram queue behind a fake Bot API."""
+        from test_emergency_lifecycle import Bot, FakeHy2, FakeServer
+        bot = Bot()
+        thread = threading.Thread(target=bot.serve_forever, kwargs={'poll_interval': 0.01})
+        thread.start()
+        self.addCleanup(bot.server_close)
+        self.addCleanup(thread.join)
+        self.addCleanup(bot.shutdown)
+        snapshot = {'schema': 1, 'installation_id': 'fixture', 'bot_token': '123:fixture-only',
+                    'admin_chat_id': 900, 'exits': cluster.exits, 'created_at': '2026-01-01T00:00:00Z',
+                    'clients': [{'id': 1, 'name': 'first', 'telegram_chat_id': 101, 'allowed': True,
+                                 'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]}]}
+        module = types.ModuleType('vpn2_emergency.snapshot')
+        module.load = lambda _directory: snapshot
+        stub = patch.dict(sys.modules, {'vpn2_emergency.snapshot': module})
+        stub.start()
+        self.addCleanup(stub.stop)
+
+        def make_server(state_dir, *, exit_id, public_ip, address, **providers):
+            del address
+            return FakeServer(web.Panel(state_dir, exit_id, public_ip, **providers))
+
+        agent = cluster.agents[node]
+        agent.snapshot_loader = module.load
+        agent.lifecycle = lifecycle.Lifecycle(
+            agent, hy2_module=FakeHy2(), web_module=types.SimpleNamespace(make_server=make_server),
+            threaded=False, api_base=f'http://127.0.0.1:{bot.server_port}',
+            probe_ready=lambda: True, probe_entry=lambda _host: True)
+        agent.leader.events = agent.lifecycle
+        return agent, bot
+
+    def queued(self, agent):
+        return [row for audience in ('admin', 'client')
+                for row in tgqueue.delivery_status(agent.state.directory, audience)
+                if row['state'] in ('pending', 'retry')]
+
+    def test_isolated_leader_back_with_telegram_sends_nothing_before_stepping_down(self):
+        cluster = self.cluster()
+        agent, bot = self.announcer(cluster, 'c')
+        online = agent.lifecycle.api_base
+        cluster.stop('entry')
+        cluster.advance(1320)
+        self.assertEqual(cluster.leaders(), ['a'])
+        # 'c' loses the other exits and Telegram alike.
+        for node in ('a', 'b'):
+            cluster.blocked.update({('c', node), (node, 'c')})
+        agent.lifecycle.api_base = 'http://127.0.0.1:9'
+        cluster.advance(390)
+        self.assertEqual(set(cluster.leaders()), {'a', 'c'})
+        self.assertTrue(agent.leader.data['autonomous'])
+        self.assertIn('leader_changed', {row['event'] for row in self.queued(agent)})
+        # Connectivity returns just as the queued notices are due again.
+        while min(row['due'] for row in self.queued(agent)) > cluster.wall() + 15:
+            cluster.advance(15)
+        cluster.blocked.clear()
+        agent.lifecycle.api_base = online
+        with self.assertLogs(level='INFO') as logs:
+            cluster.advance(45)
+        self.assertEqual(cluster.leaders(), ['a'])
+        self.assertIn('INFO:root:role=follower autonomous=false', logs.output)
+        self.assertEqual(bot.texts, [])
+        self.assertEqual(self.queued(agent), [])
+
+    def test_isolated_leader_with_telegram_still_announces(self):
+        cluster = self.cluster()
+        agent, bot = self.announcer(cluster, 'c')
+        cluster.stop('entry')
+        cluster.advance(1320)
+        for node in ('a', 'b'):
+            cluster.blocked.update({('c', node), (node, 'c')})
+        cluster.advance(390)
+        self.assertTrue(agent.leader.data['autonomous'])
+        cluster.advance(45)
+        self.assertTrue(any('сменился' in text for _chat, text in bot.texts))
 
     def test_boot_change_expires_evidence_and_quarantines_votes(self):
         state = State(self.root, clock_boot='old')

@@ -253,7 +253,12 @@ def resolve(name):
 
 
 def in_namespace(router, source, kind, args, dest=None, deadline=12):
-    """Запускает пробу в netns и собирает соединения клиента из API sing-box."""
+    """Запускает пробу в netns и собирает соединения клиента из API sing-box.
+
+    Соединения, открытые до пробы, в счёт не идут: закрытое соединение прошлой
+    пробы к тому же адресу ещё висит в /connections и подменило бы выход.
+    """
+    before = {item.get('id') for item in router.connections()} if source else set()
     process = subprocess.Popen(['ip', 'netns', 'exec', NS, sys.executable, '-I', str(Path(__file__).resolve()),
                                 'probe', kind, json.dumps(args)],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -263,7 +268,7 @@ def in_namespace(router, source, kind, args, dest=None, deadline=12):
     def collect():
         for item in router.connections() if source else []:
             meta = item.get('metadata', {})
-            if meta.get('sourceIP') == source and (dest is None or (
+            if item.get('id') not in before and meta.get('sourceIP') == source and (dest is None or (
                     dest[0] in (None, meta.get('destinationIP')) and str(meta.get('destinationPort')) == str(dest[1]))):
                 seen[item.get('id')] = {'chains': item.get('chains') or [], 'rule': item.get('rule', ''),
                                         'payload': item.get('rulePayload', '')}

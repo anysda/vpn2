@@ -465,6 +465,54 @@ class ExitEgressTests(unittest.TestCase):
             self.assertEqual(report.code(), 1, out.getvalue())
 
 
+class LingeringConnectionTests(unittest.TestCase):
+    """Два экзита подряд к одному адресу: соединение прошлой пробы ещё в /connections."""
+
+    def test_previous_probe_connection_is_not_counted(self):
+        source, dest = '10.66.66.2', ('192.0.2.10', 80)
+        listed = []
+
+        class Router:
+            @staticmethod
+            def connections():
+                return list(listed)
+
+        class Process:
+            def __init__(self, leaf):
+                self.leaf, self.polls = leaf, 0
+
+            def poll(self):
+                self.polls += 1
+                if self.polls == 2:
+                    # Проба открыла своё соединение, пока процесс жив.
+                    listed.append({'id': self.leaf, 'chains': [self.leaf], 'rule': 'rule_set', 'rulePayload': '',
+                                   'metadata': {'sourceIP': source, 'destinationIP': dest[0],
+                                                'destinationPort': '80'}})
+                return None if self.polls < 4 else 0
+
+            @staticmethod
+            def kill():
+                pass
+
+            @staticmethod
+            def communicate():
+                return '404', None
+
+        saved = vt.subprocess.Popen
+        try:
+            leaves = []
+            for tag in ('se', 'fi'):
+                vt.subprocess.Popen = lambda *_a, _leaf=f'hy2-{tag}-direct', **_k: Process(_leaf)
+                result, seen = vt.in_namespace(Router(), source, 'egress', [dest[0], tag], dest, deadline=2)
+                self.assertEqual(result, 404)
+                leaves.append(sorted(s['chains'][0] for s in seen))
+        finally:
+            vt.subprocess.Popen = saved
+        # Соединение se закрыто клиентом, но sing-box ещё держит его в списке.
+        self.assertEqual(len(listed), 2)
+        self.assertEqual(leaves, [['hy2-se-direct'], ['hy2-fi-direct']])
+
+
 class IKEv2RevokeTests(unittest.TestCase):
     """Отзыв снимает все IKE_SA логина, на какой бы conn charon их ни посадил."""
 

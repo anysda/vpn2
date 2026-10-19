@@ -122,9 +122,13 @@ elif name == 'systemctl' and args[:2] == ['is-active', '--quiet']:
     sys.exit(0 if args[2] in ('vpn2-emergency.service', 'vpn2-emergency-snapshot.service') else 3)
 elif name == 'fuser':
     sys.exit(1)
-elif name == 'curl':
-    print('public-key')
+elif name == 'curl' and '-o' not in args:
+    # Larger than a pipe buffer, like a real key: a reader that quits early
+    # breaks the pipe every time, not only when the scheduler says so.
+    print('public-key\n' * 20000, end='')
 elif name == 'gpg':
+    # Real gpg --dearmor reads its whole input before exiting.
+    sys.stdin.buffer.read()
     Path(args[-1]).write_text('key')
 '''
 

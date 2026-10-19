@@ -22,6 +22,9 @@ const root = ref<HTMLElement>()
 const nameEl = ref<HTMLElement>()
 const detail = ref<ClientDetail | null>(null)
 let loadVersion = 0
+// Выбран другой клиент, а на экране ещё прежний: его поля не правятся,
+// иначе введённое уходило бы прежнему клиенту.
+const stale = computed(() => detail.value !== null && detail.value.id !== props.clientId)
 
 function errTitle(e: unknown, fallback: string) {
   return (e as { statusMessage?: string }).statusMessage ?? fallback
@@ -421,7 +424,7 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
 </script>
 
 <template>
-  <div ref="root" class="cdet-in">
+  <div ref="root" class="cdet-in" :inert="stale" :aria-busy="stale">
     <template v-if="detail">
       <PanelClientHeading
         :initials="initials(detail.name)"

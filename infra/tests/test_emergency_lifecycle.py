@@ -85,6 +85,9 @@ class FakeHy2:
     def connections(self, _state_dir, _generation):
         return {}
 
+    def revoked(self, _state_dir, _generation):
+        return False
+
 
 class FakeServer:
     def __init__(self, panel):
@@ -378,7 +381,7 @@ class ClashHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-class IndicatorTests(unittest.TestCase):
+class RealHy2Tests(unittest.TestCase):
     """Real lifecycle, Hysteria2 state, session poller and HTTPS panel; fake sing-box."""
 
     def setUp(self):
@@ -386,7 +389,8 @@ class IndicatorTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
         (self.directory / 'fixture.json').write_text(json.dumps({
-            'schema': 1, 'installation_id': 'fixture', 'admin_chat_id': None, 'exits': EXITS,
+            'schema': 1, 'installation_id': 'fixture', 'admin_chat_id': 900, 'exits': EXITS,
+            'bot_token': '123:fixture-only',
             'created_at': '2026-01-01T00:00:00Z',
             'clients': [{'id': 1, 'name': 'first', 'telegram_chat_id': None, 'allowed': True,
                          'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]},
@@ -476,6 +480,28 @@ class IndicatorTests(unittest.TestCase):
         self.assertEqual(self.statuses({1: 'never', 2: 'never'}), {1: 'never', 2: 'never'})
         self.clash.users = ['g2-d22']
         self.assertEqual(self.statuses({1: 'never', 2: 'connected'}), {1: 'never', 2: 'connected'})
+
+    def notices(self, audience='admin'):
+        return tgqueue.delivery_status(self.directory, audience)
+
+    def test_failing_self_test_keeps_generation_and_announces_once(self):
+        with patch.object(hy2, 'selftest', return_value=False) as selftest:
+            self.advance(GUARD + 60)
+            self.assertEqual(self.agent.leader.data['role'], 'leader')
+            self.advance(600)
+        self.assertGreaterEqual(selftest.call_count, 4)
+        self.assertEqual(self.agent.leader.data['issued_generation'], 1)
+        self.assertEqual(hy2.read_state(self.directory / 'hy2')['generation'], 1)
+        self.assertEqual(self.notices() + self.notices('client'), [])
+        self.assertIsNone(self.lifecycle.server)
+        self.advance(300)
+        self.assertEqual(self.agent.leader.data['issued_generation'], 1)
+        self.assertTrue(self.agent.leader.data['ready'])
+        self.assertEqual(len(self.notices()), 1)
+        self.assertEqual({row['generation'] for row in self.notices() + self.notices('client')}, {1})
+        self.advance(600)
+        self.assertEqual(self.agent.leader.data['issued_generation'], 1)
+        self.assertEqual(len(self.notices()), 1)
 
     def test_poller_stops_with_emergency_end(self):
         self.advance(GUARD + 60)

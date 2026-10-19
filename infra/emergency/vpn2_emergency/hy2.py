@@ -245,9 +245,11 @@ def start(state_dir, generation, devices, *, options=None, runtime=None):
         raise ValueError('emergency hy2: invalid generation')
     with locked(state_dir) as directory:
         state = read_state(directory)
-        if generation < state['generation'] or (generation == state['generation'] and not state['active']):
+        if revoked_state(state, generation):
             raise ValueError('emergency hy2: generation revoked')
-        same = generation == state['generation']
+        # An issuance that never passed its self-test handed nothing out: the
+        # retry mints fresh credentials under the same number.
+        same = generation == state['generation'] and state['active']
         if same:
             previous = [{'id': item['id'], 'name': item['name']} for item in state['devices']]
             if previous != devices or state['options'] != options:
@@ -286,9 +288,23 @@ def start(state_dir, generation, devices, *, options=None, runtime=None):
                 raise RuntimeError('emergency hy2: real connection self-test failed')
             return materials(directory, state)
         except BaseException:
-            atomic(directory / 'generation.json', {'generation': generation, 'active': False})
+            # Credentials of a resumed generation are already with the clients:
+            # those are revoked. Fresh ones were never returned, so the number
+            # may be retried without a new generation and a new broadcast.
+            atomic(directory / 'generation.json',
+                   {'generation': generation, 'active': False, **({} if same else {'unissued': True})})
             runtime.stop()
             raise
+
+
+def revoked_state(state, generation):
+    return generation < state['generation'] or (
+        generation == state['generation'] and not state['active'] and not state.get('unissued'))
+
+
+def revoked(state_dir, generation):
+    """True when this generation can never be started again: a new one is needed."""
+    return revoked_state(read_state(Path(state_dir) / 'hy2'), generation)
 
 
 def stop(state_dir, *, runtime=None):

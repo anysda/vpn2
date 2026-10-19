@@ -28,6 +28,9 @@ PANEL_URL = 'http://127.0.0.1:51821/api/version'
 SOCKS = ('127.0.0.1', 7897)
 CONTROL_TARGET = ('cp.cloudflare.com', 80)
 ENTRY_PORT = 443
+# Failed issuance of the same generation: first retry, then doubling up to the cap.
+RETRY_FIRST = 30
+RETRY_MAX = 300
 
 
 def iso(wall):
@@ -97,6 +100,7 @@ class Lifecycle:
         agent.entry_check = (False, -math.inf)
         self.server = None
         self.sessions = None
+        self.retry = None
         self.profiles = {}
         self.pending = set()
         self.restored = False
@@ -177,6 +181,12 @@ class Lifecycle:
                             record['generation'], record.get('autonomous', False), record['event'])
         if data['role'] != 'leader':
             return
+        retry = self.retry
+        if retry and now >= retry['at']:
+            self.retry = dict(retry, at=math.inf)
+            if (record.get('emergency'), record.get('generation')) == (data['emergency_id'], retry['generation']):
+                self.submit(f"issue:{retry['generation']}", self._issue, data['emergency_id'],
+                            retry['generation'], record.get('autonomous', False), record['event'])
         recovery = data['recovery']
         if recovery and record.get('notified') != recovery['round']:
             record['notified'] = recovery['round']
@@ -211,14 +221,22 @@ class Lifecycle:
             agent.entry_check = args
         elif leader is None:
             return
-        elif kind in ('issued', 'failed'):
+        elif kind in ('issued', 'retry', 'failed'):
             emergency_id, generation = args
             if (leader.data['role'] == 'leader' and leader.data['emergency_id'] == emergency_id
                     and leader.data.get('issued_generation') == generation):
                 if kind == 'issued':
+                    self.retry = None
                     leader.bundle_ready(now)
+                elif kind == 'retry':
+                    # Nothing was handed out: the same generation again, with a
+                    # growing pause, so a failing self-test announces nothing.
+                    delay = min(RETRY_MAX, 2 * self.retry['delay']) if self.retry else RETRY_FIRST
+                    self.retry = dict(generation=generation, at=now + delay, delay=delay)
+                    LOG.warning('emergency issuance: generation %s retried in %s s', generation, delay)
                 else:
-                    # A new generation replaces what could not be issued.
+                    # A revoked generation can only be replaced by a new one.
+                    self.retry = None
                     leader.credentials_lost()
         elif kind == 'delivered':
             leader.set_deadline(*args, now)
@@ -239,9 +257,11 @@ class Lifecycle:
                                                   event=event, autonomous=autonomous)
         self.agent.state.save()
         self.restored = True
+        self.retry = None
         self.submit(f'issue:{generation}', self._issue, emergency_id, generation, autonomous, event)
 
     def on_step_down(self, winner):
+        self.retry = None
         if self.server:
             self.server.panel.on_step_down(winner)
         record = self.record
@@ -314,7 +334,8 @@ class Lifecycle:
                                     event=event)
         except Exception:
             LOG.exception('emergency issuance failed: generation %s', generation)
-            return ('failed', emergency_id, generation)
+            return ('failed' if self.hy2.revoked(self.directory, generation) else 'retry',
+                    emergency_id, generation)
         LOG.info('emergency access issued: generation %s, %s devices', generation, len(profiles))
         return ('issued', emergency_id, generation)
 

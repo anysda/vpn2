@@ -86,8 +86,25 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertFalse(self.hy2.read_state(self.state / 'hy2')['active'])
         self.assertEqual(list((self.state / 'hy2').glob('device-*.txt')), [])
         self.runtime.stop.assert_called()
+        self.assertFalse(self.hy2.revoked(self.state, 1))
+
+    def test_failed_self_test_retries_same_generation_resumed_one_is_revoked(self):
+        self.ready.return_value = False
+        with self.assertRaisesRegex(RuntimeError, 'self-test failed'):
+            self.start()
+        unissued = (self.state / 'hy2/server.json').read_bytes()
+        self.ready.return_value = True
+        issued = self.start()
+        self.assertEqual(self.hy2.read_state(self.state / 'hy2')['generation'], 1)
+        self.assertNotEqual((self.state / 'hy2/server.json').read_bytes(), unissued)
+        # Credentials already handed out are never minted again under their number.
+        self.ready.return_value = False
+        with self.assertRaisesRegex(RuntimeError, 'self-test failed'):
+            self.start()
+        self.assertTrue(self.hy2.revoked(self.state, 1))
         with self.assertRaisesRegex(ValueError, 'revoked'):
             self.start()
+        self.assertTrue(issued)
 
     def test_crash_during_rotation_cannot_resurrect_old_files(self):
         self.start()

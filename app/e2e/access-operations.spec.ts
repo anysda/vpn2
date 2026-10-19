@@ -333,6 +333,20 @@ test('VPN2-510: раздутая прежней версией база чист
   expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: false })
 })
 
+test('VPN2-510: место, не освобождённое прошлым запуском, освобождается при следующем', async () => {
+  const c = await client()
+  await threeDevices(c)
+  const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
+  // Строки уже чистые (их почистил прошлый запуск), а VACUUM тогда упал: свободные страницы остались в файле.
+  await db.run(sql`CREATE TABLE filler (data BLOB)`)
+  for (let i = 0; i < 20; i++) await db.run(sql`INSERT INTO filler VALUES (randomblob(1048576))`)
+  await db.run(sql`DROP TABLE filler`)
+  const before = await size()
+  expect(before).toBeGreaterThan(16 * 1024 * 1024)
+  expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: true })
+  expect(await size()).toBeLessThan(before / 10)
+})
+
 test('VPN2-510: промежуточный ключ WG на адресе устройства не подтверждается, хотя retired его не помнит', async () => {
   const c = await client()
   const [device] = await threeDevices(c)

@@ -56,7 +56,7 @@ async function initPanel() {
   // Базы, раздутые историей перевыпусков: чистка один раз, дальше строки не растут.
   // Не вышло (занято, нет места под VACUUM) - панель работает, база прежняя.
   await compactAccessOperations().then(({ rows, vacuumed }) => {
-    if (rows) log.info({ rows, vacuumed }, 'access operations history compacted')
+    if (rows || vacuumed) log.info({ rows, vacuumed }, 'access operations history compacted')
   }, err => log.warn({ err }, 'access operations history not compacted'))
 
   if (cfg.exitTags) await syncClientPrefsFile().catch((error) => {

@@ -209,7 +209,7 @@ export async function compactAccessOperations(): Promise<{ rows: number, vacuume
       rows++
     }
   }, { behavior: 'immediate' })
-  if (!rows) return { rows, vacuumed: false }
+  // Место освобождается и тогда, когда прошлый запуск почистил строки, но VACUUM не прошёл.
   const [pages] = await db.all<{ free: number, size: number }>(sql`SELECT freelist_count AS free, page_size AS size FROM pragma_freelist_count(), pragma_page_size()`)
   if (!pages || pages.free * pages.size < 16 * 1024 * 1024) return { rows, vacuumed: false }
   await db.run(sql`VACUUM`)

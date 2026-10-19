@@ -34,10 +34,29 @@ def load_snapshot(state_dir):
     return json.loads((Path(state_dir) / 'fixture.json').read_text())
 
 
-def snapshot_stub():
-    module = types.ModuleType('vpn2_emergency.snapshot')
-    module.load = load_snapshot
-    return patch.dict(sys.modules, {'vpn2_emergency.snapshot': module})
+class snapshot_stub:
+    """The panel imports the snapshot module lazily: an already imported real
+    module is a package attribute and wins over sys.modules."""
+
+    def __init__(self):
+        module = types.ModuleType('vpn2_emergency.snapshot')
+        module.load = load_snapshot
+        self.patches = (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
+                        patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True))
+
+    def start(self):
+        for item in self.patches:
+            item.start()
+
+    def stop(self):
+        for item in reversed(self.patches):
+            item.stop()
+
+    def __enter__(self):
+        self.start()
+
+    def __exit__(self, *_exc):
+        self.stop()
 
 
 class BotServer(ThreadingHTTPServer):

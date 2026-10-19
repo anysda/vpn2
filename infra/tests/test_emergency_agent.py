@@ -648,9 +648,12 @@ class EmergencyAgentTests(unittest.TestCase):
                                  'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]}]}
         module = types.ModuleType('vpn2_emergency.snapshot')
         module.load = lambda _directory: snapshot
-        stub = patch.dict(sys.modules, {'vpn2_emergency.snapshot': module})
-        stub.start()
-        self.addCleanup(stub.stop)
+        # The panel imports it lazily: a real module already imported is a
+        # package attribute and wins over sys.modules.
+        for stub in (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
+                     patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True)):
+            stub.start()
+            self.addCleanup(stub.stop)
 
         def make_server(state_dir, *, exit_id, public_ip, address, **providers):
             del address

@@ -35,6 +35,15 @@ def load_snapshot(state_dir):
     return json.loads((Path(state_dir) / 'fixture.json').read_text())
 
 
+def snapshot_stubs():
+    """The panel imports the snapshot module lazily: an already imported real
+    module is a package attribute and wins over sys.modules."""
+    module = types.ModuleType('vpn2_emergency.snapshot')
+    module.load = load_snapshot
+    return (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
+            patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True))
+
+
 class Bot(ThreadingHTTPServer):
     def __init__(self):
         super().__init__(('127.0.0.1', 0), BotHandler)
@@ -134,11 +143,9 @@ class LifecycleTests(unittest.TestCase):
                              {'id': 2, 'name': 'second', 'telegram_chat_id': 102, 'allowed': True,
                               'expires_at': None, 'devices': [{'id': 22, 'name': 'laptop'}]}]}
         self.save()
-        module = types.ModuleType('vpn2_emergency.snapshot')
-        module.load = load_snapshot
-        stub = patch.dict(sys.modules, {'vpn2_emergency.snapshot': module})
-        stub.start()
-        self.addCleanup(stub.stop)
+        for stub in snapshot_stubs():
+            stub.start()
+            self.addCleanup(stub.stop)
         self.bot = Bot()
         thread = threading.Thread(target=self.bot.serve_forever, kwargs={'poll_interval': 0.01})
         thread.start()
@@ -396,9 +403,7 @@ class RealHy2Tests(unittest.TestCase):
                          'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]},
                         {'id': 2, 'name': 'second', 'telegram_chat_id': None, 'allowed': True,
                          'expires_at': None, 'devices': [{'id': 22, 'name': 'laptop'}]}]}))
-        module = types.ModuleType('vpn2_emergency.snapshot')
-        module.load = load_snapshot
-        for stub in (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
+        for stub in (*snapshot_stubs(),
                      patch.object(hy2, 'SystemRuntime', Mock),
                      patch.object(hy2, 'selftest', return_value=True),
                      # The agent's poller, only faster than the 12 s of a real exit.

@@ -32,6 +32,8 @@ ENTRY_PORT = 443
 # Failed issuance of the same generation: first retry, then doubling up to the cap.
 RETRY_FIRST = 30
 RETRY_MAX = 300
+# A common certificate renewed during an emergency reaches Hysteria2 and the panel.
+TLS_EVERY = 60
 
 
 def iso(wall):
@@ -101,6 +103,7 @@ class Lifecycle:
         self.retry = None
         # Announcements of an autonomous leader: see _announce.
         self.round_at = -math.inf
+        self.tls_at = -math.inf
         self.reach = None
         self.held_since = None
         self.profiles = {}
@@ -178,6 +181,9 @@ class Lifecycle:
         if leader is None or not leader.data['active']:
             return
         self.submit('entry', self._check_entry, agent.addresses[agent.entry][0], now)
+        if now - self.tls_at >= TLS_EVERY:
+            self.tls_at = now
+            self.submit('tls', self._refresh_tls)
         data = leader.data
         record = self.record
         if not self.restored:
@@ -364,6 +370,13 @@ class Lifecycle:
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server
         return self.server.panel
+
+    def _refresh_tls(self):
+        try:
+            self.hy2.refresh_tls(self.directory)
+        finally:
+            if self.server:
+                self.server.refresh_tls()
 
     def _follow(self, owner):
         self._panel().on_step_down(owner)

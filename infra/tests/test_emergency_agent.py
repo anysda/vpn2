@@ -64,6 +64,9 @@ class FakeHy2:
     def revoked(self, _state_dir, _generation):
         return False
 
+    def refresh_tls(self, _state_dir):
+        return False
+
 
 class FakeTelegram:
     """Local queue of one exit: return notices go out only with a deadline."""
@@ -968,7 +971,8 @@ class EmergencyAgentTests(unittest.TestCase):
             on_step_down=lambda *_args: None, on_entry_recovered=lambda *_args: None,
             on_emergency_end=lambda: None, on_return_cancelled=lambda: None)
         server = types.SimpleNamespace(panel=panel, serve_forever=lambda: None,
-                                       shutdown=lambda: None, server_close=lambda: None)
+                                       shutdown=lambda: None, server_close=lambda: None,
+                                       refresh_tls=lambda: False)
         quiet = lambda *_args, **_kwargs: None  # noqa: E731
         cancelled = service.cancelled = []
         telegram = types.SimpleNamespace(prune=quiet, enqueue_admin=quiet, enqueue_clients=quiet,

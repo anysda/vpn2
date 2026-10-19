@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -98,6 +99,9 @@ class FakeHy2:
     def revoked(self, _state_dir, _generation):
         return False
 
+    def refresh_tls(self, _state_dir):
+        return False
+
 
 class FakeServer:
     def __init__(self, panel):
@@ -112,6 +116,9 @@ class FakeServer:
 
     def server_close(self):
         pass
+
+    def refresh_tls(self):
+        return False
 
 
 class Agent:
@@ -455,6 +462,44 @@ class ClashHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def openssl(*args):
+    subprocess.run(['openssl', *args], check=True, capture_output=True)
+
+
+class Renewals:
+    """A local CA and the common TLS directory as vpn2_tls publishes it:
+    fullchain.pem and privkey.pem point into current/, one symlink switch per renewal."""
+
+    def __init__(self, directory, ip):
+        self.directory, self.ip = directory, ip
+        self.ca, self.ca_key = directory / 'ca.pem', directory / 'ca.key'
+        openssl('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+                '-days', '1', '-subj', '/CN=fixture CA', '-keyout', str(self.ca_key), '-out', str(self.ca))
+        self.output = directory / 'tls'
+        self.output.mkdir()
+        self.count = 0
+
+    def renew(self):
+        self.count += 1
+        generation = self.output / f'g{self.count}'
+        generation.mkdir()
+        cert, key, request = generation / 'fullchain.pem', generation / 'privkey.pem', generation / 'request'
+        extensions = self.directory / 'extensions'
+        extensions.write_text(f'subjectAltName=IP:{self.ip}\nextendedKeyUsage=serverAuth\n')
+        openssl('req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes',
+                '-subj', f'/CN={self.ip}', '-keyout', str(key), '-out', str(request))
+        openssl('x509', '-req', '-in', str(request), '-CA', str(self.ca), '-CAkey', str(self.ca_key),
+                '-CAcreateserial', '-days', '1', '-extfile', str(extensions), '-out', str(cert))
+        pending = self.output / 'current.new'
+        pending.symlink_to(generation.name)
+        pending.replace(self.output / 'current')
+        for name in ('fullchain.pem', 'privkey.pem'):
+            link = self.output / name
+            if not link.is_symlink():
+                link.symlink_to(f'current/{name}')
+        return ssl.PEM_cert_to_DER_cert(cert.read_text())
+
+
 class RealHy2Tests(unittest.TestCase):
     """Real lifecycle, Hysteria2 state, session poller and HTTPS panel; fake sing-box."""
 
@@ -574,6 +619,50 @@ class RealHy2Tests(unittest.TestCase):
         self.advance(600)
         self.assertEqual(self.agent.leader.data['issued_generation'], 1)
         self.assertEqual(len(self.notices()), 1)
+
+    def test_renewal_during_emergency_reaches_hysteria2_and_panel(self):
+        # VPN2-529: the common IP certificate renewed mid-emergency is served
+        # by Hysteria2 and the panel; an open panel connection keeps its own.
+        renewals = Renewals(self.directory, '203.0.113.10')
+        self.lifecycle.close()
+        hooks._listeners.clear()
+        make_server = functools.partial(web.make_server, cert_dir=renewals.output)
+        self.lifecycle = lifecycle.Lifecycle(
+            self.agent, threaded=False, panel_address=('127.0.0.1', 0),
+            web_module=types.SimpleNamespace(make_server=make_server),
+            hy2_options={'server_ip': '203.0.113.10', 'port': self.clash.server_port,
+                         'tls_dir': str(renewals.output), 'runtime_dir': str(self.directory / 'hy2')},
+            api_base='http://127.0.0.1:9', probe_ready=lambda: True, probe_entry=lambda _host: True)
+        self.lifecycle.attach()
+        self.addCleanup(self.lifecycle.close)
+
+        def connect():
+            # An IP address, as browsers reach the panel: no SNI in the ClientHello.
+            raw = socket.create_connection(('127.0.0.1', self.lifecycle.server.server_address[1]), timeout=5)
+            return ssl._create_unverified_context().wrap_socket(raw)  # noqa: S323 - certificate is compared below
+
+        def hysteria2():
+            return ssl.PEM_cert_to_DER_cert((self.directory / 'hy2/fullchain.pem').read_text())
+
+        with patch.dict(os.environ, {'SSL_CERT_FILE': str(renewals.ca)}):
+            first = renewals.renew()
+            self.advance(GUARD + 60)
+            self.assertEqual(self.agent.leader.data['role'], 'leader')
+            self.assertFalse(hy2.read_state(self.directory / 'hy2')['pin'])
+            self.assertEqual(hysteria2(), first)
+            opened = connect()
+            self.addCleanup(opened.close)
+            self.assertEqual(opened.getpeercert(binary_form=True), first)
+            second = renewals.renew()
+            self.advance(75)
+        with connect() as fresh:
+            served = fresh.getpeercert(binary_form=True)
+        self.assertEqual({'hysteria2': hysteria2() == second, 'panel': served == second},
+                         {'hysteria2': True, 'panel': True})
+        self.assertIsNone(self.lifecycle.server.panel.fingerprint)
+        opened.sendall(b'GET /api/state HTTP/1.0\r\n\r\n')
+        self.assertTrue(opened.recv(64).startswith(b'HTTP/1.0 401'))
+        self.assertEqual(opened.getpeercert(binary_form=True), first)
 
     def test_poller_stops_with_emergency_end(self):
         self.advance(GUARD + 60)

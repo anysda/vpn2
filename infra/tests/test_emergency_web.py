@@ -12,7 +12,9 @@ import json
 import logging
 import os
 from pathlib import Path
+import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -56,7 +58,7 @@ class EmergencyWebTests(unittest.TestCase):
                             broadcast=lambda message, generation: self.queued.append((message, generation)))
         self.panel = self.web.Panel(self.directory, **self.options)
 
-    def start(self):
+    def start(self, cert_dir=None):
         static = ROOT / 'infra/emergency/vpn2_emergency/static'
         if not static.is_dir():
             static = self.directory / 'static'
@@ -64,7 +66,7 @@ class EmergencyWebTests(unittest.TestCase):
             (static / 'index.html').write_text('local panel')
             (static / 'instructions.html').write_bytes((ROOT / 'app/emergency/instructions.html').read_bytes())
         server = self.web.make_server(self.directory, address=('127.0.0.1', 0), static_dir=static,
-                                      cert_dir=self.directory / 'missing', **self.options)
+                                      cert_dir=cert_dir or self.directory / 'missing', **self.options)
         self.addCleanup(server.server_close)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -228,6 +230,45 @@ class EmergencyWebTests(unittest.TestCase):
         conn.request('GET', '/instructions')
         self.assertEqual(conn.getresponse().status, 200)
         conn.close()
+
+    def test_renewed_certificate_reaches_new_connections(self):
+        # VPN2-529: the panel takes a renewed IP certificate without a restart.
+        source = self.directory / 'ip'
+        source.mkdir()
+
+        def issue(name):
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                            '-nodes', '-days', '1', '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1',
+                            '-keyout', str(self.directory / f'{name}.key'), '-out', str(self.directory / f'{name}.pem')],
+                           check=True, capture_output=True)
+            return ssl.PEM_cert_to_DER_cert((self.directory / f'{name}.pem').read_text())
+
+        def publish(cert, key):
+            (source / 'fullchain.pem').write_bytes((self.directory / f'{cert}.pem').read_bytes())
+            (source / 'privkey.pem').write_bytes((self.directory / f'{key}.key').read_bytes())
+
+        def served():
+            raw = socket.create_connection(('127.0.0.1', self.server.server_port), timeout=5)
+            with ssl._create_unverified_context().wrap_socket(raw) as connection:
+                return connection.getpeercert(binary_form=True)
+
+        first, second = issue('first'), issue('second')
+        publish('first', 'first')
+        self.start(cert_dir=source)
+        self.assertEqual(served(), first)
+        self.assertEqual(self.panel.fingerprint, hashlib.sha256(first).hexdigest().upper())
+        self.assertFalse(self.server.refresh_tls())
+        # A pair read across the renewal does not load; the settled pair does.
+        publish('second', 'first')
+        self.assertFalse(self.server.refresh_tls())
+        self.assertEqual(served(), first)
+        publish('second', 'second')
+        self.assertTrue(self.server.refresh_tls())
+        self.assertEqual(served(), second)
+        message = self.panel.on_emergency_leader('event', 1)
+        self.assertEqual(message['certificate_fingerprint'], hashlib.sha256(second).hexdigest().upper())
+        self.assertFalse(self.server.refresh_tls())
+        self.assertEqual(sorted(path.name for path in (self.directory / 'web-tls').iterdir()), [])
 
     def test_rejected_certificate_logs_one_line_without_traceback(self):
         self.start()

@@ -259,42 +259,118 @@ class Panel:
         return self.profiles(self.auth['generation']).get(device_id)
 
 
-def tls_context(state_dir, public_ip, cert_dir):
-    """Use the IP certificate, or a private local fallback with an admin fingerprint."""
-    ip = str(ipaddress.ip_address(public_ip))
-    cert = Path(cert_dir) / 'fullchain.pem'
-    key = Path(cert_dir) / 'privkey.pem'
+class Certificate:
+    """The panel certificate: the common IP one, or a private local fallback
+    with a fingerprint for the admin message.
 
-    def usable():
-        return cert.is_file() and key.is_file() and all(
+    A renewal during an emergency must reach new connections without a
+    restart. The listening socket keeps its first context; its SNI callback,
+    which runs for every ClientHello (also one without SNI, as for an IP),
+    moves the handshake to the current context. Open connections keep theirs.
+    """
+
+    def __init__(self, state_dir, public_ip, cert_dir):
+        self.ip = str(ipaddress.ip_address(public_ip))
+        self.source = Path(cert_dir)
+        self.directory = Path(state_dir) / 'web-tls'
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self.attempted = None
+        common = self._common()
+        if common is None:
+            cert, key = self.directory / 'cert.pem', self.directory / 'key.pem'
+            if not (key.is_file() and self._usable(cert)):
+                subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                                '-nodes', '-days', '30', '-subj', f'/CN={self.ip}',
+                                '-addext', f'subjectAltName=IP:{self.ip}',
+                                '-keyout', str(key), '-out', str(cert)], check=True, capture_output=True)
+                key.chmod(0o600)
+            common = self._context(cert, key), self._fingerprint(cert)
+        self.context, self.fingerprint = common
+        self.context.sni_callback = self._handshake  # noqa - called by OpenSSL
+
+    def _usable(self, cert):
+        return cert.is_file() and all(
             subprocess.run(['openssl', 'x509', '-in', str(cert), *args],
                            capture_output=True, check=False).returncode == 0
-            for args in (['-checkend', '60', '-noout'], ['-checkip', ip, '-noout']))
+            for args in (['-checkend', '60', '-noout'], ['-checkip', self.ip, '-noout']))
 
-    fallback = not usable()
-    if fallback:
-        directory = Path(state_dir) / 'web-tls'
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        cert, key = directory / 'cert.pem', directory / 'key.pem'
-        if not usable():
-            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-                            '-nodes', '-days', '30', '-subj', f'/CN={ip}', '-addext', f'subjectAltName=IP:{ip}',
-                            '-keyout', str(key), '-out', str(cert)], check=True, capture_output=True)
-            key.chmod(0o600)
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2  # noqa - consumed by OpenSSL
-    context.load_cert_chain(cert, key)
-    trusted = subprocess.run(['openssl', 'verify', '-purpose', 'sslserver', '-verify_ip', ip,
-                              '-untrusted', str(cert), str(cert)], capture_output=True, check=False).returncode == 0
-    der = ssl.PEM_cert_to_DER_cert(cert.read_text().split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----')
-    return context, hashlib.sha256(der).hexdigest().upper() if fallback or not trusted else None
+    @staticmethod
+    def _context(cert, key):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2  # noqa - consumed by OpenSSL
+        context.load_cert_chain(cert, key)
+        return context
+
+    def _fingerprint(self, cert):
+        """None for a certificate a browser trusts for the IP, else its SHA-256."""
+        trusted = subprocess.run(['openssl', 'verify', '-purpose', 'sslserver', '-verify_ip', self.ip,
+                                  '-untrusted', str(cert), str(cert)], capture_output=True, check=False).returncode == 0
+        if trusted:
+            return None
+        der = ssl.PEM_cert_to_DER_cert(cert.read_text().split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----')
+        return hashlib.sha256(der).hexdigest().upper()
+
+    def _common(self):
+        """(context, fingerprint) of the common IP pair, or None while unusable.
+
+        The renewal publishes both files with one symlink switch, and two reads
+        of the source may straddle it: one copy of the pair is checked and loaded.
+        """
+        try:
+            pair = (self.source / 'fullchain.pem').read_bytes(), (self.source / 'privkey.pem').read_bytes()
+        except OSError:
+            return None
+        self.attempted = pair
+        cert, key = self.directory / 'incoming-cert.pem', self.directory / 'incoming-key.pem'
+        try:
+            for path, data in ((key, pair[1]), (cert, pair[0])):
+                fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'wb') as output:
+                    output.write(data)
+            if not self._usable(cert):
+                return None
+            return self._context(cert, key), self._fingerprint(cert)
+        except (OSError, ssl.SSLError):
+            return None
+        finally:
+            cert.unlink(missing_ok=True)
+            key.unlink(missing_ok=True)
+
+    def _handshake(self, connection, _server_name, _context):
+        current = self.context
+        if connection.context is not current:
+            connection.context = current
+
+    def refresh(self):
+        """True when new connections now get a renewed common certificate.
+
+        A pair already tried is not checked again; a pair read across the
+        renewal's switch differs from the settled one and is tried once more.
+        """
+        try:
+            pair = (self.source / 'fullchain.pem').read_bytes(), (self.source / 'privkey.pem').read_bytes()
+        except OSError:
+            return False
+        if pair == self.attempted:
+            return False
+        common = self._common()
+        if common is None:
+            return False
+        self.context, self.fingerprint = common
+        return True
+
+
+def tls_context(state_dir, public_ip, cert_dir):
+    """Panel certificate; stage 23 also prepares it in advance through this call."""
+    return Certificate(state_dir, public_ip, cert_dir)
 
 
 def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
                 static_dir=None, cert_dir='/etc/vpn2/tls/ip', **providers):
     panel = Panel(state_dir, exit_id, public_ip, **providers)
     assets = Path(static_dir) if static_dir else Path(__file__).with_name('static')
-    context, panel.fingerprint = tls_context(state_dir, public_ip, cert_dir)
+    certificate = tls_context(state_dir, public_ip, cert_dir)
+    context, panel.fingerprint = certificate.context, certificate.fingerprint
 
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
@@ -438,4 +514,13 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
         server.server_close()
         raise
     server.panel = panel
+
+    def refresh_tls():
+        if not certificate.refresh():
+            return False
+        panel.fingerprint = certificate.fingerprint
+        LOG.info('Emergency panel TLS certificate renewed')
+        return True
+
+    server.refresh_tls = refresh_tls
     return server

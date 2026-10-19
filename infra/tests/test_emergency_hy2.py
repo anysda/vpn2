@@ -161,6 +161,13 @@ class EmergencyHy2Tests(unittest.TestCase):
             self.assertTrue(self.hy2.certificate(renewed, {**self.options, 'tls_dir': str(renewed)}))
             with bundle.open('ab') as trust:
                 trust.write((renewed / 'fullchain.pem').read_bytes())
+            # A pair read across the renewal is refused, with one warning.
+            (source / 'fullchain.pem').write_bytes((renewed / 'fullchain.pem').read_bytes())
+            with self.assertLogs(self.hy2.LOG, 'WARNING') as logs:
+                self.assertFalse(self.hy2.refresh_tls(self.state))
+                self.assertFalse(self.hy2.refresh_tls(self.state))
+            self.assertEqual(len(logs.records), 1)
+            self.assertEqual(sorted(path.name for path in (self.state / 'hy2').glob('incoming-*')), [])
             for name in ('fullchain.pem', 'privkey.pem'):
                 (source / name).write_bytes((renewed / name).read_bytes())
             self.assertTrue(self.hy2.refresh_tls(self.state))

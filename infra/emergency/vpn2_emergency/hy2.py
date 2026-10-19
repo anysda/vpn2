@@ -121,10 +121,45 @@ def trusted_problem(cert, key, server_ip):
     return None
 
 
+def read_pair(source):
+    try:
+        return (source / 'fullchain.pem').read_bytes(), (source / 'privkey.pem').read_bytes()
+    except OSError:
+        return None
+
+
+def stage(pair, directory, server_ip):
+    """Check one copy of the common pair and keep it staged next to the live one.
+
+    The renewal publishes both files with one symlink switch; separate reads of
+    the source may straddle it, so the copy checked is the copy installed.
+    """
+    cert, key = directory / 'incoming-fullchain.pem', directory / 'incoming-privkey.pem'
+    atomic(key, pair[1])
+    atomic(cert, pair[0])
+    problem = trusted_problem(cert, key, server_ip)
+    if problem:
+        cert.unlink()
+        key.unlink()
+    return problem
+
+
+def install(directory):
+    # sing-box watches both paths and reloads the pair after each rename: the
+    # first rename logs one key mismatch error, the second loads the new pair.
+    for name in ('privkey.pem', 'fullchain.pem'):
+        os.replace(directory / f'incoming-{name}', directory / name)
+    handle = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
 def certificate(directory, options):
     source = Path(options['tls_dir'])
-    cert, key = source / 'fullchain.pem', source / 'privkey.pem'
-    problem = trusted_problem(cert, key, options['server_ip'])
+    pair = read_pair(source)
+    problem = stage(pair, directory, options['server_ip']) if pair else f'no certificate at {source}'
     if problem:
         LOG.warning('Emergency TLS: %s; self-signed certificate, pinSHA256 in profiles', problem)
         cert, key = directory / 'fullchain.pem', directory / 'privkey.pem'
@@ -138,8 +173,7 @@ def certificate(directory, options):
         cert.chmod(0o640)
         fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
         return fingerprint
-    atomic(directory / 'fullchain.pem', cert.read_bytes())
-    atomic(directory / 'privkey.pem', key.read_bytes())
+    install(directory)
     return None
 
 
@@ -328,6 +362,10 @@ def validate(directory):
     return state
 
 
+# The last common pair refused per state directory: warned about once.
+SKIPPED = {}
+
+
 def refresh_tls(state_dir):
     """Renewal hook: copy the common IP certificate without changing credentials.
 
@@ -340,18 +378,16 @@ def refresh_tls(state_dir):
         if not state['active'] or state['pin']:
             return False
         options = state['options']
-        source = Path(options['tls_dir'])
-        cert, key = source / 'fullchain.pem', source / 'privkey.pem'
-        with contextlib.suppress(OSError):
-            if cert.read_bytes() == (directory / 'fullchain.pem').read_bytes():
-                return False
-        problem = trusted_problem(cert, key, options['server_ip'])
+        pair = read_pair(Path(options['tls_dir']))
+        if pair is None or pair == read_pair(directory) or pair == SKIPPED.get(directory):
+            return False
+        problem = stage(pair, directory, options['server_ip'])
         if problem:
+            SKIPPED[directory] = pair
             LOG.warning('Emergency TLS renewal skipped: %s', problem)
             return False
-        # sing-box watches both paths and reloads the pair after rename.
-        atomic(directory / 'privkey.pem', key.read_bytes())
-        atomic(directory / 'fullchain.pem', cert.read_bytes())
+        install(directory)
+        LOG.info('Emergency TLS certificate renewed for Hysteria2')
         return True
 
 

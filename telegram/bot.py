@@ -386,10 +386,11 @@ def _pct(v) -> str:
 class BotApiError(Exception):
     """Ошибка вызова /api/bot/* — message человекочитаемый, для показа клиенту."""
 
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: str = ''):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.code = code  # statusMessage панели: машинный код вроде not_linked
 
 
 def _bot_headers() -> dict:
@@ -399,17 +400,19 @@ def _bot_headers() -> dict:
 def _extract_error(r: httpx.Response) -> BotApiError:
     """Из 4xx-ответа Nuxt вытащить человекочитаемый текст."""
     msg = ''
+    code = ''
     if r.status_code >= 500:
         return BotApiError(r.status_code, 'Панель временно недоступна. Попробуйте позже.')
     try:
         body = r.json()
         if isinstance(body, dict):
             msg = body.get('message') or body.get('statusMessage') or body.get('error') or ''
+            code = body.get('statusMessage') or ''
     except Exception:
         pass
     if not isinstance(msg, str) or not msg:
         msg = f'Ошибка сервера ({r.status_code})'
-    return BotApiError(r.status_code, msg)
+    return BotApiError(r.status_code, msg, code if isinstance(code, str) else '')
 
 
 async def _bot_request(method: str, path: str, *, json_body: dict | None = None) -> httpx.Response:
@@ -682,6 +685,11 @@ def _no_access_text() -> str:
     return 'Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора.'
 
 
+def _is_not_linked(e: 'BotApiError') -> bool:
+    """Панель не знает этот чат: его не привязывали или отвязали посреди запроса."""
+    return e.status == 404 and 'not_linked' in (e.code, e.message)
+
+
 async def _client_error_reply(chat_id: int, e: 'BotApiError') -> None:
     """Единый ответ клиенту на ошибку /api/bot/*."""
     if e.status == 404:
@@ -889,7 +897,10 @@ async def on_text(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             view = await api_add_device(chat_id, text)
         except BotApiError as e:
-            await tg_send(chat_id, f'❌ {e.message}')
+            if _is_not_linked(e):
+                await tg_send(chat_id, _no_access_text())
+            else:
+                await tg_send(chat_id, f'❌ {e.message}')
             return
         except Exception as e:
             log.error('add_device failed (%s)', type(e).__name__)
@@ -939,10 +950,23 @@ async def on_callback(update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await _handle_callback(chat_id, message_id, callback_id, data)
     except BotApiError as e:
-        await tg_answer_callback(callback_id, e.message, show_alert=True)
+        if _is_not_linked(e):
+            # Тот же ответ, что любому непривязанному чату. Сообщением: кнопку
+            # выдачи конфига уже погасили «Готовлю конфиг…», второй ответ не дойдёт.
+            await tg_answer_callback(callback_id)
+            await tg_send(chat_id, _no_access_text())
+        else:
+            await _callback_alert(chat_id, callback_id, e.message)
     except Exception as e:
         log.error('callback failed (%s)', type(e).__name__)
-        await tg_answer_callback(callback_id, UNEXPECTED_ERROR, show_alert=True)
+        await _callback_alert(chat_id, callback_id, UNEXPECTED_ERROR)
+
+
+async def _callback_alert(chat_id: int, callback_id: str, text: str) -> None:
+    """Ошибка нажатия всплывашкой; кнопка уже погашена - сообщением в чат."""
+    answer = await tg_answer_callback(callback_id, text, show_alert=True)
+    if isinstance(answer, dict) and not answer.get('ok'):
+        await tg_send(chat_id, f'❌ {text}')
 
 
 async def _handle_callback(chat_id: int, message_id: int | None,

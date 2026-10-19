@@ -232,8 +232,11 @@ class DirectRouteTests(unittest.TestCase):
             self.assertEqual(report.code(), 0)
 
 
-def client_blocked(ip, port, rules):
-    """Отказ client_block_rules роутера для tcp-назначения (семантика sing-box)."""
+def client_blocked(ip, port, rules, entry):
+    """Отказ client_block_rules роутера для tcp-назначения (семантика sing-box).
+
+    entry - адреса entry, которые vpn2-entry-addrs положил в набор entry-addrs.
+    """
     address = ipaddress.ip_address(ip)
     # ip_is_private в sing-box - netip.IsPrivate и соседи, без документационных сетей.
     private = any(address in ipaddress.ip_network(net) for net in (
@@ -243,6 +246,8 @@ def client_blocked(ip, port, rules):
     def match(rule):
         if rule.get('type') == 'logical':
             return all(match(r) for r in rule['rules'])
+        if 'rule_set' in rule:
+            return 'entry-addrs' in rule['rule_set'] and ip in entry
         if 'ip_cidr' in rule:
             return any(address in ipaddress.ip_network(net) for net in rule['ip_cidr'] if ':' not in net)
         if 'ip_is_private' in rule:
@@ -261,14 +266,7 @@ class EchoTargetTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/lib/gen-router-config.py')
         gen = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gen)
-        saved_env = os.environ.get('ENTRY_ADDRS')
-        os.environ['ENTRY_ADDRS'] = wan
-        try:
-            rules = gen.client_block_rules()
-        finally:
-            os.environ.pop('ENTRY_ADDRS')
-            if saved_env is not None:
-                os.environ['ENTRY_ADDRS'] = saved_env
+        rules = gen.client_block_rules()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manual = root / 'manual'
@@ -294,7 +292,7 @@ class EchoTargetTests(unittest.TestCase):
                     sent.append((ip, port))
                     # Отказ роутера или опущенный туннель - ответа нет; без метки direct-ru
                     # адрес вне geoip-ru ушёл бы в экзит.
-                    if not state['up'] or client_blocked(ip, port, rules):
+                    if not state['up'] or client_blocked(ip, port, rules, [wan]):
                         return None, []
                     leaf = 'direct-ru' if host == verifier.markers.get('direct-ru') else 'foreign-best'
                     ok = leaf == 'direct-ru'
@@ -317,7 +315,7 @@ class EchoTargetTests(unittest.TestCase):
             self.assertTrue(echo, 'эхо отзыва и внешней пробы режет блок адресов entry')
             self.assertEqual(rows['отрицательный контроль'], 'Работает', out.getvalue())
             for ip, port in sent:
-                self.assertFalse(client_blocked(ip, port, rules), f'{ip}:{port} закрыт клиенту')
+                self.assertFalse(client_blocked(ip, port, rules, [wan]), f'{ip}:{port} закрыт клиенту')
                 self.assertNotEqual(ip, wan)
 
 
@@ -330,14 +328,7 @@ class ExitRouteTargetTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/lib/gen-router-config.py')
         gen = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(gen)
-        saved_env = os.environ.get('ENTRY_ADDRS')
-        os.environ['ENTRY_ADDRS'] = wan
-        try:
-            rules = gen.client_block_rules()
-        finally:
-            os.environ.pop('ENTRY_ADDRS')
-            if saved_env is not None:
-                os.environ['ENTRY_ADDRS'] = saved_env
+        rules = gen.client_block_rules()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manual = root / 'manual'
@@ -360,7 +351,7 @@ class ExitRouteTargetTests(unittest.TestCase):
                     ip, port, host = args
                     sent.append((ip, port))
                     # Отказ роутера entry (client_block_rules) - соединения и ответа нет.
-                    if kind != 'echo' or client_blocked(ip, port, rules):
+                    if kind != 'echo' or client_blocked(ip, port, rules, [wan]):
                         return None, []
                     if host == verifier.markers.get('direct-ru'):
                         return ({'peer': ip, 'local': True} if ip == vt.ECHO_IP else None), \
@@ -379,7 +370,7 @@ class ExitRouteTargetTests(unittest.TestCase):
                 vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = saved
         print(out.getvalue().strip())
         for ip, port in sent:
-            self.assertFalse(client_blocked(ip, port, rules), f'{ip}:{port} закрыт клиенту')
+            self.assertFalse(client_blocked(ip, port, rules, [wan]), f'{ip}:{port} закрыт клиенту')
         return {row['check']: row['result'] for row in report.rows}
 
     def test_private_exit_route_is_checked_not_rejected(self):
@@ -792,7 +783,7 @@ class NetnsWireGuardTests(unittest.TestCase):
         self.assertTrue(data['connect_b'])
         self.assertTrue(data['echo_b'])
         self.assertTrue(data['echo_direct'], 'эхо прямого пути отвечает сокету direct-ru со своего адреса')
-        self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
+        self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в набор entry-addrs')
         self.assertTrue(data['wan_addresses_kept'], 'эхо прямого пути не должно менять адреса WAN')
         self.assertTrue(data['echo_leftover'])
         self.assertTrue(data['exit_echo'], 'эхо экзита отвечает sing-box экзита с его собственного адреса')

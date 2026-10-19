@@ -23,8 +23,8 @@ gen-router-config.py — генерирует sing-box конфиг роутер
   {TAG}_HY2_CERT_PATH    — PEM-сертификат экзита, sing-box принимает только его
   {TAG}_HY2_INSECURE=1   — без проверки (exits[].hy2_insecure: true), с предупреждением
 
-Опциональные:
-  ENTRY_ADDRS            — адреса entry: клиентам открыты только TCP 22/80/443
+Адреса entry (клиентам открыты только TCP 22/80/443) - набор entry-addrs,
+его пишет vpn2-entry-addrs стадии 20 при каждом старте sing-box.
 
 Опциональные (YouTube мимо экзитов, см. стадию 19-yt-zapret):
   YT_ROUTE               — off | zapret | direct   (дефолт off)
@@ -110,36 +110,28 @@ CLIENT_BLOCKED_CIDRS = [
 # в интернет. Остальные порты адресов entry клиенту закрыты: соединение от
 # sing-box к своему адресу идёт через lo мимо ufw.
 ENTRY_PUBLIC_TCP_PORTS = [22, 80, 443]
-
-
-def entry_addresses():
-    """Адреса entry (ENTRY_ADDRS от 20-ru-router) как /32 и /128."""
-    nets = []
-    for value in (os.environ.get('ENTRY_ADDRS') or '').split():
-        try:
-            nets.append(str(ipaddress.ip_network(value.split('/')[0])))
-        except ValueError:
-            sys.exit(f'ERROR: ENTRY_ADDRS: {value!r} не IP-адрес')
-    return list(dict.fromkeys(nets))
+# Адреса entry - локальный набор, а не снимок в конфиге: его пишет
+# vpn2-entry-addrs (стадия 20) перед каждым стартом sing-box, а изменённый
+# файл живой sing-box перечитывает сам. Новый адрес на интерфейсе закрыт
+# клиентам после перезапуска sing-box, без передеплоя.
+ENTRY_ADDRS_SET = {'type': 'local', 'tag': 'entry-addrs', 'format': 'source',
+                   'path': '/etc/sing-box/entry-addrs.json'}
 
 
 def client_block_rules():
     """reject-правила для клиентских назначений, раньше любого выбора выхода."""
-    rules = [
+    return [
         {'ip_cidr': CLIENT_BLOCKED_CIDRS, 'action': 'reject'},
         {'ip_is_private': True, 'action': 'reject'},
-    ]
-    addresses = entry_addresses()
-    if addresses:
-        rules.append({
+        {
             'type': 'logical', 'mode': 'and',
             'rules': [
-                {'ip_cidr': addresses},
+                {'rule_set': [ENTRY_ADDRS_SET['tag']]},
                 {'network': ['tcp'], 'port': ENTRY_PUBLIC_TCP_PORTS, 'invert': True},
             ],
             'action': 'reject',
-        })
-    return rules
+        },
+    ]
 
 
 def yt_settings():
@@ -571,7 +563,7 @@ def main():
                 {'type': 'local', 'tag': t, 'format': 'binary',
                  'path': f'{RULE_SET_DIR}/{t}.srs'}
                 for t in RULE_SETS
-            ],
+            ] + [ENTRY_ADDRS_SET],
             # Маршрутизация:
             #   1. YouTube (если YT_ROUTE != off) → youtube-ru, РФ-выход + десинк
             #   2. .ru/.рф/.su по домену → direct-ru (даже если сайт хостится за рубежом)

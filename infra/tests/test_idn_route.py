@@ -31,7 +31,8 @@ class IdnRouteTests(unittest.TestCase):
 
     def test_russian_idn_matches_wire_format(self):
         cfg = json.loads(generate())
-        rule = next(rule for rule in cfg['route']['rules'] if rule.get('type') == 'logical')
+        rule = next(rule for rule in cfg['route']['rules'] if rule.get('type') == 'logical'
+                    and 'domain_suffix' in rule['rules'][0])
         domain_rule = rule['rules'][0]
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'domains.json'

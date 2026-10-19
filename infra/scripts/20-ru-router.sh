@@ -53,6 +53,61 @@ done
 rm -f /var/lib/sing-box/geoip.db /var/lib/sing-box/geosite.db
 ls -la "$RS_DIR" | sed -n '/\.srs$/p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
+# Адреса самого entry: клиентам VPN до них открыты только публичные порты,
+# панель, API и прочие локальные службы закрыты (правило в генераторе).
+# Набор адресов пишется перед каждым стартом sing-box (ExecStartPre ниже), а
+# не один раз при deploy: адрес, добавленный на интерфейс или полученный
+# заново по DHCP, закрыт клиентам после перезапуска sing-box или ноды.
+mkdir -p /etc/sing-box
+cat > /usr/local/sbin/vpn2-entry-addrs << 'ADDRS'
+#!/usr/bin/env python3
+"""Глобальные адреса интерфейсов entry -> набор sing-box entry-addrs."""
+import ipaddress, json, os, subprocess, sys, tempfile
+
+SET = '/etc/sing-box/entry-addrs.json'
+
+
+def addresses():
+    out = subprocess.run(['ip', '-j', 'addr', 'show', 'scope', 'global'],
+                         check=True, capture_output=True, text=True, timeout=10).stdout
+    nets = {ipaddress.ip_network(info['local'])
+            for link in json.loads(out) for info in link.get('addr_info', [])
+            if info.get('scope') == 'global' and info.get('local')}
+    return [str(net) for net in sorted(nets, key=lambda n: (n.version, n))]
+
+
+def write(nets):
+    body = json.dumps({'version': 2, 'rules': [{'ip_cidr': nets}] if nets else []}, indent=2)
+    try:
+        with open(SET) as f:
+            if f.read() == body:
+                return
+    except FileNotFoundError:
+        pass
+    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(SET), delete=False,
+                                     prefix='.entry-addrs.') as tmp:
+        tmp.write(body)
+    os.chmod(tmp.name, 0o600)
+    os.replace(tmp.name, SET)
+
+
+try:
+    nets = addresses()
+except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
+    # Без файла набора sing-box не стартует: тогда пустой набор (частные сети
+    # закрыты и так), иначе остаются адреса прошлого старта.
+    kept = os.path.exists(SET)
+    if not kept:
+        write([])
+    print(f'vpn2-entry-addrs: адреса entry не прочитаны: {e}; '
+          f'{"набор прошлого старта" if kept else "набор пуст"}', file=sys.stderr)
+    sys.exit(1)
+write(nets)
+print(f'vpn2-entry-addrs: клиентам закрыты службы на {" ".join(nets) or "-"}')
+ADDRS
+chmod 755 /usr/local/sbin/vpn2-entry-addrs
+/usr/local/sbin/vpn2-entry-addrs | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
+
 # ----------------------------------------------------------------------------
 # 3. Secrets: clash-api на RU + пароли Hysteria2 с выходных нод
 # ----------------------------------------------------------------------------
@@ -145,10 +200,6 @@ done
 # config-base.json MUST be refreshed on every run — a stale base silently
 # drops inbounds added to gen-router-config.py since it was first
 # snapshotted (this is how the wg/ovpn TPROXY :7898 inbound got lost).
-# Адреса самого entry: клиентам VPN до них открыты только публичные порты,
-# панель, API и прочие локальные службы закрыты (правило в генераторе).
-ENTRY_ADDRS=$(ip -o addr show scope global | awk '{sub(/\/.*/, "", $4); print $4}' | tr '\n' ' ')
-export ENTRY_ADDRS
 _cfg_tmp=$(mktemp /etc/sing-box/.config-base.XXXXXX)
 if ! python3 "$GEN" > "$_cfg_tmp" \
   || ! /usr/local/bin/sing-box check -c "$_cfg_tmp"; then
@@ -193,6 +244,9 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 User=root
+# Адреса entry на момент старта (набор entry-addrs). «-»: не прочитались -
+# sing-box всё равно поднимается на наборе прошлого старта.
+ExecStartPre=-/usr/local/sbin/vpn2-entry-addrs
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 # Restart=always (а не on-failure): роутер обязан подниматься после ЛЮБОЙ
 # остановки, включая чистый SIGTERM — иначе случайный `systemctl stop`/`kill`

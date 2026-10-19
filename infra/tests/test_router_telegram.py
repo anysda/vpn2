@@ -61,6 +61,10 @@ def matches(rule, flow):
         elif key == 'rule_set':
             labels = {f'{kind}-{label}' for kind in ('geoip', 'geosite')
                       for label in flow.get(kind, [])}
+            # Набор entry-addrs пишет vpn2-entry-addrs: адреса entry из flow.
+            if any(ipaddress.ip_address(flow['ip']) in ipaddress.ip_network(net)
+                   for net in flow.get('entry_addrs', [])):
+                labels.add('entry-addrs')
             checks.append(bool(set(value) & labels))
         elif key == 'ip_is_private':
             addr = ipaddress.ip_address(flow['ip'])

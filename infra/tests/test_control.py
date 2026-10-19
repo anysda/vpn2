@@ -1,6 +1,8 @@
 """Local control API contract, credential boundary, and failure regressions."""
 import base64
+from contextlib import redirect_stderr
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -98,6 +100,28 @@ class ControlTests(unittest.TestCase):
     def test_peer_credentials_even_when_socket_is_accessible(self):
         self.assertEqual(self.request('check.run', {'check': 'readiness'}, allowed=False),
                          {'api': 1, 'ok': False, 'error': 'forbidden'})
+
+    def test_forbidden_caller_gets_reply_not_broken_pipe(self):
+        # The service closes each connection after handle(), as serve() does.
+        # A refused caller that writes after that point used to get EPIPE.
+        for delay in (0, 0.2):
+            client, server = socket.socketpair()
+            with client:
+                client.settimeout(5)
+                def serve_one():
+                    with server:
+                        self.server.handle(server, self.backend, {os.getuid() + 1}, self.pools)
+                log = io.StringIO()
+                with redirect_stderr(log):
+                    worker = threading.Thread(target=serve_one)
+                    worker.start()
+                    time.sleep(delay)
+                    client.sendall(b'{"api":1,"method":"check.run","params":{"check":"readiness"}}\n')
+                    reply = client.makefile('rb').readline()
+                    worker.join(5)
+                self.assertEqual(json.loads(reply), {'api': 1, 'ok': False, 'error': 'forbidden'})
+                self.assertEqual(client.recv(1), b'')
+                self.assertIn(f'forbidden caller uid={os.getuid()}', log.getvalue())
 
     def test_high_mapped_host_uid_is_not_interpreted_as_signed(self):
         # Linux uid_t is unsigned, including host IDs mapped from containers.

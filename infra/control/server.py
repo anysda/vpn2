@@ -8,6 +8,7 @@ from pathlib import Path
 import socket
 import struct
 import subprocess
+import sys
 import time
 
 from backend import Backend
@@ -22,22 +23,34 @@ def object_pairs(pairs):
     return result
 
 
+def receive(connection):
+    buffer = bytearray()
+    deadline = time.monotonic() + 3
+    while b'\n' not in buffer:
+        require(time.monotonic() < deadline, 'limit')
+        connection.settimeout(max(0.001, deadline - time.monotonic()))
+        chunk = connection.recv(min(8192, LIMIT + 1 - len(buffer)))
+        require(bool(chunk))
+        buffer.extend(chunk)
+        require(len(buffer) <= LIMIT, 'limit')
+    return buffer
+
+
 def handle(connection, backend, allowed_uids, pools):
     connection.settimeout(3)
     try:
         _pid, uid, _gid = struct.unpack('iII', connection.getsockopt(
             socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('iII')))
-        require(uid in allowed_uids, 'forbidden')
-        buffer = bytearray()
-        deadline = time.monotonic() + 3
-        while b'\n' not in buffer:
-            require(time.monotonic() < deadline, 'limit')
-            connection.settimeout(max(0.001, deadline - time.monotonic()))
-            chunk = connection.recv(min(8192, LIMIT + 1 - len(buffer)))
-            require(bool(chunk))
-            buffer.extend(chunk)
-            require(len(buffer) <= LIMIT, 'limit')
-        line, suffix = buffer.split(b'\n', 1)
+        if uid not in allowed_uids:
+            # Read the request before refusing: closing a socket with unread
+            # data resets it, and the caller saw a broken pipe, not a reply.
+            try:
+                receive(connection)
+            except (Fault, OSError):
+                pass
+            print(f'vpn2-control: forbidden caller uid={uid}', file=sys.stderr, flush=True)
+            raise Fault('forbidden')
+        line, suffix = receive(connection).split(b'\n', 1)
         require(not suffix)
         request = json.loads(line, object_pairs_hook=object_pairs)
         method, params = validate(request, pools)
@@ -52,6 +65,7 @@ def handle(connection, backend, allowed_uids, pools):
         encoded = b'{"api":1,"ok":false,"error":"unavailable"}\n'
     try:
         connection.sendall(encoded)
+        connection.shutdown(socket.SHUT_WR)
     except OSError:
         pass
 

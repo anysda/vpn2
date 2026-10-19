@@ -71,6 +71,11 @@ DIRECT = 'direct-ru'
 # и рвёт все соединения hy2: ssh к экзитам через hy2-mgmt, SOCKS tg-proxy, сессии
 # клиентов. В прямой выход запрос уводит метка в ручном наборе direct-ru.
 ECHO_IP = '203.0.113.84'
+# Эхо пути через экзит - тот же приём на самом экзите: локальный маршрут на lo.
+# Адрес экзита годится не всегда: экзит в частной сети entry не пропустит клиенту
+# (ip_is_private -> reject), а правило это защита и не ослабляется.
+EXIT_ECHO_IP = '203.0.113.85'
+EXIT_ECHO_ROUTE = f'local {EXIT_ECHO_IP}/32 dev lo table local'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
 # Служба управления (infra/control): панель применяет пиров WireGuard её методом wg.apply.
@@ -901,16 +906,25 @@ class Targets:
         for tag, ip in self.exit_ips.items():
             if not ip:
                 continue
-            command = (f'exec -a vpn2-verify-target python3 -I - --listen 0.0.0.0 --port {self.port} '
-                       f'--lifetime {lifetime}')
             process = subprocess.Popen(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
-                                        'bash', '-c', f"'{command}'"],
+                                        'bash', '-c', f"'{self.exit_command(self.port, lifetime)}'"],
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                        text=True)
             process.stdin.write(TARGET.read_text())
             process.stdin.close()
             if self.wait_ready(process):
                 self.remote[tag] = process
+
+    @staticmethod
+    def exit_command(port, lifetime):
+        """Цель на экзите: локальный маршрут адреса эха и эхо на всех адресах (скрипт на stdin)."""
+        return (f'ip route replace {EXIT_ECHO_ROUTE} && exec -a vpn2-verify-target python3 -I - '
+                f'--listen 0.0.0.0 --port {port} --lifetime {lifetime}')
+
+    @staticmethod
+    def exit_stop_command():
+        # Маршрут остаётся от прерванного запуска до следующей остановки: адрес документационный.
+        return f'pkill -f "^vpn2-verify-target"; ip route del {EXIT_ECHO_ROUTE} 2>/dev/null; true'
 
     @staticmethod
     def wait_ready(process):
@@ -926,7 +940,7 @@ class Targets:
                     process.wait(timeout=5)
         for tag, process in self.remote.items():
             run('ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
-                'pkill -f "^vpn2-verify-target" || true', check=False)
+                self.exit_stop_command(), check=False)
             process.kill()
             process.wait()
 
@@ -1093,7 +1107,6 @@ class Verifier:
                 self.report.add('маршрут: прямой', name, FAIL,
                                 f'нет эха или неверный выход: {sorted(leaves) or "нет соединения"}')
         for tag in self.exits:
-            ip = self.targets.exit_ips.get(tag)
             if tag not in self.targets.remote or tag not in self.markers:
                 why = 'нет эха на экзите (ssh)' if tag not in self.targets.remote else 'нет набора pin-hy2-*-direct'
                 self.report.add(f'маршрут: через экзит {tag}', name, UNKNOWN, why)
@@ -1101,7 +1114,8 @@ class Verifier:
             expected = f'hy2-{tag}-direct'
             # Метка ручного маршрута свежая: sing-box перечитывает набор правил не мгновенно.
             for _ in range(4):
-                result, seen = self.probe(protocol, 'echo', [ip, port, self.markers[tag]], (ip, port))
+                result, seen = self.probe(protocol, 'echo', [EXIT_ECHO_IP, port, self.markers[tag]],
+                                          (EXIT_ECHO_IP, port))
                 leaves = {s['chains'][0] for s in seen if s['chains']}
                 rules = {s['rule'] + ' ' + s['payload'] for s in seen}
                 path_ok = bool(result) and result['local'] and leaves == {expected}
@@ -1109,7 +1123,7 @@ class Verifier:
                     break
                 time.sleep(3)
             self.report.add(f'маршрут: через экзит {tag}', name, OK if path_ok else FAIL,
-                            f'эхо экзита ответило с его адреса через {expected}' if path_ok else
+                            f'эхо экзита ответило с самого экзита через {expected}' if path_ok else
                             f'нет эха экзита или неверный выход: {sorted(leaves) or "нет соединения"}')
             manual = any(f'manual-pin-hy2-{tag}-direct' in r for r in rules)
             self.report.add(f'ручное правило {tag}', name, OK if path_ok and manual else FAIL,

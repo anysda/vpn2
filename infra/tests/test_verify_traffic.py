@@ -321,6 +321,81 @@ class EchoTargetTests(unittest.TestCase):
                 self.assertNotEqual(ip, wan)
 
 
+class ExitRouteTargetTests(unittest.TestCase):
+    """Маршрут через экзит: цель, которую роутер пускает клиенту при любом адресе экзита."""
+
+    def paths(self, server, closed=False):
+        """Проверка пути через экзит se с адресом server; closed - исходящие sing-box на экзите запрещены."""
+        wan = '198.51.100.7'
+        spec = importlib.util.spec_from_file_location('gen_router', ROOT / 'infra/lib/gen-router-config.py')
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        saved_env = os.environ.get('ENTRY_ADDRS')
+        os.environ['ENTRY_ADDRS'] = wan
+        try:
+            rules = gen.client_block_rules()
+        finally:
+            os.environ.pop('ENTRY_ADDRS')
+            if saved_env is not None:
+                os.environ['ENTRY_ADDRS'] = saved_env
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manual = root / 'manual'
+            manual.mkdir()
+            for name in ('direct-ru', 'pin-hy2-se-direct'):
+                (manual / f'{name}.json').write_text(json.dumps({'version': 2, 'rules': []}))
+            router = root / 'config.json'
+            router.write_text(json.dumps({'outbounds': [{'tag': 'direct-ru', 'type': 'direct'},
+                                                        {'tag': 'hy2-se-direct', 'server': server}]}))
+            saved = vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns
+            vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = manual, router, (), lambda *_: None
+            sent = []
+            try:
+                report = vt.Report('ru')
+                verifier = vt.Verifier(report, ['se'], wan, wan)
+                verifier.targets.start = lambda **_: setattr(verifier.targets, 'echo', True)
+                verifier.internet_check = verifier.dns_check = verifier.egress_check = lambda _protocol: None
+
+                def probe(_protocol, kind, args, *_, **__):
+                    ip, port, host = args
+                    sent.append((ip, port))
+                    # Отказ роутера entry (client_block_rules) - соединения и ответа нет.
+                    if kind != 'echo' or client_blocked(ip, port, rules):
+                        return None, []
+                    if host == verifier.markers.get('direct-ru'):
+                        return ({'peer': ip, 'local': True} if ip == vt.ECHO_IP else None), \
+                            [{'chains': ['direct-ru'], 'rule': 'rule_set=manual-direct-ru', 'payload': ''}]
+                    seen = [{'chains': ['hy2-se-direct'], 'rule': 'rule_set=manual-pin-hy2-se-direct', 'payload': ''}]
+                    # Эхо слушает на самом экзите: ответ есть, если sing-box экзита открыл соединение.
+                    local = ip in (server, getattr(vt, 'EXIT_ECHO_IP', None))
+                    return ({'peer': ip, 'local': True} if local and not closed else None), seen
+
+                verifier.probe = probe
+                with redirect_stdout(io.StringIO()) as out:
+                    verifier.prepare()
+                    verifier.targets.remote['se'] = None
+                    verifier.paths(type('Protocol', (), {'name': 'WireGuard'})())
+            finally:
+                vt.MANUAL_DIR, vt.ROUTER, vt.INTERNET, vt.probe_dns = saved
+        print(out.getvalue().strip())
+        for ip, port in sent:
+            self.assertFalse(client_blocked(ip, port, rules), f'{ip}:{port} закрыт клиенту')
+        return {row['check']: row['result'] for row in report.rows}
+
+    def test_private_exit_route_is_checked_not_rejected(self):
+        rows = self.paths('172.16.20.5')
+        self.assertEqual(rows['маршрут: через экзит se'], 'Работает')
+        self.assertEqual(rows['ручное правило se'], 'Работает')
+
+    def test_exit_without_outbound_still_fails(self):
+        for server in ('203.0.113.9', '172.16.20.5'):
+            with self.subTest(server=server):
+                self.assertEqual(self.paths(server)['маршрут: через экзит se'], 'Работает')
+                rows = self.paths(server, closed=True)
+                self.assertEqual(rows['маршрут: через экзит se'], 'Ошибка')
+                self.assertEqual(rows['ручное правило se'], 'Ошибка')
+
+
 class WgApplyTests(unittest.TestCase):
     """Пункт «WireGuard: применение пира»: тестовый пир через wg.apply службы управления."""
 
@@ -600,7 +675,7 @@ def echo(name):
         return bool(vt.in_namespace(Router(), None, 'echo', [WAN, 18080, 'verify'], deadline=8)[0])
 
 
-result, target, targets = {}, None, None
+result, target, targets, exit_target = {}, None, None, None
 try:
     with step('wan0 и сервер wg0', 15):
         run('ip', 'link', 'set', 'lo', 'up')
@@ -662,6 +737,21 @@ try:
     with step('эхо прямого пути: остановка', 15):
         targets.stop()
         result['echo_leftover'] = 'адрес эха' in vt.leftovers()
+    # Цель на экзите - та же команда, что уходит по ssh: локальный маршрут на lo, эхо на всех адресах.
+    with step('эхо экзита', 20):
+        exit_target = subprocess.Popen(['bash', '-c', vt.Targets.exit_command(18081, 60)], stdin=subprocess.PIPE,
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        exit_target.stdin.write(Path(sys.argv[2]).read_text())
+        exit_target.stdin.close()
+        assert vt.Targets.wait_ready(exit_target)
+        with socket.create_connection((vt.EXIT_ECHO_IP, 18081), timeout=5) as sock:
+            sock.sendall(f'POST /vpn2-verify/{"1" * 32} HTTP/1.0\r\nContent-Length: 32\r\n\r\n{"1" * 32}'.encode())
+            reply = b''.join(iter(lambda: sock.recv(4096), b'')).decode()
+        result['exit_echo'] = json.loads(reply.split('\r\n\r\n', 1)[1])['local']
+        result['exit_echo_global'] = vt.EXIT_ECHO_IP in run('ip', '-o', 'address', 'show').stdout
+        run('bash', '-c', vt.Targets.exit_stop_command())
+        exit_target.wait(5)
+        result['exit_echo_route_left'] = vt.EXIT_ECHO_IP in run('ip', 'route', 'show', 'table', 'local').stdout
     # Обрыв посреди проверки: остатки снимает следующий запуск по признакам.
     with step('уборка по признакам', 30):
         vt.cleanup()
@@ -669,7 +759,7 @@ try:
         result['peers'] = run('wg', 'show', 'wg0', 'peers').stdout.split()
         result['input'] = run('iptables-save', '-t', 'filter').stdout.count('vpn2-verify')
 finally:
-    for process in [target] + ([targets.local, targets.echo] if targets else []):
+    for process in [target, exit_target] + ([targets.local, targets.echo] if targets else []):
         if process and process.poll() is None:
             process.kill()
 print(json.dumps(result))
@@ -705,6 +795,9 @@ class NetnsWireGuardTests(unittest.TestCase):
         self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
         self.assertTrue(data['wan_addresses_kept'], 'эхо прямого пути не должно менять адреса WAN')
         self.assertTrue(data['echo_leftover'])
+        self.assertTrue(data['exit_echo'], 'эхо экзита отвечает sing-box экзита с его собственного адреса')
+        self.assertFalse(data['exit_echo_global'], 'адрес эха экзита не должен появиться на интерфейсе')
+        self.assertFalse(data['exit_echo_route_left'], 'остановка цели снимает локальный маршрут на экзите')
         self.assertEqual(data['leftovers'], [])
         self.assertEqual(data['peers'], [])
         self.assertEqual(data['input'], 0)

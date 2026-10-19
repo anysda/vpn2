@@ -8,7 +8,9 @@ exit host keys. Logs contain fixed status counts only.
 Access is taken from the panel access model: a client is allowed only when
 its desired state is enabled (not deleting, not frozen, not expired) and the
 current access operation (version == clients.access_version) enables it and
-is confirmed by the VPN services. Anything unknown or pending denies.
+is confirmed by the VPN services. A confirmed operation that the panel only
+rechecks (pending again, same version) stays allowed; a new edit, anything
+unknown or never confirmed denies.
 """
 
 import argparse
@@ -71,7 +73,7 @@ def collect(database, telegram_file, now):
         current = {}
         for client_id, version, status, payload in db.execute(
                 'SELECT client_id, version, status, payload FROM access_operations'):
-            current[(client_id, version)] = status == 'confirmed' and _enabled(payload)
+            current[(client_id, version)] = status, _enabled(payload)
         for client_id, name, chat_id, frozen, expiry, deleting, version in db.execute(
                 'SELECT id, name, tg_chat_id, frozen_manual, expires_at, deleting, access_version '
                 'FROM clients ORDER BY id'):
@@ -81,12 +83,13 @@ def collect(database, telegram_file, now):
             except (ValueError, TypeError, OverflowError, OSError):
                 known_expiry, expires_at = False, snapshot.iso_time(0)
             # A new operation supersedes all older ones: only the current one counts.
-            allowed = (deleting == 0 and frozen == 0 and known_expiry
-                       and (expiry is None or expiry > now)
-                       and current.get((client_id, version)) is True)
+            status, enabled = current.get((client_id, version), (None, False))
+            wanted = (deleting == 0 and frozen == 0 and known_expiry
+                      and (expiry is None or expiry > now) and enabled)
             clients.append({
                 'id': client_id, 'name': name, 'telegram_chat_id': _chat_id(chat_id),
-                'allowed': allowed,
+                'allowed': wanted and status == 'confirmed',
+                'recheck': wanted and status == 'pending',
                 'expires_at': expires_at, 'devices': devices.get(client_id, []),
                 'access_version': version if type(version) is int else -1,
             })
@@ -144,7 +147,26 @@ def _content(value):
 
 def _new_state(installation_id):
     return {'installation_id': installation_id, 'snapshot': None, 'produced': [], 'floor': 0,
-            'acks': {}, 'confirmed': {}, 'access': {}, 'holds': {}, 'blocked': []}
+            'acks': {}, 'confirmed': {}, 'access': {}, 'holds': {}, 'blocked': [], 'granted': {}}
+
+
+def _keep_granted(state, clients):
+    """The panel periodically rechecks a confirmed operation and marks it
+    pending while the VPN services do not answer; the version stays the same.
+    Access confirmed for that version stays granted until a new edit."""
+    granted = state.setdefault('granted', {})
+    for client in clients:
+        key, version = str(client['id']), client['access_version']
+        if client['allowed']:
+            granted[key] = version
+        elif client.pop('recheck', False) and granted.get(key) == version:
+            client['allowed'] = True
+        else:
+            granted.pop(key, None)
+        client.pop('recheck', None)
+    present = {str(client['id']) for client in clients}
+    for key in set(granted) - present:
+        del granted[key]
 
 
 def _track_access(state, clients):
@@ -206,6 +228,7 @@ def run_once(config, deliver, collector, now=None):
         if state is None or state.get('installation_id') != installation_id:
             state = _new_state(installation_id)
         data = collector(now)
+        _keep_granted(state, data['clients'])
         _track_access(state, data['clients'])
         results = {}
         for _round in range(3):

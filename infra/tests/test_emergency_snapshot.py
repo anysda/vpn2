@@ -203,6 +203,24 @@ class SnapshotTests(unittest.TestCase):
         mode = (self.exits.root / 'exit-a' / snapshot.NAME).stat().st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
+    def test_recheck_of_confirmed_access_keeps_it_until_a_new_edit(self):
+        # Entry VPN services down: the panel recheck turns the confirmed
+        # operation pending, same version; nobody edited the client.
+        self.panel.client(1, 'rechecked')
+        self.panel.client(2, 'edited')
+        self.run_once()
+        self.panel.set("UPDATE access_operations SET status = 'pending'")
+        self.panel.edit(2, True)
+        self.panel.set("UPDATE access_operations SET status = 'pending' WHERE client_id = 2")
+        self.run_once(NOW + 5)
+        self.assertEqual(allowed(self.exits.load('exit-a')), {'rechecked': True, 'edited': False})
+        self.panel.edit(1, False, frozen_manual=1)
+        self.panel.set("UPDATE access_operations SET status = 'pending' WHERE client_id = 1")
+        self.panel.edit(1, True, frozen_manual=0)
+        self.panel.set("UPDATE access_operations SET status = 'pending' WHERE client_id = 1")
+        self.run_once(NOW + 10)
+        self.assertEqual(allowed(self.exits.load('exit-a')), {'rechecked': False, 'edited': False})
+
     def test_panel_change_reaches_every_exit(self):
         self.panel.client(1, 'Анна')
         self.panel.device(10, 1, 'iPhone Анны')

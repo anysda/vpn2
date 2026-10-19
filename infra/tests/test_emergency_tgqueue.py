@@ -206,6 +206,37 @@ class TelegramQueueTests(unittest.TestCase):
         self.assertEqual(self.bot.calls, [])
         print('denied: frozen=0, expired=0, no Telegram=0; reasons visible in delivery_status')
 
+    def test_expired_and_frozen_reasons_from_real_snapshot(self):
+        # The real snapshot denies an expired client too (allowed=false), so the
+        # reason must come from the deadline, not from the cleared flag.
+        with patch.dict(sys.modules):
+            sys.modules.pop('vpn2_emergency.snapshot', None)
+            real = importlib.import_module('vpn2_emergency.snapshot')
+        clients = [
+            {'id': 1, 'name': 'expired', 'telegram_chat_id': 101, 'allowed': False,
+             'expires_at': '2025-12-31T23:59:59+00:00', 'devices': [{'id': 11, 'name': 'x'}]},
+            {'id': 2, 'name': 'frozen', 'telegram_chat_id': 102, 'allowed': False,
+             'expires_at': None, 'devices': [{'id': 22, 'name': 'x'}]},
+            {'id': 3, 'name': 'frozen-later', 'telegram_chat_id': 103, 'allowed': False,
+             'expires_at': '2999-01-01T00:00:00+00:00', 'devices': [{'id': 33, 'name': 'x'}]},
+            {'id': 4, 'name': 'expired-allowed', 'telegram_chat_id': 104, 'allowed': True,
+             'expires_at': '2025-12-31T23:59:59+00:00', 'devices': [{'id': 44, 'name': 'x'}]},
+            {'id': 5, 'name': 'unreadable', 'telegram_chat_id': 105, 'allowed': True,
+             'expires_at': 'broken', 'devices': [{'id': 55, 'name': 'x'}]}]
+        real.atomic_write(self.state / real.NAME, {
+            'schema': 1, 'version': 1, 'installation_id': 'fixture', 'created_at': STAMP,
+            'exits': [], 'admin_chat_id': 900, 'bot_token': '123:fixture-only', 'clients': clients})
+        with patch.dict(sys.modules, {'vpn2_emergency.snapshot': real}):
+            tgqueue.enqueue_clients(self.state, **(self.base | {
+                'exit_url': 'https://203.0.113.1', 'profiles': self.profiles, 'now': NOW}))
+            self.drain()
+        rows = {row['client']: row['reason'] for row in self.status()}
+        self.assertEqual(rows, {1: 'срок доступа истёк', 2: 'клиент заморожен',
+                                3: 'клиент заморожен', 4: 'срок доступа истёк',
+                                5: 'неизвестные или конфликтующие права'})
+        self.assertEqual(self.bot.calls, [])
+        print('real snapshot reasons:', rows)
+
     def test_access_and_device_ownership_rechecked_between_parts(self):
         self.enqueue()
         self.tick()

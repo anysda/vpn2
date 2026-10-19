@@ -106,14 +106,19 @@ def _reason(snapshot, client_id, now):
     if len(clients) != 1:
         return None, 'неизвестные или конфликтующие права'
     client = clients[0]
-    if client.get('allowed') is not True:
-        return client, 'клиент заморожен'
+    # The snapshot also clears "allowed" for an expired client, so the expiry is
+    # checked first; epoch 0 is the snapshot's marker for an unreadable deadline.
     if client.get('expires_at') is not None:
         try:
-            if _stamp(client['expires_at']).timestamp() <= now:
-                return client, 'срок доступа истёк'
+            expires = _stamp(client['expires_at']).timestamp()
         except (TypeError, ValueError):
             return client, 'неизвестные или конфликтующие права'
+        if expires == 0:
+            return client, 'неизвестные или конфликтующие права'
+        if expires <= now:
+            return client, 'срок доступа истёк'
+    if client.get('allowed') is not True:
+        return client, 'клиент заморожен'
     if not client.get('telegram_chat_id'):
         return client, 'нет канала доставки'
     return client, ''

@@ -985,11 +985,9 @@ class EmergencyAgentTests(unittest.TestCase):
         if agent.leader:
             agent.leader.events = events
 
-    def test_leader_change_in_transition_then_cancel_keeps_access(self):
+    def cancelled_after_leader_change(self, cluster, services):
         # VPN2-520: the old leader dies right after the deadline is fixed, the
         # new one inherits the return without a bundle, the return is cancelled.
-        cluster = self.cluster()
-        services = {node: FakeHy2() for node in 'abc'}
         for node in 'abc':
             self.issuing(cluster, node, services[node])
         leader, _recovery = self.recovered(cluster)
@@ -1021,6 +1019,12 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertTrue(b.data['ready'])
         self.assertEqual(services['b'].starts[-1], b.data['issued_generation'])
         self.assertTrue(any(services[node].running for node in 'abc'))
+        return b
+
+    def test_leader_change_in_transition_then_cancel_keeps_access(self):
+        cluster = self.cluster()
+        services = {node: FakeHy2() for node in 'abc'}
+        self.cancelled_after_leader_change(cluster, services)
         # The old bundle ends one transition after the new one is ready.
         cluster.advance(TRANSITION + 30)
         self.assertFalse(services['a'].running)
@@ -1058,6 +1062,24 @@ class EmergencyAgentTests(unittest.TestCase):
         cluster.advance(30)
         self.assertFalse(b.data['active'])
         self.assertEqual(telegrams['b'].sent, [])
+
+    def test_return_after_cancel_under_new_leader_ends_emergency(self):
+        # The new leader inherited round 1 and cancelled it; the next return
+        # must be a new round, or its notice and deadline never happen.
+        cluster = self.cluster()
+        services = {node: FakeHy2() for node in 'abc'}
+        b = self.cancelled_after_leader_change(cluster, services)
+        cancelled = b.data['cancelled_round']
+        cluster.agents['entry'].ready = True
+        cluster.advance(165)
+        recovery = b.data['recovery']
+        self.assertIsNotNone(recovery)
+        self.assertGreater(recovery['round'], cancelled)
+        self.assertIsNotNone(recovery['deadline'])
+        cluster.advance(int(recovery['deadline'] - cluster.wall()) + 60)
+        self.assertFalse(any(agent.leader.data['active'] for node, agent in cluster.agents.items()
+                             if node != 'entry'))
+        self.assertFalse(any(service.running for service in services.values()))
 
     def test_undelivered_notice_ends_after_two_hours(self):
         cluster = self.cluster()

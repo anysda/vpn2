@@ -384,6 +384,11 @@ class Leader:
                 # Followers keep the leader's recovery: a new leader or a
                 # restart continues the same deadline.
                 self.data['recovery'] = status.get('recovery')
+                # Round numbers go on from the inherited one: a repeated
+                # number after a cancelled return is taken as already announced.
+                if self.data['recovery']:
+                    self.data['recovery_round'] = max(self.data.get('recovery_round', 0),
+                                                      self.data['recovery']['round'])
                 if previous_owner == self.node:
                     self.data['retiring'] = True
                 if self.data.get('retiring') and status.get('ready'):

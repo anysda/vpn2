@@ -149,6 +149,14 @@ fi
 systemctl enable vpn2-emergency.service
 systemctl restart vpn2-emergency.service
 systemctl is-active --quiet vpn2-emergency.service
+if [[ "$HOST_TAG" == ru ]]; then
+  # The entry hands the client list to the exits ahead of an emergency.
+  install -m 0644 "$STAGING/vpn2-emergency-snapshot.service" /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable vpn2-emergency-snapshot.service
+  systemctl restart vpn2-emergency-snapshot.service
+  systemctl is-active --quiet vpn2-emergency-snapshot.service
+fi
 if [[ "$HOST_TAG" != ru ]]; then
   # The exit needs Docker only during deploy; docker.socket starts it on demand.
   systemctl disable --now docker.service containerd.service >/dev/null 2>&1

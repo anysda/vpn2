@@ -92,6 +92,35 @@ emergency_standby() {
   [[ -z "$listeners" ]] || { echo "udp/$port уже слушает"; return 1; }
   echo "аварийный Hysteria2: udp/$port закрыт"
 }
+# Снимок клиентов для аварийки рассылает служба entry (VPN2-440); экзит
+# ждёт подтверждения раз в период отправки. Предел - два периода; первый
+# снимок после установки или перерыва туннеля ждём не дольше периода.
+emergency_sender() {
+  systemctl is-enabled --quiet vpn2-emergency-snapshot.service \
+    && systemctl is-active --quiet vpn2-emergency-snapshot.service
+}
+emergency_snapshot() {
+  setpriv --reuid=vpn2-emergency --regid=vpn2-emergency --init-groups -- \
+    env PYTHONPATH=/opt/vpn2-emergency python3 -B - /var/lib/vpn2-emergency "${VERIFY_SNAPSHOT_WAIT:-90}" <<'PY'
+import sys
+import time
+from vpn2_emergency import snapshot, snapshot_sender
+
+state_dir, wait = sys.argv[1], float(sys.argv[2])
+limit = 2 * snapshot_sender.RECONCILE_SECONDS
+deadline = time.monotonic() + wait
+while True:
+    age = snapshot.age_seconds(state_dir)
+    if (age is not None and age < limit) or time.monotonic() >= deadline:
+        break
+    time.sleep(min(snapshot_sender.POLL_SECONDS, wait))
+if age is None:
+    print('снимка клиентов нет: entry его не присылал')
+    raise SystemExit(1)
+print(f'снимок клиентов подтверждён {age:.0f} с назад, предел {limit} с')
+raise SystemExit(0 if age < limit else 1)
+PY
+}
 forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
 firewall() {
   LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null \
@@ -306,6 +335,8 @@ print(f"ikev2 status age: {age:.0f}s")
 raise SystemExit(0 if 0 <= age < 120 else 1)
 '
   insecure_exits
+  [[ "$EMERGENCY_IMAGE" != true ]] \
+    || check 'аварийка: отправка снимка клиентов enabled и active' emergency_sender
 else
   if [[ -n "${HY2_MGMT_PORT:-}" ]]; then
     check "hy2-mgmt: udp/$HY2_MGMT_PORT слушает" udp "$HY2_MGMT_PORT"
@@ -315,6 +346,13 @@ else
   check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
   check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
   [[ "$EMERGENCY_IMAGE" != true ]] || check 'аварийка: Hysteria2 в ожидании' emergency_standby
+  # Verify сразу после 10-foreign идёт до стадии 23 на entry: при обновлении
+  # со старой версии службы снимка там ещё нет. Снимок проверяет итоговый verify.
+  if [[ "$EMERGENCY_IMAGE" == true && "$EMERGENCY_STAMP" -nt /var/anysda/.stamps/10-foreign ]]; then
+    check 'аварийка: снимок клиентов от entry свежий' emergency_snapshot
+  elif [[ "$EMERGENCY_IMAGE" == true ]]; then
+    echo "[$HOST_TAG] аварийка: снимок клиентов проверит итоговый verify после стадии 23"
+  fi
 fi
 
 write_report

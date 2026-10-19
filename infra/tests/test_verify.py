@@ -5,10 +5,13 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import sys
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'infra/emergency'))
+from vpn2_emergency import snapshot  # noqa: E402
 MOCK = r'''#!/usr/bin/env python3
 import datetime
 import json
@@ -222,6 +225,29 @@ class VerifyTest(unittest.TestCase):
                 stamp.touch()
             elif fault != 'emergency-not-yet':
                 stamp.write_text('image sha256:' + 'b' * 64 + '\n')
+            # Снимок клиентов на экзите - настоящим кодом аварийки.
+            for name in ('__init__.py', 'snapshot.py', 'snapshot_sender.py'):
+                (emergency / 'vpn2_emergency' / name).write_text(
+                    (ROOT / 'infra/emergency/vpn2_emergency' / name).read_text())
+            snapshots = root / 'emergency-state'
+            snapshots.mkdir(mode=0o700)
+            if fault not in ('emergency-snapshot-missing', 'emergency-before-23'):
+                age = 300 if fault == 'emergency-snapshot-stale' else 10
+                image = {'schema': 1, 'version': 1, 'installation_id': 'test',
+                         'created_at': snapshot.iso_time(time.time() - age),
+                         'admin_chat_id': None, 'bot_token': None,
+                         'exits': [{'id': 'exit', 'name': 'exit', 'ip': '198.51.100.20', 'priority': 0}],
+                         'clients': []}
+                accepted = snapshot.accept(snapshots, image, None, 'test', time.time() - age)
+                self.assertEqual(accepted['status'], 'accepted')
+            # Штамп 10-foreign новее штампа 23: verify сразу после 10-foreign.
+            foreign = root / 'stamp-10-foreign'
+            foreign.touch()
+            if fault != 'emergency-before-23':
+                os.utime(foreign, (time.time() - 600,) * 2)
+            setpriv = bin_dir / 'setpriv'
+            setpriv.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
+            setpriv.chmod(0o755)
             hy2_options = root / 'emergency-hy2.json'
             if fault != 'emergency-hy2-options' and not old_stage:
                 hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
@@ -247,6 +273,8 @@ class VerifyTest(unittest.TestCase):
             source = source.replace('/opt/vpn2-emergency', str(emergency))
             source = source.replace('/etc/vpn2/emergency-hy2.json', str(hy2_options))
             source = source.replace('/var/anysda/.stamps/23-emergency', str(stamp))
+            source = source.replace('/var/anysda/.stamps/10-foreign', str(foreign))
+            source = source.replace('/var/lib/vpn2-emergency', str(snapshots))
             script = root / 'verify.sh'
             script.write_text(source)
             traffic = root / 'traffic.py'
@@ -260,6 +288,7 @@ class VerifyTest(unittest.TestCase):
                    'VERIFY_SCRAPE_TIMEOUT': '10' if fault in ('warming-up', 'empty-then-up', 'missing-then-up') else '2',
                    'VERIFY_SCRAPE_INTERVAL': '0.02',
                    'HY2_MGMT_PORT': '' if fault == 'missing-mgmt-port' else '9443',
+                   'VERIFY_SNAPSHOT_WAIT': '0.2',
                    'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report), **(extra_env or {})}
             env.pop('BASH_ENV', None)
             result = subprocess.run(['bash', str(script)], env=env, text=True,
@@ -397,6 +426,29 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn('аварийка: образ', result.stdout)
         self.assertIn('аварийка: стадия 23 ещё не ставилась', result.stdout)
+
+    def test_emergency_client_snapshot(self):
+        # VPN2-514: entry отправляет снимок, экзит держит его свежим.
+        result = self.run_verify(role='ru')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('✓ аварийка: отправка снимка клиентов enabled и active', result.stdout)
+        result = self.run_verify(role='exit')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'снимок' in line))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('✓ аварийка: снимок клиентов от entry свежий', result.stdout)
+        self.assertIn('предел 120 с', result.stdout)
+        for fault, role in (('vpn2-emergency-snapshot.service', 'ru'), ('emergency-snapshot-missing', 'exit'),
+                            ('emergency-snapshot-stale', 'exit')):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault, role=role)
+                print('\n'.join(line for line in result.stdout.splitlines() if 'сним' in line))
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('✗ аварийка: ' + ('отправка' if role == 'ru' else 'снимок'), result.stdout)
+        # Verify сразу после 10-foreign: на entry ещё старая версия без отправки.
+        result = self.run_verify('emergency-before-23', role='exit')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('снимок клиентов проверит итоговый verify', result.stdout)
+        self.assertNotIn('аварийка: снимок клиентов от entry', result.stdout)
 
     def test_update_from_stage_23_without_image(self):
         # Update from a dev install whose stage 23 predates the image: the exit is

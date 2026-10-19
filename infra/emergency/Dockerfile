@@ -34,7 +34,8 @@ LABEL vpn2.component=emergency \
 COPY infra/emergency/vpn2_emergency/*.py /opt/vpn2-emergency/vpn2_emergency/
 COPY --from=static /src/infra/emergency/vpn2_emergency/static /opt/vpn2-emergency/vpn2_emergency/static
 COPY infra/emergency/install-hy2.sh infra/emergency/vpn2-emergency-hy2.service \
-     infra/emergency/vpn2-emergency-hy2-probe.service /opt/vpn2-emergency/
+     infra/emergency/vpn2-emergency-hy2-probe.service \
+     infra/emergency/vpn2-emergency-snapshot.service /opt/vpn2-emergency/
 COPY --from=static /src/image.json /opt/vpn2-emergency/image.json
 
 # docker create needs a command; the container is never started.

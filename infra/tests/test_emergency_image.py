@@ -119,7 +119,7 @@ elif name == 'useradd':
     state['users'].append(args[-1])
     (fake / 'state.json').write_text(json.dumps(state))
 elif name == 'systemctl' and args[:2] == ['is-active', '--quiet']:
-    sys.exit(0 if args[2] == 'vpn2-emergency.service' else 3)
+    sys.exit(0 if args[2] in ('vpn2-emergency.service', 'vpn2-emergency-snapshot.service') else 3)
 elif name == 'fuser':
     sys.exit(1)
 elif name == 'curl':
@@ -176,7 +176,7 @@ class EmergencyImageTests(unittest.TestCase):
         for needle in ('vpn2_emergency/static /opt/vpn2-emergency/vpn2_emergency/static',
                        'infra/emergency/vpn2_emergency/*.py /opt/vpn2-emergency/vpn2_emergency/',
                        'infra/emergency/install-hy2.sh', 'vpn2-emergency-hy2.service',
-                       'vpn2-emergency-hy2-probe.service', 'image.json', 'LABEL vpn2.component=emergency'):
+                       'vpn2-emergency-hy2-probe.service', 'vpn2-emergency-snapshot.service', 'image.json', 'LABEL vpn2.component=emergency'):
             self.assertIn(needle, carrier)
         ignore = (ROOT / 'infra/emergency/Dockerfile.dockerignore').read_text().splitlines()
         for needle in ('*', '!app', '!infra/emergency', 'app/node_modules',
@@ -217,6 +217,7 @@ class EmergencyImageTests(unittest.TestCase):
             for name in ('index.html', 'instructions.html'):
                 (layer / 'vpn2_emergency/static' / name).write_text(version)
             (layer / 'install-hy2.sh').write_text(HY2_INSTALLER)
+            shutil.copy(ROOT / 'infra/emergency/vpn2-emergency-snapshot.service', layer)
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
         root = fake / 'root'
         config = fake / 'emergency.json'
@@ -301,6 +302,9 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertIn('User=vpn2-emergency', unit)
             self.assertIn('systemctl disable --now docker.service containerd.service', first.calls)
             self.assertIn('systemctl enable --now docker.socket', first.calls)
+            # The client snapshot is sent by the entry only.
+            self.assertFalse((root / 'etc/systemd/system/vpn2-emergency-snapshot.service').exists())
+            self.assertFalse([c for c in first.calls if 'vpn2-emergency-snapshot' in c], first.calls)
             self.assertIn('23-emergency done: image dev 111111111111', first.stdout)
             # 99-verify demands the image only after this stage: an empty stamp
             # belongs to the stage before the image.
@@ -337,6 +341,15 @@ class EmergencyImageTests(unittest.TestCase):
                              result.calls)
             self.assertFalse([c for c in result.calls if 'docker.service' in c], result.calls)
             self.assertEqual(result.state['containers'], {'vpn2-emergency': 'sha256:' + '3' * 64})
+            # VPN2-514: the entry sends the client snapshot to the exits as its own service.
+            unit = (fake / 'root/etc/systemd/system/vpn2-emergency-snapshot.service').read_text()
+            self.assertIn('ExecStart=/usr/bin/python3 -B -m vpn2_emergency.snapshot_sender run', unit)
+            self.assertIn('WantedBy=multi-user.target', unit)
+            sender = [c for c in result.calls if 'vpn2-emergency-snapshot' in c]
+            self.assertEqual(sender, ['systemctl enable vpn2-emergency-snapshot.service',
+                                      'systemctl restart vpn2-emergency-snapshot.service',
+                                      'systemctl is-active --quiet vpn2-emergency-snapshot.service'],
+                             result.calls)
 
 
 if __name__ == '__main__':

@@ -34,7 +34,7 @@ for (const route of routes) {
       app.overrides.set('app/server/utils/auth.ts', { requireAuth: async () => ({ id: 1 }) })
       app.overrides.set('app/server/utils/events.ts', { actorOf: () => 'panel', BOT_ACTOR: 'bot', recordEvent: async () => {}, joinDetail: () => '' })
       app.overrides.set('app/server/utils/validate.ts', { readBodyAs: async () => ({ chatId: 123, frozenManual: true }) })
-      app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => { notifications++ } })
+      app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => { notifications++ } })
       app.overrides.set('app/server/utils/client-ops.ts', {
         updateClient: async () => result, deleteClient: async () => ({ operation }), deleteDevice: async () => ({ ...device, operation }),
       })

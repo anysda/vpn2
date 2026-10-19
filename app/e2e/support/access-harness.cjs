@@ -37,5 +37,11 @@ module.exports = function harness(root, database, adapter, runtime = {}) {
       event => event.query || {}, (event, status) => { event.status = status })
     return mod.exports
   }
-  return { load, overrides }
+  // Подмена части модуля: остальные экспорты настоящие, новый экспорт не ломает тест.
+  // Настоящий модуль грузится сразу, его зависимости берутся из подмен на этот момент.
+  function patch(relative, replaced) {
+    overrides.delete(relative)
+    overrides.set(relative, { ...load(relative), ...replaced })
+  }
+  return { load, overrides, patch }
 }

@@ -49,8 +49,7 @@ async function panel(runtime: Record<string, unknown> = {}) {
   app.overrides.set('app/server/utils/client-prefs.ts', { syncClientPrefsFile: async () => {} })
   const route = (name: string): Handler => app.load(`app/server/api/${name}.ts`).default
   const useBot = () => {
-    const real = app.load('app/server/utils/bot-api.ts')
-    app.overrides.set('app/server/utils/bot-api.ts', { ...real, requireBotAuth: () => {} })
+    app.patch('app/server/utils/bot-api.ts', { requireBotAuth: () => {} })
   }
   const close = () => {
     db.$client.close()
@@ -216,7 +215,7 @@ test('VPN2-462: лимит, сниженный во время двух пара
   try {
     const paused = gate(2)
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
-    app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     const post = route('clients/[id]/devices/index.post')
     const [client] = await db.insert(schema.clients).values({ name: 'limit', password: 'limit-invite', deviceLimit: 3 }).returning()
     const requests = ['phone', 'laptop'].map(name => call(post, { params: { id: String(client!.id) }, body: { name } }))
@@ -267,7 +266,7 @@ test('VPN2-467: при полной очереди бота отзыв Telegram 
 test('VPN2-468: отзыв между проверкой приглашения и записью привязки побеждает', async () => {
   const { app, schema, db, route, useBot, close } = await panel()
   try {
-    app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     // Первый select после взвода отдаёт результат только после отзыва:
     // так link проверил пароль, а записать привязку ещё не успел.
@@ -321,7 +320,7 @@ test('VPN2-468: отзыв бота во время добавления уст�
   try {
     const paused = gate(1)
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
-    app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     const add = route('bot/devices/index.post')
     const unlink = route('clients/[id]/unlink.post')
@@ -350,7 +349,7 @@ test('VPN2-476: отзыв бота во время удаления и пере
     app.overrides.set('app/server/utils/access-adapter.ts', { accessAdapter: {
       enabled: async () => { await paused.caReady(); return { wg: true, openvpn: false, ikev2: true } },
     } })
-    app.overrides.set('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     const remove = route('bot/devices/[deviceId].delete')
     const reissue = route('bot/devices/[deviceId]/reissue.post')

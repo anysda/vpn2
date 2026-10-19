@@ -64,10 +64,12 @@ ROUTER = Path('/etc/sing-box/config.json')
 DIRECT = 'direct-ru'
 # Эхо прямого пути, отзыва и внешней пробы. Адреса entry клиенту закрыты, кроме
 # tcp 22/80/443 (client_block_rules роутера), поэтому эхо слушает отдельный адрес
-# из документационной сети 203.0.113.0/24 (RFC 5737): он не частный, снаружи не
-# маршрутизируется и висит на WAN-интерфейсе прямого выхода со scope host, то есть
-# в ENTRY_ADDRS (scope global) не попадает. В прямой выход запрос уводит метка в
-# ручном наборе direct-ru, а direct-ru привязан к тому же интерфейсу.
+# из документационной сети 203.0.113.0/24 (RFC 5737): он не частный и снаружи не
+# маршрутизируется. Это не адрес интерфейса, а локальный маршрут через WAN прямого
+# выхода: сокет, привязанный к WAN, доставляется в эхо, а список адресов WAN не
+# меняется. Новый адрес на WAN sing-box (auto_detect_interface) считает сменой сети
+# и рвёт все соединения hy2: ssh к экзитам через hy2-mgmt, SOCKS tg-proxy, сессии
+# клиентов. В прямой выход запрос уводит метка в ручном наборе direct-ru.
 ECHO_IP = '203.0.113.84'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
@@ -892,7 +894,7 @@ class Targets:
         self.local = self.local_target(self.wan_ip, lifetime)
         iface = self.iface or wan_device()
         if iface:
-            run('ip', 'address', 'replace', ECHO_IP + '/32', 'dev', iface, 'scope', 'host')
+            run('ip', 'route', 'replace', 'local', ECHO_IP + '/32', 'dev', iface, 'table', 'local')
             run('iptables', '-w', '-I', 'INPUT', '1', '-d', ECHO_IP, '-p', 'tcp', '--dport', str(self.port),
                 '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
             self.echo = self.local_target(ECHO_IP, lifetime)
@@ -958,13 +960,18 @@ def manual_markers(exits, add):
 
 
 def echo_addresses():
-    """Интерфейсы, на которых висит адрес эха прямого пути (scope host)."""
-    try:
-        entries = json.loads(run('ip', '-j', '-4', 'address', 'show', 'to', ECHO_IP + '/32', check=False).stdout)
-    except ValueError:
-        return []
-    return [entry['ifname'] for entry in entries
-            if any(a.get('local') == ECHO_IP and a.get('scope') == 'host' for a in entry.get('addr_info', []))]
+    """Остатки эха прямого пути: локальный маршрут и адрес на интерфейсе от прошлых версий."""
+    found = []
+    with contextlib.suppress(ValueError):
+        found += [['route', 'local', ECHO_IP + '/32', 'dev', entry['dev'], 'table', 'local']
+                  for entry in json.loads(run('ip', '-j', '-4', 'route', 'show', 'table', 'local', 'type', 'local',
+                                              ECHO_IP + '/32', check=False).stdout or '[]') if entry.get('dev')]
+    with contextlib.suppress(ValueError):
+        found += [['address', ECHO_IP + '/32', 'dev', entry['ifname']]
+                  for entry in json.loads(run('ip', '-j', '-4', 'address', 'show', 'to', ECHO_IP + '/32',
+                                              check=False).stdout or '[]')
+                  if any(a.get('local') == ECHO_IP for a in entry.get('addr_info', []))]
+    return found
 
 
 def leftovers():
@@ -1012,8 +1019,8 @@ def cleanup(protocols=()):
     if WORK.is_dir():
         with contextlib.suppress(OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             restore_wg_apply()
-    for iface in echo_addresses():
-        run('ip', 'address', 'del', ECHO_IP + '/32', 'dev', iface, check=False)
+    for item in echo_addresses():
+        run('ip', item[0], 'del', *item[1:], check=False)
     if WORK.is_dir():
         peers = run('wg', 'show', 'wg0', 'peers', check=False).stdout.split()
         for path in WORK.glob('wg-*.pub'):

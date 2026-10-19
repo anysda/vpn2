@@ -641,10 +641,13 @@ try:
         wg.issue('b', addresses[1])
         result['connect_b'] = wg.connect('b', (vt.HOST_IP, wg.port))
     result['echo_b'] = echo('эхо через туннель b')
-    # Эхо прямого пути: адрес на WAN выхода direct-ru, ответ сокету, привязанному к WAN.
+    # Эхо прямого пути: локальный маршрут через WAN выхода direct-ru, ответ сокету, привязанному к WAN.
+    # Адреса WAN не меняются: новый адрес sing-box принимает за смену сети и рвёт соединения hy2.
+    wan_addresses = run('ip', '-o', 'address', 'show', 'dev', 'wan0').stdout
     with step('эхо прямого пути: цели', 45):
         targets = vt.Targets(WAN, [], type('R', (), {'outbounds': {'direct-ru': {'bind_interface': 'wan0'}}})())
         targets.start(lifetime=60)
+    result['wan_addresses_kept'] = run('ip', '-o', 'address', 'show', 'dev', 'wan0').stdout == wan_addresses
     with step('эхо прямого пути: ответ', 10):
         bound = socket.socket()
         bound.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b'wan0')
@@ -700,6 +703,7 @@ class NetnsWireGuardTests(unittest.TestCase):
         self.assertTrue(data['echo_b'])
         self.assertTrue(data['echo_direct'], 'эхо прямого пути отвечает сокету direct-ru со своего адреса')
         self.assertFalse(data['echo_global'], 'адрес эха не должен попасть в ENTRY_ADDRS')
+        self.assertTrue(data['wan_addresses_kept'], 'эхо прямого пути не должно менять адреса WAN')
         self.assertTrue(data['echo_leftover'])
         self.assertEqual(data['leftovers'], [])
         self.assertEqual(data['peers'], [])

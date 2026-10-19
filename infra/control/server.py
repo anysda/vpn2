@@ -80,15 +80,27 @@ def serve(listener, backend, allowed_uids, pools):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true')
+    parser.add_argument('--expire', action='store_true')
     args = parser.parse_args()
-    if args.probe:
+    if args.probe or args.expire:
+        # Through the socket: the one server process serializes all changes.
+        request = {'method': 'expiry.run', 'params': {}} if args.expire else \
+            {'method': 'check.run', 'params': {'check': 'readiness'}}
         with socket.socket(socket.AF_UNIX) as connection:
-            connection.settimeout(5)
+            connection.settimeout(40 if args.expire else 5)
             connection.connect('/run/vpn2-control/control.sock')
-            connection.sendall(b'{"api":1,"method":"check.run","params":{"check":"readiness"}}\n')
+            connection.sendall(json.dumps(dict(request, api=API)).encode() + b'\n')
             reply = json.loads(connection.makefile('rb').readline(LIMIT))
-            require(reply.get('ok') is True, 'unavailable')
+        require(reply.get('ok') is True, 'unavailable')
+        if args.probe:
             print('vpn2-control: API 1 ready')
+            return
+        result = reply['result']
+        for item in result['latest']:
+            print(f"vpn2-control: expired {item['protocol']} {item['id']} at {item['expires_at']}")
+        for protocol in result['failed']:
+            print(f'vpn2-control: expiry not enforced for {protocol}', file=sys.stderr)
+        require(not result['failed'], 'unavailable')
         return
     require(os.environ.get('LISTEN_PID') == str(os.getpid()) and
             os.environ.get('LISTEN_FDS') == '1', 'unavailable')

@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import time
 
-from contract import API, LIMIT, METHODS, key as validate_key, require
+from contract import API, Fault, LIMIT, METHODS, key as validate_key, require
 
 
 def atomic(path, body, mode=0o600):
@@ -82,6 +82,20 @@ def run(argv, deadline, data=None):
     return output.decode('utf-8', errors='strict')
 
 
+def utc_now():
+    # The panel stores expiry as UTC milliseconds and sends toISOString(), so
+    # the same fixed-width form compares as text.
+    return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())
+
+
+def expired(item, now):
+    return item.get('expires_at') is not None and item['expires_at'] <= now
+
+
+def strip(item):
+    return {name: value for name, value in item.items() if name != 'expires_at'}
+
+
 def peer_addresses(peer):
     # Keep the existing client profiles byte-compatible, including the legacy
     # /24 mapping. Decimal octet strings intentionally occupy hexadecimal ULA
@@ -89,6 +103,9 @@ def peer_addresses(peer):
     subnet, host = peer['ip'].split('.')[2:]
     suffix = host if subnet == '66' else subnet + ':' + host
     return [peer['ip'] + '/32', 'fd66:66::' + suffix + '/128']
+
+
+MAX_JOURNAL = 2000
 
 
 class Backend:
@@ -112,7 +129,96 @@ class Backend:
             require(params['version'] >= previous['version'], 'stale')
             if params['version'] == previous['version']:
                 require(digest == previous['digest'], 'conflict')
-        atomic(path, json.dumps({'version': params['version'], 'digest': digest}))
+        # The applied state stays here for the expiry timer, which must work
+        # while the panel is stopped.
+        atomic(path, json.dumps({'version': params['version'], 'digest': digest, 'params': params}))
+
+    def applied(self, domain):
+        path = self.state / (domain + '.json')
+        return json.loads(path.read_text()).get('params') if path.exists() else None
+
+    def expires(self, protocol):
+        if protocol == 'openvpn':
+            result = {}
+            for path in self.state.glob('openvpn-*.json'):
+                params = json.loads(path.read_text()).get('params') or {}
+                if params.get('expires_at'):
+                    result[str(params['device_id'])] = params['expires_at']
+            return result
+        params = self.applied(protocol) or {}
+        if protocol == 'wg':
+            return {peer['key']: peer['expires_at'] for peer in params.get('peers', []) if peer.get('expires_at')}
+        return {str(client['device_id']): client['expires_at'] for client in params.get('clients', [])
+                if client.get('expires_at')}
+
+    def unexpired(self, protocol, params, now):
+        # A replay or a late apply must not return access that has expired.
+        if protocol == 'openvpn':
+            if expired(params, now) and params['action'] == 'allow':
+                params = dict(params, action='deny')
+            return strip(params)
+        name = 'peers' if protocol == 'wg' else 'clients'
+        return dict(params, **{name: [strip(item) for item in params[name] if not expired(item, now)]})
+
+    def expire(self):
+        """Take expired devices off with the same paths as an apply."""
+        now = utc_now()
+        journal_path = self.state / 'expired.json'
+        journal = json.loads(journal_path.read_text()) if journal_path.exists() else []
+        removed = []
+        failed = []
+        for protocol in ('wg', 'ikev2', 'openvpn'):
+            try:
+                removed += self.expire_protocol(protocol, now)
+            except (Fault, OSError, KeyError, ValueError, subprocess.TimeoutExpired):
+                # One protocol down must not keep the others' access open.
+                failed.append(protocol)
+        if removed:
+            journal = (journal + [dict(item, at=now) for item in removed])[-MAX_JOURNAL:]
+            atomic(journal_path, json.dumps(journal))
+        return {'removed': journal, 'latest': removed, 'failed': failed}
+
+    def expire_protocol(self, protocol, now):
+        if protocol == 'openvpn':
+            removed = []
+            for path in sorted(self.state.glob('openvpn-*.json')):
+                params = json.loads(path.read_text()).get('params')
+                if not params or params['action'] != 'allow' or not expired(params, now):
+                    continue
+                cn = 'dev_' + str(params['device_id'])
+                ccd = self.path('/etc/openvpn/server/ccd') / cn
+                text = ccd.read_text() if ccd.exists() else ''
+                disabled = bool(re.search(r'(?m)^disable\s*$', text))
+                if disabled and cn not in self.observe('openvpn')['sessions']:
+                    continue
+                self.openvpn(dict(strip(params), action='deny'))
+                # A client retrying after the drop is cut again, not reported again.
+                if not disabled:
+                    removed.append({'protocol': protocol, 'id': params['device_id'], 'expires_at': params['expires_at']})
+            return removed
+        params = self.applied(protocol)
+        name = 'peers' if protocol == 'wg' else 'clients'
+        gone = [item for item in (params or {}).get(name, []) if expired(item, now)]
+        if not gone:
+            return []
+        observed = self.observe(protocol)
+        if protocol == 'wg':
+            configured = [item for item in gone if item['key'] in observed['peers']]
+            live = configured
+        else:
+            usernames = {sa['username'] for sa in observed['sas']}
+            configured = [item for item in gone if item['device_id'] in observed['devices']]
+            live = configured + [item for item in gone if item not in configured and item['username'] in usernames]
+        if not live:
+            return []
+        rest = self.unexpired(protocol, params, now)
+        if protocol == 'wg':
+            self.wireguard(rest)
+        else:
+            self.ikev2(rest)
+        # A client retrying after the drop is cut again, not reported again.
+        return [{'protocol': protocol, 'id': item['key'] if protocol == 'wg' else item['device_id'],
+                 'expires_at': item['expires_at']} for item in configured]
 
     def execute(self, method, params):
         self.deadline = time.monotonic() + 30
@@ -147,7 +253,9 @@ class Backend:
         if method in ('openvpn.issue', 'openvpn.revoke', 'openvpn.certificate', 'openvpn.disconnect'):
             return self.openvpn_resource(method, params)
         if method == 'state.read':
-            return self.observe(params['protocol'])
+            return dict(self.observe(params['protocol']), expires=self.expires(params['protocol']))
+        if method == 'expiry.run':
+            return self.expire()
         if method == 'check.run':
             if params['check'] == 'readiness':
                 return {'ready': True, 'api': 1}
@@ -157,6 +265,7 @@ class Backend:
         if protocol == 'openvpn':
             domain += '-' + str(params['device_id'])
         self.version(domain, params)
+        params = self.unexpired(protocol, params, utc_now())
         if protocol == 'wg':
             result = self.wireguard(params)
         elif protocol == 'openvpn':

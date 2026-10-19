@@ -1,0 +1,15 @@
+[Unit]
+Description=VPN2 expiry enforcement without the panel
+# Ordering only: a restore that stops the socket must not get it back.
+After=vpn2-control.socket
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vpn2-control/launcher.py --expire
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=60

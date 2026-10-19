@@ -3,7 +3,7 @@ import { control, controlApply } from './control'
 import { and, eq, isNotNull, isNull, or } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
-import { isClientActive } from './client-status'
+import { expiryForControl, isClientActive } from './client-status'
 import { slugify } from './naming'
 import { coalesceRuns } from './coalesce'
 import { nextPoolAddress } from './address-pools'
@@ -207,7 +207,7 @@ async function syncIkev2Once(): Promise<void> {
   )
 
   await controlApply('ikev2.apply', {
-    clients: active.map(r => ({ device_id: r.id, username: r.username!, password: r.password!, ip: r.ip!, dns: clientDns(r.filterTraffic) })),
+    clients: active.map(r => ({ device_id: r.id, username: r.username!, password: r.password!, ip: r.ip!, dns: clientDns(r.filterTraffic), expires_at: expiryForControl(r.expiresAt) })),
   })
 }
 

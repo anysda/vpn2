@@ -30,7 +30,7 @@ test('массовое восстановление IKEv2 сохраняет к�
       'server/utils/ikev2.ts', {
         '../database/client': { useDb: () => db }, '../database/schema': schema,
         './address-pools': { nextPoolAddress }, './naming': { slugify },
-        './coalesce': { coalesceRuns }, './client-status': { isClientActive: () => true },
+        './coalesce': { coalesceRuns }, './client-status': { isClientActive: () => true, expiryForControl: () => null },
         './client-dns': { clientDns: () => ['192.0.2.53'] },
         './control': { controlApply: async (_method: string, params: unknown) => {
           config = execFileSync('python3', ['e2e/support/render-ikev2.py'], { input: JSON.stringify(params), encoding: 'utf8' })

@@ -11,6 +11,10 @@ function harness(collect?: () => Promise<void>) {
     enqueueExpiredAccess: async () => { calls.push('enqueueExpiredAccess') },
     runAccessOperations: async () => { calls.push('runAccessOperations') },
   }
+  imports['../utils/expiry'] = {
+    reportControlExpiry: async () => { calls.push('reportControlExpiry') },
+    syncControlExpiry: async () => { calls.push('syncControlExpiry') },
+  }
   for (const [module, method] of [
     ['client-prefs', 'syncClientPrefsFile'],
     ['traffic-collector', 'collectTraffic'],

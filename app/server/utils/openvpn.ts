@@ -4,7 +4,7 @@ import { and, eq, exists, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { ovpnLocalRoutes } from './allowed-ips'
-import { isClientActive } from './client-status'
+import { expiryForControl, isClientActive } from './client-status'
 import { nextPoolAddress } from './address-pools'
 
 // openssl ca не блокирует общие index.txt/serial/crlnumber. Выдачу,
@@ -80,9 +80,9 @@ async function killOvpnClientQuiet(cn: string): Promise<void> {
   await killOvpnClient(cn)
 }
 
-async function writeCcd(cn: string, ip: string | null, disabled: boolean): Promise<void> {
+async function writeCcd(cn: string, ip: string | null, disabled: boolean, expiresAt: Date | null): Promise<void> {
   if (!ip) throw new Error('OpenVPN address missing')
-  await controlApply('openvpn.apply', { device_id: Number(cn.slice(4)), ip, action: disabled ? 'deny' : 'allow' })
+  await controlApply('openvpn.apply', { device_id: Number(cn.slice(4)), ip, action: disabled ? 'deny' : 'allow', expires_at: expiryForControl(expiresAt) })
 }
 
 export interface OvpnConfigParams {
@@ -191,7 +191,7 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
     .from(clientsTable)
     .where(eq(clientsTable.id, row.clientId))
     .limit(1)
-  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true))
+  await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true), client?.expiresAt ?? null)
   return updated
 }
 
@@ -270,7 +270,7 @@ async function syncOpenvpnConfigOnce(): Promise<void> {
   for (const r of rows) {
     if (!r.ovpnCert) continue
     const ip = r.ovpnIp ?? (await ensureDeviceOvpnIp(r.id)).ovpnIp
-    await writeCcd(ovpnCn(r.id), ip, r.deleting || !isClientActive(r))
+    await writeCcd(ovpnCn(r.id), ip, r.deleting || !isClientActive(r), r.expiresAt)
   }
   const pinned = new Set(rows.filter(r => r.ovpnCert).map(r => ovpnCn(r.id)))
   for (const [cn] of await connectedOvpnClients()) {

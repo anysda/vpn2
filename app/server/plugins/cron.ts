@@ -1,5 +1,6 @@
 import { enqueueExpiredAccess, runAccessOperations } from '../utils/access-operations'
 import { collectTraffic } from '../utils/traffic-collector'
+import { reportControlExpiry, syncControlExpiry } from '../utils/expiry'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 
 const INTERVAL_MS = 60_000
@@ -20,6 +21,14 @@ export default defineNitroPlugin((nitroApp) => {
   async function tick() {
     await enqueueExpiredAccess()
     await runAccessOperations()
+
+    // Что сервис снял по сроку сам (панель стояла) — в журнал один раз.
+    await reportControlExpiry().catch(err =>
+      log.error({ err }, 'cron: control expiry report failed'),
+    )
+    await syncControlExpiry().catch(err =>
+      log.error({ err }, 'cron: control expiry sync failed'),
+    )
 
     // Предпочитаемые экзиты: самоисцеление файла (устройства, добавленные
     // ботом, удалённые клиенты). Без изменений файл не переписывается.

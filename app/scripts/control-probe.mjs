@@ -3,7 +3,7 @@ import { createConnection } from 'node:net'
 // Copied into each image: deploy checks that image's requirements before stop.
 const required = ['wg.apply', 'openvpn.apply', 'ikev2.apply', 'state.read',
   'profile.read', 'traffic.read', 'openvpn.issue', 'openvpn.revoke',
-  'openvpn.disconnect', 'openvpn.certificate', 'settings.read', 'settings.apply', 'routes.plan']
+  'openvpn.disconnect', 'openvpn.certificate', 'settings.read', 'settings.apply', 'routes.plan', 'expiry.run']
 const socket = createConnection('/run/vpn2-control/control.sock')
 const timer = setTimeout(() => { socket.destroy(); process.exitCode = 1 }, 5000)
 let data = ''

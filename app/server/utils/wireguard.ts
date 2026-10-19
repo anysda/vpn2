@@ -4,7 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { IP_CLAIM_ATTEMPTS, isUniqueViolation, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 import { wgAllowedIps } from './allowed-ips'
-import { isClientActive } from './client-status'
+import { expiryForControl, isClientActive } from './client-status'
 import { coalesceRuns } from './coalesce'
 import { nextPoolAddress } from './address-pools'
 import { wgEndpoint } from './wg-endpoint'
@@ -165,7 +165,7 @@ async function syncWireguardConfigOnce(): Promise<void> {
 
   const peers = rows
     .filter(r => r.wgPublicKey && r.wgPresharedKey && r.wgIp && !r.deleting && isClientActive(r))
-    .map(r => ({ key: r.wgPublicKey!, preshared_key: r.wgPresharedKey!, ip: r.wgIp! }))
+    .map(r => ({ key: r.wgPublicKey!, preshared_key: r.wgPresharedKey!, ip: r.wgIp!, expires_at: expiryForControl(r.expiresAt) }))
   await controlApply('wg.apply', { peers })
 }
 

@@ -57,6 +57,8 @@ for resource in sing-box openvpn ikev2 wg; do
 done
 install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.socket" /etc/systemd/system/
+install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control-expiry.service" /etc/systemd/system/
+install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control-expiry.timer" /etc/systemd/system/
 # A host UID is required for a user-namespace mapping. Never accept a UID in
 # a request. Preserve an explicit root-managed mapping across redeployments.
 if [[ ! -f /etc/vpn2-control/callers.json ]]; then
@@ -72,6 +74,8 @@ systemctl daemon-reload
 systemctl enable --now vpn2-control.socket
 systemctl restart vpn2-control.service
 /usr/bin/python3 -I /usr/local/lib/vpn2-control/launcher.py --probe
+# Expiry is enforced here too, so a stopped panel does not keep access open.
+systemctl enable --now vpn2-control-expiry.timer
 install -d -m 0755 /etc/vpn2
 printf '1\n' > /etc/vpn2/control-api-version
 install -d /var/anysda/.stamps

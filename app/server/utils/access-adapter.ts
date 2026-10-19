@@ -6,7 +6,7 @@ import type { AccessOperation, AccessProtocol } from '../../shared/access-operat
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import type { AccessPayload } from './access-operations'
-import { isClientActive } from './client-status'
+import { expiryForControl, isClientActive } from './client-status'
 import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
 import { ensureDeviceOvpn, killOvpnClient, ovpnCn, reissueDeviceOvpn, revokeAccessCert, syncOpenvpnConfig } from './openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
@@ -29,7 +29,12 @@ async function desired(operation: AccessOperation) {
   const [client] = await db.select().from(clients).where(eq(clients.id, operation.clientId))
   if (!client || client.accessVersion !== operation.version) throw new Error('superseded')
   const rows = await db.select().from(devices).where(eq(devices.clientId, client.id))
-  return rows.map(d => ({ ...d, filterTraffic: client.filterTraffic, enabled: !d.deleting && !client.deleting && isClientActive(client) }))
+  return rows.map(d => ({ ...d, filterTraffic: client.filterTraffic, expires: expiryForControl(client.expiresAt), enabled: !d.deleting && !client.deleting && isClientActive(client) }))
+}
+
+/** Сервис снимает доступ по сроку сам; продление должно дойти до него, иначе снимет по старому. */
+function sameExpiry(expires: Record<string, string> | undefined, id: string, expected: string | null): boolean {
+  return !expires || (expires[id] ?? null) === expected
 }
 
 /** All OS effects and observations are owned by the local control service. */
@@ -41,15 +46,15 @@ export const accessAdapter: AccessAdapter = {
   async read(protocol, operation, payload) {
     const rows = await desired(operation)
     if (protocol === 'wg') {
-      const state = await control<{ peers: Record<string, string[]> }>('state.read', { protocol: 'wg' })
+      const state = await control<{ peers: Record<string, string[]>, expires?: Record<string, string> }>('state.read', { protocol: 'wg' })
       const peers = new Set(Object.keys(state.peers))
       if (operation.kind === 'reissue' && rows.some(d => !d.deleting && (!operation.deviceId || operation.deviceId === d.id)
         && (!d.wgPublicKey || !d.wgPrivateKey || !d.wgPresharedKey || !d.wgIp))) return false
-      return rows.every(d => !d.wgPublicKey || peers.has(d.wgPublicKey) === d.enabled)
+      return rows.every(d => !d.wgPublicKey || (peers.has(d.wgPublicKey) === d.enabled && (!d.enabled || sameExpiry(state.expires, d.wgPublicKey, d.expires))))
         && payload.retired.every(d => !d.wgPublicKey || !peers.has(d.wgPublicKey))
     }
     if (protocol === 'openvpn') {
-      const { sessions } = await control<{ sessions: Record<string, string> }>('state.read', { protocol: 'openvpn' })
+      const { sessions, expires } = await control<{ sessions: Record<string, string>, expires?: Record<string, string> }>('state.read', { protocol: 'openvpn' })
       const connected = new Set(Object.keys(sessions))
       for (const d of rows) {
         if (!d.ovpnCert) continue
@@ -57,6 +62,7 @@ export const accessAdapter: AccessAdapter = {
         if (!cert.present) return false
         if ((d.deleting || payload.retired.some(old => old.ovpnCert === d.ovpnCert)) && !cert.revoked) return false
         if (cert.allowed !== d.enabled) return false
+        if (d.enabled && !sameExpiry(expires, String(d.id), d.expires)) return false
         if (!d.enabled && connected.has(ovpnCn(d.id))) return false
       }
       for (const old of payload.retired) {
@@ -70,7 +76,7 @@ export const accessAdapter: AccessAdapter = {
       }
       return true
     }
-    const status = await control<{ devices: number[], sas: Array<{ username: string }>, credentials: Record<string, string> }>('state.read', { protocol: 'ikev2' })
+    const status = await control<{ devices: number[], sas: Array<{ username: string }>, credentials: Record<string, string>, expires?: Record<string, string> }>('state.read', { protocol: 'ikev2' })
     for (const d of rows) {
       if (!d.ikev2Username) {
         if (operation.kind === 'reissue' && (!operation.deviceId || operation.deviceId === d.id)) return false
@@ -81,6 +87,7 @@ export const accessAdapter: AccessAdapter = {
       const credential = { device_id: d.id, dns: clientDns(d.filterTraffic), ip: d.ikev2Ip, password: d.ikev2Password, username: d.ikev2Username }
       const digest = createHash('sha256').update(JSON.stringify(credential)).digest('hex')
       if (d.enabled && status.credentials[d.ikev2Username] !== digest) return false
+      if (d.enabled && !sameExpiry(status.expires, String(d.id), d.expires)) return false
       if (!d.enabled && status.sas.some(sa => sa.username === d.ikev2Username)) return false
     }
     return true

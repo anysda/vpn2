@@ -15,6 +15,11 @@ export function isClientActive(client: ClientStatusInput): boolean {
   return true
 }
 
+/** Срок для локального сервиса: он снимает доступ сам, когда панель стоит (UTC). */
+export function expiryForControl(expiresAt: Date | null): string | null {
+  return expiresAt ? expiresAt.toISOString() : null
+}
+
 /** Статус клиента для отдачи во фронтенд / бот. */
 export function clientStatus(client: ClientStatusInput): 'active' | 'frozen' {
   return isClientActive(client) ? 'active' : 'frozen'

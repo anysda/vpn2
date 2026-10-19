@@ -20,7 +20,7 @@ registerHooks({
       './control': `import { control } from ${JSON.stringify(transport)}; export { control };
         export const controlApply=(method,params)=>control(method,{...params,version:1});`,
       './allowed-ips': 'export const wgAllowedIps=()=>[];',
-      './client-status': 'export const isClientActive=()=>true;',
+      './client-status': 'export const isClientActive=()=>true, expiryForControl=(at)=>at ? at.toISOString() : null;',
     }
     if (specifier in stubs) {
       return { url: `data:text/javascript,${encodeURIComponent(stubs[specifier])}`, shortCircuit: true }

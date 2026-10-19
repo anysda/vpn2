@@ -1,11 +1,13 @@
 """Local control API contract, credential boundary, and failure regressions."""
 import base64
+import hashlib
 from contextlib import redirect_stderr
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import sys
@@ -505,6 +507,160 @@ class ControlTests(unittest.TestCase):
             self.invalid('state.read', {'protocol': 'wg'}, 'unavailable')
             self.invalid('check.run', {'check': 'wg'}, 'unavailable')
 
+    # Expiry far ahead of the real clock; the timer runs with a later clock.
+    EXPIRES = '2030-01-01T00:00:00.000Z'
+    EXTENDED = '2031-01-01T00:00:00.000Z'
+    LATER = '2030-01-01T00:00:01.000Z'
+
+    def later(self):
+        return patch.object(self.backend_module, 'utc_now', return_value=self.LATER)
+
+    def wg_kernel(self):
+        self.file('/etc/wireguard/wg0.conf', '[Interface]\nPrivateKey = server-secret\nListenPort = 51820\n')
+        kernel = {}
+
+        def command(*args, data=None):
+            if args[1] == 'syncconf':
+                kernel.clear()
+                for block in data.split('[Peer]')[1:]:
+                    values = dict(line.split(' = ', 1) for line in block.strip().splitlines())
+                    kernel[values['PublicKey']] = (values['PresharedKey'], values['AllowedIPs'].split(', '))
+            elif args[-1] == 'preshared-keys':
+                return ''.join(f'{name}\t{psk}\n' for name, (psk, _ips) in kernel.items())
+            elif args[-1] == 'allowed-ips':
+                return ''.join(f'{name}\t{" ".join(ips)}\n' for name, (_psk, ips) in kernel.items())
+            return ''
+        return kernel, command
+
+    def test_expired_wg_peer_is_removed_without_the_panel(self):
+        kernel, command = self.wg_kernel()
+        other = {'key': base64.b64encode(bytes(range(2, 34))).decode(), 'preshared_key': self.psk,
+                 'ip': '10.66.66.3'}
+        expiring = dict(self.peer, expires_at=self.EXPIRES)
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.assertTrue(self.request('wg.apply', {'version': 1, 'peers': [expiring, other]})['ok'])
+            self.assertEqual(self.request('state.read', {'protocol': 'wg'})['result']['expires'],
+                             {self.public: self.EXPIRES})
+            with self.later():
+                result = self.request('expiry.run', {})['result']
+                self.assertEqual(result['latest'], [{'protocol': 'wg', 'id': self.public,
+                                                     'expires_at': self.EXPIRES}])
+                self.assertEqual(set(kernel), {other['key']})
+                self.assertNotIn(self.public, (self.root / 'etc/wireguard/wg0.conf').read_text())
+                # Reported once; a panel retry of the same version does not return access.
+                self.assertEqual(self.request('expiry.run', {})['result']['latest'], [])
+                self.assertTrue(self.request('wg.apply', {'version': 1, 'peers': [expiring, other]})['ok'])
+                self.assertEqual(set(kernel), {other['key']})
+                self.assertEqual(len(self.request('expiry.run', {})['result']['removed']), 1)
+                # The panel stays the source of truth: a later expiry restores access.
+                extended = dict(self.peer, expires_at=self.EXTENDED)
+                self.assertTrue(self.request('wg.apply', {'version': 2, 'peers': [extended, other]})['ok'])
+                self.assertEqual(self.request('expiry.run', {})['result']['latest'], [])
+                self.assertEqual(set(kernel), {self.public, other['key']})
+        self.invalid('wg.apply', {'version': 3, 'peers': [dict(self.peer, expires_at='2030-01-01')]})
+
+    def test_extension_before_expiry_keeps_access(self):
+        kernel, command = self.wg_kernel()
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.assertTrue(self.request('wg.apply', {'version': 1, 'peers': [
+                dict(self.peer, expires_at=self.EXPIRES)]})['ok'])
+            self.assertTrue(self.request('wg.apply', {'version': 2, 'peers': [
+                dict(self.peer, expires_at=self.EXTENDED)]})['ok'])
+            with self.later():
+                self.assertEqual(self.request('expiry.run', {})['result']['latest'], [])
+        self.assertEqual(set(kernel), {self.public})
+
+    def test_expired_openvpn_device_is_denied_and_dropped_without_the_panel(self):
+        self.file('/etc/openvpn/server/pki/index.txt', 'V\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        self.file('/etc/openvpn/server/ccd/dev_7', '')
+        sessions = {'dev_7': '10.67.67.2'}
+
+        def management(command):
+            if command == 'kill dev_7':
+                sessions.clear()
+                return ['SUCCESS: killed']
+            return [f'CLIENT_LIST,{name},192.0.2.2:1,{ip}' for name, ip in sessions.items()] + ['END']
+
+        params = {'version': 1, 'device_id': 7, 'action': 'allow', 'ip': '10.67.67.2',
+                  'expires_at': self.EXPIRES}
+        ccd = self.root / 'etc/openvpn/server/ccd/dev_7'
+        with patch.object(self.backend, 'command', return_value=''), \
+                patch.object(self.backend, 'management', side_effect=management):
+            self.assertTrue(self.request('openvpn.apply', params)['ok'])
+            self.assertNotIn('disable', ccd.read_text())
+            self.assertEqual(self.request('state.read', {'protocol': 'openvpn'})['result']['expires'],
+                             {'7': self.EXPIRES})
+            with self.later():
+                result = self.request('expiry.run', {})['result']
+                self.assertEqual(result['latest'], [{'protocol': 'openvpn', 'id': 7,
+                                                     'expires_at': self.EXPIRES}])
+                self.assertIn('disable', ccd.read_text())
+                self.assertEqual(sessions, {})
+                self.assertEqual(self.request('expiry.run', {})['result']['latest'], [])
+                # The client retries after the drop: cut again, not a second removal.
+                sessions['dev_7'] = '10.67.67.2'
+                result = self.request('expiry.run', {})['result']
+                self.assertEqual((result['latest'], len(result['removed']), sessions), ([], 1, {}))
+                reply = self.request('openvpn.apply', params)
+                self.assertFalse(reply['result']['observed']['allowed'])
+                self.assertIn('disable', ccd.read_text())
+                extended = dict(params, version=2, expires_at=self.EXTENDED)
+                self.assertTrue(self.request('openvpn.apply', extended)['ok'])
+                self.assertNotIn('disable', ccd.read_text())
+
+    def test_expired_ikev2_client_is_removed_without_the_panel(self):
+        self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
+        sas = {}
+
+        def command(*args):
+            if '--list-conns' in args:
+                text = (self.root / 'etc/swanctl/conf.d/anysda-clients.conf').read_text()
+                return ''.join(f'anysda-dev-{value}: IKEv2\n' for value in
+                               re.findall(r'^  anysda-dev-(\d+) : connections', text, re.M))
+            if '--list-sas' in args:
+                return ''.join(f"anysda-dev-{number}: #{number}, ESTABLISHED\n  remote EAP: '{name}'\n"
+                               for number, name in sas.items())
+            if '--terminate' in args:
+                sas.pop(int(args[-1]))
+            return ''
+
+        expiring = {'device_id': 7, 'username': 'device7', 'password': 'valid-password-007',
+                    'ip': '10.68.68.2', 'expires_at': self.EXPIRES}
+        other = {'device_id': 8, 'username': 'device8', 'password': 'valid-password-008',
+                 'ip': '10.68.68.3', 'dns': ['10.99.0.1'], 'expires_at': None}
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.assertTrue(self.request('ikev2.apply', {'version': 1, 'clients': [expiring, other]})['ok'])
+            sas.update({7: 'device7', 8: 'device8'})
+            state = self.request('state.read', {'protocol': 'ikev2'})['result']
+            self.assertEqual(state['expires'], {'7': self.EXPIRES})
+            # The panel's credential digest does not include the expiry.
+            plain = {name: value for name, value in other.items() if name != 'expires_at'}
+            digest = hashlib.sha256(json.dumps(plain, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            self.assertEqual(state['credentials']['device8'], digest)
+            with self.later():
+                result = self.request('expiry.run', {})['result']
+                self.assertEqual(result['latest'], [{'protocol': 'ikev2', 'id': 7,
+                                                     'expires_at': self.EXPIRES}])
+                state = self.request('state.read', {'protocol': 'ikev2'})['result']
+                self.assertEqual(state['devices'], [8])
+                self.assertEqual(sas, {8: 'device8'})
+                self.assertEqual(state['credentials']['device8'], digest)
+                self.assertEqual(self.request('expiry.run', {})['result']['latest'], [])
+                # The client retries after the drop: cut again, not a second removal.
+                sas[7] = 'device7'
+                result = self.request('expiry.run', {})['result']
+                self.assertEqual((result['latest'], len(result['removed']), sas), ([], 1, {8: 'device8'}))
+
+    def test_deploy_runs_the_expiry_timer(self):
+        stage = (ROOT / 'infra/scripts/29-control.sh').read_text()
+        self.assertIn('systemctl enable --now vpn2-control-expiry.timer', stage)
+        timer = (CONTROL / 'vpn2-control-expiry.timer').read_text()
+        self.assertIn('OnUnitActiveSec=30s', timer)
+        service = (CONTROL / 'vpn2-control-expiry.service').read_text()
+        self.assertIn('launcher.py --expire', service)
+        # A restore stops the socket; the timer must not start it again.
+        self.assertNotIn('Requires=vpn2-control.socket', service)
+
     def test_bounded_command_output_and_timeout(self):
         with self.assertRaises(self.contract.Fault):
             self.backend_module.run([sys.executable, '-c', 'print("x" * 1100000)'], time.monotonic() + 2)
@@ -639,6 +795,16 @@ class ControlTests(unittest.TestCase):
         self.assertLess(panel.index('scripts/control-probe.mjs'), panel.index('\npanel_begin'))
         socket_unit = (CONTROL / 'vpn2-control.socket').read_text()
         self.assertIn('PartOf=vpn2-control.service', socket_unit)
+
+    def test_image_probe_requires_every_method_the_panel_calls(self):
+        # A panel on an older service must stop at the probe, not fail its applies.
+        probe = (ROOT / 'app/scripts/control-probe.mjs').read_text()
+        required = set(re.findall(r"'([a-z0-9]+\.[a-z]+)'", probe.split(']')[0]))
+        called = set()
+        for path in (ROOT / 'app/server').rglob('*.ts'):
+            called |= set(re.findall(r"control(?:Apply)?(?:<[^>(]*>)?\('([a-z0-9]+\.[a-z]+)'", path.read_text()))
+        self.assertIn('wg.apply', called)
+        self.assertEqual(called - required, set())
 
 
 if __name__ == '__main__':

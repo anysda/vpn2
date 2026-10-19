@@ -6,17 +6,26 @@ Response: {api: 1, ok: true, result: object} or
 Errors never contain submitted values, command output, or secrets.
 
 wg.apply: {version: positive integer,
-           peers: [{key: base64 public key, preshared_key: base64 key, ip: IPv4}]}
+           peers: [{key: base64 public key, preshared_key: base64 key, ip: IPv4,
+                    expires_at?: UTC time or null}]}
     IPv6 ULA is derived using the existing panel mapping. PSKs are input only.
 openvpn.apply: {version, device_id: positive integer, action: allow|deny|revoke,
-                ip: IPv4}. Certificates are located by dev_<device_id> in the
+                ip: IPv4, expires_at?}. Certificates are located by dev_<device_id> in the
 installed CA index, never by a caller-supplied path/serial/PEM. Revocation is
 irreversible; allow cannot restore a revoked certificate. Existing profiles
 remain valid; the additive issuance/export methods below serve the panel.
-ikev2.apply: {version, clients: [{device_id, username, password, ip}]}
+ikev2.apply: {version, clients: [{device_id, username, password, ip, dns?, expires_at?}]}
     A full set of enabled devices. Removed/changed credentials have their
     concrete numeric IKE SA IDs terminated after loading the new credentials.
-state.read: {protocol: wg|openvpn|ikev2}
+state.read: {protocol: wg|openvpn|ikev2} -> observed state and expires: the
+    applied expiry by WG key or device id.
+expiry.run: {} -> removed: the devices this service took off after expiry
+    (last 2000), latest: taken off by this call, failed: protocols not checked.
+    expires_at is the panel's expiry, YYYY-MM-DDTHH:MM:SS.mmmZ. The service
+    keeps it from the last applied state and on its own timer removes expired
+    devices without the panel: WG peer and IKEv2 client out of the set, OpenVPN
+    ccd disabled, sessions dropped. An apply never returns expired access; a
+    later expiry from the panel restores it. Versions are not consumed.
 config.apply: {resource: wg-peers|ikev2-clients, schema: 1, version,
                config: {peers: [...]}|{clients: [...]}}
     Same validation, version domain and application as the protocol method.
@@ -69,7 +78,8 @@ MAX_DEVICES = 2000
 METHODS = ('wg.apply', 'openvpn.apply', 'ikev2.apply', 'state.read',
            'config.apply', 'check.run', 'profile.read', 'traffic.read',
            'openvpn.issue', 'openvpn.revoke', 'openvpn.disconnect',
-           'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan')
+           'openvpn.certificate', 'settings.read', 'settings.apply', 'api.describe', 'routes.plan',
+           'expiry.run')
 
 
 class Fault(Exception):
@@ -110,6 +120,18 @@ def key(value):
     require(len(raw) == 32 and any(raw) and base64.b64encode(raw).decode() == value)
 
 
+def expiry(value):
+    require(value is None or type(value) is str and
+            re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', value))
+
+
+def optional(value, names, extra):
+    require(type(value) is dict)
+    fields(value, names + ''.join(' ' + name for name in extra.split() if name in value))
+    if 'expires_at' in value:
+        expiry(value['expires_at'])
+
+
 def records(value):
     require(type(value) is list and len(value) <= MAX_DEVICES)
 
@@ -135,14 +157,14 @@ def validate(request, pools):
         fields(params, 'version peers')
         records(params['peers'])
         for peer in params['peers']:
-            fields(peer, 'key preshared_key ip')
+            optional(peer, 'key preshared_key ip', 'expires_at')
             key(peer['key'])
             key(peer['preshared_key'])
             address(peer['ip'], 'wg', pools)
         unique([peer['key'] for peer in params['peers']])
         unique([peer['ip'] for peer in params['peers']])
     elif method == 'openvpn.apply':
-        fields(params, 'version device_id action ip')
+        optional(params, 'version device_id action ip', 'expires_at')
         integer(params['device_id'])
         choice(params['action'], ('allow', 'deny', 'revoke'))
         address(params['ip'], 'ovpn', pools)
@@ -150,7 +172,7 @@ def validate(request, pools):
         fields(params, 'version clients')
         records(params['clients'])
         for client in params['clients']:
-            fields(client, 'device_id username password ip dns' if 'dns' in client else 'device_id username password ip')
+            optional(client, 'device_id username password ip', 'dns expires_at')
             if 'dns' in client:
                 require(client['dns'] in (['10.99.0.1'], ['8.8.8.8', '1.1.1.1']))
             integer(client['device_id'])
@@ -167,7 +189,7 @@ def validate(request, pools):
     elif method == 'check.run':
         fields(params, 'check')
         choice(params['check'], ('readiness', 'wg', 'openvpn', 'ikev2'))
-    elif method == 'api.describe':
+    elif method in ('api.describe', 'expiry.run'):
         fields(params, '')
     elif method == 'routes.plan':
         fields(params, 'offset revision')

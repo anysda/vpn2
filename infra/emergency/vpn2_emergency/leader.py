@@ -36,15 +36,27 @@ STABLE = 120
 # TELEGRAM_WAIT, without a notice.
 NOTICE = 600
 TELEGRAM_WAIT = 7200
+# The leader proposes the deadline first and announces it only once every exit
+# that follows it echoes the proposal: a leader that dies right after the
+# notice leaves its deadline with the others. The margin covers the echo (two
+# rounds); a proposal closer than NOTICE is replaced before any delivery.
+PROPOSAL_MARGIN = 2 * PERIOD
 LOG = logging.getLogger(__name__)
+
+
+def deadline_after(wall):
+    """Whole minute, so the notice and the panel show the same time."""
+    return math.ceil((wall + NOTICE) / 60) * 60
 
 
 def valid_recovery(value):
     if value is None:
         return True
+    optional = tuple(key for key in ('deadline', 'proposed') if value.get(key) is not None) \
+        if isinstance(value, dict) else ()
     return (isinstance(value, dict) and type(value.get('round')) is int and value['round'] > 0
             and all(type(value.get(key)) in (int, float) and math.isfinite(value[key])
-                    for key in ('confirmed', *(('deadline',) if value.get('deadline') is not None else ()))))
+                    for key in ('confirmed', *optional)))
 
 
 class Leader:
@@ -84,6 +96,8 @@ class Leader:
         self.ready_since = None
         self.not_ready = 0
         self.stale_since = None
+        # The deadline this process proposed; any other one was inherited.
+        self.proposed = None
         self.data.setdefault('recovery', None)
         self.data.setdefault('failed_since', None)
         self.data.setdefault('failed_rounds', 0)
@@ -271,7 +285,9 @@ class Leader:
             if ready and now - self.ready_since >= STABLE:
                 number = self.data.get('recovery_round', 0) + 1
                 self.data['recovery_round'] = number
-                self.data['recovery'] = {'round': number, 'confirmed': wall, 'deadline': None}
+                self.proposed = deadline_after(wall + PROPOSAL_MARGIN)
+                self.data['recovery'] = {'round': number, 'confirmed': wall, 'deadline': None,
+                                         'proposed': self.proposed}
                 self.state.save()
                 LOG.info('entry recovered: round %s confirmed after %s s', number, STABLE)
             return
@@ -285,7 +301,32 @@ class Leader:
                 # its own; the emergency goes on, so it issues one now.
                 self._become(self.data.get('autonomous', False))
             return
+        if recovery['deadline'] is None:
+            self._propose(recovery, wall, now)
         self._deadline_due(wall)
+
+    def _propose(self, recovery, wall, now):
+        proposed = recovery.get('proposed')
+        if proposed is not None and proposed != self.proposed and wall < proposed - NOTICE + GUARD:
+            # Inherited from a leader that may have announced it just before
+            # it died: keep its time and announce nothing a second time.
+            LOG.info('entry recovery: deadline taken over from the previous leader')
+            self.set_deadline(recovery['round'], proposed, now)
+        elif proposed is None or wall >= proposed - NOTICE:
+            recovery['proposed'] = self.proposed = deadline_after(wall + PROPOSAL_MARGIN)
+            self.state.save()
+
+    def proposal(self, now):
+        """The proposed deadline once every exit following this leader has it, else None."""
+        recovery = self.data['recovery']
+        if not recovery or recovery['deadline'] is not None or recovery.get('proposed') is None:
+            return None
+        for status, at in self.peers.values():
+            echoed = status.get('recovery') or {}
+            if (now - at < MISSED and status.get('owner') == self.node
+                    and (echoed.get('round'), echoed.get('proposed')) != (recovery['round'], recovery['proposed'])):
+                return None
+        return recovery['proposed']
 
     def set_deadline(self, number, deadline, now):
         """The first delivered notice (or no channel at all) fixes the deadline."""

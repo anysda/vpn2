@@ -65,6 +65,46 @@ class FakeHy2:
         return False
 
 
+class FakeTelegram:
+    """Local queue of one exit: return notices go out only with a deadline."""
+
+    def __init__(self):
+        self.rows, self.sent, self.cancelled = [], [], []
+
+    def _enqueue(self, audience, *_args, emergency_id='', bundle_version=0, event='initial', **_kwargs):
+        self.rows.append(dict(audience=audience, emergency=emergency_id, version=str(bundle_version),
+                              event=event, state='pending', sent=0))
+
+    def enqueue_admin(self, *args, **kwargs):
+        self._enqueue('admin', *args, **kwargs)
+
+    def enqueue_clients(self, *args, **kwargs):
+        self._enqueue('client', *args, **kwargs)
+
+    def run_once(self, *_args, deadline=None, **_kwargs):
+        for row in self.rows:
+            if row['state'] != 'pending' or (row['event'] == 'recovered' and deadline is None):
+                continue
+            row.update(state='sent', sent=1)
+            if row['event'] == 'recovered':
+                self.sent.append((row['audience'], deadline))
+
+    def cancel(self, *_args, events=None, **_kwargs):
+        self.cancelled.append(events)
+        for row in self.rows:
+            if row['state'] == 'pending' and (events is None or row['event'] in events):
+                row['state'] = 'cancelled'
+
+    def delivery_status(self, _directory, audience='client'):
+        return [dict(row) for row in self.rows if row['audience'] == audience]
+
+    def prune(self, *_args, **_kwargs):
+        pass
+
+    def reachable(self, *_args, **_kwargs):
+        return True
+
+
 class Events:
     def __init__(self):
         self.calls = []
@@ -920,7 +960,7 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertFalse(cluster.agents['b'].leader.data['active'])
         self.assertIn(('end', ()), cluster.events['b'].calls)
 
-    def issuing(self, cluster, node, service):
+    def issuing(self, cluster, node, service, telegram=None):
         """Real lifecycle on an exit: Hysteria2, panel and Telegram are stubs."""
         agent = cluster.agents[node]
         panel = types.SimpleNamespace(
@@ -934,7 +974,7 @@ class EmergencyAgentTests(unittest.TestCase):
         telegram = types.SimpleNamespace(prune=quiet, enqueue_admin=quiet, enqueue_clients=quiet,
                                          cancel=lambda *_a, **kwargs: cancelled.append(kwargs.get('events')),
                                          run_once=quiet, delivery_status=lambda *_a: [],
-                                         reachable=lambda *_a, **_k: True)
+                                         reachable=lambda *_a, **_k: True) if telegram is None else telegram
         agent.lifecycle = lifecycle.Lifecycle(
             agent, hy2_module=service, web_module=types.SimpleNamespace(make_server=lambda *_a, **_k: server),
             tg=telegram, threaded=False, probe_entry=lambda _host: True)
@@ -987,6 +1027,37 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertTrue(services['b'].running)
         self.assertTrue(all(agent.leader.data['active'] for node, agent in cluster.agents.items()
                             if node != 'entry'))
+
+    def test_leader_dies_right_after_return_notice_new_leader_keeps_its_deadline(self):
+        # VPN2-521: the notice is out, the leader dies before the next round.
+        cluster = self.cluster()
+        services = {node: FakeHy2() for node in 'abc'}
+        telegrams = {node: FakeTelegram() for node in 'abc'}
+        for node in 'abc':
+            self.issuing(cluster, node, services[node], telegrams[node])
+        self.recovered(cluster)
+        for _ in range(12):
+            if telegrams['a'].sent:
+                break
+            cluster.advance(15)
+        self.assertIn('admin', {audience for audience, _deadline in telegrams['a'].sent})
+        self.assertEqual(len({deadline for _audience, deadline in telegrams['a'].sent}), 1)
+        announced = telegrams['a'].sent[0][1]
+        held = {node: cluster.agents[node].leader.data['recovery'].get('proposed') for node in 'bc'}
+        cluster.stop('a')
+        cluster.advance(120)
+        self.assertEqual(cluster.leaders(), ['b'])
+        b = cluster.agents['b'].leader
+        self.assertEqual(lifecycle.iso(b.data['recovery']['deadline']), announced)
+        self.assertEqual(telegrams['b'].sent, [])
+        self.assertFalse([row for row in telegrams['b'].rows if row['event'] == 'recovered'])
+        # The followers already held the announced time when it went out.
+        self.assertEqual({lifecycle.iso(value) for value in held.values()}, {announced})
+        while lifecycle.iso(cluster.wall()) < announced:
+            cluster.advance()
+        cluster.advance(30)
+        self.assertFalse(b.data['active'])
+        self.assertEqual(telegrams['b'].sent, [])
 
     def test_undelivered_notice_ends_after_two_hours(self):
         cluster = self.cluster()

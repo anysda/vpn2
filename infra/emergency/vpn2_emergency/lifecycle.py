@@ -16,7 +16,7 @@ from urllib import request
 
 from . import hooks, hy2, tgqueue, web
 from .heartbeat import MISSED
-from .leader import GUARD, NOTICE
+from .leader import GUARD, deadline_after
 
 LOG = logging.getLogger(__name__)
 # The snapshot carries no time zone; notices and the panel name one explicitly.
@@ -36,11 +36,6 @@ RETRY_MAX = 300
 
 def iso(wall):
     return datetime.fromtimestamp(wall, ZONE).isoformat(timespec='seconds')
-
-
-def deadline_after(wall):
-    """Whole minute, so the notice and the panel show the same time."""
-    return math.ceil((wall + NOTICE) / 60) * 60
 
 
 def socks_connect(proxy, target, timeout=5):
@@ -221,7 +216,8 @@ class Lifecycle:
         deadline, round_ = None, None
         if recovery:
             round_ = recovery['round'] if recovery['deadline'] is None else None
-            deadline = recovery['deadline'] or deadline_after(agent.wall())
+            # Return notices wait until the exits share the deadline.
+            deadline = recovery['deadline'] or leader.proposal(now)
         if self._announce(now, previous):
             self.submit('deliver', self._deliver, data['emergency_id'], deadline, round_)
 

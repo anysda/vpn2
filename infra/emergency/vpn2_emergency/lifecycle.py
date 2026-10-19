@@ -301,8 +301,12 @@ class Lifecycle:
             event = 'leader_changed'
         else:
             event = 'initial'
+        # Recovery notices belong to the emergency, not to one generation: a
+        # bundle issued as a return is cancelled must still send that notice.
+        kept = {key: record[key] for key in ('notified', 'cancelled')
+                if key in record and record.get('emergency') in (None, emergency_id)}
         self.agent.state.data['lifecycle'] = dict(emergency=emergency_id, generation=generation,
-                                                  event=event, autonomous=autonomous)
+                                                  event=event, autonomous=autonomous, **kept)
         self.agent.state.save()
         self.restored = True
         self.retry = self.reach = self.held_since = None

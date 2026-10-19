@@ -24,7 +24,7 @@ sys.path.insert(0, str(ROOT / 'infra/emergency'))
 from vpn2_emergency import hooks, lifecycle, tgqueue, web  # noqa: E402
 from vpn2_emergency.agent import Agent  # noqa: E402
 from vpn2_emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
-from vpn2_emergency.leader import GUARD, LEASE, Leader  # noqa: E402
+from vpn2_emergency.leader import GUARD, LEASE, TRANSITION, Leader  # noqa: E402
 from vpn2_emergency.state import MAX_STATE_BYTES, State  # noqa: E402
 
 
@@ -34,6 +34,35 @@ class Clock:
 
     def __call__(self):
         return self.now
+
+
+class FakeHy2:
+    """Hysteria2 of one exit: survives agent restarts like the real unit."""
+
+    def __init__(self):
+        self.starts = []
+        self.running = False
+
+    def start(self, _state_dir, generation, devices, options=None):
+        del devices, options
+        self.starts.append(generation)
+        self.running = True
+        return {}
+
+    def stop(self, _state_dir):
+        self.running = False
+
+    def settings(self, _options):
+        return {'port': 18443}
+
+    def listening(self, _port):
+        return self.running
+
+    def watch(self, _state_dir):
+        return types.SimpleNamespace(stop=lambda: None)
+
+    def revoked(self, _state_dir, _generation):
+        return False
 
 
 class Events:
@@ -890,6 +919,74 @@ class EmergencyAgentTests(unittest.TestCase):
             cluster.advance()
         self.assertFalse(cluster.agents['b'].leader.data['active'])
         self.assertIn(('end', ()), cluster.events['b'].calls)
+
+    def issuing(self, cluster, node, service):
+        """Real lifecycle on an exit: Hysteria2, panel and Telegram are stubs."""
+        agent = cluster.agents[node]
+        panel = types.SimpleNamespace(
+            url='https://127.0.0.1/', on_emergency_leader=lambda *_args: {'exit_name': node},
+            on_step_down=lambda *_args: None, on_entry_recovered=lambda *_args: None,
+            on_emergency_end=lambda: None, on_return_cancelled=lambda: None)
+        server = types.SimpleNamespace(panel=panel, serve_forever=lambda: None,
+                                       shutdown=lambda: None, server_close=lambda: None)
+        quiet = lambda *_args, **_kwargs: None  # noqa: E731
+        cancelled = service.cancelled = []
+        telegram = types.SimpleNamespace(prune=quiet, enqueue_admin=quiet, enqueue_clients=quiet,
+                                         cancel=lambda *_a, **kwargs: cancelled.append(kwargs.get('events')),
+                                         run_once=quiet, delivery_status=lambda *_a: [],
+                                         reachable=lambda *_a, **_k: True)
+        agent.lifecycle = lifecycle.Lifecycle(
+            agent, hy2_module=service, web_module=types.SimpleNamespace(make_server=lambda *_a, **_k: server),
+            tg=telegram, threaded=False, probe_entry=lambda _host: True)
+        events = cluster.events[node]
+        for name in ('on_emergency_leader', 'on_step_down', 'on_entry_recovered', 'on_emergency_end'):
+            setattr(events, name, (lambda name, record: lambda *args: (
+                record(*args), getattr(agent.lifecycle, name)(*args)))(name, getattr(Events, name).__get__(events)))
+        if agent.leader:
+            agent.leader.events = events
+
+    def test_leader_change_in_transition_then_cancel_keeps_access(self):
+        # VPN2-520: the old leader dies right after the deadline is fixed, the
+        # new one inherits the return without a bundle, the return is cancelled.
+        cluster = self.cluster()
+        services = {node: FakeHy2() for node in 'abc'}
+        for node in 'abc':
+            self.issuing(cluster, node, services[node])
+        leader, _recovery = self.recovered(cluster)
+        cluster.advance(15)
+        deadline = leader.data['recovery']['deadline']
+        self.assertIsNotNone(deadline)
+        self.assertTrue(services['a'].running)
+        # A follower keeps `ready` from an earlier leadership of its own; it
+        # must not make the old leader retire a bundle nobody replaced.
+        cluster.agents['b'].leader.data.update(ready=True, ready_at=cluster.clock() - 3600)
+        cluster.stop('a')
+        cluster.advance(90)
+        self.assertEqual(cluster.leaders(), ['b'])
+        cluster.start('a')
+        self.issuing(cluster, 'a', services['a'])
+        cluster.advance(60)
+        self.assertEqual(cluster.leaders(), ['b'])
+        # Until the new leader has its own bundle the old one keeps serving.
+        self.assertTrue(services['a'].running)
+        cluster.agents['entry'].ready = False
+        cluster.advance(45)
+        self.assertLess(cluster.wall(), deadline)
+        b = cluster.agents['b'].leader
+        self.assertIsNone(b.data['recovery'])
+        # The cancel notice of the return still goes out with the new bundle.
+        self.assertIn(['recovered'], services['b'].cancelled)
+        cluster.advance(30)
+        self.assertTrue(services['b'].running)
+        self.assertTrue(b.data['ready'])
+        self.assertEqual(services['b'].starts[-1], b.data['issued_generation'])
+        self.assertTrue(any(services[node].running for node in 'abc'))
+        # The old bundle ends one transition after the new one is ready.
+        cluster.advance(TRANSITION + 30)
+        self.assertFalse(services['a'].running)
+        self.assertTrue(services['b'].running)
+        self.assertTrue(all(agent.leader.data['active'] for node, agent in cluster.agents.items()
+                            if node != 'entry'))
 
     def test_undelivered_notice_ends_after_two_hours(self):
         cluster = self.cluster()

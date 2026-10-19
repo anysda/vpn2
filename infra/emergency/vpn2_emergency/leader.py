@@ -178,13 +178,25 @@ class Leader:
         if self.data.get('recovery'):
             # The return is confirmed: a new leader only keeps the agreed
             # deadline and ends the emergency, it never issues a new bundle.
+            # Without its own bundle it is not ready, so the former leader
+            # keeps serving; a cancelled return issues one (entry_state).
             if self.data['role'] != 'leader':
-                self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous)
+                if self.data['owner'] not in (None, self.node):
+                    self.data['previous_owner'] = self.data['owner']
+                    self.data['unissued'] = True
+                    self.data['ready'] = False
+                    self.data.pop('ready_at', None)
+                # A former leader taking over again keeps its own bundle
+                # instead of retiring it under the clients.
+                self.data.pop('retire_at', None)
+                self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous,
+                                 retiring=False)
                 self.state.save()
             return
         if self.data['owner'] not in (None, self.node):
             self.data['previous_owner'] = self.data['owner']
-        changed = self.data['owner'] != self.node or self.data.get('credentials_lost', False)
+        changed = (self.data['owner'] != self.node or self.data.get('credentials_lost', False)
+                   or self.data.get('unissued', False))
         resumed = self.data['role'] != 'leader'
         self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous,
                          retiring=False, retired=False)
@@ -195,6 +207,7 @@ class Leader:
             self.data['generation'] += 1
             self.data['issued_generation'] = self.data['generation']
             self.data['credentials_lost'] = False
+            self.data['unissued'] = False
             self.data['ready'] = False
             self.data.pop('ready_at', None)
         if not self.data['emergency_id']:
@@ -267,6 +280,10 @@ class Leader:
             self.data['cancelled_round'] = recovery['round']
             self.state.save()
             LOG.info('entry recovery cancelled: round %s, entry not ready again', recovery['round'])
+            if self.data.get('unissued') or self.data.get('credentials_lost'):
+                # A leader that took over during the return has no bundle of
+                # its own; the emergency goes on, so it issues one now.
+                self._become(self.data.get('autonomous', False))
             return
         self._deadline_due(wall)
 
@@ -295,7 +312,7 @@ class Leader:
         self.events.on_emergency_end()
         self.data.update(role='observer', active=False, owner=None, redirect=None, autonomous=False,
                          emergency_id='', previous_emergency=ended, recovery=None, ready=False,
-                         retiring=False, retired=False, pending_leader=False, grant=None,
+                         retiring=False, retired=False, pending_leader=False, grant=None, unissued=False,
                          failed_since=None, failed_rounds=0)
         for key in ('retire_at', 'ready_at', 'majority_at', 'previous_owner'):
             self.data.pop(key, None)

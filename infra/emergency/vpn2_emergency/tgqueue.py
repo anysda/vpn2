@@ -46,7 +46,9 @@ ADMIN_RECOVERED = ('Основной VPN восстановлен. Аварий�
                    'примерно через 10 минут')
 ADMIN_RETURN_CANCELLED = ('Основной VPN снова недоступен. Завершение аварийного режима '
                           'отменено, аварийная панель и доступ продолжают работать')
+ADMIN_ENTRY_MOVED = '. Основной сервер вернулся с новым адресом: {address}'
 EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled'}
+DEADLINE = '{deadline}'
 
 
 def _snapshot(state_dir):
@@ -160,28 +162,34 @@ def _db(state_dir, audience):
         db.close()
 
 
-def _put(state_dir, audience, emergency_id, generation, client_id, version, event,
-         chat, devices, parts, reason):
+def _insert(db, emergency_id, generation, client_id, version, event,
+            chat, devices, parts, reason):
+    cursor = db.execute('''INSERT OR IGNORE INTO delivery
+        (emergency,generation,client,version,event,chat,devices,state,reason)
+        VALUES (?,?,?,?,?,?,?,?,?)''',
+        (emergency_id, generation, client_id, str(version), event, chat,
+         json.dumps(devices), 'blocked' if reason else 'pending', reason))
+    if cursor.rowcount:
+        db.executemany('INSERT INTO part VALUES (?,?,?,0)',
+                       ((cursor.lastrowid, i, json.dumps(part, ensure_ascii=False))
+                        for i, part in enumerate(parts)))
+
+
+def _put(state_dir, audience, *args):
     with _db(state_dir, audience) as db, db:
-        cursor = db.execute('''INSERT OR IGNORE INTO delivery
-            (emergency,generation,client,version,event,chat,devices,state,reason)
-            VALUES (?,?,?,?,?,?,?,?,?)''',
-            (emergency_id, generation, client_id, str(version), event, chat,
-             json.dumps(devices), 'blocked' if reason else 'pending', reason))
-        if cursor.rowcount:
-            db.executemany('INSERT INTO part VALUES (?,?,?,0)',
-                           ((cursor.lastrowid, i, json.dumps(part, ensure_ascii=False))
-                            for i, part in enumerate(parts)))
+        _insert(db, *args)
     return delivery_status(state_dir, audience)
 
 
 def enqueue_admin(state_dir, *, emergency_id, generation, bundle_version, exit_name,
                   issued_at, panel_url=None, panel_password=None, panel_ready=False,
-                  event='initial', deadline=None, certificate_fingerprint=None):
+                  event='initial', deadline=None, certificate_fingerprint=None,
+                  entry_address=None):
     """Persist a ready panel's password once; re-enqueue never replaces it.
 
     For recovered/return_cancelled no panel credentials are needed. The recovery
-    deadline is supplied by the lifecycle owner and must include a time zone.
+    deadline must include a time zone; without it run_once fills in the deadline
+    it is given, so the first delivered message fixes the time for everyone.
     """
     if event not in EVENTS:
         raise ValueError('unknown event')
@@ -200,6 +208,8 @@ def enqueue_admin(state_dir, *, emergency_id, generation, bundle_version, exit_n
             text += ADMIN_SELF_SIGNED.format(fingerprint=certificate_fingerprint)
     else:
         text = _notification(event, deadline, admin=True)
+        if event == 'recovered' and entry_address:
+            text += ADMIN_ENTRY_MOVED.format(address=entry_address)
     snapshot = _snapshot(state_dir)
     chat = snapshot.get('admin_chat_id')
     reason = '' if chat else 'нет канала доставки'
@@ -211,7 +221,9 @@ def enqueue_admin(state_dir, *, emergency_id, generation, bundle_version, exit_n
 
 def _notification(event, deadline, admin=False):
     if event == 'recovered':
-        return (ADMIN_RECOVERED if admin else RECOVERED).format(deadline=_human(deadline))
+        # No deadline yet: the placeholder stays until the first delivery.
+        return (ADMIN_RECOVERED if admin else RECOVERED).format(
+            deadline=_human(deadline) if deadline else DEADLINE)
     return ADMIN_RETURN_CANCELLED if admin else RETURN_CANCELLED
 
 
@@ -224,12 +236,20 @@ def enqueue_client(state_dir, *, emergency_id, generation, client_id, bundle_ver
     documents, avoiding unusable split credentials. No password/admin payload
     argument exists on the client path. Device names remain plain, unparsed text.
     """
+    row = _client_row(_snapshot(state_dir), client_id, emergency_id=emergency_id,
+                      generation=generation, bundle_version=bundle_version, exit_name=exit_name,
+                      issued_at=issued_at, exit_url=exit_url, profiles=profiles, event=event,
+                      deadline=deadline, now=now)
+    return _put(state_dir, 'client', *row)
+
+
+def _client_row(snapshot, client_id, *, emergency_id, generation, bundle_version, exit_name,
+                issued_at, exit_url, profiles=None, event='initial', deadline=None, now=None):
     if event not in EVENTS:
         raise ValueError('unknown event')
     url = _url(exit_url)
     instructions = parse.urlunsplit((url.scheme, url.netloc, '/instructions', '', ''))
     footer = _footer(exit_name, issued_at)
-    snapshot = _snapshot(state_dir)
     client, reason = _reason(snapshot, client_id, time.time() if now is None else now)
     parts, devices = [], []
     if not reason:
@@ -258,15 +278,22 @@ def enqueue_client(state_dir, *, emergency_id, generation, client_id, bundle_ver
             parts.extend(_texts(_notification(event, deadline), footer))
     if not snapshot.get('bot_token') and not reason:
         reason = 'автодоставка невозможна: нет токена бота'
-    return _put(state_dir, 'client', emergency_id, generation, client_id, bundle_version,
-                event, client.get('telegram_chat_id') if client else None,
-                devices, parts, reason)
+    return (emergency_id, generation, client_id, bundle_version, event,
+            client.get('telegram_chat_id') if client else None, devices, parts, reason)
 
 
-def enqueue_clients(state_dir, **kwargs):
-    """Queue every snapshot client, so each denial reason is visible to the admin."""
-    for client in _snapshot(state_dir).get('clients', []):
-        enqueue_client(state_dir, client_id=client['id'], **kwargs)
+def enqueue_clients(state_dir, *, clients=None, **kwargs):
+    """Queue every snapshot client (or only the given IDs), so each denial reason
+    is visible to the admin. One snapshot read and one transaction for all."""
+    snapshot = _snapshot(state_dir)
+    ids = [client['id'] for client in snapshot.get('clients', [])]
+    if clients is not None:
+        wanted = set(clients)
+        ids = [client_id for client_id in ids if client_id in wanted]
+    rows = [_client_row(snapshot, client_id, **kwargs) for client_id in dict.fromkeys(ids)]
+    with _db(state_dir, 'client') as db, db:
+        for row in rows:
+            _insert(db, *row)
     return delivery_status(state_dir)
 
 
@@ -288,7 +315,7 @@ class _NoRedirect(request.HTTPRedirectHandler):
         return None
 
 
-def _send(token, chat, part, api_base, timeout):
+def _send(token, chat, part, api_base, timeout, opener=None):
     # Never include raw exceptions/responses in status: both can contain secrets.
     endpoint = parse.urlsplit(api_base)
     if (endpoint.scheme != 'https'
@@ -314,7 +341,7 @@ def _send(token, chat, part, api_base, timeout):
     req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/{method}',
                           data=body, headers={'Content-Type': content_type})
     try:
-        opener = request.build_opener(_NoRedirect())
+        opener = opener or request.build_opener(_NoRedirect())
         try:
             response = opener.open(req, timeout=timeout)
         except error.HTTPError as exc:
@@ -336,16 +363,20 @@ def _send(token, chat, part, api_base, timeout):
 
 
 def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=None,
-             max_messages=16):
+             max_messages=16, deadline=None):
     """Bounded worker tick, admin first, at most one part per recipient per tick.
 
     No sleeps or background threads. Schedule ticks outside Hysteria2/web startup.
     A nonblocking process lock prevents concurrent workers sending the same part.
     Retry clocks are persisted wall times so process/host restarts preserve them.
+    deadline (ISO with zone) fills recovery messages queued without one; they
+    wait while it is None. One opener serves the whole pass: building one per
+    message loaded the CA store each time.
     """
     directory = _prepare(state_dir)
     fd = os.open(directory / 'worker.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     sent = 0
+    opener = None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -389,10 +420,15 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                     if part is None:
                         # A blocked enqueue with no profiles must be explicitly reissued.
                         continue
+                    payload = json.loads(part['payload'])
+                    if row['event'] == 'recovered' and DEADLINE in payload.get('text', ''):
+                        if deadline is None:
+                            continue
+                        payload['text'] = payload['text'].replace(DEADLINE, _human(deadline))
                     chats.add(chat)
                     max_messages -= 1
-                    ok, reason, retry_after = _send(token, chat, json.loads(part['payload']),
-                                                   api_base, timeout)
+                    opener = opener or request.build_opener(_NoRedirect())
+                    ok, reason, retry_after = _send(token, chat, payload, api_base, timeout, opener)
                     with db:
                         if ok:
                             db.execute("UPDATE part SET sent=1,payload='' WHERE delivery=? AND position=?",

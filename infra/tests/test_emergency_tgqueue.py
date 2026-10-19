@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import types
 import unittest
@@ -486,9 +487,80 @@ class TelegramQueueTests(unittest.TestCase):
             self.assertEqual(send.call_args.args[0], '456:replacement-fixture')
         self.assertEqual(self.bot.calls[0][1]['text'], self.bot.calls[1][1]['text'])
 
+    def many_clients(self, count):
+        self.snapshot['clients'] = [
+            {'id': i, 'name': f'c{i}', 'telegram_chat_id': 1000 + i, 'allowed': True,
+             'expires_at': None, 'devices': [{'id': 10000 + i, 'name': f'd{i}'}]}
+            for i in range(1, count + 1)]
+        self.save_snapshot()
+        return {10000 + i: {'uri': f'hysteria2://p{i}@203.0.113.1:443/'} for i in range(1, count + 1)}
+
+    def enqueue_all(self, profiles, **kwargs):
+        started = time.perf_counter()
+        tgqueue.enqueue_clients(self.state, **(self.base | {
+            'exit_url': 'https://203.0.113.1', 'profiles': profiles, 'now': NOW} | kwargs))
+        return time.perf_counter() - started
+
+    def test_enqueue_is_linear_with_filled_history(self):
+        profiles = self.many_clients(500)
+        empty = self.enqueue_all(profiles)
+        for generation in (2, 3, 4):
+            self.enqueue_all(profiles, generation=generation)
+        filled = self.enqueue_all(profiles, generation=5)
+        self.assertEqual(len(self.status()), 2500)
+        # Each client used to re-read the whole history: 500 clients took
+        # twice as long once earlier generations were stored.
+        self.assertLess(filled, empty * 1.5 + 0.5, (empty, filled))
+        self.assertLess(filled, 5, filled)
+        print(f'enqueue 500 clients: empty {empty:.2f} s, history 2000 rows {filled:.2f} s')
+
+    def peak_rss(self, count):
+        directory = self.state / f'rss-{count}'
+        directory.mkdir()
+        (directory / 'fixture.json').write_text((self.state / 'fixture.json').read_text())
+        for client_id in range(1, count + 1):
+            tgqueue.enqueue_client(directory, client_id=client_id, **(self.base | {
+                'exit_url': 'https://203.0.113.1', 'profiles': self.profiles_many, 'now': NOW}))
+        output = subprocess.run([sys.executable, __file__, '--rss', str(directory), self.api, str(count)],
+                                capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(int(output[0]), count * 2)
+        return int(output[1]) / 1024
+
+    def test_pass_memory_does_not_grow_with_messages(self):
+        self.profiles_many = self.many_clients(160)
+        small, large = self.peak_rss(10), self.peak_rss(160)
+        # A urllib opener per message loaded the CA store each time (~0.7 MiB).
+        self.assertLess(large - small, 8, (small, large))
+        print(f'pass peak RSS: 20 messages {small:.1f} MiB, 320 messages {large:.1f} MiB')
+
+    def test_recovery_deadline_is_filled_at_delivery(self):
+        self.admin(event='recovered', entry_address='198.51.100.7')
+        self.enqueue(event='recovered')
+        self.drain()
+        self.assertEqual(self.bot.calls, [])
+        self.assertEqual({row['state'] for row in self.status() + self.status('admin')}, {'pending'})
+        deadline = '2026-01-01T03:10:00+03:00'
+        self.tick(deadline=deadline)
+        texts = [data['text'].removesuffix(FOOTER) for _, data in self.bot.calls]
+        self.assertEqual(texts, [
+            'Основной VPN восстановлен. Аварийный режим будет завершён в 03:10 01.01.2026 '
+            '(UTC+03:00), примерно через 10 минут. Основной сервер вернулся с новым адресом: '
+            '198.51.100.7',
+            'Основное VPN-подключение восстановлено. Отключите аварийное подключение в используемом '
+            'приложении и включите прежний профиль WireGuard, OpenVPN или IKEv2. Аварийный доступ '
+            'будет отключён в 03:10 01.01.2026 (UTC+03:00), примерно через 10 минут'])
+
 
 if __name__ == '__main__':
-    if len(sys.argv) > 1 and sys.argv[1] == '--worker':
+    if len(sys.argv) > 1 and sys.argv[1] == '--rss':
+        import resource
+        with snapshot_stub():
+            sent = 0
+            for _ in range(3):
+                sent += tgqueue.run_once(sys.argv[2], api_base=sys.argv[3], now=NOW,
+                                         max_messages=int(sys.argv[4]))
+        print(sent, resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    elif len(sys.argv) > 1 and sys.argv[1] == '--worker':
         with snapshot_stub():
             tgqueue.run_once(sys.argv[2], api_base=sys.argv[3], now=NOW)
     else:

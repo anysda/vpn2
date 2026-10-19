@@ -384,6 +384,18 @@ class LifecycleTests(unittest.TestCase):
         self.advance(900, ready=False)
         self.assertTrue(data['active'])
 
+    def test_return_announced_by_former_leader_is_cancelled_to_its_audience(self):
+        # Leader A told everyone and died; this leader inherited the round with
+        # its deadline, so its own queue holds no `recovered` rows.
+        self.lead()
+        self.agent.leader.data['recovery'] = {'round': 1, 'confirmed': self.wall - 60,
+                                              'deadline': self.wall + 540, 'proposed': self.wall + 540}
+        self.advance(15)
+        self.assertEqual(self.bot.texts, [])
+        self.advance(30, ready=False)
+        self.assertIsNone(self.agent.leader.data['recovery'])
+        self.assertEqual({chat for chat, text in self.bot.texts if 'отмен' in text.lower()}, {900, 101, 102})
+
     def test_restart_restores_issuance_without_new_messages(self):
         self.recover()
         self.advance(15)

@@ -464,11 +464,23 @@ class Lifecycle:
         common = dict(emergency_id=emergency_id, generation=generation, bundle_version=number,
                       exit_name=self._exit_name(), issued_at=iso(self.agent.wall()),
                       event='return_cancelled')
+        rows = self._rows(emergency_id, number)
+        admin = self._rows(emergency_id, number, 'admin')
+        if not rows and not admin:
+            # A former leader announced the round (its deadline was inherited)
+            # and its queue stayed with it: everyone it addressed hears.
+            rows = self.tg.enqueue_clients(self.directory, exit_url=self._panel().url, **common)
+            self.tg.enqueue_admin(self.directory, **common)
+            clients = {row['client'] for row in rows if row['event'] == 'return_cancelled'
+                       and row['version'] == str(number) and row['state'] != 'blocked'}
+            LOG.info('entry recovery cancelled: round announced by a former leader, '
+                     'notice queued for %s clients', len(clients))
+            return
         # Only those who were told about the return hear that it is off.
-        clients = [row['client'] for row in self._rows(emergency_id, number) if row['sent']]
+        clients = [row['client'] for row in rows if row['sent']]
         if clients:
             self.tg.enqueue_clients(self.directory, clients=clients, exit_url=self._panel().url, **common)
-        if any(row['sent'] for row in self._rows(emergency_id, number, 'admin')):
+        if any(row['sent'] for row in admin):
             self.tg.enqueue_admin(self.directory, **common)
         LOG.info('entry recovery cancelled: notice queued for %s clients', len(clients))
 

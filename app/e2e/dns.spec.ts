@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, test, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
+import { CLOCK_MARGIN_MS, pauseClockAt } from './support/clock'
 
 // Вкладка DNS против подставного AdGuard Home (e2e/support/fake-backends.mjs):
 // в журнале есть ads.example.net из списка и mc.yandex.ru по своему правилу.
@@ -23,8 +24,7 @@ test.describe('DNS', () => {
     await openHome(page, '/dns')
     await page.getByRole('tab', { name: 'Перезаписи' }).click()
     await expect(page.getByRole('button', { name: 'Добавить перезапись' })).toBeVisible()
-    await page.clock.install()
-    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+    await pauseClockAt(page, Date.now() + CLOCK_MARGIN_MS)
     await page.getByRole('button', { name: 'Добавить перезапись' }).click()
     const dlg = page.getByRole('dialog', { name: 'Добавить перезапись' })
     const answer = dlg.getByRole('textbox', { name: 'Ответ' })

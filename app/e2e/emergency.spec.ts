@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { createInterface } from 'node:readline'
 import QRCode from 'qrcode-svg'
+import { pauseClockAt } from './support/clock'
 import { loginApi } from './support/fixtures'
 
 test('аварийная статика: общие компоненты, состояния, профили, публичная инструкция', async ({ browser, page }, testInfo) => {
@@ -96,8 +97,7 @@ test('аварийная статика: общие компоненты, сос
     // Ответ пришёл между тиками таймера (часы страницы ушли вперёд, тика не было): свежий снимок не «-1 мин».
     await action('fresh')
     const probe = await context.newPage()
-    await probe.clock.install({ time: 1_800_000_000_000 })
-    await probe.clock.pauseAt(1_800_000_000_000)
+    await pauseClockAt(probe, 1_800_000_000_000)
     await probe.route('**/api/state', async (route) => { await probe.clock.setSystemTime(1_800_000_000_900); await route.continue() })
     await probe.goto(origin)
     await expect(probe.getByText('Возраст снимка:', { exact: false })).toHaveText('Возраст снимка: 0 мин')

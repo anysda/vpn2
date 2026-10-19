@@ -8,9 +8,11 @@ import contextlib
 import hashlib
 import io
 import importlib.util
+import json
 import os
 from pathlib import Path
 import socket
+import sys
 import tempfile
 import threading
 import unittest
@@ -170,6 +172,17 @@ class ProbeControlTests(unittest.TestCase):
         self.run_probe(self.control_api)
         self.assertEqual(tree(self.root), self.installed)
 
+    def test_killed_run_socket_path_is_given_back(self):
+        drop_in = self.root / 'run/systemd/system/vpn2-control.socket.d/zz-probe.conf'
+        drop_in.parent.mkdir(parents=True)
+        drop_in.write_text('[Socket]\nListenStream=\nListenStream=/run/vpn2-control-probe/control.sock\n')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.probe.preserve()
+        self.assertIn('interrupted probe run found', output.getvalue())
+        self.probe.put_back()
+        self.assertFalse(drop_in.exists())
+        self.assertEqual(self.listen_path(), self.root / 'run/vpn2-control/control.sock')
 
     def test_group_only_accepts_refusal_sent_before_the_request(self):
         # A service that refuses by peer credentials and closes before reading
@@ -199,6 +212,106 @@ class ProbeControlTests(unittest.TestCase):
                     mock.patch.object(self.probe.sys, 'argv', ['probe_control.py', '--group-only']):
                 self.probe.main()
             worker.join(5)
+
+    def listen_path(self):
+        """Where systemd puts vpn2-control.socket: the unit plus its drop-ins."""
+        paths = []
+        units = [ROOT / 'infra/control/vpn2-control.socket']
+        for base in ('etc/systemd/system', 'run/systemd/system'):
+            units += sorted((self.root / base / 'vpn2-control.socket.d').glob('*.conf'))
+        for unit in units:
+            for line in unit.read_text().splitlines():
+                if line.startswith('ListenStream='):
+                    value = line.split('=', 1)[1]
+                    paths = [value] if value else []
+        self.assertEqual(len(paths), 1)
+        return self.root / paths[0].lstrip('/')
+
+    @contextlib.contextmanager
+    def service(self):
+        # The service's own version check over the state directory it sees now.
+        sys.path.insert(0, str(ROOT / 'infra/control'))
+        self.addCleanup(sys.path.remove, str(ROOT / 'infra/control'))
+        spec = importlib.util.spec_from_file_location('backend_under_test', ROOT / 'infra/control/backend.py')
+        backend = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(backend)
+        state = backend.Backend(self.root, self.root / 'var/lib/vpn2-control')
+        path = self.listen_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        listener = socket.socket(socket.AF_UNIX)
+        listener.bind(str(path))
+        listener.listen(4)
+        listener.settimeout(0.05)
+        done = threading.Event()
+
+        def serve():
+            while not done.is_set():
+                try:
+                    connection, _address = listener.accept()
+                except TimeoutError:
+                    continue
+                with connection:
+                    request = json.loads(connection.makefile('rb').readline())
+                    try:
+                        state.version(request['method'].split('.')[0], request['params'])
+                        reply = {'api': 1, 'ok': True, 'result': {}}
+                    except Exception as error:
+                        reply = {'api': 1, 'ok': False, 'error': str(error)}
+                    connection.sendall(json.dumps(reply).encode() + b'\n')
+
+        worker = threading.Thread(target=serve)
+        worker.start()
+        try:
+            yield
+        finally:
+            done.set()
+            worker.join(5)
+            listener.close()
+            path.unlink()
+
+    def panel(self, version):
+        """The panel container's view: /run/vpn2-control bind-mounted."""
+        client = {'device_id': 3, 'username': 'device3', 'password': 'panel-password-1', 'ip': '10.68.68.4'}
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(5)
+            try:
+                connection.connect(str(self.root / 'run/vpn2-control/control.sock'))
+            except OSError as error:
+                return error
+            connection.sendall(json.dumps({'api': 1, 'method': 'ikev2.apply',
+                                           'params': {'version': version, 'clients': [client]}}).encode() + b'\n')
+            return json.loads(connection.makefile('rb').readline())
+
+    def test_other_caller_during_probe_neither_changes_it_nor_gets_ok_from_fixture(self):
+        root = self.root
+        real = socket.socket
+
+        class Rooted(real):
+            # Older probes connect to the absolute path; map it into the test root.
+            def connect(self, path):
+                if not str(path).startswith(str(root)):
+                    path = str(root) + str(path)
+                super().connect(path)
+
+        replies = {}
+
+        def exercise():
+            with self.service():
+                replies['panel'] = self.panel(5)
+                client = {'device_id': 7, 'username': 'device7', 'password': 'test-password-123', 'ip': '10.68.68.2'}
+                replies['probe'] = self.probe.request('ikev2.apply', {'version': 1, 'clients': [client]})
+
+        with mock.patch.object(self.probe.socket, 'socket', Rooted):
+            self.run_probe(exercise)
+        self.assertEqual(replies['probe'], {'api': 1, 'ok': True, 'result': {}})
+        self.assertIsInstance(replies['panel'], OSError)
+        self.assertEqual(sorted((root / 'run/systemd').rglob('*.conf')), [])
+        # After the run the installation listens where the panel retries.
+        with self.service():
+            self.assertEqual(self.panel(5), {'api': 1, 'ok': True, 'result': {}})
+        self.assertGreaterEqual(json.loads((root / 'var/lib/vpn2-control/ikev2.json').read_text())['version'], 5)
+        self.assertIn('daemon-reload', self.calls())
+
 
 if __name__ == '__main__':
     unittest.main()

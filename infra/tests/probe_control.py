@@ -8,8 +8,12 @@ The fixture needs its own WG/OpenVPN/IKEv2 configuration. The installation's
 directories are moved aside for the run and moved back afterwards, also on
 failure; the probe then checks them byte for byte and restarts the services
 that were running. An interrupted run is recovered on the next start.
+During the run the service listens on a private socket: the panel and other
+callers see the service as unavailable and retry after the restore, they never
+change or confirm the fixture's temporary state.
 """
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -29,6 +33,13 @@ STRONGSWAN = 'strongswan-starter'
 PRESERVED = ('/etc/wireguard', '/etc/openvpn/server', '/etc/swanctl', '/var/lib/vpn2-control')
 SAVED = '.vpn2-probe-saved'
 STRANGER = 'control-test-stranger'
+# The panel container mounts /run/vpn2-control. For the run the installed
+# socket unit listens on a path nobody else knows, so a panel retry gets "no
+# service" instead of OK from the fixture's state, and repeats after restore.
+# A runtime drop-in in /run also disappears on reboot.
+INSTALLED_SOCKET = '/run/vpn2-control/control.sock'
+SOCKET = '/run/vpn2-control-probe/control.sock'
+DROP_IN = '/run/systemd/system/vpn2-control.socket.d/zz-probe.conf'
 
 
 def at(path):
@@ -65,7 +76,18 @@ def manifest():
     return rows
 
 
+def private_socket(enabled):
+    if enabled:
+        write(DROP_IN, f'[Socket]\nListenStream=\nListenStream={SOCKET}\n', 0o644)
+    elif at(DROP_IN).exists():
+        at(DROP_IN).unlink()
+    else:
+        return
+    systemctl('daemon-reload').check_returncode()
+
+
 def put_back():
+    private_socket(False)
     for top in PRESERVED:
         saved = Path(str(at(top)) + SAVED)
         if saved.exists():
@@ -87,13 +109,15 @@ def preflight():
 
 
 def preserve():
-    if any(Path(str(at(top)) + SAVED).exists() for top in PRESERVED):
+    if at(DROP_IN).exists() or any(Path(str(at(top)) + SAVED).exists() for top in PRESERVED):
         print('interrupted probe run found: restoring installation first', flush=True)
+        systemctl('stop', 'vpn2-control.service', 'vpn2-control.socket')
         put_back()
     active = [unit for unit in runtime_units() if systemctl('is-active', '--quiet', unit).returncode == 0]
     # Stopped first: a running daemon may rewrite its files (status log, wg SaveConfig).
     systemctl('stop', 'vpn2-control.service', 'vpn2-control.socket',
               'openvpn-server@server.service', 'wg-quick@wg0.service')
+    private_socket(True)
     before = manifest()
     stranger = subprocess.run(['id', STRANGER], capture_output=True, timeout=5).returncode == 0
     for top in PRESERVED:
@@ -114,6 +138,8 @@ def restore(saved):
         command('userdel', STRANGER)
     shutil.rmtree(at('/tmp/vpn2-svc'), ignore_errors=True)
     put_back()
+    with contextlib.suppress(OSError):
+        at(SOCKET).parent.rmdir()
     after = manifest()
     assert after == saved['manifest'], 'installation files differ after restore'
     print(f'installation restored byte for byte: {len(after)} paths', flush=True)
@@ -129,7 +155,7 @@ def restore(saved):
 def request(method, params):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(35)
-        connection.connect('/run/vpn2-control/control.sock')
+        connection.connect(str(at(SOCKET)))
         try:
             connection.sendall(json.dumps({'api': 1, 'method': method, 'params': params}).encode() + b'\n')
         except (BrokenPipeError, ConnectionResetError):
@@ -300,6 +326,9 @@ pools {
 ''')
     command('systemctl', 'restart', STRONGSWAN)
     command('systemctl', 'start', 'vpn2-control.socket')
+    with socket.socket(socket.AF_UNIX) as other, contextlib.suppress(OSError):
+        other.connect(str(at(INSTALLED_SOCKET)))
+        raise AssertionError(f'{INSTALLED_SOCKET} still accepts other callers during the probe')
 
 
 def main():

@@ -65,6 +65,33 @@ insecure_exits() {
   done
 }
 service() { systemctl is-active --quiet "$1"; }
+# Аварийка ставится стадией 23 из образа: версия образа и всё, что нужно
+# активации, лежат на узле заранее (docker для проверки не будим).
+emergency_image() {
+  python3 - /opt/vpn2-emergency <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+release = json.loads((root / 'release.json').read_text())
+print(f"аварийный образ: версия {release['version']}, ревизия {release['revision'][:12]}, {release['image'][:19]}")
+package = root / 'vpn2_emergency'
+missing = [name for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html')
+           if not (package / name).is_file()]
+if missing:
+    print('нет файлов аварийки: ' + ', '.join(missing))
+    raise SystemExit(1)
+PY
+}
+# Аварийный Hysteria2 ждёт выключенным: его порт никто не слушает.
+emergency_standby() {
+  local port listeners
+  port=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1]))["port"]))' /etc/vpn2/emergency-hy2.json) || return
+  listeners=$(ss -H -uln "sport = :$port") || return
+  [[ -z "$listeners" ]] || { echo "udp/$port уже слушает"; return 1; }
+  echo "аварийный Hysteria2: udp/$port закрыт"
+}
 forwarding() { local value; value=$(sysctl -n net.ipv4.ip_forward) && [[ "$value" == 1 ]]; }
 firewall() {
   LC_ALL=C ufw status | grep -x 'Status: active' >/dev/null \
@@ -202,6 +229,15 @@ check 'ufw active' firewall
 check 'fail2ban active' service fail2ban
 check 'node_exporter active' service node_exporter
 check 'sing-box active' service sing-box
+# Первый деплой проверяет экзит сразу после 10-foreign, до стадии 23: там
+# аварийки ещё нет. Итоговый verify идёт после 23, и она уже обязана быть.
+EMERGENCY_STAMP=/var/anysda/.stamps/23-emergency
+if [[ -e "$EMERGENCY_STAMP" ]]; then
+  check 'аварийка: агент vpn2-emergency active' service vpn2-emergency.service
+  check 'аварийка: образ установлен' emergency_image
+else
+  echo "[$HOST_TAG] аварийка: стадия 23 ещё не ставилась, проверка в итоговом verify"
+fi
 
 if [[ "$HOST_TAG" == ru ]]; then
   # После 10/20 первый снимок ещё может относиться к старому туннелю.
@@ -270,6 +306,7 @@ else
   fi
   check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
   check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
+  [[ ! -e "$EMERGENCY_STAMP" ]] || check 'аварийка: Hysteria2 в ожидании' emergency_standby
 fi
 
 write_report

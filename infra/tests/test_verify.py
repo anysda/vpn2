@@ -93,6 +93,8 @@ elif name == 'ss':
     if fault == 'bare':
         sys.exit(0)
     ports = ('7898', '500', '4500', '443', '8443', '9443')
+    if fault == 'emergency-listening':
+        ports += ('18443',)
     for port in ports:
         if fault != 'port-' + port and (':' + port in args or ':' not in args):
             print('UNCONN 0 0 127.0.0.1:' + port + ' 0.0.0.0:*')
@@ -204,6 +206,20 @@ class VerifyTest(unittest.TestCase):
                 state = json.loads(state_file.read_text())
                 del state['checked_at']
                 state_file.write_text(json.dumps(state))
+            # Аварийка из образа: версия и файлы, которые стадия 23 кладёт на узел.
+            emergency = root / 'emergency'
+            (emergency / 'vpn2_emergency/static').mkdir(parents=True)
+            for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html'):
+                if fault != 'emergency-' + name:
+                    (emergency / 'vpn2_emergency' / name).touch()
+            if fault != 'emergency-release':
+                (emergency / 'release.json').write_text(json.dumps(
+                    {'version': 'dev', 'revision': 'a' * 40, 'image': 'sha256:' + 'b' * 64}))
+            stamp = root / 'stamp-23-emergency'
+            if fault != 'emergency-not-yet':
+                stamp.touch()
+            hy2_options = root / 'emergency-hy2.json'
+            hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
             config = root / 'router.json'
             config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
             failover.write_text('#!/usr/bin/env python3\nimport runpy\nfrom pathlib import Path\n'
@@ -223,6 +239,9 @@ class VerifyTest(unittest.TestCase):
             source = source.replace('/usr/local/bin/anysda-yt-check', str(yt))
             source = source.replace('/usr/local/bin/anysda-yt-failover', str(failover))
             source = source.replace('/tmp/yt-check.out', str(root / 'yt-check.out'))
+            source = source.replace('/opt/vpn2-emergency', str(emergency))
+            source = source.replace('/etc/vpn2/emergency-hy2.json', str(hy2_options))
+            source = source.replace('/var/anysda/.stamps/23-emergency', str(stamp))
             script = root / 'verify.sh'
             script.write_text(source)
             traffic = root / 'traffic.py'
@@ -349,6 +368,30 @@ class VerifyTest(unittest.TestCase):
                 result = self.run_verify(fault, role='exit')
                 self.assertNotEqual(result.returncode, 0, result.stdout)
                 self.assertIn('verify FAILED:', result.stdout)
+
+    def test_emergency_image_version_and_standby(self):
+        for role in ('ru', 'exit'):
+            with self.subTest(role=role):
+                result = self.run_verify(role=role)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn('аварийный образ: версия dev, ревизия aaaaaaaaaaaa', result.stdout)
+                self.assertIn('✓ аварийка: образ установлен', result.stdout)
+                self.assertIn('✓ аварийка: агент vpn2-emergency active', result.stdout)
+        print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
+        self.assertIn('✓ аварийка: Hysteria2 в ожидании', result.stdout)
+        faults = {'emergency-release': 'аварийка: образ', 'emergency-static/instructions.html': 'аварийка: образ',
+                  'emergency-agent.py': 'аварийка: образ', 'vpn2-emergency.service': 'аварийка: агент',
+                  'emergency-listening': 'аварийка: Hysteria2'}
+        for fault, label in faults.items():
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault, role='exit')
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn('✗ ' + label, result.stdout)
+        # First deploy verifies each exit right after 10-foreign, before stage 23.
+        result = self.run_verify('emergency-not-yet', role='exit')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('аварийка: образ', result.stdout)
+        self.assertIn('аварийка: стадия 23 ещё не ставилась', result.stdout)
 
     def test_only_youtube_can_report_unmeasured(self):
         for fault in ('systemctl-error2', 'ssh-error2', 'curl-error2'):

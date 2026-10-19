@@ -17,14 +17,18 @@ let queue: Promise<unknown> = Promise.resolve()
  * Включить или выключить экзит. false — не записано: выключался бы последний
  * включённый экзит, и watchdog'у некуда было бы уводить иностранный трафик.
  * Проверка внутри очереди, по тому состоянию, поверх которого и пишем.
+ * `written` вызывается в той же очереди после записи с прежним состоянием
+ * экзита: записи журнала идут в порядке переключений.
  */
-export function toggleExit(tag: string, disabled: boolean, exits: string[]): Promise<boolean> {
+export function toggleExit(tag: string, disabled: boolean, exits: string[], written?: (wasDisabled: boolean) => Promise<unknown>): Promise<boolean> {
   const run = queue.then(async () => {
     const current = new Set(await readDisabledExits())
+    const wasDisabled = current.has(tag)
     if (disabled) current.add(tag)
     else current.delete(tag)
     if (exits.every(t => current.has(t))) return false
     await writeDisabledExits([...current].filter(t => exits.includes(t)))
+    await written?.(wasDisabled)
     return true
   })
   queue = run.catch(() => {})

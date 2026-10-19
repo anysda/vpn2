@@ -10,7 +10,9 @@ import io
 import importlib.util
 import os
 from pathlib import Path
+import socket
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -168,6 +170,35 @@ class ProbeControlTests(unittest.TestCase):
         self.run_probe(self.control_api)
         self.assertEqual(tree(self.root), self.installed)
 
+
+    def test_group_only_accepts_refusal_sent_before_the_request(self):
+        # A service that refuses by peer credentials and closes before reading
+        # the request: the probe's write then fails with EPIPE.
+        address = str(self.root / 'control.sock')
+        closed = threading.Event()
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(address)
+            listener.listen(1)
+
+            def refuse():
+                connection, _address = listener.accept()
+                with connection:
+                    connection.sendall(b'{"api": 1, "ok": false, "error": "forbidden"}\n')
+                closed.set()
+
+            worker = threading.Thread(target=refuse)
+            worker.start()
+            real = socket.socket
+
+            class Late(real):
+                def connect(self, _path):
+                    super().connect(address)
+                    closed.wait(5)
+
+            with mock.patch.object(self.probe.socket, 'socket', Late), \
+                    mock.patch.object(self.probe.sys, 'argv', ['probe_control.py', '--group-only']):
+                self.probe.main()
+            worker.join(5)
 
 if __name__ == '__main__':
     unittest.main()

@@ -130,7 +130,11 @@ def request(method, params):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(35)
         connection.connect('/run/vpn2-control/control.sock')
-        connection.sendall(json.dumps({'api': 1, 'method': method, 'params': params}).encode() + b'\n')
+        try:
+            connection.sendall(json.dumps({'api': 1, 'method': method, 'params': params}).encode() + b'\n')
+        except (BrokenPipeError, ConnectionResetError):
+            # A refusal may already be waiting: read it, not just the error.
+            pass
         return json.loads(connection.makefile('rb').readline())
 
 

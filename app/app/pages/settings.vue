@@ -58,9 +58,12 @@ const totpCode = ref('')
 const setupPwd = ref('')
 const totpLoading = ref(false)
 
-const totpQrSvg = computed(() => {
-  if (!totpUri.value) return ''
-  return new QRCode({ content: totpUri.value, padding: 4, ecl: 'M', swap: true, container: 'svg-viewbox' }).svg()
+// QR разметкой: квадрат на каждый тёмный модуль, тихая зона 4 модуля.
+const totpQr = computed(() => {
+  if (!totpUri.value) return null
+  const { modules } = new QRCode({ content: totpUri.value, ecl: 'M' }).qrcode
+  const dark = modules.flatMap((row, y) => row.flatMap((on, x) => on ? [{ x: x + 4, y: y + 4 }] : []))
+  return { size: modules.length + 8, dark }
 })
 
 async function startSetup() {
@@ -303,7 +306,12 @@ async function saveSso() {
           <form v-else @submit.prevent="confirmSetup">
             <p class="mt">Отсканируй QR в аутентификаторе или вставь секрет вручную:</p>
             <div class="qrrow">
-              <div class="qr" v-html="totpQrSvg" />
+              <div class="qr">
+                <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" shape-rendering="crispEdges">
+                  <rect :width="totpQr.size" :height="totpQr.size" fill="#fff" />
+                  <rect v-for="m in totpQr.dark" :key="`${m.x}-${m.y}`" :x="m.x" :y="m.y" width="1" height="1" fill="#000" />
+                </svg>
+              </div>
               <input class="in mono" readonly :value="totpSecret" aria-label="Секрет">
             </div>
             <label class="fld qrcode"><span>Введи 6-значный код из приложения</span><input

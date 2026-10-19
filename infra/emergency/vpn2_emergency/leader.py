@@ -111,7 +111,12 @@ class Leader:
         confirmed_at = now if candidate == self.node else self.peers.get(candidate, ({}, -math.inf))[1]
         if now - confirmed_at >= MISSED:
             return
-        if self.data['grant_until'] > now and self.data['grant'] != candidate:
+        # Only this node counts its own vote, so a candidacy that is not a
+        # leadership can be dropped at once in favour of a working leader or
+        # a higher-ranked exit. Holding it for a full lease after a restart
+        # left the leader without a majority once a third exit was cut off.
+        released = self.data['grant'] == self.node and self.data['role'] != 'leader'
+        if self.data['grant_until'] > now and self.data['grant'] != candidate and not released:
             return
         if self.preferred(now) != candidate:
             return

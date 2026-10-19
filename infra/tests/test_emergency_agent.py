@@ -531,6 +531,44 @@ class EmergencyAgentTests(unittest.TestCase):
             network.run(150, single)
         self.assertLessEqual(max(delays), 90, delays)
 
+    def failover_to_b(self):
+        network = self.network()
+        network.stop('a')
+        network.run(120)
+        self.assertEqual(network.leaders(), ['b'])
+        return network
+
+    def test_returning_higher_priority_exit_stays_follower(self):
+        network = self.failover_to_b()
+        network.start('a')
+        network.run(600, lambda: self.assertEqual(network.leaders(), ['b']))
+        self.assertEqual(network.agents['a'].leader.data['role'], 'follower')
+        self.assertEqual(network.agents['a'].leader.data['redirect'], 'b')
+
+    def assert_cut_off_exit_keeps_pair_leader(self, network):
+        for node in ('a', 'b'):
+            network.blocked.update({('c', node), (node, 'c')})
+        network.run(600, lambda: self.assertEqual(
+            [node for node in network.leaders() if node != 'c'], ['b']))
+        self.assertEqual(network.agents['a'].leader.data['role'], 'follower')
+        self.assertEqual(set(network.leaders()), {'b', 'c'})
+        self.assertTrue(network.agents['c'].leader.data['autonomous'])
+        self.assertFalse(network.agents['b'].leader.data['autonomous'])
+
+    def test_cut_off_exit_does_not_unseat_leader_of_the_other_two(self):
+        network = self.failover_to_b()
+        network.start('a')
+        network.run(120)
+        self.assert_cut_off_exit_keeps_pair_leader(network)
+
+    def test_return_then_cut_off_keeps_leader(self):
+        # Stand order: the higher-priority exit returns, two seconds later
+        # the third one is cut off from both.
+        network = self.failover_to_b()
+        network.start('a')
+        network.run(2)
+        self.assert_cut_off_exit_keeps_pair_leader(network)
+
     def test_boot_change_expires_evidence_and_quarantines_votes(self):
         state = State(self.root, clock_boot='old')
         state.data['last_entry'] = 1000

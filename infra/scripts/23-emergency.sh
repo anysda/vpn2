@@ -146,7 +146,9 @@ if [[ "$HOST_TAG" != ru ]]; then
   systemctl enable --now docker.socket >/dev/null 2>&1
 fi
 install -d /var/anysda/.stamps
-touch /var/anysda/.stamps/23-emergency
+# The stage before the image left an empty stamp; "image" tells verify that
+# release.json and the standby Hysteria2 are expected on this node.
+printf 'image %s\n' "$IMAGE" > /var/anysda/.stamps/23-emergency
 printf '[%s] 23-emergency done: image %s\n' "$HOST_TAG" "$(python3 -c '
 import json, sys
 r = json.load(open(sys.argv[1]))

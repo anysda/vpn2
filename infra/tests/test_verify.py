@@ -212,14 +212,19 @@ class VerifyTest(unittest.TestCase):
             for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html'):
                 if fault != 'emergency-' + name:
                     (emergency / 'vpn2_emergency' / name).touch()
-            if fault != 'emergency-release':
+            # Стадия 23 до образа оставила пустой штамп и не ставила release.json и Hysteria2.
+            old_stage = fault == 'emergency-old-stage'
+            if fault != 'emergency-release' and not old_stage:
                 (emergency / 'release.json').write_text(json.dumps(
                     {'version': 'dev', 'revision': 'a' * 40, 'image': 'sha256:' + 'b' * 64}))
             stamp = root / 'stamp-23-emergency'
-            if fault != 'emergency-not-yet':
+            if old_stage:
                 stamp.touch()
+            elif fault != 'emergency-not-yet':
+                stamp.write_text('image sha256:' + 'b' * 64 + '\n')
             hy2_options = root / 'emergency-hy2.json'
-            hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
+            if fault != 'emergency-hy2-options' and not old_stage:
+                hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
             config = root / 'router.json'
             config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
             failover.write_text('#!/usr/bin/env python3\nimport runpy\nfrom pathlib import Path\n'
@@ -381,7 +386,7 @@ class VerifyTest(unittest.TestCase):
         self.assertIn('✓ аварийка: Hysteria2 в ожидании', result.stdout)
         faults = {'emergency-release': 'аварийка: образ', 'emergency-static/instructions.html': 'аварийка: образ',
                   'emergency-agent.py': 'аварийка: образ', 'vpn2-emergency.service': 'аварийка: агент',
-                  'emergency-listening': 'аварийка: Hysteria2'}
+                  'emergency-listening': 'аварийка: Hysteria2', 'emergency-hy2-options': 'аварийка: Hysteria2'}
         for fault, label in faults.items():
             with self.subTest(fault=fault):
                 result = self.run_verify(fault, role='exit')
@@ -392,6 +397,16 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertNotIn('аварийка: образ', result.stdout)
         self.assertIn('аварийка: стадия 23 ещё не ставилась', result.stdout)
+
+    def test_update_from_stage_23_without_image(self):
+        # Update from a dev install whose stage 23 predates the image: the exit is
+        # verified after 10-foreign, before the new stage 23 replaces the stamp.
+        result = self.run_verify('emergency-old-stage', role='exit')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('✗ аварийка', result.stdout)
+        self.assertIn('✓ аварийка: агент vpn2-emergency active', result.stdout)
+        self.assertIn('аварийка: стадия 23 стоит без образа', result.stdout)
 
     def test_only_youtube_can_report_unmeasured(self):
         for fault in ('systemctl-error2', 'ssh-error2', 'curl-error2'):

@@ -302,6 +302,10 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertIn('systemctl disable --now docker.service containerd.service', first.calls)
             self.assertIn('systemctl enable --now docker.socket', first.calls)
             self.assertIn('23-emergency done: image dev 111111111111', first.stdout)
+            # 99-verify demands the image only after this stage: an empty stamp
+            # belongs to the stage before the image.
+            stamp = (root / 'var/anysda/.stamps/23-emergency').read_text()
+            self.assertEqual(stamp.split(), ['image', 'sha256:' + '1' * 64])
 
             second = self.stage(fake, 'exit', image='sha256:' + '2' * 64)
             print(second.stdout, end='')

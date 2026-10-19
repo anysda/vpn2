@@ -229,12 +229,20 @@ check 'ufw active' firewall
 check 'fail2ban active' service fail2ban
 check 'node_exporter active' service node_exporter
 check 'sing-box active' service sing-box
-# Первый деплой проверяет экзит сразу после 10-foreign, до стадии 23: там
-# аварийки ещё нет. Итоговый verify идёт после 23, и она уже обязана быть.
+# Deploy проверяет экзит сразу после 10-foreign, до стадии 23: на первой
+# установке аварийки ещё нет, а при обновлении может стоять стадия 23 до
+# образа (пустой штамп, без release.json и Hysteria2). Итоговый verify идёт
+# после 23: её штамп «image» требует образ и Hysteria2 строго.
 EMERGENCY_STAMP=/var/anysda/.stamps/23-emergency
+EMERGENCY_IMAGE=false
 if [[ -e "$EMERGENCY_STAMP" ]]; then
   check 'аварийка: агент vpn2-emergency active' service vpn2-emergency.service
-  check 'аварийка: образ установлен' emergency_image
+  if read -r emergency_kind _ < "$EMERGENCY_STAMP" && [[ "${emergency_kind:-}" == image ]]; then
+    EMERGENCY_IMAGE=true
+    check 'аварийка: образ установлен' emergency_image
+  else
+    echo "[$HOST_TAG] аварийка: стадия 23 стоит без образа, образ проверит итоговый verify после её обновления"
+  fi
 else
   echo "[$HOST_TAG] аварийка: стадия 23 ещё не ставилась, проверка в итоговом verify"
 fi
@@ -306,7 +314,7 @@ else
   fi
   check "Hysteria2 direct: udp/${HY2_DIRECT_PORT:-443} слушает" udp "${HY2_DIRECT_PORT:-443}"
   check "Hysteria2 warp: udp/${HY2_WARP_PORT:-8443} слушает" udp "${HY2_WARP_PORT:-8443}"
-  [[ ! -e "$EMERGENCY_STAMP" ]] || check 'аварийка: Hysteria2 в ожидании' emergency_standby
+  [[ "$EMERGENCY_IMAGE" != true ]] || check 'аварийка: Hysteria2 в ожидании' emergency_standby
 fi
 
 write_report

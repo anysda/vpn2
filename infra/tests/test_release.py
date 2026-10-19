@@ -329,6 +329,100 @@ panel_rollback
                 state.verify_backup(work / 'snapshot')
             print('SQLite backup: committed WAL included; integrity_check=ok')
 
+    def journal_runner(self, state, work):
+        """deploy_state.main() against a temporary state; host config paths are not snapshotted."""
+        release = module('release')
+        os_values = dict(line.split('=', 1) for line in Path('/etc/os-release').read_text().splitlines() if '=' in line)
+        manifest = {'format': 1, 'commit': 'a' * 40, 'rollback': 'backward-compatible', 'images': {},
+                    'binaries': {}, 'architectures': [release.architecture()],
+                    'os': {os_values['ID'].strip('"'): [os_values.get('VERSION_ID', '').strip('"')]},
+                    'min_free_bytes': 0, 'min_memory_bytes': 0, 'local_service_api': {'min': 0, 'max': 999},
+                    'database': {'min': 0, 'max': 0, 'migrate_from': [0, 0], 'journal': []},
+                    'stages': ['10-foreign', '99-verify']}
+        (work / 'manifest.json').write_text(json.dumps(manifest))
+        original_backup = state.backup
+
+        def run(folder, *arguments):
+            argv = ['deploy_state.py', '--state', str(folder), '--database', str(work / 'db.sqlite'),
+                    '--manifest', str(work / 'manifest.json'), *arguments]
+            with patch.object(sys, 'argv', argv), \
+                    patch.object(state, 'backup', lambda db, destination, _paths: original_backup(db, destination, [])):
+                self.assertEqual(state.main(), 0, arguments)
+        return run
+
+    def test_successful_deploy_and_panel_transaction_rotate_backups(self):
+        state = module('deploy_state')
+        keep = getattr(state, 'KEEP_BACKUPS', 3)
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            with sqlite3.connect(work / 'db.sqlite') as db:
+                db.execute('CREATE TABLE access(id INTEGER)')
+            run = self.journal_runner(state, work)
+            deploy, panel = work / 'deploy', work / 'deploy/panel'
+            # Leftover of a backup that failed half-way: never marked complete.
+            (deploy / 'backups/1').mkdir(parents=True)
+            for _ in range(keep + 2):
+                run(deploy, 'backup')
+                newest = json.loads((deploy / 'operation.json').read_text())['backup']
+                run(deploy, 'phase', '--phase', 'applying')
+                run(deploy, 'complete', '--role', 'exit')
+            left = sorted(p.name for p in (deploy / 'backups').iterdir())
+            print(f'deploy: {keep + 2} successful deploys -> {len(left)} backups kept')
+            self.assertEqual(len(left), keep, f'deploy backups are not rotated: {left}')
+            self.assertIn(Path(newest).name, left, 'rotation removed the newest deploy backup')
+            # Panel transaction: two snapshots each (before and inside the maintenance window).
+            (panel / 'previous-schema.json').parent.mkdir(parents=True, exist_ok=True)
+            (panel / 'previous-schema.json').write_text('{}')
+            (panel / 'previous-installed.json').write_text('{"release": null}')
+            for _ in range(keep + 2):
+                run(panel, 'backup')
+                run(panel, 'backup')
+                newest = json.loads((panel / 'operation.json').read_text())['backup']
+                run(panel, 'phase', '--phase', 'complete')
+            left = sorted(p.name for p in (panel / 'backups').iterdir())
+            print(f'panel: {keep + 2} transactions -> {len(left)} backups kept')
+            self.assertEqual(len(left), keep, f'panel backups are not rotated: {left}')
+            self.assertIn(Path(newest).name, left, 'rotation removed the newest panel backup')
+            for name in left:
+                state.verify_backup(panel / 'backups' / name)
+            self.assertEqual(len(list((deploy / 'backups').iterdir())), keep, 'panel rotation touched deploy backups')
+            # Rollback after rotation: its inputs live outside backups/ and still work.
+            library = ROOT / 'infra/lib/panel-transaction.sh'
+            script = f'''source {shlex.quote(str(library))}
+panel_state={shlex.quote(str(panel))}
+panel_compatible() {{ test -f "$1"; }}
+panel_health() {{ return 0; }}
+python3() {{ return 0; }}
+docker() {{ :; }}
+panel_rollback
+'''
+            rollback = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
+            self.assertEqual(rollback.returncode, 0, rollback.stderr)
+            self.assertIn('panel rollback verified', rollback.stdout)
+            print('rollback after rotation: ' + rollback.stdout.strip())
+
+    def test_disk_space_refusal_names_backup_folders(self):
+        state = module('deploy_state')
+        release = module('release')
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            for folder, count in (('backups', 2), ('panel/backups', 3)):
+                for index in range(count):
+                    item = work / folder / str(1000 + index)
+                    item.mkdir(parents=True)
+                    (item / 'db.sqlite').write_bytes(b'x' * 1024 * 1024)
+            (work / 'os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            (work / 'meminfo').write_text('MemAvailable: 4000000 kB\n')
+            manifest = {'os': {'ubuntu': ['26.04']}, 'architectures': [release.architecture()],
+                        'min_free_bytes': 2 ** 62, 'min_memory_bytes': 0}
+            with self.assertRaises(state.ReleaseError) as refused:
+                state.preflight(manifest, work / 'db.sqlite', work, work / 'os-release', work / 'meminfo')
+            message = str(refused.exception)
+            print('deploy stopped: ' + message)
+            self.assertIn('services unchanged', message)
+            self.assertIn(f'{work / "backups"} 2 MiB in 2', message, 'refusal does not say where deploy backups are')
+            self.assertIn(f'{work / "panel/backups"} 3 MiB in 3', message, 'refusal does not say where panel backups are')
+
     def test_exit_release_journal_never_starts_docker(self):
         # Stage 23 stops Docker on exits; docker.socket restarts dockerd on any
         # client call, so every journal action outside stage 23 must avoid it.

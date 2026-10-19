@@ -140,6 +140,65 @@ def verify_backup(destination):
                 raise ReleaseError('backup is not readable')
 
 
+KEEP_BACKUPS = 3
+
+
+def backup_dirs(folder):
+    """Snapshots by creation time, newest first; only names written by backup."""
+    if not folder.is_dir():
+        return []
+    return sorted((item for item in folder.iterdir() if item.is_dir() and item.name.isdigit()),
+                  key=lambda item: int(item.name), reverse=True)
+
+
+def rotate_backups(state, keep=KEEP_BACKUPS):
+    """After a successful operation keep the newest complete snapshots.
+
+    The snapshot of the operation just finished is never removed, even if newer
+    incomplete directories exist; incomplete leftovers of failed attempts go.
+    """
+    folder = Path(state) / 'backups'
+    journal = Path(state) / 'operation.json'
+    current = read_json(journal).get('backup') if journal.exists() else None
+    kept, removed = 0, 0
+    for item in backup_dirs(folder):
+        if str(item) == current or ((item / 'complete.json').exists() and kept < keep):
+            kept += 1
+            continue
+        try:
+            shutil.rmtree(item)
+        except OSError as error:
+            # The operation already succeeded: cleanup must not turn it into a failure.
+            print(f'WARNING: old deploy backup {item} not removed: {type(error).__name__}', file=sys.stderr)
+            continue
+        removed += 1
+    if removed:
+        print(f'old deploy backups removed: {removed}; kept {kept} newest in {folder}')
+
+
+def backup_usage(state):
+    """Where deploy snapshots are and how much they take, for the disk-space error."""
+    parts = []
+    for folder in (Path(state) / 'backups', Path(state) / 'panel/backups'):
+        items = backup_dirs(folder)
+        if not items:
+            continue
+        size = 0
+        for item in items:
+            for root, _dirs, files in os.walk(item):
+                for name in files:
+                    try:
+                        size += (Path(root) / name).lstat().st_size
+                    except OSError:
+                        pass
+        parts.append(f'{folder} ' + (f'{size / 2 ** 30:.1f} GiB' if size >= 2 ** 30 else f'{size // 2 ** 20} MiB') +
+                     f' in {len(items)}')
+    if not parts:
+        return 'deploy backups: none'
+    return ('deploy backups: ' + ', '.join(parts) +
+            f'; each successful deploy keeps the {KEEP_BACKUPS} newest, older ones can be removed')
+
+
 def preflight(manifest, database, state, os_release=Path('/etc/os-release'), meminfo=Path('/proc/meminfo'), warn=True):
     os_values = dict(line.split('=', 1) for line in os_release.read_text().splitlines() if '=' in line)
     distro = os_values.get('ID', '').strip('"')
@@ -149,7 +208,7 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
     if architecture() not in manifest['architectures']:
         raise ReleaseError('unsupported architecture')
     if shutil.disk_usage(state).free < manifest['min_free_bytes']:
-        raise ReleaseError('insufficient disk space before backup; services unchanged')
+        raise ReleaseError('insufficient disk space before backup; services unchanged; ' + backup_usage(state))
     memory = dict(line.split(':', 1) for line in meminfo.read_text().splitlines())
     if int(memory['MemAvailable'].split()[0]) * 1024 < manifest['min_memory_bytes']:
         raise ReleaseError('insufficient available memory')
@@ -250,6 +309,8 @@ def main():
             operation = read_json(journal)
             operation['phase'] = args.phase
             atomic_json(journal, operation)
+            if args.phase == 'complete':
+                rotate_backups(args.state)
         else:
             if args.role == 'entry':
                 compatible(args.database, manifest['database'])
@@ -257,6 +318,7 @@ def main():
             operation = read_json(journal)
             operation['phase'] = 'complete'
             atomic_json(journal, operation)
+            rotate_backups(args.state)
             print('installed composition: recorded; OS security updates remain enabled')
     except (ReleaseError, OSError, ValueError, KeyError, sqlite3.Error, subprocess.SubprocessError) as error:
         if args.action == 'backup':

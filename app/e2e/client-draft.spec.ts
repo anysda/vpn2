@@ -24,7 +24,12 @@ for (const width of [1400, 390]) {
       await input.press('Enter')
       await expect(toast(page, `Клиент с именем «${taken}» уже существует`)).toBeVisible()
       await expect(input).toHaveText(taken)
-      const kept: { name: string } = await (await page.request.get(`/api/clients/${await clientId(page, name)}`)).json()
+      // Карточка опрашивается каждые 3 с: свежий ответ сервера не затирает черновик.
+      const id = await clientId(page, name)
+      await page.waitForResponse(r => r.request().method() === 'GET' && new URL(r.url()).pathname === `/api/clients/${id}`)
+      await page.evaluate(() => new Promise(done => setTimeout(() => requestAnimationFrame(() => done(null)), 50)))
+      await expect(input).toHaveText(taken)
+      const kept: { name: string } = await (await page.request.get(`/api/clients/${id}`)).json()
       expect(kept.name).toBe(name)
       await input.fill(`${taken}-fixed`)
       await input.press('Enter')

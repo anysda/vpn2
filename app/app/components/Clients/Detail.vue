@@ -75,9 +75,13 @@ async function changed() {
 }
 
 // --- Имя: правится прямо в заголовке ---------------------------------------
-function syncName() {
+// Опрос карточки не затирает несохранённое имя (например, после 409): как и у
+// срока с лимитом, сервер берётся, только если в заголовке показанное до опроса.
+function syncName(same: ClientDetail | null) {
   const el = nameEl.value
-  if (el && detail.value && document.activeElement !== el) el.textContent = detail.value.name
+  const d = detail.value
+  if (!el || !d || document.activeElement === el) return
+  if (!same || !el.textContent || el.textContent === same.name) el.textContent = d.name
 }
 
 async function saveName() {
@@ -152,7 +156,7 @@ function syncForm(prev: ClientDetail | null) {
   const same = prev?.id === d.id ? prev : null
   if (!same || expDraft.value === expText(same)) expDraft.value = expText(d)
   if (!same || limDraft.value === limText(same)) limDraft.value = limText(d)
-  nextTick(syncName)
+  nextTick(() => syncName(same))
 }
 
 async function saveLimit(next: number | null, withToast: boolean) {

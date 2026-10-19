@@ -39,19 +39,11 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
+from probe_io import read_exact, recv_datagram
+
 
 SIZE = 10 * 1024 * 1024
 BLOCK = b'x' * 65536
-
-
-def read_exact(sock, size):
-    chunks = bytearray()
-    while len(chunks) < size:
-        data = sock.recv(size - len(chunks))
-        if not data:
-            raise EOFError('truncated stream')
-        chunks.extend(data)
-    return bytes(chunks)
 
 
 class Origin(socketserver.BaseRequestHandler):
@@ -106,19 +98,19 @@ def udp_probe(proxy_port, target_host, target_port):
     try:
         with socket.create_connection(('127.0.0.1', proxy_port), timeout=3) as control:
             control.sendall(b'\x05\x01\x00')
-            if read_exact(control, 2) != b'\x05\x00':
+            if read_exact(control, 2, 'SOCKS greeting', 3) != b'\x05\x00':
                 raise RuntimeError('SOCKS auth failed')
             control.sendall(b'\x05\x03\x00\x01' + b'\x00' * 6)
-            reply = read_exact(control, 10)
+            reply = read_exact(control, 10, 'SOCKS UDP associate', 3)
             if reply[:4] != b'\x05\x00\x00\x01':
                 raise RuntimeError('SOCKS UDP failed')
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.settimeout(3)
                 payload = b'udp-probe' * 128
                 sock.sendto(b'\x00\x00\x00\x01' + socket.inet_aton(target_host)
                             + struct.pack('!H', target_port) + payload,
                             (socket.inet_ntoa(reply[4:8]), struct.unpack('!H', reply[8:])[0]))
-                return {'bytes': len(payload) if sock.recv(4096).endswith(payload) else 0}
+                echo = recv_datagram(sock, f'UDP echo {target_host}:{target_port}', 3)
+                return {'bytes': len(payload) if echo.endswith(payload) else 0}
     except (OSError, EOFError, RuntimeError) as error:
         return {'bytes': 0, 'error': str(error)}
 
@@ -137,14 +129,14 @@ def socks(proxy_port, target_port, small=False, target_host='127.0.0.1'):
         sock.settimeout(5)
         sock.connect(('127.0.0.1', proxy_port))
         sock.sendall(b'\x05\x01\x00')
-        if read_exact(sock, 2) != b'\x05\x00':
+        if read_exact(sock, 2, 'SOCKS greeting') != b'\x05\x00':
             raise RuntimeError('SOCKS auth failed')
         sock.sendall(b'\x05\x01\x00\x01' + socket.inet_aton(target_host)
                      + struct.pack('!H', target_port))
-        header = read_exact(sock, 4)
+        header = read_exact(sock, 4, 'SOCKS connect')
         if header[:2] != b'\x05\x00':
             raise RuntimeError(f'SOCKS connect failed: {header!r}')
-        read_exact(sock, (4 if header[3] == 1 else 16) + 2)
+        read_exact(sock, (4 if header[3] == 1 else 16) + 2, 'SOCKS connect')
         return sock
     except BaseException:
         sock.close()
@@ -156,7 +148,7 @@ def download(proxy_port, target_port, target_host='127.0.0.1', timeout=5):
     received = 0
     try:
         with socks(proxy_port, target_port, target_host=target_host) as sock:
-            if read_exact(sock, 5) != b'hello':
+            if read_exact(sock, 5, 'server-first banner') != b'hello':
                 raise EOFError('missing server-first banner')
             sock.sendall(b'P')
             while received < SIZE:
@@ -180,7 +172,7 @@ def receiving_client(proxy_port, target_port, target_host, streams, ready):
 
     def receive():
         with socks(proxy_port, target_port, target_host=target_host) as sock:
-            read_exact(sock, 5)
+            read_exact(sock, 5, 'server-first banner')
             sock.sendall(b'S')
             barrier.wait()
             sock.settimeout(None)
@@ -477,7 +469,7 @@ def run(router_binary, server_binary, streams=8, variant='stock', origin_address
         upload_size = 1024 * 1024
         for _ in range(10):
             with socks(proxy_port, target_port, target_host=origin_address) as sock:
-                read_exact(sock, 5)
+                read_exact(sock, 5, 'server-first banner')
                 sock.sendall(b'U' + b'z' * upload_size)
                 sock.shutdown(socket.SHUT_WR)
                 uploads.append(origin.uploads.get(timeout=5))

@@ -13,6 +13,7 @@ import threading
 import time
 from string import Template
 
+from probe_io import read_exact, read_to_close, recv_datagram
 from router_support import ROOT, SB, stop, generate
 
 
@@ -26,32 +27,41 @@ def wait_port(port):
     raise RuntimeError(f'listener {port} did not start')
 
 
+def socks_reply(sock, what):
+    header = read_exact(sock, 4, what)
+    length = {1: 4, 4: 16}.get(header[3])
+    if length is None:
+        assert header[3] == 3, header
+        length = read_exact(sock, 1, what)[0]
+    return header + read_exact(sock, length + 2, what)
+
+
 def request():
     with socket.create_connection(('127.0.0.1', 17897), timeout=6) as sock:
-        sock.settimeout(6)
         sock.sendall(b'\x05\x01\x00')
-        assert sock.recv(2) == b'\x05\x00'
+        assert read_exact(sock, 2, 'SOCKS greeting') == b'\x05\x00'
         sock.sendall(b'\x05\x01\x00\x01' + socket.inet_aton('8.8.8.8') + struct.pack('!H', 18080))
-        reply = sock.recv(64)
-        if len(reply) < 2 or reply[1] != 0:
+        reply = socks_reply(sock, 'SOCKS connect')
+        if reply[1] != 0:
             return False
         sock.sendall(b'GET / HTTP/1.0\r\nHost: example.com\r\n\r\n')
-        return b'200 OK' in sock.recv(4096)
+        # HTTP/1.0: the target sends headers and body separately, then closes.
+        response = read_to_close(sock, 'HTTP reply via exit', seconds=6)
+        return b' 200 OK' in response and response.endswith(b'target reached')
 
 
 def request_udp():
     with socket.create_connection(('127.0.0.1', 17897), timeout=3) as control:
         control.sendall(b'\x05\x01\x00')
-        assert control.recv(2) == b'\x05\x00'
+        assert read_exact(control, 2, 'SOCKS greeting', 3) == b'\x05\x00'
         control.sendall(b'\x05\x03\x00\x01' + b'\x00' * 6)
-        reply = control.recv(64)
+        reply = socks_reply(control, 'SOCKS UDP associate')
         assert reply[:4] == b'\x05\x00\x00\x01', reply
         relay = socket.inet_ntoa(reply[4:8]), struct.unpack('!H', reply[8:10])[0]
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(3)
             packet = b'\x00\x00\x00\x01' + socket.inet_aton('8.8.8.8') + struct.pack('!H', 18081) + b'udp-probe'
             sock.sendto(packet, relay)
-            return sock.recv(4096).endswith(b'udp-probe')
+            return recv_datagram(sock, 'UDP echo via exit', 3).endswith(b'udp-probe')
 
 
 class Target(http.server.BaseHTTPRequestHandler):

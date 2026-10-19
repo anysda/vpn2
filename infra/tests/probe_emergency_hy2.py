@@ -16,6 +16,7 @@ import time
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from probe_hy2_isolation import socks, udp_probe
+from probe_io import read_exact
 from router_support import SB, stop as stop_process
 from test_emergency_hy2 import module
 
@@ -228,12 +229,12 @@ def probe():
         print('isolation: public TCP/UDP pass; node, loopback, private and DNS aliases blocked; nft independently enforced')
         connection = cleanup.enter_context(socks(17890, 18081, target_host='203.0.113.2'))
         connection.sendall(b'before')
-        assert connection.recv(6) == b'before'
+        assert read_exact(connection, 6, 'TCP echo before restart') == b'before'
         before = hashlib.sha256((directory / 'hy2/server.json').read_bytes()).hexdigest()
         assert hy2.start(directory, 1, devices, options=options, runtime=runtime) == first
         assert before == hashlib.sha256((directory / 'hy2/server.json').read_bytes()).hexdigest()
         connection.sendall(b'resume')
-        assert connection.recv(6) == b'resume'
+        assert read_exact(connection, 6, 'TCP echo after idempotent start') == b'resume'
         hy2.stop(directory, runtime=runtime)
         assert fetch(17893, '203.0.113.2')
         assert not fetch(17890, '203.0.113.2')

@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'telegram/tests'), str(ROOT / 'telegram')]
 from support import load_bot  # noqa: E402
 from outbox import Outbox  # noqa: E402
+from probe_io import read_to_close  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/lib/vpn2_tls.py')
 tls = importlib.util.module_from_spec(spec)
@@ -217,7 +218,7 @@ def panel_scenario(root, ports, queue, bot_url, ca):
         wait_for(lambda: get(public + '/api/version', context))
         with socket.create_connection((HOST, http_port)) as raw:
             raw.sendall(b'GET /x HTTP/1.1\r\nHost: ' + HOST.encode() + b'\r\nConnection: close\r\n\r\n')
-            redirect = raw.recv(4096).decode().splitlines()
+            redirect = read_to_close(raw, 'HTTP redirect', 10).decode().splitlines()
         assert ' 301 ' in redirect[0], redirect[0]
         login = urllib.request.Request(public + '/api/auth/sign-in/username', headers={
             'Content-Type': 'application/json', 'Origin': public},

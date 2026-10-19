@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 
+from probe_io import read_exact, recv_datagram
 from router_support import ROOT, SB, stop
 
 
@@ -56,49 +57,38 @@ def tcp_request(proxy, host, port):
     try:
         with socket.create_connection(('127.0.0.1', proxy), timeout=2) as sock:
             sock.sendall(b'\x05\x01\x00')
-            assert read_exact(sock, 2) == b'\x05\x00'
+            assert read_exact(sock, 2, 'SOCKS greeting', 2) == b'\x05\x00'
             sock.sendall(b'\x05\x01\x00' + address(host, port))
             reply = socks_reply(sock)
             if reply[1] != 0:
                 return False
             sock.sendall(b'GET /metrics HTTP/1.0\r\nHost: fixture.test\r\n\r\n')
-            return read_exact(sock, 5) == b'HTTP/'
+            return read_exact(sock, 5, 'HTTP status via tunnel', 2) == b'HTTP/'
     except OSError:
         return False
 
 
-def read_exact(sock, length):
-    data = b''
-    while len(data) < length:
-        chunk = sock.recv(length - len(data))
-        if not chunk:
-            raise ConnectionError('SOCKS reply closed early')
-        data += chunk
-    return data
-
-
 def socks_reply(sock):
-    header = read_exact(sock, 4)
+    header = read_exact(sock, 4, 'SOCKS reply', 2)
     length = {1: 4, 4: 16}.get(header[3])
     if length is None:
         assert header[3] == 3, header
-        length = read_exact(sock, 1)[0]
-    return header + read_exact(sock, length + 2)
+        length = read_exact(sock, 1, 'SOCKS reply', 2)[0]
+    return header + read_exact(sock, length + 2, 'SOCKS reply', 2)
 
 
-def udp_request(host):
+def udp_request(host, seconds=.5):
     with socket.create_connection(('127.0.0.1', 17897), timeout=2) as control:
         control.sendall(b'\x05\x01\x00')
-        assert read_exact(control, 2) == b'\x05\x00'
+        assert read_exact(control, 2, 'SOCKS greeting', 2) == b'\x05\x00'
         control.sendall(b'\x05\x03\x00\x01' + b'\x00' * 6)
         reply = socks_reply(control)
         assert reply[:4] == b'\x05\x00\x00\x01', reply
         relay = socket.inet_ntoa(reply[4:8]), struct.unpack('!H', reply[8:10])[0]
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.settimeout(.5)
             sock.sendto(b'\x00\x00\x00' + address(host, 9100) + b'probe', relay)
             try:
-                return sock.recv(4096).endswith(b'probe')
+                return recv_datagram(sock, f'UDP echo {host}', seconds).endswith(b'probe')
             except OSError:
                 return False
 
@@ -174,7 +164,8 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
             time.sleep(.05)
     assert all(p.poll() is None for p in processes), 'sing-box failed to start'
     assert tcp_request(17897, '192.0.2.20', 9100), 'public TCP must work'
-    assert udp_request('192.0.2.20'), 'public UDP must work'
+    # Allowed echoes get a loaded-machine deadline; blocked ones stay short.
+    assert udp_request('192.0.2.20', 3), 'public UDP must work'
     failures = []
     for host, port in [('127.0.0.1', 9100), ('127.0.0.1', 22), ('127.0.0.1', 9090),
                        ('127.1.2.3', 9100), ('::1', 9100), ('::ffff:127.0.0.1', 9100),
@@ -190,7 +181,7 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
             failures.append(f'UDP {host}:9100')
     assert not failures, 'loopback reachable through user tunnel: ' + ', '.join(failures)
     assert tcp_request(17897, 'public.test', 9100), 'public DNS destination must work'
-    assert udp_request('public.test'), 'public DNS UDP destination must work'
+    assert udp_request('public.test', 3), 'public DNS UDP destination must work'
     print('direct: loopback blocked; public TCP/UDP reachable', flush=True)
     for port in (22, 9100):
         assert tcp_request(17898, '127.0.0.1', port), f'mgmt port {port} must work'

@@ -9,6 +9,8 @@ import struct
 import unittest
 from unittest.mock import MagicMock, patch
 
+import probe_io
+
 
 class SocksProbeTests(unittest.TestCase):
     def test_fragmented_reply(self):
@@ -17,7 +19,7 @@ class SocksProbeTests(unittest.TestCase):
         tree = ast.parse(path.read_text())
         # Load the actual protocol functions without starting the netns fixture.
         tree.body = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-        scope = {'socket': socket, 'struct': struct, 'ipaddress': ipaddress}
+        scope = {'socket': socket, 'struct': struct, 'ipaddress': ipaddress, **vars(probe_io)}
         exec(compile(tree, str(path), 'exec'), scope)
         stream = MagicMock()
         stream.__enter__.return_value = stream

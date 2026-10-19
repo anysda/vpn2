@@ -115,7 +115,10 @@ stand_wait "$NAME" "http://127.0.0.1:$PORT"
 # Только браузер в контейнере: тесты отказов по-прежнему управляют Docker с хоста.
 # --unsafe: без него сервер молча отбрасывает launchOptions.args из playwright.config.ts
 # (флаг отрисовки шрифта); порт слушается только на 127.0.0.1.
+# DEBUG: подключения, обрывы и ошибки браузерного сервера с метками времени;
+# при сбое журнал уходит в browser.log рядом с журналом панели.
 dk run -d --rm --init --name "$NAME-browser" --network "$NAME" --shm-size=1g \
+  -e DEBUG=pw:server,pw:error \
   -p "127.0.0.1:$BROWSER_PORT:3000" \
   -v "$APP_DIR/node_modules:/app/node_modules:ro" \
   "$BROWSER_IMAGE" node /app/node_modules/@playwright/test/cli.js \
@@ -146,6 +149,8 @@ if (( rc != 0 )); then
   mkdir -p "$diagnostics"
   dk logs "$NAME" > "$diagnostics/panel.log" 2>&1 || true
   dk logs "$NAME-caddy" > "$diagnostics/caddy.log" 2>&1 || true
+  # Браузер удаляется в cleanup, после выхода его журнал уже не достать.
+  dk logs "$NAME-browser" > "$diagnostics/browser.log" 2>&1 || true
   dk inspect --format '{{json .State}}' "$NAME" > "$diagnostics/panel-state.json" || true
   echo "--- журнал панели (хвост) ---"
   dk logs "$NAME" 2>&1 | tail -80

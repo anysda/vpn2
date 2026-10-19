@@ -1,3 +1,5 @@
+import { colorMode } from './shared/color-mode'
+
 export default defineNuxtConfig({
   devtools: { enabled: true },
 
@@ -29,11 +31,7 @@ export default defineNuxtConfig({
   },
 
   // Тема по умолчанию как в системе; data-theme нужен токенам в main.css.
-  colorMode: {
-    preference: 'system',
-    fallback: 'dark',
-    dataValue: 'theme',
-  },
+  colorMode,
 
   runtimeConfig: {
     // Сессии панели (better-auth, server/utils/auth.ts).

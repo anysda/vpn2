@@ -51,6 +51,29 @@ test('аварийная статика: общие компоненты, сос
     await target.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
     await target.screenshot({ path: join(shots, name), fullPage: true })
   }
+  // Цвета темы на сохранённых элементах: аварийная и основная страница в одной теме совпадают.
+  const paletteRetained = ['body', '.wrap>header .logo span', '.head h1', '.thead span', '.crow .who b', '.card.clist']
+  async function palette(target: Page) {
+    return target.evaluate(list => list.map((selector) => {
+      const style = getComputedStyle(document.querySelector(selector)!)
+      // Сборка основной панели пишет начало градиента как 0px, аварийная - как 0%: рисуется одинаково.
+      return [selector, style.color, style.backgroundColor, style.backgroundImage.replaceAll(' 0px,', ' 0%,'), style.borderTopColor].join(' | ')
+    }), paletteRetained)
+  }
+  // Тема как в основной панели: data-theme уже стоит, когда появляется <body> (до отрисовки,
+  // без вспышки другой темы), и следует смене темы системы.
+  async function themed(colorScheme: 'light' | 'dark', path = '/') {
+    const view = await browser.newPage({ ignoreHTTPSErrors: true, extraHTTPHeaders: {}, viewport: { width: 1400, height: 1000 }, colorScheme, reducedMotion: 'reduce' })
+    await view.addInitScript(() => new MutationObserver((_records, observer) => {
+      if (!document.body) return
+      document.documentElement.dataset.firstTheme = document.documentElement.dataset.theme ?? 'нет'
+      observer.disconnect()
+    }).observe(document, { childList: true, subtree: true }))
+    await view.goto(`${origin}${path}`)
+    expect(await view.evaluate(() => [document.documentElement.dataset.firstTheme, document.documentElement.dataset.theme]))
+      .toEqual([colorScheme, colorScheme])
+    return view
+  }
   async function metrics(target: Page, selectors: string[]) {
     return target.evaluate(list => Object.fromEntries(list.map((selector) => {
       const element = document.querySelector(selector)
@@ -81,6 +104,27 @@ test('аварийная статика: общие компоненты, сос
     await probe.close()
     await shot(emergency, 'emergency-desktop.png')
     const desktopMetrics = await metrics(emergency, desktopRetained)
+    const darkPalette = await palette(emergency)
+    // Светлая тема системы: страница входа и панель светлые, акцент - светлый вариант того же --red.
+    const light = await themed('light')
+    await light.getByLabel('Пароль', { exact: true }).fill(startup.password)
+    await light.getByRole('button', { name: 'Войти', exact: true }).click()
+    await expect(light.getByText('Возраст снимка:', { exact: false })).toBeVisible()
+    await light.evaluate(() => document.fonts.ready)
+    expect(await light.evaluate(() => [getComputedStyle(document.querySelector('.wrap>header .tabs a.on')!).backgroundColor,
+      getComputedStyle(document.documentElement).getPropertyValue('--red').trim()])).toEqual(['rgb(184, 37, 26)', '#b8251a'])
+    const lightPalette = await palette(light)
+    expect(lightPalette).not.toEqual(darkPalette)
+    await shot(light, 'emergency-light-desktop.png')
+    await light.emulateMedia({ colorScheme: 'dark' })
+    await expect(light.locator('html')).toHaveAttribute('data-theme', 'dark')
+    // Цвет рамки карточки меняется плавным переходом panel.css - ждём его конца.
+    await expect.poll(() => palette(light)).toEqual(darkPalette)
+    await light.close()
+    await (await themed('dark', '/instructions')).close()
+    const lightGuide = await themed('light', '/instructions')
+    await expect(lightGuide.getByRole('heading', { name: 'Временное подключение Hysteria2' })).toBeVisible()
+    await lightGuide.close()
     // Красный акцент: активная вкладка залита существующим токеном --red.
     expect(await emergency.evaluate(() => [getComputedStyle(document.querySelector('.wrap>header .tabs a.on')!).backgroundColor,
       getComputedStyle(document.documentElement).getPropertyValue('--red').trim()])).toEqual(['rgb(255, 91, 82)', '#ff5b52'])
@@ -132,6 +176,18 @@ test('аварийная статика: общие компоненты, сос
     await page.evaluate(() => document.fonts.ready)
     await shot(page, 'main-desktop.png')
     expect(await metrics(page, desktopRetained)).toEqual(desktopMetrics)
+    expect(await palette(page)).toEqual(darkPalette)
+    // Основная панель «как в системе» в светлой теме - те же цвета, что у аварийной.
+    const mainLight = await page.context().newPage()
+    await mainLight.emulateMedia({ colorScheme: 'light' })
+    await mainLight.addInitScript(() => localStorage.setItem('nuxt-color-mode', 'system'))
+    await mainLight.setViewportSize({ width: 1400, height: 1000 })
+    await mainLight.goto(`/clients?id=${client.id}`)
+    await expect(mainLight.getByTestId('device-row')).toHaveCount(2)
+    await mainLight.evaluate(() => document.fonts.ready)
+    expect(await palette(mainLight)).toEqual(lightPalette)
+    await shot(mainLight, 'main-light-desktop.png')
+    await mainLight.close()
     await page.setViewportSize({ width: 402, height: 874 })
     await page.goto('/clients')
     await page.getByPlaceholder('Поиск...').fill('e2e-Семён')

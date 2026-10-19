@@ -7,7 +7,9 @@
   // панели по пути и запускает node, импорта нет. Наполнитель front-test
   // e2e/front-test.sh запускает node в образе стадии builder, тоже без импорта.
   // Мигратор запускает deploy в контейнере, а не импорт приложения.
-  "entry": ["scripts/migrate.mjs!", "scripts/control-probe.mjs!", "e2e/support/fake-backends.mjs", "e2e/support/front-test-seed.mjs", "e2e/support/admin-password-check.mjs", "e2e/support/config-error-check.mjs", "e2e/support/long-password-check.mjs", "e2e/support/pool-upgrade.mjs", "e2e/support/wg-endpoint-check.mjs", "e2e/support/sso-secret-check.mjs"],
+  // Настройки темы импортируют только конфиги сборки (nuxt.config.ts,
+  // emergency/vite.config.ts), а их --production входами не считает.
+  "entry": ["shared/color-mode.ts!", "scripts/migrate.mjs!", "scripts/control-probe.mjs!", "e2e/support/fake-backends.mjs", "e2e/support/front-test-seed.mjs", "e2e/support/admin-password-check.mjs", "e2e/support/config-error-check.mjs", "e2e/support/long-password-check.mjs", "e2e/support/pool-upgrade.mjs", "e2e/support/wg-endpoint-check.mjs", "e2e/support/sso-secret-check.mjs"],
   // Суффикс ! — шаблон для --production. Там тесты не входы, и e2e/support
   // выглядел бы мёртвым; без ! у первого шаблона прод-прогон не видит ни одного файла.
   "project": ["**/*.{js,mjs,cjs,ts,mts,cts,vue,css}!", "!e2e/**!"],

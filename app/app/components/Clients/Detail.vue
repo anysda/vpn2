@@ -9,7 +9,7 @@ import { accessStatus } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
-const emit = defineEmits<{ changed: [], deleted: [], gone: [id: number] }>()
+const emit = defineEmits<{ changed: [], deleted: [id: number], gone: [id: number] }>()
 
 const { fetchDetail } = useClientDetail()
 const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
@@ -42,7 +42,7 @@ async function load(animate = false) {
     if (previous?.id === props.clientId && previous.deleting && previous.operation) {
       const operation = await $fetch<AccessOperation>(`/api/access-operations/${previous.operation.id}`)
       if (version !== loadVersion) return
-      if (operation.status === 'confirmed') return emit('deleted')
+      if (operation.status === 'confirmed') return emit('deleted', props.clientId)
       previous.operation = operation
       return
     }

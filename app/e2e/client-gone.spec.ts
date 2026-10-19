@@ -94,3 +94,57 @@ test('удаление выбранного клиента из своей па�
     await page.request.delete(`/api/clients/${second.id}`)
   }
 })
+
+test('запоздалый список после удаления не выбирает удалённого клиента снова', async ({ page }) => {
+  await loginApi(page)
+  const { first, second } = await twoClients(page)
+  try {
+    const missing: string[] = []
+    page.on('response', (r) => {
+      if (r.status() === 404) missing.push(`${r.request().method()} ${r.url()}`)
+    })
+    // Удаление подтвердилось, а ответ списка, начатого раньше, ещё несёт
+    // удалённого клиента. Списки с DELETE до подтверждения и 4 с после
+    // отвечают снимком до удаления: подтверждение замечает карточка клиента,
+    // а страница в этом окне видит старый список.
+    let snapshot: unknown = null
+    let deleting = false
+    let confirmedAt = 0
+    page.on('response', async (r) => {
+      if (!deleting && r.request().method() === 'GET' && /\/api\/clients(\?.*)?$/.test(r.url()) && r.ok()) snapshot = await r.json().catch(() => snapshot)
+    })
+    await page.route(/\/api\/access-operations\/[^/]+$/, async (route) => {
+      const response = await route.fetch()
+      const operation: { status: string } = await response.json()
+      if (operation.status === 'confirmed') confirmedAt ||= Date.now()
+      await route.fulfill({ response })
+    })
+    await page.route(new RegExp(`/api/clients/${first.id}$`), async (route) => {
+      if (route.request().method() === 'DELETE') deleting = true
+      await route.fallback()
+    })
+    await page.route(/\/api\/clients(\?.*)?$/, async (route) => {
+      const stale = deleting && (!confirmedAt || Date.now() < confirmedAt + 4_000)
+      if (route.request().method() !== 'GET' || !stale) return route.fallback()
+      await route.fulfill({ json: snapshot }).catch((e: Error) => {
+        if (!e.message.includes('already handled')) throw e
+      })
+    })
+    await page.goto('/clients')
+    const panel = page.getByTestId('client-detail')
+    await expect(clientName(panel)).toHaveText(first.name)
+    await panel.getByRole('button', { name: 'Удалить клиента' }).click()
+    await page.getByRole('dialog', { name: 'Удалить клиента?' }).getByRole('button', { name: 'Удалить' }).click()
+    await expect.poll(() => confirmedAt > 0, { timeout: 45_000 }).toBe(true)
+    await expect(clientName(panel)).toHaveText(second.name)
+    await expect(clientCard(page, first.name)).toHaveCount(0, { timeout: 15_000 })
+    await page.waitForLoadState('networkidle')
+    expect(missing).toEqual([])
+    await expect(clientName(panel)).toHaveText(second.name)
+  }
+  finally {
+    await page.unrouteAll({ behavior: 'wait' })
+    await page.request.delete(`/api/clients/${first.id}`)
+    await page.request.delete(`/api/clients/${second.id}`)
+  }
+})

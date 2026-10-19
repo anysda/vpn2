@@ -9,7 +9,14 @@ import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/client
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
 
-const { clients, refresh: refreshClients, status: clientsStatus } = useClients()
+const { clients: fetched, refresh: refreshClients, status: clientsStatus } = useClients()
+// Удалённые клиенты, которых ещё может вернуть ответ списка, начатый до удаления:
+// их не показывать и не выбирать снова, иначе карточка запросит удалённого и получит 404.
+const removed = ref<number[]>([])
+const clients = computed(() => fetched.value.filter(c => !removed.value.includes(c.id)))
+watch(fetched, (list) => {
+  if (removed.value.some(id => !list.some(c => c.id === id))) removed.value = removed.value.filter(id => list.some(c => c.id === id))
+})
 const exitTags = useExitTags()
 
 const { data: trafficMap, refresh: refreshTraffic } = useFetch<Record<number, ClientTraffic>>('/api/clients/traffic', {
@@ -107,20 +114,16 @@ async function onCreated(id: number) {
   selectedId.value = id
 }
 
-async function onDeleted() {
-  selectedId.value = null
-  if (mobile.value) void toList()
-  await refreshClients()
-}
-
-// Клиента удалили, пока грузилась карточка: выбрать соседа по списку, без тоста.
-async function onGone(id: number) {
-  if (selectedId.value !== id) return
-  if (mobile.value) void toList()
-  const list = sorted.value
-  const at = list.findIndex(c => c.id === id)
-  const rest = list.filter(c => c.id !== id)
-  selectedId.value = rest[Math.min(Math.max(at, 0), rest.length - 1)]?.id ?? null
+// Клиент удалён здесь или другим админом (карточка получила 404): выбрать
+// соседа по списку, без тоста.
+async function onRemoved(id: number) {
+  const at = sorted.value.findIndex(c => c.id === id)
+  if (!removed.value.includes(id)) removed.value = [...removed.value, id]
+  if (selectedId.value === id) {
+    if (mobile.value) void toList()
+    const rest = sorted.value
+    selectedId.value = rest[Math.min(Math.max(at, 0), rest.length - 1)]?.id ?? null
+  }
   await refreshClients()
 }
 
@@ -265,8 +268,8 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
           :traffic="traffic(selectedId)"
           :exits="exitTags"
           @changed="refreshClients"
-          @deleted="onDeleted"
-          @gone="onGone"
+          @deleted="onRemoved"
+          @gone="onRemoved"
         />
         <div v-else class="more">
           Выбери клиента в списке

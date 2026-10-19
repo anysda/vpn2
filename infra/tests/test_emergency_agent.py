@@ -569,6 +569,58 @@ class EmergencyAgentTests(unittest.TestCase):
         network.run(2)
         self.assert_cut_off_exit_keeps_pair_leader(network)
 
+    def elected(self):
+        exits = [{'id': node, 'priority': rank} for rank, node in enumerate('abc')]
+        # Created after the reboot vote quarantine, so it may vote at once.
+        leader = Leader(State(self.root, clock_boot='boot'), 'a', exits, 'fixture', 1000 - LEASE, events=Events())
+        self.vote(leader, 1000, lease=LEASE)
+        leader.tick(1000, True)
+        self.assertEqual(leader.data['role'], 'leader')
+        return leader
+
+    def vote(self, leader, now, lease):
+        leader.observe('b', {'role': 'follower', 'generation': 0, 'lease': lease, 'grant': 'a',
+                             'owner': None, 'emergency_id': ''}, now)
+
+    def test_leader_keeps_role_through_one_round_without_majority(self):
+        # Under 30 % loss the only vote may expire for a round and come back.
+        leader = self.elected()
+        self.vote(leader, 1000, lease=1)
+        leader.tick(1015, True)
+        self.assertEqual(leader.data['role'], 'leader')
+        self.vote(leader, 1020, lease=LEASE)
+        leader.tick(1030, True)
+        self.assertEqual(leader.data['role'], 'leader')
+        self.assertEqual(leader.data['failed_rounds'], 0)
+        self.assertNotIn('step_down', [call[0] for call in leader.events.calls])
+
+    def test_leader_without_majority_steps_down_within_lease(self):
+        leader = self.elected()
+        self.vote(leader, 1000, lease=1)
+        now = 1000
+        while leader.data['role'] == 'leader' and now < 1000 + 2 * LEASE:
+            now += PERIOD
+            leader.tick(now, True)
+        self.assertEqual(leader.data['role'], 'follower')
+        self.assertLess(now - 1000, LEASE)
+        self.assertIn(('step_down', (None,)), leader.events.calls)
+
+    def test_leader_that_merges_logs_autonomous_false(self):
+        cluster = self.cluster()
+        cluster.stop('entry')
+        cluster.advance(1320)
+        for node in ('b', 'c'):
+            cluster.blocked.update({('a', node), (node, 'a')})
+        cluster.advance(390)
+        self.assertTrue(cluster.agents['a'].leader.data['autonomous'])
+        cluster.blocked.clear()
+        with self.assertLogs(level='INFO') as logs:
+            cluster.advance(45)
+        self.assertEqual(cluster.leaders(), ['b'])
+        self.assertFalse(cluster.agents['a'].leader.data['autonomous'])
+        self.assertFalse(cluster.agents['a'].leader.status(cluster.clock())['autonomous'])
+        self.assertIn('INFO:root:role=follower autonomous=false', logs.output)
+
     def test_boot_change_expires_evidence_and_quarantines_votes(self):
         state = State(self.root, clock_boot='old')
         state.data['last_entry'] = 1000

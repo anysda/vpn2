@@ -9,7 +9,7 @@ import math
 import uuid
 
 from . import hooks
-from .heartbeat import MISSED
+from .heartbeat import MISSED, PERIOD
 
 # Failover budget is 90 s. A follower honours the dead leader for LEASE after
 # its last reply and asks for votes only on its own PERIOD round, which can
@@ -20,6 +20,11 @@ from .heartbeat import MISSED
 LEASE = 60
 GUARD = 300
 TRANSITION = 600
+# A leader keeps its role through a lost round: under 30 % packet loss one
+# round without a majority is ordinary. It steps down after this many rounds
+# in a row or once its last majority is that old, still inside one lease. A
+# restarted leader whose majority is older steps down at once, as before.
+STEP_DOWN_ROUNDS = (LEASE - PERIOD) // PERIOD
 
 
 class Leader:
@@ -52,6 +57,7 @@ class Leader:
             self.data.pop('failed_since', None)
             self.data.pop('failed_rounds', None)
             self.data.pop('last_round', None)
+            self.data.pop('majority_at', None)
         self.candidate = None
         self.data.setdefault('failed_since', None)
         self.data.setdefault('failed_rounds', 0)
@@ -129,6 +135,8 @@ class Leader:
             self.events.on_step_down(winner)
         self.data['role'] = 'follower'
         self.data['redirect'] = winner
+        # Autonomy describes only a leader; a follower logged autonomous=true.
+        self.data['autonomous'] = False
         self.state.save()
 
     def _become(self, autonomous):
@@ -220,6 +228,7 @@ class Leader:
             if len(self.ranks) > 1 and votes >= len(self.ranks) // 2 + 1:
                 self.data['failed_since'] = None
                 self.data['failed_rounds'] = 0
+                self.data['majority_at'] = now
                 self._become(False)
                 return
         if self.data['failed_since'] is None:
@@ -230,6 +239,9 @@ class Leader:
         if self.data['failed_rounds'] >= 3 and now - self.data['failed_since'] >= GUARD:
             self._become(True)
         elif self.data['role'] == 'leader':
-            self._step_down(None)
+            majority_at = self.data.get('majority_at')
+            if (self.data['failed_rounds'] >= STEP_DOWN_ROUNDS or majority_at is None
+                    or now - majority_at >= STEP_DOWN_ROUNDS * PERIOD):
+                self._step_down(None)
         elif self.data.get('redirect'):
             self._step_down(None)

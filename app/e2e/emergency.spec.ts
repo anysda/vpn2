@@ -67,6 +67,9 @@ test('аварийная статика: общие компоненты, сос
   }
   try {
     await signIn(startup.password)
+    // Первый лидер аварии со сквозным номером поколения 3: лидер не менялся.
+    await expect(emergency.getByText('Возраст снимка:', { exact: false })).toBeVisible()
+    await expect(emergency.getByText('Лидер сменился', { exact: false })).toHaveCount(0)
     // Ответ пришёл между тиками таймера (часы страницы ушли вперёд, тика не было): свежий снимок не «-1 мин».
     await action('fresh')
     const probe = await context.newPage()

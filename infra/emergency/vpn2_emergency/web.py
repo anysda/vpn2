@@ -112,12 +112,15 @@ class Panel:
             os.fsync(output.fileno())
         temporary.replace(self.auth_file)
 
-    def on_emergency_leader(self, emergency_id, generation, autonomous=False):
+    def on_emergency_leader(self, emergency_id, generation, autonomous=False, event='initial'):
         """Return admin-only payload AFTER make_server has bound HTTPS.
 
         The keys are tgqueue.enqueue_admin arguments: the caller adds
         bundle_version, issued_at and event. Restarting within one generation
         returns the same password, so a repeated enqueue stays a no-op.
+        event is the lifecycle's notice for this generation: the panel says the
+        leader changed only for 'leader_changed', never by the generation number,
+        which keeps counting across emergencies.
         """
         with self.lock:
             if (self.auth.get('emergency_id'), self.auth.get('generation')) != (emergency_id, generation):
@@ -128,7 +131,7 @@ class Panel:
                 self.sessions.clear()
                 self.deadline = None
                 self.cancelled = False
-            self.auth['autonomous'] = autonomous
+            self.auth.update(autonomous=autonomous, event=event)
             self._save()
             self.redirect = None
             snapshot = self.snapshot_loader(self.directory) or {}
@@ -246,7 +249,8 @@ class Panel:
         delivery = delivery_summary(self.delivery(generation), self.auth.get('emergency_id'), generation)
         return dict(clients=clients, snapshot_age=age, exit_id=self.exit_id,
                     exit_name=next((x['name'] for x in snapshot.get('exits', []) if x['id'] == self.exit_id), self.exit_id),
-                    generation=generation, autonomous=self.auth.get('autonomous', False),
+                    generation=generation, leader_changed=self.auth.get('event') == 'leader_changed',
+                    autonomous=self.auth.get('autonomous', False),
                     cancelled=self.cancelled, remaining=remaining,
                     deadline=(self.auth.get('deadline_wall') or time.time() + remaining)
                     if remaining is not None else None,

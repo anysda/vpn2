@@ -427,6 +427,27 @@ class LifecycleTests(unittest.TestCase):
         events = {row['event'] for row in tgqueue.delivery_status(self.directory)}
         self.assertEqual(events, {'initial'})
 
+    def test_panel_says_leader_changed_only_within_one_emergency(self):
+        # The generation counter keeps growing across emergencies: the first
+        # leader of the next one is an initial issuance, not a leader change.
+        self.recover()
+        self.advance(675)
+        self.assertFalse(self.agent.leader.data['active'])
+        self.advance(GUARD + 60, ready=None)
+        data = self.agent.leader.data
+        self.assertEqual((data['role'], data['active']), ('leader', True))
+        view = self.servers[-1].panel.view()
+        self.assertGreater(view['generation'], 1)
+        self.assertEqual(self.agent.state.data['lifecycle']['event'], 'initial')
+        self.assertFalse(view['leader_changed'])
+        # New credentials within the same emergency: the notices say «сменился».
+        self.agent.leader.credentials_lost()
+        self.advance(15)
+        view = self.servers[-1].panel.view()
+        self.assertEqual(self.agent.state.data['lifecycle']['event'], 'leader_changed')
+        self.assertEqual(view['generation'], data['generation'])
+        self.assertTrue(view['leader_changed'])
+
     def test_new_entry_address_is_reported_to_admin(self):
         self.lead()
         self.agent.state.data['entry_moved'] = {'from': ['203.0.113.1', 51821], 'to': ['198.51.100.7', 51821],

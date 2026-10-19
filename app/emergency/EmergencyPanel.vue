@@ -12,7 +12,7 @@ type Connection = 'connected' | 'seen' | 'never' | 'unknown'
 interface Device { id: number, name: string, ready: boolean }
 interface Client { id: number, name: string, telegram: boolean, allowed: boolean, status: Connection, devices: Device[] }
 interface State {
-  clients: Client[], exit_name: string, generation: number, autonomous: boolean, cancelled: boolean
+  clients: Client[], exit_name: string, generation: number, leader_changed: boolean, autonomous: boolean, cancelled: boolean
   remaining: number | null, deadline: number | null, snapshot_age: number | null, bot_ready: boolean
   delivery: { sent: number, errors: number, pending: number, without_telegram: number, denied: number }
 }
@@ -135,7 +135,7 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
       <div class="card emergency-state" role="status">
         <p>{{ status }}</p>
         <p v-if="state.deadline">Отключение: {{ new Date(state.deadline * 1000).toLocaleString('ru-RU', { timeZoneName: 'short' }) }}</p>
-        <p v-if="state.generation > 1">Лидер сменился: {{ state.exit_name }}. Используйте новые реквизиты; администратору отправляются новый адрес и пароль.</p>
+        <p v-if="state.leader_changed">Лидер сменился: {{ state.exit_name }}. Используйте новые реквизиты; администратору отправляются новый адрес и пароль.</p>
         <p v-if="state.autonomous">Разделение сети: согласование между экзитами нарушено. Этот exit работает автономно.</p>
         <p>Отправлено: {{ state.delivery.sent }} · Ошибок: {{ state.delivery.errors }} · В очереди: {{ state.delivery.pending }} · Без Telegram: {{ state.delivery.without_telegram }} · Без доступа: {{ state.delivery.denied }}</p>
         <p>Возраст снимка: {{ snapshotAge }}</p>

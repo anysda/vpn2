@@ -190,6 +190,15 @@ class EmergencyWebTests(unittest.TestCase):
         self.panel.on_entry_recovered(time.monotonic() + 600)
         self.assertFalse(self.panel.auth)
 
+    def test_leader_change_comes_from_the_lifecycle_event(self):
+        self.panel.on_emergency_leader('event', 13, False, 'initial')
+        self.assertFalse(self.panel.view()['leader_changed'])
+        self.panel.on_emergency_leader('event', 14, False, 'leader_changed')
+        self.assertTrue(self.panel.view()['leader_changed'])
+        self.assertTrue(self.web.Panel(self.directory, **self.options).view()['leader_changed'])
+        self.panel.on_emergency_end()
+        self.assertFalse(self.panel.view()['leader_changed'])
+
     def test_panel_shows_the_deadline_from_the_notices(self):
         self.panel.on_emergency_leader('event', 2)
         agreed = (int(time.time()) // 60 + 11) * 60

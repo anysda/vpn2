@@ -410,7 +410,7 @@ class Lifecycle:
             # Connection status for the panel; lives as long as the issuance.
             self.sessions = self.hy2.watch(self.directory)
             panel = self._panel()
-            admin = panel.on_emergency_leader(emergency_id, generation, autonomous)
+            admin = panel.on_emergency_leader(emergency_id, generation, autonomous, event)
             issued_at = iso(self.agent.wall())
             self.tg.enqueue_admin(self.directory, **admin, bundle_version=generation,
                                   issued_at=issued_at, event=event)

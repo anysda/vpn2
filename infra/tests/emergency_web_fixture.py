@@ -24,7 +24,7 @@ def main():
     file.write_text(uri)
     profiles = {d: dict(uri=uri, file=str(file), qr_png=(directory / 'qr.png').read_bytes()) for d in (11, 12, 21)}
     connections = {11: 'connected', 12: 'never', 21: 'seen'}
-    row = dict(emergency='fixture', generation=1, client=1, version='v', event='initial', reason='')
+    row = dict(emergency='fixture', generation=3, client=1, version='v', event='initial', reason='')
     delivery = [row | dict(state='sent'), row | dict(state='retry', reason='Telegram 503'),
                 row | dict(state='pending'), row | dict(state='blocked', reason='нет канала доставки')]
     server = make_server(directory, exit_id='one', public_ip='127.0.0.1', address=('127.0.0.1', 0),
@@ -35,7 +35,8 @@ def main():
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
     try:
-        payload = server.panel.on_emergency_leader('fixture', 1)
+        # Generations count across emergencies: the first leader of this one is not number 1.
+        payload = server.panel.on_emergency_leader('fixture', 3)
         print(json.dumps(dict(port=server.server_port, password=payload['panel_password'])), flush=True)
         for line in sys.stdin:
             command = json.loads(line)
@@ -45,7 +46,7 @@ def main():
             elif action == 'cancel':
                 server.panel.on_return_cancelled()
             elif action == 'partition':
-                server.panel.on_emergency_leader('fixture', 1, True)
+                server.panel.on_emergency_leader('fixture', 3, True)
             elif action == 'end':
                 server.panel.on_emergency_end()
             elif action == 'fresh':
@@ -53,7 +54,7 @@ def main():
             elif action == 'unknown':
                 connections.clear()
             elif action == 'rotate':
-                payload = server.panel.on_emergency_leader('fixture', 2)
+                payload = server.panel.on_emergency_leader('fixture', 4, False, 'leader_changed')
             print(json.dumps(dict(password=payload['panel_password'])), flush=True)
     finally:
         server.shutdown()

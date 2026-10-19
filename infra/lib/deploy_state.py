@@ -78,7 +78,7 @@ def image_contract(reference):
         command(['docker', 'rm', container])
 
 
-def composition():
+def composition(role='entry'):
     packages = command(['dpkg-query', '-W', '-f=${Package}\t${Version}\n']).splitlines()
     binaries = {}
     for name, path in {'sing-box': '/usr/local/bin/sing-box', 'wgcf': '/usr/local/bin/wgcf',
@@ -87,7 +87,9 @@ def composition():
         if Path(path).is_file():
             binaries[name] = sha256(path)
     images = {}
-    if shutil.which('docker'):
+    # Panel, bot and metrics run only on entry. On an exit docker.socket would
+    # start dockerd just to answer, and it stays running after stage 23.
+    if role == 'entry' and shutil.which('docker'):
         for name in ('anysda-vpn2', 'anysda-tgbot', 'vmsingle'):
             result = subprocess.run(['docker', 'inspect', '--format', '{{.Image}}', name],
                                     capture_output=True, text=True, timeout=30)
@@ -251,7 +253,7 @@ def main():
         else:
             if args.role == 'entry':
                 compatible(args.database, manifest['database'])
-            atomic_json(args.state / 'installed.json', {'release': manifest, 'actual': composition()})
+            atomic_json(args.state / 'installed.json', {'release': manifest, 'actual': composition(args.role)})
             operation = read_json(journal)
             operation['phase'] = 'complete'
             atomic_json(journal, operation)

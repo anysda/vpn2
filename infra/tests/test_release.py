@@ -329,6 +329,52 @@ panel_rollback
                 state.verify_backup(work / 'snapshot')
             print('SQLite backup: committed WAL included; integrity_check=ok')
 
+    def test_exit_release_journal_never_starts_docker(self):
+        # Stage 23 stops Docker on exits; docker.socket restarts dockerd on any
+        # client call, so every journal action outside stage 23 must avoid it.
+        state = module('deploy_state')
+        release = module('release')
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            tools = work / 'bin'
+            tools.mkdir()
+            calls = work / 'docker-calls'
+            fake = tools / 'docker'
+            fake.write_text(f'#!/bin/sh\necho "$*" >> {shlex.quote(str(calls))}\necho sha256:{"c" * 64}\n')
+            fake.chmod(0o755)
+            os_values = dict(line.split('=', 1) for line in Path('/etc/os-release').read_text().splitlines()
+                             if '=' in line)
+            manifest = {'format': 1, 'commit': 'a' * 40, 'rollback': 'backward-compatible', 'images': {},
+                        'binaries': {}, 'architectures': [release.architecture()],
+                        'os': {os_values['ID'].strip('"'): [os_values.get('VERSION_ID', '').strip('"')]},
+                        'min_free_bytes': 0, 'min_memory_bytes': 0, 'local_service_api': {'min': 0, 'max': 999},
+                        'database': {'min': 0, 'max': 0, 'migrate_from': [0, 0], 'journal': []},
+                        'stages': ['10-foreign', '23-emergency', '99-verify']}
+            (work / 'manifest.json').write_text(json.dumps(manifest))
+            original_backup = state.backup
+
+            def run(*arguments):
+                argv = ['deploy_state.py', '--state', str(work / 'state'), '--database', str(work / 'db.sqlite'),
+                        '--manifest', str(work / 'manifest.json'), *arguments]
+                # Configuration paths are the host's own; the snapshot logic is the same without them.
+                with patch.object(sys, 'argv', argv), \
+                        patch.dict(os.environ, PATH=f'{tools}:' + os.environ['PATH']), \
+                        patch.object(state, 'backup', lambda db, destination, _paths: original_backup(db, destination, [])):
+                    self.assertEqual(state.main(), 0, arguments)
+
+            for arguments in (['preflight'], ['prepare', '--role', 'exit'], ['backup'],
+                              ['phase', '--phase', 'applying'], ['complete', '--role', 'exit'],
+                              ['preflight', '--partial'], ['prepare', '--role', 'exit', '--partial']):
+                run(*arguments)
+            exit_calls = calls.read_text().splitlines() if calls.exists() else []
+            print(f'exit journal docker calls: {len(exit_calls)} {exit_calls}')
+            self.assertEqual(exit_calls, [], 'release journal starts docker on an exit after stage 23')
+            # Positive control: the entry records its panel containers through the same fake.
+            run('complete', '--role', 'entry')
+            self.assertIn('inspect --format {{.Image}} anysda-vpn2', calls.read_text())
+            installed = json.loads((work / 'state/installed.json').read_text())
+            self.assertEqual(installed['actual']['images']['anysda-vpn2'], 'sha256:' + 'c' * 64)
+
     def test_failed_backup_does_not_stop_panel_or_change_database(self):
         library = ROOT / 'infra/lib/panel-transaction.sh'
         self.assertTrue(library.exists(), 'deploy has no mandatory backup transaction')

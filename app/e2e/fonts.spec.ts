@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Page } from '@playwright/test'
 import { expect, hydrated, loginApi, test } from './support/fixtures'
 
@@ -5,9 +7,31 @@ import { expect, hydrated, loginApi, test } from './support/fixtures'
 // набор @font-face в каждый CSS, где семейство названо по имени, и при переходах
 // по разделам копии копятся в document.fonts. Страницы берут var(--font-sans).
 
+// Каждое объявление с именем Manrope @nuxt/fonts при сборке разрешает отдельным
+// запросом к Google. Когда разные ответы несут разные версии файлов (Google
+// выкатывает новую), их @font-face не схлопываются и набор объявлен дважды -
+// так упал checks на dev 19-10. Имя в одном объявлении - один запрос на сборку.
+
 // Начертания 200-600 из nuxt.config.ts и 700 от @nuxt/ui × 2 подмножества
 const FACES = 6 * 2
 const PAGES = ['/clients', '/routes', '/dns', '/settings', '/']
+
+const root = new URL('../app', import.meta.url).pathname
+
+function namedManrope() {
+  const found: string[] = []
+  for (const f of readdirSync(root, { recursive: true, encoding: 'utf8' })) {
+    if (!/\.(css|vue)$/.test(f)) continue
+    const src = readFileSync(join(root, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const m of src.matchAll(/(?:font-family|font|--font-[\w-]+)\s*:[^;{}]*\bManrope\b[^;{}]*/g)) found.push(`${f}: ${m[0]}`)
+  }
+  return found
+}
+
+test('Manrope назван по имени в одном объявлении CSS на всю панель', () => {
+  const found = namedManrope()
+  expect(found, found.join('\n')).toHaveLength(1)
+})
 
 async function manrope(page: Page) {
   await page.evaluate(() => document.fonts.ready)

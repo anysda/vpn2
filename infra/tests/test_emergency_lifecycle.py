@@ -229,6 +229,18 @@ class LifecycleTests(unittest.TestCase):
         self.assertLessEqual(self.wall, unblocked + 90)
         self.assertTrue(self.agent.leader.data['active'])
 
+    def test_step_down_cancels_unsent_notices_and_keeps_running(self):
+        self.bot.down = True
+        self.lead()
+        self.agent.leader._step_down('b')
+        self.lifecycle.tick(self.now)
+        rows = tgqueue.delivery_status(self.directory) + tgqueue.delivery_status(self.directory, 'admin')
+        self.assertTrue(rows)
+        self.assertEqual({row['state'] for row in rows}, {'cancelled'})
+        self.bot.down = False
+        self.advance(60, ready=None)
+        self.assertEqual(self.bot.texts, [])
+
     def test_telegram_down_two_hours_ends_without_notice(self):
         self.bot.down = True
         self.recover()

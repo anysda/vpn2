@@ -245,9 +245,8 @@ class Lifecycle:
             self.server.panel.on_step_down(winner)
         record = self.record
         if record.get('emergency'):
-            self.submit(f"cancel:{record['generation']}", self.tg.cancel, self.directory,
-                        emergency_id=record['emergency'], generation=record['generation'],
-                        events=['initial', 'leader_changed'])
+            self.submit(f"cancel:{record['generation']}", self._cancel_issue,
+                        record['emergency'], record['generation'])
 
     def on_entry_recovered(self, deadline_monotonic):
         recovery = self.agent.leader.data['recovery'] if self.agent.leader else None
@@ -319,6 +318,11 @@ class Lifecycle:
         return [row for row in self.tg.delivery_status(self.directory, audience)
                 if row['emergency'] == emergency_id and row['event'] == 'recovered'
                 and row['version'] == str(number)]
+
+    def _cancel_issue(self, emergency_id, generation):
+        # Unsent access notices of a former leader must not go out after it.
+        self.tg.cancel(self.directory, emergency_id=emergency_id, generation=generation,
+                       events=['initial', 'leader_changed'])
 
     def _recovered(self, emergency_id, generation, number, confirmed, address):
         self.tg.cancel(self.directory, emergency_id=emergency_id, events=['initial', 'leader_changed'])

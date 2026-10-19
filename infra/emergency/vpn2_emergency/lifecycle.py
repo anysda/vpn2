@@ -129,6 +129,12 @@ class Lifecycle:
             self.jobs.put(None)
             self.worker.join(30)
         self._close_server()
+        self._stop_sessions()
+
+    def _stop_sessions(self):
+        sessions, self.sessions = self.sessions, None
+        if sessions:
+            sessions.stop()
 
     def submit(self, key, function, *args):
         if key in self.pending:
@@ -433,9 +439,7 @@ class Lifecycle:
     def _end(self, emergency_id):
         self._close_server()
         self.hy2.stop(self.directory)
-        sessions, self.sessions = self.sessions, None
-        if sessions:
-            sessions.stop()
+        self._stop_sessions()
         self.profiles = {}
         port = self.hy2.settings(self.hy2_options)['port']
         if self.hy2.listening(port):

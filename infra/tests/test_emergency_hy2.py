@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -282,6 +284,26 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.hy2.stop(self.state, runtime=self.runtime)
         self.assertIsNone(self.poll([1]))
         self.assertEqual(self.statuses(2), {}, 'stopped source is unknown')
+
+    def test_stopped_session_watch_writes_nothing_afterwards(self):
+        """Stop waits for a pass in flight: the state directory is quiet once it returns."""
+        self.start()
+        polling, release = threading.Event(), threading.Event()
+
+        def fetch(*_args, **_kwargs):
+            polling.set()
+            release.wait(5)
+            return {1}
+
+        watcher = self.hy2.SessionWatch(self.state, every=0.01, fetch=fetch)
+        watcher.start()
+        self.assertTrue(polling.wait(5))
+        threading.Timer(0.2, release.set).start()
+        watcher.stop()
+        self.assertFalse(watcher.is_alive(), 'poller outlived stop()')
+        written = sorted(path.name for path in (self.state / 'hy2').iterdir())
+        time.sleep(0.1)
+        self.assertEqual(sorted(path.name for path in (self.state / 'hy2').iterdir()), written)
 
     def test_session_source_labels_each_device_user(self):
         self.start()

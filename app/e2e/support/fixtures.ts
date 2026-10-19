@@ -98,6 +98,10 @@ export const test = base.extend<{ guard: Guard }>({
     const g = new Guard()
     g.attach(page)
     await use(g)
+    // Опрос страницы может застать конец теста внутри обработчика route:
+    // ответ route.fetch() освобождается вместе с контекстом, и json() в нём
+    // падал бы уже после теста. Снимаем перехват, не дожидаясь таких вызовов.
+    await page.unrouteAll({ behavior: 'ignoreErrors' })
     await g.settle(page.request)
     expect(g.problems, 'ошибки консоли, исключения и HTTP >= 400 за тест').toEqual([])
   }, { auto: true }],

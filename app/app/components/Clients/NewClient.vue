@@ -59,7 +59,7 @@ async function submit() {
       deviceLimit: unlimited.value ? null : Math.max(1, Math.floor(Number(limit.value) || 1)),
     })
     open.value = false
-    toast.add({ title: `Клиент «${n}» создан`, color: 'success' })
+    toast.add(doneToast(`Клиент «${n}» создан`, client.warning))
     emit('created', client.id)
     if (sendBot.value && canSendTg.value) {
       try {

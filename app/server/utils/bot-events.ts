@@ -123,3 +123,15 @@ export async function botDeliveries(): Promise<BotDelivery[]> {
 export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery | null> {
   return notifyBot('client_notify', { chatId, text }, `Уведомление клиенту «${name}»`)
 }
+
+/**
+ * Изменение уже записано, уведомление о нём - вдогонку: сбой постановки в
+ * очередь возвращается текстом предупреждения для ответа, а не ошибкой запроса.
+ * У ошибок очереди текст для человека, прочие только в журнал.
+ */
+export function notifyWarning(send: Promise<unknown>, fallback = 'Уведомление клиенту не отправлено'): Promise<string | undefined> {
+  return send.then(() => undefined, (err: unknown) => {
+    useLogger().warn({ err }, 'notification not queued')
+    return (err as { statusCode?: number }).statusCode && err instanceof Error ? err.message : fallback
+  })
+}

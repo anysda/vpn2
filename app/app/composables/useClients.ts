@@ -85,7 +85,7 @@ export function useClients() {
     expiresAt?: string | null
     deviceLimit?: number | null
   }) {
-    const created = await $fetch<Client>('/api/clients', { method: 'POST', body: payload })
+    const created = await $fetch<Client & { warning?: string }>('/api/clients', { method: 'POST', body: payload })
     await refresh()
     return created
   }
@@ -97,7 +97,7 @@ export function useClients() {
     frozenManual?: boolean
     preferredExit?: string | null
   }) {
-    const updated = await $fetch<Client>(`/api/clients/${id}`, { method: 'PATCH', body: patch, headers: { 'Idempotency-Key': crypto.randomUUID() } })
+    const updated = await $fetch<Client & { warning?: string }>(`/api/clients/${id}`, { method: 'PATCH', body: patch, headers: { 'Idempotency-Key': crypto.randomUUID() } })
     await refresh()
     return updated
   }
@@ -118,8 +118,9 @@ export function useClients() {
   }
 
   async function unlink(id: number) {
-    await $fetch(`/api/clients/${id}/unlink`, { method: 'POST' })
+    const result = await $fetch<{ ok: true, warning?: string }>(`/api/clients/${id}/unlink`, { method: 'POST' })
     await refresh()
+    return result
   }
 
   return { clients: data, refresh, status, error, create, update, remove, reissueAll, sendPasswordToTg, unlink }
@@ -136,7 +137,7 @@ export function useClientDetail() {
 /** Девайс-операции клиента. */
 export function useClientDevices() {
   async function addDevice(clientId: number, name: string) {
-    return $fetch<{ id: number, clientId: number, name: string, createdAt: string }>(
+    return $fetch<{ id: number, clientId: number, name: string, createdAt: string, warning?: string }>(
       `/api/clients/${clientId}/devices`,
       { method: 'POST', body: { name } },
     )

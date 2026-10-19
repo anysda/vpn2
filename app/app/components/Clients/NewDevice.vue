@@ -20,9 +20,9 @@ async function submit() {
   if (!n || busy.value) return
   busy.value = true
   try {
-    await addDevice(props.clientId, n)
+    const res = await addDevice(props.clientId, n)
     open.value = false
-    toast.add({ title: `Девайс «${n}» добавлен`, color: 'success' })
+    toast.add(doneToast(`Девайс «${n}» добавлен`, res.warning))
     emit('added')
   }
   catch (e) {

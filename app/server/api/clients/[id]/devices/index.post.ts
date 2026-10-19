@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { useDb } from '../../../../database/client'
 import { clients } from '../../../../database/schema'
 import { requireAuth } from '../../../../utils/auth'
-import { notifyClient } from '../../../../utils/bot-events'
+import { notifyClient, notifyWarning } from '../../../../utils/bot-events'
 import { ensureDeviceWg, syncWireguardConfig } from '../../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
@@ -12,12 +12,6 @@ import { readBodyAs } from '../../../../utils/validate'
 import { createDeviceWithAddresses } from '../../../../utils/create-device'
 
 const Body = z.object({ name: z.string().trim().min(1).max(64) })
-
-/** Текст предупреждения: у ошибок очереди он для человека, прочие только в журнал. */
-function notifyFailed(err: unknown): string {
-  useLogger().warn({ err }, 'client notification not queued')
-  return (err as { statusCode?: number }).statusCode && err instanceof Error ? err.message : 'Уведомление клиенту не отправлено'
-}
 
 /** Добавить девайс клиенту. Сразу выдаёт ключи WG/OVPN. */
 export default defineEventHandler(async (event) => {
@@ -62,12 +56,12 @@ export default defineEventHandler(async (event) => {
   // Уведомить привязанного клиента — устройство добавил администратор.
   // Устройство уже создано: сбой очереди бота — предупреждение, не ошибка.
   const warning = owner.tgChatId
-    ? await notifyClient(
+    ? await notifyWarning(notifyClient(
         owner.tgChatId,
         `➕ Администратор добавил вам устройство «${name}». `
         + 'Откройте «📱 Мои устройства», чтобы получить конфиг.',
         owner.name,
-      ).then(() => undefined, notifyFailed)
+      ))
     : undefined
 
   return { id: device.id, clientId, name: device.name, createdAt: device.createdAt, ...(warning ? { warning } : {}) }

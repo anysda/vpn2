@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm'
 import { useDb } from '../../../database/client'
 import { clients } from '../../../database/schema'
 import { requireAuth } from '../../../utils/auth'
-import { notifyClient } from '../../../utils/bot-events'
+import { notifyClient, notifyWarning } from '../../../utils/bot-events'
 import { generateClientPassword } from '../../../utils/password'
 
 /**
@@ -35,13 +35,6 @@ export default defineEventHandler(async (event) => {
   }, { behavior: 'immediate' })
 
   if (!before.tgChatId) return { ok: true }
-  try {
-    await notifyClient(before.tgChatId, '🔒 Ваш доступ к этому боту отозван администратором.', before.name)
-    return { ok: true }
-  }
-  catch (err) {
-    useLogger().warn({ err }, 'unlink notification not queued')
-    const human = (err as { statusCode?: number }).statusCode && err instanceof Error
-    return { ok: true, warning: human ? err.message : 'Уведомление клиенту не отправлено' }
-  }
+  const warning = await notifyWarning(notifyClient(before.tgChatId, '🔒 Ваш доступ к этому боту отозван администратором.', before.name))
+  return { ok: true, ...(warning ? { warning } : {}) }
 })

@@ -2,7 +2,7 @@ import { and, count, eq, ne, notExists, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import type { Client } from '../database/schema'
 import { clients, devices } from '../database/schema'
-import { notifyBot, notifyClient } from './bot-events'
+import { notifyBot, notifyClient, notifyWarning } from './bot-events'
 import { minExpiryMs } from './expiry'
 import { generateClientPassword } from './password'
 import { enqueueAccess, replayAccess } from './access-operations'
@@ -52,7 +52,7 @@ function assertExpiryAllowed(expiresAt: string | null | undefined): void {
 }
 
 /** Создать клиента (имя + опции). Пароль генерится автоматически. */
-export async function createClient(input: ClientCreateInput, actor: string): Promise<Client> {
+export async function createClient(input: ClientCreateInput, actor: string): Promise<Client & { warning?: string }> {
   const db = useDb()
   assertExpiryAllowed(input.expiresAt)
 
@@ -72,13 +72,14 @@ export async function createClient(input: ClientCreateInput, actor: string): Pro
 
   const [row] = await db.insert(clients).values(values).returning()
   if (!row) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
-  await notifyBot('client_created', { name: row.name })
+  // Клиент уже создан: сбой очереди бота - предупреждение в ответе, не ошибка.
+  const warning = await notifyWarning(notifyBot('client_created', { name: row.name }), 'Уведомление о клиенте не отправлено')
   await recordEvent({ type: 'client_created', level: 'info', object: `client:${row.id}`, actor, title: `Клиент создан · ${row.name}`, detail: actor })
-  return row
+  return { ...row, ...(warning ? { warning } : {}) }
 }
 
 /** Обновить клиента: валидация, апдейт, ресинк WG/OVPN, уведомления клиенту. */
-export async function updateClient(id: number, patch: ClientPatch, actor: string, key?: string): Promise<Partial<Client> & { id: number, operation?: AccessOperation }> {
+export async function updateClient(id: number, patch: ClientPatch, actor: string, key?: string): Promise<Partial<Client> & { id: number, operation?: AccessOperation, warning?: string }> {
   const db = useDb()
   if (key && (patch.frozenManual !== undefined || patch.expiresAt !== undefined)) {
     const normalized = { ...patch,
@@ -172,28 +173,31 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     await recordEvent({ type: 'client_term', level: 'info', object, actor, title: `Срок изменён · ${row.name}`, detail: joinDetail(termText(row.expiresAt), actor) })
   }
 
-  // Уведомления привязанному клиенту об изменениях аккаунта.
+  // Уведомления привязанному клиенту об изменениях аккаунта. Изменение уже
+  // записано: сбой очереди бота - предупреждение в ответе, не ошибка.
   const chat = before.tgChatId
+  const warnings: Array<string | undefined> = []
   if (chat) {
     if (patch.name !== undefined && row.name !== before.name) {
-      await notifyClient(chat, `✏️ Имя вашего профиля изменено на «${row.name}».`, row.name)
+      warnings.push(await notifyWarning(notifyClient(chat, `✏️ Имя вашего профиля изменено на «${row.name}».`, row.name)))
     }
     if (patch.deviceLimit !== undefined) {
       const rank = (v: number | null) => (v === null ? Infinity : v)
       const oldR = rank(before.deviceLimit)
       const newR = rank(row.deviceLimit)
       if (newR > oldR) {
-        await notifyClient(chat, row.deviceLimit === null
+        warnings.push(await notifyWarning(notifyClient(chat, row.deviceLimit === null
           ? '📈 Лимит устройств снят — теперь без ограничений.'
-          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`, row.name)
+          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`, row.name)))
       }
       else if (newR < oldR) {
-        await notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`, row.name)
+        warnings.push(await notifyWarning(notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`, row.name)))
       }
     }
   }
+  const warning = [...new Set(warnings.filter(Boolean))].join(' ')
 
-  return { ...row, ...(queued ? { operation: queued.operation } : {}) }
+  return { ...row, ...(queued ? { operation: queued.operation } : {}), ...(warning ? { warning } : {}) }
 }
 
 /** Удалить клиента: каскадно девайсы, ресинк WG, отзыв OVPN-сертификатов. */

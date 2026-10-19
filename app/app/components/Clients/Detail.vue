@@ -90,10 +90,10 @@ async function saveName() {
     return
   }
   try {
-    await update(d.id, { name: v })
+    const res = await update(d.id, { name: v })
     d.name = v
     el.textContent = v
-    toast.add({ title: 'Имя сохранено', color: 'success' })
+    toast.add(doneToast('Имя сохранено', res.warning))
     emit('changed')
   }
   catch (e) {
@@ -126,9 +126,9 @@ async function saveExpiry() {
   const same = (next ? new Date(next).getTime() : null) === (d.expiresAt ? new Date(d.expiresAt).getTime() : null)
   if (same) return
   try {
-    await update(d.id, { expiresAt: next })
+    const res = await update(d.id, { expiresAt: next })
     d.expiresAt = next
-    toast.add({ title: 'Срок действия сохранён', color: 'success' })
+    toast.add(doneToast('Срок действия сохранён', res.warning))
     await changed()
   }
   catch (e) {
@@ -164,9 +164,9 @@ async function saveLimit(next: number | null, withToast: boolean) {
   }
   limDraft.value = next === null ? '' : String(next)
   try {
-    await update(d.id, { deviceLimit: next })
+    const res = await update(d.id, { deviceLimit: next })
     d.deviceLimit = next
-    if (withToast) toast.add({ title: 'Лимит девайсов сохранён', color: 'success' })
+    if (withToast || res.warning) toast.add(doneToast('Лимит девайсов сохранён', res.warning))
     emit('changed')
   }
   catch (e) {
@@ -211,9 +211,9 @@ async function saveExit(e: Event) {
   const el = e.target as HTMLSelectElement
   const tag = el.value || null
   try {
-    await update(d.id, { preferredExit: tag })
+    const res = await update(d.id, { preferredExit: tag })
     d.preferredExit = tag
-    toast.add({ title: tag ? `Предпочитаемый экзит: ${tag.toUpperCase()}` : 'Предпочитаемый экзит: авто', color: 'success' })
+    toast.add(doneToast(tag ? `Предпочитаемый экзит: ${tag.toUpperCase()}` : 'Предпочитаемый экзит: авто', res.warning))
     emit('changed')
   }
   catch (err) {
@@ -286,10 +286,10 @@ function askUnlink() {
     post: '? Он потеряет доступ к самообслуживанию в боте, а старая ссылка-приглашение перестанет работать. Конфиги VPN продолжат работать.',
     act: 'Отозвать',
     run: () => guard(async () => {
-      await unlink(d.id)
+      const res = await unlink(d.id)
       d.tgLinked = false
       d.tgUsername = null
-      toast.add({ title: 'Доступ к боту отозван', color: 'success' })
+      toast.add(doneToast('Доступ к боту отозван', res.warning))
       emit('changed')
     }, 'Ошибка'),
   })

@@ -444,7 +444,20 @@ if read(SB_CONFIG) == new_body:
     sys.exit(0)
 
 # config.json меняется только при смене выходов в базе (передеплой) — тогда
-# без перезапуска не обойтись.
+# без перезапуска не обойтись. Через vpn2-apply (стадия 29-control): кандидат,
+# проверка, перезапуск, проверка службы; не поднялась — возвращается последний
+# рабочий. Первая установка идёт до 29-control, восстанавливать там нечего.
+APPLY = '/usr/local/sbin/vpn2-apply'
+if not NO_RESTART and os.access(APPLY, os.X_OK):
+    with tempfile.NamedTemporaryFile('w', suffix='.json') as candidate:
+        candidate.write(new_body)
+        candidate.flush()
+        applied = subprocess.run([APPLY, 'install', 'sing-box', candidate.name])
+    if applied.returncode:
+        sys.exit(applied.returncode)
+    write_plan()
+    print(f'{summary}, config.json изменился, sing-box restarted')
+    sys.exit(0)
 put(SB_CONFIG, new_body, [SB_BIN, 'check', '-c'])
 write_plan()
 if NO_RESTART:

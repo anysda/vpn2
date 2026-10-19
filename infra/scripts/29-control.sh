@@ -45,6 +45,16 @@ for source in contract.py backend.py server.py launcher.py; do
   install -o root -g root -m 0644 "$CONTROL_SOURCE/$source" /usr/local/lib/vpn2-control/
 done
 install -o root -g root -m 0644 "$POOL_SOURCE" /usr/local/lib/vpn2-control/vpn-pools.json
+install -o root -g root -m 0755 "$CONTROL_SOURCE/apply.py" /usr/local/sbin/vpn2-apply
+# Finish an apply interrupted since the last deploy (3: the previous config
+# was restored), then record what runs now as the last good config.
+for resource in sing-box openvpn ikev2 wg; do
+  rc=0
+  /usr/local/sbin/vpn2-apply resume "$resource" || rc=$?
+  [[ $rc == 0 || $rc == 3 ]] || exit "$rc"
+  /usr/local/sbin/vpn2-apply mark "$resource" >/dev/null 2>&1 ||
+    echo "[$HOST_TAG] vpn2-apply: $resource is not running, last good not recorded"
+done
 install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.service" /etc/systemd/system/
 install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.socket" /etc/systemd/system/
 # A host UID is required for a user-namespace mapping. Never accept a UID in

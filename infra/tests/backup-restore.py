@@ -805,9 +805,10 @@ exec /usr/bin/sqlite3 "$@"
         self.assertIn('устройство 7 «Телефон Ани»: нет пира WireGuard', result.stdout)
         self.assertRegex(result.stdout, r'(?m)^warning: +БД и конфиги VPN расходятся')
         events = Path('/test-output/curl').read_text()
-        self.assertIn('"type":"backup_failed"', events)
-        self.assertIn('расходятся', events)
-        self.assertIn('устройства: 7', events)
+        # Годный архив — предупреждение в ленте, а не «Бэкап не удался».
+        self.assertIn('{"type":"backup_warning","detail":"БД и конфиги VPN расходятся (устройства: 7)'
+                      ' — перевыпусти в панели"}', events)
+        self.assertNotIn('backup_failed', events)
         for secret in (psk, 'test-tgbot-secret'):
             self.assertNotIn(secret, result.stdout + events)
 

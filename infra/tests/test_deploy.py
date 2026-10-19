@@ -75,7 +75,7 @@ do_restore latest --force --dry-run
             self.assertEqual(result.stdout.splitlines(),
                              ["ssh: /usr/local/bin/anysda-restore.sh 'latest' '--force' '--dry-run'"])
 
-    def run_deploy(self, directory, *args, restore_rc=0):
+    def run_deploy(self, directory, *args, restore_rc=0, backup_rc=0):
         """Настоящие infra/deploy.sh и deploy-release.sh, транспорт до entry подставной."""
         root = Path(directory)
         (root / 'lib').mkdir()
@@ -90,7 +90,7 @@ do_restore latest --force --dry-run
             (root / 'bin' / tool).chmod(0o755)
         (root / 'lib/ssh.sh').write_text(f'''
 C_R= C_G= C_Y= C_B= C_END=
-log() {{ :; }}; ok() {{ :; }}; warn() {{ :; }}
+log() {{ :; }}; ok() {{ :; }}; warn() {{ echo "warn: $*" >&2; }}
 die() {{ echo "die: $*" >&2; exit 1; }}
 load_env() {{ HOST_TAG=$1; }}
 expand_hosts() {{ case $1 in ru|all) echo ru ;; *) die "unknown host group: $1" ;; esac; }}
@@ -99,6 +99,7 @@ ssh_exec() {{
   echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
   if [[ "$1" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
   if [[ "$1" == *anysda-restore.sh* ]]; then return {restore_rc}; fi
+  if [[ "$1" == *anysda-backup.sh* ]]; then return {backup_rc}; fi
 }}
 ''')
         environment = dict(os.environ, PATH=f'{root / "bin"}:{os.environ["PATH"]}',
@@ -129,6 +130,22 @@ ssh_exec() {{
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, [])
             self.assertIn(archive.name, result.stdout + result.stderr)
+
+    def test_backup_saved_with_warning_is_not_a_failure(self):
+        # Код 4 скрипта бэкапа: архив снят, но БД и конфиги VPN расходятся.
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_deploy(directory, 'backup', backup_rc=4)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, ['ssh: /usr/local/bin/anysda-backup.sh'])
+            self.assertIn('warn: архив сохранён с предупреждением', result.stderr)
+            self.assertIn('перевыпусти', result.stderr)
+
+    def test_failed_backup_still_fails(self):
+        for rc in (1, 2, 3):
+            with self.subTest(rc=rc), tempfile.TemporaryDirectory() as directory:
+                result, _ = self.run_deploy(directory, 'backup', backup_rc=rc)
+                self.assertEqual(result.returncode, rc, result.stderr)
+                self.assertNotIn('архив сохранён', result.stderr)
 
     def test_invalid_stage_arguments_open_no_release(self):
         # Иначе выпуск остаётся в applying, и следующий деплой требует recover.

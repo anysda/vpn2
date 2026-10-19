@@ -4,10 +4,12 @@ import { recordEvent } from '../../utils/events'
 import { readBodyAs } from '../../utils/validate'
 
 // Тревоги, о которых панель узнаёт только снаружи: от бота (Telegram отверг
-// сообщение) и от скрипта бэкапа на этой же ноде. Только перечисленные типы.
+// сообщение) и от скрипта бэкапа на этой же ноде (бэкап не удался или архив
+// сохранён с предупреждением). Только перечисленные типы.
 const Body = z.discriminatedUnion('type', [
   z.object({ type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']) }),
   z.object({ type: z.literal('backup_failed'), detail: z.string().trim().max(200).default('') }),
+  z.object({ type: z.literal('backup_warning'), detail: z.string().trim().max(200).default('') }),
 ])
 
 export default defineEventHandler(async (event) => {
@@ -18,6 +20,9 @@ export default defineEventHandler(async (event) => {
       type: 'telegram_rejected', level: 'alarm', object: 'bot', title: 'Telegram не принял сообщение бота',
       detail: `${body.recipient === 'client' ? 'клиенту' : 'админу'} · код ${body.status}`,
     })
+  }
+  else if (body.type === 'backup_warning') {
+    await recordEvent({ type: 'backup_warning', level: 'warn', object: 'backup', title: 'Бэкап сохранён с предупреждением', detail: body.detail })
   }
   else {
     await recordEvent({ type: 'backup_failed', level: 'alarm', object: 'backup', title: 'Бэкап не удался', detail: body.detail })

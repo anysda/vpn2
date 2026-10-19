@@ -171,6 +171,9 @@ Wants=anysda-vpn2.target
 Type=oneshot
 # Скрипт сам читает backup.env через Bash (формат %q, не EnvironmentFile).
 ExecStart=/usr/local/bin/anysda-backup.sh
+# 4 - архив снят с предупреждением (оно в журнале и в «Событиях» панели),
+# юнит не падает.
+SuccessExitStatus=4
 # Логи приходят в journalctl -u anysda-backup
 StandardOutput=journal
 StandardError=journal

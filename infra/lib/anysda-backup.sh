@@ -29,16 +29,22 @@
 set -euo pipefail
 umask 077
 
-# Неудачный бэкап — тревога в ленту «События» панели. Best-effort: панели
-# может и не быть, на исход бэкапа это не влияет. Секрет идёт в curl через
-# stdin, чтобы не светиться в списке процессов.
+# Неудачный бэкап — тревога в ленту «События» панели, архив с расхождением
+# (код 4) — предупреждение. Best-effort: панели может и не быть, на исход
+# бэкапа это не влияет. Секрет идёт в curl через stdin, чтобы не светиться
+# в списке процессов.
 FAIL_REASON=
+WARNING=
 report_failure() {
-  local rc=$1 secret=/etc/anysda/tgbot-secret.txt
+  local rc=$1 secret=/etc/anysda/tgbot-secret.txt event
   [[ $rc -ne 0 && -r $secret ]] || return 0
+  if [[ $rc -eq 4 && -n $WARNING ]]; then
+    event="{\"type\":\"backup_warning\",\"detail\":\"$WARNING\"}"
+  else
+    event="{\"type\":\"backup_failed\",\"detail\":\"${FAIL_REASON:-код выхода $rc}\"}"
+  fi
   printf 'Authorization: Bearer %s\n' "$(cat "$secret")" | curl -fsS --max-time 5 -H @- \
-    -H 'Content-Type: application/json' \
-    -d "{\"type\":\"backup_failed\",\"detail\":\"${FAIL_REASON:-код выхода $rc}\"}" \
+    -H 'Content-Type: application/json' -d "$event" \
     http://127.0.0.1:51821/api/bot/events >/dev/null 2>&1 || true
 }
 trap 'report_failure $?' EXIT
@@ -329,7 +335,6 @@ snapshot_access() {
   fi
   if [[ -n $lock ]]; then exec {lock}<&-; fi
 }
-WARNING=
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
   snapshot_access
   rc=0
@@ -532,7 +537,6 @@ printf '%-12s %s\n' 'backend:'     "$BACKUP_BACKEND"
 printf '%-12s %s\n' 'retention:'   "keep last $RETAIN"
 if [[ -n $WARNING ]]; then
   printf '%-12s %s\n' 'warning:'   "$WARNING"
-  # Тревога в ленту «События» уходит из report_failure по коду выхода.
-  FAIL_REASON="архив сохранён, но $WARNING"
+  # Предупреждение в ленту «События» уходит из report_failure по коду выхода.
   exit 4
 fi

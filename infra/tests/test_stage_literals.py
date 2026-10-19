@@ -171,6 +171,12 @@ class IkeRoutingLiteralTests(unittest.TestCase):
 
 
 class BackupLiteralTests(unittest.TestCase):
+    def test_archive_saved_with_warning_does_not_fail_unit(self):
+        # Код 4 anysda-backup.sh — архив снят, предупреждение в журнале и в панели.
+        text = source('26-backup.sh')
+        unit = text.split("cat > /etc/systemd/system/anysda-backup.service <<'EOF'", 1)[1].split('\nEOF', 1)[0]
+        self.assertIn('\nSuccessExitStatus=4\n', unit)
+
     def test_backup_env_roundtrip(self):
         text = source('26-backup.sh')
         unit = text.split("cat > /etc/systemd/system/anysda-backup.service <<'EOF'", 1)[1].split('\nEOF', 1)[0]

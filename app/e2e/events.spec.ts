@@ -153,7 +153,7 @@ test.describe('журнал событий', () => {
     expect(JSON.stringify(rows)).not.toContain('wrong-password-e2e')
   })
 
-  test('бот и бэкап сообщают о сбоях только с loopback и с секретом', async ({ page }) => {
+  test('бот и бэкап сообщают о сбоях и предупреждениях только с loopback и с секретом', async ({ page }) => {
     await loginApi(page)
     const api = page.request
     // Снаружи (через Caddy) ручка бота закрыта даже для вошедшего админа.
@@ -173,12 +173,15 @@ test.describe('журнал событий', () => {
     expect(post({ type: 'telegram_rejected', status: 403, recipient: 'client' })).toBe(200)
     expect(post({ type: 'telegram_rejected', status: 400, recipient: 'admin' })).toBe(200)
     expect(post({ type: 'backup_failed', detail: 'нет пароля шифрования' })).toBe(200)
+    const warning = 'БД и конфиги VPN расходятся (устройства: 7) — перевыпусти в панели'
+    expect(post({ type: 'backup_warning', detail: warning })).toBe(200)
 
     const rows = await since(api, mark)
     expect(rows.map(r => [r.type, r.level, r.title, r.detail])).toEqual([
       ['telegram_rejected', 'alarm', 'Telegram не принял сообщение бота', 'клиенту · код 403'],
       ['telegram_rejected', 'alarm', 'Telegram не принял сообщение бота', 'админу · код 400'],
       ['backup_failed', 'alarm', 'Бэкап не удался', 'нет пароля шифрования'],
+      ['backup_warning', 'warn', 'Бэкап сохранён с предупреждением', warning],
     ])
   })
 

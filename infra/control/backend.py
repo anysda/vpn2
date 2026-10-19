@@ -190,14 +190,44 @@ class Backend:
                 require(time.monotonic() < self.deadline, 'limit')
                 time.sleep(0.02)
 
+    def served(self, path):
+        # OpenVPN re-reads the CRL and ccd after dropping to user nobody and
+        # group nogroup, so only the "other" bits apply. An unreadable CRL
+        # keeps the old one in memory, an unreadable ccd ignores "disable",
+        # and neither is an error the server reports.
+        try:
+            if not path.stat().st_mode & 0o004:
+                return False
+            for parent in path.parents:
+                if parent == self.root != Path('/'):
+                    break
+                if not parent.stat().st_mode & 0o001:
+                    return False
+        except FileNotFoundError:
+            return False
+        return True
+
     def crl(self, base):
+        target = base / 'pki/crl.pem'
+        config = base / 'server.conf'
+        if config.exists():
+            listed = re.search(r'(?m)^\s*crl-verify\s+(\S+)\s*$', config.read_text())
+            require(bool(listed) and self.path(listed[1]) == target, 'unavailable')
+        before = target.stat() if target.exists() else None
         with tempfile.TemporaryDirectory(dir=base / 'pki') as work:
             crl = Path(work) / 'crl.pem'
             self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
                          str(base / 'pki/openssl.cnf'), '-gencrl', '-out', str(crl))
             self.command('/usr/bin/openssl', 'crl', '-in', str(crl), '-noout',
                          '-verify', '-CAfile', str(base / 'pki/ca.crt'))
-            atomic(base / 'pki/crl.pem', crl.read_text(), 0o644)
+            atomic(target, crl.read_text(), 0o644)
+        # OpenVPN reloads the CRL only when mtime (whole seconds) or size
+        # changed since its last load; a same-size rewrite in the same second
+        # would be skipped until the next change.
+        after = target.stat()
+        if before and int(after.st_mtime) == int(before.st_mtime) and after.st_size == before.st_size:
+            os.utime(target, (after.st_atime, int(before.st_mtime) + 1))
+        require(self.served(target), 'unavailable')
 
     def openvpn_resource(self, method, params):
         base = self.path('/etc/openvpn/server')
@@ -264,14 +294,16 @@ class Backend:
             except Fault:
                 pass
             revoked = False
-            if status == 'R':
+            if status == 'R' and self.served(base / 'pki/crl.pem'):
                 crl = self.command('/usr/bin/openssl', 'crl', '-in', str(base / 'pki/crl.pem'), '-text', '-noout')
                 revoked = any(int(value, 16) == int(serial, 16) for value in
                               re.findall(r'Serial Number:\s*([0-9A-Fa-f]+)', crl))
             ccd = base / 'ccd' / cn
             text = ccd.read_text() if ccd.exists() else None
+            # A ccd the server cannot read is the same as none: it connects.
+            denied = text is not None and self.served(ccd) and re.search(r'(?m)^disable\s*$', text)
             return {'valid': valid, 'revoked': revoked, 'present': text is not None,
-                    'allowed': text is not None and not re.search(r'(?m)^disable\s*$', text)}
+                    'allowed': text is not None and not denied}
 
     def traffic(self, protocol):
         if protocol == 'wg':
@@ -392,19 +424,14 @@ class Backend:
             if not allowed:
                 body += 'disable\n'
             atomic(base / 'ccd' / cn, body, 0o644)
+            require(self.served(base / 'ccd' / cn), 'unavailable')
             if params['action'] == 'revoke':
                 for status, serial in certs:
                     if status == 'V':
                         self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
                                      str(base / 'pki/openssl.cnf'), '-revoke',
                                      str(base / 'pki/newcerts' / (serial + '.pem')))
-                with tempfile.TemporaryDirectory(dir=base / 'pki') as work:
-                    crl = Path(work) / 'crl.pem'
-                    self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
-                                 str(base / 'pki/openssl.cnf'), '-gencrl', '-out', str(crl))
-                    self.command('/usr/bin/openssl', 'crl', '-in', str(crl), '-noout',
-                                 '-verify', '-CAfile', str(base / 'pki/ca.crt'))
-                    atomic(base / 'pki/crl.pem', crl.read_text(), 0o644)
+                self.crl(base)
                 require(all(status != 'V' for status, _serial in
                             self.certificates(params['device_id'])), 'unavailable')
             current = self.observe('openvpn')

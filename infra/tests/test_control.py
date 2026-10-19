@@ -263,6 +263,184 @@ class ControlTests(unittest.TestCase):
             self.assertTrue(self.request('openvpn.apply', params)['ok'])
             self.assertIn(unittest.mock.call('kill dev_7'), call.call_args_list)
 
+    def openvpn_ca(self, status='V'):
+        self.file('/etc/openvpn/server/server.conf',
+                  'crl-verify /etc/openvpn/server/pki/crl.pem\nuser nobody\ngroup nogroup\n')
+        self.file('/etc/openvpn/server/pki/index.txt',
+                  status + '\t300101000000Z\t\t0A\tunknown\t/CN=dev_7\n')
+        self.file('/etc/openvpn/server/pki/crl.pem', 'CRL')
+        self.file('/etc/openvpn/server/pki/newcerts/0A.pem', 'certificate')
+        self.file('/etc/openvpn/server/ccd/dev_7', 'ifconfig-push 10.67.67.2 255.255.255.0\n')
+        for directory in ('etc', 'etc/openvpn', 'etc/openvpn/server', 'etc/openvpn/server/pki',
+                          'etc/openvpn/server/ccd'):
+            (self.root / directory).chmod(0o755)
+        failures = []
+
+        def command(*args, **_options):
+            if failures and failures[0] in args:
+                raise self.contract.Fault('unavailable')
+            if '-revoke' in args:
+                self.file('/etc/openvpn/server/pki/index.txt',
+                          'R\t300101000000Z\t260101000000Z\t0A\tunknown\t/CN=dev_7\n')
+            if '-gencrl' in args:
+                Path(args[-1]).write_text('CRL')
+            if '-text' in args:
+                return 'Revoked Certificates:\n    Serial Number: 0A\n'
+            return ''
+        return command, failures
+
+    def test_openvpn_crl_the_server_cannot_read_is_not_a_revocation(self):
+        # OpenVPN re-reads crl.pem as user nobody; root's openssl verify
+        # passing does not mean the server stopped accepting the certificate.
+        command, _failures = self.openvpn_ca()
+        pki = self.root / 'etc/openvpn/server/pki'
+        pki.chmod(0o700)
+        params = {'version': 1, 'device_id': 7, 'action': 'revoke', 'ip': '10.67.67.2'}
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            self.invalid('openvpn.apply', params, 'unavailable')
+            state = self.request('openvpn.certificate', {'device_id': 7, 'serial': '0A'})
+            self.assertFalse(state['result']['revoked'], state)
+            pki.chmod(0o755)
+            self.assertTrue(self.request('openvpn.apply', params)['ok'])
+            state = self.request('openvpn.certificate', {'device_id': 7, 'serial': '0A'})
+            self.assertTrue(state['result']['revoked'], state)
+
+    def test_openvpn_ccd_the_server_cannot_read_is_not_a_deny(self):
+        command, _failures = self.openvpn_ca()
+        params = {'version': 1, 'device_id': 7, 'action': 'deny', 'ip': '10.67.67.2'}
+        ccd = self.root / 'etc/openvpn/server/ccd'
+        ccd.chmod(0o700)
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            self.invalid('openvpn.apply', params, 'unavailable')
+            state = self.request('openvpn.certificate', {'device_id': 7, 'serial': '0A'})
+            self.assertTrue(state['result']['allowed'], state)
+            ccd.chmod(0o755)
+            self.assertTrue(self.request('openvpn.apply', params)['ok'])
+            state = self.request('openvpn.certificate', {'device_id': 7, 'serial': '0A'})
+            self.assertFalse(state['result']['allowed'], state)
+
+    def test_openvpn_same_second_same_size_crl_is_still_reloaded(self):
+        # OpenVPN compares whole-second mtime and size before reloading.
+        command, _failures = self.openvpn_ca()
+        crl = self.root / 'etc/openvpn/server/pki/crl.pem'
+        before = int(crl.stat().st_mtime)
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            self.assertTrue(self.request('openvpn.apply', {'version': 1, 'device_id': 7,
+                                                           'action': 'revoke', 'ip': '10.67.67.2'})['ok'])
+        self.assertEqual(crl.read_text(), 'CRL')
+        self.assertGreater(int(crl.stat().st_mtime), before)
+
+    def test_openvpn_server_must_verify_the_managed_crl(self):
+        command, _failures = self.openvpn_ca()
+        self.file('/etc/openvpn/server/server.conf', 'crl-verify /etc/openvpn/server/old-crl.pem\n')
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            self.invalid('openvpn.apply', {'version': 1, 'device_id': 7, 'action': 'revoke',
+                                           'ip': '10.67.67.2'}, 'unavailable')
+
+    def test_openvpn_delete_interrupted_after_index_retry_publishes_crl(self):
+        # Partial delete: the CA index says revoked, the CRL was never written.
+        command, failures = self.openvpn_ca()
+        failures.append('-gencrl')
+        params = {'version': 1, 'device_id': 7, 'action': 'revoke', 'ip': '10.67.67.2'}
+        with patch.object(self.backend, 'command', side_effect=command), \
+                patch.object(self.backend, 'management', return_value=['END']):
+            self.invalid('openvpn.apply', params, 'unavailable')
+            self.assertEqual(self.backend.certificates(7), [('R', '0A')])
+            failures.clear()
+            reply = self.request('openvpn.apply', params)
+        self.assertTrue(reply['ok'], reply)
+        self.assertTrue(reply['result']['observed']['revoked'])
+
+    def test_wg_failed_apply_is_not_confirmed_and_retry_completes(self):
+        path = self.file('/etc/wireguard/wg0.conf', '[Interface]\nPrivateKey = server-secret\n'
+                         '\n[Peer]\nPublicKey = ' + self.public + '\n')
+        before = path.read_text()
+        kernel = {self.public: '10.66.66.2/32 fd66:66::2/128'}
+        broken = [True]
+
+        def command(*args, **_options):
+            if args[1] == 'syncconf':
+                if broken[0]:
+                    raise self.contract.Fault('unavailable')
+                kernel.clear()
+                return ''
+            if args[-1] == 'preshared-keys':
+                return ''
+            return ''.join(key + '\t' + value + '\n' for key, value in kernel.items())
+
+        params = {'version': 1, 'peers': []}
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.invalid('wg.apply', params, 'unavailable')
+            self.assertEqual(path.read_text(), before)
+            self.assertIn(self.public, kernel)
+            broken[0] = False
+            self.assertEqual(self.request('wg.apply', params)['result']['observed'], {'peers': {}})
+        self.assertNotIn(self.public, path.read_text())
+
+    def test_wg_peer_left_in_kernel_is_not_confirmed(self):
+        self.file('/etc/wireguard/wg0.conf', '[Interface]\nPrivateKey = server-secret\n')
+
+        def command(*args, **_options):
+            if args[1] == 'syncconf':
+                return ''
+            if args[-1] == 'preshared-keys':
+                return ''
+            return self.public + '\t10.66.66.2/32 fd66:66::2/128\n'
+
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.invalid('wg.apply', {'version': 1, 'peers': []}, 'unavailable')
+
+    def ikev2_world(self):
+        self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
+        world = {'live': True, 'fail': None, 'terminate': True}
+
+        def command(*args, **_options):
+            if world['fail'] and world['fail'] in args:
+                raise self.contract.Fault('unavailable')
+            if '--list-sas' in args:
+                return "anysda-dev-7: #42, ESTABLISHED\n  remote EAP: 'device7'\n" if world['live'] else ''
+            if '--terminate' in args and world['terminate']:
+                world['live'] = False
+            return ''
+        return command, world
+
+    def test_ikev2_failed_load_is_not_confirmed_and_retry_terminates(self):
+        command, world = self.ikev2_world()
+        world['fail'] = '--load-creds'
+        params = {'version': 1, 'clients': []}
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.invalid('ikev2.apply', params, 'unavailable')
+            self.assertTrue(world['live'])
+            self.assertEqual(json.loads((self.state / 'ikev2-pending.json').read_text()), ['device7'])
+            world['fail'] = None
+            self.assertTrue(self.request('ikev2.apply', params)['ok'])
+        self.assertFalse(world['live'])
+
+    def test_ikev2_sa_that_survives_terminate_is_not_confirmed(self):
+        command, world = self.ikev2_world()
+        world['terminate'] = False
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.invalid('ikev2.apply', {'version': 1, 'clients': []}, 'unavailable')
+        self.assertEqual(json.loads((self.state / 'ikev2-pending.json').read_text()), ['device7'])
+
+    def test_ikev2_delete_interrupted_at_terminate_retry_finishes(self):
+        command, world = self.ikev2_world()
+        world['fail'] = '--terminate'
+        params = {'version': 1, 'clients': []}
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.invalid('ikev2.apply', params, 'unavailable')
+            # A fresh process after the failure still knows whom to terminate.
+            self.backend = self.backend_module.Backend(self.root, self.state)
+            self.backend.pools = self.pools
+            world['fail'] = None
+        with patch.object(self.backend, 'command', side_effect=command):
+            self.assertTrue(self.request('ikev2.apply', params)['ok'])
+        self.assertFalse(world['live'])
+
     def test_ikev2_numeric_sa_and_persistent_retry(self):
         self.file('/etc/swanctl/conf.d/anysda-clients.conf', '')
         calls = []

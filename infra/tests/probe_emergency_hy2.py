@@ -256,13 +256,22 @@ def probe():
         while not fetch(17892, '203.0.113.2'):
             assert time.monotonic() < deadline
         assert not fetch(17891, '203.0.113.2')
+        # A QUIC session from before the restart is unknown to the new process:
+        # sing-box neither closes it on SIGTERM nor resets it, so the old client
+        # stalls until its idle timeout (~30 s) unless it happened to send while
+        # the port was closed. Credentials are checked with sessions opened
+        # after the restart.
         runtime.restart()
         assert hy2.selftest(directory)
         assert fetch(17893, '203.0.113.2')
-        assert not fetch(17891, '203.0.113.2')
-        assert fetch(17892, '203.0.113.2')
+        client(first[1]['uri'], 17896)
+        client(second[1]['uri'], 17897)
+        deadline = time.monotonic() + 5
+        while not fetch(17897, '203.0.113.2'):
+            assert time.monotonic() < deadline, 'new credentials rejected after restart'
+        assert not fetch(17896, '203.0.113.2')
         hy2.stop(directory, runtime=runtime)
-        assert not fetch(17892, '203.0.113.2')
+        assert not fetch(17897, '203.0.113.2')
         assert fetch(17893, '203.0.113.2')
         # An unrelated node service and the ordinary user's traffic remain alive.
         with socket.create_connection(('127.0.0.1', 18080), timeout=1):

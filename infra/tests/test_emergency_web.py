@@ -2,11 +2,14 @@
 
 import copy
 from datetime import datetime, timezone
+from contextlib import redirect_stderr
 import hashlib
 import http.client
 import importlib
 import inspect
+import io
 import json
+import logging
 import os
 from pathlib import Path
 import ssl
@@ -225,6 +228,35 @@ class EmergencyWebTests(unittest.TestCase):
         conn.request('GET', '/instructions')
         self.assertEqual(conn.getresponse().status, 200)
         conn.close()
+
+    def test_rejected_certificate_logs_one_line_without_traceback(self):
+        self.start()
+        stderr = io.StringIO()
+        records = []
+        handler = logging.Handler()
+        handler.emit = records.append
+        log = logging.getLogger('vpn2_emergency.web')
+        log.addHandler(handler)
+        self.addCleanup(log.removeHandler, handler)
+        level = log.level
+        log.setLevel(logging.INFO)
+        self.addCleanup(log.setLevel, level)
+        with redirect_stderr(stderr):
+            # A verifying client, as curl without -k: it refuses the fallback certificate.
+            conn = http.client.HTTPSConnection('127.0.0.1', self.server.server_port,
+                                               context=ssl.create_default_context(), timeout=5)
+            with self.assertRaises(ssl.SSLCertVerificationError):
+                conn.request('GET', '/')
+            conn.close()
+            deadline = time.monotonic() + 5
+            while not stderr.getvalue() and not records and time.monotonic() < deadline:
+                time.sleep(.01)
+        self.assertNotIn('Traceback', stderr.getvalue())
+        self.assertEqual([record.getMessage() for record in records],
+                         [f'emergency panel: connection from 127.0.0.1 dropped: {records[0].args[1]}'])
+        print('rejected certificate:', records[0].getMessage())
+        # The panel keeps serving.
+        self.assertEqual(self.request('/instructions')[0], 200)
 
     def test_post_requires_same_origin_json_and_session(self):
         self.start()

@@ -11,6 +11,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -18,12 +19,15 @@ import secrets
 import ssl
 import string
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from . import tgqueue
+
+LOG = logging.getLogger(__name__)
 
 
 def generate_password():
@@ -414,6 +418,16 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
                 super().process_request_thread(request, client_address)
             finally:
                 self.slots.release()
+
+        def handle_error(self, request, client_address):
+            failure = sys.exc_info()[1]
+            # A client that rejects the certificate, a scanner or a dropped
+            # connection is not a panel error: one line, no traceback.
+            if isinstance(failure, (ssl.SSLError, ConnectionError, TimeoutError)):
+                LOG.info('emergency panel: connection from %s dropped: %s', client_address[0],
+                         getattr(failure, 'reason', None) or type(failure).__name__)
+                return
+            super().handle_error(request, client_address)
 
     server = Server(address, Handler, bind_and_activate=False)
     server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)

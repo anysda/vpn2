@@ -224,6 +224,119 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertEqual(service.count(f'{installed}hy2.py'), 2)
         self.assertNotIn('/usr/local/lib/vpn2-emergency', service)
 
+    def poll(self, live):
+        def fetch(_state):
+            if isinstance(live, Exception):
+                raise live
+            return set(live)
+        return self.hy2.poll_sessions(self.state, fetch=fetch)
+
+    def statuses(self, generation=1, **kwargs):
+        return self.hy2.connections(self.state, generation, **kwargs)
+
+    def test_connection_status_four_states_per_issuance(self):
+        self.start()
+        self.assertEqual(self.statuses(), {}, 'no observation yet is unknown')
+        self.poll([])
+        self.assertEqual(self.statuses(), {1: 'never', 2: 'never'})
+        self.poll([1, 7])  # 7 is not issued in this generation
+        self.assertEqual(self.statuses(), {1: 'connected', 2: 'never'})
+        self.poll([])
+        self.assertEqual(self.statuses(), {1: 'seen', 2: 'never'})
+        self.poll(ConnectionRefusedError())
+        self.assertEqual(self.statuses(), {}, 'source unreachable is unknown')
+        self.poll([])
+        self.assertEqual(self.statuses(), {1: 'seen', 2: 'never'}, 'flag survives an outage')
+        later = self.hy2.time.time() + self.hy2.SESSIONS_STALE + 1
+        self.assertEqual(self.statuses(clock=lambda: later), {}, 'poller stopped is unknown')
+        self.assertEqual(self.statuses(2), {}, 'another generation is unknown')
+        record = __import__('json').loads((self.state / 'hy2/sessions.json').read_text())
+        self.assertEqual(set(record), {'generation', 'checked_at', 'ok', 'live', 'seen'})
+
+    def test_new_generation_resets_connection_status(self):
+        self.start()
+        self.poll([1, 2])
+        self.assertEqual(self.statuses(), {1: 'connected', 2: 'connected'})
+        self.start(2)
+        self.assertEqual(self.statuses(2), {})
+        self.poll([])
+        self.assertEqual(self.statuses(2), {1: 'never', 2: 'never'})
+        self.assertEqual(self.statuses(1), {})
+        self.hy2.stop(self.state, runtime=self.runtime)
+        self.assertIsNone(self.poll([1]))
+        self.assertEqual(self.statuses(2), {}, 'stopped source is unknown')
+
+    def test_session_source_labels_each_device_user(self):
+        self.start()
+        state = self.hy2.read_state(self.state / 'hy2')
+        config = __import__('json').loads((self.state / 'hy2/server.json').read_text())
+        self.assertEqual(config['experimental']['clash_api'],
+                         {'external_controller': '127.0.0.1:18443', 'secret': state['api_secret']})
+        passwords = {user['password'] for user in config['inbounds'][0]['users']}
+        self.assertNotIn(state['api_secret'], passwords)
+        labels = [rule for rule in config['route']['rules'] if 'auth_user' in rule]
+        self.assertEqual(labels, [{'auth_user': [f'g1-d{i}'], 'action': 'route', 'outbound': 'internet'}
+                                  for i in (1, 2)])
+        # Labels come after the destination rejects and do not widen them.
+        self.assertEqual(config['route']['rules'][:2], [{'ip_is_private': True, 'action': 'reject'},
+                                                        {'ip_cidr': ['203.0.113.1'], 'action': 'reject'}])
+        rules = self.hy2.firewall_rules(1000, 18443, True)
+        reply = 'meta skuid 1000 ct direction reply tcp sport 18443 ip daddr 127.0.0.1 accept'
+        self.assertIn(reply, rules)
+        self.assertLess(rules.index(reply), rules.index('meta skuid 1000 fib daddr type local reject'))
+
+    def test_live_devices_reads_large_answer_in_chunks(self):
+        import http.server
+        import json
+        import threading
+        connections = [{'id': str(i), 'chains': ['internet'],
+                        'rule': f'auth_user=g3-d{i % 5 + 1} => route(internet)'} for i in range(3000)]
+        connections += [{'id': 'p', 'rule': 'final'}, {'id': 'o', 'rule': 'auth_user=g2-d9 => route(internet)'}]
+        # Go escapes ">" in JSON strings.
+        body = json.dumps({'connections': connections}, separators=(',', ':')).replace('>', '\\u003e').encode()
+        self.assertGreater(len(body), 3 * 65536)
+
+        class Clash(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa - HTTPServer callback
+                ok = self.path == '/connections' and self.headers['Authorization'] == 'Bearer s3cret'
+                self.send_response(200 if ok else 401)
+                self.send_header('Content-Length', str(len(body) if ok else 0))
+                self.end_headers()
+                if ok:
+                    self.wfile.write(body)
+
+            def log_message(self, *_args):  # noqa - HTTPServer callback
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Clash)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        state = {'generation': 3, 'options': {'port': server.server_address[1]}, 'api_secret': 's3cret'}
+        self.assertEqual(self.hy2.live_devices(state), {1, 2, 3, 4, 5})
+        with self.assertRaisesRegex(RuntimeError, '401'):
+            self.hy2.live_devices({**state, 'api_secret': 'wrong'})
+
+    def test_poller_runs_in_agent_process_and_survives_errors(self):
+        self.start()
+        answers = iter([ZeroDivisionError(), {2}])
+
+        def fetch(_state):
+            answer = next(answers, {2})
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        with self.assertLogs(self.hy2.LOG, 'WARNING'):
+            watch = self.hy2.watch(self.state, every=.01, fetch=fetch)
+            self.addCleanup(watch.stop)
+            deadline = self.hy2.time.monotonic() + 5
+            while self.statuses() != {1: 'never', 2: 'connected'}:
+                self.assertLess(self.hy2.time.monotonic(), deadline)
+                self.hy2.time.sleep(.01)
+        self.assertIs(self.hy2.watch(self.state), watch)
+        self.assertTrue(watch.daemon)
+        self.assertEqual(self.hy2.SESSIONS_EVERY, 12)
+
     @unittest.skipUnless(SB and os.environ.get('RUN_NETNS_TESTS') == '1',
                          'set SING_BOX_BIN and RUN_NETNS_TESTS=1')
     def test_real_isolation_revocation_and_restart(self):

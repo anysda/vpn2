@@ -10,17 +10,20 @@ import contextlib
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import http.client
 import ipaddress
 import json
 import logging
 import os
 from pathlib import Path
 import pwd
+import re
 import secrets
 import socket
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 from urllib.parse import quote, urlencode
 
@@ -31,6 +34,13 @@ UNIT = 'vpn2-emergency-hy2.service'
 PROBE_UNIT = 'vpn2-emergency-hy2-probe.service'
 MOUNT = Path('/run/vpn2-emergency-hy2')
 LOG = logging.getLogger(__name__)
+# Sessions: the instance's own Clash API on loopback TCP (same number as the
+# QUIC port) lists live streams; every device has its own route rule, so the
+# rule name carries the Hysteria2 user. Polled from the agent process.
+SESSIONS_EVERY = 12
+SESSIONS_STALE = 40
+DEVICE_USER = re.compile(r'g(\d+)-d(\d+)')
+SESSION_RULE = re.compile(rb'"rule":"auth_user=g(\d+)-d(\d+) ')
 
 
 def command(args, **kwargs):
@@ -144,9 +154,9 @@ def profile(options, password, name, pin):
     return f"hysteria2://{quote(password, safe='')}@{host}:{options['port']}/?{urlencode(query)}#{quote(name, safe='')}"
 
 
-def server_config(options, users):
+def server_config(options, users, api_secret=None):
     directory = Path(options['runtime_dir'])
-    return {
+    config = {
         'log': {'level': 'warn'},
         # DNS over TLS: a node-local resolver is unreachable for the isolated user,
         # and plain UDP answers can be spoofed on path.
@@ -162,6 +172,14 @@ def server_config(options, users):
             {'ip_cidr': [options['server_ip']], 'action': 'reject'},
         ]},
     }
+    if api_secret is not None:
+        # Same route as without the rule: it only labels connections per device.
+        config['route']['rules'] += [
+            {'auth_user': [user['name']], 'action': 'route', 'outbound': 'internet'}
+            for user in users if DEVICE_USER.fullmatch(user['name'])]
+        config['experimental'] = {'clash_api': {
+            'external_controller': f"127.0.0.1:{options['port']}", 'secret': api_secret}}
+    return config
 
 
 class SystemRuntime:
@@ -251,10 +269,12 @@ def start(state_dir, generation, devices, *, options=None, runtime=None):
             # Readiness uses its own credential, never returned to a user.
             probe_password = secrets.token_urlsafe(32)
             users.append({'name': f'g{generation}-readiness', 'password': probe_password})
-            config = server_config(options, users)
+            api_secret = secrets.token_urlsafe(32)
+            config = server_config(options, users, api_secret)
             atomic(directory / 'server.json', config)
             state = {'generation': generation, 'active': True, 'devices': issued,
                      'options': options, 'probe_password': probe_password, 'pin': pin,
+                     'api_secret': api_secret,
                      'config_sha256': hashlib.sha256((directory / 'server.json').read_bytes()).hexdigest()}
             atomic(directory / 'generation.json', state)
         try:
@@ -398,12 +418,122 @@ def firewall_rules(uid, port, active):
  }}
  chain output {{ type filter hook output priority -10; policy accept;
   meta skuid {uid} ct direction reply udp sport {port} accept
+  meta skuid {uid} ct direction reply tcp sport {port} ip daddr 127.0.0.1 accept
   meta skuid {uid} fib daddr type local reject
   meta skuid {uid} ip daddr {{ 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4 }} reject
   meta skuid {uid} ip6 daddr {{ ::/96, ::ffff:0:0/96, 64:ff9b::/96, 64:ff9b:1::/48, 100::/64, 2001::/32, 2002::/16, fc00::/7, fe80::/10, ff00::/8 }} reject
  }}
 }}
 '''
+
+
+def live_devices(state, *, timeout=3):
+    """Device ids of the state's generation with a live stream right now.
+
+    The answer is scanned in chunks: memory stays bounded with any number of
+    connections. Raises OSError/HTTPException/RuntimeError when unknown.
+    """
+    connection = http.client.HTTPConnection('127.0.0.1', state['options']['port'], timeout=timeout)
+    try:
+        connection.request('GET', '/connections',
+                           headers={'Authorization': 'Bearer ' + state['api_secret']})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise RuntimeError(f'emergency hy2: session API answered {response.status}')
+        found, tail, deadline = set(), b'', time.monotonic() + timeout
+        while chunk := response.read(65536):
+            if time.monotonic() > deadline:
+                raise RuntimeError('emergency hy2: session API too slow')
+            data = tail + chunk
+            found.update(int(match[2]) for match in SESSION_RULE.finditer(data)
+                         if int(match[1]) == state['generation'])
+            tail = data[-64:]
+        return found
+    finally:
+        connection.close()
+
+
+def poll_sessions(state_dir, *, fetch=live_devices, clock=time.time):
+    """One observation of the current generation into hy2/sessions.json.
+
+    Kept: devices live now and, per issuance, the flag "had a session". No
+    history; a new generation starts from an empty flag set.
+    """
+    directory = Path(state_dir) / 'hy2'
+    state = read_state(directory)
+    if not state['active'] or 'api_secret' not in state:
+        return None
+    path = directory / 'sessions.json'
+    try:
+        previous = json.loads(path.read_text())
+    except (OSError, ValueError):
+        previous = {}
+    issued = {device['id'] for device in state['devices']}
+    seen = set(previous.get('seen', [])) if previous.get('generation') == state['generation'] else set()
+    try:
+        live, ok = fetch(state) & issued, True
+    except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+        live, ok = set(), False
+    record = {'generation': state['generation'], 'checked_at': clock(), 'ok': ok,
+              'live': sorted(live), 'seen': sorted((seen | live) & issued)}
+    atomic(path, record)
+    return record
+
+
+def connections(state_dir, generation, *, clock=time.time):
+    """{device_id: connected|seen|never} of an issuance; {} = status unknown.
+
+    Unknown: another or inactive generation, source unreachable, or the
+    observation is older than SESSIONS_STALE (poller not running).
+    """
+    directory = Path(state_dir) / 'hy2'
+    try:
+        state = read_state(directory)
+        record = json.loads((directory / 'sessions.json').read_text())
+    except (OSError, ValueError):
+        return {}
+    if (not state['active'] or state['generation'] != generation
+            or record.get('generation') != generation or record.get('ok') is not True
+            or not abs(clock() - record.get('checked_at', 0)) <= SESSIONS_STALE):
+        return {}
+    live, seen = set(record['live']), set(record['seen'])
+    return {device['id']: 'connected' if device['id'] in live else
+            'seen' if device['id'] in seen else 'never' for device in state['devices']}
+
+
+class SessionWatch(threading.Thread):
+    """Daemon poller inside the agent process; no separate service."""
+
+    def __init__(self, state_dir, every=SESSIONS_EVERY, fetch=live_devices):
+        super().__init__(name='hy2-sessions', daemon=True)
+        self.state_dir, self.every, self.fetch = state_dir, every, fetch
+        self.stopped = threading.Event()
+
+    def run(self):
+        while True:
+            try:
+                poll_sessions(self.state_dir, fetch=self.fetch)
+            except Exception:  # noqa: BLE001 - the poller must outlive any bad tick
+                LOG.warning('Emergency session poll failed', exc_info=True)
+            if self.stopped.wait(self.every):
+                return
+
+    def stop(self):
+        self.stopped.set()
+
+
+_watches, _watches_lock = {}, threading.Lock()
+
+
+def watch(state_dir, **kwargs):
+    """Start (once per state directory) the session poller; idempotent."""
+    key = str(Path(state_dir).resolve())
+    with _watches_lock:
+        current = _watches.get(key)
+        if current is None or not current.is_alive():
+            current = _watches[key] = SessionWatch(state_dir, **kwargs)
+            current.start()
+        return current
 
 
 def firewall(active):

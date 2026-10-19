@@ -173,6 +173,7 @@ def probe():
         ordinary_cert.write_bytes((directory / 'hy2/fullchain.pem').read_bytes())
         ordinary = json.loads((directory / 'hy2/server.json').read_text())
         ordinary['inbounds'][0]['listen_port'] = 1443
+        ordinary.pop('experimental')
         ordinary['inbounds'][0]['tls']['certificate_path'] = str(ordinary_cert)
         ordinary_key = directory / 'ordinary.key'
         ordinary_key.write_bytes((directory / 'hy2/privkey.pem').read_bytes())
@@ -265,11 +266,37 @@ def probe():
         assert hy2.selftest(directory)
         assert fetch(17893, '203.0.113.2')
         client(first[1]['uri'], 17896)
-        client(second[1]['uri'], 17897)
+        current = client(second[1]['uri'], 17897)
         deadline = time.monotonic() + 5
         while not fetch(17897, '203.0.113.2'):
             assert time.monotonic() < deadline, 'new credentials rejected after restart'
         assert not fetch(17896, '203.0.113.2')
+        # Session source: the instance's own API through the real firewall.
+        def statuses():
+            hy2.poll_sessions(directory)
+            return hy2.connections(directory, hy2.read_state(directory / 'hy2')['generation'])
+        with socks(17897, 18081, target_host='203.0.113.2') as stream:
+            stream.sendall(b'live')
+            assert stream.recv(4) == b'live'
+            assert statuses() == {1: 'connected', 2: 'never'}, statuses()
+        stop_process(current)
+        deadline = time.monotonic() + 5
+        while statuses() != {1: 'seen', 2: 'never'}:
+            assert time.monotonic() < deadline, statuses()
+        runtime.process.terminate()
+        runtime.process.wait()
+        assert statuses() == {}
+        third = hy2.start(directory, 3, devices, options=options, runtime=runtime)
+        assert statuses() == {1: 'never', 2: 'never'}
+        client(third[2]['uri'], 17898)
+        deadline = time.monotonic() + 5
+        while not fetch(17898, '203.0.113.2'):
+            assert time.monotonic() < deadline
+        with socks(17898, 18081, target_host='203.0.113.2') as stream:
+            stream.sendall(b'live')
+            assert stream.recv(4) == b'live'
+            assert statuses() == {1: 'never', 2: 'connected'}
+        print('sessions: connected -> seen after disconnect -> unknown without source -> never in a new generation')
         hy2.stop(directory, runtime=runtime)
         assert not fetch(17897, '203.0.113.2')
         assert fetch(17893, '203.0.113.2')

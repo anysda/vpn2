@@ -4,22 +4,25 @@ The same assertions can target an older tree using VPN2_TEST_ROOT.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import http.client
 import json
 import math
 import os
 from pathlib import Path
 import socket
+import ssl
 import sys
 import tempfile
 import threading
+import time
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/emergency'))
 
-from vpn2_emergency import hooks, tgqueue, web  # noqa: E402
+from vpn2_emergency import hooks, hy2, tgqueue, web  # noqa: E402
 from vpn2_emergency.leader import GUARD, STABLE, Leader  # noqa: E402
 from vpn2_emergency.state import State  # noqa: E402
 from vpn2_emergency import lifecycle  # noqa: E402
@@ -75,6 +78,12 @@ class FakeHy2:
 
     def listening(self, _port):
         return self.running
+
+    def watch(self, _state_dir):
+        return types.SimpleNamespace(stop=lambda: None)
+
+    def connections(self, _state_dir, _generation):
+        return {}
 
 
 class FakeServer:
@@ -144,9 +153,9 @@ class LifecycleTests(unittest.TestCase):
     def save(self):
         (self.directory / 'fixture.json').write_text(json.dumps(self.snapshot))
 
-    def make_server(self, state_dir, *, exit_id, public_ip, address, profiles):
+    def make_server(self, state_dir, *, exit_id, public_ip, address, **providers):
         del address
-        server = FakeServer(web.Panel(state_dir, exit_id, public_ip, profiles=profiles))
+        server = FakeServer(web.Panel(state_dir, exit_id, public_ip, **providers))
         self.servers.append(server)
         return server
 
@@ -340,6 +349,143 @@ class LifecycleTests(unittest.TestCase):
         cycle.tick(100)
         cycle.tick(115)
         self.assertEqual(self.agent.entry_check, (False, 100))
+
+
+class Clash(ThreadingHTTPServer):
+    """Session API of the emergency sing-box: one live stream per listed user."""
+
+    def __init__(self):
+        super().__init__(('127.0.0.1', 0), ClashHandler)
+        self.users = []
+        self.secret = None
+
+
+class ClashHandler(BaseHTTPRequestHandler):
+    def log_message(self, _format, *_args):  # noqa - HTTP handler
+        pass
+
+    def do_GET(self):  # noqa - HTTP handler
+        if self.path != '/connections' or self.headers['Authorization'] != f'Bearer {self.server.secret()}':
+            self.send_response(401)
+            self.end_headers()
+            return
+        body = json.dumps({'connections': [
+            {'id': str(index), 'rule': f'auth_user={user} => route(internet)'}
+            for index, user in enumerate(self.server.users)]}, separators=(',', ':')).encode()
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class IndicatorTests(unittest.TestCase):
+    """Real lifecycle, Hysteria2 state, session poller and HTTPS panel; fake sing-box."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix='indicator-')
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        (self.directory / 'fixture.json').write_text(json.dumps({
+            'schema': 1, 'installation_id': 'fixture', 'admin_chat_id': None, 'exits': EXITS,
+            'created_at': '2026-01-01T00:00:00Z',
+            'clients': [{'id': 1, 'name': 'first', 'telegram_chat_id': None, 'allowed': True,
+                         'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]},
+                        {'id': 2, 'name': 'second', 'telegram_chat_id': None, 'allowed': True,
+                         'expires_at': None, 'devices': [{'id': 22, 'name': 'laptop'}]}]}))
+        module = types.ModuleType('vpn2_emergency.snapshot')
+        module.load = load_snapshot
+        for stub in (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
+                     patch.object(hy2, 'SystemRuntime', Mock),
+                     patch.object(hy2, 'selftest', return_value=True),
+                     # The agent's poller, only faster than the 12 s of a real exit.
+                     patch.object(hy2.SessionWatch.__init__, '__defaults__', (0.05, hy2.live_devices))):
+            stub.start()
+            self.addCleanup(stub.stop)
+        self.clash = Clash()
+        self.clash.secret = lambda: hy2.read_state(self.directory / 'hy2').get('api_secret')
+        thread = threading.Thread(target=self.clash.serve_forever, kwargs={'poll_interval': 0.01})
+        thread.start()
+        self.addCleanup(self.clash.server_close)
+        self.addCleanup(thread.join)
+        self.addCleanup(self.clash.shutdown)
+        self.addCleanup(hooks._listeners.clear)
+        self.now, self.wall = 0.0, WALL
+        self.agent = Agent(self.directory, lambda: self.wall)
+        hooks._listeners.clear()
+        self.lifecycle = lifecycle.Lifecycle(
+            self.agent, threaded=False, panel_address=('127.0.0.1', 0),
+            hy2_options={'server_ip': '203.0.113.10', 'port': self.clash.server_port,
+                         'tls_dir': str(self.directory / 'no-tls'),
+                         'runtime_dir': str(self.directory / 'hy2')},
+            api_base='http://127.0.0.1:9', probe_ready=lambda: True, probe_entry=lambda _host: True)
+        self.lifecycle.attach()
+        self.addCleanup(self.lifecycle.close)
+
+    def advance(self, seconds, ready=None):
+        for _ in range(int(seconds // 15)):
+            self.now += 15
+            self.wall += 15
+            self.agent.leader.tick(self.now, ready is None)
+            self.agent.leader.entry_state(self.now, ready)
+            self.lifecycle.tick(self.now)
+
+    def request(self, method, path, body=None, cookie=None):
+        server = self.lifecycle.server
+        connection = http.client.HTTPSConnection(
+            '127.0.0.1', server.server_address[1], timeout=5,
+            context=ssl._create_unverified_context())  # noqa: S323 - local self-signed panel
+        headers = {'Origin': f'https://127.0.0.1:{server.server_address[1]}',
+                   'Content-Type': 'application/json'}
+        if cookie:
+            headers['Cookie'] = cookie
+        try:
+            connection.request(method, path, body=json.dumps(body) if body else None, headers=headers)
+            response = connection.getresponse()
+            return response.status, response.getheader('Set-Cookie'), response.read()
+        finally:
+            connection.close()
+
+    def statuses(self, expected):
+        """Panel /api/state as the admin sees it, until it shows `expected`."""
+        status, cookie, _ = self.request('POST', '/api/login',
+                                         {'password': self.lifecycle.server.panel.auth['password']})
+        self.assertEqual(status, 200)
+        deadline = time.monotonic() + 5
+        while True:
+            status, _, body = self.request('GET', '/api/state', cookie=cookie.split(';')[0])
+            self.assertEqual(status, 200)
+            seen = {client['id']: client['status'] for client in json.loads(body)['clients']}
+            if seen == expected or time.monotonic() > deadline:
+                return seen
+            time.sleep(0.05)
+
+    def test_connection_states_reach_panel_api(self):
+        self.advance(GUARD + 60)
+        self.assertEqual(self.agent.leader.data['role'], 'leader')
+        self.assertEqual(hy2.read_state(self.directory / 'hy2')['generation'], 1)
+        self.clash.users = ['g1-d11']
+        self.assertEqual(self.statuses({1: 'connected', 2: 'never'}), {1: 'connected', 2: 'never'})
+        self.clash.users = []
+        self.assertEqual(self.statuses({1: 'seen', 2: 'never'}), {1: 'seen', 2: 'never'})
+        # A new issuance (another leader, lost credentials) starts from scratch;
+        # old-generation streams do not count.
+        self.clash.users = ['g1-d11']
+        self.agent.leader.credentials_lost()
+        self.advance(15)
+        self.assertEqual(hy2.read_state(self.directory / 'hy2')['generation'], 2)
+        self.assertEqual(self.statuses({1: 'never', 2: 'never'}), {1: 'never', 2: 'never'})
+        self.clash.users = ['g2-d22']
+        self.assertEqual(self.statuses({1: 'never', 2: 'connected'}), {1: 'never', 2: 'connected'})
+
+    def test_poller_stops_with_emergency_end(self):
+        self.advance(GUARD + 60)
+        poller = self.lifecycle.sessions
+        self.assertTrue(poller is not None and poller.is_alive())
+        self.lifecycle.on_emergency_end()
+        poller.join(5)
+        self.assertFalse(poller.is_alive())
+        self.assertIsNone(self.lifecycle.sessions)
+        self.assertFalse(hy2.read_state(self.directory / 'hy2')['active'])
 
 
 class ProbeTests(unittest.TestCase):

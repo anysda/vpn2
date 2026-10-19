@@ -530,7 +530,8 @@ def watch(state_dir, **kwargs):
     key = str(Path(state_dir).resolve())
     with _watches_lock:
         current = _watches.get(key)
-        if current is None or not current.is_alive():
+        # A stopped poller may still be finishing its last pass: never reuse it.
+        if current is None or not current.is_alive() or current.stopped.is_set():
             current = _watches[key] = SessionWatch(state_dir, **kwargs)
             current.start()
         return current

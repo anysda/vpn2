@@ -96,6 +96,7 @@ class Lifecycle:
         # Until the exit's own check answers, the entry does not count as ready.
         agent.entry_check = (False, -math.inf)
         self.server = None
+        self.sessions = None
         self.profiles = {}
         self.pending = set()
         self.restored = False
@@ -274,7 +275,8 @@ class Lifecycle:
             agent = self.agent
             server = self.web.make_server(
                 self.directory, exit_id=agent.node, public_ip=agent.addresses[agent.node][0],
-                address=self.panel_address, profiles=lambda generation: self.profiles.get(generation, {}))
+                address=self.panel_address, profiles=lambda generation: self.profiles.get(generation, {}),
+                connections=lambda generation: self.hy2.connections(self.directory, generation))
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server
         return self.server.panel
@@ -299,6 +301,8 @@ class Lifecycle:
                        for client in snapshot.get('clients', []) for device in client.get('devices', [])]
             profiles = self.hy2.start(self.directory, generation, devices, options=self.hy2_options)
             self.profiles = {generation: profiles}
+            # Connection status for the panel; lives as long as the issuance.
+            self.sessions = self.hy2.watch(self.directory)
             panel = self._panel()
             admin = panel.on_emergency_leader(emergency_id, generation, autonomous)
             issued_at = iso(self.agent.wall())
@@ -363,6 +367,9 @@ class Lifecycle:
     def _end(self, emergency_id):
         self._close_server()
         self.hy2.stop(self.directory)
+        sessions, self.sessions = self.sessions, None
+        if sessions:
+            sessions.stop()
         self.profiles = {}
         port = self.hy2.settings(self.hy2_options)['port']
         if self.hy2.listening(port):

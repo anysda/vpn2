@@ -34,12 +34,23 @@ class Host:
         self.calls = []
         self.interrupt = None
         self.nft_fails = False
+        self.shown = 0
 
     def __call__(self, argv, data=None):
         self.calls.append((argv, data))
         if self.interrupt and self.interrupt in ' '.join(argv):
             self.interrupt = None
             raise Interrupted()
+        if argv[:2] == ['/usr/bin/wg', 'syncconf']:
+            # As wg(8): a key outside its section is a parsing error.
+            section = None
+            for line in data.splitlines():
+                if line.strip() in ('[Interface]', '[Peer]'):
+                    section = line.strip()
+                elif line.strip() and (section is None or line.split('=')[0].strip() not in {
+                        '[Interface]': {'PrivateKey', 'ListenPort', 'FwMark'},
+                        '[Peer]': {'PublicKey', 'PresharedKey', 'AllowedIPs'}}[section]):
+                    raise RuntimeError('wg syncconf: Configuration parsing error')
         if argv[:2] == ['/usr/local/bin/sing-box', 'check']:
             try:
                 json.loads(Path(argv[-1]).read_text())
@@ -50,6 +61,13 @@ class Host:
                       'openvpn-server@server': 'etc/openvpn/server/server.conf'}[argv[-1]]
             if 'BROKEN' in (self.root / config).read_text():
                 raise RuntimeError('systemctl is-active: inactive')
+        if argv[:2] == ['systemctl', 'show']:
+            # A unit whose config has CRASHLOOP is restarted by systemd each look.
+            self.shown += 1
+            looping = 'CRASHLOOP' in (self.root / 'etc/sing-box/config.json').read_text()
+            return f'MainPID={100 + self.shown if looping else 100}\nNRestarts=0\n'
+        if argv[:2] == ['/usr/sbin/nft', '-c'] and 'SYNTAX' in Path(argv[-1]).read_text():
+            raise RuntimeError('nft -c: Error: syntax error, unexpected \'}\'')
         if argv[0] == '/usr/sbin/nft' and argv[1] == '-f' and self.nft_fails and 'restore' not in argv[2]:
             raise RuntimeError('nft -f: syntax error')
         if argv[:3] == ['/usr/sbin/nft', 'list', 'table']:
@@ -68,11 +86,16 @@ class ApplyTests(unittest.TestCase):
         self.state = Path(work.name) / 'state'
         self.state.mkdir()
         self.host = Host(self.root)
-        self.applier = apply.Applier(self.root, self.state, self.host)
+        self.applier = self.fresh()
         self.config = self.root / 'etc/sing-box/config.json'
         self.config.parent.mkdir(parents=True)
         self.config.write_text('{"inbounds": [], "v": 1}')
         self.new = Path(work.name) / 'new.json'
+
+    def fresh(self):
+        applier = apply.Applier(self.root, self.state, self.host)
+        applier.settle = 0
+        return applier
 
     def install(self, resource, body):
         self.new.write_text(body)
@@ -94,6 +117,13 @@ class ApplyTests(unittest.TestCase):
         self.assertIn('two inbounds on one port', str(failure))
         self.assertEqual(self.config.read_text(), '{"inbounds": [], "v": 1}')
 
+    def test_same_port_on_v4_and_v6_loopback_is_accepted(self):
+        body = ('{"inbounds": [{"listen": "127.0.0.1", "listen_port": 7899},'
+                ' {"listen": "::1", "listen_port": 7899}]}')
+        self.new.write_text(body)
+        self.applier.install('sing-box', self.new)
+        self.assertEqual(self.config.read_text(), body)
+
     def test_candidate_failing_after_apply_restores_last_good(self):
         failure = self.install('sing-box', '{"inbounds": [], "BROKEN": 1}')
         self.assertEqual(failure.code, 3)
@@ -102,6 +132,12 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(self.applier.good('sing-box').read_text(), '{"inbounds": [], "v": 1}')
         self.assertEqual(len(self.host.ran('restart', 'sing-box')), 2)
         self.assertFalse(self.applier.journal('sing-box').exists())
+
+    def test_service_that_falls_after_start_restores_last_good(self):
+        failure = self.install('sing-box', '{"inbounds": [], "CRASHLOOP": 1}')
+        self.assertEqual(failure.code, 3)
+        self.assertEqual(self.config.read_text(), '{"inbounds": [], "v": 1}')
+        self.assertEqual(self.applier.good('sing-box').read_text(), '{"inbounds": [], "v": 1}')
 
     def test_last_good_is_marked_only_after_verification(self):
         self.new.write_text('{"inbounds": [], "v": 2}')
@@ -120,7 +156,7 @@ class ApplyTests(unittest.TestCase):
         with self.assertRaises(Interrupted):
             self.applier.install('sing-box', self.new)
         self.assertEqual(json.loads(self.applier.journal('sing-box').read_text())['stage'], 'applied')
-        apply.Applier(self.root, self.state, self.host).resume('sing-box')
+        self.fresh().resume('sing-box')
         self.assertEqual(self.config.read_text(), '{"inbounds": [], "v": 2}')
         self.assertEqual(self.applier.good('sing-box').read_text(), '{"inbounds": [], "v": 2}')
         self.assertFalse(self.applier.journal('sing-box').exists())
@@ -175,6 +211,15 @@ class ApplyTests(unittest.TestCase):
         self.assertIn(KEY['b'], loaded)
         self.assertNotIn(KEY['a'], self.applier.good('wg').read_text())
 
+    def test_wg_rollback_with_every_device_revoked_loads_the_interface(self):
+        path = self.wg('a')
+        self.applier.mark('wg')
+        path.write_text(HEADER.replace('51820', '51821'))
+        with self.assertRaises(apply.Failed) as caught:
+            self.applier.rollback('wg')
+        self.assertEqual(caught.exception.code, 3)
+        self.assertNotIn(KEY['a'], path.read_text())
+
     def test_wg_candidate_cannot_bring_back_peers(self):
         path = self.wg('b')
         self.new.write_text(HEADER + peer('a') + peer('c'))
@@ -204,6 +249,14 @@ class ApplyTests(unittest.TestCase):
             self.applier.nft('anysda_ytquic', self.new, 60)
         self.assertEqual(caught.exception.code, 2)
         self.assertEqual(self.host.ran('/usr/sbin/nft', '-f'), [])
+
+    def test_nft_candidate_failing_check_is_rejected_before_the_timer(self):
+        self.new.write_text('table inet anysda_ytquic { chain c { tcp dport 22 drop SYNTAX } }\n')
+        with self.assertRaises(apply.Failed) as caught:
+            self.applier.nft('anysda_ytquic', self.new, 60)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn('candidate rejected', str(caught.exception))
+        self.assertEqual(self.host.ran('systemd-run'), [])
 
     def test_nft_change_is_armed_with_a_local_restore_timer(self):
         self.new.write_text('table inet anysda_ytquic\ndelete table inet anysda_ytquic\n'

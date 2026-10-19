@@ -20,14 +20,16 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 RESOURCES = {
     'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600,
                  'check': ['/usr/local/bin/sing-box', 'check', '-c'],
-                 'apply': [['systemctl', 'restart', 'sing-box']],
+                 'apply': [['systemctl', 'restart', 'sing-box']], 'unit': 'sing-box',
                  'verify': [['systemctl', 'is-active', '--quiet', 'sing-box']]},
     'openvpn': {'path': '/etc/openvpn/server/server.conf', 'mode': 0o644,
                 'apply': [['systemctl', 'restart', 'openvpn-server@server']],
+                'unit': 'openvpn-server@server',
                 'verify': [['systemctl', 'is-active', '--quiet', 'openvpn-server@server']]},
     'ikev2': {'path': '/etc/swanctl/conf.d/anysda.conf', 'mode': 0o644,
               'apply': [['/usr/sbin/swanctl', '--load-all', '--clear', '--noprompt']],
@@ -49,6 +51,8 @@ def run(argv, data=None):
                             env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
     if result.returncode:
         last = (result.stderr or result.stdout).strip().splitlines()
+        # nft ends its message with the source line and a caret; the cause is above.
+        last = [line for line in last if 'Error' in line][:1] or last
         raise RuntimeError(f'{argv[0]} {argv[1] if len(argv) > 1 else ""}: '
                            f'{last[-1] if last else "rc=" + str(result.returncode)}')
     return result.stdout
@@ -75,10 +79,13 @@ def wg_split(text):
 
 
 class Applier:
-    def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-apply'), command=run):
+    def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-apply'), command=run, settle=5):
         self.root = root
         self.state = state
         self.command = command
+        # is-active right after restart is "active" even for a service that
+        # dies on bind a moment later and loops in Restart=.
+        self.settle = settle
 
     def target(self, resource):
         return self.root / RESOURCES[resource]['path'].lstrip('/')
@@ -100,9 +107,10 @@ class Applier:
     def check(self, resource, text, path):
         spec = RESOURCES[resource]
         if resource == 'sing-box':
-            ports = [item['listen_port'] for item in json.loads(text).get('inbounds', [])
-                     if 'listen_port' in item]
-            if len(ports) != len(set(ports)):
+            # The same port on 127.0.0.1 and ::1 is two sockets (agh-doh-v4/v6).
+            sockets = [(item.get('listen'), item['listen_port'], item.get('network'))
+                       for item in json.loads(text).get('inbounds', []) if 'listen_port' in item]
+            if len(sockets) != len(set(sockets)):
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
             options = {}
@@ -150,16 +158,24 @@ class Applier:
         spec = RESOURCES[resource]
         if resource == 'wg':
             header, peers = wg_split(self.target(resource).read_text())
+            # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
             interface = [line for line in header.splitlines()
-                         if re.match(r'^\s*(\[Interface\]|PrivateKey|ListenPort|FwMark)\b', line)]
+                         if re.match(r'^\s*(\[Interface\]\s*$|(PrivateKey|ListenPort|FwMark)\s*=)', line)]
             body = '\n'.join(interface) + '\n' + '\n'.join(
                 line for line in peers.splitlines()
-                if re.match(r'^\s*(\[Peer\]|PublicKey|PresharedKey|AllowedIPs)\b', line))
+                if re.match(r'^\s*(\[Peer\]\s*$|(PublicKey|PresharedKey|AllowedIPs)\s*=)', line))
             self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body + '\n')
         for argv in spec.get('apply', []):
             self.command(argv)
         for argv in spec['verify']:
             self.command(argv)
+        if 'unit' in spec:
+            show = ['systemctl', 'show', '--property', 'MainPID,NRestarts', spec['unit']]
+            before = self.command(show)
+            time.sleep(self.settle)
+            self.command(['systemctl', 'is-active', '--quiet', spec['unit']])
+            if self.command(show) != before or 'MainPID=0' in before:
+                raise RuntimeError(f'{spec["unit"]} did not stay running')
 
     def mark(self, resource):
         write(self.good(resource), self.target(resource).read_text(), 0o600)
@@ -238,7 +254,10 @@ class Applier:
         if re.search(r'(?m)^\s*(?:flush|list)\s+ruleset\b', text) or not named or \
                 any(found != ('inet', table) for found in named):
             raise Failed(2, f'nft: candidate may only change table inet {table}')
-        self.command(['/usr/sbin/nft', '-c', '-f', str(source)])
+        try:
+            self.command(['/usr/sbin/nft', '-c', '-f', str(source)])
+        except RuntimeError as error:
+            raise Failed(2, f'nft: candidate rejected, rules untouched: {error}') from None
         try:
             snapshot = self.command(['/usr/sbin/nft', 'list', 'table', 'inet', table])
         except RuntimeError:

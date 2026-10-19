@@ -4,6 +4,7 @@ The same assertions can target an older tree using VPN2_TEST_ROOT.
 """
 
 import importlib.util
+import inspect
 import json
 import logging
 import os
@@ -42,6 +43,9 @@ class Events:
     def on_step_down(self, *args):
         self.calls.append(('step_down', args))
 
+    def on_entry_recovered(self, *args):
+        self.calls.append(('recovered', args))
+
     def on_emergency_end(self):
         self.calls.append(('end', ()))
 
@@ -50,6 +54,8 @@ class Cluster:
     def __init__(self, directory, count=3):
         self.directory = Path(directory)
         self.clock = Clock()
+        # Wall time moves with the monotonic clock; deadlines are wall time.
+        self.wall = lambda: 1_800_000_000 + self.clock.now
         self.blocked = set()
         self.agents = {}
         self.events = {}
@@ -71,17 +77,20 @@ class Cluster:
             self.start(node)
         self.drain()
 
+    def wall_clock(self):
+        return {'wall': self.wall} if 'wall' in inspect.signature(Agent).parameters else {}
+
     def snapshot(self, _directory):
         return {'installation_id': 'fixture', 'exits': self.exits}
 
     def start(self, node):
         agent = Agent(self.configs[node], self.directory / node, clock=self.clock,
-                      snapshot_loader=self.snapshot)
+                      snapshot_loader=self.snapshot, **self.wall_clock())
         original_send = agent.send
 
-        def send(peer, message):
+        def send(peer, message, *address):
             if (node, peer) not in self.blocked:
-                original_send(peer, message)
+                original_send(peer, message, *address)
 
         agent.send = send
         self.agents[node] = agent
@@ -155,9 +164,9 @@ class Network(Cluster):
 
     def start(self, node):
         agent = Agent(self.configs[node], self.directory / node, clock=self.clock,
-                      snapshot_loader=self.snapshot)
+                      snapshot_loader=self.snapshot, **self.wall_clock())
 
-        def send(peer, message):
+        def send(peer, message, _address=None):
             if (node, peer) in self.blocked:
                 return
             packet = encode(agent.key, message | {'installation_id': agent.installation, 'sender': node})
@@ -648,6 +657,182 @@ class EmergencyAgentTests(unittest.TestCase):
         del agent.state.data['oversize']
         self.assertEqual(GUARD, 300)
 
+    def outage(self, cluster):
+        """Entry gone long enough for 'a' to lead an emergency."""
+        cluster.stop('entry')
+        cluster.advance(1320)
+        self.assertEqual(cluster.leaders(), ['a'])
+        return cluster.agents['a'].leader
+
+    def entry_back(self, cluster, ready=True, port=None):
+        if port is not None:
+            cluster.configs['entry'] = dict(cluster.configs['entry'], nodes=dict(
+                cluster.configs['entry']['nodes'], entry={'host': '127.0.0.1', 'port': port}))
+        cluster.start('entry')
+        cluster.agents['entry'].ready = ready
+        cluster.drain()
+
+    def recovered(self, cluster):
+        leader = self.outage(cluster)
+        self.entry_back(cluster)
+        cluster.advance(150)
+        recovery = leader.data.get('recovery')
+        self.assertIsNotNone(recovery)
+        return leader, recovery
+
+    def test_entry_back_without_vpn_services_keeps_emergency(self):
+        cluster = self.cluster()
+        leader = self.outage(cluster)
+        self.entry_back(cluster, ready=False)
+        cluster.advance(1800)
+        self.assertEqual(cluster.leaders(), ['a'])
+        self.assertTrue(leader.data['active'])
+        self.assertIsNone(leader.data.get('recovery'))
+        self.assertFalse(any(call[0] == 'end' for event in cluster.events.values() for call in event.calls))
+
+    def test_entry_must_stay_ready_two_minutes_before_recovery(self):
+        cluster = self.cluster()
+        leader = self.outage(cluster)
+        self.entry_back(cluster)
+        cluster.advance(135)
+        self.assertIsNone(leader.data.get('recovery'))
+        cluster.advance(15)
+        self.assertEqual(leader.data['recovery']['round'], 1)
+        self.assertIsNone(leader.data['recovery']['deadline'])
+        # Recovery issues nothing: no new generation, no leader event.
+        self.assertEqual(sum(call[0] == 'leader' for call in cluster.events['a'].calls), 1)
+
+    def test_deadline_ends_emergency_on_every_exit_and_agent_keeps_running(self):
+        cluster = self.cluster()
+        leader, recovery = self.recovered(cluster)
+        deadline = cluster.wall() + 600
+        leader.set_deadline(recovery['round'], deadline, cluster.clock())
+        self.assertEqual(cluster.events['a'].calls[-1][0], 'recovered')
+        self.assertAlmostEqual(cluster.events['a'].calls[-1][1][0], cluster.clock() + 600)
+        cluster.advance(30)
+        self.assertEqual(cluster.agents['b'].leader.data['recovery']['deadline'], deadline)
+        cluster.advance(540)
+        self.assertEqual(cluster.leaders(), ['a'])
+        cluster.advance(45)
+        for node in 'abc':
+            data = cluster.agents[node].leader.data
+            self.assertFalse(data['active'], node)
+            self.assertEqual(data['role'], 'observer', node)
+            self.assertEqual(sum(call[0] == 'end' for call in cluster.events[node].calls), 1, node)
+        cluster.advance(600)
+        self.assertEqual(cluster.leaders(), [])
+        self.assertTrue(all(agent.sock.fileno() >= 0 for agent in cluster.agents.values()))
+
+    def test_late_delivery_does_not_extend_the_fixed_deadline(self):
+        cluster = self.cluster()
+        leader, recovery = self.recovered(cluster)
+        deadline = cluster.wall() + 600
+        leader.set_deadline(recovery['round'], deadline, cluster.clock())
+        cluster.advance(300)
+        leader.set_deadline(recovery['round'], cluster.wall() + 600, cluster.clock())
+        self.assertEqual(leader.data['recovery']['deadline'], deadline)
+
+    def test_entry_not_ready_again_cancels_return_and_keeps_access(self):
+        cluster = self.cluster()
+        leader, recovery = self.recovered(cluster)
+        leader.set_deadline(recovery['round'], cluster.wall() + 600, cluster.clock())
+        cluster.advance(420)
+        cluster.agents['entry'].ready = False
+        cluster.advance(45)
+        self.assertIsNone(leader.data['recovery'])
+        self.assertEqual(leader.data['cancelled_round'], recovery['round'])
+        cluster.advance(600)
+        self.assertEqual(cluster.leaders(), ['a'])
+        self.assertTrue(all(agent.leader.data['active'] for node, agent in cluster.agents.items()
+                            if node != 'entry'))
+        self.assertFalse(any(call[0] == 'end' for event in cluster.events.values() for call in event.calls))
+        # The next stable return is a new round with its own notice.
+        cluster.agents['entry'].ready = True
+        cluster.advance(150)
+        self.assertEqual(leader.data['recovery']['round'], recovery['round'] + 1)
+
+    def test_entry_gone_again_cancels_return(self):
+        cluster = self.cluster()
+        leader, recovery = self.recovered(cluster)
+        cluster.stop('entry')
+        cluster.advance(90)
+        self.assertIsNone(leader.data['recovery'])
+        self.assertEqual(cluster.leaders(), ['a'])
+
+    def test_leader_restart_and_new_leader_keep_the_deadline(self):
+        cluster = self.cluster()
+        leader, recovery = self.recovered(cluster)
+        deadline = cluster.wall() + 600
+        leader.set_deadline(recovery['round'], deadline, cluster.clock())
+        cluster.advance(30)
+        cluster.stop('a')
+        cluster.start('a')
+        cluster.advance(30)
+        self.assertEqual(cluster.agents['a'].leader.data['recovery']['deadline'], deadline)
+        self.assertEqual(cluster.leaders(), ['a'])
+        calls = len(cluster.events['b'].calls)
+        cluster.stop('a')
+        cluster.advance(90)
+        self.assertEqual(cluster.leaders(), ['b'])
+        self.assertEqual(cluster.agents['b'].leader.data['recovery']['deadline'], deadline)
+        # No new bundle during the transition.
+        self.assertFalse(any(call[0] == 'leader' for call in cluster.events['b'].calls[calls:]))
+        while cluster.wall() < deadline + 30:
+            cluster.advance()
+        self.assertFalse(cluster.agents['b'].leader.data['active'])
+        self.assertIn(('end', ()), cluster.events['b'].calls)
+
+    def test_undelivered_notice_ends_after_two_hours(self):
+        cluster = self.cluster()
+        leader, _recovery = self.recovered(cluster)
+        cluster.advance(7140)
+        self.assertTrue(leader.data['active'])
+        with self.assertLogs(level='INFO') as logs:
+            cluster.advance(60)
+        self.assertFalse(leader.data['active'])
+        self.assertTrue(any('2' in line and 'emergency ended' in line for line in logs.output))
+
+    def test_entry_on_new_address_is_recognised_by_key(self):
+        cluster = self.cluster()
+        self.outage(cluster)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        with self.assertLogs(level='INFO') as logs:
+            self.entry_back(cluster, port=port)
+            cluster.advance(30)
+        for node in 'abc':
+            agent = cluster.agents[node]
+            self.assertEqual(agent.addresses['entry'], ('127.0.0.1', port), node)
+            self.assertEqual(agent.state.data['entry_moved']['to'], ['127.0.0.1', port])
+        self.assertTrue(any('entry address changed' in line for line in logs.output))
+        cluster.advance(150)
+        self.assertIsNotNone(cluster.agents['a'].leader.data['recovery'])
+        # A restarted exit keeps the learned address.
+        cluster.stop('b')
+        cluster.start('b')
+        self.assertEqual(cluster.agents['b'].addresses['entry'], ('127.0.0.1', port))
+
+    def test_forged_hello_from_another_address_does_not_move_entry(self):
+        cluster = self.cluster()
+        agent = cluster.agents['a']
+        before = agent.addresses['entry']
+        stranger = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        stranger.bind(('127.0.0.1', 0))
+        stranger.settimeout(2)
+        self.addCleanup(stranger.close)
+        hello = dict(sender='entry', installation_id='fixture', kind='hello', nonce='a' * 48)
+        agent.receive(encode(b'x' * 32, hello), stranger.getsockname(), cluster.clock())
+        agent.receive(encode(agent.key, hello), stranger.getsockname(), cluster.clock())
+        challenge = decode(agent.key, stranger.recv(16385))
+        # Without the matching nonce the reply is ignored.
+        reply = dict(sender='entry', installation_id='fixture', kind='reply', nonce='b' * 48,
+                     evidence=dict(epoch=1, run='x', sequence=1, age=0))
+        agent.receive(encode(agent.key, reply), stranger.getsockname(), cluster.clock())
+        self.assertEqual(agent.addresses['entry'], before)
+        self.assertEqual(challenge['kind'], 'poll')
+
     def test_hooks_contract(self):
         calls = []
         for event in ('on_emergency_leader', 'on_step_down', 'on_entry_recovered', 'on_emergency_end'):
@@ -691,6 +876,9 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertIn('emergency/provision.py', deploy)
         self.assertIn('User=vpn2-emergency', stage)
         self.assertIn('LogRateLimitBurst=10', stage)
+        self.assertIn('AmbientCapabilities=CAP_NET_BIND_SERVICE', stage)
+        self.assertIn("ufw allow 443/tcp comment 'vpn2 emergency panel'", stage)
+        self.assertIn("print('any', port)", stage)
         self.assertIn('systemctl is-active --quiet vpn2-emergency.service', stage)
         result = subprocess.run(['bash', '-n', str(ROOT / 'infra/scripts/23-emergency.sh')],
                                 capture_output=True, text=True)

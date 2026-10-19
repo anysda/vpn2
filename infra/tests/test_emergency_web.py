@@ -185,6 +185,13 @@ class EmergencyWebTests(unittest.TestCase):
         self.panel.on_entry_recovered(time.monotonic() + 600)
         self.assertFalse(self.panel.auth)
 
+    def test_panel_shows_the_deadline_from_the_notices(self):
+        self.panel.on_emergency_leader('event', 2)
+        agreed = (int(time.time()) // 60 + 11) * 60
+        self.panel.on_entry_recovered(time.monotonic() + agreed - time.time(), agreed)
+        self.assertEqual(self.panel.view()['deadline'], agreed)
+        self.assertEqual(self.web.Panel(self.directory, **self.options).view()['deadline'], agreed)
+
     def test_https_login_cookie_and_revocation(self):
         self.start()
         self.assertEqual(self.request('/api/state')[0], 401)

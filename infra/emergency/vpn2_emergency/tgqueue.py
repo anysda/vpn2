@@ -439,7 +439,10 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                                        ('pending' if remaining else 'sent', '', row['id']))
                             sent += 1
                         else:
-                            delay = retry_after or min(3600, 5 * 2 ** min(row['attempts'], 10))
+                            # The return notice fixes a ten-minute deadline when it
+                            # arrives; an hour of backoff would delay it as long.
+                            cap = 60 if row['event'] in {'recovered', 'return_cancelled'} else 3600
+                            delay = retry_after or min(cap, 5 * 2 ** min(row['attempts'], 10))
                             db.execute("UPDATE delivery SET state='retry',reason=?,attempts=attempts+1,"
                                        'due=? WHERE id=?', (reason, current + delay, row['id']))
         return sent

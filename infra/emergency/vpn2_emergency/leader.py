@@ -5,7 +5,9 @@ can serve only after three failed rounds AND 300 seconds of isolation. This
 is deliberately available under partition, not a claim of linearizability.
 """
 
+import logging
 import math
+import time
 import uuid
 
 from . import hooks
@@ -25,11 +27,30 @@ TRANSITION = 600
 # in a row or once its last majority is that old, still inside one lease. A
 # restarted leader whose majority is older steps down at once, as before.
 STEP_DOWN_ROUNDS = (LEASE - PERIOD) // PERIOD
+# The entry counts as back only after it reported working VPN services and the
+# exit reached it for this long without a break. The first heartbeat after an
+# outage is only a link and never ends an emergency.
+STABLE = 120
+# Emergency access ends this long after the first delivered recovery notice;
+# a later delivery never extends it. Without any delivery it ends after
+# TELEGRAM_WAIT, without a notice.
+NOTICE = 600
+TELEGRAM_WAIT = 7200
+LOG = logging.getLogger(__name__)
+
+
+def valid_recovery(value):
+    if value is None:
+        return True
+    return (isinstance(value, dict) and type(value.get('round')) is int and value['round'] > 0
+            and all(type(value.get(key)) in (int, float) and math.isfinite(value[key])
+                    for key in ('confirmed', *(('deadline',) if value.get('deadline') is not None else ()))))
 
 
 class Leader:
-    def __init__(self, state, node, exits, installation, now, events=hooks):
+    def __init__(self, state, node, exits, installation, now, events=hooks, wall=time.time):
         self.state = state
+        self.wall = wall
         self.node = node
         self.installation = installation
         self.events = events
@@ -59,13 +80,19 @@ class Leader:
             self.data.pop('last_round', None)
             self.data.pop('majority_at', None)
         self.candidate = None
+        # Entry readiness streaks are local; the recovery itself is agreed state.
+        self.ready_since = None
+        self.not_ready = 0
+        self.stale_since = None
+        self.data.setdefault('recovery', None)
         self.data.setdefault('failed_since', None)
         self.data.setdefault('failed_rounds', 0)
         self.data.setdefault('last_round', now - 15)
 
     def status(self, now):
         return {key: self.data.get(key) for key in (
-            'role', 'generation', 'active', 'owner', 'emergency_id', 'autonomous', 'ready')} | {
+            'role', 'generation', 'active', 'owner', 'emergency_id', 'autonomous', 'ready',
+            'recovery', 'previous_emergency')} | {
             'grant': self.data['grant'],
             'lease': max(0, self.data['grant_until'] - now),
             'ready_age': max(0, now - self.data['ready_at']) if self.data.get('ready') else None}
@@ -81,7 +108,9 @@ class Leader:
                 or status.get('grant') not in (*self.ranks, None)
                 or status.get('owner') not in (*self.ranks, None)
                 or not isinstance(status.get('emergency_id'), str)
-                or len(status['emergency_id']) > 64):
+                or len(status['emergency_id']) > 64
+                or not isinstance(status.get('previous_emergency') or '', str)
+                or not valid_recovery(status.get('recovery'))):
             return False
         if status.get('ready') and (type(status.get('ready_age')) not in (int, float)
                                     or not math.isfinite(status['ready_age']) or status['ready_age'] < 0):
@@ -90,6 +119,12 @@ class Leader:
         lease = min(status['lease'], LEASE)
         self.peers[node] = (dict(status, lease_until=now + max(0, lease - transit),
                                 ready_age=status['ready_age'] + transit if status.get('ready') else None), now)
+        if (self.data['active'] and node == self.data['owner'] and self.data['emergency_id']
+                and status.get('previous_emergency') == self.data['emergency_id']):
+            # The owner already reached the deadline; a missed round must not
+            # leave this exit in an emergency nobody serves.
+            self.finish('завершено ведущим узлом')
+            return True
         if allow_activation and status.get('active'):
             self.data['active'] = True
         self.data['generation'] = max(self.data['generation'], status['generation'])
@@ -140,6 +175,15 @@ class Leader:
         self.state.save()
 
     def _become(self, autonomous):
+        if self.data.get('recovery'):
+            # The return is confirmed: a new leader only keeps the agreed
+            # deadline and ends the emergency, it never issues a new bundle.
+            if self.data['role'] != 'leader':
+                self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous)
+                self.state.save()
+            return
+        if self.data['owner'] not in (None, self.node):
+            self.data['previous_owner'] = self.data['owner']
         changed = self.data['owner'] != self.node or self.data.get('credentials_lost', False)
         resumed = self.data['role'] != 'leader'
         self.data.update(role='leader', owner=self.node, redirect=None, autonomous=autonomous,
@@ -154,8 +198,12 @@ class Leader:
             self.data['ready'] = False
             self.data.pop('ready_at', None)
         if not self.data['emergency_id']:
+            # An outage without an entry restart keeps the entry cursor; the
+            # ended emergency makes the next identifier (and its queue) new.
+            previous = self.data.get('previous_emergency')
             self.data['emergency_id'] = str(uuid.uuid5(uuid.NAMESPACE_URL, self.installation + ':' +
-                                                     str(self.state.data.get('entry_cursor', [0, '', 0])[:2])))
+                                                     str(self.state.data.get('entry_cursor', [0, '', 0])[:2]) +
+                                                     (':' + previous if previous else '')))
         if changed or resumed:
             self.data['pending_leader'] = True
         self.state.save()
@@ -189,8 +237,79 @@ class Leader:
             self.data['retired'] = True
             self.state.save()
 
+    def entry_state(self, now, ready):
+        """Leader only, every round: True ready, False explicitly not, None no fresh answer."""
+        if ready:
+            self.ready_since = self.ready_since if self.ready_since is not None else now
+            self.not_ready = 0
+            self.stale_since = None
+        else:
+            self.ready_since = None
+            if ready is False:
+                self.not_ready += 1
+                self.stale_since = None
+            elif self.stale_since is None:
+                self.stale_since = now
+        if self.data['role'] != 'leader' or not self.data['active']:
+            return
+        recovery = self.data['recovery']
+        wall = self.wall()
+        if recovery is None:
+            if ready and now - self.ready_since >= STABLE:
+                number = self.data.get('recovery_round', 0) + 1
+                self.data['recovery_round'] = number
+                self.data['recovery'] = {'round': number, 'confirmed': wall, 'deadline': None}
+                self.state.save()
+                LOG.info('entry recovered: round %s confirmed after %s s', number, STABLE)
+            return
+        if self.not_ready >= 2 or (self.stale_since is not None and now - self.stale_since >= MISSED):
+            self.data['recovery'] = None
+            self.data['cancelled_round'] = recovery['round']
+            self.state.save()
+            LOG.info('entry recovery cancelled: round %s, entry not ready again', recovery['round'])
+            return
+        self._deadline_due(wall)
+
+    def set_deadline(self, number, deadline, now):
+        """The first delivered notice (or no channel at all) fixes the deadline."""
+        recovery = self.data['recovery']
+        if not recovery or recovery['round'] != number or recovery['deadline'] is not None:
+            return
+        recovery['deadline'] = deadline
+        self.state.save()
+        LOG.info('entry recovery deadline fixed: round %s', number)
+        self.events.on_entry_recovered(now + max(0, deadline - self.wall()))
+
+    def _deadline_due(self, wall):
+        recovery = self.data['recovery']
+        if not recovery or not self.data['active']:
+            return
+        if recovery['deadline'] is not None and wall >= recovery['deadline']:
+            self.finish('аварийный доступ отключён по сроку')
+        elif recovery['deadline'] is None and wall - recovery['confirmed'] >= TELEGRAM_WAIT:
+            self.finish('уведомление о возврате не доставлено за 2 часа, завершено без уведомления')
+
+    def finish(self, reason):
+        """Every node ends the emergency at the agreed deadline; the agent keeps running."""
+        ended = self.data['emergency_id']
+        self.events.on_emergency_end()
+        self.data.update(role='observer', active=False, owner=None, redirect=None, autonomous=False,
+                         emergency_id='', previous_emergency=ended, recovery=None, ready=False,
+                         retiring=False, retired=False, pending_leader=False, grant=None,
+                         failed_since=None, failed_rounds=0)
+        for key in ('retire_at', 'ready_at', 'majority_at', 'previous_owner'):
+            self.data.pop(key, None)
+        self.candidate = None
+        self.ready_since = None
+        self.not_ready = 0
+        self.stale_since = None
+        self.state.save()
+        LOG.info('emergency ended: %s', reason)
+
     def tick(self, now, outage):
         self._retire(now)
+        if self.data['role'] != 'leader':
+            self._deadline_due(self.wall())
         if not (outage or self.data['active']):
             return
         self.data['active'] = True
@@ -204,6 +323,9 @@ class Leader:
                     self._step_down(winner)
                 self.data['owner'] = winner
                 self.data['emergency_id'] = status['emergency_id']
+                # Followers keep the leader's recovery: a new leader or a
+                # restart continues the same deadline.
+                self.data['recovery'] = status.get('recovery')
                 if previous_owner == self.node:
                     self.data['retiring'] = True
                 if self.data.get('retiring') and status.get('ready'):

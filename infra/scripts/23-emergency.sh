@@ -31,9 +31,14 @@ if command -v ufw >/dev/null; then
 import json
 import sys
 config = json.load(open(sys.argv[1]))
+port = config['nodes'][config['node']]['port']
 for node, address in config['nodes'].items():
     if node != config['node']:
-        print(address['host'], config['nodes'][config['node']]['port'])
+        print(address['host'], port)
+# An entry reinstalled on another address proves itself by key, so exits
+# must hear its hello from anywhere; the HMAC, not the source, is checked.
+if config['node'] != config.get('entry_id', 'entry'):
+    print('any', port)
 PY
 )
 fi
@@ -118,6 +123,8 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/vpn2-emergency
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# The emergency panel listens on 443 only while this exit leads.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 LogRateLimitIntervalSec=60
 LogRateLimitBurst=10
 [Install]
@@ -128,6 +135,8 @@ systemctl daemon-reload
 if [[ "$HOST_TAG" != ru ]]; then
   # Emergency Hysteria2 waits stopped with its port closed.
   bash "$STAGING/install-hy2.sh" "$PUBLIC_IP" "${EMERGENCY_HY2_PORT:-18443}"
+  # The panel is served by the agent itself and answers only during an emergency.
+  if command -v ufw >/dev/null; then ufw allow 443/tcp comment 'vpn2 emergency panel'; fi
   # Panel certificate in advance; a fallback expiring later is renewed by
   # local openssl at activation, without network access.
   runuser -u vpn2-emergency -- env PYTHONPATH=/opt/vpn2-emergency python3 -B -c '

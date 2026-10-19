@@ -151,13 +151,17 @@ class Panel:
                     ip = str(ipaddress.ip_address(node['ip']))
                     self.redirect = f'https://[{ip}]' if ':' in ip else f'https://{ip}'
 
-    def on_entry_recovered(self, deadline_monotonic):
+    def on_entry_recovered(self, deadline_monotonic, deadline_wall=None):
+        # deadline_wall is the agreed time from the notices, so the panel shows
+        # exactly the minute the clients were told.
         with self.lock:
             if not self.auth:
                 return
             self.deadline = deadline_monotonic
             self.cancelled = False
-            self.auth.update(deadline_wall=time.time() + max(0, deadline_monotonic - time.monotonic()), cancelled=False)
+            if deadline_wall is None:
+                deadline_wall = time.time() + max(0, deadline_monotonic - time.monotonic())
+            self.auth.update(deadline_wall=deadline_wall, cancelled=False)
             self._save()
 
     def on_return_cancelled(self):
@@ -240,7 +244,8 @@ class Panel:
                     exit_name=next((x['name'] for x in snapshot.get('exits', []) if x['id'] == self.exit_id), self.exit_id),
                     generation=generation, autonomous=self.auth.get('autonomous', False),
                     cancelled=self.cancelled, remaining=remaining,
-                    deadline=time.time() + remaining if remaining is not None else None,
+                    deadline=(self.auth.get('deadline_wall') or time.time() + remaining)
+                    if remaining is not None else None,
                     bot_ready=bool(snapshot.get('bot_token') and self.broadcast),
                     delivery=delivery)
 

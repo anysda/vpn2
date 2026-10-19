@@ -6,6 +6,7 @@ import importlib
 import json
 import logging
 from pathlib import Path
+import secrets
 import selectors
 import signal
 import socket
@@ -14,6 +15,7 @@ import uuid
 
 from .heartbeat import Heartbeat, MAX_PACKET, MISSED, PERIOD, decode, encode
 from .leader import Leader
+from .lifecycle import Lifecycle
 from .state import State
 
 
@@ -28,9 +30,11 @@ def load_snapshot(state_dir):
 
 
 class Agent:
-    def __init__(self, config, state_dir, clock=time.monotonic, snapshot_loader=load_snapshot):
+    def __init__(self, config, state_dir, clock=time.monotonic, snapshot_loader=load_snapshot,
+                 wall=time.time):
         self.config = config
         self.clock = clock
+        self.wall = wall
         self.snapshot_loader = snapshot_loader
         self.state = State(state_dir)
         self.lock = (self.state.directory / 'agent.lock').open('a')
@@ -47,6 +51,18 @@ class Agent:
             raise ValueError('invalid observer configuration')
         self.addresses = {node: (socket.gethostbyname(item['host']), item['port'])
                           for node, item in config['nodes'].items()}
+        # An entry reinstalled on another address is recognised by its key and
+        # kept until the configuration itself names a different address.
+        moved = self.state.data.get('entry_moved')
+        if moved and self.node != self.entry and tuple(moved['from']) == self.addresses.get(self.entry):
+            self.addresses[self.entry] = tuple(moved['to'])
+        self.moving = None
+        # Entry: own VPN readiness, set by the lifecycle probe. Exit: the
+        # entry's last reported readiness and the exit's own reachability check.
+        self.ready = False
+        self.entry_reply = None
+        self.entry_check = None
+        self.lifecycle = None
         self.heartbeat = Heartbeat(self.state, clock())
         self.leader = None
         self.last_log = None
@@ -64,10 +80,10 @@ class Agent:
         self.sock.close()
         self.lock.close()
 
-    def send(self, peer, message):
+    def send(self, peer, message, address=None):
         message = message | {'installation_id': self.installation, 'sender': self.node}
         try:
-            self.sock.sendto(encode(self.key, message), self.addresses[peer])
+            self.sock.sendto(encode(self.key, message), address or self.addresses[peer])
         except OSError:
             # A missing route is an unknown peer, never proof of entry death.
             pass
@@ -78,6 +94,10 @@ class Agent:
     def tick(self, now):
         if self.node == self.entry:
             self.state.data['sequence'] += 1
+            # Exits that still poll an old address learn the new one from this.
+            for peer in self.addresses:
+                if peer != self.node:
+                    self.send(peer, {'kind': 'hello', 'nonce': secrets.token_hex(24)})
         else:
             snapshot = self.snapshot_loader(self.state.directory)
             if snapshot is not None:
@@ -85,13 +105,14 @@ class Agent:
                     raise ValueError('snapshot belongs to another installation')
                 exits = snapshot['exits']
                 if self.leader is None:
-                    self.leader = Leader(self.state, self.node, exits, self.installation, now)
+                    self.leader = Leader(self.state, self.node, exits, self.installation, now, wall=self.wall)
                 elif {item['id']: (item['priority'], item['id']) for item in exits} != self.leader.ranks:
                     # Membership changes require a full lease without voting.
                     # Wave integration can explicitly restart after snapshot update.
                     raise ValueError('election membership changed; restart required')
             if self.leader:
                 self.leader.tick(now, self.heartbeat.emergency_due(now))
+                self.leader.entry_state(now, self.entry_ready(now))
             for peer in self.addresses:
                 if peer == self.node:
                     continue
@@ -102,6 +123,39 @@ class Agent:
                                  'candidate': self.leader.candidate if self.leader else None})
         self.state.save()
         self.log_role()
+        if self.lifecycle:
+            self.lifecycle.tick(now)
+
+    def entry_ready(self, now):
+        """Fresh entry answer: its VPN services and control traffic, plus our own check."""
+        if not self.entry_reply or now - self.entry_reply[1] >= 2 * PERIOD:
+            return None
+        check = self.entry_check
+        reachable = check is None or (now - check[1] < 2 * PERIOD and check[0])
+        return bool(self.entry_reply[0] and reachable)
+
+    def relocate(self, peer, message, address, now):
+        """Only the entry may come back elsewhere: it must answer our fresh challenge there."""
+        if peer != self.entry or self.node == self.entry:
+            return False
+        if message.get('kind') == 'hello':
+            nonce = self.heartbeat.challenge(peer, now)
+            self.moving = (address, nonce)
+            self.send(peer, {'kind': 'poll', 'nonce': nonce,
+                             'candidate': self.leader.candidate if self.leader else None}, address)
+            return False
+        if message.get('kind') != 'reply' or self.moving != (address, message.get('nonce')):
+            return False
+        old = self.addresses[peer]
+        self.addresses[peer] = address
+        self.moving = None
+        configured = self.config['nodes'][peer]
+        self.state.data['entry_moved'] = {
+            'from': [socket.gethostbyname(configured['host']), configured['port']], 'to': list(address),
+            'emergency': self.leader.data['emergency_id'] if self.leader else ''}
+        self.state.save()
+        logging.info('entry address changed: %s -> %s', old[0], address[0])
+        return True
 
     def log_role(self):
         role = self.leader.data['role'] if self.leader else 'observer'
@@ -116,7 +170,9 @@ class Agent:
             message = decode(self.key, packet)
             peer = message.get('sender')
             if (message.get('installation_id') != self.installation or peer == self.node
-                    or peer not in self.addresses or address != self.addresses[peer]):
+                    or peer not in self.addresses):
+                return
+            if address != self.addresses[peer] and not self.relocate(peer, message, address, now):
                 return
             nonce = message.get('nonce')
             if not isinstance(nonce, str) or len(nonce) != 48:
@@ -132,14 +188,18 @@ class Agent:
                         self.leader.grant(message.get('candidate'), now,
                                           self.heartbeat.emergency_due(now) or self.leader.data['active'])
                     evidence = self.heartbeat.direct_evidence(now)
-                self.send(peer, {'kind': 'reply', 'nonce': nonce, 'evidence': evidence,
-                                 'status': self.status(now)})
+                reply = {'kind': 'reply', 'nonce': nonce, 'evidence': evidence, 'status': self.status(now)}
+                if self.node == self.entry:
+                    reply['ready'] = self.ready is True
+                self.send(peer, reply)
             elif message.get('kind') == 'reply' and self.node != self.entry:
                 transit = self.heartbeat.response(peer, nonce, now)
                 if transit is None:
                     return
                 self.heartbeat.receive(message.get('evidence'), now, transit,
                                        direct=peer == self.entry, observer=peer)
+                if peer == self.entry:
+                    self.entry_reply = (message.get('ready') is True, now)
                 if self.leader and peer != self.entry:
                     self.leader.observe(peer, message.get('status'), now, transit,
                                         allow_activation=now - self.heartbeat.last_entry >= MISSED)
@@ -182,6 +242,8 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     agent = Agent(json.loads(Path(args.config).read_text()), args.state_dir)
+    agent.lifecycle = Lifecycle(agent)
+    agent.lifecycle.attach()
 
     def stop(_signum, _frame):
         agent.stop_requested = True
@@ -191,6 +253,7 @@ def main():
     try:
         agent.run()
     finally:
+        agent.lifecycle.close()
         agent.close()
 
 

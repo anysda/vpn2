@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { expect, test } from '@playwright/test'
 import type { AccessAdapter } from '../server/utils/access-adapter'
@@ -21,6 +21,7 @@ let schema: typeof Schema
 let db: ReturnType<typeof Database.useDb>
 let adapter: AccessAdapter
 let fact: Map<string, number>
+let app: { load: (relative: string) => Record<string, unknown>, overrides: Map<string, unknown> }
 
 test.beforeEach(async () => {
   directory = mkdtempSync(path.join(tmpdir(), 'access-'))
@@ -30,7 +31,7 @@ test.beforeEach(async () => {
     read: async (protocol, operation) => fact.get(`${protocol}:${operation.clientId}`) === operation.version,
     apply: async (protocol, operation) => { fact.set(`${protocol}:${operation.clientId}`, operation.version) },
   }
-  const app = harness(root, path.join(directory, 'db.sqlite'), adapter)
+  app = harness(root, path.join(directory, 'db.sqlite'), adapter)
   schema = app.load('app/server/database/schema.ts')
   db = (app.load('app/server/database/client.ts') as typeof Database).useDb()
   await migrate(db, { migrationsFolder: path.join(root, 'app/server/database/migrations') })
@@ -263,4 +264,92 @@ test('повторы ограничены по частоте; прежнее п
   await ops.runAccessOperations(adapter)
   expect(calls).toBe(attempts)
   expect((await db.select().from(schema.botOutbox))).toHaveLength(1)
+})
+
+async function threeDevices(c: { id: number }) {
+  return db.insert(schema.devices).values([0, 1, 2].map(i => ({
+    clientId: c.id, name: `dev-${i}`, wgPublicKey: `confirmed-${i}`, wgPrivateKey: `private-${i}`, wgIp: `10.66.66.${i + 2}`, ovpnCert: `cert-${i}`,
+  }))).returning()
+}
+
+test('VPN2-510: 200 перевыпусков без подтверждения - retired по одной записи на устройство, история не растёт', async () => {
+  const c = await client()
+  const created = await threeDevices(c)
+  for (let i = 0; i < 200; i++) {
+    await ops.enqueueAccess({ clientId: c.id, actor: 'panel', kind: 'reissue', key: `reissue-${i}`, deviceId: i % 4 === 3 ? undefined : created[i % 4]!.id })
+  }
+  const rows = await db.select().from(schema.accessOperations)
+  expect(rows).toHaveLength(200)
+  const [last] = rows.filter(row => row.status === 'pending')
+  const payload = JSON.parse(last!.payload)
+  // Отзывать надо то, что VPN-служба подтверждала до цепочки: исходные ключи и сертификаты.
+  expect(payload.retired).toEqual(created.map(d => ({ id: d.id, wgPublicKey: d.wgPublicKey, ovpnCert: d.ovpnCert })))
+  expect(payload.rotateOvpn.map((r: { id: number }) => r.id).sort()).toEqual(created.map(d => d.id).sort())
+  for (const row of rows.filter(row => row.status === 'superseded')) {
+    expect(JSON.parse(row.payload)).toMatchObject({ retired: [], rotateOvpn: [], name: 'operation test' })
+  }
+  const [{ largest }] = await db.all<{ largest: number }>(sql`SELECT max(length(payload)) AS largest FROM access_operations`)
+  expect(largest).toBeLessThan(1024)
+})
+
+test('VPN2-510: реквизиты протокола, уже подтверждённого предыдущей операцией, дальше не тянутся', async () => {
+  const c = await client()
+  const [device] = await threeDevices(c)
+  const first = await ops.enqueueAccess({ clientId: c.id, deviceId: device!.id, actor: 'panel', kind: 'reissue', key: 'first' })
+  const [stored] = await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.id, first.operation.id))
+  const protocols = structuredClone(stored!.protocols)
+  protocols.wg = { ...protocols.wg, state: 'confirmed', confirmedVersion: stored!.version }
+  await db.update(schema.accessOperations).set({ protocols }).where(eq(schema.accessOperations.id, stored!.id))
+  const [current] = await db.select().from(schema.devices).where(eq(schema.devices.id, device!.id))
+  const second = await ops.enqueueAccess({ clientId: c.id, deviceId: device!.id, actor: 'panel', kind: 'reissue', key: 'second' })
+  const [row] = await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.id, second.operation.id))
+  // WG старый ключ уже снят: отзывается ключ первой операции; OpenVPN не подтверждён - исходный сертификат остаётся.
+  expect(JSON.parse(row!.payload).retired).toEqual([{ id: device!.id, wgPublicKey: current!.wgPublicKey, ovpnCert: 'cert-0' }])
+})
+
+test('VPN2-510: раздутая прежней версией база чистится при старте и ужимается', async () => {
+  const c = await client()
+  const created = await threeDevices(c)
+  const entry = (i: number) => ({ id: created[i % 3]!.id, wgPublicKey: `key-${i}`, ovpnCert: 'x'.repeat(1500) })
+  const bloated = (n: number) => JSON.stringify({ enabled: true, retired: Array.from({ length: n }, (_, i) => entry(i)), rotateOvpn: [], name: 'operation test', chatId: null })
+  const protocols = { wg: { state: 'pending' }, openvpn: { state: 'pending' }, ikev2: { state: 'not_required' } } as never
+  for (let v = 1; v <= 30; v++) {
+    await db.insert(schema.accessOperations).values({
+      id: `op-${v}`, clientId: c.id, kind: 'reissue', version: v, idempotencyKey: `k-${v}`, requestHash: 'h', protocols,
+      status: v === 30 ? 'pending' : 'superseded', payload: bloated(v * 25), actor: 'panel', nextRetry: 0, createdAt: v,
+    })
+  }
+  await db.update(schema.clients).set({ accessVersion: 30 }).where(eq(schema.clients.id, c.id))
+  const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
+  const before = await size()
+  expect(before).toBeGreaterThan(16 * 1024 * 1024)
+  expect(await ops.compactAccessOperations()).toEqual({ rows: 30, vacuumed: true })
+  const [live] = await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.id, 'op-30'))
+  expect(JSON.parse(live!.payload).retired.map((r: { wgPublicKey: string }) => r.wgPublicKey)).toEqual(['key-0', 'key-1', 'key-2'])
+  for (const row of await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.status, 'superseded'))) {
+    expect(JSON.parse(row.payload)).toMatchObject({ enabled: true, retired: [], rotateOvpn: [] })
+  }
+  expect(await size()).toBeLessThan(before / 10)
+  expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: false })
+})
+
+test('VPN2-510: промежуточный ключ WG на адресе устройства не подтверждается, хотя retired его не помнит', async () => {
+  const c = await client()
+  const [device] = await threeDevices(c)
+  const { operation } = await ops.enqueueAccess({ clientId: c.id, deviceId: device!.id, actor: 'panel', kind: 'reissue', key: 'reissue' })
+  const [current] = await db.select().from(schema.devices).where(eq(schema.devices.id, device!.id))
+  let peers: Record<string, string[]> = {}
+  app.overrides.delete('app/server/utils/access-adapter.ts')
+  app.overrides.set('app/server/utils/control.ts', {
+    control: async (method: string) => method === 'state.read' ? { peers } : {},
+    ControlUnavailable: class extends Error {},
+  })
+  const real = app.load('app/server/utils/access-adapter.ts').accessAdapter as AccessAdapter
+  const payload = JSON.parse((await db.select().from(schema.accessOperations).where(eq(schema.accessOperations.id, operation.id)))[0]!.payload)
+  const own = (key: string, i: number) => [key, [`10.66.66.${i + 2}/32`, `fd66:66::${i + 2}/128`]]
+  peers = Object.fromEntries([own(current!.wgPublicKey!, 0), own('confirmed-1', 1), own('confirmed-2', 2)])
+  expect(await real.read('wg', operation, payload)).toBe(true)
+  // Ключ из середины цепочки перевыпусков, применённый чужой синхронизацией.
+  peers = Object.fromEntries([own(current!.wgPublicKey!, 0), own('confirmed-1', 1), own('confirmed-2', 2), own('intermediate', 0)])
+  expect(await real.read('wg', operation, payload)).toBe(false)
 })

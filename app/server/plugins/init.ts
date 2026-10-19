@@ -10,6 +10,7 @@ import { loadAnysdaConfig } from '../utils/anysda-config'
 import { syncClientPrefsFile } from '../utils/client-prefs'
 import { markPanelReady } from '../utils/panel-ready'
 import { ControlUnavailable } from '../utils/control'
+import { compactAccessOperations } from '../utils/access-operations'
 
 function generatePassword(): string {
   return randomBytes(13).toString('base64url').slice(0, 18)
@@ -51,6 +52,12 @@ async function initPanel() {
       .update(readFileSync(resolve(migrationsFolder, `${migration.tag}.sql`))).digest('hex')
   })) throw new Error('Database schema incompatible. Run the deploy migration executor before starting the panel.')
   log.info('migrations applied by deploy executor; schema verified')
+
+  // Базы, раздутые историей перевыпусков: чистка один раз, дальше строки не растут.
+  // Не вышло (занято, нет места под VACUUM) - панель работает, база прежняя.
+  await compactAccessOperations().then(({ rows, vacuumed }) => {
+    if (rows) log.info({ rows, vacuumed }, 'access operations history compacted')
+  }, err => log.warn({ err }, 'access operations history not compacted'))
 
   if (cfg.exitTags) await syncClientPrefsFile().catch((error) => {
     if (!(error instanceof ControlUnavailable)) throw error

@@ -50,7 +50,11 @@ export const accessAdapter: AccessAdapter = {
       const peers = new Set(Object.keys(state.peers))
       if (operation.kind === 'reissue' && rows.some(d => !d.deleting && (!operation.deviceId || operation.deviceId === d.id)
         && (!d.wgPublicKey || !d.wgPrivateKey || !d.wgPresharedKey || !d.wgIp))) return false
-      return rows.every(d => !d.wgPublicKey || (peers.has(d.wgPublicKey) === d.enabled && (!d.enabled || sameExpiry(state.expires, d.wgPublicKey, d.expires))))
+      // Ключ из середины цепочки перевыпусков в retired не хранится: на адресе
+      // устройства не должно быть никого, кроме его текущего ключа.
+      const strangers = rows.some(d => d.wgIp && Object.entries(state.peers)
+        .some(([key, addresses]) => addresses.includes(`${d.wgIp}/32`) && (!d.enabled || key !== d.wgPublicKey)))
+      return !strangers && rows.every(d => !d.wgPublicKey || (peers.has(d.wgPublicKey) === d.enabled && (!d.enabled || sameExpiry(state.expires, d.wgPublicKey, d.expires))))
         && payload.retired.every(d => !d.wgPublicKey || !peers.has(d.wgPublicKey))
     }
     if (protocol === 'openvpn') {

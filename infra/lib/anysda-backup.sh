@@ -167,14 +167,19 @@ def devices(*fields):
 
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
-    peers = {}
+    peers, addresses = {}, {}
     for block in re.split(r'(?m)^\s*\[Peer\]\s*$', wg.read_text())[1:]:
-        fields = dict(re.findall(r'(?m)^\s*(\w+)\s*=\s*(\S+)\s*$', block))
+        fields = dict(re.findall(r'(?m)^\s*(\w+)\s*=\s*([^\n]*?)\s*$', block))
         if 'PublicKey' in fields:
             peers[fields['PublicKey']] = fields.get('PresharedKey')
+            addresses[fields['PublicKey']] = {a.strip() for a in fields.get('AllowedIPs', '').split(',')}
     known = set()
-    for device, wanted, (key, psk, _) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
+    for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
         known.add(key)
+        # Ключ из середины цепочки перевыпусков в retired не хранится: пир на
+        # адресе переходного устройства очередь заменит сама.
+        if wanted is None and ip:
+            known |= {other for other, allowed in addresses.items() if f'{ip}/32' in allowed}
         if wanted and key not in peers:
             bad.append(f'{label(device)}: нет пира WireGuard')
         elif wanted and peers[key] != psk:

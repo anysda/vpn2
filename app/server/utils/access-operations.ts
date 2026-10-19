@@ -1,9 +1,9 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { and, desc, eq, exists, getTableColumns, lte, ne, notExists } from 'drizzle-orm'
+import { and, desc, eq, exists, getTableColumns, lte, ne, notExists, sql } from 'drizzle-orm'
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shared/access-operation'
-import type { AccessKind, AccessOperation } from '../../shared/access-operation'
+import type { AccessKind, AccessOperation, AccessProtocol } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { accessOperations, botOutbox, clients, devices, events } from '../database/schema'
 import type { Client } from '../database/schema'
@@ -32,6 +32,37 @@ interface AccessRequest {
   kind?: AccessKind
   patch?: Partial<typeof clients.$inferInsert>
 }
+
+/**
+ * Что новая операция берёт у неподтверждённой предыдущей. Протокол, который
+ * она уже подтвердила, свои старые реквизиты убрал: их не тянем дальше.
+ */
+function carried(row: StoredOperation): Pick<AccessPayload, 'retired' | 'rotateOvpn'> {
+  const payload: AccessPayload = JSON.parse(row.payload)
+  const done = (protocol: AccessProtocol) => row.protocols[protocol].confirmedVersion === row.version
+  const retired = payload.retired
+    .map(old => ({ id: old.id, wgPublicKey: done('wg') ? null : old.wgPublicKey, ovpnCert: done('openvpn') ? null : old.ovpnCert }))
+    .filter(old => old.wgPublicKey || old.ovpnCert)
+  return { retired, rotateOvpn: done('openvpn') ? [] : payload.rotateOvpn }
+}
+
+/**
+ * Одна запись на устройство: реквизиты, с которых началась цепочка
+ * неподтверждённых операций (их последними подтвердила VPN-служба).
+ * Промежуточный ключ WG снимает полная замена пиров (wg.apply), а проверка
+ * находит его по адресу устройства; промежуточный сертификат OpenVPN отозван
+ * своей же ротацией, текущий отзывают rotateOvpn и удаление устройства.
+ */
+function retire(retired: RetiredAccess[], entry: RetiredAccess): RetiredAccess[] {
+  const own = retired.find(old => old.id === entry.id)
+  if (!own) return [...retired, entry]
+  return retired.map(old => old !== own ? old : {
+    id: own.id, wgPublicKey: own.wgPublicKey ?? entry.wgPublicKey, ovpnCert: own.ovpnCert ?? entry.ovpnCert,
+  })
+}
+
+/** История не нужна очереди: у вытесненной операции остаётся только целевое состояние. */
+const supersededPayload = sql`json_set(${accessOperations.payload}, '$.retired', json('[]'), '$.rotateOvpn', json('[]'))`
 
 function requestFingerprint(input: AccessRequest) {
   const patch = input.patch && Object.fromEntries(Object.entries(input.patch)
@@ -104,7 +135,7 @@ export async function enqueueAccess(input: {
     const [previous] = await tx.select().from(accessOperations)
       .where(and(eq(accessOperations.clientId, before.id), ne(accessOperations.status, 'superseded')))
       .orderBy(desc(accessOperations.version)).limit(1)
-    const inherited: AccessPayload | undefined = previous?.status === 'pending' ? JSON.parse(previous.payload) : undefined
+    const inherited = previous?.status === 'pending' ? carried(previous) : undefined
     const payload: AccessPayload = {
       enabled: !client.deleting && isClientActive(client),
       retired: inherited?.retired ?? [], rotateOvpn: inherited?.rotateOvpn ?? [],
@@ -117,7 +148,7 @@ export async function enqueueAccess(input: {
     }
     if (kind === 'delete' || kind === 'reissue') {
       for (const d of targets) {
-        payload.retired.push({ id: d.id, wgPublicKey: d.wgPublicKey, ovpnCert: d.ovpnCert })
+        payload.retired = retire(payload.retired, { id: d.id, wgPublicKey: d.wgPublicKey, ovpnCert: d.ovpnCert })
         if (kind === 'delete') {
           await tx.update(devices).set({ deleting: true }).where(eq(devices.id, d.id))
           payload.rotateOvpn = payload.rotateOvpn.filter(r => r.id !== d.id)
@@ -140,7 +171,7 @@ export async function enqueueAccess(input: {
         }
       }
     }
-    await tx.update(accessOperations).set({ status: 'superseded' })
+    await tx.update(accessOperations).set({ status: 'superseded', payload: supersededPayload })
       .where(and(eq(accessOperations.clientId, before.id), ne(accessOperations.status, 'superseded')))
     const now = Date.now()
     const protocols = Object.fromEntries(accessProtocols.map(p => [p, {
@@ -155,6 +186,34 @@ export async function enqueueAccess(input: {
     }).returning()
     return { client, operation: operationView(row!) }
   }, { behavior: 'immediate' })
+}
+
+/**
+ * Базы, где перевыпуски копили retired в каждой строке: история вытесненных
+ * операций очищается, у живых убираются повторы устройств. Освободилось
+ * много - файл ужимается, чтобы бэкапы не копировали пустые страницы.
+ */
+export async function compactAccessOperations(): Promise<{ rows: number, vacuumed: boolean }> {
+  const db = useDb()
+  let rows = 0
+  await db.transaction(async (tx) => {
+    const stale = await tx.update(accessOperations).set({ payload: supersededPayload })
+      .where(and(eq(accessOperations.status, 'superseded'), sql`(json_array_length(${accessOperations.payload}, '$.retired') > 0
+        OR json_array_length(${accessOperations.payload}, '$.rotateOvpn') > 0)`))
+    rows += stale.rowsAffected
+    for (const row of await tx.select().from(accessOperations).where(ne(accessOperations.status, 'superseded'))) {
+      const payload: AccessPayload = JSON.parse(row.payload)
+      const retired = payload.retired.reduce(retire, [])
+      if (retired.length === payload.retired.length) continue
+      await tx.update(accessOperations).set({ payload: JSON.stringify({ ...payload, retired }) }).where(eq(accessOperations.id, row.id))
+      rows++
+    }
+  }, { behavior: 'immediate' })
+  if (!rows) return { rows, vacuumed: false }
+  const [pages] = await db.all<{ free: number, size: number }>(sql`SELECT freelist_count AS free, page_size AS size FROM pragma_freelist_count(), pragma_page_size()`)
+  if (!pages || pages.free * pages.size < 16 * 1024 * 1024) return { rows, vacuumed: false }
+  await db.run(sql`VACUUM`)
+  return { rows, vacuumed: true }
 }
 
 export async function latestAccess(clientId: number) {

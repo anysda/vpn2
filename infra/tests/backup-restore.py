@@ -812,6 +812,42 @@ exec /usr/bin/sqlite3 "$@"
         for secret in (psk, 'test-tgbot-secret'):
             self.assertNotIn(secret, result.stdout + events)
 
+    def test_intermediate_reissue_key_of_pending_client_is_not_a_stranger(self):
+        # Перевыпуски без подтверждения: в retired остался только исходный ключ,
+        # а чужая синхронизация уже записала промежуточный ключ на адрес устройства.
+        def key(n):
+            return base64.b64encode(bytes([n]) * 32).decode()
+        psk = base64.b64encode(bytes([100]) * 32).decode()
+        self.conn.execute('DROP TABLE clients')
+        self.conn.execute('CREATE TABLE clients (id INTEGER PRIMARY KEY, frozen_manual INTEGER NOT NULL DEFAULT 0, '
+                          'expires_at INTEGER)')
+        self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL, '
+                          'deleting INTEGER NOT NULL DEFAULT 0, wg_public_key TEXT, wg_preshared_key TEXT, wg_ip TEXT)')
+        self.conn.execute('CREATE TABLE access_operations (id TEXT PRIMARY KEY, client_id INTEGER NOT NULL, '
+                          'status TEXT NOT NULL, payload TEXT NOT NULL)')
+        self.conn.execute('INSERT INTO clients VALUES (1, 0, NULL)')
+        self.conn.execute('INSERT INTO devices VALUES (1, 1, 0, ?, ?, ?)', (key(3), psk, '10.66.66.2'))
+        self.conn.execute("INSERT INTO access_operations VALUES ('op', 1, 'pending', ?)",
+                          (json.dumps({'retired': [{'id': 1, 'wgPublicKey': key(1), 'ovpnCert': None}]}),))
+        self.conn.commit()
+
+        def peers(*items):
+            return f'[Interface]\nPrivateKey = {WG_KEYS["archived"]}\n' + ''.join(
+                f'\n[Peer]\nPublicKey = {k}\nPresharedKey = {psk}\nAllowedIPs = {ip}/32, fd66:66::2/128\n'
+                for k, ip in items)
+        write('/etc/wireguard/wg0.conf', peers((key(1), '10.66.66.2'), (key(2), '10.66.66.2')))
+        result = self.script('backup')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'WireGuard' in line or 'warning' in line),
+              flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('устройства нет в БД', result.stdout)
+
+        # Положительный контроль: пир на чужом адресе по-прежнему ловится.
+        write('/etc/wireguard/wg0.conf', peers((key(1), '10.66.66.2'), (key(9), '10.66.66.9')))
+        result = self.script('backup')
+        self.assertEqual(result.returncode, 4, result.stdout)
+        self.assertIn(f'пир WireGuard {key(9)}: устройства нет в БД', result.stdout)
+
     def test_check_bundle_requires_unpacked_bundle(self):
         # Ручная сверка архива: путь мимо бандла — ошибка, а не «расхождений нет».
         bundle = self.backup()

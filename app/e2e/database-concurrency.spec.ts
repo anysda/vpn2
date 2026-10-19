@@ -70,6 +70,7 @@ test('HTTP ждёт миграции и администратора при ме
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },
     '../utils/panel-ready': { markPanelReady: () => {} },
+    '../utils/access-operations': { compactAccessOperations: async () => ({ rows: 0, vacuumed: false }) },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,
     useRuntimeConfig: () => ({ databaseUrl }),

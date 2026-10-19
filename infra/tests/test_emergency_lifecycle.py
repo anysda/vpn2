@@ -211,6 +211,28 @@ class LifecycleTests(unittest.TestCase):
         rows = tgqueue.delivery_status(self.directory)
         self.assertEqual({row['event'] for row in rows}, {'initial'})
 
+    def test_panel_broadcast_reaches_clients_through_the_leader_queue(self):
+        # VPN2-519: the panel the lifecycle builds can send the admin's text.
+        self.lead()
+        panel = self.servers[0].panel
+        self.assertTrue(panel.view()['bot_ready'])
+        generation = panel.auth['generation']
+        panel.broadcast('Проверка связи', generation)
+        panel.broadcast('Проверка связи', generation)
+        self.advance(30)
+        texts = [(chat, text) for chat, text in self.bot.texts if text.startswith('Проверка связи')]
+        # The same text twice is two messages; the footer names the node.
+        self.assertEqual(sorted(chat for chat, _text in texts), [101, 101, 102, 102])
+        self.assertTrue(all('Узел: exit-a' in text for _chat, text in texts))
+        self.assertEqual(panel.view()['delivery']['pending'], 0)
+        # A client without access gets nothing and the admin sees why.
+        self.snapshot['clients'][1]['allowed'] = False
+        self.save()
+        panel.broadcast('Второе', generation)
+        self.advance(15)
+        self.assertEqual([chat for chat, text in self.bot.texts if text.startswith('Второе')], [101])
+        self.assertEqual(panel.view()['delivery']['denied'], 1)
+
     def test_deadline_is_fixed_by_first_delivery_and_shown_on_panel(self):
         recovery = self.recover()
         self.advance(15)

@@ -350,11 +350,19 @@ class Lifecycle:
             agent = self.agent
             server = self.web.make_server(
                 self.directory, exit_id=agent.node, public_ip=agent.addresses[agent.node][0],
-                address=self.panel_address, profiles=lambda generation: self.profiles.get(generation, {}),
-                connections=lambda generation: self.hy2.connections(self.directory, generation))
+                address=self.panel_address, snapshot_loader=agent.snapshot_loader,
+                profiles=lambda generation: self.profiles.get(generation, {}),
+                connections=lambda generation: self.hy2.connections(self.directory, generation),
+                broadcast=self._broadcast)
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server
         return self.server.panel
+
+    def _broadcast(self, text, generation):
+        """Panel thread: queue only; the leader's next pass sends it."""
+        self.tg.enqueue_broadcast(self.directory, emergency_id=self.agent.leader.data['emergency_id'],
+                                  generation=generation, text=text, exit_name=self._exit_name(),
+                                  issued_at=iso(self.agent.wall()))
 
     def _close_server(self):
         server, self.server = self.server, None
@@ -400,9 +408,10 @@ class Lifecycle:
                 and row['version'] == str(number)]
 
     def _cancel_issue(self, emergency_id, generation):
-        # Unsent access notices of a former leader must not go out after it.
+        # Unsent access notices and panel messages of a former leader must not
+        # go out after it.
         self.tg.cancel(self.directory, emergency_id=emergency_id, generation=generation,
-                       events=['initial', 'leader_changed'])
+                       events=['initial', 'leader_changed', 'broadcast'])
 
     def _recovered(self, emergency_id, generation, number, confirmed, address):
         self.tg.cancel(self.directory, emergency_id=emergency_id, events=['initial', 'leader_changed'])

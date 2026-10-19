@@ -47,7 +47,7 @@ ADMIN_RECOVERED = ('Основной VPN восстановлен. Аварий�
 ADMIN_RETURN_CANCELLED = ('Основной VPN снова недоступен. Завершение аварийного режима '
                           'отменено, аварийная панель и доступ продолжают работать')
 ADMIN_ENTRY_MOVED = '. Основной сервер вернулся с новым адресом: {address}'
-EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled'}
+EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast'}
 DEADLINE = '{deadline}'
 
 
@@ -291,6 +291,33 @@ def enqueue_clients(state_dir, *, clients=None, **kwargs):
         wanted = set(clients)
         ids = [client_id for client_id in ids if client_id in wanted]
     rows = [_client_row(snapshot, client_id, **kwargs) for client_id in dict.fromkeys(ids)]
+    with _db(state_dir, 'client') as db, db:
+        for row in rows:
+            _insert(db, *row)
+    return delivery_status(state_dir)
+
+
+def enqueue_broadcast(state_dir, *, emergency_id, generation, text, exit_name, issued_at, now=None):
+    """The admin's free text from the panel to every snapshot client.
+
+    Each message is a new version, so the same text sent twice goes out twice;
+    clients without access or Telegram get a blocked row the admin can see.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('message required')
+    footer = _footer(exit_name, issued_at)
+    parts = list(_texts(text, footer))
+    snapshot = _snapshot(state_dir)
+    current = time.time() if now is None else now
+    version = uuid.uuid4().hex
+    rows = []
+    for client_id in dict.fromkeys(client['id'] for client in snapshot.get('clients', [])):
+        client, reason = _reason(snapshot, client_id, current)
+        if not snapshot.get('bot_token') and not reason:
+            reason = 'автодоставка невозможна: нет токена бота'
+        rows.append((emergency_id, generation, client_id, version, 'broadcast',
+                     client.get('telegram_chat_id') if client else None, [],
+                     [] if reason else parts, reason))
     with _db(state_dir, 'client') as db, db:
         for row in rows:
             _insert(db, *row)

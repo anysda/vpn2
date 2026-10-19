@@ -114,7 +114,7 @@ def main():
     args = parser.parse_args()
     root = args.root
     images = {name: resolve_image(args.repository + '/' + name, (args.digests / (name + '.txt')).read_text().strip())
-              for name in ('panel', 'tgbot')}
+              for name in ('panel', 'tgbot', 'emergency')}
     journal = json.loads((root / 'app/server/database/migrations/meta/_journal.json').read_text())
     entries = journal['entries']
     history = [{'when': e['when'], 'sha256': sha256(root / f"app/server/database/migrations/{e['tag']}.sql")}

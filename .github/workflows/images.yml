@@ -21,6 +21,10 @@ jobs:
             context: app
           - name: tgbot
             context: telegram
+          # Аварийный фронт: агент, статика панели и /instructions.
+          - name: emergency
+            context: .
+            file: infra/emergency/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +53,10 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: |
+            VPN2_VERSION=${{ steps.meta.outputs.version }}
+            VPN2_REVISION=${{ github.sha }}
           platforms: linux/amd64
           load: true
           tags: smoke/${{ matrix.name }}
@@ -76,11 +84,41 @@ jobs:
           docker run --rm --entrypoint python smoke/tgbot -c
           "import ast, telegram, aiohttp, qrcode; ast.parse(open('bot.py').read())"
 
+      # Аварийку деплой ставит без запуска контейнера: пакет и статику
+      # копирует из остановленного контейнера и запускает хостовым python.
+      - name: smoke emergency
+        if: matrix.name == 'emergency'
+        run: |
+          work=$(mktemp -d)
+          trap 'docker rm -f smoke >/dev/null; kill "$server" 2>/dev/null; rm -rf "$work"' EXIT
+          docker create --name smoke --network none smoke/emergency >/dev/null
+          docker cp smoke:/opt/vpn2-emergency/. "$work/"
+          test -f "$work/install-hy2.sh"
+          python3 -c 'import json, sys; json.load(open(sys.argv[1]))["revision"]' "$work/image.json"
+          PYTHONPATH="$work" python3 -B -c '
+          import sys
+          from vpn2_emergency import web
+          web.make_server(sys.argv[1], exit_id="smoke", public_ip="127.0.0.1",
+                          address=("127.0.0.1", 31822), cert_dir=sys.argv[1]).serve_forever()
+          ' "$work/state" &
+          server=$!
+          for _ in $(seq 1 30); do
+            if curl -fsSk https://127.0.0.1:31822/instructions -o "$work/instructions.html"; then
+              grep -q 'Временное подключение Hysteria2' "$work/instructions.html" && exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
       - name: push
         id: push
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          build-args: |
+            VPN2_VERSION=${{ steps.meta.outputs.version }}
+            VPN2_REVISION=${{ github.sha }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

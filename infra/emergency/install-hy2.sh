@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Called by emergency deployment after stage 23 created its user, state directory
-# and /opt/vpn2-emergency/vpn2_emergency (hy2.py included).
+# Called by stage 23 after it created the user, the state directory and
+# /opt/vpn2-emergency/vpn2_emergency (hy2.py included) and installed qrencode,
+# curl, openssl, nftables and polkitd: nothing is downloaded from here on.
 # Arguments: exit IP; optional dedicated UDP port. Never changes normal sing-box.
 set -euo pipefail
 source_dir=$(dirname "$(readlink -f "$0")")
@@ -10,7 +11,6 @@ getent passwd vpn2-emergency >/dev/null
 if ! getent passwd vpn2-hy2 >/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin vpn2-hy2
 fi
-apt-get install -y -qq qrencode curl openssl nftables polkitd
 module=/opt/vpn2-emergency/vpn2_emergency/hy2.py
 install -d -m 0755 /opt/vpn2-emergency/vpn2_emergency /etc/vpn2
 install -m 0644 "$source_dir/vpn2_emergency/hy2.py" "$module"

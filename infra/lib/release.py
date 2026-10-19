@@ -165,7 +165,7 @@ def main():
     check = sub.add_parser('check')
     check.add_argument('root')
     img = sub.add_parser('image')
-    img.add_argument('component', choices=('panel', 'tgbot'))
+    img.add_argument('component', choices=('panel', 'tgbot', 'emergency'))
     img.add_argument('--requested', default='')
     img.add_argument('--offline', action='store_true')
     fetch = sub.add_parser('artifact')

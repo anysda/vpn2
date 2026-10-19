@@ -1,0 +1,18 @@
+# The build context is the repository root: take only the panel sources and
+# the emergency package, never local builds, node state or secrets.
+*
+!app
+!infra/emergency
+app/node_modules
+app/.nuxt
+app/.output
+app/.data
+app/.cache
+infra/emergency/vpn2_emergency/static
+**/__pycache__
+**/.env
+**/.env.*
+**/config.yaml
+**/*.db
+**/*.pem
+**/*.key

@@ -417,7 +417,7 @@ panel_rollback
                 patch.object(builder, 'binary_specs', return_value={}), \
                 patch.object(builder, 'source_files', return_value={}), \
                 patch.object(sys, 'argv', argv):
-            for name in ('panel', 'tgbot'):
+            for name in ('panel', 'tgbot', 'emergency'):
                 (work / (name + '.txt')).write_text('sha256:' + 'a' * 64)
             builder.main()
         return json.loads(output.read_text()), output

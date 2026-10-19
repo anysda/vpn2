@@ -509,8 +509,8 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/verify-target.py" || return 1
   fi
 
+  # Код аварийки приходит образом из реестра (стадия 23), здесь только конфиг узла.
   if [[ "$stage" == '23-emergency' ]]; then
-    push "$DEPLOY_ROOT/emergency/vpn2_emergency" || return 1
     push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
   fi
 

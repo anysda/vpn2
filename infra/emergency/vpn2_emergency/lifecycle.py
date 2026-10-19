@@ -95,6 +95,8 @@ class Lifecycle:
         # Until the exit's own check answers, the entry does not count as ready.
         agent.entry_check = (False, -math.inf)
         self.server = None
+        # The leader this exit's panel points to while it follows.
+        self.following = None
         self.sessions = None
         self.retry = None
         # Announcements of an autonomous leader: see _announce.
@@ -187,6 +189,12 @@ class Lifecycle:
                 self.submit(f"issue:{record['generation']}", self._issue, data['emergency_id'],
                             record['generation'], record.get('autonomous', False), record['event'])
         if data['role'] != 'leader':
+            # Every exit serves the instructions during an emergency and
+            # sends the rest of the panel to the leader.
+            owner = data.get('owner')
+            if owner not in (None, agent.node) and self.following != owner:
+                self.following = owner
+                self.submit(f'follow:{owner}', self._follow, owner)
             return
         retry = self.retry
         if retry and now >= retry['at']:
@@ -305,11 +313,13 @@ class Lifecycle:
                                                   event=event, autonomous=autonomous, **kept)
         self.agent.state.save()
         self.restored = True
-        self.retry = self.reach = self.held_since = None
+        self.retry = self.reach = self.held_since = self.following = None
         self.submit(f'issue:{generation}', self._issue, emergency_id, generation, autonomous, event)
 
     def on_step_down(self, winner):
-        self.retry = self.reach = self.held_since = None
+        # The next round points the panel at the winner, after any issuance
+        # still queued for the worker.
+        self.retry = self.reach = self.held_since = self.following = None
         if self.server:
             self.server.panel.on_step_down(winner)
         record = self.record
@@ -328,6 +338,7 @@ class Lifecycle:
             self.server.panel.on_emergency_end()
         self.agent.state.data['lifecycle'] = {}
         self.agent.state.save()
+        self.following = None
         self.submit(f'end:{emergency_id}', self._end, emergency_id)
 
     # Worker.
@@ -353,6 +364,9 @@ class Lifecycle:
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server
         return self.server.panel
+
+    def _follow(self, owner):
+        self._panel().on_step_down(owner)
 
     def _broadcast(self, text, generation):
         """Panel thread: queue only; the leader's next pass sends it."""

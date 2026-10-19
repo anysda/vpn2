@@ -3,6 +3,7 @@
 The same assertions can target an older tree using VPN2_TEST_ROOT.
 """
 
+import functools
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
@@ -210,6 +211,50 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(self.servers[0].panel.auth)
         rows = tgqueue.delivery_status(self.directory)
         self.assertEqual({row['event'] for row in rows}, {'initial'})
+
+    def test_follower_serves_instructions_and_sends_the_rest_to_the_leader(self):
+        # VPN2-518: :443 answers on every exit during an emergency.
+        exits = [*EXITS, {'id': 'b', 'name': 'exit-b', 'priority': 1, 'ip': '203.0.113.11'}]
+        self.snapshot['exits'] = exits
+        self.save()
+        static = self.directory / 'static'
+        static.mkdir()
+        (static / 'instructions.html').write_bytes((ROOT / 'app/emergency/instructions.html').read_bytes())
+        self.agent.leader = Leader(self.agent.state, 'a', exits, 'fixture', 0, events=hooks, wall=self.agent.wall)
+        hooks._listeners.clear()
+        make_server = functools.partial(web.make_server, static_dir=static, cert_dir=self.directory / 'no-tls')
+        cycle = lifecycle.Lifecycle(
+            self.agent, hy2_module=self.hy2, web_module=types.SimpleNamespace(make_server=make_server),
+            threaded=False, panel_address=('127.0.0.1', 0), api_base=f'http://127.0.0.1:{self.bot.server_port}',
+            probe_ready=lambda: True, probe_entry=lambda _host: True)
+        cycle.attach()
+        self.addCleanup(cycle.close)
+
+        def get(path):
+            connection = http.client.HTTPSConnection(
+                '127.0.0.1', cycle.server.server_address[1], timeout=5,
+                context=ssl._create_unverified_context())  # noqa: S323 - local self-signed panel
+            try:
+                connection.request('GET', path)
+                response = connection.getresponse()
+                return response.status, response.getheader('Location'), response.read()
+            finally:
+                connection.close()
+
+        data = self.agent.leader.data
+        for emergency in ('first', 'second'):
+            data.update(active=True, role='follower', owner='b', emergency_id=emergency)
+            cycle.tick(self.now)
+            self.assertIsNotNone(cycle.server, emergency)
+            status, _location, body = get('/instructions')
+            self.assertEqual(status, 200)
+            self.assertEqual(body, (static / 'instructions.html').read_bytes())
+            for path in ('/', '/api/state'):
+                self.assertEqual(get(path)[:2], (307, 'https://203.0.113.11/'))
+            # A follower issues nothing of its own.
+            self.assertEqual(self.hy2.starts, [])
+            self.agent.leader.finish('test')
+            self.assertIsNone(cycle.server)
 
     def test_panel_broadcast_reaches_clients_through_the_leader_queue(self):
         # VPN2-519: the panel the lifecycle builds can send the admin's text.

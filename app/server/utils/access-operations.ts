@@ -211,9 +211,15 @@ export async function compactAccessOperations(): Promise<{ rows: number, vacuume
   }, { behavior: 'immediate' })
   // Место освобождается и тогда, когда прошлый запуск почистил строки, но VACUUM не прошёл.
   const [pages] = await db.all<{ free: number, size: number }>(sql`SELECT freelist_count AS free, page_size AS size FROM pragma_freelist_count(), pragma_page_size()`)
-  if (!pages || pages.free * pages.size < 16 * 1024 * 1024) return { rows, vacuumed: false }
-  await db.run(sql`VACUUM`)
-  return { rows, vacuumed: true }
+  const vacuumed = !!pages && pages.free * pages.size >= 16 * 1024 * 1024
+  if (vacuumed) await db.run(sql`VACUUM`)
+  // В WAL сжатая база лежит в журнале, а файл укорачивает только полный
+  // checkpoint. Автоматический до него не доходит, процесс гасят без close:
+  // файл оставался прежнего размера и после перезапусков. Поэтому каждый
+  // старт, в том числе после VACUUM прошлого запуска.
+  const [checkpoint] = await db.all<{ busy: number }>(sql`PRAGMA wal_checkpoint(TRUNCATE)`)
+  if (checkpoint?.busy) throw new Error('database checkpoint busy, file not truncated')
+  return { rows, vacuumed }
 }
 
 export async function latestAccess(clientId: number) {

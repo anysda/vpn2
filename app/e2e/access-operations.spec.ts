@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createRequire } from 'node:module'
@@ -345,6 +345,27 @@ test('VPN2-510: место, не освобождённое прошлым за�
   expect(before).toBeGreaterThan(16 * 1024 * 1024)
   expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: true })
   expect(await size()).toBeLessThan(before / 10)
+  // VPN2-523: сжата не только логическая база, но и файл на диске; журнал пуст.
+  const file = path.join(directory, 'db.sqlite')
+  expect(statSync(file).size).toBe(await size())
+  expect(statSync(`${file}-wal`).size).toBe(0)
+})
+
+test('VPN2-523: VACUUM прошлого запуска остался в журнале - следующий старт укорачивает файл', async () => {
+  const c = await client()
+  await threeDevices(c)
+  const size = async () => (await db.all<{ bytes: number }>(sql`SELECT page_count * page_size AS bytes FROM pragma_page_count(), pragma_page_size()`))[0]!.bytes
+  const file = path.join(directory, 'db.sqlite')
+  await db.run(sql`CREATE TABLE filler (data BLOB)`)
+  for (let i = 0; i < 20; i++) await db.run(sql`INSERT INTO filler VALUES (randomblob(1048576))`)
+  await db.run(sql`DROP TABLE filler`)
+  // Так было на 510: VACUUM прошёл, свободных страниц нет, а файл прежний.
+  await db.run(sql`VACUUM`)
+  expect(statSync(file).size).toBeGreaterThan(16 * 1024 * 1024)
+  expect(await size()).toBeLessThan(1024 * 1024)
+  expect(await ops.compactAccessOperations()).toEqual({ rows: 0, vacuumed: false })
+  expect(statSync(file).size).toBe(await size())
+  expect(statSync(`${file}-wal`).size).toBe(0)
 })
 
 test('VPN2-510: промежуточный ключ WG на адресе устройства не подтверждается, хотя retired его не помнит', async () => {

@@ -28,6 +28,7 @@ panel_rollback() {
   docker inspect anysda-vpn2-previous >/dev/null || return 1
   docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
   docker rename anysda-vpn2-previous anysda-vpn2 || return 1
+  docker update --restart=always anysda-vpn2 >/dev/null || return 1
   docker start anysda-vpn2 >/dev/null || return 1
   panel_health || { echo 'rollback failed health check; inspect service status' >&2; return 1; }
   python3 "$panel_lib/deploy_state.py" record-rollback || return 1
@@ -96,6 +97,9 @@ panel_begin() {
     panel_changed=true
     trap panel_failure EXIT
     docker stop anysda-vpn2-previous >/dev/null
+    # A Docker or host restart must not start the fallback next to the new
+    # panel on the same database, nor an old image on a newer schema.
+    docker update --restart=no anysda-vpn2-previous >/dev/null
   fi
   panel_changed=true
   trap panel_failure EXIT

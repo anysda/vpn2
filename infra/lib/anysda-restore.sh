@@ -563,6 +563,259 @@ for container in anysda-vpn2 anysda-tgbot; do
   fi
 done
 
+# ── Отзывы после архива ─────────────────────────────────────────────────────
+# Старый архив помнит ключи, которые узел с тех пор отозвал: удалённые
+# устройства и перевыпуски. Писатели уже остановлены, поэтому живое состояние
+# окончательное: переносим его отзывы в бандл до замены. Отозванный
+# сертификат остаётся в index и CRL, пир WireGuard и учётка IKEv2 не
+# возвращаются, а в БД у таких устройств креды пустые — перевыпуск выдаст новые.
+# Отзывы чужой установки (другой CA и ключ WireGuard) к архиву не относятся.
+STEP="перенос отзывов в архив"
+python3 - "$BUNDLE_DIR" <<'PY'
+import hashlib, os, re, shutil, sqlite3, subprocess, sys, tempfile
+bundle = sys.argv[1]
+LIVE_DB, LIVE_PKI = '/var/lib/anysda-vpn2/db.sqlite', '/etc/openvpn/server/pki'
+pki = os.path.join(bundle, 'etc-openvpn/server/pki')
+db_path = os.path.join(bundle, 'db.sqlite')
+wg_path = os.path.join(bundle, 'etc-wireguard/wg0.conf')
+ike_path = os.path.join(bundle, 'etc-swanctl/conf.d/anysda-clients.conf')
+HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
+
+
+def say(message):
+    print('anysda-restore: ' + message, flush=True)
+
+
+def digest(path):
+    try:
+        with open(path, 'rb') as f:
+            return hashlib.sha256(f.read().strip()).hexdigest()
+    except OSError:
+        return None
+
+
+def wg_key(directory):
+    """Приватный ключ сервера WireGuard: keys/ или [Interface] из wg0.conf."""
+    found = digest(os.path.join(directory, 'keys/server.priv')) or digest(os.path.join(directory, 'server.priv'))
+    if found:
+        return found
+    try:
+        text = open(os.path.join(directory, 'wg0.conf')).read()
+    except OSError:
+        return None
+    key = re.search(r'(?m)^\s*PrivateKey\s*=\s*(\S+)', text)
+    return hashlib.sha256(key[1].encode()).hexdigest() if key else None
+
+
+def index_rows(path):
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return []
+    return [line.split('\t') for line in lines]
+
+
+def serial_of(pem):
+    out = subprocess.run(['openssl', 'x509', '-noout', '-serial'], input=pem, text=True,
+                         capture_output=True, check=False).stdout
+    value = out.strip().partition('=')[2]
+    return int(value, 16) if HEX.fullmatch(value) else None
+
+
+def devices(path, writable=False):
+    uri = f'file:{path}' + ('' if writable else '?mode=ro')
+    con = sqlite3.connect(uri, uri=True)
+    columns = {row[1] for row in con.execute('PRAGMA table_info(devices)')}
+    if 'id' not in columns:
+        con.close()
+        return None, {}, set(), 0
+    con.row_factory = sqlite3.Row
+    rows = {row['id']: dict(row) for row in con.execute('SELECT * FROM devices')}
+    try:
+        seq = con.execute("SELECT seq FROM sqlite_sequence WHERE name = 'devices'").fetchone()
+    except sqlite3.Error:
+        seq = None
+    return con, rows, columns, max([seq[0] if seq else 0, *rows])
+
+
+live_ca = digest(os.path.join(LIVE_PKI, 'ca.crt'))
+archive_ca = digest(os.path.join(pki, 'ca.crt'))
+live_wg = wg_key('/etc/wireguard')
+archive_wg = wg_key(os.path.join(bundle, 'etc-wireguard'))
+if not (live_ca and live_ca == archive_ca) and not (live_wg and live_wg == archive_wg):
+    reason = 'на узле нет прежних ключей' if not (live_ca or live_wg) else 'архив другой установки'
+    say(f'отозванных записей применено поверх архива: 0 — {reason}, отзывы узла к нему не относятся')
+    sys.exit(0)
+same_ca = bool(live_ca) and live_ca == archive_ca
+
+live_revoked = {}
+if same_ca:
+    for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
+        if len(row) == 6 and row[0] == 'R' and HEX.fullmatch(row[3]):
+            live_revoked[int(row[3], 16)] = row
+
+live, live_seq = {}, 0
+if os.path.isfile(LIVE_DB):
+    try:
+        con, live, _columns, live_seq = devices(LIVE_DB)
+        if con:
+            con.close()
+    except sqlite3.Error as error:
+        say(f'WARN: живая БД не читается ({error}) — переношу только отзывы сертификатов')
+        live, live_seq = {}, 0
+
+# Устройство архива против живого: удалено (сертификат отозван или номер
+# уже выдан и строки нет) или перевыпущено (другой ключ, сертификат, пароль).
+revoke = {}
+archive_db = None
+if os.path.isfile(db_path):
+    archive_db, archived, columns, _seq = devices(db_path, writable=True)
+    for device_id, row in archived.items():
+        mine = live.get(device_id)
+        # Номер мог достаться другому устройству после прежнего restore.
+        if mine and row.get('created_at') and mine.get('created_at') and row['created_at'] != mine['created_at']:
+            continue
+        cert = row.get('ovpn_cert')
+        serial = serial_of(cert) if cert and same_ca else None
+        gone = mine is None and (serial in live_revoked or 0 < device_id <= live_seq)
+        if mine is None and not gone:
+            continue
+        what = set()
+        if row.get('wg_public_key') and (gone or row['wg_public_key'] != mine.get('wg_public_key')):
+            what.add('WireGuard')
+        if cert and (gone or serial in live_revoked or cert != mine.get('ovpn_cert')):
+            what.add('OpenVPN')
+        if row.get('ikev2_password') and (gone or (row['ikev2_password'], row.get('ikev2_username'))
+                                          != (mine.get('ikev2_password'), mine.get('ikev2_username'))):
+            what.add('IKEv2')
+        if what:
+            revoke[device_id] = (what, gone, row)
+
+wg_keys = {row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
+ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
+ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
+certs = [row['ovpn_cert'] for what, _gone, row in revoke.values() if 'OpenVPN' in what]
+
+if archive_db:
+    fields = {'WireGuard': ('wg_private_key', 'wg_public_key', 'wg_preshared_key'),
+              'OpenVPN': ('ovpn_cert', 'ovpn_key'), 'IKEv2': ('ikev2_password',)}
+    with archive_db:
+        for device_id, (what, _gone, _row) in revoke.items():
+            cleared = [c for name in sorted(what) for c in fields[name] if c in columns]
+            archive_db.execute(f'UPDATE devices SET {", ".join(c + " = NULL" for c in cleared)} WHERE id = ?',
+                               (device_id,))
+    archive_db.close()
+
+
+def rewrite(path, text):
+    # Владелец и режим файла архива остаются прежними.
+    with open(path, 'w') as f:
+        f.write(text)
+
+
+if wg_keys and os.path.isfile(wg_path):
+    blocks = re.split(r'(?m)^(?=\s*\[)', open(wg_path).read())
+    kept = []
+    for block in blocks:
+        key = re.search(r'(?m)^\s*PublicKey\s*=\s*(\S+)', block)
+        if re.match(r'\s*\[Peer\]', block) and key and key[1] in wg_keys:
+            continue
+        kept.append(block)
+    rewrite(wg_path, ''.join(kept))
+
+if (ike_ids or ike_secrets) and os.path.isfile(ike_path):
+    out, block, depth = [], None, 0
+    for line in open(ike_path).read().split('\n'):
+        opens, closes = line.count('{'), line.count('}')
+        if block is None and depth == 1 and opens:
+            block = [line]
+        elif block is not None:
+            block.append(line)
+        else:
+            out.append(line)
+        depth += opens - closes
+        if block is not None and depth == 1:
+            text = '\n'.join(block)
+            owner = re.match(r'\s*(?:anysda-dev-(\d+)\s*:|eap-(\d+)\s*\{)', block[0])
+            secret = re.search(r'(?m)^\s*secret\s*=\s*"([^"]*)"', text)
+            if not ((owner and int(owner[1] or owner[2]) in ike_ids) or (secret and secret[1] in ike_secrets)):
+                out.extend(block)
+            block = None
+    rewrite(ike_path, '\n'.join(out))
+
+revoked_certs = 0
+index_path = os.path.join(pki, 'index.txt')
+if same_ca and os.path.isfile(index_path):
+    rows = index_rows(index_path)
+    position = {int(r[3], 16): n for n, r in enumerate(rows) if len(r) == 6 and HEX.fullmatch(r[3])}
+    newcerts = os.path.join(pki, 'newcerts')
+    for serial, row in sorted(live_revoked.items()):
+        if serial in position:
+            if rows[position[serial]][0] == 'R':
+                continue
+            rows[position[serial]] = row
+        else:
+            rows.append(row)
+            source = os.path.join(LIVE_PKI, 'newcerts', row[3] + '.pem')
+            target = os.path.join(newcerts, row[3] + '.pem')
+            if os.path.isfile(source) and os.path.isdir(newcerts) and not os.path.exists(target):
+                shutil.copy2(source, target)
+                stat = os.stat(newcerts)
+                os.chown(target, stat.st_uid, stat.st_gid)
+        revoked_certs += 1
+    rewrite(index_path, ''.join('\t'.join(r) + '\n' for r in rows))
+    config = open(os.path.join(pki, 'openssl.cnf') if os.path.isfile(os.path.join(pki, 'openssl.cnf'))
+                  else os.path.join(LIVE_PKI, 'openssl.cnf')).read()
+    with tempfile.TemporaryDirectory(dir=pki) as work:
+        cnf = os.path.join(work, 'restore.cnf')
+        with open(cnf, 'w') as f:
+            f.write(re.sub(r'(?m)^dir\s*=.*$', lambda _m: 'dir = ' + pki, config))
+        revoked = {int(r[3], 16) for r in index_rows(index_path) if len(r) == 6 and r[0] == 'R'}
+        for cert in certs:
+            if serial_of(cert) in revoked:
+                continue
+            pem = os.path.join(work, 'revoke.pem')
+            with open(pem, 'w') as f:
+                f.write(cert)
+            # Чужой или просроченный сертификат и так не пройдёт проверку OpenVPN.
+            if subprocess.run(['openssl', 'verify', '-CAfile', os.path.join(pki, 'ca.crt'), pem],
+                              capture_output=True, check=False).returncode:
+                continue
+            done = subprocess.run(['openssl', 'ca', '-batch', '-config', cnf, '-revoke', pem],
+                                  capture_output=True, text=True, check=False)
+            if done.returncode:
+                sys.exit('openssl ca -revoke: ' + (done.stderr.strip().splitlines() or ['?'])[-1])
+            revoked.add(serial_of(cert))
+            revoked_certs += 1
+        # Номера не должны повториться: следующий сертификат и CRL — после живых.
+        for name in ('serial', 'crlnumber'):
+            values = []
+            for folder in (pki, LIVE_PKI):
+                try:
+                    value = open(os.path.join(folder, name)).read().strip()
+                except OSError:
+                    continue
+                if HEX.fullmatch(value):
+                    values.append(int(value, 16))
+            if values and os.path.isfile(os.path.join(pki, name)):
+                text = format(max(values), 'X')
+                rewrite(os.path.join(pki, name), text.zfill(len(text) + len(text) % 2) + '\n')
+        if revoked_certs:
+            crl = os.path.join(work, 'crl.pem')
+            subprocess.run(['openssl', 'ca', '-batch', '-config', cnf, '-gencrl', '-out', crl],
+                           check=True, capture_output=True)
+            subprocess.run(['openssl', 'crl', '-in', crl, '-noout', '-verify', '-CAfile',
+                            os.path.join(pki, 'ca.crt')], check=True, capture_output=True)
+            rewrite(os.path.join(pki, 'crl.pem'), open(crl).read())
+
+wg_count, ike_count = len(wg_keys), len(ike_ids)
+say(f'отозванных записей применено поверх архива: {wg_count + revoked_certs + ike_count} '
+    f'(WireGuard {wg_count}, OpenVPN {revoked_certs}, IKEv2 {ike_count})')
+for device_id, (what, gone, _row) in sorted(revoke.items()):
+    state = 'удалено после архива — удали его в панели' if gone else 'перевыпущено после архива — перевыпусти в панели'
+    say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
+PY
+
 # ── Применение ──────────────────────────────────────────────────────────────
 # Каждый блок защищён от отсутствия файла в архиве — допускаем частичные бэкапы
 STEP="установка БД"

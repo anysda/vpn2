@@ -776,6 +776,130 @@ exec /usr/bin/sqlite3 "$@"
             self.assertIn(line, result.stdout)
         self.assertNotIn('устройство 4', result.stdout)
 
+    def live_pki(self):
+        """PKI как у стадии 29: openssl ca ведёт index, serial и CRL в /etc/openvpn/server/pki."""
+        pki = Path('/etc/openvpn/server/pki')
+        shutil.rmtree('/etc/openvpn', ignore_errors=True)
+        self.addCleanup(shutil.rmtree, '/etc/openvpn', True)
+        (pki / 'newcerts').mkdir(parents=True)
+        (pki / 'openssl.cnf').write_text(
+            f'[ca]\ndefault_ca = x\n[x]\ndir = {pki}\ndatabase = $dir/index.txt\nnew_certs_dir = $dir/newcerts\n'
+            'certificate = $dir/ca.crt\nprivate_key = $dir/ca.key\nserial = $dir/serial\n'
+            'crlnumber = $dir/crlnumber\ndefault_md = sha256\ndefault_days = 30\ndefault_crl_days = 30\n'
+            'policy = any\nunique_subject = no\n[any]\ncommonName = supplied\n[client_ext]\nbasicConstraints = CA:FALSE\n')
+        (pki / 'index.txt').write_text('')
+        (pki / 'serial').write_text('01\n')
+        (pki / 'crlnumber').write_text('01\n')
+        ec = ('-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes')
+        self.openssl('req', '-x509', *ec, '-keyout', 'ca.key', '-out', 'ca.crt', '-subj', '/CN=test-ca', '-days', '30')
+        self.openssl('ca', '-batch', '-config', 'openssl.cnf', '-gencrl', '-out', 'crl.pem')
+        return pki
+
+    def openssl(self, *args):
+        result = run('openssl', *args, cwd='/etc/openvpn/server/pki')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return result.stdout
+
+    def issue(self, n):
+        ec = ('-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes')
+        self.openssl('req', '-new', *ec, '-keyout', f'/test-output/{n}.key', '-out', f'/test-output/{n}.csr',
+                     '-subj', f'/CN=dev_{n}')
+        self.openssl('ca', '-batch', '-notext', '-config', 'openssl.cnf', '-extensions', 'client_ext',
+                     '-in', f'/test-output/{n}.csr', '-out', f'/test-output/{n}.pem')
+        return Path(f'/test-output/{n}.pem').read_text()
+
+    def revoke(self, n):
+        self.openssl('ca', '-batch', '-config', 'openssl.cnf', '-revoke', f'/test-output/{n}.pem')
+        self.openssl('ca', '-batch', '-config', 'openssl.cnf', '-gencrl', '-out', 'crl.pem')
+
+    def revocation_fixture(self):
+        """Два устройства в архиве; WG, OpenVPN и IKEv2 у каждого, конфиги как у vpn2-control."""
+        self.live_pki()
+        self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER, '
+                          'wg_private_key TEXT, wg_public_key TEXT, wg_preshared_key TEXT, wg_ip TEXT, '
+                          'ovpn_cert TEXT, ovpn_key TEXT, ikev2_username TEXT, ikev2_password TEXT, ikev2_ip TEXT)')
+        devices = {}
+        for n in (1, 2, 3):
+            devices[n] = {'id': n, 'key': base64.b64encode(bytes([n]) * 32).decode(),
+                          'psk': base64.b64encode(bytes([n + 100]) * 32).decode(), 'wg_ip': f'10.66.66.{n + 1}',
+                          'user': f'dev{n}', 'password': f'secret{n}', 'ike_ip': f'10.99.1.{n + 1}'}
+        for n in (1, 2):
+            self.add_device(devices[n])
+        self.apply_configs([devices[1], devices[2]])
+        return devices
+
+    def add_device(self, d):
+        cert = self.issue(d['id'])
+        self.conn.execute('INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                          (d['id'], 1000 + d['id'], 'private', d['key'], d['psk'], d['wg_ip'], cert, 'key',
+                           d['user'], d['password'], d['ike_ip']))
+        self.conn.commit()
+
+    def apply_configs(self, devices):
+        wg, ike = self.access_configs(devices)
+        write('/etc/wireguard/wg0.conf', wg)
+        write('/etc/swanctl/conf.d/anysda-clients.conf', ike)
+
+    def test_restore_keeps_revocations_made_after_archive(self):
+        devices = self.revocation_fixture()
+        self.backup()
+        # После архива: устройство 3 выдано и удалено, устройство 2 удалено,
+        # у устройства 1 перевыпущен пароль IKEv2.
+        self.add_device(devices[3])
+        self.revoke(3)
+        self.conn.execute('DELETE FROM devices WHERE id = 3')
+        self.revoke(2)
+        self.conn.execute('DELETE FROM devices WHERE id = 2')
+        devices[1]['password'] = 'rotated1'
+        self.conn.execute("UPDATE devices SET ikev2_password = 'rotated1' WHERE id = 1")
+        self.conn.commit()
+        self.apply_configs([devices[1]])
+        live_serial = int(Path('/etc/openvpn/server/pki/serial').read_text(), 16)
+
+        result = self.script('restore', 'latest', '--force')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'отозван' in line), flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        wg = Path('/etc/wireguard/wg0.conf').read_text()
+        self.assertNotIn(devices[2]['key'], wg, 'удалённый пир WireGuard вернулся')
+        self.assertIn(devices[1]['key'], wg)
+        ike = Path('/etc/swanctl/conf.d/anysda-clients.conf').read_text()
+        for gone in ('eap-2', 'secret2', 'secret1'):
+            self.assertNotIn(gone, ike, 'отозванная учётка IKEv2 вернулась')
+        index = {line.split('\t')[3]: line.split('\t')[0]
+                 for line in Path('/etc/openvpn/server/pki/index.txt').read_text().splitlines()}
+        self.assertEqual(index, {'01': 'V', '02': 'R', '03': 'R'})
+        crl = self.openssl('crl', '-in', 'crl.pem', '-noout', '-text')
+        self.assertEqual(sorted(re.findall(r'Serial Number: ([0-9A-F]+)', crl)), ['02', '03'])
+        self.openssl('crl', '-in', 'crl.pem', '-noout', '-verify', '-CAfile', 'ca.crt')
+        self.assertGreaterEqual(int(Path('/etc/openvpn/server/pki/serial').read_text(), 16), live_serial)
+        with sqlite3.connect(DB) as db:
+            rows = {r[0]: r[1:] for r in db.execute(
+                'SELECT id, wg_public_key, ovpn_cert IS NOT NULL, ikev2_password FROM devices')}
+        self.assertEqual(rows, {1: (devices[1]['key'], 1, None), 2: (None, 0, None)})
+        self.assertIn('отозванных записей применено поверх архива: 5 (WireGuard 1, OpenVPN 2, IKEv2 2)',
+                      result.stdout)
+        self.assertIn('устройство 2: IKEv2, OpenVPN, WireGuard отозваны; удалено после архива', result.stdout)
+        self.assertIn('устройство 1: IKEv2 отозваны; перевыпущено после архива', result.stdout)
+
+    def test_foreign_install_revocations_do_not_touch_archive(self):
+        devices = self.revocation_fixture()
+        self.backup()
+        # Перенос на новый узел: свой CA, свой ключ WireGuard, устройств нет.
+        self.live_pki()
+        self.conn.execute('DELETE FROM devices')
+        self.conn.commit()
+        write('/etc/wireguard/wg0.conf', body('/etc/wireguard/wg0.conf', 'live'))
+        for name in ('server.priv', 'server.pub'):
+            write('/etc/wireguard/keys/' + name, WG_KEYS['live'])
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('отозванных записей применено поверх архива: 0 — архив другой установки', result.stdout)
+        wg = Path('/etc/wireguard/wg0.conf').read_text()
+        self.assertTrue(all(devices[n]['key'] in wg for n in (1, 2)))
+        with sqlite3.connect(DB) as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM devices WHERE wg_public_key IS NOT NULL '
+                                        'AND ovpn_cert IS NOT NULL AND ikev2_password IS NOT NULL').fetchone(), (2,))
+
     def test_persistent_mismatch_keeps_archive_with_warning(self):
         # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.
         key = base64.b64encode(bytes([7]) * 32).decode()

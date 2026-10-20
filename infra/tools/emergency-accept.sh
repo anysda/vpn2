@@ -78,7 +78,11 @@ node() {
   local opts=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o LogLevel=ERROR)
   [[ -z "$SSH_KEY" ]] || opts+=(-i "$SSH_KEY")
   [[ -z "$KNOWN_HOSTS" ]] || opts+=(-o "UserKnownHostsFile=$KNOWN_HOSTS")
-  ssh "${opts[@]}" "root@${IP[$tag]}" "$@"
+  # Текст из .bashrc узла приходит в stdout раньше вывода команды: команда
+  # сначала печатает метку, всё до неё отбрасывается.
+  ssh "${opts[@]}" "root@${IP[$tag]}" "printf '\\n%s\\n' vpn2-ssh-output-begin;" "$@" \
+    | sed -u '0,/^vpn2-ssh-output-begin$/d'
+  return "${PIPESTATUS[0]}"
 }
 
 # Состояние агента экзита одной строкой: роль поколение active autonomous

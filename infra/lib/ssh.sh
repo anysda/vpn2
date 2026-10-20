@@ -102,6 +102,32 @@ if { [[ -d "$_ssh_mux_dir" ]] || mkdir -m 700 "$_ssh_mux_dir" 2>/dev/null; } && 
   )
 fi
 
+# sshd запускает команду через login shell, и bash узла читает .bashrc ещё до
+# неё (`bash --norc` внутри команды это не отменяет): напечатанный там текст
+# приходит в stdout первым. Поэтому команда сначала печатает метку отдельной
+# строкой, а _ssh_output отбрасывает всё до метки. Без метки (shell узла не
+# дошёл до команды) вывод отдаётся как есть.
+_SSH_MARK=vpn2-ssh-output-begin
+_ssh_begin="printf '\\n%s\\n' $_SSH_MARK;"
+
+_ssh_output() {
+  local line
+  local -a before=()
+  while IFS= read -r line; do
+    if [[ $line == "$_SSH_MARK" ]]; then cat; return; fi
+    before+=("$line")
+  done
+  (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
+  printf '%s' "$line"
+}
+
+# "$@" - вызов ssh, где перед командой узла стоит "$_ssh_begin"; код возврата -
+# код ssh.
+_ssh_run() {
+  "$@" | _ssh_output
+  return "${PIPESTATUS[0]}"
+}
+
 # Run a command on the current $SSH_HOST. Args are passed to ssh.
 # Ретраит транзиентные сбои соединения: у VPS-экзитов SSH иногда флапает
 # (таймаут / "connection closed" / banner exchange), и один такой сбой
@@ -111,8 +137,8 @@ ssh_exec() {
   local attempt rc=0
   for attempt in 1 2 3 4 5; do
     rc=0
-    SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
-        "${SSH_USER}@${SSH_HOST}" "$@" || rc=$?
+    SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
+        "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$@" || rc=$?
     # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
     # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть.
     [[ $rc -ne 255 ]] && return $rc
@@ -195,9 +221,9 @@ ssh_probe() {
 # проверяется, что нода пускает новые входы, а не живёт старое соединение.
 ssh_fresh() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  SSHPASS="$SSH_PASS" timeout -k 5 "${SSH_PROBE_TIMEOUT:-30}" sshpass -e ssh \
+  SSHPASS="$SSH_PASS" _ssh_run timeout -k 5 "${SSH_PROBE_TIMEOUT:-30}" sshpass -e ssh \
       -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
-      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$@"
+      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$@"
 }
 
 # Copy a local file/dir to the host's /tmp/anysda.
@@ -222,11 +248,11 @@ push() {
   for attempt in 1 2 3 4 5; do
     rc=0
     if [[ -d "$src" ]]; then
-      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
-          "${SSH_USER}@${SSH_HOST}" "$cmd" || rc=$?
+      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
+          "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" || rc=$?
     else
-      SSHPASS="$SSH_PASS" sshpass -e ssh "${_ssh_opts[@]}" \
-          "${SSH_USER}@${SSH_HOST}" "$cmd" < "$src" || rc=$?
+      SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
+          "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
     # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не

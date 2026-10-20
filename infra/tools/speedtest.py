@@ -101,16 +101,23 @@ ss -uanmp 2>/dev/null | grep -A1 sing-box | grep -o 'rb[0-9]*' | sed 's/^/SKRB /
 '''
 
 
+# Текст, который .bashrc узла печатает при входе по ssh, приходит в stdout
+# раньше вывода команды: команда сначала печатает метку, всё до неё отбрасываем.
+SSH_MARK = 'vpn2-ssh-output-begin'
+
+
 def sh(target, cmd, *, via=None, stdin=None, timeout=600):
     """Команда на узле по ssh; via — хаб, через который ходят на экзит."""
+    marked = f"printf '\\n%s\\n' {SSH_MARK}; {cmd}"
     if via:
-        argv = SSH + [via, f'ssh -o BatchMode=yes {shlex.quote(target)} {shlex.quote(cmd)}']
+        argv = SSH + [via, f'ssh -o BatchMode=yes {shlex.quote(target)} {shlex.quote(marked)}']
     else:
-        argv = SSH + [target, cmd]
+        argv = SSH + [target, marked]
     res = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=timeout)
     if res.returncode != 0:
         raise RuntimeError(f'{target}: {cmd[:60]}…: rc={res.returncode}: {res.stderr.strip()[-300:]}')
-    return res.stdout
+    _, mark, out = res.stdout.partition(f'\n{SSH_MARK}\n')
+    return out if mark else res.stdout
 
 
 def log(msg):

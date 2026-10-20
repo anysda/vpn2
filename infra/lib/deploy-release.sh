@@ -46,7 +46,9 @@ release_start() {
   exec {VPN2_LOCK_IN}>&"${VPN2_REMOTE_LOCK[1]}"
   local locked
   read -r locked <&"${VPN2_REMOTE_LOCK[0]}" || die 'deploy already running or entry lock unavailable'
-  [[ "$locked" == locked ]] || die 'entry did not confirm deploy lock'
+  # Метка ssh_exec отсекает текст .bashrc; чужая строка здесь значит, что shell
+  # entry при входе печатает текст и до команды не дошёл.
+  [[ "$locked" == locked ]] || die "entry did not confirm deploy lock: ssh returned '$locked' instead of the command output; check what root's .bashrc/profile on entry prints and runs at ssh login"
   trap release_unlock EXIT
   local host lib
   for host in $(expand_hosts all); do

@@ -917,8 +917,11 @@ class Targets:
 
     @staticmethod
     def exit_command(port, lifetime):
-        """Цель на экзите: локальный маршрут адреса эха и эхо на всех адресах (скрипт на stdin)."""
-        return (f'ip route replace {EXIT_ECHO_ROUTE} && exec -a vpn2-verify-target python3 -I - '
+        """Цель на экзите: локальный маршрут адреса эха и эхо на всех адресах (скрипт на stdin).
+
+        Пустая строка первой: текст .bashrc без перевода строки не склеивается с «ready».
+        """
+        return (f'echo && ip route replace {EXIT_ECHO_ROUTE} && exec -a vpn2-verify-target python3 -I - '
                 f'--listen 0.0.0.0 --port {port} --lifetime {lifetime}')
 
     @staticmethod
@@ -927,10 +930,20 @@ class Targets:
         return f'pkill -f "^vpn2-verify-target"; ip route del {EXIT_ECHO_ROUTE} 2>/dev/null; true'
 
     @staticmethod
-    def wait_ready(process):
-        if select.select([process.stdout], [], [], 20)[0]:
-            return process.stdout.readline().strip() == 'ready'
-        return False
+    def wait_ready(process, timeout=20):
+        # Строки до «ready» - текст, который .bashrc экзита печатает при входе по ssh.
+        # Читаем дескриптор сами: строки из буфера файла select не видит.
+        fd, data = process.stdout.fileno(), b''
+        deadline = time.monotonic() + timeout
+        while not any(line.strip() == b'ready' for line in data.split(b'\n')[:-1]):
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                return False
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                return False
+            data += chunk
+        return True
 
     def stop(self):
         for process in (self.local, self.echo):

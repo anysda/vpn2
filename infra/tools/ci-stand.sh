@@ -35,9 +35,13 @@ die() { printf '[stand] ✗ %s\n' "$*" >&2; exit 1; }
 ssh_node() {
   local host=$1
   shift
+  # Текст из .bashrc ВМ приходит в stdout раньше вывода команды: команда
+  # сначала печатает метку, всё до неё отбрасывается.
   ssh -i "$STAND_DIR/id_ed25519" -o BatchMode=yes -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
-    -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "root@$host" "$@"
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "root@$host" \
+    "printf '\\n%s\\n' vpn2-ssh-output-begin;" "$@" | sed -u '0,/^vpn2-ssh-output-begin$/d'
+  return "${PIPESTATUS[0]}"
 }
 
 net_up() {

@@ -451,6 +451,46 @@ prep_entry_mgmt_key() {
 # ----------------------------------------------------------------------------
 # Run a stage on one host
 # ----------------------------------------------------------------------------
+# Стадии, которые меняют ufw или свои nft-таблицы. На время такой стадии на
+# ноде стоит сторож lib/fw-guard.sh: если новые ssh-входы не проходят дольше
+# окна, он сам возвращает фаервол к состоянию до стадии. 23-emergency живёт
+# своим циклом (аварийный режим) и сюда не входит, 99-verify фаервол не меняет.
+FW_GUARD_STAGES='00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 27-ikev2 28-wireguard 29-openvpn 30-frontend'
+FW_GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
+
+fw_guard_stage() {
+  [[ " $FW_GUARD_STAGES " == *" $1 "* ]]
+}
+
+# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh.
+fw_guard_beat() {
+  while kill -0 $$ 2>/dev/null; do
+    ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
+    sleep 5
+  done
+}
+
+# Снять сторожа тоже новым соединением. Пока оно не проходит, сторож успеет
+# откатить фаервол, и тогда disarm ответит кодом 3.
+fw_guard_disarm() {
+  local stage=$1 deadline rc out
+  deadline=$(( $(date +%s) + FW_GUARD_WINDOW + 30 ))
+  while :; do
+    rc=0
+    out=$(ssh_fresh "bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm $stage" 2>&1) || rc=$?
+    case $rc in
+      # 4: сторожа нет - стадия упала до arm, и её ошибка уже в rc.
+      0|4) return 0 ;;
+      3) warn "[$stage → $HOST_TAG] $out"; return 1 ;;
+    esac
+    if (( $(date +%s) >= deadline )); then
+      warn "[$stage → $HOST_TAG] после стадии нода не пускает новые ssh-входы ${FW_GUARD_WINDOW} с и дольше; сторож фаервола должен был откатить ufw, проверь вход руками"
+      return 1
+    fi
+    sleep 5
+  done
+}
+
 run_stage_on_host() {
   local stage="$1" host="$2"
   # Код 2 зарезервирован для результата 99-verify; ошибки подготовки — 1.
@@ -492,6 +532,11 @@ run_stage_on_host() {
     push "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" release-manifest.json || return 1
   fi
   push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
+  local guard=''
+  if fw_guard_stage "$stage"; then
+    push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
+    guard="bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW || exit 1; "
+  fi
   if [[ "$stage" == @(23-emergency|30-frontend) ]]; then
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
@@ -613,8 +658,17 @@ run_stage_on_host() {
 bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
-  local rc=0
-  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") || exit 1; /tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=$?
+  local rc=0 beat=''
+  if [[ -n "$guard" ]]; then
+    fw_guard_beat &
+    beat=$!
+  fi
+  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") || exit 1; ${guard}/tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=$?
+  if [[ -n "$beat" ]]; then
+    kill "$beat" 2>/dev/null || true
+    wait "$beat" 2>/dev/null || true
+    fw_guard_disarm "$stage" || rc=1
+  fi
   # Экзиту env с адресами entry и соседей нужен только на время стадии:
   # каждая стадия кладёт свои файлы заново. На entry /tmp/anysda не трогаем.
   if [[ "$host" != ru ]]; then

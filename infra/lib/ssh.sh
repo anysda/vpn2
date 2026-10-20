@@ -191,6 +191,15 @@ ssh_probe() {
   return 1
 }
 
+# Одна команда по новому соединению, без мультиплексора и повторов: так
+# проверяется, что нода пускает новые входы, а не живёт старое соединение.
+ssh_fresh() {
+  : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
+  SSHPASS="$SSH_PASS" timeout -k 5 "${SSH_PROBE_TIMEOUT:-30}" sshpass -e ssh \
+      -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
+      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$@"
+}
+
 # Copy a local file/dir to the host's /tmp/anysda.
 # Один вызов ssh на файл: scp ходит по SFTP и до экзита стоит ~0,55 с против
 # ~0,12 с у exec через тот же мультиплексор, а с mkdir и mv push был тремя

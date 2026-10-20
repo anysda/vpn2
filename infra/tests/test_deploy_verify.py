@@ -62,6 +62,7 @@ ssh_exec() {
     return 2
   fi
 }
+ssh_fresh() { :; }
 print_banner() { :; }
 pause_entry_auto_updates() { :; }
 install_prereqs() { :; }

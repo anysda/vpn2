@@ -460,7 +460,13 @@ class Lifecycle:
         if number is None:
             return None
         rows = self._rows(emergency_id, number, 'admin') + self._rows(emergency_id, number)
-        return ('delivered', number, deadline) if any(row['sent'] for row in rows) else None
+        if any(row['sent'] for row in rows):
+            return ('delivered', number, deadline)
+        if rows and all(row['state'] in ('blocked', 'failed') for row in rows):
+            # Telegram refused everyone for good: nobody waits for the notice.
+            LOG.info('entry recovery: every notice refused by Telegram, deadline fixed without it')
+            return ('delivered', number, deadline)
+        return None
 
     def _cancelled(self, emergency_id, generation, number):
         self.tg.cancel(self.directory, emergency_id=emergency_id, events=['recovered'])

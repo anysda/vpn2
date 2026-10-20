@@ -51,6 +51,7 @@ class Bot(ThreadingHTTPServer):
         super().__init__(('127.0.0.1', 0), BotHandler)
         self.texts = []
         self.down = False
+        self.refused = set()
 
 
 class BotHandler(BaseHTTPRequestHandler):
@@ -59,8 +60,8 @@ class BotHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa - HTTP handler
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        code = 502 if self.server.down else 200
-        if not self.server.down:
+        code = 502 if self.server.down else 403 if data['chat_id'] in self.server.refused else 200
+        if code == 200:
             self.server.texts.append((data['chat_id'], data['text']))
         self.send_response(code)
         self.end_headers()
@@ -320,6 +321,20 @@ class LifecycleTests(unittest.TestCase):
         self.assertGreaterEqual(deadline, unblocked + 600)
         self.assertLessEqual(deadline, self.wall + 600 + 60)
         self.assertLessEqual(self.wall, unblocked + 90)
+        self.assertTrue(self.agent.leader.data['active'])
+
+    def test_refused_by_everyone_for_good_does_not_hold_the_deadline(self):
+        self.lead()
+        self.bot.refused = {900, 101, 102}
+        self.advance(STABLE + 15)
+        self.assertIsNotNone(self.agent.leader.data['recovery'])
+        self.advance(60)
+        rows = tgqueue.delivery_status(self.directory) + tgqueue.delivery_status(self.directory, 'admin')
+        self.assertEqual({row['state'] for row in rows if row['event'] == 'recovered'}, {'failed'})
+        deadline = self.agent.leader.data['recovery']['deadline']
+        self.assertIsNotNone(deadline)
+        self.assertLessEqual(deadline, self.wall + 600 + 60)
+        self.assertEqual(self.recovered_texts(), [])
         self.assertTrue(self.agent.leader.data['active'])
 
     def test_step_down_cancels_unsent_notices_and_keeps_running(self):

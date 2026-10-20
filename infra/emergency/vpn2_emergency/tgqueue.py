@@ -49,6 +49,14 @@ ADMIN_RETURN_CANCELLED = ('Основной VPN снова недоступен.
 ADMIN_ENTRY_MOVED = '. Основной сервер вернулся с новым адресом: {address}'
 EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast'}
 DEADLINE = '{deadline}'
+# Telegram refuses these for good (deleted chat, blocked bot, malformed
+# request): repeating them only spams the API, so the row ends with the reason.
+PERMANENT = {400, 403}
+# Fixed texts for known descriptions; the API wording itself is never stored.
+DESCRIPTIONS = {'chat not found': 'чат не найден',
+                'bot was blocked by the user': 'бот заблокирован пользователем',
+                'user is deactivated': 'пользователь удалён',
+                "bot can't initiate conversation with a user": 'пользователь не запускал бота'}
 
 
 def _snapshot(state_dir):
@@ -377,16 +385,20 @@ def _send(token, chat, part, api_base, timeout, opener=None):
             status = response.code
             data = json.loads(response.read(65536))
         if status == 200 and data.get('ok') is True:
-            return True, '', 0
+            return True, '', 0, False
         code = data.get('error_code', status)
         if code == 429:
             delay = float(data.get('parameters', {}).get('retry_after', 1))
             if not math.isfinite(delay) or delay < 0:
                 delay = 1
-            return False, 'Telegram 429', max(1, delay)
-        return False, f'Telegram {code}' if isinstance(code, int) else 'ошибка Telegram', 0
+            return False, 'Telegram 429', max(1, delay), False
+        if not isinstance(code, int):
+            return False, 'ошибка Telegram', 0, False
+        description = str(data.get('description', '')).lower()
+        known = next((text for key, text in DESCRIPTIONS.items() if key in description), None)
+        return False, f'Telegram {code}: {known}' if known else f'Telegram {code}', 0, code in PERMANENT
     except (OSError, HTTPException, ValueError, TypeError, AttributeError):
-        return False, 'Telegram недоступен или ответ не подтверждён', 0
+        return False, 'Telegram недоступен или ответ не подтверждён', 0, False
 
 
 def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=None,
@@ -455,7 +467,7 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                     chats.add(chat)
                     max_messages -= 1
                     opener = opener or request.build_opener(_NoRedirect())
-                    ok, reason, retry_after = _send(token, chat, payload, api_base, timeout, opener)
+                    ok, reason, retry_after, final = _send(token, chat, payload, api_base, timeout, opener)
                     with db:
                         if ok:
                             db.execute("UPDATE part SET sent=1,payload='' WHERE delivery=? AND position=?",
@@ -465,6 +477,12 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                             db.execute('UPDATE delivery SET state=?,reason=?,attempts=0,due=0 WHERE id=?',
                                        ('pending' if remaining else 'sent', '', row['id']))
                             sent += 1
+                        elif final:
+                            # Ends here with the reason: never retried, and the
+                            # unsent profiles are not kept on disk.
+                            db.execute("UPDATE delivery SET state='failed',reason=?,attempts=attempts+1,"
+                                       'due=0 WHERE id=?', (reason, row['id']))
+                            db.execute("UPDATE part SET payload='' WHERE delivery=?", (row['id'],))
                         else:
                             # The return notice fixes a ten-minute deadline when it
                             # arrives; an hour of backoff would delay it as long.
@@ -512,7 +530,7 @@ def cancel(state_dir, *, emergency_id, generation=None, events=None):
                     query += f' AND event IN ({",".join("?" for _ in events)})'
                     args.extend(events)
                 db.execute(f"UPDATE delivery SET state='cancelled',reason='' WHERE {query} "
-                           "AND state!='sent'", args)
+                           "AND state NOT IN ('sent','failed')", args)
                 db.execute(f"UPDATE part SET payload='' WHERE delivery IN "
                            f'(SELECT id FROM delivery WHERE {query})', args)
 

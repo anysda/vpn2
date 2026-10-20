@@ -210,6 +210,36 @@ class TelegramQueueTests(unittest.TestCase):
         self.assertNotIn('private-panel-fixture', json.dumps(self.status('admin')))
         print('errors: admin=Telegram 503, client 1=Telegram 403, client 2=sent')
 
+    def test_permanent_refusal_ends_with_reason_and_is_not_repeated(self):
+        self.admin()
+        self.enqueue()
+        self.enqueue(2)
+        refusals = {900: (403, 'Forbidden: bot was blocked by the user'),
+                    101: (400, 'Bad Request: chat not found')}
+        for chat, (code, description) in refusals.items():
+            self.bot.replies[chat] = [(code, {'ok': False, 'error_code': code,
+                                              'description': description})] * 5
+        self.bot.replies[102] = [(502, {'ok': False, 'error_code': 502})]
+        for step in range(6):
+            self.tick(now=NOW + step * 4000)
+        calls = [data['chat_id'] for method, data in self.bot.calls]
+        self.assertEqual(calls.count(900), 1)
+        self.assertEqual(calls.count(101), 1)
+        admin, (first, second) = self.status('admin')[0], self.status()
+        self.assertEqual((admin['state'], admin['reason']),
+                         ('failed', 'Telegram 403: бот заблокирован пользователем'))
+        self.assertEqual((first['state'], first['reason']), ('failed', 'Telegram 400: чат не найден'))
+        # A temporary error is still repeated until it goes through.
+        self.assertEqual(calls.count(102), 3)
+        self.assertEqual(second['state'], 'sent')
+        self.assertNotIn('Bad Request', json.dumps(self.status()))
+        with closing(sqlite3.connect(self.state / 'telegram/client.sqlite3')) as db:
+            left = db.execute("SELECT count(*) FROM part WHERE delivery=1 AND payload!=''").fetchone()[0]
+        self.assertEqual(left, 0)
+        tgqueue.cancel(self.state, emergency_id='outage-a')
+        self.assertEqual(self.status()[0]['reason'], 'Telegram 400: чат не найден')
+        print('permanent: 400/403 sent once, final=failed with reason; 502 retried until sent')
+
     def test_frozen_expired_missing_chat_and_conflicting_permissions(self):
         cases = [({'allowed': False}, 'клиент заморожен'),
                  ({'expires_at': STAMP}, 'срок доступа истёк'),

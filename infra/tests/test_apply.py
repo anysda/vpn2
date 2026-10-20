@@ -247,7 +247,8 @@ class ApplyTests(unittest.TestCase):
         self.assertIn('restore failed: crl-verify must be', str(caught.exception))
         self.assertEqual((base / 'server.conf').read_text(), strict)
 
-    @unittest.skipUnless(shutil.which('openvpn', path='/usr/sbin'), 'openvpn not installed')
+    @unittest.skipUnless(shutil.which('openvpn', path='/usr/sbin'),
+                         '/usr/sbin/openvpn not installed: the candidate check needs the real binary')
     def test_openvpn_unknown_directive_is_rejected_before_restart(self):
         base = self.root / 'etc/openvpn/server'
         (base / 'pki').mkdir(parents=True)
@@ -271,14 +272,17 @@ class ApplyTests(unittest.TestCase):
                    'crl-verify pki/crl.pem\nclient-config-dir ccd\n')
         self.new.write_text(working)
         self.applier.install('openvpn', self.new)
-        self.host.calls.clear()
-        failure = self.install('openvpn', working + 'bogus-option 1\n')
-        self.assertEqual(failure.code, 2)
-        self.assertIn('candidate rejected, working config untouched', str(failure))
-        self.assertIn('bogus-option', str(failure))
-        self.assertEqual(self.host.ran('restart'), [])
-        self.assertEqual((base / 'server.conf').read_text(), working)
-        self.assertEqual(sorted(path.name for path in base.iterdir()), ['ccd', 'pki', 'server.conf'])
+        self.assertEqual(len(self.host.ran('/usr/sbin/openvpn')), 1)
+        for line, word in (('bogus-option 1', 'bogus-option'), ('keepalive 5', 'keepalive')):
+            with self.subTest(line=line):
+                self.host.calls.clear()
+                failure = self.install('openvpn', working + line + '\n')
+                self.assertEqual(failure.code, 2)
+                self.assertIn('candidate rejected, working config untouched', str(failure))
+                self.assertIn(word, str(failure))
+                self.assertEqual(self.host.ran('restart'), [])
+                self.assertEqual((base / 'server.conf').read_text(), working)
+                self.assertEqual(sorted(path.name for path in base.iterdir()), ['ccd', 'pki', 'server.conf'])
 
     def test_nft_candidate_may_touch_only_its_table(self):
         self.new.write_text('table inet anysda_ytquic {}\ntable inet filter { chain input {} }\n')

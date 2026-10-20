@@ -132,10 +132,13 @@ class Applier:
             port = (options.get('port') or ['1194'])[0]
             if not port.isdigit() or not 0 < int(port) < 65536:
                 raise ValueError(f'port {port}')
-            # Without this an unknown directive is found only by the restart. The
-            # self-test needs a cipher; the candidate's own cipher line overrides it.
-            self.command(['/usr/sbin/openvpn', '--test-crypto', '--cd', str(base), '--verb', '1',
-                          '--cipher', 'AES-256-GCM', '--config', str(path)])
+            # Without this an unknown directive is found only by the restart. openvpn
+            # reads the whole config before it prints the cipher list and exits, so
+            # an unknown or malformed directive fails here. --test-crypto would also
+            # check option combinations, but before 2.7 it demands a static key that
+            # a TLS server cannot have.
+            self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
+                          '--config', str(path), '--show-ciphers'])
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')

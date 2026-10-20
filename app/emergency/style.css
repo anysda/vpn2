@@ -11,6 +11,9 @@
 .emergency-state{margin-bottom:18px}
 .delivery-errors{display:flex;flex-direction:column;gap:2px;color:var(--red-t2)}
 .hr .exn{color:var(--t2);font-size:13px}
+/* Название режима в шапке - надпись, не вкладка: шрифт прежней вкладки, без пилюли и реакции на курсор.
+   Строка высотой с прежнюю вкладку (строка 1.4em + 26px отступов и рамок): шапка и всё ниже не сдвигаются. */
+.wrap>header>.mode{font-size:13px;font-weight:500;line-height:calc(1.4em + 26px);color:var(--red-t2);white-space:nowrap}
 .lgsub{text-align:center;color:var(--red-t2);font-size:13px}
 .clp .thead,.clp .crow{grid-template-columns:minmax(0,1.6fr) .8fr 1fr}
 .clp .crows{min-height:180px}
@@ -28,6 +31,7 @@
 .guide summary{cursor:pointer}
 .guide code{overflow-wrap:anywhere}
 @media(max-width:720px){
+  .wrap>header>.mode{display:none}
   .clp .crow{grid-template-columns:auto minmax(0,1fr) auto}
   .clp .crows{min-height:0}
   .emergency-state{margin-bottom:0}

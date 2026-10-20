@@ -51,6 +51,8 @@ def main():
                 server.panel.on_emergency_end()
             elif action == 'fresh':
                 snapshot['created_at'] = datetime.now(timezone.utc).isoformat()
+            elif action == 'never':
+                connections[21] = 'never'
             elif action == 'unknown':
                 connections.clear()
             elif action == 'refused':

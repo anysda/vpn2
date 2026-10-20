@@ -31,7 +31,7 @@ const result = ref('')
 const profile = ref<{ id: number, uri: string } | null>(null)
 const now = ref(Date.now())
 const received = ref(Date.now())
-const statusText: Record<Connection, string> = { connected: 'Подключён', seen: 'Подключался', never: 'Ещё не подключался', unknown: 'Статус неизвестен', blocked: 'Заблокирован', expired: 'Срок истёк' }
+const statusText: Record<Connection, string> = { connected: 'Подключён', seen: 'Подключался', never: 'Нет', unknown: 'Статус неизвестен', blocked: 'Заблокирован', expired: 'Срок истёк' }
 // Как в основной панели: у клиента без доступа вместо точки метка состояния.
 const denied = (c: Client) => c.status === 'blocked' || c.status === 'expired'
 const dot = (c: Client): ClientDot | null => denied(c) ? null : c.status === 'connected' ? { cls: 'on', title: statusText[c.status] } : { cls: '', color: 'var(--t4)', title: statusText[c.status] }
@@ -131,7 +131,7 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
       <BackButton v-if="mobile && screen === 'client'" @back="back" />
       <div class="logo"><span>anysda-vpn2</span></div>
       <div v-if="mobile" class="mhead"><h1>Аварийный режим</h1><p>{{ state.exit_name }}</p></div>
-      <nav class="tabs"><a class="on" href="/" aria-current="page">Аварийный режим</a></nav>
+      <p class="mode">Аварийный режим</p>
       <div class="hr"><span v-if="!mobile" class="exn">{{ state.exit_name }}</span><button type="button" class="pill" @click="logout">Выйти</button></div>
     </header>
     <main class="tab on clp" :class="mobile ? `m-${screen}` : undefined">

@@ -43,7 +43,7 @@ test('аварийная статика: общие компоненты, сос
     await expect(emergency.getByText('Возраст снимка:', { exact: false })).toBeVisible()
   }
   // Сохранённые элементы основной страницы: шрифт, размеры, скругления и отступы должны совпасть.
-  const desktopRetained = ['.wrap>header .logo span', '.wrap>header .tabs a.on', '.head h1', '.inp input', '.thead span',
+  const desktopRetained = ['.wrap>header .logo span', '.head h1', '.inp input', '.thead span',
     '.crow', '.crow .who b', '.crow .who small', '.crow .av', '.cdh h2', '.cdh .av', '.dev b', '.ov-broadcast textarea']
   const mobileListRetained = ['.mhead h1', '.mhead p', '.crow', '.crow>.av', '.crow .who b', '.crow .who small']
   const mobileDetailRetained = ['.wrap>header .cbk', '.mhead h1', '.cdh h2', '.cdh .av', '.dev b']
@@ -74,6 +74,23 @@ test('аварийная статика: общие компоненты, сос
     expect(await view.evaluate(() => [document.documentElement.dataset.firstTheme, document.documentElement.dataset.theme]))
       .toEqual([colorScheme, colorScheme])
     return view
+  }
+  // «Аварийный режим» в шапке - надпись, а не вкладка: не ссылка и не кнопка, без пилюли,
+  // курсор обычный, при наведении ничего не меняется. Шрифт - как у прежней вкладки.
+  async function modeLabel(target: Page) {
+    const header = target.locator('.wrap>header')
+    await expect(header.getByRole('link')).toHaveCount(0)
+    await expect(header.getByRole('button', { name: 'Аварийный режим' })).toHaveCount(0)
+    const label = header.getByText('Аварийный режим', { exact: true })
+    await expect(label).toBeVisible()
+    const look = () => label.evaluate((e) => {
+      const s = getComputedStyle(e)
+      return [s.cursor, s.backgroundColor, s.borderRadius, s.padding, s.boxShadow, s.fontSize, s.fontWeight, s.color]
+    })
+    const before = await look()
+    expect(before.slice(0, 7)).toEqual(['auto', 'rgba(0, 0, 0, 0)', '0px', '0px', 'none', '13px', '500'])
+    await label.hover()
+    expect(await look()).toEqual(before)
   }
   async function metrics(target: Page, selectors: string[]) {
     return target.evaluate(list => Object.fromEntries(list.map((selector) => {
@@ -111,8 +128,8 @@ test('аварийная статика: общие компоненты, сос
     await light.getByRole('button', { name: 'Войти', exact: true }).click()
     await expect(light.getByText('Возраст снимка:', { exact: false })).toBeVisible()
     await light.evaluate(() => document.fonts.ready)
-    expect(await light.evaluate(() => [getComputedStyle(document.querySelector('.wrap>header .tabs a.on')!).backgroundColor,
-      getComputedStyle(document.documentElement).getPropertyValue('--red').trim()])).toEqual(['rgb(184, 37, 26)', '#b8251a'])
+    expect(await light.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--red').trim())).toEqual('#b8251a')
+    await modeLabel(light)
     const lightPalette = await palette(light)
     expect(lightPalette).not.toEqual(darkPalette)
     await shot(light, 'emergency-light-desktop.png')
@@ -125,9 +142,9 @@ test('аварийная статика: общие компоненты, сос
     const lightGuide = await themed('light', '/instructions')
     await expect(lightGuide.getByRole('heading', { name: 'Временное подключение Hysteria2' })).toBeVisible()
     await lightGuide.close()
-    // Красный акцент: активная вкладка залита существующим токеном --red.
-    expect(await emergency.evaluate(() => [getComputedStyle(document.querySelector('.wrap>header .tabs a.on')!).backgroundColor,
-      getComputedStyle(document.documentElement).getPropertyValue('--red').trim()])).toEqual(['rgb(255, 91, 82)', '#ff5b52'])
+    // Красный акцент - существующий токен --red.
+    expect(await emergency.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--red').trim())).toEqual('#ff5b52')
+    await modeLabel(emergency)
     await expect(emergency.getByRole('button', { name: 'Новый клиент' })).toHaveCount(0)
     await expect(emergency.getByTestId('device-row')).toHaveCount(2)
     await emergency.getByRole('button', { name: 'Hysteria2', exact: true }).first().click()
@@ -245,6 +262,7 @@ test('аварийная панель: причина недоставки по 
   try {
     await action('refused')
     await action('denied')
+    await action('never')
     await page.goto(`https://127.0.0.1:${startup.port}`)
     await page.getByLabel('Пароль', { exact: true }).fill(startup.password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
@@ -259,6 +277,9 @@ test('аварийная панель: причина недоставки по 
     await anna.click()
     await expect(page.getByTestId('delivery-error')).toHaveText('Не доставлено: чат не найден (Telegram 400), повтора не будет')
     await shot(page, 'emfix-538-desktop.png')
+    // Ещё не подключался ни одним устройством: короткое «Нет» в строке и в карточке клиента.
+    await expect(anna.getByText('Нет', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('client-detail').locator('.cdh .tag')).toHaveText('Нет')
     // Клиент без доступа: метка состояния вместо точки, как в основной панели.
     for (const [name, text] of [['e2e-Блок', 'Заблокирован'], ['e2e-Истёк', 'Срок истёк']]) {
       const row = page.getByTestId('client-row').filter({ hasText: name! })

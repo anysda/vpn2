@@ -1,6 +1,9 @@
 [Unit]
 Description=Temporary emergency Hysteria2
-After=network-online.target nftables.service
+# Lives only inside its agent: stopping the agent closes the port, a restart
+# of the agent restarts it after the agent, which resumes the same generation.
+BindsTo=vpn2-emergency.service
+After=network-online.target nftables.service vpn2-emergency.service
 Wants=network-online.target
 
 [Service]

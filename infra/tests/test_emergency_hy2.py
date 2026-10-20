@@ -216,6 +216,21 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertNotIn('WantedBy=', service)
         self.assertNotIn('sing-box.service', service)
 
+    def test_unit_lives_only_while_its_agent_runs(self):
+        # Without the binding a stopped agent left the emergency port open.
+        unit = {}
+        for line in (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text().splitlines():
+            if line.startswith('[Service]'):
+                break
+            if '=' in line and not line.startswith('#'):
+                key, value = line.split('=', 1)
+                unit.setdefault(key, []).extend(value.split())
+        self.assertEqual(unit.get('BindsTo'), ['vpn2-emergency.service'])
+        # Ordered after the agent: stop goes hy2 first, restart brings hy2
+        # back only once the agent runs and can resume its generation.
+        self.assertIn('vpn2-emergency.service', unit.get('After', []))
+        self.assertNotIn('Requires', unit)
+
     def test_sandboxed_agent_controls_unit_without_privilege_escalation(self):
         stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
         self.assertIn('NoNewPrivileges=true', stage)  # sudo cannot work inside the agent

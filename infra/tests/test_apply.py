@@ -3,6 +3,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -56,6 +58,8 @@ class Host:
                 json.loads(Path(argv[-1]).read_text())
             except ValueError as error:
                 raise RuntimeError(f'sing-box check: {error}') from None
+        if argv[0] == '/usr/sbin/openvpn':
+            return apply.run(argv)
         if argv[:2] == ['systemctl', 'is-active']:
             config = {'sing-box': 'etc/sing-box/config.json',
                       'openvpn-server@server': 'etc/openvpn/server/server.conf'}[argv[-1]]
@@ -242,6 +246,39 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 4)
         self.assertIn('restore failed: crl-verify must be', str(caught.exception))
         self.assertEqual((base / 'server.conf').read_text(), strict)
+
+    @unittest.skipUnless(shutil.which('openvpn', path='/usr/sbin'), 'openvpn not installed')
+    def test_openvpn_unknown_directive_is_rejected_before_restart(self):
+        base = self.root / 'etc/openvpn/server'
+        (base / 'pki').mkdir(parents=True)
+        (base / 'ccd').mkdir()
+
+        def tool(*argv):
+            subprocess.run(argv, cwd=base / 'pki', check=True, capture_output=True)
+        for name in ('ca', 'server'):
+            tool('openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                 '-nodes', '-keyout', name + '.key', '-out', name + '.crt', '-subj', '/CN=' + name, '-days', '2')
+        tool('openvpn', '--genkey', 'secret', 'tls-crypt.key')
+        (base / 'pki/index.txt').write_text('')
+        (base / 'pki/crlnumber').write_text('01\n')
+        (base / 'pki/openssl.cnf').write_text('[ca]\ndefault_ca = x\n[x]\ndatabase = index.txt\n'
+                                              'crlnumber = crlnumber\ndefault_md = sha256\n'
+                                              'default_crl_days = 2\n')
+        tool('openssl', 'ca', '-batch', '-config', 'openssl.cnf', '-keyfile', 'ca.key', '-cert', 'ca.crt',
+             '-gencrl', '-out', 'crl.pem')
+        working = ('port 1194\nproto udp\ndev tun\nserver 10.8.0.0 255.255.255.0\nca pki/ca.crt\n'
+                   'cert pki/server.crt\nkey pki/server.key\ndh none\ntls-crypt pki/tls-crypt.key\n'
+                   'crl-verify pki/crl.pem\nclient-config-dir ccd\n')
+        self.new.write_text(working)
+        self.applier.install('openvpn', self.new)
+        self.host.calls.clear()
+        failure = self.install('openvpn', working + 'bogus-option 1\n')
+        self.assertEqual(failure.code, 2)
+        self.assertIn('candidate rejected, working config untouched', str(failure))
+        self.assertIn('bogus-option', str(failure))
+        self.assertEqual(self.host.ran('restart'), [])
+        self.assertEqual((base / 'server.conf').read_text(), working)
+        self.assertEqual(sorted(path.name for path in base.iterdir()), ['ccd', 'pki', 'server.conf'])
 
     def test_nft_candidate_may_touch_only_its_table(self):
         self.new.write_text('table inet anysda_ytquic {}\ntable inet filter { chain input {} }\n')

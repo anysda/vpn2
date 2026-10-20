@@ -51,8 +51,9 @@ def run(argv, data=None):
                             env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
     if result.returncode:
         last = (result.stderr or result.stdout).strip().splitlines()
-        # nft ends its message with the source line and a caret; the cause is above.
-        last = [line for line in last if 'Error' in line][:1] or last
+        # nft ends its message with the source line and a caret, openvpn with a
+        # hint to --help; the cause is above.
+        last = [line for line in last if 'error' in line.lower()][:1] or last
         raise RuntimeError(f'{argv[0]} {argv[1] if len(argv) > 1 else ""}: '
                            f'{last[-1] if last else "rc=" + str(result.returncode)}')
     return result.stdout
@@ -131,6 +132,10 @@ class Applier:
             port = (options.get('port') or ['1194'])[0]
             if not port.isdigit() or not 0 < int(port) < 65536:
                 raise ValueError(f'port {port}')
+            # Without this an unknown directive is found only by the restart. The
+            # self-test needs a cipher; the candidate's own cipher line overrides it.
+            self.command(['/usr/sbin/openvpn', '--test-crypto', '--cd', str(base), '--verb', '1',
+                          '--cipher', 'AES-256-GCM', '--config', str(path)])
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')

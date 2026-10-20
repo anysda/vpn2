@@ -127,6 +127,17 @@ svc_restart_if_changed() {
   svc_say "$unit перезапущен"
 }
 
+# Входы openvpn-server@server. Его перезапускают 29-openvpn и смена UID
+# management в 30-frontend: отпечаток один, иначе следующий деплой видит
+# «изменение» и рвёт всех OpenVPN-клиентов. CRL и ccd OpenVPN перечитывает сам
+# на каждом подключении, их в отпечатке нет.
+ovpn_restart_if_changed() {
+  local dir=${OVPN_DIR:-/etc/openvpn/server}
+  svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
+    /usr/lib/systemd/system/openvpn-server@.service "$dir/server.conf" \
+    "$dir/pki/ca.crt" "$dir/pki/server.crt" "$dir/pki/server.key" "$dir/pki/tls-crypt.key"
+}
+
 # svc_settle SEC [ПРОБА...] — дать только что перезапущенной службе подняться
 # (или упасть) до показа статуса. С пробой ждём, пока она пройдёт, но не
 # дольше SEC; без пробы — ровно SEC. Если ничего не перезапускали, ждать нечего.

@@ -242,11 +242,8 @@ ufw_sync_dns 'openvpn → AdGuard DNS' 10.99.0.1 $OVPN_SUBNETS
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"
 systemctl enable openvpn-server@server >/dev/null 2>&1 || true
-# Рестарт рвёт всех OpenVPN-клиентов. CRL и ccd OpenVPN перечитывает сам на
-# каждом подключении, их в отпечатке нет.
-svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
-  /usr/lib/systemd/system/openvpn-server@.service "$OVPN_DIR/server.conf" \
-  "$PKI/ca.crt" "$PKI/server.crt" "$PKI/server.key" "$PKI/tls-crypt.key"
+# Рестарт рвёт всех OpenVPN-клиентов.
+ovpn_restart_if_changed
 # Type=notify: restart вернулся после READY=1, проба только ловит падение.
 svc_settle 2 systemctl is-active --quiet openvpn-server@server
 systemctl status openvpn-server@server --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'

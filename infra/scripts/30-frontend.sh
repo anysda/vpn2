@@ -281,7 +281,7 @@ systemctl stop anysda-ikev2-sync.timer anysda-ikev2-sync.service 2>/dev/null || 
 if [[ -f /etc/openvpn/server/server.conf ]] \
   && ! grep -qx 'management-client-user vpn2-control' /etc/openvpn/server/server.conf; then
   sed -i 's/^management-client-user .*/management-client-user vpn2-control/' /etc/openvpn/server/server.conf
-  systemctl restart openvpn-server@server
+  ovpn_restart_if_changed
 fi
 touch /etc/vpn2-control/api-managed
 systemctl start anysda-ikev2-sync.timer 2>/dev/null || true

@@ -1,6 +1,7 @@
 """Release acceptance checks. VPN2_TEST_ROOT selects the unchanged baseline."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -306,10 +307,38 @@ panel_rollback
             manifest = {'binaries': {'binary': {'url': 'https://example.invalid/archive', 'sha256': expected}}}
             (work / expected).write_bytes(b'corrupted archive')
             destination = work / 'install.tar'
-            with self.assertRaisesRegex(release.ReleaseError, 'before extraction'):
-                release.artifact(manifest, 'binary', work, destination)
+            with patch('urllib.request.urlopen', side_effect=lambda *_a, **_k: io.BytesIO(b'corrupted')) as fetch:
+                with self.assertRaisesRegex(release.ReleaseError, 'before extraction'):
+                    release.artifact(manifest, 'binary', work, destination)
             self.assertFalse(destination.exists())
+            self.assertEqual(fetch.call_count, 1)
             print('corrupt artifact: rejected before extraction; destination unchanged')
+
+    def test_corrupt_cache_is_downloaded_again_once(self):
+        release = module('release')
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            expected = hashlib.sha256(b'original archive').hexdigest()
+            manifest = {'binaries': {'binary': {'url': 'https://example.invalid/archive', 'sha256': expected}}}
+            cached = work / expected
+            cached.write_bytes(b'original archivX')
+            destination = work / 'install.tar'
+            with patch('urllib.request.urlopen',
+                       side_effect=lambda *_a, **_k: io.BytesIO(b'original archive')) as fetch:
+                release.artifact(manifest, 'binary', work, destination)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(destination.read_bytes(), b'original archive')
+            self.assertEqual(cached.read_bytes(), b'original archive')
+            destination.unlink()
+            cached.write_bytes(b'original archivX')
+            with patch('urllib.request.urlopen', side_effect=lambda *_a, **_k: io.BytesIO(b'mirror broken')) as fetch:
+                with self.assertRaises(release.ReleaseError) as caught:
+                    release.artifact(manifest, 'binary', work, destination)
+            self.assertEqual(fetch.call_count, 1)
+            self.assertIn(str(cached), str(caught.exception))
+            self.assertFalse(destination.exists())
+            self.assertEqual(sorted(path.name for path in work.iterdir()), [])
+            print(caught.exception)
 
     def test_wal_backup_contains_committed_wal(self):
         state = module('deploy_state')

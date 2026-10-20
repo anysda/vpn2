@@ -128,14 +128,16 @@ def artifact(manifest, name, cache, destination=None):
     cache.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = cache / item['sha256']
     if target.exists() and sha256(target) != item['sha256']:
-        raise ReleaseError(f'{name}: digest mismatch; artifact rejected before extraction')
+        # A damaged cache entry is fetched again once, never trusted or kept.
+        target.unlink(missing_ok=True)
     if not target.exists():
         fd, temporary = tempfile.mkstemp(dir=cache)
         try:
             with os.fdopen(fd, 'wb') as output, urllib.request.urlopen(item['url'], timeout=60) as source:
                 shutil.copyfileobj(source, output)
             if sha256(temporary) != item['sha256']:
-                raise ReleaseError(f'{name}: digest mismatch; artifact rejected before extraction')
+                raise ReleaseError(f'{name}: digest mismatch for {target} after a fresh download; '
+                                   'artifact rejected before extraction')
             os.replace(temporary, target)
         finally:
             Path(temporary).unlink(missing_ok=True)

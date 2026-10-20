@@ -607,8 +607,10 @@ run_stage_on_host() {
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
   # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
+  # --norc: вложенный bash по ssh читает ~/.bashrc узла, а его `[ -z "$PS1" ]` под -u
+  # сыплет «PS1: unbound variable» в лог каждой стадии.
   ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
-bash -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
+bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0

@@ -65,7 +65,7 @@ release_start() {
       if [[ "$host" == ru ]]; then
         # A fresh host needs the container runtime to verify images. Existing
         # installations must never enter this prerequisite-only bootstrap path.
-        ssh_exec 'bash -euo pipefail -c '\''if ! command -v docker >/dev/null; then
+        ssh_exec 'bash --norc -euo pipefail -c '\''if ! command -v docker >/dev/null; then
           test ! -e /var/lib/anysda-vpn2/db.sqlite && test ! -d /etc/anysda || exit 1
           HOST_TAG=ru; source /tmp/anysda/anysda-svc.sh
           apt_update_if_stale; apt_get install -y -qq ca-certificates curl gnupg
@@ -117,5 +117,5 @@ release_complete() {
 
 release_rollback() {
   load_env ru
-  ssh_exec 'bash -euo pipefail -c '\''source /tmp/anysda/panel-transaction.sh; install -d -m 700 "$panel_state"; exec 9>"$panel_state/transaction.lock"; flock -n 9; panel_rollback; python3 /tmp/anysda/deploy_state.py phase --phase rolled-back'\'
+  ssh_exec 'bash --norc -euo pipefail -c '\''source /tmp/anysda/panel-transaction.sh; install -d -m 700 "$panel_state"; exec 9>"$panel_state/transaction.lock"; flock -n 9; panel_rollback; python3 /tmp/anysda/deploy_state.py phase --phase rolled-back'\'
 }

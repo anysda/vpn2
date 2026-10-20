@@ -209,6 +209,9 @@ class Lifecycle:
                 self.submit(f"issue:{retry['generation']}", self._issue, data['emergency_id'],
                             retry['generation'], record.get('autonomous', False), record['event'])
         recovery = data['recovery']
+        # Notices belong to the bundle this exit issued: a peer may have raised
+        # the shared counter since, and the panel counts by the issued one.
+        generation = data.get('issued_generation') or data['generation']
         if recovery and record.get('notified') != recovery['round']:
             record['notified'] = recovery['round']
             agent.state.save()
@@ -217,7 +220,7 @@ class Lifecycle:
                 moved = agent.state.data.get('entry_moved') or {}
                 address = moved['to'][0] if moved.get('emergency') == data['emergency_id'] else None
                 self.submit(f"recovered:{recovery['round']}", self._recovered, data['emergency_id'],
-                            data['generation'], recovery['round'], recovery['confirmed'], address)
+                            generation, recovery['round'], recovery['confirmed'], address)
         cancelled = data.get('cancelled_round')
         if (recovery is None and cancelled and record.get('notified') == cancelled
                 and record.get('cancelled') != cancelled):
@@ -226,7 +229,7 @@ class Lifecycle:
             if self.server:
                 self.server.panel.on_return_cancelled()
             self.submit(f'cancelled:{cancelled}', self._cancelled, data['emergency_id'],
-                        data['generation'], cancelled)
+                        generation, cancelled)
         deadline, round_ = None, None
         if recovery:
             round_ = recovery['round'] if recovery['deadline'] is None else None

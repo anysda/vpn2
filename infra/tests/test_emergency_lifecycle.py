@@ -384,6 +384,27 @@ class LifecycleTests(unittest.TestCase):
         self.advance(900, ready=False)
         self.assertTrue(data['active'])
 
+    def test_return_notices_count_on_panel_after_a_peer_raised_the_generation(self):
+        # VPN2-450: after a split the leader's generation follows the highest
+        # peer, its bundle stays the issued one; the panel counts by the latter.
+        self.lead()
+        data = self.agent.leader.data
+        issued = data['issued_generation']
+        data['generation'] = issued + 2
+        panel = self.servers[0].panel
+        sent = panel.view()['delivery']['sent']
+        self.advance(STABLE + 30)
+        self.assertIsNotNone(data['recovery']['deadline'])
+        rows = [row for row in tgqueue.delivery_status(self.directory) if row['event'] == 'recovered']
+        self.assertEqual({row['generation'] for row in rows}, {issued})
+        # Two clients heard about the return.
+        self.assertEqual(panel.view()['delivery']['sent'], sent + 2)
+        self.advance(30, ready=False)
+        self.advance(15, ready=False)
+        self.assertTrue(panel.view()['cancelled'])
+        rows = [row for row in tgqueue.delivery_status(self.directory) if row['event'] == 'return_cancelled']
+        self.assertEqual({row['generation'] for row in rows}, {issued})
+
     def test_return_announced_by_former_leader_is_cancelled_to_its_audience(self):
         # Leader A told everyone and died; this leader inherited the round with
         # its deadline, so its own queue holds no `recovered` rows.

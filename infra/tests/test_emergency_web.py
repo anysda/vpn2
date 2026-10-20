@@ -132,6 +132,44 @@ class EmergencyWebTests(unittest.TestCase):
         self.assertEqual(self.panel.view()['delivery'],
                          dict(sent=1, pending=1, errors=2, without_telegram=1, denied=1))
 
+    def test_client_card_and_summary_name_why_delivery_failed(self):
+        self.snapshot['clients'].append(dict(id=2, name='Второй клиент', telegram_chat_id=7, allowed=True,
+                                             expires_at=None, devices=[dict(id=21, name='ноутбук')]))
+        row = self.rows[0] | dict(sent=0)
+        self.rows += [row | dict(client=2, state='failed', reason='Telegram 400: чат не найден'),
+                      row | dict(client=2, state='failed', reason='Telegram 403', generation=2)]
+        self.panel.on_emergency_leader('event', 1)
+        view = self.panel.view()
+        cards = {client['id']: client['delivery_error'] for client in view['clients']}
+        self.assertEqual(cards, {1: 'Не отправлено: автодоставка невозможна: нет токена бота',
+                                 2: 'Не доставлено: чат не найден (Telegram 400), повтора не будет'})
+        self.assertEqual(view['delivery_errors'], [
+            dict(id=1, name='Тестовый клиент', reason=cards[1]), dict(id=2, name='Второй клиент', reason=cards[2])])
+        # Every row counted under «Ошибок» names its client.
+        self.assertEqual(view['delivery']['errors'], 3)
+        reasons = [('retry', 'Telegram 503', 'Telegram ответил ошибкой 503, повтор автоматически'),
+                   ('retry', 'Telegram 429', 'Telegram ограничил частоту отправки, повтор автоматически'),
+                   ('retry', 'Telegram недоступен или ответ не подтверждён', 'Telegram недоступен, повтор автоматически'),
+                   ('failed', 'Telegram 403: бот заблокирован пользователем',
+                    'Не доставлено: бот заблокирован пользователем (Telegram 403), повтора не будет'),
+                   ('failed', 'Telegram 400', 'Не доставлено: Telegram отклонил сообщение (Telegram 400), повтора не будет'),
+                   ('blocked', 'состав устройств изменился', 'Не отправлено: состав устройств изменился')]
+        for state, reason, text in reasons:
+            self.assertEqual(self.web.delivery_reason(state, reason), text)
+
+    def test_blocked_and_expired_clients_show_their_state(self):
+        clients = [dict(id=2, name='заморожен', allowed=False, expires_at=None),
+                   dict(id=3, name='истёк', allowed=False, expires_at='2025-12-31T23:59:59+00:00'),
+                   dict(id=4, name='истёк, флаг ещё стоит', allowed=True, expires_at='2025-12-31T23:59:59Z'),
+                   dict(id=5, name='права неизвестны', allowed=True, expires_at='broken')]
+        for client in clients:
+            self.snapshot['clients'].append(client | dict(telegram_chat_id=None, devices=[dict(id=client['id'] * 10, name='x')]))
+        self.connections = {11: 'seen', 12: 'never'}
+        self.panel.on_emergency_leader('event', 1)
+        statuses = {client['id']: (client['status'], client['allowed']) for client in self.panel.view()['clients']}
+        self.assertEqual(statuses, {1: ('seen', True), 2: ('blocked', False), 3: ('expired', False),
+                                    4: ('expired', False), 5: ('blocked', False)})
+
     def test_password_survives_restart_but_not_role_change(self):
         first = self.panel.on_emergency_leader('event', 1)
         resumed = self.web.Panel(self.directory, **self.options)

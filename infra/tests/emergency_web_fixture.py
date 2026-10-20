@@ -53,6 +53,14 @@ def main():
                 snapshot['created_at'] = datetime.now(timezone.utc).isoformat()
             elif action == 'unknown':
                 connections.clear()
+            elif action == 'refused':
+                delivery.append(row | dict(client=2, state='failed', reason='Telegram 400: чат не найден'))
+            elif action == 'denied':
+                snapshot['clients'] += [
+                    dict(id=3, name='e2e-Блок', telegram_chat_id=43, allowed=False, expires_at=None,
+                         devices=[dict(id=31, name='телефон')]),
+                    dict(id=4, name='e2e-Истёк', telegram_chat_id=44, allowed=False,
+                         expires_at='2026-01-01T00:00:00+00:00', devices=[dict(id=41, name='телефон')])]
             elif action == 'rotate':
                 payload = server.panel.on_emergency_leader('fixture', 4, False, 'leader_changed')
             print(json.dumps(dict(password=payload['panel_password'])), flush=True)

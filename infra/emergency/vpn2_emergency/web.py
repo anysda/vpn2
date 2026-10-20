@@ -53,26 +53,58 @@ TRACKED_ADDRESSES = 1024
 DENIED = {'клиент заморожен', 'срок доступа истёк', 'неизвестные или конфликтующие права'}
 
 
+def _delivery_kind(row, emergency_id, generation):
+    """Summary bucket of a tgqueue.delivery_status row; None outside the current generation."""
+    if (row.get('emergency'), row.get('generation')) != (emergency_id, generation):
+        return None
+    state, reason = row.get('state'), row.get('reason')
+    if state == 'cancelled':
+        return None
+    if state == 'sent':
+        return 'sent'
+    if reason == 'нет канала доставки':
+        return 'without_telegram'
+    if reason in DENIED:
+        return 'denied'
+    if state == 'pending':
+        return 'pending'
+    return 'errors'
+
+
 def delivery_summary(rows, emergency_id, generation):
     """Count tgqueue.delivery_status rows of the current emergency generation only."""
     counts = dict(sent=0, pending=0, errors=0, without_telegram=0, denied=0)
     for row in rows:
-        if (row.get('emergency'), row.get('generation')) != (emergency_id, generation):
-            continue
-        state, reason = row.get('state'), row.get('reason')
-        if state == 'cancelled':
-            continue
-        if state == 'sent':
-            counts['sent'] += 1
-        elif reason == 'нет канала доставки':
-            counts['without_telegram'] += 1
-        elif reason in DENIED:
-            counts['denied'] += 1
-        elif state == 'pending':
-            counts['pending'] += 1
-        else:
-            counts['errors'] += 1
+        kind = _delivery_kind(row, emergency_id, generation)
+        if kind:
+            counts[kind] += 1
     return counts
+
+
+def delivery_reason(state, reason):
+    """Plain text of a stored queue reason; the queue itself keeps only fixed texts."""
+    code, _, detail = reason.removeprefix('Telegram ').partition(': ')
+    if reason.startswith('Telegram ') and code.isdigit():
+        if state == 'failed':
+            detail = detail or {'400': 'Telegram отклонил сообщение',
+                                '403': 'Telegram запретил отправку'}.get(code, 'ошибка Telegram')
+            return f'Не доставлено: {detail} (Telegram {code}), повтора не будет'
+        if code == '429':
+            return 'Telegram ограничил частоту отправки, повтор автоматически'
+        return f'Telegram ответил ошибкой {code}, повтор автоматически'
+    if state == 'retry':
+        return ('Telegram недоступен, повтор автоматически' if reason.startswith('Telegram недоступен')
+                else f'{reason}, повтор автоматически')
+    return f'Не отправлено: {reason}'
+
+
+def delivery_errors(rows, emergency_id, generation):
+    """Latest undelivered reason per client, for the rows counted as errors."""
+    errors = {}
+    for row in rows:
+        if _delivery_kind(row, emergency_id, generation) == 'errors':
+            errors[row.get('client')] = delivery_reason(row.get('state'), row.get('reason') or '')
+    return errors
 
 
 def _utc(value):
@@ -227,26 +259,34 @@ class Panel:
         profiles = self.profiles(generation)
         clients = []
         now = datetime.now(timezone.utc)
+        rows = self.delivery(generation)
+        errors = delivery_errors(rows, self.auth.get('emergency_id'), generation)
         for client in snapshot.get('clients', []):
             allowed = client.get('allowed') is True
+            expired = False
             try:
-                allowed = allowed and (not client.get('expires_at') or _utc(client['expires_at']) > now)
+                expired = bool(client.get('expires_at')) and _utc(client['expires_at']) <= now
             except (ValueError, TypeError):
                 allowed = False
+            allowed = allowed and not expired
             devices = [dict(id=d['id'], name=d['name'], ready=allowed and d['id'] in profiles)
                        for d in client.get('devices', [])]
             statuses = [connections.get(d['id'], 'unknown') for d in devices]
             status = ('connected' if 'connected' in statuses else 'unknown' if 'unknown' in statuses
                       else 'seen' if 'seen' in statuses else 'never')
+            if not allowed:
+                # Without access there is no session to watch; the snapshot knows why.
+                status = 'expired' if expired else 'blocked'
             clients.append(dict(id=client['id'], name=client['name'], devices=devices,
-                                telegram=bool(client.get('telegram_chat_id')), allowed=allowed, status=status))
+                                telegram=bool(client.get('telegram_chat_id')), allowed=allowed, status=status,
+                                delivery_error=errors.get(client['id'])))
         try:
             age = max(0, int((now - _utc(snapshot['created_at'])).total_seconds()))
         except (KeyError, ValueError, TypeError):
             age = None
         remaining = max(0, int(self.deadline - time.monotonic())) if self.deadline is not None else None
         # Explicit allow-list: bot token, chat IDs and arbitrary provider fields stay server-side.
-        delivery = delivery_summary(self.delivery(generation), self.auth.get('emergency_id'), generation)
+        delivery = delivery_summary(rows, self.auth.get('emergency_id'), generation)
         return dict(clients=clients, snapshot_age=age, exit_id=self.exit_id,
                     exit_name=next((x['name'] for x in snapshot.get('exits', []) if x['id'] == self.exit_id), self.exit_id),
                     generation=generation, leader_changed=self.auth.get('event') == 'leader_changed',
@@ -255,7 +295,9 @@ class Panel:
                     deadline=(self.auth.get('deadline_wall') or time.time() + remaining)
                     if remaining is not None else None,
                     bot_ready=bool(snapshot.get('bot_token') and self.broadcast),
-                    delivery=delivery)
+                    delivery=delivery,
+                    delivery_errors=[dict(id=c['id'], name=c['name'], reason=c['delivery_error'])
+                                     for c in clients if c['delivery_error']])
 
     def profile(self, device_id):
         if not any(d['id'] == device_id and d['ready'] for c in self.view()['clients'] for d in c['devices']):

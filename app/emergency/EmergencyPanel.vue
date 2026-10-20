@@ -8,13 +8,14 @@ import ClientHeading from '../app/components/Panel/ClientHeading.vue'
 import DeviceName from '../app/components/Panel/DeviceName.vue'
 import { initials } from '../app/utils/clients-view'
 
-type Connection = 'connected' | 'seen' | 'never' | 'unknown'
+type Connection = 'connected' | 'seen' | 'never' | 'unknown' | 'blocked' | 'expired'
 interface Device { id: number, name: string, ready: boolean }
-interface Client { id: number, name: string, telegram: boolean, allowed: boolean, status: Connection, devices: Device[] }
+interface Client { id: number, name: string, telegram: boolean, allowed: boolean, status: Connection, devices: Device[], delivery_error: string | null }
 interface State {
   clients: Client[], exit_name: string, generation: number, leader_changed: boolean, autonomous: boolean, cancelled: boolean
   remaining: number | null, deadline: number | null, snapshot_age: number | null, bot_ready: boolean
   delivery: { sent: number, errors: number, pending: number, without_telegram: number, denied: number }
+  delivery_errors: { id: number, name: string, reason: string }[]
 }
 const state = ref<State | null>(null)
 const password = ref('')
@@ -30,8 +31,10 @@ const result = ref('')
 const profile = ref<{ id: number, uri: string } | null>(null)
 const now = ref(Date.now())
 const received = ref(Date.now())
-const statusText: Record<Connection, string> = { connected: 'Подключён', seen: 'Подключался', never: 'Ещё не подключался', unknown: 'Статус неизвестен' }
-const dot = (c: Client): ClientDot => c.status === 'connected' ? { cls: 'on', title: statusText[c.status] } : { cls: '', color: 'var(--t4)', title: statusText[c.status] }
+const statusText: Record<Connection, string> = { connected: 'Подключён', seen: 'Подключался', never: 'Ещё не подключался', unknown: 'Статус неизвестен', blocked: 'Заблокирован', expired: 'Срок истёк' }
+// Как в основной панели: у клиента без доступа вместо точки метка состояния.
+const denied = (c: Client) => c.status === 'blocked' || c.status === 'expired'
+const dot = (c: Client): ClientDot | null => denied(c) ? null : c.status === 'connected' ? { cls: 'on', title: statusText[c.status] } : { cls: '', color: 'var(--t4)', title: statusText[c.status] }
 const clients = computed(() => state.value?.clients.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase())) ?? [])
 const selected = computed(() => state.value?.clients.find(c => c.id === selectedId.value))
 // Таймер тикает раз в секунду, а ответ приходит между тиками: now бывает меньше received.
@@ -138,6 +141,9 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
         <p v-if="state.leader_changed">Лидер сменился: {{ state.exit_name }}. Используйте новые реквизиты; администратору отправляются новый адрес и пароль.</p>
         <p v-if="state.autonomous">Разделение сети: согласование между экзитами нарушено. Этот exit работает автономно.</p>
         <p>Отправлено: {{ state.delivery.sent }} · Ошибок: {{ state.delivery.errors }} · В очереди: {{ state.delivery.pending }} · Без Telegram: {{ state.delivery.without_telegram }} · Без доступа: {{ state.delivery.denied }}</p>
+        <ul v-if="state.delivery_errors.length" class="delivery-errors" data-testid="delivery-errors">
+          <li v-for="e in state.delivery_errors" :key="e.id"><b>{{ e.name }}</b> — {{ e.reason }}</li>
+        </ul>
         <p>Возраст снимка: {{ snapshotAge }}</p>
       </div>
       <div v-if="error" class="al red" role="alert">{{ error }}</div>
@@ -150,8 +156,8 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
               <div v-if="!clients.length" class="more">Ничего не найдено</div>
               <ClientRow v-for="c in clients" v-else :key="c.id" :name="c.name" :initials="initials(c.name)" :selected="c.id === selectedId" :mobile="mobile" :dot="dot(c)" @select="select(c.id)">
                 <template #meta>{{ mobile ? `${c.devices.length} · ${c.telegram ? 'Telegram' : 'без Telegram'}` : c.telegram ? 'Telegram' : 'без Telegram' }}</template>
-                <div v-if="mobile" class="crt"><small>{{ statusText[c.status] }}</small></div>
-                <template v-else><span>{{ c.devices.length }}</span><span>{{ statusText[c.status] }}</span></template>
+                <div v-if="mobile" class="crt"><span v-if="denied(c)" class="tag access-tag">{{ statusText[c.status] }}</span><small v-else>{{ statusText[c.status] }}</small></div>
+                <template v-else><span>{{ c.devices.length }}</span><span><span v-if="denied(c)" class="tag access-tag">{{ statusText[c.status] }}</span><template v-else>{{ statusText[c.status] }}</template></span></template>
               </ClientRow>
             </div>
           </div>
@@ -159,9 +165,10 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
         </div>
         <div class="card cdet lit" data-testid="client-detail">
           <div v-if="selected" class="cdet-in">
-            <ClientHeading :initials="initials(selected.name)" :subtitle="selected.telegram ? 'Привязан к Telegram' : 'Telegram не привязан'" :status="statusText[selected.status]" :status-class="selected.status === 'connected' ? 'ok' : ''"><h2>{{ selected.name }}</h2></ClientHeading>
+            <ClientHeading :initials="initials(selected.name)" :subtitle="selected.telegram ? 'Привязан к Telegram' : 'Telegram не привязан'" :status="statusText[selected.status]" :status-class="denied(selected) ? 'access-tag' : selected.status === 'connected' ? 'ok' : ''"><h2>{{ selected.name }}</h2></ClientHeading>
             <p v-if="!selected.telegram" class="al">Нет Telegram. Материалы доступны ниже для ручной передачи.</p>
             <p v-if="!selected.allowed" class="al">Доступ запрещён или срок истёк. Профили недоступны.</p>
+            <p v-if="selected.delivery_error" class="al red" data-testid="delivery-error">{{ selected.delivery_error }}</p>
             <div class="sub"><h3>Девайсы {{ selected.devices.length }}</h3></div>
             <div class="devl scroll">
               <div v-for="dev in selected.devices" :key="dev.id" class="dev" data-testid="device-row">

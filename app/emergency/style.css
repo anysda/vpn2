@@ -9,6 +9,7 @@
 /* Red accent in both themes: the light theme of panel.css redefines --acc under [data-theme]. */
 :root,:root[data-theme]{--acc:var(--red)}
 .emergency-state{margin-bottom:18px}
+.delivery-errors{display:flex;flex-direction:column;gap:2px;color:var(--red-t2)}
 .hr .exn{color:var(--t2);font-size:13px}
 .lgsub{text-align:center;color:var(--red-t2);font-size:13px}
 .clp .thead,.clp .crow{grid-template-columns:minmax(0,1.6fr) .8fr 1fr}

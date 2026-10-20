@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve, join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -208,6 +208,75 @@ test('аварийная статика: общие компоненты, сос
     expect(requests.every(url => url.startsWith(origin))).toBe(true)
     expect(errors).toEqual([])
     console.log('Emergency UI: desktop/mobile, same retained component styles, local assets, role states, profiles and instructions OK')
+  }
+  finally {
+    await context.close()
+    fixture.stdin.end()
+    await new Promise<void>(done => fixture.once('exit', () => done()))
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+// Причина недоставки и состояние клиента без доступа. В одном файле с тестом выше:
+// оба собирают статику в один каталог, параллельные шарды затёрли бы её друг другу.
+test('аварийная панель: причина недоставки по клиенту, «Заблокирован» и «Срок истёк»', async ({ browser }, testInfo) => {
+  test.setTimeout(120_000)
+  execFileSync('node', ['node_modules/vite/bin/vite.js', 'build', '--config', 'emergency/vite.config.ts'], { cwd: process.cwd(), stdio: 'pipe' })
+  const directory = await mkdtemp(join(tmpdir(), 'emergency-delivery-'))
+  const shots = process.env.EMERGENCY_SHOTS || testInfo.outputPath('shots')
+  await mkdir(shots, { recursive: true })
+  await writeFile(join(directory, 'qr.png'), '')
+  const fixture = spawn('python3', [resolve('../infra/tests/emergency_web_fixture.py'), directory], { stdio: ['pipe', 'pipe', 'pipe'] })
+  fixture.stderr.resume()
+  const lines = createInterface({ input: fixture.stdout })[Symbol.asyncIterator]()
+  const startup = JSON.parse((await lines.next()).value!) as { port: number, password: string }
+  const context = await browser.newContext({ ignoreHTTPSErrors: true, extraHTTPHeaders: {}, viewport: { width: 1400, height: 1000 }, colorScheme: 'dark', reducedMotion: 'reduce' })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on('pageerror', (e) => { errors.push(e.message); console.log(`pageerror: ${e.message}`) })
+  async function action(name: string) {
+    fixture.stdin.write(`${JSON.stringify({ action: name })}\n`)
+    await lines.next()
+  }
+  async function shot(target: Page, name: string) {
+    await target.evaluate(() => Promise.all(document.getAnimations().filter(a => a.effect?.getTiming().iterations !== Infinity).map(a => a.finished.catch(() => undefined))))
+    await target.screenshot({ path: join(shots, name), fullPage: true })
+  }
+  try {
+    await action('refused')
+    await action('denied')
+    await page.goto(`https://127.0.0.1:${startup.port}`)
+    await page.getByLabel('Пароль', { exact: true }).fill(startup.password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    await expect(page.getByText('Возраст снимка:', { exact: false })).toBeVisible()
+    // Сводка называет клиентов с ошибкой и причину, а не только «Ошибок: N».
+    const summary = page.getByTestId('delivery-errors')
+    await expect(summary.locator('li')).toHaveText([
+      'e2e-Семён — Telegram ответил ошибкой 503, повтор автоматически',
+      'e2e-Анна — Не доставлено: чат не найден (Telegram 400), повтора не будет',
+    ])
+    const anna = page.getByTestId('client-row').filter({ hasText: 'e2e-Анна' })
+    await anna.click()
+    await expect(page.getByTestId('delivery-error')).toHaveText('Не доставлено: чат не найден (Telegram 400), повтора не будет')
+    await shot(page, 'emfix-538-desktop.png')
+    // Клиент без доступа: метка состояния вместо точки, как в основной панели.
+    for (const [name, text] of [['e2e-Блок', 'Заблокирован'], ['e2e-Истёк', 'Срок истёк']]) {
+      const row = page.getByTestId('client-row').filter({ hasText: name! })
+      await expect(row.locator('.tag.access-tag')).toHaveText(text!)
+      await expect(row.getByTestId('client-online')).toHaveCount(0)
+      await row.click()
+      await expect(page.getByTestId('client-detail').locator('.cdh .tag.access-tag')).toHaveText(text!)
+    }
+    await expect(page.getByText('Статус неизвестен')).toHaveCount(0)
+    await shot(page, 'emfix-539-desktop.png')
+    await page.setViewportSize({ width: 402, height: 874 })
+    await expect(page.getByTestId('client-row').filter({ hasText: 'e2e-Истёк' }).locator('.tag.access-tag')).toHaveText('Срок истёк')
+    await shot(page, 'emfix-538-mobile-list.png')
+    await anna.click()
+    await expect(page.getByTestId('delivery-error')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await shot(page, 'emfix-538-mobile-detail.png')
+    expect(errors).toEqual([])
   }
   finally {
     await context.close()

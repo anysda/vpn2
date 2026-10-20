@@ -88,11 +88,24 @@ const toList = () => stack.leave(urlOf())
 // Выбранный клиент: из ссылки ?id= (топ на Обзоре), иначе первый в списке.
 const selectedId = ref<number | null>(Number(route.query.id) || null)
 watch(() => route.query.id, (id) => { if (Number(id)) selectedId.value = Number(id) })
-watch(sorted, (list) => {
+/**
+ * Кого выбрать вместо пропавшего `id`: того, кто стоял под ним в прежнем списке
+ * и остался в новом, а если ниже никого - того, кто стоял над ним.
+ */
+function neighbor(id: number | null, before: readonly Client[], now: readonly Client[]) {
+  const at = before.findIndex(c => c.id === id)
+  const left = (c: Client) => now.some(n => n.id === c.id)
+  const near = at < 0 ? undefined : before.slice(at + 1).find(left) ?? before.slice(0, at).reverse().find(left)
+  return (near ?? now[0])?.id ?? null
+}
+// Единственное место, где выбор уходит с пропавшего клиента: удалён здесь (список
+// без него мог прийти раньше подтверждения удаления), другим админом или впервые
+// загружен список.
+watch(sorted, (list, before) => {
   // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
   if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
-  selectedId.value = list[0]?.id ?? null
+  selectedId.value = neighbor(selectedId.value, before ?? [], list)
   // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
   // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
   if (mobile.value && screen.value === 'client') void toList()
@@ -114,16 +127,10 @@ async function onCreated(id: number) {
   selectedId.value = id
 }
 
-// Клиент удалён здесь или другим админом (карточка получила 404): выбрать
-// соседа по списку, без тоста.
+// Клиент удалён здесь или другим админом (карточка получила 404): убрать его
+// из списка, без тоста; соседа выберет наблюдатель списка выше.
 async function onRemoved(id: number) {
-  const at = sorted.value.findIndex(c => c.id === id)
   if (!removed.value.includes(id)) removed.value = [...removed.value, id]
-  if (selectedId.value === id) {
-    if (mobile.value) void toList()
-    const rest = sorted.value
-    selectedId.value = rest[Math.min(Math.max(at, 0), rest.length - 1)]?.id ?? null
-  }
   await refreshClients()
 }
 

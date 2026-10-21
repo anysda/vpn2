@@ -156,7 +156,7 @@ ssh root@<entry-ip>
 **2. Скачать исходники.**
 
 ```bash
-git clone --branch dev https://github.com/anysda/vpn2 /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
 cd /opt/anysda-vpn2
 ```
 
@@ -182,8 +182,7 @@ cd /opt/anysda-vpn2
 Если сборка для свежего commit ещё идёт, deploy скажет об этом и ничего не
 изменит: подождите 10-15 минут и запустите снова.
 
-**Обновление**: новые исходники (`git pull` или `git checkout <тег выпуска>`),
-затем `./deploy.sh`.
+**Обновление**: `git pull`, затем `./deploy.sh`.
 
 `./deploy.sh --development` — отдельный режим разработки: разрешает
 плавающие теги и локальные правки без проверки сборки.

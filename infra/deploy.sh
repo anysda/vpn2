@@ -528,8 +528,8 @@ run_stage_on_host() {
   push "$DEPLOY_ROOT/lib/release.py" || return 1
   push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
   push "$DEPLOY_ROOT/lib/panel-transaction.sh" || return 1
-  if [[ -f "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" ]]; then
-    push "${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}" release-manifest.json || return 1
+  if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
+    push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
   fi
   push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
   local guard=''
@@ -1309,15 +1309,15 @@ usage() {
   cat <<EOF
 anysda-vpn2 — деплой
 
-  ./deploy.sh                              полный pipeline: prereqs → проверки → деплой
-  ./deploy.sh --manifest <file>             production: опубликованный манифест релиза
+  ./deploy.sh                              полный pipeline: манифест commit → prereqs → проверки → деплой
+  ./deploy.sh --manifest <file>             то же без сети: манифест сборки из файла
   ./deploy.sh --development [stage group]   явный режим разработки с локальными/плавающими образами
   ./deploy.sh <stage> <group>              запустить одну стадию на группу нод
   ./deploy.sh backup                       снять зашифрованный backup сейчас
   ./deploy.sh restore [<name>|latest] [--force] [--dry-run]
                                            восстановить из backup (default: latest)
   ./deploy.sh backup-list                  список доступных backup'ов
-  ./deploy.sh --manifest <file> recover    проверенный полный повтор после прерывания
+  ./deploy.sh recover                      проверенный полный повтор после прерывания
   ./deploy.sh rollback                    совместимый откат панели без отката данных
 
 Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |

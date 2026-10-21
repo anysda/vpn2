@@ -18,7 +18,7 @@ release_unlock() {
     wait "$VPN2_LOCK_PID" || true
   fi
   if [[ "$code" -ne 0 && "${VPN2_DEPLOY_MUTATING:-false}" == true ]]; then
-    echo 'deploy interrupted: operation journal retained; inspect services, then run rollback or --manifest <compatible-release> recover' >&2
+    echo 'deploy interrupted: operation journal retained; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)' >&2
   fi
   exit "$code"
 }
@@ -33,8 +33,12 @@ release_start() {
     for arg in "${@:2}"; do [[ "$arg" != --dry-run ]] || return 0; done
   fi
   if [[ "${VPN2_DEVELOPMENT:-false}" != true && "$action" != rollback ]]; then
-    VPN2_RELEASE_MANIFEST=${VPN2_RELEASE_MANIFEST:-$DEPLOY_ROOT/../release-manifest.json}
-    python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.."
+    # Без --manifest берётся опубликованный манифест commit этого дерева.
+    if [[ -z "${VPN2_RELEASE_MANIFEST:-}" ]]; then
+      VPN2_RELEASE_MANIFEST=$DEPLOY_ROOT/state/release-manifest.json
+      python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" fetch "$DEPLOY_ROOT/.." || exit 1
+    fi
+    python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.." || exit 1
   fi
   # The remote lock itself needs sshpass/ssh on a clean orchestrator.
   install_prereqs

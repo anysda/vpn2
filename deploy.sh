@@ -9,13 +9,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# Явный выбор разработки; остальные запуски требуют опубликованный манифест.
+# Явный выбор разработки; остальные запуски проверяются манифестом сборки:
+# по умолчанию опубликованным для commit дерева, --manifest - из файла (без сети).
 if [[ "${1:-}" == --development ]]; then
   export VPN2_DEVELOPMENT=true
   shift
 elif [[ "${1:-}" == --manifest ]]; then
   export VPN2_DEVELOPMENT=false
-  export VPN2_RELEASE_MANIFEST="$(realpath "${2:?manifest path required}")"
+  [[ -f "${2:-}" ]] || { echo "✗ --manifest <файл>: файл манифеста не найден: ${2:-}" >&2; exit 1; }
+  export VPN2_RELEASE_MANIFEST="$(realpath "$2")"
   shift 2
 fi
 

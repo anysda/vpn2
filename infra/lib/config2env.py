@@ -9,6 +9,7 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
 import base64
 import ipaddress
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -766,12 +767,18 @@ def main():
     admin_password = admin.get('password', '')  # пусто → auto-gen в 22-adguard
 
     panel_domain = cfg.get('panel', {}).get('domain', '')
-    # Образ панели. Пусто → дефолт стадии 30 (…/panel:dev). Пин нужен, когда на
-    # проде осознанно крутится не dev-линия: без него обычный прогон 30-frontend
-    # молча утащит панель обратно на :dev.
+    # Образы панели и бота из конфига - только для ./deploy.sh --development.
+    # Проверенный деплой берёт их по digest из манифеста commit; строка из
+    # прежней установки (…/panel:1.0.0) не должна валить обновление.
     panel_image = cfg.get('panel', {}).get('image', '')
-    # Образ бота — то же для стадии 35-telegram (…/tgbot:dev).
     tgbot_image = cfg.get('tgbot', {}).get('image', '')
+    if os.environ.get('VPN2_DEVELOPMENT') != 'true':
+        for key, value in (('panel.image', panel_image), ('tgbot.image', tgbot_image)):
+            if value:
+                # stdout: внутренние перегенерации deploy глушат его, предупреждение одно.
+                print(f'config2env: {key}: {value} не используется - образ берётся из манифеста '
+                      'сборки по digest; строку можно удалить (нужна только для --development)')
+        panel_image = tgbot_image = ''
 
     lines = [
         "HOST_TAG='ru'",

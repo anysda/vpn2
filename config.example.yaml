@@ -68,12 +68,10 @@ admin:
 # panel:
 #   domain: vpn.example.com
 #   image: ghcr.io/anysda/vpn2/panel:dev   # только ./deploy.sh --development
-# Production: ./deploy.sh --manifest release-manifest.json. Образ выбирается
-# из опубликованного CI-манифеста по digest. Явно заданный image тоже обязан
-# совпадать с ним; одно совпадение имени локального тега не принимается.
+# Обычный ./deploy.sh берёт образы панели и бота по digest из манифеста
+# сборки commit дерева, image из конфига при этом не используется.
 
-# Образ Telegram-бота (опционально): в production проверяется по манифесту,
-# в явном режиме --development допускается dev-тег.
+# Образ Telegram-бота: так же, только для --development.
 # tgbot:
 #   image: ghcr.io/anysda/vpn2/tgbot:dev
 

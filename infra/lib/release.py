@@ -12,7 +12,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
 import urllib.request
+
+# CI publishes each images build's manifest next to the panel image, tagged
+# release-<full commit>: the package is public, anonymous pull needs no account.
+RELEASE_SOURCE = 'https://ghcr.io/anysda/vpn2/panel'
+MANIFEST_MEDIA_TYPE = 'application/vnd.anysda.vpn2.release-manifest.v1+json'
 
 
 class ReleaseError(Exception):
@@ -42,12 +49,8 @@ def load(path):
     try:
         manifest = read_json(path)
     except FileNotFoundError as exc:
-        raise ReleaseError(
-            'release manifest not found; download release-<commit> from a successful images workflow '
-            '(GitHub login required), checkout that commit and run '
-            './deploy.sh --manifest <path>/release-manifest.json; '
-            'see README.md Quickstart step 2. For development only: ./deploy.sh --development'
-        ) from exc
+        raise ReleaseError(f'release manifest not found: {path}. ./deploy.sh without flags downloads '
+                           'the manifest of the checked-out commit; --manifest is only for work without network') from exc
     if manifest.get('format') != 1 or not re.fullmatch(r'[a-f0-9]{40}', manifest['commit']):
         raise ReleaseError('unsupported release manifest')
     if manifest['rollback'] not in ('backward-compatible', 'forward-only'):
@@ -156,8 +159,101 @@ def source_files(root):
 
 
 def validate_source(manifest, root):
-    if source_files(Path(root)) != manifest['stages']:
-        raise ReleaseError('release stages/migrations do not match manifest; use matching source checkout')
+    actual = source_files(Path(root))
+    if actual != manifest['stages']:
+        changed = sorted(path for path in set(actual) | set(manifest['stages'])
+                         if actual.get(path) != manifest['stages'].get(path))
+        listed = ', '.join(changed[:5]) + (f' и ещё {len(changed) - 5}' if len(changed) > 5 else '')
+        raise ReleaseError(f'стадии и миграции дерева не совпадают с проверенной сборкой '
+                           f'{manifest["commit"][:12]}: {listed}. Верните файлы (git status, git stash) '
+                           'или для разработки: ./deploy.sh --development')
+
+
+def git(root, *args):
+    # The checkout is the code deploy is about to run: trusting its owner is no new risk.
+    return subprocess.run(['git', '-c', f'safe.directory={root}', '-C', str(root), *args],
+                          capture_output=True, text=True, timeout=30)
+
+
+def registry_read(source, path, accept):
+    """GET from an OCI registry; an anonymous pull token is fetched when asked for."""
+    url = urllib.parse.urlsplit(source)
+    repository = url.path.strip('/')
+    request = urllib.request.Request(f'{url.scheme}://{url.netloc}/v2/{repository}/{path}',
+                                     headers={'Accept': accept})
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.read(1 << 20)
+    except urllib.error.HTTPError as error:
+        challenge = error.headers.get('WWW-Authenticate', '')
+        if error.code != 401 or not challenge.lower().startswith('bearer '):
+            raise
+        params = dict(re.findall(r'(\w+)="([^"]*)"', challenge))
+    query = urllib.parse.urlencode({'service': params.get('service', ''),
+                                    'scope': params.get('scope', f'repository:{repository}:pull')})
+    with urllib.request.urlopen(params['realm'] + '?' + query, timeout=60) as response:
+        token = json.load(response)
+    request.add_header('Authorization', 'Bearer ' + (token.get('token') or token['access_token']))
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return response.read(1 << 20)
+
+
+def fetch(root, output, source):
+    """Download the manifest of the checked-out commit; explain what to do if absent."""
+    try:
+        head = git(root, 'rev-parse', '--verify', 'HEAD^{commit}')
+    except OSError:
+        head = None
+    if head is None or head.returncode:
+        raise ReleaseError('commit дерева не определить: нет git или каталог не из git clone. '
+                           'Поставьте по README (git clone), без сети: ./deploy.sh --manifest <файл>')
+    commit = head.stdout.strip()
+    host = urllib.parse.urlsplit(source).netloc
+    try:
+        oci = json.loads(registry_read(source, 'manifests/release-' + commit,
+                                       'application/vnd.oci.image.manifest.v1+json'))
+        layer = next(item for item in oci['layers'] if item['mediaType'] == MANIFEST_MEDIA_TYPE)
+        blob = registry_read(source, 'blobs/' + digest(layer['digest']), MANIFEST_MEDIA_TYPE)
+    except urllib.error.HTTPError as error:
+        if error.code not in (403, 404):
+            raise ReleaseError(f'{host} ответил {error.code} на запрос манифеста commit {commit[:12]}; '
+                               'повторите ./deploy.sh позже') from None
+        published = git(root, 'for-each-ref', '--count=1', '--contains', commit, 'refs/remotes', 'refs/tags')
+        if published.returncode == 0 and not published.stdout.strip():
+            hint = ('этот commit есть только в вашем дереве (свои коммиты). Вернитесь к опубликованному: '
+                    'git checkout <ветка или тег>')
+        else:
+            hint = ('сборка images для него ещё идёт или не прошла. Подождите 10-15 минут и повторите '
+                    './deploy.sh, либо git checkout предыдущего проверенного commit')
+        raise ReleaseError(f'манифест commit {commit[:12]} не опубликован: {hint}. '
+                           'Для разработки без проверки: ./deploy.sh --development') from None
+    except (urllib.error.URLError, OSError) as error:
+        reason = getattr(error, 'reason', error)
+        cached = Path(output)
+        try:
+            if read_json(cached).get('commit') == commit:
+                print(f'release: {host} недоступен ({reason}), беру манифест commit {commit[:12]}, '
+                      'скачанный раньше', file=sys.stderr)
+                return
+        except (OSError, ValueError):
+            pass
+        raise ReleaseError(f'не удалось скачать манифест commit {commit[:12]} с {host}: {reason}. '
+                           'Проверьте сеть и DNS и повторите ./deploy.sh; без сети: '
+                           './deploy.sh --manifest <файл>') from None
+    except (ValueError, KeyError, TypeError, StopIteration):
+        raise ReleaseError(f'{host}: публикация release-{commit} не похожа на манифест сборки') from None
+    if 'sha256:' + hashlib.sha256(blob).hexdigest() != layer['digest']:
+        raise ReleaseError(f'{host}: манифест commit {commit[:12]} повреждён при загрузке (digest не совпал)')
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=Path(output).parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(blob)
+        if load(temporary)['commit'] != commit:
+            raise ReleaseError(f'{host}: release-{commit[:12]} содержит манифест другого commit')
+        os.replace(temporary, output)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def main():
@@ -166,21 +262,28 @@ def main():
     sub = parser.add_subparsers(dest='action', required=True)
     check = sub.add_parser('check')
     check.add_argument('root')
+    download = sub.add_parser('fetch')
+    download.add_argument('root')
+    download.add_argument('--source', default=os.environ.get('VPN2_RELEASE_SOURCE') or RELEASE_SOURCE)
     img = sub.add_parser('image')
     img.add_argument('component', choices=('panel', 'tgbot', 'emergency'))
     img.add_argument('--requested', default='')
     img.add_argument('--offline', action='store_true')
-    fetch = sub.add_parser('artifact')
-    fetch.add_argument('name')
-    fetch.add_argument('destination')
-    fetch.add_argument('--cache', default='/var/cache/vpn2-release')
-    fetch.add_argument('--url')
+    art = sub.add_parser('artifact')
+    art.add_argument('name')
+    art.add_argument('destination')
+    art.add_argument('--cache', default='/var/cache/vpn2-release')
+    art.add_argument('--url')
     args = parser.parse_args()
     try:
+        if args.action == 'fetch':
+            fetch(args.root, args.manifest, args.source)
+            return 0
         manifest = load(args.manifest)
         if args.action == 'check':
             validate_source(manifest, args.root)
-            print('release source: verified')
+            print(f'release: манифест commit {manifest["commit"]} (версия {manifest["version"]}) '
+                  'проверен, стадии и миграции совпадают')
         elif args.action == 'image':
             print(image(manifest, args.component, args.requested, not args.offline))
         else:
@@ -189,7 +292,10 @@ def main():
             artifact(manifest, args.name, args.cache, args.destination)
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         message = str(error) if isinstance(error, ReleaseError) else type(error).__name__
-        print('release: ' + message + '; no unverified artifact accepted', file=sys.stderr)
+        if args.action in ('fetch', 'check'):
+            print('✗ ' + message, file=sys.stderr)
+        else:
+            print('release: ' + message + '; no unverified artifact accepted', file=sys.stderr)
         return 1
     return 0
 

@@ -2,6 +2,7 @@
 """Host-side deploy lock, preflight, WAL-safe snapshots and compatibility checks."""
 
 import argparse
+from contextlib import closing
 import fcntl
 import json
 import os
@@ -34,7 +35,7 @@ def atomic_json(path, data):
 def schema(database):
     if not Path(database).exists():
         return []
-    with sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True) as connection:
+    with closing(sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True)) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if '__drizzle_migrations' not in tables:
             if tables:
@@ -104,11 +105,11 @@ def backup(database, destination, paths):
     checksums = {}
     if Path(database).exists():
         copy = destination / 'db.sqlite'
-        with sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True) as source:
-            with sqlite3.connect(copy) as target:
-                source.backup(target)
-                if target.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
-                    raise ReleaseError('backup integrity check failed')
+        with closing(sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True)) as source, \
+                closing(sqlite3.connect(copy)) as target:
+            source.backup(target)
+            if target.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
+                raise ReleaseError('backup integrity check failed')
         os.chmod(copy, 0o600)
         checksums['db.sqlite'] = sha256(copy)
     archive = destination / 'configuration.tar'
@@ -135,7 +136,7 @@ def verify_backup(destination):
             raise ReleaseError('backup checksum failed')
     database = destination / 'db.sqlite'
     if database.exists():
-        with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as connection:
             if connection.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
                 raise ReleaseError('backup is not readable')
 

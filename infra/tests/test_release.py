@@ -1,4 +1,6 @@
 """Release acceptance checks. VPN2_TEST_ROOT selects the unchanged baseline."""
+from contextlib import closing
+import gc
 import hashlib
 import importlib.util
 import io
@@ -14,6 +16,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+import warnings
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -345,7 +348,7 @@ panel_rollback
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             database = work / 'live.sqlite'
-            with sqlite3.connect(database) as live:
+            with closing(sqlite3.connect(database)) as live, live:
                 live.execute('PRAGMA journal_mode=WAL')
                 live.execute('PRAGMA wal_autocheckpoint=0')
                 live.execute('CREATE TABLE access(id INTEGER, allowed INTEGER)')
@@ -353,7 +356,7 @@ panel_rollback
                 live.commit()
                 self.assertGreater(Path(str(database) + '-wal').stat().st_size, 0)
                 state.backup(database, work / 'snapshot', [])
-                with sqlite3.connect(work / 'snapshot/db.sqlite') as copy:
+                with closing(sqlite3.connect(work / 'snapshot/db.sqlite')) as copy, copy:
                     self.assertEqual(copy.execute('SELECT * FROM access').fetchall(), [(1, 0)])
                 state.verify_backup(work / 'snapshot')
             print('SQLite backup: committed WAL included; integrity_check=ok')
@@ -384,7 +387,7 @@ panel_rollback
         keep = getattr(state, 'KEEP_BACKUPS', 3)
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
-            with sqlite3.connect(work / 'db.sqlite') as db:
+            with closing(sqlite3.connect(work / 'db.sqlite')) as db, db:
                 db.execute('CREATE TABLE access(id INTEGER)')
             run = self.journal_runner(state, work)
             deploy, panel = work / 'deploy', work / 'deploy/panel'
@@ -520,7 +523,7 @@ panel_begin
         state = module('deploy_state')
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / 'db.sqlite'
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute('CREATE TABLE __drizzle_migrations (hash TEXT, created_at INTEGER)')
                 db.execute("INSERT INTO __drizzle_migrations VALUES ('new', 2)")
             contract = {'journal': [{'sha256': 'old', 'when': 1}], 'min': 1, 'max': 1}
@@ -534,7 +537,7 @@ panel_begin
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             database = work / 'db.sqlite'
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.executescript('CREATE TABLE devices(id INTEGER, allowed INTEGER, expires_at INTEGER);'
                                  'INSERT INTO devices VALUES (1,0,1); INSERT INTO devices VALUES (2,1,9999999999);'
                                  'CREATE TABLE operations(id INTEGER, status TEXT); INSERT INTO operations VALUES(1,"pending");')
@@ -604,13 +607,30 @@ panel_rollback
             release.load(path)
         print('manifest: new migration -> forward-only; same schema -> backward-compatible')
 
+    def test_journal_closes_sqlite_connections(self):
+        # An unclosed connection warns at a random garbage collection and lands in
+        # captured deploy output (preflight warning checks above).
+        state = module('deploy_state')
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            with closing(sqlite3.connect(work / 'db.sqlite')) as db, db:
+                db.execute('CREATE TABLE __drizzle_migrations (hash TEXT, created_at INTEGER)')
+            gc.collect()
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always', ResourceWarning)
+                state.schema(work / 'db.sqlite')
+                state.backup(work / 'db.sqlite', work / 'backup', [])
+                gc.collect()
+            self.assertEqual([str(w.message) for w in caught if w.category is ResourceWarning], [])
+        print('deploy journal: sqlite connections closed after schema, backup and verification')
+
     def test_deploy_warns_before_migration_that_closes_rollback(self):
         state = module('deploy_state')
         release = module('release')
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             database = work / 'db.sqlite'
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 db.execute('CREATE TABLE __drizzle_migrations (hash TEXT, created_at INTEGER)')
                 db.execute("INSERT INTO __drizzle_migrations VALUES ('a', 1)")
             (work / 'os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
@@ -645,12 +665,12 @@ panel_rollback
             for _ in range(2):
                 run = subprocess.run(['node', str(migration)], cwd=ROOT / 'app', env=env, capture_output=True, text=True, timeout=30)
                 self.assertEqual(run.returncode, 0, run.stderr)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 count = db.execute('SELECT count(*) FROM __drizzle_migrations').fetchone()[0]
                 db.execute("INSERT INTO __drizzle_migrations(hash,created_at) VALUES ('future',9999999999999)")
             run = subprocess.run(['node', str(migration)], cwd=ROOT / 'app', env=env, capture_output=True, text=True, timeout=30)
             self.assertNotEqual(run.returncode, 0)
-            with sqlite3.connect(database) as db:
+            with closing(sqlite3.connect(database)) as db, db:
                 self.assertEqual(db.execute('SELECT count(*) FROM __drizzle_migrations').fetchone()[0], count + 1)
             print('migration executor: repeat is idempotent; future history rejected without writes')
 

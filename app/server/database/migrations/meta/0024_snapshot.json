@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "110ecae4-828b-4e36-8ec2-bba35a731e80",
+  "id": "f3cbcd28-d8cc-4458-8b0c-3e395db2003b",
   "prevId": "9f22957a-f729-422d-9baf-0bcdebb4829e",
   "tables": {
     "access_operations": {
@@ -539,6 +539,52 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
+    "device_requests": {
+      "name": "device_requests",
+      "columns": {
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "device_id": {
+          "name": "device_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s','now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "device_traffic_hourly": {
       "name": "device_traffic_hourly",
       "columns": {
@@ -727,20 +773,6 @@
           "autoincrement": false,
           "default": 0
         },
-        "idempotency_key": {
-          "name": "idempotency_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "request_hash": {
-          "name": "request_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -759,13 +791,6 @@
         }
       },
       "indexes": {
-        "devices_idempotency_key_unique": {
-          "name": "devices_idempotency_key_unique",
-          "columns": [
-            "idempotency_key"
-          ],
-          "isUnique": true
-        },
         "devices_client_idx": {
           "name": "devices_client_idx",
           "columns": [

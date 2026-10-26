@@ -162,10 +162,6 @@ export const devices = sqliteTable('devices', {
   // Копит фоновый сборщик (server/utils/traffic-collector.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),
-  // Idempotency-Key запроса создания: повтор с тем же ключом отдаёт это
-  // устройство, с другим телом (request_hash) — отказ.
-  idempotencyKey: text('idempotency_key').unique(),
-  requestHash: text('request_hash'),
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),
@@ -179,6 +175,21 @@ export const devices = sqliteTable('devices', {
   // параллельных создания брали один и тот же (VPN2-70).
   uniqueIndex('devices_ikev2_username_unique').on(table.ikev2Username),
 ])
+
+/**
+ * Idempotency-Key запросов создания устройства. Нет каскада: ключ переживает
+ * удаление устройства и клиента, повтор после удаления получает отказ, а не
+ * новое устройство. С другим телом (request_hash) или клиентом — отказ.
+ */
+export const deviceRequests = sqliteTable('device_requests', {
+  idempotencyKey: text('idempotency_key').primaryKey(),
+  requestHash: text('request_hash').notNull(),
+  clientId: integer('client_id').notNull(),
+  deviceId: integer('device_id').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' })
+    .notNull()
+    .default(sql`(strftime('%s','now'))`),
+})
 
 /**
  * Почасовой трафик девайса (WG+OpenVPN+IKEv2), байты. Наполняет тот же сборщик,

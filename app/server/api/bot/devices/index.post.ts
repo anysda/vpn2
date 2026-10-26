@@ -4,7 +4,7 @@ import { ensureDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
 import { readBodyAs } from '../../../utils/validate'
-import { createDeviceWithAddresses } from '../../../utils/create-device'
+import { createDeviceWithAddresses, deviceRequestKey } from '../../../utils/create-device'
 
 const Body = z.object({
   chatId: z.number().int(),
@@ -18,11 +18,12 @@ export default defineEventHandler(async (event) => {
   const client = await clientByChat(body.chatId)
 
   const name = body.name.trim()
+  const idempotency = deviceRequestKey(event, { source: 'bot', chatId: body.chatId, name })
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
   // Привязку и лимит перепроверяем в транзакции вставки: пока шли await,
   // администратор мог отозвать бота или снизить лимит.
-  const device = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
+  const { device } = await createDeviceWithAddresses(client.id, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
     if (fresh.tgChatId !== body.chatId) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
     if (names.includes(name)) {
       throw createError({ statusCode: 409, statusMessage: 'device_exists', message: 'Девайс с таким названием уже есть' })
@@ -30,7 +31,7 @@ export default defineEventHandler(async (event) => {
     if (fresh.deviceLimit != null && names.length >= fresh.deviceLimit) {
       throw createError({ statusCode: 409, statusMessage: 'device_limit', message: 'Достигнут лимит устройств — обратитесь к администратору' })
     }
-  })
+  }, idempotency)
   if (cfg.wgEnabled) {
     await ensureDeviceWg(device.id).catch(err => useLogger().error({ err }, 'bot: ensureDeviceWg failed'))
   }

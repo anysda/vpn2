@@ -9,7 +9,7 @@ import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
 import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 import { readBodyAs } from '../../../../utils/validate'
-import { createDeviceWithAddresses } from '../../../../utils/create-device'
+import { createDeviceWithAddresses, deviceRequestKey } from '../../../../utils/create-device'
 
 const Body = z.object({ name: z.string().trim().min(1).max(64) })
 
@@ -25,13 +25,14 @@ export default defineEventHandler(async (event) => {
   if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
   const name = body.name.trim()
+  const idempotency = deviceRequestKey(event, { source: 'panel', clientId, name })
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
   // Лимит берётся из строки клиента внутри транзакции вставки: прочитанный
   // выше мог устареть, пока шли await (параллельный PATCH лимита). Оттуда
   // же адресат уведомления: бота могли отвязать.
   let owner = client
-  const device = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
+  const { device, replay } = await createDeviceWithAddresses(clientId, name, { wg: cfg.wgEnabled, ovpn: ovpnReady }, (names, fresh) => {
     owner = fresh
     if (names.includes(name)) {
       throw createError({ statusCode: 409, statusMessage: 'device_exists', message: `Девайс «${name}» у клиента уже есть` })
@@ -39,7 +40,7 @@ export default defineEventHandler(async (event) => {
     if (fresh.deviceLimit != null && names.length >= fresh.deviceLimit) {
       throw createError({ statusCode: 409, statusMessage: 'device_limit', message: `Достигнут лимит девайсов (${fresh.deviceLimit})` })
     }
-  })
+  }, idempotency)
 
   // Сразу минтим ключи, чтобы девайс был готов к выдаче конфигов.
   if (cfg.wgEnabled) {
@@ -55,7 +56,8 @@ export default defineEventHandler(async (event) => {
 
   // Уведомить привязанного клиента — устройство добавил администратор.
   // Устройство уже создано: сбой очереди бота — предупреждение, не ошибка.
-  const warning = owner.tgChatId
+  // Повтор по ключу идемпотентности клиента уже уведомил.
+  const warning = !replay && owner.tgChatId
     ? await notifyWarning(notifyClient(
         owner.tgChatId,
         `➕ Администратор добавил вам устройство «${name}». `

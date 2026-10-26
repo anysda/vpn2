@@ -162,6 +162,10 @@ export const devices = sqliteTable('devices', {
   // Копит фоновый сборщик (server/utils/traffic-collector.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),
+  // Idempotency-Key запроса создания: повтор с тем же ключом отдаёт это
+  // устройство, с другим телом (request_hash) — отказ.
+  idempotencyKey: text('idempotency_key').unique(),
+  requestHash: text('request_hash'),
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),

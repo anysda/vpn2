@@ -169,6 +169,13 @@
       "when": 1792345406639,
       "tag": "0023_admin_config_password",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792999214068,
+      "tag": "0024_device_idempotency",
+      "breakpoints": true
     }
   ]
 }

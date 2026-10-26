@@ -1,5 +1,6 @@
 import { expect, test, toast, uniq } from './support/fixtures'
 import { clientCard, clientName, createClientUi, nextYear, openClient, openHome } from './support/clients'
+import { rects } from './support/geometry'
 
 test.describe('клиенты', () => {
   test('«Отмена» в форме нового клиента ничего не создаёт', async ({ page }) => {
@@ -118,9 +119,8 @@ test.describe('рассылка под списком клиентов', () => {
     const card = page.locator('.ov-broadcast')
     await expect(card.getByRole('heading', { name: 'Рассылка от бота', exact: true })).toBeVisible()
     // В колонке списка ниже самого списка, не в карточке клиента.
-    const list = page.locator('.ccol .clist')
-    const [listBox, cardBox] = [await list.boundingBox(), await card.boundingBox()]
-    expect(cardBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height)
+    const [listBox, cardBox] = await rects(page, '.ccol .clist', '.ccol .ov-broadcast')
+    expect(cardBox.y).toBeGreaterThanOrEqual(listBox.y + listBox.height)
     await expect(page.locator('.ccol .ov-broadcast')).toHaveCount(1)
     await expect(page.getByTestId('client-detail').locator('.ov-broadcast')).toHaveCount(0)
   })

@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test'
 import { expect, NODES, test, toast } from './support/fixtures'
 import { openHome } from './support/clients'
+import { rects } from './support/geometry'
 import { noHorizontalOverflow } from './support/overflow'
 import { orderBreaks } from './support/order'
 import { wordBreaks } from './support/words'
@@ -23,12 +24,6 @@ async function settled(page: Page) {
     .every(a => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity))
 }
 
-async function box(page: Page, sel: string) {
-  const b = await page.locator(sel).first().boundingBox()
-  expect(b, sel).not.toBeNull()
-  return b!
-}
-
 // опрос нод может прийти в подмену, когда страница уже закрывается
 test.afterEach(({ page }) => page.unrouteAll({ behavior: 'ignoreErrors' }))
 
@@ -47,10 +42,8 @@ for (const width of [360, 402]) {
       await noHorizontalOverflow(page, `Обзор ${width}`)
 
       // сверху вниз: события, ноды, выходы и DNS в одном ряду, трафик, активность, топ, клиенты
-      const ev = await box(page, '.ov .ev'), nodes = await box(page, '.ov-nodes')
-      const ex = await box(page, '.ov-exits'), dns = await box(page, '.ov-dns')
-      const wave = await box(page, '.ov-wave'), act = await box(page, '.ov-activity')
-      const top = await box(page, '.ov-top'), cl = await box(page, '.ov-clients')
+      const [ev, nodes, ex, dns, wave, act, top, cl] = await rects(page,
+        '.ov .ev', '.ov-nodes', '.ov-exits', '.ov-dns', '.ov-wave', '.ov-activity', '.ov-top', '.ov-clients')
       expect(ev.y).toBeLessThan(nodes.y)
       expect(nodes.y).toBeLessThan(ex.y)
       expect(dns.y).toBe(ex.y)
@@ -59,14 +52,12 @@ for (const width of [360, 402]) {
       expect(ex.y).toBeLessThan(wave.y)
 
       // ноды парами, карточка 184
-      const cards = page.locator('.ov-nodes .node')
-      const [a, b] = [(await cards.nth(0).boundingBox())!, (await cards.nth(1).boundingBox())!]
+      const [a, b] = await rects(page, '.ov-nodes > .node:nth-child(1)', '.ov-nodes > .node:nth-child(2)')
       expect(b.y).toBe(a.y)
       expect(Math.round(a.height)).toBe(184)
       // клиенты онлайн и офлайн рядом
-      const minis = page.locator('.ov-clients .mini')
-      const [m1, m2] = [await minis.nth(0).boundingBox(), await minis.nth(1).boundingBox()]
-      expect(m2!.y).toBe(m1!.y)
+      const [m1, m2] = await rects(page, '.ov-clients > .mini:nth-child(1)', '.ov-clients > .mini:nth-child(2)')
+      expect(m2.y).toBe(m1.y)
     })
   }
 }
@@ -89,10 +80,9 @@ test('нечётное число нод: entry на всю ширину, экз
   await expect(node(page, exits[2]!)).toHaveCount(0)
   await expect(node(page, 'ru')).toBeVisible()
   await settled(page)
-  const grid = await box(page, '.ov-nodes'), ru = await box(page, '.ov-nodes .node[data-tag="ru"]')
+  const [grid, ru, a, b] = await rects(page, '.ov-nodes', '.ov-nodes .node[data-tag="ru"]',
+    `.ov-nodes .node[data-tag="${exits[0]}"]`, `.ov-nodes .node[data-tag="${exits[1]}"]`)
   expect(Math.round(ru.width)).toBe(Math.round(grid.width))
-  const a = await box(page, `.ov-nodes .node[data-tag="${exits[0]}"]`)
-  const b = await box(page, `.ov-nodes .node[data-tag="${exits[1]}"]`)
   expect(b.y).toBe(a.y)
   expect(a.y).toBeGreaterThan(ru.y)
 })
@@ -106,9 +96,10 @@ test('тап по ноде — шторка с сеткой 3×3 и спаркл
   const cells = sh.locator('.mgrid > div')
   await expect(cells).toHaveCount(9)
   await settled(page)
-  const [c1, c3, c4] = [await cells.nth(0).boundingBox(), await cells.nth(2).boundingBox(), await cells.nth(3).boundingBox()]
-  expect(c3!.y).toBe(c1!.y)
-  expect(c4!.y).toBeGreaterThan(c1!.y)
+  const cell = (n: number) => `[role="dialog"][aria-label="Entry"] .mgrid > div:nth-child(${n})`
+  const [c1, c3, c4] = await rects(page, cell(1), cell(3), cell(4))
+  expect(c3.y).toBe(c1.y)
+  expect(c4.y).toBeGreaterThan(c1.y)
   expect(Math.round((await sh.locator('.msp').boundingBox())!.height)).toBe(70)
   await noHorizontalOverflow(page, 'шторка ноды')
   await page.locator('.bso.on').tap({ position: { x: 40, y: 40 } })

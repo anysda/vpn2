@@ -1,14 +1,14 @@
 import type { Page } from '@playwright/test'
 import { expect, test } from './support/fixtures'
 import { openHome } from './support/clients'
+import { rects } from './support/geometry'
 import { noHorizontalOverflow } from './support/overflow'
 import { TAB_PAGES } from '../app/utils/tab-pages'
 
 /** Верх шапки и низ таб-бара в окне: после прокрутки они должны остаться там же. */
 async function chrome(page: Page) {
-  const head = await page.locator('.wrap>header').boundingBox()
-  const bar = await page.locator('.mbar nav').boundingBox()
-  return { head: head?.y, bar: bar && Math.round(bar.y + bar.height) }
+  const [head, bar] = await rects(page, '.wrap>header', '.mbar nav')
+  return { head: head.y, bar: Math.round(bar.y + bar.height) }
 }
 
 /** Шторка открыта и закрывается тапом по оверлею над ней. */

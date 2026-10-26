@@ -9,7 +9,7 @@ import { caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../../utils/ikev2'
 import { syncClientPrefsFile } from '../../../../utils/client-prefs'
 import { readBodyAs } from '../../../../utils/validate'
-import { createDeviceWithAddresses, deviceRequestKey } from '../../../../utils/create-device'
+import { createDeviceWithAddresses, deviceRequestKey, rejectDeletedDeviceRepeat } from '../../../../utils/create-device'
 
 const Body = z.object({ name: z.string().trim().min(1).max(64) })
 
@@ -19,13 +19,13 @@ export default defineEventHandler(async (event) => {
   const clientId = Number(getRouterParam(event, 'id'))
   if (!Number.isFinite(clientId)) throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   const body = await readBodyAs(event, Body)
-  const db = useDb()
-
-  const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
-  if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
   const name = body.name.trim()
   const idempotency = deviceRequestKey(event, { source: 'panel', clientId, name })
+  await rejectDeletedDeviceRepeat(idempotency)
+
+  const [client] = await useDb().select().from(clients).where(eq(clients.id, clientId)).limit(1)
+  if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
   // Лимит берётся из строки клиента внутри транзакции вставки: прочитанный

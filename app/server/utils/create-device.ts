@@ -17,6 +17,24 @@ export function deviceRequestKey(event: H3Event, request: Record<string, unknown
 }
 
 /**
+ * Повтор известного ключа, чьё устройство удалено или удаляется, — 410 до
+ * поиска владельца: клиента после удаления уже нет, а повтору нужен ответ
+ * «устройство удалено», не «клиента нет». Совпадение отпечатка — тот же
+ * запрос (в нём клиент панели или чат бота). Живое устройство, чужой
+ * отпечаток и неизвестный ключ идут обычным путём с проверками владельца.
+ */
+export async function rejectDeletedDeviceRepeat(idempotency?: { key: string, hash: string }) {
+  if (!idempotency) return
+  const db = useDb()
+  const [done] = await db.select().from(deviceRequests).where(eq(deviceRequests.idempotencyKey, idempotency.key))
+  if (!done || done.requestHash !== idempotency.hash) return
+  const [device] = await db.select({ deleting: devices.deleting }).from(devices).where(eq(devices.id, done.deviceId))
+  if (!device || device.deleting) {
+    throw createError({ statusCode: 410, statusMessage: 'device_deleted', message: 'Устройство по этому запросу уже удалено' })
+  }
+}
+
+/**
  * Проверка имени и лимита, всех пулов и резервирование — одна write-транзакция,
  * до выпуска ключей: параллельные запросы видят устройства друг друга.
  * guard получает имена устройств клиента и его строку, прочитанные в этой же

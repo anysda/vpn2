@@ -4,7 +4,7 @@ import { ensureDeviceWg, syncWireguardConfig } from '../../../utils/wireguard'
 import { caReady, ensureDeviceOvpn } from '../../../utils/openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from '../../../utils/ikev2'
 import { readBodyAs } from '../../../utils/validate'
-import { createDeviceWithAddresses, deviceRequestKey } from '../../../utils/create-device'
+import { createDeviceWithAddresses, deviceRequestKey, rejectDeletedDeviceRepeat } from '../../../utils/create-device'
 
 const Body = z.object({
   chatId: z.number().int(),
@@ -15,10 +15,11 @@ const Body = z.object({
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const body = await readBodyAs(event, Body)
-  const client = await clientByChat(body.chatId)
-
   const name = body.name.trim()
   const idempotency = deviceRequestKey(event, { source: 'bot', chatId: body.chatId, name })
+  await rejectDeletedDeviceRepeat(idempotency)
+  const client = await clientByChat(body.chatId)
+
   const cfg = useRuntimeConfig()
   const ovpnReady = cfg.ovpnEnabled && await caReady()
   // Привязку и лимит перепроверяем в транзакции вставки: пока шли await,

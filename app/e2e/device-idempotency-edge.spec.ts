@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { X509Certificate, randomUUID } from 'node:crypto'
 import type { APIRequestContext } from '@playwright/test'
 import { expect, loginApi, test, uniq } from './support/fixtures'
 import { waitAccess } from './support/access'
-import { container, inside } from './support/openvpn-ca'
+import { container, fault, inside, restore, rows } from './support/openvpn-ca'
 
 /**
  * Края ключа идемпотентности при создании устройства: ключ переживает
@@ -22,7 +22,7 @@ async function devices(api: APIRequestContext, clientId: number) {
   return (await r.json()).devices as { id: number, name: string }[]
 }
 
-type BotReply = { status: number, body: { devices?: { id: number, name: string }[] } }
+type BotReply = { status: number, body: { devices?: { id: number, name: string }[], statusMessage?: string } }
 
 function bot(path: string, payload: unknown, key?: string): BotReply {
   return JSON.parse(inside(`
@@ -105,4 +105,145 @@ test.describe('ключ идемпотентности создания устр
     expect(again.status).toBeLessThan(500)
     expect((await devices(page.request, b)).map(d => d.id)).not.toContain(phoneOfA!.id)
   })
+
+  test('панель: повтор ключа после удаления клиента — 410 device_deleted', async ({ page }) => {
+    const clientId = await newClient(page.request)
+    created.push(clientId)
+    const key = randomUUID()
+    const add = () => page.request.post(`/api/clients/${clientId}/devices`, {
+      data: { name: 'phone' },
+      headers: { 'idempotency-key': key },
+    })
+
+    const first = await add()
+    expect(first.status(), await first.text()).toBe(200)
+    await removeClient(page.request, clientId)
+    const before = await everyone(page.request)
+
+    const again = await add()
+    expect(again.status(), await again.text()).toBe(410)
+    expect((await again.json()).statusMessage).toBe('device_deleted')
+    expect(await everyone(page.request)).toEqual(before)
+    expect((await page.request.get(`/api/clients/${clientId}`)).status()).toBe(404)
+  })
+
+  test('бот: повтор ключа после удаления клиента — 410 device_deleted', async ({ page }) => {
+    test.skip(!container, 'loopback ручки бота есть только в одноразовом контейнере run-local.sh')
+    const clientId = await newClient(page.request)
+    created.push(clientId)
+    const chatId = 910000 + clientId
+    const key = randomUUID()
+
+    linkChat(clientId, chatId)
+    const first = bot('/api/bot/devices', { chatId, name: 'phone' }, key)
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+    await removeClient(page.request, clientId)
+    const before = await everyone(page.request)
+
+    const again = bot('/api/bot/devices', { chatId, name: 'phone' }, key)
+    expect(again.status, JSON.stringify(again.body)).toBe(410)
+    expect(again.body.statusMessage).toBe('device_deleted')
+    expect(await everyone(page.request)).toEqual(before)
+  })
+
+  test('бот: повтор ключа из отвязанного чата при живом клиенте — 404 not_linked без устройства', async ({ page }) => {
+    test.skip(!container, 'loopback ручки бота есть только в одноразовом контейнере run-local.sh')
+    const clientId = await newClient(page.request)
+    created.push(clientId)
+    const chatId = 920000 + clientId
+    const key = randomUUID()
+    const name = uniq('phone')
+
+    linkChat(clientId, chatId)
+    const first = bot('/api/bot/devices', { chatId, name }, key)
+    expect(first.status, JSON.stringify(first.body)).toBe(200)
+    const [phone] = await devices(page.request, clientId)
+    expect(phone?.name).toBe(name)
+    const unlink = await page.request.post(`/api/clients/${clientId}/unlink`)
+    expect(unlink.status(), await unlink.text()).toBe(200)
+
+    const again = bot('/api/bot/devices', { chatId, name }, key)
+    expect(again.status, JSON.stringify(again.body)).toBe(404)
+    expect(again.body.statusMessage).toBe('not_linked')
+    expect(again.body.devices).toBeUndefined()
+    expect(JSON.stringify(again.body)).not.toContain(name)
+    expect((await devices(page.request, clientId)).map(d => d.id)).toEqual([phone!.id])
+  })
+
+  test('панель: незнакомый ключ для удалённого клиента — 404 not_found', async ({ page }) => {
+    const clientId = await newClient(page.request)
+    created.push(clientId)
+    await removeClient(page.request, clientId)
+    const before = await everyone(page.request)
+
+    const r = await page.request.post(`/api/clients/${clientId}/devices`, {
+      data: { name: 'phone' },
+      headers: { 'idempotency-key': randomUUID() },
+    })
+    expect(r.status(), await r.text()).toBe(404)
+    expect((await r.json()).statusMessage).toBe('not_found')
+    expect(await everyone(page.request)).toEqual(before)
+  })
+
+  test('повтор ключа, пока клиент удаляется, — 410 device_deleted в панели и в боте', async ({ page }) => {
+    test.setTimeout(180_000)
+    test.skip(!container, 'подмена CA разрешена только в одноразовом контейнере')
+    const clientId = await newClient(page.request)
+    created.push(clientId)
+    const chatId = 930000 + clientId
+    const panelKey = randomUUID()
+    const botKey = randomUUID()
+    const panelAdd = () => page.request.post(`/api/clients/${clientId}/devices`, {
+      data: { name: 'laptop' },
+      headers: { 'idempotency-key': panelKey },
+    })
+
+    linkChat(clientId, chatId)
+    expect((await panelAdd()).status()).toBe(200)
+    const fromBot = bot('/api/bot/devices', { chatId, name: 'phone' }, botKey)
+    expect(fromBot.status, JSON.stringify(fromBot.body)).toBe(200)
+    const saved = rows(clientId)
+    expect(saved).toHaveLength(2)
+    try {
+      // Отзыв OpenVPN не проходит: клиент остаётся в состоянии «удаляется».
+      fault('revoke', new X509Certificate(saved[0]!.ovpn_cert).serialNumber)
+      const removal = await page.request.delete(`/api/clients/${clientId}`)
+      expect(removal.status(), await removal.text()).toBe(202)
+      const { operation } = await removal.json()
+      await expect.poll(async () => (await (await page.request.get(`/api/access-operations/${operation.id}`)).json()).protocols.openvpn.state, { timeout: 30_000 }).toBe('failed')
+      const detail = await page.request.get(`/api/clients/${clientId}`)
+      expect(detail.status(), await detail.text()).toBe(200)
+      expect((await detail.json()).deleting).toBe(true)
+
+      const panelAgain = await panelAdd()
+      expect(panelAgain.status(), await panelAgain.text()).toBe(410)
+      expect((await panelAgain.json()).statusMessage).toBe('device_deleted')
+      const botAgain = bot('/api/bot/devices', { chatId, name: 'phone' }, botKey)
+      expect(botAgain.status, JSON.stringify(botAgain.body)).toBe(410)
+      expect(botAgain.body.statusMessage).toBe('device_deleted')
+      expect(rows(clientId).map(d => d.id)).toEqual(saved.map(d => d.id))
+
+      restore()
+      await page.request.post(`/api/access-operations/${operation.id}/retry`)
+      await waitAccess(page.request, operation)
+    }
+    finally {
+      restore()
+    }
+  })
 })
+
+async function removeClient(api: APIRequestContext, clientId: number) {
+  const removal = await api.delete(`/api/clients/${clientId}`)
+  expect(removal.status(), await removal.text()).toBe(202)
+  await waitAccess(api, (await removal.json()).operation)
+  await expect.poll(async () => (await api.get(`/api/clients/${clientId}`)).status()).toBe(404)
+}
+
+// Все клиенты и число их устройств: повтор не должен ничего создать.
+async function everyone(api: APIRequestContext) {
+  const r = await api.get('/api/clients')
+  expect(r.status(), await r.text()).toBe(200)
+  return ((await r.json()) as { id: number, deviceCount: number }[])
+    .map(c => [c.id, c.deviceCount]).sort((a, b) => a[0]! - b[0]!)
+}

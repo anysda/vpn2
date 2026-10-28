@@ -656,13 +656,21 @@ if same_ca:
 # certificateHold ставит только restore — выданным после архива. Устройство,
 # чей сертификат в восстанавливаемом архиве, получает доступ обратно.
 held = {serial for serial, row in live_revoked.items() if row[2].partition(',')[2] == 'certificateHold'}
+# Сертификаты dev_N в живом index: серийник -> (номер, действует).
+dev = re.compile(r'(?:^|[/,])CN=dev_(\d+)(?:[/,]|$)')
+indexed = {}
+if same_ca:
+    for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
+        if len(row) == 6 and HEX.fullmatch(row[3]) and dev.search(row[5]):
+            indexed[int(row[3], 16)] = (int(dev.search(row[5])[1]), row[0] == 'V')
 
-live, live_seq = {}, 0
+live, live_seq, live_read = {}, 0, False
 if os.path.isfile(LIVE_DB):
     try:
         con, live, _columns, live_seq = devices(LIVE_DB)
         if con:
             con.close()
+            live_read = True
     except sqlite3.Error as error:
         say(f'WARN: живая БД не читается ({error}) — переношу только отзывы сертификатов')
         live, live_seq = {}, 0
@@ -692,6 +700,11 @@ if os.path.isfile(db_path):
         if mine is None and serial in held:
             continue
         gone = mine is None and (serial in live_revoked or 0 < device_id <= live_seq)
+        # Без живой БД отозванный сертификат при действующем другом у того же
+        # dev_N — перевыпуск OpenVPN, а не удаление: остальное устройства цело.
+        if gone and not live_read and any(n == device_id and valid and s != serial
+                                           for s, (n, valid) in indexed.items()):
+            gone, mine = False, {**row, 'ovpn_cert': None}
         if mine is None and not gone:
             continue
         what = set()
@@ -728,12 +741,7 @@ if os.path.isfile(db_path):
     # Хвосты newcerts без строки в index остались от прежних restore.
     pki_certs, pki_ids = {}, set()
     if same_ca:
-        dev = re.compile(r'(?:^|[/,])CN=dev_(\d+)(?:[/,]|$)')
         newcerts = os.path.join(LIVE_PKI, 'newcerts')
-        indexed = {}
-        for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
-            if len(row) == 6 and HEX.fullmatch(row[3]) and dev.search(row[5]):
-                indexed[int(row[3], 16)] = (int(dev.search(row[5])[1]), row[0] == 'V')
         for name in sorted(os.listdir(newcerts) if os.path.isdir(newcerts) else ()):
             try:
                 pem = open(os.path.join(newcerts, name)).read()

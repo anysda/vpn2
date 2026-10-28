@@ -38,6 +38,9 @@ POT_VIDEO = os.environ.get('YT_PROBE_POT_VIDEO', 'https://www.youtube.com/watch?
 SAMPLE_BYTES = 4 * 1024 * 1024
 MIN_BPS = 250000
 HITS = 3
+# Антибот с IP дата-центра роняет замер на отдельные проверки; алерт только
+# если замера нет непрерывно дольше порога, иначе бот шлёт пары каждые 5 мин.
+UNMEASURED_ALERT_AFTER = 3600
 PLAYER_CLIENT = 'web_embedded'
 
 
@@ -215,17 +218,30 @@ def tick(path, sample):
     current = api('GET')['now']
     good, detail = sample()
     unmeasured = good is None
-    if unmeasured != state.get('unmeasured', False):
-        event = (f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'
-                 if unmeasured else f'измерение возобновлено: {detail}. Автопереключение снова активно.')
+    now = time.time()
+    since = state.get('unmeasured_since')
+    alerted = state.get('unmeasured_alerted') is True
+    event = None
+    if not unmeasured:
+        if alerted:
+            event = f'измерение возобновлено: {detail}. Автопереключение снова активно.'
+        since, alerted = None, False
+    elif type(since) not in (int, float) or since > now:
+        since = now
+    elif not alerted and now - since > UNMEASURED_ALERT_AFTER:
+        event = f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'
+        alerted = True
+    if event:
         print('YouTube: ' + event, flush=True)
         state['pending'].append(event)
     state['unmeasured'] = unmeasured
+    state['unmeasured_since'] = since
+    state['unmeasured_alerted'] = alerted
     if not unmeasured:
         state['good'] = min(HITS, state['good'] + 1) if good else 0
         state['bad'] = min(HITS, state['bad'] + 1) if not good else 0
     state['last_probe'] = detail
-    state['checked_at'] = time.time()
+    state['checked_at'] = now
     save(path, state)
     target = (current if unmeasured else
               'youtube-ru' if state['good'] >= HITS else

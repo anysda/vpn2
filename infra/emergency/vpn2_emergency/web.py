@@ -501,6 +501,9 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
 
         def do_POST(self):  # noqa - BaseHTTPRequestHandler hook
             with panel.lock:
+                # The start link is a GET; before the emergency nothing else answers.
+                if panel.link_only:
+                    return self.send(404)
                 # Exact same-origin JSON protects login, logout and queue writes against CSRF.
                 origin = self.headers.get('Origin', '')
                 if origin != f'https://{self.headers.get("Host", "")}' or self.headers.get('Content-Type') != 'application/json':

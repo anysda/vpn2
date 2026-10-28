@@ -507,6 +507,10 @@ class Lifecycle:
                 profiles=lambda generation: self.profiles.get(generation, {}),
                 connections=lambda generation: self.hy2.connections(self.directory, generation),
                 broadcast=self._broadcast, start=self.start_link)
+            if link_only:
+                # Only before the emergency: a password on disk is from an
+                # earlier one that ended while no panel was up to revoke it.
+                server.panel.on_step_down()
             server.panel.link_only = link_only
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server

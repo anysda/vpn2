@@ -659,7 +659,7 @@ def main():
     # Пустой пароль иначе всплывёт только на стадии 26, после части деплоя.
     backup = cfg.get('backup', {})
     backup_on = backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1')
-    if backup_on and not backup.get('passphrase', '').strip():
+    if backup_on and not backup.get('passphrase', ''):
         config_error('backup.passphrase', 'пустой при включённом бэкапе — задай его '
                      '(или запусти ./setup.sh), либо выключи backup.enabled')
 

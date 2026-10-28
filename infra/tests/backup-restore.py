@@ -1098,40 +1098,97 @@ exec /usr/bin/sqlite3 "$@"
         self.assert_only_archived_have_access(devices)
 
     def issued_after_archive_reissued(self, live_db='live'):
-        """Архив (1, 2), выдано 3; устройству 1 перевыпущен OpenVPN, как в панели: старый отозван, выдан новый."""
+        """Архив (1, 2), выдано 3; устройство 1 перевыпущено, как в панели: новые ключ WireGuard,
+        пароль IKEv2 (учётка та же) и сертификат OpenVPN, старый сертификат отозван."""
         devices = self.issued_after_archive()
+        old = devices[1]
         archived = self.serial(1)
         self.revoke(1)
-        self.conn.execute('UPDATE devices SET ovpn_cert = ? WHERE id = 1', (self.issue(1),))
+        new = dict(old, key=base64.b64encode(bytes([11]) * 32).decode(),
+                   psk=base64.b64encode(bytes([111]) * 32).decode(), password='reissued1')
+        self.conn.execute('UPDATE devices SET wg_public_key = ?, wg_preshared_key = ?, ovpn_cert = ?, '
+                          'ikev2_password = ? WHERE id = 1', (new['key'], new['psk'], self.issue(1), new['password']))
         self.conn.commit()
+        self.apply_configs([new, devices[2], devices[3]])
         if live_db != 'live':
             self.lose_live_db(corrupt=live_db == 'corrupt')
         result = self.restore()
-        # Как при живой БД: оба сертификата устройства 1 отозваны, OpenVPN перевыпускается
-        # в панели, WireGuard, IKEv2 и адрес ccd остаются.
+        # Как при живой БД: архивные реквизиты устройства 1 сняты панелью и доступа не
+        # получают, выданных после архива в восстановленных конфигах нет. Устройство и
+        # его адрес ccd остаются, креды в БД пустые — перевыпуск в панели выдаст новые.
         crl = self.crl_serials()
         self.assertIn(archived, crl, 'архивный сертификат устройства 1, отозванный панелью, снова действует')
         self.assertIn(self.serial(1), crl, 'сертификат устройства 1, выданный после архива, не отозван')
-        self.assertEqual(self.access(devices[1]), dict(self.FULL_ACCESS, OpenVPN=False),
-                         'перевыпуск OpenVPN после архива отнял у устройства 1 другие доступы')
+        wg = Path('/etc/wireguard/wg0.conf').read_text()
+        ike = Path('/etc/swanctl/conf.d/anysda-clients.conf').read_text()
+        self.assertNotIn(old['key'], wg, 'архивный пир WireGuard устройства 1, снятый перевыпуском, вернулся')
+        self.assertNotIn(f'"{old["password"]}"', ike, 'архивный секрет IKEv2 устройства 1, снятый перевыпуском, вернулся')
+        self.assertNotIn('eap-1 {', ike, 'учётка IKEv2 устройства 1 со снятым секретом вернулась')
+        self.assertNotIn(new['key'], wg)
+        self.assertNotIn(f'"{new["password"]}"', ike)
+        self.assertTrue(Path('/etc/openvpn/server/ccd/dev_1').exists(), 'перевыпуск отнял у устройства 1 адрес ccd')
         with sqlite3.connect(DB) as db:
-            row = db.execute('SELECT wg_public_key, ovpn_cert IS NULL, ikev2_password FROM devices '
-                             'WHERE id = 1').fetchone()
-        self.assertEqual(row, (devices[1]['key'], 1, devices[1]['password']))
-        self.assertIn('устройство 1: OpenVPN отозваны; перевыпущено после архива', result.stdout)
+            row = db.execute('SELECT created_at, wg_public_key, ovpn_cert, ikev2_username, ikev2_password '
+                             'FROM devices WHERE id = 1').fetchone()
+        self.assertEqual(row, (1001, None, None, old['user'], None))
+        self.assertIn('устройство 1: IKEv2, OpenVPN, WireGuard отозваны; перевыпущено после архива', result.stdout)
         self.assertNotRegex(result.stdout, r'устройство 1: [^\n]*удалено после архива')
         self.assertEqual(self.access(devices[2]), self.FULL_ACCESS, 'устройство 2 из архива потеряло доступ')
         self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'устройство 3 выдано после архива — доступ остался')
         return result
 
-    def test_issued_after_archive_reissued_ovpn_live_db(self):
+    def test_issued_after_archive_reissued_live_db(self):
         self.issued_after_archive_reissued()
 
-    def test_issued_after_archive_reissued_ovpn_live_db_lost(self):
+    def test_issued_after_archive_reissued_live_db_lost(self):
         self.issued_after_archive_reissued('lost')
 
-    def test_issued_after_archive_reissued_ovpn_live_db_corrupt(self):
+    def test_issued_after_archive_reissued_live_db_corrupt(self):
         result = self.issued_after_archive_reissued('corrupt')
+        self.assertIn('WARN: живая БД не читается', result.stdout)
+
+    def issued_after_archive_deleted_id_reused(self, corrupt=False):
+        """Архив (1, 2), выдано 3; устройство 2 удалено, номер 2 занят новым устройством; живой БД нет."""
+        devices = self.issued_after_archive()
+        gone = devices[2]
+        archived = self.serial(2)
+        self.revoke(2)
+        self.conn.execute('DELETE FROM devices WHERE id = 2')
+        self.conn.commit()
+        other = {'id': 2, 'key': base64.b64encode(bytes([42]) * 32).decode(),
+                 'psk': base64.b64encode(bytes([142]) * 32).decode(), 'wg_ip': '10.66.66.43',
+                 'user': 'other2', 'password': 'othersecret2', 'ike_ip': '10.99.1.43'}
+        self.conn.execute('INSERT INTO devices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                          (2, 5002, 'private', other['key'], other['psk'], other['wg_ip'], self.issue(2), 'key',
+                           other['user'], other['password'], other['ike_ip']))
+        self.conn.commit()
+        self.ccd(other)
+        self.apply_configs([devices[1], other, devices[3]])
+        self.lose_live_db(corrupt)
+        result = self.restore()
+        crl = self.crl_serials()
+        self.assertIn(archived, crl, 'сертификат удалённого устройства 2 снова действует')
+        self.assertIn(self.serial(2), crl, 'сертификат нового устройства 2, выданного после архива, не отозван')
+        wg = Path('/etc/wireguard/wg0.conf').read_text()
+        ike = Path('/etc/swanctl/conf.d/anysda-clients.conf').read_text()
+        for d, who in ((gone, 'удалённого'), (other, 'нового')):
+            self.assertNotIn(d['key'], wg, f'пир WireGuard {who} устройства 2 остался')
+            self.assertNotIn(f'"{d["password"]}"', ike, f'секрет IKEv2 {who} устройства 2 остался')
+        self.assertNotIn('eap-2 {', ike, 'учётка IKEv2 удалённого устройства 2 вернулась')
+        self.assertIn('устройство 2: IKEv2, OpenVPN, WireGuard отозваны; удалено после архива', result.stdout)
+        self.assertNotRegex(result.stdout, r'устройство 2: [^\n]*перевыпущено после архива')
+        self.assertEqual(self.access(devices[1]), self.FULL_ACCESS, 'устройство 1 из архива потеряло доступ')
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'устройство 3 выдано после архива — доступ остался')
+        with sqlite3.connect(DB) as db:
+            new = db.execute('INSERT INTO devices (created_at) VALUES (9999)').lastrowid
+        self.assertGreater(new, 3, 'новое устройство получило уже выданный id')
+        return result
+
+    def test_issued_after_archive_deleted_id_reused_live_db_lost(self):
+        self.issued_after_archive_deleted_id_reused()
+
+    def test_issued_after_archive_deleted_id_reused_live_db_corrupt(self):
+        result = self.issued_after_archive_deleted_id_reused(corrupt=True)
         self.assertIn('WARN: живая БД не читается', result.stdout)
 
     def older_and_newer_archives(self):

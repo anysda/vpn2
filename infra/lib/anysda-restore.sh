@@ -571,9 +571,9 @@ done
 # возвращаются, а в БД у таких устройств креды пустые — перевыпуск выдаст новые.
 # Отзывы чужой установки (другой CA и ключ WireGuard) к архиву не относятся.
 STEP="перенос отзывов в архив"
-python3 - "$BUNDLE_DIR" <<'PY'
+python3 - "$BUNDLE_DIR" "$WORK/issued-after-archive" <<'PY'
 import hashlib, os, re, shutil, sqlite3, subprocess, sys, tempfile
-bundle = sys.argv[1]
+bundle, issued_list = sys.argv[1:]
 LIVE_DB, LIVE_PKI = '/var/lib/anysda-vpn2/db.sqlite', '/etc/openvpn/server/pki'
 pki = os.path.join(bundle, 'etc-openvpn/server/pki')
 db_path = os.path.join(bundle, 'db.sqlite')
@@ -667,9 +667,11 @@ if os.path.isfile(LIVE_DB):
 # Устройство архива против живого: удалено (сертификат отозван или номер
 # уже выдан и строки нет) или перевыпущено (другой ключ, сертификат, пароль).
 revoke = {}
+issued = {}
 archive_db = None
+archive_seq = 0
 if os.path.isfile(db_path):
-    archive_db, archived, columns, _seq = devices(db_path, writable=True)
+    archive_db, archived, columns, archive_seq = devices(db_path, writable=True)
     for device_id, row in archived.items():
         mine = live.get(device_id)
         # Номер мог достаться другому устройству после прежнего restore.
@@ -690,11 +692,41 @@ if os.path.isfile(db_path):
             what.add('IKEv2')
         if what:
             revoke[device_id] = (what, gone, row)
+    # Обратное множество: устройство есть в живой БД, но не в архиве (или под
+    # его номером в архиве другое устройство) — выдано после среза. В
+    # восстановленной БД его нет, а сертификат подписан тем же CA: без отзыва
+    # он подключается, и его ccd с адресом достанется следующему с тем же id.
+    for device_id, row in (live.items() if archive_db else ()):
+        mine = archived.get(device_id)
+        if mine and not (row.get('created_at') and mine.get('created_at')
+                         and row['created_at'] != mine.get('created_at')):
+            continue
+        what = set()
+        if row.get('wg_public_key'):
+            what.add('WireGuard')
+        if row.get('ovpn_cert') and same_ca:
+            what.add('OpenVPN')
+        if row.get('ikev2_password'):
+            what.add('IKEv2')
+        issued[device_id] = (what, mine is None, row)
 
 wg_keys = {row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
 ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
 ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
 certs = [row['ovpn_cert'] for what, _gone, row in revoke.values() if 'OpenVPN' in what]
+# У выданных после архива строк в восстановленной БД нет, чистить нечего.
+# Номер учётки IKEv2 снимаем только если в архиве под ним нет другого устройства.
+for device_id, (what, absent, row) in issued.items():
+    if 'WireGuard' in what:
+        wg_keys.add(row['wg_public_key'])
+    if 'IKEv2' in what:
+        ike_secrets.add(row['ikev2_password'])
+        if absent:
+            ike_ids.add(device_id)
+    if 'OpenVPN' in what:
+        certs.append(row['ovpn_cert'])
+with open(issued_list, 'w') as f:
+    f.write(''.join(f'{device_id}\n' for device_id, (_w, absent, _r) in sorted(issued.items()) if absent))
 
 if archive_db:
     fields = {'WireGuard': ('wg_private_key', 'wg_public_key', 'wg_preshared_key'),
@@ -704,6 +736,13 @@ if archive_db:
             cleared = [c for name in sorted(what) for c in fields[name] if c in columns]
             archive_db.execute(f'UPDATE devices SET {", ".join(c + " = NULL" for c in cleared)} WHERE id = ?',
                                (device_id,))
+        # Номера, выданные узлом после среза (и уже удалённые), не выдаются повторно.
+        has_seq = archive_db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").fetchone()
+        if has_seq and live_seq > archive_seq:
+            if not archive_db.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'devices'",
+                                      (live_seq,)).rowcount:
+                archive_db.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('devices', ?)", (live_seq,))
     archive_db.close()
 
 
@@ -814,6 +853,9 @@ say(f'отозванных записей применено поверх арх
 for device_id, (what, gone, _row) in sorted(revoke.items()):
     state = 'удалено после архива — удали его в панели' if gone else 'перевыпущено после архива — перевыпусти в панели'
     say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
+for device_id, (what, _absent, _row) in sorted(issued.items()):
+    say(f'  устройство {device_id}: {", ".join(sorted(what)) or "доступов нет"} отозваны; '
+        'выдано после архива — в восстановленной базе его нет')
 PY
 
 # ── Применение ──────────────────────────────────────────────────────────────
@@ -877,6 +919,13 @@ STEP="распаковка PKI OpenVPN"
 if [[ -d "$BUNDLE_DIR/etc-openvpn" ]]; then
   TOUCHED+=(etc/openvpn)
   copy_into "$BUNDLE_DIR/etc-openvpn" /etc/openvpn
+  # Раскладка поверх живого каталога: ccd устройств, выданных после архива,
+  # иначе остались бы, и их адрес получит следующее устройство с тем же id.
+  if [[ -s "$WORK/issued-after-archive" ]]; then
+    while read -r device_id; do
+      rm -f "/etc/openvpn/server/ccd/dev_$device_id"
+    done < "$WORK/issued-after-archive"
+  fi
 fi
 # IKEv2 (strongSwan + swanctl). Восстанавливаем CA, server cert/key, conf'ы.
 # Если IP entry поменялся — server cert умрёт по SAN; стадия 27-ikev2 при

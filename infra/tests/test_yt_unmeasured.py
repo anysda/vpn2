@@ -159,7 +159,7 @@ class UnmeasuredTests(unittest.TestCase):
                         for reason in ('антибот', 'нет форматов', 'нет JS', 'антибот'):
                             watch.tick(path, lambda: (None, reason))
                         self.assertTrue(all(call.args == ('GET',) for call in api.call_args_list))
-                        notify.assert_called_once()
+                        notify.assert_not_called()
                     state = json.loads(path.read_text())
                     self.assertEqual((state['good'], state['bad']), (good, bad))
                     self.assertEqual(state['last_probe'], 'антибот')
@@ -169,12 +169,16 @@ class UnmeasuredTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'state.json'
             path.write_text(json.dumps({'good': 0, 'bad': 1, 'pending': []}))
+            limit = getattr(watch, 'UNMEASURED_ALERT_AFTER', 3600)
+            now = [1_700_000_000]
+            gap = [(None, 'антибот')] * (limit // 300 + 2) + [(None, 'нет JS')]
             with patch.object(watch, 'api', return_value={'now': 'youtube-ru'}) as api, \
-                    patch.object(watch, 'notify', side_effect=[False, True, True, True, True]) as notify:
-                for good, detail in ((None, 'антибот'), (None, 'нет JS'), (None, 'нет форматов'),
-                                     (False, 'таймаут'), (None, 'антибот'), (True, 'быстро')):
+                    patch.object(watch.time, 'time', side_effect=lambda: now[0]), \
+                    patch.object(watch, 'notify', side_effect=lambda _: notify.call_count > 1) as notify:
+                for good, detail in gap + [(False, 'таймаут'), (None, 'антибот'), (True, 'быстро')]:
                     watch.tick(path, lambda: (good, detail))
-                self.assertEqual(notify.call_count, 5)  # четыре события и повтор доставки
+                    now[0] += 300
+                self.assertEqual(notify.call_count, 3)  # «не измерено», его повтор, «возобновлено»
                 messages = [call.args[0] for call in notify.call_args_list]
                 self.assertEqual(messages[0], messages[1])
                 self.assertIn('не измерено', messages[0])

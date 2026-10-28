@@ -44,22 +44,24 @@ release_start() {
   install_prereqs
   coproc VPN2_REMOTE_LOCK {
     load_env ru
-    ssh_exec 'umask 077; mkdir -p /var/lib/vpn2-deploy; exec flock -n /var/lib/vpn2-deploy/deploy.lock sh -c '\''echo locked; read -r release_lock'\'
+    ssh_exec 'umask 077; mkdir -p /var/lib/vpn2-deploy; exec flock -n -E 75 /var/lib/vpn2-deploy/deploy.lock sh -c '\''echo locked; read -r release_lock'\'
   }
   VPN2_LOCK_PID=$VPN2_REMOTE_LOCK_PID
   exec {VPN2_LOCK_IN}>&"${VPN2_REMOTE_LOCK[1]}"
   local locked rc=0
   if ! read -r locked <&"${VPN2_REMOTE_LOCK[0]}"; then
-    # Без строки coproc уже завершился: flock -n на entry выходит с 1, когда
-    # замок занят. Иначе до flock не дошли: ssh_exec отдаёт 255 при отказе
-    # входа или сети (причину он напечатал выше), sshpass - 5 на неверный
-    # пароль и 6 на непринятый host-key.
+    # Без строки coproc уже завершился. Занятый замок - только код 75 от
+    # flock -E 75 на entry: код 1 отдают и сбои в coproc до ssh (нет envs,
+    # пустой SSH_PASS), их причина напечатана выше. ssh_exec отдаёт 255 при
+    # отказе входа или сети, sshpass - 5 на неверный пароль, 6 и 7 на
+    # неизвестный и сменившийся host-key.
     wait "$VPN2_LOCK_PID" || rc=$?
     case $rc in
-      1) die 'deploy already running: entry deploy lock is held' ;;
+      75) die 'deploy already running: entry deploy lock is held' ;;
       5) die 'cannot take deploy lock: entry refused ssh login (wrong password)' ;;
-      255|6) die "cannot take deploy lock: ssh to entry failed (login refused or entry unreachable, ssh exit $rc); see the ssh reason above" ;;
-      *) die "cannot take deploy lock: entry lock command exited with $rc" ;;
+      6|7) die "cannot take deploy lock: entry host key is unknown or changed (sshpass exit $rc); see the ssh reason above" ;;
+      255) die "cannot take deploy lock: ssh to entry failed (login refused or entry unreachable, ssh exit $rc); see the ssh reason above" ;;
+      *) die "cannot take deploy lock: entry lock command exited with $rc, see the reason above" ;;
     esac
   fi
   # Метка ssh_exec отсекает текст .bashrc; чужая строка здесь значит, что shell

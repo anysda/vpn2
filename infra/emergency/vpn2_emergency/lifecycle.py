@@ -295,16 +295,16 @@ class Lifecycle:
         agent = self.agent
         state = agent.state.data
         active = agent.leader.data['active']
-        heard = silence < MISSED
         notice = state.get('outage_notice')
         if notice is None and sender and not active and NOTICE_AFTER <= silence < OUTAGE:
             notice = state['outage_notice'] = dict(
                 nonce=secrets.token_urlsafe(16), expires=int(agent.wall() + OUTAGE - silence),
-                message_id=None, state='send')
+                message_id=None, state='send', cursor=state.get('entry_cursor', [0, '', 0]))
             agent.state.save()
         if notice is None:
             self.offer = None
             return
+        heard = self._entry_heard(silence, notice)
         if f"outage:{notice['nonce']}" in self.pending:
             # A send under way decides first whether there is a message to
             # correct; its link may already be with the admin.
@@ -313,6 +313,10 @@ class Lifecycle:
         before = notice['state']
         if before in ('send', 'open') and (active or heard):
             notice['state'] = 'started' if active else 'back' if notice['message_id'] else 'unsent'
+        elif before == 'back' and active:
+            # A correction Telegram has not taken yet would say no emergency
+            # started while one runs.
+            notice['state'] = 'started'
         if notice['state'] in ('started', 'unsent') and heard and not active:
             del state['outage_notice']
         if state.get('outage_notice') is not notice or notice['state'] != before:
@@ -360,26 +364,41 @@ class Lifecycle:
             # the entry itself; the others join as in any emergency. An entry
             # heard again leaves the notice to the next round: the message is
             # corrected and the link closed as when it returns before a press.
-            if notice['state'] in ('send', 'open') and now - agent.heartbeat.last_entry >= MISSED:
+            if (notice['state'] in ('send', 'open')
+                    and not self._entry_heard(now - agent.heartbeat.last_entry, notice)):
                 notice['state'] = 'started'
                 agent.leader.activate()
                 LOG.info('emergency started by the admin link')
         agent.state.save()
 
+    def _entry_heard(self, silence, notice):
+        """The entry answers again: fresh evidence newer than the notice's.
+
+        A reboot resets the silence to zero without any word from the entry,
+        so a short silence alone proves nothing.
+        """
+        cursor = self.agent.state.data.get('entry_cursor', [0, '', 0])
+        return silence < MISSED and cursor > notice['cursor']
+
     def start_link(self, token):
-        """Panel thread: 202 for the current link, once; the agent loop starts the emergency."""
+        """Panel thread: the start page for the current link, once; the agent loop starts the emergency."""
         nonce, _, rest = token.partition('.')
         expires, _, signature = rest.partition('.')
         if not (expires.isascii() and expires.isdigit()) or not hmac.compare_digest(
                 signature.encode(), self._signature(nonce, expires).encode()):
-            return 403
+            return 'invalid'
+        agent = self.agent
         with self.link_lock:
-            if (self.offer != (nonce, int(expires)) or self.agent.wall() >= int(expires)
-                    or nonce in self.claimed or nonce in self.agent.state.data.get('outage_used', ())):
-                return 410
+            if (self.offer != (nonce, int(expires)) or agent.wall() >= int(expires)
+                    or nonce in self.claimed or nonce in agent.state.data.get('outage_used', ())):
+                return 'gone'
+            notice = agent.state.data.get('outage_notice')
+            # The round that sees the entry closes the link up to 15 s later.
+            if notice and self._entry_heard(agent.clock() - agent.heartbeat.last_entry, notice):
+                return 'entry_back'
             self.claimed.add(nonce)
         self.results.put(('manual', ('manual', nonce)))
-        return 202
+        return 'starting'
 
     def _signature(self, nonce, expires):
         """The installation's common key; the link names the exit that serves it."""

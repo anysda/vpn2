@@ -51,10 +51,12 @@ ATTEMPTS = 10
 BLOCK_SECONDS = 300
 TRACKED_ADDRESSES = 1024
 DENIED = {'клиент заморожен', 'срок доступа истёк', 'неизвестные или конфликтующие права'}
-START_PAGES = {202: 'Аварийный режим запускается. Адрес и пароль панели придут отдельным сообщением.',
-               403: 'Ссылка недействительна.',
-               410: 'Ссылка больше не действует: она уже использована, устарела, '
-                    'entry снова доступен или аварийный режим уже включён.'}
+START_PAGES = {'starting': (202, 'Аварийный режим запускается. Адрес и пароль панели придут '
+                                'отдельным сообщением.'),
+               'invalid': (403, 'Ссылка недействительна.'),
+               'gone': (410, 'Ссылка больше не действует: она уже использована, устарела, '
+                             'entry снова доступен или аварийный режим уже включён.'),
+               'entry_back': (410, 'Entry снова доступен, аварийный режим не нужен.')}
 
 
 def _delivery_kind(row, emergency_id, generation):
@@ -121,7 +123,7 @@ class Panel:
     def __init__(self, state_dir, exit_id, public_ip, *, snapshot_loader=_snapshot,
                  profiles=_empty, connections=_empty, delivery=None, broadcast=None, start=None):
         self.directory = Path(state_dir)
-        # start(token) -> HTTP status: the admin's link that starts the
+        # start(token) -> a START_PAGES key: the admin's link that starts the
         # emergency at once. Until the emergency the server answers only it.
         self.start = start
         self.link_only = False
@@ -463,8 +465,7 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
                 path = urlsplit(self.path).path
                 parts = path.split('/')
                 if len(parts) == 3 and parts[1] == 'start' and panel.start:
-                    code = panel.start(parts[2])
-                    text = START_PAGES.get(code, START_PAGES[403])
+                    code, text = START_PAGES.get(panel.start(parts[2]), START_PAGES['invalid'])
                     return self.send(code, text.encode(), 'text/plain; charset=utf-8')
                 if panel.link_only:
                     return self.send(404)

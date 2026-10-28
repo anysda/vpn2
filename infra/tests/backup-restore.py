@@ -990,6 +990,72 @@ exec /usr/bin/sqlite3 "$@"
         self.restore()
         self.assertEqual(self.access(devices[1]), self.NO_ACCESS, 'в архиве нет устройств — доступ у устройства 1 остался')
 
+    def archive_name(self):
+        """Снимок узла; имя нового архива (имя — время до секунды)."""
+        before = {p.name for p in BACKUPS.glob('*.age')}
+        time.sleep(1.1)
+        result = self.script('backup')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        (name,) = {p.name for p in BACKUPS.glob('*.age')} - before
+        return name
+
+    def issued_after_archive_then_newer(self):
+        """Архив A (1, 2), выдано 3, архив B (1, 2, 3); restore A, затем restore B."""
+        devices = self.revocation_fixture()
+        for n in (1, 2):
+            self.ccd(devices[n])
+        older = self.archive_name()
+        self.add_device(devices[3])
+        self.ccd(devices[3])
+        self.apply_configs([devices[n] for n in (1, 2, 3)])
+        newer = self.archive_name()
+        self.restore(older)
+        return devices, self.restore(newer)
+
+    def test_issued_after_archive_newer_archive_restores_access(self):
+        devices, result = self.issued_after_archive_then_newer()
+        self.assertEqual(self.access(devices[3]), self.FULL_ACCESS, 'устройство 3 есть в новом архиве — доступа нет')
+        for n in (1, 2):
+            self.assertEqual(self.access(devices[n]), self.FULL_ACCESS, f'устройство {n} из архива потеряло доступ')
+        with sqlite3.connect(DB) as db:
+            rows = {r[0]: r[1:] for r in db.execute('SELECT id, wg_public_key IS NOT NULL, ovpn_cert IS NOT NULL, '
+                                                    'ikev2_password IS NOT NULL FROM devices')}
+        self.assertEqual(rows, {1: (1, 1, 1), 2: (1, 1, 1), 3: (1, 1, 1)})
+        self.assertNotIn('устройство 3:', result.stdout)
+
+    def test_issued_after_archive_newer_archive_id_not_reused(self):
+        self.issued_after_archive_then_newer()
+        with sqlite3.connect(DB) as db:
+            new = db.execute('INSERT INTO devices (created_at) VALUES (9999)').lastrowid
+        self.assertGreater(new, 3, 'новое устройство получило уже выданный id')
+
+    def test_issued_after_archive_same_id_other_device_revoked(self):
+        devices = self.revocation_fixture()
+        for n in (1, 2):
+            self.ccd(devices[n])
+        self.backup()
+        # Под номером 2 в живой БД другое устройство: свои created_at, ключ, сертификат, пароль.
+        other = {'id': 2, 'key': base64.b64encode(bytes([42]) * 32).decode(),
+                 'psk': base64.b64encode(bytes([142]) * 32).decode(), 'wg_ip': '10.66.66.43',
+                 'user': 'other2', 'password': 'othersecret2', 'ike_ip': '10.99.1.43'}
+        cert = self.issue(42)
+        self.conn.execute('UPDATE devices SET created_at = 5002, wg_public_key = ?, wg_preshared_key = ?, wg_ip = ?, '
+                          'ovpn_cert = ?, ikev2_username = ?, ikev2_password = ?, ikev2_ip = ? WHERE id = 2',
+                          (other['key'], other['psk'], other['wg_ip'], cert, other['user'], other['password'],
+                           other['ike_ip']))
+        self.conn.commit()
+        self.apply_configs([devices[1], other])
+        self.restore()
+        self.assertIn(self.serial(42), self.crl_serials(), 'сертификат чужого устройства 2 не отозван')
+        self.assertNotIn(other['key'], Path('/etc/wireguard/wg0.conf').read_text(), 'пир чужого устройства 2 остался')
+        self.assertNotIn(f'"{other["password"]}"', Path('/etc/swanctl/conf.d/anysda-clients.conf').read_text(),
+                         'секрет IKEv2 чужого устройства 2 остался')
+        for n in (1, 2):
+            self.assertEqual(self.access(devices[n]), self.FULL_ACCESS, f'устройство {n} из архива потеряло доступ')
+        with sqlite3.connect(DB) as db:
+            row = db.execute('SELECT created_at, wg_public_key, ikev2_password FROM devices WHERE id = 2').fetchone()
+        self.assertEqual(row, (1002, devices[2]['key'], devices[2]['password']))
+
     def test_persistent_mismatch_keeps_archive_with_warning(self):
         # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.
         key = base64.b64encode(bytes([7]) * 32).decode()

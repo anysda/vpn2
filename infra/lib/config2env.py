@@ -656,6 +656,13 @@ def main():
         except ValueError as error:
             sys.exit(f'ERROR: {error}')
 
+    # Пустой пароль иначе всплывёт только на стадии 26, после части деплоя.
+    backup = cfg.get('backup', {})
+    backup_on = backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1')
+    if backup_on and not backup.get('passphrase', '').strip():
+        config_error('backup.passphrase', 'пустой при включённом бэкапе — задай его '
+                     '(или запусти ./setup.sh), либо выключи backup.enabled')
+
     # MGMT_IP закреплён за тегом (до исключения по UDP-фильтру), а не за
     # позицией в списке: см. assign_mgmt_octets.
     assign_mgmt_octets(repo_root, exits)
@@ -898,8 +905,7 @@ def main():
 
     # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
     # enabled=false → ничего не пишем, 26-backup увидит отсутствие и пропустится.
-    backup = cfg.get('backup', {})
-    if backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1'):
+    if backup_on:
         lines += [
             '',
             "BACKUP_ENABLED='true'",

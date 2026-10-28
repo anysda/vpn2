@@ -20,6 +20,7 @@ backup:
   enabled: true
   local:
     dir: /var/backups/anysda
+  passphrase: backup pass
 entry:
   host: 192.0.2.1
   password: entry pass
@@ -75,7 +76,7 @@ class SafeDumpConfigTests(unittest.TestCase):
 
     def test_errors_in_unindented_list_keep_key_and_line(self):
         cases = [
-            (SAFE_DUMP.replace('  tag: nl', '  tga: nl'), 'exits[1].tga: неизвестный ключ, строка 20'),
+            (SAFE_DUMP.replace('  tag: nl', '  tga: nl'), 'exits[1].tga: неизвестный ключ, строка 21'),
             (SAFE_DUMP.replace('- host: 192.0.2.3', '- host: "$(touch CANARY)"'), 'exits[1].host'),
             ('- tag: de\n' + SAFE_DUMP, 'tag: неизвестный ключ, строка 1'),
         ]

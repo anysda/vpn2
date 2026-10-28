@@ -48,8 +48,20 @@ release_start() {
   }
   VPN2_LOCK_PID=$VPN2_REMOTE_LOCK_PID
   exec {VPN2_LOCK_IN}>&"${VPN2_REMOTE_LOCK[1]}"
-  local locked
-  read -r locked <&"${VPN2_REMOTE_LOCK[0]}" || die 'deploy already running or entry lock unavailable'
+  local locked rc=0
+  if ! read -r locked <&"${VPN2_REMOTE_LOCK[0]}"; then
+    # Без строки coproc уже завершился: flock -n на entry выходит с 1, когда
+    # замок занят. Иначе до flock не дошли: ssh_exec отдаёт 255 при отказе
+    # входа или сети (причину он напечатал выше), sshpass - 5 на неверный
+    # пароль и 6 на непринятый host-key.
+    wait "$VPN2_LOCK_PID" || rc=$?
+    case $rc in
+      1) die 'deploy already running: entry deploy lock is held' ;;
+      5) die 'cannot take deploy lock: entry refused ssh login (wrong password)' ;;
+      255|6) die "cannot take deploy lock: ssh to entry failed (login refused or entry unreachable, ssh exit $rc); see the ssh reason above" ;;
+      *) die "cannot take deploy lock: entry lock command exited with $rc" ;;
+    esac
+  fi
   # Метка ssh_exec отсекает текст .bashrc; чужая строка здесь значит, что shell
   # entry при входе печатает текст и до команды не дошёл.
   [[ "$locked" == locked ]] || die "entry did not confirm deploy lock: ssh returned '$locked' instead of the command output; check what root's .bashrc/profile on entry prints and runs at ssh login"

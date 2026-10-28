@@ -6,16 +6,19 @@ which alone changes election state, so a slow Bot API never delays a round.
 """
 
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import logging
 import math
 import queue
+import secrets
 import socket
 import subprocess
 import threading
 from urllib import request
 
 from . import hooks, hy2, tgqueue, web
-from .heartbeat import MISSED
+from .heartbeat import MISSED, OUTAGE
 from .leader import GUARD, deadline_after
 
 LOG = logging.getLogger(__name__)
@@ -34,6 +37,11 @@ RETRY_FIRST = 30
 RETRY_MAX = 300
 # A common certificate renewed during an emergency reaches Hysteria2 and the panel.
 TLS_EVERY = 60
+# The admin hears of a silent entry after this much silence: exits poll each
+# other from MISSED on, and a few rounds later they agree on the one sender.
+NOTICE_AFTER = 180
+# Used start links kept in the agent state; one link per outage.
+USED_LINKS = 16
 
 
 def iso(wall):
@@ -109,6 +117,10 @@ class Lifecycle:
         self.profiles = {}
         self.pending = set()
         self.restored = False
+        # The start link the panel thread may accept now: (nonce, expires) or None.
+        self.offer = None
+        self.claimed = set()
+        self.link_lock = threading.Lock()
         self.results = queue.SimpleQueue()
         self.jobs = None
         if threaded:
@@ -271,6 +283,109 @@ class Lifecycle:
         self.reach = None
         return True
 
+    def outage(self, silence, sender):
+        """Exit, every round: the admin's notice of a silent entry with a start link.
+
+        Only the exit that the election order puts first among those that do
+        not hear the entry (sender) sends it. The notice lives in the agent
+        state: send (not delivered yet), open (the link works), back (entry
+        returned first, the correction is due), started (the emergency runs),
+        unsent (no channel, or Telegram refused it for good).
+        """
+        agent = self.agent
+        state = agent.state.data
+        active = agent.leader.data['active']
+        heard = silence < MISSED
+        notice = state.get('outage_notice')
+        if notice is None and sender and not active and NOTICE_AFTER <= silence < OUTAGE:
+            notice = state['outage_notice'] = dict(
+                nonce=secrets.token_urlsafe(16), expires=int(agent.wall() + OUTAGE - silence),
+                message_id=None, state='send')
+            agent.state.save()
+        if notice is None:
+            self.offer = None
+            return
+        if f"outage:{notice['nonce']}" in self.pending:
+            # A send under way decides first whether there is a message to
+            # correct; its link may already be with the admin.
+            self.offer = (notice['nonce'], notice['expires']) if not (active or heard) else None
+            return
+        before = notice['state']
+        if before in ('send', 'open') and (active or heard):
+            notice['state'] = 'started' if active else 'back' if notice['message_id'] else 'unsent'
+        if notice['state'] in ('started', 'unsent') and heard and not active:
+            del state['outage_notice']
+        if state.get('outage_notice') is not notice or notice['state'] != before:
+            agent.state.save()
+            if before in ('send', 'open') and not active:
+                self.submit('link-close', self._close_link)
+        current = state.get('outage_notice') and notice['state']
+        # The link is valid from the moment it may reach the admin.
+        self.offer = (notice['nonce'], notice['expires']) if current in ('send', 'open') else None
+        if current == 'send':
+            minutes = max(1, math.ceil((OUTAGE - silence) / 60))
+            self.submit(f"outage:{notice['nonce']}", self._send_outage, notice['nonce'],
+                        notice['expires'], minutes)
+        elif current == 'open' and self.server is None:
+            # A restarted agent: the link it already sent still works.
+            self.submit('link', self._open_link)
+        elif current == 'back':
+            self.submit(f"outage-back:{notice['nonce']}", self._edit_outage, notice['nonce'],
+                        notice['message_id'])
+
+    def _outage_result(self, now, kind, nonce, *args):
+        agent = self.agent
+        state = agent.state.data
+        notice = state.get('outage_notice')
+        if not notice or notice['nonce'] != nonce:
+            return
+        if kind == 'outage_sent':
+            message_id, final = args
+            if message_id is not None:
+                notice['message_id'] = message_id
+                if notice['state'] == 'send':
+                    notice['state'] = 'open'
+                LOG.info('entry silent: the admin got the start link')
+            elif final and notice['state'] == 'send':
+                notice['state'] = 'unsent'
+        elif kind == 'outage_edited':
+            if args[0] and notice['state'] == 'back':
+                del state['outage_notice']
+                LOG.info('entry back before the start: the admin notice corrected')
+        else:
+            used = state.setdefault('outage_used', [])
+            used.append(nonce)
+            del used[:-USED_LINKS]
+            if notice['state'] in ('send', 'open'):
+                notice['state'] = 'started'
+                # The exit that serves the link counts only while it does not
+                # hear the entry itself; the others join as in any emergency.
+                if now - agent.heartbeat.last_entry >= MISSED:
+                    agent.leader.activate()
+                    LOG.info('emergency started by the admin link')
+        agent.state.save()
+
+    def start_link(self, token):
+        """Panel thread: 202 for the current link, once; the agent loop starts the emergency."""
+        nonce, _, rest = token.partition('.')
+        expires, _, signature = rest.partition('.')
+        if not (expires.isascii() and expires.isdigit()) or not hmac.compare_digest(
+                signature.encode(), self._signature(nonce, expires).encode()):
+            return 403
+        with self.link_lock:
+            if (self.offer != (nonce, int(expires)) or self.agent.wall() >= int(expires)
+                    or nonce in self.claimed or nonce in self.agent.state.data.get('outage_used', ())):
+                return 410
+            self.claimed.add(nonce)
+        self.results.put(('manual', ('manual', nonce)))
+        return 202
+
+    def _signature(self, nonce, expires):
+        """The installation's common key; the link names the exit that serves it."""
+        agent = self.agent
+        message = '\n'.join(('vpn2-emergency-start', agent.installation, agent.node, nonce, expires))
+        return hmac.new(agent.key, message.encode(), hashlib.sha256).hexdigest()
+
     def _apply(self, now, kind, *args):
         agent = self.agent
         leader = agent.leader
@@ -301,6 +416,8 @@ class Lifecycle:
                     leader.credentials_lost()
         elif kind == 'delivered':
             leader.set_deadline(*args, now)
+        elif kind in ('outage_sent', 'outage_edited', 'manual'):
+            self._outage_result(now, kind, *args)
 
     # Leader events, on the agent loop.
 
@@ -361,7 +478,7 @@ class Lifecycle:
     def _check_entry(self, host, now):
         return ('entry', bool(self.probe_entry(host)), now)
 
-    def _panel(self):
+    def _panel(self, link_only=False):
         if self.server is None:
             agent = self.agent
             server = self.web.make_server(
@@ -369,10 +486,34 @@ class Lifecycle:
                 address=self.panel_address, snapshot_loader=agent.snapshot_loader,
                 profiles=lambda generation: self.profiles.get(generation, {}),
                 connections=lambda generation: self.hy2.connections(self.directory, generation),
-                broadcast=self._broadcast)
+                broadcast=self._broadcast, start=self.start_link)
+            server.panel.link_only = link_only
             threading.Thread(target=server.serve_forever, name='emergency-panel', daemon=True).start()
             self.server = server
         return self.server.panel
+
+    def _open_link(self):
+        self._panel(link_only=True)
+
+    def _close_link(self):
+        # Before the emergency the server exists only for the link.
+        if self.server and self.server.panel.link_only:
+            self._close_server()
+
+    def _send_outage(self, nonce, expires, minutes):
+        token = f'{nonce}.{expires}.{self._signature(nonce, str(expires))}'
+        panel = self._panel(link_only=True)
+        message_id, final = self.tg.send_outage(self.directory, minutes=minutes,
+                                                start_url=f'{panel.url}/start/{token}',
+                                                api_base=self.api_base)
+        if message_id is None and final:
+            LOG.warning('entry silent: no admin notice, Telegram refused it or no channel')
+            self._close_link()
+        return ('outage_sent', nonce, message_id, final)
+
+    def _edit_outage(self, nonce, message_id):
+        ok, final = self.tg.edit_outage(self.directory, message_id=message_id, api_base=self.api_base)
+        return ('outage_edited', nonce, ok or final)
 
     def _refresh_tls(self):
         try:

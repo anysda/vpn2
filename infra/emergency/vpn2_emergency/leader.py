@@ -246,6 +246,11 @@ class Leader:
             self.data['pending_leader'] = False
             self.state.save()
 
+    def activate(self):
+        """The admin's start link: the outage counts as due now, the election runs as usual."""
+        self.data['active'] = True
+        self.state.save()
+
     def bundle_ready(self, now):
         """Called by integration only after connection self-test and issuance."""
         if not self.data.get('ready'):

@@ -47,6 +47,9 @@ ADMIN_RECOVERED = ('Основной VPN восстановлен. Аварий�
 ADMIN_RETURN_CANCELLED = ('Основной VPN снова недоступен. Завершение аварийного режима '
                           'отменено, аварийная панель и доступ продолжают работать')
 ADMIN_ENTRY_MOVED = '. Основной сервер вернулся с новым адресом: {address}'
+OUTAGE = 'Entry недоступен. Аварийный режим включится через {minutes} мин'
+OUTAGE_BACK = 'Entry снова доступен. Аварийный режим не включался'
+OUTAGE_BUTTON = 'Запустить сейчас'
 EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast'}
 DEADLINE = '{deadline}'
 # Telegram refuses these for good (deleted chat, blocked bot, malformed
@@ -351,15 +354,21 @@ class _NoRedirect(request.HTTPRedirectHandler):
 
 
 def _send(token, chat, part, api_base, timeout, opener=None):
+    return _call(token, chat, part, api_base, timeout, opener)[:4]
+
+
+def _call(token, chat, part, api_base, timeout, opener=None):
+    """(ok, reason, retry_after, final, result) of one Bot API request."""
     # Never include raw exceptions/responses in status: both can contain secrets.
     endpoint = parse.urlsplit(api_base)
     if (endpoint.scheme != 'https'
             and not (endpoint.scheme == 'http' and endpoint.hostname in {'127.0.0.1', '::1'})):
         raise ValueError('HTTPS Bot API required')
     method = part['method']
-    if method == 'sendMessage':
+    if method in ('sendMessage', 'editMessageText'):
+        fields = {key: part[key] for key in ('message_id', 'reply_markup') if key in part}
         body = json.dumps({'chat_id': chat, 'text': part['text'],
-                           'link_preview_options': {'is_disabled': True}}).encode()
+                           'link_preview_options': {'is_disabled': True}, **fields}).encode()
         content_type = 'application/json'
     else:
         boundary = uuid.uuid4().hex
@@ -385,20 +394,21 @@ def _send(token, chat, part, api_base, timeout, opener=None):
             status = response.code
             data = json.loads(response.read(65536))
         if status == 200 and data.get('ok') is True:
-            return True, '', 0, False
+            return True, '', 0, False, data.get('result')
         code = data.get('error_code', status)
         if code == 429:
             delay = float(data.get('parameters', {}).get('retry_after', 1))
             if not math.isfinite(delay) or delay < 0:
                 delay = 1
-            return False, 'Telegram 429', max(1, delay), False
+            return False, 'Telegram 429', max(1, delay), False, None
         if not isinstance(code, int):
-            return False, 'ошибка Telegram', 0, False
+            return False, 'ошибка Telegram', 0, False, None
         description = str(data.get('description', '')).lower()
         known = next((text for key, text in DESCRIPTIONS.items() if key in description), None)
-        return False, f'Telegram {code}: {known}' if known else f'Telegram {code}', 0, code in PERMANENT
+        return (False, f'Telegram {code}: {known}' if known else f'Telegram {code}', 0,
+                code in PERMANENT, None)
     except (OSError, HTTPException, ValueError, TypeError, AttributeError):
-        return False, 'Telegram недоступен или ответ не подтверждён', 0, False
+        return False, 'Telegram недоступен или ответ не подтверждён', 0, False, None
 
 
 def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=None,
@@ -510,6 +520,41 @@ def reachable(state_dir, *, api_base='https://api.telegram.org', timeout=5):
         return True
     except (OSError, HTTPException, ValueError):
         return False
+
+
+def _admin_call(state_dir, part, api_base, timeout):
+    """(message_id or True, final) of one admin request outside the delivery queue."""
+    snapshot = _snapshot(state_dir)
+    chat, token = snapshot.get('admin_chat_id'), snapshot.get('bot_token')
+    if not chat or not token:
+        return None, True
+    with _worker_lock(state_dir):
+        ok, _reason, _retry, final, result = _call(token, chat, part, api_base, timeout)
+    if not ok:
+        return None, final
+    message_id = result.get('message_id') if isinstance(result, dict) else None
+    return (message_id if type(message_id) is int else True), True
+
+
+def send_outage(state_dir, *, minutes, start_url, api_base='https://api.telegram.org', timeout=5):
+    """The admin's notice of a silent entry with the start button.
+
+    It belongs to no emergency yet, so it bypasses the delivery table: the
+    caller keeps the message_id and repeats an undelivered send itself.
+    Returns (message_id, final); (None, False) is worth repeating.
+    """
+    _url(start_url)
+    part = {'method': 'sendMessage', 'text': OUTAGE.format(minutes=minutes),
+            'reply_markup': {'inline_keyboard': [[{'text': OUTAGE_BUTTON, 'url': start_url}]]}}
+    message_id, final = _admin_call(state_dir, part, api_base, timeout)
+    return (message_id if type(message_id) is int else None), final
+
+
+def edit_outage(state_dir, *, message_id, api_base='https://api.telegram.org', timeout=5):
+    """Entry is back: the notice says so and loses its button. Returns (ok, final)."""
+    part = {'method': 'editMessageText', 'text': OUTAGE_BACK, 'message_id': message_id}
+    done, final = _admin_call(state_dir, part, api_base, timeout)
+    return done is not None, final
 
 
 def cancel(state_dir, *, emergency_id, generation=None, events=None):

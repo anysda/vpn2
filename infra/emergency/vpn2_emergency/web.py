@@ -51,6 +51,10 @@ ATTEMPTS = 10
 BLOCK_SECONDS = 300
 TRACKED_ADDRESSES = 1024
 DENIED = {'клиент заморожен', 'срок доступа истёк', 'неизвестные или конфликтующие права'}
+START_PAGES = {202: 'Аварийный режим запускается. Адрес и пароль панели придут отдельным сообщением.',
+               403: 'Ссылка недействительна.',
+               410: 'Ссылка больше не действует: она уже использована, устарела, '
+                    'entry снова доступен или аварийный режим уже включён.'}
 
 
 def _delivery_kind(row, emergency_id, generation):
@@ -115,8 +119,12 @@ class Panel:
     """One panel per exit; lifecycle calls revoke credentials synchronously."""
 
     def __init__(self, state_dir, exit_id, public_ip, *, snapshot_loader=_snapshot,
-                 profiles=_empty, connections=_empty, delivery=None, broadcast=None):
+                 profiles=_empty, connections=_empty, delivery=None, broadcast=None, start=None):
         self.directory = Path(state_dir)
+        # start(token) -> HTTP status: the admin's link that starts the
+        # emergency at once. Until the emergency the server answers only it.
+        self.start = start
+        self.link_only = False
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.auth_file = self.directory / 'web-auth.json'
         self.exit_id = exit_id
@@ -155,6 +163,7 @@ class Panel:
         which keeps counting across emergencies.
         """
         with self.lock:
+            self.link_only = False
             if (self.auth.get('emergency_id'), self.auth.get('generation')) != (emergency_id, generation):
                 password = generate_password()
                 self.auth = dict(emergency_id=emergency_id, generation=generation,
@@ -179,6 +188,7 @@ class Panel:
 
     def on_step_down(self, new_leader_exit_id=None):
         with self.lock:
+            self.link_only = False
             self.auth = {}
             self.sessions.clear()
             self._save()
@@ -451,6 +461,13 @@ def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
         def do_GET(self):  # noqa - BaseHTTPRequestHandler hook
             with panel.lock:
                 path = urlsplit(self.path).path
+                parts = path.split('/')
+                if len(parts) == 3 and parts[1] == 'start' and panel.start:
+                    code = panel.start(parts[2])
+                    text = START_PAGES.get(code, START_PAGES[403])
+                    return self.send(code, text.encode(), 'text/plain; charset=utf-8')
+                if panel.link_only:
+                    return self.send(404)
                 if path == '/instructions':
                     return self.static('instructions.html')
                 if path.startswith('/assets/'):

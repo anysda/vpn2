@@ -128,6 +128,9 @@ class Agent:
         self.state.save()
         self.log_role()
         if self.lifecycle:
+            if self.leader:
+                self.lifecycle.outage(now - self.heartbeat.last_entry,
+                                      self.leader.preferred(now) == self.node)
             self.lifecycle.tick(now)
 
     def entry_ready(self, now):

@@ -11,7 +11,8 @@ YT_PROBE_VIDEO позволяет выбрать другой общедосту
 При неизмеренном ответе — другой ролик (YT_PROBE_POT_VIDEO), mweb и локальный
 PO-токен bgutil. Не более двух попыток; сетевой bad повтором не маскируем.
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
-счётчики и маршрут; уведомления — только при входе и выходе из этого состояния.
+счётчики и маршрут. «Не измерено» уходит один раз, когда провал длится без
+перерыва дольше часа; «возобновлено» — только после такого алерта.
 --probe-only проверяет поток без изменения маршрута или состояния.
 Коды пробы: 0 — успех, 1 — поломка обхода/сетевой провал видео, 2 — не измерено.
 --probe-quic отдельно измеряет QUIC (нужен curl с HTTP3); результат не меняет
@@ -219,14 +220,17 @@ def tick(path, sample):
     good, detail = sample()
     unmeasured = good is None
     now = time.time()
+    was_unmeasured = state.get('unmeasured') is True
     since = state.get('unmeasured_since')
-    alerted = state.get('unmeasured_alerted') is True
+    # State прежнего формата без ключа: «не измерено» уже ушло при входе в провал.
+    alerted = state.get('unmeasured_alerted', was_unmeasured) is True
     event = None
     if not unmeasured:
         if alerted:
             event = f'измерение возобновлено: {detail}. Автопереключение снова активно.'
         since, alerted = None, False
-    elif type(since) not in (int, float) or since > now:
+    elif (not was_unmeasured or type(since) not in (int, float)
+          or not math.isfinite(since) or not 0 < since <= now):
         since = now
     elif not alerted and now - since > UNMEASURED_ALERT_AFTER:
         event = f'не измерено: {detail}. Счётчики и маршрут сохранены ({current}).'

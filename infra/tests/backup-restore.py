@@ -812,8 +812,8 @@ exec /usr/bin/sqlite3 "$@"
         self.openssl('ca', '-batch', '-config', 'openssl.cnf', '-revoke', f'/test-output/{n}.pem')
         self.openssl('ca', '-batch', '-config', 'openssl.cnf', '-gencrl', '-out', 'crl.pem')
 
-    def revocation_fixture(self):
-        """Два устройства в архиве; WG, OpenVPN и IKEv2 у каждого, конфиги как у vpn2-control."""
+    def revocation_fixture(self, archived=(1, 2)):
+        """Устройства в архиве; WG, OpenVPN и IKEv2 у каждого, конфиги как у vpn2-control."""
         self.live_pki()
         self.conn.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER, '
                           'wg_private_key TEXT, wg_public_key TEXT, wg_preshared_key TEXT, wg_ip TEXT, '
@@ -823,9 +823,9 @@ exec /usr/bin/sqlite3 "$@"
             devices[n] = {'id': n, 'key': base64.b64encode(bytes([n]) * 32).decode(),
                           'psk': base64.b64encode(bytes([n + 100]) * 32).decode(), 'wg_ip': f'10.66.66.{n + 1}',
                           'user': f'dev{n}', 'password': f'secret{n}', 'ike_ip': f'10.99.1.{n + 1}'}
-        for n in (1, 2):
+        for n in archived:
             self.add_device(devices[n])
-        self.apply_configs([devices[1], devices[2]])
+        self.apply_configs([devices[n] for n in archived])
         return devices
 
     def add_device(self, d):
@@ -899,6 +899,96 @@ exec /usr/bin/sqlite3 "$@"
         with sqlite3.connect(DB) as db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM devices WHERE wg_public_key IS NOT NULL '
                                         'AND ovpn_cert IS NOT NULL AND ikev2_password IS NOT NULL').fetchone(), (2,))
+
+    # VPN2-556: устройство выдано после архива, в архиве его нет.
+    NO_ACCESS = dict.fromkeys(('OpenVPN', 'WireGuard', 'IKEv2', 'ccd'), False)
+    FULL_ACCESS = dict.fromkeys(NO_ACCESS, True)
+
+    @staticmethod
+    def ccd(d):
+        write(f'/etc/openvpn/server/ccd/dev_{d["id"]}', f'ifconfig-push 10.67.67.{d["id"] + 1} 255.255.255.0\n', 0o644)
+
+    def serial(self, n):
+        return int(self.openssl('x509', '-noout', '-serial', '-in', f'/test-output/{n}.pem').strip().partition('=')[2], 16)
+
+    def crl_serials(self):
+        crl = self.openssl('crl', '-in', 'crl.pem', '-noout', '-text')
+        return [int(s, 16) for s in re.findall(r'Serial Number: ([0-9A-F]+)', crl)]
+
+    def access(self, d):
+        """Чем устройство ещё может подключиться после restore."""
+        ike = Path('/etc/swanctl/conf.d/anysda-clients.conf').read_text()
+        return {'OpenVPN': self.serial(d['id']) not in self.crl_serials(),
+                'WireGuard': d['key'] in Path('/etc/wireguard/wg0.conf').read_text(),
+                'IKEv2': f'eap-{d["id"]} {{' in ike or f'"{d["password"]}"' in ike,
+                'ccd': Path(f'/etc/openvpn/server/ccd/dev_{d["id"]}').exists()}
+
+    def issued_after_archive(self, archived=(1, 2), new=3):
+        devices = self.revocation_fixture(archived)
+        for n in archived:
+            self.ccd(devices[n])
+        self.backup()
+        self.add_device(devices[new])
+        self.ccd(devices[new])
+        self.apply_configs([devices[n] for n in (*archived, new)])
+        return devices
+
+    def restore(self, archive='latest'):
+        result = self.script('restore', archive, '--force')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'отозван' in line), flush=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return result
+
+    def test_issued_after_archive_loses_access(self):
+        devices = self.issued_after_archive()
+        self.restore()
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'устройство 3 выдано после архива — доступ остался')
+
+    def test_issued_after_archive_archived_devices_keep_access(self):
+        devices = self.issued_after_archive()
+        self.restore()
+        for n in (1, 2):
+            self.assertEqual(self.access(devices[n]), self.FULL_ACCESS, f'устройство {n} из архива потеряло доступ')
+        with sqlite3.connect(DB) as db:
+            rows = {r[0]: r[1:] for r in db.execute('SELECT id, wg_public_key IS NOT NULL, ovpn_cert IS NOT NULL, '
+                                                    'ikev2_password IS NOT NULL FROM devices')}
+        self.assertEqual(rows, {1: (1, 1, 1), 2: (1, 1, 1)})
+
+    def test_issued_after_archive_id_not_reused(self):
+        self.issued_after_archive()
+        self.restore()
+        with sqlite3.connect(DB) as db:
+            new = db.execute('INSERT INTO devices (created_at) VALUES (9999)').lastrowid
+        self.assertGreater(new, 3, 'новое устройство получило id устройства, выданного после архива')
+
+    def test_issued_after_archive_and_deleted_stays_revoked(self):
+        devices = self.issued_after_archive()
+        self.revoke(3)
+        self.conn.execute('DELETE FROM devices WHERE id = 3')
+        self.conn.commit()
+        Path('/etc/openvpn/server/ccd/dev_3').unlink()
+        self.apply_configs([devices[1], devices[2]])
+        self.restore()
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS)
+        self.assertEqual(self.crl_serials(), [self.serial(3)])
+        for n in (1, 2):
+            self.assertEqual(self.access(devices[n]), self.FULL_ACCESS, f'устройство {n} из архива потеряло доступ')
+
+    def test_issued_after_archive_restore_twice(self):
+        devices = self.issued_after_archive()
+        archive = next(BACKUPS.glob('*.age')).name
+        self.restore(archive)
+        first = self.crl_serials()
+        self.restore(archive)
+        second = self.crl_serials()
+        self.assertEqual(len(second), len(set(second)), f'дубли в CRL: {second}')
+        self.assertEqual(sorted(second), sorted(first), 'повторный restore изменил набор отозванного')
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'после повторного restore у устройства 3 доступ')
+
+    def test_issued_after_archive_without_devices(self):
+        devices = self.issued_after_archive(archived=(), new=1)
+        self.restore()
+        self.assertEqual(self.access(devices[1]), self.NO_ACCESS, 'в архиве нет устройств — доступ у устройства 1 остался')
 
     def test_persistent_mismatch_keeps_archive_with_warning(self):
         # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.

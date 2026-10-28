@@ -170,7 +170,8 @@ release_start
         self.assertIn('git stash', result.stderr)
 
     def test_image_pinned_by_previous_install_is_ignored_with_warning(self):
-        config = (ROOT / 'config.example.yaml').read_text()
+        config = (ROOT / 'config.example.yaml').read_text().replace(
+            '  passphrase: ""', '  passphrase: test pass')
         config += '\npanel:\n  image: ghcr.io/anysda/vpn2/panel:1.0.0\ntgbot:\n  image: ghcr.io/anysda/vpn2/tgbot:1.0.0\n'
         (self.work / 'config.yaml').write_text(config)
         for development, expected in (('false', None), ('true', "PANEL_IMAGE='ghcr.io/anysda/vpn2/panel:1.0.0'")):

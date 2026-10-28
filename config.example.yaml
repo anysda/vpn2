@@ -204,15 +204,16 @@ admin:
 # покидает mktemp-dir и не остаётся в файловой системе.
 #
 # passphrase — единственный секрет. Потерял = бэкапы нечитаемы.
-# Если оставить пустым — setup.sh сгенерит крепкий и запишет в config.yaml
-# (chmod 600), как и admin.password / root-пароли нод; на экран не выводится.
-# При ручном заполнении config.yaml passphrase надо задать до деплоя.
+# ./setup.sh генерирует крепкий сам и пишет в config.yaml (chmod 600), как
+# admin.password / root-пароли нод; на экран не выводится.
+# При ручном заполнении config.yaml passphrase обязателен при enabled: true,
+# иначе deploy остановится на проверке конфига.
 # На компрометацию оркестратора — ротировать passphrase И re-encrypt
 # существующие бэкапы (см. README §Backup & Disaster Recovery).
 backup:
   enabled: true                # отключить — заменить true на false в этой строке
   backend: local               # local | s3
-  passphrase: ""               # age symmetric passphrase; пусто → setup.sh auto-gen
+  passphrase: ""               # age symmetric passphrase; вручную — задать, ./setup.sh генерирует сам
   retention: 10                # keep last N; «последний успешный» защищён от удаления
   schedule: daily              # off | daily — с 02:00 по системной TZ entry, задержка до 5 мин
                                # (timedatectl), случайная задержка до 5 минут

@@ -141,6 +141,7 @@ class EntryMemoryTest(unittest.TestCase):
             root = Path(directory)
             (root / "config.yaml").write_text(
                 (ROOT / "config.example.yaml").read_text()
+                .replace('  passphrase: ""', '  passphrase: test pass')
                 + "\nentry_resources:\n  querylog_size: 0\n  adaway_enabled: false\n  retention_days: 11\n")
             subprocess.run([sys.executable, str(ROOT / "infra/lib/config2env.py"), str(root)],
                            capture_output=True, check=True)

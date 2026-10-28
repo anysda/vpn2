@@ -78,7 +78,8 @@ class HysteriaTests(unittest.TestCase):
     def test_config_to_stages_bbr_brutal_and_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            base = (ROOT / 'config.example.yaml').read_text()
+            base = (ROOT / 'config.example.yaml').read_text().replace(
+                '  passphrase: ""', '  passphrase: test pass')
             # Разные направления выявляют случайную перестановку скоростей;
             # второй экзит и mgmt должны оставаться на BBR.
             for settings in ('', '    hy2_up_mbps: 240\n    hy2_down_mbps: 120\n', ''):
@@ -145,7 +146,8 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT
                          ('1.5', '10'), ('oops', '10'), ('1000001', '10')]:
             with self.subTest(up=up, down=down), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                base = (ROOT / 'config.example.yaml').read_text()
+                base = (ROOT / 'config.example.yaml').read_text().replace(
+                    '  passphrase: ""', '  passphrase: test pass')
                 (root / 'config.yaml').write_text(base.replace('    host: 5.6.7.8\n',
                     f'    host: 5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
                 result = subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],

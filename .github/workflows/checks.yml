@@ -42,6 +42,7 @@ jobs:
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
+          sed -i 's/^  passphrase: ""/  passphrase: ci pass/' "$d/config.yaml"
           python3 infra/lib/config2env.py "$d"
           test -s "$d/infra/envs/all.env"
 

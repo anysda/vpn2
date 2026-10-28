@@ -82,7 +82,8 @@ class WindowTests(unittest.TestCase):
         for scale in ('native', '0', '1', '8', '9', '14', '15', '-1', '09', 'auto'):
             with self.subTest(scale=scale), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                config = (ROOT / 'config.example.yaml').read_text()
+                config = (ROOT / 'config.example.yaml').read_text().replace(
+                    '  passphrase: ""', '  passphrase: test pass')
                 (root / 'config.yaml').write_text(config + f'\nyoutube:\n  route: zapret\n  window_scale: {scale}\n')
                 result = subprocess.run(
                     [sys.executable, str(ROOT / 'infra/lib/config2env.py'), directory],

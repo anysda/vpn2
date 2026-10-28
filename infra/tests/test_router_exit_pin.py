@@ -42,7 +42,8 @@ class ExitPinTests(unittest.TestCase):
     def test_config_flag_reaches_env_and_deploy_warns(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            base = (ROOT / 'config.example.yaml').read_text()
+            base = (ROOT / 'config.example.yaml').read_text().replace(
+                '  passphrase: ""', '  passphrase: test pass')
             (root / 'config.yaml').write_text(base.replace(
                 '    host: 5.6.7.8\n', '    host: 5.6.7.8\n    hy2_insecure: true\n'))
             result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), tmp],

@@ -1097,6 +1097,43 @@ exec /usr/bin/sqlite3 "$@"
         self.assertIn('WARN: живая БД не читается', result.stdout)
         self.assert_only_archived_have_access(devices)
 
+    def issued_after_archive_reissued(self, live_db='live'):
+        """Архив (1, 2), выдано 3; устройству 1 перевыпущен OpenVPN, как в панели: старый отозван, выдан новый."""
+        devices = self.issued_after_archive()
+        archived = self.serial(1)
+        self.revoke(1)
+        self.conn.execute('UPDATE devices SET ovpn_cert = ? WHERE id = 1', (self.issue(1),))
+        self.conn.commit()
+        if live_db != 'live':
+            self.lose_live_db(corrupt=live_db == 'corrupt')
+        result = self.restore()
+        # Как при живой БД: оба сертификата устройства 1 отозваны, OpenVPN перевыпускается
+        # в панели, WireGuard, IKEv2 и адрес ccd остаются.
+        crl = self.crl_serials()
+        self.assertIn(archived, crl, 'архивный сертификат устройства 1, отозванный панелью, снова действует')
+        self.assertIn(self.serial(1), crl, 'сертификат устройства 1, выданный после архива, не отозван')
+        self.assertEqual(self.access(devices[1]), dict(self.FULL_ACCESS, OpenVPN=False),
+                         'перевыпуск OpenVPN после архива отнял у устройства 1 другие доступы')
+        with sqlite3.connect(DB) as db:
+            row = db.execute('SELECT wg_public_key, ovpn_cert IS NULL, ikev2_password FROM devices '
+                             'WHERE id = 1').fetchone()
+        self.assertEqual(row, (devices[1]['key'], 1, devices[1]['password']))
+        self.assertIn('устройство 1: OpenVPN отозваны; перевыпущено после архива', result.stdout)
+        self.assertNotRegex(result.stdout, r'устройство 1: [^\n]*удалено после архива')
+        self.assertEqual(self.access(devices[2]), self.FULL_ACCESS, 'устройство 2 из архива потеряло доступ')
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'устройство 3 выдано после архива — доступ остался')
+        return result
+
+    def test_issued_after_archive_reissued_ovpn_live_db(self):
+        self.issued_after_archive_reissued()
+
+    def test_issued_after_archive_reissued_ovpn_live_db_lost(self):
+        self.issued_after_archive_reissued('lost')
+
+    def test_issued_after_archive_reissued_ovpn_live_db_corrupt(self):
+        result = self.issued_after_archive_reissued('corrupt')
+        self.assertIn('WARN: живая БД не читается', result.stdout)
+
     def older_and_newer_archives(self):
         """Архив A (1, 2), выдано 3, архив B (1, 2, 3)."""
         devices = self.revocation_fixture()

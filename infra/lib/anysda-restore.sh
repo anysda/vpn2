@@ -653,6 +653,9 @@ if same_ca:
     for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
         if len(row) == 6 and row[0] == 'R' and HEX.fullmatch(row[3]):
             live_revoked[int(row[3], 16)] = row
+# certificateHold ставит только restore — выданным после архива. Устройство,
+# чей сертификат в восстанавливаемом архиве, получает доступ обратно.
+held = {serial for serial, row in live_revoked.items() if row[2].partition(',')[2] == 'certificateHold'}
 
 live, live_seq = {}, 0
 if os.path.isfile(LIVE_DB):
@@ -668,17 +671,23 @@ if os.path.isfile(LIVE_DB):
 # уже выдан и строки нет) или перевыпущено (другой ключ, сертификат, пароль).
 revoke = {}
 issued = {}
+released = {}
 archive_db = None
 archive_seq = 0
 if os.path.isfile(db_path):
     archive_db, archived, columns, archive_seq = devices(db_path, writable=True)
     for device_id, row in archived.items():
         mine = live.get(device_id)
+        cert = row.get('ovpn_cert')
+        serial = serial_of(cert) if cert and same_ca else None
+        if serial in held:
+            released[serial] = device_id
         # Номер мог достаться другому устройству после прежнего restore.
         if mine and row.get('created_at') and mine.get('created_at') and row['created_at'] != mine['created_at']:
             continue
-        cert = row.get('ovpn_cert')
-        serial = serial_of(cert) if cert and same_ca else None
+        # Отозвано прежним restore, а не удалено: строки нет, номер не выше выданных.
+        if mine is None and serial in held:
+            continue
         gone = mine is None and (serial in live_revoked or 0 < device_id <= live_seq)
         if mine is None and not gone:
             continue
@@ -713,7 +722,7 @@ if os.path.isfile(db_path):
 wg_keys = {row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
 ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
 ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
-certs = [row['ovpn_cert'] for what, _gone, row in revoke.values() if 'OpenVPN' in what]
+certs = [(row['ovpn_cert'], None) for what, _gone, row in revoke.values() if 'OpenVPN' in what]
 # У выданных после архива строк в восстановленной БД нет, чистить нечего.
 # Номер учётки IKEv2 снимаем только если в архиве под ним нет другого устройства.
 for device_id, (what, absent, row) in issued.items():
@@ -724,7 +733,7 @@ for device_id, (what, absent, row) in issued.items():
         if absent:
             ike_ids.add(device_id)
     if 'OpenVPN' in what:
-        certs.append(row['ovpn_cert'])
+        certs.append((row['ovpn_cert'], 'certificateHold'))
 with open(issued_list, 'w') as f:
     f.write(''.join(f'{device_id}\n' for device_id, (_w, absent, _r) in sorted(issued.items()) if absent))
 
@@ -789,6 +798,8 @@ if same_ca and os.path.isfile(index_path):
     position = {int(r[3], 16): n for n, r in enumerate(rows) if len(r) == 6 and HEX.fullmatch(r[3])}
     newcerts = os.path.join(pki, 'newcerts')
     for serial, row in sorted(live_revoked.items()):
+        if serial in released:
+            continue
         if serial in position:
             if rows[position[serial]][0] == 'R':
                 continue
@@ -810,7 +821,7 @@ if same_ca and os.path.isfile(index_path):
         with open(cnf, 'w') as f:
             f.write(re.sub(r'(?m)^dir\s*=.*$', lambda _m: 'dir = ' + pki, config))
         revoked = {int(r[3], 16) for r in index_rows(index_path) if len(r) == 6 and r[0] == 'R'}
-        for cert in certs:
+        for cert, reason in certs:
             if serial_of(cert) in revoked:
                 continue
             pem = os.path.join(work, 'revoke.pem')
@@ -820,7 +831,8 @@ if same_ca and os.path.isfile(index_path):
             if subprocess.run(['openssl', 'verify', '-CAfile', os.path.join(pki, 'ca.crt'), pem],
                               capture_output=True, check=False).returncode:
                 continue
-            done = subprocess.run(['openssl', 'ca', '-batch', '-config', cnf, '-revoke', pem],
+            done = subprocess.run(['openssl', 'ca', '-batch', '-config', cnf, '-revoke', pem,
+                                   *(['-crl_reason', reason] if reason else [])],
                                   capture_output=True, text=True, check=False)
             if done.returncode:
                 sys.exit('openssl ca -revoke: ' + (done.stderr.strip().splitlines() or ['?'])[-1])
@@ -839,7 +851,7 @@ if same_ca and os.path.isfile(index_path):
             if values and os.path.isfile(os.path.join(pki, name)):
                 text = format(max(values), 'X')
                 rewrite(os.path.join(pki, name), text.zfill(len(text) + len(text) % 2) + '\n')
-        if revoked_certs:
+        if revoked_certs or released:
             crl = os.path.join(work, 'crl.pem')
             subprocess.run(['openssl', 'ca', '-batch', '-config', cnf, '-gencrl', '-out', crl],
                            check=True, capture_output=True)
@@ -855,7 +867,10 @@ for device_id, (what, gone, _row) in sorted(revoke.items()):
     say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
 for device_id, (what, _absent, _row) in sorted(issued.items()):
     say(f'  устройство {device_id}: {", ".join(sorted(what)) or "доступов нет"} отозваны; '
-        'выдано после архива — в восстановленной базе его нет')
+        'выдано после архива — в восстановленной базе его нет, доступ вернёт restore архива, где оно есть')
+if released:
+    say('отозванным прежним restore доступ возвращён — они есть в архиве: '
+        + ', '.join(f'№{n}' for n in sorted(released.values())))
 PY
 
 # ── Применение ──────────────────────────────────────────────────────────────

@@ -50,10 +50,14 @@ class BackupPassphraseTests(unittest.TestCase):
                 with self.subTest(enabled=enabled, line=line):
                     self.assert_rejected(backup(enabled, line))
 
-    def test_blank_passphrase_rejected_when_enabled(self):
-        for line in ("passphrase: '   '", 'passphrase: "\t "'):
-            with self.subTest(line=line):
-                self.assert_rejected(backup('true', line))
+    def test_blank_passphrase_accepted_when_enabled(self):
+        for line, value in (("passphrase: '   '", '   '), ('passphrase: "\t "', '\t ')):
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as directory:
+                result = self.convert(backup('true', line), directory)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                env = self.env_text(directory)
+                self.assertIn("BACKUP_ENABLED='true'", env)
+                self.assertIn(f"BACKUP_PASSPHRASE='{value}'", env)
 
     def test_missing_passphrase_rejected_when_enabled(self):
         self.assert_rejected(backup('true', None))

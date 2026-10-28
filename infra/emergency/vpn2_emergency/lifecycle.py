@@ -356,13 +356,14 @@ class Lifecycle:
             used = state.setdefault('outage_used', [])
             used.append(nonce)
             del used[:-USED_LINKS]
-            if notice['state'] in ('send', 'open'):
+            # The exit that serves the link counts only while it does not hear
+            # the entry itself; the others join as in any emergency. An entry
+            # heard again leaves the notice to the next round: the message is
+            # corrected and the link closed as when it returns before a press.
+            if notice['state'] in ('send', 'open') and now - agent.heartbeat.last_entry >= MISSED:
                 notice['state'] = 'started'
-                # The exit that serves the link counts only while it does not
-                # hear the entry itself; the others join as in any emergency.
-                if now - agent.heartbeat.last_entry >= MISSED:
-                    agent.leader.activate()
-                    LOG.info('emergency started by the admin link')
+                agent.leader.activate()
+                LOG.info('emergency started by the admin link')
         agent.state.save()
 
     def start_link(self, token):

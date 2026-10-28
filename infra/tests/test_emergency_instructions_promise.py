@@ -1,6 +1,6 @@
 """The client guide promises only the import ways the bot's real bundle delivers."""
 
-from html.parser import HTMLParser
+import html
 import importlib
 from pathlib import Path
 import re
@@ -19,38 +19,30 @@ LONG = re.compile(r'длинн', re.I)
 FILE_ACTION = re.compile(r'импорт|скопир|сохран|открой', re.I)
 
 
-class Guide(HTMLParser):
-    """Visible text split into blocks (<p>, <li>), each tagged with its section."""
-
-    def __init__(self):
-        super().__init__()
-        self.blocks, self.section, self.text, self.summary = [], 'общий текст', None, None
-
-    def handle_starttag(self, tag, _attrs):
-        if tag in ('p', 'li'):
-            self.text = []
-        elif tag == 'summary':
-            self.summary = []
-
-    def handle_endtag(self, tag):
-        if tag in ('p', 'li') and self.text is not None:
-            self.blocks.append((self.section, ' '.join(''.join(self.text).split())))
-            self.text = None
-        elif tag == 'summary':
-            self.section, self.summary = ''.join(self.summary).strip(), None
-        elif tag == 'details':
-            self.section = 'общий текст'
-
-    def handle_data(self, data):
-        for sink in (self.text, self.summary):
-            if sink is not None:
-                sink.append(data)
+TOKEN = re.compile(r'<!--.*?-->|<![^>]*>|<(/?)([a-zA-Z][\w-]*)[^>]*>|([^<]+)', re.S)
 
 
 def guide_blocks():
-    parser = Guide()
-    parser.feed(GUIDE.read_text(encoding='utf-8'))
-    return parser.blocks
+    """Visible text split into blocks (<p>, <li>), each tagged with its section."""
+    blocks, section, text, summary = [], 'общий текст', None, None
+    for match in TOKEN.finditer(GUIDE.read_text(encoding='utf-8')):
+        closing, tag, data = match.group(1), (match.group(2) or '').lower(), match.group(3)
+        if data is not None:
+            for sink in (text, summary):
+                if sink is not None:
+                    sink.append(html.unescape(data))
+        elif not closing and tag in ('p', 'li'):
+            text = []
+        elif not closing and tag == 'summary':
+            summary = []
+        elif closing and tag in ('p', 'li') and text is not None:
+            blocks.append((section, ' '.join(''.join(text).split())))
+            text = None
+        elif closing and tag == 'summary':
+            section, summary = ''.join(summary).strip(), None
+        elif closing and tag == 'details':
+            section = 'общий текст'
+    return blocks
 
 
 def bundle(uri):
@@ -83,7 +75,7 @@ SHORT = 'hysteria2://secret@exit-a.example:443/?sni=exit-a.example#d1'
 LONG_URI = 'hysteria2://secret@exit-a.example:443/?obfs-password=' + 'a' * 5000
 
 
-class InstructionsPromise(unittest.TestCase):
+class InstructionsPromiseTests(unittest.TestCase):
     maxDiff = None
 
     def setUp(self):

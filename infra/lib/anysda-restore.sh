@@ -673,13 +673,16 @@ revoke = {}
 issued = {}
 released = {}
 archive_db = None
-archive_seq = 0
+archive_seq = seq_floor = 0
+absent_ids = set()
 if os.path.isfile(db_path):
     archive_db, archived, columns, archive_seq = devices(db_path, writable=True)
+    archive_serials = set()
     for device_id, row in archived.items():
         mine = live.get(device_id)
         cert = row.get('ovpn_cert')
         serial = serial_of(cert) if cert and same_ca else None
+        archive_serials.add(serial)
         if serial in held:
             released[serial] = device_id
         # Номер мог достаться другому устройству после прежнего restore.
@@ -718,8 +721,51 @@ if os.path.isfile(db_path):
         if row.get('ikev2_password'):
             what.add('IKEv2')
         issued[device_id] = (what, mine is None, row)
+    absent_ids = {device_id for device_id, (_w, absent, _r) in issued.items() if absent}
+    # Живая БД могла пропасть или не читаться, а PKI и ccd узла переживают её,
+    # и OpenVPN проверяет именно их. Выданное после архива — и действующий
+    # сертификат dev_N, которого нет у устройств архива, и ccd номера вне архива.
+    # Хвосты newcerts без строки в index остались от прежних restore.
+    pki_certs, pki_ids = {}, set()
+    if same_ca:
+        dev = re.compile(r'(?:^|[/,])CN=dev_(\d+)(?:[/,]|$)')
+        newcerts = os.path.join(LIVE_PKI, 'newcerts')
+        indexed = {}
+        for row in index_rows(os.path.join(LIVE_PKI, 'index.txt')):
+            if len(row) == 6 and HEX.fullmatch(row[3]) and dev.search(row[5]):
+                indexed[int(row[3], 16)] = (int(dev.search(row[5])[1]), row[0] == 'V')
+        for name in sorted(os.listdir(newcerts) if os.path.isdir(newcerts) else ()):
+            try:
+                pem = open(os.path.join(newcerts, name)).read()
+            except OSError:
+                continue
+            serial = serial_of(pem)
+            if serial in indexed:
+                device_id, valid = indexed[serial]
+            else:
+                subject = subprocess.run(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253'],
+                                         input=pem, text=True, capture_output=True, check=False).stdout
+                found = dev.search(subject.strip().partition('=')[2])
+                if not found:
+                    continue
+                device_id, valid = int(found[1]), True
+            pki_ids.add(device_id)
+            if valid and serial not in archive_serials:
+                pki_certs[serial] = (device_id, pem)
+        pki_ids.update(device_id for device_id, _valid in indexed.values())
+    ccd = '/etc/openvpn/server/ccd'
+    ccd_ids = {int(m[1]) for m in (re.fullmatch(r'dev_(\d+)', name)
+                                   for name in (os.listdir(ccd) if os.path.isdir(ccd) else ())) if m}
+    absent_ids |= {n for n in pki_ids | ccd_ids if n not in archived}
+    seq_floor = max([live_seq, *pki_ids, *ccd_ids])
+    known = {serial_of(row['ovpn_cert']) for what, _a, row in issued.values() if 'OpenVPN' in what}
+    for serial, (device_id, pem) in pki_certs.items():
+        if serial in known:
+            continue
+        what, absent, row = issued.get(device_id, (set(), device_id not in archived, {}))
+        issued[device_id] = (what | {'OpenVPN'}, absent, {**row, 'pki_certs': [*row.get('pki_certs', ()), pem]})
 
-wg_keys = {row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
+wg_keys ={row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
 ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
 ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
 certs = [(row['ovpn_cert'], None) for what, _gone, row in revoke.values() if 'OpenVPN' in what]
@@ -733,9 +779,9 @@ for device_id, (what, absent, row) in issued.items():
         if absent:
             ike_ids.add(device_id)
     if 'OpenVPN' in what:
-        certs.append((row['ovpn_cert'], 'certificateHold'))
+        certs.extend((cert, 'certificateHold') for cert in (row.get('ovpn_cert'), *row.get('pki_certs', ())) if cert)
 with open(issued_list, 'w') as f:
-    f.write(''.join(f'{device_id}\n' for device_id, (_w, absent, _r) in sorted(issued.items()) if absent))
+    f.write(''.join(f'{device_id}\n' for device_id in sorted(absent_ids)))
 
 if archive_db:
     fields = {'WireGuard': ('wg_private_key', 'wg_public_key', 'wg_preshared_key'),
@@ -748,10 +794,10 @@ if archive_db:
         # Номера, выданные узлом после среза (и уже удалённые), не выдаются повторно.
         has_seq = archive_db.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").fetchone()
-        if has_seq and live_seq > archive_seq:
+        if has_seq and seq_floor > archive_seq:
             if not archive_db.execute("UPDATE sqlite_sequence SET seq = ? WHERE name = 'devices'",
-                                      (live_seq,)).rowcount:
-                archive_db.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('devices', ?)", (live_seq,))
+                                      (seq_floor,)).rowcount:
+                archive_db.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('devices', ?)", (seq_floor,))
     archive_db.close()
 
 

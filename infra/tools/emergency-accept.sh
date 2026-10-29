@@ -79,10 +79,21 @@ node() {
   [[ -z "$SSH_KEY" ]] || opts+=(-i "$SSH_KEY")
   [[ -z "$KNOWN_HOSTS" ]] || opts+=(-o "UserKnownHostsFile=$KNOWN_HOSTS")
   # Текст из .bashrc узла приходит в stdout раньше вывода команды: команда
-  # сначала печатает метку, всё до неё отбрасывается.
-  ssh "${opts[@]}" "root@${IP[$tag]}" "printf '\\n%s\\n' vpn2-ssh-output-begin;" "$@" \
-    | sed -u '0,/^vpn2-ssh-output-begin$/d'
-  return "${PIPESTATUS[0]}"
+  # сначала печатает метку, всё до неё отбрасывается, после неё идёт потоком.
+  # Без метки shell узла не дошёл до команды (exit или exec в .bashrc) - это
+  # отказ с причиной даже при коде 0; при 255 (соединение) - код и сообщение ssh.
+  # Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из infra/lib/ssh.sh:
+  # инструмент ssh.sh не подключает.
+  local mark=vpn2-ssh-output-begin st
+  local reason='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
+  { ssh "${opts[@]}" "root@${IP[$tag]}" "printf '\\n%s\\n' $mark;" "$@" \
+      | (while IFS= read -r line; do [[ $line != "$mark" ]] || exec cat; done; exit 3)
+    st=("${PIPESTATUS[@]}"); } || :
+  if (( st[1] == 3 && st[0] != 255 )); then
+    printf 'ssh %s: %s\n' "$tag" "$reason" >&2
+    return 1
+  fi
+  return "${st[0]}"
 }
 
 # Состояние агента экзита одной строкой: роль поколение active autonomous

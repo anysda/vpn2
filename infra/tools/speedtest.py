@@ -103,7 +103,11 @@ ss -uanmp 2>/dev/null | grep -A1 sing-box | grep -o 'rb[0-9]*' | sed 's/^/SKRB /
 
 # Текст, который .bashrc узла печатает при входе по ssh, приходит в stdout
 # раньше вывода команды: команда сначала печатает метку, всё до неё отбрасываем.
+# Без метки shell узла не дошёл до команды (exit или exec в .bashrc) - это отказ
+# даже при коде 0. Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из
+# infra/lib/ssh.sh: инструмент ssh.sh не подключает.
 SSH_MARK = 'vpn2-ssh-output-begin'
+SSH_NO_MARK_REASON = 'shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 
 
 def sh(target, cmd, *, via=None, stdin=None, timeout=600):
@@ -114,10 +118,12 @@ def sh(target, cmd, *, via=None, stdin=None, timeout=600):
     else:
         argv = SSH + [target, marked]
     res = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=timeout)
+    _, mark, out = res.stdout.partition(f'\n{SSH_MARK}\n')
+    if not mark and res.returncode != 255:
+        raise RuntimeError(f'{target}: {cmd[:60]}…: {SSH_NO_MARK_REASON}')
     if res.returncode != 0:
         raise RuntimeError(f'{target}: {cmd[:60]}…: rc={res.returncode}: {res.stderr.strip()[-300:]}')
-    _, mark, out = res.stdout.partition(f'\n{SSH_MARK}\n')
-    return out if mark else res.stdout
+    return out
 
 
 def log(msg):

@@ -36,12 +36,24 @@ ssh_node() {
   local host=$1
   shift
   # Текст из .bashrc ВМ приходит в stdout раньше вывода команды: команда
-  # сначала печатает метку, всё до неё отбрасывается.
-  ssh -i "$STAND_DIR/id_ed25519" -o BatchMode=yes -o ConnectTimeout=10 \
+  # сначала печатает метку, всё до неё отбрасывается, после неё идёт потоком.
+  # Без метки shell узла не дошёл до команды (exit или exec в .bashrc) - это
+  # отказ с причиной даже при коде 0; при 255 (соединение) - код и сообщение ssh.
+  # Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из infra/lib/ssh.sh:
+  # инструмент ssh.sh не подключает.
+  local mark=vpn2-ssh-output-begin st
+  local reason='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
+  { ssh -i "$STAND_DIR/id_ed25519" -o BatchMode=yes -o ConnectTimeout=10 \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR \
     -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "root@$host" \
-    "printf '\\n%s\\n' vpn2-ssh-output-begin;" "$@" | sed -u '0,/^vpn2-ssh-output-begin$/d'
-  return "${PIPESTATUS[0]}"
+    "printf '\\n%s\\n' $mark;" "$@" \
+      | (while IFS= read -r line; do [[ $line != "$mark" ]] || exec cat; done; exit 3)
+    st=("${PIPESTATUS[@]}"); } || :
+  if (( st[1] == 3 && st[0] != 255 )); then
+    printf 'ssh %s: %s\n' "$host" "$reason" >&2
+    return 1
+  fi
+  return "${st[0]}"
 }
 
 net_up() {

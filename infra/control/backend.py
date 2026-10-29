@@ -16,6 +16,9 @@ import time
 
 from contract import API, Fault, LIMIT, METHODS, key as validate_key, require
 
+# C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
+BLANK = r'[ \t\v\f\r]'
+
 
 def atomic(path, body, mode=0o600):
     descriptor, name = tempfile.mkstemp(prefix='.control-', dir=path.parent)
@@ -188,7 +191,7 @@ class Backend:
                 cn = 'dev_' + str(params['device_id'])
                 ccd = self.path('/etc/openvpn/server/ccd') / cn
                 text = ccd.read_text() if ccd.exists() else ''
-                disabled = bool(re.search(r'(?m)^disable\s*$', text))
+                disabled = bool(re.search(rf'(?m)^disable{BLANK}*$', text))
                 if disabled and cn not in self.observe('openvpn')['sessions']:
                     continue
                 self.openvpn(dict(strip(params), action='deny'))
@@ -320,7 +323,7 @@ class Backend:
         target = base / 'pki/crl.pem'
         config = base / 'server.conf'
         if config.exists():
-            listed = re.search(r'(?m)^\s*crl-verify\s+(\S+)\s*$', config.read_text())
+            listed = re.search(rf'(?m)^{BLANK}*crl-verify{BLANK}+([^ \t\n\v\f\r]+){BLANK}*$', config.read_text())
             require(bool(listed) and self.path(listed[1]) == target, 'unavailable')
         before = target.stat() if target.exists() else None
         with tempfile.TemporaryDirectory(dir=base / 'pki') as work:
@@ -410,7 +413,7 @@ class Backend:
             ccd = base / 'ccd' / cn
             text = ccd.read_text() if ccd.exists() else None
             # A ccd the server cannot read is the same as none: it connects.
-            denied = text is not None and self.served(ccd) and re.search(r'(?m)^disable\s*$', text)
+            denied = text is not None and self.served(ccd) and re.search(rf'(?m)^disable{BLANK}*$', text)
             return {'valid': valid, 'revoked': revoked, 'present': text is not None,
                     'allowed': text is not None and not denied}
 
@@ -438,7 +441,7 @@ class Backend:
         # Preserve deployment-owned interface configuration (addresses, key,
         # port). Only peers are an API resource; no input becomes a directive.
         previous = path.read_text()
-        header = re.split(r'(?m)^\s*\[Peer\]\s*$', previous)[0].rstrip() + '\n'
+        header = re.split(rf'(?m)^[ \t\n\v\f\r]*\[Peer\]{BLANK}*$', previous)[0].rstrip(' \t\n\v\f\r') + '\n'
         require('[Interface]' in header, 'unavailable')
         # The persisted key pair is authoritative, as in the former panel.
         # A keys-only restore can leave this host's old rendered wg0.conf.
@@ -447,7 +450,7 @@ class Backend:
         if private.exists():
             canonical = private.read_text().strip()
             validate_key(canonical)
-            header = re.sub(r'(?m)^\s*PrivateKey\s*=.*$', 'PrivateKey = ' + canonical, header)
+            header = re.sub(rf'(?m)^{BLANK}*PrivateKey{BLANK}*=.*$', 'PrivateKey = ' + canonical, header)
         peers = ''.join('\n[Peer]\nPublicKey = ' + peer['key'] +
                         '\nPresharedKey = ' + peer['preshared_key'] +
                         '\nAllowedIPs = ' + ', '.join(peer_addresses(peer)) + '\n'
@@ -456,9 +459,9 @@ class Backend:
         # hook directives. syncconf receives only the typed WG subset.
         interface = []
         for line in header.split('\n'):  # wg ends a line only at a newline
-            if re.match(r'^\s*(PrivateKey|ListenPort|FwMark)\s*=', line):
+            if re.match(rf'{BLANK}*(PrivateKey|ListenPort|FwMark){BLANK}*=', line):
                 interface.append(line)
-        require(any(re.match(r'^\s*PrivateKey\s*=', line) for line in interface),
+        require(any(re.match(rf'{BLANK}*PrivateKey{BLANK}*=', line) for line in interface),
                 'unavailable')
         # Through stdin: the distribution's AppArmor profile for wg lets it
         # open only /etc/wireguard, which it cannot traverse without root.

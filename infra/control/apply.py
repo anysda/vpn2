@@ -38,6 +38,14 @@ RESOURCES = {
            'verify': [['/usr/bin/wg', 'show', 'wg0', 'listen-port']]},
 }
 KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
+# C isspace() within a line: what wg(8) skips and openvpn splits words at. Python's
+# \s and str.strip() also take \x1c, \x85, NBSP..., which both read as text.
+BLANK = r'[ \t\v\f\r]'
+# The keys wg syncconf gets, with the values wg reads for them.
+WG_ADDRESS = '[0-9A-Fa-f.:]+(?:/[0-9]+)?'
+WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:off|0x[0-9A-Fa-f]+|[0-9]+)',
+             'PublicKey': KEY, 'PresharedKey': KEY,
+             'AllowedIPs': rf'(?:{WG_ADDRESS}(?:{BLANK}*,{BLANK}*{WG_ADDRESS})*)?'}
 # The directives infra/scripts/29-openvpn.sh writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
@@ -126,8 +134,8 @@ def openvpn_words(line):
 
 def wg_split(text):
     """Deployment-owned [Interface] section and the access-owned [Peer] tail."""
-    parts = re.split(r'(?m)^(?=\s*\[Peer\]\s*$)', text, maxsplit=1)
-    return parts[0].rstrip() + '\n', parts[1] if len(parts) > 1 else ''
+    parts = re.split(rf'(?m)^(?=[ \t\n\v\f\r]*\[Peer\]{BLANK}*$)', text, maxsplit=1)
+    return parts[0].rstrip(' \t\n\v\f\r') + '\n', parts[1] if len(parts) > 1 else ''
 
 
 class Applier:
@@ -215,12 +223,19 @@ class Applier:
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')
         elif resource == 'wg':
             header, peers = wg_split(text)
-            if not re.search(rf'(?m)^\s*PrivateKey\s*=\s*{KEY}\s*$', header):
+            # A line Python's \s reads as a syncconf key must read the same to wg.
+            for line in text.split('\n'):
+                named = re.match(rf'\s*({"|".join(WG_VALUES)})\s*=', line)
+                name = named and named[1]
+                if name and not re.fullmatch(rf'{BLANK}*{name}{BLANK}*={BLANK}*{WG_VALUES[name]}{BLANK}*(?:#.*)?', line):
+                    raise ValueError(f'{name}: wg cannot read {line!a}')
+            if not re.search(rf'(?m)^{BLANK}*PrivateKey{BLANK}*={BLANK}*{KEY}{BLANK}*$', header):
                 raise ValueError('[Interface] PrivateKey missing')
-            port = re.search(r'(?m)^\s*ListenPort\s*=\s*(\d+)\s*$', header)
+            port = re.search(rf'(?m)^{BLANK}*ListenPort{BLANK}*={BLANK}*([0-9]+){BLANK}*$', header)
             if not port or not 0 < int(port[1]) < 65536:
                 raise ValueError('[Interface] ListenPort missing')
-            if peers.count('[Peer]') != len(re.findall(rf'(?m)^\s*PublicKey\s*=\s*{KEY}\s*$', peers)):
+            public = re.findall(rf'(?m)^{BLANK}*PublicKey{BLANK}*={BLANK}*{KEY}{BLANK}*$', peers)
+            if peers.count('[Peer]') != len(public):
                 raise ValueError('[Peer] without a valid PublicKey')
         if spec.get('check'):
             self.command(spec['check'] + [str(path)])
@@ -297,11 +312,10 @@ class Applier:
             header, peers = wg_split(self.target(resource).read_text())
             # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
             # wg and wg-quick end a line only at a newline, as split('\n') does.
-            interface = [line for line in header.split('\n')
-                         if re.match(r'^\s*(\[Interface\]\s*$|(PrivateKey|ListenPort|FwMark)\s*=)', line)]
-            body = '\n'.join(interface) + '\n' + '\n'.join(
-                line for line in peers.split('\n')
-                if re.match(r'^\s*(\[Peer\]\s*$|(PublicKey|PresharedKey|AllowedIPs)\s*=)', line))
+            interface = rf'{BLANK}*(\[Interface\]{BLANK}*$|(PrivateKey|ListenPort|FwMark){BLANK}*=)'
+            peer = rf'{BLANK}*(\[Peer\]{BLANK}*$|(PublicKey|PresharedKey|AllowedIPs){BLANK}*=)'
+            body = '\n'.join(line for line in header.split('\n') if re.match(interface, line)) + '\n' + \
+                '\n'.join(line for line in peers.split('\n') if re.match(peer, line))
             self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body + '\n')
         for argv in spec.get('apply', []):
             self.command(argv)

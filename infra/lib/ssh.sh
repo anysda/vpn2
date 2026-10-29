@@ -172,8 +172,9 @@ ssh_exec() {
 }
 
 # Причина отказа ssh по коду выхода и stderr: hostkey | auth | net.
-# Смена host-key - всегда rc=255 с этим текстом у OpenSSH, неверный пароль
-# sshpass отдаёт кодом 5. Всё прочее (refused, таймаут, обрыв) - сеть.
+# Смена host-key - всегда rc=255 с этим текстом у OpenSSH, отказ во входе по
+# паролю (неверный пароль или запрет sshd на пользователя) sshpass отдаёт
+# кодом 5. Всё прочее (refused, таймаут, обрыв) - сеть.
 ssh_fail_kind() {
   local rc="$1" err="$2"
   case $rc in 5) echo auth; return ;; 124|137) echo net; return ;; esac
@@ -236,7 +237,7 @@ ssh_probe() {
   last=$(printf '%s\n' "$err" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1)
   case $(ssh_fail_kind "$rc" "$err") in
     hostkey) echo "сменился host-key ноды (например, после переустановки ОС)${last:+: $last}"; return 2 ;;
-    auth)    [[ $rc -eq 5 ]] && last="неверный пароль"
+    auth)    [[ $rc -eq 5 ]] && last="неверный пароль или sshd ноды не пускает ${SSH_USER} (DenyUsers/AllowUsers/Match)"
              echo "нода отказала во входе: $last"; return 3 ;;
   esac
   case $rc in
@@ -286,9 +287,10 @@ push() {
     fi
     [[ $rc -eq 0 ]] && return 0
     [[ $rc -eq $_SSH_NO_MARK ]] && return $rc
-    # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не
-    # выходят): без пробы, она стоила бы ноде ещё одну строку для fail2ban.
-    [[ $rc -eq 5 ]] && { _ssh_auth_refused 'нода отказала во входе: неверный пароль'; return $rc; }
+    # Код 5 у sshpass - отказ во входе: неверный пароль или запрет sshd на
+    # пользователя (удалённые mkdir/cat/mv/tar им не выходят): без пробы, она
+    # стоила бы ноде ещё одну строку для fail2ban.
+    [[ $rc -eq 5 ]] && { _ssh_auth_refused "нода отказала во входе: неверный пароль или sshd ноды не пускает ${SSH_USER} (DenyUsers/AllowUsers/Match)"; return $rc; }
     if [[ $attempt -eq 1 && $rc -eq 255 ]]; then
       _ssh_refusal_final || rc=$?
       (( rc != 1 )) && return $rc

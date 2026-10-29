@@ -53,12 +53,13 @@ release_start() {
     # Без строки coproc уже завершился. Занятый замок - только код 75 от
     # flock -E 75 на entry: код 1 отдают и сбои в coproc до ssh (нет envs,
     # пустой SSH_PASS), их причина напечатана выше. ssh_exec отдаёт 255 при
-    # отказе входа или сети, sshpass - 5 на неверный пароль, 6 и 7 на
+    # отказе входа или сети, sshpass - 5 на отказ во входе (неверный пароль
+    # или sshd entry не пускает root: DenyUsers/AllowUsers/Match), 6 и 7 на
     # неизвестный и сменившийся host-key.
     wait "$VPN2_LOCK_PID" || rc=$?
     case $rc in
       75) die 'deploy already running: entry deploy lock is held' ;;
-      5) die 'cannot take deploy lock: entry refused ssh login (wrong password)' ;;
+      5) die 'cannot take deploy lock: entry refused ssh login: wrong password (SSH_PASS), or sshd on entry does not let root in (DenyUsers/AllowUsers/Match)' ;;
       6|7) die "cannot take deploy lock: entry host key is unknown or changed (sshpass exit $rc); see the ssh reason above" ;;
       255) die "cannot take deploy lock: ssh to entry failed (login refused or entry unreachable, ssh exit $rc); see the ssh reason above" ;;
       "$_SSH_NO_MARK") die "entry did not confirm deploy lock: root's shell on entry never reached the command; check what root's .bashrc/profile on entry runs at ssh login" ;;

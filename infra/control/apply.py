@@ -177,7 +177,7 @@ class Applier:
                     # openvpn applies the last crl-verify or client-config-dir.
                     if name in ('crl-verify', 'client-config-dir'):
                         managed_lines.append(name)
-                    if name == 'cipher':
+                    if name in ('cipher', 'auth'):
                         ciphers += [(name, [word]) for word in words[1:]]
                     if name == 'data-ciphers':
                         ciphers += [(name, word.split(':')) for word in words[1:]]
@@ -201,20 +201,13 @@ class Applier:
             # an unknown or malformed directive fails here. --test-crypto would also
             # check option combinations, but before 2.7 it demands a static key that
             # a TLS server cannot have.
-            listed = self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
-                                   '--config', str(path), '--show-ciphers'])
-            # The parse takes any cipher name; an unknown one fails only the restart.
-            known = {line.split()[0].upper() for line in listed.splitlines()
-                     if re.match(r'^\S+\s+\(', line)}
-            for option, names in ciphers:
-                # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
-                # fails the start when no known cipher is left in the list.
-                for cipher in names:
-                    optional = option == 'data-ciphers' and cipher.startswith('?')
-                    if cipher and not optional and cipher.upper() not in known:
-                        raise ValueError(f'{option}: unknown cipher {cipher}')
-                if not any(cipher.removeprefix('?').upper() in known for cipher in names):
-                    raise ValueError(f'{option} {":".join(names)}: no known cipher')
+            self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
+                          '--config', str(path), '--show-ciphers'])
+            # The parse takes any cipher or digest name; an unknown one fails only the
+            # restart. --show-ciphers prints no alias (AES256, sha256), so each name
+            # goes to openvpn itself, which looks it up in OpenSSL the way the server does.
+            if ciphers:
+                self.check_openvpn_names(ciphers)
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')
@@ -229,6 +222,35 @@ class Applier:
                 raise ValueError('[Peer] without a valid PublicKey')
         if spec.get('check'):
             self.command(spec['check'] + [str(path)])
+
+    def check_openvpn_names(self, ciphers):
+        with tempfile.TemporaryDirectory() as scratch:
+            key = str(Path(scratch) / 'static.key')
+            self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
+            for option, names in ciphers:
+                # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
+                # fails the start when no known cipher is left in the list.
+                known = [self.openvpn_accepts(key, option, name.removeprefix('?')) for name in names]
+                kind = 'digest' if option == 'auth' else 'cipher'
+                for name, accepted in zip(names, known):
+                    if name and not accepted and not (option == 'data-ciphers' and name.startswith('?')):
+                        raise ValueError(f'{option}: unknown {kind} {name}')
+                if not any(known):
+                    raise ValueError(f'{option} {":".join(names)}: no known cipher')
+
+    def openvpn_accepts(self, key, option, name):
+        # A static key lets --test-crypto run without TLS, in 2.6 as in 2.7. An AEAD
+        # cipher ignores --auth, so a digest is tried with a CBC cipher.
+        if not name:
+            return False
+        argv = {'cipher': ['--cipher', name],
+                'data-ciphers': ['--cipher', name, '--data-ciphers', name],
+                'auth': ['--cipher', 'AES-256-CBC', '--auth', name]}[option]
+        try:
+            self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key] + argv)
+        except RuntimeError:
+            return False
+        return True
 
     def with_access(self, resource, structure):
         """Structure from the candidate or last good, access as it is NOW."""

@@ -720,9 +720,12 @@ if os.path.isfile(db_path):
         archive_serials.add(serial)
         if serial in held:
             released[serial] = device_id
-        # Номер мог достаться другому устройству после прежнего restore.
+        # Номер мог достаться другому устройству после прежнего restore. Сертификат
+        # отозван не restore (не hold) — панель удалила это устройство до того.
         if mine and row.get('created_at') and mine.get('created_at') and row['created_at'] != mine['created_at']:
-            continue
+            if serial not in live_revoked or serial in held:
+                continue
+            mine = None
         # Отозвано прежним restore, а не удалено: строки нет, номер не выше выданных.
         if mine is None and serial in held:
             continue
@@ -815,14 +818,23 @@ if os.path.isfile(db_path):
     ccd_ids = {int(m[1]) for m in (re.fullmatch(r'dev_(\d+)', name)
                                    for name in (os.listdir(ccd) if os.path.isdir(ccd) else ())) if m}
     absent_ids |= {n for n in pki_ids | ccd_ids if n not in archived}
-    # Учётки IKEv2 нет и после прежнего restore, обнулившего креды перевыпущенного:
-    # строка и ccd остаются. Удаление в панели снимает ccd, а занятый новым номер
-    # даёт действующий сертификат dev_N.
+    # Учётки IKEv2 нет и после прежнего restore, обнулившего креды перевыпущенного.
+    # Удаление в панели оставляет ccd и пишет в него disable, у перевыпущенного
+    # ccd без disable; ccd нет или не читается — не знаем. Номер удалённого занят
+    # действующим сертификатом dev_N — это другое устройство: перевыпуск оставил
+    # бы учётку, его отзыв обратим, как у выданных после архива.
     taken = {device_id for device_id, _pem in pki_certs.values()}
+    replaced = set()
     for device_id in by_cert:
         what, gone, row = revoke[device_id]
-        if gone and device_id in ccd_ids and device_id not in taken:
-            revoke[device_id] = (what, False, row)
+        if not gone:
+            continue
+        if device_id in taken:
+            replaced.add(device_id)
+            continue
+        text = live_text(os.path.join(ccd, f'dev_{device_id}'))
+        disabled = None if text is None else any(line.strip() == 'disable' for line in text.splitlines())
+        revoke[device_id] = (what, disabled, row)
     seq_floor = max([live_seq, *pki_ids, *ccd_ids])
     known = {serial_of(row['ovpn_cert']) for what, _a, row in issued.values() if 'OpenVPN' in what}
     for serial, (device_id, pem) in pki_certs.items():
@@ -831,7 +843,7 @@ if os.path.isfile(db_path):
         # Перевыпуск: устройство остаётся в восстановленной БД с обнулёнными кредами,
         # панель этот сертификат уже не отзовёт. Отзыв без причины, как панель: hold
         # вернул бы доступ следующим restore, в том числе удалённому после него.
-        if device_id in archived and device_id not in issued:
+        if device_id in archived and device_id not in issued and device_id not in replaced:
             reissued.setdefault(device_id, []).append(pem)
             continue
         what, absent, row = issued.get(device_id, (set(), device_id not in archived, {}))

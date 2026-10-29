@@ -138,6 +138,17 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
         self.assertNotIn('откатан', result.stdout, detail)
         self.assertIn('RESULT=0', result.stdout, detail)
 
+    def test_public_entry_unseen_by_exits_before_stage_beats_over_lo_with_one_warn(self):
+        # Провайдер режет 22 снаружи или у экзитов закрыт исходящий 22: экзиты
+        # отвечают, но вход не видят и до стадии. Прежний dev деплой не валил.
+        result, beats, probes, detail = self.run_entry_stage()
+        self.assertTrue(probes, 'экзиты не спрошены до стадии\n' + detail)
+        self.assertGreater(beats.count('entry-closed'), 1, detail)
+        self.assertEqual(result.stdout.count('вход на entry снаружи не проверяется'), 1, detail)
+        self.assertIn('не виден ни одному экзиту', result.stdout, detail)
+        self.assertNotIn('откатан', result.stdout, detail)
+        self.assertIn('RESULT=0', result.stdout, detail)
+
     def test_loopback_entry_host_is_not_checked_and_warns(self):
         result, beats, probes, detail = self.run_entry_stage(entry_host='127.0.0.1',
                                                              files=('outside-open',))

@@ -471,11 +471,14 @@ fw_guard_stage() {
 
 # Какой адрес entry.host: local - экзит по нему увидит свой же sshd (loopback,
 # не задан), private - внутренняя сеть или CGNAT (entry за NAT), иначе public.
+# Классы - только у литеральных IP. Имя на entry не разрешаем: её /etc/hosts
+# (cloud-init пишет «127.0.1.1 <имя>») дал бы loopback, а экзит разрешает имя
+# своим DNS. Имя, которого экзиты до стадии не видят, baseline уводит в lo.
 fw_guard_entry_addr_kind() {
   local addr=$1
   if [[ -n $addr && ! $addr =~ ^[0-9.]+$ && $addr != *:* ]]; then
-    addr=$(getent ahosts "$addr" 2>/dev/null | awk 'NR == 1 { print $1 }') || addr=''
-    [[ -n $addr ]] || { [[ $1 == localhost ]] && echo local || echo public; return; }
+    [[ ${addr,,} == localhost || ${addr,,} == localhost.* ]] && echo local || echo public
+    return
   fi
   case $addr in
     ''|127.*|0.0.0.0|::|::1) echo local ;;

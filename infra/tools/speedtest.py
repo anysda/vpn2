@@ -126,6 +126,9 @@ def log(msg):
 
 # --- панель ------------------------------------------------------------------
 
+# Корень клона деплоя на entry для shell-команд; PANEL_CALL читает ту же отметку.
+SOURCE_ROOT_SH = 'cat /etc/anysda/source-root 2>/dev/null || echo /opt/anysda-vpn2'
+
 PANEL_CALL = r'''
 set -euo pipefail
 # Сессия живёт между вызовами: панель считает в лимит попыток и удачные входы,
@@ -134,7 +137,9 @@ umask 077
 settings=$(python3 - <<'PY'
 from pathlib import Path
 import runpy, shlex
-root = Path('/opt/anysda-vpn2')
+# Клон деплоя (отметка стадии 26-backup), у старых установок - /opt.
+mark = Path('/etc/anysda/source-root')
+root = Path(mark.read_text().strip() if mark.is_file() else '/opt/anysda-vpn2')
 parser = runpy.run_path(str(root / 'infra/lib/config2env.py'))
 config = parser['parse_yaml']((root / 'config.yaml').read_text())
 domain = config['panel'].get('domain', '')
@@ -325,14 +330,14 @@ def run(args):
     hub = args.hub
     exits = args.exits.split(',') if args.exits else sh(
         hub, "python3 -c \"import yaml;print(' '.join(e['tag'] for e in "
-             "yaml.safe_load(open('/opt/anysda-vpn2/config.yaml'))['exits']))\"").split()
+             f"yaml.safe_load(open('$({SOURCE_ROOT_SH})/config.yaml'))['exits']))\"").split()
     exit_ip = {t: sh(t, "ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2",
                      via=hub).strip() for t in exits}
     res = {'meta': {'time': time.strftime('%Y-%m-%d %H:%M'), 'secs': args.time,
                     'repeat': args.repeat,
                     'udp_rate': args.udp_rate, 'exits': exits,
                     'clients': [c[0] for c in clients],
-                    'hub_rev': sh(hub, 'git -C /opt/anysda-vpn2 log -1 --format=%h || true').strip()},
+                    'hub_rev': sh(hub, f'git -C "$({SOURCE_ROOT_SH})" log -1 --format=%h || true').strip()},
            'tput': {}, 'lat': {}, 'nodes': {}, 'dns': {}}
 
     # Путь до iperf-сервера проседает на минуты целиком (весь блок экзита

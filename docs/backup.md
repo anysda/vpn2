@@ -110,12 +110,12 @@ s3`), кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-
 ssh root@<новый-entry-ip>
 
 # 2. репозиторий
-git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
-cd /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2
+cd vpn2
 
 # 3. сохранённый config.yaml, безопасным каналом
-scp config.yaml root@<новый-entry-ip>:/opt/anysda-vpn2/config.yaml
-chmod 600 /opt/anysda-vpn2/config.yaml
+scp config.yaml root@<новый-entry-ip>:vpn2/config.yaml
+chmod 600 config.yaml
 
 # 4. временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
 #    первый деплой поднимет HTTP и не выпустит новый сертификат до restore

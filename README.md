@@ -156,8 +156,8 @@ ssh root@<entry-ip>
 **2. Скачать исходники.**
 
 ```bash
-git clone https://github.com/anysda/vpn2 /opt/anysda-vpn2
-cd /opt/anysda-vpn2
+git clone https://github.com/anysda/vpn2
+cd vpn2
 ```
 
 **3. Заполнить конфиг мастером.** Ответы попадут в `config.yaml`.

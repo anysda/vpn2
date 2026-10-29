@@ -27,7 +27,7 @@ entry_resources panel
 STAMP_DIR=/var/anysda/.stamps
 STAGE='30-frontend'
 
-mkdir -p /etc/anysda /opt/anysda-vpn2 /var/lib/anysda-vpn2
+mkdir -p /etc/anysda /var/lib/anysda-vpn2
 
 # ----------------------------------------------------------------------------
 # 1. Pull panel image from the GitHub Container Registry (ghcr.io)

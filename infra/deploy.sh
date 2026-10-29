@@ -676,6 +676,9 @@ run_stage_on_host() {
     printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}"
     printf 'VPN2_PANEL_FOLLOWS=%q\n' "${VPN2_PANEL_FOLLOWS:-false}"
     echo 'VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json'
+    # Клон, из которого идёт деплой: restore, backup и speedtest на entry
+    # берут исходники отсюда (26-backup записывает путь в /etc/anysda/source-root).
+    printf 'VPN2_SOURCE_ROOT=%q\n' "$(cd "$DEPLOY_ROOT/.." && pwd)"
   } > "$rendered_env" || return 1
   chmod 600 "$rendered_env" || return 1
 

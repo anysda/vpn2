@@ -29,6 +29,11 @@
 set -euo pipefail
 umask 077
 
+# Клон, из которого шёл деплой (отметку пишет стадия 26-backup); старые
+# установки без отметки держат исходники в /opt/anysda-vpn2.
+SOURCE_ROOT=$(cat /etc/anysda/source-root 2>/dev/null || true)
+SOURCE_ROOT=${SOURCE_ROOT:-/opt/anysda-vpn2}
+
 # Неудачный бэкап — тревога в ленту «События» панели, архив с расхождением
 # (код 4) — предупреждение. Best-effort: панели может и не быть, на исход
 # бэкапа это не влияет. Секрет идёт в curl через stdin, чтобы не светиться
@@ -392,7 +397,7 @@ find "$BUNDLE_DIR" \( -type s -o -type p -o -type b -o -type c \) -delete
 # /app/package.json, ни .output/.config/.json в образ не попадают.
 APP_VERSION=$(curl -fsS --max-time 10 http://127.0.0.1:51821/api/version 2>/dev/null \
   | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])' 2>/dev/null || echo unknown)
-GIT_COMMIT=$(cd /opt/anysda-vpn2 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+GIT_COMMIT=$(git -C "$SOURCE_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 SCHEMA_VER=0
 if [[ -f "$BUNDLE_DIR/db.sqlite" ]]; then
   SCHEMA_VER=$(sqlite3 "$BUNDLE_DIR/db.sqlite" 'PRAGMA schema_version;')

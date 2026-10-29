@@ -19,6 +19,11 @@
 set -euo pipefail
 umask 077
 
+# Клон, из которого шёл деплой (отметку пишет стадия 26-backup); старые
+# установки без отметки держат исходники в /opt/anysda-vpn2.
+SOURCE_ROOT=$(cat /etc/anysda/source-root 2>/dev/null || true)
+SOURCE_ROOT=${SOURCE_ROOT:-/opt/anysda-vpn2}
+
 ENV_FILE=/etc/anysda/backup.env
 [[ -r "$ENV_FILE" ]] || { echo "anysda-restore: $ENV_FILE не доступен" >&2; exit 2; }
 # shellcheck disable=SC1090
@@ -253,11 +258,11 @@ if [[ -e "$BUNDLE_DIR/db.sqlite" ]]; then
   if docker cp anysda-vpn2:/app/server/database/migrations "$WORK/migrations" >/dev/null 2>&1 \
      && [[ -r "$WORK/migrations/meta/_journal.json" ]]; then
     MIGRATIONS="$WORK/migrations"
-  elif [[ -r /opt/anysda-vpn2/app/server/database/migrations/meta/_journal.json ]]; then
-    MIGRATIONS=/opt/anysda-vpn2/app/server/database/migrations
+  elif [[ -r $SOURCE_ROOT/app/server/database/migrations/meta/_journal.json ]]; then
+    MIGRATIONS=$SOURCE_ROOT/app/server/database/migrations
   fi
   if [[ -z "$MIGRATIONS" ]]; then
-    incompatible "не найден журнал миграций текущей версии (ни в контейнере anysda-vpn2, ни в /opt/anysda-vpn2)"
+    incompatible "не найден журнал миграций текущей версии (ни в контейнере anysda-vpn2, ни в $SOURCE_ROOT)"
   elif ! SCHEMA_RESULT=$(python3 - "$BUNDLE_DIR/db.sqlite" "$MIGRATIONS" 2>&1 <<'PY'
 import hashlib, json, os, sqlite3, sys
 database, folder = sys.argv[1:]
@@ -340,7 +345,7 @@ fi
 
 # Стадия 30 ждёт шаблон в staging-каталоге run_stage. /tmp может быть tmpfs:
 # готовим его из установленного дерева на каждом restore, ещё до swap.
-FRONTEND_TPL=/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl
+FRONTEND_TPL=$SOURCE_ROOT/infra/configs/anysda-config.yaml.tpl
 if [[ ! -r "$FRONTEND_TPL" ]]; then
   echo "anysda-restore: нет шаблона $FRONTEND_TPL — данные не изменены" >&2
   exit 5
@@ -1047,6 +1052,12 @@ if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   if [[ ! -f "$BUNDLE_DIR/etc-anysda/sso-runtime.json" ]]; then
     rm -f /etc/anysda/sso-runtime.json
   fi
+  # Отметка клона описывает этот хост, а не тот, где снят архив.
+  if [[ $SOURCE_ROOT == /opt/anysda-vpn2 ]]; then
+    rm -f /etc/anysda/source-root
+  else
+    printf '%s\n' "$SOURCE_ROOT" > /etc/anysda/source-root
+  fi
   # backup.env мог не быть в архиве (старый формат) — оставляем текущий нетронутым
 fi
 STEP="восстановление WireGuard"
@@ -1179,7 +1190,7 @@ set +E
 # Стадии при деплое получают склейку envs/all.env + envs/ru.env (run_stage в
 # infra/deploy.sh): AGH_PORT и прочие общие переменные лежат в all.env, и на
 # одном ru.env 22-adguard падает сразу. Собираем env так же, как деплой.
-ENVS_DIR=/opt/anysda-vpn2/infra/envs
+ENVS_DIR=$SOURCE_ROOT/infra/envs
 STAGE_ENV="$WORK/ru.env"
 if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
   { cat "$ENVS_DIR/all.env"; echo; grep -v '^SSH_PASS=' "$ENVS_DIR/ru.env";
@@ -1193,7 +1204,7 @@ fi
 # панель не входила в AdGuard паролем из бэкапа. Стадии 30 и 35 пересоздают их.
 STAGE_FAIL=""
 for stage in 22-adguard 30-frontend 35-telegram; do
-  script=/opt/anysda-vpn2/infra/scripts/$stage.sh
+  script=$SOURCE_ROOT/infra/scripts/$stage.sh
   if [[ ! -x "$script" ]]; then
     STAGE_FAIL="нет $script"
   elif [[ ! -s "$STAGE_ENV" ]]; then
@@ -1211,7 +1222,7 @@ for stage in 22-adguard 30-frontend 35-telegram; do
 done
 
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────
-VERIFY=/opt/anysda-vpn2/infra/scripts/99-verify.sh
+VERIFY=$SOURCE_ROOT/infra/scripts/99-verify.sh
 if [[ -x "$VERIFY" && -s "$STAGE_ENV" ]]; then
   echo "anysda-restore: 99-verify…"
   if "$VERIFY" "$STAGE_ENV"; then

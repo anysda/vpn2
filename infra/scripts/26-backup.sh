@@ -24,6 +24,13 @@ source "$SVC_LIB"
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 26-backup is ru-only — skipping"; exit 0;; esac
 
+# Клон репозитория, из которого шёл деплой. restore, backup и speedtest стоят
+# вне клона и берут исходники по этой отметке; без неё - /opt/anysda-vpn2.
+if [[ -n "${VPN2_SOURCE_ROOT:-}" && -d "$VPN2_SOURCE_ROOT/infra" ]]; then
+  mkdir -p /etc/anysda
+  printf '%s\n' "$VPN2_SOURCE_ROOT" > /etc/anysda/source-root
+fi
+
 # Если backup-секция в config.yaml отсутствует или enabled != true — стадия
 # снимаем прежний таймер; архивы и passphrase нужны для восстановления.
 if [[ "${BACKUP_ENABLED:-}" != "true" ]]; then

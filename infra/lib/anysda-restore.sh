@@ -1046,17 +1046,13 @@ fi
 STEP="восстановление /etc/anysda"
 if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   TOUCHED+=(etc/anysda)
+  # Отметка клона описывает этот хост, а не тот, где снят архив: архивную не берём.
+  rm -f "$BUNDLE_DIR/etc-anysda/source-root"
   copy_into "$BUNDLE_DIR/etc-anysda" /etc/anysda
   # Старые архивы не содержат настроек SSO из профиля. Их отсутствие тоже
   # восстанавливаем, иначе настройки текущей панели перекроют архивный засев.
   if [[ ! -f "$BUNDLE_DIR/etc-anysda/sso-runtime.json" ]]; then
     rm -f /etc/anysda/sso-runtime.json
-  fi
-  # Отметка клона описывает этот хост, а не тот, где снят архив.
-  if [[ $SOURCE_ROOT == /opt/anysda-vpn2 ]]; then
-    rm -f /etc/anysda/source-root
-  else
-    printf '%s\n' "$SOURCE_ROOT" > /etc/anysda/source-root
   fi
   # backup.env мог не быть в архиве (старый формат) — оставляем текущий нетронутым
 fi
@@ -1222,7 +1218,10 @@ for stage in 22-adguard 30-frontend 35-telegram; do
 done
 
 # ── Smoke-test через 99-verify ──────────────────────────────────────────────
-VERIFY=$SOURCE_ROOT/infra/scripts/99-verify.sh
+VERIFY=/opt/anysda-vpn2/infra/scripts/99-verify.sh
+if [[ -s /etc/anysda/source-root ]]; then
+  VERIFY=$(< /etc/anysda/source-root)/infra/scripts/99-verify.sh
+fi
 if [[ -x "$VERIFY" && -s "$STAGE_ENV" ]]; then
   echo "anysda-restore: 99-verify…"
   if "$VERIFY" "$STAGE_ENV"; then

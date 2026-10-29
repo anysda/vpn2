@@ -675,6 +675,28 @@ if os.path.isfile(LIVE_DB):
         say(f'WARN: живая БД не читается ({error}) — переношу только отзывы сертификатов')
         live, live_seq = {}, 0
 
+
+def live_text(path):
+    try:
+        return open(path).read()
+    except OSError:
+        return None
+
+
+# Без живой БД о доступах устройства судят живые конфиги узла: пир или секрет,
+# которых там нет, сняты перевыпуском или удалением. Нет конфига — не судим.
+live_peers = live_text('/etc/wireguard/wg0.conf')
+if live_peers is not None:
+    live_peers = {m[1] for m in re.finditer(r'(?m)^\s*PublicKey\s*=\s*(\S+)', live_peers)}
+live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
+if live_ike is not None:
+    secrets = set()
+    for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
+        name = re.search(r'(?m)^\s*id\s*=\s*"([^"]*)"', block)
+        secret = re.search(r'(?m)^\s*secret\s*=\s*"([^"]*)"', block)
+        secrets.add((name and name[1], secret and secret[1]))
+    live_ike = secrets
+
 # Устройство архива против живого: удалено (сертификат отозван или номер
 # уже выдан и строки нет) или перевыпущено (другой ключ, сертификат, пароль).
 revoke = {}
@@ -699,15 +721,27 @@ if os.path.isfile(db_path):
         # Отозвано прежним restore, а не удалено: строки нет, номер не выше выданных.
         if mine is None and serial in held:
             continue
+        what = set()
+        if not live_read:
+            # Каждый вид доступа отдельно, как сравнение с живой БД ниже. Всё
+            # снято и учётки IKEv2 на узле нет — удалено; учётка та же — перевыпуск.
+            user, password = row.get('ikev2_username'), row.get('ikev2_password')
+            if row.get('wg_public_key') and live_peers is not None and row['wg_public_key'] not in live_peers:
+                what.add('WireGuard')
+            if cert and serial in live_revoked:
+                what.add('OpenVPN')
+            if password and live_ike is not None and not any(
+                    secret == password and (not user or name == user) for name, secret in live_ike):
+                what.add('IKEv2')
+            had = {kind for kind, value in (('WireGuard', row.get('wg_public_key')), ('OpenVPN', cert),
+                                            ('IKEv2', password)) if value}
+            gone = bool(what) and what == had and not (user and live_ike and any(name == user for name, _ in live_ike))
+            if what:
+                revoke[device_id] = (what, gone, row)
+            continue
         gone = mine is None and (serial in live_revoked or 0 < device_id <= live_seq)
-        # Без живой БД отозванный сертификат при действующем другом у того же
-        # dev_N — перевыпуск OpenVPN, а не удаление: остальное устройства цело.
-        if gone and not live_read and any(n == device_id and valid and s != serial
-                                           for s, (n, valid) in indexed.items()):
-            gone, mine = False, {**row, 'ovpn_cert': None}
         if mine is None and not gone:
             continue
-        what = set()
         if row.get('wg_public_key') and (gone or row['wg_public_key'] != mine.get('wg_public_key')):
             what.add('WireGuard')
         if cert and (gone or serial in live_revoked or cert != mine.get('ovpn_cert')):

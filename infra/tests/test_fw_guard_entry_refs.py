@@ -84,7 +84,7 @@ fw_guard_disarm() { touch disarming; orig_fw_guard_disarm "$@"; }
 
 class EntryBeatReferenceExitTests(unittest.TestCase):
     def run_entry_stage(self, entry_host='198.51.100.10', exit_tags='se fi', files=(), lose=0,
-                        stage='28-wireguard'):
+                        stage='28-wireguard', extra=''):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for path in ('scripts', 'envs', 'lib'):
@@ -99,7 +99,7 @@ class EntryBeatReferenceExitTests(unittest.TestCase):
             if lose:
                 (root / 'lose').write_text(f'{lose}\n')
             script = (functions(ROOT / 'infra/lib/ssh.sh') + functions(ROOT / 'infra/deploy.sh')
-                      + STUBS + NET + f'''
+                      + STUBS + NET + extra + f'''
 FW_GUARD_STAGES='{stage}'
 FW_GUARD_WINDOW={WINDOW}
 ENTRY_HOST={entry_host}
@@ -167,6 +167,23 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
     def test_stage_that_closes_entry_rolls_back_although_one_exit_has_no_path(self):
         result, beats, probes, detail = self.run_entry_stage(files=('outside-open', 'stage-closes',
                                                                     'nopath-se'))
+        self.assertNotIn('entry-closed', beats, 'пульс при закрытом стадией входе\n' + detail)
+        self.assertIn('откатан', result.stdout, detail)
+        self.assertIn('RESULT=1', result.stdout, detail)
+
+    def test_entry_host_name_resolving_to_loopback_on_entry_is_still_checked_from_exits(self):
+        # cloud-init пишет на entry «127.0.1.1 <имя>»: getent на самой entry
+        # видит loopback, а экзиты разрешают имя своим DNS в публичный адрес.
+        hosts = r'''
+getent() {
+  [[ $1 == ahosts && $2 == vpn.example.com ]] || return 2
+  echo '127.0.1.1       STREAM vpn.example.com'
+}
+'''
+        result, beats, probes, detail = self.run_entry_stage(
+            entry_host='vpn.example.com', files=('outside-open', 'stage-closes'), extra=hosts)
+        self.assertTrue(probes, 'экзиты не спрошены: имя на entry ушло в local\n' + detail)
+        self.assertNotIn('локальный', result.stdout, detail)
         self.assertNotIn('entry-closed', beats, 'пульс при закрытом стадией входе\n' + detail)
         self.assertIn('откатан', result.stdout, detail)
         self.assertIn('RESULT=1', result.stdout, detail)

@@ -65,6 +65,30 @@ insecure_exits() {
   done
 }
 service() { systemctl is-active --quiet "$1"; }
+# Вход на экзит через hy2-mgmt. Login shell экзита читает .bashrc до команды,
+# и его вывод не должен попасть в лог deploy: команда печатает метку, вывод до
+# неё отбрасывается. Без метки shell узла не дошёл до команды (exit или exec в
+# .bashrc) - это отказ, даже при коде 0; 255 (соединение) идёт как есть.
+# Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из infra/lib/ssh.sh:
+# на узел lib/ssh.sh не попадает.
+SSH_MARK=vpn2-ssh-output-begin
+SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
+exit_ssh() {
+  local output rc=0
+  output=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>&1) || rc=$?
+  if [[ $rc -eq 255 ]]; then
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    return 255
+  fi
+  if [[ $'\n'$output$'\n' != *$'\n'"$SSH_MARK"$'\n'* ]]; then
+    echo "$SSH_NO_MARK_REASON"
+    return 1
+  fi
+  output=${output#*"$SSH_MARK"}
+  output=${output#$'\n'}
+  [[ -z "$output" ]] || printf '%s\n' "$output"
+  return "$rc"
+}
 # Аварийка ставится стадией 23 из образа: версия образа и всё, что нужно
 # активации, лежат на узле заранее (docker для проверки не будим).
 emergency_image() {
@@ -294,7 +318,7 @@ if [[ "$HOST_TAG" == ru ]]; then
     fail 'ssh экзитов: EXIT_TAGS пуст — нет узлов для проверки'
   fi
   for tag in ${EXIT_TAGS:-}; do
-    check "ssh $tag через hy2-mgmt" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$tag" true
+    check "ssh $tag через hy2-mgmt" exit_ssh "$tag"
   done
   check 'frontend: 127.0.0.1:80 отвечает через Caddy' curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:80/
   check 'vmsingle: 127.0.0.1:8428 healthy' curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8428/-/healthy

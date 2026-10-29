@@ -8,6 +8,7 @@
  * Оборачиваем `fetch`, как fetch-error-text: и `$fetch`, и `useFetch` идут
  * через ofetch, а он берёт `fetch` из `globalThis` на каждый запрос.
  */
+const GATE_MS = 15_000
 const ROTATES = /^\/api\/auth\/(two-factor\/(disable|verify-totp)|change-password)$/
 
 function apiPath(input: RequestInfo | URL) {
@@ -25,7 +26,8 @@ export default defineNuxtPlugin(() => {
     // verify-totp на странице входа сессии ещё нет: ждать некому.
     if (ROTATES.test(path) && location.pathname !== '/login') {
       const req = baseFetch(...args)
-      const done = req.catch(() => undefined)
+      // Зависший без ответа запрос держит остальные не дольше предела.
+      const done = Promise.race([req.catch(() => undefined), new Promise(resolve => setTimeout(resolve, GATE_MS))])
       rotation = done
       void done.then(() => { if (rotation === done) rotation = null })
       return req

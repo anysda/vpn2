@@ -67,11 +67,18 @@ class WireguardLineSplitTests(unittest.TestCase):
     def test_value_with_a_separator_is_not_a_key_in_a_peer(self):
         for separator in SEPARATORS:
             with self.subTest(separator=hex(ord(separator))):
-                self.path.write_text(HEADER + peer('a').replace(
-                    'AllowedIPs = 10.66.66.2/32\n', f'AllowedIPs = 10.66.66.2/32{separator}AllowedIPs = 0.0.0.0/0\n'))
+                working = HEADER + peer('a').replace(
+                    'AllowedIPs = 10.66.66.2/32\n', f'AllowedIPs = 10.66.66.2/32{separator}AllowedIPs = 0.0.0.0/0\n')
+                self.path.write_text(working)
+                self.host.calls.clear()
                 self.new.write_text(HEADER)
-                self.applier.install('wg', self.new)
-                self.assertEqual(self.loaded(), [])
+                # wg reads one AllowedIPs line it cannot parse: nothing is loaded.
+                with self.assertRaises(apply.Failed) as caught:
+                    self.applier.install('wg', self.new)
+                self.assertEqual(caught.exception.code, 2, str(caught.exception))
+                self.assertEqual(self.path.read_text(), working)
+                synced = [argv for argv, _ in self.host.calls if argv[:2] == ['/usr/bin/wg', 'syncconf']]
+                self.assertEqual(synced, [])
 
     def test_plain_config_is_loaded_line_by_line(self):
         self.path.write_text(HEADER + peer('a'))

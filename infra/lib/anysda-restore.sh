@@ -600,7 +600,7 @@ def wg_key(directory):
     if found:
         return found
     try:
-        text = open(os.path.join(directory, 'wg0.conf')).read()
+        text = open(os.path.join(directory, 'wg0.conf'), errors='replace').read()
     except OSError:
         return None
     key = re.search(r'(?m)^\s*PrivateKey\s*=\s*(\S+)', text)
@@ -678,17 +678,19 @@ if os.path.isfile(LIVE_DB):
 
 def live_text(path):
     try:
-        return open(path).read()
+        return open(path, errors='replace').read()
     except OSError:
         return None
 
 
-# Без живой БД о доступах устройства судят живые конфиги узла: пир или секрет,
-# которых там нет, сняты перевыпуском или удалением. Нет конфига — не судим.
-live_peers = live_text('/etc/wireguard/wg0.conf')
+# Без живой БД живые конфиги узла судят только устройства без сертификата
+# OpenVPN в архиве, а у отозванных панелью подсказывают подпись в журнале.
+live_peers = live_ike = None
+if not live_read:
+    live_peers = live_text('/etc/wireguard/wg0.conf')
+    live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_peers is not None:
     live_peers = {m[1] for m in re.finditer(r'(?m)^\s*PublicKey\s*=\s*(\S+)', live_peers)}
-live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_ike is not None:
     secrets = set()
     for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
@@ -724,26 +726,28 @@ if os.path.isfile(db_path):
             continue
         what = set()
         if not live_read:
-            # Каждый вид доступа отдельно, как сравнение с живой БД ниже. Всё
-            # снято и учётки IKEv2 на узле нет — удалено; учётка та же — перевыпуск.
             user, password = row.get('ikev2_username'), row.get('ikev2_password')
-            # Пира и секрета нет и у замороженного или просроченного клиента, а его
-            # сертификат действует: удаление и перевыпуск в панели его отзывают.
-            # Действует — WireGuard и IKEv2 не судим. Без сертификата заморозку от
-            # удаления не отличить: судим по конфигам, перевыпуск вернёт доступ.
-            if serial is not None and serial not in live_revoked:
+            had = {kind for kind, value in (('WireGuard', row.get('wg_public_key')), ('OpenVPN', cert),
+                                            ('IKEv2', password)) if value}
+            # Сертификат OpenVPN отзывают только удаление и перевыпуск в панели, и оба
+            # снимают все виды доступа; заморозка и срок пишут disable в ccd. Отозван —
+            # снято всё, живые конфиги лишь подсказывают подпись: учётка IKEv2 на узле
+            # та же — перевыпуск, её нет — удаление, конфига нет — не знаем.
+            # Действует — всё из архива.
+            if serial is not None:
+                if serial in live_revoked and serial not in held:
+                    gone = None if live_ike is None else not (user and any(name == user for name, _ in live_ike))
+                    revoke[device_id] = (had, gone, row)
                 continue
+            # Без сертификата заморозку от удаления не отличить: каждый вид доступа
+            # по живым конфигам, перевыпуск в панели вернёт снятое.
             if not cert:
                 unproven.add(device_id)
             if row.get('wg_public_key') and live_peers is not None and row['wg_public_key'] not in live_peers:
                 what.add('WireGuard')
-            if cert and serial in live_revoked:
-                what.add('OpenVPN')
             if password and live_ike is not None and not any(
                     secret == password and (not user or name == user) for name, secret in live_ike):
                 what.add('IKEv2')
-            had = {kind for kind, value in (('WireGuard', row.get('wg_public_key')), ('OpenVPN', cert),
-                                            ('IKEv2', password)) if value}
             gone = bool(what) and what == had and not (user and live_ike and any(name == user for name, _ in live_ike))
             if what:
                 revoke[device_id] = (what, gone, row)
@@ -960,7 +964,8 @@ wg_count, ike_count = len(wg_keys), len(ike_ids)
 say(f'отозванных записей применено поверх архива: {wg_count + revoked_certs + ike_count} '
     f'(WireGuard {wg_count}, OpenVPN {revoked_certs}, IKEv2 {ike_count})')
 for device_id, (what, gone, _row) in sorted(revoke.items()):
-    state = 'удалено после архива — удали его в панели' if gone else 'перевыпущено после архива — перевыпусти в панели'
+    state = ('отозвано после архива — удалено или перевыпущено в панели, проверь его там' if gone is None else
+             'удалено после архива — удали его в панели' if gone else 'перевыпущено после архива — перевыпусти в панели')
     say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
     if device_id in unproven:
         say('    сертификата OpenVPN в архиве нет — судил по живым конфигам, заморозку от удаления не отличить')

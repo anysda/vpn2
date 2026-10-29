@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -114,11 +115,23 @@ class Applier:
             if len(sockets) != len(set(sockets)):
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
-            options = {}
+            options, ciphers = {}, []
             for line in text.splitlines():
-                words = line.split('#')[0].split()
+                # As openvpn reads a config line: quotes, # and ; comments, --name.
+                lexer = shlex.shlex(line, posix=True)
+                lexer.whitespace_split, lexer.commenters = True, '#;'
+                words = list(lexer)
                 if words:
-                    options.setdefault(words[0], words[1:])
+                    name = words[0].removeprefix('--')
+                    options.setdefault(name, words[1:])
+                    if name in ('cipher', 'data-ciphers', 'ncp-ciphers', 'data-ciphers-fallback'):
+                        ciphers += [(name, cipher) for word in words[1:] for cipher in word.split(':')]
+            # openvpn acts on these while parsing, so the check itself would do it:
+            # log/log-append truncate or write the named file, plugin loads and runs
+            # a shared object, config pulls in a file this check never sees.
+            for name in ('log', 'log-append', 'plugin', 'config'):
+                if name in options:
+                    raise ValueError(f'{name} is not allowed in a candidate')
             base = self.target('openvpn').parent
             # Access is enforced only while the server reads the managed CRL and ccd.
             for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
@@ -137,8 +150,15 @@ class Applier:
             # an unknown or malformed directive fails here. --test-crypto would also
             # check option combinations, but before 2.7 it demands a static key that
             # a TLS server cannot have.
-            self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
-                          '--config', str(path), '--show-ciphers'])
+            listed = self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
+                                   '--config', str(path), '--show-ciphers'])
+            # The parse takes any cipher name; an unknown one fails only the restart.
+            known = {line.split()[0].upper() for line in listed.splitlines()
+                     if re.match(r'^\S+\s+\(', line)}
+            for option, cipher in ciphers:
+                # "?NAME" is optional: openvpn itself skips it when unknown.
+                if cipher and not cipher.startswith('?') and cipher.upper() not in known:
+                    raise ValueError(f'{option}: unknown cipher {cipher}')
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')

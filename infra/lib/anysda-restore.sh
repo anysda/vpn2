@@ -704,6 +704,8 @@ if live_ike is not None:
 revoke = {}
 unproven = set()
 issued = {}
+reissued = {}
+by_cert = set()
 released = {}
 archive_db = None
 archive_seq = seq_floor = 0
@@ -738,6 +740,7 @@ if os.path.isfile(db_path):
                 if serial in live_revoked and serial not in held:
                     gone = None if live_ike is None else not (user and any(name == user for name, _ in live_ike))
                     revoke[device_id] = (had, gone, row)
+                    by_cert.add(device_id)
                 continue
             # Без сертификата заморозку от удаления не отличить: каждый вид доступа
             # по живым конфигам, перевыпуск в панели вернёт снятое.
@@ -812,10 +815,24 @@ if os.path.isfile(db_path):
     ccd_ids = {int(m[1]) for m in (re.fullmatch(r'dev_(\d+)', name)
                                    for name in (os.listdir(ccd) if os.path.isdir(ccd) else ())) if m}
     absent_ids |= {n for n in pki_ids | ccd_ids if n not in archived}
+    # Учётки IKEv2 нет и после прежнего restore, обнулившего креды перевыпущенного:
+    # строка и ccd остаются. Удаление в панели снимает ccd, а занятый новым номер
+    # даёт действующий сертификат dev_N.
+    taken = {device_id for device_id, _pem in pki_certs.values()}
+    for device_id in by_cert:
+        what, gone, row = revoke[device_id]
+        if gone and device_id in ccd_ids and device_id not in taken:
+            revoke[device_id] = (what, False, row)
     seq_floor = max([live_seq, *pki_ids, *ccd_ids])
     known = {serial_of(row['ovpn_cert']) for what, _a, row in issued.values() if 'OpenVPN' in what}
     for serial, (device_id, pem) in pki_certs.items():
         if serial in known:
+            continue
+        # Перевыпуск: устройство остаётся в восстановленной БД с обнулёнными кредами,
+        # панель этот сертификат уже не отзовёт. Отзыв без причины, как панель: hold
+        # вернул бы доступ следующим restore, в том числе удалённому после него.
+        if device_id in archived and device_id not in issued:
+            reissued.setdefault(device_id, []).append(pem)
             continue
         what, absent, row = issued.get(device_id, (set(), device_id not in archived, {}))
         issued[device_id] = (what | {'OpenVPN'}, absent, {**row, 'pki_certs': [*row.get('pki_certs', ()), pem]})
@@ -824,6 +841,7 @@ wg_keys ={row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireG
 ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
 ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
 certs = [(row['ovpn_cert'], None) for what, _gone, row in revoke.values() if 'OpenVPN' in what]
+certs.extend((pem, None) for pems in reissued.values() for pem in pems)
 # У выданных после архива строк в восстановленной БД нет, чистить нечего.
 # Номер учётки IKEv2 снимаем только если в архиве под ним нет другого устройства.
 for device_id, (what, absent, row) in issued.items():
@@ -969,6 +987,8 @@ for device_id, (what, gone, _row) in sorted(revoke.items()):
     say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
     if device_id in unproven:
         say('    сертификата OpenVPN в архиве нет — судил по живым конфигам, заморозку от удаления не отличить')
+for device_id in sorted(set(reissued) - set(revoke)):
+    say(f'  устройство {device_id}: OpenVPN отозваны; перевыпущено после архива — перевыпусти в панели')
 for device_id, (what, _absent, _row) in sorted(issued.items()):
     say(f'  устройство {device_id}: {", ".join(sorted(what)) or "доступов нет"} отозваны; '
         'выдано после архива — в восстановленной базе его нет, доступ вернёт restore архива, где оно есть')

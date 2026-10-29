@@ -565,8 +565,11 @@ fw_guard_entry_baseline() {
 }
 
 # Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh. На entry с
-# опорными экзитами - только когда вход видит хоть один из них. Ни один не
-# ответил - пульс пропущен, сторож откатит фаервол по окну.
+# опорными экзитами пульс пропущен, только когда ответившие экзиты не видят
+# вход: его закрыла стадия, сторож откатит фаервол по окну. ssh entry→экзит -
+# исходящее соединение entry, закрытый вход его не рвёт, поэтому молчание всех
+# экзитов (ребут, перезапуск sshd в их стадии) о входе не говорит: пульс через
+# lo и один warn. Закрытый вход при молчащих экзитах так не поймать.
 fw_guard_beat() {
   local outside gone=0
   while kill -0 $$ 2>/dev/null; do
@@ -574,11 +577,11 @@ fw_guard_beat() {
     if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
       fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || outside=$?
       if (( outside == 3 && ! gone )); then
-        warn "[fw-guard] экзиты перестали отвечать по ssh, пульс entry пропущен"
+        warn "[fw-guard] экзиты перестали отвечать по ssh, вход на entry снаружи не проверяется - пульс через lo"
         gone=1
       fi
     fi
-    if (( outside == 0 )); then
+    if (( outside != 1 )); then
       ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
     fi
     sleep 5
@@ -590,11 +593,15 @@ fw_guard_beat() {
 fw_guard_disarm() {
   local stage=$1 deadline rc out waited=0
   # disarm на entry идёт через lo и снял бы сторожа при закрытом входе снаружи.
-  # Проба по шагу пульса, пока опорный экзит не увидит вход: одна потерянная
-  # проба не решает. Не видят дольше окна - пульса не было, сторож откатил, и
-  # disarm ответит кодом 3.
+  # Проба по шагу пульса, пока ответившие опорные экзиты не видят вход: одна
+  # потерянная проба не решает. Не видят дольше окна - пульса не было, сторож
+  # откатил, и disarm ответит кодом 3. Ни один не ответил (код 3) - о входе
+  # это не говорит, как и в пульсе: disarm сразу.
   if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
-    until fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS"; do
+    while :; do
+      rc=0
+      fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || rc=$?
+      (( rc == 1 )) || break
       if (( waited >= FW_GUARD_WINDOW + 5 )); then
         warn "[$stage → $HOST_TAG] экзиты не видят вход по ssh на entry снаружи ${waited} с, сторож должен был откатить фаервол"
         break

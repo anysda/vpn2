@@ -631,6 +631,13 @@ tmp.mkdir()
 vt.WORK, vt.CCD, vt.SWAN_FILE, vt.MANUAL_DIR = tmp / 'work', tmp / 'ccd', tmp / 'swan.conf', tmp / 'manual'
 run = vt.run
 WAN = '198.51.100.1'
+# Общий срок драйвера внутри таймаута теста (240 с). Готовность дочернего процесса ждём
+# в его пределах, а не коротким сроком шага: старт интерпретатора тормозит загрузка раннера.
+DEADLINE = time.monotonic() + 200
+
+
+def left():
+    return max(1, int(DEADLINE - time.monotonic()))
 
 
 class StepTimeout(Exception):
@@ -661,9 +668,16 @@ class Router:
         return []
 
 
+def started(process, err):
+    # Живая, но молчащая цель упирается в срок шага; вышедшая - сразу отказ с кодом.
+    if not vt.Targets.wait_ready(process, timeout=left() + 5):
+        raise AssertionError(f'цель вышла без «ready»: код {process.wait(5)}, stderr: {err.read_text()[-500:]!r}')
+
+
 def echo(name):
-    with step(name, 12):
-        return bool(vt.in_namespace(Router(), None, 'echo', [WAN, 18080, 'verify'], deadline=8)[0])
+    # Проба сама сдаётся через 5 с соединения; запас срока - на старт её интерпретатора.
+    with step(name, 35):
+        return bool(vt.in_namespace(Router(), None, 'echo', [WAN, 18080, 'verify'], deadline=30)[0])
 
 
 result, target, targets, exit_target = {}, None, None, None
@@ -678,11 +692,12 @@ try:
         run('wg', 'set', 'wg0', 'private-key', '/dev/stdin', 'listen-port', '51820', data=run('wg', 'genkey').stdout)
         run('ip', 'address', 'add', '10.66.66.1/24', 'dev', 'wg0')
         run('ip', 'link', 'set', 'wg0', 'up')
-    with step('цель на WAN', 10):
-        # stderr не наследуется: живая цель не держит канал теста после падения драйвера.
+    with step('цель на WAN', left()):
+        # stderr - в файл, не в канал теста: живая цель не держит его после падения драйвера.
         target = subprocess.Popen([sys.executable, '-I', sys.argv[2], '--listen', WAN, '--port', '18080',
-                                   '--lifetime', '120'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        assert target.stdout.readline().strip() == 'ready'
+                                   '--lifetime', '120'], stdout=subprocess.PIPE,
+                                  stderr=(tmp / 'target.err').open('w'), text=True)
+        started(target, tmp / 'target.err')
     with step('netns клиента и туннель a', 25):
         vt.cleanup()
         vt.WORK.mkdir(mode=0o700)
@@ -729,12 +744,13 @@ try:
         targets.stop()
         result['echo_leftover'] = 'адрес эха' in vt.leftovers()
     # Цель на экзите - та же команда, что уходит по ssh: локальный маршрут на lo, эхо на всех адресах.
-    with step('эхо экзита', 20):
+    with step('эхо экзита: цель', left()):
         exit_target = subprocess.Popen(['bash', '-c', vt.Targets.exit_command(18081, 60)], stdin=subprocess.PIPE,
-                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                                       stdout=subprocess.PIPE, stderr=(tmp / 'exit.err').open('w'), text=True)
         exit_target.stdin.write(Path(sys.argv[2]).read_text())
         exit_target.stdin.close()
-        assert vt.Targets.wait_ready(exit_target)
+        started(exit_target, tmp / 'exit.err')
+    with step('эхо экзита', 20):
         with socket.create_connection((vt.EXIT_ECHO_IP, 18081), timeout=5) as sock:
             sock.sendall(f'POST /vpn2-verify/{"1" * 32} HTTP/1.0\r\nContent-Length: 32\r\n\r\n{"1" * 32}'.encode())
             reply = b''.join(iter(lambda: sock.recv(4096), b'')).decode()

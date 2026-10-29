@@ -487,16 +487,23 @@ fw_guard_entry_addr_kind() {
 }
 
 # Видит ли экзит TAG вход на ENTRY_HOST:22. Код: 0 видит, 1 не видит, 3 не ответил.
+# Экзит печатает метку сразу после входа, до TCP-пробы: метка пришла, а дальше
+# отказ или таймаут сессии - экзит ответил и входа не видит (вход закрыт отбросом,
+# медленный вход по ssh съел время пробы). Без метки - не ответил. Потолок сессии
+# - медленный вход по ssh (до 10 с) и TCP-проба (3 с) с запасом.
 fw_guard_exit_sees_entry() {
-  local check rc=0
-  printf -v check 'if timeout 3 bash -c %q 2>/dev/null; then exit 0; fi; exit 1' \
-    "exec 3<>/dev/tcp/$ENTRY_HOST/22"
+  local check rc=0 mark=vpn2-fw-guard-exit-answered
+  printf -v check 'echo %s; if timeout 3 bash -c %q 2>/dev/null; then exit 0; fi; exit 1' \
+    "$mark" "exec 3<>/dev/tcp/$ENTRY_HOST/22"
   (
     load_env "$1" || exit 9
     code=0
-    SSH_PROBE_TIMEOUT=5 ssh_fresh "$check" || code=$?
+    out=$(SSH_PROBE_TIMEOUT=15 ssh_fresh "$check" 2>/dev/null) || code=$?
     # 1 - ответ команды на экзите; отличаем от die в load_env.
-    (( code != 1 )) || code=10
+    if (( code == 1 )) || { (( code == 124 || code == 137 )) &&
+         [[ $'\n'$out$'\n' == *$'\n'"$mark"$'\n'* ]]; }; then
+      code=10
+    fi
     exit "$code"
   ) >/dev/null 2>&1 || rc=$?
   case $rc in
@@ -506,20 +513,24 @@ fw_guard_exit_sees_entry() {
   return 3
 }
 
+# Все экзиты из списка разом, строка «тег код» на каждый: шаг пульса - одна
+# сессия, сколько бы экзитов ни молчало до потолка, и окно сторожа не съедается.
+fw_guard_exits_see_entry() {
+  local tag
+  for tag in $1; do
+    ( rc=0; fw_guard_exit_sees_entry "$tag" || rc=$?; echo "$tag $rc" ) &
+  done
+  wait
+}
+
 # Опрос всех экзитов из списка, а не первого ответившего: экзит, у которого нет
 # пути до entry:22, не перекрывает остальных.
 # Код: 0 хоть один видит вход, 1 ответившие не видят, 3 ни один не ответил.
 fw_guard_entry_probe() {
-  local tag rc answered=0
-  for tag in $1; do
-    rc=0
-    fw_guard_exit_sees_entry "$tag" || rc=$?
-    case $rc in
-      0) return 0 ;;
-      1) answered=1 ;;
-    esac
-  done
-  (( answered )) && return 1
+  local codes
+  codes=$(fw_guard_exits_see_entry "$1")
+  [[ $codes$'\n' == *$' 0\n'* ]] && return 0
+  [[ $codes$'\n' == *$' 1\n'* ]] && return 1
   return 3
 }
 
@@ -545,13 +556,21 @@ fw_guard_entry_baseline() {
     warn "[fw-guard] вход на entry снаружи не проверяется: entry.host '${ENTRY_HOST:-}' локальный, экзит увидел бы свой sshd"
     return 0
   fi
-  for tag in $tags; do
-    rc=0
-    fw_guard_exit_sees_entry "$tag" || rc=$?
-    case $rc in
-      0) open+=" $tag"; answered+=" $tag" ;;
-      1) answered+=" $tag" ;;
-    esac
+  # Экзиты, ответившие «вижу», - сразу опорные. Ответившие «не вижу» перед
+  # выводом «не виден ни одному» пробуются ещё 2 раза через 5 с: одна потерянная
+  # TCP-проба не должна оставить стадию без опорных.
+  local probe=$tags try codes
+  for try in 1 2 3; do
+    (( try == 1 )) || sleep 5
+    codes=$(fw_guard_exits_see_entry "$probe")
+    probe=''
+    while read -r tag rc; do
+      case $rc in
+        0) open+=" $tag" ;;
+        1) probe+=" $tag"; [[ " $answered " == *" $tag "* ]] || answered+=" $tag" ;;
+      esac
+    done <<< "$codes"
+    [[ -z $open && -n $probe ]] || break
   done
   if [[ -n $open ]]; then
     FW_GUARD_ENTRY_REFS=${open# }

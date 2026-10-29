@@ -30,6 +30,12 @@ if fault == name + '-error2':
     sys.exit(2)
 if name == 'systemctl':
     sys.exit(3 if fault == sys.argv[-1] else 0)
+elif name == 'ssh':
+    # Как настоящий вход: опции и хост отбрасываются, команда идёт в bash.
+    rest = sys.argv[1:]
+    while rest and rest[0].startswith('-'):
+        rest = rest[2:] if rest[0] in ('-o', '-i', '-F', '-p', '-l') else rest[1:]
+    os.execvp('bash', ['bash', '-c', ' '.join(rest[1:])])
 elif name == 'sysctl':
     print(0 if fault in ('forwarding', 'yt-unknown-and-failed') else 1)
 elif name == 'ufw':

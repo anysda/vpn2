@@ -43,6 +43,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -877,7 +878,13 @@ def wg_apply_check(report):
 
 
 # ---------------------------------------------------------------- контрольные цели
+class TargetError(Exception):
+    """Локальная цель эха не поднялась: без неё провал проб выглядел бы сломанным маршрутом."""
+
+
 class Targets:
+    READY_TIMEOUT = 20
+
     def __init__(self, wan_ip, exits, router):
         self.wan_ip = wan_ip
         self.port = 20000 + secrets.randbelow(30000)
@@ -888,11 +895,25 @@ class Targets:
         self.iface = router.outbounds.get(DIRECT, {}).get('bind_interface')
 
     def local_target(self, listen, lifetime):
-        process = subprocess.Popen([sys.executable, '-I', str(TARGET), '--listen', listen,
-                                    '--port', str(self.port), '--lifetime', str(lifetime)],
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        self.wait_ready(process)
-        return process
+        # stderr - в файл: канал никто не читает, а причина отказа нужна оператору.
+        with tempfile.TemporaryFile('w+') as err:
+            process = subprocess.Popen([sys.executable, '-I', str(TARGET), '--listen', listen,
+                                        '--port', str(self.port), '--lifetime', str(lifetime)],
+                                       stdout=subprocess.PIPE, stderr=err, text=True)
+            if self.wait_ready(process, self.READY_TIMEOUT):
+                return process
+            try:
+                reason = f'код {process.wait(timeout=2)}'
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                reason = f'не ответила за {self.READY_TIMEOUT} с'
+            process.stdout.close()
+            err.seek(0)
+            # Последняя строка трассировки - сама причина (Address already in use и т. п.).
+            tail = (err.read().strip().splitlines() or [''])[-1].strip()[-300:]
+        raise TargetError(f'локальная цель эха на {listen}:{self.port} не поднялась: {reason}, '
+                          f'stderr: {tail or "пусто"}')
 
     def start(self, lifetime):
         # Эхо на адресе entry - только для ретранслятора (tg-proxy стоит выше блока адресов entry).
@@ -1338,7 +1359,11 @@ def verify(report, exits, public_host):
         Namespace().up()
         protocols = [WireGuard(), OpenVPN(), IKEv2()]
         verifier = Verifier(report, exits, wan_ip, public_ip)
-        verifier.prepare()
+        try:
+            verifier.prepare()
+        except TargetError as error:
+            report.add('подготовка', 'цель эха', FAIL, str(error))
+            return
         for protocol in protocols:
             try:
                 verifier.protocol(protocol)

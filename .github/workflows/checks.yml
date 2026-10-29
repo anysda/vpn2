@@ -123,6 +123,7 @@ jobs:
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends python3 sqlite3 age expect curl git wireguard-tools openssl
             python3 /src/infra/tests/backup-restore.py /src
+            python3 /src/infra/tests/backup-clone-path.py /src
           '
 
   panel:

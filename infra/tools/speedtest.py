@@ -126,7 +126,8 @@ def log(msg):
 
 # --- панель ------------------------------------------------------------------
 
-# Корень клона деплоя на entry для shell-команд; PANEL_CALL читает ту же отметку.
+# Корень клона деплоя на entry для shell-команд. Python-код (PANEL_CALL, список
+# экзитов) читает ту же отметку сам: путь с кавычкой в код не подставляем.
 SOURCE_ROOT_SH = 'cat /etc/anysda/source-root 2>/dev/null || echo /opt/anysda-vpn2'
 
 PANEL_CALL = r'''
@@ -329,8 +330,11 @@ def run(args):
         clients.append((lbl, ssh, panel_name))
     hub = args.hub
     exits = args.exits.split(',') if args.exits else sh(
-        hub, "python3 -c \"import yaml;print(' '.join(e['tag'] for e in "
-             f"yaml.safe_load(open('$({SOURCE_ROOT_SH})/config.yaml'))['exits']))\"").split()
+        hub, "python3 -c \"import yaml; from pathlib import Path; "
+             "mark = Path('/etc/anysda/source-root'); "
+             "root = mark.read_text().strip() if mark.is_file() else '/opt/anysda-vpn2'; "
+             "print(' '.join(e['tag'] for e in "
+             "yaml.safe_load(open(root + '/config.yaml'))['exits']))\"").split()
     exit_ip = {t: sh(t, "ip -4 route get 1.1.1.1 | grep -o 'src [0-9.]*' | cut -d' ' -f2",
                      via=hub).strip() for t in exits}
     res = {'meta': {'time': time.strftime('%Y-%m-%d %H:%M'), 'secs': args.time,

@@ -166,8 +166,9 @@ class Applier:
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
             options, ciphers, managed_lines = {}, {}, []
-            # openvpn drops a UTF-8 BOM at the start of the file, nowhere else.
-            for line in text.removeprefix('\ufeff').splitlines():
+            # openvpn drops a UTF-8 BOM at the start of the file, nowhere else, and
+            # ends a line only at a newline: splitlines() also breaks at \x1c, \x85...
+            for line in text.removeprefix('\ufeff').split('\n'):
                 words = openvpn_words(line)
                 if words:
                     name = words[0].removeprefix('--')
@@ -295,10 +296,11 @@ class Applier:
         if resource == 'wg':
             header, peers = wg_split(self.target(resource).read_text())
             # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
-            interface = [line for line in header.splitlines()
+            # wg and wg-quick end a line only at a newline, as split('\n') does.
+            interface = [line for line in header.split('\n')
                          if re.match(r'^\s*(\[Interface\]\s*$|(PrivateKey|ListenPort|FwMark)\s*=)', line)]
             body = '\n'.join(interface) + '\n' + '\n'.join(
-                line for line in peers.splitlines()
+                line for line in peers.split('\n')
                 if re.match(r'^\s*(\[Peer\]\s*$|(PublicKey|PresharedKey|AllowedIPs)\s*=)', line))
             self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body + '\n')
         for argv in spec.get('apply', []):

@@ -455,7 +455,7 @@ class Backend:
         # wg-quick is deliberately not executed: it is a shell script with
         # hook directives. syncconf receives only the typed WG subset.
         interface = []
-        for line in header.splitlines():
+        for line in header.split('\n'):  # wg ends a line only at a newline
             if re.match(r'^\s*(PrivateKey|ListenPort|FwMark)\s*=', line):
                 interface.append(line)
         require(any(re.match(r'^\s*PrivateKey\s*=', line) for line in interface),

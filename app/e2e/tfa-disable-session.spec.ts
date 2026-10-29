@@ -44,9 +44,9 @@ const tfaTest = test.extend<{ tfa: Totp }>({
 })
 
 /**
- * Включить 2FA через API, открыть настройки и выключить её модалкой. Пока
- * disable в пути, страница опрашивает статус бота со старой cookie; опрос
- * доходит до сервера до (`before`) или после (`after`) выключения.
+ * Включить 2FA через API, открыть настройки и выключить её модалкой. Опрос
+ * статуса бота со старой cookie идёт до клика «Выключить» (`before`) или
+ * пока disable в пути, после выключения на сервере (`after`).
  * Возвращает статус этого опроса, 0 — опроса не было.
  */
 async function disableWhilePolling(page: Page, newApi: () => Promise<APIRequestContext>, tfa: Totp, pollLands: 'before' | 'after') {
@@ -75,7 +75,6 @@ async function disableWhilePolling(page: Page, newApi: () => Promise<APIRequestC
     const cookie = (await page.context().cookies(route.request().url())).map(c => `${c.name}=${c.value}`).join('; ')
     const api = await newApi()
     try {
-      if (pollLands === 'before') await poll()
       const response = await api.fetch(route.request(), { headers: { ...route.request().headers(), cookie } })
       if (pollLands === 'after') await poll()
       await route.fulfill({ response })
@@ -92,6 +91,7 @@ async function disableWhilePolling(page: Page, newApi: () => Promise<APIRequestC
   const dlg = page.getByRole('dialog', { name: 'Выключить 2FA?' })
   await dlg.getByLabel('Пароль', { exact: true }).fill(ADMIN_PASSWORD)
   await dlg.getByLabel('Код 2FA (6 цифр)').fill(await freshCode(tfa))
+  if (pollLands === 'before') await poll()
   await dlg.getByRole('button', { name: 'Выключить' }).click()
   await expect(toast(page, '2FA выключена')).toBeVisible()
   await expect(page.getByText('Выключена', { exact: true })).toBeVisible()

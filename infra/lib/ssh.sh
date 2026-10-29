@@ -134,12 +134,13 @@ _ssh_output() {
 # прежним путём: 255 соединение, 5/6/7 sshpass (пароль, host-key), 124/137
 # timeout у ssh_fresh.
 _SSH_NO_MARK=254
+_SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 _ssh_run() {
   local -a st
   # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
   { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
   if (( st[1] == _SSH_OUTPUT_NO_MARK )) && [[ ! " 255 5 6 7 124 137 " == *" ${st[0]} "* ]]; then
-    warn "ssh ${SSH_HOST:-?}: shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена"
+    warn "ssh ${SSH_HOST:-?}: $_SSH_NO_MARK_REASON"
     return "$_SSH_NO_MARK"
   fi
   return "${st[0]}"
@@ -196,6 +197,8 @@ _ssh_refusal_final() {
     2) warn "ssh ${SSH_HOST}: ${reason}; новый ключ сам не принимается (защита от подмены ноды)"
        warn "если ОС на ноде переустанавливали, убери старый ключ и повтори: $(ssh_hostkey_fix)" ;;
     3) _ssh_auth_refused "$reason" ;;
+    # Соединение есть, но .bashrc не пускает к команде: повтор не поможет.
+    "$_SSH_NO_MARK") warn "ssh ${SSH_HOST}: $reason" ;;
     *) return 1 ;;
   esac
 }
@@ -213,14 +216,15 @@ _ssh_auth_refused() {
 # Свежее соединение без мультиплексора: зависший master не должен отвечать
 # за ноду, а опции до _ssh_opts, потому что у ssh побеждает первое значение.
 # Код возврата - класс отказа: 1 сеть или прочее, 2 сменился host-key,
-# 3 нода отказала во входе.
+# 3 нода отказала во входе, $_SSH_NO_MARK shell узла не дошёл до команды.
 ssh_probe() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
   local limit="${SSH_PROBE_TIMEOUT:-30}" err last rc=0
-  err=$(SSHPASS="$SSH_PASS" timeout -k 5 "$limit" sshpass -e ssh \
+  err=$(SSHPASS="$SSH_PASS" _ssh_run timeout -k 5 "$limit" sshpass -e ssh \
       -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
-      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" 'echo ok' 2>&1 >/dev/null) || rc=$?
+      "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" 'echo ok' 2>&1 >/dev/null) || rc=$?
   [[ $rc -eq 0 ]] && return 0
+  if [[ $rc -eq $_SSH_NO_MARK ]]; then echo "$_SSH_NO_MARK_REASON"; return "$rc"; fi
   last=$(printf '%s\n' "$err" | tr -d '\r' | sed '/^[[:space:]]*$/d' | tail -1)
   case $(ssh_fail_kind "$rc" "$err") in
     hostkey) echo "сменился host-key ноды (например, после переустановки ОС)${last:+: $last}"; return 2 ;;

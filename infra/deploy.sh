@@ -971,6 +971,7 @@ _preflight_host() {
       limit=$attempts
       case $prc in
         2) kind=hostkey; limit=$try ;;
+        "$_SSH_NO_MARK") kind=bashrc; limit=$try ;;
         3) kind=auth; auth_tries=$((auth_tries + 1))
            (( try + 2 - auth_tries >= attempts )) || limit=$((try + 2 - auth_tries)) ;;
         *) kind=net ;;
@@ -987,8 +988,8 @@ _preflight_host() {
       done
       limit=$n
       printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$limit" "$reason"
-      # Сменившийся host-key ждать бесполезно: его убирает человек.
-      [[ $kind != hostkey ]] || break
+      # Сменившийся host-key и exit в .bashrc ждать бесполезно: их убирает человек.
+      [[ $kind != hostkey && $kind != bashrc ]] || break
       pause=$((try * 3))
       # Каждый неверный пароль fail2ban ноды засчитывает адресу entry
       # (maxretry 5 за 10 минут в 00-bootstrap). Повтор один и с паузой:
@@ -1046,8 +1047,9 @@ preflight_ssh() {
     reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
     kind=$(cat "$dir/$h.kind" 2>/dev/null || true)
     # Пропускается только экзит, до которого нет сети. Сменённый host-key и
-    # отказ во входе сами не пройдут: это ошибка настройки, деплой стоит.
-    if [[ "$h" != ru && $kind != hostkey && $kind != auth ]]; then
+    # отказ во входе и exit в .bashrc сами не пройдут: это ошибка настройки,
+    # деплой стоит.
+    if [[ "$h" != ru && $kind != hostkey && $kind != auth && $kind != bashrc ]]; then
       skipped+=("$h")
       printf '  %b⚠ Экзит %s пропущен: SSH недоступен в pre-flight%b\n' "$C_Y" "$h" "$C_END"
       continue
@@ -1056,6 +1058,7 @@ preflight_ssh() {
     case $kind in
       hostkey) fixes+=("$(cat "$dir/$h.fix")") ;;
       auth)    auth=1 ;;
+      bashrc)  ;;
       *)       net=1 ;;
     esac
   done

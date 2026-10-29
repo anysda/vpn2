@@ -822,19 +822,21 @@ if os.path.isfile(db_path):
     # Удаление в панели оставляет ccd и пишет в него disable, у перевыпущенного
     # ccd без disable; ccd нет или не читается — не знаем. Номер удалённого занят
     # действующим сертификатом dev_N — это другое устройство: перевыпуск оставил
-    # бы учётку, его отзыв обратим, как у выданных после архива.
+    # бы учётку, его отзыв обратим, как у выданных после архива. Но учётку с узла
+    # снимают и заморозка, и срок перевыпущенного: при disable и действующем dev_N
+    # не знаем, перевыпуск это без отзыва — dev_N отзывается насовсем, как перевыпуск.
     taken = {device_id for device_id, _pem in pki_certs.values()}
     replaced = set()
     for device_id in by_cert:
         what, gone, row = revoke[device_id]
         if not gone:
             continue
-        if device_id in taken:
-            replaced.add(device_id)
-            continue
         text = live_text(os.path.join(ccd, f'dev_{device_id}'))
         disabled = None if text is None else any(line.strip() == 'disable' for line in text.splitlines())
-        revoke[device_id] = (what, disabled, row)
+        if device_id in taken and not disabled:
+            replaced.add(device_id)
+            continue
+        revoke[device_id] = (what, None if device_id in taken else disabled, row)
     seq_floor = max([live_seq, *pki_ids, *ccd_ids])
     known = {serial_of(row['ovpn_cert']) for what, _a, row in issued.values() if 'OpenVPN' in what}
     for serial, (device_id, pem) in pki_certs.items():

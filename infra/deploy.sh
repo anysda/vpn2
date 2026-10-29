@@ -467,57 +467,116 @@ fw_guard_stage() {
 # deploy.sh идёт с самой entry, и её ssh к себе ходит через lo: такой вход
 # проходит и тогда, когда стадия закрыла ssh снаружи. Внешний вход проверяет
 # экзит: новое ssh-соединение к нему и TCP к ENTRY_HOST:22 оттуда, всё в пределах
-# шага пульса. Экзиты по очереди, решает первый ответивший.
-# Код: 0 вход открыт, 1 закрыт, 2 экзитов нет, 3 ни один экзит не ответил.
-fw_guard_entry_outside() {
-  local tags tag rc check
-  tags=$(active_exit_tags 2>/dev/null) || return 3
-  [[ -n "${tags// /}" ]] || return 2
-  [[ -n "${ENTRY_HOST:-}" ]] || return 3
+# шага пульса.
+
+# Какой адрес entry.host: local - экзит по нему увидит свой же sshd (loopback,
+# не задан), private - внутренняя сеть или CGNAT (entry за NAT), иначе public.
+fw_guard_entry_addr_kind() {
+  local addr=$1
+  if [[ -n $addr && ! $addr =~ ^[0-9.]+$ && $addr != *:* ]]; then
+    addr=$(getent ahosts "$addr" 2>/dev/null | awk 'NR == 1 { print $1 }') || addr=''
+    [[ -n $addr ]] || { [[ $1 == localhost ]] && echo local || echo public; return; }
+  fi
+  case $addr in
+    ''|127.*|0.0.0.0|::|::1) echo local ;;
+    10.*|192.168.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) echo private ;;
+    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) echo private ;;
+    [fF][cCdD]*:*|[fF][eE]80:*) echo private ;;
+    *) echo public ;;
+  esac
+}
+
+# Видит ли экзит TAG вход на ENTRY_HOST:22. Код: 0 видит, 1 не видит, 3 не ответил.
+fw_guard_exit_sees_entry() {
+  local check rc=0
   printf -v check 'if timeout 3 bash -c %q 2>/dev/null; then exit 0; fi; exit 1' \
     "exec 3<>/dev/tcp/$ENTRY_HOST/22"
-  for tag in $tags; do
-    rc=0
-    (
-      load_env "$tag" || exit 9
-      code=0
-      SSH_PROBE_TIMEOUT=5 ssh_fresh "$check" || code=$?
-      # 1 - ответ команды на экзите; отличаем от die в load_env.
-      (( code != 1 )) || code=10
-      exit "$code"
-    ) >/dev/null 2>&1 || rc=$?
-    case $rc in
-      0) return 0 ;;
-      10) return 1 ;;
-    esac
-  done
+  (
+    load_env "$1" || exit 9
+    code=0
+    SSH_PROBE_TIMEOUT=5 ssh_fresh "$check" || code=$?
+    # 1 - ответ команды на экзите; отличаем от die в load_env.
+    (( code != 1 )) || code=10
+    exit "$code"
+  ) >/dev/null 2>&1 || rc=$?
+  case $rc in
+    0) return 0 ;;
+    10) return 1 ;;
+  esac
   return 3
 }
 
-# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh. На entry -
-# только после того, как экзит подтвердил вход снаружи. Пока ни один экзит в
-# этой стадии не ответил по ssh (экзитов нет или они ещё не подняты, как в
-# 00-bootstrap на чистой ОС), внешней точки нет: пульс через lo и warn.
-# Ответивший экзит, который не видит вход, или молчание всех экзитов после
-# ответа - пульс пропущен, сторож откатит фаервол по окну.
+# Опрос всех экзитов из списка, а не первого ответившего: экзит, у которого нет
+# пути до entry:22, не перекрывает остальных.
+# Код: 0 хоть один видит вход, 1 ответившие не видят, 3 ни один не ответил.
+fw_guard_entry_probe() {
+  local tag rc answered=0
+  for tag in $1; do
+    rc=0
+    fw_guard_exit_sees_entry "$tag" || rc=$?
+    case $rc in
+      0) return 0 ;;
+      1) answered=1 ;;
+    esac
+  done
+  (( answered )) && return 1
+  return 3
+}
+
+# Перед arm стадии на entry, пока фаервол ещё прежний. Опорные экзиты - те, что
+# видят вход снаружи сейчас: во время стадии «закрыт» значит, что его не видит ни
+# один из них, то есть закрыла стадия, а не путь экзита. Внешней точки нет
+# (экзитов нет, они не отвечают, entry.host локальный, entry за NAT) - опорных
+# нет, пульс через lo и один warn с причиной. Публичный entry.host, который до
+# стадии не видит ни один ответивший экзит, проверкой не считается: опорными
+# остаются ответившие, пульса не будет, и сторож откатит фаервол.
+FW_GUARD_ENTRY_REFS=''
+fw_guard_entry_baseline() {
+  local stage=$1 tags tag rc kind open='' answered=''
+  FW_GUARD_ENTRY_REFS=''
+  tags=$(active_exit_tags 2>/dev/null) || tags=''
+  if [[ -z "${tags// /}" ]]; then
+    warn "[fw-guard] вход на entry снаружи не проверяется: экзитов нет"
+    return 0
+  fi
+  kind=$(fw_guard_entry_addr_kind "${ENTRY_HOST:-}")
+  if [[ $kind == local ]]; then
+    warn "[fw-guard] вход на entry снаружи не проверяется: entry.host '${ENTRY_HOST:-}' локальный, экзит увидел бы свой sshd"
+    return 0
+  fi
+  for tag in $tags; do
+    rc=0
+    fw_guard_exit_sees_entry "$tag" || rc=$?
+    case $rc in
+      0) open+=" $tag"; answered+=" $tag" ;;
+      1) answered+=" $tag" ;;
+    esac
+  done
+  if [[ -n $open ]]; then
+    FW_GUARD_ENTRY_REFS=${open# }
+  elif [[ -z $answered ]]; then
+    warn "[fw-guard] вход на entry снаружи не проверяется: экзиты пока не отвечают по ssh"
+  elif [[ $kind == private ]]; then
+    warn "[fw-guard] вход на entry снаружи не проверяется: entry.host $ENTRY_HOST внутренний и до стадии не виден ни одному экзиту (entry за NAT)"
+  else
+    FW_GUARD_ENTRY_REFS=${answered# }
+    warn "[$stage → ru] до стадии ни один экзит ($FW_GUARD_ENTRY_REFS) не видит вход на $ENTRY_HOST:22 снаружи: пульса не будет, сторож откатит фаервол"
+  fi
+}
+
+# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh. На entry с
+# опорными экзитами - только когда вход видит хоть один из них. Ни один не
+# ответил - пульс пропущен, сторож откатит фаервол по окну.
 fw_guard_beat() {
-  local outside answered=0 noted=''
+  local outside gone=0
   while kill -0 $$ 2>/dev/null; do
     outside=0
-    if [[ "$HOST_TAG" == ru ]]; then
-      fw_guard_entry_outside || outside=$?
-      case $outside in
-        0|1) answered=1 ;;
-        2) [[ $noted == *none* ]] || warn "[fw-guard] вход на entry снаружи не проверяется: экзитов нет"
-           noted+=' none'; outside=0 ;;
-        *) if (( answered )); then
-             [[ $noted == *gone* ]] || warn "[fw-guard] экзиты перестали отвечать по ssh, пульс entry пропущен"
-             noted+=' gone'
-           else
-             [[ $noted == *mute* ]] || warn "[fw-guard] вход на entry снаружи не проверяется: экзиты пока не отвечают по ssh"
-             noted+=' mute'; outside=0
-           fi ;;
-      esac
+    if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
+      fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || outside=$?
+      if (( outside == 3 && ! gone )); then
+        warn "[fw-guard] экзиты перестали отвечать по ssh, пульс entry пропущен"
+        gone=1
+      fi
     fi
     if (( outside == 0 )); then
       ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
@@ -529,16 +588,20 @@ fw_guard_beat() {
 # Снять сторожа тоже новым соединением. Пока оно не проходит, сторож успеет
 # откатить фаервол, и тогда disarm ответит кодом 3.
 fw_guard_disarm() {
-  local stage=$1 deadline rc out outside=0
+  local stage=$1 deadline rc out waited=0
   # disarm на entry идёт через lo и снял бы сторожа при закрытом входе снаружи.
-  # Экзит видит вход закрытым - ждём окно: пульса не было, сторож откатит, и
+  # Проба по шагу пульса, пока опорный экзит не увидит вход: одна потерянная
+  # проба не решает. Не видят дольше окна - пульса не было, сторож откатил, и
   # disarm ответит кодом 3.
-  if [[ "$HOST_TAG" == ru ]]; then
-    fw_guard_entry_outside || outside=$?
-    if (( outside == 1 )); then
-      warn "[$stage → $HOST_TAG] экзит не видит вход по ssh на entry снаружи, жду отката сторожа"
-      sleep $(( FW_GUARD_WINDOW + 5 ))
-    fi
+  if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
+    until fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS"; do
+      if (( waited >= FW_GUARD_WINDOW + 5 )); then
+        warn "[$stage → $HOST_TAG] экзиты не видят вход по ssh на entry снаружи ${waited} с, сторож должен был откатить фаервол"
+        break
+      fi
+      sleep 5
+      waited=$(( waited + 5 ))
+    done
   fi
   deadline=$(( $(date +%s) + FW_GUARD_WINDOW + 30 ))
   while :; do
@@ -728,6 +791,8 @@ bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh;
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
   local rc=0 beat=''
   if [[ -n "$guard" ]]; then
+    FW_GUARD_ENTRY_REFS=''
+    [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
     fw_guard_beat &
     beat=$!
   fi

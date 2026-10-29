@@ -83,6 +83,10 @@ function visible(c: Client) {
     && (!q || `${c.name}${c.tgUsername ? `@${c.tgUsername}` : ''}`.toLowerCase().includes(q))
 }
 const rows = computed(() => sorted.value.filter(visible))
+// Удаления, начатые здесь и ещё не подтверждённые: клиент -> операция.
+const deletions = new Map<number, string>()
+/** Клиента можно выбрать вместо пропавшего: его удаление не идёт. */
+const choosable = (c: Client) => !deletions.has(c.id)
 
 // Телефон: список и карточка клиента — два экрана. Открытый клиент — ?id= в
 // адресе и запись в истории: системный «назад» и «Назад» в шапке ведут к списку,
@@ -117,8 +121,11 @@ watch(sorted, (list, before) => {
   // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
   if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
-  // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать.
-  selectedId.value = neighbor(selectedId.value, (before ?? []).filter(visible), list.filter(visible))
+  // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать,
+  // того, чьё удаление ещё идёт, - только если других нет (там его статус и «Повторить»).
+  const shown = list.filter(visible)
+  const free = shown.filter(choosable)
+  selectedId.value = neighbor(selectedId.value, (before ?? []).filter(visible), free.length ? free : shown)
   // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
   // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
   if (mobile.value && screen.value === 'client') void toList()
@@ -157,13 +164,12 @@ async function onDeleting(id: number, accepted: Promise<{ operation: AccessOpera
   catch { return }
   deletions.set(id, operation.id)
   if (selectedId.value !== id) return
-  selectedId.value = neighbor(id, before, rows.value.filter(c => c.id !== id))
+  selectedId.value = neighbor(id, before, rows.value.filter(choosable))
   if (mobile.value && screen.value === 'client') void toList()
 }
 
 // Карточка удаляемого уже закрыта: подтверждение удаления ждёт страница, чтобы
 // убрать клиента, даже если запоздалый список ещё несёт его.
-const deletions = new Map<number, string>()
 async function checkDeletions() {
   for (const [id, operationId] of deletions) {
     if (!fetched.value.some(c => c.id === id)) {

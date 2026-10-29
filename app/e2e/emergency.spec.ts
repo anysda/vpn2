@@ -55,6 +55,8 @@ test('аварийная статика: общие компоненты, сос
   // Цвета темы на сохранённых элементах: аварийная и основная страница в одной теме совпадают.
   const paletteRetained = ['body', '.wrap>header .logo span', '.head h1', '.thead span', '.crow .who b', '.card.clist']
   async function palette(target: Page) {
+    // Отсутствие элемента называет селектор, а не роняет evaluate с TypeError.
+    for (const sel of paletteRetained) await expect(target.locator(sel).first(), 'palette: нет элемента ' + sel).toBeVisible()
     return target.evaluate(list => list.map((selector) => {
       const style = getComputedStyle(document.querySelector(selector)!)
       // Сборка основной панели пишет начало градиента как 0px, аварийная - как 0%: рисуется одинаково.

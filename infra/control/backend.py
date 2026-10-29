@@ -441,8 +441,9 @@ class Backend:
         # Preserve deployment-owned interface configuration (addresses, key,
         # port). Only peers are an API resource; no input becomes a directive.
         previous = path.read_text()
-        header = re.split(rf'(?m)^[ \t\n\v\f\r]*\[Peer\]{BLANK}*$', previous)[0].rstrip(' \t\n\v\f\r') + '\n'
-        require('[Interface]' in header, 'unavailable')
+        header = re.split(rf'(?im)^[ \t\n\v\f\r]*\[Peer\]{BLANK}*$', previous)[0].rstrip(' \t\n\v\f\r') + '\n'
+        # wg and wg-quick read section and key names in any case.
+        require('[interface]' in header.lower(), 'unavailable')
         # The persisted key pair is authoritative, as in the former panel.
         # A keys-only restore can leave this host's old rendered wg0.conf.
         # Never regenerate a key or return it to the API caller.
@@ -450,7 +451,7 @@ class Backend:
         if private.exists():
             canonical = private.read_text().strip()
             validate_key(canonical)
-            header = re.sub(rf'(?m)^{BLANK}*PrivateKey{BLANK}*=.*$', 'PrivateKey = ' + canonical, header)
+            header = re.sub(rf'(?im)^{BLANK}*PrivateKey{BLANK}*=.*$', 'PrivateKey = ' + canonical, header)
         peers = ''.join('\n[Peer]\nPublicKey = ' + peer['key'] +
                         '\nPresharedKey = ' + peer['preshared_key'] +
                         '\nAllowedIPs = ' + ', '.join(peer_addresses(peer)) + '\n'
@@ -459,9 +460,9 @@ class Backend:
         # hook directives. syncconf receives only the typed WG subset.
         interface = []
         for line in header.split('\n'):  # wg ends a line only at a newline
-            if re.match(rf'{BLANK}*(PrivateKey|ListenPort|FwMark){BLANK}*=', line):
+            if re.match(rf'{BLANK}*(PrivateKey|ListenPort|FwMark){BLANK}*=', line, re.I):
                 interface.append(line)
-        require(any(re.match(rf'{BLANK}*PrivateKey{BLANK}*=', line) for line in interface),
+        require(any(re.match(rf'{BLANK}*PrivateKey{BLANK}*=', line, re.I) for line in interface),
                 'unavailable')
         # Through stdin: the distribution's AppArmor profile for wg lets it
         # open only /etc/wireguard, which it cannot traverse without root.

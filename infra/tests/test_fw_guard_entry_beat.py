@@ -65,6 +65,13 @@ node_cmd() {{
   esac
   echo "$node $cmd" >> calls
   if [[ $cmd == *"/tmp/anysda/$STAGE.sh"* ]]; then
+    if [[ -e stage-closes ]]; then
+      # Стадия закрыла вход снаружи. Пульс, ушедший до закрытия, долетает, а arm
+      # сторожа считает окно заново: прежние пульсы не в счёт.
+      rm -f external-open
+      command sleep 0.3
+      rm -f beats
+    fi
     # Стадия идёт, пока сторож не получил хотя бы одну попытку пульса.
     local i start
     start=$(wc -l < calls)
@@ -106,8 +113,10 @@ class EntryGuardBeatTests(unittest.TestCase):
             (root / 'envs/ru.env').write_text('HOST_TAG=ru\n')
             (root / 'envs/se.env').write_text('HOST_TAG=se\n')
             (root / 'envs/exits.env').write_text("EXIT_TAGS='se'\n")
-            if external_open:
-                (root / 'external-open').touch()
+            # Вход снаружи открыт до стадии; external_open=False - его закрывает стадия.
+            (root / 'external-open').touch()
+            if not external_open:
+                (root / 'stage-closes').touch()
             source = (ROOT / 'infra/deploy.sh').read_text()
             settings = ''.join(line + '\n' for line in source.splitlines()
                                if line.startswith(('FW_GUARD_STAGES=', 'FW_GUARD_WINDOW=')))

@@ -79,6 +79,22 @@ class WireguardWhitespaceTests(unittest.TestCase):
                 with self.subTest(line=ascii(line)):
                     self.rejected(HEADER, peer('a').replace(allowed, line))
 
+    def test_empty_allowed_ips_is_rejected(self):
+        # wg: Line unrecognized: `AllowedIPs='
+        for line in ('AllowedIPs =', 'AllowedIPs = ', 'AllowedIPs=\t'):
+            with self.subTest(line=ascii(line)):
+                self.rejected(HEADER, peer('a').replace('AllowedIPs = 10.66.66.2/32', line))
+
+    def test_lines_wg_reads_are_applied(self):
+        # wg drops C whitespace anywhere in the line, takes "off" in any case and a
+        # leading minus that removes the address.
+        for mark in ('Off', 'OFF'):
+            with self.subTest(mark=mark):
+                self.applied(HEADER + f'FwMark = {mark}\n', peer('a'))
+        for ips in ('10.66.66.4 /32', '-10.66.66.4/32', '10.66.66.2/32, - fd66:66::2/128'):
+            with self.subTest(ips=ips):
+                self.applied(HEADER, peer('a').replace('10.66.66.2/32', ips, 1))
+
     def test_plain_config_is_applied(self):
         self.applied(HEADER, peer('a') + peer('b'))
 

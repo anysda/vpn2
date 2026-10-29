@@ -484,6 +484,8 @@ fw_guard_disarm() {
       # 4: сторожа нет - стадия упала до arm, и её ошибка уже в rc.
       0|4) return 0 ;;
       3) warn "[$stage → $HOST_TAG] $out"; return 1 ;;
+      # Shell узла не дошёл до команды: причина в $out, повтор не поможет.
+      "$_SSH_NO_MARK") warn "[$stage → $HOST_TAG] $out"; return 1 ;;
     esac
     if (( $(date +%s) >= deadline )); then
       warn "[$stage → $HOST_TAG] после стадии нода не пускает новые ssh-входы ${FW_GUARD_WINDOW} с и дольше; сторож фаервола должен был откатить ufw, проверь вход руками"

@@ -123,16 +123,18 @@ _ssh_output() {
 }
 
 # "$@" - вызов ssh, где перед командой узла стоит "$_ssh_begin"; код возврата -
-# код ssh. С --mark ssh с кодом 0 без метки в выводе (shell узла не дошёл до
-# команды) даёт код $_SSH_NO_MARK.
+# код ssh. Если ssh вышел с 0, а метки в выводе нет, shell узла не дошёл до
+# команды (.bashrc делает exit или exec): это не успех, код $_SSH_NO_MARK, без
+# повторов - сбой не транзиентный.
 _SSH_NO_MARK=254
 _ssh_run() {
-  local mark=0
-  [[ $1 == --mark ]] && { mark=1; shift; }
   local -a st
-  # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего.
+  # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
   { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
-  (( mark && st[0] == 0 && st[1] != 0 )) && return "$_SSH_NO_MARK"
+  if (( st[0] == 0 && st[1] != 0 )); then
+    warn "ssh ${SSH_HOST:-?}: shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена"
+    return "$_SSH_NO_MARK"
+  fi
   return "${st[0]}"
 }
 
@@ -148,7 +150,8 @@ ssh_exec() {
     SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
         "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$@" || rc=$?
     # rc=255 — сбой самого ssh (соединение). Любой другой код — это exit
-    # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть.
+    # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть;
+    # $_SSH_NO_MARK - shell узла не дошёл до команды, повтор не поможет.
     [[ $rc -ne 255 ]] && return $rc
     [[ $attempt -eq 1 ]] && _ssh_refusal_final && return $rc
     [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
@@ -256,17 +259,14 @@ push() {
   for attempt in 1 2 3 4 5; do
     rc=0
     if [[ -d "$src" ]]; then
-      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" _ssh_run --mark sshpass -e ssh "${_ssh_opts[@]}" \
+      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
           "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" || rc=$?
     else
-      SSHPASS="$SSH_PASS" _ssh_run --mark sshpass -e ssh "${_ssh_opts[@]}" \
+      SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
           "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
-    if [[ $rc -eq $_SSH_NO_MARK ]]; then
-      warn "push → ${SSH_HOST}: shell узла не дошёл до команды (.bashrc root делает exit или exec), файл не записан"
-      return $rc
-    fi
+    [[ $rc -eq $_SSH_NO_MARK ]] && return $rc
     # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не
     # выходят): без пробы, она стоила бы ноде ещё одну строку для fail2ban.
     [[ $rc -eq 5 ]] && { _ssh_auth_refused 'нода отказала во входе: неверный пароль'; return $rc; }

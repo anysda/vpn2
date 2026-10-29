@@ -61,6 +61,7 @@ release_start() {
       5) die 'cannot take deploy lock: entry refused ssh login (wrong password)' ;;
       6|7) die "cannot take deploy lock: entry host key is unknown or changed (sshpass exit $rc); see the ssh reason above" ;;
       255) die "cannot take deploy lock: ssh to entry failed (login refused or entry unreachable, ssh exit $rc); see the ssh reason above" ;;
+      "$_SSH_NO_MARK") die "entry did not confirm deploy lock: root's shell on entry never reached the command; check what root's .bashrc/profile on entry runs at ssh login" ;;
       *) die "cannot take deploy lock: entry lock command exited with $rc, see the reason above" ;;
     esac
   fi

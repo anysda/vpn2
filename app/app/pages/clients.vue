@@ -38,8 +38,22 @@ const subtitle = computed(() => {
 definePageMeta({ title: 'Клиенты и ключи' })
 usePageSub(subtitle)
 
+const route = useRoute()
+const router = useRouter()
+
 type Filter = 'all' | 'exp' | 'frz'
-const filter = ref<Filter>('all')
+// Фильтр живёт в адресе (?f=exp|frz), кнопки - ссылки: клик до гидратации - обычный
+// переход, и сервер отдаёт страницу уже с фильтром. Смена фильтра историю не плодит.
+const filterQuery = (f: Filter) => ({ ...route.query, f: f === 'all' ? undefined : f })
+const filter = computed<Filter>({
+  get: () => {
+    const f = route.query.f
+    return f === 'exp' || f === 'frz' ? f : 'all'
+  },
+  set: (f) => { void router.replace({ query: filterQuery(f) }) },
+})
+/** Пробел нажимает ссылку-кнопку, как настоящую кнопку. */
+const press = (e: KeyboardEvent) => (e.currentTarget as HTMLElement).click()
 const search = ref('')
 
 const traffic = (id: number) => trafficMap.value?.[id] ?? null
@@ -69,8 +83,6 @@ function visible(c: Client) {
 }
 const rows = computed(() => sorted.value.filter(visible))
 
-const route = useRoute()
-const router = useRouter()
 // Телефон: список и карточка клиента — два экрана. Открытый клиент — ?id= в
 // адресе и запись в истории: системный «назад» и «Назад» в шапке ведут к списку,
 // ссылка и обновление страницы открывают карточку.
@@ -213,15 +225,13 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
     </div>
 
     <div ref="seg" class="seg gl">
-      <button type="button" :class="{ on: filter === 'all' }" @click="filter = 'all'">
-        Все <b>{{ counts.all }}</b>
-      </button>
-      <button type="button" :class="{ on: filter === 'exp' }" @click="filter = 'exp'">
-        Истекают <b>{{ counts.exp }}</b>
-      </button>
-      <button type="button" :class="{ on: filter === 'frz' }" @click="filter = 'frz'">
-        Заморожены <b>{{ counts.frz }}</b>
-      </button>
+      <NuxtLink
+        v-for="[f, label] in ([['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const)"
+        :key="f" :to="{ query: filterQuery(f) }" replace role="button" :class="{ on: filter === f }"
+        @keydown.space.prevent="press"
+      >
+        {{ label }} <b>{{ counts[f] }}</b>
+      </NuxtLink>
       <span ref="glideEl" class="glide now" />
     </div>
 

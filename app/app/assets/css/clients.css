@@ -13,13 +13,13 @@
 
 /* фильтр */
 .clp .seg{position:relative;display:inline-flex;gap:6px;margin-bottom:14px}
-.clp .seg button{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 13px var(--font-sans);cursor:pointer;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
-.clp .seg button b{font-weight:300;font-size:15px;color:var(--t1)}
-.clp .seg button:active{transform:scale(.96)}
-.clp .seg button.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
-.clp .seg button.on b{color:var(--acc-t)}
-.clp .seg.gl button.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
-.clp .seg.gl button.on b{color:var(--t1)}
+.clp .seg>a{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 13px var(--font-sans);cursor:pointer;text-decoration:none;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
+.clp .seg>a b{font-weight:300;font-size:15px;color:var(--t1)}
+.clp .seg>a:active{transform:scale(.96)}
+.clp .seg>a.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
+.clp .seg>a.on b{color:var(--acc-t)}
+.clp .seg.gl>a.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
+.clp .seg.gl>a.on b{color:var(--t1)}
 
 .clp .sel{position:relative;display:inline-flex;align-items:center}
 .clp .sel select{appearance:none;height:40px;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px var(--font-sans);cursor:pointer;outline:0}
@@ -136,7 +136,7 @@
   .clp .inp input{flex:1;min-width:0;width:100%;font-size:14px}
   .clp .ha .pill{flex:none;height:42px}
   .clp .seg{display:flex;margin:0}
-  .clp .seg button{flex:1;min-width:0;justify-content:center;height:34px;padding:0 8px;font-size:12.5px}
+  .clp .seg>a{flex:1;min-width:0;justify-content:center;height:34px;padding:0 8px;font-size:12.5px}
   .clp .cgrid{grid-template-columns:minmax(0,1fr)}
   .clp .clist{flex:none;padding:6px}
   .clp .thead{display:none}

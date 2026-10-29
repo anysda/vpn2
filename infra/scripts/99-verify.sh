@@ -68,18 +68,23 @@ service() { systemctl is-active --quiet "$1"; }
 # Вход на экзит через hy2-mgmt. Login shell экзита читает .bashrc до команды,
 # и его вывод не должен попасть в лог deploy: команда печатает метку, вывод до
 # неё отбрасывается. Без метки shell узла не дошёл до команды (exit или exec в
-# .bashrc) - это отказ, даже при коде 0; 255 (соединение) идёт как есть.
+# .bashrc) - это отказ, даже при коде 0; при 255 (соединение) - сообщение ssh.
 # Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из infra/lib/ssh.sh:
 # на узел lib/ssh.sh не попадает.
 SSH_MARK=vpn2-ssh-output-begin
 SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 exit_ssh() {
-  local output rc=0
-  output=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>&1) || rc=$?
+  local output errors rc=0
+  # stderr .bashrc приходит от sshd отдельным каналом и позже метки из stdout:
+  # его читаем отдельно и показываем только сообщение ssh о соединении (255).
+  errors=$(mktemp)
+  output=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>"$errors") || rc=$?
   if [[ $rc -eq 255 ]]; then
-    [[ -z "$output" ]] || printf '%s\n' "$output"
+    cat -- "$errors"
+    rm -f -- "$errors"
     return 255
   fi
+  rm -f -- "$errors"
   if [[ $'\n'$output$'\n' != *$'\n'"$SSH_MARK"$'\n'* ]]; then
     echo "$SSH_NO_MARK_REASON"
     return 1

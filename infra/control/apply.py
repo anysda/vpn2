@@ -41,11 +41,11 @@ KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
 # C isspace() within a line: what wg(8) skips and openvpn splits words at. Python's
 # \s and str.strip() also take \x1c, \x85, NBSP..., which both read as text.
 BLANK = r'[ \t\v\f\r]'
-# The keys wg syncconf gets, with the values wg reads for them.
-WG_ADDRESS = '[0-9A-Fa-f.:]+(?:/[0-9]+)?'
-WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:off|0x[0-9A-Fa-f]+|[0-9]+)',
-             'PublicKey': KEY, 'PresharedKey': KEY,
-             'AllowedIPs': rf'(?:{WG_ADDRESS}(?:{BLANK}*,{BLANK}*{WG_ADDRESS})*)?'}
+# The keys wg syncconf gets, with the values wg reads for them once BLANK is gone.
+# A minus before an address removes it.
+WG_ADDRESS = '-?[0-9A-Fa-f.:]+(?:/[0-9]+)?'
+WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:(?i:off)|0x[0-9A-Fa-f]+|[0-9]+)',
+             'PublicKey': KEY, 'PresharedKey': KEY, 'AllowedIPs': f'{WG_ADDRESS}(?:,{WG_ADDRESS})*'}
 # The directives infra/scripts/29-openvpn.sh writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
@@ -223,11 +223,13 @@ class Applier:
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')
         elif resource == 'wg':
             header, peers = wg_split(text)
-            # A line Python's \s reads as a syncconf key must read the same to wg.
+            # A line Python's \s reads as a syncconf key must read the same to wg,
+            # which drops BLANK anywhere in the line before parsing it.
             for line in text.split('\n'):
-                named = re.match(rf'\s*({"|".join(WG_VALUES)})\s*=', line)
+                seen = re.sub(BLANK, '', line)
+                named = re.match(rf'\s*({"|".join(WG_VALUES)})\s*=', seen)
                 name = named and named[1]
-                if name and not re.fullmatch(rf'{BLANK}*{name}{BLANK}*={BLANK}*{WG_VALUES[name]}{BLANK}*(?:#.*)?', line):
+                if name and not re.fullmatch(rf'{name}={WG_VALUES[name]}(?:#.*)?', seen):
                     raise ValueError(f'{name}: wg cannot read {line!a}')
             if not re.search(rf'(?m)^{BLANK}*PrivateKey{BLANK}*={BLANK}*{KEY}{BLANK}*$', header):
                 raise ValueError('[Interface] PrivateKey missing')

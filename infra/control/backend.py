@@ -191,7 +191,7 @@ class Backend:
                 cn = 'dev_' + str(params['device_id'])
                 ccd = self.path('/etc/openvpn/server/ccd') / cn
                 text = ccd.read_text() if ccd.exists() else ''
-                disabled = bool(re.search(rf'(?m)^disable{BLANK}*$', text))
+                disabled = bool(re.search(rf'(?m)^{BLANK}*disable{BLANK}*$', text))
                 if disabled and cn not in self.observe('openvpn')['sessions']:
                     continue
                 self.openvpn(dict(strip(params), action='deny'))
@@ -413,7 +413,7 @@ class Backend:
             ccd = base / 'ccd' / cn
             text = ccd.read_text() if ccd.exists() else None
             # A ccd the server cannot read is the same as none: it connects.
-            denied = text is not None and self.served(ccd) and re.search(rf'(?m)^disable{BLANK}*$', text)
+            denied = text is not None and self.served(ccd) and re.search(rf'(?m)^{BLANK}*disable{BLANK}*$', text)
             return {'valid': valid, 'revoked': revoked, 'present': text is not None,
                     'allowed': text is not None and not denied}
 

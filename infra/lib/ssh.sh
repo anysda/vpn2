@@ -119,13 +119,21 @@ _ssh_output() {
   done
   (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
   printf '%s' "$line"
+  return 1
 }
 
 # "$@" - вызов ssh, где перед командой узла стоит "$_ssh_begin"; код возврата -
-# код ssh.
+# код ssh. С --mark ssh с кодом 0 без метки в выводе (shell узла не дошёл до
+# команды) даёт код $_SSH_NO_MARK.
+_SSH_NO_MARK=254
 _ssh_run() {
-  "$@" | _ssh_output
-  return "${PIPESTATUS[0]}"
+  local mark=0
+  [[ $1 == --mark ]] && { mark=1; shift; }
+  local -a st
+  # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего.
+  { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
+  (( mark && st[0] == 0 && st[1] != 0 )) && return "$_SSH_NO_MARK"
+  return "${st[0]}"
 }
 
 # Run a command on the current $SSH_HOST. Args are passed to ssh.
@@ -248,13 +256,17 @@ push() {
   for attempt in 1 2 3 4 5; do
     rc=0
     if [[ -d "$src" ]]; then
-      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
+      tar -C "$src" -cf - . | SSHPASS="$SSH_PASS" _ssh_run --mark sshpass -e ssh "${_ssh_opts[@]}" \
           "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" || rc=$?
     else
-      SSHPASS="$SSH_PASS" _ssh_run sshpass -e ssh "${_ssh_opts[@]}" \
+      SSHPASS="$SSH_PASS" _ssh_run --mark sshpass -e ssh "${_ssh_opts[@]}" \
           "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
+    if [[ $rc -eq $_SSH_NO_MARK ]]; then
+      warn "push → ${SSH_HOST}: shell узла не дошёл до команды (.bashrc root делает exit или exec), файл не записан"
+      return $rc
+    fi
     # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не
     # выходят): без пробы, она стоила бы ноде ещё одну строку для fail2ban.
     [[ $rc -eq 5 ]] && { _ssh_auth_refused 'нода отказала во входе: неверный пароль'; return $rc; }

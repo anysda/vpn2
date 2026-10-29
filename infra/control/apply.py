@@ -155,12 +155,16 @@ class Applier:
             if len(sockets) != len(set(sockets)):
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
-            options, ciphers = {}, []
+            options, ciphers, managed_lines = {}, [], []
             for line in text.splitlines():
                 words = openvpn_words(line)
                 if words:
                     name = words[0].removeprefix('--')
                     options.setdefault(name, words[1:])
+                    # openvpn applies the last crl-verify or client-config-dir, and an
+                    # inline <crl-verify> block replaces the file the same way.
+                    if name in ('crl-verify', 'client-config-dir', '<crl-verify>'):
+                        managed_lines.append(name.strip('<>'))
                     if name in ('cipher', 'data-ciphers', 'ncp-ciphers', 'data-ciphers-fallback'):
                         ciphers += [(name, cipher) for word in words[1:] for cipher in word.split(':')]
             # openvpn acts on these while parsing, so the check itself would do it:
@@ -173,6 +177,8 @@ class Applier:
             base = self.target('openvpn').parent
             # Access is enforced only while the server reads the managed CRL and ccd.
             for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
+                if managed_lines.count(name) > 1:
+                    raise ValueError(f'{name} is given more than once')
                 value = (options.get(name) or [''])[0]
                 if (base / value).resolve() != (base / managed).resolve():
                     raise ValueError(f'{name} must be {base / managed}')

@@ -165,7 +165,7 @@ class Applier:
             if len(sockets) != len(set(sockets)):
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
-            options, ciphers, managed_lines = {}, [], []
+            options, ciphers, managed_lines = {}, {}, []
             # openvpn drops a UTF-8 BOM at the start of the file, nowhere else.
             for line in text.removeprefix('\ufeff').splitlines():
                 words = openvpn_words(line)
@@ -177,10 +177,11 @@ class Applier:
                     # openvpn applies the last crl-verify or client-config-dir.
                     if name in ('crl-verify', 'client-config-dir'):
                         managed_lines.append(name)
+                    # openvpn applies the last cipher, data-ciphers and auth, so only it is checked.
                     if name in ('cipher', 'auth'):
-                        ciphers += [(name, [word]) for word in words[1:]]
+                        ciphers[name] = [(name, [word]) for word in words[1:]]
                     if name == 'data-ciphers':
-                        ciphers += [(name, word.split(':')) for word in words[1:]]
+                        ciphers[name] = [(name, word.split(':')) for word in words[1:]]
             base = self.target('openvpn').parent
             # Access is enforced only while the server reads the managed CRL and ccd.
             for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
@@ -207,7 +208,7 @@ class Applier:
             # restart. --show-ciphers prints no alias (AES256, sha256), so each name
             # goes to openvpn itself, which looks it up in OpenSSL the way the server does.
             if ciphers:
-                self.check_openvpn_names(ciphers)
+                self.check_openvpn_names([item for items in ciphers.values() for item in items])
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')

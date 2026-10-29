@@ -227,7 +227,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
     <div ref="seg" class="seg gl">
       <NuxtLink
         v-for="[f, label] in ([['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const)"
-        :key="f" :to="{ query: filterQuery(f) }" replace role="button" :class="{ on: filter === f }"
+        :key="f" :to="{ query: filterQuery(f) }" replace role="button" :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }"
         @keydown.space.prevent="press"
       >
         {{ label }} <b>{{ counts[f] }}</b>

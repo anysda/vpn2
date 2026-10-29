@@ -33,11 +33,12 @@ onUnmounted(() => { if (trafficTimer) { clearInterval(trafficTimer); trafficTime
 useVisibleRefresh(refreshTraffic)
 
 // Список грузится только в браузере. До первого ответа «Пока нет клиентов» и
-// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет. sync:
+// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет. Флаг -
+// на каждое открытие страницы: до ответа в списке лежит прошлый визит. sync:
 // наблюдатель списка ниже видит флаг уже в том же такте, что и первый список.
-const listed = ref(clientsStatus.value === 'success')
-// Ошибка до первого списка: причина видна, пока опрос не принесёт список,
-// а не мигает на каждом повторе.
+const listed = ref(false)
+// Причина сбоя держится до удачного ответа, а не мигает на каждом повторе:
+// до первого списка - вместо него, после - над прежним списком.
 const loadError = ref('')
 watch(clientsStatus, (s) => {
   if (s === 'success') {
@@ -140,8 +141,9 @@ function neighbor(id: number | null, before: readonly Client[], now: readonly Cl
 // Выбор уходит с пропавшего клиента: удалён здесь (список без него мог прийти
 // раньше ответа на удаление), другим админом или впервые загружен список.
 watch(sorted, (list, before) => {
-  // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
-  if (!list.length && !listed.value) return
+  // До первого ответа на этом открытии ?id= из ссылки не сбрасывать: в списке
+  // пока прошлый визит, нового клиента в нём ещё нет.
+  if (!listed.value) return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать,
   // того, чьё удаление ещё идёт, - никогда: выбрать некого - справа пусто.
@@ -319,11 +321,15 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
           <div class="thead">
             <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
           </div>
+          <div v-if="loadError && listed" role="alert" class="al red">
+            <b>Не удалось обновить список клиентов</b>
+            Пока показан список последней загрузки. {{ loadError }}
+          </div>
+          <div v-else-if="loadError" role="alert" class="al red">
+            <b>Не удалось загрузить клиентов</b>{{ loadError }}
+          </div>
           <div ref="rowsEl" class="crows scroll">
-            <div v-if="!listed && loadError" role="alert" class="al red">
-              <b>Не удалось загрузить клиентов</b>{{ loadError }}
-            </div>
-            <div v-else-if="!listed" class="more">
+            <div v-if="!listed" v-show="!loadError" class="more">
               Загрузка…
             </div>
             <div v-else-if="!clients.length" class="more">

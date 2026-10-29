@@ -1397,6 +1397,96 @@ exec /usr/bin/sqlite3 "$@"
         for n in (1, 2):
             self.assertEqual(self.access(devices[n]), self.FULL_ACCESS, f'устройство {n} из архива потеряло доступ')
 
+    def reissued_between_archives(self, new=()):
+        """Архив A (1, 2); устройство 1 перевыпущено, как в панели, выданы new; архив B (1', 2, *new)."""
+        devices = self.revocation_fixture()
+        for n in (1, 2):
+            self.ccd(devices[n])
+        older = self.archive_name()
+        archived = self.serial(1)
+        self.revoke(1)
+        devices[1] = dict(devices[1], key=base64.b64encode(bytes([11]) * 32).decode(),
+                          psk=base64.b64encode(bytes([111]) * 32).decode(), password='reissued1')
+        self.conn.execute('UPDATE devices SET wg_public_key = ?, wg_preshared_key = ?, ovpn_cert = ?, '
+                          'ikev2_password = ? WHERE id = 1',
+                          (devices[1]['key'], devices[1]['psk'], self.issue(1), devices[1]['password']))
+        self.conn.commit()
+        for n in new:
+            self.add_device(devices[n])
+            self.ccd(devices[n])
+        self.apply_configs([devices[n] for n in (1, 2, *new)])
+        return devices, archived, older, self.archive_name()
+
+    def assert_reissued_restored(self, devices, result, step):
+        """Перевыпущенное после архива устройство 1 остаётся в БД без доступа; отзыв не hold."""
+        access = self.access(devices[1])
+        del access['ccd']
+        self.assertEqual(access, dict.fromkeys(access, False), f'{step}: у перевыпущенного устройства 1 доступ')
+        index = {int(r[3], 16): r[2] for r in (line.split('\t') for line in
+                 Path('/etc/openvpn/server/pki/index.txt').read_text().splitlines()) if len(r) == 6}
+        self.assertNotIn('certificateHold', index[self.serial(1)],
+                         f'{step}: сертификат устройства 1 на hold — следующий restore вернёт доступ')
+        self.assertIn('устройство 1: IKEv2, OpenVPN, WireGuard отозваны; перевыпущено после архива', result.stdout)
+        self.assertNotRegex(result.stdout, r'устройство 1: [^\n]*выдано после архива', step)
+        self.assertEqual(self.access(devices[2]), self.FULL_ACCESS, f'{step}: устройство 2 из архива потеряло доступ')
+
+    def issued_after_archive_reissued_between_archives(self, live_db='live'):
+        devices, _archived, older, newer = self.reissued_between_archives()
+        self.assert_reissued_restored(devices, self.restore(older), 'A')
+        if live_db != 'live':
+            self.conn = sqlite3.connect(DB)
+            self.lose_live_db(corrupt=live_db == 'corrupt')
+        self.assert_reissued_restored(devices, self.restore(newer), 'A-B')
+
+    def test_issued_after_archive_reissued_between_archives_live_db(self):
+        self.issued_after_archive_reissued_between_archives()
+
+    def test_issued_after_archive_reissued_between_archives_live_db_lost(self):
+        self.issued_after_archive_reissued_between_archives('lost')
+
+    def issued_after_archive_reissued_then_deleted(self, live_db='live'):
+        devices, _archived, older, newer = self.reissued_between_archives()
+        self.restore(older)
+        # Панель удаляет устройство 1: кредов после restore нет, отзывать нечего, строка и ccd уходят.
+        self.conn = sqlite3.connect(DB)
+        self.conn.execute('DELETE FROM devices WHERE id = 1')
+        self.conn.commit()
+        Path('/etc/openvpn/server/ccd/dev_1').unlink()
+        self.apply_configs([devices[2]])
+        if live_db != 'live':
+            self.lose_live_db()
+        result = self.restore(newer)
+        # Строка устройства 1 в архиве B остаётся (без кредов), с ней и ccd: номер занят им же.
+        access = self.access(devices[1])
+        del access['ccd']
+        self.assertEqual(access, dict.fromkeys(access, False), 'удалённое панелью устройство 1 вернуло доступ')
+        self.assertRegex(result.stdout, r'устройство 1: IKEv2, OpenVPN, WireGuard отозваны; (удалено|отозвано) после архива')
+        self.assertEqual(self.access(devices[2]), self.FULL_ACCESS, 'устройство 2 из архива потеряло доступ')
+
+    def test_issued_after_archive_reissued_then_deleted_live_db(self):
+        self.issued_after_archive_reissued_then_deleted()
+
+    def test_issued_after_archive_reissued_then_deleted_live_db_lost(self):
+        self.issued_after_archive_reissued_then_deleted('lost')
+
+    def issued_after_archive_reissued_older_newer_older(self, live_db='live'):
+        # Положительный контроль: выданное после A устройство 3 (в B есть) A-B-A-B возвращает доступ,
+        # перевыпущенное 1 доступа не получает ни на одном шаге.
+        devices, _archived, older, newer = self.reissued_between_archives(new=(3,))
+        if live_db != 'live':
+            self.lose_live_db()
+        for step, archive, expected in (('A', older, self.NO_ACCESS), ('A-B', newer, self.FULL_ACCESS),
+                                        ('A-B-A', older, self.NO_ACCESS), ('A-B-A-B', newer, self.FULL_ACCESS)):
+            result = self.restore(archive)
+            self.assertEqual(self.access(devices[3]), expected, f'{step}: устройство 3')
+            self.assert_reissued_restored(devices, result, step)
+
+    def test_issued_after_archive_reissued_older_newer_older_live_db(self):
+        self.issued_after_archive_reissued_older_newer_older()
+
+    def test_issued_after_archive_reissued_older_newer_older_live_db_lost(self):
+        self.issued_after_archive_reissued_older_newer_older('lost')
+
     def test_persistent_mismatch_keeps_archive_with_warning(self):
         # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.
         key = base64.b64encode(bytes([7]) * 32).decode()

@@ -11,7 +11,7 @@ import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/client
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
 
-const { clients: fetched, refresh: refreshClients, status: clientsStatus } = useClients()
+const { clients: fetched, refresh: refreshClients, status: clientsStatus, error: clientsError } = useClients()
 // Удалённые клиенты, которых ещё может вернуть ответ списка, начатый до удаления:
 // их не показывать и не выбирать снова, иначе карточка запросит удалённого и получит 404.
 const removed = ref<number[]>([])
@@ -33,9 +33,22 @@ onUnmounted(() => { if (trafficTimer) { clearInterval(trafficTimer); trafficTime
 useVisibleRefresh(refreshTraffic)
 
 // Список грузится только в браузере. До первого ответа «Пока нет клиентов» и
-// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет.
+// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет. sync:
+// наблюдатель списка ниже видит флаг уже в том же такте, что и первый список.
 const listed = ref(clientsStatus.value === 'success')
-watch(clientsStatus, (s) => { if (s === 'success') listed.value = true })
+// Ошибка до первого списка: причина видна, пока опрос не принесёт список,
+// а не мигает на каждом повторе.
+const loadError = ref('')
+watch(clientsStatus, (s) => {
+  if (s === 'success') {
+    listed.value = true
+    loadError.value = ''
+  }
+  else if (s === 'error') {
+    const e = clientsError.value as { data?: { message?: string }, statusMessage?: string, message?: string } | undefined
+    loadError.value = e?.data?.message ?? e?.statusMessage ?? e?.message ?? 'Ошибка'
+  }
+}, { flush: 'sync' })
 
 const subtitle = computed(() => {
   if (!listed.value) return 'Загрузка…'
@@ -128,7 +141,7 @@ function neighbor(id: number | null, before: readonly Client[], now: readonly Cl
 // раньше ответа на удаление), другим админом или впервые загружен список.
 watch(sorted, (list, before) => {
   // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
-  if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
+  if (!list.length && !listed.value) return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать,
   // того, чьё удаление ещё идёт, - никогда: выбрать некого - справа пусто.
@@ -307,7 +320,10 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
             <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
           </div>
           <div ref="rowsEl" class="crows scroll">
-            <div v-if="!listed" class="more">
+            <div v-if="!listed && loadError" role="alert" class="al red">
+              <b>Не удалось загрузить клиентов</b>{{ loadError }}
+            </div>
+            <div v-else-if="!listed" class="more">
               Загрузка…
             </div>
             <div v-else-if="!clients.length" class="more">

@@ -61,15 +61,23 @@ export interface ClientDetail {
 
 const POLL_INTERVAL_MS = 3000
 const CLIENTS_KEY = 'clients'
+/** Дольше такта опроса: медленный ответ доходит, зависший не держит опрос вечно. */
+export const POLL_TIMEOUT_MS = 10_000
 
 export function useClients() {
+  // Ошибка запроса сбрасывает data в default(): default отдаёт последний
+  // удачный список, и сбой одного тика не рисует ложную пустоту.
+  const last = useState<Client[]>('clients-last', () => [])
   // Опрос и повторные загрузки не обрывают запрос в пути, а ждут его ответа:
-  // иначе ответ дольше такта опроса не доходил до экрана никогда.
+  // иначе ответ дольше такта опроса не доходил до экрана никогда. Зависший
+  // запрос через POLL_TIMEOUT_MS становится ошибкой, и следующий тик повторяет.
   const { data, refresh: poll, status, error } = useFetch<Client[]>('/api/clients', {
     key: CLIENTS_KEY,
-    default: () => [],
+    default: () => last.value,
+    transform: list => (last.value = list),
     server: false,
     dedupe: 'defer',
+    timeout: POLL_TIMEOUT_MS,
   })
   useSharedPoll(CLIENTS_KEY, POLL_INTERVAL_MS)
   useVisibleRefresh(poll)

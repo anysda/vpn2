@@ -1,3 +1,5 @@
+import { POLL_TIMEOUT_MS } from '~/composables/useClients'
+
 /**
  * Lightweight reactive view of the Telegram bot config — used to disable
  * "send to Telegram" controls when the bot is not configured / not running.
@@ -13,11 +15,16 @@ interface TgStatus {
 }
 
 export function useTelegramStatus() {
+  // Как список клиентов: сбой опроса оставляет последний удачный статус, а не
+  // мигает в «не настроен»; зависший запрос не держит опрос.
+  const last = useState<TgStatus>('tg-status-last', () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '' }))
   const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
     key: 'tg-status',
-    default: () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '' }),
+    default: () => last.value,
+    transform: status => (last.value = status),
     server: false,
     dedupe: 'defer',
+    timeout: POLL_TIMEOUT_MS,
   })
 
   const canSend = computed(() => Boolean(data.value?.configured && data.value?.running))

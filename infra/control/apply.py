@@ -177,8 +177,10 @@ class Applier:
                     # openvpn applies the last crl-verify or client-config-dir.
                     if name in ('crl-verify', 'client-config-dir'):
                         managed_lines.append(name)
-                    if name in ('cipher', 'data-ciphers'):
-                        ciphers += [(name, cipher) for word in words[1:] for cipher in word.split(':')]
+                    if name == 'cipher':
+                        ciphers += [(name, [word]) for word in words[1:]]
+                    if name == 'data-ciphers':
+                        ciphers += [(name, word.split(':')) for word in words[1:]]
             base = self.target('openvpn').parent
             # Access is enforced only while the server reads the managed CRL and ccd.
             for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
@@ -204,10 +206,15 @@ class Applier:
             # The parse takes any cipher name; an unknown one fails only the restart.
             known = {line.split()[0].upper() for line in listed.splitlines()
                      if re.match(r'^\S+\s+\(', line)}
-            for option, cipher in ciphers:
-                # "?NAME" is optional: openvpn itself skips it when unknown.
-                if cipher and not cipher.startswith('?') and cipher.upper() not in known:
-                    raise ValueError(f'{option}: unknown cipher {cipher}')
+            for option, names in ciphers:
+                # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
+                # fails the start when no known cipher is left in the list.
+                for cipher in names:
+                    optional = option == 'data-ciphers' and cipher.startswith('?')
+                    if cipher and not optional and cipher.upper() not in known:
+                        raise ValueError(f'{option}: unknown cipher {cipher}')
+                if not any(cipher.removeprefix('?').upper() in known for cipher in names):
+                    raise ValueError(f'{option} {":".join(names)}: no known cipher')
         elif resource == 'ikev2':
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')

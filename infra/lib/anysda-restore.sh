@@ -700,6 +700,7 @@ if live_ike is not None:
 # Устройство архива против живого: удалено (сертификат отозван или номер
 # уже выдан и строки нет) или перевыпущено (другой ключ, сертификат, пароль).
 revoke = {}
+unproven = set()
 issued = {}
 released = {}
 archive_db = None
@@ -726,6 +727,14 @@ if os.path.isfile(db_path):
             # Каждый вид доступа отдельно, как сравнение с живой БД ниже. Всё
             # снято и учётки IKEv2 на узле нет — удалено; учётка та же — перевыпуск.
             user, password = row.get('ikev2_username'), row.get('ikev2_password')
+            # Пира и секрета нет и у замороженного или просроченного клиента, а его
+            # сертификат действует: удаление и перевыпуск в панели его отзывают.
+            # Действует — WireGuard и IKEv2 не судим. Без сертификата заморозку от
+            # удаления не отличить: судим по конфигам, перевыпуск вернёт доступ.
+            if serial is not None and serial not in live_revoked:
+                continue
+            if not cert:
+                unproven.add(device_id)
             if row.get('wg_public_key') and live_peers is not None and row['wg_public_key'] not in live_peers:
                 what.add('WireGuard')
             if cert and serial in live_revoked:
@@ -953,6 +962,8 @@ say(f'отозванных записей применено поверх арх
 for device_id, (what, gone, _row) in sorted(revoke.items()):
     state = 'удалено после архива — удали его в панели' if gone else 'перевыпущено после архива — перевыпусти в панели'
     say(f'  устройство {device_id}: {", ".join(sorted(what))} отозваны; {state}')
+    if device_id in unproven:
+        say('    сертификата OpenVPN в архиве нет — судил по живым конфигам, заморозку от удаления не отличить')
 for device_id, (what, _absent, _row) in sorted(issued.items()):
     say(f'  устройство {device_id}: {", ".join(sorted(what)) or "доступов нет"} отозваны; '
         'выдано после архива — в восстановленной базе его нет, доступ вернёт restore архива, где оно есть')

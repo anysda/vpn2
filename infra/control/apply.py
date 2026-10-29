@@ -38,6 +38,16 @@ RESOURCES = {
            'verify': [['/usr/bin/wg', 'show', 'wg0', 'listen-port']]},
 }
 KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
+# The directives infra/scripts/29-openvpn.sh writes, in every version so far:
+# restore() checks a last good config an older version wrote. openvpn reads a
+# directive past the first word too (setenv opt, a BOM, config), and some run
+# while it parses (log, plugin, providers): only a known name is let through.
+OPENVPN_DIRECTIVES = frozenset((
+    'port', 'proto', 'dev', 'topology', 'server', 'ifconfig-pool', 'route',
+    'ca', 'cert', 'key', 'dh', 'tls-crypt', 'crl-verify', 'client-config-dir',
+    'keepalive', 'cipher', 'data-ciphers', 'auth', 'persist-key', 'persist-tun',
+    'sndbuf', 'rcvbuf', 'fast-io', 'user', 'group', 'push', 'status',
+    'status-version', 'management', 'management-client-user', 'verb'))
 
 
 class Failed(Exception):
@@ -156,24 +166,19 @@ class Applier:
                 raise ValueError('two inbounds on one port')
         elif resource == 'openvpn':
             options, ciphers, managed_lines = {}, [], []
-            for line in text.splitlines():
+            # openvpn drops a UTF-8 BOM at the start of the file, nowhere else.
+            for line in text.removeprefix('\ufeff').splitlines():
                 words = openvpn_words(line)
                 if words:
                     name = words[0].removeprefix('--')
+                    if name not in OPENVPN_DIRECTIVES:
+                        raise ValueError(f'{name} is not allowed in a candidate')
                     options.setdefault(name, words[1:])
-                    # openvpn applies the last crl-verify or client-config-dir, and an
-                    # inline <crl-verify> block replaces the file the same way.
-                    if name in ('crl-verify', 'client-config-dir', '<crl-verify>'):
-                        managed_lines.append(name.strip('<>'))
-                    if name in ('cipher', 'data-ciphers', 'ncp-ciphers', 'data-ciphers-fallback'):
+                    # openvpn applies the last crl-verify or client-config-dir.
+                    if name in ('crl-verify', 'client-config-dir'):
+                        managed_lines.append(name)
+                    if name in ('cipher', 'data-ciphers'):
                         ciphers += [(name, cipher) for word in words[1:] for cipher in word.split(':')]
-            # openvpn acts on these while parsing, so the check itself would do it:
-            # log/log-append truncate or write the named file, plugin loads and runs
-            # a shared object, config pulls in a file this check never sees, cd moves
-            # the base the relative CRL and ccd paths below are read from.
-            for name in ('log', 'log-append', 'plugin', 'config', 'cd'):
-                if name in options:
-                    raise ValueError(f'{name} is not allowed in a candidate')
             base = self.target('openvpn').parent
             # Access is enforced only while the server reads the managed CRL and ccd.
             for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):

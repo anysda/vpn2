@@ -1191,6 +1191,57 @@ exec /usr/bin/sqlite3 "$@"
         result = self.issued_after_archive_deleted_id_reused(corrupt=True)
         self.assertIn('WARN: живая БД не читается', result.stdout)
 
+    def issued_after_archive_suspended(self, how, live_db='live'):
+        """Архив (1, 2), выдано 3; клиент устройства 2 заморожен в панели или просрочен по таймеру
+        vpn2-control. Оба пути снимают пир и секрет с узла и ставят disable в ccd, сертификат действует."""
+        devices = self.issued_after_archive()
+        old = devices[2]
+        archived = self.serial(2)
+        ccd = Path('/etc/openvpn/server/ccd/dev_2')
+        if how == 'frozen':
+            # Панель: openvpn.apply с action deny переписывает ccd целиком.
+            write(str(ccd), 'ifconfig-push 10.67.67.3 255.255.255.0\ndisable\n', 0o644)
+        else:
+            # Таймер: тот же deny поверх действующего ccd, срок в журнале expired.json.
+            write(str(ccd), ccd.read_text() + 'disable\n', 0o644)
+        self.apply_configs([devices[1], devices[3]])
+        if live_db != 'live':
+            self.lose_live_db(corrupt=live_db == 'corrupt')
+        result = self.restore()
+        # Заморозка и истечение сертификат не отзывают: устройство 2 не удалено и не
+        # перевыпущено, реквизиты архива — его, после разморозки розданные конфиги работают.
+        self.assertNotIn(archived, self.crl_serials(), f'{how}: сертификат устройства 2 отозван')
+        self.assertEqual(self.access(old), self.FULL_ACCESS, f'{how}: устройство 2 из архива потеряло доступ')
+        with sqlite3.connect(DB) as db:
+            row = db.execute('SELECT created_at, wg_public_key, wg_preshared_key, ovpn_cert IS NOT NULL, '
+                             'ikev2_username, ikev2_password FROM devices WHERE id = 2').fetchone()
+        self.assertEqual(row, (1002, old['key'], old['psk'], 1, old['user'], old['password']),
+                         f'{how}: реквизиты устройства 2 не как в архиве')
+        self.assertNotRegex(result.stdout, r'устройство 2: [^\n]*(перевыпущено|удалено) после архива')
+        self.assertEqual(self.access(devices[1]), self.FULL_ACCESS, 'устройство 1 из архива потеряло доступ')
+        self.assertEqual(self.access(devices[3]), self.NO_ACCESS, 'устройство 3 выдано после архива — доступ остался')
+        return result
+
+    def test_issued_after_archive_frozen_live_db(self):
+        self.issued_after_archive_suspended('frozen')
+
+    def test_issued_after_archive_frozen_live_db_lost(self):
+        self.issued_after_archive_suspended('frozen', 'lost')
+
+    def test_issued_after_archive_frozen_live_db_corrupt(self):
+        result = self.issued_after_archive_suspended('frozen', 'corrupt')
+        self.assertIn('WARN: живая БД не читается', result.stdout)
+
+    def test_issued_after_archive_expired_live_db(self):
+        self.issued_after_archive_suspended('expired')
+
+    def test_issued_after_archive_expired_live_db_lost(self):
+        self.issued_after_archive_suspended('expired', 'lost')
+
+    def test_issued_after_archive_expired_live_db_corrupt(self):
+        result = self.issued_after_archive_suspended('expired', 'corrupt')
+        self.assertIn('WARN: живая БД не читается', result.stdout)
+
     def older_and_newer_archives(self):
         """Архив A (1, 2), выдано 3, архив B (1, 2, 3)."""
         devices = self.revocation_fixture()

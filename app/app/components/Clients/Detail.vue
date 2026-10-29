@@ -251,10 +251,7 @@ async function sendPassword() {
 interface Ask { title: string, pre: string, name: string, post: string, act: string, danger?: boolean, run: () => Promise<void> }
 const ask = ref<Ask | null>(null)
 const askOpen = ref(false)
-// Занят - тот вопрос, чьё действие ещё идёт. Удаление уводит карточку на соседа
-// раньше, чем действие кончится: новый вопрос о соседе оно не закрывает и не блокирует.
-const busyAsk = ref<Ask | null>(null)
-const askBusy = computed(() => busyAsk.value !== null && busyAsk.value === ask.value)
+const askBusy = ref(false)
 
 function confirm(a: Ask) {
   ask.value = a
@@ -263,17 +260,17 @@ function confirm(a: Ask) {
 
 async function runAsk() {
   const a = ask.value
-  if (!a || busyAsk.value === a) return
-  busyAsk.value = a
+  if (!a || askBusy.value) return
+  askBusy.value = true
   try {
     await a.run()
-    if (ask.value === a) askOpen.value = false
+    askOpen.value = false
   }
   catch {
     // Ошибку уже показал тост, окно остаётся открытым.
   }
   finally {
-    if (busyAsk.value === a) busyAsk.value = null
+    askBusy.value = false
   }
 }
 

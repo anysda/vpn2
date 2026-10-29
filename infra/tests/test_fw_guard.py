@@ -172,8 +172,22 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
         self.assertIn('WARN [27-ikev2 → ru] vpn2-fw-guard: откатано', result.stdout)
         self.assertIn('RESULT=1', result.stdout)
 
-    def test_emergency_stage_is_left_alone(self):
+    def test_emergency_stage_is_guarded(self):
         result = self.run_stage('23-emergency')
+        out = result.stdout
+        self.assertIn('push fw-guard.sh', out)
+        stage = next(line for line in out.splitlines() if '/tmp/anysda/23-emergency.sh /tmp' in line)
+        self.assertRegex(stage, r'fw-guard\.sh arm 23-emergency \d+ \|\| exit 1; /tmp/anysda/23-emergency\.sh')
+        self.assertIn('fresh bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm 23-emergency', out)
+        self.assertIn('RESULT=0', out)
+
+    def test_rolled_back_emergency_firewall_fails_the_stage(self):
+        result = self.run_stage('23-emergency', disarm_rc=3)
+        self.assertIn('WARN [23-emergency → ru] vpn2-fw-guard: откатано', result.stdout)
+        self.assertIn('RESULT=1', result.stdout)
+
+    def test_stage_that_keeps_the_firewall_is_not_guarded(self):
+        result = self.run_stage('99-verify')
         self.assertNotIn('fw-guard', result.stdout)
         self.assertIn('RESULT=0', result.stdout)
 
@@ -184,8 +198,6 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
         guarded = set(match.group(1).split())
         changing = re.compile(r'^\s*[^#\n]*\b(ufw (allow|delete|default|--force|reload|deny)|ufw_sync_\w+|nft (-f|delete|add))\b', re.M)
         for script in sorted((ROOT / 'infra/scripts').glob('*.sh')):
-            if script.stem == '23-emergency':
-                continue
             if changing.search(script.read_text()):
                 self.assertIn(script.stem, guarded)
 

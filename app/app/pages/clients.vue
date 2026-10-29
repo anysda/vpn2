@@ -32,7 +32,13 @@ onMounted(() => {
 onUnmounted(() => { if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null } })
 useVisibleRefresh(refreshTraffic)
 
+// Список грузится только в браузере. До первого ответа «Пока нет клиентов» и
+// «0 клиентов» были бы неправдой; опрос потом пустоту уже не прячет.
+const listed = ref(clientsStatus.value === 'success')
+watch(clientsStatus, (s) => { if (s === 'success') listed.value = true })
+
 const subtitle = computed(() => {
+  if (!listed.value) return 'Загрузка…'
   const n = clients.value.length
   const d = clients.value.reduce((sum, c) => sum + c.deviceCount, 0)
   return `${n} ${pluralRu(n, ['клиент', 'клиента', 'клиентов'])} · ${d} ${pluralRu(d, ['устройство', 'устройства', 'устройств'])}`
@@ -301,7 +307,10 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
             <span>Клиент</span><span>Устройства</span><span>Сегодня</span><span>Выход</span><span>Доступ до</span>
           </div>
           <div ref="rowsEl" class="crows scroll">
-            <div v-if="!clients.length" class="more">
+            <div v-if="!listed" class="more">
+              Загрузка…
+            </div>
+            <div v-else-if="!clients.length" class="more">
               Пока нет клиентов
             </div>
             <div v-else-if="!rows.length" class="more">

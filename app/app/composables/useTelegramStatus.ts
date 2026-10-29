@@ -17,6 +17,7 @@ export function useTelegramStatus() {
     key: 'tg-status',
     default: () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '' }),
     server: false,
+    dedupe: 'defer',
   })
 
   const canSend = computed(() => Boolean(data.value?.configured && data.value?.running))
@@ -26,11 +27,7 @@ export function useTelegramStatus() {
     return ''
   })
 
-  let timer: ReturnType<typeof setInterval> | null = null
-  onMounted(() => {
-    if (!timer) timer = setInterval(() => { void refresh() }, 15_000)
-  })
-  onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
+  useSharedPoll('tg-status', 15_000)
 
   useVisibleRefresh(refresh)
 

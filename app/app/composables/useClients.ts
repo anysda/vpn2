@@ -60,24 +60,21 @@ export interface ClientDetail {
 }
 
 const POLL_INTERVAL_MS = 3000
+const CLIENTS_KEY = 'clients'
 
 export function useClients() {
-  const { data, refresh, status, error } = useFetch<Client[]>('/api/clients', {
+  // Опрос и повторные загрузки не обрывают запрос в пути, а ждут его ответа:
+  // иначе ответ дольше такта опроса не доходил до экрана никогда.
+  const { data, refresh: poll, status, error } = useFetch<Client[]>('/api/clients', {
+    key: CLIENTS_KEY,
     default: () => [],
     server: false,
+    dedupe: 'defer',
   })
-
-  let timer: ReturnType<typeof setInterval> | null = null
-
-  onMounted(() => {
-    if (!timer) timer = setInterval(() => { void refresh() }, POLL_INTERVAL_MS)
-  })
-
-  onUnmounted(() => {
-    if (timer) { clearInterval(timer); timer = null }
-  })
-
-  useVisibleRefresh(refresh)
+  useSharedPoll(CLIENTS_KEY, POLL_INTERVAL_MS)
+  useVisibleRefresh(poll)
+  /** После своей правки нужен свежий список, а не ответ, начатый до неё. */
+  const refresh = () => poll({ dedupe: 'cancel' })
 
   async function create(payload: {
     name: string

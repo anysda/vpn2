@@ -21,11 +21,14 @@ done
 cmd="$*"
 cmd=${cmd//\/tmp\/anysda/$FAKE_NODE/anysda}
 case ${FAKE_BASHRC:-} in
-  exit)  cat >/dev/null; exit 0 ;;
-  exec)  printf 'Welcome to node\n'; cat >/dev/null; exec true ;;
+  exit)  exit 0 ;;
+  exec)  printf 'Welcome to node\n'; exec true ;;
   noise) printf 'NOISE\nmotd line\n' ;;
 esac
-exec bash -c "$cmd"
+# Как настоящий ssh: читатель закрыл трубу - остаток вывода отбрасывается,
+# код выхода - код команды узла.
+bash -c "$cmd" | { cat 2>/dev/null; cat >/dev/null; }
+exit "${PIPESTATUS[0]}"
 '''
 FAKE_SSHPASS = '#!/bin/bash\nshift 2\nexec ssh "$@"\n'
 WRITE = "mkdir -p /tmp/anysda && echo done > /tmp/anysda/written"
@@ -110,6 +113,16 @@ echo all-clean
                 self.assertEqual(result.stdout, 'all-clean\n', result.stderr)
                 self.assertEqual(node.written.read_text(), 'done\n')
                 self.assertNotRegex(result.stderr, REASON)
+
+    def test_reader_closing_early_is_not_missing_marker(self):
+        with Node('') as node:
+            result = node.bash(r'''for i in $(seq 20); do
+  { rc=0; ssh_exec 'head -c 2000000 /dev/zero | tr "\0" x' || rc=$?; echo "rc=$rc" >&2; } | head -c1 >/dev/null
+done
+''')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotRegex(result.stderr, REASON, 'ранний разрыв трубы принят за отсутствие метки')
+            self.assertEqual(result.stderr.count('rc=0'), 20, result.stderr)
 
 
 if __name__ == '__main__':

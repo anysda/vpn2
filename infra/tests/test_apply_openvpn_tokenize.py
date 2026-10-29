@@ -46,6 +46,36 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         (other / 'ccd').mkdir()
         self.rejected(WORKING.replace('crl-verify', f'cd {other}\ncrl-verify'), 'cd')
 
+    # openvpn applies the last of repeated crl-verify and client-config-dir lines.
+    def test_repeated_crl_verify_with_other_path_is_rejected_before_restart(self):
+        other = self.work / 'other.pem'
+        shutil.copy(self.base / 'pki/crl.pem', other)
+        self.rejected(WORKING + f'crl-verify {other}\n', 'crl-verify')
+
+    def test_repeated_client_config_dir_with_other_path_is_rejected_before_restart(self):
+        other = self.work / 'other-ccd'
+        other.mkdir()
+        self.rejected(WORKING + f'client-config-dir {other}\n', 'client-config-dir')
+
+    def test_repeated_crl_verify_with_managed_path_is_rejected_before_restart(self):
+        self.rejected(WORKING + 'crl-verify pki/crl.pem\n', 'crl-verify')
+
+    def test_inline_crl_verify_after_managed_is_rejected_before_restart(self):
+        crl = (self.base / 'pki/crl.pem').read_text()
+        self.rejected(WORKING + f'<crl-verify>\n{crl}</crl-verify>\n', 'crl-verify')
+
+    def test_server_template_is_applied(self):
+        pki, base = self.base / 'pki', self.base
+        self.applied(f'port 1194\nproto udp\ndev tun0\ntopology subnet\n'
+                     f'server 10.8.0.0 255.255.255.0 nopool\n'
+                     f'ifconfig-pool 10.8.0.240 10.8.0.253 255.255.255.0\n'
+                     f'ca   {pki}/ca.crt\ncert {pki}/server.crt\nkey  {pki}/server.key\n'
+                     f'dh none\ntls-crypt {pki}/tls-crypt.key\n'
+                     f'crl-verify {pki}/crl.pem\nclient-config-dir {base}/ccd\n'
+                     f'keepalive 5 30\ncipher AES-256-GCM\n'
+                     f'data-ciphers AES-256-GCM:CHACHA20-POLY1305\nauth SHA256\n'
+                     f'persist-key\npersist-tun\nsndbuf 0\nrcvbuf 0\nfast-io\n')
+
     def test_unclosed_quote_is_rejected_with_code_2(self):
         self.rejected(WORKING + 'setenv NAME "unclosed\n', 'quotation')
 

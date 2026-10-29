@@ -6,9 +6,7 @@
 ssh_exec и push в infra/lib/ssh.sh, и отличать exit в .bashrc от прошедшей
 проверки.
 """
-import os
 from pathlib import Path
-import re
 import tempfile
 import unittest
 from unittest import mock

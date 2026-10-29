@@ -16,7 +16,7 @@ class Stop(Exception):
 CONFIG = 'exits:\n  - tag: exit-a\n  - tag: exit-b\n'
 
 
-class ExitListFromSourceRoot(unittest.TestCase):
+class ExitListFromSourceRootTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory(prefix='speedtest-root-')
         self.addCleanup(directory.cleanup)

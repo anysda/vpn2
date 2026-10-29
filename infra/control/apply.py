@@ -230,11 +230,14 @@ class Applier:
             self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
             for option, names in ciphers:
                 # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
-                # fails the start when no known cipher is left in the list.
-                known = [self.openvpn_accepts(key, option, name.removeprefix('?')) for name in names]
+                # fails the start when no known cipher is left in the list. In cipher
+                # and auth the "?" is part of the name, and no such name is known.
+                optional = option == 'data-ciphers'
+                known = [self.openvpn_accepts(key, option, name.removeprefix('?') if optional else name)
+                         for name in names]
                 kind = 'digest' if option == 'auth' else 'cipher'
                 for name, accepted in zip(names, known):
-                    if name and not accepted and not (option == 'data-ciphers' and name.startswith('?')):
+                    if name and not accepted and not (optional and name.startswith('?')):
                         raise ValueError(f'{option}: unknown {kind} {name}')
                 if not any(known):
                     raise ValueError(f'{option} {":".join(names)}: no known cipher')
@@ -261,8 +264,23 @@ class Applier:
         try:
             self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key] + argv)
         except RuntimeError:
-            return False
-        return True
+            if option != 'auth':
+                return False
+        else:
+            return True
+        # --test-crypto keys an HMAC with the digest, which SHAKE and KMAC refuse,
+        # while the server only looks the digest up, aliases and any case included,
+        # and starts. openvpn lists each digest it finds by one name, OpenSSL gives
+        # the aliases of each.
+        name = name.lower()
+        shown = {found.lower() for found in re.findall(r'(?m)^(\S+) \d+ bit digest size$', self.command(
+            ['/usr/sbin/openvpn', '--show-digests']))}
+        if name in shown:
+            return True
+        listed = self.command(['/usr/bin/openssl', 'list', '-digest-algorithms'])
+        return any(name in group and group & shown for group in (
+            {alias.strip().lower() for alias in found.split(',')}
+            for found in re.findall(r'(?m)^\s*\{?\s*([^{}@=]+?)\s*\}?\s*@', listed)))
 
     def with_access(self, resource, structure):
         """Structure from the candidate or last good, access as it is NOW."""

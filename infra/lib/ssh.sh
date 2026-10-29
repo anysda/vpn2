@@ -161,7 +161,11 @@ ssh_exec() {
     # удалённой команды (напр. `test -f` для idempotency-штампа), отдаём как есть;
     # $_SSH_NO_MARK - shell узла не дошёл до команды, повтор не поможет.
     [[ $rc -ne 255 ]] && return $rc
-    [[ $attempt -eq 1 ]] && _ssh_refusal_final && return $rc
+    if [[ $attempt -eq 1 ]]; then
+      _ssh_refusal_final || rc=$?
+      (( rc != 1 )) && return $rc
+      rc=255
+    fi
     [[ $attempt -lt 5 ]] && { warn "ssh ${SSH_HOST}: сбой соединения, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done
   return $rc
@@ -190,6 +194,9 @@ ssh_hostkey_fix() {
 # лечатся, а четыре «сбой соединения, повтор» выглядят как флап сети. Одна
 # проба решает. Отказ во входе повторять нельзя ещё и потому, что fail2ban
 # экзита считает каждый неудачный пароль и банит адрес entry.
+# Код возврата - класс пробы: 1 повторять стоит (сеть или нода ответила),
+# 255 отказ окончательный, $_SSH_NO_MARK shell узла не дошёл до команды -
+# этот код вызывающий отдаёт наружу вместо 255.
 _ssh_refusal_final() {
   local reason prc=0
   reason=$(ssh_probe) || prc=$?
@@ -198,9 +205,10 @@ _ssh_refusal_final() {
        warn "если ОС на ноде переустанавливали, убери старый ключ и повтори: $(ssh_hostkey_fix)" ;;
     3) _ssh_auth_refused "$reason" ;;
     # Соединение есть, но .bashrc не пускает к команде: повтор не поможет.
-    "$_SSH_NO_MARK") warn "ssh ${SSH_HOST}: $reason" ;;
+    "$_SSH_NO_MARK") warn "ssh ${SSH_HOST}: $reason"; return "$prc" ;;
     *) return 1 ;;
   esac
+  return 255
 }
 
 _ssh_auth_refused() {
@@ -281,7 +289,11 @@ push() {
     # Код 5 у sshpass - неверный пароль (удалённые mkdir/cat/mv/tar им не
     # выходят): без пробы, она стоила бы ноде ещё одну строку для fail2ban.
     [[ $rc -eq 5 ]] && { _ssh_auth_refused 'нода отказала во входе: неверный пароль'; return $rc; }
-    [[ $attempt -eq 1 && $rc -eq 255 ]] && _ssh_refusal_final && return $rc
+    if [[ $attempt -eq 1 && $rc -eq 255 ]]; then
+      _ssh_refusal_final || rc=$?
+      (( rc != 1 )) && return $rc
+      rc=255
+    fi
     ssh_exec "rm -rf '$tmp'" >/dev/null 2>&1 || true
     [[ $attempt -lt 5 ]] && { warn "push → ${SSH_HOST}: сбой, повтор ${attempt}/4"; sleep $((attempt * 3)); }
   done

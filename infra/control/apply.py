@@ -237,6 +237,17 @@ class Applier:
                         raise ValueError(f'{option}: unknown {kind} {name}')
                 if not any(known):
                     raise ValueError(f'{option} {":".join(names)}: no known cipher')
+                if option == 'data-ciphers':
+                    # Each name may pass and the list still fail the start: openvpn
+                    # 2.6 and 2.7 refuse one longer than 124 characters after it
+                    # drops the unknown ?NAME, so the list goes to openvpn as a whole.
+                    first = names[known.index(True)].removeprefix('?')
+                    try:
+                        self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key,
+                                      '--cipher', first, '--data-ciphers', ':'.join(names)])
+                    except RuntimeError as error:
+                        said = str(error).split(': ', 1)[-1].removeprefix('Options error: ')
+                        raise ValueError(f'data-ciphers: {said or "list rejected"}') from None
 
     def openvpn_accepts(self, key, option, name):
         # A static key lets --test-crypto run without TLS, in 2.6 as in 2.7. An AEAD

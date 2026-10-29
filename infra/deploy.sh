@@ -453,9 +453,10 @@ prep_entry_mgmt_key() {
 # ----------------------------------------------------------------------------
 # Стадии, которые меняют ufw или свои nft-таблицы. На время такой стадии на
 # ноде стоит сторож lib/fw-guard.sh: если новые ssh-входы не проходят дольше
-# окна, он сам возвращает фаервол к состоянию до стадии. 23-emergency живёт
-# своим циклом (аварийный режим) и сюда не входит, 99-verify фаервол не меняет.
-FW_GUARD_STAGES='00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 27-ikev2 28-wireguard 29-openvpn 30-frontend'
+# окна, он сам возвращает фаервол к состоянию до стадии. Сторож снимается сразу
+# после стадии: свою таблицу inet vpn2_emergency_hy2 аварийный режим 23-emergency
+# меняет позже своим циклом, и откат её не трогает. 99-verify фаервол не меняет.
+FW_GUARD_STAGES='00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 23-emergency 27-ikev2 28-wireguard 29-openvpn 30-frontend'
 FW_GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
 
 fw_guard_stage() {

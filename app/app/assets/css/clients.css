@@ -154,7 +154,8 @@
 
   .clp.m-list .cdet,.clp.m-client .head,.clp.m-client .seg,.clp.m-client .ccol{display:none}
   .clp .cdet{padding:20px 18px;animation:clp-scr .3s var(--ease)}
-  .clp .cdh>div{flex:1}
+  .clp .cdh{flex-wrap:wrap}
+  .clp .cdh>div{flex:1 1 auto;max-width:calc(100% - 66px)}
   .clp .cdh h2{font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .clp .cdh .tag{flex:none}
   .clp .crw.bt{flex-direction:column;align-items:stretch;gap:10px}

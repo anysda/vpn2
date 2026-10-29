@@ -61,13 +61,13 @@ const sorted = computed(() => {
   )
 })
 
-const rows = computed(() => {
+/** Клиент виден в списке при текущих фильтре и поиске. */
+function visible(c: Client) {
   const q = search.value.trim().toLowerCase()
-  return sorted.value.filter(c =>
-    (filter.value === 'all' || (filter.value === 'exp' ? expiring(c) !== null : c.status === 'frozen'))
-    && (!q || `${c.name}${c.tgUsername ? `@${c.tgUsername}` : ''}`.toLowerCase().includes(q)),
-  )
-})
+  return (filter.value === 'all' || (filter.value === 'exp' ? expiring(c) !== null : c.status === 'frozen'))
+    && (!q || `${c.name}${c.tgUsername ? `@${c.tgUsername}` : ''}`.toLowerCase().includes(q))
+}
+const rows = computed(() => sorted.value.filter(visible))
 
 const route = useRoute()
 const router = useRouter()
@@ -105,7 +105,8 @@ watch(sorted, (list, before) => {
   // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
   if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
-  selectedId.value = neighbor(selectedId.value, before ?? [], list)
+  // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать.
+  selectedId.value = neighbor(selectedId.value, (before ?? []).filter(visible), list.filter(visible))
   // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
   // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
   if (mobile.value && screen.value === 'client') void toList()

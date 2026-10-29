@@ -3,6 +3,7 @@ import '~/assets/css/clients.css'
 import { pluralRu } from '#shared/plural'
 import { expiryLabel, useClients } from '~/composables/useClients'
 import type { Client, ClientTraffic } from '~/composables/useClients'
+import { accessProtocols } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 import type { ClientDot } from '~/components/Panel/ClientRow.vue'
 import { useExitTags } from '~/composables/useRoutes'
@@ -85,8 +86,10 @@ function visible(c: Client) {
 const rows = computed(() => sorted.value.filter(visible))
 // Удаления, начатые здесь и ещё не подтверждённые: клиент -> операция.
 const deletions = new Map<number, string>()
-/** Клиента можно выбрать вместо пропавшего: его удаление не идёт. */
-const choosable = (c: Client) => !deletions.has(c.id)
+// Удаления, на которых экзит дал сбой: клиент снова можно открыть (статус и «Повторить»).
+const stalled = ref<number[]>([])
+/** Клиента можно выбрать вместо пропавшего: его удаление не идёт или сбилось. */
+const choosable = (c: Client) => !deletions.has(c.id) || stalled.value.includes(c.id)
 
 // Телефон: список и карточка клиента — два экрана. Открытый клиент — ?id= в
 // адресе и запись в истории: системный «назад» и «Назад» в шапке ведут к списку,
@@ -122,10 +125,9 @@ watch(sorted, (list, before) => {
   if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
   if (selectedId.value !== null && list.some(c => c.id === selectedId.value)) return
   // Сосед - из того, что админ видит слева: скрытого поиском или фильтром не открывать,
-  // того, чьё удаление ещё идёт, - только если других нет (там его статус и «Повторить»).
-  const shown = list.filter(visible)
-  const free = shown.filter(choosable)
-  selectedId.value = neighbor(selectedId.value, (before ?? []).filter(visible), free.length ? free : shown)
+  // того, чьё удаление ещё идёт, - никогда: выбрать некого - справа пусто.
+  const free = list.filter(c => visible(c) && choosable(c))
+  selectedId.value = free.length ? neighbor(selectedId.value, (before ?? []).filter(visible), free) : null
   // Открытый на телефоне клиент пропал из списка (удалён, в том числе последний, или
   // ушёл из фильтра): карточка с ним уже снята, и её «удалён» до страницы не дойдёт.
   if (mobile.value && screen.value === 'client') void toList()
@@ -164,21 +166,38 @@ async function onDeleting(id: number, accepted: Promise<{ operation: AccessOpera
   catch { return }
   deletions.set(id, operation.id)
   if (selectedId.value !== id) return
+  wasOpen.add(id)
   selectedId.value = neighbor(id, before, rows.value.filter(choosable))
   if (mobile.value && screen.value === 'client') void toList()
 }
 
+// Удаляемые, открытые в момент удаления: при сбое удаления открыть снова, если справа пусто.
+const wasOpen = new Set<number>()
+function forget(id: number) {
+  deletions.delete(id)
+  wasOpen.delete(id)
+  stalled.value = stalled.value.filter(s => s !== id)
+}
+
 // Карточка удаляемого уже закрыта: подтверждение удаления ждёт страница, чтобы
-// убрать клиента, даже если запоздалый список ещё несёт его.
+// убрать клиента, даже если запоздалый список ещё несёт его, и замечает сбой,
+// чтобы снова дать открыть клиента с его статусом и «Повторить».
 async function checkDeletions() {
   for (const [id, operationId] of deletions) {
     if (!fetched.value.some(c => c.id === id)) {
-      deletions.delete(id)
+      forget(id)
       continue
     }
     const operation = await $fetch<AccessOperation>(`/api/access-operations/${operationId}`).catch(() => null)
-    if (!operation || operation.status === 'pending') continue
-    deletions.delete(id)
+    if (!operation) continue
+    if (operation.status === 'pending') {
+      const failed = accessProtocols.some(p => operation.protocols[p].state === 'failed')
+      if (failed === stalled.value.includes(id)) continue
+      stalled.value = failed ? [...stalled.value, id] : stalled.value.filter(s => s !== id)
+      if (failed && selectedId.value === null && wasOpen.has(id) && rows.value.some(c => c.id === id)) selectedId.value = id
+      continue
+    }
+    forget(id)
     if (operation.status === 'confirmed') await onRemoved(id)
   }
 }

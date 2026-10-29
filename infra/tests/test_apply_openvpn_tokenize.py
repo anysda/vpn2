@@ -132,6 +132,22 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.rejected(WORKING + 'tun-mtu 1400\n', 'tun-mtu')
         self.assertEqual(self.host.ran('/usr/sbin/openvpn'), [])
 
+    # openvpn reads "?" as optional only in data-ciphers and needs one known cipher there.
+    def test_optional_mark_in_cipher_is_rejected_before_restart(self):
+        self.rejected(WORKING + 'cipher ?NOPE\n', '?NOPE')
+
+    def test_only_optional_unknown_data_cipher_is_rejected_before_restart(self):
+        self.rejected(WORKING + 'data-ciphers ?NOPE\n', 'data-ciphers')
+
+    def test_bare_optional_mark_in_data_ciphers_is_rejected_before_restart(self):
+        self.rejected(WORKING + 'data-ciphers ?\n', 'data-ciphers')
+
+    def test_optional_unknown_data_cipher_after_known_is_applied(self):
+        self.applied(WORKING + 'data-ciphers AES-256-GCM:?NOPE\n')
+
+    def test_lowercase_ciphers_are_applied(self):
+        self.applied(WORKING + 'cipher aes-256-gcm\ndata-ciphers aes-256-gcm:chacha20-poly1305\n')
+
     def template(self, proto, fastio):
         script = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
         body = re.search(r'cat > "\$OVPN_DIR/server.conf" <<EOF\n(.*?\nEOF\n)', script, re.S)[1]

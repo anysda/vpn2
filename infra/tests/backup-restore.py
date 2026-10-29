@@ -1597,6 +1597,72 @@ exec /usr/bin/sqlite3 "$@"
     def test_issued_after_archive_id_reused_older_newer_older_live_db_lost(self):
         self.issued_after_archive_id_reused_older_newer_older('lost')
 
+    def issued_after_archive_reissued_then_suspended(self, how, live_db='lost'):
+        """Архив A (1, 2), выдано 3; устройство 1 перевыпущено (сертификат S', учётка IKEv2 та же), затем
+        клиент заморожен или просрочен: учётки и пира на узле нет, в ccd disable. Архив B (1', 2, 3).
+        Живой БД нет: restore A отзывает S' без причины, подпись не «удалено», A-B-A доступа не возвращает."""
+        devices = self.revocation_fixture()
+        for n in (1, 2):
+            self.ccd(devices[n])
+        older = self.archive_name()
+        old = devices[1]
+        archived = self.serial(1)
+        self.add_device(devices[3])
+        self.ccd(devices[3])
+        self.revoke(1)
+        devices[1] = dict(old, key=base64.b64encode(bytes([11]) * 32).decode(),
+                          psk=base64.b64encode(bytes([111]) * 32).decode(), password='reissued1')
+        self.conn.execute('UPDATE devices SET wg_public_key = ?, wg_preshared_key = ?, ovpn_cert = ?, '
+                          'ikev2_password = ? WHERE id = 1',
+                          (devices[1]['key'], devices[1]['psk'], self.issue(1), devices[1]['password']))
+        self.conn.commit()
+        reissued = self.serial(1)
+        ccd = Path('/etc/openvpn/server/ccd/dev_1')
+        if how == 'frozen':
+            write(str(ccd), 'ifconfig-push 10.67.67.2 255.255.255.0\ndisable\n', 0o644)
+        else:
+            write(str(ccd), ccd.read_text() + 'disable\n', 0o644)
+        self.apply_configs([devices[2], devices[3]])
+        # Клиент устройства 1 заморожен или просрочен — для среза B он не обязан быть в конфигах.
+        self.conn.execute('DROP TABLE clients')
+        self.conn.execute('CREATE TABLE clients (id INTEGER PRIMARY KEY, frozen_manual INTEGER NOT NULL DEFAULT 0, '
+                          'expires_at INTEGER)')
+        self.conn.execute('INSERT INTO clients VALUES (1, 0, NULL)')
+        self.conn.execute('INSERT INTO clients VALUES (2, ?, ?)',
+                          (1, None) if how == 'frozen' else (0, int(time.time()) - 3600))
+        self.conn.execute('ALTER TABLE devices ADD COLUMN client_id INTEGER')
+        self.conn.execute('UPDATE devices SET client_id = CASE id WHEN 1 THEN 2 ELSE 1 END')
+        self.conn.commit()
+        newer = self.archive_name()
+        self.lose_live_db(corrupt=live_db == 'corrupt')
+        for step, archive in (('A', older), ('A-B', newer), ('A-B-A', older)):
+            result = self.restore(archive)
+            for d in (old, devices[1]):
+                access = self.access(d)
+                del access['ccd']
+                self.assertEqual(access, dict.fromkeys(access, False), f'{how} {step}: у устройства 1 доступ')
+            crl = self.crl_serials()
+            self.assertIn(archived, crl, f'{how} {step}: сертификат архива A устройства 1 действует')
+            self.assertIn(reissued, crl, f'{how} {step}: перевыпущенный сертификат S\' действует')
+            index = {int(r[3], 16): r[2] for r in (line.split('\t') for line in
+                     Path('/etc/openvpn/server/pki/index.txt').read_text().splitlines()) if len(r) == 6}
+            self.assertNotIn('certificateHold', index[reissued],
+                             f'{how} {step}: S\' на hold — следующий restore вернёт доступ')
+            self.assertNotRegex(result.stdout, r'устройство 1: [^\n]*(удалено|выдано) после архива', f'{how} {step}')
+            self.assertEqual(self.access(devices[2]), self.FULL_ACCESS, f'{how} {step}: устройство 2 потеряло доступ')
+            if step == 'A':
+                self.assertIn('устройство 1: IKEv2, OpenVPN, WireGuard отозваны; отозвано после архива', result.stdout)
+                self.assertEqual(self.access(devices[3]), self.NO_ACCESS, f'{how} A: устройство 3 с доступом')
+
+    def test_issued_after_archive_reissued_then_frozen_live_db_lost(self):
+        self.issued_after_archive_reissued_then_suspended('frozen')
+
+    def test_issued_after_archive_reissued_then_frozen_live_db_corrupt(self):
+        self.issued_after_archive_reissued_then_suspended('frozen', 'corrupt')
+
+    def test_issued_after_archive_reissued_then_expired_live_db_lost(self):
+        self.issued_after_archive_reissued_then_suspended('expired')
+
     def test_persistent_mismatch_keeps_archive_with_warning(self):
         # Синхронизация при добавлении устройства упала: пира нет ни в одном срезе.
         key = base64.b64encode(bytes([7]) * 32).decode()

@@ -1,7 +1,10 @@
 """OpenVPN candidate lines are split into words as openvpn 2.7 splits them, with the real openvpn."""
+import re
 import shutil
+import subprocess
 import unittest
 
+from test_apply import ROOT
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_candidate import WORKING
 
@@ -26,10 +29,10 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.applied(WORKING + "; don't touch\n")
 
     def test_apostrophe_inside_a_word_is_applied(self):
-        self.applied(WORKING + "setenv NAME it's\n")
+        self.applied(WORKING + "push it's\n")
 
     def test_hash_inside_a_word_is_applied(self):
-        self.applied(WORKING + 'setenv NAME a#b\n')
+        self.applied(WORKING + 'push a#b\n')
 
     def test_quoted_log_is_rejected(self):
         self.file_is_untouched(lambda log: f'"log" "{log}"', 'log')
@@ -77,10 +80,75 @@ class OpenvpnTokenizeTests(unittest.TestCase):
                      f'persist-key\npersist-tun\nsndbuf 0\nrcvbuf 0\nfast-io\n')
 
     def test_unclosed_quote_is_rejected_with_code_2(self):
-        self.rejected(WORKING + 'setenv NAME "unclosed\n', 'quotation')
+        self.rejected(WORKING + 'push "unclosed\n', 'quotation')
 
     def test_unclosed_single_quote_is_rejected_with_code_2(self):
-        self.rejected(WORKING + "setenv NAME 'unclosed\n", 'quotation')
+        self.rejected(WORKING + "push 'unclosed\n", 'quotation')
+
+    # openvpn runs "setenv opt X" as the directive X itself.
+    def test_setenv_opt_log_is_rejected(self):
+        self.file_is_untouched(lambda log: f'setenv opt log {log}', 'setenv')
+
+    def test_setenv_opt_log_append_is_rejected(self):
+        self.file_is_untouched(lambda log: f'setenv opt log-append {log}', 'setenv')
+
+    def test_setenv_opt_config_is_rejected(self):
+        def line_for(log):
+            (self.work / 'inc.conf').write_text(f'log {log}\n')
+            return f'setenv opt config {self.work / "inc.conf"}'
+        self.file_is_untouched(line_for, 'setenv')
+
+    def test_setenv_opt_cd_is_rejected(self):
+        other = self.work / 'other'
+        shutil.copytree(self.base / 'pki', other / 'pki')
+        (other / 'ccd').mkdir()
+        self.rejected(WORKING.replace('crl-verify', f'setenv opt cd {other}\ncrl-verify'), 'setenv')
+
+    def test_setenv_opt_crl_verify_is_rejected(self):
+        other = self.work / 'other.pem'
+        shutil.copy(self.base / 'pki/crl.pem', other)
+        self.rejected(WORKING + f'setenv opt crl-verify {other}\n', 'setenv')
+
+    # openvpn drops a UTF-8 BOM at the start of the file.
+    def test_bom_before_log_is_rejected(self):
+        log = self.work / 'keep.log'
+        log.write_text('earlier lines\n')
+        try:
+            self.rejected(f'\ufeff log {log}\n' + WORKING, 'log')
+        finally:
+            self.assertEqual(log.read_text(), 'earlier lines\n')
+
+    def test_bom_before_cd_is_rejected(self):
+        other = self.work / 'other'
+        shutil.copytree(self.base / 'pki', other / 'pki')
+        (other / 'ccd').mkdir()
+        self.rejected(f'\ufeff cd {other}\n' + WORKING, 'cd')
+
+    def test_providers_is_rejected_before_openvpn_runs(self):
+        self.rejected(WORKING + f'providers {self.work / "evil.so"}\n', 'providers')
+        self.assertEqual(self.host.ran('/usr/sbin/openvpn'), [])
+
+    def test_directive_the_template_does_not_write_is_rejected(self):
+        self.rejected(WORKING + 'tun-mtu 1400\n', 'tun-mtu')
+        self.assertEqual(self.host.ran('/usr/sbin/openvpn'), [])
+
+    def template(self, proto, fastio):
+        script = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
+        body = re.search(r'cat > "\$OVPN_DIR/server.conf" <<EOF\n(.*?\nEOF\n)', script, re.S)[1]
+        env = {'OVPN_PORT': '1194', 'OVPN_SERVER_PROTO': proto, 'OVPN_SUBNET': '10.8.0.0',
+               'PKI': str(self.base / 'pki'), 'OVPN_DIR': str(self.base), 'OVPN_FASTIO': fastio,
+               'OVPN_CONTROL_USER': 'root', 'PATH': '/usr/bin:/bin'}
+        text = subprocess.run(['bash', '-c', 'cat <<EOF\n' + body], env=env, check=True,
+                              capture_output=True, text=True).stdout
+        self.assertNotIn('$', text)
+        return text + 'route 10.8.1.0 255.255.255.0\n'
+
+    # The allowed directives are exactly what 29-openvpn.sh writes.
+    def test_udp_server_template_from_the_script_is_applied(self):
+        self.applied(self.template('udp', 'fast-io'))
+
+    def test_tcp_server_template_from_the_script_is_applied(self):
+        self.applied(self.template('tcp-server', ''))
 
 
 if __name__ == '__main__':

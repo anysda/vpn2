@@ -91,7 +91,7 @@ test('положительный контроль: без задержки сп�
   // Счётчик шапки - по строкам на экране: список в базе меняют удаления соседних тестов.
   await expect(async () => {
     const total = await page.getByTestId('client-row').count()
-    await expect(header(page)).toHaveText(new RegExp(`^${total} клиент`), { timeout: 0 })
+    expect(await header(page).textContent()).toMatch(new RegExp(`^${total} клиент`))
   }).toPass()
   await page.request.delete(`/api/clients/${id}`)
 

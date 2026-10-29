@@ -1,6 +1,6 @@
 import type { Page, Request } from '@playwright/test'
 import { expect, hydrated, loginApi, test, uniq } from './support/fixtures'
-import { clientCard } from './support/clients'
+import { clientCard, clientName } from './support/clients'
 
 /**
  * Сбои опроса списка клиентов: зависший GET не замораживает опрос, ошибка API
@@ -20,6 +20,14 @@ async function ownClient(page: Page) {
 
 const header = (page: Page) => page.locator('.head p')
 const loadError = (page: Page) => page.getByRole('alert').filter({ hasText: 'Не удалось загрузить клиентов' })
+const staleError = (page: Page) => page.getByRole('alert').filter({ hasText: 'Не удалось обновить список клиентов' })
+
+/** Переход внутри приложения, без перезагрузки: страница списка монтируется заново. */
+async function spaGo(page: Page, path: string) {
+  await page.evaluate(p => (document.querySelector('#__nuxt') as Element & {
+    __vue_app__: { config: { globalProperties: { $router: { push: (p: string) => Promise<unknown> } } } }
+  }).__vue_app__.config.globalProperties.$router.push(p), path)
+}
 
 /**
  * Нет ложной пустоты прямо сейчас: ни «Пока нет клиентов», ни «0 клиентов» в
@@ -113,5 +121,79 @@ test('положительный контроль: без сбоев списо�
     expect(await header(page).textContent()).toMatch(new RegExp(`^${total} клиент`))
   }).toPass()
   await expect(loadError(page)).toHaveCount(0)
+  await page.request.delete(`/api/clients/${id}`)
+})
+
+const VIEWPORTS = [
+  { label: 'стол', use: { viewport: { width: 1400, height: 1000 }, isMobile: false, hasTouch: false } },
+  { label: 'телефон', use: { viewport: { width: 402, height: 874 } } },
+]
+
+for (const { label, use } of VIEWPORTS) {
+  test.describe(label, () => {
+    test.use(use)
+
+    // Контроль - клиент B создан до прошлого визита: он уже в запомненном списке.
+    for (const createdAfterVisit of [true, false]) {
+      test(`возврат на /clients?id=B, B создан ${createdAfterVisit ? 'после' : 'до'} прошлого визита: открыт B`, async ({ page }) => {
+        test.setTimeout(60_000)
+        await loginApi(page)
+        const a = await ownClient(page)
+        let b = createdAfterVisit ? undefined : await ownClient(page)
+        const detail = page.getByTestId('client-detail')
+        await page.goto(`/clients?id=${a.id}`)
+        await hydrated(page)
+        // На телефоне по ?id= открыта карточка клиента, строка списка скрыта.
+        await expect(clientName(detail)).toHaveText(a.name)
+        await spaGo(page, '/')
+        await expect(page).toHaveURL(/\/$/)
+        b ??= await ownClient(page)
+        // Первый ответ после возврата - не сразу: запомненный список успевает отрисоваться.
+        await page.route(url => url.pathname === '/api/clients', async (route) => {
+          if (isList(route.request())) await new Promise(done => setTimeout(done, 1500))
+          await route.continue().catch(() => undefined)
+        })
+        await spaGo(page, `/clients?id=${b.id}`)
+        await expect(clientName(detail)).toHaveText(b.name, { timeout: 10_000 })
+        // Ещё такт опроса: выбор не уезжает ни на A, ни в список.
+        await page.waitForTimeout(3500)
+        expect(page.url(), 'адрес').toContain(`id=${b.id}`)
+        expect(await clientName(detail).allTextContents(), 'открытый клиент').toEqual([b.name])
+        await page.unrouteAll({ behavior: 'ignoreErrors' })
+        await page.request.delete(`/api/clients/${a.id}`)
+        await page.request.delete(`/api/clients/${b.id}`)
+      })
+    }
+  })
+}
+
+test('после загрузки API 12 с отвечает 503: прежний список виден и помечен как устаревший', async ({ page, guard }) => {
+  test.setTimeout(60_000)
+  guard.allow(503, LIST, 'GET')
+  await loginApi(page)
+  const { id, name } = await ownClient(page)
+  await page.goto(`/clients?id=${id}`)
+  await hydrated(page)
+  await expect(clientCard(page, name)).toBeVisible()
+  const before = await header(page).textContent()
+  let until = 0
+  await page.route(url => url.pathname === '/api/clients', (route) => {
+    if (!isList(route.request()) || (until && Date.now() > until)) return route.continue()
+    until ||= Date.now() + 12_000
+    return route.fulfill({ status: 503, json: { message: 'сервер недоступен' } })
+  })
+  await page.waitForResponse(r => isList(r.request()) && r.status() === 503, { timeout: 10_000 })
+  await expect(staleError(page)).toBeVisible({ timeout: 5000 })
+  await expect(staleError(page)).toContainText('сервер недоступен')
+  while (Date.now() < until - 500) {
+    expect(await staleError(page).isVisible(), 'сообщение об устаревшем списке').toBe(true)
+    expect(await clientCard(page, name).isVisible(), 'строка клиента').toBe(true)
+    expect(await header(page).textContent(), 'шапка').toBe(before)
+    await page.waitForTimeout(400)
+  }
+  // API ожил: сообщение уходит со следующим удачным тиком.
+  await expect(staleError(page)).toHaveCount(0, { timeout: 10_000 })
+  await expect(clientCard(page, name)).toBeVisible()
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
   await page.request.delete(`/api/clients/${id}`)
 })

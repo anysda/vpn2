@@ -9,5 +9,11 @@ export default defineAppConfig({
         root: 'card-ui',
       },
     },
+    // Раскрытая область выше тостов на отступы; клики ловят только сами тосты.
+    toaster: {
+      slots: {
+        viewport: 'pointer-events-none',
+      },
+    },
   },
 })

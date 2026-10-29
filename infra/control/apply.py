@@ -118,9 +118,8 @@ class Applier:
             options, ciphers = {}, []
             for line in text.splitlines():
                 # As openvpn reads a config line: quotes, # and ; comments, --name.
-                lexer = shlex.shlex(line, posix=True)
-                lexer.whitespace_split, lexer.commenters = True, '#;'
-                words = list(lexer)
+                words = shlex.split(line, comments=True)
+                words = words[:next((i for i, word in enumerate(words) if word.startswith(';')), None)]
                 if words:
                     name = words[0].removeprefix('--')
                     options.setdefault(name, words[1:])

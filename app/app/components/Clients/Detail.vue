@@ -9,7 +9,7 @@ import { accessStatus } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
-const emit = defineEmits<{ changed: [], deleted: [id: number], gone: [id: number] }>()
+const emit = defineEmits<{ changed: [], deleting: [id: number, accepted: Promise<{ operation: AccessOperation }>], deleted: [id: number], gone: [id: number] }>()
 
 const { fetchDetail } = useClientDetail()
 const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
@@ -361,7 +361,9 @@ function askRemoveClient() {
     act: 'Удалить',
     danger: true,
     run: () => guard(async () => {
-      const result = await remove(d.id)
+      const deleting = remove(d.id)
+      emit('deleting', d.id, deleting)
+      const result = await deleting
       d.operation = result.operation
       d.deleting = true
       toast.add({ title: 'Отключение выполняется', color: 'info' })

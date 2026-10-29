@@ -3,6 +3,7 @@ import '~/assets/css/clients.css'
 import { pluralRu } from '#shared/plural'
 import { expiryLabel, useClients } from '~/composables/useClients'
 import type { Client, ClientTraffic } from '~/composables/useClients'
+import type { AccessOperation } from '#shared/access-operation'
 import type { ClientDot } from '~/components/Panel/ClientRow.vue'
 import { useExitTags } from '~/composables/useRoutes'
 import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/clients-view'
@@ -110,9 +111,8 @@ function neighbor(id: number | null, before: readonly Client[], now: readonly Cl
   const near = at < 0 ? undefined : before.slice(at + 1).find(left) ?? before.slice(0, at).reverse().find(left)
   return (near ?? now[0])?.id ?? null
 }
-// Единственное место, где выбор уходит с пропавшего клиента: удалён здесь (список
-// без него мог прийти раньше подтверждения удаления), другим админом или впервые
-// загружен список.
+// Выбор уходит с пропавшего клиента: удалён здесь (список без него мог прийти
+// раньше ответа на удаление), другим админом или впервые загружен список.
 watch(sorted, (list, before) => {
   // Список грузится только в браузере: до первого ответа ?id= из ссылки не сбрасывать.
   if (!list.length && clientsStatus.value !== 'success' && clientsStatus.value !== 'error') return
@@ -145,6 +145,40 @@ async function onCreated(id: number) {
   }
   selectedId.value = id
 }
+
+// Удаление здесь: соседа взять из видимого слева до DELETE. Пока удаление идёт,
+// список отдаёт удаляемого промежуточным статусом, он выпадает из фильтра, и
+// наблюдатель списка уже не нашёл бы его место. Выбор уходит, как только удаление
+// принято; ошибка DELETE оставляет выбор на клиенте.
+async function onDeleting(id: number, accepted: Promise<{ operation: AccessOperation }>) {
+  const before = rows.value
+  let operation: AccessOperation
+  try { ({ operation } = await accepted) }
+  catch { return }
+  deletions.set(id, operation.id)
+  if (selectedId.value !== id) return
+  selectedId.value = neighbor(id, before, rows.value.filter(c => c.id !== id))
+  if (mobile.value && screen.value === 'client') void toList()
+}
+
+// Карточка удаляемого уже закрыта: подтверждение удаления ждёт страница, чтобы
+// убрать клиента, даже если запоздалый список ещё несёт его.
+const deletions = new Map<number, string>()
+async function checkDeletions() {
+  for (const [id, operationId] of deletions) {
+    if (!fetched.value.some(c => c.id === id)) {
+      deletions.delete(id)
+      continue
+    }
+    const operation = await $fetch<AccessOperation>(`/api/access-operations/${operationId}`).catch(() => null)
+    if (!operation || operation.status === 'pending') continue
+    deletions.delete(id)
+    if (operation.status === 'confirmed') await onRemoved(id)
+  }
+}
+let deletionsTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => { deletionsTimer = setInterval(() => { void checkDeletions() }, 3000) })
+onUnmounted(() => { clearInterval(deletionsTimer) })
 
 // Клиент удалён здесь или другим админом (карточка получила 404): убрать его
 // из списка, без тоста; соседа выберет наблюдатель списка выше.
@@ -292,6 +326,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
           :traffic="traffic(selectedId)"
           :exits="exitTags"
           @changed="refreshClients"
+          @deleting="onDeleting"
           @deleted="onRemoved"
           @gone="onRemoved"
         />

@@ -17,7 +17,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -74,6 +73,47 @@ def write(path, body, mode):
             os.unlink(name)
 
 
+SPACE = ' \t\n\v\f\r\0'  # C isspace() and the terminator, not Python's wider isspace
+
+
+def openvpn_words(line):
+    """A config line split into words as openvpn 2.7 parse_line() does it.
+
+    A quote, # and ; mean something only at the start of a word; a backslash
+    escapes outside single quotes and may only precede \\, " or a space.
+    """
+    words, word, state, escaped = [], '', None, False  # state: None, '' bare, '"' or "'"
+    for char in line + '\n\0':  # openvpn reads the newline and the terminator too
+        if char == '\\' and not escaped and state != "'":
+            escaped = True
+            continue
+        out, done = '', False
+        if state is None:
+            if char in '#;':
+                break
+            if char not in SPACE:
+                if char in '"\'' and not escaped:
+                    state = char
+                else:
+                    out, state = char, ''
+        elif state == '':
+            done = char in SPACE and not escaped
+            out = '' if done else char
+        else:
+            done = char == state and not (escaped and state == '"')
+            out = '' if done or char == '\0' else char
+        if escaped and out and out not in '\\"' + SPACE:
+            raise ValueError(f'bad backslash in: {line}')
+        escaped = False
+        word += out
+        if done:
+            words.append(word)
+            word, state = '', None
+    if state:
+        raise ValueError(f'no closing quotation ({state}) in: {line}')
+    return words
+
+
 def wg_split(text):
     """Deployment-owned [Interface] section and the access-owned [Peer] tail."""
     parts = re.split(r'(?m)^(?=\s*\[Peer\]\s*$)', text, maxsplit=1)
@@ -117,9 +157,7 @@ class Applier:
         elif resource == 'openvpn':
             options, ciphers = {}, []
             for line in text.splitlines():
-                # As openvpn reads a config line: quotes, # and ; comments, --name.
-                words = shlex.split(line, comments=True)
-                words = words[:next((i for i, word in enumerate(words) if word.startswith(';')), None)]
+                words = openvpn_words(line)
                 if words:
                     name = words[0].removeprefix('--')
                     options.setdefault(name, words[1:])
@@ -127,8 +165,9 @@ class Applier:
                         ciphers += [(name, cipher) for word in words[1:] for cipher in word.split(':')]
             # openvpn acts on these while parsing, so the check itself would do it:
             # log/log-append truncate or write the named file, plugin loads and runs
-            # a shared object, config pulls in a file this check never sees.
-            for name in ('log', 'log-append', 'plugin', 'config'):
+            # a shared object, config pulls in a file this check never sees, cd moves
+            # the base the relative CRL and ccd paths below are read from.
+            for name in ('log', 'log-append', 'plugin', 'config', 'cd'):
                 if name in options:
                     raise ValueError(f'{name} is not allowed in a candidate')
             base = self.target('openvpn').parent

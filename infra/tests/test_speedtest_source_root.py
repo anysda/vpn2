@@ -30,7 +30,7 @@ class ExitListFromSourceRoot(unittest.TestCase):
         speedtest = runpy.run_path(str(ROOT / 'infra/tools/speedtest.py'))
         ran = []
 
-        def sh(target, cmd, **kwargs):
+        def sh(_target, cmd, **kwargs):
             if kwargs.get('via') or ran:
                 raise Stop
             cmd = (cmd.replace('/etc/anysda/source-root', str(self.mark))

@@ -125,6 +125,12 @@ function select(id: number) {
 
 async function onCreated(id: number) {
   await refreshClients()
+  // Новый клиент скрыт поиском или фильтром: сбросить их, чтобы строка была видна.
+  const created = clients.value.find(c => c.id === id)
+  if (created && !visible(created)) {
+    search.value = ''
+    filter.value = 'all'
+  }
   selectedId.value = id
 }
 

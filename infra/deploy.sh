@@ -464,10 +464,64 @@ fw_guard_stage() {
   [[ " $FW_GUARD_STAGES " == *" $1 "* ]]
 }
 
-# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh.
+# deploy.sh идёт с самой entry, и её ssh к себе ходит через lo: такой вход
+# проходит и тогда, когда стадия закрыла ssh снаружи. Внешний вход проверяет
+# экзит: новое ssh-соединение к нему и TCP к ENTRY_HOST:22 оттуда, всё в пределах
+# шага пульса. Экзиты по очереди, решает первый ответивший.
+# Код: 0 вход открыт, 1 закрыт, 2 экзитов нет, 3 ни один экзит не ответил.
+fw_guard_entry_outside() {
+  local tags tag rc check
+  tags=$(active_exit_tags 2>/dev/null) || return 3
+  [[ -n "${tags// /}" ]] || return 2
+  [[ -n "${ENTRY_HOST:-}" ]] || return 3
+  printf -v check 'if timeout 3 bash -c %q 2>/dev/null; then exit 0; fi; exit 1' \
+    "exec 3<>/dev/tcp/$ENTRY_HOST/22"
+  for tag in $tags; do
+    rc=0
+    (
+      load_env "$tag" || exit 9
+      code=0
+      SSH_PROBE_TIMEOUT=5 ssh_fresh "$check" || code=$?
+      # 1 - ответ команды на экзите; отличаем от die в load_env.
+      (( code != 1 )) || code=10
+      exit "$code"
+    ) >/dev/null 2>&1 || rc=$?
+    case $rc in
+      0) return 0 ;;
+      10) return 1 ;;
+    esac
+  done
+  return 3
+}
+
+# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh. На entry -
+# только после того, как экзит подтвердил вход снаружи. Пока ни один экзит в
+# этой стадии не ответил по ssh (экзитов нет или они ещё не подняты, как в
+# 00-bootstrap на чистой ОС), внешней точки нет: пульс через lo и warn.
+# Ответивший экзит, который не видит вход, или молчание всех экзитов после
+# ответа - пульс пропущен, сторож откатит фаервол по окну.
 fw_guard_beat() {
+  local outside answered=0 noted=''
   while kill -0 $$ 2>/dev/null; do
-    ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
+    outside=0
+    if [[ "$HOST_TAG" == ru ]]; then
+      fw_guard_entry_outside || outside=$?
+      case $outside in
+        0|1) answered=1 ;;
+        2) [[ $noted == *none* ]] || warn "[fw-guard] вход на entry снаружи не проверяется: экзитов нет"
+           noted+=' none'; outside=0 ;;
+        *) if (( answered )); then
+             [[ $noted == *gone* ]] || warn "[fw-guard] экзиты перестали отвечать по ssh, пульс entry пропущен"
+             noted+=' gone'
+           else
+             [[ $noted == *mute* ]] || warn "[fw-guard] вход на entry снаружи не проверяется: экзиты пока не отвечают по ssh"
+             noted+=' mute'; outside=0
+           fi ;;
+      esac
+    fi
+    if (( outside == 0 )); then
+      ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
+    fi
     sleep 5
   done
 }
@@ -475,7 +529,17 @@ fw_guard_beat() {
 # Снять сторожа тоже новым соединением. Пока оно не проходит, сторож успеет
 # откатить фаервол, и тогда disarm ответит кодом 3.
 fw_guard_disarm() {
-  local stage=$1 deadline rc out
+  local stage=$1 deadline rc out outside=0
+  # disarm на entry идёт через lo и снял бы сторожа при закрытом входе снаружи.
+  # Экзит видит вход закрытым - ждём окно: пульса не было, сторож откатит, и
+  # disarm ответит кодом 3.
+  if [[ "$HOST_TAG" == ru ]]; then
+    fw_guard_entry_outside || outside=$?
+    if (( outside == 1 )); then
+      warn "[$stage → $HOST_TAG] экзит не видит вход по ssh на entry снаружи, жду отката сторожа"
+      sleep $(( FW_GUARD_WINDOW + 5 ))
+    fi
+  fi
   deadline=$(( $(date +%s) + FW_GUARD_WINDOW + 30 ))
   while :; do
     rc=0

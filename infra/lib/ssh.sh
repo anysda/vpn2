@@ -106,8 +106,10 @@ fi
 # неё (`bash --norc` внутри команды это не отменяет): напечатанный там текст
 # приходит в stdout первым. Поэтому команда сначала печатает метку отдельной
 # строкой, а _ssh_output отбрасывает всё до метки. Без метки (shell узла не
-# дошёл до команды) вывод отдаётся как есть.
+# дошёл до команды) вывод отдаётся как есть, код $_SSH_OUTPUT_NO_MARK; прочие
+# коды - сбой записи вывода (читатель закрыл трубу), к метке отношения не имеют.
 _SSH_MARK=vpn2-ssh-output-begin
+_SSH_OUTPUT_NO_MARK=3
 _ssh_begin="printf '\\n%s\\n' $_SSH_MARK;"
 
 _ssh_output() {
@@ -117,9 +119,11 @@ _ssh_output() {
     if [[ $line == "$_SSH_MARK" ]]; then cat; return; fi
     before+=("$line")
   done
-  (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
-  printf '%s' "$line"
-  return 1
+  # Разрыв трубы у читателя не должен скрыть отсутствие метки.
+  ( trap '' PIPE
+    (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
+    printf '%s' "$line" ) 2>/dev/null
+  return "$_SSH_OUTPUT_NO_MARK"
 }
 
 # "$@" - вызов ssh, где перед командой узла стоит "$_ssh_begin"; код возврата -
@@ -131,7 +135,7 @@ _ssh_run() {
   local -a st
   # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
   { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
-  if (( st[0] == 0 && st[1] != 0 )); then
+  if (( st[0] == 0 && st[1] == _SSH_OUTPUT_NO_MARK )); then
     warn "ssh ${SSH_HOST:-?}: shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена"
     return "$_SSH_NO_MARK"
   fi

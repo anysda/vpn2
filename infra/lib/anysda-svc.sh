@@ -180,12 +180,14 @@ svc_forget() { rm -f "$SVC_FP_DIR/$1.sha256"; }
 # меняет на живом интерфейсе без обрыва. Рестарт wg-quick нужен, только если
 # интерфейса нет или в wg0.conf другие адреса. Порт меняет сам syncconf.
 wg0_conf_iface() {
-  # Как wg: строка до первого #, без пробельных символов, имена в любом регистре ASCII.
+  # Как wg-quick: строка до первого #, имя и значение без пробелов по краям,
+  # имена в любом регистре, Address делится по запятым и пробелам.
   awk '
-    { sub(/#.*/, ""); gsub(/[ \t\r\v\f]/, "") }
-    /^\[/ { interface = /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/; next }
-    interface && /^[Aa][Dd][Dd][Rr][Ee][Ss][Ss]=/ {
-      sub(/^[^=]*=/, ""); n = split($0, a, ","); for (i = 1; i <= n; i++) if (a[i] != "") print "addr " a[i]
+    { sub(/#.*/, ""); key = $0; sub(/=.*/, "", key); value = $0; sub(/^[^=]*=/, "", value)
+      gsub(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/, "", key); gsub(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/, "", value) }
+    key ~ /^\[/ { interface = tolower(key) == "[interface]"; next }
+    interface && tolower(key) == "address" && /=/ {
+      n = split(value, a, /[, \t]+/); for (i = 1; i <= n; i++) if (a[i] != "") print "addr " a[i]
     }' /etc/wireguard/wg0.conf | sort
 }
 wg0_live_iface() {

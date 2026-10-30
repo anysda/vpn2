@@ -174,19 +174,22 @@ wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
     peers, addresses, sections = {}, {}, [('', {})]
     # Как wg (config.c): строка до первого `#`, без пробельных символов, имена
-    # секций и ключей в любом регистре, но только ASCII.
+    # секций и ключей в любом регистре, но только ASCII. Строки AllowedIPs
+    # одного пира складываются.
     for line in wg.read_text().split('\n'):
         line = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
         name, eq, value = line.partition('=')
         name = name.encode().lower().decode()
         if line.startswith('['):
             sections.append((name, {}))
+        elif eq and name == 'allowedips':
+            sections[-1][1].setdefault(name, []).extend(value.split(','))
         elif eq:
             sections[-1][1][name] = value
     for section, fields in sections:
         if section == '[peer]' and 'publickey' in fields:
             peers[fields['publickey']] = fields.get('presharedkey')
-            addresses[fields['publickey']] = set(fields.get('allowedips', '').split(','))
+            addresses[fields['publickey']] = set(fields.get('allowedips', []))
     known = set()
     for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
         known.add(key)

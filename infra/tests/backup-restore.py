@@ -162,6 +162,14 @@ exit 0
         self.assertGreater(Path(str(DB) + '-wal').stat().st_size, 0)
 
     def script(self, name, *args):
+        # Как на узле: 26-backup ставит wg_conf.py в /usr/local/lib/anysda, сверка берёт его оттуда.
+        lib = Path('/usr/local/lib/anysda')
+        if not (lib / 'wg_conf.py').exists():
+            if not lib.exists():
+                lib.mkdir(parents=True)
+                self.addCleanup(shutil.rmtree, lib)
+            shutil.copy(REPO / 'infra/lib/wg_conf.py', lib / 'wg_conf.py')
+            self.addCleanup((lib / 'wg_conf.py').unlink, True)
         return run('bash', str(REPO / 'infra/lib' / ('anysda-' + name + '.sh')),
                    *args, env=self.env)
 

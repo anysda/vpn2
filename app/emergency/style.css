@@ -22,6 +22,8 @@
 .profile code{overflow-wrap:anywhere}
 /* Тихая зона уже в PNG (4 модуля): без рамки QR в узкой колонке держит 4 px на модуль. */
 .profile.clm .qr{padding:0}
+/* Без рамки скругление срезало бы тихую зону о тёмный фон; в светлой теме фон светлый, угол не мешает. */
+:root:not([data-theme="light"]) .profile.clm .qr{border-radius:0}
 .clp .cdh{flex-wrap:wrap}
 .clp .cdh .tag{white-space:normal}
 .guide{max-width:800px;margin:auto}

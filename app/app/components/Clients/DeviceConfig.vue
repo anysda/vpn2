@@ -26,7 +26,7 @@ const loading = ref(false)
 const sending = ref(false)
 const hasAAAA = ref(false)
 const qrSrc = ref('')
-// Окно 460 px вмещает QR до ~97 модулей по 4 px; крупнее - окно шире.
+// Окно 460 px вмещает QR до 97 модулей по 4 px вместе с тихой зоной (89 без неё): naturalWidth до 388 px; крупнее - окно шире.
 const qrWide = ref(false)
 const creds = ref<{ server: string, remoteId: string, username: string, password: string, hasCa: boolean, certificatePending: boolean } | null>(null)
 const showPass = ref(false)

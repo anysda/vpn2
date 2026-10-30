@@ -42,7 +42,7 @@ class TelegramConfigRemovedTests(unittest.TestCase):
         self.assertEqual(self.container_env('anysda-tgbot')['TGBOT_SECRET'], secret)
         self.assertEqual(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET'], secret)
 
-    def test_config_token_removed_from_config_leaves_runtime(self):
+    def test_config_token_removed_from_config_disables_bot(self):
         """Край 1: токен и Chat ID из config убрали - deploy выключает бота."""
         self.ok()
         self.ok()

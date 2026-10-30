@@ -70,7 +70,7 @@ test('QR настройки 2FA декодируется без зеркальн
   const svg = page.locator('#tfa .qr > svg')
   await expect(svg).toBeVisible()
   const { width, modules } = await svg.evaluate(el => ({
-    // QR тянется по рамке: размер - из viewBox.
+    // Свой размер у svg - 4 px на модуль; сторона в модулях - из viewBox.
     width: Number(el.getAttribute('width') ?? el.getAttribute('viewBox')?.split(' ')[2]),
     modules: [...el.querySelectorAll('rect')].slice(1).map(r => ({
       x: Number(r.getAttribute('x')),

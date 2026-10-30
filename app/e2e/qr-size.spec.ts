@@ -155,9 +155,10 @@ function screenContext(browser: Browser, s: Screen, baseURL?: string) {
  * устройства. Модули - тёмные точки внутри элемента (без срезанных скруглением
  * углов), модуль - по внешнему кольцу искателя. Тихая зона - расстояние от
  * блока модулей до ближайшей тёмной точки снаружи или до края экрана, в модулях.
+ * QR - по центру экрана и целиком в кадре: край экрана не подменяет тихую зону.
  */
 async function rendered(page: Page, el: Locator) {
-  await el.scrollIntoViewIfNeeded()
+  await el.evaluate(node => node.scrollIntoView({ block: 'center', inline: 'center' }))
   await page.evaluate(() => Promise.all(document.getAnimations()
     .filter(a => a.effect?.getComputedTiming().endTime !== Infinity)
     .map(a => a.finished.catch(() => undefined))))
@@ -165,6 +166,8 @@ async function rendered(page: Page, el: Locator) {
     const r = node.getBoundingClientRect()
     return { x: r.x, y: r.y, w: r.width, h: r.height, radius: parseFloat(getComputedStyle(node).borderTopLeftRadius) || 0, vw: innerWidth, vh: innerHeight }
   })
+  expect.soft(q.x >= 0 && q.y >= 0 && q.x + q.w <= q.vw && q.y + q.h <= q.vh,
+    `QR ${q.x}-${q.x + q.w} x ${q.y}-${q.y + q.h} целиком на экране ${q.vw}x${q.vh}`).toBe(true)
   const margin = 40
   const x = Math.max(0, q.x - margin)
   const y = Math.max(0, q.y - margin)

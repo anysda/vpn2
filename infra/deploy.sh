@@ -1366,7 +1366,7 @@ prefetch_images() {
     fi
     local imgs=()
     [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
-    [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" || "${TGBOT_IMAGE_PULL:-true}" == false ]] \
+    [[ "${TGBOT_IMAGE_PULL:-true}" == false ]] || ! tgbot_enabled \
       || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
     [[ ${#imgs[@]} -gt 0 ]] || exit 0
     if ssh_exec "for i in ${imgs[*]}; do docker pull -q \"\$i\" || exit 1; done" >/dev/null 2>&1; then
@@ -1453,14 +1453,22 @@ do_all() {
 }
 
 # ----------------------------------------------------------------------------
+# Бот включён, если токен и чат заданы в config.yaml или в панели (runtime.json
+# на узле). Переменные config уже загружены вызывающим.
+# ----------------------------------------------------------------------------
+tgbot_enabled() {
+  [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]] && return 0
+  ssh_exec "python3 -c 'import json, sys; r = json.load(open(\"/etc/anysda/telegram-runtime.json\")); sys.exit(not (r.get(\"bot_token\") and r.get(\"chat_id\")))'" >/dev/null 2>&1
+}
+
+# ----------------------------------------------------------------------------
 # Поздравительный пинг боту: после успешного pipeline просим бота отправить
-# "Установка завершена" + текущие метрики в чат. Если стейдж 35-telegram
-# был пропущен (TELEGRAM_BOT_TOKEN не задан) — no-op.
+# "Установка завершена" + текущие метрики в чат. Бот без токена - no-op.
 # ----------------------------------------------------------------------------
 announce_deploy_done() {
   # shellcheck disable=SC1091
   source "$DEPLOY_ROOT/envs/ru.env" 2>/dev/null || return 0
-  [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]] || return 0
+  tgbot_enabled || return 0
   local unmeasured=false
   [[ -z "${_VERIFY_WARNINGS[*]:-}" ]] || unmeasured=true
   ssh_exec "[ -f /etc/anysda/tgbot-secret.txt ] && curl -fsS --max-time 5 \

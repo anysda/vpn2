@@ -33,9 +33,8 @@ export function writeTelegramRuntime(data: TelegramRuntime) {
   writeFileSync(RUNTIME_PATH, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 })
 }
 
-// Настроен = есть кому доставлять. Секрет панели выдаёт деплой только при
-// telegram: в config.yaml (без него стадия бота секрет удаляет); токен и чат
-// из настроек — то же условие, что у значка «НЕНАСТРОЕН».
+// Настроен = есть кому доставлять. Секрет панели стадия бота выдаёт при любом
+// деплое; токен и чат из настроек — то же условие, что у значка «НЕНАСТРОЕН».
 export function botConfigured(): boolean {
   const runtime = readTelegramRuntime()
   return !!useRuntimeConfig().tgbotSecret && !!runtime.bot_token && !!runtime.chat_id

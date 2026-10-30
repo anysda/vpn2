@@ -98,7 +98,8 @@ PYEOF
 fi
 
 # Изменённые в config.yaml поля применяем и к runtime, иначе старый файл
-# перекроет новые env. Неизменённые и пустые поля сохраняют настройки из UI.
+# перекроет новые env. Поле, убранное из config, стираем, если в runtime то же,
+# что прошлый деплой взял из config (env контейнера); заданное в панели остаётся.
 previous_bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
 if [[ -n "$previous_bot" ]]; then
   previous_env=$(docker inspect --format '{{json .Config.Env}}' anysda-tgbot)
@@ -113,8 +114,12 @@ changed = False
 for field in ('bot_token', 'chat_id', 'admin_username'):
     key = 'TELEGRAM_' + field.upper()
     value = os.environ[key]
-    if value and value != previous.get(key, ''):
+    before = previous.get(key, '')
+    if value and value != before:
         runtime[field] = value
+        changed = True
+    elif not value and before and runtime.get(field) == before:
+        runtime[field] = ''
         changed = True
 if changed:
     path.write_text(json.dumps(runtime) + '\n')

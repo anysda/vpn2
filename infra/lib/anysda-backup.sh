@@ -181,7 +181,7 @@ if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_col
     from wg_conf import conf_peers
     addresses = {}
     try:
-        peers = {peer['key']: peer for peer in conf_peers(wg.read_text())}
+        peers = {peer['key']: peer for peer in conf_peers(wg.read_bytes().decode())}
     except ValueError as error:
         bad.append(str(error))
     else:

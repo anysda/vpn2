@@ -807,7 +807,7 @@ def restore_wg_apply():
     """
     if not (WORK / 'wg0.conf').exists():
         return
-    text = (WORK / 'wg0.conf').read_text()
+    text = (WORK / 'wg0.conf').read_bytes().decode()
     # Строки уходят как есть: хвост после `#` и пробелы wg срежет сам.
     interface = [line for section, entries in wg_sections(text) if section == '[interface]'
                  for name, _, line in entries if name in ('privatekey', 'listenport', 'fwmark')]
@@ -832,7 +832,7 @@ def wg_apply_check(report):
         report.add(label, component, FAIL, 'нет сокета службы управления')
         return
     try:
-        text = WG_CONF.read_text()
+        text = WG_CONF.read_bytes().decode()
         live = set(run('wg', 'show', 'wg0', 'peers').stdout.split())
     except (OSError, RuntimeError):
         report.add(label, component, FAIL, 'нет wg0 или wg0.conf')

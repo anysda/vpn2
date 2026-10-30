@@ -18,8 +18,10 @@ SPACE = ' \t\n\v\f\r'
 def wg_sections(text):
     """wg0.conf по секциям: [(секция, [(имя, значение, строка)])].
 
+    Строки делятся только по `\n`: одиночный `\r` для wg пробельный внутри строки.
     Строка до первого `#`, без пробельных символов, имена секций и ключей
-    в любом регистре, но только ASCII. Строки до первой секции - в секции ''.
+    в любом регистре, но только ASCII. Секция - вся такая строка, начатая с `[`:
+    `[Peer]=x` не `[peer]`. Строки до первой секции - в секции ''.
     """
     sections = [('', [])]
     for line in text.split('\n'):
@@ -27,7 +29,7 @@ def wg_sections(text):
         name, eq, value = clean.partition('=')
         name = name.encode().lower().decode()
         if clean.startswith('['):
-            sections.append((name, []))
+            sections.append((clean.encode().lower().decode(), []))
         elif eq:
             sections[-1][1].append((name, value, line))
     return sections
@@ -38,7 +40,8 @@ def unrecognized(text):
 
     wg-quick убирает свои имена (WG_QUICK) только после заголовка `[Interface]`
     целиком (регистр любой), имя обрезает лишь по краям. Остальное читает wg без
-    пробельных символов: неизвестная секция, строка вне секции или без `=`, имя
+    пробельных символов, заголовок секции - вся строка: неизвестная секция
+    (`[Peer]=x` тоже), строка вне секции или без `=`, имя
     не из NAMES своей секции, пустое значение. Комментарии и пустые строки
     допустимы. В ответе номер строки и имя без значения; имя не из одних букв
     (скажем, ключ без `=`) не печатается.
@@ -56,8 +59,8 @@ def unrecognized(text):
             continue
         name, eq, value = clean.partition('=')
         lower = name.encode().lower().decode()
-        if clean.startswith('[') and lower in NAMES:
-            section = lower
+        if clean.encode().lower().decode() in NAMES:
+            section = clean.encode().lower().decode()
         elif not eq or not value or lower not in NAMES.get(section, ()):
             shown = f' `{name}`' if re.fullmatch(r'\[?[^\W\d_]{1,32}\]?', name) else ''
             return f'строка {number}{shown}'

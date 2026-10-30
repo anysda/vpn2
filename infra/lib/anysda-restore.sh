@@ -606,7 +606,7 @@ def wg_key(directory):
     if found:
         return found
     try:
-        text = open(os.path.join(directory, 'wg0.conf'), errors='replace').read()
+        text = open(os.path.join(directory, 'wg0.conf'), errors='replace', newline='').read()
     except OSError:
         return None
     # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
@@ -684,9 +684,9 @@ if os.path.isfile(LIVE_DB):
         live, live_seq = {}, 0
 
 
-def live_text(path):
+def live_text(path, newline=None):
     try:
-        return open(path, errors='replace').read()
+        return open(path, errors='replace', newline=newline).read()
     except OSError:
         return None
 
@@ -695,7 +695,7 @@ def live_text(path):
 # OpenVPN в архиве, а у отозванных панелью подсказывают подпись в журнале.
 live_peers = live_ike = None
 if not live_read:
-    live_peers = live_text('/etc/wireguard/wg0.conf')
+    live_peers = live_text('/etc/wireguard/wg0.conf', newline='')
     live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_peers is not None:
     # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
@@ -905,10 +905,10 @@ def rewrite(path, text):
 
 
 if wg_keys and os.path.isfile(wg_path):
-    # Секции и ключи как у wg: строка до первого `#`, без пробельных символов,
-    # имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле.
+    # Секции и ключи как у wg: строка до `\n`, до первого `#`, без пробельных
+    # символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле.
     blocks = [[]]
-    for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path).read()):
+    for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, newline='').read()):
         clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
         if clean.startswith('['):
             blocks.append([])

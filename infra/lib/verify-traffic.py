@@ -775,24 +775,45 @@ def wg_sections(text):
     return sections
 
 
+def wg_network(entry):
+    """Сеть записи AllowedIPs без знака `+`/`-`, как её держит wg и печатает `wg show allowed-ips`.
+
+    Без маски - /32 или /128. Запись, которую wg не разберёт, - ValueError с этой записью.
+    """
+    address = entry[1:] if entry[:1] in ('+', '-') else entry
+    try:
+        if not re.fullmatch(r'[^/%]+(/[0-9]+)?', address):
+            raise ValueError(address)
+        return str(ipaddress.ip_network(address, strict=False))
+    except ValueError:
+        raise ValueError(f'wg0.conf: AllowedIPs `{entry}` не разбирается, wg отвергает файл') from None
+
+
 def conf_peers(text):
     """Пиры wg0.conf: ключ, PSK и AllowedIPs, как их видит wg.
 
-    Строки AllowedIPs складываются по порядку: `-X` убирает X, `+X` и `X` добавляют.
+    Записи AllowedIPs - сети (wg_network), строки складываются по порядку:
+    `-X` убирает X у этого пира, `+X` и `X` добавляют; адрес, который позже
+    назвал другой пир, остаётся только у него. Файл, который wg отвергает, - ValueError.
     """
-    peers = []
+    peers, owners = [], {}
     for section, entries in wg_sections(text):
         if section == '[peer]':
             values = {name: value for name, value, _ in entries}
-            allowed = {}
-            for entry in (a for name, value, _ in entries if name == 'allowedips' for a in value.split(',') if a):
-                if entry[0] == '-':
-                    allowed.pop(entry[1:], None)
-                else:
-                    allowed[entry.removeprefix('+')] = None
-            allowed = list(allowed)
-            peers.append({'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
-                          'allowed': allowed})
+            peer = {'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
+                    'allowed': []}
+            peers.append(peer)
+            for value in (value for name, value, _ in entries if name == 'allowedips'):
+                if not value:
+                    raise ValueError('wg0.conf: пустая строка AllowedIPs, wg отвергает файл')
+                for entry in filter(None, value.split(',')):
+                    network = wg_network(entry)
+                    if entry[0] != '-':
+                        owners[network] = peer
+                    elif owners.get(network) is peer:
+                        del owners[network]
+    for network, peer in owners.items():
+        peer['allowed'].append(network)
     return peers
 
 
@@ -844,8 +865,10 @@ def restore_wg_apply():
     # Строки уходят как есть: хвост после `#` и пробелы wg срежет сам.
     interface = [line for section, entries in wg_sections(text) if section == '[interface]'
                  for name, _, line in entries if name in ('privatekey', 'listenport', 'fwmark')]
-    peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n'
-                    f'AllowedIPs = {", ".join(peer["allowed"])}\n' for peer in conf_peers(text))
+    # Пир без адресов - без строки AllowedIPs: пустую строку wg отвергает, без неё очищает набор.
+    peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n' +
+                    (f'AllowedIPs = {", ".join(peer["allowed"])}\n' if peer['allowed'] else '')
+                    for peer in conf_peers(text))
     run('wg', 'syncconf', 'wg0', '/dev/stdin', data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)
     restore_file(WG_CONF, 'wg0.conf')
     restore_file(CONTROL_WG_STATE, 'control-wg.json')
@@ -868,7 +891,11 @@ def wg_apply_check(report):
     except (OSError, RuntimeError):
         report.add(label, component, FAIL, 'нет wg0 или wg0.conf')
         return
-    peers = apply_peers(text)
+    try:
+        peers = apply_peers(text)
+    except ValueError as error:
+        report.add(label, component, FAIL, str(error))
+        return
     if peers is None or {peer['key'] for peer in peers} != live:
         report.add(label, component, UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')
         return

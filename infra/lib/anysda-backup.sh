@@ -172,10 +172,14 @@ def devices(*fields):
 
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
-    peers, addresses, sections = {}, {}, [('', {})]
+    import ipaddress
+    peers, addresses, sections, owners, broken = {}, {}, [('', {})], {}, []
     # Как wg (config.c): строка до первого `#`, без пробельных символов, имена
-    # секций и ключей в любом регистре, но только ASCII. Строки AllowedIPs
-    # одного пира складываются по порядку: `-X` убирает X, `+X` и `X` добавляют.
+    # секций и ключей в любом регистре, но только ASCII. Запись AllowedIPs -
+    # сеть (без маски /32 или /128, запись как в `wg show allowed-ips`); строки
+    # складываются по порядку: `-X` убирает X у этого пира, `+X` и `X`
+    # добавляют, адрес, который позже назвал другой пир, остаётся только у него.
+    # Файл, который wg отвергает, - жалоба вместо сверки.
     for line in wg.read_text().split('\n'):
         line = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
         name, eq, value = line.partition('=')
@@ -183,33 +187,44 @@ if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_col
         if line.startswith('['):
             sections.append((name, {}))
         elif eq and name == 'allowedips':
-            allowed = sections[-1][1].setdefault(name, set())
+            if not value:
+                broken.append('wg0.conf: пустая строка AllowedIPs, wg отвергает файл')
             for entry in filter(None, value.split(',')):
-                if entry[0] == '-':
-                    allowed.discard(entry[1:])
-                else:
-                    allowed.add(entry.removeprefix('+'))
+                address = entry[1:] if entry[0] in '+-' else entry
+                try:
+                    if not re.fullmatch(r'[^/%]+(/[0-9]+)?', address):
+                        raise ValueError(address)
+                    network = str(ipaddress.ip_network(address, strict=False))
+                except ValueError:
+                    broken.append(f'wg0.conf: AllowedIPs `{entry}` не разбирается, wg отвергает файл')
+                    continue
+                if entry[0] != '-':
+                    owners[network] = len(sections)
+                elif owners.get(network) == len(sections):
+                    del owners[network]
         elif eq:
             sections[-1][1][name] = value
-    for section, fields in sections:
+    for index, (section, fields) in enumerate(sections, 1):
         if section == '[peer]' and 'publickey' in fields:
             peers[fields['publickey']] = fields.get('presharedkey')
-            addresses[fields['publickey']] = fields.get('allowedips', set())
-    known = set()
-    for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
-        known.add(key)
-        # Ключ из середины цепочки перевыпусков в retired не хранится: пир на
-        # адресе переходного устройства очередь заменит сама.
-        if wanted is None and ip:
-            known |= {other for other, allowed in addresses.items() if f'{ip}/32' in allowed}
-        if wanted and key not in peers:
-            bad.append(f'{label(device)}: нет пира WireGuard')
-        elif wanted and peers[key] != psk:
-            bad.append(f'{label(device)}: ключ пира WireGuard не совпадает с БД')
-        elif wanted is False and key in peers:
-            bad.append(f'{label(device)}: пир WireGuard у отключённого устройства')
-    for key in sorted(set(peers) - known - retired_keys):
-        bad.append(f'пир WireGuard {key}: устройства нет в БД')
+            addresses[fields['publickey']] = {network for network, owner in owners.items() if owner == index}
+    bad.extend(broken)
+    if not broken:
+        known = set()
+        for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
+            known.add(key)
+            # Ключ из середины цепочки перевыпусков в retired не хранится: пир на
+            # адресе переходного устройства очередь заменит сама.
+            if wanted is None and ip:
+                known |= {other for other, allowed in addresses.items() if f'{ip}/32' in allowed}
+            if wanted and key not in peers:
+                bad.append(f'{label(device)}: нет пира WireGuard')
+            elif wanted and peers[key] != psk:
+                bad.append(f'{label(device)}: ключ пира WireGuard не совпадает с БД')
+            elif wanted is False and key in peers:
+                bad.append(f'{label(device)}: пир WireGuard у отключённого устройства')
+        for key in sorted(set(peers) - known - retired_keys):
+            bad.append(f'пир WireGuard {key}: устройства нет в БД')
 
 swan = root / 'etc-swanctl/conf.d/anysda-clients.conf'
 if swan.is_file() and {'ikev2_username', 'ikev2_password', 'ikev2_ip'} <= device_columns:

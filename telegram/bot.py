@@ -95,7 +95,7 @@ log = logging.getLogger('tgbot')
 
 # Runtime config поверх env-vars: если файл существует — он перебивает токен/чат_id.
 # Используется панелью (Боты): при сохранении в UI Nuxt пишет сюда, бот сам
-# делает os._exit(0) при изменении mtime, docker --restart unless-stopped
+# делает os._exit(0) при изменении mtime, docker --restart always
 # перезапускает контейнер с новыми значениями.
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
 
@@ -119,8 +119,6 @@ def _load_runtime() -> tuple[str, int, str]:
         except Exception:
             pass
     admin = admin.lstrip('@').strip()
-    if not token:
-        raise RuntimeError('TELEGRAM_BOT_TOKEN не задан (ни env, ни runtime.json)')
     # Кривой chat_id (например «@mychannel») не должен ронять бота по кругу:
     # откат на env; если и там не число — 0, дальше та же ошибка, что и без env.
     for source, raw in (('telegram-runtime.json', chat), ('TELEGRAM_CHAT_ID', env_chat)):
@@ -140,11 +138,6 @@ if not SECRET:
     raise RuntimeError(
         'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
         'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.'
-    )
-if CHAT_ID == 0:
-    raise RuntimeError(
-        'TELEGRAM_CHAT_ID не задан или = 0 — admin-команды не смогут быть авторизованы. '
-        'Задай chat_id через /etc/anysda/telegram-runtime.json.'
     )
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
@@ -1778,7 +1771,24 @@ async def _fetch_bot_username() -> None:
         log.warning('getMe failed: %s — диплинки будут с фолбэк-инструкцией', e)
 
 
+# Если UI редактирует /etc/anysda/telegram-runtime.json — exit, docker
+# рестартит контейнер с новыми token/chat_id.
+async def _config_watcher():
+    initial_mtime = RUNTIME_PATH.stat().st_mtime if RUNTIME_PATH.exists() else None
+    while True:
+        await asyncio.sleep(5)
+        mtime = RUNTIME_PATH.stat().st_mtime if RUNTIME_PATH.exists() else None
+        if mtime != initial_mtime:
+            log.info('telegram-runtime.json изменён — выхожу для рестарта')
+            os._exit(0)
+
+
 async def main() -> None:
+    if not TOKEN or CHAT_ID == 0:
+        # Бот ставится и без токена: ждём «Сохранить» в панели, не выходя, иначе
+        # docker --restart always крутит его по кругу.
+        log.warning('Токен бота или Chat ID не заданы: жду их в панели, раздел «Боты»')
+        await _config_watcher()
     # Telegram egress — через TG_PROXY (HTTP-CONNECT прокси sing-box →
     # foreign-best → экзит): RU-нода в Москве api.telegram.org напрямую не
     # достаёт. Используем HTTP-CONNECT, а не SOCKS5: httpx-socks давал
@@ -1827,17 +1837,6 @@ async def main() -> None:
             await monitor_loop()
         except Exception:
             log.exception('monitor_loop crashed')
-
-    # Если UI редактирует /etc/anysda/telegram-runtime.json — exit, docker
-    # рестартит контейнер с новыми token/chat_id.
-    async def _config_watcher():
-        initial_mtime = RUNTIME_PATH.stat().st_mtime if RUNTIME_PATH.exists() else None
-        while True:
-            await asyncio.sleep(5)
-            mtime = RUNTIME_PATH.stat().st_mtime if RUNTIME_PATH.exists() else None
-            if mtime != initial_mtime:
-                log.info('telegram-runtime.json изменён — выхожу для рестарта')
-                os._exit(0)
 
     tasks = [asyncio.create_task(_config_watcher()), asyncio.create_task(poll_watchdog())]
     try:

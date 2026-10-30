@@ -700,7 +700,7 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
     guard="bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW || exit 1; "
   fi
-  if [[ "$stage" == @(23-emergency|30-frontend) ]]; then
+  if [[ "$stage" == @(23-emergency|30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
   if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then

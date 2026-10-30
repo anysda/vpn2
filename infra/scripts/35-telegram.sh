@@ -11,7 +11,8 @@
 # entry node in Moscow can't reach api.telegram.org directly. Only the
 # Nuxt API calls stay local.
 #
-# Disables an existing bot if TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set.
+# Installs the bot even without TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID: it waits
+# for them in telegram-runtime.json, which the panel writes.
 # Prerequisites: stage 20 (sing-box with the local tg-proxy inbound).
 
 set -euo pipefail
@@ -48,16 +49,8 @@ print(next((v.split("=", 1)[1] for v in json.load(sys.stdin)
   )
 }
 
-if [[ -z "${TELEGRAM_BOT_TOKEN:-}" ]] || [[ -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-  bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
-  if [[ -n "$bot" ]]; then docker rm -f anysda-tgbot >/dev/null; fi
-  rm -f /etc/anysda/tgbot-secret.txt /etc/anysda/telegram-runtime.json /var/lib/anysda-vpn2/runtime/telegram-runtime.json
-  TGBOT_SECRET=''
-  sync_panel_secret
-  echo "[$HOST_TAG] 35-telegram: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID не заданы — бот выключен"
-  echo "[$HOST_TAG] Чтобы включить бота: добавь секцию telegram: в config.yaml и перезапусти деплой"
-  exit 0
-fi
+TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
 
 STAMP_DIR=/var/anysda/.stamps
 STAGE='35-telegram'
@@ -105,7 +98,7 @@ PYEOF
 fi
 
 # Изменённые в config.yaml поля применяем и к runtime, иначе старый файл
-# перекроет новые env. Неизменённые поля сохраняют настройки из UI.
+# перекроет новые env. Неизменённые и пустые поля сохраняют настройки из UI.
 previous_bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
 if [[ -n "$previous_bot" ]]; then
   previous_env=$(docker inspect --format '{{json .Config.Env}}' anysda-tgbot)
@@ -120,7 +113,7 @@ changed = False
 for field in ('bot_token', 'chat_id', 'admin_username'):
     key = 'TELEGRAM_' + field.upper()
     value = os.environ[key]
-    if value != previous.get(key, ''):
+    if value and value != previous.get(key, ''):
         runtime[field] = value
         changed = True
 if changed:

@@ -49,7 +49,7 @@ class WireguardWhitespaceTests(unittest.TestCase):
         self.new.write_text(header)
         self.applier.install('wg', self.new)
         self.assertEqual(len(self.synced()), 1)
-        self.assertEqual(self.path.read_text(), header.rstrip(''.join(C_SPACE) + '\n') + '\n\n' + peers)
+        self.assertEqual(self.path.read_text(), header.rstrip(''.join(C_SPACE) + '\n') + '\n' + peers)
 
     def test_private_key_with_foreign_whitespace_is_rejected(self):
         for char in FOREIGN:

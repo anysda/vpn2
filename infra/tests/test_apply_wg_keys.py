@@ -61,7 +61,7 @@ class WireguardKeyNameTests(unittest.TestCase):
         self.new.write_text(header)
         self.applier.install('wg', self.new)
         self.assertEqual(len(self.synced()), 1)
-        self.assertEqual(self.path.read_text(), header.rstrip('\n') + '\n\n' + peers)
+        self.assertEqual(self.path.read_text(), header.rstrip('\n') + '\n' + peers)
         return self.synced()[0]
 
     def rejected(self, header, peers):

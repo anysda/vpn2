@@ -87,7 +87,7 @@ def backup_check(style):
         (root / 'etc-wireguard/wg0.conf').write_text(conf(style))
         scope = python(block, root=root, bad=[], retired_keys=set(), label=lambda d: f'устройство {d}',
                        device_columns={'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                       devices=lambda *fields: iter(rows))
+                       devices=lambda *_fields: iter(rows))
     return scope['bad']
 
 
@@ -151,8 +151,8 @@ def verify_syncconf_body(style):
     with tempfile.TemporaryDirectory() as directory:
         VT.WORK = Path(directory)
         (VT.WORK / 'wg0.conf').write_text(conf(style))
-        VT.run = lambda *args, data=None, **kw: sent.append((args, data))
-        VT.restore_file = lambda *args: None
+        VT.run = lambda *args, data=None, **_kw: sent.append((args, data))
+        VT.restore_file = lambda *_args: None
         try:
             VT.restore_wg_apply()
         finally:

@@ -26,6 +26,8 @@ const loading = ref(false)
 const sending = ref(false)
 const hasAAAA = ref(false)
 const qrSrc = ref('')
+// Окно 460 px вмещает QR до ~97 модулей по 4 px; крупнее - окно шире.
+const qrWide = ref(false)
 const creds = ref<{ server: string, remoteId: string, username: string, password: string, hasCa: boolean, certificatePending: boolean } | null>(null)
 const showPass = ref(false)
 let request = 0
@@ -53,6 +55,7 @@ async function load() {
     if (kind === 'wg') {
       // Адрес QR постоянный: без метки браузер показал бы из кэша старый ключ после перевыпуска.
       qrSrc.value = `${wgQrUrl(clientId, device.id)}?t=${Date.now()}`
+      qrWide.value = false
       void loadWgWarning(r)
       const c = await getWgConfig(clientId, device.id)
       if (r === request) conf.value = c
@@ -157,7 +160,7 @@ const ikeRows = computed(() => {
   <ClientsModal
     v-model:open="open"
     :title="title"
-    :wide="kind === 'ike'"
+    :wide="kind === 'ike' || (kind === 'wg' && qrWide)"
     closable
   >
     <template v-if="kind === 'wg'">
@@ -167,7 +170,12 @@ const ikeRows = computed(() => {
       <div v-if="hasAAAA" class="al amb">
         Уберите у домена IPv6-запись (AAAA), иначе у клиентов на Linux VPN может не заработать.
       </div>
-      <img :src="qrSrc" alt="WireGuard QR" class="qr">
+      <img
+        :src="qrSrc"
+        alt="WireGuard QR"
+        class="qr"
+        @load="qrWide = ($event.target as HTMLImageElement).naturalWidth > 388"
+      >
     </template>
 
     <template v-else-if="kind === 'ovpn'">

@@ -20,6 +20,8 @@
 .clp .devl{height:auto;max-height:65vh}
 .profile{grid-column:1/-1;min-width:0}
 .profile code{overflow-wrap:anywhere}
+/* Тихая зона уже в PNG (4 модуля): без рамки QR в узкой колонке держит 4 px на модуль. */
+.profile.clm .qr{padding:0}
 .clp .cdh{flex-wrap:wrap}
 .clp .cdh .tag{white-space:normal}
 .guide{max-width:800px;margin:auto}

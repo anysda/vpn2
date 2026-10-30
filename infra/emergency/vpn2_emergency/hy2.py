@@ -247,7 +247,8 @@ def materials(directory, state):
     result = {}
     for device in state['devices']:
         uri = device['uri']
-        png = command(['qrencode', '-t', 'PNG', '-o', '-', '-l', 'M'], input=uri.encode()).stdout
+        # 4 px на модуль - столько панель и показывает на ПК: меньше камера с экрана не берёт.
+        png = command(['qrencode', '-t', 'PNG', '-o', '-', '-l', 'L', '-s', '4'], input=uri.encode()).stdout
         path = directory / f"device-{device['id']}.txt"
         atomic(path, (uri + '\n').encode())
         result[device['id']] = {'uri': uri, 'qr_png': png, 'file': str(path)}

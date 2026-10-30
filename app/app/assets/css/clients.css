@@ -217,7 +217,9 @@
 .clm .pill.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
 .clm .al.amb{background:rgba(var(--amb-rgb),.07);border-color:rgba(var(--amb-rgb),.28);color:var(--amb-t2)}
 .clm .al.amb b{color:var(--amber)}
-.clm .qr{display:block;width:220px;height:220px;margin:16px auto 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
+/* QR своим размером (4 px на модуль), но не шире контента; на телефоне - на всю ширину. */
+.clm .qr{display:block;width:auto;height:auto;max-width:100%;image-rendering:pixelated;margin:16px auto 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
+@media (max-width:720px){.clm .qr{width:100%}}
 .clm .kvr{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(var(--fg),.05);font-size:12.5px}
 .clm .kvr:first-of-type{margin-top:12px}
 .clm .kvr>span{color:var(--t3)}

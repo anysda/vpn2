@@ -317,8 +317,18 @@ async def tg_answer_callback(callback_id: str, text: str = '',
 
 
 def _make_qr_png(data: str) -> bytes:
-    """Render a config string into a PNG QR — black on white, big margin so phones lock onto it."""
-    img = qrcode.make(data, box_size=10, border=4)
+    """Render a config string into a PNG QR — black on white, big margin so phones lock onto it.
+
+    ecl L as in the panel keeps the version low. Telegram downsizes photos over
+    1280 px, so the module size is the largest that fits: 10 px for short
+    configs, 9 px for the worst split config (version 27), 6 px at version 40.
+    """
+    ecl = qrcode.constants.ERROR_CORRECT_L
+    probe = qrcode.QRCode(error_correction=ecl, border=4)
+    probe.add_data(data)
+    probe.make(fit=True)
+    box = max(1, min(10, 1280 // (probe.modules_count + 8)))
+    img = qrcode.make(data, error_correction=ecl, box_size=box, border=4)
     buf = io.BytesIO()
     img.save(buf, format='PNG')
     return buf.getvalue()

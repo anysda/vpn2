@@ -58,10 +58,11 @@ const totpCode = ref('')
 const setupPwd = ref('')
 const totpLoading = ref(false)
 
-// QR разметкой: квадрат на каждый тёмный модуль, тихая зона 4 модуля.
+// QR разметкой: квадрат на каждый тёмный модуль, тихая зона 4 модуля, 4 px на модуль
+// (меньше камера с экрана не берёт); ecl L - версия ниже, модуль крупнее.
 const totpQr = computed(() => {
   if (!totpUri.value) return null
-  const { modules } = new QRCode({ content: totpUri.value, ecl: 'M' }).qrcode
+  const { modules } = new QRCode({ content: totpUri.value, ecl: 'L' }).qrcode
   const dark = modules.flatMap((row, y) => row.flatMap((on, x) => on ? [{ x: x + 4, y: y + 4 }] : []))
   return { size: modules.length + 8, dark }
 })
@@ -307,7 +308,7 @@ async function saveSso() {
             <p class="mt">Отсканируй QR в аутентификаторе или вставь секрет вручную:</p>
             <div class="qrrow">
               <div class="qr">
-                <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" shape-rendering="crispEdges">
+                <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" :style="{ width: `${totpQr.size * 4}px` }" shape-rendering="crispEdges">
                   <rect :width="totpQr.size" :height="totpQr.size" fill="#fff" />
                   <rect v-for="m in totpQr.dark" :key="`${m.x}-${m.y}`" :x="m.x" :y="m.y" width="1" height="1" fill="#000" />
                 </svg>
@@ -519,8 +520,8 @@ async function saveSso() {
 .stg #tfa form{display:contents}
 .stg .qrrow{display:flex;gap:18px;align-items:flex-end}
 .stg .qrrow .in{margin-bottom:4px}
-.stg #tfa .qr{flex:none;display:block;width:180px;height:180px;margin:14px 0 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
-.stg #tfa .qr svg{display:block;width:100%;height:100%}
+.stg #tfa .qr{flex:none;display:block;max-width:100%;margin:14px 0 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
+.stg #tfa .qr svg{display:block;max-width:100%;height:auto}
 .stg #tfa .fld.qrcode{margin-top:14px}
 /* модалка «Выключить 2FA?» - .ovl/.modal макета поверх UModal */
 .stg-ovl{background:var(--ovl);backdrop-filter:blur(6px)}

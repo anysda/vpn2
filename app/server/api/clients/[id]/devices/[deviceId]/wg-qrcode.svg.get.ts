@@ -59,7 +59,8 @@ export default defineEventHandler(async (event) => {
  * Свой вывод вместо `.svg()` библиотеки: та рисует отдельный <rect> со стилем
  * на каждый модуль и с дробными координатами (512px / N модулей), и на таком
  * конфиге выходил мегабайт. Здесь один path в единицах модуля: подряд идущие
- * тёмные модули строки сливаются в один отрезок, размер задаёт CSS через viewBox.
+ * тёмные модули строки сливаются в один отрезок. Свой размер - 4 px на модуль:
+ * меньше камера телефона с экрана ПК не берёт; уже контента ужимает CSS.
  */
 function qrSvg(content: string): string {
   const pad = 4
@@ -78,6 +79,6 @@ function qrSvg(content: string): string {
     }
   }
   const size = n + 2 * pad
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" shape-rendering="crispEdges">`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size * 4}" height="${size * 4}" shape-rendering="crispEdges">`
     + `<rect width="${size}" height="${size}" fill="#fff"/><path d="${d}"/></svg>`
 }

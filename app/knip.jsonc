@@ -1,7 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema-jsonc.json",
-  // Установочный мигратор запускается под системным flock.
-  "ignoreBinaries": ["flock"],
+  // Установочный мигратор запускается под системным flock; e2e/qr-size.spec.ts
+  // раскодирует PNG аварийки системным zbarimg (zbar-tools).
+  "ignoreBinaries": ["flock", "zbarimg"],
   // Сквозные тесты (e2e/*.spec.ts) knip берёт сам через плагин playwright.
   // Подставные VictoriaMetrics и clash API e2e/run-local.sh копирует в контейнер
   // панели по пути и запускает node, импорта нет. Наполнитель front-test

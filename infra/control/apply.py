@@ -251,8 +251,13 @@ class Applier:
             for line in text.split('\n'):
                 name, value = wg_line(line)
                 if name in WG_SECTIONS:
+                    # wg reads a later [Interface] too, but wg_split() keeps only the
+                    # first one as the deployment's: an apply replaces it whole, and
+                    # keys left in the peer tail would override the new header.
+                    # The peer tail is always the live file's (with_access).
                     if section == '[Peer]' and name == '[Interface]':
-                        raise ValueError(f'[Interface] after a [Peer]: {line!a}')
+                        raise ValueError(f'{RESOURCES["wg"]["path"]}: {line!a} after [Peer] number {len(public)}; '
+                                         'move the keys under it into the first [Interface]')
                     section = name
                     public += [0] if name == '[Peer]' else []
                     continue

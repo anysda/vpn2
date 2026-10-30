@@ -156,8 +156,6 @@ def wg_split(text):
     cut = next((index for index, line in enumerate(lines) if wg_line(line)[0] == '[Peer]'), None)
     if cut is None:
         return text.rstrip(' \t\n\v\f\r') + '\n', ''
-    while cut and re.fullmatch(f'{BLANK}*', lines[cut - 1]):
-        cut -= 1
     return '\n'.join(lines[:cut]).rstrip(' \t\n\v\f\r') + '\n', '\n'.join(lines[cut:])
 
 

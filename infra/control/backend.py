@@ -4,6 +4,7 @@ import csv
 import base64
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,10 @@ from contract import API, Fault, LIMIT, METHODS, key as validate_key, require
 
 # C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
 BLANK = r'[ \t\v\f\r]'
+# wg0.conf is read one way: vpn2-apply's, installed beside this file.
+_spec = importlib.util.spec_from_file_location('vpn2_apply', Path(__file__).with_name('apply.py'))
+wg = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(wg)
 
 
 def atomic(path, body, mode=0o600):
@@ -441,9 +446,8 @@ class Backend:
         # Preserve deployment-owned interface configuration (addresses, key,
         # port). Only peers are an API resource; no input becomes a directive.
         previous = path.read_text()
-        header = re.split(rf'(?aim)^[ \t\n\v\f\r]*\[Peer\]{BLANK}*$', previous)[0].rstrip(' \t\n\v\f\r') + '\n'
-        # wg and wg-quick read section and key names in any ASCII case.
-        require(re.search(r'(?ai)\[Interface\]', header), 'unavailable')
+        header = wg.wg_split(previous)[0]
+        require(any(wg.wg_line(line)[0] == '[Interface]' for line in header.split('\n')), 'unavailable')
         # The persisted key pair is authoritative, as in the former panel.
         # A keys-only restore can leave this host's old rendered wg0.conf.
         # Never regenerate a key or return it to the API caller.
@@ -451,19 +455,17 @@ class Backend:
         if private.exists():
             canonical = private.read_text().strip()
             validate_key(canonical)
-            header = re.sub(rf'(?aim)^{BLANK}*PrivateKey{BLANK}*=.*$', 'PrivateKey = ' + canonical, header)
+            header = '\n'.join('PrivateKey = ' + canonical if wg.wg_line(line)[0] == 'PrivateKey' else line
+                               for line in header.split('\n'))
         peers = ''.join('\n[Peer]\nPublicKey = ' + peer['key'] +
                         '\nPresharedKey = ' + peer['preshared_key'] +
                         '\nAllowedIPs = ' + ', '.join(peer_addresses(peer)) + '\n'
                         for peer in params['peers'])
         # wg-quick is deliberately not executed: it is a shell script with
         # hook directives. syncconf receives only the typed WG subset.
-        interface = []
-        for line in header.split('\n'):  # wg ends a line only at a newline
-            if re.match(rf'{BLANK}*(PrivateKey|ListenPort|FwMark){BLANK}*=', line, re.I | re.A):
-                interface.append(line)
-        require(any(re.match(rf'{BLANK}*PrivateKey{BLANK}*=', line, re.I | re.A) for line in interface),
-                'unavailable')
+        interface = [line for line in header.split('\n')  # wg ends a line only at a newline
+                     if wg.wg_line(line)[0] in wg.WG_SECTIONS['[Interface]']]
+        require(any(wg.wg_line(line)[0] == 'PrivateKey' for line in interface), 'unavailable')
         # Through stdin: the distribution's AppArmor profile for wg lets it
         # open only /etc/wireguard, which it cannot traverse without root.
         self.command('/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin',

@@ -46,6 +46,8 @@ BLANK = r'[ \t\v\f\r]'
 WG_ADDRESS = '-?[0-9A-Fa-f.:]+(?:/[0-9]+)?'
 WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:(?ai:off)|0x[0-9A-Fa-f]+|[0-9]+)',
              'PublicKey': KEY, 'PresharedKey': KEY, 'AllowedIPs': f'{WG_ADDRESS}(?:,{WG_ADDRESS})*'}
+WG_SECTIONS = {'[Interface]': ('PrivateKey', 'ListenPort', 'FwMark'),
+               '[Peer]': ('PublicKey', 'PresharedKey', 'AllowedIPs')}
 # The directives infra/scripts/29-openvpn.sh writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
@@ -132,10 +134,31 @@ def openvpn_words(line):
     return words
 
 
+def wg_line(line):
+    """The section or syncconf key wg(8) reads in a line (None if neither) and its value.
+
+    wg cuts the line at the first #, drops BLANK anywhere in it and compares the
+    name in ASCII case only (wireguard-tools config.c: config_read_line, process_line).
+    """
+    seen = re.sub(BLANK, '', line.split('#', 1)[0])
+    for name in WG_SECTIONS:
+        if re.fullmatch(re.escape(name), seen, re.I | re.A):
+            return name, ''
+    for name in WG_VALUES:
+        if re.match(name + '=', seen, re.I | re.A):
+            return name, seen[len(name) + 1:]
+    return None, seen
+
+
 def wg_split(text):
     """Deployment-owned [Interface] section and the access-owned [Peer] tail."""
-    parts = re.split(rf'(?aim)^(?=[ \t\n\v\f\r]*\[Peer\]{BLANK}*$)', text, maxsplit=1)
-    return parts[0].rstrip(' \t\n\v\f\r') + '\n', parts[1] if len(parts) > 1 else ''
+    lines = text.split('\n')
+    cut = next((index for index, line in enumerate(lines) if wg_line(line)[0] == '[Peer]'), None)
+    if cut is None:
+        return text.rstrip(' \t\n\v\f\r') + '\n', ''
+    while cut and re.fullmatch(f'{BLANK}*', lines[cut - 1]):
+        cut -= 1
+    return '\n'.join(lines[:cut]).rstrip(' \t\n\v\f\r') + '\n', '\n'.join(lines[cut:])
 
 
 class Applier:
@@ -222,28 +245,39 @@ class Applier:
             if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
                 raise ValueError('connection anysda-ikev2 missing or braces unbalanced')
         elif resource == 'wg':
-            header, peers = wg_split(text)
-            # A line Python's \s reads as a syncconf key must read the same to wg,
-            # which drops BLANK anywhere in the line before parsing it.
+            # Every section and syncconf key is checked as wg reads it, the same
+            # way activate() picks the lines it gives wg syncconf.
+            section, public, ports = None, [], []
             for line in text.split('\n'):
-                seen = re.sub(BLANK, '', line)
-                named = re.match(rf'\s*(?ai:({"|".join(WG_VALUES)}))\s*=', seen)
-                name = named and next(known for known in WG_VALUES if known.lower() == named[1].lower())
-                value = name and re.fullmatch(rf'(?ai:{name})=({WG_VALUES[name]})(?:#.*)?', seen)
-                if name and not value:
+                name, value = wg_line(line)
+                if name in WG_SECTIONS:
+                    if section == '[Peer]' and name == '[Interface]':
+                        raise ValueError(f'[Interface] after a [Peer]: {line!a}')
+                    section = name
+                    public += [0] if name == '[Peer]' else []
+                    continue
+                if not name:
+                    # A line Python's \s reads as a syncconf key must read the same to wg.
+                    if wg_line(re.sub(r'\s', '', line))[0]:
+                        raise ValueError(f'wg cannot read {line!a}')
+                    continue
+                if name not in WG_SECTIONS.get(section, ()):
+                    raise ValueError(f'{name} in {section or "no section"}: wg cannot read {line!a}')
+                if not re.fullmatch(WG_VALUES[name], value):
                     raise ValueError(f'{name}: wg cannot read {line!a}')
                 # wg parse_fwmark(): strtoul() base 16 after a lowercase 0x, else 10.
-                if name == 'FwMark' and value[1].lower() != 'off' and \
-                        int(value[1], 16 if value[1].startswith('0x') else 10) > 0xffffffff:
+                if name == 'FwMark' and value.lower() != 'off' and \
+                        int(value, 16 if value.startswith('0x') else 10) > 0xffffffff:
                     raise ValueError(f'FwMark: wg takes 0/off or 0-0xffffffff, not {line!a}')
-            if not re.search(rf'(?m)^{BLANK}*(?ai:PrivateKey){BLANK}*={BLANK}*{KEY}{BLANK}*$', header):
+                if name == 'PublicKey':
+                    public[-1] += 1
+                ports += [int(value)] if name == 'ListenPort' else []
+            if not any(wg_line(line)[0] == 'PrivateKey' for line in text.split('\n')):
                 raise ValueError('[Interface] PrivateKey missing')
-            port = re.search(rf'(?m)^{BLANK}*(?ai:ListenPort){BLANK}*={BLANK}*([0-9]+){BLANK}*$', header)
-            if not port or not 0 < int(port[1]) < 65536:
+            if not ports or not all(0 < port < 65536 for port in ports):
                 raise ValueError('[Interface] ListenPort missing')
-            public = re.findall(rf'(?m)^{BLANK}*(?ai:PublicKey){BLANK}*={BLANK}*{KEY}{BLANK}*$', peers)
-            if len(re.findall(r'(?ai)\[Peer\]', peers)) != len(public):
-                raise ValueError('[Peer] without a valid PublicKey')
+            if any(count != 1 for count in public):
+                raise ValueError('[Peer] without one valid PublicKey')
         if spec.get('check'):
             self.command(spec['check'] + [str(path)])
 
@@ -319,10 +353,10 @@ class Applier:
             header, peers = wg_split(self.target(resource).read_text())
             # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
             # wg and wg-quick end a line only at a newline, as split('\n') does.
-            interface = rf'{BLANK}*(\[Interface\]{BLANK}*$|(PrivateKey|ListenPort|FwMark){BLANK}*=)'
-            peer = rf'{BLANK}*(\[Peer\]{BLANK}*$|(PublicKey|PresharedKey|AllowedIPs){BLANK}*=)'
-            body = '\n'.join(line for line in header.split('\n') if re.match(interface, line, re.I | re.A)) + '\n' + \
-                '\n'.join(line for line in peers.split('\n') if re.match(peer, line, re.I | re.A))
+            # Lines go as written; wg reads their comments too.
+            body = '\n'.join(line for line in header.split('\n')
+                              if wg_line(line)[0] in ('[Interface]', *WG_SECTIONS['[Interface]'])) + '\n' + \
+                '\n'.join(line for line in peers.split('\n') if wg_line(line)[0] in ('[Peer]', *WG_SECTIONS['[Peer]']))
             self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body + '\n')
         for argv in spec.get('apply', []):
             self.command(argv)

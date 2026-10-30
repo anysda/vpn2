@@ -41,7 +41,7 @@ if [[ -f /var/lib/anysda-vpn2/runtime/telegram-runtime.json ]]; then
 fi
 
 install -d -o root -g root -m 0755 /usr/local/lib/vpn2-control /etc/vpn2-control
-for source in contract.py backend.py server.py launcher.py; do
+for source in contract.py backend.py server.py launcher.py apply.py; do
   install -o root -g root -m 0644 "$CONTROL_SOURCE/$source" /usr/local/lib/vpn2-control/
 done
 install -o root -g root -m 0644 "$POOL_SOURCE" /usr/local/lib/vpn2-control/vpn-pools.json

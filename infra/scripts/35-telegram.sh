@@ -102,10 +102,10 @@ fi
 # если в runtime то же, что прошлый деплой взял из config; заданное в панели
 # остаётся. Взятое из
 # config храним в /etc/anysda: оно живёт и без контейнера бота и входит в копию.
-# Узел старше этого файла: взятое из config есть только в env контейнера бота.
+# Узел старше этого файла или файл битый: взятое из config есть только в env
+# контейнера бота.
 previous_env='[]'
-if [[ ! -f /etc/anysda/telegram-from-config.json ]] \
-    && [[ -n "$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')" ]]; then
+if [[ -n "$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')" ]]; then
   previous_env=$(docker inspect --format '{{json .Config.Env}}' anysda-tgbot)
 fi
 PREVIOUS_ENV="$previous_env" TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
@@ -115,9 +115,11 @@ from pathlib import Path
 path = Path('/etc/anysda/telegram-runtime.json')
 taken = Path('/etc/anysda/telegram-from-config.json')
 runtime = json.loads(path.read_text())
-if taken.exists():
+try:
     previous = json.loads(taken.read_text())
-else:
+except (OSError, ValueError):
+    previous = None
+if not isinstance(previous, dict):
     env = dict(item.split('=', 1) for item in json.loads(os.environ['PREVIOUS_ENV']))
     previous = {field: env.get('TELEGRAM_' + field.upper(), '')
                 for field in ('bot_token', 'chat_id', 'admin_username')}
@@ -134,10 +136,13 @@ for field in ('bot_token', 'chat_id', 'admin_username'):
         changed = True
 if changed:
     path.write_text(json.dumps(runtime) + '\n')
-fd = os.open(taken, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+temp = taken.with_name('.' + taken.name + '.tmp')
+temp.unlink(missing_ok=True)
+fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(fd, 'w') as file:
+    os.fchmod(file.fileno(), 0o600)
     json.dump(current, file)
-os.chmod(taken, 0o600)
+os.replace(temp, taken)
 PYEOF
 
 # ----------------------------------------------------------------------------

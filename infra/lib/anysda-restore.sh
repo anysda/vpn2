@@ -1054,6 +1054,10 @@ if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then
   if [[ ! -f "$BUNDLE_DIR/etc-anysda/sso-runtime.json" ]]; then
     rm -f /etc/anysda/sso-runtime.json
   fi
+  # Архив снят до файла «взятое из config»: прежний с узла не оставляем.
+  if [[ ! -f "$BUNDLE_DIR/etc-anysda/telegram-from-config.json" ]]; then
+    rm -f /etc/anysda/telegram-from-config.json
+  fi
   # backup.env мог не быть в архиве (старый формат) — оставляем текущий нетронутым
 fi
 STEP="восстановление WireGuard"

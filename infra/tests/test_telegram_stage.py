@@ -148,14 +148,22 @@ class TelegramStageTests(unittest.TestCase):
         self.ok()
         self.assertEqual(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET'], 'replacement-test-secret')
         self.assertEqual(self.container_env('anysda-tgbot')['TGBOT_SECRET'], 'replacement-test-secret')
-        self.ok(TELEGRAM_BOT_TOKEN='')
-        self.assertNotIn('anysda-tgbot', self.data()['containers'])
-        self.assertEqual(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET'], '')
-        self.assertFalse(secret_file.exists())
-        self.assertFalse((self.root / 'etc/anysda/telegram-runtime.json').exists())
-        self.ok(TELEGRAM_BOT_TOKEN='')
+        # Токен убрали из config.yaml, а в панели сохранили свой: бот остаётся
+        # на месте с тем же секретом, токен из панели не стирается.
+        runtime = self.root / 'etc/anysda/telegram-runtime.json'
+        saved = json.loads(runtime.read_text()) | dict(bot_token='987654:panel-only')
+        runtime.write_text(json.dumps(saved))
+        for _ in range(2):
+            self.ok(TELEGRAM_BOT_TOKEN='')
+            self.assertIn('anysda-tgbot', self.data()['containers'])
+            self.assertEqual(secret_file.read_text(), 'replacement-test-secret')
+            self.assertEqual(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET'], 'replacement-test-secret')
+            self.assertEqual(self.container_env('anysda-tgbot')['TGBOT_SECRET'], 'replacement-test-secret')
+            self.assertEqual(json.loads(runtime.read_text()), saved)
         self.ok()
-        self.assertEqual(len(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET']), 32)
+        self.assertIn('anysda-tgbot', self.data()['containers'])
+        self.assertEqual(self.container_env('anysda-vpn2')['NUXT_TGBOT_SECRET'], 'replacement-test-secret')
+        self.assertEqual(self.container_env('anysda-tgbot')['TGBOT_SECRET'], 'replacement-test-secret')
 
     def test_config_changes_reach_runtime_without_overwriting_unchanged_ui_fields(self):
         self.ok()

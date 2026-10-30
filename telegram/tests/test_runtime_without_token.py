@@ -84,7 +84,7 @@ class RuntimeWithoutTokenTests(unittest.TestCase):
     def start(self):
         # Окружение как у контейнера, поставленного без токена в config.yaml.
         env = dict(os.environ, TELEGRAM_BOT_TOKEN='', TELEGRAM_CHAT_ID='',
-                   TELEGRAM_ADMIN_USERNAME='', TGBOT_SECRET='TEST_ONLY_EVENT_SECRET',
+                   TELEGRAM_ADMIN_USERNAME='', TGBOT_SECRET='evt-secret',
                    TGBOT_EVENT_PORT=str(free_port()), ANYSDA_URL='http://127.0.0.1:9',
                    TG_PROXY='http://127.0.0.1:9', TGBOT_INVALID_TOKEN_PAUSE_SEC='0',
                    TGBOT_OUTBOX_PATH=str(self.root / 'outbox.sqlite'))

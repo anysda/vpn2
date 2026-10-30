@@ -78,6 +78,35 @@ class TelegramConfigRemovedTests(unittest.TestCase):
             self.assertEqual(runtime['chat_id'], '200', runtime)
             self.assert_bot_waits()
 
+    def remove_bot_container(self):
+        """Контейнер бота удалён руками или стадия 35 упала между docker rm и docker run."""
+        data = self.data()
+        data['containers'].pop('anysda-tgbot')
+        self.state.write_text(json.dumps(data))
+
+    def test_config_token_removed_without_bot_container(self):
+        """Край 1: контейнера бота нет - deploy без telegram всё равно выключает бота из config."""
+        self.ok()
+        self.assertEqual(self.runtime()['bot_token'], '123456:test-only')
+        self.remove_bot_container()
+        for _ in range(2):
+            self.ok(**EMPTY)
+            runtime = self.runtime()
+            self.assertEqual(runtime.get('bot_token', ''), '', runtime)
+            self.assertEqual(runtime.get('chat_id', ''), '', runtime)
+            self.assert_bot_waits()
+            self.assertEqual(self.container_env('anysda-tgbot')['TELEGRAM_BOT_TOKEN'], '')
+
+    def test_panel_token_survives_deploy_without_bot_container(self):
+        """Край 2: контейнера бота нет, токен заменён в панели - deploy без telegram его оставляет."""
+        self.ok()
+        saved = self.save_in_panel(bot_token='987654:panel-only', chat_id='200')
+        self.remove_bot_container()
+        for _ in range(2):
+            self.ok(**EMPTY)
+            self.assertEqual(self.runtime(), saved)
+            self.assert_bot_waits()
+
     def test_new_config_token_wins_over_runtime(self):
         """Край 4: новый токен в config побеждает токен в runtime, бот включается снова."""
         self.ok()
@@ -189,14 +218,21 @@ die() { echo "die: $*" >&2; exit 1; }
         self.assertTrue(self.prefetched(), self.calls.read_text())
 
     def test_no_token_anywhere_stays_silent(self):
-        """Край 3: config пуст и runtime пуст или его нет - не шлёт и не тянет, как сейчас."""
+        """Край 3: config пуст и runtime пуст или его нет - не шлёт, а образ бота тянет:
+        стадия 35 ставит бота при любом deploy."""
         for runtime in (dict(bot_token='', chat_id='', admin_username=''), None):
             with self.subTest(runtime=runtime):
                 self.setUp()
                 self.config()
                 self.node(runtime)
                 self.assertEqual(self.announced(), [], self.calls.read_text())
-                self.assertEqual(self.prefetched(), [], self.calls.read_text())
+                self.assertTrue(self.prefetched(), self.calls.read_text())
+
+    def test_image_pull_off_skips_bot_prefetch(self):
+        """Край 3: TGBOT_IMAGE_PULL=false - единственное, что выключает предзагрузку образа бота."""
+        self.config(TELEGRAM_BOT_TOKEN='123456:test-only', TGBOT_IMAGE_PULL='false')
+        self.node(dict(bot_token='123456:test-only', chat_id='100', admin_username=''))
+        self.assertEqual(self.prefetched(), [], self.calls.read_text())
 
 
 if __name__ == '__main__':

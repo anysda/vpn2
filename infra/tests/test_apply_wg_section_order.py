@@ -46,7 +46,25 @@ class SectionOrderTests(unittest.TestCase):
                     message = self.rejected(HEADER + peer('a') + later + tail)
                     self.assertIn('/etc/wireguard/wg0.conf', message)
                     self.assertIn('after [Peer] number 1', message)
-                    self.assertIn('first [Interface]', message)
+                    self.assertIn('into the [Interface] of the config you install', message)
+                    self.assertIn('delete that section from the file', message)
+
+    def test_advice_followed_keeps_the_key(self):
+        # The refusal's advice, done as written: the key moves into the candidate's
+        # [Interface], the later section leaves wg0.conf. The key must reach wg.
+        later = '\n[Interface]\nFwMark = 0x10\n'
+        self.rejected(HEADER + peer('a') + later + peer('b'))
+        self.path.write_text(HEADER + peer('a') + peer('b'))
+        self.new.write_text(HEADER.replace('[Interface]\n', '[Interface]\nFwMark = 0x10\n', 1))
+        self.host.calls.clear()
+        self.applier.install('wg', self.new)
+        synced = [data for argv, data in self.host.calls if argv[:2] == ['/usr/bin/wg', 'syncconf']]
+        self.assertEqual(len(synced), 1)
+        self.assertIn('FwMark = 0x10', synced[0])
+        written = self.path.read_text()
+        self.assertIn('FwMark = 0x10', apply.wg_split(written)[0])
+        for name in 'ab':
+            self.assertEqual(written.count(KEY[name]), 1, written)
 
     def test_key_before_the_first_interface_is_rejected(self):
         for key in ('ListenPort = 51820', f'PrivateKey = {KEY["s"]}', 'FwMark = 1'):

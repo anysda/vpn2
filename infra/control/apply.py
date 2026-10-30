@@ -254,10 +254,12 @@ class Applier:
                     # wg reads a later [Interface] too, but wg_split() keeps only the
                     # first one as the deployment's: an apply replaces it whole, and
                     # keys left in the peer tail would override the new header.
-                    # The peer tail is always the live file's (with_access).
+                    # The peer tail is always the live file's (with_access), the header
+                    # always the candidate's: a key survives only in the candidate.
                     if section == '[Peer]' and name == '[Interface]':
                         raise ValueError(f'{RESOURCES["wg"]["path"]}: {line!a} after [Peer] number {len(public)}; '
-                                         'move the keys under it into the first [Interface]')
+                                         'move the keys under it into the [Interface] of the config you install '
+                                         'and delete that section from the file')
                     section = name
                     public += [0] if name == '[Peer]' else []
                     continue

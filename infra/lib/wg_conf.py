@@ -7,10 +7,12 @@ ValueError с «AllowedIPs», «PublicKey» или строкой, котору�
 import ipaddress
 import re
 
-# Имена, которые wg принимает в секции; в [Interface] ещё имена, которые wg-quick убирает до wg.
-NAMES = {'[interface]': {'privatekey', 'listenport', 'fwmark', 'address', 'dns', 'mtu', 'table',
-                         'preup', 'postup', 'predown', 'postdown', 'saveconfig'},
+# Имена, которые wg принимает в секции.
+NAMES = {'[interface]': {'privatekey', 'listenport', 'fwmark'},
          '[peer]': {'publickey', 'presharedkey', 'allowedips', 'endpoint', 'persistentkeepalive'}}
+# Имена, которые wg-quick убирает до wg, - только в секции `[Interface]`.
+WG_QUICK = {'address', 'dns', 'mtu', 'table', 'preup', 'postup', 'predown', 'postdown', 'saveconfig'}
+SPACE = ' \t\n\v\f\r'
 
 
 def wg_sections(text):
@@ -34,20 +36,29 @@ def wg_sections(text):
 def unrecognized(text):
     """Первая строка, которую wg-quick и wg не распознают (`Line unrecognized`), или None.
 
-    Неизвестная секция, строка вне секции или без `=`, имя не из NAMES своей секции.
-    Комментарии и пустые строки допустимы. В ответе номер строки и имя без значения;
-    имя не из одних букв (скажем, ключ без `=`) не печатается.
+    wg-quick убирает свои имена (WG_QUICK) только после заголовка `[Interface]`
+    целиком (регистр любой), имя обрезает лишь по краям. Остальное читает wg без
+    пробельных символов: неизвестная секция, строка вне секции или без `=`, имя
+    не из NAMES своей секции, пустое значение. Комментарии и пустые строки
+    допустимы. В ответе номер строки и имя без значения; имя не из одних букв
+    (скажем, ключ без `=`) не печатается.
     """
-    section = None
+    section, quick = None, False
     for number, line in enumerate(text.split('\n'), 1):
-        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        stripped = line.split('#', 1)[0]
+        key = stripped.partition('=')[0].strip(SPACE).encode().lower().decode()
+        if key.startswith('['):
+            quick = key == '[interface]'
+        elif quick and '=' in stripped and key in WG_QUICK:
+            continue
+        clean = re.sub(f'[{SPACE}]', '', stripped)
         if not clean:
             continue
-        name, eq, _ = clean.partition('=')
+        name, eq, value = clean.partition('=')
         lower = name.encode().lower().decode()
         if clean.startswith('[') and lower in NAMES:
             section = lower
-        elif not eq or lower not in NAMES.get(section, ()):
+        elif not eq or not value or lower not in NAMES.get(section, ()):
             shown = f' `{name}`' if re.fullmatch(r'\[?[^\W\d_]{1,32}\]?', name) else ''
             return f'строка {number}{shown}'
     return None

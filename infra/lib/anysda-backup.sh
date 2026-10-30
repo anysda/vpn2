@@ -60,9 +60,10 @@ trap 'report_failure $?' EXIT
 # получит «certificate revoked», не подключится или подключится без доступа.
 # Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
 # Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR, без неё - из каталога библиотек
-# узла, куда его ставит 26-backup (не рядом со скриптом: в /usr/local/bin старый).
+# узла, куда его ставит 26-backup (не рядом со скриптом и не из текущего
+# каталога, `python3 -P`: в /usr/local/bin старый).
 check_bundle() {
-  python3 - "$1" "${ANYSDA_LIB_DIR:-/usr/local/lib/anysda}" <<'PY'
+  python3 -P - "$1" "${ANYSDA_LIB_DIR:-/usr/local/lib/anysda}" <<'PY'
 import base64, calendar, json, pathlib, re, sqlite3, sys, time
 
 root = pathlib.Path(sys.argv[1])

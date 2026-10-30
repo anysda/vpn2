@@ -719,6 +719,7 @@ run_stage_on_host() {
   # Контрольный клиент и цель проверки трафика: клиент идёт только на entry.
   if [[ "$stage" == 99-verify && "$host" == ru ]]; then
     push "$DEPLOY_ROOT/lib/verify-traffic.py" || return 1
+    push "$DEPLOY_ROOT/lib/wg_conf.py" || return 1
     push "$DEPLOY_ROOT/lib/verify-target.py" || return 1
   fi
 
@@ -815,6 +816,7 @@ run_stage_on_host() {
       [[ -f "$lib" ]] || die "lib/$f не найден"
       push "$lib" "$f" || return 1
     done
+    push "$DEPLOY_ROOT/lib/wg_conf.py" || return 1
   fi
 
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает

@@ -135,6 +135,8 @@ echo "[$HOST_TAG] [2/4] /usr/local/bin/anysda-{backup,restore,backup-list}.sh"
 install -m 0755 /tmp/anysda/anysda-backup.sh      /usr/local/bin/anysda-backup.sh
 install -m 0755 /tmp/anysda/anysda-restore.sh     /usr/local/bin/anysda-restore.sh
 install -m 0755 /tmp/anysda/anysda-backup-list.sh /usr/local/bin/anysda-backup-list.sh
+# Разбор wg0.conf для сверки бэкапа: anysda-backup.sh берёт его рядом с собой.
+install -m 0644 /tmp/anysda/wg_conf.py           /usr/local/bin/wg_conf.py
 # Общие функции стадий: anysda-restore берёт отсюда wg0_apply.
 install -D -m 0644 /tmp/anysda/anysda-svc.sh     /usr/local/lib/anysda/anysda-svc.sh
 install -m 0644 /tmp/anysda/vpn-pools.json       /usr/local/lib/anysda/vpn-pools.json

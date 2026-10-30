@@ -300,8 +300,10 @@ fi
 # в БД уже отозван в CRL архива, у устройства нет пира WireGuard или учётки
 # IKEv2, у отключённого они остались. Восстанавливать можно, но такие
 # устройства перевыпустить: перевыпуск заново пишет конфиги из БД.
+# Разбор wg0.conf сверка берёт рядом с restore: 26-backup ставит их вместе.
 CHECK=/usr/local/bin/anysda-backup.sh
-if [[ -x "$CHECK" ]] && ! MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1); then
+if [[ -x "$CHECK" ]] &&
+  ! MISMATCH=$(ANYSDA_LIB_DIR=$(dirname "${BASH_SOURCE[0]}") "$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1); then
   WHAT=
   [[ $MISMATCH != *CRL* ]] || WHAT+=', CRL OpenVPN'
   [[ $MISMATCH != *WireGuard* ]] || WHAT+=', пиры WireGuard'

@@ -29,6 +29,7 @@ import contextlib
 import datetime
 import fcntl
 import http.client
+import importlib.util
 import ipaddress
 import json
 import os
@@ -47,6 +48,12 @@ import tempfile
 import threading
 import time
 import urllib.request
+
+# wg0.conf читается одним разбором с бэкапом: wg_conf.py, доставленный рядом с этим файлом.
+_spec = importlib.util.spec_from_file_location('wg_conf', Path(__file__).with_name('wg_conf.py'))
+wg_conf = sys.modules['wg_conf'] = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(wg_conf)
+wg_sections, conf_peers = wg_conf.wg_sections, wg_conf.conf_peers
 
 NS = 'vpn2-verify'
 HOST_IF = 'vp2verify'
@@ -754,67 +761,6 @@ def control_call(method, params):
     if not isinstance(reply, dict) or reply.get('ok') is not True:
         raise ControlError(str(reply.get('error') if isinstance(reply, dict) else 'неверный ответ'))
     return reply.get('result')
-
-
-def wg_sections(text):
-    """wg0.conf по секциям, как его читает wg: [(секция, [(имя, значение, строка)])].
-
-    Как в config.c wireguard-tools: строка до первого `#`, без пробельных
-    символов, имена секций и ключей в любом регистре, но только ASCII.
-    Строки до первой секции - в секции ''.
-    """
-    sections = [('', [])]
-    for line in text.split('\n'):
-        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
-        name, eq, value = clean.partition('=')
-        name = name.encode().lower().decode()
-        if clean.startswith('['):
-            sections.append((name, []))
-        elif eq:
-            sections[-1][1].append((name, value, line))
-    return sections
-
-
-def wg_network(entry):
-    """Сеть записи AllowedIPs без знака `+`/`-`, как её держит wg и печатает `wg show allowed-ips`.
-
-    Без маски - /32 или /128. Запись, которую wg не разберёт, - ValueError с этой записью.
-    """
-    address = entry[1:] if entry[:1] in ('+', '-') else entry
-    try:
-        if not re.fullmatch(r'[^/%]+(/[0-9]+)?', address):
-            raise ValueError(address)
-        return str(ipaddress.ip_network(address, strict=False))
-    except ValueError:
-        raise ValueError(f'wg0.conf: AllowedIPs `{entry}` не разбирается, wg отвергает файл') from None
-
-
-def conf_peers(text):
-    """Пиры wg0.conf: ключ, PSK и AllowedIPs, как их видит wg.
-
-    Записи AllowedIPs - сети (wg_network), строки складываются по порядку:
-    `-X` убирает X у этого пира, `+X` и `X` добавляют; адрес, который позже
-    назвал другой пир, остаётся только у него. Файл, который wg отвергает, - ValueError.
-    """
-    peers, owners = [], {}
-    for section, entries in wg_sections(text):
-        if section == '[peer]':
-            values = {name: value for name, value, _ in entries}
-            peer = {'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
-                    'allowed': []}
-            peers.append(peer)
-            for value in (value for name, value, _ in entries if name == 'allowedips'):
-                if not value:
-                    raise ValueError('wg0.conf: пустая строка AllowedIPs, wg отвергает файл')
-                for entry in filter(None, value.split(',')):
-                    network = wg_network(entry)
-                    if entry[0] != '-':
-                        owners[network] = peer
-                    elif owners.get(network) is peer:
-                        del owners[network]
-    for network, peer in owners.items():
-        peer['allowed'].append(network)
-    return peers
 
 
 def apply_peers(text):

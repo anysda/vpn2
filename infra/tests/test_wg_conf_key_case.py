@@ -229,7 +229,28 @@ class WgConfKeyCaseTests(unittest.TestCase):
     def test_6_non_ascii_name_is_not_a_key_anywhere(self):
         style = 'lookalike'
         with self.subTest('1 backup'):
-            self.assertIn('устройство 1: нет пира WireGuard', backup_check(style))
+            # Both [Peer] lack PublicKey for wg: the whole check-bundle fails like wg rejects the file.
+            import json
+            import sqlite3
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'manifest.json').write_text(json.dumps({'timestamp': '2026-10-30T120000Z'}))
+                con = sqlite3.connect(root / 'db.sqlite')
+                con.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT, wg_public_key TEXT, '
+                            'wg_preshared_key TEXT, wg_ip TEXT)')
+                con.execute('INSERT INTO devices VALUES (1, ?, ?, ?, ?)', ('one', PEER, 'psk-one', '10.66.66.2'))
+                con.commit()
+                con.close()
+                (root / 'etc-wireguard').mkdir()
+                (root / 'etc-wireguard/wg0.conf').write_text(conf(style))
+                done = subprocess.run(['bash', str(ROOT / 'infra/lib/anysda-backup.sh'), '--check-bundle', directory],
+                                      env=dict(os.environ, ANYSDA_LIB_DIR=str(ROOT / 'infra/lib')),
+                                      capture_output=True, text=True, timeout=60, check=False)
+            code, lines, err = done.returncode, done.stdout.splitlines(), done.stderr
+            self.assertEqual(code, 3, (lines, err))
+            self.assertTrue([line for line in lines if 'PublicKey' in line], (lines, err))
+            for value in (SERVER, PEER, OLD):
+                self.assertNotIn(value, '\n'.join(lines) + err)
         with self.subTest('2a restore server.priv'):
             self.assertEqual(restore_server_priv(style), (5, ''))
         with self.subTest('2b restore wg_key'):
@@ -239,11 +260,16 @@ class WgConfKeyCaseTests(unittest.TestCase):
         with self.subTest('2d restore drop peers'):
             self.assertEqual(restore_drop_peers(style), conf(style))
         with self.subTest('3a verify conf_peers'):
-            self.assertEqual([p[0] for p in verify_conf_peers(style)], ['', ''])
+            with self.assertRaises(ValueError) as caught:
+                verify_conf_peers(style)
+            self.assertIn('PublicKey', str(caught.exception))
         with self.subTest('3b verify syncconf'):
-            body = verify_syncconf_body(style)
+            # No body with the keys is built, nothing goes to `wg syncconf`.
+            with self.assertRaises(ValueError) as caught:
+                verify_syncconf_body(style)
+            self.assertIn('PublicKey', str(caught.exception))
             for value in (SERVER, '51820', '0x66', PEER, OLD):
-                self.assertNotIn(value, body)
+                self.assertNotIn(value, str(caught.exception))
         with self.subTest('4 28-wireguard'):
             code, priv, stderr = wireguard_rerun(style)
             self.assertNotEqual(code, 0)

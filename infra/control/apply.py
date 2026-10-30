@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 RESOURCES = {
@@ -66,9 +67,11 @@ class Failed(Exception):
         self.code = code
 
 
+ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
+
+
 def run(argv, data=None):
-    result = subprocess.run(argv, input=data, capture_output=True, text=True, timeout=60,
-                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    result = subprocess.run(argv, input=data, capture_output=True, text=True, timeout=60, env=ENV)
     if result.returncode:
         last = (result.stderr or result.stdout).strip().splitlines()
         # nft ends its message with the source line and a caret, openvpn with a
@@ -77,6 +80,49 @@ def run(argv, data=None):
         raise RuntimeError(f'{argv[0]} {argv[1] if len(argv) > 1 else ""}: '
                            f'{last[-1] if last else "rc=" + str(result.returncode)}')
     return result.stdout
+
+
+def tls_server_starts(scratch, cipher):
+    """openvpn starts a TLS server with this cipher, as the real server reads the line.
+
+    A server keeps --cipher for clients without cipher negotiation, BF-CBC included,
+    while --test-crypto takes it as a static key cipher, which OpenSSL 3 refuses for
+    BF-CBC without the legacy provider. The server opens a tun, so it starts as root
+    (sudo -n outside root) in a network namespace of its own, with a one-off
+    certificate. It does not exit by itself: it is stopped once started, on failure,
+    or after 60 s.
+    """
+    cert, key = scratch / 'tls.crt', scratch / 'tls.key'
+    if not cert.exists():
+        run(['/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+             '-nodes', '-keyout', str(key), '-out', str(cert), '-subj', '/CN=check', '-days', '1'])
+    root = [] if os.geteuid() == 0 else ['/usr/bin/sudo', '-n']
+    server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '/usr/sbin/openvpn', '--verb', '1',
+                                      '--dev', 'tun', '--server', '10.67.67.0', '255.255.255.0',
+                                      '--ca', str(cert), '--cert', str(cert), '--key', str(key),
+                                      '--dh', 'none', '--cipher', cipher],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV)
+    expired = []
+    timer = threading.Timer(60, lambda: expired.append(server.terminate()))
+    timer.start()
+    try:
+        for line in server.stdout:
+            if 'Initialization Sequence Completed' in line:
+                return True
+    finally:
+        timer.cancel()
+        # sudo passes SIGTERM on to openvpn, not SIGKILL.
+        if server.poll() is None:
+            server.terminate()
+        try:
+            server.wait(10)
+        except subprocess.TimeoutExpired:
+            server.kill()
+            server.wait()
+        server.stdout.close()
+    if expired:
+        raise RuntimeError(f'openvpn --cipher {cipher}: server did not start in 60 s')
+    return False
 
 
 def write(path, body, mode):
@@ -317,11 +363,13 @@ class Applier:
 
     def openvpn_accepts(self, key, option, name):
         # A static key lets --test-crypto run without TLS, in 2.6 as in 2.7. An AEAD
-        # cipher ignores --auth, so a digest is tried with a CBC cipher.
+        # cipher ignores --auth, so a digest is tried with a CBC cipher. The cipher
+        # line is what a TLS server keeps for old clients, so a TLS server decides it.
         if not name:
             return False
-        argv = {'cipher': ['--cipher', name],
-                'data-ciphers': ['--cipher', name, '--data-ciphers', name],
+        if option == 'cipher':
+            return tls_server_starts(Path(key).parent, name)
+        argv = {'data-ciphers': ['--cipher', name, '--data-ciphers', name],
                 'auth': ['--cipher', 'AES-256-CBC', '--auth', name]}[option]
         try:
             self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key] + argv)

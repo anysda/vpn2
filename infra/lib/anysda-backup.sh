@@ -59,14 +59,14 @@ trap 'report_failure $?' EXIT
 # IKEv2, у отключённого и удалённого их нет. Иначе восстановленный клиент
 # получит «certificate revoked», не подключится или подключится без доступа.
 # Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
-# Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR (без неё - рядом со скриптом),
-# затем из каталога библиотек узла, куда его ставит 26-backup.
+# Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR, без неё - из каталога библиотек
+# узла, куда его ставит 26-backup (не рядом со скриптом: в /usr/local/bin старый).
 check_bundle() {
-  python3 - "$1" "${ANYSDA_LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}" <<'PY'
+  python3 - "$1" "${ANYSDA_LIB_DIR:-/usr/local/lib/anysda}" <<'PY'
 import base64, calendar, json, pathlib, re, sqlite3, sys, time
 
 root = pathlib.Path(sys.argv[1])
-sys.path[:0] = [sys.argv[2], '/usr/local/lib/anysda']
+sys.path[:0] = [sys.argv[2]]
 db = root / 'db.sqlite'
 if not db.is_file():
     sys.exit(0)

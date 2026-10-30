@@ -2,10 +2,15 @@
 
 Один разбор для сверки бэкапа (anysda-backup.sh, на узле берёт из /usr/local/lib/anysda)
 и проверки трафика (verify-traffic.py, грузит рядом с собой). Файл, который wg отвергает, -
-ValueError с «AllowedIPs» или «PublicKey».
+ValueError с «AllowedIPs», «PublicKey» или строкой, которую wg не распознаёт.
 """
 import ipaddress
 import re
+
+# Имена, которые wg принимает в секции; в [Interface] ещё имена, которые wg-quick убирает до wg.
+NAMES = {'[interface]': {'privatekey', 'listenport', 'fwmark', 'address', 'dns', 'mtu', 'table',
+                         'preup', 'postup', 'predown', 'postdown', 'saveconfig'},
+         '[peer]': {'publickey', 'presharedkey', 'allowedips', 'endpoint', 'persistentkeepalive'}}
 
 
 def wg_sections(text):
@@ -24,6 +29,28 @@ def wg_sections(text):
         elif eq:
             sections[-1][1].append((name, value, line))
     return sections
+
+
+def unrecognized(text):
+    """Первая строка, которую wg-quick и wg не распознают (`Line unrecognized`), или None.
+
+    Неизвестная секция, строка вне секции или без `=`, имя не из NAMES своей секции.
+    Комментарии и пустые строки допустимы. В ответе номер строки и имя без значения;
+    имя не из одних букв (скажем, ключ без `=`) не печатается.
+    """
+    section = None
+    for number, line in enumerate(text.split('\n'), 1):
+        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        if not clean:
+            continue
+        name, eq, _ = clean.partition('=')
+        lower = name.encode().lower().decode()
+        if clean.startswith('[') and lower in NAMES:
+            section = lower
+        elif not eq or lower not in NAMES.get(section, ()):
+            shown = f' `{name}`' if re.fullmatch(r'\[?[^\W\d_]{1,32}\]?', name) else ''
+            return f'строка {number}{shown}'
+    return None
 
 
 def wg_network(entry):
@@ -48,7 +75,8 @@ def conf_peers(text):
     секция без записей со знаком заменяет его набор, `+X` добавляет X, `-X`
     убирает X у этого пира. Адрес, который позже назвал другой пир, остаётся
     только у него. Пир в ответе один раз, в порядке первой секции. Секция
-    без PublicKey или с пустым - ValueError: wg отвергает такой файл целиком.
+    без PublicKey или с пустым, строка, которую wg не распознаёт, - ValueError:
+    wg отвергает такой файл целиком. Пир без ключа называется раньше нераспознанной строки.
     """
     peers, by_key, owners = [], {}, {}
     for section, entries in wg_sections(text):
@@ -78,6 +106,9 @@ def conf_peers(text):
                 owners[network] = peer
             elif owners.get(network) is peer:
                 del owners[network]
+    line = unrecognized(text)
+    if line:
+        raise ValueError(f'wg0.conf: {line} не распознаётся, wg отвергает файл')
     for network, peer in owners.items():
         peer['allowed'].append(network)
     return peers

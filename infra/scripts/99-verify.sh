@@ -81,8 +81,11 @@ exit_ssh() {
   # stderr .bashrc приходит от sshd отдельным каналом и позже метки из stdout:
   # его читаем отдельно и показываем только сообщение ssh о соединении (255).
   errors=$(mktemp)
+  local t0=$SECONDS
   output=$(timeout -k 5 "$limit" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>"$errors") || rc=$?
-  if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+  # 124/137 отдаёт и сам экзит (exit в .bashrc, код команды): пределом это
+  # считается, только если время действительно вышло.
+  if [[ $rc -eq 124 || $rc -eq 137 ]] && (( SECONDS - t0 >= limit )); then
     rm -f -- "$errors"
     echo "экзит не ответил за предел ${limit} с: вход по ssh или .bashrc root на экзите завис"
     return "$rc"

@@ -1,7 +1,8 @@
 """wg0.conf так, как его читает wg (config.c wireguard-tools): секции, AllowedIPs, пиры.
 
-Один разбор для сверки бэкапа (anysda-backup.sh) и проверки трафика (verify-traffic.py),
-оба грузят этот файл рядом с собой. Файл, который wg отвергает, - ValueError с «AllowedIPs».
+Один разбор для сверки бэкапа (anysda-backup.sh, на узле берёт из /usr/local/lib/anysda)
+и проверки трафика (verify-traffic.py, грузит рядом с собой). Файл, который wg отвергает, -
+ValueError с «AllowedIPs» или «PublicKey».
 """
 import ipaddress
 import re
@@ -46,16 +47,19 @@ def conf_peers(text):
     Каждая секция [Peer] идёт в ядро по порядку, пир с тем же ключом - тот же пир:
     секция без записей со знаком заменяет его набор, `+X` добавляет X, `-X`
     убирает X у этого пира. Адрес, который позже назвал другой пир, остаётся
-    только у него. Пир в ответе один раз, в порядке первой секции; секции
-    без ключа - отдельные пиры с ключом ''.
+    только у него. Пир в ответе один раз, в порядке первой секции. Секция
+    без PublicKey или с пустым - ValueError: wg отвергает такой файл целиком.
     """
     peers, by_key, owners = [], {}, {}
     for section, entries in wg_sections(text):
         if section != '[peer]':
             continue
         values = {name: value for name, value, _ in entries}
-        key = values.get('publickey', '')
-        peer = by_key.get(key) if key else None
+        keys = [value for name, value, _ in entries if name == 'publickey']
+        if not keys or not all(keys):
+            raise ValueError('wg0.conf: пир без PublicKey, wg отвергает файл')
+        key = keys[-1]
+        peer = by_key.get(key)
         if peer is None:
             peer = {'key': key, 'preshared_key': '', 'allowed': []}
             peers.append(peer)

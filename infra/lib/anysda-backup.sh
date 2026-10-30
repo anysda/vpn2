@@ -59,13 +59,14 @@ trap 'report_failure $?' EXIT
 # IKEv2, у отключённого и удалённого их нет. Иначе восстановленный клиент
 # получит «certificate revoked», не подключится или подключится без доступа.
 # Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
-# Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR, без неё - рядом со скриптом.
+# Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR (без неё - рядом со скриптом),
+# затем из каталога библиотек узла, куда его ставит 26-backup.
 check_bundle() {
   python3 - "$1" "${ANYSDA_LIB_DIR:-$(dirname "${BASH_SOURCE[0]}")}" <<'PY'
 import base64, calendar, json, pathlib, re, sqlite3, sys, time
 
 root = pathlib.Path(sys.argv[1])
-sys.path.insert(0, sys.argv[2])
+sys.path[:0] = [sys.argv[2], '/usr/local/lib/anysda']
 db = root / 'db.sqlite'
 if not db.is_file():
     sys.exit(0)
@@ -174,12 +175,12 @@ def devices(*fields):
 
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
-    # Как wg (config.c): разбор wg0.conf один с verify-traffic.py - wg_conf.py рядом
-    # со скриптом. Файл, который wg отвергает, - жалоба вместо сверки.
+    # Как wg (config.c): разбор wg0.conf один с verify-traffic.py - wg_conf.py.
+    # Файл, который wg отвергает (пир без PublicKey тоже), - жалоба вместо сверки.
     from wg_conf import conf_peers
     addresses = {}
     try:
-        peers = {peer['key']: peer for peer in conf_peers(wg.read_text()) if peer['key']}
+        peers = {peer['key']: peer for peer in conf_peers(wg.read_text())}
     except ValueError as error:
         bad.append(str(error))
     else:

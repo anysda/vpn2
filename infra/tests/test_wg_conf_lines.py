@@ -124,20 +124,28 @@ def forms():
 
 
 def wg_quick_strip(text):
-    """The text wg-quick hands to wg: its own names in [Interface] taken out, any case."""
-    kept, section = [], None
+    """The text wg-quick hands to wg (parse_options): its own names taken out, any case.
+
+    The key is the line before `#` and the first `=`, trimmed only at its ends; a key
+    starting with `[` ends the section, and only the key `[Interface]` as a whole starts
+    the one where wg-quick takes its names out. `[ Interface ]` and `Post Up` stay for wg.
+    """
+    kept, inside = [], False
     for raw in text.split('\n'):
-        line = re.sub(r'[ \t\n\v\f\r]', '', raw.split('#', 1)[0])
-        if line.startswith('['):
-            section = line.lower()
-        elif section == '[interface]' and line.partition('=')[0].lower() in {n.lower() for n in WG_QUICK}:
+        key = raw.split('#', 1)[0].split('=', 1)[0].strip(' \t\n\v\f\r')
+        if key.startswith('['):
+            inside = key.encode().lower() == b'[interface]'
+        elif inside and key.encode().lower() in {n.lower().encode() for n in WG_QUICK}:
             continue
         kept.append(raw)
     return '\n'.join(kept)
 
 
 def wg_reject(text):
-    """config.c: the `Line unrecognized` error wg rejects the file with, or None."""
+    """config.c: the `Line unrecognized` error wg rejects the file with, or None.
+
+    A name matches only with a value after `=` (get_value: keylen >= linelen is no match).
+    """
     section = None
     for raw in text.split('\n'):
         line = re.sub(r'[ \t\n\v\f\r]', '', raw.split('#', 1)[0])
@@ -149,8 +157,9 @@ def wg_reject(text):
                 return f'Line unrecognized: `{line}\''
             section = lower.decode()
             continue
-        name, eq, _ = line.partition('=')
-        if not eq or section is None or name.encode().lower() not in {n.encode() for n in WG_NAMES[section]}:
+        name, eq, value = line.partition('=')
+        if not eq or not value or section is None or \
+                name.encode().lower() not in {n.encode() for n in WG_NAMES[section]}:
             return f'Line unrecognized: `{line}\''
     return None
 

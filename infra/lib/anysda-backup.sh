@@ -8,8 +8,8 @@
 # Архив содержит:
 #   - db.sqlite        — через sqlite3 .backup (без даунтайма панели)
 #   - etc-anysda/      — секреты панели/бота (admin-password, tgbot-secret,
-#                        clash-secret, telegram-runtime.json, manual-routes,
-#                        session-secret, anysda-config.yaml)
+#                        clash-secret, telegram-runtime.json, telegram-from-config.json,
+#                        manual-routes, session-secret, anysda-config.yaml)
 #   - etc-wireguard/   — wg0.conf + server.priv/server.pub (ключи для панели)
 #   - etc-openvpn/     — CA + серверный сертификат + ccd/ + crl.pem
 #   - etc-strongswan/  — IKEv2 CA + server cert/key

@@ -1366,8 +1366,7 @@ prefetch_images() {
     fi
     local imgs=()
     [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
-    [[ "${TGBOT_IMAGE_PULL:-true}" == false ]] || ! tgbot_enabled \
-      || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
+    [[ "${TGBOT_IMAGE_PULL:-true}" == false ]] || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
     [[ ${#imgs[@]} -gt 0 ]] || exit 0
     if ssh_exec "for i in ${imgs[*]}; do docker pull -q \"\$i\" || exit 1; done" >/dev/null 2>&1; then
       log "предзагрузка образов: ${imgs[*]}"

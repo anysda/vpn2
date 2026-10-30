@@ -98,33 +98,47 @@ PYEOF
 fi
 
 # Изменённые в config.yaml поля применяем и к runtime, иначе старый файл
-# перекроет новые env. Поле, убранное из config, стираем, если в runtime то же,
-# что прошлый деплой взял из config (env контейнера); заданное в панели остаётся.
-previous_bot=$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')
-if [[ -n "$previous_bot" ]]; then
+# перекроет новые env. Токен и чат, убранные из config, стираем (бот выключен),
+# если в runtime то же, что прошлый деплой взял из config; заданное в панели
+# остаётся. Взятое из
+# config храним в /etc/anysda: оно живёт и без контейнера бота и входит в копию.
+# Узел старше этого файла: взятое из config есть только в env контейнера бота.
+previous_env='[]'
+if [[ ! -f /etc/anysda/telegram-from-config.json ]] \
+    && [[ -n "$(docker ps -a --filter name='^anysda-tgbot$' --format '{{.Names}}')" ]]; then
   previous_env=$(docker inspect --format '{{json .Config.Env}}' anysda-tgbot)
-  PREVIOUS_ENV="$previous_env" TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
-    TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" TELEGRAM_ADMIN_USERNAME="${TELEGRAM_ADMIN_USERNAME:-}" python3 - <<'PYEOF'
+fi
+PREVIOUS_ENV="$previous_env" TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN" \
+  TELEGRAM_CHAT_ID="$TELEGRAM_CHAT_ID" TELEGRAM_ADMIN_USERNAME="${TELEGRAM_ADMIN_USERNAME:-}" python3 - <<'PYEOF'
 import json, os
 from pathlib import Path
 path = Path('/etc/anysda/telegram-runtime.json')
+taken = Path('/etc/anysda/telegram-from-config.json')
 runtime = json.loads(path.read_text())
-previous = dict(item.split('=', 1) for item in json.loads(os.environ['PREVIOUS_ENV']))
+if taken.exists():
+    previous = json.loads(taken.read_text())
+else:
+    env = dict(item.split('=', 1) for item in json.loads(os.environ['PREVIOUS_ENV']))
+    previous = {field: env.get('TELEGRAM_' + field.upper(), '')
+                for field in ('bot_token', 'chat_id', 'admin_username')}
+current = {}
 changed = False
 for field in ('bot_token', 'chat_id', 'admin_username'):
-    key = 'TELEGRAM_' + field.upper()
-    value = os.environ[key]
-    before = previous.get(key, '')
+    value = current[field] = os.environ['TELEGRAM_' + field.upper()]
+    before = previous.get(field, '')
     if value and value != before:
         runtime[field] = value
         changed = True
-    elif not value and before and runtime.get(field) == before:
+    elif field != 'admin_username' and not value and before and runtime.get(field) == before:
         runtime[field] = ''
         changed = True
 if changed:
     path.write_text(json.dumps(runtime) + '\n')
+fd = os.open(taken, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, 'w') as file:
+    json.dump(current, file)
+os.chmod(taken, 0o600)
 PYEOF
-fi
 
 # ----------------------------------------------------------------------------
 # 2. Pull bot image from the GitHub Container Registry (ghcr.io)

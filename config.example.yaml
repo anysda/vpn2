@@ -128,7 +128,8 @@ admin:
 #   querylog_size: 100
 
 # Telegram-бот (опционально).
-# Если задан — стейдж 35-telegram развернёт бот; иначе skip.
+# Бот ставится при любом deploy. Без токена ждёт его из панели; токен из config
+# включает бота, убранный из config - выключает (токен из панели остаётся).
 # telegram:
 #   bot_token: <telegram-bot-token>
 #   chat_id: <telegram-chat-id>

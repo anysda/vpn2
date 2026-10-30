@@ -10,9 +10,11 @@ import { addDevice, configDialog, deviceCard, openClient } from './support/clien
 
 // VPN2-598: камера телефона должна брать каждый QR с экрана с первого наведения.
 // Предел: не меньше 4 CSS px на модуль (тихая зона входит в счёт модулей),
-// на экране 390 px QR занимает не меньше 90 % ширины контента и не меньше
-// 2,5 CSS px на модуль; на отрисованном снимке вокруг модулей не меньше 4
-// модулей фона в светлой и тёмной теме.
+// на экране 390 px QR занимает не меньше 90 % ширины контента; на телефоне
+// 390 и 360 px (самая узкая ходовая ширина Android) не меньше 2,5 CSS px на
+// модуль, QR не выходит за шторку и экран, горизонтальной прокрутки нет; на
+// отрисованном снимке вокруг модулей не меньше 4 модулей фона в светлой и
+// тёмной теме.
 // Гоняет только e2e/qr-size.sh: QR_MODE=split (теги @split) - панель со сплитом
 // и вырезанным IP входа QR_ENTRY_IP (худший - 45.x), QR_MODE=full (@full) -
 // панель с NUXT_WG_SPLIT_LOCAL=false; QR_CONF_OUT - куда положить выданный
@@ -23,12 +25,15 @@ const MIN_QUIET = 4
 const MIN_SHARE = 0.9
 const DESKTOP = { width: 1280, height: 800 }
 const PHONE = { width: 390, height: 844 }
+const NARROW = { width: 360, height: 780 }
 const ENTRY_IP = process.env.QR_ENTRY_IP || ''
 const SCREENS = [
   { tag: '1280x800 светлая', viewport: DESKTOP, dpr: 1, scheme: 'light' },
   { tag: '1280x800 тёмная', viewport: DESKTOP, dpr: 1, scheme: 'dark' },
   { tag: '390x844 DPR 3 светлая', viewport: PHONE, dpr: 3, scheme: 'light' },
   { tag: '390x844 DPR 3 тёмная', viewport: PHONE, dpr: 3, scheme: 'dark' },
+  { tag: '360x780 DPR 3 светлая', viewport: NARROW, dpr: 3, scheme: 'light' },
+  { tag: '360x780 DPR 3 тёмная', viewport: NARROW, dpr: 3, scheme: 'dark' },
 ] as const
 type Screen = typeof SCREENS[number]
 const isPhone = (s: Screen) => s.viewport.width < 500
@@ -224,9 +229,33 @@ async function rendered(page: Page, el: Locator) {
   }
 }
 
-/** Края 2 и 3: тихая зона на любом экране, плотность на телефоне. */
+/** QR в шторке (окне) и на экране, без горизонтальной прокрутки страницы и шторки. */
+async function checkFits(what: string, s: Screen, el: Locator) {
+  const f = await el.evaluate((node) => {
+    const r = node.getBoundingClientRect()
+    const sheet = node.closest('[role="dialog"]')
+    const b = sheet?.getBoundingClientRect()
+    return {
+      left: r.left, right: r.right, vw: innerWidth,
+      boxLeft: b ? b.left : 0, boxRight: b ? b.right : innerWidth,
+      boxScroll: sheet ? sheet.scrollWidth - sheet.clientWidth : 0,
+      pageScroll: document.documentElement.scrollWidth - innerWidth,
+    }
+  })
+  console.log(`QR ${what}, ${s.tag}: QR ${f.left.toFixed(1)}-${f.right.toFixed(1)} px, шторка ${f.boxLeft.toFixed(1)}-${f.boxRight.toFixed(1)}, `
+    + `экран ${f.vw}, лишняя ширина: страница ${f.pageScroll}, шторка ${f.boxScroll}`)
+  expect.soft(f.left, `${what}, ${s.tag}: QR не выходит за экран слева`).toBeGreaterThanOrEqual(0)
+  expect.soft(f.right, `${what}, ${s.tag}: QR не выходит за экран справа`).toBeLessThanOrEqual(f.vw)
+  expect.soft(f.left, `${what}, ${s.tag}: QR не выходит за шторку слева`).toBeGreaterThanOrEqual(f.boxLeft)
+  expect.soft(f.right, `${what}, ${s.tag}: QR не выходит за шторку справа`).toBeLessThanOrEqual(f.boxRight)
+  expect.soft(f.pageScroll, `${what}, ${s.tag}: горизонтальная прокрутка страницы, px`).toBeLessThanOrEqual(0)
+  expect.soft(f.boxScroll, `${what}, ${s.tag}: горизонтальная прокрутка шторки, px`).toBeLessThanOrEqual(0)
+}
+
+/** Края 2 и 3: тихая зона на любом экране; на телефоне плотность и QR в пределах экрана. */
 async function checkRendered(what: string, s: Screen, page: Page, el: Locator) {
   const r = await rendered(page, el)
+  if (isPhone(s)) await checkFits(what, s, el)
   expect(r, `${what}, ${s.tag}: на снимке нет модулей QR`).not.toBeNull()
   console.log(`QR ${what}, ${s.tag}: на снимке ${r!.modules} модулей, ${r!.css.toFixed(2)} CSS px/модуль, `
     + `тихая зона ${r!.quiet.toFixed(2)} модуля`)
@@ -416,7 +445,7 @@ test.describe('VPN2-598: размер QR на экране', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('8. панель WG, худший конфиг: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280 и 390), на 390x844 DPR 3 ≥ 2,5 px/модуль', { tag: '@split' }, async ({ browser, page, baseURL }) => {
+  test('8. панель WG, худший конфиг: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280, 390 и 360), на 390x844 и 360x780 DPR 3 ≥ 2,5 px/модуль и QR в шторке без прокрутки', { tag: '@split' }, async ({ browser, page, baseURL }) => {
     test.setTimeout(180_000)
     await loginApi(page)
     const client = uniq('qr-shot')
@@ -438,7 +467,7 @@ test.describe('VPN2-598: размер QR на экране', () => {
     }
   })
 
-  test('9. аварийная панель hy2: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280 и 390), на 390x844 DPR 3 ≥ 2,5 px/модуль', { tag: '@split' }, async ({ browser }) => {
+  test('9. аварийная панель hy2: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280, 390 и 360), на 390x844 и 360x780 DPR 3 ≥ 2,5 px/модуль и QR в шторке без прокрутки', { tag: '@split' }, async ({ browser }) => {
     test.setTimeout(180_000)
     execFileSync('node', ['node_modules/vite/bin/vite.js', 'build', '--config', 'emergency/vite.config.ts'], { cwd: process.cwd(), stdio: 'pipe' })
     const startup = await emergencyFixture()
@@ -464,7 +493,7 @@ test.describe('VPN2-598: размер QR на экране', () => {
     }
   })
 
-  test('10. панель TOTP: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280 и 390), на 390x844 DPR 3 ≥ 2,5 px/модуль', { tag: '@split' }, async ({ browser, baseURL }) => {
+  test('10. панель TOTP: тихая зона ≥ 4 модулей на снимке (светлая и тёмная, 1280, 390 и 360), на 390x844 и 360x780 DPR 3 ≥ 2,5 px/модуль и QR в шторке без прокрутки', { tag: '@split' }, async ({ browser, baseURL }) => {
     test.setTimeout(180_000)
     for (const s of SCREENS) {
       const context = await screenContext(browser, s, baseURL)

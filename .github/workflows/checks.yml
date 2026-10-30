@@ -96,6 +96,9 @@ jobs:
           cache-dependency-path: telegram/requirements.txt
       - name: регрессии Telegram-бота
         run: |
+          # zbarimg раскодирует PNG QR бота (test_qr_size.py).
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends zbar-tools
           python3 -m pip install -r telegram/requirements.txt
           python3 -m unittest discover -s telegram/tests -v
 
@@ -222,6 +225,17 @@ jobs:
           E2E_SKIP_BUILD: '1'
           E2E_SHARDS: '4'
         run: python3 e2e/with-network-churn.py pnpm e2e:local
+      # Худший конфиг (вход 45.x, сплит) и панель без сплита, аварийка hy2 и бот:
+      # qrencode рисует PNG аварийки, zbarimg раскодирует PNG.
+      - name: размер QR на худшем конфиге
+        if: steps.paths.outputs.run == 'true'
+        env:
+          E2E_SKIP_BUILD: '1'
+          E2E_BASE_IMAGE: vpn2-panel:e2e
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
+          bash e2e/qr-size.sh
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v4

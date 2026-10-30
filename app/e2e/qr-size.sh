@@ -6,8 +6,10 @@
 # Затем e2e/qr-size.spec.ts на каждой и telegram/tests/test_qr_size.py на
 # конфиге, который выдала первая панель.
 #
+# Так же идёт в CI (panel-e2e), там образ панели уже собран:
 #   DOCKER="sudo -n docker" bash app/e2e/qr-size.sh
-#   E2E_SKIP_BUILD=1 ... - не пересобирать образ vpn2-panel:qr
+#   E2E_SKIP_BUILD=1 E2E_BASE_IMAGE=vpn2-panel:e2e ... - не пересобирать панель,
+#   только слой со службами VPN (e2e/Dockerfile.vpn) поверх E2E_BASE_IMAGE
 set -euo pipefail
 
 APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,6 +17,7 @@ APP_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$APP_DIR/e2e/support/panel-stand.sh"
 REPO_DIR=$(cd "$APP_DIR/.." && pwd)
 IMAGE=${E2E_IMAGE:-vpn2-panel:qr}
+BASE_IMAGE=${E2E_BASE_IMAGE:-$IMAGE-base}
 NAME=${E2E_CONTAINER:-vpn2-panel-qr}
 PORT=${E2E_PORT:-31790}
 ENTRY_IP=${QR_ENTRY_IP:-45.137.198.213}
@@ -31,10 +34,10 @@ done
 total=$SECONDS
 if [[ -z ${E2E_SKIP_BUILD:-} ]]; then
   started=$SECONDS
-  dk build -q -t "$IMAGE-base" "$APP_DIR"
-  dk build -q --build-arg PANEL_IMAGE="$IMAGE-base" -f "$APP_DIR/e2e/Dockerfile.vpn" -t "$IMAGE" "$APP_DIR/e2e"
+  dk build -q -t "$BASE_IMAGE" "$APP_DIR"
   echo "timing: build=$((SECONDS - started))s"
 fi
+dk build -q --build-arg PANEL_IMAGE="$BASE_IMAGE" -f "$APP_DIR/e2e/Dockerfile.vpn" -t "$IMAGE" "$APP_DIR/e2e"
 export E2E_VPN_SERVICES=1
 
 # shellcheck disable=SC2317,SC2329
@@ -80,7 +83,7 @@ playwright() {
     E2E_BASE_URL="http://127.0.0.1:$port" E2E_ADMIN_PASSWORD="$PASS" \
     E2E_BROWSER_WS="ws://127.0.0.1:$BROWSER_PORT/" E2E_PUBLIC_HOST=$PUBLIC_HOST \
     E2E_REPORT_DIR="$OUT/$mode" QR_MODE=$mode QR_ENTRY_IP="$ENTRY_IP" QR_CONF_OUT="$OUT/wg-worst.conf" \
-      ./node_modules/.bin/playwright test --project=desktop e2e/qr-size.spec.ts
+      ./node_modules/.bin/playwright test --project=desktop --grep "@$mode" e2e/qr-size.spec.ts
   )
 }
 started=$SECONDS

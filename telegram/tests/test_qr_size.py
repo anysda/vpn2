@@ -59,6 +59,9 @@ class QrSizeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_png_decodes_to_the_exact_config(self):
         if not shutil.which('zbarimg'):
+            # CI ставит zbar-tools: там пропуск спрятал бы непроверенный QR.
+            if os.environ.get('CI'):
+                self.fail('нет zbarimg (zbar-tools) в CI')
             self.skipTest('нет zbarimg (zbar-tools): декодер не из библиотеки бота')
         conf, png = self.render()
         with tempfile.TemporaryDirectory() as directory:

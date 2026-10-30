@@ -36,7 +36,8 @@ export default defineConfig({
   projects: [
     {
       name: 'desktop',
-      testIgnore: [/(^|\/)narrow\.spec\.ts$/, /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/],
+      // qr-size.spec.ts нужна панель с худшим входом, qrencode и zbarimg: его гоняет только e2e/qr-size.sh.
+      testIgnore: [/(^|\/)narrow\.spec\.ts$/, /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/, ...(process.env.QR_MODE ? [] : [/(^|\/)qr-size\.spec\.ts$/])],
       use: { ...devices['Desktop Chrome'], viewport: { width: 1400, height: 1000 } },
     },
     {

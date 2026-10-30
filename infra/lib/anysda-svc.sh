@@ -180,11 +180,12 @@ svc_forget() { rm -f "$SVC_FP_DIR/$1.sha256"; }
 # меняет на живом интерфейсе без обрыва. Рестарт wg-quick нужен, только если
 # интерфейса нет или в wg0.conf другие адреса. Порт меняет сам syncconf.
 wg0_conf_iface() {
-  awk -F= '
-    /^\[/ { sec = $0; next }
-    sec ~ /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/ {
-      k = $1; v = $2; gsub(/[ \t]/, "", k); gsub(/[ \t]/, "", v)
-      if (k ~ /^[Aa][Dd][Dd][Rr][Ee][Ss][Ss]$/) { n = split(v, a, ","); for (i = 1; i <= n; i++) print "addr " a[i] }
+  # Как wg: строка до первого #, без пробельных символов, имена в любом регистре ASCII.
+  awk '
+    { sub(/#.*/, ""); gsub(/[ \t\r\v\f]/, "") }
+    /^\[/ { interface = /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/; next }
+    interface && /^[Aa][Dd][Dd][Rr][Ee][Ss][Ss]=/ {
+      sub(/^[^=]*=/, ""); n = split($0, a, ","); for (i = 1; i <= n; i++) if (a[i] != "") print "addr " a[i]
     }' /etc/wireguard/wg0.conf | sort
 }
 wg0_live_iface() {

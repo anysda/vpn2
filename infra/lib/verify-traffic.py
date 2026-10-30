@@ -756,15 +756,33 @@ def control_call(method, params):
     return reply.get('result')
 
 
+def wg_sections(text):
+    """wg0.conf по секциям, как его читает wg: [(секция, [(имя, значение, строка)])].
+
+    Как в config.c wireguard-tools: строка до первого `#`, без пробельных
+    символов, имена секций и ключей в любом регистре, но только ASCII.
+    Строки до первой секции - в секции ''.
+    """
+    sections = [('', [])]
+    for line in text.split('\n'):
+        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        name, eq, value = clean.partition('=')
+        name = name.encode().lower().decode()
+        if clean.startswith('['):
+            sections.append((name, []))
+        elif eq:
+            sections[-1][1].append((name, value, line))
+    return sections
+
+
 def conf_peers(text):
-    """Пиры wg0.conf: ключ, PSK и AllowedIPs как в файле."""
+    """Пиры wg0.conf: ключ, PSK и AllowedIPs, как их видит wg."""
     peers = []
-    # Имена ключей и секций wg читает в любом регистре, но только ASCII.
-    for block in re.split(r'(?m)^\s*(?ai:\[Peer\])\s*$', text)[1:]:
-        values = {name.lower(): value for name, value in
-                  re.findall(r'(?m)^\s*(?ai:(PublicKey|PresharedKey|AllowedIPs))\s*=\s*(\S.*?)\s*$', block)}
-        peers.append({'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
-                      'allowed': values.get('allowedips', '').replace(',', ' ').split()})
+    for section, entries in wg_sections(text):
+        if section == '[peer]':
+            values = {name: value for name, value, _ in entries}
+            peers.append({'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
+                          'allowed': [a for a in values.get('allowedips', '').split(',') if a]})
     return peers
 
 
@@ -813,9 +831,9 @@ def restore_wg_apply():
     if not (WORK / 'wg0.conf').exists():
         return
     text = (WORK / 'wg0.conf').read_text()
-    header = re.split(r'(?m)^\s*(?ai:\[Peer\])\s*$', text)[0]
-    interface = [line for line in header.splitlines()
-                 if re.match(r'^\s*(?ai:PrivateKey|ListenPort|FwMark)\s*=', line)]
+    # Строки уходят как есть: хвост после `#` и пробелы wg срежет сам.
+    interface = [line for section, entries in wg_sections(text) if section == '[interface]'
+                 for name, _, line in entries if name in ('privatekey', 'listenport', 'fwmark')]
     peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n'
                     f'AllowedIPs = {", ".join(peer["allowed"])}\n' for peer in conf_peers(text))
     run('wg', 'syncconf', 'wg0', '/dev/stdin', data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)

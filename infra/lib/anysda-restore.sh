@@ -328,11 +328,12 @@ for key in server.priv server.pub; do
 done
 if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
   if [[ ! -s "$WG_BUNDLE/server.priv" ]]; then
+    # Как wg: строка до первого #, без пробельных символов, имена в любом регистре ASCII.
     awk '
-      /^[[:space:]]*\[/ { interface = ($0 ~ /^[[:space:]]*\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\][[:space:]]*$/) }
-      interface && /^[[:space:]]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy][[:space:]]*=/ {
-        sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print
-      }
+      { sub(/#.*/, ""); gsub(/[ \t\r\v\f]/, "") }
+      /^\[/ { interface = /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/; next }
+      interface && /^[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy]=/ { sub(/^[^=]*=/, ""); key = $0 }
+      END { if (key != "") print key }
     ' "$WG_BUNDLE/wg0.conf" > "$WG_BUNDLE/server.priv"
   fi
   # pub выводим заново: не оставляем ключ B даже при отсутствии pub в архиве.
@@ -608,8 +609,10 @@ def wg_key(directory):
         text = open(os.path.join(directory, 'wg0.conf'), errors='replace').read()
     except OSError:
         return None
-    key = re.search(r'(?m)^\s*(?ai:PrivateKey)\s*=\s*(\S+)', text)
-    return hashlib.sha256(key[1].encode()).hexdigest() if key else None
+    # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
+    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0]).partition('=') for line in text.split('\n')]
+    keys = [value for name, eq, value in lines if eq and value and name.encode().lower() == b'privatekey']
+    return hashlib.sha256(keys[-1].encode()).hexdigest() if keys else None
 
 
 def index_rows(path):
@@ -695,7 +698,9 @@ if not live_read:
     live_peers = live_text('/etc/wireguard/wg0.conf')
     live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_peers is not None:
-    live_peers = {m[1] for m in re.finditer(r'(?m)^\s*(?ai:PublicKey)\s*=\s*(\S+)', live_peers)}
+    # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
+    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0]).partition('=') for line in live_peers.split('\n')]
+    live_peers = {value for name, eq, value in lines if eq and value and name.encode().lower() == b'publickey'}
 if live_ike is not None:
     secrets = set()
     for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
@@ -900,13 +905,20 @@ def rewrite(path, text):
 
 
 if wg_keys and os.path.isfile(wg_path):
-    blocks = re.split(r'(?m)^(?=\s*\[)', open(wg_path).read())
+    # Секции и ключи как у wg: строка до первого `#`, без пробельных символов,
+    # имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле.
+    blocks = [[]]
+    for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path).read()):
+        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        if clean.startswith('['):
+            blocks.append([])
+        blocks[-1].append((clean.encode().lower(), clean.partition('=')[2], line))
     kept = []
     for block in blocks:
-        key = re.search(r'(?m)^\s*(?ai:PublicKey)\s*=\s*(\S+)', block)
-        if re.match(r'\s*(?ai:\[Peer\])', block) and key and key[1] in wg_keys:
+        key = [value for name, value, _ in block if name.startswith(b'publickey=')]
+        if block and block[0][0] == b'[peer]' and key and key[-1] in wg_keys:
             continue
-        kept.append(block)
+        kept += [line for _, _, line in block]
     rewrite(wg_path, ''.join(kept))
 
 if (ike_ids or ike_secrets) and os.path.isfile(ike_path):

@@ -172,14 +172,21 @@ def devices(*fields):
 
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
-    peers, addresses = {}, {}
-    # wg читает имена ключей и секций в любом регистре, но только ASCII.
-    for block in re.split(r'(?m)^\s*(?ai:\[Peer\])\s*$', wg.read_text())[1:]:
-        fields = {name.lower(): value for name, value in
-                  re.findall(r'(?m)^\s*([A-Za-z]+)\s*=\s*([^\n]*?)\s*$', block)}
-        if 'publickey' in fields:
+    peers, addresses, sections = {}, {}, [('', {})]
+    # Как wg (config.c): строка до первого `#`, без пробельных символов, имена
+    # секций и ключей в любом регистре, но только ASCII.
+    for line in wg.read_text().split('\n'):
+        line = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        name, eq, value = line.partition('=')
+        name = name.encode().lower().decode()
+        if line.startswith('['):
+            sections.append((name, {}))
+        elif eq:
+            sections[-1][1][name] = value
+    for section, fields in sections:
+        if section == '[peer]' and 'publickey' in fields:
             peers[fields['publickey']] = fields.get('presharedkey')
-            addresses[fields['publickey']] = {a.strip() for a in fields.get('allowedips', '').split(',')}
+            addresses[fields['publickey']] = set(fields.get('allowedips', '').split(','))
     known = set()
     for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
         known.add(key)

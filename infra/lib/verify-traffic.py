@@ -776,12 +776,21 @@ def wg_sections(text):
 
 
 def conf_peers(text):
-    """Пиры wg0.conf: ключ, PSK и AllowedIPs, как их видит wg: строки AllowedIPs складываются."""
+    """Пиры wg0.conf: ключ, PSK и AllowedIPs, как их видит wg.
+
+    Строки AllowedIPs складываются по порядку: `-X` убирает X, `+X` и `X` добавляют.
+    """
     peers = []
     for section, entries in wg_sections(text):
         if section == '[peer]':
             values = {name: value for name, value, _ in entries}
-            allowed = [a for name, value, _ in entries if name == 'allowedips' for a in value.split(',') if a]
+            allowed = {}
+            for entry in (a for name, value, _ in entries if name == 'allowedips' for a in value.split(',') if a):
+                if entry[0] == '-':
+                    allowed.pop(entry[1:], None)
+                else:
+                    allowed[entry.removeprefix('+')] = None
+            allowed = list(allowed)
             peers.append({'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
                           'allowed': allowed})
     return peers

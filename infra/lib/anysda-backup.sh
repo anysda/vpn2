@@ -175,7 +175,7 @@ if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_col
     peers, addresses, sections = {}, {}, [('', {})]
     # Как wg (config.c): строка до первого `#`, без пробельных символов, имена
     # секций и ключей в любом регистре, но только ASCII. Строки AllowedIPs
-    # одного пира складываются.
+    # одного пира складываются по порядку: `-X` убирает X, `+X` и `X` добавляют.
     for line in wg.read_text().split('\n'):
         line = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
         name, eq, value = line.partition('=')
@@ -183,13 +183,18 @@ if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_col
         if line.startswith('['):
             sections.append((name, {}))
         elif eq and name == 'allowedips':
-            sections[-1][1].setdefault(name, []).extend(value.split(','))
+            allowed = sections[-1][1].setdefault(name, set())
+            for entry in filter(None, value.split(',')):
+                if entry[0] == '-':
+                    allowed.discard(entry[1:])
+                else:
+                    allowed.add(entry.removeprefix('+'))
         elif eq:
             sections[-1][1][name] = value
     for section, fields in sections:
         if section == '[peer]' and 'publickey' in fields:
             peers[fields['publickey']] = fields.get('presharedkey')
-            addresses[fields['publickey']] = set(fields.get('allowedips', []))
+            addresses[fields['publickey']] = fields.get('allowedips', set())
     known = set()
     for device, wanted, (key, psk, ip) in devices('wg_public_key', 'wg_preshared_key', 'wg_ip'):
         known.add(key)

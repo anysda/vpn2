@@ -182,9 +182,9 @@ svc_forget() { rm -f "$SVC_FP_DIR/$1.sha256"; }
 wg0_conf_iface() {
   awk -F= '
     /^\[/ { sec = $0; next }
-    sec == "[Interface]" {
+    sec ~ /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/ {
       k = $1; v = $2; gsub(/[ \t]/, "", k); gsub(/[ \t]/, "", v)
-      if (k == "Address") { n = split(v, a, ","); for (i = 1; i <= n; i++) print "addr " a[i] }
+      if (k ~ /^[Aa][Dd][Dd][Rr][Ee][Ss][Ss]$/) { n = split(v, a, ","); for (i = 1; i <= n; i++) print "addr " a[i] }
     }' /etc/wireguard/wg0.conf | sort
 }
 wg0_live_iface() {

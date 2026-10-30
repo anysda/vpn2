@@ -51,7 +51,7 @@ wireguard_keys_build() {
     cp /etc/wireguard/server.priv "$work/server.priv"
   fi
   if [[ ! -s "$work/server.priv" && -s /etc/wireguard/wg0.conf ]]; then
-    sed -n 's/^[[:space:]]*PrivateKey[[:space:]]*=[[:space:]]*//p' \
+    sed -n 's/^[[:space:]]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy][[:space:]]*=[[:space:]]*//p' \
       /etc/wireguard/wg0.conf > "$work/server.priv"
   fi
   # Сбой вычисления public key не означает, что нужно ротировать private.

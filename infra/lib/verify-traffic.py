@@ -759,10 +759,12 @@ def control_call(method, params):
 def conf_peers(text):
     """Пиры wg0.conf: ключ, PSK и AllowedIPs как в файле."""
     peers = []
-    for block in re.split(r'(?m)^\s*\[Peer\]\s*$', text)[1:]:
-        values = dict(re.findall(r'(?m)^\s*(PublicKey|PresharedKey|AllowedIPs)\s*=\s*(\S.*?)\s*$', block))
-        peers.append({'key': values.get('PublicKey', ''), 'preshared_key': values.get('PresharedKey', ''),
-                      'allowed': values.get('AllowedIPs', '').replace(',', ' ').split()})
+    # Имена ключей и секций wg читает в любом регистре, но только ASCII.
+    for block in re.split(r'(?m)^\s*(?ai:\[Peer\])\s*$', text)[1:]:
+        values = {name.lower(): value for name, value in
+                  re.findall(r'(?m)^\s*(?ai:(PublicKey|PresharedKey|AllowedIPs))\s*=\s*(\S.*?)\s*$', block)}
+        peers.append({'key': values.get('publickey', ''), 'preshared_key': values.get('presharedkey', ''),
+                      'allowed': values.get('allowedips', '').replace(',', ' ').split()})
     return peers
 
 
@@ -811,8 +813,9 @@ def restore_wg_apply():
     if not (WORK / 'wg0.conf').exists():
         return
     text = (WORK / 'wg0.conf').read_text()
-    header = re.split(r'(?m)^\s*\[Peer\]\s*$', text)[0]
-    interface = [line for line in header.splitlines() if re.match(r'^\s*(PrivateKey|ListenPort|FwMark)\s*=', line)]
+    header = re.split(r'(?m)^\s*(?ai:\[Peer\])\s*$', text)[0]
+    interface = [line for line in header.splitlines()
+                 if re.match(r'^\s*(?ai:PrivateKey|ListenPort|FwMark)\s*=', line)]
     peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n'
                     f'AllowedIPs = {", ".join(peer["allowed"])}\n' for peer in conf_peers(text))
     run('wg', 'syncconf', 'wg0', '/dev/stdin', data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)

@@ -329,8 +329,8 @@ done
 if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
   if [[ ! -s "$WG_BUNDLE/server.priv" ]]; then
     awk '
-      /^[[:space:]]*\[/ { interface = ($0 ~ /^[[:space:]]*\[Interface\][[:space:]]*$/) }
-      interface && /^[[:space:]]*PrivateKey[[:space:]]*=/ {
+      /^[[:space:]]*\[/ { interface = ($0 ~ /^[[:space:]]*\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\][[:space:]]*$/) }
+      interface && /^[[:space:]]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy][[:space:]]*=/ {
         sub(/^[^=]*=[[:space:]]*/, ""); sub(/[[:space:]]*$/, ""); print
       }
     ' "$WG_BUNDLE/wg0.conf" > "$WG_BUNDLE/server.priv"
@@ -608,7 +608,7 @@ def wg_key(directory):
         text = open(os.path.join(directory, 'wg0.conf'), errors='replace').read()
     except OSError:
         return None
-    key = re.search(r'(?m)^\s*PrivateKey\s*=\s*(\S+)', text)
+    key = re.search(r'(?m)^\s*(?ai:PrivateKey)\s*=\s*(\S+)', text)
     return hashlib.sha256(key[1].encode()).hexdigest() if key else None
 
 
@@ -695,7 +695,7 @@ if not live_read:
     live_peers = live_text('/etc/wireguard/wg0.conf')
     live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_peers is not None:
-    live_peers = {m[1] for m in re.finditer(r'(?m)^\s*PublicKey\s*=\s*(\S+)', live_peers)}
+    live_peers = {m[1] for m in re.finditer(r'(?m)^\s*(?ai:PublicKey)\s*=\s*(\S+)', live_peers)}
 if live_ike is not None:
     secrets = set()
     for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
@@ -903,8 +903,8 @@ if wg_keys and os.path.isfile(wg_path):
     blocks = re.split(r'(?m)^(?=\s*\[)', open(wg_path).read())
     kept = []
     for block in blocks:
-        key = re.search(r'(?m)^\s*PublicKey\s*=\s*(\S+)', block)
-        if re.match(r'\s*\[Peer\]', block) and key and key[1] in wg_keys:
+        key = re.search(r'(?m)^\s*(?ai:PublicKey)\s*=\s*(\S+)', block)
+        if re.match(r'\s*(?ai:\[Peer\])', block) and key and key[1] in wg_keys:
             continue
         kept.append(block)
     rewrite(wg_path, ''.join(kept))

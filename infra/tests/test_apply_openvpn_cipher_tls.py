@@ -21,12 +21,13 @@ LISTS = (('data-ciphers', 'BF-CBC'), ('data-ciphers', 'AES-256-GCM:BF-CBC'),
 
 
 def can_be_root():
+    # Root without CAP_SYS_ADMIN (a container) runs true, not unshare --net.
     return bool(shutil.which('unshare')) and subprocess.run(
-        AS_ROOT + ['true'], capture_output=True).returncode == 0
+        AS_ROOT + ['unshare', '--net', 'true'], capture_output=True).returncode == 0
 
 
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)
-@unittest.skipUnless(can_be_root(), 'needs root or sudo -n and unshare')
+@unittest.skipUnless(can_be_root(), 'needs root or sudo -n and unshare --net')
 class OpenvpnCipherTlsTests(unittest.TestCase):
     # The temporary PKI and helpers of the cipher tests, not their tests.
     setUp = candidate.OpenvpnCandidateTests.setUp

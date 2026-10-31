@@ -12,6 +12,7 @@ previous config restored, 4 restore failed, 5 first install failed.
 """
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -131,7 +132,7 @@ def tls_server_end(cert, key, cipher):
 
 
 class Stopped(SystemExit):
-    """SIGTERM, SIGHUP or SIGINT in a cipher check: 128+sig, after the cleanup."""
+    """SIGTERM, SIGHUP or SIGINT in an install or a restore: 128+sig, after the cleanup."""
 
 
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
@@ -143,6 +144,21 @@ def stop_on_signal(number, _frame):
     for each in SIGNALS:
         signal.signal(each, signal.SIG_IGN)
     raise Stopped(128 + number)
+
+
+@contextlib.contextmanager
+def stopping():
+    """A signal inside stops apply through its finally and except clauses."""
+    main = threading.current_thread() is threading.main_thread()
+    previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS} if main else {}
+    try:
+        yield
+    except Stopped:
+        previous = {}  # apply exits: the signals stay ignored until then
+        raise
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
 
 
 def write(path, body, mode):
@@ -353,17 +369,8 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        main = threading.current_thread() is threading.main_thread()
-        previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS} if main else {}
-        try:
-            with tempfile.TemporaryDirectory() as scratch:
-                self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
-        except Stopped:
-            previous = {}  # apply exits: the signals stay ignored until then
-            raise
-        finally:
-            for number, handler in previous.items():
-                signal.signal(number, handler)
+        with stopping(), tempfile.TemporaryDirectory() as scratch:
+            self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
 
     def check_openvpn_names_with(self, key, ciphers):
         self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
@@ -458,6 +465,10 @@ class Applier:
         write(self.good(resource), self.target(resource).read_text(), 0o600)
 
     def install(self, resource, source):
+        with stopping():
+            self.install_stopping(resource, source)
+
+    def install_stopping(self, resource, source):
         self.resume(resource)
         spec = RESOURCES[resource]
         target = self.target(resource)
@@ -472,15 +483,21 @@ class Applier:
         except BaseException:  # a signal: 128+sig, the candidate goes all the same
             candidate.unlink(missing_ok=True)
             raise
-        if not self.good(resource).exists() and target.exists():
-            # Nothing verified yet: the running config earns "last good" first.
-            try:
-                for argv in spec['verify']:
-                    self.command(argv)
-                self.mark(resource)
-            except RuntimeError:
-                pass
-        self.stage(resource, 'replacing')
+        try:
+            if not self.good(resource).exists() and target.exists():
+                # Nothing verified yet: the running config earns "last good" first.
+                try:
+                    for argv in spec['verify']:
+                        self.command(argv)
+                    self.mark(resource)
+                except RuntimeError:
+                    pass
+            self.stage(resource, 'replacing')
+        except BaseException:
+            # Only a journal that says "replacing" makes the next run finish the candidate.
+            if self.stage_now(resource) != 'replacing':
+                candidate.unlink(missing_ok=True)
+            raise
         self.finish(resource)
 
     def finish(self, resource):
@@ -517,13 +534,18 @@ class Applier:
         raise Failed(3, f'{resource}: {reason}; previous config restored')
 
     def rollback(self, resource):
-        self.resume(resource)
-        self.restore(resource, 'rollback requested')
+        with stopping():
+            self.resume(resource)
+            self.restore(resource, 'rollback requested')
+
+    def stage_now(self, resource):
+        journal = self.journal(resource)
+        return json.loads(journal.read_text())['stage'] if journal.exists() else None
 
     def resume(self, resource):
-        if not self.journal(resource).exists():
+        stage = self.stage_now(resource)
+        if stage is None:
             return
-        stage = json.loads(self.journal(resource).read_text())['stage']
         if stage in ('replacing', 'applied'):
             self.finish(resource)
         elif stage in ('restoring', 'restore-failed'):

@@ -34,7 +34,6 @@ class OpenvpnAuthTests(unittest.TestCase):
     def test_unknown_auth_is_rejected_before_restart(self):
         self.rejected(WORKING + 'auth NOPE\n', 'NOPE')
 
-    @candidate.needs_server
     def test_cipher_synonyms_openvpn_accepts_are_applied(self):
         for name in SYNONYMS:
             with self.subTest(name=name):
@@ -53,21 +52,18 @@ class OpenvpnAuthTests(unittest.TestCase):
                 self.applied(WORKING + f'auth {name}\n')
                 self.host.calls.clear()
 
-    @candidate.needs_server
     def test_last_good_with_a_cipher_synonym_is_restored(self):
         self.restored(WORKING + 'cipher AES256\n')
 
     def test_last_good_with_a_data_cipher_synonym_is_restored(self):
         self.restored(WORKING + 'data-ciphers id-aes256-GCM:AES-256-GCM\n')
 
-    @candidate.needs_server
     def test_ciphers_and_auth_of_29_openvpn_are_applied(self):
         self.applied(WORKING + 'auth SHA256\ncipher AES-256-GCM\ndata-ciphers AES-256-GCM:CHACHA20-POLY1305\n')
 
     def test_tls_cipher_is_rejected_before_restart(self):
         self.rejected(WORKING + 'tls-cipher NOPE\n', 'tls-cipher')
 
-    @candidate.needs_server
     def test_auth_none_with_an_aead_cipher_is_applied(self):
         # openvpn 2.7 starts a server with it: an AEAD cipher carries its own tag.
         self.applied(WORKING + 'auth none\ncipher AES-256-GCM\ndata-ciphers AES-256-GCM:CHACHA20-POLY1305\n')

@@ -962,9 +962,11 @@ _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
   local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0 limit
-  local t1 spent n
+  local t1 spent n probe_limit
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
+  elif ! probe_limit=$(ssh_probe_limit 2>&1); then
+    reason=$probe_limit
   else
     for ((try=1; try<=attempts; try++)); do
       t1=$SECONDS; prc=0; reason=$(ssh_probe) || prc=$?
@@ -986,7 +988,7 @@ _preflight_host() {
       while (( n < limit )); do
         pause=$((n * 3))
         [[ $kind != auth || $n -ne $try ]] || pause=${PREFLIGHT_AUTH_PAUSE:-30}
-        (( spent + pause + ${SSH_PROBE_TIMEOUT:-30} <= budget )) || break
+        (( spent + pause + probe_limit <= budget )) || break
         spent=$((spent + pause + SECONDS - t1)); n=$((n + 1))
       done
       limit=$n
@@ -1005,7 +1007,7 @@ _preflight_host() {
           "${SSH_USER}@${SSH_HOST} ($h)" "$pause"
       fi
       (( try < attempts )) || break
-      if (( SECONDS - t0 + pause + ${SSH_PROBE_TIMEOUT:-30} > budget )); then
+      if (( SECONDS - t0 + pause + probe_limit > budget )); then
         printf '  %-30s время pre-flight на ноду вышло (%d с), больше попыток не будет\n' \
           "${SSH_USER}@${SSH_HOST} ($h)" "$budget"
         break

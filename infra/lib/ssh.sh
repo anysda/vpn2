@@ -126,20 +126,57 @@ _ssh_output() {
   return "$_SSH_OUTPUT_NO_MARK"
 }
 
+# "$1" секунд предела на команду "${@:2}" в своей сессии. По пределу дерево
+# сперва замирает (STOP: новых детей не наплодит), потом KILL всему дереву и
+# сессии, вместе с детьми, что отвязались в свою группу или сессию: `timeout -k`
+# uutils добивает только прямого ребёнка. Код - код команды, по пределу 137.
+_limit_kill_tree() {
+  local p
+  kill -STOP "$1" 2>/dev/null || return 0
+  for p in $(pgrep -P "$1"); do _limit_kill_tree "$p"; done
+  kill -KILL "$1" 2>/dev/null || :
+}
+_limit_run() {
+  local limit=$1 pid killer rc=0
+  shift
+  setsid "$@" <&0 & pid=$!
+  ( command sleep "$limit"; _limit_kill_tree "$pid"; pkill -KILL -s "$pid" ) </dev/null >/dev/null 2>&1 & killer=$!
+  wait "$pid" || rc=$?
+  _limit_kill_tree "$killer" 2>/dev/null
+  return "$rc"
+}
+
+# SSH_PROBE_TIMEOUT - целое число секунд больше 0, не задан - 30. Иначе
+# ошибка с именем переменной в stderr и код 1: «0» снял бы предел, «1.5» и
+# «abc» ломают арифметику bash и timeout.
+ssh_probe_limit() {
+  local v=${SSH_PROBE_TIMEOUT-30}
+  if [[ ! $v =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "SSH_PROBE_TIMEOUT='$v': нужно целое число секунд больше 0" >&2
+    return 1
+  fi
+  echo "$v"
+}
+
 # "$@" - вызов ssh, где перед командой узла стоит "$_ssh_begin"; код возврата -
 # код ssh. Метка печатается до команды, поэтому без метки shell узла не дошёл
 # до команды (.bashrc делает exit или exec, например `exec tmux` без терминала
 # выходит с 1) при любом коде ssh: это не код команды, а $_SSH_NO_MARK, без
 # повторов - сбой не транзиентный. Исключение - коды самой связки, они идут
 # прежним путём: 255 соединение, 5/6/7 sshpass (пароль, host-key), 124/137
-# timeout у ssh_fresh.
+# _limit_run у ssh_probe и ssh_fresh, но только когда предел и правда вышел:
+# 124/137 раньше предела - код самого узла.
 _SSH_NO_MARK=254
 _SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 _ssh_run() {
   local -a st
+  local link=" 255 5 6 7 " t0=${EPOCHREALTIME/[.,]/}
   # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
   { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
-  if (( st[1] == _SSH_OUTPUT_NO_MARK )) && [[ ! " 255 5 6 7 124 137 " == *" ${st[0]} "* ]]; then
+  if [[ $1 == _limit_run ]] && (( ${EPOCHREALTIME/[.,]/} - t0 >= $2 * 1000000 )); then
+    link+="124 137 "
+  fi
+  if (( st[1] == _SSH_OUTPUT_NO_MARK )) && [[ ! $link == *" ${st[0]} "* ]]; then
     warn "ssh ${SSH_HOST:-?}: $_SSH_NO_MARK_REASON"
     return "$_SSH_NO_MARK"
   fi
@@ -228,8 +265,9 @@ _ssh_auth_refused() {
 # 3 нода отказала во входе, $_SSH_NO_MARK shell узла не дошёл до команды.
 ssh_probe() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  local limit="${SSH_PROBE_TIMEOUT:-30}" err last rc=0
-  err=$(SSHPASS="$SSH_PASS" _ssh_run timeout -k 5 "$limit" sshpass -e ssh \
+  local limit err last rc=0 t0=${EPOCHREALTIME/[.,]/}
+  limit=$(ssh_probe_limit 2>&1) || { echo "$limit"; return 1; }
+  err=$(SSHPASS="$SSH_PASS" _ssh_run _limit_run "$limit" sshpass -e ssh \
       -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
       "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" 'echo ok' 2>&1 >/dev/null) || rc=$?
   [[ $rc -eq 0 ]] && return 0
@@ -241,7 +279,9 @@ ssh_probe() {
              echo "нода отказала во входе: $last"; return 3 ;;
   esac
   case $rc in
-    124|137) echo "нет ответа за ${limit} с${last:+ ($last)}: соединение или обмен ключами ssh висит, пакеты режутся по пути" ;;
+    # 124/137 раньше предела отдал сам узел: это не зависание.
+    124|137) (( ${EPOCHREALTIME/[.,]/} - t0 >= limit * 1000000 )) || { echo "${last:-ssh завершился с кодом $rc}"; return 1; }
+             echo "нет ответа за ${limit} с${last:+ ($last)}: соединение или обмен ключами ssh висит, пакеты режутся по пути" ;;
     6)       echo "host-key ноды не принят${last:+: $last}" ;;
     *)       echo "${last:-ssh завершился с кодом $rc}" ;;
   esac
@@ -252,7 +292,9 @@ ssh_probe() {
 # проверяется, что нода пускает новые входы, а не живёт старое соединение.
 ssh_fresh() {
   : "${SSH_PASS:?SSH_PASS не задан (перезапусти ./setup.sh)}"
-  SSHPASS="$SSH_PASS" _ssh_run timeout -k 5 "${SSH_PROBE_TIMEOUT:-30}" sshpass -e ssh \
+  local limit
+  limit=$(ssh_probe_limit) || return 1
+  SSHPASS="$SSH_PASS" _ssh_run _limit_run "$limit" sshpass -e ssh \
       -o ConnectionAttempts=1 -o ControlMaster=no -o ControlPath=none \
       "${_ssh_opts[@]}" "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$@"
 }

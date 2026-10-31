@@ -75,16 +75,36 @@ SSH_MARK=vpn2-ssh-output-begin
 SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 # ConnectTimeout ограничивает только соединение: зависший .bashrc или команда
 # держали бы verify без предела, поэтому весь вход - под общим потолком, как
-# ssh_probe в infra/lib/ssh.sh (timeout гасит всю группу процессов ssh).
+# ssh_probe в infra/lib/ssh.sh: _limit_run гасит всё дерево и сессию ssh.
+# _limit_kill_tree и _limit_run - копия из infra/lib/ssh.sh.
+_limit_kill_tree() {
+  local p
+  kill -STOP "$1" 2>/dev/null || return 0
+  for p in $(pgrep -P "$1"); do _limit_kill_tree "$p"; done
+  kill -KILL "$1" 2>/dev/null || :
+}
+_limit_run() {
+  local limit=$1 pid killer rc=0
+  shift
+  setsid "$@" <&0 & pid=$!
+  ( command sleep "$limit"; _limit_kill_tree "$pid"; pkill -KILL -s "$pid" ) </dev/null >/dev/null 2>&1 & killer=$!
+  wait "$pid" || rc=$?
+  _limit_kill_tree "$killer" 2>/dev/null
+  return "$rc"
+}
 exit_ssh() {
-  local output errors limit="${SSH_PROBE_TIMEOUT:-30}" rc=0
+  local output errors limit="${SSH_PROBE_TIMEOUT-30}" rc=0
+  if [[ ! $limit =~ ^[1-9][0-9]{0,5}$ ]]; then
+    echo "SSH_PROBE_TIMEOUT='$limit': нужно целое число секунд больше 0"
+    return 1
+  fi
   # stderr .bashrc приходит от sshd отдельным каналом и позже метки из stdout:
   # его читаем отдельно и показываем только сообщение ssh о соединении (255).
   errors=$(mktemp)
   # SECONDS целый и округляет начало вниз: время меряем в микросекундах
   # (EPOCHREALTIME, bash 5+; разделитель - точка или запятая по локали).
   local t0=${EPOCHREALTIME/[.,]/}
-  output=$(timeout -k 5 "$limit" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>"$errors") || rc=$?
+  output=$(_limit_run "$limit" ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$1" "printf '\\n%s\\n' $SSH_MARK" 2>"$errors") || rc=$?
   # 124/137 отдаёт и сам экзит (exit в .bashrc, код команды): пределом это
   # считается, только если время действительно вышло.
   if [[ $rc -eq 124 || $rc -eq 137 ]] && (( ${EPOCHREALTIME/[.,]/} - t0 >= limit * 1000000 )); then

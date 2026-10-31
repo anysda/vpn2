@@ -300,14 +300,18 @@ fi
 # в БД уже отозван в CRL архива, у устройства нет пира WireGuard или учётки
 # IKEv2, у отключённого они остались. Восстанавливать можно, но такие
 # устройства перевыпустить: перевыпуск заново пишет конфиги из БД.
-# Код 5 - сверку нечем выполнить (нет wg, нет права на netns): это не расхождение.
+# Код 5 - сверку нечем выполнить (нет wg, нет права на netns), прочие коды
+# кроме 3 - сверка упала: это не расхождение.
 CHECK=/usr/local/bin/anysda-backup.sh
 CHECK_RC=0
 [[ ! -x "$CHECK" ]] || MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1) || CHECK_RC=$?
 if [[ $CHECK_RC == 5 ]]; then
   echo "anysda-restore: WARN: сверка БД с конфигами VPN не выполнена:" >&2
   printf '%s\n' "$MISMATCH" >&2
-elif [[ $CHECK_RC != 0 ]]; then
+elif [[ $CHECK_RC != 0 && $CHECK_RC != 3 ]]; then
+  echo "anysda-restore: WARN: сверка БД с конфигами VPN не выполнена (код $CHECK_RC):" >&2
+  printf '%s\n' "$MISMATCH" >&2
+elif [[ $CHECK_RC == 3 ]]; then
   WHAT=
   [[ $MISMATCH != *CRL* ]] || WHAT+=', CRL OpenVPN'
   [[ $MISMATCH != *WireGuard* ]] || WHAT+=', пиры WireGuard'

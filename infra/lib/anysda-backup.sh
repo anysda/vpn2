@@ -375,6 +375,7 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   fi
   if [[ $rc != 3 ]]; then
     echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена (код $rc)" >&2
+    WARNING="сверка БД с конфигами VPN не выполнена (код $rc)"
     break
   fi
   if [[ $attempt == 10 ]]; then

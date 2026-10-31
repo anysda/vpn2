@@ -23,13 +23,14 @@ STUBS = {
     'exit-127': ('python3-not-here -P - "$2"\n', 127),
 }
 REASON = 'нечем сверить - wg не ответил за 30 с'
+PIECE = 9  # any piece of the key longer than 8 characters
 
 
 def restore(check=None):
     """The check step of anysda-restore.sh with `check` as anysda-backup.sh (None - the real one).
 
     The bundle holds the server private key in wg0.conf and server.priv, db.sqlite is not a database.
-    Returns (exit code, stderr).
+    Returns (exit code, stderr, stdout).
     """
     block = cut(source('infra/lib/anysda-restore.sh'), 'CHECK=/usr/local/bin/anysda-backup.sh',
                 '\n\n# Старые архивы')
@@ -52,7 +53,7 @@ def restore(check=None):
                               env=os.environ | {'ANYSDA_LIB_DIR': str(LIB)}, capture_output=True, text=True,
                               timeout=60, check=False)
     assert 'CHECKED' in done.stdout, (done.stdout, done.stderr)
-    return done.returncode, done.stderr
+    return done.returncode, done.stderr, done.stdout
 
 
 class RestoreCheckCodesTests(unittest.TestCase):
@@ -63,17 +64,17 @@ class RestoreCheckCodesTests(unittest.TestCase):
 
     def test_1_failed_check_is_not_done_without_reissue(self):
         """1 exit 1, 2, 127: "не выполнена (код N)", no reissue, restore goes on with the exit of code 5."""
-        five, _ = restore(f"echo '{REASON}'\nexit 5\n")
+        five, *_ = restore(f"echo '{REASON}'\nexit 5\n")
         for name, (check, code) in STUBS.items():
             with self.subTest(name):
-                rc, err = restore(check)
+                rc, err, _ = restore(check)
                 self.assert_not_done(err, code)
                 self.assertEqual(rc, five, err)
 
     def test_1_traceback_is_not_done_without_reissue(self):
         """1 the real check on a db.sqlite that is not a database: traceback, "не выполнена (код 1)"."""
-        five, _ = restore(f"echo '{REASON}'\nexit 5\n")
-        rc, err = restore()
+        five, *_ = restore(f"echo '{REASON}'\nexit 5\n")
+        rc, err, _ = restore()
         self.assertIn('Traceback', err)
         self.assertIn('DatabaseError', err)
         self.assert_not_done(err, 1)
@@ -81,7 +82,7 @@ class RestoreCheckCodesTests(unittest.TestCase):
 
     def test_2_mismatch_tells_to_reissue(self):
         """2 exit 3: "расходятся", reissue the devices named."""
-        rc, err = restore("echo 'устройство 7: нет пира WireGuard'\nexit 3\n")
+        rc, err, _ = restore("echo 'устройство 7: нет пира WireGuard'\nexit 3\n")
         self.assertEqual(rc, 0, err)
         self.assertIn('anysda-restore: WARN: в архиве БД и пиры WireGuard расходятся — после восстановления '
                       'перевыпусти эти устройства в панели:\nустройство 7: нет пира WireGuard\n', err)
@@ -89,7 +90,7 @@ class RestoreCheckCodesTests(unittest.TestCase):
 
     def test_2_nothing_to_check_with_names_the_reason(self):
         """2 exit 5: "не выполнена:" and the reason, no code, no reissue."""
-        rc, err = restore(f"echo '{REASON}'\nexit 5\n")
+        rc, err, _ = restore(f"echo '{REASON}'\nexit 5\n")
         self.assertEqual(rc, 0, err)
         self.assertIn(f'{NOT_DONE}:\n{REASON}\n', err)
         self.assertNotIn('(код', err)
@@ -98,17 +99,24 @@ class RestoreCheckCodesTests(unittest.TestCase):
 
     def test_2_check_passing_says_nothing(self):
         """2 exit 0: no warning."""
-        rc, err = restore("echo 'схема сверена'\nexit 0\n")
+        rc, err, _ = restore("echo 'схема сверена'\nexit 0\n")
         self.assertEqual(rc, 0, err)
         self.assertNotIn('WARN', err)
 
     def test_3_check_output_carries_no_key(self):
-        """3 the traceback of the real check on a bundle with the private key: no key in restore's words."""
-        _, err = restore()
-        self.assertIn('Traceback', err)
-        self.assertNotIn(SERVER, err)
-        self.assertNotIn(SERVER[:16], err)
-
+        """3 codes 1, 2, 127, traceback, 3, 5: no piece of the key longer than 8 in restore's stdout or stderr."""
+        checks = {name: check for name, (check, _) in STUBS.items()}
+        checks |= {'traceback': None, 'exit-3': "echo 'устройство 7: нет пира WireGuard'\nexit 3\n",
+                   'exit-5': f"echo '{REASON}'\nexit 5\n"}
+        pieces = {SERVER[i:i + PIECE] for i in range(len(SERVER) - PIECE + 1)}
+        for name, check in checks.items():
+            with self.subTest(name):
+                _, err, out = restore(check)
+                if check is None:
+                    self.assertIn('Traceback', err)
+                for stream, text in (('stdout', out), ('stderr', err)):
+                    leaked = sorted(piece for piece in pieces if piece in text)
+                    self.assertEqual(leaked, [], f'{stream}: {text}')
 
 if __name__ == '__main__':
     unittest.main()

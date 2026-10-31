@@ -5,7 +5,9 @@ is 32, `fd66:66:0::3` is `fd66:66::3`), `-X` removes that network, a peer may
 end with no addresses, and an address added to a later peer leaves the earlier
 one. An entry wg cannot parse rejects the whole file. The backup check,
 verify-traffic.py and the `wg syncconf` body of restore_wg_apply must end with
-the sets wg ends with, or fail like wg does.
+the sets wg ends with, or fail like wg does. A form with a signed entry is
+taken as the wg installed here decides it (installed_wg, see the prefix tests):
+wireguard-tools 1.0.20210914 rejects it, 1.0.20250521 applies it.
 """
 import ipaddress
 from pathlib import Path
@@ -15,7 +17,7 @@ import unittest
 
 from test_wg_conf_allowedips_prefix import (
     A4, A6, B4, GONE, NEW, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_NEW, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
-    cut, source)
+    assert_rejected_like_wg, cut, installed_wg, signed, source)
 from wg_root import as_root
 
 A4_BARE = '10.66.66.3'
@@ -43,7 +45,7 @@ REJECTED = {
     'leading-zero-minus': ([f'{G4}, {G6}'], [A4, '-10.66.66.03/32'], '10.66.66.03'),
 }
 # `wg setconf` of each form on a fresh wg0 in a netns, then `wg show wg0 allowed-ips`
-# (Linux 7.0, wireguard-tools 1.0.20250521): {peer: set}.
+# (Linux 7.0, wireguard-tools 1.0.20250521): {peer: set}. 1.0.20210914 rejects every form with a signed entry.
 WG_ORACLE = {
     'nomask-minus': {GONE: {G4, G6}, OLD: {A4, A6}},
     'mask-zero-minus': {GONE: {G4, G6}, OLD: {A4, A6}},
@@ -195,12 +197,30 @@ class WgConfAllowedIpsNetTests(unittest.TestCase):
                 sets = wg_sets(conf(form))
                 self.assertEqual({GONE: sets[GONE], OLD: sets[OLD]}, wanted)
                 self.assertEqual(sets[PEER], {'10.66.66.2/32', 'fd66:66::2/128'})
+            with self.subTest('installed wg', form=form):
+                address, sets = installed_wg(conf(form))
+                if signed(address):
+                    self.assertIn(address, ''.join(FORMS[form][1]))
+                else:
+                    self.assertIsNone(address)
+                    self.assertEqual(sets, wg_sets(conf(form)))
         for form in REJECTED:
             with self.subTest(form):
                 self.assertRaises(ValueError, wg_sets, conf(form))
+            with self.subTest('installed wg', form=form):
+                self.assertIsNotNone(installed_wg(conf(form))[0])
 
     def assert_reads_like_wg(self, form):
         text, wanted = conf(form), wg_sets(conf(form))
+        address, sets = installed_wg(text)
+        if address is not None:
+            assert_rejected_like_wg(self, form, address, lambda: backup_check(text), lambda: apply_gate(text),
+                                    {'conf_peers': lambda: VT.conf_peers(text),
+                                     'apply_peers': lambda: VT.apply_peers(text),
+                                     'syncconf body': lambda: syncconf_body(text)})
+            return
+        with self.subTest('installed wg', form=form):
+            self.assertEqual(sets, wanted)
         addresses, bad = backup_check(text)
         with self.subTest('backup addresses', form=form):
             self.assertEqual(addresses, wanted)

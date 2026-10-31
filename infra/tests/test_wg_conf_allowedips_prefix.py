@@ -5,6 +5,12 @@ the peer and `+X` as adding it, entry after entry and line after line. The
 backup check and verify-traffic.py take the peer's addresses from wg0.conf, so
 they must end with the set wg ends with. Each reader is cut out of its script
 and run on one wg0.conf whose last peer carries the prefixed lines.
+
+The sign is where wg versions part: wireguard-tools 1.0.20210914 (Ubuntu 24.04)
+cannot parse `+X` or `-X` and rejects the file, 1.0.20250521 (the nodes, Ubuntu
+26.04) applies them. The expectation is the decision of the wg installed here
+(installed_wg); where it rejects, every reader must refuse naming the entry wg
+names, as wg does on that node.
 """
 import base64
 import importlib.util
@@ -33,7 +39,8 @@ OLD_LINES = {
     'remove-absent': [f'{A4}, {A6}', f'-{B4}'],
     'remove-then-add': [f'-{A4}', f'{A4}, {A6}'],
 }
-# `wg setconf` of each form on a fresh wg0, then `wg show wg0 allowed-ips` (Linux 7.0, wireguard-tools 1.0.20250521).
+# `wg setconf` of each form on a fresh wg0, then `wg show wg0 allowed-ips` (Linux 7.0, wireguard-tools 1.0.20250521);
+# wireguard-tools 1.0.20210914 rejects every form with a signed entry: "Unable to parse IP address: `-10.66.66.9'".
 WG_ORACLE = {
     'canonical': {A4, A6},
     'remove-line': {A4, A6},
@@ -85,6 +92,49 @@ def wg_view(text):
 
 def wg_sets(text):
     return {p['publickey']: set(p.get('allowedips', [])) for p in wg_view(text)[1]}
+
+
+def installed_wg(text):
+    """The wg installed here on `text` as a node takes it: wg-quick strip, `wg setconf` on a fresh wg0 in a netns.
+
+    (None, {peer: set of AllowedIPs}) if wg applies the file, (the entry wg cannot parse, None) if it rejects it.
+    """
+    from test_wg_conf_wg_oracle import oracle  # it imports this module
+    error, _key, peers = oracle(text.encode())
+    if error is None:
+        return None, {key: set(ips) for key, _psk, ips in peers}
+    found = re.search(r"Unable to parse IP address: `([^']*)'", error)
+    assert found, error
+    return found.group(1), None
+
+
+def signed(address):
+    """An entry wg rejected for its sign: the edge where wg versions part."""
+    return address is not None and address[:1] in ('+', '-')
+
+
+def assert_rejected_like_wg(case, form, address, backup, gate, refusing):
+    """wg rejects the file at `address`: backup, verify and restore_wg_apply refuse it naming that entry.
+
+    backup() -> (addresses, complaints), gate() -> wg_apply_check notes, refusing: {name: call that must raise}.
+    """
+    named = ('wg0.conf: wg отвергает файл', f'`AllowedIPs`: Unable to parse IP address `{address}`')
+    with case.subTest('backup refuses like wg', form=form):
+        addresses, bad = backup()
+        case.assertEqual(addresses, {})
+        case.assertTrue([b for b in bad if all(n in b for n in named)], bad)
+    for name, call in refusing.items():
+        with case.subTest(f'verify {name} refuses like wg', form=form):
+            with case.assertRaises(ValueError) as caught:
+                call()
+            for part in named:
+                case.assertIn(part, str(caught.exception))
+    with case.subTest('verify peers vs wg0 refuses like wg', form=form):
+        notes = gate()
+        case.assertEqual(len(notes), 1, notes)
+        case.assertEqual(notes[0][0], VT.FAIL, notes)
+        for part in named:
+            case.assertIn(part, notes[0][1])
 
 
 def source(path):
@@ -194,9 +244,25 @@ class WgConfAllowedIpsPrefixTests(unittest.TestCase):
             with self.subTest(form):
                 self.assertEqual(wg_sets(conf(form))[OLD], wanted)
                 self.assertEqual(wg_sets(conf(form))[PEER], {'10.66.66.2/32', 'fd66:66::2/128'})
+            with self.subTest('installed wg', form=form):
+                address, sets = installed_wg(conf(form))
+                if signed(address):
+                    self.assertIn(address, ''.join(OLD_LINES[form]))
+                else:
+                    self.assertIsNone(address)
+                    self.assertEqual(sets, wg_sets(conf(form)))
 
     def assert_reads_like_wg(self, form):
         wanted = wg_sets(conf(form))
+        address, sets = installed_wg(conf(form))
+        if address is not None:
+            assert_rejected_like_wg(self, form, address, lambda: backup_check(form), lambda: verify_apply_gate(form),
+                                    {'conf_peers': lambda: verify_conf_peers(form),
+                                     'apply_peers': lambda: VT.apply_peers(conf(form)),
+                                     'syncconf body': lambda: verify_syncconf_sets(form)})
+            return
+        with self.subTest('installed wg', form=form):
+            self.assertEqual(sets, wanted)
         addresses, bad = backup_check(form)
         with self.subTest('backup addresses', form=form):
             self.assertEqual(addresses, wanted)

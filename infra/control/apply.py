@@ -17,7 +17,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -85,165 +84,65 @@ def run(argv, data=None):
 
 
 KNOWN_CIPHER = 'AES-256-GCM'  # every openvpn 2.6/2.7 server starts with it
+CHECK_SECONDS = 10  # the check server exits in milliseconds
+
+
+class CheckNotStarted(RuntimeError):
+    """openvpn gives no answer on the cipher here: the cipher is not judged."""
 
 
 def tls_server_starts(scratch, cipher):
-    """openvpn starts a TLS server with this cipher, as the real server reads the line.
+    """openvpn takes this cipher line as a TLS server reads it.
 
     A server keeps --cipher for clients without cipher negotiation, BF-CBC included,
     while --test-crypto takes it as a static key cipher, which OpenSSL 3 refuses for
-    BF-CBC without the legacy provider. The server opens a tun, so it starts as root
-    (sudo -n outside root) in a network namespace of its own, with a one-off
-    certificate. It does not exit by itself: it is stopped once started, on failure,
-    or after 60 s. A server that does not start with a known cipher either means the
-    environment refuses it (no unshare, no tun, sudo asks a password): that is said,
-    not taken for an unknown cipher.
+    BF-CBC without the legacy provider. openvpn 2.6 and 2.7 refuse an unknown cipher
+    before they open the tun, so on the tun node /nonexistent the server exits by
+    itself: no root, no tun, no process left. The cipher is taken when the start
+    ends on the line it ends on with KNOWN_CIPHER.
     """
     cert, key = scratch / 'tls.crt', scratch / 'tls.key'
     if not cert.exists():
         run(['/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
              '-nodes', '-keyout', str(key), '-out', str(cert), '-subj', '/CN=check', '-days', '1'])
-    deadline = time.monotonic() + 60
-    started, said = tls_server_run(cert, key, cipher, deadline)
-    if started:
-        return True
-    if cipher != KNOWN_CIPHER:
-        started, said = tls_server_run(cert, key, KNOWN_CIPHER, deadline)
-        if started:
-            return False
-    raise CheckNotStarted(f'проверка не запустилась: {start_failure(said)}')
-
-
-class CheckNotStarted(RuntimeError):
-    """The environment does not let the check server start: the cipher is not judged."""
+    known = tls_server_end(cert, key, KNOWN_CIPHER)
+    if '/nonexistent' not in known:
+        raise CheckNotStarted(f'openvpn --cipher {KNOWN_CIPHER}: {known}')
+    return cipher == KNOWN_CIPHER or tls_server_end(cert, key, cipher) == known
 
 
 # openvpn stamps each line it prints outside a daemon: 2.6/2.7, then older versions.
 STAMP = re.compile(r'(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}) ')
 
 
-def start_failure(said):
-    """What openvpn said of a start it gave up: the line before its fatal error exit."""
-    lines = [STAMP.sub('', line, count=1).strip() for line in said]
-    lines = [line for line in lines if line]
-    for number, line in enumerate(lines):
-        if line.startswith('Exiting due to fatal error'):
-            if number:
-                return lines[number - 1]
-            break
-    lines = [line for line in lines if not line.startswith('Exiting due to fatal error')]
-    return next((line for line in lines if 'error' in line.lower()), None) or (lines[-1] if lines else 'no output')
-
-
-class stopped_by_signals:
-    """SIGTERM, SIGHUP and SIGINT exit with 128+sig through finally, the default handlers skip it.
-
-    A dropped SSH session, an outer timeout or ^C would otherwise leave the check
-    server and its scratch key behind. The first signal exits; one that comes inside
-    held_signals waits for its end, and those after the first are dropped: nothing
-    cuts a cleanup short. The previous handlers come back after.
-    """
-    SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
-    holding = 0
-    pending = stopping = None
-
-    def __enter__(self):
-        stopped_by_signals.pending = stopped_by_signals.stopping = None
-        self.previous = {}
-        if threading.current_thread() is threading.main_thread():
-            for number in self.SIGNALS:
-                self.previous[number] = signal.signal(number, self.stop)
-        return self
-
-    @staticmethod
-    def stop(number, _frame):
-        if stopped_by_signals.stopping:
-            return
-        if stopped_by_signals.holding:
-            stopped_by_signals.pending = stopped_by_signals.pending or number
-            return
-        stopped_by_signals.stopping = True
-        raise SystemExit(128 + number)
-
-    def __exit__(self, *_failure):
-        for number, handler in self.previous.items():
-            signal.signal(number, handler)
-
-
-class held_signals:
-    """A signal of stopped_by_signals that comes inside waits until the block is over."""
-
-    def __enter__(self):
-        stopped_by_signals.holding += 1
-
-    def __exit__(self, *_failure):
-        stopped_by_signals.holding -= 1
-        if stopped_by_signals.pending and not stopped_by_signals.holding:
-            stopped_by_signals.stop(stopped_by_signals.pending, None)
-
-
-def tls_server_run(cert, key, cipher, deadline):
-    """(started, lines said) of one server start, stopped by the deadline at the latest.
-
-    The server runs in a process group of its own, unshare kills its child when it
-    dies, and the group gets SIGKILL 10 s after SIGTERM: a server deaf to SIGTERM
-    leaves no process behind. Outside root the group is root's, so sudo -n kills it.
-    """
-    root = [] if os.geteuid() == 0 else ['/usr/bin/sudo', '-n']
-    server = timer = None
-
-    def signal_group(name):
-        if root:
-            subprocess.run(root + ['/usr/bin/kill', '-s', name, '--', f'-{server.pid}'],
-                           capture_output=True, env=ENV, timeout=60)
-            return
-        try:
-            os.killpg(server.pid, {'TERM': 15, 'KILL': 9}[name])
-        except ProcessLookupError:
-            pass
-
-    def stop():
-        signal_group('TERM')
-        try:
-            server.wait(10)
-        except subprocess.TimeoutExpired:
-            signal_group('KILL')
-            server.wait()
-
-    expired = threading.Event()
-
-    def expire():
-        expired.set()
-        stop()
-    said = []
+def tls_server_end(cert, key, cipher):
+    """The line a server start with this cipher gives up on, without its time stamp."""
     try:
-        with held_signals():  # a started server is always known to the cleanup
-            server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '--fork', '--kill-child=SIGKILL',
-                                              '/usr/sbin/openvpn', '--verb', '1',
-                                              '--dev', 'tun', '--server', '10.67.67.0', '255.255.255.0',
-                                              '--ca', str(cert), '--cert', str(cert), '--key', str(key),
-                                              '--dh', 'none', '--cipher', cipher],
-                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV,
-                                      start_new_session=True)
-        timer = threading.Timer(max(0, deadline - time.monotonic()), expire)
-        timer.start()
-        for line in server.stdout:
-            said.append(line.strip())
-            if 'Initialization Sequence Completed' in line:
-                return True, said
-    finally:
-        with held_signals():
-            if timer:
-                timer.cancel()
-                timer.join()
-            if server:
-                if server.poll() is None:
-                    stop()
-                server.wait()
-                server.stdout.close()
-    if expired.is_set():
-        raise RuntimeError(f'openvpn --cipher {cipher}: server did not start in 60 s')
-    return False, said
+        result = subprocess.run(['/usr/sbin/openvpn', '--verb', '1', '--dev', 'tun', '--dev-node', '/nonexistent',
+                                 '--disable-dco', '--port', '0', '--server', '10.67.67.0', '255.255.255.0',
+                                 '--ca', str(cert), '--cert', str(cert), '--key', str(key), '--dh', 'none',
+                                 '--cipher', cipher],
+                                capture_output=True, text=True, timeout=CHECK_SECONDS, env=ENV)
+    except subprocess.TimeoutExpired:  # run() has killed the server
+        raise CheckNotStarted(f'openvpn --cipher {cipher}: no answer in {CHECK_SECONDS} s') from None
+    lines = [STAMP.sub('', line, count=1).strip() for line in (result.stdout + result.stderr).splitlines()]
+    lines = [line for line in lines if line and not line.startswith(('Exiting due to fatal error', 'Use --help'))]
+    return lines[-1] if lines else f'rc={result.returncode}'
+
+
+class Stopped(SystemExit):
+    """SIGTERM, SIGHUP or SIGINT in a cipher check: 128+sig, after the cleanup."""
+
+
+SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+def stop_on_signal(number, _frame):
+    # The default handlers skip finally and leave the check server and its keys; the
+    # signals after the first are ignored until exit, so nothing cuts the cleanup short.
+    for each in SIGNALS:
+        signal.signal(each, signal.SIG_IGN)
+    raise Stopped(128 + number)
 
 
 def write(path, body, mode):
@@ -454,13 +353,17 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        with stopped_by_signals():
-            scratch = tempfile.mkdtemp()
-            try:
+        main = threading.current_thread() is threading.main_thread()
+        previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS} if main else {}
+        try:
+            with tempfile.TemporaryDirectory() as scratch:
                 self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
-            finally:
-                with held_signals():  # the keys go even when a signal comes on the way
-                    shutil.rmtree(scratch)
+        except Stopped:
+            previous = {}  # apply exits: the signals stay ignored until then
+            raise
+        finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
 
     def check_openvpn_names_with(self, key, ciphers):
         self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])

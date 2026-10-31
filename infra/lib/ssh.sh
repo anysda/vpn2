@@ -108,9 +108,12 @@ fi
 # строкой, а _ssh_output отбрасывает всё до метки. Без метки (shell узла не
 # дошёл до команды) вывод отдаётся как есть, код $_SSH_OUTPUT_NO_MARK; прочие
 # коды - сбой записи вывода (читатель закрыл трубу), к метке отношения не имеют.
+# То же в stderr: .bashrc пишет туда до команды, а stderr ssh несёт и отказы
+# самого ssh. Вторая метка идёт в stderr, _ssh_errfilter отбрасывает всё до
+# неё; без метки (сбой соединения, shell не дошёл) stderr отдаётся как есть.
 _SSH_MARK=vpn2-ssh-output-begin
 _SSH_OUTPUT_NO_MARK=3
-_ssh_begin="printf '\\n%s\\n' $_SSH_MARK;"
+_ssh_begin="printf '\\n%s\\n' $_SSH_MARK; printf '\\n%s\\n' $_SSH_MARK >&2;"
 
 _ssh_output() {
   local line
@@ -128,6 +131,17 @@ _ssh_output() {
     (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
     printf '%s' "$line" ) 2>/dev/null
   return "$_SSH_OUTPUT_NO_MARK"
+}
+
+_ssh_errfilter() {
+  local line
+  local -a before=()
+  while IFS= read -r line; do
+    [[ $line == "$_SSH_MARK" ]] && { cat; return; }
+    before+=("$line")
+  done
+  (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"
+  printf '%s' "$line"
 }
 
 # "$1" секунд предела на команду "${@:2}" в своей сессии. По пределу дерево
@@ -229,15 +243,24 @@ _SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc
 _ssh_watch='exec 3<>"$1"
 { read -r -t "$2" -u 3 _ || { : > "$3"; kill -KILL 0; }; } </dev/null >/dev/null 2>&1 &
 exec 3>&-; shift 3; exec "$@"'
+# stderr команды идёт в _ssh_errfilter через дескриптор $ef, а не через
+# `2> >(...)`: дескриптор подстановки унаследовал бы сторож метки, и фильтр
+# не дождался бы конца. Перед возвратом фильтр дочитывает stderr до конца.
+_ssh_errclose() {
+  exec {ef}>&-
+  wait "$efpid" 2>/dev/null || :
+}
 _ssh_run() {
   local -a st
-  local link=" 255 5 6 7 " t0=${EPOCHREALTIME/[.,]/} limit dir=
+  local link=" 255 5 6 7 " t0=${EPOCHREALTIME/[.,]/} limit dir= ef efpid
   if [[ ${HOST_TAG:-ru} != ru && $1 != _limit_run ]]; then
     limit=$(ssh_probe_limit) || return 1
     dir=$(mktemp -d) || return 1
     mkfifo "$dir/mark" || { rm -rf -- "$dir"; return 1; }
-    { setsid -w bash -c "$_ssh_watch" _ "$dir/mark" "$limit" "$dir/hung" "$@" \
-        | _ssh_output "$dir/mark"; st=("${PIPESTATUS[@]}"); } || :
+    exec {ef}> >(_ssh_errfilter >&2); efpid=$!
+    { setsid -w bash -c "$_ssh_watch" _ "$dir/mark" "$limit" "$dir/hung" "$@" 2>&"$ef" {ef}>&- \
+        | _ssh_output "$dir/mark" {ef}>&-; st=("${PIPESTATUS[@]}"); } || :
+    _ssh_errclose
     # Команда кончилась без метки - сторожу больше нечего ждать.
     printf '\n' 1<>"$dir/mark"
     if [[ -e $dir/hung ]]; then
@@ -248,7 +271,9 @@ _ssh_run() {
     rm -rf -- "$dir"
   else
     # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
-    { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
+    exec {ef}> >(_ssh_errfilter >&2); efpid=$!
+    { "$@" 2>&"$ef" {ef}>&- | _ssh_output {ef}>&-; st=("${PIPESTATUS[@]}"); } || :
+    _ssh_errclose
   fi
   if [[ $1 == _limit_run ]] && (( ${EPOCHREALTIME/[.,]/} - t0 >= $2 * 1000000 )); then
     link+="124 137 "

@@ -23,6 +23,7 @@ from test_control import module
 from test_wg_conf_allowedips_net import apply_gate
 from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT, cut, source
 from test_wg_conf_module import BASE, CANONICAL, DEVICES, FORMS, LIB, NODE_LIB, backup_check, bundle, conf
+from wg_root import as_root
 
 WG_QUICK = ('Address', 'DNS', 'MTU', 'Table', 'PreUp', 'PostUp', 'PreDown', 'PostDown', 'SaveConfig')
 WG_NAMES = {'[interface]': {'privatekey', 'listenport', 'fwmark'},
@@ -204,6 +205,7 @@ def node_check(text, cwd_next_to_script):
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
+@as_root
 class WgConfLinesTests(unittest.TestCase):
     """1 lines wg does not recognize, 2 wg_conf.py from the node's library directory, 0 the model."""
 

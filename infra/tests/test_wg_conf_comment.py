@@ -13,13 +13,15 @@ import re
 import subprocess
 import tempfile
 import unittest
+from wg_root import as_root
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
 SERVER = base64.b64encode(bytes(range(32))).decode()
 FRESH = base64.b64encode(bytes(range(32, 64))).decode()
 OTHER = base64.b64encode(bytes(range(64, 96))).decode()
-PEER, OLD, NEW, GHOST = 'peer-one-key=', 'old-peer-key=', 'new-peer-key=', 'ghost-peer-key='
+PEER, OLD, NEW, GHOST = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202, 203, 204))
+PSK_ONE, PSK_TWO, PSK_NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213))
 
 # As 28-wireguard writes the header and backend appends the peers.
 HEAD_LINE = '# Initial config — panel will overwrite via syncWireguardConfig().\n'
@@ -47,7 +49,7 @@ def conf(form):
     ghost = f'\n# [Peer]\n#PublicKey = {GHOST}\n#AllowedIPs = 10.66.66.9/32\n' if s['commented'] else ''
     return (f'{HEAD_LINE}{s["iface"]}\n{pre}Address{eq}10.66.66.1/24{sep}fd66:66::1/64{t}\n'
             f'{pre}ListenPort{eq}51820{t}\n{hidden}{pre}PrivateKey{eq}{SERVER}{t}\n'
-            + peer(PEER, 'psk-one', 2) + peer(OLD, 'psk-two', 3) + ghost)
+            + peer(PEER, PSK_ONE, 2) + peer(OLD, PSK_TWO, 3) + ghost)
 
 
 def wg_view(text):
@@ -125,8 +127,8 @@ def verify_syncconf(form):
 def backup_check(form):
     """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
     block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, 'psk-one', '10.66.66.2')),
-            (2, None, (NEW, 'psk-new', '10.66.66.3'))]  # reissued: old key still on its address
+    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
+            (2, None, (NEW, PSK_NEW, '10.66.66.3'))]  # reissued: old key still on its address
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'etc-wireguard').mkdir()
@@ -173,11 +175,11 @@ def wireguard_rerun(form):
         return result.returncode, priv.read_text() if priv.exists() else None, result.stderr
 
 
-PEERS = [(PEER, 'psk-one', ['10.66.66.2/32', 'fd66:66::2/128']),
-         (OLD, 'psk-two', ['10.66.66.3/32', 'fd66:66::3/128'])]
+PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32', 'fd66:66::2/128']),
+         (OLD, PSK_TWO, ['10.66.66.3/32', 'fd66:66::3/128'])]
 SYNCCONF = [{'listenport': '51820', 'privatekey': SERVER},
-            [{'publickey': PEER, 'presharedkey': 'psk-one', 'allowedips': '10.66.66.2/32,fd66:66::2/128'},
-             {'publickey': OLD, 'presharedkey': 'psk-two', 'allowedips': '10.66.66.3/32,fd66:66::3/128'}]]
+            [{'publickey': PEER, 'presharedkey': PSK_ONE, 'allowedips': '10.66.66.2/32,fd66:66::2/128'},
+             {'publickey': OLD, 'presharedkey': PSK_TWO, 'allowedips': '10.66.66.3/32,fd66:66::3/128'}]]
 ADDRESSES = (0, ['addr 10.66.66.1/24', 'addr fd66:66::1/64'])
 
 
@@ -198,6 +200,7 @@ def every_reader(case, form):
         case.assertEqual((code, priv), (0, SERVER + '\n'), stderr)
 
 
+@as_root
 class WgConfCommentTests(unittest.TestCase):
     """Edges 1-5 per reader, 6-7 comment lines and blanks, 8 the file as written."""
 

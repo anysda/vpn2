@@ -14,6 +14,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+from wg_root import as_root
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -22,6 +23,7 @@ PEER = base64.b64encode(bytes(range(64, 96))).decode()
 GONE = base64.b64encode(bytes(range(96, 128))).decode()
 OLD = base64.b64encode(bytes(range(128, 160))).decode()
 NEW = base64.b64encode(bytes(range(160, 192))).decode()
+PSK_ONE, PSK_TWO, PSK_NEW, PSK_GONE = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213, 214))
 
 # As 28-wireguard writes the header and backend appends the peers.
 HEAD_LINE = '# Initial config — panel will overwrite via syncWireguardConfig().\n'
@@ -40,7 +42,7 @@ def parts(form):
     head = (HEAD_LINE + '[Interface]\n' + ''.join(f'Address = {a}\n' for a in address) +
             f'ListenPort = 51820\nPrivateKey = {SERVER}\n')
     peers = []
-    for key, psk, host in ((PEER, 'psk-one', 2), (GONE, 'psk-gone', 4), (OLD, 'psk-two', 3)):
+    for key, psk, host in ((PEER, PSK_ONE, 2), (GONE, PSK_GONE, 4), (OLD, PSK_TWO, 3)):
         allowed = [f'10.66.66.{host}/32', f'fd66:66::{host}/128']
         lines = allowed if form == 'allowed-two-lines' and key == OLD else [', '.join(allowed)]
         peers.append(f'\n[Peer]\nPublicKey = {key}\nPresharedKey = {psk}\n' +
@@ -140,9 +142,9 @@ def restore_drop_peers(form):
 def backup_check(form):
     """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
     block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, 'psk-one', '10.66.66.2')),
-            (2, None, (NEW, 'psk-new', '10.66.66.3')),  # reissued: old key still on its address
-            (3, True, (GONE, 'psk-gone', '10.66.66.4'))]
+    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
+            (2, None, (NEW, PSK_NEW, '10.66.66.3')),  # reissued: old key still on its address
+            (3, True, (GONE, PSK_GONE, '10.66.66.4'))]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'etc-wireguard').mkdir()
@@ -209,13 +211,14 @@ ADDRESSES = ['addr 10.66.66.1/24', 'addr fd66:66::1/64']
 IN_PLACE = ('value-comment', 'blank-in-name', 'section-comment')
 
 
+@as_root
 class WgConfReadersMoreTests(unittest.TestCase):
     """1 restore in place, 2 AllowedIPs over two lines, 3 Address split like wg-quick, 4 the file as written."""
 
     def test_0_references_read_every_form_like_wg(self):
         view = wg_view(conf('canonical'))
         self.assertEqual(view[0]['privatekey'], SERVER)
-        self.assertEqual(wg_peers('canonical')[2], (OLD, 'psk-two', ['10.66.66.3/32', 'fd66:66::3/128']))
+        self.assertEqual(wg_peers('canonical')[2], (OLD, PSK_TWO, ['10.66.66.3/32', 'fd66:66::3/128']))
         for form in IN_PLACE + ('allowed-two-lines', 'address-space', 'address-two-lines'):
             with self.subTest(form):
                 self.assertEqual(wg_view(conf(form))[1], view[1])

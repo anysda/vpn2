@@ -16,6 +16,7 @@ import unittest
 from test_wg_conf_allowedips_prefix import (
     A4, A6, B4, GONE, NEW, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_NEW, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
     cut, source)
+from wg_root import as_root
 
 A4_BARE = '10.66.66.3'
 G4, G6 = '10.66.66.4/32', 'fd66:66::4/128'
@@ -184,6 +185,7 @@ def syncconf_body(text):
     return data
 
 
+@as_root
 class WgConfAllowedIpsNetTests(unittest.TestCase):
     """1 address forms, 2 emptied peer, 3 address on two peers, 4 file wg rejects, 5 the file as written."""
 

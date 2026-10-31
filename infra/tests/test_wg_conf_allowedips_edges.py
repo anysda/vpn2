@@ -13,6 +13,7 @@ import unittest
 from test_wg_conf_allowedips_net import G4, G6, SPLIT, apply_gate, backup_check, network, syncconf_body
 from test_wg_conf_allowedips_prefix import (
     A4, A6, B4, GONE, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY)
+from wg_root import as_root
 
 # 1 wg rejects the whole file: AllowedIPs lines of OLD with an empty entry.
 EMPTY = {
@@ -108,6 +109,7 @@ def live(sets):
     return {net: peer for peer, nets in sets.items() for net in nets}
 
 
+@as_root
 class WgConfAllowedIpsEdgesTests(unittest.TestCase):
     """1 empty entry in the list, 2 the peer repeated in a second section, 0 the model against wg."""
 

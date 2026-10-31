@@ -19,6 +19,7 @@ from test_wg_conf_allowedips_net import apply_gate
 from test_wg_conf_allowedips_prefix import SERVER, VT, source
 from test_wg_conf_lines import wanted_peers, wg_quick_strip, wg_reject, with_lines, written
 from test_wg_conf_module import BASE, CANONICAL, LIB, NODE_LIB, backup_check, bundle, conf
+from wg_root import as_root
 
 WG_NAMES = {'interface': ('PrivateKey', 'ListenPort', 'FwMark'),
             'peer': ('PublicKey', 'PresharedKey', 'AllowedIPs', 'Endpoint', 'PersistentKeepalive')}
@@ -97,6 +98,7 @@ def cwd_check(text):
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
+@as_root
 class WgConfLinesMoreTests(unittest.TestCase):
     """1 a wg name with no value, 2 wg-quick names, 3 the module's directory, 0 the model, 5 own files."""
 

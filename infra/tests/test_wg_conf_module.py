@@ -21,6 +21,7 @@ import unittest
 from test_wg_conf_allowedips_net import G4, G6, apply_gate
 from test_wg_conf_allowedips_prefix import (
     A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT, cut, source)
+from wg_root import as_root
 
 LIB = ROOT / 'infra/lib'
 NODE_LIB = '/usr/local/lib/anysda'
@@ -139,6 +140,7 @@ def installs(text):
     return found
 
 
+@as_root
 class WgConfModuleTests(unittest.TestCase):
     """1 a [Peer] section without a public key, 2 wg_conf.py in the node's library directory, 0 the model."""
 

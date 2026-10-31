@@ -16,6 +16,7 @@ from test_wg_conf_allowedips_net import apply_gate, syncconf_body, wg_sets
 from test_wg_conf_allowedips_prefix import A4, A6, OLD, SERVER, VT
 from test_wg_conf_lines import wanted_peers, wg_quick_strip, wg_reject, written
 from test_wg_conf_module import BASE, CANONICAL, backup_check, conf
+from wg_root import as_root
 
 # Edge 1: a line starting with a section name, more on the line - put as the first header or after the last peer.
 HEADERS = {
@@ -105,6 +106,7 @@ def restored(text):
     return sorted(filter(None, (re.sub(r'[ \t\n\v\f\r]', '', line) for line in interface))), wanted_peers(body)
 
 
+@as_root
 class WgConfLinesRawTests(unittest.TestCase):
     """1 a section header with more on the line, 2 a lone `\\r`, 0 the model, 4 own files."""
 

@@ -13,12 +13,14 @@ import re
 import subprocess
 import tempfile
 import unittest
+from wg_root import as_root
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
 SERVER = base64.b64encode(bytes(range(32))).decode()
 FRESH = base64.b64encode(bytes(range(32, 64))).decode()
-PEER, OLD, NEW = 'peer-one-key=', 'old-peer-key=', 'new-peer-key='
+PEER, OLD, NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202, 203))
+PSK_ONE, PSK_TWO, PSK_NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213))
 
 NAMES = ('Interface', 'Address', 'ListenPort', 'FwMark', 'PrivateKey', 'PublicKey', 'PresharedKey', 'AllowedIPs')
 STYLES = {
@@ -37,9 +39,9 @@ def conf(style):
     n, peers = STYLES[style]
     return (f'[{n["Interface"]}]\n{n["Address"]} = 10.66.66.1/24\n{n["ListenPort"]} = 51820\n'
             f'{n["FwMark"]} = 0x66\n{n["PrivateKey"]} = {SERVER}\n\n'
-            f'[{peers[0]}]\n{n["PublicKey"]} = {PEER}\n{n["PresharedKey"]} = psk-one\n'
+            f'[{peers[0]}]\n{n["PublicKey"]} = {PEER}\n{n["PresharedKey"]} = {PSK_ONE}\n'
             f'{n["AllowedIPs"]} = 10.66.66.2/32\n\n'
-            f'[{peers[1]}]\n{n["PublicKey"]} = {OLD}\n{n["PresharedKey"]} = psk-two\n'
+            f'[{peers[1]}]\n{n["PublicKey"]} = {OLD}\n{n["PresharedKey"]} = {PSK_TWO}\n'
             f'{n["AllowedIPs"]} = 10.66.66.3/32\n')
 
 
@@ -79,8 +81,8 @@ def pairs(text):
 def backup_check(style):
     """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
     block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, 'psk-one', '10.66.66.2')),
-            (2, None, (NEW, 'psk-new', '10.66.66.3'))]  # reissued: old key still on its address
+    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
+            (2, None, (NEW, PSK_NEW, '10.66.66.3'))]  # reissued: old key still on its address
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'etc-wireguard').mkdir()
@@ -186,9 +188,10 @@ def svc_conf_iface(style):
         return result.returncode, result.stdout.split('\n')[:-1]
 
 
-PEERS = [(PEER, 'psk-one', ['10.66.66.2/32']), (OLD, 'psk-two', ['10.66.66.3/32'])]
+PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32']), (OLD, PSK_TWO, ['10.66.66.3/32'])]
 
 
+@as_root
 class WgConfKeyCaseTests(unittest.TestCase):
     """Edges 1-5: every reader takes the mixed-case file like wg does."""
 
@@ -216,7 +219,7 @@ class WgConfKeyCaseTests(unittest.TestCase):
     def test_3b_verify_syncconf_body_keeps_interface(self):
         body = pairs(verify_syncconf_body('mixed'))
         for line in (('privatekey', SERVER), ('listenport', '51820'), ('fwmark', '0x66'),
-                     ('publickey', PEER), ('presharedkey', 'psk-one'), ('publickey', OLD)):
+                     ('publickey', PEER), ('presharedkey', PSK_ONE), ('publickey', OLD)):
             self.assertIn(line, body)
 
     def test_4_wireguard_rerun_keeps_server_key(self):
@@ -238,7 +241,7 @@ class WgConfKeyCaseTests(unittest.TestCase):
                 con = sqlite3.connect(root / 'db.sqlite')
                 con.execute('CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT, wg_public_key TEXT, '
                             'wg_preshared_key TEXT, wg_ip TEXT)')
-                con.execute('INSERT INTO devices VALUES (1, ?, ?, ?, ?)', ('one', PEER, 'psk-one', '10.66.66.2'))
+                con.execute('INSERT INTO devices VALUES (1, ?, ?, ?, ?)', ('one', PEER, PSK_ONE, '10.66.66.2'))
                 con.commit()
                 con.close()
                 (root / 'etc-wireguard').mkdir()

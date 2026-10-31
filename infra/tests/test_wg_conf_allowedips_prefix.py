@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import tempfile
 import unittest
+from wg_root import as_root
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -184,6 +185,7 @@ WG_APPLY = [{'key': PEER, 'preshared_key': PSK_ONE, 'ip': '10.66.66.2'},
             {'key': OLD, 'preshared_key': PSK_TWO, 'ip': '10.66.66.3'}]
 
 
+@as_root
 class WgConfAllowedIpsPrefixTests(unittest.TestCase):
     """1 `-B` after `A, B`, 2 `+A`, 3 `-X` absent, 4 `-A` then `A`, 5 the file as written."""
 

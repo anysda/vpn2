@@ -246,6 +246,13 @@ systemctl enable openvpn-server@server >/dev/null 2>&1 || true
 ovpn_restart_if_changed
 # Type=notify: restart вернулся после READY=1, проба только ловит падение.
 svc_settle 2 systemctl is-active --quiet openvpn-server@server
+# Поднявшийся server.conf и есть last good: иначе откат деплоя, упавшего до
+# 29-control, вернул бы прежние порт, шифры и пулы. Первую установку, пока
+# vpn2-apply нет, отмечает 29-control.
+if [[ -x /usr/local/sbin/vpn2-apply ]] && systemctl is-active --quiet openvpn-server@server; then
+  /usr/local/sbin/vpn2-apply mark openvpn \
+    || echo "[$HOST_TAG] vpn2-apply mark openvpn не прошёл: last good не совпадает с server.conf" >&2
+fi
 systemctl status openvpn-server@server --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ── 6. tun0 → sing-box TPROXY (same mark/table/port as wg0) ─────────────────

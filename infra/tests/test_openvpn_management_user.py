@@ -160,6 +160,91 @@ echo "== 29-openvpn"
         output = self.deploy()
         self.assert_both_switched(output)
 
+    def header(self):
+        return source('infra/lib/anysda-svc.sh') + f'''
+HOST_TAG=ru
+SVC_FP_DIR={self.work}/applied
+OVPN_DIR={self.base}
+PATH={self.work}/bin:$PATH
+systemctl() {{ [[ $1 == *restart ]] && echo "$1 $2" >> {self.restarts}; return 0; }}
+'''
+
+    def fingerprint(self):
+        script = self.header() + 'ovpn_inputs; svc_fingerprint "${OVPN_INPUTS[@]}"'
+        return subprocess.run(['bash', '-c', script], text=True, capture_output=True, check=True).stdout
+
+    def recorded_fingerprint(self):
+        return (self.work / 'applied/openvpn-server@server.sha256').read_text()
+
+    def marker(self):
+        return self.root / 'etc/vpn2-control/api-managed'
+
+    def old_root_node(self):
+        """Live and last good with root, no marker, fingerprint of what runs."""
+        self.deploy()
+        conf = self.live().replace(USER, 'management-client-user root')
+        (self.base / 'server.conf').write_text(conf)
+        (self.state / 'openvpn.good').write_text(conf)
+        self.marker().unlink()
+        (self.work / 'applied/openvpn-server@server.sha256').write_text(self.fingerprint())
+        self.restarts.write_text('')
+
+    def failing_frontend(self):
+        """30-frontend under its panel transaction; the new panel never passes the health check."""
+        panel = source('infra/scripts/30-frontend.sh')
+        txn = source('infra/lib/panel-transaction.sh').replace(
+            'panel_lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)', 'panel_lib=/nonexistent')
+        script = self.header() + txn + f'''
+panel_state={self.work}/panel
+curl() {{ return 7; }}
+sleep() {{ :; }}
+''' + self.rooted(between(panel, 'panel_files_restored() {', 'TLS_PATHS=')) + '''
+panel_changed=true
+trap panel_failure EXIT
+''' + self.rooted(between(panel, 'systemctl stop anysda-ikev2-sync.timer',
+                          'systemctl start anysda-ikev2-sync.timer')) + 'panel_health\n'
+        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=self.work,
+                                text=True, capture_output=True, timeout=60)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def test_panel_failure_after_switch_keeps_live_and_good_together(self):
+        self.old_root_node()
+        output = self.failing_frontend()
+        live = management(self.live())
+        self.assertEqual(management(self.good()), live, output)
+        self.assertEqual(self.marker().exists(), live == [USER], output)
+        self.assertEqual(self.recorded_fingerprint(), self.fingerprint(), output)
+        rolled = self.vpn2_apply_run('rollback', 'openvpn')
+        self.assertEqual(management(self.live()), live, rolled.stderr)
+        self.restarts.write_text('')
+        output = self.deploy()
+        self.assert_both_switched(output)
+        self.assertLessEqual(len(self.restarts.read_text().splitlines()), 1, output)
+        self.restarts.write_text('')
+        output = self.deploy()
+        self.assertEqual(self.restarts.read_text(), '', output)
+
+    def test_panel_failure_without_switch_leaves_openvpn_alone(self):
+        self.deploy()
+        live, good, fp = self.live(), self.good(), self.recorded_fingerprint()
+        output = self.failing_frontend()
+        self.assertEqual(self.live(), live, output)
+        self.assertEqual(self.good(), good, output)
+        self.assertTrue(self.marker().exists(), output)
+        self.assertEqual(self.recorded_fingerprint(), fp, output)
+
+    def test_denied_switch_fails_the_stage_and_touches_nothing(self):
+        self.old_root_node()
+        live, fp = self.live(), self.recorded_fingerprint()
+        self.vpn2_apply.write_text('#!/bin/sh\necho "vpn2-apply: Permission denied" >&2\nexit 1\n')
+        output = self.failing_frontend()
+        self.assertIn('vpn2-apply install openvpn: код 1, server.conf не изменён', output)
+        self.assertEqual(self.live(), live, output)
+        self.assertEqual(self.good(), live, output)
+        self.assertFalse(self.marker().exists(), output)
+        self.assertEqual(self.recorded_fingerprint(), fp, output)
+
 
 if __name__ == '__main__':
     unittest.main()

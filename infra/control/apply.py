@@ -402,9 +402,13 @@ class Applier:
         elif resource == 'wg':
             # Every section and syncconf key is checked as wg reads it, the same
             # way activate() picks the lines it gives wg syncconf.
-            section, public, ports = None, [], []
+            section, quick, public, ports = None, False, [], []
             for line in text.split('\n'):
                 name, value = wg_line(line)
+                # wg-quick's own section: any line whose trimmed key starts with [
+                # ends it, and only [Interface] in any case opens the one it strips.
+                key = line.split('#', 1)[0].split('=', 1)[0].strip(' \t\v\f\r')
+                quick = key.lower() == '[interface]' if key.startswith('[') else quick
                 if name in WG_SECTIONS:
                     # wg reads a later [Interface] too, but wg_split() keeps only the
                     # first one as the deployment's: an apply replaces it whole, and
@@ -424,9 +428,8 @@ class Applier:
                         raise ValueError(f'wg cannot read {line!a}')
                     # Any other line wg-quick leaves in the header stops wg-quick up with
                     # "Line unrecognized". The [Peer] tail is the live file's, not checked here.
-                    key = line.split('#', 1)[0].split('=', 1)[0].strip(' \t\v\f\r')
                     if value and section != '[Peer]' and not (
-                            section == '[Interface]' and re.fullmatch('|'.join(WG_QUICK_KEYS), key, re.I | re.A)):
+                            quick and re.fullmatch('|'.join(WG_QUICK_KEYS), key, re.I | re.A)):
                         raise ValueError(f'wg cannot read {line!a}')
                     continue
                 if name not in WG_SECTIONS.get(section, ()):

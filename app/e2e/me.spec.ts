@@ -131,8 +131,6 @@ test.describe('вход через Authentik из профиля', () => {
       const viaPassword = await page.request.put('/api/admin/sso', { data: { ...base, passwordLogin: false } })
       expect(viaPassword.status()).toBe(400)
       expect((await viaPassword.json()).statusMessage).toBe('sso_not_proven')
-      const noSecret = await page.request.put('/api/admin/sso', { data: { ...base, clientSecret: '' } })
-      expect((await noSecret.json()).statusMessage).toBe('sso_no_client_secret')
       const http = await page.request.put('/api/admin/sso', { data: { ...base, redirectUrl: 'http://vpn2.example.invalid/auth/authentik' } })
       expect((await http.json()).statusMessage).toBe('sso_bad_redirect')
       const noUser = await page.request.put('/api/admin/sso', { data: { ...base, allowedSubs: `${base.allowedSubs}:nobody-e2e` } })

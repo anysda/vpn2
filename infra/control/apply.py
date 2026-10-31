@@ -298,6 +298,11 @@ def wg_split(text):
     cut = next((index for index, line in enumerate(lines) if wg_line(line)[0] == '[Peer]'), None)
     if cut is None:
         return text.rstrip(' \t\n\v\f\r') + '\n', ''
+    # Comments right above the first [Peer] sign that peer, so they go with the tail.
+    while cut and wg_line(lines[cut - 1]) == (None, ''):
+        cut -= 1
+    while not re.sub(BLANK, '', lines[cut]):
+        cut += 1
     return '\n'.join(lines[:cut]).rstrip(' \t\n\v\f\r') + '\n', '\n'.join(lines[cut:])
 
 

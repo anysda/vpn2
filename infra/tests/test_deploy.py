@@ -99,7 +99,13 @@ ssh_exec() {{
   echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
   if [[ "$1" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
   if [[ "$1" == *anysda-restore.sh* ]]; then return {restore_rc}; fi
-  if [[ "$1" == *anysda-backup.sh* ]]; then return {backup_rc}; fi
+  if [[ "$1" == *anysda-backup.sh* ]]; then
+    # Код 4 настоящей копии при расхождении - со строкой warning: в финале.
+    if [[ {backup_rc} -eq 4 ]]; then
+      printf '%-12s %s\\n' warning: 'БД и конфиги VPN расходятся (устройства: 7) — перевыпусти в панели'
+    fi
+    return {backup_rc}
+  fi
 }}
 ''')
         environment = dict(os.environ, PATH=f'{root / "bin"}:{os.environ["PATH"]}',

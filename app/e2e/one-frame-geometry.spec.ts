@@ -72,6 +72,27 @@ async function openFrozen(page: Page) {
   // Каскад запущен и для списка, и для рассылки.
   await page.waitForFunction(sels => sels.every(s => (window as unknown as Frozen).__anims
     .some(a => (a.effect as KeyframeEffect | null)?.target === document.querySelector(s))), [LIST, CARD])
+  await settled(page)
+}
+
+/**
+ * Список клиентов приходит только в браузере, карточка выбранного клиента —
+ * следом, и сетка тянет .clist по её высоте. Замер до ответов и замер после
+ * расходятся на сотни пикселей, поэтому ждать оба ответа и раскладку, которая
+ * не меняется между двумя замерами.
+ */
+async function settled(page: Page) {
+  await expect(page.locator(`${LIST} .crows > *`).first()).toBeAttached()
+  const detail = page.getByTestId('client-detail')
+  await expect(detail.getByTitle('Имя клиента').or(detail.locator(':scope > .more'))).toBeVisible()
+  await expect(detail.locator('[aria-busy="true"]')).toHaveCount(0)
+  let last = ''
+  await expect.poll(async () => {
+    const now = JSON.stringify(await rects(page, LIST, CARD))
+    const same = now === last
+    last = now
+    return same
+  }).toBe(true)
 }
 
 /** Поставить каскад в начало (обе карточки на 22px ниже) и забыть прошлые замеры. */

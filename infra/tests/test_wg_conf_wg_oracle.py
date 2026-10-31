@@ -428,7 +428,7 @@ def expected_cut(raw, key):
 
 
 def without_wg(directory):
-    """PATH dirs as now: one without wg and wg-quick, one whose `ip netns add` is refused."""
+    """PATH dirs as now: one without wg and wg-quick, one refusing a new netns (`ip netns add`, `unshare --net`)."""
     found = {}
     for folder in os.environ['PATH'].split(os.pathsep):
         for entry in (Path(folder).iterdir() if Path(folder).is_dir() else ()):
@@ -445,6 +445,13 @@ def without_wg(directory):
                                         '{ echo "mount --make-shared /run/netns failed: Operation not permitted" >&2; '
                                         f'exit 1; }}\nexec {IP} "$@"\n')
                 (top / 'ip').chmod(0o755)
+                continue
+            if kind == 'no-netns' and name == 'unshare':
+                # A new netns is refused whichever way it is made: `ip netns add` or `unshare --net`.
+                (top / 'unshare').write_text('#!/bin/bash\nfor arg; do [[ $arg != --net* && $arg != -[!-]*n* ]] || '
+                                             '{ echo "unshare: unshare failed: Operation not permitted" >&2; '
+                                             f'exit 1; }}; done\nexec {entry} "$@"\n')
+                (top / 'unshare').chmod(0o755)
                 continue
             (top / name).symlink_to(entry)
         paths[kind] = str(top)

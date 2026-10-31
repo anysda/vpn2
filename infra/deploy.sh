@@ -962,7 +962,7 @@ _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
   local ok=0 try reason='' kind=net prc pause auth_tries=0 limit
-  local t1 took spent n probe_limit what
+  local t1 took spent n probe_limit
   # Бюджет в микросекундах: время проб меряет EPOCHREALTIME, паузы считаются
   # по заказанной длине. У целых SECONDS проба в 10 мс через границу секунды
   # стоила бы 1 с, и число попыток зависело бы от того, где началась секунда.
@@ -1024,11 +1024,17 @@ _preflight_host() {
     printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
     : >"$dir/$h.ok"
   else
-    what='недоступна по ssh с entry'
-    [[ $kind != setting ]] || what='не проверялась, ошибка в настройке'
-    printf '  %-30s %b✗ нода %s (%s) %s: %s%b\n' \
-      "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$what" "$reason" "$C_END"
-    echo "нода $h ($SSH_HOST) $what: $reason" >"$dir/$h.fail"
+    # Неверная настройка общая для всех нод: её текст печатает один раз
+    # preflight_ssh, у ноды - только что она не проверялась.
+    if [[ $kind == setting ]]; then
+      printf '  %-30s %b✗ нода %s (%s) не проверялась, ошибка в настройке%b\n' \
+        "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$C_END"
+      echo "$reason" >"$dir/$h.fail"
+    else
+      printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
+        "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
+      echo "нода $h ($SSH_HOST) недоступна по ssh с entry: $reason" >"$dir/$h.fail"
+    fi
     echo "$kind" >"$dir/$h.kind"
     [[ $kind != hostkey ]] || ssh_hostkey_fix >"$dir/$h.fix"
   fi
@@ -1083,7 +1089,7 @@ preflight_ssh() {
 
   if [[ ${#settings[@]} -gt 0 ]]; then
     printf '\n%b✗ Ошибка в настройке:%b\n' "$C_R" "$C_END"
-    printf '  %s\n' "${settings[@]}"
+    printf '  %s\n' "${settings[@]}" | sort -u
     [[ ${#reasons[@]} -gt 0 ]] || HOST_TAG=deploy die "pre-flight: ошибка в настройке, деплой не запускался"
   fi
 

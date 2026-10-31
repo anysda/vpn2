@@ -127,10 +127,12 @@ _ssh_output() {
 }
 
 # "$1" секунд предела на команду "${@:2}" в своей сессии. По пределу дерево
-# сперва замирает (STOP: новых детей не наплодит), потом KILL всему дереву и
-# сессии, вместе с детьми, что отвязались в свою группу или сессию: `timeout -k`
+# сперва замирает (STOP: новых детей не наплодит), потом KILL всему дереву,
+# вместе с детьми, что отвязались в свою группу или сессию: `timeout -k`
 # uutils добивает только прямого ребёнка. Когда команда кончилась, гибнет всё,
-# что осталось в её сессии. Код - код команды, по пределу 137.
+# что осталось в её сессии. Код - код команды, по пределу 137. INT и TERM
+# вызывающего гасят сессию сразу, ловушки вызывающего возвращаются, и сигнал
+# доходит до них (или убивает shell, если ловушек нет).
 # Копия - в infra/scripts/99-verify.sh: тесты verify запускают его одним
 # файлом, без anysda-svc.sh рядом. Тексты сверяет test_ssh_limit_session.py.
 _limit_kill_tree() {
@@ -150,37 +152,50 @@ _limit_kill_tree() {
   done
   # Корень последним: его ждёт _limit_run, к его смерти потомки уже убиты.
   kill -KILL "${tree[@]:1}" "$1" 2>/dev/null || :
-  pkill -KILL -s "$1" 2>/dev/null || :
 }
 _limit_run() {
-  local limit=$1 pid killer rc=0
+  local limit=$1 pid killer rc=0 sig='' traps
   local -
   shift
+  traps=$(trap -p INT TERM)
+  trap 'sig=INT' INT
+  trap 'sig=TERM' TERM
   # Без job control фоновый setsid не лидер группы и сам зовёт setsid(): pid
   # и есть номер сессии. С `set -m` он ушёл бы в fork и вернул 0 сразу.
+  # Сторож - сирота sleep в той же сессии: пока он жив, ядро не отдаст номер
+  # сессии другому процессу, и pkill -s после wait бьёт только свою сессию.
   set +m
-  setsid -w "$@" <&0 & pid=$!
+  setsid -w sh -c '(command sleep "$1" </dev/null >/dev/null 2>&1 &); shift; exec "$@"' \
+    _limit "$((limit + 60))" "$@" <&0 & pid=$!
   ( command sleep "$limit"; _limit_kill_tree "$pid" ) </dev/null >/dev/null 2>&1 & killer=$!
   # wait молча: сообщение bash «Killed» о задании - не вывод команды.
+  # Ловушка прерывает wait: дерево гасим сами и ждём корень снова. Номер
+  # держит сторож, поэтому kill -0 видит именно корень, пока он не пожат.
   wait "$pid" 2>/dev/null || rc=$?
+  if [[ -n $sig ]] && kill -0 "$pid" 2>/dev/null; then
+    _limit_kill_tree "$pid"
+    rc=0; wait "$pid" 2>/dev/null || rc=$?
+  fi
   # У убийцы дети - его sleep или ps, kill и pkill обхода: обход не нужен.
   kill -STOP "$killer" 2>/dev/null || :
   pkill -KILL -P "$killer" 2>/dev/null || :
   kill -KILL "$killer" 2>/dev/null || :
   wait "$killer" 2>/dev/null || :
-  # Убийцу могли снять посреди работы: сессию добиваем здесь, вместе с
-  # сиротами, чей родитель уже 1.
+  # Сессию добиваем здесь, вместе со сторожем и сиротами, чей родитель уже 1.
   pkill -KILL -s "$pid" 2>/dev/null || :
+  trap - INT TERM
+  eval "$traps"
+  [[ -z $sig ]] || kill -s "$sig" "$BASHPID"
   return "$rc"
 }
 
-# SSH_PROBE_TIMEOUT - целое число секунд больше 0, не задан - 30. Иначе
-# ошибка с именем переменной в stderr и код 1: «0» снял бы предел, «1.5» и
-# «abc» ломают арифметику bash и timeout.
+# SSH_PROBE_TIMEOUT - целое число секунд от 1 до 999999 без ведущего нуля, не
+# задан - 30. Иначе ошибка с именем переменной и условием в stderr и код 1:
+# «0» снял бы предел, «1.5» и «abc» ломают арифметику bash и timeout.
 ssh_probe_limit() {
   local v=${SSH_PROBE_TIMEOUT-30}
   if [[ ! $v =~ ^[1-9][0-9]{0,5}$ ]]; then
-    echo "SSH_PROBE_TIMEOUT='$v': нужно целое число секунд больше 0" >&2
+    echo "SSH_PROBE_TIMEOUT='$v': нужно целое число секунд от 1 до 999999 без ведущего нуля" >&2
     return 1
   fi
   echo "$v"

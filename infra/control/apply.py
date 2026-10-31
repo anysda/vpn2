@@ -137,14 +137,54 @@ class Stopped(SystemExit):
 
 
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# A temporary path between its making and its name kept, and a cleanup, run whole: a
+# signal there waits for the hold to end. The kernel mask would deliver the waiting
+# signals lowest number first, so the hold is kept here and the first signal wins.
+HOLD = {'on': False, 'first': None}
+
+
+def dropped(_number, _frame):
+    """A signal after the one that stopped apply: the cleanup goes on, the code stays."""
 
 
 def stop_on_signal(number, _frame):
-    # The default handlers skip finally and leave the check server and its keys; the
-    # signals after the first are ignored until exit, so nothing cuts the cleanup short.
+    # The default handlers skip finally and leave the check server and its keys.
+    if HOLD['on']:
+        HOLD['first'] = HOLD['first'] or number
+        return
+    # Not SIG_IGN: Python reports a signal still waiting for a handler that turned into it.
     for each in SIGNALS:
-        signal.signal(each, signal.SIG_IGN)
+        if signal.getsignal(each) is stop_on_signal:
+            signal.signal(each, dropped)
     raise Stopped(128 + number)
+
+
+@contextlib.contextmanager
+def holding(on):
+    """Signals wait while ON; a signal held so far stops apply once they may not."""
+    before, HOLD['on'] = HOLD['on'], on
+    try:
+        if not on:
+            stop_if_held()
+        yield
+    finally:
+        HOLD['on'] = before
+        if not before:
+            stop_if_held()
+
+
+def stop_if_held():
+    number, HOLD['first'] = HOLD['first'], None
+    if number:
+        stop_on_signal(number, None)
+
+
+def held():
+    return holding(True)
+
+
+def released():
+    return holding(False)
 
 
 @contextlib.contextmanager
@@ -167,28 +207,26 @@ def stopping():
 
 
 def discard(path):
-    """Delete a temporary file or directory whole: a signal waits until it is gone."""
-    before = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
-    try:
-        if os.path.isdir(path) and not os.path.islink(path):
-            shutil.rmtree(path)
-        else:
-            Path(path).unlink(missing_ok=True)
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+    """Delete a temporary file or directory; the caller holds signals until it is gone."""
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        Path(path).unlink(missing_ok=True)
 
 
 def write(path, body, mode):
-    descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
-    try:
-        with os.fdopen(descriptor, 'w') as output:
-            os.fchmod(output.fileno(), mode)
-            output.write(body)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(name, path)
-    finally:
-        discard(name)
+    with held():
+        descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
+        try:
+            with released():
+                with os.fdopen(descriptor, 'w') as output:
+                    os.fchmod(output.fileno(), mode)
+                    output.write(body)
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(name, path)
+        finally:
+            discard(name)
 
 
 SPACE = ' \t\n\v\f\r\0'  # C isspace() and the terminator, not Python's wider isspace
@@ -385,14 +423,13 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        with stopping():
-            scratch = None
+        with stopping(), held():
+            scratch = tempfile.mkdtemp()
             try:
-                scratch = tempfile.mkdtemp()
-                self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
+                with released():
+                    self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
             finally:
-                if scratch:
-                    discard(scratch)
+                discard(scratch)
 
     def check_openvpn_names_with(self, key, ciphers):
         self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
@@ -492,32 +529,38 @@ class Applier:
 
     def install_stopping(self, resource, source):
         self.resume(resource)
+        candidate = self.candidate(resource)
+        with held():
+            try:
+                with released():
+                    self.prepare(resource, source, candidate)
+            except BaseException:
+                # A rejection, an error or a signal anywhere in prepare(). Only a journal
+                # that says "replacing" makes the next run finish the candidate.
+                if self.stage_now(resource) != 'replacing':
+                    discard(candidate)
+                raise
+        self.finish(resource)
+
+    def prepare(self, resource, source, candidate):
+        """A checked candidate and a journal that says "replacing"."""
         spec = RESOURCES[resource]
         target = self.target(resource)
-        candidate = self.candidate(resource)
         try:
+            body = self.with_access(resource, Path(source).read_text())
+            write(candidate, body, spec['mode'])
+            self.check(resource, body, candidate)
+        except (OSError, ValueError, RuntimeError) as error:
+            raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
+        if not self.good(resource).exists() and target.exists():
+            # Nothing verified yet: the running config earns "last good" first.
             try:
-                body = self.with_access(resource, Path(source).read_text())
-                write(candidate, body, spec['mode'])
-                self.check(resource, body, candidate)
-            except (OSError, ValueError, RuntimeError) as error:
-                raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
-            if not self.good(resource).exists() and target.exists():
-                # Nothing verified yet: the running config earns "last good" first.
-                try:
-                    for argv in spec['verify']:
-                        self.command(argv)
-                    self.mark(resource)
-                except RuntimeError:
-                    pass
-            self.stage(resource, 'replacing')
-        except BaseException:
-            # A rejection, an error or a signal, also one inside the clause above. Only a
-            # journal that says "replacing" makes the next run finish the candidate.
-            if self.stage_now(resource) != 'replacing':
-                discard(candidate)
-            raise
-        self.finish(resource)
+                for argv in spec['verify']:
+                    self.command(argv)
+                self.mark(resource)
+            except RuntimeError:
+                pass
+        self.stage(resource, 'replacing')
 
     def finish(self, resource):
         candidate = self.candidate(resource)

@@ -1149,15 +1149,43 @@ _preflight_net_hint() {
 # ----------------------------------------------------------------------------
 HY2_PORT_CANDIDATES=(443 4443 4444 8443 8444 21345)
 
+# Причина по коду ssh_exec, если команда на узел не дошла: 255 ssh (отказ во
+# входе или нет соединения, подробности ssh.sh печатает выше), 5/6/7 sshpass,
+# $_SSH_NO_MARK shell узла не дошёл до команды. Иначе код 1: это код команды
+# узла, и мёртвый туннель от сбоя входа отличает только он.
+_ssh_login_reason() {
+  case $1 in
+    255) echo 'ssh код 255: отказ во входе или нет соединения' ;;
+    5) echo 'sshpass код 5: отказ во входе (неверный пароль или sshd не пускает пользователя)' ;;
+    6) echo 'sshpass код 6: host-key узла неизвестен' ;;
+    7) echo 'sshpass код 7: сменился host-key узла' ;;
+    "$_SSH_NO_MARK") echo "код $_SSH_NO_MARK: $_SSH_NO_MARK_REASON" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Сбой входа на entry - не мёртвые туннели: экзиты не исключаем, порты не трогаем.
+_die_entry_login() {
+  local reason; reason=$(_ssh_login_reason "$1")
+  # Строка пробника или перекатки могла остаться недописанной.
+  printf '\n'
+  load_env ru
+  die "verify_and_rotate_ports: сбой входа по ssh на entry ($SSH_HOST): $reason; туннели не проверены, экзиты и порты не менял"
+}
+
 # Печатает delay (ms) и возвращает 0 если туннель ответил, 1 при таймауте/ошибке.
+# Команда до entry не дошла - код ssh_exec как есть (см. _ssh_login_reason).
 # kind: direct | warp — какой outbound экзита проверять.
 _clash_delay() {
   local tag="$1" kind="${2:-direct}"
   load_env ru
-  local secret resp d
-  secret=$(ssh_exec 'cat /etc/anysda/clash-secret.txt 2>/dev/null') || return 1
+  local secret resp d rc=0
+  secret=$(ssh_exec 'cat /etc/anysda/clash-secret.txt 2>/dev/null || true') || rc=$?
+  (( rc == 0 )) || { _ssh_login_reason "$rc" >/dev/null && return "$rc"; return 1; }
   [[ -z "$secret" ]] && return 1
-  resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-${kind}/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null") || return 1
+  # Код curl 5/6/7 совпал бы с кодами sshpass: наружу его не отдаём.
+  resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-${kind}/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null || true") || rc=$?
+  (( rc == 0 )) || { _ssh_login_reason "$rc" >/dev/null && return "$rc"; return 1; }
   d=$(printf '%s' "$resp" | grep -oE '"delay":[0-9]+' | sed -n 1p | grep -oE '[0-9]+' || true)
   if [[ "$d" =~ ^[1-9][0-9]*$ ]]; then
     printf '%s' "$d"
@@ -1199,13 +1227,15 @@ verify_and_rotate_ports() {
   mkdir -p "$state_dir"
 
   for tag in $exits; do
-    local delay current
+    local delay current rc=0
     current=$(_current_port "$tag")
     # 1. Быстрый путь: туннель отвечает на текущем порту → OK
-    if delay=$(_clash_delay "$tag" direct); then
+    delay=$(_clash_delay "$tag" direct) || rc=$?
+    if (( rc == 0 )); then
       printf '  %-16s port=%-5s %bRTT=%sms ✓%b\n' "hy2-${tag}-direct" "$current" "$C_G" "$delay" "$C_END"
       continue
     fi
+    (( rc == 1 )) || _die_entry_login "$rc"
     printf '  %-16s port=%-5s %b×%b\n' "hy2-${tag}-direct" "$current" "$C_Y" "$C_END"
 
     # 2. Активная UDP-проверка: 5 случайных high-портов с python echo. Если
@@ -1215,14 +1245,23 @@ verify_and_rotate_ports() {
     local exit_host
     load_env "$tag"; exit_host="$SSH_HOST"
     local probe_ports=(33445 39847 41001 51234 60123)
-    local udp_alive=""
+    local udp_alive="" prc=0
     printf '    UDP-пробник: '
     for p in "${probe_ports[@]}"; do
-      if _probe_udp_one_port "$tag" "$exit_host" "$p"; then
+      prc=0
+      _probe_udp_one_port "$tag" "$exit_host" "$p" || prc=$?
+      if (( prc == 0 )); then
         udp_alive="$p"
         break
       fi
+      (( prc == 1 )) || break
     done
+    # Экзит не пустил по ssh: туннель не проверен, а не мёртв.
+    if (( prc > 1 )); then
+      printf '%bсбой входа по ssh на экзит %s (%s): %s — не проверен, не исключаю, порт не меняю%b\n' \
+        "$C_R" "$tag" "$exit_host" "$(_ssh_login_reason "$prc")" "$C_END"
+      continue
+    fi
     if [[ -z "$udp_alive" ]]; then
       printf '%bвсе 5 портов фильтруются → exit МЁРТВ, исключаю%b\n' "$C_R" "$C_END"
       fully_dead+=("$tag")
@@ -1241,11 +1280,14 @@ verify_and_rotate_ports() {
       python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null
       _redeploy_exit_port "$tag" "$state_dir/rotate-${tag}-${port}.log" || continue
       sleep 4
-      if delay=$(_clash_delay "$tag" direct); then
+      rc=0
+      delay=$(_clash_delay "$tag" direct) || rc=$?
+      if (( rc == 0 )); then
         printf '%bRTT=%sms ✓%b\n' "$C_G" "$delay" "$C_END"
         found=1; rotated_any=1
         break
       fi
+      (( rc == 1 )) || _die_entry_login "$rc"
       printf '%b×%b\n' "$C_R" "$C_END"
     done
     if [[ $found -eq 0 ]]; then
@@ -1319,10 +1361,11 @@ verify_and_rotate_ports() {
 # UDP-пробник между RU entry и exit на одном порту. Используется внутри
 # verify_and_rotate_ports как ground-truth: "UDP-путь физически существует
 # или нет". Не зависит от sing-box / hy2 / warp — обычный python echo.
-# Возвращает 0 если пакет проехал туда-обратно, 1 иначе.
+# Возвращает 0 если пакет проехал туда-обратно, 1 иначе. Экзит не пустил по
+# ssh - код ssh_exec (см. _ssh_login_reason), entry не пустил - die.
 # ----------------------------------------------------------------------------
 _probe_udp_one_port() {
-  local exit_tag="$1" exit_host="$2" port="$3"
+  local exit_tag="$1" exit_host="$2" port="$3" rc=0
   # 1. На exit: открыть UFW, запустить python UDP echo с таймаутом
   load_env "$exit_tag"
   ssh_exec "
@@ -1338,7 +1381,11 @@ except Exception:
     pass
 ' </dev/null >/dev/null 2>&1 &
     sleep 1
-  " >/dev/null 2>&1 || return 1
+  " >/dev/null || rc=$?
+  if (( rc != 0 )); then
+    _ssh_login_reason "$rc" >/dev/null && return "$rc"
+    return 1
+  fi
 
   # 2. С RU entry: отправить UDP-пробу, ждать echo
   load_env "ru"
@@ -1353,12 +1400,16 @@ try:
     sys.stdout.write(data.decode())
 except Exception:
     sys.stdout.write(\"TIMEOUT\")
-' 2>/dev/null
-  " 2>/dev/null) || true
+' 2>/dev/null || true
+  ") || rc=$?
 
   # 3. Cleanup: убрать UFW-правило
   load_env "$exit_tag"
   ssh_exec "ufw delete allow ${port}/udp >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
+  if (( rc != 0 )); then
+    _ssh_login_reason "$rc" >/dev/null && _die_entry_login "$rc"
+    return 1
+  fi
 
   [[ "$result" == "PONG-PING-${port}" ]]
 }

@@ -900,8 +900,25 @@ class Targets:
         self.local = None
         self.echo = None
         self.remote = {}
+        self.failed = {}
         self.exit_ips = {tag: router.exit_ip(tag) for tag in exits}
         self.iface = router.outbounds.get(DIRECT, {}).get('bind_interface')
+
+    def not_ready(self, process, err):
+        """None - цель ответила «ready»; иначе процесс дождан, причина - код или предел и stderr."""
+        if self.wait_ready(process, self.READY_TIMEOUT):
+            return None
+        try:
+            reason = f'код {process.wait(timeout=2)}'
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            reason = f'не ответила за {self.READY_TIMEOUT} с'
+        process.stdout.close()
+        err.seek(0)
+        # Последняя строка трассировки - сама причина (Address already in use и т. п.).
+        tail = (err.read().strip().splitlines() or [''])[-1].strip()[-300:]
+        return f'{reason}, stderr: {tail or "пусто"}'
 
     def local_target(self, listen, lifetime):
         # stderr - в файл: канал никто не читает, а причина отказа нужна оператору.
@@ -909,20 +926,27 @@ class Targets:
             process = subprocess.Popen([sys.executable, '-I', str(TARGET), '--listen', listen,
                                         '--port', str(self.port), '--lifetime', str(lifetime)],
                                        stdout=subprocess.PIPE, stderr=err, text=True)
-            if self.wait_ready(process, self.READY_TIMEOUT):
-                return process
-            try:
-                reason = f'код {process.wait(timeout=2)}'
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-                reason = f'не ответила за {self.READY_TIMEOUT} с'
-            process.stdout.close()
-            err.seek(0)
-            # Последняя строка трассировки - сама причина (Address already in use и т. п.).
-            tail = (err.read().strip().splitlines() or [''])[-1].strip()[-300:]
-        raise TargetError(f'локальная цель эха на {listen}:{self.port} не поднялась: {reason}, '
-                          f'stderr: {tail or "пусто"}')
+            reason = self.not_ready(process, err)
+        if reason is None:
+            return process
+        raise TargetError(f'локальная цель эха на {listen}:{self.port} не поднялась: {reason}')
+
+    def exit_target(self, tag, lifetime):
+        # Отказ ssh во входе и падение цели различимы только по коду и stderr.
+        with tempfile.TemporaryFile('w+') as err:
+            process = subprocess.Popen(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
+                                        'bash', '-c', f"'{self.exit_command(self.port, lifetime)}'"],
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True)
+            # ssh, которому отказали во входе, может выйти раньше, чем прочтёт скрипт.
+            with contextlib.suppress(BrokenPipeError):
+                process.stdin.write(TARGET.read_text())
+            with contextlib.suppress(BrokenPipeError):
+                process.stdin.close()
+            reason = self.not_ready(process, err)
+        if reason is None:
+            self.remote[tag] = process
+        else:
+            self.failed[tag] = f'цель эха на экзите {tag} не поднялась: {reason}'
 
     def start(self, lifetime):
         # Эхо на адресе entry - только для ретранслятора (tg-proxy стоит выше блока адресов entry).
@@ -934,16 +958,8 @@ class Targets:
                 '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
             self.echo = self.local_target(ECHO_IP, lifetime)
         for tag, ip in self.exit_ips.items():
-            if not ip:
-                continue
-            process = subprocess.Popen(['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
-                                        'bash', '-c', f"'{self.exit_command(self.port, lifetime)}'"],
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                       text=True)
-            process.stdin.write(TARGET.read_text())
-            process.stdin.close()
-            if self.wait_ready(process):
-                self.remote[tag] = process
+            if ip:
+                self.exit_target(tag, lifetime)
 
     @staticmethod
     def exit_command(port, lifetime):
@@ -1151,7 +1167,8 @@ class Verifier:
                                 f'нет эха или неверный выход: {sorted(leaves) or "нет соединения"}')
         for tag in self.exits:
             if tag not in self.targets.remote or tag not in self.markers:
-                why = 'нет эха на экзите (ssh)' if tag not in self.targets.remote else 'нет набора pin-hy2-*-direct'
+                why = self.targets.failed.get(tag, 'нет эха на экзите (ssh)') \
+                    if tag not in self.targets.remote else 'нет набора pin-hy2-*-direct'
                 self.report.add(f'маршрут: через экзит {tag}', name, UNKNOWN, why)
                 continue
             expected = f'hy2-{tag}-direct'

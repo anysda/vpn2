@@ -513,7 +513,14 @@ class Applier:
             return structure
         target = self.target(resource)
         current = wg_split(self.read(resource, target))[1] if target.exists() else ''
-        return wg_split(structure)[0] + ('\n' + current if current else '')
+        header = wg_split(structure)[0]
+        if not current:
+            return header
+        # Over a [Peer] the comments ending the [Interface] sign that peer (wg_split),
+        # so they open the tail, once: the live tail may already start with them.
+        header, notes = wg_split(header + '[Peer]')
+        notes = notes.removesuffix('[Peer]')
+        return header + '\n' + ('' if current.startswith(notes) else notes) + current
 
     def activate(self, resource):
         spec = RESOURCES[resource]

@@ -75,8 +75,10 @@ test('удаление выбранного клиента из своей па�
   const { first, second } = await twoClients(page)
   try {
     const missing: string[] = []
+    let lists = 0
     page.on('response', (r) => {
       if (r.status() === 404) missing.push(`${r.request().method()} ${r.url()}`)
+      if (r.request().method() === 'GET' && /\/api\/clients(\?.*)?$/.test(r.url())) lists++
     })
     await page.goto('/clients')
     const panel = page.getByTestId('client-detail')
@@ -85,7 +87,11 @@ test('удаление выбранного клиента из своей па�
     await page.getByRole('dialog', { name: 'Удалить клиента?' }).getByRole('button', { name: 'Удалить' }).click()
     await expect(clientName(panel)).toHaveText(second.name)
     await expect(clientCard(page, first.name)).toHaveCount(0)
-    await page.waitForLoadState('networkidle')
+    // Не networkidle: список опрашивается каждые 3 с, а запрос, оборванный новым опросом
+    // внутри page.route, остаётся в сети до конца теста. Два ответа списка после удаления -
+    // полный цикл опроса, за который панель запросила бы удалённого клиента снова.
+    const listed = lists
+    await expect.poll(() => lists - listed, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
     expect(missing).toEqual([])
   }
   finally {

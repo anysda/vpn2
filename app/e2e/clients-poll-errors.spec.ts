@@ -184,7 +184,8 @@ test('после загрузки API 12 с отвечает 503: прежний
   })
   await page.waitForResponse(r => isList(r.request()) && r.status() === 503, { timeout: 10_000 })
   await expect(staleError(page)).toBeVisible({ timeout: 5000 })
-  await expect(staleError(page)).toContainText('сервер недоступен')
+  await expect(staleError(page)).toContainText('ошибка сервера (код 503)')
+  await expect(page.locator('body')).not.toContainText('сервер недоступен')
   while (Date.now() < until - 500) {
     expect(await staleError(page).isVisible(), 'сообщение об устаревшем списке').toBe(true)
     expect(await clientCard(page, name).isVisible(), 'строка клиента').toBe(true)

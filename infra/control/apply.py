@@ -82,6 +82,9 @@ def run(argv, data=None):
     return result.stdout
 
 
+KNOWN_CIPHER = 'AES-256-GCM'  # every openvpn 2.6/2.7 server starts with it
+
+
 def tls_server_starts(scratch, cipher):
     """openvpn starts a TLS server with this cipher, as the real server reads the line.
 
@@ -90,39 +93,83 @@ def tls_server_starts(scratch, cipher):
     BF-CBC without the legacy provider. The server opens a tun, so it starts as root
     (sudo -n outside root) in a network namespace of its own, with a one-off
     certificate. It does not exit by itself: it is stopped once started, on failure,
-    or after 60 s.
+    or after 60 s. A server that does not start with a known cipher either means the
+    environment refuses it (no unshare, no tun, sudo asks a password): that is said,
+    not taken for an unknown cipher.
     """
     cert, key = scratch / 'tls.crt', scratch / 'tls.key'
     if not cert.exists():
         run(['/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
              '-nodes', '-keyout', str(key), '-out', str(cert), '-subj', '/CN=check', '-days', '1'])
+    deadline = time.monotonic() + 60
+    started, said = tls_server_run(cert, key, cipher, deadline)
+    if started:
+        return True
+    if cipher != KNOWN_CIPHER:
+        started, said = tls_server_run(cert, key, KNOWN_CIPHER, deadline)
+        if started:
+            return False
+    cause = [line for line in said if 'error' in line.lower()][:1] or said[-1:] or ['no output']
+    raise RuntimeError(f'проверка не запустилась: {cause[0]}')
+
+
+def tls_server_run(cert, key, cipher, deadline):
+    """(started, lines said) of one server start, stopped by the deadline at the latest.
+
+    The server runs in a process group of its own, unshare kills its child when it
+    dies, and the group gets SIGKILL 10 s after SIGTERM: a server deaf to SIGTERM
+    leaves no process behind. Outside root the group is root's, so sudo -n kills it.
+    """
     root = [] if os.geteuid() == 0 else ['/usr/bin/sudo', '-n']
-    server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '/usr/sbin/openvpn', '--verb', '1',
+    server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '--fork', '--kill-child=SIGKILL',
+                                      '/usr/sbin/openvpn', '--verb', '1',
                                       '--dev', 'tun', '--server', '10.67.67.0', '255.255.255.0',
                                       '--ca', str(cert), '--cert', str(cert), '--key', str(key),
                                       '--dh', 'none', '--cipher', cipher],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV)
-    expired = []
-    timer = threading.Timer(60, lambda: expired.append(server.terminate()))
-    timer.start()
-    try:
-        for line in server.stdout:
-            if 'Initialization Sequence Completed' in line:
-                return True
-    finally:
-        timer.cancel()
-        # sudo passes SIGTERM on to openvpn, not SIGKILL.
-        if server.poll() is None:
-            server.terminate()
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV,
+                              start_new_session=True)
+
+    def signal_group(name):
+        if root:
+            subprocess.run(root + ['/usr/bin/kill', '-s', name, '--', f'-{server.pid}'],
+                           capture_output=True, env=ENV, timeout=60)
+            return
+        try:
+            os.killpg(server.pid, {'TERM': 15, 'KILL': 9}[name])
+        except ProcessLookupError:
+            pass
+
+    def stop():
+        signal_group('TERM')
         try:
             server.wait(10)
         except subprocess.TimeoutExpired:
-            server.kill()
+            signal_group('KILL')
             server.wait()
+
+    expired = threading.Event()
+
+    def expire():
+        expired.set()
+        stop()
+    timer = threading.Timer(max(0, deadline - time.monotonic()), expire)
+    timer.start()
+    said = []
+    try:
+        for line in server.stdout:
+            said.append(line.strip())
+            if 'Initialization Sequence Completed' in line:
+                return True, said
+    finally:
+        timer.cancel()
+        timer.join()
+        if server.poll() is None:
+            stop()
+        server.wait()
         server.stdout.close()
-    if expired:
+    if expired.is_set():
         raise RuntimeError(f'openvpn --cipher {cipher}: server did not start in 60 s')
-    return False
+    return False, said
 
 
 def write(path, body, mode):

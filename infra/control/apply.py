@@ -58,6 +58,9 @@ WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:(?ai:off)|
              'PublicKey': KEY, 'PresharedKey': KEY, 'AllowedIPs': f'{WG_ADDRESS}(?:,{WG_ADDRESS})*'}
 WG_SECTIONS = {'[Interface]': ('PrivateKey', 'ListenPort', 'FwMark'),
                '[Peer]': ('PublicKey', 'PresharedKey', 'AllowedIPs')}
+# The [Interface] keys wg-quick takes out before it gives the rest to wg: any ASCII
+# case, the name trimmed of blanks at both ends only.
+WG_QUICK_KEYS = ('Address', 'DNS', 'MTU', 'Table', 'PreUp', 'PreDown', 'PostUp', 'PostDown', 'SaveConfig')
 # The directives infra/scripts/29-openvpn.sh writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
@@ -418,6 +421,12 @@ class Applier:
                 if not name:
                     # A line Python's \s reads as a syncconf key must read the same to wg.
                     if wg_line(re.sub(FOREIGN_SPACE, '', line))[0]:
+                        raise ValueError(f'wg cannot read {line!a}')
+                    # Any other line wg-quick leaves in the header stops wg-quick up with
+                    # "Line unrecognized". The [Peer] tail is the live file's, not checked here.
+                    key = line.split('#', 1)[0].split('=', 1)[0].strip(' \t\v\f\r')
+                    if value and section != '[Peer]' and not (
+                            section == '[Interface]' and re.fullmatch('|'.join(WG_QUICK_KEYS), key, re.I | re.A)):
                         raise ValueError(f'wg cannot read {line!a}')
                     continue
                 if name not in WG_SECTIONS.get(section, ()):

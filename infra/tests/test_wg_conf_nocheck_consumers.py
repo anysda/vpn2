@@ -16,9 +16,11 @@ Each consumer runs as it is in its script; only what it asks the node for is stu
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest import mock
@@ -167,6 +169,7 @@ class VerifyFreeAddressesTests(unittest.TestCase):
     PROBE = '''
 import importlib.util, json, sys, types
 from pathlib import Path
+import signal
 spec = importlib.util.spec_from_file_location('vt', sys.argv[1])
 vt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vt)
@@ -195,16 +198,79 @@ print(json.dumps(vt.WireGuard.free_addresses(3)))
 
 
 class DeployBackupTests(unittest.TestCase):
-    """1 deploy.sh do_backup on exit 4 of the copy: nothing to check with vs a real mismatch."""
+    """1 deploy.sh do_backup on exit 4 of the copy: nothing to check with vs a real mismatch.
+
+    Review 13 of 77ceeec: exit 4 without a `warning:` line (sshpass "parse error" is 4 too,
+    ssh_exec passes it as it is) was "архив сохранён … перевыпусти" and 0, and the mktemp
+    file of the copy stayed behind on Ctrl-C. do_backup runs as `backup) do_backup ;;`
+    of deploy.sh: last command under set -euo pipefail, its own TMPDIR.
+    """
 
     OLD = 'архив сохранён с предупреждением: БД и конфиги VPN расходятся - перевыпусти перечисленные выше устройства в панели'
 
-    def do_backup(self, copy):
-        script = function('do_backup') + 'load_env() { :; }\nwarn() { printf "[ru] %s\\n" "$*" >&2; }\n' + \
-            'ssh_exec() {\n' + copy + '\nreturn 4\n}\nrc=0; do_backup || rc=$?; echo "rc=$rc"\n'
+    @staticmethod
+    def script(tmp, copy):
+        return f'export TMPDIR={tmp}\n' + function('do_backup') + \
+            'load_env() { :; }\nwarn() { printf "[ru] %s\\n" "$*" >&2; }\n' + \
+            'ssh_exec() {\n' + copy + '\n}\ndo_backup\n'
+
+    def do_backup(self, copy, code=4):
         with tempfile.TemporaryDirectory() as directory:
-            done = bash(script, directory)
-        return done.stdout + done.stderr, done.stdout.strip().splitlines()[-1]
+            tmp = Path(directory, 'tmp')
+            tmp.mkdir()
+            done = bash(self.script(tmp, f'{copy}\nreturn {code}'), directory)
+            left = sorted(path.name for path in tmp.iterdir())
+        output = done.stdout + done.stderr
+        self.assertEqual(left, [], output)
+        return output, f'rc={done.returncode}'
+
+    def test_exit_4_without_warning_line_is_a_failure(self):
+        for name, copy in {
+            'silent': ':',
+            'sshpass-parse-error': "echo 'sshpass: parse error' >&2",
+            'backup-line-only': "printf '%-12s %s\\n' 'backup:' /var/backups/anysda/anysda-vpn2-x.tar.gz.age",
+            'warning-not-at-start': "echo 'anysda-backup: WARN: warning: сверка БД с конфигами VPN не выполнена' >&2\n"
+                                    "echo ' warning: БД и конфиги VPN расходятся'",
+        }.items():
+            with self.subTest(name):
+                output, rc = self.do_backup(copy)
+                self.assertNotEqual(rc, 'rc=0', output)
+                self.assertNotIn('архив сохранён', output)
+                self.assertNotIn('перевыпусти', output)
+
+    def test_success_and_exit_1_are_as_before(self):
+        output, rc = self.do_backup("printf '%-12s %s\\n' 'backup:' /x.tar.gz.age", 0)
+        self.assertEqual(rc, 'rc=0', output)
+        self.assertNotIn('перевыпусти', output)
+        self.assertNotIn('не проверено', output)
+        output, rc = self.do_backup("echo 'boom' >&2", 1)
+        self.assertEqual(rc, 'rc=1', output)
+        self.assertNotIn('архив сохранён', output)
+
+    def test_signal_during_copy_leaves_no_temp_file(self):
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(sig.name), tempfile.TemporaryDirectory() as directory:
+                tmp, copying = Path(directory, 'tmp'), Path(directory, 'copying')
+                tmp.mkdir()
+                copy = f"printf '%-12s %s\\n' 'backup:' /x.tar.gz.age\n: > {copying}\nsleep 30\nreturn 0"
+                # Ctrl-C reaches the whole foreground group: bash, the copy, tee.
+                with subprocess.Popen(['bash', '-euo', 'pipefail', '-c', self.script(tmp, copy)], cwd=directory,
+                                      text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      start_new_session=True) as done:
+                    for _ in range(100):
+                        if copying.exists():
+                            break
+                        time.sleep(0.1)
+                    during = sorted(path.name for path in tmp.iterdir())
+                    os.killpg(done.pid, sig)
+                    stdout, stderr = done.communicate(timeout=15)
+                left = sorted(path.name for path in tmp.iterdir())
+                output = stdout + stderr
+                self.assertTrue(copying.exists(), output)
+                self.assertEqual(len(during), 1, output)
+                self.assertNotEqual(done.returncode, 0, output)
+                self.assertEqual(left, [], output)
+                self.assertNotIn('архив сохранён', output)
 
     def test_nothing_to_check_with_is_not_a_mismatch(self):
         reason = NOCHECK + ' - wg не ответил за 30 с'

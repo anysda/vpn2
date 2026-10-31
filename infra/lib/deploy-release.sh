@@ -13,7 +13,10 @@ release_unlock() {
     done
   fi
   if [[ -n "${VPN2_LOCK_IN:-}" ]]; then
-    printf '\n' >&"$VPN2_LOCK_IN" || true
+    # Если ssh замка уже оборван, coproc мёртв: встроенный printf в его трубу
+    # получил бы SIGPIPE и убил deploy кодом 141 до строки итога. В подоболочке
+    # SIGPIPE игнорируется, запись просто вернёт EPIPE.
+    ( trap '' PIPE; printf '\n' >&"$VPN2_LOCK_IN" ) 2>/dev/null || true
     exec {VPN2_LOCK_IN}>&-
     wait "$VPN2_LOCK_PID" || true
   fi

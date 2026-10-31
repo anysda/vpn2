@@ -107,6 +107,8 @@ firewall_repair_if_lost() {
 # Был ли перезапуск через svc_restart_if_changed с прошлого svc_settle.
 SVC_RESTARTED=0
 
+svc_fingerprint() { { cat "$@" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1; }
+
 # svc_restart_if_changed UNIT FILE...
 # FILE — всё, что служба читает при старте: бинарник, юнит, конфиги,
 # сертификаты. Отпечаток их содержимого сверяем с записанным при прошлом
@@ -115,7 +117,7 @@ svc_restart_if_changed() {
   local unit=$1 fp_file fp
   shift
   fp_file="$SVC_FP_DIR/$unit.sha256"
-  fp=$({ cat "$@" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1)
+  fp=$(svc_fingerprint "$@")
   if systemctl is-active --quiet "$unit" && [[ "$(cat "$fp_file" 2>/dev/null)" == "$fp" ]]; then
     svc_say "$unit: конфиг, сертификаты и бинарник прежние — не перезапускаю"
     return 0
@@ -131,11 +133,24 @@ svc_restart_if_changed() {
 # management в 30-frontend: отпечаток один, иначе следующий деплой видит
 # «изменение» и рвёт всех OpenVPN-клиентов. CRL и ccd OpenVPN перечитывает сам
 # на каждом подключении, их в отпечатке нет.
-ovpn_restart_if_changed() {
+ovpn_inputs() {
   local dir=${OVPN_DIR:-/etc/openvpn/server}
-  svc_restart_if_changed openvpn-server@server /usr/sbin/openvpn \
-    /usr/lib/systemd/system/openvpn-server@.service "$dir/server.conf" \
-    "$dir/pki/ca.crt" "$dir/pki/server.crt" "$dir/pki/server.key" "$dir/pki/tls-crypt.key"
+  OVPN_INPUTS=(/usr/sbin/openvpn /usr/lib/systemd/system/openvpn-server@.service
+    "$dir/server.conf" "$dir/pki/ca.crt" "$dir/pki/server.crt" "$dir/pki/server.key"
+    "$dir/pki/tls-crypt.key")
+}
+
+ovpn_restart_if_changed() {
+  ovpn_inputs
+  svc_restart_if_changed openvpn-server@server "${OVPN_INPUTS[@]}"
+}
+
+# vpn2-apply install сам перезапустил openvpn с новым server.conf: записываем
+# отпечаток, иначе следующий деплой перезапустит сервер ещё раз.
+ovpn_restarted_by_apply() {
+  ovpn_inputs
+  mkdir -p "$SVC_FP_DIR"
+  svc_fingerprint "${OVPN_INPUTS[@]}" > "$SVC_FP_DIR/openvpn-server@server.sha256"
 }
 
 # svc_settle SEC [ПРОБА...] — дать только что перезапущенной службе подняться

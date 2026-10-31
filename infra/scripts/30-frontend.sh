@@ -280,8 +280,18 @@ docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 systemctl stop anysda-ikev2-sync.timer anysda-ikev2-sync.service 2>/dev/null || true
 if [[ -f /etc/openvpn/server/server.conf ]] \
   && ! grep -qx 'management-client-user vpn2-control' /etc/openvpn/server/server.conf; then
-  sed -i 's/^management-client-user .*/management-client-user vpn2-control/' /etc/openvpn/server/server.conf
-  ovpn_restart_if_changed
+  # Через vpn2-apply: last good получает тот же конфиг, и откат не вернёт root.
+  ovpn_candidate=$(mktemp)
+  sed 's/^management-client-user .*/management-client-user vpn2-control/' \
+    /etc/openvpn/server/server.conf > "$ovpn_candidate"
+  rc=0
+  /usr/local/sbin/vpn2-apply install openvpn "$ovpn_candidate" || rc=$?
+  rm -f "$ovpn_candidate"
+  if (( rc )); then
+    echo "[$HOST_TAG] vpn2-apply install openvpn: код $rc, server.conf не изменён" >&2
+    exit "$rc"
+  fi
+  ovpn_restarted_by_apply
 fi
 touch /etc/vpn2-control/api-managed
 systemctl start anysda-ikev2-sync.timer 2>/dev/null || true

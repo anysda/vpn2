@@ -1522,20 +1522,30 @@ EOF
 # ----------------------------------------------------------------------------
 do_backup() {
   load_env ru
-  local rc=0 out warning
+  local rc=0 out warning traps
   out=$(mktemp)
+  # Ctrl-C и TERM посреди копии: убрать временный файл, вернуть ловушки deploy
+  # и умереть тем же сигналом. Прежние ловушки возвращаются и после копии.
+  traps=$(trap -p INT TERM)
+  # shellcheck disable=SC2064
+  trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -INT \$\$" INT
+  # shellcheck disable=SC2064
+  trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -TERM \$\$" TERM
   ssh_exec '/usr/local/bin/anysda-backup.sh' | tee "$out" || rc=$?
   warning=$(grep -m1 '^warning:' "$out" || true)
   rm -f "$out"
+  trap - INT TERM
+  eval "$traps"
   # Код 4 и «сверка не выполнена»: нечем было спросить wg - архив годный,
   # конфиги не проверены, перевыпуск не нужен.
   if [[ $rc -eq 4 && $warning == *'сверка БД с конфигами VPN не выполнена'* ]]; then
     warn 'архив сохранён, сверка с конфигами VPN не выполнена - не проверено, причина выше'
     return 0
   fi
-  # Код 4: архив снят, но БД и конфиги VPN расходятся (устройства в выводе
-  # выше). Архив годный - команда удалась, предупреждение и в «Событиях».
-  if [[ $rc -eq 4 ]]; then
+  # Код 4 со строкой warning: копия дошла до финала, но БД и конфиги VPN
+  # расходятся (устройства в выводе выше). Архив годный - команда удалась.
+  # Код 4 без неё (sshpass «parse error», обрыв) - сбой, архива нет.
+  if [[ $rc -eq 4 && -n $warning ]]; then
     warn 'архив сохранён с предупреждением: БД и конфиги VPN расходятся - перевыпусти перечисленные выше устройства в панели'
     return 0
   fi

@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -110,7 +111,11 @@ def tls_server_starts(scratch, cipher):
         started, said = tls_server_run(cert, key, KNOWN_CIPHER, deadline)
         if started:
             return False
-    raise RuntimeError(f'проверка не запустилась: {start_failure(said)}')
+    raise CheckNotStarted(f'проверка не запустилась: {start_failure(said)}')
+
+
+class CheckNotStarted(RuntimeError):
+    """The environment does not let the check server start: the cipher is not judged."""
 
 
 # openvpn stamps each line it prints outside a daemon: 2.6/2.7, then older versions.
@@ -131,28 +136,50 @@ def start_failure(said):
 
 
 class stopped_by_signals:
-    """SIGTERM and SIGHUP exit with 128+sig through finally, the default handlers skip it.
+    """SIGTERM, SIGHUP and SIGINT exit with 128+sig through finally, the default handlers skip it.
 
-    A dropped SSH session or an outer timeout would otherwise leave the check
-    server and its scratch key behind. The previous handlers come back after.
+    A dropped SSH session, an outer timeout or ^C would otherwise leave the check
+    server and its scratch key behind. The first signal exits; one that comes inside
+    held_signals waits for its end, and those after the first are dropped: nothing
+    cuts a cleanup short. The previous handlers come back after.
     """
-    SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+    SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+    holding = 0
+    pending = stopping = None
 
     def __enter__(self):
+        stopped_by_signals.pending = stopped_by_signals.stopping = None
         self.previous = {}
         if threading.current_thread() is threading.main_thread():
             for number in self.SIGNALS:
                 self.previous[number] = signal.signal(number, self.stop)
         return self
 
-    def stop(self, number, _frame):
-        for other in self.previous:
-            signal.signal(other, signal.SIG_IGN)  # a second signal does not cut the cleanup short
+    @staticmethod
+    def stop(number, _frame):
+        if stopped_by_signals.stopping:
+            return
+        if stopped_by_signals.holding:
+            stopped_by_signals.pending = stopped_by_signals.pending or number
+            return
+        stopped_by_signals.stopping = True
         raise SystemExit(128 + number)
 
     def __exit__(self, *_failure):
         for number, handler in self.previous.items():
             signal.signal(number, handler)
+
+
+class held_signals:
+    """A signal of stopped_by_signals that comes inside waits until the block is over."""
+
+    def __enter__(self):
+        stopped_by_signals.holding += 1
+
+    def __exit__(self, *_failure):
+        stopped_by_signals.holding -= 1
+        if stopped_by_signals.pending and not stopped_by_signals.holding:
+            stopped_by_signals.stop(stopped_by_signals.pending, None)
 
 
 def tls_server_run(cert, key, cipher, deadline):
@@ -163,13 +190,7 @@ def tls_server_run(cert, key, cipher, deadline):
     leaves no process behind. Outside root the group is root's, so sudo -n kills it.
     """
     root = [] if os.geteuid() == 0 else ['/usr/bin/sudo', '-n']
-    server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '--fork', '--kill-child=SIGKILL',
-                                      '/usr/sbin/openvpn', '--verb', '1',
-                                      '--dev', 'tun', '--server', '10.67.67.0', '255.255.255.0',
-                                      '--ca', str(cert), '--cert', str(cert), '--key', str(key),
-                                      '--dh', 'none', '--cipher', cipher],
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV,
-                              start_new_session=True)
+    server = timer = None
 
     def signal_group(name):
         if root:
@@ -194,27 +215,32 @@ def tls_server_run(cert, key, cipher, deadline):
     def expire():
         expired.set()
         stop()
-    timer = threading.Timer(max(0, deadline - time.monotonic()), expire)
-    timer.start()
     said = []
     try:
+        with held_signals():  # a started server is always known to the cleanup
+            server = subprocess.Popen(root + ['/usr/bin/unshare', '--net', '--fork', '--kill-child=SIGKILL',
+                                              '/usr/sbin/openvpn', '--verb', '1',
+                                              '--dev', 'tun', '--server', '10.67.67.0', '255.255.255.0',
+                                              '--ca', str(cert), '--cert', str(cert), '--key', str(key),
+                                              '--dh', 'none', '--cipher', cipher],
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ENV,
+                                      start_new_session=True)
+        timer = threading.Timer(max(0, deadline - time.monotonic()), expire)
+        timer.start()
         for line in server.stdout:
             said.append(line.strip())
             if 'Initialization Sequence Completed' in line:
                 return True, said
     finally:
-        def clean():
-            timer.cancel()
-            timer.join()
-            if server.poll() is None:
-                stop()
-            server.wait()
-            server.stdout.close()
-        try:
-            clean()
-        except SystemExit:  # a signal cut the first pass short; it comes once
-            clean()
-            raise
+        with held_signals():
+            if timer:
+                timer.cancel()
+                timer.join()
+            if server:
+                if server.poll() is None:
+                    stop()
+                server.wait()
+                server.stdout.close()
     if expired.is_set():
         raise RuntimeError(f'openvpn --cipher {cipher}: server did not start in 60 s')
     return False, said
@@ -428,33 +454,40 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        with stopped_by_signals(), tempfile.TemporaryDirectory() as scratch:
-            key = str(Path(scratch) / 'static.key')
-            self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
-            for option, names in ciphers:
-                # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
-                # fails the start when no known cipher is left in the list. In cipher
-                # and auth the "?" is part of the name, and no such name is known.
-                optional = option == 'data-ciphers'
-                known = [self.openvpn_accepts(key, option, name.removeprefix('?') if optional else name)
-                         for name in names]
-                kind = 'digest' if option == 'auth' else 'cipher'
-                for name, accepted in zip(names, known):
-                    if name and not accepted and not (optional and name.startswith('?')):
-                        raise ValueError(f'{option}: unknown {kind} {name}')
-                if not any(known):
-                    raise ValueError(f'{option} {":".join(names)}: no known cipher')
-                if option == 'data-ciphers':
-                    # Each name may pass and the list still fail the start: openvpn
-                    # 2.6 and 2.7 refuse one longer than 124 characters after it
-                    # drops the unknown ?NAME, so the list goes to openvpn as a whole.
-                    first = names[known.index(True)].removeprefix('?')
-                    try:
-                        self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key,
-                                      '--cipher', first, '--data-ciphers', ':'.join(names)])
-                    except RuntimeError as error:
-                        said = str(error).split(': ', 1)[-1].removeprefix('Options error: ')
-                        raise ValueError(f'data-ciphers: {said or "list rejected"}') from None
+        with stopped_by_signals():
+            scratch = tempfile.mkdtemp()
+            try:
+                self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
+            finally:
+                with held_signals():  # the keys go even when a signal comes on the way
+                    shutil.rmtree(scratch)
+
+    def check_openvpn_names_with(self, key, ciphers):
+        self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
+        for option, names in ciphers:
+            # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
+            # fails the start when no known cipher is left in the list. In cipher
+            # and auth the "?" is part of the name, and no such name is known.
+            optional = option == 'data-ciphers'
+            known = [self.openvpn_accepts(key, option, name.removeprefix('?') if optional else name)
+                     for name in names]
+            kind = 'digest' if option == 'auth' else 'cipher'
+            for name, accepted in zip(names, known):
+                if name and not accepted and not (optional and name.startswith('?')):
+                    raise ValueError(f'{option}: unknown {kind} {name}')
+            if not any(known):
+                raise ValueError(f'{option} {":".join(names)}: no known cipher')
+            if option == 'data-ciphers':
+                # Each name may pass and the list still fail the start: openvpn
+                # 2.6 and 2.7 refuse one longer than 124 characters after it
+                # drops the unknown ?NAME, so the list goes to openvpn as a whole.
+                first = names[known.index(True)].removeprefix('?')
+                try:
+                    self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key,
+                                  '--cipher', first, '--data-ciphers', ':'.join(names)])
+                except RuntimeError as error:
+                    said = str(error).split(': ', 1)[-1].removeprefix('Options error: ')
+                    raise ValueError(f'data-ciphers: {said or "list rejected"}') from None
 
     def openvpn_accepts(self, key, option, name):
         # A static key lets --test-crypto run without TLS, in 2.6 as in 2.7. An AEAD
@@ -533,6 +566,9 @@ class Applier:
         except (OSError, ValueError, RuntimeError) as error:
             candidate.unlink(missing_ok=True)
             raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
+        except BaseException:  # a signal: 128+sig, the candidate goes all the same
+            candidate.unlink(missing_ok=True)
+            raise
         if not self.good(resource).exists() and target.exists():
             # Nothing verified yet: the running config earns "last good" first.
             try:
@@ -563,7 +599,11 @@ class Applier:
         self.stage(resource, 'restoring')
         try:
             body = self.with_access(resource, self.good(resource).read_text())
-            self.check(resource, body, self.good(resource))
+            try:
+                self.check(resource, body, self.good(resource))
+            except CheckNotStarted as error:
+                # Last good passed the check once; here it cannot run, which does not keep it out.
+                reason += f' (last good cipher not checked: {error})'
             write(self.target(resource), body, RESOURCES[resource]['mode'])
             self.activate(resource)
         except (OSError, ValueError, RuntimeError) as error:

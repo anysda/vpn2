@@ -25,10 +25,10 @@ wg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wg)
 
 
-def atomic(path, body, mode=0o600):
+def atomic(path, body, mode=0o600, encoding=None):
     descriptor, name = tempfile.mkstemp(prefix='.control-', dir=path.parent)
     try:
-        with os.fdopen(descriptor, 'w') as output:
+        with os.fdopen(descriptor, 'w', encoding=encoding) as output:
             os.fchmod(output.fileno(), mode)
             output.write(body)
             output.flush()
@@ -445,7 +445,7 @@ class Backend:
         path = self.path('/etc/wireguard/wg0.conf')
         # Preserve deployment-owned interface configuration (addresses, key,
         # port). Only peers are an API resource; no input becomes a directive.
-        previous = path.read_text()
+        previous = path.read_bytes().decode('latin-1')
         header = wg.wg_split(previous)[0]
         require(any(wg.wg_line(line)[0] == '[Interface]' for line in header.split('\n')), 'unavailable')
         # The persisted key pair is authoritative, as in the former panel.
@@ -477,7 +477,7 @@ class Backend:
             '/usr/bin/wg', 'show', 'wg0', 'preshared-keys').splitlines())
         require(loaded_psks == {peer['key']: peer['preshared_key'] for peer in params['peers']},
                 'unavailable')
-        atomic(path, header + peers)
+        atomic(path, header + peers, encoding='latin-1')
         self.command('/usr/sbin/ip', '-6', 'addr', 'replace', 'fd66:66::1/64', 'dev', 'wg0')
         from contract import load_pools
         for subnet in (self.pools or load_pools())['wg']['subnets']:

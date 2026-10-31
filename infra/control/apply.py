@@ -45,6 +45,12 @@ KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
 # C isspace() within a line: what wg(8) skips and openvpn splits words at. Python's
 # \s and str.strip() also take \x1c, \x85, NBSP..., which both read as text.
 BLANK = r'[ \t\v\f\r]'
+# wg0.conf is read as latin-1, one char per byte, as wg reads it. Python's \s there
+# matches a single byte; its UTF-8 sequences (\xc2\x85, \xe2\x80\xa8...) match first.
+# \s is str.isspace(), and the last char it takes is U+3000.
+FOREIGN_SPACE = '|'.join(sorted({re.escape(view) for code in range(0x3001) if chr(code).isspace()
+                                 for view in (chr(code), chr(code).encode().decode('latin-1'))},
+                                key=len, reverse=True))
 # The keys wg syncconf gets, with the values wg reads for them once BLANK is gone.
 # wg reads key and section names in any ASCII case (strncasecmp). A minus before an address removes it.
 WG_ADDRESS = '-?[0-9A-Fa-f.:]+(?:/[0-9]+)?'
@@ -214,12 +220,12 @@ def discard(path):
         Path(path).unlink(missing_ok=True)
 
 
-def write(path, body, mode):
+def write(path, body, mode, encoding=None):
     with held():
         descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
         try:
             with released():
-                with os.fdopen(descriptor, 'w') as output:
+                with os.fdopen(descriptor, 'w', encoding=encoding) as output:
                     os.fchmod(output.fileno(), mode)
                     output.write(body)
                     output.flush()
@@ -306,6 +312,13 @@ class Applier:
 
     def target(self, resource):
         return self.root / RESOURCES[resource]['path'].lstrip('/')
+
+    @staticmethod
+    def encoding(resource):
+        return 'latin-1' if resource == 'wg' else None
+
+    def read(self, resource, path):
+        return Path(path).read_text(encoding=self.encoding(resource))
 
     def journal(self, resource):
         return self.state / (resource + '.journal')
@@ -399,7 +412,7 @@ class Applier:
                     continue
                 if not name:
                     # A line Python's \s reads as a syncconf key must read the same to wg.
-                    if wg_line(re.sub(r'\s', '', line))[0]:
+                    if wg_line(re.sub(FOREIGN_SPACE, '', line))[0]:
                         raise ValueError(f'wg cannot read {line!a}')
                     continue
                 if name not in WG_SECTIONS.get(section, ()):
@@ -494,13 +507,13 @@ class Applier:
         if resource != 'wg':
             return structure
         target = self.target(resource)
-        current = wg_split(target.read_text())[1] if target.exists() else ''
+        current = wg_split(self.read(resource, target))[1] if target.exists() else ''
         return wg_split(structure)[0] + ('\n' + current if current else '')
 
     def activate(self, resource):
         spec = RESOURCES[resource]
         if resource == 'wg':
-            header, peers = wg_split(self.target(resource).read_text())
+            header, peers = wg_split(self.read(resource, self.target(resource)))
             # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
             # wg and wg-quick end a line only at a newline, as split('\n') does.
             # Lines go as written; wg reads their comments too.
@@ -521,7 +534,7 @@ class Applier:
                 raise RuntimeError(f'{spec["unit"]} did not stay running')
 
     def mark(self, resource):
-        write(self.good(resource), self.target(resource).read_text(), 0o600)
+        write(self.good(resource), self.read(resource, self.target(resource)), 0o600, self.encoding(resource))
 
     def install(self, resource, source):
         with stopping():
@@ -547,8 +560,8 @@ class Applier:
         spec = RESOURCES[resource]
         target = self.target(resource)
         try:
-            body = self.with_access(resource, Path(source).read_text())
-            write(candidate, body, spec['mode'])
+            body = self.with_access(resource, self.read(resource, source))
+            write(candidate, body, spec['mode'], self.encoding(resource))
             self.check(resource, body, candidate)
         except (OSError, ValueError, RuntimeError) as error:
             raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
@@ -580,13 +593,13 @@ class Applier:
             raise Failed(5, f'{resource}: first install failed: {reason}')
         self.stage(resource, 'restoring')
         try:
-            body = self.with_access(resource, self.good(resource).read_text())
+            body = self.with_access(resource, self.read(resource, self.good(resource)))
             try:
                 self.check(resource, body, self.good(resource))
             except CheckNotStarted as error:
                 # Last good passed the check once; here it cannot run, which does not keep it out.
                 reason += f' (last good cipher not checked: {error})'
-            write(self.target(resource), body, RESOURCES[resource]['mode'])
+            write(self.target(resource), body, RESOURCES[resource]['mode'], self.encoding(resource))
             self.activate(resource)
         except (OSError, ValueError, RuntimeError) as error:
             self.stage(resource, 'restore-failed')

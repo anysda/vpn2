@@ -769,7 +769,7 @@ class ControlTests(unittest.TestCase):
         stage = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
         self.assertIn('management-client-user ${OVPN_CONTROL_USER}', stage)
         self.assertIn('OVPN_CONTROL_USER=vpn2-control', stage)
-        switch = panel.index("sed -i 's/^management-client-user")
+        switch = panel.index("'management-client-user vpn2-control'")
         guard = panel.index('panel_guard_files /etc/caddy')
         self.assertLess(panel.index('\npanel_begin'), guard)
         self.assertLess(guard, switch)

@@ -22,12 +22,16 @@ class OpenvpnLastWinsTests(unittest.TestCase):
     def test_bad_above_good_last_is_applied(self):
         for name, good in GOOD.items():
             with self.subTest(name=name):
+                if name == 'cipher' and not candidate.SERVER_RUNS:
+                    self.skipTest(candidate.NEEDS_SERVER)
                 self.applied(WORKING + f'{name} NOPE\n{name} {good}\n')
                 self.host.calls.clear()
 
     def test_good_above_bad_last_is_rejected_before_restart(self):
         for name, good in GOOD.items():
             with self.subTest(name=name):
+                if name == 'cipher' and not candidate.SERVER_RUNS:
+                    self.skipTest(candidate.NEEDS_SERVER)
                 self.rejected(WORKING + f'{name} {good}\n{name} NOPE\n', 'NOPE')
 
     def test_short_list_last_after_a_too_long_one_is_applied(self):

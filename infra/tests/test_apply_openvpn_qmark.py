@@ -21,8 +21,11 @@ class OpenvpnQmarkTests(unittest.TestCase):
     def test_qmark_outside_data_ciphers_is_rejected_before_restart(self):
         for line in ('cipher ?AES-256-GCM', 'auth ?SHA256'):
             with self.subTest(line=line):
+                if line.startswith('cipher') and not candidate.SERVER_RUNS:
+                    self.skipTest(candidate.NEEDS_SERVER)
                 self.rejected(WORKING + line + '\n', line.split()[1])
 
+    @candidate.needs_server
     def test_qmark_cipher_last_after_a_good_one_is_rejected_before_restart(self):
         self.rejected(WORKING + 'cipher AES-256-GCM\ncipher ?AES-256-GCM\n', '?AES-256-GCM')
 

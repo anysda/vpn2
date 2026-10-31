@@ -1,7 +1,5 @@
 """OpenVPN candidate check: a cipher is taken as a TLS server takes it, against a real server start."""
-import os
 from pathlib import Path
-import shutil
 import subprocess
 import threading
 import unittest
@@ -11,23 +9,17 @@ import test_apply_openvpn_candidate as candidate
 
 OPENVPN = candidate.OPENVPN
 WORKING = candidate.WORKING
-# The server opens its tun in a network namespace of its own, as root.
-AS_ROOT = [] if os.geteuid() == 0 else ['sudo', '-n']
+AS_ROOT = candidate.AS_ROOT
 # openvpn 2.6 and 2.7 decide each of these differently in --test-crypto and in a TLS
 # server start: BF-CBC is the fallback for old clients there, case and "?" included.
 NAMES = ('BF-CBC', 'bf-cbc', 'NOPE', 'AES256', 'AES-256-GCM', 'AES-128-CBC', '', '?BF-CBC')
 LISTS = (('data-ciphers', 'BF-CBC'), ('data-ciphers', 'AES-256-GCM:BF-CBC'),
          ('data-ciphers-fallback', 'BF-CBC'))
-
-
-def can_be_root():
-    # Root without CAP_SYS_ADMIN (a container) runs true, not unshare --net.
-    return bool(shutil.which('unshare')) and subprocess.run(
-        AS_ROOT + ['unshare', '--net', 'true'], capture_output=True).returncode == 0
+can_be_root = candidate.can_be_root
 
 
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)
-@unittest.skipUnless(can_be_root(), 'needs root or sudo -n and unshare --net')
+@candidate.needs_server
 class OpenvpnCipherTlsTests(unittest.TestCase):
     # The temporary PKI and helpers of the cipher tests, not their tests.
     setUp = candidate.OpenvpnCandidateTests.setUp

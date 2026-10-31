@@ -1,5 +1,7 @@
 """OpenVPN candidate check: log directives and cipher names, with the real openvpn."""
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +12,19 @@ OPENVPN = '/usr/sbin/openvpn'
 WORKING = ('port 1194\nproto udp\ndev tun\nserver 10.8.0.0 255.255.255.0\nca pki/ca.crt\n'
            'cert pki/server.crt\nkey pki/server.key\ndh none\ntls-crypt pki/tls-crypt.key\n'
            'crl-verify pki/crl.pem\nclient-config-dir ccd\n')
+# The cipher check starts a TLS server in a network namespace of its own, as root.
+AS_ROOT = [] if os.geteuid() == 0 else ['sudo', '-n']
+NEEDS_SERVER = 'needs root or sudo -n and unshare --net'
+
+
+def can_be_root():
+    # Root without CAP_SYS_ADMIN (a container) runs true, not unshare --net.
+    return bool(shutil.which('unshare')) and subprocess.run(
+        AS_ROOT + ['unshare', '--net', 'true'], capture_output=True).returncode == 0
+
+
+SERVER_RUNS = can_be_root()
+needs_server = unittest.skipUnless(SERVER_RUNS, NEEDS_SERVER)
 
 
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)
@@ -84,12 +99,14 @@ class OpenvpnCandidateTests(unittest.TestCase):
     def test_log_append_is_rejected_and_its_file_untouched(self):
         self.log_is_rejected('log-append')
 
+    @needs_server
     def test_unknown_cipher_is_rejected_before_restart(self):
         self.rejected(WORKING + 'cipher NOPE\n', 'NOPE')
 
     def test_unknown_data_cipher_is_rejected_before_restart(self):
         self.rejected(WORKING + 'data-ciphers AES-256-GCM:NOPE\n', 'NOPE')
 
+    @needs_server
     def test_known_ciphers_are_applied(self):
         listed = subprocess.run([OPENVPN, '--show-ciphers'], capture_output=True, text=True).stdout
         names = {line.split()[0] for line in listed.splitlines() if line.strip()}

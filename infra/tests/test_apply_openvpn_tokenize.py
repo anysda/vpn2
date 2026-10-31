@@ -67,6 +67,7 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         crl = (self.base / 'pki/crl.pem').read_text()
         self.rejected(WORKING + f'<crl-verify>\n{crl}</crl-verify>\n', 'crl-verify')
 
+    @candidate.needs_server
     def test_server_template_is_applied(self):
         pki, base = self.base / 'pki', self.base
         self.applied(f'port 1194\nproto udp\ndev tun0\ntopology subnet\n'
@@ -133,6 +134,7 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.assertEqual(self.host.ran('/usr/sbin/openvpn'), [])
 
     # openvpn reads "?" as optional only in data-ciphers and needs one known cipher there.
+    @candidate.needs_server
     def test_optional_mark_in_cipher_is_rejected_before_restart(self):
         self.rejected(WORKING + 'cipher ?NOPE\n', '?NOPE')
 
@@ -145,6 +147,7 @@ class OpenvpnTokenizeTests(unittest.TestCase):
     def test_optional_unknown_data_cipher_after_known_is_applied(self):
         self.applied(WORKING + 'data-ciphers AES-256-GCM:?NOPE\n')
 
+    @candidate.needs_server
     def test_lowercase_ciphers_are_applied(self):
         self.applied(WORKING + 'cipher aes-256-gcm\ndata-ciphers aes-256-gcm:chacha20-poly1305\n')
 
@@ -160,9 +163,11 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         return text + 'route 10.8.1.0 255.255.255.0\n'
 
     # The allowed directives are exactly what 29-openvpn.sh writes.
+    @candidate.needs_server
     def test_udp_server_template_from_the_script_is_applied(self):
         self.applied(self.template('udp', 'fast-io'))
 
+    @candidate.needs_server
     def test_tcp_server_template_from_the_script_is_applied(self):
         self.applied(self.template('tcp-server', ''))
 

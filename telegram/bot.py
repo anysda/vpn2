@@ -1597,6 +1597,12 @@ async def handle_health(_request: web.Request) -> web.Response:
     )
 
 
+async def handle_health_waiting(_request: web.Request) -> web.Response:
+    """GET /health, пока нет токена или Chat ID: процесс жив и ждёт панель, это
+    здоровье для docker HEALTHCHECK. waiting_token отличает его от рабочего бота."""
+    return web.json_response({'ok': True, 'waiting_token': True, 'username': ''})
+
+
 async def handle_event(request: web.Request) -> web.Response:
     # SECRET гарантированно непустой (startup-check выше). Сравниваем константно
     # по времени, чтобы убрать timing-leak; encode в bytes — compare_digest требует
@@ -1788,6 +1794,13 @@ async def main() -> None:
         # Бот ставится и без токена: ждём «Сохранить» в панели, не выходя, иначе
         # docker --restart always крутит его по кругу.
         log.warning('Токен бота или Chat ID не заданы: жду их в панели, раздел «Боты»')
+        # Только /health: без него контейнер unhealthy. Токен приходит выходом
+        # процесса из _config_watcher, порт освобождается вместе с ним.
+        idle = web.Application()
+        idle.router.add_get('/health', handle_health_waiting)
+        idle_runner = web.AppRunner(idle)
+        await idle_runner.setup()
+        await web.TCPSite(idle_runner, '127.0.0.1', EVENT_PORT).start()
         await _config_watcher()
     # Telegram egress — через TG_PROXY (HTTP-CONNECT прокси sing-box →
     # foreign-best → экзит): RU-нода в Москве api.telegram.org напрямую не

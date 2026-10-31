@@ -49,13 +49,15 @@ export function maskToken(token: string): string {
 // Жив = /health бота ответил 200, как у docker HEALTHCHECK. Голого TCP-connect
 // мало: с отвергнутым токеном бот ждёт перезапуска, его порт остаётся в LISTEN
 // без обработчика, ядро принимает соединение, и панель писала «ОНЛАЙН».
-// Имя бот узнаёт у Telegram (getMe) и отдаёт в том же ответе.
+// Имя бот узнаёт у Telegram (getMe) и отдаёт в том же ответе. Без токена бот
+// тоже отвечает 200 ради HEALTHCHECK, но с waiting_token - это не «запущен».
 export async function botHealth(): Promise<{ running: boolean, username: string }> {
   const port = Number(useRuntimeConfig().tgbotEventPort ?? 8877)
   try {
     const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })
     if (!res.ok) return { running: false, username: '' }
-    const body = await res.json().catch(() => ({})) as { username?: unknown }
+    const body = await res.json().catch(() => ({})) as { username?: unknown, waiting_token?: unknown }
+    if (body.waiting_token === true) return { running: false, username: '' }
     return { running: true, username: typeof body.username === 'string' ? body.username : '' }
   }
   catch {

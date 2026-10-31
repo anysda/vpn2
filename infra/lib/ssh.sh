@@ -116,7 +116,11 @@ _ssh_output() {
   local line
   local -a before=()
   while IFS= read -r line; do
-    if [[ $line == "$_SSH_MARK" ]]; then cat; return; fi
+    if [[ $line == "$_SSH_MARK" ]]; then
+      # "$1" - fifo сторожа входа: метка пришла, предел снят.
+      [[ -z ${1:-} ]] || printf '\n' 1<>"$1"
+      cat; return
+    fi
     before+=("$line")
   done
   # Разрыв трубы у читателя не должен скрыть отсутствие метки.
@@ -213,13 +217,39 @@ ssh_probe_limit() {
 # прежним путём: 255 соединение, 5/6/7 sshpass (пароль, host-key), 124/137
 # _limit_run у ssh_probe и ssh_fresh, но только когда предел и правда вышел:
 # 124/137 раньше предела - код самого узла.
+#
+# На экзите (HOST_TAG не ru) вход до метки - ssh и .bashrc root - ограничен
+# пределом ssh_probe_limit: зависший вход - $_SSH_HUNG без повторов, стадия
+# после метки идёт сколько нужно. Сторож сидит в сессии команды и бьёт её
+# группу через kill 0: пока он в группе, номер группы не освободится, и чужой
+# процесс под удар не попадёт. Метку _ssh_output передаёт ему через fifo.
 _SSH_NO_MARK=254
+_SSH_HUNG=253
 _SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
+_ssh_watch='exec 3<>"$1"
+{ read -r -t "$2" -u 3 _ || { : > "$3"; kill -KILL 0; }; } </dev/null >/dev/null 2>&1 &
+exec 3>&-; shift 3; exec "$@"'
 _ssh_run() {
   local -a st
-  local link=" 255 5 6 7 " t0=${EPOCHREALTIME/[.,]/}
-  # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
-  { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
+  local link=" 255 5 6 7 " t0=${EPOCHREALTIME/[.,]/} limit dir=
+  if [[ ${HOST_TAG:-ru} != ru && $1 != _limit_run ]]; then
+    limit=$(ssh_probe_limit) || return 1
+    dir=$(mktemp -d) || return 1
+    mkfifo "$dir/mark" || { rm -rf -- "$dir"; return 1; }
+    { setsid -w bash -c "$_ssh_watch" _ "$dir/mark" "$limit" "$dir/hung" "$@" \
+        | _ssh_output "$dir/mark"; st=("${PIPESTATUS[@]}"); } || :
+    # Команда кончилась без метки - сторожу больше нечего ждать.
+    printf '\n' 1<>"$dir/mark"
+    if [[ -e $dir/hung ]]; then
+      rm -rf -- "$dir"
+      warn "вход по ssh или .bashrc root на экзите завис: нет метки за ${limit} с, команда не выполнена"
+      return "$_SSH_HUNG"
+    fi
+    rm -rf -- "$dir"
+  else
+    # Под set -e код _ssh_output (нет метки) не должен ронять вызывающего здесь.
+    { "$@" | _ssh_output; st=("${PIPESTATUS[@]}"); } || :
+  fi
   if [[ $1 == _limit_run ]] && (( ${EPOCHREALTIME/[.,]/} - t0 >= $2 * 1000000 )); then
     link+="124 137 "
   fi
@@ -375,7 +405,7 @@ push() {
           "${SSH_USER}@${SSH_HOST}" "$_ssh_begin" "$cmd" < "$src" || rc=$?
     fi
     [[ $rc -eq 0 ]] && return 0
-    [[ $rc -eq $_SSH_NO_MARK ]] && return $rc
+    [[ $rc -eq $_SSH_NO_MARK || $rc -eq $_SSH_HUNG ]] && return $rc
     # Код 5 у sshpass - отказ во входе: неверный пароль или запрет sshd на
     # пользователя (удалённые mkdir/cat/mv/tar им не выходят): без пробы, она
     # стоила бы ноде ещё одну строку для fail2ban.

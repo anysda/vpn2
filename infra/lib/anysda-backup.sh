@@ -23,8 +23,9 @@
 # Источник passphrase: /etc/anysda/backup.env → ANYSDA_BACKUP_PASSPHRASE.
 # Файл (chmod 600) рендерится стадией 26-backup из config.yaml.
 #
-# Код выхода: 0 — архив снят; 4 — архив снят, но БД и конфиги VPN расходятся
-# во всех срезах (перечень устройств в выводе); остальное — архива нет.
+# Код выхода: 0 — архив снят; 4 — архив снят с предупреждением (строка
+# warning:): БД и конфиги VPN расходятся во всех срезах (перечень устройств
+# в выводе) или сверка не выполнена — нечем спросить wg; остальное — архива нет.
 
 set -euo pipefail
 umask 077
@@ -41,13 +42,19 @@ SOURCE_ROOT=${SOURCE_ROOT:-/opt/anysda-vpn2}
 FAIL_REASON=
 WARNING=
 report_failure() {
-  local rc=$1 secret=/etc/anysda/tgbot-secret.txt event
+  local rc=$1 secret=/etc/anysda/tgbot-secret.txt type=backup_failed detail=${FAIL_REASON:-код выхода $1} event
   [[ $rc -ne 0 && -r $secret ]] || return 0
-  if [[ $rc -eq 4 && -n $WARNING ]]; then
-    event="{\"type\":\"backup_warning\",\"detail\":\"$WARNING\"}"
-  else
-    event="{\"type\":\"backup_failed\",\"detail\":\"${FAIL_REASON:-код выхода $rc}\"}"
-  fi
+  if [[ $rc -eq 4 && -n $WARNING ]]; then type=backup_warning; detail=$WARNING; fi
+  # Причина бывает чужим выводом (wg, unshare): управляющие и не-UTF-8 байты
+  # заменяются, длина - не больше 200 знаков UTF-16, как в схеме панели
+  # (app/server/api/bot/events.post.ts), иначе панель отвергнет всё событие.
+  event=$(python3 -I -c '
+import json, os, sys
+text = os.fsencode(sys.argv[2]).decode("utf-8", "replace")
+text = " ".join("".join(c if c.isprintable() else " " for c in text).split())[:200]
+while len(text.encode("utf-16-le")) > 400:
+    text = text[:-1]
+print(json.dumps({"type": sys.argv[1], "detail": text.strip()}))' "$type" "$detail") || return 0
   printf 'Authorization: Bearer %s\n' "$(cat "$secret")" | curl -fsS --max-time 5 -H @- \
     -H 'Content-Type: application/json' -d "$event" \
     http://127.0.0.1:51821/api/bot/events >/dev/null 2>&1 || true
@@ -362,8 +369,7 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   if [[ $rc == 5 ]]; then
     # Нечем спросить wg - не расхождение: архив сохраняем, перевыпуск не нужен.
     echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена: $mismatch" >&2
-    mismatch=${mismatch//$'\n'/; }
-    WARNING="сверка БД с конфигами VPN не выполнена: ${mismatch//[\"\\]/}"
+    WARNING="сверка БД с конфигами VPN не выполнена: ${mismatch//$'\n'/; }"
     break
   fi
   if [[ $rc != 3 ]]; then

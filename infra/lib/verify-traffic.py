@@ -356,7 +356,8 @@ class WireGuard:
         network = ipaddress.ip_interface(f"{iface['local']}/{iface['prefixlen']}").network
         used = set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', run('wg', 'show', 'wg0', 'allowed-ips').stdout))
         with contextlib.suppress(OSError):
-            used |= set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', WG_CONF.read_text()))
+            # Байты как у wg: latin-1 не падает на байте, который wg пропускает в комментарии.
+            used |= set(re.findall(r'(\d+\.\d+\.\d+\.\d+)/32', WG_CONF.read_bytes().decode('latin-1')))
         free = [str(a) for a in reversed(list(network.hosts())) if str(a) not in used and str(a) != iface['local']]
         return free[:count]
 
@@ -807,17 +808,20 @@ def restore_wg_apply():
     """
     if not (WORK / 'wg0.conf').exists():
         return
-    # Интерфейс и пиры - какими их оставит wg после setconf сохранённого файла.
-    interface, peers = wg_conf.read((WORK / 'wg0.conf').read_bytes())
-    # Пустое значение wg отвергает: пир без PSK - без строки PresharedKey, без адресов - без
-    # строки AllowedIPs (без неё syncconf очищает набор).
-    body = '[Interface]\n' + ''.join(f'{name} = {value}\n' for name, value in interface.items()) + ''.join(
-        f'\n[Peer]\nPublicKey = {peer["key"]}\n' +
-        (f'PresharedKey = {peer["preshared_key"]}\n' if peer['preshared_key'] else '') +
-        (f'AllowedIPs = {", ".join(peer["allowed"])}\n' if peer['allowed'] else '') for peer in peers)
-    run('wg', 'syncconf', 'wg0', '/dev/stdin', data=body)
-    restore_file(WG_CONF, 'wg0.conf')
-    restore_file(CONTROL_WG_STATE, 'control-wg.json')
+    # Файлы возвращаются и тогда, когда повторное чтение или syncconf не удались.
+    try:
+        # Интерфейс и пиры - какими их оставит wg после setconf сохранённого файла.
+        interface, peers = wg_conf.read((WORK / 'wg0.conf').read_bytes())
+        # Пустое значение wg отвергает: пир без PSK - без строки PresharedKey, без адресов - без
+        # строки AllowedIPs (без неё syncconf очищает набор).
+        body = '[Interface]\n' + ''.join(f'{name} = {value}\n' for name, value in interface.items()) + ''.join(
+            f'\n[Peer]\nPublicKey = {peer["key"]}\n' +
+            (f'PresharedKey = {peer["preshared_key"]}\n' if peer['preshared_key'] else '') +
+            (f'AllowedIPs = {", ".join(peer["allowed"])}\n' if peer['allowed'] else '') for peer in peers)
+        run('wg', 'syncconf', 'wg0', '/dev/stdin', data=body)
+    finally:
+        restore_file(WG_CONF, 'wg0.conf')
+        restore_file(CONTROL_WG_STATE, 'control-wg.json')
 
 
 def wg_apply_check(report):
@@ -840,7 +844,8 @@ def wg_apply_check(report):
     try:
         peers = apply_peers(text)
     except ValueError as error:
-        report.add(label, component, FAIL, str(error))
+        # Нечем спросить wg - не проверено; отказ wg - сбой.
+        report.add(label, component, UNKNOWN if 'проверить нечем' in str(error) else FAIL, str(error))
         return
     if peers is None or {peer['key'] for peer in peers} != live:
         report.add(label, component, UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')

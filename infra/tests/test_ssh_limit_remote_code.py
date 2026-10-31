@@ -10,7 +10,6 @@ SSH_PROBE_TIMEOUT действительно вышел. Для exit_ssh в 99-v
 """
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import time
@@ -48,36 +47,19 @@ LIMIT_REASON = r'(?i)нет ответа за|предел|тайм-?аут|time
 LIMIT = 3
 
 
-def timeout_binaries():
-    """{'GNU': путь, 'uutils': путь} - те реализации timeout, что есть на машине."""
-    found = {}
-    candidates = [shutil.which('gnutimeout'), shutil.which('timeout'), '/usr/lib/cargo/bin/coreutils/timeout',
-                  shutil.which('uu-timeout'), '/usr/lib/cargo/bin/timeout']
-    for path in candidates:
-        if not path or not os.access(path, os.X_OK):
-            continue
-        version = subprocess.run([path, '--version'], text=True, capture_output=True).stdout
-        kind = 'uutils' if 'uutils' in version else 'GNU' if 'GNU' in version else None
-        if kind:
-            found.setdefault(kind, path)
-    return found
-
-
 class Node:
-    """Подставной узел: ssh и sshpass в PATH, при желании свой timeout первым."""
+    """Подставной узел: ssh и sshpass в PATH."""
 
-    def __init__(self, bashrc, sleep=0, timeout=None):
+    def __init__(self, bashrc, sleep=0):
         self.directory = tempfile.TemporaryDirectory(prefix='ssh-limit-')
         self.root = Path(self.directory.name)
-        for sub in ('bin', 'node', 'first'):
+        for sub in ('bin', 'node'):
             (self.root / sub).mkdir()
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (self.root / 'bin' / name).write_text(text)
             (self.root / 'bin' / name).chmod(0o755)
-        if timeout:
-            (self.root / 'first' / 'timeout').symlink_to(timeout)
         self.env = {k: v for k, v in os.environ.items() if k != 'SSH_PROBE_TIMEOUT'}
-        self.env.update({'PATH': f'{self.root}/first:{self.root}/bin:{os.environ["PATH"]}',
+        self.env.update({'PATH': f'{self.root}/bin:{os.environ["PATH"]}',
                          'LC_ALL': 'C.UTF-8', 'FAKE_NODE': str(self.root / 'node'),
                          'FAKE_BASHRC': bashrc, 'FAKE_SLEEP': str(sleep)})
 

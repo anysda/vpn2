@@ -45,9 +45,22 @@ release_start() {
   fi
   # The remote lock itself needs sshpass/ssh on a clean orchestrator.
   install_prereqs
+  # Сессия sshd замка может пережить клиента: связь оборвалась, ssh умер, а
+  # stdin держателя на entry EOF не получает (clientaliveinterval 0, ~2 ч до
+  # TCP keepalive). Поэтому coproc раз в секунду шлёт держателю «alive», а тот
+  # отпускает замок по пустой строке или после LOCK_PULSE_WINDOW секунд
+  # тишины. Окно с запасом на сетевые задержки в единицы секунд. Пульс идёт в
+  # coproc и не зависит от того, чем занят deploy; он кончается вместе с
+  # deploy: по строке отпускания, EOF, SIGPIPE от мёртвого ssh или смерти $$.
+  # На entry sh - dash без read -t, держатель - bash.
+  local LOCK_PULSE_WINDOW=12
   coproc VPN2_REMOTE_LOCK {
     load_env ru
-    ssh_exec 'umask 077; mkdir -p /var/lib/vpn2-deploy; exec flock -n -E 75 /var/lib/vpn2-deploy/deploy.lock sh -c '\''echo locked; read -r release_lock'\'
+    local deploy_pid=$$
+    { while kill -0 "$deploy_pid" 2>/dev/null; do
+        if read -r -t 1 _; then echo; break; elif (( $? <= 128 )); then break; fi
+        echo alive
+      done; } | ssh_exec "umask 077; mkdir -p /var/lib/vpn2-deploy; exec flock -n -E 75 /var/lib/vpn2-deploy/deploy.lock bash --norc -c 'echo locked; while read -r -t $LOCK_PULSE_WINDOW && [ \"\$REPLY\" = alive ]; do :; done'"
   }
   VPN2_LOCK_PID=$VPN2_REMOTE_LOCK_PID
   exec {VPN2_LOCK_IN}>&"${VPN2_REMOTE_LOCK[1]}"

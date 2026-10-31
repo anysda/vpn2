@@ -88,7 +88,8 @@ case "${1:-}" in
       /bin/bash --norc "$DIR/fw-guard.sh" watch "$window"
     ;;
   beat)
-    [[ ! -d "$DIR" ]] || touch "$DIR/alive"
+    # -c: только сдвигает mtime, не создаёт alive в каталоге, который стирает disarm.
+    touch -c "$DIR/alive" 2>/dev/null || true
     ;;
   watch)
     window=$2

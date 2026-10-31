@@ -160,11 +160,20 @@ else
 fi
 # Вставки TLS принадлежат релизу панели: при откате панели возвращаются вместе
 # с ней, Caddy перечитывает прежние, таймер TLS снова запущен.
+# Если стадия успела сменить management-client-user, снимок вернул в live
+# server.conf, который работал до неё и был last good: vpn2-apply снова
+# отмечает его рабочим, иначе откат вернул бы vpn2-control без панели под него.
 panel_files_restored() {
   systemctl reload-or-restart caddy || true
   systemctl try-restart openvpn-server@server || true
+  if (( ovpn_switched )); then
+    /usr/local/sbin/vpn2-apply mark openvpn \
+      || echo "[$HOST_TAG] vpn2-apply mark openvpn не прошёл: last good не совпадает с server.conf" >&2
+    ovpn_restarted_by_apply
+  fi
   [[ -f /etc/systemd/system/vpn2-tls.timer ]] && systemctl start vpn2-tls.timer || true
 }
+ovpn_switched=0
 panel_guard_files /etc/caddy/Caddyfile /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf \
   /etc/vpn2/tls/config.json /etc/vpn2/tls/panel/secure /etc/vpn2-control/api-managed \
   /etc/openvpn/server/server.conf
@@ -291,6 +300,7 @@ if [[ -f /etc/openvpn/server/server.conf ]] \
     echo "[$HOST_TAG] vpn2-apply install openvpn: код $rc, server.conf не изменён" >&2
     exit "$rc"
   fi
+  ovpn_switched=1
   ovpn_restarted_by_apply
 fi
 touch /etc/vpn2-control/api-managed

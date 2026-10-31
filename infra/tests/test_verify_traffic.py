@@ -391,6 +391,8 @@ class WgApplyTests(unittest.TestCase):
     """Пункт «WireGuard: применение пира»: тестовый пир через wg.apply службы управления."""
 
     KEYS = [__import__('base64').b64encode(bytes([n]) * 32).decode() for n in range(1, 8)]
+    # Ключ интерфейса уже зажат (clamp), wg держит его как есть.
+    PRIVATE = __import__('base64').b64encode(bytes([0x48]) * 32).decode()
 
     def serve(self, path, accept):
         listener = socket.socket(socket.AF_UNIX)
@@ -433,21 +435,29 @@ class WgApplyTests(unittest.TestCase):
             out = json.dumps([{'addr_info': [{'local': '10.66.66.1', 'prefixlen': 24}]}])
         return subprocess.CompletedProcess(args, 0, out, '')
 
+    def wg_read(self, data):
+        """Ответ wg_conf.read на фикстуру - как его дал wg под root; разбор файла здесь не проверяется."""
+        self.assertEqual(data, self.conf_bytes, 'wg_conf.read получил не wg0.conf')
+        return {'PrivateKey': self.PRIVATE, 'ListenPort': '51820'}, [
+            {'key': key, 'preshared_key': self.KEYS[4], 'allowed': [f'10.66.66.{n + 2}/32', f'fd66:66::{n + 2}/128']}
+            for n, key in enumerate(self.KEYS[:2])]
+
     def check(self, accept):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             conf = root / 'wg0.conf'
-            conf.write_text('[Interface]\nPrivateKey = x\nListenPort = 51820\n' + ''.join(
+            conf.write_text(f'[Interface]\nPrivateKey = {self.PRIVATE}\nListenPort = 51820\n' + ''.join(
                 f'\n[Peer]\nPublicKey = {key}\nPresharedKey = {self.KEYS[4]}\nAllowedIPs = 10.66.66.{n + 2}/32, '
                 f'fd66:66::{n + 2}/128\n' for n, key in enumerate(self.KEYS[:2])))
+            self.conf_bytes = conf.read_bytes()
             state = root / 'wg.json'
             state.write_text('{"version": 7, "digest": "d"}')
             before = conf.read_bytes(), state.read_bytes()
             self.live = self.KEYS[:2]
             listener, requests = self.serve(root / 'control.sock', accept)
-            saved = vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run
+            saved = vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run, vt.wg_conf.read
             vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF = root / 'control.sock', state, conf
-            vt.WORK, vt.run = root / 'work', self.fake_run
+            vt.WORK, vt.run, vt.wg_conf.read = root / 'work', self.fake_run, self.wg_read
             vt.WORK.mkdir()
             try:
                 report = vt.Report('ru')
@@ -455,7 +465,7 @@ class WgApplyTests(unittest.TestCase):
                     vt.wg_apply_check(report)
             finally:
                 listener.close()
-                vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run = saved
+                vt.CONTROL_SOCKET, vt.CONTROL_WG_STATE, vt.WG_CONF, vt.WORK, vt.run, vt.wg_conf.read = saved
             print(out.getvalue().strip())
             self.assertEqual((conf.read_bytes(), state.read_bytes()), before, 'состояние до проверки не вернулось')
             self.assertEqual(self.live, self.KEYS[:2])

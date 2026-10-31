@@ -961,15 +961,20 @@ _tcp22_open() {
 _preflight_host() {
   local h="$1" attempts="$2" budget="$3" dir="$4"
   load_env "$h"
-  local ok=0 try reason='' kind=net t0=$SECONDS prc pause auth_tries=0 limit
-  local t1 spent n probe_limit
+  local ok=0 try reason='' kind=net prc pause auth_tries=0 limit
+  local t1 took spent n probe_limit what
+  # Бюджет в микросекундах: время проб меряет EPOCHREALTIME, паузы считаются
+  # по заказанной длине. У целых SECONDS проба в 10 мс через границу секунды
+  # стоила бы 1 с, и число попыток зависело бы от того, где началась секунда.
+  local used=0 budget_us=$((budget * 1000000))
   if [[ -z "${SSH_PASS:-}" ]]; then
     reason='SSH_PASS пустой — перезапусти ./setup.sh'
   elif ! probe_limit=$(ssh_probe_limit 2>&1); then
-    reason=$probe_limit
+    reason=$probe_limit kind=setting
   else
     for ((try=1; try<=attempts; try++)); do
-      t1=$SECONDS; prc=0; reason=$(ssh_probe) || prc=$?
+      t1=${EPOCHREALTIME/[.,]/}; prc=0; reason=$(ssh_probe) || prc=$?
+      took=$(( ${EPOCHREALTIME/[.,]/} - t1 )); used=$((used + took))
       if [[ $prc -eq 0 ]]; then ok=1; break; fi
       # Предел в строке - тот, которым цикл закончится при таком же ответе:
       # отказ во входе пробуется дважды, host-key - ни разу больше.
@@ -984,12 +989,12 @@ _preflight_host() {
       # И тот, что уместится в PREFLIGHT_BUDGET, если следующие попытки
       # ответят так же долго: висящая нода съедает таймаут ssh_probe на каждой,
       # и до пятой не доходит. Расчёт повторяет проверку бюджета ниже.
-      spent=$((SECONDS - t0)); n=$try
+      spent=$used; n=$try
       while (( n < limit )); do
         pause=$((n * 3))
         [[ $kind != auth || $n -ne $try ]] || pause=${PREFLIGHT_AUTH_PAUSE:-30}
-        (( spent + pause + probe_limit <= budget )) || break
-        spent=$((spent + pause + SECONDS - t1)); n=$((n + 1))
+        (( spent + (pause + probe_limit) * 1000000 <= budget_us )) || break
+        spent=$((spent + pause * 1000000 + took)); n=$((n + 1))
       done
       limit=$n
       printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$limit" "$reason"
@@ -1007,21 +1012,23 @@ _preflight_host() {
           "${SSH_USER}@${SSH_HOST} ($h)" "$pause"
       fi
       (( try < attempts )) || break
-      if (( SECONDS - t0 + pause + probe_limit > budget )); then
+      if (( used + (pause + probe_limit) * 1000000 > budget_us )); then
         printf '  %-30s время pre-flight на ноду вышло (%d с), больше попыток не будет\n' \
           "${SSH_USER}@${SSH_HOST} ($h)" "$budget"
         break
       fi
-      sleep "$pause"
+      sleep "$pause"; used=$((used + pause * 1000000))
     done
   fi
   if [[ $ok -eq 1 ]]; then
     printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
     : >"$dir/$h.ok"
   else
-    printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
-      "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
-    echo "нода $h ($SSH_HOST) недоступна по ssh с entry: $reason" >"$dir/$h.fail"
+    what='недоступна по ssh с entry'
+    [[ $kind != setting ]] || what='не проверялась, ошибка в настройке'
+    printf '  %-30s %b✗ нода %s (%s) %s: %s%b\n' \
+      "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$what" "$reason" "$C_END"
+    echo "нода $h ($SSH_HOST) $what: $reason" >"$dir/$h.fail"
     echo "$kind" >"$dir/$h.kind"
     [[ $kind != hostkey ]] || ssh_hostkey_fix >"$dir/$h.fix"
   fi
@@ -1038,7 +1045,7 @@ preflight_ssh() {
   # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
   # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
   local hosts; hosts=$(expand_hosts all)
-  local reasons=() fixes=() skipped=() pids=() auth=0 net=0 h dir pid; dir=$(mktemp -d)
+  local reasons=() settings=() fixes=() skipped=() pids=() auth=0 net=0 h dir pid; dir=$(mktemp -d)
   for h in $hosts; do
     _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
     pids+=("$!")
@@ -1051,6 +1058,9 @@ preflight_ssh() {
     local reason kind
     reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
     kind=$(cat "$dir/$h.kind" 2>/dev/null || true)
+    # Неверная настройка (SSH_PROBE_TIMEOUT) - не недоступность: экзит с ней
+    # не пропускается, деплой стоит с её именем.
+    if [[ $kind == setting ]]; then settings+=("$reason"); continue; fi
     # Пропускается только экзит, до которого нет сети. Сменённый host-key и
     # отказ во входе и exit в .bashrc сами не пройдут: это ошибка настройки,
     # деплой стоит.
@@ -1070,6 +1080,12 @@ preflight_ssh() {
   rm -rf "$dir"
 
   SKIPPED_EXIT_TAGS="${skipped[*]}"
+
+  if [[ ${#settings[@]} -gt 0 ]]; then
+    printf '\n%b✗ Ошибка в настройке:%b\n' "$C_R" "$C_END"
+    printf '  %s\n' "${settings[@]}"
+    [[ ${#reasons[@]} -gt 0 ]] || HOST_TAG=deploy die "pre-flight: ошибка в настройке, деплой не запускался"
+  fi
 
   # Недоступный экзит не меняет конфигурацию хаба: его пропускают только
   # fan-out стадии этого запуска. Недоступный entry остаётся стоп-сигналом.

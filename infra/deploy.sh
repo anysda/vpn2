@@ -1165,12 +1165,15 @@ _ssh_login_reason() {
 }
 
 # Сбой входа на entry - не мёртвые туннели: экзиты не исключаем, порты не трогаем.
+# Тег и порт - экзит, уже перекаченный до сбоя: его порт не откатываем.
 _die_entry_login() {
   local reason; reason=$(_ssh_login_reason "$1")
   # Строка пробника или перекатки могла остаться недописанной.
   printf '\n'
   load_env ru
-  die "verify_and_rotate_ports: сбой входа по ssh на entry ($SSH_HOST): $reason; туннели не проверены, экзиты и порты не менял"
+  local what="туннели не проверены, экзиты и порты не менял"
+  [[ -n "${2:-}" ]] && what="экзит $2 уже перекачен на :$3, порт не откачен"
+  die "verify_and_rotate_ports: сбой входа по ssh на entry ($SSH_HOST): $reason; $what"
 }
 
 # Печатает delay (ms) и возвращает 0 если туннель ответил, 1 при таймауте/ошибке.
@@ -1287,7 +1290,7 @@ verify_and_rotate_ports() {
         found=1; rotated_any=1
         break
       fi
-      (( rc == 1 )) || _die_entry_login "$rc"
+      (( rc == 1 )) || _die_entry_login "$rc" "$tag" "$port"
       printf '%b×%b\n' "$C_R" "$C_END"
     done
     if [[ $found -eq 0 ]]; then

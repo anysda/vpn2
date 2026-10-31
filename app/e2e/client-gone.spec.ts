@@ -101,6 +101,57 @@ test('удаление выбранного клиента из своей па�
   }
 })
 
+test('удаление после опроса карточки при открытом диалоге не запрашивает удалённого клиента', async ({ page }) => {
+  await loginApi(page)
+  const { first, second } = await twoClients(page)
+  try {
+    const missing: string[] = []
+    let lists = 0
+    page.on('response', (r) => {
+      if (r.status() === 404 && r.url().includes(`/api/clients/${first.id}`)) missing.push(`${r.request().method()} ${r.url()}`)
+      if (r.request().method() === 'GET' && /\/api\/clients(\?.*)?$/.test(r.url())) lists++
+    })
+    // Карточку удаляемого, запрошенную после DELETE, сервер отдаёт до подтверждения
+    // удаления, а после — 404. Такой запрос держится до подтверждения, чтобы
+    // лишний GET всегда получал 404, как на медленной сети.
+    let confirmed: Promise<unknown> | null = null
+    await page.route(new RegExp(`/api/clients/${first.id}$`), async (route) => {
+      const method = route.request().method()
+      if (method === 'DELETE') {
+        const response = await route.fetch()
+        const { operation } = await response.json()
+        confirmed = waitAccess(page.request, operation)
+        return route.fulfill({ response })
+      }
+      if (method === 'GET' && confirmed) await confirmed
+      await route.fallback()
+    })
+    await page.goto('/clients')
+    const panel = page.getByTestId('client-detail')
+    await expect(clientName(panel)).toHaveText(first.name)
+    await panel.getByRole('button', { name: 'Удалить клиента' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Удалить клиента?' })
+    await expect(dialog).toBeVisible()
+    // Пока диалог открыт, опрос карточки подменяет её новым объектом.
+    await page.waitForResponse(r => r.request().method() === 'GET' && new RegExp(`/api/clients/${first.id}$`).test(r.url()) && r.ok())
+    await dialog.getByRole('button', { name: 'Удалить' }).click()
+    await expect(clientName(panel)).toHaveText(second.name, { timeout: 45_000 })
+    await expect(clientCard(page, first.name)).toHaveCount(0)
+    // Не networkidle: список опрашивается каждые 3 с, а запрос, оборванный новым опросом
+    // внутри page.route, остаётся в сети до конца теста. Удержанный GET отпускается
+    // подтверждением; два ответа списка после него - полный цикл опроса.
+    await confirmed
+    const listed = lists
+    await expect.poll(() => lists - listed, { timeout: 15_000 }).toBeGreaterThanOrEqual(2)
+    expect(missing).toEqual([])
+  }
+  finally {
+    await page.unrouteAll({ behavior: 'wait' })
+    await page.request.delete(`/api/clients/${first.id}`)
+    await page.request.delete(`/api/clients/${second.id}`)
+  }
+})
+
 test('запоздалый список после удаления не выбирает удалённого клиента снова', async ({ page }) => {
   await loginApi(page)
   const { first, second } = await twoClients(page)

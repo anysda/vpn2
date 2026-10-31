@@ -30,15 +30,27 @@ def cipher_line(name):
     return f'cipher {name}\n'.replace(' \n', '\n')
 
 
+# The interfaces an openvpn of the check opens, whatever their names: a tun or tap device
+# ("tun type tun|tap" in ip -d), or its DCO interface ("ovpn", "ovpn-dco") without --disable-dco.
+# Other interfaces come and go with the host, as the NIC a cloud runner gets in the middle of a test.
+OPENED = re.compile(r'(?m)^\d+: ([^:@]+)[:@].*\s(?:tun type \w+|ovpn(?:-dco)?)\s')
+# The server networks of the check: apply's tls_server_end, and the config under test.
+NETWORKS = re.compile(r'(?<![\d.])(?:10\.67\.67|10\.8\.0)\.')
+
+
 def traces(work, tmp):
-    """What a check could leave on the host: interfaces, routes, processes of the test tree, temporary files."""
+    """What a check could leave on the host: its interfaces and routes, processes of the test tree, temporary files.
+
+    A network namespace of the check (unshare --net) lives as long as a process in it."""
     def said(argv):
         try:
             return subprocess.run(argv, capture_output=True, text=True).stdout
         except FileNotFoundError:
             return f'no {argv[0]}'
-    return {'interfaces': sorted(re.findall(r'(?m)^\d+: ([^:@]+)', said(['ip', '-o', 'link', 'show']))),
-            'routes': sorted(said(['ip', 'route', 'show', 'table', 'all']).splitlines()),
+    opened = sorted(OPENED.findall(said(['ip', '-d', '-o', 'link', 'show'])))
+    return {'interfaces': opened,
+            'routes': sorted(route for route in said(['ip', 'route', 'show', 'table', 'all']).splitlines()
+                             if NETWORKS.search(route) or set(re.findall(r'\bdev (\S+)', route)) & set(opened)),
             # [/]tmp/... finds the processes under the work directory, not this pgrep.
             'processes': sorted(said(['pgrep', '-a', '-f', f'[/]{str(work)[1:]}']).splitlines()),
             'temporary': sorted(os.listdir(tmp))}

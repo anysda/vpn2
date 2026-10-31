@@ -364,8 +364,10 @@ function askRemoveClient() {
       const deleting = remove(d.id)
       emit('deleting', d.id, deleting)
       const result = await deleting
-      d.operation = result.operation
-      d.deleting = true
+      // Пока диалог был открыт, опрос мог подменить карточку новым объектом.
+      const cur = detail.value?.id === d.id ? detail.value : d
+      cur.operation = result.operation
+      cur.deleting = true
       toast.add({ title: 'Отключение выполняется', color: 'info' })
       await changed()
     }, 'Ошибка удаления'),

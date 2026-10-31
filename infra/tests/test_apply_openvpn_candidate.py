@@ -14,13 +14,15 @@ WORKING = ('port 1194\nproto udp\ndev tun\nserver 10.8.0.0 255.255.255.0\nca pki
            'crl-verify pki/crl.pem\nclient-config-dir ccd\n')
 # The cipher check starts a TLS server in a network namespace of its own, as root.
 AS_ROOT = [] if os.geteuid() == 0 else ['sudo', '-n']
-NEEDS_SERVER = 'needs root or sudo -n and unshare --net'
+NEEDS_SERVER = 'needs root or sudo -n, unshare --net and a tun device'
 
 
 def can_be_root():
-    # Root without CAP_SYS_ADMIN (a container) runs true, not unshare --net.
-    return bool(shutil.which('unshare')) and subprocess.run(
-        AS_ROOT + ['unshare', '--net', 'true'], capture_output=True).returncode == 0
+    # Root without CAP_SYS_ADMIN (a container) runs true, not unshare --net; a container
+    # without /dev/net/tun or CAP_NET_ADMIN runs unshare, but the server opens no tun there.
+    return bool(shutil.which('unshare')) and all(subprocess.run(
+        AS_ROOT + ['unshare', '--net'] + probe, capture_output=True).returncode == 0
+        for probe in (['true'], ['ip', 'tuntap', 'add', 'dev', 'vpn2check', 'mode', 'tun']))
 
 
 SERVER_RUNS = can_be_root()

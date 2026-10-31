@@ -12,6 +12,10 @@ SSH_PROBE_TIMEOUT pre-flight называет настройкой, а не «SS
 получить освободившийся номер (свой pid-namespace под sudo -n). Ctrl-C и TERM
 вызывающего гасят команду сразу, а не по пределу. Сирота экзита, ответившего
 сразу, гибнет и через exit_ssh: его гасит сам _limit_run, не убийца.
+Вызов в $(...) не переносит в подоболочку ловушки вызывающего: Ctrl-C
+запускает ловушку один раз, в главной оболочке, и подоболочка после вызова
+гибнет от Ctrl-C, как без вызова. Неверный SSH_PROBE_TIMEOUT останавливает
+деплой до опроса узлов, где бы его ни проверяли.
 _limit_run в infra/lib/ssh.sh и в 99-verify (на узел lib/ssh.sh не попадает)
 - одна реализация: края проверяются на обеих, тексты функций совпадают.
 """
@@ -29,8 +33,7 @@ from unittest import mock
 import test_verify
 from test_deploy import ROOT, source
 from test_ssh_limit_remote_code import Node, alive
-from test_ssh_probe_timeout_value import FAST_SLEEP
-from test_ssh_refusal import PREFLIGHT
+from test_ssh_probe_timeout_value import STAGE, deploy
 from test_verify_exit_ssh_bashrc import LABEL, MOCK
 
 LIMIT = 2
@@ -150,6 +153,28 @@ CONDITION = {'целое': r'цел',
              'до 999999': r'999 ?999|шест\w* цифр|6 цифр|меньше (1 ?000 ?000|миллиона)',
              'без ведущего нуля': r'ведущ\w* (0|нул)|не (начина\w* )?с (0|нуля)|без (0|нуля) в начале'}
 SIGNAL_GRACE = 2
+CREDS = 'SSH_USER=root SSH_HOST=node.example SSH_PASS=fixture\n'
+# Ловушки вызывающего пишут сигнал, свой BASHPID и $$ (главная оболочка);
+# mask - пойманные сигналы процесса (SigCgt): ловушка, а не только текст trap -p.
+TRAPS = (CREDS + 'trap \'echo "INT $BASHPID $$" >> "$PWD/traps"\' INT\n'
+         'trap \'echo "TERM $BASHPID $$" >> "$PWD/traps"\' TERM\n'
+         'mask() { awk \'/^SigCgt/ {print $2}\' "/proc/$1/status"; }\n')
+BAD_LIMITS = ('abc', '0', '07', '1000000')
+
+
+def calls(side):
+    """Вызовы с пределом стороны side: ssh_probe и ssh_fresh есть только в lib."""
+    found = {'_limit_run': f'_limit_run {HANG} ssh node.example true'}
+    if side == 'lib':
+        found.update(ssh_fresh='ssh_fresh true', ssh_probe='ssh_probe')
+    return found
+
+
+def fired(root):
+    """[(сигнал, в главной ли оболочке)] сработавших ловушек вызывающего."""
+    path = Path(root, 'traps')
+    rows = [line.split() for line in path.read_text().splitlines()] if path.exists() else []
+    return [(how, pid == main) for how, pid, main in rows]
 
 
 def lingering(pids):
@@ -291,17 +316,16 @@ class SshLimitSessionTests(unittest.TestCase):
                 self.assertGreater(len(node.pids()), MANY, 'заглушка не породила детей')
                 self.assert_nothing_left(f'{MANY} детей {side}', node.pids(), elapsed, LIMIT + 10)
 
-    def test_5_preflight_bad_limit_is_setting_not_unreachable(self):
-        body = FAST_SLEEP + PREFLIGHT.replace('expand_hosts() { echo ru; }', 'expand_hosts() { echo ru de nl; }')
-        self.assertNotEqual(body, FAST_SLEEP + PREFLIGHT)
-        with StubNode('') as node:
-            code, out, err, _ = node.run(body, 'abc')
-            out += err
-            print(f'pre-flight abc: rc={code} {out.strip().splitlines()[-3:]!r}')
-            self.assertNotEqual(code, 0, out)
-            self.assertIn('SSH_PROBE_TIMEOUT', out, out)
-            self.assertNotIn('SSH недоступен', out, 'неверная настройка названа недоступностью экзита')
-            self.assertEqual(node.calls(), 0)
+    def test_5_deploy_bad_limit_is_setting_not_unreachable(self):
+        for value in BAD_LIMITS:
+            with self.subTest(value=value), StubNode('') as node:
+                code, out, calls = deploy(node, value)
+                print(f'deploy {value!r}: rc={code} {out.strip().splitlines()[-3:]!r}')
+                self.assertNotEqual(code, 0, out)
+                self.assertIn('SSH_PROBE_TIMEOUT', out, out)
+                self.assertNotIn('SSH недоступен', out, 'неверная настройка названа недоступностью экзита')
+                self.assertNotIn(STAGE, out)
+                self.assertEqual(calls, 0)
 
     def test_6_one_limit_run_for_entry_and_node(self):
         texts = {}
@@ -342,7 +366,7 @@ class SshLimitSessionTests(unittest.TestCase):
                     self.assertEqual([line for line in lines if 'KILLED' in line], [],
                                      f'_limit_run {side}, {case}: убита чужая сессия с номером команды: {lines}')
 
-    def interrupt(self, script, env, cwd, pids, how):
+    def interrupt(self, script, env, cwd, pids, how, group=False):
         """(код вызывающего, живые pid заглушки, осталось ли что в его группе, секунд после сигнала)."""
         sig = signal.SIGINT if how == 'INT' else signal.SIGTERM
         caller = subprocess.Popen(['bash', '-euo', 'pipefail', '-c', script], cwd=cwd, env=env, text=True,
@@ -354,8 +378,9 @@ class SshLimitSessionTests(unittest.TestCase):
                 time.sleep(0.05)
             self.assertGreaterEqual(len(pids()), 2, 'заглушка ssh не записала pid свой и сироты')
             sent = time.monotonic()
-            # INT - группе, как Ctrl-C в терминале; TERM - одному вызывающему.
-            (os.killpg if how == 'INT' else os.kill)(caller.pid, sig)
+            # INT - группе, как Ctrl-C в терминале; TERM - одному вызывающему,
+            # с group - всей группе, как kill -TERM -<группа>.
+            (os.killpg if how == 'INT' or group else os.kill)(caller.pid, sig)
             deadline = sent + SIGNAL_GRACE + 2
             try:
                 caller.wait(timeout=SIGNAL_GRACE + 2)
@@ -418,16 +443,22 @@ class SshLimitSessionTests(unittest.TestCase):
                 self.assert_condition('exit_ssh', value, row['result'] != 'Работает', row['reason'])
                 self.assertFalse(Path(directory, 'node', 'calls').exists(), 'exit_ssh запустил ssh')
 
-    def test_10_preflight_bad_limit_said_once(self):
-        body = FAST_SLEEP + PREFLIGHT.replace('expand_hosts() { echo ru; }', 'expand_hosts() { echo ru de nl; }')
-        with StubNode('') as node:
-            code, out, err, _ = node.run(body, 'abc')
-            out += err
-            said = [line for line in out.splitlines() if re.search(r'\babc\b', line)]
-            print(f'pre-flight abc на 3 узлах: rc={code} {said!r}')
-            self.assertNotEqual(code, 0, out)
-            self.assertEqual(len(said), 1, f'причина неверной настройки не один раз:\n{out}')
-            self.assertEqual(node.calls(), 0)
+    def test_10_deploy_bad_limit_said_once(self):
+        # Симптом, а не место проверки: деплой на трёх узлах стоит до опроса
+        # узлов, условие названо одной строкой.
+        for value in BAD_LIMITS:
+            with self.subTest(value=value), StubNode('') as node:
+                code, out, calls = deploy(node, value)
+                said = [line for line in out.splitlines() if re.search(CONDITION['до 999999'], line)]
+                print(f'deploy {value!r} на 3 узлах: rc={code} {said!r}')
+                self.assertNotEqual(code, 0, out)
+                self.assertEqual(len(said), 1, f'условие неверной настройки не один раз:\n{out}')
+                self.assert_condition('deploy', value, code, '\n'.join(said))
+                if value == 'abc':
+                    named = [line for line in out.splitlines() if re.search(r'\babc\b', line)]
+                    self.assertEqual(len(named), 1, f'причина неверной настройки не один раз:\n{out}')
+                self.assertNotIn(STAGE, out)
+                self.assertEqual(calls, 0)
 
     def test_11_swarm_returns_in_time(self):
         limit, many = 5, 2000
@@ -439,6 +470,79 @@ class SshLimitSessionTests(unittest.TestCase):
                 self.assertGreater(len(node.pids()), many // 2, 'заглушка не породила детей')
                 self.assertLess(elapsed, limit + 10, f'{side}: возврат через {elapsed:.1f} с при пределе {limit} с')
                 self.assert_nothing_left(f'{many} детей {side}', node.pids(), elapsed, limit + 10)
+
+    def test_12_subshell_after_call_keeps_own_traps(self):
+        # Ловушки вызывающего в подоболочку $(...) не наследуются: после
+        # вызова в ней те же ловушки, что до него, и Ctrl-C её гасит.
+        # Сверяются пойманные сигналы, а не текст trap -p: в $(...) bash до
+        # первой смены ловушек печатает ловушки родителя, которых в
+        # подоболочке нет. «без вызова» - контроль: так подоболочка ведёт
+        # себя и без предела.
+        for side in ('lib', 'node'):
+            for name, call in {**calls(side), 'без вызова': 'true'}.items():
+                for how in ('INT', 'TERM'):
+                    with self.subTest(side=side, call=name, how=how), StubNode('') as node:
+                        code, out, err, _ = node.direct(side, TRAPS + f'''
+out=$( p=$BASHPID
+  before=$(mask $p)
+  {call} >/dev/null 2>&1 || :
+  after=$(mask $p)
+  [[ $before == "$after" ]] && echo same || printf 'differ: %s => %s\\n' "$before" "$after"
+  kill -{how} $BASHPID
+  echo SURVIVED ) || echo "rc=$?"
+echo "$out"
+''')
+                        what = f'{name} {side} в $(...)'
+                        print(f'{what} {how}: {out.strip().splitlines()!r} ловушки={fired(node.root)}')
+                        self.assertEqual(code, 0, err)
+                        self.assertIn('same', out, f'{what}: ловушки подоболочки после вызова другие:\n{out}')
+                        self.assertNotIn('SURVIVED', out, f'{what}: подоболочка пережила {how} после вызова')
+                        self.assertIn(f'rc={128 + getattr(signal, "SIG" + how)}', out, out)
+                        self.assertEqual([f for f in fired(node.root) if not f[1]], [],
+                                         f'{what}: ловушка вызывающего сработала в подоболочке')
+
+    def test_13_signal_during_call_in_subshell_runs_caller_trap_once(self):
+        # Ctrl-C (INT группе) и TERM группе во время вызова в $(...): ловушка
+        # вызывающего срабатывает один раз, в главной оболочке.
+        for side in ('lib', 'node'):
+            for name, call in calls(side).items():
+                for how in ('INT', 'TERM'):
+                    with self.subTest(side=side, call=name, how=how), StubNode('orphan') as node:
+                        script = TRAPS + f'out=$({call} 2>&1) || echo "rc=$?"\n'
+                        code, live, _, _ = self.interrupt(preamble(side) + script,
+                                                          {**node.env, 'SSH_PROBE_TIMEOUT': str(HANG)},
+                                                          node.root, node.pids, how, group=True)
+                        what = f'{name} {side} в $(...)'
+                        print(f'{what} {how}: rc={code} ловушки={fired(node.root)}')
+                        self.assertEqual(live, [], f'{what}: заглушка жива после {how}')
+                        self.assertEqual(fired(node.root), [(how, True)],
+                                         f'{what}: ловушка {how} вызывающего не один раз в главной оболочке')
+
+    def test_14_direct_call_keeps_caller_traps(self):
+        # Без подоболочки ловушки вызывающего после вызова прежние и работают.
+        for side in ('lib', 'node'):
+            for name, call in calls(side).items():
+                for how in ('INT', 'TERM'):
+                    with self.subTest(side=side, call=name, how=how, when='после'), StubNode('') as node:
+                        code, out, err, _ = node.direct(side, TRAPS + f'''
+before="$(trap -p INT TERM) $(mask $$)"
+{call} >/dev/null 2>&1 || :
+after="$(trap -p INT TERM) $(mask $$)"
+[[ $before == "$after" ]] && echo same || printf 'differ: %s => %s\\n' "$before" "$after"
+kill -{how} $$
+echo alive
+''')
+                        self.assertEqual(code, 0, err)
+                        self.assertIn('same', out, f'{name} {side}: ловушки вызывающего после вызова другие:\n{out}')
+                        self.assertIn('alive', out)
+                        self.assertEqual(fired(node.root), [(how, True)])
+                    with self.subTest(side=side, call=name, how=how, when='во время'), StubNode('orphan') as node:
+                        code, live, _, _ = self.interrupt(preamble(side) + TRAPS + f'{call} || :\n',
+                                                          {**node.env, 'SSH_PROBE_TIMEOUT': str(HANG)},
+                                                          node.root, node.pids, how, group=True)
+                        self.assertEqual(live, [], f'{name} {side}: заглушка жива после {how}')
+                        self.assertEqual(fired(node.root), [(how, True)],
+                                         f'{name} {side}: ловушка {how} вызывающего не один раз')
 
 
 if __name__ == '__main__':

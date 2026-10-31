@@ -2,6 +2,7 @@
 
 Предел идёт в timeout и в арифметику: ssh_probe и ssh_fresh (infra/lib/ssh.sh),
 exit_ssh (99-verify), бюджет попыток pre-flight (_preflight_host в deploy.sh).
+Деплой с неверным значением стоит до опроса узлов, где бы его ни проверяли.
 «0» снимает предел у timeout, «1.5» и «30s» ломают арифметику bash, «abc»
 роняет timeout в rc=1 на исправном узле. Любое значение не целое > 0, и
 заданное пустым тоже, - громкая ошибка с именем переменной, ненулевой код,
@@ -10,11 +11,13 @@ ssh не запускается. Не задано - 30 с, как прежде;
 """
 import os
 from pathlib import Path
+import re
 import tempfile
 import unittest
 from unittest import mock
 
 import test_verify
+from test_deploy import function, source
 from test_ssh_limit_remote_code import FAKE_SSH, Node
 from test_ssh_refusal import PREFLIGHT
 from test_verify_exit_ssh_bashrc import LABEL, MOCK
@@ -26,6 +29,32 @@ SYNTAX = (r'syntax error|operand expected|value too great|error token|invalid ti
 # Паузы pre-flight не ждём, но часы цикла они двигают, как настоящие.
 FAST_SLEEP = 'sleep() { SECONDS=$((SECONDS + ${1%.*})); }\n'
 SLOW = 4
+# do_all до первой стадии на трёх узлах: env-файлы есть, сеть до узлов есть,
+# ssh - подставной узел Node. Стадия, до которой дошли, печатает метку.
+DEPLOY_HEAD = FAST_SLEEP + ''.join(
+    function(name) for name in ['do_all', 'do_check', *re.findall(r'^(_?preflight\w*)\(\) \{',
+                                                                   source('infra/deploy.sh'), re.M)]) + '''
+print_banner() { :; }
+pause_entry_auto_updates() { :; }
+install_prereqs() { :; }
+exit_tags() { echo de nl; }
+expand_hosts() { case $1 in all) echo ru de nl ;; foreign) echo de nl ;; *) echo "$1" ;; esac; }
+load_env() { :; }
+_tcp22_open() { return 0; }
+run_stage() { echo "STAGE-REACHED $*"; exit 0; }
+run_tracks() { run_stage "$@"; }
+DEPLOY_ROOT=$PWD
+mkdir -p envs
+touch envs/ru.env envs/de.env envs/nl.env
+do_all
+'''
+STAGE = 'STAGE-REACHED'
+
+
+def deploy(node, limit):
+    """(код, stdout+stderr, вызовов ssh) do_all до первой стадии."""
+    code, out, err, _ = node.run(DEPLOY_HEAD, limit)
+    return code, out + err, node.calls()
 
 
 def preflight(node, limit, budget=None):
@@ -69,13 +98,20 @@ class SshProbeTimeoutValueTests(unittest.TestCase):
                     code, out, err, _ = call(node, value)
                     self.assert_loud(f'{call.__name__} SSH_PROBE_TIMEOUT={value!r}', code, out + err, node.calls())
 
-    def test_2_preflight_rejects_bad_value(self):
+    def test_2_deploy_rejects_bad_value(self):
+        # Симптом, а не место проверки: деплой стоит до опроса узлов.
         for value in BAD:
             with self.subTest(value=value), Node('') as node:
-                code, out, err, _ = preflight(node, value)
-                out += err
-                self.assertNotIn('✓', out, f'pre-flight принял ноду при SSH_PROBE_TIMEOUT={value!r}')
-                self.assert_loud(f'pre-flight SSH_PROBE_TIMEOUT={value!r}', code, out, node.calls())
+                code, out, calls = deploy(node, value)
+                self.assertNotRegex(out, r'\((ru|de|nl)\).*✓', f'pre-flight принял ноду при SSH_PROBE_TIMEOUT={value!r}')
+                self.assertNotIn(STAGE, out, f'деплой пошёл в стадии при SSH_PROBE_TIMEOUT={value!r}')
+                self.assert_loud(f'deploy SSH_PROBE_TIMEOUT={value!r}', code, out, calls)
+        # Контроль: с верным значением тот же сценарий доходит до стадий.
+        for value in (None, '15'):
+            with self.subTest(value=value, control=True), Node('') as node:
+                code, out, calls = deploy(node, value)
+                self.assertIn(STAGE, out, f'сценарий не доходит до стадий и с верным значением:\n{out}')
+                self.assertEqual(calls, 3, out)
 
     def test_3_exit_ssh_rejects_bad_value(self):
         for value in BAD:

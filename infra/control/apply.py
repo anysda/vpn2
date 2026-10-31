@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -109,8 +110,49 @@ def tls_server_starts(scratch, cipher):
         started, said = tls_server_run(cert, key, KNOWN_CIPHER, deadline)
         if started:
             return False
-    cause = [line for line in said if 'error' in line.lower()][:1] or said[-1:] or ['no output']
-    raise RuntimeError(f'проверка не запустилась: {cause[0]}')
+    raise RuntimeError(f'проверка не запустилась: {start_failure(said)}')
+
+
+# openvpn stamps each line it prints outside a daemon: 2.6/2.7, then older versions.
+STAMP = re.compile(r'(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}) ')
+
+
+def start_failure(said):
+    """What openvpn said of a start it gave up: the line before its fatal error exit."""
+    lines = [STAMP.sub('', line, count=1).strip() for line in said]
+    lines = [line for line in lines if line]
+    for number, line in enumerate(lines):
+        if line.startswith('Exiting due to fatal error'):
+            if number:
+                return lines[number - 1]
+            break
+    lines = [line for line in lines if not line.startswith('Exiting due to fatal error')]
+    return next((line for line in lines if 'error' in line.lower()), None) or (lines[-1] if lines else 'no output')
+
+
+class stopped_by_signals:
+    """SIGTERM and SIGHUP exit with 128+sig through finally, the default handlers skip it.
+
+    A dropped SSH session or an outer timeout would otherwise leave the check
+    server and its scratch key behind. The previous handlers come back after.
+    """
+    SIGNALS = (signal.SIGTERM, signal.SIGHUP)
+
+    def __enter__(self):
+        self.previous = {}
+        if threading.current_thread() is threading.main_thread():
+            for number in self.SIGNALS:
+                self.previous[number] = signal.signal(number, self.stop)
+        return self
+
+    def stop(self, number, _frame):
+        for other in self.previous:
+            signal.signal(other, signal.SIG_IGN)  # a second signal does not cut the cleanup short
+        raise SystemExit(128 + number)
+
+    def __exit__(self, *_failure):
+        for number, handler in self.previous.items():
+            signal.signal(number, handler)
 
 
 def tls_server_run(cert, key, cipher, deadline):
@@ -161,12 +203,18 @@ def tls_server_run(cert, key, cipher, deadline):
             if 'Initialization Sequence Completed' in line:
                 return True, said
     finally:
-        timer.cancel()
-        timer.join()
-        if server.poll() is None:
-            stop()
-        server.wait()
-        server.stdout.close()
+        def clean():
+            timer.cancel()
+            timer.join()
+            if server.poll() is None:
+                stop()
+            server.wait()
+            server.stdout.close()
+        try:
+            clean()
+        except SystemExit:  # a signal cut the first pass short; it comes once
+            clean()
+            raise
     if expired.is_set():
         raise RuntimeError(f'openvpn --cipher {cipher}: server did not start in 60 s')
     return False, said
@@ -380,7 +428,7 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        with tempfile.TemporaryDirectory() as scratch:
+        with stopped_by_signals(), tempfile.TemporaryDirectory() as scratch:
             key = str(Path(scratch) / 'static.key')
             self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
             for option, names in ciphers:

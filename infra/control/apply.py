@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -148,9 +149,13 @@ def stop_on_signal(number, _frame):
 
 @contextlib.contextmanager
 def stopping():
-    """A signal inside stops apply through its finally and except clauses."""
+    """A signal inside stops apply through its finally and except clauses.
+
+    A signal the caller ignores (nohup, a command run with "&") stays ignored.
+    """
     main = threading.current_thread() is threading.main_thread()
-    previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS} if main else {}
+    previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS
+                if signal.getsignal(number) is not signal.SIG_IGN} if main else {}
     try:
         yield
     except Stopped:
@@ -159,6 +164,18 @@ def stopping():
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
+
+
+def discard(path):
+    """Delete a temporary file or directory whole: a signal waits until it is gone."""
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+    try:
+        if os.path.isdir(path) and not os.path.islink(path):
+            shutil.rmtree(path)
+        else:
+            Path(path).unlink(missing_ok=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
 
 
 def write(path, body, mode):
@@ -171,8 +188,7 @@ def write(path, body, mode):
             os.fsync(output.fileno())
         os.replace(name, path)
     finally:
-        if os.path.exists(name):
-            os.unlink(name)
+        discard(name)
 
 
 SPACE = ' \t\n\v\f\r\0'  # C isspace() and the terminator, not Python's wider isspace
@@ -369,8 +385,14 @@ class Applier:
             self.command(spec['check'] + [str(path)])
 
     def check_openvpn_names(self, ciphers):
-        with stopping(), tempfile.TemporaryDirectory() as scratch:
-            self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
+        with stopping():
+            scratch = None
+            try:
+                scratch = tempfile.mkdtemp()
+                self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
+            finally:
+                if scratch:
+                    discard(scratch)
 
     def check_openvpn_names_with(self, key, ciphers):
         self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
@@ -474,16 +496,12 @@ class Applier:
         target = self.target(resource)
         candidate = self.candidate(resource)
         try:
-            body = self.with_access(resource, Path(source).read_text())
-            write(candidate, body, spec['mode'])
-            self.check(resource, body, candidate)
-        except (OSError, ValueError, RuntimeError) as error:
-            candidate.unlink(missing_ok=True)
-            raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
-        except BaseException:  # a signal: 128+sig, the candidate goes all the same
-            candidate.unlink(missing_ok=True)
-            raise
-        try:
+            try:
+                body = self.with_access(resource, Path(source).read_text())
+                write(candidate, body, spec['mode'])
+                self.check(resource, body, candidate)
+            except (OSError, ValueError, RuntimeError) as error:
+                raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
             if not self.good(resource).exists() and target.exists():
                 # Nothing verified yet: the running config earns "last good" first.
                 try:
@@ -494,9 +512,10 @@ class Applier:
                     pass
             self.stage(resource, 'replacing')
         except BaseException:
-            # Only a journal that says "replacing" makes the next run finish the candidate.
+            # A rejection, an error or a signal, also one inside the clause above. Only a
+            # journal that says "replacing" makes the next run finish the candidate.
             if self.stage_now(resource) != 'replacing':
-                candidate.unlink(missing_ok=True)
+                discard(candidate)
             raise
         self.finish(resource)
 

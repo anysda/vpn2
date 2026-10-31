@@ -54,6 +54,10 @@ release_start() {
   # deploy: по строке отпускания, EOF, SIGPIPE от мёртвого ssh или смерти $$.
   # На entry sh - dash без read -t, держатель - bash.
   local LOCK_PULSE_WINDOW=12
+  # Своя группа процессов: Ctrl-Z оператора останавливает deploy, но не пульс,
+  # иначе держатель через окно тишины отпустит замок, и после fg deploy пойдёт
+  # без него. Ctrl-C группе до пульса тоже не доходит - его кончает deploy.
+  set -m
   coproc VPN2_REMOTE_LOCK {
     load_env ru
     local deploy_pid=$$
@@ -62,6 +66,7 @@ release_start() {
         echo alive
       done; } | ssh_exec "umask 077; mkdir -p /var/lib/vpn2-deploy; exec flock -n -E 75 /var/lib/vpn2-deploy/deploy.lock bash --norc -c 'echo locked; while read -r -t $LOCK_PULSE_WINDOW && [ \"\$REPLY\" = alive ]; do :; done'"
   }
+  set +m
   VPN2_LOCK_PID=$VPN2_REMOTE_LOCK_PID
   exec {VPN2_LOCK_IN}>&"${VPN2_REMOTE_LOCK[1]}"
   local locked rc=0

@@ -1,24 +1,46 @@
-"""OpenVPN cipher check: decided right without tun, sudo or unshare; no openvpn or one that hangs is named in time."""
+"""OpenVPN cipher check: decided right without a tun device, its capabilities or rights, and as a user.
+
+Each environment is a real one, made with unshare and setpriv as root (or sudo -n), or the tests'
+own user when it is uid 1000; apply's tests run inside it in a process of their own and first
+check that it is what it is named. Where it cannot be made here, it is skipped.
+No openvpn, or one that hangs, is named in time.
+"""
 import contextlib
+import os
 from pathlib import Path
+import shutil
 import subprocess
+import sys
+import tempfile
 import time
 import unittest
 from unittest import mock
 
-from test_apply import apply
+from test_apply import ROOT, apply
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_cipher_tls import NAMES, STARTS, LeavesNothing, cipher_line
 
 OPENVPN = candidate.OPENVPN
 WORKING = candidate.WORKING
+AS_ROOT = candidate.AS_ROOT
 KNOWN = WORKING + 'cipher AES-256-GCM\n'
 GOOD = WORKING + 'cipher BF-CBC\n'
-# What each refusal of the environment prints, as unshare and sudo say it.
-NO_UNSHARE = 'unshare: unshare failed: Operation not permitted'
-NO_SUDO = 'sudo: a password is required'
 # Each openvpn call of apply has 60 s; the margin is for the rest of install.
 LIMIT = 60 + 15
+UID = 1000
+AS_UID = f'setpriv --reuid={UID} --regid={UID} --clear-groups'
+# /dev/net of a mount namespace of its own: empty, or with a tun only root opens.
+OWN_DEV_NET = [*AS_ROOT, 'unshare', '--mount', '--propagation', 'private', 'sh', '-c']
+ENVIRONMENTS = {
+    'no tun device': OWN_DEV_NET + ['mount -t tmpfs none /dev/net && exec "$@"', 'sh'],
+    'no CAP_SYS_ADMIN, CAP_NET_ADMIN': [*AS_ROOT, 'setpriv', '--inh-caps=-all', '--ambient-caps=-all',
+                                        '--bounding-set=-sys_admin,-net_admin'],
+    'no rights on /dev/net/tun': OWN_DEV_NET + ['mount -t tmpfs none /dev/net && mknod -m 600 /dev/net/tun c 10 200 '
+                                                f'&& exec {AS_UID} "$@"', 'sh'],
+    f'uid {UID}': [] if os.geteuid() == UID else [*AS_ROOT, *AS_UID.split()],
+}
+INSIDE = 'VPN2_CHECK_ENVIRONMENT'
+CAP_NET_ADMIN, CAP_SYS_ADMIN = 12, 21
 
 
 def script(path, body):
@@ -38,67 +60,108 @@ def hanging(work, deaf=False):
                                     f'echo $$ > {work / "server.pid"}\n{trap}exec sleep 1000')
 
 
-def substituted(swap, euid=None):
-    """apply finds these programs in place of the ones it names, as on a host that has them so."""
+def substituted(swap):
+    """apply finds these programs in place of the ones it names."""
     real = subprocess.Popen
 
     def popen(argv, *args, **kwargs):
         return real([swap.get(word, word) for word in argv], *args, **kwargs)
     stack = contextlib.ExitStack()
     stack.enter_context(mock.patch.object(apply.subprocess, 'Popen', popen))
-    if euid is not None:
-        # apply runs as this user: root without privileges, or a user.
-        stack.enter_context(mock.patch.object(apply.os, 'geteuid', return_value=euid))
     return stack
 
 
-class Environments:
-    def refusing(self, name, said):
-        return script(self.work / name, f"echo '{said}' >&2\nexit 1")
-
-    def environments(self):
-        """(name, programs as the host has them, euid apply runs with): no server can start there."""
-        return (
-            ('root without unshare', {'/usr/bin/unshare': self.refusing('unshare', NO_UNSHARE)}, 0),
-            ('user, sudo asks a password', {'/usr/bin/sudo': self.refusing('sudo', NO_SUDO)}, 1000),
-            ('user without sudo', {'/usr/bin/sudo': str(self.work / 'no-sudo')}, 1000))
-
-
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)
-class OpenvpnCheckEnvironmentTests(Environments, LeavesNothing, unittest.TestCase):
+class OpenvpnCheckEnvironmentTests(unittest.TestCase):
+    def test_cipher_check_and_last_good_in_each_environment(self):
+        # A copy any user reads: the tree may sit in a home only its owner enters.
+        copy = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, copy)
+        copy.chmod(0o755)
+        (copy / 'infra/control').mkdir(parents=True)
+        shutil.copy(ROOT / 'infra/control/apply.py', copy / 'infra/control')
+        shutil.copytree(Path(__file__).parent, copy / 'infra/tests', ignore=shutil.ignore_patterns('__pycache__'))
+        for path in (copy, *copy.rglob('*')):
+            path.chmod(0o755 if path.is_dir() else 0o644)
+        for name, prefix in ENVIRONMENTS.items():
+            with self.subTest(environment=name):
+                # Without root or sudo -n, unshare and setpriv cannot make it.
+                made = subprocess.run(prefix + ['true'], capture_output=True, text=True) if prefix else None
+                if made and made.returncode:
+                    self.skipTest(f'cannot be made here: {made.stderr.strip()}')
+                ran = subprocess.run(prefix + ['env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', f'{INSIDE}={name}',
+                                               f'VPN2_TEST_ROOT={copy}', sys.executable, '-B', '-m', 'unittest', '-v',
+                                               f'{Path(__file__).stem}.{Inside.__name__}'],
+                                     cwd=copy / 'infra/tests', capture_output=True, text=True, timeout=600)
+                self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr[-4000:])
+                self.assertNotIn('skipped', ran.stderr)
+                self.assertRegex(ran.stderr, r'Ran [1-9]\d* tests')
+
+
+@unittest.skipUnless(os.environ.get(INSIDE) in ENVIRONMENTS, f'runs inside an environment, {INSIDE} names it')
+class Inside(LeavesNothing, unittest.TestCase):
+    """apply in one of ENVIRONMENTS: the cipher as a TLS server decides it, last good comes back."""
     setUp_tree = candidate.OpenvpnCandidateTests.setUp
     rejected = candidate.OpenvpnCandidateTests.rejected
     applied = candidate.OpenvpnCandidateTests.applied
 
-    def test_cipher_is_decided_as_the_server_where_no_server_can_start(self):
-        for environment, swap, euid in self.environments():
-            for name in NAMES:
-                with self.subTest(environment=environment, cipher=name, server_starts=STARTS[name]):
-                    body = WORKING + cipher_line(name)
-                    with substituted(swap, euid):
-                        if STARTS[name]:
-                            self.applied(body)
-                            self.host.calls.clear()
-                            self.applied(WORKING)
-                        else:
-                            self.rejected(body, 'cipher')
-                    self.host.calls.clear()
-                    self.assertLeftNothing()
+    def test_the_environment_is_the_one_named(self):
+        name = os.environ[INSIDE]
+        tun = Path('/dev/net/tun')
+        effective = int(next(line for line in Path('/proc/self/status').read_text().splitlines()
+                             if line.startswith('CapEff:')).split()[1], 16)
+        if name == 'no tun device':
+            self.assertFalse(tun.exists())
+        elif name == 'no rights on /dev/net/tun':
+            self.assertTrue(tun.exists())
+            self.assertFalse(os.access(tun, os.R_OK | os.W_OK))
+        elif name.startswith('no CAP'):
+            self.assertEqual(effective & (1 << CAP_SYS_ADMIN | 1 << CAP_NET_ADMIN), 0)
+        if name in ('no tun device', 'no CAP_SYS_ADMIN, CAP_NET_ADMIN'):
+            # Root here: the oracle of the cipher tests cannot start its server, and is skipped.
+            self.assertEqual(os.geteuid(), 0)
+            self.assertFalse(candidate.can_be_root())
+        else:
+            self.assertEqual(os.geteuid(), UID)
+            self.assertEqual(effective, 0)
 
-    def test_last_good_with_cipher_is_restored_where_no_server_can_start(self):
-        for environment, swap, euid in self.environments():
-            with self.subTest(environment=environment):
-                (self.base / 'server.conf').write_text(GOOD)
-                self.applier.mark('openvpn')
-                # The fake host keeps a unit with BROKEN in its config down after the restart.
-                self.new.write_text(WORKING + '# BROKEN\n')
-                with substituted(swap, euid), self.assertRaises(apply.Failed) as caught:
-                    self.applier.install('openvpn', self.new)
-                self.assertEqual(caught.exception.code, 3, caught.exception)
-                self.assertNamed(caught.exception, 'previous config restored')
-                self.assertEqual((self.base / 'server.conf').read_text(), GOOD)
-                self.assertLeftNothing()
+    def test_cipher_is_decided_as_a_tls_server_starts(self):
+        for name in NAMES:
+            with self.subTest(cipher=name, server_starts=STARTS[name]):
+                body = WORKING + cipher_line(name)
+                if STARTS[name]:
+                    self.applied(body)
+                    self.host.calls.clear()
+                    self.applied(WORKING)
+                else:
+                    self.rejected(body, 'cipher')
                 self.host.calls.clear()
+                self.assertLeftNothing()
+
+    def restored(self, failure):
+        self.assertEqual(failure.code, 3, failure)
+        self.assertNamed(failure, 'previous config restored')
+        self.assertEqual((self.base / 'server.conf').read_text(), GOOD)
+        journal = self.applier.journal('openvpn')
+        self.assertFalse(journal.exists(), journal.exists() and journal.read_text())
+        self.assertLeftNothing()
+
+    def test_failed_apply_restores_last_good_with_cipher(self):
+        (self.base / 'server.conf').write_text(GOOD)
+        self.applier.mark('openvpn')
+        # The fake host keeps a unit with BROKEN in its config down after the restart.
+        self.new.write_text(WORKING + '# BROKEN\n')
+        with self.assertRaises(apply.Failed) as caught:
+            self.applier.install('openvpn', self.new)
+        self.restored(caught.exception)
+
+    def test_rollback_restores_last_good_with_cipher(self):
+        (self.base / 'server.conf').write_text(GOOD)
+        self.applier.mark('openvpn')
+        (self.base / 'server.conf').write_text(WORKING + '# BROKEN\n')
+        with self.assertRaises(apply.Failed) as caught:
+            self.applier.rollback('openvpn')
+        self.restored(caught.exception)
 
 
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)

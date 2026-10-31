@@ -79,8 +79,9 @@ class OpenvpnCipherTlsTests(LeavesNothing, unittest.TestCase):
         """The oracle: openvpn starts a TLS server from the config, or exits on it."""
         conf = self.work / 'oracle.conf'
         conf.write_text(body)
+        # A network namespace of its own and no DCO: its tun goes with the server.
         server = subprocess.Popen(AS_ROOT + ['unshare', '--net', OPENVPN, '--cd', str(self.base),
-                                             '--config', str(conf), '--verb', '3'],
+                                             '--config', str(conf), '--verb', '3', '--disable-dco'],
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         timer = threading.Timer(60, server.kill)
         timer.start()

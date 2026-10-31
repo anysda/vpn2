@@ -54,7 +54,8 @@ text = os.fsencode(sys.argv[2]).decode("utf-8", "replace")
 text = " ".join("".join(c if c.isprintable() else " " for c in text).split())[:200]
 while len(text.encode("utf-16-le")) > 400:
     text = text[:-1]
-print(json.dumps({"type": sys.argv[1], "detail": text.strip()}))' "$type" "$detail") || return 0
+event = {"type": sys.argv[1], "detail": text.strip()}
+sys.stdout.buffer.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode())' "$type" "$detail") || return 0
   printf 'Authorization: Bearer %s\n' "$(cat "$secret")" | curl -fsS --max-time 5 -H @- \
     -H 'Content-Type: application/json' -d "$event" \
     http://127.0.0.1:51821/api/bot/events >/dev/null 2>&1 || true

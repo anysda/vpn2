@@ -296,9 +296,17 @@ if [[ -f /etc/openvpn/server/server.conf ]] \
     /etc/openvpn/server/server.conf > "$ovpn_candidate"
   rc=0
   /usr/local/sbin/vpn2-apply install openvpn "$ovpn_candidate" || rc=$?
+  # Прерванный apply (130/143) мог уже заменить server.conf и перезапустить
+  # OpenVPN: тогда откат стадии возвращает прежний и перезапускает его.
+  # Код 1 бывает и без замены файла, поэтому решает содержимое, а не код.
+  cmp -s "$ovpn_candidate" /etc/openvpn/server/server.conf && ovpn_switched=1
   rm -f "$ovpn_candidate"
   if (( rc )); then
-    echo "[$HOST_TAG] vpn2-apply install openvpn: код $rc, server.conf не изменён" >&2
+    if (( ovpn_switched )); then
+      echo "[$HOST_TAG] vpn2-apply install openvpn: код $rc, server.conf уже заменён" >&2
+    else
+      echo "[$HOST_TAG] vpn2-apply install openvpn: код $rc, server.conf не изменён" >&2
+    fi
     exit "$rc"
   fi
   ovpn_switched=1

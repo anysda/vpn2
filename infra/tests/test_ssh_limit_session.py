@@ -121,22 +121,28 @@ def limited(leader=False, limit=LIMIT):
 
 # Свой pid-namespace: номер, что освободил wait, щуп сразу отдаёт новой сессии
 # (ns_last_pid), и та живёт вне сессии команды. $1 - файл с _limit_run,
-# $2 - секунд команды, $3 - предел, $4 - повторов, $5 - секунд охоты за номером,
-# $6 - каталог. Строка на повтор: alive - жертва жива, KILLED - убита,
-# free - номер не освободился.
+# $2 - секунд команды, $3 - предел, $4 - повторов, $5 - секунд охоты за номером
+# после возврата _limit_run, $6 - каталог. Строка на повтор: alive - жертва
+# жива, KILLED - убита, free - номер не освободился.
+# set +e: lib/ssh.sh включает errexit, а код охоты не значит ничего - её
+# ребёнка с номером убийцы гасит сам _limit_run, kill охоты даёт 1, и wait
+# молча обрывал серию.
 FOREIGN = r'''source "$1"
+set +e
 d=$6
 for ((i = 0; i < $4; i++)); do
-  rm -f "$d/target" "$d/victim"
+  rm -f "$d/target" "$d/victim" "$d/done"
   ( while [[ ! -s $d/target ]]; do :; done
-    t=$(<"$d/target"); end=$((SECONDS + $5))
-    while (( SECONDS < end )); do
+    t=$(<"$d/target"); end=''
+    until [[ -n $end ]] && (( SECONDS >= end )); do
+      [[ -n $end || ! -e $d/done ]] || end=$((SECONDS + $5))
       echo $((t - 1)) > /proc/sys/kernel/ns_last_pid
       bash -c 'exec setsid -w sleep 30' </dev/null >/dev/null 2>&1 & v=$!
       if (( v == t )); then echo "$v" > "$d/victim"; break; fi
       kill "$v" 2>/dev/null
     done ) & spin=$!
   rc=0; _limit_run "$3" bash -c 'echo $$ > "$1"; exec sleep "$2"' _ "$d/target" "$2" || rc=$?
+  : > "$d/done"
   wait "$spin"
   sleep 0.3
   if [[ ! -s $d/victim ]]; then echo "rc=$rc free"; continue; fi
@@ -347,7 +353,8 @@ class SshLimitSessionTests(unittest.TestCase):
                                      str(seconds), str(limit), str(times), str(hunt), directory],
                                     text=True, capture_output=True, timeout=120)
         lines = result.stdout.splitlines()
-        self.assertEqual(len(lines), times, f'щуп не прошёл все повторы: {result.stdout}{result.stderr}')
+        self.assertEqual(len(lines), times,
+                         f'щуп не прошёл все повторы, код {result.returncode}: {result.stdout}{result.stderr}')
         return lines
 
     def test_7_freed_session_number_is_not_killed(self):

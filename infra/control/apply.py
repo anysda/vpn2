@@ -426,6 +426,11 @@ class Applier:
                     # A line Python's \s reads as a syncconf key must read the same to wg.
                     if wg_line(re.sub(FOREIGN_SPACE, '', line))[0]:
                         raise ValueError(f'wg cannot read {line!a}')
+                    # wg-quick read_bool: the value after the first =, cut at # and
+                    # trimmed, is true or false in any case, or wg-quick up stops.
+                    saved = line.split('#', 1)[0].partition('=')[2].strip(' \t\n\v\f\r').lower()
+                    if quick and key.lower() == 'saveconfig' and saved not in ('true', 'false'):
+                        raise ValueError(f'SaveConfig: wg-quick takes true or false, not {line!a}')
                     # Any other line wg-quick leaves in the header stops wg-quick up with
                     # "Line unrecognized". The [Peer] tail is the live file's, not checked here.
                     if value and section != '[Peer]' and not (

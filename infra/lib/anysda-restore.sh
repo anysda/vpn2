@@ -1172,12 +1172,6 @@ if [[ -f /etc/wireguard/wg0.conf ]]; then
   fi
 fi
 start_unit openvpn-server@server
-# Конфиг из архива поднялся: отмечаем его рабочим, иначе откат OpenVPN вернул
-# бы структуру до restore.
-if [[ -x /usr/local/sbin/vpn2-apply ]] && systemctl is-active --quiet openvpn-server@server; then
-  /usr/local/sbin/vpn2-apply mark openvpn \
-    || echo "anysda-restore: WARN: vpn2-apply mark openvpn не прошёл: last good не совпадает с server.conf" >&2
-fi
 start_unit anysda-failover-watchdog
 start_unit strongswan-starter
 start_unit anysda-ikev2-routing
@@ -1213,6 +1207,12 @@ fi
 docker start anysda-vpn2 anysda-tgbot 2>/dev/null || true
 trap - ERR INT TERM
 set +E
+# Отмечаем только после конца транзакции: откат restore last good не возвращает,
+# и отменённый архив не должен стать рабочим конфигом для отката OpenVPN.
+if [[ -x /usr/local/sbin/vpn2-apply ]] && systemctl is-active --quiet openvpn-server@server; then
+  /usr/local/sbin/vpn2-apply mark openvpn \
+    || echo "anysda-restore: WARN: vpn2-apply mark openvpn не прошёл: last good не совпадает с server.conf" >&2
+fi
 
 # ── Pere-sync AGH bcrypt (admin-password.txt мог вернуться из бэкапа, а
 #    /opt/AdGuardHome/AdGuardHome.yaml — нет, и hash остался от старого

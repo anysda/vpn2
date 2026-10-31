@@ -1663,6 +1663,12 @@ exit_tags() {
 # Без аргументов → полный pipeline.
 # С двумя аргументами → одна стадия на группу.
 # -h / --help → подсказка.
+# SSH_PROBE_TIMEOUT общий для всех нод: неверный останавливает деплой и стадию
+# одной строкой до открытия выпуска, иначе запись остаётся в applying, и
+# следующий деплой требует recover.
+if [[ ! ${1:-} =~ ^(-h|--help|backup|backup-list|restore|rollback)$ ]]; then
+  probe_limit=$(ssh_probe_limit 2>&1) || HOST_TAG=deploy die "$probe_limit"
+fi
 case "${1:-}" in -h|--help) usage ;; esac
 # shellcheck source=infra/lib/deploy-release.sh
 source "$DEPLOY_ROOT/lib/deploy-release.sh"

@@ -100,6 +100,10 @@ _limit_run() {
   local limit=$1 pid killer rc=0 sig='' traps
   local -
   shift
+  # В подоболочке trap -p до первой смены ловушек печатает ловушки родителя,
+  # которых в ней нет, и eval поставил бы их. Сброс KILL ничего не меняет,
+  # но гасит этот показ: дальше видны только свои ловушки подоболочки.
+  trap - KILL
   traps=$(trap -p INT TERM)
   trap 'sig=INT' INT
   trap 'sig=TERM' TERM

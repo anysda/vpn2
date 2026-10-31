@@ -80,7 +80,7 @@ def columns(table):
 
 device_columns = columns('devices')
 deleting = 'd.deleting' if 'deleting' in device_columns else '0'
-bad = []
+bad, nocheck = [], []
 names = dict(con.execute('SELECT id, name FROM devices')) if 'name' in device_columns else {}
 
 
@@ -177,13 +177,13 @@ def devices(*fields):
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
     # Пиры берёт сам wg во временном netns, одним путём с verify-traffic.py - wg_conf.py.
-    # Файл, который wg отвергает, или нечем спросить wg - жалоба вместо сверки.
+    # Файл, который wg отвергает, - жалоба вместо сверки; нечем спросить wg - сверка не выполнена.
     from wg_conf import conf_peers
     addresses = {}
     try:
         peers = {peer['key']: peer for peer in conf_peers(wg.read_bytes())}
     except ValueError as error:
-        bad.append(str(error))
+        (nocheck if 'проверить нечем' in str(error) else bad).append(str(error))
     else:
         addresses = {key: set(peer['allowed']) for key, peer in peers.items()}
         known = set()
@@ -220,9 +220,10 @@ if swan.is_file() and {'ikev2_username', 'ikev2_password', 'ikev2_ip'} <= device
     for device in sorted(conns - known - retired_devices):
         bad.append(f'{label(device)}: учётка IKEv2 есть, устройства нет в БД')
 
-for line in bad:
+# Код 3 - расхождение, 5 - сверку нечем выполнить (не расхождение).
+for line in bad + nocheck:
     print(line)
-sys.exit(3 if bad else 0)
+sys.exit(3 if bad else 5 if nocheck else 0)
 PY
 }
 if [[ ${1:-} == --check-bundle ]]; then
@@ -358,6 +359,13 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
   rc=0
   mismatch=$(check_bundle "$BUNDLE_DIR") || rc=$?
   [[ $rc != 0 ]] || break
+  if [[ $rc == 5 ]]; then
+    # Нечем спросить wg - не расхождение: архив сохраняем, перевыпуск не нужен.
+    echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена: $mismatch" >&2
+    mismatch=${mismatch//$'\n'/; }
+    WARNING="сверка БД с конфигами VPN не выполнена: ${mismatch//[\"\\]/}"
+    break
+  fi
   if [[ $rc != 3 ]]; then
     echo "anysda-backup: WARN: сверка БД с конфигами VPN не выполнена (код $rc)" >&2
     break

@@ -51,13 +51,13 @@ wireguard_keys_build() {
     cp /etc/wireguard/server.priv "$work/server.priv"
   fi
   if [[ ! -s "$work/server.priv" && -s /etc/wireguard/wg0.conf ]]; then
-    # Как wg: строка до первого #, без пробельных символов, имена в любом регистре ASCII.
-    awk '
+    # Как wg-quick и wg: NUL вон, строка до первого #, без пробельных символов, имена в любом регистре ASCII.
+    tr -d '\000' < /etc/wireguard/wg0.conf | awk '
       { sub(/#.*/, ""); gsub(/[ \t\r\v\f]/, "") }
       /^\[/ { interface = /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/; next }
       interface && /^[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy]=/ { sub(/^[^=]*=/, ""); key = $0 }
       END { if (key != "") print key }
-    ' /etc/wireguard/wg0.conf > "$work/server.priv"
+    ' > "$work/server.priv"
   fi
   # Сбой вычисления public key не означает, что нужно ротировать private.
   # WG private key — 32 байта в base64; пустой/оборванный старый файл можно

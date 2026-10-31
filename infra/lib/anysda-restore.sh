@@ -300,8 +300,14 @@ fi
 # в БД уже отозван в CRL архива, у устройства нет пира WireGuard или учётки
 # IKEv2, у отключённого они остались. Восстанавливать можно, но такие
 # устройства перевыпустить: перевыпуск заново пишет конфиги из БД.
+# Код 5 - сверку нечем выполнить (нет wg, нет права на netns): это не расхождение.
 CHECK=/usr/local/bin/anysda-backup.sh
-if [[ -x "$CHECK" ]] && ! MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1); then
+CHECK_RC=0
+[[ ! -x "$CHECK" ]] || MISMATCH=$("$CHECK" --check-bundle "$BUNDLE_DIR" 2>&1) || CHECK_RC=$?
+if [[ $CHECK_RC == 5 ]]; then
+  echo "anysda-restore: WARN: сверка БД с конфигами VPN не выполнена:" >&2
+  printf '%s\n' "$MISMATCH" >&2
+elif [[ $CHECK_RC != 0 ]]; then
   WHAT=
   [[ $MISMATCH != *CRL* ]] || WHAT+=', CRL OpenVPN'
   [[ $MISMATCH != *WireGuard* ]] || WHAT+=', пиры WireGuard'
@@ -328,13 +334,13 @@ for key in server.priv server.pub; do
 done
 if [[ -f "$WG_BUNDLE/wg0.conf" || -f "$WG_BUNDLE/server.priv" ]]; then
   if [[ ! -s "$WG_BUNDLE/server.priv" ]]; then
-    # Как wg: строка до первого #, без пробельных символов, имена в любом регистре ASCII.
-    awk '
+    # Как wg-quick и wg: NUL вон, строка до первого #, без пробельных символов, имена в любом регистре ASCII.
+    tr -d '\000' < "$WG_BUNDLE/wg0.conf" | awk '
       { sub(/#.*/, ""); gsub(/[ \t\r\v\f]/, "") }
       /^\[/ { interface = /^\[[Ii][Nn][Tt][Ee][Rr][Ff][Aa][Cc][Ee]\]$/; next }
       interface && /^[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy]=/ { sub(/^[^=]*=/, ""); key = $0 }
       END { if (key != "") print key }
-    ' "$WG_BUNDLE/wg0.conf" > "$WG_BUNDLE/server.priv"
+    ' > "$WG_BUNDLE/server.priv"
   fi
   # pub выводим заново: не оставляем ключ B даже при отсутствии pub в архиве.
   if ! wg pubkey < "$WG_BUNDLE/server.priv" > "$WG_BUNDLE/server.pub"; then
@@ -907,11 +913,11 @@ def rewrite(path, text, encoding=None):
 
 
 if wg_keys and os.path.isfile(wg_path):
-    # Секции и ключи как у wg: строка до `\n`, до первого `#`, без пробельных
-    # символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле, байт в байт.
+    # Секции и ключи как у wg-quick и wg: строка до `\n`, NUL вон, до первого `#`, без
+    # пробельных символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле, байт в байт.
     blocks = [[]]
     for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, encoding='latin-1', newline='').read()):
-        clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
+        clean = re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0])
         if clean.startswith('['):
             blocks.append([])
         blocks[-1].append((clean.encode().lower(), clean.partition('=')[2], line))

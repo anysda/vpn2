@@ -2,14 +2,12 @@
 
 Один путь для сверки бэкапа (anysda-backup.sh, на узле берёт из /usr/local/lib/anysda)
 и проверки трафика (verify-traffic.py, грузит рядом с собой). Файл режется как у
-wg-quick и уходит в `wg setconf` на свежем wg0 во временном netns, ответ - `wg show
+wg-quick и уходит в `wg setconf` на свежем wg0 в анонимном netns, ответ - `wg show
 wg0 dump`. Файл, который wg отвергает, - ValueError с «wg0.conf» и отказами wg;
 нет wg, ip или права на netns - ValueError «проверить нечем». Живой wg0 узла не задет.
 """
 import base64
 import binascii
-import itertools
-import os
 import re
 import shutil
 import subprocess
@@ -20,7 +18,6 @@ SPACE = b' \t\n\v\f\r'
 # Отказ wg без строки файла: какое имя wg0.conf он называет.
 NAMED = (('public key', 'PublicKey'), ('AllowedIP', 'AllowedIPs'), ('IP address', 'AllowedIPs'), ('endpoint', 'Endpoint'),
          ('keepalive', 'PersistentKeepalive'), ('Fwmark', 'FwMark'), ('Servname', 'ListenPort'))
-_names = itertools.count()
 
 
 def wg_quick_strip(data):
@@ -97,48 +94,48 @@ def _clamped(key):
     return base64.b64encode(raw).decode()
 
 
+# wg0 в анонимном netns: netns держит только этот процесс и умирает вместе с ним.
+# --kill-child и pdeathsig - убитая проверка (SIGTERM, SIGKILL) не оставляет wg0 с ключами.
+# Код выхода называет шаг, на котором не вышло.
+ASK = ('setpriv', '--pdeathsig', 'KILL', 'unshare', '--net', '--pid', '--fork', '--kill-child', 'sh', '-c',
+       'ip link add wg0 type wireguard || exit 120; wg setconf wg0 /dev/stdin || exit 121; '
+       'wg show wg0 dump || exit 122')
+STEPS = {120: 'wg0 в netns', 121: 'wg setconf', 122: 'wg show'}
+TIMEOUT = 30
+
+
 def wg_dump(data):
-    """`wg show wg0 dump` после `wg setconf` файла `data` (bytes или str) на свежем wg0 во временном netns."""
+    """`wg show wg0 dump` после `wg setconf` файла `data` (bytes или str) на свежем wg0 в анонимном netns."""
     if isinstance(data, str):
         data = data.encode()
     lines = wg_quick_strip(data)
-    if not shutil.which('wg') or not shutil.which('ip'):
-        raise ValueError('wg0.conf: проверить нечем - нет wg или ip')
-    name = f'vpn2wgc{os.getpid()}x{next(_names)}'
-
-    def call(*args, data=None):
-        return subprocess.run(args, input=data, capture_output=True, timeout=30, check=False)
-
-    done = call('ip', 'netns', 'add', name)
-    if done.returncode:
-        raise ValueError(f'wg0.conf: проверить нечем - ip netns add: {_said(done)}')
-    try:
-        done = call('ip', '-n', name, 'link', 'add', 'wg0', 'type', 'wireguard')
-        if done.returncode:
-            raise ValueError(f'wg0.conf: проверить нечем - wg0 в netns: {_said(done)}')
-        refusals = []
-        # /usr/bin/wg под AppArmor не читает /tmp и /run: тело только через stdin.
-        # На отказ wg строка, которую он назвал, гасится, и wg спрашивается снова - так видны все отказы.
-        while True:
-            done = call('ip', 'netns', 'exec', name, 'wg', 'setconf', 'wg0', '/dev/stdin',
-                        data=b''.join(line + b'\n' for _, line in lines))
-            if not done.returncode:
-                break
-            if not done.stderr.rstrip().endswith((b'Configuration parsing error', b'Invalid configuration')):
-                raise ValueError(f'wg0.conf: проверить нечем - wg setconf: {_said(done)}')
-            refusal, found = _refusal(done.stderr, lines)
-            refusals.append(refusal)
-            if found is None:
-                break
-            lines[found] = (lines[found][0], b'')
-        if refusals:
-            raise ValueError('wg0.conf: wg отвергает файл: ' + '; '.join(refusals))
-        done = call('ip', 'netns', 'exec', name, 'wg', 'show', 'wg0', 'dump')
-        if done.returncode:
-            raise ValueError(f'wg0.conf: проверить нечем - wg show: {_said(done)}')
-        dump = done.stdout.decode().splitlines()
-    finally:
-        call('ip', 'netns', 'del', name)
+    missing = [name for name in ('wg', 'ip', 'unshare', 'setpriv') if not shutil.which(name)]
+    if missing:
+        raise ValueError('wg0.conf: проверить нечем - нет ' + ', '.join(missing))
+    refusals = []
+    # /usr/bin/wg под AppArmor не читает /tmp и /run: тело только через stdin.
+    # На отказ wg строка, которую он назвал, гасится, и wg спрашивается снова - так видны все отказы.
+    while True:
+        try:
+            done = subprocess.run(ASK, input=b''.join(line + b'\n' for _, line in lines), capture_output=True,
+                                  timeout=TIMEOUT, check=False)
+        except subprocess.TimeoutExpired:
+            # Так бывает с Endpoint-именем: в netns нет сети, wg повторяет резолв.
+            raise ValueError(f'wg0.conf: проверить нечем - wg не ответил за {TIMEOUT} с') from None
+        if not done.returncode:
+            break
+        if done.returncode != 121 or not done.stderr.rstrip().endswith(
+                (b'Configuration parsing error', b'Invalid configuration')):
+            step = STEPS.get(done.returncode, 'unshare --net')
+            raise ValueError(f'wg0.conf: проверить нечем - {step}: {_said(done)}')
+        refusal, found = _refusal(done.stderr, lines)
+        refusals.append(refusal)
+        if found is None:
+            break
+        lines[found] = (lines[found][0], b'')
+    if refusals:
+        raise ValueError('wg0.conf: wg отвергает файл: ' + '; '.join(refusals))
+    dump = done.stdout.decode().splitlines()
     # wg печатает ключ прижатым; в ответ идёт ключ из строки файла, который wg взял.
     private = dump[0].split('\t', 1)[0]
     taken = [clean.partition(b'=')[2].decode('latin-1') for clean in map(_clean, (line for _, line in lines))

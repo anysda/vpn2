@@ -40,19 +40,30 @@ const listed = ref(false)
 // Причина сбоя держится до удачного ответа, а не мигает на каждом повторе:
 // до первого списка - вместо него, после - над прежним списком.
 const loadError = ref('')
+type FetchFail = { message?: string, name?: string, response?: { status?: number }, cause?: FetchFail }
+/**
+ * Причина сбоя словами панели, без английского текста сервера. useFetch кладёт
+ * ошибку ofetch в cause: с ответом - код, без ответа - таймаут или нет связи.
+ */
+function failReason(err: unknown) {
+  const e = err as FetchFail | undefined
+  const code = (e?.response ?? e?.cause?.response)?.status
+  if (code) return `ошибка сервера (код ${code})`
+  const text = [e, e?.cause, e?.cause?.cause].map(x => `${x?.name ?? ''} ${x?.message ?? ''}`).join(' ')
+  return /timeout|timed out/i.test(text) ? 'сервер не ответил вовремя' : 'нет связи с сервером'
+}
 watch(clientsStatus, (s) => {
   if (s === 'success') {
     listed.value = true
     loadError.value = ''
   }
   else if (s === 'error') {
-    const e = clientsError.value as { data?: { message?: string }, statusMessage?: string, message?: string } | undefined
-    loadError.value = e?.data?.message ?? e?.statusMessage ?? e?.message ?? 'Ошибка'
+    loadError.value = failReason(clientsError.value)
   }
 }, { flush: 'sync' })
 
 const subtitle = computed(() => {
-  if (!listed.value) return 'Загрузка…'
+  if (!listed.value) return ''
   const n = clients.value.length
   const d = clients.value.reduce((sum, c) => sum + c.deviceCount, 0)
   return `${n} ${pluralRu(n, ['клиент', 'клиента', 'клиентов'])} · ${d} ${pluralRu(d, ['устройство', 'устройства', 'устройств'])}`
@@ -329,48 +340,47 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
             <b>Не удалось загрузить клиентов</b>{{ loadError }}
           </div>
           <div ref="rowsEl" class="crows scroll">
-            <div v-if="!listed" v-show="!loadError" class="more">
-              Загрузка…
-            </div>
-            <div v-else-if="!clients.length" class="more">
-              Пока нет клиентов
-            </div>
-            <div v-else-if="!rows.length" class="more">
-              Ничего не найдено
-            </div>
-            <PanelClientRow
-              v-for="c in rows"
-              v-else
-              :key="c.id"
-              :name="c.name"
-              :initials="initials(c.name)"
-              :selected="c.id === selectedId"
-              :mobile="mobile"
-              :dot="dot(c)"
-              @select="select(c.id)"
-            >
-              <template #icons><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></template>
-              <template #meta>{{ mobile ? meta(c) : tgText(c) }}</template>
-              <div v-if="mobile" class="crt">
-                <span class="t1">{{ today(c) }}</span>
-                <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
-                <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
+            <template v-if="listed">
+              <div v-if="!clients.length" class="more">
+                Пока нет клиентов
               </div>
-              <template v-else>
-                <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
-                <span
-                  class="t1"
-                  :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
-                >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
-                <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
-                <span>
+              <div v-else-if="!rows.length" class="more">
+                Ничего не найдено
+              </div>
+              <PanelClientRow
+                v-for="c in rows"
+                v-else
+                :key="c.id"
+                :name="c.name"
+                :initials="initials(c.name)"
+                :selected="c.id === selectedId"
+                :mobile="mobile"
+                :dot="dot(c)"
+                @select="select(c.id)"
+              >
+                <template #icons><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></template>
+                <template #meta>{{ mobile ? meta(c) : tgText(c) }}</template>
+                <div v-if="mobile" class="crt">
+                  <span class="t1">{{ today(c) }}</span>
                   <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                   <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                  <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
-                </span>
-              </template>
-            </PanelClientRow>
+                  <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
+                </div>
+                <template v-else>
+                  <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
+                  <span
+                    class="t1"
+                    :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
+                  >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+                  <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
+                  <span>
+                    <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
+                    <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
+                    <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
+                  </span>
+                </template>
+              </PanelClientRow>
+            </template>
           </div>
         </div>
         <OverviewBroadcast />

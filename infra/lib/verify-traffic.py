@@ -49,11 +49,11 @@ import threading
 import time
 import urllib.request
 
-# wg0.conf читается одним разбором с бэкапом: wg_conf.py, доставленный рядом с этим файлом.
+# wg0.conf читает сам wg, одним путём с бэкапом: wg_conf.py, доставленный рядом с этим файлом.
 _spec = importlib.util.spec_from_file_location('wg_conf', Path(__file__).with_name('wg_conf.py'))
 wg_conf = sys.modules['wg_conf'] = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wg_conf)
-wg_sections, conf_peers = wg_conf.wg_sections, wg_conf.conf_peers
+conf_peers = wg_conf.conf_peers
 
 NS = 'vpn2-verify'
 HOST_IF = 'vp2verify'
@@ -807,15 +807,15 @@ def restore_wg_apply():
     """
     if not (WORK / 'wg0.conf').exists():
         return
-    text = (WORK / 'wg0.conf').read_bytes().decode()
-    # Строки уходят как есть: хвост после `#` и пробелы wg срежет сам.
-    interface = [line for section, entries in wg_sections(text) if section == '[interface]'
-                 for name, _, line in entries if name in ('privatekey', 'listenport', 'fwmark')]
-    # Пир без адресов - без строки AllowedIPs: пустую строку wg отвергает, без неё очищает набор.
-    peers = ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\nPresharedKey = {peer["preshared_key"]}\n' +
-                    (f'AllowedIPs = {", ".join(peer["allowed"])}\n' if peer['allowed'] else '')
-                    for peer in conf_peers(text))
-    run('wg', 'syncconf', 'wg0', '/dev/stdin', data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)
+    # Интерфейс и пиры - какими их оставит wg после setconf сохранённого файла.
+    interface, peers = wg_conf.read((WORK / 'wg0.conf').read_bytes())
+    # Пустое значение wg отвергает: пир без PSK - без строки PresharedKey, без адресов - без
+    # строки AllowedIPs (без неё syncconf очищает набор).
+    body = '[Interface]\n' + ''.join(f'{name} = {value}\n' for name, value in interface.items()) + ''.join(
+        f'\n[Peer]\nPublicKey = {peer["key"]}\n' +
+        (f'PresharedKey = {peer["preshared_key"]}\n' if peer['preshared_key'] else '') +
+        (f'AllowedIPs = {", ".join(peer["allowed"])}\n' if peer['allowed'] else '') for peer in peers)
+    run('wg', 'syncconf', 'wg0', '/dev/stdin', data=body)
     restore_file(WG_CONF, 'wg0.conf')
     restore_file(CONTROL_WG_STATE, 'control-wg.json')
 
@@ -832,7 +832,7 @@ def wg_apply_check(report):
         report.add(label, component, FAIL, 'нет сокета службы управления')
         return
     try:
-        text = WG_CONF.read_bytes().decode()
+        text = WG_CONF.read_bytes()
         live = set(run('wg', 'show', 'wg0', 'peers').stdout.split())
     except (OSError, RuntimeError):
         report.add(label, component, FAIL, 'нет wg0 или wg0.conf')

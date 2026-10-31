@@ -59,7 +59,7 @@ trap 'report_failure $?' EXIT
 # IKEv2, у отключённого и удалённого их нет. Иначе восстановленный клиент
 # получит «certificate revoked», не подключится или подключится без доступа.
 # Зовёт и restore: anysda-backup.sh --check-bundle <распакованный бандл>.
-# Разбор wg0.conf - wg_conf.py из ANYSDA_LIB_DIR, без неё - из каталога библиотек
+# Пиры wg0.conf - wg_conf.py из ANYSDA_LIB_DIR, без неё - из каталога библиотек
 # узла, куда его ставит 26-backup (не рядом со скриптом и не из текущего
 # каталога, `python3 -P`: в /usr/local/bin старый).
 check_bundle() {
@@ -176,12 +176,12 @@ def devices(*fields):
 
 wg = root / 'etc-wireguard/wg0.conf'
 if wg.is_file() and {'wg_public_key', 'wg_preshared_key', 'wg_ip'} <= device_columns:
-    # Как wg (config.c): разбор wg0.conf один с verify-traffic.py - wg_conf.py.
-    # Файл, который wg отвергает (пир без PublicKey тоже), - жалоба вместо сверки.
+    # Пиры берёт сам wg во временном netns, одним путём с verify-traffic.py - wg_conf.py.
+    # Файл, который wg отвергает, или нечем спросить wg - жалоба вместо сверки.
     from wg_conf import conf_peers
     addresses = {}
     try:
-        peers = {peer['key']: peer for peer in conf_peers(wg.read_bytes().decode())}
+        peers = {peer['key']: peer for peer in conf_peers(wg.read_bytes())}
     except ValueError as error:
         bad.append(str(error))
     else:

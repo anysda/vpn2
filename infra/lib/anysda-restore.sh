@@ -606,11 +606,12 @@ def wg_key(directory):
     if found:
         return found
     try:
-        text = open(os.path.join(directory, 'wg0.conf'), errors='replace', newline='').read()
+        text = open(os.path.join(directory, 'wg0.conf'), encoding='latin-1', newline='').read()
     except OSError:
         return None
-    # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
-    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0]).partition('=') for line in text.split('\n')]
+    # Как wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
+    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
+             for line in text.split('\n')]
     keys = [value for name, eq, value in lines if eq and value and name.encode().lower() == b'privatekey']
     return hashlib.sha256(keys[-1].encode()).hexdigest() if keys else None
 
@@ -684,9 +685,9 @@ if os.path.isfile(LIVE_DB):
         live, live_seq = {}, 0
 
 
-def live_text(path, newline=None):
+def live_text(path, newline=None, encoding=None):
     try:
-        return open(path, errors='replace', newline=newline).read()
+        return open(path, encoding=encoding, errors='replace', newline=newline).read()
     except OSError:
         return None
 
@@ -695,11 +696,12 @@ def live_text(path, newline=None):
 # OpenVPN в архиве, а у отозванных панелью подсказывают подпись в журнале.
 live_peers = live_ike = None
 if not live_read:
-    live_peers = live_text('/etc/wireguard/wg0.conf', newline='')
+    live_peers = live_text('/etc/wireguard/wg0.conf', newline='', encoding='latin-1')
     live_ike = live_text('/etc/swanctl/conf.d/anysda-clients.conf')
 if live_peers is not None:
-    # Как wg: строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
-    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0]).partition('=') for line in live_peers.split('\n')]
+    # Как wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
+    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
+             for line in live_peers.split('\n')]
     live_peers = {value for name, eq, value in lines if eq and value and name.encode().lower() == b'publickey'}
 if live_ike is not None:
     secrets = set()
@@ -898,17 +900,17 @@ if archive_db:
     archive_db.close()
 
 
-def rewrite(path, text):
-    # Владелец и режим файла архива остаются прежними.
-    with open(path, 'w') as f:
+def rewrite(path, text, encoding=None):
+    # Владелец и режим файла архива остаются прежними; latin-1 с newline='' - байт в байт.
+    with open(path, 'w', encoding=encoding, newline='' if encoding else None) as f:
         f.write(text)
 
 
 if wg_keys and os.path.isfile(wg_path):
     # Секции и ключи как у wg: строка до `\n`, до первого `#`, без пробельных
-    # символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле.
+    # символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле, байт в байт.
     blocks = [[]]
-    for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, newline='').read()):
+    for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, encoding='latin-1', newline='').read()):
         clean = re.sub(r'[ \t\n\v\f\r]', '', line.split('#', 1)[0])
         if clean.startswith('['):
             blocks.append([])
@@ -919,7 +921,7 @@ if wg_keys and os.path.isfile(wg_path):
         if block and block[0][0] == b'[peer]' and key and key[-1] in wg_keys:
             continue
         kept += [line for _, _, line in block]
-    rewrite(wg_path, ''.join(kept))
+    rewrite(wg_path, ''.join(kept), 'latin-1')
 
 if (ike_ids or ike_secrets) and os.path.isfile(ike_path):
     out, block, depth = [], None, 0

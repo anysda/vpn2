@@ -919,16 +919,28 @@ def rewrite(path, text, encoding=None):
 if wg_keys and os.path.isfile(wg_path):
     # Секции и ключи как у wg-quick и wg: строка до `\n`, NUL вон, до первого `#`, без
     # пробельных символов, имена в любом регистре ASCII. Оставшиеся строки пишутся как в файле, байт в байт.
+    # Строки-комментарии вплотную над секцией - её подпись и уходят с ней; пустые строки и комментарии
+    # в конце файла остаются на месте.
+    def detach_notes(block):
+        n = len(block)
+        while n and not block[n - 1][0] and '#' in block[n - 1][2]:
+            n -= 1
+        notes = block[n:]
+        del block[n:]
+        return notes
+
     blocks = [[]]
     for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, encoding='latin-1', newline='').read()):
         clean = re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0])
         if clean.startswith('['):
-            blocks.append([])
+            blocks.append(detach_notes(blocks[-1]))
         blocks[-1].append((clean.encode().lower(), clean.partition('=')[2], line))
+    blocks.append(detach_notes(blocks[-1]))
     kept = []
     for block in blocks:
         key = [value for name, value, _ in block if name.startswith(b'publickey=')]
-        if block and block[0][0] == b'[peer]' and key and key[-1] in wg_keys:
+        names = [name for name, _, _ in block if name]
+        if names and names[0] == b'[peer]' and key and key[-1] in wg_keys:
             continue
         kept += [line for _, _, line in block]
     rewrite(wg_path, ''.join(kept), 'latin-1')

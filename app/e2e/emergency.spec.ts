@@ -192,6 +192,8 @@ test('аварийная статика: общие компоненты, сос
     await page.setViewportSize({ width: 1400, height: 1000 })
     await page.goto(`/clients?id=${client.id}`)
     await expect(page.getByTestId('device-row')).toHaveCount(2)
+    // Список клиентов - отдельный запрос и может прийти позже карточки: metrics и palette читают его строку.
+    await expect(page.getByTestId('client-row').filter({ hasText: 'e2e-Семён' })).toBeVisible()
     await page.evaluate(() => document.fonts.ready)
     await shot(page, 'main-desktop.png')
     expect(await metrics(page, desktopRetained)).toEqual(desktopMetrics)
@@ -203,6 +205,7 @@ test('аварийная статика: общие компоненты, сос
     await mainLight.setViewportSize({ width: 1400, height: 1000 })
     await mainLight.goto(`/clients?id=${client.id}`)
     await expect(mainLight.getByTestId('device-row')).toHaveCount(2)
+    await expect(mainLight.getByTestId('client-row').filter({ hasText: 'e2e-Семён' })).toBeVisible()
     await mainLight.evaluate(() => document.fonts.ready)
     expect(await palette(mainLight)).toEqual(lightPalette)
     await shot(mainLight, 'main-light-desktop.png')

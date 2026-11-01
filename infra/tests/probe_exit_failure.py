@@ -117,8 +117,9 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
     template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
     exit_path = directory / 'exit.json'
     exit_path.write_text(Template(template).substitute(fixture).replace('/etc/sing-box', str(directory)))
+    # сервер зонда слушает только свой порт, диапазона нет
     cfg = json.loads(generate(EXIT_TAGS='aa', DOMAIN_AA='127.0.0.1',
-                              AA_HY2_CERT_PATH=str(directory / 'tls.crt')))
+                              AA_HY2_CERT_PATH=str(directory / 'tls.crt'), HY2_HOP_ENABLED='0'))
     cfg['experimental']['clash_api']['external_controller'] = '127.0.0.1:19090'
     cfg['experimental']['cache_file']['path'] = str(directory / 'cache.db')
     for inbound in cfg['inbounds']:

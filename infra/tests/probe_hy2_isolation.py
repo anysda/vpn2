@@ -291,8 +291,9 @@ def generated_configs(router, server, directory, root, kind):
 
     hy2_port = server['inbounds'][0]['listen_port']
     warp_port = port(socket.SOCK_DGRAM)
+    # сервер зонда слушает только свой порт, диапазона нет
     config = json.loads(generate(DOMAIN_AA='127.0.0.1', HY2_DIRECT_PORT=str(hy2_port),
-                                 HY2_WARP_PORT=str(warp_port)))
+                                 HY2_WARP_PORT=str(warp_port), HY2_HOP_ENABLED='0'))
     tag = f'hy2-aa-{kind}'
     router['outbounds'] = [out for out in config['outbounds']
                            if out['tag'] in (tag, f'transport-{tag}', f'pin-{tag}')]

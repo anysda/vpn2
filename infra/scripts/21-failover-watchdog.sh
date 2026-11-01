@@ -90,8 +90,10 @@ WD_SETTINGS=(
   "RESTART_AFTER_CHECKS 3 $INT"
   "RESTART_MIN_INTERVAL_S 600 $INT"
 )
-# Эти два задаёт и config.yaml (блок failover:, config2env кладёт их в env
-# стадии): значение оттуда сильнее ручной правки env-файла.
+# Эти два живут только в config.yaml (блок failover:, config2env кладёт их в
+# env стадии), как OVPN_PROTO: есть ключ - его значение, нет - умолчание.
+# Прошлое значение env-файла не читаем, иначе удалённый из config.yaml 0
+# выключил бы перезапуск навсегда.
 FROM_CONFIG=" RESTART_AFTER_CHECKS RESTART_MIN_INTERVAL_S "
 # Сначала читаем всё из старого файла, потом пишем: перенаправление в тот же
 # файл обнулило бы его до чтения.
@@ -101,8 +103,11 @@ WATCH_GROUP=foreign-best
 LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json"
 for s in "${WD_SETTINGS[@]}"; do
   read -r key def re <<<"$s"
-  cur=$(env_cur "$key" "$re")
-  [[ "$FROM_CONFIG" == *" $key "* ]] && cur=${!key:-$cur}
+  if [[ "$FROM_CONFIG" == *" $key "* ]]; then
+    cur=${!key:-}
+  else
+    cur=$(env_cur "$key" "$re")
+  fi
   WD_BODY+=$'\n'"$key=${cur:-$def}"
 done
 printf '%s\n' "$WD_BODY" > "$WD_ENV"

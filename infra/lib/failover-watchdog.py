@@ -732,6 +732,17 @@ def _bot_event(subject, detail):
         print(f'бот: событие «{subject}» не доставлено', file=sys.stderr, flush=True)
 
 
+def _plural_ru(n, forms):
+    """Форма после целого числа: один, два, пять; как plural_ru в боте."""
+    mod10 = abs(n) % 10
+    mod100 = abs(n) % 100
+    if mod10 == 1 and mod100 != 11:
+        return forms[0]
+    if 2 <= mod10 <= 4 and (mod100 < 10 or mod100 >= 20):
+        return forms[1]
+    return forms[2]
+
+
 def restart_tick():
     """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
     набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
@@ -746,14 +757,14 @@ def restart_tick():
         return
     checks, _dead_streak, _restarted = _dead_streak, 0, t
     _save_restart()
-    print(f'все каналы всех включённых узлов мертвы {checks} проверок подряд — '
-          f'перезапускаю sing-box', flush=True)
+    streak = f"{checks} {_plural_ru(checks, ('проверку', 'проверки', 'проверок'))} подряд"
+    print(f'все каналы всех включённых узлов мертвы {streak} — перезапускаю sing-box', flush=True)
     err = _restart_sing_box()
     if err:
         print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
-        detail = f'Все каналы мертвы {checks} проверок - перезапуск sing-box не удался: {err}'
+        detail = f'Все каналы мертвы {streak} - перезапуск sing-box не удался: {err}'
     else:
-        detail = f'Все каналы мертвы {checks} проверок - перезапустил sing-box'
+        detail = f'Все каналы мертвы {streak} - перезапустил sing-box'
     _bot_event('Экзиты', detail)
 
 

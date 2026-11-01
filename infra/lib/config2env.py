@@ -190,7 +190,7 @@ def parse_yaml(text):
     validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
-           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}}
+           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -244,6 +244,8 @@ def parse_yaml(text):
                 context = 'wireguard'
             elif content.startswith('openvpn:'):
                 context = 'openvpn'
+            elif content.startswith('failover:'):
+                context = 'failover'
             else:
                 k, v = kv(content)
                 if v:
@@ -284,7 +286,7 @@ def parse_yaml(text):
             elif context == 'entry_resources':
                 k, v = kv(content)
                 cfg['entry_resources'][k] = v
-            elif context in ('wireguard', 'openvpn'):
+            elif context in ('wireguard', 'openvpn', 'failover'):
                 k, v = kv(content)
                 cfg[context][k] = v
             elif context == 'backup':
@@ -319,6 +321,7 @@ def validate_yaml(text):
         'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt', 'wireguard', 'openvpn'},
         'wireguard': {'mtu', 'split_local'},
         'openvpn': {'proto'},
+        'failover': {'restart_after_checks', 'restart_min_interval'},
         'admin': {'user', 'password', 'ssh_pubkey'},
         'panel': {'domain', 'image'}, 'tgbot': {'image'},
         'telegram': {'bot_token', 'chat_id', 'admin_username'},
@@ -408,6 +411,8 @@ def validate_yaml(text):
         if key.startswith('entry_resources.') and key != 'entry_resources.adaway_enabled' and (
                 not value.isdigit() or (key == 'entry_resources.retention_days' and int(value) == 0)):
             config_error(key, 'ожидается целое число' + (' > 0' if key.endswith('retention_days') else ' >= 0'))
+        if key.startswith('failover.') and not re.fullmatch(r'[0-9]+', value):
+            config_error(key, 'ожидается целое число >= 0' + (', секунды' if key.endswith('interval') else ''))
 
 
 def prepare_private(path):
@@ -820,6 +825,11 @@ def main():
     if 'split_local' in cfg['wireguard']:
         split_local = cfg['wireguard']['split_local'].lower() in ('true', 'yes', 'y', '1')
         lines.append(f"WG_SPLIT_LOCAL={shq('true' if split_local else 'false')}")
+    # Сторож экзитов (стадия 21): перезапуск sing-box, когда мертвы все каналы.
+    for key, variable in (('restart_after_checks', 'RESTART_AFTER_CHECKS'),
+                          ('restart_min_interval', 'RESTART_MIN_INTERVAL_S')):
+        if key in cfg['failover']:
+            lines.append(f"{variable}={shq(int(cfg['failover'][key]))}")
     tg = cfg.get('telegram', {})
     if tg.get('bot_token') and tg.get('chat_id'):
         lines += [

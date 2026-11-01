@@ -87,7 +87,12 @@ WD_SETTINGS=(
   "TG_GROUP tg-best [A-Za-z0-9_-]\+"
   "TG_PROBE_URL https://api.telegram.org https://[^[:space:]]\+"
   "TG_INTERVAL_S 30 $NUM"
+  "RESTART_AFTER_CHECKS 3 $INT"
+  "RESTART_MIN_INTERVAL_S 600 $INT"
 )
+# Эти два задаёт и config.yaml (блок failover:, config2env кладёт их в env
+# стадии): значение оттуда сильнее ручной правки env-файла.
+FROM_CONFIG=" RESTART_AFTER_CHECKS RESTART_MIN_INTERVAL_S "
 # Сначала читаем всё из старого файла, потом пишем: перенаправление в тот же
 # файл обнулило бы его до чтения.
 WD_BODY="CLASH_API=http://${MGMT}:9090
@@ -97,6 +102,7 @@ LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json"
 for s in "${WD_SETTINGS[@]}"; do
   read -r key def re <<<"$s"
   cur=$(env_cur "$key" "$re")
+  [[ "$FROM_CONFIG" == *" $key "* ]] && cur=${!key:-$cur}
   WD_BODY+=$'\n'"$key=${cur:-$def}"
 done
 printf '%s\n' "$WD_BODY" > "$WD_ENV"
@@ -114,8 +120,9 @@ ExecStart=/usr/bin/python3 /usr/local/bin/anysda-failover-watchdog
 EnvironmentFile=/etc/anysda/failover-watchdog.env
 Restart=always
 RestartSec=2
-DynamicUser=yes
-# время переездов дорожек (LANE_STATE_FILE) — /var/lib/anysda-failover-watchdog
+# root без DynamicUser: сторож перезапускает sing-box, когда мертвы все каналы
+# (systemctl restart), и шлёт событие в бот с секретом /etc/anysda/tgbot-secret.txt.
+# Время переездов дорожек и перезапуска — /var/lib/anysda-failover-watchdog
 StateDirectory=anysda-failover-watchdog
 NoNewPrivileges=true
 ProtectSystem=strict

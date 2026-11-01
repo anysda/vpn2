@@ -48,6 +48,16 @@ type=selector (см. gen-router-config.py) — управляется через
   WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
                     (повторный возврат за MIN_DWELL_S — не раньше стоянки)
   LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
+  RESTART_AFTER_CHECKS  проверок подряд с мёртвыми каналами всех узлов до перезапуска sing-box, 0 — выкл.  3
+  RESTART_MIN_INTERVAL_S  перезапуск sing-box не чаще, сек  600
+
+Перезапуск sing-box: когда экзит один, переключаться некуда, и канал, залипший
+в sing-box на entry, лежал бы до перезагрузки. Если у всех включённых узлов
+мертвы все выходы RESTART_AFTER_CHECKS проверок (циклов) подряд, вотчдог
+перезапускает sing-box, пишет в журнал и шлёт событие в бот. Жив хоть один
+выход — счётчик с нуля; clash-api не ответил — проверки не было, счётчик стоит.
+Время перезапуска лежит рядом с LANE_STATE_FILE (restart.json): предел частоты
+переживает перезапуск вотчдога.
 
 Выход бота (tg-best): Bot API (api.telegram.org) на одних экзитах режут, на
 других нет, а gstatic-проба этого не видит. Поэтому раз в TG_INTERVAL_S
@@ -79,7 +89,9 @@ flap-шторме (экзит дёргается up/down) вотчдог опт�
 """
 import json
 import os
+import importlib.util
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -171,6 +183,13 @@ _lane_moved: dict = {}    # lane -> monotonic последнего переез�
 # битый или дорожки в нём нет — последним переездом считаем запуск вотчдога.
 LANE_STATE_FILE = os.environ.get('LANE_STATE_FILE', '/var/lib/anysda-failover-watchdog/lanes.json')
 _started = 0.0            # monotonic запуска (см. _load_lane_moved)
+RESTART_AFTER_CHECKS = int(os.environ.get('RESTART_AFTER_CHECKS', '3'))
+RESTART_MIN_INTERVAL = float(os.environ.get('RESTART_MIN_INTERVAL_S', '600'))
+RESTART_STATE_FILE = os.path.join(os.path.dirname(LANE_STATE_FILE), 'restart.json')
+BOT_SECRET_FILE = '/etc/anysda/tgbot-secret.txt'
+_all_dead = None          # итог tick(): мертвы все выходы включённых узлов; None — замера не было
+_dead_streak = 0          # проверок подряд с _all_dead
+_restarted = None         # monotonic последнего перезапуска sing-box
 _lane_saved: dict = {}    # что лежит на диске (пишем только изменения)
 _conn_seen: dict = {}     # conn id -> (up+down) на прошлом тике
 _rate_t = None            # monotonic прошлого замера нагрузки
@@ -388,8 +407,9 @@ def _drop_disabled_conns(conns):
 
 
 def tick():
-    global _tick_alive
+    global _tick_alive, _all_dead
     _tick_alive = None   # дорожки балансируем только по замерам удачного тика
+    _all_dead = None
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
@@ -402,6 +422,9 @@ def tick():
 
     delays, errs = _probe_all(members)
     alive = {m: d for m, d in delays.items() if d is not None}
+    # Отказ соединения — это сам clash-api не ответил, о выходе он ничего не
+    # говорит. Нет включённых узлов — перезапуск их не вернёт.
+    _all_dead = bool(members) and not alive and 'отказ соединения' not in errs.values()
     # Живых невыключенных нет — выбираем из живых выключенных: выключение не
     # стоит простоя. Пощажённые запоминаем, лишь решив идти через них (ниже):
     # транзиентный промах текущего не должен отменять обрыв соединений.
@@ -414,6 +437,8 @@ def tick():
     else:
         _spare(set())
     _tick_alive = alive
+    if alive:
+        _all_dead = False   # живой выключенный: sing-box везёт, дело не в нём
     if not alive:
         detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
         print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
@@ -647,6 +672,89 @@ def _persist_lanes():
     except OSError as e:
         print(f'{LANE_STATE_FILE}: не записать ({e}), стоянка не переживёт перезапуск',
               file=sys.stderr, flush=True)
+
+
+def _load_restart():
+    """Время последнего перезапуска sing-box из RESTART_STATE_FILE (настенное
+    время -> monotonic, как у дорожек). Нет файла — перезапусков не было."""
+    global _restarted
+    try:
+        with open(RESTART_STATE_FILE, encoding='utf-8') as f:
+            ts = json.load(f)['restarted']
+        _restarted = time.monotonic() - max(0.0, time.time() - float(ts))
+    except FileNotFoundError:
+        _restarted = None
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        _restarted = None
+        print(f'{RESTART_STATE_FILE}: не читается ({e}), предел частоты перезапуска '
+              f'sing-box отсчитываю заново', flush=True)
+
+
+def _save_restart():
+    tmp = RESTART_STATE_FILE + '.tmp'
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump({'restarted': round(time.time(), 1)}, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, RESTART_STATE_FILE)
+    except OSError as e:
+        print(f'{RESTART_STATE_FILE}: не записать ({e}), предел частоты перезапуска '
+              f'не переживёт перезапуск вотчдога', file=sys.stderr, flush=True)
+
+
+def _restart_sing_box():
+    """'' — перезапущен, иначе причина отказа."""
+    try:
+        r = subprocess.run(['systemctl', 'restart', 'sing-box'],
+                           capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    return '' if r.returncode == 0 else (r.stderr.strip() or f'код {r.returncode}')
+
+
+def _bot_event(subject, detail):
+    """Событие в бот тем же путём, что у vpn2_tls (deliver: POST /event с
+    X-Tgbot-Secret). Бот недоступен — только строка в журнал."""
+    state = {'pending': [{'type': 'system_alert', 'subject': subject, 'detail': detail}]}
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in ('/usr/local/lib/vpn2/vpn2_tls.py', os.path.join(here, 'vpn2_tls.py')):
+        if os.path.exists(path):
+            break
+    try:
+        spec = importlib.util.spec_from_file_location('vpn2_tls', path)
+        tls = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tls)
+        tls.deliver({'bot_secret': BOT_SECRET_FILE}, state)
+    except Exception as e:
+        print(f'бот: vpn2_tls не загрузить ({e})', file=sys.stderr, flush=True)
+    if state['pending']:
+        print(f'бот: событие «{subject}» не доставлено', file=sys.stderr, flush=True)
+
+
+def restart_tick():
+    """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
+    набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
+    перезапуска — перезапускаем sing-box."""
+    global _dead_streak, _restarted
+    if RESTART_AFTER_CHECKS <= 0 or _all_dead is None:
+        return
+    _dead_streak = _dead_streak + 1 if _all_dead else 0
+    t = time.monotonic()
+    if _dead_streak < RESTART_AFTER_CHECKS or (
+            _restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
+        return
+    checks, _dead_streak, _restarted = _dead_streak, 0, t
+    _save_restart()
+    print(f'все каналы всех включённых узлов мертвы {checks} проверок подряд — '
+          f'перезапускаю sing-box', flush=True)
+    err = _restart_sing_box()
+    if err:
+        print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
+        detail = f'Все каналы мертвы {checks} проверок - перезапуск sing-box не удался: {err}'
+    else:
+        detail = f'Все каналы мертвы {checks} проверок - перезапустил sing-box'
+    _bot_event('Экзиты', detail)
 
 
 def _move_lane(lane, tag, reason, ips, quiet=False):
@@ -934,13 +1042,16 @@ def main():
           f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
           f'dwell={MIN_DWELL:.0f}s warp_return={WARP_RETURN:.0f}s '
-          f'tg={TG_GROUP}/{TG_INTERVAL:.0f}s', flush=True)
+          f'tg={TG_GROUP}/{TG_INTERVAL:.0f}s restart_after={RESTART_AFTER_CHECKS} '
+          f'restart_min={RESTART_MIN_INTERVAL:.0f}s', flush=True)
     _load_lane_moved()
+    _load_restart()
     while True:
         try:
             tick()
         except Exception as e:
             print(f'tick error: {e}', file=sys.stderr, flush=True)
+        restart_tick()
         conns = _fetch_conns()
         try:
             lanes_tick(conns)

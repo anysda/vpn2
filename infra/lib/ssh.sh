@@ -111,9 +111,12 @@ fi
 # То же в stderr: .bashrc пишет туда до команды, а stderr ssh несёт и отказы
 # самого ssh. Вторая метка идёт в stderr, _ssh_errfilter отбрасывает всё до
 # неё; без метки (сбой соединения, shell не дошёл) stderr отдаётся как есть.
+# Если .bashrc слил каналы (`exec 2>&1`), вторая метка попала бы в stdout после
+# первой, поэтому при stderr = stdout её нет. `-ef` есть и в dash, и в busybox;
+# при закрытом stdout сравнение ложно, и метка уходит в stderr.
 _SSH_MARK=vpn2-ssh-output-begin
 _SSH_OUTPUT_NO_MARK=3
-_ssh_begin="printf '\\n%s\\n' $_SSH_MARK; printf '\\n%s\\n' $_SSH_MARK >&2;"
+_ssh_begin="printf '\\n%s\\n' $_SSH_MARK; [ /dev/stdout -ef /dev/stderr ] || printf '\\n%s\\n' $_SSH_MARK >&2;"
 
 _ssh_output() {
   local line

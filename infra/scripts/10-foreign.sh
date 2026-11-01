@@ -429,6 +429,7 @@ ExecReload=/bin/sh -ec 'if [ -f $HY2HOP_CONF ]; then /usr/sbin/nft -f $HY2HOP_CO
 EOF
   systemctl daemon-reload
   systemctl enable anysda-hy2hop.service >/dev/null 2>&1
+  systemctl start anysda-hy2hop.service
 else
   nft delete table inet vpn2_hy2hop >/dev/null 2>&1 || true
   if [[ -f "$HY2HOP_UNIT" ]]; then

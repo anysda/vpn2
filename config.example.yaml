@@ -70,10 +70,12 @@ admin:
 #   image: ghcr.io/anysda/vpn2/panel:dev   # только ./deploy.sh --development
 # Обычный ./deploy.sh берёт образы панели и бота по digest из манифеста
 # сборки commit дерева, image из конфига при этом не используется.
+# После изменений: стадии 27-ikev2, 30-frontend на ru; image - ./deploy.sh --development.
 
 # Образ Telegram-бота: так же, только для --development.
 # tgbot:
 #   image: ghcr.io/anysda/vpn2/tgbot:dev
+# После изменений: ./deploy.sh --development.
 
 # SSO через OIDC-провайдера (проверено на Authentik). Опционально, по умолчанию
 # ВЫКЛЮЧЕНО — панель живёт на своём логине и пароле. Включается и в профиле
@@ -98,6 +100,7 @@ admin:
 #   password_login: true                    # пароль спрятан, но ЖИВ: /login?direct=1
 #   label: Authentik
 #   # discovery_url: https://…/.well-known/openid-configuration   # если IdP не Authentik
+# После изменений: стадия 30-frontend на ru.
 
 # Ресурсы entry рассчитываются на самой ноде при каждом прогоне 22/25/30/35:
 # RAM из /proc/meminfo, свободный диск раздела /var/lib/vmsingle.
@@ -126,6 +129,7 @@ admin:
 #   retention_days: 3
 #   adaway_enabled: false
 #   querylog_size: 100
+# После изменений: стадии 22-adguard, 25-monitoring, 30-frontend, 35-telegram на ru.
 
 # Telegram-бот (опционально).
 # Бот ставится при любом deploy. Без токена ждёт его из панели; токен из config
@@ -143,6 +147,7 @@ admin:
 #   cpu_pct: 90       # от 1 до 100
 #   ram_pct: 90       # от 1 до 100
 #   window: 300       # секунд выше порога до тревоги, не меньше 30
+# После изменений: стадия 35-telegram на ru.
 
 # YouTube (опционально, по умолчанию ВЫКЛЮЧЕНО — YouTube едет через экзиты).
 #
@@ -187,6 +192,7 @@ admin:
 #   #                                   # в nft — см. README, раздел YouTube)
 #   # zapret_ref: "6b6c63e3385fa73f8af3be4a69171e947f5a319d"   # bol-van/zapret2 v1.0.5.2
 #   # domains: "youtube.com googlevideo.com ..."   # заменить список суффиксов
+# После изменений: стадии 00-bootstrap, 19-yt-zapret, 20-ru-router на ru.
 
 # Кастомные порты (опционально). Дефолты подходят для большинства настроек.
 # ports:

@@ -432,7 +432,7 @@ EOF
 else
   nft delete table inet vpn2_hy2hop >/dev/null 2>&1 || true
   if [[ -f "$HY2HOP_UNIT" ]]; then
-    systemctl disable anysda-hy2hop.service >/dev/null 2>&1 || true
+    systemctl disable --now anysda-hy2hop.service >/dev/null 2>&1 || true
   fi
   rm -f "$HY2HOP_CONF" "$HY2HOP_UNIT" "$HY2HOP_DROPIN"
   systemctl daemon-reload

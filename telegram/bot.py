@@ -1435,8 +1435,20 @@ async def _handle_admin_text(text: str) -> bool:
 # По умолчанию: 30с * 2 = ~60с до CPU/RAM-алерта.
 MONITOR_INTERVAL = int(os.environ.get('ALERT_INTERVAL_SEC', '30'))
 ALERT_HITS       = int(os.environ.get('ALERT_HITS',         '2'))
+# Пороги CPU/RAM считаются по размеру узла (cores, memTotalBytes из статуса
+# панели): на 1 vCPU / 2 ГБ обычная нагрузка VPN держится у 80-90%, и тревога
+# по старым порогам приходила по многу раз в день. Явный env перекрывает
+# расчёт, у каждой переменной своё.
 CPU_HIGH = float(os.environ.get('ALERT_CPU_PCT', '80'))
 RAM_HIGH = float(os.environ.get('ALERT_RAM_PCT', '80'))
+SMALL_CPU_HIGH = 95.0
+SMALL_RAM_HIGH = 90.0
+SMALL_WINDOW_SEC = 300
+SMALL_CORES = 1
+SMALL_MEM_BYTES = 2 * 1024 ** 3
+_ENV_CPU = 'ALERT_CPU_PCT' in os.environ
+_ENV_RAM = 'ALERT_RAM_PCT' in os.environ
+_ENV_WINDOW = os.environ.get('ALERT_WINDOW_SEC')
 HYSTERESIS = 10.0
 # Нода считается «лежит», когда её метрики устарели больше чем на столько
 # секунд (или их нет вовсе). По умолчанию 5 минут.
@@ -1444,14 +1456,41 @@ NODE_DOWN_SEC = int(os.environ.get('ALERT_NODE_DOWN_SEC', '300'))
 
 _load_hits: dict[str, int] = {}     # key = f'{tag}:cpu' / f'{tag}:ram'
 _load_alerted: set[str] = set()
+_load_logged: dict[str, tuple] = {}  # пороги узла, последними записанные в журнал
+
+
+def _window_hits(window_sec: int) -> int:
+    return max(1, window_sec // MONITOR_INTERVAL)
+
+
+def node_thresholds(n: dict) -> tuple[float, float, int, int]:
+    """Пороги CPU и RAM, число сэмплов подряд и окно в секундах для узла.
+
+    Малый узел - не больше 1 ядра (CPU 95%) или не больше 2 ГБ памяти
+    (RAM 90% по MemAvailable); у малого узла окно 5 мин, иначе ALERT_HITS
+    сэмплов. Узел без размера в статусе - пороги как раньше."""
+    cores = n.get('cores')
+    mem = n.get('memTotalBytes')
+    small_cpu = isinstance(cores, (int, float)) and cores <= SMALL_CORES
+    small_ram = isinstance(mem, (int, float)) and mem <= SMALL_MEM_BYTES
+    cpu = CPU_HIGH if _ENV_CPU or not small_cpu else SMALL_CPU_HIGH
+    ram = RAM_HIGH if _ENV_RAM or not small_ram else SMALL_RAM_HIGH
+    if _ENV_WINDOW is not None:
+        window = int(_ENV_WINDOW)
+    elif small_cpu or small_ram:
+        window = SMALL_WINDOW_SEC
+    else:
+        return cpu, ram, ALERT_HITS, ALERT_HITS * MONITOR_INTERVAL
+    return cpu, ram, _window_hits(window), window
 
 
 async def _check_load(tag: str, metric: str, value: float, threshold: float,
-                       label: str, unit: str = '%') -> None:
+                       label: str, unit: str = '%', hits: int | None = None) -> None:
     key = f'{tag}:{metric}'
+    need = ALERT_HITS if hits is None else hits
     if value >= threshold:
         _load_hits[key] = _load_hits.get(key, 0) + 1
-        if _load_hits[key] >= ALERT_HITS and key not in _load_alerted:
+        if _load_hits[key] >= need and key not in _load_alerted:
             await tg_send(
                 CHAT_ID,
                 f'⚠️ *{tag.upper()}*: нагрузка на {label} выше '
@@ -1473,8 +1512,11 @@ async def _check_load(tag: str, metric: str, value: float, threshold: float,
 
 
 async def monitor_loop() -> None:
-    log.info('monitor_loop started: interval=%ds, hits=%d, cpu_high=%.0f, ram_high=%.0f',
-             MONITOR_INTERVAL, ALERT_HITS, CPU_HIGH, RAM_HIGH)
+    log.info('monitor_loop started: interval=%ds, hits=%d, cpu_high=%s, ram_high=%s, window=%s',
+             MONITOR_INTERVAL, ALERT_HITS,
+             f'{CPU_HIGH:.0f} (env)' if _ENV_CPU else 'по размеру узла',
+             f'{RAM_HIGH:.0f} (env)' if _ENV_RAM else 'по размеру узла',
+             f'{_ENV_WINDOW}s (env)' if _ENV_WINDOW is not None else 'по размеру узла')
     panel_failed_since = None
     panel_alerted = False
     while True:
@@ -1537,10 +1579,16 @@ async def monitor_loop() -> None:
                 tag = n.get('tag', '?')
                 cpu = n.get('cpu')
                 ram = n.get('ram')
+                cpu_high, ram_high, hits, window = node_thresholds(n)
+                if _load_logged.get(tag) != (cpu_high, ram_high, hits):
+                    log.info('пороги узла %s: cores=%s, mem=%s, cpu=%.0f%%, ram=%.0f%%, '
+                             'окно %ds (%d сэмпл.)', tag, n.get('cores'), n.get('memTotalBytes'),
+                             cpu_high, ram_high, window, hits)
+                    _load_logged[tag] = (cpu_high, ram_high, hits)
                 if isinstance(cpu, (int, float)):
-                    await _check_load(tag, 'cpu', float(cpu), CPU_HIGH, 'CPU')
+                    await _check_load(tag, 'cpu', float(cpu), cpu_high, 'CPU', hits=hits)
                 if isinstance(ram, (int, float)):
-                    await _check_load(tag, 'ram', float(ram), RAM_HIGH, 'RAM')
+                    await _check_load(tag, 'ram', float(ram), ram_high, 'RAM', hits=hits)
         except Exception as e:
             log.warning('monitor error: %s', e)
 

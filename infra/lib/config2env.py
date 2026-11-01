@@ -190,7 +190,7 @@ def parse_yaml(text):
     validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
-           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}}
+           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}, 'alerts': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -246,6 +246,8 @@ def parse_yaml(text):
                 context = 'openvpn'
             elif content.startswith('failover:'):
                 context = 'failover'
+            elif content.startswith('alerts:'):
+                context = 'alerts'
             else:
                 k, v = kv(content)
                 if v:
@@ -286,7 +288,7 @@ def parse_yaml(text):
             elif context == 'entry_resources':
                 k, v = kv(content)
                 cfg['entry_resources'][k] = v
-            elif context in ('wireguard', 'openvpn', 'failover'):
+            elif context in ('wireguard', 'openvpn', 'failover', 'alerts'):
                 k, v = kv(content)
                 cfg[context][k] = v
             elif context == 'backup':
@@ -322,6 +324,7 @@ def validate_yaml(text):
         'wireguard': {'mtu', 'split_local'},
         'openvpn': {'proto'},
         'failover': {'restart_after_checks', 'restart_min_interval'},
+        'alerts': {'cpu_pct', 'ram_pct', 'window'},
         'admin': {'user', 'password', 'ssh_pubkey'},
         'panel': {'domain', 'image'}, 'tgbot': {'image'},
         'telegram': {'bot_token', 'chat_id', 'admin_username'},
@@ -555,6 +558,13 @@ def validate_network(cfg):
         mtu = cfg['wireguard']['mtu']
         if not re.fullmatch(r'[0-9]+', mtu) or not 1280 <= int(mtu) <= 9000:
             config_error('wireguard.mtu', 'ожидается целое число от 1280 до 9000')
+    for name in ('cpu_pct', 'ram_pct'):
+        value = cfg['alerts'].get(name)
+        if value is not None and (not re.fullmatch(r'[0-9]+', value) or not 1 <= int(value) <= 100):
+            config_error('alerts.' + name, 'ожидается целое число от 1 до 100')
+    window = cfg['alerts'].get('window')
+    if window is not None and (not re.fullmatch(r'[0-9]+', window) or int(window) < 30):
+        config_error('alerts.window', 'ожидается число секунд не меньше 30')
     if cfg['panel'].get('domain'):
         cfg['panel']['domain'] = normalize_domain(cfg['panel']['domain'], 'panel.domain')
 
@@ -839,6 +849,11 @@ def main():
         ]
         if tg.get('admin_username'):
             lines.append(f"TELEGRAM_ADMIN_USERNAME={shq(tg['admin_username'])}")
+    # Пороги тревог бота: только явные, иначе бот считает их по размеру узла.
+    for key, variable in (('cpu_pct', 'ALERT_CPU_PCT'), ('ram_pct', 'ALERT_RAM_PCT'),
+                          ('window', 'ALERT_WINDOW_SEC')):
+        if key in cfg['alerts']:
+            lines.append(f"{variable}={shq(int(cfg['alerts'][key]))}")
 
 
     # YouTube-секция. Читают обе стадии: 20-ru-router (gen-router-config.py

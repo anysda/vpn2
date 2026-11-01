@@ -28,6 +28,9 @@ export interface NodeMetrics {
   // Корневая ФС ноды: доступно (как df Avail) и всего, байты.
   diskFreeBytes: number | null
   diskSizeBytes: number | null
+  // Размер ноды: число ядер и вся память, байты. По ним бот выбирает пороги тревог.
+  cores: number | null
+  memTotalBytes: number | null
   // Возраст последнего сэмпла метрик ноды, сек. null — данных нет вовсе.
   // Драйвит индикацию online/warning/offline (НЕ хранится в holdover —
   // нужен реальный возраст, иначе мёртвая нода вечно «свежая»).
@@ -45,6 +48,8 @@ export const PROMQL = {
   uptime: 'node_time_seconds - node_boot_time_seconds',
   diskFree: 'node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}',
   diskSize: 'node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}',
+  cores: 'count by(instance)(node_cpu_seconds_total{mode="idle"})',
+  memTotal: 'node_memory_MemTotal_bytes',
   // Возраст последнего сэмпла: time() минус метка времени метрики.
   stale: 'time() - timestamp(node_time_seconds)',
 }
@@ -138,7 +143,7 @@ function withHoldover(
 // Holdover нужен UI, но не алертам: повтор старого значения не является
 // новым наблюдением нагрузки. Бот запрашивает только текущие результаты VM.
 export async function fetchNodeMetrics(instances: string[], allowHoldover = true): Promise<NodeMetrics[]> {
-  const [cpu, iowait, steal, ram, rx, tx, uptime, stale, diskFree, diskSize] = await Promise.all([
+  const [cpu, iowait, steal, ram, rx, tx, uptime, stale, diskFree, diskSize, cores, memTotal] = await Promise.all([
     instantQuery(PROMQL.cpu),
     instantQuery(PROMQL.iowait),
     instantQuery(PROMQL.steal),
@@ -149,6 +154,8 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
     instantQuery(PROMQL.stale),
     instantQuery(PROMQL.diskFree),
     instantQuery(PROMQL.diskSize),
+    instantQuery(PROMQL.cores),
+    instantQuery(PROMQL.memTotal),
   ])
 
   const cpuH = withHoldover(cpu, instances, 'cpu', allowHoldover)
@@ -160,6 +167,8 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
   const upH = withHoldover(uptime, instances, 'uptime', allowHoldover)
   const diskFreeH = withHoldover(diskFree, instances, 'diskFree', allowHoldover)
   const diskSizeH = withHoldover(diskSize, instances, 'diskSize', allowHoldover)
+  const coresH = withHoldover(cores, instances, 'cores', allowHoldover)
+  const memTotalH = withHoldover(memTotal, instances, 'memTotal', allowHoldover)
 
   return instances.map(inst => ({
     instance: inst,
@@ -172,6 +181,8 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
     uptimeSec: upH.get(inst) ?? null,
     diskFreeBytes: diskFreeH.get(inst) ?? null,
     diskSizeBytes: diskSizeH.get(inst) ?? null,
+    cores: coresH.get(inst) ?? null,
+    memTotalBytes: memTotalH.get(inst) ?? null,
     // staleSec — БЕЗ holdover: реальный возраст последнего сэмпла.
     staleSec: stale.get(inst) ?? null,
   }))

@@ -176,6 +176,12 @@ docker rm -f anysda-tgbot >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
 [[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
+# Пороги тревог из config.yaml (alerts:): только заданные, иначе бот
+# считает их по размеру узла.
+alert_env=()
+for name in ALERT_CPU_PCT ALERT_RAM_PCT ALERT_WINDOW_SEC; do
+  if [[ -n "${!name:-}" ]]; then alert_env+=(-e "$name=${!name}"); fi
+done
 # Runtime-бюджет рассчитан на entry, swap не скрывает превышение бюджета.
 docker run -d \
   --name anysda-tgbot \
@@ -196,6 +202,7 @@ docker run -d \
   -e TGBOT_POLL_STALL_SEC="${TGBOT_POLL_STALL_SEC:-300}" \
   -e ANYSDA_URL=http://127.0.0.1:51821 \
   -e TG_PROXY=http://127.0.0.1:7897 \
+  "${alert_env[@]}" \
   "$TGBOT_IMAGE" >/dev/null
 
 echo "[$HOST_TAG] жду пока бот запустится..."

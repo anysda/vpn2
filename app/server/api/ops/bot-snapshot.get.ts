@@ -33,6 +33,9 @@ export default defineEventHandler(async (event) => {
     uptimeSec: nodes[i]?.uptimeSec ?? null,
     // возраст последних метрик ноды, сек — бот алертит при staleSec > 5 мин
     staleSec: nodes[i]?.staleSec ?? null,
+    // размер ноды — по нему бот выбирает пороги CPU/RAM и окно тревоги
+    cores: nodes[i]?.cores ?? null,
+    memTotalBytes: nodes[i]?.memTotalBytes ?? null,
   }))
 
   const outboundsPayload = userVisibleOutbounds(proxies)

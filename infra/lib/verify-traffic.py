@@ -901,6 +901,8 @@ class Targets:
         self.echo = None
         self.remote = {}
         self.failed = {}
+        # Экзиты, где цель поднималась в любой попытке: kill ssh цель на экзите не гасит.
+        self.reached = set()
         self.exit_ips = {tag: router.exit_ip(tag) for tag in exits}
         self.iface = router.outbounds.get(DIRECT, {}).get('bind_interface')
 
@@ -945,6 +947,7 @@ class Targets:
             reason = self.not_ready(process, err)
         if reason is None:
             self.remote[tag] = process
+            self.reached.add(tag)
         else:
             self.failed[tag] = f'цель эха на экзите {tag} не поднялась: {reason}'
 
@@ -980,7 +983,10 @@ class Targets:
                 self.exit_target(tag, lifetime)
 
     def discard(self):
-        """Цели неудачной попытки гасятся здесь: цель на экзите живёт, пока жив её ssh."""
+        """Цели неудачной попытки гасятся здесь, кроме целей на экзитах.
+
+        Цель на экзите без pty переживает kill своего ssh: её гасит остановка в stop().
+        """
         for process in (self.local, self.echo, *self.remote.values()):
             if process:
                 process.kill()
@@ -1026,9 +1032,10 @@ class Targets:
                 process.terminate()
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     process.wait(timeout=5)
-        for tag, process in self.remote.items():
+        for tag in (tag for tag in self.exit_ips if tag in self.reached):
             run('ssh', '-n', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', tag,
                 self.exit_stop_command(), check=False)
+        for process in self.remote.values():
             process.kill()
             process.wait()
 

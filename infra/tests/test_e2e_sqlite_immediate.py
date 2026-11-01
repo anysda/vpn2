@@ -7,12 +7,12 @@
 
 from pathlib import Path
 import re
-import shutil
 import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 E2E = ROOT / 'app' / 'e2e'
+SCRIPTS = ('.ts', '.mjs', '.cjs', '.js', '.sh')
 
 QUOTES = '\'"`'
 # BEGIN как отдельная инструкция SQL: в начале строки SQL, после кавычки
@@ -54,7 +54,7 @@ def bare_begins(text):
 def scan(root):
     found = []
     for path in sorted(root.rglob('*')):
-        if path.suffix in ('.ts', '.sh') and path.is_file():
+        if path.suffix in SCRIPTS and path.is_file():
             rel = path.relative_to(root).as_posix()
             found += [f'{rel}:{line}' for line in bare_begins(path.read_text(encoding='utf-8'))]
     return found
@@ -99,17 +99,16 @@ class E2eSqliteImmediateTests(unittest.TestCase):
                 self.assertFalse([f for f in found if f.startswith(name + ':')])
 
     def test_immediate_on_copy_removes_file_from_list(self):
-        name = 'notify-warning.spec.ts'
-        text = (E2E / name).read_text(encoding='utf-8')
-        if "db.exec('BEGIN')" not in text:
-            self.skipTest(f'{name} уже без голого BEGIN')
-        with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp)
-            shutil.copy(E2E / name, copy / name)
-            self.assertTrue(scan(copy))
-            (copy / name).write_text(text.replace("db.exec('BEGIN')", "db.exec('BEGIN IMMEDIATE')", 1), encoding='utf-8')
-            self.assertEqual(scan(copy), [])
-
+        bare = "db.exec('BEGIN')\n"
+        for suffix in SCRIPTS:
+            with self.subTest(suffix=suffix), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / 'support').mkdir()
+                sample = root / 'support' / f'sample{suffix}'
+                sample.write_text(bare, encoding='utf-8')
+                self.assertEqual(scan(root), [f'support/sample{suffix}:1'])
+                sample.write_text(bare.replace('BEGIN', 'BEGIN IMMEDIATE'), encoding='utf-8')
+                self.assertEqual(scan(root), [])
 
 if __name__ == '__main__':
     unittest.main()

@@ -10,6 +10,7 @@ permissions:
 jobs:
   shell:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
@@ -28,6 +29,7 @@ jobs:
 
   python-lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +50,7 @@ jobs:
 
   infra:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +64,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: зависимости инфраструктуры
+        timeout-minutes: 5
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
@@ -87,6 +91,7 @@ jobs:
 
   telegram:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -95,6 +100,7 @@ jobs:
           cache: pip
           cache-dependency-path: telegram/requirements.txt
       - name: регрессии Telegram-бота
+        timeout-minutes: 10
         run: |
           # zbarimg раскодирует PNG QR бота (test_qr_size.py).
           sudo apt-get update -qq
@@ -108,6 +114,7 @@ jobs:
     needs: [python-lint, infra, telegram]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: все проверки Python прошли
         env:
@@ -118,6 +125,7 @@ jobs:
 
   backup-restore:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: SQLite WAL и полный цикл backup/restore
@@ -127,14 +135,15 @@ jobs:
           docker run --rm -e VPN2_BACKUP_TEST=1 -v "$PWD:/src:ro" \
             --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
             debian:13 sh -ec '
-            apt-get update -qq
-            apt-get install -y -qq --no-install-recommends python3 sqlite3 age expect curl git wireguard-tools openssl iproute2
+            timeout 300 apt-get update -qq
+            timeout 300 apt-get install -y -qq --no-install-recommends python3 sqlite3 age expect curl git wireguard-tools openssl iproute2
             python3 /src/infra/tests/backup-restore.py /src
             python3 /src/infra/tests/backup-clone-path.py /src
           '
 
   panel:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: app
@@ -167,6 +176,7 @@ jobs:
 
   backup-keys:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: перенос ключей VPN на чистый хост и совместимость старых архивов
@@ -176,6 +186,7 @@ jobs:
 
   panel-e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: app
@@ -231,15 +242,19 @@ jobs:
         run: python3 e2e/with-network-churn.py pnpm e2e:local
       # Худший конфиг (вход 45.x, сплит) и панель без сплита, аварийка hy2 и бот:
       # qrencode рисует PNG аварийки, zbarimg раскодирует PNG.
-      - name: размер QR на худшем конфиге
+      - name: qrencode и zbarimg для размера QR
         if: steps.paths.outputs.run == 'true'
-        env:
-          E2E_SKIP_BUILD: '1'
-          E2E_BASE_IMAGE: vpn2-panel:e2e
+        timeout-minutes: 5
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
-          bash e2e/qr-size.sh
+      - name: размер QR на худшем конфиге
+        if: steps.paths.outputs.run == 'true'
+        timeout-minutes: 10
+        env:
+          E2E_SKIP_BUILD: '1'
+          E2E_BASE_IMAGE: vpn2-panel:e2e
+        run: bash e2e/qr-size.sh
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v4

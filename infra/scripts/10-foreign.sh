@@ -370,7 +370,13 @@ ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 ||
 HY2HOP_CONF=/etc/nftables-hy2hop.conf
 HY2HOP_UNIT=/etc/systemd/system/anysda-hy2hop.service
 HY2HOP_DROPIN=/etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
-if [[ "${HY2_HOP_ENABLED:-0}" == 1 ]]; then
+# Без ports.hy2_hop в config.yaml all.env их не несёт - умолчания здесь, как
+# HY2_HOP_DEFAULTS в lib/hy2_bandwidth.py для стороны entry.
+HY2_HOP_ENABLED="${HY2_HOP_ENABLED:-1}"
+HY2_HOP_DIRECT="${HY2_HOP_DIRECT:-20000-24999}"
+HY2_HOP_WARP="${HY2_HOP_WARP:-25000-29999}"
+HY2_HOP_MGMT="${HY2_HOP_MGMT:-30000-30999}"
+if [[ "$HY2_HOP_ENABLED" == 1 ]]; then
   echo "[$HOST_TAG] смена портов hy2: direct ${HY2_HOP_DIRECT}, warp ${HY2_HOP_WARP}, mgmt ${HY2_HOP_MGMT}"
   {
     echo '#!/usr/sbin/nft -f'

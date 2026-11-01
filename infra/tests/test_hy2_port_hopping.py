@@ -176,7 +176,7 @@ class Hy2PortHoppingTests(unittest.TestCase):
     # край 5 (сторона entry; сторона экзита - край 4 на том же конфиге)
     def test_old_config_without_hop_key_gets_defaults_enabled(self):
         outbounds, env, all_env = self.entry(old_config())
-        self.assertIn('HY2_HOP_ENABLED=1\n', all_env)
+        self.assertNotIn('HY2_HOP_', all_env)
         self.assert_hopping(outbounds, env, DEFAULTS, '30s')
 
     # край 4 (+5: конфиг старой установки)

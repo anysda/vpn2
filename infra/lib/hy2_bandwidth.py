@@ -1,9 +1,15 @@
-"""Необязательная скорость Hysteria2 в Мбит/с, с точки зрения экзита."""
+"""Необязательная скорость Hysteria2 в Мбит/с, с точки зрения экзита,
+и умолчания смены портов hy2 для config2env и генератора entry."""
 
 import json
 import os
 import re
 import sys
+
+# Нет ports.hy2_hop в config.yaml - в all.env ни одной строки HY2_HOP_*,
+# значения отсюда. Сторона экзита - те же числа в scripts/10-foreign.sh.
+HY2_HOP_DEFAULTS = {'enabled': '1', 'direct': '20000-24999', 'warp': '25000-29999',
+                    'mgmt': '30000-30999', 'interval': '30s'}
 
 
 def bandwidth_fields(up, down, *, label='Hysteria2', client=False):

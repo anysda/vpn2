@@ -16,7 +16,7 @@ from pathlib import Path
 
 # Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hy2_bandwidth import bandwidth_fields  # noqa: E402
+from hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields  # noqa: E402
 
 
 def shq(v):
@@ -191,7 +191,7 @@ def parse_yaml(text):
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
            'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}, 'alerts': {},
-           'hy2_hop': {}}
+           'hy2_hop': None}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
@@ -270,7 +270,9 @@ def parse_yaml(text):
             elif context == 'ports':
                 k, v = kv(content)
                 ports_sub = k if k == 'hy2_hop' else None
-                if not ports_sub:
+                if ports_sub:
+                    cfg['hy2_hop'] = {}
+                else:
                     cfg['ports'][k] = v
             elif context == 'telegram':
                 k, v = kv(content)
@@ -505,8 +507,6 @@ def config_error(key, reason):
     sys.exit(f'ERROR: config.yaml: {key}: {reason}')
 
 
-HY2_HOP_DEFAULTS = {'direct': '20000-24999', 'warp': '25000-29999', 'mgmt': '30000-30999'}
-
 # Порты перебора hy2 после стадии 20 — HY2_PORT_CANDIDATES в infra/deploy.sh.
 # setup.sh запускает config2env без deploy.sh рядом, поэтому копия; сверку
 # держит test_hy2_port_hopping.
@@ -516,14 +516,14 @@ HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
 def hy2_hop_settings(hop):
     """ports.hy2_hop с умолчаниями. Диапазоны ниже 32768 (эфемерные порты
     ядра выше), не пересекаются и не задевают кандидатов перебора порта."""
-    enabled = hop.get('enabled', 'true').lower() in ('true', 'yes', 'y', '1')
-    interval = hop.get('interval', '30s')
+    enabled = hop.get('enabled', HY2_HOP_DEFAULTS['enabled']).lower() in ('true', 'yes', 'y', '1')
+    interval = hop.get('interval', HY2_HOP_DEFAULTS['interval'])
     if not re.fullmatch(r'[1-9][0-9]*[smh]', interval):
         config_error('ports.hy2_hop.interval', 'ожидается длительность вида 30s, 5m')
     ranges = {}
-    for channel, default in HY2_HOP_DEFAULTS.items():
+    for channel in ('direct', 'warp', 'mgmt'):
         key = f'ports.hy2_hop.{channel}'
-        match = re.fullmatch(r'([0-9]+)-([0-9]+)', hop.get(channel, default))
+        match = re.fullmatch(r'([0-9]+)-([0-9]+)', hop.get(channel, HY2_HOP_DEFAULTS[channel]))
         if not match or not 1 <= int(match[1]) <= int(match[2]) <= 32767:
             config_error(key, 'ожидается диапазон UDP вида 20000-24999 в пределах 1..32767')
         low, high = int(match[1]), int(match[2])
@@ -591,7 +591,8 @@ def validate_network(cfg):
             port(ex['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in cfg['ports'].items():
         port(value, 'ports.' + name)
-    hy2_hop_settings(cfg['hy2_hop'])
+    if cfg['hy2_hop'] is not None:
+        hy2_hop_settings(cfg['hy2_hop'])
     if 'proto' in cfg['openvpn'] and cfg['openvpn']['proto'] not in (
             'udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6',
             'tcp-server', 'tcp4-server', 'tcp6-server'):
@@ -755,7 +756,13 @@ def main():
     hy2_mgmt   = ports.get('hy2_mgmt',   '8444')
     # Смена порта клиентом hy2: фильтр, режущий один UDP-поток по 5-tuple,
     # не держит VPN лёжа. Экзит перенаправляет диапазон на порт канала.
-    hop_enabled, hop_ranges, hop_interval = hy2_hop_settings(cfg['hy2_hop'])
+    # Без ports.hy2_hop all.env прежний, умолчания у стадий.
+    hop_lines = []
+    if cfg['hy2_hop'] is not None:
+        hop_enabled, hop_ranges, hop_interval = hy2_hop_settings(cfg['hy2_hop'])
+        hop_lines = [f'HY2_HOP_ENABLED={int(hop_enabled)}',
+                     *(f'HY2_HOP_{c.upper()}={a}-{b}' for c, (a, b) in hop_ranges.items()),
+                     f'HY2_HOP_INTERVAL={hop_interval}']
 
     # Ключ человека-админа: если задан, 00-bootstrap отключает парольный вход;
     # если пусто — пароль остаётся (VPN2-31, чтобы не запереть себя без ключа).
@@ -778,9 +785,7 @@ def main():
         f'HY2_DIRECT_PORT={hy2_direct}',
         f'HY2_WARP_PORT={hy2_warp}',
         f'HY2_MGMT_PORT={hy2_mgmt}',
-        f'HY2_HOP_ENABLED={int(hop_enabled)}',
-        *(f'HY2_HOP_{c.upper()}={a}-{b}' for c, (a, b) in hop_ranges.items()),
-        f'HY2_HOP_INTERVAL={hop_interval}',
+        *hop_lines,
         '',
         f'ADMIN_SSH_PUBKEY={shq(admin_ssh_pubkey)}',
         '',

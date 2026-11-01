@@ -44,7 +44,7 @@ import sys
 
 # Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hy2_bandwidth import bandwidth_fields  # noqa: E402
+from hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields  # noqa: E402
 
 # ----------------------------------------------------------------------------
 # YouTube: домены, которые уводятся с экзитов на РФ-выход (см. yt_block ниже).
@@ -274,12 +274,16 @@ def main():
 
     # Смена порта раз в hop_interval: фильтр по 5-tuple режет один поток,
     # а не канал. server_port остаётся первым портом подключения.
+    # Нет HY2_HOP_* в env (конфиг без ports.hy2_hop) - умолчания, включено.
+    def hop_value(name):
+        return os.environ.get(f'HY2_HOP_{name.upper()}') or HY2_HOP_DEFAULTS[name]
+
     hop = {}
-    if os.environ.get('HY2_HOP_ENABLED') == '1':
+    if hop_value('enabled') == '1':
         for channel in ('direct', 'warp', 'mgmt'):
             hop[channel] = {
-                'server_ports': [require(f'HY2_HOP_{channel.upper()}').replace('-', ':')],
-                'hop_interval': require('HY2_HOP_INTERVAL'),
+                'server_ports': [hop_value(channel).replace('-', ':')],
+                'hop_interval': hop_value('interval'),
             }
 
     for tag in exit_tags:

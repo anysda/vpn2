@@ -387,7 +387,7 @@ test.describe('VPN2-598: размер QR на экране', () => {
       const png = await page.request.get(`${origin}/api/profile/11/qr`)
       const file = join(directory, 'shown.png')
       await writeFile(file, await png.body())
-      const text = execFileSync('zbarimg', ['-q', '--raw', file], { encoding: 'utf8' }).replace(/\n$/, '')
+      const text = execFileSync('zbarimg', ['-q', '--raw', '-Sdisable', '-Sqrcode.enable', file], { encoding: 'utf8' }).replace(/\n$/, '')
       const modules = desk.units - 8
       const pxDesk = desk.size.inner / desk.units
       const share = phone.size.outer / phone.size.content

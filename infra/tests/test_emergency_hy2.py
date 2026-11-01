@@ -55,7 +55,7 @@ class EmergencyHy2Tests(unittest.TestCase):
             self.assertTrue(item['qr_png'].startswith(b'\x89PNG\r\n\x1a\n'))
             image = self.state / 'qr.png'
             image.write_bytes(item['qr_png'])
-            decoded = subprocess.run(['zbarimg', '--quiet', '--raw', str(image)],
+            decoded = subprocess.run(['zbarimg', '--quiet', '--raw', '-Sdisable', '-Sqrcode.enable', str(image)],
                                      capture_output=True, check=True).stdout.decode().strip()
             self.assertEqual(decoded, item['uri'])
             pin = parse_qs(uri.query)['pinSHA256'][0]

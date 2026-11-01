@@ -67,7 +67,7 @@ class QrSizeTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'qr.png'
             path.write_bytes(png)
-            text = subprocess.run(['zbarimg', '-q', '--raw', str(path)], check=True,
+            text = subprocess.run(['zbarimg', '-q', '--raw', '-Sdisable', '-Sqrcode.enable', str(path)], check=True,
                                   capture_output=True, text=True).stdout
         self.assertEqual(text.removesuffix('\n'), conf)
 

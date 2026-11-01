@@ -142,7 +142,8 @@ _ssh_errfilter() {
   local line
   local -a before=()
   while IFS= read -r line; do
-    [[ $line == "$_SSH_MARK" ]] && { cat; return; }
+    # dd, не cat - причина в _ssh_output.
+    [[ $line == "$_SSH_MARK" ]] && { dd status=none bs=64k; return; }
     before+=("$line")
   done
   (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"

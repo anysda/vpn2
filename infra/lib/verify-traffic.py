@@ -1116,6 +1116,10 @@ def cleanup(protocols=()):
     for pid in run('ip', 'netns', 'pids', NS, check=False).stdout.split():
         with contextlib.suppress(ProcessLookupError, ValueError):
             os.kill(int(pid), signal.SIGKILL)
+    # Удаление поднятой ссылки ядро ведёт через off, и networkd-dispatcher ищет её уже пропавшей:
+    # ошибка в журнале. Опущенная заранее ссылка в off при удалении не переходит.
+    if run('ip', 'link', 'set', HOST_IF, 'down', check=False).returncode == 0:
+        time.sleep(1)
     run('ip', 'netns', 'del', NS, check=False)
     run('ip', 'link', 'del', HOST_IF, check=False)
     clean_iptables()

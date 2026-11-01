@@ -167,9 +167,8 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
   const upH = withHoldover(uptime, instances, 'uptime', allowHoldover)
   const diskFreeH = withHoldover(diskFree, instances, 'diskFree', allowHoldover)
   const diskSizeH = withHoldover(diskSize, instances, 'diskSize', allowHoldover)
-  // Размер ноды — не наблюдение нагрузки: пропуск запроса закрываем прошлым значением всегда.
-  const coresH = withHoldover(cores, instances, 'cores', true)
-  const memTotalH = withHoldover(memTotal, instances, 'memTotal', true)
+  const coresH = withHoldover(cores, instances, 'cores', allowHoldover)
+  const memTotalH = withHoldover(memTotal, instances, 'memTotal', allowHoldover)
 
   return instances.map(inst => ({
     instance: inst,

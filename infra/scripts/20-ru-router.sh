@@ -155,6 +155,7 @@ WAN_IFACE=$(ip -4 -o route show default | awk '!f {print $5; f=1}')
 export WG_OUT_IFACE="$WAN_IFACE"
 
 export RU_CLASH_SECRET EXIT_TAGS HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT MGMT_IP
+export HY2_HOP_ENABLED HY2_HOP_DIRECT HY2_HOP_WARP HY2_HOP_MGMT HY2_HOP_INTERVAL
 # YouTube (стадия 19-yt-zapret). `source` env-файла делает переменные
 # ЛОКАЛЬНЫМИ для шелла — до python-генератора они без export не доезжают, и
 # конфиг молча собирается без YouTube-правил (стадия при этом отрабатывает

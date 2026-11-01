@@ -190,10 +190,12 @@ def parse_yaml(text):
     validate_yaml(text)
     cfg = {'exits': [], 'ports': {}, 'entry': {}, 'telegram': {}, 'admin': {},
            'panel': {}, 'tgbot': {}, 'backup': {}, 'youtube': {}, 'sso': {},
-           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}, 'alerts': {}}
+           'entry_resources': {}, 'wireguard': {}, 'openvpn': {}, 'failover': {}, 'alerts': {},
+           'hy2_hop': {}}
     context = None
     current_exit = None
     backup_sub = None    # 's3' или 'local' внутри backup: блока
+    ports_sub = None     # 'hy2_hop' внутри ports: блока
 
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
@@ -223,6 +225,7 @@ def parse_yaml(text):
                 context = 'entry'
             elif content.startswith('ports:'):
                 context = 'ports'
+                ports_sub = None
             elif content.startswith('telegram:'):
                 context = 'telegram'
             elif content.startswith('admin:'):
@@ -266,7 +269,9 @@ def parse_yaml(text):
                 cfg['entry'][k] = v
             elif context == 'ports':
                 k, v = kv(content)
-                cfg['ports'][k] = v
+                ports_sub = k if k == 'hy2_hop' else None
+                if not ports_sub:
+                    cfg['ports'][k] = v
             elif context == 'telegram':
                 k, v = kv(content)
                 cfg['telegram'][k] = v
@@ -306,6 +311,9 @@ def parse_yaml(text):
             elif context == 'backup' and backup_sub is not None:
                 k, v = kv(content)
                 cfg['backup'][backup_sub][k] = v
+            elif context == 'ports' and ports_sub is not None:
+                k, v = kv(content)
+                cfg['hy2_hop'][k] = v
 
     return cfg
 
@@ -320,7 +328,8 @@ def validate_yaml(text):
         'entry': {'host', 'password', 'public_host'},
         'exits': {'tag', 'host', 'password', 'hy2_direct_port', 'hy2_up_mbps', 'hy2_down_mbps',
                   'hy2_insecure'},
-        'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt', 'wireguard', 'openvpn'},
+        'ports': {'hy2_direct', 'hy2_warp', 'hy2_mgmt', 'wireguard', 'openvpn', 'hy2_hop'},
+        'ports.hy2_hop': {'enabled', 'direct', 'warp', 'mgmt', 'interval'},
         'wireguard': {'mtu', 'split_local'},
         'openvpn': {'proto'},
         'failover': {'restart_after_checks', 'restart_min_interval'},
@@ -342,7 +351,8 @@ def validate_yaml(text):
                             'agh_go_mib', 'retention_days', 'adaway_enabled', 'querylog_size'},
     }
     booleans = {'backup.enabled', 'sso.enabled', 'sso.auto_redirect', 'sso.password_login',
-                'entry_resources.adaway_enabled', 'wireguard.split_local', 'exits[].hy2_insecure'}
+                'entry_resources.adaway_enabled', 'wireguard.split_local', 'exits[].hy2_insecure',
+                'ports.hy2_hop.enabled'}
     boolean_values = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
     seen = set()
     context = ''
@@ -390,7 +400,7 @@ def validate_yaml(text):
         if key in schema:
             if value and not value.startswith('#'):
                 config_error(key, 'ожидается блок с отступами, как в config.example.yaml')
-            if key.startswith('backup.'):
+            if key.startswith('backup.') or key == 'ports.hy2_hop':
                 sub = name
             continue
         quoted = value[:1] in ('"', "'")
@@ -495,6 +505,38 @@ def config_error(key, reason):
     sys.exit(f'ERROR: config.yaml: {key}: {reason}')
 
 
+HY2_HOP_DEFAULTS = {'direct': '20000-24999', 'warp': '25000-29999', 'mgmt': '30000-30999'}
+
+# Порты перебора hy2 после стадии 20 — HY2_PORT_CANDIDATES в infra/deploy.sh.
+# setup.sh запускает config2env без deploy.sh рядом, поэтому копия; сверку
+# держит test_hy2_port_hopping.
+HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
+
+
+def hy2_hop_settings(hop):
+    """ports.hy2_hop с умолчаниями. Диапазоны ниже 32768 (эфемерные порты
+    ядра выше), не пересекаются и не задевают кандидатов перебора порта."""
+    enabled = hop.get('enabled', 'true').lower() in ('true', 'yes', 'y', '1')
+    interval = hop.get('interval', '30s')
+    if not re.fullmatch(r'[1-9][0-9]*[smh]', interval):
+        config_error('ports.hy2_hop.interval', 'ожидается длительность вида 30s, 5m')
+    ranges = {}
+    for channel, default in HY2_HOP_DEFAULTS.items():
+        key = f'ports.hy2_hop.{channel}'
+        match = re.fullmatch(r'([0-9]+)-([0-9]+)', hop.get(channel, default))
+        if not match or not 1 <= int(match[1]) <= int(match[2]) <= 32767:
+            config_error(key, 'ожидается диапазон UDP вида 20000-24999 в пределах 1..32767')
+        low, high = int(match[1]), int(match[2])
+        for other, (a, b) in ranges.items():
+            if low <= b and a <= high:
+                config_error(key, f'пересекается с ports.hy2_hop.{other}')
+        taken = [p for p in HY2_PORT_CANDIDATES if low <= p <= high]
+        if taken:
+            config_error(key, f'задевает порт перебора hy2 {taken[0]} (HY2_PORT_CANDIDATES)')
+        ranges[channel] = (low, high)
+    return enabled, ranges, interval
+
+
 def normalize_domain(value, key):
     """Каноническое DNS-имя для Caddy и OIDC redirect_uri."""
     try:
@@ -549,6 +591,7 @@ def validate_network(cfg):
             port(ex['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in cfg['ports'].items():
         port(value, 'ports.' + name)
+    hy2_hop_settings(cfg['hy2_hop'])
     if 'proto' in cfg['openvpn'] and cfg['openvpn']['proto'] not in (
             'udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6',
             'tcp-server', 'tcp4-server', 'tcp6-server'):
@@ -710,6 +753,9 @@ def main():
     hy2_warp   = ports.get('hy2_warp',   '8443')
     # Служебный Hysteria2 (скрейп node_exporter из-за границы вместо WG-mesh).
     hy2_mgmt   = ports.get('hy2_mgmt',   '8444')
+    # Смена порта клиентом hy2: фильтр, режущий один UDP-поток по 5-tuple,
+    # не держит VPN лёжа. Экзит перенаправляет диапазон на порт канала.
+    hop_enabled, hop_ranges, hop_interval = hy2_hop_settings(cfg['hy2_hop'])
 
     # Ключ человека-админа: если задан, 00-bootstrap отключает парольный вход;
     # если пусто — пароль остаётся (VPN2-31, чтобы не запереть себя без ключа).
@@ -732,6 +778,9 @@ def main():
         f'HY2_DIRECT_PORT={hy2_direct}',
         f'HY2_WARP_PORT={hy2_warp}',
         f'HY2_MGMT_PORT={hy2_mgmt}',
+        f'HY2_HOP_ENABLED={int(hop_enabled)}',
+        *(f'HY2_HOP_{c.upper()}={a}-{b}' for c, (a, b) in hop_ranges.items()),
+        f'HY2_HOP_INTERVAL={hop_interval}',
         '',
         f'ADMIN_SSH_PUBKEY={shq(admin_ssh_pubkey)}',
         '',

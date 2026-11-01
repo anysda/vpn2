@@ -362,6 +362,79 @@ ufw_sync_rules 'hysteria2 warp' "${HY2_WARP_PORT}/udp"
 ufw_sync_rules --alias 'hysteria2 mgmt (monitoring)' 'hysteria2 mgmt' "${HY2_MGMT_PORT}/udp"
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 
+# Смена портов hy2: outbound entry раз в HY2_HOP_INTERVAL переходит на другой
+# порт диапазона своего канала, экзит перенаправляет диапазон на порт канала.
+# Фильтр провайдера по 5-tuple режет один поток, а не канал. Своя таблица:
+# таблицы ufw и docker не трогаем. Файл грузит свой oneshot при загрузке и
+# drop-in nftables.service после его start/reload.
+HY2HOP_CONF=/etc/nftables-hy2hop.conf
+HY2HOP_UNIT=/etc/systemd/system/anysda-hy2hop.service
+HY2HOP_DROPIN=/etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
+if [[ "${HY2_HOP_ENABLED:-0}" == 1 ]]; then
+  echo "[$HOST_TAG] смена портов hy2: direct ${HY2_HOP_DIRECT}, warp ${HY2_HOP_WARP}, mgmt ${HY2_HOP_MGMT}"
+  {
+    echo '#!/usr/sbin/nft -f'
+    echo '# Managed by anysda-vpn2 stage 10-foreign. Перезаписывается каждым прогоном.'
+    echo 'table inet vpn2_hy2hop'
+    echo 'delete table inet vpn2_hy2hop'
+    echo 'table inet vpn2_hy2hop {'
+    echo '    chain prerouting {'
+    echo '        type nat hook prerouting priority dstnat; policy accept;'
+    for channel in DIRECT WARP MGMT; do
+      range_var=HY2_HOP_$channel listen_var=HY2_${channel}_PORT
+      range=${!range_var}
+      # Порт канала старой установки внутри диапазона прыжков идёт мимо redirect.
+      except=''
+      for port in "$HY2_DIRECT_PORT" "$HY2_WARP_PORT" "$HY2_MGMT_PORT"; do
+        if (( port >= ${range%-*} && port <= ${range#*-} )); then
+          except+=" udp dport != $port"
+        fi
+      done
+      echo "        udp dport ${range}${except} redirect to :${!listen_var}"
+    done
+    echo '    }'
+    echo '}'
+  } > "$HY2HOP_CONF"
+  nft -c -f "$HY2HOP_CONF"
+  ufw_sync_rules 'hysteria2 hop direct' "${HY2_HOP_DIRECT/-/:}/udp"
+  ufw_sync_rules 'hysteria2 hop warp' "${HY2_HOP_WARP/-/:}/udp"
+  ufw_sync_rules 'hysteria2 hop mgmt' "${HY2_HOP_MGMT/-/:}/udp"
+  nft -f "$HY2HOP_CONF"
+  cat > "$HY2HOP_UNIT" <<EOF
+[Unit]
+Description=anysda-vpn2 — redirect диапазонов смены портов hysteria2
+After=network-pre.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f $HY2HOP_CONF
+ExecReload=/usr/sbin/nft -f $HY2HOP_CONF
+ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet vpn2_hy2hop 2>/dev/null; true'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  mkdir -p "$(dirname "$HY2HOP_DROPIN")"
+  cat > "$HY2HOP_DROPIN" <<EOF
+[Service]
+ExecStartPost=/bin/sh -ec 'if [ -f $HY2HOP_CONF ]; then /usr/sbin/nft -f $HY2HOP_CONF; fi'
+ExecReload=/bin/sh -ec 'if [ -f $HY2HOP_CONF ]; then /usr/sbin/nft -f $HY2HOP_CONF; fi'
+EOF
+  systemctl daemon-reload
+  systemctl enable anysda-hy2hop.service >/dev/null 2>&1
+else
+  nft delete table inet vpn2_hy2hop >/dev/null 2>&1 || true
+  if [[ -f "$HY2HOP_UNIT" ]]; then
+    systemctl disable anysda-hy2hop.service >/dev/null 2>&1 || true
+  fi
+  rm -f "$HY2HOP_CONF" "$HY2HOP_UNIT" "$HY2HOP_DROPIN"
+  systemctl daemon-reload
+  ufw_sync_rules 'hysteria2 hop direct'
+  ufw_sync_rules 'hysteria2 hop warp'
+  ufw_sync_rules 'hysteria2 hop mgmt'
+fi
+
 # Verify
 echo "[$HOST_TAG] статус sing-box:"
 systemctl status sing-box --no-pager -n 5 | sed -n '1,10p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'

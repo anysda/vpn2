@@ -272,6 +272,16 @@ def main():
     mon_inbounds = []
     mon_route_rules = []
 
+    # Смена порта раз в hop_interval: фильтр по 5-tuple режет один поток,
+    # а не канал. server_port остаётся первым портом подключения.
+    hop = {}
+    if os.environ.get('HY2_HOP_ENABLED') == '1':
+        for channel in ('direct', 'warp', 'mgmt'):
+            hop[channel] = {
+                'server_ports': [require(f'HY2_HOP_{channel.upper()}').replace('-', ':')],
+                'hop_interval': require('HY2_HOP_INTERVAL'),
+            }
+
     for tag in exit_tags:
         T = tag.upper().replace('-', '_')
         domain = require(f'DOMAIN_{T}')
@@ -314,6 +324,7 @@ def main():
             **bandwidth,
             'server': domain,
             'server_port': direct_port,
+            **hop.get('direct', {}),
             'password': pwd_direct,
             'obfs': {'type': 'salamander', 'password': pwd_obfs},
             'tls': tls_direct,
@@ -324,6 +335,7 @@ def main():
             **bandwidth,
             'server': domain,
             'server_port': hy2_warp_port,
+            **hop.get('warp', {}),
             'password': pwd_warp,
             'obfs': {'type': 'salamander', 'password': pwd_obfs},
             'tls': tls_warp,
@@ -336,6 +348,7 @@ def main():
             'tag': f'hy2-{tag}-mgmt',
             'server': domain,
             'server_port': mgmt_port,
+            **hop.get('mgmt', {}),
             'password': pwd_mgmt,
             'obfs': {'type': 'salamander', 'password': pwd_obfs},
             'tls': dict(tls_common),

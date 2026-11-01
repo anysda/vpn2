@@ -896,7 +896,7 @@ class Targets:
 
     def __init__(self, wan_ip, exits, router):
         self.wan_ip = wan_ip
-        self.port = 20000 + secrets.randbelow(30000)
+        self.port = self.new_port()
         self.local = None
         self.echo = None
         self.remote = {}
@@ -948,18 +948,47 @@ class Targets:
         else:
             self.failed[tag] = f'цель эха на экзите {tag} не поднялась: {reason}'
 
-    def start(self, lifetime):
+    @staticmethod
+    def new_port():
+        # Ниже ip_local_port_range (32768-60999): исходящие соединения экзита этот порт не займут.
+        return 10000 + secrets.randbelow(22000)
+
+    def echo_rule(self, action):
+        return ('iptables', '-w', action, 'INPUT', *(('1',) if action == '-I' else ()), '-d', ECHO_IP,
+                '-p', 'tcp', '--dport', str(self.port), '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
+
+    def start(self, lifetime, attempts=3):
+        # Порт занят на каком-то экзите - все цели заново на новом порту: цель одна на весь прогон.
+        for attempt in range(attempts):
+            self.start_once(lifetime)
+            if attempt + 1 == attempts or not any('Address already in use' in why
+                                                  for why in self.failed.values()):
+                return
+            self.discard()
+            self.port = self.new_port()
+
+    def start_once(self, lifetime):
         # Эхо на адресе entry - только для ретранслятора (tg-proxy стоит выше блока адресов entry).
         self.local = self.local_target(self.wan_ip, lifetime)
         iface = self.iface or wan_device()
         if iface:
             run('ip', 'route', 'replace', 'local', ECHO_IP + '/32', 'dev', iface, 'table', 'local')
-            run('iptables', '-w', '-I', 'INPUT', '1', '-d', ECHO_IP, '-p', 'tcp', '--dport', str(self.port),
-                '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
+            run(*self.echo_rule('-I'))
             self.echo = self.local_target(ECHO_IP, lifetime)
         for tag, ip in self.exit_ips.items():
             if ip:
                 self.exit_target(tag, lifetime)
+
+    def discard(self):
+        """Цели неудачной попытки гасятся здесь: цель на экзите живёт, пока жив её ssh."""
+        for process in (self.local, self.echo, *self.remote.values()):
+            if process:
+                process.kill()
+                process.wait()
+                process.stdout.close()
+        if self.echo:
+            run(*self.echo_rule('-D'), check=False)
+        self.local, self.echo, self.remote, self.failed = None, None, {}, {}
 
     @staticmethod
     def exit_command(port, lifetime):

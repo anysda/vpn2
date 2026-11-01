@@ -45,7 +45,7 @@ if (process.argv[2] === 'seed') {
   const client = await (await request('/api/clients', { name: 'e2e-pool-upgrade', deviceLimit: null })).json()
   const device = await (await request(`/api/clients/${client.id}/devices`, { name: 'legacy' })).json()
   const before = await snapshot(client.id, device.id)
-  db.exec('BEGIN')
+  db.exec('BEGIN IMMEDIATE')
   for (const [key, octet, last] of [['wg', 66, 254], ['ovpn', 67, 239], ['ikev2', 68, 254]]) {
     const insert = db.prepare(`INSERT OR IGNORE INTO devices (client_id, name, ${key}_ip) VALUES (?, ?, ?)`)
     for (let i = 2; i <= last; i++) insert.run(client.id, `${key}-${i}`, `10.${octet}.${octet}.${i}`)

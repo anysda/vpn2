@@ -125,7 +125,9 @@ _ssh_output() {
     if [[ $line == "$_SSH_MARK" ]]; then
       # "$1" - fifo сторожа входа: метка пришла, предел снят.
       [[ -z ${1:-} ]] || printf '\n' 1<>"$1"
-      cat; return
+      # Не cat: uutils cat пишет в файл через splice и затирает строки,
+      # что ssh в тот же миг пишет в stderr (>"$log" 2>&1). dd пишет write().
+      dd status=none bs=64k; return
     fi
     before+=("$line")
   done

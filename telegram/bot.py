@@ -1457,6 +1457,9 @@ NODE_DOWN_SEC = int(os.environ.get('ALERT_NODE_DOWN_SEC', '300'))
 _load_hits: dict[str, int] = {}     # key = f'{tag}:cpu' / f'{tag}:ram'
 _load_alerted: set[str] = set()
 _load_logged: dict[str, tuple] = {}  # пороги узла, последними записанные в журнал
+# Последний известный размер узла: запрос cores/memTotal к VM может не успеть,
+# и без памяти малый узел на этом сэмпле получил бы пороги большого.
+_node_size: dict[str, dict] = {}
 
 
 def _window_hits(window_sec: int) -> int:
@@ -1579,10 +1582,14 @@ async def monitor_loop() -> None:
                 tag = n.get('tag', '?')
                 cpu = n.get('cpu')
                 ram = n.get('ram')
-                cpu_high, ram_high, hits, window = node_thresholds(n)
+                size = _node_size.setdefault(tag, {})
+                for field in ('cores', 'memTotalBytes'):
+                    if isinstance(n.get(field), (int, float)):
+                        size[field] = n[field]
+                cpu_high, ram_high, hits, window = node_thresholds(size)
                 if _load_logged.get(tag) != (cpu_high, ram_high, hits):
                     log.info('пороги узла %s: cores=%s, mem=%s, cpu=%.0f%%, ram=%.0f%%, '
-                             'окно %ds (%d сэмпл.)', tag, n.get('cores'), n.get('memTotalBytes'),
+                             'окно %ds (%d сэмпл.)', tag, size.get('cores'), size.get('memTotalBytes'),
                              cpu_high, ram_high, window, hits)
                     _load_logged[tag] = (cpu_high, ram_high, hits)
                 if isinstance(cpu, (int, float)):

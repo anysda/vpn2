@@ -1361,7 +1361,14 @@ class Verifier:
             return
         proto, port = protocol.ports[-1]
         relay_port = self.relay.start(proto, port)
-        connected = protocol.connect('b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
+        # Сразу после установки одиночный обмен через экзит теряется; connect() сам
+        # снимает туннель прошлой попытки.
+        for attempt in range(3):
+            if attempt:
+                time.sleep(5)
+            connected = protocol.connect('b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
+            if connected:
+                break
         self.report.add('внешняя проба портов', name, OK if connected else FAIL,
                         f'{proto}/{port} открыт с адреса экзита, туннель передаёт данные' if connected else
                         f'{proto}/{port} не отвечает с адреса экзита (локально работает)')

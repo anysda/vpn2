@@ -107,7 +107,7 @@ test('очередь бота заполнена: изменения запис�
       db.exec('PRAGMA busy_timeout=5000');
       const now = Date.now();
       const add = db.prepare("INSERT INTO bot_outbox (id, label, payload, status, attempts, last_failure, due, expires, created) VALUES (?, 'e2e', '{}', 'queued', 0, 0, ?, ?, ?)");
-      db.exec('BEGIN');
+      db.exec('BEGIN IMMEDIATE');
       const held = db.prepare("SELECT id FROM bot_outbox WHERE status = 'accepted'").all().map(row => row.id);
       db.exec("UPDATE bot_outbox SET status = 'failed' WHERE status = 'accepted'");
       for (let i = 0; i < 1024; i++) add.run('e2e-full-' + i, now + 3600000, now + 3600000, now);

@@ -44,7 +44,7 @@ for (const protocol of protocols) {
     try {
       database(`const [id, key, pool] = args;
         const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?)');
-        db.exec('BEGIN');
+        db.exec('BEGIN IMMEDIATE');
         // Занятый адрес IKEv2 — полный набор учётных данных, не 2000
         // повреждённых записей, которые syncIkev2 должен восстанавливать.
         for (const ip of pool) add.run(id, 'occupied-' + ip, ip, key === 'ikev2' ? 'occupied-' + ip : null, key === 'ikev2' ? 'e2e-password' : null);
@@ -122,7 +122,7 @@ test('миграция занятой /24: прежние ключи и конф
     const row = database('console.log(JSON.stringify(db.prepare("SELECT * FROM devices WHERE id = ?").get(args[0])));', device.id)
     for (const p of protocols) database(`const [id, key, pool] = args;
       const add = db.prepare('INSERT OR IGNORE INTO devices (client_id, name, ' + key + '_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?)');
-      db.exec('BEGIN');
+      db.exec('BEGIN IMMEDIATE');
       for (const ip of pool) add.run(id, 'occupied-' + ip, ip, key === 'ikev2' ? 'occupied-' + ip : null, key === 'ikev2' ? 'e2e-password' : null);
       db.exec('COMMIT');`, id, p.key, addresses(p.octet, p.last, true))
     const next = await page.request.post(`/api/clients/${id}/devices`, { data: { name: 'expanded' } })
@@ -152,7 +152,7 @@ test('два параллельных создания на последний �
   try {
     database(`const [id, pools] = args;
       const insert = db.prepare('INSERT INTO devices (client_id, name, wg_ip, ovpn_ip, ikev2_ip, ikev2_username, ikev2_password) VALUES (?, ?, ?, ?, ?, ?, ?)');
-      db.exec('BEGIN');
+      db.exec('BEGIN IMMEDIATE');
       for (let i = 0; i < 1999; i++) insert.run(id, 'occupied-' + i, ...pools.map(pool => pool[i]), 'occupied-' + pools[2][i], 'e2e-password');
       db.exec('COMMIT');`, id, protocols.map(p => addresses(p.octet, p.last)))
     const responses = await Promise.all(['first', 'second'].map(name => page.request.post(`/api/clients/${id}/devices`, { data: { name } })))

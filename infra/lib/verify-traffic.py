@@ -641,8 +641,7 @@ class Relay:
 
     def __init__(self, wan_ip):
         self.wan_ip = wan_ip
-        self.sockets = []
-        self.stopping = False
+        self.session = None
 
     @staticmethod
     def socks(command, address, port):
@@ -682,50 +681,68 @@ class Relay:
         return answer.get('nonce') == nonce and answer.get('local') is False
 
     def start(self, proto, port):
+        """Новая сессия на свободном порту; прежняя закрывается вместе с её UDP-ассоциацией."""
+        self.end_session()
         listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM if proto == 'udp' else socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((HOST_IP, 0))
-        self.sockets.append(listener)
         if proto == 'tcp':
             listener.listen(4)
-        threading.Thread(target=self.udp if proto == 'udp' else self.tcp, args=(listener, port),
-                         daemon=True).start()
+            listener.settimeout(0.5)
+        stop, sockets = threading.Event(), [listener]
+        thread = threading.Thread(target=self.udp if proto == 'udp' else self.tcp,
+                                  args=(listener, port, stop, sockets), daemon=True)
+        self.session = stop, thread, sockets
+        thread.start()
         return listener.getsockname()[1]
 
-    def udp(self, listener, port):
-        control = relay = client = None
+    def end_session(self):
+        if self.session is None:
+            return
+        stop, thread, sockets = self.session
+        self.session = None
+        stop.set()
+        thread.join(5)
+        for sock in sockets:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+            with contextlib.suppress(OSError):
+                sock.close()
+
+    def udp(self, listener, port, stop, sockets):
+        relay = client = None
         header = b'\0\0\0\1' + socket.inet_aton(self.wan_ip) + struct.pack('!H', port)
-        while not self.stopping:
+        while not stop.is_set():
             ready = select.select([s for s in (listener, relay) if s], [], [], 0.5)[0]
             try:
                 if listener in ready:
                     data, client = listener.recvfrom(65535)
                     if relay is None:
                         control, address = self.socks(3, '0.0.0.0', 0)
-                        self.sockets.append(control)
+                        sockets.append(control)
                         relay = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                        sockets.append(relay)
                         relay.connect(('127.0.0.1', address[1]) if address[0] == '0.0.0.0' else address)
-                        self.sockets.append(relay)
                     relay.send(header + data)
                 if relay in ready and client:
                     data = relay.recv(65535)
                     if len(data) > 10 and data[3] == 1:
                         listener.sendto(data[10:], client)
             except OSError:
-                if self.stopping:
-                    return
-                time.sleep(0.2)
+                stop.wait(0.2)
 
-    def tcp(self, listener, port):
-        while not self.stopping:
+    def tcp(self, listener, port, stop, sockets):
+        while not stop.is_set():
             try:
                 inner, _ = listener.accept()
+            except OSError:
+                continue
+            try:
                 outer, _ = self.socks(1, self.wan_ip, port)
             except OSError:
-                if self.stopping:
-                    return
+                inner.close()
                 continue
-            self.sockets += [inner, outer]
+            sockets += [inner, outer]
             for a, b in ((inner, outer), (outer, inner)):
                 threading.Thread(target=self.pipe, args=(a, b), daemon=True).start()
 
@@ -738,10 +755,7 @@ class Relay:
             dst.shutdown(socket.SHUT_WR)
 
     def stop(self):
-        self.stopping = True
-        for sock in self.sockets:
-            with contextlib.suppress(OSError):
-                sock.close()
+        self.end_session()
 
 
 # ---------------------------------------------------------------- служба управления
@@ -1364,12 +1378,13 @@ class Verifier:
                             'экзит не достаёт до публичного адреса entry (tg-proxy) - нет внешней точки измерения')
             return
         proto, port = protocol.ports[-1]
-        relay_port = self.relay.start(proto, port)
-        # Сразу после установки одиночный обмен через экзит теряется; connect() сам
-        # снимает туннель прошлой попытки.
+        # Сразу после установки одиночный обмен через экзит теряется, а UDP-ассоциация
+        # SOCKS5 бывает мёртвой с начала: каждая попытка - своя сессия ретранслятора,
+        # connect() сам снимает туннель прошлой попытки.
         for attempt in range(3):
             if attempt:
                 time.sleep(5)
+            relay_port = self.relay.start(proto, port)
             connected = protocol.connect('b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
             if connected:
                 break

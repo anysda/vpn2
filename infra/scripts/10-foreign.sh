@@ -201,6 +201,19 @@ CLASH_SECRET=$(cat /etc/anysda/clash-secret.txt)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/4] TLS + sing-box config + service"
 
+# sing-box разрешает домен пира при старте: без DNS это FATAL, и вместе с
+# WARP-ногой падают direct-ноги. В конфиг кладём IP, домен разрешаем здесь.
+WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_ENDPOINT_HOST#[}
+WGCF_PEER_ENDPOINT_HOST=${WGCF_PEER_ENDPOINT_HOST%]}
+if ! python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$WGCF_PEER_ENDPOINT_HOST" 2>/dev/null; then
+  WGCF_PEER_DOMAIN=$WGCF_PEER_ENDPOINT_HOST
+  WGCF_PEER_ENDPOINT_HOST=$(getent ahostsv4 "$WGCF_PEER_DOMAIN" 2>/dev/null | awk 'NR == 1 {print $1}' || true)
+  if [[ -z "$WGCF_PEER_ENDPOINT_HOST" ]]; then
+    WGCF_PEER_ENDPOINT_HOST=162.159.192.1
+    echo "[$HOST_TAG]   ⚠ адрес WARP-пира $WGCF_PEER_DOMAIN не разрешился, беру $WGCF_PEER_ENDPOINT_HOST"
+  fi
+fi
+
 export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT \
        HY2_PWD_DIRECT HY2_PWD_WARP HY2_PWD_MGMT HY2_OBFS_PWD CLASH_SECRET \
        WGCF_PRIVKEY WGCF_LOCAL_IPV4 WGCF_PEER_PUBKEY \

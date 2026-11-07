@@ -75,7 +75,7 @@ Bot API молчит везде — повторяет поиск раз в TG_I
 foreign-best. Пока узел выключен вручную, выход мёртв или узел в штрафной
 после падения, маршрут идёт через foreign-best, потом возвращается на свой
 выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Если выход
-мёртв, а узел жив (отвечает соседний выход или transport-<выход>), выход завис
+мёртв, а transport-<выход> отвечает (без transport — сосед для -direct), выход завис
 в sing-box entry: после STUCK_AFTER_CHECKS проверок вотчдог перезапускает
 sing-box под общим пределом RESTART_MIN_INTERVAL_S. Не ожил после двух таких
 перезапусков — одно событие в бот, и выход не лечим, пока не оживёт. Через те
@@ -1048,8 +1048,8 @@ def _drop_pin_fallback_conns(name, base, conns):
 
 
 def stuck_tick(proxies):
-    """Выход ручного маршрута мёртв, а его узел жив (отвечает соседний выход
-    узла или transport-<выход>): выход завис в sing-box entry, и pin без
+    """Выход ручного маршрута мёртв, а его узел жив (отвечает transport-<выход>,
+    без transport — соседний выход для -direct): выход завис в sing-box entry, и pin без
     лечения стоял бы на foreign-best бессрочно. STUCK_AFTER_CHECKS проверок
     подряд — перезапуск sing-box под тем же пределом частоты, что в
     restart_tick. Не ожил после STUCK_MAX_HEALS перезапусков — одно событие и
@@ -1064,10 +1064,16 @@ def stuck_tick(proxies):
             _stuck_heals.pop(b, None)
     dead = [] if _all_dead else [b for b in bases
                                  if b not in _tick_alive and _node_of(b) not in _excluded()]
-    lone = [b for b in dead if not any(_node_of(m) == _node_of(b) for m in _tick_alive)]
-    transports = [f'transport-{b}' for b in lone if f'transport-{b}' in proxies]
+    # transport-<выход> идёт до того же inbound узла и дальше той же ногой
+    # (warp — через WARP): жив он, а выход нет — завис sing-box хаба. Сосед
+    # по узлу — только без transport и только для -direct: живой direct не
+    # говорит, что жив WARP, а живой warp — что узел и путь до него целы.
+    transports = [f'transport-{b}' for b in dead if f'transport-{b}' in proxies]
     up = _probe_all(transports)[0] if transports else {}
-    stuck = [b for b in dead if b not in lone or up.get(f'transport-{b}') is not None]
+    stuck = [b for b in dead
+             if (up.get(f'transport-{b}') is not None if f'transport-{b}' in proxies
+                 else b.endswith('-direct')
+                 and any(_node_of(m) == _node_of(b) for m in _tick_alive))]
     for b in list(_stuck_streak):
         if b not in stuck:
             del _stuck_streak[b]

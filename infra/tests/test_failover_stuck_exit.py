@@ -49,6 +49,27 @@ class TestStuckExit(unittest.TestCase):
             run = Run(w, clash, Clock(w.INTERVAL)).go(int(300 / w.INTERVAL))
             self.assertEqual(len(run.restarts), 1, 'transport выхода отвечает: узел жив, ждём перезапуск')
 
+    def warp_down(self, transport_alive):
+        with tempfile.TemporaryDirectory() as tmp:
+            w = watchdog(tmp, INTERVAL='2')
+            clash = Clash(['aa', 'bb'])
+            for t in clash.tags:
+                clash.now[f'pin-{t}'] = t
+                clash.now[f'transport-{t}'] = f'transport-{t}'
+            clash.alive = (set(clash.tags) | {f'transport-{t}' for t in clash.tags}) - {'hy2-aa-warp'}
+            if not transport_alive:
+                clash.alive.discard('transport-hy2-aa-warp')
+            return Run(w, clash, Clock(w.INTERVAL)).go(int(3600 / w.INTERVAL))
+
+    def test_dead_warp_leg_with_live_direct_is_not_healed(self):
+        run = self.warp_down(transport_alive=False)
+        self.assertEqual(run.restarts, [], 'упал WARP (transport warp мёртв, direct жив): '
+                                           f'перезапуск хаба WARP не вернёт, было {len(run.restarts)}')
+
+    def test_stuck_warp_exit_with_live_transport_is_healed(self):
+        run = self.warp_down(transport_alive=True)
+        self.assertEqual(len(run.restarts), 2, 'warp-выход завис при живом transport: ждём лечение')
+
 
 if __name__ == '__main__':
     unittest.main()

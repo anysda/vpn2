@@ -25,7 +25,10 @@ USUAL_MINUTES = {
     'backup-restore': 8,
     'panel': 1,
     'backup-keys': 1,
-    'panel-e2e': 18,
+    'panel-e2e-paths': 1,
+    'panel-e2e-shard': 9,
+    'panel-e2e-qr': 4,
+    'panel-e2e': 1,
 }
 JOB_CEILING = 60
 APT_STEP_CEILING = 10
@@ -57,7 +60,8 @@ class CheckTimeoutTests(unittest.TestCase):
                     self.assertGreaterEqual(limit, usual * 1.5, f'{name}: ceiling would cut green runs')
 
     def test_qr_step_has_own_ceiling_and_keeps_output(self):
-        steps = [s for s in self.jobs['panel-e2e']['steps'] if QR_SCRIPT in s.get('run', '')]
+        steps = [s for job in self.jobs.values() for s in job.get('steps', [])
+                 if QR_SCRIPT in s.get('run', '')]
         self.assertEqual(len(steps), 1)
         step = steps[0]
         limit = step.get('timeout-minutes')

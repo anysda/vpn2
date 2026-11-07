@@ -211,7 +211,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3]
+        part: [1, 2, 3, 4]
     defaults:
       run:
         working-directory: app
@@ -244,7 +244,7 @@ jobs:
       - name: spec-файлы шарда
         env:
           PART: ${{ matrix.part }}
-          PARTS: '3'
+          PARTS: ${{ strategy.job-total }}
         run: |
           python3 - > "$RUNNER_TEMP/specs.txt" <<'EOF'
           import importlib.util, json, os, re, subprocess, sys

@@ -214,10 +214,13 @@ def probe_media(user, video, client, quic=False, cache=None):
                       f'{stats.get("size_download", 0)} байт, '
                       f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
                       f'CDN={effective.hostname}, client={client}' + (', PO=local' if cache else ''))
-    except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+    except subprocess.TimeoutExpired as error:
+        # Внешний timeout - повисла утилита или путь: не измерено, как и раньше,
+        # но второй заход bgutil на том же пути повиснет так же.
+        return None, f'{NETWORK_FAILURE}: видеопроба не завершена: {type(error).__name__}'
+    except (OSError, ValueError, KeyError) as error:
         # stdout yt-dlp и подписанные URL не пишем в журнал.
-        # Внешний timeout может означать зависание утилиты. Сетевой таймаут
-        # подтверждает только собственный --max-time curl (код 28).
+        # Сетевой таймаут как bad подтверждает только --max-time curl (код 28).
         return None, f'видеопроба не завершена: {type(error).__name__}'
 
 

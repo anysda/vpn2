@@ -200,6 +200,16 @@ def backup_usage(state):
             f'; each successful deploy keeps the {KEEP_BACKUPS} newest, older ones can be removed')
 
 
+def swapfile_usage(path=Path('/swapfile')):
+    """The swap file older bootstraps made can hold the space preflight wants."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return ''
+    return (f'; {path} {size // 2 ** 20} MiB: swapoff {path} && rm {path}, '
+            'the next deploy recreates swap sized to free space')
+
+
 def preflight(manifest, database, state, os_release=Path('/etc/os-release'), meminfo=Path('/proc/meminfo'), warn=True):
     os_values = dict(line.split('=', 1) for line in os_release.read_text().splitlines() if '=' in line)
     distro = os_values.get('ID', '').strip('"')
@@ -209,7 +219,8 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
     if architecture() not in manifest['architectures']:
         raise ReleaseError('unsupported architecture')
     if shutil.disk_usage(state).free < manifest['min_free_bytes']:
-        raise ReleaseError('insufficient disk space before backup; services unchanged; ' + backup_usage(state))
+        raise ReleaseError('insufficient disk space before backup; services unchanged; ' + backup_usage(state) +
+                           swapfile_usage())
     memory = dict(line.split(':', 1) for line in meminfo.read_text().splitlines())
     if int(memory['MemAvailable'].split()[0]) * 1024 < manifest['min_memory_bytes']:
         raise ReleaseError('insufficient available memory')

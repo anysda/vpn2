@@ -176,6 +176,9 @@ ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/vpn2-emergency
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Flat ~32 MB for days; exits get no entry drop-in, so the ceiling lives here.
+MemoryHigh=64M
+MemoryMax=96M
 # The emergency panel listens on 443 only while this exit leads; before an
 # emergency it serves just the admin's start link while the entry is silent.
 AmbientCapabilities=CAP_NET_BIND_SERVICE

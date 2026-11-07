@@ -23,6 +23,9 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LockPersonality=yes
+# The sender and its collect child stay under ~55 MB together.
+MemoryHigh=64M
+MemoryMax=96M
 
 [Install]
 WantedBy=multi-user.target

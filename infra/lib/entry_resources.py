@@ -130,9 +130,9 @@ UNITS = {
     "openvpn-server@server": ("MemoryLow", 64),
     "node_exporter": ("MemoryMax", 48),
     "anysda-yt-nfqws": ("MemoryMax", 32),
-    "vpn2-emergency": ("MemoryMax", 160),
+    "vpn2-emergency": ("MemoryMax", 96),
     "anysda-failover-watchdog": ("MemoryMax", 48),
-    "vpn2-emergency-snapshot": ("MemoryMax", 64),
+    "vpn2-emergency-snapshot": ("MemoryMax", 96),
     "anysda-yt-failover": ("MemoryMax", 384),
     "anysda-tproxy-watchdog": ("MemoryMax", 32),
     **{unit: ("MemoryHigh", 256) for unit in (
@@ -142,9 +142,12 @@ UNITS = {
         "anysda-ikev2-routing", "anysda-ikev2-sync", "anysda-ikev2-cert-sync",
         "anysda-wg-routing", "anysda-ovpn-routing")},
 }
-# Рабочая норма vpn2-emergency 100-150 МБ: ниже неё не режем и на 1 ГБ.
 # Проба YouTube через POT (yt-dlp + node) берёт до ~300 МБ на любой ступени.
-MEMORY_FLOOR = {"vpn2-emergency": 150, "anysda-yt-failover": 384}
+MEMORY_FLOOR = {"anysda-yt-failover": 384}
+# Аварийный агент и отправитель снимка держат ~32 МБ сутками (тест на тысячу
+# раундов), с дочерним collect - до ~55: потолок один на любой ступени, MemoryHigh
+# тормозит утечку раньше, чем MemoryMax её убьёт. Те же числа в самих юнитах.
+FIXED_MEMORY = {"vpn2-emergency": (64, 96), "vpn2-emergency-snapshot": (64, 96)}
 # Проба YouTube, сторожа, snapshot, backup: уступают CPU и диск трафику.
 BACKGROUND = {"anysda-yt-failover", "anysda-yt-quic-refresh", "anysda-failover-watchdog",
               "anysda-tproxy-watchdog", "anysda-warp-watchdog", "vpn2-emergency-snapshot",
@@ -152,6 +155,8 @@ BACKGROUND = {"anysda-yt-failover", "anysda-yt-quic-refresh", "anysda-failover-w
 
 
 def unit_memory(ram_mib, unit):
+    if unit in FIXED_MEMORY:
+        return FIXED_MEMORY[unit][1]
     tier = min(4, max(1, ram_mib // 960))
     return max(MEMORY_FLOOR.get(unit, 0), int(UNITS[unit][1] * 2 ** (tier - 2)))
 
@@ -170,6 +175,8 @@ def unit_dropin(ram_mib, unit):
     if limit == "MemoryLow":
         lines += ["OOMScoreAdjust=-900", "CPUWeight=1000", "IOWeight=1000"]
     elif limit == "MemoryMax":
+        if unit in FIXED_MEMORY:
+            lines.insert(1, f"MemoryHigh={FIXED_MEMORY[unit][0]}M")
         lines.append("MemorySwapMax=0")
     if unit in BACKGROUND:
         lines += ["CPUWeight=20", "IOWeight=20", "Nice=10"]

@@ -26,23 +26,36 @@ entry_dropin_write() {
 
 # OOMScoreAdjust и Nice systemd ставит только при запуске: живым процессам юнита
 # выставляем те же значения сами, без перезапуска (он рвёт клиентов).
+# oom_score_adj общий на процесс, nice у каждого потока свой: renice -p меняет
+# только главный поток, поэтому nice ставится всем tid из cgroup.threads.
+# Исчезнувший процесс пропускается молча, отказ записи живому - предупреждение.
 entry_unit_live() {
-  local unit=$1 rendered=$2 oom nice cgroup pid
+  local unit=$1 rendered=$2 oom nice cgroup pid tid task
+  local proc=${ENTRY_PROC_ROOT:-/proc}
   oom=$(sed -n 's/^OOMScoreAdjust=//p' <<< "$rendered")
   nice=$(sed -n 's/^Nice=//p' <<< "$rendered")
   [[ -n "$oom$nice" ]] || return 0
   cgroup=$(systemctl show -p ControlGroup --value "$unit.service" 2>/dev/null) || return 0
   [[ -n "$cgroup" ]] || return 0
-  cgroup="${ENTRY_CGROUP_ROOT:-/sys/fs/cgroup}$cgroup/cgroup.procs"
-  [[ -r "$cgroup" ]] || return 0
+  cgroup="${ENTRY_CGROUP_ROOT:-/sys/fs/cgroup}$cgroup"
+  [[ -r "$cgroup/cgroup.procs" ]] || return 0
   while read -r pid; do
-    if [[ -n "$oom" ]]; then
-      echo "$oom" 2>/dev/null > "${ENTRY_PROC_ROOT:-/proc}/$pid/oom_score_adj" || true
+    if [[ -n "$oom" ]] && ! { echo "$oom" > "$proc/$pid/oom_score_adj"; } 2>/dev/null \
+        && [[ -d "$proc/$pid" ]]; then
+      echo "WARN: oom_score_adj $pid: запись не прошла" >&2
     fi
-    if [[ -n "$nice" ]]; then
-      renice -n "$nice" -p "$pid" >/dev/null 2>&1 || true
+    if [[ -n "$nice" && ! -r "$cgroup/cgroup.threads" ]]; then
+      task=$(ls "$proc/$pid/task" 2>/dev/null) || task=
+      for tid in ${task:-$pid}; do
+        renice -n "$nice" -p "$tid" >/dev/null 2>&1 || true
+      done
     fi
-  done < "$cgroup"
+  done < "$cgroup/cgroup.procs"
+  if [[ -n "$nice" && -r "$cgroup/cgroup.threads" ]]; then
+    while read -r tid; do
+      renice -n "$nice" -p "$tid" >/dev/null 2>&1 || true
+    done < "$cgroup/cgroup.threads"
+  fi
 }
 
 # Свой drop-in последним по имени: перекрывает ручной override.conf, не трогая его.

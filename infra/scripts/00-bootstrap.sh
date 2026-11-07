@@ -42,6 +42,51 @@ systemctl mask --now esm-cache.service >/dev/null 2>&1 || true
 echo "[$HOST_TAG] [0/6] автообновления на паузу до конца деплоя"
 apt_auto_pause
 
+# Без swap entry на 2 ГБ трэшит память, и sing-box замирает (VPN2-652). Swap
+# только хосту и только меньше 4 ГБ (у VPS 4 ГБ MemTotal ~3,8 ГиБ); уже
+# включённый swap не трогаем, контейнерам он по-прежнему запрещён.
+ensure_swap() {
+  local mem_kb size avail
+  mem_kb=$(awk '$1 == "MemTotal:" {print $2}' /proc/meminfo)
+  (( mem_kb < 3840 * 1024 )) || return 0
+  [[ -z $(awk 'NR > 1' /proc/swaps) ]] || return 0
+  if [[ ! -f /swapfile ]]; then
+    size=$(( mem_kb * 1024 < 2 * 1024 ** 3 ? mem_kb * 1024 : 2 * 1024 ** 3 ))
+    avail=$(df -P -B1 "$(dirname /swapfile)" | awk 'NR == 2 {print $4}')
+    if (( avail < size + 1024 ** 3 )); then
+      echo "[$HOST_TAG]   swap пропущен: свободно $(( avail / 1024 ** 2 )) МиБ, нужно $(( size / 1024 ** 2 )) + 1024"
+      return 0
+    fi
+    echo "[$HOST_TAG]   swap: /swapfile $(( size / 1024 ** 2 )) МиБ (RAM $(( mem_kb / 1024 )) МиБ)"
+    # fallocate на части ФС не работает или даёт файл с дырами, которые swapon
+    # не берёт, - тогда пишем нулями.
+    if ! { fallocate -l "$size" /swapfile && chmod 600 /swapfile \
+           && mkswap /swapfile >/dev/null && swapon /swapfile; }; then
+      rm -f /swapfile
+      if ! { dd if=/dev/zero of=/swapfile bs=1M count=$(( size / 1024 ** 2 )) status=none \
+             && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; }; then
+        rm -f /swapfile
+        echo "[$HOST_TAG]   swap пропущен: swapon не включил /swapfile"
+        return 0
+      fi
+    fi
+  else
+    # Обрывок прошлого прогона: файл есть, swap не включён.
+    echo "[$HOST_TAG]   swap: включаю имеющийся /swapfile"
+    chmod 600 /swapfile
+    if ! swapon /swapfile 2>/dev/null \
+       && ! { mkswap /swapfile >/dev/null && swapon /swapfile; }; then
+      echo "[$HOST_TAG]   swap пропущен: swapon не включил /swapfile"
+      return 0
+    fi
+  fi
+  awk '$1 == "/swapfile" {found = 1} END {exit !found}' /etc/fstab \
+    || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo 'vm.swappiness = 10' > /etc/sysctl.d/60-anysda-swap.conf
+  sysctl -q -w vm.swappiness=10 >/dev/null || true
+}
+ensure_swap
+
 # ----------------------------------------------------------------------------
 # 1. apt update + base packages
 # ----------------------------------------------------------------------------

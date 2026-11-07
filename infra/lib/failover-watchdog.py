@@ -1241,6 +1241,8 @@ def _transport_pairs(proxies):
 
 def transport_tick(proxies):
     """hy2 канала мёртв, TCP жив - канал на TCP; hy2 снова жив TCP_RETURN - обратно.
+    Промах пробы TCP окно не сокращает (проба warp через TCP шумит при рабочем
+    канале): раньше окна обратно, только если TCP мёртв - DEAD_AFTER промахов подряд.
     Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
     pairs = _transport_pairs(proxies)
     if not pairs:
@@ -1250,12 +1252,15 @@ def transport_tick(proxies):
     delays, _ = _probe_all([v[0] for v in deciders.values()]
                            + [v[1] for s, v in deciders.items() if s in on_tcp])
     dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
+    tcp_dead = [v[1] for s, v in deciders.items()
+                if s in on_tcp and delays[v[0]] is not None and delays[v[1]] is None]
     for _ in range(DEAD_AFTER - 1):
-        if not dead:
+        if not dead and not tcp_dead:
             break
         time.sleep(CONFIRM_GAP)
-        again, _ = _probe_all(dead)
+        again, _ = _probe_all(dead + tcp_dead)
         dead = [h for h in dead if again[h] is None]
+        tcp_dead = [t for t in tcp_dead if again[t] is None]
     if dead:
         delays.update(_probe_all([deciders[s][1] for s in deciders
                                   if deciders[s][0] in dead])[0])
@@ -1269,7 +1274,7 @@ def transport_tick(proxies):
         if delays[hy2] is None:
             _hy2_since.pop(s, None)
             want[s] = tcp
-        elif delays[tcp] is None or now - _hy2_since.setdefault(s, now) >= TCP_RETURN:
+        elif tcp in tcp_dead or now - _hy2_since.setdefault(s, now) >= TCP_RETURN:
             want[s] = hy2
         else:
             want[s] = tcp

@@ -54,6 +54,7 @@ type=selector (см. gen-router-config.py) — управляется через
   PRESSURE_CPU_AVG10  cpu some avg10 entry, то же для CPU, %  60
   PSI_DIR           каталог PSI entry  /proc/pressure
   PROC_DIR          /proc для топа процессов по RSS  /proc
+  STUCK_AFTER_CHECKS  проверок подряд, что выход ручного маршрута мёртв при живом узле, до перезапуска  30
 
 Перезапуск sing-box: когда экзит один, переключаться некуда, и канал, залипший
 в sing-box на entry, лежал бы до перезагрузки. Если у всех включённых узлов
@@ -73,7 +74,11 @@ Bot API молчит везде — повторяет поиск раз в TG_I
 Ручные маршруты панели (pin-<выход>): у каждого есть запасной путь —
 foreign-best. Пока узел выключен вручную, выход мёртв или узел в штрафной
 после падения, маршрут идёт через foreign-best, потом возвращается на свой
-выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Через те
+выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Если выход
+мёртв, а узел жив (отвечает соседний выход или transport-<выход>), выход завис
+в sing-box entry: после STUCK_AFTER_CHECKS проверок вотчдог перезапускает
+sing-box под общим пределом RESTART_MIN_INTERVAL_S. Не ожил после двух таких
+перезапусков — одно событие в бот, и выход не лечим, пока не оживёт. Через те
 же pin-* идёт предпочитаемый экзит клиента (наборы client-pref-<узел>). При
 возврате на выход соединения, открытые через запасной путь, закрываются.
 
@@ -225,6 +230,10 @@ _tg_miss = 0              # промахов текущего выхода tg-be
 _tg_silent = False        # последний обход: Bot API не ответил ни через один выход
 PIN_PREFIX = 'pin-'
 _pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
+STUCK_AFTER_CHECKS = int(os.environ.get('STUCK_AFTER_CHECKS', '30'))
+STUCK_MAX_HEALS = 2       # перезапусков ради выхода, после которых его не лечим
+_stuck_streak: dict = {}  # выход ручного маршрута -> проверок подряд «мёртв при живом узле»
+_stuck_heals: dict = {}   # выход -> перезапусков ради него, пока он не ожил
 
 # Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
@@ -1038,6 +1047,65 @@ def _drop_pin_fallback_conns(name, base, conns):
         print(f'{name}: закрыто {closed} соединений с запасного выхода', flush=True)
 
 
+def stuck_tick(proxies):
+    """Выход ручного маршрута мёртв, а его узел жив (отвечает соседний выход
+    узла или transport-<выход>): выход завис в sing-box entry, и pin без
+    лечения стоял бы на foreign-best бессрочно. STUCK_AFTER_CHECKS проверок
+    подряд — перезапуск sing-box под тем же пределом частоты, что в
+    restart_tick. Не ожил после STUCK_MAX_HEALS перезапусков — одно событие и
+    больше не лечим, пока выход не оживёт."""
+    global _restarted
+    if RESTART_AFTER_CHECKS <= 0 or _tick_alive is None:
+        return
+    bases = sorted(n[len(PIN_PREFIX):] for n, p in proxies.items()
+                   if n.startswith(PIN_PREFIX) and str(p.get('type', '')).lower() == 'selector')
+    for b in bases:
+        if b in _tick_alive:
+            _stuck_heals.pop(b, None)
+    dead = [] if _all_dead else [b for b in bases
+                                 if b not in _tick_alive and _node_of(b) not in _excluded()]
+    lone = [b for b in dead if not any(_node_of(m) == _node_of(b) for m in _tick_alive)]
+    transports = [f'transport-{b}' for b in lone if f'transport-{b}' in proxies]
+    up = _probe_all(transports)[0] if transports else {}
+    stuck = [b for b in dead if b not in lone or up.get(f'transport-{b}') is not None]
+    for b in list(_stuck_streak):
+        if b not in stuck:
+            del _stuck_streak[b]
+    due = []
+    for b in stuck:
+        _stuck_streak[b] = _stuck_streak.get(b, 0) + 1
+        heals = _stuck_heals.get(b, 0)
+        if _stuck_streak[b] < STUCK_AFTER_CHECKS or heals > STUCK_MAX_HEALS:
+            continue
+        if heals == STUCK_MAX_HEALS:
+            _stuck_heals[b] = heals + 1
+            print(f'{b}: узел жив, а выход не ожил после {heals} перезапусков sing-box — '
+                  f'больше не перезапускаю, пока не оживёт', flush=True)
+            _bot_event('Экзиты', f'Выход {b} не оживает после перезапуска sing-box '
+                                 f'({heals}×) - лечить перестал, маршрут идёт через {GROUP}')
+            continue
+        due.append(b)
+    t = time.monotonic()
+    if not due or (_restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
+        return
+    _restarted = t
+    _save_restart()
+    for b in stuck:
+        if _stuck_heals.get(b, 0) < STUCK_MAX_HEALS:
+            _stuck_heals[b] = _stuck_heals.get(b, 0) + 1
+    _stuck_streak.clear()
+    names = ', '.join(due)
+    print(f'{names}: выход завис при живом узле {STUCK_AFTER_CHECKS} проверок подряд — '
+          f'перезапускаю sing-box', flush=True)
+    err = _restart_sing_box()
+    if err:
+        print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
+        detail = f'Выход {names} завис при живом узле - перезапуск sing-box не удался: {err}'
+    else:
+        detail = f'Выход {names} завис при живом узле - перезапустил sing-box'
+    _bot_event('Экзиты', detail)
+
+
 def tg_tick(proxies):
     """tg-best (выход бота): на экзите, с которого отвечает Bot API.
 
@@ -1143,6 +1211,7 @@ def main():
         try:
             proxies = _req('GET', '/proxies').get('proxies') or {}
             pins_tick(proxies, conns)
+            stuck_tick(proxies)
             tg_tick(proxies)
         except Exception as e:
             print(f'pins/tg error: {e}', file=sys.stderr, flush=True)

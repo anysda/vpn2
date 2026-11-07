@@ -72,8 +72,9 @@ Bot API молчит везде — повторяет поиск раз в TG_I
 уводит бота туда же, куда основной выбор.
 
 Ручные маршруты панели (pin-<выход>): у каждого есть запасной путь —
-foreign-best. Пока узел выключен вручную, выход мёртв или узел в штрафной
-после падения, маршрут идёт через foreign-best, потом возвращается на свой
+foreign-best (у warp-выхода - WARP-нога другого узла, без direct). Пока узел
+выключен вручную, выход мёртв или узел в штрафной после падения, маршрут идёт
+через запасной путь, потом возвращается на свой
 выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Если выход
 мёртв, а transport-<выход> отвечает (без transport — сосед для -direct), выход завис
 в sing-box entry: после STUCK_AFTER_CHECKS проверок вотчдог перезапускает
@@ -185,6 +186,7 @@ SLOW_HOLD          = float(os.environ.get('SLOW_HOLD_S', '60'))
 _lat_ewma: dict = {}      # узел -> сглаженная задержка, мс
 _state_since: dict = {}   # узел -> monotonic, с которого статус «хочет» смениться
 LANE_PREFIX = 'lane-'
+_warp_stuck = set()       # warp-выходы, что стоят на мёртвой ноге без живой WARP-замены
 _tick_alive = None        # {тег: задержка} живых невыключенных выходов последнего тика
 _lane_rate: dict = {}     # lane -> EWMA байт/с
 _lane_moved: dict = {}    # lane -> monotonic последнего переезда
@@ -993,7 +995,7 @@ def lanes_tick(conns):
 def pins_tick(proxies, conns=None):
     """pin-<выход> (ручные маршруты и предпочитаемый экзит клиента): на своём
     выходе, пока узел включён, выход жив (DEAD_AFTER промахов подряд — мёртв) и
-    узел не в штрафной, иначе — на foreign-best. Штрафную берём ту же, что у
+    узел не в штрафной, иначе — на foreign-best (warp-выход — на живую WARP-ногу другого узла). Штрафную берём ту же, что у
     основного выбора: узел, только что упавший и поднявшийся, на флапе не
     дёргает ручные маршруты туда-сюда.
 
@@ -1024,12 +1026,29 @@ def pins_tick(proxies, conns=None):
             why = f'узел в штрафной ещё {_penalty[node] - t:.0f}с'
         else:
             why = ''
-        want = GROUP if why else base
+        want = (_warp_fallback(base, p.get('now'), t) if base.endswith('-warp') else GROUP) \
+            if why else base
         if p.get('now') != want:
             _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
             print(f'{name} -> {want}: {why or "выход снова доступен"}', flush=True)
-            if want == base:
+            if not why:
                 _drop_pin_fallback_conns(name, base, conns)
+        if not why or want != base:
+            _warp_stuck.discard(base)
+        elif base not in _warp_stuck:
+            _warp_stuck.add(base)
+            print(f'{name}: {why}, живой WARP-ноги нет — остаюсь на {base}, в direct не ухожу', flush=True)
+
+
+def _warp_fallback(base, now, t):
+    """Запасной warp-выхода — живая WARP-нога другого узла, не GROUP: там
+    direct-ноги, и «-warp» вышел бы с IP дата-центра. Живой нет — pin остаётся
+    на своей мёртвой ноге, в журнале видно почему."""
+    legs = {tag: d for tag, d in _tick_alive.items()
+            if tag.endswith('-warp') and tag != base and _penalty.get(_node_of(tag), 0.0) <= t}
+    if now in legs:
+        return now
+    return min(legs, key=legs.get) if legs else base
 
 
 def _drop_pin_fallback_conns(name, base, conns):

@@ -463,11 +463,14 @@ def main():
     ] + lane_outbounds + [
         # pin-<выход> — для ручных маршрутов панели (anysda-apply-routes
         # подменяет hy2-X на pin-hy2-X). Пока узел выключен или выход мёртв,
-        # вотчдог переводит pin на foreign-best: маршрут не рвётся.
+        # вотчдог переводит pin на foreign-best: маршрут не рвётся. Запасные
+        # warp-выхода - только другие WARP-ноги: в foreign-best есть direct, и
+        # «-warp» ушёл бы с IP дата-центра.
         {
             'type': 'selector',
             'tag': f'pin-{t}',
-            'outbounds': [t, 'foreign-best'],
+            'outbounds': [t] + [w for w in warp_tags if w != t] if t in warp_tags
+                         else [t, 'foreign-best'],
             'default': t,
             'interrupt_exist_connections': False,
         } for t in all_hy2

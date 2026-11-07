@@ -109,8 +109,12 @@ if [[ "$WGCF_OK" == "1" ]] && [[ -f wgcf-account.toml ]]; then
         echo "[$HOST_TAG]   ⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder"
         WGCF_OK=0
       fi
+    elif [[ -s wgcf-profile.conf ]]; then
+      # Сбой generate не из-за аккаунта (Cloudflare API недоступен): рабочий
+      # профиль прошлого прогона оставляем, с ним и сторож WARP.
+      echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — оставляю профиль прошлого прогона"
     else
-      echo "[$HOST_TAG]   ⚠ wgcf generate не прошёл — WARP outbound будет placeholder"
+      echo "[$HOST_TAG]   ⚠⚠ wgcf generate не прошёл, профиля нет — WARP outbound будет placeholder, -warp на этом экзите мёртв"
       WGCF_OK=0
     fi
   fi

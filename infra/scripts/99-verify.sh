@@ -79,19 +79,28 @@ SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc 
 # _limit_kill_tree и _limit_run - копия из infra/lib/ssh.sh, текст один в один
 # (сверяет test_ssh_limit_session.py): скрипт запускают и одним файлом.
 _limit_kill_tree() {
-  local -a tree=("$1")
-  local -A seen=(["$1"]=1)
-  local grew=1 p pp
+  local -a tree=("$1") new
+  local IFS=' '
   kill -STOP "$1" 2>/dev/null || return 0
-  # Один снимок таблицы процессов на проход, а не pgrep на каждого потомка:
-  # проходы идут, пока находятся новые потомки, уже замороженные не плодят.
-  while (( grew )); do
-    grew=0
-    while read -r p pp; do
-      [[ -n ${seen[$pp]-} && -z ${seen[$p]-} ]] || continue
-      kill -STOP "$p" 2>/dev/null || :
-      seen[$p]=1; tree+=("$p"); grew=1
-    done < <(ps -e -o pid= -o ppid=)
+  # Один снимок таблицы процессов на проход, а не pgrep на каждого потомка.
+  # Новых потомков по снимку находит один awk, а не bash read по строке: на
+  # десятках тысяч процессов построчный разбор тянул проход на секунды, и
+  # возврат по пределу опаздывал. Проходы идут, пока находятся новые
+  # потомки, уже замороженные не плодят.
+  while mapfile -t new < <(ps -e -o pid= -o ppid= | awk -v tree="${tree[*]}" '
+      { kids[$2] = kids[$2] " " $1 }
+      END {
+        n = split(tree, queue, " ")
+        for (i = 1; i <= n; i++) seen[queue[i]] = 1
+        for (i = 1; i <= n; i++) {
+          m = split(kids[queue[i]], child, " ")
+          for (j = 1; j <= m; j++) if (!(child[j] in seen)) {
+            seen[child[j]] = 1; queue[++n] = child[j]; print child[j]
+          }
+        }
+      }'); (( ${#new[@]} )); do
+    kill -STOP "${new[@]}" 2>/dev/null || :
+    tree+=("${new[@]}")
   done
   # Корень последним: его ждёт _limit_run, к его смерти потомки уже убиты.
   kill -KILL "${tree[@]:1}" "$1" 2>/dev/null || :

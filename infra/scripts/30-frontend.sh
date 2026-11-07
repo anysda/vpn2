@@ -175,7 +175,7 @@ panel_files_restored() {
   [[ -f /etc/systemd/system/vpn2-tls.timer ]] && systemctl start vpn2-tls.timer || true
 }
 ovpn_switched=0
-panel_guard_files /etc/caddy/Caddyfile /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf \
+panel_guard_files /etc/caddy/Caddyfile /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf /etc/caddy/vpn2-panel.conf \
   /etc/vpn2/tls/config.json /etc/vpn2/tls/panel/secure /etc/vpn2-control/api-managed \
   /etc/openvpn/server/server.conf
 TLS_PATHS=(--config /etc/vpn2/tls/config.json --caddy-dir /etc/caddy
@@ -188,8 +188,9 @@ python3 /usr/local/lib/vpn2/vpn2_tls.py --prepare --role panel "${TLS_PATHS[@]}"
 
 cat > /etc/caddy/Caddyfile <<EOF
 {
-    # :80 до первого сертификата отдаёт панель, после — переадресует на HTTPS
-    # (/etc/caddy/vpn2-http.conf пишет vpn2_tls.py).
+    # :80 только переадресует на HTTPS (/etc/caddy/vpn2-http.conf), ACME
+    # HTTP-01 Caddy отвечает до маршрутов. Панель открыта лишь при действующем
+    # сертификате от CA: /etc/caddy/vpn2-panel.conf ведёт vpn2_tls.py.
     auto_https disable_redirects
     # Клиент по IP не шлёт SNI.
     default_sni ${TLS_HOST}
@@ -227,7 +228,7 @@ ${SITE} {
     import /etc/caddy/vpn2-tls.conf
     import internal_only
     encode gzip
-    import to_panel
+    import /etc/caddy/vpn2-panel.conf
 }
 :80 {
     import /etc/caddy/vpn2-http.conf
@@ -241,7 +242,7 @@ ufw delete allow 3001/tcp >/dev/null 2>&1 || true
 caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
   || { echo "[$HOST_TAG] конфиг caddy невалиден"; exit 1; }
 svc_restart_if_changed caddy /usr/bin/caddy /usr/lib/systemd/system/caddy.service /etc/caddy/Caddyfile \
-  /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf
+  /etc/caddy/vpn2-tls.conf /etc/caddy/vpn2-http.conf /etc/caddy/vpn2-panel.conf
 cat > /etc/systemd/system/vpn2-tls.service <<'EOF'
 [Unit]
 Description=VPN2 TLS certificate export and notifications
@@ -411,15 +412,15 @@ touch "$STAMP_DIR/$STAGE"
 echo "[$HOST_TAG] $STAGE done"
 panel_finish
 # Первый выпуск — после проверенной панели: неудача ACME не откатывает релиз,
-# панель остаётся на HTTP, Caddy повторяет выпуск сам.
+# панель закрыта до сертификата, Caddy повторяет выпуск сам.
 python3 /usr/local/lib/vpn2/vpn2_tls.py --initial --config /etc/vpn2/tls/config.json \
   --wait "${TLS_INITIAL_WAIT:-60}"
 systemctl enable --now vpn2-tls.timer >/dev/null
 echo
 echo "[$HOST_TAG] -------------------------------------------------------------"
-PANEL_SCHEME=http
-[[ "$(cat /etc/vpn2/tls/panel/secure)" == true ]] && PANEL_SCHEME=https
-echo "[$HOST_TAG]  Панель:        ${PANEL_SCHEME}://${PANEL_DOMAIN:-$ENTRY_HOST}/"
+PANEL_STATE=""
+grep -q '^import to_panel' /etc/caddy/vpn2-panel.conf || PANEL_STATE=" (закрыта до выпуска сертификата)"
+echo "[$HOST_TAG]  Панель:        https://${PANEL_DOMAIN:-$ENTRY_HOST}/${PANEL_STATE}"
 if [[ -f "$SSO_RUNTIME" ]]; then
   echo "[$HOST_TAG]  Вход:          как настроен в профиле панели; break-glass /login?direct=1"
   echo "[$HOST_TAG]                 $ADMIN_USER / (пароль в /etc/anysda/admin-password.txt)"

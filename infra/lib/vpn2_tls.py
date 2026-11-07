@@ -35,6 +35,9 @@ DAY = 86400
 SHORTLIVED = 160 * 3600
 IP_RENEW_AFTER = 5 * DAY
 DOMAIN_RENEW_BEFORE = 7 * DAY
+# Panel gate (vpn2-panel.conf): open only while a valid CA certificate exists.
+PANEL_OPEN = 'import to_panel\n'
+PANEL_CLOSED = 'respond "panel closed: no valid TLS certificate" 503 {\n    close\n}\n'
 
 
 def atomic(path, data, mode=0o600):
@@ -288,7 +291,8 @@ def activate(config, cert):
     files = {directory / 'vpn2-tls.conf': tls_config(config, cert['end'] - cert['start'])}
     secure_file = config.get('secure_file')
     if secure_file:
-        files[directory / 'vpn2-http.conf'] = 'redir https://' + authority(config['host']) + '{uri} permanent\n'
+        files[directory / 'vpn2-http.conf'] = redirect(config)
+        files[directory / 'vpn2-panel.conf'] = PANEL_OPEN
         files[Path(secure_file)] = 'true\n'
     previous = {path: read_text(path) for path in files}
     if previous == files:
@@ -315,6 +319,33 @@ def activate(config, cert):
         raise
 
 
+def redirect(config):
+    return 'redir https://' + authority(config['host']) + '{uri} permanent\n'
+
+
+def closed_reason(state, now):
+    expires = state.get('expires')
+    return (f'сертификат истёк {utc(expires)}' if expires and expires <= now
+            else 'сертификат не выпущен')
+
+
+def close_panel(config, reason):
+    """No valid certificate: the HTTPS site answers 503, HTTP keeps only the
+    redirect (Caddy answers HTTP-01 before any route). Returns True on change."""
+    gate = Path(config['caddy_dir']) / 'vpn2-panel.conf'
+    if read_text(gate) == PANEL_CLOSED:
+        return False
+    previous = read_text(gate)
+    atomic(gate, PANEL_CLOSED, 0o644)
+    try:
+        subprocess.run(['systemctl', 'reload', 'caddy'], capture_output=True, check=True, timeout=30)
+    except subprocess.SubprocessError:
+        atomic(gate, previous, 0o644)
+        raise
+    print(f'TLS: панель закрыта: {reason}; откроется сама после выпуска сертификата')
+    return True
+
+
 def tick(config, state_path, initial=False):
     state = read_json(state_path, {})
     now = time.time()
@@ -325,6 +356,8 @@ def tick(config, state_path, initial=False):
     if cert:
         export_certificate(config, cert)
         activate(config, cert)
+    elif config.get('secure_file') and not initial:
+        close_panel(config, closed_reason(state, now))
     observe(config, state, cert, error, now)
     atomic(state_path, json.dumps(state))
     deliver(config, state)
@@ -335,7 +368,8 @@ def tick(config, state_path, initial=False):
                    'Caddy повторит выпуск сам, до него авария на самоподписанном')
     elif initial:
         print(f"TLS: HTTPS готов, сертификат до {utc(cert['end'])}" if cert
-              else f"TLS: HTTP сохранён; {state.get('error', 'ACME pending')}; Caddy повторит выпуск сам")
+              else f"TLS: панель закрыта: {closed_reason(state, now)}; {state.get('error', 'ACME pending')}; "
+                   'Caddy повторит выпуск сам, панель откроется после него')
     return bool(cert)
 
 
@@ -355,10 +389,13 @@ def prepare(args):
     atomic(caddy_dir / 'vpn2-tls.conf', tls_config(config), 0o644)
     if args.role == 'exit':
         atomic(caddy_dir / 'Caddyfile', exit_caddyfile(config), 0o644)
-    elif previous.get('host') != args.host or not (caddy_dir / 'vpn2-http.conf').exists():
-        # Until the first certificate for this host the panel stays on HTTP.
-        atomic(caddy_dir / 'vpn2-http.conf', 'import internal_only\nencode gzip\nimport to_panel\n', 0o644)
-        atomic(args.secure_file, 'false\n', 0o644)
+    else:
+        # HTTP only redirects; Caddy answers HTTP-01 before this route.
+        atomic(caddy_dir / 'vpn2-http.conf', redirect(config), 0o644)
+        if previous.get('host') != args.host or not (caddy_dir / 'vpn2-panel.conf').exists():
+            # Closed until vpn2_tls.py sees a CA certificate for this host.
+            atomic(caddy_dir / 'vpn2-panel.conf', PANEL_CLOSED, 0o644)
+            atomic(args.secure_file, 'false\n', 0o644)
 
 
 def main():

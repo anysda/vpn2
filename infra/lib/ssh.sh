@@ -127,7 +127,8 @@ _ssh_output() {
       [[ -z ${1:-} ]] || printf '\n' 1<>"$1"
       # Не cat: uutils cat пишет в файл через splice и затирает строки,
       # что ssh в тот же миг пишет в stderr (>"$log" 2>&1). dd пишет write().
-      dd status=none bs=64k; return
+      # notrunc: uutils dd при выходе делает ftruncate по своему сдвигу и режет чужие строки.
+      dd status=none bs=64k conv=notrunc; return
     fi
     before+=("$line")
   done
@@ -143,7 +144,7 @@ _ssh_errfilter() {
   local -a before=()
   while IFS= read -r line; do
     # dd, не cat - причина в _ssh_output.
-    [[ $line == "$_SSH_MARK" ]] && { dd status=none bs=64k; return; }
+    [[ $line == "$_SSH_MARK" ]] && { dd status=none bs=64k conv=notrunc; return; }
     before+=("$line")
   done
   (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"

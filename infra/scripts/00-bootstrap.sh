@@ -90,6 +90,16 @@ ensure_swap() {
       fi
     fi
   }
+  # В privileged LXC swapon берёт /swapfile гостя в swap хоста, и откат и
+  # удаление контейнера падают (VPN2-683). Без systemd-detect-virt - как на VPS.
+  local virt=none
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    virt=$(systemd-detect-virt --container 2>/dev/null) || virt=none
+  fi
+  if [[ -n $virt && $virt != none ]]; then
+    echo "[$HOST_TAG]   swap пропущен: контейнер ($virt)"
+    return 0
+  fi
   mem_kb=$(awk '$1 == "MemTotal:" {print $2}' /proc/meminfo)
   (( mem_kb < 3840 * 1024 )) || return 0
   [[ -z $(awk 'NR > 1' /proc/swaps) ]] || return 0

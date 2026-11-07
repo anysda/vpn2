@@ -5,8 +5,9 @@ Each module runs in its own process; PKI tests form their own partition, as
 before. A class without class or module fixtures and without numbered tests is
 cut into chunks of CHUNK tests. Modules sharing the WireGuard oracle key run one
 after another in a single chain: one of them looks for that key in every netns
-of the host. The summed test count must equal the discovered one, and any
-failing partition fails the run.
+of the host. Modules that compare elapsed time with a limit by a second or less
+run last, one by one, with nothing else running. The summed test count must
+equal the discovered one, and any failing partition fails the run.
 """
 
 import argparse
@@ -26,9 +27,11 @@ HERE = Path(__file__).resolve().parent
 CHUNK = 4
 HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
 # Slowest modules by measurement: only queue order, the next run's tail
-SLOW = ('test_verify', 'test_ssh_limit_session', 'test_deploy_verify', 'test_verify_exit_ssh_limit_edge',
-        'test_verify_exit_ssh_timeout', 'test_apply_openvpn_check_signal', 'test_apply_openvpn_check_phases',
+SLOW = ('test_verify', 'test_ssh_limit_session', 'test_deploy_verify', 'test_verify_exit_ssh_timeout', 'test_apply_openvpn_check_signal', 'test_apply_openvpn_check_phases',
         'test_ssh_probe_timeout_value')
+# Elapsed time against a limit with a margin of 0.1-2 s: parallel load is enough to cross it
+QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
+         'test_control', 'test_release', 'test_probe_reads')
 
 
 def flatten(suite):
@@ -112,9 +115,10 @@ def main():
     expected = sum(parts.values())
     if not expected:
         return 1
-    # PKI, the host chain and the slowest modules first, then the largest partitions
+    # PKI, the host chain and the slowest modules first, then the largest partitions; quiet ones after the pool
     host = [key for key in parts if key[1] == 'general' and touches_host(key[0])]
-    rest = sorted((key for key in parts if key not in host),
+    quiet = [key for key in parts if key[0] in QUIET and key not in host]
+    rest = sorted((key for key in parts if key not in host and key not in quiet),
                   key=lambda key: (key[1] != 'pki', key[0] not in SLOW, -parts[key]))
     chains = [[key] for key in rest if key[1] == 'pki'] + ([host] if host else [])
     chains += [[key] for key in rest if key[1] != 'pki']
@@ -153,14 +157,19 @@ def main():
 
     started = time.monotonic()
     results = []
+
+    def report(batch):
+        for key, code, count, seconds, output in batch:
+            results.append((key, code, count, seconds))
+            print(f'===== {name(key)}: exit={code}, tests={count}, seconds={seconds:.1f}', flush=True)
+            print(output, end='', flush=True)
+
     with tempfile.TemporaryDirectory(prefix='infra-parts-') as directory:
         pool = ThreadPoolExecutor(max_workers=max(1, args.jobs))
         try:
             for future in as_completed([pool.submit(chain, keys, directory) for keys in chains]):
-                for key, code, count, seconds, output in future.result():
-                    results.append((key, code, count, seconds))
-                    print(f'===== {name(key)}: exit={code}, tests={count}, seconds={seconds:.1f}', flush=True)
-                    print(output, end='', flush=True)
+                report(future.result())
+            report(chain(quiet, directory))
         finally:
             with lock:
                 stopping.set()

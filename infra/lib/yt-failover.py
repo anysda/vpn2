@@ -43,13 +43,15 @@ HITS = 3
 # если замера нет непрерывно дольше порога, иначе бот шлёт пары каждые 5 мин.
 UNMEASURED_ALERT_AFTER = 3600
 PLAYER_CLIENT = 'web_embedded'
+# Локальные управляющие запросы никогда не отправляем через HTTP_PROXY.
+# Один на процесс: новый opener на каждый запрос оставлял ~90 КиБ RSS.
+OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def request(url, method, body, headers):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
-    # Локальные управляющие запросы никогда не отправляем через HTTP_PROXY.
-    with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=5) as response:
+    with OPENER.open(req, timeout=5) as response:
         raw = response.read()
     return json.loads(raw) if raw else {}
 

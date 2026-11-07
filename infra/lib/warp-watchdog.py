@@ -2,6 +2,7 @@
 """Exit WARP recovery. Timer and deployment share a persistent restart budget."""
 import argparse
 import fcntl
+import functools
 import ipaddress
 import json
 import os
@@ -46,6 +47,12 @@ def enabled(config):
     return False
 
 
+@functools.cache
+def opener(build):
+    # One per process: a fresh opener on every tick kept ~49 KiB of RSS.
+    return build(urllib.request.ProxyHandler({}))
+
+
 def probe(config):
     # v1.10.3 /proxies/warp/delay dials this outbound directly, ignoring route
     # selectors. Use HTTPS: this API replaces an http:// URL with its default.
@@ -54,14 +61,14 @@ def probe(config):
     controller = api['external_controller']
     if controller not in ('127.0.0.1:9090', 'localhost:9090', '[::1]:9090'):
         raise ValueError('WARP probe requires the local Clash API on port 9090')
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    client = opener(urllib.request.build_opener)
     for url in PROBE_URLS:
         query = urllib.parse.urlencode({'url': url, 'timeout': 5000})
         request = urllib.request.Request(
             f'http://{controller}/proxies/warp/delay?{query}',
             headers={'Authorization': f"Bearer {api['secret']}"})
         try:
-            with opener.open(request, timeout=7) as response:
+            with client.open(request, timeout=7) as response:
                 delay = json.load(response).get('delay')
                 if type(delay) in (int, float) and delay > 0:
                     return True

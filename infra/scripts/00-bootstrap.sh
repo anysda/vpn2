@@ -50,19 +50,33 @@ apt_auto_pause
 # Без swap entry на 2 ГБ трэшит память, и sing-box замирает (VPN2-652). Swap
 # только хосту и только меньше 4 ГБ (у VPS 4 ГБ MemTotal ~3,8 ГиБ); уже
 # включённый swap не трогаем, контейнерам он по-прежнему запрещён.
+# Swap не должен съесть место, которое preflight следующего деплоя требует по
+# min_free_bytes манифеста (VPN2-659): размер = min(RAM, 2 ГиБ, свободно -
+# min_free_bytes - 512 МиБ), меньше 256 МиБ - без swap.
 ensure_swap() {
-  local mem_kb size avail
+  local mem_kb size avail min_free cap reason manifest
   mem_kb=$(awk '$1 == "MemTotal:" {print $2}' /proc/meminfo)
   (( mem_kb < 3840 * 1024 )) || return 0
   [[ -z $(awk 'NR > 1' /proc/swaps) ]] || return 0
   if [[ ! -f /swapfile ]]; then
-    size=$(( mem_kb * 1024 < 2 * 1024 ** 3 ? mem_kb * 1024 : 2 * 1024 ** 3 ))
+    # Тот же манифест, что читает preflight; без него - число из
+    # infra/lib/build-release.py.
+    manifest=${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}
+    min_free=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1]))["min_free_bytes"]))' \
+      "$manifest" 2>/dev/null) || min_free=2147483648
     avail=$(df -P -B1 "$(dirname /swapfile)" | awk 'NR == 2 {print $4}')
-    if (( avail < size + 1024 ** 3 )); then
-      echo "[$HOST_TAG]   swap пропущен: свободно $(( avail / 1024 ** 2 )) МиБ, нужно $(( size / 1024 ** 2 )) + 1024"
+    size=$(( mem_kb * 1024 < 2 * 1024 ** 3 ? mem_kb * 1024 : 2 * 1024 ** 3 ))
+    reason="RAM $(( mem_kb / 1024 )) МиБ"
+    cap=$(( (avail - min_free - 512 * 1024 ** 2) / 1024 ** 2 * 1024 ** 2 ))
+    if (( cap < size )); then
+      size=$cap
+      reason="урезан, деплою оставлено $(( min_free / 1024 ** 2 )) + 512"
+    fi
+    if (( size < 256 * 1024 ** 2 )); then
+      echo "[$HOST_TAG]   swap пропущен: свободно $(( avail / 1024 ** 2 )) МиБ, деплою нужно $(( min_free / 1024 ** 2 )) + 512, swap меньше 256 МиБ не создаю"
       return 0
     fi
-    echo "[$HOST_TAG]   swap: /swapfile $(( size / 1024 ** 2 )) МиБ (RAM $(( mem_kb / 1024 )) МиБ)"
+    echo "[$HOST_TAG]   swap: /swapfile $(( size / 1024 ** 2 )) МиБ ($reason; свободно $(( avail / 1024 ** 2 )) МиБ)"
     # fallocate на части ФС не работает или даёт файл с дырами, которые swapon
     # не берёт, - тогда пишем нулями.
     if ! { fallocate -l "$size" /swapfile && chmod 600 /swapfile \

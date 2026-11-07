@@ -136,6 +136,7 @@ PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
 # Штраф — по УЗЛУ экзита, не по тегу: у ноды несколько outbound-ов
 # (hy2-<node>-direct, hy2-<node>-warp) — они на одной ноде и умирают вместе,
 # иначе watchdog обошёл бы штраф, перескочив на соседний тег того же узла.
+# Исключение - мёртвый warp при живом direct узла (_warp_only): это WARP, не узел.
 _penalty: dict = {}   # node -> monotonic-дедлайн пребывания в штрафной
 _pen_dur: dict = {}   # node -> текущая длительность штрафа (растёт при рецидиве)
 # Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
@@ -346,6 +347,12 @@ def _penalize(member):
     return node, dur
 
 
+def _warp_only(member, alive):
+    """Умер выход warp, а direct его узла жив: беда WARP или канала warp, не
+    узла. Узел не штрафуем, дорожки direct на нём остаются."""
+    return member.endswith('-warp') and member[:-4] + 'direct' in alive
+
+
 def _read_disabled(nodes):
     """Узлы, выключенные вручную из панели. Логирует только изменения.
     nodes — узлы группы: имя не из них (опечатка в файле) иначе молча ничего
@@ -523,6 +530,13 @@ def tick():
                   f'ожила ({c[now]}ms), транзиент, selector не трогаю', flush=True)
             return
         last_err = e.get(now, last_err)
+
+    if _warp_only(now, alive):
+        _spare(spare)
+        _switch(best, alive[best],
+                f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
+                f'direct узла {_node_of(now)} жив, узел не штрафую')
+        return
 
     # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
     node, dur = _penalize(now)
@@ -1031,7 +1045,7 @@ def pins_tick(proxies, conns=None):
         # бы на первом же удачном замере. Штрафуем узел в момент признания
         # смерти; долгая смерть штраф не наращивает.
         if (_pin_miss[base] == DEAD_AFTER and node not in _excluded()
-                and _penalty.get(node, 0.0) <= t):
+                and _penalty.get(node, 0.0) <= t and not _warp_only(base, _tick_alive)):
             _, dur = _penalize(base)
             print(f'{base} мёртв ({DEAD_AFTER}× промахов), узел {node} в штрафной {dur:.0f}с', flush=True)
         if node in _excluded():
@@ -1269,6 +1283,16 @@ def transport_tick(proxies):
     if dead:
         delays.update(_probe_all([deciders[s][1] for s in deciders
                                   if deciders[s][0] in dead])[0])
+    # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка,
+    # иначе канал остаётся на мёртвом hy2.
+    tcp_miss = [v[1] for v in deciders.values() if v[0] in dead and delays.get(v[1]) is None]
+    for _ in range(DEAD_AFTER - 1):
+        if not tcp_miss:
+            break
+        time.sleep(CONFIRM_GAP)
+        again, _ = _probe_all(tcp_miss)
+        delays.update({t: again[t] for t in tcp_miss if again[t] is not None})
+        tcp_miss = [t for t in tcp_miss if again[t] is None]
     now = time.monotonic()
     want = {}
     for s, (hy2, tcp, node, kind) in deciders.items():

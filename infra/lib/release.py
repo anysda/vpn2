@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,10 +21,13 @@ import urllib.request
 # release-<full commit>: the package is public, anonymous pull needs no account.
 RELEASE_SOURCE = 'https://ghcr.io/anysda/vpn2/panel'
 MANIFEST_MEDIA_TYPE = 'application/vnd.anysda.vpn2.release-manifest.v1+json'
+# A freshly started dockerd can break a layer extraction (snapshot not found,
+# context canceled); the same pull a few seconds later succeeds.
+PULL_PAUSES = (5, 15)
 
 
 class ReleaseError(Exception):
-    pass
+    detail = ''
 
 
 def read_json(path):
@@ -72,8 +76,37 @@ def command(args):
     result = subprocess.run(args, capture_output=True, text=True, timeout=300)
     if result.returncode:
         # Registry output and docker inspect may contain credentials. Never echo it.
-        raise ReleaseError(f'{args[0]} {args[1]} failed')
+        error = ReleaseError(f'{args[0]} {args[1]} failed')
+        if args[:2] == ['docker', 'pull']:
+            error.detail = pull_error(result.stderr)
+        raise error
     return result.stdout
+
+
+def pull_error(stderr):
+    """Last line of a docker pull error, credentials in URLs and tokens masked."""
+    lines = [line.strip() for line in (stderr or '').splitlines() if line.strip()]
+    line = lines[-1] if lines else 'no error text'
+    line = re.sub(r'(?i)(://[^/\s@]*:|bearer\s+|token=)[^\s@&]+', r'\1***', line)
+    return line[:200]
+
+
+def pull_image(component, selected):
+    """docker pull with retries; returns the last docker error, '' on success."""
+    error = ''
+    attempts = len(PULL_PAUSES) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            command(['docker', 'pull', selected])
+            return ''
+        except ReleaseError as exc:
+            error = exc.detail or str(exc)
+        if attempt < attempts:
+            pause = PULL_PAUSES[attempt - 1]
+            print(f'release: {component}: docker pull failed ({attempt}/{attempts}), '
+                  f'retry in {pause} s: {error}', file=sys.stderr)
+            time.sleep(pause)
+    return error
 
 
 def image(manifest, component, requested='', pull=True, arch=None):
@@ -88,19 +121,27 @@ def image(manifest, component, requested='', pull=True, arch=None):
         raise ReleaseError('image architecture is not supported') from exc
     reference = expected['repository'] + '@' + expected['digest']
     selected = requested or reference
+    failure = ''
     if pull:
         try:
-            command(['docker', 'pull', selected])
-        except (ReleaseError, subprocess.TimeoutExpired):
+            failure = pull_image(component, selected)
+        except subprocess.TimeoutExpired:
             pass  # A local image must still pass the immutable digest check.
     try:
-        actual = json.loads(command(['docker', 'image', 'inspect', selected]))[0]
-    except ReleaseError:
-        if requested:
+        try:
+            actual = json.loads(command(['docker', 'image', 'inspect', selected]))[0]
+        except ReleaseError:
+            if requested:
+                raise
+            # docker save/load need not preserve RepoDigests. The config digest binds
+            # the ordered rootfs DiffIDs as well as the executable configuration.
+            actual = json.loads(command(['docker', 'image', 'inspect', expected['config']]))[0]
+    except ReleaseError as exc:
+        if not failure:
             raise
-        # docker save/load need not preserve RepoDigests. The config digest binds
-        # the ordered rootfs DiffIDs as well as the executable configuration.
-        actual = json.loads(command(['docker', 'image', 'inspect', expected['config']]))[0]
+        raise ReleaseError(f'{component}: image {selected} not downloaded after '
+                           f'{len(PULL_PAUSES) + 1} attempts, docker: {failure}. Check that the '
+                           'entry reaches the image registry and run ./deploy.sh again') from exc
     descriptor = actual.get('Descriptor') or {}
     if descriptor.get('mediaType') in ('application/vnd.oci.image.index.v1+json',
                                       'application/vnd.docker.distribution.manifest.list.v2+json'):

@@ -232,6 +232,8 @@ _tg_miss = 0              # промахов текущего выхода tg-be
 _tg_silent = False        # последний обход: Bot API не ответил ни через один выход
 PIN_PREFIX = 'pin-'
 _pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
+_warp_miss: dict = {}     # WARP-нога -> промахов подряд (запасная для pin-*-warp)
+_warp_delay: dict = {}    # WARP-нога -> последняя удачная задержка
 STUCK_AFTER_CHECKS = int(os.environ.get('STUCK_AFTER_CHECKS', '30'))
 STUCK_MAX_HEALS = 2       # перезапусков ради выхода, после которых его не лечим
 _stuck_streak: dict = {}  # выход ручного маршрута -> проверок подряд «мёртв при живом узле»
@@ -1005,6 +1007,12 @@ def pins_tick(proxies, conns=None):
     if _tick_alive is None:
         return   # замеров нет (ошибка тика) — ничего не двигаем
     t = time.monotonic()
+    for tag in set(_warp_miss) | {x for x in _tick_alive if x.endswith('-warp')}:
+        if tag in _tick_alive:
+            _warp_miss[tag] = 0
+            _warp_delay[tag] = _tick_alive[tag]
+        else:
+            _warp_miss[tag] = _warp_miss.get(tag, DEAD_AFTER) + 1
     for name, p in proxies.items():
         if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
             continue
@@ -1043,9 +1051,11 @@ def pins_tick(proxies, conns=None):
 def _warp_fallback(base, now, t):
     """Запасной warp-выхода — живая WARP-нога другого узла, не GROUP: там
     direct-ноги, и «-warp» вышел бы с IP дата-центра. Живой нет — pin остаётся
-    на своей мёртвой ноге, в журнале видно почему."""
-    legs = {tag: d for tag, d in _tick_alive.items()
-            if tag.endswith('-warp') and tag != base and _penalty.get(_node_of(tag), 0.0) <= t}
+    на своей мёртвой ноге, в журнале видно почему. Нога мертва после
+    DEAD_AFTER промахов подряд, до того берём её последнюю удачную задержку."""
+    legs = {tag: _warp_delay[tag] for tag, m in _warp_miss.items()
+            if m < DEAD_AFTER and tag != base and _node_of(tag) not in _excluded()
+            and _penalty.get(_node_of(tag), 0.0) <= t}
     if now in legs:
         return now
     return min(legs, key=legs.get) if legs else base

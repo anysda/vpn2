@@ -10,6 +10,8 @@ YT_PROBE_VIDEO позволяет выбрать другой общедосту
 с разрешённым встраиванием: клиент web_embedded без cookies и PO-токена.
 При неизмеренном ответе — другой ролик (YT_PROBE_POT_VIDEO), mweb и локальный
 PO-токен bgutil. Не более двух попыток; сетевой bad повтором не маскируем.
+Лимит памяти (MemoryMax юнита) и сетевой отказ до YouTube второй заход не
+запускают; убитая по памяти проба не меняет счётчики и маршрут.
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
 счётчики и маршрут. «Не измерено» уходит один раз, когда провал длится без
 перерыва дольше часа; «возобновлено» — только после такого алерта.
@@ -46,6 +48,15 @@ PLAYER_CLIENT = 'web_embedded'
 # Локальные управляющие запросы никогда не отправляем через HTTP_PROXY.
 # Один на процесс: новый opener на каждый запрос оставлял ~90 КиБ RSS.
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+# Убийство по MemoryMax юнита - сбой самой пробы, а не YouTube: не считается
+# и не повторяется вторым, более тяжёлым заходом (node + bgutil).
+MEMORY_LIMIT = 'проба не удалась: лимит памяти'
+OOM_MARKERS = ('out of memory', 'memoryerror', 'cannot allocate memory', 'sigkill')
+# Сетевой провал до YouTube PO-токен не лечит: второй заход не запускаем.
+NETWORK_FAILURE = 'сетевой отказ до YouTube'
+NETWORK_MARKERS = ('timed out', 'connection refused', 'connection reset', 'network is unreachable',
+                   'no route to host', 'name or service not known',
+                   'temporary failure in name resolution', 'no address associated with hostname')
 
 
 def request(url, method, body, headers):
@@ -102,6 +113,28 @@ def media_ok(returncode, stats):
     return size == SAMPLE_BYTES and speed >= MIN_BPS
 
 
+def oom_kills():
+    """Счётчик OOM-kill cgroup службы; ловит и node, убитый внутри yt-dlp."""
+    try:
+        group = Path('/proc/self/cgroup').read_text().split('::', 1)[1].strip()
+        for line in Path('/sys/fs/cgroup' + group, 'memory.events').read_text().splitlines():
+            key, value = line.split()
+            if key == 'oom_kill':
+                return int(value)
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def memory_killed(result, before):
+    if result.returncode in (-9, 137):
+        return True
+    if any(marker in (result.stderr or '').lower() for marker in OOM_MARKERS):
+        return True
+    after = oom_kills() if before is not None else None
+    return after is not None and after > before
+
+
 def probe_media(user, video, client, quic=False, cache=None):
     try:
         prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
@@ -115,6 +148,7 @@ def probe_media(user, video, client, quic=False, cache=None):
             env['XDG_CACHE_HOME'] = cache
             extra = ['--source-address', '0.0.0.0', '--extractor-args',
                      'youtubepot-bgutilscript:server_home=/opt/anysda-yt-probe/bgutil/server']
+        before = oom_kills()
         info = subprocess.run(prefix + [
             '/opt/anysda-yt-probe/bin/yt-dlp', '--ignore-config', '--no-cache-dir',
             '--no-playlist', '--no-warnings', '--proxy', '', '--force-ipv4',
@@ -123,11 +157,17 @@ def probe_media(user, video, client, quic=False, cache=None):
             '--socket-timeout', '10', '--retries', '0',
             '--extractor-retries', '0', '-f', 'bestvideo[protocol=https]', '-J', video,
         ] + extra, env=env, capture_output=True, text=True, timeout=60, check=False)
+        if memory_killed(info, before):
+            return None, f'{MEMORY_LIMIT} (yt-dlp/node, client={client})'
         if info.returncode:
-            if 'Sign in to confirm' in (info.stderr or ''):
+            stderr = info.stderr or ''
+            if 'Sign in to confirm' in stderr:
                 return None, 'YouTube требует входа (антибот); обход не измерен'
-            if 'Requested format is not available' in (info.stderr or ''):
+            if 'Requested format is not available' in stderr:
                 return None, f'нет HTTPS-видеоформата (SABR/ограничения ролика), client={client}'
+            # HTTP-ответ (403 и т.п.) - YouTube ответил: это не сеть.
+            if 'HTTP Error' not in stderr and any(marker in stderr.lower() for marker in NETWORK_MARKERS):
+                return None, f'{NETWORK_FAILURE} (таймаут, соединение или DNS у yt-dlp), client={client}'
             return None, (f'не удалось получить URL видеопотока (yt-dlp, client={client}); '
                           'проверить встраивание ролика/экстрактор/JS-рантайм')
         media = json.loads(info.stdout)
@@ -153,7 +193,12 @@ def probe_media(user, video, client, quic=False, cache=None):
         for key, value in headers.items():
             if key.lower() in ('user-agent', 'referer', 'origin'):
                 cmd += ['-H', f'{key}: {value}']
+        before = oom_kills()
         result = subprocess.run(cmd + [url], env=env, capture_output=True, text=True, timeout=25, check=False)
+        if memory_killed(result, before):
+            return None, f'{MEMORY_LIMIT} (curl, client={client})'
+        if result.returncode == 6:
+            return None, f'{NETWORK_FAILURE}: DNS Googlevideo (curl=6), client={client}'
         stats = json.loads(result.stdout or '{}')
         good = media_ok(result.returncode, stats)
         if not isinstance(stats, dict):
@@ -187,9 +232,10 @@ def probe(quic=False):
             return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
         user = pwd.getpwnam('ytzdiag')
         good, detail = probe_media(user, VIDEO, PLAYER_CLIENT, quic)
-        if good is not None:
+        if good is not None or detail.startswith((MEMORY_LIMIT, NETWORK_FAILURE)):
             # Медленный/оборванный поток — измеренный bad. Другой CDN не
             # должен маскировать сетевой провал успехом резервного ролика.
+            # Лимит памяти и сеть второй заход не лечит, а память он берёт больше.
             return good, detail
         # Кэш одноразовый: нет зависимости от /root, состояния прошлого
         # запуска или гонок --probe-only с таймером. Работает с PrivateTmp.
@@ -262,6 +308,10 @@ def tick(path, sample):
         save(path, state)
     state['pending'] = [event for event in state['pending'] if not notify(event)]
     save(path, state)
+    if detail.startswith(MEMORY_LIMIT):
+        print(f'YouTube: {detail}; не считается провалом YouTube, счётчики и маршрут {target} сохранены',
+              flush=True)
+        return
     print(f'YouTube: {target}; good={state["good"]} bad={state["bad"]}; '
           f'{"не измерено: " if unmeasured else ""}{detail}', flush=True)
 

@@ -772,6 +772,8 @@ ConditionPathExists=/etc/sing-box/config.json
 Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/bin/anysda-yt-failover
 TimeoutStartSec=240
+# OOM-kill yt-dlp/node по MemoryMax не гасит контроллер: он пишет «лимит памяти».
+OOMPolicy=continue
 StateDirectory=anysda-yt-failover
 UMask=0077
 NoNewPrivileges=true

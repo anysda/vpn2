@@ -121,8 +121,8 @@ def patch_adguard(path, state_path, values, overrides, fresh=False, check=False)
 # ступенях объём умножается так же, как бюджеты docker; лимиты остаются и на
 # 4 ГБ+: это потолок против утечки, а не подгонка.
 # MemoryLow - трафик (sing-box, charon, openvpn): под давлением отдаётся последним;
-# MemoryMax - долгоживущее и пробы: на 2 ГБ сумма с docker и AGH = MemTotal
-#   (768 + 1280 MiB); на 1 ГБ сумма больше памяти из-за пола пробы YouTube;
+# MemoryMax - долгоживущее и пробы: на 2 ГБ сумма с docker и AGH не больше
+#   MemTotal (684 + 1280 MiB); на 1 ГБ сумма больше памяти из-за пола пробы YouTube;
 # MemoryHigh - короткий oneshot: в сумму MemoryMax не входит.
 UNITS = {
     "sing-box": ("MemoryLow", 128),
@@ -133,7 +133,7 @@ UNITS = {
     "vpn2-emergency": ("MemoryMax", 96),
     "anysda-failover-watchdog": ("MemoryMax", 48),
     "vpn2-emergency-snapshot": ("MemoryMax", 96),
-    "anysda-yt-failover": ("MemoryMax", 384),
+    "anysda-yt-failover": ("MemoryMax", 300),
     "anysda-tproxy-watchdog": ("MemoryMax", 32),
     **{unit: ("MemoryHigh", 256) for unit in (
         "anysda-fq", "anysda-mgmt-loopback", "anysda-hy2hop", "anysda-warp-watchdog",
@@ -142,8 +142,9 @@ UNITS = {
         "anysda-ikev2-routing", "anysda-ikev2-sync", "anysda-ikev2-cert-sync",
         "anysda-wg-routing", "anysda-ovpn-routing")},
 }
-# Проба YouTube через POT (yt-dlp + node) берёт до ~300 МБ на любой ступени.
-MEMORY_FLOOR = {"anysda-yt-failover": 384}
+# Проба YouTube (yt-dlp + node) не уходит ниже ступени 2 ГБ и на 1 ГБ: по лимиту
+# убитая проба не измеряет, но и маршрут не трогает.
+MEMORY_FLOOR = {"anysda-yt-failover": 300}
 # Аварийный агент и отправитель снимка держат ~32 МБ сутками (тест на тысячу
 # раундов), с дочерним collect - до ~55: потолок один на любой ступени, MemoryHigh
 # тормозит утечку раньше, чем MemoryMax её убьёт. Те же числа в самих юнитах.

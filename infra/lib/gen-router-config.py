@@ -41,6 +41,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import uuid
 
 # Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -176,6 +177,40 @@ def exit_tls(tag, T, domain):
     return {'enabled': True, 'server_name': domain, 'certificate_path': cert_path}
 
 
+def reality_fallback(tag, T, domain):
+    """Запасной канал VLESS + Reality по TCP: строит outbound на канал экзита.
+
+    Открытую часть Reality 20-ru-router берёт из exit-certs/{tag}.reality.
+    Нет её (экзит ещё не передеплоен) - каналы остаются только на hy2.
+    """
+    pub = os.environ.get(f'{T}_REALITY_PUBKEY', '').strip()
+    if not pub:
+        print(f'WARNING: экзит {tag}: нет ключа Reality - без запасного TCP-канала, '
+              f'при обрыве UDP до него каналы мертвы (передеплой 10-foreign)', file=sys.stderr)
+        return None
+    sni = require(f'{T}_REALITY_SNI')
+    port = int(require(f'{T}_REALITY_PORT'))
+    sid = os.environ.get(f'{T}_REALITY_SHORT_ID', '')
+
+    def outbound(kind, password):
+        return {
+            'type': 'vless', 'tag': f'transport-tcp-{tag}-{kind}',
+            'server': domain, 'server_port': port,
+            # Тот же вывод uuid из пароля канала, что у инбаунда в 10-foreign.sh.
+            'uuid': str(uuid.uuid5(uuid.NAMESPACE_OID, 'vpn2-reality:' + password)),
+            'tls': {'enabled': True, 'server_name': sni,
+                    'utls': {'enabled': True, 'fingerprint': 'chrome'},
+                    'reality': {'enabled': True, 'public_key': pub, 'short_id': sid}},
+        }
+    return outbound
+
+
+def transport_selector(tag, primary, fallback):
+    # Выбор hy2/TCP ведёт failover-watchdog: TCP только пока hy2 мёртв.
+    return {'type': 'selector', 'tag': tag, 'outbounds': [primary, fallback],
+            'default': primary, 'interrupt_exist_connections': True}
+
+
 def main():
     exit_tags = require('EXIT_TAGS').split()
     if not exit_tags:
@@ -304,6 +339,7 @@ def main():
             sys.exit(f'ERROR: {error}')
 
         tls_common = exit_tls(tag, T, domain)
+        fallback = reality_fallback(tag, T, domain)
         tls_direct = dict(tls_common)
         tls_warp   = dict(tls_common)
 
@@ -319,7 +355,8 @@ def main():
             outbounds.append({
                 'type': 'trojan', 'tag': f'hy2-{tag}-{kind}',
                 'server': '127.0.0.1', 'server_port': inner_port,
-                'password': password, 'detour': f'transport-hy2-{tag}-{kind}',
+                'password': password,
+                'detour': f'transport-{tag}-{kind}' if fallback else f'transport-hy2-{tag}-{kind}',
                 'multiplex': {'enabled': True, 'protocol': 'h2mux', 'max_connections': 4},
             })
         outbounds.append({
@@ -347,9 +384,18 @@ def main():
         # Служебный туннель до экзита. Тот же self-signed cert/obfs, что и у
         # рабочих hy2, но отдельный порт/пароль и своя пара outbound↔inbound,
         # чтобы служебный трафик не делил сессию с пользовательским.
+        if fallback:
+            for kind, password in (('direct', pwd_direct), ('warp', pwd_warp)):
+                outbounds.append(fallback(kind, password))
+                outbounds.append(transport_selector(f'transport-{tag}-{kind}',
+                                                    f'transport-hy2-{tag}-{kind}',
+                                                    f'transport-tcp-{tag}-{kind}'))
+            outbounds.append(fallback('mgmt', pwd_mgmt))
+            outbounds.append(transport_selector(f'hy2-{tag}-mgmt', f'transport-hy2-{tag}-mgmt',
+                                                f'transport-tcp-{tag}-mgmt'))
         outbounds.append({
             'type': 'hysteria2',
-            'tag': f'hy2-{tag}-mgmt',
+            'tag': f'transport-hy2-{tag}-mgmt' if fallback else f'hy2-{tag}-mgmt',
             'server': domain,
             'server_port': mgmt_port,
             **hop.get('mgmt', {}),

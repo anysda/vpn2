@@ -199,6 +199,20 @@ for _t in $EXIT_TAGS; do
   if [[ -f "/etc/sing-box/exit-certs/${_t}.pem" ]]; then
     export "${_T}_HY2_CERT_PATH=/etc/sing-box/exit-certs/${_t}.pem"
   fi
+  # Открытая часть Reality экзита: запасной канал VLESS по TCP при обрыве UDP.
+  # Строки PUB/SID/SNI/PORT читаем по одной, файл не исполняем.
+  _src="/tmp/anysda/exit-certs/${_t}.reality"
+  [[ -f "$_src" ]] && install -m 600 "$_src" "/etc/sing-box/exit-certs/${_t}.reality"
+  if [[ -f "/etc/sing-box/exit-certs/${_t}.reality" ]]; then
+    while IFS='=' read -r _k _v; do
+      case "$_k" in
+        PUB) export "${_T}_REALITY_PUBKEY=$_v" ;;
+        SID) export "${_T}_REALITY_SHORT_ID=$_v" ;;
+        SNI) export "${_T}_REALITY_SNI=$_v" ;;
+        PORT) export "${_T}_REALITY_PORT=$_v" ;;
+      esac
+    done < "/etc/sing-box/exit-certs/${_t}.reality"
+  fi
 done
 
 # Write the BASE config (without manual routes). The manual-routes watcher

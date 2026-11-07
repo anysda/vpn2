@@ -357,6 +357,17 @@ prep_ru_router() {
     ssh_exec 'cat /etc/ssh/ssh_host_ed25519_key.pub' \
       > "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" 2>/dev/null \
       || rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
+    # Открытая часть Reality (запасной TCP-канал) - строго четыре известные
+    # строки; нет её - entry держит прошлую, а на старом экзите остаётся без резерва.
+    local reality="$DEPLOY_ROOT/secrets/exit-certs/$host.reality"
+    if ssh_exec 'cat /etc/anysda/reality.pub' > "$reality.tmp" 2>/dev/null \
+       && [[ $(grep -cE '^(PUB=[A-Za-z0-9_-]{43}|SID=[0-9a-f]{0,16}|SNI=[A-Za-z0-9.-]{1,253}|PORT=[0-9]{1,5})$' \
+                 "$reality.tmp") -eq 4 && $(wc -l < "$reality.tmp") -eq 4 ]]; then
+      mv -f "$reality.tmp" "$reality"
+    else
+      rm -f "$reality.tmp"
+      warn "на $host нет ключа Reality - запасной TCP-канал до него не включится (передеплой 10-foreign)"
+    fi
     # Экзит доверен меньше entry, а 20-ru-router читает этот файл от root.
     # Пропускаем только известные ключи со значением в алфавите gen_pwd
     # из 10-foreign; сертификат и хост-ключ должны разбираться как есть.

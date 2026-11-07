@@ -193,6 +193,22 @@ HY2_OBFS_PWD=$(cat /etc/anysda/hy2-obfs.pwd)
 HY2_PWD_MGMT=$(cat /etc/anysda/hy2-mgmt.pwd)
 CLASH_SECRET=$(cat /etc/anysda/clash-secret.txt)
 
+# Запасной канал VLESS + Reality по TCP: entry уходит на него, когда до экзита
+# режут UDP. Пара X25519 через openssl: 32 байта ключа - хвост DER.
+# reality.pub - открытая часть для entry, её забирает prep_ru_router.
+reality_b64() { tail -c 32 | base64 | tr '+/' '-_' | tr -d '=\n'; }
+[[ -f /etc/anysda/reality.pem ]] || openssl genpkey -algorithm X25519 -out /etc/anysda/reality.pem
+[[ -f /etc/anysda/reality.sid ]] || openssl rand -hex 8 > /etc/anysda/reality.sid
+chmod 600 /etc/anysda/reality.pem
+REALITY_PRIVKEY=$(openssl pkey -in /etc/anysda/reality.pem -outform DER | reality_b64)
+REALITY_SHORT_ID=$(cat /etc/anysda/reality.sid)
+REALITY_SNI=${REALITY_SNI:-www.apple.com}
+REALITY_PORT=${REALITY_PORT:-4443}
+printf 'PUB=%s\nSID=%s\nSNI=%s\nPORT=%s\n' \
+  "$(openssl pkey -in /etc/anysda/reality.pem -pubout -outform DER | reality_b64)" \
+  "$REALITY_SHORT_ID" "$REALITY_SNI" "$REALITY_PORT" > /etc/anysda/reality.pub
+export REALITY_PRIVKEY REALITY_SHORT_ID REALITY_SNI REALITY_PORT
+
 # Note: these passwords MUST be communicated back to the RU router (stage 20).
 # prep_ru_router (deploy.sh) забирает их по SSH при подготовке стадии 20.
 
@@ -269,6 +285,42 @@ export HY2_BANDWIDTH_FIELDS
 SB_CONFIG_TMP=$(mktemp /etc/sing-box/.config.json.XXXXXX)
 trap 'rm -f -- "$SB_CONFIG_TMP"' EXIT
 envsubst < "$TPL" > "$SB_CONFIG_TMP"
+# VLESS + Reality по TCP рядом с hy2: пользователь на канал, у каждого маршрут
+# его hy2-инбаунда. uuid выводится из пароля канала так же, как на entry.
+if [[ -n "${REALITY_PRIVKEY:-}" ]]; then
+  python3 - "$SB_CONFIG_TMP" <<'PY'
+import json
+import os
+import sys
+import uuid
+
+path = sys.argv[1]
+with open(path) as f:
+    config = json.load(f)
+env = os.environ
+sni = env['REALITY_SNI']
+users = [{'name': kind, 'uuid': str(uuid.uuid5(uuid.NAMESPACE_OID, 'vpn2-reality:' + env[var]))}
+         for kind, var in (('direct', 'HY2_PWD_DIRECT'), ('warp', 'HY2_PWD_WARP'),
+                           ('mgmt', 'HY2_PWD_MGMT'))]
+config.setdefault('inbounds', []).append({
+    'type': 'vless', 'tag': 'reality-in', 'listen': '::',
+    'listen_port': int(env['REALITY_PORT']), 'users': users,
+    'tls': {'enabled': True, 'server_name': sni, 'reality': {
+        'enabled': True, 'handshake': {'server': sni, 'server_port': 443},
+        'private_key': env['REALITY_PRIVKEY'], 'short_id': [env['REALITY_SHORT_ID']]}}})
+route = config.setdefault('route', {})
+rules = []
+for rule in route.get('rules', []):
+    rules.append(rule)
+    inbound = rule.get('inbound', [])
+    inbound = [inbound] if isinstance(inbound, str) else inbound
+    rules += [{**rule, 'inbound': 'reality-in', 'auth_user': [user['name']]}
+              for user in users if f"hy2-{user['name']}-in" in inbound]
+route['rules'] = rules + [{'inbound': 'reality-in', 'action': 'reject'}]
+with open(path, 'w') as f:
+    json.dump(config, f, indent=2)
+PY
+fi
 
 # Validate
 if ! /usr/local/bin/sing-box check -c "$SB_CONFIG_TMP"; then
@@ -386,6 +438,7 @@ fi
 ufw_sync_rules 'hysteria2 direct' "${HY2_DIRECT_PORT}/udp"
 ufw_sync_rules 'hysteria2 warp' "${HY2_WARP_PORT}/udp"
 ufw_sync_rules --alias 'hysteria2 mgmt (monitoring)' 'hysteria2 mgmt' "${HY2_MGMT_PORT}/udp"
+ufw_sync_rules 'vless reality' "${REALITY_PORT}/tcp"
 ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090 >/dev/null 2>&1 || true
 
 # Смена портов hy2: outbound entry раз в HY2_HOP_INTERVAL переходит на другой

@@ -117,6 +117,10 @@ fi
 _SSH_MARK=vpn2-ssh-output-begin
 _SSH_OUTPUT_NO_MARK=3
 _ssh_begin="printf '\\n%s\\n' $_SSH_MARK; [ /dev/stdout -ef /dev/stderr ] || printf '\\n%s\\n' $_SSH_MARK >&2;"
+# GNU dd: uutils dd при выходе делает ftruncate по своему сдвигу и режет строки
+# второго писателя, а с conv=notrunc копит вывод до конца ввода. В Ubuntu 26.04
+# GNU dd - gnudd (gnu-coreutils, Priority: required), в прочих системах - dd.
+_ssh_dd=$(command -v gnudd || echo dd)
 
 _ssh_output() {
   local line
@@ -127,7 +131,7 @@ _ssh_output() {
       [[ -z ${1:-} ]] || printf '\n' 1<>"$1"
       # Не cat: uutils cat пишет в файл через splice и затирает строки,
       # что ssh в тот же миг пишет в stderr (>"$log" 2>&1). dd пишет write().
-      dd status=none bs=64k; return
+      "$_ssh_dd" status=none bs=64k; return
     fi
     before+=("$line")
   done
@@ -143,7 +147,7 @@ _ssh_errfilter() {
   local -a before=()
   while IFS= read -r line; do
     # dd, не cat - причина в _ssh_output.
-    [[ $line == "$_SSH_MARK" ]] && { dd status=none bs=64k; return; }
+    [[ $line == "$_SSH_MARK" ]] && { "$_ssh_dd" status=none bs=64k; return; }
     before+=("$line")
   done
   (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"

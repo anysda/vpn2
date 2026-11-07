@@ -1243,6 +1243,8 @@ def transport_tick(proxies):
     """hy2 канала мёртв, TCP жив - канал на TCP; hy2 снова жив TCP_RETURN - обратно.
     Промах пробы TCP окно не сокращает (проба warp через TCP шумит при рабочем
     канале): раньше окна обратно, только если TCP мёртв - DEAD_AFTER промахов подряд.
+    Так же промах пробы hy2 обнуляет окно только после DEAD_AFTER промахов подряд.
+    Событие узла «UDP недоступен / снова работает» - по каналу direct.
     Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
     pairs = _transport_pairs(proxies)
     if not pairs:
@@ -1254,13 +1256,16 @@ def transport_tick(proxies):
     dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
     tcp_dead = [v[1] for s, v in deciders.items()
                 if s in on_tcp and delays[v[0]] is not None and delays[v[1]] is None]
+    hy2_miss = [v[0] for s, v in deciders.items() if s in on_tcp and delays[v[0]] is None]
     for _ in range(DEAD_AFTER - 1):
-        if not dead and not tcp_dead:
+        if not dead and not tcp_dead and not hy2_miss:
             break
         time.sleep(CONFIRM_GAP)
-        again, _ = _probe_all(dead + tcp_dead)
+        again, _ = _probe_all(dead + tcp_dead + hy2_miss)
         dead = [h for h in dead if again[h] is None]
         tcp_dead = [t for t in tcp_dead if again[t] is None]
+        delays.update({h: again[h] for h in hy2_miss if again[h] is not None})
+        hy2_miss = [h for h in hy2_miss if again[h] is None]
     if dead:
         delays.update(_probe_all([deciders[s][1] for s in deciders
                                   if deciders[s][0] in dead])[0])
@@ -1285,8 +1290,9 @@ def transport_tick(proxies):
         if want[s] != proxies[s].get('now'):
             _req('PUT', f'/proxies/{urllib.parse.quote(s)}', {'name': want[s]})
             print(f'{s} -> {want[s]}', flush=True)
-    for node in sorted({v[2] for v in pairs.values()}):
-        tcp_now = any(want[s] == v[1] for s, v in pairs.items() if v[2] == node)
+    # Про UDP узла говорит direct: warp уходит на TCP и от шума выхода WARP.
+    for node in sorted(lead):
+        tcp_now = lead[node]
         if tcp_now and node not in _tcp_nodes:
             _tcp_nodes.add(node)
             _bot_event(f'UDP до экзита {node} недоступен, работаю через TCP',

@@ -151,13 +151,22 @@ BACKGROUND = {"anysda-yt-failover", "anysda-yt-quic-refresh", "anysda-failover-w
               "anysda-backup"}
 
 
+def unit_memory(ram_mib, unit):
+    tier = min(4, max(1, ram_mib // 960))
+    return max(MEMORY_FLOOR.get(unit, 0), int(UNITS[unit][1] * 2 ** (tier - 2)))
+
+
 def unit_dropin(ram_mib, unit):
+    # С memory_recursiveprot MemoryLow ребёнка действует не выше защиты предков:
+    # system.slice получает сумму защищаемых юнитов той же ступени.
+    if unit == "system.slice":
+        protected = sum(unit_memory(ram_mib, name) for name, (limit, _) in UNITS.items()
+                        if limit == "MemoryLow")
+        return f"[Slice]\nMemoryLow={protected}M"
     if unit not in UNITS:
         raise ValueError(f"Неизвестный юнит entry: {unit}")
-    limit, base = UNITS[unit]
-    tier = min(4, max(1, ram_mib // 960))
-    memory = max(MEMORY_FLOOR.get(unit, 0), int(base * 2 ** (tier - 2)))
-    lines = ["[Service]", f"{limit}={memory}M"]
+    limit = UNITS[unit][0]
+    lines = ["[Service]", f"{limit}={unit_memory(ram_mib, unit)}M"]
     if limit == "MemoryLow":
         lines += ["OOMScoreAdjust=-900", "CPUWeight=1000", "IOWeight=1000"]
     elif limit == "MemoryMax":

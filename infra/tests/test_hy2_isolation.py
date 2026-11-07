@@ -27,7 +27,13 @@ class Hy2IsolationTests(unittest.TestCase):
                     self.assertEqual(outer['obfs']['type'], 'salamander')
                     self.assertEqual(inner['password'], outer['password'])
                     self.assertEqual((inner['server'], inner['server_port']), ('127.0.0.1', port))
-                    self.assertEqual(outbounds[f'pin-{tag}']['outbounds'], [tag, 'foreign-best'])
+                    pin = outbounds[f'pin-{tag}']['outbounds']
+                    if kind == 'direct':
+                        self.assertEqual(pin, [tag, 'foreign-best'])
+                    else:
+                        self.assertEqual(pin[0], tag)
+                        self.assertNotIn('foreign-best', pin)
+                        self.assertTrue(all(t.startswith('hy2-') and t.endswith('-warp') for t in pin), pin)
             self.assertEqual(outbounds[f'hy2-{node}-mgmt']['type'], 'hysteria2')
 
     @unittest.skipUnless(SB and os.environ.get('RUN_NETNS_TESTS') == '1',

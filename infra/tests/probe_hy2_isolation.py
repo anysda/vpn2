@@ -300,6 +300,7 @@ def generated_configs(router, server, directory, root, kind):
     router['outbounds'].append({'type': 'selector', 'tag': 'foreign-best', 'outbounds': [tag]})
     router['route'] = {'final': f'pin-{tag}'}
     for out in router['outbounds']:
+        if out['tag'].startswith('pin-'): out['outbounds'] = [o for o in out['outbounds'] if any(x['tag'] == o for x in router['outbounds'])]
         if out['type'] == 'hysteria2':
             out['tls'] = {'enabled': True, 'server_name': 'localhost',
                           'certificate_path': str(directory / 'cert.pem')}

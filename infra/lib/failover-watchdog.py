@@ -177,6 +177,14 @@ RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаж
 # MIN_DWELL назад — direct мигает, и следующий возврат ждёт полную стоянку.
 WARP_RETURN        = float(os.environ.get('WARP_RETURN_S', '600'))
 _direct_since: dict = {}  # direct-выход -> monotonic, с которого он жив без перерыва
+# Запасной канал до экзита (gen-router-config.py): у каждого канала selector
+# [transport-hy2-*, transport-tcp-*] - Hysteria2 и VLESS + Reality по TCP.
+# Когда до экзита режут UDP, канал уходит на TCP и остаётся жив: группы и
+# дорожки не переезжают, перезапуск sing-box - только при мёртвых обоих.
+# Обратно на hy2 - когда он жив без перерыва TCP_RETURN_S.
+TCP_RETURN         = float(os.environ.get('TCP_RETURN_S', '60'))
+_hy2_since: dict = {}     # selector канала на TCP -> monotonic, с которого hy2 жив подряд
+_tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
@@ -1216,6 +1224,75 @@ def tg_tick(proxies):
     print(f'{TG_GROUP} -> {target} ({how}): {now or "—"}: {why}', flush=True)
 
 
+def _transport_pairs(proxies):
+    """selector канала -> (hy2, tcp, узел, вид канала) для каналов с запасным TCP."""
+    pairs = {}
+    for name, p in proxies.items():
+        members = p.get('all') or []
+        if (p.get('type') or '').lower() != 'selector' or len(members) != 2:
+            continue
+        hy2, tcp = members
+        if not (hy2.startswith('transport-hy2-') and tcp == 'transport-tcp-' + hy2[14:]):
+            continue
+        node, _, kind = hy2[14:].rpartition('-')
+        pairs[name] = (hy2, tcp, node, kind)
+    return pairs
+
+
+def transport_tick(proxies):
+    """hy2 канала мёртв, TCP жив - канал на TCP; hy2 снова жив TCP_RETURN - обратно.
+    Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
+    pairs = _transport_pairs(proxies)
+    if not pairs:
+        return
+    on_tcp = {s for s, (_, tcp, _, _) in pairs.items() if proxies[s].get('now') == tcp}
+    deciders = {s: v for s, v in pairs.items() if v[3] != 'mgmt'}
+    delays, _ = _probe_all([v[0] for v in deciders.values()]
+                           + [v[1] for s, v in deciders.items() if s in on_tcp])
+    dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
+    for _ in range(DEAD_AFTER - 1):
+        if not dead:
+            break
+        time.sleep(CONFIRM_GAP)
+        again, _ = _probe_all(dead)
+        dead = [h for h in dead if again[h] is None]
+    if dead:
+        delays.update(_probe_all([deciders[s][1] for s in deciders
+                                  if deciders[s][0] in dead])[0])
+    now = time.monotonic()
+    want = {}
+    for s, (hy2, tcp, node, kind) in deciders.items():
+        if s not in on_tcp:
+            _hy2_since.pop(s, None)
+            want[s] = tcp if hy2 in dead and delays.get(tcp) is not None else hy2
+            continue
+        if delays[hy2] is None:
+            _hy2_since.pop(s, None)
+            want[s] = tcp
+        elif delays[tcp] is None or now - _hy2_since.setdefault(s, now) >= TCP_RETURN:
+            want[s] = hy2
+        else:
+            want[s] = tcp
+    lead = {v[2]: want[s] == v[1] for s, v in deciders.items() if v[3] == 'direct'}
+    for s, (hy2, tcp, node, kind) in pairs.items():
+        if kind == 'mgmt':
+            want[s] = tcp if lead.get(node) else hy2
+        if want[s] != proxies[s].get('now'):
+            _req('PUT', f'/proxies/{urllib.parse.quote(s)}', {'name': want[s]})
+            print(f'{s} -> {want[s]}', flush=True)
+    for node in sorted({v[2] for v in pairs.values()}):
+        tcp_now = any(want[s] == v[1] for s, v in pairs.items() if v[2] == node)
+        if tcp_now and node not in _tcp_nodes:
+            _tcp_nodes.add(node)
+            _bot_event(f'UDP до экзита {node} недоступен, работаю через TCP',
+                       'Hysteria2 до экзита не отвечает, каналы идут запасным VLESS + Reality '
+                       'по TCP, sing-box не перезапускаю')
+        elif not tcp_now and node in _tcp_nodes:
+            _tcp_nodes.discard(node)
+            _bot_event(f'UDP до экзита {node} снова работает',
+                       f'Hysteria2 жив {TCP_RETURN:.0f} с подряд, каналы вернулись с TCP')
+
+
 def main():
     if not SECRET:
         print('CLASH_SECRET не задан', file=sys.stderr)
@@ -1228,10 +1305,14 @@ def main():
           f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
           f'dwell={MIN_DWELL:.0f}s warp_return={WARP_RETURN:.0f}s '
           f'tg={TG_GROUP}/{TG_INTERVAL:.0f}s restart_after={RESTART_AFTER_CHECKS} '
-          f'restart_min={RESTART_MIN_INTERVAL:.0f}s', flush=True)
+          f'restart_min={RESTART_MIN_INTERVAL:.0f}s tcp_return={TCP_RETURN:.0f}s', flush=True)
     _load_lane_moved()
     _load_restart()
     while True:
+        try:
+            transport_tick(_req('GET', '/proxies').get('proxies') or {})
+        except Exception as e:
+            print(f'transport error: {e}', file=sys.stderr, flush=True)
         try:
             tick()
         except Exception as e:

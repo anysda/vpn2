@@ -75,9 +75,9 @@ class TlsStageTests(unittest.TestCase):
             self.assertIn('dir https://acme-v02.api.letsencrypt.org/directory', policy)
             config = json.loads((Path(directory) / 'etc/vpn2/tls/config.json').read_text())
             self.assertEqual(config['output_dir'], directory + '/etc/vpn2/tls/ip')
-            # Before the first certificate the panel stays reachable over HTTP.
+            # Before the first certificate HTTP only redirects to HTTPS.
             self.assertEqual((Path(directory) / 'etc/vpn2/tls/panel/secure').read_text(), 'false\n')
-            self.assertIn('import to_panel', (Path(directory) / 'etc/caddy/vpn2-http.conf').read_text())
+            self.assertEqual((Path(directory) / 'etc/caddy/vpn2-http.conf').read_text(), 'redir https://192.0.2.1{uri} permanent\n')
             caddy_validate(self, Path(directory) / 'etc/caddy/Caddyfile')
 
     def test_domain_window_is_seven_days_before_expiry(self):

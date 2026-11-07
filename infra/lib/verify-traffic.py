@@ -1380,10 +1380,11 @@ class Verifier:
         proto, port = protocol.ports[-1]
         # Сразу после установки одиночный обмен через экзит теряется, а UDP-ассоциация
         # SOCKS5 бывает мёртвой с начала: каждая попытка - своя сессия ретранслятора,
-        # connect() сам снимает туннель прошлой попытки.
-        for attempt in range(3):
-            if attempt:
-                time.sleep(5)
+        # connect() сам снимает туннель прошлой попытки. UDP через экзит пропадает и на
+        # минуту при живой сети: третья попытка - через ~100 с после первой, всё окно
+        # не дольше ~2 мин (неудачный connect - до 20 с), паузы только у красной пробы.
+        for pause in (0, 15, 45):
+            time.sleep(pause)
             relay_port = self.relay.start(proto, port)
             connected = protocol.connect('b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
             if connected:

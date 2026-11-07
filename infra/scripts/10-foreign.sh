@@ -21,6 +21,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='10-foreign'
 
@@ -326,6 +331,10 @@ else
 fi
 
 systemctl daemon-reload
+entry_unit_resources sing-box
+if [[ "$WARP_WD_ENABLED" == 1 ]]; then
+  entry_unit_resources anysda-warp-watchdog
+fi
 systemctl enable sing-box >/dev/null 2>&1
 # Перезапуск рвёт все туннели entry→экзит, у клиентов это секунды без сети.
 # Поэтому только если sing-box читает уже не то, с чем стартовал: отпечаток
@@ -421,6 +430,7 @@ ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet vpn2_hy2hop 2>/dev/null; tr
 [Install]
 WantedBy=multi-user.target
 EOF
+  entry_unit_resources anysda-hy2hop
   mkdir -p "$(dirname "$HY2HOP_DROPIN")"
   cat > "$HY2HOP_DROPIN" <<EOF
 [Service]

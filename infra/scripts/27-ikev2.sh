@@ -34,6 +34,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
 PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
 # shellcheck source=infra/lib/anysda-pki.sh
 source "$PKI_LIB"
@@ -391,6 +396,7 @@ charon {
 }
 EOF
 systemctl enable strongswan-starter >/dev/null 2>&1 || true
+entry_unit_resources strongswan-starter
 # Рестарт charon рвёт все IKEv2-сессии, а телефоны и маки сами после этого не
 # переподключаются. Сертификаты, conns и пулы swanctl ниже грузит в живой
 # charon без рестарта (так же path-юнит применяет ротацию LE), поэтому в
@@ -434,6 +440,7 @@ ExecStop=/usr/local/sbin/anysda-ikev2-routing.sh down
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-ikev2-routing
 
 cat > /usr/local/sbin/anysda-ikev2-routing.sh <<IPTSEOF
 #!/usr/bin/env bash
@@ -784,6 +791,7 @@ Requires=strongswan-starter.service
 Type=oneshot
 ExecStart=/usr/local/sbin/anysda-ikev2-sync.py
 EOF
+entry_unit_resources anysda-ikev2-sync
 
 cat > /etc/systemd/system/anysda-ikev2-sync.timer <<'EOF'
 [Unit]
@@ -806,6 +814,11 @@ systemctl start anysda-ikev2-sync.service || true
 # включён pipefail — без `|| true` стадия падала уже ПОСЛЕ всей работы.
 { systemctl status anysda-ikev2-sync.service --no-pager -n 3 2>/dev/null || true; } \
   | sed -n '1,5p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
+
+# Drop-in до записи юнита: systemd читает его вместе с юнитом при reload.
+if [[ -n "$LE_DOMAIN" ]]; then
+  entry_unit_resources anysda-ikev2-cert-sync
+fi
 
 # Маркеры публикуем после успешной загрузки конфигурации charon.
 printf '%s' "$IKEV2_SERVER_HOST" > /etc/anysda/ikev2-server-host

@@ -13,6 +13,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
 : "${HY2_DIRECT_PORT:?}" "${HY2_WARP_PORT:?}" "${HY2_MGMT_PORT:?}"
 
 STAMP_DIR=/var/anysda/.stamps
@@ -135,6 +140,8 @@ nftables_preserve_rules
 # ----------------------------------------------------------------------------
 # 2. Sysctl tuning
 # ----------------------------------------------------------------------------
+# Drop-in юнита anysda-fq (ниже) пишем заранее: systemd читает его при reload.
+entry_unit_resources anysda-fq
 echo "[$HOST_TAG] [2/6] sysctl"
 cat > /etc/sysctl.d/99-anysda.conf <<EOF
 # anysda-vpn — set by infra/scripts/00-bootstrap.sh
@@ -484,6 +491,7 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources node_exporter
 systemctl daemon-reload
 systemctl enable node_exporter >/dev/null 2>&1
 svc_restart_if_changed node_exporter /usr/local/bin/node_exporter /etc/systemd/system/node_exporter.service

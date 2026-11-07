@@ -18,6 +18,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
 PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
 # shellcheck source=infra/lib/anysda-pki.sh
 source "$PKI_LIB"
@@ -242,6 +247,7 @@ ufw_sync_dns 'openvpn → AdGuard DNS' 10.99.0.1 $OVPN_SUBNETS
 # ── 5. openvpn-server@server ────────────────────────────────────────────────
 echo "[$HOST_TAG] [5/6] openvpn-server@server"
 systemctl enable openvpn-server@server >/dev/null 2>&1 || true
+entry_unit_resources openvpn-server@server
 # Рестарт рвёт всех OpenVPN-клиентов.
 ovpn_restart_if_changed
 # Type=notify: restart вернулся после READY=1, проба только ловит падение.
@@ -272,6 +278,7 @@ ExecStop=/usr/local/sbin/anysda-ovpn-routing.sh down
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-ovpn-routing
 
 cat > /usr/local/sbin/anysda-ovpn-routing.sh <<'IPTSEOF'
 #!/usr/bin/env bash

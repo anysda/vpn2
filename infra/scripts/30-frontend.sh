@@ -251,6 +251,7 @@ Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
 TimeoutStartSec=120
 EOF
+entry_unit_resources vpn2-tls
 cat > /etc/systemd/system/vpn2-tls.timer <<'EOF'
 [Unit]
 Description=Check VPN2 TLS lifecycle every minute

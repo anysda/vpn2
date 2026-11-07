@@ -24,6 +24,12 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# deploy.sh кладёт библиотеку рядом; без неё лимиты юнитов пропускаются с WARN.
+# shellcheck source=infra/lib/entry-resources.sh
+[[ ! -f "$RESOURCE_LIB" ]] || source "$RESOURCE_LIB"
+
 if [[ "$HOST_TAG" != "ru" ]]; then
   echo "[$HOST_TAG] stage 21-failover-watchdog: skipped (only RU)"
   exit 0
@@ -136,6 +142,7 @@ ProtectHome=true
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-failover-watchdog
 
 # 3. Запуск
 echo "[$HOST_TAG] [3/4] запуск"
@@ -202,6 +209,7 @@ After=sing-box.service
 Type=oneshot
 ExecStart=/usr/local/sbin/anysda-tproxy-watchdog.sh
 EOF
+entry_unit_resources anysda-tproxy-watchdog
 
 cat > /etc/systemd/system/anysda-tproxy-watchdog.timer <<'EOF'
 [Unit]

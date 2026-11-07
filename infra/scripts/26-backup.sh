@@ -22,6 +22,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 26-backup is ru-only — skipping"; exit 0;; esac
 
 # Клон репозитория, из которого шёл деплой. restore, backup и speedtest стоят
@@ -188,6 +193,7 @@ SuccessExitStatus=4
 StandardOutput=journal
 StandardError=journal
 EOF
+entry_unit_resources anysda-backup
 
 cat > /etc/systemd/system/anysda-backup.timer <<'EOF'
 [Unit]

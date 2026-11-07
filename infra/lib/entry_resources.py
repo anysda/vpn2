@@ -117,6 +117,56 @@ def patch_adguard(path, state_path, values, overrides, fresh=False, check=False)
     return changed
 
 
+# Юниты entry: какой лимит памяти и сколько MiB на ступени 2 ГБ. На других
+# ступенях объём умножается так же, как бюджеты docker; лимиты остаются и на
+# 4 ГБ+: это потолок против утечки, а не подгонка.
+# MemoryLow - трафик (sing-box, charon, openvpn): под давлением отдаётся последним;
+# MemoryMax - долгоживущее и пробы: на 2 ГБ сумма с docker и AGH = MemTotal
+#   (768 + 1280 MiB); на 1 ГБ сумма больше памяти из-за пола пробы YouTube;
+# MemoryHigh - короткий oneshot: в сумму MemoryMax не входит.
+UNITS = {
+    "sing-box": ("MemoryLow", 128),
+    "strongswan-starter": ("MemoryLow", 64),
+    "openvpn-server@server": ("MemoryLow", 64),
+    "node_exporter": ("MemoryMax", 48),
+    "anysda-yt-nfqws": ("MemoryMax", 32),
+    "vpn2-emergency": ("MemoryMax", 160),
+    "anysda-failover-watchdog": ("MemoryMax", 48),
+    "vpn2-emergency-snapshot": ("MemoryMax", 64),
+    "anysda-yt-failover": ("MemoryMax", 384),
+    "anysda-tproxy-watchdog": ("MemoryMax", 32),
+    **{unit: ("MemoryHigh", 256) for unit in (
+        "anysda-fq", "anysda-mgmt-loopback", "anysda-hy2hop", "anysda-warp-watchdog",
+        "anysda-yt-nft", "anysda-yt-offload", "anysda-yt-quic", "anysda-yt-quic-refresh",
+        "anysda-apply-routes", "anysda-doh-routing", "vpn2-tls", "anysda-backup",
+        "anysda-ikev2-routing", "anysda-ikev2-sync", "anysda-ikev2-cert-sync",
+        "anysda-wg-routing", "anysda-ovpn-routing")},
+}
+# Рабочая норма vpn2-emergency 100-150 МБ: ниже неё не режем и на 1 ГБ.
+# Проба YouTube через POT (yt-dlp + node) берёт до ~300 МБ на любой ступени.
+MEMORY_FLOOR = {"vpn2-emergency": 150, "anysda-yt-failover": 384}
+# Проба YouTube, сторожа, snapshot, backup: уступают CPU и диск трафику.
+BACKGROUND = {"anysda-yt-failover", "anysda-yt-quic-refresh", "anysda-failover-watchdog",
+              "anysda-tproxy-watchdog", "anysda-warp-watchdog", "vpn2-emergency-snapshot",
+              "anysda-backup"}
+
+
+def unit_dropin(ram_mib, unit):
+    if unit not in UNITS:
+        raise ValueError(f"Неизвестный юнит entry: {unit}")
+    limit, base = UNITS[unit]
+    tier = min(4, max(1, ram_mib // 960))
+    memory = max(MEMORY_FLOOR.get(unit, 0), int(base * 2 ** (tier - 2)))
+    lines = ["[Service]", f"{limit}={memory}M"]
+    if limit == "MemoryLow":
+        lines += ["OOMScoreAdjust=-900", "CPUWeight=1000", "IOWeight=1000"]
+    elif limit == "MemoryMax":
+        lines.append("MemorySwapMax=0")
+    if unit in BACKGROUND:
+        lines += ["CPUWeight=20", "IOWeight=20", "Nice=10"]
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-path", type=Path, default=Path("/var/lib/vmsingle"))
@@ -125,6 +175,7 @@ def main():
     parser.add_argument("--free-mib", type=int)
     parser.add_argument("--service", choices=("panel", "bot", "vm", "agh"))
     parser.add_argument("--agh-config", type=Path)
+    parser.add_argument("--unit", help="юнит без .service: печатает тело drop-in")
     parser.add_argument("--agh-state", type=Path, default=Path("/etc/anysda/agh-resources.json"))
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--check", action="store_true")
@@ -133,7 +184,9 @@ def main():
     overrides = json.loads(os.environ.get("ENTRY_RESOURCE_OVERRIDES") or "{}")
     values = calculate(args.ram_mib if args.ram_mib is not None else ram,
                        args.free_mib if args.free_mib is not None else free, overrides)
-    if args.agh_config:
+    if args.unit:
+        print(unit_dropin(args.ram_mib if args.ram_mib is not None else ram, args.unit))
+    elif args.agh_config:
         if patch_adguard(args.agh_config, args.agh_state, values, overrides, args.fresh, args.check):
             print("changed")
     else:

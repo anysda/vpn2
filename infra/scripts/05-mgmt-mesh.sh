@@ -21,6 +21,11 @@ set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='05-mgmt-mesh'
 
@@ -75,6 +80,7 @@ ExecStop=/sbin/ip addr del ${MGMT_LOOPBACK}/32 dev lo
 [Install]
 WantedBy=multi-user.target
 EOF
+  entry_unit_resources anysda-mgmt-loopback
   systemctl daemon-reload
   systemctl enable --now anysda-mgmt-loopback >/dev/null 2>&1 || true
   echo "[$HOST_TAG] lo:"

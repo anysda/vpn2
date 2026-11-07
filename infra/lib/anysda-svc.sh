@@ -431,3 +431,9 @@ apt_prepare() {
     DEBIAN_FRONTEND=noninteractive dpkg --configure -a --force-confdef --force-confold
   fi
 }
+
+# Заглушка до entry-resources.sh: стадия, подключившая библиотеку, получает
+# настоящую функцию; без библиотеки юнит ставится без своих лимитов.
+entry_unit_resources() {
+  echo "WARN: entry-resources.sh не подключён, лимиты $1 не записаны" >&2
+}

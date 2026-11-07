@@ -18,6 +18,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
 PKI_LIB=$(dirname "$SVC_LIB")/anysda-pki.sh
 # shellcheck source=infra/lib/anysda-pki.sh
 source "$PKI_LIB"
@@ -146,6 +151,7 @@ ExecStop=/usr/local/sbin/anysda-wg-routing.sh down
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-wg-routing
 
 cat > /usr/local/sbin/anysda-wg-routing.sh <<'IPTSEOF'
 #!/usr/bin/env bash

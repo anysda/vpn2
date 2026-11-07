@@ -9,6 +9,12 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 [[ -f "$SVC_LIB" ]] || SVC_LIB=$(dirname "$0")/../lib/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
+
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# deploy.sh кладёт библиотеку рядом; без неё лимиты юнитов пропускаются с WARN.
+# shellcheck source=infra/lib/entry-resources.sh
+[[ ! -f "$RESOURCE_LIB" ]] || source "$RESOURCE_LIB"
 RELEASE_LIB=$(dirname "$0")/release.sh
 [[ -f "$RELEASE_LIB" ]] || RELEASE_LIB=$(dirname "$0")/../lib/release.sh
 # shellcheck source=infra/lib/release.sh
@@ -84,6 +90,7 @@ Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
 TimeoutStartSec=120
 UNIT
+  entry_unit_resources vpn2-tls
   cat > /etc/systemd/system/vpn2-tls.timer <<'UNIT'
 [Unit]
 Description=Check VPN2 TLS lifecycle every minute
@@ -177,6 +184,7 @@ LogRateLimitBurst=10
 [Install]
 WantedBy=multi-user.target
 UNIT
+entry_unit_resources vpn2-emergency
 systemctl daemon-reload
 
 if [[ "$HOST_TAG" != ru ]]; then
@@ -200,6 +208,7 @@ systemctl is-active --quiet vpn2-emergency.service
 if [[ "$HOST_TAG" == ru ]]; then
   # The entry hands the client list to the exits ahead of an emergency.
   install -m 0644 "$STAGING/vpn2-emergency-snapshot.service" /etc/systemd/system/
+  entry_unit_resources vpn2-emergency-snapshot
   systemctl daemon-reload
   systemctl enable vpn2-emergency-snapshot.service
   systemctl restart vpn2-emergency-snapshot.service

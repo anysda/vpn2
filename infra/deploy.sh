@@ -696,6 +696,11 @@ run_stage_on_host() {
   push "$DEPLOY_ROOT/lib/release.py" || return 1
   push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
   push "$DEPLOY_ROOT/lib/panel-transaction.sh" || return 1
+  # Ресурсы юнитов и docker: стадия, ставящая юнит, пишет его drop-in.
+  if grep -q 'source "$RESOURCE_LIB"' "$script"; then
+    push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
+    push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1
+  fi
   if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
     push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
   fi
@@ -707,10 +712,6 @@ run_stage_on_host() {
   fi
   if [[ "$stage" == @(23-emergency|30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
-  fi
-  if [[ "$stage" == @(22-adguard|25-monitoring|30-frontend|35-telegram) ]]; then
-    push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
-    push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
   if [[ "$stage" == "29-control" ]]; then

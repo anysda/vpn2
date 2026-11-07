@@ -37,6 +37,11 @@ SVC_LIB=$(dirname "$0")/anysda-svc.sh
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$SVC_LIB"
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 19-yt-zapret is ru-only — skipping"; exit 0;; esac
 
 STAMP_DIR=/var/anysda/.stamps
@@ -383,6 +388,7 @@ ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet ytzapret 2>/dev/null; true'
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-yt-nft
 
 # TSO/GSO — только если явно попросили.
 if [[ "$YT_ZAPRET_OFFLOAD" == "off" ]]; then
@@ -402,6 +408,7 @@ ExecStop=/usr/sbin/ethtool -K $WAN_IFACE tso on gso on gro on
 [Install]
 WantedBy=multi-user.target
 EOF
+  entry_unit_resources anysda-yt-offload
   systemctl daemon-reload
   systemctl enable --now anysda-yt-offload.service >/dev/null 2>&1 || true
   echo "[$HOST_TAG]   offload off на $WAN_IFACE"
@@ -490,6 +497,7 @@ ExecStop=/usr/sbin/nft delete table inet anysda_ytquic
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-yt-quic
 
 cat > /etc/systemd/system/anysda-yt-quic-refresh.service <<'EOF'
 [Unit]
@@ -499,6 +507,7 @@ Description=anysda-vpn2 — обновление списка IP-диапазо�
 Type=oneshot
 ExecStart=/usr/local/sbin/anysda-yt-quic-refresh.sh
 EOF
+entry_unit_resources anysda-yt-quic-refresh
 
 cat > /etc/systemd/system/anysda-yt-quic-refresh.timer <<'EOF'
 [Unit]
@@ -574,6 +583,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-yt-nfqws
 
 systemctl daemon-reload
 systemctl enable anysda-yt-nft.service anysda-yt-nfqws.service >/dev/null 2>&1
@@ -769,6 +779,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 EOF
+entry_unit_resources anysda-yt-failover
 cat > /etc/systemd/system/anysda-yt-failover.timer <<'EOF'
 [Unit]
 Description=anysda-vpn2 — периодическая проверка видеопотока YouTube

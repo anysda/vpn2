@@ -11,6 +11,11 @@ set -euo pipefail
 
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 20-ru-router is ru-only — skipping"; exit 0;; esac
 
+RESOURCE_LIB=$(dirname "$0")/entry-resources.sh
+[[ -f "$RESOURCE_LIB" ]] || RESOURCE_LIB=$(dirname "$0")/../lib/entry-resources.sh
+# shellcheck source=infra/lib/entry-resources.sh
+source "$RESOURCE_LIB"
+
 STAMP_DIR=/var/anysda/.stamps
 STAGE='20-ru-router'
 
@@ -261,6 +266,7 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources sing-box
 systemctl daemon-reload
 systemctl enable sing-box >/dev/null 2>&1
 
@@ -541,6 +547,7 @@ Type=oneshot
 ExecStartPre=/bin/sleep 2
 ExecStart=/usr/local/sbin/anysda-apply-routes.py
 EOF
+entry_unit_resources anysda-apply-routes
 
 cat > /etc/systemd/system/anysda-apply-routes.path << 'EOF'
 [Unit]

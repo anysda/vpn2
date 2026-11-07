@@ -444,6 +444,7 @@ ExecStart=/usr/local/sbin/anysda-doh-routing
 [Install]
 WantedBy=multi-user.target
 EOF
+entry_unit_resources anysda-doh-routing
 
 cat > /etc/systemd/system/adguardhome.service <<EOF
 [Unit]

@@ -917,7 +917,10 @@ run_stage() {
     if [[ -n "$verify_logs" ]]; then
       # Подоболочка: у голого `cmd | tee &` $! — это tee, и bash 5.2
       # отдаёт wait её код 0, если задание уже завершилось.
-      ( set -o pipefail; run_stage_on_host "$stage" "$h" 2>&1 | tee "$verify_logs/$h" ) &
+      # GNU tee: uutils tee пишет в stdout через splice, а splice берёт позицию
+      # общего файла без блокировки - при `deploy.sh > log` tee узлов пишут по
+      # одному смещению и затирают строки друг друга. В Ubuntu 26.04 это gnutee.
+      ( set -o pipefail; run_stage_on_host "$stage" "$h" 2>&1 | "$(command -v gnutee || echo tee)" "$verify_logs/$h" ) &
     else
       run_stage_on_host "$stage" "$h" &
     fi
@@ -1597,7 +1600,8 @@ do_backup() {
   trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -INT \$\$" INT
   # shellcheck disable=SC2064
   trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -TERM \$\$" TERM
-  ssh_exec '/usr/local/bin/anysda-backup.sh' | tee "$out" || rc=$?
+  # GNU tee - причина у 99-verify в run_stage: stderr ssh_exec пишет в тот же файл.
+  ssh_exec '/usr/local/bin/anysda-backup.sh' | "$(command -v gnutee || echo tee)" "$out" || rc=$?
   warning=$(grep -m1 '^warning:' "$out" || true)
   rm -f "$out"
   trap - INT TERM

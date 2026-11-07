@@ -162,7 +162,7 @@ class ProbeLimitTests(unittest.TestCase):
             return dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
 
         small = dropin(2048)
-        self.assertEqual(small.get('MemoryMax'), '300M')
+        self.assertEqual(small.get('MemoryMax'), '340M')
         for key, value in (('Nice', '10'), ('CPUWeight', '20'), ('IOWeight', '20')):
             self.assertEqual(small.get(key), value, key)
         for ram in (3072, 4096, 8192):

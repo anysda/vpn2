@@ -50,6 +50,10 @@ type=selector (см. gen-router-config.py) — управляется через
   LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
   RESTART_AFTER_CHECKS  проверок подряд с мёртвыми каналами всех узлов до перезапуска sing-box, 0 — выкл.  3
   RESTART_MIN_INTERVAL_S  перезапуск sing-box не чаще, сек  600
+  PRESSURE_MEM_AVG10  memory some avg10 entry, с которого причина — перегруз entry, %  10
+  PRESSURE_CPU_AVG10  cpu some avg10 entry, то же для CPU, %  60
+  PSI_DIR           каталог PSI entry  /proc/pressure
+  PROC_DIR          /proc для топа процессов по RSS  /proc
 
 Перезапуск sing-box: когда экзит один, переключаться некуда, и канал, залипший
 в sing-box на entry, лежал бы до перезагрузки. Если у всех включённых узлов
@@ -185,6 +189,10 @@ LANE_STATE_FILE = os.environ.get('LANE_STATE_FILE', '/var/lib/anysda-failover-wa
 _started = 0.0            # monotonic запуска (см. _load_lane_moved)
 RESTART_AFTER_CHECKS = int(os.environ.get('RESTART_AFTER_CHECKS', '3'))
 RESTART_MIN_INTERVAL = float(os.environ.get('RESTART_MIN_INTERVAL_S', '600'))
+PRESSURE_MEM_AVG10 = float(os.environ.get('PRESSURE_MEM_AVG10', '10'))
+PRESSURE_CPU_AVG10 = float(os.environ.get('PRESSURE_CPU_AVG10', '60'))
+PSI_DIR = os.environ.get('PSI_DIR', '/proc/pressure')
+PROC_DIR = os.environ.get('PROC_DIR', '/proc')
 RESTART_STATE_FILE = os.path.join(os.path.dirname(LANE_STATE_FILE), 'restart.json')
 BOT_SECRET_FILE = '/etc/anysda/tgbot-secret.txt'
 _all_dead = None          # итог tick(): мертвы все выходы включённых узлов; None — замера не было
@@ -743,6 +751,59 @@ def _plural_ru(n, forms):
     return forms[2]
 
 
+def _psi_some_avg10(name):
+    """some avg10 из PSI_DIR/<name>; None — PSI нет или не прочитать."""
+    try:
+        with open(os.path.join(PSI_DIR, name), encoding='ascii') as f:
+            for line in f:
+                if line.startswith('some '):
+                    for part in line.split()[1:]:
+                        k, _, v = part.partition('=')
+                        if k == 'avg10':
+                            return float(v)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _top_rss(n=3):
+    """Топ процессов по RSS из PROC_DIR: «имя pid NМБ» через запятую."""
+    procs = []
+    try:
+        pids = [d for d in os.listdir(PROC_DIR) if d.isdigit()]
+    except OSError:
+        return ''
+    for pid in pids:
+        name, rss = '', 0
+        try:
+            with open(os.path.join(PROC_DIR, pid, 'status'), encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    if line.startswith('Name:'):
+                        name = line[5:].strip()
+                    elif line.startswith('VmRSS:'):
+                        rss = int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        if rss:
+            procs.append((rss, name, pid))
+    procs.sort(reverse=True)
+    return ', '.join(f'{name} {pid} {rss // 1024}МБ' for rss, name, pid in procs[:n])
+
+
+def _entry_pressure():
+    """Entry под давлением — «память 35.0%, CPU 1.0%» (PSI some avg10), иначе ''."""
+    mem, cpu = _psi_some_avg10('memory'), _psi_some_avg10('cpu')
+    hot = []
+    if mem is not None and mem >= PRESSURE_MEM_AVG10:
+        hot.append('память')
+    if cpu is not None and cpu >= PRESSURE_CPU_AVG10:
+        hot.append('CPU')
+    if not hot:
+        return ''
+    nums = ', '.join(f'{k} {v:.1f}%' for k, v in (('память', mem), ('CPU', cpu)) if v is not None)
+    return f"{'/'.join(hot)}; PSI some avg10: {nums}"
+
+
 def restart_tick():
     """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
     набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
@@ -758,14 +819,24 @@ def restart_tick():
     checks, _dead_streak, _restarted = _dead_streak, 0, t
     _save_restart()
     streak = f"{checks} {_plural_ru(checks, ('проверку', 'проверки', 'проверок'))} подряд"
-    print(f'все каналы всех включённых узлов мертвы {streak} — перезапускаю sing-box', flush=True)
+    pressure = _entry_pressure()
+    if pressure:
+        top = _top_rss()
+        print(f'entry перегружен ({pressure}; топ RSS: {top or "-"}), sing-box не отвечает '
+              f'{streak} — перезапускаю sing-box', flush=True)
+        subject = 'Entry'
+        what = f'entry перегружен ({pressure}; топ RSS: {top or "-"}), sing-box не отвечает {streak}'
+    else:
+        print(f'все каналы всех включённых узлов мертвы {streak} — перезапускаю sing-box', flush=True)
+        subject = 'Экзиты'
+        what = f'Все каналы мертвы {streak}'
     err = _restart_sing_box()
     if err:
         print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
-        detail = f'Все каналы мертвы {streak} - перезапуск sing-box не удался: {err}'
+        detail = f'{what} - перезапуск sing-box не удался: {err}'
     else:
-        detail = f'Все каналы мертвы {streak} - перезапустил sing-box'
-    _bot_event('Экзиты', detail)
+        detail = f'{what} - перезапустил sing-box'
+    _bot_event(subject, detail)
 
 
 def _move_lane(lane, tag, reason, ips, quiet=False):

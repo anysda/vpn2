@@ -19,6 +19,7 @@ SSH_PROBE_TIMEOUT pre-flight называет настройкой, а не «SS
 _limit_run в infra/lib/ssh.sh и в 99-verify (на узел lib/ssh.sh не попадает)
 - одна реализация: края проверяются на обеих, тексты функций совпадают.
 """
+import math
 import os
 from pathlib import Path
 import re
@@ -194,6 +195,23 @@ def lingering(pids):
         if not flags & 0x4:
             live.append(pid)
     return live
+
+
+def swarm_spawn_seconds(many):
+    """Секунды, за которые заглушка swarm без предела порождает рой из many на этом раннере."""
+    with StubNode('swarm', FAKE_MANY=str(many)) as node:
+        started = time.monotonic()
+        stub = subprocess.Popen([str(node.root / 'bin' / 'ssh'), 'node.example', 'true'], cwd=node.root,
+                                env=node.env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            # pid пишут заглушка, python роя и каждый спящий ребёнок.
+            while len(node.pids()) < many // 2 + 2 and stub.poll() is None and time.monotonic() - started < 60:
+                time.sleep(0.05)
+            return time.monotonic() - started
+        finally:
+            os.killpg(stub.pid, signal.SIGKILL)
+            stub.wait()
 
 
 def sudo_unshare():
@@ -468,11 +486,17 @@ class SshLimitSessionTests(unittest.TestCase):
                 self.assertEqual(calls, 0)
 
     def test_11_swarm_returns_in_time(self):
-        limit, many = 5, 2000
+        many = 2000
+        # Предел должен истечь на рое, а не на его части: вдвое дольше порождения
+        # роя на этом раннере, не меньше 5 с. Медленный fork под нагрузкой CI
+        # не успевал породить детей до постоянных 5 с.
+        spawn = swarm_spawn_seconds(many)
+        limit = max(5, math.ceil(2 * spawn))
         for side in ('lib', 'node'):
             with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many)) as node:
                 code, out, err, elapsed = node.direct(side, limited(limit=limit))
-                print(f'{many} детей и зомби _limit_run {side}: {out.strip()!r} {elapsed:.1f}s')
+                print(f'{many} детей и зомби _limit_run {side}: {out.strip()!r} {elapsed:.1f}s '
+                      f'(рой {spawn:.1f}s, предел {limit}s)')
                 self.assertRegex(out, r'rc=(124|137)\b', err)
                 self.assertGreater(len(node.pids()), many // 2, 'заглушка не породила детей')
                 self.assertLess(elapsed, limit + 10, f'{side}: возврат через {elapsed:.1f} с при пределе {limit} с')

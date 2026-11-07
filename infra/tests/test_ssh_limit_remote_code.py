@@ -8,6 +8,7 @@ SSH_PROBE_TIMEOUT действительно вышел. Для exit_ssh в 99-v
 (test_verify_exit_ssh_remote_code). Подставной ssh - sshd с login shell:
 сначала .bashrc узла (режим из FAKE_BASHRC), затем команда через bash.
 """
+import contextlib
 import os
 from pathlib import Path
 import subprocess
@@ -94,7 +95,9 @@ class Node:
 
     def __exit__(self, *_):
         for pid in alive(self.pids()):
-            os.kill(pid, 9)
+            # Убитый родитель тысячи зомби выходит долго: alive видит его, а к kill его уже пожали.
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, 9)
         self.directory.cleanup()
 
 

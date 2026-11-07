@@ -54,11 +54,11 @@ apt_auto_pause
 # min_free_bytes манифеста (VPN2-659): размер = min(RAM, 2 ГиБ, свободно -
 # min_free_bytes - 512 МиБ), меньше 256 МиБ - без swap.
 ensure_swap() {
-  local mem_kb size avail min_free cap reason manifest
-  mem_kb=$(awk '$1 == "MemTotal:" {print $2}' /proc/meminfo)
-  (( mem_kb < 3840 * 1024 )) || return 0
-  [[ -z $(awk 'NR > 1' /proc/swaps) ]] || return 0
-  if [[ ! -f /swapfile ]]; then
+  local mem_kb
+  # Создаёт и включает /swapfile; аргумент dd - сразу нулями, без fallocate
+  # (обрывок с дырами значит, что fallocate на этой ФС их и даёт).
+  create_swapfile() {
+    local size avail min_free cap reason manifest
     # Тот же манифест, что читает preflight; без него - число из
     # infra/lib/build-release.py.
     manifest=${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}
@@ -74,29 +74,37 @@ ensure_swap() {
     fi
     if (( size < 256 * 1024 ** 2 )); then
       echo "[$HOST_TAG]   swap пропущен: свободно $(( avail / 1024 ** 2 )) МиБ, деплою нужно $(( min_free / 1024 ** 2 )) + 512, swap меньше 256 МиБ не создаю"
-      return 0
+      return 1
     fi
     echo "[$HOST_TAG]   swap: /swapfile $(( size / 1024 ** 2 )) МиБ ($reason; свободно $(( avail / 1024 ** 2 )) МиБ)"
     # fallocate на части ФС не работает или даёт файл с дырами, которые swapon
     # не берёт, - тогда пишем нулями.
-    if ! { fallocate -l "$size" /swapfile && chmod 600 /swapfile \
+    if [[ ${1:-} == dd ]] || ! { fallocate -l "$size" /swapfile && chmod 600 /swapfile \
            && mkswap /swapfile >/dev/null && swapon /swapfile; }; then
       rm -f /swapfile
       if ! { dd if=/dev/zero of=/swapfile bs=1M count=$(( size / 1024 ** 2 )) status=none \
              && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile; }; then
         rm -f /swapfile
         echo "[$HOST_TAG]   swap пропущен: swapon не включил /swapfile"
-        return 0
+        return 1
       fi
     fi
+  }
+  mem_kb=$(awk '$1 == "MemTotal:" {print $2}' /proc/meminfo)
+  (( mem_kb < 3840 * 1024 )) || return 0
+  [[ -z $(awk 'NR > 1' /proc/swaps) ]] || return 0
+  if [[ ! -f /swapfile ]]; then
+    create_swapfile || return 0
   else
     # Обрывок прошлого прогона: файл есть, swap не включён.
     echo "[$HOST_TAG]   swap: включаю имеющийся /swapfile"
     chmod 600 /swapfile
     if ! swapon /swapfile 2>/dev/null \
        && ! { mkswap /swapfile >/dev/null && swapon /swapfile; }; then
-      echo "[$HOST_TAG]   swap пропущен: swapon не включил /swapfile"
-      return 0
+      # Файл с дырами swapon не берёт никогда - пересоздаём нулями.
+      echo "[$HOST_TAG]   swap: /swapfile не включается, пересоздаю"
+      rm -f /swapfile
+      create_swapfile dd || return 0
     fi
   fi
   awk '$1 == "/swapfile" {found = 1} END {exit !found}' /etc/fstab \

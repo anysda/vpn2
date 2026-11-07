@@ -353,6 +353,10 @@ class _NoRedirect(request.HTTPRedirectHandler):
         return None
 
 
+# Built once: an opener per call grows the process for good (see lifecycle.PANEL_OPENER).
+OPENER = request.build_opener(_NoRedirect())
+
+
 def _send(token, chat, part, api_base, timeout, opener=None):
     return _call(token, chat, part, api_base, timeout, opener)[:4]
 
@@ -385,7 +389,7 @@ def _call(token, chat, part, api_base, timeout, opener=None):
     req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/{method}',
                           data=body, headers={'Content-Type': content_type})
     try:
-        opener = opener or request.build_opener(_NoRedirect())
+        opener = opener or OPENER
         try:
             response = opener.open(req, timeout=timeout)
         except error.HTTPError as exc:
@@ -476,7 +480,7 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                         payload['text'] = payload['text'].replace(DEADLINE, _human(deadline))
                     chats.add(chat)
                     max_messages -= 1
-                    opener = opener or request.build_opener(_NoRedirect())
+                    opener = opener or OPENER
                     ok, reason, retry_after, final = _send(token, chat, payload, api_base, timeout, opener)
                     with db:
                         if ok:
@@ -513,7 +517,7 @@ def reachable(state_dir, *, api_base='https://api.telegram.org', timeout=5):
         return True
     req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/getMe')
     try:
-        with request.build_opener(_NoRedirect()).open(req, timeout=timeout):
+        with OPENER.open(req, timeout=timeout):
             return True
     except error.HTTPError as exc:
         exc.close()

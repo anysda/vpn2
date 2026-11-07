@@ -42,6 +42,9 @@ TLS_EVERY = 60
 NOTICE_AFTER = 180
 # Used start links kept in the agent state; one link per outage.
 USED_LINKS = 16
+# One opener for the life of the process: a new one every round cost the entry
+# ~230 KiB of RSS that was never returned (17 -> 570 MB in 2.5 days).
+PANEL_OPENER = request.build_opener(request.ProxyHandler({}))
 
 
 def iso(wall):
@@ -68,8 +71,7 @@ def entry_ready(settings):
                                 text=True, timeout=10).stdout.split()
         if states != ['active'] * len(units):
             return False
-        opener = request.build_opener(request.ProxyHandler({}))
-        with opener.open(settings.get('panel', PANEL_URL), timeout=5) as response:
+        with PANEL_OPENER.open(settings.get('panel', PANEL_URL), timeout=5) as response:
             if response.status != 200:
                 return False
         return socks_connect(tuple(settings.get('socks', SOCKS)),

@@ -156,8 +156,19 @@ def dropped(_number, _frame):
     """A signal after the one that stopped apply: the cleanup goes on, the code stays."""
 
 
-def stop_on_signal(number, _frame):
+def inside_stop(frame):
+    """FRAME runs within stop_on_signal: Python runs a handler between any two steps of another."""
+    while frame:
+        if frame.f_code is stop_on_signal.__code__:
+            return True
+        frame = frame.f_back
+    return False
+
+
+def stop_on_signal(number, frame):
     # The default handlers skip finally and leave the check server and its keys.
+    if inside_stop(frame):
+        return  # a later signal while the first is taken in: the first keeps the code
     if HOLD['on']:
         HOLD['first'] = HOLD['first'] or number
         return

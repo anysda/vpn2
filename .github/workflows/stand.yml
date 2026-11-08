@@ -12,6 +12,10 @@ on:
         description: 'Отрицательный контроль: остановить OpenVPN на entry перед проверкой'
         type: boolean
         default: false
+      break_tcp_fallback:
+        description: 'Отрицательный контроль: при обрыве UDP резать и запасной TCP до экзита'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -59,6 +63,12 @@ jobs:
       - name: verify
         if: ${{ !cancelled() && steps.up.outcome == 'success' }}
         run: sudo infra/tools/ci-stand.sh verify ${{ inputs.stop_openvpn && '--stop-openvpn' || '' }}
+
+      # Обрыв UDP entry → экзит: трафик уходит на запасной TCP без перезапуска
+      # sing-box и возвращается на Hysteria2.
+      - name: udp-cut
+        if: ${{ !cancelled() && steps.up.outcome == 'success' }}
+        run: sudo infra/tools/ci-stand.sh udp-cut ${{ inputs.break_tcp_fallback && '--break-tcp-fallback' || '' }}
 
       - name: collect
         if: always()

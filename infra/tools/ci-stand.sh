@@ -7,12 +7,15 @@
 #   sudo infra/tools/ci-stand.sh up                     поднять ВМ
 #   sudo infra/tools/ci-stand.sh deploy <образ панели>  полный деплой
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
+#   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tools/ci-stand.sh down                   снести всё
 #
 # Образ панели - локальный docker-образ, собранный из этого же дерева; на
 # entry он загружается до деплоя, deploy берёт его по panel.image.
 # verify возвращает код 99-verify: 0 работает, 1 ошибка, 2 не проверено.
+# udp-cut режет UDP с entry на экзите и проверяет, что трафик ушёл на запасной
+# TCP без перезапуска sing-box и вернулся на Hysteria2: 0 прошло, 1 нет.
 set -Eeuo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -223,6 +226,147 @@ cmd_verify() {
   return "$rc"
 }
 
+UDP_CUT_HOLD_S=90   # сколько держать обрыв
+UDP_CUT_MAX_GAP=15  # окно без ответа через экзит, с: на стенде из VPS 2,4 с
+
+# Каналы с запасным TCP на entry: «селектор hy2|tcp» по строке, как их видит
+# сторож (_transport_pairs в failover-watchdog.py).
+TRANSPORTS_PY=$(cat <<'EOF'
+import json, urllib.request
+env = {}
+for line in open('/etc/anysda/failover-watchdog.env'):
+    key, sep, value = line.strip().partition('=')
+    if sep and not key.startswith('#'):
+        env[key] = value.strip('"\'')
+req = urllib.request.Request(env['CLASH_API'].rstrip('/') + '/proxies',
+                             headers={'Authorization': 'Bearer ' + env['CLASH_SECRET']})
+proxies = json.load(urllib.request.urlopen(req, timeout=5))['proxies']
+for name, p in sorted(proxies.items()):
+    members = p.get('all') or []
+    if ((p.get('type') or '').lower() == 'selector' and len(members) == 2
+            and members[0].startswith('transport-hy2-')
+            and members[1] == 'transport-tcp-' + members[0][14:]):
+        print(name, 'hy2' if p.get('now') == members[0] else 'tcp')
+EOF
+)
+
+# Запрос через экзит раз в секунду: время конца запроса и код ответа.
+CURL_LOOP=$(cat <<'EOF'
+while [[ ! -e /root/udp-cut.stop ]]; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -x socks5h://127.0.0.1:7897 https://api.ipify.org) || true
+  printf '%s %s\n' "$(date +%s.%N)" "$code"
+  sleep 1
+done
+EOF
+)
+
+check() {  # <текст> <команда проверки...>; провал копится в rc вызывающего
+  if "${@:2}"; then log "✓ $1"; else log "✗ $1"; rc=1; fi
+}
+transports() { ssh_node "$ENTRY" python3 - <<<"$TRANSPORTS_PY"; }
+on_hy2() { local t; t=$(transports) && [[ -n "$t" ]] && ! grep -q ' tcp$' <<<"$t"; }
+singbox_state() { ssh_node "$ENTRY" 'systemctl show -p NRestarts -p ActiveEnterTimestamp sing-box' | sort | paste -sd ' '; }
+
+# Правила обрыва на экзите: только трафик с адресов entry, ssh с хоста не задет.
+cut_rules() {
+  local action=$1 v6 port
+  ssh_node "$EXIT" "iptables -w $action INPUT -p udp -s $ENTRY -j DROP" || return
+  for v6 in $UDP_CUT_V6; do
+    ssh_node "$EXIT" "ip6tables -w $action INPUT -p udp -s $v6 -j DROP" || return
+  done
+  for port in $UDP_CUT_TCP_PORTS; do
+    ssh_node "$EXIT" "iptables -w $action INPUT -p tcp -s $ENTRY --dport $port -j DROP" || return
+  done
+}
+
+cmd_udp_cut() {
+  UDP_CUT_TCP_PORTS=''
+  if [[ "${1:-}" == --break-tcp-fallback ]]; then
+    # Отрицательный контроль: запасной TCP тоже мёртв, сторожу остаётся
+    # только перезапуск sing-box - проверки обязаны упасть.
+    UDP_CUT_TCP_PORTS=$(ssh_node "$EXIT" "ss -Hltnp | awk '/\"sing-box\"/ {n = split(\$4, a, \":\"); print a[n]}' | sort -u | paste -sd ' '")
+    UDP_CUT_TCP_PORTS=${UDP_CUT_TCP_PORTS:-4443}
+    log "отрицательный контроль: режу и TCP sing-box экзита с entry (порты $UDP_CUT_TCP_PORTS)"
+  fi
+  UDP_CUT_V6=$(ssh_node "$ENTRY" "ip -6 -o addr show scope global | awk '{sub(\"/.*\", \"\", \$4); print \$4}' | paste -sd ' '")
+  if [[ -n "$UDP_CUT_V6" ]]; then log "IPv6 entry под обрывом: $UDP_CUT_V6"
+  else log 'у entry нет глобального IPv6: обрыв только по IPv4'; fi
+
+  local tcp_return deadline
+  tcp_return=$(ssh_node "$ENTRY" "sed -n 's/^TCP_RETURN_S=//p' /etc/anysda/failover-watchdog.env")
+  tcp_return=${tcp_return:-60}
+  deadline=$((SECONDS + 120))
+  until on_hy2; do
+    (( SECONDS < deadline )) || { transports || true; die 'до обрыва не все каналы на hy2'; }
+    sleep 2
+  done
+  log "каналы до обрыва: $(transports | paste -sd ',' | sed 's/,/, /g')"
+  local before after
+  before=$(singbox_state)
+  log "sing-box до: $before"
+
+  ssh_node "$ENTRY" 'cat > /root/udp-cut-curl.sh' <<<"$CURL_LOOP"
+  ssh_node "$ENTRY" 'rm -f /root/udp-cut.stop; setsid nohup bash /root/udp-cut-curl.sh > /root/udp-cut-curl.log 2>&1 < /dev/null &'
+  sleep 5
+  local t0 t1 t_end
+  t0=$(ssh_node "$ENTRY" 'date +%s.%N')
+  trap 'cut_rules -D 2>/dev/null || true' EXIT
+  cut_rules -I
+  log "обрыв UDP с entry на экзите: $(date -u +%T), держу ${UDP_CUT_HOLD_S} с"
+  sleep "$UDP_CUT_HOLD_S"
+  cut_rules -D
+  trap - EXIT
+  t1=$(ssh_node "$ENTRY" 'date +%s.%N')
+  log "обрыв снят: $(date -u +%T), жду возврата на hy2 (TCP_RETURN_S=$tcp_return)"
+  local back=''
+  deadline=$((SECONDS + ${tcp_return%.*} + 60))
+  while (( SECONDS < deadline )); do
+    if on_hy2; then
+      back=$(ssh_node "$ENTRY" 'date +%s.%N')
+      break
+    fi
+    sleep 2
+  done
+  sleep 3
+  ssh_node "$ENTRY" 'touch /root/udp-cut.stop'
+  t_end=$(ssh_node "$ENTRY" 'date +%s.%N')
+  after=$(singbox_state)
+
+  local curl_log journal gap fails
+  curl_log=$(ssh_node "$ENTRY" 'cat /root/udp-cut-curl.log')
+  # Самое долгое время между ответами 200 от начала обрыва до конца замера.
+  gap=$(awk -v t0="$t0" -v end="$t_end" '
+    $2 == 200 { if ($1 < t0) { prev = $1; next } if (prev == "") prev = t0
+                if ($1 - prev > max) max = $1 - prev; prev = $1 }
+    END { if (prev == "") prev = t0; if (end - prev > max) max = end - prev; printf "%.1f", max }' <<<"$curl_log")
+  fails=$(awk -v t0="$t0" '$1 >= t0 && $2 != 200' <<<"$curl_log" | wc -l)
+  journal=$(ssh_node "$ENTRY" "journalctl -u anysda-failover-watchdog --since @${t0%.*} -o short-precise --no-pager")
+  log 'журнал сторожа с начала обрыва:'
+  grep -E ' -> |UDP до экзита|штрафной|foreign-best|мертвы|перезапуск' <<<"$journal" | sed 's/^/    /' || true
+
+  local rc=0 n back_s
+  check "окно без ответа через экзит ${gap} с (предел ${UDP_CUT_MAX_GAP} с), ошибок curl с начала обрыва: $fails" \
+    awk -v g="$gap" -v m="$UDP_CUT_MAX_GAP" 'BEGIN { exit !(g <= m) }'
+  check "sing-box не перезапускался: до «$before», после «$after»" test "$after" = "$before"
+  n=$(grep -c "UDP до экзита $EXIT_TAG недоступен" <<<"$journal" || true)
+  check "событие «UDP до экзита $EXIT_TAG недоступен»: $n (ждём 1)" test "$n" = 1
+  n=$(grep -c "UDP до экзита $EXIT_TAG снова работает" <<<"$journal" || true)
+  check "событие «UDP до экзита $EXIT_TAG снова работает»: $n (ждём 1)" test "$n" = 1
+  n=$(grep -c 'в штрафной' <<<"$journal" || true)
+  check "«в штрафной» в журнале: $n (ждём 0)" test "$n" = 0
+  n=$(grep -c 'foreign-best' <<<"$journal" || true)
+  check "«foreign-best» в журнале: $n (ждём 0)" test "$n" = 0
+  # Вернулись и остались: после перезапуска sing-box каналы на миг на hy2,
+  # а сторож тут же уводит их на TCP.
+  local final
+  final=$(transports | paste -sd ',' | sed 's/,/, /g') || true
+  back_s=$([[ -z "$back" ]] || awk -v a="$t1" -v b="$back" 'BEGIN { printf "%.1f", b - a }')
+  check "каналы на hy2 после снятия: ${back_s:-нет за $(( ${tcp_return%.*} + 60 ))} с, в конце: $final" \
+    test -n "$back" -a -n "$final" -a "${final/tcp/}" = "$final"
+  log "обрыв UDP: код $rc"
+  return "$rc"
+}
+
 cmd_collect() {
   local out=${1:?каталог для отчётов} host tag
   mkdir -p "$out"
@@ -265,7 +409,8 @@ case "${1:-}" in
   up) cmd_up ;;
   deploy) cmd_deploy "${@:2}" ;;
   verify) cmd_verify "${@:2}" ;;
+  udp-cut) cmd_udp_cut "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

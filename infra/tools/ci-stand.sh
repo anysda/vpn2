@@ -32,7 +32,8 @@ BRIDGE=vpn2ci
 PANEL_REF=vpn2-ci/panel:local
 EXIT_TAG='nl'
 # имя адрес vCPU память(МиБ) MAC
-NODES=("entry $NET.10 3 3072 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
+# entry ведёт почти все стадии - ему все ядра раннера, экзит большей частью ждёт.
+NODES=("entry $NET.10 4 4096 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
 ENTRY=$NET.10
 EXIT=$NET.20
 # Ожидание выпуска сертификата впустую: на адрес 198.18.x ACME не выпустит.
@@ -187,6 +188,9 @@ write_files:
       Environment=TCP_RETURN_S=$TCP_RETURN_S
 bootcmd:
   - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer]
+  # Службы образа, которых продукт не касается: packagekit будит хук apt после
+  # каждого apt-get update, остальные жгут CPU ВМ на загрузке.
+  - [systemctl, mask, --now, packagekit.service, fwupd.service, udisks2.service, multipathd.service, multipathd.socket]
   - echo 'man-db man-db/auto-update boolean false' | debconf-set-selections
   - [rm, -f, /var/lib/man-db/auto-update]
 runcmd:

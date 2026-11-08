@@ -297,7 +297,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4, 5]
+        part: [1, 2, 3, 4, 5, 6, 7, 8]
     defaults:
       run:
         working-directory: app
@@ -310,6 +310,21 @@ jobs:
         run: |
           selected=$(python3 ../infra/lib/e2e_paths.py --github)
           echo "run=$selected" >> "$GITHUB_OUTPUT"
+      # Образ панели и его vpn-слой собираются встроенным сборщиком docker в
+      # фоне, пока ставятся pnpm, Node и зависимости: кэш gha на ветках полос
+      # промахивался, а buildx с выгрузкой образа стоил ~65 с подряд.
+      # run-local.sh пересобирает vpn-слой из локального кэша за секунды.
+      - name: сборка образов панели в фоне
+        if: steps.paths.outputs.run == 'true'
+        run: |
+          (
+            rc=0
+            docker build --progress=plain -t vpn2-panel:e2e . \
+              && docker build --progress=plain --build-arg PANEL_IMAGE=vpn2-panel:e2e \
+                -f e2e/Dockerfile.vpn -t vpn2-panel:e2e-vpn e2e || rc=$?
+            echo "$rc" > "$RUNNER_TEMP/build.rc"
+          ) > "$RUNNER_TEMP/build.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/build.pid"
       - if: steps.paths.outputs.run == 'true'
         uses: pnpm/action-setup@v6
         with:
@@ -328,19 +343,14 @@ jobs:
           version=$(node -p 'require("@playwright/test/package.json").version')
           nohup docker pull -q "mcr.microsoft.com/playwright:v${version}-noble" > "$RUNNER_TEMP/browser-pull.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/browser-pull.pid"
-      - if: steps.paths.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v4
-        with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели
         if: steps.paths.outputs.run == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: app
-          load: true
-          tags: vpn2-panel:e2e
-          # Кэш пишет только panel-e2e-qr: запись из пяти шардов разом шла ~55 с.
-          cache-from: type=gha,scope=checks-panel
+        timeout-minutes: 10
+        run: |
+          pid=$(cat "$RUNNER_TEMP/build.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          cat "$RUNNER_TEMP/build.log"
+          exit "$(cat "$RUNNER_TEMP/build.rc" 2>/dev/null || echo 1)"
       - name: браузерный образ загружен
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5
@@ -371,8 +381,7 @@ jobs:
 
   # Худший конфиг (вход 45.x, сплит) и панель без сплита, аварийка hy2 и бот:
   # qrencode рисует PNG аварийки, zbarimg раскодирует PNG. Здесь же один раз
-  # проверки образа без браузера (e2e/image-checks.sh) и запись кэша сборки
-  # панели: задание короче шардов, запись не удлиняет e2e.
+  # проверки образа без браузера (e2e/image-checks.sh).
   panel-e2e-qr:
     name: e2e панели QR
     runs-on: ubuntu-latest
@@ -391,6 +400,17 @@ jobs:
         run: |
           selected=$(python3 ../infra/lib/e2e_paths.py --github)
           echo "run=$selected" >> "$GITHUB_OUTPUT"
+      # Как в шардах: сборка в фоне без buildx; запись кэша gha mode=max
+      # стоила здесь ~50 с.
+      - name: сборка образов панели в фоне
+        if: steps.paths.outputs.run == 'true'
+        run: |
+          (
+            rc=0
+            docker build --progress=plain -t vpn2-panel:e2e . || rc=$?
+            echo "$rc" > "$RUNNER_TEMP/build.rc"
+          ) > "$RUNNER_TEMP/build.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/build.pid"
       - if: steps.paths.outputs.run == 'true'
         uses: pnpm/action-setup@v6
         with:
@@ -415,19 +435,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
-      - if: steps.paths.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v4
-        with:
-          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели
         if: steps.paths.outputs.run == 'true'
-        uses: docker/build-push-action@v7
-        with:
-          context: app
-          load: true
-          tags: vpn2-panel:e2e
-          cache-from: type=gha,scope=checks-panel
-          cache-to: type=gha,mode=max,scope=checks-panel
+        timeout-minutes: 10
+        run: |
+          pid=$(cat "$RUNNER_TEMP/build.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          cat "$RUNNER_TEMP/build.log"
+          exit "$(cat "$RUNNER_TEMP/build.rc" 2>/dev/null || echo 1)"
       - name: браузерный образ загружен
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5

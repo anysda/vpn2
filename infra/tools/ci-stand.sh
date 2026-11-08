@@ -294,6 +294,35 @@ fetch_image() {
   mv "$image.part" "$image"
 }
 
+# Ядро и initrd того же образа (каталог unpacked рядом с ним): qemu грузит их
+# сам, без GRUB, читающего initrd (~70 МБ) через BIOS, - до ядра ~2 с вместо
+# ~9. Гость тот же: тот же корень, та же строка ядра. Нет файлов - через GRUB.
+fetch_kernel() {
+  local dir=$1 base sums f
+  base=${IMAGE_URL%/*}/unpacked/$(basename "$IMAGE_URL" .img)
+  sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/unpacked/SHA256SUMS") || return 1
+  for f in vmlinuz initrd; do
+    curl -fsSL --retry 3 -o "$dir/$f.part" "$base-$f-generic" || return 1
+    printf '%s\n' "$sums" | awk -v n="${base##*/}-$f-generic" '$2 == n || $2 == "*" n {print $1 "  '"$dir/$f.part"'"}' \
+      | grep . | sha256sum --check --status || return 1
+    mv "$dir/$f.part" "$dir/$f"
+  done
+}
+
+vm_wait_ready() {
+  local name=$1 ip=$2 up_t0=$3 deadline=$((SECONDS + 600))
+  until ssh_node "$ip" 'cloud-init status --wait >/dev/null 2>&1; test -f /var/lib/cloud/instance/boot-finished'; do
+    (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
+    sleep 1
+  done
+  # Ядро снаружи образа: модули стадий (wireguard, xfrm) берутся из корня.
+  ssh_node "$ip" 'test -d "/lib/modules/$(uname -r)/kernel"' \
+    || die "ВМ $name: ядро $(ssh_node "$ip" 'uname -r') без модулей в образе"
+  log "ВМ $name готова через $((SECONDS - up_t0)) с от начала up: $(ssh_node "$ip" '. /etc/os-release; printf "%s, ядро %s, dpkg %s, база man-db %s" "$PRETTY_NAME" "$(uname -r)" \
+    "$(grep -q unsafe-io /etc/dpkg/dpkg.cfg.d/90vpn2-ci 2>/dev/null && echo без fsync || echo с fsync)" \
+    "$(test -e /var/lib/man-db/auto-update && echo обновляется || echo не обновляется)"')"
+}
+
 cmd_up() {
   [[ -e /dev/kvm ]] || die '/dev/kvm нет: нужна машина с аппаратной виртуализацией'
   mkdir -p "$STAND_DIR"
@@ -306,6 +335,8 @@ cmd_up() {
     fetch_image "$image" &
     fetch=$!
   fi
+  local kfetch='' boot=()
+  [[ -f "$STAND_DIR/initrd" ]] || { fetch_kernel "$STAND_DIR" & kfetch=$!; }
   if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
     # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
     # Индекс apt в образе раннера свежий: update (~3 с) - только если без
@@ -317,6 +348,11 @@ cmd_up() {
     log "qemu и прокси apt на раннере: $((SECONDS - up_t0)) с от начала up"
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
+  if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
+  if [[ -f "$STAND_DIR/vmlinuz" && -f "$STAND_DIR/initrd" ]]; then
+    boot=(-kernel "$STAND_DIR/vmlinuz" -initrd "$STAND_DIR/initrd"
+      -append 'root=LABEL=cloudimg-rootfs ro console=tty1 console=ttyS0')
+  fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
@@ -335,20 +371,17 @@ cmd_up() {
       -drive "file=$STAND_DIR/$name-seed.iso,if=virtio,format=raw,readonly=on" \
       -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no" -device "virtio-net-pci,netdev=lan,mac=$mac" \
       -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \
-      -daemonize -pidfile "$STAND_DIR/$name.pid"
-    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up"
+      -daemonize -pidfile "$STAND_DIR/$name.pid" "${boot[@]}"
+    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up${boot:+, ядро без GRUB}"
   done
+  # Узлы ждём параллельно: последовательно второй замечали на ~3 с позже.
+  local waits=()
   for node in "${NODES[@]}"; do
     read -r name ip _ <<<"$node"
-    local deadline=$((SECONDS + 600))
-    until ssh_node "$ip" 'cloud-init status --wait >/dev/null 2>&1; test -f /var/lib/cloud/instance/boot-finished'; do
-      (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
-      sleep 1
-    done
-    log "ВМ $name готова через $((SECONDS - up_t0)) с от начала up: $(ssh_node "$ip" '. /etc/os-release; printf "%s, dpkg %s, база man-db %s" "$PRETTY_NAME" \
-      "$(grep -q unsafe-io /etc/dpkg/dpkg.cfg.d/90vpn2-ci 2>/dev/null && echo без fsync || echo с fsync)" \
-      "$(test -e /var/lib/man-db/auto-update && echo обновляется || echo не обновляется)"')"
+    vm_wait_ready "$name" "$ip" "$up_t0" & waits+=($!)
   done
+  local p
+  for p in "${waits[@]}"; do wait "$p" || die 'ВМ стенда не поднялись'; done
   host_stats 'ВМ готовы'
   entry_stats 'ВМ готовы'
 }

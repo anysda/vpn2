@@ -37,6 +37,15 @@ jobs:
       - name: up (фоном)
         run: sudo infra/tools/ci-stand.sh up-bg
 
+      # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
+      - name: apt cache
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: stand-apt-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          restore-keys: stand-apt-
+
       - uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
@@ -85,6 +94,13 @@ jobs:
         if: always()
         run: sudo infra/tools/ci-stand.sh down
 
+      - name: apt cache save
+        if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
+
   # Обрыв UDP entry → экзит: трафик уходит на запасной TCP без перезапуска
   # sing-box и возвращается на Hysteria2. Стенд только из нужных стадий.
   udp-cut:
@@ -93,6 +109,15 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+
+      # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
+      - name: apt cache
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: stand-apt-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          restore-keys: stand-apt-
 
       - name: up
         id: up
@@ -118,3 +143,10 @@ jobs:
       - name: down
         if: always()
         run: sudo infra/tools/ci-stand.sh down
+
+      - name: apt cache save
+        if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}

@@ -38,6 +38,12 @@ EXIT=$NET.20
 # Ожидание выпуска сертификата впустую: на адрес 198.18.x ACME не выпустит.
 # Стадии берут его из окружения ssh-сессии (pam_env, /etc/environment).
 TLS_INITIAL_WAIT=0
+# Пакеты ВМ идут через кэширующий прокси apt на хосте (apt-cacher-ng на мосту):
+# установка на ВМ та же - apt-get update/install с чистой Ubuntu, но пакеты
+# берутся из кэша раннера, а не с зеркал на каждом прогоне. Каталог кэша
+# переживает прогон через actions/cache (stand.yml).
+APT_CACHE=${STAND_APT_CACHE:-/var/tmp/vpn2-apt-cache}
+APT_PROXY=http://$NET.1:3142
 # Сторож возвращает канал на hy2 после стольких секунд живого hy2 (в продукте 60).
 TCP_RETURN_S=20
 
@@ -121,6 +127,9 @@ write_files:
     permissions: '0600'
     content: |
       $(cat "$STAND_DIR/id_ed25519.pub")
+  - path: /etc/apt/apt.conf.d/00vpn2-ci-proxy
+    content: |
+      Acquire::http::Proxy "$APT_PROXY";
   - path: /etc/environment
     append: true
     content: |
@@ -135,6 +144,32 @@ runcmd:
   - [systemctl, restart, ssh]
 EOF
   cloud-localds --network-config="$dir/network-config" "$STAND_DIR/$name-seed.iso" "$dir/user-data" "$dir/meta-data"
+}
+
+# Слушает только мост стенда. Поднимается в начале деплоя: каталог кэша
+# восстанавливает actions/cache от пользователя раннера, пока ВМ грузятся,
+# потом владелец - прокси, иначе он не допишет новые пакеты.
+apt_proxy_up() {
+  mkdir -p "$APT_CACHE"
+  printf 'CacheDir: %s\nBindAddress: %s\nPort: 3142\n' "$APT_CACHE" "$NET.1" \
+    > /etc/apt-cacher-ng/zz-vpn2-ci.conf
+  chown -R apt-cacher-ng: "$APT_CACHE"
+  systemctl restart apt-cacher-ng
+  local deadline=$((SECONDS + 30))
+  until curl -fs -o /dev/null "$APT_PROXY/acng-report.html"; do
+    (( SECONDS < deadline )) || die "прокси apt не поднялся на $APT_PROXY"
+    sleep 1
+  done
+  log "прокси apt: $APT_PROXY, в кэше $(du -sh "$APT_CACHE" | cut -f1)"
+}
+
+# Сколько прокси взял с зеркал и сколько отдал ВМ (журнал apt-cacher-ng:
+# I - пришло с зеркала, O - отдано клиенту).
+apt_proxy_stats() {
+  local log=/var/log/apt-cacher-ng/apt-cacher.log
+  [[ -f "$log" ]] || return 0
+  awk -F'|' '$2 == "I" {i += $3} $2 == "O" {o += $3}
+    END {printf "[stand] прокси apt: с зеркал %.1f МБ, отдано ВМ %.1f МБ\n", i / 1e6, o / 1e6}' "$log"
 }
 
 fetch_image() {
@@ -158,9 +193,10 @@ cmd_up() {
     fetch_image "$image" &
     fetch=$!
   fi
-  if ! command -v qemu-system-x86_64 cloud-localds qemu-img >/dev/null; then
+  if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
     apt-get update -q
-    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
+      qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
@@ -268,6 +304,7 @@ load_panel() {
 
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
+  apt_proxy_up
   push_tree
   docker tag "$image" "$PANEL_REF"
   load_panel &
@@ -290,6 +327,7 @@ UDP_STAGES=('00-bootstrap all' '05-mgmt-mesh all' "10-foreign $EXIT_TAG" '20-ru-
             '21-failover-watchdog ru' '22-adguard ru')
 
 cmd_deploy_udp() {
+  apt_proxy_up
   push_tree
   local stage started=$SECONDS
   for stage in "${UDP_STAGES[@]}"; do
@@ -493,6 +531,12 @@ cmd_down() {
   iptables -w -D FORWARD -i "$BRIDGE" -j ACCEPT 2>/dev/null || true
   iptables -w -D FORWARD -o "$BRIDGE" -j ACCEPT 2>/dev/null || true
   rm -rf "$STAND_DIR"
+  # Кэш сохраняет actions/cache от пользователя раннера: прокси стоп, файлы на чтение.
+  if [[ -d "$APT_CACHE" ]]; then
+    systemctl stop apt-cacher-ng 2>/dev/null || true
+    apt_proxy_stats
+    chmod -R a+rX "$APT_CACHE"
+  fi
 }
 
 case "${1:-}" in

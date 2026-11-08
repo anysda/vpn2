@@ -86,11 +86,19 @@ ctypes.CDLL(None).syscall({'x86_64': 60, 'aarch64': 93}[os.uname().machine], 0)
 
 
 def alive(pid):
+    # Ведущий поток в Z, пока другие потоки ещё выходят: дескрипторы и порт процесса открыты.
     try:
-        state = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+        tasks = list(Path(f'/proc/{pid}/task').iterdir())
     except OSError:
         return False
-    return state != 'Z'
+    for task in tasks:
+        try:
+            state = (task / 'stat').read_text().rsplit(')', 1)[1].split()[0]
+        except OSError:
+            continue
+        if state != 'Z':
+            return True
+    return False
 
 
 def listening(address, port):

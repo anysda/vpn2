@@ -46,6 +46,29 @@ test('остановка Unix API сохраняет операцию и пон�
   }
 })
 
+// Каталоги клиента OpenVPN остаются, как после прерванного запуска,
+// и следующий живой тест в том же контейнере должен их пережить.
+test('остаток каталога OpenVPN-клиента от прошлого запуска лежит до живого теста', async ({ page }) => {
+  test.skip(!container, 'файлы клиента пишутся только в одноразовом контейнере')
+  await loginApi(page)
+  const probe = await (await page.request.post('/api/clients', { data: { name: uniq('ovpn-leftover') } })).json()
+  const removed = await (await page.request.delete(`/api/clients/${probe.id}`)).json()
+  if (removed.operation) await waitAccess(page.request, removed.operation)
+  const dirs = JSON.parse(inside(`
+    import { mkdirSync, writeFileSync } from 'node:fs';
+    const first=JSON.parse(process.argv[1])+1;
+    const dirs=[];
+    for(let id=first; id<first+5; id++) {
+      const dir='/tmp/access-openvpn-'+id;
+      mkdirSync(dir,{recursive:true,mode:0o700});
+      writeFileSync(dir+'/log','Initialization Sequence Completed\\n');
+      dirs.push(dir);
+    }
+    console.log(JSON.stringify(dirs));
+  `, probe.id))
+  expect(dirs).toHaveLength(5)
+})
+
 test('живой OpenVPN: заморозка завершает сессию и запрещает повторное подключение', async ({ page }) => {
   test.setTimeout(180_000)
   test.skip(!container, 'VPN-клиент разрешён только в одноразовом контейнере')

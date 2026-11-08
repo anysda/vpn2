@@ -124,6 +124,8 @@ pause_entry_auto_updates() { :; }
 install_prereqs() { :; }
 do_check() { :; }
 preflight_ssh() { :; }
+prep_orchestrator_key() { :; }
+prep_entry_mgmt_key() { :; }
 run_stage() { echo "STAGE $*"; }
 run_tracks() { :; }
 expand_hosts() { echo exit; }

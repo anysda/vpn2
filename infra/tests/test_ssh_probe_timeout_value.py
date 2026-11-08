@@ -37,6 +37,8 @@ DEPLOY_HEAD = FAST_SLEEP + ''.join(
 print_banner() { :; }
 pause_entry_auto_updates() { :; }
 install_prereqs() { :; }
+prep_orchestrator_key() { :; }
+prep_entry_mgmt_key() { :; }
 exit_tags() { echo de nl; }
 expand_hosts() { case $1 in all) echo ru de nl ;; foreign) echo de nl ;; *) echo "$1" ;; esac; }
 load_env() { :; }

@@ -40,7 +40,7 @@ class ReleaseTests(unittest.TestCase):
         for name in ('do_all', 'run_tracks'):
             functions += name + '() {' + source.split(name + '() {', 1)[1].split('\n}', 1)[0] + '\n}\n'
         script = functions + '''
-for name in print_banner pause_entry_auto_updates install_prereqs do_check preflight_ssh verify_and_rotate_ports print_summary announce_deploy_done release_complete; do
+for name in print_banner pause_entry_auto_updates install_prereqs do_check preflight_ssh prep_orchestrator_key prep_entry_mgmt_key verify_and_rotate_ports print_summary announce_deploy_done release_complete; do
   eval "$name() { :; }"
 done
 die() { exit 1; }
@@ -59,7 +59,7 @@ do_all
         source = (ROOT / 'infra/deploy.sh').read_text()
         script = 'do_all() {' + source.split('do_all() {', 1)[1].split('\n}', 1)[0] + '\n}\n'
         script += '''
-for name in print_banner pause_entry_auto_updates install_prereqs do_check preflight_ssh verify_and_rotate_ports run_stage run_tracks; do
+for name in print_banner pause_entry_auto_updates install_prereqs do_check preflight_ssh prep_orchestrator_key prep_entry_mgmt_key verify_and_rotate_ports run_stage run_tracks; do
   eval "$name() { :; }"
 done
 expand_hosts() { echo exit; }

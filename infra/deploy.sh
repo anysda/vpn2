@@ -878,7 +878,9 @@ run_stage() {
     20-ru-router) prep_ru_router; warn_insecure_exits ;;
     23-emergency) python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
   esac
-  if [[ "$stage" == "00-bootstrap" ]]; then
+  # Полный прогон готовит ключи один раз до параллельных цепочек (do_all):
+  # две цепочки с 00-bootstrap иначе разом переписали бы одни и те же файлы.
+  if [[ "$stage" == "00-bootstrap" && -z "${_BOOTSTRAP_KEYS_READY:-}" ]]; then
     prep_orchestrator_key
     prep_entry_mgmt_key
   fi
@@ -1493,22 +1495,23 @@ do_all() {
   do_check
   preflight_ssh
 
-  run_stage 00-bootstrap     ru
-  run_stage 05-mgmt-mesh     ru
+  prep_orchestrator_key
+  prep_entry_mgmt_key
+  local _BOOTSTRAP_KEYS_READY=1
   # Even bootstrap/firewall and management changes belong to the exit's
   # sequential update. Stage 10 verifies it before the next exit starts.
   local exit_track='' tag
   for tag in $(expand_hosts foreign); do
     exit_track+="00-bootstrap:$tag 05-mgmt-mesh:$tag 10-foreign:$tag "
   done
-  # 28/29/19 на ru от экзитов не зависят (секреты экзитов забирает только
-  # prep_ru_router перед 20) - гоняем их, пока экзиты ставят 10-foreign.
+  # Стадии ru до 20 от экзитов не зависят (ключи готовы выше, секреты экзитов
+  # забирает только prep_ru_router перед 20) - гоняем их, пока ставятся экзиты.
   # 19 строго ДО 20: сначала готовим путь десинка YouTube, потом sing-box
   # начинает на него маршрутизировать. Обратный порядок = окно, в котором
   # YouTube уже на РФ-выходе, а обходить DPI ещё нечем. Стадия сама валит
   # деплой, если A/B-проверка не прошла.
   run_tracks "$exit_track" \
-             "28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
+             "00-bootstrap:ru 05-mgmt-mesh:ru 28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
   run_stage 20-ru-router     ru
   verify_and_rotate_ports
   run_stage 21-failover-watchdog ru

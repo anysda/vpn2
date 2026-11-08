@@ -12,6 +12,7 @@ previous config restored, 4 restore failed, 5 first install failed.
 """
 
 import argparse
+import atexit
 import contextlib
 import fcntl
 import json
@@ -156,6 +157,11 @@ def dropped(_number, _frame):
     """A signal after the one that stopped apply: the cleanup goes on, the code stays."""
 
 
+def wait_to_exit():
+    """The signals wait in the kernel: as Python shuts down it puts SIG_DFL in place of dropped."""
+    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
+
+
 def inside_stop(frame):
     """FRAME runs within stop_on_signal: Python runs a handler between any two steps of another."""
     while frame:
@@ -176,6 +182,9 @@ def stop_on_signal(number, frame):
     for each in SIGNALS:
         if signal.getsignal(each) is stop_on_signal:
             signal.signal(each, dropped)
+    # Last at exit, first to run; a later signal then stays pending and the code is this one.
+    atexit.unregister(wait_to_exit)
+    atexit.register(wait_to_exit)
     raise Stopped(128 + number)
 
 

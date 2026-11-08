@@ -30,7 +30,7 @@ CHUNK = 4
 HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
 # Seconds of a partition in infra (true) on GitHub (dev cdfd3ce): queue order only. Unlisted ones
 # go after, larger first; a new slow module goes here or ends up in the run's tail.
-# test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and hangs
+# test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and fails the run
 WEIGHT = {
     'test_verify.VerifyTest[test_individual_entry_failures]': 245,
     'test_verify.VerifyTest[test_fresh_scrape_after_tunnel_restart_ten_times]': 50,

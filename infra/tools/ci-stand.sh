@@ -5,7 +5,9 @@
 # трафик WireGuard/OpenVPN/IKEv2.
 #
 #   sudo infra/tools/ci-stand.sh up                     поднять ВМ
+#   sudo infra/tools/ci-stand.sh up-bg | up-wait        то же фоном и ожидание
 #   sudo infra/tools/ci-stand.sh deploy <образ панели>  полный деплой
+#   sudo infra/tools/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
 #   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
@@ -14,6 +16,8 @@
 # Образ панели - локальный docker-образ, собранный из этого же дерева; на
 # entry он загружается до деплоя, deploy берёт его по panel.image.
 # verify возвращает код 99-verify: 0 работает, 1 ошибка, 2 не проверено.
+# deploy-udp ставит только то, на чём стоит обрыв UDP: экзит, sing-box entry,
+# сторож и AdGuard (DNS sing-box идёт через него).
 # udp-cut режет UDP с entry на экзите и проверяет, что трафик ушёл на запасной
 # TCP без перезапуска sing-box и вернулся на Hysteria2: 0 прошло, 1 нет.
 set -Eeuo pipefail
@@ -28,9 +32,14 @@ BRIDGE=vpn2ci
 PANEL_REF=vpn2-ci/panel:local
 EXIT_TAG='nl'
 # имя адрес vCPU память(МиБ) MAC
-NODES=("entry $NET.10 2 3072 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
+NODES=("entry $NET.10 3 3072 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
 ENTRY=$NET.10
 EXIT=$NET.20
+# Ожидание выпуска сертификата впустую: на адрес 198.18.x ACME не выпустит.
+# Стадии берут его из окружения ssh-сессии (pam_env, /etc/environment).
+TLS_INITIAL_WAIT=0
+# Сторож возвращает канал на hy2 после стольких секунд живого hy2 (в продукте 60).
+TCP_RETURN_S=20
 
 log() { printf '[stand] %s\n' "$*"; }
 die() { printf '[stand] ✗ %s\n' "$*" >&2; exit 1; }
@@ -94,6 +103,7 @@ ethernets:
 EOF
   # Как у хостера: root по паролю (00-bootstrap разносит ключ оркестратора).
   # Таймеры apt выключены, чтобы автообновление не держало apt весь прогон.
+  # Короткие ожидания стенда - в окружение ssh и в drop-in сторожа.
   cat > "$dir/user-data" <<EOF
 #cloud-config
 disable_root: false
@@ -111,6 +121,14 @@ write_files:
     permissions: '0600'
     content: |
       $(cat "$STAND_DIR/id_ed25519.pub")
+  - path: /etc/environment
+    append: true
+    content: |
+      TLS_INITIAL_WAIT=$TLS_INITIAL_WAIT
+  - path: /etc/systemd/system/anysda-failover-watchdog.service.d/10-vpn2-ci.conf
+    content: |
+      [Service]
+      Environment=TCP_RETURN_S=$TCP_RETURN_S
 bootcmd:
   - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer]
 runcmd:
@@ -119,21 +137,32 @@ EOF
   cloud-localds --network-config="$dir/network-config" "$STAND_DIR/$name-seed.iso" "$dir/user-data" "$dir/meta-data"
 }
 
+fetch_image() {
+  local image=$1 sums name
+  log "образ: $IMAGE_URL"
+  curl -fsSL --retry 3 -o "$image.part" "$IMAGE_URL"
+  sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/SHA256SUMS")
+  name=${IMAGE_URL##*/}
+  printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$image.part"'"}' \
+    | grep . | sha256sum --check --status || die "контрольная сумма $name не сошлась"
+  mv "$image.part" "$image"
+}
+
 cmd_up() {
   [[ -e /dev/kvm ]] || die '/dev/kvm нет: нужна машина с аппаратной виртуализацией'
   mkdir -p "$STAND_DIR"
   chmod 700 "$STAND_DIR"
-  local image=$STAND_DIR/base.img
+  local image=$STAND_DIR/base.img fetch=''
+  # Образ качается, пока ставится qemu.
   if [[ ! -f "$image" ]]; then
-    log "образ: $IMAGE_URL"
-    curl -fsSL --retry 3 -o "$image.part" "$IMAGE_URL"
-    local sums name
-    sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/SHA256SUMS")
-    name=${IMAGE_URL##*/}
-    printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$image.part"'"}' \
-      | grep . | sha256sum --check --status || die "контрольная сумма $name не сошлась"
-    mv "$image.part" "$image"
+    fetch_image "$image" &
+    fetch=$!
   fi
+  if ! command -v qemu-system-x86_64 cloud-localds qemu-img >/dev/null; then
+    apt-get update -q
+    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+  fi
+  if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
@@ -158,10 +187,30 @@ cmd_up() {
     local deadline=$((SECONDS + 600))
     until ssh_node "$ip" 'cloud-init status --wait >/dev/null 2>&1; test -f /var/lib/cloud/instance/boot-finished'; do
       (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
-      sleep 5
+      sleep 2
     done
     log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; echo "$PRETTY_NAME"')"
   done
+}
+
+# up фоном: ВМ грузятся, пока раннер собирает образ панели; up-wait ждёт
+# конца и отдаёт вывод и код up.
+cmd_up_bg() {
+  mkdir -p "$STAND_DIR"
+  chmod 700 "$STAND_DIR"
+  : > "$STAND_DIR/up.rc"
+  setsid nohup bash -c '"$0" up > "$1/up.log" 2>&1; echo $? > "$1/up.rc"' "$0" "$STAND_DIR" \
+    < /dev/null > /dev/null 2>&1 &
+}
+
+cmd_up_wait() {
+  local deadline=$((SECONDS + 900))
+  until [[ -s "$STAND_DIR/up.rc" ]]; do
+    (( SECONDS < deadline )) || { cat "$STAND_DIR/up.log"; die 'up не кончился за 15 мин'; }
+    sleep 1
+  done
+  cat "$STAND_DIR/up.log"
+  return "$(cat "$STAND_DIR/up.rc")"
 }
 
 # Долгая команда на entry отвязана от ssh: обрыв сессии её не убивает.
@@ -179,12 +228,12 @@ entry_run() {
       ssh_node "$ENTRY" "sed -n '$((shown + 1)),\$p' /root/$name.log" || true
       return "$rc"
     fi
-    sleep 10
+    sleep 2
   done
 }
 
-cmd_deploy() {
-  local image=${1:?образ панели (docker-образ на этой машине)} password
+push_tree() {
+  local password
   password=$(cat "$STAND_DIR/root-password")
   log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
   ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
@@ -202,6 +251,11 @@ admin:
 panel:
   image: $PANEL_REF
 EOF
+}
+
+cmd_deploy() {
+  local image=${1:?образ панели (docker-образ на этой машине)}
+  push_tree
   # Docker на entry ставят пререквизиты оркестратора и 00-bootstrap; образ
   # нужен к 30-frontend, поэтому сначала только первая стадия.
   entry_run bootstrap './deploy.sh --development 00-bootstrap ru' || die "00-bootstrap ru: код $?"
@@ -212,6 +266,19 @@ EOF
   entry_run deploy './deploy.sh --development' || rc=$?
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   return "$rc"
+}
+
+# Только то, на чём стоит обрыв UDP: без VPN-серверов, аварийки, панели и бота.
+UDP_STAGES=('00-bootstrap all' '05-mgmt-mesh all' "10-foreign $EXIT_TAG" '20-ru-router ru'
+            '21-failover-watchdog ru' '22-adguard ru')
+
+cmd_deploy_udp() {
+  push_tree
+  local stage started=$SECONDS
+  for stage in "${UDP_STAGES[@]}"; do
+    entry_run "deploy-${stage%% *}" "./deploy.sh --development $stage" || die "$stage: код $?"
+  done
+  log "стадии для обрыва UDP: $(( SECONDS - started )) с"
 }
 
 cmd_verify() {
@@ -226,7 +293,10 @@ cmd_verify() {
   return "$rc"
 }
 
-UDP_CUT_HOLD_S=90   # сколько держать обрыв
+# Сколько держать обрыв. Сторож проверяет каналы раз в INTERVAL=2 с, мёртвым
+# канал считает после DEAD_AFTER промахов, sing-box перезапускает после
+# RESTART_AFTER_CHECKS проверок: любой исход виден за ~20 с.
+UDP_CUT_HOLD_S=30
 UDP_CUT_MAX_GAP=15  # окно без ответа через экзит, с: на стенде из VPS 2,4 с
 
 # Каналы с запасным TCP на entry: «селектор hy2|tcp» по строке, как их видит
@@ -292,9 +362,9 @@ cmd_udp_cut() {
   if [[ -n "$UDP_CUT_V6" ]]; then log "IPv6 entry под обрывом: $UDP_CUT_V6"
   else log 'у entry нет глобального IPv6: обрыв только по IPv4'; fi
 
-  local tcp_return deadline
-  tcp_return=$(ssh_node "$ENTRY" "sed -n 's/^TCP_RETURN_S=//p' /etc/anysda/failover-watchdog.env")
-  tcp_return=${tcp_return:-60}
+  local tcp_return=$TCP_RETURN_S deadline
+  ssh_node "$ENTRY" "systemctl show -p Environment anysda-failover-watchdog | grep -qw 'TCP_RETURN_S=$tcp_return'" \
+    || die "сторож без TCP_RETURN_S=$tcp_return стенда"
   deadline=$((SECONDS + 120))
   until on_hy2; do
     (( SECONDS < deadline )) || { transports || true; die 'до обрыва не все каналы на hy2'; }
@@ -376,7 +446,7 @@ cmd_collect() {
       || rm -f "$out/verify-report-$tag.json"
   done
   local name
-  for name in bootstrap deploy verify; do
+  for name in $(ssh_node "$ENTRY" 'cd /root && ls -- *.log 2>/dev/null | sed "s/\.log$//"' || true); do
     ssh_node "$ENTRY" "cat /root/$name.log" > "$out/$name.log" 2>/dev/null || rm -f "$out/$name.log"
   done
   cp "$STAND_DIR"/*-console.log "$out/" 2>/dev/null || true
@@ -407,10 +477,13 @@ cmd_down() {
 
 case "${1:-}" in
   up) cmd_up ;;
+  up-bg) cmd_up_bg ;;
+  up-wait) cmd_up_wait ;;
   deploy) cmd_deploy "${@:2}" ;;
+  deploy-udp) cmd_deploy_udp ;;
   verify) cmd_verify "${@:2}" ;;
   udp-cut) cmd_udp_cut "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

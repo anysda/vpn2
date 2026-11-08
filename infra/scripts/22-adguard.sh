@@ -57,7 +57,7 @@ if [[ "$need_install" -eq 1 ]]; then
   ARCHIVE="AdGuardHome_${ARCH}.tar.gz"
   release_download adguard "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
   if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
     ( cd "$TMP" && grep -E "[[:space:]]\*?(\./)?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
       || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
   fi

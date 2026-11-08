@@ -495,7 +495,7 @@ if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --v
   ARCHIVE="node_exporter-${NE_VERSION}.linux-amd64.tar.gz"
   release_download node-exporter "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
   if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --connect-timeout 20 "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
     ( cd "$TMP" && grep -E "[[:space:]]${ARCHIVE}\$" sha256sums.txt | sha256sum -c - ) \
       || { rm -rf "$TMP"; echo "[$HOST_TAG] node_exporter SHA-256 mismatch — abort" >&2; exit 1; }
   fi

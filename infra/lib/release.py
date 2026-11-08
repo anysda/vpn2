@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,11 @@ MANIFEST_MEDIA_TYPE = 'application/vnd.anysda.vpn2.release-manifest.v1+json'
 # A freshly started dockerd can break a layer extraction (snapshot not found,
 # context canceled); the same pull a few seconds later succeeds.
 PULL_PAUSES = (5, 15)
+# releases/download can answer 503/504 for an hour while the releases API works:
+# transient errors are retried, then a github.com asset is taken through the API.
+DOWNLOAD_PAUSES = (3, 10, 30)
+GITHUB_DOWNLOAD = 'https://github.com'
+GITHUB_API = 'https://api.github.com'
 
 
 class ReleaseError(Exception):
@@ -166,6 +172,54 @@ def image(manifest, component, requested='', pull=True, arch=None):
     return digest(actual['Id'])  # Store-native immutable handle, never a tag.
 
 
+def download(name, url, output, accept=None):
+    """GET url into output with retries; returns (error text, attempts), ('', n) on success."""
+    attempts = len(DOWNLOAD_PAUSES) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            output.seek(0)
+            output.truncate()
+            request = urllib.request.Request(url, headers={'Accept': accept} if accept else {})
+            with urllib.request.urlopen(request, timeout=60) as source:
+                shutil.copyfileobj(source, output)
+            return '', attempt
+        except urllib.error.HTTPError as exc:
+            error = f'HTTP {exc.code}'
+            if exc.code < 500 and exc.code != 429:
+                return error, attempt
+        except (OSError, http.client.HTTPException) as exc:
+            error = str(getattr(exc, 'reason', '') or exc) or type(exc).__name__
+        if attempt < attempts:
+            pause = DOWNLOAD_PAUSES[attempt - 1]
+            print(f'release: {name}: {url}: {error} ({attempt}/{attempts}), retry in {pause} s', file=sys.stderr)
+            time.sleep(pause)
+    return error, attempts
+
+
+def github_download(name, url, output):
+    """A github.com release asset through the releases API; returns an error text, '' on success."""
+    parts = url.removeprefix(GITHUB_DOWNLOAD + '/').split('/')
+    if not url.startswith(GITHUB_DOWNLOAD + '/') or len(parts) != 6 or parts[2:4] != ['releases', 'download']:
+        return 'not a GitHub release asset, no fallback'
+    owner, repo, _releases, _download, tag, asset = parts
+    api = f'{GITHUB_API}/repos/{owner}/{repo}/releases/tags/{tag}'
+    print(f'release: {name}: trying GitHub releases API {api}', file=sys.stderr)
+    with tempfile.TemporaryFile() as listing:
+        error, attempts = download(name, api, listing)
+        if error:
+            return f'{api}: {error} after {attempts} attempts'
+        listing.seek(0)
+        try:
+            found = [item['url'] for item in json.load(listing)['assets']
+                     if item['name'] == urllib.parse.unquote(asset)]
+        except (ValueError, KeyError, TypeError):
+            return f'{api}: unexpected answer'
+    if not found:
+        return f'{api}: no asset {asset}'
+    error, attempts = download(name, found[0], output, 'application/octet-stream')
+    return f'{found[0]}: {error} after {attempts} attempts' if error else ''
+
+
 def artifact(manifest, name, cache, destination=None):
     item = manifest['binaries'][name]
     cache = Path(cache)
@@ -177,8 +231,14 @@ def artifact(manifest, name, cache, destination=None):
     if not target.exists():
         fd, temporary = tempfile.mkstemp(dir=cache)
         try:
-            with os.fdopen(fd, 'wb') as output, urllib.request.urlopen(item['url'], timeout=60) as source:
-                shutil.copyfileobj(source, output)
+            with os.fdopen(fd, 'wb') as output:
+                error, attempts = download(name, item['url'], output)
+                if error:
+                    fallback = github_download(name, item['url'], output)
+                    if fallback:
+                        raise ReleaseError(f'{name}: {item["url"]}: {error} after {attempts} attempts; '
+                                           f'{fallback}. Check that the entry reaches github.com '
+                                           'and run ./deploy.sh again')
             if sha256(temporary) != item['sha256']:
                 raise ReleaseError(f'{name}: digest mismatch for {target} after a fresh download; '
                                    'artifact rejected before extraction')

@@ -13,7 +13,7 @@ SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 release_download() {
   local name="$1" destination="$2" url="$3" lib
   if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --connect-timeout 20 --max-time 300 -o "$destination" "$url"
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 -o "$destination" "$url"
   else
     lib=$(dirname "${BASH_SOURCE[0]}")/release.py
     python3 "$lib" --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
@@ -341,7 +341,7 @@ caddy_install() {
   deb="caddy_${CADDY_VER}_linux_amd64.deb"
   release_download caddy "$tmp/$deb" "$rel_url/$deb" || { rm -rf "$tmp"; return 1; }
   if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --connect-timeout 20 "$rel_url/caddy_${CADDY_VER}_checksums.txt" -o "$tmp/checksums.txt"
+    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$rel_url/caddy_${CADDY_VER}_checksums.txt" -o "$tmp/checksums.txt"
     ( cd "$tmp" && grep -E "[[:space:]]${deb}\$" checksums.txt | sha512sum -c - ) \
       || { rm -rf "$tmp"; svc_say "caddy SHA-512 mismatch — abort" >&2; return 1; }
   fi

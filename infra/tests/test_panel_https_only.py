@@ -24,7 +24,8 @@ import tempfile
 import threading
 import time
 import unittest
-import urllib.request
+
+import release_fetch
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -48,14 +49,9 @@ def caddy_binary():
     binary = cache / 'caddy'
     if binary.exists():
         return str(binary)
-    base = f'https://github.com/caddyserver/caddy/releases/download/v{version}'
     name = f'caddy_{version}_linux_amd64.tar.gz'
-
-    def fetch(url):
-        with urllib.request.urlopen(url, timeout=120) as response:
-            return response.read()
-    data = fetch(f'{base}/{name}')
-    sums = fetch(f'{base}/caddy_{version}_checksums.txt').decode()
+    data = release_fetch.fetch('caddyserver/caddy', f'v{version}', name)
+    sums = release_fetch.fetch('caddyserver/caddy', f'v{version}', f'caddy_{version}_checksums.txt').decode()
     want = next(line.split()[0] for line in sums.splitlines() if line.endswith(' ' + name))
     if hashlib.sha512(data).hexdigest() != want:
         raise AssertionError('caddy archive SHA-512 mismatch')

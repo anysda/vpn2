@@ -74,14 +74,18 @@ jobs:
         run: python3 infra/tests/run_parallel.py
       - name: регрессии развёртывания и маршрутов sing-box
         if: matrix.sing-box
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           d=$(mktemp -d)
           trap 'rm -rf "$d"' EXIT
           version=$(sed -n "s/^readonly SB_VER='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
           test -n "$version"
-          curl -fsSL --retry 3 -o "$d/sing-box.tar.gz" \
-            "https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-amd64.tar.gz"
           checksum=$(sed -n "s/^readonly SB_SHA256_AMD64='\([^']*\)'/\1/p" infra/lib/install-sing-box.sh)
+          test -n "$checksum"
+          # releases/download бывает 504, тогда тот же файл берётся через API релизов
+          python3 infra/tests/release_fetch.py SagerNet/sing-box "v${version}" \
+            "sing-box-${version}-linux-amd64.tar.gz" "$d/sing-box.tar.gz" --sha256 "$checksum"
           printf '%s  %s\n' "$checksum" "$d/sing-box.tar.gz" | sha256sum --check --status
           tar -xzf "$d/sing-box.tar.gz" -C "$d"
           export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"

@@ -197,6 +197,21 @@ def lingering(pids):
     return live
 
 
+def group_members(pgid):
+    """Живые (не зомби) процессы группы pgid по /proc."""
+    found = []
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        try:
+            fields = Path('/proc', entry, 'stat').read_text().rsplit(')', 1)[1].split()
+        except OSError:
+            continue
+        if int(fields[2]) == pgid and fields[0] not in 'ZX':
+            found.append(int(entry))
+    return found
+
+
 def swarm_spawn_seconds(many):
     """Секунды, за которые заглушка swarm без предела порождает рой из many на этом раннере."""
     with StubNode('swarm', FAKE_MANY=str(many)) as node:
@@ -413,13 +428,12 @@ class SshLimitSessionTests(unittest.TestCase):
                 pass
             while alive(pids()) and time.monotonic() < deadline:
                 time.sleep(0.1)
+            # Зомби группы ждут init, на загруженном раннере не сразу: не
+            # процесс. Живой член группы к сроку - отказ.
+            while group_members(caller.pid) and time.monotonic() < deadline:
+                time.sleep(0.1)
             gone = time.monotonic() - sent
-            try:
-                os.killpg(caller.pid, 0)
-                left = True
-            except ProcessLookupError:
-                left = False
-            return caller.poll(), alive(pids()), left, gone
+            return caller.poll(), alive(pids()), bool(group_members(caller.pid)), gone
         finally:
             try:
                 os.killpg(caller.pid, signal.SIGKILL)

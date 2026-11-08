@@ -5,7 +5,8 @@ serves the same file, so a failed download goes through
 api.github.com/repos/<repo>/releases/tags/<tag> -> asset by name -> asset url
 with Accept: application/octet-stream. GITHUB_TOKEN, when set, goes to the API
 only, never to the storage host the asset redirects to. The checksum is checked
-by the caller after either path.
+by the caller after either path. A silent download page costs one WEB_TIMEOUT
+(a stall between reads, not the whole download) and goes to the API unretried.
 
 CLI: release_fetch.py <owner/repo> <tag> <asset> <out> --sha256 <hex>
 """
@@ -22,6 +23,7 @@ import urllib.parse
 import urllib.request
 
 TIMEOUT = 120
+WEB_TIMEOUT = 10
 
 
 class _SameHostAuth(urllib.request.HTTPRedirectHandler):
@@ -38,19 +40,23 @@ class _SameHostAuth(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_SameHostAuth)
 
 
-def _get(url, headers=None):
+def _get(url, headers=None, timeout=TIMEOUT):
     request = urllib.request.Request(url, headers=headers or {})
-    with _OPENER.open(request, timeout=TIMEOUT) as response:
+    with _OPENER.open(request, timeout=timeout) as response:
         return response.read()
 
 
-def _retry(what, call, tries=3):
+def _timed_out(error):
+    return isinstance(error, TimeoutError) or isinstance(getattr(error, 'reason', None), TimeoutError)
+
+
+def _retry(what, call, tries=3, final=lambda _error: False):
     for attempt in range(1, tries + 1):
         try:
             return call()
         except (urllib.error.URLError, OSError) as error:
             print(f'{what}: {error} (try {attempt}/{tries})', file=sys.stderr)
-            if attempt == tries:
+            if attempt == tries or final(error):
                 raise
             time.sleep(2 * attempt)
 
@@ -60,7 +66,8 @@ def fetch(repo, tag, name):
     web = os.environ.get('RELEASE_FETCH_WEB', 'https://github.com')
     api = os.environ.get('RELEASE_FETCH_API', 'https://api.github.com')
     try:
-        return _retry('releases/download', lambda: _get(f'{web}/{repo}/releases/download/{tag}/{name}'))
+        return _retry('releases/download', lambda: _get(f'{web}/{repo}/releases/download/{tag}/{name}',
+                                                        timeout=WEB_TIMEOUT), final=_timed_out)
     except (urllib.error.URLError, OSError) as error:
         print(f'releases/download failed ({error}), trying the releases API', file=sys.stderr)
     headers = {'Accept': 'application/vnd.github+json'}

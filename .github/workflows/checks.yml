@@ -74,14 +74,23 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
           python3 -m pip install PyYAML==6.0.3
-      - name: версия Caddy для тестов панели
-        id: caddy
-        run: sed -n "s/^CADDY_VER='\([^']*\)'/version=\1/p" infra/lib/anysda-svc.sh >> "$GITHUB_OUTPUT"
-      # Caddy качается при импорте тестов в каждой части, обрыв загрузки стоит минуты.
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/vpn2-tests
-          key: vpn2-tests-caddy-${{ steps.caddy.outputs.version }}
+      # Тесты панели качают Caddy при импорте в каждой части; releases/download
+      # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.
+      - name: Caddy для тестов панели
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n "s/^CADDY_VER='\([^']*\)'/\1/p" infra/lib/anysda-svc.sh)
+          test -n "$version"
+          name="caddy_${version}_linux_amd64.tar.gz"
+          d=$(mktemp -d)
+          gh release download "v$version" -R caddyserver/caddy -D "$d" -p "$name" -p "caddy_${version}_checksums.txt"
+          grep " $name\$" "$d/caddy_${version}_checksums.txt" | sed "s| $name\$| $d/$name|" | sha512sum --check --status
+          cache="$HOME/.cache/vpn2-tests/caddy-$version"
+          mkdir -p "$cache"
+          tar -xzf "$d/$name" -C "$cache" caddy
+          "$cache/caddy" version
       - name: регрессии инфраструктуры без sing-box
         if: ${{ !matrix.sing-box }}
         env:

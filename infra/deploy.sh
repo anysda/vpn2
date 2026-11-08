@@ -234,7 +234,10 @@ install_prereqs() {
       *) pkgs+=("$cmd") ;;
     esac
   done
-  [[ ${#pkgs[@]} -eq 0 ]] || pkgs+=(ca-certificates)
+  # ca-certificates - только если его нет: стоящий apt обновил бы, и его
+  # configure (~5 с) задерживал бы экзиты, ждущие sshpass. Обновит его, как и
+  # раньше, 00-bootstrap entry тем же списком пакетов.
+  [[ ${#pkgs[@]} -eq 0 ]] || apt_have ca-certificates || pkgs+=(ca-certificates)
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
 
   for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do

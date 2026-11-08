@@ -193,8 +193,9 @@ def stop_on_signal(number, frame):
     # The default handlers skip finally and leave the check server and its keys.
     if inside_stop(frame):
         return  # a later signal while the first is taken in: the first keeps the code
+    # A signal held so far keeps the code, whichever comes as the hold ends.
+    number = HOLD['first'] = HOLD['first'] or number
     if HOLD['on']:
-        HOLD['first'] = HOLD['first'] or number
         return
     # Not SIG_IGN: Python reports a signal still waiting for a handler that turned into it.
     for each in SIGNALS:
@@ -203,6 +204,7 @@ def stop_on_signal(number, frame):
     # Last at exit, first to run; a later signal then stays pending and the code is this one.
     atexit.unregister(wait_to_exit)
     atexit.register(wait_to_exit)
+    HOLD['first'] = None  # the handlers are dropped: the cleanup's holds do not stop it again
     raise Stopped(128 + number)
 
 
@@ -221,9 +223,9 @@ def holding(on):
 
 
 def stop_if_held():
-    number, HOLD['first'] = HOLD['first'], None
-    if number:
-        stop_on_signal(number, None)
+    # Taken up in stop_on_signal: a signal before that finds the held one and stops with its code.
+    if HOLD['first']:
+        stop_on_signal(HOLD['first'], None)
 
 
 def held():

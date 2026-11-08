@@ -250,6 +250,7 @@ After=caddy.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/lib/vpn2/vpn2_tls.py
+SyslogIdentifier=vpn2-tls
 TimeoutStartSec=120
 EOF
 entry_unit_resources vpn2-tls

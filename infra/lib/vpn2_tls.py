@@ -329,7 +329,7 @@ def closed_reason(state, now):
             else 'сертификат не выпущен')
 
 
-def close_panel(config, reason):
+def close_panel(config):
     """No valid certificate: the HTTPS site answers 503, HTTP keeps only the
     redirect (Caddy answers HTTP-01 before any route). Returns True on change."""
     gate = Path(config['caddy_dir']) / 'vpn2-panel.conf'
@@ -342,8 +342,17 @@ def close_panel(config, reason):
     except subprocess.SubprocessError:
         atomic(gate, previous, 0o644)
         raise
-    print(f'TLS: панель закрыта: {reason}; откроется сама после выпуска сертификата')
     return True
+
+
+def to_journal(line):
+    """The --initial run prints to the installation output: the same line goes
+    to the journal under the identifier of vpn2-tls.service."""
+    try:
+        return subprocess.run(['logger', '-t', 'vpn2-tls', line], capture_output=True,
+                              timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def tick(config, state_path, initial=False):
@@ -353,11 +362,20 @@ def tick(config, state_path, initial=False):
     error = safe_error(journal(state), config['host'])
     if initial and not cert:
         error = error or f"ACME: initial issuance did not complete within {config.get('wait', 60)}s"
+    closed = None
     if cert:
         export_certificate(config, cert)
         activate(config, cert)
-    elif config.get('secure_file') and not initial:
-        close_panel(config, closed_reason(state, now))
+        state.pop('closed', None)
+    elif config.get('secure_file'):
+        closed = closed_reason(state, now)
+        changed = close_panel(config)
+        # The journal names the reason once per closed state, not every minute:
+        # on closing, and on the first run that finds the panel closed silently
+        # (by the installation or by a version that did not log it).
+        if not initial and (changed or state.get('closed') != closed):
+            print(f'TLS: панель закрыта: {closed}; откроется сама после выпуска сертификата')
+            state['closed'] = closed
     observe(config, state, cert, error, now)
     atomic(state_path, json.dumps(state))
     deliver(config, state)
@@ -366,10 +384,15 @@ def tick(config, state_path, initial=False):
         print(f"TLS: сертификат на IP до {utc(cert['end'])}" if cert
               else f"TLS: сертификата на IP пока нет; {state.get('error', 'ACME pending')}; "
                    'Caddy повторит выпуск сам, до него авария на самоподписанном')
-    elif initial:
-        print(f"TLS: HTTPS готов, сертификат до {utc(cert['end'])}" if cert
-              else f"TLS: панель закрыта: {closed_reason(state, now)}; {state.get('error', 'ACME pending')}; "
-                   'Caddy повторит выпуск сам, панель откроется после него')
+    elif initial and cert:
+        print(f"TLS: HTTPS готов, сертификат до {utc(cert['end'])}")
+    elif initial and closed:
+        line = (f"TLS: панель закрыта: {closed}; {state.get('error', 'ACME pending')}; "
+                'Caddy повторит выпуск сам, панель откроется после него')
+        print(line)
+        if to_journal(line):
+            state['closed'] = closed
+            atomic(state_path, json.dumps(state))
     return bool(cert)
 
 

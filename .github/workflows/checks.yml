@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
       - name: мёртвые переменные и функции
@@ -21,7 +21,7 @@ jobs:
         run: python3 infra/tests/test_aws_cli.py
       - name: зависимости Debian и Ubuntu
         run: bash infra/tests/debian-compat.sh
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: мастер на Python из Debian 12
@@ -31,14 +31,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.15'
       - name: ruff
-        run: git ls-files -z '*.py' | xargs -0 pipx run --spec ruff==0.13.3 ruff check --isolated --select E9,F,ARG,ERA
+        run: git ls-files -z '*.py' | xargs -0 pipx run --spec ruff==0.17.4 ruff check --isolated --select E9,F,ARG,ERA
       - name: vulture
-        run: git ls-files -z '*.py' | xargs -0 pipx run --spec vulture==2.14 vulture --min-confidence 0
+        run: git ls-files -z '*.py' | xargs -0 pipx run --spec vulture==2.16 vulture --min-confidence 0
       - name: config2env на config.example.yaml
         run: |
           d=$(mktemp -d)
@@ -61,13 +61,13 @@ jobs:
       SHARD: ${{ matrix.part }}/3
       MANIFEST: /tmp/infra-manifest.json
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
-      - uses: actions/setup-python@v5
+          node-version: 26
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.15'
       - name: зависимости инфраструктуры
         timeout-minutes: 5
         run: |
@@ -116,7 +116,7 @@ jobs:
           export RUN_NETNS_TESTS=1
           "$SING_BOX_BIN" version
           python3 infra/tests/run_parallel.py --shard "$SHARD" --manifest "$MANIFEST"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: infra-manifest-${{ matrix.sing-box }}-${{ matrix.part }}
           path: ${{ env.MANIFEST }}
@@ -128,8 +128,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: infra-manifest-*
           path: ${{ runner.temp }}/manifests
@@ -145,10 +145,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.15'
           cache: pip
           cache-dependency-path: telegram/requirements.txt
       - name: регрессии Telegram-бота
@@ -180,7 +180,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: SQLite WAL и полный цикл backup/restore
         # Копия и restore проверяют wg0.conf настоящим wg во временном netns, как
         # root на узле: нужны iproute2 и права на netns (меньше этих трёх не хватает).
@@ -201,13 +201,13 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -224,14 +224,14 @@ jobs:
         env:
           NODE_PATH: ${{ github.workspace }}/app/node_modules/.pnpm/node_modules
         run: |
-          pnpm dlx knip@6.39.0
-          pnpm dlx knip@6.39.0 --production --exclude dependencies,unlisted,binaries
+          pnpm dlx knip@6.44.2
+          pnpm dlx knip@6.44.2 --production --exclude dependencies,unlisted,binaries
 
   backup-keys:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: перенос ключей VPN на чистый хост и совместимость старых архивов
         run: |
           docker build -t vpn2-backup-test infra/tests
@@ -244,7 +244,7 @@ jobs:
     outputs:
       run: ${{ steps.paths.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: изменения зависимостей панели
@@ -269,21 +269,21 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели один раз для всех шардов
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: app
           load: true
@@ -328,7 +328,7 @@ jobs:
           python3 e2e/with-network-churn.py bash e2e/run-local.sh "${specs[@]}"
       - name: отчёт и трейсы
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-${{ matrix.part }}
           path: |
@@ -347,21 +347,21 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: app
           load: true
@@ -384,7 +384,7 @@ jobs:
         run: bash e2e/qr-size.sh
       - name: отчёт и трейсы
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-qr
           path: |

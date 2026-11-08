@@ -27,7 +27,7 @@ load_env() {
   esac
 }
 net() {
-  local node cmd="$*" last age n
+  local node cmd="$*" last age n cap
   case $SSH_HOST in
     entry-node) node=entry ;;
     exit-se) node=se ;;
@@ -47,7 +47,15 @@ net() {
           command sleep 0.3
           touch closed
         fi
+        # Стадия не короче 1,5 с и не кончается до первого пульса: у медленного
+        # экзита (LOGIN) он идёт после пробы, и kill пульса на конце стадии гасил
+        # его на загруженном раннере. Ждём запись в beats по событию, а не по
+        # часам, и выходим сразу после неё: возраст пульса на disarm не растёт
+        # со скоростью раннера. Закрывшая вход стадия пульса не ждёт: его не
+        # будет. Потолок - на случай, когда пульса нет вовсе.
+        cap=$(( $(now_ms) + 3000 + ${LOGIN:-0} * 100 ))
         command sleep 1.5
+        while [[ ! -e closed && ! -s beats ]] && (( $(now_ms) < cap )); do command sleep 0.05; done
         touch stage-done ;;
       *'fw-guard.sh beat'*)
         now_ms > beat.part && mv beat.part beat

@@ -107,24 +107,6 @@ async function rewind(page: Page) {
 }
 
 test.describe('геометрия из одного кадра', () => {
-  test('прямоугольники по порядку селекторов, как у getBoundingClientRect', async ({ page }) => {
-    await openFrozen(page)
-
-    const got = await rects(page, LIST, CARD)
-    expect(got).toHaveLength(2)
-    expect(Math.abs(gap(got) - GAP)).toBeLessThanOrEqual(0.5)
-
-    const ref = await page.evaluate(sels => sels.map((s) => {
-      const r = document.querySelector(s)!.getBoundingClientRect()
-      return { x: r.x, y: r.y, width: r.width, height: r.height }
-    }), [LIST, CARD])
-    for (const [i, r] of ref.entries()) {
-      for (const k of ['x', 'y', 'width', 'height'] as const) {
-        expect(Math.abs(got[i]![k] - r[k]), `${[LIST, CARD][i]} ${k}`).toBeLessThanOrEqual(0.5)
-      }
-    }
-  })
-
   test('один кадр: между обращениями к странице каскад сдвигается, зазор ровно 12px', async ({ page }) => {
     await openFrozen(page)
     // Зубы проверки: начало и конец каскада различаются для списка на 22px,

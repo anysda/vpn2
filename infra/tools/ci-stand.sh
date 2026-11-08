@@ -14,7 +14,7 @@
 #   sudo infra/tools/ci-stand.sh down                   снести всё
 #
 # Образ панели - локальный docker-образ, собранный из этого же дерева; на
-# entry он загружается до деплоя, deploy берёт его по panel.image.
+# entry он загружается, как только 00-bootstrap поднял docker, deploy берёт его по panel.image.
 # verify возвращает код 99-verify: 0 работает, 1 ошибка, 2 не проверено.
 # deploy-udp ставит только то, на чём стоит обрыв UDP: экзит, sing-box entry,
 # сторож и AdGuard (DNS sing-box идёт через него).
@@ -253,19 +253,35 @@ panel:
 EOF
 }
 
+# Docker на entry ставит 00-bootstrap, а образ панели нужен только к
+# 35-telegram и 30-frontend: грузится, как только docker поднялся.
+load_panel() {
+  local deadline=$((SECONDS + 600))
+  until ssh_node "$ENTRY" 'systemctl is-active -q docker' 2>/dev/null \
+      && docker save "$PANEL_REF" | gzip -1 | ssh_node "$ENTRY" 'gunzip | docker load' >/dev/null 2>&1; do
+    (( SECONDS < deadline )) || { log 'образ панели не загрузился на entry за 10 мин'; return 1; }
+    sleep 2
+  done
+  log "образ панели $PANEL_REF → entry"
+}
+
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
   push_tree
-  # Docker на entry ставят пререквизиты оркестратора и 00-bootstrap; образ
-  # нужен к 30-frontend, поэтому сначала только первая стадия.
-  entry_run bootstrap './deploy.sh --development 00-bootstrap ru' || die "00-bootstrap ru: код $?"
-  log "образ панели $image → entry"
   docker tag "$image" "$PANEL_REF"
-  docker save "$PANEL_REF" | gzip -1 | ssh_node "$ENTRY" 'gunzip | docker load'
-  local started=$SECONDS rc=0
+  load_panel &
+  local loader=$! started=$SECONDS rc=0
   entry_run deploy './deploy.sh --development' || rc=$?
+  wait "$loader" || (( rc )) || rc=1
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   return "$rc"
+}
+
+# ssh-мультиплексор стадии живёт 60 с и держит унаследованный замок
+# deploy.sh: следующий запуск без этого упал бы на flock -n.
+close_entry_mux() {
+  ssh_node "$ENTRY" 'for s in /tmp/anysda-ssh-0/*; do [ -S "$s" ] && ssh -o ControlPath="$s" -O exit mux; done' \
+    >/dev/null 2>&1 || true
 }
 
 # Только то, на чём стоит обрыв UDP: без VPN-серверов, аварийки, панели и бота.
@@ -276,7 +292,10 @@ cmd_deploy_udp() {
   push_tree
   local stage started=$SECONDS
   for stage in "${UDP_STAGES[@]}"; do
-    entry_run "deploy-${stage%% *}" "./deploy.sh --development $stage" || die "$stage: код $?"
+    close_entry_mux
+    entry_run "deploy-${stage%% *}" \
+      "mkdir -p infra/state && flock -w 70 infra/state/deploy.lock true && ./deploy.sh --development $stage" \
+      || die "$stage: код $?"
   done
   log "стадии для обрыва UDP: $(( SECONDS - started )) с"
 }

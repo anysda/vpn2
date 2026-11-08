@@ -7,9 +7,10 @@ SINGLE or one whose part weighs LONG seconds or more into one test per part. Mod
 after another in a single chain: one of them looks for that key in every netns
 of the host. Modules that compare elapsed time with a limit by a second or less
 run last, one by one, with nothing else running. The pool takes the heaviest
-chain first by the measured WEIGHT. A chain longer than the pool's even share
-holds the part's finish: it runs at normal priority, the rest under nice NICE. The summed test count must equal the
-discovered one, and any failing partition fails the run.
+chain first by the measured WEIGHT. A chain within CRITICAL of the part's
+finish (the pool's even share or its longest chain) holds that finish: it runs
+at normal priority, the rest under nice NICE. The summed test count must equal
+the discovered one, and any failing partition fails the run.
 
 --shard k/N runs one of N disjoint parts: quiet modules are spread first, then
 each chain, heaviest first, goes to the part that would finish earliest with it
@@ -51,6 +52,7 @@ SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'tes
 LONG = 40
 # Priority of chains off the critical path: on a 4-CPU runner the 192 s verify test ran 129 s with less beside it
 NICE = 10
+CRITICAL = 0.6
 QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
          'test_control', 'test_release', 'test_probe_reads')
 
@@ -236,9 +238,10 @@ def main():
             'discovered': sorted(test.id() for tests in found.values() for test in tests),
             'assigned': sorted(test.id() for key in parts for test in found[key])}))
     chains.sort(key=lambda keys: (-sum(weight(key) for key in keys), -sum(parts[key] for key in keys)))
-    # Critical: longer than the even share of the part's pool, the rest yields the CPU to it
-    share = sum(cost(keys, parts) for keys in chains) / max(1, args.jobs)
-    critical = {id(keys) for keys in chains if cost(keys, parts) > share}
+    # Critical: near the pool's finish (its even share or the longest chain), the rest yields the CPU to it
+    finish = max([sum(cost(keys, parts) for keys in chains) / max(1, args.jobs)]
+                 + [cost(keys, parts) for keys in chains])
+    critical = {id(keys) for keys in chains if cost(keys, parts) >= CRITICAL * finish}
     if args.plan:
         for keys in chains + [quiet]:
             mark = '' if id(keys) in critical or keys is quiet else f' nice={NICE}'

@@ -294,21 +294,20 @@ fetch_image() {
   mv "$image.part" "$image"
 }
 
-# Ядро и initrd того же образа (каталог unpacked рядом с ним): qemu грузит их
-# сам, без GRUB, читающего initrd (~70 МБ) через BIOS, - до ядра ~2 с вместо
-# ~9. Корень тот же, строка ядра образа плюс mitigations=off: ВМ одноразовая,
-# чужого кода в ней нет, а retpoline и Safe RET на AMD раннера тормозят
-# dpkg и стадии. Нет файлов - через GRUB.
+# Ядро того же образа (каталог unpacked рядом с ним): qemu грузит его сам,
+# без GRUB, читающего initrd (~70 МБ) через BIOS, - до ядра ~2 с вместо ~9.
+# Без initrd: virtio и ext4 в ядре, корень - первый раздел диска (~4 с
+# загрузки). Корень тот же, плюс mitigations=off: ВМ одноразовая, чужого кода
+# в ней нет, а retpoline и Safe RET на AMD раннера тормозят dpkg и стадии.
+# Нет ядра - через GRUB.
 fetch_kernel() {
-  local dir=$1 base sums f
-  base=${IMAGE_URL%/*}/unpacked/$(basename "$IMAGE_URL" .img)
+  local dir=$1 name sums
+  name=$(basename "$IMAGE_URL" .img)-vmlinuz-generic
   sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/unpacked/SHA256SUMS") || return 1
-  for f in vmlinuz initrd; do
-    curl -fsSL --retry 3 -o "$dir/$f.part" "$base-$f-generic" || return 1
-    printf '%s\n' "$sums" | awk -v n="${base##*/}-$f-generic" '$2 == n || $2 == "*" n {print $1 "  '"$dir/$f.part"'"}' \
-      | grep . | sha256sum --check --status || return 1
-    mv "$dir/$f.part" "$dir/$f"
-  done
+  curl -fsSL --retry 3 -o "$dir/vmlinuz.part" "${IMAGE_URL%/*}/unpacked/$name" || return 1
+  printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$dir/vmlinuz.part"'"}' \
+    | grep . | sha256sum --check --status || return 1
+  mv "$dir/vmlinuz.part" "$dir/vmlinuz"
 }
 
 vm_wait_ready() {
@@ -338,7 +337,7 @@ cmd_up() {
     fetch=$!
   fi
   local kfetch='' boot=()
-  [[ -f "$STAND_DIR/initrd" ]] || { fetch_kernel "$STAND_DIR" & kfetch=$!; }
+  [[ -f "$STAND_DIR/vmlinuz" ]] || { fetch_kernel "$STAND_DIR" & kfetch=$!; }
   if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
     # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
     # Индекс apt в образе раннера свежий: update (~3 с) - только если без
@@ -351,9 +350,9 @@ cmd_up() {
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
-  if [[ -f "$STAND_DIR/vmlinuz" && -f "$STAND_DIR/initrd" ]]; then
-    boot=(-kernel "$STAND_DIR/vmlinuz" -initrd "$STAND_DIR/initrd"
-      -append 'root=LABEL=cloudimg-rootfs ro console=tty1 console=ttyS0 mitigations=off')
+  if [[ -f "$STAND_DIR/vmlinuz" ]]; then
+    boot=(-kernel "$STAND_DIR/vmlinuz"
+      -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off')
   fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")

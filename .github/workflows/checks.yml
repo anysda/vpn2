@@ -68,14 +68,19 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 26
+      # Колеса PyYAML для 3.15 нет: сборка из исходников ~14 с в каждом задании, кэш pip держит готовое
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
+          cache: pip
+          cache-dependency-path: .github/workflows/checks.yml
+      - name: процессор раннера
+        run: lscpu | grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core):'
       - name: зависимости инфраструктуры
         timeout-minutes: 5
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
+          sudo apt-get install -y -qq --no-install-recommends strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
           python3 -m pip install PyYAML==6.0.3
       # Тесты панели качают Caddy при импорте в каждой части; releases/download
       # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.

@@ -3,11 +3,12 @@
 
 Each module runs in its own process. A class without class or module fixtures
 and without numbered tests is cut into chunks of CHUNK tests, a class from
-SINGLE into one test per part. Modules sharing the WireGuard oracle key run one
+SINGLE or one whose part weighs LONG seconds or more into one test per part. Modules sharing the WireGuard oracle key run one
 after another in a single chain: one of them looks for that key in every netns
 of the host. Modules that compare elapsed time with a limit by a second or less
 run last, one by one, with nothing else running. The pool takes the heaviest
-chain first by the measured WEIGHT. The summed test count must equal the
+chain first by the measured WEIGHT. A chain longer than the pool's even share
+holds the part's finish: it runs at normal priority, the rest under nice NICE. The summed test count must equal the
 discovered one, and any failing partition fails the run.
 
 --shard k/N runs one of N disjoint parts: quiet modules are spread first, then
@@ -45,6 +46,11 @@ WEIGHT = json.loads((HERE / 'partition-weights.json').read_text())
 SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'test_delivery.DeliveryProcessTests',
           'test_pki.PkiTests')
 # Elapsed time against a limit with a margin of 0.1-2 s: parallel load is enough to cross it
+# A divisible class this heavy holds the part's finish alone: one test per part (169 s of three
+# swap tests in one process against 20-60 s each, run 42509594204)
+LONG = 40
+# Priority of chains off the critical path: on a 4-CPU runner the 192 s verify test ran 129 s with less beside it
+NICE = 10
 QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
          'test_control', 'test_release', 'test_probe_reads')
 
@@ -78,6 +84,13 @@ def divisible(test):
             and not re.match(r'test_?\d', test._testMethodName))
 
 
+def heavy(module, cls, members):
+    """The measured part a divisible class would run in weighs LONG seconds or more."""
+    if len(members) <= CHUNK:
+        return (WEIGHT.get(f'{module}[general]') or 0) >= LONG
+    return any((WEIGHT.get(f'{module}.{cls}[{chunk}]') or 0) >= LONG for chunk in range(len(members) // CHUNK + 1))
+
+
 def assign(tests):
     """(module, group, class, chunk) -> its tests, in discovery order."""
     parts, by_class = {}, {}
@@ -87,8 +100,10 @@ def assign(tests):
         else:
             parts.setdefault((module_of(test), 'general', None, None), []).append(test)
     for (module, cls), members in by_class.items():
-        if f'{module}.{cls}' in SINGLE:
+        if f'{module}.{cls}' in SINGLE or (len(members) > 1 and heavy(module, cls, members)):
+            share = (WEIGHT.get(f'{module}[general]') if len(members) <= CHUNK else None) or 0
             for test in members:
+                SHARE[f'{module}.{cls}[{test._testMethodName}]'] = share / len(members)
                 parts[(module, 'general', cls, test._testMethodName)] = [test]
             continue
         if len(members) <= CHUNK:
@@ -114,8 +129,16 @@ def name(key):
     return f'{module}[{group}]' if cls is None else f'{module}.{cls}[{chunk}]'
 
 
+# Unmeasured single test of a split class: its share of the class's measured part
+SHARE = {}
+
+
+def weight(key):
+    return WEIGHT.get(name(key)) or SHARE.get(name(key)) or 0
+
+
 def cost(keys, parts):
-    return sum(WEIGHT.get(name(key)) or parts[key] for key in keys)
+    return sum(weight(key) or parts[key] for key in keys)
 
 
 def spread(groups, parts, count, jobs=1, tail=None):
@@ -212,10 +235,14 @@ def main():
             'shard': shard, 'total': total, 'ran': 0,
             'discovered': sorted(test.id() for tests in found.values() for test in tests),
             'assigned': sorted(test.id() for key in parts for test in found[key])}))
-    chains.sort(key=lambda keys: (-sum(WEIGHT.get(name(key), 0) for key in keys), -sum(parts[key] for key in keys)))
+    chains.sort(key=lambda keys: (-sum(weight(key) for key in keys), -sum(parts[key] for key in keys)))
+    # Critical: longer than the even share of the part's pool, the rest yields the CPU to it
+    share = sum(cost(keys, parts) for keys in chains) / max(1, args.jobs)
+    critical = {id(keys) for keys in chains if cost(keys, parts) > share}
     if args.plan:
         for keys in chains + [quiet]:
-            print(sum(WEIGHT.get(name(key), 0) for key in keys), ' '.join(name(key) for key in keys))
+            mark = '' if id(keys) in critical or keys is quiet else f' nice={NICE}'
+            print(f'{sum(weight(key) for key in keys):g}{mark}', ' '.join(name(key) for key in keys))
         return 0
 
     children = set()
@@ -228,7 +255,7 @@ def main():
     signal.signal(signal.SIGTERM, terminate)
     signal.signal(signal.SIGINT, terminate)
 
-    def run(key, directory):
+    def run(key, directory, nice=0):
         module, group, cls, chunk = key
         work = Path(tempfile.mkdtemp(dir=directory))
         log, report = work / 'output.log', work / 'count'
@@ -240,7 +267,8 @@ def main():
         with log.open('w') as output, lock:
             if stopping.is_set():
                 return key, 1, 0, 0.0, ''
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT, start_new_session=True,
+                                       preexec_fn=(lambda: os.nice(nice)) if nice else None)
             children.add(process)
         code = process.wait()
         with lock:
@@ -248,8 +276,8 @@ def main():
         count = int(report.read_text()) if report.exists() else 0
         return key, code, count, time.monotonic() - started, log.read_text()
 
-    def chain(keys, directory):
-        return [run(key, directory) for key in keys]
+    def chain(keys, directory, nice=0):
+        return [run(key, directory, nice) for key in keys]
 
     started = time.monotonic()
     results = []
@@ -263,7 +291,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix='infra-parts-') as directory:
         pool = ThreadPoolExecutor(max_workers=max(1, args.jobs))
         try:
-            for future in as_completed([pool.submit(chain, keys, directory) for keys in chains]):
+            for future in as_completed([pool.submit(chain, keys, directory, 0 if id(keys) in critical else NICE)
+                                        for keys in chains]):
                 report(future.result())
             report(chain(quiet, directory))
         finally:

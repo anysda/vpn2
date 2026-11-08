@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   shell:
+    name: проверка shell
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -28,6 +29,7 @@ jobs:
         run: bash infra/tests/setup-compat.sh
 
   python-lint:
+    name: линт Python
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -49,6 +51,7 @@ jobs:
           test -s "$d/infra/envs/all.env"
 
   infra:
+    name: "infra ${{ matrix.sing-box && 'с' || 'без' }} sing-box ${{ matrix.part }}/3"
     runs-on: ubuntu-latest
     timeout-minutes: 40
     strategy:
@@ -124,6 +127,7 @@ jobs:
 
   # Части infra вместе прогнали ровно найденный набор, без пропусков и повторов.
   infra-sum:
+    name: infra итог
     needs: infra
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -142,6 +146,7 @@ jobs:
           done
 
   telegram:
+    name: тесты бота
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -164,6 +169,7 @@ jobs:
   # Сохраняем прежний общий статус python: он зелёный только после всех
   # наборов, в том числе обеих веток матрицы infra (важно для required checks).
   python:
+    name: Python итог
     needs: [python-lint, infra, infra-sum, telegram]
     if: always()
     runs-on: ubuntu-latest
@@ -178,6 +184,7 @@ jobs:
         run: test "$LINT_RESULT,$INFRA_RESULT,$INFRA_SUM_RESULT,$BOT_RESULT" = success,success,success,success
 
   backup-restore:
+    name: 'бэкап: восстановление'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -225,6 +232,7 @@ jobs:
           exit "$failed"
 
   panel:
+    name: линт панели
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -258,6 +266,7 @@ jobs:
           pnpm dlx knip@6.44.2 --production --exclude dependencies,unlisted,binaries
 
   backup-keys:
+    name: 'бэкап: ключи'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -275,6 +284,7 @@ jobs:
   # тестам делятся по тестам. Каждое задание сверяет, что прогнало ровно свою
   # долю общего разбиения, вместе - каждый тест ровно один раз.
   panel-e2e-shard:
+    name: 'e2e панели ${{ matrix.part }}/${{ strategy.job-total }}'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -359,6 +369,7 @@ jobs:
   # проверки образа без браузера (e2e/image-checks.sh) и запись кэша сборки
   # панели: задание короче шардов, запись не удлиняет e2e.
   panel-e2e-qr:
+    name: e2e панели QR
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -447,6 +458,7 @@ jobs:
   # раннером на общем лимите аккаунта стоила до 3,5 мин. Красное, когда шард
   # или QR упали или отменены.
   panel-e2e:
+    name: e2e панели итог
     needs: [panel-e2e-shard, panel-e2e-qr]
     if: failure() || cancelled()
     runs-on: ubuntu-latest

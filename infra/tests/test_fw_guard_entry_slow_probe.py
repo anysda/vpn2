@@ -21,7 +21,8 @@ export BASH_ENV=$PWD/probe-start.sh
 class EntryBeatSlowProbeStartTests(unittest.TestCase):
     def test_slow_probe_start_keeps_open_entry_seen(self):
         runner = refs.EntryBeatReferenceExitTests()
-        with mock.patch.object(refs, 'NET', refs.NET + 'LOGIN=13\n' + slow.SLOW + SLOW_START):
+        with mock.patch.object(refs, 'NET', refs.NET + 'LOGIN=13\n' + slow.SLOW + SLOW_START), \
+                mock.patch.object(refs, 'WINDOW', slow.WINDOW):
             result, beats, probes, detail = runner.run_entry_stage(exit_tags='se',
                                                                    files=('outside-open',))
         self.assertIn('entry', beats, detail)

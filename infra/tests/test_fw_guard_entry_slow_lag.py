@@ -23,7 +23,8 @@ net() {
 class EntryBeatSlowExitLagTests(unittest.TestCase):
     def test_late_beat_of_slow_exit_is_counted_before_stage_ends(self):
         runner = refs.EntryBeatReferenceExitTests()
-        with mock.patch.object(refs, 'NET', refs.NET + 'LOGIN=13\n' + slow.SLOW + LAG):
+        with mock.patch.object(refs, 'NET', refs.NET + 'LOGIN=13\n' + slow.SLOW + LAG), \
+                mock.patch.object(refs, 'WINDOW', slow.WINDOW):
             result, beats, probes, detail = runner.run_entry_stage(exit_tags='se',
                                                                    files=('outside-open',))
         self.assertIn('entry', beats, detail)

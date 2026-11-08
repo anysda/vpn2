@@ -11,6 +11,9 @@ from unittest import mock
 import test_fw_guard_entry_refs as refs
 
 
+# Окно 6 с реального времени: под нагрузкой раннера 3 с - та же гонка, что у потолка.
+WINDOW = 60
+
 # Вход по ssh на экзит длится LOGIN с (в секундах стенда), потом команда пробы.
 # Сессию обрывает потолок SSH_PROBE_TIMEOUT, как timeout в ssh_fresh. Обрыв
 # считается в секундах стенда: запуск bash и awk ускорению не поддаётся, и
@@ -62,7 +65,8 @@ net() {
 class EntryBeatSlowExitTests(unittest.TestCase):
     def run_slow(self, login, files):
         runner = refs.EntryBeatReferenceExitTests()
-        with mock.patch.object(refs, 'NET', refs.NET + f'LOGIN={login}\n' + SLOW):
+        with mock.patch.object(refs, 'NET', refs.NET + f'LOGIN={login}\n' + SLOW), \
+                mock.patch.object(refs, 'WINDOW', WINDOW):
             return runner.run_entry_stage(exit_tags='se', files=files)
 
     def test_slow_exit_sees_stage_closing_entry_and_stage_rolls_back(self):
@@ -86,7 +90,8 @@ class EntryBeatSlowExitTests(unittest.TestCase):
 
     def test_lost_baseline_probe_keeps_exit_as_reference(self):
         runner = refs.EntryBeatReferenceExitTests()
-        with mock.patch.object(refs, 'NET', refs.NET + LOST_BASELINE):
+        with mock.patch.object(refs, 'NET', refs.NET + LOST_BASELINE), \
+                mock.patch.object(refs, 'WINDOW', WINDOW):
             result, beats, probes, detail = runner.run_entry_stage(
                 exit_tags='se', files=('outside-open', 'stage-closes'))
         self.assertNotIn('не проверяется', result.stdout, 'одна потерянная проба оставила стадию без опорных\n' + detail)

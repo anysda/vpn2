@@ -1,10 +1,8 @@
 {
  "test_verify.VerifyTest[test_individual_entry_failures]": 175,
  "test_ssh_limit_slow_runner.SlowRunnerTests[test_swarm_on_slow_fork]": 132,
- "test_bootstrap_swap_container.BootstrapSwapContainerTests[test_lxc_gets_no_swap]": 128,
  "test_ssh_limit_slow_runner[general]": 125,
  "test_ssh_limit_session[general]": 112,
- "test_bootstrap_swap_container[general]": 78,
  "test_pki.PkiTests[test_failed_generation_retry_ovpn]": 76,
  "test_verify_exit_ssh_limit_edge[general]": 75,
  "test_fw_guard_entry_slow[general]": 74,
@@ -181,6 +179,7 @@
  "test_tcp_fallback[general]": 4,
  "test_verify_local_target[general]": 4,
  "test_apply_signal_child_start[general]": 3,
+ "test_bootstrap_swap_container[general]": 3,
  "test_config_schema[general]": 3,
  "test_deploy_lock_local_failure.DeployLockLocalFailureTests[0]": 3,
  "test_deploy_lock_local_failure.DeployLockLocalFailureTests[1]": 3,

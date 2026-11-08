@@ -631,12 +631,25 @@ class IKEv2:
 
 
 # ------------------------------------------------- ретранслятор через экзит
+def relay_reachable(relay, port, pauses=(0, 5, 10, 20)):
+    """health ретранслятора с повтором: транспорт до экзита пропадает на десятки
+    секунд, пока сторож не переключит его (hy2 -> tcp), и одиночный промах не
+    значит, что внешней точки нет. Окно ~35 с пауз плюс до 13 с на попытку; на
+    живом пути хватает первой.
+    """
+    for pause in pauses:
+        time.sleep(pause)
+        if relay.health(port):
+            return True
+    return False
+
+
 class Relay:
     """Порт на veth хоста -> SOCKS5 tg-proxy -> экзит -> публичный адрес entry.
 
     Так клиент из netns стучится в порты entry снаружи, с адреса экзита, а не
     из локальной сети. tg-proxy есть на каждом entry: это inbound sing-box,
-    который всегда ведёт в tg-best (экзиты).
+    его трафик к адресам самого entry уходит прямой ногой экзита (direct-best).
     """
 
     def __init__(self, wan_ip):
@@ -1185,7 +1198,7 @@ class Verifier:
             # ufw не пускает случайный порт цели; правило с меткой снимает уборка.
             run('iptables', '-w', '-I', 'INPUT', '1', '-p', 'tcp', '--dport', str(self.targets.port),
                 '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
-            self.relay_ok = self.relay.health(self.targets.port)
+            self.relay_ok = relay_reachable(self.relay, self.targets.port)
 
     def probe(self, protocol, kind, args, dest=None, retry=True):
         source = Namespace.source()

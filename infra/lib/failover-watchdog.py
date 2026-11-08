@@ -55,6 +55,9 @@ type=selector (см. gen-router-config.py) — управляется через
   PSI_DIR           каталог PSI entry  /proc/pressure
   PROC_DIR          /proc для топа процессов по RSS  /proc
   STUCK_AFTER_CHECKS  проверок подряд, что выход ручного маршрута мёртв при живом узле, до перезапуска  30
+  TCP_RETURN_S      канал с TCP обратно на hy2, если тот жив без перерыва, сек  60
+  HY2_RISE_S        после полной аварии канала или перезапуска sing-box мёртвый hy2
+                    при живом TCP столько - подъём QUIC, не резка UDP, сек  10
 
 Перезапуск sing-box: когда экзит один, переключаться некуда, и канал, залипший
 в sing-box на entry, лежал бы до перезагрузки. Если у всех включённых узлов
@@ -186,6 +189,17 @@ _direct_since: dict = {}  # direct-выход -> monotonic, с которого 
 # Обратно на hy2 - когда он жив без перерыва TCP_RETURN_S.
 TCP_RETURN         = float(os.environ.get('TCP_RETURN_S', '60'))
 _hy2_since: dict = {}     # selector канала на TCP -> monotonic, с которого hy2 жив подряд
+# После полной аварии канала (мертвы hy2 и TCP) или перезапуска sing-box TCP
+# соединяется сразу, а hy2 - нет: dial QUIC, начатый ещё в обрыве, ждёт
+# повтора рукопожатия или его тайм-аута (5 с в quic-go), новый - RTT. На стенде
+# hy2 мёртв через 0,5 с после снятия обрыва. Пока hy2 мёртв меньше HY2_RISE_S
+# с возврата TCP - это подъём: канал на hy2, события нет. Окно - тайм-аут
+# рукопожатия плюс проба PROBE_TIMEOUT_MS с до-проверками, с запасом. Был hy2 жив
+# после аварии - резка UDP уводит на TCP сразу, как раньше.
+HY2_RISE           = float(os.environ.get('HY2_RISE_S', '10'))
+_hy2_rise: dict = {}      # selector -> monotonic возврата TCP при мёртвом hy2; None - канал мёртв
+_restart_gen = 0          # перезапусков sing-box сторожем
+_rise_gen = 0             # сколько из них transport_tick уже учёл
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
@@ -849,7 +863,7 @@ def restart_tick():
     """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
     набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
     перезапуска — перезапускаем sing-box."""
-    global _dead_streak, _restarted
+    global _dead_streak, _restarted, _restart_gen
     if RESTART_AFTER_CHECKS <= 0 or _all_dead is None:
         return
     _dead_streak = _dead_streak + 1 if _all_dead else 0
@@ -858,6 +872,7 @@ def restart_tick():
             _restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
         return
     checks, _dead_streak, _restarted = _dead_streak, 0, t
+    _restart_gen += 1
     _save_restart()
     streak = f"{checks} {_plural_ru(checks, ('проверку', 'проверки', 'проверок'))} подряд"
     pressure = _entry_pressure()
@@ -1111,7 +1126,7 @@ def stuck_tick(proxies):
     подряд — перезапуск sing-box под тем же пределом частоты, что в
     restart_tick. Не ожил после STUCK_MAX_HEALS перезапусков — одно событие и
     больше не лечим, пока выход не оживёт."""
-    global _restarted
+    global _restarted, _restart_gen
     if RESTART_AFTER_CHECKS <= 0 or _tick_alive is None:
         return
     bases = sorted(n[len(PIN_PREFIX):] for n, p in proxies.items()
@@ -1152,6 +1167,7 @@ def stuck_tick(proxies):
     if not due or (_restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
         return
     _restarted = t
+    _restart_gen += 1
     _save_restart()
     for b in stuck:
         if _stuck_heals.get(b, 0) < STUCK_MAX_HEALS:
@@ -1264,13 +1280,20 @@ def transport_tick(proxies):
     Промах пробы TCP окно не сокращает (проба warp через TCP шумит при рабочем
     канале): раньше окна обратно, только если TCP мёртв - DEAD_AFTER промахов подряд.
     Так же промах пробы hy2 обнуляет окно только после DEAD_AFTER промахов подряд.
+    После полной аварии канала или перезапуска sing-box мёртвый hy2 при живом
+    TCP - подъём QUIC, на TCP только через HY2_RISE с возврата TCP.
     Событие узла «UDP недоступен / снова работает» - по каналу direct.
     Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
+    global _rise_gen
     pairs = _transport_pairs(proxies)
     if not pairs:
         return
     on_tcp = {s for s, (_, tcp, _, _) in pairs.items() if proxies[s].get('now') == tcp}
     deciders = {s: v for s, v in pairs.items() if v[3] != 'mgmt'}
+    if _rise_gen != _restart_gen:
+        _rise_gen = _restart_gen
+        for s in deciders.keys() - on_tcp:
+            _hy2_rise.setdefault(s, None)
     delays, _ = _probe_all([v[0] for v in deciders.values()]
                            + [v[1] for s, v in deciders.items() if s in on_tcp])
     dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
@@ -1300,12 +1323,31 @@ def transport_tick(proxies):
         delays.update({t: again[t] for t in tcp_miss if again[t] is not None})
         tcp_miss = [t for t in tcp_miss if again[t] is None]
     now = time.monotonic()
+    # Авария связи с узлом - не отвечает ни один его канал ни по hy2, ни по TCP.
+    # Один мёртвый канал при живом соседнем - промах пробы, не авария.
+    node_up = {}
+    for s, (hy2, tcp, node, _) in deciders.items():
+        up = delays[hy2] is not None if s in on_tcp else hy2 not in dead
+        node_up[node] = node_up.get(node, False) or up or delays.get(tcp) is not None
     want = {}
     for s, (hy2, tcp, node, kind) in deciders.items():
         if s not in on_tcp:
             _hy2_since.pop(s, None)
-            want[s] = tcp if hy2 in dead and delays.get(tcp) is not None else hy2
+            if hy2 not in dead:
+                _hy2_rise.pop(s, None)
+                want[s] = hy2
+            elif delays.get(tcp) is None:
+                if not node_up[node]:
+                    _hy2_rise[s] = None
+                want[s] = hy2
+            elif s in _hy2_rise:
+                if _hy2_rise[s] is None:
+                    _hy2_rise[s] = now
+                want[s] = tcp if now - _hy2_rise[s] >= HY2_RISE else hy2
+            else:
+                want[s] = tcp
             continue
+        _hy2_rise.pop(s, None)
         if delays[hy2] is None:
             _hy2_since.pop(s, None)
             want[s] = tcp

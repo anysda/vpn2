@@ -345,16 +345,6 @@ def close_panel(config):
     return True
 
 
-def to_journal(line):
-    """The --initial run prints to the installation output: the same line goes
-    to the journal under the identifier of vpn2-tls.service."""
-    try:
-        return subprocess.run(['logger', '-t', 'vpn2-tls', line], capture_output=True,
-                              timeout=10).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
 def tick(config, state_path, initial=False):
     state = read_json(state_path, {})
     now = time.time()
@@ -370,9 +360,11 @@ def tick(config, state_path, initial=False):
     elif config.get('secure_file'):
         closed = closed_reason(state, now)
         changed = close_panel(config)
-        # The journal names the reason once per closed state, not every minute:
-        # on closing, and on the first run that finds the panel closed silently
-        # (by the installation or by a version that did not log it).
+        # The unit journal names the reason once per closed state, not every
+        # minute: on closing, and on the first service run that finds the panel
+        # closed silently (by the installation or by a version that did not log
+        # it). The --initial run prints to the installation output only: a line
+        # written from the ssh session does not belong to vpn2-tls.service.
         if not initial and (changed or state.get('closed') != closed):
             print(f'TLS: панель закрыта: {closed}; откроется сама после выпуска сертификата')
             state['closed'] = closed
@@ -390,9 +382,6 @@ def tick(config, state_path, initial=False):
         line = (f"TLS: панель закрыта: {closed}; {state.get('error', 'ACME pending')}; "
                 'Caddy повторит выпуск сам, панель откроется после него')
         print(line)
-        if to_journal(line):
-            state['closed'] = closed
-            atomic(state_path, json.dumps(state))
     return bool(cert)
 
 

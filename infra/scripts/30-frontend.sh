@@ -416,6 +416,10 @@ panel_finish
 # панель закрыта до сертификата, Caddy повторяет выпуск сам.
 python3 /usr/local/lib/vpn2/vpn2_tls.py --initial --config /etc/vpn2/tls/config.json \
   --wait "${TLS_INITIAL_WAIT:-60}"
+# Причину закрытой панели в журнал юнита (journalctl -u vpn2-tls) пишет сама
+# служба: строка из сессии установки туда не попадает.
+systemctl start vpn2-tls.service \
+  || echo "[$HOST_TAG] vpn2-tls.service завершилась с ошибкой, подробности: journalctl -u vpn2-tls"
 systemctl enable --now vpn2-tls.timer >/dev/null
 echo
 echo "[$HOST_TAG] -------------------------------------------------------------"

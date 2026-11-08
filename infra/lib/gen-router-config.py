@@ -343,7 +343,7 @@ def main():
         tls_direct = dict(tls_common)
         tls_warp   = dict(tls_common)
 
-        # H2mux drains QUIC into bounded per-stream buffers. In stock 1.12.25
+        # H2mux drains QUIC into bounded per-stream buffers. In stock 1.14.4
         # its 1 GiB receive window exceeds 250 concurrent streams * 4 MiB:
         # frozen readers cannot exhaust the connection window. Recheck these
         # limits when upgrading sing-mux / x/net. Yamux also isolates readers

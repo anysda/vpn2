@@ -53,9 +53,9 @@ case "$YT_QUIC" in block|allow) ;; *) echo "неверный YT_QUIC=$YT_QUIC" >
 YT_MARK="${YT_MARK:-256}"
 YT_ZAPRET_QUEUE="${YT_ZAPRET_QUEUE:-200}"
 YT_ZAPRET_REPO="${YT_ZAPRET_REPO:-https://github.com/bol-van/zapret2}"
-# Пин коммита — воспроизводимость сборки. Релиз v1.0.5.2 (тег лёгкий, сам
+# Пин коммита — воспроизводимость сборки. Релиз v1.0.7 (тег лёгкий, сам
 # коммит здесь — с ним сравнивается rev-parse HEAD ниже).
-YT_ZAPRET_REF="${YT_ZAPRET_REF:-6b6c63e3385fa73f8af3be4a69171e947f5a319d}"
+YT_ZAPRET_REF="${YT_ZAPRET_REF:-038c97e5819df10f8e8c22a2f1fffe57f2f7379b}"
 YT_ZAPRET_BASE="${YT_ZAPRET_BASE:-/opt/zapret2}"
 YT_ZAPRET_BIN="$YT_ZAPRET_BASE/binaries/my/nfqws2"
 # Стратегия десинка. Две части, обе обязательны:
@@ -734,25 +734,25 @@ chmod 0755 /usr/local/bin/anysda-yt-check
 # непривилегированным пользователем, без cookies и удалённых плагинов.
 YT_PROBE_VENV=/opt/anysda-yt-probe
 if [[ ! -x "$YT_PROBE_VENV/bin/yt-dlp" ]] \
-   || [[ "$("$YT_PROBE_VENV/bin/yt-dlp" --version)" != 2026.08.19 ]]; then
+   || [[ "$("$YT_PROBE_VENV/bin/yt-dlp" --version)" != 2026.10.26 ]]; then
   python3 -m venv "$YT_PROBE_VENV"
-  "$YT_PROBE_VENV/bin/pip" install --disable-pip-version-check 'yt-dlp[default]==2026.8.19'
+  "$YT_PROBE_VENV/bin/pip" install --disable-pip-version-check 'yt-dlp[default]==2026.10.26'
 fi
 # EJS требует Node >=22, а системный пакет Ubuntu/Debian может быть старее.
 # Роутер поддерживает linux-amd64; не меняем Node других приложений на узле.
 if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
    || [[ ! -f "$YT_PROBE_VENV/lib/node_modules/npm/bin/npm-cli.js" ]] \
-   || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v24.21.0 ]]; then
+   || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v26.13.0 ]]; then
   YT_NODE_TMP=$(mktemp -d)
   trap 'rm -rf "$YT_NODE_TMP"' EXIT
-  release_download yt-node "$YT_NODE_TMP/node.tar.xz" https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz
-  printf '%s  %s\n' fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 \
+  release_download yt-node "$YT_NODE_TMP/node.tar.xz" https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz
+  printf '%s  %s\n' d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 \
     "$YT_NODE_TMP/node.tar.xz" | sha256sum -c -
   tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" \
-    node-v24.21.0-linux-x64/bin/node node-v24.21.0-linux-x64/lib/node_modules/npm
-  install -m 0755 "$YT_NODE_TMP/node-v24.21.0-linux-x64/bin/node" "$YT_PROBE_VENV/bin/node"
+    node-v26.13.0-linux-x64/bin/node node-v26.13.0-linux-x64/lib/node_modules/npm
+  install -m 0755 "$YT_NODE_TMP/node-v26.13.0-linux-x64/bin/node" "$YT_PROBE_VENV/bin/node"
   mkdir -p "$YT_PROBE_VENV/lib/node_modules"
-  cp -a "$YT_NODE_TMP/node-v24.21.0-linux-x64/lib/node_modules/npm" "$YT_PROBE_VENV/lib/node_modules/"
+  cp -a "$YT_NODE_TMP/node-v26.13.0-linux-x64/lib/node_modules/npm" "$YT_PROBE_VENV/lib/node_modules/"
   rm -rf "$YT_NODE_TMP"
   trap - EXIT
 fi

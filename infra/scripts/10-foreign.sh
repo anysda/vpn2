@@ -35,9 +35,9 @@ mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box /var/lib/sing-box/acme
 # 1. wgcf — register WARP and generate WG profile
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [1/4] wgcf"
-WGCF_VER='2.3.0'
+WGCF_VER='2.3.1'
 # Версию wgcf не печатает (ни `version`, ни `--version`), сверяем по sha256 релиза.
-WGCF_SHA256='01614e38c0eb5f3405232e71cfaf02d64d4809e4988ad8f5a8071af16d193405'
+WGCF_SHA256='4fb7a136aa470ece11d17949c7db07b040ec9c604742dc8680bcf1889f85d0c8'
 if [[ "$(sha256sum /usr/local/bin/wgcf 2>/dev/null | cut -d' ' -f1)" != "$WGCF_SHA256" ]]; then
   WGCF_CANDIDATE=$(mktemp /usr/local/bin/.wgcf.XXXXXXXX)
   trap 'rm -f "$WGCF_CANDIDATE"' EXIT

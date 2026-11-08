@@ -7,7 +7,7 @@ import unittest
 from router_support import ROOT, SB
 
 
-@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
+@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
 class ConfigPublishTests(unittest.TestCase):
     def test_invalid_generation_keeps_previous_config(self):
         for stage in ('20-ru-router', '10-foreign'):

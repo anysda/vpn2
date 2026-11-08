@@ -59,7 +59,7 @@ def rule_index(cfg, pred):
     return next((i for i, r in enumerate(cfg['route']['rules']) if pred(r)), None)
 
 
-@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
+@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
 class TestManualRouteEdges(unittest.TestCase):
     def run_apply(self, rows):
         tmp = tempfile.TemporaryDirectory()

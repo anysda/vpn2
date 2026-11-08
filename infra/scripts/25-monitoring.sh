@@ -88,7 +88,7 @@ grep 'targets:' /etc/anysda/vmsingle-scrape.yml | HOST_TAG="$HOST_TAG" awk '{pri
 # ----------------------------------------------------------------------------
 # Пин версии: с :latest docker run брал образ, скачанный когда-то первым, и
 # узлы жили на разных версиях.
-VM_VER='v1.153.0'
+VM_VER='v1.155.0'
 docker rm -f vmsingle >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.

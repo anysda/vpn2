@@ -63,7 +63,7 @@ class ClientBlockTests(unittest.TestCase):
         self.assertTrue(all('inbound' in rule or rule.get('action') in ('reject', 'sniff')
                             for rule in rules[:block + 1]))
 
-    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
+    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
     def test_manual_default_route_stays_below_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)

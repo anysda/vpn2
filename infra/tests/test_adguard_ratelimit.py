@@ -60,7 +60,7 @@ class AdguardRatelimitTests(unittest.TestCase):
                             self.assertIn(str(address), addresses, (protocol, cidr, address))
                 if existing:
                     self.assertIn('203.0.113.8', addresses)
-                # v0.107.79 parses the whitelist but does not pass it to dnsproxy.
+                # v0.107.80 and earlier parse the whitelist but does not pass it to dnsproxy.
                 # Membership alone does not mean that the client is exempt.
                 self.assertEqual(config.get('ratelimit', 20), 0)
                 self.assertEqual(config['bind_hosts'], ['127.0.0.1', '192.0.2.53'])

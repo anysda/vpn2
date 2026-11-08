@@ -9,7 +9,7 @@ import unittest
 from router_support import SB, stage_source
 
 
-@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
+@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
 class RuleSetUpdateTests(unittest.TestCase):
     def test_download_is_validated_before_replace(self):
         for payload in [b'', b'upstream error page', b'SRS\x02broken']:

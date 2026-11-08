@@ -96,7 +96,7 @@ class TelegramStageTests(unittest.TestCase):
         (self.root / 'tmp/anysda/anysda-config.yaml.tpl').write_text('admin: fixture\n')
         binaries = self.root / 'bin'
         binaries.mkdir()
-        commands = {'docker': DOCKER, 'caddy': '#!/bin/sh\necho v2.11.7\n',
+        commands = {'docker': DOCKER, 'caddy': '#!/bin/sh\necho v2.11.9\n',
                     'ufw': '#!/bin/sh\nexit 0\n', 'curl': '#!/bin/sh\nexit 0\n',
                     'envsubst': '#!/bin/sh\ncat\n', 'systemctl': '#!/bin/sh\nexit 0\n',
                     'journalctl': '#!/bin/sh\nexit 0\n',

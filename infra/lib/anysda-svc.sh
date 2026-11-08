@@ -332,7 +332,7 @@ deb_install() {
 # перед каждой стадией.
 # Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
 # что встала первой.
-CADDY_VER='2.11.7'
+CADDY_VER='2.11.9'
 caddy_install() {
   local tmp rel_url deb
   [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]] || return 0

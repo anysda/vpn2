@@ -76,7 +76,7 @@ apt_have $APT_PKGS || apt_install $APT_PKGS
 if [[ "$BACKUP_BACKEND" == "s3" ]] && ! command -v aws >/dev/null 2>&1; then
   # Для обновления релиза меняется только эта версия; подпись проверяется
   # постоянным официальным ключом AWS CLI Team, а не ключом из загрузки.
-  AWS_CLI_VERSION=2.37.12
+  AWS_CLI_VERSION=2.39.6
   AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip"
   echo "[$HOST_TAG]   download aws-cli v${AWS_CLI_VERSION}…"
   TMPD=$(mktemp -d)

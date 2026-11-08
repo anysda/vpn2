@@ -2,12 +2,11 @@
 # Общий установщик для стадий 10/20. Аргумент — путь бинарника (по умолчанию системный).
 set -euo pipefail
 
-# Выше 1.12 не берём: 1.13+ ухудшает hysteria2 на канале с потерями.
-readonly SB_VER='1.12.25'
-# GitHub release assets API, tag v1.12.25, поле digest; сверено sha256sum архивов:
-# https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.12.25
-readonly SB_SHA256_AMD64='a1ec76e2b6b139eb747a1b1ebee7d14b8d4be5a833596cad8070a31ef960301f'
-readonly SB_SHA256_ARM64='719b76196c8b31efa636b2d8f669e314547e0da0a5ab38a75e1882d307bbd154'
+readonly SB_VER='1.14.4'
+# GitHub release assets API, tag v1.14.4, поле digest; сверено sha256sum архивов:
+# https://api.github.com/repos/SagerNet/sing-box/releases/tags/v1.14.4
+readonly SB_SHA256_AMD64='699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968'
+readonly SB_SHA256_ARM64='436441f76ee2f7fe21b5b2d426d3cb261a480455a704865789ad533e4273ec26'
 dest=${1:-/usr/local/bin/sing-box}
 
 if [[ -x "$dest" ]] && installed=$("$dest" version 2>/dev/null) &&

@@ -7,7 +7,7 @@ renewal window -> new certificate; ACME blocked -> alert with expiry;
 unblocked -> "updated". Exit role: same code, certificate exported for
 sing-box while TCP 443 stays free. No public CA, no Telegram.
 
-CADDY_BIN=<caddy 2.11.7> DOCKER='sudo -n docker' <venv with telegram/requirements.txt>/bin/python \
+CADDY_BIN=<caddy 2.11.9> DOCKER='sudo -n docker' <venv with telegram/requirements.txt>/bin/python \
     infra/tests/probe_tls_live.py
 """
 

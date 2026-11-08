@@ -149,7 +149,7 @@ os.execv('/usr/bin/install', ['install', *args])
 
 CADDY = '''#!/usr/bin/env bash
 echo "caddy $*" >> "$FAKE/calls.log"
-[[ "$1" != version ]] || echo 'v2.11.7 h1:test'
+[[ "$1" != version ]] || echo 'v2.11.9 h1:test'
 '''
 
 # The image's own installer is exercised by its own tests; here it only logs.

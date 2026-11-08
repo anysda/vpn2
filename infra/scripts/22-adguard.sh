@@ -28,7 +28,7 @@ STAMP_DIR=/var/anysda/.stamps
 STAGE='22-adguard'
 AGH_DIR=/opt/AdGuardHome
 AGH_BIN=$AGH_DIR/AdGuardHome
-AGH_VER='v0.107.79'
+AGH_VER='v0.107.80'
 # Что стадия сама записала в настройки DNS, которые правятся в панели.
 AGH_DNS_STATE=/etc/anysda/agh-dns.json
 
@@ -123,7 +123,7 @@ patch_agh_config() {
   [[ ! -f "$cfg" ]] && return 0
   local changed=0
   # whitelist сохраняем для совместимости, включая пользовательские адреса.
-  # В v0.107.79 dnsforward/config.go:newRatelimitMw не передаёт этот список
+  # До v0.107.80 включительно dnsforward/config.go:newRatelimitMw не передаёт этот список
   # в dnsproxy AllowlistAddrs: даже один адрес в нём не освобождён от 20 rps.
   # На закрытом DNS-слушателе отключаем лимит целиком. Он доступен по lo и
   # служебному адресу; INPUT default deny и стадии 27/28/29 разрешают :53
@@ -149,7 +149,7 @@ dns["use_http3_upstreams"] = False
 dns["bind_hosts"] = ["127.0.0.1", os.environ["DNS_BIND"]]
 # Значения по умолчанию для полей, которые админ меняет в панели.
 # aaaa_disabled: на entry нет IPv6-форвардинга, AAAA уводит клиента мимо
-# manual-routes. ratelimit 0: в v0.107.79 whitelist не доходит до dnsproxy
+# manual-routes. ratelimit 0: до v0.107.80 включительно whitelist не доходит до dnsproxy
 # (см. ниже), лимит душил бы туннельных клиентов.
 defaults = dict(
     upstream_dns=["[/ru/рф/xn--p1ai/su/]77.88.8.8",

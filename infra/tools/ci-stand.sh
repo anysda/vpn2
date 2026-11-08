@@ -121,6 +121,38 @@ net_up() {
   iptables -w -C FORWARD -o "$BRIDGE" -j ACCEPT 2>/dev/null || iptables -w -I FORWARD 1 -o "$BRIDGE" -j ACCEPT
 }
 
+# Прогрев ВМ сразу после загрузки, пока раннер собирает панель и деплой
+# раскладывает исходники. Установка та же: деплой сам делает свои apt-get
+# update/install, прогрев лишь кладёт индекс apt (через прокси) и, на entry,
+# пакеты Docker в кэш apt (HTTPS идёт мимо прокси, это самое долгое
+# скачивание 00-bootstrap). Стадии ждут чужие блокировки apt сами.
+warm_script() {
+  cat <<'WARM'
+#!/bin/sh
+t0=$(date +%s)
+say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
+if apt-get -q update >/dev/null; then say 'индекс apt'; else say 'индекс apt не вышел'; fi
+[ "$1" = entry ] || exit 0
+w=/var/tmp/vpn2-ci-warm
+. /etc/os-release
+mkdir -p "$w/sources" "$w/lists/partial" "$w/debs"
+chown _apt "$w/debs"
+curl -fsSL --retry 3 "https://download.docker.com/linux/$ID/gpg" | gpg --dearmor --yes -o "$w/docker.gpg" || exit 0
+echo "deb [arch=$(dpkg --print-architecture) signed-by=$w/docker.gpg] https://download.docker.com/linux/$ID $VERSION_CODENAME stable" \
+  > "$w/sources/docker.list"
+o="-o Dir::Etc::SourceList=/dev/null -o Dir::Etc::SourceParts=$w/sources -o Dir::State::Lists=$w/lists"
+# shellcheck disable=SC2086
+apt-get -q $o update >/dev/null || { say 'индекс Docker не вышел'; exit 0; }
+cd "$w/debs" || exit 0
+# shellcheck disable=SC2086
+if apt-get -q $o download docker-ce docker-ce-cli containerd.io >/dev/null; then
+  mv ./*.deb /var/cache/apt/archives/ && say "пакеты Docker в кэше apt"
+else
+  say 'пакеты Docker не скачались'
+fi
+WARM
+}
+
 seed() {
   local name=$1 ip=$2 mac=$3 password=$4 dir=$STAND_DIR/seed-$1
   mkdir -p "$dir"
@@ -186,6 +218,10 @@ write_files:
     content: |
       [Service]
       Environment=TCP_RETURN_S=$TCP_RETURN_S
+  - path: /usr/local/sbin/vpn2-ci-warm
+    permissions: '0755'
+    content: |
+$(warm_script | sed 's/^/      /')
 bootcmd:
   - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer]
   # Службы образа, которых продукт не касается: packagekit будит хук apt после
@@ -195,14 +231,20 @@ bootcmd:
   - [rm, -f, /var/lib/man-db/auto-update]
 runcmd:
   - [systemctl, restart, ssh]
+  - [systemd-run, --unit=vpn2-ci-warm, /usr/local/sbin/vpn2-ci-warm, $name]
 EOF
   cloud-localds --network-config="$dir/network-config" "$STAND_DIR/$name-seed.iso" "$dir/user-data" "$dir/meta-data"
 }
 
-# Слушает только мост стенда. Поднимается в начале деплоя: каталог кэша
-# восстанавливает actions/cache от пользователя раннера, пока ВМ грузятся,
-# потом владелец - прокси, иначе он не допишет новые пакеты.
+# Слушает только мост стенда. Поднимается в up до запуска ВМ (их прогрев
+# идёт через него): каталог кэша actions/cache восстанавливает до up от
+# пользователя раннера, потом владелец - прокси, иначе он не допишет новые
+# пакеты. Деплой лишь проверяет, что прокси жив: перезапуск оборвал бы прогрев.
 apt_proxy_up() {
+  if [[ "${1:-}" == --if-down ]] && curl -fs -o /dev/null "$APT_PROXY/acng-report.html"; then
+    log "прокси apt: $APT_PROXY уже поднят, в кэше $(du -sh "$APT_CACHE" | cut -f1)"
+    return 0
+  fi
   mkdir -p "$APT_CACHE"
   printf 'CacheDir: %s\nBindAddress: %s\nPort: 3142\n' "$APT_CACHE" "$NET.1" \
     > /etc/apt-cacher-ng/zz-vpn2-ci.conf
@@ -258,7 +300,7 @@ cmd_up() {
   host_machine
   host_stats 'начало up'
   chmod 700 "$STAND_DIR"
-  local image=$STAND_DIR/base.img fetch=''
+  local image=$STAND_DIR/base.img fetch='' up_t0=$SECONDS
   # Образ качается, пока ставится qemu.
   if [[ ! -f "$image" ]]; then
     fetch_image "$image" &
@@ -266,14 +308,19 @@ cmd_up() {
   fi
   if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
     # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
-    apt-get update -q
-    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -yq --no-install-recommends \
-      -o Dpkg::Options::=--force-unsafe-io qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
+    # Индекс apt в образе раннера свежий: update (~3 с) - только если без
+    # него пакеты не встали.
+    local install=(env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -yq
+      --no-install-recommends -o Dpkg::Options::=--force-unsafe-io
+      qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng)
+    "${install[@]}" || { apt-get update -q && "${install[@]}"; }
+    log "qemu и прокси apt на раннере: $((SECONDS - up_t0)) с от начала up"
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
+  apt_proxy_up
   local node name ip cpus mem mac tap
   for node in "${NODES[@]}"; do
     read -r name ip cpus mem mac <<<"$node"
@@ -289,7 +336,7 @@ cmd_up() {
       -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no" -device "virtio-net-pci,netdev=lan,mac=$mac" \
       -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \
       -daemonize -pidfile "$STAND_DIR/$name.pid"
-    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ"
+    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up"
   done
   for node in "${NODES[@]}"; do
     read -r name ip _ <<<"$node"
@@ -298,7 +345,7 @@ cmd_up() {
       (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
       sleep 1
     done
-    log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; printf "%s, dpkg %s, база man-db %s" "$PRETTY_NAME" \
+    log "ВМ $name готова через $((SECONDS - up_t0)) с от начала up: $(ssh_node "$ip" '. /etc/os-release; printf "%s, dpkg %s, база man-db %s" "$PRETTY_NAME" \
       "$(grep -q unsafe-io /etc/dpkg/dpkg.cfg.d/90vpn2-ci 2>/dev/null && echo без fsync || echo с fsync)" \
       "$(test -e /var/lib/man-db/auto-update && echo обновляется || echo не обновляется)"')"
   done
@@ -341,7 +388,7 @@ entry_run() {
       ssh_node "$ENTRY" "sed -n '$((shown + 1)),\$p' /root/$name.log" | stage_stats || true
       return "$rc"
     fi
-    sleep 2
+    sleep 1
   done
 }
 
@@ -393,11 +440,25 @@ load_panel() {
   log "образ панели $PANEL_REF → entry"
 }
 
+# Итог прогрева по узлам: время от загрузки ВМ (монотонные часы журнала),
+# рядом - аптайм entry на старте деплоя.
+warm_report() {
+  local node name ip
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    ssh_node "$ip" 'journalctl -u vpn2-ci-warm -o short-monotonic --no-pager -q' 2>/dev/null \
+      | sed -n "s/^\[ *\([0-9.]*\)\].*\(прогрев: .*\)/[stand] ВМ $name, \1 с от загрузки: \2/p" || true
+  done
+}
+
+entry_uptime() { ssh_node "$ENTRY" 'cut -d" " -f1 /proc/uptime' 2>/dev/null || echo '?'; }
+
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
   host_stats 'до деплоя'
   entry_stats 'до деплоя'
-  apt_proxy_up
+  apt_proxy_up --if-down
+  log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
   docker tag "$image" "$PANEL_REF"
   load_panel &
@@ -405,6 +466,7 @@ cmd_deploy() {
   entry_run deploy './deploy.sh --development' || rc=$?
   wait "$loader" || (( rc )) || rc=1
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  warm_report
   host_stats 'после деплоя'
   return "$rc"
 }
@@ -422,7 +484,8 @@ UDP_STAGES=('00-bootstrap all' '05-mgmt-mesh all' "10-foreign $EXIT_TAG" '20-ru-
 
 cmd_deploy_udp() {
   host_stats 'до деплоя'
-  apt_proxy_up
+  apt_proxy_up --if-down
+  log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
   local stage started=$SECONDS
   for stage in "${UDP_STAGES[@]}"; do
@@ -432,6 +495,7 @@ cmd_deploy_udp() {
       || die "$stage: код $?"
   done
   log "стадии для обрыва UDP: $(( SECONDS - started )) с"
+  warm_report
 }
 
 cmd_verify() {

@@ -33,11 +33,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # ВМ грузятся, пока собирается образ панели.
-      - name: up (фоном)
-        run: sudo infra/tools/ci-stand.sh up-bg
-
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
+      # До up: прокси поднимается до запуска ВМ, их прогрев идёт через него.
       - name: apt cache
         id: apt-cache
         uses: actions/cache/restore@v6
@@ -45,6 +42,10 @@ jobs:
           path: /var/tmp/vpn2-apt-cache
           key: stand-apt-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
           restore-keys: stand-apt-
+
+      # ВМ грузятся, пока собирается образ панели.
+      - name: up (фоном)
+        run: sudo infra/tools/ci-stand.sh up-bg
 
       - uses: docker/setup-buildx-action@v4
         with:

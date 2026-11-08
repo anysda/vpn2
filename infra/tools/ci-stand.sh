@@ -222,9 +222,25 @@ apt_proxy_stats() {
 }
 
 fetch_image() {
-  local image=$1 sums name
+  local image=$1 sums name url size i a b pids=() started=$SECONDS
   log "образ: $IMAGE_URL"
-  curl -fsSL --retry 3 -o "$image.part" "$IMAGE_URL"
+  # Один поток упирается в ~50 МБ/с: образ (~850 МБ) - четырьмя диапазонами
+  # с одного зеркала (адрес после редиректа); без длины - одним потоком.
+  url=$(curl -fsIL --retry 3 -o /dev/null -w '%{url_effective}' "$IMAGE_URL")
+  size=$(curl -fsI --retry 3 "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" {print $2}' | tail -n1)
+  if [[ "$size" =~ ^[0-9]+$ ]] && (( size > 4 )); then
+    for i in 0 1 2 3; do
+      a=$((size * i / 4)) b=$((size * (i + 1) / 4 - 1))
+      curl -fsS --retry 3 -r "$a-$b" -o "$image.part$i" "$url" & pids+=($!)
+    done
+    for i in "${pids[@]}"; do wait "$i" || die 'образ ВМ не скачан'; done
+    cat "$image.part0" "$image.part1" "$image.part2" "$image.part3" > "$image.part"
+    rm -f "$image.part0" "$image.part1" "$image.part2" "$image.part3"
+    (( $(stat -c %s "$image.part") == size )) || die 'образ ВМ скачан не целиком'
+  else
+    curl -fsSL --retry 3 -o "$image.part" "$IMAGE_URL"
+  fi
+  log "образ скачан за $((SECONDS - started)) с"
   sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/SHA256SUMS")
   name=${IMAGE_URL##*/}
   printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$image.part"'"}' \
@@ -276,7 +292,7 @@ cmd_up() {
     local deadline=$((SECONDS + 600))
     until ssh_node "$ip" 'cloud-init status --wait >/dev/null 2>&1; test -f /var/lib/cloud/instance/boot-finished'; do
       (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
-      sleep 2
+      sleep 1
     done
     log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; printf "%s, dpkg %s, база man-db %s" "$PRETTY_NAME" \
       "$(grep -q unsafe-io /etc/dpkg/dpkg.cfg.d/90vpn2-ci 2>/dev/null && echo без fsync || echo с fsync)" \

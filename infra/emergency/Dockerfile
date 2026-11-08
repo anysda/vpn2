@@ -4,13 +4,13 @@
 # the agent as a systemd unit, so an emergency downloads nothing.
 
 # --- static ------------------------------------------------------------------
-FROM mirror.gcr.io/library/node:24-slim AS static
+FROM mirror.gcr.io/library/node:26-slim AS static
 
-RUN corepack enable && corepack prepare pnpm@10 --activate
+RUN npm install -g pnpm@12
 
 WORKDIR /src/app
 
-COPY app/package.json app/pnpm-lock.yaml app/.npmrc ./
+COPY app/package.json app/pnpm-lock.yaml app/pnpm-workspace.yaml app/.npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY app/ ./

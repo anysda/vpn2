@@ -1,18 +1,18 @@
 # --- builder ---------------------------------------------------------------
-FROM mirror.gcr.io/library/node:24-slim AS builder
+FROM mirror.gcr.io/library/node:26-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@10 --activate
+RUN npm install -g pnpm@12
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
 RUN pnpm build
 
 # --- runtime ---------------------------------------------------------------
-FROM mirror.gcr.io/library/node:24-slim AS runtime
+FROM mirror.gcr.io/library/node:26-slim AS runtime
 
 # VPN utilities and PKI stay on the host; util-linux is used by deploy migration.
 RUN apt-get update \

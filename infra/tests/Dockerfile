@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/node:24-slim
+FROM mirror.gcr.io/library/node:26-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends age expect sqlite3 wireguard-tools openssl python3 \
     && rm -rf /var/lib/apt/lists/*

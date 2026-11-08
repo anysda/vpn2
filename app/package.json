@@ -22,47 +22,36 @@
     "e2e:local": "bash e2e/run-local.sh"
   },
   "dependencies": {
-    "@better-auth/utils": "0.4.2",
-    "@iconify-json/lucide": "^1.2.142",
-    "@iconify-json/simple-icons": "^1.2.99",
+    "@better-auth/utils": "0.5.1",
+    "@iconify-json/lucide": "^1.2.152",
+    "@iconify-json/simple-icons": "^1.2.101",
     "@libsql/client": "^0.18.0",
     "@node-rs/argon2": "^2.2.2",
-    "@nuxt/ui": "^4.11.3",
-    "better-auth": "1.7.7",
+    "@nuxt/ui": "^4.12.0",
+    "better-auth": "1.7.18",
     "drizzle-orm": "^0.45.4",
     "h3": "1.15.11",
-    "js-yaml": "^5.4.3",
-    "nuxt": "^4.6.1",
+    "js-yaml": "^5.5.0",
+    "nuxt": "^4.6.4",
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0",
     "qrcode-svg": "^1.1.0",
-    "tailwindcss": "^4.3.3",
-    "zod": "^4.6.6"
+    "tailwindcss": "^4.3.5",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@fontsource-variable/manrope": "^5.3.0",
     "@nuxt/eslint": "^1.17.0",
-    "@nuxtjs/color-mode": "4.0.1",
-    "@playwright/test": "1.64.0",
+    "@nuxtjs/color-mode": "4.1.0",
+    "@playwright/test": "1.65.0",
     "@types/qrcode-svg": "^1.1.5",
     "@vitejs/plugin-vue": "6.0.10",
-    "@zxing/library": "0.21.3",
+    "@zxing/library": "0.23.0",
     "drizzle-kit": "^0.31.11",
-    "eslint": "^10.12.0",
-    "typescript": "^5.9.3",
-    "vite": "8.3.4",
-    "vue": "3.5.43",
-    "vue-tsc": "^3.3.13"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@parcel/watcher",
-      "esbuild",
-      "unrs-resolver",
-      "vue-demi"
-    ],
-    "overrides": {
-      "better-call>@better-auth/utils": "0.4.2"
-    }
+    "eslint": "^10.14.0",
+    "typescript": "^6.0.3",
+    "vite": "8.3.6",
+    "vue": "3.5.45",
+    "vue-tsc": "^3.3.14"
   }
 }

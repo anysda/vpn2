@@ -83,8 +83,27 @@ class Failed(Exception):
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
 
 
+def finished(argv, data=None, timeout=60):
+    """subprocess.run that leaves no child running: a signal while Popen starts it waits.
+
+    Popen may run the child before it returns it; a signal raised there would leave
+    the child to no one. Held, it stops apply once the child is known and killed.
+    """
+    with held():
+        child = subprocess.Popen(argv, stdin=None if data is None else subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, env=ENV)
+        with child:  # closes the pipes and waits for the child
+            try:
+                with released():
+                    stdout, stderr = child.communicate(data, timeout=timeout)
+            except BaseException:
+                child.kill()
+                raise
+    return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
+
+
 def run(argv, data=None):
-    result = subprocess.run(argv, input=data, capture_output=True, text=True, timeout=60, env=ENV)
+    result = finished(argv, data)
     if result.returncode:
         last = (result.stderr or result.stdout).strip().splitlines()
         # nft ends its message with the source line and a caret, openvpn with a
@@ -130,12 +149,11 @@ STAMP = re.compile(r'(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|\w{3} \w{3} [ \d]\d \d\d:
 def tls_server_end(cert, key, cipher):
     """The line a server start with this cipher gives up on, without its time stamp."""
     try:
-        result = subprocess.run(['/usr/sbin/openvpn', '--verb', '1', '--dev', 'tun', '--dev-node', '/nonexistent',
-                                 '--disable-dco', '--port', '0', '--server', '10.67.67.0', '255.255.255.0',
-                                 '--ca', str(cert), '--cert', str(cert), '--key', str(key), '--dh', 'none',
-                                 '--cipher', cipher],
-                                capture_output=True, text=True, timeout=CHECK_SECONDS, env=ENV)
-    except subprocess.TimeoutExpired:  # run() has killed the server
+        result = finished(['/usr/sbin/openvpn', '--verb', '1', '--dev', 'tun', '--dev-node', '/nonexistent',
+                           '--disable-dco', '--port', '0', '--server', '10.67.67.0', '255.255.255.0',
+                           '--ca', str(cert), '--cert', str(cert), '--key', str(key), '--dh', 'none',
+                           '--cipher', cipher], timeout=CHECK_SECONDS)
+    except subprocess.TimeoutExpired:  # finished() has killed the server
         raise CheckNotStarted(f'openvpn --cipher {cipher}: no answer in {CHECK_SECONDS} s') from None
     lines = [STAMP.sub('', line, count=1).strip() for line in (result.stdout + result.stderr).splitlines()]
     lines = [line for line in lines if line and not line.startswith(('Exiting due to fatal error', 'Use --help'))]

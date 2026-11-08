@@ -61,8 +61,8 @@ class PanelClosedJournalTests(unittest.TestCase):
             journal.tick()
             lines = journal.closed_lines()
             self.assertEqual(len(lines), 1, lines)
-            # Written by the installation under the identifier of the timer unit.
-            self.assertTrue(lines[0].startswith('-t vpn2-tls ' + LINE + 'сертификат не выпущен'), lines)
+            # Written by vpn2-tls.service itself, so `journalctl -u vpn2-tls` shows it.
+            self.assertTrue(lines[0].startswith(LINE + 'сертификат не выпущен'), lines)
             journal.tick()
             self.assertEqual(journal.closed_lines(), lines)
         self.each_mode(check)

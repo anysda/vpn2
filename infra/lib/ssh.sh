@@ -117,10 +117,21 @@ fi
 _SSH_MARK=vpn2-ssh-output-begin
 _SSH_OUTPUT_NO_MARK=3
 _ssh_begin="printf '\\n%s\\n' $_SSH_MARK; [ /dev/stdout -ef /dev/stderr ] || printf '\\n%s\\n' $_SSH_MARK >&2;"
-# GNU dd: uutils dd при выходе делает ftruncate по своему сдвигу и режет строки
-# второго писателя, а с conv=notrunc копит вывод до конца ввода. В Ubuntu 26.04
-# GNU dd - gnudd (gnu-coreutils, Priority: required), в прочих системах - dd.
-_ssh_dd=$(command -v gnudd || echo dd)
+# После метки поток копируется в вывод целыми строками, каждая одним write():
+# stdout и stderr стадии часто пишут в один журнал (>"$log" 2>&1), а ssh отдаёт
+# поток кусками по пакетам канала, и кусок кончается посреди строки. Писатель,
+# что кладёт кусок как есть (dd, cat), ставит строку второго потока в середину
+# чужой: e7765 -> e776o4583 и 5. Начало строки без перевода ждёт остатка, хвост
+# без перевода уходит в конце потока. Не cat: uutils cat пишет в файл через
+# splice и затирает строки второго писателя; не dd: uutils dd при выходе режет
+# файл ftruncate по своему сдвигу. perl - perl-base, Priority: required в
+# Ubuntu; PERL_BADLANG=0 - без жалобы на локаль в журнал. Граница: в файл
+# write() строки идёт целиком, а в трубу (`2>&1 | tee`) ядро бережёт от чужой
+# записи только строку до PIPE_BUF (4 КиБ).
+_ssh_lines='while (<STDIN>) { my $o = 0; $o += syswrite(STDOUT, $_, length($_) - $o, $o) // exit 1 while $o < length($_) }'
+_ssh_copy_lines() {
+  PERL_BADLANG=0 perl -e "$_ssh_lines"
+}
 
 _ssh_output() {
   local line
@@ -129,9 +140,7 @@ _ssh_output() {
     if [[ $line == "$_SSH_MARK" ]]; then
       # "$1" - fifo сторожа входа: метка пришла, предел снят.
       [[ -z ${1:-} ]] || printf '\n' 1<>"$1"
-      # Не cat: uutils cat пишет в файл через splice и затирает строки,
-      # что ssh в тот же миг пишет в stderr (>"$log" 2>&1). dd пишет write().
-      "$_ssh_dd" status=none bs=64k; return
+      _ssh_copy_lines; return
     fi
     before+=("$line")
   done
@@ -146,8 +155,7 @@ _ssh_errfilter() {
   local line
   local -a before=()
   while IFS= read -r line; do
-    # dd, не cat - причина в _ssh_output.
-    [[ $line == "$_SSH_MARK" ]] && { "$_ssh_dd" status=none bs=64k; return; }
+    [[ $line == "$_SSH_MARK" ]] && { _ssh_copy_lines; return; }
     before+=("$line")
   done
   (( ${#before[@]} == 0 )) || printf '%s\n' "${before[@]}"

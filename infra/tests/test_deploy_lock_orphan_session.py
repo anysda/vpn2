@@ -41,16 +41,23 @@ mkfifo "$s/in" "$s/out"
 # Сессия sshd: stdin держит открытым посторонний процесс, EOF не придёт.
 setsid sleep "$FAKE_SESSION_TTL" 3<>"$s/in" </dev/null >/dev/null 2>&1 &
 holder=$!
-setsid bash -c "$cmd" <"$s/in" 1<>"$s/out" 2>"$s/err" &
+# Клиент открывает вывод сессии до старта команды: занятый замок flock
+# отвергает сразу, и открытие fifo после ухода последнего писателя ждало бы
+# нового писателя вечно. Временный писатель 4 нужен, чтобы открыть читателя 5
+# без блокировки.
+exec 4<>"$s/out" 5<"$s/out"
+setsid bash -c "$cmd" <"$s/in" 1<>"$s/out" 2>"$s/err" 4>&- 5<&- &
 server=$!
+exec 4>&-
 echo "$holder $server" > "$s/session"
 # Клиент: пересылка stdin на entry и stdout с entry.
 exec 3<&0
-cat <&3 >"$s/in" 3<&- &
+cat <&3 >"$s/in" 3<&- 5<&- &
 forward=$!
 exec 3<&-
-cat "$s/out" &
+cat <&5 5<&- &
 relay=$!
+exec 5<&-
 echo "$$ $forward $relay" > "$s/client"
 wait "$relay"
 rc=0

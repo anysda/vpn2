@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -35,6 +36,7 @@ class Stub(BaseHTTPRequestHandler):
     """Download page, releases API and asset storage on one port; hosts tell them apart."""
     primary_status = 504
     seen = []
+    silence = threading.Event()
 
     def do_GET(self):  # noqa - HTTP handler
         host = self.headers['Host'].split(':')[0]
@@ -43,6 +45,9 @@ class Stub(BaseHTTPRequestHandler):
         if self.path == f'/{REPO}/releases/download/{TAG}/{NAME}':
             if self.primary_status == 200:
                 return self.reply(200, BODY)
+            if self.primary_status is None:
+                self.silence.wait(130)
+                return None
             return self.reply(self.primary_status, b'<html>Gateway Timeout</html>')
         if self.path == f'/repos/{REPO}/releases/tags/{TAG}':
             assets = [{'name': 'other.txt', 'url': f'http://127.0.0.1:{port}/repos/{REPO}/releases/assets/1'},
@@ -76,6 +81,8 @@ class ReleaseFetchTests(unittest.TestCase):
         self.assertIsNotNone(release_fetch, 'infra/tests/release_fetch.py is missing')
         Stub.primary_status = 504
         Stub.seen = []
+        Stub.silence = threading.Event()
+        self.addCleanup(Stub.silence.set)
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Stub)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
@@ -101,6 +108,22 @@ class ReleaseFetchTests(unittest.TestCase):
         self.assertTrue(all(s[2] == f'Bearer {TOKEN}' for s in api), api)
         blob = [s for s in Stub.seen if s[1].startswith('/blob/')]
         self.assertEqual([s[2] for s in blob], [None], Stub.seen)
+
+    def test_silent_download_page_falls_back_to_api_in_seconds(self):
+        Stub.primary_status = None
+        out = self.work / 'f.tar.gz'
+        start = time.monotonic()
+        try:
+            run = subprocess.run([sys.executable, str(Path(release_fetch.__file__)), REPO, TAG, NAME, str(out),
+                                  '--sha256', hashlib.sha256(BODY).hexdigest()],
+                                 env=self.env, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            self.fail('silent releases/download held fetch for 30 s without reaching the API')
+        took = time.monotonic() - start
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(out.read_bytes(), BODY)
+        self.assertLess(took, 20, run.stderr)
+        self.assertTrue([s for s in Stub.seen if s[1].startswith('/repos/')], Stub.seen)
 
     def test_checksum_mismatch_after_fallback_fails_and_leaves_no_file(self):
         out = self.work / 'b.tar.gz'

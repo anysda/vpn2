@@ -69,7 +69,8 @@ for _ in range(int(sys.argv[1])):
 time.sleep(float(sys.argv[2]))' "$((FAKE_MANY / 2))" "$FAKE_SLEEP" </dev/null >/dev/null 2>&1 &
           echo $! >> "$FAKE_NODE/pids"
           for ((i = 0; i < FAKE_MANY / 2; i++)); do sleep "$FAKE_SLEEP" </dev/null >/dev/null 2>&1 &
-            echo $! >> "$FAKE_NODE/pids"; done ;;
+            echo $! >> "$FAKE_NODE/pids"; done
+          : > "$FAKE_NODE/spawned" ;;
   # Сирота в сессии, а заглушка отвечает сразу: команда кончилась до предела.
   early-*) n=$(wc -l < "$FAKE_NODE/pids")
            case ${FAKE_BASHRC#early-} in
@@ -113,6 +114,17 @@ class StubNode(Node):
         result = subprocess.run(['bash', '-euo', 'pipefail', '-c', preamble(side) + body], cwd=self.root,
                                 env=self.env, text=True, capture_output=True, timeout=timeout)
         return result.returncode, result.stdout, result.stderr, time.monotonic() - started
+
+
+# sleep в PATH узла: сон убийцы _limit_run (ровно GATE_LIMIT секунд) ждёт, пока
+# заглушка swarm породит рой, и пишет время, с которого пошёл предел.
+GATE_SLEEP = r'''#!/bin/bash
+if [[ $* == "$GATE_LIMIT" ]]; then
+  while [[ ! -e $FAKE_NODE/spawned ]]; do command -p sleep 0.05; done
+  date +%s.%N > "$FAKE_NODE/gate"
+fi
+exec "$(command -pv sleep)" "$@"
+'''
 
 
 def limited(leader=False, limit=LIMIT):
@@ -505,17 +517,25 @@ class SshLimitSessionTests(unittest.TestCase):
         # роя на этом раннере, не меньше 5 с. Медленный fork под нагрузкой CI
         # не успевал породить детей до постоянных 5 с. Дети спят дольше
         # предела: иначе на медленном рое команда кончается сама до него.
+        # Прогон под нагрузкой порождает рой медленнее замера: предел идёт с
+        # момента, когда рой порождён (GATE_SLEEP), возврат меряется от него.
         spawn = swarm_spawn_seconds(many)
         limit = max(5, math.ceil(2 * spawn))
         for side in ('lib', 'node'):
-            with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many), FAKE_SLEEP=str(limit + HANG)) as node:
-                code, out, err, elapsed = node.direct(side, limited(limit=limit), timeout=limit + 30)
-                print(f'{many} детей и зомби _limit_run {side}: {out.strip()!r} {elapsed:.1f}s '
-                      f'(рой {spawn:.1f}s, предел {limit}s)')
+            with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many), FAKE_SLEEP=str(limit + HANG),
+                                                   GATE_LIMIT=str(limit)) as node:
+                (node.root / 'bin' / 'sleep').write_text(GATE_SLEEP)
+                (node.root / 'bin' / 'sleep').chmod(0o755)
+                code, out, err, elapsed = node.direct(side, limited(limit=limit), timeout=limit + HANG + 60)
+                gate = node.root / 'node' / 'gate'
+                self.assertTrue(gate.exists(), f'{side}: сон убийцы прошёл мимо sleep узла: {err}')
+                after = time.time() - float(gate.read_text())
+                print(f'{many} детей и зомби _limit_run {side}: {out.strip()!r} {elapsed:.1f}s, '
+                      f'от роя {after:.1f}s (замер {spawn:.1f}s, предел {limit}s)')
                 self.assertRegex(out, r'rc=(124|137)\b', err)
                 self.assertGreater(len(node.pids()), many // 2, 'заглушка не породила детей')
-                self.assertLess(elapsed, limit + 10, f'{side}: возврат через {elapsed:.1f} с при пределе {limit} с')
-                self.assert_nothing_left(f'{many} детей {side}', node.pids(), elapsed, limit + 10)
+                self.assertLess(after, limit + 10, f'{side}: возврат через {after:.1f} с от роя при пределе {limit} с')
+                self.assert_nothing_left(f'{many} детей {side}', node.pids(), after, limit + 10)
 
     def test_12_subshell_after_call_keeps_own_traps(self):
         # Ловушки вызывающего в подоболочку $(...) не наследуются: после

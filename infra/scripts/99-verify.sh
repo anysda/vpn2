@@ -76,37 +76,98 @@ SSH_NO_MARK_REASON='shell узла не дошёл до команды (.bashrc 
 # ConnectTimeout ограничивает только соединение: зависший .bashrc или команда
 # держали бы verify без предела, поэтому весь вход - под общим потолком, как
 # ssh_probe в infra/lib/ssh.sh: _limit_run гасит всё дерево и сессию ssh.
-# _limit_kill_tree и _limit_run - копия из infra/lib/ssh.sh, текст один в один
+# Функции _limit* - копия из infra/lib/ssh.sh, текст один в один
 # (сверяет test_ssh_limit_session.py): скрипт запускают и одним файлом.
+# Ядро отдаёт детей процесса в /proc/<pid>/task/<tid>/children (без
+# CONFIG_PROC_CHILDREN файла нет: тогда снимок ps и pkill, как раньше).
+_limit_children_ok() {
+  [[ -r /proc/$BASHPID/task/$BASHPID/children ]]
+}
+# Дети процессов "$@" через пробел: читаются только их записи в /proc, не
+# весь /proc хоста. Вышедший процесс - пустой ответ, не ошибка.
+_limit_kids() {
+  local p ng=-u fg=-u
+  local -a files=()
+  shopt -q nullglob && ng=-s
+  shopt -q failglob && fg=-s
+  shopt -s nullglob
+  shopt -u failglob
+  for p; do files+=(/proc/"$p"/task/*/children); done
+  shopt "$ng" nullglob
+  shopt "$fg" failglob
+  (( ${#files[@]} == 0 )) || cat -- "${files[@]}" 2>/dev/null || :
+}
 _limit_kill_tree() {
   local -a tree=("$1") new
-  local IFS=' '
+  local -A seen=(["$1"]=1)
+  local k IFS=$' \n'
   kill -STOP "$1" 2>/dev/null || return 0
-  # Один снимок таблицы процессов на проход, а не pgrep на каждого потомка.
-  # Новых потомков по снимку находит один awk, а не bash read по строке: на
-  # десятках тысяч процессов построчный разбор тянул проход на секунды, и
-  # возврат по пределу опаздывал. Проходы идут, пока находятся новые
-  # потомки, уже замороженные не плодят.
-  while mapfile -t new < <(ps -e -o pid= -o ppid= | awk -v tree="${tree[*]}" '
-      { kids[$2] = kids[$2] " " $1 }
-      END {
-        n = split(tree, queue, " ")
-        for (i = 1; i <= n; i++) seen[queue[i]] = 1
-        for (i = 1; i <= n; i++) {
-          m = split(kids[queue[i]], child, " ")
-          for (j = 1; j <= m; j++) if (!(child[j] in seen)) {
-            seen[child[j]] = 1; queue[++n] = child[j]; print child[j]
+  # Проходы идут, пока находятся новые потомки, уже замороженные не плодят.
+  # Потомков дают записи children самого дерева: проход стоит размер дерева,
+  # а не число процессов хоста (ps -e под нагрузкой - секунды на проход).
+  if _limit_children_ok; then
+    while new=()
+      for k in $(_limit_kids "${tree[@]}"); do
+        [[ -n ${seen[$k]-} ]] || { seen[$k]=1; new+=("$k"); }
+      done
+      (( ${#new[@]} )); do
+      kill -STOP "${new[@]}" 2>/dev/null || :
+      tree+=("${new[@]}")
+    done
+  else
+    # Один снимок таблицы процессов на проход, новых потомков по нему
+    # находит один awk, а не bash read по строке.
+    while mapfile -t new < <(ps -e -o pid= -o ppid= | awk -v tree="${tree[*]}" '
+        { kids[$2] = kids[$2] " " $1 }
+        END {
+          n = split(tree, queue, " ")
+          for (i = 1; i <= n; i++) seen[queue[i]] = 1
+          for (i = 1; i <= n; i++) {
+            m = split(kids[queue[i]], child, " ")
+            for (j = 1; j <= m; j++) if (!(child[j] in seen)) {
+              seen[child[j]] = 1; queue[++n] = child[j]; print child[j]
+            }
           }
-        }
-      }'); (( ${#new[@]} )); do
-    kill -STOP "${new[@]}" 2>/dev/null || :
-    tree+=("${new[@]}")
-  done
+        }'); (( ${#new[@]} )); do
+      kill -STOP "${new[@]}" 2>/dev/null || :
+      tree+=("${new[@]}")
+    done
+  fi
   # Корень последним: его ждёт _limit_run, к его смерти потомки уже убиты.
   kill -KILL "${tree[@]:1}" "$1" 2>/dev/null || :
 }
+# KILL всем процессам сессии "$1", как pkill -s, но без обхода /proc хоста.
+# Сирота сессии - ребёнок ближайшего subreaper-предка или init, то есть
+# ребёнок одного из предков этой оболочки; остальные члены - их потомки в той
+# же сессии. Члены замирают, проходы - пока находятся новые. Граница: член
+# сессии, чей живой родитель ушёл в свою сессию (setsid после fork), не
+# виден - pkill -s его бы убил.
+_limit_kill_session() {
+  local p st k IFS=$' \n'
+  local -a f anc=() tree=() new
+  local -A seen=()
+  p=$BASHPID
+  while (( p > 0 )) && { read -r st < "/proc/$p/stat"; } 2>/dev/null; do
+    anc+=("$p")
+    read -r -a f <<< "${st##*) }"
+    p=${f[1]}
+  done
+  while new=()
+    for k in $(_limit_kids "${anc[@]}" "${tree[@]}"); do
+      [[ -z ${seen[$k]-} ]] || continue
+      seen[$k]=1
+      { read -r st < "/proc/$k/stat"; } 2>/dev/null || continue
+      read -r -a f <<< "${st##*) }"
+      [[ ${f[3]} != "$1" ]] || new+=("$k")
+    done
+    (( ${#new[@]} )); do
+    kill -STOP "${new[@]}" 2>/dev/null || :
+    tree+=("${new[@]}")
+  done
+  (( ${#tree[@]} == 0 )) || kill -KILL "${tree[@]}" 2>/dev/null || :
+}
 _limit_run() {
-  local limit=$1 pid killer rc=0 sig='' traps
+  local limit=$1 pid killer rc=0 sig='' traps kids='' IFS=$' \t\n'
   local -
   shift
   # В подоболочке trap -p до первой смены ловушек печатает ловушки родителя,
@@ -119,7 +180,7 @@ _limit_run() {
   # Без job control фоновый setsid не лидер группы и сам зовёт setsid(): pid
   # и есть номер сессии. С `set -m` он ушёл бы в fork и вернул 0 сразу.
   # Сторож - сирота sleep в той же сессии: пока он жив, ядро не отдаст номер
-  # сессии другому процессу, и pkill -s после wait бьёт только свою сессию.
+  # сессии другому процессу, и уборка после wait бьёт только свою сессию.
   set +m
   setsid -w sh -c '(command sleep "$1" </dev/null >/dev/null 2>&1 &); shift; exec "$@"' \
     _limit "$((limit + 60))" "$@" <&0 & pid=$!
@@ -132,13 +193,22 @@ _limit_run() {
     _limit_kill_tree "$pid"
     rc=0; wait "$pid" 2>/dev/null || rc=$?
   fi
-  # У убийцы дети - его sleep или ps, kill и pkill обхода: обход не нужен.
+  _limit_children_ok && kids=1
+  # У убийцы дети - его sleep или подоболочки и kill обхода: обход не нужен.
   kill -STOP "$killer" 2>/dev/null || :
-  pkill -KILL -P "$killer" 2>/dev/null || :
+  if [[ -n $kids ]]; then
+    kill -KILL $(_limit_kids "$killer") 2>/dev/null || :
+  else
+    pkill -KILL -P "$killer" 2>/dev/null || :
+  fi
   kill -KILL "$killer" 2>/dev/null || :
   wait "$killer" 2>/dev/null || :
   # Сессию добиваем здесь, вместе со сторожем и сиротами, чей родитель уже 1.
-  pkill -KILL -s "$pid" 2>/dev/null || :
+  if [[ -n $kids ]]; then
+    _limit_kill_session "$pid"
+  else
+    pkill -KILL -s "$pid" 2>/dev/null || :
+  fi
   trap - INT TERM
   eval "$traps"
   [[ -z $sig ]] || kill -s "$sig" "$BASHPID"

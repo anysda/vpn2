@@ -131,7 +131,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # Кэш панели dev ещё и в реестр: gha-кэш dev веткам полос не виден, stand читает этот.
+          cache-to: |
+            type=gha,mode=max,scope=${{ matrix.name }}
+            ${{ github.ref == 'refs/heads/dev' && matrix.name == 'panel' && format('type=registry,ref=ghcr.io/{0}/panel:buildcache-dev,mode=max', github.repository) || '' }}
 
       # Digest в аннотации: логи прогона без токена закрыты, а аннотации
       # публичны — по ним сверяют то, что нода стянула, с тем, что собрали.

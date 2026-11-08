@@ -258,7 +258,9 @@ _install_prereq_pkgs() {
     docker_apt_source
   fi
   apt_get update -qq
-  apt_get install -y -qq "${pkgs[@]}" >/dev/null
+  # sshpass и компания служб не обновляют: обход needrestart после dpkg (~3 с)
+  # здесь только задерживает экзиты, которые ждут sshpass.
+  NEEDRESTART_SUSPEND=1 apt_get install -y -qq --no-install-recommends "${pkgs[@]}" >/dev/null
 }
 
 # ----------------------------------------------------------------------------

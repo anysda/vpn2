@@ -107,11 +107,11 @@ class StubNode(Node):
         (self.root / 'bin' / 'ssh').write_text(FAKE_SSH)
         self.env.update({'FAKE_REASON': STUB_REASON, 'FAKE_MANY': str(MANY), **env})
 
-    def direct(self, side, body):
+    def direct(self, side, body, timeout=60):
         """(код, stdout, stderr, секунды) сценария с _limit_run стороны side."""
         started = time.monotonic()
         result = subprocess.run(['bash', '-euo', 'pipefail', '-c', preamble(side) + body], cwd=self.root,
-                                env=self.env, text=True, capture_output=True, timeout=60)
+                                env=self.env, text=True, capture_output=True, timeout=timeout)
         return result.returncode, result.stdout, result.stderr, time.monotonic() - started
 
 
@@ -503,12 +503,13 @@ class SshLimitSessionTests(unittest.TestCase):
         many = 2000
         # Предел должен истечь на рое, а не на его части: вдвое дольше порождения
         # роя на этом раннере, не меньше 5 с. Медленный fork под нагрузкой CI
-        # не успевал породить детей до постоянных 5 с.
+        # не успевал породить детей до постоянных 5 с. Дети спят дольше
+        # предела: иначе на медленном рое команда кончается сама до него.
         spawn = swarm_spawn_seconds(many)
         limit = max(5, math.ceil(2 * spawn))
         for side in ('lib', 'node'):
-            with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many)) as node:
-                code, out, err, elapsed = node.direct(side, limited(limit=limit))
+            with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many), FAKE_SLEEP=str(limit + HANG)) as node:
+                code, out, err, elapsed = node.direct(side, limited(limit=limit), timeout=limit + 30)
                 print(f'{many} детей и зомби _limit_run {side}: {out.strip()!r} {elapsed:.1f}s '
                       f'(рой {spawn:.1f}s, предел {limit}s)')
                 self.assertRegex(out, r'rc=(124|137)\b', err)

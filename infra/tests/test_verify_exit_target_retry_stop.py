@@ -13,6 +13,8 @@ import importlib.util
 import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -70,6 +72,16 @@ target = subprocess.Popen([sys.executable, '-I', script, '--listen', {'us': '127
 with open(os.path.join(node, 'pids'), 'a') as pids:
     pids.write(f'{tag} {target.pid} {port}\n')
 sys.exit(target.wait())
+'''
+# Ведущий поток выходит один (SYS_exit), второй поток держит слушающий сокет процесса.
+LEADER_EXITS = r'''
+import ctypes, os, socket, sys, threading, time
+sock = socket.socket()
+sock.bind((sys.argv[1], 0))
+sock.listen()
+threading.Thread(target=time.sleep, args=(60,)).start()
+print(sock.getsockname()[1], flush=True)
+ctypes.CDLL(None).syscall({'x86_64': 60, 'aarch64': 93}[os.uname().machine], 0)
 '''
 
 
@@ -174,6 +186,23 @@ class ExitTargetRetryStopTests(unittest.TestCase):
                          'цель на экзите пережила остановку')
         self.assertFalse(listening(ADDRESS['de'], first), f'de слушает старый порт {first}')
         self.assertEqual(self.stops(), sorted(EXITS), 'одна остановка на каждый экзит, где была цель')
+
+    @unittest.skipUnless(os.uname().machine in ('x86_64', 'aarch64'), 'номер SYS_exit')
+    def test_leader_zombie_with_live_thread_is_alive(self):
+        # Цель многопоточная: при SIGTERM ведущий поток бывает в Z, пока поток таймера ещё держит порт.
+        process = subprocess.Popen([sys.executable, '-I', '-c', LEADER_EXITS, ADDRESS['de']],
+                                   stdout=subprocess.PIPE, text=True)
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        port = int(process.stdout.readline())
+        process.stdout.close()
+        stat = Path(f'/proc/{process.pid}/stat')
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and stat.read_text().rsplit(')', 1)[1].split()[0] != 'Z':
+            time.sleep(0.05)
+        self.assertEqual(stat.read_text().rsplit(')', 1)[1].split()[0], 'Z', 'ведущий поток не вышел')
+        self.assertTrue(listening(ADDRESS['de'], port), 'порт закрылся вместе с ведущим потоком')
+        self.assertTrue(alive(process.pid), 'процесс с живым потоком держит порт, а alive() считает его мёртвым')
 
 
 if __name__ == '__main__':

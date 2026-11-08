@@ -1780,4 +1780,13 @@ exec /usr/bin/sqlite3 "$@"
 if __name__ == '__main__':
     if os.environ.get('VPN2_BACKUP_TEST') != '1' or not Path('/.dockerenv').exists():
         sys.exit('Run only inside a disposable Docker container with VPN2_BACKUP_TEST=1')
-    unittest.main(defaultTest=BackupRestore.__name__, verbosity=2)
+    # VPN2_BACKUP_SHARD=k/N: every N-th test from the k-th, each part in its own container;
+    # VPN2_BACKUP_REPORT gets the discovered and run counts for the sum over the parts
+    shard, total = (int(value) for value in os.environ.get('VPN2_BACKUP_SHARD', '1/1').split('/'))
+    tests = list(unittest.defaultTestLoader.loadTestsFromTestCase(BackupRestore))
+    mine = tests[shard - 1::total]
+    result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(mine))
+    if os.environ.get('VPN2_BACKUP_REPORT'):
+        Path(os.environ['VPN2_BACKUP_REPORT']).write_text(json.dumps({
+            'shard': shard, 'total': total, 'discovered': len(tests), 'ran': result.testsRun}))
+    sys.exit(int(not result.wasSuccessful() or result.testsRun != len(mine) or not mine))

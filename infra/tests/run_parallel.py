@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Run the discovered infra suite in parallel isolated processes.
+"""Run the discovered suite (infra/tests, or --dir) in parallel isolated processes.
 
-Each module runs in its own process; PKI tests form their own partition, as
-before. A class without class or module fixtures and without numbered tests is
-cut into chunks of CHUNK tests, a class from SINGLE into one test per part. Modules sharing the WireGuard oracle key run one
+Each module runs in its own process. A class without class or module fixtures
+and without numbered tests is cut into chunks of CHUNK tests, a class from
+SINGLE into one test per part. Modules sharing the WireGuard oracle key run one
 after another in a single chain: one of them looks for that key in every netns
 of the host. Modules that compare elapsed time with a limit by a second or less
 run last, one by one, with nothing else running. The pool takes the heaviest
 chain first by the measured WEIGHT. The summed test count must equal the
 discovered one, and any failing partition fails the run.
 
---shard k/N runs one of N disjoint parts: chains and quiet modules are spread
-over the parts by WEIGHT (else the test count), quiet ones still run last and
-alone inside their part. --manifest writes the discovered and the part's test
+--shard k/N runs one of N disjoint parts: quiet modules are spread first, then
+each chain, heaviest first, goes to the part that would finish earliest with it
+(its longest chain or its sum over the pool, plus its quiet tail), by WEIGHT
+(else the test count). --manifest writes the discovered and the part's test
 ids; --check-manifests checks that the parts of one run are disjoint and cover
 everything discovered.
 """
@@ -35,33 +36,13 @@ import unittest
 HERE = Path(__file__).resolve().parent
 CHUNK = 4
 HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
-# Seconds of a partition in infra (true) on GitHub (dev cdfd3ce): queue order and --shard split only. Unlisted ones
-# go after, larger first; a new slow module goes here or ends up in the run's tail.
+# Seconds of a partition on GitHub, the slower variant of infra and telegram (refresh from the
+# «===== name: ... seconds=» lines of a green run): queue order and --shard split only. Unlisted ones go
+# after, larger first; a new slow module goes there or ends up in the run's tail.
 # test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and fails the run
-WEIGHT = {
-    'test_verify.VerifyTest[test_individual_entry_failures]': 245,
-    'test_verify.VerifyTest[test_fresh_scrape_after_tunnel_restart_ten_times]': 50,
-    'test_pki[pki]': 239, 'test_deploy_verify[general]': 136, 'test_ssh_limit_session[general]': 128,
-    'test_wg_client_lane_route[general]': 112, 'test_ssh_limit_slow_runner[general]': 91,
-    'test_wg_conf_wg_oracle[general]': 88, 'test_bootstrap_swap_container[general]': 86,
-    'test_wg_conf_kill_nul_nocheck[general]': 74,
-    'test_verify_exit_ssh_timeout[general]': 67, 'test_ssh_dd_notrunc[general]': 66,
-    'test_apply_openvpn_check_signal[general]': 66, 'test_ssh_probe_timeout_value[general]': 61,
-    'test_apply_openvpn_check_phases[general]': 60, 'test_telegram_from_config.TelegramFromConfigTests[0]': 54,
-    'test_apply_openvpn_check_env.OpenvpnCheckRefusedTests[0]': 52, 'test_fw_guard_entry_slow[general]': 49,
-    'test_fw_guard_late_beat[general]': 48, 'test_verify_traffic[general]': 47,
-    'test_panel_closed_journal[general]': 46, 'test_verify_exit_target[general]': 40,
-    'test_stage_exit_login_hang[general]': 39,
-    'test_adguard_panel_settings[general]': 32, 'test_emergency_agent.EmergencyAgentTests[11]': 29,
-    'test_verify_exit_ssh_bashrc[general]': 27, 'test_telegram_bot_off.TelegramConfigRemovedTests[0]': 25,
-    'test_hy2_isolation[general]': 23, 'test_emergency_hy2.EmergencyHy2Tests[3]': 23,
-    'test_verify_result[general]': 22, 'test_verify_exit_ssh_stderr[general]': 22,
-    'test_hy2hop_disable_unit[general]': 22, 'test_emergency_memory[general]': 22, 'test_telegram_stage[general]': 21,
-    'test_hy2hop_enable_starts_unit[general]': 21,
-    'test_verify_exit_ssh_limit_edge[general]': 77, 'test_verify_exit_ssh_remote_code[general]': 23,
-}
+WEIGHT = json.loads((HERE / 'partition-weights.json').read_text())
 # One test of these classes takes most of a CHUNK and holds the run's tail alone
-SINGLE = ('test_verify.VerifyTest',)
+SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'test_delivery.DeliveryProcessTests')
 # Elapsed time against a limit with a margin of 0.1-2 s: parallel load is enough to cross it
 QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
          'test_control', 'test_release', 'test_probe_reads')
@@ -81,12 +62,8 @@ def module_of(test):
     return type(test).__module__
 
 
-def group_of(test):
-    return 'pki' if type(test).__name__ == 'PkiTests' else 'general'
-
-
-def touches_host(module):
-    source = HERE / f'{module}.py'
+def touches_host(directory, module):
+    source = directory / f'{module}.py'
     return source.is_file() and bool(HOST_STATE.search(source.read_text(errors='replace')))
 
 
@@ -94,7 +71,7 @@ def divisible(test):
     """Tests of this class can run apart from each other."""
     cls = type(test)
     module = sys.modules.get(cls.__module__)
-    return (group_of(test) == 'general' and not isinstance(test, unittest.loader._FailedTest)
+    return (not isinstance(test, unittest.loader._FailedTest)
             and 'setUpClass' not in vars(cls) and 'tearDownClass' not in vars(cls)
             and not hasattr(module, 'setUpModule') and not hasattr(module, 'tearDownModule')
             and not re.match(r'test_?\d', test._testMethodName))
@@ -107,7 +84,7 @@ def assign(tests):
         if divisible(test):
             by_class.setdefault((module_of(test), type(test).__name__), []).append(test)
         else:
-            parts.setdefault((module_of(test), group_of(test), None, None), []).append(test)
+            parts.setdefault((module_of(test), 'general', None, None), []).append(test)
     for (module, cls), members in by_class.items():
         if f'{module}.{cls}' in SINGLE:
             for test in members:
@@ -122,7 +99,7 @@ def assign(tests):
 
 
 def run_partition(args):
-    sys.path.insert(0, str(HERE))
+    sys.path.insert(0, args.dir)
     parts = assign(flatten(unittest.defaultTestLoader.loadTestsFromName(args.module)))
     chunk = int(args.chunk) if args.chunk and args.chunk.isdigit() else args.chunk
     selected = unittest.TestSuite(parts.get((args.module, args.group, args.cls, chunk), []))
@@ -140,12 +117,22 @@ def cost(keys, parts):
     return sum(WEIGHT.get(name(key)) or parts[key] for key in keys)
 
 
-def spread(groups, parts, count, last_first=False):
-    """Heaviest group to the least loaded of count parts; ties go to the first (or last) part."""
-    loads, shards = [0] * count, [[] for _ in range(count)]
+def spread(groups, parts, count, jobs=1, tail=None):
+    """Heaviest group to the part that would finish earliest with it; a part is a pool of jobs
+    workers taking it on the least busy one, then its tail[i] seconds; ties go to the first part."""
+    tail, shards = tail or [0] * count, [[] for _ in range(count)]
+    workers = [[0] * jobs for _ in range(count)]
+
+    def finish(index, seconds):
+        busy = sorted(workers[index])
+        busy[0] += seconds
+        return max(busy) + tail[index]
+
     for keys in sorted(groups, key=lambda keys: -cost(keys, parts)):
-        index = min(range(count), key=lambda i: (loads[i], -i if last_first else i))
-        loads[index] += cost(keys, parts)
+        seconds = cost(keys, parts)
+        index = min(range(count), key=lambda i: finish(i, seconds))
+        busy = workers[index]
+        busy[busy.index(min(busy))] += seconds
         shards[index].append(keys)
     return shards
 
@@ -180,8 +167,9 @@ def check_manifests(paths):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--dir', default=str(HERE), help='directory of the suite')
     parser.add_argument('--module')
-    parser.add_argument('--group', choices=('pki', 'general'))
+    parser.add_argument('--group', choices=('general',))
     parser.add_argument('--cls')
     parser.add_argument('--chunk')
     parser.add_argument('--report')
@@ -199,16 +187,20 @@ def main():
     if not 1 <= shard <= total:
         parser.error('--shard wants k/N with 1 <= k <= N')
 
-    sys.path.insert(0, str(HERE))
-    found = assign(flatten(unittest.defaultTestLoader.discover(str(HERE))))
+    directory = Path(args.dir).resolve()
+    args.dir = str(directory)
+    sys.path.insert(0, args.dir)
+    found = assign(flatten(unittest.defaultTestLoader.discover(args.dir)))
     parts = {key: len(tests) for key, tests in found.items()}
     # The heaviest chain first, unmeasured ones by size; quiet ones after the pool
-    host = [key for key in parts if key[1] == 'general' and touches_host(key[0])]
+    host = [key for key in parts if touches_host(directory, key[0])]
     quiet = [key for key in parts if key[0] in QUIET and key not in host]
     chains = [[key] for key in parts if key not in host and key not in quiet] + ([host] if host else [])
-    # The heaviest quiet module goes to the part with the lightest head of the pool
-    chains = spread(chains, parts, total)[shard - 1]
-    mine = [key for keys in spread([[key] for key in quiet], parts, total, last_first=True)[shard - 1] for key in keys]
+    # Quiet modules run alone after the pool: their sum is the tail each part's pool is balanced against
+    tails = spread([[key] for key in quiet], parts, total)
+    mine = [key for keys in tails[shard - 1] for key in keys]
+    tail = [sum(cost(keys, parts) for keys in shard_tail) for shard_tail in tails]
+    chains = spread(chains, parts, total, args.jobs, tail)[shard - 1]
     quiet = [key for key in quiet if key in mine]
     parts = {key: parts[key] for keys in chains + [quiet] for key in keys}
     expected = sum(parts.values())
@@ -239,7 +231,8 @@ def main():
         module, group, cls, chunk = key
         work = Path(tempfile.mkdtemp(dir=directory))
         log, report = work / 'output.log', work / 'count'
-        command = [sys.executable, __file__, '--module', module, '--group', group, '--report', str(report)]
+        command = [sys.executable, __file__, '--dir', args.dir, '--module', module, '--group', group,
+                   '--report', str(report)]
         if cls is not None:
             command += ['--cls', cls, '--chunk', str(chunk)]
         started = time.monotonic()

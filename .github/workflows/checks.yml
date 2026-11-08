@@ -158,7 +158,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends zbar-tools
           python3 -m pip install -r telegram/requirements.txt
-          python3 -m unittest discover -s telegram/tests -v
+          # Модули в параллельных процессах; сумма тестов частей сверяется с найденной
+          python3 infra/tests/run_parallel.py --dir telegram/tests
 
   # Сохраняем прежний общий статус python: он зелёный только после всех
   # наборов, в том числе обеих веток матрицы infra (важно для required checks).
@@ -181,18 +182,47 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - name: образ для backup/restore
+        timeout-minutes: 5
+        run: |
+          docker build -q -t vpn2-backup-restore - <<'EOF'
+          FROM debian:13
+          RUN timeout 300 apt-get update -qq && timeout 300 apt-get install -y -qq --no-install-recommends \
+            python3 sqlite3 age expect curl git wireguard-tools openssl iproute2
+          EOF
       - name: SQLite WAL и полный цикл backup/restore
         # Копия и restore проверяют wg0.conf настоящим wg во временном netns, как
         # root на узле: нужны iproute2 и права на netns (меньше этих трёх не хватает).
+        # Тесты пишут в пути узла, поэтому каждая доля идёт в своём контейнере.
         run: |
-          docker run --rm -e VPN2_BACKUP_TEST=1 -v "$PWD:/src:ro" \
-            --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
-            debian:13 sh -ec '
-            timeout 300 apt-get update -qq
-            timeout 300 apt-get install -y -qq --no-install-recommends python3 sqlite3 age expect curl git wireguard-tools openssl iproute2
-            python3 /src/infra/tests/backup-restore.py /src
-            python3 /src/infra/tests/backup-clone-path.py /src
-          '
+          out=$(mktemp -d)
+          parts=4
+          run() {
+            docker run --rm -e VPN2_BACKUP_TEST=1 -e VPN2_BACKUP_SHARD="$1" -e VPN2_BACKUP_REPORT="/out/$2.json" \
+              -v "$PWD:/src:ro" -v "$out:/out" \
+              --cap-add NET_ADMIN --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
+              vpn2-backup-restore python3 "/src/infra/tests/$3.py" /src > "$out/$2.log" 2>&1
+          }
+          pids=()
+          for k in $(seq "$parts"); do
+            run "$k/$parts" "backup-restore-$k" backup-restore &
+            pids+=($!)
+          done
+          run 1/1 backup-clone-path backup-clone-path &
+          pids+=($!)
+          failed=0
+          for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+          for log in "$out"/*.log; do echo "===== $log"; cat "$log"; done
+          python3 - "$out" "$parts" <<'EOF'
+          import json, pathlib, sys
+          reports = [json.loads(path.read_text()) for path in pathlib.Path(sys.argv[1]).glob('backup-restore-*.json')]
+          shards = sorted(report['shard'] for report in reports)
+          discovered = {report['discovered'] for report in reports}
+          ran = sum(report['ran'] for report in reports)
+          print(f'backup-restore parts: {shards}, tests={ran} of {sorted(discovered)}')
+          sys.exit(shards != list(range(1, int(sys.argv[2]) + 1)) or len(discovered) != 1 or ran != discovered.pop())
+          EOF
+          exit "$failed"
 
   panel:
     runs-on: ubuntu-latest

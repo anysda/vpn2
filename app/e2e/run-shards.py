@@ -24,33 +24,79 @@ def assign_files(files, count, weights):
     return groups
 
 
-def part_groups(files, part, count, weights):
+def part_groups(units, part, count, weights):
     """CI part "k/n": one weighted split over all n*count panels, part k keeps its slice.
 
-    The slices partition the listing: every spec is in exactly one part.
+    The slices partition the units: every test is in exactly one part.
     """
     index, total = (int(x) for x in part.split('/'))
     if not 1 <= index <= total:
         sys.exit(f'E2E_PART must be k/n with 1 <= k <= n, not {part}')
-    groups = assign_files(files, total * count, weights)
-    flat = sorted(file for group in groups for file in group)
-    if flat != sorted(files):
-        sys.exit('weighted split lost or duplicated a spec')
+    groups = assign_files(units, total * count, weights)
+    flat = sorted(unit for group in groups for unit in group)
+    if flat != sorted(units):
+        sys.exit('weighted split lost or duplicated a test')
+    sizes = [len(group) for group in groups]
+    print(f'units: {len(units)}, per panel {min(sizes)}..{max(sizes)}', flush=True)
     return groups[(index - 1) * count:index * count]
 
 
-def ran_files(report):
-    """Spec files present in the merged JSON report (skipped tests included)."""
-    files = set()
+def listed_tests(report):
+    """(file, line) for every test of a Playwright JSON report or --list.
 
-    def walk(suites):
+    The line is the --test-list form: "[project] › file › describe › title".
+    """
+    tests = []
+
+    def walk(suites, titles):
         for suite in suites:
-            if suite.get('specs'):
-                files.add(suite['file'])
-            walk(suite.get('suites', []))
+            # Верхний уровень - сам файл, его заголовок в строку не входит.
+            path = [] if titles is None else [*titles, suite['title']]
+            for spec in suite.get('specs', []):
+                for test in spec['tests']:
+                    tests.append((spec['file'], ' › '.join(
+                        [f"[{test['projectName']}]", spec['file'], *path, spec['title']])))
+            walk(suite.get('suites', []), path)
 
-    walk(json.loads(report.read_text()).get('suites', []))
-    return sorted(files)
+    walk(report.get('suites', []), None)
+    return tests
+
+
+def split_units(files, tests, weights):
+    """A file with per-test weights is split into its tests, the rest stay whole.
+
+    Only files measured test by test in shard-weights.json split: their tests
+    keep no state for one another.
+    """
+    units, unit_weights = [], {}
+    for file in files:
+        lines = [line for owner, line in tests if owner == file]
+        if lines and all(line in weights for line in lines):
+            units += lines
+            unit_weights.update((line, weights[line]) for line in lines)
+        else:
+            units.append(file)
+            unit_weights[file] = weights.get(file, 10)
+    return units, unit_weights
+
+
+def panel_tests(group, tests):
+    """Test lines one panel runs: whole files of the group plus its split-off tests."""
+    units = set(group)
+    return [line for file, line in tests if file in units or line in units]
+
+
+def panel_arguments(group, tests, report):
+    """Playwright filters: the panel's files; tests of split files run elsewhere are inverted out."""
+    mine = set(panel_tests(group, tests))
+    owners = sorted({file for file, line in tests if line in mine} | {unit for unit in group if '[' not in unit})
+    elsewhere = [line for file, line in tests if file in owners and line not in mine]
+    arguments = [f'e2e/{re.escape(file)}$' for file in owners]
+    if elsewhere:
+        invert = report / 'elsewhere.txt'
+        invert.write_text(''.join(line + '\n' for line in elsewhere))
+        arguments += ['--test-list-invert', str(invert)]
+    return arguments
 
 
 def main():
@@ -68,7 +114,7 @@ def main():
     processes = []
     groups = None
     part = os.environ.get('E2E_PART')
-    files = []
+    tests = []
     if len(sys.argv) == 1:
         # Ask Playwright: filesystem globs could omit future .test.ts/.spec.js
         # files or disagree with project-specific testMatch/testIgnore rules.
@@ -79,8 +125,9 @@ def main():
                  'E2E_ADMIN_PASSWORD': 'listing-only'},
         ))
         files = sorted({suite['file'] for suite in listing['suites']})
-        weights = json.loads((app / 'e2e/shard-weights.json').read_text())
-        groups = part_groups(files, part, count, weights) if part else assign_files(files, count, weights)
+        tests = listed_tests(listing)
+        units, weights = split_units(files, tests, json.loads((app / 'e2e/shard-weights.json').read_text()))
+        groups = part_groups(units, part, count, weights) if part else assign_files(units, count, weights)
         if any(not group for group in groups):
             sys.exit('Every shard must contain at least one spec')
 
@@ -110,7 +157,7 @@ def main():
                     "PLAYWRIGHT_BLOB_OUTPUT_FILE": str(Path(blobs) / f"report-{index}.zip"),
                 }
                 with (report / "run.log").open("w") as log:
-                    arguments = ([f'e2e/{re.escape(file)}$' for file in groups[index - 1]]
+                    arguments = (panel_arguments(groups[index - 1], tests, report)
                                  if groups else [*sys.argv[1:], '--shard', f'{index}/{count}'])
                     command = subprocess.Popen(
                         ["bash", "e2e/run-local.sh", *arguments, "--reporter=list,blob"],
@@ -133,16 +180,16 @@ def main():
             )
             complete = len(list(Path(blobs).glob("*.zip"))) == count
             if part and groups:
-                # Сверка: панели этой части прогнали ровно свои файлы; итог по
-                # всем частям сверяет задание panel-e2e по specs-all.txt.
-                planned = sorted(file for group in groups for file in group)
+                # Сверка: панели этой части прогнали ровно свои тесты. Части
+                # делят одно разбиение (part_groups), поэтому все части вместе -
+                # каждый тест набора ровно один раз.
+                planned = sorted(line for group in groups for line in panel_tests(group, tests))
                 report = results / "results.json"
-                ran = ran_files(report) if report.exists() else []
-                (results / "specs-all.txt").write_text(''.join(f + '\n' for f in files))
-                (results / "specs-ran.txt").write_text(''.join(f + '\n' for f in ran))
+                ran = sorted(line for _, line in listed_tests(json.loads(report.read_text()))) if report.exists() else []
+                print(f"tests: part {part} planned {len(planned)}, ran {len(ran)}, "
+                      f"suite {len(tests)} in {len(files)} spec", flush=True)
                 if ran != planned:
-                    print(f"specs: planned {len(planned)}, ran {len(ran)}; "
-                          f"missing={sorted(set(planned) - set(ran))} extra={sorted(set(ran) - set(planned))}",
+                    print(f"missing={sorted(set(planned) - set(ran))} extra={sorted(set(ran) - set(planned))}",
                           flush=True)
                     complete = False
             print(f"shards: count={count}, seconds={time.monotonic() - started:.1f}, "

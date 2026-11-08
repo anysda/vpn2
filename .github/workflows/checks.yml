@@ -241,7 +241,9 @@ jobs:
   # ними: шарды и QR стартуют вместе с остальными проверками, а без зависимостей
   # панели проходят пустыми.
   # Набор делится по весам run-shards.py сразу на все панели всех заданий
-  # (E2E_PART), в задании 4 панели запускателя; каждый spec ровно в одной.
+  # (E2E_PART), в задании 4 панели запускателя; тяжёлые spec с весами по
+  # тестам делятся по тестам. Каждое задание сверяет, что прогнало ровно свою
+  # долю общего разбиения, вместе - каждый тест ровно один раз.
   panel-e2e-shard:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -250,7 +252,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [1, 2, 3, 4]
+        part: [1, 2, 3, 4, 5]
     defaults:
       run:
         working-directory: app
@@ -292,8 +294,8 @@ jobs:
           context: app
           load: true
           tags: vpn2-panel:e2e
+          # Кэш пишет только panel-e2e-qr: запись из пяти шардов разом шла ~55 с.
           cache-from: type=gha,scope=checks-panel
-          cache-to: type=gha,mode=max,scope=checks-panel
       - name: браузерный образ загружен
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5
@@ -312,15 +314,6 @@ jobs:
           E2E_SHARDS: '4'
           E2E_PART: ${{ matrix.part }}/${{ strategy.job-total }}
         run: python3 e2e/with-network-churn.py bash e2e/run-local.sh
-      - name: список прогнанных spec для сверки в panel-e2e
-        if: always() && steps.paths.outputs.run == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-specs-${{ matrix.part }}
-          path: |
-            app/test-results/specs-all.txt
-            app/test-results/specs-ran.txt
-          retention-days: 3
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v7
@@ -333,7 +326,8 @@ jobs:
 
   # Худший конфиг (вход 45.x, сплит) и панель без сплита, аварийка hy2 и бот:
   # qrencode рисует PNG аварийки, zbarimg раскодирует PNG. Здесь же один раз
-  # проверки образа без браузера (e2e/image-checks.sh).
+  # проверки образа без браузера (e2e/image-checks.sh) и запись кэша сборки
+  # панели: задание короче шардов, запись не удлиняет e2e.
   panel-e2e-qr:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -387,6 +381,7 @@ jobs:
           load: true
           tags: vpn2-panel:e2e
           cache-from: type=gha,scope=checks-panel
+          cache-to: type=gha,mode=max,scope=checks-panel
       - name: браузерный образ загружен
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5
@@ -417,49 +412,20 @@ jobs:
             app/test-results
           retention-days: 14
 
-  # Прежнее имя для required checks: зелёное, когда прошли все шарды и QR и
-  # шарды вместе прогнали каждый spec ровно один раз, или e2e не требуется.
+  # Прежнее имя сводной проверки. Своего раннера на успехе не ждёт: при
+  # зелёных шардах и QR пропущено (пропуск = зелёная проверка), очередь за
+  # раннером на общем лимите аккаунта стоила до 3,5 мин. Красное, когда шард
+  # или QR упали или отменены.
   panel-e2e:
     needs: [panel-e2e-shard, panel-e2e-qr]
-    if: always()
+    if: failure() || cancelled()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: все шарды e2e прошли
-        id: result
+      - name: шард или QR не прошли
         env:
-          SHARD_RUN: ${{ needs.panel-e2e-shard.outputs.run }}
-          QR_RUN: ${{ needs.panel-e2e-qr.outputs.run }}
           SHARD_RESULT: ${{ needs.panel-e2e-shard.result }}
           QR_RESULT: ${{ needs.panel-e2e-qr.result }}
         run: |
-          test "$SHARD_RESULT,$QR_RESULT" = success,success
-          test "$SHARD_RUN" = "$QR_RUN"
-          if [ "$SHARD_RUN" = false ]; then
-            echo 'panel-e2e skipped — no panel dependencies changed'
-          fi
-          echo "run=$SHARD_RUN" >> "$GITHUB_OUTPUT"
-      - if: steps.result.outputs.run == 'true'
-        uses: actions/download-artifact@v8
-        with:
-          pattern: e2e-specs-*
-          path: specs
-      - name: каждый spec прогнан ровно в одном шарде
-        if: steps.result.outputs.run == 'true'
-        run: |
-          python3 - <<'EOF'
-          import collections, pathlib, sys
-          parts = sorted(pathlib.Path('specs').glob('e2e-specs-*'))
-          listed = {(p / 'specs-all.txt').read_text() for p in parts}
-          if len(parts) != 4 or len(listed) != 1:
-              sys.exit(f'parts={len(parts)}, distinct listings={len(listed)}')
-          everything = listed.pop().split()
-          ran = collections.Counter(f for p in parts for f in (p / 'specs-ran.txt').read_text().split())
-          twice = sorted(f for f, n in ran.items() if n > 1)
-          missing = sorted(set(everything) - set(ran))
-          extra = sorted(set(ran) - set(everything))
-          print(f'{len(everything)} spec, по шардам: '
-                + ' + '.join(str(len((p / "specs-ran.txt").read_text().split())) for p in parts))
-          if twice or missing or extra:
-              sys.exit(f'twice={twice} missing={missing} extra={extra}')
-          EOF
+          echo "panel-e2e-shard=$SHARD_RESULT panel-e2e-qr=$QR_RESULT"
+          exit 1

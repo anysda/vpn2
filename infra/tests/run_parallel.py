@@ -9,10 +9,17 @@ of the host. Modules that compare elapsed time with a limit by a second or less
 run last, one by one, with nothing else running. The pool takes the heaviest
 chain first by the measured WEIGHT. The summed test count must equal the
 discovered one, and any failing partition fails the run.
+
+--shard k/N runs one of N disjoint parts: chains and quiet modules are spread
+over the parts by WEIGHT (else the test count), quiet ones still run last and
+alone inside their part. --manifest writes the discovered and the part's test
+ids; --check-manifests checks that the parts of one run are disjoint and cover
+everything discovered.
 """
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 import os
 from pathlib import Path
 import re
@@ -28,7 +35,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 CHUNK = 4
 HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
-# Seconds of a partition in infra (true) on GitHub (dev cdfd3ce): queue order only. Unlisted ones
+# Seconds of a partition in infra (true) on GitHub (dev cdfd3ce): queue order and --shard split only. Unlisted ones
 # go after, larger first; a new slow module goes here or ends up in the run's tail.
 # test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and fails the run
 WEIGHT = {
@@ -51,6 +58,7 @@ WEIGHT = {
     'test_verify_result[general]': 22, 'test_verify_exit_ssh_stderr[general]': 22,
     'test_hy2hop_disable_unit[general]': 22, 'test_emergency_memory[general]': 22, 'test_telegram_stage[general]': 21,
     'test_hy2hop_enable_starts_unit[general]': 21,
+    'test_verify_exit_ssh_limit_edge[general]': 77, 'test_verify_exit_ssh_remote_code[general]': 23,
 }
 # One test of these classes takes most of a CHUNK and holds the run's tail alone
 SINGLE = ('test_verify.VerifyTest',)
@@ -128,6 +136,48 @@ def name(key):
     return f'{module}[{group}]' if cls is None else f'{module}.{cls}[{chunk}]'
 
 
+def cost(keys, parts):
+    return sum(WEIGHT.get(name(key)) or parts[key] for key in keys)
+
+
+def spread(groups, parts, count, last_first=False):
+    """Heaviest group to the least loaded of count parts; ties go to the first (or last) part."""
+    loads, shards = [0] * count, [[] for _ in range(count)]
+    for keys in sorted(groups, key=lambda keys: -cost(keys, parts)):
+        index = min(range(count), key=lambda i: (loads[i], -i if last_first else i))
+        loads[index] += cost(keys, parts)
+        shards[index].append(keys)
+    return shards
+
+
+def check_manifests(paths):
+    manifests = [json.loads(Path(path).read_text()) for path in paths]
+    total = {manifest['total'] for manifest in manifests}
+    shards = sorted(manifest['shard'] for manifest in manifests)
+    discovered = {tuple(manifest['discovered']) for manifest in manifests}
+    problems = []
+    count = next(iter(total)) if len(total) == 1 else 0
+    if not count or shards != list(range(1, count + 1)):
+        problems.append(f'parts {shards} of {sorted(total)}')
+    if len(discovered) != 1:
+        problems.append('parts discovered different suites')
+    found = set(next(iter(discovered), ()))
+    seen, overlap = set(), set()
+    for manifest in manifests:
+        mine = set(manifest['assigned'])
+        overlap |= seen & mine
+        seen |= mine
+        if manifest['ran'] != len(mine):
+            problems.append(f"part {manifest['shard']}: ran {manifest['ran']} of {len(mine)}")
+    if overlap:
+        problems.append(f'{len(overlap)} tests in more than one part: {sorted(overlap)[:5]}')
+    if seen != found:
+        problems.append(f'missing {sorted(found - seen)[:5]}, unknown {sorted(seen - found)[:5]}')
+    print(f'infra parts: {len(manifests)}, tests={sum(m["ran"] for m in manifests)} of {len(found)}, '
+          f'problems={problems}', flush=True)
+    return int(bool(problems) or not found)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--module')
@@ -137,19 +187,38 @@ def main():
     parser.add_argument('--report')
     parser.add_argument('--jobs', type=int, default=int(os.environ.get('INFRA_JOBS', 0)) or 2 * (os.cpu_count() or 1))
     parser.add_argument('--plan', action='store_true', help='print the queue with weights and exit')
+    parser.add_argument('--shard', help='k/N: run part k of N')
+    parser.add_argument('--manifest', help='write discovered and this part\'s test ids as JSON')
+    parser.add_argument('--check-manifests', nargs='+', metavar='MANIFEST')
     args = parser.parse_args()
     if args.module:
         return run_partition(args)
+    if args.check_manifests:
+        return check_manifests(args.check_manifests)
+    shard, total = (int(value) for value in (args.shard or '1/1').split('/'))
+    if not 1 <= shard <= total:
+        parser.error('--shard wants k/N with 1 <= k <= N')
 
     sys.path.insert(0, str(HERE))
-    parts = {key: len(tests) for key, tests in assign(flatten(unittest.defaultTestLoader.discover(str(HERE)))).items()}
-    expected = sum(parts.values())
-    if not expected:
-        return 1
+    found = assign(flatten(unittest.defaultTestLoader.discover(str(HERE))))
+    parts = {key: len(tests) for key, tests in found.items()}
     # The heaviest chain first, unmeasured ones by size; quiet ones after the pool
     host = [key for key in parts if key[1] == 'general' and touches_host(key[0])]
     quiet = [key for key in parts if key[0] in QUIET and key not in host]
     chains = [[key] for key in parts if key not in host and key not in quiet] + ([host] if host else [])
+    # The heaviest quiet module goes to the part with the lightest head of the pool
+    chains = spread(chains, parts, total)[shard - 1]
+    mine = [key for keys in spread([[key] for key in quiet], parts, total, last_first=True)[shard - 1] for key in keys]
+    quiet = [key for key in quiet if key in mine]
+    parts = {key: parts[key] for keys in chains + [quiet] for key in keys}
+    expected = sum(parts.values())
+    if not expected:
+        return 1
+    if args.manifest:
+        Path(args.manifest).write_text(json.dumps({
+            'shard': shard, 'total': total, 'ran': 0,
+            'discovered': sorted(test.id() for tests in found.values() for test in tests),
+            'assigned': sorted(test.id() for key in parts for test in found[key])}))
     chains.sort(key=lambda keys: (-sum(WEIGHT.get(name(key), 0) for key in keys), -sum(parts[key] for key in keys)))
     if args.plan:
         for keys in chains + [quiet]:
@@ -217,7 +286,11 @@ def main():
         f'{name(key)}={seconds:.0f}s' for key, _code, _count, seconds in sorted(results, key=lambda r: -r[3])[:10]))
     seconds = time.monotonic() - started
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
-    print(f'infra partitions: {len(results)} of {len(parts)}, jobs={args.jobs}, tests={ran} of {expected}, '
+    if args.manifest:
+        manifest = json.loads(Path(args.manifest).read_text())
+        manifest['ran'] = ran
+        Path(args.manifest).write_text(json.dumps(manifest))
+    print(f'infra partitions{"" if total == 1 else f" {shard}/{total}"}: {len(results)} of {len(parts)}, jobs={args.jobs}, tests={ran} of {expected}, '
           f'seconds={seconds:.1f}, cpu={usage.ru_utime + usage.ru_stime:.0f}s of {seconds * (os.cpu_count() or 1):.0f}s, '
           f'failed={failed}', flush=True)
     return int(bool(failed) or ran != expected or len(results) != len(parts))

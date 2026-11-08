@@ -55,6 +55,11 @@ jobs:
       fail-fast: false
       matrix:
         sing-box: [false, true]
+        # Доля набора на задание: одна часть целиком дольше 10 минут.
+        part: [1, 2, 3]
+    env:
+      SHARD: ${{ matrix.part }}/3
+      MANIFEST: /tmp/infra-manifest.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -69,11 +74,19 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
           python3 -m pip install PyYAML==6.0.3
+      - name: версия Caddy для тестов панели
+        id: caddy
+        run: sed -n "s/^CADDY_VER='\([^']*\)'/version=\1/p" infra/lib/anysda-svc.sh >> "$GITHUB_OUTPUT"
+      # Caddy качается при импорте тестов в каждой части, обрыв загрузки стоит минуты.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/vpn2-tests
+          key: vpn2-tests-caddy-${{ steps.caddy.outputs.version }}
       - name: регрессии инфраструктуры без sing-box
         if: ${{ !matrix.sing-box }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 infra/tests/run_parallel.py
+        run: python3 infra/tests/run_parallel.py --shard "$SHARD" --manifest "$MANIFEST"
       - name: регрессии развёртывания и маршрутов sing-box
         if: matrix.sing-box
         env:
@@ -93,7 +106,31 @@ jobs:
           export SING_BOX_BIN="$d/sing-box-${version}-linux-amd64/sing-box"
           export RUN_NETNS_TESTS=1
           "$SING_BOX_BIN" version
-          python3 infra/tests/run_parallel.py
+          python3 infra/tests/run_parallel.py --shard "$SHARD" --manifest "$MANIFEST"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: infra-manifest-${{ matrix.sing-box }}-${{ matrix.part }}
+          path: ${{ env.MANIFEST }}
+          retention-days: 1
+
+  # Части infra вместе прогнали ровно найденный набор, без пропусков и повторов.
+  infra-sum:
+    needs: infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: infra-manifest-*
+          path: ${{ runner.temp }}/manifests
+      - name: сумма тестов по частям infra
+        env:
+          DIR: ${{ runner.temp }}/manifests
+        run: |
+          for variant in false true; do
+            python3 infra/tests/run_parallel.py --check-manifests "$DIR"/infra-manifest-"$variant"-*/infra-manifest.json
+          done
 
   telegram:
     runs-on: ubuntu-latest
@@ -117,7 +154,7 @@ jobs:
   # Сохраняем прежний общий статус python: он зелёный только после всех
   # наборов, в том числе обеих веток матрицы infra (важно для required checks).
   python:
-    needs: [python-lint, infra, telegram]
+    needs: [python-lint, infra, infra-sum, telegram]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -126,8 +163,9 @@ jobs:
         env:
           LINT_RESULT: ${{ needs.python-lint.result }}
           INFRA_RESULT: ${{ needs.infra.result }}
+          INFRA_SUM_RESULT: ${{ needs.infra-sum.result }}
           BOT_RESULT: ${{ needs.telegram.result }}
-        run: test "$LINT_RESULT,$INFRA_RESULT,$BOT_RESULT" = success,success,success
+        run: test "$LINT_RESULT,$INFRA_RESULT,$INFRA_SUM_RESULT,$BOT_RESULT" = success,success,success,success
 
   backup-restore:
     runs-on: ubuntu-latest

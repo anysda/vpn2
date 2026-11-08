@@ -12,6 +12,11 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'infra/emergency'))
 from vpn2_emergency import snapshot  # noqa: E402
+# Предел на весь сценарий 99-verify - защита от зависания, а не мерило
+# скорости: свои ожидания сценария (опрос метрик до 10 с, предел ssh) кончаются
+# раньше. Исправный сценарий на раннере с 20 и больше процессами на ядро идёт
+# дольше 20 с; зависший по-прежнему падает TimeoutExpired.
+SCENARIO_HANG = 120
 MOCK = r'''#!/usr/bin/env python3
 import datetime
 import json
@@ -298,7 +303,7 @@ class VerifyTest(unittest.TestCase):
                    'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report), **(extra_env or {})}
             env.pop('BASH_ENV', None)
             result = subprocess.run(['bash', str(script)], env=env, text=True,
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCENARIO_HANG)
             counter = root / 'scrape-counter'
             result.scrape_requests = int(counter.read_text()) if counter.exists() else 0
             result.report = json.loads(report.read_text()) if report.exists() else None

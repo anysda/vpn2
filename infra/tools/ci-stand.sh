@@ -296,7 +296,9 @@ fetch_image() {
 
 # Ядро и initrd того же образа (каталог unpacked рядом с ним): qemu грузит их
 # сам, без GRUB, читающего initrd (~70 МБ) через BIOS, - до ядра ~2 с вместо
-# ~9. Гость тот же: тот же корень, та же строка ядра. Нет файлов - через GRUB.
+# ~9. Корень тот же, строка ядра образа плюс mitigations=off: ВМ одноразовая,
+# чужого кода в ней нет, а retpoline и Safe RET на AMD раннера тормозят
+# dpkg и стадии. Нет файлов - через GRUB.
 fetch_kernel() {
   local dir=$1 base sums f
   base=${IMAGE_URL%/*}/unpacked/$(basename "$IMAGE_URL" .img)
@@ -351,7 +353,7 @@ cmd_up() {
   if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
   if [[ -f "$STAND_DIR/vmlinuz" && -f "$STAND_DIR/initrd" ]]; then
     boot=(-kernel "$STAND_DIR/vmlinuz" -initrd "$STAND_DIR/initrd"
-      -append 'root=LABEL=cloudimg-rootfs ro console=tty1 console=ttyS0')
+      -append 'root=LABEL=cloudimg-rootfs ro console=tty1 console=ttyS0 mitigations=off')
   fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")

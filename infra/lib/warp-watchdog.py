@@ -77,7 +77,7 @@ def probe(config):
     return False
 
 
-def decision(state, now, healthy):
+def decision(state, now, healthy, dead_after=DEAD_AFTER):
     """Mutate the budget BEFORE systemctl, including failed restart attempts."""
     # A backward wall-clock correction must never replenish the hourly budget.
     now = max(now, state.get('last_seen', now))
@@ -91,7 +91,7 @@ def decision(state, now, healthy):
         return 'recovered' if recovered else 'healthy'
     state.pop('healthy_since', None)
     state.setdefault('bad_since', now)
-    if now - state['bad_since'] < DEAD_AFTER:
+    if now - state['bad_since'] < dead_after:
         return 'waiting'
     if len(state['restarts']) >= MAX_PER_HOUR or now < state.get('next_restart', 0):
         return 'limited'
@@ -117,11 +117,11 @@ def save_state(path, state):
         os.close(directory)
 
 
-def tick(config, path, journal=False):
+def tick(config, path, journal=False, dead_after=DEAD_AFTER):
     # Corrupt/unreadable state fails closed: losing it must not reset the cap.
     state = json.loads(path.read_text()) if path.exists() else {}
     healthy = probe(config)
-    action = decision(state, time.time(), healthy)
+    action = decision(state, time.time(), healthy, dead_after)
     save_state(path, state)
     if action == 'restart':
         log(f'WARP restart: sing-box; attempts/hour={len(state["restarts"])}; '
@@ -148,7 +148,10 @@ def run(config, path, bootstrap=False):
         deadline = time.monotonic() + BOOTSTRAP_SECONDS
         attempts = 0
         while True:
-            action = tick(config, path, bootstrap)
+            # Fresh sing-box does not revive a stalled WARP by itself, and only a
+            # restart does: during deployment restart after the first failed probe.
+            # The shared backoff and hourly cap still bound every restart.
+            action = tick(config, path, bootstrap, 0 if bootstrap else DEAD_AFTER)
             if not bootstrap or action in ('healthy', 'recovered'):
                 return
             attempts += action == 'restart'

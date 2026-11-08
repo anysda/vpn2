@@ -70,7 +70,6 @@
  "test_fw_guard[general]": 13,
  "test_emergency_manual_start_edges.ManualStartEdgeTests[0]": 12,
  "test_fw_guard_entry_refs.EntryBeatReferenceExitTests[0]": 12,
- "test_ssh_limit_proc_walk[general]": 12,
  "test_telegram_bot_off.TelegramConfigRemovedTests[1]": 12,
  "test_verify.VerifyTest[test_emergency_client_snapshot]": 12,
  "test_verify.VerifyTest[test_insecure_exit_warning_in_summary_and_report]": 12,

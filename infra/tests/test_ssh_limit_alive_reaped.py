@@ -5,7 +5,7 @@ init жнёт его не сразу. alive() видит /proc/<pid>, а к чт
 пропала: пустое состояние не равно Z, и пожатый процесс выходил живым
 («left kid:<pid>» после предела). Заглушка awk открывает это окно без
 надежды на тайминг: убивает процесс и ждёт, пока его пожнут, потом читает.
-Обе копии alive() (proc_walk и kill_tree_scale).
+Копия alive() в kill_tree_scale.
 """
 import subprocess
 import tempfile
@@ -13,7 +13,6 @@ import unittest
 from pathlib import Path
 
 import test_ssh_limit_kill_tree_scale
-import test_ssh_limit_proc_walk
 
 # Только чтение stat цели: убить, дождаться, пока родитель пожнёт, читать.
 AWK = '''#!/bin/bash
@@ -40,7 +39,7 @@ def alive_line(module):
 
 class TestAliveReaped(unittest.TestCase):
     def test_reaped_between_dir_and_stat_is_gone(self):
-        for module in (test_ssh_limit_proc_walk, test_ssh_limit_kill_tree_scale):
+        for module in (test_ssh_limit_kill_tree_scale,):
             with self.subTest(module=module.__name__), \
                     tempfile.TemporaryDirectory(prefix='limit-alive-') as directory:
                 root = Path(directory)

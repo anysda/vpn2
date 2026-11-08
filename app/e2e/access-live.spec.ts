@@ -75,16 +75,26 @@ test('живой OpenVPN: заморозка завершает сессию и 
   await loginApi(page)
   const client = await (await page.request.post('/api/clients', { data: { name: uniq('ovpn-session') } })).json()
   const device = await (await page.request.post(`/api/clients/${client.id}/devices`, { data: { name: 'Телефон' } })).json()
+  // openvpn по SIGTERM сам удаляет pid-файл: rmSync в Node 24, встретив исчезнувший
+  // файл, молча оставляет каталог, и следующий mkdirSync падает с EEXIST.
+  // Поэтому сначала дождаться выхода процесса, потом убрать каталог и убедиться в этом.
   const stop = () => inside(`
     import { existsSync, readFileSync, rmSync } from 'node:fs';
     const dir='/tmp/access-openvpn-'+JSON.parse(process.argv[1]);
+    const alive=pid=>{ try { return !/^\\d+ \\(.*\\) Z /.test(readFileSync('/proc/'+pid+'/stat','utf8')); } catch { return false; } };
     if(existsSync(dir+'/pid')) {
       const pid=Number(readFileSync(dir+'/pid','utf8'));
-      if(Number.isInteger(pid) && pid>1) try { process.kill(pid,'SIGTERM'); } catch {}
+      if(Number.isInteger(pid) && pid>1) {
+        try { process.kill(pid,'SIGTERM'); } catch {}
+        const sleep=new Int32Array(new SharedArrayBuffer(4));
+        for(const until=Date.now()+10000; alive(pid) && Date.now()<until;) Atomics.wait(sleep,0,0,50);
+        if(alive(pid)) throw new Error('openvpn '+pid+' не вышел по SIGTERM');
+      }
     }
     rmSync(dir,{recursive:true,force:true});
+    if(existsSync(dir)) throw new Error(dir+' остался после rmSync');
   `, client.id)
-  const start = () => inside(String.raw`
+  const start = () => (stop(), inside(String.raw`
     import { mkdirSync, writeFileSync } from 'node:fs';
     import { execFileSync } from 'node:child_process';
     import { DatabaseSync } from 'node:sqlite';
@@ -102,7 +112,7 @@ test('живой OpenVPN: заморозка завершает сессию и 
       'cert '+dir+'/cert','key '+dir+'/key','writepid '+dir+'/pid','log '+dir+'/log'].join('\n')+'\n';
     writeFileSync(dir+'/config',config,{mode:0o600});
     execFileSync('openvpn',['--config',dir+'/config','--daemon'],{stdio:'pipe'});
-  `, client.id, device.id)
+  `, client.id, device.id))
   const state = () => inside(`
     import { readFileSync } from 'node:fs';
     const log=readFileSync('/tmp/access-openvpn-'+JSON.parse(process.argv[1])+'/log','utf8');

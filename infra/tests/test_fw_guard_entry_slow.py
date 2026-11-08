@@ -18,16 +18,16 @@ WINDOW = 60
 # Сессию обрывает потолок SSH_PROBE_TIMEOUT, как timeout в ssh_fresh. Обрыв
 # считается в секундах стенда: запуск bash и awk ускорению не поддаётся, и
 # реальные часы съедали бы запас потолка над LOGIN (0,2 с при LOGIN=13).
-# Внешний timeout - только страховка, на секунду реального времени дольше входа.
+# Внешний timeout - только страховка от зависшей заглушки: обрыв без метки значит
+# «экзит не ответил», и запас в секунду над входом голодный раннер съедал.
 SLOW = r'''
 eval "orig_$(declare -f net)"
 net() {
   if [[ $SSH_HOST == exit-* && $* == */dev/tcp/* ]]; then
-    local node=${SSH_HOST#exit-} ceiling=${SSH_PROBE_TIMEOUT:-30} limit
+    local node=${SSH_HOST#exit-} ceiling=${SSH_PROBE_TIMEOUT:-30}
     echo "$node $*" >> calls
     echo "$node" >> probes
-    limit=$(awk -v s="$ceiling" -v l="$LOGIN" 'BEGIN { if (s < l + 10) s = l + 10; print s / 10 }')
-    command timeout "$limit" bash -c '
+    command timeout 30 bash -c '
       login=$1 ceiling=$3
       command sleep "$(awk -v s="$login" "BEGIN { print s / 10 }")"
       # Вход закрыт отбросом: TCP-проба висит до своего таймаута, а вход с

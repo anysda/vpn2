@@ -169,7 +169,7 @@ def probe():
 
         devices = [{'id': 1, 'name': 'one'}, {'id': 2, 'name': 'two'}]
         first = hy2.start(directory, 1, devices, options=options, runtime=runtime)
-        # Keep an independent ordinary Hysteria2 tunnel alive during all actions.
+        # An independent ordinary Hysteria2 tunnel stays alive during all actions.
         ordinary_cert = directory / 'ordinary.pem'
         ordinary_cert.write_bytes((directory / 'hy2/fullchain.pem').read_bytes())
         ordinary = json.loads((directory / 'hy2/server.json').read_text())
@@ -181,15 +181,19 @@ def probe():
         ordinary['inbounds'][0]['tls']['key_path'] = str(ordinary_key)
         ordinary_path = directory / 'ordinary.json'
         ordinary_path.write_text(json.dumps(ordinary))
-        ordinary_process = subprocess.Popen([SB, 'run', '-c', str(ordinary_path)],
-                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        cleanup.callback(stop_process, ordinary_process)
-        client(first[1]['uri'], 17893, 1443, ordinary_cert)
         client(first[1]['uri'], 17890)
         deadline = time.monotonic() + 5
         while not fetch(17890, '203.0.113.2'):
             assert time.monotonic() < deadline, 'positive QUIC control failed'
-        assert fetch(17893, '203.0.113.2')
+        # Started after the emergency control on purpose: its readiness is awaited
+        # on its own, not inferred from another tunnel that happened to come up.
+        ordinary_process = subprocess.Popen([SB, 'run', '-c', str(ordinary_path)],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cleanup.callback(stop_process, ordinary_process)
+        client(first[1]['uri'], 17893, 1443, ordinary_cert)
+        deadline = time.monotonic() + 5
+        while not fetch(17893, '203.0.113.2'):
+            assert time.monotonic() < deadline, 'ordinary Hysteria2 control failed'
         native = os.environ.get('HYSTERIA_BIN')
         if native:
             uri = urlsplit(first[1]['uri'])

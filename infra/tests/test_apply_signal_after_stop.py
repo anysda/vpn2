@@ -14,11 +14,13 @@ import unittest
 
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_check_env import hanging
+from test_verify_exit_target_retry_stop import alive
 
 TESTS = Path(__file__).resolve().parent
 SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGINT')
 STEPS = ('cleanup', 'after cleanup', 'atexit', 'shutdown')
 LIMIT = 30
+GONE = 10  # a killed server leaves /proc a moment after apply has exited, or stays a zombie for init
 # The later signals apply sends itself at STEP; "shutdown" is a module global that goes
 # while the interpreter shuts down.
 LATE = '''
@@ -131,7 +133,10 @@ class InstallSignalAfterStopTests(unittest.TestCase):
             check.kill()
             self.fail(f'apply still runs {LIMIT} s on: {check.communicate()[0]}')
         server = server_pid.read_text().strip()
-        self.assertEqual((check.returncode, said, Path('/proc', server).exists(), sorted(os.listdir(self.scratch)),
+        started = time.monotonic()
+        while alive(server) and time.monotonic() - started < GONE:
+            time.sleep(0.05)
+        self.assertEqual((check.returncode, said, alive(server), sorted(os.listdir(self.scratch)),
                           (self.base / 'server.conf').read_text() == candidate.WORKING),
                          (128 + getattr(signal, first), '', False, [], True))
 

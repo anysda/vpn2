@@ -56,10 +56,28 @@ def run(args):
     return subprocess.run(args, check=True, capture_output=True, text=True)
 
 
-def fetch(proxy, host):
+def attempt(proxy, host):
     return subprocess.run(['curl', '-fsS', '--max-time', '2', '--noproxy', '',
                            '--socks5-hostname', f'127.0.0.1:{proxy}',
-                           f'http://{host}:18080/'], capture_output=True).returncode == 0
+                           f'http://{host}:18080/'], capture_output=True).returncode
+
+
+def fetch(proxy, host):
+    return attempt(proxy, host) == 0
+
+
+def refused(proxy, host):
+    """Refusal by the server, observed on a client that is already listening.
+
+    curl exits 7 while the client's SOCKS port is not open yet, which says
+    nothing about credentials. A ready sing-box client whose tunnel the server
+    refused answers SOCKS5 'general failure', curl exit 97.
+    """
+    deadline = time.monotonic() + 5
+    while (code := attempt(proxy, host)) == 7:
+        assert time.monotonic() < deadline, f'client on {proxy} never listened'
+        time.sleep(.05)
+    return code == 97
 
 
 def probe():
@@ -261,7 +279,7 @@ def probe():
         deadline = time.monotonic() + 5
         while not fetch(17892, '203.0.113.2'):
             assert time.monotonic() < deadline
-        assert not fetch(17891, '203.0.113.2')
+        assert refused(17891, '203.0.113.2'), 'old password accepted'
         # A QUIC session from before the restart is unknown to the new process:
         # sing-box neither closes it on SIGTERM nor resets it, so the old client
         # stalls until its idle timeout (~30 s) unless it happened to send while
@@ -275,7 +293,7 @@ def probe():
         deadline = time.monotonic() + 5
         while not fetch(17897, '203.0.113.2'):
             assert time.monotonic() < deadline, 'new credentials rejected after restart'
-        assert not fetch(17896, '203.0.113.2')
+        assert refused(17896, '203.0.113.2'), 'old password accepted'
         # Session source: the instance's own API through the real firewall.
         def statuses():
             hy2.poll_sessions(directory)

@@ -61,22 +61,8 @@ fi
 export E2E_VPN_SERVICES=1
 
 if [[ -z ${E2E_SHARD:-} ]]; then
-started=$SECONDS
-RUN_CADDY_TESTS=1 python3 "$APP_DIR/../infra/tests/test_panel_proxy.py"
-# Пустая БД и недоступный файл пароля: безопасный отказ старта без утечки в лог.
-dk run --rm --name "$NAME-init" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
-  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/admin-password-check.mjs"
-dk run --rm --name "$NAME-config" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
-  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/config-error-check.mjs"
-dk run --rm --name "$NAME-password" --read-only --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp \
-  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/long-password-check.mjs"
-dk run --rm --name "$NAME-wg-endpoint" --network none --read-only \
-  --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/wireguard \
-  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/wg-endpoint-check.mjs"
-dk run --rm --name "$NAME-sso-secret" --read-only \
-  --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/anysda \
-  -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/sso-secret-check.mjs"
-echo "timing: image-checks=$((SECONDS - started))s"
+# E2E_SKIP_IMAGE_CHECKS=1: проверки образа уже идут в другом задании CI.
+[[ -n ${E2E_SKIP_IMAGE_CHECKS:-} ]] || E2E_CONTAINER="$NAME" bash "$APP_DIR/e2e/image-checks.sh" "$IMAGE"
 
 if [[ $shards != 1 ]]; then
   export E2E_IMAGE="$IMAGE" E2E_SHARDS="$shards"

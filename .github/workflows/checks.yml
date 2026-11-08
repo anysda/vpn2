@@ -237,30 +237,16 @@ jobs:
           docker build -t vpn2-backup-test infra/tests
           docker run --rm -v "$PWD:/repo:ro" vpn2-backup-test
 
-  # Выбор по путям один раз: шарды и QR без зависимостей панели пропускаются.
-  panel-e2e-paths:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      run: ${{ steps.paths.outputs.run }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: изменения зависимостей панели
-        id: paths
-        working-directory: app
-        run: |
-          selected=$(python3 ../infra/lib/e2e_paths.py --github)
-          echo "run=$selected" >> "$GITHUB_OUTPUT"
-
-  # Набор делится на задания по весам run-shards.py (каждый spec ровно в одном),
-  # внутри задания - те же 4 панели запускателя.
+  # Выбор по путям - первым шагом каждого задания, без отдельного задания перед
+  # ними: шарды и QR стартуют вместе с остальными проверками, а без зависимостей
+  # панели проходят пустыми.
+  # Набор делится по весам run-shards.py сразу на все панели всех заданий
+  # (E2E_PART), в задании 4 панели запускателя; каждый spec ровно в одной.
   panel-e2e-shard:
-    needs: panel-e2e-paths
-    if: needs.panel-e2e-paths.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
     strategy:
       fail-fast: false
       matrix:
@@ -270,19 +256,37 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+        with:
+          fetch-depth: 0
+      - name: изменения зависимостей панели
+        id: paths
+        run: |
+          selected=$(python3 ../infra/lib/e2e_paths.py --github)
+          echo "run=$selected" >> "$GITHUB_OUTPUT"
+      - if: steps.paths.outputs.run == 'true'
+        uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v7
+      - if: steps.paths.outputs.run == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - uses: docker/setup-buildx-action@v4
+      - if: steps.paths.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: загрузка браузерного образа, в фоне на время сборки панели
+        if: steps.paths.outputs.run == 'true'
+        run: |
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          nohup docker pull -q "mcr.microsoft.com/playwright:v${version}-noble" > "$RUNNER_TEMP/browser-pull.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/browser-pull.pid"
+      - if: steps.paths.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
-      - name: сборка панели один раз для всех шардов
+      - name: сборка панели
+        if: steps.paths.outputs.run == 'true'
         uses: docker/build-push-action@v7
         with:
           context: app
@@ -290,42 +294,33 @@ jobs:
           tags: vpn2-panel:e2e
           cache-from: type=gha,scope=checks-panel
           cache-to: type=gha,mode=max,scope=checks-panel
-      - name: загрузка браузерного образа
+      - name: браузерный образ загружен
+        if: steps.paths.outputs.run == 'true'
+        timeout-minutes: 5
         run: |
+          pid=$(cat "$RUNNER_TEMP/browser-pull.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
           version=$(node -p 'require("@playwright/test/package.json").version')
-          docker pull "mcr.microsoft.com/playwright:v${version}-noble"
-      - name: spec-файлы шарда
-        env:
-          PART: ${{ matrix.part }}
-          PARTS: ${{ strategy.job-total }}
-        run: |
-          python3 - > "$RUNNER_TEMP/specs.txt" <<'EOF'
-          import importlib.util, json, os, re, subprocess, sys
-          spec = importlib.util.spec_from_file_location('run_shards', 'e2e/run-shards.py')
-          run_shards = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(run_shards)
-          # Тот же список, что у запускателя без аргументов: Playwright --list.
-          listing = json.loads(subprocess.check_output(
-              ['node_modules/.bin/playwright', 'test', '--list', '--reporter=json'], text=True,
-              env={**os.environ, 'E2E_ADMIN_PASSWORD': 'listing-only'}))
-          files = sorted({suite['file'] for suite in listing['suites']})
-          weights = json.loads(open('e2e/shard-weights.json').read())
-          groups = run_shards.assign_files(files, int(os.environ['PARTS']), weights)
-          mine = groups[int(os.environ['PART']) - 1]
-          if not mine:
-              sys.exit('shard has no specs')
-          print(f'part {os.environ["PART"]}/{os.environ["PARTS"]}: {len(mine)} of {len(files)} specs',
-                file=sys.stderr)
-          print('\n'.join(f'e2e/{re.escape(file)}$' for file in mine))
-          EOF
+          docker image inspect "mcr.microsoft.com/playwright:v${version}-noble" >/dev/null \
+            || { cat "$RUNNER_TEMP/browser-pull.log"; exit 1; }
       - name: сквозные тесты на собранном образе при смене сети хоста
+        if: steps.paths.outputs.run == 'true'
         env:
           E2E_IP: sudo -n ip
           E2E_SKIP_BUILD: '1'
+          E2E_SKIP_IMAGE_CHECKS: '1'
           E2E_SHARDS: '4'
-        run: |
-          mapfile -t specs < "$RUNNER_TEMP/specs.txt"
-          python3 e2e/with-network-churn.py bash e2e/run-local.sh "${specs[@]}"
+          E2E_PART: ${{ matrix.part }}/${{ strategy.job-total }}
+        run: python3 e2e/with-network-churn.py bash e2e/run-local.sh
+      - name: список прогнанных spec для сверки в panel-e2e
+        if: always() && steps.paths.outputs.run == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-specs-${{ matrix.part }}
+          path: |
+            app/test-results/specs-all.txt
+            app/test-results/specs-ran.txt
+          retention-days: 3
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v7
@@ -337,51 +332,81 @@ jobs:
           retention-days: 14
 
   # Худший конфиг (вход 45.x, сплит) и панель без сплита, аварийка hy2 и бот:
-  # qrencode рисует PNG аварийки, zbarimg раскодирует PNG.
+  # qrencode рисует PNG аварийки, zbarimg раскодирует PNG. Здесь же один раз
+  # проверки образа без браузера (e2e/image-checks.sh).
   panel-e2e-qr:
-    needs: panel-e2e-paths
-    if: needs.panel-e2e-paths.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      run: ${{ steps.paths.outputs.run }}
     defaults:
       run:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+        with:
+          fetch-depth: 0
+      - name: изменения зависимостей панели
+        id: paths
+        run: |
+          selected=$(python3 ../infra/lib/e2e_paths.py --github)
+          echo "run=$selected" >> "$GITHUB_OUTPUT"
+      - if: steps.paths.outputs.run == 'true'
+        uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v7
+      - if: steps.paths.outputs.run == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - uses: docker/setup-buildx-action@v4
+      - if: steps.paths.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: загрузка браузерного образа, в фоне на время сборки панели
+        if: steps.paths.outputs.run == 'true'
+        run: |
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          nohup docker pull -q "mcr.microsoft.com/playwright:v${version}-noble" > "$RUNNER_TEMP/browser-pull.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/browser-pull.pid"
+      - name: qrencode и zbarimg для размера QR
+        if: steps.paths.outputs.run == 'true'
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
+      - if: steps.paths.outputs.run == 'true'
+        uses: docker/setup-buildx-action@v4
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
       - name: сборка панели
+        if: steps.paths.outputs.run == 'true'
         uses: docker/build-push-action@v7
         with:
           context: app
           load: true
           tags: vpn2-panel:e2e
           cache-from: type=gha,scope=checks-panel
-      - name: загрузка браузерного образа
-        run: |
-          version=$(node -p 'require("@playwright/test/package.json").version')
-          docker pull "mcr.microsoft.com/playwright:v${version}-noble"
-      - name: qrencode и zbarimg для размера QR
+      - name: браузерный образ загружен
+        if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
+          pid=$(cat "$RUNNER_TEMP/browser-pull.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          docker image inspect "mcr.microsoft.com/playwright:v${version}-noble" >/dev/null \
+            || { cat "$RUNNER_TEMP/browser-pull.log"; exit 1; }
       - name: размер QR на худшем конфиге
+        if: steps.paths.outputs.run == 'true'
         timeout-minutes: 10
         env:
           E2E_SKIP_BUILD: '1'
           E2E_BASE_IMAGE: vpn2-panel:e2e
         run: bash e2e/qr-size.sh
+      - name: проверки образа без браузера
+        if: steps.paths.outputs.run == 'true'
+        timeout-minutes: 5
+        run: bash e2e/image-checks.sh vpn2-panel:qr
       - name: отчёт и трейсы
         if: failure()
         uses: actions/upload-artifact@v7
@@ -392,23 +417,49 @@ jobs:
             app/test-results
           retention-days: 14
 
-  # Прежнее имя для required checks: зелёное, когда прошли все шарды и QR
-  # или e2e не требуется.
+  # Прежнее имя для required checks: зелёное, когда прошли все шарды и QR и
+  # шарды вместе прогнали каждый spec ровно один раз, или e2e не требуется.
   panel-e2e:
-    needs: [panel-e2e-paths, panel-e2e-shard, panel-e2e-qr]
+    needs: [panel-e2e-shard, panel-e2e-qr]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: все шарды e2e прошли
+        id: result
         env:
-          RUN: ${{ needs.panel-e2e-paths.outputs.run }}
-          PATHS_RESULT: ${{ needs.panel-e2e-paths.result }}
+          SHARD_RUN: ${{ needs.panel-e2e-shard.outputs.run }}
+          QR_RUN: ${{ needs.panel-e2e-qr.outputs.run }}
           SHARD_RESULT: ${{ needs.panel-e2e-shard.result }}
           QR_RESULT: ${{ needs.panel-e2e-qr.result }}
         run: |
-          if [ "$PATHS_RESULT" = success ] && [ "$RUN" = false ]; then
+          test "$SHARD_RESULT,$QR_RESULT" = success,success
+          test "$SHARD_RUN" = "$QR_RUN"
+          if [ "$SHARD_RUN" = false ]; then
             echo 'panel-e2e skipped — no panel dependencies changed'
-            exit 0
           fi
-          test "$PATHS_RESULT,$SHARD_RESULT,$QR_RESULT" = success,success,success
+          echo "run=$SHARD_RUN" >> "$GITHUB_OUTPUT"
+      - if: steps.result.outputs.run == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: e2e-specs-*
+          path: specs
+      - name: каждый spec прогнан ровно в одном шарде
+        if: steps.result.outputs.run == 'true'
+        run: |
+          python3 - <<'EOF'
+          import collections, pathlib, sys
+          parts = sorted(pathlib.Path('specs').glob('e2e-specs-*'))
+          listed = {(p / 'specs-all.txt').read_text() for p in parts}
+          if len(parts) != 4 or len(listed) != 1:
+              sys.exit(f'parts={len(parts)}, distinct listings={len(listed)}')
+          everything = listed.pop().split()
+          ran = collections.Counter(f for p in parts for f in (p / 'specs-ran.txt').read_text().split())
+          twice = sorted(f for f, n in ran.items() if n > 1)
+          missing = sorted(set(everything) - set(ran))
+          extra = sorted(set(ran) - set(everything))
+          print(f'{len(everything)} spec, по шардам: '
+                + ' + '.join(str(len((p / "specs-ran.txt").read_text().split())) for p in parts))
+          if twice or missing or extra:
+              sys.exit(f'twice={twice} missing={missing} extra={extra}')
+          EOF

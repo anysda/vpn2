@@ -24,6 +24,35 @@ def assign_files(files, count, weights):
     return groups
 
 
+def part_groups(files, part, count, weights):
+    """CI part "k/n": one weighted split over all n*count panels, part k keeps its slice.
+
+    The slices partition the listing: every spec is in exactly one part.
+    """
+    index, total = (int(x) for x in part.split('/'))
+    if not 1 <= index <= total:
+        sys.exit(f'E2E_PART must be k/n with 1 <= k <= n, not {part}')
+    groups = assign_files(files, total * count, weights)
+    flat = sorted(file for group in groups for file in group)
+    if flat != sorted(files):
+        sys.exit('weighted split lost or duplicated a spec')
+    return groups[(index - 1) * count:index * count]
+
+
+def ran_files(report):
+    """Spec files present in the merged JSON report (skipped tests included)."""
+    files = set()
+
+    def walk(suites):
+        for suite in suites:
+            if suite.get('specs'):
+                files.add(suite['file'])
+            walk(suite.get('suites', []))
+
+    walk(json.loads(report.read_text()).get('suites', []))
+    return sorted(files)
+
+
 def main():
     app = Path(__file__).resolve().parent.parent
     count = int(os.environ.get("E2E_SHARDS", "4"))
@@ -38,6 +67,8 @@ def main():
         sys.exit("E2E_PORT and E2E_BROWSER_PORT must leave distinct valid ports for every shard")
     processes = []
     groups = None
+    part = os.environ.get('E2E_PART')
+    files = []
     if len(sys.argv) == 1:
         # Ask Playwright: filesystem globs could omit future .test.ts/.spec.js
         # files or disagree with project-specific testMatch/testIgnore rules.
@@ -49,7 +80,7 @@ def main():
         ))
         files = sorted({suite['file'] for suite in listing['suites']})
         weights = json.loads((app / 'e2e/shard-weights.json').read_text())
-        groups = assign_files(files, count, weights)
+        groups = part_groups(files, part, count, weights) if part else assign_files(files, count, weights)
         if any(not group for group in groups):
             sys.exit('Every shard must contain at least one spec')
 
@@ -101,6 +132,19 @@ def main():
                 check=False,
             )
             complete = len(list(Path(blobs).glob("*.zip"))) == count
+            if part and groups:
+                # Сверка: панели этой части прогнали ровно свои файлы; итог по
+                # всем частям сверяет задание panel-e2e по specs-all.txt.
+                planned = sorted(file for group in groups for file in group)
+                report = results / "results.json"
+                ran = ran_files(report) if report.exists() else []
+                (results / "specs-all.txt").write_text(''.join(f + '\n' for f in files))
+                (results / "specs-ran.txt").write_text(''.join(f + '\n' for f in ran))
+                if ran != planned:
+                    print(f"specs: planned {len(planned)}, ran {len(ran)}; "
+                          f"missing={sorted(set(planned) - set(ran))} extra={sorted(set(ran) - set(planned))}",
+                          flush=True)
+                    complete = False
             print(f"shards: count={count}, seconds={time.monotonic() - started:.1f}, "
                   f"exit_codes={codes}, reports_complete={complete}", flush=True)
             return int(any(codes) or merged.returncode != 0 or not complete)

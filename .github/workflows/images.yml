@@ -162,6 +162,8 @@ jobs:
           path: digests
           merge-multiple: true
       - name: release manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 infra/lib/build-release.py --digests digests --output release-manifest.json
       - name: validate source contract
         run: python3 infra/lib/release.py --manifest release-manifest.json check .

@@ -4,12 +4,41 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+import time
+import urllib.error
 import urllib.request
 
-from release import ReleaseError, command, digest, sha256, source_files
+from release import DOWNLOAD_PAUSES, GITHUB_API, ReleaseError, command, digest, sha256, source_files
+
+
+def fetch(url, timeout=60):
+    """GET url with retries; the workflow token lifts the anonymous API limit of a shared runner."""
+    headers = {}
+    token = os.environ.get('GITHUB_TOKEN')
+    if token and url.startswith(GITHUB_API + '/'):
+        headers['Authorization'] = f'Bearer {token}'
+    attempts = len(DOWNLOAD_PAUSES) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
+                return response.read()
+        except urllib.error.HTTPError as exc:
+            error = f'HTTP {exc.code} {exc.reason}'
+            # 403 is the GitHub API rate limit; other 4xx will not change on retry.
+            if exc.code < 500 and exc.code not in (403, 429):
+                break
+        except OSError as exc:
+            error = str(getattr(exc, 'reason', '') or exc) or type(exc).__name__
+        if attempt < attempts:
+            pause = DOWNLOAD_PAUSES[attempt - 1]
+            print(f'build-release: {url}: {error} ({attempt}/{attempts}), retry in {pause} s', file=sys.stderr)
+            time.sleep(pause)
+    raise ReleaseError(f'{url}: {error}')
 
 
 def value(root, path, name):
@@ -40,8 +69,7 @@ def binary_specs(root):
         version = value(root, 'infra/' + stage, variable)
         filename = asset.format(v=version)
         url = f'https://api.github.com/repos/{repo}/releases/tags/{tag.format(v=version)}'
-        with urllib.request.urlopen(url, timeout=60) as response:
-            release = json.load(response)
+        release = json.loads(fetch(url))
         asset_data = next(a for a in release['assets'] if a['name'] == filename)
         specs[name] = {'version': version, 'architecture': 'amd64',
                        'url': asset_data['browser_download_url'],
@@ -57,21 +85,14 @@ def binary_specs(root):
                        'sha256': re.search(r"printf '%s  %s\\n' ([a-f0-9]{64})", pot)[1]}
     version = value(root, stages + '26-backup.sh', '  AWS_CLI_VERSION')
     url = f'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{version}.zip'
-    with urllib.request.urlopen(url, timeout=120) as response:
-        checksum = hashlib.sha256()
-        while chunk := response.read(1024 * 1024):
-            checksum.update(chunk)
-    specs['aws-cli'] = {'version': version, 'architecture': 'amd64', 'url': url, 'sha256': checksum.hexdigest()}
-    with urllib.request.urlopen(url + '.sig', timeout=60) as response:
-        signature = hashlib.sha256(response.read()).hexdigest()
+    checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
+    specs['aws-cli'] = {'version': version, 'architecture': 'amd64', 'url': url, 'sha256': checksum}
+    signature = hashlib.sha256(fetch(url + '.sig')).hexdigest()
     specs['aws-cli-signature'] = {'version': version, 'architecture': 'amd64', 'url': url + '.sig', 'sha256': signature}
     version = re.search(r'YT_ZAPRET_REF:-([a-f0-9]{40})', node)[1]
     url = f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz'
-    with urllib.request.urlopen(url, timeout=120) as response:
-        checksum = hashlib.sha256()
-        while chunk := response.read(1024 * 1024):
-            checksum.update(chunk)
-    specs['zapret2-source'] = {'version': version, 'architecture': 'all', 'url': url, 'sha256': checksum.hexdigest()}
+    checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
+    specs['zapret2-source'] = {'version': version, 'architecture': 'all', 'url': url, 'sha256': checksum}
     return specs
 
 
@@ -138,5 +159,7 @@ def main():
 if __name__ == '__main__':
     try:
         main()
+    except ReleaseError as error:
+        raise SystemExit(f'release manifest generation failed: {error}') from None
     except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError) as error:
         raise SystemExit('release manifest generation failed: ' + type(error).__name__) from None

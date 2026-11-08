@@ -42,7 +42,8 @@ HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
 # test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and fails the run
 WEIGHT = json.loads((HERE / 'partition-weights.json').read_text())
 # One test of these classes takes most of a CHUNK and holds the run's tail alone
-SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'test_delivery.DeliveryProcessTests')
+SINGLE = ('test_verify.VerifyTest', 'test_deploy_verify.DeployVerifyTests', 'test_delivery.DeliveryProcessTests',
+          'test_pki.PkiTests')
 # Elapsed time against a limit with a margin of 0.1-2 s: parallel load is enough to cross it
 QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
          'test_control', 'test_release', 'test_probe_reads')

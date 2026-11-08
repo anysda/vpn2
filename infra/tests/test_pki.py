@@ -108,35 +108,40 @@ class PkiTests(unittest.TestCase):
         return {str(p.relative_to(self.base / protocol)): p.read_bytes()
                 for p in (self.base / protocol).rglob("*") if p.is_file()}
 
-    def test_failed_generation_retry(self):
-        phases = {
-            "ike": ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
-                    "pki:--self", "pki:--pub", "pki:--issue", "python3:-"),
-            "wg": ("wg:genkey", "wg:pubkey", "python3:-"),
-            "ovpn": ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
-                     "openssl:req:-x509", "openssl:req:sign",
-                     "openssl:ca:sign", "openvpn:--genkey", "openssl:ca:-gencrl", "python3:-"),
-        }
-        for protocol, faults in phases.items():
-            for fault in faults:
-                for mode in ("before", "after", "empty"):
-                    # После успешного rename уже опубликован полный комплект;
-                    # отказ проверяем до syscall (без его подмены успехом).
-                    if fault == "python3:-" and mode != "before":
-                        continue
-                    with self.subTest(protocol=protocol, fault=fault, mode=mode):
-                        shutil.rmtree(self.base / protocol, ignore_errors=True)
-                        Path(self.env["PKI_MARKER"]).unlink(missing_ok=True)
-                        result = self.stage(protocol, fault, mode)
-                        self.assertTrue(Path(self.env["PKI_MARKER"]).exists(), result.stdout)
-                        self.assertNotEqual(result.returncode, 0, result.stdout)
-                        # Никакие части нового комплекта не видны после сбоя.
-                        self.assertFalse(any(p.suffix in (".key", ".crt", ".priv", ".pub")
-                                             for p in (self.base / protocol).rglob("*")))
-                        self.good(protocol)
-                        before = self.snapshot(protocol)
-                        self.good(protocol)
-                        self.assertEqual(before, self.snapshot(protocol))
+    # A method per protocol: each is minutes of key generation on CI, apart they run in parallel.
+    def test_failed_generation_retry_ike(self):
+        self.failed_generation_retry("ike", ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
+                                             "pki:--self", "pki:--pub", "pki:--issue", "python3:-"))
+
+    def test_failed_generation_retry_wg(self):
+        self.failed_generation_retry("wg", ("wg:genkey", "wg:pubkey", "python3:-"))
+
+    def test_failed_generation_retry_ovpn(self):
+        self.failed_generation_retry("ovpn", ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
+                                              "openssl:req:-x509", "openssl:req:sign",
+                                              "openssl:ca:sign", "openvpn:--genkey", "openssl:ca:-gencrl",
+                                              "python3:-"))
+
+    def failed_generation_retry(self, protocol, faults):
+        for fault in faults:
+            for mode in ("before", "after", "empty"):
+                # После успешного rename уже опубликован полный комплект;
+                # отказ проверяем до syscall (без его подмены успехом).
+                if fault == "python3:-" and mode != "before":
+                    continue
+                with self.subTest(protocol=protocol, fault=fault, mode=mode):
+                    shutil.rmtree(self.base / protocol, ignore_errors=True)
+                    Path(self.env["PKI_MARKER"]).unlink(missing_ok=True)
+                    result = self.stage(protocol, fault, mode)
+                    self.assertTrue(Path(self.env["PKI_MARKER"]).exists(), result.stdout)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    # Никакие части нового комплекта не видны после сбоя.
+                    self.assertFalse(any(p.suffix in (".key", ".crt", ".priv", ".pub")
+                                         for p in (self.base / protocol).rglob("*")))
+                    self.good(protocol)
+                    before = self.snapshot(protocol)
+                    self.good(protocol)
+                    self.assertEqual(before, self.snapshot(protocol))
 
     def test_private_keys_are_not_world_readable(self):
         for protocol in ("ike", "wg", "ovpn"):

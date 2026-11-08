@@ -141,6 +141,8 @@ EOF
   # Как у хостера: root по паролю (00-bootstrap разносит ключ оркестратора).
   # Таймеры apt выключены, чтобы автообновление не держало apt весь прогон.
   # Короткие ожидания стенда - в окружение ssh и в drop-in сторожа.
+  # ВМ одноразовые: dpkg без fsync на каждый файл, без man/doc/info и без
+  # пересборки базы man-db триггером; пакеты и сервисы ставятся те же.
   cat > "$dir/user-data" <<EOF
 #cloud-config
 disable_root: false
@@ -162,6 +164,13 @@ write_files:
     content: |
       Acquire::http::Proxy "$APT_PROXY";
       Acquire::https::Proxy "DIRECT";
+  - path: /etc/dpkg/dpkg.cfg.d/90vpn2-ci
+    content: |
+      force-unsafe-io
+      path-exclude=/usr/share/man/*
+      path-exclude=/usr/share/info/*
+      path-exclude=/usr/share/doc/*
+      path-include=/usr/share/doc/*/copyright
   - path: /etc/environment
     append: true
     content: |
@@ -172,6 +181,8 @@ write_files:
       Environment=TCP_RETURN_S=$TCP_RETURN_S
 bootcmd:
   - [systemctl, disable, --now, apt-daily.timer, apt-daily-upgrade.timer]
+  - echo 'man-db man-db/auto-update boolean false' | debconf-set-selections
+  - [rm, -f, /var/lib/man-db/auto-update]
 runcmd:
   - [systemctl, restart, ssh]
 EOF

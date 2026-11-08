@@ -142,7 +142,8 @@ EOF
   # Таймеры apt выключены, чтобы автообновление не держало apt весь прогон.
   # Короткие ожидания стенда - в окружение ssh и в drop-in сторожа.
   # ВМ одноразовые: dpkg без fsync на каждый файл, без man/doc/info и без
-  # пересборки базы man-db триггером; пакеты и сервисы ставятся те же.
+  # пересборки базы man-db триггером; apt update без переводов и индексов
+  # command-not-found/AppStream. Пакеты и сервисы ставятся те же.
   cat > "$dir/user-data" <<EOF
 #cloud-config
 disable_root: false
@@ -164,6 +165,11 @@ write_files:
     content: |
       Acquire::http::Proxy "$APT_PROXY";
       Acquire::https::Proxy "DIRECT";
+      Acquire::Languages "none";
+      Acquire::IndexTargets::deb::CNF::DefaultEnabled "false";
+      Acquire::IndexTargets::deb::DEP-11::DefaultEnabled "false";
+      Acquire::IndexTargets::deb::DEP-11-icons::DefaultEnabled "false";
+      Acquire::IndexTargets::deb::DEP-11-icons-small::DefaultEnabled "false";
   - path: /etc/dpkg/dpkg.cfg.d/90vpn2-ci
     content: |
       force-unsafe-io
@@ -239,9 +245,10 @@ cmd_up() {
     fetch=$!
   fi
   if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
+    # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
     apt-get update -q
-    DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
-      qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
+    DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 apt-get install -yq --no-install-recommends \
+      -o Dpkg::Options::=--force-unsafe-io qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
@@ -271,7 +278,9 @@ cmd_up() {
       (( SECONDS < deadline )) || { tail -n 40 "$STAND_DIR/$name-console.log" >&2; die "ВМ $name не поднялась за 10 мин"; }
       sleep 2
     done
-    log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; echo "$PRETTY_NAME"')"
+    log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; printf "%s, dpkg %s, база man-db %s" "$PRETTY_NAME" \
+      "$(grep -q unsafe-io /etc/dpkg/dpkg.cfg.d/90vpn2-ci 2>/dev/null && echo без fsync || echo с fsync)" \
+      "$(test -e /var/lib/man-db/auto-update && echo обновляется || echo не обновляется)"')"
   done
   host_stats 'ВМ готовы'
   entry_stats 'ВМ готовы'

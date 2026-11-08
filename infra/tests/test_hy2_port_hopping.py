@@ -260,7 +260,7 @@ class Hy2PortHoppingTests(unittest.TestCase):
         (anysda / 'hy2_bandwidth.py').write_text('')
         (anysda / 'sing-box-server.json.tpl').write_text('{}\n')
         executables = {anysda / 'warp-watchdog.py': '#!/bin/sh\nexit 1\n',
-                       root / 'bin/sing-box': '#!/bin/sh\necho "sing-box version 1.14.4"\n',
+                       root / 'bin/sing-box': '#!/bin/sh\necho "sing-box version 1.12.25"\n',
                        fake / 'ufw': FAKE_UFW, fake / 'nft': FAKE_NFT,
                        fake / 'curl': '#!/bin/sh\nexit 22\n'}
         for name in ('systemctl', 'ss', 'sysctl', 'modprobe', 'ip', 'iptables', 'ip6tables',

@@ -40,7 +40,7 @@ class RouterConfigTests(unittest.TestCase):
                             and c.get('port') == [443]
                             for r, c in zip(rules[:youtube], conds[:youtube])))
 
-    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
     def test_all_youtube_modes_pass_sing_box_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -57,7 +57,7 @@ class RouterConfigTests(unittest.TestCase):
                                                 capture_output=True, text=True)
                         self.assertEqual(result.returncode, 0, result.stderr)
 
-    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
     def test_manual_domain_and_ip_priority_in_real_rule_sets(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
@@ -78,7 +78,7 @@ class RouterConfigTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual('match rules.' in result.stderr, matches, result.stderr)
 
-    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
     def test_exit_template_passes_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)

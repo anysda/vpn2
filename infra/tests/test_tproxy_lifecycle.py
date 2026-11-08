@@ -9,7 +9,7 @@ from router_support import ROOT, SB
 @unittest.skipUnless(os.environ.get('RUN_NETNS_TESTS') == '1',
                      'set RUN_NETNS_TESTS=1 with sudo/iproute2/iptables available')
 class TproxyLifecycleTests(unittest.TestCase):
-    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+    @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
     def test_exit_failure_does_not_fall_back_to_entry_for_tcp_or_udp(self):
         result = subprocess.run([
             'sudo', '-n', 'unshare', '--net', 'env', f'SING_BOX_BIN={SB}',

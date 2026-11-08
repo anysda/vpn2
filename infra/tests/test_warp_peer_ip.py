@@ -78,7 +78,7 @@ class WarpPeerAddressTests(unittest.TestCase):
         (self.stage / 'install-sing-box.sh').write_text('exit 0\n')
         fakes = dict(RESOLVERS, wgcf=WGCF,
                      curl='#!/bin/sh\ncat >/dev/null\necho \'{"config": {"client_id": "AQID"}}\'\n',
-                     **{'sing-box': '#!/bin/sh\necho "sing-box version 1.14.4"\n'})
+                     **{'sing-box': '#!/bin/sh\necho "sing-box version 1.12.25"\n'})
         for name, body in fakes.items():
             (self.bin / name).write_text(body)
             (self.bin / name).chmod(0o755)

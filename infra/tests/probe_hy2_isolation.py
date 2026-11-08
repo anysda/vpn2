@@ -5,7 +5,7 @@ python3 infra/tests/probe_hy2_isolation.py --router-binary /path/to/router \
     --server-binary /path/to/stock-sing-box
 
 Eight TCP receivers stop reading while a ninth downloads 10 MiB through the
-same outbound. Exit 1 on starvation; --variant stock reproduces 1.14.4.
+same outbound. Exit 1 on starvation; --variant stock reproduces 1.12.25.
 --variant generated tests the repository's actual hub and exit configs;
 use a non-loopback --origin-address (the exit deliberately blocks loopback).
 --server-ssh and --server-address move the exit to an isolated systemd host;

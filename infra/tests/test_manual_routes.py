@@ -6,7 +6,7 @@ import unittest
 from router_support import SB, apply, prepare, snapshot, stage_source
 
 
-@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
 class ManualRoutesTests(unittest.TestCase):
     def test_broken_input_keeps_last_routes(self):
         for filename, broken in [('manual.json', '{'), ('prefs.json', '{'),

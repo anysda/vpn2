@@ -11,7 +11,7 @@ def load(path):
     return json.loads(path.read_text())
 
 
-@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.14.4')
+@unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
 class RoutePlanTests(unittest.TestCase):
     def test_plan_is_the_applied_config_with_set_contents(self):
         with tempfile.TemporaryDirectory() as tmp:

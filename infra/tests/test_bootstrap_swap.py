@@ -5,6 +5,7 @@ test cuts it out of the stage, points /proc/meminfo, /proc/swaps, /etc/fstab,
 /etc/sysctl.d/ and /swapfile into a temporary tree and replaces fallocate,
 mkswap, swapon, swapoff and sysctl with recorders in PATH.
 """
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -105,9 +106,17 @@ class Fixture:
         return found
 
     def snapshot(self):
-        return {str(path.relative_to(self.root)): path.read_bytes()
-                for path in sorted(self.root.rglob('*'))
-                if path.is_file() and path.parts[-2] != 'bin' and path.name != 'calls'}
+        # system/ holds only links to the host PATH binaries: never walk into it.
+        found = {}
+        for folder, dirs, files in os.walk(self.root):
+            folder = Path(folder)
+            if folder == self.root:
+                dirs[:] = [name for name in dirs if name != 'system']
+            for name in files:
+                path = folder / name
+                if path.is_file() and folder.name != 'bin' and name != 'calls':
+                    found[str(path.relative_to(self.root))] = path.read_bytes()
+        return dict(sorted(found.items()))
 
 
 class BootstrapSwapTests(unittest.TestCase):

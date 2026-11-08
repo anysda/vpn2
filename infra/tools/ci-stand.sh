@@ -42,6 +42,7 @@ TLS_INITIAL_WAIT=0
 # установка на ВМ та же - apt-get update/install с чистой Ubuntu, но пакеты
 # берутся из кэша раннера, а не с зеркал на каждом прогоне. Каталог кэша
 # переживает прогон через actions/cache (stand.yml).
+# HTTPS-источники (репо Docker) идут мимо: прокси не держит туннели CONNECT.
 APT_CACHE=${STAND_APT_CACHE:-/var/tmp/vpn2-apt-cache}
 APT_PROXY=http://$NET.1:3142
 # Сторож возвращает канал на hy2 после стольких секунд живого hy2 (в продукте 60).
@@ -130,6 +131,7 @@ write_files:
   - path: /etc/apt/apt.conf.d/00vpn2-ci-proxy
     content: |
       Acquire::http::Proxy "$APT_PROXY";
+      Acquire::https::Proxy "DIRECT";
   - path: /etc/environment
     append: true
     content: |

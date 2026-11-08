@@ -13,11 +13,14 @@ import test_fw_guard_entry_refs as refs
 import test_fw_guard_entry_silent as silent
 
 
-# Отметка пульса пишется 3 с: стадия (1,5 с) кончается и kill приходит посреди записи.
+# Отметка пульса пишется 5 с - дольше потолка, до которого стадия ждёт первый пульс
+# (arm + 3 с): стадия кончается, и kill приходит посреди записи. Без пульса возраст
+# на disarm ~3 с, поэтому окно 6 с: откат здесь означает только недописанную отметку.
+WINDOW = 60
 SLOW_BEAT = r'''
 eval "orig_$(declare -f now_ms)"
 now_ms() {
-  if [[ ${FUNCNAME[1]} == *net && $cmd == *'fw-guard.sh beat'* ]]; then command sleep 3; fi
+  if [[ ${FUNCNAME[1]} == *net && $cmd == *'fw-guard.sh beat'* ]]; then command sleep 5; fi
   orig_now_ms
 }
 '''
@@ -26,7 +29,7 @@ now_ms() {
 class EntryBeatKilledMidWriteTests(unittest.TestCase):
     def check_not_rolled_back(self, net):
         runner = refs.EntryBeatReferenceExitTests()
-        with mock.patch.object(refs, 'NET', net):
+        with mock.patch.object(refs, 'NET', net), mock.patch.object(refs, 'WINDOW', WINDOW):
             result, _, _, detail = runner.run_entry_stage(files=('outside-open',), extra=SLOW_BEAT)
         self.assertNotIn('откатан', result.stdout, 'оборванный пульс откатил стадию\n' + detail)
         self.assertIn('RESULT=0', result.stdout, detail)

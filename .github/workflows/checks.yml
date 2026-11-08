@@ -71,6 +71,8 @@ jobs:
           python3 -m pip install PyYAML==6.0.3
       - name: регрессии инфраструктуры без sing-box
         if: ${{ !matrix.sing-box }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python3 infra/tests/run_parallel.py
       - name: регрессии развёртывания и маршрутов sing-box
         if: matrix.sing-box

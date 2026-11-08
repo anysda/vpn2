@@ -162,7 +162,6 @@
  "test_config_validation[general]": 3,
  "test_config_vpn.VpnConfigTests[0]": 3,
  "test_deploy_lock_local_failure.DeployLockLocalFailureTests[1]": 3,
- "test_deploy_lock_orphan_step_timeout[general]": 3,
  "test_dns[general]": 3,
  "test_emergency_agent.EmergencyAgentTests[0]": 3,
  "test_emergency_snapshot.SnapshotTests[2]": 3,

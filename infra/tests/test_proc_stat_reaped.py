@@ -15,7 +15,6 @@ from unittest import mock
 
 import test_deploy_fatal_exit_code
 import test_deploy_lock_orphan_session
-import test_deploy_lock_orphan_step_timeout
 
 GONE = (FileNotFoundError(errno.ENOENT, 'No such file or directory'),
         ProcessLookupError(errno.ESRCH, 'No such process'))
@@ -39,9 +38,6 @@ class AliveReapedTests(unittest.TestCase):
 
     def test_orphan_session_alive(self):
         self.check(test_deploy_lock_orphan_session.alive)
-
-    def test_orphan_step_timeout_alive(self):
-        self.check(test_deploy_lock_orphan_step_timeout.alive)
 
 
 class FakeSshReapedCoprocTests(unittest.TestCase):

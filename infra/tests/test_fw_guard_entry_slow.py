@@ -12,24 +12,33 @@ import test_fw_guard_entry_refs as refs
 
 
 # Вход по ssh на экзит длится LOGIN с (в секундах стенда), потом команда пробы.
-# Сессию обрывает потолок SSH_PROBE_TIMEOUT, как timeout в ssh_fresh.
+# Сессию обрывает потолок SSH_PROBE_TIMEOUT, как timeout в ssh_fresh. Обрыв
+# считается в секундах стенда: запуск bash и awk ускорению не поддаётся, и
+# реальные часы съедали бы запас потолка над LOGIN (0,2 с при LOGIN=13).
+# Внешний timeout - только страховка, на секунду реального времени дольше входа.
 SLOW = r'''
 eval "orig_$(declare -f net)"
 net() {
   if [[ $SSH_HOST == exit-* && $* == */dev/tcp/* ]]; then
-    local node=${SSH_HOST#exit-} limit
+    local node=${SSH_HOST#exit-} ceiling=${SSH_PROBE_TIMEOUT:-30} limit
     echo "$node $*" >> calls
     echo "$node" >> probes
-    limit=$(awk -v s="${SSH_PROBE_TIMEOUT:-30}" 'BEGIN { print s / 10 }')
+    limit=$(awk -v s="$ceiling" -v l="$LOGIN" 'BEGIN { if (s < l + 10) s = l + 10; print s / 10 }')
     command timeout "$limit" bash -c '
-      command sleep "$(awk -v s="$1" "BEGIN { print s / 10 }")"
-      # Вход закрыт отбросом: TCP-проба висит до своего таймаута.
+      login=$1 ceiling=$3
+      command sleep "$(awk -v s="$login" "BEGIN { print s / 10 }")"
+      # Вход закрыт отбросом: TCP-проба висит до своего таймаута, а вход с
+      # пробой дольше потолка сессию обрывает ssh_fresh (код timeout).
       timeout() {
         [[ -e outside-open ]] && return 0
+        if (( login + $1 > ceiling )); then
+          command sleep "$(awk -v s=$(( ceiling - login )) "BEGIN { print s / 10 }")"
+          exit 124
+        fi
         command sleep "$(awk -v s="$1" "BEGIN { print s / 10 }")"
         return 124
       }
-      eval "$2"' _ "$LOGIN" "$*"
+      eval "$2"' _ "$LOGIN" "$*" "$ceiling"
     return
   fi
   orig_net "$@"

@@ -134,12 +134,12 @@ class Hy2PortHoppingTests(unittest.TestCase):
     # край 1
     def test_entry_outbounds_hop_on_all_three_channels(self):
         outbounds, env, _ = self.entry(with_hop('true'))
-        self.assert_hopping(outbounds, env, DEFAULTS, '30s')
+        self.assert_hopping(outbounds, env, DEFAULTS, '5s')
 
     # край 2: проверка на уровне env, на HEAD config2env ключа ports.hy2_hop не знает
     def test_disabled_hopping_keeps_outbounds_byte_identical(self):
         hop = {'HY2_HOP_DIRECT': '20000-24999', 'HY2_HOP_WARP': '25000-29999',
-               'HY2_HOP_MGMT': '30000-30999', 'HY2_HOP_INTERVAL': '30s'}
+               'HY2_HOP_MGMT': '30000-30999', 'HY2_HOP_INTERVAL': '5s'}
         disabled = generate(HY2_HOP_ENABLED='0', **hop)
         enabled = json.loads(generate(HY2_HOP_ENABLED='1', **hop))
         for outbound in hy2_outbounds(json.loads(disabled)).values():
@@ -177,7 +177,7 @@ class Hy2PortHoppingTests(unittest.TestCase):
     def test_old_config_without_hop_key_gets_defaults_enabled(self):
         outbounds, env, all_env = self.entry(old_config())
         self.assertNotIn('HY2_HOP_', all_env)
-        self.assert_hopping(outbounds, env, DEFAULTS, '30s')
+        self.assert_hopping(outbounds, env, DEFAULTS, '5s')
 
     # край 4 (+5: конфиг старой установки)
     def test_exit_stage_redirects_ranges_and_rerun_keeps_one_rule(self):

@@ -51,6 +51,36 @@ TCP_RETURN_S=20
 log() { printf '[stand] %s\n' "$*"; }
 die() { printf '[stand] ✗ %s\n' "$*" >&2; exit 1; }
 
+# Машина раннера: модель CPU и ядра один раз, затем нагрузка хоста за отрезок
+# с прошлой отметки (/proc/stat в файле стенда переживает шаги workflow).
+# steal хоста - время, отнятое у ВМ раннера её гипервизором.
+host_machine() {
+  log "хост: $(sed -n 's/^model name[[:space:]]*: //p' /proc/cpuinfo | sort | uniq -c | sed 's/^ *//' | paste -sd ';'), $(nproc) ядер, $(awk '/MemTotal/ {printf "%d", $2 / 1024}' /proc/meminfo) МиБ"
+}
+# Занятость и steal по строке «cpu» из /proc/stat за отрезок с прошлого вызова
+# с тем же файлом-отметкой; первый вызов только ставит отметку.
+cpu_delta() {  # <файл-отметка> <строка cpu> <ядер>
+  local _cpu u n s i w q sq st p=() dt
+  read -r _cpu u n s i w q sq st _ <<<"$2"
+  [[ -f "$1" ]] && read -r -a p < "$1"
+  echo "$((u + n + s + i + w + q + sq + st)) $((i + w)) $st" > "$1"
+  (( ${#p[@]} == 3 )) && dt=$((u + n + s + i + w + q + sq + st - p[0])) && (( dt > 0 )) || return 0
+  printf ', занято %d %%, steal %d %% за %d с' "$(( 100 * (dt - (i + w - p[1])) / dt ))" \
+    "$(( 100 * (st - p[2]) / dt ))" "$(( dt / $3 / 100 ))"
+}
+host_stats() {  # <метка>
+  mkdir -p "$STAND_DIR"
+  log "хост [$1]: load $(cut -d' ' -f1-3 /proc/loadavg)$(cpu_delta "$STAND_DIR/host-stat" "$(head -n1 /proc/stat)" "$(nproc)")"
+}
+# То же внутри entry: steal гостя - vCPU стенда ждали ядро хоста.
+entry_stats() {  # <метка>
+  local g
+  g=$(ssh_node "$ENTRY" 'cut -d" " -f1-3 /proc/loadavg; head -n1 /proc/stat; nproc' 2>/dev/null) || return 0
+  mapfile -t g <<<"$g"
+  (( ${#g[@]} == 3 )) || return 0
+  log "entry [$1]: load ${g[0]}$(cpu_delta "$STAND_DIR/entry-stat" "${g[1]}" "${g[2]}")"
+}
+
 ssh_node() {
   local host=$1
   shift
@@ -188,6 +218,8 @@ fetch_image() {
 cmd_up() {
   [[ -e /dev/kvm ]] || die '/dev/kvm нет: нужна машина с аппаратной виртуализацией'
   mkdir -p "$STAND_DIR"
+  host_machine
+  host_stats 'начало up'
   chmod 700 "$STAND_DIR"
   local image=$STAND_DIR/base.img fetch=''
   # Образ качается, пока ставится qemu.
@@ -230,6 +262,8 @@ cmd_up() {
     done
     log "ВМ $name готова: $(ssh_node "$ip" '. /etc/os-release; echo "$PRETTY_NAME"')"
   done
+  host_stats 'ВМ готовы'
+  entry_stats 'ВМ готовы'
 }
 
 # up фоном: ВМ грузятся, пока раннер собирает образ панели; up-wait ждёт
@@ -260,15 +294,30 @@ entry_run() {
   while :; do
     lines=$(ssh_node "$ENTRY" "wc -l < /root/$name.log" 2>/dev/null || echo "$shown")
     if (( lines > shown )); then
-      ssh_node "$ENTRY" "sed -n '$((shown + 1)),${lines}p' /root/$name.log" || true
+      ssh_node "$ENTRY" "sed -n '$((shown + 1)),${lines}p' /root/$name.log" | stage_stats || true
       shown=$lines
     fi
     if rc=$(ssh_node "$ENTRY" "cat /root/$name.rc 2>/dev/null") && [[ -n "$rc" ]]; then
-      ssh_node "$ENTRY" "sed -n '$((shown + 1)),\$p' /root/$name.log" || true
+      ssh_node "$ENTRY" "sed -n '$((shown + 1)),\$p' /root/$name.log" | stage_stats || true
       return "$rc"
     fi
     sleep 2
   done
+}
+
+# Вывод стадий насквозь; после строк «[стадия → узел] done» - нагрузка
+# хоста и entry за время с прошлой отметки.
+stage_stats() {
+  local line done=()
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    [[ $line =~ \[([^]]+)\]\ done ]] && done+=("${BASH_REMATCH[1]}")
+  done
+  (( ${#done[@]} )) || return 0
+  local label
+  label=$(printf '%s, ' "${done[@]}")
+  host_stats "после ${label%, }"
+  entry_stats "после ${label%, }"
 }
 
 push_tree() {
@@ -306,6 +355,8 @@ load_panel() {
 
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
+  host_stats 'до деплоя'
+  entry_stats 'до деплоя'
   apt_proxy_up
   push_tree
   docker tag "$image" "$PANEL_REF"
@@ -314,6 +365,7 @@ cmd_deploy() {
   entry_run deploy './deploy.sh --development' || rc=$?
   wait "$loader" || (( rc )) || rc=1
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  host_stats 'после деплоя'
   return "$rc"
 }
 
@@ -329,6 +381,7 @@ UDP_STAGES=('00-bootstrap all' '05-mgmt-mesh all' "10-foreign $EXIT_TAG" '20-ru-
             '21-failover-watchdog ru' '22-adguard ru')
 
 cmd_deploy_udp() {
+  host_stats 'до деплоя'
   apt_proxy_up
   push_tree
   local stage started=$SECONDS

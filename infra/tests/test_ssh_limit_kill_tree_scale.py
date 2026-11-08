@@ -31,7 +31,7 @@ cat "$FAKE_PS_EXTRA"
 # PASSES проходов ps | awk по тому же снимку, tree - _limit_kill_tree, left -
 # выжившие из настоящего дерева.
 SCENARIO = r'''
-alive() { [[ -d /proc/$1 ]] && [[ $(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) != Z ]]; }
+alive() { local s; s=$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) && [[ -n $s && $s != Z ]]; }
 since() { awk -v s="$1" -v e="$EPOCHREALTIME" 'BEGIN { printf "%.4f", e - s }'; }
 for ((r = 0; r < $1; r++)); do
   bash -c 'sleep 60 & sleep 60 & wait' </dev/null >/dev/null 2>&1 & root=$!

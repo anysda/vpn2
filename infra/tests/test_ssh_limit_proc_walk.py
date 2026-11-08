@@ -36,7 +36,7 @@ wait
 '''
 
 SCENARIO = r'''
-alive() { [[ -d /proc/$1 ]] && [[ $(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) != Z ]]; }
+alive() { local s; s=$(awk '{ print $3 }' "/proc/$1/stat" 2>/dev/null) && [[ -n $s && $s != Z ]]; }
 # $1 - метка, что не наша: её процесс не проверяется, а гасится в конце.
 left() {
   local tag k i out=''

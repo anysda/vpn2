@@ -75,6 +75,32 @@ die 'stage failed: entry refuses ssh'
 NEXT = 'release_start rollback\necho deploy-locked\n'
 
 
+def kill_tree(root):
+    """KILL процессу и всем потомкам, в какой бы группе и сессии они ни были.
+
+    Дерево сначала замирает (STOP), чтобы никто не успел породить нового
+    ребёнка или осиротеть, пока его обходят.
+    """
+    found, todo = [], [root]
+    while todo:
+        pid = todo.pop()
+        try:
+            os.kill(pid, signal.SIGSTOP)
+        except ProcessLookupError:
+            continue
+        found.append(pid)
+        for children in Path(f'/proc/{pid}/task').glob('*/children'):
+            try:
+                todo += [int(child) for child in children.read_text().split()]
+            except OSError:
+                pass
+    for pid in found:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 class OrphanEntry(Entry):
     def __init__(self):
         super().__init__()
@@ -98,8 +124,12 @@ SSH_USER=root SSH_HOST=entry.example SSH_PASS=fixture SSH_PROBE_TIMEOUT=5
         try:
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            out, err = proc.communicate()
+            # Вывод шага держат и процессы клиента подставного ssh, не только
+            # bash, а ssh.sh уводит их в свою группу: убить всё дерево шага,
+            # иначе communicate ждёт EOF вечно.
+            kill_tree(proc.pid)
+            proc.communicate(timeout=5)
+            raise
         return subprocess.CompletedProcess(proc.args, proc.returncode, out, err)
 
     def sessions(self):

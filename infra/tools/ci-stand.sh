@@ -171,11 +171,12 @@ cmd_up() {
     read -r name ip cpus mem mac <<<"$node"
     tap=$BRIDGE-$name
     seed "$name" "$ip" "$mac" "$(cat "$STAND_DIR/root-password")"
+    # Диск одноразовый: fsync гостя (dpkg на каждый пакет) хосту не нужен.
     qemu-img create -q -f qcow2 -F qcow2 -b "$image" "$STAND_DIR/$name.qcow2" 20G
     ip link show "$tap" >/dev/null 2>&1 || ip tuntap add dev "$tap" mode tap
     ip link set "$tap" master "$BRIDGE" up
     qemu-system-x86_64 -name "vpn2-$name" -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
-      -drive "file=$STAND_DIR/$name.qcow2,if=virtio,discard=unmap" \
+      -drive "file=$STAND_DIR/$name.qcow2,if=virtio,discard=unmap,cache=unsafe" \
       -drive "file=$STAND_DIR/$name-seed.iso,if=virtio,format=raw,readonly=on" \
       -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no" -device "virtio-net-pci,netdev=lan,mac=$mac" \
       -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \

@@ -158,8 +158,11 @@ def alive(pid):
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    # Зомби держателя тоже считается мёртвым.
-    stat = Path(f'/proc/{pid}/stat').read_text()
+    # Зомби держателя тоже считается мёртвым, пожатый до чтения stat - тоже.
+    try:
+        stat = Path(f'/proc/{pid}/stat').read_text()
+    except (FileNotFoundError, ProcessLookupError):
+        return False
     return stat.rsplit(')', 1)[1].split()[0] != 'Z'
 
 

@@ -48,7 +48,7 @@ if os.environ.get('FAKE_RESET') == f'{op}:{n}' and not os.path.exists(refused):
             try:
                 if open(f'/proc/{coproc}/stat').read().split(') ')[1][0] == 'Z':
                     break
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 break
             time.sleep(0.05)
 if os.path.exists(refused):

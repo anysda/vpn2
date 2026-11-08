@@ -38,7 +38,9 @@ net() {
   if [[ $node == entry ]]; then
     case $cmd in
       *"/tmp/anysda/$STAGE.sh"*)
-        now_ms > armed
+        # Отметки пишутся целиком или никак, как mtime alive у настоящего сторожа:
+        # kill пульса посреди записи не оставляет пустой файл (возраст от эпохи).
+        now_ms > armed.part && mv armed.part armed
         if [[ -e stage-closes ]]; then
           rm -f outside-open
           # Проба, ушедшая до закрытия, может донести пульс чуть позже.
@@ -48,7 +50,7 @@ net() {
         command sleep 1.5
         touch stage-done ;;
       *'fw-guard.sh beat'*)
-        now_ms > beat
+        now_ms > beat.part && mv beat.part beat
         if [[ -e closed || ( ! -e outside-open && ! -e stage-closes ) ]]; then echo entry-closed >> beats; else echo entry >> beats; fi ;;
       *'fw-guard.sh disarm'*)
         last=$(cat armed)

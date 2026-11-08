@@ -29,7 +29,8 @@ HERE = Path(__file__).resolve().parent
 CHUNK = 4
 HOST_STATE = re.compile(r'test_wg_conf_wg_oracle|/run/netns')
 # Seconds of a partition in infra (true) on GitHub (dev cdfd3ce): queue order only. Unlisted ones
-# go after, larger first; a new slow module goes here or ends up in the run's tail
+# go after, larger first; a new slow module goes here or ends up in the run's tail.
+# test_deploy_lock_orphan_session is left out: in the first wave its 15 s step overruns and hangs
 WEIGHT = {
     'test_verify.VerifyTest[test_individual_entry_failures]': 245,
     'test_verify.VerifyTest[test_fresh_scrape_after_tunnel_restart_ten_times]': 50,
@@ -43,7 +44,7 @@ WEIGHT = {
     'test_apply_openvpn_check_env.OpenvpnCheckRefusedTests[0]': 52, 'test_fw_guard_entry_slow[general]': 49,
     'test_fw_guard_late_beat[general]': 48, 'test_verify_traffic[general]': 47,
     'test_panel_closed_journal[general]': 46, 'test_verify_exit_target[general]': 40,
-    'test_stage_exit_login_hang[general]': 39, 'test_deploy_lock_orphan_session[general]': 38,
+    'test_stage_exit_login_hang[general]': 39,
     'test_adguard_panel_settings[general]': 32, 'test_emergency_agent.EmergencyAgentTests[11]': 29,
     'test_verify_exit_ssh_bashrc[general]': 27, 'test_telegram_bot_off.TelegramConfigRemovedTests[0]': 25,
     'test_hy2_isolation[general]': 23, 'test_emergency_hy2.EmergencyHy2Tests[3]': 23,

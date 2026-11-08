@@ -299,6 +299,7 @@ fetch_image() {
 # Без initrd: virtio и ext4 в ядре, корень - первый раздел диска (~4 с
 # загрузки). Корень тот же, плюс mitigations=off: ВМ одноразовая, чужого кода
 # в ней нет, а retpoline и Safe RET на AMD раннера тормозят dpkg и стадии.
+# snapd продукту не нужен: его засев держит cloud-init на загрузке ~2 с.
 # Нет ядра - через GRUB.
 fetch_kernel() {
   local dir=$1 name sums
@@ -352,13 +353,17 @@ cmd_up() {
   if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
   if [[ -f "$STAND_DIR/vmlinuz" ]]; then
     boot=(-kernel "$STAND_DIR/vmlinuz"
-      -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off')
+      -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off systemd.mask=snapd.service systemd.mask=snapd.socket systemd.mask=snapd.seeded.service')
   fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
   [[ -f "$STAND_DIR/root-password" ]] || (umask 077; openssl rand -hex 16 > "$STAND_DIR/root-password")
   net_up
   apt_proxy_up
-  local node name ip cpus mem mac tap
+  local node name ip cpus mem mac tap vhost=''
+  # Сеть ВМ в ядре хоста (vhost-net), а не в потоке qemu: меньше CPU раннера
+  # на образ панели, пакеты и трафик 99-verify.
+  modprobe vhost_net 2>/dev/null || true
+  [[ -c /dev/vhost-net ]] && vhost=,vhost=on
   for node in "${NODES[@]}"; do
     read -r name ip cpus mem mac <<<"$node"
     tap=$BRIDGE-$name
@@ -370,10 +375,10 @@ cmd_up() {
     qemu-system-x86_64 -name "vpn2-$name" -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
       -drive "file=$STAND_DIR/$name.qcow2,if=virtio,discard=unmap,cache=unsafe" \
       -drive "file=$STAND_DIR/$name-seed.iso,if=virtio,format=raw,readonly=on" \
-      -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no" -device "virtio-net-pci,netdev=lan,mac=$mac" \
+      -netdev "tap,id=lan,ifname=$tap,script=no,downscript=no$vhost" -device "virtio-net-pci,netdev=lan,mac=$mac" \
       -device virtio-rng-pci -display none -serial "file:$STAND_DIR/$name-console.log" \
       -daemonize -pidfile "$STAND_DIR/$name.pid" "${boot[@]}"
-    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up${boot:+, ядро без GRUB}"
+    log "ВМ $name: $ip, ${cpus} vCPU, ${mem} МиБ, запущена через $((SECONDS - up_t0)) с от начала up${boot:+, ядро без GRUB}${vhost:+, vhost-net}"
   done
   # Узлы ждём параллельно: последовательно второй замечали на ~3 с позже.
   local waits=()

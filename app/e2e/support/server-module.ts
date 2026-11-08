@@ -21,8 +21,11 @@ export function serverModule<T = Record<string, unknown>>(
   const source = process.env.SERVER_REVISION
     ? execFileSync('git', ['show', `${process.env.SERVER_REVISION}:${relative(root, filename)}`], { cwd: root, encoding: 'utf8' })
     : readFileSync(filename, 'utf8')
+  // esModuleInterop выключен явно (в TypeScript 6 он включён по умолчанию):
+  // `import * as x` остаётся простым require, как пространство имён в сборке
+  // Nitro, без лишнего ключа default, на котором спотыкается drizzle.
   const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: false },
     fileName: filename,
   })
   const exports = {}

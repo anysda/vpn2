@@ -1175,7 +1175,8 @@ class EmergencyAgentTests(unittest.TestCase):
     def test_deploy_declares_agent_for_all_nodes(self):
         stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
         deploy = (ROOT / 'infra/deploy.sh').read_text()
-        self.assertIn('run_stage 23-emergency     all', deploy)
+        self.assertIn("'23-emergency:foreign'", deploy)
+        self.assertIn('"23-emergency:ru ', deploy)
         self.assertIn('emergency/provision.py', deploy)
         self.assertIn('User=vpn2-emergency', stage)
         self.assertIn('LogRateLimitBurst=10', stage)

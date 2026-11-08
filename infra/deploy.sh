@@ -1437,7 +1437,7 @@ except Exception:
 # ----------------------------------------------------------------------------
 # Full ordered pipeline
 # ----------------------------------------------------------------------------
-# Образы панели и бота тянем в фоне, пока ru занята apt-стадиями 26/27:
+# Образы панели и бота тянем в фоне, пока ru занята стадиями 23-27:
 # 30/35 потом делают свой docker pull по уже скачанным слоям. Сбой
 # предзагрузки не страшен - стадии тянут образ сами и сами падают без него.
 # Имена образов - те же умолчания, что в 30-frontend.sh / 35-telegram.sh.
@@ -1452,7 +1452,9 @@ prefetch_images() {
     [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
     [[ "${TGBOT_IMAGE_PULL:-true}" == false ]] || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
     [[ ${#imgs[@]} -gt 0 ]] || exit 0
-    if ssh_exec "for i in ${imgs[*]}; do docker pull -q \"\$i\" || exit 1; done" >/dev/null 2>&1; then
+    # Каждый образ отдельно: несобранный в реестре (свой образ панели) не
+    # отменяет предзагрузку остальных.
+    if ssh_exec "rc=0; for i in ${imgs[*]}; do docker pull -q \"\$i\" || rc=1; done; exit \$rc" >/dev/null 2>&1; then
       log "предзагрузка образов: ${imgs[*]}"
     else
       warn "предзагрузка образов не вышла - стадии потянут сами"
@@ -1516,11 +1518,14 @@ do_all() {
   verify_and_rotate_ports
   run_stage 21-failover-watchdog ru
   run_stage 22-adguard       ru
-  run_stage 23-emergency     all
-  run_stage 25-monitoring    ru
   prefetch_images
-  run_stage 26-backup        ru
-  run_stage 27-ikev2         ru
+  # 23 на экзитах ставит docker и тянет образ аварийки (~20 с против ~8 с на
+  # ru): ru тем временем проходит 25/26/27, аварийка экзитов им не нужна.
+  # provision.py под замком и пишет атомарно - двум цепочкам он не мешает.
+  local exit_emergency=''
+  [[ -z "$(expand_hosts foreign)" ]] || exit_emergency='23-emergency:foreign'
+  run_tracks "$exit_emergency" \
+             "23-emergency:ru 25-monitoring:ru 26-backup:ru 27-ikev2:ru"
   run_stage 29-control       ru
   wait "$_PREFETCH_PID" || true
   VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru

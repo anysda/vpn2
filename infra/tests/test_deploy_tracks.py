@@ -50,6 +50,13 @@ do_all
                             and '99-verify' not in line and '23-emergency' not in line),
                         lines.index('stage 20-ru-router ru'), lines)
 
+    def test_ru_stages_run_while_exits_install_emergency(self):
+        lines = self.run_all()
+        tracks = [line.split(' ', 1)[1].split() for line in lines if line.startswith('track ')]
+        self.assertIn(['23-emergency:foreign'], tracks)
+        self.assertIn(['23-emergency:ru', '25-monitoring:ru', '26-backup:ru', '27-ikev2:ru'], tracks)
+        self.assertLess(lines.index('stage 27-ikev2 ru'), lines.index('stage 29-control ru'), lines)
+
     def test_single_bootstrap_stage_still_prepares_keys(self):
         source = (ROOT / 'infra/deploy.sh').read_text()
         script = function(source, 'run_stage').split('\n  local hosts', 1)[0] + '\n}\n' + '''

@@ -136,7 +136,8 @@ PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
 # Штраф — по УЗЛУ экзита, не по тегу: у ноды несколько outbound-ов
 # (hy2-<node>-direct, hy2-<node>-warp) — они на одной ноде и умирают вместе,
 # иначе watchdog обошёл бы штраф, перескочив на соседний тег того же узла.
-# Исключение - мёртвый warp при живом direct узла (_warp_only): это WARP, не узел.
+# Исключение - у узла отвечает другой выход пользовательского трафика (_node_alive):
+# умер канал или выход (WARP, hy2 при обрыве UDP), а не узел.
 _penalty: dict = {}   # node -> monotonic-дедлайн пребывания в штрафной
 _pen_dur: dict = {}   # node -> текущая длительность штрафа (растёт при рецидиве)
 # Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
@@ -347,10 +348,14 @@ def _penalize(member):
     return node, dur
 
 
-def _warp_only(member, alive):
-    """Умер выход warp, а direct его узла жив: беда WARP или канала warp, не
-    узла. Узел не штрафуем, дорожки direct на нём остаются."""
-    return member.endswith('-warp') and member[:-4] + 'direct' in alive
+def _node_alive(member, alive):
+    """Живой выход пользовательского трафика узла member, кроме него самого, или ''.
+    Проба выхода идёт через его канал на любом транспорте (hy2 или TCP), так что
+    мёртв warp при живом direct или hy2 direct при warp уже на TCP - беда канала
+    или выхода, не узла: узел не штрафуем. mgmt трафик клиентов не везёт."""
+    node = _node_of(member)
+    return next((t for t in sorted(alive) if t != member and _node_of(t) == node
+                 and not t.endswith('-mgmt')), '')
 
 
 def _read_disabled(nodes):
@@ -531,11 +536,12 @@ def tick():
             return
         last_err = e.get(now, last_err)
 
-    if _warp_only(now, alive):
+    other = _node_alive(now, alive)
+    if other:
         _spare(spare)
         _switch(best, alive[best],
                 f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
-                f'direct узла {_node_of(now)} жив, узел не штрафую')
+                f'{other} узла {_node_of(now)} жив, узел не штрафую')
         return
 
     # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
@@ -1045,7 +1051,7 @@ def pins_tick(proxies, conns=None):
         # бы на первом же удачном замере. Штрафуем узел в момент признания
         # смерти; долгая смерть штраф не наращивает.
         if (_pin_miss[base] == DEAD_AFTER and node not in _excluded()
-                and _penalty.get(node, 0.0) <= t and not _warp_only(base, _tick_alive)):
+                and _penalty.get(node, 0.0) <= t and not _node_alive(base, _tick_alive)):
             _, dur = _penalize(base)
             print(f'{base} мёртв ({DEAD_AFTER}× промахов), узел {node} в штрафной {dur:.0f}с', flush=True)
         if node in _excluded():

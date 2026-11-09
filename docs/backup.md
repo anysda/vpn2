@@ -133,8 +133,8 @@ chmod 600 config.yaml
 #    backend: s3
 ./deploy.sh backup-list
 ./deploy.sh restore latest --force
-#    backend: local - путь к архиву, restore сам положит его
-#    в /var/backups/anysda-vpn2/
+#    backend: local - путь к архиву, restore сам положит его в каталог
+#    backup.local.dir (по умолчанию /var/backups/anysda-vpn2/)
 ./deploy.sh restore ./anysda-vpn2-<дата>.tar.gz.age --force
 ```
 

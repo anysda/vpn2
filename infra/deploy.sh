@@ -1661,9 +1661,10 @@ do_restore() {
       return 0
     fi
     log "scp локального архива на entry: $base"
-    ssh_exec "mkdir -p \${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2} 2>/dev/null || mkdir -p /var/backups/anysda-vpn2"
     push "$archive" "$base"
-    ssh_exec "mv /tmp/anysda/'$base' '/var/backups/anysda-vpn2/$base' && chmod 600 '/var/backups/anysda-vpn2/$base'"
+    # Каталог - из backup.env, откуда его берёт anysda-restore.sh (backup.local.dir).
+    ssh_exec "dir=\$(f=/etc/anysda/backup.env; [ -r \"\$f\" ] && . \"\$f\"; echo \"\${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2}\") \
+      && mkdir -p \"\$dir\" && mv /tmp/anysda/'$base' \"\$dir/$base\" && chmod 600 \"\$dir/$base\""
     archive="$base"
   fi
   ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'$flags"

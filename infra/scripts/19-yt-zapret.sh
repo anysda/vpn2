@@ -745,7 +745,8 @@ if [[ ! -x "$YT_PROBE_VENV/bin/node" ]] \
    || [[ "$("$YT_PROBE_VENV/bin/node" --version)" != v26.13.0 ]]; then
   YT_NODE_TMP=$(mktemp -d)
   trap 'rm -rf "$YT_NODE_TMP"' EXIT
-  release_download yt-node "$YT_NODE_TMP/node.tar.xz" https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz
+  release_download yt-node "$YT_NODE_TMP/node.tar.xz" https://nodejs.org/dist/v26.13.0/node-v26.13.0-linux-x64.tar.xz \
+    d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997
   printf '%s  %s\n' d28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997 \
     "$YT_NODE_TMP/node.tar.xz" | sha256sum -c -
   tar -xJf "$YT_NODE_TMP/node.tar.xz" -C "$YT_NODE_TMP" \

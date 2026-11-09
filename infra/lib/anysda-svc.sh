@@ -10,15 +10,17 @@
 SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
 # Loads lazily: backup/restore also use this library without release artifacts.
+# release_download <имя> <файл> <url> [sha256]: один путь в обоих режимах -
+# release.py с повтором, запасным путём через API релизов GitHub и сверкой
+# хеша. Хеш берётся из манифеста сборки; в режиме разработки манифеста нет,
+# хеш приходит из стадии (четвёртый аргумент). Есть оба - обязаны совпасть.
 release_download() {
-  local name="$1" destination="$2" url="$3" lib
-  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 --max-time 300 -o "$destination" "$url"
-  else
-    lib=$(dirname "${BASH_SOURCE[0]}")/release.py
-    python3 "$lib" --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
-      artifact "$name" "$destination" --url "$url"
+  local name="$1" destination="$2" url="$3" sha="${4:-}" lib manifest=()
+  lib=$(dirname "${BASH_SOURCE[0]}")/release.py
+  if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
+    manifest=(--manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}")
   fi
+  python3 "$lib" "${manifest[@]}" artifact "$name" "$destination" --url "$url" ${sha:+--sha256 "$sha"}
 }
 
 UFW_RULES_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/ufw-rules.py
@@ -362,18 +364,15 @@ deb_install() {
 # Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
 # что встала первой.
 CADDY_VER='2.11.9'
+# GitHub release assets API, tag v2.11.9, поле digest.
+CADDY_SHA256='bbea4aeaadc86b233c168cc33bad9daa1cbce756dc08949b783b45398f8e65cb'
 caddy_install() {
   local tmp rel_url deb
   [[ "$(caddy version 2>/dev/null | cut -d' ' -f1)" != "v${CADDY_VER}" ]] || return 0
   tmp=$(mktemp -d)
   rel_url="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VER}"
   deb="caddy_${CADDY_VER}_linux_amd64.deb"
-  release_download caddy "$tmp/$deb" "$rel_url/$deb" || { rm -rf "$tmp"; return 1; }
-  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$rel_url/caddy_${CADDY_VER}_checksums.txt" -o "$tmp/checksums.txt"
-    ( cd "$tmp" && grep -E "[[:space:]]${deb}\$" checksums.txt | sha512sum -c - ) \
-      || { rm -rf "$tmp"; svc_say "caddy SHA-512 mismatch — abort" >&2; return 1; }
-  fi
+  release_download caddy "$tmp/$deb" "$rel_url/$deb" "$CADDY_SHA256" || { rm -rf "$tmp"; return 1; }
   deb_install "$tmp/$deb" >/dev/null || { rm -rf "$tmp"; return 1; }
   rm -rf "$tmp"
 }

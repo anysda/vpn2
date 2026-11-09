@@ -41,7 +41,7 @@ WGCF_SHA256='4fb7a136aa470ece11d17949c7db07b040ec9c604742dc8680bcf1889f85d0c8'
 if [[ "$(sha256sum /usr/local/bin/wgcf 2>/dev/null | cut -d' ' -f1)" != "$WGCF_SHA256" ]]; then
   WGCF_CANDIDATE=$(mktemp /usr/local/bin/.wgcf.XXXXXXXX)
   trap 'rm -f "$WGCF_CANDIDATE"' EXIT
-  release_download wgcf "$WGCF_CANDIDATE" "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64"
+  release_download wgcf "$WGCF_CANDIDATE" "https://github.com/ViRb3/wgcf/releases/download/v${WGCF_VER}/wgcf_${WGCF_VER}_linux_amd64" "$WGCF_SHA256"
   printf '%s  %s\n' "$WGCF_SHA256" "$WGCF_CANDIDATE" | sha256sum --check --status
   chmod 755 "$WGCF_CANDIDATE"
   mv -fT "$WGCF_CANDIDATE" /usr/local/bin/wgcf

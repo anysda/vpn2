@@ -29,6 +29,7 @@ STAGE='22-adguard'
 AGH_DIR=/opt/AdGuardHome
 AGH_BIN=$AGH_DIR/AdGuardHome
 AGH_VER='v0.107.80'
+AGH_SHA256='28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18'
 # Что стадия сама записала в настройки DNS, которые правятся в панели.
 AGH_DNS_STATE=/etc/anysda/agh-dns.json
 
@@ -49,18 +50,11 @@ fi
 if [[ "$need_install" -eq 1 ]]; then
   ARCH='linux_amd64'
   TMP=$(mktemp -d)
-  # Скачиваем архив и checksums-файл по отдельности и проверяем SHA-256 перед
-  # распаковкой — `curl | tar -xz` уязвим к compromise CDN. checksums.txt подписан тем же релизом — атакеру нужно
-  # подменить оба файла одновременно (всё ещё уязвимо к compromise GitHub
-  # releases, но не к одностороннему MITM/CDN-corruption).
+  # SHA-256 архива сверяется до распаковки: из манифеста сборки, а в режиме
+  # разработки - AGH_SHA256 выше (GitHub release assets API, поле digest).
   REL_URL="https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VER}"
   ARCHIVE="AdGuardHome_${ARCH}.tar.gz"
-  release_download adguard "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
-  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$REL_URL/checksums.txt" -o "$TMP/checksums.txt"
-    ( cd "$TMP" && grep -E "[[:space:]]\*?(\./)?${ARCHIVE}\$" checksums.txt | sha256sum -c - ) \
-      || { rm -rf "$TMP"; echo "[$HOST_TAG] AdGuardHome SHA-256 mismatch — abort" >&2; exit 1; }
-  fi
+  release_download adguard "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE" "$AGH_SHA256"
   tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m0755 "$TMP/AdGuardHome/AdGuardHome" "$AGH_BIN"
   rm -rf "$TMP"

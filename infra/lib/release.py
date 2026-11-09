@@ -359,7 +359,8 @@ def fetch(root, output, source):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--manifest', required=True)
+    # Without a manifest only artifact works: development mode, the hash pinned in the stage.
+    parser.add_argument('--manifest')
     sub = parser.add_subparsers(dest='action', required=True)
     check = sub.add_parser('check')
     check.add_argument('root')
@@ -375,12 +376,19 @@ def main():
     art.add_argument('destination')
     art.add_argument('--cache', default='/var/cache/vpn2-release')
     art.add_argument('--url')
+    art.add_argument('--sha256')
     args = parser.parse_args()
     try:
-        if args.action == 'fetch':
+        if args.manifest is None:
+            if args.action != 'artifact' or not args.url or not re.fullmatch(r'[a-f0-9]{64}', args.sha256 or ''):
+                raise ReleaseError(f'{getattr(args, "name", args.action)}: without --manifest only artifact '
+                                   'with --url and the pinned --sha256 is allowed')
+            manifest = {'binaries': {args.name: {'url': args.url, 'sha256': args.sha256}}}
+        elif args.action == 'fetch':
             fetch(args.root, args.manifest, args.source)
             return 0
-        manifest = load(args.manifest)
+        else:
+            manifest = load(args.manifest)
         if args.action == 'check':
             validate_source(manifest, args.root)
             print(f'release: манифест commit {manifest["commit"]} (версия {manifest["version"]}) '
@@ -390,6 +398,8 @@ def main():
         else:
             if args.url and args.url != manifest['binaries'][args.name]['url']:
                 raise ReleaseError('artifact version/URL differs from release manifest')
+            if args.sha256 and args.sha256 != manifest['binaries'][args.name]['sha256']:
+                raise ReleaseError(f'{args.name}: hash pinned in the stage differs from release manifest')
             artifact(manifest, args.name, args.cache, args.destination)
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         message = str(error) if isinstance(error, ReleaseError) else type(error).__name__

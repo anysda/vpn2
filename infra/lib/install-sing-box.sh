@@ -32,9 +32,15 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 archive="sing-box-${SB_VER}-linux-${arch}.tar.gz"
+url="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/$archive"
 if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
   python3 "$(dirname "$0")/release.py" --manifest "$VPN2_RELEASE_MANIFEST" \
     artifact "sing-box-$arch" "$work/$archive"
+elif [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
+  # Режим разработки: манифеста нет, тот же повтор и запасной путь через API
+  # релизов GitHub, хеш - закреплённый выше.
+  python3 "$(dirname "$0")/release.py" artifact "sing-box-$arch" "$work/$archive" \
+    --url "$url" --sha256 "$sha256"
 else
   curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 20 \
     -o "$work/$archive" "https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/$archive"

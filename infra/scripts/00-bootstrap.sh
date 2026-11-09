@@ -489,16 +489,13 @@ svc_restart_if_changed fail2ban /usr/bin/fail2ban-server /usr/lib/systemd/system
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/6] node_exporter"
 NE_VERSION='1.12.1'
+# GitHub release assets API, tag v1.12.1, поле digest.
+NE_SHA256='b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63'
 if [[ ! -x /usr/local/bin/node_exporter ]] || ! /usr/local/bin/node_exporter --version 2>&1 | grep "version $NE_VERSION " >/dev/null; then
   TMP=$(mktemp -d)
   REL_URL="https://github.com/prometheus/node_exporter/releases/download/v${NE_VERSION}"
   ARCHIVE="node_exporter-${NE_VERSION}.linux-amd64.tar.gz"
-  release_download node-exporter "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE"
-  if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
-    curl -fsSL --retry 5 --retry-all-errors --connect-timeout 20 "$REL_URL/sha256sums.txt" -o "$TMP/sha256sums.txt"
-    ( cd "$TMP" && grep -E "[[:space:]]${ARCHIVE}\$" sha256sums.txt | sha256sum -c - ) \
-      || { rm -rf "$TMP"; echo "[$HOST_TAG] node_exporter SHA-256 mismatch — abort" >&2; exit 1; }
-  fi
+  release_download node-exporter "$TMP/$ARCHIVE" "$REL_URL/$ARCHIVE" "$NE_SHA256"
   tar -xz -C "$TMP" -f "$TMP/$ARCHIVE"
   install -m 0755 "$TMP/node_exporter-${NE_VERSION}.linux-amd64/node_exporter" /usr/local/bin/node_exporter
   rm -rf "$TMP"

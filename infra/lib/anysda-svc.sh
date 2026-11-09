@@ -308,9 +308,38 @@ apt_auto_pause() {
 
 # apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
 # стартом закрывает штатный DPkg::Lock::Timeout.
+# Разовый 5xx зеркала или прокси (InRelease, .deb) apt не повторяет даже с
+# Acquire::Retries: HTTP-ошибку он считает окончательной, update лишь
+# предупреждает и оставляет старые списки, а install потом падает «Unable to
+# locate package». Поэтому сбой загрузки (5xx, 408, 429, обрыв сети) повторяем
+# сами, всего APT_FETCH_TRIES раз с паузой; 4xx - ответ зеркала, не повтор.
+# Не отдало и тогда - строка «зеркало apt не отдало» с адресом и прежний код.
+APT_FETCH_TRIES=3
 apt_get() {
-  apt_wait_idle
-  apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@"
+  local try=1 rc err failed
+  err=$(mktemp)
+  while :; do
+    apt_wait_idle
+    rc=0
+    apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@" 2>"$err" || rc=$?
+    failed=$(awk '/^[WE]: Failed to fetch / {
+        if ($6 ~ /^4[0-9][0-9]$/ && $6 != 408 && $6 != 429) next
+        url = $5; sub(/^[WE]: Failed to fetch +[^ ]+ +/, ""); sub(/ +\[IP: .*/, "")
+        gsub(/  +/, " "); print url ": " $0; exit }' "$err")
+    [[ -n "$failed" ]] || break
+    if (( try >= APT_FETCH_TRIES )); then
+      cat "$err" >&2
+      svc_say "зеркало apt не отдало ${failed} за ${try} попытки" >&2
+      rm -f "$err"
+      return "$rc"
+    fi
+    svc_say "зеркало apt: ${failed}, повтор через $((5 * try)) с" >&"$APT_LOG_FD"
+    sleep $((5 * try))
+    try=$((try + 1))
+  done
+  cat "$err" >&2
+  rm -f "$err"
+  return "$rc"
 }
 
 # deb_install FILE — локальный .deb. Без зависимостей - сразу dpkg -i: apt-get

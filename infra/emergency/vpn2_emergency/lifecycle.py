@@ -129,6 +129,11 @@ class Lifecycle:
             self.jobs = queue.Queue()
             self.worker = threading.Thread(target=self._work, name='emergency-lifecycle', daemon=True)
             self.worker.start()
+        foreign = getattr(agent, 'foreign', None)
+        if foreign is not None and agent.node != agent.entry:
+            # The entry was installed anew: the previous installation's
+            # emergency ends here, its Hysteria2 survived the agent restart.
+            self.submit(f"end:{foreign['emergency_id']}", self._end, foreign['emergency_id'])
 
     @property
     def record(self):

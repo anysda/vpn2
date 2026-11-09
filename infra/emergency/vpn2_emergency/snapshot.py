@@ -233,6 +233,24 @@ def confirm(state_dir, version, value_digest, installation_id, now=None):
         return {'status': 'invalid'}
 
 
+def discard(state_dir, installation_id):
+    """Remove the image of another installation so the entry can send its own.
+
+    The receiver never replaces a foreign image itself; only the agent, which
+    knows the installation changed, may let it go.
+    """
+    with locked(state_dir):
+        try:
+            previous = _current(state_dir)
+        except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+            return False
+        if previous is None or previous['installation_id'] == installation_id:
+            return False
+        (Path(state_dir) / NAME).unlink()
+        (Path(state_dir) / CONFIRMED).unlink(missing_ok=True)
+    return True
+
+
 def load(state_dir):
     """Effective snapshot: expiry is applied now, also during an outage.
 

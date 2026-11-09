@@ -29,6 +29,16 @@ def load_snapshot(state_dir):
     return module.load(state_dir)
 
 
+def discard_snapshot(state_dir, installation_id):
+    try:
+        module = importlib.import_module('.snapshot', __package__)
+    except ModuleNotFoundError as error:
+        if error.name != __package__ + '.snapshot':
+            raise
+        return False
+    return module.discard(state_dir, installation_id)
+
+
 class Agent:
     def __init__(self, config, state_dir, clock=time.monotonic, snapshot_loader=load_snapshot,
                  wall=time.time):
@@ -49,6 +59,7 @@ class Agent:
         self.key = bytes.fromhex(config['key'])
         if len(self.key) != 32 or len(config['nodes']) > 65:
             raise ValueError('invalid observer configuration')
+        self.foreign = self.forget_foreign()
         self.addresses = {node: (socket.gethostbyname(item['host']), item['port'])
                           for node, item in config['nodes'].items()}
         # An entry reinstalled on another address is recognised by its key and
@@ -75,6 +86,33 @@ class Agent:
             self.state.data['run'] = str(uuid.uuid4())
             self.state.data['sequence'] = 0
         self.state.save()
+
+    def forget_foreign(self):
+        """Start over when the entry was installed anew with a new identity.
+
+        Election, entry cursor and client snapshot of the previous installation
+        never match the new one: the old cursor would reject the new entry
+        forever and the old image could never be replaced. What is returned is
+        the emergency of the previous installation, ended by the lifecycle.
+        """
+        known = self.state.data.get('installation_id')
+        if known is None and self.node != self.entry:
+            # State written before the installation was recorded in it.
+            previous = self.snapshot_loader(self.state.directory)
+            known = previous['installation_id'] if previous else None
+        foreign = None
+        if known is not None and known != self.installation:
+            leader = self.state.data.get('leader') or {}
+            record = self.state.data.get('lifecycle') or {}
+            foreign = {'emergency_id': leader.get('emergency_id') or record.get('emergency') or '',
+                       'active': bool(leader.get('active'))}
+            self.state.data = {'clock_boot': self.state.data['clock_boot']}
+            if self.node != self.entry:
+                discard_snapshot(self.state.directory, self.installation)
+            logging.warning('installation changed: state of the previous one discarded, '
+                            'emergency active=%s', str(foreign['active']).lower())
+        self.state.data['installation_id'] = self.installation
+        return foreign
 
     def close(self):
         self.sock.close()
@@ -104,9 +142,11 @@ class Agent:
                     self.send(peer, {'kind': 'hello', 'nonce': secrets.token_hex(24)})
         else:
             snapshot = self.snapshot_loader(self.state.directory)
+            if snapshot is not None and snapshot['installation_id'] != self.installation:
+                # Left by the previous installation: the entry sends a fresh one.
+                discard_snapshot(self.state.directory, self.installation)
+                snapshot = None
             if snapshot is not None:
-                if snapshot['installation_id'] != self.installation:
-                    raise ValueError('snapshot belongs to another installation')
                 exits = snapshot['exits']
                 if self.leader is None:
                     self.leader = Leader(self.state, self.node, exits, self.installation, now, wall=self.wall)

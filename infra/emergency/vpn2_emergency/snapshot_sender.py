@@ -147,7 +147,7 @@ def _content(value):
 
 def _new_state(installation_id):
     return {'installation_id': installation_id, 'snapshot': None, 'produced': [], 'floor': 0,
-            'acks': {}, 'confirmed': {}, 'access': {}, 'holds': {}, 'blocked': [], 'granted': {}}
+            'acks': {}, 'confirmed': {}, 'access': {}, 'holds': {}, 'blocked': {}, 'granted': {}}
 
 
 def _keep_granted(state, clients):
@@ -228,6 +228,10 @@ def run_once(config, deliver, collector, now=None):
         if state is None or state.get('installation_id') != installation_id:
             state = _new_state(installation_id)
         data = collector(now)
+        if not isinstance(state['blocked'], dict):
+            # Older state blocked such exits for good.
+            state['blocked'] = {}
+        reconcile = config.get('reconcile_seconds', RECONCILE_SECONDS)
         _keep_granted(state, data['clients'])
         _track_access(state, data['clients'])
         results = {}
@@ -240,12 +244,13 @@ def run_once(config, deliver, collector, now=None):
             again = False
             for node in exits:
                 exit_id = node['id']
-                if exit_id in state['blocked']:
+                # An exit still configured for another installation is asked
+                # again later: stage 23 replaces its identity in parallel.
+                if now - state['blocked'].get(exit_id, now - reconcile) < reconcile:
                     results[exit_id] = 'wrong-installation'
                     continue
                 if state['acks'].get(exit_id) == current_digest:
-                    if now - state['confirmed'].get(exit_id, 0) < config.get(
-                            'reconcile_seconds', RECONCILE_SECONDS):
+                    if now - state['confirmed'].get(exit_id, 0) < reconcile:
                         results[exit_id] = 'unchanged'
                         continue
                     request = {'op': 'confirm', 'version': current['version'],
@@ -256,6 +261,7 @@ def run_once(config, deliver, collector, now=None):
                 response = deliver(exit_id, request)
                 status = response.get('status')
                 results[exit_id] = status
+                state['blocked'].pop(exit_id, None)
                 if status in ('accepted', 'unchanged'):
                     state['acks'][exit_id] = current_digest
                     state['confirmed'][exit_id] = now
@@ -270,7 +276,7 @@ def run_once(config, deliver, collector, now=None):
                     state['acks'][exit_id] = seen
                     again = True
                 elif status == 'wrong-installation':
-                    state['blocked'].append(exit_id)
+                    state['blocked'][exit_id] = now
                 snapshot.atomic_write(path, state)
             if not again:
                 break

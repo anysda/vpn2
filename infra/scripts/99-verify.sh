@@ -269,10 +269,19 @@ if missing:
 PY
 }
 # Аварийный Hysteria2 ждёт выключенным: его порт никто не слушает.
+# Исключение - verify сразу после 10-foreign при идущей аварии: entry
+# переустановлен и ещё не знаком экзиту. Аварию завершит агент после
+# стадии 23 этого deploy, итоговый verify требует порт закрытым.
 emergency_standby() {
   local port listeners
   port=$(python3 -c 'import json, sys; print(int(json.load(open(sys.argv[1]))["port"]))' /etc/vpn2/emergency-hy2.json) || return
   listeners=$(ss -H -uln "sport = :$port") || return
+  if [[ -n "$listeners" ]] && ! [[ "$EMERGENCY_STAMP" -nt /var/anysda/.stamps/10-foreign ]] \
+    && python3 -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("leader", {}).get("active") is not True)' \
+      /var/lib/vpn2-emergency/agent.json 2>/dev/null; then
+    echo "идёт аварийный режим: udp/$port слушает до стадии 23, закрытым его проверит итоговый verify"
+    return 0
+  fi
   [[ -z "$listeners" ]] || { echo "udp/$port уже слушает"; return 1; }
   echo "аварийный Hysteria2: udp/$port закрыт"
 }

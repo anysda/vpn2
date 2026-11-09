@@ -92,7 +92,7 @@ journalctl -u anysda-yt-failover
 ```
 
 PO-токен делает `bgutil-ytdlp-pot-provider` (GPL-3.0-only) в venv пробы с
-выделенным Node 24; исходники и лицензия в `/opt/anysda-yt-probe/bgutil`.
+выделенным Node 26; исходники и лицензия в `/opt/anysda-yt-probe/bgutil`.
 Постоянного сервиса, браузера, cookies и входа нет. Пиковая память пробы на
 машине с 2 ГБ без потолка - 330-340 МиБ в cgroup (yt-dlp и node); под
 потолком службы 340 МиБ - около 290 МиБ, ядро отбирает кэш страниц. Лимит

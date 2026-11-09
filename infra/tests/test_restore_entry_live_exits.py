@@ -108,7 +108,7 @@ class Exits:
                                 self.installation[exit_id], NOW)
 
 
-class RestoreEntryWithLiveExits(unittest.TestCase):
+class TestRestoreEntryWithLiveExits(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -198,7 +198,7 @@ class RestoreEntryWithLiveExits(unittest.TestCase):
 VERIFY = ROOT / 'infra/scripts/99-verify.sh'
 
 
-class StandbyBeforeStage23(unittest.TestCase):
+class TestStandbyBeforeStage23(unittest.TestCase):
     """99-verify right after 10-foreign meets an emergency the new entry ends."""
 
     def setUp(self):

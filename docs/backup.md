@@ -105,6 +105,11 @@ s3`), кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-
 
 ## Восстановление entry-ноды с нуля
 
+Нужны сохранённый вне entry `config.yaml` и, при `backup.backend: local`,
+копия архива `.tar.gz.age`: локальные архивы пропали вместе со старой
+entry, поэтому их заранее забирает внешний агент (см. «Где хранятся»). При
+`s3` архив новая entry возьмёт из bucket сама.
+
 ```bash
 # 1. свежая entry
 ssh root@<новый-entry-ip>
@@ -113,17 +118,24 @@ ssh root@<новый-entry-ip>
 git clone https://github.com/anysda/vpn2
 cd vpn2
 
-# 3. сохранённый config.yaml, безопасным каналом
-scp config.yaml root@<новый-entry-ip>:vpn2/config.yaml
+# 3. сохранённый config.yaml (при backend: local и архив), безопасным каналом
+scp config.yaml anysda-vpn2-<дата>.tar.gz.age root@<новый-entry-ip>:vpn2/
 chmod 600 config.yaml
 
-# 4. временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
+# 4. в config.yaml: entry.password - root-пароль новой машины, entry.host -
+#    новый IP, если сменился; иначе deploy остановится на входе по SSH.
+#    Временно panel.domain: "" и sso.enabled: false (SSO требует HTTPS):
 #    первый деплой поднимет HTTP и не выпустит новый сертификат до restore
 ./deploy.sh
 
-# 5. вернуть panel.domain и sso.enabled, восстановить
+# 5. вернуть panel.domain и sso.enabled, восстановить (база после deploy
+#    не пустая, поэтому --force)
+#    backend: s3
 ./deploy.sh backup-list
-./deploy.sh restore latest --force    # база после deploy не пустая
+./deploy.sh restore latest --force
+#    backend: local - путь к архиву, restore сам положит его
+#    в /var/backups/anysda-vpn2/
+./deploy.sh restore ./anysda-vpn2-<дата>.tar.gz.age --force
 ```
 
 Экзиты не трогают и не переустанавливают. Новый entry получает новое

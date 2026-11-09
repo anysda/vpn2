@@ -196,6 +196,10 @@ class Lifecycle:
         if agent.node == agent.entry:
             self.submit('ready', self._ready)
             return
+        reinstalled = agent.state.data.get('reinstalled')
+        if reinstalled:
+            self.submit('reinstalled', self._reinstalled, reinstalled['emergency_id'],
+                        reinstalled.get('queued', False))
         leader = agent.leader
         if leader is None or not leader.data['active']:
             return
@@ -422,6 +426,12 @@ class Lifecycle:
             self.reach = now if args[0] else None
         elif kind == 'entry':
             agent.entry_check = args
+        elif kind == 'reinstalled':
+            if args[0]:
+                agent.state.data.pop('reinstalled', None)
+            elif 'reinstalled' in agent.state.data:
+                agent.state.data['reinstalled']['queued'] = True
+            agent.state.save()
         elif leader is None:
             return
         elif kind in ('issued', 'retry', 'failed'):
@@ -664,6 +674,32 @@ class Lifecycle:
         if any(row['sent'] for row in admin):
             self.tg.enqueue_admin(self.directory, **common)
         LOG.info('entry recovery cancelled: notice queued for %s clients', len(clients))
+
+    def _reinstalled(self, emergency_id, queued):
+        """An emergency ended by a new entry: its clients hear of the return
+        when the new entry's snapshot has them back, i.e. after the restore
+        brought back their previous profiles; whoever it lacks then is not told."""
+        agent = self.agent
+        version = agent.installation
+        if not queued:
+            snapshot = agent.snapshot_loader(self.directory)
+            if not snapshot or snapshot['installation_id'] != version or not snapshot['clients']:
+                # A fresh entry has no clients until the restore.
+                return None
+            chats = {item['id']: item['telegram_chat_id'] for item in snapshot['clients']}
+            # The same chat: the same person, not a new client under an old number.
+            clients = [client for client, chat in self.tg.informed(self.directory, emergency_id).items()
+                       if chat is not None and chats.get(client) == chat]
+            self.tg.enqueue_clients(self.directory, clients=clients, emergency_id=emergency_id,
+                                    generation=0, bundle_version=version,
+                                    exit_name=self._exit_name(), issued_at=iso(agent.wall()),
+                                    event='entry_reinstalled')
+            LOG.info('entry reinstalled: return notice queued for %s clients', len(clients))
+        self.tg.run_once(self.directory, api_base=self.api_base, now=agent.wall())
+        rows = [row for row in self.tg.delivery_status(self.directory)
+                if row['emergency'] == emergency_id and row['event'] == 'entry_reinstalled'
+                and row['version'] == version]
+        return ('reinstalled', all(row['state'] not in ('pending', 'retry') for row in rows))
 
     def _end(self, emergency_id):
         self._close_server()

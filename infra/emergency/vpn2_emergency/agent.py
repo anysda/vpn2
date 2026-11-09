@@ -93,7 +93,8 @@ class Agent:
         Election, entry cursor and client snapshot of the previous installation
         never match the new one: the old cursor would reject the new entry
         forever and the old image could never be replaced. What is returned is
-        the emergency of the previous installation, ended by the lifecycle.
+        the emergency of the previous installation, ended by the lifecycle;
+        its leader keeps only the emergency's identity for the return notice.
         """
         known = self.state.data.get('installation_id')
         if known is None and self.node != self.entry:
@@ -109,6 +110,10 @@ class Agent:
             self.state.data = {'clock_boot': self.state.data['clock_boot']}
             if self.node != self.entry:
                 discard_snapshot(self.state.directory, self.installation)
+                if foreign['active'] and leader.get('role') == 'leader' and foreign['emergency_id']:
+                    # Its leader tells the clients of the return once the new
+                    # entry has them back: the only state that survives.
+                    self.state.data['reinstalled'] = {'emergency_id': foreign['emergency_id']}
             logging.warning('installation changed: state of the previous one discarded, '
                             'emergency active=%s', str(foreign['active']).lower())
         self.state.data['installation_id'] = self.installation

@@ -33,6 +33,10 @@ RECOVERED = ('Основное VPN-подключение восстановле
              'подключение в используемом приложении и включите прежний профиль '
              'WireGuard, OpenVPN или IKEv2. Аварийный доступ будет отключён в '
              '{deadline}, примерно через 10 минут')
+# The entry was installed anew: the emergency already ended with it.
+REINSTALLED = ('Основное VPN-подключение восстановлено. Аварийный доступ уже отключён: '
+               'включите прежний профиль WireGuard, OpenVPN или IKEv2 и отключите '
+               'аварийное подключение в используемом приложении')
 RETURN_CANCELLED = ('Возврат отменён: основное VPN-подключение снова недоступно. '
                     'Аварийный доступ сохраняется — если вы уже переключились, снова '
                     'включите аварийное подключение Hysteria2')
@@ -50,7 +54,8 @@ ADMIN_ENTRY_MOVED = '. Основной сервер вернулся с нов�
 OUTAGE = 'Entry недоступен. Аварийный режим включится через {minutes} мин'
 OUTAGE_BACK = 'Entry снова доступен. Аварийный режим не включался'
 OUTAGE_BUTTON = 'Запустить сейчас'
-EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast'}
+EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast',
+          'entry_reinstalled'}
 DEADLINE = '{deadline}'
 # Telegram refuses these for good (deleted chat, blocked bot, malformed
 # request): repeating them only spams the API, so the row ends with the reason.
@@ -235,11 +240,13 @@ def _notification(event, deadline, admin=False):
         # No deadline yet: the placeholder stays until the first delivery.
         return (ADMIN_RECOVERED if admin else RECOVERED).format(
             deadline=_human(deadline) if deadline else DEADLINE)
+    if event == 'entry_reinstalled':
+        return REINSTALLED
     return ADMIN_RETURN_CANCELLED if admin else RETURN_CANCELLED
 
 
 def enqueue_client(state_dir, *, emergency_id, generation, client_id, bundle_version,
-                   exit_name, issued_at, exit_url, profiles=None, event='initial',
+                   exit_name, issued_at, exit_url=None, profiles=None, event='initial',
                    deadline=None, now=None):
     """Queue only the client's snapshot device IDs; profiles is hy2.start's map.
 
@@ -255,11 +262,13 @@ def enqueue_client(state_dir, *, emergency_id, generation, client_id, bundle_ver
 
 
 def _client_row(snapshot, client_id, *, emergency_id, generation, bundle_version, exit_name,
-                issued_at, exit_url, profiles=None, event='initial', deadline=None, now=None):
+                issued_at, exit_url=None, profiles=None, event='initial', deadline=None, now=None):
     if event not in EVENTS:
         raise ValueError('unknown event')
-    url = _url(exit_url)
-    instructions = parse.urlunsplit((url.scheme, url.netloc, '/instructions', '', ''))
+    # Only profiles link the instructions; the notice after a reinstall has no panel.
+    if exit_url is not None or event in {'initial', 'leader_changed'}:
+        url = _url(exit_url)
+        instructions = parse.urlunsplit((url.scheme, url.netloc, '/instructions', '', ''))
     footer = _footer(exit_name, issued_at)
     client, reason = _reason(snapshot, client_id, time.time() if now is None else now)
     parts, devices = [], []
@@ -345,6 +354,21 @@ def delivery_status(state_dir, audience='client'):
             (SELECT count(*) FROM part WHERE delivery=delivery.id AND sent=1) AS sent,
             (SELECT count(*) FROM part WHERE delivery=delivery.id) AS total
             FROM delivery ORDER BY id''')]
+
+
+def informed(state_dir, emergency_id):
+    """Clients who got emergency profiles and were not told of a return since:
+    {client: chat}. Rows of the emergency survive the end of the emergency."""
+    clients = {}
+    with _db(state_dir, 'client') as db:
+        for row in db.execute('''SELECT client, chat, event FROM delivery WHERE emergency=?
+                AND EXISTS (SELECT 1 FROM part WHERE delivery=delivery.id AND sent=1)
+                ORDER BY id''', (emergency_id,)):
+            if row['event'] in {'initial', 'leader_changed', 'return_cancelled'}:
+                clients[row['client']] = row['chat']
+            elif row['event'] in {'recovered', 'entry_reinstalled'}:
+                clients.pop(row['client'], None)
+    return clients
 
 
 class _NoRedirect(request.HTTPRedirectHandler):
@@ -500,7 +524,7 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                         else:
                             # The return notice fixes a ten-minute deadline when it
                             # arrives; an hour of backoff would delay it as long.
-                            cap = 60 if row['event'] in {'recovered', 'return_cancelled'} else 3600
+                            cap = 60 if row['event'] in {'recovered', 'return_cancelled', 'entry_reinstalled'} else 3600
                             delay = retry_after or min(cap, 5 * 2 ** min(row['attempts'], 10))
                             db.execute("UPDATE delivery SET state='retry',reason=?,attempts=attempts+1,"
                                        'due=? WHERE id=?', (reason, current + delay, row['id']))

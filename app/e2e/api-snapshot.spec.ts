@@ -93,7 +93,8 @@ test.describe('снимок ответов API панели', () => {
     expect([...actual.keys()].sort()).toEqual(routes())
   })
 
-  test('записи совпадают с эталоном байт в байт', async (_fixtures, testInfo) => {
+  test('записи совпадают с эталоном байт в байт', async () => {
+    const testInfo = test.info()
     expect(walked, 'обход должен был отработать').toBe(true)
     for (const [route, text] of actual) await testInfo.attach(`${route}.json`, { body: text, contentType: 'application/json' })
     for (const [route, text] of actual) {

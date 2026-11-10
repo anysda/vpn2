@@ -16,5 +16,41 @@
       "queued": "<count>",
       "delivered_day": "<count>"
     }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/telegram",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "configured": true,
+      "running": true,
+      "username": "demo_vpn_bot",
+      "bot_token_masked": "123456..aaaa",
+      "chat_id": "123456789",
+      "admin_username": "snapshot_admin",
+      "clients_total": "+3",
+      "clients_subscribed": "+1",
+      "queued": "<count>",
+      "delivered_day": "<count>"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/admin/telegram",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "configured": true,
+      "running": true,
+      "username": "demo_vpn_bot",
+      "bot_token_masked": "123456..aaaa",
+      "chat_id": "123456789",
+      "admin_username": "snapshot_admin",
+      "clients_total": "+0",
+      "clients_subscribed": "+0",
+      "queued": "<count>",
+      "delivered_day": "<count>"
+    }
   }
 ]

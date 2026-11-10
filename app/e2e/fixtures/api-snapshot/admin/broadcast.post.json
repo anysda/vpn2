@@ -9,8 +9,8 @@
       "delivery": {
         "id": "<uuid>",
         "label": "Рассылка",
-        "status": "accepted",
-        "remaining": 0,
+        "status": "<first-attempt>",
+        "remaining": "<first-attempt>",
         "created": "<ms>"
       }
     }

@@ -33,49 +33,49 @@
         {
           "tag": "ru",
           "label": "RU entry",
-          "cpu": "<metric>",
-          "ram": "<metric>",
-          "rxMbps": "<metric>",
-          "txMbps": "<metric>",
-          "uptimeSec": "<metric>",
-          "staleSec": "<metric>",
-          "cores": "<metric>",
+          "cpu": "<percent>",
+          "ram": "<percent>",
+          "rxMbps": "<mbps>",
+          "txMbps": "<mbps>",
+          "uptimeSec": "<count>",
+          "staleSec": "<count>",
+          "cores": 12.5,
           "memTotalBytes": null
         },
         {
           "tag": "nl",
           "label": "NL exit",
-          "cpu": "<metric>",
-          "ram": "<metric>",
-          "rxMbps": "<metric>",
-          "txMbps": "<metric>",
-          "uptimeSec": "<metric>",
-          "staleSec": "<metric>",
-          "cores": "<metric>",
+          "cpu": "<percent>",
+          "ram": "<percent>",
+          "rxMbps": "<mbps>",
+          "txMbps": "<mbps>",
+          "uptimeSec": "<count>",
+          "staleSec": "<count>",
+          "cores": 12.5,
           "memTotalBytes": null
         },
         {
           "tag": "fi",
           "label": "FI exit",
-          "cpu": "<metric>",
-          "ram": "<metric>",
-          "rxMbps": "<metric>",
-          "txMbps": "<metric>",
-          "uptimeSec": "<metric>",
-          "staleSec": "<metric>",
-          "cores": "<metric>",
+          "cpu": "<percent>",
+          "ram": "<percent>",
+          "rxMbps": "<mbps>",
+          "txMbps": "<mbps>",
+          "uptimeSec": "<count>",
+          "staleSec": "<count>",
+          "cores": 12.5,
           "memTotalBytes": null
         },
         {
           "tag": "us",
           "label": "US exit",
-          "cpu": "<metric>",
-          "ram": "<metric>",
-          "rxMbps": "<metric>",
-          "txMbps": "<metric>",
-          "uptimeSec": "<metric>",
-          "staleSec": "<metric>",
-          "cores": "<metric>",
+          "cpu": "<percent>",
+          "ram": "<percent>",
+          "rxMbps": "<mbps>",
+          "txMbps": "<mbps>",
+          "uptimeSec": "<count>",
+          "staleSec": "<count>",
+          "cores": 12.5,
           "memTotalBytes": null
         }
       ],
@@ -87,36 +87,36 @@
         },
         {
           "name": "hy2-fi-direct",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": false
         },
         {
           "name": "hy2-nl-direct",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": false
         },
         {
           "name": "hy2-us-direct",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": false
         },
         {
           "name": "hy2-fi-warp",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": true
         },
         {
           "name": "hy2-nl-warp",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": true
         },
         {
           "name": "hy2-us-warp",
-          "rttMs": "<metric>",
+          "rttMs": "<count>",
           "isWarp": true
         }
       ],
-      "connections": "<metric>"
+      "connections": "<count>"
     }
   }
 ]

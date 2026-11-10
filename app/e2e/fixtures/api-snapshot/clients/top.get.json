@@ -19,6 +19,24 @@
   },
   {
     "method": "GET",
+    "path": "/api/clients/top?period=day",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "period": "day",
+      "since": "<sec>",
+      "historyStart": null,
+      "clients": [],
+      "counts": {
+        "total": "+2",
+        "onlineNow": "+0",
+        "activeDay": "+0",
+        "activeWeek": "+0"
+      }
+    }
+  },
+  {
+    "method": "GET",
     "path": "/api/clients/top?period=week",
     "status": 200,
     "contentType": "application/json",
@@ -28,10 +46,10 @@
       "historyStart": null,
       "clients": [],
       "counts": {
-        "total": "<count>",
-        "onlineNow": "<count>",
-        "activeDay": "<count>",
-        "activeWeek": "<count>"
+        "total": "+2",
+        "onlineNow": "+0",
+        "activeDay": "+0",
+        "activeWeek": "+0"
       }
     }
   },

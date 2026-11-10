@@ -18,6 +18,10 @@ BOT_DIR = HERE.parent
 FIXTURE = HERE / 'fixtures' / 'texts.json'
 NAMED_CONSTANTS = ('ERROR_FALLBACK', 'NAV_DEVICES', 'NAV_ADD', 'REPLY_KB',
                    'UNEXPECTED_ERROR', 'ADMIN_START_TEXT')
+# Обращения кода к общей таблице по постоянному ключу. Сам текст лежит в
+# app/shared/error-text.json, в коде от него осталось только обращение: его
+# пропажа - это пропажа показа текста, как раньше пропажа литерала.
+TABLE_REFS = {"ERROR_TEXT['device_limit']": 1, "PLURAL['botDevice']": 1}
 PLURAL_NUMBERS = (0, 1, 2, 5, 11, 21, 111)
 SAMPLE_EXPIRES = ('2026-12-31T23:59:59Z', '2027-01-05T10:00:00+00:00', '', None, 'garbage')
 SPECIAL = ('plain', 'a_b', '*x*', 'q[1]', 'back`tick', 'Имя_с*символом', 123)
@@ -75,9 +79,34 @@ def source_files():
     return sorted(found)
 
 
-def collect_literals():
-    """Каждая строка с не-ASCII символом (кириллица, эмодзи, типографика) в telegram/**/*.py."""
+def collect_table_refs():
+    """Обращения ERROR_TEXT['ключ'] и PLURAL['ключ'] в коде бота со счётчиком."""
     counter = collections.Counter()
+    for path in source_files():
+        for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+            if not (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
+                    and isinstance(node.slice.value, str)):
+                continue
+            table = getattr(node.value, 'id', None) or getattr(node.value, 'attr', None)
+            if table in ('ERROR_TEXT', 'PLURAL'):
+                counter[f'{table}[{node.slice.value!r}]'] += 1
+    return dict(sorted(counter.items()))
+
+
+def ref_texts(bot, ref):
+    """Тексты таблицы за обращением: один у ERROR_TEXT, три формы у PLURAL."""
+    table, _, key = ref.partition('[')
+    value = getattr(bot.texts, table)[ast.literal_eval(key.removesuffix(']'))]
+    return [value] if isinstance(value, str) else list(value)
+
+
+def collect_literals(bot):
+    """Каждая строка с не-ASCII символом (кириллица, эмодзи, типографика) в telegram/**/*.py
+    и каждый текст общей таблицы, к которому код обращается по постоянному ключу."""
+    counter = collections.Counter()
+    for ref, n in collect_table_refs().items():
+        for text in ref_texts(bot, ref):
+            counter[text] += n
     for path in source_files():
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
             if (isinstance(node, ast.Constant) and isinstance(node.value, str)
@@ -150,7 +179,7 @@ def collect_rendered(bot):
 
 
 def build(bot):
-    return {'literals': collect_literals(), 'rendered': collect_rendered(bot)}
+    return {'literals': collect_literals(bot), 'rendered': collect_rendered(bot)}
 
 
 def dump(data):
@@ -171,12 +200,14 @@ class FrozenTextsTests(unittest.TestCase):
         def in_table(text):
             return isinstance(text, str) and any(text in s for s in table)
 
+        referenced = {text for ref in TABLE_REFS for text in ref_texts(self.bot, ref)}
         code = {text: n for text, n in self.data['literals']}
         fixed = {text: n for text, n in frozen['literals']}
         for text, n in fixed.items():
             if text in code:
                 self.assertEqual(code[text], n, text)
             else:
+                self.assertNotIn(text, referenced, f'table text is no longer sent: {text!r}')
                 self.assertTrue(in_table(text), f'literal gone and not in table: {text!r}')
         for text in code:
             self.assertTrue(text in fixed, f'new literal: {text!r}')
@@ -188,6 +219,9 @@ class FrozenTextsTests(unittest.TestCase):
                 self.assertTrue(in_table(value), f'constant gone and not in table: {name}')
         for name in rendered:
             self.assertTrue(name in frozen['rendered'], f'new rendered entry: {name}')
+
+    def test_table_references_are_frozen(self):
+        self.assertEqual(collect_table_refs(), TABLE_REFS)
 
     def test_rendered_is_complete(self):
         rendered = self.data['rendered']

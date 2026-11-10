@@ -58,7 +58,10 @@ install -o root -g root -m 0644 "$PACKAGE_SOURCE/control/launcher.py" /usr/local
 for stale in contract.py backend.py server.py apply.py vpn-pools.json; do
   rm -f "/usr/local/lib/vpn2-control/$stale"
 done
-install -o root -g root -m 0755 "$PACKAGE_SOURCE/control/apply.py" /usr/local/sbin/vpn2-apply
+# vpn2-apply is an entry into the package: it reads wg0.conf with the service's
+# parser (vpn2.wg). Laid beside and renamed: stages and the panel call it any time.
+install -o root -g root -m 0755 "$PACKAGE_SOURCE/control/apply_launcher.py" /usr/local/sbin/.vpn2-apply.new
+mv -f /usr/local/sbin/.vpn2-apply.new /usr/local/sbin/vpn2-apply
 # Finish an apply interrupted since the last deploy (3: the previous config
 # was restored), then record what runs now as the last good config.
 for resource in sing-box openvpn ikev2 wg; do

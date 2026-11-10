@@ -27,6 +27,8 @@ import tempfile
 import threading
 import time
 
+from vpn2 import wg
+
 RESOURCES = {
     'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600,
                  'check': ['/usr/local/bin/sing-box', 'check', '-c'],
@@ -42,26 +44,6 @@ RESOURCES = {
     'wg': {'path': '/etc/wireguard/wg0.conf', 'mode': 0o600,
            'verify': [['/usr/bin/wg', 'show', 'wg0', 'listen-port']]},
 }
-KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
-# C isspace() within a line: what wg(8) skips and openvpn splits words at. Python's
-# \s and str.strip() also take \x1c, \x85, NBSP..., which both read as text.
-BLANK = r'[ \t\v\f\r]'
-# wg0.conf is read as latin-1, one char per byte, as wg reads it. Python's \s there
-# matches a single byte; its UTF-8 sequences (\xc2\x85, \xe2\x80\xa8...) match first.
-# \s is str.isspace(), and the last char it takes is U+3000.
-FOREIGN_SPACE = '|'.join(sorted({re.escape(view) for code in range(0x3001) if chr(code).isspace()
-                                 for view in (chr(code), chr(code).encode().decode('latin-1'))},
-                                key=len, reverse=True))
-# The keys wg syncconf gets, with the values wg reads for them once BLANK is gone.
-# wg reads key and section names in any ASCII case (strncasecmp). A minus before an address removes it.
-WG_ADDRESS = '-?[0-9A-Fa-f.:]+(?:/[0-9]+)?'
-WG_VALUES = {'PrivateKey': KEY, 'ListenPort': '[0-9]+', 'FwMark': '(?:(?ai:off)|0x[0-9A-Fa-f]+|[0-9]+)',
-             'PublicKey': KEY, 'PresharedKey': KEY, 'AllowedIPs': f'{WG_ADDRESS}(?:,{WG_ADDRESS})*'}
-WG_SECTIONS = {'[Interface]': ('PrivateKey', 'ListenPort', 'FwMark'),
-               '[Peer]': ('PublicKey', 'PresharedKey', 'AllowedIPs')}
-# The [Interface] keys wg-quick takes out before it gives the rest to wg: any ASCII
-# case, the name trimmed of blanks at both ends only.
-WG_QUICK_KEYS = ('Address', 'DNS', 'MTU', 'Table', 'PreUp', 'PreDown', 'PostUp', 'PostDown', 'SaveConfig')
 # The directives infra/scripts/29-openvpn.sh writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
@@ -319,36 +301,6 @@ def openvpn_words(line):
     return words
 
 
-def wg_line(line):
-    """The section or syncconf key wg(8) reads in a line (None if neither) and its value.
-
-    wg cuts the line at the first #, drops BLANK anywhere in it and compares the
-    name in ASCII case only (wireguard-tools config.c: config_read_line, process_line).
-    """
-    seen = re.sub(BLANK, '', line.split('#', 1)[0])
-    for name in WG_SECTIONS:
-        if re.fullmatch(re.escape(name), seen, re.I | re.A):
-            return name, ''
-    for name in WG_VALUES:
-        if re.match(name + '=', seen, re.I | re.A):
-            return name, seen[len(name) + 1:]
-    return None, seen
-
-
-def wg_split(text):
-    """Deployment-owned [Interface] section and the access-owned [Peer] tail."""
-    lines = text.split('\n')
-    cut = next((index for index, line in enumerate(lines) if wg_line(line)[0] == '[Peer]'), None)
-    if cut is None:
-        return text.rstrip(' \t\n\v\f\r') + '\n', ''
-    # Comments right above the first [Peer] sign that peer, so they go with the tail.
-    while cut and wg_line(lines[cut - 1]) == (None, ''):
-        cut -= 1
-    while not re.sub(BLANK, '', lines[cut]):
-        cut += 1
-    return '\n'.join(lines[:cut]).rstrip(' \t\n\v\f\r') + '\n', '\n'.join(lines[cut:])
-
-
 class Applier:
     def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-apply'), command=run, settle=5):
         self.root = root
@@ -442,58 +394,7 @@ class Applier:
         elif resource == 'wg':
             # Every section and syncconf key is checked as wg reads it, the same
             # way activate() picks the lines it gives wg syncconf.
-            section, quick, public, ports = None, False, [], []
-            for line in text.split('\n'):
-                name, value = wg_line(line)
-                # wg-quick's own section: any line whose trimmed key starts with [
-                # ends it, and only [Interface] in any case opens the one it strips.
-                key = line.split('#', 1)[0].split('=', 1)[0].strip(' \t\v\f\r')
-                quick = key.lower() == '[interface]' if key.startswith('[') else quick
-                if name in WG_SECTIONS:
-                    # wg reads a later [Interface] too, but wg_split() keeps only the
-                    # first one as the deployment's: an apply replaces it whole, and
-                    # keys left in the peer tail would override the new header.
-                    # The peer tail is always the live file's (with_access), the header
-                    # always the candidate's: a key survives only in the candidate.
-                    if section == '[Peer]' and name == '[Interface]':
-                        raise ValueError(f'{RESOURCES["wg"]["path"]}: {line!a} after [Peer] number {len(public)}; '
-                                         'move the keys under it into the [Interface] of the config you install '
-                                         'and delete that section from the file')
-                    section = name
-                    public += [0] if name == '[Peer]' else []
-                    continue
-                if not name:
-                    # A line Python's \s reads as a syncconf key must read the same to wg.
-                    if wg_line(re.sub(FOREIGN_SPACE, '', line))[0]:
-                        raise ValueError(f'wg cannot read {line!a}')
-                    # wg-quick read_bool: the value after the first =, cut at # and
-                    # trimmed, is true or false in any case, or wg-quick up stops.
-                    saved = line.split('#', 1)[0].partition('=')[2].strip(' \t\n\v\f\r').lower()
-                    if quick and key.lower() == 'saveconfig' and saved not in ('true', 'false'):
-                        raise ValueError(f'SaveConfig: wg-quick takes true or false, not {line!a}')
-                    # Any other line wg-quick leaves in the header stops wg-quick up with
-                    # "Line unrecognized". The [Peer] tail is the live file's, not checked here.
-                    if value and section != '[Peer]' and not (
-                            quick and re.fullmatch('|'.join(WG_QUICK_KEYS), key, re.I | re.A)):
-                        raise ValueError(f'wg cannot read {line!a}')
-                    continue
-                if name not in WG_SECTIONS.get(section, ()):
-                    raise ValueError(f'{name} in {section or "no section"}: wg cannot read {line!a}')
-                if not re.fullmatch(WG_VALUES[name], value):
-                    raise ValueError(f'{name}: wg cannot read {line!a}')
-                # wg parse_fwmark(): strtoul() base 16 after a lowercase 0x, else 10.
-                if name == 'FwMark' and value.lower() != 'off' and \
-                        int(value, 16 if value.startswith('0x') else 10) > 0xffffffff:
-                    raise ValueError(f'FwMark: wg takes 0/off or 0-0xffffffff, not {line!a}')
-                if name == 'PublicKey':
-                    public[-1] += 1
-                ports += [int(value)] if name == 'ListenPort' else []
-            if not any(wg_line(line)[0] == 'PrivateKey' for line in text.split('\n')):
-                raise ValueError('[Interface] PrivateKey missing')
-            if not ports or not all(0 < port < 65536 for port in ports):
-                raise ValueError('[Interface] ListenPort missing')
-            if any(count != 1 for count in public):
-                raise ValueError('[Peer] without one valid PublicKey')
+            wg.check(text)
         if spec.get('check'):
             self.command(spec['check'] + [str(path)])
 
@@ -569,27 +470,22 @@ class Applier:
         if resource != 'wg':
             return structure
         target = self.target(resource)
-        current = wg_split(self.read(resource, target))[1] if target.exists() else ''
-        header = wg_split(structure)[0]
+        current = wg.split(self.read(resource, target))[1] if target.exists() else ''
+        header = wg.split(structure)[0]
         if not current:
             return header
-        # Over a [Peer] the comments ending the [Interface] sign that peer (wg_split),
+        # Over a [Peer] the comments ending the [Interface] sign that peer (wg.split),
         # so they open the tail, once: the live tail may already start with them.
-        header, notes = wg_split(header + '[Peer]')
+        header, notes = wg.split(header + '[Peer]')
         notes = notes.removesuffix('[Peer]')
         return header + '\n' + ('' if current.startswith(notes) else notes) + current
 
     def activate(self, resource):
         spec = RESOURCES[resource]
         if resource == 'wg':
-            header, peers = wg_split(self.read(resource, self.target(resource)))
             # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
-            # wg and wg-quick end a line only at a newline, as split('\n') does.
-            # Lines go as written; wg reads their comments too.
-            body = '\n'.join(line for line in header.split('\n')
-                              if wg_line(line)[0] in ('[Interface]', *WG_SECTIONS['[Interface]'])) + '\n' + \
-                '\n'.join(line for line in peers.split('\n') if wg_line(line)[0] in ('[Peer]', *WG_SECTIONS['[Peer]']))
-            self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body + '\n')
+            body = wg.syncconf_body(self.read(resource, self.target(resource)))
+            self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body)
         for argv in spec.get('apply', []):
             self.command(argv)
         for argv in spec['verify']:

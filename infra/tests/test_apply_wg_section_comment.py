@@ -100,7 +100,7 @@ class SectionCommentTests(unittest.TestCase):
 
     def test_split_cuts_at_a_first_peer_with_a_comment(self):
         tail = section('a', '[Peer] # alice', peer('a')) + peer('b')
-        header, rest = apply.wg_split(HEADER + tail)
+        header, rest = apply.wg.split(HEADER + tail)
         self.assertEqual(header, HEADER)
         self.assertIn(KEY['a'], rest)
         self.assertIn(KEY['b'], rest)
@@ -112,7 +112,7 @@ class SectionCommentTests(unittest.TestCase):
                 self.assertEqual(self.applied(self.path.read_text() if attempt == 2 else HEADER + tail),
                                  [INTERFACE] + peers('a', 'b'))
                 written = self.path.read_text()
-                self.assertEqual(apply.wg_split(written)[0], HEADER)
+                self.assertEqual(apply.wg.split(written)[0], HEADER)
                 for name in 'ab':
                     self.assertEqual(written.count(KEY[name]), 1, written)
 

@@ -80,6 +80,8 @@ class OpenvpnCheckEnvironmentTests(unittest.TestCase):
         copy.chmod(0o755)
         (copy / 'infra/vpn2/src/vpn2/control').mkdir(parents=True)
         shutil.copy(ROOT / 'infra/vpn2/src/vpn2/control/apply.py', copy / 'infra/vpn2/src/vpn2/control')
+        for name in ('__init__.py', 'wg.py'):
+            shutil.copy(ROOT / 'infra/vpn2/src/vpn2' / name, copy / 'infra/vpn2/src/vpn2')
         shutil.copytree(Path(__file__).parent, copy / 'infra/tests', ignore=shutil.ignore_patterns('__pycache__'))
         for path in (copy, *copy.rglob('*')):
             path.chmod(0o755 if path.is_dir() else 0o644)

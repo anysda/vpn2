@@ -62,7 +62,7 @@ class SectionOrderTests(unittest.TestCase):
         self.assertEqual(len(synced), 1)
         self.assertIn('FwMark = 0x10', synced[0])
         written = self.path.read_text()
-        self.assertIn('FwMark = 0x10', apply.wg_split(written)[0])
+        self.assertIn('FwMark = 0x10', apply.wg.split(written)[0])
         for name in 'ab':
             self.assertEqual(written.count(KEY[name]), 1, written)
 

@@ -11,6 +11,8 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+# apply.py берёт разбор wg0.conf из пакета.
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 spec = importlib.util.spec_from_file_location('apply', ROOT / 'infra/vpn2/src/vpn2/control/apply.py')
 apply = importlib.util.module_from_spec(spec)
 sys.modules['apply'] = apply

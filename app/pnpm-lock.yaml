@@ -69,6 +69,9 @@ importers:
       '@playwright/test':
         specifier: 1.65.0
         version: 1.65.0
+      '@types/pngjs':
+        specifier: 6.0.5
+        version: 6.0.5
       '@types/qrcode-svg':
         specifier: ^1.1.5
         version: 1.1.5
@@ -84,6 +87,12 @@ importers:
       eslint:
         specifier: ^10.14.0
         version: 10.14.0(jiti@2.7.0)
+      jsqr:
+        specifier: 1.4.0
+        version: 1.4.0
+      pngjs:
+        specifier: 7.0.0
+        version: 7.0.0
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -2278,6 +2287,9 @@ packages:
   '@types/node@26.6.6':
     resolution: {integrity: sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==}
 
+  '@types/pngjs@6.0.5':
+    resolution: {integrity: sha512-0k5eKfrA83JOZPppLtS2C7OUtyNAl2wKNxfyYl9Q5g9lPkgBl/9hNyAu6HuEH2J4XmIv2znEpkDd0SaZVxW6iQ==}
+
   '@types/qrcode-svg@1.1.5':
     resolution: {integrity: sha512-GjkD+HB8S1wrIsf3skHDtcYBjzNhTxocMbX+wG166xDkaVOnLiMUla7bLjbwxo6mMvqqWQNP0Dk8nkIeizSmnw==}
 
@@ -4109,6 +4121,9 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  jsqr@1.4.0:
+    resolution: {integrity: sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==}
+
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
@@ -4646,6 +4661,10 @@ packages:
   pluralize@8.0.0:
     resolution: {integrity: sha512-Nc3IT5yHzflTfbjgqWcCPpo7DaKy4FnpB0l/zCAW0Tc7jxAiuqSxHasntB3D7887LSrA93kDJ9IXovxJYxyLCA==}
     engines: {node: '>=4'}
+
+  pngjs@7.0.0:
+    resolution: {integrity: sha512-LKWqWJRhstyYo9pGvgor/ivk2w94eSjE3RGVuzLGlr3NmD8bf7RcYGze1mNdEHRP6TRP6rMuDHk5t44hnTRyow==}
+    engines: {node: '>=14.19.0'}
 
   postcss-calc@11.2.3:
     resolution: {integrity: sha512-pFW3MR2a4W7uHcSGUiyQGGXZWHon83ljbNwnUJ1mRKublWQbv+3o9NiqhlV4TJfNby+U+zLY2OgiywzhA5eFqw==}
@@ -8062,6 +8081,10 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
+  '@types/pngjs@6.0.5':
+    dependencies:
+      '@types/node': 26.6.6
+
   '@types/qrcode-svg@1.1.5': {}
 
   '@types/resolve@1.20.2': {}
@@ -9819,6 +9842,8 @@ snapshots:
 
   json5@2.2.3: {}
 
+  jsqr@1.4.0: {}
+
   keyv@5.6.0:
     dependencies:
       '@keyv/serialize': 1.1.1
@@ -10560,6 +10585,8 @@ snapshots:
       playwright-core: 1.65.0
 
   pluralize@8.0.0: {}
+
+  pngjs@7.0.0: {}
 
   postcss-calc@11.2.3(postcss@8.5.32):
     dependencies:

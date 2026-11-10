@@ -19,9 +19,7 @@ exit_host:
 exit_libs:
   - "{{ exit_infra }}/lib/entry-resources.sh"
   - "{{ exit_infra }}/lib/entry_resources.py"
-  - "{{ exit_infra }}/lib/release.py"
   - "{{ exit_infra }}/lib/install-sing-box.sh"
-  - "{{ exit_infra }}/lib/warp-watchdog.py"
   - "{{ exit_infra }}/configs/sing-box-server.json.tpl"
   - "{{ exit_wheel }}"
 
@@ -40,6 +38,9 @@ exit_env:
   HY2_HOP_DIRECT: "{{ lookup('ansible.builtin.env', 'HY2_HOP_DIRECT') }}"
   HY2_HOP_WARP: "{{ lookup('ansible.builtin.env', 'HY2_HOP_WARP') }}"
   HY2_HOP_MGMT: "{{ lookup('ansible.builtin.env', 'HY2_HOP_MGMT') }}"
+
+# Сторож WARP живёт в пакете vpn2: venv экзита ставит первая стадия.
+exit_vpn2: /opt/vpn2/venv/bin/vpn2
 
 exit_wgcf_version: '2.3.1'
 # Версию wgcf не печатает (ни `version`, ни `--version`): сверка по sha256 релиза.

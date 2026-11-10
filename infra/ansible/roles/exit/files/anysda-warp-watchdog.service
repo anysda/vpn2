@@ -4,7 +4,7 @@ After=network-online.target sing-box.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/anysda-warp-watchdog
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog warp
 TimeoutStartSec=45
 StateDirectory=anysda-warp-watchdog
 StateDirectoryMode=0700

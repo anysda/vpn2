@@ -7,7 +7,7 @@ import re
 import sys
 
 # Нет ports.hy2_hop в config.yaml - в all.env ни одной строки HY2_HOP_*,
-# значения отсюда. Сторона экзита - те же числа в scripts/10-foreign.sh.
+# значения отсюда. Сторона экзита - те же числа в vpn2.exitnode.
 HY2_HOP_DEFAULTS = {'enabled': '1', 'direct': '20000-24999', 'warp': '25000-29999',
                     'mgmt': '30000-30999', 'interval': '5s'}
 

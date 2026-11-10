@@ -159,7 +159,7 @@ def components():
     sb_binary = f'#!/bin/sh\necho "sing-box version {sb_ver}"\n'.encode()
 
     def wgcf(work, lib):
-        # Роль exit зовёт release.py теми же аргументами, что release_download.
+        # Роль exit зовёт vpn2.release теми же аргументами, что release_download.
         url = f'https://github.com/ViRb3/wgcf/releases/download/v{wgcf_ver}/wgcf_{wgcf_ver}_linux_amd64'
         return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\nWGCF_SHA256=\'{wgcf_sha}\'\n'
                 f'release_download wgcf {shlex.quote(str(work / "wgcf"))} {url} "$WGCF_SHA256"\n'), work / 'wgcf'

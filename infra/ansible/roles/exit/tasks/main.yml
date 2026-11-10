@@ -4,7 +4,7 @@
     path: "{{ item }}"
     state: directory
     mode: '0755'
-  loop: [/var/anysda/.stamps, /etc/anysda, /etc/sing-box, /var/lib/sing-box, /var/lib/sing-box/acme, "{{ exit_tmp }}"]
+  loop: [/var/anysda/.stamps, /etc/anysda, /etc/sing-box, /var/lib/sing-box, /var/lib/sing-box/acme]
 
 - name: Библиотеки шагов, шаблон конфига и колесо vpn2
   ansible.builtin.copy:
@@ -26,7 +26,7 @@
     - name: Загрузка wgcf
       ansible.builtin.command:
         argv: >-
-          {{ ['/usr/bin/python3', exit_tmp ~ '/release.py']
+          {{ exit_host[:-1] + ['vpn2.release']
              + ([] if exit_development else ['--manifest', exit_manifest])
              + ['artifact', 'wgcf', exit_tmp ~ '/wgcf', '--url', exit_wgcf_url, '--sha256', exit_wgcf_sha256] }}
       changed_when: true
@@ -36,8 +36,13 @@
         src: "{{ exit_tmp }}/wgcf"
         dest: /usr/local/bin/wgcf
         remote_src: true
-        checksum: "{{ exit_wgcf_sha256 }}"
         mode: '0755'
+
+# install-sing-box.sh берёт vpn2.release из каталога рядом с собой.
+- name: Пакет vpn2 рядом с установщиком sing-box
+  ansible.builtin.command:
+    argv: [/usr/bin/python3, -m, zipfile, -e, "{{ exit_tmp }}/{{ exit_wheel | basename }}", "{{ exit_tmp }}/"]
+  changed_when: false
 
 - name: Бинарник sing-box
   ansible.builtin.command:
@@ -121,7 +126,7 @@
 # и бюджет: не больше двух добавочных попыток за прогон и трёх за скользящий час.
 - name: Проверка WARP
   ansible.builtin.command:
-    cmd: /usr/local/bin/anysda-warp-watchdog --bootstrap
+    argv: ["{{ exit_vpn2 }}", watchdog, warp, --bootstrap]
   when: exit_warp_enabled
   register: exit_warp_check
   changed_when: false

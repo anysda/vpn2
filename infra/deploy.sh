@@ -785,14 +785,8 @@ run_stage_on_host() {
     done
   fi
 
-  if [[ "$stage" == "10-foreign" || "$stage" == "20-ru-router" ]]; then
+  if [[ "$stage" == "20-ru-router" ]]; then
     push "$DEPLOY_ROOT/lib/install-sing-box.sh" || return 1
-  fi
-
-  if [[ "$stage" == "10-foreign" ]]; then
-    local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
-    [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
-    push "$tpl" "sing-box-server.json.tpl" || return 1
   fi
 
   if [[ "$stage" == "20-ru-router" ]]; then

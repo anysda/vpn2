@@ -197,7 +197,7 @@ def reality_fallback(tag, T, domain):
         return {
             'type': 'vless', 'tag': f'transport-tcp-{tag}-{kind}',
             'server': domain, 'server_port': port,
-            # Тот же вывод uuid из пароля канала, что у инбаунда в 10-foreign.sh.
+            # Тот же вывод uuid из пароля канала, что у инбаунда в vpn2.exitnode.
             'uuid': str(uuid.uuid5(uuid.NAMESPACE_OID, 'vpn2-reality:' + password)),
             'tls': {'enabled': True, 'server_name': sni,
                     'utls': {'enabled': True, 'fingerprint': 'chrome'},

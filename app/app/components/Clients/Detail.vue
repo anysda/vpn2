@@ -5,7 +5,7 @@ import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { anim, expiringInDays, initials } from '~/utils/clients-view'
 import { dateRuLocal, formatRuDateUtc, parseRuDateUtc, sizeBinRu } from '~/utils/format'
 import { maskRuDate } from '~/utils/ru-date-mask'
-import type { ConfigKind } from './DeviceConfig.vue'
+import type { ConfigKind } from '~/composables/useDeviceAccess'
 import { accessStatus } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 

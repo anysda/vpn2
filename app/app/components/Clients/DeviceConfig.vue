@@ -1,20 +1,14 @@
 <script setup lang="ts">
 import type { Device } from '~/composables/useClients'
-import { useClientsIkev2 } from '~/composables/useClientsIkev2'
-import { useClientsOvpn } from '~/composables/useClientsOvpn'
-import { useClientsWg } from '~/composables/useClientsWg'
+import type { ConfigKind } from '~/composables/useDeviceAccess'
+import { useDeviceAccess } from '~/composables/useDeviceAccess'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { copyText } from '~/utils/clipboard'
 import { anim } from '~/utils/clients-view'
 
-export type ConfigKind = 'wg' | 'ovpn' | 'ike'
-
 const props = defineProps<{ clientId: number, device: Device, kind: ConfigKind }>()
 const open = defineModel<boolean>('open', { default: false })
 
-const { getWgConfig, sendWgToTg, wgQrUrl } = useClientsWg()
-const { getOvpnConfig, sendOvpnToTg } = useClientsOvpn()
-const { getIkev2Credentials, ikev2CaCrtUrl, sendIkev2ToTg } = useClientsIkev2()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
@@ -54,18 +48,18 @@ async function load() {
   try {
     if (kind === 'wg') {
       // Адрес QR постоянный: без метки браузер показал бы из кэша старый ключ после перевыпуска.
-      qrSrc.value = `${wgQrUrl(clientId, device.id)}?t=${Date.now()}`
+      qrSrc.value = `${useDeviceAccess(kind).qrUrl(clientId, device.id)}?t=${Date.now()}`
       qrWide.value = false
       void loadWgWarning(r)
-      const c = await getWgConfig(clientId, device.id)
+      const c = await useDeviceAccess(kind).getConfig(clientId, device.id)
       if (r === request) conf.value = c
     }
     else if (kind === 'ovpn') {
-      const c = await getOvpnConfig(clientId, device.id)
+      const c = await useDeviceAccess(kind).getConfig(clientId, device.id)
       if (r === request) conf.value = c
     }
     else {
-      const c = await getIkev2Credentials(clientId, device.id)
+      const c = await useDeviceAccess(kind).getConfig(clientId, device.id)
       // caCertPem есть только у self-signed: тогда нужна кнопка «Скачать CA».
       if (r === request) creds.value = { ...c, hasCa: c.caCertPem !== null }
     }
@@ -107,9 +101,7 @@ async function sendTg() {
   sending.value = true
   const { clientId, device, kind } = props
   try {
-    if (kind === 'wg') await sendWgToTg(clientId, device.id)
-    else if (kind === 'ovpn') await sendOvpnToTg(clientId, device.id)
-    else await sendIkev2ToTg(clientId, device.id)
+    await useDeviceAccess(kind).sendToTg(clientId, device.id)
     toast.add({ title: kind === 'wg' ? 'WireGuard-конфиг отправлен в Telegram' : kind === 'ovpn' ? 'OpenVPN-конфиг отправлен в Telegram' : 'IKEv2 отправлен в Telegram', color: 'success' })
   }
   catch (e) {
@@ -241,7 +233,7 @@ const ikeRows = computed(() => {
         <a
           v-if="creds?.hasCa"
           class="pill"
-          :href="ikev2CaCrtUrl()"
+          :href="useDeviceAccess('ike').caCrtUrl()"
           target="_blank"
           rel="noopener"
         >Скачать CA</a>

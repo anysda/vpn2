@@ -4,7 +4,7 @@ import { and, asc, count, eq, gt, lt, lte, ne, or } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { botOutbox } from '../database/schema'
 import type { BotDelivery } from '../../shared/bot-delivery'
-import { botConfigured, botEventPort } from './telegram-config'
+import { botConfigured } from './telegram-config'
 import { recordEvent } from './events'
 
 /** Секрет, которым панель подписывает события боту. Без него 503 до любых других действий. */
@@ -15,8 +15,8 @@ export function botSecretOrThrow(): string {
 }
 
 /** POST /event боту этой ноды. Таймаут и повтор у очереди и у прямой отправки разные. */
-export function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, retry: number }): Promise<unknown> {
-  const url: string = `http://127.0.0.1:${botEventPort()}/event`
+function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, retry: number }): Promise<unknown> {
+  const url: string = `http://127.0.0.1:${Number(useRuntimeConfig().tgbotEventPort ?? 8877)}/event`
   return $fetch<unknown>(url, {
     method: 'POST', headers: { 'X-Tgbot-Secret': String(useRuntimeConfig().tgbotSecret) },
     body, timeout: opts.timeout, retry: opts.retry,

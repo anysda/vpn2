@@ -33,7 +33,7 @@ export interface ClientCreateInput {
   expiresAt?: string | null
   deviceLimit?: number | null
 }
-
+/** Сообщение 409 при лимите ниже числа устройств. @internal */
 /** Сообщение 409 при лимите ниже числа устройств. */
 export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
 

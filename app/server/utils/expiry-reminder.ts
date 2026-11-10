@@ -7,7 +7,7 @@ import { joinDetail, recordEvent } from './events'
 import { useLogger } from './logger'
 import { botConfigured } from './telegram-config'
 
-/** «через 3 дня» в журнале и в сообщении клиенту. */
+/** «через 3 дня» в журнале и в сообщении клиенту. @internal */
 export const expiryLeftText = (days: number) => `через ${days} ${plural(days, 'day')}`
 
 const DAY_MS = 86_400_000

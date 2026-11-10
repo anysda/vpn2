@@ -13,9 +13,10 @@
   // emergency/vite.config.ts), а их --production входами не считает.
   "entry": ["shared/color-mode.ts!", "scripts/migrate.mjs!", "scripts/control-probe.mjs!", "e2e/support/fake-backends.mjs", "e2e/support/front-test-seed.mjs", "e2e/support/admin-password-check.mjs", "e2e/support/config-error-check.mjs", "e2e/support/long-password-check.mjs", "e2e/support/pool-upgrade.mjs", "e2e/support/wg-endpoint-check.mjs", "e2e/support/sso-secret-check.mjs", "e2e/session-gone-check.mjs"],
   // scripts/api-snapshot.mjs импортирует только e2e/api-snapshot.spec.ts.
+  // server/test/stubs.ts берут только тесты vitest.
   // Суффикс ! — шаблон для --production. Там тесты не входы, и e2e/support
   // выглядел бы мёртвым; без ! у первого шаблона прод-прогон не видит ни одного файла.
-  "project": ["**/*.{js,mjs,cjs,ts,mts,cts,vue,css}!", "!e2e/**!", "!scripts/api-snapshot.mjs!"],
+  "project": ["**/*.{js,mjs,cjs,ts,mts,cts,vue,css}!", "!e2e/**!", "!scripts/api-snapshot.mjs!", "!server/test/**!"],
   "ignoreDependencies": [
     // @nuxt/icon (из @nuxt/ui, режим local) берёт коллекцию по имени иконки
     // в шаблонах: i-lucide-copy, i-lucide-x и т.д. Импорта в коде нет.

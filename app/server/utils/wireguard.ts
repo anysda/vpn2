@@ -28,7 +28,7 @@ function isPublicIpv4(address: string): boolean {
  * (панель разворачивается с --network host). За NAT нужен явный IPv4 входа.
  * Домены сохраняем; о наличии AAAA отдельно предупреждаем в панели.
  */
-export function wgEndpoint(host: string): string {
+function wgEndpoint(host: string): string {
   const literal = host.trim().replace(/^\[(.*)\]$/, '$1')
   if (isIP(literal) !== 6) return host
 

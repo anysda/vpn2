@@ -2,7 +2,7 @@ import table from './error-text.json' with { type: 'json' }
 
 export type PluralKey = keyof typeof table.plural
 
-/** Форма существительного после целого числа: один, два, пять. */
+/** Форма существительного после целого числа: один, два, пять. @internal */
 export function pluralRu(n: number, forms: [string, string, string]): string {
   const abs = Math.abs(n)
   const mod10 = abs % 10

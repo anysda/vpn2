@@ -47,6 +47,8 @@ def _empty(_generation):
     return {}
 
 
+# Собранную страницу привозит образ emergency, стадия 23 кладёт её сюда.
+STATIC_DIR = '/opt/vpn2-emergency/static'
 ATTEMPTS = 10
 BLOCK_SECONDS = 300
 TRACKED_ADDRESSES = 1024
@@ -426,7 +428,7 @@ def tls_context(state_dir, public_ip, cert_dir):
 def make_server(state_dir, *, exit_id, public_ip, address=('0.0.0.0', 443),
                 static_dir=None, cert_dir='/etc/vpn2/tls/ip', **providers):
     panel = Panel(state_dir, exit_id, public_ip, **providers)
-    assets = Path(static_dir) if static_dir else Path(__file__).with_name('static')
+    assets = Path(static_dir or STATIC_DIR)
     certificate = tls_context(state_dir, public_ip, cert_dir)
     context, panel.fingerprint = certificate.context, certificate.fingerprint
 

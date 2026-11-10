@@ -152,9 +152,16 @@ echo "caddy $*" >> "$FAKE/calls.log"
 [[ "$1" != version ]] || echo 'v2.11.9 h1:test'
 '''
 
-# The image's own installer is exercised by its own tests; here it only logs.
+# The installer is exercised by its own tests; here it only logs.
 HY2_INSTALLER = '''#!/usr/bin/env bash
 echo "install-hy2 $*" >> "$FAKE/calls.log"
+'''
+
+# The host venv with the vpn2 package: stage 23 only asks whether it is there.
+VPN2 = '''#!/usr/bin/env bash
+echo "vpn2 $*" >> "$FAKE/calls.log"
+# Как настоящий диспетчер: без команды - справка и код 2.
+[[ "$1 $2" == 'emergency agent' ]] || exit 2
 '''
 
 
@@ -177,20 +184,22 @@ class EmergencyImageTests(unittest.TestCase):
         self.assertIn('smoke emergency', steps)
         self.assertIn('/instructions', steps['smoke emergency']['run'])
 
-    def test_image_carries_built_static_agent_and_installer(self):
+    def test_image_carries_only_built_static(self):
         text = (ROOT / 'infra/emergency/Dockerfile').read_text()
         self.assertIn('RUN pnpm emergency:build', text)
         carrier = text.rsplit('\nFROM ', 1)[1]
         self.assertTrue(carrier.startswith('scratch'), 'carrier needs no runtime of its own')
-        for needle in ('vpn2_emergency/static /opt/vpn2-emergency/vpn2/emergency/static',
-                       'COPY infra/vpn2/src/vpn2 /opt/vpn2-emergency/vpn2\n',
-                       'infra/emergency/install-hy2.sh', 'vpn2-emergency-hy2.service',
-                       'vpn2-emergency-hy2-probe.service', 'vpn2-emergency-snapshot.service', 'image.json', 'LABEL vpn2.component=emergency'):
+        for needle in ('vpn2_emergency/static /opt/vpn2-emergency/static\n', 'image.json',
+                       'LABEL vpn2.component=emergency'):
             self.assertIn(needle, carrier)
+        # Агент - пакет vpn2 из venv хоста, юниты едут с деревом деплоя: в образе их нет.
+        for needle in ('infra/vpn2', 'install-hy2.sh', '.service'):
+            self.assertNotIn(needle, carrier)
         ignore = (ROOT / 'infra/emergency/Dockerfile.dockerignore').read_text().splitlines()
-        for needle in ('*', '!app', '!infra/emergency', '!infra/vpn2/src/vpn2', '**/__pycache__', 'app/node_modules',
+        for needle in ('*', '!app', '**/__pycache__', 'app/node_modules',
                        'infra/emergency/vpn2_emergency/static', '**/.env'):
             self.assertIn(needle, ignore)
+        self.assertNotIn('!infra/vpn2/src/vpn2', ignore)
 
     def test_release_manifest_pins_emergency_image(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -213,7 +222,7 @@ class EmergencyImageTests(unittest.TestCase):
 
     # --- stage 23 against a fake host ---------------------------------------
 
-    def stage(self, fake, host, *, image, offline=False):
+    def stage(self, fake, host, *, image, offline=False, static='static', venv=True):
         """Run stage 23 for host with `image` published under the dev tag."""
         state = json.loads((fake / 'state.json').read_text())
         state['registry']['ghcr.io/anysda/vpn2/emergency:dev'] = image
@@ -221,13 +230,9 @@ class EmergencyImageTests(unittest.TestCase):
         version = image.split(':')[1]
         layer = fake / 'image' / version
         if not layer.exists():
-            shutil.copytree(ROOT / 'infra/vpn2/src/vpn2', layer / 'vpn2',
-                            ignore=shutil.ignore_patterns('static', '__pycache__'))
-            (layer / 'vpn2/emergency/static/assets').mkdir(parents=True)
+            (layer / static / 'assets').mkdir(parents=True)
             for name in ('index.html', 'instructions.html'):
-                (layer / 'vpn2/emergency/static' / name).write_text(version)
-            (layer / 'install-hy2.sh').write_text(HY2_INSTALLER)
-            shutil.copy(ROOT / 'infra/emergency/vpn2-emergency-snapshot.service', layer)
+                (layer / static / name).write_text(version)
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
         root = fake / 'root'
         config = fake / 'emergency.json'
@@ -253,10 +258,18 @@ class EmergencyImageTests(unittest.TestCase):
         for name in ('release.sh', 'vpn2_tls.py'):
             if (ROOT / 'infra/lib' / name).exists():
                 shutil.copy(ROOT / 'infra/lib' / name, stage_dir / name)
+        # deploy.sh кладёт юниты и установщик рядом со стадией.
+        (stage_dir / 'install-hy2.sh').write_text(HY2_INSTALLER)
+        shutil.copy(ROOT / 'infra/emergency/vpn2-emergency-snapshot.service', stage_dir)
+        (fake / 'venv/bin').mkdir(parents=True, exist_ok=True)
+        (fake / 'venv/bin/vpn2').unlink(missing_ok=True)
+        if venv:
+            (fake / 'venv/bin/vpn2').write_text(VPN2)
+            (fake / 'venv/bin/vpn2').chmod(0o755)
         env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{fake / 'sbin'}",
                'HOST_TAG': host, 'VPN2_DEVELOPMENT': 'true', 'EMERGENCY_CONFIG_SOURCE': str(config),
                'FAKE_OFFLINE': '1' if offline else '0', 'SVC_FP_DIR': str(root / 'var/lib/anysda/applied'),
-               'TLS_INITIAL_WAIT': '0'}
+               'TLS_INITIAL_WAIT': '0', 'VPN2_VENV': str(fake / 'venv')}
         env.pop('BASH_ENV', None)
         (fake / 'calls.log').write_text('')
         result = subprocess.run(['bash', str(stage_dir / '23-emergency.sh')], env=env, text=True,
@@ -295,6 +308,11 @@ class EmergencyImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
             fake = self.host(directory)
             root = fake / 'root'
+            # Копии пакета от прежних раскладок: выпуск и сборки до venv.
+            emergency = root / 'opt/vpn2-emergency'
+            for leftover in ('vpn2/emergency', 'vpn2_emergency'):
+                (emergency / leftover).mkdir(parents=True)
+                (emergency / leftover / 'agent.py').write_text('old')
             first = self.stage(fake, 'exit', image='sha256:' + '1' * 64)
             print(first.stdout, end='')
             self.assertEqual(first.returncode, 0, first.stdout)
@@ -308,15 +326,16 @@ class EmergencyImageTests(unittest.TestCase):
                              {'bridge': 'none', 'iptables': False, 'ip6tables': False})
             self.assertIn('docker pull ghcr.io/anysda/vpn2/emergency:dev', first.calls)
             self.assertEqual(first.state['containers'], {'vpn2-emergency': 'sha256:' + '1' * 64})
-            package = root / 'opt/vpn2-emergency/vpn2/emergency'
-            self.assertTrue((package / 'agent.py').is_file())
-            self.assertEqual((package / 'static/instructions.html').read_text(), '1' * 64)
+            self.assertEqual((emergency / 'static/instructions.html').read_text(), '1' * 64)
+            self.assertEqual(sorted(p.name for p in emergency.iterdir()), ['release.json', 'static'])
+            self.assertIn('vpn2 emergency agent --help', first.calls)
             release = json.loads((root / 'opt/vpn2-emergency/release.json').read_text())
             self.assertEqual(release, {'version': 'dev', 'revision': '1' * 40, 'image': 'sha256:' + '1' * 64})
             self.assertIn('install-hy2 198.51.100.20 18443', first.calls)
             self.assertTrue(any(c.startswith('runuser -u vpn2-emergency') for c in first.calls), first.calls)
             unit = (root / 'etc/systemd/system/vpn2-emergency.service').read_text()
             self.assertIn('User=vpn2-emergency', unit)
+            self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent --config ', unit)
             self.assertIn('systemctl disable --now docker.service containerd.service', first.calls)
             self.assertIn('systemctl enable --now docker.socket', first.calls)
             # The client snapshot is sent by the entry only.
@@ -334,7 +353,8 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertFalse([c for c in second.calls if c.startswith('apt-get')], second.calls)
             self.assertEqual(sorted(second.state['images']), ['sha256:' + '2' * 64])
             self.assertEqual(second.state['containers'], {'vpn2-emergency': 'sha256:' + '2' * 64})
-            self.assertEqual((package / 'static/instructions.html').read_text(), '2' * 64)
+            self.assertEqual((emergency / 'static/instructions.html').read_text(), '2' * 64)
+            self.assertFalse((emergency / 'static.old').exists())
             self.assertEqual(json.loads((root / 'opt/vpn2-emergency/release.json').read_text())['image'],
                              'sha256:' + '2' * 64)
             self.assertFalse(list((root / 'opt/vpn2-emergency').glob('.staging.*')))
@@ -360,7 +380,7 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertEqual(result.state['containers'], {'vpn2-emergency': 'sha256:' + '3' * 64})
             # VPN2-514: the entry sends the client snapshot to the exits as its own service.
             unit = (fake / 'root/etc/systemd/system/vpn2-emergency-snapshot.service').read_text()
-            self.assertIn('ExecStart=/usr/bin/python3 -B -m vpn2.emergency snapshot-sender run', unit)
+            self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency snapshot-sender run', unit)
             self.assertIn('WantedBy=multi-user.target', unit)
             sender = [c for c in result.calls if 'vpn2-emergency-snapshot' in c]
             self.assertEqual(sender, ['systemctl enable vpn2-emergency-snapshot.service',
@@ -423,3 +443,22 @@ class EmergencyImageTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+    def test_stage_needs_host_venv_and_accepts_image_built_before_it(self):
+        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
+            fake = self.host(directory)
+            missing = self.stage(fake, 'exit', image='sha256:' + '4' * 64, venv=False)
+            self.assertEqual(missing.returncode, 1, missing.stdout)
+            self.assertIn('нет пакета vpn2 с аварийкой', missing.stdout)
+            self.assertFalse([c for c in missing.calls if c.startswith(('docker', 'systemctl'))], missing.calls)
+            # Между пушем в dev и сборкой образа :dev в реестре лежит образ со
+            # статикой внутри пакета: стадия берёт её и оттуда.
+            older = self.stage(fake, 'exit', image='sha256:' + '5' * 64, static='vpn2/emergency/static')
+            self.assertEqual(older.returncode, 0, older.stdout)
+            emergency = fake / 'root/opt/vpn2-emergency'
+            self.assertEqual((emergency / 'static/index.html').read_text(), '5' * 64)
+            self.assertFalse((emergency / 'vpn2').exists())
+            broken = self.stage(fake, 'exit', image='sha256:' + '6' * 64, static='elsewhere')
+            self.assertEqual(broken.returncode, 1, broken.stdout)
+            self.assertIn('нет статики страницы', broken.stdout)
+            self.assertEqual((emergency / 'static/index.html').read_text(), '5' * 64)

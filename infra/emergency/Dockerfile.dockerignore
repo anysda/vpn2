@@ -1,9 +1,7 @@
-# The build context is the repository root: take only the panel sources and
-# the emergency package, never local builds, node state or secrets.
+# The build context is the repository root: take only the panel sources,
+# never local builds, node state or secrets.
 *
 !app
-!infra/emergency
-!infra/vpn2/src/vpn2
 app/node_modules
 app/.nuxt
 app/.output

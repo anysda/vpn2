@@ -773,9 +773,16 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
-  # Код аварийки приходит образом из реестра (стадия 23), здесь только конфиг узла.
+  # Агент аварийки - пакет vpn2 из venv хоста; образ из реестра везёт только
+  # статику страницы. Отсюда едут конфиг узла, юниты и установщик Hysteria2.
   if [[ "$stage" == '23-emergency' ]]; then
     push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
+    local emergency_file emergency_files='vpn2-emergency-snapshot.service'
+    [[ "$host" == ru ]] \
+      || emergency_files='install-hy2.sh vpn2-emergency-hy2.service vpn2-emergency-hy2-probe.service'
+    for emergency_file in $emergency_files; do
+      push "$DEPLOY_ROOT/emergency/$emergency_file" || return 1
+    done
   fi
 
   if [[ "$stage" == "10-foreign" || "$stage" == "20-ru-router" ]]; then
@@ -872,7 +879,14 @@ run_stage() {
         rm -rf -- "$DEPLOY_ROOT/emergency/vpn2_emergency/__pycache__"
         rmdir "$DEPLOY_ROOT/emergency/vpn2_emergency" 2>/dev/null || true
       fi
-      python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
+      python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1
+      # Агент аварийки на entry идёт из venv: стадии он нужен готовым. Фоновая
+      # установка do_all держит замок, при тех же пинах здесь ничего не качается.
+      if [[ " $(expand_hosts "$group") " == *' ru '* ]]; then
+        ansible_wheel_build || return 1
+        ansible_venv_install >>"$VENV_LOG" 2>&1 \
+          || { tail -n 20 "$VENV_LOG" >&2; die "ansible: venv не установился, аварийке entry он нужен; лог $VENV_LOG"; }
+      fi ;;
   esac
   # Полный прогон готовит ключи один раз до параллельных цепочек (do_all):
   # две цепочки с 00-bootstrap иначе разом переписали бы одни и те же файлы.

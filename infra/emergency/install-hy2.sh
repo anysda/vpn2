@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Called by stage 23 after it created the user, the state directory and
-# /opt/vpn2-emergency/vpn2 (the package) and installed qrencode,
+# the vpn2 package in /opt/vpn2/venv and installed qrencode,
 # curl, openssl, nftables and polkitd: nothing is downloaded from here on.
 # Arguments: exit IP; optional dedicated UDP port. Never changes normal sing-box.
 set -euo pipefail
@@ -11,7 +11,7 @@ getent passwd vpn2-emergency >/dev/null
 if ! getent passwd vpn2-hy2 >/dev/null; then
   useradd --system --no-create-home --shell /usr/sbin/nologin vpn2-hy2
 fi
-hy2() { env -C /opt/vpn2-emergency python3 -B -m vpn2.emergency hy2 "$@"; }
+hy2() { /opt/vpn2/venv/bin/vpn2 emergency hy2 "$@"; }
 install -d -m 0755 /etc/vpn2
 for unit in vpn2-emergency-hy2.service vpn2-emergency-hy2-probe.service; do
   install -m 0644 "$source_dir/$unit" "/etc/systemd/system/$unit"

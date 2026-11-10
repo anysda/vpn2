@@ -19,6 +19,7 @@ REPORT = '/var/lib/anysda/verify-report.json'
 TRAFFIC = Path(__file__).with_name('traffic.py')
 STAMPS = Path('/var/anysda/.stamps')
 EMERGENCY_ROOT = Path('/opt/vpn2-emergency')
+VENV = Path('/opt/vpn2/venv')
 EMERGENCY_STATE = Path('/var/lib/vpn2-emergency')
 EMERGENCY_HY2 = Path('/etc/vpn2/emergency-hy2.json')
 TLS_CONFIG = Path('/etc/vpn2/tls/config.json')
@@ -195,7 +196,7 @@ def basic(stage):
         stage.line('аварийка: стадия 23 стоит без образа, образ проверит итоговый verify после её обновления')
         return
     stage.image = True
-    stage.check('аварийка: образ установлен', emergency.image, EMERGENCY_ROOT, not after_stage())
+    stage.check('аварийка: образ установлен', emergency.image, EMERGENCY_ROOT, VENV, not after_stage())
 
 
 def after_stage():
@@ -284,7 +285,7 @@ def exit_node(stage):
     # Verify сразу после 10-foreign идёт до стадии 23 на entry: при обновлении
     # со старой версии службы снимка там ещё нет. Снимок проверяет итоговый verify.
     if after_stage():
-        stage.check('аварийка: снимок клиентов от entry свежий', emergency.snapshot, EMERGENCY_ROOT,
+        stage.check('аварийка: снимок клиентов от entry свежий', emergency.snapshot, VENV,
                     EMERGENCY_STATE, stage.get('VERIFY_SNAPSHOT_WAIT', '90'))
     else:
         stage.line('аварийка: снимок клиентов проверит итоговый verify после стадии 23')

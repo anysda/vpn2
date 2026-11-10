@@ -211,8 +211,8 @@ class EmergencyHy2Tests(unittest.TestCase):
     def test_independent_unit_is_not_started_at_boot(self):
         service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
         self.assertIn('User=vpn2-hy2\n', service)
-        self.assertIn('vpn2.emergency hy2 open', service)
-        self.assertIn('vpn2.emergency hy2 close', service)
+        self.assertIn('vpn2 emergency hy2 open', service)
+        self.assertIn('vpn2 emergency hy2 close', service)
         self.assertNotIn('WantedBy=', service)
         self.assertNotIn('sing-box.service', service)
 
@@ -248,7 +248,7 @@ class EmergencyHy2Tests(unittest.TestCase):
             self.assertFalse(self.hy2.SystemRuntime().probe(self.state))
         self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.PROBE_UNIT])
         probe_unit = (ROOT / 'infra/emergency' / self.hy2.PROBE_UNIT).read_text()
-        for needle in ('Type=oneshot', 'User=vpn2-emergency', 'vpn2.emergency hy2 probe', 'AF_NETLINK'):
+        for needle in ('Type=oneshot', 'User=vpn2-emergency', 'vpn2 emergency hy2 probe', 'AF_NETLINK'):
             self.assertIn(needle, probe_unit)
         installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
         self.assertNotIn('sudoers', installer)
@@ -257,13 +257,19 @@ class EmergencyHy2Tests(unittest.TestCase):
                        'subject.user == "vpn2-emergency"', '"start"', '"stop"', '"restart"'):
             self.assertIn(needle, installer)
 
-    def test_unit_runs_the_module_copy_the_agent_stage_installs(self):
+    def test_units_run_the_package_from_host_venv(self):
         stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
-        service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
-        self.assertIn('mv "$SOURCE_DIR" /opt/vpn2-emergency/vpn2\n', stage)
-        self.assertIn('WorkingDirectory=/opt/vpn2-emergency\n', service)
-        self.assertEqual(service.count('/usr/bin/python3 -B -m vpn2.emergency hy2 '), 2)
-        self.assertNotIn('/usr/local/lib/vpn2-emergency', service)
+        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent ', stage)
+        self.assertNotIn('python3 -B -m vpn2', stage)
+        units = {name: (ROOT / 'infra/emergency' / name).read_text()
+                 for name in (self.hy2.UNIT, self.hy2.PROBE_UNIT, 'vpn2-emergency-snapshot.service')}
+        self.assertEqual(units[self.hy2.UNIT].count('/opt/vpn2/venv/bin/vpn2 emergency hy2 '), 2)
+        for name, unit in units.items():
+            with self.subTest(unit=name):
+                self.assertIn('/opt/vpn2/venv/bin/vpn2 emergency ', unit)
+                self.assertNotIn('python3', unit)
+        installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
+        self.assertIn('/opt/vpn2/venv/bin/vpn2 emergency hy2 "$@"', installer)
 
     def poll(self, live):
         def fetch(_state):

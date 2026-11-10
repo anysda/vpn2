@@ -1,10 +1,11 @@
-"""Проверки аварийки. Она ставится стадией 23 из образа: версия образа и всё,
-что нужно активации, лежат на узле заранее (docker для проверки не будим).
+"""Проверки аварийки. Агент - пакет vpn2 из venv хоста, стадия 23 кладёт из
+образа статику страницы: версия образа и всё, что нужно активации, лежат на
+узле заранее (docker для проверки не будим).
 
 Verify сразу после 10-foreign идёт до стадии 23 этого deploy (before_stage):
-при обновлении с выпуска на узле ещё лежит его аварийка в раскладке
-vpn2_emergency. Её заменит стадия 23, раскладку пакета строго требует
-итоговый verify.
+при обновлении на узле ещё лежит прежняя аварийка с копией пакета рядом
+(vpn2_emergency у выпуска, vpn2 у сборок до venv). Её заменит стадия 23,
+новую раскладку строго требует итоговый verify.
 """
 import json
 import os
@@ -13,7 +14,8 @@ import traceback
 
 from vpn2.verify.host import chain, command, sh
 
-FILES = ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html')
+STATIC = ('static/index.html', 'static/instructions.html')
+COPIES = ('vpn2', 'vpn2_emergency')
 # Снимок читает код самой аварийки под её пользователем: каталог состояния закрыт для остальных.
 SNAPSHOT_AGE = '''
 import sys
@@ -63,7 +65,7 @@ def problem(error):
     return traceback.format_exception_only(error)[-1].rstrip('\n')
 
 
-def image(root, before_stage):
+def image(root, venv, before_stage):
     lines = []
     try:
         release = json.loads((root / 'release.json').read_text())
@@ -71,11 +73,15 @@ def image(root, before_stage):
                      f"{release['image'][:19]}")
     except BROKEN as error:
         return 1, problem(error)
-    missing = [name for name in FILES if not (root / 'vpn2/emergency' / name).is_file()]
-    if missing and before_stage and all((root / 'vpn2_emergency' / name).is_file() for name in FILES):
-        lines.append('раскладка выпуска до стадии 23: файлы пакета проверит итоговый verify')
-    elif missing:
-        return 1, '\n'.join(lines + ['нет файлов аварийки: ' + ', '.join(missing)])
+    copies = [name for name in COPIES if (root / name).exists()]
+    if copies and before_stage:
+        return 0, '\n'.join(lines + ['прежняя раскладка до стадии 23: новую проверит итоговый verify'])
+    problems = [f'нет {name}' for name in STATIC if not (root / name).is_file()]
+    if not os.access(venv / 'bin/vpn2', os.X_OK):
+        problems.append(f'нет {venv}/bin/vpn2')
+    problems += [f'осталась копия пакета {root / name}' for name in copies]
+    if problems:
+        return 1, '\n'.join(lines + ['аварийка: ' + ', '.join(problems)])
     return 0, '\n'.join(lines)
 
 
@@ -130,8 +136,8 @@ def sender():
                  ('systemctl', 'is-active', '--quiet', 'vpn2-emergency-snapshot.service'))
 
 
-def snapshot(root, state_dir, wait):
+def snapshot(venv, state_dir, wait):
     """Экзит ждёт подтверждения снимка раз в период отправки: предел - два периода,
     первый снимок после установки или перерыва туннеля ждём не дольше wait."""
     return command('setpriv', '--reuid=vpn2-emergency', '--regid=vpn2-emergency', '--init-groups', '--',
-                   'env', f'PYTHONPATH={root}', 'python3', '-B', '-c', SNAPSHOT_AGE, str(state_dir), str(wait))
+                   f'{venv}/bin/python', '-B', '-c', SNAPSHOT_AGE, str(state_dir), str(wait))

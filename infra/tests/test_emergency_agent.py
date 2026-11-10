@@ -1190,7 +1190,7 @@ class EmergencyAgentTests(unittest.TestCase):
 
     def test_deploy_drops_release_package_leftover_from_checkout(self):
         deploy = (ROOT / 'infra/deploy.sh').read_text()
-        step = deploy.split('    23-emergency)\n', 1)[1].split('|| return 1 ;;', 1)[0]
+        step = deploy.split('    23-emergency)\n', 1)[1].split('|| return 1\n', 1)[0]
         script = 'python3() { echo "provision $*"; }\n' + step
 
         def run(prepare):

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import time
@@ -220,16 +221,26 @@ class VerifyTest(unittest.TestCase):
                 state = json.loads(state_file.read_text())
                 del state['checked_at']
                 state_file.write_text(json.dumps(state))
-            # Аварийка из образа: версия и файлы, которые стадия 23 кладёт на узел.
+            # Аварийка: статика страницы из образа, агент - пакет vpn2 из venv хоста.
             emergency = root / 'emergency'
-            (emergency / 'vpn2/emergency/static').mkdir(parents=True)
-            # Выпуск до переноса аварийки в пакет клал её файлы в vpn2_emergency.
-            release_layout = fault in ('emergency-release-layout', 'emergency-release-layout-after-23')
-            package = emergency / ('vpn2_emergency' if release_layout else 'vpn2/emergency')
-            (package / 'static').mkdir(parents=True, exist_ok=True)
-            for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html'):
+            (emergency / 'static').mkdir(parents=True)
+            for name in ('static/index.html', 'static/instructions.html'):
                 if fault != 'emergency-' + name:
-                    (package / name).touch()
+                    (emergency / name).touch()
+            # Прежние раскладки держали копию пакета рядом: выпуск - vpn2_emergency, dev - vpn2.
+            layouts = {'emergency-release-layout': 'vpn2_emergency', 'emergency-dev-layout': 'vpn2/emergency',
+                       'emergency-release-layout-after-23': 'vpn2_emergency'}
+            if fault in layouts:
+                shutil.rmtree(emergency / 'static')
+                (emergency / layouts[fault] / 'static').mkdir(parents=True)
+            venv = root / 'venv'
+            (venv / 'bin').mkdir(parents=True)
+            (venv / 'bin/python').write_text(
+                f'#!/bin/sh\nPYTHONPATH={ROOT / "infra/vpn2/src"} exec {sys.executable} "$@"\n')
+            (venv / 'bin/python').chmod(0o755)
+            if fault != 'emergency-venv':
+                (venv / 'bin/vpn2').write_text('#!/bin/sh\n')
+                (venv / 'bin/vpn2').chmod(0o755)
             # Стадия 23 до образа оставила пустой штамп и не ставила release.json и Hysteria2.
             old_stage = fault == 'emergency-old-stage'
             if fault != 'emergency-release' and not old_stage:
@@ -241,11 +252,6 @@ class VerifyTest(unittest.TestCase):
                 stamp.touch()
             elif fault != 'emergency-not-yet':
                 stamp.write_text('image sha256:' + 'b' * 64 + '\n')
-            # Снимок клиентов на экзите - настоящим кодом аварийки.
-            (emergency / 'vpn2/__init__.py').write_text((ROOT / 'infra/vpn2/src/vpn2/__init__.py').read_text())
-            for name in ('__init__.py', 'snapshot.py', 'snapshot_sender.py'):
-                (emergency / 'vpn2/emergency' / name).write_text(
-                    (ROOT / 'infra/vpn2/src/vpn2/emergency' / name).read_text())
             snapshots = root / 'emergency-state'
             snapshots.mkdir(mode=0o700)
             if fault not in ('emergency-snapshot-missing', 'emergency-before-23'):
@@ -260,7 +266,7 @@ class VerifyTest(unittest.TestCase):
             # Штамп 10-foreign новее штампа 23: verify сразу после 10-foreign.
             foreign = root / 'stamps/10-foreign'
             foreign.touch()
-            if fault not in ('emergency-before-23', 'emergency-release-layout'):
+            if fault not in ('emergency-before-23', 'emergency-release-layout', 'emergency-dev-layout'):
                 os.utime(foreign, (time.time() - 600,) * 2)
             setpriv = bin_dir / 'setpriv'
             setpriv.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
@@ -280,7 +286,7 @@ class VerifyTest(unittest.TestCase):
                                 + ('raise SystemExit(1)\n' if fault == 'yt-failover' else
                                    'raise SystemExit(main())\n'))
             failover.chmod(0o755)
-            paths = {'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency,
+            paths = {'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency, 'VENV': venv,
                      'EMERGENCY_HY2': hy2_options, 'STAMPS': stamp.parent, 'EMERGENCY_STATE': snapshots}
             script = root / 'verify.py'
             script.write_text(
@@ -443,7 +449,7 @@ class VerifyTest(unittest.TestCase):
         print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
         self.assertIn('✓ аварийка: Hysteria2 в ожидании', result.stdout)
         faults = {'emergency-release': 'аварийка: образ', 'emergency-static/instructions.html': 'аварийка: образ',
-                  'emergency-agent.py': 'аварийка: образ', 'vpn2-emergency.service': 'аварийка: агент',
+                  'emergency-venv': 'аварийка: образ', 'vpn2-emergency.service': 'аварийка: агент',
                   'emergency-listening': 'аварийка: Hysteria2', 'emergency-hy2-options': 'аварийка: Hysteria2'}
         for fault, label in faults.items():
             with self.subTest(fault=fault):
@@ -489,20 +495,23 @@ class VerifyTest(unittest.TestCase):
         self.assertIn('✓ аварийка: агент vpn2-emergency active', result.stdout)
         self.assertIn('аварийка: стадия 23 стоит без образа', result.stdout)
 
-    def test_update_from_release_layout(self):
-        # Обновление с выпуска: verify сразу после 10-foreign видит аварийку
-        # выпуска в старой раскладке, новую положит стадия 23 этого deploy.
-        result = self.run_verify('emergency-release-layout', role='exit')
-        print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn('✓ аварийка: образ установлен', result.stdout)
-        self.assertIn('раскладка выпуска до стадии 23', result.stdout)
-        # После стадии 23 старая раскладка - ошибка: стадия не заменила файлы.
+    def test_update_from_layout_with_package_copy(self):
+        # Обновление с выпуска или прежнего dev: verify сразу после 10-foreign видит
+        # копию пакета рядом со статикой, новую раскладку положит стадия 23 этого deploy.
+        for fault in ('emergency-release-layout', 'emergency-dev-layout'):
+            with self.subTest(fault=fault):
+                result = self.run_verify(fault, role='exit')
+                print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertIn('✓ аварийка: образ установлен', result.stdout)
+                self.assertIn('прежняя раскладка до стадии 23', result.stdout)
+        # После стадии 23 копия пакета - ошибка: стадия не заменила файлы.
         result = self.run_verify('emergency-release-layout-after-23', role='exit')
         print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn('✗ аварийка: образ установлен', result.stdout)
-        self.assertIn('нет файлов аварийки: agent.py', result.stdout)
+        self.assertIn('нет static/index.html', result.stdout)
+        self.assertIn('осталась копия пакета', result.stdout)
 
     def test_only_youtube_can_report_unmeasured(self):
         for fault in ('systemctl-error2', 'ssh-error2', 'curl-error2'):

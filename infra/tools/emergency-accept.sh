@@ -583,7 +583,7 @@ PY
 
 cmd_password() {
   local count=${1:-1000}
-  node "${EXITS[0]}" "PYTHONPATH=/opt/vpn2-emergency python3 - $count" <<'PY'
+  node "${EXITS[0]}" "/opt/vpn2/venv/bin/python - $count" <<'PY'
 import string, sys
 from vpn2.emergency import web
 ok = 0

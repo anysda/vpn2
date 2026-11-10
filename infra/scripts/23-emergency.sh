@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Stage 23: only the observer runs during normal operation. Everything the
-# emergency front needs - image contents, units, packages, certificates - is
+# emergency front needs - panel static, units, packages, certificates - is
 # installed here, so activation reaches neither the registry nor package mirrors.
+# The agent is the vpn2 package of the host venv; the image brings only the
+# panel static built by node.
 set -euo pipefail
 [[ -n "${1:-}" && -f "$1" ]] && source "$1"
 : "${HOST_TAG:?}"
@@ -19,6 +21,16 @@ RELEASE_LIB=$(dirname "$0")/release.sh
 [[ -f "$RELEASE_LIB" ]] || RELEASE_LIB=$(dirname "$0")/../lib/release.sh
 # shellcheck source=infra/lib/release.sh
 source "$RELEASE_LIB"
+# Юниты и install-hy2.sh деплой кладёт рядом со стадией; в дереве они в emergency/.
+EMERGENCY_DIR=$(dirname "$0")
+[[ -f "$EMERGENCY_DIR/vpn2-emergency-snapshot.service" || -f "$EMERGENCY_DIR/install-hy2.sh" ]] \
+  || EMERGENCY_DIR=$(dirname "$0")/../emergency
+VPN2_VENV=${VPN2_VENV:-/opt/vpn2/venv}
+# Пакет на экзит ставит 00-bootstrap, на entry - деплой перед этой стадией.
+"$VPN2_VENV/bin/vpn2" emergency agent --help >/dev/null 2>&1 || {
+  echo "ERROR: в $VPN2_VENV нет пакета vpn2 с аварийкой: на экзите его ставит стадия 00-bootstrap, на entry - ./deploy.sh" >&2
+  exit 1
+}
 CONFIG_SOURCE=${EMERGENCY_CONFIG_SOURCE:-/tmp/anysda/emergency.json}
 CONTAINER=vpn2-emergency
 test -s "$CONFIG_SOURCE"
@@ -134,19 +146,21 @@ docker create --name "$CONTAINER" --network none "$IMAGE" >/dev/null
 STAGING=$(mktemp -d /opt/vpn2-emergency/.staging.XXXXXX)
 trap 'rm -rf -- "$STAGING"' EXIT
 docker cp "$CONTAINER:/opt/vpn2-emergency/." "$STAGING/"
-SOURCE_DIR=$STAGING/vpn2
-for required in emergency/agent.py emergency/static/instructions.html; do
-  [[ -f "$SOURCE_DIR/$required" ]] || {
-    echo "ERROR: в образе аварийки $IMAGE нет vpn2/$required: образ собран не из этой версии кода" >&2
+# Образ, собранный до переноса агента в venv, держит статику внутри пакета.
+STATIC_SOURCE=$STAGING/static
+[[ -d "$STATIC_SOURCE" ]] || STATIC_SOURCE=$STAGING/vpn2/emergency/static
+for required in index.html instructions.html; do
+  [[ -f "$STATIC_SOURCE/$required" ]] || {
+    echo "ERROR: в образе аварийки $IMAGE нет статики страницы ($required)" >&2
     exit 1
   }
 done
-# Пакет меняется целиком: файл, которого в новой версии нет, на хосте не остаётся.
-chmod -R u=rwX,go=rX "$SOURCE_DIR"
-rm -rf -- /opt/vpn2-emergency/vpn2.old
-if [[ -d /opt/vpn2-emergency/vpn2 ]]; then mv /opt/vpn2-emergency/vpn2 /opt/vpn2-emergency/vpn2.old; fi
-mv "$SOURCE_DIR" /opt/vpn2-emergency/vpn2
-rm -rf -- /opt/vpn2-emergency/vpn2.old
+# Статика меняется целиком: файл, которого в новой версии нет, на хосте не остаётся.
+chmod -R u=rwX,go=rX "$STATIC_SOURCE"
+rm -rf -- /opt/vpn2-emergency/static.old
+if [[ -d /opt/vpn2-emergency/static ]]; then mv /opt/vpn2-emergency/static /opt/vpn2-emergency/static.old; fi
+mv "$STATIC_SOURCE" /opt/vpn2-emergency/static
+rm -rf -- /opt/vpn2-emergency/static.old
 python3 - "$STAGING/image.json" "$IMAGE" > "$STAGING/release.json" <<'PY'
 import json
 import sys
@@ -170,7 +184,7 @@ Wants=network-online.target
 User=vpn2-emergency
 Group=vpn2-emergency
 WorkingDirectory=/opt/vpn2-emergency
-ExecStart=/usr/bin/python3 -B -m vpn2.emergency agent --config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency
+ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent --config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -196,13 +210,13 @@ systemctl daemon-reload
 
 if [[ "$HOST_TAG" != ru ]]; then
   # Emergency Hysteria2 waits stopped with its port closed.
-  bash "$STAGING/install-hy2.sh" "$PUBLIC_IP" "${EMERGENCY_HY2_PORT:-18443}"
+  bash "$EMERGENCY_DIR/install-hy2.sh" "$PUBLIC_IP" "${EMERGENCY_HY2_PORT:-18443}"
   # The panel is served by the agent itself and answers only during an emergency.
   if command -v ufw >/dev/null; then ufw allow 443/tcp comment 'vpn2 emergency panel'; fi
   emergency_ip_certificate
   # Panel certificate in advance; a fallback expiring later is renewed by
   # local openssl at activation, without network access.
-  runuser -u vpn2-emergency -- env PYTHONPATH=/opt/vpn2-emergency python3 -B -c '
+  runuser -u vpn2-emergency -- "$VPN2_VENV/bin/python" -B -c '
 import sys
 from vpn2.emergency import web
 web.tls_context(*sys.argv[1:])
@@ -214,15 +228,15 @@ systemctl restart vpn2-emergency.service
 systemctl is-active --quiet vpn2-emergency.service
 if [[ "$HOST_TAG" == ru ]]; then
   # The entry hands the client list to the exits ahead of an emergency.
-  install -m 0644 "$STAGING/vpn2-emergency-snapshot.service" /etc/systemd/system/
+  install -m 0644 "$EMERGENCY_DIR/vpn2-emergency-snapshot.service" /etc/systemd/system/
   entry_unit_resources vpn2-emergency-snapshot
   systemctl daemon-reload
   systemctl enable vpn2-emergency-snapshot.service
   systemctl restart vpn2-emergency-snapshot.service
   systemctl is-active --quiet vpn2-emergency-snapshot.service
 fi
-# Прежнее имя пакета: службы уже идут с нового.
-rm -rf -- /opt/vpn2-emergency/vpn2_emergency
+# Прежние копии пакета рядом с аварийкой: службы уже идут из venv.
+rm -rf -- /opt/vpn2-emergency/vpn2 /opt/vpn2-emergency/vpn2_emergency
 if [[ "$HOST_TAG" != ru ]]; then
   # The exit needs Docker only during deploy; docker.socket starts it on demand.
   systemctl disable --now docker.service containerd.service >/dev/null 2>&1

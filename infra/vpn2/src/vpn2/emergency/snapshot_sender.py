@@ -31,11 +31,13 @@ POLL_SECONDS = 5
 SSH_TIMEOUT = 30
 KEEP_PRODUCED = 16
 # setpriv, not runuser: no PAM session lines in the journal on every call.
-# Экзит, не обновлённый этим деплоем, держит приёмник под прежним именем.
-REMOTE = ('cd /opt/vpn2-emergency && module="vpn2.emergency snapshot" && '
-          '{ [ -d vpn2/emergency ] || module=vpn2_emergency.snapshot; } && '
+# Экзит, не обновлённый этим деплоем с прошлого выпуска, держит приёмник
+# под прежним именем в /opt/vpn2-emergency; venv с пакетом у него может не быть.
+REMOTE = ('run="/opt/vpn2/venv/bin/vpn2 emergency snapshot"; '
+          '[ ! -d /opt/vpn2-emergency/vpn2_emergency ] || '
+          '{ cd /opt/vpn2-emergency && run="/usr/bin/python3 -B -m vpn2_emergency.snapshot"; }; '
           'exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency '
-          '--init-groups -- /usr/bin/python3 -B -m $module receive '
+          '--init-groups -- $run receive '
           '--config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency')
 
 

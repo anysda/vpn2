@@ -110,8 +110,8 @@ jobs:
             exit 1
           fi
 
-      # Аварийку деплой ставит без запуска контейнера: пакет и статику
-      # копирует из остановленного контейнера и запускает хостовым python.
+      # Аварийку деплой ставит без запуска контейнера: статику копирует из
+      # остановленного контейнера, отдаёт её агент из пакета vpn2.
       - name: smoke emergency
         if: matrix.name == 'emergency'
         run: |
@@ -119,14 +119,14 @@ jobs:
           trap 'docker rm -f smoke >/dev/null; kill "$server" 2>/dev/null; rm -rf "$work"' EXIT
           docker create --name smoke --network none smoke/emergency >/dev/null
           docker cp smoke:/opt/vpn2-emergency/. "$work/"
-          test -f "$work/install-hy2.sh"
           python3 -c 'import json, sys; json.load(open(sys.argv[1]))["revision"]' "$work/image.json"
-          PYTHONPATH="$work" python3 -B -c '
+          PYTHONPATH=infra/vpn2/src python3 -B -c '
           import sys
           from vpn2.emergency import web
           web.make_server(sys.argv[1], exit_id="smoke", public_ip="127.0.0.1",
-                          address=("127.0.0.1", 31822), cert_dir=sys.argv[1]).serve_forever()
-          ' "$work/state" &
+                          address=("127.0.0.1", 31822), static_dir=sys.argv[2],
+                          cert_dir=sys.argv[1]).serve_forever()
+          ' "$work/state" "$work/static" &
           server=$!
           for _ in $(seq 1 30); do
             if curl -fsSk https://127.0.0.1:31822/instructions -o "$work/instructions.html"; then

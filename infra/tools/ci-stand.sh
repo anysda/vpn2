@@ -772,6 +772,27 @@ cmd_snapshot_corrupt() {
   ssh_node "$ENTRY" "printf '# positive control\\n' >> $file"
 }
 
+# Состояние apt каждого узла и журнал прокси раннера - в отчёт при любом исходе.
+collect_apt() {
+  local out=$1 node name ip
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    ssh_node "$ip" 'echo "== update прогрева =="; cat /var/log/vpn2-ci-warm-update.log 2>&1
+      echo "== lists =="; ls -l --time-style=+%H:%M:%S /var/lib/apt/lists /var/lib/apt/lists/partial 2>&1
+      echo "== sources =="
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
+        [ -f "$f" ] || continue
+        echo "--- $f"; cat "$f"
+      done
+      echo "== apt.conf =="; grep -r . /etc/apt/apt.conf.d 2>&1 | grep -iE "Proxy|Acquire|Retries"
+      echo "== policy =="; apt-cache policy wireguard fail2ban qrencode 2>&1
+      echo "== журнал =="; journalctl -u vpn2-ci-warm --no-pager -q 2>&1
+      true' > "$out/apt-$name.txt" 2>&1 || true
+  done
+  cp /var/log/apt-cacher-ng/apt-cacher.log "$out/apt-cacher.log" 2>/dev/null || true
+  cp /var/log/apt-cacher-ng/apt-cacher.err "$out/apt-cacher.err" 2>/dev/null || true
+}
+
 cmd_collect() {
   local out=${1:?каталог для отчётов} host tag
   mkdir -p "$out"
@@ -785,6 +806,7 @@ cmd_collect() {
     ssh_node "$ENTRY" "cat /root/$name.log" > "$out/$name.log" 2>/dev/null || rm -f "$out/$name.log"
   done
   cp "$STAND_DIR"/*-console.log "$out/" 2>/dev/null || true
+  collect_apt "$out"
   # Пароль узлов стенда в журналах не печатается, но проверяем: артефакт публичный.
   if [[ -f "$STAND_DIR/root-password" ]] && grep -rqF -- "$(cat "$STAND_DIR/root-password")" "$out"; then
     die 'в собранных файлах найден пароль стенда'

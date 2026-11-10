@@ -198,6 +198,10 @@ async function ready(page: Page, pending: Set<unknown>, shown: Locator[]) {
  * страницы (с базового размера, чтобы порядок кадров не влиял): тогда снимку менять размер нечего.
  */
 async function fitWindow(page: Page, pending: Set<unknown>, base: { width: number, height: number }, shown: Locator[]) {
+  // Пилюли вкладок встают по размерам, которые были на момент их расчёта (до прихода данных и шрифтов):
+  // пересчитываем их на готовой раскладке, как при изменении окна, и даём доиграть.
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+  await ready(page, pending, shown)
   for (let i = 0; i < 4; i++) {
     const vp = page.viewportSize() ?? base
     const need = Math.max(base.height, await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight)))

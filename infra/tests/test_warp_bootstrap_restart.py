@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -18,7 +19,7 @@ CONFIG = {
 class TestWarpBootstrapRestart(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location('warp_watchdog', ROOT / 'infra/lib/warp-watchdog.py')
+        spec = importlib.util.spec_from_file_location('warp_watchdog', watchdog_src.path('warp'))
         cls.wd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.wd)
 

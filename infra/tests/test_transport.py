@@ -2,12 +2,14 @@
 
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 from router_support import exit_cert
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -120,8 +122,8 @@ python3 "$2/infra/lib/gen-router-config.py"'''
                 stage = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
                 exports = stage[stage.index('export HY2_UP_MBPS='):
                                 stage.index('SB_CONFIG_TMP=')]
-                exports = exports.replace('/tmp/anysda/hy2_bandwidth.py',
-                                          str(ROOT / 'infra/lib/hy2_bandwidth.py'))
+                exports = exports.replace('python3 /tmp/anysda/hy2_bandwidth.py',
+                                          shlex.join(watchdog_src.command('hy2')))
                 env = dict(os.environ, HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',
                            HY2_PWD_MGMT='test-mgmt', HY2_OBFS_PWD='test-obfs', CLASH_SECRET='test',
                            WGCF_PEER_ENDPOINT_HOST='192.0.2.20', WGCF_PEER_ENDPOINT_PORT='2408',
@@ -157,7 +159,7 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('нужны обе скорости', result.stderr)
                 self.assertFalse((root / 'infra/envs').exists())
-                result = subprocess.run(['python3', str(ROOT / 'infra/lib/hy2_bandwidth.py')],
+                result = subprocess.run(watchdog_src.command('hy2'),
                                         env=dict(os.environ, HY2_UP_MBPS=up, HY2_DOWN_MBPS=down),
                                         capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)

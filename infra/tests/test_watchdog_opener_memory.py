@@ -13,6 +13,8 @@ import tempfile
 import threading
 import unittest
 
+import watchdog_src
+
 ROOT = Path(__file__).resolve().parents[2]
 WARMUP = 100
 ROUNDS = 1000
@@ -98,8 +100,8 @@ class OpenerMemoryTests(unittest.TestCase):
         self.addCleanup(self.api.server_close)
         self.addCleanup(self.api.shutdown)
 
-    def run_loop(self, code, script):
-        args = (ROOT / script, self.api.server_port, self.root, WARMUP, ROUNDS)
+    def run_loop(self, code, kind):
+        args = (watchdog_src.path(kind), self.api.server_port, self.root, WARMUP, ROUNDS)
         result = subprocess.run([sys.executable, '-c', code, *map(str, args)],
                                 capture_output=True, text=True, timeout=600)
         self.assertEqual(result.returncode, 0, result.stderr[-3000:])
@@ -115,14 +117,14 @@ class OpenerMemoryTests(unittest.TestCase):
                              f'{what}: descriptors grew {fds_start} -> {fds_end} in {ROUNDS} ticks')
 
     def test_warp_watchdog_ticks_stay_flat(self):
-        measured = self.run_loop(WARP_LOOP, 'infra/lib/warp-watchdog.py')
+        measured = self.run_loop(WARP_LOOP, 'warp')
         # Every tick really probed the API and read it as healthy.
         self.assertEqual(measured['actions'], ['healthy'])
         self.assertGreaterEqual(self.api.hits, WARMUP + ROUNDS)
         self.assert_flat(measured, 'warp-watchdog')
 
     def test_yt_failover_ticks_stay_flat(self):
-        measured = self.run_loop(YT_LOOP, 'infra/lib/yt-failover.py')
+        measured = self.run_loop(YT_LOOP, 'yt')
         self.assertEqual(measured['state']['good'], 3)
         self.assertEqual(measured['state']['pending'], [])
         self.assertGreaterEqual(self.api.hits, WARMUP + ROUNDS)

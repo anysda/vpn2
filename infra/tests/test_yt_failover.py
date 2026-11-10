@@ -10,10 +10,11 @@ from unittest.mock import patch
 
 from router_support import exit_cert
 from test_deploy import ROOT, source
+import watchdog_src
 
 
 def load_watch():
-    path = ROOT / 'infra/lib/yt-failover.py'
+    path = watchdog_src.path('yt')
     spec = importlib.util.spec_from_file_location('yt_failover', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

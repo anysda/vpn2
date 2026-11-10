@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 import urllib.error
 import urllib.parse
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -34,7 +35,7 @@ def rendered(peer_host):
 class TestWarpWatchdog(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        spec = importlib.util.spec_from_file_location('warp_watchdog', ROOT / 'infra/lib/warp-watchdog.py')
+        spec = importlib.util.spec_from_file_location('warp_watchdog', watchdog_src.path('warp'))
         cls.wd = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.wd)
 
@@ -200,7 +201,7 @@ class TestWarpWatchdog(unittest.TestCase):
     def test_cli_disabled_does_not_create_state(self):
         config = self.directory / 'config.json'
         config.write_text('{"outbounds": []}')
-        result = subprocess.run(['python3', str(ROOT / 'infra/lib/warp-watchdog.py'),
+        result = subprocess.run([*watchdog_src.command('warp'),
                                  '--config', str(config), '--state', str(self.state), '--bootstrap'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -210,7 +211,7 @@ class TestWarpWatchdog(unittest.TestCase):
         config = self.directory / 'config.json'
         config.write_text(json.dumps(self.config))
         self.state.write_text('{broken')
-        result = subprocess.run(['python3', str(ROOT / 'infra/lib/warp-watchdog.py'),
+        result = subprocess.run([*watchdog_src.command('warp'),
                                  '--config', str(config), '--state', str(self.state), '--bootstrap'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

@@ -18,6 +18,7 @@ import unittest
 from unittest.mock import patch
 
 from router_support import exit_cert
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -43,7 +44,7 @@ def router_config():
 
 
 def watchdog():
-    spec = importlib.util.spec_from_file_location('watchdog', ROOT / 'infra/lib/failover-watchdog.py')
+    spec = importlib.util.spec_from_file_location('watchdog', watchdog_src.path('failover'))
     module = importlib.util.module_from_spec(spec)
     with patch.dict(os.environ, {'DEAD_AFTER': '3'}, clear=True):
         spec.loader.exec_module(module)

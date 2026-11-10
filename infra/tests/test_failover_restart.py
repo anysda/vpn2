@@ -24,6 +24,7 @@ import urllib.error
 import urllib.parse
 
 import test_config_validation as validation
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -95,7 +96,7 @@ class Clock:
 
 
 def watchdog(state_dir, **env):
-    spec = importlib.util.spec_from_file_location('watchdog', ROOT / 'infra/lib/failover-watchdog.py')
+    spec = importlib.util.spec_from_file_location('watchdog', watchdog_src.path('failover'))
     module = importlib.util.module_from_spec(spec)
     base = {'CLASH_SECRET': 'test',
             'LANE_STATE_FILE': str(Path(state_dir) / 'lanes.json'),

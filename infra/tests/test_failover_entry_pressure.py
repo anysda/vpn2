@@ -22,6 +22,7 @@ import unittest
 from unittest.mock import patch
 
 from test_failover_restart import Clash, Stop
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -96,7 +97,7 @@ class Run:
                     'DISABLED_EXITS_FILE': str(state / 'exits-disabled.json'),
                     'PSI_DIR': str(make_psi(tmp, mem, cpu)),
                     'PROC_DIR': str(make_proc(tmp))}
-        spec = importlib.util.spec_from_file_location('watchdog', ROOT / 'infra/lib/failover-watchdog.py')
+        spec = importlib.util.spec_from_file_location('watchdog', watchdog_src.path('failover'))
         self.w = importlib.util.module_from_spec(spec)
         with patch.dict(os.environ, self.env, clear=True):
             spec.loader.exec_module(self.w)

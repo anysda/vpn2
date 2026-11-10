@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
+import watchdog_src
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 PIN = 'pin-hy2-aa-warp'
@@ -19,7 +20,7 @@ AA_WARP, BB_WARP, CC_WARP = 'hy2-aa-warp', 'hy2-bb-warp', 'hy2-cc-warp'
 
 
 def watchdog():
-    spec = importlib.util.spec_from_file_location('watchdog', ROOT / 'infra/lib/failover-watchdog.py')
+    spec = importlib.util.spec_from_file_location('watchdog', watchdog_src.path('failover'))
     module = importlib.util.module_from_spec(spec)
     with patch.dict(os.environ, {'DEAD_AFTER': '3'}, clear=True):
         spec.loader.exec_module(module)

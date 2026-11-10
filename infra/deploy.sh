@@ -1667,7 +1667,7 @@ do_restore() {
       && mkdir -p \"\$dir\" && mv /tmp/anysda/'$base' \"\$dir/$base\" && chmod 600 \"\$dir/$base\""
     archive="$base"
   fi
-  ssh_exec "/usr/local/bin/anysda-restore.sh '$archive'$flags"
+  ssh_exec "VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} /usr/local/bin/anysda-restore.sh '$archive'$flags"
   (( ! dry_run )) || return 0
   # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
   # которого он снят, а запущенные службы собраны под секреты текущего: бот

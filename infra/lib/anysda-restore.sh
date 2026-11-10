@@ -1237,7 +1237,9 @@ STAGE_ENV="$WORK/ru.env"
 if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
   { cat "$ENVS_DIR/all.env"; echo; grep -v '^SSH_PASS=' "$ENVS_DIR/ru.env";
     # Стадии должны читать восстановленный файл, а не перетирать его засевом.
-    echo 'unset ADMIN_PASSWORD'; } > "$STAGE_ENV"
+    echo 'unset ADMIN_PASSWORD';
+    # Режим деплоя приходит от deploy.sh restore, без него стадии ищут манифест выпуска.
+    printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}"; } > "$STAGE_ENV"
   chmod 600 "$STAGE_ENV"
 fi
 

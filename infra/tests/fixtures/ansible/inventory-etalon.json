@@ -1,0 +1,36 @@
+{
+  "_meta": {
+    "hostvars": {
+      "nl": {
+        "ansible_host": "198.18.10.20",
+        "ansible_password": "stand-pass",
+        "ansible_ssh_common_args": "-o UserKnownHostsFile=@INFRA@/.known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password -o ConnectTimeout=10",
+        "ansible_ssh_private_key_file": "~/.ssh/id_ed25519",
+        "ansible_user": "root"
+      },
+      "ru": {
+        "ansible_host": "198.18.10.10",
+        "ansible_password": "stand-pass",
+        "ansible_ssh_common_args": "-o UserKnownHostsFile=@INFRA@/.known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password -o ConnectTimeout=10",
+        "ansible_ssh_private_key_file": "~/.ssh/id_ed25519",
+        "ansible_user": "root"
+      }
+    }
+  },
+  "all": {
+    "children": [
+      "entry",
+      "exits"
+    ]
+  },
+  "entry": {
+    "hosts": [
+      "ru"
+    ]
+  },
+  "exits": {
+    "hosts": [
+      "nl"
+    ]
+  }
+}

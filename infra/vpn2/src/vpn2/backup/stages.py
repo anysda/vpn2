@@ -9,6 +9,7 @@ from vpn2.backup.errors import RestoreError
 
 STAGES = ('22-adguard', '30-frontend', '35-telegram')
 TAIL_LINES = 15
+STATE_DIR = '/var/lib/anysda-vpn2/state'
 
 
 def _say(text, stream):
@@ -31,6 +32,11 @@ def stage_env(source_root, work, *, environ=None):
            if not line.startswith(b'SSH_PASS=')]
     development = environ.get('VPN2_DEVELOPMENT') or 'false'
     tail = f'unset ADMIN_PASSWORD\nVPN2_DEVELOPMENT={shlex.quote(development)}\n'.encode()
+    # /tmp/anysda/release-manifest.json живёт до перезагрузки: деплой оставляет манифест
+    # установленного выпуска в состоянии, стадии берут его оттуда.
+    manifest = os.path.join(environ.get('VPN2_STATE_DIR') or STATE_DIR, 'release-manifest.json')
+    if os.path.isfile(manifest):
+        tail += f'VPN2_RELEASE_MANIFEST={shlex.quote(manifest)}\n'.encode()
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, 'wb') as handle:
         handle.write(common + b'\n' + b''.join(own))

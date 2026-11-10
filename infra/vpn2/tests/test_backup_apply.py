@@ -336,3 +336,25 @@ def test_start_without_svc_lib_and_sync_units(tmp_path):
         'systemctl start caddy', 'systemctl start anysda-ikev2-cert-sync.path', 'id vpn2-panel',
         'id vpn2-control', 'systemctl start vpn2-control.socket vpn2-control.service',
         'docker start anysda-vpn2 anysda-tgbot']
+
+
+def test_archived_manifest_does_not_replace_the_installed_one(tmp_path):
+    """По манифесту из архива стадии подняли бы образы выпуска, с которого снят бэкап: остаётся установленный."""
+    state = tmp_path / 'root/var/lib/anysda-vpn2/state'
+    put(tmp_path / 'bundle/deploy-state/release-manifest.json', '{"commit": "archived"}\n', 0o600)
+    put(tmp_path / 'bundle/deploy-state/known_hosts', 'из архива\n', 0o600)
+    put(state / 'release-manifest.json', '{"commit": "installed"}\n', 0o640)
+    run = Fake()
+    apply.apply_bundle(make(tmp_path, run), tmp_path / 'bundle', run=run, out=lambda _: None)
+    manifest = state / 'release-manifest.json'
+    assert manifest.read_text() == '{"commit": "installed"}\n' and oct(manifest.stat().st_mode & 0o777) == '0o640'
+    assert (state / 'known_hosts').read_text() == 'из архива\n'
+    assert [p.name for p in state.iterdir() if p.name.startswith('.')] == []
+
+
+def test_archived_manifest_fills_a_missing_one(tmp_path):
+    state = tmp_path / 'root/var/lib/anysda-vpn2/state'
+    put(tmp_path / 'bundle/deploy-state/release-manifest.json', '{"commit": "archived"}\n', 0o600)
+    run = Fake()
+    apply.apply_bundle(make(tmp_path, run), tmp_path / 'bundle', run=run, out=lambda _: None)
+    assert (state / 'release-manifest.json').read_text() == '{"commit": "archived"}\n'

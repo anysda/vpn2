@@ -222,7 +222,20 @@ def _deploy_state(rb, bundle, paths, run):
     if not os.path.isdir(state):
         _must(run, ['install', '-d', '-m', '700', '-o', 'root', '-g', 'root', state],
               'install -d -m 700 -o root -g root /var/lib/anysda-vpn2/state')
-    rb.copy_into(os.path.join(bundle, 'deploy-state'), state)
+    # Манифест выпуска остаётся от установленного дерева: по манифесту из архива
+    # стадии подняли бы образы выпуска, с которого снят бэкап.
+    manifest = os.path.join(state, 'release-manifest.json')
+    kept = os.path.join(state, '.release-manifest.json.kept')
+    installed = os.path.isfile(manifest)
+    if installed:
+        owner = os.stat(manifest)
+        shutil.copy2(manifest, kept)
+        os.chown(kept, owner.st_uid, owner.st_gid)
+    try:
+        rb.copy_into(os.path.join(bundle, 'deploy-state'), state)
+    finally:
+        if installed:
+            os.replace(kept, manifest)
 
 
 def _panel_runtime(rb, run):

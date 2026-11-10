@@ -111,3 +111,15 @@ def test_finish_reports_unsynced_passwords():
     assert caught.value.message == (
         '\nanysda-restore: FAILED — данные восстановлены, но пароли не пересинхронизированы:\n'
         '  причина\n  Почини причину и прогони ./deploy.sh <стадия> ru; pre-restore снимок: снимок')
+
+
+def test_stage_env_points_stages_at_the_stored_manifest(tmp_path):
+    """/tmp/anysda живёт до перезагрузки: манифест установленного выпуска стадии берут из состояния деплоя."""
+    src, work = tree(tmp_path)
+    state = tmp_path / 'state dir'
+    state.mkdir()
+    environ = {'VPN2_STATE_DIR': str(state)}
+    assert b'VPN2_RELEASE_MANIFEST' not in stages.stage_env(src, work, environ=environ).read_bytes()
+    (state / 'release-manifest.json').write_text('{}\n')
+    lines = stages.stage_env(src, work, environ=environ).read_text().splitlines()
+    assert lines[-2:] == ['VPN2_DEVELOPMENT=false', f"VPN2_RELEASE_MANIFEST='{state}/release-manifest.json'"]

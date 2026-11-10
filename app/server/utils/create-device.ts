@@ -4,6 +4,18 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, deviceRequests, devices } from '../database/schema'
 import { nextPoolAddress } from './address-pools'
+import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
+import { ensureDeviceOvpn } from './openvpn'
+import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
+
+/** Строки журнала при сбое шагов выдачи: у бота и панели свои. */
+export interface ProvisionLog {
+  wg: string
+  ovpn: string
+  ikev2: string
+  wgSync: string
+  ikev2Sync: string
+}
 
 /**
  * Ключ идемпотентности создания: из заголовка idempotency-key, как у операций
@@ -79,4 +91,20 @@ export async function createDeviceWithAddresses(
     }
     return { device, replay: false }
   }, { behavior: 'immediate' })
+}
+
+/**
+ * Ключи нового устройства и синхронизация протоколов, чтобы девайс был сразу
+ * готов к выдаче конфигов. Сбой шага пишется в журнал и не прерывает остальные.
+ */
+export async function provisionDeviceKeys(deviceId: number, ovpnReady: boolean, log: ProvisionLog) {
+  if (useRuntimeConfig().wgEnabled) {
+    await ensureDeviceWg(deviceId).catch(err => useLogger().error({ err }, log.wg))
+  }
+  if (ovpnReady) {
+    await ensureDeviceOvpn(deviceId).catch(err => useLogger().error({ err }, log.ovpn))
+  }
+  await ensureDeviceIkev2(deviceId).catch(err => useLogger().error({ err }, log.ikev2))
+  await syncWireguardConfig().catch(err => useLogger().error({ err }, log.wgSync))
+  await syncIkev2().catch(err => useLogger().error({ err }, log.ikev2Sync))
 }

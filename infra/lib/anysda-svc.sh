@@ -215,6 +215,15 @@ wg0_apply() {
 exec {APT_LOG_FD}>&1
 APT_LOCKS=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock)
 APT_LOCK_TIMEOUT=1200
+# Ожидание исчерпано: метка живёт час и снимается свободным apt. При ней
+# следующий вызов не ждёт второй круг, а apt-get получает короткий
+# Lock::Timeout и либо идёт, либо падает сразу.
+APT_GAVE_UP=${APT_GAVE_UP:-/run/anysda-apt-gave-up}
+APT_GAVE_UP_LOCK_TIMEOUT=60
+
+apt_gave_up() {
+  [[ -n "$(find "$APT_GAVE_UP" -mmin -60 2>/dev/null)" ]]
+}
 
 # В минимальном Debian нет psmisc/fuser. lslocks из util-linux видит те же
 # блокировки ядра; без него отсутствие fuser выглядело как свободный apt.
@@ -231,8 +240,13 @@ apt_lock_holders() {
 apt_wait_idle() {
   local t0=$SECONDS said=-20 holders pid
   while holders=$(apt_lock_holders); do
+    if apt_gave_up; then
+      svc_say "apt всё ещё занят, ожидание уже исчерпано, продолжаю" >&"$APT_LOG_FD"
+      return 0
+    fi
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "apt так и не освободился за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
+      : >"$APT_GAVE_UP" 2>/dev/null || true
       return 0
     fi
     if (( SECONDS - said >= 20 )); then
@@ -243,6 +257,7 @@ apt_wait_idle() {
     fi
     sleep 5
   done
+  rm -f "$APT_GAVE_UP" 2>/dev/null || true
   (( SECONDS - t0 < 5 )) || svc_say "apt освободился через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
 }
 
@@ -318,12 +333,14 @@ apt_auto_pause() {
 # Не отдало и тогда - строка «зеркало apt не отдало» с адресом и прежний код.
 APT_FETCH_TRIES=3
 apt_get() {
-  local try=1 rc err failed
+  local try=1 rc err failed lock_timeout
   err=$(mktemp)
   while :; do
     apt_wait_idle
+    lock_timeout=$APT_LOCK_TIMEOUT
+    ! apt_gave_up || lock_timeout=$APT_GAVE_UP_LOCK_TIMEOUT
     rc=0
-    apt-get -o DPkg::Lock::Timeout="$APT_LOCK_TIMEOUT" "$@" 2>"$err" || rc=$?
+    apt-get -o DPkg::Lock::Timeout="$lock_timeout" "$@" 2>"$err" || rc=$?
     failed=$(awk '/^[WE]: Failed to fetch / {
         if ($6 ~ /^4[0-9][0-9]$/ && $6 != 408 && $6 != 429) next
         url = $5; sub(/^[WE]: Failed to fetch +[^ ]+ +/, ""); sub(/ +\[IP: .*/, "")

@@ -1188,6 +1188,32 @@ class EmergencyAgentTests(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_deploy_drops_release_package_leftover_from_checkout(self):
+        deploy = (ROOT / 'infra/deploy.sh').read_text()
+        step = deploy.split('    23-emergency)\n', 1)[1].split('|| return 1 ;;', 1)[0]
+        script = 'python3() { echo "provision $*"; }\n' + step
+
+        def run(prepare):
+            with tempfile.TemporaryDirectory() as directory:
+                package = Path(directory) / 'emergency/vpn2_emergency'
+                (package / '__pycache__').mkdir(parents=True)
+                (package / '__pycache__/agent.cpython-312.pyc').touch()
+                prepare(package)
+                result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], text=True,
+                                        capture_output=True, env={**os.environ, 'DEPLOY_ROOT': directory})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('provision', result.stdout)
+                return sorted(str(path.relative_to(package)) for path in package.rglob('*')) \
+                    if package.exists() else None
+
+        # После git pull с выпуска от пакета остаётся один __pycache__: каталог уходит.
+        self.assertIsNone(run(Path.exists))
+        # Собранная локально статика страницы остаётся на месте.
+        self.assertEqual(run(lambda package: (package / 'static').mkdir()), ['static'])
+        # Дерево выпуска со своим пакетом (деплой старой версии) не трогаем.
+        self.assertEqual(run(lambda package: (package / '__init__.py').touch()),
+                         ['__init__.py', '__pycache__', '__pycache__/agent.cpython-312.pyc'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

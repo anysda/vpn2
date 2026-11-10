@@ -904,7 +904,15 @@ run_stage() {
 
   case "$stage" in
     20-ru-router) prep_ru_router; warn_insecure_exits ;;
-    23-emergency) python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
+    23-emergency)
+      # Выпуск до переноса аварийки в пакет запускал её из checkout: после
+      # git pull от каталога остаётся один __pycache__. Собранную статику
+      # страницы (static/) не трогаем: rmdir снимает только пустой каталог.
+      if [[ ! -e "$DEPLOY_ROOT/emergency/vpn2_emergency/__init__.py" ]]; then
+        rm -rf -- "$DEPLOY_ROOT/emergency/vpn2_emergency/__pycache__"
+        rmdir "$DEPLOY_ROOT/emergency/vpn2_emergency" 2>/dev/null || true
+      fi
+      python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1 ;;
   esac
   # Полный прогон готовит ключи один раз до параллельных цепочек (do_all):
   # две цепочки с 00-bootstrap иначе разом переписали бы одни и те же файлы.

@@ -3,7 +3,7 @@ import { and, desc, eq, exists, getTableColumns, lte, ne, notExists, sql } from 
 import type { SQL } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shared/access-operation'
-import type { AccessKind, AccessOperation, AccessProtocol } from '../../shared/access-operation'
+import type { AccessKind, AccessOperation } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { accessOperations, botOutbox, clients, devices, events } from '../database/schema'
 import type { Client } from '../database/schema'
@@ -12,18 +12,10 @@ import { accessAdapter } from './access-adapter'
 import type { AccessAdapter } from './access-adapter'
 import { botConfigured } from './telegram-config'
 import { withAccessLock } from './access-lock'
+import { carried, retire } from './access-payload'
+import type { AccessPayload, StoredOperation } from './access-payload'
 import { ControlUnavailable } from './control'
 
-interface RetiredAccess { id: number, wgPublicKey: string | null, ovpnCert: string | null }
-export interface AccessPayload {
-  enabled: boolean
-  retired: RetiredAccess[]
-  rotateOvpn: Array<{ id: number, cert: string | null }>
-  name: string
-  chatId: number | null
-  notice?: string
-}
-type StoredOperation = typeof accessOperations.$inferSelect
 const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 300_000]
 
 interface AccessRequest {
@@ -31,34 +23,6 @@ interface AccessRequest {
   deviceId?: number
   kind?: AccessKind
   patch?: Partial<typeof clients.$inferInsert>
-}
-
-/**
- * Что новая операция берёт у неподтверждённой предыдущей. Протокол, который
- * она уже подтвердила, свои старые реквизиты убрал: их не тянем дальше.
- */
-function carried(row: StoredOperation): Pick<AccessPayload, 'retired' | 'rotateOvpn'> {
-  const payload: AccessPayload = JSON.parse(row.payload)
-  const done = (protocol: AccessProtocol) => row.protocols[protocol].confirmedVersion === row.version
-  const retired = payload.retired
-    .map(old => ({ id: old.id, wgPublicKey: done('wg') ? null : old.wgPublicKey, ovpnCert: done('openvpn') ? null : old.ovpnCert }))
-    .filter(old => old.wgPublicKey || old.ovpnCert)
-  return { retired, rotateOvpn: done('openvpn') ? [] : payload.rotateOvpn }
-}
-
-/**
- * Одна запись на устройство: реквизиты, с которых началась цепочка
- * неподтверждённых операций (их последними подтвердила VPN-служба).
- * Промежуточный ключ WG снимает полная замена пиров (wg.apply), а проверка
- * находит его по адресу устройства; промежуточный сертификат OpenVPN отозван
- * своей же ротацией, текущий отзывают rotateOvpn и удаление устройства.
- */
-function retire(retired: RetiredAccess[], entry: RetiredAccess): RetiredAccess[] {
-  const own = retired.find(old => old.id === entry.id)
-  if (!own) return [...retired, entry]
-  return retired.map(old => old !== own ? old : {
-    id: own.id, wgPublicKey: own.wgPublicKey ?? entry.wgPublicKey, ovpnCert: own.ovpnCert ?? entry.ovpnCert,
-  })
 }
 
 /** История не нужна очереди: у вытесненной операции остаётся только целевое состояние. */

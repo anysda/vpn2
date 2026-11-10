@@ -695,6 +695,7 @@ run_verify() {
   # Итог стадии печатается после вывода проверки, а не после плея.
   # shellcheck disable=SC2329  # зовёт run_play
   ( ok() { :; }; run_play 99-verify "$host" ) || rc=$?
+  HOST_TAG="$host"  # окружение узла осталось в субшелле, метка строк итога - здесь
   if [[ -f "$VPN2_VERIFY_OUT/$host" ]]; then
     { IFS= read -r code; text=$(cat); } < "$VPN2_VERIFY_OUT/$host"
     [[ -z "$text" ]] || printf '%s\n' "$text"

@@ -117,7 +117,11 @@ class DeployVerifyTests(unittest.TestCase):
                         print(result.stdout, end='')
                         print(f'rc={result.returncode}')
                     self.assertEqual(result.returncode, expected, result.stdout)
+                    self.assertIn('[exit] [99-verify → exit] done', result.stdout)
+                    if expected == 0:
+                        self.assertIn('[ru] [99-verify → ru] done', result.stdout)
                     if expected == 2:
+                        self.assertIn('[ru] [99-verify → ru] не все проверки измерены', result.stdout)
                         self.assertIn('⚠', result.stdout)
                         reasons = [line for line in ru.stdout.splitlines() if '] ? ' in line]
                         self.assertTrue(reasons, ru.stdout)

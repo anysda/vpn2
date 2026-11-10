@@ -1,0 +1,13 @@
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+[Unit]
+Description=anysda-vpn: {{ base_wan_qdisc }} on the default route interface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-fq {{ base_wan_qdisc }}
+
+[Install]
+WantedBy=multi-user.target

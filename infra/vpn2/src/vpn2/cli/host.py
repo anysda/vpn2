@@ -29,9 +29,28 @@ def _packages(args):
     return apt.install(args.package, docker=args.docker)
 
 
+NFT_DROPIN = '''[Service]
+# Stopping this loader must not remove rules owned by other services.
+ExecStop=
+'''
+
+
+def nft_preserve(*, root='/', run=subprocess.run):
+    """nftables не сбрасывает чужие таблицы: ни из конфига, ни остановкой юнита."""
+    root = Path(root)
+    changed = firewall.preserve_nftables_conf(root / 'etc/nftables.conf')
+    dropin = root / 'etc/systemd/system/nftables.service.d/10-anysda-preserve.conf'
+    if not dropin.is_file() or dropin.read_text() != NFT_DROPIN:
+        dropin.parent.mkdir(parents=True, exist_ok=True)
+        dropin.write_text(NFT_DROPIN)
+        run(['systemctl', 'daemon-reload'], check=True)
+        changed = True
+    return changed
+
+
 def _nft_preserve(args):
     del args
-    return firewall.preserve_nftables_conf()
+    return nft_preserve()
 
 
 def _swap(args):
@@ -246,3 +265,8 @@ def main(argv):
     if changed:
         print(CHANGED)
     return 0
+
+
+if __name__ == '__main__':
+    # Чистый экзит зовёт модуль прямо из колеса: `python3 -m vpn2.cli.host`.
+    sys.exit(main(sys.argv[1:]))

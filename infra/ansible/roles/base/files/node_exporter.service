@@ -1,0 +1,16 @@
+[Unit]
+Description=Prometheus node_exporter (managed by anysda-vpn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=node_exporter
+# Слушаем только loopback: entry скребёт локально, экзиты — через hy2-туннель,
+# который на самом экзите бьёт в 127.0.0.1:9100. Наружу порт не открываем.
+ExecStart=/usr/local/bin/node_exporter --web.listen-address=127.0.0.1:9100
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

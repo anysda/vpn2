@@ -1,0 +1,11 @@
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+ignoreip = {{ base_f2b_ignore.stdout | trim }}
+
+[sshd]
+enabled = true
+port = ssh
+backend = systemd

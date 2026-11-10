@@ -1,0 +1,21 @@
+#!/bin/sh
+# anysda-vpn — set by infra/scripts/00-bootstrap.sh
+set -eu
+dev=$(ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')
+[ -n "$dev" ] || { echo "anysda-fq: нет маршрута по умолчанию" >&2; exit 1; }
+case "${1:?ожидается fq или pfifo_fast}" in
+  pfifo_fast)
+    tc qdisc show dev "$dev" root | grep -q '^qdisc pfifo_fast ' && exit 0
+    tc qdisc replace dev "$dev" root pfifo_fast
+    ;;
+  fq)
+    current=$(tc qdisc show dev "$dev" root)
+    if echo "$current" | grep -q '^qdisc fq .*flow_limit 1000p' &&
+       ! echo "$current" | grep -q 'nopacing'; then
+      exit 0
+    fi
+    tc qdisc replace dev "$dev" root fq flow_limit 1000 pacing
+    ;;
+  *) echo "anysda-fq: неизвестная очередь $1" >&2; exit 1 ;;
+esac
+echo "anysda-fq: $dev -> $1"

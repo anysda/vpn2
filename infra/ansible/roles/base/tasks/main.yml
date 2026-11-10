@@ -1,0 +1,166 @@
+---
+- name: Каталоги состояния
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop: [/var/anysda/.stamps, /etc/anysda, /var/lib/anysda, "{{ base_tmp }}", /etc/systemd/networkd.conf.d]
+
+- name: Библиотеки шагов и колесо vpn2
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ base_tmp }}/"
+    mode: '0644'
+  loop: "{{ base_libs }}"
+  changed_when: false
+
+- name: Чужие таблицы nftables переживают перезапуск юнита
+  ansible.builtin.command:
+    argv: "{{ base_host + ['nft-preserve'] }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+# esm-cache при каждом apt ходит к esm.ubuntu.com и виснет, когда тот недоступен,
+# а apt через needrestart его ждёт. Узлу VPN кэш ESM не нужен.
+- name: Маска esm-cache
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl mask --now esm-cache.service
+    creates: /etc/systemd/system/esm-cache.service
+  failed_when: false
+
+- name: Swap узлу с памятью меньше 4 ГБ
+  ansible.builtin.command:
+    argv: "{{ base_host + ['swap', '--manifest', base_manifest] }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Пакеты одним заходом apt
+  ansible.builtin.command:
+    argv: "{{ base_host + ['packages'] + (['--docker'] if base_entry else []) + base_packages }}"
+  environment:
+    HOST_TAG: "{{ inventory_hostname }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Конфиг nftables из пакета не сбрасывает чужие таблицы
+  ansible.builtin.command:
+    argv: "{{ base_host + ['nft-preserve'] }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Docker включён
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+  when: base_entry
+  failed_when: false
+
+- name: Venv vpn2 экзита из колеса
+  ansible.builtin.command:
+    argv: "{{ base_host + ['venv', base_tmp ~ '/' ~ (base_wheel | basename)] }}"
+  when: not base_entry
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Настройки ядра
+  ansible.builtin.copy:
+    src: 99-anysda.conf
+    dest: /etc/sysctl.d/99-anysda.conf
+    mode: '0644'
+  register: base_sysctl
+
+# Не обработчиком: оборванный плей оставил бы файл без применения.
+- name: Настройки ядра применены  # noqa: no-handler
+  ansible.builtin.command:
+    cmd: sysctl --quiet --system
+  when: base_sysctl is changed
+  changed_when: true
+
+# networkd при перезапуске сносит чужие ip rule и маршруты, в том числе
+# fwmark 0x42 -> table 101, на которой держится TPROXY клиентов. Файл читается
+# при следующем старте networkd, перезапускать его не нужно.
+- name: Файлы очереди WAN, networkd и node_exporter
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode | default('0644') }}"
+  loop:
+    - {src: anysda-fq, dest: /usr/local/sbin/anysda-fq, mode: '0755'}
+    - {src: 60-anysda-foreign.conf, dest: /etc/systemd/networkd.conf.d/60-anysda-foreign.conf}
+    - {src: node_exporter.service, dest: /etc/systemd/system/node_exporter.service}
+
+- name: Юнит очереди WAN
+  ansible.builtin.template:
+    src: anysda-fq.service.j2
+    dest: /etc/systemd/system/anysda-fq.service
+    mode: '0644'
+
+- name: Ресурсы юнитов
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; for unit; do entry_unit_resources "$unit"; echo "changed=$ENTRY_DROPIN_CHANGED"; done'
+      - "{{ base_tmp }}"
+      - anysda-fq
+      - node_exporter
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  register: base_step
+  changed_when: "'changed=1' in base_step.stdout"
+
+- name: Очередь WAN включена
+  ansible.builtin.systemd_service:
+    name: anysda-fq
+    enabled: true
+    daemon_reload: true
+
+- name: Очередь WAN выставлена
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/anysda-fq, "{{ base_wan_qdisc }}"]
+  register: base_step
+  changed_when: "'->' in base_step.stdout"
+
+- name: Ключи оркестратора и админа
+  ansible.posix.authorized_key:
+    user: root
+    key: "{{ base_keys | join('\n') }}"
+  when: base_keys | length > 0
+
+# Ключ entry для ssh через служебный hy2-туннель. Опознаётся по комментарию:
+# пересозданная entry вытесняет прежний ключ. Туннель отдаёт соединение sshd
+# с 127.0.0.1, поэтому from= не пускает этот ключ с публичного адреса.
+- name: Ключ entry для служебного туннеля
+  ansible.builtin.lineinfile:
+    path: /root/.ssh/authorized_keys
+    regexp: ' anysda-entry-mgmt$'
+    line: 'from="127.0.0.1,::1" {{ base_entry_mgmt_key.splitlines() | first | trim }}'
+    create: true
+    mode: '0600'
+  when: not base_entry and base_entry_mgmt_key | trim | length > 0
+
+- name: Вход по ssh
+  ansible.builtin.command:
+    argv: "{{ base_host + ['sshd', base_sshd_password] }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Фаервол ufw
+  ansible.builtin.command:
+    argv: "{{ base_host + ['ufw', base_ufw | to_json] }}"
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+- name: Fail2ban и node_exporter
+  ansible.builtin.import_tasks: services.yml
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/00-bootstrap
+    force: false
+    mode: '0644'

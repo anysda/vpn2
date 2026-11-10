@@ -1,0 +1,13 @@
+[Unit]
+Description=anysda-vpn mgmt loopback alias ({{ mgmt_ip }})
+After=network-pre.target
+Before=sing-box.service adguardhome.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip addr replace {{ mgmt_ip }}/32 dev lo
+ExecStop=/sbin/ip addr del {{ mgmt_ip }}/32 dev lo
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+---
+- name: Служебный слой узла
+  hosts: all
+  tags: [05-mgmt-mesh]
+  roles:
+    - mgmt

@@ -1,0 +1,98 @@
+---
+# Служебный скрейп экзитов идёт через отдельный туннель Hysteria2, а не через
+# WireGuard-mesh wgmgmt: WG через границу блокируется. Узел, поставленный в
+# эпоху mesh, от него очищается; на чистом узле эти шаги ничего не делают.
+- name: Следы wgmgmt
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: [/sys/class/net/wgmgmt, /etc/systemd/system/multi-user.target.wants/wg-quick@wgmgmt.service]
+  register: mgmt_wgmgmt
+
+- name: Снос wgmgmt
+  when: mgmt_wgmgmt.results | selectattr('stat.exists') | list | length > 0
+  block:
+    - name: Служба wgmgmt остановлена
+      ansible.builtin.systemd_service:
+        name: wg-quick@wgmgmt
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Интерфейс wgmgmt и правила mesh сняты
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      loop:
+        - [ip, link, del, wgmgmt]
+        - [ufw, delete, allow, proto, udp, from, 10.99.0.0/24, to, any, port, "{{ mgmt_port }}"]
+        - [ufw, delete, allow, proto, tcp, from, 10.99.0.0/24, to, any, port, '9100']
+      changed_when: true
+      failed_when: false
+
+    - name: Конфиг и ключ wgmgmt убраны
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: [/etc/wireguard/wgmgmt.conf, /etc/wireguard/wgmgmt.privkey]
+
+# В эпоху mesh node_exporter слушал служебный адрес.
+- name: Адрес node_exporter - loopback
+  ansible.builtin.replace:
+    path: /etc/systemd/system/node_exporter.service
+    regexp: '--web\.listen-address=(?!127\.0\.0\.1:9100)[0-9.]*:9100'
+    replace: '--web.listen-address=127.0.0.1:9100'
+  register: mgmt_node_exporter
+
+- name: Служба node_exporter перезапущена с новым адресом  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: node_exporter
+    state: restarted
+    daemon_reload: true
+  when: mgmt_node_exporter is changed
+
+- name: Служебный адрес entry
+  when: mgmt_entry
+  block:
+    # Адрес держит oneshot-юнит: переживает ребут без сетевого демона.
+    # `ip addr replace` не падает на уже висящем адресе.
+    - name: Юнит служебного адреса
+      ansible.builtin.template:
+        src: anysda-mgmt-loopback.service.j2
+        dest: /etc/systemd/system/anysda-mgmt-loopback.service
+        mode: '0644'
+
+    - name: Библиотека ресурсов
+      ansible.builtin.copy:
+        src: "{{ mgmt_infra }}/lib/{{ item }}"
+        dest: "{{ mgmt_tmp }}/"
+        mode: '0644'
+      loop: [entry-resources.sh, entry_resources.py]
+      changed_when: false
+
+    - name: Ресурсы юнита служебного адреса
+      ansible.builtin.command:
+        argv:
+          - /bin/bash
+          - --norc
+          - -euo
+          - pipefail
+          - -c
+          - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-mgmt-loopback; echo "changed=$ENTRY_DROPIN_CHANGED"'
+          - "{{ mgmt_tmp }}"
+      environment:
+        ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+      register: mgmt_step
+      changed_when: "'changed=1' in mgmt_step.stdout"
+
+    - name: Служебный адрес висит на lo
+      ansible.builtin.systemd_service:
+        name: anysda-mgmt-loopback
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/05-mgmt-mesh
+    force: false
+    mode: '0644'

@@ -1,0 +1,119 @@
+---
+base_entry: "{{ inventory_hostname == 'ru' }}"
+base_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+base_tmp: /tmp/anysda
+base_manifest: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
+base_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
+
+# Шаги узла из пакета vpn2. На entry venv ставит деплой; на чистом экзите venv
+# ещё нет, и модуль запускается системным python прямо из колеса.
+base_host_entry: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
+base_host_exit:
+  - /usr/bin/env
+  - "PYTHONPATH={{ base_tmp }}/{{ base_wheel | basename }}"
+  - /usr/bin/python3
+  - -B
+  - -m
+  - vpn2.cli.host
+base_host: "{{ base_host_entry if base_entry else base_host_exit }}"
+
+# Библиотеки, которые шаги роли зовут на узле из base_tmp.
+base_libs_common: [lib/entry-resources.sh, lib/entry_resources.py, lib/release.py]
+base_libs: "{{ base_libs_common | map('regex_replace', '^', base_infra ~ '/') | list + ([] if base_entry else [base_wheel]) }}"
+
+base_packages_common:
+  - wireguard
+  - wireguard-tools
+  - curl
+  - wget
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - openssl
+  - gettext-base
+  - iproute2
+  - procps
+  - kmod
+  - ufw
+  - fail2ban
+  - jq
+  - qrencode
+  - unzip
+  - git
+  - openssh-client
+  - iptables
+  - nftables
+  - netcat-openbsd
+  - python3
+  - python3-yaml
+  - python3-venv
+# Пакеты стадий entry ставятся тем же заходом apt: каждый заход dpkg - свой
+# прогон триггеров, а entry кончает первую стадию раньше экзитов и ждёт их.
+base_packages_entry:
+  - openvpn
+  - strongswan
+  - strongswan-starter
+  - strongswan-charon
+  - strongswan-pki
+  - strongswan-swanctl
+  - libcharon-extauth-plugins
+  - libcharon-extra-plugins
+  - libstrongswan-standard-plugins
+  - libstrongswan-extra-plugins
+  - apache2-utils
+# zapret2 - чистый C: g++ из build-essential не нужен.
+base_packages_zapret:
+  - gcc
+  - make
+  - libc6-dev
+  - libcap-dev
+  - libnetfilter-queue-dev
+  - libnfnetlink-dev
+  - libmnl-dev
+  - zlib1g-dev
+  - libluajit-5.1-dev
+  - luajit
+  - ethtool
+base_packages_backup: [age, expect, sqlite3]
+base_packages: >-
+  {{ base_packages_common
+     + (base_packages_entry if base_entry else [])
+     + (base_packages_zapret if base_entry and lookup('ansible.builtin.env', 'YT_ROUTE') == 'zapret' else [])
+     + (base_packages_backup if base_entry and lookup('ansible.builtin.env', 'BACKUP_ENABLED') == 'true' else []) }}
+
+# default_qdisc не меняет уже созданный WAN. Экзит держит fq с flow_limit 1000:
+# один hy2-поток несёт трафик всех клиентов. WAN entry - pfifo_fast: fq снижает
+# скорость IKEv2.
+base_wan_qdisc: "{{ 'pfifo_fast' if base_entry else 'fq' }}"
+
+base_orchestrator_keys: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/orchestrator_keys', errors='ignore') | default('', true) }}"
+base_entry_mgmt_key: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/entry_mgmt_key', errors='ignore') | default('', true) }}"
+base_admin_key: "{{ lookup('ansible.builtin.env', 'ADMIN_SSH_PUBKEY') }}"
+base_keys: "{{ (base_orchestrator_keys.splitlines() + [base_admin_key]) | map('trim') | select | unique | list }}"
+# Entry: пароль отключается, только когда ключ есть у человека-админа - ключ
+# оркестратора живёт на самой entry и после её переустановки не поможет.
+# Экзит: пароль отключается, как только лёг ключ оркестратора.
+base_sshd_password: "{{ 'no' if (base_admin_key if base_entry else base_orchestrator_keys | trim) else 'yes' }}"
+
+# Listener-порты WG, OpenVPN, IKEv2 и панели открывают их роли. Пустые группы
+# снимают правила под Caddy-обманку с экзитов, поставленных раньше.
+base_ufw_entry:
+  - {comment: ssh, rules: [22/tcp]}
+  - {comment: caddy HTTP + ACME challenge, aliases: [caddy HTTP панель], rules: [80/tcp]}
+base_ufw_exit:
+  - {comment: ssh, rules: [22/tcp]}
+  - {comment: hysteria2 direct, rules: ["{{ lookup('ansible.builtin.env', 'HY2_DIRECT_PORT') }}/udp"]}
+  - {comment: hysteria2 warp, rules: ["{{ lookup('ansible.builtin.env', 'HY2_WARP_PORT') }}/udp"]}
+  - comment: hysteria2 mgmt
+    aliases: [hysteria2 mgmt (monitoring)]
+    rules: ["{{ lookup('ansible.builtin.env', 'HY2_MGMT_PORT') }}/udp"]
+  - {comment: caddy HTTP + ACME challenge, aliases: [caddy HTTP панель], rules: []}
+  - {comment: caddy HTTPS панель, rules: []}
+base_ufw: "{{ base_ufw_entry if base_entry else base_ufw_exit }}"
+
+base_node_exporter_version: '1.12.1'
+# GitHub release assets API, tag v1.12.1, поле digest.
+base_node_exporter_sha256: b51d8a76aa2a9156a55d501aca6276fae09e262259a5e4e831d2c2222f084e63
+base_node_exporter_archive: "node_exporter-{{ base_node_exporter_version }}.linux-amd64"
+base_node_exporter_url: >-
+  https://github.com/prometheus/node_exporter/releases/download/v{{ base_node_exporter_version }}/{{ base_node_exporter_archive }}.tar.gz

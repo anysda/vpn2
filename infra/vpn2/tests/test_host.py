@@ -235,3 +235,17 @@ def test_sshd_stopped_service_is_started(tmp_path):
     run.calls.clear()
     host.sshd('no', root=root, run=run)
     assert run.calls[-1] == 'systemctl reload-or-restart ssh'
+
+
+def test_nft_preserve_writes_dropin_once(tmp_path):
+    (tmp_path / 'etc').mkdir()
+    (tmp_path / 'etc/nftables.conf').write_text('#!/usr/sbin/nft -f\nflush ruleset\ntable inet filter {}\n')
+    calls = []
+    run = lambda argv, **_: calls.append(argv)  # noqa: E731
+    assert host.nft_preserve(root=tmp_path, run=run) is True
+    assert (tmp_path / 'etc/systemd/system/nftables.service.d/10-anysda-preserve.conf').read_text() == (
+        '[Service]\n# Stopping this loader must not remove rules owned by other services.\nExecStop=\n')
+    assert 'flush ruleset' not in (tmp_path / 'etc/nftables.conf').read_text().splitlines()
+    assert calls == [['systemctl', 'daemon-reload']]
+    assert host.nft_preserve(root=tmp_path, run=run) is False
+    assert len(calls) == 1

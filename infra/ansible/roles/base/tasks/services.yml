@@ -1,0 +1,92 @@
+---
+# Адреса entry fail2ban не банит: деплой ходит на узел с entry, и ошибка в
+# пароле узла иначе запирает entry на час. Список пересобирается каждым деплоем.
+- name: Адреса, которые fail2ban не банит
+  ansible.builtin.command:
+    argv: "{{ base_host + ['f2b-ignore', lookup('ansible.builtin.env', 'ENTRY_HOST')] }}"
+  register: base_f2b_ignore
+  changed_when: false
+
+- name: Настройки fail2ban
+  ansible.builtin.template:
+    src: anysda.local.j2
+    dest: /etc/fail2ban/jail.d/anysda.local
+    mode: '0644'
+
+- name: Служба fail2ban включена
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    enabled: true
+
+- name: Служба fail2ban перезапущена при смене входов
+  ansible.builtin.command:
+    argv: >-
+      {{ base_host + ['restart-if-changed', 'fail2ban', '/usr/bin/fail2ban-server',
+         '/usr/lib/systemd/system/fail2ban.service', '/etc/fail2ban/jail.d/anysda.local', '/usr/sbin/nft'] }}
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"
+
+# node_exporter слушает только loopback: entry скребёт локально, экзиты - через
+# служебный hy2-туннель, который на самом экзите бьёт в 127.0.0.1:9100.
+- name: Версия node_exporter
+  ansible.builtin.command:
+    cmd: /usr/local/bin/node_exporter --version
+  register: base_node_exporter
+  changed_when: false
+  failed_when: false
+
+- name: Установка node_exporter
+  when: ('version ' ~ base_node_exporter_version ~ ' ') not in (base_node_exporter.stdout | default('')) ~ (base_node_exporter.stderr | default(''))
+  block:
+    - name: Архив node_exporter
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/python3', base_tmp ~ '/release.py']
+             + ([] if lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') == 'true' else ['--manifest', base_manifest])
+             + ['artifact', 'node-exporter', base_tmp ~ '/' ~ base_node_exporter_archive ~ '.tar.gz',
+                '--url', base_node_exporter_url, '--sha256', base_node_exporter_sha256] }}
+      changed_when: true
+
+    - name: Бинарник node_exporter
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        argv:
+          - tar
+          - -xz
+          - -C
+          - /usr/local/bin
+          - --strip-components=1
+          - --no-same-owner
+          - -f
+          - "{{ base_tmp }}/{{ base_node_exporter_archive }}.tar.gz"
+          - "{{ base_node_exporter_archive }}/node_exporter"
+      changed_when: true
+
+    - name: Права и уборка архива node_exporter
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: "{{ item.state }}"
+        mode: "{{ item.mode | default(omit) }}"
+      loop:
+        - {path: /usr/local/bin/node_exporter, state: file, mode: '0755'}
+        - {path: "{{ base_tmp }}/{{ base_node_exporter_archive }}.tar.gz", state: absent}
+
+- name: Пользователь node_exporter
+  ansible.builtin.user:
+    name: node_exporter
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Служба node_exporter включена
+  ansible.builtin.systemd_service:
+    name: node_exporter
+    enabled: true
+    daemon_reload: true
+
+- name: Служба node_exporter перезапущена при смене входов
+  ansible.builtin.command:
+    argv: >-
+      {{ base_host + ['restart-if-changed', 'node_exporter', '/usr/local/bin/node_exporter',
+         '/etc/systemd/system/node_exporter.service'] }}
+  register: base_step
+  changed_when: "'vpn2: changed' in base_step.stdout"

@@ -145,10 +145,6 @@
       1
     ],
     [
-      "Render a config string into a PNG QR — black on white, big margin so phones lock onto it.\n\n    ecl L as in the panel keeps the version low. Telegram downsizes photos over\n    1280 px, so the module size is the largest that fits: 10 px for short\n    configs, 9 px for the worst split config (version 27), 6 px at version 40.\n    ",
-      1
-    ],
-    [
       "Send a QR PNG with caption as photo — phones can scan straight from chat.",
       1
     ],

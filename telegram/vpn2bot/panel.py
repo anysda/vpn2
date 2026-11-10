@@ -105,6 +105,12 @@ async def api_wg_config(chat_id: int, device_id: str) -> str:
     return r.text
 
 
+# QR того же конфига рисует панель: один генератор с её SVG.
+async def api_wg_qr_png(chat_id: int, device_id: str) -> bytes:
+    r = await _bot_request('GET', f'{_device_path(device_id)}/wg-qrcode.png?chatId={chat_id}')
+    return r.content
+
+
 async def api_ovpn_config(chat_id: int, device_id: str) -> str:
     r = await _bot_request('GET', f'{_device_path(device_id)}/ovpn-config?chatId={chat_id}')
     return r.text

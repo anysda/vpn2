@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hmac
 import os
 import re
@@ -75,6 +76,17 @@ async def handle_health_invalid_token(_request: web.Request) -> web.Response:
     return web.json_response({'ok': True, 'invalid_token': True, 'waiting_token': True, 'username': ''})
 
 
+# PNG из события панели (base64). Не PNG - пусто: панель прошлой версии QR не шлёт.
+def _event_png(value) -> bytes:
+    if not isinstance(value, str):
+        return b''
+    try:
+        png = base64.b64decode(value, validate=True)
+    except ValueError:
+        return b''
+    return png if png.startswith(b'\x89PNG\r\n\x1a\n') else b''
+
+
 async def handle_event(request: web.Request) -> web.Response:
     # SECRET гарантированно непустой (startup-check выше). Сравниваем константно
     # по времени, чтобы убрать timing-leak; encode в bytes — compare_digest требует
@@ -109,9 +121,14 @@ async def handle_event(request: web.Request) -> web.Response:
         name = data.get('name', '?')
         conf = data.get('conf', '')
         if conf:
+            qr = _event_png(data.get('qr'))
+            if not qr:
+                log.warning('client_send_wireguard: no QR from the panel, sending the file only')
+
             # WireGuard: два сообщения — сначала QR как фото, затем .conf файлом.
             async def _send_wg():
-                await transport.tg_send_qr(config.CHAT_ID, conf, f'{md_bold(name)} — WireGuard')
+                if qr:
+                    await transport.tg_send_qr(config.CHAT_ID, qr, f'{md_bold(name)} — WireGuard')
                 await transport.tg_send_document(
                     config.CHAT_ID, f'{name}.conf', conf.encode('utf-8'),
                     caption=f'{md_bold(name)} — WireGuard',

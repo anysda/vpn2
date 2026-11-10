@@ -1,11 +1,9 @@
 import asyncio
-import io
 import json
 import os
 import time
 
 import httpx
-import qrcode
 from telegram import Update
 from telegram.request import HTTPXRequest
 
@@ -143,27 +141,8 @@ async def tg_answer_callback(callback_id: str, text: str = '',
     return r.json()
 
 
-def _make_qr_png(data: str) -> bytes:
-    """Render a config string into a PNG QR — black on white, big margin so phones lock onto it.
-
-    ecl L as in the panel keeps the version low. Telegram downsizes photos over
-    1280 px, so the module size is the largest that fits: 10 px for short
-    configs, 9 px for the worst split config (version 27), 6 px at version 40.
-    """
-    ecl = qrcode.constants.ERROR_CORRECT_L
-    probe = qrcode.QRCode(error_correction=ecl, border=4)
-    probe.add_data(data)
-    probe.make(fit=True)
-    box = max(1, min(10, 1280 // (probe.modules_count + 8)))
-    img = qrcode.make(data, error_correction=ecl, box_size=box, border=4)
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    return buf.getvalue()
-
-
-async def tg_send_qr(chat_id: int, payload: str, caption: str) -> dict:
+async def tg_send_qr(chat_id: int, png: bytes, caption: str) -> dict:
     """Send a QR PNG with caption as photo — phones can scan straight from chat."""
-    png = _make_qr_png(payload)
     files = {'photo': ('qr.png', png, 'image/png')}
     data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
     return await _tg_post('sendPhoto', data, files, timeout=30)

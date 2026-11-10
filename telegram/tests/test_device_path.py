@@ -33,7 +33,7 @@ class DevicePathTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(bot.transport._local.aclose)
         self.addAsyncCleanup(bot.transport._tg.aclose)
         for helper in (bot.panel.api_delete_device, bot.panel.api_reissue_device,
-                       bot.panel.api_wg_config, bot.panel.api_ovpn_config):
+                       bot.panel.api_wg_config, bot.panel.api_wg_qr_png, bot.panel.api_ovpn_config):
             with self.subTest(helper=helper.__name__), \
                     patch.object(bot.panel, '_bot_request', AsyncMock(
                         return_value=httpx.Response(200, json={}))) as request:

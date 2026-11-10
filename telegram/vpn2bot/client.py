@@ -305,8 +305,9 @@ async def _handle_callback(chat_id: int, message_id: int | None,
             return
         await transport.tg_answer_callback(callback_id, 'Готовлю конфиг WireGuard…')
         conf = await panel.api_wg_config(chat_id, arg)
+        qr = await panel.api_wg_qr_png(chat_id, arg)
         config_name = device.get('configName') or device.get('name') or 'wireguard'
-        await transport.tg_send_qr(chat_id, conf, f'{md_bold(device.get("name", "?"))} — WireGuard')
+        await transport.tg_send_qr(chat_id, qr, f'{md_bold(device.get("name", "?"))} — WireGuard')
         await transport.tg_send_document(
             chat_id, f'{config_name}.conf', conf.encode('utf-8'),
             caption=f'{md_bold(device.get("name", "?"))} — WireGuard',

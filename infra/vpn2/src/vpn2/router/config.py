@@ -3,7 +3,7 @@
 gen-router-config.py — генерирует sing-box конфиг роутера для RU-ноды.
 
 Читает переменные из окружения, пишет JSON в stdout.
-Вызывается из 20-ru-router.sh после того, как все переменные экспортированы.
+Вызывается шагом base-config роли router, когда окружение стадии собрано.
 
 Обязательные переменные:
   EXIT_TAGS              — пробельный список тегов выходных нод (us se ...)
@@ -159,7 +159,7 @@ def exit_tls(tag, T, domain):
     """TLS Hysteria2 до экзита: только закреплённый сертификат экзита.
 
     Экзит отдаёт self-signed сертификат; deploy забирает его с экзита, а
-    20-ru-router кладёт в /etc/sing-box/exit-certs/{tag}.pem. С
+    Роль router кладёт в /etc/sing-box/exit-certs/{tag}.pem. С
     `certificate_path` sing-box принимает только этот сертификат, и подмена
     экзита на пути entry → экзит рвёт туннель. Без закрепления конфиг не
     собирается: insecure включает только явный exits[].hy2_insecure.
@@ -181,7 +181,7 @@ def exit_tls(tag, T, domain):
 def reality_fallback(tag, T, domain):
     """Запасной канал VLESS + Reality по TCP: строит outbound на канал экзита.
 
-    Открытую часть Reality 20-ru-router берёт из exit-certs/{tag}.reality.
+    Открытую часть Reality роль router берёт из exit-certs/{tag}.reality.
     Нет её (экзит ещё не передеплоен) - каналы остаются только на hy2.
     """
     pub = os.environ.get(f'{T}_REALITY_PUBKEY', '').strip()

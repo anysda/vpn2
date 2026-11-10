@@ -52,6 +52,13 @@ BOOLEANS = {'backup.enabled', 'sso.enabled', 'sso.auto_redirect', 'sso.password_
             'entry_resources.adaway_enabled', 'wireguard.split_local', 'exits[].hy2_insecure',
             'ports.hy2_hop.enabled'}
 FREE_TOP = {'orchestrator_key', 'orchestrator_pubkey'}
+KEY_NAMES = FREE_TOP.union(*SCHEMA.values(), (name for name in SCHEMA if '.' not in name))
+KEY_LINE = re.compile(r'^( *(?:- +)?)([a-z0-9_]+):(.*)$')
+# Простое значение, которое старый построчный разбор брал как есть, а YAML читает как разметку.
+MARKUP = re.compile(r'[@%`,\]}:]|[-?]( |$)|(=|<<)$|[^&*!\[{].*(:( |$)|\t)')
+QUOTED = re.compile(r"""('(?:[^']|'')*'|"(?:[^"\\]|\\.)*")(.*)$""")
+FOREIGN = (yaml.AnchorToken, yaml.AliasToken, yaml.TagToken, yaml.DirectiveToken,
+           yaml.DocumentStartToken, yaml.DocumentEndToken)
 
 
 class ConfigError(Exception):
@@ -131,6 +138,43 @@ class Config:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+def _plain_forms(text):
+    """Строки `ключ: значение` в форме, которую YAML читает так же, как старый построчный разбор.
+
+    Пробелы и табуляция вокруг значения и комментарий после него снимаются; простое значение из
+    знаков разметки (`@p`, `%p`, `a: b`, `- p`) берётся в одинарные кавычки. Число строк прежнее.
+    """
+    lines = text.split('\n')
+    for index, line in enumerate(lines):
+        found = KEY_LINE.match(line.rstrip('\r'))
+        if not found or found.group(2) not in KEY_NAMES:
+            continue
+        head, name, value = found.group(1), found.group(2), found.group(3).strip()
+        if not value or value[0] in '"\'#|>':
+            closed = QUOTED.match(value)
+            if closed and closed.group(2).lstrip()[:1] in ('', '#'):
+                value = closed.group(1)
+            lines[index] = f'{head}{name}: {value}'.rstrip()
+            continue
+        value = re.sub(r'\s+#.*$', '', value)
+        if MARKUP.match(value):
+            value = "'" + value.replace("'", "''") + "'"
+        lines[index] = f'{head}{name}: {value}'
+    return '\n'.join(lines)
+
+
+def _reject_foreign(text):
+    """Якоря, теги, директивы, границы документа и `-` отдельной строкой: старый разбор их не брал."""
+    if text.startswith('\ufeff'):
+        raise ConfigError('yaml', 'файл начинается с BOM; сохраните его в UTF-8 без BOM')
+    tokens = list(yaml.scan(text, Loader=yaml.SafeLoader))
+    for token, after in zip(tokens, tokens[1:]):
+        if isinstance(token, FOREIGN):
+            raise ConfigError('yaml', f'сложный YAML не поддерживается, строка {token.start_mark.line + 1}')
+        if isinstance(token, yaml.BlockEntryToken) and after.start_mark.line != token.start_mark.line:
+            raise ConfigError('yaml', f'элемент списка начинается в строке с `-`, строка {token.start_mark.line + 1}')
+
+
 def _scalar(node, key):
     """Строка из скалярного узла; сложный YAML и неверные значения - ConfigError."""
     if not isinstance(node, yaml.ScalarNode) or node.style in ('|', '>'):
@@ -168,7 +212,7 @@ def _mapping(node, path, schema_key, column):
         raise ConfigError(path, 'ожидается блок с отступами, как в config.example.yaml')
     out = {}
     for knode, vnode in node.value:
-        if not isinstance(knode, yaml.ScalarNode):
+        if not isinstance(knode, yaml.ScalarNode) or knode.style is not None:
             raise ConfigError(path, 'неверный формат ключа')
         name = knode.value
         key = f'{path}.{name}' if path else name
@@ -202,7 +246,7 @@ def _sections(root):
         raise ConfigError('<корень>', 'ожидается словарь ключей')
     out = {}
     for knode, vnode in root.value:
-        name = knode.value if isinstance(knode, yaml.ScalarNode) else '?'
+        name = knode.value if isinstance(knode, yaml.ScalarNode) and knode.style is None else '?'
         if name in out:
             raise ConfigError(name, 'повтор ключа')
         if knode.start_mark.column != 0:
@@ -229,7 +273,7 @@ def _typed(cls, data):
     return cls(**args)
 
 
-def _build(sections, raw):
+def _build(sections):
     ports = dict(sections.get('ports', {}))
     hop = ports.pop('hy2_hop', None)
     return Config(
@@ -238,22 +282,26 @@ def _build(sections, raw):
         ports=replace(_typed(Ports, ports), hy2_hop=None if hop is None else _typed(Hy2Hop, hop)),
         telegram=_typed(Telegram, sections.get('telegram', {})),
         sso=_typed(Sso, sections.get('sso', {})),
-        raw=raw,
+        raw=sections,
     )
 
 
 def loads(text):
-    """Config из текста config.yaml; неверный файл - ConfigError."""
+    """Config из текста config.yaml; неверный файл - ConfigError.
+
+    Config.raw - разделы как в файле, все значения строками (секреты и числа с ведущим нулём целы).
+    """
+    text = _plain_forms(text)
     try:
+        _reject_foreign(text)
         root = yaml.compose(text, Loader=yaml.SafeLoader)
-        raw = yaml.safe_load(text)
     except yaml.YAMLError as error:
         mark = getattr(error, 'problem_mark', None)
         where = f', строка {mark.line + 1}' if mark else ''
         raise ConfigError('yaml', f'{getattr(error, "problem", None) or "ошибка разбора"}{where}') from None
-    if root is None or not isinstance(raw, dict):
+    if root is None:
         raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
-    return _build(_sections(root), raw)
+    return _build(_sections(root))
 
 
 def load(path='/etc/anysda/config.yaml'):

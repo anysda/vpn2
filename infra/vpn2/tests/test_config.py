@@ -33,9 +33,30 @@ def expected(value, field_type):
     return str(value).lower() in TRUE_WORDS if field_type is bool else str(value)
 
 
+def old_raw(cfg):
+    """Разбор оракула в форме Config.raw: непустые разделы, hy2_hop внутри ports."""
+    out = {key: value for key, value in cfg.items() if key != 'hy2_hop' and value}
+    if cfg['hy2_hop'] is not None:
+        out['ports'] = {**cfg['ports'], 'hy2_hop': cfg['hy2_hop']}
+    return out
+
+
+def walk(old, new, path):
+    """Пары (путь, оракул, новый) там, где деревья расходятся значением, типом или набором ключей."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        for key in sorted(old.keys() | new.keys()):
+            yield from walk(old.get(key), new.get(key), f'{path}.{key}' if path else key)
+    elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
+        for index, pair in enumerate(zip(old, new)):
+            yield from walk(*pair, f'{path}[{index}]')
+    elif old != new or type(old) is not type(new):
+        yield path, old, new
+
+
 def differences(name, cfg, typed):
-    """Список (образец, ключ, оракул, новый) по разделам entry, exits, ports, telegram, sso."""
-    out = []
+    """Список (образец, ключ, оракул, новый): типизированные разделы и raw по всем разделам и ключам."""
+    out = [(name, f'raw:{path}', old, new)
+           for path, old, new in walk(old_raw(cfg), {k: v for k, v in typed.raw.items() if v}, '')]
 
     def compare(section, old, new):
         for key, value in old.items():
@@ -140,7 +161,7 @@ def test_all_typed_fields_are_read():
     assert cfg.sso == config.Sso(
         enabled=True, base_url='u', app_slug='s', client_id='i', client_secret='x',
         allowed_subs='z', auto_redirect=True, password_login=False, label='l', discovery_url='d')
-    assert cfg.raw['ports']['hy2_hop']['interval'] == 30
+    assert cfg.raw['ports']['hy2_hop']['interval'] == '30'
     first = cfg.exits[0]
     assert (first.hy2_direct_port, first.hy2_up_mbps, first.hy2_down_mbps) == ('4443', '100', '200')
     assert first.hy2_insecure is True
@@ -168,6 +189,68 @@ def test_absent_boolean_keys_keep_old_defaults():
     old['enabled'] = old['enabled'] == '1'
     new = config.Hy2Hop()
     assert old == {k: getattr(new, k) for k in old}
+
+
+def test_raw_keeps_strings_of_every_section():
+    text = ('entry:\n  host: h\nbackup:\n  enabled: yes\n  retention: 07\n  s3:\n    secret_key: 0123\n'
+            'failover:\n  restart_min_interval: 0600\nentry_resources:\n  panel_memory_mib: 0512\n'
+            'wireguard:\n  mtu: 1420\n  split_local: no\nadmin:\n  user: 1e3\nyoutube:\n  mark: 0x10\n'
+            'orchestrator_key: 2026-01-01\n')
+    cfg = config.loads(text)
+    assert cfg.raw == {
+        'entry': {'host': 'h'}, 'backup': {'enabled': 'yes', 'retention': '07', 's3': {'secret_key': '0123'}},
+        'failover': {'restart_min_interval': '0600'}, 'entry_resources': {'panel_memory_mib': '0512'},
+        'wireguard': {'mtu': '1420', 'split_local': 'no'}, 'admin': {'user': '1e3'}, 'youtube': {'mark': '0x10'},
+        'orchestrator_key': '2026-01-01'}
+    assert differences('raw', oracle(text), cfg) == []
+    assert differences('raw', {**oracle(text), 'admin': {'user': '1000'}}, cfg) == [('raw', 'raw:admin.user', '1000', '1e3')]
+    extra = config.loads(text + 'alerts:\n  cpu_pct: 90\n')
+    assert differences('raw', oracle(text), extra) == [('raw', 'raw:alerts', None, {'cpu_pct': '90'})]
+
+
+HAND_WRITTEN = ['password: a: b', 'password: @p', 'password: %p', 'password: `p', 'password: - p', 'password: ? p',
+                'password: p\t# c', 'password: p\t', 'password:\tp', 'host: 1.2.3.4 \t', 'host:h', 'password: p:',
+                'password: :', 'password: =', 'password: <<', 'password: ,p', 'password: ]p', 'password: }p',
+                'password: \t', 'password: \t# c', "password: it's: here", 'password: "p"\t# c']
+FOREIGN = ['entry:\n  password: &a\n', 'entry:\n  password: &a x\n', 'entry:\n  password: !!str 123\n',
+           'entry:\n  password: !!binary aGk=\n', 'entry:\n  password: ! p\n', 'entry: &e\n  host: h\n',
+           'entry:\n  password: *a\n', '---\nentry:\n  host: h\n', 'entry:\n  host: h\n...\n',
+           'entry:\n  "host": h\n', '"entry":\n  host: h\n', '\ufeffentry:\n  host: h\n', '%YAML 1.1\n---\nentry:\n  host: h\n',
+           'entry:\n  host: h\nexits:\n  -\n    tag: t\n    host: e\n', 'entry:\n  password: [a\n',
+           'entry:\n  password: {a: b\n']
+
+
+@pytest.mark.parametrize('line', HAND_WRITTEN)
+def test_hand_written_plain_values_read_as_old(line):
+    text = f'entry:\n  {line}\nexits:\n  - {line}\n    tag: t\n'
+    cfg = oracle(text)
+    assert cfg is not None
+    assert differences(line, cfg, config.loads(text)) == []
+
+
+@pytest.mark.parametrize('text', FOREIGN)
+def test_yaml_beyond_old_format_is_rejected(text):
+    assert oracle(text) is None
+    with pytest.raises(config.ConfigError):
+        config.loads(text)
+
+
+def test_plain_value_forms_match_oracle_by_enumeration():
+    """Все значения из одного и двух знаков разметки: вердикт и значение как у оракула."""
+    marks = '@%`-?,]}[{=<>&*!|#:\'" \t\\~.+/$a1'
+    found = []
+    for value in list(marks) + [a + b for a in marks for b in marks]:
+        for template in ('entry:\n  password: {}\n', 'exits:\n  - tag: {}\n    host: e\n', 'sso:\n  enabled: {}\n',
+                         'orchestrator_key: {}\n'):
+            text = template.format(value)
+            cfg = oracle(text)
+            try:
+                new = config.loads(text)
+            except config.ConfigError:
+                new = None
+            if (cfg is None) != (new is None) or (cfg is not None and differences(value, cfg, new)):
+                found.append((template.split(':')[0], value))
+    assert not found, found
 
 
 @pytest.mark.parametrize('text', ['', '\n# только комментарий\n', '- a\n- b\n', 'просто строка\n',
@@ -202,7 +285,8 @@ def test_positive_control_corrupted_key_is_caught():
     cfg = oracle(text)
     assert differences('example', cfg, config.loads(text)) == []
     rows = differences('example-broken', cfg, config.loads(broken))
-    assert rows == [('example-broken', 'exits[0].host', '5.6.7.8', '5.6.7.9')]
+    assert rows == [('example-broken', 'raw:exits[0].host', '5.6.7.8', '5.6.7.9'),
+                    ('example-broken', 'exits[0].host', '5.6.7.8', '5.6.7.9')]
     with tempfile.TemporaryDirectory() as directory:
         copy = Path(directory) / 'config.yaml'
         copy.write_text(broken, encoding='utf-8')

@@ -218,8 +218,10 @@ test.describe('эталонные скриншоты', () => {
     await page.goto('/')
     await expect(page.locator('.ov-nodes')).toBeVisible()
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
+    // Журнал событий первый раз приходит с сервера (живые данные); подмена встаёт на его 30-секундном опросе.
+    await page.clock.runFor(30_500)
     await shot(page, pending, 'overview', [
-      page.getByText('Вход в панель'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
+      page.getByText('Вход в панель'), page.getByText('Узел восстановлен'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
       page.getByText('Трафика пока нет'), page.getByText('14,9%'),
     ])
 
@@ -228,6 +230,7 @@ test.describe('эталонные скриншоты', () => {
     await shot(page, pending, 'clients')
     const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })
     await press(row)
+    await page.clock.runFor(500)
     const panel = page.getByTestId('client-detail')
     await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
     await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)

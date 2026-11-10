@@ -206,6 +206,11 @@ test.describe('эталонные скриншоты', () => {
     test.setTimeout(300_000)
     // Часы стоят: ни опросов раз в 30 с, ни перерисовок посреди снимка. Время двигает только runFor.
     await pauseClockAt(page, FIXED)
+    // Каждый снимок Playwright будит вкладку (visibilitychange), панель в ответ перезапрашивает данные,
+    // и кадр попадает в момент обновления. Событие гасим до слушателей панели, данные не трогаем.
+    await page.addInitScript(() => {
+      document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true)
+    })
     await pinAll(page)
     const pending = trackRequests(page)
 

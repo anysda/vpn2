@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
-import { relative, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 
@@ -32,7 +32,14 @@ export function serverModule<T = Record<string, unknown>>(
   const require = createRequire(import.meta.url)
   runInNewContext(outputText, {
     exports,
-    require: (name: string) => name in mocks ? mocks[name] : require(name),
+    require: (name: string) => {
+      if (name in mocks) return mocks[name]
+      // Относительный импорт без подмены (например, общий list-order) исполняем
+      // настоящим модулем и теми же подменами, а не ищем от каталога загрузчика.
+      const sibling = name.startsWith('.') ? `${resolve(dirname(filename), name)}.ts` : ''
+      if (sibling && (process.env.SERVER_REVISION || existsSync(sibling))) return serverModule(sibling, mocks, globals)
+      return require(name)
+    },
     ...globals,
   }, { filename })
   return exports as T

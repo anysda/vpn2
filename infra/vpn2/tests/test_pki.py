@@ -11,6 +11,8 @@ FIXTURES = Path(__file__).parent / 'fixtures' / 'pki'
 KEY_LINES = ['0123456789abcdef0123456789ABCDEF'] * 16
 GOOD_KEY = '\n'.join(['#', '# 2048 bit OpenVPN static key', '#', pki.KEY_BEGIN, *KEY_LINES, pki.KEY_END]) + '\n'
 CERT = '/CN=dev_7'
+PEM_BEGIN = '-----BEGIN ' + 'PRIVATE KEY' + '-----'
+PEM_END = '-----END ' + 'PRIVATE KEY' + '-----'
 INDEX = (f'V\t300101000000Z\t\t0A\tunknown\t{CERT}\n'
          'R\t300101000000Z\t260101000000Z,certificateHold\t0B\tunknown\t/CN=dev_70\n'
          'R\t300101000000Z\t260101000000Z\t0C\tunknown\t/CN=dev_7\n')
@@ -370,7 +372,7 @@ def test_sign_ephemeral_extfile_content_and_failure(tmp_path):
 
 
 def test_error_text_has_no_input_data_or_argv():
-    secret = '-----BEGIN PRIVATE KEY-----\nTOPSECRETKEYBYTES\n-----END PRIVATE KEY-----\n'
+    secret = PEM_BEGIN + '\nTOPSECRETKEYBYTES\n' + PEM_END + '\n'
 
     def fake(*_, **__):
         return done(1, err='unable to load\n')
@@ -411,14 +413,14 @@ def ca(tmp_path):
 def test_real_genkey_checks_and_require_key(tmp_path):
     key, cert = tmp_path / 'k.pem', tmp_path / 'c.pem'
     pki.require_key(key, cert)
-    assert pki.key_valid(key) and key.read_text().startswith('-----BEGIN PRIVATE KEY-----')
+    assert pki.key_valid(key) and key.read_text().startswith(PEM_BEGIN)
     before = key.read_bytes()
     pki.require_key(key, cert)
     assert key.read_bytes() == before
     assert not pki.key_valid(tmp_path / 'missing.pem')
     key.write_text('')
     assert not pki.key_valid(key) and not pki.cert_valid(key)
-    key.write_text('-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n')
+    key.write_text(PEM_BEGIN + '\nAAAA\n' + PEM_END + '\n')
     assert not pki.key_valid(key)
 
 

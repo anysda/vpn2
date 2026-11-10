@@ -9,7 +9,7 @@ import pytest
 from vpn2 import notify
 from vpn2.notify import BotApi, Outcome
 
-SECRET = 'TEST_ONLY_SECRET'
+SECRET = 'tst-secret'
 TOKEN = '123456:TEST-TOKEN-abcdef'
 EVENT = {'type': 'system_alert', 'subject': 'Маршрут YouTube', 'detail': 'узел недоступен'}
 

@@ -156,33 +156,29 @@ function pinAll(page: Page) {
   ])
 }
 
-/** Страница готова: шрифты, гидратация, ни одного запроса в полёте 400 мс подряд. */
-async function ready(page: Page) {
-  let inflight = 0
-  const up = () => { inflight++ }
-  const down = () => { inflight-- }
-  page.on('request', up)
-  page.on('requestfinished', down)
-  page.on('requestfailed', down)
-  try {
-    await hydrated(page)
-    await page.evaluate(() => document.fonts.ready)
-    let quiet = 0
-    await expect.poll(async () => {
-      quiet = inflight === 0 ? quiet + 1 : 0
-      return quiet
-    }, { timeout: 20_000, intervals: [100] }).toBeGreaterThanOrEqual(4)
-    await page.evaluate(() => document.fonts.ready)
-  }
-  finally {
-    page.off('request', up)
-    page.off('requestfinished', down)
-    page.off('requestfailed', down)
-  }
+/** Запросы страницы, которые ещё не закончились (долгие потоки событий не в счёт). */
+function trackRequests(page: Page) {
+  const pending = new Set<unknown>()
+  page.on('request', (r) => { if (r.resourceType() !== 'eventsource') pending.add(r) })
+  page.on('requestfinished', r => pending.delete(r))
+  page.on('requestfailed', r => pending.delete(r))
+  return pending
 }
 
-async function shot(page: Page, name: string) {
-  await ready(page)
+/** Страница готова: шрифты, гидратация, ни одного запроса в полёте 400 мс подряд. */
+async function ready(page: Page, pending: Set<unknown>) {
+  await hydrated(page)
+  await page.evaluate(() => document.fonts.ready)
+  let quiet = 0
+  await expect.poll(() => {
+    quiet = pending.size === 0 ? quiet + 1 : 0
+    return quiet
+  }, { timeout: 20_000, intervals: [100] }).toBeGreaterThanOrEqual(4)
+  await page.evaluate(() => document.fonts.ready)
+}
+
+async function shot(page: Page, pending: Set<unknown>, name: string) {
+  await ready(page, pending)
   await expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
 }
 
@@ -198,41 +194,42 @@ test.describe('эталонные скриншоты', () => {
     test.setTimeout(300_000)
     await page.clock.install({ time: FIXED })
     await pinAll(page)
+    const pending = trackRequests(page)
 
     await page.goto('/login')
     await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
-    await shot(page, 'login')
+    await shot(page, pending, 'login')
 
     await loginApi(page)
 
     await page.goto('/')
     await expect(page.locator('.ov-nodes')).toBeVisible()
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
-    await shot(page, 'overview')
+    await shot(page, pending, 'overview')
 
     await page.goto('/clients')
     await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
-    await shot(page, 'clients')
+    await shot(page, pending, 'clients')
     await page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) }).click()
     const panel = page.getByTestId('client-detail')
     await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
     await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)
-    await shot(page, 'client-card')
+    await shot(page, pending, 'client-card')
 
     await page.goto('/dns')
     await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
     for (const [id, label] of DNS_TABS) {
       if (id !== 'sum') await page.getByRole('tab', { name: label, exact: true }).click()
       await expect(page.locator('.dns .dpan.on')).toBeVisible()
-      await shot(page, `dns-${id}`)
+      await shot(page, pending, `dns-${id}`)
     }
 
     await page.goto('/routes')
     await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
-    await shot(page, 'routes')
+    await shot(page, pending, 'routes')
 
     await page.goto('/settings')
     await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
-    await shot(page, 'settings')
+    await shot(page, pending, 'settings')
   })
 })

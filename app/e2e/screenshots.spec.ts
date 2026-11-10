@@ -212,6 +212,8 @@ async function fitWindow(page: Page, pending: Set<unknown>, base: { width: numbe
 }
 
 async function shot(page: Page, pending: Set<unknown>, base: { width: number, height: number }, name: string, shown: Locator[] = []) {
+  // Мышь осталась там, где была на прошлом экране: hover подсвечивает то, что окажется под ней.
+  await page.mouse.move(0, 0)
   await ready(page, pending, shown)
   await fitWindow(page, pending, base, shown)
   await expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true })

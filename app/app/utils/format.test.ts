@@ -84,3 +84,31 @@ for (const tz of ['UTC', 'Europe/Moscow']) {
     })
   })
 }
+
+// Названия взяты из прежнего кода: MG и D в Overview/Wave.vue и Activity.vue (origin/dev), не из format.ts.
+describe('названия месяцев и дней недели закреплены полностью', () => {
+  const MONTHS = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
+  // 15-е число каждого месяца 2026 года
+  const FULL15 = ['чт, 15 янв', 'вс, 15 фев', 'вс, 15 мар', 'ср, 15 апр', 'пт, 15 мая', 'пн, 15 июн', 'ср, 15 июл', 'сб, 15 авг', 'вт, 15 сен', 'чт, 15 окт', 'вс, 15 ноя', 'вт, 15 дек']
+  const months = MONTHS.map((name, m) => [m + 1, name, FULL15[m]!] as const)
+  const WEEK = ['пн, 9 ноя', 'вт, 10 ноя', 'ср, 11 ноя', 'чт, 12 ноя', 'пт, 13 ноя', 'сб, 14 ноя', 'вс, 15 ноя']
+
+  it.each(months)('mskWeekdayDateFromSec: месяц %i (%s), полдень МСК', (m, name, full) => {
+    const out = mskWeekdayDateFromSec(Date.UTC(2026, m - 1, 15, 9) / 1000)
+    expect(out).toContain(` ${name}`)
+    expect(out).toBe(full)
+  })
+  it.each(months)('mskDayNumLabel: месяц %i (%s)', (m, name, full) => {
+    const out = mskDayNumLabel(Date.UTC(2026, m - 1, 15) / 864e5)
+    expect(out).toContain(` ${name}`)
+    expect(out).toBe(full)
+  })
+  it('семь подряд идущих дней: все названия дней недели', () => {
+    const days = [...Array(7).keys()]
+    expect(days.map(i => mskWeekdayDateFromSec(Date.UTC(2026, 10, 9 + i, 9) / 1000))).toEqual(WEEK)
+    expect(days.map(i => mskDayNumLabel(Date.UTC(2026, 10, 9 + i) / 864e5))).toEqual(WEEK)
+  })
+  it('WD_MON: неделя с понедельника', () => {
+    expect(WD_MON).toEqual(['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'])
+  })
+})

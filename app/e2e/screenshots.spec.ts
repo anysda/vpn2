@@ -187,8 +187,24 @@ async function ready(page: Page, pending: Set<unknown>, shown: Locator[]) {
   await page.evaluate(() => document.fonts.ready)
 }
 
-async function shot(page: Page, pending: Set<unknown>, name: string, shown: Locator[] = []) {
+/**
+ * Снимок «страница целиком» Playwright делает, дважды меняя размер окна; на каждое изменение панель
+ * перезапрашивает данные, и кадр ловит их посреди обновления. Окно заранее вытягиваем по высоте
+ * страницы (с базового размера, чтобы порядок кадров не влиял): тогда снимку менять размер нечего.
+ */
+async function fitWindow(page: Page, pending: Set<unknown>, base: { width: number, height: number }, shown: Locator[]) {
+  for (let i = 0; i < 4; i++) {
+    const vp = page.viewportSize() ?? base
+    const need = Math.max(base.height, await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight)))
+    if (vp.height === need) return
+    await page.setViewportSize({ width: base.width, height: need })
+    await ready(page, pending, shown)
+  }
+}
+
+async function shot(page: Page, pending: Set<unknown>, base: { width: number, height: number }, name: string, shown: Locator[] = []) {
   await ready(page, pending, shown)
+  await fitWindow(page, pending, base, shown)
   await expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
 }
 
@@ -213,10 +229,11 @@ test.describe('эталонные скриншоты', () => {
     })
     await pinAll(page)
     const pending = trackRequests(page)
+    const base = page.viewportSize()!
 
     await page.goto('/login')
     await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
-    await shot(page, pending, 'login')
+    await shot(page, pending, base, 'login')
 
     await loginApi(page)
 
@@ -225,36 +242,36 @@ test.describe('эталонные скриншоты', () => {
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
     // Журнал событий первый раз приходит с сервера (живые данные); подмена встаёт на его 30-секундном опросе.
     await page.clock.runFor(30_500)
-    await shot(page, pending, 'overview', [
+    await shot(page, pending, base, 'overview', [
       page.getByText('Вход в панель'), page.getByText('Узел восстановлен'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
       page.getByText('Трафика пока нет'), page.getByText('14,9%'),
     ])
 
     await page.goto('/clients')
     await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
-    await shot(page, pending, 'clients')
+    await shot(page, pending, base, 'clients')
     const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })
     await press(row)
     await page.clock.runFor(500)
     const panel = page.getByTestId('client-detail')
     await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
     await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)
-    await shot(page, pending, 'client-card')
+    await shot(page, pending, base, 'client-card')
 
     await page.goto('/dns')
     await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
     for (const [id, label] of DNS_TABS) {
       if (id !== 'sum') await press(page.getByRole('tab', { name: label, exact: true }))
       await expect(page.locator('.dns .dpan.on')).toBeVisible()
-      await shot(page, pending, `dns-${id}`)
+      await shot(page, pending, base, `dns-${id}`)
     }
 
     await page.goto('/routes')
     await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
-    await shot(page, pending, 'routes')
+    await shot(page, pending, base, 'routes')
 
     await page.goto('/settings')
     await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
-    await shot(page, pending, 'settings')
+    await shot(page, pending, base, 'settings')
   })
 })

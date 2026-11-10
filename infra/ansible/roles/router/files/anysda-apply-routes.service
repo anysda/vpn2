@@ -1,0 +1,16 @@
+[Unit]
+Description=anysda-vpn2 — apply manual sing-box routes from panel
+After=sing-box.service
+# Дефолтный лимит (5 стартов за 10с) выбивался одной правкой в панели: она
+# пишет manual-routes.json несколько раз подряд, .path триггерит нас на каждую
+# запись, и юнит навсегда уходил в failed (start-limit-hit) — правки маршрутов
+# переставали применяться молча. Скрипт идемпотентен и при отсутствии изменений
+# не трогает sing-box, поэтому лимит здесь не нужен.
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+# Дебаунс: пока мы спим, повторные срабатывания .path схлопываются systemd'ом
+# в одно отложенное задание вместо пачки отдельных запусков.
+ExecStartPre=/bin/sleep 2
+ExecStart=/opt/vpn2/venv/bin/vpn2 router apply-routes

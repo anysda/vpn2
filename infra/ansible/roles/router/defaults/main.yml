@@ -1,0 +1,35 @@
+---
+router_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+router_tmp: /tmp/anysda
+router_vpn2: /opt/vpn2/venv/bin/vpn2
+router_step: ["{{ router_vpn2 }}", router]
+# Установщик sing-box зовёт python3 -m vpn2.release: первым в PATH стоит venv с пакетом.
+router_path: /opt/vpn2/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Окружение генератора конфига: общие переменные стадии и по набору на экзит.
+router_env_common:
+  - EXIT_TAGS
+  - HY2_DIRECT_PORT
+  - HY2_WARP_PORT
+  - HY2_MGMT_PORT
+  - MGMT_IP
+  - HY2_HOP_ENABLED
+  - HY2_HOP_DIRECT
+  - HY2_HOP_WARP
+  - HY2_HOP_MGMT
+  - HY2_HOP_INTERVAL
+  - YT_ROUTE
+  - YT_QUIC
+  - YT_MARK
+  - YT_DOMAINS
+router_env_exit_prefix: [DOMAIN, MGMT_IP]
+router_env_exit_suffix: [HY2_UP_MBPS, HY2_DOWN_MBPS, HY2_DIRECT_PORT, HY2_MGMT_PORT, HY2_INSECURE]
+router_exits: "{{ lookup('ansible.builtin.env', 'EXIT_TAGS').split() | map('upper') | map('replace', '-', '_') | list }}"
+router_env_names: >-
+  {{ router_env_common
+     + (router_env_exit_prefix | product(router_exits) | map('join', '_') | list)
+     + (router_exits | product(router_env_exit_suffix) | map('join', '_') | list) }}
+router_env: "{{ dict(router_env_names | zip(query('ansible.builtin.env', *router_env_names))) }}"
+
+# Что деплой снял с экзитов: каталогов может не быть, если экзиты ещё не ставились.
+router_secrets: "{{ router_infra }}/secrets"

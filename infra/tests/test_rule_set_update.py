@@ -1,12 +1,13 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import time
 import unittest
 
-from router_support import SB, stage_source
+from router_support import SB, stage
 
 
 @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
@@ -49,20 +50,19 @@ class RuleSetUpdateTests(unittest.TestCase):
 
     @staticmethod
     def update(directory):
-        source = stage_source().split('for _rs in ', 1)[1].split('\ndone', 1)[0]
-        source = 'for _rs in ' + source + '\ndone\n'
-        source = source.replace('$("$VPN2_BIN" router config --rule-sets)', 'fixture')
-        source = source.replace('/usr/local/bin/sing-box', '"$SING_BOX_BIN"')
-        # Only the network download is replaced; validation uses the real binary.
-        shell = '''set -euo pipefail
-curl() {
-  while [[ "$1" != '-o' ]]; do shift; done
-  cp "$DOWNLOAD" "$2"
-}
-''' + source
-        return subprocess.run(['bash', '-c', shell], text=True, capture_output=True,
-                              env={**os.environ, 'RS_DIR': str(directory), 'HOST_TAG': 'test',
-                                   'SING_BOX_BIN': SB, 'DOWNLOAD': str(directory / 'download')})
+        # Подменено только скачивание; набор проверяет настоящий бинарник.
+        def fetch(_name, dest):
+            shutil.copyfile(directory / 'download', dest)
+
+        def check(path):
+            return subprocess.run([SB, 'rule-set', 'decompile', '--output', '/dev/null', str(path)],
+                                  capture_output=True).returncode == 0
+
+        try:
+            stage.sync_rule_sets(directory, ['fixture'], fetch, check)
+        except stage.StageError as error:
+            return subprocess.CompletedProcess([], 1, str(error), '')
+        return subprocess.CompletedProcess([], 0, '', '')
 
 
 if __name__ == '__main__':

@@ -2,13 +2,14 @@
 
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
 
-from router_support import exit_cert
+from router_support import exit_cert, exit_secrets, stage
 import watchdog_src
 
 
@@ -86,27 +87,17 @@ class HysteriaTests(unittest.TestCase):
                 subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],
                                check=True, capture_output=True, text=True,
                                env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
-                stage = (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
-                exports = stage[stage.index('export RU_CLASH_SECRET EXIT_TAGS'):
-                                stage.index('# TLS pinning Hysteria2 outbound:')]
-                script = '''source "$1/infra/envs/all.env"
-source "$1/infra/envs/ru.env"
-for tag in $EXIT_TAGS; do
-  upper=${tag^^}
-  for key in DIRECT WARP MGMT OBFS; do
-    printf -v "${upper}_${key}" '%s' test-password
-  done
-done
-export WG_OUT_IFACE=wan-test
-RU_CLASH_SECRET=test-clash-secret
-''' + exports + '''for tag in $EXIT_TAGS; do
-  export "${tag^^}_HY2_CERT_PATH=$3"
-done
-python3 "$2/infra/vpn2/src/vpn2/router/config.py"'''
-                result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, str(ROOT), exit_cert()],
-                                        check=True, capture_output=True, text=True,
-                                        env={'PATH': os.environ['PATH']})
-                router = json.loads(result.stdout)
+                # Как run_play: переменные стадии уходят в окружение шага целиком.
+                script = 'set -a; source "$1/infra/envs/all.env"; source "$1/infra/envs/ru.env"; env -0'
+                dumped = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp], check=True,
+                                        capture_output=True, text=True, env={'PATH': os.environ['PATH']})
+                environ = dict(item.split('=', 1) for item in dumped.stdout.split('\0') if item)
+                tags = environ['EXIT_TAGS'].split()
+                for tag in tags:
+                    shutil.copyfile(exit_cert(), root / f'{tag}.pem')
+                env, _ = stage.exit_environment(environ, exit_secrets(tags), root, root / 'pinned', 'wan-test')
+                env['RU_CLASH_SECRET'] = 'test-clash-secret'
+                router = json.loads(stage.render_config(env))
                 for out in router['outbounds']:
                     if out['type'] != 'hysteria2':
                         continue

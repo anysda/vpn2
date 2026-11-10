@@ -1,0 +1,6 @@
+---
+- name: Роутер sing-box на entry
+  hosts: entry
+  tags: [20-ru-router]
+  roles:
+    - router

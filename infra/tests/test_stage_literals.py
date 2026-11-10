@@ -10,6 +10,8 @@ import unittest
 
 import yaml
 
+from router_support import exit_secrets, stage
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 VALUES = ['operator"name', "operator'name", r'operator\name',
@@ -118,15 +120,12 @@ class FrontendLiteralTests(unittest.TestCase):
 
 class RouterExportLiteralTests(unittest.TestCase):
     def test_default_ports_are_data(self):
-        text = source('20-ru-router.sh')
-        start = text.index('for _t in $EXIT_TAGS;', text.index('export YT_ROUTE='))
-        block = text[start:text.index('\n# TLS pinning', start)]
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                result = run(block + '\nprintf "%s\\0" "$TEST_HY2_DIRECT_PORT" "$TEST_HY2_MGMT_PORT"',
-                             work, EXIT_TAGS='test', HY2_DIRECT_PORT=value, HY2_MGMT_PORT=value)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout.split('\0')[:-1], [value, value])
+                environ = {'EXIT_TAGS': 'test', 'HY2_DIRECT_PORT': value, 'HY2_MGMT_PORT': value}
+                env, _ = stage.exit_environment(environ, exit_secrets(['test']), Path(work, 'in'),
+                                                Path(work, 'pinned'), 'lo')
+                self.assertEqual([env['TEST_HY2_DIRECT_PORT'], env['TEST_HY2_MGMT_PORT']], [value, value])
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 

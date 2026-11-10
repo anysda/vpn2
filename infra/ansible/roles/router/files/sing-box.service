@@ -1,0 +1,26 @@
+[Unit]
+Description=sing-box (anysda-vpn2 RU router)
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+# StartLimitIntervalSec=0 — роутер обязан подниматься ВСЕГДА: убираем лимит
+# systemd «5 крашей за 10с → сдаться», иначе при краш-цикле весь VPN ляжет.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+# Адреса entry на момент старта (набор entry-addrs). «-»: не прочитались -
+# sing-box всё равно поднимается на наборе прошлого старта.
+ExecStartPre=-/opt/vpn2/venv/bin/vpn2 router entry-addrs
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+# Restart=always (а не on-failure): роутер обязан подниматься после ЛЮБОЙ
+# остановки, включая чистый SIGTERM — иначе случайный `systemctl stop`/`kill`
+# (или pkill по имени) кладёт маршрутизацию насовсем.
+Restart=always
+RestartSec=2s
+LimitNOFILE=1048576
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

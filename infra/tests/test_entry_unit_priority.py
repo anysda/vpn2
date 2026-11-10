@@ -29,7 +29,7 @@ TOOL = ROOT / "infra/lib/entry_resources.py"
 LIB = ROOT / "infra/lib/entry-resources.sh"
 ROLES = ROOT / "infra/ansible/roles"
 DROPIN = "zz-vpn2-resources.conf"
-PROTECTED = {"sing-box": ("20-ru-router.sh", "role:exit"),
+PROTECTED = {"sing-box": ("role:router", "role:exit"),
              "strongswan-starter": ("27-ikev2.sh",)}
 BACKGROUND = {"anysda-yt-failover": "19-yt-zapret.sh",
               "anysda-failover-watchdog": "role:failover",

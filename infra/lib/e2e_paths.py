@@ -21,7 +21,7 @@ DEPENDENCIES = {
     'infra/tests/test_panel_proxy.py',
     'infra/lib/config2env.py',
     'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py',
-    'infra/scripts/20-ru-router.sh',
+    'infra/vpn2/src/vpn2/router/stage.py',
     'infra/vpn2/src/vpn2/router/config.py',
     'infra/tests/router_support.py',
     # app/e2e/qr-size.sh: QR аварийки hy2 и худший конфиг для бота.

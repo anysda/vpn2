@@ -9,6 +9,8 @@ import tempfile
 
 ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
 SB = os.environ.get('SING_BOX_BIN')
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.router import stage  # noqa: E402
 
 
 def stop(process):
@@ -64,8 +66,14 @@ def run_generator(**overrides):
                           env=env, text=True, capture_output=True)
 
 
-def stage_source():
-    return (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
+def exit_secrets(tags, password='test-password-0123456789'):
+    """Секреты экзитов в том виде, в каком деплой кладёт их в foreign-secrets.env."""
+    return {f'{stage.upper(tag)}_{kind}': password for tag in tags for kind in stage.SECRET_KINDS}
+
+
+def role_tasks():
+    import yaml
+    return yaml.safe_load((ROOT / 'infra/ansible/roles/router/tasks/main.yml').read_text())
 
 
 def prepare(directory, **overrides):

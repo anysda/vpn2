@@ -15,7 +15,8 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-STAGES = ('20-ru-router',)
+# Роли router и exit зовут установщик напрямую и следом читают версию.
+STAGES = ('installer',)
 VERSION = '1.12.25'
 
 
@@ -72,14 +73,8 @@ class SingBoxInstallTests(unittest.TestCase):
                                 lambda match: match[1] + digest, helper.read_text())
                 local_helper.write_text(source.replace('/usr/local/bin/sing-box', str(dest)))
 
-            # These exact stage sections include the post-install version execution.
-            source = (ROOT / f'infra/scripts/{stage}.sh').read_text()
-            section = re.search(r'echo "\[\$HOST_TAG\] \[\d/\d\] sing-box"\n(.*?)\n# -+',
-                                source, re.S)[0].rsplit('\n# -', 1)[0]
-            # Isolate the legacy tar -C /tmp and fixed extraction directory as well.
-            section = section.replace('/tmp', str(scratch)) if not helper.exists() else section
-            section = section.replace('/usr/local/bin/sing-box', str(dest))
-            section = section.replace('/tmp/anysda/install-sing-box.sh', str(local_helper))
+            # Как задачи ролей: установщик, затем запуск бинарника за версией.
+            section = f'bash {shlex.quote(str(local_helper))}\n{shlex.quote(str(dest))} version | sed -n 1p'
             stage_file = work / 'stage.sh'
             script(stage_file, 'set -o pipefail\nHOST_TAG=test\n' + section
                    + f'\ntouch {shlex.quote(str(continued))}\n')

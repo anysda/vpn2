@@ -785,24 +785,6 @@ run_stage_on_host() {
     done
   fi
 
-  if [[ "$stage" == "20-ru-router" ]]; then
-    push "$DEPLOY_ROOT/lib/install-sing-box.sh" || return 1
-  fi
-
-  if [[ "$stage" == "20-ru-router" ]]; then
-    local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
-    [[ -f "$sec" ]] || die "secrets/foreign-secrets.env не найден — prep_ru_router не запускался?"
-    push "$sec" "foreign-secrets.env" || return 1
-    # TLS-pin для Hysteria2 outbound: cert каждого экзита (если уже опубликован
-    # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
-    if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-certs" "exit-certs" || return 1
-    fi
-    if [[ -d "$DEPLOY_ROOT/secrets/exit-hostkeys" ]]; then
-      push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys" || return 1
-    fi
-  fi
-
   # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
   # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
   # thing 30-frontend still needs from the orchestrator side is the rails

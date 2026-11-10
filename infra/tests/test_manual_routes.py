@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from router_support import SB, apply, prepare, snapshot, stage_source
+from router_support import SB, apply, prepare, role_tasks, snapshot
 
 
 @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
@@ -37,11 +37,11 @@ class ManualRoutesTests(unittest.TestCase):
             self.assertEqual(snapshot(directory), before)
 
     def test_stage_does_not_fall_back_to_base_on_apply_failure(self):
-        source = stage_source()
-        block = source.split('if ! "$VPN2_BIN" router apply-routes --no-restart', 1)[1]
-        block = block.split('\nfi', 1)[0]
-        self.assertNotIn('install -m 600', block)
-        self.assertIn('exit 1', block)
+        # Сбой apply-routes останавливает роль: базу поверх действующего конфига никто не кладёт.
+        tasks = role_tasks()
+        task, = [t for t in tasks if 'apply-routes' in str(t.get('ansible.builtin.command'))]
+        self.assertFalse({'ignore_errors', 'failed_when', 'rescue'} & set(task))
+        self.assertFalse([t for t in tasks if 'config.json' in str(t.get('ansible.builtin.copy'))])
 
 
 if __name__ == '__main__':

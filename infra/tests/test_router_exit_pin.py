@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from router_support import ROOT, exit_cert, generate, run_generator
+from router_support import ROOT, exit_cert, exit_secrets, generate, run_generator, stage
 from test_deploy import bash, function, source
 
 
@@ -100,21 +100,16 @@ prep_ru_router
     def test_stage_keeps_pin_already_on_entry(self):
         # Повторный deploy без свежего сертификата (экзит пропущен, deploy с
         # другой машины) закрепляет уже лежащий на entry, а не падает.
-        stage = source('infra/scripts/20-ru-router.sh')
-        pins = stage.split('mkdir -p /etc/sing-box/exit-certs', 1)[1].split(
-            '# Write the BASE config', 1)[0]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            pins = ('mkdir -p /etc/sing-box/exit-certs' + pins).replace(
-                '/etc/sing-box/exit-certs', str(root / 'pinned')).replace(
-                '/tmp/anysda/exit-certs', str(root / 'incoming'))
             (root / 'pinned').mkdir()
             (root / 'pinned/aa.pem').write_text('old-pin')
-            result = bash('EXIT_TAGS="aa bb"\n' + pins + 'echo "AA=${AA_HY2_CERT_PATH:-}"\n'
-                          'echo "BB=${BB_HY2_CERT_PATH:-}"\n', tmp)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn(f'AA={root}/pinned/aa.pem\n', result.stdout)
-            self.assertIn('BB=\n', result.stdout)
+            environ = {'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '443', 'HY2_MGMT_PORT': '3443'}
+            env, _ = stage.exit_environment(environ, exit_secrets(['aa', 'bb']), root / 'incoming',
+                                            root / 'pinned', 'lo')
+            self.assertEqual(env['AA_HY2_CERT_PATH'], f'{root}/pinned/aa.pem')
+            self.assertNotIn('BB_HY2_CERT_PATH', env)
+            self.assertEqual((root / 'pinned/aa.pem').read_text(), 'old-pin')
 
 
 if __name__ == '__main__':

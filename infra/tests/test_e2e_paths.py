@@ -40,7 +40,7 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/tests/test_speedtest.py'], 'true'),
                 (['infra/tests/test_deploy.py'], 'true'),
                 (['infra/tests/test_panel_proxy.py'], 'true'),
-                (['infra/scripts/20-ru-router.sh'], 'true'),
+                (['infra/vpn2/src/vpn2/router/stage.py'], 'true'),
                 (['infra/vpn2/src/vpn2/router/config.py'], 'true'),
                 (['infra/tests/router_support.py'], 'true'),
                 (['infra/lib/e2e_paths.py'], 'true'),

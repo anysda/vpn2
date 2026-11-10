@@ -89,32 +89,20 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
             cleanup.callback(server.server_close)
             cleanup.callback(server.shutdown)
 
-    stage = (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
-
     def local(text):
         text = text.replace('/etc/sing-box/', f'{etc}/')
         return re.sub(r'/usr/local/sbin/([\w.-]+)', lambda m: str(sbin / m.group(1)), text)
 
-    for path, _marker, body in re.findall(
-            r"^cat > /usr/local/sbin/(\S+) << '(\w+)'\n(.*?)\n\2$", stage, re.M | re.S):
-        (sbin / path).write_text(local(body) + '\n')
-        (sbin / path).chmod(0o755)
     # Команда пакета из юнита: модуль с подменёнными путями, запускается сам.
     entry_addrs = sbin / 'vpn2-entry-addrs'
     entry_addrs.write_text(local((ROOT / 'infra/vpn2/src/vpn2/router/entry_addrs.py').read_text()))
-    unit = stage.split('cat > /etc/systemd/system/sing-box.service', 1)[1].split('\nEOF\n', 1)[0]
+    unit = (ROOT / 'infra/ansible/roles/router/files/sing-box.service').read_text()
     unit = unit.replace('/opt/vpn2/venv/bin/vpn2 router entry-addrs', f'{sys.executable} {entry_addrs}')
     assert str(entry_addrs) in unit, unit
     start_pre = [local(line.split('=', 1)[1]) for line in unit.splitlines()
                  if line.startswith('ExecStartPre=')]
 
-    # deploy: снимок адресов в окружение генератора - так, как его делает стадия.
-    env = {}
-    snapshot = re.search(r'^ENTRY_ADDRS=(\$\(.*\))$', stage, re.M)
-    if snapshot:
-        env['ENTRY_ADDRS'] = subprocess.run(['bash', '-c', f'echo {snapshot.group(1)}'],
-                                            check=True, capture_output=True, text=True).stdout
-    generated = run_generator(**env)
+    generated = run_generator()
     assert generated.returncode == 0, generated.stderr
     cfg = json.loads(generated.stdout)
     rules = [rule for rule in cfg['route']['rules']

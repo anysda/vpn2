@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 
+from router_support import stage
 from test_deploy import ROOT, bash, function, source
 
 
@@ -38,23 +39,11 @@ class ExitTagTests(unittest.TestCase):
                                      directory], text=True, capture_output=True,
                                     env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
             self.assertEqual(result.returncode, 0, result.stderr)
-            stage = source('infra/scripts/20-ru-router.sh')
-            secrets = stage.split('while IFS= read -r _line', 1)[1].split(
-                '# ----------------------------------------------------------------------------', 1)[0]
-            exports = stage.split('export RU_CLASH_SECRET EXIT_TAGS', 1)[1].split(
-                '# TLS pinning', 1)[0]
-            pins = stage.split('mkdir -p /etc/sing-box/exit-certs', 1)[1].split(
-                '# Write the BASE config', 1)[0]
-            pins = ('mkdir -p /etc/sing-box/exit-certs' + pins).replace(
-                '/etc/sing-box/exit-certs', str(root / 'pinned')).replace(
-                '/tmp/anysda/exit-certs', str(root / 'certs'))
             (root / 'certs').mkdir()
             (root / 'certs/us-2.pem').write_text('fixture-cert')
             (root / 'certs/us2.pem').write_text('fixture-cert')
             monitoring = source('infra/scripts/25-monitoring.sh').split(
                 '\n{\n', 1)[1].split('\n} > /etc/anysda/vmsingle-scrape.yml', 1)[0]
-            ssh = stage.split('  echo "# anysda-vpn — генерирует', 1)[1].split(
-                '\n} > "$SSH_MGMT_CONF"', 1)[0].split('\n', 1)[1]
             panel = source('infra/scripts/30-frontend.sh')
             hosts = 'NODE_HOSTS=' + panel.split('NODE_HOSTS=', 1)[1].split('\n# /etc/timezone', 1)[0]
             mgmt = panel.split('  -e NUXT_MGMT_IPS=', 1)[1].split(' \\\n', 1)[0]
@@ -76,20 +65,25 @@ ssh_exec() {
   esac
 }
 prep_ru_router
-FS=$DEPLOY_ROOT/secrets/foreign-secrets.env
-RU_CLASH_SECRET=test-secret
-SSH_MGMT_KNOWN=$PWD/known_hosts
-export WG_OUT_IFACE=lo
-''' + 'while IFS= read -r _line' + secrets + 'export RU_CLASH_SECRET EXIT_TAGS' + exports + pins
-            script += '\npython3 ' + shlex.quote(str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')) + ' > router.json\n'
+set -a
+source "$DEPLOY_ROOT/envs/all.env"
+source "$DEPLOY_ROOT/envs/ru.env"
+set +a
+env -0 > stage.env
+'''
             script += '_current_port us-2 > port.txt\n'
             script += '{\n' + monitoring + '\n} > scrape.yml\n'
-            script += '{\n' + ssh + '\n} > ssh.conf\n'
             script += hosts + '\nprintf "%s\\n" "$NODE_HOSTS" > hosts.txt\n'
             script += 'printf "%s\\n" ' + mgmt + ' > mgmt.txt\n'
             result = bash(script, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            cfg = json.loads((root / 'router.json').read_text())
+            environ = dict(item.split('=', 1) for item in (root / 'stage.env').read_text().split('\0') if item)
+            foreign = stage.parse_secrets((root / 'infra/secrets/foreign-secrets.env').read_text())
+            env, _ = stage.exit_environment(environ, foreign, root / 'certs', root / 'pinned', 'lo')
+            env['RU_CLASH_SECRET'] = 'test-secret'
+            cfg = json.loads(stage.render_config(env))
+            tags = environ['EXIT_TAGS'].split()
+            (root / 'ssh.conf').write_text(stage.ssh_config_text(tags, environ, root / 'known_hosts')[0])
             direct = next(o for o in cfg['outbounds'] if o['tag'] == 'hy2-us-2-direct')
             if direct.get('detour'):
                 direct = next(o for o in cfg['outbounds'] if o['tag'] == direct['detour'])

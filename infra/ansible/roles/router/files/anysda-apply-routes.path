@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch /etc/anysda/manual-routes.json and client-prefs.json for changes
+
+[Path]
+PathModified=/etc/anysda/manual-routes.json
+PathModified=/etc/anysda/client-prefs.json
+Unit=anysda-apply-routes.service
+
+[Install]
+WantedBy=multi-user.target

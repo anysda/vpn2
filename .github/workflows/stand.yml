@@ -149,6 +149,19 @@ jobs:
           path: snapshot-ref/
           if-no-files-found: error
 
+      # Сценарий 2 карточки: слепок до и после повторного ./deploy.sh одинаков.
+      - name: повторный деплой
+        run: sudo infra/tools/ci-stand.sh deploy-again stand-report
+
+      - name: "повторный деплой: слепок тот же"
+        run: |
+          rc=0
+          for node in entry exit; do
+            "$RUNNER_TEMP/venv/bin/vpn2" snapshot diff --ignore infra/tests/fixtures/snapshot/ignore.yml \
+              "stand-report/snapshot-$node.json" "stand-report/snapshot-again-$node.json" || rc=1
+          done
+          exit "$rc"
+
       - name: collect
         if: always()
         run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report

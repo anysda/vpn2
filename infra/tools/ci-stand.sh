@@ -11,7 +11,8 @@
 #   sudo infra/tools/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
 #   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
-#   sudo infra/tools/ci-stand.sh snapshot <каталог>     слепок обоих узлов после деплоя
+#   sudo infra/tools/ci-stand.sh snapshot <каталог> [префикс]  слепок обоих узлов после деплоя
+#   sudo infra/tools/ci-stand.sh deploy-again <каталог> повторный ./deploy.sh и слепок snapshot-again
 #   sudo infra/tools/ci-stand.sh snapshot-corrupt       положительный контроль слепка
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tools/ci-stand.sh down                   снести всё
@@ -747,15 +748,28 @@ cmd_udp_cut() {
 }
 
 cmd_snapshot() {
-  local out=${1:?каталог для слепков} node name ip started=$SECONDS
+  local out=${1:?каталог для слепков} prefix=${2:-snapshot} node name ip started=$SECONDS
   mkdir -p "$out"
   for node in "${NODES[@]}"; do
     read -r name ip _ <<<"$node"
     snapshot_run "$ip" "--baseline $SNAP_DIR/base.json --out $SNAP_DIR/now.json"
-    ssh_node "$ip" "cat $SNAP_DIR/now.json" > "$out/snapshot-$name.json" \
+    ssh_node "$ip" "cat $SNAP_DIR/now.json" > "$out/$prefix-$name.json" \
       || die "слепок $name не забран с узла"
   done
   log "слепки в $out за $((SECONDS - started)) с"
+}
+
+# Сценарий 2: тот же ./deploy.sh второй раз; слепок после него сверяется
+# с первым, база не переснимается.
+cmd_deploy_again() {
+  local out=${1:?каталог для слепков} started=$SECONDS rc=0
+  close_entry_mux
+  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+    || die 'замок деплоя на entry не освободился за 70 с'
+  entry_run deploy-again './deploy.sh --development' || rc=$?
+  log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  (( rc == 0 )) || return "$rc"
+  cmd_snapshot "$out" snapshot-again
 }
 
 # Положительный контроль: правка файла продукта, которую сверка с эталоном
@@ -838,6 +852,7 @@ case "${1:-}" in
   up-wait) cmd_up_wait ;;
   deploy) cmd_deploy "${@:2}" ;;
   deploy-udp) cmd_deploy_udp ;;
+  deploy-again) cmd_deploy_again "${@:2}" ;;
   verify) cmd_verify "${@:2}" ;;
   udp-cut) cmd_udp_cut "${@:2}" ;;
   snapshot) cmd_snapshot "${@:2}" ;;

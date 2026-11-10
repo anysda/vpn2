@@ -12,6 +12,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from vpn2.fsutil import atomic
+
 
 class FirewallError(RuntimeError):
     """An external program returned non-zero, timed out or is missing."""
@@ -334,3 +336,186 @@ def reload_dropin(files):
                    '/usr/sbin/nft -f "$f"; fi; done')
     return (f"[Service]\nExecStartPost=/bin/sh -ec '{command}'\n"
             f"ExecReload=/bin/sh -ec '{command}'\n")
+
+
+# --- NFT: wrappers over the nft program ------------------------------------
+
+def _nft_file(verb, source, run):
+    """``nft [-c] -f``: a str with a newline is a text fed on stdin, else a file path."""
+    argv = ['nft'] + verb + ['-f']
+    if isinstance(source, str) and '\n' in source:
+        _call_stdin(run, argv + ['-'], source)
+    else:
+        _call(run, argv + [str(source)])
+
+
+def _call_stdin(runner, argv, text):
+    """Like _call(check=True) for a runner that takes ``input=``."""
+    try:
+        result = runner(argv, input=text)
+    except FileNotFoundError as error:
+        raise FirewallError(argv, 127, str(error)) from error
+    except subprocess.TimeoutExpired as error:
+        raise FirewallError(argv, 124, 'timeout') from error
+    if result.returncode != 0:
+        raise FirewallError(argv, result.returncode, result.stderr or '')
+
+
+def nft_check(text_or_path, *, run=run):
+    """``nft -c -f``: syntax check without loading; FirewallError on refusal."""
+    _nft_file(['-c'], text_or_path, run)
+
+
+def nft_load(text_or_path, *, run=run):
+    """``nft -f``: load a text (stdin) or a file; FirewallError on refusal."""
+    _nft_file([], text_or_path, run)
+
+
+def nft_list_table(table, family='inet', *, run=run):
+    """Text of ``nft list table``, or None if the table (or nft) is absent."""
+    try:
+        result = _call(run, ['nft', 'list', 'table', family, table], check=False)
+    except FirewallError:
+        return None
+    return result.stdout if result.returncode == 0 else None
+
+
+def nft_delete_table(table, family='inet', *, run=run):
+    """Delete a table; False if it did not exist (or nft is missing). Never raises."""
+    return _ok(run, ['nft', 'delete', 'table', family, table])
+
+
+def queued_packets(table, queue, *, run=run, family='inet'):
+    """Sum of packet counters of the rules that queue to ``queue`` (nfqws2).
+
+    LookupError when no such rule has a counter; FirewallError if nft fails.
+    """
+    result = _call(run, ['nft', '-j', 'list', 'table', family, table])
+    try:
+        items = json.loads(result.stdout)['nftables']
+    except (ValueError, KeyError, TypeError) as error:
+        raise LookupError(f'nft -j list table {family} {table}: no JSON ruleset') from error
+    counters = []
+    for item in items:
+        exprs = item.get('rule', {}).get('expr', []) if isinstance(item, dict) else []
+        if any(expr.get('queue', {}).get('num') == queue for expr in exprs):
+            counters += [expr['counter']['packets'] for expr in exprs if 'counter' in expr]
+    if not counters:
+        raise LookupError(f'no counters on rules with queue {queue} in {family} {table}')
+    return sum(counters)
+
+
+_FLUSH_RE = re.compile(rb'(?m)^[ \t]*flush[ \t]+ruleset[ \t]*;?[ \t]*(#.*)?$')
+
+
+def preserve_nftables_conf(conf='/etc/nftables.conf'):
+    """Comment out ``flush ruleset`` in nftables.conf; True if the file changed.
+
+    The first change keeps a copy ``<conf>.before-vpn2`` (never overwritten).
+    A repeat finds no ``flush ruleset`` and touches nothing.
+    """
+    conf = Path(conf)
+    if not conf.is_file():
+        return False
+    raw = conf.read_bytes()
+    new = _FLUSH_RE.sub(b'# vpn2: preserve tables owned by ufw, routing, Docker and fail2ban', raw)
+    if new == raw:
+        return False
+    backup = conf.with_name(conf.name + '.before-vpn2')
+    if not backup.exists():
+        shutil.copy2(conf, backup)
+    atomic(conf, new, mode=conf.stat().st_mode & 0o7777)
+    return True
+
+
+# --- snapshot and restore of the firewall (fw-guard.sh) --------------------
+
+class GuardSnapshot:
+    """Snapshot of ufw and the project's own nft tables, and the way back.
+
+    Layout under ``<dir>/snap`` is that of fw-guard.sh: ``ufw`` (copy of
+    <etc>/ufw), ``default-ufw``, flag files ``ufw-active`` and ``no-ufw``,
+    ``nft-<family>-<table>`` (output of ``nft list table``).
+    """
+
+    def __init__(self, directory, tables, etc='/etc', *, run=run):
+        self.snap = Path(directory) / 'snap'
+        self.tables = [tuple(table.split()) if isinstance(table, str) else tuple(table)
+                       for table in tables]
+        self.etc = Path(etc)
+        self.run = run
+
+    def _file(self, table):
+        return self.snap / ('nft-' + '-'.join(table))
+
+    @classmethod
+    def take(cls, directory, tables, etc='/etc', *, run=run):
+        """Record the state; tables are 'inet name' strings or (family, name)."""
+        self = cls(directory, tables, etc, run=run)
+        shutil.rmtree(self.snap, ignore_errors=True)
+        self.snap.mkdir(parents=True, mode=0o700)
+        try:
+            active = _call(run, ['ufw', 'status'], check=False).stdout.splitlines()
+            has_ufw = True
+        except FirewallError as error:
+            if error.returncode != 127:
+                raise
+            has_ufw = False
+        if has_ufw:
+            shutil.copytree(self.etc / 'ufw', self.snap / 'ufw', symlinks=True)
+            if (self.etc / 'default' / 'ufw').is_file():
+                shutil.copy2(self.etc / 'default' / 'ufw', self.snap / 'default-ufw')
+            if 'Status: active' in active:
+                (self.snap / 'ufw-active').touch()
+        else:
+            (self.snap / 'no-ufw').touch()
+        for table in self.tables:
+            text = nft_list_table(table[1], table[0], run=run)
+            if text is None:
+                self._file(table).unlink(missing_ok=True)
+            else:
+                self._file(table).write_text(text, encoding='utf-8', errors='surrogateescape')
+        return self
+
+    def restore(self):
+        """Return ufw and the tables to the snapshot; False if any step failed.
+
+        Like ``restore`` in fw-guard.sh, a failing step does not stop the rest
+        and nothing is raised: the result is the old return code 0 or 1.
+        """
+        ok = True
+        if (self.snap / 'ufw').is_dir():
+            temp = self.etc / 'ufw.vpn2-guard'
+            shutil.rmtree(temp, ignore_errors=True)
+            shutil.copytree(self.snap / 'ufw', temp, symlinks=True)
+            shutil.rmtree(self.etc / 'ufw', ignore_errors=True)
+            os.rename(temp, self.etc / 'ufw')
+            if (self.snap / 'default-ufw').is_file():
+                shutil.copy2(self.snap / 'default-ufw', self.etc / 'default' / 'ufw')
+        if (self.snap / 'ufw-active').exists():
+            steps = (['ufw', '--force', 'enable'], ['ufw', 'reload'])
+        else:
+            steps = (['ufw', '--force', 'disable'],)
+        for argv in steps:
+            if not self._step(argv):
+                ok = False
+                break
+        for table in self.tables:
+            nft_delete_table(table[1], table[0], run=self.run)
+            if self._file(table).is_file() and not self._load(self._file(table)):
+                ok = False
+        return ok
+
+    def _step(self, argv):
+        """True if argv worked or the program is not installed (command -v guard)."""
+        try:
+            return _call(self.run, argv, check=False).returncode == 0
+        except FirewallError as error:
+            return error.returncode == 127
+
+    def _load(self, path):
+        try:
+            nft_load(path, run=self.run)
+        except FirewallError as error:
+            return error.returncode == 127
+        return True

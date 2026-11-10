@@ -108,6 +108,22 @@ describe('matchRoute: ip_cidr', () => {
 
   it('семейства не смешиваются', () => {
     expect(m(['0.0.0.0/0'], '2001:db8::1')).toBeNull()
+    expect(m(['::/0'], '1.2.3.4')).toBeNull()
+    expect(m(['::ffff:0:0/96'], '1.2.3.4')).toBeNull()
+    expect(m(['::/0', '1.2.3.0/24'], '1.2.3.4')?.by?.value).toBe('1.2.3.0/24')
+  })
+
+  it('сеть всего IPv6 выше правила для адреса IPv4 его не перехватывает', () => {
+    const rules = plan([{ ip_cidr: ['::/0'], outbound: 'a' }, { ip_cidr: ['1.2.3.4'], outbound: 'b' }])
+    expect(matchRoute(rules, conn({ ip: '1.2.3.4' }))?.outbound).toBe('b')
+    expect(matchRoute(rules, conn({ ip: '2001:db8::5' }))?.outbound).toBe('a')
+  })
+
+  it('источник: семейства не смешиваются', () => {
+    const s = (cidr: string, source: string) => matchRoute(plan([{ source_ip_cidr: [cidr], outbound: 'x' }]), conn({ ip: '8.8.8.8', source }))
+    expect(s('::/0', '10.66.66.2')).toBeNull()
+    expect(s('0.0.0.0/0', 'fd66:66::2')).toBeNull()
+    expect(s('::/0', 'fd66:66::2')).not.toBeNull()
   })
 
   it('мусор в списке пропускается, без ip соединения - null', () => {

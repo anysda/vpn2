@@ -61,23 +61,32 @@ function list(value: unknown): string[] {
   return (Array.isArray(value) ? value : [value]).map(String)
 }
 
-const cidrCache = new WeakMap<SbRule, BlockList>()
-const sourceCache = new WeakMap<SbRule, BlockList>()
-function cidrs(rule: SbRule, key: 'ip_cidr' | 'source_ip_cidr' = 'ip_cidr'): BlockList {
+// Сети правила лежат раздельно по семействам: BlockList сверяет адрес IPv4 с
+// сетью IPv6 как ::ffff:a.b.c.d, и ::/0 совпала бы с любым адресом IPv4, а
+// sing-box семейства не смешивает.
+interface Nets { 4: BlockList, 6: BlockList }
+const cidrCache = new WeakMap<SbRule, Nets>()
+const sourceCache = new WeakMap<SbRule, Nets>()
+function cidrs(rule: SbRule, key: 'ip_cidr' | 'source_ip_cidr' = 'ip_cidr'): Nets {
   const cache = key === 'ip_cidr' ? cidrCache : sourceCache
-  let bl = cache.get(rule)
-  if (!bl) {
-    bl = new BlockList()
+  let nets = cache.get(rule)
+  if (!nets) {
+    nets = { 4: new BlockList(), 6: new BlockList() }
     for (const c of list(rule[key])) {
       const [addr = '', bits] = c.split('/')
       const family = isIP(addr)
-      if (!family) continue
-      const type = family === 4 ? 'ipv4' : 'ipv6'
-      bl.addSubnet(addr, bits === undefined ? (family === 4 ? 32 : 128) : Number(bits), type)
+      if (family === 4) nets[4].addSubnet(addr, bits === undefined ? 32 : Number(bits), 'ipv4')
+      else if (family === 6) nets[6].addSubnet(addr, bits === undefined ? 128 : Number(bits), 'ipv6')
     }
-    cache.set(rule, bl)
+    cache.set(rule, nets)
   }
-  return bl
+  return nets
+}
+
+function inNets(nets: Nets, ip: string) {
+  const family = isIP(ip)
+  if (family === 4) return nets[4].check(ip, 'ipv4')
+  return family === 6 && nets[6].check(ip, 'ipv6')
 }
 
 function ipIn(bl: BlockList, ip: string) {
@@ -135,11 +144,11 @@ function destHit(plan: RoutePlan, conn: Conn, rule: SbRule, key: string): Matche
       return v ? { kind: key, value: v, sets: [] } : null
     }
     case 'ip_cidr': {
-      if (!ip || !ipIn(cidrs(rule), ip)) return null
+      if (!ip || !inNets(cidrs(rule), ip)) return null
       // Какая именно подсеть совпала - для подписи и поиска правила панели;
       // в больших наборах (geoip) подписью остаётся сам адрес.
       const all = list(rule.ip_cidr)
-      const v = all.length <= 64 ? all.find(c => ipIn(cidrs({ ip_cidr: c }), ip)) : undefined
+      const v = all.length <= 64 ? all.find(c => inNets(cidrs({ ip_cidr: c }), ip)) : undefined
       return { kind: key, value: v ?? ip, sets: [] }
     }
     case 'ip_is_private':
@@ -161,7 +170,7 @@ function sourceHit(conn: Conn, rule: SbRule, keys: string[]): MatchedBy | null {
   const src = conn.source
   if (!src) return null
   for (const k of keys) {
-    if (k === 'source_ip_cidr' && ipIn(cidrs(rule, k), src)) return { kind: k, value: src, sets: [] }
+    if (k === 'source_ip_cidr' && inNets(cidrs(rule, k), src)) return { kind: k, value: src, sets: [] }
     if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivate(src)) return { kind: k, value: src, sets: [] }
   }
   return null

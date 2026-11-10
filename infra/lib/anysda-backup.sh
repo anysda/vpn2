@@ -15,6 +15,7 @@
 #   - etc-strongswan/  — IKEv2 CA + server cert/key
 #   - etc-swanctl/     — IKEv2 conn-конфиг + загруженные creds
 #   - caddy-storage/   — сертификаты, приватные ключи и ACME-аккаунты Caddy
+#   - deploy-state/    — состояние деплоя: адреса mesh, исключённые экзиты, known_hosts
 #   - manifest.json    — версии + SHA-256 каждого компонента
 #
 # Plaintext tar.gz живёт ТОЛЬКО в mktemp-dir chmod 700, удаляется trap EXIT.
@@ -410,6 +411,12 @@ done
 if [[ -d /var/lib/caddy/.local/share/caddy ]]; then
   cp -a /var/lib/caddy/.local/share/caddy "$BUNDLE_DIR/caddy-storage"
   rm -rf -- "$BUNDLE_DIR/caddy-storage/locks"
+fi
+
+# 7. Состояние деплоя: без mgmt-ips.txt новый entry раздал бы экзитам адреса
+# mesh заново, по позиции в config.yaml.
+if [[ -d /var/lib/anysda-vpn2/state ]]; then
+  cp -a /var/lib/anysda-vpn2/state "$BUNDLE_DIR/deploy-state"
 fi
 
 # cp -a переносит и сокеты (mgmt.sock OpenVPN), и FIFO, а tar их молча

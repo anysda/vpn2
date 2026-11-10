@@ -361,6 +361,27 @@ fi
             self.assertEqual((snapshot / name).read_text(), 'live:' + name)
         print('caddy_storage_restore_ownership_order_snapshot=PASS', flush=True)
 
+    def test_deploy_state_round_trip(self):
+        state = Path('/var/lib/anysda-vpn2/state')
+        self.addCleanup(shutil.rmtree, state, ignore_errors=True)
+        files = {'mgmt-ips.txt': 'se 2\nnl 3\n', 'excluded-exits.txt': 'nl\n', 'known_hosts': 'host key\n'}
+        for name, text in files.items():
+            write(str(state / name), text, 0o600)
+        state.chmod(0o700)
+        bundle = self.backup()
+        self.assertIn('deploy-state', json.loads((bundle / 'manifest.json').read_text())['components'])
+        for name, text in files.items():
+            self.assertEqual((bundle / 'deploy-state' / name).read_text(), text)
+        write(str(state / 'mgmt-ips.txt'), 'nl 2\n', 0o600)
+        (state / 'known_hosts').unlink()
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        for name, text in files.items():
+            self.assertEqual((state / name).read_text(), text)
+        self.assertEqual(state.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.safety() / 'var/lib/anysda-vpn2/state/mgmt-ips.txt').read_text(), 'nl 2\n')
+        print('deploy_state_round_trip=PASS', flush=True)
+
     def test_without_caddy_storage(self):
         # То же содержимое бандла, что до появления Caddy в формате v1.
         bundle = self.backup()

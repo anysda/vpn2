@@ -4,6 +4,7 @@ import fcntl
 import os
 import pty
 import select
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -57,6 +58,21 @@ def workdir(parent, prefix, *, run=subprocess.run):
                         with contextlib.suppress(OSError):
                             run(['shred', '-uz', item], capture_output=True, check=False)
             shutil.rmtree(path, ignore_errors=True)
+
+
+def _terminated(signum, _frame):
+    raise SystemExit(128 + signum)
+
+
+@contextlib.contextmanager
+def exit_on_signals(signals=(signal.SIGTERM, signal.SIGHUP)):
+    """TERM и HUP внутри блока - SystemExit(128+N): уборка рабочих каталогов идёт, как по trap EXIT."""
+    saved = {s: signal.signal(s, _terminated) for s in signals}
+    try:
+        yield
+    finally:
+        for s, handler in saved.items():
+            signal.signal(s, handler)
 
 
 def pack(work_dir, bundle_name, out_tar, *, run=subprocess.run):

@@ -213,6 +213,118 @@ jobs:
           path: /var/tmp/vpn2-apt-cache
           key: ${{ steps.apt-cache.outputs.cache-primary-key }}
 
+  upgrade:
+    name: стенд обновление с выпуска Ubuntu ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['24.04', '26.04']
+    env:
+      STAND_OS: ${{ matrix.os }}
+      UPGRADE_FROM: v1.1.5
+    steps:
+      # fetch-depth 0: нужен тег выпуска (archive и список удалённых файлов).
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
+      # До up: прокси поднимается до запуска ВМ, их прогрев идёт через него.
+      - name: apt cache
+        id: apt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          restore-keys: stand-apt-${{ matrix.os }}-
+
+      # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
+      - name: up (фоном)
+        run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
+
+      - uses: docker/setup-buildx-action@v4
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
+
+      # Панель из этого же коммита. Кэш gha ветке виден только свой и main,
+      # поэтому dev - через реестр (пишет images.yml): первая сборка ветки тёплая.
+      - name: panel image
+        uses: docker/build-push-action@v7
+        with:
+          context: app
+          platforms: linux/amd64
+          load: true
+          tags: vpn2-stand/panel:${{ github.sha }}
+          cache-from: |
+            type=gha,scope=panel-stand
+            type=gha,scope=checks-panel
+            type=registry,ref=ghcr.io/${{ github.repository }}/panel:buildcache-dev
+            type=gha,scope=panel
+          cache-to: type=gha,mode=max,scope=panel-stand
+
+      - name: up
+        id: up
+        run: sudo infra/tools/ci-stand.sh up-wait
+
+      # Манифест выпуска: образы по digest, как их собрал релиз.
+      - name: манифест выпуска
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$UPGRADE_FROM" -p release-manifest.json -D "$RUNNER_TEMP"
+
+      # Сценарий 4 карточки: чистая установка выпуска, поверх - дерево ветки.
+      - name: установка выпуска
+        run: sudo infra/tools/ci-stand.sh deploy-release "$UPGRADE_FROM" "$RUNNER_TEMP/release-manifest.json"
+
+      - name: обновление до ветки
+        run: sudo infra/tools/ci-stand.sh deploy-upgrade vpn2-stand/panel:${{ github.sha }} "$UPGRADE_FROM"
+
+      # Слепки в stand-report: collect проверяет их на пароль стенда, а
+      # артефакт отчёта их отдаёт.
+      - name: snapshot
+        run: sudo infra/tools/ci-stand.sh snapshot stand-report
+
+      - name: venv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
+
+      # Слепок после обновления равен эталону чистой установки; оба узла
+      # сверяются всегда, красный шаг - если разошёлся хоть один.
+      - name: "обновление: слепок как у чистой установки"
+        run: |
+          rc=0
+          cat infra/tests/fixtures/snapshot/ignore.yml infra/tests/fixtures/snapshot/ignore-upgrade.yml > "$RUNNER_TEMP/ignore-upgrade.yml"
+          for node in entry exit; do
+            "$RUNNER_TEMP/venv/bin/vpn2" snapshot diff --ignore "$RUNNER_TEMP/ignore-upgrade.yml" \
+              "infra/tests/fixtures/snapshot/ubuntu-${{ matrix.os }}-$node.json.gz" "stand-report/snapshot-$node.json" || rc=1
+          done
+          exit "$rc"
+
+      - name: collect
+        if: always()
+        run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: verify-report-upgrade-ubuntu-${{ matrix.os }}
+          path: stand-report/
+          if-no-files-found: warn
+
+      - name: down
+        if: always()
+        run: sudo infra/tools/ci-stand.sh down
+
+      - name: apt cache save
+        if: ${{ always() && steps.apt-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-apt-cache
+          key: ${{ steps.apt-cache.outputs.cache-primary-key }}
+
   # Обрыв UDP entry → экзит: трафик уходит на запасной TCP без перезапуска
   # sing-box и возвращается на Hysteria2. Стенд только из нужных стадий.
   udp-cut:

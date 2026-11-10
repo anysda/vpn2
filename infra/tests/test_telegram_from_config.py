@@ -1,8 +1,7 @@
 """Файл «взятое из config» (telegram-from-config.json): битый не валит стадию 35,
-запись не оставляет пустого файла, restore архива без файла его не оставляет.
+запись не оставляет пустого файла.
 
-Стадия 35 идёт в обвязке test_telegram_stage (двойник docker, без root),
-restore - блок /etc/anysda из anysda-restore.sh, как в test_restore_sso.
+Стадия 35 идёт в обвязке test_telegram_stage (двойник docker, без root).
 """
 import json
 import os

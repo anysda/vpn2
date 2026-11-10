@@ -1,7 +1,7 @@
 """restore передаёт стадиям режим деплоя (VPN2_DEVELOPMENT).
 
 deploy.sh restore кладёт значение перед запуском anysda-restore.sh на entry,
-а блок STAGE_ENV в anysda-restore.sh пишет его в env стадий. Без этого стадия
+а vpn2.backup.stages пишет его в env стадий (проверено в тестах пакета). Без этого стадия
 30-frontend после деплоя --development идёт как установка по манифесту.
 """
 import os

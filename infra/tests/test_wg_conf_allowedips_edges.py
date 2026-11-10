@@ -12,7 +12,7 @@ installed here decides it (installed_wg, see the prefix tests): wireguard-tools
 import re
 import unittest
 
-from test_wg_conf_allowedips_net import G4, G6, SPLIT, apply_gate, backup_check, network, syncconf_body
+from test_wg_conf_allowedips_net import G4, G6, SPLIT, apply_gate, network, syncconf_body
 from test_wg_conf_allowedips_prefix import (
     A4, A6, B4, GONE, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
     assert_rejected_like_wg, installed_wg, signed)
@@ -139,14 +139,6 @@ class WgConfAllowedIpsEdgesTests(unittest.TestCase):
     def test_1_empty_entry_is_not_read_silently(self):
         for form in EMPTY:
             text = conf(form)
-            try:
-                addresses, bad = backup_check(text)
-            except Exception as error:
-                with self.subTest('backup fails', form=form):
-                    self.assertIn('AllowedIPs', str(error))
-            else:
-                with self.subTest('backup fails', form=form):
-                    self.assertTrue([b for b in bad if 'AllowedIPs' in b], (addresses, bad))
             for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
                 with self.subTest(f'verify {name} fails', form=form):
                     with self.assertRaises(Exception) as caught:
@@ -165,19 +157,13 @@ class WgConfAllowedIpsEdgesTests(unittest.TestCase):
             text, wanted = conf(form), wg_apply(conf(form))
             address, sets = installed_wg(text)
             if address is not None:
-                assert_rejected_like_wg(self, form, address, lambda: backup_check(text), lambda: apply_gate(text),
+                assert_rejected_like_wg(self, form, address, lambda: apply_gate(text),
                                         {'conf_peers': lambda: VT.conf_peers(text),
                                          'apply_peers': lambda: VT.apply_peers(text),
                                          'syncconf body': lambda: syncconf_body(text)})
                 continue
             with self.subTest('installed wg', form=form):
                 self.assertEqual(sets, wanted)
-            addresses, bad = backup_check(text)
-            with self.subTest('backup addresses', form=form):
-                self.assertEqual(addresses, wanted)
-            with self.subTest('backup complaints', form=form):
-                # NEW was reissued from 10.66.66.3: OLD counts as its peer only while wg gives OLD that address.
-                self.assertEqual(bad, [] if A4 in wanted[OLD] else [f'пир WireGuard {OLD}: устройства нет в БД'])
             with self.subTest('verify conf_peers', form=form):
                 self.assertEqual({p['key']: sorted(p['allowed']) for p in VT.conf_peers(text)},
                                  {key: sorted(value) for key, value in wanted.items()})

@@ -26,7 +26,7 @@ import unittest
 from unittest import mock
 
 from test_deploy import bash, function
-from test_wg_conf_allowedips_prefix import ROOT, VT, cut, source
+from test_wg_conf_allowedips_prefix import ROOT, VT, source
 
 S = 'KLKQERtKGmYrCPaUJZYYoFjRRNizdBvaUWfrjPG5I1Q='
 P = '0ivjKi39oR/BxsZp17GSMczPpE4CKHCaC1RbI3zedFg='
@@ -37,8 +37,6 @@ CONF = f'[Interface]\nPrivateKey = {S}\nListenPort = 51820\n\n[Peer]\nPublicKey 
 NOCHECK = 'wg0.conf: проверить нечем'
 # events.post.ts line 12: the body the panel takes from the backup copy.
 SCHEMA = "z.object({ type: z.literal('backup_warning'), detail: z.string().trim().max(200).default('') }),"
-# String.prototype.trim: WhiteSpace and LineTerminator of ECMAScript.
-JS_SPACE = '\t\n\v\f\r   ' + ''.join(map(chr, range(0x2000, 0x200b))) + '    　﻿'
 
 
 def result(stdout='', code=0):
@@ -294,62 +292,10 @@ class DeployBackupTests(unittest.TestCase):
 
 
 class BackupEventTests(unittest.TestCase):
-    """3 the event of the copy for any reason: valid UTF-8 JSON the panel schema takes."""
-
-    REASONS = {
-        'tab': b'tab\there',
-        'cr': b'cr\rhere',
-        'ctl-01': b'ctl\x01here',
-        'esc': b'esc\x1b[31mhere',
-        'not-utf8': b'latin1 \xff\xfe byte',
-        'long-1000': ('Операция не позволена ' * 46).encode()[:1000],
-    }
-
-    def event(self, directory, reason, locale):
-        """anysda-backup.sh as it is up to the check, its loop over slices, the exit; the check says `reason`, exit 5."""
-        root = Path(directory)
-        (root / 'etc').mkdir()
-        (root / 'etc/tgbot-secret.txt').write_text('s3cret\n')
-        (root / 'reason').write_bytes(NOCHECK.encode() + b' - unshare --net: ' + reason)
-        text = source('infra/lib/anysda-backup.sh').replace('/etc/anysda/', f'{root}/etc/')
-        fake_curl = ('curl() { while (($#)); do [[ $1 == -d ]] && printf "%s" "$2" > body; shift; done; '
-                     'cat > header; }\n')
-        head = text.split('# Сверка среза с БД того же среза', 1)[0].replace('umask 077\n', 'umask 077\n' + fake_curl, 1)
-        loop = cut(text, 'for attempt in 1 2 3 4 5 6 7 8 9 10; do', '\ndone\n') + '\ndone\n'
-        script = head + 'BUNDLE_DIR=.\nsnapshot_access() { :; }\ncheck_bundle() { cat reason; return 5; }\n' + loop + \
-            '[[ -z $WARNING ]] || exit 4\n'
-        env = {'PATH': os.environ['PATH'], 'LC_ALL': locale, 'LANG': locale}
-        done = subprocess.run(['bash', '-c', script], cwd=directory, env=env, capture_output=True, timeout=15,
-                              check=False)
-        self.assertEqual(done.returncode, 4, done.stderr[-2000:])
-        body = root / 'body'
-        self.assertTrue(body.exists(), 'no event reached the panel')
-        return body.read_bytes()
+    """3 the event of the copy: the schema the package cuts the detail for (vpn2.notify.clean_detail)."""
 
     def test_schema_copy_is_the_panel_schema(self):
         self.assertIn(SCHEMA, source('app/server/api/bot/events.post.ts').splitlines()[11])
-
-    def test_any_reason_gives_a_body_the_panel_takes(self):
-        for locale in ('C', 'C.UTF-8'):
-            for case, reason in self.REASONS.items():
-                with self.subTest(case=case, locale=locale), tempfile.TemporaryDirectory() as directory:
-                    raw = self.event(directory, reason, locale)
-                    try:
-                        text = raw.decode('utf-8')
-                    except UnicodeDecodeError as error:
-                        self.fail(f'body is not UTF-8: {error}: {raw[-80:]!r}')
-                    try:
-                        body = json.loads(text)  # strict: a raw control character is not JSON, as for JSON.parse
-                    except ValueError as error:
-                        self.fail(f'body is not JSON: {error}: {text[-80:]!r}')
-                    self.assertEqual(set(body), {'type', 'detail'})
-                    self.assertEqual(body['type'], 'backup_warning')
-                    self.assertIsInstance(body['detail'], str)
-                    detail = body['detail'].strip(JS_SPACE)
-                    # zod max counts String length: UTF-16 code units.
-                    self.assertLessEqual(len(detail.encode('utf-16-le')) // 2, 200, detail)
-                    self.assertTrue(detail.startswith('сверка БД с конфигами VPN не выполнена'), detail)
-                    self.assertIn('проверить нечем', detail)
 
 
 if __name__ == '__main__':

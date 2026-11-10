@@ -26,6 +26,7 @@ SERVER = base64.b64encode(bytes(range(32))).decode()
 PEER = base64.b64encode(bytes(range(64, 96))).decode()
 GONE = base64.b64encode(bytes(range(96, 128))).decode()
 OLD = base64.b64encode(bytes(range(128, 160))).decode()
+NEW = base64.b64encode(bytes(range(160, 192))).decode()
 PSK_ONE, PSK_GONE, PSK_TWO = (base64.b64encode(bytes([n] * 32)).decode() for n in (1, 2, 3))
 
 A4, A6, B4 = '10.66.66.3/32', 'fd66:66::3/128', '10.66.66.9/32'

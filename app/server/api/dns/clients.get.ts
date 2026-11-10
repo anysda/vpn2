@@ -1,7 +1,7 @@
-import { desc } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients, devices } from '../../database/schema'
 import { agh } from '../../utils/agh-client'
+import { clientsNewestFirst } from '../../utils/list-order'
 import type { AghStats } from '../../utils/agh-parse'
 import { requireAuth } from '../../utils/auth'
 import { serviceNames } from '../../utils/dns-context'
@@ -12,7 +12,7 @@ export default defineEventHandler(async (event) => {
   await requireAuth(event)
   const db = useDb()
   const [cl, dv, aghClients, stats, names] = await Promise.all([
-    db.select().from(clients).orderBy(desc(clients.createdAt)),
+    db.select().from(clients).orderBy(...clientsNewestFirst),
     db.select({ clientId: devices.clientId, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip }).from(devices),
     agh<{ clients: AghPersistentClient[] | null }>('clients'),
     agh<AghStats>('stats'),

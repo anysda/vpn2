@@ -1,6 +1,7 @@
-import { asc, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients, devices } from '../../database/schema'
+import { devicesOldestFirst } from '../../utils/list-order'
 import { requireAuth } from '../../utils/auth'
 import { clientStatus } from '../../utils/client-status'
 import { deviceConfigName } from '../../utils/naming'
@@ -18,7 +19,7 @@ export default defineEventHandler(async (event) => {
 
   const devRows = await db.select().from(devices)
     .where(eq(devices.clientId, id))
-    .orderBy(asc(devices.createdAt))
+    .orderBy(...devicesOldestFirst)
 
   let rxTotal = 0
   let txTotal = 0

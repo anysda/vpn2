@@ -1,8 +1,9 @@
 import { timingSafeEqual } from 'node:crypto'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
+import { devicesOldestFirst } from './list-order'
 import { deviceConfigName } from './naming'
 import { latestAccess } from './access-operations'
 import { accessStatus } from '../../shared/access-operation'
@@ -78,7 +79,7 @@ export async function botClientView(clientId: number) {
     .select()
     .from(devices)
     .where(eq(devices.clientId, clientId))
-    .orderBy(asc(devices.createdAt))
+    .orderBy(...devicesOldestFirst)
   const operation = await latestAccess(c.id)
   return {
     operation,

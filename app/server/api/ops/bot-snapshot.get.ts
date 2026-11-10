@@ -1,7 +1,7 @@
-import { desc } from 'drizzle-orm'
 import { useDb } from '../../database/client'
 import { clients } from '../../database/schema'
 import { requireBotAuth } from '../../utils/bot-api'
+import { clientsNewestFirst } from '../../utils/list-order'
 import { clientStatus } from '../../utils/client-status'
 import { fetchConnections, fetchProxies, userVisibleOutbounds } from '../../utils/clash-client'
 import { fetchNodeMetrics, nodeInstances } from '../../utils/vm-client'
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
       frozenManual: clients.frozenManual,
       expiresAt: clients.expiresAt,
       createdAt: clients.createdAt,
-    }).from(clients).orderBy(desc(clients.createdAt)),
+    }).from(clients).orderBy(...clientsNewestFirst),
     fetchNodeMetrics(nodeInstances().map(n => n.instance), false),
     fetchProxies(),
     fetchConnections(),

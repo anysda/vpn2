@@ -1,6 +1,7 @@
-import { desc, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { useDb } from '../../../../database/client'
 import { clients, devices } from '../../../../database/schema'
+import { clientsNewestFirst } from '../../../../utils/list-order'
 import { clientStatus } from '../../../../utils/client-status'
 import { requireBotAuth } from '../../../../utils/bot-api'
 import { currentAccessByClient } from '../../../../utils/access-operations'
@@ -11,7 +12,7 @@ export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const db = useDb()
 
-  const rows = await db.select().from(clients).orderBy(desc(clients.createdAt))
+  const rows = await db.select().from(clients).orderBy(...clientsNewestFirst)
   const agg = await db
     .select({ clientId: devices.clientId, cnt: sql<number>`count(*)` })
     .from(devices)

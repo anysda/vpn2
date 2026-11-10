@@ -200,7 +200,9 @@ const DNS_TABS = [
 test.describe('эталонные скриншоты', () => {
   test.beforeAll(seed)
 
-  test('все страницы панели', async ({ page }) => {
+  test('все страницы панели', async ({ page }, info) => {
+    // На телефоне жмут пальцем: click не открывает экран клиента.
+    const press = (l: Locator) => info.project.name === 'mobile' ? l.tap() : l.click()
     test.setTimeout(300_000)
     // Часы стоят: ни опросов раз в 30 с, ни перерисовок посреди снимка. Время двигает только runFor.
     await pauseClockAt(page, FIXED)
@@ -224,7 +226,8 @@ test.describe('эталонные скриншоты', () => {
     await page.goto('/clients')
     await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
     await shot(page, pending, 'clients')
-    await page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) }).click()
+    const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })
+    await press(row)
     const panel = page.getByTestId('client-detail')
     await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
     await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)
@@ -233,7 +236,7 @@ test.describe('эталонные скриншоты', () => {
     await page.goto('/dns')
     await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
     for (const [id, label] of DNS_TABS) {
-      if (id !== 'sum') await page.getByRole('tab', { name: label, exact: true }).click()
+      if (id !== 'sum') await press(page.getByRole('tab', { name: label, exact: true }))
       await expect(page.locator('.dns .dpan.on')).toBeVisible()
       await shot(page, pending, `dns-${id}`)
     }

@@ -52,10 +52,16 @@ docker run --rm --network none --user "$PANEL_UID:$PANEL_GID" \
   -v /run/vpn2-control:/run/vpn2-control:ro \
   --entrypoint node "$PANEL_IMAGE" scripts/control-probe.mjs
 panel_begin
-chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2
-for name in db.sqlite db.sqlite-wal db.sqlite-shm; do
-  [[ ! -e /var/lib/anysda-vpn2/$name ]] || chown -h vpn2-panel:vpn2-panel "/var/lib/anysda-vpn2/$name"
-done
+# Миграция в panel_replace идёт от root: на первой установке она создаёт базу
+# с владельцем root, поэтому владельца выставляем и после неё.
+panel_db_owner() {
+  local name
+  chown vpn2-panel:vpn2-panel /var/lib/anysda-vpn2
+  for name in db.sqlite db.sqlite-wal db.sqlite-shm; do
+    [[ ! -e /var/lib/anysda-vpn2/$name ]] || chown -h vpn2-panel:vpn2-panel "/var/lib/anysda-vpn2/$name"
+  done
+}
+panel_db_owner
 
 # ----------------------------------------------------------------------------
 # 2. Generate or load admin password, render anysda-config.yaml
@@ -387,6 +393,7 @@ if [[ $(docker inspect --format '{{index .Config.Labels "vpn2.spec"}} {{.State.R
   echo "[$HOST_TAG] панель не изменилась, контейнер оставлен"
 else
   panel_replace
+  panel_db_owner
   # До удаления старого контейнера сохраняем карту для обновления с версии,
   # которая ещё не хранила адреса экзитов в БД. Читаем только нужную переменную.
   # При неудачном первом запуске повтор деплоя сохраняет исходную карту;

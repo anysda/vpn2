@@ -14,6 +14,7 @@ SSO_ENABLED=false SSO_REDIRECT_URL=''
 ENTRY_DOCKER_ARGS=()
 agh_password() { echo test-only-hash; }
 panel_replace() { echo replace >> calls; }
+panel_db_owner() { echo owner >> calls; }
 curl() { [[ ! -e panel-down ]]; }
 docker() {
   case "$1" in
@@ -64,7 +65,7 @@ class PanelKeepTests(unittest.TestCase):
         return done, result.stdout
 
     def test_first_deploy_starts_panel_and_repeat_keeps_it(self):
-        self.assertEqual(self.deploy()[0], ['replace', 'rm', 'run'])
+        self.assertEqual(self.deploy()[0], ['replace', 'owner', 'rm', 'run'])
         args = (self.root / 'run.args').read_text().splitlines()
         self.assertIn('NUXT_PREVIOUS_NODE_HOSTS=ru=198.51.100.1', args)
         done, out = self.deploy()
@@ -82,17 +83,17 @@ class PanelKeepTests(unittest.TestCase):
             with self.subTest(change=name):
                 before = (self.root / 'label').read_text()
                 change()
-                self.assertEqual(self.deploy()[0], ['replace', 'rm', 'run'])
+                self.assertEqual(self.deploy()[0], ['replace', 'owner', 'rm', 'run'])
                 self.assertNotEqual((self.root / 'label').read_text(), before)
                 self.assertEqual(self.deploy()[0], [])
 
     def test_stopped_or_silent_panel_is_replaced(self):
         self.deploy()
         (self.root / 'panel-down').touch()
-        self.assertEqual(self.deploy()[0], ['replace', 'rm', 'run'])
+        self.assertEqual(self.deploy()[0], ['replace', 'owner', 'rm', 'run'])
         (self.root / 'panel-down').unlink()
         (self.root / 'label').unlink()
-        self.assertEqual(self.deploy()[0], ['replace', 'rm', 'run'])
+        self.assertEqual(self.deploy()[0], ['replace', 'owner', 'rm', 'run'])
 
 
 class PanelTransactionTests(unittest.TestCase):

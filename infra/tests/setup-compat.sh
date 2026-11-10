@@ -23,6 +23,8 @@ curl() {
   esac
 }
 export -f ip dig curl
+# Состояние деплоя живёт в /var/lib: тест идёт не от root и пишет в свой каталог.
+export VPN2_STATE_DIR="$FIXTURE/state"
 for run in 1 2; do
   # Один экзит, без домена/бота/бэкапа/YouTube; пароль панели сгенерирует деплой.
   printf '%s\n' 1 test-entry-password 198.51.100.2 test-exit-password de \

@@ -698,7 +698,11 @@ def assign_mgmt_octets(repo_root, exits):
         e['_mgmt_idx'] = pinned[e['tag']]
 
     if changed:
-        state_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            state_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        except PermissionError:
+            sys.exit(f'config2env: нет прав на каталог состояния деплоя {state_file.parent}: '
+                     'запускать от root')
         state_file.write_text(
             '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\n'
             '# Не перенумеровывать: на октет завязаны метки метрик и mon-порт.\n'

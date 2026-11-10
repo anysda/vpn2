@@ -49,7 +49,7 @@ jobs:
           trap 'rm -rf "$d"' EXIT
           cp config.example.yaml "$d/config.yaml"
           sed -i 's/^  passphrase: ""/  passphrase: ci pass/' "$d/config.yaml"
-          python3 infra/lib/config2env.py "$d"
+          VPN2_STATE_DIR="$d/state" python3 infra/lib/config2env.py "$d"
           test -s "$d/infra/envs/all.env"
 
   infra:

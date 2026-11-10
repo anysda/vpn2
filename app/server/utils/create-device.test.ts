@@ -94,7 +94,7 @@ describe('маршруты создания отдают свои строки �
     const { default: route } = await import('../api/clients/[id]/devices/index.post')
     dbRows.clients = [{ id: 7, name: 'Анна', tgChatId: null }]
     allFail()
-    const event = { ...fakeEvent({ id: '7' }), body: { name: 'phone' } }
+    const event = Object.assign(fakeEvent({ id: '7' }) as object, { body: { name: 'phone' } })
     expect(await route(event as never)).toEqual({ id: 5, clientId: 7, name: 'phone', createdAt: 1 })
     expect(logged).toEqual([
       'ensureDeviceWg on add failed', 'ensureDeviceOvpn on add failed', 'ensureDeviceIkev2 on add failed',

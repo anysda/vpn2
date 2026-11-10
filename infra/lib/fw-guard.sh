@@ -17,9 +17,10 @@ set -euo pipefail
 DIR=${FW_GUARD_DIR:-/run/vpn2-fw-guard}
 ETC=${FW_GUARD_ETC:-/etc}
 UNIT=vpn2-fw-guard
-# Свои nft-таблицы стадий (19-yt-zapret). Чужие таблицы (Docker, fail2ban) не
+# Свои nft-таблицы стадий (19-yt-zapret, port hopping Hysteria2 из 10-foreign).
+# Чужие таблицы (Docker, fail2ban) не
 # снимаем: откат всего ruleset стёр бы то, что службы добавили за время стадии.
-TABLES=('inet ytzapret' 'inet anysda_ytquic')
+TABLES=('inet ytzapret' 'inet anysda_ytquic' 'inet vpn2_hy2hop')
 
 say() { echo "vpn2-fw-guard: $*"; }
 

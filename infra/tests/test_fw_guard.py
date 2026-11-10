@@ -28,7 +28,7 @@ echo "nft $*" >> "$FAKE/calls"
 case "$1" in
   list) [ -f "$FAKE/table-$4" ] && cat "$FAKE/table-$4" || exit 1 ;;
   delete) rm -f "$FAKE/table-$4" ;;
-  -f) name=$(sed -n 's/^table inet \\([a-z_]*\\) {$/\\1/p' "$2"); cp "$2" "$FAKE/table-$name" ;;
+  -f) name=$(sed -n 's/^table inet \\([a-z0-9_]*\\) {$/\\1/p' "$2"); cp "$2" "$FAKE/table-$name" ;;
 esac
 '''
 
@@ -94,6 +94,23 @@ class FirewallGuardTests(unittest.TestCase):
         self.assertEqual(disarm.returncode, 3, disarm.stdout + disarm.stderr)
         self.assertIn('откатаны к состоянию до неё', disarm.stdout)
         self.assertFalse(self.dir.exists())
+
+    def test_restore_returns_hy2hop_table_to_snapshot(self):
+        hop = self.fake / 'table-vpn2_hy2hop'
+        hop.write_text('table inet vpn2_hy2hop {\n  dport 20000-20100\n}\n')
+        self.assertEqual(self.guard('arm', '10-foreign', '1').returncode, 0)
+        hop.write_text('table inet vpn2_hy2hop {\n  dport 30000-30100\n}\n')
+        os.utime(self.dir / 'alive', (time.time() - 10,) * 2)
+        self.assertEqual(self.guard('watch', '1').returncode, 0)
+        self.assertIn('20000-20100', hop.read_text())
+
+    def test_restore_drops_hy2hop_table_created_by_stage(self):
+        hop = self.fake / 'table-vpn2_hy2hop'
+        self.assertEqual(self.guard('arm', '10-foreign', '1').returncode, 0)
+        hop.write_text('table inet vpn2_hy2hop {\n  dport 30000-30100\n}\n')
+        os.utime(self.dir / 'alive', (time.time() - 10,) * 2)
+        self.assertEqual(self.guard('watch', '1').returncode, 0)
+        self.assertFalse(hop.exists())
 
     def test_fresh_logins_keep_stage_changes(self):
         self.assertEqual(self.guard('arm', '29-openvpn', '3').returncode, 0)

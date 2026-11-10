@@ -4,7 +4,7 @@
 # Пути считаются от VPN2_ROOT и от каталога infra рядом с этим файлом.
 
 VPN2_ROOT="${VPN2_ROOT:-/opt/vpn2}"
-VENV_LOG="${VENV_LOG:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/state/ansible-venv.log}"
+VENV_LOG="${VENV_LOG:-$VPN2_ROOT/ansible-venv.log}"
 # Каталог infra с versions.yml, ansible/ и vpn2/; тест подменяет копией.
 ANSIBLE_VENV_INFRA="${ANSIBLE_VENV_INFRA:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 _VENV_PID=
@@ -19,30 +19,45 @@ _vpn2_src_hash() {
   } | sha256sum | cut -d' ' -f1
 }
 
-# Хэш пинов: версия python, три файла пинов и исходники пакета.
+# Хэш пинов: версия python и два файла пинов; исходники пакета и versions.yml не входят.
 ansible_venv_pins() {
   local f
   {
     python3 -V 2>&1
-    for f in versions.yml ansible/constraints.txt ansible/requirements.yml; do
+    for f in ansible/constraints.txt ansible/requirements.yml; do
       sha256sum "$ANSIBLE_VENV_INFRA/$f"
     done
-    _vpn2_src_hash
   } | sha256sum | cut -d' ' -f1
 }
 
+# Путь колеса vpn2 в $VPN2_ROOT/wheels; пусто и код 1, если его нет.
+ansible_wheel_path() {
+  local w
+  w="$(ls "$VPN2_ROOT"/wheels/vpn2-*-py3-none-any.whl 2>/dev/null | head -n1)"
+  [[ -n "$w" ]] || return 1
+  printf '%s\n' "$w"
+}
+
 # Колесо vpn2 без сети и без pip: PEP 517 хук setuptools из системного whl,
-# в копии исходников, чтобы дерево репы осталось чистым.
+# в копии исходников, чтобы дерево репы осталось чистым. Под своим замком:
+# сборку зовут параллельные дорожки экзитов.
 ansible_wheel_build() {
-  local wheels="$VPN2_ROOT/wheels" src tmp st
+  mkdir -p "$VPN2_ROOT/wheels"
+  (
+    flock 8
+    _ansible_wheel_build_locked
+  ) 8>"$VPN2_ROOT/wheels/.lock"
+}
+
+_ansible_wheel_build_locked() {
+  local wheels="$VPN2_ROOT/wheels" src tmp st built
   src="$(_vpn2_src_hash)"
-  if [[ -f "$wheels/vpn2.whl" && -f "$wheels/.src-sha256" \
+  if ansible_wheel_path >/dev/null && [[ -f "$wheels/.src-sha256" \
         && "$(cat "$wheels/.src-sha256")" == "$src" ]]; then
     return 0
   fi
   st="$(ls /usr/share/python-wheels/setuptools-*.whl 2>/dev/null | head -n1)"
   [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в /usr/share/python-wheels (пакет python3-venv)"
-  mkdir -p "$wheels"
   tmp="$(mktemp -d)"
   cp -r "$ANSIBLE_VENV_INFRA/vpn2/." "$tmp/src"
   mkdir -p "$tmp/out"
@@ -53,9 +68,9 @@ ansible_wheel_build() {
     rm -rf "$tmp"
     die "ansible: колесо vpn2 не собралось"
   fi
-  basename "$tmp"/out/vpn2-*.whl >"$wheels/.name"
-  mv -f "$tmp"/out/vpn2-*.whl "$wheels/vpn2.whl.new" \
-    && mv -f "$wheels/vpn2.whl.new" "$wheels/vpn2.whl" \
+  built="$(basename "$tmp"/out/vpn2-*.whl)"
+  rm -f "$wheels"/vpn2-*.whl "$wheels/.src-sha256"
+  mv -f "$tmp/out/$built" "$wheels/$built" \
     && printf '%s\n' "$src" >"$wheels/.src-sha256.new" \
     && mv -f "$wheels/.src-sha256.new" "$wheels/.src-sha256"
   rm -rf "$tmp"
@@ -72,27 +87,34 @@ _venv_retry() {
 }
 
 _ansible_venv_install_locked() {
-  local venv="$VPN2_ROOT/venv" pins pip link
+  local venv="$VPN2_ROOT/venv" pins pip wheel src
   pins="$(ansible_venv_pins)"
-  if [[ -f "$venv/.vpn2-pins" && -f "$VPN2_ROOT/wheels/vpn2.whl" \
-        && "$(cat "$venv/.vpn2-pins")" == "$pins" ]]; then
-    log "ansible: пины те же, без загрузки"
+  wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
+  src="$(cat "$VPN2_ROOT/wheels/.src-sha256")"
+  pip="$(ls /usr/share/python-wheels/pip-*.whl 2>/dev/null | head -n1)"
+  if [[ -f "$venv/.vpn2-pins" && "$(cat "$venv/.vpn2-pins")" == "$pins" ]]; then
+    if [[ -f "$venv/.vpn2-wheel" && "$(cat "$venv/.vpn2-wheel")" == "$src" ]]; then
+      log "ansible: пины те же, без загрузки"
+      return 0
+    fi
+    [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в /usr/share/python-wheels (пакет python3-venv)"
+    rm -f "$venv/.vpn2-wheel"
+    python3 "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
+      --no-index --no-deps --force-reinstall "$wheel" || return 1
+    printf '%s\n' "$src" >"$venv/.vpn2-wheel"
+    log "ansible: пины те же, колесо vpn2 обновлено"
     return 0
   fi
-  pip="$(ls /usr/share/python-wheels/pip-*.whl 2>/dev/null | head -n1)"
   [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в /usr/share/python-wheels (пакет python3-venv)"
-  rm -f "$venv/.vpn2-pins"
+  rm -f "$venv/.vpn2-pins" "$venv/.vpn2-wheel"
   python3 -m venv --without-pip --clear "$venv" || return 1
   _venv_retry python3 "$pip/pip" --python "$venv/bin/python" install \
     --disable-pip-version-check -c "$ANSIBLE_VENV_INFRA/ansible/constraints.txt" ansible-core || return 1
-  # pip требует настоящее имя колеса: ссылка с ним на файл с фиксированным именем.
-  link="$(mktemp -d)"
-  ln -s "$VPN2_ROOT/wheels/vpn2.whl" "$link/$(cat "$VPN2_ROOT/wheels/.name")"
   python3 "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
-    --no-index --no-deps "$link"/*.whl || { rm -rf "$link"; return 1; }
-  rm -rf "$link"
+    --no-index --no-deps "$wheel" || return 1
   _venv_retry "$venv/bin/ansible-galaxy" collection install \
     -r "$ANSIBLE_VENV_INFRA/ansible/requirements.yml" -p "$VPN2_ROOT/collections" || return 1
+  printf '%s\n' "$src" >"$venv/.vpn2-wheel"
   printf '%s\n' "$pins" >"$venv/.vpn2-pins"
 }
 

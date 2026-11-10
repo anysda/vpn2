@@ -15,8 +15,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / 'infra/lib/ansible-venv.sh'
-PIN_FILES = ('versions.yml', 'ansible/constraints.txt', 'ansible/requirements.yml',
-             'vpn2/pyproject.toml', 'vpn2/src/vpn2/config.py')
+PIN_FILES = ('ansible/constraints.txt', 'ansible/requirements.yml')
+OTHER_FILES = ('versions.yml', 'vpn2/pyproject.toml', 'vpn2/src/vpn2/config.py')
 NEEDS_WHEEL = pytest.mark.skipif(
     not glob.glob('/usr/share/python-wheels/setuptools-*.whl'),
     reason='нет системного setuptools-*.whl (python3-venv)')
@@ -36,7 +36,7 @@ def infra(tmp_path):
     dst = tmp_path / 'infra'
     shutil.copytree(ROOT / 'infra/vpn2', dst / 'vpn2',
                     ignore=shutil.ignore_patterns('__pycache__', 'tests', '*.egg-info'))
-    for name in PIN_FILES:
+    for name in PIN_FILES + OTHER_FILES:
         (dst / name).parent.mkdir(parents=True, exist_ok=True)
         src = ROOT / 'infra' / name
         if src.exists():
@@ -61,6 +61,14 @@ def test_pins_change_with_each_input(infra, name):
     assert pins(infra) != before
 
 
+@pytest.mark.parametrize('name', OTHER_FILES)
+def test_pins_ignore_versions_and_package_sources(infra, name):
+    before = pins(infra)
+    with open(infra / name, 'a') as f:
+        f.write('\n# правка\n')
+    assert pins(infra) == before
+
+
 def test_pins_ignore_pycache(infra):
     before = pins(infra)
     cache = infra / 'vpn2/src/vpn2/__pycache__'
@@ -76,7 +84,9 @@ def build(tmp_path, infra_dir=None):
         env['ANSIBLE_VENV_INFRA'] = str(infra_dir)
     res = bash('ansible_wheel_build', **env)
     assert res.returncode == 0, res.stderr
-    return tmp_path / 'root/wheels/vpn2.whl'
+    wheels = sorted((tmp_path / 'root/wheels').glob('vpn2-*-py3-none-any.whl'))
+    assert len(wheels) == 1, wheels
+    return wheels[0]
 
 
 def tree_status():
@@ -109,5 +119,68 @@ def test_source_edit_rebuilds(tmp_path, infra):
     first = wheel.stat().st_mtime_ns
     with open(infra / 'vpn2/src/vpn2/config.py', 'a') as f:
         f.write('\n# правка\n')
-    build(tmp_path, infra)
+    wheel = build(tmp_path, infra)  # в каталоге по-прежнему одно колесо
     assert wheel.stat().st_mtime_ns != first
+
+
+@NEEDS_WHEEL
+def test_wheel_path(tmp_path):
+    env = {'VPN2_ROOT': str(tmp_path / 'root')}
+    res = bash('ansible_wheel_path', **env)
+    assert res.returncode == 1 and res.stdout == ''
+    wheel = build(tmp_path)
+    res = bash('ansible_wheel_path', **env)
+    assert res.returncode == 0 and res.stdout.strip() == str(wheel)
+    assert wheel.name.startswith('vpn2-') and wheel.name.endswith('-py3-none-any.whl')
+    assert not (wheel.parent / 'vpn2.whl').exists()
+    assert not (wheel.parent / '.name').exists()
+
+
+@pytest.fixture
+def fake_python(tmp_path):
+    """Заглушка python3 в PATH: пишет аргументы в файл, pip и сеть не зовутся."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    calls = tmp_path / 'calls'
+    stub = bin_dir / 'python3'
+    stub.write_text('#!/bin/sh\n'
+                    'if [ "$1" = "-V" ]; then echo "Python 3.0.0"; exit 0; fi\n'
+                    f'echo "$*" >> {calls}\n')
+    stub.chmod(0o755)
+    return bin_dir, calls
+
+
+def install(tmp_path, bin_dir, infra_dir):
+    return bash('ansible_venv_install',
+               VPN2_ROOT=str(tmp_path / 'root'), ANSIBLE_VENV_INFRA=str(infra_dir),
+               PATH=f'{bin_dir}:{os.environ["PATH"]}')
+
+
+@NEEDS_WHEEL
+@pytest.mark.skipif(not glob.glob('/usr/share/python-wheels/pip-*.whl'),
+                    reason='нет системного pip-*.whl (python3-venv)')
+def test_install_branches(tmp_path, infra, fake_python):
+    bin_dir, calls = fake_python
+    build(tmp_path, infra)
+    root = tmp_path / 'root'
+    venv = root / 'venv'
+    venv.mkdir(parents=True)
+    pin = bash('ansible_venv_pins', ANSIBLE_VENV_INFRA=str(infra),
+               PATH=f'{bin_dir}:{os.environ["PATH"]}').stdout.strip()
+    (venv / '.vpn2-pins').write_text(pin + '\n')
+    (venv / '.vpn2-wheel').write_text((root / 'wheels/.src-sha256').read_text())
+    # тот же маркер колеса: ни одного вызова
+    res = install(tmp_path, bin_dir, infra)
+    assert res.returncode == 0, res.stderr
+    assert 'пины те же, без загрузки' in res.stdout
+    assert not calls.exists()
+    # другое колесо: один вызов с --no-index
+    with open(infra / 'vpn2/src/vpn2/config.py', 'a') as f:
+        f.write('\n# правка\n')
+    build(tmp_path, infra)
+    res = install(tmp_path, bin_dir, infra)
+    assert res.returncode == 0, res.stderr
+    assert 'колесо vpn2 обновлено' in res.stdout
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 1 and '--no-index' in lines[0] and '--force-reinstall' in lines[0]
+    assert (venv / '.vpn2-wheel').read_text() == (root / 'wheels/.src-sha256').read_text()

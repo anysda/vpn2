@@ -122,6 +122,8 @@ function pinAll(page: Page) {
     return { ...body, starts: Array.from({ length: n }, (_, i) => cur - (n - 1 - i) * step), exits, total, sum, prev: Math.round(sum * 0.8) }
   }
   return Promise.all([
+    // Живое: порт в «Адресе возврата» SSO - у каждого шарда свой E2E_PORT, эталон снят на 31710.
+    pin(page, /\/api\/admin\/sso(\?|$)/, (b: Json) => ({ ...b, redirectUrl: String(b.redirectUrl).replace(/:\d+\//, ':31710/') })),
     pin(page, /\/api\/sso(\?|$)/, b => ({ ...b, enabled: false, autoRedirect: false })),
     pin(page, /\/api\/events(\?|$)/, () => [
       { id: 5, at: FIXED - 4 * 60_000, type: 'node', level: 'ok', title: 'Узел восстановлен', detail: 'Связь с узлом снова есть' },

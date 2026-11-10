@@ -1,0 +1,188 @@
+"""vpn2 host <действие> - шаги настройки узла для ролей ansible.
+
+Действие, изменившее узел, печатает последней строкой `vpn2: changed`:
+по ней роль ставит changed. Модуль не тянет PyYAML: на чистом экзите он
+запускается из колеса системным python до установки пакетов.
+"""
+import argparse
+import glob
+import hashlib
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+from vpn2 import apt, firewall, swap
+
+CHANGED = 'vpn2: changed'
+APPLIED_DIR = Path('/var/lib/anysda/applied')
+
+
+def _say(text):
+    print(f"[{os.environ.get('HOST_TAG', 'anysda')}]   {text}", flush=True)
+
+
+def _packages(args):
+    return apt.install(args.package, docker=args.docker)
+
+
+def _nft_preserve(args):
+    del args
+    return firewall.preserve_nftables_conf()
+
+
+def _swap(args):
+    return swap.ensure(args.manifest, _say)
+
+
+def _ufw(args):
+    """Политика, свои правила по комментариям, включение и журнал ufw."""
+    changed = firewall.ufw_repair_if_lost()
+    changed = bool(firewall.ufw_defaults()) or changed
+    for group in json.loads(args.groups):
+        added, deleted = firewall.ufw_reconcile(group['comment'], group.get('rules', ()),
+                                                group.get('aliases', ()))
+        for sign, rules in (('+', added), ('-', deleted)):
+            for rule in rules:
+                _say(f"ufw {sign} {rule} ({group['comment']})")
+        changed = changed or bool(added or deleted)
+    if not firewall.ufw_active():
+        subprocess.run(['ufw', '--force', 'enable'], check=True, stdout=subprocess.DEVNULL)
+        changed = True
+    # Без журнала: иначе каждый пакет сканера портов - строка в kern.log.
+    try:
+        logging_off = 'LOGLEVEL=off' in Path('/etc/ufw/ufw.conf').read_text().splitlines()
+    except OSError:
+        logging_off = False
+    if not logging_off:
+        subprocess.run(['ufw', 'logging', 'off'], check=True, stdout=subprocess.DEVNULL)
+        changed = True
+    return changed
+
+
+def f2b_ignore(client, entry_host, resolve=None):
+    """Адреса, которые fail2ban не банит: loopback, источник деплоя, адреса entry."""
+    result = ['127.0.0.1/8', '::1']
+
+    def add(address):
+        if not re.fullmatch(r'[0-9A-Fa-f:.]+', address) or not re.search(r'[.:]', address):
+            return
+        if address.startswith('127.') or address == '::1' or address in result:
+            return
+        result.append(address)
+
+    add(client.split(' ')[0])
+    if re.fullmatch(r'[0-9A-Fa-f:.]+', entry_host):
+        add(entry_host)
+    elif entry_host:
+        for address in (resolve or _resolve)(entry_host):
+            add(address)
+    return result
+
+
+def _resolve(host):
+    try:
+        return [item[4][0] for item in socket.getaddrinfo(host, None)]
+    except OSError:
+        return []
+
+
+def _f2b_ignore(args):
+    print(' '.join(f2b_ignore(os.environ.get('SSH_CLIENT', ''), args.entry_host)))
+    return False
+
+
+def fingerprint(paths):
+    """sha256 склейки содержимого; отсутствующий файл в отпечаток не входит."""
+    digest = hashlib.sha256()
+    for path in paths:
+        try:
+            digest.update(Path(path).read_bytes())
+        except OSError:
+            continue
+    return digest.hexdigest()
+
+
+def restart_if_changed(unit, paths, *, applied=None, run=subprocess.run):
+    """Перезапуск службы, только если сменились её входы или она не работает."""
+    applied = APPLIED_DIR if applied is None else Path(applied)
+    record = applied / f'{unit}.sha256'
+    current = fingerprint(paths)
+    active = run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0
+    try:
+        known = record.read_text().strip()
+    except OSError:
+        known = None
+    if active and known == current:
+        return False
+    run(['systemctl', 'restart', unit], check=True)
+    applied.mkdir(parents=True, exist_ok=True)
+    record.write_text(current + '\n')
+    return True
+
+
+def _restart_if_changed(args):
+    changed = restart_if_changed(args.unit, args.file)
+    _say(f'{args.unit} перезапущен' if changed
+         else f'{args.unit}: конфиг, сертификаты и бинарник прежние — не перезапускаю')
+    return changed
+
+
+def _venv(args):
+    """venv vpn2 экзита из колеса, без сети; PyYAML берётся из системных пакетов."""
+    root = Path(args.root)
+    mark = root / 'venv/.vpn2-wheel'
+    digest = hashlib.sha256(Path(args.wheel).read_bytes()).hexdigest()
+    if mark.is_file() and mark.read_text().strip() == digest:
+        return False
+    pips = sorted(glob.glob(os.path.join(args.pip_dir, 'pip-*.whl')))
+    if not pips:
+        raise RuntimeError(f'нет pip-*.whl в {args.pip_dir} (пакет python3-venv)')
+    venv = root / 'venv'
+    subprocess.run(['/usr/bin/python3', '-m', 'venv', '--without-pip', '--system-site-packages',
+                    '--clear', str(venv)], check=True)
+    subprocess.run(['/usr/bin/python3', pips[-1] + '/pip', '--python', str(venv / 'bin/python'),
+                    'install', '--no-index', '--no-deps', '--disable-pip-version-check',
+                    args.wheel], check=True, stdout=subprocess.DEVNULL)
+    mark.write_text(digest + '\n')
+    return True
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest='action', required=True)
+    item = sub.add_parser('packages')
+    item.add_argument('--docker', action='store_true')
+    item.add_argument('package', nargs='+')
+    item.set_defaults(run=_packages)
+    sub.add_parser('nft-preserve').set_defaults(run=_nft_preserve)
+    item = sub.add_parser('swap')
+    item.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
+    item.set_defaults(run=_swap)
+    item = sub.add_parser('ufw')
+    item.add_argument('groups', help='JSON: [{"comment", "rules", "aliases"}]')
+    item.set_defaults(run=_ufw)
+    item = sub.add_parser('f2b-ignore')
+    item.add_argument('entry_host', nargs='?', default='')
+    item.set_defaults(run=_f2b_ignore)
+    item = sub.add_parser('restart-if-changed')
+    item.add_argument('unit')
+    item.add_argument('file', nargs='+')
+    item.set_defaults(run=_restart_if_changed)
+    item = sub.add_parser('venv')
+    item.add_argument('wheel')
+    item.add_argument('--root', default='/opt/vpn2')
+    item.add_argument('--pip-dir', default='/usr/share/python-wheels')
+    item.set_defaults(run=_venv)
+    args = parser.parse_args(argv)
+    try:
+        changed = args.run(args)
+    except (RuntimeError, ValueError, OSError, subprocess.CalledProcessError) as error:
+        print(f'vpn2 host {args.action}: {error}', file=sys.stderr)
+        return 1
+    if changed:
+        print(CHANGED)
+    return 0

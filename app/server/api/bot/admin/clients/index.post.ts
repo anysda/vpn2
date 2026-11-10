@@ -7,7 +7,7 @@ import { readBodyAs } from '../../../../utils/validate'
 // Создание клиента из админского чата бота — имя + фильтрация.
 // Срок/лимит админ задаёт потом через карточку клиента (PATCH).
 const Body = z.object({
-  name: z.string().min(1).max(64),
+  name: z.string().trim().min(1).max(64),
   filterTraffic: z.boolean().optional(),
 })
 

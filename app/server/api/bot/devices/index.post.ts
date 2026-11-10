@@ -1,19 +1,20 @@
 import { z } from 'zod'
 import { botClientView, clientByChat, requireBotAuth } from '../../../utils/bot-api'
 import { caReady } from '../../../utils/openvpn'
+import { syncClientPrefsFile } from '../../../utils/client-prefs'
 import { readBodyAs } from '../../../utils/validate'
 import { createDeviceWithAddresses, deviceRequestKey, provisionDeviceKeys, rejectDeletedDeviceRepeat } from '../../../utils/create-device'
 
 const Body = z.object({
   chatId: z.number().int(),
-  name: z.string().min(1).max(64),
+  name: z.string().trim().min(1).max(64),
 })
 
 // Клиент добавляет себе девайс через бота.
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
   const body = await readBodyAs(event, Body)
-  const name = body.name.trim()
+  const name = body.name
   const idempotency = deviceRequestKey(event, { source: 'bot', chatId: body.chatId, name })
   await rejectDeletedDeviceRepeat(idempotency)
   const client = await clientByChat(body.chatId)
@@ -38,6 +39,7 @@ export default defineEventHandler(async (event) => {
     wgSync: 'bot: wg sync failed',
     ikev2Sync: 'bot: ikev2 sync failed',
   })
+  await syncClientPrefsFile().catch(err => useLogger().error({ err }, 'bot: client prefs sync failed'))
 
   return botClientView(client.id)
 })

@@ -99,7 +99,12 @@ with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
             r"^cat > /usr/local/sbin/(\S+) << '(\w+)'\n(.*?)\n\2$", stage, re.M | re.S):
         (sbin / path).write_text(local(body) + '\n')
         (sbin / path).chmod(0o755)
+    # Команда пакета из юнита: модуль с подменёнными путями, запускается сам.
+    entry_addrs = sbin / 'vpn2-entry-addrs'
+    entry_addrs.write_text(local((ROOT / 'infra/vpn2/src/vpn2/router/entry_addrs.py').read_text()))
     unit = stage.split('cat > /etc/systemd/system/sing-box.service', 1)[1].split('\nEOF\n', 1)[0]
+    unit = unit.replace('/opt/vpn2/venv/bin/vpn2 router entry-addrs', f'{sys.executable} {entry_addrs}')
+    assert str(entry_addrs) in unit, unit
     start_pre = [local(line.split('=', 1)[1]) for line in unit.splitlines()
                  if line.startswith('ExecStartPre=')]
 

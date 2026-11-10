@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from router_support import ROOT, SB
+import watchdog_src
 
 
 @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
@@ -43,13 +44,14 @@ class ConfigPublishTests(unittest.TestCase):
         source = source.replace('/etc/sing-box', str(directory))
         source = source.replace('/tmp/anysda/sing-box-server.json.tpl', str(directory / 'template'))
         source = source.replace('/usr/local/bin/sing-box', '"$SING_BOX_BIN"')
-        source = source.replace('/tmp/anysda/hy2_bandwidth.py', str(ROOT / 'infra/lib/hy2_bandwidth.py'))
+        source = source.replace(watchdog_src.VENV_VPN2, str(watchdog_src.shim(directory)))
         (directory / 'template').write_text(body)
-        generator = directory / 'generate.py'
-        generator.write_text(f'print({body!r})\n')
+        # Генератор стадии 20 - команда пакета: подменная печатает заданный конфиг.
+        (directory / 'bin').mkdir()
+        generator = watchdog_src.shim(directory / 'bin', f"#!/bin/sh\ncat <<'J'\n{body}\nJ\n")
         shell = 'set -euo pipefail\nenvsubst() { command cat; }\n' + source
         return subprocess.run(['bash', '-c', shell], text=True, capture_output=True,
-                              env={**os.environ, 'HOST_TAG': 'test', 'GEN': str(generator),
+                              env={**os.environ, 'HOST_TAG': 'test', 'VPN2_BIN': str(generator),
                                    'SING_BOX_BIN': SB})
 
 

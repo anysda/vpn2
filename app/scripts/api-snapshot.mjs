@@ -307,7 +307,7 @@ function mapPath(node, path, fn) {
  * @param {Record<string, string | number>} ids идентификаторы клиентов сценария
  * @returns {Call[]}
  */
-export function normalize(route, list, ids) {
+function normalize(route, list, ids) {
   const rules = NORMALIZATION.filter(r => r.route === route || r.route === '*')
   const out = structuredClone(list)
   const order = [...rules.filter(r => r.kind === 'scope' || r.kind === 'idkeys'), ...rules.filter(r => r.kind !== 'scope' && r.kind !== 'idkeys')]

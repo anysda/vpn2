@@ -144,3 +144,28 @@ ansible_venv_wait() {
   fi
   cat "$VENV_LOG" >&2
 }
+
+# Стадия плеем ansible: infra/ansible/plays/<стадия>.yml на одном хосте.
+# Стадии под fw-guard идут только bash-путём: сторож отката живёт там.
+run_play() {
+  local stage="$1" host="$2"
+  [[ " $FW_GUARD_STAGES " != *" $stage "* ]] \
+    || die "стадия $stage под fw-guard, плей пока нельзя (уберите ansible/plays/$stage.yml)"
+  if [[ "$BASHPID" != "$$" ]]; then
+    # Хосты идут субшеллами: фон родителя не наш потомок, wait его не дождётся.
+    # Своя установка встаёт за его замком и при тех же пинах ничего не качает.
+    local VENV_LOG="$VENV_LOG.$BASHPID"
+    _VENV_PID=
+    ansible_venv_start
+  elif [[ ! -f "$VPN2_ROOT/venv/.vpn2-pins" && -z "$_VENV_PID" ]]; then
+    ansible_venv_start
+  fi
+  ansible_venv_wait
+  log "[$stage → $host] плей ansible"
+  (
+    set -o pipefail
+    ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
+      "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/plays/$stage.yml" \
+      --limit "$host" --tags "$stage" 2>&1 | sed -u "s/^/[$host]/"
+  )
+}

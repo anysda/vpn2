@@ -30,6 +30,14 @@ def run(directory, text, *args):
 
 
 class AnsibleInventoryTests(unittest.TestCase):
+    def test_inventory_is_executable_in_git(self):
+        # Без бита исполнения ansible читает inventory.py как ini и узлов не видит.
+        mode = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-s', 'infra/ansible/inventory.py'],
+                              text=True, capture_output=True, check=True).stdout.split()[:1]
+        if not mode:
+            self.skipTest('дерево не из git')
+        self.assertEqual(mode, ['100755'])
+
     def test_list_matches_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             result = run(directory, render(), '--list')

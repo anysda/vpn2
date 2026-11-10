@@ -679,6 +679,7 @@ fw_guard_disarm() {
 
 run_stage_on_host() {
   local stage="$1" host="$2"
+  if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi
   # Код 2 зарезервирован для результата 99-verify; ошибки подготовки — 1.
 
   local script="$DEPLOY_ROOT/scripts/${stage}.sh"
@@ -1714,7 +1715,7 @@ case "${1:-}" in
   ''|recover|backup|backup-list|restore|rollback) ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
-    [[ -f "$DEPLOY_ROOT/scripts/$1.sh" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
+    [[ -f "$DEPLOY_ROOT/scripts/$1.sh" || -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
     expand_hosts "$2" >/dev/null
     ;;
 esac

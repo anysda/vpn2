@@ -1551,7 +1551,7 @@ do_all() {
   wait "$_PREFETCH_PID" || true
   VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
   run_stage 30-frontend      ru
-  [[ -z ${_VENV_PID:-} ]] || ansible_venv_wait
+  [[ -z ${_VENV_PID:-} ]] || ansible_venv_wait soft
   local verify_rc=0
   run_stage 99-verify        all || verify_rc=$?
   [[ $verify_rc -ne 1 ]] || return 1

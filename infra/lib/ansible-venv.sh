@@ -147,12 +147,18 @@ ansible_venv_start() {
   _VENV_PID=$!
 }
 
+# Ожидание фоновой установки. Без аргумента сбой фатален (плею venv нужен);
+# с `soft` - только предупреждение: хосты уже изменены, venv ни одной стадии не нужен.
 ansible_venv_wait() {
   [[ -n "$_VENV_PID" ]] || return 0
-  local pid="$_VENV_PID"
+  local pid="$_VENV_PID" mode="${1:-}"
   _VENV_PID=
   if ! wait "$pid"; then
     tail -n 20 "$VENV_LOG" >&2
+    if [[ "$mode" == soft ]]; then
+      HOST_TAG=deploy warn "ansible: venv не установился, лог $VENV_LOG; повторится при следующем запуске"
+      return 0
+    fi
     die "ansible: venv не установился, лог $VENV_LOG"
   fi
   cat "$VENV_LOG" >&2

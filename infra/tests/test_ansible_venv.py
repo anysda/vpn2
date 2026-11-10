@@ -208,3 +208,28 @@ def test_background_install_does_not_hold_deploy_lock(tmp_path):
         subprocess.run(['kill', str(bg)])
 
 
+def venv_wait(tmp_path, mode):
+    log = tmp_path / 'venv.log'
+    return bash(
+        'warn() { echo "WARN $*" >&2; }\n'
+        f'echo pip-boom > {log}; (exit 1) & _VENV_PID=$!\n'
+        f'ansible_venv_wait {mode}; echo "rc=$?"',
+        VPN2_ROOT=str(tmp_path / 'root'), VENV_LOG=str(log))
+
+
+def test_soft_venv_wait_warns_and_returns_zero(tmp_path):
+    res = venv_wait(tmp_path, 'soft')
+    assert res.returncode == 0, res.stderr
+    assert 'rc=0' in res.stdout
+    assert 'pip-boom' in res.stderr
+    assert 'WARN ansible: venv не установился, лог' in res.stderr
+    assert 'повторится при следующем запуске' in res.stderr
+
+
+def test_strict_venv_wait_dies_on_failed_background(tmp_path):
+    res = venv_wait(tmp_path, '')
+    assert res.returncode != 0
+    assert 'rc=' not in res.stdout
+    assert 'ansible: venv не установился' in res.stderr
+
+

@@ -217,7 +217,15 @@ async function prepare(page: Page, pending: Set<unknown>, base: { width: number,
   await page.mouse.move(0, 0)
   await ready(page, pending, shown)
   await fitWindow(page, pending, base, shown)
+  if (DIAG_REPAINT.on) {
+    const vp = page.viewportSize()!
+    await page.setViewportSize({ width: vp.width + 1, height: vp.height })
+    await page.setViewportSize(vp)
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+    await ready(page, pending, shown)
+  }
 }
+const DIAG_REPAINT = { on: false }
 
 const DNS_TABS = [
   ['sum', 'Сводка'], ['log', 'Журнал'], ['flt', 'Фильтры'], ['rules', 'Свои правила'],
@@ -297,18 +305,20 @@ test.describe('эталонные скриншоты', () => {
 
   // ДИАГНОСТИКА VPN2-749, временно: один и тот же обход в свежих браузерах с разными аргументами.
   test('диагностика: свежие браузеры', async ({ playwright }, info) => {
-    test.skip(info.project.name !== 'desktop')
+    test.skip(info.project.name === 'narrow')
+    const mobile = info.project.name === 'mobile'
     test.setTimeout(1_200_000)
     const fs = await import('node:fs')
     const crypto = await import('node:crypto')
-    const variants: [string, string[], number][] = [
-      ['base', ['--font-render-hinting=none'], 4],
-      ['onethread', ['--font-render-hinting=none', '--num-raster-threads=1'], 3],
-      ['nopartial', ['--font-render-hinting=none', '--disable-partial-raster'], 3],
+    const variants: [string, string[], number, boolean][] = [
+      ['nopartial', ['--font-render-hinting=none', '--disable-partial-raster'], 4, false],
+      ['nopartial-repaint', ['--font-render-hinting=none', '--disable-partial-raster'], 4, true],
+      ['repaint', ['--font-render-hinting=none'], 4, true],
     ]
     const ws = process.env.E2E_BROWSER_WS!
     const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:31710'
-    for (const [v, args, runs] of variants) {
+    for (const [v, args, runs, repaint] of variants) {
+      DIAG_REPAINT.on = repaint
       const shots: Record<string, string[]> = {}
       for (let k = 0; k < runs; k++) {
         const browser = await playwright.chromium.connect(ws, {
@@ -321,7 +331,9 @@ test.describe('эталонные скриншоты', () => {
             console.log(`DIAG ${v} gpu ${JSON.stringify(si.gpu.featureStatus)} dev ${JSON.stringify(si.gpu.devices[0])}`)
           }
           const ctx = await browser.newContext({
-            viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false,
+            ...(mobile
+              ? { viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
+              : { viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false }),
             userAgent: info.project.use.userAgent, locale: 'ru-RU', timezoneId: 'Europe/Moscow', reducedMotion: 'reduce',
             baseURL, extraHTTPHeaders: { origin: new URL(baseURL).origin },
           })
@@ -340,7 +352,7 @@ test.describe('эталонные скриншоты', () => {
           cdp.on('LayerTree.layerTreeDidChange', (e: { layers?: typeof layers }) => { if (e.layers) layers = e.layers })
           await cdp.send('LayerTree.enable')
           const log: Record<string, unknown> = {}
-          await walk(page, false, async (name) => {
+          await walk(page, mobile, async (name) => {
             const png = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', scale: 'css' })
             const f = info.outputPath(`${v}-${k}-${name}.png`)
             fs.writeFileSync(f, png);
@@ -370,7 +382,7 @@ test.describe('эталонные скриншоты', () => {
         }
       }
       for (const [name, list] of Object.entries(shots)) {
-        console.log(`DIAG ${v} ${name} distinct=${new Set(list).size} of ${list.length}`)
+        console.log(`DIAG ${info.project.name} ${v} ${name} distinct=${new Set(list).size} of ${list.length}`)
       }
     }
   })

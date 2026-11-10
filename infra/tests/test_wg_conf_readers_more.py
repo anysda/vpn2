@@ -107,7 +107,7 @@ def bash(script, directory):
 
 
 def load_verify():
-    spec = importlib.util.spec_from_file_location('verify_traffic_more', ROOT / 'infra/lib/verify-traffic.py')
+    spec = importlib.util.spec_from_file_location('verify_traffic_more', ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

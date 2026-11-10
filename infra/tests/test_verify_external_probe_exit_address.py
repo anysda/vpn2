@@ -17,7 +17,7 @@ import unittest
 
 from test_router_telegram import generate, route
 
-VERIFY = Path(__file__).resolve().parents[1] / 'lib/verify-traffic.py'
+VERIFY = Path(__file__).resolve().parents[1] / 'vpn2/src/vpn2/verify/traffic.py'
 ENTRY_V4, ENTRY_V6 = '203.0.113.10', '2001:db8::10'
 ENTRY_ADDRS = [f'{ENTRY_V4}/32', f'{ENTRY_V6}/128']
 DIRECT = {'hy2-aa-direct', 'hy2-bb-direct'}

@@ -115,7 +115,7 @@ echo all-clean
 
     def test_verify_traffic_target_ready_after_login_text(self):
         spec = importlib.util.spec_from_file_location('verify_traffic_noise',
-                                                      ROOT / 'infra/lib/verify-traffic.py')
+                                                      ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         cases = (("printf 'NOISE\\nmotd\\n'; sleep 0.2; echo ready; sleep 5", True),

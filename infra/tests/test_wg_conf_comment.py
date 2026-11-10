@@ -92,7 +92,7 @@ WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
 
 
 def load_verify():
-    spec = importlib.util.spec_from_file_location('verify_traffic_comment', ROOT / 'infra/lib/verify-traffic.py')
+    spec = importlib.util.spec_from_file_location('verify_traffic_comment', ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

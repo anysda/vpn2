@@ -16,8 +16,8 @@ import unittest
 from contextlib import redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE = ROOT / 'infra/lib/verify-traffic.py'
-TARGET = ROOT / 'infra/lib/verify-target.py'
+MODULE = ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py'
+TARGET = ROOT / 'infra/vpn2/src/vpn2/verify/target.py'
 
 
 def load():

@@ -187,7 +187,7 @@ print(json.dumps(vt.WireGuard.free_addresses(3)))
             conf.write_bytes(f'[Interface]\nPrivateKey = {S} # caf'.encode() + b'\xe9\n\n[Peer]\n' +
                              f'PublicKey = {P}\nAllowedIPs = 10.66.66.6/32\n'.encode())
             env = {'PATH': os.environ['PATH'], 'LANG': 'C', 'LC_ALL': 'C'}
-            done = subprocess.run([sys.executable, '-I', '-c', self.PROBE, str(ROOT / 'infra/lib/verify-traffic.py'),
+            done = subprocess.run([sys.executable, '-I', '-c', self.PROBE, str(ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py'),
                                    str(conf)], env=env, capture_output=True, text=True, timeout=30, check=False)
         self.assertNotIn('UnicodeDecodeError', done.stderr)
         self.assertEqual(done.returncode, 0, done.stderr[-2000:])

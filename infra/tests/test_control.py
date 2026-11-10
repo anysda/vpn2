@@ -777,7 +777,7 @@ class ControlTests(unittest.TestCase):
         self.assertIn('/etc/openvpn/server/server.conf', panel[guard:switch])
         self.assertIn('systemctl try-restart openvpn-server@server', panel)
         self.assertIn('pwd.getpwnam(\'vpn2-control\').pw_uid',
-                      (ROOT / 'infra/lib/verify-traffic.py').read_text())
+                      (ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py').read_text())
 
     def test_no_system_execution_or_writable_config_mounts_in_panel(self):
         for path in (ROOT / 'app/server').rglob('*.ts'):

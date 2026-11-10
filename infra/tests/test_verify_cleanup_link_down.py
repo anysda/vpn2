@@ -17,7 +17,7 @@ import unittest
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
-MODULE = ROOT / 'infra/lib/verify-traffic.py'
+MODULE = ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py'
 
 
 def load():

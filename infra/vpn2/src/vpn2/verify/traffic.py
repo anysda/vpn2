@@ -18,7 +18,7 @@ wg0 и тем же методом убирается.
 
 Привязка к пути - по API sing-box (/connections): запрос от адреса клиента
 в туннеле и выход, через который он ушёл. Цели контролируемые: эхо-сервер
-verify-target.py на entry и экзитах. Внешний адрес интернета сверяется с
+vpn2.verify.target на entry и экзитах. Внешний адрес интернета сверяется с
 эталоном с самого entry: недоступен и оттуда - «Не проверено», не «Ошибка».
 
 Код: 0 - всё работает, 1 - есть «Ошибка», 2 - есть «Не проверено».
@@ -29,7 +29,6 @@ import contextlib
 import datetime
 import fcntl
 import http.client
-import importlib.util
 import ipaddress
 import json
 import os
@@ -49,11 +48,18 @@ import threading
 import time
 import urllib.request
 
-# wg0.conf читает сам wg, одним путём с бэкапом: wg_conf.py, доставленный рядом с этим файлом.
-_spec = importlib.util.spec_from_file_location('wg_conf', Path(__file__).with_name('wg_conf.py'))
-wg_conf = sys.modules['wg_conf'] = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(wg_conf)
-conf_peers = wg_conf.conf_peers
+# Проба в netns и тесты запускают модуль файлом: пакет лежит двумя каталогами выше.
+try:
+    from vpn2 import wg as wg_conf
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
+    from vpn2 import wg as wg_conf
+
+
+def conf_peers(data):
+    """Пиры wg0.conf, какими их держит сам wg: одним путём с бэкапом (vpn2.wg)."""
+    return wg_conf.read(data)[1]
+
 
 NS = 'vpn2-verify'
 HOST_IF = 'vp2verify'
@@ -85,7 +91,7 @@ ECHO_IP = '203.0.113.84'
 EXIT_ECHO_IP = '203.0.113.85'
 EXIT_ECHO_ROUTE = f'local {EXIT_ECHO_IP}/32 dev lo table local'
 TG_PROXY = ('127.0.0.1', 7897)
-TARGET = Path(__file__).with_name('verify-target.py')
+TARGET = Path(__file__).with_name('target.py')
 # Служба управления (vpn2.control): панель применяет пиров WireGuard её методом wg.apply.
 CONTROL_SOCKET = Path('/run/vpn2-control/control.sock')
 CONTROL_WG_STATE = Path('/var/lib/vpn2-control/wg.json')
@@ -135,7 +141,7 @@ class Report:
 
 # ---------------------------------------------------------------- пробы в netns
 def probe_echo(ip, port, host):
-    """POST nonce на verify-target.py; ответ - тот же nonce и адрес отправителя."""
+    """POST nonce на цель эха (target.py); ответ - тот же nonce и адрес отправителя."""
     nonce = secrets.token_hex(16)
     connection = http.client.HTTPConnection(ip, port, timeout=5)
     try:
@@ -274,7 +280,7 @@ def in_namespace(router, source, kind, args, dest=None, deadline=12):
     пробы к тому же адресу ещё висит в /connections и подменило бы выход.
     """
     before = {item.get('id') for item in router.connections()} if source else set()
-    process = subprocess.Popen(['ip', 'netns', 'exec', NS, sys.executable, '-I', str(Path(__file__).resolve()),
+    process = subprocess.Popen(['ip', 'netns', 'exec', NS, sys.executable, '-I', str(Path(__file__).absolute()),
                                 'probe', kind, json.dumps(args)],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     seen = {}

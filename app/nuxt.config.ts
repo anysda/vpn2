@@ -1,4 +1,33 @@
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { colorMode } from './shared/color-mode'
+
+// Поставщик шрифтов (контракт unifont): начертание на каждый вес и подмножество,
+// как отдавал Google, файл - вариативный woff2 пакета. Адрес data: @nuxt/fonts
+// «скачивает» без сети и кладёт файл в /_fonts; unicode-range - из CSS пакета.
+const manropeDir = dirname(createRequire(import.meta.url).resolve('@fontsource-variable/manrope/package.json'))
+const manropeRanges = new Map(
+  [...readFileSync(join(manropeDir, 'wght.css'), 'utf8')
+    .matchAll(/\/\* manrope-([\w-]+)-wght-normal \*\/[^}]*unicode-range:\s*([^;]+);/g)]
+    .map(([, subset, range]) => [subset!, range!.split(',')]),
+)
+const manropeProvider = () => Object.assign(() => ({
+  resolveFont(family: string, options: { weights: string[], styles: string[], subsets: string[] }) {
+    if (family !== 'Manrope' || !options.styles.includes('normal')) return
+    const fonts = options.subsets.filter(subset => manropeRanges.has(subset)).flatMap((subset) => {
+      const file = readFileSync(join(manropeDir, 'files', `manrope-${subset}-wght-normal.woff2`))
+      const url = `data:font/woff2;base64,${file.toString('base64')}`
+      return options.weights.map(weight => ({
+        src: [{ url, format: 'woff2' }],
+        weight,
+        style: 'normal' as const,
+        unicodeRange: manropeRanges.get(subset),
+      }))
+    })
+    return { fonts }
+  },
+}), { _name: 'manrope', _options: {} })
 
 export default defineNuxtConfig({
   devtools: { enabled: true },
@@ -20,10 +49,12 @@ export default defineNuxtConfig({
     },
   },
 
-  // Manrope берётся из Google Fonts. Неиспользуемые каталоги
-  // Fontsource/Fontshare задерживали сборку на ~68 с при их отказе.
+  // Manrope - из пакета @fontsource-variable/manrope, без сети: Google
+  // изредка отдавал другую сборку файлов, и снимки панели плавали. Единственный
+  // поставщик - manrope ниже, каталоги Google/Fontsource/Fontshare не опрашиваются.
   fonts: {
-    provider: 'google',
+    provider: 'manrope',
+    providers: { manrope: manropeProvider },
     defaults: {
       weights: [200, 300, 400, 500, 600],
       subsets: ['cyrillic', 'latin'],

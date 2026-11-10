@@ -24,8 +24,6 @@
     "@iconify-json/simple-icons",
     // server/utils/logger.ts: pino грузит transport строкой
     // target: 'pino-pretty' (вне production). Импорта в коде нет.
-    "pino-pretty",
-    // Шрифт аварийной панели Vite берёт из url() в CSS, импорта из JS нет.
-    "@fontsource-variable/manrope"
+    "pino-pretty"
   ]
 }

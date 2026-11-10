@@ -199,7 +199,9 @@ _restart_gen = 0          # перезапусков sing-box сторожем
 _rise_gen = 0             # сколько из них transport_tick уже учёл
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
-_slow_probes: dict = {}   # тег -> (поток, итог, причины) пробы, которую не стали ждать
+_slow_probes: dict = {}   # (тег, url) -> (поток, итог, причины) пробы, которую не стали ждать
+_cycle_slow: dict = {}    # то же для проходов общего цикла: свой поток, свои пробы
+_cycle_miss: dict = {}    # (тег, url) -> опросов общего цикла подряд без ответа
 _lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
@@ -296,15 +298,16 @@ def _probe(tag, out, errs=None, url=PROBE_URL):
             errs[tag] = probe.probe_error(e)
 
 
-def _probe_all(members, url=PROBE_URL, known_dead=None):
+def _probe_all(members, url=PROBE_URL, known_dead=None, slow=None):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
     мёртвый экзит не тормозит остальных.
     known_dead задаёт проверка каналов: теги, чья смерть уже учтена. Их ответа
     ждём только KNOWN_DEAD_WAIT; не дождались - проба идёт дальше, её итог
-    заберёт следующий такой опрос."""
+    заберёт следующий такой опрос. slow - где лежат недождавшиеся пробы."""
+    slow = _slow_probes if slow is None else slow
     probes = {}
     for m in members:
-        probe = _slow_probes.pop(m, None) if known_dead is not None else None
+        probe = slow.pop((m, url), None) if known_dead is not None else None
         if probe is None or m not in known_dead:
             out: dict = {}
             errs: dict = {}
@@ -321,9 +324,33 @@ def _probe_all(members, url=PROBE_URL, known_dead=None):
     errors: dict = {}
     for m, (thread, out, errs) in probes.items():
         if m in hurry and thread.is_alive():
-            _slow_probes[m] = probes[m]
+            slow[(m, url)] = probes[m]
         result[m] = out.get(m)
         errors.update(errs)
+    return result, errors
+
+
+def _probe_cycle(members, url=PROBE_URL, patient=(), need_one=False):
+    """Опрос для проходов общего цикла. Выход, промолчавший DEAD_AFTER опросов
+    подряд, мёртв уже учтённо: его ответа ждём KNOWN_DEAD_WAIT, чтобы чужой
+    тайм-аут не отодвигал следующую проверку живых. patient ждём всегда
+    полностью - по нему решают сейчас. need_one: никто не ответил - торопливых
+    дожидаемся до общего предела, «мертвы все» решает полный опрос."""
+    hurry = {m for m in members if _cycle_miss.get((m, url), 0) >= DEAD_AFTER} - set(patient)
+    start = time.monotonic()
+    result, errors = _probe_all(members, url, known_dead=hurry, slow=_cycle_slow)
+    if need_one and hurry and all(d is None for d in result.values()):
+        for m in sorted(hurry):
+            thread, out, errs = _cycle_slow.pop((m, url), (None, {}, {}))
+            if thread is not None:
+                thread.join(max(0.0, start + JOIN_DEADLINE - time.monotonic()))
+                result[m] = out.get(m)
+                errors.update(errs)
+    for m, d in result.items():
+        if d is None:
+            _cycle_miss[(m, url)] = _cycle_miss.get((m, url), 0) + 1
+        else:
+            _cycle_miss.pop((m, url), None)
     return result, errors
 
 
@@ -476,7 +503,7 @@ def tick():
     if not everyone:
         return
 
-    delays, errs = _probe_all(members)
+    delays, errs = _probe_cycle(members, patient=(now,), need_one=True)
     alive = {m: d for m, d in delays.items() if d is not None}
     # Отказ соединения — это сам clash-api не ответил, о выходе он ничего не
     # говорит. Нет включённых узлов — перезапуск их не вернёт.
@@ -487,7 +514,7 @@ def tick():
     fallback = not alive
     if fallback:
         members = everyone
-        d2, e2 = _probe_all([m for m in everyone if _node_of(m) in disabled])
+        d2, e2 = _probe_cycle([m for m in everyone if _node_of(m) in disabled], patient=(now,), need_one=True)
         errs.update(e2)
         alive = {m: d for m, d in d2.items() if d is not None}
     else:
@@ -1123,7 +1150,7 @@ def stuck_tick(proxies):
     # по узлу — только без transport и только для -direct: живой direct не
     # говорит, что жив WARP, а живой warp — что узел и путь до него целы.
     transports = [f'transport-{b}' for b in dead if f'transport-{b}' in proxies]
-    up = _probe_all(transports)[0] if transports else {}
+    up = _probe_cycle(transports)[0] if transports else {}
     stuck = [b for b in dead
              if (up.get(f'transport-{b}') is not None if f'transport-{b}' in proxies
                  else b.endswith('-direct')
@@ -1196,7 +1223,11 @@ def tg_tick(proxies):
         if now not in _tick_alive:
             err = 'выход мёртв'
         elif _tg_miss or t >= _tg_next:
-            res, errs = _probe_all([now], TG_PROBE_URL)
+            # Ответа ждём коротко: тайм-аут Bot API не должен держать цикл и
+            # выбор экзита. Не успел - итог пробы заберёт следующий цикл.
+            res, errs = _probe_all([now], TG_PROBE_URL, known_dead={now}, slow=_cycle_slow)
+            if (now, TG_PROBE_URL) in _cycle_slow:
+                return
             _tg_next = t + TG_INTERVAL
             if res.get(now) is not None:
                 if _tg_miss:

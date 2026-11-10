@@ -20,12 +20,7 @@
 - {section: files, name: '/etc/vpn2/emergency/agent.json', field: sha256, reason: ключи аварийного канала создаются при установке}
 - {section: files, name: '/var/lib/vpn2-emergency*/*', field: sha256, reason: ключи и состояние аварийного канала создаются при установке}
 - {section: files, name: '/opt/anysda-vpn2/config.yaml', field: sha256, reason: установка дописывает в конфиг созданный ключ оркестратора; остальное сверяет shape}
-- {section: files, name: '/var/lib/anysda-vpn2/state/known_hosts', field: '*', reason: 'ключи узлов стенда случайные; в эталоне файл ещё в checkout'}
-- {section: files, name: '/opt/anysda-vpn2/infra/.known_hosts', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
-- {section: files, name: '/opt/anysda-vpn2/infra/state', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
-- {section: files, name: '/opt/anysda-vpn2/infra/state/*', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
-- {section: files, name: '/var/lib/anysda-vpn2/state', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
-- {section: files, name: '/var/lib/anysda-vpn2/state/mgmt-ips.txt', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
+- {section: files, name: '/var/lib/anysda-vpn2/state/known_hosts', field: sha256, reason: ключи узлов стенда случайные}
 - {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты; остальное сверяет shape}
 - {section: files, name: '/opt/anysda-vpn2/infra/secrets/*', field: sha256, reason: каталог созданных при установке секретов}
 

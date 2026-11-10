@@ -6,7 +6,10 @@
 (`vpn2.fsutil.atomic(..., encoding='latin-1')`): байты не меняются.
 """
 import base64
+import binascii
 import re
+import shutil
+import subprocess
 
 # Канонический ключ wg: 32 байта base64, последний знак не несёт лишних битов.
 KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
@@ -292,5 +295,253 @@ def profile(text):
             'public_key': last.get('publickey'), 'endpoint': endpoint}
 
 
-# Дальше (шаг 2): run, genkey, genpsk, pubkey, render_interface, render_peers, peer_addresses,
-# dump, read, conf_peers, parse_dump, allowed_ips, preshared_keys, transfer.
+
+
+# Шаг 2: внешний wg, рендер и вывод `wg show`.
+
+# wg0 в анонимном netns: netns держит только этот процесс и умирает вместе с ним.
+# --kill-child и pdeathsig - убитая проверка (SIGTERM, SIGKILL) не оставляет wg0 с ключами.
+# Код выхода называет шаг, на котором не вышло.
+ASK = ('setpriv', '--pdeathsig', 'KILL', 'unshare', '--net', '--pid', '--fork', '--kill-child', 'sh', '-c',
+       'ip link add wg0 type wireguard || exit 120; wg setconf wg0 /dev/stdin || exit 121; '
+       'wg show wg0 dump || exit 122')
+STEPS = {120: 'wg0 в netns', 121: 'wg setconf', 122: 'wg show'}
+TIMEOUT = 30
+# Отказ wg без строки файла: какое имя wg0.conf он называет.
+NAMED = (('public key', 'PublicKey'), ('AllowedIP', 'AllowedIPs'), ('IP address', 'AllowedIPs'),
+         ('endpoint', 'Endpoint'), ('keepalive', 'PersistentKeepalive'), ('Fwmark', 'FwMark'),
+         ('Servname', 'ListenPort'))
+
+
+def run(argv, *, data=None, timeout=TIMEOUT):
+    """Запуск программы: bytes на входе (str кодируется) и на выходе, код не проверяется."""
+    if isinstance(data, str):
+        data = data.encode()
+    return subprocess.run(list(argv), input=data, capture_output=True, timeout=timeout, check=False)
+
+
+_DEFAULT_RUN = run
+
+
+def _call(argv, runner, *, data=None, timeout=TIMEOUT):
+    """runner(argv): нет программы и таймаут - WgUnchecked, без traceback и без argv в тексте."""
+    try:
+        return runner(argv, data=data, timeout=timeout)
+    except FileNotFoundError:
+        raise WgUnchecked(f'wg0.conf: проверить нечем - нет {argv[0]}') from None
+    except subprocess.TimeoutExpired:
+        raise WgUnchecked(f'wg0.conf: проверить нечем - {argv[0]} не ответил за {timeout} с') from None
+
+
+def _tool(argv, runner, *, data=None):
+    """Вывод `wg genkey|genpsk|pubkey` без пробелов по краям; отказ - WgError без ключа в тексте."""
+    done = _call(argv, runner, data=data)
+    if done.returncode:
+        raise WgError(f'{argv[0]} {argv[1]}: код {done.returncode}')
+    out = done.stdout.decode(errors='replace').strip()
+    if not valid_key(out, strict=False):
+        raise WgError(f'{argv[0]} {argv[1]}: ответ не ключ')
+    return out
+
+
+def genkey(*, run=run):
+    """Новый приватный ключ (`wg genkey`)."""
+    return _tool(['wg', 'genkey'], run)
+
+
+def genpsk(*, run=run):
+    """Новый общий ключ (`wg genpsk`)."""
+    return _tool(['wg', 'genpsk'], run)
+
+
+def pubkey(private, *, run=run):
+    """Публичный ключ по приватному; приватный идёт через stdin, не в argv и не в текст ошибки."""
+    return _tool(['wg', 'pubkey'], run, data=private + '\n')
+
+
+def render_interface(addresses, port, private, *, note=None):
+    """Начальная шапка wg0.conf (28-wireguard.sh): [комментарий], Address, ListenPort, PrivateKey."""
+    return (f'# {note}\n' if note is not None else '') + \
+        f'[Interface]\nAddress = {", ".join(addresses)}\nListenPort = {port}\nPrivateKey = {private}\n'
+
+
+def render_peers(peers, *, omit_empty=False):
+    """Пиры [{key, preshared_key, allowed}]: каждый с пустой строки перед [Peer].
+
+    omit_empty=False (панель) пишет PresharedKey и AllowedIPs всегда; True (проверка
+    трафика) опускает пустые: пустое значение wg отвергает.
+    """
+    out = ''
+    for peer in peers:
+        out += f'\n[Peer]\nPublicKey = {peer["key"]}\n'
+        if peer['preshared_key'] or not omit_empty:
+            out += f'PresharedKey = {peer["preshared_key"]}\n'
+        if peer['allowed'] or not omit_empty:
+            out += f'AllowedIPs = {", ".join(peer["allowed"])}\n'
+    return out
+
+
+def peer_addresses(ip):
+    """Адреса пира в профилях клиентов: ip/32 и fd66:66::N/128 (десятичные октеты в ULA, как у панели)."""
+    subnet, host = ip.split('.')[2:]
+    suffix = host if subnet == '66' else subnet + ':' + host
+    return [ip + '/32', 'fd66:66::' + suffix + '/128']
+
+
+def _clean(row):
+    """Строка, как её видит wg: до первого `#`, без пробельных символов."""
+    return re.sub(rb'[ \t\n\v\f\r]', b'', row.split(b'#', 1)[0])
+
+
+def _said(done):
+    return done.stderr.decode(errors='replace').strip().replace('\n', '; ')
+
+
+def _refusal(stderr, lines):
+    """Первый отказ wg и индекс его строки в `lines` (или None).
+
+    Значение, которое wg повторил, печатается, только если это не ключ и не вся
+    нераспознанная строка (в ней может быть ключ): имя строки - если оно из букв.
+    """
+    reason = stderr.decode('latin-1').split('\n', 1)[0]
+    text, _, echoed = reason.partition(': `')
+    echoed = echoed.removesuffix("'").encode('latin-1')
+    secret = 'Key' in text or text.startswith('Line unrecognized')
+    value = f' `{echoed.decode("latin-1")}`' if echoed and not secret else ''
+    cleaned = [_clean(row) for _, row in lines]
+    found = None
+    if echoed:
+        found = next((i for i, clean in enumerate(cleaned) if echoed in (clean, clean.partition(b'=')[2])), None)
+        if found is None:
+            found = next((i for i, clean in enumerate(cleaned) if echoed in clean.partition(b'=')[2]), None)
+    if found is None:
+        name = next((name for marker, name in NAMED if marker in text), '')
+        return (f'{name}: ' if name else '') + text + value, None
+    name = cleaned[found].partition(b'=')[0].decode('latin-1')
+    shown = f' `{name}`' if re.fullmatch(r'\[?[A-Za-z]{1,32}\]?', name) else ''
+    if name.lower().endswith('key'):
+        value = ''
+    return f'строка {lines[found][0]}{shown}: {text}{value}', found
+
+
+def _clamped(key):
+    """Приватный ключ base64 в той форме, в какой его держит и печатает wg (curve25519 clamp), или None."""
+    try:
+        raw = bytearray(base64.b64decode(key, validate=True))
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) != 32:
+        return None
+    raw[0] &= 248
+    raw[31] = (raw[31] & 127) | 64
+    return base64.b64encode(raw).decode()
+
+
+def dump(data, *, run=run, timeout=TIMEOUT, which=shutil.which):
+    """`wg show wg0 dump` после `wg setconf` файла `data` (bytes или str) на свежем wg0 в анонимном netns.
+
+    WgError «wg отвергает файл» с отказами wg; WgUnchecked «проверить нечем»: нет wg, ip, unshare,
+    setpriv, таймаут, сбой шага netns. which проверяет программы заранее только у настоящего run.
+    """
+    if isinstance(data, str):
+        data = data.encode()
+    lines = quick_strip(data)
+    missing = [name for name in ('wg', 'ip', 'unshare', 'setpriv') if not which(name)] \
+        if run is _DEFAULT_RUN else []
+    if missing:
+        raise WgUnchecked('wg0.conf: проверить нечем - нет ' + ', '.join(missing))
+    refusals = []
+    # /usr/bin/wg под AppArmor не читает /tmp и /run: тело только через stdin.
+    # На отказ wg строка, которую он назвал, гасится, и wg спрашивается снова - так видны все отказы.
+    while True:
+        done = _call(ASK, run, data=b''.join(row + b'\n' for _, row in lines), timeout=timeout)
+        if not done.returncode:
+            break
+        if done.returncode != 121 or not done.stderr.rstrip().endswith(
+                (b'Configuration parsing error', b'Invalid configuration')):
+            step = STEPS.get(done.returncode, 'unshare --net')
+            raise WgUnchecked(f'wg0.conf: проверить нечем - {step}: {_said(done)}')
+        refusal, found = _refusal(done.stderr, lines)
+        refusals.append(refusal)
+        if found is None:
+            break
+        lines[found] = (lines[found][0], b'')
+    if refusals:
+        raise WgError('wg0.conf: wg отвергает файл: ' + '; '.join(refusals))
+    rows = done.stdout.decode().splitlines()
+    # wg печатает ключ прижатым; в ответ идёт ключ из строки файла, который wg взял.
+    private = rows[0].split('\t', 1)[0]
+    taken = [clean.partition(b'=')[2].decode('latin-1') for clean in (_clean(row) for _, row in lines)
+             if clean.partition(b'=')[0].lower() == b'privatekey']
+    taken = [key for key in taken if _clamped(key) == private]
+    if taken:
+        rows[0] = taken[-1] + rows[0][len(private):]
+    return rows
+
+
+def read(data, *, run=run):
+    """Интерфейс и пиры, какими их держит wg после setconf.
+
+    Интерфейс - {имя wg0.conf: значение} только заданных: PrivateKey, ListenPort, FwMark.
+    Пиры в порядке dump: ключ, PSK ('' без него), AllowedIPs.
+    """
+    rows = dump(data, run=run)
+    private, _public, port, fwmark = rows[0].split('\t')[:4]
+    interface = {name: value for name, value, unset in
+                 (('PrivateKey', private, '(none)'), ('ListenPort', port, '0'), ('FwMark', fwmark, 'off'))
+                 if value != unset}
+    peers = []
+    for row in rows[1:]:
+        key, psk, _endpoint, allowed = row.split('\t')[:4]
+        peers.append({'key': key, 'preshared_key': '' if psk == '(none)' else psk,
+                      'allowed': [] if allowed == '(none)' else allowed.split(',')})
+    return interface, peers
+
+
+def conf_peers(data, *, run=run):
+    """Пиры wg0.conf, какими их держит wg: ключ, PSK, AllowedIPs."""
+    return read(data, run=run)[1]
+
+
+def parse_dump(text):
+    """`wg show all dump` -> {интерфейс: {listen_port, peers}}; peers - отсортированные AllowedIPs пиров.
+
+    Шапка - 5 полей (имя, ключи, порт, fwmark), пир - 8 и больше (в слепок идёт 5-е: allowed-ips).
+    """
+    records = {}
+    for row in text.splitlines():
+        fields = row.split('\t')
+        if len(fields) == 5:
+            records.setdefault(fields[0], {'peers': []})['listen_port'] = fields[3]
+        elif len(fields) >= 5:
+            records.setdefault(fields[0], {'peers': []})['peers'].append(fields[4])
+    for record in records.values():
+        record['peers'].sort()
+    return records
+
+
+def _table(text, parts):
+    """Строки `wg show wg0 <поле>` по табуляции; пустые строки не в счёт, чужая форма - WgError."""
+    rows = [row.split('\t') for row in text.splitlines() if row]
+    if any(len(row) != parts for row in rows):
+        raise WgError(f'wg show: строка не из {parts} полей')
+    return rows
+
+
+def allowed_ips(text):
+    """`wg show wg0 allowed-ips` -> {ключ: отсортированные адреса}."""
+    return {key: sorted(addresses.replace(',', ' ').split()) for key, addresses in _table(text, 2)}
+
+
+def preshared_keys(text):
+    """`wg show wg0 preshared-keys` -> {ключ: PSK}."""
+    return dict(_table(text, 2))
+
+
+def transfer(text):
+    """`wg show wg0 transfer` -> [{key, rx, tx}]; rx и tx переставлены (вид клиента), как у панели."""
+    rows = _table(text, 3)
+    try:
+        return [{'key': key, 'rx': int(tx), 'tx': int(rx)} for key, rx, tx in rows]
+    except ValueError as error:
+        raise WgError(f'wg show: счётчик не число: {error}') from None

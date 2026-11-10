@@ -74,7 +74,7 @@ class TelegramAlwaysInstalledTests(unittest.TestCase):
         """Что run_stage_on_host из deploy.sh кладёт в /tmp/anysda узла."""
         deploy = self.root / 'checkout/infra'
         deploy.mkdir(parents=True)
-        for name in ('scripts', 'lib', 'configs'):
+        for name in ('scripts', 'lib', 'configs', 'vpn2'):
             (deploy / name).symlink_to(ROOT / 'infra' / name)
         (deploy.parent / 'app').symlink_to(ROOT / 'app')
         (deploy / 'envs').mkdir()

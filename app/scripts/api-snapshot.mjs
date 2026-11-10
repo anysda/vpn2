@@ -106,6 +106,8 @@ const NORMALIZATION = [
   ...rule(['clients/[id]/devices/[deviceId]/ikev2-credentials.get'], 'field', ['password'], '<password>', PASSWORD, R_PASSWORD),
   ...rule(['clients/[id]/devices/[deviceId]/ikev2-credentials.get'], 'field', ['caCertPem'], '<pem>', PEM, 'сертификат IKEv2 CA: случайный, срок от момента прогона'),
   { route: 'clients/[id]/devices/[deviceId]/wg-qrcode.svg.get', kind: 'body', key: '', label: '<svg-qrcode>', check: /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 \d+ \d+"[\s\S]+<\/svg>$/, reason: 'картинка кодирует случайные ключи WireGuard' },
+  // Тело PNG читается как текст UTF-8: байт 0x89 сигнатуры становится U+FFFD, остальное цело; управляющие байты после сигнатуры заменены в check любым символом (no-control-regex).
+  ...['clients/[id]/devices/[deviceId]/wg-qrcode.png.get', 'bot/devices/[deviceId]/wg-qrcode.png.get'].map(route => /** @type {Rule} */ ({ route, kind: 'body', key: '', label: '<png-qrcode>', check: /^\uFFFDPNG\r\n[\s\S]\n[\s\S]{3}\rIHDR[\s\S]{60,}$/, reason: 'картинка кодирует случайные ключи WireGuard: проверены сигнатура PNG, заголовок IHDR и длина' })),
 
   ...rule(['clients/top.get'], 'field', ['since'], '<sec>', SEC, 'начало суток: от даты прогона'),
   ...rule(['clients/top.get'], 'field', ['historyStart'], '<sec>', SEC, 'начало истории: от момента прогона'),
@@ -222,6 +224,7 @@ export async function walk(io) {
   await adminCall('clients/[id]/devices/[deviceId]/ovpn-config.get', 'GET', '/api/clients/{main}/devices/{phone}/ovpn-config')
   await adminCall('clients/[id]/devices/[deviceId]/ikev2-credentials.get', 'GET', '/api/clients/{main}/devices/{phone}/ikev2-credentials')
   await adminCall('clients/[id]/devices/[deviceId]/wg-qrcode.svg.get', 'GET', '/api/clients/{main}/devices/{phone}/wg-qrcode.svg')
+  await adminCall('clients/[id]/devices/[deviceId]/wg-qrcode.png.get', 'GET', '/api/clients/{main}/devices/{phone}/wg-qrcode.png')
   await adminCall('clients/[id]/devices/[deviceId]/send-wg-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-wg-to-tg')
   await adminCall('clients/[id]/devices/[deviceId]/send-ovpn-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-ovpn-to-tg')
   await adminCall('clients/[id]/devices/[deviceId]/send-ikev2-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-ikev2-to-tg')
@@ -262,6 +265,7 @@ export async function walk(io) {
   vars.blaptop = bdevice(blaptop.json, 'laptop')
   await botCall('bot/devices/index.post', 'POST', '/api/bot/devices', { chatId: CHAT_ID, name: 'phone' })
   await botCall('bot/devices/[deviceId]/wg-config.get', 'GET', '/api/bot/devices/{bphone}/wg-config?chatId={chat}')
+  await botCall('bot/devices/[deviceId]/wg-qrcode.png.get', 'GET', '/api/bot/devices/{bphone}/wg-qrcode.png?chatId={chat}')
   await botCall('bot/devices/[deviceId]/ovpn-config.get', 'GET', '/api/bot/devices/{bphone}/ovpn-config?chatId={chat}')
   await botCall('bot/devices/[deviceId]/wg-config.get', 'GET', '/api/bot/devices/{missing}/wg-config?chatId={chat}')
   const reissue = await botCall('bot/devices/[deviceId]/reissue.post', 'POST', '/api/bot/devices/{bphone}/reissue', { chatId: CHAT_ID })

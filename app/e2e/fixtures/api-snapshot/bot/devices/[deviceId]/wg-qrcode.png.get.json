@@ -1,0 +1,9 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/bot/devices/{bphone}/wg-qrcode.png?chatId={chat}",
+    "status": 200,
+    "contentType": "image/png",
+    "body": "<png-qrcode>"
+  }
+]

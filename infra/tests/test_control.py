@@ -806,6 +806,20 @@ class ControlTests(unittest.TestCase):
         self.assertIn('wg.apply', called)
         self.assertEqual(called - required, set())
 
+    def test_recorded_panel_calls_pass_validation(self):
+        # Те же примеры читает vitest панели (control-contract.test.ts): панель
+        # шлёт ровно эти запросы, служба обязана их принимать.
+        examples = json.loads((ROOT / 'infra/tests/fixtures/control/panel-calls.json').read_text())
+        for example in examples:
+            with self.subTest(method=example['method'], params=example['params']):
+                request = {'api': 1, 'method': example['method'], 'params': example['params']}
+                self.assertEqual(self.contract.validate(request, self.pools)[0], example['method'])
+        called = set()
+        for path in (ROOT / 'app/server').rglob('*.ts'):
+            if not path.name.endswith('.test.ts'):
+                called |= set(re.findall(r"control(?:Apply)?(?:<[^(]*>)?\(\s*'([a-z0-9]+\.[a-z]+)'", path.read_text()))
+        self.assertEqual({example['method'] for example in examples}, called)
+
 
 if __name__ == '__main__':
     unittest.main()

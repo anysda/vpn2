@@ -355,7 +355,7 @@ describe('retryAccess', () => {
   it('повтор назначается на сейчас, not_required не трогается', async () => {
     dbResults.push([op()], [op({ nextRetry: NOW, status: 'pending' })])
     await retryAccess('op-1')
-    const set = sets()[0] as { status: string, nextRetry: number, protocols: Record<string, { nextRetry: number | null }> }
+    const set = sets()[0] as { status: string, nextRetry: number, protocols: Record<'wg' | 'openvpn' | 'ikev2', { nextRetry: number | null }> }
     expect([set.status, set.nextRetry]).toEqual(['pending', NOW])
     expect([set.protocols.wg.nextRetry, set.protocols.openvpn.nextRetry, set.protocols.ikev2.nextRetry]).toEqual([NOW, null, NOW])
   })
@@ -472,7 +472,7 @@ describe('runAccessOperations', () => {
     adapter.apply.mockRejectedValue(new ControlUnavailable())
     dbResults.push([row()])
     await run()
-    expect(final()!.protocols.wg.error).toBe('Нет связи с сервисом')
+    expect(final()!.protocols.wg?.error).toBe('Нет связи с сервисом')
   })
 
   it('операция уже записала событие (completionRecorded) - подтверждение без события и уведомления', async () => {
@@ -540,7 +540,7 @@ describe('runAccessOperations', () => {
     dbResults.push([row({ protocols: { wg: { ...pending }, openvpn: { ...pending }, ikev2: idle } })])
     await run()
     expect(final()!.status).toBe('pending')
-    expect([final()!.protocols.wg.state, final()!.protocols.openvpn.state]).toEqual(['confirmed', 'failed'])
+    expect([final()!.protocols.wg?.state, final()!.protocols.openvpn?.state]).toEqual(['confirmed', 'failed'])
   })
 
   it('параллельный запуск отдаёт тот же промис', async () => {

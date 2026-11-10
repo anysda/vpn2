@@ -164,3 +164,74 @@ def test_restart_if_changed(tmp_path):
     (tmp_path / 'conf').write_text('2')
     assert host.restart_if_changed('x', [tmp_path / 'conf'], applied=applied, run=run) is True
     assert calls.count('restart') == 2
+
+
+class Sshd:
+    """sshd и systemctl узла: -T отдаёт настройки, -t проверяет конфиг."""
+
+    def __init__(self, *, penalties=True, valid=True, active=True):
+        self.penalties, self.valid, self.active, self.calls = penalties, valid, active, []
+
+    def __call__(self, argv, **kwargs):
+        del kwargs
+        self.calls.append(' '.join(argv))
+        if argv == ['sshd', '-T']:
+            text = 'port 22\n' + ('persourcepenalties crash:90s\n' if self.penalties else '')
+            return subprocess.CompletedProcess(argv, 0, stdout=text)
+        if argv == ['sshd', '-t']:
+            return subprocess.CompletedProcess(argv, 0 if self.valid else 255)
+        if argv[:2] == ['systemctl', 'is-active']:
+            return subprocess.CompletedProcess(argv, 0 if self.active else 3)
+        return subprocess.CompletedProcess(argv, 0)
+
+
+def sshd_root(tmp_path):
+    (tmp_path / 'etc/ssh').mkdir(parents=True)
+    (tmp_path / 'etc/ssh/sshd_config').write_text(
+        'Include /etc/ssh/sshd_config.d/*.conf\n#PermitRootLogin prohibit-password\n'
+        '#PasswordAuthentication yes\nKbdInteractiveAuthentication yes\nUsePAM yes\n')
+    return tmp_path
+
+
+def test_sshd_matches_stage_files(tmp_path):
+    root, run = sshd_root(tmp_path), Sshd()
+    assert host.sshd('no', root=root, run=run) is True
+    assert (root / 'etc/ssh/sshd_config.d/00-anysda.conf').read_text() == (
+        '# anysda-vpn — set by infra/scripts/00-bootstrap.sh\nPasswordAuthentication no\n'
+        'PermitRootLogin prohibit-password\nKbdInteractiveAuthentication no\n')
+    assert (root / 'etc/ssh/sshd_config').read_text() == (
+        'Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin prohibit-password\n'
+        'PasswordAuthentication no\nKbdInteractiveAuthentication no\nUsePAM yes\n')
+    assert (root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf').read_text() == 'PerSourcePenalties no\n'
+    assert (root / 'run/sshd').is_dir()
+    assert run.calls[-1] == 'systemctl reload-or-restart ssh'
+    # повтор ничего не меняет и sshd не трогает
+    run.calls.clear()
+    assert host.sshd('no', root=root, run=run) is False
+    assert 'systemctl reload-or-restart ssh' not in run.calls
+
+
+def test_sshd_old_openssh_gets_no_penalties_file(tmp_path):
+    root = sshd_root(tmp_path)
+    (root / 'etc/ssh/sshd_config.d').mkdir()
+    (root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf').write_text('PerSourcePenalties no\n')
+    host.sshd('yes', root=root, run=Sshd(penalties=False))
+    assert not (root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf').exists()
+    assert 'PermitRootLogin yes\n' in (root / 'etc/ssh/sshd_config.d/00-anysda.conf').read_text()
+
+
+def test_sshd_invalid_config_rolls_back_to_password(tmp_path):
+    root, run = sshd_root(tmp_path), Sshd(valid=False)
+    with pytest.raises(RuntimeError, match='конфиг sshd невалиден'):
+        host.sshd('no', root=root, run=run)
+    assert 'PasswordAuthentication yes\n' in (root / 'etc/ssh/sshd_config.d/00-anysda.conf').read_text()
+    assert not (root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf').exists()
+    assert 'systemctl reload-or-restart ssh' not in run.calls
+
+
+def test_sshd_stopped_service_is_started(tmp_path):
+    root, run = sshd_root(tmp_path), Sshd(active=False)
+    host.sshd('no', root=root, run=run)
+    run.calls.clear()
+    host.sshd('no', root=root, run=run)
+    assert run.calls[-1] == 'systemctl reload-or-restart ssh'

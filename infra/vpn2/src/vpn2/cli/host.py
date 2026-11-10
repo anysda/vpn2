@@ -151,6 +151,63 @@ def _venv(args):
     return True
 
 
+SSHD_HEADER = '# anysda-vpn — set by infra/scripts/00-bootstrap.sh'
+
+
+def sshd_auth(password, root):
+    """Drop-in и те же строки основного конфига: парольный вход yes или no."""
+    root_login = 'yes' if password == 'yes' else 'prohibit-password'
+    dropin = root / 'etc/ssh/sshd_config.d/00-anysda.conf'
+    dropin.parent.mkdir(parents=True, exist_ok=True)
+    dropin.write_text(f'{SSHD_HEADER}\nPasswordAuthentication {password}\n'
+                      f'PermitRootLogin {root_login}\nKbdInteractiveAuthentication no\n')
+    config = root / 'etc/ssh/sshd_config'
+    text = config.read_text()
+    for key, value in (('PasswordAuthentication', password), ('PermitRootLogin', root_login)):
+        text = re.sub(rf'(?m)^#?{key}.*$', f'{key} {value}', text)
+    config.write_text(text)
+
+
+def sshd(password, *, root='/', run=subprocess.run):
+    """Настройка входа по ssh; невалидный конфиг откатывается к парольному входу."""
+    root = Path(root)
+    config = root / 'etc/ssh/sshd_config'
+    penalties = root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf'
+    watched = (config, root / 'etc/ssh/sshd_config.d/00-anysda.conf', penalties)
+
+    def state():
+        return [path.read_bytes() if path.is_file() else None for path in watched]
+
+    before = state()
+    sshd_auth(password, root)
+    text = config.read_text()
+    for key in ('ChallengeResponseAuthentication', 'KbdInteractiveAuthentication'):
+        text = re.sub(rf'(?m)^#?{key}.*$', f'{key} no', text)
+    config.write_text(text)
+    # sshd -t и -T требуют каталог privsep, а apt при обновлении openssh его
+    # удаляет: до перезапуска ssh.service вернуть его некому.
+    (root / 'run/sshd').mkdir(mode=0o755, parents=True, exist_ok=True)
+    # OpenSSH 9.8+ штрафует адрес на 90 с за оборванный вход, и несколько неудачных
+    # входов деплоя запирают его. Старый sshd директивы не знает и с ней падает.
+    dump = run(['sshd', '-T'], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    if any(line.lower().startswith('persourcepenalties ') for line in dump.splitlines()):
+        penalties.write_text('PerSourcePenalties no\n')
+    else:
+        penalties.unlink(missing_ok=True)
+    if run(['sshd', '-t']).returncode != 0:
+        sshd_auth('yes', root)
+        penalties.unlink(missing_ok=True)
+        raise RuntimeError('конфиг sshd невалиден — откатываюсь')
+    changed = state() != before
+    if changed or run(['systemctl', 'is-active', '--quiet', 'ssh']).returncode != 0:
+        run(['systemctl', 'reload-or-restart', 'ssh'], check=True)
+    return changed
+
+
+def _sshd(args):
+    return sshd(args.password)
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='action', required=True)
@@ -172,6 +229,9 @@ def main(argv):
     item.add_argument('unit')
     item.add_argument('file', nargs='+')
     item.set_defaults(run=_restart_if_changed)
+    item = sub.add_parser('sshd')
+    item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
+    item.set_defaults(run=_sshd)
     item = sub.add_parser('venv')
     item.add_argument('wheel')
     item.add_argument('--root', default='/opt/vpn2')

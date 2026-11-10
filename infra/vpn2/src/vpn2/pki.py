@@ -6,14 +6,18 @@
 бросают PkiError; в тексте только программа и последняя строка stderr - ни
 аргументов, ни входных данных, значит приватный ключ в исключение не попадает.
 """
+import contextlib
+import ctypes
+import os
 import re
 import secrets
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import NamedTuple
 
-from vpn2.fsutil import atomic
+from vpn2.fsutil import atomic, lock
 
 HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
 BLANK = ' \t\n\v\f\r'
@@ -309,4 +313,117 @@ def gencrl(directory, out, *, verify=True, run=run):
         atomic(out, crl.read_text(), 0o644)
 
 
-# --- место для transaction и build_openvpn (следующий шаг) ---
+AT_FDCWD = -100
+RENAME_EXCHANGE = 2
+
+
+def _libc():
+    return ctypes.CDLL(None, use_errno=True)
+
+
+def _exchange(source, target):
+    """renameat2(RENAME_EXCHANGE): два каталога меняются местами одним syscall."""
+    if _libc().renameat2(AT_FDCWD, os.fsencode(source), AT_FDCWD, os.fsencode(target), RENAME_EXCHANGE):
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(target))
+
+
+def _copy(source, work):
+    """Как `cp -a --no-preserve=mode source/. work/`: права от umask 077, владельцы - если root."""
+    shutil.copytree(source, work, symlinks=True, dirs_exist_ok=True)
+    for path in [work, *Path(work).rglob('*')]:
+        origin = Path(source) / path.relative_to(work)
+        info = origin.lstat()
+        if os.geteuid() == 0:
+            os.lchown(path, info.st_uid, info.st_gid)
+        if path != Path(work) and not path.is_symlink():
+            path.chmod(info.st_mode & 0o700)
+
+
+@contextlib.contextmanager
+def transaction(target, *, timeout=None):
+    """Комплект target собирается в рабочей копии и подменяет target целиком.
+
+    Замок `.<имя>.lock` лежит рядом с target (его делят стадия и панель), timeout - как
+    у fsutil.lock. Внутри блока umask 077 (на весь процесс). Рабочая копия -
+    `<target>.tmp.XXXXXXXX` рядом с target. Исключение в блоке: target не тронут, копия
+    убрана. Успех: права target на копию и renameat2(EXCHANGE), запасного пути нет -
+    отказ syscall это OSError. target ещё нет - простой rename. Остатки чужих упавших
+    запусков (`*.tmp.*`) не трогаются: имя копии случайное, они не мешают.
+    """
+    target = Path(target)
+    umask = os.umask(0o077)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with lock(target.parent / f'.{target.name}.lock', timeout=timeout):
+            work = Path(tempfile.mkdtemp(prefix=f'{target.name}.tmp.', dir=target.parent))
+            try:
+                if target.is_dir():
+                    _copy(target, work)
+                yield work
+                if os.path.exists(target):
+                    work.chmod(os.stat(target).st_mode & 0o777)
+                    _exchange(work, target)
+                else:
+                    os.rename(work, target)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+    finally:
+        os.umask(umask)
+
+
+def _require_pair(key, cert, run):
+    if not pair_valid(key, cert, run=run):
+        raise PkiError(f'PKI: invalid or mismatched key/certificate: {cert}')
+
+
+def build_openvpn(directory, *, run=run):
+    """Комплект OpenVPN (CA, сервер, tls-crypt, CRL) в directory, как стадия 29.
+
+    Повтор на готовом комплекте ничего не перевыпускает. openssl.cnf пишется с
+    каталогом по умолчанию (туда комплект попадёт после transaction), а `openssl ca`
+    идёт по build.cnf с каталогом directory, чтобы менялась только эта копия базы.
+    """
+    pki = Path(directory)
+    (pki / 'newcerts').mkdir(parents=True, exist_ok=True)  # стадия 29:50, до транзакции
+    atomic(pki / 'openssl.cnf', openssl_cnf())
+    for name, body in (('index.txt', ''), ('serial', '01\n'), ('crlnumber', '01\n')):
+        if not (pki / name).is_file():
+            atomic(pki / name, body)
+    ca, ca_key, cnf, build = pki / 'ca.crt', pki / 'ca.key', pki / 'openssl.cnf', pki / 'build.cnf'
+    require_key(ca_key, ca, run=run)
+    if not cert_valid(ca, run=run):
+        _checked(run, ['openssl', 'req', '-x509', '-new', '-key', str(ca_key), '-days', '3650', '-sha256',
+                       '-out', str(ca), '-subj', '/CN=anysda-vpn2 CA', '-config', str(cnf),
+                       '-extensions', 'v3_ca'], 'openssl req')
+    _require_pair(ca_key, ca, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
+    atomic(build, openssl_cnf(pki))
+    key, cert, csr = pki / 'server.key', pki / 'server.crt', pki / 'server.csr'
+    require_key(key, cert, run=run)
+    if not (pair_valid(key, cert, run=run) and verify(ca, cert, run=run)):
+        _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr),
+                       '-subj', '/CN=anysda-vpn2-server', '-config', str(cnf)], 'openssl req')
+        _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(build), '-extensions', 'server_ext',
+                       '-days', '3650', '-in', str(csr), '-out', str(cert)], 'openssl ca')
+        csr.unlink(missing_ok=True)
+    tls, crl = pki / 'tls-crypt.key', pki / 'crl.pem'
+
+    def tls_ok():
+        return tls.is_file() and tls_crypt_valid(tls.read_text(errors='replace'))
+
+    if not tls_ok():
+        _checked(run, ['openvpn', '--genkey', 'secret', str(tls)], 'openvpn --genkey')
+    crl_check = ['openssl', 'crl', '-in', str(crl), '-noout', '-verify', '-CAfile', str(ca)]
+    if not _ok(run, crl_check):
+        _checked(run, ['openssl', 'ca', '-config', str(build), '-gencrl', '-out', str(crl)], 'openssl ca -gencrl')
+    _require_pair(key, cert, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
+    _checked(run, crl_check, 'openssl crl')
+    if not tls_ok():
+        raise PkiError(f'PKI: invalid tls-crypt key: {tls}')
+    build.unlink(missing_ok=True)
+    for path in (ca_key, key, tls):
+        path.chmod(0o600)
+    for path in (ca, cert, crl):
+        path.chmod(0o644)

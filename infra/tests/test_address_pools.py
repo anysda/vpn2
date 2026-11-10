@@ -43,7 +43,8 @@ class AddressPoolTests(unittest.TestCase):
         # его сеть в эту проверку. Широкие RFC1918 bypass-маршруты не пулы.
         known = networks + reserved + list(map(ipaddress.ip_network, ['10.0.0.0/32', '192.0.0.0/32']))
         files = [p for directory in ('infra', 'app/server') for p in (ROOT / directory).rglob('*')
-                 if p.suffix in ('.py', '.sh', '.ts', '.tpl') and 'tests' not in p.parts]
+                 if p.suffix in ('.py', '.sh', '.ts', '.tpl') and 'tests' not in p.parts
+                 and not p.name.endswith('.test.ts')]
         for path in files:
             for literal in re.findall(r'(?<![\d.])(?:10|172|192)\.\d+\.\d+\.\d+(?![\d.])', path.read_text()):
                 address = ipaddress.ip_address(literal)

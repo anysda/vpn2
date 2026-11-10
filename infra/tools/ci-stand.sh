@@ -151,10 +151,11 @@ say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
 # --error-on=any - иначе update с ошибкой зеркала возвращает 0. timeout - жёсткий
 # предел на случай, когда прокси держит соединение без ответа; по пределу попытка
 # неудачна и идёт обычным путём (вторая попытка, затем старый mtime списков).
+# Обычный update идёт до 20 с, 60 с - тройной запас; при зависшем прокси две попытки стоят две минуты, а не десять.
 n=1; ok=
 while [ "$n" -le 2 ]; do
   echo "попытка $n" >>/var/log/vpn2-ci-warm-update.log
-  if timeout 300 apt-get -q --error-on=any -o Acquire::http::Timeout=30 -o Acquire::Retries=1 update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
+  if timeout 60 apt-get -q --error-on=any -o Acquire::http::Timeout=30 -o Acquire::Retries=1 update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
   [ "$n" -lt 2 ] && sleep 10
   n=$((n + 1))
 done

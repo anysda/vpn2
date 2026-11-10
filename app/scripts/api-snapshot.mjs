@@ -193,7 +193,7 @@ export async function walk(io) {
   await adminCall('admin/telegram.get', 'GET', '/api/admin/telegram')
 
   // SSO без включения: сохраняется известное состояние, затем читается.
-  const sso = { enabled: false, authentikUrl: 'https://auth.example.invalid', appSlug: 'vpn2-snapshot', clientId: 'vpn2-snapshot', clientSecret: 'snap-secret', allowedSubs: '00000000-0000-4000-8000-000000000001', label: 'Snapshot IdP', autoRedirect: false, passwordLogin: true, redirectUrl: 'https://vpn2.example.invalid/auth/authentik' }
+  const sso = { enabled: false, authentikUrl: 'https://auth.example.invalid', appSlug: 'vpn2-snapshot', clientId: 'vpn2-snapshot', clientSecret: 'snap-secret01', allowedSubs: '00000000-0000-4000-8000-000000000001', label: 'Snapshot IdP', autoRedirect: false, passwordLogin: true, redirectUrl: 'https://vpn2.example.invalid/auth/authentik' }
   await adminCall('admin/sso.put', 'PUT', '/api/admin/sso', sso)
   await adminCall('admin/sso.put', 'PUT', '/api/admin/sso', { ...sso, enabled: true, clientId: '' })
   await adminCall('admin/sso.get', 'GET', '/api/admin/sso')

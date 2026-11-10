@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Стенд внутри одной машины с KVM: entry и экзит - ВМ из облачного образа
-# Ubuntu (STAND_OS=24.04 или 26.04, по умолчанию 26.04; STAND_IMAGE_URL
-# задаёт образ сам) в своей сети за NAT хоста. Продукт ставится штатным
+# Ubuntu (STAND_OS=24.04 или 26.04, по умолчанию 26.04; сборка образа
+# закреплена серийным номером, STAND_IMAGE_URL задаёт образ сам) в своей сети
+# за NAT хоста. Продукт ставится штатным
 # ./deploy.sh с самого entry, как по README; 99-verify гоняет настоящий
 # трафик WireGuard/OpenVPN/IKEv2.
 #
@@ -38,9 +39,16 @@ set -Eeuo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 STAND_DIR=${STAND_DIR:-/var/tmp/vpn2-ci-stand}
-# ОС узлов: 24.04 или 26.04; образ берётся из каталога релиза этой версии.
+# ОС узлов: 24.04 или 26.04. Образ - по серийному номеру сборки: каталог
+# release/ переезжает на новую сборку, и эталон слепка хоста расходился бы без
+# изменений продукта. Новый номер - отдельной правкой вместе с пересъёмкой эталона.
 STAND_OS=${STAND_OS:-26.04}
-IMAGE_URL=${STAND_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/$STAND_OS/release/ubuntu-$STAND_OS-server-cloudimg-amd64.img}
+case $STAND_OS in
+  24.04) IMAGE_SERIAL=20261017 ;;
+  26.04) IMAGE_SERIAL=20261016 ;;
+  *) IMAGE_SERIAL='' ;;
+esac
+IMAGE_URL=${STAND_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/$STAND_OS/release-$IMAGE_SERIAL/ubuntu-$STAND_OS-server-cloudimg-amd64.img}
 # Адреса вне частных диапазонов: sing-box отклоняет клиентские соединения в
 # частные сети, а проверка трафика ходит на адреса entry и экзита.
 NET=198.18.10

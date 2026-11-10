@@ -2,6 +2,8 @@ name: checks
 
 on:
   push:
+    branches-ignore: ['shots/**']
+    tags: ['**']
   pull_request:
 
 permissions:

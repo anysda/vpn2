@@ -10,6 +10,9 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
 from vpn2.emergency.web import make_server
 
+# Сборка панели (pnpm emergency:build) лежит в дереве, в пакет её кладёт только образ.
+STATIC = Path(__file__).resolve().parents[1] / 'emergency/vpn2_emergency/static'
+
 
 def main():
     directory = Path(sys.argv[1])
@@ -28,7 +31,7 @@ def main():
     delivery = [row | dict(state='sent'), row | dict(state='retry', reason='Telegram 503'),
                 row | dict(state='pending'), row | dict(state='blocked', reason='нет канала доставки')]
     server = make_server(directory, exit_id='one', public_ip='127.0.0.1', address=('127.0.0.1', 0),
-                         cert_dir=directory / 'missing', snapshot_loader=lambda _p: snapshot,
+                         static_dir=STATIC, cert_dir=directory / 'missing', snapshot_loader=lambda _p: snapshot,
                          profiles=lambda _g: profiles, connections=lambda _g: connections,
                          delivery=lambda _g: delivery,
                          broadcast=lambda _message, _generation: delivery.append(row | dict(state='pending')))

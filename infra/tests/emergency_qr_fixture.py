@@ -17,6 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
 from vpn2.emergency import hy2
 from vpn2.emergency.web import make_server
 
+# Сборка панели (pnpm emergency:build) лежит в дереве, в пакет её кладёт только образ.
+STATIC = Path(__file__).resolve().parents[1] / 'emergency/vpn2_emergency/static'
+
 NAME = 'Ж' * 64
 DEVICE = 11
 
@@ -31,7 +34,7 @@ def main():
                     clients=[dict(id=1, name='e2e-QR', telegram_chat_id=None, allowed=True, expires_at=None,
                                   devices=[dict(id=DEVICE, name=NAME)])])
     server = make_server(directory, exit_id='one', public_ip='127.0.0.1', address=('127.0.0.1', 0),
-                         cert_dir=directory / 'missing', snapshot_loader=lambda _p: snapshot,
+                         static_dir=STATIC, cert_dir=directory / 'missing', snapshot_loader=lambda _p: snapshot,
                          profiles=lambda _g: profiles, connections=lambda _g: {DEVICE: 'never'},
                          delivery=lambda _g: [], broadcast=lambda _message, _generation: None)
     thread = threading.Thread(target=server.serve_forever)

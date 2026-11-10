@@ -5,7 +5,8 @@ import sys
 import tempfile
 import unittest
 
-from test_deploy import ROOT
+import watchdog_src  # noqa: F401  пакет vpn2 в PYTHONPATH
+
 
 
 class PrefixTests(unittest.TestCase):
@@ -13,7 +14,7 @@ class PrefixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'goog.json'
             path.write_text(json.dumps({'prefixes': prefixes}))
-            return subprocess.run([sys.executable, str(ROOT / 'infra/lib/gen-yt-quic-nft.py'), str(path)],
+            return subprocess.run([sys.executable, '-m', 'vpn2.cli', 'nft', 'yt-quic', str(path)],
                                   capture_output=True, text=True, timeout=10)
 
     def test_rejects_incomplete_or_widened_list(self):

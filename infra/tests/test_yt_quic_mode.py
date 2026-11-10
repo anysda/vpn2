@@ -19,8 +19,7 @@ class QuicModeTests(unittest.TestCase):
             root = Path(directory)
             for path in ('etc/systemd/system', 'usr/local/sbin', 'tmp/anysda', 'var/lib/anysda'):
                 (root / path).mkdir(parents=True, exist_ok=True)
-            for name in ('gen-yt-quic-nft.py', 'google-prefixes.json'):
-                shutil.copy(ROOT / 'infra/lib' / name, root / 'tmp/anysda' / name)
+            shutil.copy(ROOT / 'infra/lib/google-prefixes.json', root / 'tmp/anysda')
             stale = root / 'etc/nftables-yt-quic.conf'
             stale.write_text('old block\n')
             script = '''

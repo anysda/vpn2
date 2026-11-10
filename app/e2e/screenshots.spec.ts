@@ -1,4 +1,4 @@
-import { request, type APIRequestContext, type Page } from '@playwright/test'
+import { request, type APIRequestContext, type Locator, type Page } from '@playwright/test'
 import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, test } from './support/fixtures'
 
 // Эталонные скриншоты всех страниц панели в трёх размерах окна (проекты desktop,
@@ -21,6 +21,8 @@ import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, test 
 // | /api/ops/clients-online          | hourly                              | узор                          | часы от Date.now(), трафик чужих тестов |
 // | /api/clients/top                 | since, historyStart                 | от FIXED                      | границы периода от Date.now() |
 // | /api/clients, /api/clients/<id>  | createdAt (клиент и девайсы)        | по таблице SEED от FIXED      | время создания в БД |
+// | /api/ops/adguard                | available, totalToday, blockedToday, blockRatePct, avgMs | 12480, 1860, 14.9, 11.4 | счётчики фейкового AdGuard растут от запросов чужих тестов |
+// | /api/clients, /api/clients/<id>  | operation                           | null                          | статус выдачи доступа зависит от того, успела ли нода его подтвердить |
 // | /api/dns/log                     | rows[].time                         | FIXED - 37 с * номер строки   | журнал AdGuard пишется от Date.now() |
 // | /api/dns/filters                 | black[].updated, white[].updated    | FIXED - 3 ч                   | last_updated = момент старта AdGuard |
 
@@ -138,12 +140,14 @@ function pinAll(page: Page) {
       const start = mskDay(FIXED) * 86400 - MSK_OFFSET_SEC
       return { ...b, since: b.period === 'week' ? start - 6 * 86400 : start, historyStart: start - 30 * 86400 }
     }),
-    pin(page, /\/api\/clients(\?|$)/, (list: Json[]) => list.map(c => ({ ...c, createdAt: iso(ageOf(c.name)) }))),
+    pin(page, /\/api\/clients(\?|$)/, (list: Json[]) => list.map(c => ({ ...c, operation: null, createdAt: iso(ageOf(c.name)) }))),
     pin(page, /\/api\/clients\/\d+(\?|$)/, (c: Json) => ({
       ...c,
+      operation: null,
       createdAt: iso(ageOf(c.name)),
       devices: (c.devices as Json[]).map((d, i) => ({ ...d, createdAt: iso(ageOf(c.name) + (i + 1) * 60_000) })),
     })),
+    pin(page, /\/api\/ops\/adguard(\?|$)/, b => ({ ...b, available: true, totalToday: 12480, blockedToday: 1860, blockRatePct: 14.9, avgMs: 11.4 })),
     pin(page, /\/api\/dns\/log(\?|$)/, (b: { rows: Json[] }) => ({
       ...b,
       rows: b.rows.map((r, i) => ({ ...r, time: iso(FIXED - i * 37_000) })),
@@ -166,19 +170,22 @@ function trackRequests(page: Page) {
 }
 
 /** Страница готова: шрифты, гидратация, ни одного запроса в полёте 400 мс подряд. */
-async function ready(page: Page, pending: Set<unknown>) {
+async function ready(page: Page, pending: Set<unknown>, shown: Locator[]) {
   await hydrated(page)
+  for (const l of shown) await expect(l.first()).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   let quiet = 0
   await expect.poll(() => {
     quiet = pending.size === 0 ? quiet + 1 : 0
     return quiet
   }, { timeout: 20_000, intervals: [100] }).toBeGreaterThanOrEqual(4)
+  // Переходы и конечные анимации CSS доиграны.
+  await expect.poll(() => page.evaluate(() => document.getAnimations().filter(a => a.playState === 'running' && Number.isFinite(a.effect?.getComputedTiming().endTime ?? Infinity)).length)).toBe(0)
   await page.evaluate(() => document.fonts.ready)
 }
 
-async function shot(page: Page, pending: Set<unknown>, name: string) {
-  await ready(page, pending)
+async function shot(page: Page, pending: Set<unknown>, name: string, shown: Locator[] = []) {
+  await ready(page, pending, shown)
   await expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
 }
 
@@ -205,7 +212,10 @@ test.describe('эталонные скриншоты', () => {
     await page.goto('/')
     await expect(page.locator('.ov-nodes')).toBeVisible()
     await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
-    await shot(page, pending, 'overview')
+    await shot(page, pending, 'overview', [
+      page.getByText('Вход в панель'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
+      page.getByText('Трафика пока нет'), page.getByText('14,9%'),
+    ])
 
     await page.goto('/clients')
     await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)

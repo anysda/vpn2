@@ -1,4 +1,57 @@
 # Поля слепка хоста, которые законно различаются между двумя чистыми установками.
 # Запись: section, name (маска fnmatch, * проходит через /), field (имя поля или "*"), reason.
-# Правило без причины или не закрывшее ни одной записи - повод его убрать.
-[]
+# Наличие, права и владелец файла сверяются всегда, если field не "*".
+# Правило, не закрывшее ни одной записи, сверка печатает предупреждением - его пора убрать.
+
+# Секреты и ключи, которые установка создаёт случайными
+- {section: files, name: '/etc/anysda/*-password.txt', field: sha256, reason: случайный пароль создаётся при установке}
+- {section: files, name: '/etc/anysda/*-secret.txt', field: sha256, reason: случайный секрет создаётся при установке}
+- {section: files, name: '/etc/anysda/hy2-*', field: sha256, reason: пароли и сертификат Hysteria2 создаются при установке}
+- {section: files, name: '/etc/anysda/reality.*', field: sha256, reason: ключи Reality создаются при установке}
+- {section: files, name: '/etc/anysda/wgcf-*', field: sha256, reason: учётная запись WARP регистрируется при установке}
+- {section: files, name: '/etc/openvpn/server/pki/*', field: sha256, reason: удостоверяющий центр OpenVPN создаётся при установке}
+- {section: files, name: '/etc/strongswan/pki/*', field: sha256, reason: удостоверяющий центр IKEv2 создаётся при установке}
+- {section: files, name: '/etc/swanctl/private/*', field: sha256, reason: ключ сервера IKEv2 создаётся при установке}
+- {section: files, name: '/etc/swanctl/x509*/*', field: sha256, reason: сертификаты IKEv2 создаются при установке}
+- {section: files, name: '/etc/wireguard/keys/*', field: sha256, reason: ключи WireGuard создаются при установке}
+- {section: files, name: '/etc/sing-box/tls.*', field: sha256, reason: самоподписанный сертификат экзита создаётся при установке}
+- {section: files, name: '/etc/sing-box/exit-certs/*', field: sha256, reason: сертификат и ключ Reality экзита создаются при установке}
+- {section: files, name: '/etc/shadow*', field: sha256, reason: соль хэша пароля root случайная}
+- {section: files, name: '/etc/vpn2/emergency/agent.json', field: sha256, reason: ключи аварийного канала создаются при установке}
+- {section: files, name: '/var/lib/vpn2-emergency*/*', field: sha256, reason: ключи и состояние аварийного канала создаются при установке}
+- {section: files, name: '/opt/anysda-vpn2/config.yaml', field: sha256, reason: установка дописывает в конфиг созданный ключ оркестратора}
+- {section: files, name: '/opt/anysda-vpn2/infra/.known_hosts', field: sha256, reason: ключи узлов стенда случайные}
+- {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты}
+- {section: files, name: '/opt/anysda-vpn2/infra/secrets/*', field: sha256, reason: каталог созданных при установке секретов}
+
+# Конфиги, в которые вписаны созданные секреты
+- {section: files, name: '/etc/anysda/anysda-config.yaml', field: sha256, reason: содержит созданные пароли и ключи}
+- {section: files, name: '/etc/anysda/failover-watchdog.env', field: sha256, reason: содержит созданный секрет Clash API}
+- {section: files, name: '/etc/sing-box/config*.json', field: sha256, reason: содержит созданные ключи и пароли}
+- {section: files, name: '/etc/wireguard/wg0.conf', field: sha256, reason: содержит созданный приватный ключ}
+- {section: files, name: '/var/lib/anysda/applied/*.sha256', field: sha256, reason: хэш применённого конфига с секретами}
+- {section: files, name: '/var/lib/vpn2-apply/*.good', field: sha256, reason: копия применённого конфига с секретами}
+
+# Состояние, которое службы пишут во время работы
+- {section: files, name: '/etc/openvpn/server/status-server.log', field: sha256, reason: OpenVPN переписывает файл статуса каждую минуту}
+- {section: files, name: '/etc/anysda/ikev2-status.json', field: sha256, reason: статус IKEv2 с меткой времени}
+- {section: files, name: '/etc/vpn2/tls/state.json', field: sha256, reason: состояние сертификата с датой выпуска}
+- {section: files, name: '/var/lib/anysda/verify-report.json', field: sha256, reason: отчёт verify с меткой времени; его строки сверяет раздел verify}
+- {section: files, name: '/var/lib/anysda-failover-watchdog/lanes.json', field: sha256, reason: замеры линий сторожа с меткой времени}
+- {section: files, name: '/var/lib/anysda-warp-watchdog/state.json', field: sha256, reason: состояние сторожа WARP с меткой времени}
+- {section: files, name: '/var/lib/anysda-vpn2/db.sqlite-*', field: sha256, reason: журнал записи SQLite работающей панели}
+- {section: files, name: '/var/lib/vpn2-deploy/operation.json', field: sha256, reason: журнал операции деплоя с меткой времени}
+- {section: files, name: '/var/lib/vpn2-deploy/panel/operation.json', field: sha256, reason: журнал операции панели с меткой времени}
+- {section: files, name: '/var/lib/vpn2-deploy/backups/*', field: '*', reason: имя каталога резервной копии - метка времени в наносекундах}
+- {section: files, name: '/var/lib/vpn2-deploy/panel/backups/*', field: '*', reason: имя каталога резервной копии - метка времени в наносекундах}
+
+# Не файлы
+- {section: ports, name: 'udp *:[3-6][0-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящие UDP-сокеты sing-box на случайном порту ядра}
+- {section: units, name: 'var-lib-docker-rootfs-overlayfs-*.mount', field: '*', reason: точка монтирования контейнера с его случайным идентификатором}
+- {section: units, name: 'vpn2-ci-warm.service', field: '*', reason: разовый юнит прогрева стенда CI - не продукт}
+- {section: containers, name: 'anysda-vpn2', field: image, reason: образ панели собирается из исходников коммита}
+- {section: containers, name: 'anysda-vpn2', field: image_id, reason: образ панели собирается из исходников коммита}
+- {section: containers, name: 'anysda-tgbot', field: image, reason: образ бота собирается из исходников коммита}
+- {section: containers, name: 'anysda-tgbot', field: image_id, reason: образ бота собирается из исходников коммита}
+- {section: containers, name: 'vpn2-emergency', field: image, reason: образ аварийного канала собирается из исходников коммита}
+- {section: containers, name: 'vpn2-emergency', field: image_id, reason: образ аварийного канала собирается из исходников коммита}

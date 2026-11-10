@@ -424,8 +424,10 @@ docker_apt_source() {
 }
 
 # apt_lists_are_fresh LISTS SOURCE... — списки свежие, если каталог обновлён
-# за последний час, ни один источник не новее его и в нём есть индекс
-# (*_Packages* или *_InRelease). Время индекса не годится: apt ставит файлу
+# за последний час, ни один источник не новее его и в нём есть индекс пакетов
+# (*_Packages*). Одного *_InRelease мало: update с кодом 0 при сбое зеркала
+# оставляет его без Packages, и install не находит пакет. Время индекса не
+# годится: apt ставит файлу
 # Last-Modified зеркала, сразу после update он бывает старше месяца. Свежий
 # каталог на только что поднятой машине может держать один partial/.
 apt_lists_are_fresh() {
@@ -433,7 +435,7 @@ apt_lists_are_fresh() {
   shift
   [[ -n "$(find "$lists" -maxdepth 0 -mmin -60 2>/dev/null)" ]] || return 1
   [[ -z "$(find "$@" -newer "$lists" -print -quit 2>/dev/null)" ]] || return 1
-  [[ -n "$(find "$lists" -maxdepth 1 -type f \( -name '*_Packages*' -o -name '*_InRelease' \) -print -quit 2>/dev/null)" ]]
+  [[ -n "$(find "$lists" -maxdepth 1 -type f -name '*_Packages*' -print -quit 2>/dev/null)" ]]
 }
 
 # apt_update_if_stale — apt-get update, если нет свежего индекса или источник

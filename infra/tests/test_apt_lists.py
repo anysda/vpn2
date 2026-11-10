@@ -49,8 +49,9 @@ apt_update_if_stale
     def test_fresh_packages_index_skips_update(self):
         self.assertEqual(self.run_update('mirror_Packages.lz4'), '')
 
-    def test_fresh_inrelease_skips_update(self):
-        self.assertEqual(self.run_update('mirror_InRelease'), '')
+    def test_inrelease_without_packages_runs_update(self):
+        # update с кодом 0, скачавший одни InRelease: пакетов в таком индексе нет
+        self.assertEqual(self.run_update('mirror_InRelease'), 'update -qq\n')
 
     def test_source_newer_than_lists_runs_update(self):
         self.assertEqual(self.run_update('mirror_Packages.lz4', source_is_newer=True), 'update -qq\n')

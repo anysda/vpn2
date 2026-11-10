@@ -141,7 +141,7 @@ warm_script() {
 #!/bin/sh
 t0=$(date +%s)
 say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
-if apt-get -q update >/dev/null; then say 'индекс apt'; else say 'индекс apt не вышел'; fi
+if apt-get -q update >/var/log/vpn2-ci-warm-update.log 2>&1; then say 'индекс apt'; else say 'индекс apt не вышел'; fi
 [ "$1" = entry ] || exit 0
 w=/var/tmp/vpn2-ci-warm
 . /etc/os-release
@@ -259,9 +259,8 @@ apt_proxy_up() {
   printf 'CacheDir: %s\nBindAddress: %s\nPort: 3142\n' "$APT_CACHE" "$NET.1" \
     > /etc/apt-cacher-ng/zz-vpn2-ci.conf
   # Запросы ВМ к archive.ubuntu.com прокси шлёт на бэкенды uburep. Без этого
-  # файла их угадывает postinst по региону раннера (mirrors.ubuntu.com), и на
-  # тёплом кэше перепроверка InRelease висит на чужом зеркале: прогрев 205 с,
-  # второй узел остаётся без Packages и не находит wireguard.
+  # файла их угадывает postinst по региону раннера (mirrors.ubuntu.com):
+  # бэкенд задан явно, тот же, что в источниках ВМ.
   echo 'http://archive.ubuntu.com/ubuntu/' > /etc/apt-cacher-ng/backends_ubuntu
   chown -R apt-cacher-ng: "$APT_CACHE"
   systemctl restart apt-cacher-ng
@@ -497,12 +496,28 @@ load_panel() {
 # Итог прогрева по узлам: время от загрузки ВМ (монотонные часы журнала),
 # рядом - аптайм entry на старте деплоя.
 warm_report() {
-  local node name ip
+  local node name ip out slow=0
   for node in "${NODES[@]}"; do
     read -r name ip _ <<<"$node"
-    ssh_node "$ip" 'journalctl -u vpn2-ci-warm -o short-monotonic --no-pager -q' 2>/dev/null \
-      | sed -n "s/^\[ *\([0-9.]*\)\].*\(прогрев: .*\)/[stand] ВМ $name, \1 с от загрузки: \2/p" || true
+    out=$(ssh_node "$ip" 'journalctl -u vpn2-ci-warm -o short-monotonic --no-pager -q' 2>/dev/null \
+      | sed -n "s/^\[ *\([0-9.]*\)\].*\(прогрев: .*\)/[stand] ВМ $name, \1 с от загрузки: \2/p") || true
+    [[ -z "$out" ]] || echo "$out"
+    # Индекс apt дольше минуты: что ответил update узлу и что осталось в lists.
+    (( $(sed -n 's/.*индекс apt.* за \([0-9]*\) с$/\1/p' <<<"$out" | head -1) + 0 > 60 )) || continue
+    slow=1
+    ssh_node "$ip" 'echo "списков Packages: $(ls /var/lib/apt/lists | grep -c _Packages)"
+      tail -n 40 /var/log/vpn2-ci-warm-update.log' 2>/dev/null \
+      | sed "s/^/[stand] ВМ $name, update прогрева: /" || true
   done
+  (( slow )) || return 0
+  # Запросы индекса через прокси: секунды от первой записи, I - с зеркала,
+  # O - узлу; размер, клиент, путь (хэш by-hash укорочен).
+  awk -F'|' 'NR == 1 {t0 = $1}
+    $5 ~ /\/dists\// || ($2 != "I" && $2 != "O") {u = $5; sub(/.*\/dists\//, "", u)
+      if (u ~ /by-hash/) u = substr(u, 1, length(u) - 52)
+      printf "[stand] прокси apt +%d с %s %s %s %s\n", $1 - t0, $2, $3, $4, u}' \
+    /var/log/apt-cacher-ng/apt-cacher.log 2>/dev/null || true
+  tail -n 20 /var/log/apt-cacher-ng/apt-cacher.err 2>/dev/null | sed 's/^/[stand] прокси apt, ошибки: /' || true
 }
 
 entry_uptime() { ssh_node "$ENTRY" 'cut -d" " -f1 /proc/uptime' 2>/dev/null || echo '?'; }

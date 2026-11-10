@@ -6,6 +6,7 @@ from .config import log
 from .panel import BotApiError
 from .texts import (
     ADMIN_START_TEXT,
+    ERROR_TEXT,
     NAV_ADD,
     NAV_DEVICES,
     REPLY_KB,
@@ -45,7 +46,7 @@ async def _start_add_device(chat_id: int, view: dict) -> None:
     """Начать добавление устройства: проверить лимит, запросить название."""
     limit = view.get('deviceLimit')
     if limit is not None and len(view.get('devices', [])) >= limit:
-        await transport.tg_send(chat_id, 'Достигнут лимит устройств. Обратитесь к администратору.')
+        await transport.tg_send(chat_id, ERROR_TEXT['device_limit'])
         return
     _awaiting_device_name.add(chat_id)
     await transport.tg_send(chat_id, 'Пришлите название устройства (например: Телефон, Ноутбук).')

@@ -16,7 +16,7 @@ from support import import_bot  # noqa: E402
 
 BOT_DIR = HERE.parent
 FIXTURE = HERE / 'fixtures' / 'texts.json'
-NAMED_CONSTANTS = ('_ADMIN', '_LATER', 'ERROR_FALLBACK', 'NAV_DEVICES', 'NAV_ADD', 'REPLY_KB',
+NAMED_CONSTANTS = ('ERROR_FALLBACK', 'NAV_DEVICES', 'NAV_ADD', 'REPLY_KB',
                    'UNEXPECTED_ERROR', 'ADMIN_START_TEXT')
 PLURAL_NUMBERS = (0, 1, 2, 5, 11, 21, 111)
 SAMPLE_EXPIRES = ('2026-12-31T23:59:59Z', '2027-01-05T10:00:00+00:00', '', None, 'garbage')
@@ -86,15 +86,28 @@ def collect_literals():
     return [[text, n] for text, n in sorted(counter.items())]
 
 
-def plural_forms():
-    """Тройки форм, которые код передаёт в plural_ru."""
+def plural_forms(bot):
+    """Triples passed to plural_ru: tuple literals and PLURAL['name'] from the table."""
     triples = set()
     for path in source_files():
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
-            if (isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'plural_ru'
-                    and len(node.args) == 2 and isinstance(node.args[1], ast.Tuple)):
-                triples.add(tuple(ast.literal_eval(node.args[1])))
+            if not (isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'plural_ru'
+                    and len(node.args) == 2):
+                continue
+            arg = node.args[1]
+            if isinstance(arg, ast.Tuple):
+                triples.add(tuple(ast.literal_eval(arg)))
+            elif (isinstance(arg, ast.Subscript) and getattr(arg.value, 'id', None) == 'PLURAL'
+                    and isinstance(arg.slice, ast.Constant)):
+                triples.add(tuple(bot.texts.PLURAL[arg.slice.value]))
     return sorted(triples)
+
+
+def table_strings(bot):
+    """Strings of the shared table the bot loaded: bot, botFallback, plural forms."""
+    table = bot.texts._TABLE
+    forms = [form for triple in table['plural'].values() for form in triple]
+    return [*table['bot'].values(), table['botFallback'], *forms]
 
 
 def rows(markup):
@@ -107,7 +120,7 @@ def collect_rendered(bot):
     out['ERROR_TEXT'] = dict(bot.texts.ERROR_TEXT)
     out['plural_ru'] = {' / '.join(forms): {str(n): bot.texts.plural_ru(n, forms)
                                             for n in PLURAL_NUMBERS}
-                        for forms in plural_forms()}
+                        for forms in plural_forms(bot)}
     out['_limit_label'] = {str(v): bot.texts._limit_label(v) for v in (None, 0, 1, 25)}
     out['_expiry_label'] = {str(v): bot.texts._expiry_label(v) for v in SAMPLE_EXPIRES}
     out['md'] = {str(v): bot.texts.md(v) for v in SPECIAL}
@@ -152,7 +165,29 @@ class FrozenTextsTests(unittest.TestCase):
 
     def test_texts_match_fixture(self):
         self.assertTrue(FIXTURE.exists(), f'нет эталона {FIXTURE}; создать: --write')
-        self.assertEqual(dump(self.data), FIXTURE.read_text(encoding='utf-8'))
+        frozen = json.loads(FIXTURE.read_text(encoding='utf-8'))
+        table = table_strings(self.bot)
+
+        def in_table(text):
+            return isinstance(text, str) and any(text in s for s in table)
+
+        code = {text: n for text, n in self.data['literals']}
+        fixed = {text: n for text, n in frozen['literals']}
+        for text, n in fixed.items():
+            if text in code:
+                self.assertEqual(code[text], n, text)
+            else:
+                self.assertTrue(in_table(text), f'literal gone and not in table: {text!r}')
+        for text in code:
+            self.assertTrue(text in fixed, f'new literal: {text!r}')
+        rendered = self.data['rendered']
+        for name, value in frozen['rendered'].items():
+            if name in rendered:
+                self.assertEqual(dump(rendered[name]), dump(value), name)
+            else:
+                self.assertTrue(in_table(value), f'constant gone and not in table: {name}')
+        for name in rendered:
+            self.assertTrue(name in frozen['rendered'], f'new rendered entry: {name}')
 
     def test_rendered_is_complete(self):
         rendered = self.data['rendered']

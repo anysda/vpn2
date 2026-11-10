@@ -1,5 +1,7 @@
+import json
 import re
 from datetime import datetime
+from pathlib import Path
 
 from . import config
 
@@ -26,46 +28,24 @@ def md_bold(text: object) -> str:
     return ''.join(out)
 
 
-_ADMIN = 'Обратитесь к администратору.'
-_LATER = 'Попробуйте позже.'
+def _load_table() -> dict:
+    # Shared with the panel: error texts and plural forms live in one file.
+    # The image ships it inside the package, the repo keeps it in app/shared.
+    try:
+        raw = Path(__file__).with_name('error-text.json').read_text(encoding='utf-8')
+    except FileNotFoundError:
+        shared = Path(__file__).resolve().parents[2] / 'app' / 'shared' / 'error-text.json'
+        raw = shared.read_text(encoding='utf-8')
+    return json.loads(raw)
+
+
+_TABLE = _load_table()
 
 # Коды /api/bot/* (statusMessage панели) → текст для человека в Telegram.
 # Код машинный: показывать его клиенту нельзя, он уходит в журнал.
-ERROR_TEXT = {
-    'not_linked': 'Этот Telegram не привязан к клиенту VPN.',
-    'not_found': 'Не найдено: возможно, его уже удалили.',
-    'invalid_password': 'Ссылка-приглашение недействительна. ' + _ADMIN,
-    'client_exists': 'Такой клиент уже есть.',
-    'device_exists': 'Устройство с таким названием уже есть.',
-    'device_limit': 'Достигнут лимит устройств. ' + _ADMIN,
-    'device_limit_below_count': 'Лимит меньше числа устройств: сначала удалите лишние.',
-    'invalid_expiry': 'Неверный срок доступа.',
-    'invalid_body': 'Неверный запрос. ' + _LATER,
-    'invalid_json': 'Неверный запрос. ' + _LATER,
-    'invalid_params': 'Неверный запрос. ' + _LATER,
-    'invalid_id': 'Неверный запрос. ' + _LATER,
-    'invalid_chat_id': 'Неверный запрос. ' + _LATER,
-    'unknown_outbound': 'Выбранный выход недоступен. ' + _ADMIN,
-    'outbounds_unavailable': 'Выходы сейчас недоступны. ' + _LATER,
-    'wg_disabled': 'WireGuard выключен. ' + _ADMIN,
-    'ovpn_disabled': 'OpenVPN выключен. ' + _ADMIN,
-    'wg_pool_exhausted': 'Свободные адреса WireGuard закончились. ' + _ADMIN,
-    'ovpn_pool_exhausted': 'Свободные адреса OpenVPN закончились. ' + _ADMIN,
-    'ikev2_pool_exhausted': 'Свободные адреса IKEv2 закончились. ' + _ADMIN,
-    'wg_keys_not_ready': 'WireGuard ещё не настроен. ' + _LATER,
-    'ovpn_ca_not_ready': 'OpenVPN ещё не настроен. ' + _LATER,
-    'ovpn_reissue_failed': 'Не удалось перевыпустить ключ OpenVPN. ' + _LATER,
-    'wg_ipv4_endpoint_unavailable': 'У сервера нет адреса IPv4 для WireGuard. ' + _ADMIN,
-    'wg_public_host_not_configured': 'Адрес сервера WireGuard не настроен. ' + _ADMIN,
-    'ovpn_public_host_not_configured': 'Адрес сервера OpenVPN не настроен. ' + _ADMIN,
-    'insert_failed': 'Не удалось сохранить. ' + _LATER,
-    'unauthorized': 'Бот не может связаться с панелью. ' + _ADMIN,
-    'Unauthorized': 'Бот не может связаться с панелью. ' + _ADMIN,
-    'tgbot_secret_not_configured': 'Бот не может связаться с панелью. ' + _ADMIN,
-    'loopback_only': 'Бот не может связаться с панелью. ' + _ADMIN,
-    'invalid_origin': 'Бот не может связаться с панелью. ' + _ADMIN,
-}
-ERROR_FALLBACK = 'Не удалось выполнить запрос. ' + _LATER
+ERROR_TEXT: dict[str, str] = _TABLE['bot']
+ERROR_FALLBACK: str = _TABLE['botFallback']
+PLURAL: dict[str, tuple[str, str, str]] = {k: tuple(v) for k, v in _TABLE['plural'].items()}
 
 
 def plural_ru(n: int, forms: tuple[str, str, str]) -> str:

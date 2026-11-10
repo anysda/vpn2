@@ -4,6 +4,7 @@ from datetime import datetime
 from . import config, events, panel, transport
 from .panel import BotApiError
 from .texts import (
+    PLURAL,
     _access_protocol_lines,
     _confirm_markup,
     _limit_label,
@@ -37,7 +38,7 @@ def _admin_list_markup(clients: list[dict]) -> dict:
             icon = '⏳'
         limit = _limit_label(c.get('deviceLimit'))
         count = c.get('deviceCount', 0)
-        noun = plural_ru(count, ('девайс', 'девайса', 'девайсов'))
+        noun = plural_ru(count, PLURAL['botDevice'])
         rows.append([{
             'text': f'{icon} {c.get("name", "?")} — {count} {noun} · лимит: {limit}'
                     + (f' · {verified}' if verified else ''),

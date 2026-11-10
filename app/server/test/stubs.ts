@@ -98,6 +98,7 @@ interface FakeDb {
   update: (...args: unknown[]) => Chain
   delete: (...args: unknown[]) => Chain
   transaction: <T>(cb: (tx: FakeDb) => Promise<T>) => Promise<T>
+  batch: (items: PromiseLike<unknown>[]) => Promise<unknown[]>
 }
 
 export const fakeDb: FakeDb = {
@@ -106,6 +107,7 @@ export const fakeDb: FakeDb = {
   update: query('update'),
   delete: query('delete'),
   transaction: async cb => cb(fakeDb),
+  batch: async items => Promise.all(items),
 }
 
 export const databaseModule = { useDb: () => fakeDb }

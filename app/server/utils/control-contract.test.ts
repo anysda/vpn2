@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { dbResults, installStubs } from '../test/stubs'
+import { dbOps, dbResults, fakeEvent, installStubs } from '../test/stubs'
 import { control, controlApply } from './control'
 import { recordEvent } from './events'
 import { loadServerKeys, syncWireguardConfig } from './wireguard'
@@ -12,6 +12,12 @@ import { ikev2Mode, syncIkev2 } from './ikev2'
 import { reportControlExpiry, syncControlExpiry } from './expiry'
 import { toggleExit } from './exit-control'
 import { syncRoutesFile } from './routes-sync'
+import { accessAdapter } from './access-adapter'
+import { collectTraffic } from './traffic-collector'
+import { syncClientPrefsFile } from './client-prefs'
+import routeCheck from '../api/routes/check.get'
+
+vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
 
 // Примеры запросов и ответов control - общие со службой: те же запросы
 // infra/tests/test_control.py пропускает через проверку contract.py.
@@ -26,6 +32,7 @@ vi.mock('../database/client', async () => ({
   IP_CLAIM_ATTEMPTS: 50,
   isUniqueViolation: () => false,
 }))
+vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))
 vi.mock('./access-lock', () => ({ withAccessLock: (action: () => Promise<void>) => action() }))
 vi.mock('./events', async importOriginal => ({ ...(await importOriginal<object>()), recordEvent: vi.fn(async () => true) }))
@@ -201,5 +208,43 @@ describe('контракт control: живые вызовы панели шлю�
     dbResults.push(rows)
     expect((await syncRoutesFile()).count).toBe(rows.length)
     expect(sentMethods()).toEqual(['settings.apply:routes'])
+  })
+
+  it('state.read и openvpn.certificate: проверка операции доступа сверяет сертификат устройства', async () => {
+    const operation = { clientId: 7, version: 3, kind: 'update', deviceId: null, protocols: { openvpn: { confirmedVersion: null } } }
+    dbResults.push(
+      [{ id: 7, accessVersion: 3, deleting: false, frozenManual: false, filterTraffic: false, expiresAt: new Date('2031-05-06T07:08:09.000Z') }],
+      [{ id: 12, clientId: 7, deleting: false, ovpnCert: certDev12 }],
+    )
+    expect(await accessAdapter.read('openvpn', operation as never, { retired: [], rotateOvpn: [] } as never)).toBe(true)
+    expect(sentMethods()).toEqual(['state.read:openvpn', 'openvpn.certificate'])
+  })
+
+  it('traffic.read: счётчики трёх протоколов разбираются по устройствам базы', async () => {
+    const [wg] = (example('traffic.read', p => p.protocol === 'wg').result as { samples: { key: string }[] }).samples
+    const [ikev2] = (example('traffic.read', p => p.protocol === 'ikev2').result as { samples: { username: string, uniqueid: string, rx: number, tx: number }[] }).samples
+    dbResults.push([{ id: 12, pk: wg!.key, ikev2: ikev2!.username }], [])
+    await collectTraffic()
+    expect(sentMethods().sort()).toEqual(['traffic.read:ikev2', 'traffic.read:openvpn', 'traffic.read:wg'])
+    // Счётчик IKEv2 из ответа лёг в снимок сборщика под устройством из базы.
+    const saved = dbOps.filter(o => o.op === 'values').map(o => o.args[0] as { name?: string, value?: string }).find(v => v.name === 'ikev2')
+    expect(JSON.parse(saved!.value!)).toEqual({ [`12:${ikev2!.uniqueid}`]: [ikev2!.rx, ikev2!.tx] })
+  })
+
+  it('routes.plan: проверка маршрута собирает план из записанного ответа', async () => {
+    dbResults.push([])
+    const reply = await routeCheck(fakeEvent({}, { q: '1.1.1.1' })) as { query: string, ip: string }
+    expect(sentMethods()).toEqual(['routes.plan'])
+    expect(reply).toMatchObject({ query: '1.1.1.1', ip: '1.1.1.1' })
+    expect(JSON.stringify(reply)).toContain('direct-ru')
+  })
+
+  it('settings.apply: предпочтения экзитов уходят отсортированными адресами по узлам', async () => {
+    dbResults.push([
+      { node: 'fra', wg: '10.67.67.2', ovpn: null, ikev2: null },
+      { node: 'fra', wg: null, ovpn: '10.66.66.2', ikev2: null },
+    ])
+    await syncClientPrefsFile()
+    expect(sentMethods()).toEqual(['settings.apply:preferences'])
   })
 })

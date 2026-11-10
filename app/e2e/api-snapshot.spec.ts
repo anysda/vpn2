@@ -59,13 +59,13 @@ async function adminFetch(api: APIRequestContext, method: string, path: string, 
 test.describe.configure({ mode: 'serial' })
 
 test.describe('снимок ответов API панели', () => {
-  test.skip(!container, 'нужен контейнер панели run-local.sh (E2E_FAULT_CONTAINER)')
   test.setTimeout(360_000)
 
   let actual = new Map<string, string>()
   let walked = false
 
   test('обход сценария собирает записи', async ({ page }, testInfo) => {
+    expect(container, 'нужен контейнер панели run-local.sh (E2E_FAULT_CONTAINER)').toBeTruthy()
     await loginApi(page)
     const api = page.request
     const { calls: raw, ids } = await walk({

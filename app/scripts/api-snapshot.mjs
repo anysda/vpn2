@@ -193,7 +193,7 @@ export async function walk(io) {
   await adminCall('admin/telegram.get', 'GET', '/api/admin/telegram')
 
   // SSO без включения: сохраняется известное состояние, затем читается.
-  const sso = { enabled: false, authentikUrl: 'https://auth.example.invalid', appSlug: 'vpn2-snapshot', clientId: 'vpn2-snapshot', clientSecret: 'snapshot-secret-0001', allowedSubs: '00000000-0000-4000-8000-000000000001', label: 'Snapshot IdP', autoRedirect: false, passwordLogin: true, redirectUrl: 'https://vpn2.example.invalid/auth/authentik' }
+  const sso = { enabled: false, authentikUrl: 'https://auth.example.invalid', appSlug: 'vpn2-snapshot', clientId: 'vpn2-snapshot', clientSecret: 'snap-secret', allowedSubs: '00000000-0000-4000-8000-000000000001', label: 'Snapshot IdP', autoRedirect: false, passwordLogin: true, redirectUrl: 'https://vpn2.example.invalid/auth/authentik' }
   await adminCall('admin/sso.put', 'PUT', '/api/admin/sso', sso)
   await adminCall('admin/sso.put', 'PUT', '/api/admin/sso', { ...sso, enabled: true, clientId: '' })
   await adminCall('admin/sso.get', 'GET', '/api/admin/sso')
@@ -248,7 +248,7 @@ export async function walk(io) {
   await botCall('bot/admin/clients/[id].patch', 'PATCH', '/api/bot/admin/clients/{bot}', { deviceLimit: 3 })
   await settle((await botCall('bot/admin/clients/[id].patch', 'PATCH', '/api/bot/admin/clients/{bot}', { frozenManual: true })).json)
   await settle((await botCall('bot/admin/clients/[id].patch', 'PATCH', '/api/bot/admin/clients/{bot}', { frozenManual: false })).json)
-  await botCall('bot/link.post', 'POST', '/api/bot/link', { password: 'wrong-password-snapshot', chatId: CHAT_ID })
+  await botCall('bot/link.post', 'POST', '/api/bot/link', { password: 'wrong-pass', chatId: CHAT_ID })
   await botCall('bot/link.post', 'POST', '/api/bot/link', { password: card.json?.password ?? '', chatId: CHAT_ID, username: 'snapshot_user' })
   vars.chat = CHAT_ID
   await botCall('bot/client.get', 'GET', '/api/bot/client?chatId={chat}')

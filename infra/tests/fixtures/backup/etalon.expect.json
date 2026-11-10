@@ -1,0 +1,17 @@
+{
+ "clients": [
+  "etalon-1",
+  "etalon-2"
+ ],
+ "files": {
+  "/etc/openvpn/server/pki/ca.crt": "9e5668d2ebd3548bad33b2a7a53bccfb1e167fec0c18c5aca9fe8cb238ba1e3c",
+  "/etc/openvpn/server/pki/server.crt": "05968241e438c962cbfbed8c013625842456982291ea5c44189528251639cc6f",
+  "/etc/swanctl/x509/anysda-server.crt": "1dc64fdad8e1bb71e932fc416a88ee3682fa06b1ec4712dec03426870d756462",
+  "/etc/swanctl/x509ca/anysda-ca.crt": "8bee2a666555b85dc186de9b37846478c166ccd3edaf884ae4651788bcaa38e5",
+  "/var/lib/anysda-vpn2/runtime/telegram-runtime.json": "a4785885e9fb5bf378acfe4f3bd15564e14db465a48ca8d6e76bccf55ba651fc"
+ },
+ "wg_peers": [
+  "KqZYweyVVpFBnDhFPZmeSKlva74GRT0Zfm9KqoIydVA=",
+  "T1tYnkFh1xpneVF5HIIKsCqM55Dms/8AsnAECViCgR4="
+ ]
+}

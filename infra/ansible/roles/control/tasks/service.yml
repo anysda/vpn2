@@ -1,0 +1,85 @@
+---
+- name: Юниты службы, сокета и таймера срока
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ control_units }}"
+  register: control_unit_files
+
+# UID вызывающего нужен на узле для отображения user-namespace и из запроса не
+# берётся. Список, который root правил руками, переживает повторный деплой.
+- name: Список разрешённых вызывающих
+  ansible.builtin.copy:
+    content: "[0,{{ control_panel_user.uid }}]\n"
+    dest: "{{ control_etc }}/callers.json"
+    force: false
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Права списка вызывающих
+  ansible.builtin.file:
+    path: "{{ control_etc }}/callers.json"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Каталоги конфигов VPN
+  ansible.builtin.command:
+    argv: [install, -d, -o, root, -g, root, -m, '0700', "{{ item }}"]
+    creates: "{{ item }}"
+  loop: "{{ control_config_dirs }}"
+
+- name: Каталог состояния службы
+  ansible.builtin.file:
+    path: /var/lib/vpn2-control
+    state: directory
+    owner: vpn2-control
+    group: vpn2-control
+    mode: '0700'
+
+# Служба перезапускается, только когда сменились её юниты, пулы или сам пакет:
+# отметка колеса лежит в venv и меняется вместе с ним, копия - рядом с venv.
+- name: Отметка пакета, на котором запущена служба
+  ansible.builtin.copy:
+    src: "{{ control_venv }}/.vpn2-wheel"
+    dest: "{{ control_package_mark }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: '0644'
+  register: control_package
+
+- name: Сокет слушает
+  ansible.builtin.systemd_service:
+    name: vpn2-control.socket
+    enabled: true
+    state: started
+    daemon_reload: "{{ control_unit_files is changed }}"
+
+- name: Служба перезапущена на новом коде  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    name: vpn2-control.service
+    state: restarted
+  when: control_unit_files is changed or control_pools is changed or control_package is changed
+
+- name: Служба отвечает
+  ansible.builtin.command:
+    argv: ["{{ control_vpn2 }}", control, serve, --probe]
+  changed_when: false
+
+# Срок доступа исполняется и здесь: остановленная панель не держит его открытым.
+- name: Таймер срока доступа
+  ansible.builtin.systemd_service:
+    name: vpn2-control-expiry.timer
+    enabled: true
+    state: started
+
+# Прежняя раскладка: копия пакета и запускалки рядом с ней.
+- name: Копия пакета прежних выпусков убрана
+  ansible.builtin.file:
+    path: /usr/local/lib/vpn2-control
+    state: absent

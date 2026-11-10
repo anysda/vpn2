@@ -258,5 +258,9 @@ def settings(resource, config, pools):
                     re.fullmatch(r'hy2-[a-z][a-z0-9-]{0,62}-(direct|warp)', route['outbound'])))
 
 
+# Список пулов, общий с панелью: на узел его кладёт роль control.
+POOLS = Path('/etc/vpn2-control/vpn-pools.json')
+
+
 def load_pools():
-    return json.loads(Path(__file__).with_name('vpn-pools.json').read_text())
+    return json.loads(POOLS.read_text())

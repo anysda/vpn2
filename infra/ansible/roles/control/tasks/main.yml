@@ -1,0 +1,105 @@
+---
+# Локальный API управления узлом: панель ходит в него через сокет.
+- name: Группа службы
+  ansible.builtin.group:
+    name: vpn2-control
+    system: true
+
+- name: Пользователь службы
+  ansible.builtin.user:
+    name: vpn2-control
+    system: true
+    group: vpn2-control
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Пользователь панели входит в группу сокета
+  ansible.builtin.user:
+    name: vpn2-panel
+    system: true
+    groups: [vpn2-control]
+    append: true
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+  register: control_panel_user
+
+- name: Пользователь бота
+  ansible.builtin.user:
+    name: vpn2-bot
+    system: true
+    home: /nonexistent
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Данные панели
+  ansible.builtin.import_tasks: data.yml
+
+- name: Каталог настроек службы
+  ansible.builtin.file:
+    path: "{{ control_etc }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Список пулов, общий с панелью
+  ansible.builtin.copy:
+    src: "{{ control_infra }}/../app/shared/vpn-pools.json"
+    dest: "{{ control_etc }}/vpn-pools.json"
+    owner: root
+    group: root
+    mode: '0644'
+  register: control_pools
+
+# Стадии и панель зовут vpn2-apply в любой момент: copy кладёт файл рядом и
+# переименовывает.
+- name: Исполнитель vpn2-apply - вход в пакет
+  ansible.builtin.copy:
+    content: |
+      #!/bin/sh
+      exec {{ control_vpn2 }} control apply "$@"
+    dest: /usr/local/sbin/vpn2-apply
+    owner: root
+    group: root
+    mode: '0755'
+
+# Доводит apply, прерванный с прошлого деплоя (3 - возвращён прежний конфиг),
+# и записывает работающее сейчас как последний годный конфиг.
+- name: Прерванный apply доведён
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/vpn2-apply, resume, "{{ item }}"]
+  loop: "{{ control_resources }}"
+  register: control_resume
+  changed_when: control_resume.rc == 3
+  failed_when: control_resume.rc not in [0, 3]
+
+- name: Работающий конфиг записан как последний годный
+  ansible.builtin.command:
+    argv: [/usr/local/sbin/vpn2-apply, mark, "{{ item }}"]
+  loop: "{{ control_resources }}"
+  changed_when: false
+  failed_when: false
+
+- name: Служба и сокет
+  ansible.builtin.import_tasks: service.yml
+
+- name: Каталог отметок для панели
+  ansible.builtin.file:
+    path: /etc/vpn2
+    state: directory
+    mode: '0755'
+
+- name: Отметка версии API для панели
+  ansible.builtin.copy:
+    content: "1\n"
+    dest: /etc/vpn2/control-api-version
+    mode: '0644'
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/29-control
+    force: false
+    mode: '0644'

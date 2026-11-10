@@ -3,7 +3,7 @@
 wg rejects the whole file when a [Peer] section has `PublicKey =` with no
 value or no PublicKey at all. The backup check (anysda-backup.sh
 --check-bundle) and verify-traffic.py must fail like wg does, not drop the
-section with its addresses. Stage 26 installs wg_conf.py where the node keeps
+section with its addresses. The backup role installs wg_conf.py where the node keeps
 its libraries, /usr/local/lib/anysda/, before the backup script that imports
 it, and restore runs the check with the module from there wherever restore
 itself lies.
@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -20,7 +19,7 @@ import unittest
 
 from test_wg_conf_allowedips_net import G4, G6, apply_gate
 from test_wg_conf_allowedips_prefix import (
-    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT, source)
+    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT)
 from wg_root import as_root
 
 LIB = ROOT / 'infra/lib'
@@ -103,16 +102,6 @@ def backup_check(text):
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
-def installs(text):
-    """Every `install` line of a stage script: (line number, destination)."""
-    found = []
-    for number, line in enumerate(text.split('\n')):
-        words = shlex.split(line.split(' #', 1)[0]) if line.strip().startswith('install ') else []
-        if words:
-            found.append((number, words[words.index('-t') + 1] if '-t' in words else words[-1], words))
-    return found
-
-
 @as_root
 class WgConfModuleTests(unittest.TestCase):
     """1 a [Peer] section without a public key, 2 wg_conf.py in the node's library directory, 0 the model."""
@@ -147,18 +136,13 @@ class WgConfModuleTests(unittest.TestCase):
         code, lines, err = backup_check(conf(CANONICAL))
         self.assertEqual((code, lines), (0, []), err)
 
-    def test_2a_stage_26_installs_module_in_node_lib_before_backup(self):
-        found = installs(source('infra/scripts/26-backup.sh'))
-        module = [(number, target) for number, target, words in found if any('wg_conf.py' in w for w in words)]
-        with self.subTest('installed'):
-            self.assertTrue(module, found)
-        with self.subTest('into /usr/local/lib/anysda'):
-            self.assertEqual([t for _, t in module if t.rstrip('/') not in (NODE_LIB, f'{NODE_LIB}/wg_conf.py')], [])
-        with self.subTest('not into /usr/local/bin'):
-            self.assertEqual([t for _, t in module if t.startswith('/usr/local/bin')], [])
-        backup = [number for number, target, _ in found if target == '/usr/local/bin/anysda-backup.sh']
-        with self.subTest('before anysda-backup.sh'):
-            self.assertTrue(backup and module and min(n for n, _ in module) < min(backup), (module, backup))
+    def test_2a_backup_role_installs_module_in_node_lib_before_backup(self):
+        role = ROOT / 'infra/ansible/roles/backup'
+        self.assertIn('\n  - lib/wg_conf.py\n', (role / 'defaults/main.yml').read_text().split('backup_node_lib:', 1)[1])
+        tasks = (role / 'tasks/install.yml').read_text()
+        module = tasks.index(f'dest: "{NODE_LIB}/{{{{ item | basename }}}}"')
+        self.assertLess(module, tasks.index('dest: "/usr/local/bin/{{ item }}"'))
+
 
 if __name__ == '__main__':
     unittest.main()

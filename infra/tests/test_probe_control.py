@@ -216,7 +216,7 @@ class ProbeControlTests(unittest.TestCase):
     def listen_path(self):
         """Where systemd puts vpn2-control.socket: the unit plus its drop-ins."""
         paths = []
-        units = [ROOT / 'infra/control/vpn2-control.socket']
+        units = [ROOT / 'infra/ansible/roles/control/templates/vpn2-control.socket.j2']
         for base in ('etc/systemd/system', 'run/systemd/system'):
             units += sorted((self.root / base / 'vpn2-control.socket.d').glob('*.conf'))
         for unit in units:

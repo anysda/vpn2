@@ -30,6 +30,13 @@ apply.main()
 '''
 
 
+# Что роль control делает после стадий VPN: доводит прерванный apply и
+# записывает работающий конфиг как последний годный.
+CONTROL_MARK = ('rc=0\n/usr/local/sbin/vpn2-apply resume openvpn || rc=$?\n'
+                '[[ $rc == 0 || $rc == 3 ]] || exit "$rc"\n'
+                '/usr/local/sbin/vpn2-apply mark openvpn >/dev/null 2>&1 || true\n')
+
+
 def between(text, start, end):
     return text[text.index(start):text.index(end, text.index(start))]
 
@@ -72,15 +79,12 @@ class OpenvpnManagementUserTests(unittest.TestCase):
     def deploy(self):
         """29-openvpn, then 29-control records last good, then 30-frontend switches the user."""
         stage = source('infra/scripts/29-openvpn.sh')
-        control = source('infra/scripts/29-control.sh')
         panel = source('infra/scripts/30-frontend.sh')
         steps = (
             between(stage, 'OVPN_CONTROL_USER=', 'mkdir -p /var/anysda/.stamps')
             + between(stage, '# ── 4. server.conf', 'svc_settle 2')
             + 'echo "== 29-control"\n'
-            + between(control, 'for resource in sing-box openvpn ikev2 wg; do',
-                      'install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.service"')
-            .replace('for resource in sing-box openvpn ikev2 wg; do', 'for resource in openvpn; do')
+            + CONTROL_MARK
             + 'echo "== 30-frontend"\n'
             + between(panel, 'systemctl stop anysda-ikev2-sync.timer', 'systemctl start anysda-ikev2-sync.timer'))
         script = source('infra/lib/anysda-svc.sh') + f'''

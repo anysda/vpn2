@@ -773,9 +773,6 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
-  if [[ "$stage" == "29-control" ]]; then
-    push "$DEPLOY_ROOT/control" "control" || return 1
-  fi
   # Код аварийки приходит образом из реестра (стадия 23), здесь только конфиг узла.
   if [[ "$stage" == '23-emergency' ]]; then
     push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
@@ -824,17 +821,6 @@ run_stage_on_host() {
       [[ -f "$lib" ]] || die "lib/$f не найден"
       push "$lib" "$f" || return 1
     done
-  fi
-
-  # 26-backup кладёт скрипты в /usr/local/bin на entry. Передаём их как
-  # вспомогательные файлы, сама стадия install'ит install -m 0755.
-  if [[ "$stage" == "26-backup" ]]; then
-    for f in anysda-backup.sh anysda-restore.sh anysda-backup-list.sh; do
-      local lib="$DEPLOY_ROOT/lib/$f"
-      [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f" || return 1
-    done
-    push "$DEPLOY_ROOT/lib/wg_conf.py" || return 1
   fi
 
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает

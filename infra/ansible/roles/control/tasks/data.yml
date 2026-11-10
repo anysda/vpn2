@@ -1,0 +1,75 @@
+---
+# Данные приложения живут в каталоге панели; прежние пути в /etc/anysda
+# остаются ссылками: их читают резервная копия и старые образы.
+- name: Каталоги данных панели
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: vpn2-panel
+    group: vpn2-panel
+    mode: '0700'
+  loop: ["{{ control_data }}", "{{ control_data }}/runtime"]
+
+- name: Прежние файлы настроек панели
+  ansible.builtin.stat:
+    path: "/etc/anysda/{{ item }}"
+  loop: "{{ control_runtime_files }}"
+  register: control_runtime_old
+
+- name: Настройки панели перенесены в её каталог
+  ansible.builtin.copy:
+    src: "/etc/anysda/{{ item.item }}"
+    dest: "{{ control_data }}/runtime/{{ item.item }}"
+    remote_src: true
+    force: false
+    mode: preserve
+  loop: "{{ control_runtime_old.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists and item.stat.isreg
+
+- name: Прежние пути настроек - ссылки
+  ansible.builtin.file:
+    src: "{{ control_data }}/runtime/{{ item }}"
+    dest: "/etc/anysda/{{ item }}"
+    state: link
+    force: true
+    follow: false
+  loop: "{{ control_runtime_files }}"
+
+- name: Настройки в каталоге панели принадлежат ей
+  ansible.builtin.file:
+    path: "{{ control_data }}/runtime"
+    state: directory
+    recurse: true
+    follow: false
+    owner: vpn2-panel
+    group: vpn2-panel
+
+- name: Файлы базы панели
+  ansible.builtin.find:
+    paths: ["{{ control_data }}"]
+    patterns: "{{ control_panel_files }}"
+    file_type: any
+  register: control_data_files
+
+- name: Владелец базы - пользователь панели
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: vpn2-panel
+    group: vpn2-panel
+    follow: false
+  loop: "{{ control_data_files.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Настройки бота
+  ansible.builtin.stat:
+    path: "{{ control_data }}/runtime/telegram-runtime.json"
+  register: control_bot_runtime
+
+- name: Настройки бота читает его группа
+  ansible.builtin.file:
+    path: "{{ control_data }}/runtime/telegram-runtime.json"
+    mode: '0640'
+  when: control_bot_runtime.stat.exists

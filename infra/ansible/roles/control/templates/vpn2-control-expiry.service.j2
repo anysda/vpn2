@@ -5,7 +5,7 @@ After=vpn2-control.socket
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I /usr/local/lib/vpn2-control/launcher.py --expire
+ExecStart={{ control_vpn2 }} control serve --expire
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

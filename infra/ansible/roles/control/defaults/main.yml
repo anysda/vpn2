@@ -1,0 +1,24 @@
+---
+control_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+# Служба, таймер срока и vpn2-apply - входы в пакет vpn2 из venv деплоя.
+control_venv: /opt/vpn2/venv
+control_vpn2: "{{ control_venv }}/bin/vpn2"
+control_etc: /etc/vpn2-control
+control_package_mark: /opt/vpn2/control.wheel
+control_data: /var/lib/anysda-vpn2
+control_units:
+  - vpn2-control.service
+  - vpn2-control.socket
+  - vpn2-control-expiry.service
+  - vpn2-control-expiry.timer
+# Данные панели: служба и резервная копия читают их и при остановленной панели.
+control_panel_files:
+  - db.sqlite
+  - db.sqlite-wal
+  - db.sqlite-shm
+  - access-worker.sqlite
+  - access-worker.sqlite-journal
+control_runtime_files: [sso-runtime.json, telegram-runtime.json]
+# Каталоги конфигов, которые служба правит: на первой установке их ещё нет.
+control_config_dirs: [/etc/wireguard, /etc/openvpn/server, /etc/swanctl/conf.d]
+control_resources: [sing-box, openvpn, ikev2, wg]

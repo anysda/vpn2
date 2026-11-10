@@ -15,7 +15,7 @@ import type * as Schema from '../server/database/schema'
 import type * as Database from '../server/database/client'
 
 test.describe('control-backlog', () => {
-  const infra = resolve(process.env.E2E_SERVER_ROOT || '.', '../infra/control')
+  const infra = resolve(process.env.E2E_SERVER_ROOT || '.', '../infra/ansible/roles/control/templates')
   const source = resolve(process.env.E2E_SERVER_ROOT || '.', '../infra/vpn2/src')
 
   // Настоящий serve() из пакета vpn2 (vpn2.control.server): соединения по одному, очередь
@@ -39,7 +39,7 @@ with socket.socket(socket.AF_UNIX) as listener:
 `
 
   test('всплеск запросов к сервису управления сверх очереди listen не теряется', async () => {
-    const backlog = Number(/^Backlog=(\d+)$/m.exec(readFileSync(join(infra, 'vpn2-control.socket'), 'utf8'))![1])
+    const backlog = Number(/^Backlog=(\d+)$/m.exec(readFileSync(join(infra, 'vpn2-control.socket.j2'), 'utf8'))![1])
     const directory = mkdtempSync(join(tmpdir(), 'vpn2-control-'))
     const path = join(directory, 'control.sock')
     const service = spawn('python3', ['-c', SERVICE, source, path, String(backlog)], { stdio: ['ignore', 'pipe', 'inherit'] })

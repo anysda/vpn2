@@ -340,9 +340,8 @@ def main():
         return
     if sys.argv[1:] == ['--panel']:
         expect('check.run', {'check': 'readiness'})
-        for path in Path('/usr/local/lib/vpn2-control').iterdir():
-            assert not os.access(path, os.W_OK), path.name
-        assert not os.access('/usr/local/lib/vpn2-control', os.W_OK)
+        for path in ('/opt/vpn2/venv', '/usr/local/sbin/vpn2-apply', '/etc/vpn2-control/vpn-pools.json'):
+            assert not os.access(path, os.W_OK), path
         assert not os.access('/etc/vpn2-control/callers.json', os.W_OK)
         assert not os.access('/etc/openvpn/server/pki/ca.key', os.R_OK)
         print('panel: sources/templates/validation read-only; CA key unreadable')

@@ -98,7 +98,7 @@ IN
     dk exec "$name" mkdir -p /etc/vpn2-control /usr/local/lib/vpn2-control
     dk exec "$name" touch /etc/vpn2-control/api-managed
     dk cp "$STAND_REPO_DIR/infra/vpn2/src/vpn2" "$name:/usr/local/lib/vpn2-control/vpn2"
-    dk cp "$STAND_APP_DIR/shared/vpn-pools.json" "$name:/usr/local/lib/vpn2-control/vpn2/control/vpn-pools.json"
+    dk cp "$STAND_APP_DIR/shared/vpn-pools.json" "$name:/etc/vpn2-control/vpn-pools.json"
     dk cp "$STAND_APP_DIR/e2e/support/control-service.py" "$name:/tmp/control-service.py"
     dk exec -d "$name" python3 /tmp/control-service.py
     awk '/^cat > .*anysda-ikev2-sync.py.*PYEOF/ {f=1; next} f && /^PYEOF$/ {exit} f' \

@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-CONTROL = ROOT / 'infra/control'
+CONTROL = ROOT / 'infra/ansible/roles/control'
 
 
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
@@ -653,12 +653,12 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual((result['latest'], len(result['removed']), sas), ([], 1, {8: 'device8'}))
 
     def test_deploy_runs_the_expiry_timer(self):
-        stage = (ROOT / 'infra/scripts/29-control.sh').read_text()
-        self.assertIn('systemctl enable --now vpn2-control-expiry.timer', stage)
-        timer = (CONTROL / 'vpn2-control-expiry.timer').read_text()
+        tasks = (CONTROL / 'tasks/service.yml').read_text()
+        self.assertIn('name: vpn2-control-expiry.timer\n    enabled: true\n    state: started', tasks)
+        timer = (CONTROL / 'templates/vpn2-control-expiry.timer.j2').read_text()
         self.assertIn('OnUnitActiveSec=30s', timer)
-        service = (CONTROL / 'vpn2-control-expiry.service').read_text()
-        self.assertIn('launcher.py --expire', service)
+        service = (CONTROL / 'templates/vpn2-control-expiry.service.j2').read_text()
+        self.assertIn('control serve --expire', service)
         # A restore stops the socket; the timer must not start it again.
         self.assertNotIn('Requires=vpn2-control.socket', service)
 
@@ -674,10 +674,9 @@ class ControlTests(unittest.TestCase):
     def test_deploy_installs_service_in_pipeline(self):
         deploy = (ROOT / 'infra/deploy.sh').read_text()
         self.assertIn('run_stage 29-control', deploy)
-        stage = (ROOT / 'infra/scripts/29-control.sh').read_text()
-        self.assertIn('systemctl enable --now vpn2-control.socket', stage)
-        self.assertIn('install -o root -g root -m 0644', stage)
-        service = (CONTROL / 'vpn2-control.service').read_text()
+        tasks = (CONTROL / 'tasks/service.yml').read_text()
+        self.assertIn('name: vpn2-control.socket\n    enabled: true\n    state: started', tasks)
+        service = (CONTROL / 'templates/vpn2-control.service.j2').read_text()
         self.assertIn('User=vpn2-control', service)
         self.assertIn('ProtectSystem=strict', service)
         self.assertNotIn('CAP_SYS_ADMIN', service)
@@ -794,7 +793,7 @@ class ControlTests(unittest.TestCase):
             self.assertNotIn('-v /etc/' + directory, panel)
         self.assertNotIn('-v /etc/anysda:/etc/anysda', panel)
         self.assertLess(panel.index('scripts/control-probe.mjs'), panel.index('\npanel_begin'))
-        socket_unit = (CONTROL / 'vpn2-control.socket').read_text()
+        socket_unit = (CONTROL / 'templates/vpn2-control.socket.j2').read_text()
         self.assertIn('PartOf=vpn2-control.service', socket_unit)
 
     def test_image_probe_requires_every_method_the_panel_calls(self):

@@ -38,6 +38,11 @@ apply.main()
 '''
 
 
+# Что роль control делает после стадий VPN: доводит прерванный apply и
+# записывает работающий конфиг как последний годный.
+CONTROL_MARK = ('rc=0\n/usr/local/sbin/vpn2-apply resume openvpn || rc=$?\n[[ $rc == 0 || $rc == 3 ]] || exit "$rc"\n/usr/local/sbin/vpn2-apply mark openvpn >/dev/null 2>&1 || true\n')
+
+
 def between(text, start, end):
     return text[text.index(start):text.index(end, text.index(start))]
 
@@ -105,10 +110,7 @@ swanctl() {{ :; }}
         steps = between(stage, 'OVPN_CONTROL_USER=', 'mkdir -p /var/anysda/.stamps') \
             + between(stage, '# ── 4. server.conf', '# ── 6. tun0')
         if control:
-            steps += 'echo "== 29-control"\n' + between(
-                source('infra/scripts/29-control.sh'), 'for resource in sing-box openvpn ikev2 wg; do',
-                'install -o root -g root -m 0644 "$CONTROL_SOURCE/vpn2-control.service"') \
-                .replace('for resource in sing-box openvpn ikev2 wg; do', 'for resource in openvpn; do')
+            steps += 'echo "== 29-control"\n' + CONTROL_MARK
         return self.bash(self.header(port) + 'echo "== 29-openvpn"\n' + self.rooted(steps))
 
     def deployed(self, port, control=True):

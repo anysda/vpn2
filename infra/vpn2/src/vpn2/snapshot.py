@@ -1,11 +1,19 @@
-"""Host snapshot comparison: baseline subtraction, ignore rules, diff, storage (stdlib only).
+"""Слепок хоста: сбор, вычитание базы, правила игнорирования, diff, хранение (только stdlib).
 
-A snapshot is {section: {name: {field: value}}} plus the service key "schema".
+Слепок - {раздел: {имя: {поле: значение}}} плюс служебный ключ "schema".
 """
 import fnmatch
+import glob
+import grp
 import gzip
+import hashlib
 import io
 import json
+import os
+import pwd
+import re
+import stat
+import subprocess
 from pathlib import Path
 
 from vpn2 import fsutil
@@ -16,18 +24,17 @@ _MIN_REASON = 10
 
 
 class SnapshotError(Exception):
-    """A snapshot or ignore file is malformed."""
+    """Слепок или файл игнорирования повреждён."""
 
 
 def load_ignore(path):
-    """Read a YAML list of {section, name, field, reason} ignore records.
+    """Прочитать YAML-список правил игнорирования {section, name, field, reason}.
 
-    name is an fnmatch.fnmatchcase mask; its "*" also crosses "/", so
-    /etc/wireguard/*.conf matches /etc/wireguard/sub/x.conf too.
-    field is a field name or "*" (the whole record, including its presence).
-    A missing or extra key, a reason shorter than 10 characters or a file that
-    is not a list raises SnapshotError naming the record number (from 1).
-    An empty file gives an empty list.
+    name - маска fnmatch.fnmatchcase; её "*" переходит и через "/", поэтому
+    /etc/wireguard/*.conf подходит и к /etc/wireguard/sub/x.conf.
+    field - имя поля или "*" (вся запись, включая её наличие).
+    Нет ключа, лишний ключ, reason короче 10 символов или файл не список -
+    SnapshotError с номером записи (с 1). Пустой файл даёт пустой список.
     """
     import yaml
     try:
@@ -62,10 +69,10 @@ def _sections(snapshot):
 
 
 def subtract(snapshot, baseline):
-    """Keep records absent from baseline or differing from it.
+    """Оставить записи, которых нет в базе или которые от неё отличаются.
 
-    A record present in baseline and gone from snapshot stays as {"absent": True}.
-    Inputs are not modified.
+    Запись из базы, пропавшая из слепка, остаётся как {"absent": True}.
+    Входные данные не меняются.
     """
     result = {}
     if SCHEMA_KEY in snapshot:
@@ -90,7 +97,7 @@ def _matches(rule, section, name):
 
 
 def _visible(section, name, record, ignore):
-    """Record without ignored fields, or None when a "*" rule hides it entirely."""
+    """Запись без игнорируемых полей или None, если правило "*" скрывает её целиком."""
     hidden = set()
     for rule in ignore:
         if not _matches(rule, section, name):
@@ -106,11 +113,11 @@ def _dumps(value):
 
 
 def diff(old, new, ignore=()):
-    """Sorted list of differences between two snapshots; empty when equal.
+    """Отсортированный список различий двух слепков; пустой, если равны.
 
-    Lines: "<section> <name>: нет в текущем", "<section> <name>: лишнее в текущем",
-    "<section> <name> <field>: <old> -> <new>" (a side without the field shows нет).
-    A different schema gives the single line "schema: 1 -> 2" and nothing else.
+    Строки: "<section> <name>: нет в текущем", "<section> <name>: лишнее в текущем",
+    "<section> <name> <field>: <old> -> <new>" (у стороны без поля - нет).
+    Разная схема даёт единственную строку "schema: 1 -> 2" и ничего больше.
     """
     if old.get(SCHEMA_KEY) != new.get(SCHEMA_KEY):
         return [f'{SCHEMA_KEY}: {_dumps(old.get(SCHEMA_KEY))} -> {_dumps(new.get(SCHEMA_KEY))}']
@@ -138,7 +145,7 @@ def diff(old, new, ignore=()):
 
 
 def unused_ignore(old, new, ignore):
-    """Ignore records that match no name (and field) in old or in new."""
+    """Правила игнорирования, не совпавшие ни с одним именем (и полем) ни в old, ни в new."""
     unused = []
     for rule in ignore:
         used = False
@@ -154,7 +161,7 @@ def unused_ignore(old, new, ignore):
 
 
 def dump(snapshot, path):
-    """Write snapshot as sorted JSON; a .gz path is gzipped with mtime 0 (stable bytes)."""
+    """Записать слепок как JSON с отсортированными ключами; путь .gz сжимается с mtime 0 (байты стабильны)."""
     raw = json.dumps(snapshot, sort_keys=True, ensure_ascii=False, indent=1).encode('utf-8')
     if str(path).endswith('.gz'):
         buffer = io.BytesIO()
@@ -165,8 +172,294 @@ def dump(snapshot, path):
 
 
 def load(path):
-    """Read a snapshot written by dump."""
+    """Прочитать слепок, записанный dump."""
     raw = Path(path).read_bytes()
     if str(path).endswith('.gz'):
         raw = gzip.decompress(raw)
     return json.loads(raw.decode('utf-8'))
+
+
+SCHEMA = 1
+_TIMEOUT = 60
+_NOT_INSTALLED = 127
+_UNITS_TYPES = 'service,timer,socket,path,mount'
+_SECRET_NAME = re.compile('PASS|SECRET|TOKEN|KEY|PRIVATE|HASH', re.IGNORECASE)
+_COUNTERS = re.compile(r'packets \d+ bytes \d+')
+_USERS = re.compile(r'\("([^"]*)",pid=')
+_VERIFY_REPORT = 'var/lib/anysda/verify-report.json'
+
+
+def _run(argv):
+    """Запустить команду: (код, stdout); stderr отброшен, LC_ALL=C, предел 60 с."""
+    try:
+        done = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=_TIMEOUT,
+            env=dict(os.environ, LC_ALL='C'), check=False)
+    except FileNotFoundError:
+        return _NOT_INSTALLED, ''
+    except PermissionError:
+        return 126, ''
+    except subprocess.TimeoutExpired:
+        return 124, ''
+    return done.returncode, done.stdout.decode('utf-8', 'replace')
+
+
+def _failed(argv, code):
+    return {'_error': {'reason': f'{" ".join(argv)}: код {code}'}}
+
+
+def _owner(uid, gid):
+    try:
+        user = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        user = str(uid)
+    try:
+        group = grp.getgrgid(gid).gr_name
+    except KeyError:
+        group = str(gid)
+    return f'{user}:{group}'
+
+
+def _sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_record(path, info):
+    kind = ('file' if stat.S_ISREG(info.st_mode) else 'dir' if stat.S_ISDIR(info.st_mode)
+            else 'link' if stat.S_ISLNK(info.st_mode) else 'other')
+    record = {'type': kind, 'mode': format(stat.S_IMODE(info.st_mode), '04o'),
+              'owner': _owner(info.st_uid, info.st_gid)}
+    try:
+        if kind == 'file':
+            record['sha256'] = _sha256(path)
+        elif kind == 'link':
+            record['target'] = os.readlink(path)
+    except OSError as error:
+        record['error'] = error.strerror or type(error).__name__
+    return record
+
+
+def _walk(path, root, records):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return
+    name = '/' + os.path.relpath(path, root).replace(os.sep, '/')
+    record = _file_record(path, info)
+    if stat.S_ISDIR(info.st_mode):
+        try:
+            children = sorted(os.listdir(path))
+        except OSError as error:
+            record['error'] = error.strerror or type(error).__name__
+            children = []
+    else:
+        children = []
+    records[name] = record
+    for child in children:
+        if child != '__pycache__':
+            _walk(os.path.join(path, child), root, records)
+
+
+def _files(root):
+    """Файлы, каталоги и ссылки под /etc, /opt/anysda*, /var/lib/anysda*, /var/lib/vpn2* в root."""
+    records = {}
+    roots = [os.path.join(root, 'etc')]
+    for mask in ('opt/anysda*', 'var/lib/anysda*', 'var/lib/vpn2*'):
+        roots.extend(sorted(glob.glob(os.path.join(root, mask))))
+    for path in roots:
+        _walk(path, root, records)
+    return records
+
+
+def _table(lines):
+    """Строки без шапки: [(колонки)]; ведущий маркер "●"/"*" отбрасывается."""
+    rows = []
+    for line in lines.splitlines():
+        columns = line.split()
+        if columns and columns[0] in ('●', '*'):
+            columns = columns[1:]
+        if columns:
+            rows.append(columns)
+    return rows
+
+
+def _units(run):
+    """Юниты systemd: enabled из list-unit-files, active из list-units."""
+    files = ['systemctl', 'list-unit-files', '--no-legend', '--plain', f'--type={_UNITS_TYPES}']
+    loaded = ['systemctl', 'list-units', '--all', '--no-legend', '--plain',
+              f'--type={_UNITS_TYPES}']
+    records = {}
+    for argv, field, column in ((files, 'enabled', 1), (loaded, 'active', 2)):
+        code, out = run(argv)
+        if code != 0:
+            return _failed(argv, code)
+        for columns in _table(out):
+            if len(columns) > column:
+                records.setdefault(columns[0], {})[field] = columns[column]
+    return records
+
+
+def _ports(run):
+    """Слушающие сокеты: "tcp 0.0.0.0:443" и имена процессов."""
+    argv = ['ss', '-H', '-lntu', '-p']
+    code, out = run(argv)
+    if code != 0:
+        return _failed(argv, code)
+    names = {}
+    for columns in _table(out):
+        if len(columns) < 5:
+            continue
+        found = names.setdefault(f'{columns[0]} {columns[4]}', set())
+        found.update(_USERS.findall(' '.join(columns[5:])))
+    return {name: {'process': ','.join(sorted(found))} for name, found in names.items()}
+
+
+def _nft(out):
+    records = {}
+    depth = 0
+    table = chain = None
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.endswith('{'):
+            words = line.split()
+            if depth == 0 and words[0] == 'table' and len(words) >= 3:
+                table = f'{words[1]} {words[2]}'
+            elif depth == 1 and words[0] == 'chain' and table:
+                chain = f'nft {table} {words[1]}'
+                records[chain] = {'rules': []}
+            elif depth == 2 and chain:
+                records[chain]['rules'].append(_COUNTERS.sub('packets 0 bytes 0', line))
+            depth += 1
+        elif line == '}':
+            depth -= 1
+            if depth == 1:
+                chain = None
+            elif depth == 0:
+                table = None
+        elif depth == 2 and chain:
+            records[chain]['rules'].append(_COUNTERS.sub('packets 0 bytes 0', line))
+    return records
+
+
+def _firewall(run):
+    """nftables по цепочкам и вывод ufw."""
+    records = {}
+    errors = []
+    for argv in (['nft', 'list', 'ruleset'], ['ufw', 'status', 'verbose']):
+        code, out = run(argv)
+        if code == _NOT_INSTALLED:
+            continue
+        if code != 0:
+            errors.append(_failed(argv, code)['_error']['reason'])
+        elif argv[0] == 'nft':
+            records.update(_nft(out))
+        else:
+            records['ufw'] = {'status': [line.strip() for line in out.splitlines() if line.strip()]}
+    if errors:
+        records['_error'] = {'reason': '; '.join(errors)}
+    return records
+
+
+def _container(item):
+    config = item.get('Config') or {}
+    host = item.get('HostConfig') or {}
+    ports = []
+    for container_port, bindings in ((item.get('NetworkSettings') or {}).get('Ports') or {}).items():
+        for binding in bindings or []:
+            ports.append(f'{binding.get("HostIp", "")}:{binding.get("HostPort", "")}->{container_port}')
+    mounts = [f'{mount.get("Source", "")}:{mount.get("Destination", "")}:'
+              f'{"rw" if mount.get("RW", True) else "ro"}' for mount in item.get('Mounts') or []]
+    env = []
+    for entry in config.get('Env') or []:
+        name, _, value = entry.partition('=')
+        env.append(f'{name}=<скрыто>' if _SECRET_NAME.search(name) else f'{name}={value}')
+    return {
+        'image': config.get('Image', ''), 'image_id': item.get('Image', ''),
+        'state': (item.get('State') or {}).get('Status', ''),
+        'restart': (host.get('RestartPolicy') or {}).get('Name', ''),
+        'network': host.get('NetworkMode', ''),
+        'ports': sorted(ports), 'mounts': sorted(mounts), 'env': sorted(env),
+    }
+
+
+def _containers(run):
+    """Контейнеры docker; секретные значения env скрыты."""
+    argv = ['docker', 'ps', '-a', '--format', '{{.Names}}']
+    code, out = run(argv)
+    if code == _NOT_INSTALLED:
+        return {}
+    if code != 0:
+        return _failed(argv, code)
+    names = out.split()
+    if not names:
+        return {}
+    argv = ['docker', 'inspect'] + names
+    code, out = run(argv)
+    if code != 0:
+        return _failed(argv, code)
+    try:
+        items = json.loads(out)
+    except ValueError:
+        return {'_error': {'reason': 'docker inspect: вывод не разобран'}}
+    return {item.get('Name', '').lstrip('/'): _container(item) for item in items}
+
+
+def _wg(run):
+    """WireGuard: порт и allowed-ips пиров; ключи не попадают в слепок."""
+    argv = ['wg', 'show', 'all', 'dump']
+    code, out = run(argv)
+    if code == _NOT_INSTALLED:
+        return {}
+    if code != 0:
+        return _failed(argv, code)
+    records = {}
+    for line in out.splitlines():
+        fields = line.split('\t')
+        if len(fields) == 5:
+            records.setdefault(fields[0], {'peers': []})['listen_port'] = fields[3]
+        elif len(fields) >= 5:
+            records.setdefault(fields[0], {'peers': []})['peers'].append(fields[4])
+    for record in records.values():
+        record['peers'].sort()
+    return records
+
+
+def _verify(root):
+    """Результаты проверок из отчёта 99-verify.sh: "<component> <check>" -> result."""
+    path = os.path.join(root, _VERIFY_REPORT)
+    try:
+        with open(path, encoding='utf-8') as stream:
+            report = json.load(stream)
+        return {f'{row["component"]} {row["check"]}': {'result': row['result']}
+                for row in report['checks']}
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'_error': {'reason': f'/{_VERIFY_REPORT}: отчёт не разобран'}}
+
+
+def collect(root='/', run=None):
+    """Слепок живого хоста: schema 1 и семь разделов.
+
+    root - префикс чтения файлов (имена записей всегда от "/"); run(argv) -> (код, stdout).
+    Раздел, чья команда вернула не 0, содержит запись "_error"; docker, wg, nft, ufw
+    с кодом 127 (не установлены) дают пустой раздел.
+    """
+    run = run or _run
+    root = str(root)
+    return {
+        SCHEMA_KEY: SCHEMA,
+        'files': _files(root),
+        'units': _units(run),
+        'ports': _ports(run),
+        'firewall': _firewall(run),
+        'containers': _containers(run),
+        'wg': _wg(run),
+        'verify': _verify(root),
+    }

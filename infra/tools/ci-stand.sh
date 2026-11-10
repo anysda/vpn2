@@ -501,7 +501,8 @@ push_tree() {
         # поток из ls-files: секретов и состояния в нём нет, они остаются на месте;
         # отслеживаемый infra/secrets/.gitignore ложится как в чистой установке
         git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml'
-        git -C "$REPO_ROOT" diff -z --name-only --diff-filter=D "${tag:?тег}" HEAD \
+        # --no-renames: переименованный после тега файл считается удалённым, старое имя стирается
+        git -C "$REPO_ROOT" diff -z --name-only --no-renames --diff-filter=D "${tag:?тег}" HEAD \
           | ssh_node "$ENTRY" 'xargs -0 -r -I{} rm -f -- "/opt/anysda-vpn2/{}"'
         return 0 ;;
     *) die "push_tree: неизвестный режим $mode" ;;
@@ -866,14 +867,15 @@ panel_api() {
 # перезапусков. /health на паузе не отвечает (VPN2-794) - не проверяется.
 cmd_bot_fake_token() {
   local fake='1234567890:stand-fake-token-not-real-000000000'
-  local t0=$SECONDS waited rc_before rc_after running
+  local t0=$SECONDS waited rc_before rc_after running since
   ssh_node "$ENTRY" 'curl -fsS http://127.0.0.1:8877/health' >/dev/null \
     || die "бот до смены токена не отвечает на /health"
+  since=$(ssh_node "$ENTRY" 'date -u +%Y-%m-%dT%H:%M:%SZ')
   panel_api PUT /api/admin/telegram "{\"bot_token\": \"$fake\", \"chat_id\": \"1\"}" >/dev/null \
     || die "PUT /api/admin/telegram не прошёл"
   t0=$SECONDS
-  until ssh_node "$ENTRY" 'docker logs anysda-tgbot 2>&1 | grep -q InvalidToken'; do
-    (( SECONDS - t0 < 120 )) || die "за 120 с в журнале бота нет InvalidToken: $(ssh_node "$ENTRY" 'docker logs --tail 20 anysda-tgbot 2>&1')"
+  until ssh_node "$ENTRY" "docker logs --since '$since' anysda-tgbot 2>&1 | grep -q InvalidToken"; do
+    (( SECONDS - t0 < 120 )) || die "за 120 с в журнале бота нет InvalidToken: $(ssh_node "$ENTRY" "docker logs --since '$since' --tail 20 anysda-tgbot 2>&1")"
     sleep 3
   done
   waited=$((SECONDS - t0))
@@ -883,12 +885,14 @@ cmd_bot_fake_token() {
   rc_after=$(ssh_node "$ENTRY" "docker inspect -f '{{.RestartCount}}' anysda-tgbot")
   [[ $running == true && $rc_after == "$rc_before" ]] \
     || die "бот не на паузе: Running=$running, RestartCount $rc_before -> $rc_after"
-  log "бот с поддельным токеном: InvalidToken через $waited с, RestartCount $rc_after, контейнер работает"
+  panel_api GET /api/admin/telegram >/dev/null || die "панель не отвечает после смены токена бота"
+  log "бот с поддельным токеном: InvalidToken через $waited с, RestartCount $rc_after, контейнер работает, панель отвечает"
 }
 
 # Эталонный архив бэкапа (VPN2-751): на развёрнутом стенде создаётся известный
 # набор данных, снимается anysda-backup.sh; архив и файл ожиданий кладутся в
-# <каталог>. Токен ненастоящий; пароли стенда и панели в файлы не попадают.
+# <каталог>. Токен ненастоящий; архив зашифрован открытой фразой стенда и несёт
+# данные одноразового стенда (в том числе хэш пароля панели), настоящих секретов в нём нет.
 cmd_backup_fixture() {
   local out=${1:?каталог для эталона} name json id dir newest ret
   local token='1234567890:stand-etalon-archive-token-0000000'

@@ -43,6 +43,7 @@ def deploy():
         (root / 'scripts/99-verify.sh').chmod(0o755)
         (root / 'lib/ssh.sh').write_text(source('infra/lib/ssh.sh'))
         (root / 'lib/anysda-svc.sh').write_text('apt_prepare() { :; }\n')
+        (root / 'lib/ansible-venv.sh').write_text(source('infra/lib/ansible-venv.sh'))
         (root / 'lib/fw-guard.sh').write_text('exit 0\n')
         for path in STUBS:
             (root / path).touch()

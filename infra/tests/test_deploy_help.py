@@ -14,7 +14,8 @@ class DeployHelpTests(unittest.TestCase):
                 with self.subTest(flag=flag, config=config), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
                     (root / 'infra/lib').mkdir(parents=True)
-                    for name in ('deploy.sh', 'infra/deploy.sh', 'infra/lib/ssh.sh', 'infra/lib/anysda-svc.sh'):
+                    for name in ('deploy.sh', 'infra/deploy.sh', 'infra/lib/ssh.sh', 'infra/lib/anysda-svc.sh',
+                                 'infra/lib/ansible-venv.sh'):
                         shutil.copy2(ROOT / name, root / name)
                     # A converter call must fail even when config.yaml exists.
                     (root / 'infra/lib/config2env.py').write_text('raise RuntimeError("converter called")\n')

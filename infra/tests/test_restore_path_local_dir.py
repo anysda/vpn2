@@ -36,7 +36,7 @@ class TestRestoreLocalArchivePath(unittest.TestCase):
             (root / sub).mkdir(parents=True)
         for sub in ('etc/anysda', 'var/lib/anysda-vpn2', 'usr/local/bin', 'stub'):
             (entry / sub).mkdir(parents=True)
-        for path in ('infra/deploy.sh', 'infra/lib/deploy-release.sh'):
+        for path in ('infra/deploy.sh', 'infra/lib/deploy-release.sh', 'infra/lib/ansible-venv.sh'):
             (root / path.removeprefix('infra/')).write_text((ROOT / path).read_text())
         (root / 'lib/anysda-svc.sh').write_text('')
         for tool in ('ssh', 'scp', 'sshpass', 'envsubst', 'curl', 'rsync', 'openssl'):

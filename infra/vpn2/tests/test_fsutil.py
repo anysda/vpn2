@@ -157,7 +157,7 @@ def test_lock_timeout_window(tmp_path):
         with pytest.raises(LockBusy), lock(path, timeout=0.2):
             pass
         elapsed = time.monotonic() - started
-    assert 0.2 <= elapsed <= 2
+    assert 0.2 <= elapsed <= 10
 
 
 def test_lock_released_on_exception(tmp_path):

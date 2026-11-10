@@ -150,6 +150,26 @@ def test_all_typed_fields_are_read():
     assert differences('all', oracle(text), cfg) == []
 
 
+def test_absent_boolean_keys_keep_old_defaults():
+    base = 'entry:\n  host: h\n  password: p\n'
+    sso = config.loads(base + 'sso:\n  enabled: true\n').sso
+    assert sso.auto_redirect is True
+    assert sso.password_login is True
+    hop = config.loads(base + 'ports:\n  hy2_hop:\n    direct: 1-2\n').ports.hy2_hop
+    assert hop == config.Hy2Hop(enabled=True, direct='1-2', warp='25000-29999',
+                                mgmt='30000-30999', interval='5s')
+    explicit = config.loads(base + 'sso:\n  enabled: true\n  auto_redirect: false\n'
+                            '  password_login: no\nports:\n  hy2_hop:\n    enabled: false\n')
+    assert explicit.sso.auto_redirect is False
+    assert explicit.sso.password_login is False
+    assert explicit.ports.hy2_hop.enabled is False
+    assert config.loads(base).ports.hy2_hop is None
+    old = dict(ORACLE.HY2_HOP_DEFAULTS)
+    old['enabled'] = old['enabled'] == '1'
+    new = config.Hy2Hop()
+    assert old == {k: getattr(new, k) for k in old}
+
+
 @pytest.mark.parametrize('text', ['', '\n# только комментарий\n', '- a\n- b\n', 'просто строка\n',
                                   'entry: [a]\n', 'entry:\n  host: a\n  host: b\n',
                                   'entry:\n  hots: a\n', 'sso:\n  enabled: maybe\n',

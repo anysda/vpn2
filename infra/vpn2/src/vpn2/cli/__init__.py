@@ -25,7 +25,7 @@ def _commands():
     for name in _names():
         try:
             mod = _load(name)
-        except Exception:
+        except (Exception, SystemExit):
             # сломанный модуль остаётся командой: ошибку покажет её вызов
             found[name.replace("_", "-")] = name
             continue
@@ -52,7 +52,12 @@ def main(argv=None):
         sys.stderr.write(f"vpn2: неизвестная команда {argv[0]}\n" + _usage(cmds))
         return 2
     try:
-        rc = _load(name).main(argv[1:])
+        main = _load(name).main
+    except (Exception, SystemExit) as exc:
+        sys.stderr.write(f"vpn2 {argv[0]}: {exc!r}\n")
+        return 1
+    try:
+        rc = main(argv[1:])
     except Exception as exc:
         sys.stderr.write(f"vpn2 {argv[0]}: {exc!r}\n")
         return 1

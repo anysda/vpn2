@@ -82,3 +82,13 @@ def test_version_matches_pyproject():
         check=True,
     )
     assert res.stdout == want + "\n"
+
+
+def test_module_raising_system_exit_does_not_break_neighbours(extra, capsys):
+    write(extra, "quitter", "raise SystemExit(3)\n")
+    assert cli.main(["version"]) == 0
+    capsys.readouterr()
+    assert cli.main(["--help"]) == 0
+    assert "version" in capsys.readouterr().out
+    assert cli.main(["quitter"]) == 1
+    assert "quitter" in capsys.readouterr().err

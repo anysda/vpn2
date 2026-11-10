@@ -78,11 +78,11 @@ class Exit:
 
 @dataclass(frozen=True)
 class Hy2Hop:
-    enabled: bool = False
-    direct: str = ''
-    warp: str = ''
-    mgmt: str = ''
-    interval: str = ''
+    enabled: bool = True
+    direct: str = '20000-24999'
+    warp: str = '25000-29999'
+    mgmt: str = '30000-30999'
+    interval: str = '5s'
 
 
 @dataclass(frozen=True)
@@ -110,8 +110,8 @@ class Sso:
     client_id: str = ''
     client_secret: str = ''
     allowed_subs: str = ''
-    auto_redirect: bool = False
-    password_login: bool = False
+    auto_redirect: bool = True
+    password_login: bool = True
     label: str = ''
     discovery_url: str = ''
 

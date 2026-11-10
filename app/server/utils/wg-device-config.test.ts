@@ -173,14 +173,14 @@ describe('админ send-wg-to-tg: секрет бота и событие', ()
     expect(await run(botWgConfig, bot.ok)).toBe(conf)
   })
 
-  it('тело client_send_wireguard: имя конфига и сам конфиг, подпись секретом', async () => {
+  it('тело client_send_wireguard: имя конфига, сам конфиг и его PNG для бота, подпись секретом', async () => {
     await run(sendWgToTg, admin.ok)
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [url, opts] = fetchMock.mock.calls[0]!
     expect(url).toBe('http://127.0.0.1:8877/event')
     expect(opts).toMatchObject({ method: 'POST', headers: { 'X-Tgbot-Secret': 's3cret' }, timeout: 8000 })
-    expect(opts.body).toEqual({ type: 'client_send_wireguard', name: deviceConfigName('Анна', 'phone', 3), conf })
-    expect(Object.keys(opts.body as object)).toEqual(['type', 'name', 'conf'])
+    expect(opts.body).toEqual({ type: 'client_send_wireguard', name: deviceConfigName('Анна', 'phone', 3), conf, qr: qrPng(conf).toString('base64') })
+    expect(Object.keys(opts.body as object)).toEqual(['type', 'name', 'conf', 'qr'])
   })
 
   it('бот не ответил - 502 bot_unreachable с причиной', async () => {

@@ -84,10 +84,4 @@ describe('событие «отправить WireGuard в Telegram»', () => {
     expect([event.type, event.name, event.conf]).toEqual(['client_send_wireguard', 'ivan-phone', worst])
     expect(Buffer.from(event.qr, 'base64').equals(qrPng(worst))).toBe(true)
   })
-
-  it('маршрут панели шлёт именно его', () => {
-    const route = readFileSync(new URL('../api/clients/[id]/devices/[deviceId]/send-wg-to-tg.post.ts', import.meta.url), 'utf8')
-    expect(route).toContain('wgBotEvent(name, conf)')
-    expect(route).not.toContain("type: 'client_send_wireguard'")
-  })
 })

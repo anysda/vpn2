@@ -1,0 +1,20 @@
+# Шаблон стенда CI: метки @...@ подставляет ci-stand.sh, пароль бэкапа тестовый.
+entry:
+  host: @ENTRY_HOST@
+  password: "@PASSWORD@"
+exits:
+  - tag: @EXIT_TAG@
+    host: @EXIT_HOST@
+    password: "@PASSWORD@"
+admin:
+  user: anysda
+panel:
+  image: @PANEL_IMAGE@
+backup:
+  enabled: true
+  backend: local
+  passphrase: "stand-etalon"
+  retention: 10
+  schedule: off
+  local:
+    dir: /var/backups/anysda-vpn2

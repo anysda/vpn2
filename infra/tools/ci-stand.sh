@@ -466,19 +466,13 @@ push_tree() {
   log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
   ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
   git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2'
-  ssh_node "$ENTRY" "umask 077; cat > /opt/anysda-vpn2/config.yaml" <<EOF
-entry:
-  host: $ENTRY
-  password: "$password"
-exits:
-  - tag: $EXIT_TAG
-    host: $EXIT
-    password: "$password"
-admin:
-  user: anysda
-panel:
-  image: $PANEL_REF
-EOF
+  local template=$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml rendered
+  rendered=$(sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
+    -e "s|@PASSWORD@|$password|g" -e "s|@PANEL_IMAGE@|$PANEL_REF|g" "$template")
+  if grep -q '@[A-Z_]*@' <<<"$rendered"; then
+    die "в config.yaml стенда остались неподставленные метки (шаблон $template)"
+  fi
+  ssh_node "$ENTRY" "umask 077; cat > /opt/anysda-vpn2/config.yaml" <<<"$rendered"
 }
 
 # Docker на entry ставит 00-bootstrap, а образ панели нужен только к

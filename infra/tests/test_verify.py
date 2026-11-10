@@ -223,9 +223,13 @@ class VerifyTest(unittest.TestCase):
             # Аварийка из образа: версия и файлы, которые стадия 23 кладёт на узел.
             emergency = root / 'emergency'
             (emergency / 'vpn2/emergency/static').mkdir(parents=True)
+            # Выпуск до переноса аварийки в пакет клал её файлы в vpn2_emergency.
+            release_layout = fault in ('emergency-release-layout', 'emergency-release-layout-after-23')
+            package = emergency / ('vpn2_emergency' if release_layout else 'vpn2/emergency')
+            (package / 'static').mkdir(parents=True, exist_ok=True)
             for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html'):
                 if fault != 'emergency-' + name:
-                    (emergency / 'vpn2/emergency' / name).touch()
+                    (package / name).touch()
             # Стадия 23 до образа оставила пустой штамп и не ставила release.json и Hysteria2.
             old_stage = fault == 'emergency-old-stage'
             if fault != 'emergency-release' and not old_stage:
@@ -255,7 +259,7 @@ class VerifyTest(unittest.TestCase):
             # Штамп 10-foreign новее штампа 23: verify сразу после 10-foreign.
             foreign = root / 'stamp-10-foreign'
             foreign.touch()
-            if fault != 'emergency-before-23':
+            if fault not in ('emergency-before-23', 'emergency-release-layout'):
                 os.utime(foreign, (time.time() - 600,) * 2)
             setpriv = bin_dir / 'setpriv'
             setpriv.write_text('#!/bin/sh\nwhile [ "$1" != -- ]; do shift; done\nshift\nexec "$@"\n')
@@ -471,6 +475,21 @@ class VerifyTest(unittest.TestCase):
         self.assertNotIn('✗ аварийка', result.stdout)
         self.assertIn('✓ аварийка: агент vpn2-emergency active', result.stdout)
         self.assertIn('аварийка: стадия 23 стоит без образа', result.stdout)
+
+    def test_update_from_release_layout(self):
+        # Обновление с выпуска: verify сразу после 10-foreign видит аварийку
+        # выпуска в старой раскладке, новую положит стадия 23 этого deploy.
+        result = self.run_verify('emergency-release-layout', role='exit')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('✓ аварийка: образ установлен', result.stdout)
+        self.assertIn('раскладка выпуска до стадии 23', result.stdout)
+        # После стадии 23 старая раскладка - ошибка: стадия не заменила файлы.
+        result = self.run_verify('emergency-release-layout-after-23', role='exit')
+        print('\n'.join(line for line in result.stdout.splitlines() if 'авари' in line))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn('✗ аварийка: образ установлен', result.stdout)
+        self.assertIn('нет файлов аварийки: agent.py', result.stdout)
 
     def test_only_youtube_can_report_unmeasured(self):
         for fault in ('systemctl-error2', 'ssh-error2', 'curl-error2'):

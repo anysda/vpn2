@@ -251,8 +251,14 @@ exit_ssh() {
 }
 # Аварийка ставится стадией 23 из образа: версия образа и всё, что нужно
 # активации, лежат на узле заранее (docker для проверки не будим).
+#
+# Verify сразу после 10-foreign идёт до стадии 23 этого deploy: при обновлении
+# с выпуска на узле ещё лежит его аварийка в раскладке vpn2_emergency. Её
+# заменит стадия 23, раскладку пакета строго требует итоговый verify.
 emergency_image() {
-  python3 - /opt/vpn2-emergency <<'PY'
+  local before_stage=false
+  [[ "$EMERGENCY_STAMP" -nt /var/anysda/.stamps/10-foreign ]] || before_stage=true
+  python3 - /opt/vpn2-emergency "$before_stage" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -260,10 +266,11 @@ import sys
 root = Path(sys.argv[1])
 release = json.loads((root / 'release.json').read_text())
 print(f"аварийный образ: версия {release['version']}, ревизия {release['revision'][:12]}, {release['image'][:19]}")
-package = root / 'vpn2/emergency'
-missing = [name for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html')
-           if not (package / name).is_file()]
-if missing:
+names = ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html')
+missing = [name for name in names if not (root / 'vpn2/emergency' / name).is_file()]
+if missing and sys.argv[2] == 'true' and all((root / 'vpn2_emergency' / name).is_file() for name in names):
+    print('раскладка выпуска до стадии 23: файлы пакета проверит итоговый verify')
+elif missing:
     print('нет файлов аварийки: ' + ', '.join(missing))
     raise SystemExit(1)
 PY

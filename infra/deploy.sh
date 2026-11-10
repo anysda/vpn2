@@ -772,6 +772,14 @@ run_stage_on_host() {
     if [[ "$host" != ru && -s "$entry_key" ]]; then
       push "$entry_key" "entry_mgmt_key" || return 1
     fi
+    # Колесо vpn2 для venv экзита; 00-bootstrap берёт его маской vpn2-*.whl.
+    # На entry venv ставит деплой сам, колесо туда не едет.
+    if [[ "$host" != ru ]]; then
+      ansible_wheel_build || return 1
+      local wheel
+      wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
+      push "$wheel" || return 1
+    fi
   fi
 
   if [[ "$stage" == "10-foreign" ]]; then

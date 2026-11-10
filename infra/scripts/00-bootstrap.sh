@@ -176,7 +176,8 @@ for vpn2_cand in "$VPN2_WHEEL_DIR"/vpn2-*.whl; do
   [[ -f "$vpn2_cand" ]] && vpn2_wheel=$vpn2_cand
 done
 if [[ -z "$vpn2_wheel" ]]; then
-  echo "[$HOST_TAG] колесо vpn2 не передано, venv не трогаю"
+  # На entry колеса нет всегда: venv там ставит деплой (infra/lib/ansible-venv.sh).
+  [[ "$HOST_TAG" == ru ]] || echo "[$HOST_TAG] колесо vpn2 не передано, venv не трогаю"
 else
   vpn2_sha=$(sha256sum "$vpn2_wheel")
   vpn2_sha=${vpn2_sha%% *}

@@ -46,12 +46,12 @@ class BootstrapVenvTests(unittest.TestCase):
     def put_wheel(self):
         self.wheel.write_bytes(b'wheel')
 
-    def run_block(self, fail_pip=False):
+    def run_block(self, fail_pip=False, host='nl'):
         script = (f'export FIX={self.root}\nexport PATH=$FIX/bin:$PATH\n'
                   f'export VPN2_ROOT={self.root}/opt/vpn2 VPN2_WHEEL_DIR={self.root}/anysda\n'
                   f'export VPN2_PIP_DIR={self.root}/pywheels\n'
                   + ('export FAIL_PIP=1\n' if fail_pip else '')
-                  + 'HOST_TAG=nl\n' + venv_block())
+                  + f'HOST_TAG={host}\n' + venv_block())
         return bash(script, self.root)
 
     def calls(self):
@@ -90,6 +90,12 @@ class BootstrapVenvTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.calls(), [])
         self.assertIn('колесо vpn2 не передано', result.stdout)
+
+    def test_no_wheel_on_entry_is_silent(self):
+        result = self.run_block(host='ru')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertNotIn('колесо vpn2 не передано', result.stdout)
 
     def test_pip_failure_fails_without_marker(self):
         self.put_wheel()

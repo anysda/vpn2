@@ -1,0 +1,1442 @@
+"""
+Сторож экзитов (vpn2 watchdog failover) — быстрый failover экзит-нод для anysda-vpn.
+
+sing-box urltest снимается с мёртвой ноды ~33с. Этот вотчдог активно
+опрашивает экзиты через clash-api и сразу переключает selector-группу
+foreign-best на живой экзит с наименьшей задержкой.
+
+Что важно для скорости (см. test-notes #14 — старый вотчдог давал ~20с):
+  - опрос всех экзитов параллельный, тик НЕ виснет дольше JOIN_DEADLINE.
+    clash-api для МЁРТВОГО QUIC-экзита игнорит свой параметр timeout и
+    висит до ~7с — раньше это растягивало каждый тик и failover до ~20с;
+  - подтверждение «на месте»: если текущий экзит не ответил, вотчдог НЕ
+    ждёт следующий тик, а тут же до-проверяет его ещё (DEAD_AFTER-1) раз
+    подряд с коротким зазором. Анти-флап сохранён (одиночный транзиентный
+    промах не переключает), но failover ~5-7с вместо ~20с.
+
+Группа WATCH_GROUP (foreign-best) в конфиге роутера должна быть
+type=selector (см. gen-router-config.py) — управляется через clash-api PUT.
+
+Конфиг — через переменные окружения (EnvironmentFile systemd-юнита):
+  CLASH_API         базовый URL clash-api          http://10.99.0.1:9090
+  CLASH_SECRET      Bearer-секрет clash-api         (обязателен)
+  WATCH_GROUP       тег selector-группы             foreign-best
+  PROBE_URL         URL для delay-теста             http://www.gstatic.com/generate_204
+  INTERVAL          период опроса, сек              2
+  PROBE_TIMEOUT_MS  таймаут delay-теста, мс         1500
+  TOLERANCE_MS      порог переключения по латентности, мс  120
+  DEAD_AFTER        промахов подряд до признания экзита мёртвым  2
+  CONFIRM_GAP       зазор между до-проверками, сек  0.4
+  LATENCY_HOLD      тиков подряд с преимуществом до switch-по-латентности  4
+  COOLDOWN_S        базовый штраф для умершего экзита, сек  60
+  MAX_COOLDOWN_S    потолок штрафа при рецидивах, сек  600
+  PENALTY_RESET_S   стабильности до сброса эскалации, сек  300
+  DISABLED_EXITS_FILE  узлы, выключенные из панели  /etc/anysda/exits-disabled.json
+  BALANCE           on|off — балансировка дорожек lane-NN по экзитам  on
+  BALANCE_MARGIN_MS узел «быстрый», если задержка ≤ лучшей + N мс  150
+  ACTIVE_BPS        порог активности дорожки, байт/с  20000
+  REBALANCE_INTERVAL_S  период проверки дисбаланса, сек  300
+  IMBALANCE_SHARE   разрыв max−min от общей нагрузки для переезда  0.35
+  IMBALANCE_MIN_MBPS  и не меньше стольких Мбит/с  5
+  MIN_DWELL_S       активную дорожку не двигать чаще, сек  1800
+  IDLE_DWELL_S      неактивную — не чаще, сек  600
+  RATE_TAU_S        постоянная сглаживания нагрузки, сек  300
+  TG_GROUP          selector выхода бота (inbound tg-proxy)  tg-best
+  TG_PROBE_URL      проба Bot API через экзит      https://api.telegram.org
+  TG_INTERVAL_S     период проверки Bot API, сек    30
+  WARP_RETURN_S     дорожка на warp возвращается на direct, если тот жив без перерыва, сек  600
+                    (повторный возврат за MIN_DWELL_S — не раньше стоянки)
+  LANE_STATE_FILE   время последнего переезда дорожек  /var/lib/anysda-failover-watchdog/lanes.json
+  RESTART_AFTER_CHECKS  проверок подряд с мёртвыми каналами всех узлов до перезапуска sing-box, 0 — выкл.  3
+  RESTART_MIN_INTERVAL_S  перезапуск sing-box не чаще, сек  600
+  PRESSURE_MEM_AVG10  memory some avg10 entry, с которого причина — перегруз entry, %  10
+  PRESSURE_CPU_AVG10  cpu some avg10 entry, то же для CPU, %  60
+  PSI_DIR           каталог PSI entry  /proc/pressure
+  PROC_DIR          /proc для топа процессов по RSS  /proc
+  STUCK_AFTER_CHECKS  проверок подряд, что выход ручного маршрута мёртв при живом узле, до перезапуска  30
+  TCP_RETURN_S      канал с TCP обратно на hy2, если тот жив без перерыва, сек  60
+  HY2_RISE_S        после полной аварии канала или перезапуска sing-box мёртвый hy2
+                    при живом TCP столько - подъём QUIC, не резка UDP, сек  10
+
+Перезапуск sing-box: когда экзит один, переключаться некуда, и канал, залипший
+в sing-box на entry, лежал бы до перезагрузки. Если у всех включённых узлов
+мертвы все выходы RESTART_AFTER_CHECKS проверок (циклов) подряд, вотчдог
+перезапускает sing-box, пишет в журнал и шлёт событие в бот. Жив хоть один
+выход — счётчик с нуля; clash-api не ответил — проверки не было, счётчик стоит.
+Время перезапуска лежит рядом с LANE_STATE_FILE (restart.json): предел частоты
+переживает перезапуск вотчдога.
+
+Выход бота (tg-best): Bot API (api.telegram.org) на одних экзитах режут, на
+других нет, а gstatic-проба этого не видит. Поэтому раз в TG_INTERVAL_S
+вотчдог проверяет Bot API через экзит бота; после DEAD_AFTER промахов подряд
+(или сразу, если узел выключили вручную) ищет экзит, где Bot API отвечает. Если
+Bot API молчит везде — повторяет поиск раз в TG_INTERVAL_S, а с мёртвого экзита
+уводит бота туда же, куда основной выбор.
+
+Ручные маршруты панели (pin-<выход>): у каждого есть запасной путь —
+foreign-best (у warp-выхода - WARP-нога другого узла, без direct). Пока узел
+выключен вручную, выход мёртв или узел в штрафной после падения, маршрут идёт
+через запасной путь, потом возвращается на свой
+выход. Без этого ручной маршрут на упавший экзит просто рвался бы. Если выход
+мёртв, а transport-<выход> отвечает (без transport — сосед для -direct), выход завис
+в sing-box entry: после STUCK_AFTER_CHECKS проверок вотчдог перезапускает
+sing-box под общим пределом RESTART_MIN_INTERVAL_S. Не ожил после двух таких
+перезапусков — одно событие в бот, и выход не лечим, пока не оживёт. Через те
+же pin-* идёт предпочитаемый экзит клиента (наборы client-pref-<узел>). При
+возврате на выход соединения, открытые через запасной путь, закрываются.
+
+Анти-флап по латентности: замеры delay через QUIC шумят ±300-500мс. Чтобы
+вотчдог не метался между экзитами, переключение по СКОРОСТИ (не по смерти)
+происходит лишь когда один и тот же экзит лучше текущего на >TOLERANCE
+LATENCY_HOLD тиков ПОДРЯД. Смерть экзита по-прежнему переключает сразу.
+
+Штрафная скамья (см. test-notes #16): экзит, признанный мёртвым,
+COOLDOWN_S секунд НЕ выбирается обратно как foreign-best. Без этого при
+flap-шторме (экзит дёргается up/down) вотчдог оптимистично возвращался на
+него, едва тот поднимался, и ловил компаундные простои. В штрафной экзит
+игнорируется при выборе best; если ВСЕ живые в штрафной — берётся лучший
+среди всех (не стрэндим). При рецидиве (экзит умер снова вскоре после
+окончания штрафа) срок удваивается до MAX_COOLDOWN_S — хронически
+нестабильный экзит быстро паркуется надолго, система садится на стабильный.
+"""
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+
+from vpn2 import fsutil, notify, probe
+
+CLASH       = os.environ.get('CLASH_API', 'http://10.99.0.1:9090').rstrip('/')
+SECRET      = os.environ.get('CLASH_SECRET', '')
+GROUP       = os.environ.get('WATCH_GROUP', 'foreign-best')
+# не-Cloudflare URL: до cp.cloudflare.com WARP-выходы быстрее direct и замеры
+# врут; gstatic нейтрален.
+PROBE_URL   = os.environ.get('PROBE_URL', 'http://www.gstatic.com/generate_204')
+INTERVAL    = float(os.environ.get('INTERVAL', '2'))
+TIMEOUT_MS  = int(os.environ.get('PROBE_TIMEOUT_MS', '1500'))
+TOLERANCE   = int(os.environ.get('TOLERANCE_MS', '120'))
+# анти-флап: экзит мёртв только после DEAD_AFTER промахов ПОДРЯД.
+DEAD_AFTER  = int(os.environ.get('DEAD_AFTER', '2'))
+CONFIRM_GAP = float(os.environ.get('CONFIRM_GAP', '0.4'))
+# анти-флап по латентности: switch-по-скорости лишь после LATENCY_HOLD
+# тиков подряд с устойчивым преимуществом одного и того же экзита.
+LATENCY_HOLD = int(os.environ.get('LATENCY_HOLD', '4'))
+_lat_cand: str = ''   # экзит-кандидат на switch-по-латентности
+_lat_streak = 0       # сколько тиков подряд он держит преимущество
+# штрафная скамья: умерший экзит COOLDOWN секунд не выбирается обратно.
+# При рецидиве штраф удваивается (до MAX_COOLDOWN) — хронически нестабильный
+# экзит паркуется надолго. PENALTY_RESET — после стольких секунд стабильной
+# работы рецидив-счётчик сбрасывается на базовый COOLDOWN.
+COOLDOWN      = float(os.environ.get('COOLDOWN_S', '60'))
+MAX_COOLDOWN  = float(os.environ.get('MAX_COOLDOWN_S', '600'))
+PENALTY_RESET = float(os.environ.get('PENALTY_RESET_S', '300'))
+# Штраф — по УЗЛУ экзита, не по тегу: у ноды несколько outbound-ов
+# (hy2-<node>-direct, hy2-<node>-warp) — они на одной ноде и умирают вместе,
+# иначе watchdog обошёл бы штраф, перескочив на соседний тег того же узла.
+# Исключение - у узла отвечает другой выход пользовательского трафика (_node_alive):
+# умер канал или выход (WARP, hy2 при обрыве UDP), а не узел.
+_penalty: dict = {}   # node -> monotonic-дедлайн пребывания в штрафной
+_pen_dur: dict = {}   # node -> текущая длительность штрафа (растёт при рецидиве)
+# Ручное выключение узлов из панели: файл пишет панель (/api/ops/exits/:tag).
+# Выключенный узел — как мёртвый: в выборе не участвует, если сейчас выбран —
+# уводим сразу (без до-проверок), висящие через него соединения рвём.
+# Выключение — предпочтение, а не запрет ценой простоя: если живых
+# невыключенных нет, трафик идёт через живой выключенный и его соединения
+# не рвём, пока не появится живой невыключенный.
+# Нет файла / битый JSON / не список — ничего не выключено.
+DISABLED_FILE = os.environ.get('DISABLED_EXITS_FILE', '/etc/anysda/exits-disabled.json')
+_disabled: set = set()   # узлы, выключенные вручную (перечитывается каждый тик)
+_disabled_warn = ''      # последняя жалоба на формат файла (пишем только смену)
+_disabled_unknown: set = set()   # выключенные, которых нет среди узлов (пишем только смену)
+_spared: set = set()     # выключенные узлы, через которые идём за неимением живых невыключенных
+
+# Дорожки (lane-NN, см. gen-router-config.py): клиентские устройства разложены
+# по selector'ам по VPN-IP; здесь решаем, на какой экзит смотрит каждая.
+# BALANCE=off — дорожки просто повторяют foreign-best (поведение «один выход»).
+# BALANCE=on  — активные устройства размазываются по «быстрым» узлам (задержка
+# ≤ лучшей + BALANCE_MARGIN_MS); переезд — только при проблеме узла (сразу)
+# или при сильном дисбалансе (раз в REBALANCE_INTERVAL_S, по одной дорожке,
+# не чаще MIN_DWELL_S на дорожку). Переключение selector'а трогает только
+# НОВЫЕ соединения — текущие доживают на старом выходе.
+BALANCE            = os.environ.get('BALANCE', 'on').strip().lower() == 'on'
+BALANCE_MARGIN_MS  = int(os.environ.get('BALANCE_MARGIN_MS', '150'))
+ACTIVE_BPS         = float(os.environ.get('ACTIVE_BPS', '20000'))   # байт/с — дорожка «активна»
+REBALANCE_INTERVAL = float(os.environ.get('REBALANCE_INTERVAL_S', '300'))
+IMBALANCE_SHARE    = float(os.environ.get('IMBALANCE_SHARE', '0.35'))
+IMBALANCE_MIN_BPS  = float(os.environ.get('IMBALANCE_MIN_MBPS', '5')) * 1e6 / 8
+MIN_DWELL          = float(os.environ.get('MIN_DWELL_S', '1800'))   # активную дорожку не двигаем чаще
+IDLE_DWELL         = float(os.environ.get('IDLE_DWELL_S', '600'))   # неактивную — чаще можно
+RATE_TAU           = float(os.environ.get('RATE_TAU_S', '300'))     # сглаживание нагрузки (EWMA)
+# Дорожка, уведённая на warp своего узла (direct был мёртв), сама на direct не
+# вернётся: warp жив, узел в балансировке. Возвращаем, когда direct жив без
+# перерыва WARP_RETURN_S (не один удачный замер). Стоянку MIN_DWELL не ждём:
+# увод был аварийным (перезапуск sing-box на выходе при деплое уводил все
+# дорожки на полчаса), и чем дольше на warp, тем больше сессий успевает
+# привязаться к чужому IP. Но если дорожка уже возвращалась с warp меньше
+# MIN_DWELL назад — direct мигает, и следующий возврат ждёт полную стоянку.
+WARP_RETURN        = float(os.environ.get('WARP_RETURN_S', '600'))
+_direct_since: dict = {}  # direct-выход -> monotonic, с которого он жив без перерыва
+# Запасной канал до экзита (gen-router-config.py): у каждого канала selector
+# [transport-hy2-*, transport-tcp-*] - Hysteria2 и VLESS + Reality по TCP.
+# Когда до экзита режут UDP, канал уходит на TCP и остаётся жив: группы и
+# дорожки не переезжают, перезапуск sing-box - только при мёртвых обоих.
+# Обратно на hy2 - когда он жив без перерыва TCP_RETURN_S.
+TCP_RETURN         = float(os.environ.get('TCP_RETURN_S', '60'))
+_hy2_since: dict = {}     # selector канала на TCP -> monotonic, с которого hy2 жив подряд
+# После полной аварии канала (мертвы hy2 и TCP) или перезапуска sing-box TCP
+# соединяется сразу, а hy2 - нет: dial QUIC, начатый ещё в обрыве, ждёт
+# повтора рукопожатия или его тайм-аута (5 с в quic-go), новый - RTT. На стенде
+# hy2 мёртв через 0,5 с после снятия обрыва. Пока hy2 мёртв меньше HY2_RISE_S
+# с возврата TCP - это подъём: канал на hy2, события нет. Окно - тайм-аут
+# рукопожатия плюс проба PROBE_TIMEOUT_MS с до-проверками, с запасом. Был hy2 жив
+# после аварии - резка UDP уводит на TCP сразу, как раньше.
+HY2_RISE           = float(os.environ.get('HY2_RISE_S', '10'))
+_hy2_rise: dict = {}      # selector -> monotonic возврата TCP при мёртвом hy2; None - канал мёртв
+_restart_gen = 0          # перезапусков sing-box сторожем
+_rise_gen = 0             # сколько из них transport_tick уже учёл
+_tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
+_known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
+_slow_probes: dict = {}   # тег -> (поток, итог, причины) пробы, которую не стали ждать
+_lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
+# «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
+# одиночный всплеск в 1-2с — норма) и только если она держится за порогом
+# SLOW_HOLD_S подряд: вывод узла из балансировки двигает все его дорожки.
+LAT_TAU            = float(os.environ.get('LAT_TAU_S', '30'))
+SLOW_HOLD          = float(os.environ.get('SLOW_HOLD_S', '60'))
+_lat_ewma: dict = {}      # узел -> сглаженная задержка, мс
+_state_since: dict = {}   # узел -> monotonic, с которого статус «хочет» смениться
+LANE_PREFIX = 'lane-'
+_warp_stuck = set()       # warp-выходы, что стоят на мёртвой ноге без живой WARP-замены
+_tick_alive = None        # {тег: задержка} живых невыключенных выходов последнего тика
+_lane_rate: dict = {}     # lane -> EWMA байт/с
+_lane_moved: dict = {}    # lane -> monotonic последнего переезда
+# Время переезда переживает перезапуск: на диске — настенное время. Нет файла,
+# битый или дорожки в нём нет — последним переездом считаем запуск вотчдога.
+LANE_STATE_FILE = os.environ.get('LANE_STATE_FILE', '/var/lib/anysda-failover-watchdog/lanes.json')
+_started = 0.0            # monotonic запуска (см. _load_lane_moved)
+RESTART_AFTER_CHECKS = int(os.environ.get('RESTART_AFTER_CHECKS', '3'))
+RESTART_MIN_INTERVAL = float(os.environ.get('RESTART_MIN_INTERVAL_S', '600'))
+PRESSURE_MEM_AVG10 = float(os.environ.get('PRESSURE_MEM_AVG10', '10'))
+PRESSURE_CPU_AVG10 = float(os.environ.get('PRESSURE_CPU_AVG10', '60'))
+PSI_DIR = os.environ.get('PSI_DIR', '/proc/pressure')
+PROC_DIR = os.environ.get('PROC_DIR', '/proc')
+RESTART_STATE_FILE = os.path.join(os.path.dirname(LANE_STATE_FILE), 'restart.json')
+BOT_SECRET_FILE = '/etc/anysda/tgbot-secret.txt'
+_all_dead = None          # итог tick(): мертвы все выходы включённых узлов; None — замера не было
+_dead_streak = 0          # проверок подряд с _all_dead
+_restarted = None         # monotonic последнего перезапуска sing-box
+_lane_saved: dict = {}    # что лежит на диске (пишем только изменения)
+_conn_seen: dict = {}     # conn id -> (up+down) на прошлом тике
+_rate_t = None            # monotonic прошлого замера нагрузки
+_elig: set = set()        # узлы, участвующие в балансировке (с гистерезисом)
+
+_tag_miss: dict = {}      # выход -> промахов подряд (мёртв после DEAD_AFTER)
+_tag_delay: dict = {}     # выход -> последняя удачная задержка
+_elig_init = False        # первый удачный тик уже наполнил _elig
+_last_rebalance = time.monotonic()
+
+TG_GROUP     = os.environ.get('TG_GROUP', 'tg-best')
+TG_PROBE_URL = os.environ.get('TG_PROBE_URL', 'https://api.telegram.org')
+# Проба Bot API — тот же delay-тест clash-api: HEAD без перехода по редиректам,
+# код ответа sing-box не смотрит и наружу не отдаёт. Смысл ответу даёт https:
+# задержку вернёт только рукопожатие с настоящим сертификатом Telegram, заглушка
+# блокировки так не ответит. Адрес на http:// clash-api молча меняет на свой
+# gstatic, и Bot API тогда не проверялся бы вовсе.
+if not TG_PROBE_URL.startswith('https://'):
+    print(f'TG_PROBE_URL={TG_PROBE_URL}: нужен https://, беру https://api.telegram.org',
+          file=sys.stderr, flush=True)
+    TG_PROBE_URL = 'https://api.telegram.org'
+TG_INTERVAL  = float(os.environ.get('TG_INTERVAL_S', '30'))
+_tg_next = -1e9           # monotonic следующей плановой проверки Bot API
+_tg_miss = 0              # промахов текущего выхода tg-best подряд
+_tg_silent = False        # последний обход: Bot API не ответил ни через один выход
+PIN_PREFIX = 'pin-'
+_pin_miss: dict = {}      # выход ручного маршрута -> промахов подряд
+_warp_miss: dict = {}     # WARP-нога -> промахов подряд (запасная для pin-*-warp)
+_warp_delay: dict = {}    # WARP-нога -> последняя удачная задержка
+STUCK_AFTER_CHECKS = int(os.environ.get('STUCK_AFTER_CHECKS', '30'))
+STUCK_MAX_HEALS = 2       # перезапусков ради выхода, после которых его не лечим
+_stuck_streak: dict = {}  # выход ручного маршрута -> проверок подряд «мёртв при живом узле»
+_stuck_heals: dict = {}   # выход -> перезапусков ради него, пока он не ожил
+
+# Жёсткие границы времени. clash-api для мёртвого QUIC-экзита игнорит
+# параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
+PROBE_HTTP_TIMEOUT = TIMEOUT_MS / 1000.0 + 0.5   # таймаут urlopen для delay-пробы
+JOIN_DEADLINE      = PROBE_HTTP_TIMEOUT + 0.5    # тик не ждёт проб дольше этого
+# Канал, чья смерть уже учтена, проверка каналов ждёт столько: его тайм-аут
+# не держит пробу живых. Ожил и ответил позже - итог заберёт следующий проход.
+KNOWN_DEAD_WAIT    = min(0.3, PROBE_HTTP_TIMEOUT)
+API_TIMEOUT        = 5.0                         # таймаут обычных GET/PUT группы
+
+
+_api = probe.ClashApi(CLASH, SECRET)
+
+
+def _req(method, path, body=None, timeout=API_TIMEOUT):
+    return _api.request(method, path, body, timeout=timeout)
+
+
+def _probe(tag, out, errs=None, url=PROBE_URL):
+    """delay-тест одного outbound; out[tag] = delay(ms) либо None если мёртв.
+    errs[tag], если передан, получает причину промаха (см. probe.probe_error)."""
+    q = urllib.parse.urlencode({'url': url, 'timeout': TIMEOUT_MS})
+    try:
+        d = _req('GET', f'/proxies/{urllib.parse.quote(tag)}/delay?{q}',
+                 timeout=PROBE_HTTP_TIMEOUT)
+        v = d.get('delay')
+        out[tag] = v if isinstance(v, int) and v > 0 else None
+        if out[tag] is None and errs is not None:
+            errs[tag] = f'clash-api без delay: {d!r}'
+    except Exception as e:
+        out[tag] = None
+        if errs is not None:
+            errs[tag] = probe.probe_error(e)
+
+
+def _probe_all(members, url=PROBE_URL, known_dead=None):
+    """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
+    мёртвый экзит не тормозит остальных.
+    known_dead задаёт проверка каналов: теги, чья смерть уже учтена. Их ответа
+    ждём только KNOWN_DEAD_WAIT; не дождались - проба идёт дальше, её итог
+    заберёт следующий такой опрос."""
+    probes = {}
+    for m in members:
+        probe = _slow_probes.pop(m, None) if known_dead is not None else None
+        if probe is None or m not in known_dead:
+            out: dict = {}
+            errs: dict = {}
+            thread = threading.Thread(target=_probe, args=(m, out, errs, url), daemon=True)
+            thread.start()
+            probe = (thread, out, errs)
+        probes[m] = probe
+    hurry = known_dead or ()
+    start = time.monotonic()
+    for m in sorted(probes, key=lambda m: m in hurry):
+        wait = KNOWN_DEAD_WAIT if m in hurry else JOIN_DEADLINE
+        probes[m][0].join(max(0.0, start + wait - time.monotonic()))
+    result: dict = {}
+    errors: dict = {}
+    for m, (thread, out, errs) in probes.items():
+        if m in hurry and thread.is_alive():
+            _slow_probes[m] = probes[m]
+        result[m] = out.get(m)
+        errors.update(errs)
+    return result, errors
+
+
+def _switch(target, delay_ms, reason):
+    _req('PUT', f'/proxies/{urllib.parse.quote(GROUP)}', {'name': target})
+    print(f'switch -> {target} ({delay_ms}ms; {reason})', flush=True)
+
+
+def _node_of(tag):
+    """Узел экзита из тега hy2-<node>-<kind>. Для нестандартного — сам тег."""
+    p = tag.split('-')
+    return p[1] if len(p) >= 3 else tag
+
+
+def _pick_best(alive):
+    """Лучший по латентности экзит из НЕ-оштрафованных (штраф — по узлу).
+    Если узлы всех живых в штрафной — берём лучший среди всех (не стрэндим)."""
+    t = time.monotonic()
+    free = {m: d for m, d in alive.items() if _penalty.get(_node_of(m), 0.0) <= t}
+    pool = free or alive
+    return min(pool, key=pool.get)
+
+
+def _penalize(member):
+    """Отправить УЗЕЛ экзита в штрафную (все его теги сразу). При рецидиве
+    (умер снова вскоре после окончания прошлого штрафа) длительность
+    удваивается до MAX_COOLDOWN — нестабильный узел паркуется надолго."""
+    node = _node_of(member)
+    t = time.monotonic()
+    prev_dur = _pen_dur.get(node, 0.0)
+    if prev_dur and (t - _penalty.get(node, 0.0)) < PENALTY_RESET:
+        dur = min(prev_dur * 2, MAX_COOLDOWN)   # рецидив — эскалация
+    else:
+        dur = COOLDOWN                          # давно стабилен — базовый штраф
+    _pen_dur[node] = dur
+    _penalty[node] = t + dur
+    return node, dur
+
+
+def _node_alive(member, alive):
+    """Живой выход пользовательского трафика узла member, кроме него самого, или ''.
+    Проба выхода идёт через его канал на любом транспорте (hy2 или TCP), так что
+    мёртв warp при живом direct или hy2 direct при warp уже на TCP - беда канала
+    или выхода, не узла: узел не штрафуем. mgmt трафик клиентов не везёт."""
+    node = _node_of(member)
+    return next((t for t in sorted(alive) if t != member and _node_of(t) == node
+                 and not t.endswith('-mgmt')), '')
+
+
+def _read_disabled(nodes):
+    """Узлы, выключенные вручную из панели. Логирует только изменения.
+    nodes — узлы группы: имя не из них (опечатка в файле) иначе молча ничего
+    бы не выключало."""
+    global _disabled, _disabled_warn, _disabled_unknown
+    warn = ''
+    try:
+        with open(DISABLED_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+        raw = data.get('disabled', []) if isinstance(data, dict) else None
+    except FileNotFoundError:
+        raw = []
+    except (OSError, ValueError) as e:
+        raw, warn = [], f'не читается ({e})'
+    if not isinstance(raw, list):
+        warn = f'ожидался {{"disabled": [узлы]}}, получено {json.dumps(data, ensure_ascii=False)[:200]}'
+        raw = []
+    cur = {t for t in raw if isinstance(t, str)}
+    if not warn and any(not isinstance(t, str) for t in raw):
+        warn = f'не-строки в списке отброшены: {json.dumps(raw, ensure_ascii=False)[:200]}'
+    if warn != _disabled_warn:
+        if warn:
+            print(f'{DISABLED_FILE}: {warn}; считаю выключенными: '
+                  f'{", ".join(sorted(cur)) or "нет"}', flush=True)
+        _disabled_warn = warn
+    if cur != _disabled:
+        print(f'выключены вручную: {", ".join(sorted(cur)) or "нет"}', flush=True)
+        _disabled = cur
+    unknown = cur - nodes
+    if unknown != _disabled_unknown:
+        if unknown:
+            print(f'{DISABLED_FILE}: таких узлов нет, ничего не выключают: '
+                  f'{", ".join(sorted(unknown))} (узлы: {", ".join(sorted(nodes)) or "нет"})', flush=True)
+        _disabled_unknown = unknown
+    return cur
+
+
+def _excluded():
+    """Узлы, которых сейчас избегаем: выключенные, кроме пощажённых."""
+    return _disabled - _spared
+
+
+def _spare(nodes):
+    """Запомнить, через какие выключенные узлы идём (пусто — ни через какие).
+    В журнал — только смена, одной строкой."""
+    global _spared
+    if nodes == _spared:
+        return
+    if nodes:
+        print(f'живых невыключенных экзитов нет — трафик идёт через выключенные вручную '
+              f'({", ".join(sorted(nodes))}), их соединения не рву', flush=True)
+    else:
+        print(f'есть живой невыключенный экзит — ухожу с выключенных вручную '
+              f'({", ".join(sorted(_spared))})', flush=True)
+    _spared = nodes
+
+
+def _fetch_conns():
+    """Снимок /connections на цикл (общий для учёта нагрузки дорожек и
+    обрыва соединений через выключенные узлы). None — clash-api не ответил."""
+    try:
+        return _req('GET', '/connections').get('connections') or []
+    except Exception as e:
+        print(f'не смог получить соединения: {e}', file=sys.stderr, flush=True)
+        return None
+
+
+def _drop_disabled_conns(conns):
+    """Рвём соединения, ещё идущие через выключенные узлы — как при сбое ноды
+    (иначе долгие сессии текли бы через «выключенный» экзит до закрытия).
+    mgmt-туннели не трогаем: по ним панель скрейпит метрики самого узла."""
+    drop = _excluded()   # через пощажённые идёт трафик — их не трогаем
+    if not drop or conns is None:
+        return
+    closed = 0
+    for c in conns:
+        out = (c.get('chains') or [''])[0]
+        if out.endswith('-mgmt') or _node_of(out) not in drop or not c.get('id'):
+            continue
+        try:
+            _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
+            closed += 1
+        except Exception:
+            pass
+    if closed:
+        print(f'закрыто {closed} соединений через выключенные узлы '
+              f'({", ".join(sorted(drop))})', flush=True)
+
+
+def tick():
+    global _tick_alive, _all_dead
+    _tick_alive = None   # дорожки балансируем только по замерам удачного тика
+    _all_dead = None
+    group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
+    if group.get('type', '').lower() != 'selector':
+        raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
+    everyone = group.get('all', [])
+    disabled = _read_disabled({_node_of(m) for m in everyone})
+    members = [m for m in everyone if _node_of(m) not in disabled]
+    now = group.get('now')
+    if not everyone:
+        return
+
+    delays, errs = _probe_all(members)
+    alive = {m: d for m, d in delays.items() if d is not None}
+    # Отказ соединения — это сам clash-api не ответил, о выходе он ничего не
+    # говорит. Нет включённых узлов — перезапуск их не вернёт.
+    _all_dead = bool(members) and not alive and 'отказ соединения' not in errs.values()
+    # Живых невыключенных нет — выбираем из живых выключенных: выключение не
+    # стоит простоя. Пощажённые запоминаем, лишь решив идти через них (ниже):
+    # транзиентный промах текущего не должен отменять обрыв соединений.
+    fallback = not alive
+    if fallback:
+        members = everyone
+        d2, e2 = _probe_all([m for m in everyone if _node_of(m) in disabled])
+        errs.update(e2)
+        alive = {m: d for m, d in d2.items() if d is not None}
+    else:
+        _spare(set())
+    _tick_alive = alive
+    if alive:
+        _all_dead = False   # живой выключенный: sing-box везёт, дело не в нём
+    if not alive:
+        detail = ', '.join(f'{m}: {errs.get(m, "?")}' for m in members)
+        print(f'все экзиты не отвечают, выбор не трогаю ({detail})', flush=True)
+        return
+    best = _pick_best(alive)   # лучший из не-оштрафованных
+    spare = {_node_of(m) for m in alive} if fallback else set()
+
+    global _lat_cand, _lat_streak
+    if now in alive and fallback:
+        _spare(spare)   # текущий выключен, но жив, а живых невыключенных нет — остаёмся
+    if now and _node_of(now) in disabled and now not in alive:
+        # текущий выключен вручную — уводим сразу, без до-проверок и штрафа
+        _spare(spare)
+        _lat_cand, _lat_streak = '', 0
+        _switch(best, alive[best], f'узел {_node_of(now)} выключен вручную'
+                                   f'{" и не отвечает" if fallback else ""}')
+        return
+    if now in alive:
+        # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
+        # один и тот же экзит лучше на >TOLERANCE LATENCY_HOLD тиков подряд
+        # (анти-флап — замеры delay через QUIC шумят).
+        if best != now and alive[best] + TOLERANCE < alive[now]:
+            _lat_streak = _lat_streak + 1 if best == _lat_cand else 1
+            _lat_cand = best
+            if _lat_streak >= LATENCY_HOLD:
+                _switch(best, alive[best],
+                        f'{alive[now]}ms медленнее, устойчиво ×{_lat_streak}')
+                _lat_cand, _lat_streak = '', 0
+        else:
+            _lat_cand, _lat_streak = '', 0
+        return
+    _lat_cand, _lat_streak = '', 0   # текущий не ответил — копилку латентности сбросить
+
+    if now not in members:
+        # выбора нет / он не из группы — просто берём лучший
+        _spare(spare)
+        _switch(best, alive[best], 'выбор не задан')
+        return
+
+    # Текущий — член группы, но не ответил. НЕ ждём следующий тик: тут же
+    # до-проверяем его ещё (DEAD_AFTER-1) раз подряд. Ожил на любой — транзиент.
+    last_err = errs.get(now, '?')
+    for k in range(1, DEAD_AFTER):
+        time.sleep(CONFIRM_GAP)
+        c: dict = {}
+        e: dict = {}
+        _probe(now, c, e)
+        if c.get(now) is not None:
+            # До-проверка — свежий успешный замер и для дорожек/пинов.
+            # Иначе они накопят DEAD_AFTER промахов и уведут живой выход.
+            alive[now] = c[now]
+            print(f'{now}: промах ({last_err}), но до-проверка {k}/{DEAD_AFTER - 1} '
+                  f'ожила ({c[now]}ms), транзиент, selector не трогаю', flush=True)
+            return
+        last_err = e.get(now, last_err)
+
+    other = _node_alive(now, alive)
+    if other:
+        _spare(spare)
+        _switch(best, alive[best],
+                f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
+                f'{other} узла {_node_of(now)} жив, узел не штрафую')
+        return
+
+    # умерший узел — в штрафную целиком (анти-flap); при рецидиве срок растёт
+    node, dur = _penalize(now)
+    # best выбран до штрафа: без перевыбора уходили на соседний тег того же
+    # узла (nl-direct -> nl-warp), и смерть узла давала второй простой.
+    best = _pick_best(alive)
+    _spare(spare)
+    _switch(best, alive[best],
+            f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), '
+            f'узел {node} в штрафной {dur:.0f}с')
+
+
+def _lane_of(conn):
+    """Дорожка соединения — последний элемент chains (группа, через которую
+    его провёл роутер): ['hy2-gb-direct', 'lane-07'] → 'lane-07'."""
+    chains = conn.get('chains') or []
+    return chains[-1] if chains and chains[-1].startswith(LANE_PREFIX) else None
+
+
+def _update_lane_rates(conns):
+    """EWMA нагрузки (байт/с, up+down) по дорожкам из дельт счётчиков
+    соединений. Новое соединение берётся за базу (первые ≤2с не считаем) —
+    иначе после рестарта вотчдога долгие соединения дали бы ложный всплеск."""
+    global _rate_t
+    t = time.monotonic()
+    dt = (t - _rate_t) if _rate_t else 0.0
+    _rate_t = t
+    inst: dict = {}
+    seen: dict = {}
+    for c in conns:
+        cid, lane = c.get('id'), _lane_of(c)
+        if not cid or not lane:
+            continue
+        total = int(c.get('upload') or 0) + int(c.get('download') or 0)
+        prev = _conn_seen.get(cid)
+        seen[cid] = total
+        if prev is not None and total >= prev:
+            inst[lane] = inst.get(lane, 0) + (total - prev)
+    _conn_seen.clear()
+    _conn_seen.update(seen)
+    if dt <= 0:
+        return
+    k = 1 - pow(2.718281828, -dt / RATE_TAU)
+    for lane in set(_lane_rate) | set(inst):
+        x = inst.get(lane, 0) / dt
+        _lane_rate[lane] = _lane_rate.get(lane, 0.0) + (x - _lane_rate.get(lane, 0.0)) * k
+
+
+def _effective_alive(alive, all_tags):
+    """Живые выходы с анти-флапом: одиночный промах пробы не роняет выход —
+    мёртвым он считается после DEAD_AFTER промахов подряд (до того берём
+    последнюю удачную задержку). Выключенные вручную отбрасываем, кроме
+    пощажённых (живых невыключенных нет — см. _spare)."""
+    for tag in all_tags:
+        if tag in alive:
+            _tag_miss[tag] = 0
+            _tag_delay[tag] = alive[tag]
+        else:
+            _tag_miss[tag] = _tag_miss.get(tag, DEAD_AFTER) + 1
+    return {t: _tag_delay[t] for t in all_tags
+            if _tag_miss.get(t, DEAD_AFTER) < DEAD_AFTER and t in _tag_delay
+            and _node_of(t) not in _excluded()}
+
+
+def _node_targets(alive):
+    """Для каждого живого узла — выход, на который направляем дорожки
+    (direct; warp — только если direct мёртв), и его задержка."""
+    nodes: dict = {}
+    for tag, d in alive.items():
+        node = _node_of(tag)
+        cur = nodes.get(node)
+        is_direct = tag.endswith('-direct')
+        if cur is None or (is_direct and not cur[0].endswith('-direct')):
+            nodes[node] = (tag, d)
+    return nodes
+
+
+def _update_eligible(targets):
+    """Множество «быстрых» узлов с гистерезисом. Выключенный вручную или без
+    живых выходов (targets уже учитывают DEAD_AFTER) — вон сразу. По задержке
+    решаем по EWMA (LAT_TAU): выход из балансировки — если сглаженная
+    задержка хуже лучшей на > BALANCE_MARGIN_MS непрерывно SLOW_HOLD секунд;
+    возврат — после LATENCY_HOLD тиков подряд в норме (он устройства не двигает)."""
+    global _elig_init
+    t = time.monotonic()
+    k = 1 - pow(2.718281828, -INTERVAL / LAT_TAU)
+    for n, (_, d) in targets.items():
+        _lat_ewma[n] = d if n not in _lat_ewma else _lat_ewma[n] + (d - _lat_ewma[n]) * k
+    for n in list(_lat_ewma):
+        if n not in targets:
+            del _lat_ewma[n]   # узел пропал — при возвращении начнём с чистого замера
+    lat = {n: round(_lat_ewma[n]) for n in targets}
+    best = min(lat.values(), default=None)
+    want = {n for n in targets
+            if best is not None and lat[n] <= best + BALANCE_MARGIN_MS
+            and _penalty.get(n, 0.0) <= t}
+    for node in set(want) | set(_elig):
+        hard_out = node in _excluded() or node not in targets
+        if hard_out:
+            if node in _elig:
+                _elig.discard(node)
+                print(f'дорожки: узел {node} выбыл '
+                      f'({"выключен вручную" if node in _excluded() else "нет живых выходов"})', flush=True)
+            _state_since.pop(node, None)
+            continue
+        if (node in want) == (node in _elig):
+            _state_since.pop(node, None)
+            continue
+        since = _state_since.setdefault(node, t)
+        hold = LATENCY_HOLD * INTERVAL if node in want else SLOW_HOLD
+        # первичное наполнение (первый удачный тик после старта) — без
+        # ожидания, иначе первые секунды все дорожки свалились бы на один узел
+        if t - since >= hold or not _elig_init:
+            _state_since.pop(node, None)
+            if node in want:
+                _elig.add(node)
+                print(f'дорожки: узел {node} в балансировке (~{lat[node]}ms)', flush=True)
+            else:
+                _elig.discard(node)
+                print(f'дорожки: узел {node} вне балансировки — медленный '
+                      f'(~{lat[node]}ms сглаж. ≥{SLOW_HOLD:.0f}с, лучший ~{best}ms)', flush=True)
+    _elig_init = _elig_init or bool(targets)
+    # не стрэндим: если «быстрых» не осталось — любой живой не выключенный
+    return (_elig & set(targets)) or set(targets)
+
+
+def _lane_ips(conns):
+    ips: dict = {}
+    for c in conns:
+        lane = _lane_of(c)
+        ip = (c.get('metadata') or {}).get('sourceIP')
+        if lane and ip:
+            ips.setdefault(lane, set()).add(ip)
+    return ips
+
+
+def _load_lane_moved():
+    """Время последнего переезда дорожек из LANE_STATE_FILE (настенное время
+    переводим в monotonic). Битый файл — одна строка в журнал, отсчёт от запуска."""
+    global _started, _lane_saved
+    _started = time.monotonic()
+    _lane_moved.clear()
+    try:
+        with open(LANE_STATE_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    except (OSError, ValueError) as e:
+        data = e
+    if not isinstance(data, dict) or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in data.values()):
+        print(f'{LANE_STATE_FILE}: не читается ({str(data)[:200]}), '
+              f'стоянку дорожек отсчитываю от запуска', flush=True)
+        data = {}
+    wall = time.time()
+    for lane, ts in data.items():
+        _lane_moved[lane] = _started - max(0.0, wall - ts)   # из будущего — как «только что»
+    _lane_saved = dict(_lane_moved)
+
+
+def _persist_lanes():
+    """Записать время переездов, если изменилось: .tmp + os.replace — вотчдог,
+    убитый посреди записи, не оставит полфайла."""
+    global _lane_saved
+    if _lane_moved == _lane_saved:
+        return
+    shift = time.time() - time.monotonic()
+    try:
+        fsutil.atomic(LANE_STATE_FILE, json.dumps(
+            {l: round(m + shift, 1) for l, m in sorted(_lane_moved.items())}), mode=0o644)
+        _lane_saved = dict(_lane_moved)
+    except OSError as e:
+        print(f'{LANE_STATE_FILE}: не записать ({e}), стоянка не переживёт перезапуск',
+              file=sys.stderr, flush=True)
+
+
+def _load_restart():
+    """Время последнего перезапуска sing-box из RESTART_STATE_FILE (настенное
+    время -> monotonic, как у дорожек). Нет файла — перезапусков не было."""
+    global _restarted
+    try:
+        with open(RESTART_STATE_FILE, encoding='utf-8') as f:
+            ts = json.load(f)['restarted']
+        _restarted = time.monotonic() - max(0.0, time.time() - float(ts))
+    except FileNotFoundError:
+        _restarted = None
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        _restarted = None
+        print(f'{RESTART_STATE_FILE}: не читается ({e}), предел частоты перезапуска '
+              f'sing-box отсчитываю заново', flush=True)
+
+
+def _save_restart():
+    try:
+        fsutil.atomic(RESTART_STATE_FILE, json.dumps({'restarted': round(time.time(), 1)}),
+                      mode=0o644)
+    except OSError as e:
+        print(f'{RESTART_STATE_FILE}: не записать ({e}), предел частоты перезапуска '
+              f'не переживёт перезапуск вотчдога', file=sys.stderr, flush=True)
+
+
+def _restart_sing_box():
+    """'' — перезапущен, иначе причина отказа."""
+    try:
+        r = subprocess.run(['systemctl', 'restart', 'sing-box'],
+                           capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    return '' if r.returncode == 0 else (r.stderr.strip() or f'код {r.returncode}')
+
+
+def _bot_event(subject, detail):
+    """Событие в бот (POST /event с X-Tgbot-Secret). Бот недоступен — только
+    строка в журнал."""
+    event = {'type': 'system_alert', 'subject': subject, 'detail': detail}
+    if notify.bot_event(event, secret_file=BOT_SECRET_FILE) is not notify.Outcome.SENT:
+        print(f'бот: событие «{subject}» не доставлено', file=sys.stderr, flush=True)
+
+
+def _plural_ru(n, forms):
+    """Форма после целого числа: один, два, пять; как plural_ru в боте."""
+    mod10 = abs(n) % 10
+    mod100 = abs(n) % 100
+    if mod10 == 1 and mod100 != 11:
+        return forms[0]
+    if 2 <= mod10 <= 4 and (mod100 < 10 or mod100 >= 20):
+        return forms[1]
+    return forms[2]
+
+
+def _psi_some_avg10(name):
+    """some avg10 из PSI_DIR/<name>; None — PSI нет или не прочитать."""
+    try:
+        with open(os.path.join(PSI_DIR, name), encoding='ascii') as f:
+            for line in f:
+                if line.startswith('some '):
+                    for part in line.split()[1:]:
+                        k, _, v = part.partition('=')
+                        if k == 'avg10':
+                            return float(v)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _top_rss(n=3):
+    """Топ процессов по RSS из PROC_DIR: «имя pid NМБ» через запятую."""
+    procs = []
+    try:
+        pids = [d for d in os.listdir(PROC_DIR) if d.isdigit()]
+    except OSError:
+        return ''
+    for pid in pids:
+        name, rss = '', 0
+        try:
+            with open(os.path.join(PROC_DIR, pid, 'status'), encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    if line.startswith('Name:'):
+                        name = line[5:].strip()
+                    elif line.startswith('VmRSS:'):
+                        rss = int(line.split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        if rss:
+            procs.append((rss, name, pid))
+    procs.sort(reverse=True)
+    return ', '.join(f'{name} {pid} {rss // 1024}МБ' for rss, name, pid in procs[:n])
+
+
+def _entry_pressure():
+    """Entry под давлением — «память 35.0%, CPU 1.0%» (PSI some avg10), иначе ''."""
+    mem, cpu = _psi_some_avg10('memory'), _psi_some_avg10('cpu')
+    hot = []
+    if mem is not None and mem >= PRESSURE_MEM_AVG10:
+        hot.append('память')
+    if cpu is not None and cpu >= PRESSURE_CPU_AVG10:
+        hot.append('CPU')
+    if not hot:
+        return ''
+    nums = ', '.join(f'{k} {v:.1f}%' for k, v in (('память', mem), ('CPU', cpu)) if v is not None)
+    return f"{'/'.join(hot)}; PSI some avg10: {nums}"
+
+
+def restart_tick():
+    """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
+    набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
+    перезапуска — перезапускаем sing-box."""
+    global _dead_streak, _restarted, _restart_gen
+    if RESTART_AFTER_CHECKS <= 0 or _all_dead is None:
+        return
+    _dead_streak = _dead_streak + 1 if _all_dead else 0
+    t = time.monotonic()
+    if _dead_streak < RESTART_AFTER_CHECKS or (
+            _restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
+        return
+    checks, _dead_streak, _restarted = _dead_streak, 0, t
+    _restart_gen += 1
+    _save_restart()
+    streak = f"{checks} {_plural_ru(checks, ('проверку', 'проверки', 'проверок'))} подряд"
+    pressure = _entry_pressure()
+    if pressure:
+        top = _top_rss()
+        print(f'entry перегружен ({pressure}; топ RSS: {top or "-"}), sing-box не отвечает '
+              f'{streak} — перезапускаю sing-box', flush=True)
+        subject = 'Entry'
+        what = f'entry перегружен ({pressure}; топ RSS: {top or "-"}), sing-box не отвечает {streak}'
+    else:
+        print(f'все каналы всех включённых узлов мертвы {streak} — перезапускаю sing-box', flush=True)
+        subject = 'Экзиты'
+        what = f'Все каналы мертвы {streak}'
+    err = _restart_sing_box()
+    if err:
+        print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
+        detail = f'{what} - перезапуск sing-box не удался: {err}'
+    else:
+        detail = f'{what} - перезапустил sing-box'
+    _bot_event(subject, detail)
+
+
+def _move_lane(lane, tag, reason, ips, quiet=False):
+    """quiet — дорожка без соединений: в журнал не пишем поштучно (сводка у вызывающего)."""
+    _req('PUT', f'/proxies/{urllib.parse.quote(lane)}', {'name': tag})
+    _lane_moved[lane] = time.monotonic()
+    if not quiet:
+        who = ','.join(sorted(ips.get(lane, ()))[:3])
+        print(f'{lane} ({who}) -> {tag}: {reason}', flush=True)
+
+
+def lanes_tick(conns):
+    """Раскладка дорожек по экзитам (см. описание BALANCE выше)."""
+    global _last_rebalance
+    proxies = _req('GET', '/proxies').get('proxies') or {}
+    lanes = sorted(n for n, p in proxies.items()
+                   if n.startswith(LANE_PREFIX) and str(p.get('type', '')).lower() == 'selector')
+    if not lanes:
+        return
+    cur = {l: proxies[l].get('now') for l in lanes}
+
+    if not BALANCE:
+        fb = (proxies.get(GROUP) or {}).get('now')
+        for l in lanes:
+            if fb and cur[l] != fb:
+                _req('PUT', f'/proxies/{urllib.parse.quote(l)}', {'name': fb})
+        return
+
+    # дорожка без записи — последним переездом считаем запуск; пропавшие выбрасываем
+    moved = {l: _lane_moved.get(l, _started) for l in lanes}
+    _lane_moved.clear()
+    _lane_moved.update(moved)
+
+    if conns is not None:
+        _update_lane_rates(conns)
+    if _tick_alive is None:
+        return   # замеров нет (ошибка тика) — ничего не двигаем
+    all_tags = (proxies.get(lanes[0]) or {}).get('all') or []
+    alive = _effective_alive(_tick_alive, all_tags)
+    t = time.monotonic()
+    for tag in all_tags:
+        if tag.endswith('-direct') and tag in alive:
+            _direct_since.setdefault(tag, t)
+        else:
+            _direct_since.pop(tag, None)   # промах (по DEAD_AFTER) — отсчёт заново
+    targets = _node_targets(alive)
+    elig = _update_eligible(targets)
+    if not elig:
+        return   # ни одного живого экзита — «выбор не трогаю», как foreign-best
+    ips = _lane_ips(conns or [])
+    rate = {l: _lane_rate.get(l, 0.0) for l in lanes}
+    load = {n: 0.0 for n in elig}
+    count = {n: 0 for n in elig}   # дорожек на узле — тай-брейк при равной нагрузке
+    broken = [l for l in lanes if _node_of(cur[l] or '') not in elig or cur[l] not in alive]
+    for l in lanes:
+        n = _node_of(cur[l] or '')
+        if n in load and l not in broken:
+            load[n] += rate[l]
+            count[n] += 1
+    lightest = lambda: min(load, key=lambda n: (load[n], count[n]))
+
+    # 1. Проблема узла/выхода: дорожка не на «быстром» узле или её выход мёртв —
+    #    уводим сразу, тяжёлые первыми, каждую на самый лёгкий узел.
+    quiet_moves: dict = {}
+    for l in sorted(broken, key=lambda x: -rate[x]):
+        old = _node_of(cur[l] or '?')
+        dst = lightest()
+        why = ('узел выключен вручную' if old in _excluded()
+               else 'выход мёртв' if cur[l] not in alive and old in elig
+               else 'узел недоступен/медленный')
+        quiet = l not in ips
+        _move_lane(l, targets[dst][0], f'{old}→{dst}: {why}', ips, quiet)
+        if quiet:
+            quiet_moves.setdefault(f'{old}→{dst}: {why}', []).append(l[len(LANE_PREFIX):])
+        load[dst] += rate[l]
+        count[dst] += 1
+        cur[l] = targets[dst][0]
+    for what, ls in quiet_moves.items():
+        print(f'{len(ls)} дорожек без соединений ({",".join(ls)}) — {what}', flush=True)
+
+    # 1б. Возврат с warp на direct того же узла: direct жив без перерыва
+    #     WARP_RETURN; стоянку ждём, только если дорожка недавно уже
+    #     возвращалась (см. WARP_RETURN выше). Нагрузка узла не меняется.
+    for l in lanes:
+        tag = cur[l] or ''
+        direct = targets.get(_node_of(tag), ('',))[0]
+        up = t - _direct_since.get(direct, t)
+        calm = l not in _lane_back or t - _lane_back[l] >= MIN_DWELL
+        if (tag.endswith('-warp') and direct.endswith('-direct') and up >= WARP_RETURN
+                and (calm or t - _lane_moved[l] >= MIN_DWELL)):
+            _move_lane(l, direct, f'возврат с {tag}, прямой жив без перерыва {up / 60:.1f} мин', ips)
+            _lane_back[l] = t
+            cur[l] = direct
+
+    # Ошибка /connections — не пустой снимок: активные дорожки неизвестны,
+    # а нагрузки устарели. Аварийные переезды выше от снимка не зависят.
+    if conns is None or t - _last_rebalance < REBALANCE_INTERVAL or len(load) < 2:
+        return
+    _last_rebalance = t
+
+    # 2. Дисбаланс: одна активная дорожка с самого нагруженного узла на самый
+    #    лёгкий — та, чья нагрузка ближе всего к половине разрыва.
+    total = sum(load.values())
+    hi, lo = max(load, key=load.get), min(load, key=load.get)
+    gap = load[hi] - load[lo]
+    if total > 0 and gap > IMBALANCE_SHARE * total and gap > IMBALANCE_MIN_BPS:
+        cand = [l for l in lanes
+                if _node_of(cur[l] or '') == hi and ACTIVE_BPS <= rate[l] < gap
+                and t - _lane_moved[l] >= MIN_DWELL]
+        if cand:
+            l = min(cand, key=lambda x: abs(rate[x] - gap / 2))
+            _move_lane(l, targets[lo][0],
+                       f'{hi}→{lo}: дисбаланс {load[hi] * 8 / 1e6:.1f}/{load[lo] * 8 / 1e6:.1f} Mbps', ips)
+            load[hi] -= rate[l]
+            load[lo] += rate[l]
+            count[hi] -= 1
+            count[lo] += 1
+            cur[l] = targets[lo][0]
+
+    # 3. Спящие дорожки — тихо разносим по узлам с упором на лёгкие:
+    #    проснувшееся устройство попадёт туда, где свободнее. Двигаем ТОЛЬКО
+    #    дорожки без единого соединения: устройство в сети, но с малым
+    #    трафиком (мессенджер, фон) не должно менять внешний IP.
+    idle = [l for l in lanes if rate[l] < ACTIVE_BPS]
+    proj = dict(load)
+    for l in idle:
+        n = _node_of(cur[l] or '')
+        if n in proj:
+            proj[n] += ACTIVE_BPS   # вес «спящего» устройства
+    levelled = []
+    for l in idle:
+        n = _node_of(cur[l] or '')
+        if l in ips or t - _lane_moved[l] < IDLE_DWELL:
+            continue
+        dst = min(proj, key=proj.get)
+        if dst != n and n in proj and proj[n] - ACTIVE_BPS > proj[dst]:
+            proj[n] -= ACTIVE_BPS
+            proj[dst] += ACTIVE_BPS
+            _move_lane(l, targets[dst][0], '', ips, quiet=True)
+            levelled.append(f'{l[len(LANE_PREFIX):]}:{n}→{dst}')
+    if levelled:
+        print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
+
+
+def pins_tick(proxies, conns=None):
+    """pin-<выход> (ручные маршруты и предпочитаемый экзит клиента): на своём
+    выходе, пока узел включён, выход жив (DEAD_AFTER промахов подряд — мёртв) и
+    узел не в штрафной, иначе — на foreign-best (warp-выход — на живую WARP-ногу другого узла). Штрафную берём ту же, что у
+    основного выбора: узел, только что упавший и поднявшийся, на флапе не
+    дёргает ручные маршруты туда-сюда.
+
+    Selector меняет выход только новым соединениям. При возврате pin на свой
+    выход закрываем те, что открылись через запасной: иначе долгоживущие (push,
+    мессенджеры) часами шли бы не через выбранный экзит."""
+    if _tick_alive is None:
+        return   # замеров нет (ошибка тика) — ничего не двигаем
+    t = time.monotonic()
+    for tag in set(_warp_miss) | {x for x in _tick_alive if x.endswith('-warp')}:
+        if tag in _tick_alive:
+            _warp_miss[tag] = 0
+            _warp_delay[tag] = _tick_alive[tag]
+        else:
+            _warp_miss[tag] = _warp_miss.get(tag, DEAD_AFTER) + 1
+    for name, p in proxies.items():
+        if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
+            continue
+        base = name[len(PIN_PREFIX):]
+        _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
+        node = _node_of(base)
+        # Выход не основной — tick() его смерть не штрафует, и маршрут вернулся
+        # бы на первом же удачном замере. Штрафуем узел в момент признания
+        # смерти; долгая смерть штраф не наращивает.
+        if (_pin_miss[base] == DEAD_AFTER and node not in _excluded()
+                and _penalty.get(node, 0.0) <= t and not _node_alive(base, _tick_alive)):
+            _, dur = _penalize(base)
+            print(f'{base} мёртв ({DEAD_AFTER}× промахов), узел {node} в штрафной {dur:.0f}с', flush=True)
+        if node in _excluded():
+            why = 'узел выключен вручную'
+        elif _pin_miss[base] >= DEAD_AFTER:
+            why = 'выход мёртв'
+        elif _penalty.get(node, 0.0) > t:
+            why = f'узел в штрафной ещё {_penalty[node] - t:.0f}с'
+        else:
+            why = ''
+        want = (_warp_fallback(base, p.get('now'), t) if base.endswith('-warp') else GROUP) \
+            if why else base
+        if p.get('now') != want:
+            _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': want})
+            print(f'{name} -> {want}: {why or "выход снова доступен"}', flush=True)
+            if not why:
+                _drop_pin_fallback_conns(name, base, conns)
+        if not why or want != base:
+            _warp_stuck.discard(base)
+        elif base not in _warp_stuck:
+            _warp_stuck.add(base)
+            print(f'{name}: {why}, живой WARP-ноги нет — остаюсь на {base}, в direct не ухожу', flush=True)
+
+
+def _warp_fallback(base, now, t):
+    """Запасной warp-выхода — живая WARP-нога другого узла, не GROUP: там
+    direct-ноги, и «-warp» вышел бы с IP дата-центра. Живой нет — pin остаётся
+    на своей мёртвой ноге, в журнале видно почему. Нога мертва после
+    DEAD_AFTER промахов подряд, до того берём её последнюю удачную задержку."""
+    legs = {tag: _warp_delay[tag] for tag, m in _warp_miss.items()
+            if m < DEAD_AFTER and tag != base and _node_of(tag) not in _excluded()
+            and _penalty.get(_node_of(tag), 0.0) <= t}
+    if now in legs:
+        return now
+    return min(legs, key=legs.get) if legs else base
+
+
+def _drop_pin_fallback_conns(name, base, conns):
+    closed = 0
+    for c in conns or []:
+        chains = c.get('chains') or []
+        if name not in chains or chains[0] == base or not c.get('id'):
+            continue
+        try:
+            _req('DELETE', f'/connections/{urllib.parse.quote(c["id"])}')
+            closed += 1
+        except Exception:
+            pass
+    if closed:
+        print(f'{name}: закрыто {closed} соединений с запасного выхода', flush=True)
+
+
+def stuck_tick(proxies):
+    """Выход ручного маршрута мёртв, а его узел жив (отвечает transport-<выход>,
+    без transport — соседний выход для -direct): выход завис в sing-box entry, и pin без
+    лечения стоял бы на foreign-best бессрочно. STUCK_AFTER_CHECKS проверок
+    подряд — перезапуск sing-box под тем же пределом частоты, что в
+    restart_tick. Не ожил после STUCK_MAX_HEALS перезапусков — одно событие и
+    больше не лечим, пока выход не оживёт."""
+    global _restarted, _restart_gen
+    if RESTART_AFTER_CHECKS <= 0 or _tick_alive is None:
+        return
+    bases = sorted(n[len(PIN_PREFIX):] for n, p in proxies.items()
+                   if n.startswith(PIN_PREFIX) and str(p.get('type', '')).lower() == 'selector')
+    for b in bases:
+        if b in _tick_alive:
+            _stuck_heals.pop(b, None)
+    dead = [] if _all_dead else [b for b in bases
+                                 if b not in _tick_alive and _node_of(b) not in _excluded()]
+    # transport-<выход> идёт до того же inbound узла и дальше той же ногой
+    # (warp — через WARP): жив он, а выход нет — завис sing-box хаба. Сосед
+    # по узлу — только без transport и только для -direct: живой direct не
+    # говорит, что жив WARP, а живой warp — что узел и путь до него целы.
+    transports = [f'transport-{b}' for b in dead if f'transport-{b}' in proxies]
+    up = _probe_all(transports)[0] if transports else {}
+    stuck = [b for b in dead
+             if (up.get(f'transport-{b}') is not None if f'transport-{b}' in proxies
+                 else b.endswith('-direct')
+                 and any(_node_of(m) == _node_of(b) for m in _tick_alive))]
+    for b in list(_stuck_streak):
+        if b not in stuck:
+            del _stuck_streak[b]
+    due = []
+    for b in stuck:
+        _stuck_streak[b] = _stuck_streak.get(b, 0) + 1
+        heals = _stuck_heals.get(b, 0)
+        if _stuck_streak[b] < STUCK_AFTER_CHECKS or heals > STUCK_MAX_HEALS:
+            continue
+        if heals == STUCK_MAX_HEALS:
+            _stuck_heals[b] = heals + 1
+            print(f'{b}: узел жив, а выход не ожил после {heals} перезапусков sing-box — '
+                  f'больше не перезапускаю, пока не оживёт', flush=True)
+            _bot_event('Экзиты', f'Выход {b} не оживает после перезапуска sing-box '
+                                 f'({heals}×) - лечить перестал, маршрут идёт через {GROUP}')
+            continue
+        due.append(b)
+    t = time.monotonic()
+    if not due or (_restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
+        return
+    _restarted = t
+    _restart_gen += 1
+    _save_restart()
+    for b in stuck:
+        if _stuck_heals.get(b, 0) < STUCK_MAX_HEALS:
+            _stuck_heals[b] = _stuck_heals.get(b, 0) + 1
+    _stuck_streak.clear()
+    names = ', '.join(due)
+    print(f'{names}: выход завис при живом узле {STUCK_AFTER_CHECKS} проверок подряд — '
+          f'перезапускаю sing-box', flush=True)
+    err = _restart_sing_box()
+    if err:
+        print(f'sing-box не перезапустился: {err}', file=sys.stderr, flush=True)
+        detail = f'Выход {names} завис при живом узле - перезапуск sing-box не удался: {err}'
+    else:
+        detail = f'Выход {names} завис при живом узле - перезапустил sing-box'
+    _bot_event('Экзиты', detail)
+
+
+def tg_tick(proxies):
+    """tg-best (выход бота): на экзите, с которого отвечает Bot API.
+
+    Текущий выход проверяем раз в TG_INTERVAL. Не ответил Bot API или сам
+    выход — перепроверяем каждый цикл и переезжаем после DEAD_AFTER промахов
+    подряд, как основной выбор: одиночный таймаут бота не уводит. С выключенного
+    вручную узла уводим сразу.
+
+    Если Bot API молчит через все выходы, обход повторяем не чаще раза в
+    TG_INTERVAL: каждая проба стоит таймаута, и обход на каждом цикле тормозил
+    бы весь вотчдог. С мёртвого или выключенного выхода при этом всё равно
+    уходим — на живой выход foreign-best."""
+    global _tg_next, _tg_miss, _tg_silent
+    grp = proxies.get(TG_GROUP)
+    if not grp or str(grp.get('type', '')).lower() != 'selector' or _tick_alive is None:
+        return
+    now = grp.get('now') or ''
+    t = time.monotonic()
+    retry = False   # плановый повтор обхода после «молчит везде»
+    if _node_of(now) in _excluded():
+        why = 'узел выключен вручную'
+    elif _tg_silent and now in _tick_alive:
+        if t < _tg_next:
+            return
+        retry, why = True, 'Bot API не отвечал ни через один выход'
+    else:
+        if now not in _tick_alive:
+            err = 'выход мёртв'
+        elif _tg_miss or t >= _tg_next:
+            res, errs = _probe_all([now], TG_PROBE_URL)
+            _tg_next = t + TG_INTERVAL
+            if res.get(now) is not None:
+                if _tg_miss:
+                    print(f'{TG_GROUP}: {now}: Bot API снова отвечает (промахов подряд '
+                          f'было {_tg_miss}), выбор не трогаю', flush=True)
+                _tg_miss = 0
+                return
+            err = f'Bot API не отвечает ({errs.get(now, "?")})'
+        else:
+            return
+        _tg_miss += 1
+        if _tg_miss < DEAD_AFTER:
+            return
+        why = f'{err}, {_tg_miss}× подряд'
+    _tg_miss = 0
+    # живые и не исключённые; текущий — только при повторе обхода
+    cands = [m for m in grp.get('all', []) if m in _tick_alive and (m != now or retry)]
+    ok: dict = {}
+    if cands and (not _tg_silent or t >= _tg_next):
+        res, _ = _probe_all(cands, TG_PROBE_URL)
+        ok = {m: d for m, d in res.items() if d is not None}
+        _tg_next = t + TG_INTERVAL
+        if not ok and not _tg_silent:
+            print(f'{TG_GROUP}: Bot API не отвечает ни через один экзит, '
+                  f'повторю через {TG_INTERVAL:.0f}с', flush=True)
+        elif ok and _tg_silent:
+            print(f'{TG_GROUP}: Bot API снова отвечает ({", ".join(sorted(ok))})', flush=True)
+        _tg_silent = not ok
+    if now in ok:
+        return
+    fb = (proxies.get(GROUP) or {}).get('now')
+    if ok:
+        target = fb if fb in ok else min(ok, key=ok.get)
+        how = f'{ok[target]}ms'
+    elif not retry and fb in _tick_alive and fb != now:
+        # Bot API не отвечает нигде, а текущий выход мёртв или выключен:
+        # стоять на нём незачем — живой выход хотя бы довезёт бота, когда
+        # Bot API вернётся.
+        target, how = fb, 'Bot API пока не отвечает нигде, беру выход foreign-best'
+    else:
+        return
+    _req('PUT', f'/proxies/{urllib.parse.quote(TG_GROUP)}', {'name': target})
+    print(f'{TG_GROUP} -> {target} ({how}): {now or "—"}: {why}', flush=True)
+
+
+def _transport_pairs(proxies):
+    """selector канала -> (hy2, tcp, узел, вид канала) для каналов с запасным TCP."""
+    pairs = {}
+    for name, p in proxies.items():
+        members = p.get('all') or []
+        if (p.get('type') or '').lower() != 'selector' or len(members) != 2:
+            continue
+        hy2, tcp = members
+        if not (hy2.startswith('transport-hy2-') and tcp == 'transport-tcp-' + hy2[14:]):
+            continue
+        node, _, kind = hy2[14:].rpartition('-')
+        pairs[name] = (hy2, tcp, node, kind)
+    return pairs
+
+
+def transport_tick(proxies):
+    """hy2 канала мёртв, TCP жив - канал на TCP; hy2 снова жив TCP_RETURN - обратно.
+    Промах пробы TCP окно не сокращает (проба warp через TCP шумит при рабочем
+    канале): раньше окна обратно, только если TCP мёртв - DEAD_AFTER промахов подряд.
+    Так же промах пробы hy2 обнуляет окно только после DEAD_AFTER промахов подряд.
+    После полной аварии канала или перезапуска sing-box мёртвый hy2 при живом
+    TCP - подъём QUIC, на TCP только через HY2_RISE с возврата TCP.
+    Мёртвый канал не задерживает живые: смерть, учтённую прошлым проходом,
+    не ждём дольше KNOWN_DEAD_WAIT и заново не до-проверяем.
+    Событие узла «UDP недоступен / снова работает» - по каналу direct.
+    Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
+    global _rise_gen
+    pairs = _transport_pairs(proxies)
+    if not pairs:
+        return
+    on_tcp = {s for s, (_, tcp, _, _) in pairs.items() if proxies[s].get('now') == tcp}
+    deciders = {s: v for s, v in pairs.items() if v[3] != 'mgmt'}
+    if _rise_gen != _restart_gen:
+        _rise_gen = _restart_gen
+        for s in deciders.keys() - on_tcp:
+            _hy2_rise.setdefault(s, None)
+    # Смерть, учтённую прошлым проходом, не ждём и заново не до-проверяем:
+    # вердикт по такому каналу до-проверка уже не меняет.
+    known = _known_dead & {t for v in deciders.values() for t in v[:2]}
+    spare = {v[0]: v[1] for v in deciders.values()}
+    first = [v[0] for v in deciders.values()] \
+        + [v[1] for s, v in deciders.items() if s in on_tcp or v[0] in known]
+    delays, _ = _probe_all(first, known_dead=known)
+    tries = dict.fromkeys(first, 1)
+    dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
+    fresh = [h for h in dead if h not in known]
+    tcp_dead = [v[1] for s, v in deciders.items()
+                if s in on_tcp and delays[v[0]] is not None and delays[v[1]] is None]
+    # Промах hy2 канала на TCP до-проверяем, пока идёт окно возврата: без окна
+    # обнулять нечего.
+    hy2_miss = [v[0] for s, v in deciders.items()
+                if s in on_tcp and delays[v[0]] is None and s in _hy2_since]
+    for _ in range(DEAD_AFTER - 1):
+        if not fresh and not tcp_dead and not hy2_miss:
+            break
+        time.sleep(CONFIRM_GAP)
+        # TCP канала пробуем той же пачкой, что и до-проверку его hy2: решение
+        # готово вместе с вердиктом по hy2, а не ещё через тайм-аут.
+        tcp_try = [spare[h] for h in fresh if delays.get(spare[h]) is None]
+        again, _ = _probe_all(fresh + tcp_dead + hy2_miss + tcp_try, known_dead=set())
+        for t in tcp_try:
+            tries[t] = tries.get(t, 0) + 1
+            delays[t] = again[t]
+        fresh = [h for h in fresh if again[h] is None]
+        tcp_dead = [t for t in tcp_dead if again[t] is None]
+        delays.update({h: again[h] for h in hy2_miss if again[h] is not None})
+        hy2_miss = [h for h in hy2_miss if again[h] is None]
+    dead = [h for h in dead if h in known or h in fresh]
+    # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка
+    # до DEAD_AFTER проб, иначе канал остаётся на мёртвом hy2.
+    while True:
+        tcp_miss = [spare[h] for h in dead if delays.get(spare[h]) is None
+                    and spare[h] not in known and tries.get(spare[h], 0) < DEAD_AFTER]
+        if not tcp_miss:
+            break
+        if any(tries.get(t) for t in tcp_miss):
+            time.sleep(CONFIRM_GAP)
+        again, _ = _probe_all(tcp_miss, known_dead=set())
+        for t in tcp_miss:
+            tries[t] = tries.get(t, 0) + 1
+            delays[t] = again[t]
+    now = time.monotonic()
+    # Авария связи с узлом - не отвечает ни один его канал ни по hy2, ни по TCP.
+    # Один мёртвый канал при живом соседнем - промах пробы, не авария.
+    node_up = {}
+    for s, (hy2, tcp, node, _) in deciders.items():
+        up = delays[hy2] is not None if s in on_tcp else hy2 not in dead
+        node_up[node] = node_up.get(node, False) or up or delays.get(tcp) is not None
+    want = {}
+    for s, (hy2, tcp, node, kind) in deciders.items():
+        if s not in on_tcp:
+            _hy2_since.pop(s, None)
+            if hy2 not in dead:
+                _hy2_rise.pop(s, None)
+                want[s] = hy2
+            elif delays.get(tcp) is None:
+                if not node_up[node]:
+                    _hy2_rise[s] = None
+                want[s] = hy2
+            elif s in _hy2_rise:
+                if _hy2_rise[s] is None:
+                    _hy2_rise[s] = now
+                want[s] = tcp if now - _hy2_rise[s] >= HY2_RISE else hy2
+            else:
+                want[s] = tcp
+            continue
+        _hy2_rise.pop(s, None)
+        if delays[hy2] is None:
+            _hy2_since.pop(s, None)
+            want[s] = tcp
+        elif tcp in tcp_dead or now - _hy2_since.setdefault(s, now) >= TCP_RETURN:
+            want[s] = hy2
+        else:
+            want[s] = tcp
+    _known_dead.clear()
+    for s, (hy2, tcp, _, _) in deciders.items():
+        if delays[hy2] is None if s in on_tcp else hy2 in dead:
+            _known_dead.add(hy2)
+            if delays.get(tcp) is None:
+                _known_dead.add(tcp)
+    lead = {v[2]: want[s] == v[1] for s, v in deciders.items() if v[3] == 'direct'}
+    for s, (hy2, tcp, node, kind) in pairs.items():
+        if kind == 'mgmt':
+            want[s] = tcp if lead.get(node) else hy2
+        if want[s] != proxies[s].get('now'):
+            _req('PUT', f'/proxies/{urllib.parse.quote(s)}', {'name': want[s]})
+            print(f'{s} -> {want[s]}', flush=True)
+    # Про UDP узла говорит direct: warp уходит на TCP и от шума выхода WARP.
+    for node in sorted(lead):
+        tcp_now = lead[node]
+        if tcp_now and node not in _tcp_nodes:
+            _tcp_nodes.add(node)
+            _bot_event(f'UDP до экзита {node} недоступен, работаю через TCP',
+                       'Hysteria2 до экзита не отвечает, каналы идут запасным VLESS + Reality '
+                       'по TCP, sing-box не перезапускаю')
+        elif not tcp_now and node in _tcp_nodes:
+            _tcp_nodes.discard(node)
+            _bot_event(f'UDP до экзита {node} снова работает',
+                       f'Hysteria2 жив {TCP_RETURN:.0f} с подряд, каналы вернулись с TCP')
+
+
+def _transport_pass():
+    try:
+        transport_tick(_req('GET', '/proxies').get('proxies') or {})
+    except Exception as e:
+        print(f'transport error: {e}', file=sys.stderr, flush=True)
+
+
+def _transport_loop():
+    """Свой такт проверки каналов: остальные проходы цикла её не задерживают."""
+    while True:
+        _transport_pass()
+        time.sleep(INTERVAL)
+
+
+def main(serial=False):
+    """serial - проверка каналов в общем цикле, для тестов на модельных часах."""
+    if not SECRET:
+        print('CLASH_SECRET не задан', file=sys.stderr)
+        sys.exit(1)
+    print(f'failover-watchdog: group={GROUP} interval={INTERVAL}s '
+          f'probe_timeout={TIMEOUT_MS}ms dead_after={DEAD_AFTER} '
+          f'tolerance={TOLERANCE}ms latency_hold={LATENCY_HOLD} '
+          f'cooldown={COOLDOWN:.0f}-{MAX_COOLDOWN:.0f}s api={CLASH} '
+          f'balance={"on" if BALANCE else "off"} margin={BALANCE_MARGIN_MS}ms '
+          f'rebalance={REBALANCE_INTERVAL:.0f}s imbalance>{IMBALANCE_SHARE:.0%}&>{IMBALANCE_MIN_BPS * 8 / 1e6:g}Mbps '
+          f'dwell={MIN_DWELL:.0f}s warp_return={WARP_RETURN:.0f}s '
+          f'tg={TG_GROUP}/{TG_INTERVAL:.0f}s restart_after={RESTART_AFTER_CHECKS} '
+          f'restart_min={RESTART_MIN_INTERVAL:.0f}s tcp_return={TCP_RETURN:.0f}s', flush=True)
+    _load_lane_moved()
+    _load_restart()
+    if not serial:
+        threading.Thread(target=_transport_loop, daemon=True).start()
+    while True:
+        if serial:
+            _transport_pass()
+        try:
+            tick()
+        except Exception as e:
+            print(f'tick error: {e}', file=sys.stderr, flush=True)
+        restart_tick()
+        conns = _fetch_conns()
+        try:
+            lanes_tick(conns)
+        except Exception as e:
+            print(f'lanes error: {e}', file=sys.stderr, flush=True)
+        _persist_lanes()
+        try:
+            proxies = _req('GET', '/proxies').get('proxies') or {}
+            pins_tick(proxies, conns)
+            stuck_tick(proxies)
+            tg_tick(proxies)
+        except Exception as e:
+            print(f'pins/tg error: {e}', file=sys.stderr, flush=True)
+        # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
+        _drop_disabled_conns(conns)
+        time.sleep(INTERVAL)
+

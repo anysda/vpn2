@@ -46,11 +46,39 @@ DEVICES = {
     'both': {'name': 'Оба', 'hasWg': True, 'hasOvpn': True},
 }
 
+CLIENTS = {
+    'active': {'id': 'c1', 'name': 'Иван_П', 'status': 'active', 'deviceLimit': 3, 'deviceCount': 2,
+               'expiresAt': '2026-12-31T23:59:59Z', 'tgLinked': True,
+               'accessStatus': 'Доступ включён'},
+    'frozen': {'id': 'c2', 'name': 'Анна', 'status': 'frozen', 'deviceLimit': None,
+               'deviceCount': 5, 'expiresAt': 'garbage'},
+    'pending': {'id': 'c3', 'name': 'Пётр', 'status': 'active', 'deviceLimit': 1, 'deviceCount': 1,
+                'frozenManual': True, 'accessStatus': 'Состояние не подтверждено',
+                'operation': {'status': 'pending', 'protocols': {
+                    'wg': {'state': 'failed', 'error': 'ошибка_x'}}}},
+    'superseded': {'id': 'c4', 'name': 'Заменён', 'status': 'active', 'deviceCount': 0,
+                   'accessStatus': 'Состояние не подтверждено',
+                   'operation': {'status': 'superseded', 'protocols': {
+                       'wg': {'state': 'confirmed'}}}},
+    'bare': {},
+}
+
+
+def source_files():
+    """Все .py под telegram/, кроме tests, каталогов с точки и __pycache__."""
+    found = []
+    for path in BOT_DIR.rglob('*.py'):
+        parts = path.relative_to(BOT_DIR).parts[:-1]
+        if any(p == 'tests' or p == '__pycache__' or p.startswith('.') for p in parts):
+            continue
+        found.append(path)
+    return sorted(found)
+
 
 def collect_literals():
-    """Каждая строка с не-ASCII символом (кириллица, эмодзи, типографика) в telegram/*.py."""
+    """Каждая строка с не-ASCII символом (кириллица, эмодзи, типографика) в telegram/**/*.py."""
     counter = collections.Counter()
-    for path in sorted(BOT_DIR.glob('*.py')):
+    for path in source_files():
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
             if (isinstance(node, ast.Constant) and isinstance(node.value, str)
                     and not node.value.isascii()):
@@ -61,12 +89,17 @@ def collect_literals():
 def plural_forms():
     """Тройки форм, которые код передаёт в plural_ru."""
     triples = set()
-    for path in sorted(BOT_DIR.glob('*.py')):
+    for path in source_files():
         for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
             if (isinstance(node, ast.Call) and getattr(node.func, 'id', None) == 'plural_ru'
                     and len(node.args) == 2 and isinstance(node.args[1], ast.Tuple)):
                 triples.add(tuple(ast.literal_eval(node.args[1])))
     return sorted(triples)
+
+
+def rows(markup):
+    """Клавиатура как список рядов, кнопка - пара [text, callback_data]."""
+    return [[[b['text'], b['callback_data']] for b in row] for row in markup['inline_keyboard']]
 
 
 def collect_rendered(bot):
@@ -82,6 +115,15 @@ def collect_rendered(bot):
     out['_menu_text'] = {k: bot._menu_text(v) for k, v in VIEWS.items()}
     out['_devices_text'] = {k: bot._devices_text(v) for k, v in VIEWS.items()}
     out['_device_card_text'] = {k: bot._device_card_text(v) for k, v in DEVICES.items()}
+    out['devices_markup'] = {k: rows(bot._devices_markup(v)) for k, v in VIEWS.items()}
+    out['device_card_markup'] = {i: rows(bot._device_card_markup(i)) for i in ('7', 'a_b')}
+    out['confirm_markup'] = rows(bot._confirm_markup('yes:1', 'no:1'))
+    out['admin_list_markup'] = {
+        'none': rows(bot._admin_list_markup([])),
+        'all': rows(bot._admin_list_markup(list(CLIENTS.values()))),
+    }
+    out['admin_card_markup'] = {k: rows(bot._admin_card_markup(v)) for k, v in CLIENTS.items()}
+    out['admin_card_text'] = {k: bot._admin_card_text(v) for k, v in CLIENTS.items()}
     saved = bot.ADMIN_USERNAME
     try:
         out['_no_access_text'] = {}
@@ -118,6 +160,9 @@ class FrozenTextsTests(unittest.TestCase):
             self.assertIn(key, rendered['ERROR_TEXT'])
         for name in NAMED_CONSTANTS + ('ERROR_TEXT',):
             self.assertIn(name, rendered)
+        for name in ('devices_markup', 'device_card_markup', 'confirm_markup', 'admin_list_markup',
+                     'admin_card_markup', 'admin_card_text'):
+            self.assertTrue(rendered[name], name)
         self.assertTrue(rendered['plural_ru'])
         self.assertTrue(self.data['literals'])
 

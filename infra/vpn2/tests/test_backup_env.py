@@ -9,7 +9,7 @@ from vpn2.backup.env import BackupEnvError, Settings, bundle_name, read_env, set
 
 HAS_BASH = shutil.which('bash') is not None
 NEEDS_BASH = pytest.mark.skipif(not HAS_BASH, reason='нужен bash')
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-backup.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
 VALUES = {
     'BACKUP_BACKEND': 'local',
     'WITH_SPACE': 'a b  c',

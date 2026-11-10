@@ -11,7 +11,7 @@ from vpn2 import fsutil
 from vpn2.backup import bundle
 from vpn2.backup.bundle import components, manifest, sha_dir, sha_file, verify_components, write_manifest
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-backup.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
 NEEDS_BASH = pytest.mark.skipif(shutil.which('bash') is None or shutil.which('python3') is None,
                                 reason='нужны bash и python3')
 START = '# ── Manifest с SHA-256 каждого компонента'

@@ -19,7 +19,7 @@ from vpn2.backup import env
 from vpn2.backup import run as backup_run
 from vpn2.backup.run import Paths, create
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-backup.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
 NEEDS_BASH = pytest.mark.skipif(
     any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'flock', 'shred', 'python3')),
     reason='нужны bash, sqlite3, tar, flock, shred, python3')

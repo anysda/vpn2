@@ -12,7 +12,7 @@ from vpn2.backup import check
 from vpn2.backup.bundle import write_manifest
 
 LIB = Path(__file__).resolve().parents[2] / 'lib'
-SCRIPT = LIB / 'anysda-backup.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
 NEEDS = pytest.mark.skipif(not all(shutil.which(n) for n in ('bash', 'python3', 'sqlite3')),
                            reason='нужны bash, python3 и sqlite3')
 # Ключи ненастоящие: собраны из частей.

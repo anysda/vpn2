@@ -13,7 +13,7 @@ from vpn2.cli import backup_list
 
 NEEDS_BASH = pytest.mark.skipif(
     shutil.which('bash') is None or shutil.which('numfmt') is None, reason='нужны bash и numfmt')
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-backup-list.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup-list.sh'
 MIB = 1024 ** 2
 GIB = 1024 ** 3
 # ожидания получены запуском numfmt --to=iec на тех же значениях

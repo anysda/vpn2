@@ -11,7 +11,7 @@ import pytest
 from vpn2.backup.errors import RestoreError
 from vpn2.backup.rollback import Rollback, StepFailed
 
-RESTORE = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-restore.sh'
+RESTORE = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-restore.sh'
 SRC = Path(__file__).resolve().parents[1] / 'src'
 needs_bash = pytest.mark.skipif(shutil.which('bash') is None, reason='нужен bash')
 

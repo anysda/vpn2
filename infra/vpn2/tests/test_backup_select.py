@@ -11,7 +11,7 @@ from vpn2.backup import env as benv
 from vpn2.backup import select
 from vpn2.backup.errors import RestoreError
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-restore.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-restore.sh'
 NEEDS_BASH = pytest.mark.skipif(shutil.which('bash') is None, reason='нужен bash')
 NOW = 1_780_000_000
 

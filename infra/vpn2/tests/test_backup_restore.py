@@ -184,3 +184,17 @@ def test_refusals_before_any_change(node, monkeypatch):
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n'
     calls = (tmp / 'calls.log').read_text()
     assert 'systemctl' not in calls and 'docker stop' not in calls and not leftovers(root)
+
+
+@needs_tools
+def test_s3_backend_without_keys_restores_local_archive(node):
+    """Скрипт спрашивал переменные S3 только при обращении к облаку: архив уже лежит рядом - они не нужны."""
+    _tmp, root, paths, vals = node
+    write_env(root, {**vals, 'BACKUP_BACKEND': 's3'})
+    name = 'anysda-vpn2-2026-01-02T030405Z.tar.gz.age'
+    assert go(root, paths, [name, '--dry-run'])[:2] == (
+        0, f'anysda-restore: dry-run — восстановил бы {name} (local), ничего не изменено\n')
+    code, _out, err = go(root, paths, ['latest', '--dry-run'])
+    assert code == 0 and '  BACKUP_S3_BUCKET: parameter null or not set\n' in err
+    code, _out, err = go(root, paths, ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
+    assert (code, err) == (1, 'anysda-restore: BACKUP_S3_BUCKET: parameter null or not set\n')

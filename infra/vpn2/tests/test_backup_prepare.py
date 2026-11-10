@@ -14,7 +14,7 @@ from vpn2.backup import prepare
 from vpn2.backup.archive import ArchiveError
 from vpn2.backup.errors import RestoreError
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-restore.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-restore.sh'
 HAS_BASH = shutil.which('bash') is not None and SCRIPT.is_file()
 BASH = pytest.mark.skipif(not HAS_BASH, reason='нет bash или anysda-restore.sh')
 SQLITE = pytest.mark.skipif(not HAS_BASH or shutil.which('sqlite3') is None, reason='нет sqlite3')

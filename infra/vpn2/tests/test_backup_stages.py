@@ -11,7 +11,7 @@ import pytest
 from vpn2.backup import stages
 from vpn2.backup.errors import RestoreError
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-restore.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-restore.sh'
 needs_bash = pytest.mark.skipif(shutil.which('bash') is None, reason='нужен bash')
 
 

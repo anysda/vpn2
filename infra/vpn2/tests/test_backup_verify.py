@@ -13,7 +13,7 @@ import pytest
 from vpn2.backup import bundle, verify
 from vpn2.backup.errors import RestoreError
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'lib' / 'anysda-restore.sh'
+SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-restore.sh'
 NEEDS_PY = pytest.mark.skipif(shutil.which('python3') is None, reason='нужен python3')
 ARCHIVE = 'anysda-vpn2-2026-05-22T020000Z.tar.gz.age'
 

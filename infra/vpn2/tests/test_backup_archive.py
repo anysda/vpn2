@@ -10,7 +10,7 @@ import pytest
 from vpn2.backup import archive
 from vpn2.backup.archive import ArchiveError, decrypt, encrypt, pack, unpack, wipe, workdir
 
-LIB = Path(__file__).resolve().parents[2] / 'lib'
+LIB = Path(__file__).resolve().parent / 'fixtures' / 'backup'
 HAS_AGE = shutil.which('age') is not None and shutil.which('expect') is not None
 NEEDS_AGE = pytest.mark.skipif(not HAS_AGE, reason='нужны age и expect')
 NEEDS_TAR = pytest.mark.skipif(shutil.which('tar') is None, reason='нужен tar')

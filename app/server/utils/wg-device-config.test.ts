@@ -11,7 +11,7 @@ import { qrPng, qrSvg } from './qr'
 
 const wg = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).defineEventHandler = (handler: unknown) => handler
-  return { keysReady: true, params: undefined as unknown }
+  return { keysReady: true, syncFails: false, params: undefined as unknown }
 })
 
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
@@ -29,7 +29,10 @@ vi.mock('./wireguard', async () => {
       calls.push(`wg:device:${id}`)
       return { wgPrivateKey: 'priv', wgPresharedKey: 'psk', wgIp: '10.8.0.5' }
     },
-    syncWireguardConfig: async () => { calls.push('wg:sync') },
+    syncWireguardConfig: async () => {
+      calls.push('wg:sync')
+      if (wg.syncFails) throw new Error('sync failed')
+    },
     buildWgClientConfig: (p: Record<string, unknown>) => {
       calls.push('wg:build')
       wg.params = p
@@ -56,6 +59,7 @@ beforeEach(() => setup(config))
 function setup(runtime: Record<string, unknown>) {
   installStubs(runtime)
   wg.keysReady = true
+  wg.syncFails = false
   wg.params = undefined
   for (const key of Object.keys(headers)) Reflect.deleteProperty(headers, key)
   vi.stubGlobal('setHeader', (_event: unknown, name: string, value: string) => { headers[name] = value })
@@ -126,6 +130,26 @@ describe.each(routes)('$name', ({ handler, ok, bad, foreign, invalid, authFail, 
     expect(calls).toEqual(['auth', ...lookups, ...core, ...tail])
     expect(wg.params).toEqual(params)
     expect(headers['content-type']).toBe(type)
+  })
+
+  it('синхронизация отклонена ошибкой - конфиг всё равно собран, ответ тот же', async () => {
+    wg.syncFails = true
+    expect(await run(handler, ok)).toEqual(body())
+    expect(calls).toEqual(['auth', ...lookups, ...core, ...tail])
+    expect(wg.params).toEqual(params)
+  })
+
+  it('wgSplitLocal: false - в сборку уходит splitLocal false', async () => {
+    setup({ ...config, wgSplitLocal: false })
+    await run(handler, ok)
+    expect(wg.params).toEqual({ ...params, splitLocal: false })
+  })
+
+  it('wgSplitLocal не задан - splitLocal true', async () => {
+    const { wgSplitLocal: _unset, ...noSplit } = config
+    setup(noSplit)
+    await run(handler, ok)
+    expect(wg.params).toEqual({ ...params, splitLocal: true })
   })
 })
 

@@ -14,6 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.request
 
 
 TELEGRAM = Path(__file__).resolve().parents[1]
@@ -35,6 +36,9 @@ real_send = httpx.AsyncClient.send
 async def send(self, request, **kwargs):
     if request.url.host != 'api.telegram.org':
         return await real_send(self, request, **kwargs)
+    if 'rejected' in request.url.path:
+        return httpx.Response(401, json={'ok': False, 'error_code': 401,
+                                         'description': 'Unauthorized'}, request=request)
     method = request.url.path.rsplit('/', 1)[-1]
     if method == 'getUpdates':
         await asyncio.sleep(3600)
@@ -94,11 +98,11 @@ class HealthWithoutTokenTests(unittest.TestCase):
                         TGBOT_POLL_STALL_SEC=str(STALL_SEC),
                         TGBOT_OUTBOX_PATH=str(self.root / 'outbox.sqlite'))
 
-    def start(self, token, chat_id):
+    def start(self, token, chat_id, env=None):
         runtime = self.root / 'telegram-runtime.json'
         runtime.write_text(json.dumps(
             {'bot_token': token, 'chat_id': chat_id, 'admin_username': ''}))
-        env = dict(self.env, TELEGRAM_BOT_TOKEN=token, TELEGRAM_CHAT_ID=chat_id)
+        env = dict(env or self.env, TELEGRAM_BOT_TOKEN=token, TELEGRAM_CHAT_ID=chat_id)
         output = self.output.open('a')
         self.addCleanup(output.close)
         process = subprocess.Popen(
@@ -137,6 +141,41 @@ class HealthWithoutTokenTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, 'HEALTHCHECK прошёл при зависшем getUpdates')
         # Красное от /health (503), а не от закрытого порта.
         self.assertIn('503', result.stderr, result.stderr[-1500:] + '\nлог бота:\n' + self.log())
+
+    def test_rejected_token_pause_keeps_health_and_exits(self):
+        """Токен отвергнут: на паузе /health жив, новый токен обрывает паузу, порт свободен."""
+        env = dict(self.env, TGBOT_INVALID_TOKEN_PAUSE_SEC='60')
+        process = self.start('1:rejected', '42', env)
+        deadline = time.monotonic() + 20
+        while 'InvalidToken' not in self.log():
+            self.assertIsNone(process.poll(), 'бот вышел до паузы:\n' + self.log())
+            if time.monotonic() > deadline:
+                self.fail('в журнале нет InvalidToken за 20 с:\n' + self.log())
+            time.sleep(0.5)
+        self.assertIsNone(process.poll(), 'бот не на паузе, а завершился:\n' + self.log())
+        result = self.check()
+        self.assertEqual(result.returncode, 0, 'HEALTHCHECK красный на паузе после отвергнутого '
+                         f'токена, код {result.returncode}:\n{result.stderr[-1500:]}\nлог бота:\n'
+                         + self.log())
+        url = f'http://127.0.0.1:{self.port}/health'
+        with urllib.request.urlopen(url, timeout=5) as response:
+            self.assertEqual(response.status, 200)
+            body = json.loads(response.read())
+        self.assertIs(body.get('ok'), True, body)
+        self.assertIs(body.get('invalid_token'), True, body)
+        self.assertIsNone(process.poll(), 'бот завершился на паузе:\n' + self.log())
+        runtime = self.root / 'telegram-runtime.json'
+        runtime.write_text(json.dumps(
+            {'bot_token': '2:new', 'chat_id': '42', 'admin_username': ''}))
+        later = time.time() + 1
+        os.utime(runtime, (later, later))
+        try:
+            code = process.wait(15)
+        except subprocess.TimeoutExpired:
+            self.fail('новый токен не оборвал паузу за 15 с:\n' + self.log())
+        self.assertEqual(code, 1, self.log())
+        with self.assertRaises(ConnectionRefusedError):
+            socket.create_connection(('127.0.0.1', self.port), 1)
 
 
 if __name__ == '__main__':

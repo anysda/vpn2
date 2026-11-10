@@ -181,13 +181,14 @@ jobs:
       - uses: actions/checkout@v7
 
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
+      # Узлы обрыва - Ubuntu 26.04: кэш общий с развёртыванием 26.04.
       - name: apt cache
         id: apt-cache
         uses: actions/cache/restore@v6
         with:
           path: /var/tmp/vpn2-apt-cache
-          key: stand-apt-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
-          restore-keys: stand-apt-
+          key: stand-apt-26.04-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          restore-keys: stand-apt-26.04-
 
       - name: up
         id: up

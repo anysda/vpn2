@@ -27,7 +27,7 @@ BB_DIRECT, BB_WARP = 'hy2-bb-direct', 'hy2-bb-warp'
 
 
 def router_config():
-    spec = importlib.util.spec_from_file_location('router', ROOT / 'infra/lib/gen-router-config.py')
+    spec = importlib.util.spec_from_file_location('router', ROOT / 'infra/vpn2/src/vpn2/router/config.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     env = {'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '443', 'HY2_WARP_PORT': '8443',

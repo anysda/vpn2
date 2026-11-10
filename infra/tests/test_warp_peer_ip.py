@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 import unittest
 
+import watchdog_src
+
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 DOMAIN = 'engage.cloudflareclient.com'
@@ -74,7 +76,6 @@ class WarpPeerAddressTests(unittest.TestCase):
         (self.state / 'wgcf-account.toml').write_text(
             'access_token = "token"\ndevice_id = "device"\nkey_type = "curve25519"\n')
         shutil.copy(ROOT / 'infra/configs/sing-box-server.json.tpl', self.stage)
-        shutil.copy(ROOT / 'infra/lib/hy2_bandwidth.py', self.stage)
         (self.stage / 'install-sing-box.sh').write_text('exit 0\n')
         fakes = dict(RESOLVERS, wgcf=WGCF,
                      curl='#!/bin/sh\ncat >/dev/null\necho \'{"config": {"client_id": "AQID"}}\'\n',
@@ -90,7 +91,8 @@ class WarpPeerAddressTests(unittest.TestCase):
         end = source.index('\n# Validate', start)
         block = source[start:end]
         for real, fake in (('/usr/local/bin/', f'{self.bin}/'), ('/etc/anysda', str(self.state)),
-                           ('/etc/sing-box', str(self.singbox)), ('/tmp/anysda', str(self.stage))):
+                           ('/etc/sing-box', str(self.singbox)), ('/tmp/anysda', str(self.stage)),
+                           (watchdog_src.VENV_VPN2, str(watchdog_src.shim(self.root)))):
             block = block.replace(real, fake)
         out = self.root / 'config.json'
         out.unlink(missing_ok=True)

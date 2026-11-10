@@ -233,10 +233,12 @@ class TestWarpInstall(unittest.TestCase):
         for path in paths:
             (directory / path.lstrip('/')).mkdir(parents=True)
             block = block.replace(path, str(directory / path.lstrip('/')))
-        fixture = directory / 'tmp/anysda/warp-watchdog.py'
+        fixture = directory / 'vpn2'
         # The real enabled/config detection is covered above. This executable
         # fixture tests the stage's systemctl/file lifecycle without root.
         fixture.write_text('#!/bin/sh\nexit "${PROBE_DISABLED:-0}"\n')
+        fixture.chmod(0o755)
+        block = block.replace(watchdog_src.VENV_VPN2, str(fixture))
         calls = directory / 'calls'
         script = '\n'.join(['set -euo pipefail',
                             f'systemctl() {{ echo "$*" >> {shlex.quote(str(calls))}; }}',

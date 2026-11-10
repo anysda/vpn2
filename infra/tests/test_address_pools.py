@@ -152,7 +152,7 @@ ufw_sync_rules() {
                    SE_DIRECT='test', SE_WARP='test', SE_MGMT='test', SE_OBFS='test', MGMT_IP_SE='10.99.0.2',
                    SE_HY2_CERT_PATH=exit_cert(),
                    LANE_SUBNETS='10.66.66.0/24 10.67.67.0/24 10.68.68.0/24')
-        result = subprocess.run(['python3', str(ROOT / 'infra/lib/gen-router-config.py')], env=env,
+        result = subprocess.run(['python3', str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')], env=env,
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         config = json.loads(result.stdout)

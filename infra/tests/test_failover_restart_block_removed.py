@@ -31,7 +31,11 @@ class Box:
         for path in ('etc/anysda', 'etc/systemd/system', 'tmp/anysda', 'usr/local/bin', 'usr/local/sbin'):
             (self.box / path).mkdir(parents=True)
         (self.box / 'etc/anysda/clash-secret.txt').write_text('test\n')
-        (self.box / 'tmp/anysda/failover-watchdog.py').write_text('')
+        # Команда vpn2 из venv: стадия требует её и метку колеса.
+        (self.box / 'opt/vpn2/venv/bin').mkdir(parents=True)
+        (self.box / 'opt/vpn2/venv/bin/vpn2').write_text('#!/bin/sh\n')
+        (self.box / 'opt/vpn2/venv/bin/vpn2').chmod(0o755)
+        (self.box / 'opt/vpn2/venv/.vpn2-wheel').write_text('x\n')
         self.bin = root / 'bin'
         self.bin.mkdir()
         stubs = {'systemctl': ':', 'sleep': ':', 'install': 'cp "${@: -2:1}" "${@: -1}"'}
@@ -41,7 +45,7 @@ class Box:
         stage = root / 'stage'
         stage.mkdir()
         text = (ROOT / 'infra/scripts/21-failover-watchdog.sh').read_text()
-        for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda'):
+        for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda', '/opt/vpn2/'):
             text = text.replace(prefix, f'{self.box}{prefix}')
         self.stage = stage / '21-failover-watchdog.sh'
         self.stage.write_text(text)

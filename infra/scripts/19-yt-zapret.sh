@@ -454,18 +454,18 @@ cat > /usr/local/sbin/anysda-yt-quic-refresh.sh <<'QREFRESH'
 set -euo pipefail
 PREFIXES='/var/lib/anysda/google-prefixes.json'
 NFT_CONF='/etc/nftables-yt-quic.conf'
-GEN='/usr/local/sbin/gen-yt-quic-nft.py'
+GEN='/opt/vpn2/venv/bin/vpn2 nft yt-quic'
 TMP=$(mktemp); TMP_NFT=$(mktemp)
 trap 'rm -f "$TMP" "$TMP_NFT"' EXIT
 
 if curl -fsS --max-time 30 https://www.gstatic.com/ipranges/goog.json -o "$TMP" \
-   && python3 "$GEN" "$TMP" > "$TMP_NFT" 2>/dev/null \
+   && $GEN "$TMP" > "$TMP_NFT" 2>/dev/null \
    && nft -c -f "$TMP_NFT"; then
   install -m 0644 "$TMP" "$PREFIXES"
   echo "список обновлён с gstatic"
 else
   echo "gstatic недоступен или ответ битый — остаюсь на сохранённом списке" >&2
-  python3 "$GEN" "$PREFIXES" > "$TMP_NFT"
+  $GEN "$PREFIXES" > "$TMP_NFT"
   nft -c -f "$TMP_NFT"
 fi
 
@@ -475,7 +475,8 @@ echo "QUIC-блокировка применена: $(nft list table inet anysda
 QREFRESH
 chmod 0755 /usr/local/sbin/anysda-yt-quic-refresh.sh
 
-install -m 0755 /tmp/anysda/gen-yt-quic-nft.py /usr/local/sbin/gen-yt-quic-nft.py
+# Генератор таблицы живёт в пакете vpn2; файл прежних выпусков убираем.
+rm -f /usr/local/sbin/gen-yt-quic-nft.py
 
 # Снапшот из репы — стартовое наполнение. Дальше его обновляет таймер, но
 # даже если gstatic недоступен в момент прогона стадии, дыры не будет.
@@ -760,9 +761,12 @@ fi
 POT_INSTALL=$(dirname "$0")/install-yt-pot.sh
 [[ -f "$POT_INSTALL" ]] || POT_INSTALL=$(dirname "$0")/../lib/install-yt-pot.sh
 bash "$POT_INSTALL" "$YT_PROBE_VENV"
+# Проба живёт в пакете vpn2; метка колеса обновляется вместе с её кодом.
 YT_PROBE_CHANGED=0
-cmp -s /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover || YT_PROBE_CHANGED=1
-install -m 0755 /tmp/anysda/yt-failover.py /usr/local/bin/anysda-yt-failover
+[[ -x /opt/vpn2/venv/bin/vpn2 ]] || { echo "[$HOST_TAG] /opt/vpn2/venv/bin/vpn2 не найден (venv vpn2 не установлен)"; exit 1; }
+# Результат в state.json старше кода пробы - перемерить сразу.
+[[ ! /opt/vpn2/venv/.vpn2-wheel -nt /var/lib/anysda-yt-failover/state.json ]] || YT_PROBE_CHANGED=1
+rm -f /usr/local/bin/anysda-yt-failover
 cat > /etc/systemd/system/anysda-yt-failover.service <<'EOF'
 [Unit]
 Description=anysda-vpn2 — видеопроба YouTube и запасной VPN-путь
@@ -771,7 +775,7 @@ ConditionPathExists=/etc/sing-box/config.json
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /usr/local/bin/anysda-yt-failover
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt
 TimeoutStartSec=240
 # OOM-kill yt-dlp/node по MemoryMax не гасит контроллер: он пишет «лимит памяти».
 OOMPolicy=continue

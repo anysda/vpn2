@@ -13,6 +13,7 @@ PYTHON_WHEELS_DIR="${PYTHON_WHEELS_DIR:-/usr/share/python-wheels}"
 # из PATH может оказаться чужим (pyenv, setup-python). Тест подменяет.
 VPN2_PYTHON="${VPN2_PYTHON:-/usr/bin/python3}"
 _VENV_PID=
+_VENV_READY=
 
 # Хэш исходников пакета vpn2: pyproject.toml и src/**/*.py, __pycache__ не входит.
 _vpn2_src_hash() {
@@ -181,11 +182,10 @@ ansible_venv_wait() {
   cat "$VENV_LOG" >&2
 }
 
-# Стадия плеем ansible: infra/ansible/plays/<стадия>.yml на одном хосте.
-# Обвес тот же, что у стадии-скрипта: окружение хоста, манифест выпуска,
-# подготовка apt и сторож отката фаервола с пульсом.
-run_play() {
-  local stage="$1" host="$2"
+# venv готов к этой строке: фон дожидается, без фона ставится сейчас.
+# fresh - bash-стадии, зовущей команду vpn2: одиночный запуск после обновления
+# репы сверяет колесо с исходниками (при тех же пинах ничего не качает).
+ansible_venv_ensure() {
   if [[ "$BASHPID" != "$$" ]]; then
     # Хосты идут субшеллами: фон родителя не наш потомок, wait его не дождётся.
     # Своя установка встаёт за его замком и при тех же пинах ничего не качает.
@@ -200,10 +200,20 @@ run_play() {
       die "ansible: venv не установился"
     fi
     rm -f "$install_log"
-  elif [[ ! -f "$VPN2_ROOT/venv/.vpn2-pins" && -z "$_VENV_PID" ]]; then
+  elif [[ -z "$_VENV_PID" ]] && { [[ ! -f "$VPN2_ROOT/venv/.vpn2-pins" ]] \
+      || [[ "${1:-}" == fresh && -z "$_VENV_READY" ]]; }; then
     ansible_venv_start
   fi
   ansible_venv_wait
+  _VENV_READY=1
+}
+
+# Стадия плеем ansible: infra/ansible/plays/<стадия>.yml на одном хосте.
+# Обвес тот же, что у стадии-скрипта: окружение хоста, манифест выпуска,
+# подготовка apt и сторож отката фаервола с пульсом.
+run_play() {
+  local stage="$1" host="$2"
+  ansible_venv_ensure
   load_env "$host" || return 1
   log "[$stage → $host] starting"
   push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1

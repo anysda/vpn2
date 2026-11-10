@@ -112,6 +112,7 @@ def exit_config(env):
                 shutil.copy(path, stage)
         shutil.copy(ROOT / 'infra/configs/sing-box-server.json.tpl', stage)
         block = block.replace('/tmp/anysda', str(stage)).replace('/etc/sing-box', str(sb))
+        block = block.replace(fr.watchdog_src.VENV_VPN2, str(fr.watchdog_src.shim(tmp)))
         script = f'set -euo pipefail\nHOST_TAG=test\n{block}\ncat "$SB_CONFIG_TMP"\n'
         result = subprocess.run(['bash', '-c', script], text=True, capture_output=True,
                                 env={**os.environ, **env})

@@ -17,7 +17,7 @@ from router_support import exit_cert
 
 
 ROOT = Path(__file__).resolve().parents[2]
-GENERATOR = Path(os.environ.get("GEN_ROUTER_PATH", ROOT / "infra/lib/gen-router-config.py"))
+GENERATOR = Path(os.environ.get("GEN_ROUTER_PATH", ROOT / "infra/vpn2/src/vpn2/router/config.py"))
 ADGUARD = ROOT / "infra/scripts/22-adguard.sh"
 UPSTREAMS = ["[/ru/рф/xn--p1ai/su/]77.88.8.8",
              "https://1.1.1.1/dns-query", "https://dns.google/dns-query"]

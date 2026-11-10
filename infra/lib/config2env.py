@@ -929,7 +929,7 @@ def main():
             lines.append(f"{variable}={shq(int(cfg['alerts'][key]))}")
 
 
-    # YouTube-секция. Читают обе стадии: 20-ru-router (gen-router-config.py
+    # YouTube-секция. Читают обе стадии: 20-ru-router (vpn2.router.config
     # строит outbound youtube-ru и правила) и 19-yt-zapret (десинк). Пустая
     # секция → YT_ROUTE=off, поведение ровно как до появления фичи.
     yt = cfg.get('youtube', {})

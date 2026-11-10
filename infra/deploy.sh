@@ -692,6 +692,10 @@ run_stage_on_host() {
 
   local script="$DEPLOY_ROOT/scripts/${stage}.sh"
   [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
+  # Стадии entry, зовущие команду vpn2: venv с пакетом обязан быть готов до них.
+  if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog) ]]; then
+    ansible_venv_ensure fresh
+  fi
 
   load_env "$host" || return 1
   log "[$stage → $host] starting"
@@ -758,11 +762,6 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
   fi
 
-  # Общая валидация bandwidth; 22 импортирует тот же генератор для AdGuard.
-  case "$stage" in
-    10-foreign|20-ru-router|22-adguard) push "$DEPLOY_ROOT/lib/hy2_bandwidth.py" || return 1 ;;
-  esac
-
   if [[ "$stage" == "10-foreign" || "$stage" == "20-ru-router" ]]; then
     push "$DEPLOY_ROOT/lib/install-sing-box.sh" || return 1
   fi
@@ -771,16 +770,12 @@ run_stage_on_host() {
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"
     push "$tpl" "sing-box-server.json.tpl" || return 1
-    push "$DEPLOY_ROOT/lib/warp-watchdog.py" "warp-watchdog.py" || return 1
   fi
 
   if [[ "$stage" == "20-ru-router" ]]; then
     local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
     [[ -f "$sec" ]] || die "secrets/foreign-secrets.env не найден — prep_ru_router не запускался?"
-    local gen="$DEPLOY_ROOT/lib/gen-router-config.py"
-    [[ -f "$gen" ]] || die "lib/gen-router-config.py не найден"
     push "$sec" "foreign-secrets.env" || return 1
-    push "$gen" "gen-router-config.py" || return 1
     # TLS-pin для Hysteria2 outbound: cert каждого экзита (если уже опубликован
     # обновлённым 10-foreign) → /etc/sing-box/exit-certs/{tag}.pem на RU.
     if [[ -d "$DEPLOY_ROOT/secrets/exit-certs" ]]; then
@@ -789,18 +784,6 @@ run_stage_on_host() {
     if [[ -d "$DEPLOY_ROOT/secrets/exit-hostkeys" ]]; then
       push "$DEPLOY_ROOT/secrets/exit-hostkeys" "exit-hostkeys" || return 1
     fi
-  fi
-
-  # 22-adguard берёт из генератора апстрим YouTube -> российский резолвер:
-  # список доменов и адрес резолвера живут только в gen-router-config.py.
-  if [[ "$stage" == "22-adguard" ]]; then
-    push "$DEPLOY_ROOT/lib/gen-router-config.py" "gen-router-config.py" || return 1
-  fi
-
-  if [[ "$stage" == "21-failover-watchdog" ]]; then
-    local wd="$DEPLOY_ROOT/lib/failover-watchdog.py"
-    [[ -f "$wd" ]] || die "lib/failover-watchdog.py не найден"
-    push "$wd" "failover-watchdog.py" || return 1
   fi
 
   # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
@@ -814,10 +797,10 @@ run_stage_on_host() {
     fi
   fi
 
-  # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен генератор
-  # и снапшот списка префиксов (fallback, если gstatic недоступен при прогоне).
+  # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен снапшот
+  # списка префиксов (fallback, если gstatic недоступен при прогоне).
   if [[ "$stage" == "19-yt-zapret" ]]; then
-    for f in gen-yt-quic-nft.py google-prefixes.json yt-failover.py install-yt-pot.sh; do
+    for f in google-prefixes.json install-yt-pot.sh; do
       local lib="$DEPLOY_ROOT/lib/$f"
       [[ -f "$lib" ]] || die "lib/$f не найден"
       push "$lib" "$f" || return 1

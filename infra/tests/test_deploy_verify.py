@@ -32,8 +32,7 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
             (root / f'{host}.rc').write_text(str(result.returncode))
         for path in (ROOT / 'infra/scripts').glob('*.sh'):
             (root / 'scripts' / path.name).touch()
-        for path in ('lib/gen-router-config.py', 'lib/failover-watchdog.py',
-                     'lib/anysda-svc.sh', 'lib/ansible-venv.sh', 'emergency/provision.py',
+        for path in (                     'lib/anysda-svc.sh', 'lib/ansible-venv.sh', 'emergency/provision.py',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):
             (root / path).touch()
@@ -65,6 +64,7 @@ ssh_exec() {
 ssh_fresh() { :; }
 print_banner() { :; }
 pause_entry_auto_updates() { :; }
+ansible_venv_ensure() { :; }
 install_prereqs() { :; }
 do_check() { :; }
 preflight_ssh() { :; }

@@ -200,8 +200,8 @@ class VerifyTest(unittest.TestCase):
             # старый ложный успех, и новый код «нет измерений» без живого хоста.
             watch_ref = os.environ.get('VERIFY_REF')
             watch_source = subprocess.check_output(
-                ['git', 'show', f'{watch_ref}:infra/lib/yt-failover.py'], cwd=ROOT, text=True,
-            ) if watch_ref else (ROOT / 'infra/lib/yt-failover.py').read_text()
+                ['git', 'show', f'{watch_ref}:infra/vpn2/src/vpn2/watchdog/yt.py'], cwd=ROOT, text=True,
+            ) if watch_ref else (ROOT / 'infra/vpn2/src/vpn2/watchdog/yt.py').read_text()
             watch_file = root / 'watch.py'
             watch_file.write_text(watch_source)
             state_file = root / 'probe.json'
@@ -270,7 +270,9 @@ class VerifyTest(unittest.TestCase):
                 hy2_options.write_text(json.dumps({'server_ip': '198.51.100.1', 'port': 18443}))
             config = root / 'router.json'
             config.write_text('{"outbounds": [{"tag": "youtube-auto"}]}')
-            failover.write_text('#!/usr/bin/env python3\nimport runpy\nfrom pathlib import Path\n'
+            failover.write_text('#!/usr/bin/env python3\nimport runpy\nimport sys\nfrom pathlib import Path\n'
+                                f'sys.path.insert(0, {str(ROOT / "infra/vpn2/src")!r})\n'
+                                'del sys.argv[1:3]\n'
                                 f'watch = runpy.run_path({str(watch_file)!r})\n'
                                 'main = watch["main"]\n'
                                 f'main.__globals__.update(CONFIG=Path({str(config)!r}), '
@@ -286,7 +288,7 @@ class VerifyTest(unittest.TestCase):
                 f'sys.path.insert(0, {str(ROOT / "infra/vpn2/src")!r})\n'
                 'from vpn2.verify import stage\n'
                 + ''.join(f'stage.{name} = Path({str(path)!r})\n' for name, path in paths.items())
-                + f'stage.YT_CHECK, stage.YT_FAILOVER = {str(yt)!r}, {str(failover)!r}\n'
+                + f'stage.YT_CHECK, stage.YT_FAILOVER = {str(yt)!r}, ({str(failover)!r}, "watchdog", "yt")\n'
                 'raise SystemExit(stage.run(dict(os.environ)))\n')
             command = [sys.executable, '-B', str(script)]
             # VERIFY_REF - ревизия с прежней стадией на bash: эталон вывода для сверки переноса.
@@ -296,7 +298,7 @@ class VerifyTest(unittest.TestCase):
                                                  cwd=ROOT, text=True)
                 for old, new in (('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf', networkd),
                                  ('/etc/anysda/ikev2-status.json', status), ('/usr/local/bin/anysda-yt-check', yt),
-                                 ('/usr/local/bin/anysda-yt-failover', failover), ('/opt/vpn2-emergency', emergency),
+                                 ('/usr/local/bin/anysda-yt-failover', f'{failover} watchdog yt'), ('/opt/vpn2-emergency', emergency),
                                  ('/etc/vpn2/emergency-hy2.json', hy2_options),
                                  ('/var/anysda/.stamps/23-emergency', stamp),
                                  ('/var/anysda/.stamps/10-foreign', foreign), ('/var/lib/vpn2-emergency', snapshots)):

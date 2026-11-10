@@ -20,6 +20,7 @@ class TestForeignConfigAudit(unittest.TestCase):
                 # its error handling, permissions and cleanup, without touching /etc.
                 script = block.replace('/tmp/anysda', tmp).replace('/etc/sing-box', tmp)
                 script = script.replace('/usr/local/bin/sing-box', 'check_config')
+                script = script.replace('/opt/vpn2/venv/bin/vpn2', 'true')
                 fixture = '\n'.join([
                     'set -euo pipefail', 'HOST_TAG=test', 'umask 022',
                     f'cd {shlex.quote(tmp)}',

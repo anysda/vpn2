@@ -688,7 +688,7 @@ UDP_CUT_HOLD_S=30
 UDP_CUT_MAX_GAP=15  # окно без ответа через экзит, с: на стенде из VPS 2,4 с
 
 # Каналы с запасным TCP на entry: «селектор hy2|tcp» по строке, как их видит
-# сторож (_transport_pairs в failover-watchdog.py).
+# сторож (_transport_pairs в vpn2.watchdog.failover).
 TRANSPORTS_PY=$(cat <<'EOF'
 import json, urllib.request
 env = {}

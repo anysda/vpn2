@@ -14,6 +14,8 @@ import sys
 import tempfile
 import unittest
 
+import watchdog_src
+
 from router_support import ROOT, generate, run_generator
 from test_ufw_reconcile import FAKE_UFW
 
@@ -257,10 +259,12 @@ class Hy2PortHoppingTests(unittest.TestCase):
         stage = anysda / '10-foreign.sh'
         stage.write_text(source)
         (anysda / 'install-sing-box.sh').write_text(':\n')
-        (anysda / 'hy2_bandwidth.py').write_text('')
         (anysda / 'sing-box-server.json.tpl').write_text('{}\n')
-        executables = {anysda / 'warp-watchdog.py': '#!/bin/sh\nexit 1\n',
-                       root / 'bin/sing-box': '#!/bin/sh\necho "sing-box version 1.12.25"\n',
+        # Команда vpn2: полосы hy2 штатные (пусто), WARP на узле нет.
+        vpn2 = watchdog_src.shim(root, '#!/bin/sh\n[ "$2" = hy2 ]\n')
+        stage.write_text(source.replace(watchdog_src.VENV_VPN2, str(vpn2)))
+        executables = {
+            root / 'bin/sing-box': '#!/bin/sh\necho "sing-box version 1.12.25"\n',
                        fake / 'ufw': FAKE_UFW, fake / 'nft': FAKE_NFT,
                        fake / 'curl': '#!/bin/sh\nexit 22\n'}
         for name in ('systemctl', 'ss', 'sysctl', 'modprobe', 'ip', 'iptables', 'ip6tables',

@@ -100,7 +100,7 @@ RU_CLASH_SECRET=test-clash-secret
 ''' + exports + '''for tag in $EXIT_TAGS; do
   export "${tag^^}_HY2_CERT_PATH=$3"
 done
-python3 "$2/infra/lib/gen-router-config.py"'''
+python3 "$2/infra/vpn2/src/vpn2/router/config.py"'''
                 result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, str(ROOT), exit_cert()],
                                         check=True, capture_output=True, text=True,
                                         env={'PATH': os.environ['PATH']})
@@ -116,7 +116,7 @@ python3 "$2/infra/lib/gen-router-config.py"'''
                 stage = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
                 exports = stage[stage.index('export HY2_UP_MBPS='):
                                 stage.index('SB_CONFIG_TMP=')]
-                exports = exports.replace('python3 /tmp/anysda/hy2_bandwidth.py',
+                exports = exports.replace('/opt/vpn2/venv/bin/vpn2 watchdog hy2',
                                           shlex.join(watchdog_src.command('hy2')))
                 env = dict(os.environ, HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',
                            HY2_PWD_MGMT='test-mgmt', HY2_OBFS_PWD='test-obfs', CLASH_SECRET='test',

@@ -1,6 +1,6 @@
 # Сторож экзитов
 
-`infra/lib/failover-watchdog.py`, ставится стадией `21-failover-watchdog`.
+`infra/vpn2/src/vpn2/watchdog/failover.py`, ставится стадией `21-failover-watchdog`.
 Настройки в `/etc/anysda/failover-watchdog.env` переживают передеплой; битое
 значение заменяется умолчанием. Адрес и секрет clash-api стадия 21 пишет
 заново.

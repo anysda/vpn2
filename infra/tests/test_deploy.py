@@ -41,12 +41,13 @@ class DeployTests(unittest.TestCase):
             (root / 'secrets').mkdir()
             (root / 'secrets/foreign-secrets.env').touch()
             (root / 'lib').mkdir()
-            for library in ('gen-router-config.py', 'failover-watchdog.py', 'anysda-backup.sh',
+            for library in ('anysda-backup.sh',
                             'anysda-restore.sh', 'anysda-backup-list.sh'):
                 (root / 'lib' / library).touch()
             script = function('run_stage_on_host') + function('do_restore') + '''
 DEPLOY_ROOT=$PWD
 load_env() { :; }
+ansible_venv_ensure() { :; }
 log() { :; }
 ok() { :; }
 ssh_exec() { :; }

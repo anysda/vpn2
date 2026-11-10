@@ -26,7 +26,7 @@ TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
 IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
-YT_FAILOVER = '/usr/local/bin/anysda-yt-failover'
+YT_FAILOVER = ('/opt/vpn2/venv/bin/vpn2', 'watchdog', 'yt')
 TRAFFIC_LABEL = 'трафик: контрольный клиент'
 
 
@@ -214,9 +214,9 @@ def youtube(stage):
     # 120 с) выполняет таймер; отсутствие свежей пробы - код 2. На чистой
     # установке стадия 19 идёт раньше конфига sing-box, и systemd пропускает
     # пробу по ConditionPathExists - меряем один раз здесь.
-    if host.command(YT_FAILOVER, '--status')[0] == 2:
+    if host.command(*YT_FAILOVER, '--status')[0] == 2:
         host.command('systemctl', 'start', 'anysda-yt-failover.service')
-    stage.check('yt-failover: selector и последняя видеопроба', host.command, YT_FAILOVER, '--status',
+    stage.check('yt-failover: selector и последняя видеопроба', host.command, *YT_FAILOVER, '--status',
                 allow_unmeasured=True)
     stage.check('yt-failover: таймер active', host.service, 'anysda-yt-failover.timer')
 

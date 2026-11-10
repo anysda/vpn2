@@ -265,7 +265,7 @@ def stage_env(failover):
         box = root / 'box'
 
         def jail(text):
-            for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda'):
+            for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda', '/opt/vpn2/'):
                 text = text.replace(prefix, f'{box}{prefix}')
             return text
 
@@ -277,7 +277,11 @@ def stage_env(failover):
         for path in ('etc/anysda', 'etc/systemd/system', 'tmp/anysda', 'usr/local/bin', 'usr/local/sbin'):
             (box / path).mkdir(parents=True)
         (box / 'etc/anysda/clash-secret.txt').write_text('test\n')
-        (box / 'tmp/anysda/failover-watchdog.py').write_text('')
+        # Команда vpn2 из venv: стадия требует её и метку колеса.
+        (box / 'opt/vpn2/venv/bin').mkdir(parents=True)
+        (box / 'opt/vpn2/venv/bin/vpn2').write_text('#!/bin/sh\n')
+        (box / 'opt/vpn2/venv/bin/vpn2').chmod(0o755)
+        (box / 'opt/vpn2/venv/.vpn2-wheel').write_text('x\n')
         bin_dir = root / 'bin'
         bin_dir.mkdir()
         stubs = {'systemctl': ':', 'sleep': ':',

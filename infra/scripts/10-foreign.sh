@@ -267,7 +267,7 @@ echo "[$HOST_TAG]   cert SAN: IP:${PUB_IP}"
 
 # Публикуем self-signed cert (только публичный PEM, без приватного ключа) —
 # prep_ru_router забирает его и кладёт в /etc/sing-box/exit-certs/{tag}.pem
-# на RU. gen-router-config.py подставляет его как `tls.certificate` в Hysteria2
+# на RU. vpn2.router.config подставляет его как `tls.certificate` в Hysteria2
 # outbound — тогда RU-роутер принимает только этот конкретный cert и MITM на
 # RU→exit невозможен.
 cp /etc/sing-box/tls.crt /etc/anysda/hy2-tls.crt
@@ -278,7 +278,7 @@ TPL=/tmp/anysda/sing-box-server.json.tpl
 [[ -f "$TPL" ]] || { echo "[$HOST_TAG] $TPL не найден"; exit 1; }
 # Пустая пара сохраняет BBR. Настройка не затрагивает служебный hy2-mgmt.
 export HY2_UP_MBPS="${HY2_UP_MBPS:-}" HY2_DOWN_MBPS="${HY2_DOWN_MBPS:-}"
-HY2_BANDWIDTH_FIELDS=$(python3 /tmp/anysda/hy2_bandwidth.py)
+HY2_BANDWIDTH_FIELDS=$(/opt/vpn2/venv/bin/vpn2 watchdog hy2)
 export HY2_BANDWIDTH_FIELDS
 # Проверяем приватный кандидат; неудачный рендер/проверка сохраняет конфиг,
 # с которым сервис сможет снова стартовать после сбоя или перезагрузки.
@@ -357,11 +357,10 @@ WantedBy=multi-user.target
 EOF
 # Общий бюджет для таймера и ожидания WARP при деплое. Состояние не удаляем
 # даже при отключении WARP: повторная установка не должна обнулять лимиты.
-WARP_WD_SRC=/tmp/anysda/warp-watchdog.py
-[[ -f "$WARP_WD_SRC" ]] || WARP_WD_SRC=$(dirname "$0")/../lib/warp-watchdog.py
-install -m755 "$WARP_WD_SRC" /usr/local/bin/anysda-warp-watchdog
+# Сторож живёт в пакете vpn2 (venv ставит 00-bootstrap); файл прежних выпусков убираем.
+rm -f /usr/local/bin/anysda-warp-watchdog
 WARP_WD_ENABLED=0
-if /usr/local/bin/anysda-warp-watchdog --enabled; then
+if /opt/vpn2/venv/bin/vpn2 watchdog warp --enabled; then
   WARP_WD_ENABLED=1
   cat > /etc/systemd/system/anysda-warp-watchdog.service <<'EOF'
 [Unit]
@@ -370,7 +369,7 @@ After=network-online.target sing-box.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/anysda-warp-watchdog
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog warp
 TimeoutStartSec=45
 StateDirectory=anysda-warp-watchdog
 StateDirectoryMode=0700
@@ -396,7 +395,7 @@ else
   systemctl disable --now anysda-warp-watchdog.timer >/dev/null 2>&1 || true
   systemctl stop anysda-warp-watchdog.service >/dev/null 2>&1 || true
   rm -f /etc/systemd/system/anysda-warp-watchdog.timer \
-    /etc/systemd/system/anysda-warp-watchdog.service /usr/local/bin/anysda-warp-watchdog
+    /etc/systemd/system/anysda-warp-watchdog.service
 fi
 
 systemctl daemon-reload
@@ -426,7 +425,7 @@ fi
 # один flock и бюджет: максимум две дополнительные попытки за этот прогон,
 # не более трёх за скользящий час; окно ожидания 9 минут + текущая проба.
 if [[ "$WARP_WD_ENABLED" == 1 ]]; then
-  if ! /usr/local/bin/anysda-warp-watchdog --bootstrap; then
+  if ! /opt/vpn2/venv/bin/vpn2 watchdog warp --bootstrap; then
     echo "[$HOST_TAG] WARNING: проверка WARP не удалась; экзит продолжает работу"
   fi
   systemctl enable --now anysda-warp-watchdog.timer >/dev/null

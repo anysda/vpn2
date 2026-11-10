@@ -29,7 +29,7 @@ class YoutubeFailoverTests(unittest.TestCase):
                    HY2_DIRECT_PORT='443', HY2_WARP_PORT='444',
                    HY2_MGMT_PORT='445', WG_OUT_IFACE='eth0', RU_CLASH_SECRET='fake',
                    MGMT_IP='127.0.0.1', YT_ROUTE=mode, YT_QUIC=quic)
-        result = subprocess.run(['python3', str(ROOT / 'infra/lib/gen-router-config.py')],
+        result = subprocess.run(['python3', str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')],
                                 env=env, capture_output=True, text=True, check=True)
         return json.loads(result.stdout)
 
@@ -150,7 +150,7 @@ class YoutubeFailoverTests(unittest.TestCase):
         self.assertIn('systemctl enable --now anysda-yt-failover.timer', stage)
         self.assertIn('systemctl disable --now anysda-yt-failover.timer', stage)
         self.assertIn('systemctl stop anysda-yt-failover.service', stage)
-        self.assertIn('yt-failover.py', source('infra/deploy.sh'))
+        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt\n', stage)
 
     def test_quic_diagnostic_cannot_silently_fall_back_to_tcp(self):
         watch = load_watch()

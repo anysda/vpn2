@@ -2,7 +2,7 @@
 # Stage 22 — AdGuard Home on RU server.
 # Listens on 127.0.0.1:53 and ${MGMT_IP}:53 (mgmt mesh). WG/OpenVPN-клиенты
 # резолвят через него (см. ufw-правила → 10.99.0.1:53 в стадиях 28/29);
-# sing-box тоже использует его как DNS-резолвер (gen-router-config.py).
+# sing-box тоже использует его как DNS-резолвер (vpn2.router.config).
 # Web UI и API только на 127.0.0.1:${AGH_PORT} — ими пользуется панель (вкладка «DNS»).
 
 set -euo pipefail

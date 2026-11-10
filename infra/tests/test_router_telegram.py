@@ -23,7 +23,7 @@ PRIVATE_NETS = [ipaddress.ip_network(net) for net in (
     '169.254.0.0/16', 'fc00::/7', '::1/128', 'fe80::/10')]
 
 GENERATOR = os.environ.get(
-    'ROUTER_GENERATOR', str(Path(__file__).resolve().parents[1] / 'lib/gen-router-config.py'))
+    'ROUTER_GENERATOR', str(Path(__file__).resolve().parents[1] / 'vpn2/src/vpn2/router/config.py'))
 ENV = {
     'EXIT_TAGS': 'aa bb', 'HY2_DIRECT_PORT': '8443', 'HY2_WARP_PORT': '8444',
     'HY2_MGMT_PORT': '8445', 'WG_OUT_IFACE': 'lo', 'RU_CLASH_SECRET': 'test-only',

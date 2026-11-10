@@ -4,8 +4,8 @@
 # Ставит лёгкий сервис anysda-failover-watchdog: он активно опрашивает экзиты
 # через clash-api раз в ~2с и сразу переключает selector-группу foreign-best
 # на живой экзит с наименьшей задержкой. Мёртвый экзит подтверждается
-# до-проверками на месте — failover ~5-7с (см. lib/failover-watchdog.py и
-# gen-router-config.py — foreign-best там должен быть type=selector).
+# до-проверками на месте — failover ~5-7с (см. vpn2.watchdog.failover и
+# vpn2.router.config — foreign-best там должен быть type=selector).
 #
 # Рядом ставит таймер anysda-tproxy-watchdog: возвращает снесённую
 # маршрутизацию TPROXY.
@@ -39,13 +39,14 @@ STAGE='21-failover-watchdog'
 STAMP_DIR=/var/anysda/.stamps
 mkdir -p "$STAMP_DIR" /etc/anysda
 
-WD_SRC=/tmp/anysda/failover-watchdog.py
-WD_BIN=/usr/local/bin/anysda-failover-watchdog
-[[ -f "$WD_SRC" ]] || { echo "[$HOST_TAG] $WD_SRC не найден (push из deploy.sh не прошёл)"; exit 1; }
+# Сторож живёт в пакете vpn2; метка колеса меняется вместе с его кодом.
+VPN2_BIN=/opt/vpn2/venv/bin/vpn2
+VPN2_WHEEL_MARK=/opt/vpn2/venv/.vpn2-wheel
+[[ -x "$VPN2_BIN" ]] || { echo "[$HOST_TAG] $VPN2_BIN не найден (venv vpn2 не установлен)"; exit 1; }
 
-# 1. Бинарь
-echo "[$HOST_TAG] [1/4] устанавливаю watchdog"
-install -m755 -o root -g root "$WD_SRC" "$WD_BIN"
+# 1. Файл сторожа прежних выпусков
+echo "[$HOST_TAG] [1/4] сторож из пакета vpn2"
+rm -f /usr/local/bin/anysda-failover-watchdog
 
 # clash-api секрет пишет стейдж 20-ru-router
 CLASH_SECRET=$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)
@@ -127,7 +128,7 @@ Wants=sing-box.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/local/bin/anysda-failover-watchdog
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog failover
 EnvironmentFile=/etc/anysda/failover-watchdog.env
 Restart=always
 RestartSec=2
@@ -148,7 +149,7 @@ entry_unit_resources anysda-failover-watchdog
 echo "[$HOST_TAG] [3/4] запуск"
 systemctl daemon-reload
 systemctl enable anysda-failover-watchdog >/dev/null 2>&1 || true
-svc_restart_if_changed anysda-failover-watchdog /usr/local/bin/anysda-failover-watchdog \
+svc_restart_if_changed anysda-failover-watchdog "$VPN2_WHEEL_MARK" \
   /etc/systemd/system/anysda-failover-watchdog.service /etc/anysda/failover-watchdog.env
 svc_settle 3
 systemctl status anysda-failover-watchdog --no-pager -n 5 | sed -n '1,8p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'

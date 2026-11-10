@@ -33,8 +33,8 @@ def test_none_return_is_zero(extra):
 
 
 def test_underscore_in_name_becomes_dash(extra):
-    write(extra, "backup_list", "def main(argv):\n    return 3\n")
-    assert cli.main(["backup-list"]) == 3
+    write(extra, "two_words", "def main(argv):\n    return 3\n")
+    assert cli.main(["two-words"]) == 3
 
 
 def test_not_commands_hidden(extra, capsys):

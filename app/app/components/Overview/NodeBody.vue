@@ -2,6 +2,7 @@
 import type { NodeMetric } from '~/composables/useMonitoring'
 import { count, drawSvg, ru } from '~/utils/overview'
 import { exitName, level, nodeHealth, uptimeShort } from '~/utils/overview-nodes'
+import { gbDecRu, gibLatin, gibTotalLatin } from '~/utils/format'
 
 // Содержимое окна узла: подробности и выключение экзита. Одно и то же в
 // модалке десктопа и в шторке телефона; подтверждение встаёт вместо подробностей.
@@ -28,12 +29,11 @@ const isExit = computed(() => Boolean(n.value && n.value.tag !== 'ru'))
 const bad = computed(() => Boolean(n.value && nodeHealth(n.value).kind !== 'ok'))
 const pct = (v: number | null | undefined) => v == null ? '—' : `${Math.round(v)}%`
 const mbps = (v: number | null | undefined) => v == null ? '—' : ru(v, v < 10 ? 1 : 0)
-const gb = (b: number | null | undefined) => b == null ? '—' : `${ru(b / 1e9, b < 1e10 ? 1 : 0)} ГБ`
 const disk = computed(() => {
   const x = n.value
   if (!x || x.diskFreeBytes == null) return null
-  const free = x.diskFreeBytes / 1024 ** 3, p = x.diskFreePct
-  return { free: `${Math.round(free)} GB`, pct: p, size: p ? `${Math.round(free / p * 100)} GB` : '—' }
+  const p = x.diskFreePct
+  return { free: gibLatin(x.diskFreeBytes), pct: p, size: gibTotalLatin(x.diskFreeBytes, p) }
 })
 
 const body = ref<HTMLElement>()
@@ -112,7 +112,7 @@ async function apply(x: NodeMetric, disabled: boolean) {
       <div><span>Полос</span><b>{{ n.lanes ?? 0 }}</b><small>warp {{ n.lanesWarp ?? 0 }}</small></div>
       <div><span>↓ сейчас</span><b>{{ mbps(n.rxMbps) }}</b><small>Mbps</small></div>
       <div><span>↑ сейчас</span><b>{{ mbps(n.txMbps) }}</b><small>Mbps</small></div>
-      <div><span>Сутки ↓</span><b>{{ gb(n.rxTodayBytes) }}</b><small>сутки ↑ {{ gb(n.txTodayBytes) }}</small></div>
+      <div><span>Сутки ↓</span><b>{{ gbDecRu(n.rxTodayBytes) }}</b><small>сутки ↑ {{ gbDecRu(n.txTodayBytes) }}</small></div>
     </div>
     <OverviewLine class="msp" :data="data" :w="400" :h="70" :pad="6" :col="bad ? 'var(--red-t)' : 'var(--acc)'" />
     <div class="mf"><button type="button" class="pill" @click="emit('close')">Закрыть</button></div>

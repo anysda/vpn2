@@ -1,19 +1,8 @@
 import { pluralRu } from '#shared/plural'
 
-const MIB = 1024 * 1024
 const DAY_MS = 86_400_000
 /** «Истекают»: активный клиент, у которого срок кончится в ближайшие 7 суток. */
 const EXPIRING_MS = 7 * DAY_MS
-
-/** Объём как в макете: «1,4 ГБ», «380 МБ», меньше мегабайта — «12 КБ», ноль — «—». */
-export function sizeRu(bytes: number | null | undefined): string {
-  const n = bytes ?? 0
-  if (n <= 0) return '—'
-  const m = n / MIB
-  if (m >= 1024) return `${(m / 1024).toFixed(1).replace('.', ',')} ГБ`
-  if (m >= 1) return `${Math.round(m)} МБ`
-  return `${Math.max(1, Math.round(n / 1024))} КБ`
-}
 
 /** Инициалы для аватара: первые буквы первых двух слов. */
 export function initials(name: string): string {

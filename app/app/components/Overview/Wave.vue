@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { linePoints, peakBand, ru } from '~/utils/overview'
+import { bytesToGbDec, gbDecNumRu, hourRangeRu, mskHourFromSec, mskWeekdayDateFromSec } from '~/utils/format'
 
 // Трафик за сутки (по часам) или неделю (по суткам МСК): сумма экзитов,
 // рядом — сравнение с тем же окном периодом раньше. Линейка ведёт по точкам.
@@ -13,9 +14,9 @@ onMounted(() => { timer = setInterval(() => void refresh(), 60_000) })
 onBeforeUnmount(() => clearInterval(timer))
 
 const W = 400, H = 140, PAD = 14
-const gb = computed(() => (data.value?.total ?? []).map(b => b / 1e9))
+const gb = computed(() => (data.value?.total ?? []).map(bytesToGbDec))
 const band = computed(() => peakBand(gb.value, 5))
-const big = computed(() => data.value ? ru(data.value.sum / 1e9, data.value.sum < 1e10 ? 1 : 0) : '—')
+const big = computed(() => data.value ? gbDecNumRu(data.value.sum) : '—')
 const delta = computed(() => {
   const d = data.value
   if (!d?.prev) return null
@@ -23,17 +24,13 @@ const delta = computed(() => {
   return `${pct > 0 ? '+' : pct < 0 ? '−' : ''}${Math.abs(pct)}% ${d.period === 'day' ? 'к вчерашнему' : 'к прошлой неделе'}`
 })
 
-const D = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб']
-const MG = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
-const hh = (h: number) => `${String(h).padStart(2, '0')}:00`
 function tipText(i: number) {
   const d = data.value!
-  // подписи по Москве: сдвигаем на +3 ч и читаем как UTC
-  const t = new Date((d.starts[i]! + 3 * 3600) * 1000), h = t.getUTCHours()
+  const s = d.starts[i]!
   return {
     v: `${ru(gb.value[i]!, 1)} ГБ`,
     unit: d.period === 'day' ? 'час' : 'сутки',
-    sub: d.period === 'day' ? `${hh(h)}–${hh((h + 1) % 24)}` : `${D[t.getUTCDay()]}, ${t.getUTCDate()} ${MG[t.getUTCMonth()]}`,
+    sub: d.period === 'day' ? hourRangeRu(mskHourFromSec(s)) : mskWeekdayDateFromSec(s),
   }
 }
 

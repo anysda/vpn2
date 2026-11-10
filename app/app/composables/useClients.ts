@@ -178,33 +178,3 @@ export interface ClientTraffic {
   /** «В сети»: recentBytes выше порога keepalive-шума. */
   online: boolean
 }
-
-/** «31.12.2026» → ISO-строка (UTC-полночь). null — если формат не распознан. */
-export function parseRuDate(s: string): string | null {
-  const m = s.trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
-  if (!m) return null
-  const dd = Number(m[1])
-  const mm = Number(m[2])
-  const yyyy = Number(m[3])
-  const d = new Date(Date.UTC(yyyy, mm - 1, dd))
-  // Отсеять несуществующие даты (напр. 31.02.2026).
-  if (d.getUTCDate() !== dd || d.getUTCMonth() !== mm - 1) return null
-  return d.toISOString()
-}
-
-/** ISO-строка → «31.12.2026» (пусто, если даты нет). */
-export function formatRuDate(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`
-}
-
-export function expiryLabel(expiresAt: string | null | undefined): string {
-  if (!expiresAt) return 'Бессрочный'
-  const d = new Date(expiresAt)
-  return `до ${d.toLocaleDateString('ru-RU')}`
-}
-
-/** Человекочитаемый размер в байтах. */

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { ClientDetail, ClientTraffic, Device } from '~/composables/useClients'
-import { formatRuDate, parseRuDate, useClientDetail, useClientDevices, useClients } from '~/composables/useClients'
+import { useClientDetail, useClientDevices, useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
-import { anim, expiringInDays, initials, sizeRu } from '~/utils/clients-view'
+import { anim, expiringInDays, initials } from '~/utils/clients-view'
+import { dateRuLocal, formatRuDateUtc, parseRuDateUtc, sizeBinRu } from '~/utils/format'
 import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from './DeviceConfig.vue'
 import { accessStatus } from '#shared/access-operation'
@@ -123,10 +124,10 @@ async function saveExpiry() {
   const raw = expDraft.value.trim()
   let next: string | null = null
   if (raw) {
-    next = parseRuDate(raw)
+    next = parseRuDateUtc(raw)
     if (!next) {
       toast.add({ title: 'Срок действия — в формате ДД.ММ.ГГГГ', color: 'error' })
-      expDraft.value = formatRuDate(d.expiresAt)
+      expDraft.value = formatRuDateUtc(d.expiresAt)
       return
     }
   }
@@ -147,7 +148,7 @@ async function saveExpiry() {
 const limDraft = ref('')
 const minLimit = computed(() => Math.max(1, detail.value?.devices.length ?? 0))
 
-const expText = (d: ClientDetail) => formatRuDate(d.expiresAt)
+const expText = (d: ClientDetail) => formatRuDateUtc(d.expiresAt)
 const limText = (d: ClientDetail) => d.deviceLimit === null ? '' : String(d.deviceLimit)
 
 // Карточка перезагружается после сохранения срока или девайса, когда человек
@@ -424,7 +425,7 @@ const tag = computed(() => {
 const rx = computed(() => props.traffic?.rxBytes ?? detail.value?.rxTotal ?? 0)
 const tx = computed(() => props.traffic?.txBytes ?? detail.value?.txTotal ?? 0)
 
-const created = computed(() => (detail.value ? new Date(detail.value.createdAt).toLocaleDateString('ru-RU') : ''))
+const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdAt) : ''))
 </script>
 
 <template>
@@ -463,8 +464,8 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
         </div>
         <div><span>Создан</span><b>{{ created }}</b></div>
         <div>
-          <span>Суммарный трафик</span><b>{{ sizeRu(rx + tx) }}</b>
-          <em>↓ {{ sizeRu(rx) }} · ↑ {{ sizeRu(tx) }}</em>
+          <span>Суммарный трафик</span><b>{{ sizeBinRu(rx + tx) }}</b>
+          <em>↓ {{ sizeBinRu(rx) }} · ↑ {{ sizeBinRu(tx) }}</em>
         </div>
         <div>
           <span>Фильтр рекламы</span><b>{{ detail.filterTraffic ? 'включён' : 'выключен' }}</b>
@@ -561,7 +562,7 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
           <template v-if="mobile">
             <div class="kb dvt">
               <PanelDeviceName :name="dev.name">
-                <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
+                <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
               </PanelDeviceName>
               <button
                 type="button"
@@ -596,8 +597,8 @@ const created = computed(() => (detail.value ? new Date(detail.value.createdAt).
             <PanelDeviceName :name="dev.name">
               <small
                 :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
-                :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeRu(dev.rxTotal)} ↑ ${sizeRu(dev.txTotal)}` : undefined"
-              >{{ dev.rxTotal + dev.txTotal > 0 ? sizeRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
+                :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeBinRu(dev.rxTotal)} ↑ ${sizeBinRu(dev.txTotal)}` : undefined"
+              >{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
             </PanelDeviceName>
             <div class="kb">
               <button type="button" @click="openConfig(dev, 'wg')">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { hmsOrDdmmHmLocal } from '~/utils/format'
 // Журнал запросов: фильтр, поиск по домену и клиенту, блокировка и
 // разблокировка из строки своим правилом AdGuard.
 type Kind = 'ok' | 'blk' | 'rw' | 'safe'
@@ -122,12 +123,6 @@ async function act(r: Row) {
 }
 
 const today = new Date().toDateString()
-const two = (x: number) => String(x).padStart(2, '0')
-function when(t: string) {
-  const d = new Date(t)
-  const hms = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`
-  return d.toDateString() === today ? hms : `${two(d.getDate())}.${two(d.getMonth() + 1)} ${hms.slice(0, 5)}`
-}
 
 onMounted(() => void load())
 </script>
@@ -156,10 +151,10 @@ onMounted(() => void load())
       </div>
       <div ref="list" class="lt scroll" @scroll.passive="onScroll">
         <div v-for="(r, i) in rows" :key="`${r.time}|${r.domain}|${r.ip}|${i}`" :class="{ blk: r.kind === 'blk' || r.kind === 'safe' }">
-          <time :datetime="r.time">{{ when(r.time) }}</time>
+          <time :datetime="r.time">{{ hmsOrDdmmHmLocal(r.time, today) }}</time>
           <div style="min-width:0">
             <b>{{ r.domain }}</b><small>{{ r.type }}</small>
-            <small class="lm"><span class="mono">{{ when(r.time) }}</span> · {{ r.type }} · {{ r.client }}</small>
+            <small class="lm"><span class="mono">{{ hmsOrDdmmHmLocal(r.time, today) }}</span> · {{ r.type }} · {{ r.client }}</small>
           </div>
           <div class="rs">
             <span :class="TAGS[r.kind].cls">{{ TAGS[r.kind].text }}</span>

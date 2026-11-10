@@ -3,6 +3,7 @@ import { pluralRu } from '#shared/plural'
 import { activityScale } from '~/utils/activity-scale'
 import { anim } from '~/utils/clients-view'
 import { ru, useWake } from '~/utils/overview'
+import { gbDecRound1, mskDayNumLabel, WD_MON } from '~/utils/format'
 
 // Активность: недели столбцами, дни строками, как в GitHub. «Онлайн» —
 // клиентов в сети за сутки, «Трафик» — ГБ всех клиентов за сутки (МСК).
@@ -14,9 +15,8 @@ onBeforeUnmount(() => clearInterval(timer))
 
 type Mode = 'on' | 'tr'
 const mode = ref<Mode>('on')
-const D = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+const D = WD_MON
 const MO = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
-const MG = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 // номер суток МСК → дата, читаемая через getUTC*
 const date = (day: number) => new Date(day * 864e5)
 const wd = (day: number) => (date(day).getUTCDay() + 6) % 7
@@ -25,7 +25,7 @@ const byDay = computed(() => new Map((data.value?.days ?? []).map(d => [d.day, d
 const val = (day: number) => {
   const d = byDay.value.get(day)
   if (!d) return 0
-  return mode.value === 'on' ? d.online : Math.round(d.bytes / 1e8) / 10
+  return mode.value === 'on' ? d.online : gbDecRound1(d.bytes)
 }
 // оттенок — от сырого значения: день с десятками мегабайт не пустой, хотя пишется «0,0 ГБ»
 const raw = (day: number) => {
@@ -82,9 +82,9 @@ const selDay = computed(() => {
 const read = computed(() => {
   const day = selDay.value
   if (day == null) return null
-  const t = date(day), v = val(day)
+  const v = val(day)
   return {
-    when: `${D[wd(day)]}, ${t.getUTCDate()} ${MG[t.getUTCMonth()]}`,
+    when: mskDayNumLabel(day),
     v: mode.value === 'on' ? String(v) : ru(v, 1),
     unit: mode.value === 'on' ? `${pluralRu(v, ['клиент', 'клиента', 'клиентов'])} в сети` : 'ГБ',
   }

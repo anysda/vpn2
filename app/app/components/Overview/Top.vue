@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { anim, sizeRu } from '~/utils/clients-view'
+import { anim } from '~/utils/clients-view'
+import { sizeBinRu } from '~/utils/format'
 import { useWake } from '~/utils/overview'
 
 // Топ клиентов по трафику за сутки или неделю (переключатель в шапке Обзора).
@@ -41,9 +42,9 @@ watch(rows, (r) => {
       <button v-for="(c, i) in rows" :key="c.id" type="button" class="tr" @click="navigateTo({ path: '/clients', query: { id: c.id } })">
         <span class="n">{{ i + 1 }}</span>
         <span class="nm">{{ c.name }}</span>
-        <b>{{ sizeRu(c.total) }}</b>
+        <b>{{ sizeBinRu(c.total) }}</b>
         <span class="bar"><i :class="{ lead: i === 0 }" :style="{ width: c.w }" /></span>
-        <span class="io">↓ {{ sizeRu(c.rx) }} · ↑ {{ sizeRu(c.tx) }}</span>
+        <span class="io">↓ {{ sizeBinRu(c.rx) }} · ↑ {{ sizeBinRu(c.tx) }}</span>
       </button>
     </div>
     <div v-else class="empty">{{ data ? 'Трафика пока нет' : '' }}</div>

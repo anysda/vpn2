@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { EventLevel, PanelEvent } from '#shared/events'
+import { timeOrDdmmMsk } from '~/utils/format'
 
 const { data, refresh } = useFetch<PanelEvent[]>('/api/events', { query: { limit: 30 }, default: () => [] })
 
@@ -32,15 +33,6 @@ watch(data, () => {
 
 const COLOR: Record<EventLevel, string> = { alarm: 'var(--red)', warn: 'var(--amber)', info: 'var(--g2)', ok: 'var(--green)' }
 
-const MSK = 'Europe/Moscow'
-const dayOf = (ms: number) => new Date(ms).toLocaleDateString('ru-RU', { timeZone: MSK })
-/** Сегодня — время, раньше — дата. */
-function when(ms: number): string {
-  if (dayOf(ms) === dayOf(now.value)) {
-    return new Date(ms).toLocaleTimeString('ru-RU', { timeZone: MSK, hour: '2-digit', minute: '2-digit' })
-  }
-  return new Date(ms).toLocaleDateString('ru-RU', { timeZone: MSK, day: '2-digit', month: '2-digit' })
-}
 </script>
 
 <template>
@@ -48,7 +40,7 @@ function when(ms: number): string {
     <h3>События</h3>
     <ul v-if="data.length" ref="list" :class="{ top: edge.top, end: edge.end }" @scroll.passive="onScroll">
       <li v-for="e in data" :key="e.id">
-        <time :datetime="new Date(e.at).toISOString()">{{ when(e.at) }}</time>
+        <time :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, now) }}</time>
         <span class="dot" :class="{ pulse: e.level === 'ok' || e.level === 'alarm' }" :style="{ background: COLOR[e.level] }" />
         <div><b><WholeWords :text="e.title" /></b><small v-if="e.detail"><WholeWords :text="e.detail" /></small></div>
       </li>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ddmmLocal, pad2 } from '~/utils/format'
 // График запросов сводки: все и заблокированные, линейка с подсказкой
 // ведётся курсором, без курсора подсказка стоит на пике.
 const props = defineProps<{ q: number[], b: number[], units: 'hours' | 'days' }>()
@@ -13,21 +14,19 @@ const bd = computed(() => smooth(props.b.map((v, i) => [X(i), Y(v)])))
 const peak = computed(() => props.q.reduce((m, v, i, a) => v > a[m]! ? i : m, 0))
 
 const now = new Date()
-const two = (x: number) => String(x).padStart(2, '0')
 const hourOf = (i: number) => (now.getHours() - (n.value - 1 - i) + 24 * 4) % 24
 const dayOf = (i: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - (n.value - 1 - i))
-const ddmm = (d: Date) => `${two(d.getDate())}.${two(d.getMonth() + 1)}`
 
 const span = (i: number) => props.units === 'hours'
-  ? `${two(hourOf(i))}:00–${two((hourOf(i) + 1) % 24)}:00`
-  : ddmm(dayOf(i))
+  ? `${pad2(hourOf(i))}:00–${pad2((hourOf(i) + 1) % 24)}:00`
+  : ddmmLocal(dayOf(i))
 
 const marks = computed(() => {
   if (props.units === 'hours') {
     const h = now.getHours()
-    return [...Array.from({ length: 6 }, (_, k) => `${two((h + 1 + 4 * k) % 24)}:00`), 'сейчас']
+    return [...Array.from({ length: 6 }, (_, k) => `${pad2((h + 1 + 4 * k) % 24)}:00`), 'сейчас']
   }
-  return [...Array.from({ length: 6 }, (_, k) => ddmm(dayOf(Math.round(k * (n.value - 1) / 6)))), 'сегодня']
+  return [...Array.from({ length: 6 }, (_, k) => ddmmLocal(dayOf(Math.round(k * (n.value - 1) / 6)))), 'сегодня']
 })
 
 const plot = ref<HTMLElement>()

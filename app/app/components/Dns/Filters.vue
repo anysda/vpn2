@@ -2,6 +2,7 @@
 // Чёрные и белые списки AdGuard: включить, добавить, удалить, проверить
 // обновления. Каждое действие возвращает списки из /control/filtering/status.
 import { pluralRu } from '#shared/plural'
+import { todayYesterdayHmLocal } from '~/utils/format'
 
 interface List { name: string, url: string, enabled: boolean, rules: number, updated: string | null }
 interface View { interval: number, black: List[], white: List[] }
@@ -39,17 +40,10 @@ const sub = computed(() => {
   return `Включено ${on.length} из ${v.black.length} · ${grp(rules)} ${pluralRu(rules, ['правило', 'правила', 'правил'])} · ${every(v.interval)}`
 })
 
-const two = (x: number) => String(x).padStart(2, '0')
 function updated(l: List) {
   if (!l.enabled) return 'выключен'
   if (!l.updated) return '—'
-  const d = new Date(l.updated)
-  const hm = `${two(d.getHours())}:${two(d.getMinutes())}`
-  const day = new Date()
-  if (d.toDateString() === day.toDateString()) return `сегодня ${hm}`
-  day.setDate(day.getDate() - 1)
-  if (d.toDateString() === day.toDateString()) return `вчера ${hm}`
-  return `${two(d.getDate())}.${two(d.getMonth() + 1)} ${hm}`
+  return todayYesterdayHmLocal(l.updated)
 }
 
 // Строка телефона: правил и обновление — одной строкой под адресом.

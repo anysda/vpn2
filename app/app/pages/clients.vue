@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
 import { pluralRu } from '#shared/plural'
-import { expiryLabel, useClients } from '~/composables/useClients'
+import { useClients } from '~/composables/useClients'
 import type { Client, ClientTraffic } from '~/composables/useClients'
 import { accessProtocols } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 import type { ClientDot } from '~/components/Panel/ClientRow.vue'
 import { useExitTags } from '~/composables/useRoutes'
-import { anim, expiringInDays, inDaysRu, initials, sizeRu } from '~/utils/clients-view'
+import { anim, expiringInDays, inDaysRu, initials } from '~/utils/clients-view'
+import { expiryLabelLocal, sizeBinRu } from '~/utils/format'
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
 
@@ -283,7 +284,7 @@ const newOpen = ref(false)
 function dot(c: Client): ClientDot | null {
   if (c.status === 'frozen') return null
   const t = traffic(c.id)
-  if (t?.online) return { cls: 'on', title: `В сети · за 5 мин ${sizeRu(t.recentBytes)}` }
+  if (t?.online) return { cls: 'on', title: `В сети · за 5 мин ${sizeBinRu(t.recentBytes)}` }
   return {
     cls: '',
     color: expiring(c) !== null ? 'var(--amber)' : 'var(--t4)',
@@ -291,7 +292,7 @@ function dot(c: Client): ClientDot | null {
   }
 }
 
-const today = (c: Client) => sizeRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0))
+const today = (c: Client) => sizeBinRu((traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0))
 const tgText = (c: Client) => (c.tgUsername ? `@${c.tgUsername}` : c.tgLinked ? 'Telegram' : 'без Telegram')
 /** Мета строки на телефоне: «3/3 · NL · @nick». */
 const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто'} · ${tgText(c)}`
@@ -364,19 +365,19 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
                   <span class="t1">{{ today(c) }}</span>
                   <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                   <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                  <small v-else>{{ c.expiresAt ? expiryLabel(c.expiresAt) : 'бессрочно' }}</small>
+                  <small v-else>{{ c.expiresAt ? expiryLabelLocal(c.expiresAt) : 'бессрочно' }}</small>
                 </div>
                 <template v-else>
                   <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
                   <span
                     class="t1"
-                    :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeRu(traffic(c.id)?.dayRx)} ↑ ${sizeRu(traffic(c.id)?.dayTx)}` : undefined"
-                  >{{ today(c) }}<small>всего {{ sizeRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+                    :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeBinRu(traffic(c.id)?.dayRx)} ↑ ${sizeBinRu(traffic(c.id)?.dayTx)}` : undefined"
+                  >{{ today(c) }}<small>всего {{ sizeBinRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
                   <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
                   <span>
                     <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
                     <span v-else-if="expiring(c) !== null" class="tag amb">{{ inDaysRu(expiring(c)!) }}</span>
-                    <template v-else>{{ expiryLabel(c.expiresAt) }}</template>
+                    <template v-else>{{ expiryLabelLocal(c.expiresAt) }}</template>
                   </span>
                 </template>
               </PanelClientRow>

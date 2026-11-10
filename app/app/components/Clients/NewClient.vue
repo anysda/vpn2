@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { parseRuDate, useClients } from '~/composables/useClients'
+import { useClients } from '~/composables/useClients'
+import { parseRuDateUtc } from '~/utils/format'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { maskRuDate } from '~/utils/ru-date-mask'
 
@@ -44,7 +45,7 @@ async function submit() {
   }
   let expiresAt: string | null = null
   if (expires.value.trim()) {
-    expiresAt = parseRuDate(expires.value)
+    expiresAt = parseRuDateUtc(expires.value)
     if (!expiresAt) {
       toast.add({ title: 'Дата — в формате ДД.ММ.ГГГГ', color: 'error' })
       return

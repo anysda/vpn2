@@ -1,7 +1,8 @@
 name: stand
 
-# Деплой dev на стенд из двух ВМ внутри раннера и 99-verify с настоящим
-# трафиком WireGuard/OpenVPN/IKEv2; рядом на своём стенде - обрыв UDP
+# Деплой dev на стенд из двух ВМ внутри раннера (матрица Ubuntu 24.04 и 26.04)
+# и 99-verify с настоящим трафиком WireGuard/OpenVPN/IKEv2, затем слепок
+# хоста сверяется с эталоном из репы; рядом на своём стенде - обрыв UDP
 # entry → экзит. Две задачи идут параллельно, прогон - до 5 минут.
 # Запускается на dev и вручную, не на каждый PR.
 on:
@@ -17,6 +18,14 @@ on:
         description: 'Отрицательный контроль: при обрыве UDP резать и запасной TCP до экзита'
         type: boolean
         default: false
+      snapshot_reason:
+        description: 'Пересъёмка эталона слепка: причина'
+        type: string
+        default: ''
+      snapshot_corrupt:
+        description: 'Положительный контроль: испортить файл на entry перед слепком'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,9 +36,15 @@ concurrency:
 
 jobs:
   deploy:
-    name: стенд развёртывание
+    name: стенд развёртывание Ubuntu ${{ matrix.os }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ['24.04', '26.04']
+    env:
+      STAND_OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
 
@@ -40,12 +55,12 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: /var/tmp/vpn2-apt-cache
-          key: stand-apt-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
-          restore-keys: stand-apt-
+          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          restore-keys: stand-apt-${{ matrix.os }}-
 
-      # ВМ грузятся, пока собирается образ панели.
+      # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
-        run: sudo infra/tools/ci-stand.sh up-bg
+        run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
 
       - uses: docker/setup-buildx-action@v4
         with:
@@ -80,6 +95,60 @@ jobs:
         if: ${{ inputs.stop_openvpn && !cancelled() && steps.up.outcome == 'success' }}
         run: sudo infra/tools/ci-stand.sh verify --stop-openvpn
 
+      # Положительный контроль: сверка слепка с эталоном после этого обязана упасть.
+      - name: snapshot corrupt
+        if: ${{ inputs.snapshot_corrupt }}
+        run: sudo infra/tools/ci-stand.sh snapshot-corrupt
+
+      # Слепки в stand-report: collect проверяет их на пароль стенда, а
+      # артефакт отчёта их отдаёт.
+      - name: snapshot
+        run: sudo infra/tools/ci-stand.sh snapshot stand-report
+
+      - name: venv
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q ./infra/vpn2
+
+      # Оба узла сверяются всегда: красный шаг - если разошёлся хоть один
+      # или эталона нет.
+      - name: snapshot diff
+        if: ${{ inputs.snapshot_reason == '' }}
+        run: |
+          rc=0
+          for node in entry exit; do
+            ref=infra/tests/fixtures/snapshot/ubuntu-$STAND_OS-$node.json.gz
+            if [[ ! -f $ref ]]; then
+              echo "эталона нет: $ref"
+              rc=1
+              continue
+            fi
+            "$RUNNER_TEMP/venv/bin/vpn2" snapshot diff --ignore infra/tests/fixtures/snapshot/ignore.yml \
+              "$ref" "stand-report/snapshot-$node.json" || rc=1
+          done
+          exit "$rc"
+
+      # Пересъёмка: сверки нет, слепки уходят артефактом под именами эталонов.
+      # В репу CI их не коммитит. stand-report принадлежит root, поэтому
+      # сжатое кладётся в свой каталог.
+      - name: snapshot reference
+        if: ${{ inputs.snapshot_reason != '' }}
+        env:
+          SNAPSHOT_REASON: ${{ inputs.snapshot_reason }}
+        run: |
+          echo "Пересъёмка эталона слепка Ubuntu $STAND_OS, причина: $SNAPSHOT_REASON"
+          mkdir snapshot-ref
+          for node in entry exit; do
+            gzip -n -c "stand-report/snapshot-$node.json" > "snapshot-ref/ubuntu-$STAND_OS-$node.json.gz"
+          done
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ inputs.snapshot_reason != '' }}
+        with:
+          name: snapshot-ubuntu-${{ matrix.os }}
+          path: snapshot-ref/
+          if-no-files-found: error
+
       - name: collect
         if: always()
         run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report
@@ -87,7 +156,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: verify-report
+          name: verify-report-ubuntu-${{ matrix.os }}
           path: stand-report/
           if-no-files-found: warn
 

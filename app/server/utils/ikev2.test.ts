@@ -123,7 +123,7 @@ describe('buildIkev2ClientInfo', () => {
   it('self-signed: сервер из профиля, CA выдаётся, обращение к IP из аргумента не нужно', async () => {
     dbResults.push([device])
     answerProfile(profile({ ca: 'test-ca' }))
-    expect(await buildIkev2ClientInfo(4, '198.51.100.1')).toEqual({
+    expect(await buildIkev2ClientInfo(4)).toEqual({
       server: '203.0.113.7', remoteId: '203.0.113.7', username: 'anna-phone', password: 'test-pass',
       caCertPem: 'test-ca', certificatePending: false,
     })
@@ -132,13 +132,13 @@ describe('buildIkev2ClientInfo', () => {
   it('self-signed без CA - caCertPem null', async () => {
     dbResults.push([device])
     answerProfile(profile({ ca: '' }))
-    expect((await buildIkev2ClientInfo(4, '')).caCertPem).toBeNull()
+    expect((await buildIkev2ClientInfo(4)).caCertPem).toBeNull()
   })
 
   it('letsencrypt: CA клиенту не отдаётся, даже если она есть', async () => {
     dbResults.push([device])
     answerProfile(profile({ mode: 'letsencrypt', ca: 'test-ca', host: 'vpn.example.test', domain: 'vpn.example.test' }))
-    const info = await buildIkev2ClientInfo(4, '')
+    const info = await buildIkev2ClientInfo(4)
     expect([info.caCertPem, info.certificatePending]).toEqual([null, false])
   })
 
@@ -151,18 +151,18 @@ describe('buildIkev2ClientInfo', () => {
   ])('certificatePending: %s', async (_name, over, pending) => {
     dbResults.push([device])
     answerProfile(profile(over))
-    expect((await buildIkev2ClientInfo(4, '')).certificatePending).toBe(pending)
+    expect((await buildIkev2ClientInfo(4)).certificatePending).toBe(pending)
   })
 
   it('хост профиля пуст - берётся ENTRY_HOST, затем wgPublicHost', async () => {
     answerProfile(profile({ host: '' }))
     dbResults.push([device])
     vi.stubEnv('ENTRY_HOST', ' entry.example.test ')
-    expect((await buildIkev2ClientInfo(4, '')).server).toBe('entry.example.test')
+    expect((await buildIkev2ClientInfo(4)).server).toBe('entry.example.test')
     vi.stubEnv('ENTRY_HOST', '')
     runtimeConfig.wgPublicHost = '203.0.113.50'
     dbResults.push([device])
-    expect((await buildIkev2ClientInfo(4, '')).server).toBe('203.0.113.50')
+    expect((await buildIkev2ClientInfo(4)).server).toBe('203.0.113.50')
   })
 })
 

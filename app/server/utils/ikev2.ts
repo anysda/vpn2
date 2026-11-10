@@ -17,8 +17,16 @@ export async function ikev2Mode(): Promise<'letsencrypt' | 'self-signed'> {
   return (await profile()).mode
 }
 
+/**
+ * Адрес entry для IKEv2: ENTRY_HOST (стадия 27 пишет server-cert с CN=$ENTRY_HOST),
+ * иначе wg public host - он тоже адрес entry. Пусто - не настроен.
+ */
+export function entryHost(): string {
+  return String(process.env.ENTRY_HOST || useRuntimeConfig().wgPublicHost || '').trim()
+}
+
 async function ikev2ServerHost(): Promise<string> {
-  return (await profile()).host || String(process.env.ENTRY_HOST || useRuntimeConfig().wgPublicHost || '').trim()
+  return (await profile()).host || entryHost()
 }
 
 /**
@@ -233,12 +241,8 @@ export interface Ikev2ClientInfo {
  * Собрать поля для отображения клиенту. server = ikev2ServerHost() (domain
  * в LE-режиме, адрес WG/OVPN в self-signed). caCertPem = null в LE-режиме: клиенту
  * НЕ нужен анысда-CA, LE-корень уже в trust-store.
- *
- * Параметр `_serverIp` оставлен для обратной совместимости вызывающего кода;
- * фактический host теперь резолвится из /etc/anysda/ikev2-server-host
- * (стадия 27 ставит) — это даёт consistency между сервером и панелью.
  */
-export async function buildIkev2ClientInfo(deviceId: number, _serverIp: string): Promise<Ikev2ClientInfo> {
+export async function buildIkev2ClientInfo(deviceId: number): Promise<Ikev2ClientInfo> {
   const device = await ensureDeviceIkev2(deviceId)
   const [mode, host] = await Promise.all([ikev2Mode(), ikev2ServerHost()])
   const ca = mode === 'letsencrypt'

@@ -1,7 +1,7 @@
 import { createError as h3Error } from 'h3'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auth, calls, dbRows, fakeEvent, fetchMock, installStubs, rejection, stubError } from '../test/stubs'
-import { buildIkev2ClientInfo, ikev2ServerReady } from './ikev2'
+import { buildIkev2ClientInfo, entryHost, ikev2ServerReady } from './ikev2'
 
 vi.hoisted(() => vi.stubGlobal('defineEventHandler', (handler: unknown) => handler))
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
@@ -141,5 +141,21 @@ describe('send-ikev2-to-tg', () => {
     expect(withCause.cause).toBeDefined()
     expect(JSON.stringify(withCause)).toBe(JSON.stringify(h3Error(fields)))
     expect(JSON.stringify(h3Error({ ...fields, cause: err.cause }))).toBe(JSON.stringify(h3Error(fields)))
+  })
+})
+
+describe('entryHost', () => {
+  it('ENTRY_HOST задан - он без пробелов, wgPublicHost не нужен', () => {
+    installStubs({ wgPublicHost: '203.0.113.50' })
+    vi.stubEnv('ENTRY_HOST', ' entry.example.test ')
+    expect(entryHost()).toBe('entry.example.test')
+  })
+
+  it('ENTRY_HOST пуст - wgPublicHost, нет обоих - пустая строка', () => {
+    vi.stubEnv('ENTRY_HOST', '')
+    installStubs({ wgPublicHost: '203.0.113.50' })
+    expect(entryHost()).toBe('203.0.113.50')
+    installStubs({})
+    expect(entryHost()).toBe('')
   })
 })

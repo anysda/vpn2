@@ -42,11 +42,13 @@
 - {section: files, name: '/var/lib/anysda-vpn2/db.sqlite-*', field: sha256, reason: журнал записи SQLite работающей панели}
 - {section: files, name: '/var/lib/vpn2-deploy/operation.json', field: sha256, reason: журнал операции деплоя с меткой времени}
 - {section: files, name: '/var/lib/vpn2-deploy/panel/operation.json', field: sha256, reason: журнал операции панели с меткой времени}
-- {section: files, name: '/var/lib/vpn2-deploy/backups/*', field: '*', reason: имя каталога резервной копии - метка времени в наносекундах}
-- {section: files, name: '/var/lib/vpn2-deploy/panel/backups/*', field: '*', reason: имя каталога резервной копии - метка времени в наносекундах}
+- {section: files, name: '/var/lib/vpn2-deploy/backups/*', field: '*', reason: каталог копии назван меткой времени в наносекундах - он и его содержимое каждый раз новые}
+- {section: files, name: '/var/lib/vpn2-deploy/panel/backups/*', field: '*', reason: каталог копии назван меткой времени в наносекундах - он и его содержимое каждый раз новые}
 
 # Не файлы
-- {section: ports, name: 'udp *:[3-6][0-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящие UDP-сокеты sing-box на случайном порту ядра}
+- {section: ports, name: 'udp *:3[2-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
+- {section: ports, name: 'udp *:[45][0-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
+- {section: ports, name: 'udp *:60[0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
 - {section: units, name: 'var-lib-docker-rootfs-overlayfs-*.mount', field: '*', reason: точка монтирования контейнера с его случайным идентификатором}
 - {section: units, name: 'vpn2-ci-warm.service', field: '*', reason: разовый юнит прогрева стенда CI - не продукт}
 - {section: containers, name: 'anysda-vpn2', field: image, reason: образ панели собирается из исходников коммита}

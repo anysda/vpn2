@@ -22,6 +22,15 @@ cp "$1" "$T/$n.env"
 echo "вывод $n"
 [ ! -f "$T/rc-$n" ] || exit "$(cat "$T/rc-$n")"
 '''
+VERIFY = '''import os
+import sys
+
+t = os.environ['T']
+with open(t + '/calls.log', 'a') as log:
+    log.write('stage 99-verify\\n')
+rc = t + '/rc-99-verify'
+sys.exit(int(open(rc).read()) if os.path.exists(rc) else 0)
+'''
 WG = '#!/bin/sh\n[ "$1" = pubkey ] && { cat > /dev/null; echo PUBKEY; }\nexit 0\n'
 UNITS = 'sing-box openvpn-server@server strongswan-starter'
 
@@ -42,8 +51,11 @@ def node(tmp_path, monkeypatch):
     put(src / 'infra/configs/anysda-config.yaml.tpl', 'tpl\n')
     put(src / 'infra/envs/all.env', 'AGH_PORT=3000')
     put(src / 'infra/envs/ru.env', 'SSH_PASS=x\nHOST=ru\n')
-    for name in ('22-adguard', '30-frontend', '35-telegram', '99-verify'):
+    for name in ('22-adguard', '30-frontend', '35-telegram'):
         put(src / f'infra/scripts/{name}.sh', STAGE, 0o755)
+    for name, body in (('__init__.py', ''), ('cli/__init__.py', ''), ('cli/verify.py', ''),
+                       ('cli/__main__.py', VERIFY)):
+        put(src / 'infra/vpn2/src/vpn2' / name, body)
     put(Path(paths.source_root_file), f'{src}\n')
     bin_dir = root / 'bin'
     for name, body in STUBS.items():

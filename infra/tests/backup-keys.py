@@ -107,7 +107,7 @@ class BackupRestore(unittest.TestCase):
             '> /test-panel.log 2>&1 && touch /test-panel-started\nfi\n', 0o755)
         put('/test-bin/ip', '#!/bin/sh\nexit 1\n', 0o755)
         put('/test-bin/curl', '#!/bin/sh\necho \'{"version":"test"}\'\n', 0o755)
-        for stage in ('22-adguard', '30-frontend', '35-telegram', '99-verify'):
+        for stage in ('22-adguard', '30-frontend', '35-telegram'):
             put(f'/opt/anysda-vpn2/infra/scripts/{stage}.sh', '#!/bin/sh\nexit 0\n', 0o755)
         put('/opt/anysda-vpn2/infra/envs/all.env', 'HOST_TAG=ru\n')
         put('/opt/anysda-vpn2/infra/envs/ru.env', 'ENTRY_HOST=vpn.example.test\n')

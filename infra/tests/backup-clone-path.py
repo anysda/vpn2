@@ -25,7 +25,18 @@ _spec.loader.exec_module(fixture)  # забирает путь репозито�
 REPO = fixture.REPO
 OPT = Path('/opt/anysda-vpn2')
 CLONE = Path('/root/vpn2')
-STAGES = ('22-adguard', '30-frontend', '35-telegram', '99-verify')
+STAGES = ('22-adguard', '30-frontend', '35-telegram')
+# Проверка узла идёт пакетом дерева: команда verify подменена, остальной пакет настоящий.
+VERIFY = '''import os
+from pathlib import Path
+
+
+def main(_argv):
+    with open('/test-output/stages', 'a') as log:
+        log.write('|'.join((__file__, Path('/tmp/anysda/anysda-config.yaml.tpl').read_text(),
+                            'SOURCE=' + os.environ['SOURCE'])) + '\\n')
+    return 0
+'''
 OUT = Path('/test-output')
 
 
@@ -40,6 +51,7 @@ def make_source(root):
         fixture.write(root / 'infra/scripts' / (stage + '.sh'), '''#!/bin/sh
 printf '%s|%s|%s\\n' "$0" "$(cat /tmp/anysda/anysda-config.yaml.tpl)" "$(grep '^SOURCE=' "$1")" >> /test-output/stages
 ''', 0o755)
+    fixture.write(root / 'infra/vpn2/src/vpn2/cli/verify.py', VERIFY)
     fixture.write(root / 'infra/configs/anysda-config.yaml.tpl', f'template from {root}')
     fixture.write(root / 'infra/envs/all.env', f'SOURCE={root}\n')
     fixture.write(root / 'infra/envs/ru.env', '''HOST_TAG=ru
@@ -108,8 +120,9 @@ class ClonePath(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout[-1500:])
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
         self.assertEqual(stages.read_text().splitlines(),
-                         [f'{root}/infra/scripts/{stage}.sh|template from {root}|SOURCE={root}'
-                          for stage in STAGES])
+                         [f'{root}/infra/{path}|template from {root}|SOURCE={root}'
+                          for path in [f'scripts/{stage}.sh' for stage in STAGES]
+                          + ['vpn2/src/vpn2/cli/verify.py']])
 
     def assert_speedtest_uses(self, root):
         text = (REPO / 'infra/tools/speedtest.py').read_text()

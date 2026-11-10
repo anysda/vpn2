@@ -569,7 +569,7 @@ def _wg(run):
 
 
 def _verify(root):
-    """Результаты проверок из отчёта 99-verify.sh: "<component> <check>" -> result."""
+    """Результаты проверок из отчёта vpn2 verify: "<component> <check>" -> result."""
     path = os.path.join(root, _VERIFY_REPORT)
     try:
         with open(path, encoding='utf-8') as stream:

@@ -27,7 +27,7 @@ import tempfile
 import time
 
 ROOT = Path('/')
-# Same unit as 27-ikev2.sh and 99-verify.sh. Ubuntu 26.04 also installs
+# Same unit as 27-ikev2.sh and vpn2 verify. Ubuntu 26.04 also installs
 # charon-systemd (strongswan.service), a second charon the product never runs.
 STRONGSWAN = 'strongswan-starter'
 PRESERVED = ('/etc/wireguard', '/etc/openvpn/server', '/etc/swanctl', '/var/lib/vpn2-control')

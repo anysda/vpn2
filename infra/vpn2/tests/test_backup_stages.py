@@ -95,9 +95,13 @@ def test_smoke_skips_without_verify_and_fails_on_other_codes(tmp_path):
     env_file = stages.stage_env(src, work, environ={})
     out, err = StringIO(), StringIO()
     stages.smoke(src, env_file, 'снимок', out=out, err=err)
-    assert err.getvalue() == (f'anysda-restore: WARN: нет 99-verify ({src}/infra/scripts/99-verify.sh) '
+    assert err.getvalue() == (f'anysda-restore: WARN: нет vpn2 verify ({src}/infra/vpn2/src) '
                               'или env стадий — пропуск smoke-test\n')
-    script(src, '99-verify', 'exit 3\n')
+    cli = src / 'infra/vpn2/src/vpn2/cli'
+    cli.mkdir(parents=True)
+    for name, body in (('../__init__.py', ''), ('__init__.py', ''), ('verify.py', ''),
+                       ('__main__.py', 'import os\nimport sys\nsys.exit(int(os.environ["AGH_PORT"]) - 2997)\n')):
+        (cli / name).write_text(body)
     with pytest.raises(RestoreError) as caught:
         stages.smoke(src, env_file, 'снимок', out=out, err=err)
     assert caught.value.code == 7 and caught.value.message.endswith('pre-restore снимок: снимок')

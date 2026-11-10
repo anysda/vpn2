@@ -137,7 +137,7 @@ fi
 exit 0
 ''', 0o755)
         write('/test-bin/curl', '#!/bin/sh\necho \'{"version":"test"}\'\n', 0o755)
-        for stage in ('22-adguard', '30-frontend', '35-telegram', '99-verify'):
+        for stage in ('22-adguard', '30-frontend', '35-telegram'):
             write('/opt/anysda-vpn2/infra/scripts/' + stage + '.sh',
                   '#!/bin/sh\nexit 0\n', 0o755)
         write('/opt/anysda-vpn2/infra/configs/anysda-config.yaml.tpl', 'template from installed tree')

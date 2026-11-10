@@ -10,6 +10,8 @@ from vpn2.backup.errors import RestoreError
 STAGES = ('22-adguard', '30-frontend', '35-telegram')
 TAIL_LINES = 15
 STATE_DIR = '/var/lib/anysda-vpn2/state'
+# Проверка узла: окружение стадий целиком, пакет из дерева, интерпретатор тот же, что у restore.
+VERIFY = 'set -a; source "$1"; set +a; PYTHONPATH=$2 exec "$3" -B -m vpn2.cli verify'
 
 
 def _say(text, stream):
@@ -90,16 +92,17 @@ def resync(source_root, env_file, work, *, run=subprocess.run, out=None, err=Non
 
 
 def smoke(source_root, env_file, presnap_final, *, run=subprocess.run, out=None, err=None):
-    """99-verify установленного дерева: код 2 - предупреждение, иной отказ - RestoreError(7)."""
+    """vpn2 verify пакетом установленного дерева: код 2 - предупреждение, иной отказ - RestoreError(7)."""
     out = sys.stdout if out is None else out
     err = sys.stderr if err is None else err
-    verify = Path(source_root) / 'infra/scripts/99-verify.sh'
-    if not (os.access(verify, os.X_OK) and _filled(env_file)):
-        _say(f'anysda-restore: WARN: нет 99-verify ({verify}) или env стадий — пропуск smoke-test', err)
+    package = Path(source_root) / 'infra/vpn2/src'
+    if not ((package / 'vpn2/cli/verify.py').is_file() and _filled(env_file)):
+        _say(f'anysda-restore: WARN: нет vpn2 verify ({package}) или env стадий — пропуск smoke-test', err)
         return
     _say('anysda-restore: 99-verify…', out)
     try:
-        code = run([str(verify), str(env_file)], check=False).returncode
+        code = run(['bash', '-c', VERIFY, 'anysda-restore', str(env_file), str(package), sys.executable],
+                   check=False).returncode
     except OSError:
         code = 126
     if code == 0:

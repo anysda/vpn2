@@ -12,7 +12,7 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from support import load_bot  # noqa: E402
+from support import import_bot  # noqa: E402
 
 BOT_DIR = HERE.parent
 FIXTURE = HERE / 'fixtures' / 'texts.json'
@@ -103,36 +103,36 @@ def rows(markup):
 
 
 def collect_rendered(bot):
-    out = {name: getattr(bot, name) for name in NAMED_CONSTANTS}
-    out['ERROR_TEXT'] = dict(bot.ERROR_TEXT)
-    out['plural_ru'] = {' / '.join(forms): {str(n): bot.plural_ru(n, forms)
+    out = {name: getattr(bot.texts, name) for name in NAMED_CONSTANTS}
+    out['ERROR_TEXT'] = dict(bot.texts.ERROR_TEXT)
+    out['plural_ru'] = {' / '.join(forms): {str(n): bot.texts.plural_ru(n, forms)
                                             for n in PLURAL_NUMBERS}
                         for forms in plural_forms()}
-    out['_limit_label'] = {str(v): bot._limit_label(v) for v in (None, 0, 1, 25)}
-    out['_expiry_label'] = {str(v): bot._expiry_label(v) for v in SAMPLE_EXPIRES}
-    out['md'] = {str(v): bot.md(v) for v in SPECIAL}
-    out['md_bold'] = {str(v): bot.md_bold(v) for v in SPECIAL}
-    out['_menu_text'] = {k: bot._menu_text(v) for k, v in VIEWS.items()}
-    out['_devices_text'] = {k: bot._devices_text(v) for k, v in VIEWS.items()}
-    out['_device_card_text'] = {k: bot._device_card_text(v) for k, v in DEVICES.items()}
-    out['devices_markup'] = {k: rows(bot._devices_markup(v)) for k, v in VIEWS.items()}
-    out['device_card_markup'] = {i: rows(bot._device_card_markup(i)) for i in ('7', 'a_b')}
-    out['confirm_markup'] = rows(bot._confirm_markup('yes:1', 'no:1'))
+    out['_limit_label'] = {str(v): bot.texts._limit_label(v) for v in (None, 0, 1, 25)}
+    out['_expiry_label'] = {str(v): bot.texts._expiry_label(v) for v in SAMPLE_EXPIRES}
+    out['md'] = {str(v): bot.texts.md(v) for v in SPECIAL}
+    out['md_bold'] = {str(v): bot.texts.md_bold(v) for v in SPECIAL}
+    out['_menu_text'] = {k: bot.texts._menu_text(v) for k, v in VIEWS.items()}
+    out['_devices_text'] = {k: bot.texts._devices_text(v) for k, v in VIEWS.items()}
+    out['_device_card_text'] = {k: bot.texts._device_card_text(v) for k, v in DEVICES.items()}
+    out['devices_markup'] = {k: rows(bot.texts._devices_markup(v)) for k, v in VIEWS.items()}
+    out['device_card_markup'] = {i: rows(bot.texts._device_card_markup(i)) for i in ('7', 'a_b')}
+    out['confirm_markup'] = rows(bot.texts._confirm_markup('yes:1', 'no:1'))
     out['admin_list_markup'] = {
-        'none': rows(bot._admin_list_markup([])),
-        'all': rows(bot._admin_list_markup(list(CLIENTS.values()))),
+        'none': rows(bot.admin._admin_list_markup([])),
+        'all': rows(bot.admin._admin_list_markup(list(CLIENTS.values()))),
     }
-    out['admin_card_markup'] = {k: rows(bot._admin_card_markup(v)) for k, v in CLIENTS.items()}
-    out['admin_card_text'] = {k: bot._admin_card_text(v) for k, v in CLIENTS.items()}
-    saved = bot.ADMIN_USERNAME
+    out['admin_card_markup'] = {k: rows(bot.admin._admin_card_markup(v)) for k, v in CLIENTS.items()}
+    out['admin_card_text'] = {k: bot.admin._admin_card_text(v) for k, v in CLIENTS.items()}
+    saved = bot.config.ADMIN_USERNAME
     try:
         out['_no_access_text'] = {}
         for username in ('', 'admin_user'):
-            bot.ADMIN_USERNAME = username
-            out['_no_access_text'][username or 'no_admin'] = bot._no_access_text()
+            bot.config.ADMIN_USERNAME = username
+            out['_no_access_text'][username or 'no_admin'] = bot.texts._no_access_text()
     finally:
-        bot.ADMIN_USERNAME = saved
-    out['_admin_list_text'] = {str(n): bot._admin_list_text([{}] * n) for n in (0, 1, 2, 5, 21)}
+        bot.config.ADMIN_USERNAME = saved
+    out['_admin_list_text'] = {str(n): bot.admin._admin_list_text([{}] * n) for n in (0, 1, 2, 5, 21)}
     return out
 
 
@@ -147,7 +147,7 @@ def dump(data):
 class FrozenTextsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bot = load_bot()
+        cls.bot = import_bot()
         cls.data = build(cls.bot)
 
     def test_texts_match_fixture(self):
@@ -156,7 +156,7 @@ class FrozenTextsTests(unittest.TestCase):
 
     def test_rendered_is_complete(self):
         rendered = self.data['rendered']
-        for key in self.bot.ERROR_TEXT:
+        for key in self.bot.texts.ERROR_TEXT:
             self.assertIn(key, rendered['ERROR_TEXT'])
         for name in NAMED_CONSTANTS + ('ERROR_TEXT',):
             self.assertIn(name, rendered)
@@ -170,7 +170,7 @@ class FrozenTextsTests(unittest.TestCase):
 if __name__ == '__main__':
     if '--write' in sys.argv:
         FIXTURE.parent.mkdir(exist_ok=True)
-        FIXTURE.write_text(dump(build(load_bot())), encoding='utf-8')
+        FIXTURE.write_text(dump(build(import_bot())), encoding='utf-8')
         print(f'записан {FIXTURE}')
     else:
         unittest.main()

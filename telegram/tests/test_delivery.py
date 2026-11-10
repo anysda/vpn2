@@ -21,11 +21,11 @@ from aiohttp import web
 
 CHILD = '''
 import asyncio, os
-from support import load_bot
-bot = load_bot({key: os.environ[key] for key in (
+from support import import_bot
+bot = import_bot({key: os.environ[key] for key in (
     'TG_PROXY', 'TGBOT_EVENT_PORT', 'TGBOT_OUTBOX_PATH', 'SSL_CERT_FILE',
     'TGBOT_POLL_STALL_SEC', 'ANYSDA_URL')})
-asyncio.run(bot.main())
+asyncio.run(bot.__main__.main())
 '''
 
 

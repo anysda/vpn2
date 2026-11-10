@@ -1,5 +1,5 @@
 *
 !Dockerfile
 !requirements.txt
-!bot.py
-!outbox.py
+!vpn2bot
+**/__pycache__

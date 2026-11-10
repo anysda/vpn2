@@ -1,13 +1,13 @@
 """Число устройств в кнопке админского списка согласовано с существительным."""
 import unittest
 
-from support import load_bot
+from support import import_bot
 
 
 class PluralTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.bot = load_bot()
+        cls.bot = import_bot()
 
     def test_device_counts(self):
         cases = (
@@ -23,7 +23,7 @@ class PluralTests(unittest.TestCase):
                 with self.subTest(count=count, limit=limit):
                     client = {'id': 1, 'name': 'Тест', 'status': 'active',
                               'deviceCount': count, 'deviceLimit': limit}
-                    text = self.bot._admin_list_markup([client])['inline_keyboard'][0][0]['text']
+                    text = self.bot.admin._admin_list_markup([client])['inline_keyboard'][0][0]['text']
                     print(text)
                     label = '∞' if limit is None else str(limit)
                     self.assertEqual(text, f'✅ Тест — {count} {noun} · лимит: {label}')

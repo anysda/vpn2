@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from support import load_bot
+from support import import_bot
 
 GIB = 1024 ** 3
 SMALL = {'cores': 1, 'memTotalBytes': 2 * GIB}
@@ -18,9 +18,9 @@ def node(tag, cpu=10, ram=10, size=None):
 class AlertsBySizeTests(unittest.IsolatedAsyncioTestCase):
     async def run_samples(self, samples, env=None):
         """Гонит monitor_loop по снимкам; возвращает [(номер сэмпла с 1, текст)]."""
-        bot = load_bot(env)
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
+        bot = import_bot(env)
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
         sample = 0
         sent = []
 
@@ -33,12 +33,12 @@ class AlertsBySizeTests(unittest.IsolatedAsyncioTestCase):
             sent.append((sample, text))
             return {'ok': True}
 
-        with patch.object(bot, 'api_status', AsyncMock(side_effect=status)), \
-                patch.object(bot.asyncio, 'sleep', AsyncMock(side_effect=[
+        with patch.object(bot.panel, 'api_status', AsyncMock(side_effect=status)), \
+                patch.object(bot.monitor.asyncio, 'sleep', AsyncMock(side_effect=[
                     None] * len(samples) + [asyncio.CancelledError()])), \
-                patch.object(bot, 'tg_send', AsyncMock(side_effect=send)):
+                patch.object(bot.transport, 'tg_send', AsyncMock(side_effect=send)):
             with self.assertRaises(asyncio.CancelledError):
-                await bot.monitor_loop()
+                await bot.monitor.monitor_loop()
         return sent
 
     @staticmethod

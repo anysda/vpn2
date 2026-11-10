@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import httpx
 
-from support import load_bot, update
+from support import import_bot, update
 
 NOT_LINKED = {'error': True, 'statusCode': 404, 'statusMessage': 'not_linked',
               'message': 'not_linked'}
@@ -45,13 +45,13 @@ class NotLinkedReplyTests(unittest.IsolatedAsyncioTestCase):
     """Отвязанный чат получает одно и то же «нет доступа», где бы ни узнал об отвязке."""
 
     async def asyncSetUp(self):  # noqa - unittest lifecycle hook, called by the framework
-        self.bot = load_bot({'TELEGRAM_ADMIN_USERNAME': 'vpn_admin'})
-        self.addAsyncCleanup(self.bot._local.aclose)
-        self.addAsyncCleanup(self.bot._tg.aclose)
+        self.bot = import_bot({'TELEGRAM_ADMIN_USERNAME': 'vpn_admin'})
+        self.addAsyncCleanup(self.bot.transport._local.aclose)
+        self.addAsyncCleanup(self.bot.transport._tg.aclose)
         self.tg = Telegram()
         tg = httpx.AsyncClient(base_url='http://telegram.test', transport=httpx.MockTransport(self.tg))
         self.addAsyncCleanup(tg.aclose)
-        patcher = patch.object(self.bot, '_tg', tg)
+        patcher = patch.object(self.bot.transport, '_tg', tg)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -66,14 +66,14 @@ class NotLinkedReplyTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(base_url='http://panel.test',
                                      transport=httpx.MockTransport(panel)) as client:
-            with patch.object(self.bot, '_local', client):
+            with patch.object(self.bot.transport, '_local', client):
                 await action()
 
     async def _expected_text(self):
         """Ответ обычному сообщению из отвязанного чата - эталон."""
-        await self._with_panel(None, lambda: self.bot.on_text(update(text='привет'), None))
+        await self._with_panel(None, lambda: self.bot.client.on_text(update(text='привет'), None))
         reference = self.tg.sent(200)
-        self.assertEqual(reference, [self.bot._no_access_text()])
+        self.assertEqual(reference, [self.bot.texts._no_access_text()])
         self.tg.calls.clear()
         return reference[0]
 
@@ -83,7 +83,7 @@ class NotLinkedReplyTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(action=action):
                 self.tg.calls.clear()
                 self.tg.answered.clear()
-                await self._with_panel(path, lambda: self.bot.on_callback(
+                await self._with_panel(path, lambda: self.bot.client.on_callback(
                     update(data=f'{action}:7'), None))
                 self.assertEqual(self.tg.sent(200), [expected])
                 self.assertNotIn('not_linked', json.dumps(self.tg.calls, ensure_ascii=False))
@@ -94,14 +94,14 @@ class NotLinkedReplyTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(data=data):
                 self.tg.calls.clear()
                 self.tg.answered.clear()
-                await self._with_panel('', lambda: self.bot.on_callback(update(data=data), None))
+                await self._with_panel('', lambda: self.bot.client.on_callback(update(data=data), None))
                 self.assertEqual(self.tg.sent(200), [expected])
                 self.assertNotIn('not_linked', json.dumps(self.tg.calls, ensure_ascii=False))
 
     async def test_add_device_unlinked_mid_request_gets_no_access_text(self):
         expected = await self._expected_text()
-        self.bot._awaiting_device_name.add(200)
-        await self._with_panel('/api/bot/devices', lambda: self.bot.on_text(
+        self.bot.client._awaiting_device_name.add(200)
+        await self._with_panel('/api/bot/devices', lambda: self.bot.client.on_text(
             update(text='laptop'), None))
         self.assertEqual(self.tg.sent(200), [expected])
 
@@ -114,8 +114,8 @@ class NotLinkedReplyTests(unittest.IsolatedAsyncioTestCase):
 
         async with httpx.AsyncClient(base_url='http://panel.test',
                                      transport=httpx.MockTransport(panel)) as client:
-            with patch.object(self.bot, '_local', client):
-                await self.bot.on_callback(update(data='wg:7'), None)
+            with patch.object(self.bot.transport, '_local', client):
+                await self.bot.client.on_callback(update(data='wg:7'), None)
         self.assertEqual(self.tg.sent(200), ['❌ Панель временно недоступна. Попробуйте позже.'])
         self.assertEqual(self.tg.alerts()[0], 'Готовлю конфиг WireGuard…')
 

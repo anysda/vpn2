@@ -89,7 +89,9 @@ jobs:
         if: matrix.name == 'tgbot'
         run: >
           docker run --rm --entrypoint python smoke/tgbot -c
-          "import ast, telegram, aiohttp, qrcode; ast.parse(open('bot.py').read())"
+          "import ast, glob, os, telegram, aiohttp, qrcode;
+          [ast.parse(open(p).read()) for p in glob.glob('vpn2bot/*.py')];
+          assert os.path.isfile('vpn2bot/__main__.py')"
 
       # Аварийку деплой ставит без запуска контейнера: пакет и статику
       # копирует из остановленного контейнера и запускает хостовым python.

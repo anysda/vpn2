@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from support import load_bot
+from support import import_bot
 
 
 class AlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
@@ -12,83 +12,83 @@ class AlertDeliveryTests(unittest.IsolatedAsyncioTestCase):
         for metric in ('cpu', 'ram'):
             for dip in (69, 70, 75, 79.9):
                 with self.subTest(metric=metric, dip=dip):
-                    bot = load_bot()
-                    self.addAsyncCleanup(bot._local.aclose)
-                    self.addAsyncCleanup(bot._tg.aclose)
-                    bot.ALERT_HITS = 2
-                    with patch.object(bot, 'tg_send', AsyncMock()) as send:
+                    bot = import_bot()
+                    self.addAsyncCleanup(bot.transport._local.aclose)
+                    self.addAsyncCleanup(bot.transport._tg.aclose)
+                    bot.monitor.ALERT_HITS = 2
+                    with patch.object(bot.transport, 'tg_send', AsyncMock()) as send:
                         for value in (85, dip, 85):
-                            await bot._check_load('test', metric, value, 80, metric.upper())
+                            await bot.monitor._check_load('test', metric, value, 80, metric.upper())
                         self.assertEqual(send.await_count, 0)
-                        await bot._check_load('test', metric, 80, 80, metric.upper())
+                        await bot.monitor._check_load('test', metric, 80, 80, metric.upper())
                         self.assertEqual(send.await_count, 1)
                         for value in (75, 85, 70):
-                            await bot._check_load('test', metric, value, 80, metric.upper())
+                            await bot.monitor._check_load('test', metric, value, 80, metric.upper())
                         self.assertEqual(send.await_count, 1)
-                        await bot._check_load('test', metric, 69, 80, metric.upper())
+                        await bot.monitor._check_load('test', metric, 69, 80, metric.upper())
                         self.assertEqual(send.await_count, 2)
-                        self.assertNotIn(f'test:{metric}', bot._load_alerted)
+                        self.assertNotIn(f'test:{metric}', bot.monitor._load_alerted)
 
     async def test_rejected_telegram_message_is_an_error(self):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
         for status in (403, 429, 500):
-            with self.subTest(status=status), patch.object(bot._tg, 'post', AsyncMock(
+            with self.subTest(status=status), patch.object(bot.transport._tg, 'post', AsyncMock(
                     return_value=httpx.Response(status, json={
                         'ok': False, 'description': 'unavailable', 'error_code': status}))):
                 with self.assertRaises(Exception):
-                    await bot.tg_send(100, 'alert')
+                    await bot.transport.tg_send(100, 'alert')
 
     async def test_load_alert_and_recovery_retry_after_send_failure(self):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
-        bot.ALERT_HITS = 1
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
+        bot.monitor.ALERT_HITS = 1
         for recovering in (False, True):
             with self.subTest(recovering=recovering):
-                bot._load_alerted.clear()
+                bot.monitor._load_alerted.clear()
                 if recovering:
-                    bot._load_alerted.add('test:cpu')
+                    bot.monitor._load_alerted.add('test:cpu')
                 value = 10 if recovering else 99
-                with patch.object(bot, 'tg_send', AsyncMock(side_effect=[
+                with patch.object(bot.transport, 'tg_send', AsyncMock(side_effect=[
                         httpx.ConnectError('offline'), {'ok': True}])) as send:
                     with self.assertRaises(httpx.ConnectError):
-                        await bot._check_load('test', 'cpu', value, 80, 'CPU')
-                    await bot._check_load('test', 'cpu', value, 80, 'CPU')
+                        await bot.monitor._check_load('test', 'cpu', value, 80, 'CPU')
+                    await bot.monitor._check_load('test', 'cpu', value, 80, 'CPU')
                     self.assertEqual(send.await_count, 2)
-                    self.assertEqual('test:cpu' in bot._load_alerted, not recovering)
+                    self.assertEqual('test:cpu' in bot.monitor._load_alerted, not recovering)
 
     async def test_node_alert_and_recovery_retry_after_send_failure(self):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
-        bot.ALERT_HITS = 1
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
+        bot.monitor.ALERT_HITS = 1
         for recovering in (False, True):
             with self.subTest(recovering=recovering):
-                bot._node_alerted.clear()
+                bot.monitor._node_alerted.clear()
                 if recovering:
-                    bot._node_alerted.add('test')
+                    bot.monitor._node_alerted.add('test')
                 snapshot = {'nodes': [{'tag': 'test', 'staleSec': 0 if recovering else None}]}
-                with patch.object(bot, 'api_status', AsyncMock(return_value=snapshot)), \
-                        patch.object(bot.asyncio, 'sleep', AsyncMock(side_effect=[
+                with patch.object(bot.panel, 'api_status', AsyncMock(return_value=snapshot)), \
+                        patch.object(bot.monitor.asyncio, 'sleep', AsyncMock(side_effect=[
                             None, None, asyncio.CancelledError()])), \
-                        patch.object(bot, 'tg_send', AsyncMock(side_effect=[
+                        patch.object(bot.transport, 'tg_send', AsyncMock(side_effect=[
                             httpx.ConnectError('offline'), {'ok': True}])) as send:
                     with self.assertRaises(asyncio.CancelledError):
-                        await bot.monitor_loop()
+                        await bot.monitor.monitor_loop()
                     self.assertEqual(send.await_count, 2)
-                    self.assertEqual('test' in bot._node_alerted, not recovering)
+                    self.assertEqual('test' in bot.monitor._node_alerted, not recovering)
 
     async def test_markdown_fallback_still_delivers(self):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
-        with patch.object(bot._tg, 'post', AsyncMock(side_effect=[
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
+        with patch.object(bot.transport._tg, 'post', AsyncMock(side_effect=[
                 httpx.Response(400, json={'ok': False, 'description': "can't parse entities"}),
                 httpx.Response(200, json={'ok': True}),
         ])) as send:
-            self.assertTrue((await bot.tg_send(100, '*broken', 'Markdown'))['ok'])
+            self.assertTrue((await bot.transport.tg_send(100, '*broken', 'Markdown'))['ok'])
             self.assertNotIn('parse_mode', send.call_args.kwargs['json'])
 
 

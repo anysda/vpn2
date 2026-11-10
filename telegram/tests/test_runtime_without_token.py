@@ -1,6 +1,6 @@
 """Бот без токена живёт и ждёт: токен и Chat ID из панели включают опрос без деплоя.
 
-Настоящий bot.py идёт отдельным процессом, двойник политики `--restart always`
+Настоящий пакет vpn2bot идёт отдельным процессом, двойник политики `--restart always`
 поднимает его заново после выхода и считает выходы. Сеть Telegram подменена
 двойником на уровне httpx: он отвечает на любой метод и записывает, с каким
 токеном его звали.
@@ -17,7 +17,7 @@ import time
 import unittest
 
 
-BOT = Path(__file__).resolve().parents[1] / 'bot.py'
+BOT = Path(__file__).resolve().parents[1] / 'vpn2bot'
 FIRST = '123456:TEST_ONLY_FIRST'
 SECOND = '654321:TEST_ONLY_SECOND'
 # Окно, за которое бот обязан подхватить telegram-runtime.json (карточка - до 60 с).
@@ -53,8 +53,17 @@ async def send(self, request, **kwargs):
 
 
 httpx.AsyncClient.send = send
-source = Path(bot_path).read_text().replace('/etc/anysda/telegram-runtime.json', runtime)
-exec(compile(source, bot_path, 'exec'), {'__name__': '__main__', '__file__': bot_path})
+import importlib.util
+import runpy
+# Путь к runtime-файлу подменяем в исходнике config; чужой байт-код не используется.
+spec = importlib.util.find_spec('vpn2bot.config')
+source = Path(spec.origin).read_text()
+assert '/etc/anysda/telegram-runtime.json' in source, 'путь runtime не найден в config.py'
+source = source.replace('/etc/anysda/telegram-runtime.json', runtime)
+module = importlib.util.module_from_spec(spec)
+sys.modules['vpn2bot.config'] = module
+exec(compile(source, spec.origin, 'exec'), module.__dict__)
+runpy.run_module('vpn2bot', run_name='__main__', alter_sys=True)
 '''
 
 

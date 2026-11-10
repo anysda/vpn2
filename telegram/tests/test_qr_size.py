@@ -16,7 +16,7 @@ import unittest
 
 from PIL import Image
 
-from support import load_bot
+from support import import_bot
 
 WORST = Path(os.environ.get('QR_WORST_CONF') or Path(__file__).with_name('qr-worst-wg.conf'))
 MAX_SIDE = 1280
@@ -40,11 +40,11 @@ def module_px(image):
 
 class QrSizeTests(unittest.IsolatedAsyncioTestCase):
     def render(self):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
         conf = WORST.read_text()
-        return conf, bot._make_qr_png(conf)
+        return conf, bot.transport._make_qr_png(conf)
 
     async def test_worst_config_fits_telegram_and_keeps_8px_per_module(self):
         conf, png = self.render()

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from support import load_bot
+from support import import_bot
 
 
 DOWN = '🔴 Панель недоступна — мониторинговые данные не поступают'
@@ -14,9 +14,9 @@ UP = '🟢 Панель снова доступна'
 
 class PanelAvailabilityTests(unittest.IsolatedAsyncioTestCase):
     async def check_polls(self, polls, expected, send_errors=None):
-        bot = load_bot()
-        self.addAsyncCleanup(bot._local.aclose)
-        self.addAsyncCleanup(bot._tg.aclose)
+        bot = import_bot()
+        self.addAsyncCleanup(bot.transport._local.aclose)
+        self.addAsyncCleanup(bot.transport._tg.aclose)
         clock = 0
         remaining = iter(polls)
 
@@ -30,12 +30,12 @@ class PanelAvailabilityTests(unittest.IsolatedAsyncioTestCase):
                 raise httpx.ConnectError('panel unavailable')
             return {'nodes': []}
 
-        with patch.object(bot, 'api_status', poll), \
-                patch.object(bot, 'time', SimpleNamespace(monotonic=lambda: clock)), \
-                patch.object(bot.asyncio, 'sleep', AsyncMock()), \
-                patch.object(bot, 'tg_send', AsyncMock(side_effect=send_errors)) as send:
+        with patch.object(bot.panel, 'api_status', poll), \
+                patch.object(bot.monitor, 'time', SimpleNamespace(monotonic=lambda: clock)), \
+                patch.object(bot.monitor.asyncio, 'sleep', AsyncMock()), \
+                patch.object(bot.transport, 'tg_send', AsyncMock(side_effect=send_errors)) as send:
             with self.assertRaises(asyncio.CancelledError):
-                await bot.monitor_loop()
+                await bot.monitor.monitor_loop()
         self.assertEqual([call.args[1] for call in send.await_args_list], expected)
 
     async def test_five_minutes_exactly_one_alert_and_one_recovery(self):

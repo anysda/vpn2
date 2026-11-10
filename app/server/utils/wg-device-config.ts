@@ -1,8 +1,6 @@
-import { and, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
-import { useDb } from '../database/client'
-import { clients, devices } from '../database/schema'
-import { requireAuth } from './auth'
+import type { clients } from '../database/schema'
+import { adminClientDevice } from './device-route'
 import { clientDns } from './client-dns'
 import { buildWgClientConfig, ensureDeviceWg, loadServerKeys, syncWireguardConfig } from './wireguard'
 
@@ -40,24 +38,9 @@ export async function deviceWgConfig(deviceId: number, filterTraffic: typeof cli
   })
 }
 
+
 /** Конфиг девайса для маршрутов админки `clients/[id]/devices/[deviceId]/wg-*`. */
 export async function adminDeviceWgConfig(event: H3Event): Promise<string> {
-  await requireAuth(event)
-  const clientId = Number(getRouterParam(event, 'id'))
-  const deviceId = Number(getRouterParam(event, 'deviceId'))
-  if (!Number.isFinite(clientId) || !Number.isFinite(deviceId)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  }
-
-  const endpoint = requireWgEndpoint()
-
-  const db = useDb()
-  const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
-  if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  const [device] = await db.select().from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
-    .limit(1)
-  if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  return deviceWgConfig(deviceId, client.filterTraffic, endpoint)
+  const { client, device, ready: endpoint } = await adminClientDevice(event, requireWgEndpoint)
+  return deviceWgConfig(device.id, client.filterTraffic, endpoint)
 }

@@ -1,73 +1,19 @@
-import { and, eq } from 'drizzle-orm'
-import { useDb } from '../../../../../database/client'
-import { clients, devices } from '../../../../../database/schema'
-import { requireAuth } from '../../../../../utils/auth'
-import { clientDns } from '../../../../../utils/client-dns'
+import { botSecretOrThrow, sendBotEvent } from '../../../../../utils/bot-events'
+import { adminClientDevice } from '../../../../../utils/device-route'
 import { deviceConfigName } from '../../../../../utils/naming'
-import { buildWgClientConfig, ensureDeviceWg, loadServerKeys, syncWireguardConfig } from '../../../../../utils/wireguard'
+import { deviceWgConfig, requireWgEndpoint } from '../../../../../utils/wg-device-config'
 
 export default defineEventHandler(async (event) => {
-  await requireAuth(event)
-  const clientId = Number(getRouterParam(event, 'id'))
-  const deviceId = Number(getRouterParam(event, 'deviceId'))
-  if (!Number.isFinite(clientId) || !Number.isFinite(deviceId)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
-  }
-
-  const cfg = useRuntimeConfig()
-  if (!cfg.wgEnabled) throw createError({ statusCode: 503, statusMessage: 'wg_disabled', message: 'WireGuard выключен' })
-  const endpoint = String(cfg.wgPublicHost || '')
-  if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'wg_public_host_not_configured' })
-
-  const secret = String(cfg.tgbotSecret ?? '')
-  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
-
-  const db = useDb()
-  const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
-  if (!client) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  const [device] = await db.select().from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
-    .limit(1)
-  if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  const server = await loadServerKeys().catch(() => null)
-  if (!server) {
-    throw createError({ statusCode: 503, statusMessage: 'wg_keys_not_ready', message: 'WireGuard server-ключи ещё не инициализированы (стадия 28-wireguard)' })
-  }
-
-  const dev = await ensureDeviceWg(deviceId)
-  await syncWireguardConfig().catch(() => {})
-
-  const conf = buildWgClientConfig({
-    clientPrivateKey: dev.wgPrivateKey!,
-    clientPresharedKey: dev.wgPresharedKey!,
-    clientIp: dev.wgIp!,
-    serverPublicKey: server.publicKey,
-    serverEndpoint: endpoint,
-    serverPort: Number(cfg.wgListenPort),
-    dns: clientDns(client.filterTraffic).join(', '),
-    mtu: Number(cfg.wgMtu),
-    splitLocal: cfg.wgSplitLocal !== false,
-    tunnelPrefixes: [String(cfg.wgSubnetPrefix), String(cfg.mgmtMeshIpPrefix)],
+  // Секрет бота - до поиска в базе: без бота 503 и для чужого id.
+  const { client, device, ready: endpoint } = await adminClientDevice(event, () => {
+    const host = requireWgEndpoint()
+    botSecretOrThrow()
+    return host
   })
+  const conf = await deviceWgConfig(device.id, client.filterTraffic, endpoint)
 
   const name = deviceConfigName(client.name, device.name, device.id)
-  const port = Number(cfg.tgbotEventPort ?? 8877)
-  try {
-    await $fetch(`http://127.0.0.1:${port}/event`, {
-      method: 'POST',
-      headers: { 'X-Tgbot-Secret': secret },
-      body: { type: 'client_send_wireguard', name, conf },
-      timeout: 8000,
-    })
-  }
-  catch (e) {
-    throw createError({
-      statusCode: 502,
-      statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram',
-      cause: e,
-    })
-  }
+  await sendBotEvent({ type: 'client_send_wireguard', name, conf })
 
   return { ok: true }
 })

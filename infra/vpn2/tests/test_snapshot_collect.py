@@ -70,7 +70,7 @@ INSPECT = [{
     'Name': '/xray',
     'Image': 'sha256:abc',
     'Config': {'Image': 'ghcr.io/x/xray:1.8', 'Env': [
-        'PATH=/usr/bin', 'DB_PASSWORD=hunter2', 'api_token=tok123', 'SSH_Key=k', 'EMPTY=']},
+        'DB_PASSWORD=hunter2', 'api_token=tok123', 'SSH_Key=k', 'EMPTY=']},
     'State': {'Status': 'running'},
     'HostConfig': {'RestartPolicy': {'Name': 'always'}, 'NetworkMode': 'host'},
     'NetworkSettings': {'Ports': {
@@ -258,7 +258,7 @@ def test_containers_secrets_hidden(root):
     assert record['network'] == 'host'
     assert record['ports'] == ['0.0.0.0:443->443/tcp']
     assert record['mounts'] == ['/etc/xray:/etc/xray:ro', '/var/lib/xray:/data:rw']
-    assert record['env'] == ['DB_PASSWORD=<скрыто>', 'EMPTY=', 'PATH=/usr/bin',
+    assert record['env'] == ['DB_PASSWORD=<скрыто>', 'EMPTY=',
                              'SSH_Key=<скрыто>', 'api_token=<скрыто>']
     dumped = json.dumps(collect(root, fake()))
     assert 'hunter2' not in dumped and 'tok123' not in dumped
@@ -321,3 +321,35 @@ def test_real_collect_runs_on_this_machine():
 
 def test_default_run_missing_command_is_127():
     assert snapshot._run(['definitely-not-a-command-748']) == (127, '')
+
+
+def test_usr_local_bin_and_sbin_are_collected(root):
+    (root / 'usr' / 'local' / 'bin').mkdir(parents=True)
+    (root / 'usr' / 'local' / 'bin' / 'tool').write_text('#!/bin/sh\n')
+    (root / 'usr' / 'local' / 'share' / 'x').mkdir(parents=True)
+    files = collect(root, fake())['files']
+    assert '/usr/local/bin/tool' in files
+    assert not [name for name in files if name.startswith('/usr/local/share')]
+
+
+def test_changed_usr_local_bin_is_named(root):
+    (root / 'usr' / 'local' / 'bin').mkdir(parents=True)
+    (root / 'usr' / 'local' / 'bin' / 'tool').write_text('#!/bin/sh\n')
+    before = collect(root, fake())
+    with open(root / 'usr' / 'local' / 'bin' / 'tool', 'a') as handle:
+        handle.write('x')
+    lines = diff(before, collect(root, fake()))
+    assert any(line.startswith('files /usr/local/bin/tool sha256: ') for line in lines)
+
+
+def test_missing_usr_local_sbin_does_not_fail(root):
+    assert not (root / 'usr' / 'local' / 'sbin').exists()
+    assert 'files' in collect(root, fake())
+
+
+def test_base_image_env_is_dropped(root):
+    item = dict(INSPECT[0], Config={'Image': 'x', 'Env': [
+        'PATH=/usr/bin', 'PYTHON_VERSION=3.14.0', 'PYTHON_SHA256=ab', 'GPG_KEY=x',
+        'NODE_VERSION=22', 'LANG=C.UTF-8', 'TZ=UTC', 'PANEL_SECRET=s', 'PYTHONUNBUFFERED=1']})
+    record = collect(root, fake({'docker inspect': (0, json.dumps([item]))}))['containers']['xray']
+    assert record['env'] == ['PANEL_SECRET=<скрыто>', 'PYTHONUNBUFFERED=1', 'TZ=UTC']

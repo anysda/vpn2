@@ -184,6 +184,9 @@ _TIMEOUT = 60
 _NOT_INSTALLED = 127
 _UNITS_TYPES = 'service,timer,socket,path,mount'
 _SECRET_NAME = re.compile('PASS|SECRET|TOKEN|KEY|PRIVATE|HASH', re.IGNORECASE)
+# Переменные базового образа меняются при его обновлении и к установке не относятся.
+_IMAGE_ENV_NAMES = ('PATH', 'LANG', 'GPG_KEY', 'NODE_VERSION', 'YARN_VERSION')
+_IMAGE_ENV_PREFIX = 'PYTHON_'
 _COUNTERS = re.compile(r'packets \d+ bytes \d+')
 _USERS = re.compile(r'\("([^"]*)",pid=')
 _VERIFY_REPORT = 'var/lib/anysda/verify-report.json'
@@ -265,9 +268,11 @@ def _walk(path, root, records):
 
 
 def _files(root):
-    """Файлы, каталоги и ссылки под /etc, /opt/anysda*, /var/lib/anysda*, /var/lib/vpn2* в root."""
+    """Файлы, каталоги и ссылки под /etc, /usr/local/bin, /usr/local/sbin, /opt/anysda*,
+    /var/lib/anysda*, /var/lib/vpn2* в root."""
     records = {}
-    roots = [os.path.join(root, 'etc')]
+    roots = [os.path.join(root, 'etc'), os.path.join(root, 'usr/local/bin'),
+             os.path.join(root, 'usr/local/sbin')]
     for mask in ('opt/anysda*', 'var/lib/anysda*', 'var/lib/vpn2*'):
         roots.extend(sorted(glob.glob(os.path.join(root, mask))))
     for path in roots:
@@ -382,6 +387,8 @@ def _container(item):
     env = []
     for entry in config.get('Env') or []:
         name, _, value = entry.partition('=')
+        if name in _IMAGE_ENV_NAMES or name.startswith(_IMAGE_ENV_PREFIX):
+            continue
         env.append(f'{name}=<скрыто>' if _SECRET_NAME.search(name) else f'{name}={value}')
     return {
         'image': config.get('Image', ''), 'image_id': item.get('Image', ''),

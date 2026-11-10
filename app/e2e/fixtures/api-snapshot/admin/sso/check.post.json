@@ -1,0 +1,15 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/admin/sso/check",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "sso_bad_url",
+      "message": "Адрес Authentik должен начинаться с https://"
+    }
+  }
+]

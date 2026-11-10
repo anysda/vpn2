@@ -1,0 +1,9 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/clients/{main}/devices/{phone}/wg-qrcode.svg",
+    "status": 200,
+    "contentType": "image/svg+xml; charset=utf-8",
+    "body": "<svg-qrcode>"
+  }
+]

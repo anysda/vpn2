@@ -1,0 +1,11 @@
+[
+  {
+    "method": "PUT",
+    "path": "/api/admin/telegram",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true
+    }
+  }
+]

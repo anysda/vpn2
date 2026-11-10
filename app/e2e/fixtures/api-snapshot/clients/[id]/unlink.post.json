@@ -1,0 +1,11 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/clients/{bot}/unlink",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true
+    }
+  }
+]

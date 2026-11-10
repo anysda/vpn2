@@ -1,0 +1,24 @@
+[
+  {
+    "method": "PUT",
+    "path": "/api/admin/sso",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/admin/sso",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "sso_no_client_id",
+      "message": "Укажите client_id провайдера"
+    }
+  }
+]

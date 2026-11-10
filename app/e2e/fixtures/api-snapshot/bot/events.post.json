@@ -1,0 +1,37 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/bot/events",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/bot/events",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "invalid_body",
+      "message": "Проверьте поле «type»"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/bot/events",
+    "status": 401,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 401,
+      "statusMessage": "unauthorized",
+      "message": "Неверный секрет бота"
+    }
+  }
+]

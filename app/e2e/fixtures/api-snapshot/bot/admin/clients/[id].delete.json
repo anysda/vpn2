@@ -1,0 +1,90 @@
+[
+  {
+    "method": "DELETE",
+    "path": "/api/bot/admin/clients/{second}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "delete",
+        "version": 1,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  },
+  {
+    "method": "DELETE",
+    "path": "/api/bot/admin/clients/{bot}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "delete",
+        "version": 5,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  }
+]

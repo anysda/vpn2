@@ -1,0 +1,65 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/bot/client?chatId={chat}",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "unfreeze",
+        "version": 2,
+        "status": "confirmed",
+        "protocols": {
+          "wg": {
+            "state": "confirmed",
+            "confirmedVersion": 2,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "confirmed",
+            "confirmedVersion": 2,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "confirmed",
+            "confirmedVersion": 2,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      },
+      "accessStatus": "Доступ включён",
+      "id": "<id>",
+      "name": "e2e-api-snapshot-bot",
+      "deviceLimit": 3,
+      "expiresAt": null,
+      "devices": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/bot/client?chatId=1",
+    "status": 404,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 404,
+      "statusMessage": "not_linked",
+      "message": "Telegram не привязан ни к одному клиенту"
+    }
+  }
+]

@@ -1,0 +1,37 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/bot/admin/clients",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 0,
+      "deleting": false,
+      "name": "e2e-api-snapshot-bot",
+      "filterTraffic": true,
+      "expiresAt": null,
+      "deviceLimit": 3,
+      "frozenManual": false,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/bot/admin/clients",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "invalid_body",
+      "message": "Проверьте поле «Имя»"
+    }
+  }
+]

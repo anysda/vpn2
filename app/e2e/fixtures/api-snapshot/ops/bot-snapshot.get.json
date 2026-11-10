@@ -1,0 +1,122 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/ops/bot-snapshot",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "timestamp": "<time>",
+      "clients": [
+        {
+          "id": "<id>",
+          "name": "e2e-api-snapshot-bot",
+          "status": "active",
+          "expiresAt": null,
+          "createdAt": "<time>"
+        },
+        {
+          "id": "<id>",
+          "name": "e2e-api-snapshot-main",
+          "status": "active",
+          "expiresAt": "2099-12-30T20:59:59.000Z",
+          "createdAt": "<time>"
+        },
+        {
+          "id": "<id>",
+          "name": "e2e-api-snapshot-second",
+          "status": "active",
+          "expiresAt": null,
+          "createdAt": "<time>"
+        }
+      ],
+      "nodes": [
+        {
+          "tag": "ru",
+          "label": "RU entry",
+          "cpu": "<metric>",
+          "ram": "<metric>",
+          "rxMbps": "<metric>",
+          "txMbps": "<metric>",
+          "uptimeSec": "<metric>",
+          "staleSec": "<metric>",
+          "cores": "<metric>",
+          "memTotalBytes": null
+        },
+        {
+          "tag": "nl",
+          "label": "NL exit",
+          "cpu": "<metric>",
+          "ram": "<metric>",
+          "rxMbps": "<metric>",
+          "txMbps": "<metric>",
+          "uptimeSec": "<metric>",
+          "staleSec": "<metric>",
+          "cores": "<metric>",
+          "memTotalBytes": null
+        },
+        {
+          "tag": "fi",
+          "label": "FI exit",
+          "cpu": "<metric>",
+          "ram": "<metric>",
+          "rxMbps": "<metric>",
+          "txMbps": "<metric>",
+          "uptimeSec": "<metric>",
+          "staleSec": "<metric>",
+          "cores": "<metric>",
+          "memTotalBytes": null
+        },
+        {
+          "tag": "us",
+          "label": "US exit",
+          "cpu": "<metric>",
+          "ram": "<metric>",
+          "rxMbps": "<metric>",
+          "txMbps": "<metric>",
+          "uptimeSec": "<metric>",
+          "staleSec": "<metric>",
+          "cores": "<metric>",
+          "memTotalBytes": null
+        }
+      ],
+      "outbounds": [
+        {
+          "name": "direct-ru",
+          "rttMs": null,
+          "isWarp": false
+        },
+        {
+          "name": "hy2-fi-direct",
+          "rttMs": "<metric>",
+          "isWarp": false
+        },
+        {
+          "name": "hy2-nl-direct",
+          "rttMs": "<metric>",
+          "isWarp": false
+        },
+        {
+          "name": "hy2-us-direct",
+          "rttMs": "<metric>",
+          "isWarp": false
+        },
+        {
+          "name": "hy2-fi-warp",
+          "rttMs": "<metric>",
+          "isWarp": true
+        },
+        {
+          "name": "hy2-nl-warp",
+          "rttMs": "<metric>",
+          "isWarp": true
+        },
+        {
+          "name": "hy2-us-warp",
+          "rttMs": "<metric>",
+          "isWarp": true
+        }
+      ],
+      "connections": "<metric>"
+    }
+  }
+]

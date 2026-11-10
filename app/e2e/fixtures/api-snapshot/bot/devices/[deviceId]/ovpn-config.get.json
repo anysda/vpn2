@@ -1,0 +1,9 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/bot/devices/{bphone}/ovpn-config?chatId={chat}",
+    "status": 200,
+    "contentType": "text/plain; charset=utf-8",
+    "body": "client\ndev tun\nproto udp\nremote vpn.example.test 1194\nresolv-retry infinite\nnobind\npersist-key\npersist-tun\nblock-ipv6\nroute-ipv6 ::/1\nroute-ipv6 8000::/1\nremote-cert-tls server\nsndbuf 0\nrcvbuf 0\nfast-io\ncipher AES-256-GCM\nauth SHA256\nverb 3\ndhcp-option DNS 10.99.0.1\n# Локальные сети — мимо туннеля, на физический интерфейс.\nroute 10.0.0.0 255.0.0.0 net_gateway\nroute 100.64.0.0 255.192.0.0 net_gateway\nroute 172.16.0.0 255.240.0.0 net_gateway\nroute 192.168.0.0 255.255.0.0 net_gateway\nroute 10.99.0.0 255.255.255.0 vpn_gateway\n\n<ca>\n<pem>\n</ca>\n<cert>\n<pem>\n</cert>\n<key>\n<secret>\n</key>\n<tls-crypt>\n<secret>\n</tls-crypt>\n"
+  }
+]

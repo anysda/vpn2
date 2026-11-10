@@ -1,0 +1,35 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/bot/admin/clients/{bot}",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "operation": null,
+      "accessStatus": "Состояние не подтверждено",
+      "id": "<id>",
+      "name": "e2e-api-snapshot-bot",
+      "status": "active",
+      "frozenManual": false,
+      "filterTraffic": true,
+      "deviceCount": 0,
+      "deviceLimit": 3,
+      "expiresAt": null,
+      "tgLinked": false,
+      "password": "<password>"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/bot/admin/clients/{missing}",
+    "status": 404,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 404,
+      "statusMessage": "not_found",
+      "message": "Не найдено"
+    }
+  }
+]

@@ -254,8 +254,10 @@ export async function walk(io) {
   await botCall('bot/devices/[deviceId]/wg-config.get', 'GET', '/api/bot/devices/{missing}/wg-config?chatId={chat}')
   const reissue = await botCall('bot/devices/[deviceId]/reissue.post', 'POST', '/api/bot/devices/{bphone}/reissue', { chatId: CHAT_ID })
   await settle(reissue.json)
-  await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', `/api/bot/admin/access-operations/${reissue.json?.operation?.id ?? MISSING_OPERATION}/retry`)
-  await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', `/api/bot/admin/access-operations/${MISSING_OPERATION}/retry`)
+  vars.operation = reissue.json?.operation?.id ?? MISSING_OPERATION
+  vars.nooperation = MISSING_OPERATION
+  await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', '/api/bot/admin/access-operations/{operation}/retry')
+  await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', '/api/bot/admin/access-operations/{nooperation}/retry')
   await settle((await botCall('bot/devices/[deviceId].delete', 'DELETE', '/api/bot/devices/{blaptop}?chatId={chat}')).json)
   await botCall('bot/events.post', 'POST', '/api/bot/events', { type: 'telegram_rejected', status: 403, recipient: 'client' })
   await botCall('bot/events.post', 'POST', '/api/bot/events', { type: 'unknown' })

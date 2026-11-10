@@ -1,0 +1,51 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/clients/top?period=day",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "period": "day",
+      "since": "<sec>",
+      "historyStart": null,
+      "clients": [],
+      "counts": {
+        "total": "<count>",
+        "onlineNow": "<count>",
+        "activeDay": "<count>",
+        "activeWeek": "<count>"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/clients/top?period=week",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "period": "week",
+      "since": "<sec>",
+      "historyStart": null,
+      "clients": [],
+      "counts": {
+        "total": "<count>",
+        "onlineNow": "<count>",
+        "activeDay": "<count>",
+        "activeWeek": "<count>"
+      }
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/clients/top?period=year",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "invalid_period",
+      "message": "invalid_period"
+    }
+  }
+]

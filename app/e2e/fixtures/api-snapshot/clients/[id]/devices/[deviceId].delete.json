@@ -1,0 +1,46 @@
+[
+  {
+    "method": "DELETE",
+    "path": "/api/clients/{main}/devices/{laptop}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": "<id>",
+        "kind": "delete",
+        "version": 6,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  }
+]

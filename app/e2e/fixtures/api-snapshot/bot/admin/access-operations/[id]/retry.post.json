@@ -1,0 +1,59 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/bot/admin/access-operations/{operation}/retry",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": "<id>",
+        "kind": "reissue",
+        "version": 3,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "confirmed",
+            "confirmedVersion": 3,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "confirmed",
+            "confirmedVersion": 3,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "confirmed",
+            "confirmedVersion": 3,
+            "checkedAt": "<ms>",
+            "lastAttempt": "<ms>",
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/bot/admin/access-operations/{nooperation}/retry",
+    "status": 404,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 404,
+      "statusMessage": "not_found",
+      "message": "Не найдено"
+    }
+  }
+]

@@ -1,0 +1,39 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/clients/{main}/devices",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "clientId": "<id>",
+      "name": "phone",
+      "createdAt": "<time>"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/clients/{main}/devices",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "clientId": "<id>",
+      "name": "laptop",
+      "createdAt": "<time>"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/clients/{main}/devices",
+    "status": 409,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 409,
+      "statusMessage": "device_exists",
+      "message": "Девайс «phone» у клиента уже есть"
+    }
+  }
+]

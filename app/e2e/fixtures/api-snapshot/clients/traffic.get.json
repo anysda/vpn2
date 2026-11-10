@@ -1,0 +1,18 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/clients/traffic",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "{main}": {
+        "rxBytes": 0,
+        "txBytes": 0,
+        "dayRx": 0,
+        "dayTx": 0,
+        "recentBytes": 0,
+        "online": false
+      }
+    }
+  }
+]

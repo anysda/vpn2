@@ -1,0 +1,189 @@
+[
+  {
+    "method": "PATCH",
+    "path": "/api/clients/{main}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 1,
+      "deleting": false,
+      "name": "e2e-api-snapshot-main",
+      "filterTraffic": false,
+      "expiresAt": "2099-12-30T20:59:59.000Z",
+      "deviceLimit": 6,
+      "frozenManual": false,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>",
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "unfreeze",
+        "version": 1,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/clients/{main}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 2,
+      "deleting": false,
+      "name": "e2e-api-snapshot-main",
+      "filterTraffic": false,
+      "expiresAt": "2099-12-30T20:59:59.000Z",
+      "deviceLimit": 6,
+      "frozenManual": true,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>",
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "freeze",
+        "version": 2,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/clients/{main}",
+    "status": 202,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 3,
+      "deleting": false,
+      "name": "e2e-api-snapshot-main",
+      "filterTraffic": false,
+      "expiresAt": "2099-12-30T20:59:59.000Z",
+      "deviceLimit": 6,
+      "frozenManual": false,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>",
+      "operation": {
+        "id": "<uuid>",
+        "clientId": "<id>",
+        "deviceId": null,
+        "kind": "unfreeze",
+        "version": 3,
+        "status": "pending",
+        "protocols": {
+          "wg": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "openvpn": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          },
+          "ikev2": {
+            "state": "pending",
+            "confirmedVersion": null,
+            "checkedAt": null,
+            "lastAttempt": null,
+            "nextRetry": "<ms>",
+            "error": null
+          }
+        },
+        "nextRetry": "<ms>",
+        "createdAt": "<ms>"
+      }
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/clients/{main}",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "invalid_body",
+      "message": "Проверьте поле «Лимит устройств»"
+    }
+  }
+]

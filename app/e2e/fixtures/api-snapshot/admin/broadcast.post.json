@@ -1,0 +1,18 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/admin/broadcast",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "recipients": "<count>",
+      "delivery": {
+        "id": "<uuid>",
+        "label": "Рассылка",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      }
+    }
+  }
+]

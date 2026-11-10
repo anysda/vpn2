@@ -1,0 +1,23 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/admin/sso",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "enabled": false,
+      "authentikUrl": "https://auth.example.invalid",
+      "appSlug": "vpn2-snapshot",
+      "clientId": "vpn2-snapshot",
+      "allowedSubs": "00000000-0000-4000-8000-000000000001",
+      "label": "Snapshot IdP",
+      "autoRedirect": false,
+      "passwordLogin": true,
+      "redirectUrl": "https://vpn2.example.invalid/auth/authentik",
+      "clientSecretMasked": "snap••••••01",
+      "hasSecret": true,
+      "discoveryUrl": "https://auth.example.invalid/application/o/vpn2-snapshot/.well-known/openid-configuration",
+      "source": "panel"
+    }
+  }
+]

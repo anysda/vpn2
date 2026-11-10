@@ -1,0 +1,45 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/admin/bot-deliveries",
+    "status": 200,
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "<uuid>",
+        "label": "Уведомление о клиенте «e2e-api-snapshot-main»",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      },
+      {
+        "id": "<uuid>",
+        "label": "Уведомление о клиенте «e2e-api-snapshot-second»",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      },
+      {
+        "id": "<uuid>",
+        "label": "Уведомление о клиенте «e2e-api-snapshot-bot»",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      },
+      {
+        "id": "<uuid>",
+        "label": "Уведомление клиенту «e2e-api-snapshot-bot»",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      },
+      {
+        "id": "<uuid>",
+        "label": "Уведомление клиенту «e2e-api-snapshot-bot»",
+        "status": "accepted",
+        "remaining": 0,
+        "created": "<ms>"
+      }
+    ]
+  }
+]

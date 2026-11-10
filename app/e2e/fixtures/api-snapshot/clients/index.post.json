@@ -1,0 +1,59 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/clients",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 0,
+      "deleting": false,
+      "name": "e2e-api-snapshot-main",
+      "filterTraffic": false,
+      "expiresAt": "2099-12-31T20:59:59.000Z",
+      "deviceLimit": 5,
+      "frozenManual": false,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/clients",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "id": "<id>",
+      "accessVersion": 0,
+      "deleting": false,
+      "name": "e2e-api-snapshot-second",
+      "filterTraffic": true,
+      "expiresAt": null,
+      "deviceLimit": 3,
+      "frozenManual": false,
+      "password": "<password>",
+      "tgChatId": null,
+      "tgUsername": null,
+      "preferredExit": null,
+      "createdAt": "<time>",
+      "updatedAt": "<time>"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/clients",
+    "status": 400,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 400,
+      "statusMessage": "invalid_body",
+      "message": "Проверьте поле «Имя»"
+    }
+  }
+]

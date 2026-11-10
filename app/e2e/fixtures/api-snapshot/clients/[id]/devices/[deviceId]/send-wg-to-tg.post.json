@@ -1,0 +1,11 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/clients/{main}/devices/{phone}/send-wg-to-tg",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "ok": true
+    }
+  }
+]

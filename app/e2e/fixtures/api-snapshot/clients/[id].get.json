@@ -1,0 +1,84 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/clients/{second}",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "operation": null,
+      "deleting": false,
+      "id": "<id>",
+      "name": "e2e-api-snapshot-second",
+      "filterTraffic": true,
+      "expiresAt": null,
+      "deviceLimit": 3,
+      "frozenManual": false,
+      "createdAt": "<time>",
+      "status": "active",
+      "tgLinked": false,
+      "tgUsername": null,
+      "preferredExit": null,
+      "rxTotal": 0,
+      "txTotal": 0,
+      "devices": []
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/clients/{missing}",
+    "status": 404,
+    "contentType": "application/json",
+    "body": {
+      "error": true,
+      "url": "<url>",
+      "statusCode": 404,
+      "statusMessage": "not_found",
+      "message": "Не найдено"
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/api/clients/{main}",
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "operation": null,
+      "deleting": false,
+      "id": "<id>",
+      "name": "e2e-api-snapshot-main",
+      "filterTraffic": false,
+      "expiresAt": "2099-12-31T20:59:59.000Z",
+      "deviceLimit": 5,
+      "frozenManual": false,
+      "createdAt": "<time>",
+      "status": "active",
+      "tgLinked": false,
+      "tgUsername": null,
+      "preferredExit": null,
+      "rxTotal": 0,
+      "txTotal": 0,
+      "devices": [
+        {
+          "id": "<id>",
+          "name": "phone",
+          "configName": "<config-name>",
+          "createdAt": "<time>",
+          "rxTotal": 0,
+          "txTotal": 0,
+          "hasWg": true,
+          "hasOvpn": true
+        },
+        {
+          "id": "<id>",
+          "name": "laptop",
+          "configName": "<config-name>",
+          "createdAt": "<time>",
+          "rxTotal": 0,
+          "txTotal": 0,
+          "hasWg": true,
+          "hasOvpn": true
+        }
+      ]
+    }
+  }
+]

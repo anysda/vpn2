@@ -1,0 +1,40 @@
+[
+  {
+    "method": "GET",
+    "path": "/api/bot/admin/clients",
+    "status": 200,
+    "contentType": "application/json",
+    "body": [
+      {
+        "id": "<id>",
+        "name": "e2e-api-snapshot-bot",
+        "status": "active",
+        "accessStatus": "Состояние не подтверждено",
+        "deviceCount": 0,
+        "deviceLimit": 3,
+        "expiresAt": null,
+        "tgLinked": false
+      },
+      {
+        "id": "<id>",
+        "name": "e2e-api-snapshot-main",
+        "status": "active",
+        "accessStatus": "Ключи перевыпущены",
+        "deviceCount": 2,
+        "deviceLimit": 6,
+        "expiresAt": "2099-12-30T20:59:59.000Z",
+        "tgLinked": false
+      },
+      {
+        "id": "<id>",
+        "name": "e2e-api-snapshot-second",
+        "status": "active",
+        "accessStatus": "Состояние не подтверждено",
+        "deviceCount": 0,
+        "deviceLimit": 3,
+        "expiresAt": null,
+        "tgLinked": false
+      }
+    ]
+  }
+]

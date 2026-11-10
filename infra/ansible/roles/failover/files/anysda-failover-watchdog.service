@@ -1,0 +1,21 @@
+[Unit]
+Description=anysda-vpn failover watchdog (быстрое переключение экзитов)
+After=network-online.target sing-box.service
+Wants=sing-box.service
+
+[Service]
+Type=simple
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog failover
+EnvironmentFile=/etc/anysda/failover-watchdog.env
+Restart=always
+RestartSec=2
+# root без DynamicUser: сторож перезапускает sing-box, когда мертвы все каналы
+# (systemctl restart), и шлёт событие в бот с секретом /etc/anysda/tgbot-secret.txt.
+# Время переездов дорожек и перезапуска — /var/lib/anysda-failover-watchdog
+StateDirectory=anysda-failover-watchdog
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=anysda-vpn TPROXY watchdog, раз в минуту
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

@@ -30,8 +30,9 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
                 f'HOST_TAG={host}\nTELEGRAM_BOT_TOKEN=fixture\nTELEGRAM_CHAT_ID=1\n')
             (root / f'{host}.out').write_text(result.stdout)
             (root / f'{host}.rc').write_text(str(result.returncode))
-        for path in (ROOT / 'infra/scripts').glob('*.sh'):
-            (root / 'scripts' / path.name).touch()
+        # Стадии-плеи идут тем же путём, что и bash-стадии: каталога плеев в макете нет.
+        for path in (*(ROOT / 'infra/scripts').glob('*.sh'), *(ROOT / 'infra/ansible/plays').glob('*.yml')):
+            (root / 'scripts' / f'{path.stem}.sh').touch()
         for path in (                     'lib/anysda-svc.sh', 'lib/ansible-venv.sh', 'emergency/provision.py',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):

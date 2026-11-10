@@ -712,14 +712,14 @@ run_verify() {
 run_stage_on_host() {
   local stage="$1" host="$2"
   if [[ "$stage" == 99-verify ]]; then run_verify "$host"; return; fi
-  if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi
-
-  local script="$DEPLOY_ROOT/scripts/${stage}.sh"
-  [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
   # Стадии entry, зовущие команду vpn2: venv с пакетом обязан быть готов до них.
   if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog) ]]; then
     ansible_venv_ensure fresh
   fi
+  if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi
+
+  local script="$DEPLOY_ROOT/scripts/${stage}.sh"
+  [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
 
   load_env "$host" || return 1
   log "[$stage → $host] starting"

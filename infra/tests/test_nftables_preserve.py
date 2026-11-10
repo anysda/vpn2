@@ -45,8 +45,7 @@ fi
             self.assertIn('\nExecStop=\n', dropin.read_text())
 
     def test_watchdog_repairs_lost_chains_with_policy_rule_still_present(self):
-        stage = source('infra/scripts/21-failover-watchdog.sh')
-        watchdog = stage.split("<<'WDEOF'\n", 1)[1].split('\nWDEOF', 1)[0]
+        watchdog = source('infra/ansible/roles/failover/files/anysda-tproxy-watchdog.sh')
         with tempfile.TemporaryDirectory() as directory:
             restored = Path(directory) / 'restored'
             mocks = r'''

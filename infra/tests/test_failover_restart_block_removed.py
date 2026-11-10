@@ -5,7 +5,7 @@ RESTART_AFTER_CHECKS и RESTART_MIN_INTERVAL_S живут только в config
 /etc/anysda/failover-watchdog.env для них не читается, иначе однажды
 выставленный 0 выключает перезапуск навсегда.
 
-Два прогона стадии 21 в одной песочнице: env-файл сторожа от первого
+Два прогона команды с одним env-файлом: файл от первого
 прогона остаётся ко второму, как на entry между двумя deploy.
 """
 import os
@@ -15,6 +15,7 @@ import tempfile
 import unittest
 
 import test_config_validation as validation
+import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -22,41 +23,20 @@ OFF = 'failover:\n  restart_after_checks: 0\n  restart_min_interval: 900\n'
 
 
 class Box:
-    """Песочница стадии 21: /etc, /var, /usr/local под одним каталогом."""
+    """Env-файл сторожа между прогонами vpn2 watchdog failover-env."""
 
     def __init__(self, root):
         self.root = root
-        self.box = root / 'box'
         self.runs = 0
-        for path in ('etc/anysda', 'etc/systemd/system', 'tmp/anysda', 'usr/local/bin', 'usr/local/sbin'):
-            (self.box / path).mkdir(parents=True)
-        (self.box / 'etc/anysda/clash-secret.txt').write_text('test\n')
-        # Команда vpn2 из venv: стадия требует её и метку колеса.
-        (self.box / 'opt/vpn2/venv/bin').mkdir(parents=True)
-        (self.box / 'opt/vpn2/venv/bin/vpn2').write_text('#!/bin/sh\n')
-        (self.box / 'opt/vpn2/venv/bin/vpn2').chmod(0o755)
-        (self.box / 'opt/vpn2/venv/.vpn2-wheel').write_text('x\n')
-        self.bin = root / 'bin'
-        self.bin.mkdir()
-        stubs = {'systemctl': ':', 'sleep': ':', 'install': 'cp "${@: -2:1}" "${@: -1}"'}
-        for name, body in stubs.items():
-            (self.bin / name).write_text(f'#!/bin/bash\n{body}\n')
-            (self.bin / name).chmod(0o755)
-        stage = root / 'stage'
-        stage.mkdir()
-        text = (ROOT / 'infra/scripts/21-failover-watchdog.sh').read_text()
-        for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda', '/opt/vpn2/'):
-            text = text.replace(prefix, f'{self.box}{prefix}')
-        self.stage = stage / '21-failover-watchdog.sh'
-        self.stage.write_text(text)
-        (stage / 'anysda-svc.sh').write_text((ROOT / 'infra/lib/anysda-svc.sh').read_text())
+        self.secret = root / 'clash-secret.txt'
+        self.secret.write_text('test\n')
 
     @property
     def env_file(self):
-        return self.box / 'etc/anysda/failover-watchdog.env'
+        return self.root / 'failover-watchdog.env'
 
     def deploy(self, failover):
-        """config.yaml -> config2env -> env стадии -> стадия 21 -> env сторожа."""
+        """config.yaml -> config2env -> окружение стадии -> env сторожа."""
         self.runs += 1
         cfg = self.root / f'cfg{self.runs}'
         cfg.mkdir()
@@ -69,12 +49,12 @@ class Box:
             line + '\n' for line in (envs / 'ru.env').read_text().splitlines()
             if not line.startswith('SSH_PASS=')))
         result = subprocess.run(
-            ['bash', str(self.stage), str(rendered)],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, 'PATH': f'{self.bin}:{os.environ["PATH"]}',
-                 'SVC_FP_DIR': str(self.box / 'var/lib/anysda/applied')})
+            ['bash', '-c', 'set -a; source "$1"; shift; exec "$@"', 'bash', str(rendered),
+             *watchdog_src.command('failover-env'), '--env-file', str(self.env_file),
+             '--secret-file', str(self.secret)],
+            capture_output=True, text=True, timeout=30)
         if result.returncode:
-            return f'стадия 21: {result.stdout}{result.stderr}'
+            return f'failover-env: {result.stdout}{result.stderr}'
         return dict(line.partition('=')[::2] for line in self.env_file.read_text().splitlines())
 
 

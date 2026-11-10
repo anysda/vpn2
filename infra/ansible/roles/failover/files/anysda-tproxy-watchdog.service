@@ -1,0 +1,7 @@
+[Unit]
+Description=anysda-vpn TPROXY watchdog (маршрутизация 0x42)
+After=sing-box.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-tproxy-watchdog.sh

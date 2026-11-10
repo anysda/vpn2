@@ -21,16 +21,19 @@ import sys
 import tempfile
 import unittest
 
+import yaml
+
 
 ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents[2]))
 TOOL = ROOT / "infra/lib/entry_resources.py"
 LIB = ROOT / "infra/lib/entry-resources.sh"
+ROLES = ROOT / "infra/ansible/roles"
 DROPIN = "zz-vpn2-resources.conf"
 PROTECTED = {"sing-box": ("20-ru-router.sh", "10-foreign.sh"),
              "strongswan-starter": ("27-ikev2.sh",)}
 BACKGROUND = {"anysda-yt-failover": "19-yt-zapret.sh",
-              "anysda-failover-watchdog": "21-failover-watchdog.sh",
-              "anysda-tproxy-watchdog": "21-failover-watchdog.sh",
+              "anysda-failover-watchdog": "role:failover",
+              "anysda-tproxy-watchdog": "role:failover",
               "vpn2-emergency-snapshot": "23-emergency.sh"}
 EXIT_ONLY = {"10-foreign.sh"}
 HEREDOC = re.compile(r"""^\s*cat\s+>\s*(\S+)\s*<<-?\s*['"]?(\w+)['"]?\s*$""")
@@ -100,10 +103,29 @@ def inventory():
         total = sum(1 for line in lines if line.strip() == "[Service]")
         if total != found:
             mismatch.append(f"{path.name}: [Service] {total}, разобрано {found}")
+    for path in sorted(ROLES.glob("*/files/*.service")):
+        units.append((path.stem, f"role:{path.parts[-3]}", 1, path.read_text()))
     return units, mismatch
 
 
+def role_dropin_units(role):
+    """Юниты, которым задачи роли зовут entry_unit_resources из подключённой библиотеки."""
+    units = []
+    for task in yaml.safe_load((ROLES / role / "tasks/main.yml").read_text()):
+        argv = (task.get("ansible.builtin.command") or {}).get("argv") or []
+        code = next((i for i, word in enumerate(argv) if 'source "$0/entry-resources.sh"' in str(word)), None)
+        if code is None:
+            continue
+        units += re.findall(r"entry_unit_resources ([\w@.-]+)", argv[code])
+        if re.search(r'entry_unit_resources "\$', argv[code]):
+            for word in argv[code + 2:]:
+                units += (task.get("loop") or []) if word == "{{ item }}" else [word]
+    return units
+
+
 def calls_dropin(script, unit):
+    if script.startswith("role:"):
+        return unit in role_dropin_units(script[5:])
     text = (ROOT / "infra/scripts" / script).read_text()
     return re.search(rf"""^\s*entry_unit_resources\s+['"]?{re.escape(unit)}(\.service)?['"]?\s*$""",
                      text, re.M) is not None
@@ -164,7 +186,8 @@ class EntryUnitPriorityTest(unittest.TestCase):
         for unit, script in BACKGROUND.items():
             with self.subTest(unit=unit):
                 self.assertTrue(calls_dropin(script, unit), f"{script} не зовёт entry_unit_resources {unit}")
-                self.assertIn('source "$RESOURCE_LIB"', (ROOT / "infra/scripts" / script).read_text())
+                if not script.startswith("role:"):
+                    self.assertIn('source "$RESOURCE_LIB"', (ROOT / "infra/scripts" / script).read_text())
                 for ram in (2048, 8192):
                     values = dropin(unit, ram)
                     self.assertLess(int(values.get("CPUWeight", "100")), 100, ram)

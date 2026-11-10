@@ -250,8 +250,7 @@ class TestFailoverRestart(unittest.TestCase):
 
 
 def stage_env(failover):
-    """config.yaml -> config2env -> env стадии (как run_stage_on_host) ->
-    стадия 21 в песочнице -> /etc/anysda/failover-watchdog.env."""
+    """config.yaml -> config2env -> окружение стадии -> vpn2 watchdog failover-env."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         result = validation.ConfigValidationTests.convert(None, validation.CONFIG + failover, directory)
@@ -262,42 +261,17 @@ def stage_env(failover):
         rendered.write_text((envs / 'all.env').read_text() + '\n' + ''.join(
             line + '\n' for line in (envs / 'ru.env').read_text().splitlines()
             if not line.startswith('SSH_PASS=')))
-        box = root / 'box'
-
-        def jail(text):
-            for prefix in ('/etc/', '/var/', '/usr/local/', '/tmp/anysda', '/opt/vpn2/'):
-                text = text.replace(prefix, f'{box}{prefix}')
-            return text
-
-        stage = root / 'stage'
-        stage.mkdir()
-        (stage / '21-failover-watchdog.sh').write_text(
-            jail((ROOT / 'infra/scripts/21-failover-watchdog.sh').read_text()))
-        (stage / 'anysda-svc.sh').write_text((ROOT / 'infra/lib/anysda-svc.sh').read_text())
-        for path in ('etc/anysda', 'etc/systemd/system', 'tmp/anysda', 'usr/local/bin', 'usr/local/sbin'):
-            (box / path).mkdir(parents=True)
-        (box / 'etc/anysda/clash-secret.txt').write_text('test\n')
-        # Команда vpn2 из venv: стадия требует её и метку колеса.
-        (box / 'opt/vpn2/venv/bin').mkdir(parents=True)
-        (box / 'opt/vpn2/venv/bin/vpn2').write_text('#!/bin/sh\n')
-        (box / 'opt/vpn2/venv/bin/vpn2').chmod(0o755)
-        (box / 'opt/vpn2/venv/.vpn2-wheel').write_text('x\n')
-        bin_dir = root / 'bin'
-        bin_dir.mkdir()
-        stubs = {'systemctl': ':', 'sleep': ':',
-                 'install': 'cp "${@: -2:1}" "${@: -1}"'}
-        for name, body in stubs.items():
-            (bin_dir / name).write_text(f'#!/bin/bash\n{body}\n')
-            (bin_dir / name).chmod(0o755)
+        env_file = root / 'failover-watchdog.env'
+        (root / 'clash-secret.txt').write_text('test\n')
         result = subprocess.run(
-            ['bash', str(stage / '21-failover-watchdog.sh'), str(rendered)],
-            capture_output=True, text=True, timeout=30,
-            env={**os.environ, 'PATH': f'{bin_dir}:{os.environ["PATH"]}',
-                 'SVC_FP_DIR': str(box / 'var/lib/anysda/applied')})
+            ['bash', '-c', 'set -a; source "$1"; shift; exec "$@"', 'bash', str(rendered),
+             *watchdog_src.command('failover-env'), '--env-file', str(env_file),
+             '--secret-file', str(root / 'clash-secret.txt')],
+            capture_output=True, text=True, timeout=30)
         if result.returncode:
-            return f'стадия 21: {result.stdout}{result.stderr}'
+            return f'failover-env: {result.stdout}{result.stderr}'
         env = {}
-        for line in (box / 'etc/anysda/failover-watchdog.env').read_text().splitlines():
+        for line in env_file.read_text().splitlines():
             key, _, value = line.partition('=')
             env[key] = value
         return env

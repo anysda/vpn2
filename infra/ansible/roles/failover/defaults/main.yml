@@ -1,0 +1,7 @@
+---
+failover_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+failover_tmp: /tmp/anysda
+failover_vpn2: /opt/vpn2/venv/bin/vpn2
+# Сторож живёт в пакете vpn2; метка колеса меняется вместе с его кодом.
+failover_wheel_mark: /opt/vpn2/venv/.vpn2-wheel
+failover_env: /etc/anysda/failover-watchdog.env

@@ -1,0 +1,106 @@
+---
+# Сторож активно опрашивает экзиты через clash-api и переключает группу
+# foreign-best на живой экзит. Идёт после 20-ru-router: тот пишет секрет
+# clash-api и поднимает sing-box.
+- name: Команда vpn2
+  ansible.builtin.stat:
+    path: "{{ failover_vpn2 }}"
+  register: failover_vpn2_stat
+  failed_when: not (failover_vpn2_stat.stat.executable | default(false))
+
+- name: Файл сторожа прежних выпусков убран
+  ansible.builtin.file:
+    path: /usr/local/bin/anysda-failover-watchdog
+    state: absent
+
+# Ручные настройки сторожа в env-файле переживают передеплой.
+- name: Env-файл сторожа
+  ansible.builtin.command:
+    argv: ["{{ failover_vpn2 }}", watchdog, failover-env]
+  environment:
+    MGMT_IP: "{{ lookup('ansible.builtin.env', 'MGMT_IP') }}"
+    RESTART_AFTER_CHECKS: "{{ lookup('ansible.builtin.env', 'RESTART_AFTER_CHECKS') }}"
+    RESTART_MIN_INTERVAL_S: "{{ lookup('ansible.builtin.env', 'RESTART_MIN_INTERVAL_S') }}"
+  register: failover_env_step
+  changed_when: "'changed=1' in failover_env_step.stdout"
+
+- name: Юниты сторожей
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /etc/systemd/system/
+    mode: '0644'
+  loop:
+    - anysda-failover-watchdog.service
+    - anysda-tproxy-watchdog.service
+    - anysda-tproxy-watchdog.timer
+
+# Раз в минуту проверяет то, без чего клиенты wg0, OpenVPN и IKEv2 молча
+# теряют интернет, и чинит на месте.
+- name: Сторож TPROXY
+  ansible.builtin.copy:
+    src: anysda-tproxy-watchdog.sh
+    dest: /usr/local/sbin/anysda-tproxy-watchdog.sh
+    mode: '0755'
+
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ failover_infra }}/lib/{{ item }}"
+    dest: "{{ failover_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  changed_when: false
+
+- name: Ресурсы юнитов сторожей
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources "$1"; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ failover_tmp }}"
+      - "{{ item }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  loop: [anysda-failover-watchdog, anysda-tproxy-watchdog]
+  register: failover_step
+  changed_when: "'changed=1' in failover_step.stdout"
+
+- name: Сторож экзитов включён
+  ansible.builtin.systemd_service:
+    name: anysda-failover-watchdog
+    enabled: true
+    daemon_reload: true
+
+# Перезапуск только при смене входов службы: кода сторожа, юнита, env-файла.
+- name: Сторож экзитов запущен с текущими входами
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/anysda-svc.sh"; svc_restart_if_changed anysda-failover-watchdog "$@"; svc_settle 3'
+      - "{{ failover_tmp }}"
+      - "{{ failover_wheel_mark }}"
+      - /etc/systemd/system/anysda-failover-watchdog.service
+      - "{{ failover_env }}"
+  environment:
+    HOST_TAG: "{{ inventory_hostname }}"
+  register: failover_restart
+  changed_when: "'перезапущен' in failover_restart.stdout"
+
+- name: Таймер сторожа TPROXY
+  ansible.builtin.systemd_service:
+    name: anysda-tproxy-watchdog.timer
+    enabled: true
+    state: started
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/21-failover-watchdog
+    force: false
+    mode: '0644'

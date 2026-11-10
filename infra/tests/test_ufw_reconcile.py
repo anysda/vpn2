@@ -2,10 +2,14 @@
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
+
+import yaml
 
 from test_deploy import ROOT, source
 
@@ -52,10 +56,6 @@ class UfwReconcileTests(unittest.TestCase):
 
     def test_all_listener_stages_remove_owned_stale_rules(self):
         cases = [
-            ('00-bootstrap', 'ssh', '22/tcp'),
-            ('00-bootstrap', 'hysteria2 direct', '443/udp'),
-            ('00-bootstrap', 'hysteria2 warp', '444/udp'),
-            ('00-bootstrap', 'hysteria2 mgmt', '445/udp'),
             ('10-foreign', 'hysteria2 direct', '443/udp'),
             ('10-foreign', 'hysteria2 warp', '444/udp'),
             ('10-foreign', 'hysteria2 mgmt', '445/udp'),
@@ -78,6 +78,38 @@ class UfwReconcileTests(unittest.TestCase):
                 manual = ['allow', '59998/udp', 'comment', 'manual ' + old_comment]
                 variables = 'WG_PORT=51820 OVPN_PORT=1194 OVPN_FW_PROTO=tcp HY2_DIRECT_PORT=443 HY2_WARP_PORT=444 HY2_MGMT_PORT=445\n'
                 result = self.run_commands(variables + line + '\n' + line, [old, manual])
+                self.assertNotIn(old, result)
+                self.assertIn(manual, result)
+                self.assertEqual(len(result), 2)
+                self.assertTrue(any(r[:2] == ['allow', desired] for r in result))
+
+    def test_base_role_removes_owned_stale_rules(self):
+        # Первая стадия ведёт ufw шагом пакета: группы роли base идут в ufw_reconcile.
+        defaults = source('infra/ansible/roles/base/defaults/main.yml')
+        block = defaults.split('base_ufw_exit:\n', 1)[1].split('base_ufw:', 1)[0]
+        ports = {'HY2_DIRECT_PORT': '443', 'HY2_WARP_PORT': '444', 'HY2_MGMT_PORT': '445'}
+        block = re.sub(r"\{\{ lookup\('ansible.builtin.env', '(\w+)'\) \}\}", lambda m: ports[m[1]], block)
+        groups = {group['comment']: group for group in yaml.safe_load(block)}
+        for comment, desired in [('ssh', '22/tcp'), ('hysteria2 direct', '443/udp'),
+                                 ('hysteria2 warp', '444/udp'), ('hysteria2 mgmt', '445/udp')]:
+            with self.subTest(comment=comment), tempfile.TemporaryDirectory() as directory:
+                group = groups[comment]
+                self.assertEqual(group['rules'], [desired])
+                old_comment = group.get('aliases', [comment])[0]
+                old = ['allow', '59999/udp', 'comment', old_comment]
+                manual = ['allow', '59998/udp', 'comment', 'manual ' + old_comment]
+                state = Path(directory, 'rules.json')
+                state.write_text(json.dumps([old, manual]))
+                ufw = Path(directory, 'ufw')
+                ufw.write_text(FAKE_UFW)
+                ufw.chmod(0o755)
+                code = ('import json, sys; from vpn2 import firewall; g = json.loads(sys.argv[1]); '
+                        '[firewall.ufw_reconcile(g["comment"], g["rules"], g.get("aliases", ())) for _ in range(2)]')
+                env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'], UFW_STATE=str(state),
+                           PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
+                subprocess.run([sys.executable, '-B', '-c', code, json.dumps(group)], env=env, check=True,
+                               capture_output=True, text=True, timeout=30)
+                result = json.loads(state.read_text())
                 self.assertNotIn(old, result)
                 self.assertIn(manual, result)
                 self.assertEqual(len(result), 2)

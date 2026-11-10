@@ -1,4 +1,4 @@
-"""vpn2 watchdog failover|warp|yt|hy2 - сторожа entry и экзита."""
+"""vpn2 watchdog failover|failover-env|warp|yt|hy2 - сторожа entry и экзита."""
 
 import importlib
 import sys
@@ -7,6 +7,7 @@ import sys
 # сторож экзитов читает окружение при импорте.
 KINDS = {
     'failover': ('failover', 'main'),
+    'failover-env': ('failover_env', 'main'),
     'warp': ('warp', 'main'),
     'yt': ('yt', 'run'),
     'hy2': ('hy2_bandwidth', 'main'),

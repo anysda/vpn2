@@ -29,13 +29,13 @@ TOOL = ROOT / "infra/lib/entry_resources.py"
 LIB = ROOT / "infra/lib/entry-resources.sh"
 ROLES = ROOT / "infra/ansible/roles"
 DROPIN = "zz-vpn2-resources.conf"
-PROTECTED = {"sing-box": ("20-ru-router.sh", "10-foreign.sh"),
+PROTECTED = {"sing-box": ("20-ru-router.sh", "role:exit"),
              "strongswan-starter": ("27-ikev2.sh",)}
 BACKGROUND = {"anysda-yt-failover": "19-yt-zapret.sh",
               "anysda-failover-watchdog": "role:failover",
               "anysda-tproxy-watchdog": "role:failover",
               "vpn2-emergency-snapshot": "23-emergency.sh"}
-EXIT_ONLY = {"10-foreign.sh"}
+EXIT_ONLY = {"role:exit"}
 HEREDOC = re.compile(r"""^\s*cat\s+>\s*(\S+)\s*<<-?\s*['"]?(\w+)['"]?\s*$""")
 INSTALL = re.compile(r"""^\s*install\s.*?([\w@.-]+\.service)"?\s+/etc/systemd/system/?\s*$""")
 
@@ -111,7 +111,9 @@ def inventory():
 def role_dropin_units(role):
     """Юниты, которым задачи роли зовут entry_unit_resources из подключённой библиотеки."""
     units = []
-    for task in yaml.safe_load((ROLES / role / "tasks/main.yml").read_text()):
+    tasks = [task for path in sorted((ROLES / role / "tasks").glob("*.yml"))
+             for task in yaml.safe_load(path.read_text())]
+    for task in tasks:
         argv = (task.get("ansible.builtin.command") or {}).get("argv") or []
         code = next((i for i, word in enumerate(argv) if 'source "$0/entry-resources.sh"' in str(word)), None)
         if code is None:
@@ -173,7 +175,8 @@ class EntryUnitPriorityTest(unittest.TestCase):
             for script in scripts:
                 with self.subTest(unit=unit, script=script):
                     self.assertTrue(calls_dropin(script, unit), f"{script} не зовёт entry_unit_resources {unit}")
-                    self.assertIn('source "$RESOURCE_LIB"', (ROOT / "infra/scripts" / script).read_text())
+                    if not script.startswith("role:"):
+                        self.assertIn('source "$RESOURCE_LIB"', (ROOT / "infra/scripts" / script).read_text())
             for ram in (2048, 8192):
                 with self.subTest(unit=unit, ram=ram):
                     values = dropin(unit, ram)

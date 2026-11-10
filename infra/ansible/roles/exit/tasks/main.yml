@@ -1,0 +1,164 @@
+---
+- name: Каталоги экзита
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop: [/var/anysda/.stamps, /etc/anysda, /etc/sing-box, /var/lib/sing-box, /var/lib/sing-box/acme, "{{ exit_tmp }}"]
+
+- name: Библиотеки шагов, шаблон конфига и колесо vpn2
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ exit_tmp }}/"
+    mode: '0644'
+  loop: "{{ exit_libs }}"
+  changed_when: false
+
+- name: Сумма бинарника wgcf
+  ansible.builtin.stat:
+    path: /usr/local/bin/wgcf
+    checksum_algorithm: sha256
+  register: exit_wgcf
+
+- name: Установка wgcf
+  when: exit_wgcf.stat.checksum | default('') != exit_wgcf_sha256
+  block:
+    - name: Загрузка wgcf
+      ansible.builtin.command:
+        argv: >-
+          {{ ['/usr/bin/python3', exit_tmp ~ '/release.py']
+             + ([] if exit_development else ['--manifest', exit_manifest])
+             + ['artifact', 'wgcf', exit_tmp ~ '/wgcf', '--url', exit_wgcf_url, '--sha256', exit_wgcf_sha256] }}
+      changed_when: true
+
+    - name: Бинарник wgcf
+      ansible.builtin.copy:
+        src: "{{ exit_tmp }}/wgcf"
+        dest: /usr/local/bin/wgcf
+        remote_src: true
+        checksum: "{{ exit_wgcf_sha256 }}"
+        mode: '0755'
+
+- name: Бинарник sing-box
+  ansible.builtin.command:
+    argv: [bash, "{{ exit_tmp }}/install-sing-box.sh"]
+  environment:
+    VPN2_DEVELOPMENT: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') }}"
+    VPN2_RELEASE_MANIFEST: "{{ exit_manifest }}"
+  register: exit_step
+  changed_when: "'уже установлен' not in exit_step.stdout"
+
+# Профиль WARP, пароли каналов, пара Reality, сертификат hy2 и конфиг sing-box.
+# Существующие секреты и годный сертификат шаг не меняет: entry их пинит.
+- name: Секреты, сертификат и конфиг sing-box
+  ansible.builtin.command:
+    argv: "{{ exit_host + ['exit-config', '--template', exit_tmp ~ '/sing-box-server.json.tpl'] }}"
+  environment: "{{ exit_env }}"
+  register: exit_step
+  changed_when: "'vpn2: changed' in exit_step.stdout"
+
+- name: Юнит sing-box
+  ansible.builtin.copy:
+    src: sing-box.service
+    dest: /etc/systemd/system/sing-box.service
+    mode: '0644'
+
+- name: Сторож WARP
+  ansible.builtin.import_tasks: warp.yml
+
+- name: Служба sing-box включена
+  ansible.builtin.systemd_service:
+    name: sing-box
+    enabled: true
+    daemon_reload: true
+
+- name: Ресурсы sing-box
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources sing-box; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ exit_tmp }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  register: exit_step
+  changed_when: "'changed=1' in exit_step.stdout"
+
+- name: Ресурсы сторожа WARP
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-warp-watchdog; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ exit_tmp }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  register: exit_step
+  changed_when: "'changed=1' in exit_step.stdout"
+  when: exit_warp_enabled
+
+# Перезапуск рвёт все туннели entry-экзит, у клиентов это секунды без сети.
+# Поэтому только если sing-box читает уже не то, с чем стартовал.
+- name: Служба sing-box перезапущена при смене входов
+  ansible.builtin.command:
+    argv: >-
+      {{ exit_host + ['restart-if-changed', '--record', '/var/lib/sing-box/applied.sha256', 'sing-box']
+         + exit_sing_box_inputs }}
+  environment: "{{ exit_env }}"
+  register: exit_restart
+  changed_when: "'vpn2: changed' in exit_restart.stdout"
+
+- name: Пауза на старт sing-box
+  ansible.builtin.wait_for:
+    timeout: 2
+  when: "'vpn2: changed' in exit_restart.stdout"
+
+# Даже при прежнем конфиге WARP проверяется. Проверка и таймер делят один flock
+# и бюджет: не больше двух добавочных попыток за прогон и трёх за скользящий час.
+- name: Проверка WARP
+  ansible.builtin.command:
+    cmd: /usr/local/bin/anysda-warp-watchdog --bootstrap
+  when: exit_warp_enabled
+  register: exit_warp_check
+  changed_when: false
+  failed_when: false
+
+- name: Предупреждение о WARP
+  ansible.builtin.debug:
+    msg: "WARNING: проверка WARP не удалась; экзит продолжает работу"
+  when: exit_warp_enabled and exit_warp_check.rc != 0
+
+- name: Таймер сторожа WARP
+  ansible.builtin.systemd_service:
+    name: anysda-warp-watchdog.timer
+    enabled: true
+    state: started
+  when: exit_warp_enabled
+
+- name: Порты экзита в ufw
+  ansible.builtin.command:
+    argv: "{{ exit_host + ['ufw', '--only-rules', exit_ufw | to_json] }}"
+  environment: "{{ exit_env }}"
+  register: exit_step
+  changed_when: "'vpn2: changed' in exit_step.stdout"
+
+- name: Правило clash-api эпохи mesh снято
+  ansible.builtin.command:
+    cmd: ufw delete allow proto tcp from 10.99.0.0/24 to any port 9090
+  register: exit_step
+  changed_when: "'Rule deleted' in exit_step.stdout"
+  failed_when: false
+
+- name: Смена портов hy2
+  ansible.builtin.import_tasks: hy2hop.yml
+
+- name: Штамп стадии
+  ansible.builtin.file:
+    path: /var/anysda/.stamps/10-foreign
+    state: touch
+    mode: '0644'
+  changed_when: false

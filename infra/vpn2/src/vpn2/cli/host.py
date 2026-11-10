@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import apt, firewall, swap
+from vpn2 import apt, exitnode, firewall, swap
 
 CHANGED = 'vpn2: changed'
 APPLIED_DIR = Path('/var/lib/anysda/applied')
@@ -59,8 +59,10 @@ def _swap(args):
 
 def _ufw(args):
     """Политика, свои правила по комментариям, включение и журнал ufw."""
-    changed = firewall.ufw_repair_if_lost()
-    changed = bool(firewall.ufw_defaults()) or changed
+    changed = False
+    if not args.only_rules:
+        changed = firewall.ufw_repair_if_lost()
+        changed = bool(firewall.ufw_defaults()) or changed
     for group in json.loads(args.groups):
         added, deleted = firewall.ufw_reconcile(group['comment'], group.get('rules', ()),
                                                 group.get('aliases', ()))
@@ -68,6 +70,8 @@ def _ufw(args):
             for rule in rules:
                 _say(f"ufw {sign} {rule} ({group['comment']})")
         changed = changed or bool(added or deleted)
+    if args.only_rules:
+        return changed
     if not firewall.ufw_active():
         subprocess.run(['ufw', '--force', 'enable'], check=True, stdout=subprocess.DEVNULL)
         changed = True
@@ -125,10 +129,11 @@ def fingerprint(paths):
     return digest.hexdigest()
 
 
-def restart_if_changed(unit, paths, *, applied=None, run=subprocess.run):
+def restart_if_changed(unit, paths, *, applied=None, record=None, run=subprocess.run):
     """Перезапуск службы, только если сменились её входы или она не работает."""
-    applied = APPLIED_DIR if applied is None else Path(applied)
-    record = applied / f'{unit}.sha256'
+    if record is None:
+        record = (APPLIED_DIR if applied is None else Path(applied)) / f'{unit}.sha256'
+    record = Path(record)
     current = fingerprint(paths)
     active = run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0
     try:
@@ -138,13 +143,13 @@ def restart_if_changed(unit, paths, *, applied=None, run=subprocess.run):
     if active and known == current:
         return False
     run(['systemctl', 'restart', unit], check=True)
-    applied.mkdir(parents=True, exist_ok=True)
+    record.parent.mkdir(parents=True, exist_ok=True)
     record.write_text(current + '\n')
     return True
 
 
 def _restart_if_changed(args):
-    changed = restart_if_changed(args.unit, args.file)
+    changed = restart_if_changed(args.unit, args.file, record=args.record)
     _say(f'{args.unit} перезапущен' if changed
          else f'{args.unit}: конфиг, сертификаты и бинарник прежние — не перезапускаю')
     return changed
@@ -223,6 +228,15 @@ def sshd(password, *, root='/', run=subprocess.run):
     return changed
 
 
+def _exit_config(args):
+    return exitnode.configure(os.environ, args.template, _say)
+
+
+def _exit_hy2hop(args):
+    del args
+    return exitnode.hy2hop(os.environ, _say)
+
+
 def _sshd(args):
     return sshd(args.password)
 
@@ -239,15 +253,22 @@ def main(argv):
     item.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
     item.set_defaults(run=_swap)
     item = sub.add_parser('ufw')
+    item.add_argument('--only-rules', action='store_true',
+                      help='только правила групп: политику и включение ufw не трогать')
     item.add_argument('groups', help='JSON: [{"comment", "rules", "aliases"}]')
     item.set_defaults(run=_ufw)
     item = sub.add_parser('f2b-ignore')
     item.add_argument('entry_host', nargs='?', default='')
     item.set_defaults(run=_f2b_ignore)
     item = sub.add_parser('restart-if-changed')
+    item.add_argument('--record', help='файл отпечатка вместо общего каталога')
     item.add_argument('unit')
     item.add_argument('file', nargs='+')
     item.set_defaults(run=_restart_if_changed)
+    item = sub.add_parser('exit-config')
+    item.add_argument('--template', required=True)
+    item.set_defaults(run=_exit_config)
+    sub.add_parser('exit-hy2hop').set_defaults(run=_exit_hy2hop)
     item = sub.add_parser('sshd')
     item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
     item.set_defaults(run=_sshd)

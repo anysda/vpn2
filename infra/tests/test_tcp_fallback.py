@@ -21,12 +21,15 @@ import unittest
 import urllib.error
 import urllib.parse
 import socket
+import sys
 
 import router_support
 import test_failover_restart as fr
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import exitnode  # noqa: E402
 SB = os.environ.get('SING_BOX_BIN') or shutil.which('sing-box')
 KINDS = ('direct', 'warp', 'mgmt')
 PASSWORDS = {'direct': 'test-direct-0123456789', 'warp': 'test-warp-0123456789',
@@ -99,26 +102,9 @@ def node_of(o):
 
 
 def exit_config(env):
-    """Конфиг экзита так, как его собирает 10-foreign: шаблон, envsubst и всё,
-    что стадия делает с кандидатом до `sing-box check`."""
-    source = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
-    block = source[source.index('TPL=/tmp/anysda/'):source.index('\n# Validate')]
-    with tempfile.TemporaryDirectory() as tmp:
-        stage, sb = Path(tmp) / 'anysda', Path(tmp) / 'sing-box'
-        stage.mkdir()
-        sb.mkdir()
-        for path in (ROOT / 'infra/lib').iterdir():
-            if path.is_file():
-                shutil.copy(path, stage)
-        shutil.copy(ROOT / 'infra/configs/sing-box-server.json.tpl', stage)
-        block = block.replace('/tmp/anysda', str(stage)).replace('/etc/sing-box', str(sb))
-        block = block.replace(fr.watchdog_src.VENV_VPN2, str(fr.watchdog_src.shim(tmp)))
-        script = f'set -euo pipefail\nHOST_TAG=test\n{block}\ncat "$SB_CONFIG_TMP"\n'
-        result = subprocess.run(['bash', '-c', script], text=True, capture_output=True,
-                                env={**os.environ, **env})
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
-        return json.loads(result.stdout)
+    """Конфиг экзита так, как его собирает роль exit: шаблон и инбаунд Reality."""
+    template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
+    return json.loads(exitnode.render_config(template, {**env, 'HY2_BANDWIDTH_FIELDS': ''}))
 
 
 def exit_env():

@@ -14,10 +14,8 @@ import sys
 import tempfile
 import unittest
 
-import watchdog_src
 
 from router_support import ROOT, generate, run_generator
-from test_ufw_reconcile import FAKE_UFW
 
 
 CHANNELS = ('direct', 'warp', 'mgmt')
@@ -180,109 +178,6 @@ class Hy2PortHoppingTests(unittest.TestCase):
         outbounds, env, all_env = self.entry(old_config())
         self.assertNotIn('HY2_HOP_', all_env)
         self.assert_hopping(outbounds, env, DEFAULTS, '5s')
-
-    # край 4 (+5: конфиг старой установки)
-    def test_exit_stage_redirects_ranges_and_rerun_keeps_one_rule(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            result = convert(old_config(), tmp)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            envs = root / 'infra/envs'
-            env_file = root / 'stage.env'
-            env_file.write_text((envs / 'all.env').read_text() + (envs / 'gb.env').read_text())
-            env = load_env(tmp, 'gb')
-            listen = {'direct': int(env['HY2_DIRECT_PORT']), 'warp': int(env['HY2_WARP_PORT']),
-                      'mgmt': int(env['HY2_MGMT_PORT'])}
-            self.assertEqual(listen['direct'], 4443, 'gb из config.example: свой порт direct')
-            stage, logs = self.prepare_stage(root)
-            for run in (1, 2):
-                logs['nft'].write_text('')
-                result = subprocess.run(['bash', str(stage), str(env_file)], cwd=root,
-                                        env=self.stage_env(root, logs), capture_output=True,
-                                        text=True, timeout=120)
-                self.assertEqual(result.returncode, 0, f'прогон {run}\n{result.stdout}\n{result.stderr}')
-            files = dict(self.texts(root / 'etc', root / 'bin'))
-            persistent = '\n'.join(files.values())
-            live = logs['nft'].read_text()
-            calls = logs['calls'].read_text()
-            self.assertTrue('table inet vpn2_hy2hop' in persistent and 'hook prerouting' in persistent,
-                            f'нет сохранённой таблицы inet vpn2_hy2hop с prerouting; файлы: {sorted(files)}')
-            for channel in CHANNELS:
-                with self.subTest(channel=channel):
-                    low, high = DEFAULTS[channel]
-                    rule = rf'udp dport {low}-{high}\b[^\n;]*?\bredirect to :?{listen[channel]}\b'
-                    found = {name: len(re.findall(rule, text)) for name, text in files.items()
-                             if re.search(rule, text)}
-                    self.assertEqual(sum(found.values()), 1, found)
-                    if re.search(rule, live):
-                        self.assertRegex(live, r'(flush|delete|destroy) table inet vpn2_hy2hop'
-                                               r'|flush ruleset')
-                    else:
-                        self.assertRegex(calls, r'systemctl .*\b(restart|reload|start)\b.*(nft|hy2)')
-            rules = [' '.join(rule) for rule in json.loads(logs['ufw'].read_text())]
-            for channel in CHANNELS:
-                low, high = DEFAULTS[channel]
-                opened = [r for r in rules if f'{low}:{high}' in r and 'udp' in r]
-                self.assertEqual(len(opened), 1, (channel, rules))
-
-    @staticmethod
-    def texts(*directories):
-        for directory in directories:
-            for path in directory.rglob('*'):
-                if path.is_file():
-                    try:
-                        yield str(path.relative_to(directory.parent)), path.read_text()
-                    except UnicodeDecodeError:
-                        pass
-
-    @staticmethod
-    def rewrite(text, root):
-        mapping = {'/etc/': f'{root}/etc/', '/var/': f'{root}/var/', '/usr/sbin/': '',
-                   '/usr/local/bin/': f'{root}/bin/', '/tmp/anysda': f'{root}/anysda'}
-        return re.sub('|'.join(map(re.escape, mapping)), lambda m: mapping[m.group(0)], text)
-
-    def prepare_stage(self, root):
-        """Стадия как её запускает деплой из /tmp/anysda, корень ФС подменён на root."""
-        anysda, fake = root / 'anysda', root / 'fake'
-        for directory in (anysda, fake, root / 'etc', root / 'var', root / 'bin'):
-            directory.mkdir()
-        (root / 'etc/systemd/system').mkdir(parents=True)
-        for path in (ROOT / 'infra/lib').iterdir():
-            if path.is_file():
-                try:
-                    (anysda / path.name).write_text(self.rewrite(path.read_text(), root))
-                except UnicodeDecodeError:
-                    pass
-        (anysda / 'stubs.sh').write_text(STUBS)
-        source = self.rewrite((ROOT / 'infra/scripts/10-foreign.sh').read_text(), root)
-        source = source.replace('source "$SVC_LIB"\n', f'source "$SVC_LIB"\nsource {anysda}/stubs.sh\n', 1)
-        stage = anysda / '10-foreign.sh'
-        stage.write_text(source)
-        (anysda / 'install-sing-box.sh').write_text(':\n')
-        (anysda / 'sing-box-server.json.tpl').write_text('{}\n')
-        # Команда vpn2: полосы hy2 штатные (пусто), WARP на узле нет.
-        vpn2 = watchdog_src.shim(root, '#!/bin/sh\n[ "$2" = hy2 ]\n')
-        stage.write_text(source.replace(watchdog_src.VENV_VPN2, str(vpn2)))
-        executables = {
-            root / 'bin/sing-box': '#!/bin/sh\necho "sing-box version 1.12.25"\n',
-                       fake / 'ufw': FAKE_UFW, fake / 'nft': FAKE_NFT,
-                       fake / 'curl': '#!/bin/sh\nexit 22\n'}
-        for name in ('systemctl', 'ss', 'sysctl', 'modprobe', 'ip', 'iptables', 'ip6tables',
-                     'apt-get', 'journalctl'):
-            executables[fake / name] = FAKE_CALL
-        for path, body in executables.items():
-            path.write_text(body)
-            path.chmod(0o755)
-        logs = {'nft': root / 'nft.log', 'calls': root / 'calls.log', 'ufw': root / 'ufw.json'}
-        logs['calls'].write_text('')
-        logs['ufw'].write_text('[]')
-        return stage, logs
-
-    @staticmethod
-    def stage_env(root, logs):
-        return {**os.environ, 'PATH': f'{root}/fake:{os.environ["PATH"]}', 'HOME': str(root),
-                'NFT_LOG': str(logs['nft']), 'CALLS_LOG': str(logs['calls']),
-                'UFW_STATE': str(logs['ufw'])}
 
 
 if __name__ == '__main__':

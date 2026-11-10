@@ -56,9 +56,6 @@ class UfwReconcileTests(unittest.TestCase):
 
     def test_all_listener_stages_remove_owned_stale_rules(self):
         cases = [
-            ('10-foreign', 'hysteria2 direct', '443/udp'),
-            ('10-foreign', 'hysteria2 warp', '444/udp'),
-            ('10-foreign', 'hysteria2 mgmt', '445/udp'),
             ('27-ikev2', 'ikev2 IKE', '500/udp'),
             ('27-ikev2', 'ikev2 NAT-T', '4500/udp'),
             ('28-wireguard', 'wireguard listener', '51820/udp'),
@@ -71,8 +68,7 @@ class UfwReconcileTests(unittest.TestCase):
                 line = next(line.strip() for line in source(f'infra/scripts/{stage}.sh').splitlines()
                             if comment in line and ('ufw allow' in line or 'ufw_sync_rules' in line))
                 # Use the exact comment from the old installation, including aliases.
-                old_comment = {'hysteria2 mgmt': 'hysteria2 mgmt (monitoring)',
-                               'caddy HTTP': 'caddy HTTP панель',
+                old_comment = {'caddy HTTP': 'caddy HTTP панель',
                                'caddy HTTPS': 'caddy HTTPS панель'}.get(comment, comment)
                 old = ['allow', '59999/udp', 'comment', old_comment]
                 manual = ['allow', '59998/udp', 'comment', 'manual ' + old_comment]

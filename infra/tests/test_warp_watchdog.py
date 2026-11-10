@@ -7,7 +7,6 @@ import json
 import os
 import re
 from pathlib import Path
-import shlex
 import subprocess
 import tempfile
 import unittest
@@ -220,43 +219,10 @@ class TestWarpWatchdog(unittest.TestCase):
 
 
 class TestWarpInstall(unittest.TestCase):
-    def test_stage_install_repeat_and_remove(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        directory = Path(temporary.name)
-        source = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
-        # On the old stage this is an empty block, so the assertion below
-        # demonstrates that no watchdog was installed (independent of imports).
-        start = source.index('EOF\n', source.index('cat > /etc/systemd/system/sing-box.service')) + 4
-        block = source[start:source.index('systemctl daemon-reload')]
-        paths = ('/etc/systemd/system', '/usr/local/bin', '/tmp/anysda')
-        for path in paths:
-            (directory / path.lstrip('/')).mkdir(parents=True)
-            block = block.replace(path, str(directory / path.lstrip('/')))
-        fixture = directory / 'vpn2'
-        # The real enabled/config detection is covered above. This executable
-        # fixture tests the stage's systemctl/file lifecycle without root.
-        fixture.write_text('#!/bin/sh\nexit "${PROBE_DISABLED:-0}"\n')
-        fixture.chmod(0o755)
-        block = block.replace(watchdog_src.VENV_VPN2, str(fixture))
-        calls = directory / 'calls'
-        script = '\n'.join(['set -euo pipefail',
-                            f'systemctl() {{ echo "$*" >> {shlex.quote(str(calls))}; }}',
-                            block])
-        service = directory / 'etc/systemd/system/anysda-warp-watchdog.service'
-        timer = service.with_suffix('.timer')
-        for _ in range(2):
-            subprocess.run(['bash', '-c', script], check=True, capture_output=True)
-            self.assertTrue(service.exists(), '10-foreign must install WARP recovery service')
-            self.assertIn('TimeoutStartSec=45', service.read_text())
-            self.assertIn('OnUnitInactiveSec=30', timer.read_text())
-        for _ in range(2):
-            subprocess.run(['bash', '-c', 'export PROBE_DISABLED=1\n' + script],
-                           check=True, capture_output=True)
-            self.assertFalse(service.exists())
-            self.assertFalse(timer.exists())
-            self.assertFalse((directory / 'usr/local/bin/anysda-warp-watchdog').exists())
-        self.assertEqual(calls.read_text().count('disable --now anysda-warp-watchdog.timer'), 2)
+    def test_role_units_bound_probe_and_period(self):
+        files = ROOT / 'infra/ansible/roles/exit/files'
+        self.assertIn('TimeoutStartSec=45', (files / 'anysda-warp-watchdog.service').read_text())
+        self.assertIn('OnUnitInactiveSec=30', (files / 'anysda-warp-watchdog.timer').read_text())
 
 
 if __name__ == '__main__':

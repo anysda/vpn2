@@ -164,6 +164,15 @@ def test_restart_if_changed(tmp_path):
     (tmp_path / 'conf').write_text('2')
     assert host.restart_if_changed('x', [tmp_path / 'conf'], applied=applied, run=run) is True
     assert calls.count('restart') == 2
+    # Экзит держит отпечаток sing-box в прежнем файле стадии: первый прогон роли
+    # на живом узле не рвёт туннели лишним перезапуском.
+    record = tmp_path / 'sing-box' / 'applied.sha256'
+    record.parent.mkdir()
+    record.write_text(hashlib.sha256(b'2').hexdigest() + '\n')
+    assert host.restart_if_changed('x', [tmp_path / 'conf'], record=record, run=run) is False
+    (tmp_path / 'conf').write_text('3')
+    assert host.restart_if_changed('x', [tmp_path / 'conf'], record=record, run=run) is True
+    assert record.read_text() == hashlib.sha256(b'3').hexdigest() + '\n'
 
 
 class Sshd:

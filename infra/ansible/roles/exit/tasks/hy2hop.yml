@@ -1,0 +1,70 @@
+---
+# Файл таблицы грузит свой oneshot при загрузке и drop-in nftables.service
+# после его start и reload.
+- name: Служба смены портов hy2 остановлена
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl disable --now anysda-hy2hop.service
+    removes: /etc/systemd/system/anysda-hy2hop.service
+  when: not exit_hop_enabled
+  failed_when: false
+
+- name: Таблица перенаправления диапазонов hy2
+  ansible.builtin.command:
+    argv: "{{ exit_host + ['exit-hy2hop'] }}"
+  environment: "{{ exit_env }}"
+  register: exit_step
+  changed_when: "'vpn2: changed' in exit_step.stdout"
+
+- name: Каталог drop-in nftables
+  ansible.builtin.file:
+    path: /etc/systemd/system/nftables.service.d
+    state: directory
+    mode: '0755'
+  when: exit_hop_enabled
+
+- name: Юнит смены портов hy2 и drop-in nftables
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: '0644'
+  loop:
+    - {src: anysda-hy2hop.service, dest: /etc/systemd/system/anysda-hy2hop.service}
+    - {src: 90-anysda-hy2hop.conf, dest: /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf}
+  when: exit_hop_enabled
+
+- name: Ресурсы юнита смены портов hy2
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-hy2hop; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ exit_tmp }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  when: exit_hop_enabled
+  register: exit_step
+  changed_when: "'changed=1' in exit_step.stdout"
+
+- name: Служба смены портов hy2 включена
+  ansible.builtin.systemd_service:
+    name: anysda-hy2hop.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: exit_hop_enabled
+
+- name: Юнит смены портов hy2 и drop-in nftables сняты
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/anysda-hy2hop.service
+    - /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
+  when: not exit_hop_enabled
+
+- name: Systemd перечитал юниты
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: not exit_hop_enabled

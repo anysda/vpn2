@@ -1,0 +1,14 @@
+[Unit]
+Description=Recover stalled WARP on the sing-box exit
+After=network-online.target sing-box.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/anysda-warp-watchdog
+TimeoutStartSec=45
+StateDirectory=anysda-warp-watchdog
+StateDirectoryMode=0700
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=anysda-warp-watchdog

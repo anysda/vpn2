@@ -146,22 +146,6 @@ release_complete
 '''], capture_output=True, text=True, timeout=10)
         self.assertEqual(run.returncode, 0, run.stderr)
 
-    def test_corrupt_wgcf_never_replaces_working_executable(self):
-        source = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
-        block = "WGCF_VER=" + source.split('WGCF_VER=', 1)[1].split('\ncd /etc/anysda', 1)[0]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            previous = root / 'wgcf'
-            previous.write_bytes(b'previous verified executable')
-            script = '''
-release_download() { printf corrupted > "$2"; }
-curl() { while [[ "$1" != -o ]]; do shift; done; printf corrupted > "$2"; }
-''' + block.replace('/usr/local/bin/', directory + '/')
-            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(result.returncode, 0, 'corrupt wgcf was installed')
-            self.assertEqual(previous.read_bytes(), b'previous verified executable')
-            self.assertEqual(list(root.glob('.wgcf.*')), [])
-
     def test_preflight_does_not_wait_for_lifetime_lock(self):
         source = (ROOT / 'infra/deploy.sh').read_text()
         body = source.split('preflight_ssh() {', 1)[1].split('\n}', 1)[0]

@@ -11,7 +11,7 @@ import watchdog_src
 @unittest.skipUnless(SB, 'set SING_BOX_BIN to sing-box 1.12.25')
 class ConfigPublishTests(unittest.TestCase):
     def test_invalid_generation_keeps_previous_config(self):
-        for stage in ('20-ru-router', '10-foreign'):
+        for stage in ('20-ru-router',):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
                 directory = Path(tmp)
                 config = directory / ('config-base.json' if stage.startswith('20') else 'config.json')
@@ -23,7 +23,7 @@ class ConfigPublishTests(unittest.TestCase):
                 self.assertFalse(list(directory.glob('.config*')))
 
     def test_valid_config_is_published_with_private_permissions(self):
-        for stage in ('20-ru-router', '10-foreign'):
+        for stage in ('20-ru-router',):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
                 directory = Path(tmp)
                 body = '{"outbounds":[{"type":"direct","tag":"direct"}]}'

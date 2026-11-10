@@ -150,17 +150,19 @@ class FakeGitHub:
 
 def components():
     """name -> (releases/download path, payload, build(work, lib) -> (script, installed file))."""
-    wgcf_ver = pinned(STAGES / '10-foreign.sh', 'WGCF_VER')
+    exit_defaults = (ROOT / 'infra/ansible/roles/exit/defaults/main.yml').read_text()
+    wgcf_ver = re.search(r"^exit_wgcf_version: '([^']+)'", exit_defaults, re.M)[1]
+    wgcf_sha = re.search(r'^exit_wgcf_sha256: ([0-9a-f]{64})$', exit_defaults, re.M)[1]
     agh_ver = pinned(STAGES / '22-adguard.sh', 'AGH_VER')
     caddy_ver = pinned(LIB / 'anysda-svc.sh', 'CADDY_VER')
     sb_ver = pinned(LIB / 'install-sing-box.sh', 'SB_VER')
     sb_binary = f'#!/bin/sh\necho "sing-box version {sb_ver}"\n'.encode()
 
     def wgcf(work, lib):
-        source = (STAGES / '10-foreign.sh').read_text()
-        block = 'WGCF_VER=' + source.split('WGCF_VER=', 1)[1].split('\ncd /etc/anysda', 1)[0]
-        return f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\n' + \
-            block.replace('/usr/local/bin/', f'{work}/'), work / 'wgcf'
+        # Роль exit зовёт release.py теми же аргументами, что release_download.
+        url = f'https://github.com/ViRb3/wgcf/releases/download/v{wgcf_ver}/wgcf_{wgcf_ver}_linux_amd64'
+        return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\nWGCF_SHA256=\'{wgcf_sha}\'\n'
+                f'release_download wgcf {shlex.quote(str(work / "wgcf"))} {url} "$WGCF_SHA256"\n'), work / 'wgcf'
 
     def adguard(work, lib):
         source = (STAGES / '22-adguard.sh').read_text()

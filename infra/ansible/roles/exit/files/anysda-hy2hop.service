@@ -1,0 +1,13 @@
+[Unit]
+Description=anysda-vpn2 — redirect диапазонов смены портов hysteria2
+After=network-pre.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables-hy2hop.conf
+ExecReload=/usr/sbin/nft -f /etc/nftables-hy2hop.conf
+ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet vpn2_hy2hop 2>/dev/null; true'
+
+[Install]
+WantedBy=multi-user.target

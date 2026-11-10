@@ -13,7 +13,7 @@ VERSIONS = INFRA / 'versions.yml'
 # ключ -> (файл со стадией, имя переменной версии)
 STAGE_PINS = {
     'sing_box': ('lib/install-sing-box.sh', 'SB_VER'),
-    'wgcf': ('scripts/10-foreign.sh', 'WGCF_VER'),
+    'wgcf': ('ansible/roles/exit/defaults/main.yml', 'exit_wgcf_version'),
     'adguard': ('scripts/22-adguard.sh', 'AGH_VER'),
     'caddy': ('lib/anysda-svc.sh', 'CADDY_VER'),
     'victoriametrics': ('scripts/25-monitoring.sh', 'VM_VER'),
@@ -22,7 +22,7 @@ STAGE_PINS = {
 
 def stage_version(relpath, var):
     text = (INFRA / relpath).read_text(encoding='utf-8')
-    found = re.search(rf"^(?:readonly )?{var}='([^']+)'", text, re.M)
+    found = re.search(rf"^(?:readonly )?{var}(?:=|: )'([^']+)'", text, re.M)
     assert found, f'{relpath}: нет присваивания {var}'
     return found.group(1)
 

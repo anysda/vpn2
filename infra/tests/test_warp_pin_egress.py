@@ -12,8 +12,6 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -98,77 +96,6 @@ class WarpPinWatchdogTests(unittest.TestCase):
     def test_dead_direct_leg_still_falls_back(self):
         targets = self.dead_leg_puts(f'pin-{AA_DIRECT}', {BB_DIRECT: 120, BB_WARP: 160})
         self.assertEqual(targets[-1:], ['foreign-best'])
-
-
-class WarpExitProfileTests(unittest.TestCase):
-    """Блок WARP 10-foreign.sh на фейковом wgcf: живой аккаунт, сбой generate."""
-
-    def run_block(self, state, generate_fails=False):
-        source = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
-        start = source.index('cd /etc/anysda\n')
-        end = source.index('\n# ----', source.index('wgcf: placeholder', start))
-        root = state.parents[1]
-        wgcf = root / 'wgcf'
-        wgcf.write_text('''#!/bin/sh
-echo "$1" >> "$WGCF_CALLS"
-case "$1" in
-  generate)
-    if [ "${WGCF_GENERATE_FAIL:-0}" = 1 ]; then
-      echo 'failed to update bound device: Post "https://api.cloudflareclient.com": i/o timeout' >&2
-      exit 1
-    fi
-    printf '[Interface]\\nPrivateKey = live-key\\nAddress = 172.16.0.2/32, fd00::2/128\\n[Peer]\\nPublicKey = peer-key\\nEndpoint = engage.cloudflareclient.com:2408\\n' > wgcf-profile.conf
-    ;;
-  register) exit 1 ;;
-esac
-''')
-        wgcf.chmod(0o755)
-        curl = root / 'curl'
-        curl.write_text('#!/bin/sh\ncat >/dev/null\necho \'{"config": {"client_id": "AQID"}}\'\n')
-        curl.chmod(0o755)
-        calls = root / 'calls'
-        calls.unlink(missing_ok=True)
-        block = source[start:end].replace('/etc/anysda', str(state)).replace(
-            '/usr/local/bin/wgcf', str(wgcf))
-        script = ('HOST_TAG=test\n' + block +
-                  '\necho "RESULT ok=$WGCF_OK key=$WGCF_PRIVKEY peer=$WGCF_PEER_ENDPOINT_HOST"\n')
-        result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=state, text=True,
-                                capture_output=True,
-                                env=dict(os.environ, WGCF_CALLS=str(calls),
-                                         WGCF_GENERATE_FAIL=str(int(generate_fails)),
-                                         PATH=f'{root}:{os.environ["PATH"]}'))
-        line = next((x for x in result.stdout.splitlines() if x.startswith('RESULT ')), '')
-        return result, dict(kv.split('=', 1) for kv in line.split()[1:]), calls.read_text().split()
-
-    def state_dir(self, temporary):
-        state = Path(temporary) / 'etc/anysda'
-        state.mkdir(parents=True)
-        (state / 'wgcf-account.toml').write_text(
-            'access_token = "token"\ndevice_id = "device"\nkey_type = "curve25519"\n')
-        return state
-
-    def test_generate_failure_with_live_account_is_not_silent_placeholder(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            state = self.state_dir(temporary)
-            first, values, _ = self.run_block(state)
-            self.assertEqual((first.returncode, values.get('ok')), (0, '1'), first.stderr)
-            result, values, calls = self.run_block(state, generate_fails=True)
-        self.assertEqual(calls, ['generate'])
-        self.assertFalse(result.returncode == 0 and values.get('peer') == '127.0.0.1',
-                         'рабочий профиль прошлого прогона заменён заглушкой 127.0.0.1: '
-                         'WARP-нога мертва, сторож экзита снят, «-warp» уходит в direct')
-
-    def test_redeploy_with_live_account_keeps_warp(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            state = self.state_dir(temporary)
-            runs = [self.run_block(state) for _ in range(2)]
-            account = (state / 'wgcf-account.toml').read_text()
-        for result, values, calls in runs:
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(calls, ['generate'])
-            self.assertEqual(values, {'ok': '1', 'key': 'live-key', 'peer': 'engage.cloudflareclient.com'})
-            self.assertNotIn('⚠', result.stdout)
-        self.assertIn('device_id = "device"', account)
 
 
 if __name__ == '__main__':

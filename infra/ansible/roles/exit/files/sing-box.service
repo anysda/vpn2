@@ -1,0 +1,23 @@
+[Unit]
+Description=sing-box (anysda-vpn foreign exit)
+After=network-online.target nss-lookup.target
+Wants=network-online.target
+# StartLimitIntervalSec=0 — НИКОГДА не сдаваться: systemd по умолчанию
+# перестаёт рестартить после 5 крашей за 10с. Для экзита это смерти подобно —
+# отключаем лимит, sing-box рестартится всегда (RestartSec=5s пейсит).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
+# Restart=always — exit поднимается после любой остановки, не только краша.
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+# Need NET_ADMIN to manage WireGuard userspace outbound + bind low ports
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

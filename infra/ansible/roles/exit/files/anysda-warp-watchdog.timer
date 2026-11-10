@@ -1,0 +1,11 @@
+[Unit]
+Description=Check exit WARP every 30 seconds
+
+[Timer]
+OnBootSec=30
+OnUnitInactiveSec=30
+AccuracySec=1
+Unit=anysda-warp-watchdog.service
+
+[Install]
+WantedBy=timers.target

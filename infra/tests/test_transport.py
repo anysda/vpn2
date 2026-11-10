@@ -2,9 +2,9 @@
 
 import json
 import os
-import shlex
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -13,6 +13,8 @@ import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import exitnode  # noqa: E402
 
 
 class QueueTests(unittest.TestCase):
@@ -113,26 +115,24 @@ python3 "$2/infra/vpn2/src/vpn2/router/config.py"'''
                         'tag'].removeprefix('transport-') in ('hy2-us-direct', 'hy2-us-warp') else {}
                     self.assertEqual(actual, expected, out['tag'])
 
-                stage = (ROOT / 'infra/scripts/10-foreign.sh').read_text()
-                exports = stage[stage.index('export HY2_UP_MBPS='):
-                                stage.index('SB_CONFIG_TMP=')]
-                exports = exports.replace('/opt/vpn2/venv/bin/vpn2 watchdog hy2',
-                                          shlex.join(watchdog_src.command('hy2')))
-                env = dict(os.environ, HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',
-                           HY2_PWD_MGMT='test-mgmt', HY2_OBFS_PWD='test-obfs', CLASH_SECRET='test',
-                           WGCF_PEER_ENDPOINT_HOST='192.0.2.20', WGCF_PEER_ENDPOINT_PORT='2408',
-                           WGCF_LOCAL_IPV4='192.0.2.21', WGCF_RESERVED_JSON='[0,0,0]',
-                           WGCF_PRIVKEY='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-                           WGCF_PEER_PUBKEY='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')
+                template = (ROOT / 'infra/configs/sing-box-server.json.tpl').read_text()
+                values = dict(HY2_PWD_DIRECT='test-direct', HY2_PWD_WARP='test-warp',
+                              HY2_PWD_MGMT='test-mgmt', HY2_OBFS_PWD='test-obfs', CLASH_SECRET='test',
+                              REALITY_PRIVKEY='test', REALITY_SHORT_ID='abcd',
+                              REALITY_SNI='www.apple.com', REALITY_PORT='4443',
+                              **exitnode.WARP_PLACEHOLDER)
+                names = ('HY2_DIRECT_PORT', 'HY2_WARP_PORT', 'HY2_MGMT_PORT', 'HY2_UP_MBPS', 'HY2_DOWN_MBPS')
                 for tag in ('us', 'gb'):
-                    script = '''source "$1/infra/envs/all.env"
-source "$1/infra/envs/$3.env"
-export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT
-''' + exports + '\nenvsubst < "$2/infra/configs/sing-box-server.json.tpl"'
-                    result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, str(ROOT), tag],
-                                            env=env, check=True, capture_output=True, text=True)
-                    server = json.loads(result.stdout)
-                    for inbound in server['inbounds']:
+                    script = ('source "$1/infra/envs/all.env"\nsource "$1/infra/envs/$2.env"\n'
+                              + ''.join(f'echo "${{{name}:-}}"\n' for name in names))
+                    result = subprocess.run(['bash', '-eu', '-c', script, 'test', tmp, tag],
+                                            check=True, capture_output=True, text=True)
+                    env = dict(zip(names, result.stdout.split('\n')))
+                    server = json.loads(exitnode.render_config(
+                        template, {**values, **env, 'HY2_BANDWIDTH_FIELDS': exitnode.bandwidth_fragment(env)}))
+                    hy2 = [inbound for inbound in server['inbounds'] if inbound['type'] == 'hysteria2']
+                    self.assertEqual(len(hy2), 3)
+                    for inbound in hy2:
                         actual = {k: inbound[k] for k in ('up_mbps', 'down_mbps') if k in inbound}
                         expected = {'up_mbps': 240, 'down_mbps': 120} if settings and tag == 'us' and (
                             inbound['tag'] in ('hy2-direct-in', 'hy2-warp-in')) else {}

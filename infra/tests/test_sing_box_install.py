@@ -15,7 +15,7 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-STAGES = ('10-foreign', '20-ru-router')
+STAGES = ('20-ru-router',)
 VERSION = '1.12.25'
 
 

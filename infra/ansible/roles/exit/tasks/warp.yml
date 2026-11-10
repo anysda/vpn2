@@ -1,0 +1,50 @@
+---
+# Сторож читает адрес пира WARP из конфига sing-box: placeholder на loopback
+# значит, что WARP на узле нет, и сторож с таймером снимаются.
+- name: Нужен ли сторож WARP
+  ansible.builtin.command:
+    argv: [/usr/bin/python3, -B, "{{ exit_tmp }}/warp-watchdog.py", --enabled]
+  register: exit_warp
+  changed_when: false
+  failed_when: false
+
+- name: Признак сторожа WARP
+  ansible.builtin.set_fact:
+    exit_warp_enabled: "{{ exit_warp.rc == 0 }}"
+
+- name: Сторож WARP и его таймер
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {src: "{{ exit_infra }}/lib/warp-watchdog.py", dest: /usr/local/bin/anysda-warp-watchdog, mode: '0755'}
+    - {src: anysda-warp-watchdog.service, dest: /etc/systemd/system/anysda-warp-watchdog.service, mode: '0644'}
+    - {src: anysda-warp-watchdog.timer, dest: /etc/systemd/system/anysda-warp-watchdog.timer, mode: '0644'}
+  when: exit_warp_enabled
+
+# Состояние сторожа не удаляется и без WARP: повторная установка не должна
+# обнулять его лимиты перезапусков.
+- name: Таймер сторожа WARP остановлен
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl disable --now anysda-warp-watchdog.timer
+    removes: /etc/systemd/system/anysda-warp-watchdog.timer
+  when: not exit_warp_enabled
+  failed_when: false
+
+- name: Служба сторожа WARP остановлена
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl stop anysda-warp-watchdog.service
+    removes: /etc/systemd/system/anysda-warp-watchdog.service
+  when: not exit_warp_enabled
+  failed_when: false
+
+- name: Сторож WARP снят
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/anysda-warp-watchdog.timer
+    - /etc/systemd/system/anysda-warp-watchdog.service
+    - /usr/local/bin/anysda-warp-watchdog
+  when: not exit_warp_enabled

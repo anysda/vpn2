@@ -1,0 +1,6 @@
+---
+- name: Экзит - sing-box, WARP и каналы до entry
+  hosts: exits
+  tags: [10-foreign]
+  roles:
+    - exit

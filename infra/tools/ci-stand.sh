@@ -12,6 +12,7 @@
 #   sudo infra/tools/ci-stand.sh deploy-upgrade <образ> <тег>     поверх выпуска - дерево ветки
 #   sudo infra/tools/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
+#   sudo infra/tools/ci-stand.sh ansible-ping           ansible с entry достаёт все узлы
 #   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
 #   sudo infra/tools/ci-stand.sh snapshot <каталог> [префикс]  слепок обоих узлов после деплоя
 #   sudo infra/tools/ci-stand.sh deploy-again <каталог> повторный ./deploy.sh и слепок snapshot-again
@@ -660,6 +661,18 @@ cmd_verify() {
   return "$rc"
 }
 
+# ansible с entry достаёт все узлы стенда: строк SUCCESS не меньше, чем узлов.
+cmd_ansible_ping() {
+  local rc=0 ok want=${#NODES[@]}
+  entry_run ansible-ping 'ANSIBLE_CONFIG=infra/ansible/ansible.cfg /opt/vpn2/venv/bin/ansible all -m ping -o' || rc=$?
+  log "ansible all -m ping: код $rc"
+  (( rc == 0 )) || return "$rc"
+  ok=$(ssh_node "$ENTRY" "grep -c SUCCESS /root/ansible-ping.log" || true)
+  [[ "$ok" =~ ^[0-9]+$ ]] || ok=0
+  (( ok >= want )) || die "ansible ping: SUCCESS у $ok узлов из $want"
+  log "ansible ping: SUCCESS у $ok узлов из $want"
+}
+
 # Сколько держать обрыв. Сторож проверяет каналы раз в INTERVAL=2 с, мёртвым
 # канал считает после DEAD_AFTER промахов, sing-box перезапускает после
 # RESTART_AFTER_CHECKS проверок: любой исход виден за ~20 с.
@@ -826,6 +839,8 @@ cmd_deploy_again() {
   entry_run deploy-again './deploy.sh --development' || rc=$?
   log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
+  ssh_node "$ENTRY" "grep -qF 'ansible: пины те же' /root/deploy-again.log" \
+    || die 'повторный деплой переустановил venv с ansible'
   cmd_snapshot "$out" snapshot-again
 }
 
@@ -1110,6 +1125,7 @@ case "${1:-}" in
   deploy-upgrade) cmd_deploy_upgrade "${@:2}" ;;
   deploy-udp) cmd_deploy_udp ;;
   deploy-again) cmd_deploy_again "${@:2}" ;;
+  ansible-ping) cmd_ansible_ping ;;
   verify) cmd_verify "${@:2}" ;;
   udp-cut) cmd_udp_cut "${@:2}" ;;
   snapshot) cmd_snapshot "${@:2}" ;;
@@ -1119,5 +1135,5 @@ case "${1:-}" in
   restore-check) cmd_restore_check "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

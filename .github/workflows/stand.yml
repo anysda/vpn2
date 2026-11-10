@@ -102,6 +102,10 @@ jobs:
       - name: deploy
         run: sudo infra/tools/ci-stand.sh deploy vpn2-stand/panel:${{ github.sha }}
 
+      # ansible с entry достаёт все узлы стенда.
+      - name: ansible ping
+        run: sudo infra/tools/ci-stand.sh ansible-ping
+
       # Отрицательный контроль: 99-verify при остановленном OpenVPN обязан упасть.
       - name: verify
         if: ${{ inputs.stop_openvpn && !cancelled() && steps.up.outcome == 'success' }}

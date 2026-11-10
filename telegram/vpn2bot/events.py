@@ -72,7 +72,7 @@ async def handle_health_waiting(_request: web.Request) -> web.Response:
 
 async def handle_health_invalid_token(_request: web.Request) -> web.Response:
     # Пауза после отвергнутого токена: процесс жив и ждёт новый токен из панели.
-    return web.json_response({'ok': True, 'invalid_token': True, 'username': ''})
+    return web.json_response({'ok': True, 'invalid_token': True, 'waiting_token': True, 'username': ''})
 
 
 async def handle_event(request: web.Request) -> web.Response:

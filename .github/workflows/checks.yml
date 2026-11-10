@@ -381,11 +381,6 @@ jobs:
           version=$(node -p 'require("@playwright/test/package.json").version')
           docker image inspect "mcr.microsoft.com/playwright:v${version}-noble" >/dev/null \
             || { cat "$RUNNER_TEMP/browser-pull.log"; exit 1; }
-      - name: среда прогона
-        if: steps.paths.outputs.run == 'true'
-        run: |
-          version=$(node -p 'require("@playwright/test/package.json").version')
-          echo "ENV e2e cpu=\"$(lscpu | sed -n 's/^Model name:[[:space:]]*//p')\" kernel=$(uname -r) image=${ImageVersion:-} chromium=\"$(docker run --rm "mcr.microsoft.com/playwright:v${version}-noble" bash -c '"$(find /ms-playwright -type f -name chrome -path "*chromium-*" | head -1)" --version' 2>/dev/null)\""
       - name: сквозные тесты на собранном образе при смене сети хоста
         if: steps.paths.outputs.run == 'true'
         env:

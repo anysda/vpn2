@@ -1,0 +1,86 @@
+name: shots
+
+# Эталонные снимки панели: ручная сверка «до и после», не блокирующая проверка
+# (края глифов плавают в 3 прогонах из 27, VPN2-797). Запуск: кнопкой с веткой
+# на входе или пушем в ветку shots/<имя>.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: ветка для прогона снимков
+        required: true
+        default: dev
+  push:
+    branches: ['shots/**']
+
+permissions:
+  contents: read
+
+jobs:
+  shots:
+    name: снимки панели
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch || github.ref }}
+      - name: сборка образов панели в фоне
+        run: |
+          (
+            rc=0
+            docker build --progress=plain -t vpn2-panel:e2e . \
+              && docker build --progress=plain --build-arg PANEL_IMAGE=vpn2-panel:e2e \
+                -f e2e/Dockerfile.vpn -t vpn2-panel:e2e-vpn e2e || rc=$?
+            echo "$rc" > "$RUNNER_TEMP/build.rc"
+          ) > "$RUNNER_TEMP/build.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/build.pid"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: загрузка браузерного образа, в фоне на время сборки панели
+        run: |
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          nohup docker pull -q "mcr.microsoft.com/playwright:v${version}-noble" > "$RUNNER_TEMP/browser-pull.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/browser-pull.pid"
+      - name: сборка панели
+        timeout-minutes: 10
+        run: |
+          pid=$(cat "$RUNNER_TEMP/build.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          cat "$RUNNER_TEMP/build.log"
+          exit "$(cat "$RUNNER_TEMP/build.rc" 2>/dev/null || echo 1)"
+      - name: браузерный образ загружен, среда прогона
+        timeout-minutes: 5
+        run: |
+          pid=$(cat "$RUNNER_TEMP/browser-pull.pid")
+          while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          version=$(node -p 'require("@playwright/test/package.json").version')
+          docker image inspect "mcr.microsoft.com/playwright:v${version}-noble" >/dev/null \
+            || { cat "$RUNNER_TEMP/browser-pull.log"; exit 1; }
+          echo "ENV e2e cpu=\"$(lscpu | sed -n 's/^Model name:[[:space:]]*//p')\" kernel=$(uname -r) image=${ImageVersion:-} chromium=\"$(docker run --rm "mcr.microsoft.com/playwright:v${version}-noble" bash -c '"$(find /ms-playwright -type f -name chrome -path "*chromium-*" | head -1)" --version' 2>/dev/null)\""
+      - name: снимочный спек при смене сети хоста
+        env:
+          E2E_IP: sudo -n ip
+          E2E_SKIP_BUILD: '1'
+          E2E_SKIP_IMAGE_CHECKS: '1'
+          E2E_SHOTS: '1'
+        run: python3 e2e/with-network-churn.py bash e2e/run-local.sh e2e/screenshots.spec.ts
+      - name: отчёт и трейсы
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: shots-results
+          path: |
+            app/playwright-report
+            app/test-results
+          retention-days: 14

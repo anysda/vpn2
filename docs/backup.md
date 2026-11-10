@@ -92,7 +92,10 @@ backup:
 Passphrase генерирует `setup.sh` и пишет в `config.yaml`. Стадия
 `26-backup` ставит `age`, `expect`, `sqlite3` (и aws-cli v2 при `backend:
 s3`), кладёт скрипты `/usr/local/bin/anysda-{backup,restore,backup-list}.sh`,
-рендерит `/etc/anysda/backup.env` и включает таймер.
+рендерит `/etc/anysda/backup.env` и включает таймер. Сами скрипты - короткий
+запуск команд `vpn2 backup`, `vpn2 restore` и `vpn2 backup-list` из клона, с
+которого шёл деплой (путь к нему стадия пишет в `/etc/anysda/source-root`);
+архивы прежних версий читаются как раньше.
 
 ## config.yaml - мастер-секрет
 

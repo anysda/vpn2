@@ -258,6 +258,11 @@ apt_proxy_up() {
   mkdir -p "$APT_CACHE"
   printf 'CacheDir: %s\nBindAddress: %s\nPort: 3142\n' "$APT_CACHE" "$NET.1" \
     > /etc/apt-cacher-ng/zz-vpn2-ci.conf
+  # Запросы ВМ к archive.ubuntu.com прокси шлёт на бэкенды uburep. Без этого
+  # файла их угадывает postinst по региону раннера (mirrors.ubuntu.com), и на
+  # тёплом кэше перепроверка InRelease висит на чужом зеркале: прогрев 205 с,
+  # второй узел остаётся без Packages и не находит wireguard.
+  echo 'http://archive.ubuntu.com/ubuntu/' > /etc/apt-cacher-ng/backends_ubuntu
   chown -R apt-cacher-ng: "$APT_CACHE"
   systemctl restart apt-cacher-ng
   local deadline=$((SECONDS + 30))

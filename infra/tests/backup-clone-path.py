@@ -3,16 +3,14 @@
 
 VPN2_BACKUP_TEST=1 python3 infra/tests/backup-clone-path.py /path/to/repository
 Только в одноразовом контейнере, как backup-restore.py (его фикстура общая).
-Клон отмечает настоящий run_stage_on_host 26-backup ru из deploy.sh: ssh_exec и
-push выполняются здесь же, как деплой с самой entry, и стадия ставит restore и
-backup в /usr/local/bin, откуда путь клона не виден.
+Команды стоят в /usr/local/bin, откуда путь клона не виден: его даёт отметка
+/etc/anysda/source-root, которую пишет роль backup.
 """
 
 import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -29,12 +27,6 @@ OPT = Path('/opt/anysda-vpn2')
 CLONE = Path('/root/vpn2')
 STAGES = ('22-adguard', '30-frontend', '35-telegram', '99-verify')
 OUT = Path('/test-output')
-
-
-def deploy_functions():
-    """Все функции deploy.sh без его верхнего уровня (тот сразу запускает деплой)."""
-    text = (REPO / 'infra/deploy.sh').read_text()
-    return '\n'.join(re.findall(r'^[A-Za-z_][\w-]*\(\) \{\n.*?^\}$', text, re.M | re.S)) + '\n'
 
 
 def make_source(root):
@@ -79,35 +71,24 @@ class ClonePath(unittest.TestCase):
         # Фикстура кладёт исходники в /opt; каждый случай ставит их сам.
         shutil.rmtree(OPT)
 
+    def install(self, root):
+        """Команды и библиотеки узла - то же, что кладёт роль backup."""
+        for name in ('backup', 'restore', 'backup-list'):
+            target = Path(f'/usr/local/bin/anysda-{name}.sh')
+            shutil.copy(root / f'infra/lib/anysda-{name}.sh', target)
+            target.chmod(0o755)
+        Path('/usr/local/lib/anysda').mkdir(parents=True)
+        shutil.copy(root / 'infra/lib/anysda-svc.sh', '/usr/local/lib/anysda/anysda-svc.sh')
+        shutil.copy(root / 'app/shared/vpn-pools.json', '/usr/local/lib/anysda/vpn-pools.json')
+
     def deploy(self):
-        """Деплой из клона на этой же машине: стадия 26-backup через deploy.sh."""
-        script = deploy_functions() + f'''
-DEPLOY_ROOT={CLONE}/infra
-load_env() {{ :; }}
-log() {{ echo "$*"; }}
-ok() {{ echo "$*"; }}
-warn() {{ echo "$*" >&2; }}
-die() {{ echo "$*" >&2; exit 1; }}
-fw_guard_stage() {{ return 1; }}
-ssh_exec() {{ bash --norc -c "$1"; }}
-push() {{
-  local target=/tmp/anysda/${{2:-$(basename "$1")}}
-  mkdir -p /tmp/anysda && rm -rf "$target" && cp -a "$1" "$target"
-}}
-run_stage_on_host 26-backup ru
-'''
-        result = fixture.run('bash', '-euo', 'pipefail', '-c', script, cwd=CLONE, env=self.env)
-        self.assertEqual(result.returncode, 0, result.stdout)
+        """Деплой из клона: команды стоят, роль backup оставила отметку клона."""
+        self.install(CLONE)
+        fixture.write(Path('/etc/anysda/source-root'), f'{CLONE}\n')
 
     def legacy_install(self):
         """Старая установка: скрипты стоят, отметки клона нет."""
-        for name in ('backup', 'restore', 'backup-list'):
-            target = Path(f'/usr/local/bin/anysda-{name}.sh')
-            shutil.copy(OPT / f'infra/lib/anysda-{name}.sh', target)
-            target.chmod(0o755)
-        Path('/usr/local/lib/anysda').mkdir(parents=True)
-        shutil.copy(OPT / 'infra/lib/anysda-svc.sh', '/usr/local/lib/anysda/anysda-svc.sh')
-        shutil.copy(OPT / 'app/shared/vpn-pools.json', '/usr/local/lib/anysda/vpn-pools.json')
+        self.install(OPT)
 
     def manifest(self):
         result = fixture.run('/usr/local/bin/anysda-backup.sh', env=self.env)

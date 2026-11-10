@@ -1,0 +1,7 @@
+# Что повторный ./deploy.sh без изменений законно добавляет к слепку первой установки.
+# Формат тот же, что у ignore.yml; сверка сценария «повторный деплой» берёт оба файла.
+
+- {section: containers, name: anysda-vpn2-previous, field: '*', reason: повторный деплой пересоздаёт панель и оставляет прежний контейнер для отката}
+- {section: files, name: '/var/lib/vpn2-deploy/panel/*', field: '*', reason: копия конфигурации и схемы прежней панели для отката появляется со второго деплоя}
+- {section: files, name: /var/lib/anysda-vpn2/db.sqlite, field: sha256, reason: пересозданная панель пишет в базу при старте}
+- {section: containers, name: anysda-vpn2, field: env, reason: NUXT_PREVIOUS_NODE_HOSTS пуст при первой установке и заполняется со второго деплоя - из-за этого панель и пересоздаётся}

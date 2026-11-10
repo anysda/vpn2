@@ -4,6 +4,7 @@ from contextlib import closing, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from email import policy
 from email.parser import BytesParser
+import http.client
 import importlib
 import io
 import json
@@ -18,6 +19,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import types
 import unittest
+import urllib.request
 from unittest.mock import patch
 
 
@@ -430,7 +432,7 @@ class TelegramQueueTests(unittest.TestCase):
 
     def test_unknown_network_result_retries_without_secret_exception(self):
         self.enqueue()
-        with patch.object(tgqueue.request.OpenerDirector, 'open',
+        with patch.object(urllib.request.OpenerDirector, 'open',
                           side_effect=OSError('123:fixture-only private-panel-fixture')):
             self.assertEqual(self.tick(), 0)
         self.assertEqual(self.status()[0]['due'], NOW + 5)
@@ -454,8 +456,8 @@ class TelegramQueueTests(unittest.TestCase):
 
     def test_truncated_http_response_is_retried(self):
         self.enqueue()
-        with patch.object(tgqueue.request.OpenerDirector, 'open',
-                          side_effect=tgqueue.HTTPException('truncated response')):
+        with patch.object(urllib.request.OpenerDirector, 'open',
+                          side_effect=http.client.HTTPException('truncated response')):
             self.assertEqual(self.tick(), 0)
         self.assertEqual(self.status()[0]['state'], 'retry')
         self.assertEqual(self.tick(now=NOW + 5), 1)

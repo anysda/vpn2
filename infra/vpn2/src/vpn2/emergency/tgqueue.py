@@ -10,16 +10,16 @@ between the response and commit) can still cause a duplicate at Telegram.
 from contextlib import contextmanager
 from datetime import datetime
 import fcntl
-from http.client import HTTPException
 import importlib
 import json
-import math
 import os
 from pathlib import Path
 import sqlite3
 import time
-from urllib import error, parse, request
+from urllib import parse
 import uuid
+
+from .. import notify
 
 
 INITIAL = ('Основное VPN-подключение временно недоступно. Аварийный конфиг '
@@ -57,14 +57,6 @@ OUTAGE_BUTTON = 'Запустить сейчас'
 EVENTS = {'initial', 'leader_changed', 'recovered', 'return_cancelled', 'broadcast',
           'entry_reinstalled'}
 DEADLINE = '{deadline}'
-# Telegram refuses these for good (deleted chat, blocked bot, malformed
-# request): repeating them only spams the API, so the row ends with the reason.
-PERMANENT = {400, 403}
-# Fixed texts for known descriptions; the API wording itself is never stored.
-DESCRIPTIONS = {'chat not found': 'чат не найден',
-                'bot was blocked by the user': 'бот заблокирован пользователем',
-                'user is deactivated': 'пользователь удалён',
-                "bot can't initiate conversation with a user": 'пользователь не запускал бота'}
 
 
 def _snapshot(state_dir):
@@ -371,72 +363,13 @@ def informed(state_dir, emergency_id):
     return clients
 
 
-class _NoRedirect(request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa - urllib callback
-        del req, fp, code, msg, headers, newurl
-        return None
-
-
-# Built once: an opener per call grows the process for good (see lifecycle.PANEL_OPENER).
-OPENER = request.build_opener(_NoRedirect())
-
-
 def _send(token, chat, part, api_base, timeout, opener=None):
     return _call(token, chat, part, api_base, timeout, opener)[:4]
 
 
 def _call(token, chat, part, api_base, timeout, opener=None):
     """(ok, reason, retry_after, final, result) of one Bot API request."""
-    # Never include raw exceptions/responses in status: both can contain secrets.
-    endpoint = parse.urlsplit(api_base)
-    if (endpoint.scheme != 'https'
-            and not (endpoint.scheme == 'http' and endpoint.hostname in {'127.0.0.1', '::1'})):
-        raise ValueError('HTTPS Bot API required')
-    method = part['method']
-    if method in ('sendMessage', 'editMessageText'):
-        fields = {key: part[key] for key in ('message_id', 'reply_markup') if key in part}
-        body = json.dumps({'chat_id': chat, 'text': part['text'],
-                           'link_preview_options': {'is_disabled': True}, **fields}).encode()
-        content_type = 'application/json'
-    else:
-        boundary = uuid.uuid4().hex
-        fields = {'chat_id': str(chat), 'caption': part['caption']}
-        body = b''
-        for key, value in fields.items():
-            body += (f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"'
-                     f'\r\n\r\n{value}\r\n').encode()
-        body += (f'--{boundary}\r\nContent-Disposition: form-data; name="document"; '
-                 f'filename="{part["filename"]}"\r\nContent-Type: text/plain; '
-                 'charset=utf-8\r\n\r\n').encode()
-        body += part['document'].encode() + f'\r\n--{boundary}--\r\n'.encode()
-        content_type = f'multipart/form-data; boundary={boundary}'
-    req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/{method}',
-                          data=body, headers={'Content-Type': content_type})
-    try:
-        opener = opener or OPENER
-        try:
-            response = opener.open(req, timeout=timeout)
-        except error.HTTPError as exc:
-            response = exc
-        with response:
-            status = response.code
-            data = json.loads(response.read(65536))
-        if status == 200 and data.get('ok') is True:
-            return True, '', 0, False, data.get('result')
-        code = data.get('error_code', status)
-        if code == 429:
-            delay = float(data.get('parameters', {}).get('retry_after', 1))
-            if not math.isfinite(delay) or delay < 0:
-                delay = 1
-            return False, 'Telegram 429', max(1, delay), False, None
-        if not isinstance(code, int):
-            return False, 'ошибка Telegram', 0, False, None
-        description = str(data.get('description', '')).lower()
-        known = next((text for key, text in DESCRIPTIONS.items() if key in description), None)
-        return (False, f'Telegram {code}: {known}' if known else f'Telegram {code}', 0,
-                code in PERMANENT, None)
-    except (OSError, HTTPException, ValueError, TypeError, AttributeError):
-        return False, 'Telegram недоступен или ответ не подтверждён', 0, False, None
+    return tuple(notify.BotApi(token, api_base=api_base, timeout=timeout, opener=opener).call(chat, part))
 
 
 def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=None,
@@ -504,7 +437,6 @@ def run_once(state_dir, *, api_base='https://api.telegram.org', timeout=5, now=N
                         payload['text'] = payload['text'].replace(DEADLINE, _human(deadline))
                     chats.add(chat)
                     max_messages -= 1
-                    opener = opener or OPENER
                     ok, reason, retry_after, final = _send(token, chat, payload, api_base, timeout, opener)
                     with db:
                         if ok:
@@ -539,14 +471,9 @@ def reachable(state_dir, *, api_base='https://api.telegram.org', timeout=5):
     if not token:
         # Without a token nothing can go out anyway.
         return True
-    req = request.Request(f'{api_base.rstrip("/")}/bot{parse.quote(token, safe=":")}/getMe')
     try:
-        with OPENER.open(req, timeout=timeout):
-            return True
-    except error.HTTPError as exc:
-        exc.close()
-        return True
-    except (OSError, HTTPException, ValueError):
+        return notify.BotApi(token, api_base=api_base, timeout=timeout).reachable()
+    except ValueError:
         return False
 
 

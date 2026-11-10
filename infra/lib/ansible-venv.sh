@@ -154,14 +154,22 @@ run_play() {
   if [[ "$BASHPID" != "$$" ]]; then
     # Хосты идут субшеллами: фон родителя не наш потомок, wait его не дождётся.
     # Своя установка встаёт за его замком и при тех же пинах ничего не качает.
-    local VENV_LOG="$VENV_LOG.$BASHPID"
+    # Синхронно и без файла лога: успех молчит, неуспех показывает хвост.
+    local install_log
     _VENV_PID=
-    ansible_venv_start
+    install_log="$(mktemp)"
+    ansible_wheel_build
+    if ! ansible_venv_install >"$install_log" 2>&1; then
+      tail -n 20 "$install_log" >&2
+      rm -f "$install_log"
+      die "ansible: venv не установился"
+    fi
+    rm -f "$install_log"
   elif [[ ! -f "$VPN2_ROOT/venv/.vpn2-pins" && -z "$_VENV_PID" ]]; then
     ansible_venv_start
   fi
   ansible_venv_wait
-  log "[$stage → $host] плей ansible"
+  HOST_TAG="$host" log "[$stage → $host] starting"
   (
     set -o pipefail
     ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \

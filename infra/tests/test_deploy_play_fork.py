@@ -145,6 +145,30 @@ run_stage_on_host 42-x ru
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(), ['[nl]played'])
             self.assertEqual((root / 'calls').read_text().splitlines(), ['install'])
+            self.assertEqual(list((root / 'vpn2').glob('ansible-venv.log*')), [])
+            self.assertNotIn('пины те же', result.stdout + result.stderr)
+
+    def test_run_play_in_host_subshell_failed_install_dies_with_tail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = self.tree(directory, '42-x')
+            tmp = Path(directory) / 'tmp'
+            tmp.mkdir()
+            playbook = root / 'vpn2/venv/bin/ansible-playbook'
+            playbook.parent.mkdir(parents=True)
+            playbook.write_text('#!/bin/sh\necho played\n')
+            playbook.chmod(0o755)
+            script = (STUBS + fw_guard_stages()
+                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
+                      + 'ansible_wheel_build() { :; }\n'
+                      + 'ansible_venv_install() { echo pip-boom; return 1; }\n'
+                      + 'rc=0; ( run_play 42-x nl ) || rc=$?; echo "rc=$rc"\n')
+            result = bash(script, directory, {'VPN2_ROOT': str(root / 'vpn2'), 'TMPDIR': str(tmp)})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), ['rc=1'])
+            self.assertIn('pip-boom', result.stderr)
+            self.assertIn('die: ansible: venv не установился', result.stderr)
+            self.assertEqual(list(tmp.iterdir()), [], 'временный файл не удалён')
+            self.assertEqual(list((root / 'vpn2').glob('ansible-venv.log*')), [])
 
     def test_run_play_starts_venv_when_missing(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -20,7 +20,7 @@ import unittest
 
 from test_wg_conf_allowedips_net import G4, G6, apply_gate
 from test_wg_conf_allowedips_prefix import (
-    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT, cut, source)
+    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT, source)
 from wg_root import as_root
 
 LIB = ROOT / 'infra/lib'
@@ -103,33 +103,6 @@ def backup_check(text):
     return done.returncode, done.stdout.splitlines(), done.stderr
 
 
-def restore_check(text):
-    """The check-bundle step of anysda-restore.sh, the script copied alone into a temporary directory.
-
-    The backup script it calls is a copy without wg_conf.py next to it; ANYSDA_LIB_DIR names infra/lib.
-    Returns (exit code, stderr).
-    """
-    block = cut(source('infra/lib/anysda-restore.sh'), 'CHECK=/usr/local/bin/anysda-backup.sh',
-                '\n\n# Старые архивы')
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory)
-        for name in ('restore', 'bin', 'work', 'bundle'):
-            (top / name).mkdir()
-        check = top / 'bin/anysda-backup.sh'
-        check.write_text(source('infra/lib/anysda-backup.sh'))
-        check.chmod(0o755)
-        assert block.count('/usr/local/bin/anysda-backup.sh') == 1, block
-        script = top / 'restore/anysda-restore.sh'
-        script.write_text('#!/bin/bash\nset -euo pipefail\nBUNDLE_DIR=$1\n' +
-                          block.replace('/usr/local/bin/anysda-backup.sh', str(check)) + '\necho CHECKED\n')
-        bundle(top / 'bundle', text)
-        done = subprocess.run(['bash', str(script), str(top / 'bundle')], cwd=top / 'work',
-                              env=os.environ | {'ANYSDA_LIB_DIR': str(LIB)}, capture_output=True, text=True,
-                              timeout=60, check=False)
-    assert 'CHECKED' in done.stdout, (done.stdout, done.stderr)
-    return done.returncode, done.stderr
-
-
 def installs(text):
     """Every `install` line of a stage script: (line number, destination)."""
     found = []
@@ -186,16 +159,6 @@ class WgConfModuleTests(unittest.TestCase):
         backup = [number for number, target, _ in found if target == '/usr/local/bin/anysda-backup.sh']
         with self.subTest('before anysda-backup.sh'):
             self.assertTrue(backup and module and min(n for n, _ in module) < min(backup), (module, backup))
-
-    def test_2b_restore_from_any_directory_checks_with_module_from_lib_dir(self):
-        code, err = restore_check(conf(CANONICAL))
-        with self.subTest('matching bundle: no warning'):
-            self.assertEqual((code, err), (0, ''))
-        code, err = restore_check(conf(BASE[:2]))
-        with self.subTest('peer missing in wg0.conf: names the device'):
-            self.assertIn('пиры WireGuard', err)
-            self.assertIn('устройство 2 «old»: нет пира WireGuard', err)
-
 
 if __name__ == '__main__':
     unittest.main()

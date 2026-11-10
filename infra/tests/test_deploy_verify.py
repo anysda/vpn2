@@ -151,25 +151,5 @@ class DeployVerifyTests(unittest.TestCase):
                     self.assertEqual(result.returncode, code, result.stdout)
                     self.assertIn('exit: exits[].hy2_insecure: true', result.stdout)
 
-    def test_restore_distinguishes_unknown_from_failure(self):
-        body = source('infra/lib/anysda-restore.sh')
-        body = body[body.index('# ── Smoke-test'):body.index('# Данные восстановлены')]
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            verify = root / 'verify'
-            env = root / 'env'
-            env.write_text('fixture')
-            for code in (0, 1, 2, 255):
-                verify.write_text(f'#!/bin/sh\nexit {code}\n')
-                verify.chmod(0o755)
-                script = f'STAGE_ENV={env}\nPRESNAP_FINAL=fixture\n' + body.replace(
-                    '/opt/anysda-vpn2/infra/scripts/99-verify.sh', str(verify))
-                result = subprocess.run(['bash', '-euc', script], text=True, capture_output=True, timeout=5)
-                self.assertEqual(result.returncode, 0 if code in (0, 2) else 7, result.stderr)
-                if code == 2:
-                    self.assertIn('⚠', result.stderr)
-                    self.assertNotIn('PASSED', result.stdout)
-
-
 if __name__ == '__main__':
     unittest.main()

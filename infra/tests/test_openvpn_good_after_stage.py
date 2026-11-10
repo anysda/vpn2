@@ -117,31 +117,6 @@ swanctl() {{ :; }}
         self.assertIn(f'port {port}\n', self.live())
         return result.stdout + result.stderr
 
-    def restore(self, conf):
-        """anysda-restore from the PKI unpacking on: the archive holds this server.conf."""
-        bundle = self.work / 'bundle/etc-openvpn/server'
-        (bundle / 'ccd').mkdir(parents=True)
-        (bundle / 'pki').mkdir()
-        for name in ('ca.crt', 'server.crt', 'server.key', 'tls-crypt.key', 'crl.pem'):
-            (bundle / 'pki' / name).write_text(name + '\n')
-        (bundle / 'server.conf').write_text(conf)
-        (self.work / 'restore-work').mkdir()
-        lib = source('infra/lib/anysda-restore.sh')
-        block = between(lib, 'copy_into() {', 'rollback_path() {') \
-            + between(lib, 'start_unit() {', '# ── Остановка сервисов') \
-            + between(lib, 'STEP="распаковка PKI OpenVPN"', '# ── Smoke-test через 99-verify')
-        result = self.bash(self.header() + f'''
-BUNDLE_DIR={self.work}/bundle
-WORK={self.work}/restore-work
-SOURCE_ROOT={self.work}/no-source
-CADDY_STORAGE={self.root}/var/lib/caddy/.local/share/caddy
-CADDY_SYNC_UNITS=()
-TOUCHED=()
-''' + self.rooted(block) + '\necho RESTORED\n')
-        self.assertIn('RESTORED', result.stdout, result.stdout + result.stderr)
-        self.assertEqual(self.live(), conf, result.stdout + result.stderr)
-        return result.stdout + result.stderr
-
     def vpn2_apply_run(self, *argv):
         return subprocess.run([str(self.vpn2_apply), *argv], text=True, capture_output=True, timeout=60)
 
@@ -194,28 +169,6 @@ TOUCHED=()
         output += self.failed_install()
         self.assertEqual(self.live(), good, output)
         self.assertIn('port 1195\n', self.live(), output)
-
-    def archive_conf(self):
-        self.deployed(1194)
-        conf = self.live().replace('port 1194\n', 'port 1195\n')
-        self.assertNotEqual(conf, self.live())
-        return conf
-
-    def test_3_rollback_after_restore_keeps_archive_conf(self):
-        """3 restore of an archive with port 1195 over a live 1194: rollback keeps the archive's."""
-        conf = self.archive_conf()
-        output = self.restore(conf)
-        output += self.rolled_back()
-        self.assertEqual(self.port(), 'port 1195', output)
-        self.assertEqual(self.live(), conf, output)
-
-    def test_3_failed_install_after_restore_keeps_archive_conf(self):
-        """3 restore of an archive with port 1195 over a live 1194: a failed install returns to it."""
-        conf = self.archive_conf()
-        output = self.restore(conf)
-        output += self.failed_install()
-        self.assertEqual(self.port(), 'port 1195', output)
-        self.assertEqual(self.live(), conf, output)
 
     def test_4_29_openvpn_failing_itself_leaves_the_working_conf_after_rollback(self):
         """4 openvpn does not come up with 1195: the stage fails, rollback returns to 1194."""

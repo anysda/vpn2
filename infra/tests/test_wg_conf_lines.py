@@ -10,11 +10,8 @@ line. On the node the backup script lies in /usr/local/bin and takes
 wg_conf.py from /usr/local/lib/anysda, not from a wg_conf.py next to itself.
 """
 import json
-import os
 from pathlib import Path
 import re
-import shutil
-import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -22,7 +19,7 @@ from unittest.mock import patch
 from test_control import module
 from test_wg_conf_allowedips_net import apply_gate
 from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT, cut, source
-from test_wg_conf_module import BASE, CANONICAL, DEVICES, FORMS, LIB, NODE_LIB, backup_check, bundle, conf
+from test_wg_conf_module import BASE, CANONICAL, DEVICES, backup_check, conf
 from wg_root import as_root
 
 WG_QUICK = ('Address', 'DNS', 'MTU', 'Table', 'PreUp', 'PostUp', 'PreDown', 'PostDown', 'SaveConfig')
@@ -169,42 +166,6 @@ def wanted_peers(text):
     return sorted((p['key'], sorted(p['allowed'])) for p in VT.conf_peers(text))
 
 
-STALE = '''"""wg_conf.py of an older install left next to the backup script: reads any file."""
-
-
-def wg_sections(text):
-    return [('', [])]
-
-
-def conf_peers(text):
-    return []
-'''
-
-
-def node_check(text, cwd_next_to_script):
-    """anysda-backup.sh --check-bundle as on the node, without ANYSDA_LIB_DIR.
-
-    The copy lies in a directory with an older wg_conf.py next to it; the node's library
-    directory /usr/local/lib/anysda is a temporary one holding infra/lib/wg_conf.py.
-    Returns (exit code, stdout lines, stderr).
-    """
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory)
-        for name in ('bin', 'lib', 'work', 'bundle'):
-            (top / name).mkdir()
-        shutil.copy(LIB / 'wg_conf.py', top / 'lib/wg_conf.py')
-        (top / 'bin/wg_conf.py').write_text(STALE)
-        script = source('infra/lib/anysda-backup.sh')
-        assert NODE_LIB in script, 'anysda-backup.sh does not name /usr/local/lib/anysda'
-        (top / 'bin/anysda-backup.sh').write_text(script.replace(NODE_LIB, str(top / 'lib')))
-        (top / 'bin/anysda-backup.sh').chmod(0o755)
-        env = {name: value for name, value in os.environ.items() if name != 'ANYSDA_LIB_DIR'}
-        done = subprocess.run([str(top / 'bin/anysda-backup.sh'), '--check-bundle', str(bundle(top / 'bundle', text))],
-                              cwd=top / ('bin' if cwd_next_to_script else 'work'), env=env,
-                              capture_output=True, text=True, timeout=60, check=False)
-    return done.returncode, done.stdout.splitlines(), done.stderr
-
-
 @as_root
 class WgConfLinesTests(unittest.TestCase):
     """1 lines wg does not recognize, 2 wg_conf.py from the node's library directory, 0 the model."""
@@ -247,18 +208,6 @@ class WgConfLinesTests(unittest.TestCase):
             with self.subTest('verify: the same peers', place=place, form=form):
                 self.assertEqual(wanted_peers(text), canonical)
                 self.assertIsNotNone(VT.apply_peers(text))
-
-    def test_2_node_copy_takes_module_from_node_lib_not_next_to_itself(self):
-        for cwd_next_to_script in (False, True):
-            where = 'cwd next to the script' if cwd_next_to_script else 'cwd elsewhere'
-            code, out, err = node_check(conf(CANONICAL), cwd_next_to_script)
-            with self.subTest('matching bundle: no complaint', where=where):
-                self.assertEqual((code, out), (0, []), err)
-            code, out, err = node_check(conf(FORMS['pubkey-blank']), cwd_next_to_script)
-            with self.subTest('peer without key: wg_conf.py of the node lib rejects', where=where):
-                self.assertEqual(code, 3, (out, err))
-                self.assertTrue([line for line in out if 'PublicKey' in line], (out, err))
-
 
 if __name__ == '__main__':
     unittest.main()

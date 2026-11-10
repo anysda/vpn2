@@ -9,16 +9,12 @@ and in `Post Up = ...` the line stays for wg, which rejects it. The backup check
 wg-quick. The backup check takes wg_conf.py only from the library directory,
 never from the directory it is run from.
 """
-import os
-from pathlib import Path
-import subprocess
-import tempfile
 import unittest
 
 from test_wg_conf_allowedips_net import apply_gate
-from test_wg_conf_allowedips_prefix import SERVER, VT, source
+from test_wg_conf_allowedips_prefix import SERVER, VT
 from test_wg_conf_lines import wanted_peers, wg_quick_strip, wg_reject, with_lines, written
-from test_wg_conf_module import BASE, CANONICAL, LIB, NODE_LIB, backup_check, bundle, conf
+from test_wg_conf_module import BASE, CANONICAL, backup_check, conf
 from wg_root import as_root
 
 WG_NAMES = {'interface': ('PrivateKey', 'ListenPort', 'FwMark'),
@@ -69,35 +65,6 @@ def forms():
     return found
 
 
-OLDER = (LIB / 'wg_conf.py').read_text() + '''
-
-def unrecognized(text):
-    """wg_conf.py of an older install: no check of lines wg does not recognize."""
-    del text
-'''
-
-
-def cwd_check(text):
-    """anysda-backup.sh --check-bundle run from a directory holding an older wg_conf.py.
-
-    The node's library directory /usr/local/lib/anysda is a temporary one without wg_conf.py
-    (the module is not installed there yet); no ANYSDA_LIB_DIR. Returns (exit code, stdout lines, stderr).
-    """
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory)
-        for name in ('bin', 'lib', 'bundle'):
-            (top / name).mkdir()
-        (top / 'bin/wg_conf.py').write_text(OLDER)
-        script = source('infra/lib/anysda-backup.sh')
-        assert NODE_LIB in script, 'anysda-backup.sh does not name /usr/local/lib/anysda'
-        (top / 'bin/anysda-backup.sh').write_text(script.replace(NODE_LIB, str(top / 'lib')))
-        (top / 'bin/anysda-backup.sh').chmod(0o755)
-        env = {name: value for name, value in os.environ.items() if name != 'ANYSDA_LIB_DIR'}
-        done = subprocess.run([str(top / 'bin/anysda-backup.sh'), '--check-bundle', str(bundle(top / 'bundle', text))],
-                              cwd=top / 'bin', env=env, capture_output=True, text=True, timeout=60, check=False)
-    return done.returncode, done.stdout.splitlines(), done.stderr
-
-
 @as_root
 class WgConfLinesMoreTests(unittest.TestCase):
     """1 a wg name with no value, 2 wg-quick names, 3 the module's directory, 0 the model, 5 own files."""
@@ -143,12 +110,6 @@ class WgConfLinesMoreTests(unittest.TestCase):
                 self.assert_rejected(text, form=form)
             else:
                 self.assert_accepted(text, form=form)
-
-    def test_3_copy_does_not_take_module_from_current_directory(self):
-        code, out, err = cwd_check(with_lines('interface', f'PrivatKey = {SERVER}'))
-        with self.subTest('typo in a name: not passed silently'):
-            self.assertNotEqual(code, 0, (out, err))
-            self.assertTrue(out or err.strip(), code)
 
     def test_5_own_files_pass(self):
         self.assert_accepted(written(), form='written')

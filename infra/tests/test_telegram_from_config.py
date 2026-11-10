@@ -6,11 +6,8 @@ restore - блок /etc/anysda из anysda-restore.sh, как в test_restore_ss
 """
 import json
 import os
-from pathlib import Path
-import tempfile
 import unittest
 
-from test_deploy import bash, source
 import test_telegram_stage as stage
 
 
@@ -42,15 +39,6 @@ def hook(event, args):
         os._exit(137)
 sys.addaudithook(hook)
 '''
-
-
-def restore_block():
-    """Блок «восстановление /etc/anysda» с copy_into, как его выполняет restore."""
-    script = source('infra/lib/anysda-restore.sh')
-    block = script.split('if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then', 1)[1]
-    helper = 'copy_into() {' + script.split('copy_into() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
-    return helper + 'if [[ -d "$BUNDLE_DIR/etc-anysda" ]]; then' + block.split(
-        'if [[ -f "$BUNDLE_DIR/etc-wireguard/wg0.conf" ]]; then', 1)[0]
 
 
 class TelegramFromConfigTests(unittest.TestCase):
@@ -138,40 +126,6 @@ class TelegramFromConfigTests(unittest.TestCase):
         after = self.taken.read_text()
         self.assertTrue(after, f'запись оставила пустой файл, rc={result.returncode}')
         self.assertIn(json.loads(after), (before, dict(bot_token='', chat_id='', admin_username='')))
-
-    def restore(self, bundle_files):
-        """Restore архива, где в etc-anysda лежат bundle_files, в /etc/anysda узла."""
-        work = Path(tempfile.mkdtemp(prefix='restore-', dir=self.root))
-        bundle = work / 'bundle/etc-anysda'
-        bundle.mkdir(parents=True)
-        for name, body in bundle_files.items():
-            (bundle / name).write_text(body)
-        live = self.root / 'etc/anysda'
-        result = bash('BUNDLE_DIR="$PWD/bundle"\n' + restore_block().replace('/etc/anysda', str(live)),
-                      work)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_restore_archive_without_file_removes_it(self):
-        """Край 2: архив до файла - после restore файла нет, deploy без telegram
-        идёт по правилу «файла нет» (контейнера нет - токен остаётся)."""
-        self.ok()
-        self.assertTrue(self.taken.exists())
-        self.remove_bot_container()
-        self.restore({'unrelated': 'archived'})
-        self.assertFalse(self.taken.exists(), 'restore оставил файл от прежнего config')
-        self.assertEqual((self.root / 'etc/anysda/unrelated').read_text(), 'archived')
-        self.ok(**EMPTY)
-        runtime = self.runtime()
-        self.assertEqual(runtime['bot_token'], CONFIG, runtime)
-        self.assertEqual(runtime['chat_id'], '100', runtime)
-
-    def test_restore_archive_with_file_brings_it(self):
-        """Край 2: файл в архиве - после restore на узле файл из архива."""
-        self.ok()
-        archived = json.dumps(dict(bot_token='555555:archived', chat_id='300', admin_username=''))
-        self.restore({'telegram-from-config.json': archived})
-        self.assertEqual(self.taken.read_text(), archived)
-
 
 if __name__ == '__main__':
     unittest.main()

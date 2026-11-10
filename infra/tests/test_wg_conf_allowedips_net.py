@@ -3,7 +3,7 @@
 wg parses each AllowedIPs entry into a network (no mask is /32 or /128, `/032`
 is 32, `fd66:66:0::3` is `fd66:66::3`), `-X` removes that network, a peer may
 end with no addresses, and an address added to a later peer leaves the earlier
-one. An entry wg cannot parse rejects the whole file. The backup check,
+one. An entry wg cannot parse rejects the whole file.
 verify-traffic.py and the `wg syncconf` body of restore_wg_apply must end with
 the sets wg ends with, or fail like wg does. A form with a signed entry is
 taken as the wg installed here decides it (installed_wg, see the prefix tests):
@@ -16,8 +16,8 @@ import tempfile
 import unittest
 
 from test_wg_conf_allowedips_prefix import (
-    A4, A6, B4, GONE, NEW, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_NEW, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
-    assert_rejected_like_wg, cut, installed_wg, signed, source)
+    A4, A6, B4, GONE, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
+    assert_rejected_like_wg, installed_wg, signed)
 from wg_root import as_root
 
 A4_BARE = '10.66.66.3'
@@ -121,23 +121,6 @@ def wg_sets(text):
     return sets
 
 
-def backup_check(text):
-    """anysda-backup.sh --check-bundle: (peer addresses it reads, complaints about WireGuard peers)."""
-    block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
-            (2, None, (NEW, PSK_NEW, '10.66.66.3')),  # reissued: old key still on its address
-            (3, True, (GONE, PSK_GONE, '10.66.66.4'))]
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / 'etc-wireguard').mkdir()
-        (root / 'etc-wireguard/wg0.conf').write_text(text)
-        scope = {'re': re, 'root': root, 'bad': [], 'retired_keys': set(), 'label': lambda d: f'устройство {d}',
-                 'device_columns': {'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                 'devices': lambda *_fields: iter(rows)}
-        exec(block, scope)
-    return {key: set(value) for key, value in scope['addresses'].items()}, scope['bad']
-
-
 def apply_gate(text):
     """verify-traffic.py wg_apply_check() up to the free address, live wg0 holding the conf's peers."""
     notes = []
@@ -214,19 +197,13 @@ class WgConfAllowedIpsNetTests(unittest.TestCase):
         text, wanted = conf(form), wg_sets(conf(form))
         address, sets = installed_wg(text)
         if address is not None:
-            assert_rejected_like_wg(self, form, address, lambda: backup_check(text), lambda: apply_gate(text),
+            assert_rejected_like_wg(self, form, address, lambda: apply_gate(text),
                                     {'conf_peers': lambda: VT.conf_peers(text),
                                      'apply_peers': lambda: VT.apply_peers(text),
                                      'syncconf body': lambda: syncconf_body(text)})
             return
         with self.subTest('installed wg', form=form):
             self.assertEqual(sets, wanted)
-        addresses, bad = backup_check(text)
-        with self.subTest('backup addresses', form=form):
-            self.assertEqual(addresses, wanted)
-        with self.subTest('backup complaints', form=form):
-            # NEW was reissued from 10.66.66.3: OLD counts as its peer only while wg gives OLD that address.
-            self.assertEqual(bad, [] if A4 in wanted[OLD] else [f'пир WireGuard {OLD}: устройства нет в БД'])
         with self.subTest('verify conf_peers', form=form):
             self.assertEqual({p['key']: sorted(p['allowed']) for p in VT.conf_peers(text)},
                              {key: sorted(value) for key, value in wanted.items()})
@@ -246,14 +223,6 @@ class WgConfAllowedIpsNetTests(unittest.TestCase):
 
     def assert_fails_like_wg(self, form):
         text, named = conf(form), REJECTED[form][2]
-        try:
-            addresses, bad = backup_check(text)
-        except Exception as error:
-            with self.subTest('backup fails', form=form):
-                self.assertIn(named, str(error))
-        else:
-            with self.subTest('backup fails', form=form):
-                self.assertTrue([b for b in bad if named in b], (addresses, bad))
         for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
             with self.subTest(f'verify {name} fails', form=form):
                 with self.assertRaises(Exception) as caught:

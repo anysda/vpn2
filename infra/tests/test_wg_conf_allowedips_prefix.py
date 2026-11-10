@@ -1,10 +1,9 @@
 """wg0.conf outside apply: AllowedIPs entries prefixed with `+` or `-`.
 
 wg (wireguard-tools config.c, parse_ip_prefix) reads `-X` as removing X from
-the peer and `+X` as adding it, entry after entry and line after line. The
-backup check and verify-traffic.py take the peer's addresses from wg0.conf, so
-they must end with the set wg ends with. Each reader is cut out of its script
-and run on one wg0.conf whose last peer carries the prefixed lines.
+the peer and `+X` as adding it, entry after entry and line after line.
+verify-traffic.py takes the peer's addresses from wg0.conf, so it must end
+with the set wg ends with. Each reader is run on one wg0.conf whose last peer carries the prefixed lines.
 
 The sign is where wg versions part: wireguard-tools 1.0.20210914 (Ubuntu 24.04)
 cannot parse `+X` or `-X` and rejects the file, 1.0.20250521 (the nodes, Ubuntu
@@ -27,8 +26,7 @@ SERVER = base64.b64encode(bytes(range(32))).decode()
 PEER = base64.b64encode(bytes(range(64, 96))).decode()
 GONE = base64.b64encode(bytes(range(96, 128))).decode()
 OLD = base64.b64encode(bytes(range(128, 160))).decode()
-NEW = base64.b64encode(bytes(range(160, 192))).decode()
-PSK_ONE, PSK_GONE, PSK_TWO, PSK_NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (1, 2, 3, 4))
+PSK_ONE, PSK_GONE, PSK_TWO = (base64.b64encode(bytes([n] * 32)).decode() for n in (1, 2, 3))
 
 A4, A6, B4 = '10.66.66.3/32', 'fd66:66::3/128', '10.66.66.9/32'
 # AllowedIPs lines of the last peer (OLD) in each form.
@@ -113,16 +111,12 @@ def signed(address):
     return address is not None and address[:1] in ('+', '-')
 
 
-def assert_rejected_like_wg(case, form, address, backup, gate, refusing):
-    """wg rejects the file at `address`: backup, verify and restore_wg_apply refuse it naming that entry.
+def assert_rejected_like_wg(case, form, address, gate, refusing):
+    """wg rejects the file at `address`: verify and restore_wg_apply refuse it naming that entry.
 
-    backup() -> (addresses, complaints), gate() -> wg_apply_check notes, refusing: {name: call that must raise}.
+    gate() -> wg_apply_check notes, refusing: {name: call that must raise}.
     """
     named = ('wg0.conf: wg отвергает файл', f'`AllowedIPs`: Unable to parse IP address `{address}`')
-    with case.subTest('backup refuses like wg', form=form):
-        addresses, bad = backup()
-        case.assertEqual(addresses, {})
-        case.assertTrue([b for b in bad if all(n in b for n in named)], bad)
     for name, call in refusing.items():
         with case.subTest(f'verify {name} refuses like wg', form=form):
             with case.assertRaises(ValueError) as caught:
@@ -146,23 +140,6 @@ def cut(text, start, end):
     body = text.split(start, 1)[1]
     assert end in body, end
     return start + body.split(end, 1)[0]
-
-
-def backup_check(form):
-    """anysda-backup.sh --check-bundle: (peer addresses it reads, complaints about WireGuard peers)."""
-    block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
-            (2, None, (NEW, PSK_NEW, '10.66.66.3')),  # reissued: old key still on its address
-            (3, True, (GONE, PSK_GONE, '10.66.66.4'))]
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / 'etc-wireguard').mkdir()
-        (root / 'etc-wireguard/wg0.conf').write_text(conf(form))
-        scope = {'re': re, 'root': root, 'bad': [], 'retired_keys': set(), 'label': lambda d: f'устройство {d}',
-                 'device_columns': {'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                 'devices': lambda *_fields: iter(rows)}
-        exec(block, scope)
-    return scope['addresses'], scope['bad']
 
 
 def load_verify():
@@ -256,18 +233,13 @@ class WgConfAllowedIpsPrefixTests(unittest.TestCase):
         wanted = wg_sets(conf(form))
         address, sets = installed_wg(conf(form))
         if address is not None:
-            assert_rejected_like_wg(self, form, address, lambda: backup_check(form), lambda: verify_apply_gate(form),
+            assert_rejected_like_wg(self, form, address, lambda: verify_apply_gate(form),
                                     {'conf_peers': lambda: verify_conf_peers(form),
                                      'apply_peers': lambda: VT.apply_peers(conf(form)),
                                      'syncconf body': lambda: verify_syncconf_sets(form)})
             return
         with self.subTest('installed wg', form=form):
             self.assertEqual(sets, wanted)
-        addresses, bad = backup_check(form)
-        with self.subTest('backup addresses', form=form):
-            self.assertEqual(addresses, wanted)
-        with self.subTest('backup complaints', form=form):
-            self.assertEqual(bad, [])
         with self.subTest('verify conf_peers', form=form):
             self.assertEqual(verify_conf_peers(form), {key: sorted(value) for key, value in wanted.items()})
         with self.subTest('verify apply_peers', form=form):

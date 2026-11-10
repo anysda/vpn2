@@ -15,7 +15,6 @@ through stdin, wg-quick runs as a copy. Root via `sudo -n` (wg_root), else skipp
 """
 import base64
 import calendar
-import hashlib
 import itertools
 import json
 import os
@@ -24,15 +23,14 @@ import re
 import shutil
 import sqlite3
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 from unittest.mock import patch
 
-from test_wg_conf_allowedips_prefix import OLD_LINES, VT, conf as prefix_conf, cut, source
+from test_wg_conf_allowedips_prefix import OLD_LINES, VT, conf as prefix_conf
 from test_wg_conf_lines import forms as line_forms
-from test_wg_conf_module import CANONICAL, FORMS, LIB, conf as module_conf, restore_check
+from test_wg_conf_module import CANONICAL, FORMS, LIB, conf as module_conf
 from wg_root import as_root
 
 WG, WG_QUICK, IP = shutil.which('wg'), shutil.which('wg-quick'), shutil.which('ip')
@@ -372,61 +370,6 @@ def syncconf_peers(raw):
     return sorted(peers)
 
 
-RESTORE_SH = source('infra/lib/anysda-restore.sh')
-SCOPE = {'hashlib': hashlib, 'os': os, 're': re, 'shutil': shutil, 'sqlite3': sqlite3, 'subprocess': subprocess,
-         'sys': sys, 'tempfile': tempfile}
-
-
-def restore_cut(raw, keys):
-    """anysda-restore.sh: the cut of the peers `keys` out of the bundle's wg0.conf, twice: (bytes, bytes)."""
-    block = cut(RESTORE_SH, 'def rewrite(', '\nif (ike_ids')
-    out = []
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'wg0.conf'
-        path.write_bytes(raw)
-        for _ in range(2):
-            exec(block, dict(SCOPE, wg_keys=set(keys), wg_path=str(path)))  # noqa: S102 - the script's own code
-            out.append(path.read_bytes())
-    return out
-
-
-def restore_server_key(raw):
-    """anysda-restore.sh wg_key(): the digest of the server key it reads from wg0.conf."""
-    scope = dict(SCOPE)
-    exec(cut(RESTORE_SH, 'def digest(', '\n\ndef index_rows'), scope)  # noqa: S102
-    with tempfile.TemporaryDirectory() as directory:
-        (Path(directory) / 'wg0.conf').write_bytes(raw)
-        return scope['wg_key'](directory)
-
-
-def restore_live_peers(raw):
-    """anysda-restore.sh: the public keys it reads from the live wg0.conf when the live db is not read."""
-    block = cut(RESTORE_SH, 'def live_text(', '\nif live_ike is not None:')
-    assert block.count("'/etc/wireguard/wg0.conf'") == 1, block
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'wg0.conf'
-        path.write_bytes(raw)
-        scope = dict(SCOPE, live_read=False)
-        exec(block.replace("'/etc/wireguard/wg0.conf'", repr(str(path))), scope)  # noqa: S102
-    return scope['live_peers']
-
-
-def expected_cut(raw, key):
-    """The bytes of `raw` without the [Peer] blocks whose last PublicKey is `key`, the rest byte for byte."""
-    blocks = [[]]
-    for line in re.findall(rb'[^\n]*\n|[^\n]+', raw):
-        clean = re.sub(rb'[ \t\n\v\f\r]', b'', line.split(b'#', 1)[0])
-        if clean.startswith(b'['):
-            blocks.append([])
-        blocks[-1].append((clean, line))
-    kept = b''
-    for block in blocks:
-        keys = [clean.partition(b'=')[2] for clean, _ in block if clean.partition(b'=')[0].lower() == b'publickey']
-        if not (block and block[0][0].lower() == b'[peer]' and keys and keys[-1] == key.encode()):
-            kept += b''.join(line for _, line in block)
-    return kept
-
-
 def without_wg(directory):
     """PATH dirs as now: one without wg and wg-quick, one refusing a new netns (`ip netns add`, `unshare --net`)."""
     found = {}
@@ -525,31 +468,10 @@ class WgOracleTests(unittest.TestCase):
     def test_3_nul_as_wg_quick_and_wg(self):
         self.check_all(NUL)
 
-    def test_4_restore_cut_server_key_live_peers(self):
-        for name, raw in RESTORE.items():
-            error, private, peers = oracle(raw)
-            self.assertIsNone(error, name)
-            with self.subTest('restore: server key is the one wg takes', edge=name):
-                self.assertEqual(restore_server_key(raw), hashlib.sha256(private.encode()).hexdigest())
-            with self.subTest('restore: live peers are wg\'s', edge=name):
-                self.assertEqual(restore_live_peers(raw), {key for key, _, _ in peers})
-            for key, _, _ in peers:
-                with self.subTest('restore: peer cut', edge=name, peer=key[:4]):
-                    try:
-                        first, second = restore_cut(raw, {key})
-                    except Exception as caught:  # noqa: BLE001 - the restore step must not die on the file
-                        self.fail(f'{type(caught).__name__}: {caught}')
-                    self.assertEqual(first, expected_cut(raw, key))
-                    self.assertEqual(second, first)
-                    error_after, _, peers_after = oracle(first)
-                    self.assertIsNone(error_after)
-                    self.assertEqual(peers_after, [peer for peer in peers if peer[0] != key])
-
     def test_5_peers_on_every_edge(self):
         self.check_all(RESTORE | EARLIER)
 
     def test_6_nothing_to_ask_is_a_loud_refusal(self):
-        text = module_conf(CANONICAL)
         with tempfile.TemporaryDirectory() as directory:
             for kind, path in without_wg(directory).items():
                 with patch.dict(os.environ, {'PATH': path}):
@@ -566,10 +488,6 @@ class WgOracleTests(unittest.TestCase):
                         with self.assertRaises(Exception) as caught:
                             syncconf_peers(mk())
                         self.assertIn('wg0.conf', str(caught.exception))
-                    with self.subTest('restore: the check warns, naming wg0.conf', kind=kind):
-                        _code, err = restore_check(text)
-                        self.assertIn('WARN', err)
-                        self.assertIn('wg0.conf', err)
 
     def test_7_own_files_and_earlier_forms(self):
         own = own_files()

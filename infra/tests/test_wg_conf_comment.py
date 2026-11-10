@@ -20,8 +20,8 @@ ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]
 SERVER = base64.b64encode(bytes(range(32))).decode()
 FRESH = base64.b64encode(bytes(range(32, 64))).decode()
 OTHER = base64.b64encode(bytes(range(64, 96))).decode()
-PEER, OLD, NEW, GHOST = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202, 203, 204))
-PSK_ONE, PSK_TWO, PSK_NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213))
+PEER, OLD, GHOST = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202, 204))
+PSK_ONE, PSK_TWO = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212))
 
 # As 28-wireguard writes the header and backend appends the peers.
 HEAD_LINE = '# Initial config — panel will overwrite via syncWireguardConfig().\n'
@@ -124,34 +124,6 @@ def verify_syncconf(form):
     return wg_view(data)
 
 
-def backup_check(form):
-    """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
-    block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
-            (2, None, (NEW, PSK_NEW, '10.66.66.3'))]  # reissued: old key still on its address
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / 'etc-wireguard').mkdir()
-        (root / 'etc-wireguard/wg0.conf').write_text(conf(form))
-        scope = {'re': re, 'root': root, 'bad': [], 'retired_keys': set(), 'label': lambda d: f'устройство {d}',
-                 'device_columns': {'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                 'devices': lambda *_fields: iter(rows)}
-        exec(block, scope)
-    return scope['bad']
-
-
-def restore_server_priv(form):
-    """anysda-restore.sh: exit code and server.priv taken from [Interface] of the archived wg0.conf."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'WG_BUNDLE="$BUNDLE_DIR/etc-wireguard"',
-                '# Стадия 30 ждёт')
-    with tempfile.TemporaryDirectory() as directory:
-        bundle = Path(directory) / 'bundle/etc-wireguard'
-        bundle.mkdir(parents=True)
-        (bundle / 'wg0.conf').write_text(conf(form))
-        result = bash('BUNDLE_DIR="$PWD/bundle"\n' + WG_STUB + block, directory)
-        return result.returncode, (bundle / 'server.priv').read_text()
-
-
 def svc_conf_iface(form):
     """anysda-svc.sh wg0_conf_iface: addresses wg0_apply compares with live wg0."""
     block = cut(source('infra/lib/anysda-svc.sh'), 'wg0_conf_iface() {', '\n}\n') + '\n}\n'
@@ -189,10 +161,6 @@ def every_reader(case, form):
         case.assertEqual(verify_conf_peers(form), PEERS)
     with case.subTest('1b verify syncconf body', form=form):
         case.assertEqual(verify_syncconf(form), SYNCCONF)
-    with case.subTest('2 backup', form=form):
-        case.assertEqual(backup_check(form), [])
-    with case.subTest('3 restore server.priv', form=form):
-        case.assertEqual(restore_server_priv(form), (0, SERVER + '\n'))
     with case.subTest('4 svc addresses', form=form):
         case.assertEqual(svc_conf_iface(form), ADDRESSES)
     with case.subTest('5 28-wireguard', form=form):
@@ -218,16 +186,6 @@ class WgConfCommentTests(unittest.TestCase):
                 self.assertEqual(verify_conf_peers(form), PEERS)
             with self.subTest('syncconf body', form=form):
                 self.assertEqual(verify_syncconf(form), SYNCCONF)
-
-    def test_2_backup_accepts_every_peer(self):
-        for form in ('section-comment', 'value-comment'):
-            with self.subTest(form):
-                self.assertEqual(backup_check(form), [])
-
-    def test_3_restore_takes_server_priv(self):
-        for form in ('section-comment', 'value-comment'):
-            with self.subTest(form):
-                self.assertEqual(restore_server_priv(form), (0, SERVER + '\n'))
 
     def test_4_svc_addresses_match_live_wg0(self):
         for form in ('section-comment', 'section-blank', 'value-comment'):

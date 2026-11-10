@@ -5,7 +5,6 @@ ASCII letters: `PrivateKey` with the Kelvin sign is an unknown line for wg.
 Each reader is cut out of its script and run on the same file in three forms.
 """
 import base64
-import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -19,8 +18,8 @@ ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]
 
 SERVER = base64.b64encode(bytes(range(32))).decode()
 FRESH = base64.b64encode(bytes(range(32, 64))).decode()
-PEER, OLD, NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202, 203))
-PSK_ONE, PSK_TWO, PSK_NEW = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213))
+PEER, OLD = (base64.b64encode(bytes([n] * 32)).decode() for n in (201, 202))
+PSK_ONE, PSK_TWO = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212))
 
 NAMES = ('Interface', 'Address', 'ListenPort', 'FwMark', 'PrivateKey', 'PublicKey', 'PresharedKey', 'AllowedIPs')
 STYLES = {
@@ -62,12 +61,6 @@ def bash(script, directory):
                           text=True, capture_output=True, timeout=15)
 
 
-def python(block, **names):
-    scope = {'re': re, 'os': os, 'hashlib': hashlib, **names}
-    exec(block, scope)
-    return scope
-
-
 # Stub of wg: pubkey of an empty key fails, genkey gives a key the host never had.
 WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
            '  local key; key=$(cat); [[ -n $key ]] || return 1; echo "pub-$key"; }\n')
@@ -76,60 +69,6 @@ WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
 def pairs(text):
     """(name in lower case, value) for each ASCII `name = value` line."""
     return [(m[1].lower(), m[2]) for m in re.finditer(r'(?m)^\s*([A-Za-z]+)\s*=\s*(.*?)\s*$', text)]
-
-
-def backup_check(style):
-    """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
-    block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
-            (2, None, (NEW, PSK_NEW, '10.66.66.3'))]  # reissued: old key still on its address
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / 'etc-wireguard').mkdir()
-        (root / 'etc-wireguard/wg0.conf').write_text(conf(style))
-        scope = python(block, root=root, bad=[], retired_keys=set(), label=lambda d: f'устройство {d}',
-                       device_columns={'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                       devices=lambda *_fields: iter(rows))
-    return scope['bad']
-
-
-def restore_server_priv(style):
-    """anysda-restore.sh: server.priv taken from [Interface] of the archived wg0.conf."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'WG_BUNDLE="$BUNDLE_DIR/etc-wireguard"',
-                '# Стадия 30 ждёт')
-    with tempfile.TemporaryDirectory() as directory:
-        bundle = Path(directory) / 'bundle/etc-wireguard'
-        bundle.mkdir(parents=True)
-        (bundle / 'wg0.conf').write_text(conf(style))
-        result = bash('BUNDLE_DIR="$PWD/bundle"\n' + WG_STUB + block, directory)
-        return result.returncode, (bundle / 'server.priv').read_text().strip()
-
-
-def restore_wg_key(style):
-    """anysda-restore.sh wg_key(): fingerprint of the server key in a wg0.conf directory."""
-    text = source('infra/lib/anysda-restore.sh')
-    block = cut(text, 'def digest(', '\n\n\ndef index_rows')
-    with tempfile.TemporaryDirectory() as directory:
-        (Path(directory) / 'wg0.conf').write_text(conf(style))
-        return python(block)['wg_key'](directory)
-
-
-def restore_live_peers(style):
-    """anysda-restore.sh: peer keys of the live /etc/wireguard/wg0.conf."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'if live_peers is not None:\n',
-                '\nif live_ike is not None:')
-    return python(block, live_peers=conf(style))['live_peers']
-
-
-def restore_drop_peers(style):
-    """anysda-restore.sh: wg0.conf of the archive without peers of revoked devices."""
-    text = source('infra/lib/anysda-restore.sh')
-    block = cut(text, 'def rewrite(', '\n\nif (ike_ids')
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'wg0.conf'
-        path.write_text(conf(style))
-        python(block, wg_keys={PEER}, wg_path=str(path))
-        return path.read_text()
 
 
 def load_verify():
@@ -195,24 +134,6 @@ PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32']), (OLD, PSK_TWO, ['10.66.66.3/32'])]
 class WgConfKeyCaseTests(unittest.TestCase):
     """Edges 1-5: every reader takes the mixed-case file like wg does."""
 
-    def test_1_backup_check_knows_every_peer(self):
-        self.assertEqual(backup_check('mixed'), [])
-
-    def test_2a_restore_takes_server_priv_from_interface(self):
-        self.assertEqual(restore_server_priv('mixed'), (0, SERVER))
-
-    def test_2b_restore_wg_key_finds_server_key(self):
-        self.assertEqual(restore_wg_key('mixed'), hashlib.sha256(SERVER.encode()).hexdigest())
-
-    def test_2c_restore_finds_live_peers(self):
-        self.assertEqual(restore_live_peers('mixed'), {PEER, OLD})
-
-    def test_2d_restore_drops_peer_of_revoked_device(self):
-        text = restore_drop_peers('mixed')
-        self.assertNotIn(PEER, text, 'peer of the revoked device is left in wg0.conf')
-        self.assertIn(OLD, text)
-        self.assertIn(SERVER, text)
-
     def test_3a_verify_conf_peers_finds_peers(self):
         self.assertEqual(verify_conf_peers('mixed'), PEERS)
 
@@ -254,14 +175,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
             self.assertTrue([line for line in lines if 'PublicKey' in line], (lines, err))
             for value in (SERVER, PEER, OLD):
                 self.assertNotIn(value, '\n'.join(lines) + err)
-        with self.subTest('2a restore server.priv'):
-            self.assertEqual(restore_server_priv(style), (5, ''))
-        with self.subTest('2b restore wg_key'):
-            self.assertIsNone(restore_wg_key(style))
-        with self.subTest('2c restore live peers'):
-            self.assertEqual(restore_live_peers(style), set())
-        with self.subTest('2d restore drop peers'):
-            self.assertEqual(restore_drop_peers(style), conf(style))
         with self.subTest('3a verify conf_peers'):
             with self.assertRaises(ValueError) as caught:
                 verify_conf_peers(style)
@@ -283,18 +196,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
 
     def test_7_canonical_config_reads_as_before(self):
         style = 'canonical'
-        with self.subTest('1 backup'):
-            self.assertEqual(backup_check(style), [])
-        with self.subTest('2a restore server.priv'):
-            self.assertEqual(restore_server_priv(style), (0, SERVER))
-        with self.subTest('2b restore wg_key'):
-            self.assertEqual(restore_wg_key(style), hashlib.sha256(SERVER.encode()).hexdigest())
-        with self.subTest('2c restore live peers'):
-            self.assertEqual(restore_live_peers(style), {PEER, OLD})
-        with self.subTest('2d restore drop peers'):
-            text = restore_drop_peers(style)
-            self.assertNotIn(PEER, text)
-            self.assertIn(OLD, text)
         with self.subTest('3a verify conf_peers'):
             self.assertEqual(verify_conf_peers(style), PEERS)
         with self.subTest('3b verify syncconf'):

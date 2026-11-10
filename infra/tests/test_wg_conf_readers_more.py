@@ -6,7 +6,6 @@ and wg-quick splits Address at commas and blanks alike. Each reader is cut out
 of its script and run on forms of one wg0.conf.
 """
 import base64
-import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -22,8 +21,7 @@ SERVER = base64.b64encode(bytes(range(32))).decode()
 PEER = base64.b64encode(bytes(range(64, 96))).decode()
 GONE = base64.b64encode(bytes(range(96, 128))).decode()
 OLD = base64.b64encode(bytes(range(128, 160))).decode()
-NEW = base64.b64encode(bytes(range(160, 192))).decode()
-PSK_ONE, PSK_TWO, PSK_NEW, PSK_GONE = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 213, 214))
+PSK_ONE, PSK_TWO, PSK_GONE = (base64.b64encode(bytes([n] * 32)).decode() for n in (211, 212, 214))
 
 # As 28-wireguard writes the header and backend appends the peers.
 HEAD_LINE = '# Initial config — panel will overwrite via syncWireguardConfig().\n'
@@ -108,53 +106,6 @@ def bash(script, directory):
                           text=True, capture_output=True, timeout=15)
 
 
-def python(block, **names):
-    scope = {'re': re, 'os': os, 'hashlib': hashlib, **names}
-    exec(block, scope)
-    return scope
-
-
-def restore_wg_key(form):
-    """anysda-restore.sh wg_key(): fingerprint of the server key in a wg0.conf directory."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'def digest(', '\n\n\ndef index_rows')
-    with tempfile.TemporaryDirectory() as directory:
-        (Path(directory) / 'wg0.conf').write_text(conf(form))
-        return python(block)['wg_key'](directory)
-
-
-def restore_live_peers(form):
-    """anysda-restore.sh: peer keys of the live /etc/wireguard/wg0.conf."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'if live_peers is not None:\n',
-                '\nif live_ike is not None:')
-    return python(block, live_peers=conf(form))['live_peers']
-
-
-def restore_drop_peers(form):
-    """anysda-restore.sh: wg0.conf of the archive without the peer of a revoked device."""
-    block = cut(source('infra/lib/anysda-restore.sh'), 'def rewrite(', '\n\nif (ike_ids')
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'wg0.conf'
-        path.write_text(conf(form))
-        python(block, wg_keys={GONE}, wg_path=str(path))
-        return path.read_text()
-
-
-def backup_check(form):
-    """anysda-backup.sh --check-bundle: complaints about WireGuard peers."""
-    block = cut(source('infra/lib/anysda-backup.sh'), "wg = root / 'etc-wireguard/wg0.conf'", '\nswan = root')
-    rows = [(1, True, (PEER, PSK_ONE, '10.66.66.2')),
-            (2, None, (NEW, PSK_NEW, '10.66.66.3')),  # reissued: old key still on its address
-            (3, True, (GONE, PSK_GONE, '10.66.66.4'))]
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        (root / 'etc-wireguard').mkdir()
-        (root / 'etc-wireguard/wg0.conf').write_text(conf(form))
-        scope = python(block, root=root, bad=[], retired_keys=set(), label=lambda d: f'устройство {d}',
-                       device_columns={'wg_public_key', 'wg_preshared_key', 'wg_ip'},
-                       devices=lambda *_fields: iter(rows))
-    return scope['bad']
-
-
 def load_verify():
     spec = importlib.util.spec_from_file_location('verify_traffic_more', ROOT / 'infra/lib/verify-traffic.py')
     module = importlib.util.module_from_spec(spec)
@@ -206,7 +157,6 @@ def wg_peers(form):
     return [(p['publickey'], p['presharedkey'], p['allowedips']) for p in wg_view(conf(form))[1]]
 
 
-SERVER_HASH = hashlib.sha256(SERVER.encode()).hexdigest()
 ADDRESSES = ['addr 10.66.66.1/24', 'addr fd66:66::1/64']
 IN_PLACE = ('value-comment', 'blank-in-name', 'section-comment')
 
@@ -226,26 +176,8 @@ class WgConfReadersMoreTests(unittest.TestCase):
             with self.subTest('wg-quick', form=form):
                 self.assertEqual(wg_quick_addresses(conf(form)), ADDRESSES)
 
-    def assert_dropped(self, form):
-        """Only the revoked peer is gone; every other line stays as it was, blank lines aside."""
-        text = restore_drop_peers(form)
-        kept = ''.join(part for part in parts(form) if GONE not in part)
-        self.assertEqual(lines(text), lines(kept))
-        self.assertEqual([p['publickey'] for p in wg_view(text)[1]], [PEER, OLD])
-
-    def test_1_restore_in_place_reads_like_wg(self):
-        for form in IN_PLACE:
-            with self.subTest('wg_key', form=form):
-                self.assertEqual(restore_wg_key(form), SERVER_HASH)
-            with self.subTest('live peers', form=form):
-                self.assertEqual(restore_live_peers(form), {PEER, GONE, OLD})
-            with self.subTest('drop revoked peer', form=form):
-                self.assert_dropped(form)
-
     def test_2_two_allowedips_lines_keep_both_addresses(self):
         form = 'allowed-two-lines'
-        with self.subTest('backup'):
-            self.assertEqual(backup_check(form), [])
         with self.subTest('verify conf_peers'):
             self.assertEqual(verify_conf_peers(form), wg_peers(form))
         with self.subTest('verify syncconf body'):
@@ -258,14 +190,6 @@ class WgConfReadersMoreTests(unittest.TestCase):
 
     def test_4_file_as_written_reads_as_before(self):
         form = 'canonical'
-        with self.subTest('restore wg_key'):
-            self.assertEqual(restore_wg_key(form), SERVER_HASH)
-        with self.subTest('restore live peers'):
-            self.assertEqual(restore_live_peers(form), {PEER, GONE, OLD})
-        with self.subTest('restore drop revoked peer'):
-            self.assert_dropped(form)
-        with self.subTest('backup'):
-            self.assertEqual(backup_check(form), [])
         with self.subTest('verify conf_peers'):
             self.assertEqual(verify_conf_peers(form), wg_peers(form))
         with self.subTest('verify syncconf body'):

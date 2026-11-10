@@ -4,7 +4,7 @@
 #   сплит со вырезанным IP входа 45.x - худший конфиг (QR_MODE=split);
 #   NUXT_WG_SPLIT_LOCAL=false - полный туннель (QR_MODE=full).
 # Затем e2e/qr-size.spec.ts на каждой и telegram/tests/test_qr_size.py на
-# конфиге, который выдала первая панель.
+# конфиге и его PNG для бота, которые выдала первая панель.
 #
 # Так же идёт в CI (panel-e2e), там образ панели уже собран:
 #   DOCKER="sudo -n docker" bash app/e2e/qr-size.sh
@@ -51,7 +51,7 @@ trap cleanup EXIT
 started=$SECONDS
 PASS=$(openssl rand -hex 12)
 stand_up "$NAME-split" "$IMAGE" "127.0.0.1:$PORT" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
-  -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_WG_ENDPOINT_IP="$ENTRY_IP"
+  -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_WG_ENDPOINT_IP="$ENTRY_IP" -e NUXT_TGBOT_SECRET="$PASS"
 stand_up "$NAME-full" "$IMAGE" "127.0.0.1:$((PORT + 2))" "$PASS" --tmpfs /var/lib/anysda-vpn2 \
   -e NUXT_AUTH_LOGIN_MAX_ATTEMPTS=1000 -e NUXT_WG_SPLIT_LOCAL=false
 stand_wait "$NAME-split" "http://127.0.0.1:$PORT"
@@ -89,16 +89,32 @@ playwright() {
 started=$SECONDS
 echo "=== панель: сплит, вход $ENTRY_IP ==="
 playwright "$PORT" split || rc=1
+# PNG, который панель отдаёт боту для того же девайса, что и выданный .conf:
+# клиент теста 1 привязывается к чату, запрос идёт маршрутом бота.
+# shellcheck disable=SC2016
+dk exec "$NAME-split" node --input-type=module -e '
+  import { DatabaseSync } from "node:sqlite"
+  const db = new DatabaseSync("/var/lib/anysda-vpn2/db.sqlite")
+  db.exec("PRAGMA busy_timeout=5000")
+  const row = db.prepare("SELECT d.id AS device, c.id AS client FROM devices d JOIN clients c ON c.id = d.client_id "
+    + "WHERE c.name LIKE ? ORDER BY d.id DESC LIMIT 1").get("e2e-qr-split-%")
+  if (!row) throw new Error("нет клиента теста 1")
+  db.prepare("UPDATE clients SET tg_chat_id = ? WHERE id = ?").run(598000 + row.client, row.client)
+  const r = await fetch(`http://127.0.0.1:31821/api/bot/devices/${row.device}/wg-qrcode.png?chatId=${598000 + row.client}`,
+    { headers: { authorization: "Bearer " + process.env.NUXT_TGBOT_SECRET } })
+  if (!r.ok) throw new Error("wg-qrcode.png: HTTP " + r.status)
+  process.stdout.write(Buffer.from(await r.arrayBuffer()))
+' > "$OUT/wg-worst.png" || rc=1
 echo "=== панель: сплит выключен ==="
 playwright "$((PORT + 2))" full || rc=1
 echo "timing: playwright=$((SECONDS - started))s"
 
 echo "=== бот ==="
-if [[ -s $OUT/wg-worst.conf ]]; then
-  QR_WORST_CONF="$OUT/wg-worst.conf" "$VENV/bin/python" -m unittest discover \
+if [[ -s $OUT/wg-worst.conf && -s $OUT/wg-worst.png ]]; then
+  QR_WORST_CONF="$OUT/wg-worst.conf" QR_WORST_PNG="$OUT/wg-worst.png" "$VENV/bin/python" -m unittest discover \
     -s "$REPO_DIR/telegram/tests" -p test_qr_size.py -v || rc=1
 else
-  echo 'панель не выдала худший конфиг: тест бота не запущен' >&2
+  echo 'панель не выдала худший конфиг и его PNG для бота: тест бота не запущен' >&2
   rc=1
 fi
 echo "timing: total=$((SECONDS - total))s, отчёты: $OUT"

@@ -15,7 +15,7 @@ const svgRef = {
   short: { length: 14974, sha256: '5be7ea24b7ddfd1aba7b9dd8df51a7d708f0ee478b13071c96ee3a57b50b8f58' },
 }
 
-// Формула _make_qr_png из telegram/bot.py: поле 4 модуля, Telegram ужимает фото больше 1280 px.
+// Формула прежнего генератора бота: поле 4 модуля, Telegram ужимает фото больше 1280 px.
 const botBox = (n: number) => Math.max(1, Math.min(10, Math.floor(1280 / (n + 8))))
 
 describe.each([['worst', worst], ['short', short]] as const)('QR %s', (name, conf) => {
@@ -66,4 +66,13 @@ describe.each([['worst', worst], ['short', short]] as const)('QR %s', (name, con
     }
     expect(nonWhite).toBe(0)
   })
+})
+
+// Тест бота (telegram/tests/test_qr_size.py) без панели меряет записанный PNG:
+// запись не должна отставать от генератора.
+it('PNG худшего конфига в тестах бота равен нынешнему', () => {
+  const saved = PNG.sync.read(readFileSync(new URL('../../../telegram/tests/fixtures/qr-worst-wg.png', import.meta.url)))
+  const now = PNG.sync.read(qrPng(worst))
+  expect([saved.width, saved.height]).toEqual([now.width, now.height])
+  expect(saved.data.equals(now.data)).toBe(true)
 })

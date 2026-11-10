@@ -71,6 +71,9 @@ describe('wgAllowedIps', () => {
       const line = wgAllowedIps(true, [], host)
       expect(covered(line, host), host).toBe(false)
     }
+    // соседний блок слева (192.192.0.0/10 кончается на 192.255.255.255) не трогается
+    expect(wgAllowedIps(true, [], '193.0.0.0').split(', ')).toContain('192.192.0.0/10')
+    expect(wgAllowedIps(true, [], '193.255.255.255').split(', ')).toContain('194.0.0.0/7')
   })
 
   it('endpoint в /4: вычитание даёт 28 префиксов вместо одного', () => {

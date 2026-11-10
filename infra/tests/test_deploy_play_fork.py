@@ -44,6 +44,15 @@ ssh_exec() { echo "ssh_exec" >> calls; }
 fw_guard_stage() { return 1; }
 '''
 
+# После библиотеки: колесо экзита и обвес плея без узла.
+PLAY_STUBS = '''
+: > wheel.whl
+ansible_wheel_path() { echo "$PWD/wheel.whl"; }
+load_env() { HOST_TAG=$1; }
+push() { :; }
+ssh_exec() { echo "ssh_exec $*" >> ssh; }
+'''
+
 
 class PlayForkTests(unittest.TestCase):
     def tree(self, directory, *plays):
@@ -93,16 +102,30 @@ run_stage_on_host 42-x ru
             self.assertIn(f'push {root}/scripts/42-x.sh', calls)
             self.assertEqual(calls[-1], 'ssh_exec')
 
-    def test_fw_guard_stage_with_play_dies(self):
+    def test_fw_guard_stage_play_runs_between_arm_and_disarm(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.tree(directory, '00-bootstrap')
-            script = (STUBS + fw_guard_stages() + function('run_stage_on_host')
-                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
-                      + 'run_stage_on_host 00-bootstrap ru\n')
+            venv = root / 'vpn2/venv'
+            (venv / 'bin').mkdir(parents=True)
+            (venv / '.vpn2-pins').write_text('x\n')
+            playbook = venv / 'bin/ansible-playbook'
+            playbook.write_text('#!/bin/sh\necho "play wheel=$VPN2_WHEEL_SHA256 dev=$VPN2_DEVELOPMENT" >> ssh\n')
+            playbook.chmod(0o755)
+            script = (STUBS + f'source {ROOT}/infra/lib/ansible-venv.sh\n' + PLAY_STUBS
+                      + 'FW_GUARD_WINDOW=90\n'
+                      + 'fw_guard_stage() { return 0; }\n'
+                      + 'fw_guard_entry_baseline() { echo baseline >> ssh; }\n'
+                      + 'fw_guard_beat() { sleep 30; }\n'
+                      + 'fw_guard_disarm() { echo "disarm $1" >> ssh; }\n'
+                      + 'run_play 00-bootstrap nl\n')
             result = bash(script, directory, {'VPN2_ROOT': str(root / 'vpn2')})
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn('die: стадия 00-bootstrap под fw-guard, плей пока нельзя', result.stderr)
-            self.assertFalse((root / 'calls').exists())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            calls = (root / 'ssh').read_text().splitlines()
+            self.assertIn("apt_prepare; apt_auto_pause'", calls[1])
+            empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+            self.assertEqual(calls[2:], [
+                'ssh_exec bash --norc /tmp/anysda/fw-guard.sh arm 00-bootstrap 90',
+                f'play wheel={empty} dev=false', 'disarm 00-bootstrap', 'ssh_exec rm -rf /tmp/anysda'])
 
     def test_run_play_command_line_prefix_and_code(self):
         for rc in (0, 2):
@@ -116,7 +139,7 @@ run_stage_on_host 42-x ru
                                     f'echo "args=$*"\nexit {rc}\n')
                 playbook.chmod(0o755)
                 script = (STUBS + fw_guard_stages()
-                          + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
+                          + f'source {ROOT}/infra/lib/ansible-venv.sh\n' + PLAY_STUBS
                           + 'ansible_venv_start() { echo start >> calls; }\n'
                           + 'rc=0; run_play 42-x nl || rc=$?; echo "rc=$rc"\n')
                 result = bash(script, directory, {'VPN2_ROOT': str(root / 'vpn2')})
@@ -136,7 +159,7 @@ run_stage_on_host 42-x ru
             playbook.write_text('#!/bin/sh\necho played\n')
             playbook.chmod(0o755)
             script = (STUBS + fw_guard_stages()
-                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
+                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n' + PLAY_STUBS
                       + 'ansible_wheel_build() { :; }\n'
                       + 'ansible_venv_install() { echo install >> calls; }\n'
                       + 'sleep 1 & _VENV_PID=$!\n'
@@ -158,7 +181,7 @@ run_stage_on_host 42-x ru
             playbook.write_text('#!/bin/sh\necho played\n')
             playbook.chmod(0o755)
             script = (STUBS + fw_guard_stages()
-                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
+                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n' + PLAY_STUBS
                       + 'ansible_wheel_build() { :; }\n'
                       + 'ansible_venv_install() { echo pip-boom; return 1; }\n'
                       + 'rc=0; ( run_play 42-x nl ) || rc=$?; echo "rc=$rc"\n')
@@ -174,7 +197,7 @@ run_stage_on_host 42-x ru
         with tempfile.TemporaryDirectory() as directory:
             root = self.tree(directory, '42-x')
             script = (STUBS + fw_guard_stages()
-                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n'
+                      + f'source {ROOT}/infra/lib/ansible-venv.sh\n' + PLAY_STUBS
                       + 'ansible_venv_start() { echo start >> calls; }\n'
                       + 'ansible_venv_wait() { echo wait >> calls; }\n'
                       + 'run_play 42-x nl || true\n')

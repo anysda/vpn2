@@ -182,11 +182,10 @@ ansible_venv_wait() {
 }
 
 # Стадия плеем ansible: infra/ansible/plays/<стадия>.yml на одном хосте.
-# Стадии под fw-guard идут только bash-путём: сторож отката живёт там.
+# Обвес тот же, что у стадии-скрипта: окружение хоста, манифест выпуска,
+# подготовка apt и сторож отката фаервола с пульсом.
 run_play() {
   local stage="$1" host="$2"
-  [[ " $FW_GUARD_STAGES " != *" $stage "* ]] \
-    || die "стадия $stage под fw-guard, плей пока нельзя (уберите ansible/plays/$stage.yml)"
   if [[ "$BASHPID" != "$$" ]]; then
     # Хосты идут субшеллами: фон родителя не наш потомок, wait его не дождётся.
     # Своя установка встаёт за его замком и при тех же пинах ничего не качает.
@@ -205,11 +204,52 @@ run_play() {
     ansible_venv_start
   fi
   ansible_venv_wait
-  HOST_TAG="$host" log "[$stage → $host] starting"
+  load_env "$host" || return 1
+  log "[$stage → $host] starting"
+  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
+  if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
+    push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
+  fi
+  local wheel='' wheel_sha=''
+  if [[ "$host" != ru ]]; then
+    wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
+    wheel_sha="$(sha256sum "$wheel" | cut -d' ' -f1)"
+  fi
+  # Пауза автообновлений и ожидание apt идут здесь, с живым выводом: внутри
+  # задачи ansible двадцать минут ожидания были бы тишиной.
+  local prepare=apt_prepare
+  [[ "$stage" != 00-bootstrap ]] || prepare='apt_prepare; apt_auto_pause'
+  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
+bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; $prepare'" | sed -u "s/^/[$host]/" || return 1
+  local rc=0 beat=''
+  if fw_guard_stage "$stage"; then
+    push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
+    ssh_exec "bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW" || return 1
+    # shellcheck disable=SC2034  # читают fw_guard_beat и fw_guard_disarm в deploy.sh
+    FW_GUARD_ENTRY_REFS=''
+    [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
+    fw_guard_beat &
+    beat=$!
+  fi
   (
     set -o pipefail
+    export VPN2_DEVELOPMENT="${VPN2_DEVELOPMENT:-false}" VPN2_PANEL_FOLLOWS="${VPN2_PANEL_FOLLOWS:-false}"
+    export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
+    export VPN2_WHEEL="$wheel" VPN2_WHEEL_SHA256="$wheel_sha" VPN2_INFRA="$DEPLOY_ROOT"
+    VPN2_SOURCE_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
+    export VPN2_SOURCE_ROOT
     ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
       "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/plays/$stage.yml" \
       --limit "$host" --tags "$stage" 2>&1 | sed -u "s/^/[$host]/"
-  )
+  ) || rc=$?
+  if [[ -n "$beat" ]]; then
+    kill "$beat" 2>/dev/null || true
+    wait "$beat" 2>/dev/null || true
+    fw_guard_disarm "$stage" || rc=1
+  fi
+  if [[ "$host" != ru ]]; then
+    ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
+  fi
+  [[ $rc -eq 0 ]] || return "$rc"
+  ok "[$stage → $host] done"
 }

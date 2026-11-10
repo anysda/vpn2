@@ -126,11 +126,24 @@ ansible_venv_install() {
   ) 9>"$VPN2_ROOT/.lock"
 }
 
+# Закрывает унаследованные дескрипторы старше 2 (кроме 255 - файл самого
+# скрипта): иначе фон держит замок деплоя верхнего deploy.sh, и после сбоя
+# деплоя следующий запуск видит «deploy уже выполняется».
+_close_inherited_fds() {
+  local f n
+  for f in /proc/$BASHPID/fd/*; do
+    n="${f##*/}"
+    [[ "$n" =~ ^[0-9]+$ ]] || continue
+    (( n > 2 && n != 255 )) || continue
+    eval "exec $n>&-" 2>/dev/null || true
+  done
+}
+
 # Колесо собирается синхронно, установка идёт в фоне.
 ansible_venv_start() {
   ansible_wheel_build
   mkdir -p "$(dirname "$VENV_LOG")"
-  ansible_venv_install >"$VENV_LOG" 2>&1 &
+  ( _close_inherited_fds; ansible_venv_install ) >"$VENV_LOG" 2>&1 &
   _VENV_PID=$!
 }
 

@@ -184,3 +184,27 @@ def test_install_branches(tmp_path, infra, fake_python):
     lines = calls.read_text().splitlines()
     assert len(lines) == 1 and '--no-index' in lines[0] and '--force-reinstall' in lines[0]
     assert (venv / '.vpn2-wheel').read_text() == (root / 'wheels/.src-sha256').read_text()
+
+
+def test_background_install_does_not_hold_deploy_lock(tmp_path):
+    # Деплой берёт замок через exec {fd}> и падает; фон с sleep ещё идёт,
+    # а следующий запуск обязан взять тот же замок.
+    lock = tmp_path / 'deploy.lock'
+    res = bash(
+        f'exec {{fd}}>{lock}; flock -n "$fd" || exit 9\n'
+        'ansible_wheel_build() { :; }\n'
+        '_ansible_venv_install_locked() { sleep 20; }\n'
+        'ansible_venv_start\n'
+        'echo "bg=$_VENV_PID" >&2\n'
+        'exit 1',
+        VPN2_ROOT=str(tmp_path / 'root'))
+    bg = int(res.stderr.rsplit('bg=', 1)[1].split()[0])
+    try:
+        assert res.returncode == 1, res.stderr
+        second = subprocess.run(['flock', '-n', str(lock), 'true'])
+        assert second.returncode == 0, 'фон venv держит замок деплоя'
+    finally:
+        subprocess.run(['pkill', '-P', str(bg)])
+        subprocess.run(['kill', str(bg)])
+
+

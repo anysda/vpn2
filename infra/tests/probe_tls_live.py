@@ -32,8 +32,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'telegram/tests'), str(ROOT / 'telegram')]
-from support import load_bot  # noqa: E402
-from outbox import Outbox  # noqa: E402
+from support import import_bot  # noqa: E402
 from probe_io import read_to_close  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/lib/vpn2_tls.py')
@@ -295,15 +294,15 @@ def exit_scenario(root, ports, ca):
 
 
 def main(root):
-    bot = load_bot()
-    queue = Outbox(str(root / 'outbox.sqlite'))
+    bot = import_bot()
+    queue = bot.outbox.Outbox(str(root / 'outbox.sqlite'))
 
     class BotHandler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa - called by BaseHTTPRequestHandler
             data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-            request = SimpleNamespace(headers=self.headers, app={bot.OUTBOX_KEY: queue},
+            request = SimpleNamespace(headers=self.headers, app={bot.events.OUTBOX_KEY: queue},
                                       json=AsyncMock(return_value=data))
-            response = asyncio.run(bot.handle_event(request))
+            response = asyncio.run(bot.events.handle_event(request))
             self.send_response(response.status)
             self.end_headers()
             self.wfile.write(response.body)
@@ -331,7 +330,7 @@ def main(root):
         return root / 'issued-ca.pem'
 
     ca = {'name': f'{tag}-acme', 'panel': f'{tag}-panel', 'url': f'https://localhost:{acme_port}/dir',
-          'root': root / 'pebble-ca.pem', 'secret': bot.SECRET, 'issued': issued}
+          'root': root / 'pebble-ca.pem', 'secret': bot.config.SECRET, 'issued': issued}
     try:
         docker('create', '--name', ca['name'], '--network', 'host', '-e', 'PEBBLE_VA_NOSLEEP=1',
                '-e', 'PEBBLE_WFE_NONCEREJECT=0', '-v', f'{root}/pebble.json:/config.json:ro',
@@ -348,8 +347,8 @@ def main(root):
             subprocess.run([*DOCKER, 'rm', '-f', name], capture_output=True)
         server.shutdown()
         server.server_close()
-        asyncio.run(bot._local.aclose())
-        asyncio.run(bot._tg.aclose())
+        asyncio.run(bot.transport._local.aclose())
+        asyncio.run(bot.transport._tg.aclose())
 
 
 if __name__ == '__main__':

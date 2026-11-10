@@ -212,6 +212,7 @@ run_play() {
   fi
   local wheel='' wheel_sha=''
   if [[ "$host" != ru ]]; then
+    ansible_wheel_build || return 1
     wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
     wheel_sha="$(sha256sum "$wheel" | cut -d' ' -f1)"
   fi

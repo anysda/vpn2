@@ -848,9 +848,11 @@ cmd_backup_fixture() {
   peers=$(ssh_node "$ENTRY" 'wg show wg0 peers | sort') || die "wg show wg0 peers не прошёл"
   names=$(panel_api GET /api/clients | python3 -c 'import json, sys; print("\n".join(sorted(c["name"] for c in json.load(sys.stdin))))') \
     || die "GET /api/clients не разобран"
-  # Каталоги выданных сертификатов (только обычные файлы, закрытых ключей нет) и runtime-файл бота.
-  sums=$(ssh_node "$ENTRY" 'find /etc/openvpn/server/pki/issued /etc/swanctl/x509 -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
-    sha256sum /var/lib/anysda-vpn2/runtime/telegram-runtime.json') || die "sha256 файлов эталона не собраны"
+  # Сертификаты *.crt (закрытых ключей нет) и runtime-файл бота; на стенде это
+  # ca.crt, server.crt, anysda-server.crt, anysda-ca.crt.
+  sums=$(ssh_node "$ENTRY" "find /etc/openvpn/server/pki /etc/swanctl/x509 /etc/swanctl/x509ca -maxdepth 1 -type f -name '*.crt' -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
+    sha256sum /var/lib/anysda-vpn2/runtime/telegram-runtime.json") || die "sha256 файлов эталона не собраны"
+  (( $(grep -c . <<<"$sums") >= 5 )) || die "в files меньше 5 записей: $(grep -c . <<<"$sums")"
   PEERS=$peers NAMES=$names SUMS=$sums python3 - "$out/etalon.expect.json" <<'PY' || die "etalon.expect.json не собран"
 import json, os, sys
 files = {}

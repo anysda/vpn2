@@ -160,8 +160,9 @@ jobs:
       - name: "повторный деплой: слепок тот же"
         run: |
           rc=0
+          cat infra/tests/fixtures/snapshot/ignore.yml infra/tests/fixtures/snapshot/ignore-again.yml > "$RUNNER_TEMP/ignore-again.yml"
           for node in entry exit; do
-            "$RUNNER_TEMP/venv/bin/vpn2" snapshot diff --ignore infra/tests/fixtures/snapshot/ignore.yml \
+            "$RUNNER_TEMP/venv/bin/vpn2" snapshot diff --ignore "$RUNNER_TEMP/ignore-again.yml" \
               "stand-report/snapshot-$node.json" "stand-report/snapshot-again-$node.json" || rc=1
           done
           exit "$rc"

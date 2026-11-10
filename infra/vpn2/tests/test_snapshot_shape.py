@@ -114,3 +114,16 @@ def test_data_directories_are_recorded_without_content(root):
     found = files(root)
     assert found['/var/lib/caddy']['type'] == 'dir' and found['/var/lib/sing-box']['type'] == 'dir'
     assert '/var/lib/caddy/certs' not in found and '/var/lib/vmsingle' not in found
+
+
+def test_warp_device_id_is_not_part_of_the_shape(root):
+    """reserved - идентификатор устройства WARP: у каждой регистрации свой, у двух установок он разный."""
+    def exit_config(reserved, mtu=1280):
+        config = {'endpoints': [{'type': 'wireguard', 'mtu': mtu, 'address': ['172.16.0.2/32'],
+                                 'peers': [{'address': 'engage.cloudflareclient.com', 'port': 2408,
+                                            'reserved': reserved}]}]}
+        (root / 'etc/sing-box/config.json').write_text(json.dumps(config))
+        return files(root)['/etc/sing-box/config.json']['shape']
+
+    assert exit_config([113, 44, 192]) == exit_config([15, 42, 196])
+    assert exit_config([113, 44, 192]) != exit_config([113, 44, 192], mtu=1420)

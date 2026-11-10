@@ -211,7 +211,7 @@ _SHAPED = ('/etc/sing-box/config*.json', '/etc/anysda/anysda-config.yaml',
            '/etc/anysda/failover-watchdog.env', '/etc/wireguard/wg0.conf',
            '/opt/anysda-vpn2/config.yaml', '/opt/anysda-vpn2/infra/envs/*.env',
            '/var/lib/vpn2-apply/*.good', '/opt/AdGuardHome*/AdGuardHome.yaml')
-_SECRET_FIELD = re.compile('pass|secret|token|key|private|hash|uuid|short_id|psk|salt', re.IGNORECASE)
+_SECRET_FIELD = re.compile('pass|secret|token|key|private|hash|uuid|short_id|psk|salt|reserved', re.IGNORECASE)
 _ASSIGN = re.compile(r'''^((\s*)(?:-\s+)?(?:export\s+)?["']?([\w.-]+)["']?\s*[:=]\s*)(.*)$''')
 _MASK = '*'
 # Каталоги данных служб: сверяются сам каталог, его права и владелец, содержимое живое.

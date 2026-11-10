@@ -88,10 +88,14 @@ docker() {
     def test_recovery_rechecks_contract_and_backups_before_resuming(self):
         library = ROOT / 'infra/lib/deploy-release.sh'
         self.assertTrue(library.exists(), 'release recovery is missing')
+        state = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, state)
         run = subprocess.run(['bash', '-euo', 'pipefail', '-c', f'''
 source {shlex.quote(str(library))}
 DEPLOY_ROOT={shlex.quote(str(ROOT / 'infra'))}
-VPN2_RELEASE_MANIFEST=release-manifest.json
+VPN2_STATE_DIR={shlex.quote(state)}
+VPN2_RELEASE_MANIFEST=$VPN2_STATE_DIR/release-manifest.json
+touch "$VPN2_RELEASE_MANIFEST"
 install_prereqs() {{ :; }}
 load_env() {{ :; }}
 expand_hosts() {{ echo ru; }}

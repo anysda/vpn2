@@ -1173,7 +1173,12 @@ STEP="восстановление состояния деплоя"
 if [[ -d "$BUNDLE_DIR/deploy-state" ]]; then
   TOUCHED+=(var/lib/anysda-vpn2/state)
   [[ -d /var/lib/anysda-vpn2/state ]] || install -d -m 700 -o root -g root /var/lib/anysda-vpn2/state
+  # Манифест выпуска остаётся от установленного дерева: по манифесту из архива
+  # стадии ниже подняли бы образы выпуска, из которого снят бэкап.
+  STATE_MANIFEST=/var/lib/anysda-vpn2/state/release-manifest.json
+  [[ ! -f "$STATE_MANIFEST" ]] || cp -a "$STATE_MANIFEST" "$WORK/release-manifest.json"
   copy_into "$BUNDLE_DIR/deploy-state" /var/lib/anysda-vpn2/state
+  [[ ! -f "$WORK/release-manifest.json" ]] || cp -a "$WORK/release-manifest.json" "$STATE_MANIFEST"
 fi
 
 # ── Старт сервисов обратно ──────────────────────────────────────────────────
@@ -1247,7 +1252,12 @@ if [[ -r "$ENVS_DIR/all.env" && -r "$ENVS_DIR/ru.env" ]]; then
     # Стадии должны читать восстановленный файл, а не перетирать его засевом.
     echo 'unset ADMIN_PASSWORD';
     # Режим деплоя приходит от deploy.sh restore, без него стадии ищут манифест выпуска.
-    printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}"; } > "$STAGE_ENV"
+    printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}";
+    # /tmp/anysda/release-manifest.json живёт до перезагрузки, деплой оставляет
+    # манифест установленного выпуска в состоянии - стадии берут его оттуда.
+    if [[ -f "${VPN2_STATE_DIR:-/var/lib/anysda-vpn2/state}/release-manifest.json" ]]; then
+      printf 'VPN2_RELEASE_MANIFEST=%q\n' "${VPN2_STATE_DIR:-/var/lib/anysda-vpn2/state}/release-manifest.json"
+    fi; } > "$STAGE_ENV"
   chmod 600 "$STAGE_ENV"
 fi
 

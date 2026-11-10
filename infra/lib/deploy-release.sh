@@ -42,6 +42,11 @@ release_start() {
       python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" fetch "$DEPLOY_ROOT/.." || exit 1
     fi
     python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.." || exit 1
+    # Манифест из --manifest остаётся в состоянии деплоя: anysda-restore.sh
+    # прогоняет стадии по нему, когда /tmp/anysda уже вычищен перезагрузкой.
+    if [[ ! "$VPN2_RELEASE_MANIFEST" -ef "$VPN2_STATE_DIR/release-manifest.json" ]]; then
+      install -m 600 "$VPN2_RELEASE_MANIFEST" "$VPN2_STATE_DIR/release-manifest.json" || exit 1
+    fi
   fi
   # The remote lock itself needs sshpass/ssh on a clean orchestrator.
   install_prereqs

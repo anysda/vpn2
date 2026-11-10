@@ -16,16 +16,16 @@
         },
         {
           "id": "<id>",
-          "name": "e2e-api-snapshot-main",
+          "name": "e2e-api-snapshot-second",
           "status": "active",
-          "expiresAt": "2099-12-30T20:59:59.000Z",
+          "expiresAt": null,
           "createdAt": "<time>"
         },
         {
           "id": "<id>",
-          "name": "e2e-api-snapshot-second",
+          "name": "e2e-api-snapshot-main",
           "status": "active",
-          "expiresAt": null,
+          "expiresAt": "2099-12-30T20:59:59.000Z",
           "createdAt": "<time>"
         }
       ],

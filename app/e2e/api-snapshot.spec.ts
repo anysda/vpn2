@@ -56,6 +56,24 @@ async function adminFetch(api: APIRequestContext, method: string, path: string, 
   return { status: r.status(), type: r.headers()['content-type'] ?? '', text: await r.text() }
 }
 
+const second = () => Math.floor(Date.now() / 1000)
+let createdIn: number | null = null
+
+/**
+ * created_at клиента хранится с точностью до секунды, а списки сортируются по нему:
+ * каждый следующий клиент сценария создаётся в следующей секунде, порядок в списках один.
+ */
+async function apart<T>(method: string, path: string, data: unknown, call: () => Promise<T>): Promise<T> {
+  const name = (data as { name?: unknown } | undefined)?.name
+  const creates = method === 'POST' && ['/api/clients', '/api/bot/admin/clients'].includes(path)
+    && typeof name === 'string' && name.startsWith('e2e-api-snapshot-')
+  if (!creates) return call()
+  while (createdIn !== null && second() <= createdIn) await new Promise(r => setTimeout(r, 20))
+  const reply = await call()
+  createdIn = second()
+  return reply
+}
+
 test.describe.configure({ mode: 'serial' })
 
 test.describe('снимок ответов API панели', () => {
@@ -69,8 +87,8 @@ test.describe('снимок ответов API панели', () => {
     await loginApi(page)
     const api = page.request
     const { calls: raw, ids } = await walk({
-      admin: (method: string, path: string, data?: unknown) => adminFetch(api, method, path, data),
-      bot: async (method: string, path: string, data: unknown, auth: boolean) => botFetch(method, path, data, auth),
+      admin: (method: string, path: string, data?: unknown) => apart(method, path, data, () => adminFetch(api, method, path, data)),
+      bot: (method: string, path: string, data: unknown, auth: boolean) => apart(method, path, data, async () => botFetch(method, path, data, auth)),
       settled: async (id: string) => {
         await expect.poll(async () => (await (await api.get(`/api/access-operations/${id}`)).json()).status,
           { timeout: 45_000 }).toBe('confirmed')

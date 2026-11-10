@@ -10,7 +10,7 @@ import type { AccessOperation } from '../../shared/access-operation'
 import { syncClientPrefsFile } from './client-prefs'
 import { assertKnownOutbound } from './route-outbound'
 import { joinDetail, recordEvent } from './events'
-import { pluralRu } from '../../shared/plural'
+import { plural } from '../../shared/plural'
 
 /**
  * Общие операции над клиентами — используются и панелью (session-auth),
@@ -34,7 +34,10 @@ export interface ClientCreateInput {
   deviceLimit?: number | null
 }
 
-const devicesText = (n: number) => `${n} ${pluralRu(n, ['устройство', 'устройства', 'устройств'])}`
+/** Сообщение 409 при лимите ниже числа устройств. */
+export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
+
+const devicesText = (n: number) => `${n} ${plural(n, 'device')}`
 
 /** Срок для журнала — дата по Москве, как её видит админ. */
 function termText(expiresAt: Date | null): string {
@@ -102,7 +105,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     if (patch.deviceLimit < have) {
       throw createError({
         statusCode: 409,
-        statusMessage: 'device_limit_below_count', message: `У клиента уже ${have} ${pluralRu(have, ['устройство', 'устройства', 'устройств'])} — лимит не может быть меньше`,
+        statusMessage: 'device_limit_below_count', message: deviceLimitBelowCountText(have),
       })
     }
   }

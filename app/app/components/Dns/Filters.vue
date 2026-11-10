@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Чёрные и белые списки AdGuard: включить, добавить, удалить, проверить
 // обновления. Каждое действие возвращает списки из /control/filtering/status.
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 import { todayYesterdayHmLocal } from '~/utils/format'
 
 interface List { name: string, url: string, enabled: boolean, rules: number, updated: string | null }
@@ -25,11 +25,11 @@ const key = (l: List, white: boolean) => `${white ? 'w' : 'b'}|${l.url}`
 
 function every(h: number) {
   if (!h) return 'не обновляются'
-  if (h < 24) return h === 1 ? 'обновляются раз в час' : `обновляются раз в ${h} ${pluralRu(h, ['час', 'часа', 'часов'])}`
+  if (h < 24) return h === 1 ? 'обновляются раз в час' : `обновляются раз в ${h} ${plural(h, 'hour')}`
   const d = Math.round(h / 24)
   if (d === 1) return 'обновляются раз в сутки'
   if (d === 7) return 'обновляются раз в неделю'
-  return `обновляются раз в ${d} ${pluralRu(d, ['день', 'дня', 'дней'])}`
+  return `обновляются раз в ${d} ${plural(d, 'day')}`
 }
 
 const sub = computed(() => {
@@ -37,7 +37,7 @@ const sub = computed(() => {
   if (!v) return ''
   const on = v.black.filter(l => l.enabled)
   const rules = on.reduce((a, l) => a + l.rules, 0)
-  return `Включено ${on.length} из ${v.black.length} · ${grp(rules)} ${pluralRu(rules, ['правило', 'правила', 'правил'])} · ${every(v.interval)}`
+  return `Включено ${on.length} из ${v.black.length} · ${grp(rules)} ${plural(rules, 'rule')} · ${every(v.interval)}`
 })
 
 function updated(l: List) {
@@ -49,7 +49,7 @@ function updated(l: List) {
 // Строка телефона: правил и обновление — одной строкой под адресом.
 function meta(l: List) {
   if (!l.enabled || !l.rules) return updated(l)
-  return `${grp(l.rules)} ${pluralRu(l.rules, ['правило', 'правила', 'правил'])} · ${updated(l)}`
+  return `${grp(l.rules)} ${plural(l.rules, 'rule')} · ${updated(l)}`
 }
 
 async function toggle(l: List, white: boolean) {
@@ -74,7 +74,7 @@ async function check() {
   try {
     const r = await latest(() => $fetch<View & { updated: number }>('/api/dns/filters/refresh', { method: 'POST' }))
     toast.add({ title: r.updated
-      ? `Списки обновлены: ${r.updated} ${pluralRu(r.updated, ['список', 'списка', 'списков'])}`
+      ? `Списки обновлены: ${r.updated} ${plural(r.updated, 'list')}`
       : 'Списки обновлены, новых правил нет' })
   }
   catch (e) {

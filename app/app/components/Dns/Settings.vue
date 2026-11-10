@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Настройки DNS AdGuard: серверы выше, защита, кэш, журнал. Каждое изменение —
 // одно поле; ответ сервера — то, что AdGuard показывает после изменения.
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 
 interface View {
   upstreams: string
@@ -97,7 +97,7 @@ async function check() {
       method: 'POST', body: { upstreams: ups.value, bootstrap: data.value?.bootstrap ?? '' },
     })
     if (r.failed.length) toast.add({ title: `Не отвечают: ${r.failed.join(', ')}`, color: 'error' })
-    else toast.add({ title: r.total === 1 ? 'Сервер отвечает' : `Все ${r.total} ${pluralRu(r.total, ['сервер', 'сервера', 'серверов'])} отвечают` })
+    else toast.add({ title: r.total === 1 ? 'Сервер отвечает' : `Все ${r.total} ${plural(r.total, 'server')} отвечают` })
   }
   catch (e) {
     toast.add({ title: errText(e), color: 'error' })

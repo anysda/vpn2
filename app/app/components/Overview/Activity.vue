@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 import { activityScale } from '~/utils/activity-scale'
 import { anim } from '~/utils/clients-view'
 import { ru, useWake } from '~/utils/overview'
@@ -86,7 +86,7 @@ const read = computed(() => {
   return {
     when: mskDayNumLabel(day),
     v: mode.value === 'on' ? String(v) : ru(v, 1),
-    unit: mode.value === 'on' ? `${pluralRu(v, ['клиент', 'клиента', 'клиентов'])} в сети` : 'ГБ',
+    unit: mode.value === 'on' ? `${plural(v, 'client')} в сети` : 'ГБ',
   }
 })
 

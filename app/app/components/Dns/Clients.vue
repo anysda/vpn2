@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Клиенты панели глазами AdGuard: адреса в туннеле, свои настройки, запросы.
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 
 interface Row {
   name: string
@@ -23,7 +23,7 @@ const tag = computed(() => {
   const rows = data.value ?? []
   const n = rows.length
   const ips = rows.reduce((a, r) => a + r.ips.length, 0)
-  return `${n} ${pluralRu(n, ['клиент', 'клиента', 'клиентов'])} · ${ips} ${pluralRu(ips, ['адрес', 'адреса', 'адресов'])}`
+  return `${n} ${plural(n, 'client')} · ${ips} ${plural(ips, 'address')}`
 })
 
 const ini = (n: string) => n.split(' ').map(s => s[0]).join('').slice(0, 2)

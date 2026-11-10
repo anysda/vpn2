@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 import { useClients } from '~/composables/useClients'
 import type { Client, ClientTraffic } from '~/composables/useClients'
 import { accessProtocols } from '#shared/access-operation'
@@ -67,7 +67,7 @@ const subtitle = computed(() => {
   if (!listed.value) return ''
   const n = clients.value.length
   const d = clients.value.reduce((sum, c) => sum + c.deviceCount, 0)
-  return `${n} ${pluralRu(n, ['клиент', 'клиента', 'клиентов'])} · ${d} ${pluralRu(d, ['устройство', 'устройства', 'устройств'])}`
+  return `${n} ${plural(n, 'client')} · ${d} ${plural(d, 'device')}`
 })
 definePageMeta({ title: 'Клиенты и ключи' })
 usePageSub(subtitle)

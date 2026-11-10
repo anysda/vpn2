@@ -1,4 +1,4 @@
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 
 const DAY_MS = 86_400_000
 /** «Истекают»: активный клиент, у которого срок кончится в ближайшие 7 суток. */
@@ -18,7 +18,7 @@ export function expiringInDays(expiresAt: string | null, status: string, now = D
 }
 
 export function inDaysRu(n: number): string {
-  return `через ${n} ${pluralRu(n, ['день', 'дня', 'дней'])}`
+  return `через ${n} ${plural(n, 'day')}`
 }
 
 const EASE = 'cubic-bezier(.23,1,.32,1)'

@@ -1,4 +1,4 @@
-import { pluralRu } from './plural'
+import { plural } from './plural'
 
 export interface BotDelivery {
   id: string
@@ -24,7 +24,7 @@ export function botDeliveryTime(created: number, now = Date.now()): string {
 }
 
 export function botQueueText(count: number): string {
-  return `Бот недоступен, ${count} ${pluralRu(count, ['уведомление', 'уведомления', 'уведомлений'])} в очереди`
+  return `Бот недоступен, ${count} ${plural(count, 'notification')} в очереди`
 }
 
 export function botDeliveryText(row: BotDelivery): string {

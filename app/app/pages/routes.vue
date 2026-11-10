@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { pluralRu } from '#shared/plural'
+import { plural } from '#shared/plural'
 import { ROUTES_KEY } from '~/composables/useRoutes'
 import type { Route } from '~/composables/useRoutes'
 
@@ -8,7 +8,7 @@ useHead({ title: 'Маршруты — anysda-vpn2' })
 const { data: rules } = useNuxtData<Route[]>(ROUTES_KEY)
 const count = computed(() => {
   const n = rules.value?.length ?? 0
-  return `${n} ${pluralRu(n, ['правило', 'правила', 'правил'])}`
+  return `${n} ${plural(n, 'rule')}`
 })
 definePageMeta({ title: 'Маршруты' })
 usePageSub(() => `${count.value} · какой сайт через какой выход`)

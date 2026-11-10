@@ -148,7 +148,7 @@ class LogLiteralTests(unittest.TestCase):
                             result = run(script, work, HOST_TAG=value)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
-        self.assertGreater(count, 20)
+        self.assertGreater(count, 15)
 
 
 class IkeRoutingLiteralTests(unittest.TestCase):

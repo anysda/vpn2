@@ -26,13 +26,104 @@ const MISSING_OPERATION = '00000000-0000-4000-8000-000000000000'
  */
 
 /**
- * Что заменяется и почему. kind: field - поле JSON по пути (* - каждый элемент
- * массива), line - значение строки `Ключ = значение` текстового тела, block -
- * содержимое блока <тег>…</тег>, body - всё тело. check - формат исходного
- * значения: он проверяется отдельно и валит прогон, если не совпал.
- * @type {{ route: string, kind: 'field' | 'line' | 'block' | 'body', key: string, label: string, check: RegExp, reason: string, status?: number }[]}
+ * Таблица нормализации: маршрут (* - любой), вид, поле, метка, формат исходного
+ * значения, причина. Вид: field - поле JSON (путь через точку, * - любой ключ
+ * или элемент), line - значение строки `Ключ = значение`, block - тело блока
+ * <тег>…</тег>, body - всё тело, scope - оставить в массиве (key - путь, пусто
+ * для корня) только элементы, у которых поле field (первое слово check, до
+ * «:») подходит под регулярное выражение, idkeys - оставить в объекте только
+ * ключи-идентификаторы клиентов сценария. Значение null остаётся null. Формат
+ * (check) проверяется на каждом значении: не подошёл - прогон падает, так
+ * длина и вид случайных значений проверены отдельно от эталона. Поля вне
+ * таблицы сравниваются как есть.
+ * @typedef {{ route: string, kind: 'field' | 'line' | 'block' | 'body' | 'scope' | 'idkeys', key: string, label: string, check: RegExp, reason: string, field?: string }} Rule
  */
-const NORMALIZATION = []
+
+const ID = /^\d+$/
+const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/
+const MS = /^\d{13}$/
+const SEC = /^\d{10}$/
+const NUM = /^-?\d+(\.\d+)?$/
+const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/
+const PASSWORD = /^[A-Za-z0-9]{20}$/
+const KEY44 = /^[A-Za-z0-9+/]{43}=$/
+const PEM = /^(-----BEGIN [A-Z0-9 ]+-----)\n[\s\S]+\n-----END [A-Z0-9 ]+-----\n?$/
+const OVPN_KEY = /^-----BEGIN [A-Za-z0-9 ]+-----\n[\s\S]+\n-----END [A-Za-z0-9 ]+-----$/
+
+/**
+ * @param {string[]} routes
+ * @param {Rule['kind']} kind
+ * @param {string[]} keys
+ * @param {string} label
+ * @param {RegExp} check
+ * @param {string} reason
+ * @returns {Rule[]}
+ */
+const rule = (routes, kind, keys, label, check, reason) =>
+  routes.flatMap(route => keys.map(key => ({ route, kind, key, label, check, reason })))
+
+const R_ID = 'идентификатор из автоинкремента: зависит от клиентов других спеков в шарде'
+const R_TIME = 'время создания: момент прогона'
+const R_PASSWORD = 'пароль клиента генерируется случайно'
+const R_OP = 'операция доступа: случайный uuid и моменты прогона'
+const BOT_CLIENT = ['bot/link.post', 'bot/client.get', 'bot/devices/index.post', 'bot/devices/[deviceId]/reissue.post', 'bot/devices/[deviceId].delete']
+const WG_TEXT = ['clients/[id]/devices/[deviceId]/wg-config.get', 'bot/devices/[deviceId]/wg-config.get']
+const OVPN_TEXT = ['clients/[id]/devices/[deviceId]/ovpn-config.get', 'bot/devices/[deviceId]/ovpn-config.get']
+const SNAPSHOT = 'ops/bot-snapshot.get'
+
+/** @type {Rule[]} */
+const NORMALIZATION = [
+  ...rule(['*'], 'field', ['url'], '<url>', /^http:\/\/127\.0\.0\.1:\d+\/api\//, 'адрес в теле ошибки: порт стенда и идентификаторы'),
+  ...rule(['*'], 'field', ['operation.id'], '<uuid>', UUID, R_OP),
+  ...rule(['*'], 'field', ['operation.createdAt', 'operation.nextRetry', 'operation.protocols.*.nextRetry', 'operation.protocols.*.checkedAt', 'operation.protocols.*.lastAttempt'], '<ms>', MS, R_OP),
+  ...rule(['*'], 'field', ['operation.clientId', 'operation.deviceId'], '<id>', ID, R_ID),
+
+  ...rule(['admin/telegram.get'], 'field', ['clients_total', 'clients_subscribed', 'queued', 'delivered_day'], '<count>', ID, 'счётчики по всем клиентам и очереди шарда: набор зависит от других спеков'),
+
+  ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch'], 'field', ['id'], '<id>', ID, R_ID),
+  ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch'], 'field', ['createdAt', 'updatedAt'], '<time>', ISO, R_TIME),
+  ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch', 'bot/admin/clients/[id].get'], 'field', ['password'], '<password>', PASSWORD, R_PASSWORD),
+  ...rule(['bot/admin/clients/[id].get'], 'field', ['id'], '<id>', ID, R_ID),
+
+  { route: 'clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
+  ...rule(['clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
+  ...rule(['clients/index.get'], 'field', ['*.createdAt'], '<time>', ISO, R_TIME),
+  ...rule(['clients/[id].get'], 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
+  ...rule(['clients/[id].get'], 'field', ['createdAt', 'devices.*.createdAt'], '<time>', ISO, R_TIME),
+  ...rule(['clients/[id].get', ...BOT_CLIENT], 'field', ['devices.*.configName'], '<config-name>', /^e2e-api-snaps-\d+$/, 'имя конфига содержит идентификатор устройства'),
+  ...rule(['clients/[id]/devices/index.post'], 'field', ['id', 'clientId'], '<id>', ID, R_ID),
+  ...rule(['clients/[id]/devices/index.post'], 'field', ['createdAt'], '<time>', ISO, R_TIME),
+
+  ...rule(WG_TEXT, 'line', ['PrivateKey', 'PublicKey', 'PresharedKey'], '<wg-key>', KEY44, 'ключ WireGuard: случайный (серверный - свой на каждый стенд)'),
+  ...rule(WG_TEXT, 'line', ['Address'], '<address>', /^\d+\.\d+\.\d+\.\d+\/\d+, [0-9a-f:]+\/\d+$/, 'адрес из пула: зависит от устройств других спеков'),
+  ...rule(OVPN_TEXT, 'block', ['ca', 'cert'], '<pem>', PEM, 'сертификат OpenVPN: случайный, срок от момента прогона'),
+  ...rule(OVPN_TEXT, 'block', ['key', 'tls-crypt'], '<secret>', OVPN_KEY, 'закрытый ключ и tls-crypt: случайные'),
+  ...rule(['clients/[id]/devices/[deviceId]/ikev2-credentials.get'], 'field', ['password'], '<password>', PASSWORD, R_PASSWORD),
+  ...rule(['clients/[id]/devices/[deviceId]/ikev2-credentials.get'], 'field', ['caCertPem'], '<pem>', PEM, 'сертификат IKEv2 CA: случайный, срок от момента прогона'),
+  { route: 'clients/[id]/devices/[deviceId]/wg-qrcode.svg.get', kind: 'body', key: '', label: '<svg-qrcode>', check: /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 \d+ \d+"[\s\S]+<\/svg>$/, reason: 'картинка кодирует случайные ключи WireGuard' },
+
+  ...rule(['clients/top.get'], 'field', ['since'], '<sec>', SEC, 'начало суток: от даты прогона'),
+  ...rule(['clients/top.get'], 'field', ['historyStart'], '<sec>', SEC, 'начало истории: от момента прогона'),
+  ...rule(['clients/top.get'], 'field', ['counts.total', 'counts.onlineNow', 'counts.activeDay', 'counts.activeWeek'], '<count>', ID, 'счётчики по всем клиентам шарда'),
+  { route: 'clients/traffic.get', kind: 'idkeys', key: '', label: '', check: ID, reason: 'карта трафика общая на панель: оставлены клиенты сценария, ключ-идентификатор заменён именем' },
+
+  { route: 'bot/admin/clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
+  ...rule(['bot/admin/clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
+  ...rule(BOT_CLIENT, 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
+
+  { route: SNAPSHOT, kind: 'scope', key: 'clients', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список клиентов общий на панель шарда: строки других спеков из эталона исключены' },
+  ...rule([SNAPSHOT], 'field', ['timestamp'], '<time>', ISO, R_TIME),
+  ...rule([SNAPSHOT], 'field', ['clients.*.id'], '<id>', ID, R_ID),
+  ...rule([SNAPSHOT], 'field', ['clients.*.createdAt'], '<time>', ISO, R_TIME),
+  ...rule([SNAPSHOT], 'field', ['nodes.*.cpu', 'nodes.*.ram', 'nodes.*.rxMbps', 'nodes.*.txMbps', 'nodes.*.uptimeSec', 'nodes.*.staleSec', 'nodes.*.cores', 'nodes.*.memTotalBytes', 'outbounds.*.rttMs', 'connections'], '<metric>', NUM, 'метрики подставных VM и clash: другие спеки меняют их в шарде'),
+
+  ...rule(['admin/broadcast.post'], 'field', ['recipients'], '<count>', ID, 'число привязанных чатов шарда: зависит от других спеков'),
+  ...rule(['admin/broadcast.post'], 'field', ['delivery.id'], '<uuid>', UUID, 'идентификатор доставки: случайный'),
+  ...rule(['admin/broadcast.post'], 'field', ['delivery.created'], '<ms>', MS, R_TIME),
+  { route: 'admin/bot-deliveries.get', kind: 'scope', key: '', field: 'label', label: '', check: /e2e-api-snapshot-/, reason: 'очередь общая на панель шарда: доставки других спеков из эталона исключены' },
+  ...rule(['admin/bot-deliveries.get'], 'field', ['*.id'], '<uuid>', UUID, 'идентификатор доставки: случайный'),
+  ...rule(['admin/bot-deliveries.get'], 'field', ['*.created'], '<ms>', MS, R_TIME),
+]
 
 /**
  * @param {string} route
@@ -55,13 +146,11 @@ function toCall(route, method, path, reply) {
 /**
  * Обход. Возвращает сырые вызовы по маршрутам в порядке выполнения.
  * @param {Io} io
- * @returns {Promise<Map<string, Call[]>>}
+ * @returns {Promise<{ calls: Map<string, Call[]>, ids: Record<string, string | number> }>}
  */
 export async function walk(io) {
   /** @type {Map<string, Call[]>} */
   const calls = new Map()
-  /** @type {Map<string, any>} */
-  const raw = new Map()
   const vars = /** @type {Record<string, string | number>} */ ({})
 
   /**
@@ -190,8 +279,7 @@ export async function walk(io) {
   await settle((await botCall('bot/admin/clients/[id].delete', 'DELETE', '/api/bot/admin/clients/{bot}')).json)
   await io.gone('/api/clients/' + vars.bot)
 
-  void raw
-  return calls
+  return { calls, ids: { main: vars.main, second: vars.second, bot: vars.bot } }
 }
 
 /** @param {unknown} node @param {string[]} path @param {(value: unknown) => unknown} fn @returns {number} */
@@ -210,28 +298,45 @@ function mapPath(node, path, fn) {
 
 /**
  * Применяет таблицу к вызовам маршрута. Значение, не подошедшее под check,
- * и применимая запись, которая ничего не нашла, валят прогон.
+ * валит прогон. Правило, которое ничего не нашло, допустимо: одно правило
+ * покрывает несколько вызовов и состояний.
  * @param {string} route
  * @param {Call[]} list
+ * @param {Record<string, string | number>} ids идентификаторы клиентов сценария
  * @returns {Call[]}
  */
-export function normalize(route, list) {
-  const rules = NORMALIZATION.filter(r => r.route === route)
+export function normalize(route, list, ids) {
+  const rules = NORMALIZATION.filter(r => r.route === route || r.route === '*')
   const out = structuredClone(list)
+  const order = [...rules.filter(r => r.kind === 'scope' || r.kind === 'idkeys'), ...rules.filter(r => r.kind !== 'scope' && r.kind !== 'idkeys')]
   for (const call of out) {
-    for (const rule of rules.filter(r => r.status === undefined || r.status === call.status)) {
+    for (const rule of order) {
       /** @type {(v: unknown) => unknown} */
       const swap = (v) => {
+        if (v === null) return null
         if (!rule.check.test(String(v))) throw new Error(`${route} ${rule.key}: «${String(v).slice(0, 40)}» не подходит под ${rule.check}`)
         return rule.label
       }
-      if (rule.kind === 'field') mapPath(call.body, rule.key.split('.'), swap)
+      if (rule.kind === 'scope') {
+        const holder = /** @type {any} */ (rule.key ? rule.key.split('.').reduce((n, k) => n?.[k], /** @type {any} */ (call.body)) : call.body)
+        if (!Array.isArray(holder) || call.status !== 200) continue
+        const kept = holder.filter(item => rule.check.test(String(item?.[rule.field ?? ''] ?? '')))
+        holder.splice(0, holder.length, ...kept)
+      }
+      else if (rule.kind === 'idkeys') {
+        if (call.status !== 200 || call.body === null || typeof call.body !== 'object') continue
+        const body = /** @type {Record<string, unknown>} */ (call.body)
+        const named = Object.entries(ids).map(([name, id]) => /** @type {[string, string]} */ ([`{${name}}`, String(id)]))
+        call.body = Object.fromEntries(named.filter(([, id]) => id in body).map(([name, id]) => [name, body[id]]))
+      }
+      else if (rule.kind === 'field') mapPath(call.body, rule.key.split('.'), swap)
       else if (rule.kind === 'body') call.body = swap(call.body)
       else if (typeof call.body === 'string') {
         const text = call.body
         if (rule.kind === 'line') {
           call.body = text.replace(new RegExp(`^(${rule.key}\\s*=\\s*)(.*)$`, 'gm'), (_, head, value) => head + swap(value))
-        } else {
+        }
+        else {
           call.body = text.replace(new RegExp(`(<${rule.key}>\\n)([\\s\\S]*?)(\\n</${rule.key}>)`, 'g'), (_, a, value, c) => a + swap(value) + c)
         }
       }
@@ -243,8 +348,9 @@ export function normalize(route, list) {
 /**
  * Эталонные строки файлов по маршрутам: JSON с отступом и переводом строки в конце.
  * @param {Map<string, Call[]>} calls
+ * @param {Record<string, string | number>} ids
  * @returns {Map<string, string>}
  */
-export function snapshotFiles(calls) {
-  return new Map([...calls].map(([route, list]) => [route, `${JSON.stringify(normalize(route, list), null, 2)}\n`]))
+export function snapshotFiles(calls, ids) {
+  return new Map([...calls].map(([route, list]) => [route, `${JSON.stringify(normalize(route, list, ids), null, 2)}\n`]))
 }

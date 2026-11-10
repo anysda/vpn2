@@ -6,7 +6,7 @@ import type { APIRequestContext } from '@playwright/test'
 import { expect, loginApi, test } from './support/fixtures'
 import { container } from './support/openvpn-ca'
 // @ts-expect-error модуль .mjs без деклараций: обход запускается и из скрипта
-import { walk, snapshotFiles, normalize } from '../scripts/api-snapshot.mjs'
+import { walk, snapshotFiles } from '../scripts/api-snapshot.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures', 'api-snapshot')
@@ -68,7 +68,7 @@ test.describe('снимок ответов API панели', () => {
   test('обход сценария собирает записи', async ({ page }, testInfo) => {
     await loginApi(page)
     const api = page.request
-    const raw = await walk({
+    const { calls: raw, ids } = await walk({
       admin: (method: string, path: string, data?: unknown) => adminFetch(api, method, path, data),
       bot: async (method: string, path: string, data: unknown, auth: boolean) => botFetch(method, path, data, auth),
       settled: async (id: string) => {
@@ -81,10 +81,9 @@ test.describe('снимок ответов API панели', () => {
     })
     // Сырой обход - в отчёт: по нему уточняется таблица нормализации.
     await testInfo.attach('raw.json', { body: JSON.stringify([...raw], null, 2), contentType: 'application/json' })
-    actual = snapshotFiles(raw)
+    actual = snapshotFiles(raw, ids)
     walked = true
     await testInfo.attach('actual.json', { body: JSON.stringify([...actual], null, 2), contentType: 'application/json' })
-    expect(normalize).toBeTypeOf('function')
   })
 
   test('каждому маршруту есть запись и каждой записи есть маршрут', () => {

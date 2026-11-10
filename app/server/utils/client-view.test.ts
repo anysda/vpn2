@@ -1,0 +1,111 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { auth, calls, dbResults, fakeEvent, installStubs, rejection, stubError } from '../test/stubs'
+import adminList from '../api/clients/index.get'
+import adminCard from '../api/clients/[id].get'
+import botList from '../api/bot/admin/clients/index.get'
+import botCard from '../api/bot/admin/clients/[id].get'
+import { deviceConfigName } from './naming'
+
+const access = vi.hoisted(() => {
+  (globalThis as Record<string, unknown>).defineEventHandler = (handler: unknown) => handler
+  return { byClient: new Map<number, unknown>(), latest: null as unknown }
+})
+
+vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
+vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
+vi.mock('./bot-api', async () => (await import('../test/stubs')).botApiModule)
+vi.mock('./access-operations', () => ({
+  currentAccessByClient: async () => access.byClient,
+  latestAccess: async () => access.latest,
+}))
+
+const created = new Date('2026-01-02T03:04:05.000Z')
+const anna = {
+  id: 7, name: 'Anna', password: 'secret', filterTraffic: true, expiresAt: new Date('2031-05-06T07:08:09.000Z'), deviceLimit: 3,
+  frozenManual: false, deleting: false, createdAt: created, tgChatId: 42, tgUsername: 'anna', preferredExit: 'fra', accessVersion: 3,
+}
+const boris = {
+  id: 8, name: 'Boris', password: 'other', filterTraffic: false, expiresAt: null, deviceLimit: 1,
+  frozenManual: true, deleting: false, createdAt: created, tgChatId: null, tgUsername: null, preferredExit: null, accessVersion: 1,
+}
+const state = { state: 'pending', confirmedVersion: null, checkedAt: null }
+const operation = { id: 'op-1', clientId: 7, kind: 'unfreeze', status: 'pending', version: 3, protocols: { wg: state, openvpn: state, ikev2: state } }
+// Счётчик n лежит в каждой строке: число девайсов бота не зависит от того,
+// считает ли ручка count() или длину списка.
+const devices = [
+  { id: 12, clientId: 7, name: 'laptop', createdAt: created, rxTotal: 100, txTotal: 200, wgPrivateKey: 'k', wgPublicKey: 'p', wgIp: '10.66.66.2', ovpnCert: null, ovpnKey: null, n: 2 },
+  { id: 13, clientId: 7, name: 'phone', createdAt: created, rxTotal: 5, txTotal: 6, wgPrivateKey: null, wgPublicKey: null, wgIp: null, ovpnCert: 'c', ovpnKey: 'k', n: 2 },
+]
+
+const open = async (card: (event: never) => Promise<unknown>, id: string) => card(fakeEvent({ id }))
+
+beforeEach(() => {
+  installStubs()
+  access.byClient = new Map([[7, operation]])
+  access.latest = operation
+})
+
+describe('списки клиентов: поля и их порядок у админа и у бота', () => {
+  const rows = () => dbResults.push([anna, boris], [{ clientId: 7, cnt: 2, rx: 105, tx: 206 }])
+
+  it('админ', async () => {
+    rows()
+    expect(JSON.stringify(await adminList(fakeEvent({})))).toBe(JSON.stringify([
+      {
+        accessStatus: 'Включение выполняется', id: 7, name: 'Anna', filterTraffic: true, expiresAt: anna.expiresAt, deviceLimit: 3,
+        frozenManual: false, createdAt: created, status: 'active', tgLinked: true, tgUsername: 'anna', preferredExit: 'fra',
+        deviceCount: 2, rxTotal: 105, txTotal: 206,
+      },
+      {
+        accessStatus: 'Состояние не подтверждено', id: 8, name: 'Boris', filterTraffic: false, expiresAt: null, deviceLimit: 1,
+        frozenManual: true, createdAt: created, status: 'frozen', tgLinked: false, tgUsername: null, preferredExit: null,
+        deviceCount: 0, rxTotal: 0, txTotal: 0,
+      },
+    ]))
+  })
+
+  it('бот', async () => {
+    rows()
+    expect(JSON.stringify(await botList(fakeEvent({})))).toBe(JSON.stringify([
+      { id: 7, name: 'Anna', status: 'active', accessStatus: 'Включение выполняется', deviceCount: 2, deviceLimit: 3, expiresAt: anna.expiresAt, tgLinked: true },
+      { id: 8, name: 'Boris', status: 'frozen', accessStatus: 'Состояние не подтверждено', deviceCount: 0, deviceLimit: 1, expiresAt: null, tgLinked: false },
+    ]))
+  })
+})
+
+describe('карточка клиента: поля и их порядок у админа и у бота', () => {
+  it('админ: клиент, операция и девайсы с суммой трафика', async () => {
+    dbResults.push([anna], devices)
+    expect(JSON.stringify(await adminCard(fakeEvent({ id: '7' })))).toBe(JSON.stringify({
+      operation, deleting: false, id: 7, name: 'Anna', filterTraffic: true, expiresAt: anna.expiresAt, deviceLimit: 3, frozenManual: false,
+      createdAt: created, status: 'active', tgLinked: true, tgUsername: 'anna', preferredExit: 'fra', rxTotal: 105, txTotal: 206,
+      devices: [
+        { id: 12, name: 'laptop', configName: deviceConfigName('Anna', 'laptop', 12), createdAt: created, rxTotal: 100, txTotal: 200, hasWg: true, hasOvpn: false },
+        { id: 13, name: 'phone', configName: deviceConfigName('Anna', 'phone', 13), createdAt: created, rxTotal: 5, txTotal: 6, hasWg: false, hasOvpn: true },
+      ],
+    }))
+  })
+
+  it('бот: число девайсов и пароль для приглашения', async () => {
+    dbResults.push([anna], devices)
+    expect(JSON.stringify(await botCard(fakeEvent({ id: '7' })))).toBe(JSON.stringify({
+      operation, accessStatus: 'Включение выполняется', id: 7, name: 'Anna', status: 'active', frozenManual: false, filterTraffic: true,
+      deviceCount: 2, deviceLimit: 3, expiresAt: anna.expiresAt, tgLinked: true, password: 'secret',
+    }))
+  })
+
+  it('бот: без операции и без девайсов', async () => {
+    access.latest = null
+    dbResults.push([boris], [])
+    expect(await botCard(fakeEvent({ id: '8' }))).toMatchObject({ operation: null, accessStatus: 'Состояние не подтверждено', deviceCount: 0 })
+  })
+
+  it.each([['админ', adminCard, auth.admin], ['бот', botCard, auth.bot]] as const)('%s: отказ авторизации раньше базы, не число - 400, нет клиента - 404', async (_who, card, gate) => {
+    gate.mockImplementationOnce(() => { throw stubError({ statusCode: 401 }) })
+    expect((await rejection(open(card, '7'))).statusCode).toBe(401)
+    expect(calls).toEqual(['auth'])
+    expect(await rejection(open(card, 'x'))).toMatchObject({ statusCode: 400, statusMessage: 'invalid_id' })
+    expect(calls.filter(c => c.startsWith('db:'))).toEqual([])
+    expect(await rejection(open(card, '9'))).toMatchObject({ statusCode: 404, statusMessage: 'not_found' })
+  })
+})

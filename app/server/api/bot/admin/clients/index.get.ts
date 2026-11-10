@@ -1,33 +1,17 @@
-import { sql } from 'drizzle-orm'
-import { useDb } from '../../../../database/client'
-import { clients, devices } from '../../../../database/schema'
-import { clientsNewestFirst } from '../../../../utils/list-order'
-import { clientStatus } from '../../../../utils/client-status'
 import { requireBotAuth } from '../../../../utils/bot-api'
-import { currentAccessByClient } from '../../../../utils/access-operations'
-import { accessStatus } from '../../../../../shared/access-operation'
+import { clientList } from '../../../../utils/client-view'
 
 /** Список клиентов для админского управления из бота. */
 export default defineEventHandler(async (event) => {
   requireBotAuth(event)
-  const db = useDb()
-
-  const rows = await db.select().from(clients).orderBy(...clientsNewestFirst)
-  const agg = await db
-    .select({ clientId: devices.clientId, cnt: sql<number>`count(*)` })
-    .from(devices)
-    .groupBy(devices.clientId)
-  const byClient = new Map(agg.map(a => [a.clientId, Number(a.cnt)]))
-  const operations = await currentAccessByClient()
-
-  return rows.map(c => ({
+  return (await clientList()).map(c => ({
     id: c.id,
     name: c.name,
-    status: clientStatus(c),
-    accessStatus: operations.has(c.id) ? accessStatus(operations.get(c.id)!) : 'Состояние не подтверждено',
-    deviceCount: byClient.get(c.id) ?? 0,
+    status: c.status,
+    accessStatus: c.accessStatus,
+    deviceCount: c.deviceCount,
     deviceLimit: c.deviceLimit,
     expiresAt: c.expiresAt,
-    tgLinked: !!c.tgChatId,
+    tgLinked: c.tgLinked,
   }))
 })

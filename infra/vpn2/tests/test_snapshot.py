@@ -97,6 +97,40 @@ def test_field_ignore_hides_only_that_field_on_both_sides():
     assert diff(make(), new, ignore) == ['files /etc/ufw/ufw.conf sha256: "aa" -> "changed"']
 
 
+def env_pair(old_env, new_env):
+    old, new = make(), make()
+    old['units']['xray.service']['env'] = old_env
+    new['units']['xray.service']['env'] = new_env
+    return old, new
+
+
+def env_rule(field='env:A'):
+    return rule('xray.service', field, section='units')
+
+
+def test_env_key_ignore_hides_only_that_variable():
+    old, new = env_pair(['A=1', 'B=2'], ['A=9', 'B=2'])
+    assert diff(old, new, [env_rule()]) == []
+    assert old['units']['xray.service']['env'] == ['A=1', 'B=2']
+
+
+def test_env_key_ignore_keeps_other_variable_difference():
+    old, new = env_pair(['A=1', 'B=2'], ['A=9', 'B=3'])
+    assert diff(old, new, [env_rule()]) == ['units xray.service env: ["B=2"] -> ["B=3"]']
+
+
+def test_env_key_ignore_unused_when_no_such_variable():
+    old, new = env_pair(['B=2'], ['B=2'])
+    assert unused_ignore(old, new, [env_rule()]) == [env_rule()]
+    old, new = env_pair(['B=2'], ['A=1', 'B=2'])
+    assert unused_ignore(old, new, [env_rule()]) == []
+
+
+def test_env_key_ignore_variable_on_one_side_only():
+    old, new = env_pair(['B=2'], ['A=1', 'B=2'])
+    assert diff(old, new, [env_rule()]) == []
+
+
 def test_star_field_hides_missing_and_extra():
     new = make()
     del new['files']['/etc/ufw/ufw.conf']

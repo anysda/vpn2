@@ -32,7 +32,7 @@ def load_ignore(path):
 
     name - маска fnmatch.fnmatchcase; её "*" переходит и через "/", поэтому
     /etc/wireguard/*.conf подходит и к /etc/wireguard/sub/x.conf.
-    field - имя поля или "*" (вся запись, включая её наличие).
+    field - имя поля или "*" (вся запись, включая её наличие); "поле:ключ" убирает из списка поля строки "ключ=...".
     Нет ключа, лишний ключ, reason короче 10 символов или файл не список -
     SnapshotError с номером записи (с 1). Пустой файл даёт пустой список.
     """
@@ -99,13 +99,22 @@ def _matches(rule, section, name):
 def _visible(section, name, record, ignore):
     """Запись без игнорируемых полей или None, если правило "*" скрывает её целиком."""
     hidden = set()
+    dropped = []
     for rule in ignore:
         if not _matches(rule, section, name):
             continue
         if rule['field'] == '*':
             return None
-        hidden.add(rule['field'])
-    return {key: value for key, value in record.items() if key not in hidden}
+        if ':' in rule['field']:
+            dropped.append(rule['field'].split(':', 1))
+        else:
+            hidden.add(rule['field'])
+    result = {key: value for key, value in record.items() if key not in hidden}
+    for field, key in dropped:
+        if isinstance(result.get(field), list):
+            result[field] = [item for item in result[field]
+                             if not (isinstance(item, str) and item.startswith(f'{key}='))]
+    return result
 
 
 def _dumps(value):
@@ -155,6 +164,12 @@ def unused_ignore(old, new, ignore):
                     continue
                 if rule['field'] == '*' or rule['field'] in record:
                     used = True
+                elif ':' in rule['field']:
+                    field, key = rule['field'].split(':', 1)
+                    items = record.get(field)
+                    if isinstance(items, list) and any(
+                            isinstance(item, str) and item.startswith(f'{key}=') for item in items):
+                        used = True
         if not used:
             unused.append(rule)
     return unused

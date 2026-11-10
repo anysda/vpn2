@@ -8,9 +8,9 @@ import tempfile
 from unittest.mock import Mock
 
 root = Path(sys.argv[1])
-sys.path.insert(0, str(root / 'infra/control'))
-from backend import Backend  # noqa: E402
-from server import serve  # noqa: E402
+sys.path.insert(0, str(root / 'infra/vpn2/src'))
+from vpn2.control.backend import Backend  # noqa: E402
+from vpn2.control.server import serve  # noqa: E402
 
 pools = json.loads((root / 'app/shared/vpn-pools.json').read_text())
 with tempfile.TemporaryDirectory() as work, socket.socket(socket.AF_UNIX) as listener:

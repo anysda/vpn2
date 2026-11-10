@@ -746,6 +746,7 @@ run_stage_on_host() {
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
   if [[ "$stage" == "29-control" ]]; then
     push "$DEPLOY_ROOT/control" "control" || return 1
+    push "$DEPLOY_ROOT/vpn2/src/vpn2" "vpn2-package" || return 1
   fi
   # Контрольный клиент и цель проверки трафика: клиент идёт только на entry.
   if [[ "$stage" == 99-verify && "$host" == ru ]]; then

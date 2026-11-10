@@ -734,7 +734,7 @@ class Applier:
                 pass
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     sub = parser.add_subparsers(dest='action', required=True)
     for name in ('install', 'rollback', 'mark', 'resume'):
@@ -747,7 +747,7 @@ def main():
     item.add_argument('file')
     item.add_argument('--seconds', type=int, default=120)
     sub.add_parser('confirm').add_argument('table')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     applier = Applier()
     applier.state.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (applier.state / 'lock').open('a') as lock:

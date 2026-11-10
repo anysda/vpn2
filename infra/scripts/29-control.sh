@@ -10,6 +10,9 @@ fi
 
 CONTROL_SOURCE=$(dirname "$0")/control
 [[ -d "$CONTROL_SOURCE" ]] || CONTROL_SOURCE=$(dirname "$0")/../control
+# The service code is the vpn2 package: deploy pushes it beside the stage.
+PACKAGE_SOURCE=$(dirname "$0")/vpn2-package
+[[ -d "$PACKAGE_SOURCE" ]] || PACKAGE_SOURCE=$(dirname "$0")/../vpn2/src/vpn2
 POOL_SOURCE=$(dirname "$0")/vpn-pools.json
 [[ -f "$POOL_SOURCE" ]] || POOL_SOURCE=$(dirname "$0")/../../app/shared/vpn-pools.json
 command -v python3 >/dev/null
@@ -41,11 +44,21 @@ if [[ -f /var/lib/anysda-vpn2/runtime/telegram-runtime.json ]]; then
 fi
 
 install -d -o root -g root -m 0755 /usr/local/lib/vpn2-control /etc/vpn2-control
-for source in contract.py backend.py server.py launcher.py apply.py; do
-  install -o root -g root -m 0644 "$CONTROL_SOURCE/$source" /usr/local/lib/vpn2-control/
+# Laid out beside and swapped in: the expiry timer may start the launcher meanwhile.
+rm -rf /usr/local/lib/vpn2-control/.vpn2.new
+cp -R "$PACKAGE_SOURCE" /usr/local/lib/vpn2-control/.vpn2.new
+find /usr/local/lib/vpn2-control/.vpn2.new -name __pycache__ -prune -exec rm -rf {} +
+install -m 0644 "$POOL_SOURCE" /usr/local/lib/vpn2-control/.vpn2.new/control/vpn-pools.json
+chown -R root:root /usr/local/lib/vpn2-control/.vpn2.new
+chmod -R u=rwX,go=rX /usr/local/lib/vpn2-control/.vpn2.new
+rm -rf /usr/local/lib/vpn2-control/vpn2
+mv /usr/local/lib/vpn2-control/.vpn2.new /usr/local/lib/vpn2-control/vpn2
+install -o root -g root -m 0644 "$PACKAGE_SOURCE/control/launcher.py" /usr/local/lib/vpn2-control/
+# The flat layout of earlier releases.
+for stale in contract.py backend.py server.py apply.py vpn-pools.json; do
+  rm -f "/usr/local/lib/vpn2-control/$stale"
 done
-install -o root -g root -m 0644 "$POOL_SOURCE" /usr/local/lib/vpn2-control/vpn-pools.json
-install -o root -g root -m 0755 "$CONTROL_SOURCE/apply.py" /usr/local/sbin/vpn2-apply
+install -o root -g root -m 0755 "$PACKAGE_SOURCE/control/apply.py" /usr/local/sbin/vpn2-apply
 # Finish an apply interrupted since the last deploy (3: the previous config
 # was restored), then record what runs now as the last good config.
 for resource in sing-box openvpn ikev2 wg; do

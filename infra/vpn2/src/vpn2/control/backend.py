@@ -4,7 +4,6 @@ import csv
 import base64
 import fcntl
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,33 +14,13 @@ import subprocess
 import tempfile
 import time
 
-from contract import API, Fault, LIMIT, METHODS, key as validate_key, require
+from ..fsutil import atomic
+# wg0.conf is read one way: vpn2-apply's.
+from . import apply as wg
+from .contract import API, Fault, LIMIT, METHODS, key as validate_key, load_pools, require
 
 # C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
 BLANK = r'[ \t\v\f\r]'
-# wg0.conf is read one way: vpn2-apply's, installed beside this file.
-_spec = importlib.util.spec_from_file_location('vpn2_apply', Path(__file__).with_name('apply.py'))
-wg = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(wg)
-
-
-def atomic(path, body, mode=0o600, encoding=None):
-    descriptor, name = tempfile.mkstemp(prefix='.control-', dir=path.parent)
-    try:
-        with os.fdopen(descriptor, 'w', encoding=encoding) as output:
-            os.fchmod(output.fileno(), mode)
-            output.write(body)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(name, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
 
 
 def run(argv, deadline, data=None):
@@ -402,7 +381,6 @@ class Backend:
                 self.crl(base)
                 return {'revoked': True}
             # openssl verify uses the published CRL, not just the CA index.
-            from contract import Fault
             valid = False
             try:
                 self.command('/usr/bin/openssl', 'verify', '-CAfile', str(base / 'pki/ca.crt'),
@@ -479,7 +457,6 @@ class Backend:
                 'unavailable')
         atomic(path, header + peers, encoding='latin-1')
         self.command('/usr/sbin/ip', '-6', 'addr', 'replace', 'fd66:66::1/64', 'dev', 'wg0')
-        from contract import load_pools
         for subnet in (self.pools or load_pools())['wg']['subnets']:
             self.command('/usr/sbin/ip', 'route', 'replace', subnet, 'dev', 'wg0')
         return result

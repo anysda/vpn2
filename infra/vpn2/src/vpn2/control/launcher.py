@@ -2,6 +2,6 @@
 import sys
 
 sys.path.insert(0, '/usr/local/lib/vpn2-control')
-from server import main  # noqa: E402
+from vpn2.control.server import main  # noqa: E402
 
 main()

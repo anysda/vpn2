@@ -230,11 +230,9 @@ class ProbeControlTests(unittest.TestCase):
     @contextlib.contextmanager
     def service(self):
         # The service's own version check over the state directory it sees now.
-        sys.path.insert(0, str(ROOT / 'infra/control'))
-        self.addCleanup(sys.path.remove, str(ROOT / 'infra/control'))
-        spec = importlib.util.spec_from_file_location('backend_under_test', ROOT / 'infra/control/backend.py')
-        backend = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(backend)
+        sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+        self.addCleanup(sys.path.remove, str(ROOT / 'infra/vpn2/src'))
+        backend = importlib.import_module('vpn2.control.backend')
         state = backend.Backend(self.root, self.root / 'var/lib/vpn2-control')
         path = self.listen_path()
         path.parent.mkdir(parents=True, exist_ok=True)

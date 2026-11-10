@@ -86,7 +86,7 @@ EXIT_ECHO_IP = '203.0.113.85'
 EXIT_ECHO_ROUTE = f'local {EXIT_ECHO_IP}/32 dev lo table local'
 TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('verify-target.py')
-# Служба управления (infra/control): панель применяет пиров WireGuard её методом wg.apply.
+# Служба управления (vpn2.control): панель применяет пиров WireGuard её методом wg.apply.
 CONTROL_SOCKET = Path('/run/vpn2-control/control.sock')
 CONTROL_WG_STATE = Path('/var/lib/vpn2-control/wg.json')
 WG_CONF = Path('/etc/wireguard/wg0.conf')
@@ -581,7 +581,7 @@ class IKEv2:
 
     @staticmethod
     def server_sas(eap_id):
-        """uniqueid живых IKE_SA сервера с этим EAP-логином, разбор как у продукта (control/backend.py).
+        """uniqueid живых IKE_SA сервера с этим EAP-логином, разбор как у продукта (vpn2.control.backend).
 
         EAP-логин swanctl печатает, только если он отличается от IKE-идентификатора; у
         проверочного клиента они совпадают, и логин стоит в «remote '...'».

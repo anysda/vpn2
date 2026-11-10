@@ -22,12 +22,13 @@ ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]
 CONTROL = ROOT / 'infra/control'
 
 
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+
+
 def module(name):
-    spec = importlib.util.spec_from_file_location(name, CONTROL / (name + '.py'))
-    result = importlib.util.module_from_spec(spec)
-    sys.modules[name] = result
-    spec.loader.exec_module(result)
-    return result
+    """A fresh vpn2.control.<name>: what a test patched in it does not reach the next one."""
+    sys.modules.pop('vpn2.control.' + name, None)
+    return importlib.import_module('vpn2.control.' + name)
 
 
 class ControlTests(unittest.TestCase):

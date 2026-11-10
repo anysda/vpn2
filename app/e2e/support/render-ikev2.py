@@ -5,8 +5,8 @@ import sys
 import tempfile
 from unittest.mock import Mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'infra/control'))
-from backend import Backend  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'infra/vpn2/src'))
+from vpn2.control.backend import Backend  # noqa: E402
 
 params = json.load(sys.stdin)
 with tempfile.TemporaryDirectory() as directory:

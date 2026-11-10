@@ -11,8 +11,8 @@ import subprocess
 import sys
 import time
 
-from backend import Backend
-from contract import API, Fault, LIMIT, load_pools, require, validate
+from .backend import Backend
+from .contract import API, Fault, LIMIT, load_pools, require, validate
 
 
 def object_pairs(pairs):
@@ -77,11 +77,11 @@ def serve(listener, backend, allowed_uids, pools):
             handle(connection, backend, allowed_uids, pools)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe', action='store_true')
     parser.add_argument('--expire', action='store_true')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.probe or args.expire:
         # Through the socket: the one server process serializes all changes.
         request = {'method': 'expiry.run', 'params': {}} if args.expire else \

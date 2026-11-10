@@ -11,7 +11,7 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-spec = importlib.util.spec_from_file_location('apply', ROOT / 'infra/control/apply.py')
+spec = importlib.util.spec_from_file_location('apply', ROOT / 'infra/vpn2/src/vpn2/control/apply.py')
 apply = importlib.util.module_from_spec(spec)
 sys.modules['apply'] = apply
 spec.loader.exec_module(apply)

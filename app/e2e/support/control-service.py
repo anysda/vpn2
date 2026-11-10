@@ -5,9 +5,9 @@ import socket
 import sys
 
 sys.path.insert(0, '/usr/local/lib/vpn2-control')
-from backend import Backend  # noqa: E402
-from contract import load_pools  # noqa: E402
-from server import serve  # noqa: E402
+from vpn2.control.backend import Backend  # noqa: E402
+from vpn2.control.contract import load_pools  # noqa: E402
+from vpn2.control.server import serve  # noqa: E402
 
 state = Path('/var/lib/vpn2-control')
 state.mkdir(mode=0o700, exist_ok=True)

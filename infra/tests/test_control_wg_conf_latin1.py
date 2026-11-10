@@ -29,19 +29,15 @@ LOCALES = ('C', 'C.UTF-8')
 LATIN1, ASCII, UTF8 = b'\xe9', b'e', b'\xc3\xa9'
 
 PROBE = r'''
-import importlib.util, json, sys, traceback
+import importlib, json, sys, traceback
 from pathlib import Path
 root, case, work = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
 peers = json.loads(sys.argv[4])
-sys.path.insert(0, str(root / 'infra/control'))
+sys.path.insert(0, str(root / 'infra/vpn2/src'))
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, root / 'infra/control' / (name + '.py'))
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module('vpn2.control.' + name)
 
 
 synced = []

@@ -10,6 +10,8 @@
 #   sudo infra/tools/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
 #   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
+#   sudo infra/tools/ci-stand.sh snapshot <каталог>     слепок обоих узлов после деплоя
+#   sudo infra/tools/ci-stand.sh snapshot-corrupt       положительный контроль слепка
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tools/ci-stand.sh down                   снести всё
 #
@@ -20,6 +22,10 @@
 # сторож и AdGuard (DNS sing-box идёт через него).
 # udp-cut режет UDP с entry на экзите и проверяет, что трафик ушёл на запасной
 # TCP без перезапуска sing-box и вернулся на Hysteria2: 0 прошло, 1 нет.
+# Слепок хоста: база снимается в deploy до установки, snapshot после неё
+# кладёт в <каталог> snapshot-entry.json и snapshot-exit.json - только то, что
+# установка изменила. snapshot-corrupt дописывает строку в юнит на entry:
+# сверка с эталоном обязана после этого покраснеть.
 set -Eeuo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -492,6 +498,34 @@ warm_report() {
 
 entry_uptime() { ssh_node "$ENTRY" 'cut -d" " -f1 /proc/uptime' 2>/dev/null || echo '?'; }
 
+# /run - tmpfs вне корней слепка: инструмент и файлы слепка сами в него не
+# попадают. Пакет на узел не ставится, он запускается из этого каталога.
+SNAP_DIR=/run/vpn2-snapshot
+
+snapshot_tool() {  # <адрес узла>
+  ssh_node "$1" "rm -rf $SNAP_DIR/vpn2 && mkdir -p $SNAP_DIR"
+  tar -C "$REPO_ROOT/infra/vpn2/src" --exclude=__pycache__ -czf - vpn2 | ssh_node "$1" "tar -xzf - -C $SNAP_DIR"
+}
+
+snapshot_run() {  # <адрес узла> <аргументы snapshot...>
+  local out
+  out=$(ssh_node "$1" "PYTHONPATH=$SNAP_DIR python3 -B -m vpn2.cli snapshot ${*:2}" 2>&1) \
+    || die "слепок на $1: код $?, хвост вывода:
+$(tail -n 20 <<<"$out")"
+}
+
+# База - чистая ОС плюс исходники в /opt/anysda-vpn2 (после push_tree): в
+# итоговом слепке остаётся только сделанное установкой.
+snapshot_base() {
+  local node name ip started=$SECONDS p waits=()
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    { snapshot_tool "$ip" && snapshot_run "$ip" "--out $SNAP_DIR/base.json"; } & waits+=($!)
+  done
+  for p in "${waits[@]}"; do wait "$p" || die 'база слепка не снята'; done
+  log "база слепка обоих узлов снята за $((SECONDS - started)) с"
+}
+
 cmd_deploy() {
   local image=${1:?образ панели (docker-образ на этой машине)}
   host_stats 'до деплоя'
@@ -499,6 +533,7 @@ cmd_deploy() {
   apt_proxy_up --if-down
   log "деплой начат на $(entry_uptime) с от загрузки entry"
   push_tree
+  snapshot_base
   docker tag "$image" "$PANEL_REF"
   load_panel &
   local loader=$! started=$SECONDS rc=0
@@ -693,6 +728,26 @@ cmd_udp_cut() {
   return "$rc"
 }
 
+cmd_snapshot() {
+  local out=${1:?каталог для слепков} node name ip started=$SECONDS
+  mkdir -p "$out"
+  for node in "${NODES[@]}"; do
+    read -r name ip _ <<<"$node"
+    snapshot_run "$ip" "--baseline $SNAP_DIR/base.json --out $SNAP_DIR/now.json"
+    ssh_node "$ip" "cat $SNAP_DIR/now.json" > "$out/snapshot-$name.json" \
+      || die "слепок $name не забран с узла"
+  done
+  log "слепки в $out за $((SECONDS - started)) с"
+}
+
+# Положительный контроль: правка файла продукта, которую сверка с эталоном
+# обязана заметить. Службы не перезапускаются, daemon-reload тоже не нужен.
+cmd_snapshot_corrupt() {
+  local file=/etc/systemd/system/anysda-failover-watchdog.service
+  log "положительный контроль слепка: дописываю строку в entry:$file"
+  ssh_node "$ENTRY" "printf '# positive control\\n' >> $file"
+}
+
 cmd_collect() {
   local out=${1:?каталог для отчётов} host tag
   mkdir -p "$out"
@@ -745,7 +800,9 @@ case "${1:-}" in
   deploy-udp) cmd_deploy_udp ;;
   verify) cmd_verify "${@:2}" ;;
   udp-cut) cmd_udp_cut "${@:2}" ;;
+  snapshot) cmd_snapshot "${@:2}" ;;
+  snapshot-corrupt) cmd_snapshot_corrupt ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

@@ -69,13 +69,13 @@ def lock(path, *, blocking=True, timeout=None):
         if blocking and timeout is None:
             fcntl.flock(handle, fcntl.LOCK_EX)
         else:
-            deadline = time.monotonic() + (timeout if blocking else 0)
+            deadline = time.monotonic() + timeout if blocking else None
             while True:
                 try:
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
                 except BlockingIOError:
-                    if time.monotonic() >= deadline:
+                    if deadline is None or time.monotonic() >= deadline:
                         raise LockBusy(str(path)) from None
                     time.sleep(_POLL)
         try:

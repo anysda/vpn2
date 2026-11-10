@@ -8,6 +8,8 @@
 #   sudo infra/tools/ci-stand.sh up                     поднять ВМ
 #   sudo infra/tools/ci-stand.sh up-bg | up-wait        то же фоном и ожидание
 #   sudo infra/tools/ci-stand.sh deploy <образ панели>  полный деплой
+#   sudo infra/tools/ci-stand.sh deploy-release <тег> <манифест>  установка выпуска по манифесту
+#   sudo infra/tools/ci-stand.sh deploy-upgrade <образ> <тег>     поверх выпуска - дерево ветки
 #   sudo infra/tools/ci-stand.sh deploy-udp             стадии до 22-adguard
 #   sudo infra/tools/ci-stand.sh verify [--stop-openvpn]
 #   sudo infra/tools/ci-stand.sh udp-cut [--break-tcp-fallback]
@@ -464,12 +466,28 @@ stage_stats() {
   entry_stats "после ${label%, }"
 }
 
+# push_tree             - чистый каталог, исходники ветки (ls-files);
+# push_tree --ref <тег>  - чистый каталог, исходники тега (git archive);
+# push_tree --over <тег> - каталог остаётся, поверх файлы ветки, удалённые с
+#                          тега пути стираются; config.yaml, infra/secrets и
+#                          infra/state не трогаются (config.yaml не рендерится).
 push_tree() {
-  local password
+  local mode=${1:-} tag=${2:-} password
   password=$(cat "$STAND_DIR/root-password")
-  log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
-  ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
-  git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2'
+  case "$mode" in
+    '') log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) → entry:/opt/anysda-vpn2"
+        ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
+        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2' ;;
+    --ref) log "исходники $tag → entry:/opt/anysda-vpn2"
+        ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
+        git -C "$REPO_ROOT" archive "${tag:?тег}" | ssh_node "$ENTRY" 'tar -xf - -C /opt/anysda-vpn2' ;;
+    --over) log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) поверх $tag → entry:/opt/anysda-vpn2"
+        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml --exclude=infra/secrets --exclude=infra/state'
+        git -C "$REPO_ROOT" diff -z --name-only --diff-filter=D "${tag:?тег}" HEAD \
+          | ssh_node "$ENTRY" 'xargs -0 -r -I{} rm -f -- "/opt/anysda-vpn2/{}"'
+        return 0 ;;
+    *) die "push_tree: неизвестный режим $mode" ;;
+  esac
   local template=$REPO_ROOT/infra/tests/fixtures/config/etalon.yaml rendered
   rendered=$(sed -e "s|@ENTRY_HOST@|$ENTRY|g" -e "s|@EXIT_HOST@|$EXIT|g" -e "s|@EXIT_TAG@|$EXIT_TAG|g" \
     -e "s|@PASSWORD@|$password|g" -e "s|@PANEL_IMAGE@|$PANEL_REF|g" "$template")
@@ -564,6 +582,21 @@ cmd_deploy() {
   log "деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   warm_report
   host_stats 'после деплоя'
+  return "$rc"
+}
+
+# Сценарий 4, шаг 1: выпуск <тег> ставится по манифесту (образы по digest).
+cmd_deploy_release() {
+  local tag=${1:?тег выпуска} manifest=${2:?файл манифеста выпуска} started=$SECONDS rc=0
+  [[ -f $manifest ]] || die "нет файла манифеста $manifest"
+  host_stats 'до деплоя'
+  apt_proxy_up --if-down
+  push_tree
+  snapshot_base
+  push_tree --ref "$tag"
+  ssh_node "$ENTRY" 'cat > /root/release-manifest.json' < "$manifest"
+  entry_run release './deploy.sh --manifest /root/release-manifest.json' || rc=$?
+  log "установка выпуска $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   return "$rc"
 }
 
@@ -773,6 +806,20 @@ cmd_deploy_again() {
   log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
   cmd_snapshot "$out" snapshot-again
+}
+
+# Сценарий 4, шаг 2: поверх выпуска <тег> - дерево ветки, ./deploy.sh --development.
+cmd_deploy_upgrade() {
+  local image=${1:?образ панели (docker-образ на этой машине)} tag=${2:?тег выпуска} started=$SECONDS rc=0
+  close_entry_mux
+  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+    || die 'замок деплоя на entry не освободился за 70 с'
+  push_tree --over "$tag"
+  docker tag "$image" "$PANEL_REF"
+  load_panel || return 1
+  entry_run deploy './deploy.sh --development' || rc=$?
+  log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  return "$rc"
 }
 
 # Положительный контроль: правка файла продукта, которую сверка с эталоном
@@ -1032,6 +1079,8 @@ case "${1:-}" in
   up-bg) cmd_up_bg ;;
   up-wait) cmd_up_wait ;;
   deploy) cmd_deploy "${@:2}" ;;
+  deploy-release) cmd_deploy_release "${@:2}" ;;
+  deploy-upgrade) cmd_deploy_upgrade "${@:2}" ;;
   deploy-udp) cmd_deploy_udp ;;
   deploy-again) cmd_deploy_again "${@:2}" ;;
   verify) cmd_verify "${@:2}" ;;
@@ -1043,5 +1092,5 @@ case "${1:-}" in
   restore-check) cmd_restore_check "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

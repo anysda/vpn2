@@ -531,3 +531,24 @@ jobs:
       - run: pip install ./infra/vpn2 pytest
       - run: vpn2 version
       - run: python -m pytest infra/vpn2/tests -q
+
+  ansible:
+    name: роли ansible
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ANSIBLE_CONFIG: infra/ansible/ansible.cfg
+      ANSIBLE_COLLECTIONS_PATH: /tmp/collections
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - run: pip install -c infra/ansible/constraints.txt ansible-core ansible-lint==26.10.1
+      - run: ansible-galaxy collection install -r infra/ansible/requirements.yml -p /tmp/collections
+      - name: syntax-check
+        run: |
+          for play in infra/ansible/plays/*.yml; do
+            ansible-playbook -i localhost, --syntax-check "$play"
+          done
+      - run: ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/plays infra/ansible/roles

@@ -16,6 +16,7 @@
 #   sudo infra/tools/ci-stand.sh snapshot-corrupt       положительный контроль слепка
 #   sudo infra/tools/ci-stand.sh bot-fake-token         боту поддельный токен: пауза, не цикл перезапусков
 #   sudo infra/tools/ci-stand.sh backup-fixture <каталог> эталонный архив бэкапа и etalon.expect.json
+#   sudo infra/tools/ci-stand.sh restore-check [--foreign-pass] restore эталонного архива и сверка; с флагом - чужой пароль, шаг обязан упасть
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tools/ci-stand.sh down                   снести всё
 #
@@ -879,6 +880,87 @@ PY
   log "эталонный архив: $(stat -c %s "$out/etalon.tar.gz.age") байт, $newest"
 }
 
+# Сверка восстановленного узла с etalon.expect.json. Аргументы: вывод
+# `wg show wg0 peers`, вывод sha256sum путей из files, тело GET /api/clients,
+# путь expect. Несовпадения - строками `restore: <что> <ожидалось> <получено>`
+# в stderr; код возврата - их число (не больше 255); при 0 в stdout итог.
+restore_compare() {
+  PEERS=$1 SUMS=$2 CLIENTS=$3 python3 - "$4" <<'PY'
+import json, os, sys
+e = json.load(open(sys.argv[1]))
+bad = 0
+def miss(what, want, got):
+    global bad
+    bad += 1
+    print('restore: %s %s %s' % (what, want, got), file=sys.stderr)
+peers = set(os.environ['PEERS'].split())
+for key in e['wg_peers']:
+    if key not in peers:
+        miss('wg-пир', key, 'нет')
+got = {}
+for line in os.environ['SUMS'].splitlines():
+    parts = line.split(None, 1)
+    if len(parts) == 2:
+        got[parts[1].strip()] = parts[0]
+for path, digest in sorted(e['files'].items()):
+    if got.get(path) != digest:
+        miss('sha256 ' + path, digest, got.get(path, 'нет'))
+try:
+    names = {c['name'] for c in json.loads(os.environ['CLIENTS'])}
+except (ValueError, TypeError, KeyError):
+    names = set()
+    miss('ответ /api/clients', 'список клиентов', 'не разобран')
+for name in e['clients']:
+    if name not in names:
+        miss('клиент', name, 'нет')
+if bad:
+    sys.exit(min(bad, 255))
+print('ключей %d, файлов %d, клиентов %d' % (len(e['wg_peers']), len(e['files']), len(e['clients'])))
+PY
+}
+
+# Сценарий 3 карточки: restore эталонного архива на развёрнутый стенд.
+# С --foreign-pass пароль архива в backup.env заменяется чужим: restore обязан
+# упасть кодом 4 до любых изменений, шаг возвращает этот код.
+# ./deploy.sh: --development первым словом (deploy.sh:14), restore вторым
+# (infra/deploy.sh:1721).
+cmd_restore_check() {
+  local foreign=0 fx=$REPO_ROOT/infra/tests/fixtures/backup started=$SECONDS rc=0
+  [[ ${1:-} != --foreign-pass ]] || foreign=1
+  local archive=$fx/etalon.tar.gz.age expect=$fx/etalon.expect.json
+  [[ -f $archive ]] || die "фикстуры нет: $archive"
+  [[ -f $expect ]] || die "фикстуры нет: $expect"
+  ssh_node "$ENTRY" 'cat > /root/etalon.tar.gz.age' < "$archive" || die "архив не загружен на entry"
+  if (( foreign )); then
+    ssh_node "$ENTRY" "sed -i 's/^\\(ANYSDA_BACKUP_PASSPHRASE=\\).*/\\1stand-foreign/' /etc/anysda/backup.env" \
+      || die "пароль архива в backup.env не заменён"
+    log 'отрицательный контроль: чужой пароль архива'
+  fi
+  close_entry_mux
+  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+    || die 'замок деплоя на entry не освободился за 70 с'
+  entry_run restore './deploy.sh --development restore /root/etalon.tar.gz.age --force' || rc=$?
+  log "restore: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  (( rc == 0 )) || return "$rc"
+
+  # Сессии панели заменены вместе с базой: старый cookie-jar не годится.
+  ssh_node "$ENTRY" 'rm -f /run/vpn2-panel.jar'
+  local paths peers sums clients t0=$SECONDS n=0 summary
+  paths=$(python3 -c 'import json, sys; print("\n".join(sorted(json.load(open(sys.argv[1]))["files"])))' "$expect") \
+    || die "restore: files не прочитаны из $expect"
+  peers=$(ssh_node "$ENTRY" 'wg show wg0 peers') || die "restore: wg show wg0 peers не прошёл"
+  # shellcheck disable=SC2046
+  sums=$(ssh_node "$ENTRY" "sha256sum -- $(printf '%q ' $paths)" 2>/dev/null) || true
+  until clients=$(panel_api GET /api/clients 2>/dev/null); do
+    (( SECONDS - t0 < 90 )) || { clients=''; break; }
+    ssh_node "$ENTRY" 'rm -f /run/vpn2-panel.jar'
+    sleep 3
+  done
+  summary=$(restore_compare "$peers" "$sums" "$clients" "$expect") || n=$?
+  (( n == 0 )) || die "restore: несовпадений $n"
+  log "restore: совпало, $summary"
+}
+
 # Состояние apt каждого узла и журнал прокси раннера - в отчёт при любом исходе.
 collect_apt() {
   local out=$1 node name ip
@@ -958,7 +1040,8 @@ case "${1:-}" in
   snapshot-corrupt) cmd_snapshot_corrupt ;;
   bot-fake-token) cmd_bot_fake_token ;;
   backup-fixture) cmd_backup_fixture "${@:2}" ;;
+  restore-check) cmd_restore_check "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

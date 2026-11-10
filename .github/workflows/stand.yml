@@ -30,6 +30,10 @@ on:
         description: 'Снять эталонный архив бэкапа в артефакт'
         type: boolean
         default: false
+      restore_foreign:
+        description: 'Отрицательный контроль: restore с чужим паролем обязан упасть'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -170,6 +174,11 @@ jobs:
       # Сценарий 5 карточки. /health на паузе не проверяется до VPN2-794.
       - name: бот с поддельным токеном
         run: sudo infra/tools/ci-stand.sh bot-fake-token
+
+      # Сценарий 3 карточки: restore эталонного архива и сверка с эталоном.
+      - name: restore эталонного архива
+        if: ${{ !inputs.backup_fixture }}
+        run: sudo infra/tools/ci-stand.sh restore-check ${{ inputs.restore_foreign && '--foreign-pass' || '' }}
 
       - name: эталонный архив бэкапа
         if: ${{ inputs.backup_fixture }}

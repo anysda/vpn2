@@ -4,8 +4,38 @@ import { and, asc, count, eq, gt, lt, lte, ne, or } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { botOutbox } from '../database/schema'
 import type { BotDelivery } from '../../shared/bot-delivery'
-import { botConfigured } from './telegram-config'
+import { botConfigured, botEventPort } from './telegram-config'
 import { recordEvent } from './events'
+
+/** Секрет, которым панель подписывает события боту. Без него 503 до любых других действий. */
+export function botSecretOrThrow(): string {
+  const secret = String(useRuntimeConfig().tgbotSecret ?? '')
+  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
+  return secret
+}
+
+/** POST /event боту этой ноды. Таймаут и повтор у очереди и у прямой отправки разные. */
+export function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, retry: number }): Promise<unknown> {
+  const url: string = `http://127.0.0.1:${botEventPort()}/event`
+  return $fetch<unknown>(url, {
+    method: 'POST', headers: { 'X-Tgbot-Secret': String(useRuntimeConfig().tgbotSecret) },
+    body, timeout: opts.timeout, retry: opts.retry,
+  })
+}
+
+/** Отправка из запроса администратора: бот не ответил - 502 тому, кто нажал кнопку. */
+export async function sendBotEvent(body: Record<string, unknown>): Promise<void> {
+  try {
+    await postBotEvent(body, { timeout: 8000, retry: 0 })
+  }
+  catch (e) {
+    throw createError({
+      statusCode: 502,
+      statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram',
+      cause: e,
+    })
+  }
+}
 
 const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
 const MAX_ATTEMPTS = DELAYS.length + 1
@@ -80,12 +110,8 @@ async function attemptOnce(id: string) {
   if (row.failed) return deliveryFailed(row.label)
   let accepted = false
   try {
-    const cfg = useRuntimeConfig()
-    if (!cfg.tgbotSecret) throw new Error('bot not configured')
-    const ack = await $fetch<{ ok: boolean, delivery_id: string }>(`http://127.0.0.1:${Number(cfg.tgbotEventPort ?? 8877)}/event`, {
-      method: 'POST', headers: { 'X-Tgbot-Secret': String(cfg.tgbotSecret) },
-      body: { ...JSON.parse(row.payload), deliveryId: id }, timeout: 1500, retry: 0,
-    })
+    if (!useRuntimeConfig().tgbotSecret) throw new Error('bot not configured')
+    const ack = await postBotEvent({ ...JSON.parse(row.payload), deliveryId: id }, { timeout: 1500, retry: 0 }) as { ok: boolean, delivery_id: string }
     accepted = ack.ok === true && ack.delivery_id === id
   }
   catch { /* Очередь и оставшиеся попытки видны администратору. */ }

@@ -14,7 +14,6 @@ VERSIONS = INFRA / 'versions.yml'
 STAGE_PINS = {
     'sing_box': ('lib/install-sing-box.sh', 'SB_VER'),
     'wgcf': ('ansible/roles/exit/defaults/main.yml', 'exit_wgcf_version'),
-    'adguard': ('scripts/22-adguard.sh', 'AGH_VER'),
     'caddy': ('lib/anysda-svc.sh', 'CADDY_VER'),
     'victoriametrics': ('scripts/25-monitoring.sh', 'VM_VER'),
 }
@@ -39,6 +38,7 @@ STAGE_LINES = {
     'sing_box_sha256_amd64': ('lib/install-sing-box.sh', "readonly SB_SHA256_AMD64='{v}'"),
     'sing_box_sha256_arm64': ('lib/install-sing-box.sh', "readonly SB_SHA256_ARM64='{v}'"),
     'node_exporter': ('ansible/roles/base/defaults/main.yml', "base_node_exporter_version: '{v}'"),
+    'adguard': ('vpn2/src/vpn2/adguard/stage.py', "AGH_VER = '{v}'\n"),
     'yt_node': ('scripts/19-yt-zapret.sh', 'https://nodejs.org/dist/{v}/node-{v}-linux-x64.tar.xz'),
     'yt_node_sha256': ('scripts/19-yt-zapret.sh', '{v}'),
     'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),

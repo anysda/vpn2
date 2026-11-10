@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+for cmd in iptables ip6tables; do
+  "$cmd" -w -t nat -N ANYSDA_DOH 2>/dev/null || true
+  "$cmd" -w -t nat -F ANYSDA_DOH
+  if [[ "$cmd" == iptables ]]; then
+    addresses=(1.1.1.1 8.8.8.8 8.8.4.4)
+  else
+    addresses=(2001:4860:4860::8888 2001:4860:4860::8844)
+  fi
+  for address in "${addresses[@]}"; do
+    "$cmd" -w -t nat -A ANYSDA_DOH -p tcp -d "$address" --dport 443 -j REDIRECT --to-ports 7899
+  done
+  "$cmd" -w -t nat -C OUTPUT -j ANYSDA_DOH 2>/dev/null || \
+    "$cmd" -w -t nat -A OUTPUT -j ANYSDA_DOH
+done

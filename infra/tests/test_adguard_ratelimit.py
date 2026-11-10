@@ -11,7 +11,6 @@ import ipaddress
 import json
 import os
 from pathlib import Path
-import re
 import socket
 import subprocess
 import sys
@@ -21,18 +20,20 @@ import unittest
 
 import yaml
 
-from test_deploy import ROOT, bash, source
+from adguard_support import stage
+from test_deploy import ROOT, source
+from vpn2.adguard import dns
 
 
 def patch_config(path):
-    stage = source('infra/scripts/22-adguard.sh')
-    function = re.search(r'^patch_agh_config\(\) \{\n.*?^\}', stage, re.M | re.S).group()
-    result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n'
-                  'HOST_TAG=test\nMGMT_IP=192.0.2.53\nAGH_PORT=3001\nsvc_forget() { :; }\n'
-                  + function + f'\npatch_agh_config "{path}"', path.parent)
-    if result.returncode:
-        raise AssertionError(result.stderr)
-    return yaml.safe_load(path.read_text())
+    """Политика DNS роли поверх готового конфига; пишет файл, только если он изменился."""
+    config = yaml.safe_load(path.read_text())
+    before = yaml.safe_load(path.read_text())
+    subnets = stage.pool_subnets({}, ROOT / 'app/shared/vpn-pools.json')
+    dns.patch_policy(config, {}, subnets, '192.0.2.53', '3001')
+    if config != before:
+        path.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+    return config
 
 
 def pool_clients():
@@ -74,7 +75,7 @@ class AdguardRatelimitTests(unittest.TestCase):
         speedtest = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(speedtest)
         binary = os.environ['ADGUARD_BIN']
-        version = re.search(r"^AGH_VER='([^']+)'", source('infra/scripts/22-adguard.sh'), re.M)[1]
+        version = stage.AGH_VER
         self.assertIn(version, subprocess.check_output([binary, '--version'], text=True))
         clients = pool_clients()
         addresses = ['192.0.2.53', *(a for group in clients.values() for a in group)]

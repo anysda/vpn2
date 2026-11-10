@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -13,12 +12,13 @@ import unittest
 
 import yaml
 
+from adguard_support import Hub
 from router_support import exit_cert
+from vpn2.adguard import dns
 
 
 ROOT = Path(__file__).resolve().parents[2]
 GENERATOR = Path(os.environ.get("GEN_ROUTER_PATH", ROOT / "infra/vpn2/src/vpn2/router/config.py"))
-ADGUARD = ROOT / "infra/scripts/22-adguard.sh"
 UPSTREAMS = ["[/ru/рф/xn--p1ai/su/]77.88.8.8",
              "https://1.1.1.1/dns-query", "https://dns.google/dns-query"]
 
@@ -80,15 +80,7 @@ class RouterDnsTests(unittest.TestCase):
 
 class AdguardPatchTests(unittest.TestCase):
     def test_installed_config_and_idempotence(self):
-        script = ADGUARD.read_text()
-        template_script = Path(os.environ.get("AGH_TEMPLATE_SCRIPT", ADGUARD)).read_text()
-        template = template_script.split('cat > "$AGH_CFG" <<YAML\n', 1)[1].split('\nYAML\n', 1)[0]
-        for key, value in {"AGH_PORT": "3000", "AGH_USER": "test-user",
-                           "AGH_USER_YAML": '"test-user"', "AGH_HASH_YAML": '"test-hash"',
-                           "AGH_PASS_HASH": "test-hash", "MGMT_IP": "192.0.2.1",
-                           "YT_UPSTREAM_YAML": ""}.items():
-            template = template.replace("${" + key + "}", value)
-        before = yaml.safe_load(template)
+        before = yaml.safe_load(dns.fresh_text("test-user", "test-hash", "3000", "192.0.2.1", "true", "1000"))
         # Состояние установленного хаба, включая пользовательские настройки.
         before["dns"].update(upstream_dns=["77.88.8.8", *UPSTREAMS[1:],
                                            "[/youtube.com/googlevideo.com/]77.88.8.8"],
@@ -96,59 +88,41 @@ class AdguardPatchTests(unittest.TestCase):
                               upstream_dns_file="/etc/custom-upstreams.txt", use_http3_upstreams=True)
         before["user_rules"] = ["||ads.example.test^"]
         before["clients"] = {"persistent": [{"name": "custom", "ids": ["192.0.2.10"]}]}
-        function = re.search(r"^patch_agh_config\(\) \{\n.*?^\}", script, re.M | re.S).group()
         with tempfile.TemporaryDirectory() as work:
-            path = Path(work) / "AdGuardHome.yaml"
-            path.write_text(yaml.safe_dump(before, allow_unicode=True, sort_keys=False))
-            env = dict(os.environ, HOST_TAG="test", AGH_PORT="3001", WG_SERVER_IP="192.0.2.1",
-                       OVPN_SUBNET="198.51.100.0", IKEV2_SUBNET="203.0.113.0/24")
-            command = (f'set -euo pipefail\nsource "{ROOT}/infra/lib/anysda-svc.sh"\n'
-                       'svc_forget() { :; }\n' + function) + '\npatch_agh_config "$1"'
-            run = lambda: subprocess.run(["bash", "-c", command, "patch", str(path)],
-                                          env=env, text=True, check=True, capture_output=True)
-            print(run().stdout, end="")
-            after = yaml.safe_load(path.read_text())
+            hub = Hub(work, user="test-user")
+            hub.env.update(WG_SERVER_IP="192.0.2.1", OVPN_SUBNET="198.51.100.0", IKEV2_SUBNET="203.0.113.0/24")
+            hub.config.write_text(yaml.safe_dump(before, allow_unicode=True, sort_keys=False))
+            hub.deploy()
+            self.assertTrue(hub.changed)
+            after = yaml.safe_load(hub.config.read_text())
             self.assertEqual(after["dns"]["upstream_dns"], UPSTREAMS)
             self.assertEqual(after["dns"]["fallback_dns"], [])
             self.assertEqual(after["dns"]["upstream_dns_file"], "")
             self.assertTrue(after["dns"]["cache_optimistic"])
             self.assertFalse(after["dns"]["use_http3_upstreams"])
-            for key in ("users", "filters", "user_rules", "clients"):
+            self.assertEqual(after["users"], [{"name": "test-user", "password": "hash"}])
+            for key in ("filters", "user_rules", "clients"):
                 self.assertEqual(after[key], before[key])
-            first = hashlib.sha256(path.read_bytes()).hexdigest()
-            print("sha256sum before second patch:")
-            print(subprocess.check_output(["sha256sum", str(path)], text=True), end="")
-            self.assertEqual(run().stdout, "")
-            print("sha256sum after second patch:")
-            print(subprocess.check_output(["sha256sum", str(path)], text=True), end="")
-            self.assertEqual(first, hashlib.sha256(path.read_bytes()).hexdigest())
-            print("PASS: upstream split, fallback removed, optimistic cache; second patch unchanged")
+            first = hashlib.sha256(hub.config.read_bytes()).hexdigest()
+            hub.deploy()
+            self.assertFalse(hub.changed)
+            self.assertEqual(first, hashlib.sha256(hub.config.read_bytes()).hexdigest())
 
     def test_unfiltered_instance_has_same_policy_without_lists(self):
-        script = ADGUARD.read_text()
-        code = script.split('"$AGH_PORT" <<\'PYEOF\'\n', 1)[1].split("\nPYEOF", 1)[0]
-        with tempfile.TemporaryDirectory() as work:
-            source, target = Path(work) / "filtered.yaml", Path(work) / "plain.yaml"
-            filtered = {"users": [{"name": "test", "password": "hash"}],
-                        "dns": {"upstream_dns": UPSTREAMS, "cache_optimistic": True},
-                        "filters": [{"enabled": True}], "user_rules": ["||example.test^"]}
-            source.write_text(yaml.safe_dump(filtered))
-            command = [sys.executable, "-c", code, str(source), str(target), "3000"]
-            self.assertEqual(subprocess.check_output(command, text=True), "changed\n")
-            plain = yaml.safe_load(target.read_text())
-            self.assertEqual(plain["dns"]["upstream_dns"], UPSTREAMS)
-            self.assertEqual(plain["dns"]["bind_hosts"], ["127.0.0.2"])
-            self.assertFalse(plain["filtering"]["protection_enabled"])
-            self.assertFalse(plain["filtering"]["filtering_enabled"])
-            self.assertEqual(plain["filters"], [])
-            self.assertEqual(plain["user_rules"], [])
-            enriched = copy.deepcopy(plain)
-            enriched["dns"]["unrelated_default"] = True
-            enriched["schema_version"] = 30
-            target.write_text(yaml.safe_dump(enriched))
-            first = target.read_bytes()
-            self.assertEqual(subprocess.check_output(command, text=True), "")
-            self.assertEqual(first, target.read_bytes())
+        filtered = {"users": [{"name": "test", "password": "hash"}],
+                    "dns": {"upstream_dns": UPSTREAMS, "cache_optimistic": True},
+                    "filters": [{"enabled": True}], "user_rules": ["||example.test^"]}
+        plain = dns.plain_config(filtered, {}, "3000")
+        self.assertEqual(plain["dns"]["upstream_dns"], UPSTREAMS)
+        self.assertEqual(plain["dns"]["bind_hosts"], ["127.0.0.2"])
+        self.assertFalse(plain["filtering"]["protection_enabled"])
+        self.assertFalse(plain["filtering"]["filtering_enabled"])
+        self.assertEqual(plain["filters"], [])
+        self.assertEqual(plain["user_rules"], [])
+        enriched = copy.deepcopy(plain)
+        enriched["dns"]["unrelated_default"] = True
+        enriched["schema_version"] = 30
+        self.assertEqual(dns.plain_config(filtered, enriched, "3000"), enriched)
 
 
 if __name__ == "__main__":

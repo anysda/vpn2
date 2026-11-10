@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
+from adguard_support import Hub
 from router_support import exit_cert
 from test_deploy import ROOT, bash, source
 
@@ -132,15 +133,12 @@ ufw_sync_rules() {
                 for cidr in pools[key]['subnets']:
                     for protocol in ('tcp', 'udp'):
                         self.assertIn(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53', rules)
-        stage = source('infra/scripts/22-adguard.sh')
-        function = 'patch_agh_config() {' + stage.split('patch_agh_config() {', 1)[1].split('\n}', 1)[0] + '\n}'
         with tempfile.TemporaryDirectory() as directory:
-            config = Path(directory) / 'AdGuardHome.yaml'
-            config.write_text('dns:\n  aaaa_disabled: true\n  ratelimit_whitelist: [203.0.113.1]\n')
-            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\nHOST_TAG=ru\nAGH_PORT=3001\nsvc_forget() {{ :; }}\n' + function + '\npatch_agh_config AdGuardHome.yaml\npatch_agh_config AdGuardHome.yaml', directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            import yaml
-            addresses = yaml.safe_load(config.read_text())['dns']['ratelimit_whitelist']
+            hub = Hub(directory)
+            hub.config.write_text('users: []\ndns:\n  aaaa_disabled: true\n  ratelimit_whitelist: [203.0.113.1]\n')
+            hub.deploy()
+            hub.deploy()
+            addresses = hub.dns()['ratelimit_whitelist']
             self.assertEqual(len(addresses), 24 * 254 + 1)
             self.assertEqual(len(set(addresses)), len(addresses))
             self.assertIn('203.0.113.1', addresses)

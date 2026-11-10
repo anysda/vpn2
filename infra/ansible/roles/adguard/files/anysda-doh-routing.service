@@ -1,0 +1,13 @@
+[Unit]
+Description=DoH upstream routing through sing-box
+After=network-online.target ufw.service sing-box.service
+Wants=sing-box.service
+Before=adguardhome.service adguardhome-unfiltered.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-doh-routing
+
+[Install]
+WantedBy=multi-user.target

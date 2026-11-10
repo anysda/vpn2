@@ -1,0 +1,51 @@
+"""Шаг «config» роли adguard на каталогах во временной папке."""
+
+import contextlib
+import io
+import os
+from pathlib import Path
+import sys
+
+import yaml
+
+ROOT = Path(os.environ.get('INFRA_TEST_ROOT', Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.adguard import stage  # noqa: E402
+
+
+class Hub:
+    """Каталоги /opt/AdGuardHome и /etc/anysda во временной папке."""
+
+    def __init__(self, directory, port=3001, user='anysda'):
+        self.root = Path(directory)
+        self.agh, self.plain = self.root / 'agh', self.root / 'plain'
+        self.etc, self.work = self.root / 'etc-anysda', self.root / 'work'
+        for path in (self.agh, self.plain, self.etc, self.work):
+            path.mkdir(parents=True)
+        self.config = self.agh / 'AdGuardHome.yaml'
+        self.env = {'AGH_PORT': str(port), 'MGMT_IP': '192.0.2.53'}
+        self.user = user
+        self.changed = False
+
+    def deploy(self):
+        """Сборка и публикация обоих конфигов; возвращает stderr шага."""
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log), contextlib.redirect_stdout(io.StringIO()):
+            staged = stage.build_configs(
+                self.env, self.user, 'pw', agh_dir=self.agh, plain_dir=self.plain, etc=self.etc,
+                pools_file=ROOT / 'app/shared/vpn-pools.json', work=self.work, hasher=lambda *_: 'hash',
+                profile=lambda _env: {'AGH_ADAWAY': 'false', 'AGH_QUERYLOG': '1000'}, patch=lambda *_: None)
+            published = [stage.publish(unit, path, directory / 'AdGuardHome.yaml',
+                                       active=lambda _unit: False, forget=lambda _unit: None)
+                         for unit, path, directory in zip(stage.UNITS, staged, (self.agh, self.plain))]
+        self.changed = published[0]
+        return log.getvalue()
+
+    def dns(self):
+        return yaml.safe_load(self.config.read_text())['dns']
+
+    def edit(self, **values):
+        """Как AdGuard после POST /control/dns_config из панели."""
+        config = yaml.safe_load(self.config.read_text())
+        config['dns'].update(values)
+        self.config.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))

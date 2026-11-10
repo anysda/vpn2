@@ -1,0 +1,23 @@
+[Unit]
+Description=AdGuard Home (DNS without filters)
+After=network-online.target anysda-doh-routing.service
+Requires=anysda-doh-routing.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/AdGuardHome-unfiltered
+ExecStart=/opt/AdGuardHome/AdGuardHome --no-check-update --config /opt/AdGuardHome-unfiltered/AdGuardHome.yaml --work-dir /opt/AdGuardHome-unfiltered
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+# Go начинает GC до cgroup pressure; запас до MemoryMax нужен при обновлении
+# фильтров (старый и новый индексы кратковременно живут одновременно).
+Environment=GOMEMLIMIT={{ adguard_limits.AGH_GO_LIMIT }}
+MemoryAccounting=true
+MemoryHigh={{ adguard_limits.AGH_MEMORY_HIGH }}
+MemoryMax={{ adguard_limits.AGH_MEMORY_MAX }}
+MemorySwapMax={{ adguard_limits.AGH_SWAP_MAX }}
+
+[Install]
+WantedBy=multi-user.target

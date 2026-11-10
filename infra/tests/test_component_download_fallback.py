@@ -68,8 +68,21 @@ sys.exit(release.main())
 '''
 
 
+AGH_STEP = r'''
+from vpn2.adguard import stage
+
+fetch = release.main
+release.main = lambda argv: fetch([*argv, '--cache', os.environ['RELEASE_CACHE']])
+stage.AGH_SHA256 = os.environ['AGH_SHA256']
+try:
+    stage.install_binary(os.environ, os.environ['AGH_WORK'])
+except stage.StageError as error:
+    sys.exit(str(error))
+'''
+
+
 def pinned(path, name):
-    return re.search(rf"^\s*(?:readonly\s+)?{name}=['\"]?([^'\"\s]+)", path.read_text(), re.M)[1]
+    return re.search(rf"^\s*(?:readonly\s+)?{name} ?= ?['\"]?([^'\"\s]+)", path.read_text(), re.M)[1]
 
 
 def tar_gz(members):
@@ -153,7 +166,7 @@ def components():
     exit_defaults = (ROOT / 'infra/ansible/roles/exit/defaults/main.yml').read_text()
     wgcf_ver = re.search(r"^exit_wgcf_version: '([^']+)'", exit_defaults, re.M)[1]
     wgcf_sha = re.search(r'^exit_wgcf_sha256: ([0-9a-f]{64})$', exit_defaults, re.M)[1]
-    agh_ver = pinned(STAGES / '22-adguard.sh', 'AGH_VER')
+    agh_ver = pinned(ROOT / 'infra/vpn2/src/vpn2/adguard/stage.py', 'AGH_VER')
     caddy_ver = pinned(LIB / 'anysda-svc.sh', 'CADDY_VER')
     sb_ver = pinned(LIB / 'install-sing-box.sh', 'SB_VER')
     sb_binary = f'#!/bin/sh\necho "sing-box version {sb_ver}"\n'.encode()
@@ -164,14 +177,11 @@ def components():
         return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\nWGCF_SHA256=\'{wgcf_sha}\'\n'
                 f'release_download wgcf {shlex.quote(str(work / "wgcf"))} {url} "$WGCF_SHA256"\n'), work / 'wgcf'
 
-    def adguard(work, lib):
-        source = (STAGES / '22-adguard.sh').read_text()
-        version = re.search(r"^AGH_VER=.*$", source, re.M)[0]
-        sha = re.search(r"^AGH_SHA256=.*$", source, re.M)
-        block = source.split('if [[ "$need_install" -eq 1 ]]; then', 1)[1].split('\n"$AGH_BIN" --version', 1)[0]
-        return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\n{version}\n{sha[0] if sha else ""}\n'
-                f'AGH_BIN={shlex.quote(str(work / "AdGuardHome"))}\nneed_install=1\n'
-                'if [[ "$need_install" -eq 1 ]]; then' + block), work / 'AdGuardHome'
+    def adguard(work, _lib):
+        # Шаг binary роли adguard: тот же vpn2.release, что и у стадий, без оболочки.
+        (work / 'step.py').write_text(SHIM.rsplit("if 'artifact' in sys.argv:", 1)[0] + AGH_STEP)
+        return (f"AGH_SHA256='{'0' * 64}' AGH_WORK={shlex.quote(str(work))} "
+                f'python3 {shlex.quote(str(work / "step.py"))}\n'), work / 'AdGuardHome'
 
     def caddy(work, lib):
         return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\n'

@@ -1,17 +1,16 @@
 """Повторный деплой не затирает настройки DNS, заданные в панели.
 
-Гоняется настоящий раздел «config» стадии 22: первая установка, правка тех
-полей, что панель меняет через API AdGuard, и повторный прогон.
+Гоняется шаг «config» роли adguard: первая установка, правка тех полей, что
+панель меняет через API AdGuard, и повторный прогон.
 """
 
 import json
-from pathlib import Path
 import tempfile
 import unittest
 
 import yaml
 
-from test_deploy import ROOT, bash, source
+from adguard_support import Hub
 
 DEFAULTS = {
     'upstream_dns': ['[/ru/рф/xn--p1ai/su/]77.88.8.8',
@@ -32,43 +31,6 @@ PANEL = {
     'ratelimit': 30,
     'aaaa_disabled': False,
 }
-
-
-class Hub:
-    """Каталоги /opt/AdGuardHome и /etc/anysda во временной папке."""
-
-    def __init__(self, directory):
-        self.root = Path(directory)
-        self.agh = self.root / 'agh'
-        self.etc = self.root / 'etc-anysda'
-        self.agh.mkdir()
-        self.etc.mkdir()
-        self.config = self.agh / 'AdGuardHome.yaml'
-
-    def deploy(self):
-        stage = source('infra/scripts/22-adguard.sh')
-        start = stage.index('AGH_WORK=$(mktemp -d)')
-        end = stage.index('\n', stage.index('entry_adguard_resources "$AGH_CFG"', start))
-        section = stage[start:end].replace('/etc/anysda', str(self.etc))
-        result = bash(
-            f'source "{ROOT}/infra/lib/anysda-svc.sh"\n'
-            'svc_forget() { :; }\nentry_adguard_resources() { :; }\n'
-            f'HOST_TAG=ru AGH_PORT=3001 MGMT_IP=192.0.2.53 AGH_DIR="{self.agh}"\n'
-            f'AGH_DNS_STATE="{self.etc}/agh-dns.json"\n'
-            'AGH_USER=anysda AGH_PASS_HASH=hash AGH_ADAWAY=false AGH_QUERYLOG=1000\n'
-            + section + f'\ncp "$AGH_CFG" "{self.config}"\n', self.root)
-        if result.returncode:
-            raise AssertionError(result.stderr)
-        return result.stderr
-
-    def dns(self):
-        return yaml.safe_load(self.config.read_text())['dns']
-
-    def edit(self, **values):
-        """Как AdGuard после POST /control/dns_config из панели."""
-        config = yaml.safe_load(self.config.read_text())
-        config['dns'].update(values)
-        self.config.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
 
 
 def managed(dns):
@@ -102,7 +64,7 @@ class AdguardPanelSettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             hub = Hub(directory)
             hub.deploy()
-            # Прежняя версия стадии записала другое значение и запомнила его.
+            # Прежний выпуск записал другое значение и запомнила его.
             state = hub.etc / 'agh-dns.json'
             if state.exists():
                 saved = json.loads(state.read_text())

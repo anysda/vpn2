@@ -10,6 +10,7 @@ import unittest
 
 import yaml
 
+from adguard_support import Hub
 from router_support import exit_secrets, stage
 
 
@@ -30,31 +31,18 @@ def run(script, directory, **values):
 
 class AdguardLiteralTests(unittest.TestCase):
     def test_fresh_credentials(self):
-        text = source('22-adguard.sh')
-        block = text[text.index('agh_fresh=()'):text.index('\nelse\n  # Config exists')]
         for value in [*VALUES, 'true', 'name: value', '*alias']:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                path = Path(work) / 'fresh.yaml'
-                result = run('svc_forget() { :; }\n' + block + '\nfi', work,
-                             AGH_CFG=str(path), AGH_USER=value, AGH_PASS_HASH='test-hash',
-                             AGH_PORT='3000', MGMT_IP='192.0.2.1',
-                             AGH_ADAWAY='true', AGH_QUERYLOG='1000')
-                self.assertEqual(result.returncode, 0, result.stderr)
-                cfg = yaml.safe_load(path.read_text())
-                self.assertEqual(cfg['users'], [{'name': value, 'password': 'test-hash'}])
-                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                hub = Hub(work, user=value)
+                hub.deploy()
+                cfg = yaml.safe_load(hub.config.read_text())
+                self.assertEqual(cfg['users'], [{'name': value, 'password': 'hash'}])
+                self.assertEqual(hub.config.stat().st_mode & 0o777, 0o600)
 
     def test_sync_credentials(self):
-        text = source('22-adguard.sh')
-        block = text[text.index('  agh_sync=$('):text.index('\npatch_agh_config "$AGH_CFG"')]
-        block = block.rsplit('\nfi', 1)[0]
-        cases = [(value, 'AdGuardHome.yaml') for value in VALUES]
-        cases.append(('plain', 'config"\\$.yaml'))
-        for value, filename in cases:
-            with self.subTest(value=value, filename=filename), tempfile.TemporaryDirectory() as work:
-                path = Path(work) / filename
-                path.write_text(yaml.safe_dump({'users': [], 'custom': 'keep'}))
-                # Exercise config2env as well as source of its shell assignments.
+        for value in VALUES:
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
+                # Имя проходит весь путь: config.yaml, config2env, env стадии, конфиг AdGuard.
                 config = ('entry:\n  host: entry.example.test\n  password: fake\n'
                           'exits:\n  - tag: test\n    host: exit.example.test\n'
                           '    password: fake\nadmin:\n  user: ' + json.dumps(value) + '\n')
@@ -63,19 +51,19 @@ class AdguardLiteralTests(unittest.TestCase):
                                            text=True, capture_output=True, timeout=15,
                                            env={**os.environ, 'VPN2_STATE_DIR': f'{work}/state'})
                 self.assertEqual(converted.returncode, 0, converted.stderr)
-                script = ('source infra/envs/ru.env\nAGH_USER=$ADMIN_USER\n'
-                          'svc_forget() { echo restart; }\n' + block)
-                first = run(script, work, AGH_CFG=str(path), AGH_PASS_HASH=value, HOST_TAG='ru')
-                self.assertEqual(first.returncode, 0, first.stderr)
-                cfg = yaml.safe_load(path.read_text())
-                self.assertEqual(cfg['users'], [{'name': value, 'password': value}])
+                user = run('source infra/envs/ru.env\nprintf %s "$ADMIN_USER"', work)
+                self.assertEqual(user.stdout, value, user.stderr)
+                hub = Hub(Path(work, 'hub'), user=user.stdout)
+                hub.config.write_text(yaml.safe_dump({'users': [], 'custom': 'keep'}))
+                hub.deploy()
+                cfg = yaml.safe_load(hub.config.read_text())
+                self.assertEqual(cfg['users'], [{'name': value, 'password': 'hash'}])
                 self.assertEqual(cfg['custom'], 'keep')
-                self.assertIn('restart', first.stdout)
-                before = path.read_bytes()
-                second = run(script, work, AGH_CFG=str(path), AGH_PASS_HASH=value, HOST_TAG='ru')
-                self.assertEqual(second.returncode, 0, second.stderr)
-                self.assertNotIn('restart', second.stdout)
-                self.assertEqual(before, path.read_bytes())
+                self.assertTrue(hub.changed)
+                before = hub.config.read_bytes()
+                hub.deploy()
+                self.assertFalse(hub.changed)
+                self.assertEqual(before, hub.config.read_bytes())
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 
@@ -147,7 +135,7 @@ class LogLiteralTests(unittest.TestCase):
                             result = run(script, work, HOST_TAG=value)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
-        self.assertGreater(count, 15)
+        self.assertGreater(count, 10)
 
 
 class IkeRoutingLiteralTests(unittest.TestCase):

@@ -16,11 +16,15 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import jinja2
 import yaml
 
 
 ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents[2]))
 TOOL = ROOT / "infra/lib/entry_resources.py"
+sys.path.insert(0, str(ROOT / "infra/vpn2/src"))
+from vpn2.adguard import dns as adguard_dns, stage as adguard  # noqa: E402
+
 SERVICES = {"panel": "30-frontend.sh", "bot": "35-telegram.sh", "vm": "25-monitoring.sh"}
 
 
@@ -153,10 +157,17 @@ class EntryMemoryTest(unittest.TestCase):
             self.assertIn("-retentionPeriod=11d", result.stdout)
 
     def test_stages_load_and_deploy_ships_library(self):
-        for service, name in {**SERVICES, "agh": "22-adguard.sh"}.items():
+        for service, name in SERVICES.items():
             script = stage(name)
             self.assertIn(f"entry_resources {service}", script)
             self.assertIn('source "$RESOURCE_LIB"', script)
+        # AdGuard ставит роль: библиотеку кладёт она же, профиль берёт шаг limits.
+        tasks = yaml.safe_load((ROOT / "infra/ansible/roles/adguard/tasks/main.yml").read_text())
+        shipped = [name for task in tasks if "lib/" in str(task.get("ansible.builtin.copy", {}).get("src"))
+                   for name in task["loop"]]
+        self.assertEqual(shipped, ["entry-resources.sh", "entry_resources.py"])
+        self.assertIn("limits", [task["ansible.builtin.command"]["argv"].split("'")[1] for task in tasks
+                                 if "adguard_step" in str(task.get("ansible.builtin.command", {}).get("argv"))])
         deploy = (ROOT / "infra/deploy.sh").read_text()
         for filename in ("entry-resources.sh", "entry_resources.py"):
             self.assertIn(f'push "$DEPLOY_ROOT/lib/{filename}"', deploy)
@@ -186,22 +197,19 @@ class EntryMemoryTest(unittest.TestCase):
                 self.assertEqual(first, subprocess.check_output(command))
 
     def test_adguard_new_config_and_service(self):
-        script = stage("22-adguard.sh")
-        config = script.split('cat > "$AGH_CFG" <<YAML\n')[1].split('\nYAML')[0]
-        unit = script.split('cat > /etc/systemd/system/adguardhome.service <<EOF\n')[1].split('\nEOF')[0]
+        unit = jinja2.Template((ROOT / "infra/ansible/roles/adguard/templates/adguardhome.service.j2").read_text())
         for ram, size, enabled, limits in (
                 (2048, 100, False, ("192M", "256M", "160MiB", "0")),
                 (4096, 1000, True, ("infinity", "infinity", "off", "infinity"))):
-            rendered = render(ram, 8192, "agh") + "\nAGH_PORT=3000\nMGMT_IP=127.0.0.2\n"
-            result = subprocess.run(["bash", "-c", rendered + "\ncat <<YAML\n" + config + "\nYAML"],
-                                    check=True, capture_output=True, text=True)
-            cfg = yaml.safe_load(result.stdout)
+            profile = adguard.limits({"VPN2_ENTRY_RESOURCES": str(TOOL)}, "--ram-mib", str(ram),
+                                     "--free-mib", "8192")
+            cfg = yaml.safe_load(adguard_dns.fresh_text("anysda", "hash", "3000", "127.0.0.2",
+                                                        profile["AGH_ADAWAY"], profile["AGH_QUERYLOG"]))
             self.assertEqual(cfg["querylog"]["size_memory"], size)
             self.assertEqual(cfg["filters"][1]["enabled"], enabled)
-            result = subprocess.run(["bash", "-c", rendered + "\ncat <<EOF\n" + unit + "\nEOF"],
-                                    check=True, capture_output=True, text=True)
+            rendered = unit.render(adguard_limits=profile)
             for key, value in zip(("MemoryHigh", "MemoryMax", "Environment=GOMEMLIMIT", "MemorySwapMax"), limits):
-                self.assertIn(f"{key}={value}", result.stdout)
+                self.assertIn(f"{key}={value}\n", rendered)
 
     def test_adguard_resize_idempotency_and_user_changes(self):
         resource = module()

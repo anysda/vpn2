@@ -1,0 +1,20 @@
+---
+adguard_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+adguard_tmp: /tmp/anysda
+adguard_vpn2: /opt/vpn2/venv/bin/vpn2
+adguard_step: ["{{ adguard_vpn2 }}", adguard]
+
+# Переменные стадии, которые читают шаги: веб-порт и адрес слушателя, логин
+# панели, адреса туннелей для списка клиентов и ресурсы entry.
+adguard_env_names:
+  - AGH_PORT
+  - MGMT_IP
+  - ADMIN_USER
+  - ADMIN_PASSWORD
+  - WG_SERVER_IP
+  - OVPN_SUBNET
+  - IKEV2_SUBNET
+  - ENTRY_RESOURCE_OVERRIDES
+  - VPN2_RELEASE_MANIFEST
+  - VPN2_DEVELOPMENT
+adguard_env: "{{ dict(adguard_env_names | zip(query('ansible.builtin.env', *adguard_env_names))) }}"

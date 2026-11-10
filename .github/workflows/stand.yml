@@ -26,6 +26,10 @@ on:
         description: 'Положительный контроль: испортить файл на entry перед слепком'
         type: boolean
         default: false
+      backup_fixture:
+        description: 'Снять эталонный архив бэкапа в артефакт'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -165,6 +169,17 @@ jobs:
       # Сценарий 5 карточки. /health на паузе не проверяется до VPN2-794.
       - name: бот с поддельным токеном
         run: sudo infra/tools/ci-stand.sh bot-fake-token
+
+      - name: эталонный архив бэкапа
+        if: ${{ inputs.backup_fixture }}
+        run: sudo infra/tools/ci-stand.sh backup-fixture backup-fixture && sudo chown -R "$USER" backup-fixture
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ inputs.backup_fixture }}
+        with:
+          name: backup-fixture-ubuntu-${{ matrix.os }}
+          path: backup-fixture/
+          if-no-files-found: error
 
       - name: collect
         if: always()

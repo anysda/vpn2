@@ -74,4 +74,22 @@ describe('очередь outbox', () => {
     expect(last.status).toBe('queued')
     expect(last.lastFailure).toBeGreaterThan(0)
   })
+
+  it('без секрета - запрос боту не уходит, запись остаётся в очереди', async () => {
+    installStubs({ tgbotEventPort: 9911 })
+    queued()
+    await retryBotEvents()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(dbOps.filter(o => o.op === 'set').at(-1)?.args[0]).toMatchObject({ status: 'queued' })
+  })
+
+  it('подтверждение без delivery_id или с чужим - не доставка', async () => {
+    for (const ack of [{ ok: true }, { ok: true, delivery_id: 'other' }]) {
+      installStubs({ tgbotSecret: 's3cret', tgbotEventPort: 9911 })
+      queued()
+      fetchMock.mockResolvedValue(ack)
+      await retryBotEvents()
+      expect(dbOps.filter(o => o.op === 'set').at(-1)?.args[0]).toMatchObject({ status: 'queued' })
+    }
+  })
 })

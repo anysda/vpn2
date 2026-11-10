@@ -2,6 +2,7 @@
 // Модули подменяются в тесте так:
 //   vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 // а installStubs() в beforeEach ставит глобалы и сбрасывает состояние.
+import { Column, Param, SQL, getTableColumns, getTableName, is } from 'drizzle-orm'
 import { vi } from 'vitest'
 
 export interface StubError extends Error {
@@ -16,6 +17,12 @@ export const calls: string[] = []
 export const dbResults: unknown[][] = []
 /** Вызовы методов цепочек запроса (where, set, values...) с аргументами. */
 export const dbOps: { op: string, args: unknown[] }[] = []
+/**
+ * Строки таблиц по имени таблицы ('clients', 'devices'). Если для таблицы строки
+ * заданы, select().from(таблица).where(...) отбирает их по условию запроса, а не
+ * берёт очередь dbResults: снятая проверка владельца отдаёт чужую строку.
+ */
+export const dbRows: Record<string, Record<string, unknown>[]> = {}
 export const runtimeConfig: Record<string, unknown> = {}
 export const fetchMock = vi.fn<(url: string, opts: Record<string, unknown>) => Promise<unknown>>()
 /** Отказ авторизации: тест подставляет throw. */
@@ -29,19 +36,48 @@ export function stubError(input: { statusCode: number, statusMessage?: string, m
   return err
 }
 
+/** Условие where как пары «колонка = значение»; порядок и скобки and() не важны. */
+export function conditionPairs(cond: unknown, out: { column: string, value: unknown }[] = []) {
+  const tokens: unknown[] = []
+  const walk = (node: unknown) => {
+    if (is(node, Column)) tokens.push({ column: node })
+    else if (is(node, Param)) tokens.push({ value: node.value })
+    else if (is(node, SQL)) node.queryChunks.forEach(walk)
+    else if (Array.isArray(node)) node.forEach(walk)
+  }
+  walk(cond)
+  tokens.forEach((t, i) => {
+    const next = tokens[i + 1] as { value?: unknown } | undefined
+    if ('column' in (t as object) && next && 'value' in next) out.push({ column: (t as { column: Column }).column.name, value: next.value })
+  })
+  return out
+}
+
+function selectRows(table: unknown, cond: unknown): Record<string, unknown>[] | undefined {
+  const rows = is(table, SQL) || !table ? undefined : dbRows[getTableName(table as never)]
+  if (!rows) return undefined
+  const keys = Object.entries(getTableColumns(table as never) as Record<string, Column>).map(([key, col]) => [col.name, key] as const)
+  const pairs = conditionPairs(cond).map(({ column, value }) => [keys.find(([name]) => name === column)?.[1] ?? column, value] as const)
+  return rows.filter(row => pairs.every(([key, value]) => row[key] === value))
+}
+
 type Chain = { [method: string]: (...args: unknown[]) => Chain } & PromiseLike<unknown>
 
 function chain(op: string): Chain {
   calls.push(`db:${op}`)
   let result: Promise<unknown> | undefined
+  let table: unknown
+  let cond: unknown
   const proxy: Chain = new Proxy({} as Chain, {
     get(_target, prop) {
       if (prop === 'then') {
-        result ??= Promise.resolve(dbResults.shift() ?? [])
+        result ??= Promise.resolve(op === 'select' && selectRows(table, cond) || dbResults.shift() || [])
         return result.then.bind(result)
       }
       return (...args: unknown[]) => {
         dbOps.push({ op: String(prop), args })
+        if (prop === 'from') table = args[0]
+        if (prop === 'where') cond = args[0]
         return proxy
       }
     },
@@ -86,9 +122,9 @@ export const botApiModule = {
     calls.push('auth')
     auth.bot()
   },
-  clientByChat: async () => {
+  clientByChat: async (chatId: number) => {
     calls.push('db:clientByChat')
-    const [client] = dbResults.shift() ?? []
+    const [client] = dbRows.clients ? dbRows.clients.filter(c => c.tgChatId === chatId) : dbResults.shift() ?? []
     if (!client) throw stubError({ statusCode: 404, statusMessage: 'not_linked' })
     return client
   },
@@ -104,6 +140,7 @@ export function installStubs(config: Record<string, unknown> = {}) {
   calls.length = 0
   dbResults.length = 0
   dbOps.length = 0
+  for (const key of Object.keys(dbRows)) Reflect.deleteProperty(dbRows, key)
   for (const key of Object.keys(runtimeConfig)) Reflect.deleteProperty(runtimeConfig, key)
   Object.assign(runtimeConfig, config)
   fetchMock.mockReset()

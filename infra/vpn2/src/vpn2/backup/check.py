@@ -6,6 +6,7 @@
 """
 import base64
 import calendar
+import contextlib
 import json
 import pathlib
 import re
@@ -58,8 +59,15 @@ def _timestamp(root):
 
 
 def _problems(root, run):
-    """(расхождения, что нечем проверить) по каталогу набора с db.sqlite."""
-    con = sqlite3.connect(f'file:{root / "db.sqlite"}?mode=ro', uri=True)
+    """(расхождения, что нечем проверить) по каталогу набора с db.sqlite.
+
+    Соединение закрывается сразу: открытое чтение не даёт следующему писателю среза свернуть WAL в файл БД.
+    """
+    with contextlib.closing(sqlite3.connect(f'file:{root / "db.sqlite"}?mode=ro', uri=True)) as con:
+        return _compare(con, root, run)
+
+
+def _compare(con, root, run):
 
     def columns(table):
         return {row[1] for row in con.execute(f'PRAGMA table_info({table})')}

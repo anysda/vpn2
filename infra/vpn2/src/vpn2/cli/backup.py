@@ -12,7 +12,7 @@ class _Parser(argparse.ArgumentParser):
 
 def main(argv):
     parser = _Parser(prog='vpn2 backup', description='Бэкап узла: архив в локальный каталог и, для s3, в бакет.')
-    parser.add_argument('--check-bundle', metavar='КАТАЛОГ',
+    parser.add_argument('--check-bundle', metavar='КАТАЛОГ', nargs='?', const='',
                         help='сверить БД распакованного набора с конфигами VPN и выйти (коды 0, 3, 5)')
     parser.add_argument('--env-file', metavar='ФАЙЛ', default=env.DEFAULT_ENV_FILE,
                         help='файл настроек (по умолчанию %(default)s)')

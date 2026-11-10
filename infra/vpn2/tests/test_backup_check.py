@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import shutil
@@ -10,6 +11,7 @@ import pytest
 from vpn2 import wg
 from vpn2.backup import check
 from vpn2.backup.bundle import write_manifest
+from vpn2.cli import backup as cli_backup
 
 LIB = Path(__file__).resolve().parents[2] / 'lib'
 SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
@@ -105,6 +107,14 @@ def test_code2_not_a_bundle(tmp_path):
                    'укажи каталог anysda-vpn2-* из архива\n')
 
 
+@pytest.mark.parametrize('argv', [['--check-bundle'], ['--check-bundle', '']])
+def test_command_without_path_is_code2(argv, capsys):
+    """Скрипт на `--check-bundle` без каталога отвечал тем же отказом, а не разбором аргументов."""
+    assert cli_backup.main(argv) == 2
+    assert capsys.readouterr() == ('', "anysda-backup: --check-bundle: '' — не распакованный бандл "
+                                       '(нет manifest.json); укажи каталог anysda-vpn2-* из архива\n')
+
+
 def test_code0_without_db_and_good_bundle(tmp_path, monkeypatch):
     assert run_py(build(tmp_path / 'a', db=False)) == (0, '', '')
     good = build(tmp_path / 'b', devices=[dev(1), dev(2, key=K2, user='v', pw='w')], clients=[CLIENT],
@@ -186,6 +196,20 @@ def test_corrupt_database_exit1(tmp_path):
     (root / 'db.sqlite').write_bytes(b'not a database' * 100)
     code, out, err = run_py(root)
     assert (code, out, err) == (1, '', 'DatabaseError: file is not a database\n')
+
+
+def test_check_leaves_no_open_connection(tmp_path, monkeypatch):
+    """Срез в режиме WAL: после сверки следующий писатель (перенос отзывов) сворачивает журнал в файл БД."""
+    root = build(tmp_path / 'b', devices=[dev(1)], clients=[CLIENT], peers=[peer(K1)], swanctl=swan((1, 'u', 'p')))
+    database = root / 'db.sqlite'
+    with contextlib.closing(sqlite3.connect(database)) as con:
+        con.execute('PRAGMA journal_mode=wal')
+    assert run_py(root, monkeypatch, stub_conf_peers) == (0, '', '')
+    with contextlib.closing(sqlite3.connect(database)) as con, con:
+        con.execute('UPDATE devices SET name = ? WHERE id = 1', ('после сверки',))
+    assert not (root / 'db.sqlite-wal').exists()
+    with contextlib.closing(sqlite3.connect(f'file:{database}?immutable=1', uri=True)) as con:
+        assert con.execute('SELECT name FROM devices').fetchall() == [('после сверки',)]
 
 
 # --- прямая сверка с bash: удалить вместе с bash-телом (anysda-backup.sh --check-bundle) ---

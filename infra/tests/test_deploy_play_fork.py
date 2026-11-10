@@ -199,6 +199,18 @@ run_stage_on_host 42-x ru
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('die: нет такой стадии: 44-z', result.stderr)
 
+    def test_prereqs_start_venv_only_on_full_run(self):
+        for args, started in (('', False), ('venv', True)):
+            with self.subTest(args=args), tempfile.TemporaryDirectory() as directory:
+                script = (STUBS + function('install_prereqs')
+                          + 'apt_have() { return 0; }\n'
+                          + 'ansible_venv_start() { echo start >> calls; }\n'
+                          + f'C_B= C_G= C_END=\ninstall_prereqs {args} >/dev/null\n'
+                          + 'touch calls\n')
+                result = bash(script, directory)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual('start' in (Path(directory) / 'calls').read_text(), started)
+
 
 class WheelPushTests(unittest.TestCase):
     def test_bootstrap_ships_wheel_to_exit_not_to_entry(self):

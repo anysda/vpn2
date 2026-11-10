@@ -239,11 +239,13 @@ install_prereqs() {
   # ca-certificates - только если его нет: стоящий apt обновил бы, и его
   # configure (~5 с) задерживал бы экзиты, ждущие sshpass. Обновит его, как и
   # раньше, 00-bootstrap entry тем же списком пакетов.
-  apt_have python3-venv || pkgs+=(python3-venv)
+  # venv нужен только полному запуску (do_all зовёт с аргументом venv); служебные
+  # слова и одиночная стадия идут через release_start без него.
+  [[ "${1:-}" != venv ]] || apt_have python3-venv || pkgs+=(python3-venv)
   [[ ${#pkgs[@]} -eq 0 ]] || apt_have ca-certificates || pkgs+=(ca-certificates)
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
   # venv с ansible-core качается в фоне, пока идут первые стадии; ждёт его do_all.
-  ansible_venv_start
+  [[ "${1:-}" != venv ]] || ansible_venv_start
 
   for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
     printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
@@ -1512,7 +1514,7 @@ do_all() {
   _VERIFY_WARNINGS=()
 
   pause_entry_auto_updates
-  install_prereqs
+  install_prereqs venv
   do_check
   preflight_ssh
 

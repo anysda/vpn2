@@ -1,0 +1,12 @@
+#!/usr/sbin/nft -f
+# Managed by anysda-vpn2 stage 10-foreign. Перезаписывается каждым прогоном.
+table inet vpn2_hy2hop
+delete table inet vpn2_hy2hop
+table inet vpn2_hy2hop {
+    chain prerouting {
+        type nat hook prerouting priority dstnat; policy accept;
+        udp dport 20000-24999 udp dport != 20100 redirect to :20100
+        udp dport 25000-29999 redirect to :18443
+        udp dport 30000-30999 redirect to :8444
+    }
+}

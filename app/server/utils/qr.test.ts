@@ -4,7 +4,7 @@ import jsQR from 'jsqr'
 import { PNG } from 'pngjs'
 import QRCode from 'qrcode-svg'
 import { describe, expect, it } from 'vitest'
-import { qrPng, qrSvg } from './qr'
+import { qrPng, qrSvg, wgBotEvent } from './qr'
 
 const worst = readFileSync(new URL('../../../telegram/tests/qr-worst-wg.conf', import.meta.url), 'utf8')
 const short = worst.replace(/^AllowedIPs = .*$/m, 'AllowedIPs = 0.0.0.0/0, ::/0')
@@ -75,4 +75,19 @@ it('PNG худшего конфига в тестах бота равен нын
   const now = PNG.sync.read(qrPng(worst))
   expect([saved.width, saved.height]).toEqual([now.width, now.height])
   expect(saved.data.equals(now.data)).toBe(true)
+})
+
+describe('событие «отправить WireGuard в Telegram»', () => {
+  it('несёт конфиг и его PNG: бот сам QR не рисует', () => {
+    const event = wgBotEvent('ivan-phone', worst)
+    expect(Object.keys(event).sort()).toEqual(['conf', 'name', 'qr', 'type'])
+    expect([event.type, event.name, event.conf]).toEqual(['client_send_wireguard', 'ivan-phone', worst])
+    expect(Buffer.from(event.qr, 'base64').equals(qrPng(worst))).toBe(true)
+  })
+
+  it('маршрут панели шлёт именно его', () => {
+    const route = readFileSync(new URL('../api/clients/[id]/devices/[deviceId]/send-wg-to-tg.post.ts', import.meta.url), 'utf8')
+    expect(route).toContain('wgBotEvent(name, conf)')
+    expect(route).not.toContain("type: 'client_send_wireguard'")
+  })
 })

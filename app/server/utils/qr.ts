@@ -77,3 +77,11 @@ export function qrPng(content: string): Buffer {
     chunk('IEND', Buffer.alloc(0)),
   ])
 }
+
+/**
+ * Событие «отправить WireGuard в Telegram» для бота. QR рисует панель, бот
+ * пересылает PNG как есть: своего генератора у него нет.
+ */
+export function wgBotEvent(name: string, conf: string) {
+  return { type: 'client_send_wireguard' as const, name, conf, qr: qrPng(conf).toString('base64') }
+}

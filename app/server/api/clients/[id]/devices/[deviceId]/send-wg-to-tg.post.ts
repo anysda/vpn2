@@ -1,7 +1,7 @@
 import { botSecretOrThrow, sendBotEvent } from '../../../../../utils/bot-events'
 import { adminClientDevice } from '../../../../../utils/device-route'
 import { deviceConfigName } from '../../../../../utils/naming'
-import { qrPng } from '../../../../../utils/qr'
+import { wgBotEvent } from '../../../../../utils/qr'
 import { deviceWgConfig, requireWgEndpoint } from '../../../../../utils/wg-device-config'
 
 export default defineEventHandler(async (event) => {
@@ -14,7 +14,7 @@ export default defineEventHandler(async (event) => {
   const conf = await deviceWgConfig(device.id, client.filterTraffic, endpoint)
 
   const name = deviceConfigName(client.name, device.name, device.id)
-  await sendBotEvent({ type: 'client_send_wireguard', name, conf, qr: qrPng(conf).toString('base64') })
+  await sendBotEvent(wgBotEvent(name, conf))
 
   return { ok: true }
 })

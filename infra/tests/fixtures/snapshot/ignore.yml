@@ -52,6 +52,7 @@
 - {section: units, name: 'var-lib-docker-rootfs-overlayfs-*.mount', field: '*', reason: точка монтирования контейнера с его случайным идентификатором}
 - {section: units, name: 'vpn2-ci-warm.service', field: '*', reason: разовый юнит прогрева стенда CI - не продукт}
 - {section: units, name: 'apt-news.service', field: '*', reason: разовая служба Ubuntu - её запускает хук apt и она живёт секунды}
+- {section: units, name: 'fwupd-refresh.service', field: '*', reason: разовая служба Ubuntu - её запускает таймер обновления прошивок и она живёт секунды}
 - {section: containers, name: 'anysda-vpn2', field: image, reason: образ панели собирается из исходников коммита}
 - {section: containers, name: 'anysda-vpn2', field: image_id, reason: образ панели собирается из исходников коммита}
 - {section: containers, name: 'anysda-tgbot', field: image, reason: образ бота собирается из исходников коммита}

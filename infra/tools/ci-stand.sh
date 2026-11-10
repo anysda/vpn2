@@ -52,6 +52,12 @@ EXIT_TAG='nl'
 NODES=("entry $NET.10 4 4096 52:54:00:12:0a:0a" "exit $NET.20 2 2048 52:54:00:12:0a:14")
 ENTRY=$NET.10
 EXIT=$NET.20
+# Состояние деплоя на entry и ожидание его замка. Выпуск со старой раскладкой
+# держит замок в checkout: его ждём, только если файл есть - flock создал бы.
+STATE=/var/lib/anysda-vpn2/state
+OLD_STATE=/opt/anysda-vpn2/infra/state
+DEPLOY_LOCK_WAIT="flock -w 70 /run/lock/anysda-vpn2-deploy.lock true"
+DEPLOY_LOCK_WAIT+=" && { [ ! -e $OLD_STATE/deploy.lock ] || flock -w 70 $OLD_STATE/deploy.lock true; }"
 # Ожидание выпуска сертификата впустую: на адрес 198.18.x ACME не выпустит.
 # Стадии берут его из окружения ssh-сессии (pam_env, /etc/environment).
 TLS_INITIAL_WAIT=0
@@ -487,7 +493,7 @@ stage_stats() {
 # push_tree --over <тег> - каталог остаётся, поверх файлы ветки, удалённые с
 #                          тега пути стираются; config.yaml не трогается и не
 #                          рендерится, неотслеживаемые infra/secrets и
-#                          infra/state остаются (в потоке их нет).
+#                          infra/state старого выпуска остаются (в потоке их нет).
 push_tree() {
   local mode=${1:-} tag=${2:-} password
   password=$(cat "$STAND_DIR/root-password")
@@ -642,7 +648,7 @@ cmd_deploy_udp() {
   for stage in "${UDP_STAGES[@]}"; do
     close_entry_mux
     entry_run "deploy-${stage%% *}" \
-      "mkdir -p infra/state && flock -w 70 infra/state/deploy.lock true && ./deploy.sh --development $stage" \
+      "$DEPLOY_LOCK_WAIT && ./deploy.sh --development $stage" \
       || die "$stage: код $?"
   done
   log "стадии для обрыва UDP: $(( SECONDS - started )) с"
@@ -834,7 +840,7 @@ cmd_snapshot() {
 cmd_deploy_again() {
   local out=${1:?каталог для слепков} started=$SECONDS rc=0
   close_entry_mux
-  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+  ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
   entry_run deploy-again './deploy.sh --development' || rc=$?
   log "повторный деплой: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
@@ -848,14 +854,22 @@ cmd_deploy_again() {
 cmd_deploy_upgrade() {
   local image=${1:?образ панели (docker-образ на этой машине)} tag=${2:?тег выпуска} started=$SECONDS rc=0
   close_entry_mux
-  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+  ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
+  local mgmt left
+  mgmt=$(ssh_node "$ENTRY" "cat $STATE/mgmt-ips.txt 2>/dev/null || cat $OLD_STATE/mgmt-ips.txt") \
+    || die 'обновление: адреса mesh выпуска не прочитаны'
   push_tree --over "$tag"
   docker tag "$image" "$PANEL_REF"
   load_panel || return 1
   entry_run deploy './deploy.sh --development' || rc=$?
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
-  return "$rc"
+  (( rc == 0 )) || return "$rc"
+  [[ $(ssh_node "$ENTRY" "cat $STATE/mgmt-ips.txt") == "$mgmt" ]] \
+    || die 'обновление: адреса mesh после переноса состояния не те, что у выпуска'
+  ssh_node "$ENTRY" "test -s $STATE/known_hosts" || die "обновление: нет $STATE/known_hosts"
+  left=$(ssh_node "$ENTRY" "ls -d $OLD_STATE ${OLD_STATE%/state}/.known_hosts* 2>/dev/null") || true
+  [[ -z $left ]] || die "обновление: состояние деплоя осталось в checkout: $left"
 }
 
 # Положительный контроль: правка файла продукта, которую сверка с эталоном
@@ -1023,12 +1037,17 @@ cmd_restore_check() {
     log 'отрицательный контроль: чужой пароль архива'
   fi
   close_entry_mux
-  ssh_node "$ENTRY" 'flock -w 70 /opt/anysda-vpn2/infra/state/deploy.lock true' \
+  ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
+  local mgmt
+  mgmt=$(ssh_node "$ENTRY" "sha256sum $STATE/mgmt-ips.txt") || die "restore: нет $STATE/mgmt-ips.txt"
   entry_run restore './deploy.sh --development restore /root/etalon.tar.gz.age --force' || rc=$?
   log "restore: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
 
+  # Эталонный архив снят до переезда состояния деплоя: restore оставляет текущее.
+  [[ $(ssh_node "$ENTRY" "sha256sum $STATE/mgmt-ips.txt") == "$mgmt" ]] \
+    || die 'restore: адреса mesh в состоянии деплоя изменились'
   # Сессии панели заменены вместе с базой: старый cookie-jar не годится.
   ssh_node "$ENTRY" 'rm -f /run/vpn2-panel.jar'
   local paths peers sums clients t0=$SECONDS n=0 summary

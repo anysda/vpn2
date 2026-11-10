@@ -91,7 +91,8 @@ jobs:
         if: matrix.name == 'tgbot'
         run: >
           docker run --rm --entrypoint python smoke/tgbot -c
-          "import ast, glob, os, telegram, aiohttp, qrcode;
+          "import ast, glob, importlib.util, os, telegram, aiohttp;
+          assert not importlib.util.find_spec('qrcode') and not importlib.util.find_spec('PIL');
           [ast.parse(open(p).read()) for p in glob.glob('vpn2bot/*.py')];
           assert os.path.isfile('vpn2bot/__main__.py')"
 

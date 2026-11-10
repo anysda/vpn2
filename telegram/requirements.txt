@@ -1,5 +1,5 @@
 # Все версии точные, вместе с зависимостями зависимостей: сборка образа
-# повторяемая. Прямые: python-telegram-bot, httpx, aiohttp, qrcode[pil].
+# повторяемая. Прямые: python-telegram-bot, httpx, aiohttp.
 aiohappyeyeballs==2.7.1   # via aiohttp
 aiohttp==3.14.5           # прямая
 aiosignal==1.4.0          # via aiohttp
@@ -12,9 +12,7 @@ httpcore==1.0.9           # via httpx
 httpx==0.28.1             # прямая, via python-telegram-bot
 idna==3.20                # via anyio, httpx, yarl
 multidict==7.2.1          # via aiohttp, yarl
-pillow==13.0.0            # via qrcode
 propcache==0.5.4          # via aiohttp, yarl
 python-telegram-bot==22.8  # прямая
-qrcode[pil]==8.2          # прямая
 typing-extensions==4.16.0  # via anyio
 yarl==1.25.1              # via aiohttp

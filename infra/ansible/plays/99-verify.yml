@@ -1,0 +1,6 @@
+---
+- name: Проверка узла после деплоя
+  hosts: all
+  tags: [99-verify]
+  roles:
+    - verify

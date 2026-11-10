@@ -685,10 +685,33 @@ fw_guard_disarm() {
   done
 }
 
+# Стадия 99 на одном хосте: плей запускает `vpn2 verify`, вывод проверки
+# печатается как есть. Код 2 «не все проверки измерены» берётся из кода самой
+# проверки: у ansible-playbook 2 значит упавшую задачу, это отказ.
+run_verify() {
+  local host="$1" rc=0 code='' text=''
+  local -x VPN2_VERIFY_OUT
+  VPN2_VERIFY_OUT=$(mktemp -d) || return 1
+  # Итог стадии печатается после вывода проверки, а не после плея.
+  # shellcheck disable=SC2329  # зовёт run_play
+  ( ok() { :; }; run_play 99-verify "$host" ) || rc=$?
+  if [[ -f "$VPN2_VERIFY_OUT/$host" ]]; then
+    { IFS= read -r code; text=$(cat); } < "$VPN2_VERIFY_OUT/$host"
+    [[ -z "$text" ]] || printf '%s\n' "$text"
+  fi
+  rm -r -- "$VPN2_VERIFY_OUT"
+  if [[ $rc -eq 0 && "$code" == 2 ]]; then
+    warn "[99-verify → $host] не все проверки измерены"
+    return 2
+  fi
+  [[ $rc -eq 0 && "$code" == 0 ]] || return 1
+  ok "[99-verify → $host] done"
+}
+
 run_stage_on_host() {
   local stage="$1" host="$2"
+  if [[ "$stage" == 99-verify ]]; then run_verify "$host"; return; fi
   if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi
-  # Код 2 зарезервирован для результата 99-verify; ошибки подготовки — 1.
 
   local script="$DEPLOY_ROOT/scripts/${stage}.sh"
   [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
@@ -752,11 +775,6 @@ run_stage_on_host() {
   if [[ "$stage" == "29-control" ]]; then
     push "$DEPLOY_ROOT/control" "control" || return 1
   fi
-  # Проверку ведёт пакет этого deploy, а не установленный на узле: стадия зовёт его из исходников.
-  if [[ "$stage" == 99-verify ]]; then
-    push "$DEPLOY_ROOT/vpn2/src/vpn2" "vpn2-src/vpn2" || return 1
-  fi
-
   # Код аварийки приходит образом из реестра (стадия 23), здесь только конфиг узла.
   if [[ "$stage" == '23-emergency' ]]; then
     push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
@@ -844,10 +862,6 @@ bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh;
   # каждая стадия кладёт свои файлы заново. На entry /tmp/anysda не трогаем.
   if [[ "$host" != ru ]]; then
     ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
-  fi
-  if [[ "$stage" == 99-verify && $rc -eq 2 ]]; then
-    warn "[$stage → $host] не все проверки измерены"
-    return 2
   fi
   [[ $rc -eq 0 ]] || return 1
 

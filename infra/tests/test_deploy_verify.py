@@ -51,15 +51,24 @@ expand_hosts() { if [[ $1 == all ]]; then echo 'ru exit'; else echo "$1"; fi; }
 push() { [[ $FAILURE != push ]] || return 2; }
 ssh_exec() {
   if [[ $* == *apt_prepare* ]]; then [[ $FAILURE != apt ]] || return 2
-  elif [[ $* == *99-verify.sh* ]]; then
-    [[ $HOST_TAG != ru ]] || sleep 1  # экзит завершается раньше ru: ловит потерю кода в wait
-    cat "$DEPLOY_ROOT/$HOST_TAG.out"
-    return "$(<"$DEPLOY_ROOT/$HOST_TAG.rc")"
   elif [[ $* == *deploy_done* ]]; then
     printf '%s\n' "$*" > "$DEPLOY_ROOT/event"
   elif [[ $* == *30-frontend.sh* && $FAILURE == other-stage ]]; then
     return 2
   fi
+}
+# Плей стадии 99, как его видит deploy.sh: файл узла с кодом и выводом проверки,
+# код 2 от ansible-playbook при отказе (упавшая задача роли verify).
+run_play() {
+  local code
+  load_env "$2"
+  push
+  ssh_exec apt_prepare
+  [[ $HOST_TAG != ru ]] || sleep 1  # экзит завершается раньше ru: ловит потерю кода в wait
+  code=$(<"$DEPLOY_ROOT/$HOST_TAG.rc")
+  { echo "$code"; cat "$DEPLOY_ROOT/$HOST_TAG.out"; } > "$VPN2_VERIFY_OUT/$2"
+  [[ $code != 1 ]] || return 2
+  ok "[$1 → $2] done"
 }
 ssh_fresh() { :; }
 print_banner() { :; }

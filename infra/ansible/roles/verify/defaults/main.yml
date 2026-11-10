@@ -1,0 +1,41 @@
+verify_entry: "{{ inventory_hostname == 'ru' }}"
+verify_tmp: /tmp/anysda
+verify_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
+# Каталог на машине деплоя: туда ложится файл узла с кодом и выводом проверки, deploy.sh
+# печатает вывод как есть. Пусто - плей запущен без deploy.sh, вывод не копится.
+verify_out: "{{ lookup('ansible.builtin.env', 'VPN2_VERIFY_OUT') }}"
+
+# Проверку ведёт пакет этого деплоя: на entry он стоит в venv, на экзит
+# приезжает колесом и запускается системным python прямо из него.
+verify_command_entry: /opt/vpn2/venv/bin/python -B -m vpn2.cli verify
+verify_command_exit: >-
+  /usr/bin/env PYTHONPATH={{ verify_tmp }}/{{ verify_wheel | basename }} /usr/bin/python3 -B -m vpn2.cli verify
+verify_command: "{{ verify_command_entry if verify_entry else verify_command_exit }}"
+
+# Настройки проверки из окружения узла (envs/all.env и envs/<узел>.env).
+verify_env_names:
+  - HOST_TAG
+  - MGMT_IP
+  - EXIT_TAGS
+  - ENTRY_HOST
+  - YT_ROUTE
+  - HY2_MGMT_PORT
+  - HY2_DIRECT_PORT
+  - HY2_WARP_PORT
+  - SSH_PROBE_TIMEOUT
+  - VERIFY_SCRAPE_TIMEOUT
+  - VERIFY_SCRAPE_INTERVAL
+  - VERIFY_SNAPSHOT_WAIT
+  - VERIFY_REPORT
+  - VERIFY_TRAFFIC
+# Экзит без проверки сертификата: <ТЕГ>_HY2_INSECURE=1.
+verify_env_insecure: >-
+  {{ lookup('ansible.builtin.env', 'EXIT_TAGS').split() | map('upper') | map('replace', '-', '_')
+     | map('regex_replace', '$', '_HY2_INSECURE') | list }}
+verify_env_all: "{{ verify_env_names + verify_env_insecure }}"
+# Незаданная переменная на узел не едет: пустая строка - тоже значение.
+verify_env_unset: __vpn2_unset__
+verify_env_values: "{{ query('ansible.builtin.env', *verify_env_all, default=verify_env_unset) }}"
+verify_environment: >-
+  {{ dict(verify_env_all | zip(verify_env_values)) | dict2items
+     | rejectattr('value', 'eq', verify_env_unset) | items2dict }}

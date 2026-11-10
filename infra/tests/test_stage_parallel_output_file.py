@@ -17,11 +17,16 @@ from test_stage_exit_login_hang import FAKE_SSH, FAKE_SSHPASS, STUBS
 
 EXITS = tuple(f'x{i}' for i in range(8))
 LINES = 300
-STAGE = f'''#!/bin/bash
-set -euo pipefail
-source "$1"
-for i in $(seq {LINES}); do echo "[$HOST_TAG] проверка $i"; done
-echo "[$HOST_TAG] ✓ стадия $(basename "$0" .sh) пройдена"
+# Плей стадии 99 глазами deploy.sh: файл узла с кодом и выводом проверки.
+PLAY = f'''
+run_play() {{
+  load_env "$2"
+  {{
+    echo 0
+    for i in $(seq {LINES}); do echo "[$HOST_TAG] проверка $i"; done
+    echo "[$HOST_TAG] ✓ стадия $1 пройдена"
+  }} > "$VPN2_VERIFY_OUT/$2"
+}}
 '''
 
 
@@ -39,8 +44,6 @@ def deploy():
         for tag in ('ru',) + EXITS:
             (root / f'envs/{tag}.env').write_text(
                 f'HOST_TAG={tag}\nSSH_HOST={tag}.example\nSSH_USER=root\nSSH_PASS=fixture\n')
-        (root / 'scripts/99-verify.sh').write_text(STAGE)
-        (root / 'scripts/99-verify.sh').chmod(0o755)
         (root / 'lib/ssh.sh').write_text(source('infra/lib/ssh.sh'))
         (root / 'lib/anysda-svc.sh').write_text('apt_prepare() { :; }\n')
         (root / 'lib/ansible-venv.sh').write_text(source('infra/lib/ansible-venv.sh'))
@@ -56,7 +59,7 @@ def deploy():
         script = ('set -euo pipefail\nDEPLOY_ROOT=$PWD\nexport DEPLOY_ROOT\n'
                   'source "$DEPLOY_ROOT/lib/ssh.sh"\n'
                   + text[text.index('_STAGE_LOG='):text.index('# Без аргументов → полный pipeline.')]
-                  + '\nC_R= C_G= C_Y= C_B= C_END=\nrun_stage 99-verify all\n')
+                  + PLAY + '\nC_R= C_G= C_Y= C_B= C_END=\nrun_stage 99-verify all\n')
         env = {k: v for k, v in os.environ.items()
                if k not in ('VPN2_RELEASE_MANIFEST', 'SKIPPED_EXIT_TAGS')}
         env.update({'PATH': f"{root / 'bin'}:{os.environ['PATH']}", 'TMPDIR': str(root / 'tmp'),

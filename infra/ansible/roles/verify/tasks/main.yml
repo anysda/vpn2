@@ -1,0 +1,34 @@
+---
+- name: Колесо vpn2 на экзите
+  ansible.builtin.copy:
+    src: "{{ verify_wheel }}"
+    dest: "{{ verify_tmp }}/"
+    mode: '0644'
+  when: not verify_entry
+  changed_when: false
+
+# Код 2 - часть проверок не измерена: это не отказ, его разбирает deploy.sh.
+# Потоки сведены в один: строки отчёта и причины идут в порядке печати.
+- name: Проверка узла
+  ansible.builtin.shell:
+    cmd: "{{ verify_command }} 2>&1"
+  environment: "{{ verify_environment }}"
+  register: verify_run
+  changed_when: false
+  failed_when: false
+
+# Первая строка файла - код, дальше вывод как есть.
+- name: Код и вывод проверки у деплоя
+  ansible.builtin.copy:
+    content: "{{ verify_run.rc }}\n{{ verify_run.stdout }}\n"
+    dest: "{{ verify_out }}/{{ inventory_hostname }}"
+    mode: '0600'
+  delegate_to: localhost
+  when: verify_out | length > 0
+  changed_when: false
+
+- name: Проверка узла прошла
+  ansible.builtin.assert:
+    that: verify_run.rc in [0, 2]
+    fail_msg: "verify: код {{ verify_run.rc }}"
+    quiet: true

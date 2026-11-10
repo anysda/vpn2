@@ -224,7 +224,7 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
         self.assertIn('RESULT=1', result.stdout)
 
     def test_stage_that_keeps_the_firewall_is_not_guarded(self):
-        result = self.run_stage('99-verify')
+        result = self.run_stage('35-telegram')
         self.assertNotIn('fw-guard', result.stdout)
         self.assertIn('RESULT=0', result.stdout)
 

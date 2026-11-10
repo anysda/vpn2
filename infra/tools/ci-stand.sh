@@ -492,7 +492,8 @@ push_tree() {
         git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2' ;;
     --ref) log "исходники $tag → entry:/opt/anysda-vpn2"
         ssh_node "$ENTRY" 'rm -rf /opt/anysda-vpn2 && mkdir -p /opt/anysda-vpn2'
-        git -C "$REPO_ROOT" archive "${tag:?тег}" | ssh_node "$ENTRY" 'tar -xf - -C /opt/anysda-vpn2' ;;
+        # umask 0022: права каталогов как у дерева ветки, иначе слепок считает их лишними
+        git -C "$REPO_ROOT" -c tar.umask=0022 archive "${tag:?тег}" | ssh_node "$ENTRY" 'tar -xf - -C /opt/anysda-vpn2' ;;
     --over) log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) поверх $tag → entry:/opt/anysda-vpn2"
         git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml --exclude=infra/secrets --exclude=infra/state'
         git -C "$REPO_ROOT" diff -z --name-only --diff-filter=D "${tag:?тег}" HEAD \

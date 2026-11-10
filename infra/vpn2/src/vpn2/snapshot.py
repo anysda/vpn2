@@ -205,6 +205,17 @@ _IMAGE_ENV_PREFIX = 'PYTHON_'
 _COUNTERS = re.compile(r'packets \d+ bytes \d+')
 _USERS = re.compile(r'\("([^"]*)",pid=')
 _VERIFY_REPORT = 'var/lib/anysda/verify-report.json'
+# Конфиги со вписанными секретами: sha256 у них случайный, сверяется shape -
+# содержимое, где значения секретных полей заменены маской.
+_SHAPED = ('/etc/sing-box/config*.json', '/etc/anysda/anysda-config.yaml',
+           '/etc/anysda/failover-watchdog.env', '/etc/wireguard/wg0.conf',
+           '/opt/anysda-vpn2/config.yaml', '/opt/anysda-vpn2/infra/envs/*.env',
+           '/var/lib/vpn2-apply/*.good', '/opt/AdGuardHome*/AdGuardHome.yaml')
+_SECRET_FIELD = re.compile('pass|secret|token|key|private|hash|uuid|short_id|psk|salt', re.IGNORECASE)
+_ASSIGN = re.compile(r'''^((\s*)(?:-\s+)?(?:export\s+)?["']?([\w.-]+)["']?\s*[:=]\s*)(.*)$''')
+_MASK = '*'
+# Каталоги данных служб: сверяются сам каталог, его права и владелец, содержимое живое.
+_SHALLOW = ('var/lib/sing-box', 'var/lib/vmsingle', 'var/lib/caddy')
 
 
 def _run(argv):
@@ -261,14 +272,87 @@ def _file_record(path, info):
     return record
 
 
-def _walk(path, root, records):
+def _masked(value):
+    if isinstance(value, dict):
+        return {key: _MASK if _SECRET_FIELD.search(key) else _masked(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_masked(item) for item in value]
+    return value
+
+
+def _masked_lines(text):
+    """Строки "ключ: значение" и "ключ=значение": у секретного ключа значение - маска.
+    Блочное значение YAML (| или >) секретного ключа уходит целиком."""
+    lines = []
+    block = None
+    for line in text.splitlines():
+        if block is not None:
+            if not line.strip() or len(line) - len(line.lstrip()) > block:
+                continue
+            block = None
+        found = _ASSIGN.match(line)
+        if found and _SECRET_FIELD.search(found.group(3)):
+            if found.group(4)[:1] in ('|', '>'):
+                block = len(found.group(2))
+            line = found.group(1) + _MASK
+        lines.append(line)
+    return '\n'.join(lines)
+
+
+def _accounts(text, keep):
+    """Строки passwd или group без номеров: их выдаёт счётчик системы, не установка."""
+    rows = [line.split(':') for line in text.splitlines() if line.strip()]
+    return '\n'.join(sorted(':'.join(row[index] for index in keep if index < len(row)) for row in rows))
+
+
+def _callers(text, root):
+    """Список uid службы управления именами: номера зависят от порядка создания пользователей."""
+    names = {}
+    with open(os.path.join(root, 'etc/passwd'), encoding='utf-8', errors='replace') as stream:
+        for line in stream:
+            row = line.split(':')
+            if len(row) > 2:
+                names[row[2]] = row[0]
+    return json.dumps(sorted(names.get(str(uid), str(uid)) for uid in json.loads(text)))
+
+
+def _shape(name, path, root):
+    """sha256 содержимого без случайного (секреты, номера пользователей) или None."""
+    special = {'/etc/passwd': lambda text: _accounts(text, (0, 5, 6)),
+               '/etc/passwd-': lambda text: _accounts(text, (0, 5, 6)),
+               '/etc/group': lambda text: _accounts(text, (0, 3)),
+               '/etc/group-': lambda text: _accounts(text, (0, 3)),
+               '/etc/vpn2-control/callers.json': lambda text: _callers(text, root)}
+    if name not in special and not any(fnmatch.fnmatchcase(name, mask) for mask in _SHAPED):
+        return None
+    with open(path, encoding='utf-8', errors='replace') as stream:
+        text = stream.read()
+    if name in special:
+        normal = special[name](text)
+    else:
+        try:
+            normal = json.dumps(_masked(json.loads(text)), sort_keys=True, ensure_ascii=False)
+        except ValueError:
+            normal = _masked_lines(text)
+    return hashlib.sha256(normal.encode()).hexdigest()
+
+
+def _walk(path, root, records, deep=True):
     try:
         info = os.lstat(path)
     except OSError:
         return
     name = '/' + os.path.relpath(path, root).replace(os.sep, '/')
     record = _file_record(path, info)
-    if stat.S_ISDIR(info.st_mode):
+    if stat.S_ISREG(info.st_mode) and 'error' not in record:
+        try:
+            shape = _shape(name, path, root)
+        except (OSError, ValueError, TypeError) as error:
+            record['error'] = f'shape: {type(error).__name__}'
+        else:
+            if shape:
+                record['shape'] = shape
+    if stat.S_ISDIR(info.st_mode) and deep:
         try:
             children = sorted(os.listdir(path))
         except OSError as error:
@@ -284,7 +368,8 @@ def _walk(path, root, records):
 
 def _files(root):
     """Файлы, каталоги и ссылки под /etc, /usr/local/bin, /usr/local/sbin, /opt/anysda*,
-    /var/lib/anysda*, /var/lib/vpn2* в root."""
+    /var/lib/anysda*, /var/lib/vpn2* в root; конфиг и бинарь AdGuard Home; каталоги
+    данных служб (_SHALLOW) без содержимого."""
     records = {}
     roots = [os.path.join(root, 'etc'), os.path.join(root, 'usr/local/bin'),
              os.path.join(root, 'usr/local/sbin')]
@@ -292,6 +377,12 @@ def _files(root):
         roots.extend(sorted(glob.glob(os.path.join(root, mask))))
     for path in roots:
         _walk(path, root, records)
+    for home in ('opt/AdGuardHome', 'opt/AdGuardHome-unfiltered'):
+        _walk(os.path.join(root, home), root, records, deep=False)
+        for name in ('AdGuardHome', 'AdGuardHome.yaml'):
+            _walk(os.path.join(root, home, name), root, records)
+    for name in _SHALLOW:
+        _walk(os.path.join(root, name), root, records, deep=False)
     return records
 
 

@@ -19,23 +19,32 @@
 - {section: files, name: '/etc/shadow*', field: sha256, reason: соль хэша пароля root случайная}
 - {section: files, name: '/etc/vpn2/emergency/agent.json', field: sha256, reason: ключи аварийного канала создаются при установке}
 - {section: files, name: '/var/lib/vpn2-emergency*/*', field: sha256, reason: ключи и состояние аварийного канала создаются при установке}
-- {section: files, name: '/opt/anysda-vpn2/config.yaml', field: sha256, reason: установка дописывает в конфиг созданный ключ оркестратора}
+- {section: files, name: '/opt/anysda-vpn2/config.yaml', field: sha256, reason: установка дописывает в конфиг созданный ключ оркестратора; остальное сверяет shape}
 - {section: files, name: '/var/lib/anysda-vpn2/state/known_hosts', field: '*', reason: 'ключи узлов стенда случайные; в эталоне файл ещё в checkout'}
 - {section: files, name: '/opt/anysda-vpn2/infra/.known_hosts', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
 - {section: files, name: '/opt/anysda-vpn2/infra/state', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
 - {section: files, name: '/opt/anysda-vpn2/infra/state/*', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
 - {section: files, name: '/var/lib/anysda-vpn2/state', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
 - {section: files, name: '/var/lib/anysda-vpn2/state/mgmt-ips.txt', field: '*', reason: 'состояние деплоя переехало из checkout, в эталоне старая раскладка'}
-- {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты}
+- {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты; остальное сверяет shape}
 - {section: files, name: '/opt/anysda-vpn2/infra/secrets/*', field: sha256, reason: каталог созданных при установке секретов}
 
 # Конфиги, в которые вписаны созданные секреты
-- {section: files, name: '/etc/anysda/anysda-config.yaml', field: sha256, reason: содержит созданные пароли и ключи}
-- {section: files, name: '/etc/anysda/failover-watchdog.env', field: sha256, reason: содержит созданный секрет Clash API}
-- {section: files, name: '/etc/sing-box/config*.json', field: sha256, reason: содержит созданные ключи и пароли}
-- {section: files, name: '/etc/wireguard/wg0.conf', field: sha256, reason: содержит созданный приватный ключ}
+- {section: files, name: '/etc/anysda/anysda-config.yaml', field: sha256, reason: содержит созданные пароли и ключи; остальное сверяет shape}
+- {section: files, name: '/etc/anysda/failover-watchdog.env', field: sha256, reason: содержит созданный секрет Clash API; остальное сверяет shape}
+- {section: files, name: '/etc/sing-box/config*.json', field: sha256, reason: содержит созданные ключи и пароли; остальное сверяет shape}
+- {section: files, name: '/etc/wireguard/wg0.conf', field: sha256, reason: содержит созданный приватный ключ; остальное сверяет shape}
 - {section: files, name: '/var/lib/anysda/applied/*.sha256', field: sha256, reason: хэш применённого конфига с секретами}
-- {section: files, name: '/var/lib/vpn2-apply/*.good', field: sha256, reason: копия применённого конфига с секретами}
+- {section: files, name: '/var/lib/vpn2-apply/*.good', field: sha256, reason: копия применённого конфига с секретами; остальное сверяет shape}
+
+- {section: files, name: '/opt/AdGuardHome*/AdGuardHome.yaml', field: sha256, reason: содержит хэш пароля со случайной солью; остальное сверяет shape}
+
+# Номера пользователей и образ системы - не продукт
+- {section: files, name: '/etc/passwd*', field: sha256, reason: номера пользователей выдаёт счётчик системы; имена с домом и оболочкой сверяет shape}
+- {section: files, name: '/etc/group*', field: sha256, reason: номера групп выдаёт счётчик системы; имена и состав сверяет shape}
+- {section: files, name: '/etc/vpn2-control/callers.json', field: sha256, reason: uid вызывающих зависят от счётчика системы; имена сверяет shape}
+- {section: files, name: '/etc/ssl/certs/*', field: '*', reason: набор корневых сертификатов меняет обновление ca-certificates образа}
+- {section: files, name: '/etc/ld.so.cache', field: sha256, reason: кэш линковщика пересобирает любое обновление пакетов образа}
 
 # Состояние, которое службы пишут во время работы
 - {section: files, name: '/etc/openvpn/server/status-server.log', field: sha256, reason: OpenVPN переписывает файл статуса каждую минуту}

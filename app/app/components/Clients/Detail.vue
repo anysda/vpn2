@@ -1,23 +1,20 @@
 <script setup lang="ts">
 import type { ClientDetail, ClientTraffic, Device } from '~/composables/useClients'
-import { useClientDetail, useClientDevices, useClients } from '~/composables/useClients'
-import { useTelegramStatus } from '~/composables/useTelegramStatus'
-import { anim, expiringInDays, initials } from '~/utils/clients-view'
+import { useClientDetail, useClients } from '~/composables/useClients'
+import { anim, errTitle, expiringInDays, initials } from '~/utils/clients-view'
 import { dateRuLocal, formatRuDateUtc, parseRuDateUtc, sizeBinRu } from '~/utils/format'
 import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from '~/composables/useDeviceAccess'
 import { accessStatus } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
+import type { Ask } from './Ask.vue'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
 const emit = defineEmits<{ changed: [], deleting: [id: number, accepted: Promise<{ operation: AccessOperation }>], deleted: [id: number], gone: [id: number] }>()
 
 const { fetchDetail } = useClientDetail()
-const { update, remove, reissueAll, sendPasswordToTg, unlink } = useClients()
-const { removeDevice, reissueDevice } = useClientDevices()
-const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
+const { update } = useClients()
 const toast = useToast()
-const mobile = useMobile()
 
 const root = ref<HTMLElement>()
 const nameEl = ref<HTMLElement>()
@@ -26,10 +23,6 @@ let loadVersion = 0
 // Выбран другой клиент, а на экране ещё прежний: его поля не правятся,
 // иначе введённое уходило бы прежнему клиенту.
 const stale = computed(() => detail.value !== null && detail.value.id !== props.clientId)
-
-function errTitle(e: unknown, fallback: string) {
-  return (e as { statusMessage?: string }).statusMessage ?? fallback
-}
 
 /** Клиента уже нет: удалён в другой вкладке или другим админом. */
 function isGone(e: unknown) {
@@ -144,72 +137,23 @@ async function saveExpiry() {
   }
 }
 
-// --- Лимит девайсов --------------------------------------------------------
-const limDraft = ref('')
-const minLimit = computed(() => Math.max(1, detail.value?.devices.length ?? 0))
-
 const expText = (d: ClientDetail) => formatRuDateUtc(d.expiresAt)
-const limText = (d: ClientDetail) => d.deviceLimit === null ? '' : String(d.deviceLimit)
 
 // Карточка перезагружается после сохранения срока или девайса, когда человек
 // уже мог начать править соседнее поле: черновик берёт значение сервера, только
 // если в нём то, что было показано до перезагрузки. Другой клиент — поля заново.
+// Лимит так же ведёт себя сам (DetailLimit.vue).
 function syncForm(prev: ClientDetail | null) {
   const d = detail.value
   if (!d) return
   const same = prev?.id === d.id ? prev : null
   if (!same || expDraft.value === expText(same)) expDraft.value = expText(d)
-  if (!same || limDraft.value === limText(same)) limDraft.value = limText(d)
   nextTick(() => syncName(same))
 }
 
-async function saveLimit(next: number | null, withToast: boolean) {
-  const d = detail.value
-  if (!d) return
-  if (next === d.deviceLimit) {
-    limDraft.value = next === null ? '' : String(next)
-    return
-  }
-  limDraft.value = next === null ? '' : String(next)
-  try {
-    const res = await update(d.id, { deviceLimit: next })
-    d.deviceLimit = next
-    if (withToast || res.warning) toast.add(doneToast('Лимит девайсов сохранён', res.warning))
-    emit('changed')
-  }
-  catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка сохранения лимита'), color: 'error' })
-    limDraft.value = d.deviceLimit === null ? '' : String(d.deviceLimit)
-  }
-}
-
-function onLimitChange() {
-  const v = limDraft.value.trim()
-  if (!v) return saveLimit(null, true)
-  const n = Number.parseInt(v, 10)
-  if (!(n >= minLimit.value)) {
-    toast.add({ title: `Лимит — не меньше ${minLimit.value}`, color: 'error' })
-    limDraft.value = detail.value?.deviceLimit == null ? '' : String(detail.value.deviceLimit)
-    return
-  }
-  return saveLimit(n, true)
-}
-
-function limitMinus() {
-  const lim = detail.value?.deviceLimit ?? null
-  if (lim === null) return saveLimit(minLimit.value, false)
-  if (lim > minLimit.value) return saveLimit(lim - 1, false)
-}
-
-function limitPlus() {
-  const lim = detail.value?.deviceLimit ?? null
-  return saveLimit(lim === null ? minLimit.value : lim + 1, false)
-}
-
-function limitInfinity() {
-  const d = detail.value
-  if (!d) return
-  return saveLimit(d.deviceLimit === null ? Math.max(d.devices.length, 3) : null, false)
+function onLimitSaved(id: number, limit: number | null) {
+  if (detail.value?.id === id) detail.value.deviceLimit = limit
+  emit('changed')
 }
 
 // --- Предпочитаемый экзит --------------------------------------------------
@@ -230,169 +174,25 @@ async function saveExit(e: Event) {
   }
 }
 
-// --- Бот -------------------------------------------------------------------
-const sendingPwd = ref(false)
-async function sendPassword() {
+// --- Части карточки --------------------------------------------------------
+const asker = ref<{ confirm: (a: Ask) => void }>()
+const confirm = (a: Ask) => asker.value?.confirm(a)
+
+function onUnlinked(id: number) {
   const d = detail.value
-  if (!d) return
-  sendingPwd.value = true
-  try {
-    await sendPasswordToTg(d.id)
-    toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' })
+  if (d?.id === id) {
+    d.tgLinked = false
+    d.tgUsername = null
   }
-  catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка отправки'), color: 'error' })
-  }
-  finally {
-    sendingPwd.value = false
-  }
+  emit('changed')
 }
 
-// --- Подтверждения ---------------------------------------------------------
-interface Ask { title: string, pre: string, name: string, post: string, act: string, danger?: boolean, run: () => Promise<void> }
-const ask = ref<Ask | null>(null)
-const askOpen = ref(false)
-const askBusy = ref(false)
-
-function confirm(a: Ask) {
-  ask.value = a
-  askOpen.value = true
-}
-
-async function runAsk() {
-  const a = ask.value
-  if (!a || askBusy.value) return
-  askBusy.value = true
-  try {
-    await a.run()
-    askOpen.value = false
-  }
-  catch {
-    // Ошибку уже показал тост, окно остаётся открытым.
-  }
-  finally {
-    askBusy.value = false
-  }
-}
-
-async function guard(fn: () => Promise<void>, fallback: string) {
-  try {
-    await fn()
-  }
-  catch (e) {
-    toast.add({ title: errTitle(e, fallback), color: 'error' })
-    throw e
-  }
-}
-
-function askUnlink() {
-  const d = detail.value!
-  confirm({
-    title: 'Отозвать доступ к боту?',
-    pre: 'Отвязать Telegram клиента ',
-    name: d.name,
-    post: '? Он потеряет доступ к самообслуживанию в боте, а старая ссылка-приглашение перестанет работать. Конфиги VPN продолжат работать.',
-    act: 'Отозвать',
-    run: () => guard(async () => {
-      const res = await unlink(d.id)
-      d.tgLinked = false
-      d.tgUsername = null
-      toast.add(doneToast('Доступ к боту отозван', res.warning))
-      emit('changed')
-    }, 'Ошибка'),
-  })
-}
-
-function askReissueDevice(dev: Device) {
-  const d = detail.value!
-  confirm({
-    title: 'Перевыпустить ключи девайса?',
-    pre: 'Перевыпустить ключи девайса ',
-    name: dev.name,
-    post: '? После применения старые конфиги этого девайса перестанут работать.',
-    act: 'Перевыпустить',
-    run: () => guard(async () => {
-      await reissueDevice(d.id, dev.id)
-      toast.add({ title: 'Перевыпуск выполняется', color: 'info' })
-      await changed()
-    }, 'Ошибка перевыпуска'),
-  })
-}
-
-function askRemoveDevice(dev: Device) {
-  const d = detail.value!
-  confirm({
-    title: 'Удалить девайс?',
-    pre: 'Удалить девайс ',
-    name: dev.name,
-    post: '? Действие необратимо; конфиги перестанут работать после подтверждения отключения.',
-    act: 'Удалить',
-    danger: true,
-    run: () => guard(async () => {
-      await removeDevice(d.id, dev.id)
-      toast.add({ title: 'Отключение выполняется', color: 'info' })
-      await changed()
-    }, 'Ошибка удаления'),
-  })
-}
-
-function askReissueAll() {
-  const d = detail.value!
-  confirm({
-    title: 'Перевыпустить все ключи?',
-    pre: 'Перевыпустить ключи всех девайсов клиента ',
-    name: d.name,
-    post: '? После применения старые конфиги перестанут работать — нужно будет раздать новые.',
-    act: 'Перевыпустить',
-    run: () => guard(async () => {
-      await reissueAll(d.id)
-      toast.add({ title: 'Перевыпуск выполняется', color: 'info' })
-      await changed()
-    }, 'Ошибка перевыпуска'),
-  })
-}
-
-function askRemoveClient() {
-  const d = detail.value!
-  confirm({
-    title: 'Удалить клиента?',
-    pre: 'Удалить клиента ',
-    name: d.name,
-    post: ' со всеми девайсами? Действие необратимо; доступ прекратится после подтверждения отключения.',
-    act: 'Удалить',
-    danger: true,
-    run: () => guard(async () => {
-      const deleting = remove(d.id)
-      emit('deleting', d.id, deleting)
-      const result = await deleting
-      // Пока диалог был открыт, опрос мог подменить карточку новым объектом.
-      const cur = detail.value?.id === d.id ? detail.value : d
-      cur.operation = result.operation
-      cur.deleting = true
-      toast.add({ title: 'Отключение выполняется', color: 'info' })
-      await changed()
-    }, 'Ошибка удаления'),
-  })
-}
-
-// --- Заморозка -------------------------------------------------------------
-const freezing = ref(false)
-async function toggleFreeze() {
+// Пока диалог удаления был открыт, опрос мог подменить карточку новым объектом.
+function onDeleteAccepted(id: number, operation: AccessOperation) {
   const d = detail.value
-  if (!d) return
-  const next = !d.frozenManual
-  freezing.value = true
-  try {
-    await update(d.id, { frozenManual: next })
-    toast.add({ title: next ? 'Отключение выполняется' : 'Включение выполняется', color: 'info' })
-    await changed()
-  }
-  catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка'), color: 'error' })
-  }
-  finally {
-    freezing.value = false
-  }
+  if (d?.id !== id) return
+  d.operation = operation
+  d.deleting = true
 }
 
 // --- Девайсы и конфиги -----------------------------------------------------
@@ -406,11 +206,6 @@ function openConfig(dev: Device, kind: ConfigKind) {
   cfgKind.value = kind
   cfgOpen.value = true
 }
-
-const limitReached = computed(() => {
-  const d = detail.value
-  return !!d && d.deviceLimit !== null && d.devices.length >= d.deviceLimit
-})
 
 // --- Показатели ------------------------------------------------------------
 const tag = computed(() => {
@@ -475,64 +270,9 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
 
       <ClientsOperationStatus :operation="detail.operation" :deleting="detail.deleting" @changed="changed" />
 
-      <div class="crw bt">
-        <span>Бот · <b>{{ detail.tgLinked ? (detail.tgUsername ? `@${detail.tgUsername}` : 'привязан') : 'не привязан' }}</b></span>
-        <div class="bta">
-          <span :title="canSendTg ? undefined : tgReason">
-            <button
-              type="button"
-              class="pill w"
-              :disabled="!canSendTg || sendingPwd"
-              @click="sendPassword"
-            >Отправить доступ к боту</button>
-          </span>
-          <button
-            v-if="detail.tgLinked"
-            type="button"
-            class="pill red"
-            @click="askUnlink"
-          >
-            Отозвать доступ к боту
-          </button>
-        </div>
-      </div>
+      <ClientsDetailBot :detail="detail" :confirm="confirm" @unlinked="onUnlinked" />
 
-      <div class="crw">
-        <span>Лимит девайсов<template v-if="detail.deviceLimit === null"> · <b>лимит снят (∞)</b></template></span>
-        <div class="stp">
-          <button
-            type="button"
-            aria-label="Меньше"
-            :disabled="detail.deviceLimit !== null && detail.deviceLimit <= minLimit"
-            @click="limitMinus"
-          >
-            −
-          </button>
-          <input
-            v-model="limDraft"
-            class="in"
-            placeholder="∞"
-            inputmode="numeric"
-            aria-label="Лимит девайсов"
-            @change="onLimitChange"
-            @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-          >
-          <button type="button" aria-label="Больше" @click="limitPlus">
-            +
-          </button>
-        </div>
-        <button
-          type="button"
-          class="pill"
-          :class="{ on: detail.deviceLimit === null }"
-          title="Безлимитно"
-          aria-label="Безлимитно"
-          :aria-pressed="detail.deviceLimit === null"
-          @click="limitInfinity"
-        >
-          ∞
-        </button>
-      </div>
+      <ClientsDetailLimit :detail="detail" @saved="onLimitSaved" />
 
       <div class="crw">
         <span>Предпочитаемый экзит</span>
@@ -545,113 +285,21 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
         </span>
       </div>
 
-      <div class="sub">
-        <h3>Девайсы {{ detail.devices.length }} / {{ detail.deviceLimit ?? '∞' }}</h3>
-        <span :title="limitReached ? 'Достигнут лимит девайсов' : undefined">
-          <button
-            type="button"
-            class="pill"
-            :disabled="limitReached"
-            @click="newDevOpen = true"
-          >+ девайс</button>
-        </span>
-      </div>
-      <div class="devl scroll">
-        <div v-for="dev in detail.devices" :key="dev.id" class="dev" data-testid="device-row">
-          <!-- телефон: имя и ↻ 🗑 строкой, под ними три протокола -->
-          <template v-if="mobile">
-            <div class="kb dvt">
-              <PanelDeviceName :name="dev.name">
-                <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-              </PanelDeviceName>
-              <button
-                type="button"
-                class="ic"
-                aria-label="Перевыпустить ключи девайса"
-                @click="askReissueDevice(dev)"
-              >
-                <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
-              </button>
-              <button
-                type="button"
-                class="ic"
-                aria-label="Удалить девайс"
-                @click="askRemoveDevice(dev)"
-              >
-                <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
-              </button>
-            </div>
-            <div class="kb dk3">
-              <button type="button" @click="openConfig(dev, 'wg')">
-                WG
-              </button>
-              <button type="button" @click="openConfig(dev, 'ovpn')">
-                OVPN
-              </button>
-              <button type="button" @click="openConfig(dev, 'ike')">
-                IKEv2
-              </button>
-            </div>
-          </template>
-          <template v-else>
-            <PanelDeviceName :name="dev.name">
-              <small
-                :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
-                :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeBinRu(dev.rxTotal)} ↑ ${sizeBinRu(dev.txTotal)}` : undefined"
-              >{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-            </PanelDeviceName>
-            <div class="kb">
-              <button type="button" @click="openConfig(dev, 'wg')">
-                WG
-              </button>
-              <button type="button" @click="openConfig(dev, 'ovpn')">
-                OVPN
-              </button>
-              <button type="button" @click="openConfig(dev, 'ike')">
-                IKEv2
-              </button>
-              <button
-                type="button"
-                class="ic"
-                title="Перевыпустить ключи девайса"
-                aria-label="Перевыпустить ключи девайса"
-                @click="askReissueDevice(dev)"
-              >
-                <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
-              </button>
-              <button
-                type="button"
-                class="ic"
-                title="Удалить девайс"
-                aria-label="Удалить девайс"
-                @click="askRemoveDevice(dev)"
-              >
-                <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
-              </button>
-            </div>
-          </template>
-        </div>
-        <div v-if="!detail.devices.length" class="dev nod">
-          Пока нет девайсов — добавь первый.
-        </div>
-      </div>
+      <ClientsDetailDevices
+        :detail="detail"
+        :confirm="confirm"
+        :reload="changed"
+        @add="newDevOpen = true"
+        @config="openConfig"
+      />
 
-      <div class="acts">
-        <button type="button" class="pill" @click="askReissueAll">
-          Перевыпустить все ключи
-        </button>
-        <button
-          type="button"
-          class="pill"
-          :disabled="freezing"
-          @click="toggleFreeze"
-        >
-          {{ detail.frozenManual ? 'Разморозить' : 'Заморозить' }}
-        </button>
-        <button type="button" class="pill red" @click="askRemoveClient">
-          Удалить клиента
-        </button>
-      </div>
+      <ClientsDetailActions
+        :detail="detail"
+        :confirm="confirm"
+        :reload="changed"
+        @deleting="(id, accepted) => emit('deleting', id, accepted)"
+        @accepted="onDeleteAccepted"
+      />
 
       <ClientsNewDevice v-model:open="newDevOpen" :client-id="detail.id" @added="changed" />
       <ClientsDeviceConfig
@@ -663,24 +311,6 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
       />
     </template>
 
-    <ClientsModal v-model:open="askOpen" :title="ask?.title ?? ''">
-      <p class="mt">
-        {{ ask?.pre }}<b>«{{ ask?.name }}»</b>{{ ask?.post }}
-      </p>
-      <div class="mf">
-        <button type="button" class="pill" @click="askOpen = false">
-          Отмена
-        </button>
-        <button
-          type="button"
-          class="pill"
-          :class="ask?.danger ? 'redw' : 'w'"
-          :disabled="askBusy"
-          @click="runAsk"
-        >
-          {{ ask?.act }}
-        </button>
-      </div>
-    </ClientsModal>
+    <ClientsAsk ref="asker" />
   </div>
 </template>

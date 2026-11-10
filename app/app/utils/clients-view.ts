@@ -28,3 +28,8 @@ export function anim(el: Element | null | undefined, keyframes: Keyframe[], o: K
   if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return null
   return el.animate(keyframes, { easing: EASE, fill: 'backwards', ...o })
 }
+
+/** Текст ошибки сервера или запасной заголовок тоста. */
+export function errTitle(e: unknown, fallback: string): string {
+  return (e as { statusMessage?: string }).statusMessage ?? fallback
+}

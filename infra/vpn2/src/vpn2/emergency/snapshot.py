@@ -300,12 +300,12 @@ def receive(stream, state_dir, installation_id, now=None):
     return {'status': 'invalid'}
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=('receive',))
     parser.add_argument('--config', default='/etc/vpn2/emergency/agent.json')
     parser.add_argument('--state-dir', default='/var/lib/vpn2-emergency')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         installation_id = json.loads(Path(args.config).read_text())['installation_id']
         if not isinstance(installation_id, str) or not installation_id:

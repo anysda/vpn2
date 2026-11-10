@@ -122,7 +122,7 @@ fi
 
 getent passwd vpn2-emergency >/dev/null || useradd --system --home-dir /var/lib/vpn2-emergency --shell /usr/sbin/nologin vpn2-emergency
 install -d -m 0700 -o vpn2-emergency -g vpn2-emergency /var/lib/vpn2-emergency
-install -d -m 0755 /opt/vpn2-emergency/vpn2_emergency
+install -d -m 0755 /opt/vpn2-emergency
 install -d -m 0750 -o root -g vpn2-emergency /etc/vpn2/emergency
 install -m 0640 -o root -g vpn2-emergency "$CONFIG_SOURCE" /etc/vpn2/emergency/agent.json
 
@@ -134,15 +134,15 @@ docker create --name "$CONTAINER" --network none "$IMAGE" >/dev/null
 STAGING=$(mktemp -d /opt/vpn2-emergency/.staging.XXXXXX)
 trap 'rm -rf -- "$STAGING"' EXIT
 docker cp "$CONTAINER:/opt/vpn2-emergency/." "$STAGING/"
-SOURCE_DIR=$STAGING/vpn2_emergency
-test -f "$SOURCE_DIR/agent.py"
-test -f "$SOURCE_DIR/static/instructions.html"
-for module in "$SOURCE_DIR"/*.py; do
-  install -m 0644 "$module" /opt/vpn2-emergency/vpn2_emergency/
-done
-rm -rf -- /opt/vpn2-emergency/vpn2_emergency/static
-cp -R "$SOURCE_DIR/static" /opt/vpn2-emergency/vpn2_emergency/static
-chmod -R u=rwX,go=rX /opt/vpn2-emergency/vpn2_emergency/static
+SOURCE_DIR=$STAGING/vpn2
+test -f "$SOURCE_DIR/emergency/agent.py"
+test -f "$SOURCE_DIR/emergency/static/instructions.html"
+# Пакет меняется целиком: файл, которого в новой версии нет, на хосте не остаётся.
+chmod -R u=rwX,go=rX "$SOURCE_DIR"
+rm -rf -- /opt/vpn2-emergency/vpn2.old
+if [[ -d /opt/vpn2-emergency/vpn2 ]]; then mv /opt/vpn2-emergency/vpn2 /opt/vpn2-emergency/vpn2.old; fi
+mv "$SOURCE_DIR" /opt/vpn2-emergency/vpn2
+rm -rf -- /opt/vpn2-emergency/vpn2.old
 python3 - "$STAGING/image.json" "$IMAGE" > "$STAGING/release.json" <<'PY'
 import json
 import sys
@@ -166,7 +166,7 @@ Wants=network-online.target
 User=vpn2-emergency
 Group=vpn2-emergency
 WorkingDirectory=/opt/vpn2-emergency
-ExecStart=/usr/bin/python3 -B -m vpn2_emergency.agent --config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency
+ExecStart=/usr/bin/python3 -B -m vpn2.emergency agent --config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency
 Restart=on-failure
 RestartSec=5
 UMask=0077
@@ -200,7 +200,7 @@ if [[ "$HOST_TAG" != ru ]]; then
   # local openssl at activation, without network access.
   runuser -u vpn2-emergency -- env PYTHONPATH=/opt/vpn2-emergency python3 -B -c '
 import sys
-from vpn2_emergency import web
+from vpn2.emergency import web
 web.tls_context(*sys.argv[1:])
 ' /var/lib/vpn2-emergency "$PUBLIC_IP" /etc/vpn2/tls/ip
 fi
@@ -217,6 +217,8 @@ if [[ "$HOST_TAG" == ru ]]; then
   systemctl restart vpn2-emergency-snapshot.service
   systemctl is-active --quiet vpn2-emergency-snapshot.service
 fi
+# Прежнее имя пакета: службы уже идут с нового.
+rm -rf -- /opt/vpn2-emergency/vpn2_emergency
 if [[ "$HOST_TAG" != ru ]]; then
   # The exit needs Docker only during deploy; docker.socket starts it on demand.
   systemctl disable --now docker.service containerd.service >/dev/null 2>&1

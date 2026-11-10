@@ -25,8 +25,8 @@ DEPENDENCIES = {
     'infra/lib/gen-router-config.py',
     'infra/tests/router_support.py',
     # app/e2e/qr-size.sh: QR аварийки hy2 и худший конфиг для бота.
-    'infra/emergency/vpn2_emergency/hy2.py',
-    'infra/emergency/vpn2_emergency/web.py',
+    'infra/vpn2/src/vpn2/emergency/hy2.py',
+    'infra/vpn2/src/vpn2/emergency/web.py',
     'infra/tests/emergency_qr_fixture.py',
     'telegram/tests/qr-worst-wg.conf',
     'telegram/tests/test_qr_size.py',

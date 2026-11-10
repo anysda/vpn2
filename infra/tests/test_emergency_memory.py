@@ -16,7 +16,7 @@ import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-EMERGENCY = ROOT / 'infra/emergency'
+EMERGENCY = ROOT / 'infra/vpn2/src'
 TESTS = Path(__file__).resolve().parent
 WARMUP = 100
 ROUNDS = 1000
@@ -36,8 +36,8 @@ def fds():
 ENTRY_LOOP = MEASURE + '''
 import json, select, sys, time
 sys.path.insert(0, sys.argv[1])
-from vpn2_emergency.agent import Agent
-from vpn2_emergency.lifecycle import Lifecycle
+from vpn2.emergency.agent import Agent
+from vpn2.emergency.lifecycle import Lifecycle
 config, state, warmup, rounds = json.loads(sys.argv[2]), sys.argv[3], int(sys.argv[4]), int(sys.argv[5])
 now = 1000.0
 agents = {}
@@ -72,7 +72,7 @@ import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 sys.path.insert(0, sys.argv[2])
-from vpn2_emergency import snapshot_sender
+from vpn2.emergency import snapshot_sender
 import test_emergency_snapshot as fixture
 root, warmup, rounds = Path(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
 panel = fixture.Panel(root)

@@ -585,7 +585,7 @@ cmd_password() {
   local count=${1:-1000}
   node "${EXITS[0]}" "PYTHONPATH=/opt/vpn2-emergency python3 - $count" <<'PY'
 import string, sys
-from vpn2_emergency import web
+from vpn2.emergency import web
 ok = 0
 for _ in range(int(sys.argv[1])):
     p = web.generate_password()

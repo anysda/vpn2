@@ -22,12 +22,12 @@ import unittest
 from unittest.mock import Mock, patch
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
-from vpn2_emergency import hooks, hy2, tgqueue, web  # noqa: E402
-from vpn2_emergency.leader import GUARD, STABLE, Leader  # noqa: E402
-from vpn2_emergency.state import State  # noqa: E402
-from vpn2_emergency import lifecycle  # noqa: E402
+from vpn2.emergency import hooks, hy2, tgqueue, web  # noqa: E402
+from vpn2.emergency.leader import GUARD, STABLE, Leader  # noqa: E402
+from vpn2.emergency.state import State  # noqa: E402
+from vpn2.emergency import lifecycle  # noqa: E402
 
 WALL = 1_800_000_000.0
 EXITS = [{'id': 'a', 'name': 'exit-a', 'priority': 0, 'ip': '203.0.113.10'}]
@@ -40,10 +40,10 @@ def load_snapshot(state_dir):
 def snapshot_stubs():
     """The panel imports the snapshot module lazily: an already imported real
     module is a package attribute and wins over sys.modules."""
-    module = types.ModuleType('vpn2_emergency.snapshot')
+    module = types.ModuleType('vpn2.emergency.snapshot')
     module.load = load_snapshot
-    return (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
-            patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True))
+    return (patch.dict(sys.modules, {'vpn2.emergency.snapshot': module}),
+            patch.object(sys.modules['vpn2.emergency'], 'snapshot', module, create=True))
 
 
 class Bot(ThreadingHTTPServer):
@@ -123,7 +123,7 @@ class FakeServer:
 
 
 class Agent:
-    """The fields of vpn2_emergency.agent.Agent the lifecycle reads."""
+    """The fields of vpn2.emergency.agent.Agent the lifecycle reads."""
 
     def __init__(self, directory, wall):
         self.state = State(directory)

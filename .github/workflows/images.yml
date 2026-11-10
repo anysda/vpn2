@@ -123,7 +123,7 @@ jobs:
           python3 -c 'import json, sys; json.load(open(sys.argv[1]))["revision"]' "$work/image.json"
           PYTHONPATH="$work" python3 -B -c '
           import sys
-          from vpn2_emergency import web
+          from vpn2.emergency import web
           web.make_server(sys.argv[1], exit_id="smoke", public_ip="127.0.0.1",
                           address=("127.0.0.1", 31822), cert_dir=sys.argv[1]).serve_forever()
           ' "$work/state" &

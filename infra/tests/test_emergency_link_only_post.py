@@ -93,7 +93,7 @@ class LinkOnlyPostTests(manual.ManualStartTests):
         lifecycle = cluster.agents['a'].lifecycle
         web_module = lifecycle.web
         lifecycle.web = types.SimpleNamespace(make_server=self.port_busy)
-        with self.assertLogs('vpn2_emergency.lifecycle', 'ERROR'):
+        with self.assertLogs('vpn2.emergency.lifecycle', 'ERROR'):
             cluster.drain()
             for _ in range(400):
                 if not cluster.active():

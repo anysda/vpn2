@@ -13,9 +13,9 @@ import secrets
 import sys
 import threading
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'emergency'))
-from vpn2_emergency import hy2
-from vpn2_emergency.web import make_server
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
+from vpn2.emergency import hy2
+from vpn2.emergency.web import make_server
 
 NAME = 'Ж' * 64
 DEVICE = 11

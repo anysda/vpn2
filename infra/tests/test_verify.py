@@ -10,8 +10,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
-from vpn2_emergency import snapshot  # noqa: E402
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.emergency import snapshot  # noqa: E402
 # Предел на весь сценарий 99-verify - защита от зависания, а не мерило
 # скорости: свои ожидания сценария (опрос метрик до 10 с, предел ssh) кончаются
 # раньше. Исправный сценарий на раннере с 20 и больше процессами на ядро идёт
@@ -222,10 +222,10 @@ class VerifyTest(unittest.TestCase):
                 state_file.write_text(json.dumps(state))
             # Аварийка из образа: версия и файлы, которые стадия 23 кладёт на узел.
             emergency = root / 'emergency'
-            (emergency / 'vpn2_emergency/static').mkdir(parents=True)
+            (emergency / 'vpn2/emergency/static').mkdir(parents=True)
             for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html'):
                 if fault != 'emergency-' + name:
-                    (emergency / 'vpn2_emergency' / name).touch()
+                    (emergency / 'vpn2/emergency' / name).touch()
             # Стадия 23 до образа оставила пустой штамп и не ставила release.json и Hysteria2.
             old_stage = fault == 'emergency-old-stage'
             if fault != 'emergency-release' and not old_stage:
@@ -237,9 +237,10 @@ class VerifyTest(unittest.TestCase):
             elif fault != 'emergency-not-yet':
                 stamp.write_text('image sha256:' + 'b' * 64 + '\n')
             # Снимок клиентов на экзите - настоящим кодом аварийки.
+            (emergency / 'vpn2/__init__.py').write_text((ROOT / 'infra/vpn2/src/vpn2/__init__.py').read_text())
             for name in ('__init__.py', 'snapshot.py', 'snapshot_sender.py'):
-                (emergency / 'vpn2_emergency' / name).write_text(
-                    (ROOT / 'infra/emergency/vpn2_emergency' / name).read_text())
+                (emergency / 'vpn2/emergency' / name).write_text(
+                    (ROOT / 'infra/vpn2/src/vpn2/emergency' / name).read_text())
             snapshots = root / 'emergency-state'
             snapshots.mkdir(mode=0o700)
             if fault not in ('emergency-snapshot-missing', 'emergency-before-23'):

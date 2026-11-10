@@ -19,10 +19,10 @@ import types
 import unittest
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
-from vpn2_emergency import lifecycle, snapshot, snapshot_sender  # noqa: E402
-from vpn2_emergency.agent import Agent  # noqa: E402
+from vpn2.emergency import lifecycle, snapshot, snapshot_sender  # noqa: E402
+from vpn2.emergency.agent import Agent  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     'restore_agent_harness', Path(__file__).resolve().parent / 'test_emergency_agent.py')

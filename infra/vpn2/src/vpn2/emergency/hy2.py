@@ -606,10 +606,28 @@ def firewall(active):
     command(['nft', '-f', '-'], input=(prefix + firewall_rules(uid, options['port'], active)).encode())
 
 
-def main():
+def endpoint(server_ip, port, active, path=None):
+    """Адрес и порт аварийного Hysteria2; при идущей аварии не меняются."""
+    ip = str(ipaddress.ip_address(server_ip))
+    port = int(port)
+    if not 1024 <= port <= 65535:
+        raise SystemExit('invalid emergency UDP port')
+    path = Path(path or OPTIONS)
+    desired = {'server_ip': ip, 'port': port}
+    if path.exists() and json.loads(path.read_text()) != desired and active:
+        # Issued profiles name the current endpoint; change it with the next generation.
+        raise SystemExit('stop emergency role before changing its endpoint settings')
+    path.write_text(json.dumps(desired) + '\n')
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('open', 'close', 'probe'))
-    args = parser.parse_args()
+    parser.add_argument('action', choices=('open', 'close', 'probe', 'endpoint'))
+    parser.add_argument('values', nargs='*', help='endpoint: IP, порт, 1 при идущей аварии')
+    args = parser.parse_args(argv)
+    if args.action == 'endpoint':
+        server_ip, port, active = args.values
+        return endpoint(server_ip, port, active == '1')
     if args.action == 'probe':
         raise SystemExit(0 if probe(STATE) else 1)
     if args.action == 'open':

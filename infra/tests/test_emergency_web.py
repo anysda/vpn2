@@ -23,12 +23,12 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(os.environ.get('EMERGENCY_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
 
 class EmergencyWebTests(unittest.TestCase):
     def setUp(self):
-        self.web = importlib.import_module('vpn2_emergency.web')
+        self.web = importlib.import_module('vpn2.emergency.web')
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
@@ -268,7 +268,7 @@ class EmergencyWebTests(unittest.TestCase):
         expected = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest().upper()
         message = self.panel.on_emergency_leader('event', 1)
         self.assertEqual(message['certificate_fingerprint'], expected)
-        tgqueue = importlib.import_module('vpn2_emergency.tgqueue')
+        tgqueue = importlib.import_module('vpn2.emergency.tgqueue')
         accepted = inspect.signature(tgqueue.enqueue_admin).parameters
         self.assertLessEqual(set(message), set(accepted))
         self.assertTrue(message['panel_ready'])
@@ -323,7 +323,7 @@ class EmergencyWebTests(unittest.TestCase):
         records = []
         handler = logging.Handler()
         handler.emit = records.append
-        log = logging.getLogger('vpn2_emergency.web')
+        log = logging.getLogger('vpn2.emergency.web')
         log.addHandler(handler)
         self.addCleanup(log.removeHandler, handler)
         level = log.level

@@ -17,7 +17,7 @@ from router_support import ROOT, SB
 
 
 def module():
-    path = ROOT / 'infra/emergency/vpn2_emergency/hy2.py'
+    path = ROOT / 'infra/vpn2/src/vpn2/emergency/hy2.py'
     spec = importlib.util.spec_from_file_location('emergency_hy2', path)
     loaded = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loaded)
@@ -211,8 +211,8 @@ class EmergencyHy2Tests(unittest.TestCase):
     def test_independent_unit_is_not_started_at_boot(self):
         service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
         self.assertIn('User=vpn2-hy2\n', service)
-        self.assertIn('hy2.py open', service)
-        self.assertIn('hy2.py close', service)
+        self.assertIn('vpn2.emergency hy2 open', service)
+        self.assertIn('vpn2.emergency hy2 close', service)
         self.assertNotIn('WantedBy=', service)
         self.assertNotIn('sing-box.service', service)
 
@@ -248,7 +248,7 @@ class EmergencyHy2Tests(unittest.TestCase):
             self.assertFalse(self.hy2.SystemRuntime().probe(self.state))
         self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.PROBE_UNIT])
         probe_unit = (ROOT / 'infra/emergency' / self.hy2.PROBE_UNIT).read_text()
-        for needle in ('Type=oneshot', 'User=vpn2-emergency', 'hy2.py probe', 'AF_NETLINK'):
+        for needle in ('Type=oneshot', 'User=vpn2-emergency', 'vpn2.emergency hy2 probe', 'AF_NETLINK'):
             self.assertIn(needle, probe_unit)
         installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
         self.assertNotIn('sudoers', installer)
@@ -260,9 +260,9 @@ class EmergencyHy2Tests(unittest.TestCase):
     def test_unit_runs_the_module_copy_the_agent_stage_installs(self):
         stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
         service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
-        installed = '/opt/vpn2-emergency/vpn2_emergency/'
-        self.assertIn(f'"$module" {installed}', stage)
-        self.assertEqual(service.count(f'{installed}hy2.py'), 2)
+        self.assertIn('mv "$SOURCE_DIR" /opt/vpn2-emergency/vpn2\n', stage)
+        self.assertIn('WorkingDirectory=/opt/vpn2-emergency\n', service)
+        self.assertEqual(service.count('/usr/bin/python3 -B -m vpn2.emergency hy2 '), 2)
         self.assertNotIn('/usr/local/lib/vpn2-emergency', service)
 
     def poll(self, live):

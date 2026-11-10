@@ -182,13 +182,13 @@ class EmergencyImageTests(unittest.TestCase):
         self.assertIn('RUN pnpm emergency:build', text)
         carrier = text.rsplit('\nFROM ', 1)[1]
         self.assertTrue(carrier.startswith('scratch'), 'carrier needs no runtime of its own')
-        for needle in ('vpn2_emergency/static /opt/vpn2-emergency/vpn2_emergency/static',
-                       'infra/emergency/vpn2_emergency/*.py /opt/vpn2-emergency/vpn2_emergency/',
+        for needle in ('vpn2_emergency/static /opt/vpn2-emergency/vpn2/emergency/static',
+                       'COPY infra/vpn2/src/vpn2 /opt/vpn2-emergency/vpn2\n',
                        'infra/emergency/install-hy2.sh', 'vpn2-emergency-hy2.service',
                        'vpn2-emergency-hy2-probe.service', 'vpn2-emergency-snapshot.service', 'image.json', 'LABEL vpn2.component=emergency'):
             self.assertIn(needle, carrier)
         ignore = (ROOT / 'infra/emergency/Dockerfile.dockerignore').read_text().splitlines()
-        for needle in ('*', '!app', '!infra/emergency', 'app/node_modules',
+        for needle in ('*', '!app', '!infra/emergency', '!infra/vpn2/src/vpn2', '**/__pycache__', 'app/node_modules',
                        'infra/emergency/vpn2_emergency/static', '**/.env'):
             self.assertIn(needle, ignore)
 
@@ -203,7 +203,7 @@ class EmergencyImageTests(unittest.TestCase):
         self.assertIn('release manifest not found', result.stderr)
 
     def test_activation_code_downloads_and_installs_nothing(self):
-        files = list((ROOT / 'infra/emergency/vpn2_emergency').glob('*.py'))
+        files = list((ROOT / 'infra/vpn2/src/vpn2/emergency').glob('*.py'))
         files.append(ROOT / 'infra/emergency/install-hy2.sh')
         for path in files:
             text = path.read_text()
@@ -220,11 +220,11 @@ class EmergencyImageTests(unittest.TestCase):
         version = image.split(':')[1]
         layer = fake / 'image' / version
         if not layer.exists():
-            shutil.copytree(ROOT / 'infra/emergency/vpn2_emergency', layer / 'vpn2_emergency',
+            shutil.copytree(ROOT / 'infra/vpn2/src/vpn2', layer / 'vpn2',
                             ignore=shutil.ignore_patterns('static', '__pycache__'))
-            (layer / 'vpn2_emergency/static/assets').mkdir(parents=True)
+            (layer / 'vpn2/emergency/static/assets').mkdir(parents=True)
             for name in ('index.html', 'instructions.html'):
-                (layer / 'vpn2_emergency/static' / name).write_text(version)
+                (layer / 'vpn2/emergency/static' / name).write_text(version)
             (layer / 'install-hy2.sh').write_text(HY2_INSTALLER)
             shutil.copy(ROOT / 'infra/emergency/vpn2-emergency-snapshot.service', layer)
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
@@ -306,7 +306,7 @@ class EmergencyImageTests(unittest.TestCase):
                              {'bridge': 'none', 'iptables': False, 'ip6tables': False})
             self.assertIn('docker pull ghcr.io/anysda/vpn2/emergency:dev', first.calls)
             self.assertEqual(first.state['containers'], {'vpn2-emergency': 'sha256:' + '1' * 64})
-            package = root / 'opt/vpn2-emergency/vpn2_emergency'
+            package = root / 'opt/vpn2-emergency/vpn2/emergency'
             self.assertTrue((package / 'agent.py').is_file())
             self.assertEqual((package / 'static/instructions.html').read_text(), '1' * 64)
             release = json.loads((root / 'opt/vpn2-emergency/release.json').read_text())
@@ -358,7 +358,7 @@ class EmergencyImageTests(unittest.TestCase):
             self.assertEqual(result.state['containers'], {'vpn2-emergency': 'sha256:' + '3' * 64})
             # VPN2-514: the entry sends the client snapshot to the exits as its own service.
             unit = (fake / 'root/etc/systemd/system/vpn2-emergency-snapshot.service').read_text()
-            self.assertIn('ExecStart=/usr/bin/python3 -B -m vpn2_emergency.snapshot_sender run', unit)
+            self.assertIn('ExecStart=/usr/bin/python3 -B -m vpn2.emergency snapshot-sender run', unit)
             self.assertIn('WantedBy=multi-user.target', unit)
             sender = [c for c in result.calls if 'vpn2-emergency-snapshot' in c]
             self.assertEqual(sender, ['systemctl enable vpn2-emergency-snapshot.service',

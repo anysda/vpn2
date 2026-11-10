@@ -3,6 +3,7 @@
 *
 !app
 !infra/emergency
+!infra/vpn2/src/vpn2
 app/node_modules
 app/.nuxt
 app/.output

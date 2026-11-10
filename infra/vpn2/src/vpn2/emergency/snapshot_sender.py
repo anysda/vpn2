@@ -31,8 +31,11 @@ POLL_SECONDS = 5
 SSH_TIMEOUT = 30
 KEEP_PRODUCED = 16
 # setpriv, not runuser: no PAM session lines in the journal on every call.
-REMOTE = ('cd /opt/vpn2-emergency && exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency '
-          '--init-groups -- /usr/bin/python3 -B -m vpn2_emergency.snapshot receive '
+# Экзит, не обновлённый этим деплоем, держит приёмник под прежним именем.
+REMOTE = ('cd /opt/vpn2-emergency && module="vpn2.emergency snapshot" && '
+          '{ [ -d vpn2/emergency ] || module=vpn2_emergency.snapshot; } && '
+          'exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency '
+          '--init-groups -- /usr/bin/python3 -B -m $module receive '
           '--config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency')
 
 
@@ -105,13 +108,13 @@ def collect(database, telegram_file, now):
 
 def collect_as(user, database, telegram_file, now):
     """Read panel data with the panel user's own rights (WAL files stay its own)."""
-    command = [sys.executable, '-B', '-m', 'vpn2_emergency.snapshot_sender', 'collect',
+    command = [sys.executable, '-B', '-m', 'vpn2.emergency', 'snapshot-sender', 'collect',
                '--database', str(database), '--telegram-file', str(telegram_file),
                '--now', repr(now)]
     if user:
         command = ['setpriv', f'--reuid={user}', f'--regid={user}', '--init-groups', '--',
                    *command]
-    result = subprocess.run(command, cwd=Path(__file__).resolve().parents[1], input=b'',
+    result = subprocess.run(command, cwd=Path(__file__).resolve().parents[2], input=b'',
                             capture_output=True, timeout=SSH_TIMEOUT, check=False)
     if result.returncode:
         raise ValueError('panel data unavailable')
@@ -283,7 +286,7 @@ def run_once(config, deliver, collector, now=None):
         return results
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', nargs='?', choices=('run', 'collect'), default='run')
     parser.add_argument('--agent-config', default='/etc/vpn2/emergency/agent.json')
@@ -295,7 +298,7 @@ def main():
     parser.add_argument('--ssh-config', default='/root/.ssh/anysda-mgmt.conf')
     parser.add_argument('--now', type=float)
     parser.add_argument('--once', action='store_true')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.command == 'collect':
         try:
             data = collect(args.database, args.telegram_file, args.now or time.time())

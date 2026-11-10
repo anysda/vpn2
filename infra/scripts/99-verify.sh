@@ -260,7 +260,7 @@ import sys
 root = Path(sys.argv[1])
 release = json.loads((root / 'release.json').read_text())
 print(f"аварийный образ: версия {release['version']}, ревизия {release['revision'][:12]}, {release['image'][:19]}")
-package = root / 'vpn2_emergency'
+package = root / 'vpn2/emergency'
 missing = [name for name in ('agent.py', 'web.py', 'hy2.py', 'static/index.html', 'static/instructions.html')
            if not (package / name).is_file()]
 if missing:
@@ -307,7 +307,7 @@ emergency_snapshot() {
     env PYTHONPATH=/opt/vpn2-emergency python3 -B - /var/lib/vpn2-emergency "${VERIFY_SNAPSHOT_WAIT:-90}" <<'PY'
 import sys
 import time
-from vpn2_emergency import snapshot, snapshot_sender
+from vpn2.emergency import snapshot, snapshot_sender
 
 state_dir, wait = sys.argv[1], float(sys.argv[2])
 limit = 2 * snapshot_sender.RECONCILE_SECONDS

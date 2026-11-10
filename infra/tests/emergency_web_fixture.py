@@ -7,8 +7,8 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'emergency'))
-from vpn2_emergency.web import make_server
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
+from vpn2.emergency.web import make_server
 
 
 def main():

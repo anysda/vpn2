@@ -26,9 +26,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from test_emergency_agent import Clock, Cluster, ROOT
 from test_emergency_lifecycle import FakeHy2
 
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
-from vpn2_emergency import lifecycle, web  # noqa: E402
-from vpn2_emergency.agent import Agent  # noqa: E402
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.emergency import lifecycle, web  # noqa: E402
+from vpn2.emergency.agent import Agent  # noqa: E402
 
 ADMIN = 900
 SILENT = 'Entry недоступен'
@@ -214,12 +214,12 @@ class ManualStartTests(unittest.TestCase):
         self.addCleanup(self.bot.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(self.bot.shutdown)
-        module = types.ModuleType('vpn2_emergency.snapshot')
+        module = types.ModuleType('vpn2.emergency.snapshot')
         module.load = load_snapshot
         # The queue and the panel import it lazily: a real module already
         # imported is a package attribute and wins over sys.modules.
-        for stub in (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
-                     patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True)):
+        for stub in (patch.dict(sys.modules, {'vpn2.emergency.snapshot': module}),
+                     patch.object(sys.modules['vpn2.emergency'], 'snapshot', module, create=True)):
             stub.start()
             self.addCleanup(stub.stop)
         self.addCleanup(SNAPSHOTS.clear)

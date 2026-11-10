@@ -31,8 +31,10 @@ LABEL vpn2.component=emergency \
       org.opencontainers.image.version=$VPN2_VERSION \
       org.opencontainers.image.revision=$VPN2_REVISION
 
-COPY infra/emergency/vpn2_emergency/*.py /opt/vpn2-emergency/vpn2_emergency/
-COPY --from=static /src/infra/emergency/vpn2_emergency/static /opt/vpn2-emergency/vpn2_emergency/static
+# Пакет vpn2 целиком: агент зовётся как `python3 -m vpn2.emergency`, общие
+# модули пакета лежат рядом, на хост ничего не ставится.
+COPY infra/vpn2/src/vpn2 /opt/vpn2-emergency/vpn2
+COPY --from=static /src/infra/emergency/vpn2_emergency/static /opt/vpn2-emergency/vpn2/emergency/static
 COPY infra/emergency/install-hy2.sh infra/emergency/vpn2-emergency-hy2.service \
      infra/emergency/vpn2-emergency-hy2-probe.service \
      infra/emergency/vpn2-emergency-snapshot.service /opt/vpn2-emergency/

@@ -19,13 +19,13 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
-from vpn2_emergency import hooks, lifecycle, tgqueue, web  # noqa: E402
-from vpn2_emergency.agent import Agent  # noqa: E402
-from vpn2_emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
-from vpn2_emergency.leader import GUARD, LEASE, TRANSITION, Leader  # noqa: E402
-from vpn2_emergency.state import MAX_STATE_BYTES, State  # noqa: E402
+from vpn2.emergency import hooks, lifecycle, tgqueue, web  # noqa: E402
+from vpn2.emergency.agent import Agent  # noqa: E402
+from vpn2.emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
+from vpn2.emergency.leader import GUARD, LEASE, TRANSITION, Leader  # noqa: E402
+from vpn2.emergency.state import MAX_STATE_BYTES, State  # noqa: E402
 
 
 class Clock:
@@ -718,12 +718,12 @@ class EmergencyAgentTests(unittest.TestCase):
                     'admin_chat_id': 900, 'exits': cluster.exits, 'created_at': '2026-01-01T00:00:00Z',
                     'clients': [{'id': 1, 'name': 'first', 'telegram_chat_id': 101, 'allowed': True,
                                  'expires_at': None, 'devices': [{'id': 11, 'name': 'phone'}]}]}
-        module = types.ModuleType('vpn2_emergency.snapshot')
+        module = types.ModuleType('vpn2.emergency.snapshot')
         module.load = lambda _directory: snapshot
         # The panel imports it lazily: a real module already imported is a
         # package attribute and wins over sys.modules.
-        for stub in (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
-                     patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True)):
+        for stub in (patch.dict(sys.modules, {'vpn2.emergency.snapshot': module}),
+                     patch.object(sys.modules['vpn2.emergency'], 'snapshot', module, create=True)):
             stub.start()
             self.addCleanup(stub.stop)
 
@@ -859,7 +859,7 @@ class EmergencyAgentTests(unittest.TestCase):
     def test_recovery_confirmed_through_real_lifecycle_probes(self):
         # Readiness comes from the lifecycle's probes, not from test flags:
         # a probe result must reach the round that reads it while still fresh.
-        from vpn2_emergency.lifecycle import Lifecycle
+        from vpn2.emergency.lifecycle import Lifecycle
 
         class Probes(Lifecycle):
             def _recovered(self, *_args):
@@ -1152,7 +1152,7 @@ class EmergencyAgentTests(unittest.TestCase):
             hooks._listeners.clear()
 
     def test_provision_is_stable_private_and_separate_from_client_secrets(self):
-        spec = importlib.util.spec_from_file_location('provision', ROOT / 'infra/emergency/provision.py')
+        spec = importlib.util.spec_from_file_location('provision', ROOT / 'infra/vpn2/src/vpn2/emergency/provision.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         (self.root / 'config.yaml').write_text(

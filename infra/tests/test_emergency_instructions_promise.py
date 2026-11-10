@@ -9,8 +9,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
-tgqueue = importlib.import_module('vpn2_emergency.tgqueue')
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+tgqueue = importlib.import_module('vpn2.emergency.tgqueue')
 GUIDE = ROOT / 'app/emergency/instructions.html'
 STAMP = '2026-01-01T00:00:00+00:00'
 QR = re.compile(r'\bQR\b', re.I)

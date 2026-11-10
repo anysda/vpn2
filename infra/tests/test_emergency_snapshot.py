@@ -18,8 +18,8 @@ import unittest
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 MIGRATIONS = Path(__file__).resolve().parents[2] / 'app/server/database/migrations'
-sys.path.insert(0, str(ROOT / 'infra/emergency'))
-from vpn2_emergency import snapshot, snapshot_sender  # noqa: E402
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.emergency import snapshot, snapshot_sender  # noqa: E402
 
 INSTALLATION = 'test-installation'
 TOKEN = 'test-bot-token-secret'
@@ -335,7 +335,7 @@ class SnapshotTests(unittest.TestCase):
             "        or args[-2] not in ('exit-a', 'exit-b'):\n"
             '    sys.exit(255)\n'
             "root = os.environ['FAKE_EXITS']\n"
-            "sys.exit(subprocess.run([sys.executable, '-B', '-m', 'vpn2_emergency.snapshot',\n"
+            "sys.exit(subprocess.run([sys.executable, '-B', '-m', 'vpn2.emergency', 'snapshot',\n"
             "    'receive', '--config', root + '/agent.json', '--state-dir',\n"
             "    root + '/' + args[-2]], cwd=os.environ['FAKE_CODE']).returncode)\n")
         fake.chmod(0o700)
@@ -346,20 +346,20 @@ class SnapshotTests(unittest.TestCase):
         (exits / 'agent.json').write_text(json.dumps({'installation_id': INSTALLATION}))
         env = os.environ | {'PATH': f'{bin_dir}:{os.environ["PATH"]}',
                             'FAKE_EXITS': str(exits), 'FAKE_SSH_CONFIG': '/test/ssh.conf',
-                            'FAKE_CODE': str(ROOT / 'infra/emergency')}
-        command = [sys.executable, '-B', '-m', 'vpn2_emergency.snapshot_sender', 'run', '--once',
+                            'FAKE_CODE': str(ROOT / 'infra/vpn2/src')}
+        command = [sys.executable, '-B', '-m', 'vpn2.emergency', 'snapshot-sender', 'run', '--once',
                    '--agent-config', str(agent), '--state-dir', str(self.sender),
                    '--database', str(self.panel.path), '--telegram-file',
                    str(self.panel.telegram), '--panel-user', '', '--ssh-config',
                    '/test/ssh.conf']
-        result = subprocess.run(command, cwd=ROOT / 'infra/emergency', env=env,
+        result = subprocess.run(command, cwd=ROOT / 'infra/vpn2/src', env=env,
                                 capture_output=True, text=True, timeout=60, check=False)
         self.assertEqual((result.returncode, result.stdout.strip(), result.stderr),
                          (0, '{"accepted": 2}', ''))
         value = snapshot.load(exits / 'exit-b')
         self.assertEqual((value['version'], value['bot_token']), (1, TOKEN))
         self.panel.edit(1, False, frozen_manual=1)
-        result = subprocess.run(command, cwd=ROOT / 'infra/emergency', env=env,
+        result = subprocess.run(command, cwd=ROOT / 'infra/vpn2/src', env=env,
                                 capture_output=True, text=True, timeout=60, check=False)
         self.assertEqual(result.stdout.strip(), '{"accepted": 2}')
         self.assertFalse(snapshot.load(exits / 'exit-a')['clients'][0]['allowed'])

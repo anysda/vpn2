@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(Path(os.environ.get('VPN2_TG_SOURCE', ROOT)) / 'infra/emergency'))
-tgqueue = importlib.import_module('vpn2_emergency.tgqueue')
+sys.path.insert(0, str(Path(os.environ.get('VPN2_TG_SOURCE', ROOT)) / 'infra/vpn2/src'))
+tgqueue = importlib.import_module('vpn2.emergency.tgqueue')
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp()
 STAMP = '2026-01-01T00:00:00+00:00'
 FOOTER = '\n\nУзел: exit-a. Время выдачи: 00:00 01.01.2026 (UTC+00:00)'
@@ -39,10 +39,10 @@ class snapshot_stub:
     module is a package attribute and wins over sys.modules."""
 
     def __init__(self):
-        module = types.ModuleType('vpn2_emergency.snapshot')
+        module = types.ModuleType('vpn2.emergency.snapshot')
         module.load = load_snapshot
-        self.patches = (patch.dict(sys.modules, {'vpn2_emergency.snapshot': module}),
-                        patch.object(sys.modules['vpn2_emergency'], 'snapshot', module, create=True))
+        self.patches = (patch.dict(sys.modules, {'vpn2.emergency.snapshot': module}),
+                        patch.object(sys.modules['vpn2.emergency'], 'snapshot', module, create=True))
 
     def start(self):
         for item in self.patches:
@@ -260,8 +260,8 @@ class TelegramQueueTests(unittest.TestCase):
         # The real snapshot denies an expired client too (allowed=false), so the
         # reason must come from the deadline, not from the cleared flag.
         with patch.dict(sys.modules):
-            sys.modules.pop('vpn2_emergency.snapshot', None)
-            real = importlib.import_module('vpn2_emergency.snapshot')
+            sys.modules.pop('vpn2.emergency.snapshot', None)
+            real = importlib.import_module('vpn2.emergency.snapshot')
         clients = [
             {'id': 1, 'name': 'expired', 'telegram_chat_id': 101, 'allowed': False,
              'expires_at': '2025-12-31T23:59:59+00:00', 'devices': [{'id': 11, 'name': 'x'}]},
@@ -276,7 +276,7 @@ class TelegramQueueTests(unittest.TestCase):
         real.atomic_write(self.state / real.NAME, {
             'schema': 1, 'version': 1, 'installation_id': 'fixture', 'created_at': STAMP,
             'exits': [], 'admin_chat_id': 900, 'bot_token': '123:fixture-only', 'clients': clients})
-        with patch.dict(sys.modules, {'vpn2_emergency.snapshot': real}):
+        with patch.dict(sys.modules, {'vpn2.emergency.snapshot': real}):
             tgqueue.enqueue_clients(self.state, **(self.base | {
                 'exit_url': 'https://203.0.113.1', 'profiles': self.profiles, 'now': NOW}))
             self.drain()
@@ -467,7 +467,7 @@ class TelegramQueueTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.bot.calls, [])
         self.assertEqual(self.status()[0]['reason'], 'неизвестные или конфликтующие права')
-        with patch.object(sys.modules['vpn2_emergency.snapshot'], 'load', return_value=None):
+        with patch.object(sys.modules['vpn2.emergency.snapshot'], 'load', return_value=None):
             self.tick()
             self.admin()
         self.assertEqual(self.bot.calls, [])

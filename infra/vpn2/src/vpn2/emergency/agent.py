@@ -287,11 +287,11 @@ class Agent:
                         self.receive(packet, address, self.clock())
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True)
     parser.add_argument('--state-dir', default='/var/lib/vpn2-emergency')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     agent = Agent(json.loads(Path(args.config).read_text()), args.state_dir)
     agent.lifecycle = Lifecycle(agent)

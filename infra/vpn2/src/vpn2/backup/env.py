@@ -66,14 +66,22 @@ class Settings:
     s3_secret_key: str = field(default='', repr=False)
 
 
+# Порядок - как их раскрывал скрипт: бакет в аргументе, затем ключи и адрес в вызове aws.
+S3_NAMES = {'s3_bucket': 'BACKUP_S3_BUCKET', 's3_access_key': 'ANYSDA_S3_ACCESS_KEY',
+            's3_secret_key': 'ANYSDA_S3_SECRET_KEY', 's3_endpoint': 'BACKUP_S3_ENDPOINT'}
+
+
 def _required(env, name, text):
     if not env.get(name):
         raise BackupEnvError(f'{name}: {text}', 1)
     return env[name]
 
 
-def settings(env, env_file=DEFAULT_ENV_FILE):
-    """Settings из словаря read_env; пустое значение - как отсутствующее (семантика :- и :?)."""
+def settings(env, env_file=DEFAULT_ENV_FILE, *, lazy_s3=False):
+    """Settings из словаря read_env; пустое значение - как отсутствующее (семантика :- и :?).
+
+    lazy_s3 - не требовать переменные S3 сразу: restore спрашивает их только при обращении к облаку.
+    """
     backend = _required(env, 'BACKUP_BACKEND', f'BACKUP_BACKEND не задан в {env_file}')
     values = {
         'backend': backend,
@@ -81,7 +89,11 @@ def settings(env, env_file=DEFAULT_ENV_FILE):
         'retention': env.get('BACKUP_RETENTION') or Settings.retention,
         'passphrase': env.get('ANYSDA_BACKUP_PASSPHRASE', ''),
     }
-    if backend == 's3':
+    if backend == 's3' and lazy_s3:
+        for key, name in S3_NAMES.items():
+            values[key] = env.get(name, '')
+        values['s3_region'] = env.get('BACKUP_S3_REGION') or Settings.s3_region
+    elif backend == 's3':
         values['s3_endpoint'] = _required(env, 'BACKUP_S3_ENDPOINT', 'BACKUP_S3_ENDPOINT не задан')
         values['s3_bucket'] = _required(env, 'BACKUP_S3_BUCKET', 'BACKUP_S3_BUCKET не задан')
         values['s3_access_key'] = _required(

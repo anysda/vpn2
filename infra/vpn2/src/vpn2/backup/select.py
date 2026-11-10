@@ -7,6 +7,7 @@ import sys
 import time
 from dataclasses import dataclass
 
+from vpn2.backup.env import S3_NAMES
 from vpn2.backup.errors import RestoreError
 
 _NAME = re.compile(r'anysda-vpn2-([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z)\.tar\.gz\.age')
@@ -69,6 +70,14 @@ def _s3_env(settings, environ):
     return env
 
 
+def _s3_unset(settings):
+    """Сообщение bash о первой пустой переменной S3 (`${VAR:?}` скрипта) или None."""
+    for key, name in S3_NAMES.items():
+        if not getattr(settings, key):
+            return f'{name}: parameter null or not set'
+    return None
+
+
 def _aws(settings, *args):
     return ['aws', '--endpoint-url', settings.s3_endpoint, 's3', *args]
 
@@ -104,10 +113,12 @@ def resolve_latest(settings, *, run=subprocess.run, now=None, err=None, environ=
     best_local = _newest(_local_names(settings.local_dir))
     best_s3 = None
     if settings.backend == 's3':
+        text, code = _s3_unset(settings), 1
         try:
-            done = run(_aws(settings, 'ls', f's3://{settings.s3_bucket}/'), stdout=subprocess.PIPE,
-                       stderr=subprocess.STDOUT, env=_s3_env(settings, environ), check=False)
-            text, code = done.stdout.decode('utf-8', 'surrogateescape').rstrip('\n'), done.returncode
+            if text is None:
+                done = run(_aws(settings, 'ls', f's3://{settings.s3_bucket}/'), stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT, env=_s3_env(settings, environ), check=False)
+                text, code = done.stdout.decode('utf-8', 'surrogateescape').rstrip('\n'), done.returncode
         except OSError:
             text, code = 'aws: command not found', 127
         if code == 0:
@@ -138,6 +149,9 @@ def s3_pull(settings, name, dest, *, run=subprocess.run, environ=None):
     """Скачать архив из S3 в каталог dest с правами 0600; False при любом отказе (aws, chmod)."""
     os.makedirs(dest, mode=0o700, exist_ok=True)
     target = os.path.join(dest, name)
+    unset = _s3_unset(settings)
+    if unset:
+        raise RestoreError(1, f'anysda-restore: {unset}')
     try:
         done = run(_aws(settings, 'cp', f's3://{settings.s3_bucket}/{name}', target, '--only-show-errors'),
                    env=_s3_env(settings, environ), check=False)

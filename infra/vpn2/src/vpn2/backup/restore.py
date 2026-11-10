@@ -48,7 +48,7 @@ class Node:
 
 def _settings(node):
     try:
-        return env.settings(env.read_env(node.env_file), node.env_file)
+        return env.settings(env.read_env(node.env_file), node.env_file, lazy_s3=True)
     except env.BackupEnvError as exc:
         text = f'anysda-restore: {node.env_file} не доступен' if exc.code == 2 else str(exc)
         raise RestoreError(exc.code, text) from None

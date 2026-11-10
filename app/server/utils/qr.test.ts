@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import jsQR from 'jsqr'
 import { PNG } from 'pngjs'
+import QRCode from 'qrcode-svg'
 import { describe, expect, it } from 'vitest'
 import { qrPng, qrSvg } from './qr'
 
@@ -34,7 +35,35 @@ describe.each([['worst', worst], ['short', short]] as const)('QR %s', (name, con
   })
 
   it('PNG декодируется в исходный текст', () => {
-    const got = jsQR(new Uint8ClampedArray(png.data), png.width, png.height)
+    const got = jsQR(new Uint8ClampedArray(png.data), png.width, png.height, { inversionAttempts: 'dontInvert' })
     expect(got?.data).toBe(conf)
+  })
+
+  it('пиксели в центрах клеток совпадают с матрицей', () => {
+    const modules = (new QRCode({ content: conf, ecl: 'L' }) as unknown as { qrcode: { modules: boolean[][] } }).qrcode.modules
+    expect(modules.length).toBe(n)
+    const box = botBox(n)
+    let bad = 0
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        const x = Math.floor((c + 4) * box + box / 2)
+        const y = Math.floor((r + 4) * box + box / 2)
+        const px = png.data[(y * png.width + x) * 4]
+        if (px !== (modules[r]![c] ? 0 : 255)) bad++
+      }
+    }
+    expect(bad).toBe(0)
+  })
+
+  it('поле 4 модуля со всех сторон белое', () => {
+    const edge = 4 * botBox(n)
+    let nonWhite = 0
+    for (let y = 0; y < png.height; y++) {
+      for (let x = 0; x < png.width; x++) {
+        const inField = y < edge || x < edge || y >= png.height - edge || x >= png.width - edge
+        if (inField && png.data[(y * png.width + x) * 4] !== 255) nonWhite++
+      }
+    }
+    expect(nonWhite).toBe(0)
   })
 })

@@ -769,28 +769,6 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/install-sing-box.sh" || return 1
   fi
 
-  # Перед 00-bootstrap раскатываем публичные ключи оркестратора. Сам keypair
-  # и файл orchestrator_keys готовит prep_orchestrator_key (однократно).
-  if [[ "$stage" == "00-bootstrap" ]]; then
-    local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
-    if [[ -s "$combined" ]]; then
-      log "[$stage → $host] раскатываю $(wc -l < "$combined") ключ(а/ей)"
-      push "$combined" "orchestrator_keys" || return 1
-    fi
-    local entry_key="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
-    if [[ "$host" != ru && -s "$entry_key" ]]; then
-      push "$entry_key" "entry_mgmt_key" || return 1
-    fi
-    # Колесо vpn2 для venv экзита; 00-bootstrap берёт его маской vpn2-*.whl.
-    # На entry venv ставит деплой сам, колесо туда не едет.
-    if [[ "$host" != ru ]]; then
-      ansible_wheel_build || return 1
-      local wheel
-      wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
-      push "$wheel" || return 1
-    fi
-  fi
-
   if [[ "$stage" == "10-foreign" ]]; then
     local tpl="$DEPLOY_ROOT/configs/sing-box-server.json.tpl"
     [[ -f "$tpl" ]] || die "configs/sing-box-server.json.tpl не найден"

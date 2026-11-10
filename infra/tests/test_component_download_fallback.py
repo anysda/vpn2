@@ -152,7 +152,6 @@ def components():
     """name -> (releases/download path, payload, build(work, lib) -> (script, installed file))."""
     wgcf_ver = pinned(STAGES / '10-foreign.sh', 'WGCF_VER')
     agh_ver = pinned(STAGES / '22-adguard.sh', 'AGH_VER')
-    ne_ver = pinned(STAGES / '00-bootstrap.sh', 'NE_VERSION')
     caddy_ver = pinned(LIB / 'anysda-svc.sh', 'CADDY_VER')
     sb_ver = pinned(LIB / 'install-sing-box.sh', 'SB_VER')
     sb_binary = f'#!/bin/sh\necho "sing-box version {sb_ver}"\n'.encode()
@@ -172,12 +171,6 @@ def components():
                 f'AGH_BIN={shlex.quote(str(work / "AdGuardHome"))}\nneed_install=1\n'
                 'if [[ "$need_install" -eq 1 ]]; then' + block), work / 'AdGuardHome'
 
-    def node_exporter(work, lib):
-        source = (STAGES / '00-bootstrap.sh').read_text()
-        block = 'NE_VERSION=' + source.split('NE_VERSION=', 1)[1].split('\nid node_exporter', 1)[0]
-        return f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\n' + \
-            block.replace('/usr/local/bin/', f'{work}/'), work / 'node_exporter'
-
     def caddy(work, lib):
         return (f'source {shlex.quote(str(lib / "anysda-svc.sh"))}\n'
                 'caddy() { :; }\n'
@@ -194,11 +187,6 @@ def components():
         'adguard': (f'/AdguardTeam/AdGuardHome/releases/download/{agh_ver}/AdGuardHome_linux_amd64.tar.gz',
                     tar_gz({'AdGuardHome/AdGuardHome': (b'adguard executable', 0o755)}), adguard,
                     b'adguard executable'),
-        'node-exporter': (f'/prometheus/node_exporter/releases/download/v{ne_ver}/'
-                          f'node_exporter-{ne_ver}.linux-amd64.tar.gz',
-                          tar_gz({f'node_exporter-{ne_ver}.linux-amd64/node_exporter':
-                                  (b'node_exporter executable', 0o755)}),
-                          node_exporter, b'node_exporter executable'),
         'caddy': (f'/caddyserver/caddy/releases/download/v{caddy_ver}/caddy_{caddy_ver}_linux_amd64.deb',
                   b'caddy package', caddy, b'caddy package'),
         'sing-box': (f'/SagerNet/sing-box/releases/download/v{sb_ver}/sing-box-{sb_ver}-linux-amd64.tar.gz',

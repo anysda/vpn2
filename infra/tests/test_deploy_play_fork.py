@@ -235,28 +235,5 @@ run_stage_on_host 42-x ru
                 self.assertEqual('start' in (Path(directory) / 'calls').read_text(), started)
 
 
-class WheelPushTests(unittest.TestCase):
-    def test_bootstrap_ships_wheel_to_exit_not_to_entry(self):
-        for host, shipped in (('nl', True), ('ru', False)):
-            with self.subTest(host=host), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                (root / 'scripts').mkdir()
-                (root / 'scripts/00-bootstrap.sh').touch()
-                (root / 'envs').mkdir()
-                (root / 'envs/all.env').touch()
-                (root / 'envs' / f'{host}.env').touch()
-                script = STUBS + function('run_stage_on_host') + '''
-VPN2_ROOT=$PWD/vpn2
-ansible_wheel_build() { mkdir -p "$VPN2_ROOT/wheels"; touch "$VPN2_ROOT/wheels/vpn2-0.1.0-py3-none-any.whl"; echo build >> calls; }
-ansible_wheel_path() { echo "$VPN2_ROOT/wheels/vpn2-0.1.0-py3-none-any.whl"; }
-run_stage_on_host 00-bootstrap ''' + host + '\n'
-                result = bash(script, directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                calls = (root / 'calls').read_text().splitlines()
-                wheel = f'push {root}/vpn2/wheels/vpn2-0.1.0-py3-none-any.whl'
-                self.assertEqual(wheel in calls, shipped, calls)
-                self.assertEqual('build' in calls, shipped, calls)
-
-
 if __name__ == '__main__':
     unittest.main()

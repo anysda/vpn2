@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / 'config.example.yaml'
 SCRIPTS = ROOT / 'infra' / 'scripts'
+PLAYS = ROOT / 'infra' / 'ansible' / 'plays'
 
 BLOCK = re.compile(r'^# ([a-z_][a-z0-9_]*):\s*$')
 CHILD = re.compile(r'^# {2,}\S')
@@ -71,8 +72,8 @@ class ConfigExampleStagesTests(unittest.TestCase):
                  for stage in STAGE.findall(line)]
         self.assertTrue(named)
         absent = [f'{stage} (config.example.yaml:{number})' for number, stage in named
-                  if not (SCRIPTS / f'{stage}.sh').is_file()]
-        self.assertEqual(absent, [], 'стадии нет в infra/scripts')
+                  if not (SCRIPTS / f'{stage}.sh').is_file() and not (PLAYS / f'{stage}.yml').is_file()]
+        self.assertEqual(absent, [], 'стадии нет ни в infra/scripts, ни в infra/ansible/plays')
 
     def test_alerts_names_stage_writing_thresholds(self):
         writers = {path.stem for path in SCRIPTS.glob('*.sh')

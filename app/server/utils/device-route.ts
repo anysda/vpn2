@@ -20,6 +20,9 @@ export interface ClientDevice<T> {
   ready: T
 }
 
+/** Номер записи из адреса: целое больше нуля, как в удалении и перевыпуске. */
+const validId = (id: number) => Number.isSafeInteger(id) && id > 0
+
 async function deviceOf(clientId: number, deviceId: number): Promise<Device> {
   const [device] = await useDb().select().from(devices)
     .where(and(eq(devices.id, deviceId), eq(devices.clientId, clientId)))
@@ -33,7 +36,7 @@ export async function adminClientDevice<T = undefined>(event: H3Event, preflight
   await requireAuth(event)
   const clientId = Number(getRouterParam(event, 'id'))
   const deviceId = Number(getRouterParam(event, 'deviceId'))
-  if (!Number.isFinite(clientId) || !Number.isFinite(deviceId)) {
+  if (!validId(clientId) || !validId(deviceId)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid_id' })
   }
   const ready = await preflight?.() as T
@@ -50,7 +53,7 @@ export async function botClientDevice<T = undefined>(event: H3Event, preflight?:
   requireBotAuth(event)
   const deviceId = Number(getRouterParam(event, 'deviceId'))
   const chatId = Number(getQuery(event).chatId)
-  if (!Number.isFinite(deviceId) || !Number.isFinite(chatId)) {
+  if (!validId(deviceId) || !Number.isSafeInteger(chatId)) {
     throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
   }
   const ready = await preflight?.() as T

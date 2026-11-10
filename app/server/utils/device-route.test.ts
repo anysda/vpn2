@@ -97,11 +97,22 @@ describe('принадлежность девайса клиенту', () => {
     expect((await botClientDevice(fakeEvent({ deviceId: '4' }, { chatId: '43' }))).device).toMatchObject({ id: 4, clientId: 8 })
   })
 
-  it('id не целое, но конечное (1.5) - не 400: проверка Number.isFinite, как в маршрутах', async () => {
+  it.each(['1.5', '0', '-1', '9007199254740993'])('id %s - 400 до preflight и базы: нужен целый номер больше нуля', async (id) => {
     rows()
-    const admin = await rejection(adminClientDevice(fakeEvent({ id: '1.5', deviceId: '3' })))
-    expect([admin.statusCode, admin.statusMessage]).toEqual([404, 'not_found'])
-    const bot = await rejection(botClientDevice(fakeEvent({ deviceId: '1.5' }, { chatId: '42' })))
-    expect([bot.statusCode, bot.statusMessage]).toEqual([404, 'not_found'])
+    for (const event of [fakeEvent({ id, deviceId: '3' }), fakeEvent({ id: '7', deviceId: id })]) {
+      const admin = await rejection(adminClientDevice(event, failingPreflight))
+      expect([admin.statusCode, admin.statusMessage]).toEqual([400, 'invalid_id'])
+    }
+    const bot = await rejection(botClientDevice(fakeEvent({ deviceId: id }, { chatId: '42' }), failingPreflight))
+    expect([bot.statusCode, bot.statusMessage]).toEqual([400, 'invalid_params'])
+    expect(calls).toEqual(['auth', 'auth', 'auth'])
+  })
+
+  it('чат бота: дробный номер - 400, отрицательный (группа) проходит разбор', async () => {
+    rows()
+    const frac = await rejection(botClientDevice(fakeEvent({ deviceId: '3' }, { chatId: '42.5' }), failingPreflight))
+    expect([frac.statusCode, frac.statusMessage]).toEqual([400, 'invalid_params'])
+    const group = await rejection(botClientDevice(fakeEvent({ deviceId: '3' }, { chatId: '-100' })))
+    expect(group.statusCode).not.toBe(400)
   })
 })

@@ -98,6 +98,14 @@ describe.each(routes)('$name', ({ handler, ok, bad, foreign, invalid, authFail, 
     expect(calls).toEqual(['auth'])
   })
 
+  it.each(['1.5', '-1'])(`номер девайса %s - 400 ${invalid} до проверок WireGuard`, async (deviceId) => {
+    setup({ ...config, wgEnabled: false })
+    const event = invalid === 'invalid_id' ? fakeEvent({ id: '7', deviceId }) : fakeEvent({ deviceId }, { chatId: '42' })
+    const err = await rejection(run(handler, event))
+    expect([err.statusCode, err.statusMessage]).toEqual([400, invalid])
+    expect(calls).toEqual(['auth'])
+  })
+
   it('WireGuard выключен - 503 wg_disabled до поиска, даже для чужого девайса', async () => {
     setup({ ...config, wgEnabled: false })
     const err = await rejection(run(handler, foreign))

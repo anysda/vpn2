@@ -1,8 +1,8 @@
 """Fixed protocol adapters. No shell, arbitrary paths, or raw diagnostics API."""
 
+import contextlib
 import csv
 import base64
-import fcntl
 import hashlib
 import json
 import os
@@ -11,12 +11,11 @@ import re
 import selectors
 import socket
 import subprocess
-import tempfile
 import time
 
-from ..fsutil import atomic
+from ..fsutil import LockBusy, atomic, lock
 # wg0.conf is read one way: vpn2-apply's.
-from .. import wg
+from .. import pki, wg
 from .contract import API, Fault, LIMIT, METHODS, key as validate_key, load_pools, require
 
 # C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
@@ -268,14 +267,34 @@ class Backend:
                 'host': marker('server-host'), 'domain': marker('domain'),
                 'ca': ca.read_text() if ca.exists() else ''}
 
-    def pki_lock(self, lock):
-        while True:
+    @contextlib.contextmanager
+    def pki_lock(self, base):
+        """Замок CA, общий со стадией и vpn2.pki.transaction; ждём не дольше срока запроса."""
+        with contextlib.ExitStack() as stack:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except BlockingIOError:
-                require(time.monotonic() < self.deadline, 'limit')
-                time.sleep(0.02)
+                stack.enter_context(lock(base / '.pki.lock', timeout=max(0.0, self.deadline - time.monotonic())))
+            except LockBusy:
+                raise Fault('limit') from None
+            yield
+
+    def openssl(self, argv, data=None):
+        """Исполнитель для vpn2.pki: тот же ограниченный запуск, openssl по полному пути."""
+        argv = ['/usr/bin/openssl', *argv[1:]]
+        try:
+            output = self.command(*argv) if data is None else self.command(*argv, data=data)
+        except Fault as fault:
+            if fault.args != ('unavailable',):
+                raise
+            return subprocess.CompletedProcess(argv, 1, '', '')
+        return subprocess.CompletedProcess(argv, 0, output, '')
+
+    @contextlib.contextmanager
+    def ca(self):
+        """Отказ openssl внутри vpn2.pki - тот же ответ службы, что и раньше."""
+        try:
+            yield
+        except pki.PkiError:
+            raise Fault('unavailable') from None
 
     def served(self, path):
         # OpenVPN re-reads the CRL and ccd after dropping to user nobody and
@@ -301,13 +320,8 @@ class Backend:
             listed = re.search(rf'(?m)^{BLANK}*crl-verify{BLANK}+([^ \t\n\v\f\r]+){BLANK}*$', config.read_text())
             require(bool(listed) and self.path(listed[1]) == target, 'unavailable')
         before = target.stat() if target.exists() else None
-        with tempfile.TemporaryDirectory(dir=base / 'pki') as work:
-            crl = Path(work) / 'crl.pem'
-            self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
-                         str(base / 'pki/openssl.cnf'), '-gencrl', '-out', str(crl))
-            self.command('/usr/bin/openssl', 'crl', '-in', str(crl), '-noout',
-                         '-verify', '-CAfile', str(base / 'pki/ca.crt'))
-            atomic(target, crl.read_text(), 0o644)
+        with self.ca():
+            pki.gencrl(base / 'pki', target, run=self.openssl)
         # OpenVPN reloads the CRL only when mtime (whole seconds) or size
         # changed since its last load; a same-size rewrite in the same second
         # would be skipped until the next change.
@@ -326,8 +340,7 @@ class Backend:
                 self.management('kill ' + cn)
             require(cn not in self.observe('openvpn')['sessions'], 'unavailable')
             return {'killed': present}
-        with (base / '.pki.lock').open('a') as lock:
-            self.pki_lock(lock)
+        with self.pki_lock(base):
             if method == 'openvpn.issue':
                 # The journal retains the same key/CSR across a crash. A crash
                 # after signing is recovered from newcerts by public key.
@@ -336,8 +349,8 @@ class Backend:
                 key, csr, cert = (directory / name for name in ('key.pem', 'csr.pem', 'cert.pem'))
                 if not key.exists():
                     candidate = directory / 'key.tmp'
-                    self.command('/usr/bin/openssl', 'genpkey', '-algorithm', 'EC',
-                                 '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-out', str(candidate))
+                    with self.ca():
+                        pki.genkey(candidate, run=self.openssl)
                     atomic(key, candidate.read_text())
                     candidate.unlink()
                 if not cert.exists():
@@ -349,12 +362,9 @@ class Backend:
                             atomic(cert, existing.read_text())
                             break
                 if not cert.exists():
-                    self.command('/usr/bin/openssl', 'req', '-new', '-key', str(key),
-                                 '-out', str(csr), '-subj', '/CN=' + cn)
                     candidate = directory / 'cert.tmp'
-                    self.command('/usr/bin/openssl', 'ca', '-batch', '-notext', '-config',
-                                 str(base / 'pki/openssl.cnf'), '-extensions', 'client_ext',
-                                 '-days', '3650', '-in', str(csr), '-out', str(candidate))
+                    with self.ca():
+                        pki.issue(base / 'pki', cn, key, csr, candidate, run=self.openssl)
                     atomic(cert, candidate.read_text())
                     candidate.unlink()
                 serial = self.command('/usr/bin/openssl', 'x509', '-in', str(cert), '-noout', '-serial')
@@ -367,18 +377,15 @@ class Backend:
             cert = base / 'pki/newcerts' / (serial + '.pem')
             if method == 'openvpn.revoke':
                 if status != 'R':
-                    self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
-                                 str(base / 'pki/openssl.cnf'), '-revoke', str(cert))
+                    with self.ca():
+                        pki.revoke(base / 'pki', cert, run=self.openssl)
                 self.crl(base)
                 return {'revoked': True}
             # openssl verify uses the published CRL, not just the CA index.
-            valid = False
             try:
-                self.command('/usr/bin/openssl', 'verify', '-CAfile', str(base / 'pki/ca.crt'),
-                             '-CRLfile', str(base / 'pki/crl.pem'), '-crl_check', str(cert))
-                valid = True
+                valid = pki.verify(base / 'pki/ca.crt', cert, crl=base / 'pki/crl.pem', run=self.openssl)
             except Fault:
-                pass
+                valid = False
             revoked = False
             if status == 'R' and self.served(base / 'pki/crl.pem'):
                 crl = self.command('/usr/bin/openssl', 'crl', '-in', str(base / 'pki/crl.pem'), '-text', '-noout')
@@ -470,26 +477,15 @@ class Backend:
 
     def certificates(self, device_id):
         cn = 'dev_' + str(device_id)
-        matches = []
-        for line in self.path('/etc/openvpn/server/pki/index.txt').read_text().splitlines():
-            columns = line.split('\t')
-            if len(columns) == 6 and re.search(r'(?:^|/)CN=' + cn + r'(?:/|$)', columns[5]):
-                require(re.fullmatch(r'[A-Fa-f0-9]{1,64}', columns[3]), 'unavailable')
-                matches.append((columns[0], columns[3]))
-        return matches
+        rows = pki.index(self.path('/etc/openvpn/server/pki/index.txt').read_text())
+        with self.ca():
+            return [(row.status, row.serial) for row in pki.by_cn(rows, cn, strict=True)]
 
     def openvpn(self, params):
         base = self.path('/etc/openvpn/server')
         cn = 'dev_' + str(params['device_id'])
         # Same lock as deployment/legacy issuance; no overlapping CA changes.
-        with (base / '.pki.lock').open('a') as lock:
-            while True:
-                try:
-                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    break
-                except BlockingIOError:
-                    require(time.monotonic() < self.deadline, 'limit')
-                    time.sleep(0.02)
+        with self.pki_lock(base):
             certs = self.certificates(params['device_id'])
             require(bool(certs), 'unavailable')
             allowed = params['action'] == 'allow'
@@ -504,9 +500,8 @@ class Backend:
             if params['action'] == 'revoke':
                 for status, serial in certs:
                     if status == 'V':
-                        self.command('/usr/bin/openssl', 'ca', '-batch', '-config',
-                                     str(base / 'pki/openssl.cnf'), '-revoke',
-                                     str(base / 'pki/newcerts' / (serial + '.pem')))
+                        with self.ca():
+                            pki.revoke(base / 'pki', base / 'pki/newcerts' / (serial + '.pem'), run=self.openssl)
                 self.crl(base)
                 require(all(status != 'V' for status, _serial in
                             self.certificates(params['device_id'])), 'unavailable')

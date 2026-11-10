@@ -93,7 +93,7 @@ class E2eSqliteImmediateTests(unittest.TestCase):
 
     def test_trigger_body_in_repo_is_not_flagged(self):
         found = scan(E2E)
-        for name in ('access-operations.spec.ts', 'client-prefs.spec.ts', 'traffic-collector.spec.ts'):
+        for name in ('access-operations.spec.ts', 'clients.spec.ts', 'traffic.spec.ts'):
             with self.subTest(name=name):
                 self.assertIn('CREATE TRIGGER', (E2E / name).read_text(encoding='utf-8'))
                 self.assertFalse([f for f in found if f.startswith(name + ':')])

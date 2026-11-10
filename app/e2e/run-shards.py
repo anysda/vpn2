@@ -62,34 +62,50 @@ def listed_tests(report):
     return tests
 
 
-def split_units(files, tests, weights):
-    """A file with per-test weights is split into its tests, the rest stay whole.
+def group_of(file, line):
+    """Top-level describe of a test line, "file › describe"; None for a test outside any describe."""
+    rest = line.split(' › ')[2:]
+    return f'{file} › {rest[0]}' if len(rest) > 1 else None
 
-    Only files measured test by test in shard-weights.json split: their tests
-    keep no state for one another.
+
+def split_units(files, tests, weights):
+    """A unit is a test, a top-level describe or a whole file - whatever shard-weights.json measured.
+
+    A file whose every top-level describe is measured splits into them (a
+    themed spec keeps one describe per scenario group, they share no state);
+    a describe measured test by test splits further into its tests. Anything
+    unmeasured keeps the file whole.
     """
     units, unit_weights = [], {}
     for file in files:
-        lines = [line for owner, line in tests if owner == file]
-        if lines and all(line in weights for line in lines):
-            units += lines
-            unit_weights.update((line, weights[line]) for line in lines)
-        else:
-            units.append(file)
-            unit_weights[file] = weights.get(file, 10)
+        groups = {}
+        for owner, line in tests:
+            if owner == file:
+                groups.setdefault(group_of(file, line), []).append(line)
+        split = {}
+        for group, lines in groups.items():
+            if all(line in weights for line in lines):
+                split.update((line, weights[line]) for line in lines)
+            elif group in weights:
+                split[group] = weights[group]
+            else:
+                split = {file: weights.get(file, 10)}
+                break
+        units += split or [file]
+        unit_weights.update(split or {file: weights.get(file, 10)})
     return units, unit_weights
 
 
 def panel_tests(group, tests):
-    """Test lines one panel runs: whole files of the group plus its split-off tests."""
+    """Test lines one panel runs: whole files and describes of the group plus its split-off tests."""
     units = set(group)
-    return [line for file, line in tests if file in units or line in units]
+    return [line for file, line in tests if file in units or line in units or group_of(file, line) in units]
 
 
 def panel_arguments(group, tests, report):
     """Playwright filters: the panel's files; tests of split files run elsewhere are inverted out."""
     mine = set(panel_tests(group, tests))
-    owners = sorted({file for file, line in tests if line in mine} | {unit for unit in group if '[' not in unit})
+    owners = sorted({file for file, line in tests if line in mine} | {unit for unit in group if ' › ' not in unit})
     elsewhere = [line for file, line in tests if file in owners and line not in mine]
     arguments = [f'e2e/{re.escape(file)}$' for file in owners]
     if elsewhere:

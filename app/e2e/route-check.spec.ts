@@ -3,20 +3,22 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { test, expect } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import type { ClashProxy } from '../server/utils/clash-client'
 import type { RoutePlan } from '../server/utils/route-match'
 import { serverModule } from './support/server-module'
+import * as outbounds from '../shared/outbounds'
 
-type RouteCheck = typeof import('../server/utils/route-check')
-type Row = { id: number, type: string, value: string, outbound: string }
+test.describe('route-check', () => {
+  type RouteCheck = typeof import('../server/utils/route-check')
+  type Row = { id: number, type: string, value: string, outbound: string }
 
-const infraTests = fileURLToPath(new URL('../../infra/tests', import.meta.url))
+  const infraTests = fileURLToPath(new URL('../../infra/tests', import.meta.url))
 
-// Снимок строит тот же скрипт роутера, что пишет его на сервере: генератор
-// конфига и anysda-apply-routes.py из стадии 20. Проверки sing-box в нём
-// заменены на `true`, наборы geoip/geosite - тестовые.
-const BUILD = `
+  // Снимок строит тот же скрипт роутера, что пишет его на сервере: генератор
+  // конфига и anysda-apply-routes.py из стадии 20. Проверки sing-box в нём
+  // заменены на `true`, наборы geoip/geosite - тестовые.
+  const BUILD = `
 import json, sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
@@ -32,134 +34,194 @@ if r.returncode:
     sys.exit(r.stderr)
 `
 
-function buildPlan(rows: Row[], sets: Record<string, object[]>, env: Record<string, string> = {}, prefs: Record<string, string[]> = {}): RoutePlan {
-  const dir = mkdtempSync(join(tmpdir(), 'route-plan-'))
-  try {
-    execFileSync('python3', ['-c', BUILD, infraTests, dir, JSON.stringify({ rows, sets, env, prefs })], {
-      env: { ...process.env, SING_BOX_BIN: 'true' },
-    })
-    return JSON.parse(readFileSync(join(dir, 'plan.json'), 'utf8'))
-  }
-  finally {
-    rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-function checker(): RouteCheck {
-  const match = serverModule(new URL('../server/utils/route-match.ts', import.meta.url), {})
-  return serverModule<RouteCheck>(new URL('../server/utils/route-check.ts', import.meta.url), { './route-match': match })
-}
-
-const ROWS: Row[] = [
-  { id: 1, type: 'domain', value: 'chatgpt.com', outbound: 'hy2-aa-direct' },
-  { id: 2, type: 'domain', value: '*.openai.com', outbound: 'hy2-bb-warp' },
-  { id: 3, type: 'ip_cidr', value: '203.0.113.0/24', outbound: 'hy2-bb-direct' },
-  { id: 4, type: 'domain', value: 'mail.ru', outbound: 'hy2-aa-direct' },
-]
-const SETS = {
-  'geoip-ru': [{ ip_cidr: ['198.51.100.0/24', '149.154.160.0/20'] }],
-  'geosite-category-gov-ru': [{ domain_suffix: ['gosuslugi.example'] }],
-  'geosite-youtube': [{ domain_suffix: ['youtube.example'] }],
-}
-const delay = (ms: number) => [{ time: '', delay: ms }]
-const PROXIES: ClashProxy[] = [
-  { name: 'hy2-aa-direct', type: 'Trojan', history: delay(40) },
-  { name: 'hy2-bb-direct', type: 'Trojan', history: delay(50) },
-  { name: 'hy2-bb-warp', type: 'Trojan', history: delay(70) },
-  { name: 'direct-ru', type: 'Direct', history: delay(4) },
-  { name: 'youtube-ru', type: 'Direct', history: delay(38) },
-  { name: 'youtube-auto', type: 'Selector', now: 'youtube-ru' },
-  { name: 'foreign-best', type: 'Selector', now: 'hy2-bb-direct' },
-  { name: 'pin-hy2-aa-direct', type: 'Selector', now: 'hy2-aa-direct' },
-  { name: 'pin-hy2-bb-direct', type: 'Selector', now: 'hy2-bb-direct' },
-  { name: 'pin-hy2-bb-warp', type: 'Selector', now: 'hy2-bb-warp' },
-  { name: 'lane-01', type: 'Selector', now: 'hy2-bb-direct' },
-  { name: 'lane-02', type: 'Selector', now: 'hy2-bb-warp' },
-]
-// Устройства клиентов из LANE_SUBNETS тестового роутера (192.0.2.0/29, 4 дорожки):
-// .5 - клиент с личным выходом aa (дорожка lane-01), .6 - без него (lane-02).
-const PREFS = { aa: ['192.0.2.5'] }
-const MAMA = '192.0.2.5'
-const OTHER = '192.0.2.6'
-
-test.describe('проверка адреса по снимку маршрутов роутера', () => {
-  let plan: RoutePlan
-  let rc: RouteCheck
-  test.beforeAll(() => {
-    plan = buildPlan(ROWS, SETS, { YT_ROUTE: 'zapret' }, PREFS)
-    rc = checker()
-  })
-
-  function check(input: string, ip: string | null = null) {
-    const q = rc.parseQuery(input)!
-    return rc.explain(plan, rc.clientConn(q, ip), ROWS, PROXIES)
+  function buildPlan(rows: Row[], sets: Record<string, object[]>, env: Record<string, string> = {}, prefs: Record<string, string[]> = {}): RoutePlan {
+    const dir = mkdtempSync(join(tmpdir(), 'route-plan-'))
+    try {
+      execFileSync('python3', ['-c', BUILD, infraTests, dir, JSON.stringify({ rows, sets, env, prefs })], {
+        env: { ...process.env, SING_BOX_BIN: 'true' },
+      })
+      return JSON.parse(readFileSync(join(dir, 'plan.json'), 'utf8'))
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }
 
-  const cases: Array<[string, string, string | null, Partial<ReturnType<RouteCheck['explain']>>]> = [
-    ['точное правило', 'chatgpt.com', null, { reason: 'manual', rule: 'chatgpt.com', routeId: 1, outbound: 'hy2-aa-direct', delay: 40 }],
-    ['правило домена берёт и поддомены', 'cdn.chatgpt.com', null, { reason: 'manual', routeId: 1 }],
-    ['wildcard', 'api.openai.com', null, { reason: 'manual', rule: '*.openai.com', routeId: 2, outbound: 'hy2-bb-warp', delay: 70 }],
-    ['CIDR', '203.0.113.9', null, { reason: 'manual', rule: '203.0.113.0/24', routeId: 3, outbound: 'hy2-bb-direct' }],
-    ['ручное правило выше .ru', 'mail.ru', null, { reason: 'manual', routeId: 4, outbound: 'hy2-aa-direct' }],
-    ['.рф', 'https://Пример.РФ/путь', null, { reason: 'ru', rule: '.рф', routeId: null, outbound: 'direct-ru', delay: 4 }],
-    ['.ru', 'yandex.ru', null, { reason: 'ru', rule: '.ru', outbound: 'direct-ru' }],
-    ['gov-ru', 'www.gosuslugi.example', null, { reason: 'ru', rule: 'geosite-category-gov-ru', outbound: 'direct-ru' }],
-    ['geoip-ru по IP', '198.51.100.7', null, { reason: 'ru', rule: 'geoip-ru', outbound: 'direct-ru' }],
-    ['geoip-ru по адресу домена', 'shop.example', '198.51.100.7', { reason: 'ru', rule: 'geoip-ru', outbound: 'direct-ru' }],
-    ['zapret по списку доменов', 'www.youtube.com', null, { reason: 'youtube', rule: 'youtube.com', outbound: 'youtube-ru', delay: 38 }],
-    ['zapret по geosite', 'm.youtube.example', null, { reason: 'youtube', rule: 'geosite-youtube', outbound: 'youtube-ru' }],
-    ['Telegram мимо geoip-ru', '149.154.167.50', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
-    ['частная сеть закрыта', '172.16.0.10', null, { reason: 'reject', routeId: null }],
-    ['link-local закрыт', '169.254.169.254', null, { reason: 'reject', routeId: null }],
-    ['по умолчанию', 'unknown-site.com', '1.0.0.1', { reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-direct', delay: 50 }],
-    ['домен без адреса - по умолчанию', 'unknown-site.com', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
+  function checker(): RouteCheck {
+    const match = serverModule(new URL('../server/utils/route-match.ts', import.meta.url), {})
+    return serverModule<RouteCheck>(new URL('../server/utils/route-check.ts', import.meta.url), { './route-match': match })
+  }
+
+  const ROWS: Row[] = [
+    { id: 1, type: 'domain', value: 'chatgpt.com', outbound: 'hy2-aa-direct' },
+    { id: 2, type: 'domain', value: '*.openai.com', outbound: 'hy2-bb-warp' },
+    { id: 3, type: 'ip_cidr', value: '203.0.113.0/24', outbound: 'hy2-bb-direct' },
+    { id: 4, type: 'domain', value: 'mail.ru', outbound: 'hy2-aa-direct' },
   ]
-  for (const [name, input, ip, want] of cases) {
-    test(name, () => {
-      expect(check(input, ip)).toMatchObject(want)
+  const SETS = {
+    'geoip-ru': [{ ip_cidr: ['198.51.100.0/24', '149.154.160.0/20'] }],
+    'geosite-category-gov-ru': [{ domain_suffix: ['gosuslugi.example'] }],
+    'geosite-youtube': [{ domain_suffix: ['youtube.example'] }],
+  }
+  const delay = (ms: number) => [{ time: '', delay: ms }]
+  const PROXIES: ClashProxy[] = [
+    { name: 'hy2-aa-direct', type: 'Trojan', history: delay(40) },
+    { name: 'hy2-bb-direct', type: 'Trojan', history: delay(50) },
+    { name: 'hy2-bb-warp', type: 'Trojan', history: delay(70) },
+    { name: 'direct-ru', type: 'Direct', history: delay(4) },
+    { name: 'youtube-ru', type: 'Direct', history: delay(38) },
+    { name: 'youtube-auto', type: 'Selector', now: 'youtube-ru' },
+    { name: 'foreign-best', type: 'Selector', now: 'hy2-bb-direct' },
+    { name: 'pin-hy2-aa-direct', type: 'Selector', now: 'hy2-aa-direct' },
+    { name: 'pin-hy2-bb-direct', type: 'Selector', now: 'hy2-bb-direct' },
+    { name: 'pin-hy2-bb-warp', type: 'Selector', now: 'hy2-bb-warp' },
+    { name: 'lane-01', type: 'Selector', now: 'hy2-bb-direct' },
+    { name: 'lane-02', type: 'Selector', now: 'hy2-bb-warp' },
+  ]
+  // Устройства клиентов из LANE_SUBNETS тестового роутера (192.0.2.0/29, 4 дорожки):
+  // .5 - клиент с личным выходом aa (дорожка lane-01), .6 - без него (lane-02).
+  const PREFS = { aa: ['192.0.2.5'] }
+  const MAMA = '192.0.2.5'
+  const OTHER = '192.0.2.6'
+
+  test.describe('проверка адреса по снимку маршрутов роутера', () => {
+    let plan: RoutePlan
+    let rc: RouteCheck
+    test.beforeAll(() => {
+      plan = buildPlan(ROWS, SETS, { YT_ROUTE: 'zapret' }, PREFS)
+      rc = checker()
     })
+
+    function check(input: string, ip: string | null = null) {
+      const q = rc.parseQuery(input)!
+      return rc.explain(plan, rc.clientConn(q, ip), ROWS, PROXIES)
+    }
+
+    const cases: Array<[string, string, string | null, Partial<ReturnType<RouteCheck['explain']>>]> = [
+      ['точное правило', 'chatgpt.com', null, { reason: 'manual', rule: 'chatgpt.com', routeId: 1, outbound: 'hy2-aa-direct', delay: 40 }],
+      ['правило домена берёт и поддомены', 'cdn.chatgpt.com', null, { reason: 'manual', routeId: 1 }],
+      ['wildcard', 'api.openai.com', null, { reason: 'manual', rule: '*.openai.com', routeId: 2, outbound: 'hy2-bb-warp', delay: 70 }],
+      ['CIDR', '203.0.113.9', null, { reason: 'manual', rule: '203.0.113.0/24', routeId: 3, outbound: 'hy2-bb-direct' }],
+      ['ручное правило выше .ru', 'mail.ru', null, { reason: 'manual', routeId: 4, outbound: 'hy2-aa-direct' }],
+      ['.рф', 'https://Пример.РФ/путь', null, { reason: 'ru', rule: '.рф', routeId: null, outbound: 'direct-ru', delay: 4 }],
+      ['.ru', 'yandex.ru', null, { reason: 'ru', rule: '.ru', outbound: 'direct-ru' }],
+      ['gov-ru', 'www.gosuslugi.example', null, { reason: 'ru', rule: 'geosite-category-gov-ru', outbound: 'direct-ru' }],
+      ['geoip-ru по IP', '198.51.100.7', null, { reason: 'ru', rule: 'geoip-ru', outbound: 'direct-ru' }],
+      ['geoip-ru по адресу домена', 'shop.example', '198.51.100.7', { reason: 'ru', rule: 'geoip-ru', outbound: 'direct-ru' }],
+      ['zapret по списку доменов', 'www.youtube.com', null, { reason: 'youtube', rule: 'youtube.com', outbound: 'youtube-ru', delay: 38 }],
+      ['zapret по geosite', 'm.youtube.example', null, { reason: 'youtube', rule: 'geosite-youtube', outbound: 'youtube-ru' }],
+      ['Telegram мимо geoip-ru', '149.154.167.50', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
+      ['частная сеть закрыта', '172.16.0.10', null, { reason: 'reject', routeId: null }],
+      ['link-local закрыт', '169.254.169.254', null, { reason: 'reject', routeId: null }],
+      ['по умолчанию', 'unknown-site.com', '1.0.0.1', { reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-direct', delay: 50 }],
+      ['домен без адреса - по умолчанию', 'unknown-site.com', null, { reason: 'default', outbound: 'hy2-bb-direct' }],
+    ]
+    for (const [name, input, ip, want] of cases) {
+      test(name, () => {
+        expect(check(input, ip)).toMatchObject(want)
+      })
+    }
+
+    function checkFor(source: string, input: string, ip: string | null = null) {
+      const q = rc.parseQuery(input)!
+      return rc.explain(plan, rc.clientConn(q, ip, source), ROWS, PROXIES)
+    }
+
+    test('клиент с личным выходом идёт в свой экзит', () => {
+      expect(checkFor(MAMA, 'unknown-site.com', '1.0.0.1'))
+        .toMatchObject({ reason: 'client', rule: '', routeId: null, outbound: 'hy2-aa-direct', delay: 40 })
+      expect(check('unknown-site.com', '1.0.0.1')).toMatchObject({ reason: 'default', outbound: 'hy2-bb-direct' })
+    })
+
+    test('личный выход ниже ручных правил, YouTube и РФ', () => {
+      expect(checkFor(MAMA, 'api.openai.com')).toMatchObject({ reason: 'manual', routeId: 2, outbound: 'hy2-bb-warp' })
+      expect(checkFor(MAMA, 'yandex.ru')).toMatchObject({ reason: 'ru', outbound: 'direct-ru' })
+      expect(checkFor(MAMA, 'www.youtube.com')).toMatchObject({ reason: 'youtube', outbound: 'youtube-ru' })
+    })
+
+    test('клиент без личного выхода идёт своей дорожкой', () => {
+      expect(checkFor(OTHER, 'unknown-site.com', '1.0.0.1'))
+        .toMatchObject({ reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-warp', delay: 70 })
+    })
+
+    test('ручное правило из одного IP без маски', () => {
+      const p = buildPlan([{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], {})
+      const q = rc.parseQuery('1.1.1.1')!
+      expect(rc.explain(p, rc.clientConn(q, null), [{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], PROXIES))
+        .toMatchObject({ reason: 'manual', rule: '1.1.1.1/32', routeId: 7, outbound: 'direct-ru' })
+    })
+
+    test('без ответа clash закреплённый выход назван своим именем', () => {
+      const q = rc.parseQuery('api.openai.com')!
+      expect(rc.explain(plan, rc.clientConn(q, null), ROWS, [])).toMatchObject({ reason: 'manual', routeId: 2, outbound: 'hy2-bb-warp', delay: null })
+    })
+
+    test('разбор ввода: ссылка, порт, IDN, мусор', () => {
+      expect(rc.parseQuery(' HTTPS://User@Chatgpt.com:8443/c/1?x ')).toEqual({ domain: 'chatgpt.com', shown: 'chatgpt.com' })
+      expect(rc.parseQuery('пример.рф')).toEqual({ domain: 'xn--e1afmkfd.xn--p1ai', shown: 'пример.рф' })
+      expect(rc.parseQuery('[2001:db8::1]:443')).toEqual({ ip: '2001:db8::1', shown: '2001:db8::1' })
+      expect(rc.parseQuery('1.1.1.1')).toEqual({ ip: '1.1.1.1', shown: '1.1.1.1' })
+      expect(rc.parseQuery('localhost')).toBeNull()
+      expect(rc.parseQuery('   ')).toBeNull()
+    })
+  })
+})
+
+test.describe('visible-outbounds', () => {
+  const proxies: ClashProxy[] = [
+    'hy2-se-direct', 'hy2-se-warp', 'hy2-us-2-direct', 'direct-ru',
+    'hy2-se-mgmt', 'hy2-fr-mgmt', 'hy2-de-mgmt', 'hy2-se-dns',
+    'foreign-best', 'lane-01', 'pin-hy2-se-direct', 'youtube-ru', 'youtube-auto',
+    'block', 'dns-out', 'hy2--direct',
+  ].map(name => ({ name, type: 'Hysteria2', history: [] }))
+  const visible = ['direct-ru', 'hy2-se-direct', 'hy2-us-2-direct', 'hy2-se-warp']
+
+  function clash() {
+    return serverModule<typeof import('../server/utils/clash-client')>(
+      new URL('../server/utils/clash-client.ts', import.meta.url), {
+        './logger': { useLogger: () => ({ warn: () => {} }) },
+        '../../shared/outbounds': outbounds,
+      }, {
+        useRuntimeConfig: () => ({}),
+        $fetch: async () => ({ proxies: Object.fromEntries(proxies.map(p => [p.name, p])) }),
+      },
+    )
   }
 
-  function checkFor(source: string, input: string, ip: string | null = null) {
-    const q = rc.parseQuery(input)!
-    return rc.explain(plan, rc.clientConn(q, ip, source), ROWS, PROXIES)
-  }
-
-  test('клиент с личным выходом идёт в свой экзит', () => {
-    expect(checkFor(MAMA, 'unknown-site.com', '1.0.0.1'))
-      .toMatchObject({ reason: 'client', rule: '', routeId: null, outbound: 'hy2-aa-direct', delay: 40 })
-    expect(check('unknown-site.com', '1.0.0.1')).toMatchObject({ reason: 'default', outbound: 'hy2-bb-direct' })
+  test('API маршрутов и бота показывают только пользовательские выходы, даже без RTT', async () => {
+    const client = clash()
+    const routes = serverModule<{ default: (event: unknown) => Promise<Array<{ name: string }>> }>(
+      new URL('../server/api/routes/outbounds.get.ts', import.meta.url), {
+        '../../utils/auth': { requireAuth: async () => {} },
+        '../../utils/clash-client': client,
+      }, { defineEventHandler: (fn: unknown) => fn },
+    )
+    const bot = serverModule<{ default: (event: unknown) => Promise<{ outbounds: Array<{ name: string }> }> }>(
+      new URL('../server/api/ops/bot-snapshot.get.ts', import.meta.url), {
+        '../../database/client': { useDb: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }) },
+        '../../database/schema': { clients: {} },
+        '../../utils/bot-api': { requireBotAuth: () => {} },
+        '../../utils/client-status': { clientStatus: () => 'active' },
+        '../../utils/clash-client': { ...client, fetchConnections: async () => null },
+        '../../utils/vm-client': { nodeInstances: () => [], fetchNodeMetrics: async () => [] },
+      }, { defineEventHandler: (fn: unknown) => fn },
+    )
+    expect.soft((await routes.default({})).map(p => p.name)).toEqual(visible)
+    expect((await bot.default({})).outbounds.map(p => p.name)).toEqual(visible)
   })
 
-  test('личный выход ниже ручных правил, YouTube и РФ', () => {
-    expect(checkFor(MAMA, 'api.openai.com')).toMatchObject({ reason: 'manual', routeId: 2, outbound: 'hy2-bb-warp' })
-    expect(checkFor(MAMA, 'yandex.ru')).toMatchObject({ reason: 'ru', outbound: 'direct-ru' })
-    expect(checkFor(MAMA, 'www.youtube.com')).toMatchObject({ reason: 'youtube', outbound: 'youtube-ru' })
-  })
-
-  test('клиент без личного выхода идёт своей дорожкой', () => {
-    expect(checkFor(OTHER, 'unknown-site.com', '1.0.0.1'))
-      .toMatchObject({ reason: 'default', rule: '', routeId: null, outbound: 'hy2-bb-warp', delay: 70 })
-  })
-
-  test('ручное правило из одного IP без маски', () => {
-    const p = buildPlan([{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], {})
-    const q = rc.parseQuery('1.1.1.1')!
-    expect(rc.explain(p, rc.clientConn(q, null), [{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], PROXIES))
-      .toMatchObject({ reason: 'manual', rule: '1.1.1.1/32', routeId: 7, outbound: 'direct-ru' })
-  })
-
-  test('без ответа clash закреплённый выход назван своим именем', () => {
-    const q = rc.parseQuery('api.openai.com')!
-    expect(rc.explain(plan, rc.clientConn(q, null), ROWS, [])).toMatchObject({ reason: 'manual', routeId: 2, outbound: 'hy2-bb-warp', delay: null })
-  })
-
-  test('разбор ввода: ссылка, порт, IDN, мусор', () => {
-    expect(rc.parseQuery(' HTTPS://User@Chatgpt.com:8443/c/1?x ')).toEqual({ domain: 'chatgpt.com', shown: 'chatgpt.com' })
-    expect(rc.parseQuery('пример.рф')).toEqual({ domain: 'xn--e1afmkfd.xn--p1ai', shown: 'пример.рф' })
-    expect(rc.parseQuery('[2001:db8::1]:443')).toEqual({ ip: '2001:db8::1', shown: '2001:db8::1' })
-    expect(rc.parseQuery('1.1.1.1')).toEqual({ ip: '1.1.1.1', shown: '1.1.1.1' })
-    expect(rc.parseQuery('localhost')).toBeNull()
-    expect(rc.parseQuery('   ')).toBeNull()
+  test('карточки узлов и парсер UI сохраняют тег с дефисом и исключают служебные выходы', () => {
+    const control = serverModule<typeof import('../server/utils/exit-control')>(
+      new URL('../server/utils/exit-control.ts', import.meta.url), { '../../shared/outbounds': outbounds, './control': {} },
+    )
+    const ui = serverModule<typeof import('../app/composables/useRoutes')>(
+      new URL('../app/composables/useRoutes.ts', import.meta.url), { '#shared/outbounds': outbounds },
+    )
+    expect.soft(control.exitNodeOf('hy2-us-2-direct')).toBe('us-2')
+    expect(ui.parseOutbound('hy2-us-2-direct')).toEqual({ tag: 'us-2', variant: 'direct' })
+    for (const proxy of proxies.filter(p => !visible.includes(p.name))) {
+      expect(control.exitNodeOf(proxy.name)).toBeNull()
+      expect(ui.parseOutbound(proxy.name)).toBeNull()
+    }
   })
 })

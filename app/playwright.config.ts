@@ -6,6 +6,8 @@ import { join } from 'node:path'
 const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:31710'
 const reportDir = process.env.E2E_REPORT_DIR || '.'
 // Эталонные снимки — ручная сверка (VPN2-749): в шарды e2e не входят, идут отдельно с E2E_SHOTS=1 (shots.yml).
+// Сценарии узкого десктопа и телефона лежат в файле своей темы под describe с меткой
+// @narrow или @mobile: проект берёт свои по метке, desktop - всё без метки.
 const shotsIgnore = process.env.E2E_SHOTS ? [] : [/(^|\/)screenshots\.spec\.ts$/]
 
 export default defineConfig({
@@ -43,21 +45,22 @@ export default defineConfig({
     {
       name: 'desktop',
       // qr-size.spec.ts нужна панель с худшим входом, qrencode и zbarimg: его гоняет только e2e/qr-size.sh.
-      testIgnore: [/(^|\/)narrow\.spec\.ts$/, /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/, ...(process.env.QR_MODE ? [] : [/(^|\/)qr-size\.spec\.ts$/]), ...shotsIgnore],
+      testIgnore: [...(process.env.QR_MODE ? [] : [/(^|\/)qr-size\.spec\.ts$/]), ...shotsIgnore],
+      grepInvert: /@mobile|@narrow/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1400, height: 1000 } },
     },
     {
       // Узкий десктоп: до 720px включается мобильный каркас, его держит проект mobile.
       name: 'narrow',
-      testMatch: /(^|\/)(narrow|screenshots)\.spec\.ts$/,
-      testIgnore: shotsIgnore,
+      grep: /@narrow|screenshots\.spec\.ts/,
+      testIgnore: [/(^|\/)qr-size\.spec\.ts$/, ...shotsIgnore],
       use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } },
     },
     {
-      // Все телефонные сценарии: mobile.spec.ts и mobile-<раздел>.spec.ts.
+      // Все телефонные сценарии: describe с меткой @mobile в файле своей темы.
       name: 'mobile',
-      testMatch: /(^|\/)(mobile(-[\w-]+)?|screenshots)\.spec\.ts$/,
-      testIgnore: shotsIgnore,
+      grep: /@mobile|screenshots\.spec\.ts/,
+      testIgnore: [/(^|\/)qr-size\.spec\.ts$/, ...shotsIgnore],
       use: { ...devices['Desktop Chrome'], viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
     },
   ],

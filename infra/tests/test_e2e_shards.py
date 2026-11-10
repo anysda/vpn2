@@ -25,6 +25,29 @@ class ShardTests(unittest.TestCase):
         self.assertEqual(groups[0], ['heavy.spec.ts'])
         self.assertEqual(groups, runner.assign_files(list(reversed(files)), 2, {'heavy.spec.ts': 30}))
 
+    def test_themed_spec_splits_into_measured_describes_and_tests(self):
+        def line(file, *path, project='desktop'):
+            return file, ' › '.join([f'[{project}]', file, *path])
+
+        tests = [
+            line('theme.spec.ts', 'first', 'a'), line('theme.spec.ts', 'first', 'inner', 'b'),
+            line('theme.spec.ts', 'phone', 'c', project='mobile'), line('theme.spec.ts', 'phone', 'd', project='mobile'),
+            line('half.spec.ts', 'known', 'e'), line('half.spec.ts', 'unknown', 'f'),
+            line('bare.spec.ts', 'g'),
+        ]
+        weights = {'theme.spec.ts › first': 7, tests[2][1]: 3, tests[3][1]: 4,
+                   'half.spec.ts › known': 5, 'half.spec.ts': 9}
+        units, unit_weights = runner.split_units(['theme.spec.ts', 'half.spec.ts', 'bare.spec.ts'], tests, weights)
+        self.assertEqual(units, ['theme.spec.ts › first', tests[2][1], tests[3][1], 'half.spec.ts', 'bare.spec.ts'])
+        self.assertEqual([unit_weights[unit] for unit in units], [7, 3, 4, 9, 10])
+        groups = runner.assign_files(units, 3, unit_weights)
+        ran = sorted(test for group in groups for test in runner.panel_tests(group, tests))
+        self.assertEqual(ran, sorted(test for _, test in tests))
+        with tempfile.TemporaryDirectory() as tmp:
+            arguments = runner.panel_arguments(['theme.spec.ts › first'], tests, Path(tmp))
+            self.assertEqual(arguments[:2], [r'e2e/theme\.spec\.ts$', '--test-list-invert'])
+            self.assertEqual((Path(tmp) / 'elsewhere.txt').read_text().splitlines(), [tests[2][1], tests[3][1]])
+
     def run_gate(self, codes=(0, 0), missing=False, cancel=False, browser_port='52001', full=False,
                  default_ports=False):
         started = []

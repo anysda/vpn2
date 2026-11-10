@@ -249,3 +249,64 @@ def test_nft_preserve_writes_dropin_once(tmp_path):
     assert calls == [['systemctl', 'daemon-reload']]
     assert host.nft_preserve(root=tmp_path, run=run) is False
     assert len(calls) == 1
+
+
+class SwapNode:
+    """Узел 2 ГБ без swap: swapon не берёт файл с дырами, пока его не записал dd."""
+
+    def __init__(self, tmp_path, monkeypatch, *, virt='none'):
+        self.root, self.calls, self.virt = tmp_path, [], virt
+        self.file = tmp_path / 'swapfile'
+        for name, text in (('proc/meminfo', 'MemTotal: 2014000 kB\n'), ('proc/swaps', 'Filename Type\n'),
+                           ('etc/fstab', '/dev/vda1 / ext4 defaults 0 1\n'), ('etc/sysctl.d/.keep', '')):
+            (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / name).write_text(text)
+        monkeypatch.setattr(swap, 'SWAPFILE', str(self.file))
+        monkeypatch.setattr(swap, '_ok', self.ok)
+        monkeypatch.setattr(swap.shutil, 'which', lambda _name: '/usr/bin/systemd-detect-virt')
+        monkeypatch.setattr(swap.shutil, 'disk_usage', lambda _path: types.SimpleNamespace(free=20 * 1024 ** 3))
+        monkeypatch.setattr(swap.subprocess, 'run', self.run)
+        self.written = False
+
+    def run(self, *_, **__):
+        return types.SimpleNamespace(stdout=self.virt + '\n', returncode=0)
+
+    def ok(self, argv):
+        self.calls.append(argv[0])
+        if argv[0] == 'fallocate':
+            self.file.write_bytes(b'')
+        if argv[0] == 'dd':
+            self.file.write_bytes(b'')
+            self.written = True
+        return argv[0] != 'swapon' or self.written
+
+
+def test_swap_holey_file_recreated_with_dd(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch), []
+    node.file.write_bytes(b'')
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path) is True
+    assert lines == [f'swap: включаю имеющийся {node.file}', f'swap: {node.file} не включается, пересоздаю',
+                     f'swap: {node.file} 1966 МиБ (RAM 1966 МиБ; свободно 20480 МиБ)']
+    assert node.calls == ['swapon', 'mkswap', 'swapon', 'dd', 'mkswap', 'swapon']
+    assert (tmp_path / 'etc/fstab').read_text().endswith(f'{node.file} none swap sw 0 0\n')
+    assert (tmp_path / 'etc/sysctl.d/60-anysda-swap.conf').read_text() == 'vm.swappiness = 10\n'
+
+
+def test_swap_fresh_node_falls_back_from_fallocate_to_dd(tmp_path, monkeypatch):
+    node = SwapNode(tmp_path, monkeypatch)
+    assert swap.ensure(tmp_path / 'none.json', lambda _text: None, root=tmp_path) is True
+    assert node.calls == ['fallocate', 'mkswap', 'swapon', 'dd', 'mkswap', 'swapon']
+
+
+def test_swap_skipped_in_container_and_with_active_swap(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch, virt='lxc'), []
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path) is False
+    assert lines == ['swap пропущен: контейнер (lxc)']
+    node.virt = 'none'
+    (tmp_path / 'proc/swaps').write_text('Filename Type\n/swapfile file 1 0 -2\n')
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path) is False
+    assert node.calls == []
+
+
+def test_f2b_ignore_skips_garbage():
+    assert host.f2b_ignore('127.0.0.1 1 22', 'entry.example', lambda _name: ['not-an-ip;rm']) == ['127.0.0.1/8', '::1']

@@ -128,7 +128,7 @@ class Run:
                 patch.object(w, '_bot_event', side_effect=self.event, create=True), \
                 contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.out):
             try:
-                w.main()
+                w.main(serial=True)
             except Stop:
                 pass
         return self

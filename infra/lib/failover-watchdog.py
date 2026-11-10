@@ -201,6 +201,8 @@ _hy2_rise: dict = {}      # selector -> monotonic возврата TCP при м
 _restart_gen = 0          # перезапусков sing-box сторожем
 _rise_gen = 0             # сколько из них transport_tick уже учёл
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
+_known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
+_slow_probes: dict = {}   # тег -> (поток, итог, причины) пробы, которую не стали ждать
 _lane_back: dict = {}     # lane -> monotonic последнего возврата с warp
 # «Медленный» решаем по СГЛАЖЕННОЙ задержке (QUIC-замеры шумят ±300-500мс,
 # одиночный всплеск в 1-2с — норма) и только если она держится за порогом
@@ -267,6 +269,9 @@ _stuck_heals: dict = {}   # выход -> перезапусков ради не
 # параметр timeout и виснет — поэтому delay-пробу ограничиваем сами.
 PROBE_HTTP_TIMEOUT = TIMEOUT_MS / 1000.0 + 0.5   # таймаут urlopen для delay-пробы
 JOIN_DEADLINE      = PROBE_HTTP_TIMEOUT + 0.5    # тик не ждёт проб дольше этого
+# Канал, чья смерть уже учтена, проверка каналов ждёт столько: его тайм-аут
+# не держит пробу живых. Ожил и ответил позже - итог заберёт следующий проход.
+KNOWN_DEAD_WAIT    = min(0.3, PROBE_HTTP_TIMEOUT)
 API_TIMEOUT        = 5.0                         # таймаут обычных GET/PUT группы
 
 
@@ -311,19 +316,35 @@ def _probe(tag, out, errs=None, url=PROBE_URL):
             errs[tag] = _classify_probe_error(e)
 
 
-def _probe_all(members, url=PROBE_URL):
+def _probe_all(members, url=PROBE_URL, known_dead=None):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
-    мёртвый экзит не тормозит остальных."""
-    out: dict = {}
-    errs: dict = {}
-    threads = [threading.Thread(target=_probe, args=(m, out, errs, url), daemon=True)
-               for m in members]
-    for t in threads:
-        t.start()
-    deadline = time.monotonic() + JOIN_DEADLINE
-    for t in threads:
-        t.join(max(0.0, deadline - time.monotonic()))
-    return {m: out.get(m) for m in members}, errs
+    мёртвый экзит не тормозит остальных.
+    known_dead задаёт проверка каналов: теги, чья смерть уже учтена. Их ответа
+    ждём только KNOWN_DEAD_WAIT; не дождались - проба идёт дальше, её итог
+    заберёт следующий такой опрос."""
+    probes = {}
+    for m in members:
+        probe = _slow_probes.pop(m, None) if known_dead is not None else None
+        if probe is None or m not in known_dead:
+            out: dict = {}
+            errs: dict = {}
+            thread = threading.Thread(target=_probe, args=(m, out, errs, url), daemon=True)
+            thread.start()
+            probe = (thread, out, errs)
+        probes[m] = probe
+    hurry = known_dead or ()
+    start = time.monotonic()
+    for m in sorted(probes, key=lambda m: m in hurry):
+        wait = KNOWN_DEAD_WAIT if m in hurry else JOIN_DEADLINE
+        probes[m][0].join(max(0.0, start + wait - time.monotonic()))
+    result: dict = {}
+    errors: dict = {}
+    for m, (thread, out, errs) in probes.items():
+        if m in hurry and thread.is_alive():
+            _slow_probes[m] = probes[m]
+        result[m] = out.get(m)
+        errors.update(errs)
+    return result, errors
 
 
 def _switch(target, delay_ms, reason):
@@ -1282,6 +1303,8 @@ def transport_tick(proxies):
     Так же промах пробы hy2 обнуляет окно только после DEAD_AFTER промахов подряд.
     После полной аварии канала или перезапуска sing-box мёртвый hy2 при живом
     TCP - подъём QUIC, на TCP только через HY2_RISE с возврата TCP.
+    Мёртвый канал не задерживает живые: смерть, учтённую прошлым проходом,
+    не ждём дольше KNOWN_DEAD_WAIT и заново не до-проверяем.
     Событие узла «UDP недоступен / снова работает» - по каналу direct.
     Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
     global _rise_gen
@@ -1294,34 +1317,51 @@ def transport_tick(proxies):
         _rise_gen = _restart_gen
         for s in deciders.keys() - on_tcp:
             _hy2_rise.setdefault(s, None)
-    delays, _ = _probe_all([v[0] for v in deciders.values()]
-                           + [v[1] for s, v in deciders.items() if s in on_tcp])
+    # Смерть, учтённую прошлым проходом, не ждём и заново не до-проверяем:
+    # вердикт по такому каналу до-проверка уже не меняет.
+    known = _known_dead & {t for v in deciders.values() for t in v[:2]}
+    spare = {v[0]: v[1] for v in deciders.values()}
+    first = [v[0] for v in deciders.values()] \
+        + [v[1] for s, v in deciders.items() if s in on_tcp or v[0] in known]
+    delays, _ = _probe_all(first, known_dead=known)
+    tries = dict.fromkeys(first, 1)
     dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
+    fresh = [h for h in dead if h not in known]
     tcp_dead = [v[1] for s, v in deciders.items()
                 if s in on_tcp and delays[v[0]] is not None and delays[v[1]] is None]
-    hy2_miss = [v[0] for s, v in deciders.items() if s in on_tcp and delays[v[0]] is None]
+    # Промах hy2 канала на TCP до-проверяем, пока идёт окно возврата: без окна
+    # обнулять нечего.
+    hy2_miss = [v[0] for s, v in deciders.items()
+                if s in on_tcp and delays[v[0]] is None and s in _hy2_since]
     for _ in range(DEAD_AFTER - 1):
-        if not dead and not tcp_dead and not hy2_miss:
+        if not fresh and not tcp_dead and not hy2_miss:
             break
         time.sleep(CONFIRM_GAP)
-        again, _ = _probe_all(dead + tcp_dead + hy2_miss)
-        dead = [h for h in dead if again[h] is None]
+        # TCP канала пробуем той же пачкой, что и до-проверку его hy2: решение
+        # готово вместе с вердиктом по hy2, а не ещё через тайм-аут.
+        tcp_try = [spare[h] for h in fresh if delays.get(spare[h]) is None]
+        again, _ = _probe_all(fresh + tcp_dead + hy2_miss + tcp_try, known_dead=set())
+        for t in tcp_try:
+            tries[t] = tries.get(t, 0) + 1
+            delays[t] = again[t]
+        fresh = [h for h in fresh if again[h] is None]
         tcp_dead = [t for t in tcp_dead if again[t] is None]
         delays.update({h: again[h] for h in hy2_miss if again[h] is not None})
         hy2_miss = [h for h in hy2_miss if again[h] is None]
-    if dead:
-        delays.update(_probe_all([deciders[s][1] for s in deciders
-                                  if deciders[s][0] in dead])[0])
-    # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка,
-    # иначе канал остаётся на мёртвом hy2.
-    tcp_miss = [v[1] for v in deciders.values() if v[0] in dead and delays.get(v[1]) is None]
-    for _ in range(DEAD_AFTER - 1):
+    dead = [h for h in dead if h in known or h in fresh]
+    # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка
+    # до DEAD_AFTER проб, иначе канал остаётся на мёртвом hy2.
+    while True:
+        tcp_miss = [spare[h] for h in dead if delays.get(spare[h]) is None
+                    and spare[h] not in known and tries.get(spare[h], 0) < DEAD_AFTER]
         if not tcp_miss:
             break
-        time.sleep(CONFIRM_GAP)
-        again, _ = _probe_all(tcp_miss)
-        delays.update({t: again[t] for t in tcp_miss if again[t] is not None})
-        tcp_miss = [t for t in tcp_miss if again[t] is None]
+        if any(tries.get(t) for t in tcp_miss):
+            time.sleep(CONFIRM_GAP)
+        again, _ = _probe_all(tcp_miss, known_dead=set())
+        for t in tcp_miss:
+            tries[t] = tries.get(t, 0) + 1
+            delays[t] = again[t]
     now = time.monotonic()
     # Авария связи с узлом - не отвечает ни один его канал ни по hy2, ни по TCP.
     # Один мёртвый канал при живом соседнем - промах пробы, не авария.
@@ -1355,6 +1395,12 @@ def transport_tick(proxies):
             want[s] = hy2
         else:
             want[s] = tcp
+    _known_dead.clear()
+    for s, (hy2, tcp, _, _) in deciders.items():
+        if delays[hy2] is None if s in on_tcp else hy2 in dead:
+            _known_dead.add(hy2)
+            if delays.get(tcp) is None:
+                _known_dead.add(tcp)
     lead = {v[2]: want[s] == v[1] for s, v in deciders.items() if v[3] == 'direct'}
     for s, (hy2, tcp, node, kind) in pairs.items():
         if kind == 'mgmt':
@@ -1376,7 +1422,22 @@ def transport_tick(proxies):
                        f'Hysteria2 жив {TCP_RETURN:.0f} с подряд, каналы вернулись с TCP')
 
 
-def main():
+def _transport_pass():
+    try:
+        transport_tick(_req('GET', '/proxies').get('proxies') or {})
+    except Exception as e:
+        print(f'transport error: {e}', file=sys.stderr, flush=True)
+
+
+def _transport_loop():
+    """Свой такт проверки каналов: остальные проходы цикла её не задерживают."""
+    while True:
+        _transport_pass()
+        time.sleep(INTERVAL)
+
+
+def main(serial=False):
+    """serial - проверка каналов в общем цикле, для тестов на модельных часах."""
     if not SECRET:
         print('CLASH_SECRET не задан', file=sys.stderr)
         sys.exit(1)
@@ -1391,11 +1452,11 @@ def main():
           f'restart_min={RESTART_MIN_INTERVAL:.0f}s tcp_return={TCP_RETURN:.0f}s', flush=True)
     _load_lane_moved()
     _load_restart()
+    if not serial:
+        threading.Thread(target=_transport_loop, daemon=True).start()
     while True:
-        try:
-            transport_tick(_req('GET', '/proxies').get('proxies') or {})
-        except Exception as e:
-            print(f'transport error: {e}', file=sys.stderr, flush=True)
+        if serial:
+            _transport_pass()
         try:
             tick()
         except Exception as e:

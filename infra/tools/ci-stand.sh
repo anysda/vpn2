@@ -510,8 +510,10 @@ push_tree() {
         # отслеживаемый infra/secrets/.gitignore ложится как в чистой установке
         git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml'
         # --no-renames: переименованный после тега файл считается удалённым, старое имя стирается
+        # опустевший каталог уходит вместе с файлом, как при git pull: иначе слепок
+        # видит каталог, которого в чистой установке нет
         git -C "$REPO_ROOT" diff -z --name-only --no-renames --diff-filter=D "${tag:?тег}" HEAD \
-          | ssh_node "$ENTRY" 'xargs -0 -r -I{} rm -f -- "/opt/anysda-vpn2/{}"'
+          | ssh_node "$ENTRY" 'cd /opt/anysda-vpn2 && xargs -0 -r sh -c '\''for f; do rm -f -- "$f"; d=$(dirname -- "$f"); [ "$d" = . ] || rmdir -p --ignore-fail-on-non-empty -- "$d" 2>/dev/null || true; done'\'' _'
         return 0 ;;
     *) die "push_tree: неизвестный режим $mode" ;;
   esac

@@ -134,7 +134,7 @@ PKGS=(wireguard wireguard-tools
       ufw fail2ban
       jq qrencode unzip git openssh-client
       iptables nftables netcat-openbsd
-      python3 python3-yaml)
+      python3 python3-yaml python3-venv)
 SKIP=()
 # Пакеты стадий ru (29, 19, 22, 26, 27) - сюда же: entry кончает bootstrap
 # раньше экзитов и ждёт их, а потом стадии ставили бы своё по одному apt на
@@ -165,6 +165,40 @@ if ! apt_have "${PKGS[@]}"; then
 fi
 nftables_preserve_rules
 [[ "$HOST_TAG" != ru ]] || systemctl enable --now docker >/dev/null 2>&1 || true
+# --- venv vpn2: начало
+# Колесо vpn2 кладёт оркестратор в /tmp/anysda/vpn2-<версия>-py3-none-any.whl;
+# ставим без сети в /opt/vpn2/venv (PyYAML берём из apt через system-site-packages).
+VPN2_ROOT="${VPN2_ROOT:-/opt/vpn2}"
+VPN2_WHEEL_DIR="${VPN2_WHEEL_DIR:-/tmp/anysda}"
+VPN2_PIP_DIR="${VPN2_PIP_DIR:-/usr/share/python-wheels}"
+vpn2_wheel=
+for vpn2_cand in "$VPN2_WHEEL_DIR"/vpn2-*.whl; do
+  [[ -f "$vpn2_cand" ]] && vpn2_wheel=$vpn2_cand
+done
+if [[ -z "$vpn2_wheel" ]]; then
+  echo "[$HOST_TAG] колесо vpn2 не передано, venv не трогаю"
+else
+  vpn2_sha=$(sha256sum "$vpn2_wheel")
+  vpn2_sha=${vpn2_sha%% *}
+  vpn2_mark=
+  [[ -f "$VPN2_ROOT/venv/.vpn2-wheel" ]] && vpn2_mark=$(<"$VPN2_ROOT/venv/.vpn2-wheel")
+  if [[ "$vpn2_sha" != "$vpn2_mark" ]]; then
+    echo "[$HOST_TAG] venv vpn2: ставлю ${vpn2_wheel##*/}"
+    vpn2_pip=
+    for vpn2_cand in "$VPN2_PIP_DIR"/pip-*.whl; do
+      [[ -e "$vpn2_cand" ]] && vpn2_pip=$vpn2_cand
+    done
+    if [[ -z "$vpn2_pip" ]] \
+       || ! python3 -m venv --without-pip --system-site-packages --clear "$VPN2_ROOT/venv" \
+       || ! python3 "$vpn2_pip/pip" --python "$VPN2_ROOT/venv/bin/python" install \
+            --no-index --no-deps --disable-pip-version-check "$vpn2_wheel" >/dev/null; then
+      echo "[$HOST_TAG] ОШИБКА: не удалось поставить колесо vpn2 в $VPN2_ROOT/venv" >&2
+      exit 1
+    fi
+    echo "$vpn2_sha" > "$VPN2_ROOT/venv/.vpn2-wheel"
+  fi
+fi
+# --- venv vpn2: конец
 # Note: iptables-persistent/netfilter-persistent conflict with ufw — we use
 # ufw for the firewall and manage routing-specific iptables rules via systemd
 # oneshot units (later stages).

@@ -1,0 +1,6 @@
+# Контекст сборки - корень репы: берём только три пути, нужных образу бота.
+*
+!telegram/requirements.txt
+!telegram/vpn2bot
+!app/shared/error-text.json
+**/__pycache__

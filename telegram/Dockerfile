@@ -1,8 +1,11 @@
+# Контекст сборки - корень репы: в образ идёт ещё и app/shared/error-text.json.
 FROM mirror.gcr.io/library/python:3.15-slim
 WORKDIR /app
-COPY requirements.txt .
+COPY telegram/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY vpn2bot ./vpn2bot
+COPY telegram/vpn2bot ./vpn2bot
+# Общий с панелью файл текстов ошибок: бот ищет его рядом с собой.
+COPY --chmod=0644 app/shared/error-text.json ./vpn2bot/error-text.json
 USER 10002:10002
 # Проверяем не «жив ли процесс», а «жив ли поллер»: 03-08-2026 контейнер 38 часов
 # показывал Up, пока getUpdates молча не работал. /health отдаёт 503, если ответа

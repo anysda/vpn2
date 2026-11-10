@@ -26,8 +26,10 @@ jobs:
         include:
           - name: panel
             context: app
+          # Бот: контекст - корень репы, в образ идёт app/shared/error-text.json.
           - name: tgbot
-            context: telegram
+            context: .
+            file: telegram/Dockerfile
           # Аварийный фронт: агент, статика панели и /instructions.
           - name: emergency
             context: .
@@ -92,6 +94,20 @@ jobs:
           "import ast, glob, os, telegram, aiohttp, qrcode;
           [ast.parse(open(p).read()) for p in glob.glob('vpn2bot/*.py')];
           assert os.path.isfile('vpn2bot/__main__.py')"
+
+      # Тексты ошибок в образе должны совпадать с файлом репы на этом коммите,
+      # иначе бот молча покажет людям устаревшие.
+      - name: smoke tgbot error-text
+        if: matrix.name == 'tgbot'
+        run: |
+          set -o pipefail
+          in_image=$(docker run --rm --entrypoint sha256sum smoke/tgbot /app/vpn2bot/error-text.json | cut -d' ' -f1) \
+            || { echo "::error::в образе tgbot нет /app/vpn2bot/error-text.json"; exit 1; }
+          in_repo=$(sha256sum app/shared/error-text.json | cut -d' ' -f1)
+          if [ -z "$in_image" ] || [ "$in_image" != "$in_repo" ]; then
+            echo "::error::error-text.json в образе tgbot ($in_image) не равен файлу репы ($in_repo)"
+            exit 1
+          fi
 
       # Аварийку деплой ставит без запуска контейнера: пакет и статику
       # копирует из остановленного контейнера и запускает хостовым python.

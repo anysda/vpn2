@@ -16,11 +16,8 @@ IKEV2_PACKAGES = (
 class AptRecommendsTests(unittest.TestCase):
     def run_packages(self, stage, missing, role='ru'):
         text = source(f'infra/scripts/{stage}.sh')
-        if stage == '27-ikev2':
-            block = text.split('# ── 1. apt strongswan', 1)[1]
-            block = block[block.index('\n'):].split('# ── 2. Server certs', 1)[0]
-        else:
-            block = 'PKGS=(' + text.split('PKGS=(', 1)[1].split('\nnftables_preserve_rules', 1)[0]
+        block = text.split('# ── 1. apt strongswan', 1)[1]
+        block = block[block.index('\n'):].split('# ── 2. Server certs', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
             result = bash(source('infra/lib/anysda-svc.sh') + f'''
 HOST_TAG={role}
@@ -61,10 +58,16 @@ docker_apt_source() {{ :; }}
         self.assertEqual(self.run_packages('27-ikev2', 'none'), '')
 
     def test_bootstrap_repairs_required_packages(self):
-        for package in (*IKEV2_PACKAGES, 'openssh-client'):
+        # Доустановку недостающего ведёт шаг apt пакета vpn2; роль отдаёт ему
+        # полный список, и пакеты IKEv2 в нём названы поимённо.
+        defaults = source('infra/ansible/roles/base/defaults/main.yml')
+        common = defaults.split('base_packages_common:', 1)[1].split('base_packages_entry:', 1)[0]
+        entry = defaults.split('base_packages_entry:', 1)[1].split('base_packages_zapret:', 1)[0]
+        self.assertIn('  - openssh-client\n', common)
+        for package in IKEV2_PACKAGES:
             with self.subTest(package=package):
-                calls = self.run_packages('00-bootstrap', package)
-                self.assertIn(package, calls.split(), 'bootstrap omitted required package')
+                self.assertIn(f'  - {package}\n', entry, 'bootstrap omitted required package')
+        self.assertIn('+ (base_packages_entry if base_entry else [])', defaults)
 
     def test_restored_plugin_restarts_charon_but_unchanged_repeat_does_not(self):
         stage = source('infra/scripts/27-ikev2.sh')

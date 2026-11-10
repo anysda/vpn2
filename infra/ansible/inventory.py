@@ -5,13 +5,13 @@ import os
 import sys
 from pathlib import Path
 
-from vpn2.config import Config, ConfigError, load
+from vpn2.config import STATE_DIR, Config, ConfigError, load
 
 
-def inventory(cfg: Config, infra: Path) -> dict:
+def inventory(cfg: Config, state: Path) -> dict:
     """Инвентарь в формате ansible --list; те же опции ssh, что у bash-деплоя."""
     common_args = ' '.join((
-        f'-o UserKnownHostsFile={infra}/.known_hosts',
+        f'-o UserKnownHostsFile={state}/known_hosts',
         '-o StrictHostKeyChecking=accept-new',
         '-o PreferredAuthentications=publickey,password',
         '-o ConnectTimeout=10',
@@ -46,7 +46,7 @@ def main(argv):
         except (OSError, ConfigError) as error:
             print(f'inventory.py: {error}', file=sys.stderr)
             return 1
-        print(json.dumps(inventory(cfg, infra), indent=2, sort_keys=True))
+        print(json.dumps(inventory(cfg, STATE_DIR), indent=2, sort_keys=True))
         return 0
     if len(argv) == 2 and argv[0] == '--host':
         print('{}')

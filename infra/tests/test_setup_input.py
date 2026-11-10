@@ -40,7 +40,7 @@ def prepare(directory):
 def run_setup(directory, answers):
     with subprocess.Popen(['bash', '-c', COMMAND], cwd=directory,
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                          text=True, start_new_session=True, env={**os.environ, 'HOME': directory}) as process:
+                          text=True, start_new_session=True, env={**os.environ, 'HOME': directory, 'VPN2_STATE_DIR': f'{directory}/state'}) as process:
         try:
             output, _ = process.communicate(answers, timeout=5)
         except subprocess.TimeoutExpired:
@@ -349,7 +349,7 @@ youtube:
             token_echo = None
             with subprocess.Popen(['bash', '-c', COMMAND], cwd=directory, stdin=slave,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  start_new_session=True, env={**os.environ, 'HOME': directory}) as process:
+                                  start_new_session=True, env={**os.environ, 'HOME': directory, 'VPN2_STATE_DIR': f'{directory}/state'}) as process:
                 try:
                     for prompt, answer in prompts:
                         deadline = time.monotonic() + 5

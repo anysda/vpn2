@@ -111,7 +111,7 @@ class Node:
         for name in ('config-set-port.py', 'config2env.py'):
             (self.root / 'lib' / name).write_text(RECORDER)
         (self.root / 'state/excluded-exits.txt').write_text(OLD_EXCLUDED)
-        (self.root / '.known_hosts').touch()
+        (self.root / 'state/known_hosts').touch()
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (self.fake / 'bin' / name).write_text(text)
             (self.fake / 'bin' / name).chmod(0o755)
@@ -122,8 +122,8 @@ class Node:
         deploy = (ROOT / 'infra/deploy.sh').read_text()
         deploy = deploy[deploy.index('_STAGE_LOG='):deploy.index('# Без аргументов → полный pipeline.')]
         script = '''set -euo pipefail
-DEPLOY_ROOT=$PWD
-export DEPLOY_ROOT
+DEPLOY_ROOT=$PWD VPN2_STATE_DIR=$PWD/state
+export DEPLOY_ROOT VPN2_STATE_DIR
 source "$DEPLOY_ROOT/lib/ssh.sh"
 ''' + deploy + r'''
 C_R= C_G= C_Y= C_B= C_END=

@@ -88,7 +88,7 @@ class WindowTests(unittest.TestCase):
                 result = subprocess.run(
                     [sys.executable, str(ROOT / 'infra/lib/config2env.py'), directory],
                     text=True, capture_output=True, check=False,
-                )
+                                        env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
                 if scale in ('15', '-1', '09', 'auto'):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn('youtube.window_scale', result.stderr)

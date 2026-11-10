@@ -1,4 +1,5 @@
 """Hysteria2 и служебный канал до экзита идут только с закреплённым сертификатом."""
+import os
 import json
 from pathlib import Path
 import subprocess
@@ -47,7 +48,8 @@ class ExitPinTests(unittest.TestCase):
             (root / 'config.yaml').write_text(base.replace(
                 '    host: 5.6.7.8\n', '    host: 5.6.7.8\n    hy2_insecure: true\n'))
             result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), tmp],
-                                    capture_output=True, text=True)
+                                    capture_output=True, text=True,
+                                    env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
             self.assertEqual(result.returncode, 0, result.stderr)
             env = (root / 'infra/envs/all.env').read_text()
             self.assertIn('US_HY2_INSECURE=1\n', env)

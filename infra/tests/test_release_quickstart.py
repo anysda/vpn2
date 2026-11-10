@@ -101,7 +101,8 @@ install_prereqs() {{ echo UNEXPECTED_REMOTE_CHANGE; exit 99; }}
 release_start
 '''
         env = dict(os.environ, DEPLOY_ROOT=str(ROOT / 'infra'), VPN2_DEVELOPMENT='false',
-                   VPN2_RELEASE_SOURCE=source, PATH=f'{self.work / "bin"}:{os.environ["PATH"]}')
+                   VPN2_RELEASE_SOURCE=source, VPN2_STATE_DIR=str(self.work / 'state'),
+                   PATH=f'{self.work / "bin"}:{os.environ["PATH"]}')
         env.pop('VPN2_RELEASE_MANIFEST', None)
         result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env,
                                 capture_output=True, text=True, timeout=60)
@@ -176,7 +177,7 @@ release_start
         (self.work / 'config.yaml').write_text(config)
         for development, expected in (('false', None), ('true', "PANEL_IMAGE='ghcr.io/anysda/vpn2/panel:1.0.0'")):
             result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), str(self.work)],
-                                    env=dict(os.environ, VPN2_DEVELOPMENT=development),
+                                    env=dict(os.environ, VPN2_STATE_DIR=f'{self.work}/state', VPN2_DEVELOPMENT=development),
                                     capture_output=True, text=True, timeout=60)
             self.assertEqual(result.returncode, 0, result.stderr)
             env = (self.work / 'infra/envs/ru.env').read_text()

@@ -40,7 +40,8 @@ class ConfigPermissionTests(unittest.TestCase):
 
         mask = os.umask(0o022)
         try:
-            with patch('sys.argv', ['config2env.py', directory]), patch.object(Path, 'write_text', check_private):
+            with patch('sys.argv', ['config2env.py', directory]), patch.object(Path, 'write_text', check_private), \
+                    patch.dict(os.environ, VPN2_STATE_DIR=f'{directory}/state'):
                 module.main()
             self.assertCountEqual(written, ['ru.env', 'se.env'])
             for name in written:

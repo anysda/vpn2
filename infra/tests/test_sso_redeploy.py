@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 import subprocess
@@ -17,7 +18,8 @@ class SsoRedeployTests(unittest.TestCase):
                     'exits:\n  - tag: se\n    host: 192.0.2.2\n    password: test-only\n'
                     'sso:\n  enabled: true\n  client_secret: ""\n' + seed)
                 result = subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), directory],
-                                        text=True, capture_output=True, timeout=10)
+                                        text=True, capture_output=True, timeout=10,
+                                        env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 env = (root / 'infra/envs/ru.env').read_text()
                 self.assertIn("SSO_REQUESTED='true'", env)

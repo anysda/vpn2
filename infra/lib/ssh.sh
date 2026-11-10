@@ -74,10 +74,15 @@ expand_hosts() {
 # SSHPASS экспортируется per-call чтобы пароль не светился в `ps aux`.
 #
 # Host-key policy: первое подключение к ноде закрепляет её host-key в
-# $DEPLOY_ROOT/.known_hosts (TOFU). При повторном деплое подмена ключа =
+# $VPN2_STATE_DIR/known_hosts (TOFU). При повторном деплое подмена ключа =
 # отказ соединения.
-_known_hosts="${DEPLOY_ROOT}/.known_hosts"
-[[ -f "$_known_hosts" ]] || { touch "$_known_hosts"; chmod 600 "$_known_hosts"; }
+# Тот же путь по умолчанию, что в infra/lib/state-dir.sh: оркестратор и стадии
+# получают его отсюда, верхний deploy.sh - оттуда.
+: "${VPN2_STATE_DIR:=/var/lib/anysda-vpn2/state}"
+export VPN2_STATE_DIR
+_known_hosts="$VPN2_STATE_DIR/known_hosts"
+# Каталог создаёт deploy.sh (state_dir_ensure); здесь только сам файл.
+[[ -f "$_known_hosts" || ! -d "${_known_hosts%/*}" ]] || { touch "$_known_hosts"; chmod 600 "$_known_hosts"; }
 _ssh_opts=(
   -o StrictHostKeyChecking=accept-new
   -o UserKnownHostsFile="$_known_hosts"

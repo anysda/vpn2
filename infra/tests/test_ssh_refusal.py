@@ -34,7 +34,8 @@ def run(case_err, case_rc, body):
         script = f'''
 export PATH="$PWD/bin:$PATH" CALLS="$PWD/calls" FAKE_RC={case_rc}
 FAKE_ERR=$(cat err); export FAKE_ERR
-DEPLOY_ROOT=$PWD
+DEPLOY_ROOT=$PWD VPN2_STATE_DIR=$PWD/state
+mkdir state
 source {ROOT}/infra/lib/ssh.sh
 sleep() {{ :; }}
 SSH_USER=root SSH_HOST=203.0.113.7 SSH_PASS=secret
@@ -42,7 +43,7 @@ SSH_USER=root SSH_HOST=203.0.113.7 SSH_PASS=secret
 '''
         result = bash(script, directory)
         calls = (root / 'calls').read_text().count('call') if (root / 'calls').exists() else 0
-        return result, calls, str(root / '.known_hosts')
+        return result, calls, str(root / 'state/known_hosts')
 
 
 PREFLIGHT = (''.join(function(name) for name in

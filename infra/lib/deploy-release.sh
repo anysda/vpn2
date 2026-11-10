@@ -38,7 +38,7 @@ release_start() {
   if [[ "${VPN2_DEVELOPMENT:-false}" != true && "$action" != rollback ]]; then
     # Без --manifest берётся опубликованный манифест commit этого дерева.
     if [[ -z "${VPN2_RELEASE_MANIFEST:-}" ]]; then
-      VPN2_RELEASE_MANIFEST=$DEPLOY_ROOT/state/release-manifest.json
+      VPN2_RELEASE_MANIFEST=$VPN2_STATE_DIR/release-manifest.json
       python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" fetch "$DEPLOY_ROOT/.." || exit 1
     fi
     python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.." || exit 1

@@ -637,12 +637,26 @@ def materialize_orchestrator_key(cfg):
     print('orchestrator-ключ восстановлен из config.yaml')
 
 
+def state_dir():
+    """Каталог состояния деплоя на entry; тот же путь, что в infra/lib/state-dir.sh."""
+    return Path(os.environ.get('VPN2_STATE_DIR') or '/var/lib/anysda-vpn2/state')
+
+
+def state_file_for_read(repo_root, name):
+    """Файл состояния для чтения. До первого deploy.sh нового выпуска состояние
+    ещё лежит в checkout (infra/state): setup.sh зовёт нас раньше переноса, и
+    засев октетов заново сменил бы адреса mesh."""
+    current = state_dir() / name
+    legacy = repo_root / 'infra' / 'state' / name
+    return legacy if not current.exists() and legacy.exists() else current
+
+
 def load_excluded_exits(repo_root):
-    """Читает infra/state/excluded-exits.txt — список тегов экзитов, которые
+    """Читает excluded-exits.txt из каталога состояния — список тегов экзитов, которые
     probe_udp_or_exclude() (в deploy.sh) пометил как недостижимые по UDP с
     RU направления. Эти экзиты исключаются из всех env-файлов на каждой
     регенерации envs (одиночные стадии тоже подхватывают)."""
-    state_file = repo_root / 'infra' / 'state' / 'excluded-exits.txt'
+    state_file = state_file_for_read(repo_root, 'excluded-exits.txt')
     if not state_file.exists():
         return set()
     excluded = set()
@@ -656,7 +670,7 @@ def load_excluded_exits(repo_root):
 def assign_mgmt_octets(repo_root, exits):
     """Закрепляет за тегом экзита последний октет MGMT_IP (10.99.0.N).
 
-    Октет хранится в infra/state/mgmt-ips.txt (`тег октет`) и от порядка
+    Октет хранится в mgmt-ips.txt каталога состояния (`тег октет`) и от порядка
     exits в config.yaml больше не зависит: убрали экзит из середины — у
     остальных адреса и mon-порты (10100+N) те же. Файла нет (первый деплой
     или обновление со старой версии) — засеваем прежней формулой «позиция в
@@ -664,10 +678,11 @@ def assign_mgmt_octets(repo_root, exits):
     Новый тег берёт наименьший свободный октет; октет убранного тега
     остаётся за ним и никому не переходит.
     """
-    state_file = repo_root / 'infra' / 'state' / 'mgmt-ips.txt'
+    state_file = state_dir() / 'mgmt-ips.txt'
+    source = state_file_for_read(repo_root, 'mgmt-ips.txt')
     pinned = {}
-    if state_file.exists():
-        for line in state_file.read_text().splitlines():
+    if source.exists():
+        for line in source.read_text().splitlines():
             parts = line.split()
             if len(parts) == 2 and not parts[0].startswith('#') and parts[1].isdigit():
                 pinned[parts[0]] = int(parts[1])
@@ -683,7 +698,7 @@ def assign_mgmt_octets(repo_root, exits):
         e['_mgmt_idx'] = pinned[e['tag']]
 
     if changed:
-        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         state_file.write_text(
             '# тег → последний октет MGMT_IP (10.99.0.N), пишет config2env.py.\n'
             '# Не перенумеровывать: на октет завязаны метки метрик и mon-порт.\n'
@@ -736,7 +751,7 @@ def main():
         skipped = [e['tag'] for e in exits if e.get('tag') in excluded]
         if skipped:
             print(f'config2env: исключены по UDP-фильтру: {", ".join(skipped)} '
-                  f'(infra/state/excluded-exits.txt) — '
+                  f'({state_dir()}/excluded-exits.txt) — '
                   f'их MGMT_IP-индексы зарезервированы и не переиспользуются')
         exits = kept
 

@@ -35,10 +35,17 @@ fi
 die()  { printf '%b✗ %s%b\n' "$R" "$*" "$E" >&2; exit 1; }
 ok()   { printf '%b✓ %s%b\n' "$G" "$*" "$E"; }
 
-# Protect generated envs before the entry-side, cross-workstation lock is taken.
-mkdir -p "$REPO_ROOT/infra/state"
-exec {local_deploy_fd}>"$REPO_ROOT/infra/state/deploy.lock"
-flock -n "$local_deploy_fd" || die 'deploy уже выполняется из этого рабочего дерева'
+# Состояние деплоя живёт вне checkout, замок - в /run/lock. Замок берётся до
+# генерации env; под ним же состояние старой раскладки переезжает из infra/.
+# shellcheck source=infra/lib/state-dir.sh
+source "$REPO_ROOT/infra/lib/state-dir.sh"
+state_dir_ensure 2>/dev/null \
+  || die "нет доступа к $VPN2_STATE_DIR: deploy.sh запускается от root"
+exec {local_deploy_fd}>"$VPN2_DEPLOY_LOCK" \
+  || die "нет доступа к $VPN2_DEPLOY_LOCK: deploy.sh запускается от root"
+flock -n "$local_deploy_fd" || die 'deploy уже выполняется на этой машине'
+state_dir_migrate "$REPO_ROOT/infra" \
+  || die "состояние деплоя не перенеслось из infra/state в $VPN2_STATE_DIR"
 
 # ── Проверка config.yaml ──────────────────────────────────────────────────────
 if [[ ! -f "${REPO_ROOT}/config.yaml" ]]; then

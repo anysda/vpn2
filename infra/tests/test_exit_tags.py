@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 import shlex
@@ -34,7 +35,8 @@ class ExitTagTests(unittest.TestCase):
                 '    password: test-password\n    hy2_direct_port: 1443\n'
                 '  - tag: us2\n    host: 192.0.2.3\n    password: test-password\n')
             result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'),
-                                     directory], text=True, capture_output=True)
+                                     directory], text=True, capture_output=True,
+                                    env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state'})
             self.assertEqual(result.returncode, 0, result.stderr)
             stage = source('infra/scripts/20-ru-router.sh')
             secrets = stage.split('while IFS= read -r _line', 1)[1].split(

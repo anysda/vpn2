@@ -114,11 +114,11 @@ class SshBashrcStderrTests(unittest.TestCase):
 
     def run_ssh(self, body, bashrc='noise', tag='us', known_hosts='', **env):
         (self.home / '.bashrc').write_text(BASHRC[bashrc])
-        (self.root / 'deploy' / '.known_hosts').write_text(known_hosts)
+        (self.root / 'deploy' / 'known_hosts').write_text(known_hosts)
         env = {**os.environ, 'PATH': f'{self.root}/bin:{os.environ["PATH"]}',
                'FAKE_ROOT': str(self.root), 'FAKE_NODE': str(self.root / 'node'),
                'FAKE_SSHD_PORT': str(self.port), 'HOST_TAG': tag, **env}
-        script = f'''DEPLOY_ROOT={self.root}/deploy
+        script = f'''DEPLOY_ROOT={self.root}/deploy VPN2_STATE_DIR={self.root}/deploy
 source {ROOT}/infra/lib/ssh.sh
 sleep() {{ :; }}
 SSH_USER=$(id -un) SSH_HOST=node.example SSH_PASS=fixture SSH_PROBE_TIMEOUT=10

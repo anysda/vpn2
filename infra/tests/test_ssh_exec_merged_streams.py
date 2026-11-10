@@ -105,8 +105,8 @@ class SshExecMergedStreamsTests(unittest.TestCase):
     def run_merged(self, way, tag):
         log = self.root / 'stage.log'
         log.unlink(missing_ok=True)
-        (self.root / 'deploy' / '.known_hosts').write_text('')
-        script = f'''DEPLOY_ROOT={self.root}/deploy
+        (self.root / 'deploy' / 'known_hosts').write_text('')
+        script = f'''DEPLOY_ROOT={self.root}/deploy VPN2_STATE_DIR={self.root}/deploy
 source {ROOT}/infra/lib/ssh.sh
 SSH_USER=$(id -un) SSH_HOST=node.example SSH_PASS=fixture SSH_PROBE_TIMEOUT=10
 log={log}

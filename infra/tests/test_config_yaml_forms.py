@@ -43,7 +43,7 @@ class SafeDumpConfigTests(unittest.TestCase):
         (Path(directory) / 'config.yaml').write_text(config)
         return subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), directory],
                               capture_output=True, text=True, timeout=10,
-                              env={**os.environ, 'HOME': directory})
+                              env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
 
     def envs(self, directory):
         return {path.name: path.read_text()

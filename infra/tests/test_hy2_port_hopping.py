@@ -67,7 +67,7 @@ def convert(config, directory):
     (Path(directory) / 'config.yaml').write_text(config)
     return subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), directory],
                           capture_output=True, text=True, timeout=30,
-                          env={**os.environ, 'HOME': directory})
+                          env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
 
 
 def load_env(directory, host):

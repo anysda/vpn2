@@ -86,7 +86,8 @@ class HysteriaTests(unittest.TestCase):
                 (root / 'config.yaml').write_text(base.replace(
                     '    host: 5.6.7.8\n', '    host: 5.6.7.8\n' + settings))
                 subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],
-                               check=True, capture_output=True, text=True)
+                               check=True, capture_output=True, text=True,
+                               env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
                 stage = (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
                 exports = stage[stage.index('export RU_CLASH_SECRET EXIT_TAGS'):
                                 stage.index('# TLS pinning Hysteria2 outbound:')]
@@ -151,7 +152,8 @@ export HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT
                 (root / 'config.yaml').write_text(base.replace('    host: 5.6.7.8\n',
                     f'    host: 5.6.7.8\n    hy2_up_mbps: {up}\n    hy2_down_mbps: {down}\n'))
                 result = subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), tmp],
-                                        capture_output=True, text=True)
+                                        capture_output=True, text=True,
+                                        env={**os.environ, 'VPN2_STATE_DIR': f'{tmp}/state'})
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('нужны обе скорости', result.stderr)
                 self.assertFalse((root / 'infra/envs').exists())

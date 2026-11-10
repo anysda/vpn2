@@ -144,7 +144,8 @@ class EntryMemoryTest(unittest.TestCase):
                 .replace('  passphrase: ""', '  passphrase: test pass')
                 + "\nentry_resources:\n  querylog_size: 0\n  adaway_enabled: false\n  retention_days: 11\n")
             subprocess.run([sys.executable, str(ROOT / "infra/lib/config2env.py"), str(root)],
-                           capture_output=True, check=True)
+                           capture_output=True, check=True,
+                           env={**os.environ, 'VPN2_STATE_DIR': f'{root}/state'})
             command = (f"source {shlex.quote(str(root / 'infra/envs/ru.env'))}; "
                        f"source {shlex.quote(str(ROOT / 'infra/lib/entry-resources.sh'))}; "
                        "entry_resources vm; printf '%s\\n' \"${ENTRY_RUNTIME_ARGS[@]}\"")

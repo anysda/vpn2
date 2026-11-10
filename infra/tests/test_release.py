@@ -170,19 +170,23 @@ preflight_ssh
             shutil.copyfile(ROOT / 'deploy.sh', root / 'deploy.sh')
             (root / 'config.yaml').touch()
             (root / 'infra/lib').mkdir(parents=True)
+            shutil.copyfile(ROOT / 'infra/lib/state-dir.sh', root / 'infra/lib/state-dir.sh')
+            env = {**os.environ, 'VPN2_STATE_DIR': f'{root}/state', 'VPN2_DEPLOY_LOCK': f'{root}/deploy.lock'}
             (root / 'infra/lib/config2env.py').write_text(
                 'from pathlib import Path\nimport sys\n'
                 'with (Path(sys.argv[1]) / "generated").open("a") as output: output.write("generated\\n")\n')
             stage = root / 'infra/deploy.sh'
             stage.write_text('#!/bin/sh\nsleep 2\n')
             stage.chmod(0o755)
-            first = subprocess.Popen(['bash', str(root / 'deploy.sh')], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            first = subprocess.Popen(['bash', str(root / 'deploy.sh')], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     env=env)
             try:
                 for _ in range(100):
                     if (root / 'generated').exists():
                         break
                     time.sleep(0.01)
-                second = subprocess.run(['bash', str(root / 'deploy.sh')], capture_output=True, text=True, timeout=5)
+                second = subprocess.run(['bash', str(root / 'deploy.sh')], capture_output=True, text=True, timeout=5,
+                                        env=env)
                 self.assertNotEqual(second.returncode, 0, 'concurrent deploy rewrote the active env files')
                 self.assertEqual((root / 'generated').read_text().splitlines(), ['generated'])
             finally:

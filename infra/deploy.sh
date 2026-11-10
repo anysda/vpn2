@@ -1270,7 +1270,7 @@ verify_and_rotate_ports() {
   local exits; exits=$(active_exit_tags)
   local rotated_any=0
   local fully_dead=()     # tags, у которых ВЕСЬ UDP-путь RU↔exit фильтруется
-  local state_dir="$DEPLOY_ROOT/state"
+  local state_dir="$VPN2_STATE_DIR"
   mkdir -p "$state_dir"
 
   for tag in $exits; do

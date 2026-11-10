@@ -58,7 +58,8 @@ class AdguardLiteralTests(unittest.TestCase):
                           '    password: fake\nadmin:\n  user: ' + json.dumps(value) + '\n')
                 (Path(work) / 'config.yaml').write_text(config)
                 converted = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), work],
-                                           text=True, capture_output=True, timeout=15)
+                                           text=True, capture_output=True, timeout=15,
+                                           env={**os.environ, 'VPN2_STATE_DIR': f'{work}/state'})
                 self.assertEqual(converted.returncode, 0, converted.stderr)
                 script = ('source infra/envs/ru.env\nAGH_USER=$ADMIN_USER\n'
                           'svc_forget() { echo restart; }\n' + block)

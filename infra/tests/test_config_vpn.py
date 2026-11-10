@@ -114,7 +114,7 @@ done
         for extra, key in cases:
             with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                for path in ('infra/envs/ru.env', 'infra/state/mgmt-ips.txt'):
+                for path in ('infra/envs/ru.env', 'state/mgmt-ips.txt'):
                     target = root / path
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text('KEEP\n')
@@ -123,7 +123,7 @@ done
                 self.assertIn(key, result.stderr)
                 self.assertNotIn('Traceback', result.stderr)
                 self.assertEqual((root / 'infra/envs/ru.env').read_text(), 'KEEP\n')
-                self.assertEqual((root / 'infra/state/mgmt-ips.txt').read_text(), 'KEEP\n')
+                self.assertEqual((root / 'state/mgmt-ips.txt').read_text(), 'KEEP\n')
                 self.assertFalse((root / 'infra/envs/all.env').exists())
 
 

@@ -24,7 +24,8 @@ def render(extra_exits=''):
 def run(directory, text, *args):
     path = Path(directory) / 'config.yaml'
     path.write_text(text, encoding='utf-8')
-    env = dict(os.environ, VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'))
+    env = dict(os.environ, VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
+               VPN2_STATE_DIR=str(Path(directory) / 'state'))
     return subprocess.run([sys.executable, 'infra/ansible/inventory.py', *args], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=30)
 
@@ -41,8 +42,9 @@ class AnsibleInventoryTests(unittest.TestCase):
     def test_list_matches_fixture(self):
         with tempfile.TemporaryDirectory() as directory:
             result = run(directory, render(), '--list')
+            state = str(Path(directory) / 'state')
         self.assertEqual(result.returncode, 0, result.stderr)
-        actual = json.loads(result.stdout.replace(str(INFRA), '@INFRA@'))
+        actual = json.loads(result.stdout.replace(state, '@STATE@'))
         self.assertEqual(actual, json.loads(FIXTURE.read_text(encoding='utf-8')))
 
     def test_host_is_empty(self):

@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import shutil
 import subprocess
 import tempfile
@@ -15,14 +16,16 @@ class DeployHelpTests(unittest.TestCase):
                     root = Path(directory)
                     (root / 'infra/lib').mkdir(parents=True)
                     for name in ('deploy.sh', 'infra/deploy.sh', 'infra/lib/ssh.sh', 'infra/lib/anysda-svc.sh',
-                                 'infra/lib/ansible-venv.sh'):
+                                 'infra/lib/ansible-venv.sh', 'infra/lib/state-dir.sh'):
                         shutil.copy2(ROOT / name, root / name)
                     # A converter call must fail even when config.yaml exists.
                     (root / 'infra/lib/config2env.py').write_text('raise RuntimeError("converter called")\n')
                     if config is not None:
                         (root / 'config.yaml').write_text(config)
                     result = subprocess.run(['bash', str(root / 'deploy.sh'), flag],
-                                            input='', capture_output=True, text=True, timeout=10)
+                                            input='', capture_output=True, text=True, timeout=10,
+                                            env={**os.environ, 'VPN2_STATE_DIR': f'{root}/state',
+                                                 'VPN2_DEPLOY_LOCK': f'{root}/deploy.lock'})
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('./deploy.sh <stage> <group>', result.stdout)
                     self.assertNotIn('converter called', result.stderr)

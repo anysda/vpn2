@@ -5,12 +5,16 @@
 entry_resources и failover проверяются так же, текстовые значения остаются
 строками в той же форме. Значения с секретами в тексты ошибок не попадают.
 """
+import os
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# Состояние деплоя на entry; тот же путь, что в infra/lib/state-dir.sh.
+STATE_DIR = Path(os.environ.get('VPN2_STATE_DIR') or '/var/lib/anysda-vpn2/state')
 
 BOOL_WORDS = {'true', 'false', 'yes', 'no', 'y', 'n', '1', '0'}
 TRUE_WORDS = {'true', 'yes', 'y', '1'}

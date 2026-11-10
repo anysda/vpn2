@@ -182,6 +182,10 @@ alert_env=()
 for name in ALERT_CPU_PCT ALERT_RAM_PCT ALERT_WINDOW_SEC; do
   if [[ -n "${!name:-}" ]]; then alert_env+=(-e "$name=${!name}"); fi
 done
+# Пауза бота после отвергнутого токена: из среды стадии, без неё - умолчание бота.
+if [[ -n "${TGBOT_INVALID_TOKEN_PAUSE_SEC:-}" ]]; then
+  alert_env+=(-e "TGBOT_INVALID_TOKEN_PAUSE_SEC=$TGBOT_INVALID_TOKEN_PAUSE_SEC")
+fi
 # Runtime-бюджет рассчитан на entry, swap не скрывает превышение бюджета.
 docker run -d \
   --name anysda-tgbot \

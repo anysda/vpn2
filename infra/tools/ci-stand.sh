@@ -894,10 +894,10 @@ panel_api() {
 
 # Сценарий 5: боту через панель - поддельный токен. Telegram отвечает
 # InvalidToken, бот обязан уйти в паузу (_wait_token_fix), а не в цикл
-# перезапусков. /health на паузе не отвечает (VPN2-794) - не проверяется.
+# перезапусков, и всю паузу отвечать на /health признаком invalid_token.
 cmd_bot_fake_token() {
   local fake='1234567890:stand-fake-token-not-real-000000000'
-  local t0=$SECONDS waited rc_before rc_after running since
+  local t0=$SECONDS waited rc_before rc_after running since health
   ssh_node "$ENTRY" 'curl -fsS http://127.0.0.1:8877/health' >/dev/null \
     || die "бот до смены токена не отвечает на /health"
   since=$(ssh_node "$ENTRY" 'date -u +%Y-%m-%dT%H:%M:%SZ')
@@ -915,6 +915,9 @@ cmd_bot_fake_token() {
   rc_after=$(ssh_node "$ENTRY" "docker inspect -f '{{.RestartCount}}' anysda-tgbot")
   [[ $running == true && $rc_after == "$rc_before" ]] \
     || die "бот не на паузе: Running=$running, RestartCount $rc_before -> $rc_after"
+  health=$(ssh_node "$ENTRY" 'curl -fsS http://127.0.0.1:8877/health') \
+    || die 'бот на паузе не отвечает на /health'
+  [[ $health == *'"invalid_token": true'* ]] || die "бот на паузе: в /health нет invalid_token: $health"
   panel_api GET /api/admin/telegram >/dev/null || die "панель не отвечает после смены токена бота"
   log "бот с поддельным токеном: InvalidToken через $waited с, RestartCount $rc_after, контейнер работает, панель отвечает"
 }

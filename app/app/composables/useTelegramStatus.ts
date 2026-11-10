@@ -32,7 +32,9 @@ export function useTelegramStatus(pollMs = 15_000) {
     transform: status => (last.value = status),
     server: false,
     dedupe: 'defer',
-    timeout: POLL_TIMEOUT_MS,
+    // Дольше ворот смены сессии (15 с, plugins/session-rotation.client.ts):
+    // запрос, ждущий в воротах, не должен оборваться раньше, чем уйдёт.
+    timeout: 2 * POLL_TIMEOUT_MS,
   })
 
   const canSend = computed(() => Boolean(data.value?.configured && data.value?.running))

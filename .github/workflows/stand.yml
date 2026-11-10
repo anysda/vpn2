@@ -162,6 +162,10 @@ jobs:
           done
           exit "$rc"
 
+      # Сценарий 5 карточки. /health на паузе не проверяется до VPN2-794.
+      - name: бот с поддельным токеном
+        run: sudo infra/tools/ci-stand.sh bot-fake-token
+
       - name: collect
         if: always()
         run: sudo infra/tools/ci-stand.sh collect stand-report && sudo chown -R "$USER" stand-report

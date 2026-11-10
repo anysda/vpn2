@@ -14,6 +14,7 @@
 #   sudo infra/tools/ci-stand.sh snapshot <каталог> [префикс]  слепок обоих узлов после деплоя
 #   sudo infra/tools/ci-stand.sh deploy-again <каталог> повторный ./deploy.sh и слепок snapshot-again
 #   sudo infra/tools/ci-stand.sh snapshot-corrupt       положительный контроль слепка
+#   sudo infra/tools/ci-stand.sh bot-fake-token         боту поддельный токен: пауза, не цикл перезапусков
 #   sudo infra/tools/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tools/ci-stand.sh down                   снести всё
 #
@@ -780,6 +781,43 @@ cmd_snapshot_corrupt() {
   ssh_node "$ENTRY" "printf '# positive control\\n' >> $file"
 }
 
+# Запрос к панели на entry: вход один раз (cookie-jar /run/vpn2-panel.jar),
+# пароль читается на самом entry и в журнал раннера не попадает.
+# Использование: panel_api <метод> <путь> [json-тело]; печатает тело ответа.
+panel_api() {
+  local method=$1 path=$2 body=${3:-}
+  local base=http://127.0.0.1:51821 jar=/run/vpn2-panel.jar
+  local hdr="-H 'Origin: $base' -H 'Content-Type: application/json'"
+  local login="curl -fsS -c $jar $hdr -d \"\$(printf '{\"username\":\"anysda\",\"password\":\"%s\"}' \"\$(cat /etc/anysda/admin-password.txt)\")\" $base/api/auth/sign-in/username >/dev/null"
+  local req="curl -fsS -b $jar -X $method $hdr ${body:+-d '$body'} $base$path"
+  ssh_node "$ENTRY" "[ -f $jar ] || { $login; }; $req"
+}
+
+# Сценарий 5: боту через панель - поддельный токен. Telegram отвечает
+# InvalidToken, бот обязан уйти в паузу (_wait_token_fix), а не в цикл
+# перезапусков. /health на паузе не отвечает (VPN2-794) - не проверяется.
+cmd_bot_fake_token() {
+  local fake='1234567890:stand-fake-token-not-real-000000000'
+  local t0=$SECONDS waited rc_before rc_after running
+  ssh_node "$ENTRY" 'curl -fsS http://127.0.0.1:8877/health' >/dev/null \
+    || die "бот до смены токена не отвечает на /health"
+  panel_api PUT /api/admin/telegram "{\"bot_token\": \"$fake\", \"chat_id\": \"1\"}" >/dev/null \
+    || die "PUT /api/admin/telegram не прошёл"
+  t0=$SECONDS
+  until ssh_node "$ENTRY" 'docker logs anysda-tgbot 2>&1 | grep -q InvalidToken'; do
+    (( SECONDS - t0 < 120 )) || die "за 120 с в журнале бота нет InvalidToken: $(ssh_node "$ENTRY" 'docker logs --tail 20 anysda-tgbot 2>&1')"
+    sleep 3
+  done
+  waited=$((SECONDS - t0))
+  rc_before=$(ssh_node "$ENTRY" "docker inspect -f '{{.RestartCount}}' anysda-tgbot")
+  sleep 30
+  running=$(ssh_node "$ENTRY" "docker inspect -f '{{.State.Running}}' anysda-tgbot")
+  rc_after=$(ssh_node "$ENTRY" "docker inspect -f '{{.RestartCount}}' anysda-tgbot")
+  [[ $running == true && $rc_after == "$rc_before" ]] \
+    || die "бот не на паузе: Running=$running, RestartCount $rc_before -> $rc_after"
+  log "бот с поддельным токеном: InvalidToken через $waited с, RestartCount $rc_after, контейнер работает"
+}
+
 # Состояние apt каждого узла и журнал прокси раннера - в отчёт при любом исходе.
 collect_apt() {
   local out=$1 node name ip
@@ -857,7 +895,8 @@ case "${1:-}" in
   udp-cut) cmd_udp_cut "${@:2}" ;;
   snapshot) cmd_snapshot "${@:2}" ;;
   snapshot-corrupt) cmd_snapshot_corrupt ;;
+  bot-fake-token) cmd_bot_fake_token ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  *) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

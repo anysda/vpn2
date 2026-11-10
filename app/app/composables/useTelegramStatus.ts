@@ -1,23 +1,31 @@
 import { POLL_TIMEOUT_MS } from '~/composables/useClients'
 
 /**
- * Lightweight reactive view of the Telegram bot config — used to disable
- * "send to Telegram" controls when the bot is not configured / not running.
- * Bots/Section.vue is the source of truth (writes via PUT); other components
- * just read.
+ * Единственное место, где панель читает `/api/admin/telegram`: и раздел
+ * настроек бота (Bots/Section.vue, он же пишет через PUT), и кнопки
+ * «отправить в Telegram», которым нужно знать, настроен ли бот и запущен ли.
  */
 interface TgStatus {
   configured: boolean
   running: boolean
-  username?: string
   bot_token_masked: string
   chat_id: string | number | ''
+  admin_username: string
+  username: string
+  clients_total: number
+  clients_subscribed: number
+  queued: number
+  delivered_day: number
 }
 
-export function useTelegramStatus() {
+/** `pollMs` - шаг опроса; у одного ключа таймер общий, шаг задаёт первый смонтированный. */
+export function useTelegramStatus(pollMs = 15_000) {
   // Как список клиентов: сбой опроса оставляет последний удачный статус, а не
   // мигает в «не настроен»; зависший запрос не держит опрос.
-  const last = useState<TgStatus>('tg-status-last', () => ({ configured: false, running: false, bot_token_masked: '', chat_id: '' }))
+  const last = useState<TgStatus>('tg-status-last', () => ({
+    configured: false, running: false, bot_token_masked: '', chat_id: '', admin_username: '',
+    username: '', clients_total: 0, clients_subscribed: 0, queued: 0, delivered_day: 0,
+  }))
   const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
     key: 'tg-status',
     default: () => last.value,
@@ -34,7 +42,7 @@ export function useTelegramStatus() {
     return ''
   })
 
-  useSharedPoll('tg-status', 15_000)
+  useSharedPoll('tg-status', pollMs)
 
   useVisibleRefresh(refresh)
 

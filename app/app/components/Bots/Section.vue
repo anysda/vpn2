@@ -1,24 +1,7 @@
 <script setup lang="ts">
-interface TgStatus {
-  configured: boolean
-  running: boolean
-  bot_token_masked: string
-  chat_id: string | number | ''
-  admin_username: string
-  username: string
-  clients_total: number
-  clients_subscribed: number
-  queued: number
-  delivered_day: number
-}
+import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
-const { data, refresh } = useFetch<TgStatus>('/api/admin/telegram', {
-  default: () => ({
-    configured: false, running: false, bot_token_masked: '', chat_id: '', admin_username: '',
-    username: '', clients_total: 0, clients_subscribed: 0, queued: 0, delivered_day: 0,
-  }),
-  server: false,
-})
+const { status: data, refresh } = useTelegramStatus(10_000)
 
 const toast = useToast()
 
@@ -70,7 +53,8 @@ async function save() {
     if (newToken.value === submitted.token) newToken.value = ''
     if (newChatId.value === submitted.chatId) newChatId.value = submitted.chatId.trim()
     if (newAdminUsername.value === submitted.username) newAdminUsername.value = submitted.username.trim().replace(/^@+/, '')
-    await refresh()
+    // Опрос в пути начат до записи: его ответ устарел, нужен свежий запрос.
+    await refresh({ dedupe: 'cancel' })
   }
   catch (e) {
     const err = e as { statusMessage?: string }
@@ -80,13 +64,6 @@ async function save() {
     saving.value = false
   }
 }
-
-let timer: ReturnType<typeof setInterval> | null = null
-onMounted(() => {
-  if (!timer) timer = setInterval(() => { void refresh() }, 10_000)
-})
-onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
-useVisibleRefresh(refresh)
 
 </script>
 

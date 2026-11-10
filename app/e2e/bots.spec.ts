@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, test, toast, uniq } from './support/fixtures'
+import { expect, hydrated, test, toast, uniq } from './support/fixtures'
 import { openHome } from './support/clients'
 
 function botsCard(page: Page) {
@@ -7,6 +7,24 @@ function botsCard(page: Page) {
 }
 
 test.describe('настройки Telegram', () => {
+  test('статус бота панель запрашивает один раз на страницу', async ({ page }) => {
+    let hits = 0
+    page.on('request', (r) => {
+      if (r.method() === 'GET' && new URL(r.url()).pathname === '/api/admin/telegram') hits++
+    })
+    await openHome(page, '/settings')
+    await expect(botsCard(page).getByText(/^(Не настроен|Онлайн|Офлайн)$/)).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(hits).toBe(1)
+
+    // Список клиентов: форма нового клиента, панель клиента и окно конфига читают один и тот же статус.
+    hits = 0
+    await page.goto('/')
+    await hydrated(page)
+    await page.waitForLoadState('networkidle')
+    expect(hits).toBeLessThanOrEqual(1)
+  })
+
   test('поздний ответ статуса не стирает черновик настроек', async ({ page }) => {
     let hold = false
     let entered!: () => void

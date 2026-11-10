@@ -133,7 +133,7 @@ async def main() -> None:
         await runner.cleanup()
 
 
-def _wait_token_fix(limit_sec: int) -> None:
+async def _wait_token_fix(limit_sec: int) -> None:
     """Пауза перед перезапуском с отвергнутым токеном.
 
     Без неё docker --restart поднимает бот через секунды, и тот снова бьётся
@@ -146,21 +146,40 @@ def _wait_token_fix(limit_sec: int) -> None:
     initial = mtime()
     deadline = time.monotonic() + limit_sec
     while time.monotonic() < deadline:
-        time.sleep(5)
+        await asyncio.sleep(5)
         if mtime() != initial:
             return
+
+
+async def _invalid_token_pause() -> None:
+    # Сервер /health живёт всю паузу, иначе контейнер unhealthy; строка журнала
+    # пишется после старта сервера: по ней узнают, что пауза началась.
+    runner = None
+    try:
+        app = web.Application()
+        app.router.add_get('/health', events.handle_health_invalid_token)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        await web.TCPSite(runner, '127.0.0.1', config.EVENT_PORT).start()
+    except OSError:
+        log.exception('health server on pause')
+    try:
+        log.error(
+            'Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
+            'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
+            config.INVALID_TOKEN_PAUSE_SEC,
+        )
+        await _wait_token_fix(config.INVALID_TOKEN_PAUSE_SEC)
+    finally:
+        if runner is not None:
+            await runner.cleanup()
 
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except InvalidToken:
-        log.error(
-            'Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
-            'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
-            config.INVALID_TOKEN_PAUSE_SEC,
-        )
-        _wait_token_fix(config.INVALID_TOKEN_PAUSE_SEC)
+        asyncio.run(_invalid_token_pause())
         raise SystemExit(1) from None
     except Exception:
         # Через логгер, а не голой трассировкой в stderr: так токен вырезается.

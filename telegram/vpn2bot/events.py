@@ -70,6 +70,11 @@ async def handle_health_waiting(_request: web.Request) -> web.Response:
     return web.json_response({'ok': True, 'waiting_token': True, 'username': ''})
 
 
+async def handle_health_invalid_token(_request: web.Request) -> web.Response:
+    # Пауза после отвергнутого токена: процесс жив и ждёт новый токен из панели.
+    return web.json_response({'ok': True, 'invalid_token': True, 'username': ''})
+
+
 async def handle_event(request: web.Request) -> web.Response:
     # SECRET гарантированно непустой (startup-check выше). Сравниваем константно
     # по времени, чтобы убрать timing-leak; encode в bytes — compare_digest требует

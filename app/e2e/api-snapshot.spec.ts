@@ -60,7 +60,7 @@ test.describe.configure({ mode: 'serial' })
 
 test.describe('снимок ответов API панели', () => {
   test.skip(!container, 'нужен контейнер панели run-local.sh (E2E_FAULT_CONTAINER)')
-  test.setTimeout(240_000)
+  test.setTimeout(360_000)
 
   let actual = new Map<string, string>()
   let walked = false
@@ -77,6 +77,15 @@ test.describe('снимок ответов API панели', () => {
       },
       gone: async (path: string) => {
         await expect.poll(async () => (await api.get(path)).status(), { timeout: 45_000 }).toBe(404)
+      },
+      // Первая попытка доставки ждёт бота 1,5 с, повтор через 30 и 60 с:
+      // запись очереди - только когда доставки сценария дошли до конца.
+      delivered: async (deliveryId: string) => {
+        await expect.poll(async () => {
+          const list = await (await api.get('/api/admin/bot-deliveries')).json() as { id: string, label: string, status: string }[]
+          const own = list.filter(d => d.id === deliveryId || d.label.includes('e2e-api-snapshot-'))
+          return own.some(d => d.id === deliveryId) ? own.filter(d => d.status !== 'accepted').map(d => `${d.label}: ${d.status}`) : ['нет рассылки']
+        }, { timeout: 100_000, intervals: [1_000] }).toEqual([])
       },
     })
     // Сырой обход - в отчёт: по нему уточняется таблица нормализации.

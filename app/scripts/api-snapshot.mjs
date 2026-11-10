@@ -21,6 +21,7 @@ const MISSING_OPERATION = '00000000-0000-4000-8000-000000000000'
  *   bot: (method: string, path: string, data?: unknown, auth?: boolean) => Promise<Reply>,
  *   settled: (operationId: string) => Promise<void>,
  *   gone: (path: string) => Promise<void>,
+ *   delivered: (deliveryId: string) => Promise<void>,
  * }} Io
  * @typedef {{ method: string, path: string, status: number, contentType: string, body: unknown }} Call
  */
@@ -32,18 +33,21 @@ const MISSING_OPERATION = '00000000-0000-4000-8000-000000000000'
  * <тег>…</тег>, body - всё тело, scope - оставить в массиве (key - путь, пусто
  * для корня) только элементы, у которых поле field (первое слово check, до
  * «:») подходит под регулярное выражение, idkeys - оставить в объекте только
- * ключи-идентификаторы клиентов сценария. Значение null остаётся null. Формат
+ * ключи-идентификаторы клиентов сценария, delta - в первом вызове маршрута
+ * (база до действий сценария) поле заменяется меткой, в остальных - разницей
+ * с базой вида +N. Значение null остаётся null. Формат
  * (check) проверяется на каждом значении: не подошёл - прогон падает, так
  * длина и вид случайных значений проверены отдельно от эталона. Поля вне
  * таблицы сравниваются как есть.
- * @typedef {{ route: string, kind: 'field' | 'line' | 'block' | 'body' | 'scope' | 'idkeys', key: string, label: string, check: RegExp, reason: string, field?: string }} Rule
+ * @typedef {{ route: string, kind: 'field' | 'line' | 'block' | 'body' | 'scope' | 'idkeys' | 'delta', key: string, label: string, check: RegExp, reason: string, field?: string }} Rule
  */
 
 const ID = /^\d+$/
 const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/
 const MS = /^\d{13}$/
 const SEC = /^\d{10}$/
-const NUM = /^-?\d+(\.\d+)?$/
+const PERCENT = /^(100|\d{1,2}(\.\d+)?)$/
+const RATE = /^\d+(\.\d+)?$/
 const UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/
 const PASSWORD = /^[A-Za-z0-9]{20}$/
 const KEY44 = /^[A-Za-z0-9+/]{43}=$/
@@ -78,7 +82,8 @@ const NORMALIZATION = [
   ...rule(['*'], 'field', ['operation.createdAt', 'operation.nextRetry', 'operation.protocols.*.nextRetry', 'operation.protocols.*.checkedAt', 'operation.protocols.*.lastAttempt'], '<ms>', MS, R_OP),
   ...rule(['*'], 'field', ['operation.clientId', 'operation.deviceId'], '<id>', ID, R_ID),
 
-  ...rule(['admin/telegram.get'], 'field', ['clients_total', 'clients_subscribed', 'queued', 'delivered_day'], '<count>', ID, 'счётчики по всем клиентам и очереди шарда: набор зависит от других спеков'),
+  ...rule(['admin/telegram.get'], 'delta', ['clients_total', 'clients_subscribed'], '<count>', ID, 'первый вызов - число клиентов шарда до сценария, дальше разница со сценарием: спеки панели идут по одному'),
+  ...rule(['admin/telegram.get'], 'field', ['queued', 'delivered_day'], '<count>', ID, 'очередь шарда: доставки соседних спеков дозревают повтором через 30 с (server/utils/bot-events.ts:10,91)'),
 
   ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch'], 'field', ['id'], '<id>', ID, R_ID),
   ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch'], 'field', ['createdAt', 'updatedAt'], '<time>', ISO, R_TIME),
@@ -104,7 +109,7 @@ const NORMALIZATION = [
 
   ...rule(['clients/top.get'], 'field', ['since'], '<sec>', SEC, 'начало суток: от даты прогона'),
   ...rule(['clients/top.get'], 'field', ['historyStart'], '<sec>', SEC, 'начало истории: от момента прогона'),
-  ...rule(['clients/top.get'], 'field', ['counts.total', 'counts.onlineNow', 'counts.activeDay', 'counts.activeWeek'], '<count>', ID, 'счётчики по всем клиентам шарда'),
+  ...rule(['clients/top.get'], 'delta', ['counts.total', 'counts.onlineNow', 'counts.activeDay', 'counts.activeWeek'], '<count>', ID, 'первый вызов - счётчики шарда до сценария, дальше разница со сценарием: спеки панели идут по одному'),
   { route: 'clients/traffic.get', kind: 'idkeys', key: '', label: '', check: ID, reason: 'карта трафика общая на панель: оставлены клиенты сценария, ключ-идентификатор заменён именем' },
 
   { route: 'bot/admin/clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
@@ -115,11 +120,15 @@ const NORMALIZATION = [
   ...rule([SNAPSHOT], 'field', ['timestamp'], '<time>', ISO, R_TIME),
   ...rule([SNAPSHOT], 'field', ['clients.*.id'], '<id>', ID, R_ID),
   ...rule([SNAPSHOT], 'field', ['clients.*.createdAt'], '<time>', ISO, R_TIME),
-  ...rule([SNAPSHOT], 'field', ['nodes.*.cpu', 'nodes.*.ram', 'nodes.*.rxMbps', 'nodes.*.txMbps', 'nodes.*.uptimeSec', 'nodes.*.staleSec', 'nodes.*.cores', 'nodes.*.memTotalBytes', 'outbounds.*.rttMs', 'connections'], '<metric>', NUM, 'метрики подставных VM и clash: другие спеки меняют их в шарде'),
+  ...rule([SNAPSHOT], 'field', ['nodes.*.cpu', 'nodes.*.ram'], '<percent>', PERCENT, 'загрузка подставной VM: другие спеки меняют её в шарде, проверен диапазон 0..100'),
+  ...rule([SNAPSHOT], 'field', ['nodes.*.rxMbps', 'nodes.*.txMbps'], '<mbps>', RATE, 'скорость подставной VM: другие спеки меняют её в шарде, проверено неотрицательное число'),
+  ...rule([SNAPSHOT], 'field', ['nodes.*.uptimeSec', 'nodes.*.staleSec', 'outbounds.*.rttMs', 'connections'], '<count>', ID, 'время работы, давность, задержка и соединения подставных VM и clash: от момента опроса и других спеков, проверено целое неотрицательное'),
 
   ...rule(['admin/broadcast.post'], 'field', ['recipients'], '<count>', ID, 'число привязанных чатов шарда: зависит от других спеков'),
   ...rule(['admin/broadcast.post'], 'field', ['delivery.id'], '<uuid>', UUID, 'идентификатор доставки: случайный'),
   ...rule(['admin/broadcast.post'], 'field', ['delivery.created'], '<ms>', MS, R_TIME),
+  ...rule(['admin/broadcast.post'], 'field', ['delivery.status'], '<first-attempt>', /^(accepted|queued)$/, 'итог первой попытки: бот за 1,5 с под сменой сети CI может не ответить (server/utils/bot-events.ts:76,91); конечное accepted сценарий дожидается до admin/bot-deliveries.get'),
+  ...rule(['admin/broadcast.post'], 'field', ['delivery.remaining'], '<first-attempt>', /^(0|5)$/, 'остаток попыток после первой: 0 при accepted, 5 при queued (server/utils/bot-events.ts:18)'),
   { route: 'admin/bot-deliveries.get', kind: 'scope', key: '', field: 'label', label: '', check: /e2e-api-snapshot-/, reason: 'очередь общая на панель шарда: доставки других спеков из эталона исключены' },
   ...rule(['admin/bot-deliveries.get'], 'field', ['*.id'], '<uuid>', UUID, 'идентификатор доставки: случайный'),
   ...rule(['admin/bot-deliveries.get'], 'field', ['*.created'], '<ms>', MS, R_TIME),
@@ -190,7 +199,8 @@ export async function walk(io) {
   await adminCall('admin/sso.get', 'GET', '/api/admin/sso')
   await adminCall('admin/sso/check.post', 'POST', '/api/admin/sso/check', { authentikUrl: 'ftp://auth.example.invalid' })
 
-  // Клиенты панели.
+  // Клиенты панели. Первый top.get - база счётчиков до клиентов сценария.
+  await adminCall('clients/top.get', 'GET', '/api/clients/top?period=day')
   const main = await adminCall('clients/index.post', 'POST', '/api/clients', { name: `${CLIENT_PREFIX}main`, filterTraffic: false, expiresAt: '2099-12-31T20:59:59.000Z', deviceLimit: 5 })
   vars.main = main.json?.id ?? 0
   const second = await adminCall('clients/index.post', 'POST', '/api/clients', { name: `${CLIENT_PREFIX}second` })
@@ -243,6 +253,8 @@ export async function walk(io) {
   vars.chat = CHAT_ID
   await botCall('bot/client.get', 'GET', '/api/bot/client?chatId={chat}')
   await botCall('bot/client.get', 'GET', '/api/bot/client?chatId=1')
+  // Три клиента сценария, один с привязанным чатом.
+  await adminCall('admin/telegram.get', 'GET', '/api/admin/telegram')
   const bphone = await botCall('bot/devices/index.post', 'POST', '/api/bot/devices', { chatId: CHAT_ID, name: 'phone' })
   const bdevice = (/** @type {any} */ json, /** @type {string} */ name) => json?.devices?.find((/** @type {any} */ d) => d.name === name)?.id ?? 0
   vars.bphone = bdevice(bphone.json, 'phone')
@@ -265,7 +277,8 @@ export async function walk(io) {
   await botCall('ops/bot-snapshot.get', 'GET', '/api/ops/bot-snapshot')
 
   // Рассылка и очередь бота, отвязка чата.
-  await adminCall('admin/broadcast.post', 'POST', '/api/admin/broadcast', { text: 'api-snapshot' })
+  const broadcast = await adminCall('admin/broadcast.post', 'POST', '/api/admin/broadcast', { text: 'api-snapshot' })
+  await io.delivered(broadcast.json?.delivery?.id ?? MISSING_OPERATION)
   await adminCall('admin/bot-deliveries.get', 'GET', '/api/admin/bot-deliveries')
   await adminCall('clients/[id]/unlink.post', 'POST', '/api/clients/{bot}/unlink')
 
@@ -280,6 +293,8 @@ export async function walk(io) {
   await io.gone('/api/clients/' + vars.second)
   await settle((await botCall('bot/admin/clients/[id].delete', 'DELETE', '/api/bot/admin/clients/{bot}')).json)
   await io.gone('/api/clients/' + vars.bot)
+  // Клиенты сценария удалены: счётчики вернулись к базе.
+  await adminCall('admin/telegram.get', 'GET', '/api/admin/telegram')
 
   return { calls, ids: { main: vars.main, second: vars.second, bot: vars.bot } }
 }
@@ -330,6 +345,16 @@ function normalize(route, list, ids) {
         const body = /** @type {Record<string, unknown>} */ (call.body)
         const named = Object.entries(ids).map(([name, id]) => /** @type {[string, string]} */ ([`{${name}}`, String(id)]))
         call.body = Object.fromEntries(named.filter(([, id]) => id in body).map(([name, id]) => [name, body[id]]))
+      }
+      else if (rule.kind === 'delta') {
+        if (call.status !== 200) continue
+        const base = /** @type {any} */ (rule.key.split('.').reduce((n, k) => n?.[k], /** @type {any} */ (list[0]?.body)))
+        const first = call === out[0]
+        mapPath(call.body, rule.key.split('.'), (v) => {
+          if (!rule.check.test(String(v)) || !rule.check.test(String(base))) throw new Error(`${route} ${rule.key}: «${String(v)}» или база «${String(base)}» не подходит под ${rule.check}`)
+          const d = Number(v) - Number(base)
+          return first ? rule.label : `${d < 0 ? '' : '+'}${d}`
+        })
       }
       else if (rule.kind === 'field') mapPath(call.body, rule.key.split('.'), swap)
       else if (rule.kind === 'body') call.body = swap(call.body)

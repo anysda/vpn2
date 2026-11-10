@@ -323,14 +323,15 @@ def run(argv, *, data=None, timeout=TIMEOUT):
 _DEFAULT_RUN = run
 
 
-def _call(argv, runner, *, data=None, timeout=TIMEOUT):
+def _call(argv, runner, *, data=None, timeout=TIMEOUT, name=None):
     """runner(argv): нет программы и таймаут - WgUnchecked, без traceback и без argv в тексте."""
+    label = name or argv[0]
     try:
         return runner(argv, data=data, timeout=timeout)
     except FileNotFoundError:
         raise WgUnchecked(f'wg0.conf: проверить нечем - нет {argv[0]}') from None
     except subprocess.TimeoutExpired:
-        raise WgUnchecked(f'wg0.conf: проверить нечем - {argv[0]} не ответил за {timeout} с') from None
+        raise WgUnchecked(f'wg0.conf: проверить нечем - {label} не ответил за {timeout} с') from None
 
 
 def _tool(argv, runner, *, data=None):
@@ -454,7 +455,7 @@ def dump(data, *, run=run, timeout=TIMEOUT, which=shutil.which):
     # /usr/bin/wg под AppArmor не читает /tmp и /run: тело только через stdin.
     # На отказ wg строка, которую он назвал, гасится, и wg спрашивается снова - так видны все отказы.
     while True:
-        done = _call(ASK, run, data=b''.join(row + b'\n' for _, row in lines), timeout=timeout)
+        done = _call(ASK, run, data=b''.join(row + b'\n' for _, row in lines), timeout=timeout, name='wg')
         if not done.returncode:
             break
         if done.returncode != 121 or not done.stderr.rstrip().endswith(
@@ -521,8 +522,11 @@ def parse_dump(text):
 
 
 def _table(text, parts):
-    """Строки `wg show wg0 <поле>` по табуляции; пустые строки не в счёт, чужая форма - WgError."""
-    rows = [row.split('\t') for row in text.splitlines() if row]
+    """Строки `wg show wg0 <поле>` по табуляции; чужая форма и пустая строка - WgError.
+
+    Как в панели: у двухполевых хвост после первой табуляции остаётся значением, у трёхполевых полей ровно три.
+    """
+    rows = [row.split('\t', 1) if parts == 2 else row.split('\t') for row in text.splitlines()]
     if any(len(row) != parts for row in rows):
         raise WgError(f'wg show: строка не из {parts} полей')
     return rows

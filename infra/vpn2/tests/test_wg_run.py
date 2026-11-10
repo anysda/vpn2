@@ -158,7 +158,7 @@ def test_dump_refusal_never_names_a_key():
     (done(122, err='boom'), 'wg show: boom'),
     (done(1, err='unshare: failed\nx'), 'unshare --net: unshare: failed; x'),
     (done(121, err='something else'), 'wg setconf: something else'),
-    (subprocess.TimeoutExpired('x', 1), 'setpriv не ответил за 30 с'),
+    (subprocess.TimeoutExpired('x', 1), 'wg не ответил за 30 с'),
     (FileNotFoundError(), 'нет setpriv'),
 ])
 def test_dump_unchecked_cases(answer, text):
@@ -217,7 +217,7 @@ def test_allowed_preshared_transfer():
     assert wg.allowed_ips(table) == {A: ['192.0.2.3/32', 'fd66:66::3/128'],
                                      B: ['192.0.2.2/32', 'fd66:66::2/128']}
     assert wg.allowed_ips('') == {}
-    assert wg.preshared_keys(f'{A}\t{C}\n{B}\t(none)\n\n') == {A: C, B: '(none)'}
+    assert wg.preshared_keys(f'{A}\t{C}\n{B}\t(none)\n') == {A: C, B: '(none)'}
     # rx и tx переставлены: вид клиента.
     assert wg.transfer(f'{A}\t10\t20\n{B}\t0\t7\n') == [{'key': A, 'rx': 20, 'tx': 10},
                                                        {'key': B, 'rx': 7, 'tx': 0}]
@@ -226,10 +226,18 @@ def test_allowed_preshared_transfer():
 
 @pytest.mark.parametrize('func', [wg.allowed_ips, wg.preshared_keys, wg.transfer])
 def test_table_garbage_is_wgerror(func):
+    # Как в старом коде панели: строка без табуляции и пустая строка - отказ, а не пропуск.
+    for text in ('одна строка без табуляции', '\n', f'{A}\t1\t2\n\n'):
+        with pytest.raises(WgError):
+            func(text)
+
+
+def test_table_extra_field_forms_taken_from_old_panel_code():
+    # Двухполевые хвост после первой табуляции держат значением, трёхполевая строка с лишним полем - отказ.
+    assert wg.allowed_ips(f'{A}\t1\t2\t3\n') == {A: ['1', '2', '3']}
+    assert wg.preshared_keys(f'{A}\t1\t2\n') == {A: '1\t2'}
     with pytest.raises(WgError):
-        func('одна строка без табуляции')
-    with pytest.raises(WgError):
-        func(f'{A}\t1\t2\t3\n')
+        wg.transfer(f'{A}\t1\t2\t3\n')
 
 
 def test_transfer_not_a_number():

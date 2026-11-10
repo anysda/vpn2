@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { loginAttempt, loginFinish } from '../utils/login-limit'
+import { loginAttempt, loginFinish } from '../api/auth/[...all]'
+
+vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
+vi.mock('../utils/bot-api', () => ({ isLoopbackAddr: () => false }))
+vi.mock('../utils/events', () => ({ joinDetail: () => '', recordEvent: async () => {} }))
+vi.mock('../utils/sso', () => ({ SSO_PROVIDER: 'authentik' }))
+vi.mock('../utils/validate', () => ({ FIELD_LABELS: {} }))
 
 const WINDOW = 300
 let n = 0

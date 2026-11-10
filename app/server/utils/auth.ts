@@ -328,7 +328,7 @@ function buildAuth() {
       window: 60,
       max: 100,
       // Всё, что проверяет пароль или код 2FA, считает неудачи сама ручка
-      // /api/auth/* (server/utils/login-limit.ts): библиотека считала бы и
+      // /api/auth/* (server/api/auth/[...all].ts): библиотека считала бы и
       // удачные попытки.
       customRules: {
         '/sign-in/username': false,

@@ -217,15 +217,16 @@ async function prepare(page: Page, pending: Set<unknown>, base: { width: number,
   await page.mouse.move(0, 0)
   await ready(page, pending, shown)
   await fitWindow(page, pending, base, shown)
-  if (DIAG_REPAINT.on) {
-    const vp = page.viewportSize()!
-    await page.setViewportSize({ width: vp.width + 1, height: vp.height })
-    await page.setViewportSize(vp)
-    await page.evaluate(() => window.dispatchEvent(new Event('resize')))
-    await ready(page, pending, shown)
-  }
+  // Растр тайла зависит от его истории: узор дизеринга градиента привязан к тайлу, где его рисовали,
+  // а группа с opacity, перерисованная частично, округляется иначе, чем целиком. История у каждого
+  // запуска браузера своя (VPN2-749). Частичный растр выключен в playwright.config.ts, а здесь
+  // перед кадром вся страница растрируется заново на итоговом размере окна.
+  const vp = page.viewportSize()!
+  await page.setViewportSize({ width: vp.width + 1, height: vp.height })
+  await page.setViewportSize(vp)
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')))
+  await ready(page, pending, shown)
 }
-const DIAG_REPAINT = { on: false }
 
 const DNS_TABS = [
   ['sum', 'Сводка'], ['log', 'Журнал'], ['flt', 'Фильтры'], ['rules', 'Свои правила'],
@@ -301,89 +302,5 @@ test.describe('эталонные скриншоты', () => {
   test('все страницы панели', async ({ page }, info) => {
     test.setTimeout(300_000)
     await walk(page, info.project.name === 'mobile', name => expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true }))
-  })
-
-  // ДИАГНОСТИКА VPN2-749, временно: один и тот же обход в свежих браузерах с разными аргументами.
-  test('диагностика: свежие браузеры', async ({ playwright }, info) => {
-    test.skip(info.project.name === 'narrow')
-    const mobile = info.project.name === 'mobile'
-    test.setTimeout(1_200_000)
-    const fs = await import('node:fs')
-    const crypto = await import('node:crypto')
-    const variants: [string, string[], number, boolean][] = [
-      ['nopartial', ['--font-render-hinting=none', '--disable-partial-raster'], 4, false],
-      ['nopartial-repaint', ['--font-render-hinting=none', '--disable-partial-raster'], 4, true],
-      ['repaint', ['--font-render-hinting=none'], 4, true],
-    ]
-    const ws = process.env.E2E_BROWSER_WS!
-    const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:31710'
-    for (const [v, args, runs, repaint] of variants) {
-      DIAG_REPAINT.on = repaint
-      const shots: Record<string, string[]> = {}
-      for (let k = 0; k < runs; k++) {
-        const browser = await playwright.chromium.connect(ws, {
-          headers: { 'x-playwright-launch-options': JSON.stringify({ args }) }, exposeNetwork: '<loopback>', timeout: 60_000,
-        })
-        try {
-          if (k === 0) {
-            const cdp = await browser.newBrowserCDPSession()
-            const si = await cdp.send('SystemInfo.getInfo') as { gpu: { featureStatus: Record<string, string>, devices: unknown[] } }
-            console.log(`DIAG ${v} gpu ${JSON.stringify(si.gpu.featureStatus)} dev ${JSON.stringify(si.gpu.devices[0])}`)
-          }
-          const ctx = await browser.newContext({
-            ...(mobile
-              ? { viewport: { width: 402, height: 874 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true }
-              : { viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false }),
-            userAgent: info.project.use.userAgent, locale: 'ru-RU', timezoneId: 'Europe/Moscow', reducedMotion: 'reduce',
-            baseURL, extraHTTPHeaders: { origin: new URL(baseURL).origin },
-          })
-          await ctx.addInitScript(() => {
-            const w = window as unknown as { __tr: string[] }
-            w.__tr = []
-            const log = (kind: string) => (e: Event & { propertyName?: string, animationName?: string }) => {
-              const t = e.target as Element
-              w.__tr.push(`${kind} ${t.tagName?.toLowerCase()}.${String(t.className?.baseVal ?? t.className ?? '').trim().replace(/\s+/g, '.')}:${e.propertyName ?? e.animationName}`)
-            }
-            for (const k of ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart']) document.addEventListener(k, log(k), true)
-          })
-          const page = await ctx.newPage()
-          const cdp = await ctx.newCDPSession(page)
-          let layers: { layerId: string, backendNodeId?: number, offsetX: number, offsetY: number, width: number, height: number, drawsContent: boolean }[] = []
-          cdp.on('LayerTree.layerTreeDidChange', (e: { layers?: typeof layers }) => { if (e.layers) layers = e.layers })
-          await cdp.send('LayerTree.enable')
-          const log: Record<string, unknown> = {}
-          await walk(page, mobile, async (name) => {
-            const png = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', scale: 'css' })
-            const f = info.outputPath(`${v}-${k}-${name}.png`)
-            fs.writeFileSync(f, png);
-            (shots[name] ??= []).push(png.toString('base64'))
-            const tr = await page.evaluate(() => { const w = window as unknown as { __tr: string[] }; const r = w.__tr; w.__tr = []; return r })
-            const ls = []
-            for (const l of layers) {
-              let node = ''
-              let reasons: string[] = []
-              try { reasons = (await cdp.send('LayerTree.compositingReasons', { layerId: l.layerId }) as { compositingReasonIds: string[] }).compositingReasonIds } catch { /* слой ушёл */ }
-              if (l.backendNodeId) {
-                try {
-                  const d = await cdp.send('DOM.describeNode', { backendNodeId: l.backendNodeId }) as { node: { localName: string, attributes?: string[] } }
-                  const at = d.node.attributes ?? []
-                  node = `${d.node.localName}.${at[at.indexOf('class') + 1] ?? ''}`
-                } catch { /* узел ушёл */ }
-              }
-              ls.push({ node, x: l.offsetX, y: l.offsetY, w: l.width, h: l.height, draws: l.drawsContent, reasons })
-            }
-            log[name] = { md5: crypto.createHash('md5').update(png).digest('hex').slice(0, 8), tr, layers: ls }
-          })
-          fs.writeFileSync(info.outputPath(`${v}-${k}-log.json`), JSON.stringify(log, null, 1))
-          await ctx.close()
-        }
-        finally {
-          await browser.close()
-        }
-      }
-      for (const [name, list] of Object.entries(shots)) {
-        console.log(`DIAG ${info.project.name} ${v} ${name} distinct=${new Set(list).size} of ${list.length}`)
-      }
-    }
   })
 })

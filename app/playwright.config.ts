@@ -30,7 +30,8 @@ export default defineConfig({
       : undefined,
     // Без флага chromium на Linux хинтует шрифт и округляет ширины букв до целых
     // пикселей: переносы строк не как на телефоне. Через run-server доходит только с --unsafe.
-    launchOptions: { args: ['--font-render-hinting=none'] },
+    // Без частичного растра тайл всегда рисуется целиком: эталонные снимки не плавают между запусками.
+    launchOptions: { args: ['--font-render-hinting=none', '--disable-partial-raster'] },
     locale: 'ru-RU',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

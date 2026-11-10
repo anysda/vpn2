@@ -14,7 +14,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   timeout: 90_000,
-  expect: { timeout: 10_000 },
+  expect: {
+    timeout: 10_000,
+    toHaveScreenshot: { pathTemplate: '{testDir}/__screenshots__/{projectName}/{arg}{ext}', threshold: 0, maxDiffPixels: 0 },
+  },
   reporter: [['list'], ['html', { open: 'never', outputFolder: join(reportDir, 'playwright-report') }]],
   outputDir: join(reportDir, 'test-results'),
   globalTeardown: './e2e/support/teardown.ts',
@@ -43,13 +46,13 @@ export default defineConfig({
     {
       // Узкий десктоп: до 720px включается мобильный каркас, его держит проект mobile.
       name: 'narrow',
-      testMatch: /(^|\/)narrow\.spec\.ts$/,
+      testMatch: /(^|\/)(narrow|screenshots)\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 1024, height: 768 } },
     },
     {
       // Все телефонные сценарии: mobile.spec.ts и mobile-<раздел>.spec.ts.
       name: 'mobile',
-      testMatch: /(^|\/)mobile(-[\w-]+)?\.spec\.ts$/,
+      testMatch: /(^|\/)(mobile(-[\w-]+)?|screenshots)\.spec\.ts$/,
       use: { ...devices['Desktop Chrome'], viewport: { width: 402, height: 874 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
     },
   ],

@@ -163,6 +163,7 @@ class HealthWithoutTokenTests(unittest.TestCase):
             body = json.loads(response.read())
         self.assertIs(body.get('ok'), True, body)
         self.assertIs(body.get('invalid_token'), True, body)
+        self.assertIs(body.get('waiting_token'), True, body)
         self.assertIsNone(process.poll(), 'бот завершился на паузе:\n' + self.log())
         runtime = self.root / 'telegram-runtime.json'
         runtime.write_text(json.dumps(

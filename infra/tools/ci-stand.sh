@@ -481,8 +481,9 @@ stage_stats() {
 # push_tree             - чистый каталог, исходники ветки (ls-files);
 # push_tree --ref <тег>  - чистый каталог, исходники тега (git archive);
 # push_tree --over <тег> - каталог остаётся, поверх файлы ветки, удалённые с
-#                          тега пути стираются; config.yaml, infra/secrets и
-#                          infra/state не трогаются (config.yaml не рендерится).
+#                          тега пути стираются; config.yaml не трогается и не
+#                          рендерится, неотслеживаемые infra/secrets и
+#                          infra/state остаются (в потоке их нет).
 push_tree() {
   local mode=${1:-} tag=${2:-} password
   password=$(cat "$STAND_DIR/root-password")
@@ -495,7 +496,9 @@ push_tree() {
         # umask 0022: права каталогов как у дерева ветки, иначе слепок считает их лишними
         git -C "$REPO_ROOT" -c tar.umask=0022 archive "${tag:?тег}" | ssh_node "$ENTRY" 'tar -xf - -C /opt/anysda-vpn2' ;;
     --over) log "исходники $(git -C "$REPO_ROOT" rev-parse --short HEAD) поверх $tag → entry:/opt/anysda-vpn2"
-        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml --exclude=infra/secrets --exclude=infra/state'
+        # поток из ls-files: секретов и состояния в нём нет, они остаются на месте;
+        # отслеживаемый infra/secrets/.gitignore ложится как в чистой установке
+        git -C "$REPO_ROOT" ls-files -z | tar -C "$REPO_ROOT" --null -T - -czf - | ssh_node "$ENTRY" 'tar -xzf - -C /opt/anysda-vpn2 --exclude=config.yaml'
         git -C "$REPO_ROOT" diff -z --name-only --diff-filter=D "${tag:?тег}" HEAD \
           | ssh_node "$ENTRY" 'xargs -0 -r -I{} rm -f -- "/opt/anysda-vpn2/{}"'
         return 0 ;;

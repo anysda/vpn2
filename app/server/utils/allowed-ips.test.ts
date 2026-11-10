@@ -39,6 +39,17 @@ describe('wgAllowedIps', () => {
     for (let i = 1; i < nets.length; i++) expect(nets[i]!.start).toBeGreaterThan(nets[i - 1]!.end)
   })
 
+  it('сплит: полнота - сумма размеров равна 2^32 минус исключённые блоки', () => {
+    // исключено: 0/8, 10/8, 127/8 (по 16 777 216), 100.64/10 (4 194 304),
+    // 172.16/12 (1 048 576), 192.168/16 (65 536), 224/3 (536 870 912)
+    const excluded = 3 * 16_777_216 + 4_194_304 + 1_048_576 + 65_536 + 536_870_912
+    expect(excluded).toBe(592_510_976)
+    const nets = v4Nets(wgAllowedIps(true))
+    const total = nets.reduce((sum, r) => sum + (r.end - r.start + 1), 0)
+    expect(total).toBe(4_294_967_296 - 592_510_976)
+    expect(total).toBe(3_702_456_320)
+  })
+
   it('сплит: v6 - 2000::/3 и ULA fd66:66::/64 в конце', () => {
     const parts = wgAllowedIps(true).split(', ')
     expect(parts.slice(-2)).toEqual(['2000::/3', 'fd66:66::/64'])

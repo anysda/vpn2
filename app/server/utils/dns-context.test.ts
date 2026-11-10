@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
-import { citesGone, findList, listNames, listsView } from './dns-context'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { agh } from './agh-client'
+import { checkUntil, citesGone, findList, listNames, listsView } from './dns-context'
 import type { AghFilter, AghFilteringStatus } from './dns-context'
 import type { CheckHost } from './agh-parse'
+
+vi.mock('./agh-client', () => ({ agh: vi.fn() }))
 
 const f = (id: number, over: Partial<AghFilter> = {}): AghFilter => ({ id, name: `L${id}`, url: `https://x/${id}.txt`, enabled: true, rules_count: id * 10, ...over })
 const st = (over: Partial<AghFilteringStatus> = {}): AghFilteringStatus => ({ enabled: true, interval: 24, filters: [], whitelist_filters: [], user_rules: [], ...over })
@@ -93,5 +96,38 @@ describe('citesGone', () => {
   it('сравнение текста точное: пробелы и регистр различаются', () => {
     expect(citesGone(r([{ text: '||A^', filter_list_id: 0 }]), ['||a^'])).toBe(false)
     expect(citesGone(r([{ text: '||a^ ', filter_list_id: 0 }]), ['||a^'])).toBe(false)
+  })
+})
+
+describe('checkUntil', () => {
+  const aghMock = vi.mocked(agh)
+  beforeEach(() => {
+    vi.useFakeTimers()
+    aghMock.mockReset()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  it('кончается по успеху: опрос идёт, пока done не станет true', async () => {
+    let n = 0
+    aghMock.mockImplementation(async () => ({ reason: `r${++n}` }))
+    let result: unknown
+    void checkUntil('a.com', undefined, r => r.reason === 'r3').then((r) => { result = r })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(result).toEqual({ reason: 'r3' })
+    expect(aghMock).toHaveBeenCalledTimes(3)
+    expect(aghMock).toHaveBeenCalledWith('filtering/check_host', { query: { name: 'a.com', client: undefined } })
+  })
+
+  it('кончается по сроку: done не наступил, возвращается последний ответ и опрос стоит', async () => {
+    aghMock.mockResolvedValue({ reason: 'old' })
+    let result: unknown
+    void checkUntil('a.com', '10.0.0.5', () => false, 1000).then((r) => { result = r })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(result).toEqual({ reason: 'old' })
+    const calls = aghMock.mock.calls.length
+    expect(calls).toBeGreaterThan(1)
+    expect(calls).toBeLessThanOrEqual(8)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(aghMock).toHaveBeenCalledTimes(calls)
   })
 })

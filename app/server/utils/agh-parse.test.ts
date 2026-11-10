@@ -174,6 +174,23 @@ describe('summarize', () => {
     expect(s2.threats).toBe(5)
   })
 
+  it('почасовая: ряды блокировок и угроз тоже обрезаются до 24, доля не больше 100', () => {
+    const fill = (head: number, tail: number) => [...Array.from({ length: 6 }, () => head), ...Array.from({ length: 24 }, () => tail)]
+    const s = summarize(stats({
+      time_units: 'hours', dns_queries: fill(10, 10), blocked_filtering: fill(1000, 5),
+      replaced_parental: fill(1000, 1), replaced_safebrowsing: fill(1000, 2),
+    }), none, '', [])
+    expect(s.q).toHaveLength(24)
+    expect(s.b).toHaveLength(24)
+    expect(s.t).toHaveLength(24)
+    expect(s.queries).toBe(240)
+    expect(s.blocked).toBe(120)
+    expect(s.blockedPct).toBe(50)
+    expect(s.blockedPct).toBeLessThanOrEqual(100)
+    expect(s.t.every(v => v === 3)).toBe(true)
+    expect(s.threats).toBe(72)
+  })
+
   it('время ответа в миллисекундах из секунд', () => {
     expect(summarize(stats({ avg_processing_time: 0.0123 }), none, '', []).avgMs).toBeCloseTo(12.3, 5)
   })

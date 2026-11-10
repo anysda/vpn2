@@ -44,6 +44,25 @@ describe('minExpiryMs', () => {
     expect(minExpiryMs()).toBe(Date.parse('2026-06-17T00:00:00Z'))
   })
 
+  it('любая зона процесса: UTC+14, UTC-11 и UTC дают тот же результат', () => {
+    const prev = process.env.TZ
+    try {
+      for (const tz of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC']) {
+        process.env.TZ = tz
+        at('2026-06-15T12:00:00Z')
+        expect(minExpiryMs()).toBe(Date.parse('2026-06-16T00:00:00Z'))
+        at('2026-06-15T23:30:00Z')
+        expect(minExpiryMs()).toBe(Date.parse('2026-06-16T00:00:00Z'))
+        at('2026-06-16T00:30:00Z')
+        expect(minExpiryMs()).toBe(Date.parse('2026-06-17T00:00:00Z'))
+      }
+    }
+    finally {
+      if (prev === undefined) delete process.env.TZ
+      else process.env.TZ = prev
+    }
+  })
+
   it('результат всегда больше «сейчас» и в пределах суток', () => {
     for (const iso of ['2026-03-29T00:00:00Z', '2026-10-25T01:59:59Z', '2026-06-15T12:00:00Z']) {
       at(iso)

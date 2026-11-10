@@ -128,10 +128,11 @@ describe('matchRoute: ip_is_private и ip_version', () => {
   const m = (rule: Record<string, unknown>, ip?: string) => matchRoute(plan([{ ...rule, outbound: 'x' }]), conn({ ip }))
 
   it('границы приватных диапазонов', () => {
-    for (const ip of ['10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.0.0', '100.64.0.1', '127.0.0.1', '169.254.1.1', 'fe80::1', 'fd00::1', '::1']) {
+    for (const ip of ['10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.0.0', '100.64.0.1', '127.0.0.1', '169.254.1.1', 'fe80::1', 'fd00::1', '::1',
+      '224.0.0.251', '239.255.255.250', '224.0.0.0', '240.0.0.1', '255.255.255.255', 'ff02::fb']) {
       expect(m({ ip_is_private: true }, ip), ip).not.toBeNull()
     }
-    for (const ip of ['172.15.255.255', '172.32.0.0', '100.63.255.255', '100.128.0.0', '8.8.8.8', '2001:db8::1']) {
+    for (const ip of ['172.15.255.255', '172.32.0.0', '100.63.255.255', '100.128.0.0', '8.8.8.8', '2001:db8::1', '223.255.255.255', '126.255.255.255', '128.0.0.1']) {
       expect(m({ ip_is_private: true }, ip), ip).toBeNull()
     }
   })
@@ -247,6 +248,13 @@ describe('matchRoute: rule_set, logical, invert', () => {
   it('logical: подпись берётся из первого совпавшего не-invert подправила', () => {
     const or = { type: 'logical', mode: 'or', rules: [{ domain: ['zzz.com'] }, { domain: ['a.com'] }], outbound: 'x' }
     expect(matchRoute(plan([or]), conn({ domain: 'a.com' }))?.by?.value).toBe('a.com')
+  })
+
+  it('logical or: инвертированное первое подправило не даёт подпись, берётся не-invert', () => {
+    const or = { type: 'logical', mode: 'or', rules: [{ domain: ['zzz.com'], invert: true }, { domain: ['a.com'] }], outbound: 'x' }
+    const hit = matchRoute(plan([or]), conn({ domain: 'a.com' }))
+    expect(hit).not.toBeNull()
+    expect(hit?.by?.value).toBe('a.com')
   })
 
   it('invert: на обычном правиле и на logical', () => {

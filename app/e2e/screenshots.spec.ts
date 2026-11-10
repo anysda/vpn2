@@ -229,6 +229,7 @@ test.describe('эталонные скриншоты', () => {
     })
     await pinAll(page)
     const pending = trackRequests(page)
+    console.log('DBGCPU', (await import('node:fs')).readFileSync('/proc/cpuinfo', 'utf8').split('\n').filter(l => /model name|flags/.test(l)).slice(0, 2).map(l => l.slice(0, 40) + (l.includes('avx512f') ? ' AVX512' : '') + (l.includes(' avx2') ? ' AVX2' : '')).join(' | '))
     const base = page.viewportSize()!
 
     await page.goto('/login')

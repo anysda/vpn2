@@ -9,6 +9,9 @@ VENV_LOG="${VENV_LOG:-$VPN2_ROOT/ansible-venv.log}"
 ANSIBLE_VENV_INFRA="${ANSIBLE_VENV_INFRA:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # Каталог системных колёс python (setuptools, pip); тест подменяет.
 PYTHON_WHEELS_DIR="${PYTHON_WHEELS_DIR:-/usr/share/python-wheels}"
+# Системный интерпретатор: колёса из PYTHON_WHEELS_DIR собраны под него, а python3
+# из PATH может оказаться чужим (pyenv, setup-python). Тест подменяет.
+VPN2_PYTHON="${VPN2_PYTHON:-/usr/bin/python3}"
 _VENV_PID=
 
 # Хэш исходников пакета vpn2: pyproject.toml и src/**/*.py, __pycache__ не входит.
@@ -25,7 +28,7 @@ _vpn2_src_hash() {
 ansible_venv_pins() {
   local f
   {
-    python3 -V 2>&1
+    "$VPN2_PYTHON" -V 2>&1
     for f in ansible/constraints.txt ansible/requirements.yml; do
       sha256sum "$ANSIBLE_VENV_INFRA/$f"
     done
@@ -68,15 +71,15 @@ _ansible_wheel_build_locked() {
   [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   # setuptools до 70.1 (Ubuntu 24.04) не несёт bdist_wheel, он в пакете wheel;
   # на 26.04 первая проверка проходит и пакет не ставится.
-  if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import setuptools.command.bdist_wheel' "$st" 2>/dev/null \
-      && ! python3 -I -c 'import wheel' 2>/dev/null; then
+  if ! "$VPN2_PYTHON" -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import setuptools.command.bdist_wheel' "$st" 2>/dev/null \
+      && ! "$VPN2_PYTHON" -I -c 'import wheel' 2>/dev/null; then
     _install_prereq_pkgs python3-wheel || true
   fi
   tmp="$(mktemp -d)"
   cp -r "$ANSIBLE_VENV_INFRA/vpn2/." "$tmp/src"
   mkdir -p "$tmp/out"
   find "$tmp/src" -name __pycache__ -type d -prune -exec rm -rf {} +
-  if ! python3 -I -c 'import sys, os; sys.path.insert(0, sys.argv[1]); os.chdir(sys.argv[2]); from setuptools import build_meta as b; b.build_wheel(sys.argv[3])' \
+  if ! "$VPN2_PYTHON" -I -c 'import sys, os; sys.path.insert(0, sys.argv[1]); os.chdir(sys.argv[2]); from setuptools import build_meta as b; b.build_wheel(sys.argv[3])' \
       "$st" "$tmp/src" "$tmp/out" >"$tmp/build.log" 2>&1; then
     tail -n 20 "$tmp/build.log" >&2
     rm -rf "$tmp"
@@ -113,7 +116,7 @@ _ansible_venv_install_locked() {
     fi
     [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
     rm -f "$venv/.vpn2-wheel"
-    python3 "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
+    "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
       --no-index --no-deps --force-reinstall "$wheel" || return 1
     printf '%s\n' "$src" >"$venv/.vpn2-wheel"
     log "ansible: пины те же, колесо vpn2 обновлено"
@@ -121,10 +124,10 @@ _ansible_venv_install_locked() {
   fi
   [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   rm -f "$venv/.vpn2-pins" "$venv/.vpn2-wheel"
-  python3 -m venv --without-pip --clear "$venv" || return 1
-  _venv_retry python3 "$pip/pip" --python "$venv/bin/python" install \
+  "$VPN2_PYTHON" -m venv --without-pip --clear "$venv" || return 1
+  _venv_retry "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install \
     --disable-pip-version-check -c "$ANSIBLE_VENV_INFRA/ansible/constraints.txt" ansible-core || return 1
-  python3 "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
+  "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
     --no-index --no-deps "$wheel" || return 1
   _venv_retry "$venv/bin/ansible-galaxy" collection install \
     -r "$ANSIBLE_VENV_INFRA/ansible/requirements.yml" -p "$VPN2_ROOT/collections" || return 1

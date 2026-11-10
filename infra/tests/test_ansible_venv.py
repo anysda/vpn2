@@ -18,9 +18,23 @@ ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / 'infra/lib/ansible-venv.sh'
 PIN_FILES = ('ansible/constraints.txt', 'ansible/requirements.yml')
 OTHER_FILES = ('versions.yml', 'vpn2/pyproject.toml', 'vpn2/src/vpn2/config.py')
+
+
+def _system_python_builds_wheels():
+    """Системный python3 собирает колесо: setuptools-*.whl с bdist_wheel или модуль wheel."""
+    found = glob.glob('/usr/share/python-wheels/setuptools-*.whl')
+    if not found or not os.access('/usr/bin/python3', os.X_OK):
+        return False
+    with zipfile.ZipFile(found[0]) as z:
+        if 'setuptools/command/bdist_wheel.py' in z.namelist():
+            return True
+    return subprocess.run(['/usr/bin/python3', '-I', '-c', 'import wheel'],
+                          capture_output=True).returncode == 0
+
+
 NEEDS_WHEEL = unittest.skipUnless(
-    glob.glob('/usr/share/python-wheels/setuptools-*.whl'),
-    'нет системного setuptools-*.whl (python3-venv)')
+    _system_python_builds_wheels(),
+    'системный python3 не собирает колёса (python3-venv, python3-wheel)')
 NEEDS_PIP_WHEEL = unittest.skipUnless(
     glob.glob('/usr/share/python-wheels/pip-*.whl'),
     'нет системного pip-*.whl (python3-venv)')
@@ -54,7 +68,7 @@ def tree_status():
 def install(tmp_path, bin_dir, infra_dir):
     return bash('ansible_venv_install',
                 VPN2_ROOT=str(tmp_path / 'root'), ANSIBLE_VENV_INFRA=str(infra_dir),
-                PATH=f'{bin_dir}:{os.environ["PATH"]}')
+                VPN2_PYTHON=str(bin_dir / 'python3'))
 
 
 class AnsibleVenvTest(unittest.TestCase):
@@ -87,7 +101,7 @@ class AnsibleVenvTest(unittest.TestCase):
         return res.stdout.strip()
 
     def fake_python(self):
-        """Заглушка python3 в PATH: пишет аргументы в файл, pip и сеть не зовутся."""
+        """Заглушка python3 для VPN2_PYTHON: пишет аргументы в файл, pip и сеть не зовутся."""
         bin_dir = self.tmp / 'bin'
         bin_dir.mkdir()
         calls = self.tmp / 'calls'
@@ -182,7 +196,7 @@ class AnsibleVenvTest(unittest.TestCase):
         venv = root / 'venv'
         venv.mkdir(parents=True)
         pin = bash('ansible_venv_pins', ANSIBLE_VENV_INFRA=str(infra),
-                   PATH=f'{bin_dir}:{os.environ["PATH"]}').stdout.strip()
+                   VPN2_PYTHON=str(bin_dir / 'python3')).stdout.strip()
         (venv / '.vpn2-pins').write_text(pin + '\n')
         (venv / '.vpn2-wheel').write_text((root / 'wheels/.src-sha256').read_text())
         # тот же маркер колеса: ни одного вызова
@@ -276,10 +290,11 @@ class AnsibleVenvTest(unittest.TestCase):
                 # Модуль wheel на хосте тестов не мешает: проба его не видит.
                 bash(
                     f'_install_prereq_pkgs() {{ echo "$*" >> {calls}; }}\n'
-                    'python3() { [[ "$*" == *"import wheel"* ]] && return 1; '
-                    'command python3 "$@"; }\n'
+                    'nowheel() { [[ "$*" == *"import wheel"* ]] && return 1; '
+                    '/usr/bin/python3 "$@"; }\n'
                     'ansible_wheel_build',
-                    VPN2_ROOT=str(tmp / 'root'), PYTHON_WHEELS_DIR=str(wheels))
+                    VPN2_ROOT=str(tmp / 'root'), PYTHON_WHEELS_DIR=str(wheels),
+                    VPN2_PYTHON='nowheel')
                 if has_cmd:
                     self.assertFalse(calls.exists())
                 else:

@@ -128,7 +128,7 @@ describe('matchRoute: ip_is_private и ip_version', () => {
   const m = (rule: Record<string, unknown>, ip?: string) => matchRoute(plan([{ ...rule, outbound: 'x' }]), conn({ ip }))
 
   it('границы приватных диапазонов', () => {
-    for (const ip of ['10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.1.1', '100.64.0.1', '127.0.0.1', '169.254.1.1', 'fe80::1', 'fd00::1', '::1']) {
+    for (const ip of ['10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.0.0', '100.64.0.1', '127.0.0.1', '169.254.1.1', 'fe80::1', 'fd00::1', '::1']) {
       expect(m({ ip_is_private: true }, ip), ip).not.toBeNull()
     }
     for (const ip of ['172.15.255.255', '172.32.0.0', '100.63.255.255', '100.128.0.0', '8.8.8.8', '2001:db8::1']) {
@@ -207,7 +207,7 @@ describe('matchRoute: источник клиента', () => {
   })
 
   it('source_ip_is_private', () => {
-    expect(m({ source_ip_is_private: true }, '192.168.0.2')).not.toBeNull()
+    expect(m({ source_ip_is_private: true }, '192.168.0.0')).not.toBeNull()
     expect(m({ source_ip_is_private: true }, '8.8.8.8')).toBeNull()
   })
 

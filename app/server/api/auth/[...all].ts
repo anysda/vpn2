@@ -1,3 +1,4 @@
+import errorText from '../../../shared/error-text.json' with { type: 'json' }
 import { isLoopbackAddr } from '../../utils/bot-api'
 import { joinDetail, recordEvent } from '../../utils/events'
 import { loginAttempt, loginFinish } from '../../utils/login-limit'
@@ -35,7 +36,7 @@ const TEXT: Record<string, string> = {
   TOO_MANY_ATTEMPTS_REQUEST_NEW_CODE: 'Слишком много попыток, введите логин и пароль заново',
   ACCOUNT_TEMPORARILY_LOCKED: 'Слишком много неверных кодов, попробуйте позже',
   TOO_MANY_REQUESTS: 'Слишком много попыток, попробуйте позже',
-  UNAUTHORIZED: 'Нужно войти',
+  UNAUTHORIZED: errorText.panel.Unauthorized,
   SESSION_EXPIRED: 'Сессия завершена, войдите заново',
 }
 

@@ -3,24 +3,9 @@
  * `createError({ statusMessage: 'not_found' })`, и без текста `message` равен
  * коду — его видел человек в тосте и в Telegram. Здесь код остаётся в
  * `statusMessage`, а в `message` встаёт текст; заданный обработчиком текст
- * не трогаем.
+ * не трогаем. Тексты лежат в `app/shared/error-text.json`.
  */
-const TEXT: Record<string, string> = {
-  Unauthorized: 'Нужно войти',
-  unauthorized: 'Неверный секрет бота',
-  not_found: 'Не найдено',
-  invalid_id: 'Неверный идентификатор',
-  invalid_params: 'Неверные параметры запроса',
-  invalid_chat_id: 'Неверный идентификатор чата Telegram',
-  invalid_password: 'Неверный пароль клиента',
-  not_linked: 'Telegram не привязан ни к одному клиенту',
-  loopback_only: 'API бота доступен только с этой ноды',
-  tgbot_secret_not_configured: 'Не задан секрет Telegram-бота в конфиге',
-  wg_public_host_not_configured: 'Не задан публичный адрес WireGuard в конфиге',
-  ovpn_public_host_not_configured: 'Не задан публичный адрес OpenVPN в конфиге',
-  entry_host_not_configured: 'Не задан публичный адрес сервера в конфиге',
-  insert_failed: 'Не удалось сохранить запись',
-}
+import { panelErrorText } from '../../shared/error-text'
 
 export default defineNitroPlugin((nitroApp) => {
   // Хук синхронный: Nitro зовёт его перед errorHandler и не ждёт, так что
@@ -28,7 +13,7 @@ export default defineNitroPlugin((nitroApp) => {
   nitroApp.hooks.hook('error', (error, { event }) => {
     if (!event || !isError(error)) return
     if (error.message && error.message !== error.statusMessage) return
-    const text = TEXT[error.statusMessage ?? '']
+    const text = panelErrorText(error.statusMessage ?? '')
     if (text) error.message = text
   })
 })

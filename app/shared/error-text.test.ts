@@ -63,6 +63,18 @@ describe('единая таблица текстов ошибок', () => {
   })
 
   it('plural содержит тройки панели и бота', () => {
+    expect(table.plural).toEqual({
+      client: ['клиент', 'клиента', 'клиентов'],
+      address: ['адрес', 'адреса', 'адресов'],
+      hour: ['час', 'часа', 'часов'],
+      day: ['день', 'дня', 'дней'],
+      rule: ['правило', 'правила', 'правил'],
+      list: ['список', 'списка', 'списков'],
+      server: ['сервер', 'сервера', 'серверов'],
+      device: ['устройство', 'устройства', 'устройств'],
+      notification: ['уведомление', 'уведомления', 'уведомлений'],
+      botDevice: ['девайс', 'девайса', 'девайсов'],
+    })
     const values = Object.values(table.plural)
     for (const triple of panelTriples) {
       expect(hasTriple(values, triple), `нет тройки панели ${triple.join(' / ')}`).toBe(true)

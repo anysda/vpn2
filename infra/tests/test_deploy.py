@@ -3,6 +3,7 @@
 VPN2_TEST_ROOT позволяет прогнать те же проверки против другой ревизии.
 """
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -72,8 +73,10 @@ do_restore latest --force --dry-run
 '''
             result = bash(script, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.splitlines(),
-                             ["ssh: /usr/local/bin/anysda-restore.sh 'latest' '--force' '--dry-run'"])
+            lines = result.stdout.splitlines()
+            self.assertEqual(len(lines), 1, lines)
+            self.assertRegex(lines[0], r"^ssh: VPN2_DEVELOPMENT=(true|false) "
+                                       r"/usr/local/bin/anysda-restore\.sh 'latest' '--force' '--dry-run'$")
 
     def run_deploy(self, directory, *args, restore_rc=0, backup_rc=0):
         """Настоящие infra/deploy.sh и deploy-release.sh, транспорт до entry подставной."""
@@ -125,7 +128,8 @@ ssh_exec() {{
                 result, calls = self.run_deploy(directory, *args)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(calls), 1, calls)
-                self.assertTrue(calls[0].startswith(f"ssh: /usr/local/bin/anysda-restore.sh '{archive}'"), calls)
+                self.assertRegex(calls[0], r'^ssh: VPN2_DEVELOPMENT=(true|false) '
+                                           r'/usr/local/bin/anysda-restore\.sh ' + re.escape(f"'{archive}'"))
                 self.assertIn("'--dry-run'", calls[0])
 
     def test_restore_dry_run_of_local_archive_uploads_nothing(self):

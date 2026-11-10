@@ -1,43 +1,11 @@
-import { and, eq } from 'drizzle-orm'
-import { useDb } from '../../../../database/client'
-import { devices } from '../../../../database/schema'
-import { clientByChat, requireBotAuth, requireChatLinked } from '../../../../utils/bot-api'
-import { clientDns } from '../../../../utils/client-dns'
-import { buildOvpnConfig, caReady, ensureDeviceOvpn } from '../../../../utils/openvpn'
+import { requireChatLinked } from '../../../../utils/bot-api'
+import { botClientDevice } from '../../../../utils/device-route'
+import { deviceOvpnConfig, requireOvpnEndpoint } from '../../../../utils/ovpn-device-config'
 
 // Выдача OpenVPN-конфига девайса по запросу клиента из бота.
 export default defineEventHandler(async (event) => {
-  requireBotAuth(event)
-  const deviceId = Number(getRouterParam(event, 'deviceId'))
-  const chatId = Number(getQuery(event).chatId)
-  if (!Number.isFinite(deviceId) || !Number.isFinite(chatId)) {
-    throw createError({ statusCode: 400, statusMessage: 'invalid_params' })
-  }
-
-  const cfg = useRuntimeConfig()
-  if (!cfg.ovpnEnabled) throw createError({ statusCode: 503, statusMessage: 'ovpn_disabled', message: 'OpenVPN выключен' })
-  const endpoint = String(cfg.ovpnPublicHost || '')
-  if (!endpoint) throw createError({ statusCode: 500, statusMessage: 'ovpn_public_host_not_configured' })
-  if (!(await caReady())) throw createError({ statusCode: 503, statusMessage: 'ovpn_ca_not_ready', message: 'OpenVPN CA ещё не инициализирован (стадия 29-openvpn)' })
-
-  const client = await clientByChat(chatId)
-  const db = useDb()
-  const [device] = await db.select().from(devices)
-    .where(and(eq(devices.id, deviceId), eq(devices.clientId, client.id)))
-    .limit(1)
-  if (!device) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-
-  const dev = await ensureDeviceOvpn(deviceId)
-  const conf = await buildOvpnConfig({
-    clientCert: dev.ovpnCert!,
-    clientKey: dev.ovpnKey!,
-    serverHost: endpoint,
-    serverPort: Number(cfg.ovpnPort),
-    proto: String(cfg.ovpnProto),
-    dns: clientDns(client.filterTraffic),
-    splitLocal: cfg.wgSplitLocal !== false,
-    tunnelPrefixes: [String(cfg.mgmtMeshIpPrefix)],
-  })
+  const { client, device, ready: endpoint, chatId } = await botClientDevice(event, () => requireOvpnEndpoint())
+  const conf = await deviceOvpnConfig(device.id, client.filterTraffic, endpoint)
 
   // Последний await перед ответом: отвязанный за время сборки чат конфиг не получает.
   await requireChatLinked(client.id, chatId)

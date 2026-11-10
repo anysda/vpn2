@@ -272,24 +272,14 @@ def test_create_matches_bash(tmp_path, monkeypatch, label, extra, old, scenario,
     shell, python = results
     assert shell['rc'] == code, label
     if label == 'empty-passphrase':
-        shell = deviate_secret_in_argv(shell)
+        shell = deviate_single_event(shell)
     assert python == shell
 
 
-def deviate_secret_in_argv(result):
-    """Единственное отличие: у события на 8877 секрет идёт через stdin (-H @-), а не в argv (VPN2-801)."""
-    old = json.dumps(['-fsS', '--max-time', '5', '-H', 'Content-Type: application/json', '-H',
-                      f'X-Tgbot-Secret: {SECRET}']).strip('[]')
-    calls = []
-    for line in result['calls']:
-        record = json.loads(line)
-        if record['cmd'] == 'curl' and f'X-Tgbot-Secret: {SECRET}' in record['argv']:
-            argv = record['argv']
-            assert json.dumps(argv[:7]).strip('[]') == old
-            record = {'cmd': 'curl', 'argv': ['-fsS', '--max-time', '5', '-H', '@-', '-H',
-                                              'Content-Type: application/json', *argv[7:]],
-                      'stdin': f'X-Tgbot-Secret: {SECRET}\n'}
-        calls.append(json.dumps(record))
+def deviate_single_event(result):
+    """Единственное отличие: тревоги боту на 8877 больше нет, о сбое говорит одно событие backup_failed."""
+    calls = [line for line in result['calls'] if f'X-Tgbot-Secret: {SECRET}' not in json.loads(line)['argv']]
+    assert len(calls) == len(result['calls']) - 1
     return {**result, 'calls': calls}
 
 
@@ -376,14 +366,19 @@ def test_report_failure_keeps_secret_out_of_argv(tmp_path):
     assert not calls
 
 
-def test_alert_no_passphrase_writes_text_and_posts(tmp_path):
-    paths = Paths.under(str(tmp_path))
-    put(Path(paths.secret_file), SECRET + '\n')
-    calls, err = [], StringIO()
-    backup_run.alert_no_passphrase(paths, err, lambda argv, **kw: calls.append((argv, kw)))
+def test_empty_passphrase_is_one_russian_event(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    vals = values(root, ANYSDA_BACKUP_PASSPHRASE='')
+    err = StringIO()
+    assert create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=err, now=NOW) == 2
+    assert err.getvalue().startswith('anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.')
     assert paths.env_file in err.getvalue()
-    assert 'system_alert' in calls[0][0][calls[0][0].index('-d') + 1]
-    assert SECRET not in ' '.join(calls[0][0])
+    sent = events(root)
+    assert len(sent) == 1 and SECRET not in ' '.join(sent[0]['argv'])
+    assert sent[0]['argv'][-1] == backup_run.notify.PANEL_URL
+    assert json.loads(sent[0]['argv'][sent[0]['argv'].index('-d') + 1]) == {
+        'type': 'backup_failed', 'detail': 'нет пароля шифрования'}
+    assert sent[0]['stdin'] == f'Authorization: Bearer {SECRET}\n'
 
 
 def test_rotate_local_keeps_newest(tmp_path):

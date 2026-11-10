@@ -142,13 +142,13 @@ def report_failure(rc, state, paths, run):
     _post(run, [notify.PANEL_URL], f'Authorization: Bearer {secret}', body)
 
 
-def alert_no_passphrase(paths, err, run):
-    """Пароля нет: текст FATAL в err и тревога боту на 8877 (второе событие - вместе с report_failure)."""
+def alert_no_passphrase(paths, err):
+    """Пароля нет: текст FATAL в err. Событие одно - backup_failed из report_failure.
+
+    Прежний скрипт слал ещё и system_alert боту с английским текстом: владелец получал два
+    сообщения об одном сбое.
+    """
     err.write(FATAL_TEXT.format(env_file=paths.env_file))
-    secret = _secret(paths)
-    if secret is not None:
-        body = '{"type":"system_alert","subject":"backup failed","detail":"ANYSDA_BACKUP_PASSPHRASE missing"}'
-        _post(run, [notify.BOT_URL], f'X-Tgbot-Secret: {secret}', body)
 
 
 def copy_etc_anysda(bundle_dir, paths, run, err):
@@ -427,7 +427,7 @@ def _default_check(bundle_dir, out, err):
 
 def _make(settings, paths, state, run, out, err, now, check, sleep, wait):
     if not settings.passphrase:
-        alert_no_passphrase(paths, err, run)
+        alert_no_passphrase(paths, err)
         state.fail_reason = 'нет пароля шифрования'
         raise _Stop(2)
     source_root = _source_root(paths)

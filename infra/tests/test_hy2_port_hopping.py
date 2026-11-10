@@ -34,7 +34,6 @@ for arg in "$@"; do
   prev=$arg
 done
 '''
-FAKE_CALL = '#!/bin/sh\necho "$(basename "$0") $*" >> "$CALLS_LOG"\n'
 STUBS = '''
 release_download() { printf '#!/bin/sh\\nexit 1\\n' > "$2"; }
 sha256sum() {

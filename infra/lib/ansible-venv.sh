@@ -61,12 +61,12 @@ _ansible_wheel_build_locked() {
         && "$(cat "$wheels/.src-sha256")" == "$src" ]]; then
     return 0
   fi
-  st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1)"
+  st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1 || true)"
   if [[ -z "$st" ]]; then
     # Entry, обновлённый со старого выпуска, без python3-venv: ставим его тем же
     # способом, что и install_prereqs; замок колеса держится, дорожки ждут.
     _install_prereq_pkgs python3-venv || true
-    st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1)"
+    st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1 || true)"
   fi
   [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   # setuptools до 70.1 (Ubuntu 24.04) не несёт bdist_wheel, он в пакете wheel;

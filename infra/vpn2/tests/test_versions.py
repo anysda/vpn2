@@ -43,7 +43,6 @@ STAGE_LINES = {
     'yt_node_sha256': ('scripts/19-yt-zapret.sh', '{v}'),
     'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),
     'yt_pot_sha256': ('lib/install-yt-pot.sh', '{v}'),
-    'aws_cli': ('scripts/26-backup.sh', 'AWS_CLI_VERSION={v}\n'),
     'zapret2': ('scripts/19-yt-zapret.sh', 'YT_ZAPRET_REF="${{YT_ZAPRET_REF:-{v}}}"'),
 }
 
@@ -56,7 +55,7 @@ def check_lines(pins):
 
 
 def test_keys():
-    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', *STAGE_PINS, *STAGE_LINES}
+    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', *STAGE_PINS, *STAGE_LINES}
 
 
 def test_matches_stages():

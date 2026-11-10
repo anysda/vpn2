@@ -1,0 +1,14 @@
+[Unit]
+Description=anysda-vpn2 — encrypted DB+secrets backup
+Wants=anysda-vpn2.target
+
+[Service]
+Type=oneshot
+# backup.env читает сама команда: формат файла - кавычки shell, не EnvironmentFile.
+ExecStart={{ backup_vpn2 }} backup
+# 4 - архив снят с предупреждением (оно в журнале и в «Событиях» панели),
+# юнит не падает.
+SuccessExitStatus=4
+# Логи приходят в journalctl -u anysda-backup
+StandardOutput=journal
+StandardError=journal

@@ -1,0 +1,6 @@
+---
+- name: Резервные копии entry
+  hosts: entry
+  tags: [26-backup]
+  roles:
+    - backup

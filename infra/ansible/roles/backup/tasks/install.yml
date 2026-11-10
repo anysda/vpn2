@@ -1,0 +1,71 @@
+---
+- name: Каталог библиотек узла
+  ansible.builtin.file:
+    path: /usr/local/lib/anysda
+    state: directory
+    mode: '0755'
+
+# Разбор wg0.conf остаётся на узле для проверок вне пакета, общие функции
+# стадий и список пулов берёт restore.
+- name: Библиотеки для команд вне клона
+  ansible.builtin.copy:
+    src: "{{ backup_infra }}/{{ item }}"
+    dest: "/usr/local/lib/anysda/{{ item | basename }}"
+    mode: '0644'
+  loop: "{{ backup_node_lib }}"
+
+- name: Команды бэкапа, восстановления и списка архивов
+  ansible.builtin.copy:
+    src: "{{ backup_infra }}/lib/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    mode: '0755'
+  loop: "{{ backup_commands }}"
+
+# Единственное место, где парольная фраза живёт на entry.
+- name: Настройки бэкапа
+  ansible.builtin.template:
+    src: backup.env.j2
+    dest: /etc/anysda/backup.env
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Юнит и таймер бэкапа
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: '0644'
+  loop: [anysda-backup.service, anysda-backup.timer]
+  register: backup_units
+
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ backup_infra }}/lib/{{ item }}"
+    dest: "{{ backup_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  changed_when: false
+
+- name: Ресурсы юнита бэкапа
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-backup; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ backup_tmp }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  register: backup_step
+  changed_when: "'changed=1' in backup_step.stdout"
+
+# OnCalendar без суффикса TZ: systemd берёт системную таймзону entry.
+- name: Таймер по расписанию
+  ansible.builtin.systemd_service:
+    name: anysda-backup.timer
+    enabled: "{{ backup_schedule == 'daily' }}"
+    state: "{{ 'started' if backup_schedule == 'daily' else 'stopped' }}"
+    daemon_reload: "{{ backup_units is changed or backup_step is changed }}"

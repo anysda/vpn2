@@ -1,17 +1,15 @@
-from pathlib import Path
 import configparser
-import tempfile
 import unittest
 
-from test_deploy import bash, source
+from test_deploy import source
+
+ROLE = 'infra/ansible/roles/backup'
 
 
 class BackupDisableTests(unittest.TestCase):
     def test_schedule_uses_entry_timezone_with_at_most_five_minutes_jitter(self):
-        stage = source('infra/scripts/26-backup.sh')
-        timer = stage.split("cat > /etc/systemd/system/anysda-backup.timer <<'EOF'\n", 1)[1].split('\nEOF', 1)[0]
         config = configparser.ConfigParser()
-        config.read_string(timer)
+        config.read_string(source(f'{ROLE}/templates/anysda-backup.timer.j2'))
         self.assertEqual(config['Timer']['OnCalendar'], '*-*-* 02:00:00')
         self.assertEqual(config['Timer']['RandomizedDelaySec'], '300')
         # systemd по умолчанию добавляет ещё минуту AccuracySec поверх jitter.
@@ -19,17 +17,12 @@ class BackupDisableTests(unittest.TestCase):
         self.assertEqual(config['Timer']['Persistent'], 'true')
 
     def test_disabled_stops_existing_timer(self):
-        stage = source('infra/scripts/26-backup.sh')
-        block = stage.split('if [[ "${BACKUP_ENABLED:-}" != "true" ]]; then', 1)[1]
-        block = 'if [[ "${BACKUP_ENABLED:-}" != "true" ]]; then' + block.split('\nfi', 1)[0] + '\nfi\n'
-        for enabled in ('false', ''):
-            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as directory:
-                result = bash(f'BACKUP_ENABLED="{enabled}"\nHOST_TAG=ru\n'
-                              'systemctl() { echo "systemctl $*" >> calls; }\n' + block, directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                calls = Path(directory) / 'calls'
-                self.assertTrue(calls.exists(), result.stdout)
-                self.assertEqual(calls.read_text().splitlines(), ['systemctl disable --now anysda-backup.timer'])
+        tasks = source(f'{ROLE}/tasks/main.yml')
+        step = tasks.split('- name: Таймер выключенного бэкапа снят', 1)[1].split('\n- name:', 1)[0]
+        self.assertIn('name: anysda-backup.timer', step)
+        self.assertIn('enabled: false', step)
+        self.assertIn('state: stopped', step)
+        self.assertIn('when: not backup_enabled', step)
 
 
 if __name__ == '__main__':

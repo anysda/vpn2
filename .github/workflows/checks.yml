@@ -20,8 +20,6 @@ jobs:
         run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
       - name: мёртвые переменные и функции
         run: git ls-files -z '*.sh' | xargs -0 shellcheck -i SC2034,SC2317,SC2329
-      - name: проверка загрузки AWS CLI
-        run: python3 infra/tests/test_aws_cli.py
       - name: зависимости Debian и Ubuntu
         run: bash infra/tests/debian-compat.sh
       - uses: actions/setup-python@v7

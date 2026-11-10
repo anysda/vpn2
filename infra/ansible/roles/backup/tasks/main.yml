@@ -1,0 +1,70 @@
+---
+# Резервные копии entry: три команды, настройки с парольной фразой и таймер.
+- name: Клон деплоя
+  ansible.builtin.stat:
+    path: "{{ backup_source_root }}/infra"
+  register: backup_clone
+  when: backup_source_root | length > 0
+
+- name: Отметка клона деплоя
+  ansible.builtin.copy:
+    content: "{{ backup_source_root }}\n"
+    dest: /etc/anysda/source-root
+    mode: '0644'
+  when: backup_source_root | length > 0 and backup_clone.stat.isdir | default(false)
+
+# Бэкап выключен в config.yaml: прежний таймер снимается, архивы и парольная
+# фраза остаются - они нужны для восстановления.
+- name: Таймер выключенного бэкапа снят
+  ansible.builtin.systemd_service:
+    name: anysda-backup.timer
+    enabled: false
+    state: stopped
+  when: not backup_enabled
+  failed_when: false
+
+- name: Бэкап включён
+  when: backup_enabled
+  block:
+    - name: Настройки бэкапа заданы
+      ansible.builtin.assert:
+        that:
+          - backup_backend | length > 0
+          - backup_passphrase | length > 0
+          - backup_backend != 's3' or (backup_s3.values() | map('length') | min) > 0
+        fail_msg: >-
+          Нет настроек бэкапа: backend, passphrase, а для s3 - endpoint, bucket и ключи.
+          Заполни setup.sh или раздел backup в config.yaml
+        quiet: true
+
+    - name: Каталоги архивов
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0700'
+      loop: ["{{ backup_local_dir }}", "{{ backup_local_dir }}/.pre-restore"]
+
+    - name: Пакеты бэкапа
+      ansible.builtin.command:
+        argv: >-
+          {{ [backup_venv ~ '/bin/python', '-m', 'vpn2.cli.host', 'packages'] + backup_packages
+             + (backup_packages_s3 if backup_backend == 's3' else []) }}
+      environment:
+        HOST_TAG: "{{ inventory_hostname }}"
+      register: backup_step
+      changed_when: "'vpn2: changed' in backup_step.stdout"
+
+    - name: Клиент S3
+      ansible.builtin.import_tasks: aws-cli.yml
+      when: backup_backend == 's3'
+
+    - name: Команды и настройки
+      ansible.builtin.import_tasks: install.yml
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/26-backup
+    force: false
+    mode: '0644'
+  when: backup_enabled

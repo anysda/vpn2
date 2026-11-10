@@ -309,8 +309,6 @@
  "test_apt_pause[general]": 1,
  "test_apt_recommends.AptRecommendsTests[0]": 1,
  "test_apt_recommends.AptRecommendsTests[1]": 1,
- "test_aws_cli.AwsCliTests[0]": 1,
- "test_aws_cli.AwsCliTests[1]": 1,
  "test_backup_disable[general]": 1,
  "test_ci_timeouts[general]": 1,
  "test_config_backup_passphrase.BackupPassphraseTests[0]": 1,

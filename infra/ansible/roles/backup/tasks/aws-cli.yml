@@ -1,0 +1,96 @@
+---
+# Официальный бинарь aws-cli v2. Подпись сверяется постоянным ключом AWS CLI
+# Team из роли (FB5DB77FD5C118B80511ADA8A6310ACC4672475C), а не ключом из загрузки.
+- name: Клиент S3 на узле
+  ansible.builtin.command:
+    argv: [/bin/sh, -c, command -v aws]
+  register: backup_aws
+  changed_when: false
+  failed_when: false
+
+- name: Установка aws-cli
+  when: backup_aws.rc != 0
+  block:
+    - name: Рабочий каталог загрузки
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: aws-cli.
+      register: backup_aws_tmp
+
+    # Свой keyring: пользовательские ключи и gpg.conf в сверке не участвуют.
+    - name: Каталог ключей
+      ansible.builtin.file:
+        path: "{{ backup_aws_tmp.path }}/gnupg"
+        state: directory
+        mode: '0700'
+
+    - name: Ключ AWS CLI Team
+      ansible.builtin.copy:
+        src: aws-cli-team.asc
+        dest: "{{ backup_aws_tmp.path }}/aws-cli-team.asc"
+        mode: '0644'
+
+    - name: Ключ в keyring
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --no-options
+          - --homedir
+          - "{{ backup_aws_tmp.path }}/gnupg"
+          - --batch
+          - --no-autostart
+          - --import
+          - "{{ backup_aws_tmp.path }}/aws-cli-team.asc"
+      changed_when: true
+
+    # Выпуск качает архив по манифесту со сверкой суммы, разработка - по адресу.
+    - name: Архив и подпись
+      ansible.builtin.command:
+        argv: >-
+          {{ [backup_venv ~ '/bin/python', '-m', 'vpn2.release']
+             + ([] if backup_development else ['--manifest', backup_manifest])
+             + ['artifact', item.name, backup_aws_tmp.path ~ '/' ~ item.file, '--url', backup_aws_cli_url ~ item.suffix] }}
+      loop:
+        - {name: aws-cli, file: awscli.zip, suffix: ''}
+        - {name: aws-cli-signature, file: awscli.zip.sig, suffix: .sig}
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Подпись архива
+      ansible.builtin.command:
+        argv:
+          - gpg
+          - --no-options
+          - --homedir
+          - "{{ backup_aws_tmp.path }}/gnupg"
+          - --batch
+          - --no-autostart
+          - --no-auto-key-retrieve
+          - --verify
+          - "{{ backup_aws_tmp.path }}/awscli.zip.sig"
+          - "{{ backup_aws_tmp.path }}/awscli.zip"
+      changed_when: false
+
+    - name: Архив распакован
+      ansible.builtin.unarchive:
+        src: "{{ backup_aws_tmp.path }}/awscli.zip"
+        dest: "{{ backup_aws_tmp.path }}"
+        remote_src: true
+
+    - name: Установщик aws-cli
+      ansible.builtin.command:
+        argv:
+          - "{{ backup_aws_tmp.path }}/aws/install"
+          - --bin-dir
+          - /usr/local/bin
+          - --install-dir
+          - /usr/local/aws-cli
+          - --update
+      changed_when: true
+  always:
+    - name: Рабочий каталог убран
+      ansible.builtin.file:
+        path: "{{ backup_aws_tmp.path }}"
+        state: absent
+      when: backup_aws_tmp.path is defined

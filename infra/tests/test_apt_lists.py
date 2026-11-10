@@ -60,7 +60,7 @@ apt_update_if_stale
         self.assertEqual(self.run_update('mirror_Packages.lz4', stale_index=True), 'update -qq\n')
 
     def test_stage_installers_use_shared_list_check(self):
-        for stage in ('26-backup', '27-ikev2', '29-openvpn'):
+        for stage in ('27-ikev2', '29-openvpn'):
             with self.subTest(stage=stage):
                 text = source(f'infra/scripts/{stage}.sh')
                 self.assertTrue('apt_update_if_stale' in text, f'{stage} bypasses shared check')

@@ -174,34 +174,10 @@ class IkeRoutingLiteralTests(unittest.TestCase):
 class BackupLiteralTests(unittest.TestCase):
     def test_archive_saved_with_warning_does_not_fail_unit(self):
         # Код 4 anysda-backup.sh — архив снят, предупреждение в журнале и в панели.
-        text = source('26-backup.sh')
-        unit = text.split("cat > /etc/systemd/system/anysda-backup.service <<'EOF'", 1)[1].split('\nEOF', 1)[0]
+        unit = (ROOT / 'infra/ansible/roles/backup/templates/anysda-backup.service.j2').read_text()
         self.assertIn('\nSuccessExitStatus=4\n', unit)
-
-    def test_backup_env_roundtrip(self):
-        text = source('26-backup.sh')
-        unit = text.split("cat > /etc/systemd/system/anysda-backup.service <<'EOF'", 1)[1].split('\nEOF', 1)[0]
-        self.assertNotIn('\nEnvironmentFile=', unit, 'Bash %q is not systemd EnvironmentFile syntax')
-        block = text[text.index('echo "[$HOST_TAG] [3/4]'):text.index('# ── 4. Systemd')]
-        keys = ['BACKUP_LOCAL_DIR', 'BACKUP_RETENTION', 'BACKUP_PASSPHRASE',
-                'BACKUP_S3_ENDPOINT', 'BACKUP_S3_BUCKET', 'BACKUP_S3_REGION',
-                'BACKUP_S3_ACCESS_KEY', 'BACKUP_S3_SECRET_KEY']
-        for value in [*VALUES, "'; touch INJECTED; #"]:
-            with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                path = Path(work) / 'backup.env'
-                result = run(block.replace('/etc/anysda/backup.env', str(path)), work,
-                             HOST_TAG='ru', BACKUP_BACKEND='s3', **dict.fromkeys(keys, value))
-                self.assertEqual(result.returncode, 0, result.stderr)
-                # Start with a clean shell so original env cannot hide a broken assignment.
-                names = [key.replace('BACKUP_PASSPHRASE', 'ANYSDA_BACKUP_PASSPHRASE')
-                         .replace('BACKUP_S3_ACCESS_KEY', 'ANYSDA_S3_ACCESS_KEY')
-                         .replace('BACKUP_S3_SECRET_KEY', 'ANYSDA_S3_SECRET_KEY') for key in keys]
-                loaded = run('source backup.env\nprintf "%s\\0" ' +
-                             ' '.join('"$' + key + '"' for key in names), work)
-                self.assertEqual(loaded.returncode, 0, loaded.stderr)
-                self.assertEqual(loaded.stdout.split('\0')[:-1], [value] * len(keys))
-                self.assertFalse((Path(work) / 'INJECTED').exists())
-                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        # backup.env пишется в синтаксисе Bash, для EnvironmentFile он не годится.
+        self.assertNotIn('\nEnvironmentFile=', unit)
 
 
 class TelegramLiteralTests(unittest.TestCase):

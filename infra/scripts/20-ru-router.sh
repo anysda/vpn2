@@ -2,7 +2,7 @@
 # Stage 20 — sing-box роутер на RU-ноде.
 # Поднимает sing-box: трафик клиентов (WG/OpenVPN, заведённый стадиями 28/29
 # в sing-box TPROXY :7898) роутится по наборам geoip/geosite в hy2-туннели до
-# exit-нод (см. gen-router-config.py). Идемпотентен.
+# exit-нод (см. vpn2 router config). Идемпотентен.
 
 set -euo pipefail
 
@@ -18,6 +18,9 @@ source "$RESOURCE_LIB"
 
 STAMP_DIR=/var/anysda/.stamps
 STAGE='20-ru-router'
+# Генератор конфига, набор адресов и ручные маршруты живут в пакете vpn2.
+VPN2_BIN=/opt/vpn2/venv/bin/vpn2
+[[ -x "$VPN2_BIN" ]] || { echo "[$HOST_TAG] $VPN2_BIN не найден (venv vpn2 не установлен)"; exit 1; }
 
 mkdir -p /etc/anysda /etc/sing-box /var/lib/sing-box
 
@@ -38,7 +41,7 @@ bash /tmp/anysda/install-sing-box.sh
 echo "[$HOST_TAG] [2/6] rule-set geoip/geosite"
 RS_DIR=/var/lib/sing-box/rule-set
 mkdir -p "$RS_DIR"
-for _rs in $(python3 /tmp/anysda/gen-router-config.py --rule-sets); do
+for _rs in $("$VPN2_BIN" router config --rule-sets); do
   _f="$RS_DIR/${_rs}.srs"
   if [[ -f "$_f" && -z $(find "$_f" -mtime +7 2>/dev/null) ]] \
     && /usr/local/bin/sing-box rule-set decompile --output /dev/null "$_f" >/dev/null 2>&1; then
@@ -64,54 +67,8 @@ ls -la "$RS_DIR" | sed -n '/\.srs$/p' | HOST_TAG="$HOST_TAG" awk '{print "[" ENV
 # не один раз при deploy: адрес, добавленный на интерфейс или полученный
 # заново по DHCP, закрыт клиентам после перезапуска sing-box или ноды.
 mkdir -p /etc/sing-box
-cat > /usr/local/sbin/vpn2-entry-addrs << 'ADDRS'
-#!/usr/bin/env python3
-"""Глобальные адреса интерфейсов entry -> набор sing-box entry-addrs."""
-import ipaddress, json, os, subprocess, sys, tempfile
-
-SET = '/etc/sing-box/entry-addrs.json'
-
-
-def addresses():
-    out = subprocess.run(['ip', '-j', 'addr', 'show', 'scope', 'global'],
-                         check=True, capture_output=True, text=True, timeout=10).stdout
-    nets = {ipaddress.ip_network(info['local'])
-            for link in json.loads(out) for info in link.get('addr_info', [])
-            if info.get('scope') == 'global' and info.get('local')}
-    return [str(net) for net in sorted(nets, key=lambda n: (n.version, n))]
-
-
-def write(nets):
-    body = json.dumps({'version': 2, 'rules': [{'ip_cidr': nets}] if nets else []}, indent=2)
-    try:
-        with open(SET) as f:
-            if f.read() == body:
-                return
-    except FileNotFoundError:
-        pass
-    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(SET), delete=False,
-                                     prefix='.entry-addrs.') as tmp:
-        tmp.write(body)
-    os.chmod(tmp.name, 0o600)
-    os.replace(tmp.name, SET)
-
-
-try:
-    nets = addresses()
-except (OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
-    # Без файла набора sing-box не стартует: тогда пустой набор (частные сети
-    # закрыты и так), иначе остаются адреса прошлого старта.
-    kept = os.path.exists(SET)
-    if not kept:
-        write([])
-    print(f'vpn2-entry-addrs: адреса entry не прочитаны: {e}; '
-          f'{"набор прошлого старта" if kept else "набор пуст"}', file=sys.stderr)
-    sys.exit(1)
-write(nets)
-print(f'vpn2-entry-addrs: клиентам закрыты службы на {" ".join(nets) or "-"}')
-ADDRS
-chmod 755 /usr/local/sbin/vpn2-entry-addrs
-/usr/local/sbin/vpn2-entry-addrs | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
+rm -f /usr/local/sbin/vpn2-entry-addrs
+"$VPN2_BIN" router entry-addrs | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'
 
 # ----------------------------------------------------------------------------
 # 3. Secrets: clash-api на RU + пароли Hysteria2 с выходных нод
@@ -151,12 +108,10 @@ done
 # 4. Генерация sing-box конфига через Python-скрипт (поддерживает N нод)
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [4/6] sing-box router config"
-GEN=/tmp/anysda/gen-router-config.py
-[[ -f "$GEN" ]] || { echo "[$HOST_TAG] $GEN не найден"; exit 1; }
 
 WAN_IFACE=$(ip -4 -o route show default | awk '!f {print $5; f=1}')
 : "${WAN_IFACE:?}"
-# Backward-compat: gen-router-config.py читает WG_OUT_IFACE (имя из v1).
+# Backward-compat: vpn2 router config читает WG_OUT_IFACE (имя из v1).
 export WG_OUT_IFACE="$WAN_IFACE"
 
 export RU_CLASH_SECRET EXIT_TAGS HY2_DIRECT_PORT HY2_WARP_PORT HY2_MGMT_PORT MGMT_IP
@@ -183,7 +138,7 @@ done
 
 # TLS pinning Hysteria2 outbound: deploy забирает сертификат каждого экзита в
 # /tmp/anysda/exit-certs/{tag}.pem — кладём его в /etc/sing-box/exit-certs
-# и экспортируем {T}_HY2_CERT_PATH; gen-router-config.py подставит
+# и экспортируем {T}_HY2_CERT_PATH; vpn2 router config подставит
 # tls.certificate_path. Если в этот раз сертификат не приехал (экзит пропущен,
 # deploy с другой машины), остаётся закреплённый ранее. Без закрепления
 # генератор откажет: insecure — только явным exits[].hy2_insecure.
@@ -218,10 +173,10 @@ done
 # Write the BASE config (without manual routes). The manual-routes watcher
 # derives /etc/sing-box/config.json = config-base.json + panel rules, so
 # config-base.json MUST be refreshed on every run — a stale base silently
-# drops inbounds added to gen-router-config.py since it was first
+# drops inbounds added to vpn2 router config since it was first
 # snapshotted (this is how the wg/ovpn TPROXY :7898 inbound got lost).
 _cfg_tmp=$(mktemp /etc/sing-box/.config-base.XXXXXX)
-if ! python3 "$GEN" > "$_cfg_tmp" \
+if ! VPN_POOLS_FILE="$(dirname "$0")/vpn-pools.json" "$VPN2_BIN" router config > "$_cfg_tmp" \
   || ! /usr/local/bin/sing-box check -c "$_cfg_tmp"; then
   rm -f "$_cfg_tmp"
   echo "[$HOST_TAG] конфиг невалиден — сервис не трогаю"
@@ -266,7 +221,7 @@ Type=simple
 User=root
 # Адреса entry на момент старта (набор entry-addrs). «-»: не прочитались -
 # sing-box всё равно поднимается на наборе прошлого старта.
-ExecStartPre=-/usr/local/sbin/vpn2-entry-addrs
+ExecStartPre=-/opt/vpn2/venv/bin/vpn2 router entry-addrs
 ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
 # Restart=always (а не on-failure): роутер обязан подниматься после ЛЮБОЙ
 # остановки, включая чистый SIGTERM — иначе случайный `systemctl stop`/`kill`
@@ -300,248 +255,7 @@ sysctl -p /etc/sysctl.d/99-anysda-vpn.conf >/dev/null
 # ----------------------------------------------------------------------------
 echo "[$HOST_TAG] [6/6] sing-box manual-routes watcher"
 
-cat > /usr/local/sbin/anysda-apply-routes.py << 'PYEOF'
-#!/usr/bin/env python3
-import ipaddress, json, os, subprocess, sys, tempfile
-
-# --no-restart: только собрать config.json (стадия 20 перезапускает sing-box
-# сама, один раз на итоговом конфиге).
-NO_RESTART = '--no-restart' in sys.argv[1:]
-
-MANUAL_ROUTES = '/etc/anysda/manual-routes.json'
-CLIENT_PREFS  = '/etc/anysda/client-prefs.json'
-SB_CONFIG     = '/etc/sing-box/config.json'
-SB_CONFIG_BASE= '/etc/sing-box/config-base.json'
-RULES_DIR     = '/etc/sing-box/manual-routes'
-PREFS_DIR     = '/etc/sing-box/client-prefs'
-ROUTE_PLAN    = '/etc/anysda/route-plan.json'
-SB_BIN        = '/usr/local/bin/sing-box'
-
-if not os.path.exists(SB_CONFIG_BASE) and os.path.exists(SB_CONFIG):
-    import shutil
-    shutil.copy2(SB_CONFIG, SB_CONFIG_BASE)
-
-if not os.path.exists(SB_CONFIG_BASE):
-    print('config-base.json missing', file=sys.stderr); sys.exit(1)
-
-def load_input(path, expected):
-    try:
-        with open(path) as f:
-            value = json.load(f)
-        if not isinstance(value, expected):
-            raise ValueError(f'ожидался {expected.__name__}')
-        return value
-    except FileNotFoundError:
-        return expected()
-    except (ValueError, OSError) as e:
-        print(f'{path}: не читается список маршрутов: {e}; сохраняю действующие правила', file=sys.stderr)
-        sys.exit(1)
-
-# Читаем оба входа до записи любых наборов. Повреждённый/недописанный JSON
-# не означает удаление правил: только явные [] и {} очищают списки.
-rows = load_input(MANUAL_ROUTES, list)
-prefs = load_input(CLIENT_PREFS, dict)
-
-with open(SB_CONFIG_BASE) as f: cfg = json.load(f)
-
-# Правило на outbound, которого нет в конфиге (экзит убрали, опечатка в
-# панели), sing-box отвергает целиком — и вместе с ним все остальные ручные
-# маршруты. Такие строки пропускаем по одной и пишем в журнал.
-known = {o.get('tag') for o in cfg.get('outbounds', []) + cfg.get('endpoints', [])}
-manual = []
-for row in rows if isinstance(rows, list) else []:
-    try:
-        out, kind, val = row['outbound'], row['type'], str(row['value'])
-        if out not in known:
-            raise ValueError(f'outbound {out!r} нет в конфиге')
-        # Ручной маршрут на экзит — через pin-<выход>: вотчдог переводит его на
-        # foreign-best, пока узел выключен или выход мёртв (иначе маршрут рвётся).
-        if f'pin-{out}' in known:
-            out = f'pin-{out}'
-        if kind == 'domain':
-            rule = {'domain_suffix': [val[2:] if val.startswith('*.') else val]}
-        elif kind == 'ip_cidr':
-            ipaddress.ip_network(val, strict=False)
-            rule = {'ip_cidr': [val]}
-        else:
-            raise ValueError(f'тип {kind!r} неизвестен')
-    except (KeyError, TypeError, ValueError) as e:
-        print(f'пропускаю маршрут {row!r}: {e}', file=sys.stderr)
-        continue
-    manual.append((out, rule))
-
-# Маршруты лежат в local rule-set'ах, по набору на выход, а config.json на них
-# только ссылается. sing-box сам перечитывает изменённый файл набора и
-# подменяет правила на ходу, соединения не рвутся; SIGHUP и рестарт рвут все.
-# Наборы заведены на каждый выход, который предлагает панель, даже пустые:
-# тогда правка маршрута меняет только файлы, а config.json остаётся прежним.
-targets = []
-for o in cfg.get('outbounds', []):
-    t = o.get('tag', '')
-    if t == 'direct-ru' or (t.startswith('hy2-') and not t.endswith('-mgmt')):
-        targets.append(f'pin-{t}' if f'pin-{t}' in known else t)
-for out, _ in manual:
-    if out not in targets:
-        targets.append(out)
-pos = {t: i for i, t in enumerate(targets)}
-
-# Побеждает первая строка панели. Наборы же стоят в порядке выходов, поэтому
-# из строки вычитаем более ранние строки тех наборов, что стоят ниже её.
-sets = {t: [] for t in targets}
-for i, (out, rule) in enumerate(manual):
-    earlier = {}
-    for o, r in manual[:i]:
-        if pos[o] > pos[out]:
-            for k, v in r.items():
-                earlier.setdefault(k, []).extend(v)
-    if earlier:
-        rule = {'type': 'logical', 'mode': 'and', 'rules': [rule, dict(earlier, invert=True)]}
-    sets[out].append(rule)
-
-def rules_path(t):
-    return os.path.join(RULES_DIR, f'{t}.json')
-
-# Ручные маршруты — сразу за служебной головой списка (sniff, mon-*,
-# блокировки loopback и 853, выход бота), но выше всего остального (YouTube, .ru,
-# дорожки). Выше головы маршрут панели на домен или подсеть перехватывал бы
-# скрейп экзитов и бота, а 0.0.0.0/0 на экзит открывал бы его loopback.
-route = cfg['route']
-route['rule_set'] = route.get('rule_set', []) + [
-    {'type': 'local', 'tag': f'manual-{t}', 'format': 'source', 'path': rules_path(t)}
-    for t in targets]
-rules = route['rules']
-head = 0
-while head < len(rules) and ('inbound' in rules[head] or rules[head].get('action') == 'reject'):
-    head += 1
-route['rules'] = rules[:head] + [{'rule_set': [f'manual-{t}'], 'outbound': t} for t in targets] + rules[head:]
-
-# Предпочитаемые экзиты клиентов (панель пишет client-prefs.json:
-# {"<узел>": ["<IP устройства>", ...]}). IP узла — в набор client-pref-<узел>
-# с выходом pin-hy2-<узел>-direct: пока узел выключен, мёртв или в штрафной,
-# вотчдог держит pin на foreign-best. Наборы заведены на каждый узел, даже
-# пустые, и перечитываются на ходу: смена предпочтения не трогает config.json
-# и не рвёт соединения. Правила — перед дорожками, то есть после ручных
-# маршрутов, YouTube и РФ: меняется только то, что ушло бы в дорожку.
-nodes = sorted(t[len('pin-hy2-'):-len('-direct')] for t in known
-               if t.startswith('pin-hy2-') and t.endswith('-direct'))
-pref_sets = {n: set() for n in nodes}
-for node, ips in prefs.items() if isinstance(prefs, dict) else []:
-    if node not in pref_sets:
-        print(f'пропускаю предпочтение {node!r}: выхода hy2-{node}-direct нет в конфиге', file=sys.stderr)
-        continue
-    for ip in ips if isinstance(ips, list) else []:
-        try:
-            pref_sets[node].add(f'{ipaddress.ip_address(str(ip))}/32')
-        except ValueError:
-            print(f'пропускаю IP {ip!r} предпочтения {node!r}', file=sys.stderr)
-
-def pref_path(n):
-    return os.path.join(PREFS_DIR, f'{n}.json')
-
-route['rule_set'] += [
-    {'type': 'local', 'tag': f'client-pref-{n}', 'format': 'source', 'path': pref_path(n)}
-    for n in nodes]
-rules = route['rules']
-at = next((i for i, r in enumerate(rules) if str(r.get('outbound', '')).startswith('lane-')), len(rules))
-rules[at:at] = [{'rule_set': [f'client-pref-{n}'], 'outbound': f'pin-hy2-{n}-direct'} for n in nodes]
-
-new_body = json.dumps(cfg, indent=2)
-
-def read(path):
-    try:
-        with open(path) as f: return f.read()
-    except FileNotFoundError:
-        return None
-
-def put(path, body, check=None):
-    """Атомарно (tmp + rename в том же каталоге) заменить файл, если изменился."""
-    if read(path) == body:
-        return False
-    with tempfile.NamedTemporaryFile('w', dir=os.path.dirname(path), delete=False, suffix='.tmp') as tmp:
-        tmp.write(body); tmp_path = tmp.name
-    try:
-        if check:
-            subprocess.run(check + [tmp_path], check=True, capture_output=True)
-        os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, path)
-    except subprocess.CalledProcessError as e:
-        os.unlink(tmp_path)
-        print(f'{path}: проверка не прошла: {e.stderr.decode(errors="replace").strip()}', file=sys.stderr)
-        sys.exit(1)
-    return True
-
-# Сначала наборы: и живой sing-box, и проверка нового config.json читают их
-# с диска. Панель при сохранении пишет manual-routes.json несколько раз
-# подряд, неизменённые файлы не трогаем.
-os.makedirs(RULES_DIR, mode=0o700, exist_ok=True)
-changed = [t for t in targets
-           if put(rules_path(t), json.dumps({'version': 2, 'rules': sets[t]}, indent=2),
-                  [SB_BIN, 'rule-set', 'compile', '-o', os.devnull])]
-for name in os.listdir(RULES_DIR):
-    if name.endswith('.json') and name[:-5] not in pos:
-        os.unlink(os.path.join(RULES_DIR, name))
-os.makedirs(PREFS_DIR, mode=0o700, exist_ok=True)
-for n in nodes:
-    body = {'version': 2, 'rules': [{'source_ip_cidr': sorted(pref_sets[n])}] if pref_sets[n] else []}
-    if put(pref_path(n), json.dumps(body, indent=2), [SB_BIN, 'rule-set', 'compile', '-o', os.devnull]):
-        changed.append(f'client-pref-{n}')
-for name in os.listdir(PREFS_DIR):
-    if name.endswith('.json') and name[:-5] not in pref_sets:
-        os.unlink(os.path.join(PREFS_DIR, name))
-
-# Снимок того, что получил sing-box: итоговые route.rules и содержимое всех
-# наборов. По нему панель отвечает, через какой выход пойдёт адрес, тем же
-# порядком правил, без своей копии. Пишется только вместе с принятым конфигом.
-def set_rules(item):
-    path = item.get('path', '')
-    if item.get('format') == 'binary':
-        out = subprocess.run([SB_BIN, 'rule-set', 'decompile', '-o', '/dev/stdout', path],
-                             check=True, capture_output=True, text=True).stdout
-        return json.loads(out).get('rules', [])
-    with open(path) as f:
-        return json.load(f).get('rules', [])
-
-def write_plan():
-    try:
-        sets_body = {item['tag']: set_rules(item) for item in route.get('rule_set', [])}
-    except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as e:
-        print(f'{ROUTE_PLAN}: набор не читается, снимок маршрутов прежний: {e}', file=sys.stderr)
-        return
-    plan = {'rules': route['rules'], 'final': route.get('final', ''), 'rule_set': sets_body}
-    put(ROUTE_PLAN, json.dumps(plan, ensure_ascii=False, separators=(',', ':')))
-
-summary = (f'{len(manual)} manual route(s), '
-           f'{sum(map(len, pref_sets.values()))} IP с предпочтением, наборов изменено: {len(changed)}')
-if read(SB_CONFIG) == new_body:
-    tail = 'config.json уже собран' if NO_RESTART else 'sing-box перечитает их сам, без перезапуска'
-    write_plan()
-    print(f'{summary}, {tail}')
-    sys.exit(0)
-
-# config.json меняется только при смене выходов в базе (передеплой) — тогда
-# без перезапуска не обойтись. Через vpn2-apply (стадия 29-control): кандидат,
-# проверка, перезапуск, проверка службы; не поднялась — возвращается последний
-# рабочий. Первая установка идёт до 29-control, восстанавливать там нечего.
-APPLY = '/usr/local/sbin/vpn2-apply'
-if not NO_RESTART and os.access(APPLY, os.X_OK):
-    with tempfile.NamedTemporaryFile('w', suffix='.json') as candidate:
-        candidate.write(new_body)
-        candidate.flush()
-        applied = subprocess.run([APPLY, 'install', 'sing-box', candidate.name])
-    if applied.returncode:
-        sys.exit(applied.returncode)
-    write_plan()
-    print(f'{summary}, config.json изменился, sing-box restarted')
-    sys.exit(0)
-put(SB_CONFIG, new_body, [SB_BIN, 'check', '-c'])
-write_plan()
-if NO_RESTART:
-    print(f'{summary}, config.json собран')
-    sys.exit(0)
-subprocess.run(['systemctl', 'restart', 'sing-box'], check=True)
-print(f'{summary}, config.json изменился, sing-box restarted')
-PYEOF
-chmod +x /usr/local/sbin/anysda-apply-routes.py
+rm -f /usr/local/sbin/anysda-apply-routes.py
 
 cat > /etc/systemd/system/anysda-apply-routes.service << 'EOF'
 [Unit]
@@ -559,7 +273,7 @@ Type=oneshot
 # Дебаунс: пока мы спим, повторные срабатывания .path схлопываются systemd'ом
 # в одно отложенное задание вместо пачки отдельных запусков.
 ExecStartPre=/bin/sleep 2
-ExecStart=/usr/local/sbin/anysda-apply-routes.py
+ExecStart=/opt/vpn2/venv/bin/vpn2 router apply-routes
 EOF
 entry_unit_resources anysda-apply-routes
 
@@ -587,7 +301,7 @@ systemctl start  anysda-apply-routes.path
 # config.json = свежая config-base.json + ручные маршруты панели, затем ОДИН
 # рестарт sing-box уже на итоговом конфиге (раньше было два: на голой базе,
 # которая на секунды сносила ручные маршруты, и ещё один из apply-routes).
-if ! /usr/local/sbin/anysda-apply-routes.py --no-restart 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
+if ! "$VPN2_BIN" router apply-routes --no-restart 2>&1 | HOST_TAG="$HOST_TAG" awk '{print "[" ENVIRON["HOST_TAG"] "]   " $0}'; then
   echo "[$HOST_TAG]   ручные маршруты не применились — сохраняю действующий конфиг, сервис не трогаю"
   exit 1
 fi
@@ -618,7 +332,7 @@ systemctl status sing-box --no-pager -n 4 | sed -n '1,6p' | HOST_TAG="$HOST_TAG"
 # ----------------------------------------------------------------------------
 # ssh <tag> на экзиты через служебный hy2-туннель (VPN2-38). nc идёт в
 # локальный SOCKS-инбаунд mon-{tag} (порт = 10100 + последний октет
-# MGMT_IP_{T}, как в gen-router-config.py), туннель приводит на 127.0.0.1:22
+# MGMT_IP_{T}, как в vpn2 router config), туннель приводит на 127.0.0.1:22
 # экзита. Ключ entry (/root/.ssh/id_ed25519_mgmt) раскладывает 00-bootstrap.
 # Адрес у всех экзитов 127.0.0.1, поэтому хост-ключ сверяем по псевдониму
 # anysda-<tag>; known_hosts собирается заново с ключей, которые deploy.sh

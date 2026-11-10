@@ -38,7 +38,7 @@ class ManualRoutesTests(unittest.TestCase):
 
     def test_stage_does_not_fall_back_to_base_on_apply_failure(self):
         source = stage_source()
-        block = source.split('if ! /usr/local/sbin/anysda-apply-routes.py --no-restart', 1)[1]
+        block = source.split('if ! "$VPN2_BIN" router apply-routes --no-restart', 1)[1]
         block = block.split('\nfi', 1)[0]
         self.assertNotIn('install -m 600', block)
         self.assertIn('exit 1', block)

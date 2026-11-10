@@ -101,12 +101,11 @@ class ClientBlockTests(unittest.TestCase):
 
 
 class EntryAddrsScriptTests(unittest.TestCase):
-    """vpn2-entry-addrs стадии 20 (ExecStartPre sing-box) без root: ip подменён."""
+    """vpn2 router entry-addrs стадии 20 (ExecStartPre sing-box) без root: ip подменён."""
 
     def run_script(self, directory, ip_json, ip_rc=0):
-        source = (ROOT / 'infra/scripts/20-ru-router.sh').read_text()
-        body = source.split("cat > /usr/local/sbin/vpn2-entry-addrs << 'ADDRS'\n", 1)[1]
-        body = body.split('\nADDRS\n', 1)[0].replace('/etc/sing-box/', f'{directory}/')
+        body = (ROOT / 'infra/vpn2/src/vpn2/router/entry_addrs.py').read_text()
+        body = body.replace('/etc/sing-box/', f'{directory}/')
         script = directory / 'vpn2-entry-addrs'
         script.write_text(body + '\n')
         bindir = directory / 'bin'

@@ -60,7 +60,7 @@ def run_generator(**overrides):
     # Любой набор экзитов (стенд панели берёт свой) получает закреплённый сертификат.
     for tag in env['EXIT_TAGS'].split():
         env.setdefault(f'{tag.upper()}_HY2_CERT_PATH', exit_cert())
-    return subprocess.run([sys.executable, str(ROOT / 'infra/lib/gen-router-config.py')],
+    return subprocess.run([sys.executable, str(ROOT / 'infra/vpn2/src/vpn2/router/config.py')],
                           env=env, text=True, capture_output=True)
 
 
@@ -78,7 +78,7 @@ def prepare(directory, **overrides):
     (directory / 'base.json').write_text(json.dumps(cfg))
     (directory / 'manual.json').write_text('[]')
     (directory / 'prefs.json').write_text('{}')
-    source = stage_source().split("<< 'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
+    source = (ROOT / 'infra/vpn2/src/vpn2/router/apply_routes.py').read_text()
     replacements = {
         '/etc/anysda/manual-routes.json': directory / 'manual.json',
         '/etc/anysda/client-prefs.json': directory / 'prefs.json',

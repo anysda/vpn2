@@ -51,7 +51,7 @@ class RuleSetUpdateTests(unittest.TestCase):
     def update(directory):
         source = stage_source().split('for _rs in ', 1)[1].split('\ndone', 1)[0]
         source = 'for _rs in ' + source + '\ndone\n'
-        source = source.replace('$(python3 /tmp/anysda/gen-router-config.py --rule-sets)', 'fixture')
+        source = source.replace('$("$VPN2_BIN" router config --rule-sets)', 'fixture')
         source = source.replace('/usr/local/bin/sing-box', '"$SING_BOX_BIN"')
         # Only the network download is replaced; validation uses the real binary.
         shell = '''set -euo pipefail

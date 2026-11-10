@@ -43,9 +43,10 @@ from pathlib import Path
 import sys
 import uuid
 
-# Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields  # noqa: E402
+# Загрузка по пути файла (тесты, локальные стенды): пакет лежит двумя уровнями выше.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from vpn2.watchdog.hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields  # noqa: E402
 
 # ----------------------------------------------------------------------------
 # YouTube: домены, которые уводятся с экзитов на РФ-выход (см. yt_block ниже).
@@ -425,9 +426,9 @@ def main():
     # её направить, решает failover-watchdog (clash-api PUT, без рестарта
     # sing-box). Списки статические: новые устройства раскладываются сами.
     lanes = int(os.environ.get('LANES') or 32)
-    pools_file = Path(__file__).with_name('vpn-pools.json')
-    if not pools_file.exists():
-        pools_file = Path(__file__).resolve().parents[2] / 'app/shared/vpn-pools.json'
+    # Стадия передаёт файл пулов, что приехал с ней; из дерева берётся общий.
+    pools_file = Path(os.environ.get('VPN_POOLS_FILE')
+                      or Path(__file__).resolve().parents[5] / 'app/shared/vpn-pools.json')
     pools = json.loads(pools_file.read_text())
     # Старая LANE_SUBNETS не должна исключить расширение после обновления.
     lane_subnets = list(dict.fromkeys([
@@ -713,8 +714,14 @@ def main():
     print(json.dumps(cfg, indent=2, ensure_ascii=False))
 
 
-if __name__ == '__main__':
-    if sys.argv[1:] == ['--rule-sets']:
+def run(argv=None):
+    """`vpn2 router config` печатает конфиг, `--rule-sets` - имена наборов."""
+    if list(sys.argv[1:] if argv is None else argv) == ['--rule-sets']:
         print(' '.join(RULE_SETS))
     else:
         main()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(run())

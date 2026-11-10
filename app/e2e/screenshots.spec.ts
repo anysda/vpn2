@@ -211,12 +211,12 @@ async function fitWindow(page: Page, pending: Set<unknown>, base: { width: numbe
   }
 }
 
-async function shot(page: Page, pending: Set<unknown>, base: { width: number, height: number }, name: string, shown: Locator[] = []) {
+/** Экран готов к снимку: мышь убрана, данные и раскладка дорисованы, окно по странице. */
+async function prepare(page: Page, pending: Set<unknown>, base: { width: number, height: number }, shown: Locator[] = []) {
   // Мышь осталась там, где была на прошлом экране: hover подсвечивает то, что окажется под ней.
   await page.mouse.move(0, 0)
   await ready(page, pending, shown)
   await fitWindow(page, pending, base, shown)
-  await expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true })
 }
 
 const DNS_TABS = [
@@ -224,65 +224,122 @@ const DNS_TABS = [
   ['rw', 'Перезаписи'], ['svc', 'Сервисы'], ['cl', 'Клиенты'], ['set', 'Настройки DNS'],
 ] as const
 
+/** Обход всех экранов панели; onShot зовётся на каждом готовом экране. */
+async function walk(page: Page, mobile: boolean, onShot: (name: string) => Promise<unknown>) {
+  // На телефоне жмут пальцем: click не открывает экран клиента.
+  const press = (l: Locator) => mobile ? l.tap() : l.click()
+  // Часы стоят: ни опросов раз в 30 с, ни перерисовок посреди снимка. Время двигает только runFor.
+  await pauseClockAt(page, FIXED)
+  // Каждый снимок Playwright будит вкладку (visibilitychange), панель в ответ перезапрашивает данные,
+  // и кадр попадает в момент обновления. Событие гасим до слушателей панели, данные не трогаем.
+  await page.addInitScript(() => {
+    document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true)
+  })
+  await pinAll(page)
+  const pending = trackRequests(page)
+  const base = page.viewportSize()!
+  const snap = async (name: string, shown: Locator[] = []) => {
+    await prepare(page, pending, base, shown)
+    await onShot(name)
+  }
+
+  await page.goto('/login')
+  await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
+  await snap('login')
+
+  await loginApi(page)
+
+  await page.goto('/')
+  await expect(page.locator('.ov-nodes')).toBeVisible()
+  await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
+  // Журнал событий первый раз приходит с сервера (живые данные); подмена встаёт на его 30-секундном опросе.
+  await page.clock.runFor(30_500)
+  await snap('overview', [
+    page.getByText('Вход в панель'), page.getByText('Узел восстановлен'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
+    page.getByText('Трафика пока нет'), page.getByText('14,9%'),
+  ])
+
+  await page.goto('/clients')
+  await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
+  await snap('clients')
+  const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })
+  await press(row)
+  await page.clock.runFor(500)
+  const panel = page.getByTestId('client-detail')
+  await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
+  await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)
+  await snap('client-card')
+
+  await page.goto('/dns')
+  await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
+  for (const [id, label] of DNS_TABS) {
+    if (id !== 'sum') await press(page.getByRole('tab', { name: label, exact: true }))
+    await expect(page.locator('.dns .dpan.on')).toBeVisible()
+    await snap(`dns-${id}`)
+  }
+
+  await page.goto('/routes')
+  await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
+  await snap('routes')
+
+  await page.goto('/settings')
+  await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
+  await snap('settings')
+}
+
 test.describe('эталонные скриншоты', () => {
   test.beforeAll(seed)
 
   test('все страницы панели', async ({ page }, info) => {
-    // На телефоне жмут пальцем: click не открывает экран клиента.
-    const press = (l: Locator) => info.project.name === 'mobile' ? l.tap() : l.click()
     test.setTimeout(300_000)
-    // Часы стоят: ни опросов раз в 30 с, ни перерисовок посреди снимка. Время двигает только runFor.
-    await pauseClockAt(page, FIXED)
-    // Каждый снимок Playwright будит вкладку (visibilitychange), панель в ответ перезапрашивает данные,
-    // и кадр попадает в момент обновления. Событие гасим до слушателей панели, данные не трогаем.
-    await page.addInitScript(() => {
-      document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true)
-    })
-    await pinAll(page)
-    const pending = trackRequests(page)
-    const base = page.viewportSize()!
+    await walk(page, info.project.name === 'mobile', name => expect.soft(page).toHaveScreenshot(`${name}.png`, { fullPage: true }))
+  })
 
-    await page.goto('/login')
-    await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
-    await shot(page, pending, base, 'login')
-
-    await loginApi(page)
-
-    await page.goto('/')
-    await expect(page.locator('.ov-nodes')).toBeVisible()
-    await expect(page.getByText('загружаю метрики…')).toHaveCount(0)
-    // Журнал событий первый раз приходит с сервера (живые данные); подмена встаёт на его 30-секундном опросе.
-    await page.clock.runFor(30_500)
-    await shot(page, pending, base, 'overview', [
-      page.getByText('Вход в панель'), page.getByText('Узел восстановлен'), page.getByText('к вчерашнему'), page.getByText('клиента в сети'),
-      page.getByText('Трафика пока нет'), page.getByText('14,9%'),
-    ])
-
-    await page.goto('/clients')
-    await expect(page.getByTestId('client-row')).toHaveCount(SEED.length)
-    await shot(page, pending, base, 'clients')
-    const row = page.getByTestId('client-row').filter({ has: page.getByText(SEED[0]!.name, { exact: true }) })
-    await press(row)
-    await page.clock.runFor(500)
-    const panel = page.getByTestId('client-detail')
-    await expect(panel.getByTitle('Имя клиента')).toHaveText(SEED[0]!.name)
-    await expect(page.getByTestId('device-row')).toHaveCount(SEED[0]!.devices.length)
-    await shot(page, pending, base, 'client-card')
-
-    await page.goto('/dns')
-    await expect(page.getByRole('tab', { name: 'Сводка' })).toBeVisible()
-    for (const [id, label] of DNS_TABS) {
-      if (id !== 'sum') await press(page.getByRole('tab', { name: label, exact: true }))
-      await expect(page.locator('.dns .dpan.on')).toBeVisible()
-      await shot(page, pending, base, `dns-${id}`)
+  // ДИАГНОСТИКА VPN2-749, временно: один и тот же обход в свежих браузерах с разными аргументами.
+  test('диагностика: свежие браузеры', async ({ playwright }, info) => {
+    test.skip(info.project.name !== 'desktop')
+    test.setTimeout(1_200_000)
+    const fs = await import('node:fs')
+    const variants: [string, string[]][] = [
+      ['base', ['--font-render-hinting=none']],
+      ['nogpu', ['--font-render-hinting=none', '--disable-gpu']],
+      ['noraster', ['--font-render-hinting=none', '--disable-gpu-rasterization']],
+    ]
+    const ws = process.env.E2E_BROWSER_WS!
+    const baseURL = process.env.E2E_BASE_URL || 'http://127.0.0.1:31710'
+    for (const [v, args] of variants) {
+      const shots: Record<string, string[]> = {}
+      for (let k = 0; k < 3; k++) {
+        const browser = await playwright.chromium.connect(ws, {
+          headers: { 'x-playwright-launch-options': JSON.stringify({ args }) }, exposeNetwork: '<loopback>', timeout: 60_000,
+        })
+        try {
+          if (k === 0) {
+            const cdp = await browser.newBrowserCDPSession()
+            const si = await cdp.send('SystemInfo.getInfo') as { gpu: { featureStatus: Record<string, string>, devices: unknown[] } }
+            console.log(`DIAG ${v} gpu ${JSON.stringify(si.gpu.featureStatus)} dev ${JSON.stringify(si.gpu.devices[0])}`)
+          }
+          const ctx = await browser.newContext({
+            viewport: { width: 1400, height: 1000 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false,
+            userAgent: info.project.use.userAgent, locale: 'ru-RU', timezoneId: 'Europe/Moscow', reducedMotion: 'reduce',
+            baseURL, extraHTTPHeaders: { origin: new URL(baseURL).origin },
+          })
+          const page = await ctx.newPage()
+          await walk(page, false, async (name) => {
+            const png = await page.screenshot({ fullPage: true, animations: 'disabled', caret: 'hide', scale: 'css' })
+            const f = info.outputPath(`${v}-${k}-${name}.png`)
+            fs.writeFileSync(f, png);
+            (shots[name] ??= []).push(png.toString('base64'))
+          })
+          await ctx.close()
+        }
+        finally {
+          await browser.close()
+        }
+      }
+      for (const [name, list] of Object.entries(shots)) {
+        console.log(`DIAG ${v} ${name} distinct=${new Set(list).size} of ${list.length}`)
+      }
     }
-
-    await page.goto('/routes')
-    await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
-    await shot(page, pending, base, 'routes')
-
-    await page.goto('/settings')
-    await expect(page.getByRole('heading', { name: 'Мой профиль' })).toBeVisible()
-    await shot(page, pending, base, 'settings')
   })
 })

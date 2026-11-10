@@ -148,11 +148,13 @@ warm_script() {
 t0=$(date +%s)
 say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
 # Старый mtime заставляет стадию обновить списки самой, как на машине без прогрева;
-# --error-on=any - иначе update с ошибкой зеркала возвращает 0.
+# --error-on=any - иначе update с ошибкой зеркала возвращает 0. timeout - жёсткий
+# предел на случай, когда прокси держит соединение без ответа; по пределу попытка
+# неудачна и идёт обычным путём (вторая попытка, затем старый mtime списков).
 n=1; ok=
 while [ "$n" -le 2 ]; do
   echo "попытка $n" >>/var/log/vpn2-ci-warm-update.log
-  if apt-get -q --error-on=any update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
+  if timeout 300 apt-get -q --error-on=any -o Acquire::http::Timeout=30 -o Acquire::Retries=1 update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
   [ "$n" -lt 2 ] && sleep 10
   n=$((n + 1))
 done
@@ -1040,6 +1042,8 @@ collect_apt() {
       done
       echo "== apt.conf =="; grep -r . /etc/apt/apt.conf.d 2>&1 | grep -iE "Proxy|Acquire|Retries"
       echo "== policy =="; apt-cache policy wireguard fail2ban qrencode 2>&1
+      echo "== процессы apt =="; ps -eo pid,etimes,stat,args 2>&1 | grep -E "[a]pt|[m]ethods/"
+      echo "== partial =="; ls -l --time-style=+%T /var/lib/apt/lists/partial 2>&1
       echo "== журнал =="; journalctl -u vpn2-ci-warm --no-pager -q 2>&1
       true' > "$out/apt-$name.txt" 2>&1 || true
   done

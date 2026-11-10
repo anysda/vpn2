@@ -270,6 +270,27 @@ jobs:
           pnpm dlx knip@6.44.2
           pnpm dlx knip@6.44.2 --production --exclude dependencies,unlisted,binaries
 
+  panel-unit:
+    name: unit-тесты панели
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: vitest
+        run: pnpm test:unit
+
   backup-keys:
     name: 'бэкап: ключи'
     runs-on: ubuntu-latest

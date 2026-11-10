@@ -31,3 +31,5 @@ test-results
 # Тесты и отчёты не входят в runtime: их правки не инвалидируют Nuxt build.
 e2e
 playwright.config.ts
+**/*.test.ts
+vitest.config.ts

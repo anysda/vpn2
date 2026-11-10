@@ -6,6 +6,7 @@ import type { Client, ClientTraffic } from '~/composables/useClients'
 import { accessProtocols } from '#shared/access-operation'
 import type { AccessOperation } from '#shared/access-operation'
 import type { ClientDot } from '~/components/Panel/ClientRow.vue'
+import type { Filter } from '~/components/Clients/FilterTabs.vue'
 import { useExitTags } from '~/composables/useRoutes'
 import { anim, expiringInDays, inDaysRu, initials } from '~/utils/clients-view'
 import { expiryLabelLocal, sizeBinRu } from '~/utils/format'
@@ -75,7 +76,6 @@ usePageSub(subtitle)
 const route = useRoute()
 const router = useRouter()
 
-type Filter = 'all' | 'exp' | 'frz'
 // Фильтр живёт в адресе (?f=exp|frz), кнопки - ссылки: клик до гидратации - обычный
 // переход, и сервер отдаёт страницу уже с фильтром. Смена фильтра историю не плодит.
 const filterQuery = (f: Filter) => ({ ...route.query, f: f === 'all' ? undefined : f })
@@ -86,8 +86,6 @@ const filter = computed<Filter>({
   },
   set: (f) => { void router.replace({ query: filterQuery(f) }) },
 })
-/** Пробел нажимает ссылку-кнопку, как настоящую кнопку. */
-const press = (e: KeyboardEvent) => (e.currentTarget as HTMLElement).click()
 const search = ref('')
 
 const traffic = (id: number) => trafficMap.value?.[id] ?? null
@@ -252,32 +250,6 @@ watch([filter, search], () => nextTick(() => {
     anim(r, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 320, delay: i * 28 }))
 }))
 
-// Подложка активного сегмента ездит за кнопкой, как в шапке.
-const seg = ref<HTMLElement>()
-const glideEl = ref<HTMLElement>()
-const glided = ref(false)
-function glide(jump = false) {
-  const box = seg.value, g = glideEl.value
-  const on = box?.querySelector<HTMLElement>(':scope>.on')
-  if (!box || !g || !on || !box.offsetWidth) return
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-  g.classList.toggle('now', jump || !glided.value || reduce)
-  const r = on.getBoundingClientRect(), q = box.getBoundingClientRect()
-  g.style.width = `${r.width}px`
-  g.style.height = `${r.height}px`
-  g.style.transform = `translate(${r.left - q.left - box.clientLeft}px,${r.top - q.top - box.clientTop}px)`
-  if (!glided.value || jump) requestAnimationFrame(() => g.classList.remove('now'))
-  glided.value = true
-}
-const onResize = () => glide(true)
-watch(filter, () => nextTick(() => requestAnimationFrame(() => glide())))
-watch(counts, () => nextTick(() => glide(true)))
-onMounted(() => {
-  nextTick(() => glide(true))
-  addEventListener('resize', onResize)
-  void document.fonts?.ready.then(() => glide(true))
-})
-onUnmounted(() => removeEventListener('resize', onResize))
 
 const newOpen = ref(false)
 
@@ -316,16 +288,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
       </div>
     </div>
 
-    <div ref="seg" class="seg gl">
-      <NuxtLink
-        v-for="[f, label] in ([['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const)"
-        :key="f" :to="{ query: filterQuery(f) }" replace role="button" :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }"
-        @keydown.space.prevent="press"
-      >
-        {{ label }} <b>{{ counts[f] }}</b>
-      </NuxtLink>
-      <span ref="glideEl" class="glide now" />
-    </div>
+    <ClientsFilterTabs :filter="filter" :counts="counts" :to="f => ({ query: filterQuery(f) })" />
 
     <section class="cgrid">
       <div class="ccol">

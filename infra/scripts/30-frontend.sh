@@ -275,15 +275,6 @@ for _t in ${EXIT_TAGS:-}; do
   _v="DOMAIN_$(printf '%s' "$_t" | tr 'a-z-' 'A-Z_')"
   NODE_HOSTS+=",${_t}=${!_v:-}"
 done
-# До удаления старого контейнера сохраняем карту для обновления с версии,
-# которая ещё не хранила адреса экзитов в БД. Читаем только нужную переменную.
-# При неудачном первом запуске повтор деплоя сохраняет исходную карту;
-# после успешного запуска панель берёт более свежую карту из БД.
-PREVIOUS_NODE_HOSTS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' anysda-vpn2-previous 2>/dev/null \
-  | awk '/^NUXT_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); current=$0}
-         /^NUXT_PREVIOUS_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); previous=$0}
-         END {print previous != "" ? previous : current}') || PREVIOUS_NODE_HOSTS=
-docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
 # /etc/timezone не монтируем: в Ubuntu 26.04 его нет, docker создаёт на его
 # месте каталог и контейнер не стартует. Время берут из /etc/localtime.
 [[ -d /etc/timezone ]] && rmdir /etc/timezone 2>/dev/null || true
@@ -321,64 +312,92 @@ systemctl start anysda-ikev2-sync.timer 2>/dev/null || true
 # Флаг Secure cookie (и протокол проверки Origin в CSRF) читается из файла при
 # каждом старте: vpn2_tls.py включает его после первого сертификата и
 # перезапускает контейнер — окружение docker restart не меняет.
-docker run -d \
-  --name anysda-vpn2 \
-  "${ENTRY_DOCKER_ARGS[@]}" \
-  --restart always \
-  --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
-  --network host \
-  --user "$PANEL_UID:$PANEL_GID" --group-add "$CONTROL_GID" \
-  --cap-drop ALL --security-opt no-new-privileges \
-  -v /etc/localtime:/etc/localtime:ro \
-  -v /etc/vpn2/tls/panel:/run/vpn2-tls:ro \
-  -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
-  -v /run/vpn2-control:/run/vpn2-control:ro \
-  -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
-  -e NODE_ENV=production \
-  -e PORT=51821 \
-  -e HOST=127.0.0.1 \
-  -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
-  -e NUXT_DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
-  -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
-  -e NUXT_WG_ENABLED=true \
-  -e NUXT_WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}" \
-  -e NUXT_WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}" \
-  -e NUXT_WG_SUBNET_PREFIX="${WG_SUBNET_PREFIX:-10.66.66.}" \
-  -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
-  -e NUXT_WG_ENDPOINT_IP="$ENTRY_HOST" \
-  -e NUXT_NODE_HOSTS="$NODE_HOSTS" \
-  -e NUXT_PREVIOUS_NODE_HOSTS="${PREVIOUS_NODE_HOSTS:-}" \
-  -e NUXT_WG_MTU="${WG_MTU:-1420}" \
-  -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
-  -e NUXT_OVPN_ENABLED=true \
-  -e NUXT_OVPN_PORT="${OVPN_PORT:-1194}" \
-  -e NUXT_OVPN_PROTO="${OVPN_PROTO:-udp}" \
-  -e NUXT_OVPN_PUBLIC_HOST="${OVPN_PUBLIC_HOST:-$ENTRY_HOST}" \
-  -e NUXT_ROUTES_FILE_PATH=/etc/anysda/manual-routes.json \
-  -e NUXT_CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
-  -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \
-  -e NUXT_AGH_URL="http://127.0.0.1:${AGH_PORT}" \
-  -e NUXT_AGH_USER="${ADMIN_USER}" \
-  -e NUXT_AGH_PASSWORD="$(agh_password "$ADMIN_PASS")" \
-  -e NUXT_EXIT_TAGS="${EXIT_TAGS}" \
-  -e NUXT_MGMT_MESH_IP_PREFIX="10.99.0." \
-  -e NUXT_MGMT_IPS="$(_pairs="ru:${MGMT_IP_RU:-10.99.0.1}"; for _t in ${EXIT_TAGS}; do _u=$(echo "$_t" | tr 'a-z-' 'A-Z_'); _key="MGMT_IP_${_u}"; _v="${!_key:-}"; [ -n "$_v" ] && _pairs="$_pairs,$_t:$_v"; done; printf '%s' "$_pairs")" \
-  -e NUXT_VM_URL="http://127.0.0.1:8428" \
-  -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
-  -e NUXT_TGBOT_EVENT_PORT=8877 \
-  -e NUXT_PUBLIC_SSO_ENABLED="${SSO_ENABLED}" \
-  -e NUXT_PUBLIC_SSO_AUTO_REDIRECT="${SSO_AUTO_REDIRECT:-true}" \
-  -e NUXT_PUBLIC_SSO_LABEL="${SSO_LABEL:-Authentik}" \
-  -e NUXT_SSO_ALLOWED_SUBS="${SSO_ALLOWED_SUBS:-}" \
-  -e NUXT_SSO_PASSWORD_LOGIN="${SSO_PASSWORD_LOGIN:-true}" \
-  -e NUXT_OAUTH_OIDC_CLIENT_ID="${SSO_CLIENT_ID:-}" \
-  -e NUXT_OAUTH_OIDC_CLIENT_SECRET="${SSO_CLIENT_SECRET:-}" \
-  -e NUXT_OAUTH_OIDC_OPENID_CONFIG="${SSO_DISCOVERY_URL:-}" \
-  -e NUXT_OAUTH_OIDC_REDIRECT_URL="${SSO_REDIRECT_URL}" \
-  -e LOG_LEVEL=info \
-  "$PANEL_IMAGE" \
-  sh -ec 'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); exec node .output/server/index.mjs' \
-  >/dev/null
+panel_container() {
+  docker run -d \
+    --name anysda-vpn2 \
+    --label "vpn2.spec=${panel_spec:-}" \
+    "${ENTRY_DOCKER_ARGS[@]}" \
+    --restart always \
+    --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 \
+    --network host \
+    --user "$PANEL_UID:$PANEL_GID" --group-add "$CONTROL_GID" \
+    --cap-drop ALL --security-opt no-new-privileges \
+    -v /etc/localtime:/etc/localtime:ro \
+    -v /etc/vpn2/tls/panel:/run/vpn2-tls:ro \
+    -v /etc/anysda/anysda-config.yaml:/etc/anysda/config.yaml:ro \
+    -v /run/vpn2-control:/run/vpn2-control:ro \
+    -v /var/lib/anysda-vpn2:/var/lib/anysda-vpn2 \
+    -e NODE_ENV=production \
+    -e PORT=51821 \
+    -e HOST=127.0.0.1 \
+    -e NUXT_SESSION_PASSWORD="$SESSION_SECRET" \
+    -e NUXT_DATABASE_URL="file:/var/lib/anysda-vpn2/db.sqlite" \
+    -e NUXT_ANYSDA_CONFIG_PATH=/etc/anysda/config.yaml \
+    -e NUXT_WG_ENABLED=true \
+    -e NUXT_WG_LISTEN_PORT="${WG_LISTEN_PORT:-51820}" \
+    -e NUXT_WG_SERVER_IP="${WG_SERVER_IP:-10.66.66.1}" \
+    -e NUXT_WG_SUBNET_PREFIX="${WG_SUBNET_PREFIX:-10.66.66.}" \
+    -e NUXT_WG_PUBLIC_HOST="${WG_PUBLIC_HOST:-$ENTRY_HOST}" \
+    -e NUXT_WG_ENDPOINT_IP="$ENTRY_HOST" \
+    -e NUXT_NODE_HOSTS="$NODE_HOSTS" \
+    -e NUXT_PREVIOUS_NODE_HOSTS="${PREVIOUS_NODE_HOSTS:-}" \
+    -e NUXT_WG_MTU="${WG_MTU:-1420}" \
+    -e NUXT_WG_SPLIT_LOCAL="${WG_SPLIT_LOCAL:-true}" \
+    -e NUXT_OVPN_ENABLED=true \
+    -e NUXT_OVPN_PORT="${OVPN_PORT:-1194}" \
+    -e NUXT_OVPN_PROTO="${OVPN_PROTO:-udp}" \
+    -e NUXT_OVPN_PUBLIC_HOST="${OVPN_PUBLIC_HOST:-$ENTRY_HOST}" \
+    -e NUXT_ROUTES_FILE_PATH=/etc/anysda/manual-routes.json \
+    -e NUXT_CLASH_SECRET="$(cat /etc/anysda/clash-secret.txt 2>/dev/null || true)" \
+    -e NUXT_CLASH_API_URL="http://${MGMT_IP}:9090" \
+    -e NUXT_AGH_URL="http://127.0.0.1:${AGH_PORT}" \
+    -e NUXT_AGH_USER="${ADMIN_USER}" \
+    -e NUXT_AGH_PASSWORD="$(agh_password "$ADMIN_PASS")" \
+    -e NUXT_EXIT_TAGS="${EXIT_TAGS}" \
+    -e NUXT_MGMT_MESH_IP_PREFIX="10.99.0." \
+    -e NUXT_MGMT_IPS="$(_pairs="ru:${MGMT_IP_RU:-10.99.0.1}"; for _t in ${EXIT_TAGS}; do _u=$(echo "$_t" | tr 'a-z-' 'A-Z_'); _key="MGMT_IP_${_u}"; _v="${!_key:-}"; [ -n "$_v" ] && _pairs="$_pairs,$_t:$_v"; done; printf '%s' "$_pairs")" \
+    -e NUXT_VM_URL="http://127.0.0.1:8428" \
+    -e NUXT_TGBOT_SECRET="$(cat /etc/anysda/tgbot-secret.txt 2>/dev/null || true)" \
+    -e NUXT_TGBOT_EVENT_PORT=8877 \
+    -e NUXT_PUBLIC_SSO_ENABLED="${SSO_ENABLED}" \
+    -e NUXT_PUBLIC_SSO_AUTO_REDIRECT="${SSO_AUTO_REDIRECT:-true}" \
+    -e NUXT_PUBLIC_SSO_LABEL="${SSO_LABEL:-Authentik}" \
+    -e NUXT_SSO_ALLOWED_SUBS="${SSO_ALLOWED_SUBS:-}" \
+    -e NUXT_SSO_PASSWORD_LOGIN="${SSO_PASSWORD_LOGIN:-true}" \
+    -e NUXT_OAUTH_OIDC_CLIENT_ID="${SSO_CLIENT_ID:-}" \
+    -e NUXT_OAUTH_OIDC_CLIENT_SECRET="${SSO_CLIENT_SECRET:-}" \
+    -e NUXT_OAUTH_OIDC_OPENID_CONFIG="${SSO_DISCOVERY_URL:-}" \
+    -e NUXT_OAUTH_OIDC_REDIRECT_URL="${SSO_REDIRECT_URL}" \
+    -e LOG_LEVEL=info \
+    "$PANEL_IMAGE" \
+    sh -ec 'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); exec node .output/server/index.mjs' \
+    >/dev/null
+}
+# Отпечаток запуска: образ, аргументы docker run и конфиг, который панель
+# читает при старте. Совпал с меткой работающей панели - повторный деплой её
+# не трогает: ни остановки, ни копии, ни миграции. Карта прежних адресов в
+# отпечаток не входит: она берётся из заменяемого контейнера.
+panel_image_id=$(docker image inspect --format '{{.Id}}' "$PANEL_IMAGE")
+panel_spec=$( (docker() { printf '%s\0' "$@" >&3; }; PREVIOUS_NODE_HOSTS=''; panel_container) 3>&1 \
+  | cat - <(printf '%s\0' "$panel_image_id") /etc/anysda/anysda-config.yaml | sha256sum | cut -d' ' -f1)
+panel_kept=0
+if [[ $(docker inspect --format '{{index .Config.Labels "vpn2.spec"}} {{.State.Running}}' anysda-vpn2 2>/dev/null) == "$panel_spec true" ]] \
+  && curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:51821/api/version 2>/dev/null; then
+  panel_kept=1
+  echo "[$HOST_TAG] панель не изменилась, контейнер оставлен"
+else
+  panel_replace
+  # До удаления старого контейнера сохраняем карту для обновления с версии,
+  # которая ещё не хранила адреса экзитов в БД. Читаем только нужную переменную.
+  # При неудачном первом запуске повтор деплоя сохраняет исходную карту;
+  # после успешного запуска панель берёт более свежую карту из БД.
+  PREVIOUS_NODE_HOSTS=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' anysda-vpn2-previous 2>/dev/null \
+    | awk '/^NUXT_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); current=$0}
+           /^NUXT_PREVIOUS_NODE_HOSTS=/ {sub(/^[^=]*=/, ""); previous=$0}
+           END {print previous != "" ? previous : current}') || PREVIOUS_NODE_HOSTS=
+  docker rm -f anysda-vpn2 >/dev/null 2>&1 || true
+  panel_container
+fi
 
 echo "[$HOST_TAG] жду пока контейнер откроет HTTP…"
 http_up=0
@@ -389,12 +408,13 @@ done
 # Битый anysda-config.yaml роняет init панели (process.exit(1) в
 # server/plugins/init.ts). Причину печатаем раньше общей проверки ниже:
 # чинить надо конфиг, а не панель.
-if bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
+if (( ! panel_kept )) && bad=$(docker logs anysda-vpn2 2>&1 | grep 'anysda config .* is invalid' | tail -1); then
   echo "[$HOST_TAG] ✗ панель не разобрала /etc/anysda/anysda-config.yaml, пароль админа не применён:"
   echo "[$HOST_TAG]   ${bad:0:400}"
   exit 1
 fi
-if [[ $http_up -ne 1 ]] || docker logs anysda-vpn2 2>&1 | grep 'panel init failed' >/dev/null; then
+if [[ $http_up -ne 1 ]] \
+  || { (( ! panel_kept )) && docker logs anysda-vpn2 2>&1 | grep 'panel init failed' >/dev/null; }; then
   echo "[$HOST_TAG] ✗ панель не поднялась: /api/version не ответил 2xx за 60 с или init упал"
   echo "[$HOST_TAG]   контейнер: $(docker ps -a --filter name='^anysda-vpn2$' --format '{{.Status}}')"
   echo "[$HOST_TAG]   хвост журнала панели:"

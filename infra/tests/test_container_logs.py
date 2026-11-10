@@ -11,7 +11,7 @@ class ContainerLogsTest(unittest.TestCase):
         for stage in ('25-monitoring.sh', '30-frontend.sh', '35-telegram.sh'):
             with self.subTest(stage=stage):
                 source = (scripts / stage).read_text()
-                command = re.search(r'^docker run -d \\\n(?:.*\\\n)*.*', source, re.M)
+                command = re.search(r'^ *docker run -d \\\n(?:.*\\\n)*.*', source, re.M)
                 self.assertIsNotNone(command)
                 args = shlex.split(command[0].replace('\\\n', ' '))
                 self.assertIn('--log-driver', args)

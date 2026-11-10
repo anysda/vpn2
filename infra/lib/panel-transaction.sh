@@ -4,6 +4,7 @@ panel_state=/var/lib/vpn2-deploy/panel
 panel_lib=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 panel_changed=false
 panel_old=false
+panel_replaced=false
 
 panel_compatible() {
   python3 "$panel_lib/deploy_state.py" compatible --contract "$1"
@@ -38,14 +39,16 @@ panel_rollback() {
 # panel_guard_files FILE... — host config that belongs to the panel release
 # (Caddy TLS snippets): a failed deploy restores it, absent files are removed,
 # then the stage's panel_files_restored (if defined) reloads the services.
+# Копии лежат в files.pending до конца стадии; в files они попадают только при
+# замене панели, иначе повторный деплой менял бы состояние хоста.
 panel_files=()
 panel_guard_files() {
   local file
-  rm -rf "$panel_state/files"
-  install -d -m 700 "$panel_state/files"
+  rm -rf "$panel_state/files.pending"
+  install -d -m 700 "$panel_state/files.pending"
   for file; do
     panel_files+=("$file")
-    if [[ -e "$file" ]]; then cp -a --parents "$file" "$panel_state/files"; fi
+    if [[ -e "$file" ]]; then cp -a --parents "$file" "$panel_state/files.pending"; fi
   done
 }
 
@@ -53,7 +56,7 @@ panel_restore_files() {
   local file
   (( ${#panel_files[@]} )) || return 0
   for file in "${panel_files[@]}"; do
-    if [[ -e "$panel_state/files$file" ]]; then cp -a "$panel_state/files$file" "$file"; else rm -f "$file"; fi
+    if [[ -e "$panel_state/files.pending$file" ]]; then cp -a "$panel_state/files.pending$file" "$file"; else rm -f "$file"; fi
   done
   if declare -F panel_files_restored >/dev/null; then panel_files_restored; fi
   echo 'panel host config restored'
@@ -64,21 +67,30 @@ panel_failure() {
   trap - EXIT
   if [[ "$code" -ne 0 && "$panel_changed" == true ]]; then
     panel_restore_files || echo 'panel host config restore failed' >&2
+    rm -rf "$panel_state/files.pending"
     if [[ "$panel_old" == true ]]; then
       panel_rollback || echo 'automatic rollback unavailable; deploy a schema-compatible release; do not restore an old access snapshot' >&2
-    else
+    elif [[ "$panel_replaced" == true ]]; then
       echo 'installation failed; no previous release exists' >&2
     fi
   fi
   exit "$code"
 }
 
+# panel_begin — замок и проверка образа. Работающую панель не трогает: стадия
+# сначала выясняет, нужна ли замена, и только тогда зовёт panel_replace.
 panel_begin() {
   install -d -m 700 "$panel_state"
   exec {panel_lock_fd}>"$panel_state/transaction.lock"
   flock -n "$panel_lock_fd" || { echo 'panel deploy already running' >&2; return 1; }
   python3 "$panel_lib/deploy_state.py" image-contract --image "$PANEL_IMAGE" --contract "$panel_state/candidate-schema.json"
   python3 "$panel_lib/deploy_state.py" compatible --contract "$panel_state/candidate-schema.json" --migrating
+  panel_changed=true
+  trap panel_failure EXIT
+}
+
+# panel_replace — копия, остановка прежней панели и миграция базы под новую.
+panel_replace() {
   # First backup is mandatory while the old panel and VPN are still serving.
   python3 "$panel_lib/deploy_state.py" --state "$panel_state" backup
   if [[ -f /var/lib/vpn2-deploy/installed.json ]]; then
@@ -86,6 +98,9 @@ panel_begin() {
   else
     rm -f "$panel_state/previous-installed.json"
   fi
+  rm -rf "$panel_state/files"
+  if [[ -d "$panel_state/files.pending" ]]; then cp -a "$panel_state/files.pending" "$panel_state/files"; fi
+  panel_replaced=true
   if docker inspect anysda-vpn2 >/dev/null 2>&1; then
     local old_image
     old_image=$(docker inspect --format '{{.Image}}' anysda-vpn2)
@@ -94,15 +109,11 @@ panel_begin() {
     docker rm -f anysda-vpn2-previous >/dev/null 2>&1 || true
     docker rename anysda-vpn2 anysda-vpn2-previous
     panel_old=true
-    panel_changed=true
-    trap panel_failure EXIT
     docker stop anysda-vpn2-previous >/dev/null
     # A Docker or host restart must not start the fallback next to the new
     # panel on the same database, nor an old image on a newer schema.
     docker update --restart=no anysda-vpn2-previous >/dev/null
   fi
-  panel_changed=true
-  trap panel_failure EXIT
   echo 'administrative changes paused for migration; VPN services remain running'
   # Capture changes completed between the first backup and the maintenance window.
   python3 "$panel_lib/deploy_state.py" --state "$panel_state" backup
@@ -118,4 +129,5 @@ panel_finish() {
   python3 "$panel_lib/deploy_state.py" --state "$panel_state" phase --phase complete
   panel_changed=false
   trap - EXIT
+  rm -rf "$panel_state/files.pending"
 }

@@ -37,10 +37,10 @@ class PanelPreviousTests(unittest.TestCase):
         return dict(line.split('=', 1) for line in run.stdout.splitlines() if '=' in line)
 
     def test_previous_panel_is_not_restarted_by_docker(self):
-        self.assertEqual(self.run_transaction('panel_begin; trap - EXIT'), {'anysda-vpn2-previous': 'no'})
+        self.assertEqual(self.run_transaction('panel_begin; panel_replace; trap - EXIT'), {'anysda-vpn2-previous': 'no'})
 
     def test_rolled_back_panel_restarts_with_docker_again(self):
-        policy = self.run_transaction('panel_begin; trap - EXIT; panel_rollback >/dev/null')
+        policy = self.run_transaction('panel_begin; panel_replace; trap - EXIT; panel_rollback >/dev/null')
         self.assertEqual(policy, {'anysda-vpn2': 'always'})
 
 

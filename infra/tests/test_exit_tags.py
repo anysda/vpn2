@@ -13,7 +13,7 @@ from test_deploy import ROOT, bash, function, source
 class ExitTagTests(unittest.TestCase):
     def test_previous_panel_hosts_survive_failed_upgrade_retry(self):
         stage = source('infra/scripts/30-frontend.sh')
-        capture = 'PREVIOUS_NODE_HOSTS=' + stage.split('PREVIOUS_NODE_HOSTS=', 1)[1].split('\ndocker rm', 1)[0]
+        capture = 'PREVIOUS_NODE_HOSTS=$(' + stage.split('PREVIOUS_NODE_HOSTS=$(', 1)[1].split('\n  docker rm', 1)[0]
         for previous in ('', 'ru=192.0.2.1,se=192.0.2.2'):
             with self.subTest(previous=previous):
                 env = 'NUXT_NODE_HOSTS=ru=192.0.2.1,se1=192.0.2.2\n'
@@ -56,7 +56,7 @@ class ExitTagTests(unittest.TestCase):
             ssh = stage.split('  echo "# anysda-vpn — генерирует', 1)[1].split(
                 '\n} > "$SSH_MGMT_CONF"', 1)[0].split('\n', 1)[1]
             panel = source('infra/scripts/30-frontend.sh')
-            hosts = 'NODE_HOSTS=' + panel.split('NODE_HOSTS=', 1)[1].split('\ndocker rm', 1)[0]
+            hosts = 'NODE_HOSTS=' + panel.split('NODE_HOSTS=', 1)[1].split('\n# /etc/timezone', 1)[0]
             mgmt = panel.split('  -e NUXT_MGMT_IPS=', 1)[1].split(' \\\n', 1)[0]
             script = function('prep_ru_router') + function('_current_port') + '''
 DEPLOY_ROOT=$PWD/infra

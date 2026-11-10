@@ -87,7 +87,7 @@ class TelegramStageTests(unittest.TestCase):
         # Release transactions have their own failure/rollback suite. This
         # fixture isolates bot/panel secret propagation with a Docker double.
         (scripts / 'release.sh').write_text((ROOT / 'infra/lib/release.sh').read_text())
-        (scripts / 'panel-transaction.sh').write_text('panel_begin() { :; }\npanel_finish() { :; }\npanel_guard_files() { :; }\n')
+        (scripts / 'panel-transaction.sh').write_text('panel_begin() { :; }\npanel_replace() { :; }\npanel_finish() { :; }\npanel_guard_files() { :; }\n')
         (scripts / 'anysda-svc.sh').write_text(
             f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n'
             'svc_restart_if_changed() { :; }\n')

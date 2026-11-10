@@ -28,7 +28,7 @@ NODE_HOSTS=ru=192.0.2.1 PANEL_IMAGE=test-only-image
 PANEL_UID=10001 PANEL_GID=10001 CONTROL_GID=10003
 docker() { printf '%s\\n' "$@" > docker.args; }
 docker run -d \\
-''' + stage.split('docker run -d \\\n', 1)[1].split('\necho ', 1)[0]
+''' + stage.split('docker run -d \\\n', 1)[1].split('\n}\n', 1)[0]
 
 
 class SsoMissingSecretTests(unittest.TestCase):

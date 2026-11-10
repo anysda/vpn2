@@ -75,7 +75,7 @@ do_all
 
     def test_previous_hosts_are_read_from_retained_container(self):
         source = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        capture = 'PREVIOUS_NODE_HOSTS=' + source.split('PREVIOUS_NODE_HOSTS=', 1)[1].split('\ndocker rm', 1)[0]
+        capture = 'PREVIOUS_NODE_HOSTS=$(' + source.split('PREVIOUS_NODE_HOSTS=$(', 1)[1].split('\n  docker rm', 1)[0]
         run = subprocess.run(['bash', '-euo', 'pipefail', '-c', '''
 docker() {
   [[ "${*: -1}" == anysda-vpn2-previous ]] || return 1
@@ -517,6 +517,7 @@ PANEL_IMAGE=test
 python3() {{ [[ " $* " != *' backup '* && " $* " != *' backup' ]]; }}
 docker() {{ touch {shlex.quote(str(marker))}; }}
 panel_begin
+panel_replace
 '''
             run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
             self.assertNotEqual(run.returncode, 0)

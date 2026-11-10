@@ -43,7 +43,7 @@ def render(ram, disk, service, overrides=None):
 
 
 def docker_args(service, ram, disk=8192, overrides=None):
-    command = re.search(r"^docker run -d .*?(?=\n\n)", stage(SERVICES[service]), re.M | re.S)[0]
+    command = re.search(r"^ *docker run -d .*?(?=\n}\n|\n\n)", stage(SERVICES[service]), re.M | re.S)[0]
     # Старые деревья тоже исполняются: проверяем реальные неверные флаги,
     # а не только отсутствие нового модуля.
     setup = render(ram, disk, service, overrides) if TOOL.exists() else ""

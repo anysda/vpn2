@@ -21,7 +21,7 @@ const MISSING_OPERATION = '00000000-0000-4000-8000-000000000000'
  *   bot: (method: string, path: string, data?: unknown, auth?: boolean) => Promise<Reply>,
  *   settled: (operationId: string) => Promise<void>,
  *   gone: (path: string) => Promise<void>,
- *   delivered: (deliveryId: string) => Promise<void>,
+ *   delivered: (deliveryIds: string[]) => Promise<void>,
  * }} Io
  * @typedef {{ method: string, path: string, status: number, contentType: string, body: unknown }} Call
  */
@@ -274,7 +274,8 @@ export async function walk(io) {
   vars.nooperation = MISSING_OPERATION
   await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', '/api/bot/admin/access-operations/{operation}/retry')
   await botCall('bot/admin/access-operations/[id]/retry.post', 'POST', '/api/bot/admin/access-operations/{nooperation}/retry')
-  await settle((await botCall('bot/devices/[deviceId].delete', 'DELETE', '/api/bot/devices/{blaptop}?chatId={chat}')).json)
+  const dropLaptop = await botCall('bot/devices/[deviceId].delete', 'DELETE', '/api/bot/devices/{blaptop}?chatId={chat}')
+  await settle(dropLaptop.json)
   await botCall('bot/events.post', 'POST', '/api/bot/events', { type: 'telegram_rejected', status: 403, recipient: 'client' })
   await botCall('bot/events.post', 'POST', '/api/bot/events', { type: 'unknown' })
   await botCall('bot/events.post', 'POST', '/api/bot/events', { type: 'backup_failed', detail: 'snapshot' }, false)
@@ -282,7 +283,10 @@ export async function walk(io) {
 
   // Рассылка и очередь бота, отвязка чата.
   const broadcast = await adminCall('admin/broadcast.post', 'POST', '/api/admin/broadcast', { text: 'api-snapshot' })
-  await io.delivered(broadcast.json?.delivery?.id ?? MISSING_OPERATION)
+  // Уведомление клиенту о подтверждённой операции ставится в очередь под номером
+  // операции и видно в списке только после первой попытки таймера: запись очереди
+  // ждёт и рассылку, и оба уведомления привязанного чата.
+  await io.delivered([broadcast, reissue, dropLaptop].map(r => r.json?.delivery?.id ?? r.json?.operation?.id ?? MISSING_OPERATION))
   await adminCall('admin/bot-deliveries.get', 'GET', '/api/admin/bot-deliveries')
   await adminCall('clients/[id]/unlink.post', 'POST', '/api/clients/{bot}/unlink')
 

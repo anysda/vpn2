@@ -262,7 +262,7 @@ sys.stdin.read()
     def test_legacy_dangling_wg_keys(self):
         # Воспроизводим старый формат с пропущенным keys/, реальным манифестом
         # и шифрованием. Работает и при прогоне теста против origin/dev.
-        legacy = REPO / 'infra/lib/anysda-backup.sh'
+        legacy = REPO / 'infra/vpn2/tests/fixtures/backup/anysda-backup.sh'
         write('/test-output/legacy-backup.sh', legacy.read_text().replace('cp -aL', 'cp -a'))
         result = run('bash', '/test-output/legacy-backup.sh', env=self.env)
         self.assertEqual(result.returncode, 0, result.stdout)
@@ -696,9 +696,6 @@ exec /usr/bin/sqlite3 "$@"
 
         # Старый архив с расхождением: restore предупреждает и называет устройство.
         Path('/test-bin/sqlite3').unlink()
-        shutil.copy(REPO / 'infra/lib/anysda-backup.sh', '/usr/local/bin/anysda-backup.sh')
-        Path('/usr/local/bin/anysda-backup.sh').chmod(0o755)
-        self.addCleanup(Path('/usr/local/bin/anysda-backup.sh').unlink)
         shutil.copy(pki / 'revoked.pem', bundle / 'etc-openvpn/server/pki/crl.pem')
         with sqlite3.connect(bundle / 'db.sqlite') as db:
             db.execute('UPDATE devices SET ovpn_cert = ? WHERE id = 1', ((pki / '10.pem').read_text(),))
@@ -784,9 +781,6 @@ exec /usr/bin/sqlite3 "$@"
 
         # Старый архив с расхождением: restore предупреждает и называет устройства.
         Path('/test-bin/sqlite3').unlink()
-        shutil.copy(REPO / 'infra/lib/anysda-backup.sh', '/usr/local/bin/anysda-backup.sh')
-        Path('/usr/local/bin/anysda-backup.sh').chmod(0o755)
-        self.addCleanup(Path('/usr/local/bin/anysda-backup.sh').unlink)
         (bundle / 'etc-wireguard/wg0.conf').write_text(before_wg)
         (bundle / 'etc-swanctl/conf.d/anysda-clients.conf').write_text(before_ike)
         manifest = json.loads((bundle / 'manifest.json').read_text())

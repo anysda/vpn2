@@ -1,10 +1,10 @@
-"""`./deploy.sh restore ./<архив>`: архив ложится туда, где его ищет anysda-restore.sh.
+"""`./deploy.sh restore ./<архив>`: архив ложится туда, где его ищет restore.
 
-Настоящие infra/deploy.sh и anysda-restore.sh. Транспорт до entry подставной:
+Настоящие infra/deploy.sh и restore пакета vpn2. Транспорт до entry подставной:
 команды ssh исполняются локально, корень entry - временный каталог (пути
 /etc/anysda, /var/backups, /var/lib/anysda-vpn2, /tmp/anysda, /usr/local/bin
-переписаны внутрь него). age подменён: подставной expect записывает, какой
-архив restore взялся расшифровывать, - дальше расшифровки тест не идёт.
+переписаны внутрь него, restore получает его корнем узла). age подменён:
+записывает, какой архив restore взялся расшифровывать, - дальше тест не идёт.
 """
 import os
 from pathlib import Path
@@ -43,11 +43,17 @@ class TestRestoreLocalArchivePath(unittest.TestCase):
             (root / 'bin' / tool).write_text('#!/bin/sh\nexit 0\n')
             (root / 'bin' / tool).chmod(0o755)
         restore_sh = entry / 'usr/local/bin/anysda-restore.sh'
-        restore_sh.write_text(into_entry((ROOT / 'infra/lib/anysda-restore.sh').read_text(), entry))
+        restore_sh.write_text(f'''#!/bin/sh
+PYTHONPATH={ROOT}/infra/vpn2/src exec python3 -c 'import sys
+from vpn2.backup import restore
+node = restore.Node(root="{entry}", env_file="{entry}/etc/anysda/backup.env",
+                    source_root_file="{entry}/etc/anysda/source-root")
+sys.exit(restore.main(sys.argv[1:], node=node))' "$@"
+''')
         restore_sh.chmod(0o755)
-        expect = entry / 'stub/expect'
-        expect.write_text(f'#!/bin/sh\ncat > {entry}/decrypting\nexit 1\n')
-        expect.chmod(0o755)
+        age = entry / 'stub/age'
+        age.write_text(f'#!/bin/sh\necho "age $*" > {entry}/decrypting\nexit 1\n')
+        age.chmod(0o755)
         local_dir = into_entry(backup_env_dir, entry)
         (entry / 'etc/anysda/backup.env').write_text(
             "BACKUP_ENABLED='true'\n"
@@ -98,8 +104,8 @@ print(re.sub(sys.argv[1], lambda m: m.group(1) + sys.argv[2] + "/" + m.group(2),
         self.assertEqual(stat.S_IMODE(placed.stat().st_mode), 0o600)
         self.assertIn(f'anysda-restore: source = {placed}', output)
         # restore дошёл до расшифровки именно этого файла
-        self.assertIn('age -d -o', decrypting)
-        self.assertIn(f'"{placed}"', decrypting)
+        self.assertTrue(decrypting.startswith('age -d -o '), decrypting)
+        self.assertTrue(decrypting.endswith(f' {placed}\n'), decrypting)
         return entry
 
     def test_custom_local_dir_receives_archive(self):

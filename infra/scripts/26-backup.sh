@@ -137,8 +137,8 @@ fi
 
 # ── 2. Раскатываем скрипты (push'нуты из infra/lib/ оркестратором) ──────────
 echo "[$HOST_TAG] [2/4] /usr/local/bin/anysda-{backup,restore,backup-list}.sh"
-# Разбор wg0.conf для сверки бэкапа: anysda-backup.sh импортирует его отсюда,
-# поэтому модуль на месте раньше скрипта.
+# Скрипты - запуск пакета vpn2 из клона деплоя (отметка source-root ниже).
+# Разбор wg0.conf остаётся на узле для проверок вне пакета.
 install -D -m 0644 /tmp/anysda/wg_conf.py        /usr/local/lib/anysda/wg_conf.py
 install -m 0755 /tmp/anysda/anysda-backup.sh      /usr/local/bin/anysda-backup.sh
 install -m 0755 /tmp/anysda/anysda-restore.sh     /usr/local/bin/anysda-restore.sh

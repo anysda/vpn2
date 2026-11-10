@@ -21,6 +21,9 @@ UNIT=vpn2-fw-guard
 # Чужие таблицы (Docker, fail2ban) не
 # снимаем: откат всего ruleset стёр бы то, что службы добавили за время стадии.
 TABLES=('inet ytzapret' 'inet anysda_ytquic' 'inet vpn2_hy2hop')
+# Файлы, из которых эти таблицы поднимаются после перезагрузки (под $ETC):
+# без них живая таблица вернулась бы к снимку, а диск остался бы от стадии.
+FILES=(nftables-hy2hop.conf)
 
 say() { echo "vpn2-fw-guard: $*"; }
 
@@ -38,6 +41,10 @@ snapshot() {
     file=$snap/nft-${table// /-}
     # shellcheck disable=SC2086
     if command -v nft >/dev/null && nft list table $table > "$file" 2>/dev/null; then :; else rm -f "$file"; fi
+  done
+  mkdir -p "$snap/files"
+  for file in "${FILES[@]}"; do
+    [[ ! -f "$ETC/$file" ]] || cp -a "$ETC/$file" "$snap/files/$file"
   done
 }
 
@@ -64,6 +71,16 @@ restore() {
       # shellcheck disable=SC2086
       nft delete table $table 2>/dev/null || true
       [[ ! -f "$file" ]] || nft -f "$file" || rc=1
+    done
+  fi
+  # Снимок без каталога files снят сторожем до этой версии: диск не трогаем.
+  if [[ -d "$snap/files" ]]; then
+    for file in "${FILES[@]}"; do
+      if [[ -f "$snap/files/$file" ]]; then
+        cp -a "$snap/files/$file" "$ETC/$file.vpn2-guard" && mv "$ETC/$file.vpn2-guard" "$ETC/$file" || rc=1
+      else
+        rm -f "$ETC/$file" || rc=1
+      fi
     done
   fi
   return $rc

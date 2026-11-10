@@ -96,21 +96,41 @@ class FirewallGuardTests(unittest.TestCase):
         self.assertFalse(self.dir.exists())
 
     def test_restore_returns_hy2hop_table_to_snapshot(self):
+        # Таблицу после перезагрузки поднимает юнит из файла на диске: откат
+        # возвращает и живую таблицу, и файл с его правами.
         hop = self.fake / 'table-vpn2_hy2hop'
+        conf = self.etc / 'nftables-hy2hop.conf'
         hop.write_text('table inet vpn2_hy2hop {\n  dport 20000-20100\n}\n')
+        conf.write_text('before 20000-20100\n')
+        conf.chmod(0o600)
         self.assertEqual(self.guard('arm', '10-foreign', '1').returncode, 0)
         hop.write_text('table inet vpn2_hy2hop {\n  dport 30000-30100\n}\n')
+        conf.write_text('after 30000-30100\n')
+        conf.chmod(0o644)
         os.utime(self.dir / 'alive', (time.time() - 10,) * 2)
         self.assertEqual(self.guard('watch', '1').returncode, 0)
         self.assertIn('20000-20100', hop.read_text())
+        self.assertEqual(conf.read_text(), 'before 20000-20100\n')
+        self.assertEqual(conf.stat().st_mode & 0o777, 0o600)
 
     def test_restore_drops_hy2hop_table_created_by_stage(self):
         hop = self.fake / 'table-vpn2_hy2hop'
+        conf = self.etc / 'nftables-hy2hop.conf'
         self.assertEqual(self.guard('arm', '10-foreign', '1').returncode, 0)
         hop.write_text('table inet vpn2_hy2hop {\n  dport 30000-30100\n}\n')
+        conf.write_text('after 30000-30100\n')
         os.utime(self.dir / 'alive', (time.time() - 10,) * 2)
         self.assertEqual(self.guard('watch', '1').returncode, 0)
         self.assertFalse(hop.exists())
+        self.assertFalse(conf.exists())
+
+    def test_fresh_logins_keep_hy2hop_file(self):
+        conf = self.etc / 'nftables-hy2hop.conf'
+        conf.write_text('before\n')
+        self.assertEqual(self.guard('arm', '10-foreign', '60').returncode, 0)
+        conf.write_text('after\n')
+        self.assertEqual(self.guard('disarm', '10-foreign').returncode, 0)
+        self.assertEqual(conf.read_text(), 'after\n')
 
     def test_fresh_logins_keep_stage_changes(self):
         self.assertEqual(self.guard('arm', '29-openvpn', '3').returncode, 0)

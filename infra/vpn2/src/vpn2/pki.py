@@ -7,9 +7,13 @@
 аргументов, ни входных данных, значит приватный ключ в исключение не попадает.
 """
 import re
+import secrets
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import NamedTuple
 
+from vpn2.fsutil import atomic
 
 HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
 BLANK = ' \t\n\v\f\r'
@@ -184,6 +188,125 @@ def by_cn(rows, cn, *, comma=False, strict=False):
 def openssl_cnf(directory='/etc/openvpn/server/pki'):
     """openssl.cnf для `openssl ca` с каталогом PKI directory."""
     return CNF.replace('@DIR@', str(directory))
+
+
+def key_valid(path, *, run=run):
+    """Приватный ключ читается и проходит `openssl pkey -check`."""
+    return _ok(run, ['openssl', 'pkey', '-in', str(path), '-check', '-noout'])
+
+
+def cert_valid(path, *, checkend=0, run=run):
+    """Сертификат читается и не истекает в ближайшие checkend секунд."""
+    return _ok(run, ['openssl', 'x509', '-in', str(path), '-noout', '-checkend', str(checkend)])
+
+
+def pair_valid(key, cert, *, run=run):
+    """Ключ и сертификат валидны, публичный ключ у них один."""
+    if not (key_valid(key, run=run) and cert_valid(cert, run=run)):
+        return False
+    try:
+        derived = run(['openssl', 'pkey', '-in', str(key), '-pubout'])
+        issued = run(['openssl', 'x509', '-in', str(cert), '-pubkey', '-noout'])
+    except PkiError:
+        return False
+    return derived.returncode == 0 == issued.returncode and derived.stdout.strip() == issued.stdout.strip()
+
+
+def genkey(path, *, run=run):
+    """Новый приватный ключ EC prime256v1 в path."""
+    _checked(run, ['openssl', 'genpkey', *EC_KEY, '-out', str(path)], 'openssl genpkey')
+
+
+def require_key(key, cert, *, run=run):
+    """Ключ годен или создан заново. Битый ключ при живом сертификате - PkiIdentity.
+
+    Это может быть действующая идентичность, её восстанавливают из бэкапа, а не заменяют.
+    """
+    if key_valid(key, run=run):
+        return
+    if cert_valid(cert, run=run):
+        raise PkiIdentity(f'PKI: valid certificate but missing/invalid private key: {key}')
+    genkey(key, run=run)
+
+
+def verify(ca, cert, *, crl=None, purpose=None, run=run):
+    """`openssl verify`: сертификат подписан ca; с crl - и не отозван; purpose - как -purpose."""
+    argv = ['openssl', 'verify', '-CAfile', str(ca)]
+    if crl is not None:
+        argv += ['-CRLfile', str(crl), '-crl_check']
+    if purpose:
+        argv += ['-purpose', purpose]
+    return _ok(run, [*argv, str(cert)])
+
+
+def serial(pem, *, run=run):
+    """Серийник сертификата (PEM-текст) числом; None, если openssl его не отдал."""
+    done = run(['openssl', 'x509', '-noout', '-serial'], data=pem)
+    value = done.stdout.strip().partition('=')[2]
+    return int(value, 16) if done.returncode == 0 and HEX.fullmatch(value) else None
+
+
+def subject_cn(pem, *, run=run):
+    """Первый CN из subject в виде RFC2253 (не-ASCII и спецзнаки экранированы); нет CN - None."""
+    done = run(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253'], data=pem)
+    found = re.search(r'(?:^|,)CN=((?:[^,\\]|\\.)*)', done.stdout.strip().partition('=')[2])
+    return found[1] if done.returncode == 0 and found else None
+
+
+def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', run=run):
+    """Сертификат для key через `openssl ca` (запись в index/serial CA); возвращает serial hex-строкой."""
+    directory = Path(directory)
+    _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr), '-subj', '/CN=' + cn],
+             'openssl req')
+    _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(directory / 'openssl.cnf'),
+                   '-extensions', extensions, '-days', str(days), '-in', str(csr), '-out', str(out)],
+             'openssl ca')
+    done = _checked(run, ['openssl', 'x509', '-in', str(out), '-noout', '-serial'], 'openssl x509')
+    value = done.stdout.strip().partition('=')[2]
+    if not HEX.fullmatch(value):
+        raise PkiError('openssl x509 -serial: no serial')
+    return value
+
+
+def sign_ephemeral(directory, cn, key, out, *, days=1, run=run):
+    """Короткоживущий клиентский сертификат без `openssl ca`: index, serial и CRL не трогаются.
+
+    Ключ создаётся в key, сертификат - в out, подписан ca.crt и ca.key из directory.
+    """
+    directory = Path(directory)
+    with tempfile.TemporaryDirectory(dir=Path(out).parent) as work:
+        csr, ext = Path(work) / 'csr.pem', Path(work) / 'ext.cnf'
+        _checked(run, ['openssl', 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                       '-nodes', '-subj', '/CN=' + cn, '-keyout', str(key), '-out', str(csr)], 'openssl req')
+        atomic(ext, 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n')
+        _checked(run, ['openssl', 'x509', '-req', '-in', str(csr), '-CA', str(directory / 'ca.crt'),
+                       '-CAkey', str(directory / 'ca.key'), '-set_serial', '0x' + secrets.token_hex(16),
+                       '-days', str(days), '-extfile', str(ext), '-out', str(out)], 'openssl x509')
+
+
+def revoke(directory, cert, *, reason=None, run=run):
+    """Отметить сертификат отозванным в базе CA (CRL выпускает gencrl)."""
+    _checked(run, ['openssl', 'ca', '-batch', '-config', str(Path(directory) / 'openssl.cnf'),
+                   '-revoke', str(cert), *(['-crl_reason', reason] if reason else [])], 'openssl ca -revoke')
+
+
+def gencrl(directory, out, *, verify=True, run=run):
+    """CRL из базы CA в out.
+
+    verify=True: выпуск во временный файл, проверка ca.crt и только потом атомарная
+    запись 0644; не прошло проверку - PkiError, out прежний. verify=False: сразу в out.
+    """
+    directory, out = Path(directory), Path(out)
+    argv = ['openssl', 'ca', '-batch', '-config', str(directory / 'openssl.cnf'), '-gencrl', '-out']
+    if not verify:
+        _checked(run, [*argv, str(out)], 'openssl ca -gencrl')
+        return
+    with tempfile.TemporaryDirectory(dir=out.parent) as work:
+        crl = Path(work) / 'crl.pem'
+        _checked(run, [*argv, str(crl)], 'openssl ca -gencrl')
+        _checked(run, ['openssl', 'crl', '-in', str(crl), '-noout', '-verify', '-CAfile',
+                       str(directory / 'ca.crt')], 'openssl crl')
+        atomic(out, crl.read_text(), 0o644)
 
 
 # --- место для transaction и build_openvpn (следующий шаг) ---

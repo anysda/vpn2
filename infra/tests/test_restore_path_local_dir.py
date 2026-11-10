@@ -67,7 +67,7 @@ log() {{ :; }}; ok() {{ :; }}; warn() {{ echo "warn: $*" >&2; }}
 die() {{ echo "die: $*" >&2; exit 1; }}
 load_env() {{ HOST_TAG=$1; }}
 expand_hosts() {{ case $1 in ru|all) echo ru ;; *) die "unknown host group: $1" ;; esac; }}
-# Выпуск (release.py, deploy_state.py) тесту не нужен: исполняются только
+# Выпуск (vpn2.release, deploy_state.py) тесту не нужен: исполняются только
 # команды про архив и каталог бэкапов.
 push() {{
   [[ "${{2:-$1}}" == *.tar.gz.age ]] || return 0

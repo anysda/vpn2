@@ -2,6 +2,11 @@
 # Orchestrator lifetime lock on entry, shared by all deploy workstations.
 VPN2_BACKED_UP=()
 
+# Команды выпуска из пакета этого дерева; venv для них не нужен (stdlib).
+release_cli() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -m vpn2.release "$@"; }
+# Дерево (стадии, роли, пакет, миграции) должно совпадать с проверенной сборкой.
+release_verify_tree() { release_cli --manifest "$VPN2_RELEASE_MANIFEST" verify-tree "$DEPLOY_ROOT/.."; }
+
 release_unlock() {
   local code=$?
   trap - EXIT
@@ -39,9 +44,9 @@ release_start() {
     # Без --manifest берётся опубликованный манифест commit этого дерева.
     if [[ -z "${VPN2_RELEASE_MANIFEST:-}" ]]; then
       VPN2_RELEASE_MANIFEST=$VPN2_STATE_DIR/release-manifest.json
-      python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" fetch "$DEPLOY_ROOT/.." || exit 1
+      release_cli --manifest "$VPN2_RELEASE_MANIFEST" fetch "$DEPLOY_ROOT/.." || exit 1
     fi
-    python3 "$DEPLOY_ROOT/lib/release.py" --manifest "$VPN2_RELEASE_MANIFEST" check "$DEPLOY_ROOT/.." || exit 1
+    release_verify_tree || exit 1
     # Манифест из --manifest остаётся в состоянии деплоя: anysda-restore.sh
     # прогоняет стадии по нему, когда /tmp/anysda уже вычищен перезагрузкой.
     if [[ ! "$VPN2_RELEASE_MANIFEST" -ef "$VPN2_STATE_DIR/release-manifest.json" ]]; then
@@ -99,7 +104,8 @@ release_start() {
   local host lib
   for host in $(expand_hosts all); do
     load_env "$host"
-    for lib in release.py deploy_state.py panel-transaction.sh anysda-svc.sh; do push "$DEPLOY_ROOT/lib/$lib"; done
+    push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2
+    for lib in deploy_state.py panel-transaction.sh anysda-svc.sh; do push "$DEPLOY_ROOT/lib/$lib"; done
     if [[ "$action" != rollback && "$action" != recover ]]; then
       ssh_exec 'python3 -c '\''import json,pathlib; p=pathlib.Path("/var/lib/vpn2-deploy/operation.json"); assert not p.exists() or json.loads(p.read_text())["phase"] in ("complete","aborted","rolled-back"), "unfinished deploy: inspect operation.json and recover first"'\'
     fi
@@ -150,7 +156,8 @@ release_complete() {
   for host in $(expand_hosts all); do
     load_env "$host"
     # Exit stages erase their staging directory, including the helper and manifest.
-    for lib in release.py deploy_state.py; do push "$DEPLOY_ROOT/lib/$lib"; done
+    push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2
+    push "$DEPLOY_ROOT/lib/deploy_state.py"
     if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
       ssh_exec 'python3 /tmp/anysda/deploy_state.py phase --phase complete'
     else

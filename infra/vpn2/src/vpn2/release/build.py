@@ -1,19 +1,20 @@
-#!/usr/bin/env python3
-"""Build the published contract from this checkout and pushed image digests."""
+"""Build the published contract from this checkout and pushed image digests.
+
+Every pinned version and hash comes from infra/versions.yml, nowhere else.
+"""
 
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 
-from release import DOWNLOAD_PAUSES, GITHUB_API, ReleaseError, command, digest, sha256, source_files
+from . import DOWNLOAD_PAUSES, GITHUB_API, ReleaseError, command, digest, sha256, source_files, versions
 
 
 def fetch(url, timeout=60):
@@ -41,32 +42,24 @@ def fetch(url, timeout=60):
     raise ReleaseError(f'{url}: {error}')
 
 
-def value(root, path, name):
-    match = re.search(rf"^{name}(?:=|:\s*)['\"]?([^'\"\s]+)", (root / path).read_text(), re.M)
-    if match is None:
-        raise ValueError('missing pinned version: ' + name)
-    return match[1]
-
-
 def binary_specs(root):
-    stages = 'infra/scripts/'
-    sb = (root / 'infra/lib/install-sing-box.sh').read_text()
-    version = re.search(r"SB_VER='([^']+)'", sb)[1]
+    pins = versions(root / 'infra/versions.yml')
+    version = pins['sing_box']
     specs = {}
     for arch in ('amd64', 'arm64'):
         specs['sing-box-' + arch] = {
             'version': version, 'architecture': arch,
-            'sha256': re.search(rf"SB_SHA256_{arch.upper()}='([^']+)'", sb)[1],
+            'sha256': pins['sing_box_sha256_' + arch],
             'url': f'https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz',
         }
     entries = (
-        ('wgcf', 'scripts/10-foreign.sh', 'WGCF_VER', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
-        ('caddy', 'lib/anysda-svc.sh', 'CADDY_VER', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
-        ('node-exporter', 'ansible/roles/base/defaults/main.yml', 'base_node_exporter_version', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
-        ('adguard', 'scripts/22-adguard.sh', 'AGH_VER', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
+        ('wgcf', 'wgcf', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
+        ('caddy', 'caddy', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
+        ('node-exporter', 'node_exporter', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
+        ('adguard', 'adguard', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
     )
-    for name, stage, variable, repo, tag, asset in entries:
-        version = value(root, 'infra/' + stage, variable)
+    for name, pin, repo, tag, asset in entries:
+        version = pins[pin]
         filename = asset.format(v=version)
         url = f'https://api.github.com/repos/{repo}/releases/tags/{tag.format(v=version)}'
         release = json.loads(fetch(url))
@@ -74,22 +67,21 @@ def binary_specs(root):
         specs[name] = {'version': version, 'architecture': 'amd64',
                        'url': asset_data['browser_download_url'],
                        'sha256': digest(asset_data['digest']).split(':')[1]}
-    node = (root / (stages + '19-yt-zapret.sh')).read_text()
-    node_url = re.search(r'https://nodejs.org/dist/[^\s]+\.tar\.xz', node)[0]
-    specs['yt-node'] = {'version': node_url.split('/')[4], 'architecture': 'amd64',
-                        'url': node_url, 'sha256': re.search(r"printf '%s  %s\\n' ([a-f0-9]{64})", node)[1]}
-    pot = (root / 'infra/lib/install-yt-pot.sh').read_text()
-    version = value(root, 'infra/lib/install-yt-pot.sh', 'pot_version')
+    version = pins['yt_node']
+    specs['yt-node'] = {'version': version, 'architecture': 'amd64',
+                        'url': f'https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz',
+                        'sha256': pins['yt_node_sha256']}
+    version = pins['yt_pot']
     specs['yt-pot'] = {'version': version, 'architecture': 'all',
                        'url': f'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{version}.tar.gz',
-                       'sha256': re.search(r"printf '%s  %s\\n' ([a-f0-9]{64})", pot)[1]}
-    version = value(root, stages + '26-backup.sh', '  AWS_CLI_VERSION')
+                       'sha256': pins['yt_pot_sha256']}
+    version = pins['aws_cli']
     url = f'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{version}.zip'
     checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
     specs['aws-cli'] = {'version': version, 'architecture': 'amd64', 'url': url, 'sha256': checksum}
     signature = hashlib.sha256(fetch(url + '.sig')).hexdigest()
     specs['aws-cli-signature'] = {'version': version, 'architecture': 'amd64', 'url': url + '.sig', 'sha256': signature}
-    version = re.search(r'YT_ZAPRET_REF:-([a-f0-9]{40})', node)[1]
+    version = pins['zapret2']
     url = f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz'
     checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
     specs['zapret2-source'] = {'version': version, 'architecture': 'all', 'url': url, 'sha256': checksum}
@@ -126,13 +118,13 @@ def rollback_plan(root, journal):
     return 'backward-compatible' if previous == journal else 'forward-only'
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[2])
+def build(argv):
+    parser = argparse.ArgumentParser(prog='vpn2 release build-manifest', description=__doc__)
+    parser.add_argument('--root', type=Path, default=Path.cwd())
     parser.add_argument('--digests', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repository', default='ghcr.io/anysda/vpn2')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     root = args.root
     images = {name: resolve_image(args.repository + '/' + name, (args.digests / (name + '.txt')).read_text().strip())
               for name in ('panel', 'tgbot', 'emergency')}
@@ -156,10 +148,12 @@ def main():
     args.output.write_text(json.dumps(manifest, indent=2) + '\n')
 
 
-if __name__ == '__main__':
+
+def main(argv=None):
     try:
-        main()
+        build(sys.argv[1:] if argv is None else argv)
     except ReleaseError as error:
         raise SystemExit(f'release manifest generation failed: {error}') from None
     except (OSError, ValueError, KeyError, StopIteration, subprocess.SubprocessError) as error:
         raise SystemExit('release manifest generation failed: ' + type(error).__name__) from None
+    return 0

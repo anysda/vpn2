@@ -188,9 +188,9 @@ jobs:
       - name: release manifest
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python3 infra/lib/build-release.py --digests digests --output release-manifest.json
+        run: PYTHONPATH=infra/vpn2/src python3 -m vpn2.release build-manifest --root . --digests digests --output release-manifest.json
       - name: validate source contract
-        run: python3 infra/lib/release.py --manifest release-manifest.json check .
+        run: PYTHONPATH=infra/vpn2/src python3 -m vpn2.release --manifest release-manifest.json verify-tree .
       # Манифест публикуется рядом с образом панели (пакет публичный), тег -
       # полный commit: ./deploy.sh скачивает его анонимно, без учётки GitHub.
       # Повторная сборка того же commit перезаписывает тег манифестом своих
@@ -212,5 +212,5 @@ jobs:
         env:
           VPN2_RELEASE_SOURCE: https://ghcr.io/${{ github.repository }}/panel
         run: |
-          python3 infra/lib/release.py --manifest "$RUNNER_TEMP/fetched.json" fetch .
+          PYTHONPATH=infra/vpn2/src python3 -m vpn2.release --manifest "$RUNNER_TEMP/fetched.json" fetch .
           cmp release-manifest.json "$RUNNER_TEMP/fetched.json"

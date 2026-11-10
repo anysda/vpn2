@@ -23,6 +23,16 @@ ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]
 
 
 def module(name):
+    """Свежий экземпляр модуля: выпуск - из пакета vpn2, остальное - из infra/lib."""
+    source = ROOT / 'infra/vpn2/src'
+    if name in ('release', 'build-release'):
+        if not (source / 'vpn2/release/__init__.py').exists():
+            raise AssertionError(f'{name}: deploy has no release safety mechanism')
+        if str(source) not in sys.path:
+            sys.path.insert(0, str(source))
+        for key in [key for key in sys.modules if key == 'vpn2.release' or key.startswith('vpn2.release.')]:
+            del sys.modules[key]
+        return importlib.import_module('vpn2.release' + ('.build' if name == 'build-release' else ''))
     path = ROOT / 'infra/lib' / (name + '.py')
     if not path.exists():
         raise AssertionError(f'{name}: deploy has no release safety mechanism')
@@ -593,7 +603,7 @@ panel_rollback
         subprocess.run(git + ['commit', '-qm', 'later'], check=True)
         builder = module('build-release')
         output = work / 'release-manifest.json'
-        argv = ['build-release.py', '--root', str(repo), '--digests', str(work), '--output', str(output)]
+        argv = ['build-manifest', '--root', str(repo), '--digests', str(work), '--output', str(output)]
         with patch.object(builder, 'resolve_image', return_value={}), \
                 patch.object(builder, 'binary_specs', return_value={}), \
                 patch.object(builder, 'source_files', return_value={}), \

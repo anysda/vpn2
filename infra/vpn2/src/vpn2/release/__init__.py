@@ -1,5 +1,8 @@
-#!/usr/bin/env python3
-"""Release contract, immutable images and verified download cache (stdlib only)."""
+"""Release contract, immutable images and verified download cache (stdlib only).
+
+Runs on a node before the vpn2 venv exists: the package directory is shipped
+next to the stages and started as `python3 -m vpn2.release`.
+"""
 
 import argparse
 import hashlib
@@ -250,10 +253,28 @@ def artifact(manifest, name, cache, destination=None):
     return target
 
 
+def versions(path):
+    """Flat `key: "value"` pins of infra/versions.yml; vpn2.config.versions is the strict reader."""
+    pins = {}
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        match = re.fullmatch(r'([a-z0-9_]+):\s*"([^"]+)"\s*', line)
+        if match:
+            pins[match[1]] = match[2]
+        elif line.strip() and not line.lstrip().startswith('#'):
+            raise ReleaseError(f'{path}: not a pin line: {line.strip()[:60]}')
+    return pins
+
+
 def source_files(root):
     paths = list((root / 'infra/scripts').glob('*.sh'))
     paths += list((root / 'infra/lib').glob('*.sh')) + list((root / 'infra/lib').glob('*.py'))
     paths += list((root / 'infra/configs').rglob('*'))
+    # The package and the roles are deploy code as much as the stages are.
+    paths += list((root / 'infra/vpn2/src/vpn2').rglob('*.py'))
+    paths += [path for path in (root / 'infra/ansible').rglob('*')
+              if not any(part.startswith('.') or part == '__pycache__'
+                         for part in path.relative_to(root).parts)]
+    paths += [root / 'infra/vpn2/pyproject.toml', root / 'infra/versions.yml']
     paths += list((root / 'app/server/database/migrations').rglob('*'))
     paths += [root / 'infra/deploy.sh', root / 'deploy.sh']
     return {str(path.relative_to(root)): sha256(path) for path in sorted(paths) if path.is_file()}
@@ -357,12 +378,16 @@ def fetch(root, output, source):
         Path(temporary).unlink(missing_ok=True)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ['build-manifest']:
+        from . import build
+        return build.main(argv[1:])
+    parser = argparse.ArgumentParser(prog='vpn2 release', description=__doc__)
     # Without a manifest only artifact works: development mode, the hash pinned in the stage.
     parser.add_argument('--manifest')
     sub = parser.add_subparsers(dest='action', required=True)
-    check = sub.add_parser('check')
+    check = sub.add_parser('verify-tree')
     check.add_argument('root')
     download = sub.add_parser('fetch')
     download.add_argument('root')
@@ -377,7 +402,7 @@ def main():
     art.add_argument('--cache', default='/var/cache/vpn2-release')
     art.add_argument('--url')
     art.add_argument('--sha256')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         if args.manifest is None:
             if args.action != 'artifact' or not args.url or not re.fullmatch(r'[a-f0-9]{64}', args.sha256 or ''):
@@ -389,7 +414,7 @@ def main():
             return 0
         else:
             manifest = load(args.manifest)
-        if args.action == 'check':
+        if args.action == 'verify-tree':
             validate_source(manifest, args.root)
             print(f'release: манифест commit {manifest["commit"]} (версия {manifest["version"]}) '
                   'проверен, стадии и миграции совпадают')
@@ -403,13 +428,10 @@ def main():
             artifact(manifest, args.name, args.cache, args.destination)
     except (ReleaseError, OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         message = str(error) if isinstance(error, ReleaseError) else type(error).__name__
-        if args.action in ('fetch', 'check'):
+        if args.action in ('fetch', 'verify-tree'):
             print('✗ ' + message, file=sys.stderr)
         else:
             print('release: ' + message + '; no unverified artifact accepted', file=sys.stderr)
         return 1
     return 0
 
-
-if __name__ == '__main__':
-    sys.exit(main())

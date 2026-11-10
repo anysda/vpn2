@@ -2,28 +2,19 @@
 """artifact() survives 503/504 from releases/download: retries, then the releases API."""
 import hashlib
 import http.server
-import importlib.util
 import json
-import os
 from pathlib import Path
-import sys
 import tempfile
 import threading
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+from vpn2 import release
+
 DATA = b'release archive'
 DOWNLOAD = '/o/r/releases/download/v1/file.tgz'
 
 
-def module(name):
-    path = ROOT / 'infra/lib' / (name + '.py')
-    sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location(name, path)
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
 
 
 class Server:
@@ -78,7 +69,6 @@ class Server:
 
 class ArtifactRetryTests(unittest.TestCase):
     def fetch(self, server):
-        release = module('release')
         work = Path(tempfile.mkdtemp())
         manifest = {'binaries': {'binary': {'url': server.base + DOWNLOAD,
                                             'sha256': hashlib.sha256(DATA).hexdigest()}}}

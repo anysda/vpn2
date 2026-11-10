@@ -41,7 +41,7 @@
     - name: Архив node_exporter
       ansible.builtin.command:
         argv: >-
-          {{ ['/usr/bin/python3', base_tmp ~ '/release.py']
+          {{ base_host[:-1] + ['vpn2.release']
              + ([] if lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') == 'true' else ['--manifest', base_manifest])
              + ['artifact', 'node-exporter', base_tmp ~ '/' ~ base_node_exporter_archive ~ '.tar.gz',
                 '--url', base_node_exporter_url, '--sha256', base_node_exporter_sha256] }}

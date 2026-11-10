@@ -3,6 +3,14 @@
 
 release_lib_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+# Команды выпуска живут в пакете: при деплое он лежит рядом с библиотекой
+# (/tmp/anysda/vpn2), при restore из дерева исходников - в infra/vpn2/src.
+release_py() {
+  local src=$release_lib_dir
+  [[ -d "$src/vpn2/release" ]] || src=$release_lib_dir/../vpn2/src
+  PYTHONPATH=$src python3 -m vpn2.release "$@"
+}
+
 release_image() {
   local component="$1" requested="$2" pull="$3"
   if [[ "${VPN2_DEVELOPMENT:-false}" == true ]]; then
@@ -24,12 +32,12 @@ release_image() {
   fi
   local args=()
   [[ "$pull" != false ]] || args+=(--offline)
-  python3 "$release_lib_dir/release.py" --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
+  release_py --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
     image "$component" --requested "$requested" "${args[@]}"
 }
 
 release_artifact() {
   local name="$1" destination="$2"
-  python3 "$release_lib_dir/release.py" --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
+  release_py --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
     artifact "$name" "$destination"
 }

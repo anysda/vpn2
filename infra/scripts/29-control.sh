@@ -11,7 +11,7 @@ fi
 CONTROL_SOURCE=$(dirname "$0")/control
 [[ -d "$CONTROL_SOURCE" ]] || CONTROL_SOURCE=$(dirname "$0")/../control
 # The service code is the vpn2 package: deploy pushes it beside the stage.
-PACKAGE_SOURCE=$(dirname "$0")/vpn2-package
+PACKAGE_SOURCE=$(dirname "$0")/vpn2
 [[ -d "$PACKAGE_SOURCE" ]] || PACKAGE_SOURCE=$(dirname "$0")/../vpn2/src/vpn2
 POOL_SOURCE=$(dirname "$0")/vpn-pools.json
 [[ -f "$POOL_SOURCE" ]] || POOL_SOURCE=$(dirname "$0")/../../app/shared/vpn-pools.json

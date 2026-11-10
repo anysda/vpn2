@@ -11,16 +11,17 @@ SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
 # Loads lazily: backup/restore also use this library without release artifacts.
 # release_download <имя> <файл> <url> [sha256]: один путь в обоих режимах -
-# release.py с повтором, запасным путём через API релизов GitHub и сверкой
+# vpn2.release с повтором, запасным путём через API релизов GitHub и сверкой
 # хеша. Хеш берётся из манифеста сборки; в режиме разработки манифеста нет,
 # хеш приходит из стадии (четвёртый аргумент). Есть оба - обязаны совпасть.
 release_download() {
-  local name="$1" destination="$2" url="$3" sha="${4:-}" lib manifest=()
-  lib=$(dirname "${BASH_SOURCE[0]}")/release.py
+  local name="$1" destination="$2" url="$3" sha="${4:-}" src manifest=()
+  src=$(dirname "${BASH_SOURCE[0]}")
+  [[ -d "$src/vpn2/release" ]] || src=$src/../vpn2/src
   if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
     manifest=(--manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}")
   fi
-  python3 "$lib" "${manifest[@]}" artifact "$name" "$destination" --url "$url" ${sha:+--sha256 "$sha"}
+  PYTHONPATH=$src python3 -m vpn2.release "${manifest[@]}" artifact "$name" "$destination" --url "$url" ${sha:+--sha256 "$sha"}
 }
 
 UFW_RULES_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/ufw-rules.py

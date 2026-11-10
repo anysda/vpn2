@@ -1,6 +1,5 @@
 """A transient docker pull failure on a fresh Docker is retried, a final one is named."""
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -10,6 +9,8 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+from vpn2 import release
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -46,18 +47,11 @@ exit 1
 '''
 
 
-def release_module():
-    path = ROOT / 'infra/lib/release.py'
-    sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location('release_pull_retry', path)
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
 
 
 class PullRetryTests(unittest.TestCase):
     def setUp(self):
-        self.release = release_module()
+        self.release = release
         self.arch = self.release.architecture()
         self.work = Path(tempfile.mkdtemp(prefix='vpn2-pull-retry-'))
         self.addCleanup(shutil.rmtree, self.work, True)
@@ -95,7 +89,7 @@ class PullRetryTests(unittest.TestCase):
 
     def test_final_pull_failure_names_image_and_docker_error(self):
         stderr = io.StringIO()
-        argv = ['release.py', '--manifest', str(self.work / 'release.json'), 'image', 'tgbot']
+        argv = ['vpn2 release', '--manifest', str(self.work / 'release.json'), 'image', 'tgbot']
         with patch.dict(os.environ, self.environment, FAKE_DOCKER_FAILS='99'), \
                 patch('time.sleep') as sleep, patch.object(sys, 'argv', argv), \
                 contextlib.redirect_stderr(stderr):

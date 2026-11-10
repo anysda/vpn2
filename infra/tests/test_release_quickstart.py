@@ -15,8 +15,8 @@ import threading
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / 'infra/lib'))
-import release  # noqa: E402
+sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2 import release  # noqa: E402
 
 HEAD = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'],
                       capture_output=True, text=True, check=True).stdout.strip()
@@ -81,8 +81,8 @@ class Registry:
 
 
 def run_python(*args, source):
-    return subprocess.run([sys.executable, str(ROOT / 'infra/lib/release.py'), *args],
-                          env=dict(os.environ, VPN2_RELEASE_SOURCE=source),
+    return subprocess.run([sys.executable, '-m', 'vpn2.release', *args],
+                          env=dict(os.environ, VPN2_RELEASE_SOURCE=source, PYTHONPATH=str(ROOT / 'infra/vpn2/src')),
                           capture_output=True, text=True, timeout=60)
 
 
@@ -133,7 +133,7 @@ release_start
         result = run_python('--manifest', str(output), 'fetch', str(ROOT), source=registry.source)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('/token?', ''.join(registry.requests))  # GHCR-style anonymous token
-        check = run_python('--manifest', str(output), 'check', str(ROOT), source=registry.source)
+        check = run_python('--manifest', str(output), 'verify-tree', str(ROOT), source=registry.source)
         self.assertEqual(check.returncode, 0, check.stderr)
         self.assertIn(f'манифест commit {HEAD} (версия 0.0.0-test) проверен', check.stdout)
 
@@ -165,7 +165,7 @@ release_start
         stages['infra/scripts/30-frontend.sh'] = '0' * 64
         output = self.work / 'release-manifest.json'
         output.write_text(json.dumps(contract(stages=stages)))
-        result = run_python('--manifest', str(output), 'check', str(ROOT), source='')
+        result = run_python('--manifest', str(output), 'verify-tree', str(ROOT), source='')
         self.assertEqual(result.returncode, 1)
         self.assertIn('infra/scripts/30-frontend.sh', result.stderr)
         self.assertIn('git stash', result.stderr)

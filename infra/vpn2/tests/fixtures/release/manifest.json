@@ -1,0 +1,90 @@
+{
+  "format": 1,
+  "version": "9.9.9",
+  "images": {
+    "panel": {
+      "amd64": {
+        "repository": "ghcr.io/anysda/vpn2/x",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "config": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "tgbot": {
+      "amd64": {
+        "repository": "ghcr.io/anysda/vpn2/x",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "config": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    "emergency": {
+      "amd64": {
+        "repository": "ghcr.io/anysda/vpn2/x",
+        "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "config": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    }
+  },
+  "binaries": {
+    "caddy": {
+      "version": "1.0.0",
+      "architecture": "amd64",
+      "url": "https://example.invalid/caddy.deb",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  },
+  "local_service_api": {
+    "min": 1,
+    "max": 1
+  },
+  "database": {
+    "min": 1,
+    "max": 1,
+    "migrate_from": [
+      0,
+      1
+    ],
+    "journal": [
+      {
+        "when": 1,
+        "sha256": "0a03d89c3515d8d1d0f6d05f590116bc6c7c323d6fb448c1d6c3a38425fc98bc"
+      }
+    ]
+  },
+  "rollback": "forward-only",
+  "stages": {
+    "app/server/database/migrations/0000_init.sql": "0a03d89c3515d8d1d0f6d05f590116bc6c7c323d6fb448c1d6c3a38425fc98bc",
+    "app/server/database/migrations/meta/_journal.json": "cdb3c248b1680ba10a6cf88c2d325de0a7093259ba3f3ef658e9d0760b72dc7b",
+    "deploy.sh": "53175bcc0524f37b47062fafdda28e3f8eb91d519ca0a184ca71bbebe72f969a",
+    "infra/ansible/ansible.cfg": "4d523dee6bc8c17a3e283570526d8d6ed3d1edda07c53e94c55e491bbf780337",
+    "infra/ansible/plays/26-backup.yml": "045e3639f49d5d7a5e90deee95736f420dfe3fed649b53607f0e2a385154a41e",
+    "infra/ansible/roles/backup/tasks/main.yml": "23579228112c79973013b501fd029d06c50bf9ad9f8da608c5c9dd7d5256519c",
+    "infra/configs/a/b.tpl": "f612b89bcdbc401379f644d7e48572e3470f77dcd4c39416405d80952ad7089e",
+    "infra/deploy.sh": "c6f1676734b35a3c26274cdcdedc4a34ead3d0b815ab6d06afd4a58a55baf13c",
+    "infra/lib/deploy_state.py": "927489cb2fcdb32e302713f6a720397868b71dd2128c734181983f367d622c24",
+    "infra/lib/ssh.sh": "a325dcacb80b202a014b420b93fc19061900018f8ce216d0a0cb00d610ec7f97",
+    "infra/scripts/00-bootstrap.sh": "be64adb52ee58dc731a15683944c1b8057e8276eca07930f0063a5e852641151",
+    "infra/versions.yml": "2769a31b374d68b203f39eff2eecb6d5c6460ccf1e76388491353c923c13c9fa",
+    "infra/vpn2/pyproject.toml": "4e51766e75ea8ce24a2c168df7ed62e025c0825c13999d61e3be2e0d0a18cd66",
+    "infra/vpn2/src/vpn2/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "infra/vpn2/src/vpn2/release/__init__.py": "4e9416efcf77b84013f263e1f9008c656861298be5aabc82f458e6e47c60d9ff"
+  },
+  "os": {
+    "debian": [
+      "12",
+      "13"
+    ],
+    "ubuntu": [
+      "24.04",
+      "26.04"
+    ]
+  },
+  "architectures": [
+    "amd64"
+  ],
+  "min_free_bytes": 2147483648,
+  "min_memory_bytes": 268435456,
+  "system_packages": {
+    "policy": "supported distribution repositories; security updates allowed",
+    "record": "dpkg-query -W at successful deploy"
+  }
+}

@@ -727,7 +727,8 @@ run_stage_on_host() {
   push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
   push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return 1
   push "$DEPLOY_ROOT/lib/release.sh" || return 1
-  push "$DEPLOY_ROOT/lib/release.py" || return 1
+  # Пакет vpn2 рядом со стадией: выпуск (vpn2.release) и код службы управления.
+  push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2 || return 1
   push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
   push "$DEPLOY_ROOT/lib/panel-transaction.sh" || return 1
   # Ресурсы юнитов и docker: стадия, ставящая юнит, пишет его drop-in.
@@ -750,7 +751,6 @@ run_stage_on_host() {
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
   if [[ "$stage" == "29-control" ]]; then
     push "$DEPLOY_ROOT/control" "control" || return 1
-    push "$DEPLOY_ROOT/vpn2/src/vpn2" "vpn2-package" || return 1
   fi
   # Проверку ведёт пакет этого deploy, а не установленный на узле: стадия зовёт его из исходников.
   if [[ "$stage" == 99-verify ]]; then
@@ -1440,7 +1440,7 @@ prefetch_images() {
   (
     load_env ru
     if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
-      ssh_exec 'python3 /tmp/anysda/release.py --manifest /tmp/anysda/release-manifest.json image panel --offline' >/dev/null
+      ssh_exec 'PYTHONPATH=/tmp/anysda python3 -m vpn2.release --manifest /tmp/anysda/release-manifest.json image panel --offline' >/dev/null
       exit
     fi
     local imgs=()

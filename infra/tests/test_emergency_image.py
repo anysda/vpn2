@@ -196,8 +196,9 @@ class EmergencyImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             manifest, _ = test_release.ReleaseTests().build_manifest(Path(directory), migrations_after_tag=0)
         self.assertEqual(sorted(manifest['images']), ['emergency', 'panel', 'tgbot'])
-        result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/release.py'), '--manifest',
+        result = subprocess.run([sys.executable, '-m', 'vpn2.release', '--manifest',
                                  '/nonexistent/release-manifest.json', 'image', 'emergency', '--offline'],
+                                env=dict(os.environ, PYTHONPATH=str(ROOT / 'infra/vpn2/src')),
                                 capture_output=True, text=True)
         self.assertNotIn('invalid choice', result.stderr)
         self.assertIn('release manifest not found', result.stderr)
@@ -248,7 +249,8 @@ class EmergencyImageTests(unittest.TestCase):
         (stage_dir / '23-emergency.sh').write_text(source)
         svc = (ROOT / 'infra/lib/anysda-svc.sh').read_text().replace('/etc/', str(root) + '/etc/')
         (stage_dir / 'anysda-svc.sh').write_text(svc)
-        for name in ('release.sh', 'release.py', 'vpn2_tls.py'):
+        shutil.copytree(ROOT / 'infra/vpn2/src/vpn2/release', stage_dir / 'vpn2/release', dirs_exist_ok=True)
+        for name in ('release.sh', 'vpn2_tls.py'):
             if (ROOT / 'infra/lib' / name).exists():
                 shutil.copy(ROOT / 'infra/lib' / name, stage_dir / name)
         env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{fake / 'sbin'}",

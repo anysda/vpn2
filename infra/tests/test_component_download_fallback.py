@@ -32,14 +32,14 @@ LIB = ROOT / 'infra/lib'
 STAGES = ROOT / 'infra/scripts'
 
 SHIM = r'''
-import importlib.util
 import os
 import sys
 import urllib.request
 
-spec = importlib.util.spec_from_file_location('release', os.environ['REAL_RELEASE'])
-release = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(release)
+sys.path.insert(0, os.environ['REAL_RELEASE'])
+for name in [name for name in sys.modules if name == 'vpn2' or name.startswith('vpn2.')]:
+    del sys.modules[name]
+import vpn2.release as release
 release.DOWNLOAD_PAUSES = (0, 0, 0)
 base = os.environ['FAKE_GITHUB']
 original = urllib.request.urlopen
@@ -204,7 +204,8 @@ class TestComponentDownloadFallback(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.lib = self.tmp / 'lib'
         self.lib.mkdir()
-        (self.lib / 'release.py').write_text(SHIM)
+        (self.lib / 'vpn2/release').mkdir(parents=True)
+        (self.lib / 'vpn2/release/__main__.py').write_text(SHIM)
         tools = self.tmp / 'bin'
         tools.mkdir()
         # releases/download during the incident, as curl reports it.
@@ -213,7 +214,7 @@ class TestComponentDownloadFallback(unittest.TestCase):
         for tool in tools.iterdir():
             tool.chmod(0o755)
         self.env = dict(os.environ, PATH=f'{tools}:{os.environ["PATH"]}', TMPDIR=str(self.tmp),
-                        VPN2_DEVELOPMENT='true', HOST_TAG='test', REAL_RELEASE=str(LIB / 'release.py'),
+                        VPN2_DEVELOPMENT='true', HOST_TAG='test', REAL_RELEASE=str(ROOT / 'infra/vpn2/src'),
                         FAKE_GITHUB=self.server.base)
         self.env.pop('VPN2_RELEASE_MANIFEST', None)
 

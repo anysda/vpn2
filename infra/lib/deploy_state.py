@@ -15,7 +15,11 @@ import tarfile
 import tempfile
 import time
 
-from release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256
+try:  # при деплое пакет лежит рядом (/tmp/anysda/vpn2)
+    import vpn2.release  # noqa: F401
+except ImportError:  # дерево исходников
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'vpn2/src'))
+from vpn2.release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256  # noqa: E402
 
 
 def atomic_json(path, data):

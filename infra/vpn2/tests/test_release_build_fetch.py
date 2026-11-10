@@ -1,34 +1,28 @@
 """The images workflow builds the release manifest past a rate-limited GitHub API.
 
-Every source lookup in build-release.py answers 403 (rate limit) once, then
+Every source lookup in vpn2.release.build answers 403 (rate limit) once, then
 works: the manifest must still come out, the workflow token must reach
 api.github.com only, and a lasting failure must name the address and the code
 instead of a bare exception name.
 """
 
 import email.message
-import importlib.util
 import io
 import json
 import os
 from pathlib import Path
-import sys
 import unittest
 from unittest import mock
 import urllib.error
 import urllib.request
 
-ROOT = Path(__file__).resolve().parents[2]
+from vpn2.release import build, versions
+
+ROOT = Path(__file__).resolve().parents[3]
 TOKEN = 'ci-token-value'
 API = 'https://api.github.com/repos/'
 
 
-def builder():
-    sys.path.insert(0, str(ROOT / 'infra/lib'))
-    spec = importlib.util.spec_from_file_location('build_release', ROOT / 'infra/lib/build-release.py')
-    result = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(result)
-    return result
 
 
 class Upstream:
@@ -55,12 +49,12 @@ class Upstream:
         return io.BytesIO(b'archive')
 
 
-def asset_names(module):
-    value = module.value
+def asset_names():
+    pins = versions(ROOT / 'infra/versions.yml')
     return {
-        'wgcf_{}_linux_amd64'.format(value(ROOT, 'infra/scripts/10-foreign.sh', 'WGCF_VER')),
-        'caddy_{}_linux_amd64.deb'.format(value(ROOT, 'infra/lib/anysda-svc.sh', 'CADDY_VER')),
-        'node_exporter-{}.linux-amd64.tar.gz'.format(value(ROOT, 'infra/ansible/roles/base/defaults/main.yml', 'base_node_exporter_version')),
+        'wgcf_{}_linux_amd64'.format(pins['wgcf']),
+        'caddy_{}_linux_amd64.deb'.format(pins['caddy']),
+        'node_exporter-{}.linux-amd64.tar.gz'.format(pins['node_exporter']),
         'AdGuardHome_linux_amd64.tar.gz',
     }
 
@@ -70,9 +64,9 @@ ASSETS = set()
 
 class BuildReleaseFetchTests(unittest.TestCase):
     def setUp(self):
-        self.module = builder()
+        self.module = build
         ASSETS.clear()
-        ASSETS.update(asset_names(self.module))
+        ASSETS.update(asset_names())
 
     def specs(self, upstream):
         with mock.patch.object(urllib.request, 'urlopen', upstream), \

@@ -32,12 +32,50 @@ def check_stages(pins):
         assert pins[key] == stage_version(relpath, var), key
 
 
+# Пины, записанные в стадиях не переменной в кавычках: ключ -> (файл, строка
+# с версией). Пока стадия жива, её литерал обязан совпадать с versions.yml;
+# роль, пришедшая на смену, читает versions.yml сама, и строка отсюда уходит.
+STAGE_LINES = {
+    'sing_box_sha256_amd64': ('lib/install-sing-box.sh', "readonly SB_SHA256_AMD64='{v}'"),
+    'sing_box_sha256_arm64': ('lib/install-sing-box.sh', "readonly SB_SHA256_ARM64='{v}'"),
+    'node_exporter': ('ansible/roles/base/defaults/main.yml', "base_node_exporter_version: '{v}'"),
+    'yt_node': ('scripts/19-yt-zapret.sh', 'https://nodejs.org/dist/{v}/node-{v}-linux-x64.tar.xz'),
+    'yt_node_sha256': ('scripts/19-yt-zapret.sh', '{v}'),
+    'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),
+    'yt_pot_sha256': ('lib/install-yt-pot.sh', '{v}'),
+    'aws_cli': ('scripts/26-backup.sh', 'AWS_CLI_VERSION={v}\n'),
+    'zapret2': ('scripts/19-yt-zapret.sh', 'YT_ZAPRET_REF="${{YT_ZAPRET_REF:-{v}}}"'),
+}
+
+
+def check_lines(pins):
+    for key, (relpath, line) in STAGE_LINES.items():
+        path = INFRA / relpath
+        if path.exists():
+            assert line.format(v=pins[key]) in path.read_text(encoding='utf-8'), key
+
+
 def test_keys():
-    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', *STAGE_PINS}
+    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', *STAGE_PINS, *STAGE_LINES}
 
 
 def test_matches_stages():
     check_stages(config.versions(VERSIONS))
+    check_lines(config.versions(VERSIONS))
+
+
+def test_release_reader_agrees():
+    """Выпуск читает файл без PyYAML (до venv) и видит то же, что vpn2.config."""
+    from vpn2 import release
+    assert release.versions(VERSIONS) == config.versions(VERSIONS)
+
+
+def test_no_pins_outside_versions():
+    """Сборщик манифеста не держит своих версий: только ключи versions.yml."""
+    text = (INFRA / 'vpn2/src/vpn2/release/build.py').read_text(encoding='utf-8')
+    pins = config.versions(VERSIONS)
+    assert [key for key, value in pins.items() if value in text] == []
+    assert not re.search(r"['\"]v?\d+\.\d+\.\d+['\"]", text)
 
 
 def test_matches_stage_detects_drift(tmp_path):

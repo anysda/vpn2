@@ -14,7 +14,9 @@ fi
 pot_tmp=$(mktemp -d "$probe_venv/.pot-install.XXXXXXXX")
 trap 'rm -rf "$pot_tmp"' EXIT
 if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
-  python3 "$(dirname "$0")/release.py" --manifest "$VPN2_RELEASE_MANIFEST" artifact yt-pot "$pot_tmp/source.tar.gz"
+  release_src=$(dirname "$0")
+  [[ -d "$release_src/vpn2/release" ]] || release_src=$release_src/../vpn2/src
+  PYTHONPATH=$release_src python3 -m vpn2.release --manifest "$VPN2_RELEASE_MANIFEST" artifact yt-pot "$pot_tmp/source.tar.gz"
 else
   curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
     "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/$pot_version.tar.gz" -o "$pot_tmp/source.tar.gz"

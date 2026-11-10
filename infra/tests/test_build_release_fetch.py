@@ -60,7 +60,7 @@ def asset_names(module):
     return {
         'wgcf_{}_linux_amd64'.format(value(ROOT, 'infra/scripts/10-foreign.sh', 'WGCF_VER')),
         'caddy_{}_linux_amd64.deb'.format(value(ROOT, 'infra/lib/anysda-svc.sh', 'CADDY_VER')),
-        'node_exporter-{}.linux-amd64.tar.gz'.format(value(ROOT, 'infra/scripts/00-bootstrap.sh', 'NE_VERSION')),
+        'node_exporter-{}.linux-amd64.tar.gz'.format(value(ROOT, 'infra/ansible/roles/base/defaults/main.yml', 'base_node_exporter_version')),
         'AdGuardHome_linux_amd64.tar.gz',
     }
 

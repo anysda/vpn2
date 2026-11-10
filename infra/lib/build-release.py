@@ -42,7 +42,7 @@ def fetch(url, timeout=60):
 
 
 def value(root, path, name):
-    match = re.search(rf"^{name}=['\"]?([^'\"\s]+)", (root / path).read_text(), re.M)
+    match = re.search(rf"^{name}(?:=|:\s*)['\"]?([^'\"\s]+)", (root / path).read_text(), re.M)
     if match is None:
         raise ValueError('missing pinned version: ' + name)
     return match[1]
@@ -62,7 +62,7 @@ def binary_specs(root):
     entries = (
         ('wgcf', 'scripts/10-foreign.sh', 'WGCF_VER', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
         ('caddy', 'lib/anysda-svc.sh', 'CADDY_VER', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
-        ('node-exporter', 'scripts/00-bootstrap.sh', 'NE_VERSION', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
+        ('node-exporter', 'ansible/roles/base/defaults/main.yml', 'base_node_exporter_version', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
         ('adguard', 'scripts/22-adguard.sh', 'AGH_VER', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
     )
     for name, stage, variable, repo, tag, asset in entries:

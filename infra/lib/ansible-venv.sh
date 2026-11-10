@@ -66,6 +66,12 @@ _ansible_wheel_build_locked() {
     st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1)"
   fi
   [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
+  # setuptools до 70.1 (Ubuntu 24.04) не несёт bdist_wheel, он в пакете wheel;
+  # на 26.04 первая проверка проходит и пакет не ставится.
+  if ! python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import setuptools.command.bdist_wheel' "$st" 2>/dev/null \
+      && ! python3 -I -c 'import wheel' 2>/dev/null; then
+    _install_prereq_pkgs python3-wheel || true
+  fi
   tmp="$(mktemp -d)"
   cp -r "$ANSIBLE_VENV_INFRA/vpn2/." "$tmp/src"
   mkdir -p "$tmp/out"

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / 'infra/lib/ansible-venv.sh'
@@ -259,6 +260,30 @@ class AnsibleVenvTest(unittest.TestCase):
                     self.assertFalse(calls.exists())
                 else:
                     self.assertEqual(calls.read_text().splitlines(), ['python3-venv'])
+
+    def test_wheel_build_installs_wheel_package_only_when_setuptools_lacks_bdist_wheel(self):
+        for has_cmd in (False, True):
+            with self.subTest(has_bdist_wheel=has_cmd):
+                tmp = self.new_tmp()
+                wheels = tmp / 'pywheels'
+                wheels.mkdir()
+                with zipfile.ZipFile(wheels / 'setuptools-1-py3-none-any.whl', 'w') as z:
+                    z.writestr('setuptools/__init__.py', '')
+                    if has_cmd:
+                        z.writestr('setuptools/command/__init__.py', '')
+                        z.writestr('setuptools/command/bdist_wheel.py', '')
+                calls = tmp / 'calls'
+                # Модуль wheel на хосте тестов не мешает: проба его не видит.
+                bash(
+                    f'_install_prereq_pkgs() {{ echo "$*" >> {calls}; }}\n'
+                    'python3() { [[ "$*" == *"import wheel"* ]] && return 1; '
+                    'command python3 "$@"; }\n'
+                    'ansible_wheel_build',
+                    VPN2_ROOT=str(tmp / 'root'), PYTHON_WHEELS_DIR=str(wheels))
+                if has_cmd:
+                    self.assertFalse(calls.exists())
+                else:
+                    self.assertEqual(calls.read_text().splitlines(), ['python3-wheel'])
 
 
 if __name__ == '__main__':

@@ -242,6 +242,12 @@ install_prereqs() {
   # venv нужен только полному запуску (do_all зовёт с аргументом venv); служебные
   # слова и одиночная стадия идут через release_start без него.
   [[ "${1:-}" != venv ]] || apt_have python3-venv || pkgs+=(python3-venv)
+  # setuptools-whl до 70.1 (Ubuntu 24.04) собирает колесо только с пакетом wheel.
+  if [[ "${1:-}" == venv ]] && ! apt_have python3-wheel \
+      && dpkg --compare-versions "$(apt-cache policy python3-setuptools-whl 2>/dev/null \
+        | awk '/Candidate:/ {print $2}')" lt 70.1; then
+    pkgs+=(python3-wheel)
+  fi
   [[ ${#pkgs[@]} -eq 0 ]] || apt_have ca-certificates || pkgs+=(ca-certificates)
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
   # venv с ansible-core качается в фоне, пока идут первые стадии; ждёт его do_all.

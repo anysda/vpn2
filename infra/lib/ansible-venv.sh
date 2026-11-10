@@ -7,6 +7,8 @@ VPN2_ROOT="${VPN2_ROOT:-/opt/vpn2}"
 VENV_LOG="${VENV_LOG:-$VPN2_ROOT/ansible-venv.log}"
 # Каталог infra с versions.yml, ansible/ и vpn2/; тест подменяет копией.
 ANSIBLE_VENV_INFRA="${ANSIBLE_VENV_INFRA:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# Каталог системных колёс python (setuptools, pip); тест подменяет.
+PYTHON_WHEELS_DIR="${PYTHON_WHEELS_DIR:-/usr/share/python-wheels}"
 _VENV_PID=
 
 # Хэш исходников пакета vpn2: pyproject.toml и src/**/*.py, __pycache__ не входит.
@@ -56,8 +58,14 @@ _ansible_wheel_build_locked() {
         && "$(cat "$wheels/.src-sha256")" == "$src" ]]; then
     return 0
   fi
-  st="$(ls /usr/share/python-wheels/setuptools-*.whl 2>/dev/null | head -n1)"
-  [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в /usr/share/python-wheels (пакет python3-venv)"
+  st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1)"
+  if [[ -z "$st" ]]; then
+    # Entry, обновлённый со старого выпуска, без python3-venv: ставим его тем же
+    # способом, что и install_prereqs; замок колеса держится, дорожки ждут.
+    _install_prereq_pkgs python3-venv || true
+    st="$(ls "$PYTHON_WHEELS_DIR"/setuptools-*.whl 2>/dev/null | head -n1)"
+  fi
+  [[ -n "$st" ]] || die "ansible: нет setuptools-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   tmp="$(mktemp -d)"
   cp -r "$ANSIBLE_VENV_INFRA/vpn2/." "$tmp/src"
   mkdir -p "$tmp/out"
@@ -91,13 +99,13 @@ _ansible_venv_install_locked() {
   pins="$(ansible_venv_pins)"
   wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
   src="$(cat "$VPN2_ROOT/wheels/.src-sha256")"
-  pip="$(ls /usr/share/python-wheels/pip-*.whl 2>/dev/null | head -n1)"
+  pip="$(ls "$PYTHON_WHEELS_DIR"/pip-*.whl 2>/dev/null | head -n1)"
   if [[ -f "$venv/.vpn2-pins" && "$(cat "$venv/.vpn2-pins")" == "$pins" ]]; then
     if [[ -f "$venv/.vpn2-wheel" && "$(cat "$venv/.vpn2-wheel")" == "$src" ]]; then
       log "ansible: пины те же, без загрузки"
       return 0
     fi
-    [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в /usr/share/python-wheels (пакет python3-venv)"
+    [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
     rm -f "$venv/.vpn2-wheel"
     python3 "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
       --no-index --no-deps --force-reinstall "$wheel" || return 1
@@ -105,7 +113,7 @@ _ansible_venv_install_locked() {
     log "ansible: пины те же, колесо vpn2 обновлено"
     return 0
   fi
-  [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в /usr/share/python-wheels (пакет python3-venv)"
+  [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   rm -f "$venv/.vpn2-pins" "$venv/.vpn2-wheel"
   python3 -m venv --without-pip --clear "$venv" || return 1
   _venv_retry python3 "$pip/pip" --python "$venv/bin/python" install \

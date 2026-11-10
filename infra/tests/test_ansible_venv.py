@@ -233,3 +233,24 @@ def test_strict_venv_wait_dies_on_failed_background(tmp_path):
     assert 'ansible: venv не установился' in res.stderr
 
 
+
+
+@NEEDS_WHEEL
+@pytest.mark.parametrize('ready', (False, True))
+def test_wheel_build_installs_venv_package_only_when_setuptools_missing(tmp_path, ready):
+    system = glob.glob('/usr/share/python-wheels/setuptools-*.whl')[0]
+    wheels = tmp_path / 'pywheels'
+    wheels.mkdir()
+    if ready:
+        shutil.copy(system, wheels)
+    calls = tmp_path / 'calls'
+    res = bash(
+        f'_install_prereq_pkgs() {{ echo "$*" >> {calls}; cp {system} "$PYTHON_WHEELS_DIR/"; }}\n'
+        'ansible_wheel_build',
+        VPN2_ROOT=str(tmp_path / 'root'), PYTHON_WHEELS_DIR=str(wheels))
+    assert res.returncode == 0, res.stderr
+    assert list((tmp_path / 'root/wheels').glob('vpn2-*-py3-none-any.whl'))
+    if ready:
+        assert not calls.exists()
+    else:
+        assert calls.read_text().splitlines() == ['python3-venv']

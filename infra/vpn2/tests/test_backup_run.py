@@ -92,6 +92,7 @@ def make_node(root, *, db=True, db_bytes=None, old=0):
     put(Path(paths.caddy) / 'certificates' / 'сертификат b.crt', 'crt\n')
     put(Path(paths.caddy) / 'locks' / 'l.lock', 'x')
     put(Path(paths.source_root_file), '/nonexistent/src\n')
+    put(Path(paths.deploy_state) / 'mgmt-ips.txt', 'exit-a 10.0.0.2\n', 0o600)
     if db_bytes is not None:
         put(Path(paths.db), db_bytes)
     elif db:
@@ -123,13 +124,13 @@ def install_stubs(directory):
 
 
 def cut_script(root, dest):
-    """Скрипт без check_bundle и --check-bundle (строки 74-249), пути /etc и /var/lib - под root.
+    """Скрипт без check_bundle и --check-bundle (строки 75-250), пути /etc и /var/lib - под root.
 
     Замены (удалить вместе с bash-телом): check_bundle - заглушка CHECK_STUB; `/etc/` и `/var/lib/`
     вне heredoc с текстом FATAL становятся `<root>/etc/`, `<root>/var/lib/`.
     """
     lines = SCRIPT.read_text().split('\n')
-    cut = lines[:73] + CHECK_STUB.split('\n') + lines[249:577]
+    cut = lines[:74] + CHECK_STUB.split('\n') + lines[250:]
     result, heredoc = [], False
     for line in cut:
         if line.startswith('\tEOM'):

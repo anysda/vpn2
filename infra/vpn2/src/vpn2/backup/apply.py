@@ -30,6 +30,7 @@ class Paths:
 
     caddy_storage: str = 'var/lib/caddy/.local/share/caddy'
     caddy_dirs: tuple = ('var/lib/caddy/.local', 'var/lib/caddy/.local/share')
+    deploy_state: str = 'var/lib/anysda-vpn2/state'
     svc_lib: str = 'usr/local/lib/anysda/anysda-svc.sh'
     vpn2_apply: str = 'usr/local/sbin/vpn2-apply'
 
@@ -209,6 +210,19 @@ def apply_bundle(rb, bundle_dir, *, paths=Paths(), run=subprocess.run, out=None)
     _ikev2(rb, bundle, run)
     rb.step = 'восстановление хранилища Caddy'
     _caddy(rb, bundle, paths, run, out)
+    rb.step = 'восстановление состояния деплоя'
+    if os.path.isdir(os.path.join(bundle, 'deploy-state')):
+        _deploy_state(rb, bundle, paths, run)
+
+
+def _deploy_state(rb, bundle, paths, run):
+    """Архив старого выпуска состояния деплоя не несёт: тогда остаётся текущее."""
+    state = rb.live(paths.deploy_state)
+    rb.touch(paths.deploy_state)
+    if not os.path.isdir(state):
+        _must(run, ['install', '-d', '-m', '700', '-o', 'root', '-g', 'root', state],
+              'install -d -m 700 -o root -g root /var/lib/anysda-vpn2/state')
+    rb.copy_into(os.path.join(bundle, 'deploy-state'), state)
 
 
 def _panel_runtime(rb, run):

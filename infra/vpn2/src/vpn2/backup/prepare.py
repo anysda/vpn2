@@ -18,7 +18,7 @@ SNAPSHOT_PATHS = (
     'etc/strongswan', 'etc/swanctl', 'etc/strongswan.conf', 'etc/strongswan.d',
     'etc/ipsec.conf', 'etc/ipsec.secrets',
     'etc/caddy', 'var/lib/caddy/.local/share/caddy',
-    'var/lib/anysda-vpn2/runtime', 'var/lib/vpn2-control',
+    'var/lib/anysda-vpn2/runtime', 'var/lib/anysda-vpn2/state', 'var/lib/vpn2-control',
     'opt/AdGuardHome/AdGuardHome.yaml', 'var/anysda/.stamps',
 )
 _PRIVATE_KEY = re.compile(rb'^[Pp][Rr][Ii][Vv][Aa][Tt][Ee][Kk][Ee][Yy]=')

@@ -320,7 +320,8 @@ def test_guards_literals_and_failures(tmp_path):
 SCRIPT_PATHS = [
     'etc/anysda', 'etc/wireguard', 'etc/openvpn', 'etc/strongswan', 'etc/swanctl', 'etc/strongswan.conf',
     'etc/strongswan.d', 'etc/ipsec.conf', 'etc/ipsec.secrets', 'etc/caddy', 'var/lib/caddy/.local/share/caddy',
-    'var/lib/anysda-vpn2/runtime', 'var/lib/vpn2-control', 'opt/AdGuardHome/AdGuardHome.yaml', 'var/anysda/.stamps',
+    'var/lib/anysda-vpn2/runtime', 'var/lib/anysda-vpn2/state', 'var/lib/vpn2-control', 'opt/AdGuardHome/AdGuardHome.yaml',
+    'var/anysda/.stamps',
 ]
 TS = '2026-01-02T030405.123456789Z'
 

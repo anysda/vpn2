@@ -408,7 +408,7 @@ for path in \
   etc/strongswan etc/swanctl etc/strongswan.conf etc/strongswan.d \
   etc/ipsec.conf etc/ipsec.secrets \
   etc/caddy var/lib/caddy/.local/share/caddy \
-  var/lib/anysda-vpn2/runtime var/lib/vpn2-control \
+  var/lib/anysda-vpn2/runtime var/lib/anysda-vpn2/state var/lib/vpn2-control \
   opt/AdGuardHome/AdGuardHome.yaml var/anysda/.stamps; do
   if [[ -e "/$path" || -L "/$path" ]]; then
     (cd / && cp -a --parents "$path" "$PRESNAP_ROOT/")
@@ -1166,6 +1166,14 @@ if [[ -d "$BUNDLE_DIR/caddy-storage" ]]; then
   echo "anysda-restore: Caddy storage restored (caddy:caddy, dirs=700 files=600)"
 else
   echo "anysda-restore: Caddy storage отсутствует в архиве — оставляю текущее"
+fi
+
+# Архив старого выпуска состояния деплоя не несёт: остаётся текущее.
+STEP="восстановление состояния деплоя"
+if [[ -d "$BUNDLE_DIR/deploy-state" ]]; then
+  TOUCHED+=(var/lib/anysda-vpn2/state)
+  [[ -d /var/lib/anysda-vpn2/state ]] || install -d -m 700 -o root -g root /var/lib/anysda-vpn2/state
+  copy_into "$BUNDLE_DIR/deploy-state" /var/lib/anysda-vpn2/state
 fi
 
 # ── Старт сервисов обратно ──────────────────────────────────────────────────

@@ -261,7 +261,7 @@ def test_issued_ids_like_read_r(tmp_path):
     rb = make(tmp_path, run)
     apply.apply_bundle(rb, tmp_path / 'bundle', run=run, out=lambda _: None)
     assert sorted(p.name for p in ccd.iterdir()) == ['dev_keep', 'dev_tail']
-    assert rb.touched == ['etc/openvpn'] and rb.step == 'восстановление хранилища Caddy'
+    assert rb.touched == ['etc/openvpn'] and rb.step == 'восстановление состояния деплоя'
 
 
 def test_repeat_apply_same_tree(tmp_path):
@@ -292,6 +292,32 @@ def test_mark_good_only_executable_and_active(tmp_path, mode, capsys):
         put(tool, '#!/bin/sh\nexit 2\n', mode)
         apply.mark_good(make(tmp_path, run), run=run)
         assert 'WARN: vpn2-apply mark openvpn не прошёл' in capsys.readouterr().err
+
+
+def test_deploy_state_from_bundle(tmp_path):
+    """Состояние деплоя из набора ложится поверх живого каталога и создаёт его, если каталога нет."""
+    state = tmp_path / 'root/var/lib/anysda-vpn2/state'
+    put(tmp_path / 'bundle/deploy-state/mgmt-ips.txt', 'из архива\n', 0o600)
+    for live in (False, True):
+        if live:
+            put(state / 'mgmt-ips.txt', 'текущее\n')
+            put(state / 'other', 'остаётся\n')
+        run = Fake()
+        rb = make(tmp_path, run)
+        apply.apply_bundle(rb, tmp_path / 'bundle', run=run, out=lambda _: None)
+        assert (state / 'mgmt-ips.txt').read_text() == 'из архива\n'
+        assert rb.touched == ['var/lib/anysda-vpn2/state']
+    assert (state / 'other').read_text() == 'остаётся\n'
+
+
+def test_bundle_without_deploy_state_keeps_live(tmp_path):
+    """Архив старого выпуска: каталога deploy-state нет - текущее состояние деплоя не тронуто."""
+    state = tmp_path / 'root/var/lib/anysda-vpn2/state'
+    put(state / 'mgmt-ips.txt', 'текущее\n')
+    run = Fake()
+    rb = make(tmp_path, run)
+    apply.apply_bundle(rb, tmp_path / 'bundle', run=run, out=lambda _: None)
+    assert (state / 'mgmt-ips.txt').read_text() == 'текущее\n' and rb.touched == []
 
 
 def test_start_without_svc_lib_and_sync_units(tmp_path):

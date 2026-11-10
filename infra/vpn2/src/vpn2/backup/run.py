@@ -56,6 +56,7 @@ class Paths:
     strongswan: str = '/etc/strongswan'
     swanctl: str = '/etc/swanctl'
     caddy: str = '/var/lib/caddy/.local/share/caddy'
+    deploy_state: str = '/var/lib/anysda-vpn2/state'
 
     @classmethod
     def under(cls, root):
@@ -262,7 +263,7 @@ def take_slices(bundle_dir, paths, state, run, err, check, sleep, wait=LOCK_WAIT
 
 
 def copy_extras(bundle_dir, paths, run, err):
-    """strongswan.conf/.d, ipsec.*, хранилище Caddy без locks; сокеты, FIFO и устройства из набора удаляются."""
+    """strongswan.conf/.d, ipsec.*, хранилище Caddy без locks, состояние деплоя; сокеты, FIFO и устройства из набора удаляются."""
     for name in ('strongswan.conf', 'strongswan.d', 'ipsec.conf', 'ipsec.secrets'):
         if os.path.exists(f'{paths.etc}/{name}'):
             _must(run, ['cp', '-a', f'{paths.etc}/{name}', f'{bundle_dir}/etc-{name}'], err)
@@ -273,6 +274,9 @@ def copy_extras(bundle_dir, paths, run, err):
             shutil.rmtree(locks, ignore_errors=True)
         elif os.path.lexists(locks):
             os.unlink(locks)
+    # Без mgmt-ips.txt новый entry раздал бы экзитам адреса mesh заново, по позиции в config.yaml.
+    if os.path.isdir(paths.deploy_state):
+        _must(run, ['cp', '-a', paths.deploy_state, f'{bundle_dir}/deploy-state'], err)
     for root, dirs, files in os.walk(bundle_dir):
         for name in dirs + files:
             full = os.path.join(root, name)

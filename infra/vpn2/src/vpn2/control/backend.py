@@ -16,7 +16,7 @@ import time
 
 from ..fsutil import atomic
 # wg0.conf is read one way: vpn2-apply's.
-from . import apply as wg
+from .. import wg
 from .contract import API, Fault, LIMIT, METHODS, key as validate_key, load_pools, require
 
 # C isspace() within a line, as openvpn and wg read their configs; not Python's \s.
@@ -81,15 +81,6 @@ def expired(item, now):
 
 def strip(item):
     return {name: value for name, value in item.items() if name != 'expires_at'}
-
-
-def peer_addresses(peer):
-    # Keep the existing client profiles byte-compatible, including the legacy
-    # /24 mapping. Decimal octet strings intentionally occupy hexadecimal ULA
-    # fields, exactly as in the current panel's wgUlaAddress.
-    subnet, host = peer['ip'].split('.')[2:]
-    suffix = host if subnet == '66' else subnet + ':' + host
-    return [peer['ip'] + '/32', 'fd66:66::' + suffix + '/128']
 
 
 MAX_JOURNAL = 2000
@@ -402,11 +393,7 @@ class Backend:
 
     def traffic(self, protocol):
         if protocol == 'wg':
-            rows = []
-            for line in self.command('/usr/bin/wg', 'show', 'wg0', 'transfer').splitlines():
-                key, rx, tx = line.split('\t')
-                rows.append({'key': key, 'rx': int(tx), 'tx': int(rx)})
-            return {'samples': rows}
+            return {'samples': wg.transfer(self.command('/usr/bin/wg', 'show', 'wg0', 'transfer'))}
         if protocol == 'openvpn':
             rows = []
             for row in csv.reader(self.management('status 2')):
@@ -424,8 +411,8 @@ class Backend:
         # Preserve deployment-owned interface configuration (addresses, key,
         # port). Only peers are an API resource; no input becomes a directive.
         previous = path.read_bytes().decode('latin-1')
-        header = wg.wg_split(previous)[0]
-        require(any(wg.wg_line(line)[0] == '[Interface]' for line in header.split('\n')), 'unavailable')
+        header = wg.split(previous)[0]
+        require(any(wg.line(line)[0] == '[Interface]' for line in header.split('\n')), 'unavailable')
         # The persisted key pair is authoritative, as in the former panel.
         # A keys-only restore can leave this host's old rendered wg0.conf.
         # Never regenerate a key or return it to the API caller.
@@ -433,26 +420,23 @@ class Backend:
         if private.exists():
             canonical = private.read_text().strip()
             validate_key(canonical)
-            header = '\n'.join('PrivateKey = ' + canonical if wg.wg_line(line)[0] == 'PrivateKey' else line
+            header = '\n'.join('PrivateKey = ' + canonical if wg.line(line)[0] == 'PrivateKey' else line
                                for line in header.split('\n'))
-        peers = ''.join('\n[Peer]\nPublicKey = ' + peer['key'] +
-                        '\nPresharedKey = ' + peer['preshared_key'] +
-                        '\nAllowedIPs = ' + ', '.join(peer_addresses(peer)) + '\n'
-                        for peer in params['peers'])
+        # Client profiles stay byte-compatible: wg.peer_addresses keeps the legacy /24 mapping.
+        expected = {peer['key']: wg.peer_addresses(peer['ip']) for peer in params['peers']}
+        peers = wg.render_peers([dict(peer, allowed=expected[peer['key']]) for peer in params['peers']])
         # wg-quick is deliberately not executed: it is a shell script with
         # hook directives. syncconf receives only the typed WG subset.
         interface = [line for line in header.split('\n')  # wg ends a line only at a newline
-                     if wg.wg_line(line)[0] in wg.WG_SECTIONS['[Interface]']]
-        require(any(wg.wg_line(line)[0] == 'PrivateKey' for line in interface), 'unavailable')
+                     if wg.line(line)[0] in wg.WG_SECTIONS['[Interface]']]
+        require(any(wg.line(line)[0] == 'PrivateKey' for line in interface), 'unavailable')
         # Through stdin: the distribution's AppArmor profile for wg lets it
         # open only /etc/wireguard, which it cannot traverse without root.
         self.command('/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin',
                      data='[Interface]\n' + '\n'.join(interface) + '\n' + peers)
         result = self.observe('wg')
-        expected = {peer['key']: peer_addresses(peer) for peer in params['peers']}
         require(result['peers'] == expected, 'unavailable')
-        loaded_psks = dict(line.split('\t', 1) for line in self.command(
-            '/usr/bin/wg', 'show', 'wg0', 'preshared-keys').splitlines())
+        loaded_psks = wg.preshared_keys(self.command('/usr/bin/wg', 'show', 'wg0', 'preshared-keys'))
         require(loaded_psks == {peer['key']: peer['preshared_key'] for peer in params['peers']},
                 'unavailable')
         atomic(path, header + peers, encoding='latin-1')
@@ -608,11 +592,7 @@ class Backend:
 
     def observe(self, protocol):
         if protocol == 'wg':
-            peers = {}
-            for line in self.command('/usr/bin/wg', 'show', 'wg0', 'allowed-ips').splitlines():
-                public_key, addresses = line.split('\t', 1)
-                peers[public_key] = sorted(addresses.replace(',', ' ').split())
-            return {'peers': peers}
+            return {'peers': wg.allowed_ips(self.command('/usr/bin/wg', 'show', 'wg0', 'allowed-ips'))}
         if protocol == 'openvpn':
             rows = list(csv.reader(self.management('status 2')))
             require(any(row == ['END'] for row in rows), 'unavailable')

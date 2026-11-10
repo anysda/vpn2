@@ -214,7 +214,7 @@ class ControlTests(unittest.TestCase):
                          '300000\n')
 
     def test_wg_preserves_extended_pool_ula_mapping(self):
-        self.assertEqual(self.backend_module.peer_addresses(dict(self.peer, ip='10.66.64.12')),
+        self.assertEqual(self.backend_module.wg.peer_addresses('10.66.64.12'),
                          ['10.66.64.12/32', 'fd66:66::64:12/128'])
 
     def test_wg_keys_only_restore_replaces_the_old_hosts_rendered_key(self):

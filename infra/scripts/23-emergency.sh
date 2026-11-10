@@ -135,8 +135,12 @@ STAGING=$(mktemp -d /opt/vpn2-emergency/.staging.XXXXXX)
 trap 'rm -rf -- "$STAGING"' EXIT
 docker cp "$CONTAINER:/opt/vpn2-emergency/." "$STAGING/"
 SOURCE_DIR=$STAGING/vpn2
-test -f "$SOURCE_DIR/emergency/agent.py"
-test -f "$SOURCE_DIR/emergency/static/instructions.html"
+for required in emergency/agent.py emergency/static/instructions.html; do
+  [[ -f "$SOURCE_DIR/$required" ]] || {
+    echo "ERROR: в образе аварийки $IMAGE нет vpn2/$required: образ собран не из этой версии кода" >&2
+    exit 1
+  }
+done
 # Пакет меняется целиком: файл, которого в новой версии нет, на хосте не остаётся.
 chmod -R u=rwX,go=rX "$SOURCE_DIR"
 rm -rf -- /opt/vpn2-emergency/vpn2.old

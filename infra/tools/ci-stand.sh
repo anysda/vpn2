@@ -147,7 +147,19 @@ warm_script() {
 #!/bin/sh
 t0=$(date +%s)
 say() { echo "прогрев: $* за $(( $(date +%s) - t0 )) с"; }
-if apt-get -q update >/var/log/vpn2-ci-warm-update.log 2>&1; then say 'индекс apt'; else say 'индекс apt не вышел'; fi
+# Старый mtime заставляет стадию обновить списки самой, как на машине без прогрева;
+# --error-on=any - иначе update с ошибкой зеркала возвращает 0.
+n=1; ok=
+while [ "$n" -le 2 ]; do
+  echo "попытка $n" >>/var/log/vpn2-ci-warm-update.log
+  if apt-get -q --error-on=any update >>/var/log/vpn2-ci-warm-update.log 2>&1; then ok=1; break; fi
+  [ "$n" -lt 2 ] && sleep 10
+  n=$((n + 1))
+done
+if [ -z "$ok" ]; then
+  touch -d '2 hours ago' /var/lib/apt/lists
+  say 'индекс apt не вышел'
+elif [ "$n" -eq 1 ]; then say 'индекс apt'; else say 'индекс apt со второй попытки'; fi
 [ "$1" = entry ] || exit 0
 w=/var/tmp/vpn2-ci-warm
 . /etc/os-release
@@ -597,6 +609,7 @@ cmd_deploy_release() {
   ssh_node "$ENTRY" 'cat > /root/release-manifest.json' < "$manifest"
   entry_run release './deploy.sh --manifest /root/release-manifest.json' || rc=$?
   log "установка выпуска $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
+  warm_report
   return "$rc"
 }
 
@@ -1015,6 +1028,7 @@ collect_apt() {
     read -r name ip _ <<<"$node"
     ssh_node "$ip" 'echo "== update прогрева =="; cat /var/log/vpn2-ci-warm-update.log 2>&1
       echo "== lists =="; ls -l --time-style=+%H:%M:%S /var/lib/apt/lists /var/lib/apt/lists/partial 2>&1
+      stat -c "%y %n" /var/lib/apt/lists 2>&1
       echo "== sources =="
       for f in /etc/apt/sources.list /etc/apt/sources.list.d/*; do
         [ -f "$f" ] || continue

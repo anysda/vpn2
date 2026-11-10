@@ -8,10 +8,9 @@ import subprocess
 import tempfile
 import unittest
 
-import jinja2
 import yaml
 
-from adguard_support import stage
+from adguard_support import render_unit, stage
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/adguard'
@@ -46,9 +45,7 @@ class AdguardRoleTests(unittest.TestCase):
         for reference, files in snapshots():
             for unit in UNITS:
                 with self.subTest(reference=reference, unit=unit):
-                    template = jinja2.Template((ROLE / f'templates/{unit}.service.j2').read_text(),
-                                               keep_trailing_newline=True)
-                    text = template.render(adguard_limits=profile)
+                    text = render_unit(unit, profile)
                     target = files[f'/etc/systemd/system/{unit}.service']
                     self.assertEqual(target['sha256'], hashlib.sha256(text.encode()).hexdigest())
                     self.assertEqual(target['mode'], '0644')

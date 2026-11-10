@@ -1,4 +1,4 @@
-"""Offline regression of the real install sections of both deployment stages.
+"""Offline regression of the sing-box installer as the router and exit roles run it.
 
 VPN2_TEST_ROOT can point to a git archive of the baseline; no host paths are used.
 Only the fixture copy of the installer gets fixture digests, never production code.
@@ -15,13 +15,11 @@ import unittest
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
-# Роли router и exit зовут установщик напрямую и следом читают версию.
-STAGES = ('installer',)
 VERSION = '1.12.25'
 
 
 class SingBoxInstallTests(unittest.TestCase):
-    def exercise(self, stage, scenario, arch='amd64'):
+    def exercise(self, scenario, arch='amd64'):
         with tempfile.TemporaryDirectory(prefix='sing-box-test.') as directory:
             work = Path(directory)
             tools = work / 'tools'
@@ -146,38 +144,29 @@ if [[ -n "$out" ]]; then cp "$ARCHIVE" "$out"; else cat "$ARCHIVE"; fi
             self.assertEqual(list(scratch.iterdir()), [], 'temporary directory leaked')
             self.assertEqual(list(work.glob('.sing-box.*')), [], 'candidate leaked')
 
-    def test_bad_downloads_stop_each_stage(self):
-        for stage in STAGES:
-            for scenario in ('tampered', 'checksum', 'http404', 'network'):
-                with self.subTest(stage=stage, scenario=scenario):
-                    self.exercise(stage, scenario)
+    def test_bad_downloads_stop_install(self):
+        for scenario in ('tampered', 'checksum', 'http404', 'network'):
+            with self.subTest(scenario=scenario):
+                self.exercise(scenario)
 
     def test_install_and_repeat_both_architectures(self):
-        for stage in STAGES:
-            for arch in ('amd64', 'arm64'):
-                with self.subTest(stage=stage, arch=arch):
-                    self.exercise(stage, 'good', arch)
+        for arch in ('amd64', 'arm64'):
+            with self.subTest(arch=arch):
+                self.exercise('good', arch)
 
     def test_fresh_install(self):
-        for stage in STAGES:
-            with self.subTest(stage=stage):
-                self.exercise(stage, 'fresh')
+        self.exercise('fresh')
 
     def test_existing_exact_version_is_untouched(self):
-        for stage in STAGES:
-            with self.subTest(stage=stage):
-                self.exercise(stage, 'already')
+        self.exercise('already')
 
     def test_version_match_is_exact(self):
-        for stage in STAGES:
-            with self.subTest(stage=stage):
-                self.exercise(stage, 'near_version')
+        self.exercise('near_version')
 
     def test_failures_preserve_binary_and_cleanup(self):
-        for stage in STAGES:
-            for scenario in ('broken_tar', 'install_error', 'mv_error', 'wrong_version', 'signal'):
-                with self.subTest(stage=stage, scenario=scenario):
-                    self.exercise(stage, scenario)
+        for scenario in ('broken_tar', 'install_error', 'mv_error', 'wrong_version', 'signal'):
+            with self.subTest(scenario=scenario):
+                self.exercise(scenario)
 
 
 if __name__ == '__main__':

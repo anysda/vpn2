@@ -3,6 +3,7 @@
 import contextlib
 import io
 import os
+import re
 from pathlib import Path
 import sys
 
@@ -49,3 +50,11 @@ class Hub:
         config = yaml.safe_load(self.config.read_text())
         config['dns'].update(values)
         self.config.write_text(yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
+
+
+def render_unit(name, limits):
+    """Юнит роли с подставленными лимитами; в шаблоне только {{ adguard_limits.ИМЯ }}."""
+    text = (ROOT / f'infra/ansible/roles/adguard/templates/{name}.service.j2').read_text()
+    text = re.sub(r'\{\{ adguard_limits\.(\w+) \}\}', lambda match: str(limits[match[1]]), text)
+    assert '{{' not in text and '{%' not in text, name
+    return text

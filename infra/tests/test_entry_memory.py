@@ -16,13 +16,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import jinja2
 import yaml
 
 
 ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents[2]))
 TOOL = ROOT / "infra/lib/entry_resources.py"
 sys.path.insert(0, str(ROOT / "infra/vpn2/src"))
+from adguard_support import render_unit  # noqa: E402
 from vpn2.adguard import dns as adguard_dns, stage as adguard  # noqa: E402
 
 SERVICES = {"panel": "30-frontend.sh", "bot": "35-telegram.sh", "vm": "25-monitoring.sh"}
@@ -197,7 +197,6 @@ class EntryMemoryTest(unittest.TestCase):
                 self.assertEqual(first, subprocess.check_output(command))
 
     def test_adguard_new_config_and_service(self):
-        unit = jinja2.Template((ROOT / "infra/ansible/roles/adguard/templates/adguardhome.service.j2").read_text())
         for ram, size, enabled, limits in (
                 (2048, 100, False, ("192M", "256M", "160MiB", "0")),
                 (4096, 1000, True, ("infinity", "infinity", "off", "infinity"))):
@@ -207,7 +206,7 @@ class EntryMemoryTest(unittest.TestCase):
                                                         profile["AGH_ADAWAY"], profile["AGH_QUERYLOG"]))
             self.assertEqual(cfg["querylog"]["size_memory"], size)
             self.assertEqual(cfg["filters"][1]["enabled"], enabled)
-            rendered = unit.render(adguard_limits=profile)
+            rendered = render_unit("adguardhome", profile)
             for key, value in zip(("MemoryHigh", "MemoryMax", "Environment=GOMEMLIMIT", "MemorySwapMax"), limits):
                 self.assertIn(f"{key}={value}\n", rendered)
 

@@ -244,7 +244,7 @@ def probe(quic=False):
 
 def save(path, state):
     path.parent.mkdir(parents=True, exist_ok=True)
-    fsutil.atomic(path, json.dumps(state, ensure_ascii=False) + '\n', mode=0o644)
+    fsutil.atomic(path, json.dumps(state, ensure_ascii=False) + '\n', mode=0o600)
 
 
 def tick(path, sample):

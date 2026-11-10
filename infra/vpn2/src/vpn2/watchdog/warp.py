@@ -87,7 +87,7 @@ def decision(state, now, healthy, dead_after=DEAD_AFTER):
 
 
 def save_state(path, state):
-    fsutil.atomic(path, json.dumps(state), mode=0o644)
+    fsutil.atomic(path, json.dumps(state), mode=0o600)
 
 
 def tick(config, path, journal=False, dead_after=DEAD_AFTER):

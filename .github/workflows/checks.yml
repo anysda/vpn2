@@ -491,3 +491,20 @@ jobs:
         run: |
           echo "panel-e2e-shard=$SHARD_RESULT panel-e2e-qr=$QR_RESULT"
           exit 1
+
+  vpn2-package:
+    name: пакет vpn2 (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install ./infra/vpn2 pytest
+      - run: vpn2 version
+      - run: python -m pytest infra/vpn2/tests -q

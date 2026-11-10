@@ -25,6 +25,7 @@ def run(down_error='Connection refused', down_rc=1):
             (root / f'envs/{tag}.env').write_text(f'HOST_TAG={tag}\n')
         (root / 'lib/ssh.sh').write_text(revision('infra/lib/ssh.sh'))
         (root / 'lib/anysda-svc.sh').write_text(revision('infra/lib/anysda-svc.sh'))
+        (root / 'lib/ansible-venv.sh').write_text('')
         deploy = revision('infra/deploy.sh')
         deploy = deploy[deploy.index('_STAGE_LOG='):deploy.index('# Без аргументов → полный pipeline.')]
         script = '''set -euo pipefail

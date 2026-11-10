@@ -187,6 +187,8 @@ print_sso_notice() {
 # ----------------------------------------------------------------------------
 # shellcheck source=infra/lib/anysda-svc.sh
 source "$DEPLOY_ROOT/lib/anysda-svc.sh"
+# shellcheck source=infra/lib/ansible-venv.sh
+source "$DEPLOY_ROOT/lib/ansible-venv.sh"
 
 # ----------------------------------------------------------------------------
 # Оркестратор обычно запускают на самом entry. Свежий entry через минуту после
@@ -237,8 +239,11 @@ install_prereqs() {
   # ca-certificates - только если его нет: стоящий apt обновил бы, и его
   # configure (~5 с) задерживал бы экзиты, ждущие sshpass. Обновит его, как и
   # раньше, 00-bootstrap entry тем же списком пакетов.
+  apt_have python3-venv || pkgs+=(python3-venv)
   [[ ${#pkgs[@]} -eq 0 ]] || apt_have ca-certificates || pkgs+=(ca-certificates)
   [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
+  # venv с ansible-core качается в фоне, пока идут первые стадии; ждёт его do_all.
+  ansible_venv_start
 
   for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
     printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
@@ -1535,6 +1540,7 @@ do_all() {
   wait "$_PREFETCH_PID" || true
   VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
   run_stage 30-frontend      ru
+  [[ -z ${_VENV_PID:-} ]] || ansible_venv_wait
   local verify_rc=0
   run_stage 99-verify        all || verify_rc=$?
   [[ $verify_rc -ne 1 ]] || return 1

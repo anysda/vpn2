@@ -58,6 +58,8 @@ _install_prereq_pkgs() {
   [[ " $* " == *' openssh-client '* && " $* " != *' scp '* && " $* " != *' ssh '* ]]
   echo 'SSH package mapping: OK'
 }
+# shellcheck disable=SC2317,SC2329
+ansible_venv_start() { :; }
 install_prereqs
 
 # Настоящая POSIX-блокировка: проверяем fallback при отсутствии fuser,

@@ -86,6 +86,7 @@ do_restore latest --force --dry-run
         for path in ('infra/deploy.sh', 'infra/lib/deploy-release.sh'):
             (root / path.removeprefix('infra/')).write_text(source(path))
         (root / 'lib/anysda-svc.sh').write_text('')
+        (root / 'lib/ansible-venv.sh').write_text('apt_have() { return 0; }\nansible_venv_start() { :; }\n')
         (root / 'scripts').mkdir()
         (root / 'scripts/30-frontend.sh').touch()
         for tool in ('ssh', 'scp', 'sshpass', 'envsubst', 'curl', 'rsync', 'openssl'):

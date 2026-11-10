@@ -33,7 +33,7 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
         for path in (ROOT / 'infra/scripts').glob('*.sh'):
             (root / 'scripts' / path.name).touch()
         for path in ('lib/gen-router-config.py', 'lib/failover-watchdog.py',
-                     'lib/anysda-svc.sh', 'emergency/provision.py',
+                     'lib/anysda-svc.sh', 'lib/ansible-venv.sh', 'emergency/provision.py',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):
             (root / path).touch()

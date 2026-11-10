@@ -26,6 +26,7 @@ import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, test 
 // | /api/clients, /api/clients/<id>  | operation                           | null                          | статус выдачи доступа зависит от того, успела ли нода его подтвердить |
 // | /api/dns/log                     | rows[].time                         | FIXED - 37 с * номер строки   | журнал AdGuard пишется от Date.now() |
 // | /api/dns/filters                 | black[].updated, white[].updated    | FIXED - 3 ч                   | last_updated = момент старта AdGuard |
+// | /api/dns/clients                 | порядок строк, queries              | порядок SEED, 1000 / 700 / 400 | порядок по createdAt при равных секундах плавает, запросы берутся из счётчиков AdGuard |
 
 const FIXED = Date.UTC(2027, 0, 15, 9, 0, 0)
 const MSK_OFFSET_SEC = 3 * 3600
@@ -158,6 +159,10 @@ function pinAll(page: Page) {
       black: (b.black as Json[]).map(l => ({ ...l, updated: iso(FIXED - 3 * 3_600_000) })),
       white: (b.white as Json[]).map(l => ({ ...l, updated: iso(FIXED - 3 * 3_600_000) })),
     })),
+    pin(page, /\/api\/dns\/clients(\?|$)/, (b: Json[]) => SEED.flatMap((c, i) => {
+      const row = b.find(r => r.name === c.name)
+      return row ? [{ ...row, queries: 1000 - i * 300 }] : []
+    })),
   ])
 }
 
@@ -229,7 +234,6 @@ test.describe('эталонные скриншоты', () => {
     })
     await pinAll(page)
     const pending = trackRequests(page)
-    console.log('DBGCPU', (await import('node:fs')).readFileSync('/proc/cpuinfo', 'utf8').split('\n').filter(l => /model name|flags/.test(l)).slice(0, 2).map(l => l.slice(0, 40) + (l.includes('avx512f') ? ' AVX512' : '') + (l.includes(' avx2') ? ' AVX2' : '')).join(' | '))
     const base = page.viewportSize()!
 
     await page.goto('/login')

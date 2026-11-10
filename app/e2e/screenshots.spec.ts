@@ -1,4 +1,5 @@
 import { request, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { pauseClockAt } from './support/clock'
 import { ADMIN_PASSWORD, ADMIN_USER, authPost, expect, hydrated, loginApi, test } from './support/fixtures'
 
 // Эталонные скриншоты всех страниц панели в трёх размерах окна (проекты desktop,
@@ -173,6 +174,8 @@ function trackRequests(page: Page) {
 async function ready(page: Page, pending: Set<unknown>, shown: Locator[]) {
   await hydrated(page)
   for (const l of shown) await expect(l.first()).toBeVisible()
+  // Счётчики и кривые Обзора дорисованы: 4 с времени страницы вперёд, таймеры и кадры в порядке очереди.
+  await page.clock.runFor(4000)
   await page.evaluate(() => document.fonts.ready)
   let quiet = 0
   await expect.poll(() => {
@@ -199,7 +202,8 @@ test.describe('эталонные скриншоты', () => {
 
   test('все страницы панели', async ({ page }) => {
     test.setTimeout(300_000)
-    await page.clock.install({ time: FIXED })
+    // Часы стоят: ни опросов раз в 30 с, ни перерисовок посреди снимка. Время двигает только runFor.
+    await pauseClockAt(page, FIXED)
     await pinAll(page)
     const pending = trackRequests(page)
 

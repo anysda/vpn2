@@ -66,8 +66,7 @@ EXITS = ('nl', 'de')
 NOISE = ('Welcome to exit node', 'motd line')
 HUNG = re.compile(r'\bnl\b.*завис|завис.*\bnl\b')
 STUBS = ('lib/anysda-pki.sh', 'lib/release.sh', 'lib/release.py', 'lib/deploy_state.py',
-         'lib/panel-transaction.sh', 'lib/ufw-rules.py', 'lib/verify-traffic.py',
-         'lib/wg_conf.py', 'lib/verify-target.py', 'lib/hy2_bandwidth.py',
+         'lib/panel-transaction.sh', 'lib/ufw-rules.py', 'lib/wg_conf.py', 'lib/hy2_bandwidth.py',
          'lib/install-sing-box.sh', 'lib/warp-watchdog.py', 'configs/sing-box-server.json.tpl')
 
 
@@ -113,6 +112,8 @@ def deploy(stage, group, deadline, **fake):
         (root / 'lib/fw-guard.sh').write_text('exit 0\n')
         for path in STUBS:
             (root / path).touch()
+        (root / 'vpn2/src/vpn2').mkdir(parents=True)
+        (root / 'vpn2/src/vpn2/__init__.py').touch()
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (root / 'bin' / name).write_text(text)
             (root / 'bin' / name).chmod(0o755)

@@ -235,7 +235,8 @@ class VerifyTest(unittest.TestCase):
             if fault != 'emergency-release' and not old_stage:
                 (emergency / 'release.json').write_text(json.dumps(
                     {'version': 'dev', 'revision': 'a' * 40, 'image': 'sha256:' + 'b' * 64}))
-            stamp = root / 'stamp-23-emergency'
+            (root / 'stamps').mkdir()
+            stamp = root / 'stamps/23-emergency'
             if old_stage:
                 stamp.touch()
             elif fault != 'emergency-not-yet':
@@ -257,7 +258,7 @@ class VerifyTest(unittest.TestCase):
                 accepted = snapshot.accept(snapshots, image, None, 'test', time.time() - age)
                 self.assertEqual(accepted['status'], 'accepted')
             # Штамп 10-foreign новее штампа 23: verify сразу после 10-foreign.
-            foreign = root / 'stamp-10-foreign'
+            foreign = root / 'stamps/10-foreign'
             foreign.touch()
             if fault not in ('emergency-before-23', 'emergency-release-layout'):
                 os.utime(foreign, (time.time() - 600,) * 2)
@@ -277,22 +278,32 @@ class VerifyTest(unittest.TestCase):
                                 + ('raise SystemExit(1)\n' if fault == 'yt-failover' else
                                    'raise SystemExit(main())\n'))
             failover.chmod(0o755)
+            paths = {'NETWORKD_DROPIN': networkd, 'IKEV2_STATUS': status, 'EMERGENCY_ROOT': emergency,
+                     'EMERGENCY_HY2': hy2_options, 'STAMPS': stamp.parent, 'EMERGENCY_STATE': snapshots}
+            script = root / 'verify.py'
+            script.write_text(
+                'import os\nimport sys\nfrom pathlib import Path\n'
+                f'sys.path.insert(0, {str(ROOT / "infra/vpn2/src")!r})\n'
+                'from vpn2.verify import stage\n'
+                + ''.join(f'stage.{name} = Path({str(path)!r})\n' for name, path in paths.items())
+                + f'stage.YT_CHECK, stage.YT_FAILOVER = {str(yt)!r}, {str(failover)!r}\n'
+                'raise SystemExit(stage.run(dict(os.environ)))\n')
+            command = [sys.executable, '-B', str(script)]
+            # VERIFY_REF - ревизия с прежней стадией на bash: эталон вывода для сверки переноса.
             ref = os.environ.get('VERIFY_REF')
-            source = subprocess.check_output(
-                ['git', 'show', f'{ref}:infra/scripts/99-verify.sh'], cwd=ROOT, text=True,
-            ) if ref else (ROOT / 'infra/scripts/99-verify.sh').read_text()
-            source = source.replace('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf', str(networkd))
-            source = source.replace('/etc/anysda/ikev2-status.json', str(status))
-            source = source.replace('/usr/local/bin/anysda-yt-check', str(yt))
-            source = source.replace('/usr/local/bin/anysda-yt-failover', str(failover))
-            source = source.replace('/tmp/yt-check.out', str(root / 'yt-check.out'))
-            source = source.replace('/opt/vpn2-emergency', str(emergency))
-            source = source.replace('/etc/vpn2/emergency-hy2.json', str(hy2_options))
-            source = source.replace('/var/anysda/.stamps/23-emergency', str(stamp))
-            source = source.replace('/var/anysda/.stamps/10-foreign', str(foreign))
-            source = source.replace('/var/lib/vpn2-emergency', str(snapshots))
-            script = root / 'verify.sh'
-            script.write_text(source)
+            if ref:
+                source = subprocess.check_output(['git', 'show', f'{ref}:infra/scripts/99-verify.sh'],
+                                                 cwd=ROOT, text=True)
+                for old, new in (('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf', networkd),
+                                 ('/etc/anysda/ikev2-status.json', status), ('/usr/local/bin/anysda-yt-check', yt),
+                                 ('/usr/local/bin/anysda-yt-failover', failover), ('/opt/vpn2-emergency', emergency),
+                                 ('/etc/vpn2/emergency-hy2.json', hy2_options),
+                                 ('/var/anysda/.stamps/23-emergency', stamp),
+                                 ('/var/anysda/.stamps/10-foreign', foreign), ('/var/lib/vpn2-emergency', snapshots)):
+                    source = source.replace(old, str(new))
+                script = root / 'verify.sh'
+                script.write_text(source)
+                command = ['bash', str(script)]
             traffic = root / 'traffic.py'
             traffic.write_text(TRAFFIC)
             report = root / 'report' / 'verify-report.json'
@@ -307,7 +318,7 @@ class VerifyTest(unittest.TestCase):
                    'VERIFY_SNAPSHOT_WAIT': '0.2',
                    'VERIFY_TRAFFIC': str(traffic), 'VERIFY_REPORT': str(report), **(extra_env or {})}
             env.pop('BASH_ENV', None)
-            result = subprocess.run(['bash', str(script)], env=env, text=True,
+            result = subprocess.run(command, env=env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=SCENARIO_HANG)
             counter = root / 'scrape-counter'
             result.scrape_requests = int(counter.read_text()) if counter.exists() else 0

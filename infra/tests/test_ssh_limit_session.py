@@ -16,8 +16,8 @@ SSH_PROBE_TIMEOUT pre-flight называет настройкой, а не «SS
 запускает ловушку один раз, в главной оболочке, и подоболочка после вызова
 гибнет от Ctrl-C, как без вызова. Неверный SSH_PROBE_TIMEOUT останавливает
 деплой до опроса узлов, где бы его ни проверяли.
-_limit_run в infra/lib/ssh.sh и в 99-verify (на узел lib/ssh.sh не попадает)
-- одна реализация: края проверяются на обеих, тексты функций совпадают.
+На узле вход под пределом ведёт vpn2.verify.exitssh, не _limit_run: его края
+проверяются через exit_ssh.
 """
 import math
 import os
@@ -32,7 +32,7 @@ import unittest
 from unittest import mock
 
 import test_verify
-from test_deploy import ROOT, source
+from test_deploy import ROOT
 from test_ssh_limit_remote_code import Node, alive
 from test_ssh_probe_timeout_value import STAGE, deploy
 from test_verify_exit_ssh_bashrc import LABEL, MOCK
@@ -86,20 +86,12 @@ exec sleep "$FAKE_SLEEP"
 
 
 def preamble(side):
-    """Текст bash, после которого _limit_run определён так, как его видит сторона.
+    """Текст bash, после которого _limit_run определён: infra/lib/ssh.sh на entry.
 
-    lib - infra/lib/ssh.sh на entry. node - 99-verify на узле: свои функции
-    _limit* из скрипта, а если их там нет, то из infra/lib/anysda-svc.sh, что
-    кладётся на каждый узел.
+    На узле вход под пределом ведёт vpn2.verify.exitssh: его проверяют тесты exit_ssh.
     """
-    if side == 'lib':
-        return f'DEPLOY_ROOT={ROOT}/infra\nsource {ROOT}/infra/lib/ssh.sh\n'
-    verify = source('infra/scripts/99-verify.sh')
-    names = re.findall(r'^(_limit\w*)\(\) \{', verify, re.M)
-    if not names:
-        assert 'anysda-svc.sh' in verify, '99-verify не определяет _limit_run и не берёт его из anysda-svc.sh'
-        return f'source {ROOT}/infra/lib/anysda-svc.sh\n'
-    return ''.join(f'{n}() {{' + verify.split(f'\n{n}() {{', 1)[1].split('\n}', 1)[0] + '\n}\n' for n in names)
+    assert side == 'lib', side
+    return f'DEPLOY_ROOT={ROOT}/infra\nsource {ROOT}/infra/lib/ssh.sh\n'
 
 
 class StubNode(Node):
@@ -278,7 +270,7 @@ class SshLimitSessionTests(unittest.TestCase):
                     print(f'{mode} {call.__name__}: rc={code} {elapsed:.1f}s {out.strip()!r}')
                     self.assertNotEqual(code, 0, err)
                     self.assert_nothing_left(f'{mode} {call.__name__}', node.pids(), elapsed)
-            for side in ('lib', 'node'):
+            for side in ('lib',):
                 with self.subTest(mode=mode, call=f'_limit_run {side}'), StubNode(mode) as node:
                     code, out, err, elapsed = node.direct(side, limited())
                     self.assertRegex(out, r'rc=(124|137)\b', err)
@@ -337,14 +329,14 @@ class SshLimitSessionTests(unittest.TestCase):
             self.assertIn(code, (124, 137), err)
             self.assertIn(STUB_REASON, err)
             self.assertNotRegex(err, KILLED, 'ssh_fresh пишет вызывающему сообщение bash о задании')
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             with self.subTest(side=side), StubNode('says') as node:
                 code, out, err, _ = node.direct(side, limited())
                 self.assertRegex(out, r'rc=(124|137)\b', err)
                 self.assertEqual(err.strip(), STUB_REASON, f'_limit_run {side}: stderr не только команды')
 
     def test_3_limit_holds_for_group_leader(self):
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             with self.subTest(call=f'_limit_run {side}'), StubNode('hang') as node:
                 code, out, err, elapsed = node.direct(side, limited(leader=True))
                 print(f'set -m _limit_run {side}: {out.strip()!r} {elapsed:.2f}s')
@@ -359,7 +351,7 @@ class SshLimitSessionTests(unittest.TestCase):
             self.assert_nothing_left('set -m ssh_probe', node.pids(), elapsed, least=1)
 
     def test_4_many_children(self):
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             with self.subTest(side=side), StubNode('many') as node:
                 code, out, err, elapsed = node.direct(side, limited())
                 print(f'{MANY} детей _limit_run {side}: {out.strip()!r} {elapsed:.1f}s')
@@ -377,17 +369,6 @@ class SshLimitSessionTests(unittest.TestCase):
                 self.assertNotIn('SSH недоступен', out, 'неверная настройка названа недоступностью экзита')
                 self.assertNotIn(STAGE, out)
                 self.assertEqual(calls, 0)
-
-    def test_6_one_limit_run_for_entry_and_node(self):
-        texts = {}
-        for side in ('lib', 'node'):
-            script = (preamble(side) + 'declare -F | awk \'$3 ~ /^_limit/ {print $3}\' | sort | '
-                      'while read -r f; do declare -f "$f"; done\n')
-            result = subprocess.run(['bash', '-c', script], text=True, capture_output=True, timeout=15)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            texts[side] = result.stdout
-        self.assertIn('_limit_run ()', texts['lib'])
-        self.assertEqual(texts['node'], texts['lib'], '_limit_run в lib/ssh.sh и в 99-verify разъехались')
 
     def foreign(self, limit_text, seconds, limit, times, hunt):
         with tempfile.TemporaryDirectory(prefix='ssh-limit-foreign-') as directory:
@@ -410,7 +391,7 @@ class SshLimitSessionTests(unittest.TestCase):
         print(f'без уборки: {control}')
         self.assertTrue([line for line in control if ' alive' in line],
                         f'щуп не занял освободившийся номер, тест пуст: {control}')
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             for case, seconds, limit, times, hunt in (('ранний конец', 0.3, HANG, 5, 2), ('предел', HANG, 1, 3, 3)):
                 with self.subTest(side=side, case=case):
                     lines = self.foreign(preamble(side), seconds, limit, times, hunt)
@@ -462,7 +443,7 @@ class SshLimitSessionTests(unittest.TestCase):
         self.assertFalse(left, f'{what}: после {how} в группе вызывающего остались процессы (убийца по пределу)')
 
     def test_8_int_term_kill_command_now(self):
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             for how in ('INT', 'TERM'):
                 with self.subTest(side=side, how=how), StubNode('orphan') as node:
                     script = preamble(side) + f'_limit_run {HANG} ssh node.example true\necho after\n'
@@ -521,7 +502,7 @@ class SshLimitSessionTests(unittest.TestCase):
         # момента, когда рой порождён (GATE_SLEEP), возврат меряется от него.
         spawn = swarm_spawn_seconds(many)
         limit = max(5, math.ceil(2 * spawn))
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             with self.subTest(side=side), StubNode('swarm', FAKE_MANY=str(many), FAKE_SLEEP=str(limit + HANG),
                                                    GATE_LIMIT=str(limit)) as node:
                 (node.root / 'bin' / 'sleep').write_text(GATE_SLEEP)
@@ -544,7 +525,7 @@ class SshLimitSessionTests(unittest.TestCase):
         # первой смены ловушек печатает ловушки родителя, которых в
         # подоболочке нет. «без вызова» - контроль: так подоболочка ведёт
         # себя и без предела.
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             for name, call in {**calls(side), 'без вызова': 'true'}.items():
                 for how in ('INT', 'TERM'):
                     with self.subTest(side=side, call=name, how=how), StubNode('') as node:
@@ -570,7 +551,7 @@ echo "$out"
     def test_13_signal_during_call_in_subshell_runs_caller_trap_once(self):
         # Ctrl-C (INT группе) и TERM группе во время вызова в $(...): ловушка
         # вызывающего срабатывает один раз, в главной оболочке.
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             for name, call in calls(side).items():
                 for how in ('INT', 'TERM'):
                     with self.subTest(side=side, call=name, how=how), StubNode('orphan') as node:
@@ -586,7 +567,7 @@ echo "$out"
 
     def test_14_direct_call_keeps_caller_traps(self):
         # Без подоболочки ловушки вызывающего после вызова прежние и работают.
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             for name, call in calls(side).items():
                 for how in ('INT', 'TERM'):
                     with self.subTest(side=side, call=name, how=how, when='после'), StubNode('') as node:

@@ -47,6 +47,8 @@ def deploy():
         (root / 'lib/fw-guard.sh').write_text('exit 0\n')
         for path in STUBS:
             (root / path).touch()
+        (root / 'vpn2/src/vpn2').mkdir(parents=True)
+        (root / 'vpn2/src/vpn2/__init__.py').touch()
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (root / 'bin' / name).write_text(text)
             (root / 'bin' / name).chmod(0o755)

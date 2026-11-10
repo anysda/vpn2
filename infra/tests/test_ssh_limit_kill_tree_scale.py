@@ -83,7 +83,7 @@ class TestKillTreeScale(unittest.TestCase):
         return min(float(run[1]) for run in runs), min(float(run[3]) for run in runs), left
 
     def test_one_pass_does_not_grow_with_process_count(self):
-        for side in ('lib', 'node'):
+        for side in ('lib',):
             with self.subTest(side=side), tempfile.TemporaryDirectory(prefix='kill-tree-scale-') as directory:
                 base, tree, left = self.run_side(side, directory)
                 bound = FACTOR * base

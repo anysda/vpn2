@@ -748,11 +748,9 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/control" "control" || return 1
     push "$DEPLOY_ROOT/vpn2/src/vpn2" "vpn2-package" || return 1
   fi
-  # Контрольный клиент и цель проверки трафика: клиент идёт только на entry.
-  if [[ "$stage" == 99-verify && "$host" == ru ]]; then
-    push "$DEPLOY_ROOT/lib/verify-traffic.py" || return 1
-    push "$DEPLOY_ROOT/lib/wg_conf.py" || return 1
-    push "$DEPLOY_ROOT/lib/verify-target.py" || return 1
+  # Проверку ведёт пакет этого deploy, а не установленный на узле: стадия зовёт его из исходников.
+  if [[ "$stage" == 99-verify ]]; then
+    push "$DEPLOY_ROOT/vpn2/src/vpn2" "vpn2-src/vpn2" || return 1
   fi
 
   # Код аварийки приходит образом из реестра (стадия 23), здесь только конфиг узла.

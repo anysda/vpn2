@@ -195,11 +195,20 @@ class TestRestoreEntryWithLiveExits(unittest.TestCase):
         self.assertEqual(set(results.values()), {'accepted'})
 
 
-VERIFY = ROOT / 'infra/scripts/99-verify.sh'
+STANDBY = '''import sys
+from pathlib import Path
+from vpn2.verify import emergency
+
+root = Path(sys.argv[1])
+before_stage = not emergency.newer(root / 'stamp-23', root / 'stamp-10')
+code, output = emergency.standby(root / 'hy2.json', root / 'state/agent.json', before_stage)
+print(output)
+raise SystemExit(code)
+'''
 
 
 class TestStandbyBeforeStage23(unittest.TestCase):
-    """99-verify right after 10-foreign meets an emergency the new entry ends."""
+    """Verify right after 10-foreign meets an emergency the new entry ends."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -213,21 +222,15 @@ class TestStandbyBeforeStage23(unittest.TestCase):
         (self.root / 'state').mkdir()
 
     def standby(self, stage23_newer, active):
-        source = VERIFY.read_text()
-        start = source.index('emergency_standby() {')
-        function = source[start:source.index('\n}\n', start) + 3]
-        for old, new in (('/etc/vpn2/emergency-hy2.json', self.root / 'hy2.json'),
-                         ('/var/lib/vpn2-emergency', self.root / 'state'),
-                         ('/var/anysda/.stamps/10-foreign', self.root / 'stamp-10')):
-            function = function.replace(old, str(new))
         (self.root / 'state/agent.json').write_text(json.dumps({'leader': {'active': active}}))
         stamps = [self.root / 'stamp-10', self.root / 'stamp-23']
         for index, path in enumerate(stamps if stage23_newer else stamps[::-1]):
             path.touch()
             os.utime(path, (NOW + index, NOW + index))
-        script = f'EMERGENCY_STAMP={self.root / "stamp-23"}\n{function}emergency_standby\n'
-        env = dict(os.environ, PATH=f"{self.root / 'bin'}:{os.environ['PATH']}")
-        return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+        env = dict(os.environ, PATH=f"{self.root / 'bin'}:{os.environ['PATH']}",
+                   PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
+        return subprocess.run([sys.executable, '-B', '-c', STANDBY, str(self.root)], env=env,
+                              capture_output=True, text=True)
 
     def test_listening_port_during_emergency_before_stage_23(self):
         self.assertEqual(self.standby(stage23_newer=False, active=True).returncode, 0)

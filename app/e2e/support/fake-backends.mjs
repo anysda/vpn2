@@ -19,8 +19,14 @@ const tags = (process.env.NUXT_EXIT_TAGS || '').split(/\s+/).filter(Boolean)
 const instances = Object.values(mgmt).map(ip => `${ip}:9100`)
 const DEMO = process.env.FAKE_DEMO === '1'
 
+// Число ядер узла: запрос тоже по node_cpu_seconds_total, поэтому стоит раньше
+// загрузки CPU и отвечает своим целым числом.
+const CORES_QUERY = 'count by(instance)(node_cpu_seconds_total'
+const CORES = 2
+
 const SERIES = [
   ['timestamp(', 1],
+  [CORES_QUERY, CORES],
   ['node_cpu_seconds_total', 12.5],
   ['MemAvailable', 41],
   ['receive_bytes', 125000],
@@ -204,6 +210,7 @@ function demoMetric(tag, q, t) {
   }
   if (q.includes('mode="iowait"')) return clamp(wave(p.iowait ?? 0.6, p.iowait ? 6 : 0.4, t, s))
   if (q.includes('mode="steal"')) return clamp(wave(p.steal ?? 0.3, p.steal ? 5 : 0.2, t, s + 1))
+  if (q.includes(CORES_QUERY)) return CORES
   if (q.includes('node_cpu_seconds_total')) return clamp(wave(p.cpu, tag === DEGRADED ? 9 : 12, t, s))
   if (q.includes('MemAvailable')) return clamp(wave(p.ram, 3, t / 4, s))
   if (q.includes('receive_bytes')) return Math.max(0, wave(p.mbps, p.mbps * 0.45, t, s)) * 1e6 / 8

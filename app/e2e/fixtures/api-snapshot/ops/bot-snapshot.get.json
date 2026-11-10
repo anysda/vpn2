@@ -39,7 +39,7 @@
           "txMbps": "<mbps>",
           "uptimeSec": "<count>",
           "staleSec": "<count>",
-          "cores": 12.5,
+          "cores": 2,
           "memTotalBytes": null
         },
         {
@@ -51,7 +51,7 @@
           "txMbps": "<mbps>",
           "uptimeSec": "<count>",
           "staleSec": "<count>",
-          "cores": 12.5,
+          "cores": 2,
           "memTotalBytes": null
         },
         {
@@ -63,7 +63,7 @@
           "txMbps": "<mbps>",
           "uptimeSec": "<count>",
           "staleSec": "<count>",
-          "cores": 12.5,
+          "cores": 2,
           "memTotalBytes": null
         },
         {
@@ -75,7 +75,7 @@
           "txMbps": "<mbps>",
           "uptimeSec": "<count>",
           "staleSec": "<count>",
-          "cores": 12.5,
+          "cores": 2,
           "memTotalBytes": null
         }
       ],

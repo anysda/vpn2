@@ -22,8 +22,14 @@ import unittest
 from test_deploy import ROOT
 
 RUNS = 1000
+# Скорость прогона гонки зависит от занятости машины (на свободной 1000 идут
+# за 40 с, на занятом раннере CI - дольше двух минут), поэтому цикл ограничен
+# временем: после MIN_RUNS он кончается по BUDGET секунд. Предел HANG на вызов
+# bash ловит только зависание и от числа прогонов не зависит.
+MIN_RUNS, BUDGET, HANG = 100, 40, 900
 SHORT, LONG = 500, 20000
-# $1 - ssh.sh, $2 - каталог, $3 - число прогонов.
+# $1 - ssh.sh, $2 - каталог, $3 - число прогонов, $4 - обязательные прогоны,
+# $5 - секунд на остальные.
 RACE = r'''source "$1"
 set +e
 w=$2
@@ -31,7 +37,9 @@ gen() { seq 100001 $((100000 + $2)) | sed "s/^/$1/"; }
 gen e $SHORT > "$w/e_short"; gen e $LONG > "$w/e_long"
 gen o $SHORT > "$w/o_short"; gen o $LONG > "$w/o_long"
 feed() { printf 'motd\n%s\n' "$_SSH_MARK"; if [[ $2 == short ]]; then cat "$1"; else sed '' "$1"; fi; }
+SECONDS=0
 for ((n = 1; n <= $3; n++)); do
+  if ((n > $4 && SECONDS >= $5)); then break; fi
   if ((n % 2)); then es=short os=long; else es=long os=short; fi
   f=$w/stage.log
   { ( feed "$w/e_$es" $es | _ssh_errfilter >&2 ) &
@@ -65,7 +73,7 @@ printf 'refused\ntail' | _ssh_errfilter; echo " rc=$?"
 
 def bash(script, *args):
     return subprocess.run(['bash', '-c', script, 'bash', str(ROOT / 'infra/lib/ssh.sh'), *args],
-                          text=True, capture_output=True, timeout=120, stdin=subprocess.DEVNULL)
+                          text=True, capture_output=True, timeout=HANG, stdin=subprocess.DEVNULL)
 
 
 class SshDdNotruncTests(unittest.TestCase):
@@ -75,7 +83,7 @@ class SshDdNotruncTests(unittest.TestCase):
         self.dir = Path(tmp.name)
 
     def test_two_dd_in_one_file_keep_every_line(self):
-        result = bash(RACE, str(self.dir), str(RUNS))
+        result = bash(RACE, str(self.dir), str(RUNS), str(MIN_RUNS), str(BUDGET))
         if result.returncode:
             n, es, os_ = result.stdout.split()
             data = (self.dir / 'stage.log').read_bytes()

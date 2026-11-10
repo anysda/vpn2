@@ -27,4 +27,5 @@ dk run --rm --name "$NAME-wg-endpoint" --network none --read-only \
 dk run --rm --name "$NAME-sso-secret" --read-only \
   --tmpfs /var/lib/anysda-vpn2 --tmpfs /tmp --tmpfs /etc/anysda \
   -i --entrypoint node "$IMAGE" --input-type=module < "$APP_DIR/e2e/support/sso-secret-check.mjs"
+bash "$APP_DIR/e2e/support/fonts-local-check.sh" "$IMAGE"
 echo "timing: image-checks=$((SECONDS - started))s"

@@ -292,8 +292,19 @@ def _table(lines):
     return rows
 
 
+def _service_types(out):
+    """Блоки "Id=...", "Type=..." через пустую строку: {служба: Type}."""
+    types = {}
+    for block in out.split('\n\n'):
+        pairs = dict(line.split('=', 1) for line in block.splitlines() if '=' in line)
+        if 'Id' in pairs:
+            types[pairs['Id']] = pairs.get('Type', '')
+    return types
+
+
 def _units(run):
-    """Юниты systemd: enabled из list-unit-files, active из list-units."""
+    """Юниты systemd: enabled из list-unit-files, active из list-units.
+    У службы таймера и у oneshot activating/deactivating пишутся как inactive (гонка запуска)."""
     files = ['systemctl', 'list-unit-files', '--no-legend', '--plain', f'--type={_UNITS_TYPES}']
     loaded = ['systemctl', 'list-units', '--all', '--no-legend', '--plain',
               f'--type={_UNITS_TYPES}']
@@ -305,6 +316,16 @@ def _units(run):
         for columns in _table(out):
             if len(columns) > column:
                 records.setdefault(columns[0], {})[field] = columns[column]
+    show = ['systemctl', 'show', '--property=Id,Type', '*.service']
+    code, out = run(show)
+    if code != 0:
+        return _failed(show, code)
+    types = _service_types(out)
+    for name, record in records.items():
+        if not name.endswith('.service') or record.get('active') not in ('activating', 'deactivating'):
+            continue
+        if f'{name[:-len(".service")]}.timer' in records or types.get(name) == 'oneshot':
+            record['active'] = 'inactive'
     return records
 
 

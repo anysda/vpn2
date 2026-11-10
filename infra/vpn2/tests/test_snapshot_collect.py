@@ -89,6 +89,7 @@ def fake(overrides=None):
     answers = {
         'systemctl list-unit-files': (0, UNIT_FILES),
         'systemctl list-units': (0, UNITS),
+        'systemctl show': (0, ''),
         'ss': (0, SS),
         'nft': (0, NFT),
         'ufw': (0, UFW),
@@ -206,6 +207,31 @@ def test_units_merge_both_lists(root):
     assert units['rescue.service'] == {'active': 'inactive'}
 
 
+def _transient(root, service, state, timer=True, kind='simple'):
+    names = [service] + ([service.replace('.service', '.timer')] if timer else [])
+    rows = ''.join(f'{n}  loaded  {state if n == service else "active"}  x  d\n' for n in names)
+    show = f'Id={service}\nType={kind}\n\nId=ssh.service\nType=notify\n'
+    return collect(root, fake({'systemctl list-units': (0, rows),
+                                 'systemctl show': (0, show)}))['units'][service]['active']
+
+
+def test_timer_service_transient_states_are_inactive(root):
+    assert _transient(root, 'sync.service', 'activating') == 'inactive'
+    assert _transient(root, 'sync.service', 'deactivating') == 'inactive'
+
+
+def test_oneshot_service_without_timer_activating_is_inactive(root):
+    assert _transient(root, 'job.service', 'activating', timer=False, kind='oneshot') == 'inactive'
+
+
+def test_timer_service_failed_stays_failed(root):
+    assert _transient(root, 'sync.service', 'failed') == 'failed'
+
+
+def test_plain_service_activating_is_kept(root):
+    assert _transient(root, 'daemon.service', 'activating', timer=False) == 'activating'
+
+
 def test_ports(root):
     ports = collect(root, fake())['ports']
     assert ports['tcp 127.0.0.1:24283 python'] == {'process': 'python'}
@@ -290,6 +316,7 @@ def test_verify_broken_is_error(root):
 
 @pytest.mark.parametrize('prefix, section', [
     ('systemctl list-units', 'units'), ('systemctl list-unit-files', 'units'),
+    ('systemctl show', 'units'),
     ('ss', 'ports'), ('nft', 'firewall'), ('ufw', 'firewall'),
     ('docker ps', 'containers'), ('docker inspect', 'containers'), ('wg', 'wg')])
 def test_failed_command_gives_error_record(root, prefix, section):

@@ -16,14 +16,15 @@ import type * as Database from '../server/database/client'
 
 test.describe('control-backlog', () => {
   const infra = resolve(process.env.E2E_SERVER_ROOT || '.', '../infra/control')
+  const source = resolve(process.env.E2E_SERVER_ROOT || '.', '../infra/vpn2/src')
 
-  // Настоящий serve() из infra/control/server.py: соединения по одному, очередь
+  // Настоящий serve() из пакета vpn2 (vpn2.control.server): соединения по одному, очередь
   // listen как Backlog в vpn2-control.socket. Ответ занимает 20 мс, как чтение
   // настроек на нагруженной машине.
   const SERVICE = `
 import os, socket, sys, time
 sys.path.insert(0, sys.argv[1])
-from server import serve
+from vpn2.control.server import serve
 
 class Backend:
     def execute(self, method, params):
@@ -41,7 +42,7 @@ with socket.socket(socket.AF_UNIX) as listener:
     const backlog = Number(/^Backlog=(\d+)$/m.exec(readFileSync(join(infra, 'vpn2-control.socket'), 'utf8'))![1])
     const directory = mkdtempSync(join(tmpdir(), 'vpn2-control-'))
     const path = join(directory, 'control.sock')
-    const service = spawn('python3', ['-c', SERVICE, infra, path, String(backlog)], { stdio: ['ignore', 'pipe', 'inherit'] })
+    const service = spawn('python3', ['-c', SERVICE, source, path, String(backlog)], { stdio: ['ignore', 'pipe', 'inherit'] })
     try {
       await once(service.stdout, 'data')
       const { control } = serverModule<typeof import('../server/utils/control')>('server/utils/control.ts', {

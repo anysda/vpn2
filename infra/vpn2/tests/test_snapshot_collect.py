@@ -208,10 +208,31 @@ def test_units_merge_both_lists(root):
 
 def test_ports(root):
     ports = collect(root, fake())['ports']
-    assert ports['tcp 127.0.0.1:24283'] == {'process': 'python'}
-    assert ports['tcp 0.0.0.0:443'] == {'process': 'anyd,nginx'}
+    assert ports['tcp 127.0.0.1:24283 python'] == {'process': 'python'}
+    assert ports['tcp 0.0.0.0:443 anyd,nginx'] == {'process': 'anyd,nginx'}
     assert ports['udp 127.0.0.53%lo:53'] == {'process': ''}
     assert ports['tcp [::]:22'] == {'process': ''}
+
+
+def test_ports_random_singbox_port_is_ignorable(root):
+    def ss(singbox, wg='udp UNCONN 0 0 0.0.0.0:51820 0.0.0.0:*',
+           py='udp UNCONN 0 0 0.0.0.0:51821 0.0.0.0:* users:(("python3",pid=7,fd=3))'):
+        line = f'udp UNCONN 0 0 127.0.0.1:{singbox} 0.0.0.0:* users:(("sing-box",pid=5,fd=9))'
+        return {'ss': (0, '\n'.join([line, wg, py]) + '\n')}
+
+    first = collect(root, fake(ss(40385)))
+    second = collect(root, fake(ss(35677)))
+    assert first['ports']['udp 127.0.0.1:40385 sing-box'] == {'process': 'sing-box'}
+    assert first['ports']['udp 0.0.0.0:51820'] == {'process': ''}
+    rule = {'section': 'ports', 'name': 'udp *:[3-6][0-9][0-9][0-9][0-9] sing-box',
+            'field': '*', 'reason': 'random kernel port'}
+    assert diff(first, second, [rule]) == []
+    lines = diff(first, second)
+    assert any('udp 127.0.0.1:40385 sing-box' in line for line in lines)
+    assert any('udp 127.0.0.1:35677 sing-box' in line for line in lines)
+    moved_py = 'udp UNCONN 0 0 0.0.0.0:51831 0.0.0.0:* users:(("python3",pid=7,fd=3))'
+    for changed in (ss(40385, wg='udp UNCONN 0 0 0.0.0.0:51830 0.0.0.0:*'), ss(40385, py=moved_py)):
+        assert diff(first, collect(root, fake(changed)), [rule])
 
 
 def test_firewall_nft_and_ufw(root):

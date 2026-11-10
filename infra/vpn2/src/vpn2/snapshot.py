@@ -304,7 +304,7 @@ def _units(run):
 
 
 def _ports(run):
-    """Слушающие сокеты: "tcp 0.0.0.0:443" и имена процессов."""
+    """Слушающие сокеты: имя "tcp 0.0.0.0:443 nginx" (процессы через запятую), поле process."""
     argv = ['ss', '-H', '-lntu', '-p']
     code, out = run(argv)
     if code != 0:
@@ -315,7 +315,11 @@ def _ports(run):
             continue
         found = names.setdefault(f'{columns[0]} {columns[4]}', set())
         found.update(_USERS.findall(' '.join(columns[5:])))
-    return {name: {'process': ','.join(sorted(found))} for name, found in names.items()}
+    records = {}
+    for name, found in names.items():
+        process = ','.join(sorted(found))
+        records[f'{name} {process}' if process else name] = {'process': process}
+    return records
 
 
 def _nft(out):

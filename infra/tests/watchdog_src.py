@@ -5,8 +5,6 @@ import sys
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 SRC = ROOT / 'infra/vpn2/src'
-ROUTER = SRC / 'vpn2/router'
-ROUTER_CONFIG = ROUTER / 'config.py'
 FILES = {'failover': 'failover.py', 'warp': 'warp.py', 'yt': 'yt.py', 'hy2': 'hy2_bandwidth.py'}
 
 sys.path.insert(0, str(SRC))

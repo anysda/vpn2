@@ -1,0 +1,7 @@
+ansible_core: "2.21.6"
+ansible_posix: "2.2.2"
+sing_box: "1.12.25"
+wgcf: "2.3.1"
+adguard: "v0.107.80"
+caddy: "2.11.9"
+victoriametrics: "v1.155.0"

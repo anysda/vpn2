@@ -7,6 +7,7 @@ entry_resources и failover проверяются так же, текстовы
 """
 import re
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -255,3 +256,18 @@ def load(path='/etc/anysda/config.yaml'):
     """Config из файла."""
     with open(path, encoding='utf-8') as handle:
         return loads(handle.read())
+
+
+def versions(path: str | Path) -> dict[str, str]:
+    """Пины внешних версий из infra/versions.yml; неверный файл - ConfigError."""
+    try:
+        with open(path, encoding='utf-8') as handle:
+            raw = yaml.safe_load(handle.read())
+    except yaml.YAMLError as error:
+        raise ConfigError('yaml', getattr(error, 'problem', None) or 'ошибка разбора') from None
+    if not isinstance(raw, dict):
+        raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
+    for key, value in raw.items():
+        if not isinstance(value, str):
+            raise ConfigError(str(key), 'значение не строка')
+    return raw

@@ -18,9 +18,9 @@
   ansible.builtin.command:
     argv: ["{{ failover_vpn2 }}", watchdog, failover-env]
   environment:
-    MGMT_IP: "{{ lookup('ansible.builtin.env', 'MGMT_IP') }}"
-    RESTART_AFTER_CHECKS: "{{ lookup('ansible.builtin.env', 'RESTART_AFTER_CHECKS') }}"
-    RESTART_MIN_INTERVAL_S: "{{ lookup('ansible.builtin.env', 'RESTART_MIN_INTERVAL_S') }}"
+    MGMT_IP: "{{ vpn2_env.MGMT_IP | default('') }}"
+    RESTART_AFTER_CHECKS: "{{ vpn2_env.RESTART_AFTER_CHECKS | default('') }}"
+    RESTART_MIN_INTERVAL_S: "{{ vpn2_env.RESTART_MIN_INTERVAL_S | default('') }}"
   register: failover_env_step
   changed_when: "'changed=1' in failover_env_step.stdout"
 
@@ -62,7 +62,7 @@
       - "{{ failover_tmp }}"
       - "{{ item }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   loop: [anysda-failover-watchdog, anysda-tproxy-watchdog]
   register: failover_step
   changed_when: "'changed=1' in failover_step.stdout"

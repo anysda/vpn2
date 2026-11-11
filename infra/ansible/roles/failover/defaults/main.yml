@@ -1,5 +1,5 @@
 ---
-failover_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+failover_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 failover_tmp: /tmp/anysda
 failover_vpn2: /opt/vpn2/venv/bin/vpn2
 # Сторож живёт в пакете vpn2; метка колеса меняется вместе с его кодом.

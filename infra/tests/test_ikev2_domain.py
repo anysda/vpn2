@@ -61,8 +61,11 @@ class Ikev2DomainTests(unittest.TestCase):
             helper = helper.replace('/etc/', directory + '/etc/').replace('/run/', directory + '/run/')
             (root / 'helper.sh').write_text(helper)
             conf = root / 'etc/swanctl/conf.d/anysda.conf'
-            conf.write_text('connections {\n  anysda-ikev2 {\n    local-server {\n'
-                            '      id    = 192.0.2.1\n    }\n  }\n}\n')
+            # Раскладку на обе цепочки деплой написал заранее: скрипт меняет только пару.
+            pending = ('connections {\n  anysda-ikev2 {\n    local-server {\n'
+                       '      certs = anysda-server.crt, anysda-own.crt\n      id    = %any\n    }\n  }\n}\n')
+            conf.write_text(pending)
+            (root / 'etc/swanctl/x509ca/anysda-le-chain-9.crt').write_text('previous chain')
             mode = root / 'etc/anysda/ikev2-mode'
             host = root / 'etc/anysda/ikev2-server-host'
             mode.write_text('self-signed')
@@ -92,7 +95,10 @@ export -f swanctl
             self.assertEqual(applied.returncode, 0, applied.stderr)
             self.assertEqual(mode.read_text(), 'letsencrypt')
             self.assertEqual(host.read_text(), 'vpn.example.test')
-            self.assertIn('id    = vpn.example.test', conf.read_text())
+            self.assertEqual(conf.read_text(), pending, 'conn со своим CA для прежних профилей не трогается')
+            self.assertEqual((root / 'etc/swanctl/x509/anysda-server.crt').read_text().strip(),
+                             (root / 'leaf.pem').read_text().strip())
+            self.assertEqual(list((root / 'etc/swanctl/x509ca').iterdir()), [], 'цепочка прежнего сертификата')
             before = (root / 'calls').read_text()
             repeat = bash(prelude + call, directory)
             self.assertEqual(repeat.returncode, 0, repeat.stderr)
@@ -112,15 +118,18 @@ export -f swanctl
         domain = 'vpn.example.test'
         cases = (
             # (адрес профилей, прошлые отметки mode/server-host, есть LE-cert) →
-            # (режим, адрес в профилях, id сервера, домен под LE)
-            ('192.0.2.1', '', None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
-            (domain, domain, ('letsencrypt', domain), True, ('letsencrypt', domain, domain, domain)),
-            (domain, domain, None, False, ('self-signed', domain, '%any', domain)),
-            (domain, domain, None, True, ('letsencrypt', domain, domain, domain)),
-            # Домен добавлен к серверу, раздававшему профили по IP: свой CA остаётся.
-            (domain, domain, ('self-signed', '192.0.2.1'), True, ('self-signed', domain, '%any', '')),
+            # (режим, адрес в профилях, id сервера, домен под LE, обе цепочки)
+            ('192.0.2.1', '', None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '', False)),
+            (domain, domain, ('letsencrypt', domain), True, ('letsencrypt', domain, domain, domain, False)),
+            (domain, domain, None, False, ('self-signed', domain, '%any', domain, True)),
+            (domain, domain, None, True, ('letsencrypt', domain, domain, domain, False)),
+            # Домен добавлен к серверу, раздававшему профили по IP: Let's Encrypt для новых
+            # клиентов, свой CA рядом для прежних. Так же после ожидания сертификата.
+            (domain, domain, ('self-signed', '192.0.2.1'), True, ('letsencrypt', domain, '%any', domain, True)),
+            (domain, domain, ('self-signed', domain), True, ('letsencrypt', domain, '%any', domain, True)),
+            (domain, domain, ('self-signed', '192.0.2.1'), False, ('self-signed', domain, '%any', domain, True)),
             # Явный public_host важнее домена панели.
-            ('edge.example.net', domain, None, True, ('self-signed', 'edge.example.net', '%any', '')),
+            ('edge.example.net', domain, None, True, ('self-signed', 'edge.example.net', '%any', '', False)),
         )
         for public, panel, previous, issued, expected in cases:
             with self.subTest(public=public, previous=previous, issued=issued), \
@@ -130,6 +139,11 @@ export -f swanctl
                 if previous:
                     (root / 'etc/ikev2-mode').write_text(previous[0])
                     (root / 'etc/ikev2-server-host').write_text(previous[1])
+                if previous and previous[0] == 'self-signed':
+                    (root / 'swanctl/x509ca').mkdir(parents=True)
+                    (root / 'swanctl/x509ca/anysda-ca.crt').write_text('own')
+                    # Отметка прежних версий, оставлявшая такой сервер на своём CA.
+                    (root / 'etc/ikev2-own-ca-kept').touch()
                 caddy = root / 'caddy' / domain
                 caddy.mkdir(parents=True)
                 if issued:
@@ -137,11 +151,8 @@ export -f swanctl
                         (caddy / f'{domain}.{suffix}').write_text('pem')
                 chosen = ikev2.plan('192.0.2.1', public, panel, etc=root / 'etc',
                                     swanctl=root / 'swanctl', caddy=root / 'caddy')
-                self.assertEqual((chosen.mode, chosen.server_host, chosen.local_id, chosen.le_domain),
-                                 expected)
-                # Решение остаться на своём CA не отменяется следующим деплоем.
-                self.assertEqual((root / 'etc/ikev2-own-ca-kept').exists(),
-                                 previous == ('self-signed', '192.0.2.1'))
+                self.assertEqual((chosen.mode, chosen.server_host, chosen.local_id, chosen.le_domain,
+                                  chosen.both), expected)
         # Адрес профилей: WG_PUBLIC_HOST, без него домен панели, без него адрес входа.
         defaults = vpn_roles.role_defaults('ikev2')
         line = defaults.split('ikev2_public_host:', 1)[1].split('ikev2_subnet:', 1)[0]

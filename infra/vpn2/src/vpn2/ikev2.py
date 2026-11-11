@@ -1,9 +1,16 @@
 """Сервер IKEv2 на entry: режим сертификата, свой CA, конфиг swanctl, загрузка в charon.
 
-Режимов два. letsencrypt: адрес профилей - домен панели, Caddy выдал на него
-сертификат (или пара восстановлена из бэкапа в swanctl), и профилей по IP со своим CA
-ещё не выдавали. self-signed: иначе; свой ECDSA CA, в SAN адрес профилей и IP входа.
+Режимов два. letsencrypt: адрес профилей - домен панели, и Caddy выдал на него
+сертификат (или пара восстановлена из бэкапа в swanctl). self-signed: иначе; свой
+ECDSA CA, в SAN адрес профилей и IP входа.
 Панель читает режим и адрес из /etc/anysda/ikev2-mode и ikev2-server-host.
+
+Сервер, у которого уже есть свой CA, с доменом отдаёт обе цепочки: профили, выданные
+до сертификата Let's Encrypt (по IP или по домену), доверяют только своему CA.
+charon берёт первый сертификат из certs, чей CA клиент назвал в CERTREQ, иначе первый
+в списке: клиент с системным доверием получает Let's Encrypt, клиент с импортированным
+своим CA - свой. Профилю по IP отвечает отдельная conn: её id совпадает с IDr клиента
+точнее, чем %any, а сертификат в ней только свой.
 """
 import glob
 import os
@@ -67,7 +74,7 @@ connections {
 
     local-server {
       auth  = pubkey
-      certs = anysda-server.crt
+      certs = $IKEV2_CERTS
       id    = $IKEV2_LOCAL_ID
     }
     remote-client {
@@ -94,7 +101,7 @@ connections {
       }
     }
   }
-}
+$IKEV2_IP_CONN}
 
 pools {
   anysda-ikev2-pool {
@@ -110,6 +117,20 @@ pools {
 ''')
 
 
+# Профиль по IP, выданный до домена: в IDr у него IP входа. Объявлена после базовой
+# conn и conn устройств, поэтому остальным клиентам по-прежнему отвечает базовая.
+IP_CONN = Template('''  anysda-ikev2-ip : connections.anysda-ikev2 {
+    local-server {
+      certs = anysda-own.crt
+      id    = $IKEV2_ENTRY_HOST
+    }
+  }
+''')
+# Куда в swanctl ложится пара своего CA: основной парой сервера и вторым комплектом.
+SERVER_PAIR = (('server.crt', 'x509/anysda-server.crt', 0o644), ('server.key', 'private/anysda-server.key', 0o600))
+OWN_PAIR = (('server.crt', 'x509/anysda-own.crt', 0o644), ('server.key', 'private/anysda-own.key', 0o600))
+
+
 class Plan(NamedTuple):
     mode: str
     server_host: str
@@ -117,6 +138,8 @@ class Plan(NamedTuple):
     le_cert: str
     le_key: str
     local_id: str
+    # Обе цепочки: пара сервера (Let's Encrypt или, пока его нет, своя) и пара своего CA.
+    both: bool = False
 
 
 def _read(path):
@@ -138,17 +161,10 @@ def _readable(path):
 
 
 def plan(entry_host, public_host, panel_domain, *, etc=ETC, swanctl=SWANCTL, caddy=CADDY):
-    """Режим сертификата сервера по настройкам и состоянию узла.
-
-    Профили по IP со своим CA уже выданы, а сертификат Let's Encrypt IP не содержит:
-    такой сервер остаётся на своём CA, отметка ikev2-own-ca-kept ставится здесь же.
-    """
+    """Режим сертификата сервера по настройкам и состоянию узла."""
     etc = Path(etc)
     mode, host = _read(etc / 'ikev2-mode'), _read(etc / 'ikev2-server-host')
-    kept = etc / 'ikev2-own-ca-kept'
-    if public_host != entry_host and mode == 'self-signed' and host == entry_host:
-        kept.touch()
-    le_domain = panel_domain if panel_domain and public_host == panel_domain and not kept.exists() else ''
+    le_domain = panel_domain if panel_domain and public_host == panel_domain else ''
     le_cert = f'{caddy}/{le_domain}/{le_domain}.crt' if le_domain else ''
     le_key = f'{caddy}/{le_domain}/{le_domain}.key' if le_domain else ''
     # Restore возвращает действующую пару LE в swanctl, а Caddy на чистом узле мог ещё
@@ -157,16 +173,25 @@ def plan(entry_host, public_host, panel_domain, *, etc=ETC, swanctl=SWANCTL, cad
                 and _filled(f'{swanctl}/x509/anysda-server.crt')
                 and _filled(f'{swanctl}/private/anysda-server.key'))
     if (_readable(le_cert) and _readable(le_key)) or restored:
-        return Plan('letsencrypt', le_domain, le_domain, le_cert, le_key, le_domain)
+        # Свой CA на узле есть - профили с ним могли быть выданы, он остаётся рядом.
+        both = os.path.exists(f'{swanctl}/x509ca/anysda-ca.crt')
+        return Plan('letsencrypt', le_domain, le_domain, le_cert, le_key, '%any' if both else le_domain, both)
     # Идентификатор сервера берётся из IDr клиента (у старых профилей IP, у новых домен),
-    # оба есть в SAN своего сертификата.
+    # оба есть в SAN своего сертификата. С доменом раскладка сразу на обе цепочки:
+    # слежению за сертификатом Caddy останется заменить пару сервера.
     local_id = '%any' if public_host != entry_host else public_host
-    return Plan('self-signed', public_host, le_domain, le_cert, le_key, local_id)
+    return Plan('self-signed', public_host, le_domain, le_cert, le_key, local_id, bool(le_domain))
 
 
-def conf_text(local_id, subnet, dns):
-    """Базовая conn и пулы swanctl; conn устройств и секреты дописывает панель."""
-    return CONF.substitute(IKEV2_LOCAL_ID=local_id, IKEV2_SUBNET=subnet, IKEV2_DNS=dns, IKEV2_SUBNET6=SUBNET6)
+def conf_text(local_id, subnet, dns, own_id=''):
+    """Базовая conn и пулы swanctl; conn устройств и секреты дописывает панель.
+
+    own_id - IP входа, когда рядом с парой сервера отдаётся пара своего CA.
+    """
+    return CONF.substitute(
+        IKEV2_LOCAL_ID=local_id, IKEV2_SUBNET=subnet, IKEV2_DNS=dns, IKEV2_SUBNET6=SUBNET6,
+        IKEV2_CERTS='anysda-server.crt, anysda-own.crt' if own_id else 'anysda-server.crt',
+        IKEV2_IP_CONN=IP_CONN.substitute(IKEV2_ENTRY_HOST=own_id) if own_id else '')
 
 
 def _put(path, body, mode):
@@ -187,16 +212,22 @@ def _creds(swanctl):
             for path in sorted(Path(swanctl, name).glob('*')) if path.is_file()}
 
 
-def own_certs(public_host, entry_host, say, *, target=PKI, swanctl=SWANCTL, run=pki.run):
+def own_certs(public_host, entry_host, say, *, target=PKI, swanctl=SWANCTL, run=pki.run, pairs=SERVER_PAIR):
     """Свой CA и сертификат сервера: сборка одной подменой каталога и выкладка в swanctl."""
     with pki.transaction(target) as work:
         say(f'[3/8] self-signed server cert (CN={public_host})')
         pki.build_ikev2(work, public_host, entry_host, say=say, run=run)
     target = Path(target)
-    for name, dest, mode in (('ca.crt', 'x509ca/anysda-ca.crt', 0o644),
-                             ('server.crt', 'x509/anysda-server.crt', 0o644),
-                             ('server.key', 'private/anysda-server.key', 0o600)):
+    for name, dest, mode in (('ca.crt', 'x509ca/anysda-ca.crt', 0o644), *pairs):
         _put(Path(swanctl, dest), (target / name).read_bytes(), mode)
+
+
+def _drop(paths):
+    """Убирает файлы; True - хоть один был."""
+    found = [path for path in paths if path.exists()]
+    for path in found:
+        path.unlink()
+    return bool(found)
 
 
 def starter_inputs():
@@ -232,32 +263,44 @@ def server(entry_host, public_host, panel_domain, subnet, dns, say, restart, *,
             say('  → временно self-signed; сертификат Caddy применится автоматически (проверка каждые 30 с)')
         say(f'mode={chosen.mode} server-host={chosen.server_host}')
         before = _creds(swanctl)
+        stale = []
         if chosen.mode == 'letsencrypt':
             say(f'[2/8] LE-cert от Caddy ({chosen.le_domain})')
-            # Свой CA из режима self-signed путает charon при поиске цепочки.
-            Path(swanctl, 'x509ca/anysda-ca.crt').unlink(missing_ok=True)
+            if chosen.both:
+                say('  свой CA остаётся рядом: профили, выданные до Let\'s Encrypt, продолжают работать')
+                own_certs(public_host, entry_host, say, target=target, swanctl=swanctl, run=pki_run, pairs=OWN_PAIR)
             if _readable(chosen.le_cert) and _readable(chosen.le_key):
                 run([le_sync, chosen.le_cert, chosen.le_key], check=True)
             else:
                 say('  сохраняю восстановленные LE-cert/key/chain из swanctl до выдачи Caddy')
         else:
             say('[2/8] self-signed CA')
-            own_certs(public_host, entry_host, say, target=target, swanctl=swanctl, run=pki_run)
+            own_certs(public_host, entry_host, say, target=target, swanctl=swanctl, run=pki_run,
+                      pairs=SERVER_PAIR + OWN_PAIR if chosen.both else SERVER_PAIR)
+            # Цепочка прежнего сертификата Let's Encrypt серверу на своём CA не нужна.
+            stale += sorted(Path(swanctl, 'x509ca').glob('anysda-le-chain-*.crt'))
+        if not chosen.both:
+            stale += [Path(swanctl, dest) for _name, dest, _mode in OWN_PAIR]
+        dropped = _drop(stale)
         changed = _creds(swanctl) != before
         say('[4/8] swanctl conf')
-        text = conf_text(chosen.local_id, subnet, dns).encode()
+        text = conf_text(chosen.local_id, subnet, dns, entry_host if chosen.both else '').encode()
         changed |= _put(Path(swanctl, 'conf.d/anysda.conf'), text, 0o644)
         say('[6/8] strongswan-starter service')
         restarted = restart()
         if restarted:
             _settle(run, sleep)
-        # CA, creds, пулы и conns - в работающий charon.
-        for what in ('--load-creds', '--load-pools', '--load-conns'):
+        # CA, creds, пулы и conns - в работающий charon. Убранное с диска charon держит
+        # в памяти, пока загрузка не начата с чистого набора.
+        run(['swanctl', '--load-creds', *(['--clear'] if dropped else [])], check=True, stdout=subprocess.DEVNULL)
+        for what in ('--load-pools', '--load-conns'):
             run(['swanctl', what], check=True, stdout=subprocess.DEVNULL)
         for name, value in (('ikev2-server-host', chosen.server_host), ('ikev2-mode', chosen.mode),
                             ('ikev2-domain', chosen.le_domain)):
             changed |= _put(etc / name, value.encode(), 0o644)
-        # Файл оставался от прежних версий стадии: профили по IP работают и так.
-        (etc / 'ikev2-profile-notice').unlink(missing_ok=True)
+        # Файлы прежних версий стадии: профили по IP работают и так, а отметка навсегда
+        # оставляла сервер с доменом на своём CA.
+        for name in ('ikev2-profile-notice', 'ikev2-own-ca-kept'):
+            (etc / name).unlink(missing_ok=True)
         say(f'27-ikev2 — mode={chosen.mode} server-host={chosen.server_host}')
     return changed or restarted

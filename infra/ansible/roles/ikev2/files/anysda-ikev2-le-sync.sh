@@ -47,11 +47,8 @@ for f in "$TMP"/cert-*.pem; do
 done
 
 if [[ -n "$DOMAIN" ]]; then
-  # Все conn устройств наследуют local-server из этой базовой conn.
-  # Домен уже провалидирован config2env, но ограничим sed replacement и здесь.
-  [[ "$DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]
-  sed "s/^      id    = .*/      id    = $DOMAIN/" /etc/swanctl/conf.d/anysda.conf > "$TMP/anysda.conf"
-  install -m 0644 "$TMP/anysda.conf" /etc/swanctl/conf.d/anysda.conf
+  # anysda.conf не трогаем: деплой с доменом сразу пишет conn на обе цепочки, и пара
+  # своего CA в ней остаётся для профилей, выданных до этого сертификата.
   swanctl --load-creds >/dev/null
   # Conn хранит выбранный leaf: одного --load-creds недостаточно.
   swanctl --load-conns >/dev/null

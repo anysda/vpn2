@@ -1,26 +1,25 @@
 ---
-backup_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
-backup_tmp: /tmp/anysda
+backup_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 backup_venv: /opt/vpn2/venv
 backup_vpn2: "{{ backup_venv }}/bin/vpn2"
-backup_manifest: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
-backup_development: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') == 'true' }}"
+backup_manifest: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('/tmp/anysda/release-manifest.json', true) }}"
+backup_development: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') == 'true' }}"
 # Клон, из которого идёт деплой: restore, backup и speedtest стоят вне клона
 # и берут исходники по этой отметке.
-backup_source_root: "{{ lookup('ansible.builtin.env', 'VPN2_SOURCE_ROOT') }}"
+backup_source_root: "{{ vpn2_env.VPN2_SOURCE_ROOT | default('') }}"
 
-backup_enabled: "{{ lookup('ansible.builtin.env', 'BACKUP_ENABLED') == 'true' }}"
-backup_backend: "{{ lookup('ansible.builtin.env', 'BACKUP_BACKEND') }}"
-backup_local_dir: "{{ lookup('ansible.builtin.env', 'BACKUP_LOCAL_DIR') | default('/var/backups/anysda-vpn2', true) }}"
-backup_retention: "{{ lookup('ansible.builtin.env', 'BACKUP_RETENTION') | default('10', true) }}"
-backup_schedule: "{{ lookup('ansible.builtin.env', 'BACKUP_SCHEDULE') | default('off', true) }}"
-backup_passphrase: "{{ lookup('ansible.builtin.env', 'BACKUP_PASSPHRASE') }}"
+backup_enabled: "{{ vpn2_env.BACKUP_ENABLED | default('') == 'true' }}"
+backup_backend: "{{ vpn2_env.BACKUP_BACKEND | default('') }}"
+backup_local_dir: "{{ vpn2_env.BACKUP_LOCAL_DIR | default('/var/backups/anysda-vpn2', true) }}"
+backup_retention: "{{ vpn2_env.BACKUP_RETENTION | default('10', true) }}"
+backup_schedule: "{{ vpn2_env.BACKUP_SCHEDULE | default('off', true) }}"
+backup_passphrase: "{{ vpn2_env.BACKUP_PASSPHRASE | default('') }}"
 backup_s3:
-  BACKUP_S3_ENDPOINT: "{{ lookup('ansible.builtin.env', 'BACKUP_S3_ENDPOINT') }}"
-  BACKUP_S3_BUCKET: "{{ lookup('ansible.builtin.env', 'BACKUP_S3_BUCKET') }}"
-  BACKUP_S3_ACCESS_KEY: "{{ lookup('ansible.builtin.env', 'BACKUP_S3_ACCESS_KEY') }}"
-  BACKUP_S3_SECRET_KEY: "{{ lookup('ansible.builtin.env', 'BACKUP_S3_SECRET_KEY') }}"
-backup_s3_region: "{{ lookup('ansible.builtin.env', 'BACKUP_S3_REGION') }}"
+  BACKUP_S3_ENDPOINT: "{{ vpn2_env.BACKUP_S3_ENDPOINT | default('') }}"
+  BACKUP_S3_BUCKET: "{{ vpn2_env.BACKUP_S3_BUCKET | default('') }}"
+  BACKUP_S3_ACCESS_KEY: "{{ vpn2_env.BACKUP_S3_ACCESS_KEY | default('') }}"
+  BACKUP_S3_SECRET_KEY: "{{ vpn2_env.BACKUP_S3_SECRET_KEY | default('') }}"
+backup_s3_region: "{{ vpn2_env.BACKUP_S3_REGION | default('') }}"
 
 backup_packages: [age, expect, sqlite3]
 backup_packages_s3: [unzip, curl, gnupg]

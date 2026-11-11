@@ -13,7 +13,6 @@ LOOKUPS_LEFT = {
     'control': 1,
     'verify': 4,
 
-    'backup': 16,
     'emergency': 10,
 
     'ikev2': 10,

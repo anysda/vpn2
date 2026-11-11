@@ -1,8 +1,8 @@
-"""Создание бэкапа: ход anysda-backup.sh (строки 250-577) по блокам, код выхода как у скрипта."""
+"""Создание бэкапа: срез узла, manifest.json, tar.gz, age, ротация, S3. Код выхода 0, 4 (есть предупреждение) или сбой."""
 import contextlib
 import errno
 import fcntl
-import hashlib
+import io
 import json
 import os
 import re
@@ -12,19 +12,16 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
-from io import StringIO
+from datetime import UTC, datetime
 from pathlib import Path
 
-from vpn2 import notify
-from vpn2.backup import archive, bundle, env
+from vpn2 import fsutil, notify
+from vpn2.backup import archive, check, env
 
 VERSION_URL = 'http://127.0.0.1:51821/api/version'
-NO_SOURCE_ROOT = '/opt/anysda-vpn2'
 LOCK_WAIT = 60
-LOCK_POLL = 0.05
 SLICES = 10
-JSON_HEADER = 'Content-Type: application/json'
+SLICE_NAMES = ('db.sqlite', 'etc-wireguard', 'etc-openvpn', 'etc-strongswan', 'etc-swanctl')
 FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.
 
 Ожидается в {env_file}. Источник:
@@ -41,516 +38,319 @@ FATAL_TEXT = '''anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутству
 
 @dataclass(frozen=True)
 class Paths:
-    """Пути узла, которые читает скрипт; under(root) переносит их под root (для тестов без root)."""
+    """Файл настроек и корень узла (root не пуст только в тестах)."""
 
     env_file: str = env.DEFAULT_ENV_FILE
-    secret_file: str = notify.SECRET_FILE
-    source_root_file: str = '/etc/anysda/source-root'
-    etc_anysda: str = '/etc/anysda'
-    runtime_dir: str = '/var/lib/anysda-vpn2/runtime'
-    work_parent: str = '/var/lib/anysda-vpn2'
-    db: str = '/var/lib/anysda-vpn2/db.sqlite'
-    pki_lock: str = '/etc/openvpn/server/.pki.lock'
-    etc: str = '/etc'
-    wireguard: str = '/etc/wireguard'
-    openvpn: str = '/etc/openvpn'
-    strongswan: str = '/etc/strongswan'
-    swanctl: str = '/etc/swanctl'
-    caddy: str = '/var/lib/caddy/.local/share/caddy'
-    deploy_state: str = '/var/lib/anysda-vpn2/state'
-
-    @classmethod
-    def under(cls, root):
-        """Те же пути, но внутри каталога root."""
-        return cls(**{name: f'{root}{value}' for name, value in cls().__dict__.items()})
-
-
-class _Stop(Exception):
-    """Ход прерван: code - код выхода скрипта (set -e или явный exit)."""
-
-    def __init__(self, code, why='', program=''):
-        super().__init__(code)
-        self.code = code
-        self.why = why
-        self.program = program
-
-
-class _State:
-    """FAIL_REASON и WARNING скрипта: причина сбоя и предупреждение для события."""
-
-    def __init__(self):
-        self.fail_reason = ''
-        self.warning = ''
-        self.step = ''
-        self.tail = None
-
-    def enter(self, step):
-        """step - чем кончился бы сбой на этом шаге; причину ищем только в его выводе."""
-        self.step = step
-        if self.tail:
-            self.tail.line = ''
-
-
-class _Tail:
-    """err хода: пишет дальше как есть и помнит последнюю непустую строку."""
-
-    def __init__(self, err):
-        self.err = err
-        self.line = ''
-
-    def write(self, text):
-        for line in str(text).splitlines():
-            if line.strip():
-                self.line = line.strip()
-        return self.err.write(text)
-
-    def __getattr__(self, name):
-        return getattr(self.err, name)
-
-
-class _Done:
-    def __init__(self, returncode, stdout=b'', stderr=b'', missing=False):
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-        self.missing = missing
-
-
-def _text(data):
-    return data.decode(errors='replace') if isinstance(data, bytes) else (data or '')
-
-
-def _exec(run, args, err, *, quiet=False, **kwargs):
-    """Запуск внешней программы; stderr уходит в err (если не quiet), нет программы - код 127."""
-    try:
-        done = run(args, capture_output=True, check=False, **kwargs)
-    except OSError as exc:
-        if not quiet:
-            err.write(f'{args[0]}: {exc.strerror}\n')
-        return _Done(127, missing=True)
-    if not quiet and done.stderr:
-        err.write(_text(done.stderr))
-    return done
-
-
-def _must(run, args, err, **kwargs):
-    """Как команда под set -e: код не 0 обрывает ход тем же кодом."""
-    done = _exec(run, args, err, **kwargs)
-    if done.returncode != 0:
-        raise _failed(done, args[0])
-    return done
-
-
-def _failed(done, program):
-    missing = getattr(done, 'missing', False)
-    return _Stop(done.returncode, f'программа {program} не найдена' if missing else '', program)
-
-
-def _post(run, args, secret_header, body):
-    """curl best-effort (`|| true`): секрет заголовка идёт через stdin (-H @-), не в argv."""
-    argv = ['curl', '-fsS', '--max-time', '5', '-H', '@-', '-H', JSON_HEADER, '-d', body, *args]
-    with contextlib.suppress(OSError, subprocess.SubprocessError):
-        run(argv, input=(secret_header + '\n').encode(), stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, check=False)
-
-
-def _secret(paths):
-    """Секрет бота, как `$(cat файл)`: без хвостовых переводов строки; нет доступа - None."""
-    if not os.access(paths.secret_file, os.R_OK):
-        return None
-    try:
-        return Path(paths.secret_file).read_bytes().decode(errors='surrogateescape').rstrip('\n')
-    except OSError:
-        return None
-
-
-def report_failure(rc, state, paths, run):
-    """Событие в ленту панели при коде не 0 (4 с предупреждением - backup_warning); как report_failure скрипта."""
-    secret = _secret(paths)
-    if rc == 0 or secret is None:
-        return
-    kind, detail = 'backup_failed', state.fail_reason or f'код выхода {rc}'
-    if rc == 4 and state.warning:
-        kind, detail = 'backup_warning', state.warning
-    event = {'type': kind, 'detail': notify.clean_detail(detail)}
-    body = json.dumps(event, ensure_ascii=False, separators=(',', ':'))
-    _post(run, [notify.PANEL_URL], f'Authorization: Bearer {secret}', body)
-
-
-def alert_no_passphrase(paths, err):
-    """Пароля нет: текст FATAL в err. Событие одно - backup_failed из report_failure.
-
-    Прежний скрипт слал ещё и system_alert боту с английским текстом: владелец получал два
-    сообщения об одном сбое.
-    """
-    err.write(FATAL_TEXT.format(env_file=paths.env_file))
-
-
-def copy_etc_anysda(bundle_dir, paths, run, err):
-    """/etc/anysda целиком; ссылки sso-runtime.json и telegram-runtime.json заменяются файлами из runtime."""
-    if not os.path.isdir(paths.etc_anysda):
-        return
-    target = f'{bundle_dir}/etc-anysda'
-    _must(run, ['cp', '-a', paths.etc_anysda, target], err)
-    for name in ('sso-runtime.json', 'telegram-runtime.json'):
-        if os.path.islink(f'{target}/{name}'):
-            os.unlink(f'{target}/{name}')
-            runtime = f'{paths.runtime_dir}/{name}'
-            if os.path.islink(runtime):
-                err.write('backup: runtime must be a regular file\n')
-                raise _Stop(1)
-            if os.path.isfile(runtime):
-                _must(run, ['cp', '-p', runtime, f'{target}/{name}'], err)
-
-
-@contextlib.contextmanager
-def _pki_lock(path, state, wait):
-    """Общий замок PKI (flock -s, ждать не дольше wait); нет файла - без замка."""
-    if not os.path.exists(path):
-        yield
-        return
-    try:
-        fd = os.open(path, os.O_RDONLY)
-    except OSError as exc:
-        raise _Stop(1) from exc
-    try:
-        deadline = time.monotonic() + wait
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    state.fail_reason = 'замок PKI OpenVPN занят дольше минуты'
-                    raise _Stop(1) from None
-                time.sleep(LOCK_POLL)
-        yield
-    finally:
-        os.close(fd)
-
-
-def snapshot_access(bundle_dir, paths, state, run, err, wait=LOCK_WAIT):
-    """Один срез под замком PKI: db.sqlite, etc-wireguard, etc-openvpn, etc-strongswan, etc-swanctl."""
-    names = ('db.sqlite', 'etc-wireguard', 'etc-openvpn', 'etc-strongswan', 'etc-swanctl')
-    for name in names:
-        target = f'{bundle_dir}/{name}'
-        if os.path.isdir(target) and not os.path.islink(target):
-            shutil.rmtree(target, ignore_errors=True)
-        elif os.path.lexists(target):
-            os.unlink(target)
-    with _pki_lock(paths.pki_lock, state, wait):
-        if os.access(paths.db, os.R_OK):
-            _must(run, ['sqlite3', paths.db, '.timeout 10000', f".backup '{bundle_dir}/db.sqlite'"], err)
-        else:
-            err.write(f'anysda-backup: WARN: {paths.db} не найден — пропускаю db.sqlite\n')
-        os.makedirs(f'{bundle_dir}/etc-wireguard', exist_ok=True)
-        for name in ('wg0.conf', 'server.priv', 'server.pub'):
-            if os.path.isfile(f'{paths.wireguard}/{name}'):
-                _must(run, ['cp', '-aL', f'{paths.wireguard}/{name}', f'{bundle_dir}/etc-wireguard/'], err)
-        for source, name in ((paths.openvpn, 'etc-openvpn'), (paths.strongswan, 'etc-strongswan'),
-                             (paths.swanctl, 'etc-swanctl')):
-            if os.path.isdir(source):
-                _must(run, ['cp', '-a', source, f'{bundle_dir}/{name}'], err)
-
-
-def _device_ids(mismatch):
-    found = {int(m.group(1)) for line in mismatch.split('\n') if (m := re.match('^устройство ([0-9]+)', line))}
-    return sorted(found)
-
-
-def _mismatch_warning(mismatch, err):
-    """Устойчивое расхождение после 10 срезов: сообщение в err и текст предупреждения с номерами устройств."""
-    err.write('anysda-backup: WARN: БД и конфиги VPN расходятся в 10 срезах подряд — сохраняю архив как есть; '
-              'перевыпусти эти устройства в панели:\n')
-    err.write(mismatch + '\n')
-    ids = _device_ids(mismatch)
-    listed = ', '.join(str(i) for i in ids[:10])
-    if len(ids) > 10:
-        listed += f' и ещё {len(ids) - 10}'
-    return f"БД и конфиги VPN расходятся{f' (устройства: {listed})' if listed else ''} — перевыпусти в панели"
-
-
-def take_slices(bundle_dir, paths, state, run, err, check, sleep, wait=LOCK_WAIT):
-    """Срезы (до 10) со сверкой check; расхождение - снять заново, нечем сверить - предупреждение."""
-    for attempt in range(1, SLICES + 1):
-        snapshot_access(bundle_dir, paths, state, run, err, wait)
-        out = StringIO()
-        rc = check(bundle_dir, out, err)
-        mismatch = out.getvalue().rstrip('\n')
-        if rc == 0:
-            return
-        if rc == 5:
-            err.write(f'anysda-backup: WARN: сверка БД с конфигами VPN не выполнена: {mismatch}\n')
-            state.warning = f"сверка БД с конфигами VPN не выполнена: {mismatch.replace(chr(10), '; ')}"
-            return
-        if rc != 3:
-            err.write(f'anysda-backup: WARN: сверка БД с конфигами VPN не выполнена (код {rc})\n')
-            state.warning = f'сверка БД с конфигами VPN не выполнена (код {rc})'
-            return
-        if attempt == SLICES:
-            state.warning = _mismatch_warning(mismatch, err)
-            return
-        err.write(f'anysda-backup: срез {attempt}: БД и конфиги VPN расходятся (идёт выдача или отзыв?), '
-                  'снимаю заново:\n')
-        err.write(mismatch + '\n')
-        sleep(3)
-
-
-def copy_extras(bundle_dir, paths, run, err):
-    """strongswan.conf/.d, ipsec.*, хранилище Caddy без locks, состояние деплоя; сокеты, FIFO и устройства из набора удаляются."""
-    for name in ('strongswan.conf', 'strongswan.d', 'ipsec.conf', 'ipsec.secrets'):
-        if os.path.exists(f'{paths.etc}/{name}'):
-            _must(run, ['cp', '-a', f'{paths.etc}/{name}', f'{bundle_dir}/etc-{name}'], err)
-    if os.path.isdir(paths.caddy):
-        _must(run, ['cp', '-a', paths.caddy, f'{bundle_dir}/caddy-storage'], err)
-        locks = f'{bundle_dir}/caddy-storage/locks'
-        if os.path.isdir(locks) and not os.path.islink(locks):
-            shutil.rmtree(locks, ignore_errors=True)
-        elif os.path.lexists(locks):
-            os.unlink(locks)
-    # Без mgmt-ips.txt новый entry раздал бы экзитам адреса mesh заново, по позиции в config.yaml.
-    if os.path.isdir(paths.deploy_state):
-        _must(run, ['cp', '-a', paths.deploy_state, f'{bundle_dir}/deploy-state'], err)
-    for root, dirs, files in os.walk(bundle_dir):
-        for name in dirs + files:
-            full = os.path.join(root, name)
-            mode = os.lstat(full).st_mode
-            if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode) or stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
-                os.unlink(full)
-
-
-def _app_version(run):
-    """Версия панели с /api/version; любой сбой - unknown."""
-    done = _exec(run, ['curl', '-fsS', '--max-time', '10', VERSION_URL], None, quiet=True)
-    try:
-        if done.returncode != 0:
-            return 'unknown'
-        return str(json.loads(done.stdout)['version']).rstrip('\n')
-    except (ValueError, KeyError, TypeError):
-        return 'unknown'
-
-
-def _git_commit(source_root, run):
-    done = _exec(run, ['git', '-C', source_root, 'rev-parse', '--short', 'HEAD'], None, quiet=True)
-    return _text(done.stdout).rstrip('\n') if done.returncode == 0 else 'unknown'
-
-
-def _source_root(paths):
-    try:
-        text = Path(paths.source_root_file).read_bytes().decode(errors='surrogateescape').rstrip('\n')
-    except OSError:
-        text = ''
-    return text or NO_SOURCE_ROOT
-
-
-def write_manifest(bundle_dir, source_root, ts, run, err):
-    """manifest.json набора: версия панели, коммит, schema_version из среза БД, sha компонентов."""
-    schema = '0'
-    if os.path.isfile(f'{bundle_dir}/db.sqlite'):
-        done = _must(run, ['sqlite3', f'{bundle_dir}/db.sqlite', 'PRAGMA schema_version;'], err)
-        schema = _text(done.stdout).rstrip('\n')
-    data = bundle.manifest(bundle_dir, version=_app_version(run), git_commit=_git_commit(source_root, run),
-                           schema_version=schema, timestamp=ts)
-    path = bundle.write_manifest(bundle_dir, data)
-    os.chmod(path, 0o600)
-
-
-def pack_and_encrypt(work, name, passphrase, run, err):
-    """tar.gz набора и шифрование age; открытый архив затирается. Возвращает путь зашифрованного файла."""
-    plain, encrypted = work / f'{name}.tar.gz', work / f'{name}.tar.gz.age'
-    try:
-        archive.pack(work, name, plain, run=run)
-    except archive.ArchiveError as exc:
-        err.write(exc.message + '\n')
-        raise _Stop(exc.code) from None
-    codes = []
-
-    def _pty(argv, secret, prompts, *, timeout):
-        codes.append(archive.pty_run(argv, secret, prompts, timeout=timeout))
-        return codes[-1]
-
-    try:
-        archive.encrypt(plain, encrypted, passphrase, run=_pty, wiper=lambda path: archive.wipe(path, run=run))
-    except archive.ArchiveError as exc:
-        if codes and codes[0] != 0:
-            raise _Stop(codes[0], program='age') from None
-        err.write(exc.message + '\n')
-        raise _Stop(exc.code) from None
-    return encrypted
-
-
-def publish(encrypted, final):
-    """Зашифрованный архив на место (0600); возвращает размер и sha256."""
-    shutil.move(encrypted, final)
-    os.chmod(final, 0o600)
-    return os.stat(final).st_size, hashlib.sha256(Path(final).read_bytes()).hexdigest()
-
-
-def _keep(retention):
-    try:
-        return int(retention)
-    except ValueError:
-        return 0
-
-
-def rotate_local(local_dir, final, retention, out):
-    """Оставить retention свежих anysda-vpn2-*.tar.gz.age (порядок по mtime, как find|sort -n); final не трогать."""
-    found = []
-    with os.scandir(local_dir) as entries:
-        for entry in entries:
-            if fnmatchcase(entry.name, 'anysda-vpn2-*.tar.gz.age') and entry.is_file(follow_symlinks=False):
-                found.append((entry.stat(follow_symlinks=False).st_mtime_ns, os.path.join(local_dir, entry.name)))
-    paths = [path for _, path in sorted(found)]
-    keep = _keep(retention)
-    for path in paths[:len(paths) - keep] if len(paths) > keep else []:
-        if path == final:
-            continue
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(path)
-        out.write(f'anysda-backup: rotated out {os.path.basename(path)}\n')
-
-
-def _aws(settings, run, err, *args):
-    """aws с ключами в окружении (как AWS_ACCESS_KEY_ID=... aws ...) и регионом из настроек."""
-    environ = {**os.environ, 'AWS_DEFAULT_REGION': settings.s3_region,
-               'AWS_ACCESS_KEY_ID': settings.s3_access_key, 'AWS_SECRET_ACCESS_KEY': settings.s3_secret_key}
-    return _exec(run, ['aws', '--endpoint-url', settings.s3_endpoint, *args], err, env=environ)
-
-
-def upload_s3(settings, final, key, run, out, err):
-    """Выгрузка в S3 и ротация по именам (TS в имени); кроме нового ключа, остаются retention последних."""
-    target = f's3://{settings.s3_bucket}'
-    out.write(f'anysda-backup: uploading to {target}/{key}\n')
-    done = _aws(settings, run, err, 's3', 'cp', final, f'{target}/{key}', '--only-show-errors')
-    if done.returncode != 0:
-        raise _failed(done, 'aws')
-    listing = _aws(settings, run, err, 's3', 'ls', f'{target}/')
-    names = [(line.split() or [''])[-1] for line in _text(listing.stdout).splitlines()]
-    keys = sorted(n for n in names if re.fullmatch(r'anysda-vpn2-.*\.tar\.gz\.age', n))
-    if not keys:
-        if listing.returncode != 0:
-            raise _failed(listing, 'aws')
-        raise _Stop(1, 'архива нет в списке бакета')
-    keep = _keep(settings.retention)
-    old = keys[:len(keys) - keep] if keep > 0 else keys
-    for name in old:
-        if name == key:
-            continue
-        done = _aws(settings, run, err, 's3', 'rm', f'{target}/{name}', '--only-show-errors')
-        if done.returncode != 0:
-            raise _failed(done, 'aws')
-        out.write(f'anysda-backup: s3 rotated out {name}\n')
-    if listing.returncode != 0:
-        raise _failed(listing, 'aws')
-
-
-def summary(settings, final, size, digest, warning, out):
-    """Итоговые строки (printf '%-12s'); с предупреждением - код выхода 4."""
-    out.write(f"\n{'backup:':<12} {final}\n{'size:':<12} {size} bytes\n{'hash:':<12} sha256:{digest}\n")
-    out.write(f"{'backend:':<12} {settings.backend}\n{'retention:':<12} keep last {settings.retention}\n")
-    if warning:
-        out.write(f"{'warning:':<12} {warning}\n")
-        return 4
-    return 0
-
-
-def _default_check(bundle_dir, out, err):
-    """Сверка среза через vpn2.backup.check; check_bundle требует manifest.json, а его ещё нет - ставим пустышку."""
-    from vpn2.backup import check
-    marker = Path(bundle_dir, bundle.MANIFEST)
-    marker.write_text('{}')
-    try:
-        return check.check_bundle(bundle_dir, out=out, err=err)
-    finally:
-        marker.unlink(missing_ok=True)
-
-
-def _make(settings, paths, state, run, out, err, now, check, sleep, wait):
-    if not settings.passphrase:
-        alert_no_passphrase(paths, err)
-        state.fail_reason = 'нет пароля шифрования'
-        raise _Stop(2)
-    source_root = _source_root(paths)
-    state.enter('каталог для архива не подготовлен')
-    os.makedirs(settings.local_dir, exist_ok=True)
-    os.chmod(settings.local_dir, 0o700)
-    with archive.workdir(paths.work_parent, '.backup-tmp.', run=run) as work:
-        ts = env.timestamp(now)
-        name = env.bundle_name(ts)
-        bundle_dir = work / name
-        os.makedirs(bundle_dir)
-        state.enter('копирование /etc/anysda не прошло')
-        copy_etc_anysda(bundle_dir, paths, run, err)
-        state.enter('снимок базы и ключей не снят')
-        take_slices(bundle_dir, paths, state, run, err, check, sleep, wait)
-        state.enter('копирование настроек служб не прошло')
-        copy_extras(bundle_dir, paths, run, err)
-        state.enter('описание архива не записано')
-        write_manifest(bundle_dir, source_root, ts, run, err)
-        state.enter('упаковка и шифрование не прошли')
-        encrypted = pack_and_encrypt(work, name, settings.passphrase, run, err)
-        final = f'{settings.local_dir}/{name}.tar.gz.age'
-        state.enter('архив не сохранён на диск')
-        size, digest = publish(encrypted, final)
-        state.enter('старые архивы не убраны')
-        rotate_local(settings.local_dir, final, settings.retention, out)
-        if settings.backend == 's3':
-            state.enter('выгрузка в S3 не прошла')
-            upload_s3(settings, final, f'{name}.tar.gz.age', run, out, err)
-        return summary(settings, final, size, digest, state.warning, out)
+    root: str = ''
 
 
 NO_SPACE = 'нет места на диске'
 
 
-def _line_cause(line):
-    return NO_SPACE if 'No space left on device' in line else line
+class Stop(Exception):
+    """Ход прерван с кодом выхода code; в событие панели идёт reason целиком либо «шаг: cause»."""
+
+    def __init__(self, code, cause='', reason=''):
+        super().__init__(code)
+        self.code = code
+        self.cause = cause
+        self.reason = reason
+
+
+def _warn(text):
+    print(text, file=sys.stderr)
+
+
+def _must(argv, **kwargs):
+    rc, _out, why = archive.call(argv, **kwargs)
+    if rc:
+        raise Stop(rc, _named(argv[0], rc, why))
+
+
+def _named(program, rc, why):
+    """Причина отказа программы: её последняя строка stderr, а молчала - код выхода."""
+    if 'No space left on device' in why:
+        return NO_SPACE
+    return why or f'{program}: код выхода {rc}'
+
+
+def _drop(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+    elif os.path.lexists(path):
+        os.unlink(path)
+
+
+def copy_etc_anysda(bundle, root):
+    """/etc/anysda целиком; ссылки sso-runtime.json и telegram-runtime.json заменяются файлами из runtime."""
+    if not os.path.isdir(f'{root}/etc/anysda'):
+        return
+    target = f'{bundle}/etc-anysda'
+    _must(['cp', '-a', f'{root}/etc/anysda', target])
+    for name in ('sso-runtime.json', 'telegram-runtime.json'):
+        if os.path.islink(f'{target}/{name}'):
+            os.unlink(f'{target}/{name}')
+            runtime = f'{root}/var/lib/anysda-vpn2/runtime/{name}'
+            if os.path.islink(runtime):
+                _warn('backup: runtime must be a regular file')
+                raise Stop(1)
+            if os.path.isfile(runtime):
+                _must(['cp', '-p', runtime, f'{target}/{name}'])
+
+
+@contextlib.contextmanager
+def _pki_lock(path, wait):
+    """Общий замок PKI (как flock -s -w); нет файла - без замка."""
+    if not os.path.exists(path):
+        yield
+        return
+    with open(path, 'rb') as lock:
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise Stop(1, reason='замок PKI OpenVPN занят дольше минуты') from None
+                time.sleep(0.05)
+        yield
+
+
+def take_slice(bundle, root, wait=LOCK_WAIT):
+    """Один срез под замком PKI: db.sqlite, etc-wireguard, etc-openvpn, etc-strongswan, etc-swanctl."""
+    for name in SLICE_NAMES:
+        _drop(f'{bundle}/{name}')
+    db = f'{root}/var/lib/anysda-vpn2/db.sqlite'
+    with _pki_lock(f'{root}/etc/openvpn/server/.pki.lock', wait):
+        if os.access(db, os.R_OK):
+            _must(['sqlite3', db, '.timeout 10000', f".backup '{bundle}/db.sqlite'"])
+        else:
+            _warn(f'anysda-backup: WARN: {db} не найден — пропускаю db.sqlite')
+        os.makedirs(f'{bundle}/etc-wireguard', exist_ok=True)
+        for name in ('wg0.conf', 'server.priv', 'server.pub'):
+            if os.path.isfile(f'{root}/etc/wireguard/{name}'):
+                _must(['cp', '-aL', f'{root}/etc/wireguard/{name}', f'{bundle}/etc-wireguard/'])
+        for name in ('openvpn', 'strongswan', 'swanctl'):
+            if os.path.isdir(f'{root}/etc/{name}'):
+                _must(['cp', '-a', f'{root}/etc/{name}', f'{bundle}/etc-{name}'])
+
+
+def check_slice(bundle):
+    """Сверка БД среза с конфигами VPN: (код check_bundle, текст расхождений)."""
+    out = io.StringIO()
+    marker = Path(bundle, archive.MANIFEST)  # check_bundle требует manifest.json, а его ещё нет
+    marker.write_text('{}')
+    try:
+        return check.check_bundle(bundle, out=out), out.getvalue().rstrip('\n')
+    finally:
+        marker.unlink(missing_ok=True)
+
+
+def _mismatch_warning(mismatch):
+    _warn('anysda-backup: WARN: БД и конфиги VPN расходятся в 10 срезах подряд — сохраняю архив как есть; '
+          'перевыпусти эти устройства в панели:')
+    _warn(mismatch)
+    ids = sorted({int(m.group(1)) for line in mismatch.split('\n') if (m := re.match('^устройство ([0-9]+)', line))})
+    listed = ', '.join(map(str, ids[:10])) + (f' и ещё {len(ids) - 10}' if len(ids) > 10 else '')
+    return f"БД и конфиги VPN расходятся{f' (устройства: {listed})' if listed else ''} — перевыпусти в панели"
+
+
+def take_slices(bundle, root, *, check=check_slice, pause=3, wait=LOCK_WAIT):
+    """Срезы (до 10) со сверкой; расхождение - снять заново. Возвращает предупреждение или ''."""
+    for attempt in range(1, SLICES + 1):
+        take_slice(bundle, root, wait)
+        rc, mismatch = check(bundle)
+        if rc == 0:
+            return ''
+        if rc != 3:
+            warning = 'сверка БД с конфигами VPN не выполнена' + (f': {mismatch}' if rc == 5 else f' (код {rc})')
+            _warn(f'anysda-backup: WARN: {warning}')
+            return warning.replace('\n', '; ')
+        if attempt == SLICES:
+            return _mismatch_warning(mismatch)
+        _warn(f'anysda-backup: срез {attempt}: БД и конфиги VPN расходятся (идёт выдача или отзыв?), снимаю заново:')
+        _warn(mismatch)
+        time.sleep(pause)
+    return ''
+
+
+def copy_extras(bundle, root):
+    """strongswan.conf/.d, ipsec.*, хранилище Caddy без locks, состояние деплоя; сокеты, FIFO и устройства долой."""
+    for name in ('strongswan.conf', 'strongswan.d', 'ipsec.conf', 'ipsec.secrets'):
+        if os.path.exists(f'{root}/etc/{name}'):
+            _must(['cp', '-a', f'{root}/etc/{name}', f'{bundle}/etc-{name}'])
+    caddy = f'{root}/var/lib/caddy/.local/share/caddy'
+    if os.path.isdir(caddy):
+        _must(['cp', '-a', caddy, f'{bundle}/caddy-storage'])
+        _drop(f'{bundle}/caddy-storage/locks')
+    # Без mgmt-ips.txt новый entry раздал бы экзитам адреса mesh заново, по позиции в config.yaml.
+    if os.path.isdir(f'{root}/var/lib/anysda-vpn2/state'):
+        _must(['cp', '-a', f'{root}/var/lib/anysda-vpn2/state', f'{bundle}/deploy-state'])
+    for top, dirs, files in os.walk(bundle):
+        for name in dirs + files:
+            mode = os.lstat(os.path.join(top, name)).st_mode
+            if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode) or stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
+                os.unlink(os.path.join(top, name))
+
+
+def _output(argv):
+    """stdout команды без хвостового перевода строки; сбой - None."""
+    try:
+        done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False, text=True)
+    except OSError:
+        return None
+    return done.stdout.rstrip('\n') if done.returncode == 0 else None
+
+
+def _app_version():
+    try:
+        return str(json.loads(_output(['curl', '-fsS', '--max-time', '10', VERSION_URL]))['version']).rstrip('\n')
+    except (ValueError, KeyError, TypeError):
+        return 'unknown'
+
+
+def write_manifest(bundle, root, ts):
+    """manifest.json набора: версия панели, коммит, schema_version из среза БД, sha компонентов."""
+    try:
+        source = Path(f'{root}/etc/anysda/source-root').read_text(errors='surrogateescape').rstrip('\n')
+    except OSError:
+        source = ''
+    schema = '0'
+    if os.path.isfile(f'{bundle}/db.sqlite'):
+        schema = _output(['sqlite3', f'{bundle}/db.sqlite', 'PRAGMA schema_version;'])
+        if schema is None:
+            raise Stop(1)
+    data = {'version': _app_version(),
+            'git_commit': _output(['git', '-C', source or '/opt/anysda-vpn2', 'rev-parse', '--short', 'HEAD'])
+            or 'unknown',
+            'schema_version': int(schema),
+            'timestamp': ts,
+            'components': archive.components(bundle),
+            'archive_format': 'tar.gz.age',
+            'spec_version': 1}
+    fsutil.atomic(Path(bundle, archive.MANIFEST), json.dumps(data, indent=2, ensure_ascii=False) + '\n', mode=0o600)
+
+
+def rotate_local(local_dir, final, retention):
+    """Оставить retention свежих архивов (порядок по mtime); final не трогать."""
+    found = sorted((entry.stat(follow_symlinks=False).st_mtime_ns, entry.path) for entry in os.scandir(local_dir)
+                   if archive.is_archive(entry))
+    for _, path in found[:max(len(found) - retention, 0)]:
+        if path != final:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+            print(f'anysda-backup: rotated out {os.path.basename(path)}')
+
+
+def upload_s3(settings, final, key, retention):
+    """Выгрузка в S3 и ротация по именам (метка в имени); кроме нового ключа, остаются retention последних."""
+    target = f's3://{settings.s3_bucket}'
+    print(f'anysda-backup: uploading to {target}/{key}', flush=True)
+    rc, _out, why = env.aws(settings, 'cp', final, f'{target}/{key}', '--only-show-errors')
+    if rc:
+        raise Stop(rc, _named('aws', rc, why))
+    listed, text, list_why = env.aws(settings, 'ls', f'{target}/', capture=True)
+    names = [(line.split() or [''])[-1] for line in text.splitlines()]
+    keys = sorted(name for name in names if re.fullmatch(r'anysda-vpn2-.*\.tar\.gz\.age', name))
+    if not keys:
+        raise Stop(listed or 1, _named('aws', listed, list_why) if listed else 'архива нет в списке бакета')
+    for name in keys[:len(keys) - retention] if retention > 0 else keys:
+        if name == key:
+            continue
+        rc, _out, why = env.aws(settings, 'rm', f'{target}/{name}', '--only-show-errors')
+        if rc:
+            raise Stop(rc, _named('aws', rc, why))
+        print(f'anysda-backup: s3 rotated out {name}')
+    if listed:
+        raise Stop(listed, _named('aws', listed, list_why))
+
+
+def _make(settings, paths, enter, check, pause, wait):
+    """Ход бэкапа; enter(шаг) - чем кончился бы сбой с этого места, для события панели."""
+    if not settings.passphrase:
+        sys.stderr.write(FATAL_TEXT.format(env_file=paths.env_file))
+        raise Stop(2, reason='нет пароля шифрования')
+    root = paths.root
+    retention = int(settings.retention) if settings.retention.isdecimal() else 0
+    enter('каталог для архива не подготовлен')
+    os.makedirs(settings.local_dir, exist_ok=True)
+    os.chmod(settings.local_dir, 0o700)
+    with archive.workdir(f'{root}/var/lib/anysda-vpn2', '.backup-tmp.') as work:
+        ts = datetime.now(UTC).strftime('%Y-%m-%dT%H%M%SZ')
+        name = f'anysda-vpn2-{ts}'
+        bundle = work / name
+        bundle.mkdir()
+        enter('копирование /etc/anysda не прошло')
+        copy_etc_anysda(bundle, root)
+        enter('снимок базы и ключей не снят')
+        warning = take_slices(bundle, root, check=check, pause=pause, wait=wait)
+        enter('копирование настроек служб не прошло')
+        copy_extras(bundle, root)
+        enter('описание архива не записано')
+        write_manifest(bundle, root, ts)
+        final = f'{settings.local_dir}/{name}.tar.gz.age'
+        enter('упаковка и шифрование не прошли')
+        _must(['tar', '-C', str(work), '-czf', str(work / f'{name}.tar.gz'), name])
+        archive.encrypt(work / f'{name}.tar.gz', work / f'{name}.tar.gz.age', settings.passphrase)
+        enter('архив не сохранён на диск')
+        shutil.move(work / f'{name}.tar.gz.age', final)
+        os.chmod(final, 0o600)
+        enter('старые архивы не убраны')
+        rotate_local(settings.local_dir, final, retention)
+        if settings.backend == 's3':
+            enter('выгрузка в S3 не прошла')
+            upload_s3(settings, final, f'{name}.tar.gz.age', retention)
+    print(f"\n{'backup:':<12} {final}\n{'size:':<12} {os.path.getsize(final)} bytes\n"
+          f"{'hash:':<12} {archive.sha_file(final)}\n"
+          f"{'backend:':<12} {settings.backend}\n{'retention:':<12} keep last {settings.retention}")
+    if warning:
+        print(f"{'warning:':<12} {warning}")
+    return warning
+
+
+def create(settings, *, paths=Paths(), check=check_slice, pause=3, lock_wait=LOCK_WAIT):
+    """Снять зашифрованный бэкап узла; код выхода 0, 4 с предупреждением, иначе сбой.
+
+    Временный каталог убирается при любом исходе, при коде не 0 в журнал панели уходит событие.
+    """
+    old_umask = os.umask(0o077)
+    kind, detail, cause, steps = 'backup_failed', '', '', ['']
+    try:
+        detail = _make(settings, paths, steps.append, check, pause, lock_wait)
+        rc, kind = (4, 'backup_warning') if detail else (0, kind)
+    except Stop as stop:
+        rc, detail, cause = stop.code, stop.reason, stop.cause
+    except archive.ArchiveError as exc:
+        _warn(exc.message)
+        rc, cause = exc.code, exc.message if exc.code == 3 else f'age: код выхода {exc.code}'
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        _warn(f'anysda-backup: {type(exc).__name__}: {exc}')
+        rc, cause = 1, _error_cause(exc)
+    finally:
+        os.umask(old_umask)
+    if rc:
+        secret_file = f'{paths.root}{notify.SECRET_FILE}'
+        if not detail:
+            detail = _masked(': '.join(filter(None, (steps[-1], cause or f'код выхода {rc}'))), settings, secret_file)
+        notify.panel_event({'type': kind, 'detail': notify.clean_detail(detail)}, secret_file=secret_file)
+    return rc
 
 
 def _error_cause(exc):
-    if isinstance(exc, subprocess.TimeoutExpired):
-        program = exc.cmd[0] if isinstance(exc.cmd, (list, tuple)) else exc.cmd
-        return f'{Path(str(program)).name}: нет ответа за {exc.timeout:g} с'
     if not isinstance(exc, OSError) or not exc.strerror:
         return str(exc) or type(exc).__name__
     where = f' ({exc.filename})' if exc.filename else ''
     return (NO_SPACE if exc.errno == errno.ENOSPC else exc.strerror) + where
 
 
-def _explain(state, settings, paths, cause):
-    """Причина для события: шаг и что на нём случилось; пароль и ключи в текст не попадают."""
-    if state.fail_reason or not state.step:
-        return
-    for secret in (settings.passphrase, settings.s3_access_key, settings.s3_secret_key, _secret(paths)):
-        if secret:
-            cause = cause.replace(secret, '***')
-    state.fail_reason = f'{state.step}: {cause}'
-
-
-def create(settings, *, paths=Paths(), run=subprocess.run, out=None, err=None, now=None,
-           check=None, sleep=time.sleep, lock_wait=LOCK_WAIT):
-    """Снять зашифрованный бэкап узла; код выхода как у anysda-backup.sh (0, 4 с предупреждением, иначе сбой).
-
-    Временный каталог убирается при любом исходе, при коде не 0 уходит событие (report_failure).
-    check(каталог, out, err) -> код сверки среза (0, 3, 5...); по умолчанию - vpn2.backup.check.
-    """
-    out = sys.stdout if out is None else out
-    err = sys.stderr if err is None else err
-    check = check or _default_check
-    state, rc = _State(), 1
-    err = state.tail = _Tail(err)
-    old_umask = os.umask(0o077)
+def _masked(text, settings, secret_file):
+    """Пароль и ключи в событие не попадают."""
     try:
-        rc = _make(settings, paths, state, run, out, err, now, check, sleep, lock_wait)
-    except _Stop as stop:
-        rc = stop.code
-        _explain(state, settings, paths, stop.why or _line_cause(err.line)
-                 or (f'{stop.program}: ' if stop.program else '') + f'код выхода {rc}')
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        _explain(state, settings, paths, _error_cause(exc))
-        err.write(f'anysda-backup: {type(exc).__name__}: {exc}\n')
-        rc = 1
-    finally:
-        os.umask(old_umask)
-        report_failure(rc, state, paths, run)
-    return rc
+        panel_secret = Path(secret_file).read_text().strip()
+    except OSError:
+        panel_secret = ''
+    for secret in (settings.passphrase, settings.s3_access_key, settings.s3_secret_key, panel_secret):
+        if secret:
+            text = text.replace(secret, '***')
+    return text

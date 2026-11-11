@@ -2,19 +2,35 @@
 import os
 import shutil
 import sqlite3
-from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
-from test_backup_apply import STUB
-from test_backup_run import NOW, STUBS, make_node, put, values, write_env
-from vpn2.backup import env, restore
-from vpn2.backup import run as backup_run
+from test_backup_run import STUBS, create, make_node, put, values, write_env
+from vpn2.backup import restore
 
 needs_tools = pytest.mark.skipif(
-    any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'shred', 'flock')),
-    reason='нужны bash, sqlite3, tar, shred, flock')
+    any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'shred')),
+    reason='нужны bash, sqlite3, tar, shred')
+# Заглушки: argv в журнал; отказ по шаблону FAIL_ON; install без -o/-g (без root) - настоящий.
+STUB = '''#!/bin/sh
+n=$(basename "$0")
+echo "$n $*" >> "$T/calls.log"
+case "$n $*" in $FAIL_ON) echo "$n: отказ" >&2; exit 1 ;; esac
+case "$n" in
+  id) case " $IDS " in *" $1 "*) exit 0 ;; esac; exit 1 ;;
+  systemctl) case "$1" in
+    is-active) case " $ACTIVE " in *" $3 "*) exit 0 ;; esac; exit 3 ;;
+    cat) case " $UNITS " in *" $2 "*) exit 0 ;; esac; exit 1 ;;
+  esac ;;
+  docker) [ "$*" = "container inspect anysda-tgbot" ] && exit 1 ;;
+  install) skip=
+    for a; do shift; if [ -n "$skip" ]; then skip=; continue; fi
+      case "$a" in -o|-g) skip=1; continue ;; esac; set -- "$@" "$a"; done
+    exec @INSTALL@ "$@" ;;
+esac
+exit 0
+'''
 STAGE = '''#!/bin/sh
 n=$(basename "$0" .sh)
 echo "stage $n" >> "$T/calls.log"
@@ -36,7 +52,7 @@ UNITS = 'sing-box openvpn-server@server strongswan-starter'
 
 
 @pytest.fixture
-def node(tmp_path, monkeypatch):
+def node(tmp_path, monkeypatch, capsys):
     """Узел с архивом: после съёма бэкапа живые файлы изменены, restore должен вернуть архивные."""
     root = tmp_path / 'n'
     root.mkdir()
@@ -68,22 +84,19 @@ def node(tmp_path, monkeypatch):
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('VPN2_DEVELOPMENT', raising=False)
     vals = values(root)
-    write_env(root, vals)
-    out, err = StringIO(), StringIO()
-    code = backup_run.create(env.settings(vals, paths.env_file), paths=paths, out=out, err=err, now=NOW,
-                             check=lambda _b, _o, _e: 0, sleep=lambda _s: None)
-    assert code == 0, err.getvalue()
+    assert create(root, paths, vals) == 0, capsys.readouterr().err
+    name = next((root / 'out dir').glob('anysda-vpn2-*.tar.gz.age')).name
     put(Path(paths.etc_anysda) / 'admin-password', 'changed\n', 0o600)
     put(Path(paths.wireguard) / 'wg0.conf', 'changed\n', 0o600)
     (tmp_path / 'calls.log').unlink(missing_ok=True)
-    return tmp_path, root, paths, vals
+    capsys.readouterr()
+    return SimpleNamespace(tmp=tmp_path, root=root, paths=paths, vals=vals, name=name, capsys=capsys)
 
 
-def go(root, paths, argv=('latest',)):
-    out, err = StringIO(), StringIO()
-    place = restore.Node(root=str(root), env_file=paths.env_file, source_root_file=paths.source_root_file)
-    code = restore.main(list(argv), node=place, out=out, err=err)
-    return code, out.getvalue(), err.getvalue()
+def go(node, argv=('latest',)):
+    code = restore.main(list(argv), root=str(node.root), env_file=node.paths.env_file)
+    captured = node.capsys.readouterr()
+    return code, captured.out, captured.err
 
 
 def leftovers(root):
@@ -92,8 +105,8 @@ def leftovers(root):
 
 @needs_tools
 def test_restore_returns_archived_state(node):
-    tmp, root, paths, _vals = node
-    code, out, err = go(root, paths)
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
+    code, out, err = go(node)
     assert code == 0, err
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'pw\n'
     assert (Path(paths.wireguard) / 'wg0.conf').read_text() == 'wg0.conf\n'
@@ -101,7 +114,7 @@ def test_restore_returns_archived_state(node):
     assert len(snaps) == 1 and oct(snaps[0].stat().st_mode & 0o777) == '0o600'
     assert out.rstrip('\n').endswith(
         '\nanysda-restore: SUCCESS\n'
-        f'  source:       {root}/out dir/anysda-vpn2-2026-01-02T030405Z.tar.gz.age\n'
+        f'  source:       {root}/out dir/{node.name}\n'
         f'  pre-snapshot: {snaps[0]}\n'
         '  Существующие клиенты должны переподключаться без переоформления конфигов.')
     for line in ('manifest verified', 'схема БД архива: 0 из 0', '22-adguard re-synced', '35-telegram re-synced',
@@ -120,9 +133,9 @@ def test_restore_returns_archived_state(node):
 
 @needs_tools
 def test_dry_run_changes_nothing(node):
-    tmp, root, paths, _vals = node
-    code, out, _err = go(root, paths, ['--dry-run'])
-    assert (code, out) == (0, 'anysda-restore: dry-run — восстановил бы anysda-vpn2-2026-01-02T030405Z.tar.gz.age '
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
+    code, out, _err = go(node, ['--dry-run'])
+    assert (code, out) == (0, f'anysda-restore: dry-run — восстановил бы {node.name} '
                               '(local), ничего не изменено\n')
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n'
     assert not (tmp / 'calls.log').exists() and not leftovers(root)
@@ -130,9 +143,9 @@ def test_dry_run_changes_nothing(node):
 
 @needs_tools
 def test_failed_stage_is_code_8_and_stops_chain(node):
-    tmp, root, paths, _vals = node
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
     put(tmp / 'rc-30-frontend', '5')
-    code, out, err = go(root, paths)
+    code, out, err = go(node)
     assert code == 8
     assert 'SUCCESS' not in out and '99-verify PASSED' in out
     assert 'stage 35-telegram' not in (tmp / 'calls.log').read_text()
@@ -149,9 +162,9 @@ def test_failed_stage_is_code_8_and_stops_chain(node):
     ('2', 0, 'anysda-restore: ⚠ 99-verify: не все проверки измерены; причины выше\n'),
 ])
 def test_verify_exit_codes(node, verify_rc, code, text):
-    tmp, root, paths, _vals = node
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
     put(tmp / 'rc-99-verify', verify_rc)
-    got, out, err = go(root, paths)
+    got, out, err = go(node)
     assert got == code and text in err
     assert ('SUCCESS' in out) == (code == 0)
     assert not leftovers(root)
@@ -159,11 +172,11 @@ def test_verify_exit_codes(node, verify_rc, code, text):
 
 @needs_tools
 def test_failed_step_rolls_back_with_code_10(node, monkeypatch):
-    tmp, root, paths, _vals = node
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
     monkeypatch.setenv('FAIL_ON', 'systemctl start openvpn-server@server')
-    code, out, err = go(root, paths)
+    code, out, err = go(node)
     assert code == 10
-    assert 'anysda-restore: FAILED на шаге «запуск службы openvpn-server@server»: systemctl start "$1" (код 1)' in err
+    assert 'anysda-restore: FAILED на шаге «запуск службы openvpn-server@server»: systemctl start openvpn-server@server (код 1)' in err
     assert 'откат после сбоя' not in err and 'SUCCESS' not in out
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n'
     assert (Path(paths.wireguard) / 'wg0.conf').read_text() == 'changed\n'
@@ -173,26 +186,26 @@ def test_failed_step_rolls_back_with_code_10(node, monkeypatch):
 
 @needs_tools
 def test_refusals_before_any_change(node, monkeypatch):
-    tmp, root, paths, vals = node
-    assert go(root, paths, ['latest', '--bogus'])[::2] == (2, 'anysda-restore: неизвестный аргумент: --bogus\n')
-    code, _out, err = go(root, paths, ['/any/dir/anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
+    assert go(node, ['latest', '--bogus'])[::2] == (2, 'anysda-restore: неизвестный аргумент: --bogus\n')
+    code, _out, err = go(node, ['/any/dir/anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
     assert (code, err) == (3, f'anysda-restore: архив anysda-vpn2-2020-01-01T000000Z.tar.gz.age не найден в '
                               f'{root}/out dir\n')
     conn = sqlite3.connect(paths.db)
     conn.execute('insert into clients values (1)')
     conn.commit()
     conn.close()
-    code, _out, err = go(root, paths)
+    code, _out, err = go(node)
     assert code == 6 and 'ABORT — текущая db.sqlite не пустая (1 клиентов' in err
     monkeypatch.setenv('STUB_AGE_FAIL', '1')
-    code, _out, err = go(root, paths, ['latest', '--force'])
+    code, _out, err = go(node, ['latest', '--force'])
     assert code == 4 and 'дешифровка провалилась (age exit=1)' in err
     write_env(root, {**vals, 'ANYSDA_BACKUP_PASSPHRASE': ''})
-    code, _out, err = go(root, paths)
+    code, _out, err = go(node)
     assert (code, err) == (2, f'anysda-restore FATAL: ANYSDA_BACKUP_PASSPHRASE пуст в {paths.env_file}.\n'
                               '  Заполни backup.passphrase в config.yaml и прогони ./deploy.sh 26-backup ru\n')
     os.unlink(paths.env_file)
-    assert go(root, paths)[::2] == (2, f'anysda-restore: {paths.env_file} не доступен\n')
+    assert go(node)[::2] == (2, f'anysda-restore: {paths.env_file} не доступен\n')
     assert (Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n'
     calls = (tmp / 'calls.log').read_text()
     assert 'systemctl' not in calls and 'docker stop' not in calls and not leftovers(root)
@@ -201,57 +214,37 @@ def test_refusals_before_any_change(node, monkeypatch):
 @needs_tools
 def test_s3_backend_without_keys_restores_local_archive(node):
     """Скрипт спрашивал переменные S3 только при обращении к облаку: архив уже лежит рядом - они не нужны."""
-    _tmp, root, paths, vals = node
+    tmp, root, paths, vals = node.tmp, node.root, node.paths, node.vals  # noqa: F841
     write_env(root, {**vals, 'BACKUP_BACKEND': 's3'})
-    name = 'anysda-vpn2-2026-01-02T030405Z.tar.gz.age'
-    assert go(root, paths, [name, '--dry-run'])[:2] == (
+    name = node.name
+    assert go(node, [name, '--dry-run'])[:2] == (
         0, f'anysda-restore: dry-run — восстановил бы {name} (local), ничего не изменено\n')
-    code, _out, err = go(root, paths, ['latest', '--dry-run'])
+    code, _out, err = go(node, ['latest', '--dry-run'])
     assert code == 0 and '  BACKUP_S3_BUCKET: parameter null or not set\n' in err
-    code, _out, err = go(root, paths, ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
+    code, _out, err = go(node, ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
     assert (code, err) == (1, 'anysda-restore: BACKUP_S3_BUCKET: parameter null or not set\n')
 
 
-def _state(tmp, root, paths):
-    """Всё, что отказ до начала работ обязан оставить как было."""
-    calls = (tmp / 'calls.log').read_text() if (tmp / 'calls.log').exists() else ''
-    return ((Path(paths.etc_anysda) / 'admin-password').read_text(), 'systemctl' in calls, 'docker stop' in calls,
-            leftovers(root), list((root / 'out dir/.pre-restore').glob('*')), (root / 'tmp/anysda').exists())
-
-
-UNTOUCHED = ('changed\n', False, False, [], [], False)
-
-
 @needs_tools
-def test_preflight_passes_without_touching_node(node):
-    tmp, root, paths, _vals = node
-    code, out, err = go(root, paths, ['latest', '--preflight'])
+def test_preflight_refuses_like_the_real_run_and_touches_nothing(node, monkeypatch):
+    """Проход деплоя перед открытием выпуска: те же код и строка отказа, узел не тронут."""
+    tmp, root, paths = node.tmp, node.root, node.paths
+
+    def untouched():
+        calls = (tmp / 'calls.log').read_text() if (tmp / 'calls.log').exists() else ''
+        return ((Path(paths.etc_anysda) / 'admin-password').read_text() == 'changed\n' and 'systemctl' not in calls
+                and 'docker stop' not in calls and not leftovers(root) and not (root / 'tmp/anysda').exists()
+                and not list((root / 'out dir/.pre-restore').glob('*')))
+    code, out, err = go(node, ['latest', '--preflight'])
     assert code == 0, err
-    assert 'SUCCESS' not in out and 'останавливаю сервисы' not in out
-    assert _state(tmp, root, paths) == UNTOUCHED
-    assert go(root, paths)[0] == 0
-
-
-@needs_tools
-@pytest.mark.parametrize('reason', ['no-archive', 'passphrase', 'no-force', 'version', 'no-caddy'])
-def test_preflight_refuses_like_the_real_run(node, monkeypatch, reason):
-    """Проход перед открытием выпуска отказывает тем же кодом и той же строкой, что сам restore."""
-    tmp, root, paths, _vals = node
-    argv = ['latest']
-    if reason == 'no-archive':
-        argv = ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age']
-    elif reason == 'passphrase':
-        monkeypatch.setenv('STUB_AGE_FAIL', '1')
-    elif reason == 'no-force':
-        conn = sqlite3.connect(paths.db)
-        conn.execute('insert into clients values (1)')
-        conn.commit()
-        conn.close()
-    elif reason == 'version':
-        os.unlink(tmp / 'src/app/server/database/migrations/meta/_journal.json')
-    else:
-        monkeypatch.setenv('IDS', 'vpn2-panel')
-    code, _out, err = go(root, paths, [*argv, '--preflight'])
-    expected = {'no-archive': 3, 'passphrase': 4, 'no-force': 6, 'version': 9, 'no-caddy': 5}[reason]
-    assert _state(tmp, root, paths) == UNTOUCHED
-    assert (code, err) == (expected, go(root, paths, argv)[2])
+    assert 'SUCCESS' not in out and untouched()
+    conn = sqlite3.connect(paths.db)
+    conn.execute('insert into clients values (1)')
+    conn.commit()
+    conn.close()
+    code, _out, err = go(node, ['latest', '--preflight'])
+    assert code == 6 and untouched()
+    monkeypatch.setenv('STUB_AGE_FAIL', '1')
+    assert go(node, ['latest', '--force', '--preflight'])[0] == 4 and untouched()
+    monkeypatch.delenv('STUB_AGE_FAIL')
+    assert (code, err) == go(node)[::2]

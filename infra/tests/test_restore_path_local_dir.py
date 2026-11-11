@@ -46,9 +46,7 @@ class TestRestoreLocalArchivePath(unittest.TestCase):
         restore_sh.write_text(f'''#!/bin/sh
 PYTHONPATH={ROOT}/infra/vpn2/src exec python3 -c 'import sys
 from vpn2.backup import restore
-node = restore.Node(root="{entry}", env_file="{entry}/etc/anysda/backup.env",
-                    source_root_file="{entry}/etc/anysda/source-root")
-sys.exit(restore.main(sys.argv[1:], node=node))' "$@"
+sys.exit(restore.main(sys.argv[1:], root="{entry}", env_file="{entry}/etc/anysda/backup.env"))' "$@"
 ''')
         restore_sh.chmod(0o755)
         age = entry / 'stub/age'

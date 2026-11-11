@@ -7,10 +7,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from vpn2 import wg
 from vpn2.backup import check
-from vpn2.backup.bundle import write_manifest
 from vpn2.cli import backup as cli_backup
 
 LIB = Path(__file__).resolve().parents[2] / 'lib'
@@ -67,7 +65,7 @@ def build(root, *, devices=(), clients=(), ops=(), peers=None, swanctl=None, db=
         (root / 'etc-openvpn/server/pki').mkdir(parents=True)
         (root / 'etc-openvpn/server/pki/crl.pem').write_text(crl)
     if manifest:
-        write_manifest(root, {'timestamp': STAMP, 'components': {}})
+        (root / 'manifest.json').write_text(json.dumps({'timestamp': STAMP, 'components': {}}))
     return root
 
 

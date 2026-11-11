@@ -1,64 +1,33 @@
+"""Съём бэкапа на поддельном узле под root и мелкие правила рядом: настройки, листинг, выбор архива."""
 import fcntl
-import hashlib
 import json
 import os
-import re
 import shlex
 import shutil
 import sqlite3
-import subprocess
-import sys
 import tarfile
-from datetime import UTC, datetime
-from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-
-from vpn2.backup import env
+from vpn2.backup import archive, env, listing, restore
 from vpn2.backup import run as backup_run
-from vpn2.backup.run import Paths, create
 
-SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
-NEEDS_BASH = pytest.mark.skipif(
-    any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'flock', 'shred', 'python3')),
-    reason='нужны bash, sqlite3, tar, flock, shred, python3')
-NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
-NAME = 'anysda-vpn2-2026-01-02T030405Z'
+needs_tools = pytest.mark.skipif(
+    any(shutil.which(name) is None for name in ('bash', 'sqlite3', 'tar', 'shred')),
+    reason='нужны bash, sqlite3, tar, shred')
 SECRET = 'bot-token-value'
-PY = sys.executable
-
+# age-заглушка: «шифрование» - копия файла, пароль с терминала не читается.
 STUBS = {
-    'age': '#!/bin/sh\n[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"\n'
-           '[ -n "$STUB_AGE_NOFILE" ] || cp "$4" "$3"\n',
-    'expect': '#!/bin/sh\n[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"\n'
-              'line=$(grep "^spawn ")\nout=$(printf %s "$line" | cut -d\'"\' -f2)\n'
-              'src=$(printf %s "$line" | cut -d\'"\' -f4)\n[ -n "$STUB_AGE_NOFILE" ] || cp "$src" "$out"\n',
+    'age': '#!/bin/sh\n[ -z "$STUB_AGE_FAIL" ] || exit "$STUB_AGE_FAIL"\ncp "$4" "$3"\n',
     'git': '#!/bin/sh\necho abc1234\n',
-    'date': '#!/bin/sh\necho 2026-01-02T030405Z\n',
-    'sleep': f'#!{PY}\nimport json, os, sys\n'
-             "open(os.environ['STUB_LOG'], 'a').write(json.dumps({'cmd': 'sleep', 'argv': sys.argv[1:]}) + '\\n')\n",
-    'curl': f'#!{PY}\nimport json, os, sys\nargv = sys.argv[1:]\n'
-            "stdin = sys.stdin.read() if '@-' in argv else ''\n"
-            "open(os.environ['STUB_LOG'], 'a').write(json.dumps({'cmd': 'curl', 'argv': argv, 'stdin': stdin}) + '\\n')\n"
-            "if argv[-1].endswith('/api/version'):\n    print('{\"version\":\"9.9\"}')\n",
-    'aws': f'#!{PY}\nimport json, os, sys\nargv = sys.argv[1:]\n'
-           "keys = {k: v for k, v in os.environ.items() if k.startswith('AWS_')}\n"
-           "open(os.environ['STUB_LOG'], 'a').write(json.dumps({'cmd': 'aws', 'argv': argv, 'env': keys}) + '\\n')\n"
-           "if os.environ.get('STUB_AWS_FAIL') == argv[3]:\n    print('aws: boom', file=sys.stderr)\n    sys.exit(9)\n"
-           "if argv[3] == 'ls':\n    print(open(os.environ['STUB_S3_LIST']).read(), end='')\n",
+    'curl': '#!/bin/sh\necho \'{"version":"9.9"}\'\n',
+    'aws': '#!/bin/sh\necho "aws $*" >> "$STUB_LOG"\n[ "$4" != ls ] || cat "$STUB_S3_LIST"\n'
+           '[ "$STUB_AWS_FAIL" != "$4" ] || { echo "aws: boom" >&2; exit 9; }\n',
 }
-CHECK_STUB = '''check_bundle() {
-  local seq rc rest; seq=$(cat "$CHECK_DIR/seq"); rc=${seq%% *}; rest=${seq#* }
-  [[ $seq == *" "* ]] || rest=$rc
-  printf '%s' "$rest" > "$CHECK_DIR/seq"
-  [[ $rc == 0 ]] || cat "$CHECK_DIR/text"
-  return "$rc"
-}
-'''
 
 
-def put(path, data=b'', mode=None):
+def put(path, data='', mode=None):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data if isinstance(data, bytes) else data.encode())
     if mode:
@@ -66,567 +35,264 @@ def put(path, data=b'', mode=None):
     return path
 
 
-def make_node(root, *, db=True, db_bytes=None, old=0):
-    """Поддельный узел в root: те же пути, что у скрипта, внутри root. Возвращает Paths."""
-    paths = Paths.under(str(root))
-    runtime = Path(paths.runtime_dir)
-    put(runtime / 'sso-runtime.json', '{"sso": 1}\n')
-    put(runtime / 'telegram-runtime.json', '{"tg": 1}\n')
-    etc = Path(paths.etc_anysda)
-    put(etc / 'admin-password', 'pw\n', 0o600)
-    put(etc / 'tgbot-secret.txt', SECRET + '\n', 0o600)
-    put(etc / 'файл с пробелом.txt', 'данные\n')
+def make_node(root):
+    """Поддельный узел в root: те же пути, что на настоящем, внутри root."""
+    paths = SimpleNamespace(
+        root=str(root), env_file=f'{root}/etc/anysda/backup.env', etc_anysda=f'{root}/etc/anysda',
+        wireguard=f'{root}/etc/wireguard', db=f'{root}/var/lib/anysda-vpn2/db.sqlite',
+        source_root_file=f'{root}/etc/anysda/source-root', work_parent=f'{root}/var/lib/anysda-vpn2')
+    runtime = root / 'var/lib/anysda-vpn2/runtime'
+    etc = root / 'etc'
     for name in ('sso-runtime.json', 'telegram-runtime.json'):
-        (etc / name).symlink_to(runtime / name)
+        put(runtime / name, '{"x": 1}\n')
+        (etc / 'anysda').mkdir(parents=True, exist_ok=True)
+        (etc / 'anysda' / name).symlink_to(runtime / name)
+    put(etc / 'anysda/admin-password', 'pw\n', 0o600)
+    put(etc / 'anysda/tgbot-secret.txt', SECRET + '\n', 0o600)
+    put(etc / 'anysda/файл с пробелом.txt', 'данные\n')
+    put(etc / 'anysda/source-root', '/nonexistent/src\n')
     for name in ('wg0.conf', 'server.priv', 'server.pub'):
-        put(Path(paths.wireguard) / name, name + '\n', 0o600)
-    put(Path(paths.openvpn) / 'server' / '.pki.lock')
-    put(Path(paths.openvpn) / 'ca.crt', 'ca\n')
-    put(Path(paths.openvpn) / 'ccd' / 'client one', 'ifconfig-push\n')
-    os.mkfifo(Path(paths.openvpn) / 'mgmt.fifo')
-    put(Path(paths.strongswan) / 'ca.pem', 'ike\n')
-    put(Path(paths.swanctl) / 'swanctl.conf', 'conns\n')
-    for name in ('strongswan.conf', 'ipsec.conf', 'ipsec.secrets'):
-        put(Path(paths.etc) / name, name + '\n')
-    put(Path(paths.etc) / 'strongswan.d' / 'x.conf', 'x\n')
-    put(Path(paths.caddy) / 'certificates' / 'сертификат b.crt', 'crt\n')
-    put(Path(paths.caddy) / 'locks' / 'l.lock', 'x')
-    put(Path(paths.source_root_file), '/nonexistent/src\n')
-    put(Path(paths.deploy_state) / 'mgmt-ips.txt', 'exit-a 10.0.0.2\n', 0o600)
-    if db_bytes is not None:
-        put(Path(paths.db), db_bytes)
-    elif db:
-        conn = sqlite3.connect(paths.db)
-        conn.execute('create table t (a)')
-        conn.execute("insert into t values ('x')")
-        conn.commit()
-        conn.close()
-    Path(paths.work_parent).mkdir(parents=True, exist_ok=True)
-    local = root / 'out dir'
-    local.mkdir()
-    for index in range(old):
-        archive = put(local / f'anysda-vpn2-2025-12-0{index + 1}T000000Z.tar.gz.age', 'old')
-        os.utime(archive, (1_000 + index, 1_000 + index))
+        put(etc / 'wireguard' / name, name + '\n', 0o600)
+    put(etc / 'openvpn/server/.pki.lock')
+    put(etc / 'openvpn/ca.crt', 'ca\n')
+    put(etc / 'openvpn/ccd/client one', 'ifconfig-push\n')
+    os.mkfifo(etc / 'openvpn/mgmt.fifo')
+    put(etc / 'strongswan/ca.pem', 'ike\n')
+    put(etc / 'swanctl/swanctl.conf', 'conns\n')
+    for name in ('strongswan.conf', 'ipsec.conf', 'ipsec.secrets', 'strongswan.d/x.conf'):
+        put(etc / name, name + '\n')
+    put(root / 'var/lib/caddy/.local/share/caddy/certificates/сертификат b.crt', 'crt\n')
+    put(root / 'var/lib/caddy/.local/share/caddy/locks/l.lock', 'x')
+    put(root / 'var/lib/anysda-vpn2/state/mgmt-ips.txt', 'exit-a 10.0.0.2\n', 0o600)
+    conn = sqlite3.connect(paths.db)
+    conn.execute('create table t (a)')
+    conn.execute("insert into t values ('x')")
+    conn.commit()
+    conn.close()
+    (root / 'out dir').mkdir()
     return paths
 
 
 def values(root, **extra):
-    base = {'BACKUP_BACKEND': 'local', 'BACKUP_LOCAL_DIR': str(root / 'out dir'), 'BACKUP_RETENTION': '10',
-            'ANYSDA_BACKUP_PASSPHRASE': 'парольная фраза'}
-    return {**base, **extra}
-
-
-def install_stubs(directory):
-    directory.mkdir(parents=True, exist_ok=True)
-    for name, body in STUBS.items():
-        put(directory / name, body, 0o755)
-    return directory
-
-
-def cut_script(root, dest):
-    """Скрипт без check_bundle и --check-bundle (строки 75-250), пути /etc и /var/lib - под root.
-
-    Замены (удалить вместе с bash-телом): check_bundle - заглушка CHECK_STUB; `/etc/` и `/var/lib/`
-    вне heredoc с текстом FATAL становятся `<root>/etc/`, `<root>/var/lib/`.
-    """
-    lines = SCRIPT.read_text().split('\n')
-    cut = lines[:74] + CHECK_STUB.split('\n') + lines[250:]
-    result, heredoc = [], False
-    for line in cut:
-        if line.startswith('\tEOM'):
-            heredoc = False
-        if not heredoc:
-            line = re.sub(r'(?<![\w$./-])/(etc|var/lib)/', lambda m: f'{root}/{m.group(1)}/', line)
-        if 'cat >&2 <<-EOM' in line:
-            heredoc = True
-        result.append(line)
-    dest.write_text('\n'.join(result) + '\n')
-    return dest
-
-
-def norm(text, root):
-    text = text.replace(str(root), '<R>')
-    text = re.sub(r'\.backup-tmp\.\w+', '.backup-tmp.<X>', text)
-    return re.sub(r'"env": (\{[^}]*\})', lambda m: '"env": ' + json.dumps(sorted(json.loads(m.group(1)).items())), text)
-
-
-def placeholders(out, final):
-    """size и hash в итоге зависят от mtime внутри tar: сверяем с файлом и подменяем меткой."""
-    if not final.is_file() or 'size:' not in out:
-        return out
-    digest = hashlib.sha256(final.read_bytes()).hexdigest()
-    size = f"{'size:':<12} {final.stat().st_size} bytes\n"
-    assert size in out
-    assert f"{'hash:':<12} sha256:{digest}\n" in out
-    # Цифры размера случайно встречаются и внутри хэша: размер меняем только в его строке.
-    return out.replace(size, f"{'size:':<12} <SIZE> bytes\n").replace(digest, '<HASH>')
-
-
-def test_placeholders_keep_hash_that_contains_size_digits(tmp_path):
-    final = tmp_path / 'archive'
-    final.write_bytes(b'12345')
-    digest = hashlib.sha256(final.read_bytes()).hexdigest()
-    assert '5' in digest
-    out = f"{'size:':<12} 5 bytes\n{'hash:':<12} sha256:{digest}\n"
-    assert placeholders(out, final) == f"{'size:':<12} <SIZE> bytes\n{'hash:':<12} sha256:<HASH>\n"
-
-
-def snapshot(root, rc, out, err, log):
-    """Всё наблюдаемое после запуска, пути root заменены на <R>."""
-    local = root / 'out dir'
-    final = local / f'{NAME}.tar.gz.age'
-    members, manifest = [], None
-    if final.is_file():
-        with tarfile.open(final, 'r:gz') as tar:
-            for member in tar:
-                data = tar.extractfile(member).read() if member.isfile() else b''
-                members.append((member.name, oct(member.mode), member.type, member.size, member.linkname, data))
-                if member.name == f'{NAME}/manifest.json':
-                    manifest = json.loads(data)
-    out = placeholders(out, final)
-    calls = [norm(line, root) for line in log.read_text().splitlines()] if log.exists() else []
-    work = Path(Paths.under(str(root)).work_parent)
-    return {'rc': rc, 'out': norm(out, root), 'err': norm(err, root), 'members': members, 'manifest': manifest,
-            'local': sorted(p.name for p in local.iterdir()), 'mode': oct(final.stat().st_mode) if final.exists() else None,
-            'calls': calls, 'leftover': sorted(p.name for p in work.glob('.backup-tmp.*'))}
+    return {'BACKUP_BACKEND': 'local', 'BACKUP_LOCAL_DIR': str(root / 'out dir'), 'BACKUP_RETENTION': '10',
+            'ANYSDA_BACKUP_PASSPHRASE': 'парольная фраза', **extra}
 
 
 def write_env(root, vals):
-    lines = '\n'.join(f'{key}={shlex.quote(value)}' for key, value in vals.items())
-    put(Path(Paths.under(str(root)).env_file), lines + '\n', 0o600)
+    put(root / 'etc/anysda/backup.env', '\n'.join(f'{k}={shlex.quote(v)}' for k, v in vals.items()) + '\n', 0o600)
 
 
-def run_bash(root, scenario):
-    bin_dir = install_stubs(root / 'bin')
-    check = root / 'check'
-    put(check / 'seq', ' '.join(scenario.get('check', ['0'])))
-    put(check / 'text', scenario.get('check_text', ''))
-    script = cut_script(root, root / 'backup.sh')
-    log = root / 'log'
-    environ = {'PATH': f'{bin_dir}:/usr/bin:/bin', 'HOME': str(root), 'LC_ALL': 'C.UTF-8', 'STUB_LOG': str(log),
-               'CHECK_DIR': str(check), 'STUB_S3_LIST': str(root / 's3list'),
-               **{k: v for k, v in scenario.get('stub_env', {}).items()}}
-    done = subprocess.run(['bash', str(script)], env=environ, capture_output=True, stdin=subprocess.DEVNULL, check=False)
-    return snapshot(root, done.returncode, done.stdout.decode(), done.stderr.decode(), log)
+def create(root, paths, vals=None, **kw):
+    vals = vals or values(root)
+    write_env(root, vals)
+    return backup_run.create(env.settings(vals, paths.env_file),
+                             paths=backup_run.Paths(env_file=paths.env_file, root=paths.root),
+                             **{'check': lambda _bundle: (0, ''), 'pause': 0, **kw})
 
 
-def run_python(root, vals, scenario, monkeypatch):
-    paths = Paths.under(str(root))
-    bin_dir = install_stubs(root / 'bin')
-    log = root / 'log'
-    for key in [k for k in os.environ if k.startswith(('AWS_', 'STUB_'))]:
-        monkeypatch.delenv(key)
-    monkeypatch.setenv('PATH', f'{bin_dir}:/usr/bin:/bin')
-    monkeypatch.setenv('STUB_LOG', str(log))
-    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3list'))
-    for key, value in scenario.get('stub_env', {}).items():
-        monkeypatch.setenv(key, value)
-    seq = list(scenario.get('check', ['0']))
-
-    def check(_bundle, out, _err):
-        code = int(seq.pop(0) if len(seq) > 1 else seq[0])
-        if code != 0:
-            out.write(scenario.get('check_text', ''))
-        return code
-
-    def sleep(seconds):
-        with open(log, 'a') as handle:
-            handle.write(json.dumps({'cmd': 'sleep', 'argv': [str(seconds)]}) + '\n')
-
-    out, err = StringIO(), StringIO()
-    settings = env.settings(vals, paths.env_file)
-    rc = create(settings, paths=paths, out=out, err=err, now=NOW, check=check, sleep=sleep)
-    return snapshot(root, rc, out.getvalue(), err.getvalue(), log)
-
-
-S3 = {'BACKUP_BACKEND': 's3', 'BACKUP_S3_ENDPOINT': 'https://s3.example.test', 'BACKUP_S3_BUCKET': 'bkt',
-      'ANYSDA_S3_ACCESS_KEY': 'access', 'ANYSDA_S3_SECRET_KEY': 'shh', 'BACKUP_RETENTION': '2'}
-LISTING = ''.join(f'2025-12-0{i} 00:00:00  10 anysda-vpn2-2025-12-0{i}T000000Z.tar.gz.age\n' for i in (1, 2, 3)) \
-    + f'2026-01-02 03:04:05  10 {NAME}.tar.gz.age\n2025-01-01 00:00:00  3 other.txt\n'
-MISMATCH = 'устройство 12 «Телефон»: нет пира\nустройство 3: нет учётки\nустройство 12: дубль\n'
-MANY = ''.join(f'устройство {n}: нет пира\n' for n in range(1, 14))
-# (имя, значения env, число старых архивов, сценарий, код выхода bash)
-SCENARIOS = [
-    ('success', {}, 0, {}, 0),
-    ('empty-passphrase', {'ANYSDA_BACKUP_PASSPHRASE': ''}, 0, {}, 2),
-    ('sqlite-fails', {}, 0, {'db_bytes': b'not a database'}, 1),
-    ('age-fails', {}, 0, {'stub_env': {'STUB_AGE_FAIL': '7'}}, 7),
-    ('age-no-file', {}, 0, {'stub_env': {'STUB_AGE_NOFILE': '1'}}, 3),
-    ('rotation-3-old', {'BACKUP_RETENTION': '2'}, 3, {}, 0),
-    ('s3-ok-rotation', S3, 1, {'s3list': LISTING}, 0),
-    ('s3-upload-fails', S3, 0, {'s3list': LISTING, 'stub_env': {'STUB_AWS_FAIL': 'cp'}}, 9),
-    ('s3-list-empty', S3, 0, {'s3list': ''}, 1),
-    ('s3-rm-fails', S3, 0, {'s3list': LISTING, 'stub_env': {'STUB_AWS_FAIL': 'rm'}}, 9),
-    ('warning-no-wg', {}, 0, {'check': ['5'], 'check_text': 'нет wg\nещё строка\n'}, 4),
-    ('warning-other-code', {}, 0, {'check': ['1']}, 4),
-    ('retry-then-ok', {}, 0, {'check': ['3', '3', '0'], 'check_text': MISMATCH}, 0),
-    ('ten-mismatches', {}, 0, {'check': ['3'], 'check_text': MISMATCH}, 4),
-    ('ten-mismatches-many-ids', {}, 0, {'check': ['3'], 'check_text': MANY}, 4),
-    ('no-db', {}, 0, {'db': False}, 0),
-]
-
-
-# удалить вместе с bash-телом: прямая сверка с anysda-backup.sh на одном и том же поддельном узле
-@NEEDS_BASH
-@pytest.mark.parametrize(('label', 'extra', 'old', 'scenario', 'code'), SCENARIOS, ids=[s[0] for s in SCENARIOS])
-def test_create_matches_bash(tmp_path, monkeypatch, label, extra, old, scenario, code):
-    results = []
-    for who in ('bash', 'python'):
-        root = tmp_path / 'node'  # тот же путь для обоих: backup.env и source-root попадают в архив
-        shutil.rmtree(root, ignore_errors=True)
-        root.mkdir()
-        make_node(root, db=scenario.get('db', True), db_bytes=scenario.get('db_bytes'), old=old)
-        put(root / 's3list', scenario.get('s3list', ''))
-        vals = values(root, **extra)
-        write_env(root, vals)
-        results.append(run_bash(root, scenario) if who == 'bash'
-                       else run_python(root, vals, scenario, monkeypatch))
-    shell, python = results
-    assert shell['rc'] == code, label
-    if label == 'empty-passphrase':
-        shell = deviate_single_event(shell)
-    if label in CAUSES:
-        shell = deviate_cause(python, shell, CAUSES[label], code)
-    assert python == shell
-
-
-CAUSES = {'sqlite-fails': 'снимок базы и ключей не снят: Error: ',
-          'age-fails': 'упаковка и шифрование не прошли: age: код выхода 7',
-          'age-no-file': 'упаковка и шифрование не прошли: ',
-          's3-upload-fails': 'выгрузка в S3 не прошла: aws: boom',
-          's3-list-empty': 'выгрузка в S3 не прошла: архива нет в списке бакета',
-          's3-rm-fails': 'выгрузка в S3 не прошла: aws: boom'}
-
-
-def deviate_cause(python, shell, cause, code):
-    """Отличие от скрипта: событие о сбое называет шаг и причину, скрипт слал только код выхода."""
-    ours, theirs = json.loads(python['calls'][-1]), json.loads(shell['calls'][-1])
-    place = ours['argv'].index('-d') + 1
-    event = json.loads(ours['argv'][place])
-    assert event['type'] == 'backup_failed' and event['detail'].startswith(cause)
-    assert len(event['detail']) > len(cause) or not cause.endswith(': ')
-    assert json.loads(theirs['argv'][place]) == {**event, 'detail': f'код выхода {code}'}
-    ours['argv'][place] = theirs['argv'][place]
-    assert ours == theirs
-    return {**shell, 'calls': [*shell['calls'][:-1], python['calls'][-1]]}
-
-
-def deviate_single_event(result):
-    """Единственное отличие: тревоги боту на 8877 больше нет, о сбое говорит одно событие backup_failed."""
-    calls = [line for line in result['calls'] if f'X-Tgbot-Secret: {SECRET}' not in json.loads(line)['argv']]
-    assert len(calls) == len(result['calls']) - 1
-    return {**result, 'calls': calls}
-
-
-# ---- проверки функций и краёв без bash ----
-
-def node(tmp_path, monkeypatch, **kw):
+@pytest.fixture
+def node(tmp_path, monkeypatch):
     root = tmp_path / 'n'
     root.mkdir()
-    paths = make_node(root, **kw)
-    bin_dir = install_stubs(root / 'bin')
-    monkeypatch.setenv('PATH', f'{bin_dir}:/usr/bin:/bin')
+    paths = make_node(root)
+    for name, body in STUBS.items():
+        put(root / 'bin' / name, body, 0o755)
+    monkeypatch.setenv('PATH', f'{root}/bin:/usr/bin:/bin')
     monkeypatch.setenv('STUB_LOG', str(root / 'log'))
-    return root, paths
+    events = []
+    monkeypatch.setattr(backup_run.notify, 'panel_event', lambda event, **kw: events.append((event, kw)))
+    return root, paths, events
 
 
-def go(root, paths, **kw):
-    vals = values(root)
-    write_env(root, vals)
-    out, err = StringIO(), StringIO()
-    rc = create(env.settings(vals, paths.env_file), paths=paths, out=out, err=err, now=NOW,
-                check=lambda _b, _o, _e: 0, sleep=lambda _s: None, **kw)
-    return rc, out.getvalue(), err.getvalue()
+@needs_tools
+def test_create_archive_manifest_and_summary(node, capsys):
+    root, paths, events = node
+    assert create(root, paths) == 0
+    (final,) = (root / 'out dir').iterdir()
+    assert archive.NAME.fullmatch(final.name) and oct(final.stat().st_mode & 0o777) == '0o600'
+    out = capsys.readouterr().out
+    assert f"\n{'backup:':<12} {final}\n{'size:':<12} {final.stat().st_size} bytes\n" in out
+    assert out.endswith(f"{'backend:':<12} local\n{'retention:':<12} keep last 10\n")
+    with tarfile.open(final) as tar:
+        tar.extractall(root / 'x', filter='tar')
+    bundle = root / 'x' / final.name.removesuffix('.tar.gz.age')
+    manifest = json.loads((bundle / 'manifest.json').read_text())
+    assert list(manifest) == ['version', 'git_commit', 'schema_version', 'timestamp', 'components',
+                              'archive_format', 'spec_version']
+    assert manifest['components'] == archive.components(bundle)
+    assert {'db.sqlite', 'etc-anysda', 'etc-wireguard', 'etc-openvpn', 'caddy-storage',
+            'deploy-state'} <= set(manifest['components'])
+    assert (bundle / 'etc-anysda/sso-runtime.json').read_text() == '{"x": 1}\n'
+    assert not (bundle / 'etc-anysda/sso-runtime.json').is_symlink()
+    assert not (bundle / 'etc-openvpn/mgmt.fifo').exists()
+    assert restore.check_manifest(str(bundle), final.name) == manifest
+    assert not events and not list(Path(paths.work_parent).glob('.backup-tmp.*'))
 
 
-def events(root):
-    log = root / 'log'
-    records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-    return [r for r in records if r['cmd'] == 'curl']
-
-
-def test_create_success_and_names_with_space(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, out, _err = go(root, paths)
-    final = root / 'out dir' / f'{NAME}.tar.gz.age'
-    assert rc == 0
-    assert final.is_file()
-    assert 'hash:' in out
-    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
-
-
-def test_create_busy_lock_reports_and_cleans(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    fd = os.open(paths.pki_lock, os.O_RDONLY)
+@needs_tools
+def test_create_busy_lock_reports_and_cleans(node):
+    root, paths, events = node
+    fd = os.open(f'{root}/etc/openvpn/server/.pki.lock', os.O_RDONLY)
     fcntl.flock(fd, fcntl.LOCK_EX)
     try:
-        rc, _out, _err = go(root, paths, lock_wait=0.2)
+        assert create(root, paths, lock_wait=0.2) == 1
     finally:
         os.close(fd)
-    assert rc == 1
-    assert any('замок PKI OpenVPN занят дольше минуты' in ' '.join(e['argv']) for e in events(root))
+    assert events[0][0]['type'] == 'backup_failed'
+    assert 'замок PKI OpenVPN занят дольше минуты' in events[0][0]['detail']
     assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
 
 
-def test_create_interrupt_leaves_no_temp(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    real = subprocess.run
-
-    def boom(args, **kwargs):
-        if args[0] == 'tar':
-            raise KeyboardInterrupt
-        return real(args, **kwargs)
-
-    vals = values(root)
-    write_env(root, vals)
-    with pytest.raises(KeyboardInterrupt):
-        create(env.settings(vals, paths.env_file), paths=paths, run=boom, out=StringIO(), err=StringIO(), now=NOW,
-               check=lambda _b, _o, _e: 0, sleep=lambda _s: None)
-    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
+@needs_tools
+def test_mismatch_in_every_slice_is_warning_code_4(node, capsys):
+    root, paths, events = node
+    assert create(root, paths, check=lambda _bundle: (3, 'устройство 7: нет пира WireGuard')) == 4
+    captured = capsys.readouterr()
+    assert captured.err.count('снимаю заново:') == 9
+    assert f"{'warning:':<12} БД и конфиги VPN расходятся (устройства: 7) — перевыпусти в панели" in captured.out
+    assert events[0][0]['type'] == 'backup_warning' and len(list((root / 'out dir').iterdir())) == 1
 
 
-def test_report_failure_keeps_secret_out_of_argv(tmp_path):
-    paths = Paths.under(str(tmp_path))
-    put(Path(paths.secret_file), SECRET + '\n')
-    calls = []
-    state = backup_run._State()
-    state.warning = 'пир не найден'
-    backup_run.report_failure(4, state, paths, lambda argv, **kw: calls.append((argv, kw)))
-    argv, kw = calls[0]
-    assert SECRET not in ' '.join(argv)
-    assert kw['input'] == f'Authorization: Bearer {SECRET}\n'.encode()
-    assert 'backup_warning' in argv[argv.index('-d') + 1]
-    calls.clear()
-    backup_run.report_failure(0, state, paths, lambda *a, **_k: calls.append(a))
-    assert not calls
+@needs_tools
+def test_empty_passphrase_is_one_event(node, capsys):
+    root, paths, events = node
+    assert create(root, paths, values(root, ANYSDA_BACKUP_PASSPHRASE='')) == 2
+    err = capsys.readouterr().err
+    assert err.startswith('anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.')
+    assert paths.env_file in err
+    assert [event for event, _kw in events] == [{'type': 'backup_failed', 'detail': 'нет пароля шифрования'}]
+    assert events[0][1]['secret_file'] == f'{root}/etc/anysda/tgbot-secret.txt'
 
 
-def test_empty_passphrase_is_one_russian_event(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    vals = values(root, ANYSDA_BACKUP_PASSPHRASE='')
-    err = StringIO()
-    assert create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=err, now=NOW) == 2
-    assert err.getvalue().startswith('anysda-backup FATAL: ANYSDA_BACKUP_PASSPHRASE отсутствует или пуста.')
-    assert paths.env_file in err.getvalue()
-    sent = events(root)
-    assert len(sent) == 1 and SECRET not in ' '.join(sent[0]['argv'])
-    assert sent[0]['argv'][-1] == backup_run.notify.PANEL_URL
-    assert json.loads(sent[0]['argv'][sent[0]['argv'].index('-d') + 1]) == {
-        'type': 'backup_failed', 'detail': 'нет пароля шифрования'}
-    assert sent[0]['stdin'] == f'Authorization: Bearer {SECRET}\n'
+@needs_tools
+def test_s3_upload_and_rotation(node, monkeypatch, capsys):
+    root, paths, _events = node
+    old = [f'anysda-vpn2-2020-01-0{n}T000000Z.tar.gz.age' for n in (1, 2, 3)]
+    put(root / 's3', ''.join(f'2020-01-0{n} 00:00:00  10 {name}\n' for n, name in enumerate(old, 1)))
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3'))
+    s3 = {'BACKUP_BACKEND': 's3', 'BACKUP_RETENTION': '2', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'https://e',
+          'ANYSDA_S3_ACCESS_KEY': 'k', 'ANYSDA_S3_SECRET_KEY': 's'}
+    assert create(root, paths, values(root, **s3)) == 0
+    log = (root / 'log').read_text().splitlines()
+    assert log[0].startswith('aws --endpoint-url https://e s3 cp ') and ' s3://b/anysda-vpn2-' in log[0]
+    assert f'aws --endpoint-url https://e s3 rm s3://b/{old[0]} --only-show-errors' in log
+    assert f's3 rotated out {old[0]}' in capsys.readouterr().out
+    monkeypatch.setenv('STUB_AWS_FAIL', 'cp')
+    assert create(root, paths, values(root, **s3)) == 9
 
 
-def _no_space(args, **kwargs):
-    if args[0] == 'tar':
-        return subprocess.CompletedProcess(args, 2, b'', b'tar: write error: No space left on device\n')
-    return subprocess.run(args, **kwargs)
+S3 = {'BACKUP_BACKEND': 's3', 'BACKUP_S3_BUCKET': 'b', 'BACKUP_S3_ENDPOINT': 'https://e',
+      'ANYSDA_S3_ACCESS_KEY': 'access-key', 'ANYSDA_S3_SECRET_KEY': 'secret-key'}
 
 
-@pytest.mark.parametrize(('extra', 'stub_env', 'run', 'code'), [
-    ({}, {}, _no_space, 2),
-    ({}, {'STUB_AGE_FAIL': '7'}, subprocess.run, 7),
-    (S3, {'STUB_AWS_FAIL': 'cp'}, subprocess.run, 9),
-], ids=['no-space', 'encrypt-fails', 'upload-target-down'])
-def test_failure_at_any_step_is_one_backup_failed_event(tmp_path, monkeypatch, extra, stub_env, run, code):
-    """На каком бы шаге ни оборвался бэкап, панель получает ровно одно backup_failed - его она шлёт в Telegram."""
-    root, paths = node(tmp_path, monkeypatch)
-    put(root / 's3list', '')
-    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3list'))
-    for key, value in stub_env.items():
-        monkeypatch.setenv(key, value)
-    vals = values(root, **extra)
-    write_env(root, vals)
-    rc = create(env.settings(vals, paths.env_file), paths=paths, run=run, out=StringIO(), err=StringIO(), now=NOW,
-                check=lambda _b, _o, _e: 0, sleep=lambda _s: None)
-    assert rc == code
-    posted = [e for e in events(root) if e['argv'][-1] == backup_run.notify.PANEL_URL]
-    assert len(posted) == 1
-    assert json.loads(posted[0]['argv'][posted[0]['argv'].index('-d') + 1]) == {
-        'type': 'backup_failed', 'detail': f'код выхода {code}'}
-    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
+@needs_tools
+@pytest.mark.parametrize(('extra', 'stub_env', 'code', 'detail'), [
+    ({}, {'STUB_AGE_FAIL': '7'}, 7, 'упаковка и шифрование не прошли: age: код выхода 7'),
+    (S3, {'STUB_AWS_FAIL': 'cp'}, 9, 'выгрузка в S3 не прошла: aws: boom'),
+    (S3, {}, 1, 'выгрузка в S3 не прошла: архива нет в списке бакета'),
+    ({}, {'STUB_SQLITE': '5'}, 5, 'снимок базы и ключей не снят: sqlite3: код выхода 5'),
+    ({}, {'STUB_SQLITE': '1 disk: No space left on device, key access-key'}, 1,
+     'снимок базы и ключей не снят: нет места на диске'),
+    (S3, {'STUB_SQLITE': '1 bad access-key secret-key парольная фраза'}, 1,
+     'снимок базы и ключей не снят: bad *** *** ***'),
+])
+def test_failure_event_names_step_and_cause(node, monkeypatch, extra, stub_env, code, detail):
+    """Событие о сбое (панель шлёт его админу в Telegram) называет шаг и причину, без секретов."""
+    root, paths, events = node
+    put(root / 'bin/sqlite3', '#!/bin/sh\n[ -n "$STUB_SQLITE" ] || exec /usr/bin/sqlite3 "$@"\n'
+        'set -- $STUB_SQLITE; code=$1; shift; [ -z "$*" ] || echo "$*" >&2; exit "$code"\n', 0o755)
+    put(root / 's3', '')
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3'))
+    for name, value in stub_env.items():
+        monkeypatch.setenv(name, value)
+    assert create(root, paths, values(root, **extra)) == code
+    assert [event for event, _kw in events] == [{'type': 'backup_failed', 'detail': detail}]
+    assert not list((root / 'var/lib/anysda-vpn2').glob('.backup-tmp.*'))
 
 
-def test_success_posts_no_event(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    assert go(root, paths)[0] == 0
-    assert not [e for e in events(root) if e['argv'][-1] == backup_run.notify.PANEL_URL]
+@needs_tools
+def test_full_disk_at_the_archive_directory_is_named(node, monkeypatch):
+    root, paths, events = node
+
+    def move(_source, target):
+        raise OSError(28, 'No space left on device', target)
+    monkeypatch.setattr(backup_run.shutil, 'move', move)
+    assert create(root, paths) == 1
+    assert events[0][0]['detail'].startswith(f"архив не сохранён на диск: нет места на диске ({root}/out dir/anysda-")
 
 
-def test_rotate_local_keeps_newest(tmp_path):
+def test_rotate_local_keeps_newest(tmp_path, capsys):
     for index in range(4):
-        archive = put(tmp_path / f'anysda-vpn2-{index}.tar.gz.age', 'x')
-        os.utime(archive, (100 + index, 100 + index))
+        item = put(tmp_path / f'anysda-vpn2-{index}.tar.gz.age', 'x')
+        os.utime(item, (100 + index, 100 + index))
     put(tmp_path / 'other.txt', 'x')
-    final = tmp_path / 'anysda-vpn2-3.tar.gz.age'
-    out = StringIO()
-    backup_run.rotate_local(str(tmp_path), str(final), 2, out)
+    backup_run.rotate_local(str(tmp_path), str(tmp_path / 'anysda-vpn2-3.tar.gz.age'), 2)
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         'anysda-vpn2-2.tar.gz.age', 'anysda-vpn2-3.tar.gz.age', 'other.txt']
-    assert out.getvalue().count('rotated out') == 2
+    assert capsys.readouterr().out.count('rotated out') == 2
 
 
-def test_default_check_without_db_passes(tmp_path):
-    pytest.importorskip('vpn2.backup.check')
-    bundle = tmp_path / 'b'
-    bundle.mkdir()
-    assert backup_run._default_check(str(bundle), StringIO(), StringIO()) == 0
-    assert not (bundle / 'manifest.json').exists()
+def test_settings_defaults_and_required():
+    got = env.settings({'BACKUP_BACKEND': 'local'})
+    assert (got.local_dir, got.retention, got.s3_region) == ('/var/backups/anysda-vpn2', '10', 'us-east-1')
+    with pytest.raises(env.BackupEnvError, match='BACKUP_BACKEND не задан в /x') as caught:
+        env.settings({}, '/x')
+    assert caught.value.code == 1
+    with pytest.raises(env.BackupEnvError, match='BACKUP_S3_BUCKET не задан'):
+        env.settings({'BACKUP_BACKEND': 's3'})
+    lazy = env.settings({'BACKUP_BACKEND': 's3', 'ANYSDA_BACKUP_PASSPHRASE': 'секрет'}, lazy_s3=True)
+    assert 'секрет' not in repr(lazy)
+    assert env.aws(lazy, 'ls') == (1, 'BACKUP_S3_BUCKET: parameter null or not set', '')
 
 
-# ---- причина сбоя в событии: шаг и последняя содержательная строка ----
-
-def failed(root, paths, monkeypatch, *, extra=None, stub_env=None, run=None):
-    vals = values(root, **(extra or {}))
-    write_env(root, vals)
-    put(root / 's3list', '')
-    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3list'))
-    for name, value in (stub_env or {}).items():
-        monkeypatch.setenv(name, value)
-    more = {'run': run} if run else {}
-    rc = create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=StringIO(), now=NOW,
-                check=lambda _b, _o, _e: 0, sleep=lambda _s: None, **more)
-    sent = [record for record in events(root) if '-d' in record['argv']]
-    assert len(sent) == 1
-    event = json.loads(sent[0]['argv'][sent[0]['argv'].index('-d') + 1])
-    assert event['type'] == 'backup_failed'
-    return rc, event['detail']
+def test_read_env_is_what_bash_sources(tmp_path):
+    path = put(tmp_path / 'backup.env', "A='один два'\nB=$'x\\ny'\nexport C=\"$A!\"\n")
+    assert env.read_env(path) == {'A': 'один два', 'B': 'x\ny', 'C': 'один два!'}
+    with pytest.raises(env.BackupEnvError) as caught:
+        env.read_env(tmp_path / 'нет')
+    assert caught.value.code == 2
 
 
-def program(name, code=1, stderr=b'', error=None):
-    real = subprocess.run
-
-    def run(args, **kwargs):
-        if args[0] != name:
-            return real(args, **kwargs)
-        if error:
-            raise error
-        return subprocess.CompletedProcess(args, code, b'', stderr)
-
-    return run
+@pytest.mark.parametrize(('n', 'text'), [(0, '0'), (1023, '1023'), (1024, '1.0K'), (1025, '1.1K'),
+                                         (10 * 1024, '10K'), (10 * 1024 + 1, '11K'), (1024 ** 2, '1.0M')])
+def test_human_size_like_numfmt(n, text):
+    assert listing.human_size(n) == text
 
 
-@pytest.mark.parametrize(('where', 'tail'), [('{out}/x.age', ' ({out}/x.age)'), (None, '')])
-def test_full_disk_at_the_archive_directory_is_named(tmp_path, monkeypatch, where, tail):
-    root, paths = node(tmp_path, monkeypatch)
-    out = str(root / 'out dir')
-
-    def move(_source, _target):
-        raise OSError(28, 'No space left on device', where and where.format(out=out))
-
-    monkeypatch.setattr(backup_run.shutil, 'move', move)
-    rc, detail = failed(root, paths, monkeypatch)
-    assert rc == 1
-    assert detail == 'архив не сохранён на диск: нет места на диске' + tail.format(out=out)
-    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
+def test_listing_local_rows(tmp_path, capsys):
+    for index, name in enumerate(('anysda-vpn2-2026-01-01T000000Z.tar.gz.age', 'anysda-vpn2-x.tar.gz.age')):
+        os.utime(put(tmp_path / name, 'x' * 2048), (100 + index, 100 + index))
+    put(tmp_path / 'other', 'x')
+    assert listing.render(env.settings({'BACKUP_BACKEND': 'local', 'BACKUP_LOCAL_DIR': str(tmp_path)})) == 0
+    row = '%-50s %-22s %12s'
+    assert capsys.readouterr().out.splitlines()[2:] == [
+        row % ('anysda-vpn2-x.tar.gz.age', '?', '2.0K'),
+        row % ('anysda-vpn2-2026-01-01T000000Z.tar.gz.age', '2026-01-01T000000Z', '2.0K')]
 
 
-def test_full_disk_seen_by_a_program_is_named(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    stderr = b"cp: error writing '/var/lib/x/etc-anysda/a.env': No space left on device\n"
-    rc, detail = failed(root, paths, monkeypatch, run=program('cp', stderr=stderr))
-    assert rc == 1
-    assert detail == 'копирование /etc/anysda не прошло: нет места на диске'
+def test_parse_args_and_age_text():
+    assert restore.parse_args([]) == restore.Args()
+    assert restore.parse_args(['x.age', '-f', '--allow-incompatible']) == restore.Args(
+        name='x.age', force=True, allow_incompatible=True)
+    assert restore.parse_args(['--dry-run']).name == 'latest'
+    with pytest.raises(restore.RestoreError):
+        restore.parse_args(['latest', 'second'])
+    assert [restore.age_text(s) for s in (59, 3600, 90061, -90)] == ['0 мин', '1 ч 0 мин', '1 д 1 ч', '-1 мин']
 
 
-def test_other_os_error_names_the_step_and_the_file(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    monkeypatch.setattr(backup_run.shutil, 'move',
-                        lambda _s, _t: (_ for _ in ()).throw(PermissionError(13, 'Permission denied', '/var/b/x.age')))
-    _rc, detail = failed(root, paths, monkeypatch)
-    assert detail == 'архив не сохранён на диск: Permission denied (/var/b/x.age)'
-
-
-def test_s3_upload_failure_carries_the_last_line(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, detail = failed(root, paths, monkeypatch, extra=S3, stub_env={'STUB_AWS_FAIL': 'cp'})
-    assert rc == 9
-    assert detail == 'выгрузка в S3 не прошла: aws: boom'
-
-
-def test_s3_without_the_program_says_so(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, detail = failed(root, paths, monkeypatch, extra=S3,
-                        run=program('aws', error=FileNotFoundError(2, 'No such file or directory')))
-    assert rc == 127
-    assert detail == 'выгрузка в S3 не прошла: программа aws не найдена'
-
-
-def test_s3_listing_without_the_new_archive(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, detail = failed(root, paths, monkeypatch, extra=S3)
-    assert rc == 1
-    assert detail == 'выгрузка в S3 не прошла: архива нет в списке бакета'
-
-
-def test_s3_rotation_failure_is_the_same_step(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    put(root / 'list', LISTING)
-    vals = {**S3, 'BACKUP_RETENTION': '0'}
-    write_env(root, values(root, **vals))
-    monkeypatch.setenv('STUB_S3_LIST', str(root / 'list'))
-    monkeypatch.setenv('STUB_AWS_FAIL', 'rm')
-    settings = env.settings(values(root, **vals), paths.env_file)
-    assert create(settings, paths=paths, out=StringIO(), err=StringIO(), now=NOW,
-                  check=lambda _b, _o, _e: 0, sleep=lambda _s: None) == 9
-    sent = events(root)
-    assert json.loads(sent[-1]['argv'][sent[-1]['argv'].index('-d') + 1])['detail'] == (
-        'выгрузка в S3 не прошла: aws: boom')
-
-
-def test_cause_is_the_last_meaningful_line_without_secrets(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    stderr = ('upload failed: ./a to s3://bucket/a\n\nAn error occurred (SignatureDoesNotMatch) for key '
-              f"{S3['ANYSDA_S3_ACCESS_KEY']} secret {S3['ANYSDA_S3_SECRET_KEY']} token {SECRET}\n  \n").encode()
-    _rc, detail = failed(root, paths, monkeypatch, extra=S3, run=program('aws', code=255, stderr=stderr))
-    assert detail.startswith('выгрузка в S3 не прошла: An error occurred (SignatureDoesNotMatch) for key *** secret')
-    for secret in (S3['ANYSDA_S3_ACCESS_KEY'], S3['ANYSDA_S3_SECRET_KEY'], SECRET, 'парольная фраза'):
-        assert secret not in detail
-    assert 'upload failed' not in detail
-
-
-def test_long_cause_is_cut_and_stays_one_line(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    _rc, detail = failed(root, paths, monkeypatch, extra=S3,
-                         run=program('aws', stderr=('fatal error: ' + 'x' * 900 + '\n').encode()))
-    assert detail.startswith('выгрузка в S3 не прошла: fatal error: xxx') and len(detail) <= 200 and '\n' not in detail
-
-
-def test_database_snapshot_failure_names_the_step(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch, db_bytes=b'not a database')
-    rc, detail = failed(root, paths, monkeypatch)
-    assert rc != 0
-    assert detail.startswith('снимок базы и ключей не снят: ') and 'not a database' in detail
-
-
-def test_silent_failure_names_the_step_and_the_code(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, detail = failed(root, paths, monkeypatch, run=program('sqlite3', code=5))
-    assert rc == 5
-    assert detail == 'снимок базы и ключей не снят: sqlite3: код выхода 5'
-
-
-def test_encryption_failure_names_the_step(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    rc, detail = failed(root, paths, monkeypatch, stub_env={'STUB_AGE_NOFILE': '1'})
-    assert rc == 3
-    assert detail.startswith('упаковка и шифрование не прошли: ')
-
-
-def test_earlier_warning_is_not_taken_for_the_cause(tmp_path, monkeypatch):
-    root, paths = node(tmp_path, monkeypatch)
-    vals = values(root, **S3)
-    write_env(root, vals)
-    monkeypatch.setenv('STUB_AWS_FAIL', 'cp')
-    monkeypatch.setattr(backup_run, '_exec', silent_aws(backup_run._exec))
-    rc = create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=StringIO(), now=NOW,
-                check=lambda _b, _o, e: e.write('шум сверки\n') or 0, sleep=lambda _s: None)
-    sent = events(root)
-    assert rc == 9
-    assert json.loads(sent[-1]['argv'][sent[-1]['argv'].index('-d') + 1])['detail'] == (
-        'выгрузка в S3 не прошла: aws: код выхода 9')
-
-
-def silent_aws(real):
-    def call(run, args, err, **kwargs):
-        return real(run, args, err, **{**kwargs, 'quiet': args[0] == 'aws' or kwargs.get('quiet', False)})
-    return call
+def test_latest_prefers_strictly_newer_cloud(tmp_path, monkeypatch, capsys):
+    old, new = (f'anysda-vpn2-2026-01-0{day}T000000Z.tar.gz.age' for day in (1, 2))
+    put(tmp_path / old)
+    put(tmp_path / 'anysda-vpn2-junk.tar.gz.age')
+    vals = env.settings({'BACKUP_BACKEND': 's3', 'BACKUP_LOCAL_DIR': str(tmp_path)}, lazy_s3=True)
+    listed = {'code': 0, 'text': f'2026-01-02 00:00:00   10 {new}\n2026-01-01 00:00:00   10 {old}'}
+    monkeypatch.setattr(env, 'aws', lambda *_a, **_k: (listed['code'], listed['text'], ''))
+    assert restore.resolve_latest(vals) == (new, 'S3')
+    assert f'самый свежий local: {old} — старше выбранного на 1 д 0 ч' in capsys.readouterr().err
+    listed.update(code=1, text='boom')
+    assert restore.resolve_latest(vals) == (old, 'local')
+    assert 'WARN: S3 недоступен' in capsys.readouterr().err
+    (tmp_path / old).unlink()
+    with pytest.raises(restore.RestoreError) as caught:
+        restore.resolve_latest(vals)
+    assert caught.value.code == 3

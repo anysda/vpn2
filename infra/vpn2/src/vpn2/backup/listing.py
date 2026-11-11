@@ -1,16 +1,12 @@
-"""Листинг бэкапов (перенос infra/lib/anysda-backup-list.sh): локальные архивы и S3."""
-import fnmatch
+"""Листинг бэкапов: локальные архивы и S3."""
 import os
 import re
-import subprocess
-import sys
 
-_MASK = 'anysda-vpn2-*.tar.gz.age'
+from vpn2.backup import archive, env
+
 _TS = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z')
 _S3_LINE = re.compile(r'anysda-vpn2-.*\.tar\.gz\.age$')
-_SORT_KEY = re.compile(r'^[ \t]*[^ \t]*[ \t]*[^ \t]*')
-_ROW = '%-50s %-22s %12s\n'
-_FIELDS = re.compile(r'[ \t]+')
+_ROW = '%-50s %-22s %12s'
 
 
 def human_size(n):
@@ -29,64 +25,47 @@ def human_size(n):
 
 
 def local_rows(local_dir):
-    """[(имя, метка или '?', размер в байтах)] по mtime убыванию, как find | sort -nr."""
+    """[(имя, метка или '?', размер в байтах)], свежие по mtime первыми."""
     found = []
     try:
         entries = list(os.scandir(local_dir))
     except OSError:
         return []
     for entry in entries:
-        if not fnmatch.fnmatchcase(entry.name, _MASK):
-            continue
         try:
-            if not entry.is_file(follow_symlinks=False):
-                continue
-            st = entry.stat(follow_symlinks=False)
+            if archive.is_archive(entry):
+                st = entry.stat(follow_symlinks=False)
+                found.append((st.st_mtime_ns, os.fsencode(entry.path), entry.name, st.st_size))
         except OSError:
             continue
-        found.append((st.st_mtime_ns, os.fsencode(entry.path), entry.name, st.st_size))
-    # sort -nr: при равном mtime последнее сравнение - вся строка, тоже в обратную сторону
-    found.sort(key=lambda item: (item[0], item[1]), reverse=True)
     rows = []
-    for _, _, name, size in found:
+    for _, _, name, size in sorted(found, reverse=True):
         match = _TS.search(name)
         rows.append((name, match.group(0) if match else '?', size))
     return rows
 
 
 def _s3_rows(text):
-    """grep -E | sort -k1,2 -r | awk: строки aws s3 ls в «  имя метка размер»."""
-    lines = [ln for ln in text.split('\n') if _S3_LINE.search(ln)]
-    lines.sort(key=lambda ln: (_SORT_KEY.match(ln).group(0).encode(errors='surrogateescape'),
-                               ln.encode(errors='surrogateescape')), reverse=True)
-    out = []
-    for ln in lines:
-        f = [x for x in _FIELDS.split(ln) if x] + ['', '', '', '']
-        out.append('  %-50s %-22s %12s\n' % (f[3], f[0] + 'T' + f[1] + 'Z', f[2]))
-    return out, bool(lines)
+    """Строки `aws s3 ls` (дата время размер имя), свежие первыми, в «  имя метка размер»."""
+    lines = sorted((line for line in text.split('\n') if _S3_LINE.search(line)),
+                   key=lambda line: (line.split()[:2], line), reverse=True)
+    rows = []
+    for line in lines:
+        f = line.split() + ['', '', '', '']
+        rows.append('  ' + _ROW % (f[3], f[0] + 'T' + f[1] + 'Z', f[2]))
+    return rows
 
 
-def render(settings, *, run=subprocess.run, out=None, environ=None):
-    """Печать листинга как скрипт; код возврата: 0, а для s3 - 1, если aws упал или строк нет (pipefail)."""
-    out = sys.stdout if out is None else out
-    out.write(_ROW % ('Name', 'Timestamp (UTC)', 'Size'))
-    out.write(_ROW % ('----', '---------------', '----'))
+def render(settings):
+    """Печать листинга; код возврата: 0, а для s3 - 1, если aws упал или архивов нет."""
+    print(_ROW % ('Name', 'Timestamp (UTC)', 'Size'))
+    print(_ROW % ('----', '---------------', '----'))
     for name, ts, size in local_rows(settings.local_dir):
-        out.write(_ROW % (name, ts, human_size(size)))
+        print(_ROW % (name, ts, human_size(size)))
     if settings.backend != 's3':
         return 0
-    out.write('\n')
-    out.write(f'── S3: s3://{settings.s3_bucket}/ ──\n')
-    env = dict(os.environ if environ is None else environ)
-    env['AWS_DEFAULT_REGION'] = settings.s3_region
-    env['AWS_ACCESS_KEY_ID'] = settings.s3_access_key
-    env['AWS_SECRET_ACCESS_KEY'] = settings.s3_secret_key
-    args = ['aws', '--endpoint-url', settings.s3_endpoint, 's3', 'ls', f's3://{settings.s3_bucket}/']
-    try:
-        done = run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, check=False)
-        text, code = done.stdout.decode('utf-8', 'surrogateescape'), done.returncode
-    except OSError:
-        text, code = '', 127
-    rows, matched = _s3_rows(text)
-    out.writelines(rows)
-    return 0 if code == 0 and matched else 1
+    print(f'\n── S3: s3://{settings.s3_bucket}/ ──', flush=True)
+    code, text, _why = env.aws(settings, 'ls', f's3://{settings.s3_bucket}/', capture=True)
+    rows = _s3_rows(text)
+    print('\n'.join(rows), end='\n' if rows else '')
+    return 0 if code == 0 and rows else 1

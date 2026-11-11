@@ -108,7 +108,8 @@ python3() {{ echo source-checked; }}
 die() {{ echo "$*" >&2; exit 1; }}
 ssh_exec() {{
   if [[ "$*" == *'exec flock'* ]]; then echo locked; read -r unlock
-  elif [[ "$*" == *'unfinished deploy'* || "$*" == *--partial* ]]; then return 1
+  elif [[ "$*" == *operation.json* ]]; then return 76
+  elif [[ "$*" == *--partial* ]]; then return 1
   elif [[ "$*" == *preflight* ]]; then echo preflight-checked
   elif [[ "$*" == *prepare* ]]; then echo artifacts-checked
   elif [[ "$*" == *' backup'* ]]; then echo backup-checked

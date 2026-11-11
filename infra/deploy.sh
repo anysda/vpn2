@@ -1593,6 +1593,8 @@ case "${1:-}" in
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     [[ -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
     expand_hosts "$2" >/dev/null
+    [[ "$1" != 10-foreign || "$2" != ru ]] \
+      || HOST_TAG=deploy die '10-foreign - стадия экзитов, на entry её нет: группа foreign, all или тег экзита'
     ;;
 esac
 release_start "$@"

@@ -23,7 +23,7 @@ done
 begin=$1; shift
 cmd="$*"
 case $cmd in
-  *'exec flock'*|*'unfinished deploy'*|'python3 /tmp/anysda/deploy_state.py '*|*"cat > '/tmp/anysda/"*|*'tar -xmf'*)
+  *'exec flock'*|*'/var/lib/vpn2-deploy/operation.json'*|'python3 /tmp/anysda/deploy_state.py '*|*"cat > '/tmp/anysda/"*|*'tar -xmf'*)
     cmd=${cmd//python3 \/tmp\/anysda\/deploy_state.py/python3 $FAKE_NODE/deploy_state.py}
     cmd=${cmd//\/var\/lib\/vpn2-deploy/$FAKE_NODE/lock}
     cmd=${cmd//\/tmp\/anysda/$FAKE_NODE/anysda}
@@ -153,6 +153,47 @@ class ProbeTimeoutBeforeReleaseTests(unittest.TestCase):
             self.assert_rejected_before_release(tree, tree.deploy('0'), '0')
             fixed = tree.deploy(None)
             output = fixed.stdout + fixed.stderr
+            self.assertNotIn('unfinished deploy', output)
+            self.assertIn('phase --phase applying', (tree.node / 'state.log').read_text(), output)
+
+
+class JournalTests(unittest.TestCase):
+    """Отказ по аргументам журнала не открывает; открытый журнал - одна строка с выходом."""
+
+    def test_foreign_stage_on_entry_refused_before_release(self):
+        with Tree() as tree:
+            (tree.root / 'infra/ansible/plays/10-foreign.yml').write_text('- hosts: all\n')
+            refused = tree.deploy('5', '10-foreign', 'ru')
+            output = refused.stdout + refused.stderr
+            self.assertNotEqual(refused.returncode, 0, output)
+            fatal = [line for line in refused.stderr.splitlines() if 'FATAL' in line]
+            self.assertEqual(len(fatal), 1, output)
+            self.assertIn('[deploy] FATAL: 10-foreign - стадия экзитов, на entry её нет', fatal[0])
+            self.assertFalse(tree.journal().exists(), output)
+            self.assertEqual(tree.copies(), [], output)
+            self.assertNotIn('operation journal retained', output)
+            # Следующая стадия идёт без recover.
+            following = tree.deploy('5', NOOP_STAGE, 'ru')
+            self.assertEqual(following.returncode, 0, following.stdout + following.stderr)
+
+    def test_open_journal_is_one_fatal_line_and_recover_passes(self):
+        with Tree() as tree:
+            tree.journal().write_text('{"phase": "applying"}')
+            for args in ((NOOP_STAGE, 'ru'), ()):
+                with self.subTest(args=args):
+                    blocked = tree.deploy('5', *args)
+                    output = blocked.stdout + blocked.stderr
+                    self.assertNotEqual(blocked.returncode, 0, output)
+                    self.assertNotIn('Traceback', output)
+                    self.assertNotIn('AssertionError', output)
+                    fatal = [line for line in blocked.stderr.splitlines() if 'FATAL' in line]
+                    self.assertEqual(len(fatal), 1, output)
+                    self.assertIn('[deploy] FATAL: unfinished deploy on ru', fatal[0])
+                    self.assertIn('./deploy.sh recover', fatal[0])
+                    self.assertIn('./deploy.sh rollback', fatal[0])
+                    self.assertEqual(tree.copies(), [], output)
+            recovered = tree.deploy('5', 'recover')
+            output = recovered.stdout + recovered.stderr
             self.assertNotIn('unfinished deploy', output)
             self.assertIn('phase --phase applying', (tree.node / 'state.log').read_text(), output)
 

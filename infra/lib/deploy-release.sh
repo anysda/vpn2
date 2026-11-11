@@ -107,7 +107,11 @@ release_start() {
     push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2
     for lib in deploy_state.py anysda-svc.sh; do push "$DEPLOY_ROOT/lib/$lib"; done
     if [[ "$action" != rollback && "$action" != recover ]]; then
-      ssh_exec 'python3 -c '\''import json,pathlib; p=pathlib.Path("/var/lib/vpn2-deploy/operation.json"); assert not p.exists() or json.loads(p.read_text())["phase"] in ("complete","aborted","rolled-back"), "unfinished deploy: inspect operation.json and recover first"'\'
+      # Код 76 - журнал незавершённого деплоя: одна строка с выходом, без трейсбека.
+      local journal_rc=0
+      ssh_exec 'python3 -c '\''import json,pathlib,sys; p=pathlib.Path("/var/lib/vpn2-deploy/operation.json"); sys.exit(0 if not p.exists() or json.loads(p.read_text())["phase"] in ("complete","aborted","rolled-back") else 76)'\' || journal_rc=$?
+      [[ "$journal_rc" != 76 ]] || HOST_TAG=deploy die "unfinished deploy on $host: operation journal /var/lib/vpn2-deploy/operation.json is open; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)"
+      [[ "$journal_rc" == 0 ]] || exit "$journal_rc"
     fi
     if [[ "${VPN2_DEVELOPMENT:-false}" != true && "$action" != rollback ]]; then
       push "$VPN2_RELEASE_MANIFEST" release-manifest.json

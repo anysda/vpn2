@@ -199,21 +199,20 @@ class BackupRestore(unittest.TestCase):
         fixture()
         result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force')
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
-        # Настоящая стадия 27 после restore; службы/сеть/наличие пакетов — заглушки.
+        # Шаг роли ikev2 после restore; службы и swanctl - заглушки.
         Path('/etc/strongswan.d').mkdir(exist_ok=True)
-        put('/test-bin/dpkg', '#!/bin/sh\n[ "$2" = strongswan-starter ]\n', 0o755)
         put('/test-bin/swanctl', '#!/bin/sh\necho anysda-ikev2\n', 0o755)
-        put('/test-bin/ss', '#!/bin/sh\nexit 0\n', 0o755)
-        put('/test-bin/ip', '#!/bin/sh\necho "default via 192.0.2.1 dev eth0"\n', 0o755)
-        put('/test-stage.env', 'HOST_TAG=ru\nENTRY_HOST=192.0.2.10\nPANEL_DOMAIN=vpn.example.test\n')
         self.assertFalse(Path('/var/lib/caddy/.local/share/caddy/certificates').exists())
-        result = run('bash', str(ROOT / 'infra/scripts/27-ikev2.sh'), '/test-stage.env', check=False)
+        result = run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'HOST_TAG=ru', 'python3', '-B', '-m',
+                     'vpn2.cli.host', 'ikev2-server', '--entry-host', '192.0.2.10',
+                     '--public-host', 'vpn.example.test', '--panel-domain', 'vpn.example.test',
+                     '--subnet', '10.68.68.0/24', '--dns', '10.99.0.1', check=False)
         self.assertEqual(Path('/etc/anysda/ikev2-mode').read_text(), 'letsencrypt', result.stdout)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for path, body in original.items():
             self.assertTrue(path.read_bytes() == body, f'LE identity changed: {path}')
-        self.assertIn('27-ikev2 done', result.stdout)
-        print('PASS: real stage 27 preserves restored LE cert/key/chain without Caddy storage', flush=True)
+        self.assertIn('mode=letsencrypt server-host=vpn.example.test', result.stdout)
+        print('PASS: role ikev2 preserves restored LE cert/key/chain without Caddy storage', flush=True)
 
 
 if __name__ == '__main__':

@@ -6,14 +6,14 @@ import types
 import unittest
 from unittest.mock import patch
 
-from test_deploy import source
+from test_deploy import ROOT
 
 
 class Ikev2SyncTests(unittest.TestCase):
     def test_failed_revoke_is_retried(self):
         for failure in ('load', 'list', 'terminate'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
-                script = source('infra/scripts/27-ikev2.sh').split("<<'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
+                script = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py').read_text()
                 sync = types.ModuleType('ikev2_sync')
                 exec(compile(script, 'ikev2_sync', 'exec'), sync.__dict__)
                 root = Path(directory)
@@ -46,7 +46,7 @@ class Ikev2SyncTests(unittest.TestCase):
 
     def test_acknowledged_termination_with_live_sa_is_not_confirmed(self):
         with tempfile.TemporaryDirectory() as directory:
-            script = source('infra/scripts/27-ikev2.sh').split("<<'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
+            script = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py').read_text()
             sync = types.ModuleType('ikev2_sync')
             exec(compile(script, 'ikev2_sync', 'exec'), sync.__dict__)
             for name in ('CLIENTS_CONF', 'STATE_FILE', 'DIGEST_FILE', 'STATUS_FILE'):

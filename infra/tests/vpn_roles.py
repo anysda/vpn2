@@ -82,6 +82,32 @@ def ovpn_stage(root, applied, apply, port=1194):
                        str(root), str(applied), str(apply), str(port)]) + '\n'
 
 
+def ikev2_pki(target, *, env=None):
+    """Свой CA и сертификат сервера роли ikev2 в каталоге target, как шаг `ikev2-server`."""
+    code = ('import sys\nfrom vpn2 import pki\n'
+            'try:\n    with pki.transaction(sys.argv[1]) as work:\n'
+            '        pki.build_ikev2(work, "203.0.113.10", "203.0.113.10", say=print)\n'
+            'except pki.PkiError as error:\n    sys.exit(str(error))\n')
+    env = dict(env or os.environ, PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
+    return subprocess.run([sys.executable, '-c', code, str(target)], env=env, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+
+
+def ikev2_routing(wan='wan', subnets=('10.68.68.0/24',), subnet6='fd68:68::/112'):
+    """Скрипт маршрутизации роли ikev2: шаблон с теми же подстановками, что делает ansible."""
+    text = (ROOT / 'infra/ansible/roles/ikev2/templates/anysda-ikev2-routing.sh.j2').read_text()
+    values = {"{{ ikev2_wan_if | quote }}": shlex.quote(wan),
+              "{{ ikev2_subnets | map('quote') | join('\\\\ ') }}": '\\ '.join(shlex.quote(net) for net in subnets),
+              "{{ ikev2_subnet6 | quote }}": shlex.quote(subnet6)}
+    for mark, value in values.items():
+        if mark not in text:
+            raise AssertionError(f'в шаблоне нет {mark}')
+        text = text.replace(mark, value)
+    if '{{' in text or '{%' in text:
+        raise AssertionError('в шаблоне осталась неизвестная подстановка')
+    return text
+
+
 def role_defaults(role):
     return (ROOT / 'infra/ansible/roles' / role / 'defaults/main.yml').read_text()
 

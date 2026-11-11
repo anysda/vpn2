@@ -6,7 +6,6 @@ Requires strongswan-pki, openssl, wireguard-tools, openvpn and Python 3.
 
 import os
 from pathlib import Path
-import shlex
 import shutil
 import subprocess
 import tempfile
@@ -70,19 +69,11 @@ class PkiTests(unittest.TestCase):
             result = step(target, env=dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode))
             result.stdout += result.stderr
             return result
-        body = (ROOT / "infra/scripts/27-ikev2.sh").read_text()
-        body = body.split('  echo "[$HOST_TAG] [2/8] self-signed CA"', 1)[1]
-        body = body.split('  install -m 644 "$PKI/ca.crt"', 1)[0]
         target = self.base / protocol
         target.mkdir(exist_ok=True)
-        lib = ROOT / "infra/lib/anysda-pki.sh"
-        prelude = f"source {shlex.quote(str(lib))}\n" if lib.exists() else ""
-        command = "set -euo pipefail\n" + prelude
-        command += f"HOST_TAG=ru\nENTRY_HOST=203.0.113.10\nPKI={shlex.quote(str(target))}\n"
-        command += body
-        env = dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode)
-        return subprocess.run(["bash", "-c", command], env=env, text=True,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        result = vpn_roles.ikev2_pki(target, env=dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode))
+        result.stdout += result.stderr
+        return result
 
     def good(self, protocol):
         result = self.stage(protocol)
@@ -108,7 +99,7 @@ class PkiTests(unittest.TestCase):
     # A method per protocol: each is minutes of key generation on CI, apart they run in parallel.
     def test_failed_generation_retry_ike(self):
         self.failed_generation_retry("ike", ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
-                                             "pki:--self", "pki:--pub", "pki:--issue", "python3:-"))
+                                             "pki:--self", "pki:--pub", "pki:--issue"))
 
     def test_failed_generation_retry_wg(self):
         self.failed_generation_retry("wg", ("wg:genkey", "wg:pubkey"))

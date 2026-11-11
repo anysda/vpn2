@@ -1,18 +1,16 @@
 from pathlib import Path
-import shlex
+import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT, bash, source
-
-LIB = shlex.quote(str(ROOT / 'infra/lib/anysda-pki.sh'))
+from test_deploy import bash
+from vpn_roles import package
 
 
 class Ikev2ExpiryTests(unittest.TestCase):
     def test_expired_certificate_is_reissued_and_valid_certificate_is_kept(self):
-        stage = source('infra/scripts/27-ikev2.sh')
-        block = '  ikev2_pki_build() {' + stage.split('  ikev2_pki_build() {', 1)[1].split(
-            '  # Снять watcher', 1)[0]
+        ikev2 = package('ikev2')
+        real = package('pki').run
         for days, host, renew in ((-1, '192.0.2.1', True), (30, '192.0.2.1', False),
                                   (30, '192.0.2.2', True)):
             with self.subTest(days=days, host=host), tempfile.TemporaryDirectory() as directory:
@@ -58,26 +56,22 @@ openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -set_serial 2 \
                 pki.mkdir()
                 for name in ('ca.key', 'ca.crt', 'server.key', 'server.crt', 'renewed.crt'):
                     (pki / name).write_bytes((root / name).read_bytes())
-                script = f'source {LIB}\n' + '''
-PKI=$PWD/pki
-HOST_TAG=ru
-ENTRY_HOST=192.0.2.1
-pki() {
-  echo "$1" >> issued
-  case "$1" in
-    --gen) cat "$PKI/server.key" ;;
-    --pub) openssl pkey -in "$PKI/server.key" -pubout ;;
-    --issue) cat "$PKI/renewed.crt" ;;
-    *) return 1 ;;
-  esac
-}
-''' + block.replace('/etc/swanctl', shlex.quote(directory))
-                result = bash(script, directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                issued = []
+
+                def run(argv, **kwargs):
+                    if argv[0] != 'pki':
+                        return real(argv, **kwargs)
+                    issued.append(argv[1])
+                    if argv[1] == '--pub':
+                        return real(['openssl', 'pkey', '-in', str(pki / 'server.key'), '-pubout'])
+                    if argv[1] == '--issue':
+                        return subprocess.CompletedProcess(argv, 0, (root / 'renewed.crt').read_text(), '')
+                    return subprocess.CompletedProcess(argv, 1, '', 'unexpected')
+                ikev2.own_certs('192.0.2.1', '192.0.2.1', lambda _text: None, target=pki, swanctl=root, run=run)
                 installed = (root / 'x509/anysda-server.crt').read_bytes()
                 expected = (root / 'renewed.crt').read_bytes() if renew else original
                 self.assertEqual(installed, expected, 'expired or wrong-SAN certificate was kept')
-                self.assertEqual((root / 'issued').exists(), renew)
+                self.assertEqual(issued, ['--pub', '--issue'] if renew else [])
                 self.assertEqual((root / 'ca.crt').read_bytes(), ca)
                 self.assertEqual((root / 'private/anysda-server.key').stat().st_mode & 0o777, 0o600)
                 after = bash('openssl x509 -in x509/anysda-server.crt -noout -checkend 0', directory)

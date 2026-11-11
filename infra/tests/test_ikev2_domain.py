@@ -1,51 +1,58 @@
 """Переход IP→домен выполняется тем же обработчиком, что и ротация Caddy."""
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 
 from test_deploy import ROOT, bash, source, function
+import vpn_roles
+from vpn_roles import package
+
+LE_SYNC = ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-le-sync.sh'
 
 
 class Ikev2DomainTests(unittest.TestCase):
     def test_pending_domain_installs_watcher_and_retry_timer(self):
-        stage = source('infra/scripts/27-ikev2.sh')
+        ikev2 = package('ikev2')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for child in ('etc/anysda', 'etc/systemd/system', 'var/anysda/.stamps', 'pki'):
-                (root / child).mkdir(parents=True)
-            (root / 'pki/ca.crt').write_text('existing CA')
-            (root / 'etc/anysda/ikev2-profile-notice').write_text('old notice')
-            # Исполняем финал стадии: именно там должны быть установлены
-            # watchers после загрузки charon, независимо от начального режима.
-            tail = stage[stage.index('touch /var/anysda/.stamps/27-ikev2'):]
-            marker = '# Маркеры публикуем после успешной загрузки конфигурации charon.'
-            if marker in stage:
-                tail = stage[stage.index(marker):]
-            tail = tail.replace('/etc/', directory + '/etc/').replace('/var/', directory + '/var/')
-            result = bash('''
-HOST_TAG=ru
-IKEV2_MODE=self-signed
-IKEV2_SERVER_HOST=vpn.example.test
-PANEL_DOMAIN=vpn.example.test
-LE_DOMAIN=vpn.example.test
-LE_CERT=/caddy/not-yet-created.crt
-LE_KEY=/caddy/not-yet-created.key
-PKI=$PWD/pki
-systemctl() { echo "$*" >> systemctl.calls; }
-''' + tail, directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            timer = root / 'etc/systemd/system/anysda-ikev2-cert-sync.timer'
-            self.assertTrue(timer.exists(), 'pending self-signed has no certificate retry timer')
-            self.assertIn('OnUnitActiveSec=30s', timer.read_text())
-            service = (timer.parent / 'anysda-ikev2-cert-sync.service').read_text()
-            self.assertIn('"vpn.example.test"', service)
+            (root / 'etc').mkdir()
+            (root / 'etc/ikev2-profile-notice').write_text('old notice')
+            calls = []
+
+            def run(argv, **_kwargs):
+                calls.append(argv)
+                return subprocess.CompletedProcess(argv, 0)
+            changed = ikev2.server(
+                '192.0.2.1', 'vpn.example.test', 'vpn.example.test', '10.68.68.0/24', '10.99.0.1',
+                lambda _text: None, lambda: False, etc=root / 'etc', swanctl=root / 'swanctl',
+                target=root / 'pki', caddy=root / 'caddy', lock_path=root / 'lock', run=run)
+            self.assertTrue(changed)
+            self.assertEqual(calls, [['swanctl', what] for what in
+                                     ('--load-creds', '--load-pools', '--load-conns')])
             # Профили по IP продолжают работать: старое предупреждение снимается.
-            self.assertFalse((root / 'etc/anysda/ikev2-profile-notice').exists())
-            self.assertEqual((root / 'etc/anysda/ikev2-domain').read_text(), 'vpn.example.test')
+            self.assertFalse((root / 'etc/ikev2-profile-notice').exists())
+            self.assertEqual((root / 'etc/ikev2-domain').read_text(), 'vpn.example.test')
+            self.assertEqual((root / 'etc/ikev2-mode').read_text(), 'self-signed')
+            self.assertIn('id    = %any', (root / 'swanctl/conf.d/anysda.conf').read_text())
+            again = ikev2.server(
+                '192.0.2.1', 'vpn.example.test', 'vpn.example.test', '10.68.68.0/24', '10.99.0.1',
+                lambda _text: None, lambda: False, etc=root / 'etc', swanctl=root / 'swanctl',
+                target=root / 'pki', caddy=root / 'caddy', lock_path=root / 'lock', run=run)
+            self.assertFalse(again, 'повтор без изменений считается изменением')
+        # Ожидающий домен: роль ставит наблюдатель и таймер повтора по отметке ikev2-domain.
+        role = ROOT / 'infra/ansible/roles/ikev2'
+        tasks = vpn_roles.role_tasks('ikev2')
+        self.assertIn('ikev2_le_domain | length > 0', tasks)
+        for unit in ('anysda-ikev2-cert-sync.path', 'anysda-ikev2-cert-sync.timer'):
+            self.assertIn(unit, tasks.split('ikev2_le_domain | length > 0', 1)[1])
+        self.assertIn('OnUnitActiveSec=30s', (role / 'files/anysda-ikev2-cert-sync.timer').read_text())
+        self.assertIn('"{{ ikev2_le_domain }}"',
+                      (role / 'templates/anysda-ikev2-cert-sync.service.j2').read_text())
+        self.assertIn("ikev2_domain.content", vpn_roles.role_defaults('ikev2'))
 
     def test_appearance_rotation_and_reload_failure(self):
-        stage = source('infra/scripts/27-ikev2.sh')
-        helper = stage.split("<<'LESYNC'\n", 1)[1].split('\nLESYNC', 1)[0]
+        helper = LE_SYNC.read_text()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for child in ('etc/swanctl/x509', 'etc/swanctl/x509ca', 'etc/swanctl/private',
@@ -101,74 +108,71 @@ export -f swanctl
             self.assertEqual((root / 'calls').read_text(), before, 'stale watcher must not restore removed domain')
 
     def test_server_address_follows_client_configs_and_keeps_ip_profiles(self):
-        stage = source('infra/scripts/27-ikev2.sh')
-        start = stage.index('# Адрес сервера в профилях тот же')
-        head = stage[start:stage.index('# ── 1. apt strongswan')]
+        ikev2 = package('ikev2')
+        domain = 'vpn.example.test'
         cases = (
-            # (WG_PUBLIC_HOST, прошлые маркеры mode/server-host, есть LE-cert) →
+            # (адрес профилей, прошлые отметки mode/server-host, есть LE-cert) →
             # (режим, адрес в профилях, id сервера, домен под LE)
-            (None, None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
-            # env без WG_PUBLIC_HOST: адресом всё равно служит домен панели.
-            ('', ('letsencrypt', 'vpn.example.test'), True,
-             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
-            ('vpn.example.test', None, False,
-             ('self-signed', 'vpn.example.test', '%any', 'vpn.example.test')),
-            ('vpn.example.test', None, True,
-             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
+            ('192.0.2.1', '', None, False, ('self-signed', '192.0.2.1', '192.0.2.1', '')),
+            (domain, domain, ('letsencrypt', domain), True, ('letsencrypt', domain, domain, domain)),
+            (domain, domain, None, False, ('self-signed', domain, '%any', domain)),
+            (domain, domain, None, True, ('letsencrypt', domain, domain, domain)),
             # Домен добавлен к серверу, раздававшему профили по IP: свой CA остаётся.
-            ('vpn.example.test', ('self-signed', '192.0.2.1'), True,
-             ('self-signed', 'vpn.example.test', '%any', '')),
-            ('vpn.example.test', ('letsencrypt', 'vpn.example.test'), True,
-             ('letsencrypt', 'vpn.example.test', 'vpn.example.test', 'vpn.example.test')),
+            (domain, domain, ('self-signed', '192.0.2.1'), True, ('self-signed', domain, '%any', '')),
             # Явный public_host важнее домена панели.
-            ('edge.example.net', None, True, ('self-signed', 'edge.example.net', '%any', '')),
+            ('edge.example.net', domain, None, True, ('self-signed', 'edge.example.net', '%any', '')),
         )
-        for public, previous, issued, expected in cases:
+        for public, panel, previous, issued, expected in cases:
             with self.subTest(public=public, previous=previous, issued=issued), \
                     tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                (root / 'etc/anysda').mkdir(parents=True)
+                (root / 'etc').mkdir()
                 if previous:
-                    (root / 'etc/anysda/ikev2-mode').write_text(previous[0])
-                    (root / 'etc/anysda/ikev2-server-host').write_text(previous[1])
-                caddy = root / 'caddy/vpn.example.test'
+                    (root / 'etc/ikev2-mode').write_text(previous[0])
+                    (root / 'etc/ikev2-server-host').write_text(previous[1])
+                caddy = root / 'caddy' / domain
                 caddy.mkdir(parents=True)
                 if issued:
                     for suffix in ('crt', 'key'):
-                        (caddy / f'vpn.example.test.{suffix}').write_text('pem')
-                result = bash(f'''
-HOST_TAG=ru
-ENTRY_HOST=192.0.2.1
-PANEL_DOMAIN={'' if public is None else 'vpn.example.test'}
-WG_PUBLIC_HOST={public or ''}
-CADDY_CERT_DIR=$PWD/caddy
-''' + head.replace('/etc/', directory + '/etc/') + '''
-printf '%s|%s|%s|%s' "$IKEV2_MODE" "$IKEV2_SERVER_HOST" "$IKEV2_LOCAL_ID" "$LE_DOMAIN" > result
-''', directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(tuple((root / 'result').read_text().split('|')), expected)
+                        (caddy / f'{domain}.{suffix}').write_text('pem')
+                chosen = ikev2.plan('192.0.2.1', public, panel, etc=root / 'etc',
+                                    swanctl=root / 'swanctl', caddy=root / 'caddy')
+                self.assertEqual((chosen.mode, chosen.server_host, chosen.local_id, chosen.le_domain),
+                                 expected)
                 # Решение остаться на своём CA не отменяется следующим деплоем.
-                self.assertEqual((root / 'etc/anysda/ikev2-own-ca-kept').exists(),
+                self.assertEqual((root / 'etc/ikev2-own-ca-kept').exists(),
                                  previous == ('self-signed', '192.0.2.1'))
+        # Адрес профилей: WG_PUBLIC_HOST, без него домен панели, без него адрес входа.
+        defaults = vpn_roles.role_defaults('ikev2')
+        line = defaults.split('ikev2_public_host:', 1)[1].split('ikev2_subnet:', 1)[0]
+        self.assertLess(line.index('WG_PUBLIC_HOST'), line.index('ikev2_panel_domain'))
+        self.assertLess(line.index('ikev2_panel_domain'), line.index('ikev2_entry_host'))
+
+    def test_restored_letsencrypt_pair_is_kept_until_caddy_issues(self):
+        ikev2 = package('ikev2')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for child in ('etc', 'swanctl/x509', 'swanctl/private'):
+                (root / child).mkdir(parents=True)
+            (root / 'etc/ikev2-mode').write_text('letsencrypt')
+            (root / 'etc/ikev2-server-host').write_text('vpn.example.test')
+            (root / 'swanctl/x509/anysda-server.crt').write_text('pem')
+            (root / 'swanctl/private/anysda-server.key').write_text('pem')
+            chosen = ikev2.plan('192.0.2.1', 'vpn.example.test', 'vpn.example.test', etc=root / 'etc',
+                                swanctl=root / 'swanctl', caddy=root / 'caddy')
+            self.assertEqual(chosen.mode, 'letsencrypt')
 
     def test_own_certificate_names_domain_and_entry_ip_with_same_ca(self):
-        stage = source('infra/scripts/27-ikev2.sh')
-        block = '  ikev2_pki_build() {' + stage.split('  ikev2_pki_build() {', 1)[1].split(
-            '  pki_transaction', 1)[0]
-        lib = ROOT / 'infra/lib/anysda-pki.sh'
+        pki = package('pki')
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'pki').mkdir()
-            run = f'source {lib}\nHOST_TAG=ru\nENTRY_HOST=192.0.2.1\nPKI=$PWD/pki\n' + block
-            before = bash(run + 'ikev2_pki_build "$PKI"\n', directory)
-            self.assertEqual(before.returncode, 0, before.stderr)
+            said = []
+            pki.build_ikev2(root / 'pki', '192.0.2.1', '192.0.2.1', say=said.append)
             ca = (root / 'pki/ca.crt').read_bytes()
             old = (root / 'pki/server.crt').read_bytes()
-            after = bash(run.replace('ENTRY_HOST=192.0.2.1\n', 'ENTRY_HOST=192.0.2.1\n'
-                                     'IKEV2_PUBLIC_HOST=vpn.example.test\n')
-                         + 'ikev2_pki_build "$PKI"\n', directory)
-            self.assertEqual(after.returncode, 0, after.stderr)
-            self.assertIn('SAN не содержит vpn.example.test', after.stdout)
+            pki.build_ikev2(root / 'pki', 'vpn.example.test', '192.0.2.1', say=said.append)
+            self.assertIn('SAN не содержит vpn.example.test, перевыпуск server cert', said)
             self.assertEqual((root / 'pki/ca.crt').read_bytes(), ca, 'clients trust the same CA')
             self.assertNotEqual((root / 'pki/server.crt').read_bytes(), old)
             text = bash('openssl x509 -in pki/server.crt -noout -text', directory).stdout
@@ -181,11 +185,13 @@ printf '%s|%s|%s|%s' "$IKEV2_MODE" "$IKEV2_SERVER_HOST" "$IKEV2_LOCAL_ID" "$LE_D
                 check = bash(f'openssl verify -CAfile pki/ca.crt -purpose sslserver {flag} {name} '
                              'pki/server.crt', directory)
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
-            again = bash(run.replace('ENTRY_HOST=192.0.2.1\n', 'ENTRY_HOST=192.0.2.1\n'
-                                     'IKEV2_PUBLIC_HOST=vpn.example.test\n')
-                         + 'ikev2_pki_build "$PKI"\n', directory)
-            self.assertEqual(again.returncode, 0, again.stderr)
-            self.assertNotIn('перевыпуск', again.stdout, 'certificate with both names is kept')
+            kept = (root / 'pki/server.crt').read_bytes()
+            del said[:]
+            pki.build_ikev2(root / 'pki', 'vpn.example.test', '192.0.2.1', say=said.append)
+            self.assertEqual(said, [], 'certificate with both names is kept')
+            self.assertEqual((root / 'pki/server.crt').read_bytes(), kept)
+            self.assertEqual(sorted(path.name for path in (root / 'pki').iterdir()),
+                             ['ca.crt', 'ca.key', 'server.crt', 'server.key'])
 
     def test_summary_reads_actual_mode(self):
         deploy = source('infra/deploy.sh')

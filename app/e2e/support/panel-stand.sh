@@ -101,9 +101,8 @@ IN
     dk cp "$STAND_APP_DIR/shared/vpn-pools.json" "$name:/etc/vpn2-control/vpn-pools.json"
     dk cp "$STAND_APP_DIR/e2e/support/control-service.py" "$name:/tmp/control-service.py"
     dk exec -d "$name" python3 /tmp/control-service.py
-    awk '/^cat > .*anysda-ikev2-sync.py.*PYEOF/ {f=1; next} f && /^PYEOF$/ {exit} f' \
-      "$STAND_REPO_DIR/infra/scripts/27-ikev2.sh" \
-      | dk exec -i "$name" sh -c 'cat > /tmp/ikev2-test-sync.py'
+    dk exec -i "$name" sh -c 'cat > /tmp/ikev2-test-sync.py' \
+      < "$STAND_REPO_DIR/infra/ansible/roles/ikev2/files/anysda-ikev2-sync.py"
     dk exec -i "$name" sh -c 'cat > /tmp/vpn-services.sh' < "$STAND_APP_DIR/e2e/support/vpn-services.sh"
     dk exec -d "$name" bash /tmp/vpn-services.sh
   fi

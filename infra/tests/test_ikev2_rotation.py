@@ -2,12 +2,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_deploy import bash, source
+from test_deploy import ROOT, bash
 
 
 class Ikev2RotationTests(unittest.TestCase):
     def test_rotated_certificate_reloads_connection(self):
-        helper = source('infra/scripts/27-ikev2.sh').split("<<'LESYNC'\n", 1)[1].split('\nLESYNC', 1)[0]
+        helper = (ROOT / 'infra/ansible/roles/ikev2/files/anysda-ikev2-le-sync.sh').read_text()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for child in ('x509', 'x509ca', 'private'):

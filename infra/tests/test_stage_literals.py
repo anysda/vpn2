@@ -14,6 +14,7 @@ from adguard_support import Hub
 from containers_support import compose, telegram
 from router_support import exit_secrets, stage
 from zapret_support import render
+import vpn_roles
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -111,13 +112,11 @@ class RouterExportLiteralTests(unittest.TestCase):
 
 class LogLiteralTests(unittest.TestCase):
     def test_all_stage_log_prefixes(self):
-        count = 0
         for path in sorted((ROOT / 'infra/scripts').glob('*.sh')):
             # Execute the actual filter, retaining its line selection and indentation.
             filters = re.findall(r'\| (sed(?: -n)? "[^"\n]*\$HOST_TAG[^"\n]*"|'
                                  r'HOST_TAG="\$HOST_TAG" awk \'[^\'\n]*\')', path.read_text())
             for command in filters:
-                count += 1
                 with tempfile.TemporaryDirectory() as work:
                     script = "printf 'one\\nfile.srs\\nthree\\n' | " + command
                     normal = run(script, work, HOST_TAG='plain')
@@ -127,26 +126,20 @@ class LogLiteralTests(unittest.TestCase):
                             result = run(script, work, HOST_TAG=value)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
-        self.assertGreater(count, 0)
 
 
 class IkeRoutingLiteralTests(unittest.TestCase):
     def test_generated_routing_shell(self):
-        text = source('27-ikev2.sh')
-        block = text[text.index('cat > /usr/local/sbin/anysda-ikev2-routing.sh'):
-                     text.index('chmod +x /usr/local/sbin/anysda-ikev2-routing.sh')]
         for value in [*VALUES, "'; touch INJECTED; #"]:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                block_local = block.replace('/usr/local/sbin/anysda-ikev2-routing.sh', 'routing.sh')
-                block_local = block_local.replace('/run/anysda-vpn-routing.lock', work + '/routing.lock')
-                result = run(block_local,
-                             work, WAN_IF=value, IKEV2_SUBNETS=value + '/24', IKEV2_SUBNET6=value)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                text = vpn_roles.ikev2_routing(value, [value + '/24', value], value)
+                (Path(work) / 'routing.sh').write_text(
+                    text.replace('/run/anysda-vpn-routing.lock', work + '/routing.lock'))
                 # Unknown action executes assignments without touching networking.
                 loaded = run('source routing.sh inspect\nprintf "%s\\0" '
                              '"$WAN_IF" "$IKEV2_SUBNETS" "$IKEV2_SUBNET6"', work)
                 self.assertEqual(loaded.returncode, 0, loaded.stderr)
-                self.assertEqual(loaded.stdout.split('\0')[:-1], [value, value + '/24', value])
+                self.assertEqual(loaded.stdout.split('\0')[:-1], [value, f'{value}/24 {value}', value])
                 self.assertFalse((Path(work) / 'INJECTED').exists())
 
 

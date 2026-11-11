@@ -82,18 +82,11 @@ set -- up
 
     def test_ikev2_routes_and_openvpn_extra_routes(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
-        stage = source('infra/scripts/27-ikev2.sh')
-        template = stage.split('cat > /usr/local/sbin/anysda-ikev2-routing.sh <<IPTSEOF\n', 1)[1].split('\nIPTSEOF', 1)[0]
         with tempfile.TemporaryDirectory() as directory:
-            template = template.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
-            script = f'source "{ROOT}/infra/lib/anysda-svc.sh"\n' + '''
-IKEV2_SUBNETS=$(vpn_pool_subnets ikev2)
-IKEV2_SUBNET=10.68.68.0/24
-IKEV2_SUBNET6=fd68:68::/112
-WAN_IF=eth0
-cat > routing.sh <<IPTSEOF
-''' + template + '''
-IPTSEOF
+            text = vpn_roles.ikev2_routing('eth0', pools['ikev2']['subnets'])
+            (Path(directory) / 'routing.sh').write_text(
+                text.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock'))
+            script = '''
 ip() { echo "ip $*"; }
 iptables() { [[ " $* " != *" -C "* ]] && echo "iptables $*"; }
 ip6tables() { [[ " $* " != *" -C "* ]] && echo "ip6tables $*"; }
@@ -109,25 +102,7 @@ source routing.sh up
 
     def test_dns_firewall_and_adguard_cover_every_subnet(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
-        for key, filename, variable in [('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
-            stage = source(f'infra/scripts/{filename}.sh')
-            loop = next(line for line in stage.splitlines() if line.startswith('ufw_sync_dns '))
-            with tempfile.TemporaryDirectory() as directory:
-                result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n{variable}=$(vpn_pool_subnets {key})\n' + '''
-IKEV2_DNS=10.99.0.1
-ufw() { echo "$*" >> rules; }
-ufw_sync_rules() {
-  local comment=$1 rule
-  shift
-  for rule in "$@"; do ufw allow "$rule" comment "$comment"; done
-}
-''' + loop, directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                rules = (Path(directory) / 'rules').read_text()
-                for cidr in pools[key]['subnets']:
-                    for protocol in ('tcp', 'udp'):
-                        self.assertIn(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53', rules)
-        for key, role in [('wg', 'wireguard'), ('ovpn', 'openvpn')]:
+        for key, role in [('wg', 'wireguard'), ('ovpn', 'openvpn'), ('ikev2', 'ikev2')]:
             defaults = vpn_roles.role_defaults(role)
             self.assertIn(f'{role}_subnets: "{{{{ {role}_pools.{key}.subnets }}}}"', defaults)
             self.assertIn(f"{role}_infra ~ '/../app/shared/vpn-pools.json'", defaults)

@@ -21,7 +21,7 @@ def fw_guard_stages():
 
 def stage_args_check():
     """Проверка аргументов стадии из deploy.sh до открытия выпуска."""
-    head = "case \"${1:-}\" in\n  ''|recover|backup|backup-list|restore|rollback) ;;"
+    head = "case \"${1:-}\" in\n  ''|recover|backup|backup-list|rollback) ;;"
     body = DEPLOY.split(head, 1)[1].split('\nesac', 1)[0]
     return head + body + '\nesac\n'
 

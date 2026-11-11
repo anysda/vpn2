@@ -28,6 +28,8 @@ case $cmd in
     cmd=${cmd//\/var\/lib\/vpn2-deploy/$FAKE_NODE/lock}
     cmd=${cmd//\/tmp\/anysda/$FAKE_NODE/anysda}
     exec bash -c "$begin $cmd" ;;
+  *anysda-restore.sh*)
+    exec bash -c "$begin echo 'anysda-restore: архива нет' >&2; exit 3" ;;
 esac
 printf '%s\n' "$cmd" >> "$FAKE_NODE/skipped.log"
 exec bash -c "$begin"
@@ -196,6 +198,18 @@ class JournalTests(unittest.TestCase):
             output = recovered.stdout + recovered.stderr
             self.assertNotIn('unfinished deploy', output)
             self.assertIn('phase --phase applying', (tree.node / 'state.log').read_text(), output)
+
+    def test_restore_without_archive_refused_before_release(self):
+        with Tree() as tree:
+            refused = tree.deploy('5', 'restore', 'latest')
+            output = refused.stdout + refused.stderr
+            self.assertEqual(refused.returncode, 3, output)
+            self.assertIn('anysda-restore: архива нет', refused.stderr)
+            self.assertFalse(tree.journal().exists(), output)
+            self.assertEqual(tree.copies(), [], output)
+            self.assertNotIn('operation journal retained', output)
+            following = tree.deploy('5', NOOP_STAGE, 'ru')
+            self.assertEqual(following.returncode, 0, following.stdout + following.stderr)
 
 
 if __name__ == '__main__':

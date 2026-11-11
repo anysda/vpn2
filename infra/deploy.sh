@@ -636,7 +636,10 @@ fw_guard_entry_baseline() {
 # экзитов (ребут, перезапуск sshd в их стадии) о входе не говорит: пульс через
 # lo и один warn. Закрытый вход при молчащих экзитах так не поймать.
 fw_guard_beat() {
-  local owner=${1:-$$} outside gone=0
+  local owner=${1:-$$} outside gone=0 nap=''
+  # Пауза не переживает пульс: осиротевший sleep ещё 5 с держал бы замок
+  # деплоя и вывод, и команда сразу следом видела бы «deploy уже выполняется».
+  trap '[[ -z "$nap" ]] || kill "$nap" 2>/dev/null; exit 0' TERM
   while kill -0 "$owner" 2>/dev/null; do
     outside=0
     if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
@@ -649,7 +652,8 @@ fw_guard_beat() {
     if (( outside != 1 )); then
       ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
     fi
-    sleep 5
+    sleep 5 & nap=$!
+    wait "$nap" || true
   done
 }
 
@@ -1550,7 +1554,7 @@ do_restore() {
       && mkdir -p \"\$dir\" && mv /tmp/anysda/'$base' \"\$dir/$base\" && chmod 600 \"\$dir/$base\""
     archive="$base"
   fi
-  ssh_exec "VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} /usr/local/bin/anysda-restore.sh '$archive'$flags"
+  ssh_exec "VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} /usr/local/bin/anysda-restore.sh '$archive'$flags" || return $?
   (( ! dry_run )) || return 0
   # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
   # которого он снят, а запущенные службы собраны под секреты текущего: бот
@@ -1588,7 +1592,12 @@ source "$DEPLOY_ROOT/lib/deploy-release.sh"
 # Ошибка в аргументах стадии не открывает выпуск: иначе запись остаётся в
 # applying, и следующий деплой требует recover.
 case "${1:-}" in
-  ''|recover|backup|backup-list|restore|rollback) ;;
+  ''|recover|backup|backup-list|rollback) ;;
+  restore)
+    # Архива нет или он не тот: пробный проход отказывает той же строкой и
+    # кодом, выпуск ещё не открыт.
+    [[ " ${*:2} " == *' --dry-run '* ]] || do_restore "${@:2}" --dry-run >/dev/null || exit $?
+    ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     [[ -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"

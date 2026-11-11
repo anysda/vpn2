@@ -110,6 +110,24 @@ settled
         settled(self, result)
 
 
+class BeatReleasesDeployLockTests(unittest.TestCase):
+    def test_stopped_beat_leaves_no_holder_of_inherited_lock(self):
+        # Замок деплоя наследуют все потомки; пауза пульса настоящая, 5 с.
+        result, _ = deploy('''
+unset -f sleep
+HOST_TAG=se
+exec 9>lock
+flock -n 9
+fw_guard_beat $$ &
+beat=$!
+command sleep 0.5
+kill "$beat"; wait "$beat" 2>/dev/null || true
+exec 9>&-
+if flock -n lock true; then echo LOCK=free; else echo LOCK=held; fi
+''', timeout=15)
+        self.assertIn('LOCK=free', result.stdout, result.stdout + result.stderr)
+
+
 class ProbeUnderDeployLockTests(unittest.TestCase):
     def test_exit_probe_returns_with_live_coproc(self):
         result, _ = deploy('''

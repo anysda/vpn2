@@ -8,7 +8,7 @@ import pytest
 
 from vpn2 import entryvpn, pki, wg
 
-pytestmark = pytest.mark.skipif(not shutil.which('wg'), reason='нет wg')
+NEEDS_WG = pytest.mark.skipif(not shutil.which('wg'), reason='нет wg')
 
 KEY = 'YEocP0e2o1WT5GlvBvQzVF7EeR1z9aLk9SIGqBqLHFQ='
 INITIAL = ('# Initial config — panel will overwrite via syncWireguardConfig().\n[Interface]\n'
@@ -37,6 +37,7 @@ def shape(key, conf):
             'wg0.conf': conf, '.keys.lock': ('', 0o600)}
 
 
+@NEEDS_WG
 def test_clean_root_gets_new_key_and_initial_conf(tmp_path):
     assert identity(tmp_path) is True
     key = (tmp_path / 'keys/server.priv').read_text().strip()
@@ -45,6 +46,7 @@ def test_clean_root_gets_new_key_and_initial_conf(tmp_path):
     assert identity(tmp_path) is False
 
 
+@NEEDS_WG
 def test_flat_key_migrates_unchanged(tmp_path):
     (tmp_path / 'server.priv').write_text(KEY + '\n')
     assert identity(tmp_path) is True
@@ -52,6 +54,7 @@ def test_flat_key_migrates_unchanged(tmp_path):
 
 
 @pytest.mark.parametrize('line', ['PrivateKey = {key}', 'privatekey={key} # старый', ' PRIVATEKEY\t=\t{key}'])
+@NEEDS_WG
 def test_key_is_taken_from_interface_of_existing_conf(tmp_path, line):
     conf = f'[Interface]\nAddress = 10.66.66.1/24\n{line.format(key=KEY)}\n[Peer]\nPublicKey = x\n'
     (tmp_path / 'wg0.conf').write_text(conf)
@@ -66,6 +69,7 @@ def test_key_is_taken_from_interface_of_existing_conf(tmp_path, line):
     '[Interface]\nAddress = 10.66.66.1/24\n[Peer]\nPrivateKey = ' + KEY + '\n',
     '[Interface]\nPrivateKey = ' + KEY[:-2] + '\n',
 ])
+@NEEDS_WG
 def test_conf_without_usable_key_is_refused(tmp_path, conf):
     (tmp_path / 'wg0.conf').write_text(conf)
     (tmp_path / 'wg0.conf').chmod(0o644)
@@ -74,6 +78,7 @@ def test_conf_without_usable_key_is_refused(tmp_path, conf):
     assert tree(tmp_path) == {'wg0.conf': (conf, 0o644), '.keys.lock': ('', 0o600)}
 
 
+@NEEDS_WG
 def test_broken_key_with_public_half_is_refused(tmp_path):
     (tmp_path / 'keys').mkdir()
     (tmp_path / 'keys/server.priv').write_text('обрыв\n')
@@ -86,6 +91,7 @@ def test_broken_key_with_public_half_is_refused(tmp_path):
     assert not (tmp_path / 'wg0.conf').exists()
 
 
+@NEEDS_WG
 def test_empty_key_file_without_identity_is_regenerated(tmp_path):
     (tmp_path / 'keys').mkdir()
     (tmp_path / 'keys/server.priv').write_text('')
@@ -115,6 +121,7 @@ LIVE = ('5: wg0    inet 10.66.66.1/24 scope global wg0\\       valid_lft forever
     ({('systemctl', 'is-active', '--quiet'): (3, '')}, '10.66.66.1/24, fd66:66::1/64', True),
     ({('ip', 'link', 'show'): (1, '')}, '10.66.66.1/24, fd66:66::1/64', True),
 ])
+@NEEDS_WG
 def test_apply_restarts_only_when_addresses_differ(tmp_path, answers, address, restarted):
     conf = tmp_path / 'wg0.conf'
     conf.write_text(f'[Interface]\nAddress = {address}\nPrivateKey = {KEY}\n')
@@ -130,6 +137,7 @@ def test_apply_restarts_only_when_addresses_differ(tmp_path, answers, address, r
         assert said == ['адреса wg0 прежние — wg syncconf без рестарта']
 
 
+@NEEDS_WG
 def test_routing_ensure_restarts_unit_only_without_chain():
     calls, said = [], []
     args = ('anysda-wg-routing', 'wg0', 'ANYSDA_WG_TPROXY')
@@ -142,6 +150,7 @@ def test_routing_ensure_restarts_unit_only_without_chain():
     assert said == ['anysda-wg-routing: цепочка ANYSDA_WG_TPROXY пропала, восстанавливаю']
 
 
+@NEEDS_WG
 def test_dns_rules_match_stage_order():
     assert entryvpn.dns_rules('10.99.0.1', ['10.66.66.0/24', '10.66.64.0/24']) == [
         'proto udp from 10.66.66.0/24 to 10.99.0.1 port 53', 'proto tcp from 10.66.66.0/24 to 10.99.0.1 port 53',

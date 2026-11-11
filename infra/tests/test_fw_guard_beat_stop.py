@@ -72,7 +72,7 @@ def settled(test, result):
     test.assertEqual(before, after, 'пульс идёт после стадии: ' + out + result.stderr)
 
 
-class BeatStopsWithStage(unittest.TestCase):
+class BeatStopsWithStageTests(unittest.TestCase):
     def stage(self, rc):
         return deploy(f'''
 STAGE=29-openvpn STAGE_RC={rc}
@@ -108,7 +108,7 @@ settled
         settled(self, result)
 
 
-class ProbeUnderDeployLock(unittest.TestCase):
+class ProbeUnderDeployLockTests(unittest.TestCase):
     def test_exit_probe_returns_with_live_coproc(self):
         result, _ = deploy('''
 fw_guard_exit_sees_entry() { command sleep 0.1; [[ $1 == se ]]; }
@@ -124,7 +124,7 @@ kill "$LOCK_PID"
         self.assertIn('PROBE=0', result.stdout)
 
 
-class ExitStageOnEntry(unittest.TestCase):
+class ExitStageOnEntryTests(unittest.TestCase):
     BODY = '''
 warn_insecure_exits() { :; }
 run_stage_on_host() { echo "HOST $1 $2"; }

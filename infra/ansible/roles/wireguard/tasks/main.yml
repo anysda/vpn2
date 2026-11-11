@@ -1,0 +1,132 @@
+---
+# Ядерный WireGuard на wg0: трафик клиентов уходит в ту же цепочку TPROXY
+# sing-box, что у OpenVPN. Панель переписывает wg0.conf пирами включённых
+# клиентов и применяет его `wg syncconf`.
+- name: Каталог отметок стадий
+  ansible.builtin.file:
+    path: /var/anysda/.stamps
+    state: directory
+    mode: '0755'
+
+- name: Каталог WireGuard
+  ansible.builtin.file:
+    path: /etc/wireguard
+    state: directory
+    mode: '0700'
+
+- name: Пакет wireguard-tools
+  ansible.builtin.command:
+    argv: "{{ wireguard_host + ['packages', 'wireguard-tools'] }}"
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Модуль ядра wireguard
+  ansible.builtin.command:
+    cmd: modprobe wireguard
+  changed_when: false
+  failed_when: false
+
+# Ключи переживают повторы: действующий приватный ключ не ротируется.
+- name: Ключи сервера и начальный wg0.conf
+  ansible.builtin.command:
+    argv: "{{ wireguard_host + ['wg-identity', '--port', wireguard_port, '--address', wireguard_address] }}"
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Пересылка пакетов между интерфейсами
+  ansible.builtin.copy:
+    src: 98-wg-forward.conf
+    dest: /etc/sysctl.d/98-wg-forward.conf
+    mode: '0644'
+
+- name: Параметры ядра применены
+  ansible.builtin.command:
+    cmd: sysctl -p /etc/sysctl.d/98-wg-forward.conf
+  changed_when: false
+
+- name: Порт WireGuard и DNS клиентов в ufw
+  ansible.builtin.command:
+    argv: "{{ wireguard_host + ['ufw', '--only-rules', wireguard_ufw | to_json] }}"
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Служба wg-quick@wg0 включена
+  ansible.builtin.systemd_service:
+    name: wg-quick@wg0
+    enabled: true
+
+# Рестарт wg-quick рвёт туннель всем клиентам: при прежних адресах ключи и
+# пиры применяет `wg syncconf`.
+- name: Конфиг wg0 применён
+  ansible.builtin.command:
+    argv: "{{ wireguard_host + ['wg-apply'] }}"
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Юнит маршрутизации wg0
+  ansible.builtin.template:
+    src: anysda-wg-routing.service.j2
+    dest: /etc/systemd/system/anysda-wg-routing.service
+    mode: '0644'
+
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ wireguard_infra }}/lib/{{ item }}"
+    dest: "{{ wireguard_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  changed_when: false
+
+- name: Ресурсы юнита маршрутизации
+  ansible.builtin.command:
+    argv:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-wg-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
+      - "{{ wireguard_tmp }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  register: wireguard_step
+  changed_when: "'changed=1' in wireguard_step.stdout"
+
+- name: Скрипт маршрутизации wg0
+  ansible.builtin.copy:
+    src: anysda-wg-routing.sh
+    dest: /usr/local/sbin/anysda-wg-routing.sh
+    mode: '0755'
+
+- name: Маршрутизация wg0 включена
+  ansible.builtin.systemd_service:
+    name: anysda-wg-routing
+    enabled: true
+    daemon_reload: true
+
+- name: Маршрутизация wg0 запущена с текущими входами
+  ansible.builtin.command:
+    argv: >-
+      {{ wireguard_host + ['restart-if-changed', 'anysda-wg-routing',
+         '/etc/systemd/system/anysda-wg-routing.service', '/usr/local/sbin/anysda-wg-routing.sh'] }}
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Цепочка TPROXY wg0 на месте
+  ansible.builtin.command:
+    argv: "{{ wireguard_host + ['routing-ensure', 'anysda-wg-routing', 'wg0', 'ANYSDA_WG_TPROXY'] }}"
+  environment: "{{ wireguard_env }}"
+  register: wireguard_step
+  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/28-wireguard
+    force: false
+    mode: '0644'

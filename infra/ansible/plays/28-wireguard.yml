@@ -1,0 +1,6 @@
+---
+- name: Сервер WireGuard на entry
+  hosts: entry
+  tags: [28-wireguard]
+  roles:
+    - wireguard

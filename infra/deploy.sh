@@ -647,7 +647,8 @@ fw_guard_beat() {
   local owner=${1:-$$} outside gone=0 nap=''
   # Пауза не переживает пульс: осиротевший sleep ещё 5 с держал бы замок
   # деплоя и вывод, и команда сразу следом видела бы «deploy уже выполняется».
-  trap '[[ -z "$nap" ]] || kill "$nap" 2>/dev/null; exit 0' TERM
+  # Убитую паузу пульс дожидается: под нагрузкой она умирает не сразу и ещё держит замок.
+  trap '[[ -z "$nap" ]] || { kill "$nap" 2>/dev/null; wait "$nap" 2>/dev/null; }; exit 0' TERM
   while kill -0 "$owner" 2>/dev/null; do
     outside=0
     if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then

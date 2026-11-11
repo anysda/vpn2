@@ -17,12 +17,12 @@
     mode: '0755'
   changed_when: false
 
-- name: Библиотеки шагов и колесо vpn2
+- name: Колесо vpn2 экзита
   ansible.builtin.copy:
-    src: "{{ item }}"
+    src: "{{ base_wheel }}"
     dest: "{{ base_tmp }}/"
     mode: '0644'
-  loop: "{{ base_libs }}"
+  when: not base_entry
   changed_when: false
 
 - name: Чужие таблицы nftables переживают перезапуск юнита
@@ -108,21 +108,10 @@
     mode: '0644'
 
 - name: Ресурсы юнитов
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; for unit; do entry_unit_resources "$unit"; echo "changed=$ENTRY_DROPIN_CHANGED"; done'
-      - "{{ base_tmp }}"
-      - anysda-fq
-      - node_exporter
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
-  register: base_step
-  changed_when: "'changed=1' in base_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-fq, node_exporter]
 
 - name: Очередь WAN включена
   ansible.builtin.systemd_service:

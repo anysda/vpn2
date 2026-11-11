@@ -111,11 +111,13 @@ def inventory():
 
 
 def role_dropin_units(role):
-    """Юниты, которым задачи роли зовут entry_unit_resources из подключённой библиотеки."""
+    """Юниты, которым роль пишет drop-in: через роль resources или своим вызовом библиотеки."""
     units = []
     tasks = [inner for path in sorted((ROLES / role / "tasks").glob("*.yml"))
              for task in yaml.safe_load(path.read_text()) for inner in task.get("block", [task])]
     for task in tasks:
+        if (task.get("ansible.builtin.include_role") or {}).get("name") == "resources":
+            units += task["vars"]["resources_units"]
         argv = (task.get("ansible.builtin.command") or {}).get("argv") or []
         code = next((i for i, word in enumerate(argv) if 'source "$0/entry-resources.sh"' in str(word)), None)
         if code is None:

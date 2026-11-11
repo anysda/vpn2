@@ -1,0 +1,34 @@
+---
+# Лимиты памяти и приоритеты юнитов: drop-in zz-vpn2-resources.conf пишет
+# библиотека деплоя на узле. Роль зовут через include_role со списком
+# resources_units; итог шага зовущая роль читает из resources_step.
+
+# Библиотека копируется один раз за плей: рабочий каталог живёт до конца стадии.
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ resources_infra }}/lib/{{ item }}"
+    dest: "{{ resources_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  when: resources_play | default('') != ansible_play_name
+  changed_when: false
+
+- name: Библиотека ресурсов лежит на узле
+  ansible.builtin.set_fact:
+    resources_play: "{{ ansible_play_name }}"
+
+- name: Ресурсы юнитов
+  ansible.builtin.command:
+    argv: "{{ resources_bash + [resources_tmp] + resources_units }}"
+  environment:
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
+  vars:
+    resources_bash:
+      - /bin/bash
+      - --norc
+      - -euo
+      - pipefail
+      - -c
+      - 'source "$0/entry-resources.sh"; for unit; do entry_unit_resources "$unit"; echo "changed=$ENTRY_DROPIN_CHANGED"; done'
+  register: resources_step
+  changed_when: "'changed=1' in resources_step.stdout"

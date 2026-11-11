@@ -14,7 +14,7 @@ LOOKUPS_LEFT = {
     'verify': 4,
 
     'backup': 16,
-    'base': 12,
+    'base': 11,
     'emergency': 10,
 
     'ikev2': 10,
@@ -86,6 +86,9 @@ def test_every_name_roles_read_is_in_hostvars():
     assert {'adguard_env_names', 'containers_env_common', 'router_env_exit_suffix', 'verify_env_names',
             'zapret_env_names'} <= set(lists), 'списки имён ролей не найдены: разбор defaults устарел'
     plain = {name for _, args in calls() for name in re.findall(rf"'({NAME})'", args)}
+    # Роль, ушедшая на hostvars, читает те же имена как vpn2_env.ИМЯ.
+    plain |= {name for path in sources()
+              for name in re.findall(rf'\bvpn2_env\.({NAME})\b', path.read_text(encoding='utf-8'))}
     for key, names in lists.items():
         if key.endswith('_exit_prefix'):
             assert set(names) <= set(nodevars.EXIT_PREFIXES), key

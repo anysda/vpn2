@@ -23,10 +23,6 @@ base_host_exit:
   - vpn2.cli.host
 base_host: "{{ base_host_entry if base_entry else base_host_exit }}"
 
-# Библиотеки, которые шаги роли зовут на узле из base_tmp.
-base_libs_common: [lib/entry-resources.sh, lib/entry_resources.py]
-base_libs: "{{ base_libs_common | map('regex_replace', '^', base_infra ~ '/') | list + ([] if base_entry else [base_wheel]) }}"
-
 base_packages_common:
   - wireguard
   - wireguard-tools

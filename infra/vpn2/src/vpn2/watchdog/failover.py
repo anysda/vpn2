@@ -207,6 +207,7 @@ _pin_switch_seen = 0      # сколько из них pins_tick уже учёл
 # не ждём: выбор уходит на другой узел, как с мёртвого.
 LEG_WAIT           = HY2_RISE + INTERVAL + DEAD_AFTER * (TIMEOUT_MS / 1000.0 + 1.0)
 _leg_wait: dict = {}      # текущий экзит -> monotonic, с которого ждём перевода его канала
+_late_miss: dict = {}     # hy2 канала -> промахи подряд, недосчитанные проходом проверки каналов
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
 _slow_probes: dict = {}   # (тег, url) -> (поток, итог, причины) пробы, которую не стали ждать
@@ -1436,21 +1437,19 @@ def transport_tick(proxies):
     hy2_miss = [v[0] for s, v in deciders.items()
                 if s in on_tcp and delays[v[0]] is None and s in _hy2_since]
     # Пока идут до-проверки соседа, ответивший hy2 пробуем заодно: умер сразу
-    # после своей пробы - счёт его промахов идёт с этого же прохода, а не со
-    # следующего. Следим первые DEAD_AFTER - 1 пачек, дольше проход не растёт.
-    miss = dict.fromkeys(fresh, 1)
+    # после своей пробы - счёт его промахов идёт с этого же прохода. Проход от
+    # этого не растёт: недосчитанное переходит в следующий, он идёт без паузы.
+    miss = {h: 1 + _late_miss.get(h, 0) for h in fresh}
     watch = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is not None]
-    for n in range(2 * (DEAD_AFTER - 1)):
-        early = n < DEAD_AFTER - 1
+    for _ in range(DEAD_AFTER - 1):
         fresh = [h for h in miss if miss[h] < DEAD_AFTER]
-        if not fresh and not (early and (tcp_dead or hy2_miss)):
+        if not fresh and not tcp_dead and not hy2_miss:
             break
         time.sleep(CONFIRM_GAP)
         # TCP канала пробуем той же пачкой, что и до-проверку его hy2: решение
         # готово вместе с вердиктом по hy2, а не ещё через тайм-аут.
         tcp_try = [spare[h] for h in fresh if delays.get(spare[h]) is None]
-        extra = watch + tcp_dead + hy2_miss if early else []
-        again, _ = _probe_all(fresh + extra + tcp_try, known_dead=set())
+        again, _ = _probe_all(fresh + watch + tcp_dead + hy2_miss + tcp_try, known_dead=set())
         for t in tcp_try:
             tries[t] = tries.get(t, 0) + 1
             delays[t] = again[t]
@@ -1459,16 +1458,15 @@ def transport_tick(proxies):
                 miss[h] += 1
             else:
                 del miss[h]
-        if not early:
-            continue
         for h in watch:
             if again[h] is None:
                 miss[h] = 1
-                dead.append(h)
         watch = [h for h in watch if again[h] is not None]
         tcp_dead = [t for t in tcp_dead if again[t] is None]
         delays.update({h: again[h] for h in hy2_miss if again[h] is not None})
         hy2_miss = [h for h in hy2_miss if again[h] is None]
+    _late_miss.clear()
+    _late_miss.update({h: n for h, n in miss.items() if n < DEAD_AFTER})
     dead = [h for h in dead if h in known or miss.get(h, 0) >= DEAD_AFTER]
     # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка
     # до DEAD_AFTER проб, иначе канал остаётся на мёртвом hy2.
@@ -1557,7 +1555,8 @@ def _transport_loop():
     """Свой такт проверки каналов: остальные проходы цикла её не задерживают."""
     while True:
         _transport_pass()
-        time.sleep(INTERVAL)
+        if not _late_miss:
+            time.sleep(INTERVAL)
 
 
 def main(serial=False):

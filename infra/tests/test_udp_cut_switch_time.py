@@ -117,7 +117,7 @@ class SwitchTimeCase(unittest.TestCase):
 
     def switch_time(self, w, warm):
         """Время от обрыва UDP до ухода direct на TCP; обрыв через warm с после старта."""
-        clash = self.CLASH(tf.router_config((NODE,)))
+        clash = self.clash = self.CLASH(tf.router_config((NODE,)))
         clock, out, restarts, events = StopTime(), io.StringIO(), [], []
         before = threading.active_count()
         with patch.object(w, '_req', clash.req), patch.object(w, 'time', clock), \
@@ -171,6 +171,10 @@ class TestUdpCutInsideChannelCheck(SwitchTimeCase):
             took, log = self.switch_time(w, 3.0)
             self.assertLessEqual(
                 took, limit, f'до ухода на TCP {took:.1f} с при пределе {limit:.1f} с\n' + log[-1500:])
+            # Сосед, умерший первым, позднего не ждёт: его проход не растёт.
+            warp = self.clash.moved[f'transport-tcp-{NODE}-warp'] - self.clash.cut_at
+            self.assertLessEqual(warp, w.DEAD_AFTER * (PROBE_S + w.CONFIRM_GAP) + SLACK / 2,
+                                 f'warp ушёл на TCP за {warp:.1f} с\n' + log[-1500:])
 
 
 if __name__ == '__main__':

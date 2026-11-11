@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import apt, exitnode, firewall, swap
+from vpn2 import apt, entryvpn, exitnode, firewall, pki, swap
 
 CHANGED = 'vpn2: changed'
 APPLIED_DIR = Path('/var/lib/anysda/applied')
@@ -65,8 +65,10 @@ def _ufw(args):
         changed = firewall.ufw_repair_if_lost()
         changed = bool(firewall.ufw_defaults()) or changed
     for group in json.loads(args.groups):
-        added, deleted = firewall.ufw_reconcile(group['comment'], group.get('rules', ()),
-                                                group.get('aliases', ()))
+        rules = list(group.get('rules', ()))
+        if 'dns' in group:
+            rules += entryvpn.dns_rules(group['dns']['to'], group['dns']['subnets'])
+        added, deleted = firewall.ufw_reconcile(group['comment'], rules, group.get('aliases', ()))
         for sign, rules in (('+', added), ('-', deleted)):
             for rule in rules:
                 _say(f"ufw {sign} {rule} ({group['comment']})")
@@ -282,6 +284,19 @@ def _sshd(args):
     return sshd(args.password)
 
 
+def _wg_identity(args):
+    return entryvpn.wg_identity(args.port, args.address)
+
+
+def _wg_apply(args):
+    del args
+    return entryvpn.wg_apply(_say)
+
+
+def _routing_ensure(args):
+    return entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='action', required=True)
@@ -296,7 +311,7 @@ def main(argv):
     item = sub.add_parser('ufw')
     item.add_argument('--only-rules', action='store_true',
                       help='только правила групп: политику и включение ufw не трогать')
-    item.add_argument('groups', help='JSON: [{"comment", "rules", "aliases"}]')
+    item.add_argument('groups', help='JSON: [{"comment", "rules", "aliases", "dns": {"to", "subnets"}}]')
     item.set_defaults(run=_ufw)
     item = sub.add_parser('f2b-ignore')
     item.add_argument('entry_host', nargs='?', default='')
@@ -313,6 +328,16 @@ def main(argv):
     item = sub.add_parser('sshd')
     item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
     item.set_defaults(run=_sshd)
+    item = sub.add_parser('wg-identity', help='ключи сервера WireGuard и начальный wg0.conf')
+    item.add_argument('--port', required=True)
+    item.add_argument('--address', required=True)
+    item.set_defaults(run=_wg_identity)
+    sub.add_parser('wg-apply', help='wg0.conf в ядро без лишнего рестарта').set_defaults(run=_wg_apply)
+    item = sub.add_parser('routing-ensure', help='вернуть пропавшую цепочку TPROXY службы')
+    item.add_argument('unit')
+    item.add_argument('iface')
+    item.add_argument('chain')
+    item.set_defaults(run=_routing_ensure)
     item = sub.add_parser('venv')
     item.add_argument('wheel')
     item.add_argument('--root', default='/opt/vpn2')
@@ -322,7 +347,7 @@ def main(argv):
     args = parser.parse_args(argv)
     try:
         changed = args.run(args)
-    except (RuntimeError, ValueError, OSError, subprocess.CalledProcessError) as error:
+    except (RuntimeError, ValueError, OSError, pki.PkiError, subprocess.CalledProcessError) as error:
         print(f'vpn2 host {args.action}: {error}', file=sys.stderr)
         return 1
     if changed:

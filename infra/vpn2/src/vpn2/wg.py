@@ -200,7 +200,7 @@ def _pairs(text):
 def private_key(text, *, interface_only=True):
     """Приватный ключ из wg0.conf (последний) или None.
 
-    interface_only=True - только в [Interface] (awk в 28-wireguard.sh и anysda-restore.sh);
+    interface_only=True - только в [Interface] (роль wireguard и anysda-restore.sh);
     False - в любой секции (restore.wg_key). Ключ в [Peer] при True не берётся.
     Пустое значение последней строки в режиме True сбрасывает ключ, как в awk.
     """
@@ -361,7 +361,7 @@ def pubkey(private, *, run=run):
 
 
 def render_interface(addresses, port, private, *, note=None):
-    """Начальная шапка wg0.conf (28-wireguard.sh): [комментарий], Address, ListenPort, PrivateKey."""
+    """Начальная шапка wg0.conf (роль wireguard): [комментарий], Address, ListenPort, PrivateKey."""
     return (f'# {note}\n' if note is not None else '') + \
         f'[Interface]\nAddress = {", ".join(addresses)}\nListenPort = {port}\nPrivateKey = {private}\n'
 

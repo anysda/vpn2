@@ -115,7 +115,8 @@ run_stage_on_host 42-x ru
             result = bash(script, directory, {'VPN2_ROOT': str(root / 'vpn2')})
             self.assertEqual(result.returncode, 0, result.stderr)
             calls = (root / 'ssh').read_text().splitlines()
-            self.assertIn("apt_prepare; apt_auto_pause'", calls[1])
+            # openssh обновляется в подготовке, до arm: рестарт sshd от своего же apt не тратит окно сторожа.
+            self.assertIn("apt_prepare; apt_auto_pause; apt_sshd_first'", calls[1])
             empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
             self.assertEqual(calls[2:], [
                 'ssh_exec bash --norc /tmp/anysda/fw-guard.sh arm 00-bootstrap 90',

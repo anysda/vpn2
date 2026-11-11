@@ -331,7 +331,7 @@ run_play() {
   # Пауза автообновлений и ожидание apt идут здесь, с живым выводом: внутри
   # задачи ansible двадцать минут ожидания были бы тишиной.
   local prepare=apt_prepare
-  [[ "$stage" != 00-bootstrap ]] || prepare='apt_prepare; apt_auto_pause'
+  [[ "$stage" != 00-bootstrap ]] || prepare='apt_prepare; apt_auto_pause; apt_sshd_first'
   ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
 bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; $prepare'" | sed -u "s/^/[$host]/" || return 1
   local rc=0 beat='' owner=$BASHPID

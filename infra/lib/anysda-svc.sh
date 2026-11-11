@@ -446,6 +446,51 @@ apt_prepare() {
   fi
 }
 
+# apt_sshd_first — в подготовке 00-bootstrap, до включения сторожа фаервола:
+# обновляет один openssh отдельным коротким заходом. В общем заходе пакетов
+# prerm останавливает sshd, а запускает его configure в самом конце: между ними
+# распаковка сотен пакетов, дольше окна сторожа, и сторож принимал это за
+# потерянный доступ. Здесь sshd лежит секунды, сторож ещё не взведён, фаервол
+# не тронут. После первой установки (метка стадии) общий заход пакетов не
+# идёт, обновлять нечего. sshd не вернулся - стадия падает до правок фаервола.
+APT_SSHD_STAMP=/var/anysda/.stamps/00-bootstrap
+APT_SSHD_WAIT=60
+apt_sshd_versions() {
+  LC_ALL=C apt-cache policy openssh-server 2>/dev/null \
+    | awk '$1 == "Installed:" { i = $2 } $1 == "Candidate:" { c = $2 } END { print i, c }'
+}
+
+# Новый вход по тому же адресу и порту, которым пришёл деплой: баннер sshd.
+sshd_answers() {
+  local addr port
+  read -r _ _ addr port <<<"${SSH_CONNECTION:-}"
+  # shellcheck disable=SC2016
+  timeout 5 bash --norc -c 'exec 3<>"/dev/tcp/$0/$1" && read -r -t 3 banner <&3 && [[ $banner == SSH-* ]]' \
+    "${addr:-127.0.0.1}" "${port:-22}" 2>/dev/null
+}
+
+apt_sshd_first() {
+  local installed candidate t0
+  [[ ! -e "$APT_SSHD_STAMP" ]] || return 0
+  apt_have openssh-server || return 0
+  # Сбой списков покажет сама стадия: её apt идёт следом и читает те же списки.
+  apt_update_if_stale || true
+  read -r installed candidate < <(apt_sshd_versions) || true
+  [[ -n "$candidate" && "$candidate" != "(none)" && "$installed" != "$candidate" ]] || return 0
+  svc_say "openssh-server $installed -> $candidate: обновляю до включения сторожа фаервола"
+  DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt_get install -y -qq --only-upgrade \
+    -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+    openssh-server openssh-client openssh-sftp-server >/dev/null
+  t0=$SECONDS
+  until sshd_answers; do
+    if (( SECONDS - t0 >= APT_SSHD_WAIT )); then
+      svc_say "sshd не отвечает $((SECONDS - t0)) с после обновления openssh-server, фаервол не тронут: journalctl -u ssh" >&2
+      return 1
+    fi
+    sleep 2
+  done
+}
+
 # Заглушка до entry-resources.sh: стадия, подключившая библиотеку, получает
 # настоящую функцию; без библиотеки юнит ставится без своих лимитов.
 entry_unit_resources() {

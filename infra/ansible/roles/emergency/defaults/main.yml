@@ -2,7 +2,7 @@
 emergency_entry: "{{ inventory_hostname == 'ru' }}"
 emergency_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 emergency_tmp: /tmp/anysda
-# Агент, heartbeat, выбор лидера и аварийный hy2 - пакет vpn2 из venv узла.
+# Агент, пульс entry, выбор лидера и аварийный hy2 - пакет vpn2 из venv узла.
 emergency_venv: /opt/vpn2/venv
 emergency_vpn2: "{{ emergency_venv }}/bin/vpn2"
 emergency_home: /opt/vpn2-emergency

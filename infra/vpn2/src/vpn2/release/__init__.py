@@ -181,20 +181,20 @@ def image(manifest, component, requested='', pull=True, arch=None):
     return digest(actual['Id'])  # Store-native immutable handle, never a tag.
 
 
-def download(name, url, output, accept=None):
+def download(name, url, output, headers=None, retried=(429,), timeout=60):
     """GET url into output with retries; returns (error text, attempts), ('', n) on success."""
     attempts = len(DOWNLOAD_PAUSES) + 1
     for attempt in range(1, attempts + 1):
         try:
             output.seek(0)
             output.truncate()
-            request = urllib.request.Request(url, headers={'Accept': accept} if accept else {})
-            with urllib.request.urlopen(request, timeout=60) as source:
+            request = urllib.request.Request(url, headers=headers or {})
+            with urllib.request.urlopen(request, timeout=timeout) as source:
                 shutil.copyfileobj(source, output)
             return '', attempt
         except urllib.error.HTTPError as exc:
             error = f'HTTP {exc.code}'
-            if exc.code < 500 and exc.code != 429:
+            if exc.code < 500 and exc.code not in retried:
                 return error, attempt
         except (OSError, http.client.HTTPException) as exc:
             error = str(getattr(exc, 'reason', '') or exc) or type(exc).__name__
@@ -225,7 +225,7 @@ def github_download(name, url, output):
             return f'{api}: unexpected answer'
     if not found:
         return f'{api}: no asset {asset}'
-    error, attempts = download(name, found[0], output, 'application/octet-stream')
+    error, attempts = download(name, found[0], output, {'Accept': 'application/octet-stream'})
     return f'{found[0]}: {error} after {attempts} attempts' if error else ''
 
 

@@ -16,6 +16,13 @@ class RevokeError(Exception):
         self.message = message
 
 
+def wg_values(text, wanted):
+    """Значения ключа wg0.conf как у wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII."""
+    lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
+             for line in text.split('\n')]
+    return [value for name, eq, value in lines if eq and value and name.encode().lower() == wanted]
+
+
 def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         live_pki='/etc/openvpn/server/pki', live_wg_dir='/etc/wireguard',
         live_ike_conf='/etc/swanctl/conf.d/anysda-clients.conf',
@@ -28,10 +35,8 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
     ike_path = os.path.join(bundle, 'etc-swanctl/conf.d/anysda-clients.conf')
     HEX = re.compile(r'[0-9A-Fa-f]{1,64}')
 
-
     def say(message):
         print('anysda-restore: ' + message, flush=True)
-
 
     def digest(path):
         try:
@@ -39,7 +44,6 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
                 return hashlib.sha256(f.read().strip()).hexdigest()
         except OSError:
             return None
-
 
     def wg_key(directory):
         """Приватный ключ сервера WireGuard: keys/ или [Interface] из wg0.conf."""
@@ -50,12 +54,8 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             text = open(os.path.join(directory, 'wg0.conf'), encoding='latin-1', newline='').read()
         except OSError:
             return None
-        # Как wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
-        lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
-                 for line in text.split('\n')]
-        keys = [value for name, eq, value in lines if eq and value and name.encode().lower() == b'privatekey']
+        keys = wg_values(text, b'privatekey')
         return hashlib.sha256(keys[-1].encode()).hexdigest() if keys else None
-
 
     def index_rows(path):
         try:
@@ -64,13 +64,11 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             return []
         return [line.split('\t') for line in lines]
 
-
     def serial_of(pem):
         out = runner(['openssl', 'x509', '-noout', '-serial'], input=pem, text=True,
                              capture_output=True, check=False).stdout
         value = out.strip().partition('=')[2]
         return int(value, 16) if HEX.fullmatch(value) else None
-
 
     def devices(path, writable=False):
         uri = f'file:{path}' + ('' if writable else '?mode=ro')
@@ -86,7 +84,6 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         except sqlite3.Error:
             seq = None
         return con, rows, columns, max([seq[0] if seq else 0, *rows])
-
 
     live_ca = digest(os.path.join(LIVE_PKI, 'ca.crt'))
     archive_ca = digest(os.path.join(pki, 'ca.crt'))
@@ -125,13 +122,11 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             say(f'WARN: живая БД не читается ({error}) — переношу только отзывы сертификатов')
             live, live_seq = {}, 0
 
-
     def live_text(path, newline=None, encoding=None):
         try:
             return open(path, encoding=encoding, errors='replace', newline=newline).read()
         except OSError:
             return None
-
 
     # Без живой БД живые конфиги узла судят только устройства без сертификата
     # OpenVPN в архиве, а у отозванных панелью подсказывают подпись в журнале.
@@ -140,10 +135,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         live_peers = live_text(os.path.join(live_wg_dir, 'wg0.conf'), newline='', encoding='latin-1')
         live_ike = live_text(live_ike_conf)
     if live_peers is not None:
-        # Как wg-quick и wg: NUL вон, строка до первого `#`, без пробельных символов, имя в любом регистре ASCII.
-        lines = [re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0]).partition('=')
-                 for line in live_peers.split('\n')]
-        live_peers = {value for name, eq, value in lines if eq and value and name.encode().lower() == b'publickey'}
+        live_peers = set(wg_values(live_peers, b'publickey'))
     if live_ike is not None:
         secrets = set()
         for block in re.findall(r'(?ms)^\s*eap-\d+\s*\{(.*?)\}', live_ike):
@@ -304,7 +296,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             what, absent, row = issued.get(device_id, (set(), device_id not in archived, {}))
             issued[device_id] = (what | {'OpenVPN'}, absent, {**row, 'pki_certs': [*row.get('pki_certs', ()), pem]})
 
-    wg_keys ={row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
+    wg_keys = {row['wg_public_key'] for what, _gone, row in revoke.values() if 'WireGuard' in what}
     ike_ids = {device_id for device_id, (what, _gone, _row) in revoke.items() if 'IKEv2' in what}
     ike_secrets = {row['ikev2_password'] for what, _gone, row in revoke.values() if 'IKEv2' in what}
     certs = [(row['ovpn_cert'], None) for what, _gone, row in revoke.values() if 'OpenVPN' in what]
@@ -340,12 +332,10 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
                     archive_db.execute("INSERT INTO sqlite_sequence(name, seq) VALUES ('devices', ?)", (seq_floor,))
         archive_db.close()
 
-
     def rewrite(path, text, encoding=None):
         # Владелец и режим файла архива остаются прежними; latin-1 с newline='' - байт в байт.
         with open(path, 'w', encoding=encoding, newline='' if encoding else None) as f:
             f.write(text)
-
 
     if wg_keys and os.path.isfile(wg_path):
         # Секции и ключи как у wg-quick и wg: строка до `\n`, NUL вон, до первого `#`, без

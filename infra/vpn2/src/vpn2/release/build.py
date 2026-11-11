@@ -5,86 +5,66 @@ Every pinned version and hash comes from infra/versions.yml, nowhere else.
 
 import argparse
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 
-from . import DOWNLOAD_PAUSES, GITHUB_API, ReleaseError, command, digest, sha256, source_files, versions
+from . import GITHUB_API, ReleaseError, command, digest, download, sha256, source_files, versions
 
 
 def fetch(url, timeout=60):
     """GET url with retries; the workflow token lifts the anonymous API limit of a shared runner."""
-    headers = {}
     token = os.environ.get('GITHUB_TOKEN')
-    if token and url.startswith(GITHUB_API + '/'):
-        headers['Authorization'] = f'Bearer {token}'
-    attempts = len(DOWNLOAD_PAUSES) + 1
-    for attempt in range(1, attempts + 1):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
-                return response.read()
-        except urllib.error.HTTPError as exc:
-            error = f'HTTP {exc.code} {exc.reason}'
-            # 403 is the GitHub API rate limit; other 4xx will not change on retry.
-            if exc.code < 500 and exc.code not in (403, 429):
-                break
-        except OSError as exc:
-            error = str(getattr(exc, 'reason', '') or exc) or type(exc).__name__
-        if attempt < attempts:
-            pause = DOWNLOAD_PAUSES[attempt - 1]
-            print(f'build-release: {url}: {error} ({attempt}/{attempts}), retry in {pause} s', file=sys.stderr)
-            time.sleep(pause)
-    raise ReleaseError(f'{url}: {error}')
+    headers = {'Authorization': f'Bearer {token}'} if token and url.startswith(GITHUB_API + '/') else {}
+    body = io.BytesIO()
+    # 403 is the GitHub API rate limit; other 4xx will not change on retry.
+    error, _attempts = download('build-manifest', url, body, headers, retried=(403, 429), timeout=timeout)
+    if error:
+        raise ReleaseError(f'{url}: {error}')
+    return body.getvalue()
+
+
+def spec(version, arch, url, checksum=None):
+    """A manifest entry; without a pinned hash the file is downloaded and hashed now."""
+    return {'version': version, 'architecture': arch, 'url': url,
+            'sha256': checksum or hashlib.sha256(fetch(url, timeout=120)).hexdigest()}
+
+
+# Assets whose hash GitHub publishes: name, pin, repository, tag and asset templates.
+GITHUB_ASSETS = (
+    ('wgcf', 'wgcf', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
+    ('caddy', 'caddy', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
+    ('node-exporter', 'node_exporter', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
+    ('adguard', 'adguard', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
+)
 
 
 def binary_specs(root):
     pins = versions(root / 'infra/versions.yml')
     version = pins['sing_box']
-    specs = {}
-    for arch in ('amd64', 'arm64'):
-        specs['sing-box-' + arch] = {
-            'version': version, 'architecture': arch,
-            'sha256': pins['sing_box_sha256_' + arch],
-            'url': f'https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz',
-        }
-    entries = (
-        ('wgcf', 'wgcf', 'ViRb3/wgcf', 'v{v}', 'wgcf_{v}_linux_amd64'),
-        ('caddy', 'caddy', 'caddyserver/caddy', 'v{v}', 'caddy_{v}_linux_amd64.deb'),
-        ('node-exporter', 'node_exporter', 'prometheus/node_exporter', 'v{v}', 'node_exporter-{v}.linux-amd64.tar.gz'),
-        ('adguard', 'adguard', 'AdguardTeam/AdGuardHome', '{v}', 'AdGuardHome_linux_amd64.tar.gz'),
-    )
-    for name, pin, repo, tag, asset in entries:
+    specs = {'sing-box-' + arch: spec(
+        version, arch, f'https://github.com/SagerNet/sing-box/releases/download/v{version}/sing-box-{version}-linux-{arch}.tar.gz',
+        pins['sing_box_sha256_' + arch]) for arch in ('amd64', 'arm64')}
+    for name, pin, repo, tag, asset in GITHUB_ASSETS:
         version = pins[pin]
-        filename = asset.format(v=version)
-        url = f'https://api.github.com/repos/{repo}/releases/tags/{tag.format(v=version)}'
-        release = json.loads(fetch(url))
-        asset_data = next(a for a in release['assets'] if a['name'] == filename)
-        specs[name] = {'version': version, 'architecture': 'amd64',
-                       'url': asset_data['browser_download_url'],
-                       'sha256': digest(asset_data['digest']).split(':')[1]}
+        release = json.loads(fetch(f'https://api.github.com/repos/{repo}/releases/tags/{tag.format(v=version)}'))
+        found = next(item for item in release['assets'] if item['name'] == asset.format(v=version))
+        specs[name] = spec(version, 'amd64', found['browser_download_url'], digest(found['digest']).split(':')[1])
     version = pins['yt_node']
-    specs['yt-node'] = {'version': version, 'architecture': 'amd64',
-                        'url': f'https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz',
-                        'sha256': pins['yt_node_sha256']}
+    specs['yt-node'] = spec(version, 'amd64', f'https://nodejs.org/dist/{version}/node-{version}-linux-x64.tar.xz',
+                            pins['yt_node_sha256'])
     version = pins['yt_pot']
-    specs['yt-pot'] = {'version': version, 'architecture': 'all',
-                       'url': f'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{version}.tar.gz',
-                       'sha256': pins['yt_pot_sha256']}
+    specs['yt-pot'] = spec(version, 'all', f'https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{version}.tar.gz',
+                           pins['yt_pot_sha256'])
     version = pins['aws_cli']
     url = f'https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{version}.zip'
-    checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
-    specs['aws-cli'] = {'version': version, 'architecture': 'amd64', 'url': url, 'sha256': checksum}
-    signature = hashlib.sha256(fetch(url + '.sig')).hexdigest()
-    specs['aws-cli-signature'] = {'version': version, 'architecture': 'amd64', 'url': url + '.sig', 'sha256': signature}
+    specs['aws-cli'] = spec(version, 'amd64', url)
+    specs['aws-cli-signature'] = spec(version, 'amd64', url + '.sig')
     version = pins['zapret2']
-    url = f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz'
-    checksum = hashlib.sha256(fetch(url, timeout=120)).hexdigest()
-    specs['zapret2-source'] = {'version': version, 'architecture': 'all', 'url': url, 'sha256': checksum}
+    specs['zapret2-source'] = spec(version, 'all', f'https://github.com/bol-van/zapret2/archive/{version}.tar.gz')
     return specs
 
 
@@ -146,7 +126,6 @@ def build(argv):
                             'record': 'dpkg-query -W at successful deploy'},
     }
     args.output.write_text(json.dumps(manifest, indent=2) + '\n')
-
 
 
 def main(argv=None):

@@ -17,6 +17,7 @@ import os
 import pwd
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -33,6 +34,9 @@ NODE_VER = 'v26.13.0'
 NODE_SHA256 = 'd28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997'
 NODE_URL = f'https://nodejs.org/dist/{NODE_VER}/node-{NODE_VER}-linux-x64.tar.xz'
 YT_DLP_VER = '2026.10.26'
+# Зависимости видеопробы качаются из PyPI, npm и GitHub: одна сетевая заминка не роняет установку.
+FETCH_TRIES = 3
+FETCH_PAUSES = (10, 30)
 # Режет ClientHello. DPI провайдера берёт только split: fake и circular хуже
 # или не берут вовсе, не возвращать.
 SPLIT = '--payload=tls_client_hello --lua-desync=multisplit:pos=10,midsld:seqovl=1'
@@ -351,17 +355,85 @@ def _pot_state(venv):
     return version, marker.stat().st_ino if marker.is_file() else 0
 
 
-def install_probe(environ, venv=PROBE_VENV):
+def pot_failure(code, output):
+    """Что не установилось и почему: одна строка из вывода установщика PO-токенов."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+
+    def last(pattern):
+        return next((line for line in reversed(lines) if re.search(pattern, line)), '')
+
+    if code < 0:
+        return f'установщик PO-токенов: убит сигналом {-code}'
+    package = re.search(r'/node_modules/((?:@[^/\s]+/)?[^/\s]+)$', last(r'^npm error path '))
+    npm = f'пакет npm {package.group(1)}' if package else 'пакеты npm'
+    source = 'архив исходников bgutil-ytdlp-pot-provider'
+    for what, pattern in ((npm, r'prebuild-install warn install '),
+                          (npm, r'^npm error .*request to \S+ failed'),
+                          (source, r'^curl: \(\d+\)'),
+                          (source, r': FAILED$'),
+                          ('пакет pip bgutil-ytdlp-pot-provider', r'^ERROR: '),
+                          (npm, r'^npm error code ')):
+        line = last(pattern)
+        if line:
+            return f'{what}: {line[:200]}'
+    return f"установщик PO-токенов: {lines[-1][:200] if lines else f'код выхода {code}, вывода нет'}"
+
+
+def _fetch(once, sleep):
+    """Повторяет установку с загрузкой из сети; once возвращает причину отказа или ''."""
+    for attempt in range(1, FETCH_TRIES + 1):
+        cause = once()
+        if not cause:
+            return
+        if attempt < FETCH_TRIES:
+            pause = FETCH_PAUSES[attempt - 1]
+            sys.stderr.write(f'зависимости видеопробы: попытка {attempt} из {FETCH_TRIES} не удалась '
+                             f'({cause}), повтор через {pause} с\n')
+            sleep(pause)
+    raise StageError(f'зависимости видеопробы не установились за {FETCH_TRIES} попытки: {cause}; '
+                     'проверьте доступ entry к сети и повторите ./deploy.sh')
+
+
+def _clear_pot_work(venv):
+    # Убитый установщик не убирает рабочий каталог с недокачанным; готовая установка лежит в bgutil.
+    for stale in glob.glob(f'{venv}/.pot-install.*'):
+        shutil.rmtree(stale, ignore_errors=True)
+
+
+def install_pot(environ, venv, sleep=time.sleep):
+    argv = ['bash', environ.get('VPN2_YT_POT_INSTALL') or POT_INSTALL, venv]
+    env = {**environ, 'PATH': f"{os.path.dirname(sys.executable)}:{environ['PATH']}"}
+
+    def once():
+        _clear_pot_work(venv)
+        done = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                              errors='replace', check=False, env=env)
+        sys.stderr.write(done.stdout or '')
+        return pot_failure(done.returncode, done.stdout or '') if done.returncode else ''
+
+    try:
+        _fetch(once, sleep)
+    finally:
+        _clear_pot_work(venv)
+
+
+def install_probe(environ, venv=None, sleep=time.sleep):
     """Видеопроба под диагностическим пользователем: yt-dlp с EJS, свой Node и PO-токены.
 
     EJS требует Node >=22, системный пакет может быть старее; Node других
     приложений узла не трогаем. Роутер поддерживает linux-amd64.
     """
+    venv = venv or PROBE_VENV
     changed = False
     if _output(f'{venv}/bin/yt-dlp', '--version') != YT_DLP_VER:
         subprocess.run([SYSTEM_PYTHON, '-m', 'venv', venv], check=True)
-        subprocess.run([f'{venv}/bin/pip', 'install', '--disable-pip-version-check',
-                        f'yt-dlp[default]=={YT_DLP_VER}'], check=True, stdout=sys.stderr)
+        pip = [f'{venv}/bin/pip', 'install', '--disable-pip-version-check', f'yt-dlp[default]=={YT_DLP_VER}']
+
+        def once():
+            code = subprocess.run(pip, check=False, stdout=sys.stderr).returncode
+            return f'пакет pip yt-dlp {YT_DLP_VER}: pip, код выхода {code}' if code else ''
+
+        _fetch(once, sleep)
         changed = True
     npm = f'{venv}/lib/node_modules/npm'
     if _output(f'{venv}/bin/node', '--version') != NODE_VER or not os.path.isfile(f'{npm}/bin/npm-cli.js'):
@@ -382,8 +454,7 @@ def install_probe(environ, venv=PROBE_VENV):
                            check=True)
         changed = True
     before = _pot_state(venv)
-    subprocess.run(['bash', environ.get('VPN2_YT_POT_INSTALL') or POT_INSTALL, venv], check=True,
-                   stdout=sys.stderr, env={**environ, 'PATH': f"{os.path.dirname(sys.executable)}:{environ['PATH']}"})
+    install_pot(environ, venv, sleep)
     return changed or _pot_state(venv) != before
 
 

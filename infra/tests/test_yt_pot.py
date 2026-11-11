@@ -111,6 +111,7 @@ class PotTests(unittest.TestCase):
                 patch.object(stage.os.path, 'isfile', return_value=True), \
                 patch.object(stage, '_pot_state', return_value=('1', 1)), \
                 patch.object(stage.subprocess, 'run') as run:
+            run.return_value = stage.subprocess.CompletedProcess([], 0, stdout='')
             # yt-dlp и Node уже нужных версий: остаётся только вызов установщика PO-токенов.
             with patch.object(stage, 'NODE_VER', stage.YT_DLP_VER):
                 stage.install_probe({'PATH': '/usr/bin', 'VPN2_YT_POT_INSTALL': '/x/install-yt-pot.sh'}, venv)

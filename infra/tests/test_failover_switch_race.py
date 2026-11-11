@@ -62,7 +62,7 @@ class TestSwitchRace(unittest.TestCase):
         w, run = self.w, self.run_
         for target, name, value in (
                 (w, '_req', self.clash.req), (w.time, 'monotonic', run.clock.monotonic),
-                (w.time, 'time', run.clock.time), (w.time, 'sleep', lambda s: None)):
+                (w.time, 'time', run.clock.time), (w.time, 'sleep', lambda _s: None)):
             stack.enter_context(patch.object(target, name, value))
         stack.enter_context(patch.object(w, '_restart_sing_box', side_effect=run.restart))
         stack.enter_context(patch.object(w, '_bot_event', side_effect=run.event))

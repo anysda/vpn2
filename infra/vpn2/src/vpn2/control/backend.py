@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import shutil
 import socket
 import subprocess
 import time
@@ -83,6 +84,8 @@ def strip(item):
 
 
 MAX_JOURNAL = 2000
+# The panel reads the state back right after an apply; nothing vanishes under that read.
+FORGET_AFTER = 60
 
 
 class Backend:
@@ -153,7 +156,49 @@ class Backend:
         if removed:
             journal = (journal + [dict(item, at=now) for item in removed])[-MAX_JOURNAL:]
             atomic(journal_path, json.dumps(journal))
+        try:
+            self.forget()
+        except (Fault, OSError, KeyError, ValueError):
+            pass
         return {'removed': journal, 'latest': removed, 'failed': failed}
+
+    def forget(self):
+        """Drop what a deleted OpenVPN device left here: its ccd, applied state and issue journals.
+
+        The panel never names a deleted device again, so the service decides by
+        the CA index: no valid certificate is left and access is not allowed.
+        """
+        base = self.path('/etc/openvpn/server')
+        if not (base / 'pki/index.txt').is_file():
+            return
+        found = {}
+        for path in [*self.state.glob('openvpn-*.json'), *self.state.glob('issue-*'), *(base / 'ccd').glob('dev_*')]:
+            match = re.fullmatch(r'(?:openvpn-|dev_|issue-)([1-9][0-9]*)(?:\.json|-[a-f0-9]{64})?', path.name)
+            if match:
+                found.setdefault(int(match[1]), []).append(path)
+        fresh = time.time() - FORGET_AFTER
+        with self.pki_lock(base):
+            for device_id, paths in sorted(found.items()):
+                certs = self.certificates(device_id)
+                # The CA index row and newcerts/<serial>.pem of a revoked certificate stay: every CRL is built from them.
+                revoked = {(base / 'pki/newcerts' / (serial + '.pem')).read_text()
+                           for status, serial in certs if status == 'R'}
+                journals = [path for path in paths if path.name.startswith('issue-')]
+                if certs and len(revoked) == len(certs):
+                    if (self.applied('openvpn-' + str(device_id)) or {}).get('action') == 'allow':
+                        continue
+                    gone = paths
+                else:
+                    # A journal without a certificate is an issue in progress.
+                    gone = [path for path in journals if (path / 'cert.pem').is_file() and
+                            (path / 'cert.pem').read_text() in revoked]
+                if any(path.stat().st_mtime > fresh for path in gone):
+                    continue
+                for path in gone:
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                    else:
+                        path.unlink()
 
     def expire_protocol(self, protocol, now):
         if protocol == 'openvpn':

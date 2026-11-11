@@ -45,14 +45,14 @@
       loop: ["{{ backup_local_dir }}", "{{ backup_local_dir }}/.pre-restore"]
 
     - name: Пакеты бэкапа
-      ansible.builtin.command:
-        argv: >-
-          {{ [backup_venv ~ '/bin/python', '-m', 'vpn2.cli.host', 'packages'] + backup_packages
-             + (backup_packages_s3 if backup_backend == 's3' else []) }}
-      environment:
-        HOST_TAG: "{{ inventory_hostname }}"
-      register: backup_step
-      changed_when: "'vpn2: changed' in backup_step.stdout"
+      ansible.builtin.apt:
+        name: "{{ backup_packages + (backup_packages_s3 if backup_backend == 's3' else []) }}"
+        state: present
+        lock_timeout: 1200
+      register: backup_apt
+      until: backup_apt is succeeded
+      retries: 3
+      delay: 10
 
     - name: Клиент S3
       ansible.builtin.import_tasks: aws-cli.yml

@@ -1,0 +1,63 @@
+---
+# sshd -t требует каталог privsep, а apt при обновлении openssh его удаляет:
+# до перезапуска ssh.service вернуть его некому.
+- name: Каталог privsep sshd
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    mode: '0755'
+
+# Невалидный конфиг на место не ложится: проверка идёт до записи.
+- name: Парольный вход и вход root
+  ansible.builtin.copy:
+    content: |
+      # anysda-vpn — set by infra/scripts/00-bootstrap.sh
+      PasswordAuthentication {{ base_sshd_password }}
+      PermitRootLogin {{ base_sshd_root }}
+      KbdInteractiveAuthentication no
+    dest: /etc/ssh/sshd_config.d/00-anysda.conf
+    mode: '0644'
+    validate: sshd -t -f %s
+  register: base_sshd_dropin
+
+- name: Те же строки основного конфига sshd
+  ansible.builtin.replace:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?{{ item.key }}.*$'
+    replace: '{{ item.key }} {{ item.value }}'
+    validate: sshd -t -f %s
+  loop:
+    - {key: PasswordAuthentication, value: "{{ base_sshd_password }}"}
+    - {key: PermitRootLogin, value: "{{ base_sshd_root }}"}
+    - {key: ChallengeResponseAuthentication, value: 'no'}
+    - {key: KbdInteractiveAuthentication, value: 'no'}
+  register: base_sshd_main
+
+# OpenSSH 9.8+ штрафует адрес на 90 с за оборванный вход, и несколько неудачных
+# входов деплоя запирают его. Старый sshd директивы не знает и с ней падает.
+- name: Директивы действующего sshd
+  ansible.builtin.command:
+    cmd: sshd -T
+  register: base_sshd_dump
+  changed_when: false
+  failed_when: false
+
+- name: Штрафы адресам за оборванный вход выключены
+  ansible.builtin.copy:
+    content: "PerSourcePenalties no\n"
+    dest: /etc/ssh/sshd_config.d/99-anysda-no-penalties.conf
+    mode: '0644'
+    validate: sshd -t -f %s
+  when: "'persourcepenalties ' in base_sshd_dump.stdout | lower"
+  register: base_sshd_penalties
+
+- name: Служба ssh работает
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: started
+
+- name: Служба ssh перечитала конфиг  # noqa: no-handler
+  ansible.builtin.command:  # noqa: command-instead-of-module
+    cmd: systemctl reload-or-restart ssh
+  when: base_sshd_dropin is changed or base_sshd_main is changed or base_sshd_penalties is changed
+  changed_when: true

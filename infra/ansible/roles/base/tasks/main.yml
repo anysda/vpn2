@@ -25,7 +25,26 @@
   when: not base_entry
   changed_when: false
 
-- name: Чужие таблицы nftables переживают перезапуск юнита
+# Остановка юнита nftables иначе сносит таблицы ufw, маршрутизации, Docker и fail2ban.
+- name: Каталог настроек юнита nftables
+  ansible.builtin.file:
+    path: /etc/systemd/system/nftables.service.d
+    state: directory
+    mode: '0755'
+
+- name: Остановка юнита nftables не трогает чужие таблицы
+  ansible.builtin.copy:
+    src: 10-anysda-preserve.conf
+    dest: /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf
+    mode: '0644'
+  register: base_nft_dropin
+
+- name: Systemd перечитал юнит nftables  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: base_nft_dropin is changed
+
+- name: Конфиг nftables не сбрасывает чужие таблицы
   ansible.builtin.command:
     argv: "{{ base_host + ['nft-preserve'] }}"
   register: base_step
@@ -45,13 +64,25 @@
   register: base_step
   changed_when: "'vpn2: changed' in base_step.stdout"
 
+# Чужой apt (unattended-upgrades первого часа жизни VPS) держит замок dpkg:
+# его ждём до 20 минут, сбой зеркала повторяем.
 - name: Пакеты одним заходом apt
-  ansible.builtin.command:
-    argv: "{{ base_host + ['packages'] + (['--docker'] if base_entry else []) + base_packages }}"
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: 1200
   environment:
-    HOST_TAG: "{{ inventory_hostname }}"
-  register: base_step
-  changed_when: "'vpn2: changed' in base_step.stdout"
+    NEEDRESTART_MODE: a
+  register: base_apt
+  until: base_apt is succeeded
+  retries: 3
+  delay: 10
+
+- name: Docker из официального источника
+  ansible.builtin.import_tasks: docker.yml
+  when: base_entry
 
 - name: Конфиг nftables из пакета не сбрасывает чужие таблицы
   ansible.builtin.command:
@@ -144,10 +175,7 @@
   when: not base_entry and base_entry_mgmt_key | trim | length > 0
 
 - name: Вход по ssh
-  ansible.builtin.command:
-    argv: "{{ base_host + ['sshd', base_sshd_password] }}"
-  register: base_step
-  changed_when: "'vpn2: changed' in base_step.stdout"
+  ansible.builtin.import_tasks: sshd.yml
 
 - name: Фаервол ufw
   ansible.builtin.command:

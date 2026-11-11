@@ -59,13 +59,6 @@ apt_update_if_stale
     def test_stale_lists_run_update(self):
         self.assertEqual(self.run_update('mirror_Packages.lz4', stale_index=True), 'update -qq\n')
 
-    def test_stage_installers_use_shared_list_check(self):
-        # Роли ставят пакеты шагом пакета vpn2 с той же проверкой списков.
-        for role in ('wireguard', 'openvpn'):
-            with self.subTest(role=role):
-                self.assertIn(f"{role}_host + ['packages',", source(f'infra/ansible/roles/{role}/tasks/main.yml'))
-        self.assertIn("ikev2_host + ['ikev2-packages']", source('infra/ansible/roles/ikev2/tasks/main.yml'))
-
 
 if __name__ == '__main__':
     unittest.main()

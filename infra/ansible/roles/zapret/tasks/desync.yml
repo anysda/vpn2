@@ -1,11 +1,13 @@
 ---
 - name: Пакеты сборки nfqws2
-  ansible.builtin.command:
-    argv: "{{ zapret_host + ['packages'] + zapret_packages }}"
-  environment:
-    HOST_TAG: "{{ inventory_hostname }}"
-  register: zapret_pkgs
-  changed_when: "'vpn2: changed' in zapret_pkgs.stdout"
+  ansible.builtin.apt:
+    name: "{{ zapret_packages }}"
+    state: present
+    lock_timeout: 1200
+  register: zapret_apt
+  until: zapret_apt is succeeded
+  retries: 3
+  delay: 10
 
 - name: Исходники zapret2 и сборка nfqws2
   ansible.builtin.command:

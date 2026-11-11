@@ -1,7 +1,6 @@
 import pytest
 
 import vpn2.cli as cli
-from vpn2.cli import watchdog
 
 
 def test_usage_without_name(capsys):
@@ -14,11 +13,9 @@ def test_unknown_name(capsys):
     assert "Использование" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("kind", sorted(watchdog.KINDS))
-def test_every_kind_resolves(kind):
-    module, entry = watchdog.KINDS[kind]
-    loaded = __import__(f"vpn2.watchdog.{module}", fromlist=[entry])
-    assert callable(getattr(loaded, entry))
+@pytest.mark.parametrize("target", [*cli.WATCHDOGS.values(), *cli.ROUTER.values(), *dict(cli.COMMANDS).values()])
+def test_every_table_row_resolves(target):
+    assert callable(cli._resolve(target))
 
 
 def test_arguments_reach_the_watchdog(monkeypatch):

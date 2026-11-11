@@ -11,11 +11,22 @@
 
 # python3-vici в Ubuntu нет ни в одном компоненте: счётчики читаются через swanctl.
 - name: Пакеты strongSwan
-  ansible.builtin.command:
-    argv: "{{ ikev2_host + ['ikev2-packages'] }}"
-  environment: "{{ ikev2_env }}"
-  register: ikev2_step
-  changed_when: "'vpn2: changed' in ikev2_step.stdout"
+  ansible.builtin.apt:
+    name: "{{ ikev2_packages }}"
+    state: present
+    lock_timeout: 1200
+  register: ikev2_apt
+  until: ikev2_apt is succeeded
+  retries: 3
+  delay: 10
+
+# Второй charon рядом со starter дрался бы за 500/4500.
+- name: Пакета charon-systemd нет
+  ansible.builtin.apt:
+    name: charon-systemd
+    state: absent
+    purge: true
+    lock_timeout: 1200
 
 # В файле Caddy лежит цепочка, а swanctl берёт из certs только первый сертификат:
 # скрипт кладёт leaf в x509, остальное в x509ca. Его же зовёт path-юнит ротации.

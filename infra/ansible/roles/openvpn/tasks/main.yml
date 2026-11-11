@@ -9,11 +9,14 @@
     mode: '0755'
 
 - name: Пакеты openvpn и openssl
-  ansible.builtin.command:
-    argv: "{{ openvpn_host + ['packages', 'openvpn', 'openssl'] }}"
-  environment: "{{ openvpn_env }}"
-  register: openvpn_step
-  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+  ansible.builtin.apt:
+    name: [openvpn, openssl]
+    state: present
+    lock_timeout: 1200
+  register: openvpn_apt
+  until: openvpn_apt is succeeded
+  retries: 3
+  delay: 10
 
 # Ключи переживают повторы: комплект собирается в копии и подменяет прежний
 # целиком, действующие ключи не перевыпускаются.

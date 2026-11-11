@@ -8,7 +8,7 @@ import subprocess
 import pytest
 from vpn2 import wg
 from vpn2.backup import check
-from vpn2.cli import backup as cli_backup
+import vpn2.cli as cli
 
 # Ключи ненастоящие: собраны из частей.
 K1, K2, K3 = ('A' * 42 + c + '=' for c in 'BCD')
@@ -90,7 +90,7 @@ def test_code2_not_a_bundle(tmp_path):
 @pytest.mark.parametrize('argv', [['--check-bundle'], ['--check-bundle', '']])
 def test_command_without_path_is_code2(argv, capsys):
     """Скрипт на `--check-bundle` без каталога отвечал тем же отказом, а не разбором аргументов."""
-    assert cli_backup.main(argv) == 2
+    assert cli.backup(argv) == 2
     assert capsys.readouterr() == ('', "anysda-backup: --check-bundle: '' — не распакованный бандл "
                                        '(нет manifest.json); укажи каталог anysda-vpn2-* из архива\n')
 

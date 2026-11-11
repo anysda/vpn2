@@ -5,12 +5,12 @@ import sys
 
 import pytest
 
-from vpn2.cli import emergency as cli
+import vpn2.cli as cli
 from vpn2.emergency import __main__ as dispatcher, hy2
 
 
 def test_cli_and_services_share_one_dispatcher():
-    assert cli.main is dispatcher.main
+    assert cli._resolve(dict(cli.COMMANDS)['emergency']) is dispatcher.main
 
 
 @pytest.mark.parametrize('argv', ([], ['unknown']))

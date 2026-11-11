@@ -6,10 +6,6 @@ import vpn2.cli as cli
 from vpn2.control import apply, server
 
 
-def test_control_is_a_command():
-    assert 'control' in cli._commands()
-
-
 @pytest.mark.parametrize('argv, code', [([], 2), (['nope'], 2), (['--help'], 0)])
 def test_usage(argv, code, capsys):
     assert cli.main(['control', *argv]) == code

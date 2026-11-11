@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import apt, entryvpn, exitnode, firewall, ikev2, pki, swap
+from vpn2 import entryvpn, exitnode, firewall, ikev2, pki, swap
 
 CHANGED = 'vpn2: changed'
 APPLIED_DIR = Path('/var/lib/anysda/applied')
@@ -24,25 +24,6 @@ APPLIED_DIR = Path('/var/lib/anysda/applied')
 
 def _say(text):
     print(f"[{os.environ.get('HOST_TAG', 'anysda')}]   {text}", flush=True)
-
-
-NFT_DROPIN = '''[Service]
-# Stopping this loader must not remove rules owned by other services.
-ExecStop=
-'''
-
-
-def nft_preserve(*, root='/', run=subprocess.run):
-    """nftables не сбрасывает чужие таблицы: ни из конфига, ни остановкой юнита."""
-    root = Path(root)
-    changed = firewall.preserve_nftables_conf(root / 'etc/nftables.conf')
-    dropin = root / 'etc/systemd/system/nftables.service.d/10-anysda-preserve.conf'
-    if not dropin.is_file() or dropin.read_text() != NFT_DROPIN:
-        dropin.parent.mkdir(parents=True, exist_ok=True)
-        dropin.write_text(NFT_DROPIN)
-        run(['systemctl', 'daemon-reload'], check=True)
-        changed = True
-    return changed
 
 
 def _ufw(args):
@@ -211,59 +192,6 @@ def _venv_in_use(build):
     return False
 
 
-SSHD_HEADER = '# anysda-vpn — set by infra/scripts/00-bootstrap.sh'
-
-
-def sshd_auth(password, root):
-    """Drop-in и те же строки основного конфига: парольный вход yes или no."""
-    root_login = 'yes' if password == 'yes' else 'prohibit-password'
-    dropin = root / 'etc/ssh/sshd_config.d/00-anysda.conf'
-    dropin.parent.mkdir(parents=True, exist_ok=True)
-    dropin.write_text(f'{SSHD_HEADER}\nPasswordAuthentication {password}\n'
-                      f'PermitRootLogin {root_login}\nKbdInteractiveAuthentication no\n')
-    config = root / 'etc/ssh/sshd_config'
-    text = config.read_text()
-    for key, value in (('PasswordAuthentication', password), ('PermitRootLogin', root_login)):
-        text = re.sub(rf'(?m)^#?{key}.*$', f'{key} {value}', text)
-    config.write_text(text)
-
-
-def sshd(password, *, root='/', run=subprocess.run):
-    """Настройка входа по ssh; невалидный конфиг откатывается к парольному входу."""
-    root = Path(root)
-    config = root / 'etc/ssh/sshd_config'
-    penalties = root / 'etc/ssh/sshd_config.d/99-anysda-no-penalties.conf'
-    watched = (config, root / 'etc/ssh/sshd_config.d/00-anysda.conf', penalties)
-
-    def state():
-        return [path.read_bytes() if path.is_file() else None for path in watched]
-
-    before = state()
-    sshd_auth(password, root)
-    text = config.read_text()
-    for key in ('ChallengeResponseAuthentication', 'KbdInteractiveAuthentication'):
-        text = re.sub(rf'(?m)^#?{key}.*$', f'{key} no', text)
-    config.write_text(text)
-    # sshd -t и -T требуют каталог privsep, а apt при обновлении openssh его
-    # удаляет: до перезапуска ssh.service вернуть его некому.
-    (root / 'run/sshd').mkdir(mode=0o755, parents=True, exist_ok=True)
-    # OpenSSH 9.8+ штрафует адрес на 90 с за оборванный вход, и несколько неудачных
-    # входов деплоя запирают его. Старый sshd директивы не знает и с ней падает.
-    dump = run(['sshd', '-T'], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
-    if any(line.lower().startswith('persourcepenalties ') for line in dump.splitlines()):
-        penalties.write_text('PerSourcePenalties no\n')
-    else:
-        penalties.unlink(missing_ok=True)
-    if run(['sshd', '-t']).returncode != 0:
-        sshd_auth('yes', root)
-        penalties.unlink(missing_ok=True)
-        raise RuntimeError('конфиг sshd невалиден — откатываюсь')
-    changed = state() != before
-    if changed or run(['systemctl', 'is-active', '--quiet', 'ssh']).returncode != 0:
-        run(['systemctl', 'reload-or-restart', 'ssh'], check=True)
-    return changed
-
-
 def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=None, apply=entryvpn.OVPN_APPLY):
     """Рестарт OpenVPN по общему со стадией панели отпечатку входов."""
     return entryvpn.ovpn_restart(
@@ -271,88 +199,117 @@ def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=None, apply=entryvpn.OV
         _say, apply=apply)
 
 
-def _ikev2_packages(args):
-    del args
-    changed = apt.install(ikev2.PACKAGES)
-    if apt.have([ikev2.CONFLICT]):
-        apt.apt_get(['purge', '-y', '-qq', ikev2.CONFLICT], quiet=True)
-        changed = True
-    return changed
-
-
 def _ikev2_server(args):
     return ikev2.server(args.entry_host, args.public_host, args.panel_domain, args.subnet, args.dns, _say,
                         lambda: restart_if_changed(ikev2.UNIT, ikev2.starter_inputs()))
 
 
+def _nft_preserve(args):
+    del args
+    return firewall.preserve_nftables_conf()
+
+
+def _swap(args):
+    return swap.ensure(args.manifest, _say, install_bytes=args.install_bytes)
+
+
+def _exit_config(args):
+    return exitnode.configure(os.environ, args.template, _say)
+
+
+def _wg_identity(args):
+    return entryvpn.wg_identity(args.port, args.address)
+
+
+def _wg_apply(args):
+    del args
+    return entryvpn.wg_apply(_say)
+
+
+def _routing_ensure(args):
+    return entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)
+
+
+def _ovpn_pki(args):
+    del args
+    return entryvpn.ovpn_pki()
+
+
+def _ovpn_server_conf(args):
+    return entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)
+
+
+def _ovpn_restart(args):
+    del args
+    return ovpn_restart()
+
+
+def _argument(*flags, **options):
+    return flags, options
+
+
+# действие, справка, аргументы, обработчик: он возвращает, менялся ли узел
+ACTIONS = (
+    ('nft-preserve', 'flush ruleset в nftables.conf закомментирован', (), _nft_preserve),
+    ('swap', 'swap узлу с памятью меньше 4 ГБ', (
+        _argument('--manifest', default='/tmp/anysda/release-manifest.json'),
+        _argument('--install-bytes', type=int, default=0, help='место на диске после полной установки узла, байт'),
+    ), _swap),
+    ('ufw', 'политика и правила ufw по группам', (
+        _argument('--only-rules', action='store_true', help='только правила групп: политику и включение ufw не трогать'),
+        _argument('groups', help='JSON: [{"comment", "rules", "aliases", "dns": {"to", "subnets"}}]'),
+    ), _ufw),
+    ('f2b-ignore', 'адреса, которые fail2ban не банит', (
+        _argument('entry_host', nargs='?', default=''),
+    ), _f2b_ignore),
+    ('restart-if-changed', 'перезапуск службы при смене её входов', (
+        _argument('--record', help='файл отпечатка вместо общего каталога'),
+        _argument('unit'),
+        _argument('file', nargs='+'),
+    ), _restart_if_changed),
+    ('exit-config', 'конфиг sing-box экзита', (_argument('--template', required=True),), _exit_config),
+    ('wg-identity', 'ключи сервера WireGuard и начальный wg0.conf', (
+        _argument('--port', required=True),
+        _argument('--address', required=True),
+    ), _wg_identity),
+    ('wg-apply', 'wg0.conf в ядро без лишнего рестарта', (), _wg_apply),
+    ('routing-ensure', 'вернуть пропавшую цепочку TPROXY службы', (
+        _argument('unit'),
+        _argument('iface'),
+        _argument('chain'),
+    ), _routing_ensure),
+    ('ovpn-pki', 'каталоги и комплект PKI сервера OpenVPN', (), _ovpn_pki),
+    ('ovpn-server-conf', 'server.conf сервера OpenVPN', (
+        _argument('--port', required=True),
+        _argument('--proto', required=True),
+        _argument('--subnet', required=True, help='сеть tun0 без маски'),
+        _argument('pool', nargs='+', help='подсети пула клиентов'),
+    ), _ovpn_server_conf),
+    ('ovpn-restart', 'рестарт OpenVPN при смене входов и отметка last good', (), _ovpn_restart),
+    ('ikev2-server', 'сертификаты, конфиг swanctl и загрузка в charon', (
+        _argument('--entry-host', required=True),
+        _argument('--public-host', required=True, help='адрес сервера в профилях'),
+        _argument('--panel-domain', default=''),
+        _argument('--subnet', required=True),
+        _argument('--dns', required=True),
+    ), _ikev2_server),
+    ('venv', 'venv vpn2 экзита из колеса', (
+        _argument('wheel'),
+        _argument('--root', default='/opt/vpn2'),
+        _argument('--pip-dir', default='/usr/share/python-wheels'),
+        _argument('--python', default='/usr/bin/python3'),
+    ), _venv),
+)
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='action', required=True)
-    item = sub.add_parser('packages')
-    item.add_argument('--docker', action='store_true')
-    item.add_argument('package', nargs='+')
-    item.set_defaults(run=lambda args: apt.install(args.package, docker=args.docker))
-    sub.add_parser('nft-preserve').set_defaults(run=lambda args: nft_preserve())
-    item = sub.add_parser('swap')
-    item.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
-    item.add_argument('--install-bytes', type=int, default=0,
-                      help='место на диске после полной установки узла, байт')
-    item.set_defaults(run=lambda args: swap.ensure(args.manifest, _say, install_bytes=args.install_bytes))
-    item = sub.add_parser('ufw')
-    item.add_argument('--only-rules', action='store_true',
-                      help='только правила групп: политику и включение ufw не трогать')
-    item.add_argument('groups', help='JSON: [{"comment", "rules", "aliases", "dns": {"to", "subnets"}}]')
-    item.set_defaults(run=_ufw)
-    item = sub.add_parser('f2b-ignore')
-    item.add_argument('entry_host', nargs='?', default='')
-    item.set_defaults(run=_f2b_ignore)
-    item = sub.add_parser('restart-if-changed')
-    item.add_argument('--record', help='файл отпечатка вместо общего каталога')
-    item.add_argument('unit')
-    item.add_argument('file', nargs='+')
-    item.set_defaults(run=_restart_if_changed)
-    item = sub.add_parser('exit-config')
-    item.add_argument('--template', required=True)
-    item.set_defaults(run=lambda args: exitnode.configure(os.environ, args.template, _say))
-    item = sub.add_parser('sshd')
-    item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
-    item.set_defaults(run=lambda args: sshd(args.password))
-    item = sub.add_parser('wg-identity', help='ключи сервера WireGuard и начальный wg0.conf')
-    item.add_argument('--port', required=True)
-    item.add_argument('--address', required=True)
-    item.set_defaults(run=lambda args: entryvpn.wg_identity(args.port, args.address))
-    sub.add_parser('wg-apply', help='wg0.conf в ядро без лишнего рестарта') \
-        .set_defaults(run=lambda args: entryvpn.wg_apply(_say))
-    item = sub.add_parser('routing-ensure', help='вернуть пропавшую цепочку TPROXY службы')
-    item.add_argument('unit')
-    item.add_argument('iface')
-    item.add_argument('chain')
-    item.set_defaults(run=lambda args: entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say))
-    sub.add_parser('ovpn-pki', help='каталоги и комплект PKI сервера OpenVPN') \
-        .set_defaults(run=lambda args: entryvpn.ovpn_pki())
-    item = sub.add_parser('ovpn-server-conf', help='server.conf сервера OpenVPN')
-    item.add_argument('--port', required=True)
-    item.add_argument('--proto', required=True)
-    item.add_argument('--subnet', required=True, help='сеть tun0 без маски')
-    item.add_argument('pool', nargs='+', help='подсети пула клиентов')
-    item.set_defaults(run=lambda args: entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool))
-    sub.add_parser('ovpn-restart', help='рестарт OpenVPN при смене входов и отметка last good') \
-        .set_defaults(run=lambda args: ovpn_restart())
-    sub.add_parser('ikev2-packages', help='strongSwan со starter, без charon-systemd') \
-        .set_defaults(run=_ikev2_packages)
-    item = sub.add_parser('ikev2-server', help='сертификаты, конфиг swanctl и загрузка в charon')
-    item.add_argument('--entry-host', required=True)
-    item.add_argument('--public-host', required=True, help='адрес сервера в профилях')
-    item.add_argument('--panel-domain', default='')
-    item.add_argument('--subnet', required=True)
-    item.add_argument('--dns', required=True)
-    item.set_defaults(run=_ikev2_server)
-    item = sub.add_parser('venv')
-    item.add_argument('wheel')
-    item.add_argument('--root', default='/opt/vpn2')
-    item.add_argument('--pip-dir', default='/usr/share/python-wheels')
-    item.add_argument('--python', default='/usr/bin/python3')
-    item.set_defaults(run=_venv)
+    for name, text, arguments, handler in ACTIONS:
+        item = sub.add_parser(name, help=text)
+        for flags, options in arguments:
+            item.add_argument(*flags, **options)
+        item.set_defaults(run=handler)
     args = parser.parse_args(argv)
     try:
         changed = args.run(args)

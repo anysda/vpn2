@@ -1,7 +1,6 @@
 """Тонкие команды vpn2: что видит оператор на пустом, битом и повторном вызове."""
 import json
 import os
-import sys
 
 import pytest
 
@@ -30,40 +29,6 @@ else:
 '''
 
 
-@pytest.fixture
-def ufw(tmp_path, monkeypatch):
-    """Подменный ufw на PATH: хранит правила в файле, как настоящий `show added`."""
-    bin_dir = tmp_path / 'bin'
-    bin_dir.mkdir()
-    state = tmp_path / 'rules'
-    state.write_text('')
-    script = bin_dir / 'ufw'
-    script.write_text(UFW.format(python=sys.executable, state=str(state)))
-    script.chmod(0o755)
-    monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
-
-    def rules():
-        return [line for line in state.read_text().splitlines() if line]
-
-    def calls():
-        path = tmp_path / 'rules.calls'
-        text = path.read_text() if path.exists() else ''
-        path.write_text('')
-        return [line for line in text.splitlines() if line != 'show added']
-
-    rules.calls = calls
-    rules.state = state
-    return rules
-
-
-def test_dispatcher_without_a_command_lists_them(capsys):
-    assert cli.main([]) == 2
-    err = capsys.readouterr().err
-    assert err.startswith('vpn2: нужна команда\nКоманды: ')
-    for name in ('backup', 'containers', 'nft', 'restore', 'router', 'ufw', 'verify'):
-        assert name in err
-
-
 def test_dispatcher_refuses_an_unknown_command(capsys):
     assert cli.main(['no-such']) == 2
     assert capsys.readouterr().err.startswith('vpn2: неизвестная команда no-such\n')
@@ -73,54 +38,6 @@ def test_dispatcher_help_goes_to_stdout(capsys):
     assert cli.main(['--help']) == 0
     out, err = capsys.readouterr()
     assert out.startswith('Использование: vpn2 <команда> [аргументы]\n') and err == ''
-
-
-def test_ufw_sync_adds_then_repeats_without_changes(ufw):
-    argv = ['ufw', 'sync', 'vpn2-dns', 'from 198.51.100.0/24 to 192.0.2.53 port 53 proto udp', '51820/udp']
-    assert cli.main(argv) == 0
-    assert ufw() == [
-        'ufw allow from 198.51.100.0/24 to 192.0.2.53 port 53 proto udp comment vpn2-dns',
-        'ufw allow 51820/udp comment vpn2-dns',
-    ]
-    assert len(ufw.calls()) == 2
-    assert cli.main(argv) == 0
-    assert ufw.calls() == []
-
-
-def test_ufw_sync_drops_own_stale_rules_and_keeps_foreign(ufw):
-    ufw.state.write_text("ufw allow 22/tcp comment 'ssh'\nufw allow 8443/tcp comment 'vpn2-web'\n"
-                         "ufw allow 9000/tcp comment 'old-web'\nufw allow 443/tcp comment 'vpn2-web'\n")
-    assert cli.main(['ufw', 'sync', '--alias', 'old-web', 'vpn2-web', '443/tcp']) == 0
-    assert ufw() == ["ufw allow 22/tcp comment 'ssh'", "ufw allow 443/tcp comment 'vpn2-web'"]
-
-
-def test_ufw_sync_with_no_rules_clears_only_its_own(ufw):
-    ufw.state.write_text("ufw allow 22/tcp comment 'ssh'\nufw allow 8443/tcp comment 'vpn2-web'\n")
-    assert cli.main(['ufw', 'sync', 'vpn2-web']) == 0
-    assert ufw() == ["ufw allow 22/tcp comment 'ssh'"]
-
-
-def test_ufw_failure_is_shown_and_changes_nothing(ufw, capsys):
-    ufw.state.write_text('BROKEN\n')
-    assert cli.main(['ufw', 'sync', 'vpn2-web', '443/tcp']) == 1
-    err = capsys.readouterr().err
-    assert err.startswith('vpn2 ufw: ') and 'ufw show added -> 1' in err and 'problem running ufw' in err
-    assert ufw() == ['BROKEN'] and ufw.calls() == []
-
-
-@pytest.mark.usefixtures('ufw')
-def test_ufw_without_the_program_is_an_error(monkeypatch, tmp_path, capsys):
-    monkeypatch.setenv('PATH', str(tmp_path / 'nowhere'))
-    assert cli.main(['ufw', 'sync', 'vpn2-web', '443/tcp']) == 1
-    assert '-> 127' in capsys.readouterr().err
-
-
-@pytest.mark.usefixtures('ufw')
-def test_ufw_without_a_comment_is_a_usage_error(capsys):
-    with pytest.raises(SystemExit) as stop:
-        cli.main(['ufw', 'sync'])
-    assert stop.value.code == 2
-    assert 'comment' in capsys.readouterr().err
 
 
 def goog(tmp_path, data):

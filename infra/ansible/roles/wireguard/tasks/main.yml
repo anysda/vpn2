@@ -15,11 +15,14 @@
     mode: '0700'
 
 - name: Пакет wireguard-tools
-  ansible.builtin.command:
-    argv: "{{ wireguard_host + ['packages', 'wireguard-tools'] }}"
-  environment: "{{ wireguard_env }}"
-  register: wireguard_step
-  changed_when: "'vpn2: changed' in wireguard_step.stdout"
+  ansible.builtin.apt:
+    name: [wireguard-tools]
+    state: present
+    lock_timeout: 1200
+  register: wireguard_apt
+  until: wireguard_apt is succeeded
+  retries: 3
+  delay: 10
 
 - name: Модуль ядра wireguard
   ansible.builtin.command:

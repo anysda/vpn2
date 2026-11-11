@@ -77,6 +77,8 @@ base_packages_zapret:
   - luajit
   - ethtool
 base_packages_backup: [age, expect, sqlite3]
+base_packages_docker: [docker-ce, docker-ce-cli, containerd.io, apparmor, pigz, xz-utils]
+base_docker_arch: {x86_64: amd64, aarch64: arm64}
 base_packages: >-
   {{ base_packages_common
      + (base_packages_entry if base_entry else [])
@@ -95,6 +97,7 @@ base_keys: "{{ (base_orchestrator_keys.splitlines() + [base_admin_key]) | map('t
 # Entry: пароль отключается, только когда ключ есть у человека-админа - ключ
 # оркестратора живёт на самой entry и после её переустановки не поможет.
 # Экзит: пароль отключается, как только лёг ключ оркестратора.
+base_sshd_root: "{{ 'yes' if base_sshd_password == 'yes' else 'prohibit-password' }}"
 base_sshd_password: "{{ 'no' if (base_admin_key if base_entry else base_orchestrator_keys | trim) else 'yes' }}"
 
 # Listener-порты WG, OpenVPN, IKEv2 и панели открывают их роли. Пустые группы

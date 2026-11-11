@@ -26,3 +26,16 @@ ikev2_ufw:
     dns: {to: "{{ ikev2_dns }}", subnets: "{{ ikev2_subnets }}"}
 ikev2_caddy_certs: /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory
 ikev2_le_domain: "{{ ikev2_domain.content | default('') | b64decode }}"
+
+# starter и его charon названы явно: strongSwan 6 по умолчанию выбирает charon-systemd,
+# а starter только рекомендует strongswan-charon.
+ikev2_packages:
+  - strongswan
+  - strongswan-starter
+  - strongswan-charon
+  - strongswan-pki
+  - strongswan-swanctl
+  - libcharon-extauth-plugins
+  - libcharon-extra-plugins
+  - libstrongswan-standard-plugins
+  - libstrongswan-extra-plugins

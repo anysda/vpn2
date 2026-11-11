@@ -410,3 +410,18 @@ def test_exit_venv_build_of_running_process_is_kept(tmp_path):
         service.wait()
     assert exit_venv(tmp_path, b'three') == 0
     assert not first.exists()
+
+
+def test_exit_venv_build_of_the_same_name_elsewhere_is_not_ours(tmp_path):
+    # The build name is the wheel hash: another directory can hold the same one.
+    assert exit_venv(tmp_path, b'one') == 0
+    first = (tmp_path / 'root/venv').resolve()
+    foreign = subprocess.Popen(['python3', '-c', 'import time; time.sleep(120)',
+                                f'{tmp_path}/elsewhere/venvs/{first.name}/bin/vpn2'])
+    try:
+        assert host._venv_in_use(first) is False
+        assert exit_venv(tmp_path, b'two') == 0
+        assert not first.exists()
+    finally:
+        foreign.kill()
+        foreign.wait()

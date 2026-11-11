@@ -203,20 +203,24 @@ def _venv(args):
             link.rename(aside)
             fresh.replace(link)
     for old in builds.iterdir():
-        if old.name != venv.name and not _venv_in_use(old.name):
+        if old.name != venv.name and not _venv_in_use(old):
             shutil.rmtree(old)
     return True
 
 
-def _venv_in_use(name):
-    """Путь сборки стоит в командной строке живого процесса."""
-    needle = f'/venvs/{name}/'.encode()
+def _venv_in_use(build):
+    """Путь сборки стоит в командной строке живого процесса.
+
+    Сверяется полный путь: сборка с тем же именем в чужом каталоге - не эта.
+    """
+    needles = {os.fsencode(f'{path}/') for path in (build.absolute(), build.resolve())}
     for item in glob.glob('/proc/[0-9]*/cmdline'):
         try:
-            if needle in Path(item).read_bytes():
-                return True
+            line = Path(item).read_bytes()
         except OSError:
             continue
+        if any(needle in line for needle in needles):
+            return True
     return False
 
 

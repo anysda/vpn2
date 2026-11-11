@@ -70,9 +70,9 @@ class SsoMissingSecretTests(unittest.TestCase):
                         root = Path(directory)
                         (root / 'envs').mkdir()
                         (root / 'lib').mkdir()
-                        (root / 'scripts').mkdir()
+                        (root / 'ansible/plays').mkdir(parents=True)
                         for stage in ('30-frontend', '99-verify'):
-                            (root / 'scripts' / (stage + '.sh')).touch()
+                            (root / 'ansible/plays' / (stage + '.yml')).touch()
                         # Isolate notice placement; release acceptance is tested separately.
                         (root / 'lib/deploy-release.sh').write_text(
                             'release_start() { :; }\nrelease_complete() { :; }\n')
@@ -85,6 +85,7 @@ class SsoMissingSecretTests(unittest.TestCase):
 DEPLOY_ROOT=$PWD
 C_G= C_B= C_END=
 load_env() { source "$DEPLOY_ROOT/envs/ru.env"; }
+die() { echo "die: $*" >&2; exit 1; }
 ssh_exec() { bash -c "$1"; }
 print_banner() { :; }
 print_ikev2_notice() { :; }

@@ -1,44 +1,13 @@
 import { useLogger } from './logger'
 import { MSK_OFFSET_SEC, mskDay } from './msk-day'
 
-interface VmInstantResult {
-  metric: Record<string, string>
-  value: [number, string]
-}
-
 interface VmResponse {
   status: 'success' | 'error'
-  data: {
-    resultType: 'vector' | 'matrix' | 'scalar' | 'string'
-    result: VmInstantResult[]
-  }
-}
-
-export interface NodeMetrics {
-  instance: string
-  // Занятость ЦПУ (user+system+softirq+irq+nice), средняя по ядрам. Ожидание
-  // диска и украденное гипервизором время сюда не входят — отдельные поля.
-  cpuPct: number | null
-  iowaitPct: number | null
-  stealPct: number | null
-  ramPct: number | null
-  rxBps: number | null
-  txBps: number | null
-  uptimeSec: number | null
-  // Корневая ФС ноды: доступно (как df Avail) и всего, байты.
-  diskFreeBytes: number | null
-  diskSizeBytes: number | null
-  // Размер ноды: число ядер и вся память, байты. По ним бот выбирает пороги тревог.
-  cores: number | null
-  memTotalBytes: number | null
-  // Возраст последнего сэмпла метрик ноды, сек. null — данных нет вовсе.
-  // Драйвит индикацию online/warning/offline (НЕ хранится в holdover —
-  // нужен реальный возраст, иначе мёртвая нода вечно «свежая»).
-  staleSec: number | null
+  data: { result: Array<{ metric: Record<string, string>, value: [number, string] }> }
 }
 
 export const PROMQL = {
-  // Сумма по ядрам, делённая на число ядер: 100% = все ядра заняты.
+  // Занятость без iowait и steal; сумма по ядрам, делённая на их число: 100% = все ядра заняты.
   cpu: '100 * sum by(instance) (rate(node_cpu_seconds_total{mode=~"user|system|softirq|irq|nice"}[30s])) / count by(instance) (node_cpu_seconds_total{mode="idle"})',
   iowait: '100 * avg by(instance) (rate(node_cpu_seconds_total{mode="iowait"}[30s]))',
   steal: '100 * avg by(instance) (rate(node_cpu_seconds_total{mode="steal"}[30s]))',
@@ -46,25 +15,26 @@ export const PROMQL = {
   rx: 'sum by(instance) (irate(node_network_receive_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
   tx: 'sum by(instance) (irate(node_network_transmit_bytes_total{device!="lo",device!~"wg.*"}[30s]))',
   uptime: 'node_time_seconds - node_boot_time_seconds',
+  // Корневая ФС: доступно (как df Avail) и всего.
   diskFree: 'node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}',
   diskSize: 'node_filesystem_size_bytes{mountpoint="/",fstype!~"tmpfs|overlay"}',
+  // Размер ноды: по ядрам и памяти бот выбирает пороги тревог.
   cores: 'count by(instance)(node_cpu_seconds_total{mode="idle"})',
   memTotal: 'node_memory_MemTotal_bytes',
-  // Возраст последнего сэмпла: time() минус метка времени метрики.
+  // Возраст последнего сэмпла, сек: по нему индикатор online/warning/offline.
   stale: 'time() - timestamp(node_time_seconds)',
 }
 
-// holdover[instance][metricKey] = last successful value
+/** Последние удачные значения: instance → метрика → число. */
 const holdover = new Map<string, Map<string, number>>()
 
-function rememberValue(instance: string, metricKey: string, value: number) {
-  let m = holdover.get(instance)
-  if (!m) { m = new Map(); holdover.set(instance, m) }
-  m.set(metricKey, value)
-}
-
-function recallValue(instance: string, metricKey: string): number | null {
-  return holdover.get(instance)?.get(metricKey) ?? null
+/** Текущее значение метрики; если его нет, то последнее удачное (когда holdover разрешён). */
+function held(current: Map<string, number>, instance: string, key: string, allowHoldover = true): number | null {
+  const value = current.get(instance)
+  const memory = holdover.get(instance) ?? new Map<string, number>()
+  holdover.set(instance, memory)
+  if (value !== undefined) memory.set(key, value)
+  return value ?? (allowHoldover ? memory.get(key) ?? null : null)
 }
 
 export async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
@@ -80,11 +50,8 @@ export async function instantQuery(promql: string, time?: number, strict = false
       return result
     }
     for (const row of data.data.result) {
-      const instance = row.metric.instance
-      if (!instance) continue
       const value = Number(row.value[1])
-      if (!Number.isFinite(value)) continue
-      result.set(instance, value)
+      if (row.metric.instance && Number.isFinite(value)) result.set(row.metric.instance, value)
     }
   }
   catch (err) {
@@ -101,116 +68,49 @@ export interface NodeHealth {
   uptimeSec: number | null
 }
 
-/**
- * Текущее состояние нод без holdover для журнала событий. Недоступная VM —
- * исключение, а не пустой ответ: иначе сбой самой VM выглядел бы как
- * «все ноды оффлайн».
- */
+/** Состояние нод без holdover для журнала событий. Недоступная VM - исключение, а не «все ноды оффлайн». */
 export async function fetchNodeHealth(instances: string[]): Promise<NodeHealth[]> {
-  const [stale, iowait, uptime] = await Promise.all([
-    instantQuery(PROMQL.stale, undefined, true),
-    instantQuery(PROMQL.iowait, undefined, true),
-    instantQuery(PROMQL.uptime, undefined, true),
-  ])
+  const [stale, iowait, uptime] = await Promise.all([PROMQL.stale, PROMQL.iowait, PROMQL.uptime].map(q => instantQuery(q, undefined, true)))
   return instances.map(instance => ({
     instance,
-    staleSec: stale.get(instance) ?? null,
-    iowaitPct: iowait.get(instance) ?? null,
-    uptimeSec: uptime.get(instance) ?? null,
+    staleSec: stale!.get(instance) ?? null,
+    iowaitPct: iowait!.get(instance) ?? null,
+    uptimeSec: uptime!.get(instance) ?? null,
   }))
 }
 
-function withHoldover(
-  current: Map<string, number>,
-  instances: string[],
-  metricKey: string,
-  allowHoldover = true,
-): Map<string, number | null> {
-  const result = new Map<string, number | null>()
-  for (const inst of instances) {
-    const v = current.get(inst)
-    if (v !== undefined) {
-      rememberValue(inst, metricKey, v)
-      result.set(inst, v)
-    }
-    else {
-      result.set(inst, allowHoldover ? recallValue(inst, metricKey) : null)
-    }
-  }
-  return result
-}
+/** Поле ответа → ключ PROMQL. staleSec отдельно: ему нужен настоящий возраст, без holdover. */
+const NODE_FIELDS = {
+  cpuPct: 'cpu', iowaitPct: 'iowait', stealPct: 'steal', ramPct: 'ram', rxBps: 'rx', txBps: 'tx', uptimeSec: 'uptime',
+  diskFreeBytes: 'diskFree', diskSizeBytes: 'diskSize', cores: 'cores', memTotalBytes: 'memTotal',
+} as const
+type NodeField = keyof typeof NODE_FIELDS
+export type NodeMetrics = { instance: string, staleSec: number | null } & Record<NodeField, number | null>
 
-// Holdover нужен UI, но не алертам: повтор старого значения не является
-// новым наблюдением нагрузки. Бот запрашивает только текущие результаты VM.
+/** Holdover нужен интерфейсу, но не алертам: бот запрашивает только текущие значения. */
 export async function fetchNodeMetrics(instances: string[], allowHoldover = true): Promise<NodeMetrics[]> {
-  const [cpu, iowait, steal, ram, rx, tx, uptime, stale, diskFree, diskSize, cores, memTotal] = await Promise.all([
-    instantQuery(PROMQL.cpu),
-    instantQuery(PROMQL.iowait),
-    instantQuery(PROMQL.steal),
-    instantQuery(PROMQL.ram),
-    instantQuery(PROMQL.rx),
-    instantQuery(PROMQL.tx),
-    instantQuery(PROMQL.uptime),
-    instantQuery(PROMQL.stale),
-    instantQuery(PROMQL.diskFree),
-    instantQuery(PROMQL.diskSize),
-    instantQuery(PROMQL.cores),
-    instantQuery(PROMQL.memTotal),
-  ])
-
-  const cpuH = withHoldover(cpu, instances, 'cpu', allowHoldover)
-  const iowaitH = withHoldover(iowait, instances, 'iowait', allowHoldover)
-  const stealH = withHoldover(steal, instances, 'steal', allowHoldover)
-  const ramH = withHoldover(ram, instances, 'ram', allowHoldover)
-  const rxH = withHoldover(rx, instances, 'rx', allowHoldover)
-  const txH = withHoldover(tx, instances, 'tx', allowHoldover)
-  const upH = withHoldover(uptime, instances, 'uptime', allowHoldover)
-  const diskFreeH = withHoldover(diskFree, instances, 'diskFree', allowHoldover)
-  const diskSizeH = withHoldover(diskSize, instances, 'diskSize', allowHoldover)
-  const coresH = withHoldover(cores, instances, 'cores', allowHoldover)
-  const memTotalH = withHoldover(memTotal, instances, 'memTotal', allowHoldover)
-
-  return instances.map(inst => ({
-    instance: inst,
-    cpuPct: cpuH.get(inst) ?? null,
-    iowaitPct: iowaitH.get(inst) ?? null,
-    stealPct: stealH.get(inst) ?? null,
-    ramPct: ramH.get(inst) ?? null,
-    rxBps: rxH.get(inst) ?? null,
-    txBps: txH.get(inst) ?? null,
-    uptimeSec: upH.get(inst) ?? null,
-    diskFreeBytes: diskFreeH.get(inst) ?? null,
-    diskSizeBytes: diskSizeH.get(inst) ?? null,
-    cores: coresH.get(inst) ?? null,
-    memTotalBytes: memTotalH.get(inst) ?? null,
-    // staleSec — БЕЗ holdover: реальный возраст последнего сэмпла.
-    staleSec: stale.get(inst) ?? null,
-  }))
+  const fields = Object.keys(NODE_FIELDS) as NodeField[]
+  const queries = [...fields.map(field => PROMQL[NODE_FIELDS[field]]), PROMQL.stale]
+  const results = await Promise.all(queries.map(q => instantQuery(q)))
+  return instances.map((instance) => {
+    const values = fields.map((field, i) => [field, held(results[i]!, instance, NODE_FIELDS[field], allowHoldover)])
+    return {
+      instance,
+      ...Object.fromEntries(values) as Record<NodeField, number | null>,
+      staleSec: results[fields.length]!.get(instance) ?? null,
+    }
+  })
 }
 
-// Суточный трафик ноды: increase() WAN-счётчиков с 00:00 МСК. Фильтр строже,
-// чем у rx/tx Mbps: на entry трафик клиента виден и на wg0/tun0/xfrm0, и на
-// eth0 — считаем только физический интерфейс, иначе сумма удвоится.
+// Суточный трафик ноды считаем только по физическому интерфейсу: на entry
+// трафик клиента виден ещё и на wg0/tun0/xfrm0, сумма удвоилась бы.
 export const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
 const DAILY_CACHE_MS = 30_000
 
-/** Полных секунд с 00:00 по Москве, без захвата конца вчерашних суток. */
-function secondsSinceMskMidnight(nowMs = Date.now()): number {
-  const sec = Math.floor(nowMs / 1000)
-  return (sec + MSK_OFFSET_SEC) % 86400
-}
-
-export interface DailyTraffic {
-  rxBytes: number | null
-  txBytes: number | null
-}
-
-// increase() за сутки на 2с-скрейпе — тяжёлый запрос; панель опрашивает
-// /api/ops/nodes раз в 2с, поэтому результат держим 30с.
+// increase() за сутки тяжёлый, а панель опрашивает ноды раз в 2 с: результат держим 30 с.
 let dailyCache: { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> } | null = null
 
-
-export async function fetchDailyTraffic(instances: string[]): Promise<Map<string, DailyTraffic>> {
+export async function fetchDailyTraffic(instances: string[]): Promise<Map<string, { rxBytes: number | null, txBytes: number | null }>> {
   const now = Date.now()
   const day = mskDay(now)
   if (dailyCache && dailyCache.day !== day) {
@@ -219,75 +119,38 @@ export async function fetchDailyTraffic(instances: string[]): Promise<Map<string
     for (const m of holdover.values()) { m.delete('rxDay'); m.delete('txDay') }
   }
   if (!dailyCache || now - dailyCache.at > DAILY_CACHE_MS) {
-    const seconds = secondsSinceMskMidnight(now)
-    // Окно [0s] VM интерпретирует автоматически. В первую секунду суток
-    // возвращаем ноль без запроса и не кэшируем его на следующие 30 секунд.
+    const seconds = (Math.floor(now / 1000) + MSK_OFFSET_SEC) % 86400
+    // В первую секунду суток окно пустое: ноль без запроса и без кэша.
     if (seconds === 0) return new Map(instances.map(inst => [inst, { rxBytes: 0, txBytes: 0 }]))
     const range = `${seconds}s`
     const time = Math.floor(now / 1000)
-    // increase_prometheus не берёт сэмпл перед окном (из вчерашнего дня).
-    // Фиксируем время вычисления вместе с длиной окна, чтобы его начало
-    // не сдвинулось, пока запрос идёт до VM.
+    // increase_prometheus не берёт сэмпл из вчерашнего дня; время фиксируем вместе с окном.
     const [rx, tx] = await Promise.all([
       instantQuery(`sum by(instance) (increase_prometheus(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
       instantQuery(`sum by(instance) (increase_prometheus(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
     ])
     dailyCache = { at: now, day, rx, tx }
   }
-  const rxH = withHoldover(dailyCache.rx, instances, 'rxDay')
-  const txH = withHoldover(dailyCache.tx, instances, 'txDay')
   return new Map(instances.map(inst => [inst, {
-    rxBytes: rxH.get(inst) ?? null,
-    txBytes: txH.get(inst) ?? null,
+    rxBytes: held(dailyCache!.rx, inst, 'rxDay'),
+    txBytes: held(dailyCache!.tx, inst, 'txDay'),
   }]))
 }
 
 /**
- * Map exit tags → MGMT IPs. Источник истины — runtimeConfig.mgmtIps (env
- * `NUXT_MGMT_IPS`), формат "tag:ip,tag:ip,...", приходит из стадии 30-frontend
- * со СТАБИЛЬНЫМИ индексами из config.yaml (исключённые экзиты резервируют
- * свой индекс, не сдвигая соседей). Это критично: wgmgmt-туннель на ноде
- * физически прописан на конкретный 10.99.0.X — если посчитать индекс
- * динамически (i+2 от текущей exitTags), при exclusion одного экзита
- * остальные «съезжают» в коде, но не на нодах, и scrape промахивается.
- *
- * Fallback (для совместимости со старыми деплоями без NUXT_MGMT_IPS):
- * считаем индексы из exitTags по позиции — старое поведение.
+ * Ноды и их адреса в mgmt-сети из `NUXT_MGMT_IPS` ("tag:ip,tag:ip"). Индексы
+ * адресов стабильны: исключённый экзит не сдвигает соседей.
  */
 export function nodeInstances(): Array<{ tag: string, instance: string, label: string }> {
   const cfg = useRuntimeConfig()
-  const mgmtIpsRaw = String(cfg.mgmtIps || '').trim()
   const tags = String(cfg.exitTags || '').trim().split(/\s+/).filter(Boolean)
-
-  if (mgmtIpsRaw) {
-    const ipByTag = new Map<string, string>()
-    for (const pair of mgmtIpsRaw.split(',')) {
-      const [t, ip] = pair.split(':').map(s => s.trim())
-      if (t && ip) ipByTag.set(t, ip)
-    }
-    const ruIp = ipByTag.get('ru') ?? '10.99.0.1'
-    const nodes: Array<{ tag: string, instance: string, label: string }> = [
-      { tag: 'ru', instance: `${ruIp}:9100`, label: 'RU entry' },
-    ]
-    for (const tag of tags) {
-      const ip = ipByTag.get(tag)
-      if (!ip) continue // фильтруем неизвестные теги — exclusion обрабатывается через config2env, тег исчезнет из exitTags
-      nodes.push({ tag, instance: `${ip}:9100`, label: `${tag.toUpperCase()} exit` })
-    }
-    return nodes
+  const ipByTag = new Map<string, string>()
+  for (const pair of String(cfg.mgmtIps || '').split(',')) {
+    const [tag, ip] = pair.split(':').map(s => s.trim())
+    if (tag && ip) ipByTag.set(tag, ip)
   }
-
-  // Fallback (legacy): динамическая нумерация. Сломается при exclusion.
-  const prefix = cfg.mgmtMeshIpPrefix as string
-  const nodes: Array<{ tag: string, instance: string, label: string }> = [
-    { tag: 'ru', instance: `${prefix}1:9100`, label: 'RU entry' },
+  return [
+    { tag: 'ru', instance: `${ipByTag.get('ru') ?? '10.99.0.1'}:9100`, label: 'RU entry' },
+    ...tags.filter(tag => ipByTag.has(tag)).map(tag => ({ tag, instance: `${ipByTag.get(tag)}:9100`, label: `${tag.toUpperCase()} exit` })),
   ]
-  tags.forEach((tag, i) => {
-    nodes.push({
-      tag,
-      instance: `${prefix}${i + 2}:9100`,
-      label: `${tag.toUpperCase()} exit`,
-    })
-  })
-  return nodes
 }

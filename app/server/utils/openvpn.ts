@@ -7,9 +7,7 @@ import { ovpnLocalRoutes } from './allowed-ips'
 import { expiryForControl, isClientActive } from './client-status'
 import { nextPoolAddress } from './address-pools'
 
-// openssl ca не блокирует общие index.txt/serial/crlnumber. Выдачу,
-// перевыпуск и отзыв выполняем по очереди, включая чтение/запись устройства:
-// два запроса одного конфига не должны выпускать два разных сертификата.
+// openssl ca не блокирует index.txt/serial/crlnumber: выдача, перевыпуск и отзыв идут по очереди.
 let caQueue: Promise<unknown> = Promise.resolve()
 
 function withCaLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -18,10 +16,7 @@ function withCaLock<T>(fn: () => Promise<T>): Promise<T> {
   return run
 }
 
-/**
- * Выдать устройству постоянный адрес OpenVPN, если его нет. Повтор при
- * конфликте UNIQUE — та же гонка выбора свободного адреса, что у WG и IKEv2.
- */
+/** Выдаёт устройству постоянный адрес OpenVPN, если его нет. Конфликт UNIQUE от параллельной выдачи повторяется. */
 async function ensureDeviceOvpnIp(deviceId: number) {
   const db = useDb()
   for (let attempt = 1; ; attempt++) {
@@ -44,10 +39,7 @@ async function ensureDeviceOvpnIp(deviceId: number) {
   }
 }
 
-/** OpenVPN cert CN for a device — stable, derived from the DB device id. */
-export function ovpnCn(deviceId: number): string {
-  return `dev_${deviceId}`
-}
+export const ovpnCn = (deviceId: number): string => `dev_${deviceId}`
 
 /** Readiness errors propagate: an unreachable service is not a disabled CA. */
 export async function caReady(): Promise<boolean> {
@@ -71,15 +63,6 @@ export async function killOvpnClient(cn: string): Promise<boolean> {
   return (await control<{ killed: boolean }>('openvpn.disconnect', { device_id: Number(match[1]) })).killed
 }
 
-async function connectedOvpnClients(): Promise<Map<string, string>> {
-  const { sessions } = await control<{ sessions: Record<string, string> }>('state.read', { protocol: 'openvpn' })
-  return new Map(Object.entries(sessions))
-}
-
-async function killOvpnClientQuiet(cn: string): Promise<void> {
-  await killOvpnClient(cn)
-}
-
 async function writeCcd(cn: string, ip: string | null, disabled: boolean, expiresAt: Date | null): Promise<void> {
   if (!ip) throw new Error('OpenVPN address missing')
   await controlApply('openvpn.apply', { device_id: Number(cn.slice(4)), ip, action: disabled ? 'deny' : 'allow', expires_at: expiryForControl(expiresAt) })
@@ -92,41 +75,32 @@ export interface OvpnConfigParams {
   serverPort: number
   proto: string
   dns: string[]
-  /** true (по умолчанию) — локалка клиента остаётся мимо туннеля. */
+  /** true (по умолчанию) - локальная сеть клиента остаётся мимо туннеля. */
   splitLocal?: boolean
-  /** Сети, которые всё-таки должны идти В туннель: mgmt (DNS AdGuard). */
+  /** Сети, которые идут в туннель: mgmt с DNS AdGuard. */
   tunnelPrefixes?: string[]
 }
 
-/** Render a unified .ovpn with inline ca / cert / key / tls-crypt blocks. */
+/** Единый .ovpn со встроенными ca, cert, key и tls-crypt. */
 export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
-  // Семейство remote выбирает клиент (IPv4, IPv6 или DNS с A/AAAA).
-  // Суффикс 4/6 ограничивает bind сервера, а -server задаёт роль TCP;
-  // перенос этих ограничений в профиль ломает dual-stack и смену адреса.
-  if (!/^(?:udp[46]?|tcp[46]?(?:-server)?)$/.test(p.proto)) {
-    throw new Error(`unsupported OpenVPN protocol: ${p.proto}`)
-  }
-  const clientProto = p.proto.startsWith('udp') ? 'udp' : 'tcp-client'
+  // Семейство remote выбирает клиент; суффикс 4/6 и -server относятся только к серверу.
+  if (!/^(?:udp[46]?|tcp[46]?(?:-server)?)$/.test(p.proto)) throw new Error(`unsupported OpenVPN protocol: ${p.proto}`)
   const { ca, tlsCrypt } = await control<{ ca: string, tlsCrypt: string }>('profile.read', { protocol: 'openvpn' })
   return [
     `client`,
     `dev tun`,
-    `proto ${clientProto}`,
+    `proto ${p.proto.startsWith('udp') ? 'udp' : 'tcp-client'}`,
     `remote ${p.serverHost} ${p.serverPort}`,
     `resolv-retry infinite`,
     `nobind`,
     `persist-key`,
     `persist-tun`,
-    // Туннель только IPv4 (tun0 10.67.67.0/24). Загоняем весь IPv6 в tun
-    // (route-ipv6 ::/1 + 8000::/1) и отбиваем его block-ipv6 — иначе IPv6
-    // клиента уходит мимо туннеля напрямую (leak), а приложения падают на
-    // IPv4, который идёт через VPN.
+    // Туннель только IPv4: весь IPv6 заводим в tun и блокируем, иначе он утекает мимо VPN.
     `block-ipv6`,
     `route-ipv6 ::/1`,
     `route-ipv6 8000::/1`,
     `remote-cert-tls server`,
-    // Буферы сокета системные, а не мелкие встроенные; fast-io - запись в
-    // UDP без лишнего poll. OpenVPN Connect эти опции молча пропускает.
+    // Системные буферы сокета и запись в UDP без лишнего poll.
     `sndbuf 0`,
     `rcvbuf 0`,
     ...(p.proto.startsWith('udp') ? ['fast-io'] : []),
@@ -152,10 +126,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
   ].join('\n')
 }
 
-/**
- * Make sure the DEVICE has an OpenVPN cert. If absent, issue one and persist
- * the cert + key on the device row. Returns the (possibly updated) record.
- */
+/** Выдаёт устройству сертификат OpenVPN, если его нет, и возвращает запись. */
 export function ensureDeviceOvpn(deviceId: number) {
   return withCaLock(() => ensureDeviceOvpnOnce(deviceId))
 }
@@ -183,19 +154,14 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
       .returning()
     if (!issued) throw new Error(`device ${deviceId} not found`)
   }
-  // Адрес и ccd — до того, как клиент получит конфиг: первое же подключение
-  // идёт с постоянным адресом.
+  // Адрес и ccd до выдачи конфига: первое же подключение идёт с постоянным адресом.
   const updated = await ensureDeviceOvpnIp(deviceId)
-  const [client] = await db
-    .select({ frozenManual: clientsTable.frozenManual, expiresAt: clientsTable.expiresAt })
-    .from(clientsTable)
-    .where(eq(clientsTable.id, row.clientId))
-    .limit(1)
+  const [client] = await db.select().from(clientsTable).where(eq(clientsTable.id, row.clientId)).limit(1)
   await writeCcd(ovpnCn(deviceId), updated.ovpnIp, updated.deleting || (client ? !isClientActive(client) : true), client?.expiresAt ?? null)
   return updated
 }
 
-/** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
+/** Перевыпуск сертификата устройства: старый отзывается в CRL, выдаётся новый. */
 export function reissueDeviceOvpn(deviceId: number, clientId: number, version: number) {
   return withCaLock(async () => {
     try {
@@ -216,15 +182,12 @@ async function reissueDeviceOvpnOnce(deviceId: number, clientId: number, version
   const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
   if (!row) throw new Error(`device ${deviceId} not found`)
 
-  // Неготовая CA не отменяет отзыв: до публикации CRL и успешной выдачи
-  // нового сертификата сохраняем старую пару в БД для повтора.
+  // Неготовая CA не отменяет отзыв. CRL проверяется только при подключении,
+  // поэтому живую сессию со старым сертификатом рвём сами.
   if (row.ovpnCert) {
     await revokeAccessCert(row.ovpnCert)
-    // CRL проверяется только при подключении — живую сессию со старым
-    // сертификатом рвём сами.
     await killOvpnClient(ovpnCn(deviceId))
   }
-  // Без ранее выданного сертификата OpenVPN остаётся необязательным.
   if (!row.ovpnCert && !(await caReady())) return row
 
   const { cert, key } = await issueClientCert(deviceId, row.ovpnCert ?? '')
@@ -239,41 +202,33 @@ async function reissueDeviceOvpnOnce(deviceId: number, clientId: number, version
 }
 
 /**
- * Сверка ccd с базой для всех устройств с сертификатом: постоянный адрес
- * (устройствам до VPN2-115 выдаётся здесь), флаг disable, удаление ccd
- * исчезнувших устройств. Подключённых замороженных и тех, кто сидит не на
- * своём адресе (подключился до записи ccd), выбиваем: и то и другое OpenVPN
- * применяет только при новом подключении.
+ * Сверка ccd с базой: постоянный адрес и запрет для каждого устройства с
+ * сертификатом. Подключённых без записи в базе выбиваем.
  */
 export async function syncOpenvpnConfig(): Promise<void> {
   return withCaLock(syncOpenvpnConfigOnce)
 }
 
 async function syncOpenvpnConfigOnce(): Promise<void> {
-  const cfg = useRuntimeConfig()
-  if (!cfg.ovpnEnabled) return
+  if (!useRuntimeConfig().ovpnEnabled) return
   if (!(await caReady())) throw new Error('OpenVPN CA unavailable')
 
-  const db = useDb()
-  const rows = await db
+  const rows = await useDb()
     .select({
-      id: devicesTable.id,
-      ovpnCert: devicesTable.ovpnCert,
-      ovpnIp: devicesTable.ovpnIp,
-      deleting: devicesTable.deleting,
-      frozenManual: clientsTable.frozenManual,
-      expiresAt: clientsTable.expiresAt,
+      id: devicesTable.id, ovpnCert: devicesTable.ovpnCert, ovpnIp: devicesTable.ovpnIp, deleting: devicesTable.deleting,
+      frozenManual: clientsTable.frozenManual, expiresAt: clientsTable.expiresAt,
     })
     .from(devicesTable)
     .innerJoin(clientsTable, eq(devicesTable.clientId, clientsTable.id))
-
+  const pinned = new Set<string>()
   for (const r of rows) {
     if (!r.ovpnCert) continue
     const ip = r.ovpnIp ?? (await ensureDeviceOvpnIp(r.id)).ovpnIp
     await writeCcd(ovpnCn(r.id), ip, r.deleting || !isClientActive(r), r.expiresAt)
+    pinned.add(ovpnCn(r.id))
   }
-  const pinned = new Set(rows.filter(r => r.ovpnCert).map(r => ovpnCn(r.id)))
-  for (const [cn] of await connectedOvpnClients()) {
-    if (/^dev_\d+$/.test(cn) && !pinned.has(cn)) await killOvpnClientQuiet(cn)
+  const { sessions } = await control<{ sessions: Record<string, string> }>('state.read', { protocol: 'openvpn' })
+  for (const cn of Object.keys(sessions)) {
+    if (/^dev_\d+$/.test(cn) && !pinned.has(cn)) await killOvpnClient(cn)
   }
 }

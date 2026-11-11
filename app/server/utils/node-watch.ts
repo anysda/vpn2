@@ -3,11 +3,7 @@ import { lastEventOf, recordEvent } from './events'
 import { exitNodeOf } from './exit-control'
 import { fetchNodeHealth, nodeInstances } from './vm-client'
 
-/**
- * Сторож нод для журнала: раз в 30 с смотрит VictoriaMetrics и пишет только
- * переходы состояния. Telegram-алерты нод шлёт бот по своему опросу, панель
- * их не дублирует — здесь только запись в ленту.
- */
+/** Сторож нод для ленты: раз в 30 с смотрит VictoriaMetrics и пишет только переходы состояния. */
 
 export const NODE_CHECK_MS = 30_000
 const LAG_SEC = 60
@@ -17,14 +13,9 @@ const IOWAIT_PCT = 30
 // Пропавшая серия (рестарт VM, сбой скрейпа) — оффлайн только со второй проверки подряд.
 const MISSING_HITS = 2
 const NODE_TYPES = ['node_offline', 'node_lag', 'node_online']
-// «Отстают» перед «оффлайн» — тот же простой, если между записями не дольше этого:
-// отставание растёт с 60 с до 180 с за две-три проверки. Окно меряется между
-// моментами записей, а не от последней метрики: оно отделяет один эпизод от
-// другого. Возврат из «отстают» в ленту не пишется, так что давнее «отстают»
-// к новому простою не относится.
+// «Отстают» перед «оффлайн» - тот же простой, если между записями не дольше этого.
 const LAG_TO_OFFLINE_MS = OFFLINE_SEC * 1000
-// Подпись «отстают» несёт возраст последней метрики — по ней после рестарта
-// панели восстанавливается начало простоя.
+// Подпись «отстают» несёт возраст последней метрики: по ней после рестарта панели восстанавливается начало простоя.
 const lagDetail = (staleSec: number) => `нет данных ${Math.round(staleSec)} с · ${CHECK_NOTE}`
 const LAG_STALE_RE = /^нет данных (\d+) с/
 
@@ -51,8 +42,7 @@ const CHECK_NOTE = 'проверка каждые 30 с'
 async function trackOf(tag: string): Promise<Track> {
   const known = tracks.get(tag)
   if (known) return known
-  // После рестарта панели состояние берём из журнала: без повторной записи
-  // и с настоящим началом простоя.
+  // После рестарта панели состояние берём из журнала, с настоящим началом простоя.
   const last = await lastEventOf(nodeObject(tag), NODE_TYPES)
   const state: NodeState = last?.type === 'node_offline' ? 'offline' : last?.type === 'node_lag' ? 'lagging' : 'online'
   let since = last?.at ?? 0
@@ -72,8 +62,7 @@ function lagStart(lag: { at: number, detail?: string }): number {
   return stale ? lag.at - Number(stale[1]) * 1000 : lag.at
 }
 
-// Полные минуты: возврат замечается до шага проверки позже настоящего,
-// так что 4 мин 10 с без метрик — «4 мин», а не «5 мин».
+// Полные минуты: 4 мин 10 с без метрик - «4 мин».
 function downtimeText(ms: number): string {
   return `простой ${Math.max(1, Math.floor(ms / 60_000))} мин`
 }
@@ -101,8 +90,7 @@ export async function checkNodes(now = Date.now()): Promise<void> {
     }
 
     if (observed === 'offline' && track.state !== 'offline') {
-      // Из «отстают» простой уже идёт. Из «в сети» — от последней метрики;
-      // серия пропала целиком и раньше её не видели — от этой проверки.
+      // Из «отстают» простой уже идёт; из «в сети» - от последней метрики.
       if (track.state === 'online') track.since = track.lastSeen ?? now
       track.state = 'offline'
       await recordEvent({ type: 'node_offline', level: 'alarm', object, at: now, title: `${name} оффлайн`, detail: `нет метрик · ${CHECK_NOTE}` })

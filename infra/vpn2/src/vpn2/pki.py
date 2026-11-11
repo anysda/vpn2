@@ -10,7 +10,6 @@ import contextlib
 import ctypes
 import os
 import re
-import secrets
 import shutil
 import subprocess
 import tempfile
@@ -250,13 +249,6 @@ def serial(pem, *, run=run):
     return int(value, 16) if done.returncode == 0 and HEX.fullmatch(value) else None
 
 
-def subject_cn(pem, *, run=run):
-    """Первый CN из subject в виде RFC2253 (не-ASCII и спецзнаки экранированы); нет CN - None."""
-    done = run(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253'], data=pem)
-    found = re.search(r'(?:^|,)CN=((?:[^,\\]|\\.)*)', done.stdout.strip().partition('=')[2])
-    return found[1] if done.returncode == 0 and found else None
-
-
 def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', run=run):
     """Сертификат для key через `openssl ca` (запись в index/serial CA); возвращает serial hex-строкой."""
     directory = Path(directory)
@@ -270,22 +262,6 @@ def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', r
     if not HEX.fullmatch(value):
         raise PkiError('openssl x509 -serial: no serial')
     return value
-
-
-def sign_ephemeral(directory, cn, key, out, *, days=1, run=run):
-    """Короткоживущий клиентский сертификат без `openssl ca`: index, serial и CRL не трогаются.
-
-    Ключ создаётся в key, сертификат - в out, подписан ca.crt и ca.key из directory.
-    """
-    directory = Path(directory)
-    with tempfile.TemporaryDirectory(dir=Path(out).parent) as work:
-        csr, ext = Path(work) / 'csr.pem', Path(work) / 'ext.cnf'
-        _checked(run, ['openssl', 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
-                       '-nodes', '-subj', '/CN=' + cn, '-keyout', str(key), '-out', str(csr)], 'openssl req')
-        atomic(ext, 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n')
-        _checked(run, ['openssl', 'x509', '-req', '-in', str(csr), '-CA', str(directory / 'ca.crt'),
-                       '-CAkey', str(directory / 'ca.key'), '-set_serial', '0x' + secrets.token_hex(16),
-                       '-days', str(days), '-extfile', str(ext), '-out', str(out)], 'openssl x509')
 
 
 def revoke(directory, cert, *, reason=None, run=run):

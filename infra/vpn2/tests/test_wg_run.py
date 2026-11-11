@@ -97,14 +97,6 @@ def test_render_peers_panel_and_check_forms():
     assert wg.render_peers([]) == '' == wg.render_peers([], omit_empty=True)
 
 
-def test_rendered_file_passes_check_and_roundtrips():
-    text = wg.render_interface(['192.0.2.1/24'], 51820, S) + wg.render_peers(
-        [{'key': A, 'preshared_key': C, 'allowed': ['192.0.2.2/32']}])
-    wg.check(text)
-    assert wg.private_key(text) == S and wg.public_keys(text) == {A}
-    assert wg.addresses(text) == ['192.0.2.1/24']
-
-
 @pytest.mark.parametrize(('ip', 'expected'), [
     ('10.66.66.2', ['10.66.66.2/32', 'fd66:66::2/128']),
     ('10.66.5.9', ['10.66.5.9/32', 'fd66:66::5:9/128']),
@@ -198,18 +190,6 @@ def test_read_and_conf_peers():
 def test_read_fwmark_and_hidden_key():
     out = f'(none)\t{B}\t0\t0x1f\n'
     assert wg.read('x', run=Fake(done(out=out)))[0] == {'FwMark': '0x1f'}
-
-
-def test_parse_dump_snapshot_forms():
-    text = (f'wg0\t{S}\t{B}\t51820\toff\n'
-            f'wg0\t{A}\t{C}\t203.0.113.5:4000\t10.8.0.3/32,10.8.0.9/32\t1700000000\t10\t20\toff\n'
-            f'wg0\t{B}\t(none)\t(none)\t10.8.0.2/32\t0\t0\t0\toff\n'
-            f'wg1\t{S}\t{B}\t51821\toff\n'
-            f'wg1\t{C}\t(none)\t(none)\t(none)\t0\t0\t0\toff\n')
-    assert wg.parse_dump(text) == {
-        'wg0': {'listen_port': '51820', 'peers': ['10.8.0.2/32', '10.8.0.3/32,10.8.0.9/32']},
-        'wg1': {'listen_port': '51821', 'peers': ['(none)']}}
-    assert wg.parse_dump('') == {}
 
 
 def test_allowed_preshared_transfer():

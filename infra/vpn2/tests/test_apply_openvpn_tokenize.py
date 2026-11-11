@@ -130,16 +130,6 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.rejected(WORKING + 'tun-mtu 1400\n', 'tun-mtu')
         self.assertEqual(self.host.ran('/usr/sbin/openvpn'), [])
 
-    # openvpn reads "?" as optional only in data-ciphers and needs one known cipher there.
-    def test_optional_mark_in_cipher_is_rejected_before_restart(self):
-        self.rejected(WORKING + 'cipher ?NOPE\n', '?NOPE')
-
-    def test_only_optional_unknown_data_cipher_is_rejected_before_restart(self):
-        self.rejected(WORKING + 'data-ciphers ?NOPE\n', 'data-ciphers')
-
-    def test_bare_optional_mark_in_data_ciphers_is_rejected_before_restart(self):
-        self.rejected(WORKING + 'data-ciphers ?\n', 'data-ciphers')
-
     def test_optional_unknown_data_cipher_after_known_is_applied(self):
         self.applied(WORKING + 'data-ciphers AES-256-GCM:?NOPE\n')
 

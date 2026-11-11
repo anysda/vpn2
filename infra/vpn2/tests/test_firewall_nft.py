@@ -32,10 +32,6 @@ def test_own_table_shape_and_repeat():
     assert firewall.own_table('t1', ['    chain c {', '    }'], header=['# h']) == text
 
 
-def test_own_table_output_passes_table_only():
-    firewall.table_only(firewall.own_table('anysda_x', '    set s {\n    }'), 'anysda_x')
-
-
 def test_google_quic_table_matches_old_generator_byte_for_byte():
     v4, v6 = firewall.load_google_prefixes(GOOG)
     assert firewall.google_quic_table(v4, v6).encode() == (FIXTURES / 'ytquic.nft').read_bytes()
@@ -101,34 +97,6 @@ def test_hy2hop_table_plain_and_inside():
     assert firewall.hy2hop_table(RANGES, {'DIRECT': 20100, 'WARP': 18443, 'MGMT': 8444}) == inside
 
 
-def test_reload_dropin_one_and_two_files():
-    assert firewall.reload_dropin(['/etc/nftables-hy2hop.conf']) == fixture('dropin_one.conf')
-    two = firewall.reload_dropin(['/etc/nftables-yt-zapret.conf', '/etc/nftables-yt-quic.conf'])
-    assert two == fixture('dropin_two.conf')
-    assert two.count('ExecReload=') == 1 and two.count('ExecStartPost=') == 1
-
-
-def test_table_only_accepts_own_and_variants():
-    firewall.table_only('table inet anysda_x\ndelete table inet anysda_x\ntable inet anysda_x {\n}\n', 'anysda_x')
-    firewall.table_only('add table inet anysda_x\n', 'anysda_x')
-    firewall.table_only('table ip anysda_x\n', 'anysda_x', family='ip')
-
-
-@pytest.mark.parametrize('text', [
-    'flush ruleset\ntable inet anysda_x {\n}\n',
-    'table inet anysda_x\n  list ruleset\n',
-    'table inet other {\n}\n',
-    'table ip anysda_x {\n}\n',
-    '',
-    '# only a comment\nadd rule inet anysda_x c accept\n',
-    'table inet anysda_x {\n}\ntable inet other {\n}\n',
-    'delete table inet other\ntable inet anysda_x {\n}\n',
-])
-def test_table_only_rejects(text):
-    with pytest.raises(ValueError, match='anysda_x'):
-        firewall.table_only(text, 'anysda_x')
-
-
 # --- wrappers over nft ------------------------------------------------------
 
 class Recorder:
@@ -150,40 +118,6 @@ class Recorder:
 
     def argvs(self):
         return [argv for argv, _ in self.calls]
-
-
-def test_nft_load_text_goes_through_stdin_and_path_as_file(tmp_path):
-    run = Recorder()
-    firewall.nft_load('table inet x\n', run=run)
-    firewall.nft_load(tmp_path / 'a.nft', run=run)
-    firewall.nft_check('table inet x\n', run=run)
-    firewall.nft_check(str(tmp_path / 'b.nft'), run=run)
-    assert run.calls == [
-        (['nft', '-f', '-'], 'table inet x\n'),
-        (['nft', '-f', str(tmp_path / 'a.nft')], None),
-        (['nft', '-c', '-f', '-'], 'table inet x\n'),
-        (['nft', '-c', '-f', str(tmp_path / 'b.nft')], None),
-    ]
-
-
-@pytest.mark.parametrize('fail', [done(code=1, stderr='syntax error'), FileNotFoundError('nft'),
-                                  subprocess.TimeoutExpired('nft', 30)])
-@pytest.mark.parametrize('call', [firewall.nft_check, firewall.nft_load])
-@pytest.mark.parametrize('source', ['table inet x\n', Path('/nonexistent/a.nft')])
-def test_nft_check_and_load_failure_raises(call, source, fail):
-    run = Recorder(default=fail) if isinstance(fail, SimpleNamespace) else Recorder([(['nft'], fail)])
-    with pytest.raises(FirewallError) as info:
-        call(source, run=run)
-    assert info.value.argv[0] == 'nft'
-
-
-def test_check_refusal_means_load_is_not_called_by_the_caller():
-    run = Recorder([(['nft', '-c'], done(code=1, stderr='Error: syntax'))])
-    text = 'table inet x\n'
-    with pytest.raises(FirewallError, match='syntax'):
-        firewall.nft_check(text, run=run)
-        firewall.nft_load(text, run=run)
-    assert run.argvs() == [['nft', '-c', '-f', '-']]
 
 
 def test_nft_list_table():

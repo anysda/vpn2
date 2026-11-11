@@ -3,23 +3,19 @@
 
 Candidate beside the target -> syntax and project checks -> journal -> rename ->
 reload -> verify -> only then "last good". A failed apply restores the last
-good structure with the CURRENT access state: WireGuard peers come from the
-live file, OpenVPN CRL/ccd and IKEv2 secrets are separate files never kept
-here. An interrupted apply is finished by the next run (or `resume`).
+good config; the OpenVPN CRL and ccd are separate files never kept here. An
+interrupted apply is finished by the next run (or `resume`).
 
 Exit codes: 2 candidate rejected (target untouched), 3 not applied and the
 previous config restored, 4 restore failed, 5 first install failed.
 """
 
 import argparse
-import atexit
 import contextlib
 import fcntl
 import json
 import os
 from pathlib import Path
-import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -27,22 +23,9 @@ import tempfile
 import threading
 import time
 
-from vpn2 import wg
-
 RESOURCES = {
-    'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600,
-                 'check': ['/usr/local/bin/sing-box', 'check', '-c'],
-                 'apply': [['systemctl', 'restart', 'sing-box']], 'unit': 'sing-box',
-                 'verify': [['systemctl', 'is-active', '--quiet', 'sing-box']]},
-    'openvpn': {'path': '/etc/openvpn/server/server.conf', 'mode': 0o644,
-                'apply': [['systemctl', 'restart', 'openvpn-server@server']],
-                'unit': 'openvpn-server@server',
-                'verify': [['systemctl', 'is-active', '--quiet', 'openvpn-server@server']]},
-    'ikev2': {'path': '/etc/swanctl/conf.d/anysda.conf', 'mode': 0o644,
-              'apply': [['/usr/sbin/swanctl', '--load-all', '--clear', '--noprompt']],
-              'verify': [['/usr/sbin/swanctl', '--list-conns']]},
-    'wg': {'path': '/etc/wireguard/wg0.conf', 'mode': 0o600,
-           'verify': [['/usr/bin/wg', 'show', 'wg0', 'listen-port']]},
+    'sing-box': {'path': '/etc/sing-box/config.json', 'mode': 0o600, 'unit': 'sing-box'},
+    'openvpn': {'path': '/etc/openvpn/server/server.conf', 'mode': 0o644, 'unit': 'openvpn-server@server'},
 }
 # The directives the openvpn role (entryvpn.OVPN_CONF) writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
@@ -65,167 +48,38 @@ class Failed(Exception):
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
 
 
-def finished(argv, data=None, timeout=60):
-    """subprocess.run that leaves no child running: a signal while Popen starts it waits.
-
-    Popen may run the child before it returns it; a signal raised there would leave
-    the child to no one. Held, it stops apply once the child is known and killed.
-    """
-    with held():
-        child = subprocess.Popen(argv, stdin=None if data is None else subprocess.PIPE, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True, env=ENV)
-        with child:  # closes the pipes and waits for the child
-            try:
-                with released():
-                    stdout, stderr = child.communicate(data, timeout=timeout)
-            except BaseException:
-                child.kill()
-                raise
-    return subprocess.CompletedProcess(argv, child.returncode, stdout, stderr)
-
-
-def run(argv, data=None):
-    result = finished(argv, data)
+def run(argv):
+    result = subprocess.run(argv, capture_output=True, text=True, env=ENV, timeout=60, check=False)
     if result.returncode:
         last = (result.stderr or result.stdout).strip().splitlines()
-        # nft ends its message with the source line and a caret, openvpn with a
-        # hint to --help; the cause is above.
+        # openvpn ends its message with a hint to --help; the cause is above.
         last = [line for line in last if 'error' in line.lower()][:1] or last
         raise RuntimeError(f'{argv[0]} {argv[1] if len(argv) > 1 else ""}: '
                            f'{last[-1] if last else "rc=" + str(result.returncode)}')
     return result.stdout
 
 
-KNOWN_CIPHER = 'AES-256-GCM'  # every openvpn 2.6/2.7 server starts with it
-CHECK_SECONDS = 10  # the check server exits in milliseconds
-
-
-class CheckNotStarted(RuntimeError):
-    """openvpn gives no answer on the cipher here: the cipher is not judged."""
-
-
-def tls_server_starts(scratch, cipher):
-    """openvpn takes this cipher line as a TLS server reads it.
-
-    A server keeps --cipher for clients without cipher negotiation, BF-CBC included,
-    while --test-crypto takes it as a static key cipher, which OpenSSL 3 refuses for
-    BF-CBC without the legacy provider. openvpn 2.6 and 2.7 refuse an unknown cipher
-    before they open the tun, so on the tun node /nonexistent the server exits by
-    itself: no root, no tun, no process left. The cipher is taken when the start
-    ends on the line it ends on with KNOWN_CIPHER.
-    """
-    cert, key = scratch / 'tls.crt', scratch / 'tls.key'
-    if not cert.exists():
-        run(['/usr/bin/openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
-             '-nodes', '-keyout', str(key), '-out', str(cert), '-subj', '/CN=check', '-days', '1'])
-    known = tls_server_end(cert, key, KNOWN_CIPHER)
-    if '/nonexistent' not in known:
-        raise CheckNotStarted(f'openvpn --cipher {KNOWN_CIPHER}: {known}')
-    return cipher == KNOWN_CIPHER or tls_server_end(cert, key, cipher) == known
-
-
-# openvpn stamps each line it prints outside a daemon: 2.6/2.7, then older versions.
-STAMP = re.compile(r'(?:\d{4}-\d\d-\d\d \d\d:\d\d:\d\d|\w{3} \w{3} [ \d]\d \d\d:\d\d:\d\d \d{4}) ')
-
-
-def tls_server_end(cert, key, cipher):
-    """The line a server start with this cipher gives up on, without its time stamp."""
-    try:
-        result = finished(['/usr/sbin/openvpn', '--verb', '1', '--dev', 'tun', '--dev-node', '/nonexistent',
-                           '--disable-dco', '--port', '0', '--server', '10.67.67.0', '255.255.255.0',
-                           '--ca', str(cert), '--cert', str(cert), '--key', str(key), '--dh', 'none',
-                           '--cipher', cipher], timeout=CHECK_SECONDS)
-    except subprocess.TimeoutExpired:  # finished() has killed the server
-        raise CheckNotStarted(f'openvpn --cipher {cipher}: no answer in {CHECK_SECONDS} s') from None
-    lines = [STAMP.sub('', line, count=1).strip() for line in (result.stdout + result.stderr).splitlines()]
-    lines = [line for line in lines if line and not line.startswith(('Exiting due to fatal error', 'Use --help'))]
-    return lines[-1] if lines else f'rc={result.returncode}'
-
-
 class Stopped(SystemExit):
-    """SIGTERM, SIGHUP or SIGINT in an install or a restore: 128+sig, after the cleanup."""
+    """SIGTERM, SIGHUP or SIGINT in an install: 128+sig, after the cleanup."""
 
 
 SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
-# A temporary path between its making and its name kept, and a cleanup, run whole: a
-# signal there waits for the hold to end. The kernel mask would deliver the waiting
-# signals lowest number first, so the hold is kept here and the first signal wins.
-HOLD = {'on': False, 'first': None}
-
-
-def dropped(_number, _frame):
-    """A signal after the one that stopped apply: the cleanup goes on, the code stays."""
-
-
-def wait_to_exit():
-    """The signals wait in the kernel: as Python shuts down it puts SIG_DFL in place of dropped."""
-    signal.pthread_sigmask(signal.SIG_BLOCK, SIGNALS)
-
-
-def inside_stop(frame):
-    """FRAME runs within stop_on_signal: Python runs a handler between any two steps of another."""
-    while frame:
-        if frame.f_code is stop_on_signal.__code__:
-            return True
-        frame = frame.f_back
-    return False
-
-
-def stop_on_signal(number, frame):
-    # The default handlers skip finally and leave the check server and its keys.
-    if inside_stop(frame):
-        return  # a later signal while the first is taken in: the first keeps the code
-    # A signal held so far keeps the code, whichever comes as the hold ends.
-    number = HOLD['first'] = HOLD['first'] or number
-    if HOLD['on']:
-        return
-    # Not SIG_IGN: Python reports a signal still waiting for a handler that turned into it.
-    for each in SIGNALS:
-        if signal.getsignal(each) is stop_on_signal:
-            signal.signal(each, dropped)
-    # Last at exit, first to run; a later signal then stays pending and the code is this one.
-    atexit.unregister(wait_to_exit)
-    atexit.register(wait_to_exit)
-    HOLD['first'] = None  # the handlers are dropped: the cleanup's holds do not stop it again
-    raise Stopped(128 + number)
-
-
-@contextlib.contextmanager
-def holding(on):
-    """Signals wait while ON; a signal held so far stops apply once they may not."""
-    before, HOLD['on'] = HOLD['on'], on
-    try:
-        if not on:
-            stop_if_held()
-        yield
-    finally:
-        HOLD['on'] = before
-        if not before:
-            stop_if_held()
-
-
-def stop_if_held():
-    # Taken up in stop_on_signal: a signal before that finds the held one and stops with its code.
-    if HOLD['first']:
-        stop_on_signal(HOLD['first'], None)
-
-
-def held():
-    return holding(True)
-
-
-def released():
-    return holding(False)
 
 
 @contextlib.contextmanager
 def stopping():
     """A signal inside stops apply through its finally and except clauses.
 
-    A signal the caller ignores (nohup, a command run with "&") stays ignored.
+    A signal the caller ignores (nohup, a command run with "&") stays ignored;
+    after the first signal the rest are ignored, so the cleanup runs whole.
     """
+    def stop(number, _frame):
+        for each in SIGNALS:
+            signal.signal(each, signal.SIG_IGN)
+        raise Stopped(128 + number)
+
     main = threading.current_thread() is threading.main_thread()
-    previous = {number: signal.signal(number, stop_on_signal) for number in SIGNALS
+    previous = {number: signal.signal(number, stop) for number in SIGNALS
                 if signal.getsignal(number) is not signal.SIG_IGN} if main else {}
     try:
         yield
@@ -237,27 +91,17 @@ def stopping():
             signal.signal(number, handler)
 
 
-def discard(path):
-    """Delete a temporary file or directory; the caller holds signals until it is gone."""
-    if os.path.isdir(path) and not os.path.islink(path):
-        shutil.rmtree(path)
-    else:
-        Path(path).unlink(missing_ok=True)
-
-
-def write(path, body, mode, encoding=None):
-    with held():
-        descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
-        try:
-            with released():
-                with os.fdopen(descriptor, 'w', encoding=encoding) as output:
-                    os.fchmod(output.fileno(), mode)
-                    output.write(body)
-                    output.flush()
-                    os.fsync(output.fileno())
-                os.replace(name, path)
-        finally:
-            discard(name)
+def write(path, body, mode):
+    descriptor, name = tempfile.mkstemp(prefix='.vpn2-apply-', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'w') as output:
+            os.fchmod(output.fileno(), mode)
+            output.write(body)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 SPACE = ' \t\n\v\f\r\0'  # C isspace() and the terminator, not Python's wider isspace
@@ -313,13 +157,6 @@ class Applier:
     def target(self, resource):
         return self.root / RESOURCES[resource]['path'].lstrip('/')
 
-    @staticmethod
-    def encoding(resource):
-        return 'latin-1' if resource == 'wg' else None
-
-    def read(self, resource, path):
-        return Path(path).read_text(encoding=self.encoding(resource))
-
     def journal(self, resource):
         return self.state / (resource + '.journal')
 
@@ -333,208 +170,100 @@ class Applier:
     def stage(self, resource, value):
         write(self.journal(resource), json.dumps({'stage': value}), 0o600)
 
+    def stage_now(self, resource):
+        journal = self.journal(resource)
+        return json.loads(journal.read_text())['stage'] if journal.exists() else None
+
     # Project checks: what a syntax check cannot see.
     def check(self, resource, text, path):
-        spec = RESOURCES[resource]
         if resource == 'sing-box':
             # The same port on 127.0.0.1 and ::1 is two sockets (agh-doh-v4/v6).
             sockets = [(item.get('listen'), item['listen_port'], item.get('network'))
                        for item in json.loads(text).get('inbounds', []) if 'listen_port' in item]
             if len(sockets) != len(set(sockets)):
                 raise ValueError('two inbounds on one port')
-        elif resource == 'openvpn':
-            options, ciphers, managed_lines = {}, {}, []
-            # openvpn drops a UTF-8 BOM at the start of the file, nowhere else, and
-            # ends a line only at a newline: splitlines() also breaks at \x1c, \x85...
-            for line in text.removeprefix('\ufeff').split('\n'):
-                words = openvpn_words(line)
-                if words:
-                    name = words[0].removeprefix('--')
-                    if name not in OPENVPN_DIRECTIVES:
-                        raise ValueError(f'{name} is not allowed in a candidate')
-                    options.setdefault(name, words[1:])
-                    # openvpn applies the last crl-verify or client-config-dir.
-                    if name in ('crl-verify', 'client-config-dir'):
-                        managed_lines.append(name)
-                    # openvpn applies the last cipher, data-ciphers and auth, so only it is checked.
-                    if name in ('cipher', 'auth'):
-                        ciphers[name] = [(name, [word]) for word in words[1:]]
-                    if name == 'data-ciphers':
-                        ciphers[name] = [(name, word.split(':')) for word in words[1:]]
-            base = self.target('openvpn').parent
-            # Access is enforced only while the server reads the managed CRL and ccd.
-            for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
-                if managed_lines.count(name) > 1:
-                    raise ValueError(f'{name} is given more than once')
-                value = (options.get(name) or [''])[0]
-                if (base / value).resolve() != (base / managed).resolve():
-                    raise ValueError(f'{name} must be {base / managed}')
-            for name in ('ca', 'cert', 'key', 'dh', 'tls-crypt', 'tls-auth', 'crl-verify'):
-                value = (options.get(name) or ['none'])[0]
-                if value != 'none' and not (base / value).exists():
-                    raise ValueError(f'{name} {value}: no such file')
-            port = (options.get('port') or ['1194'])[0]
-            if not port.isdigit() or not 0 < int(port) < 65536:
-                raise ValueError(f'port {port}')
-            # Without this an unknown directive is found only by the restart. openvpn
-            # reads the whole config before it prints the cipher list and exits, so
-            # an unknown or malformed directive fails here. --test-crypto would also
-            # check option combinations, but before 2.7 it demands a static key that
-            # a TLS server cannot have.
-            self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
-                          '--config', str(path), '--show-ciphers'])
-            # The parse takes any cipher or digest name; an unknown one fails only the
-            # restart. --show-ciphers prints no alias (AES256, sha256), so each name
-            # goes to openvpn itself, which looks it up in OpenSSL the way the server does.
-            if ciphers:
-                self.check_openvpn_names([item for items in ciphers.values() for item in items])
-        elif resource == 'ikev2':
-            if text.count('{') != text.count('}') or not re.search(r'(?m)^\s*anysda-ikev2\s*\{', text):
-                raise ValueError('connection anysda-ikev2 missing or braces unbalanced')
-        elif resource == 'wg':
-            # Every section and syncconf key is checked as wg reads it, the same
-            # way activate() picks the lines it gives wg syncconf.
-            wg.check(text)
-        if spec.get('check'):
-            self.command(spec['check'] + [str(path)])
-
-    def check_openvpn_names(self, ciphers):
-        with stopping(), held():
-            scratch = tempfile.mkdtemp()
-            try:
-                with released():
-                    self.check_openvpn_names_with(str(Path(scratch) / 'static.key'), ciphers)
-            finally:
-                discard(scratch)
-
-    def check_openvpn_names_with(self, key, ciphers):
-        self.command(['/usr/sbin/openvpn', '--genkey', 'secret', key])
-        for option, names in ciphers:
-            # Only data-ciphers takes "?NAME": openvpn skips it when unknown, but
-            # fails the start when no known cipher is left in the list. In cipher
-            # and auth the "?" is part of the name, and no such name is known.
-            optional = option == 'data-ciphers'
-            known = [self.openvpn_accepts(key, option, name.removeprefix('?') if optional else name)
-                     for name in names]
-            kind = 'digest' if option == 'auth' else 'cipher'
-            for name, accepted in zip(names, known):
-                if name and not accepted and not (optional and name.startswith('?')):
-                    raise ValueError(f'{option}: unknown {kind} {name}')
-            if not any(known):
-                raise ValueError(f'{option} {":".join(names)}: no known cipher')
-            if option == 'data-ciphers':
-                # Each name may pass and the list still fail the start: openvpn
-                # 2.6 and 2.7 refuse one longer than 124 characters after it
-                # drops the unknown ?NAME, so the list goes to openvpn as a whole.
-                first = names[known.index(True)].removeprefix('?')
-                try:
-                    self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key,
-                                  '--cipher', first, '--data-ciphers', ':'.join(names)])
-                except RuntimeError as error:
-                    said = str(error).split(': ', 1)[-1].removeprefix('Options error: ')
-                    raise ValueError(f'data-ciphers: {said or "list rejected"}') from None
-
-    def openvpn_accepts(self, key, option, name):
-        # A static key lets --test-crypto run without TLS, in 2.6 as in 2.7. An AEAD
-        # cipher ignores --auth, so a digest is tried with a CBC cipher. The cipher
-        # line is what a TLS server keeps for old clients, so a TLS server decides it.
-        if not name:
-            return False
-        if option == 'cipher':
-            return tls_server_starts(Path(key).parent, name)
-        argv = {'data-ciphers': ['--cipher', name, '--data-ciphers', name],
-                'auth': ['--cipher', 'AES-256-CBC', '--auth', name]}[option]
-        try:
-            self.command(['/usr/sbin/openvpn', '--verb', '1', '--test-crypto', '--secret', key] + argv)
-        except RuntimeError:
-            if option != 'auth':
-                return False
+            self.command(['/usr/local/bin/sing-box', 'check', '-c', str(path)])
         else:
-            return True
-        # --test-crypto keys an HMAC with the digest, which SHAKE and KMAC refuse,
-        # while the server only looks the digest up, aliases and any case included,
-        # and starts. openvpn lists each digest it finds by one name, OpenSSL gives
-        # the aliases of each.
-        name = name.lower()
-        shown = {found.lower() for found in re.findall(r'(?m)^(\S+) \d+ bit digest size$', self.command(
-            ['/usr/sbin/openvpn', '--show-digests']))}
-        if name in shown:
-            return True
-        listed = self.command(['/usr/bin/openssl', 'list', '-digest-algorithms'])
-        return any(name in group and group & shown for group in (
-            {alias.strip().lower() for alias in found.split(',')}
-            for found in re.findall(r'(?m)^\s*\{?\s*([^{}@=]+?)\s*\}?\s*@', listed)))
+            self.check_openvpn(text, path)
 
-    def with_access(self, resource, structure):
-        """Structure from the candidate or last good, access as it is NOW."""
-        if resource != 'wg':
-            return structure
-        target = self.target(resource)
-        current = wg.split(self.read(resource, target))[1] if target.exists() else ''
-        header = wg.split(structure)[0]
-        if not current:
-            return header
-        # Over a [Peer] the comments ending the [Interface] sign that peer (wg.split),
-        # so they open the tail, once: the live tail may already start with them.
-        header, notes = wg.split(header + '[Peer]')
-        notes = notes.removesuffix('[Peer]')
-        return header + '\n' + ('' if current.startswith(notes) else notes) + current
+    def check_openvpn(self, text, path):
+        options, managed_lines = {}, []
+        # openvpn drops a UTF-8 BOM at the start of the file, nowhere else, and
+        # ends a line only at a newline: splitlines() also breaks at \x1c, \x85...
+        for line in text.removeprefix('﻿').split('\n'):
+            words = openvpn_words(line)
+            if words:
+                name = words[0].removeprefix('--')
+                if name not in OPENVPN_DIRECTIVES:
+                    raise ValueError(f'{name} is not allowed in a candidate')
+                options.setdefault(name, words[1:])
+                managed_lines.append(name)
+        base = self.target('openvpn').parent
+        # Access is enforced only while the server reads the managed CRL and ccd;
+        # openvpn applies the last crl-verify or client-config-dir.
+        for name, managed in (('crl-verify', 'pki/crl.pem'), ('client-config-dir', 'ccd')):
+            if managed_lines.count(name) > 1:
+                raise ValueError(f'{name} is given more than once')
+            value = (options.get(name) or [''])[0]
+            if (base / value).resolve() != (base / managed).resolve():
+                raise ValueError(f'{name} must be {base / managed}')
+        for name in ('ca', 'cert', 'key', 'dh', 'tls-crypt', 'crl-verify'):
+            value = (options.get(name) or ['none'])[0]
+            if value != 'none' and not (base / value).exists():
+                raise ValueError(f'{name} {value}: no such file')
+        port = (options.get('port') or ['1194'])[0]
+        if not port.isdigit() or not 0 < int(port) < 65536:
+            raise ValueError(f'port {port}')
+        # openvpn reads the whole config before it prints the cipher list and exits,
+        # so a malformed directive fails here and not in the restart. An unknown
+        # cipher name fails the restart, and the last good config comes back.
+        self.command(['/usr/sbin/openvpn', '--cd', str(base), '--verb', '1',
+                      '--config', str(path), '--show-ciphers'])
 
     def activate(self, resource):
         spec = RESOURCES[resource]
-        if resource == 'wg':
-            # wg syncconf takes only wg(8) keys; Address and the like are wg-quick's.
-            body = wg.syncconf_body(self.read(resource, self.target(resource)))
-            self.command(['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'], data=body)
-        for argv in spec.get('apply', []):
-            self.command(argv)
-        for argv in spec['verify']:
-            self.command(argv)
-        if 'unit' in spec:
-            show = ['systemctl', 'show', '--property', 'MainPID,NRestarts', spec['unit']]
-            before = self.command(show)
-            time.sleep(self.settle)
-            self.command(['systemctl', 'is-active', '--quiet', spec['unit']])
-            if self.command(show) != before or 'MainPID=0' in before:
-                raise RuntimeError(f'{spec["unit"]} did not stay running')
+        self.command(['systemctl', 'restart', spec['unit']])
+        self.verify(resource)
+        show = ['systemctl', 'show', '--property', 'MainPID,NRestarts', spec['unit']]
+        before = self.command(show)
+        time.sleep(self.settle)
+        self.verify(resource)
+        if self.command(show) != before or 'MainPID=0' in before:
+            raise RuntimeError(f'{spec["unit"]} did not stay running')
+
+    def verify(self, resource):
+        self.command(['systemctl', 'is-active', '--quiet', RESOURCES[resource]['unit']])
 
     def mark(self, resource):
-        write(self.good(resource), self.read(resource, self.target(resource)), 0o600, self.encoding(resource))
+        write(self.good(resource), self.target(resource).read_text(), 0o600)
 
     def install(self, resource, source):
         with stopping():
-            self.install_stopping(resource, source)
-
-    def install_stopping(self, resource, source):
-        self.resume(resource)
-        candidate = self.candidate(resource)
-        with held():
+            self.resume(resource)
+            candidate = self.candidate(resource)
             try:
-                with released():
-                    self.prepare(resource, source, candidate)
+                self.prepare(resource, source, candidate)
             except BaseException:
                 # A rejection, an error or a signal anywhere in prepare(). Only a journal
                 # that says "replacing" makes the next run finish the candidate.
                 if self.stage_now(resource) != 'replacing':
-                    discard(candidate)
+                    candidate.unlink(missing_ok=True)
                 raise
-        self.finish(resource)
+            self.finish(resource)
 
     def prepare(self, resource, source, candidate):
         """A checked candidate and a journal that says "replacing"."""
-        spec = RESOURCES[resource]
         target = self.target(resource)
         try:
-            body = self.with_access(resource, self.read(resource, source))
-            write(candidate, body, spec['mode'], self.encoding(resource))
+            body = Path(source).read_text()
+            write(candidate, body, RESOURCES[resource]['mode'])
             self.check(resource, body, candidate)
         except (OSError, ValueError, RuntimeError) as error:
             raise Failed(2, f'{resource}: candidate rejected, working config untouched: {error}')
         if not self.good(resource).exists() and target.exists():
             # Nothing verified yet: the running config earns "last good" first.
             try:
-                for argv in spec['verify']:
-                    self.command(argv)
+                self.verify(resource)
                 self.mark(resource)
             except RuntimeError:
                 pass
@@ -558,13 +287,9 @@ class Applier:
             raise Failed(5, f'{resource}: first install failed: {reason}')
         self.stage(resource, 'restoring')
         try:
-            body = self.with_access(resource, self.read(resource, self.good(resource)))
-            try:
-                self.check(resource, body, self.good(resource))
-            except CheckNotStarted as error:
-                # Last good passed the check once; here it cannot run, which does not keep it out.
-                reason += f' (last good cipher not checked: {error})'
-            write(self.target(resource), body, RESOURCES[resource]['mode'], self.encoding(resource))
+            body = self.good(resource).read_text()
+            self.check(resource, body, self.good(resource))
+            write(self.target(resource), body, RESOURCES[resource]['mode'])
             self.activate(resource)
         except (OSError, ValueError, RuntimeError) as error:
             self.stage(resource, 'restore-failed')
@@ -573,76 +298,23 @@ class Applier:
         self.journal(resource).unlink()
         raise Failed(3, f'{resource}: {reason}; previous config restored')
 
-    def rollback(self, resource):
-        with stopping():
-            self.resume(resource)
-            self.restore(resource, 'rollback requested')
-
-    def stage_now(self, resource):
-        journal = self.journal(resource)
-        return json.loads(journal.read_text())['stage'] if journal.exists() else None
-
     def resume(self, resource):
         stage = self.stage_now(resource)
-        if stage is None:
-            return
         if stage in ('replacing', 'applied'):
             self.finish(resource)
         elif stage in ('restoring', 'restore-failed'):
             self.restore(resource, 'interrupted restore')
         # install-failed stays visible until the next install succeeds.
 
-    # Network rules that can cut management: a local timer, not SSH, restores
-    # the project's own table; tables of ufw, Docker, fail2ban are not touched.
-    def nft(self, table, source, seconds):
-        text = Path(source).read_text()
-        named = re.findall(r'(?m)^\s*(?:add\s+|create\s+|delete\s+|flush\s+)?table\s+(\S+)\s+(\S+)', text)
-        if re.search(r'(?m)^\s*(?:flush|list)\s+ruleset\b', text) or not named or \
-                any(found != ('inet', table) for found in named):
-            raise Failed(2, f'nft: candidate may only change table inet {table}')
-        try:
-            self.command(['/usr/sbin/nft', '-c', '-f', str(source)])
-        except RuntimeError as error:
-            raise Failed(2, f'nft: candidate rejected, rules untouched: {error}') from None
-        try:
-            snapshot = self.command(['/usr/sbin/nft', 'list', 'table', 'inet', table])
-        except RuntimeError:
-            snapshot = ''
-        restore = self.state / f'nft-{table}.restore'
-        write(restore, f'table inet {table}\ndelete table inet {table}\n{snapshot}', 0o600)
-        unit = f'vpn2-apply-nft-{table}'
-        self.confirm(table)
-        self.command(['systemd-run', '--unit', unit, f'--on-active={seconds}',
-                      '/usr/sbin/nft', '-f', str(restore)])
-        try:
-            self.command(['/usr/sbin/nft', '-f', str(source)])
-        except RuntimeError as error:
-            self.command(['/usr/sbin/nft', '-f', str(restore)])
-            self.confirm(table)
-            raise Failed(3, f'nft: not applied: {error}; previous table restored')
-
-    def confirm(self, table):
-        unit = f'vpn2-apply-nft-{table}'
-        for argv in (['systemctl', 'stop', unit + '.timer'], ['systemctl', 'reset-failed', unit]):
-            try:
-                self.command(argv)
-            except RuntimeError:
-                pass
-
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     sub = parser.add_subparsers(dest='action', required=True)
-    for name in ('install', 'rollback', 'mark', 'resume'):
+    for name in ('install', 'mark', 'resume'):
         item = sub.add_parser(name)
         item.add_argument('resource', choices=sorted(RESOURCES))
         if name == 'install':
             item.add_argument('file')
-    item = sub.add_parser('nft')
-    item.add_argument('table')
-    item.add_argument('file')
-    item.add_argument('--seconds', type=int, default=120)
-    sub.add_parser('confirm').add_argument('table')
     args = parser.parse_args(argv)
     applier = Applier()
     applier.state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -651,22 +323,11 @@ def main(argv=None):
         try:
             if args.action == 'install':
                 applier.install(args.resource, args.file)
-            elif args.action == 'rollback':
-                applier.rollback(args.resource)
-            elif args.action == 'mark':
-                applier.resume(args.resource)
-                for argv in RESOURCES[args.resource]['verify']:
-                    applier.command(argv)
-                applier.mark(args.resource)
-            elif args.action == 'resume':
-                applier.resume(args.resource)
-            elif args.action == 'nft':
-                applier.nft(args.table, args.file, args.seconds)
-                print(f'nft: table inet {args.table} applied; restores in {args.seconds}s '
-                      f'unless confirmed: vpn2-apply confirm {args.table}')
-                return
             else:
-                applier.confirm(args.table)
+                applier.resume(args.resource)
+                if args.action == 'mark':
+                    applier.verify(args.resource)
+                    applier.mark(args.resource)
         except Failed as error:
             print(f'vpn2-apply: {error}', file=sys.stderr)
             sys.exit(error.code)

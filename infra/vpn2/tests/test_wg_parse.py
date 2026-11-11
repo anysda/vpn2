@@ -121,76 +121,6 @@ def test_split_blank_lines_and_latin1_bytes():
     assert tail.encode('latin-1').endswith(b'caf\xe9 \xff\n')
 
 
-def test_check_accepts_base_files():
-    wg.check(HEADER)
-    wg.check(HEADER + peer(A) + peer(B, f'PresharedKey = {C}\nAllowedIPs = 192.0.2.3/32, fd00::3/128\n'))
-    wg.check(HEADER.replace('Address', 'address') + 'SaveConfig = TRUE\nFwMark = off\n# c\n')
-    wg.check(f'[interface]\r\nlistenport=1\r\nPRIVATEKEY={S}\r\n')
-    wg.check(HEADER + 'PostUp = iptables -A x # c\n' + peer(A, 'AllowedIPs = -192.0.2.9/32\n'))
-
-
-@pytest.mark.parametrize('text, fragment', [
-    ('', 'PrivateKey missing'),
-    ('# only comments\n\n', 'PrivateKey missing'),
-    (f'[Interface]\nPrivateKey = {S}\n', 'ListenPort missing'),
-    (HEADER.replace('51820', '0'), 'ListenPort missing'),
-    (HEADER.replace('51820', '70000'), 'ListenPort missing'),
-    (HEADER + peer(A, f'PublicKey = {B}\n'), '[Peer] without one valid PublicKey'),
-    (HEADER + '[Peer]\nAllowedIPs = 192.0.2.2/32\n', '[Peer] without one valid PublicKey'),
-    (HEADER + 'PublicKey = ' + A + '\n', 'PublicKey in [Interface]'),
-    (f'PrivateKey = {S}\n', 'PrivateKey in no section'),
-    (HEADER.replace(S, S[:-2] + 'B='), 'PrivateKey: wg cannot read'),
-    (HEADER.replace(S, ''), 'PrivateKey: wg cannot read'),
-    (HEADER + 'FwMark = 0x100000000\n', 'FwMark: wg takes'),
-    (HEADER + 'FwMark = 0X10\n', 'FwMark: wg cannot read'),
-    (HEADER + 'junk\n', 'wg cannot read'),
-    (HEADER + 'Endpoint = 192.0.2.1:1\n', 'wg cannot read'),
-    (HEADER + 'SaveConfig = maybe\n', 'SaveConfig: wg-quick takes true or false'),
-    (HEADER + 'Public\xa0Key = x\n', 'wg cannot read'),
-    ('[Interface]\nListen\x00Port=1\n', 'wg cannot read'),
-    (HEADER + peer(A, 'AllowedIPs = 192.0.2.2/32,\n'), 'AllowedIPs: wg cannot read'),
-])
-def test_check_refusals(text, fragment):
-    refused(text, fragment)
-
-
-def test_check_interface_after_peer_names_path_and_number():
-    text = HEADER + peer(A) + peer(B) + '[Interface]\nListenPort = 2\n'
-    with pytest.raises(WgError, match=r'/etc/wireguard/wg0\.conf: .*after \[Peer\] number 2'):
-        wg.check(text)
-
-
-def test_check_ignores_wg_quick_names_outside_peer_tail_only():
-    # Address после [Peer] - строка wg, не wg-quick: в хвосте пиров её не проверяют
-    wg.check(HEADER + peer(A, 'Endpoint = x\n'))
-    refused(HEADER.replace('[Interface]\n', '[Interface]\nTab\t= 1\n'), 'wg cannot read')
-
-
-def test_check_non_utf8_latin1_comment_and_repeat():
-    text = HEADER + '# caf\xe9 \xff\xc3\xa9\n' + peer(A)
-    wg.check(text)
-    wg.check(text)
-    with pytest.raises(WgError) as first:
-        wg.check('')
-    with pytest.raises(WgError) as second:
-        wg.check('')
-    assert str(first.value) == str(second.value)
-
-
-def test_syncconf_body_keeps_only_wg_lines_in_order():
-    text = HEADER + 'SaveConfig = true\nPostUp = x\n# note\n' + peer(A, f'PresharedKey = {C}\nAllowedIPs = 192.0.2.2/32\n')
-    body = wg.syncconf_body(text)
-    assert body == (f'[Interface]\nListenPort = 51820\nPrivateKey = {S}\n'
-                    f'[Peer]\nPublicKey = {A}\nPresharedKey = {C}\nAllowedIPs = 192.0.2.2/32\n')
-    assert wg.syncconf_body(text) == body
-
-
-def test_syncconf_body_comments_with_keys_and_no_peers():
-    text = f'[interface]\nprivatekey = {S} # mine\nListenPort=1\n# c\nAddress=1\n'
-    assert wg.syncconf_body(text) == f'[interface]\nprivatekey = {S} # mine\nListenPort=1\n\n'
-    assert wg.syncconf_body('') == '\n\n'
-
-
 def test_private_key_interface_only_vs_any_section():
     text = HEADER + peer(A, f'PrivateKey = {B}\n')
     assert wg.private_key(text) == S
@@ -218,37 +148,6 @@ def test_private_key_other_section_between_interfaces():
     assert wg.private_key(text) == A
     assert wg.private_key(text, interface_only=False) == B
     assert wg.private_key(f'[Interface] x\nPrivateKey={A}\n') is None
-
-
-def test_public_keys():
-    text = HEADER + peer(A) + peer(B) + peer(A) + '# PublicKey = ' + C + '\nPublicKey =\n'
-    assert wg.public_keys(text) == {A, B}
-    assert wg.public_keys('') == set() and wg.public_keys(HEADER) == set()
-    assert wg.public_keys(f'[Peer]\nPUBLICKEY\t=\t{C}\n') == {C}
-    assert wg.public_keys(f'[Peer]\nPublicKeу={C}\n') == set()
-
-
-def test_drop_peers_byte_for_byte():
-    text = HEADER + f'\n# first\n[Peer]\nPublicKey = {A}\nAllowedIPs = 192.0.2.2/32\n' + \
-        f'\n# second \xe9\n[Peer]\nPublicKey = {B}\nAllowedIPs = 192.0.2.3/32\n# tail\n'
-    assert wg.drop_peers(text, {A}) == HEADER + f'\n# second \xe9\n[Peer]\nPublicKey = {B}\nAllowedIPs = 192.0.2.3/32\n# tail\n'
-    assert wg.drop_peers(text, {B}) == HEADER + f'\n# first\n[Peer]\nPublicKey = {A}\nAllowedIPs = 192.0.2.2/32\n\n# tail\n'
-    assert wg.drop_peers(text, {A, B}) == HEADER + '\n# tail\n'
-    assert wg.drop_peers(text, {C}) == text and wg.drop_peers(text, set()) == text
-    assert wg.drop_peers(text, {A}) == wg.drop_peers(text, {A})
-
-
-def test_drop_peers_empty_and_odd_input():
-    assert wg.drop_peers('', {A}) == ''
-    assert wg.drop_peers('no newline', {A}) == 'no newline'
-    text = f'[Peer]\r\nPublicKey = {A}\r\n'
-    assert wg.drop_peers(text, {A}) == ''
-    # [Interface] с PublicKey не пир: остаётся
-    keep = f'[Interface]\nPublicKey = {A}\n'
-    assert wg.drop_peers(keep, {A}) == keep
-    # NUL и регистр секции, ключ со вставкой NUL
-    nul = f'[PEER]\x00\nPublic\x00Key = {A}\n'
-    assert wg.drop_peers(nul, {A}) == ''
 
 
 def test_addresses_wg_quick_rules():

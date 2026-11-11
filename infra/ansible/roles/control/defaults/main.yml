@@ -21,4 +21,4 @@ control_panel_files:
 control_runtime_files: [sso-runtime.json, telegram-runtime.json]
 # Каталоги конфигов, которые служба правит: на первой установке их ещё нет.
 control_config_dirs: [/etc/wireguard, /etc/openvpn/server, /etc/swanctl/conf.d]
-control_resources: [sing-box, openvpn, ikev2, wg]
+control_resources: [sing-box, openvpn]

@@ -320,7 +320,7 @@ def test_build_openvpn_real_kit_verifies_and_repeat_keeps_ca(tmp_path):
     ca, crt, crl = target / 'ca.crt', target / 'server.crt', target / 'crl.pem'
     assert pki.verify(ca, crt, purpose='sslserver') and pki.verify(ca, crt, crl=crl)
     assert pki.pair_valid(target / 'server.key', crt) and pki.tls_crypt_valid((target / 'tls-crypt.key').read_text())
-    assert pki.subject_cn(crt.read_text()) == 'anysda-vpn2-server'
+    assert 'CN=anysda-vpn2-server' in subprocess.run(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', str(crt)], capture_output=True, text=True, check=True).stdout
     assert pki.index((target / 'index.txt').read_text())[0].subject == '/CN=anysda-vpn2-server'
     first, before = ca_identity(target), tree(target)
     assert first[0] is not None and 'Fingerprint=' in first[1]

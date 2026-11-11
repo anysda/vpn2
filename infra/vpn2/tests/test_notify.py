@@ -126,24 +126,6 @@ def test_flush_нет_секрета_очередь_цела(tmp_path):
     assert out is Outcome.NO_BOT and pending == [{'n': 1}]
 
 
-def test_panel_event(secret_file):
-    event = {'type': 'backup_failed', 'detail': 'нет пароля шифрования'}
-    op = Opener(Resp(200, b''))
-    assert notify.panel_event(event, secret_file=secret_file, opener=op) is Outcome.SENT
-    req, _ = op.requests[0]
-    assert req.get_header('Authorization') == f'Bearer {SECRET}'
-    assert req.full_url == notify.PANEL_URL and json.loads(req.data) == event
-    assert SECRET.encode() not in req.data
-
-
-def test_panel_event_отказы(secret_file, tmp_path):
-    assert notify.panel_event({}, secret_file=str(tmp_path / 'x'),
-                              opener=Opener(Resp())) is Outcome.NO_BOT
-    for reply in (http_error(401, {}), OSError(SECRET), Resp(503, b'')):
-        out = notify.panel_event({}, secret_file=secret_file, opener=Opener(reply))
-        assert out is Outcome.FAILED and SECRET not in repr(out)
-
-
 def test_clean_detail():
     assert notify.clean_detail('') == ''
     assert notify.clean_detail('a\x00b\n\tc   d') == 'a b c d'

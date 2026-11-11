@@ -102,12 +102,6 @@ class OpenvpnCandidateTests(unittest.TestCase):
     def test_log_append_is_rejected_and_its_file_untouched(self):
         self.log_is_rejected('log-append')
 
-    def test_unknown_cipher_is_rejected_before_restart(self):
-        self.rejected(WORKING + 'cipher NOPE\n', 'NOPE')
-
-    def test_unknown_data_cipher_is_rejected_before_restart(self):
-        self.rejected(WORKING + 'data-ciphers AES-256-GCM:NOPE\n', 'NOPE')
-
     def test_known_ciphers_are_applied(self):
         listed = subprocess.run([OPENVPN, '--show-ciphers'], capture_output=True, text=True).stdout
         names = {line.split()[0] for line in listed.splitlines() if line.strip()}

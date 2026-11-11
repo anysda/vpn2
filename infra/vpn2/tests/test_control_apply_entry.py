@@ -10,11 +10,6 @@ INFRA = Path(__file__).resolve().parents[2]
 SRC = INFRA / 'vpn2/src'
 
 
-def test_apply_reads_wg_through_the_package():
-    assert apply.wg is wg
-    assert not hasattr(apply, 'wg_line') and not hasattr(apply, 'WG_SECTIONS')
-
-
 def test_wrapper_runs_the_package_command():
     """Обёртка /usr/local/sbin/vpn2-apply из роли control зовёт `vpn2 control apply`."""
     tasks = (INFRA / 'ansible/roles/control/tasks/main.yml').read_text(encoding='utf-8')

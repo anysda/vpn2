@@ -192,37 +192,6 @@ def test_dns_rules():
         ['allow proto tcp from 198.51.100.0/24 to 192.0.2.53 port 53'], [])
 
 
-def test_ufw_allow_variants():
-    ufw = FakeUfw()
-    firewall.ufw_allow('443/udp', 'панель', run=ufw)
-    firewall.ufw_allow('40000/udp', run=ufw)
-    assert ufw.calls == [['ufw', 'allow', '443/udp', 'comment', 'панель'],
-                         ['ufw', 'allow', '40000/udp']]
-
-
-def test_ufw_allow_without_ufw():
-    firewall.ufw_allow('1/udp', if_present=True, run=missing)
-    with pytest.raises(FirewallError):
-        firewall.ufw_allow('1/udp', run=missing)
-    refuse = FakeUfw(fail_on=lambda _: True)
-    with pytest.raises(FirewallError):
-        firewall.ufw_allow('1/udp', if_present=True, run=refuse)
-
-
-def test_ufw_delete_variants():
-    ufw = FakeUfw([['allow', '40000/udp']])
-    firewall.ufw_delete('40000/udp', run=ufw)
-    assert ufw.rules == []
-    assert ufw.calls == [['ufw', '--force', 'delete', 'allow', '40000/udp']]
-    firewall.ufw_delete('1/udp', run=missing)
-    refuse = FakeUfw(fail_on=lambda _: True)
-    firewall.ufw_delete('1/udp', run=refuse)
-    with pytest.raises(FirewallError):
-        firewall.ufw_delete('1/udp', missing_ok=False, run=refuse)
-    with pytest.raises(FirewallError):
-        firewall.ufw_delete('1/udp', missing_ok=False, run=missing)
-
-
 def test_ufw_active():
     assert firewall.ufw_active(run=lambda *_, **__: done(STATUS_ACTIVE))
     assert not firewall.ufw_active(run=lambda *_, **__: done(STATUS_INACTIVE))

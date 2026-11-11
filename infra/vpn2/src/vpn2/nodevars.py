@@ -371,10 +371,3 @@ def env_by_node(cfg: Config, *, state=STATE_DIR, repo_root=None, development=Fal
         nodes[item['tag']] = {**common, **_exit(item, octets[item['tag']], common['HY2_DIRECT_PORT'])}
     return nodes
 
-
-def node_env(cfg: Config, node, **options) -> dict:
-    """Переменные одного узла; узла нет в конфиге (или он исключён) - ConfigError."""
-    nodes = env_by_node(cfg, **options)
-    if node not in nodes:
-        raise ConfigError(node, 'такого узла нет в config.yaml: ' + ', '.join(nodes))
-    return nodes[node]

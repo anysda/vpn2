@@ -131,46 +131,6 @@ def test_alive_any_all_bad_and_first_good():
     assert c.alive_any('w', [], timeout_ms=1, http_timeout=1) is False
 
 
-def test_delay_many_mixed():
-    def handler(req, _timeout):
-        if 'dead' in req.full_url:
-            return urllib.error.URLError(socket.timeout())
-        return '{"delay": 100}'
-    c, _ = api(handler)
-    tags = ['hy2-a-direct', 'hy2-dead-warp', 'hy2-b-warp']
-    delays, errors = c.delay_many(tags, 'u', timeout_ms=1500, http_timeout=2.0, deadline=2.5)
-    assert delays == {'hy2-a-direct': 100, 'hy2-dead-warp': None, 'hy2-b-warp': 100}
-    assert errors == {'hy2-dead-warp': 'таймаут'}
-
-
-def test_delay_many_empty_and_repeat():
-    c, _ = api(const('{"delay": 5}'))
-    assert c.delay_many([], 'u', timeout_ms=1, http_timeout=1, deadline=1) == ({}, {})
-    first = c.delay_many(['a'], 'u', timeout_ms=1, http_timeout=1, deadline=1)
-    assert first == c.delay_many(['a'], 'u', timeout_ms=1, http_timeout=1, deadline=1)
-
-
-def test_delay_many_deadline():
-    gate = threading.Event()
-
-    def handler(req, _timeout):
-        if '/hang/' in req.full_url:
-            gate.wait(10)
-            return '{"delay": 1}'
-        return '{"delay": 7}'
-    c, _ = api(handler)
-    t0 = time.monotonic()
-    try:
-        delays, errors = c.delay_many(['ok', 'hang'], 'u', timeout_ms=1, http_timeout=1,
-                                      deadline=0.3)
-        spent = time.monotonic() - t0
-    finally:
-        gate.set()
-    assert delays == {'ok': 7, 'hang': None}
-    assert errors == {}
-    assert spent < 1.5
-
-
 def test_request_empty_and_headers():
     c, op = api(const(b''))
     assert c.request('GET', '/x', timeout=3) == {}

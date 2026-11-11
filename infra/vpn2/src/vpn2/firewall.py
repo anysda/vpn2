@@ -119,29 +119,6 @@ def dns_rules(destination, subnets):
     return rules
 
 
-def ufw_allow(rule, comment=None, *, if_present=False, run=run):
-    """One-off `ufw allow`; with if_present a missing ufw does nothing."""
-    argv = ['ufw', 'allow', *shlex.split(rule)]
-    if comment is not None:
-        argv += ['comment', comment]
-    try:
-        _call(run, argv)
-    except FirewallError as error:
-        if if_present and error.returncode == 127:
-            return
-        raise
-
-
-def ufw_delete(rule, *, missing_ok=True, run=run):
-    """One-off removal of an allow rule; missing_ok hides refusal and absent ufw."""
-    argv = ['ufw', '--force', 'delete', 'allow', *shlex.split(rule)]
-    try:
-        _call(run, argv)
-    except FirewallError:
-        if not missing_ok:
-            raise
-
-
 def ufw_active(*, run=run):
     """True if `ufw status` reports 'Status: active'; no ufw means False."""
     try:
@@ -222,21 +199,6 @@ def own_table(table, body, *, header=(), family='inet', gap=False):
     lines.extend(body.split('\n') if isinstance(body, str) else body)
     lines.append('}')
     return '\n'.join(lines) + '\n'
-
-
-_TABLE_RE = re.compile(r'(?m)^\s*(?:add\s+|create\s+|delete\s+|flush\s+)?table\s+(\S+)\s+(\S+)')
-
-
-def table_only(text, table, family='inet'):
-    """Raise ValueError unless text touches only the table ``family table``.
-
-    Rejects ``flush ruleset``, ``list ruleset``, a foreign table, a text with
-    no table at all and a text with a foreign table among its own.
-    """
-    named = _TABLE_RE.findall(text)
-    if re.search(r'(?m)^\s*(?:flush|list)\s+ruleset\b', text) or not named or \
-            any(found != (family, table) for found in named):
-        raise ValueError(f'nft: candidate may only change table {family} {table}')
 
 
 def load_google_prefixes(path):
@@ -322,22 +284,6 @@ def hy2hop_table(ranges, listen):
     return own_table('vpn2_hy2hop', body, header=header)
 
 
-def reload_dropin(files):
-    """Text of an nftables.service drop-in that reloads the given nft files.
-
-    One file gives the plain ``if [ -f F ]`` form (10-foreign), several give
-    a loop over them (19-yt-zapret).
-    """
-    files = list(files)
-    if len(files) == 1:
-        command = f"if [ -f {files[0]} ]; then /usr/sbin/nft -f {files[0]}; fi"
-    else:
-        command = (f'for f in {" ".join(files)}; do if [ -f "$f" ]; then '
-                   '/usr/sbin/nft -f "$f"; fi; done')
-    return (f"[Service]\nExecStartPost=/bin/sh -ec '{command}'\n"
-            f"ExecReload=/bin/sh -ec '{command}'\n")
-
-
 # --- NFT: wrappers over the nft program ------------------------------------
 
 def _nft_file(verb, source, run):
@@ -359,11 +305,6 @@ def _call_stdin(runner, argv, text):
         raise FirewallError(argv, 124, 'timeout') from error
     if result.returncode != 0:
         raise FirewallError(argv, result.returncode, result.stderr or '')
-
-
-def nft_check(text_or_path, *, run=run):
-    """``nft -c -f``: syntax check without loading; FirewallError on refusal."""
-    _nft_file(['-c'], text_or_path, run)
 
 
 def nft_load(text_or_path, *, run=run):

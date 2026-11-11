@@ -220,18 +220,8 @@ class BackendTests(Probe, unittest.TestCase):
 class ApplyTests(Probe, unittest.TestCase):
     """2 vpn2-apply install, rollback and mark wg with `# caf\\xe9`: the byte kept in wg0.conf and last good."""
 
-    def test_latin1_comment(self):
-        self.check_apply(LATIN1)
-
-
 class AsNowTests(Probe, unittest.TestCase):
     """3 the comment in ASCII and in UTF-8: the same outcome and bytes as now."""
-
-    def test_ascii_and_utf8_comment(self):
-        for comment in (ASCII, UTF8):
-            self.check_backend(comment)
-            self.check_apply(comment)
-
 
 class OtherFilesTests(Probe, unittest.TestCase):
     """4 the text files that are not wg0.conf: UTF-8 read and written as now."""

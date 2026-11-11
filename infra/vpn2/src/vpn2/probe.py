@@ -3,8 +3,6 @@
 import functools
 import json
 import socket
-import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -114,31 +112,6 @@ class ClashApi:
         if _good_delay(value):
             return value, ''
         return None, f'clash-api без delay: {answer!r}'
-
-    def delay_many(self, tags, url, *, timeout_ms, http_timeout, deadline):
-        """Параллельные пробы, поток на тег, общий срок deadline с.
-
-        Возвращает ({tag: ms|None}, {tag: причина}); не уложившийся тег - None без причины."""
-        results = {}
-
-        def work(tag):
-            results[tag] = self.delay(tag, url, timeout_ms=timeout_ms,
-                                      http_timeout=http_timeout)
-
-        threads = [threading.Thread(target=work, args=(tag,), daemon=True) for tag in tags]
-        for thread in threads:
-            thread.start()
-        end = time.monotonic() + deadline
-        for thread in threads:
-            thread.join(max(0.0, end - time.monotonic()))
-        delays = {}
-        errors = {}
-        for tag in tags:
-            ms, reason = results.get(tag, (None, ''))
-            delays[tag] = ms
-            if reason:
-                errors[tag] = reason
-        return delays, errors
 
     def alive_any(self, tag, urls, *, timeout_ms, http_timeout):
         """Цели по очереди до первой годной: две цели против ложного отказа сайта."""

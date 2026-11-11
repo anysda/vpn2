@@ -220,30 +220,6 @@ def test_verify_argv_plain_crl_and_purpose():
     assert not pki.verify('ca', 'c', crl='crl', run=Fake(done(2, err='certificate revoked')))
 
 
-def test_serial_and_subject_cn_argv_and_parsing():
-    fake = Fake(done(0, 'serial=0A\n'))
-    assert pki.serial('PEM', run=fake) == 10
-    assert fake.calls == [(['openssl', 'x509', '-noout', '-serial'], 'PEM')]
-    assert pki.serial('PEM', run=Fake(done(0, 'serial=' + 'F' * 32 + '\n'))) == 16 ** 32 - 1
-    for bad in (done(1, 'serial=0A\n'), done(0, ''), done(0, 'serial=zz\n'), done(0, 'serial=\n'), done(0, 'garbage')):
-        assert pki.serial('PEM', run=Fake(bad)) is None
-    names = Fake(done(0, 'subject=CN=dev_7\n'))
-    assert pki.subject_cn('PEM', run=names) == 'dev_7'
-    assert names.calls == [(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253'], 'PEM')]
-
-
-def test_subject_cn_shapes():
-    def cn(out, code=0):
-        return pki.subject_cn('PEM', run=Fake(done(code, out)))
-    assert cn('subject=CN=dev_7,O=x\n') == 'dev_7'
-    assert cn('subject=O=x,CN=dev_7\n') == 'dev_7'
-    assert cn('subject=CN=dev\\,7,O=x\n') == 'dev\\,7'
-    assert cn('subject=CN=\\D0\\B4\\D0\\B5\\D0\\B2\n') == '\\D0\\B4\\D0\\B5\\D0\\B2'
-    assert cn('subject=O=x\n') is None
-    assert cn('subject=XCN=dev_7\n') is None
-    assert cn('', 1) is None and cn('subject=CN=dev_7\n', 1) is None
-
-
 def test_missing_openssl_in_serial_is_pki_error():
     with pytest.raises(PkiError, match='not found'):
         pki.serial('PEM', run=Fake(PkiError('openssl: not found')))
@@ -339,38 +315,6 @@ def test_gencrl_failure_of_openssl_ca_and_no_verify(tmp_path):
     assert out.read_text() == 'RAW\n'
 
 
-def test_sign_ephemeral_argv_serial_and_cleanup(tmp_path):
-    fake = Fake(done(0))
-    pki.sign_ephemeral('/p/pki', 'vpn2-verify-ab-1', tmp_path / 'k.pem', tmp_path / 'c.pem', run=fake)
-    req, sign = argvs(fake)
-    csr = req[req.index('-out') + 1]
-    assert req == ['openssl', 'req', '-new', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
-                   '-nodes', '-subj', '/CN=vpn2-verify-ab-1', '-keyout', f'{tmp_path}/k.pem', '-out', csr]
-    serial_arg = sign[sign.index('-set_serial') + 1]
-    ext = sign[sign.index('-extfile') + 1]
-    assert sign[:4] == ['openssl', 'x509', '-req', '-in'] and int(serial_arg, 16) > 0 and len(serial_arg) == 34
-    assert sign[sign.index('-CA') + 1:sign.index('-CA') + 4] == ['/p/pki/ca.crt', '-CAkey', '/p/pki/ca.key']
-    assert sign[sign.index('-days') + 1] == '1' and sign[-2:] == ['-out', f'{tmp_path}/c.pem']
-    assert ext.startswith(str(tmp_path)) and sorted(p.name for p in tmp_path.iterdir()) == []
-    pki.sign_ephemeral('/p/pki', 'x', 'k', tmp_path / 'c.pem', days=2, run=fake)
-    assert fake.calls[3][0][fake.calls[3][0].index('-days') + 1] == '2'
-    assert fake.calls[3][0][fake.calls[3][0].index('-set_serial') + 1] != serial_arg
-
-
-def test_sign_ephemeral_extfile_content_and_failure(tmp_path):
-    seen = []
-
-    def fake(argv, **_):
-        if argv[1] == 'x509':
-            seen.append(Path(argv[argv.index('-extfile') + 1]).read_text())
-            return done(1, err='sign failed')
-        return done(0)
-    with pytest.raises(PkiError, match='openssl x509: sign failed'):
-        pki.sign_ephemeral('/p', 'x', 'k', tmp_path / 'c.pem', run=fake)
-    assert seen == ['basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=clientAuth\n']
-    assert list(tmp_path.iterdir()) == []
-
-
 def test_error_text_has_no_input_data_or_argv():
     secret = PEM_BEGIN + '\nTOPSECRETKEYBYTES\n' + PEM_END + '\n'
 
@@ -445,7 +389,7 @@ def test_real_issue_revoke_gencrl_verify(ca, tmp_path):
     pki.genkey(key)
     value = pki.issue(ca, 'dev_7', key, csr, cert)
     assert value == '0A' and pki.pair_valid(key, cert)
-    assert pki.serial(cert.read_text()) == 10 and pki.subject_cn(cert.read_text()) == 'dev_7'
+    assert pki.serial(cert.read_text()) == 10
     rows = pki.by_cn(pki.index((ca / 'index.txt').read_text()), 'dev_7', strict=True)
     assert [(row.status, row.serial) for row in rows] == [('V', '0A')]
     assert (ca / 'newcerts' / '0A.pem').read_text() == cert.read_text()
@@ -494,18 +438,3 @@ def test_real_gencrl_with_mismatched_ca_fails_and_old_kept(ca, tmp_path):
     assert crl.read_bytes() == old
     assert sorted(p.name for p in ca.iterdir() if p.name.startswith('tmp')) == []
 
-
-@real
-def test_real_sign_ephemeral_leaves_the_ca_database_alone(ca, tmp_path):
-    out = tmp_path / 'out'
-    out.mkdir()
-    key, cert = out / 'k.pem', out / 'c.pem'
-    before = {name: (ca / name).read_bytes() for name in ('index.txt', 'serial', 'crlnumber')}
-    pki.sign_ephemeral(ca, 'vpn2-verify-ab-1', key, cert)
-    assert {name: (ca / name).read_bytes() for name in before} == before
-    assert sorted(p.name for p in out.iterdir()) == ['c.pem', 'k.pem']
-    assert pki.pair_valid(key, cert) and pki.verify(ca / 'ca.crt', cert)
-    assert pki.subject_cn(cert.read_text()) == 'vpn2-verify-ab-1'
-    assert pki.serial(cert.read_text()) not in (None, 10)
-    assert not pki.cert_valid(cert, checkend=2 * 86400)
-    assert list((ca / 'newcerts').iterdir()) == []

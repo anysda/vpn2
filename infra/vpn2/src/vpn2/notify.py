@@ -109,14 +109,6 @@ def flush(pending, **kwargs):
     return Outcome.SENT
 
 
-def panel_event(event, *, secret_file=SECRET_FILE, url=PANEL_URL, timeout=5, opener=None):
-    """Событие журналу панели: Bearer тем же секретом, SENT на любой 2xx."""
-    secret = _read_secret(secret_file)
-    if not secret:
-        return Outcome.NO_BOT
-    return _post(event, url, {'Authorization': f'Bearer {secret}'}, timeout, opener, None)
-
-
 class Reply:
     """Итог одного запроса к Bot API."""
     __slots__ = ('ok', 'reason', 'retry_after', 'final', 'result')

@@ -202,18 +202,6 @@ def test_positive_control_extra_and_changed_key_are_caught():
     assert differences({'ru': {'A': '1'}}, {'ru': {'A': 1}}) == [('ru', 'A', '1', 1)]
 
 
-def test_node_env_and_missing_node():
-    cfg = config.loads(EXITS3)
-    with tempfile.TemporaryDirectory() as tmp:
-        state = Path(tmp)
-        assert nodevars.node_env(cfg, 'de-2', state=state)['HOST_TAG'] == 'de-2'
-        assert nodevars.node_env(cfg, 'ru', state=state)['MGMT_IP'] == '10.99.0.1'
-        with pytest.raises(config.ConfigError) as caught:
-            nodevars.node_env(cfg, 'fr', state=state)
-        assert caught.value.key == 'fr'
-        assert not list(state.iterdir()), 'расчёт переменных ничего не пишет в состояние'
-
-
 @pytest.mark.parametrize('text, key', [
     (MINIMAL.replace('host: 198.18.0.2', 'host: 1.2.3'), 'exits[0].host'),
     (MINIMAL.replace('tag: nl', 'tag: ru'), 'exits[0].tag'),

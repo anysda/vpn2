@@ -200,55 +200,6 @@ class ApplyTests(unittest.TestCase):
         path.write_text(HEADER + ''.join(peer(name) for name in names))
         return path
 
-    def test_rollback_after_revocation_does_not_return_the_device(self):
-        path = self.wg('a', 'b')
-        self.applier.mark('wg')
-        path.write_text(HEADER.replace('51820', '51821') + peer('b'))   # a revoked since
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.rollback('wg')
-        failure = caught.exception
-        self.assertEqual(failure.code, 3)
-        self.assertIn('ListenPort = 51820', path.read_text())
-        self.assertNotIn(KEY['a'], path.read_text())
-        self.assertIn(KEY['b'], path.read_text())
-        loaded = self.host.calls[[argv for argv, _ in self.host.calls].index(
-            ['/usr/bin/wg', 'syncconf', 'wg0', '/dev/stdin'])][1]
-        self.assertNotIn(KEY['a'], loaded)
-        self.assertIn(KEY['b'], loaded)
-        self.assertNotIn(KEY['a'], self.applier.good('wg').read_text())
-
-    def test_wg_rollback_with_every_device_revoked_loads_the_interface(self):
-        path = self.wg('a')
-        self.applier.mark('wg')
-        path.write_text(HEADER.replace('51820', '51821'))
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.rollback('wg')
-        self.assertEqual(caught.exception.code, 3)
-        self.assertNotIn(KEY['a'], path.read_text())
-
-    def test_wg_candidate_cannot_bring_back_peers(self):
-        path = self.wg('b')
-        self.new.write_text(HEADER + peer('a') + peer('c'))
-        self.applier.install('wg', self.new)
-        self.assertNotIn(KEY['a'], path.read_text())
-        self.assertIn(KEY['b'], path.read_text())
-
-    def test_openvpn_rollback_that_drops_the_crl_is_an_explicit_error(self):
-        base = self.root / 'etc/openvpn/server'
-        (base / 'pki').mkdir(parents=True)
-        (base / 'ccd').mkdir()
-        (base / 'pki/crl.pem').write_text('crl')
-        weak = 'port 1194\nclient-config-dir ccd\n'
-        (base / 'server.conf').write_text(weak)
-        self.applier.mark('openvpn')
-        strict = weak + 'crl-verify pki/crl.pem\n'
-        (base / 'server.conf').write_text(strict)
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.rollback('openvpn')
-        self.assertEqual(caught.exception.code, 4)
-        self.assertIn('restore failed: crl-verify must be', str(caught.exception))
-        self.assertEqual((base / 'server.conf').read_text(), strict)
-
     @unittest.skipUnless(shutil.which('openvpn', path='/usr/sbin'),
                          '/usr/sbin/openvpn not installed: the candidate check needs the real binary')
     def test_openvpn_unknown_directive_is_rejected_before_restart(self):
@@ -285,47 +236,6 @@ class ApplyTests(unittest.TestCase):
                 self.assertEqual(self.host.ran('restart'), [])
                 self.assertEqual((base / 'server.conf').read_text(), working)
                 self.assertEqual(sorted(path.name for path in base.iterdir()), ['ccd', 'pki', 'server.conf'])
-
-    def test_nft_candidate_may_touch_only_its_table(self):
-        self.new.write_text('table inet anysda_ytquic {}\ntable inet filter { chain input {} }\n')
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.nft('anysda_ytquic', self.new, 60)
-        self.assertEqual(caught.exception.code, 2)
-        self.assertEqual(self.host.ran('/usr/sbin/nft', '-f'), [])
-
-    def test_nft_candidate_failing_check_is_rejected_before_the_timer(self):
-        self.new.write_text('table inet anysda_ytquic { chain c { tcp dport 22 drop SYNTAX } }\n')
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.nft('anysda_ytquic', self.new, 60)
-        self.assertEqual(caught.exception.code, 2)
-        self.assertIn('candidate rejected', str(caught.exception))
-        self.assertEqual(self.host.ran('systemd-run'), [])
-
-    def test_nft_change_is_armed_with_a_local_restore_timer(self):
-        self.new.write_text('table inet anysda_ytquic\ndelete table inet anysda_ytquic\n'
-                            'table inet anysda_ytquic { chain c { tcp dport 22 drop } }\n')
-        self.applier.nft('anysda_ytquic', self.new, 60)
-        timer = self.host.ran('systemd-run')
-        self.assertEqual(timer[0][:4], ['systemd-run', '--unit', 'vpn2-apply-nft-anysda_ytquic',
-                                        '--on-active=60'])
-        restore = Path(timer[0][-1]).read_text()
-        self.assertTrue(restore.startswith('table inet anysda_ytquic\ndelete table inet anysda_ytquic\n'))
-        self.assertNotIn('filter', restore)
-        self.assertEqual(self.host.ran('vpn2-apply-nft-anysda_ytquic.timer', 'stop')[-1][0], 'systemctl')
-        calls = len(self.host.calls)
-        self.applier.confirm('anysda_ytquic')
-        self.assertIn(['systemctl', 'stop', 'vpn2-apply-nft-anysda_ytquic.timer'],
-                      [argv for argv, _ in self.host.calls[calls:]])
-
-    def test_nft_failed_load_restores_the_table_at_once(self):
-        self.host.nft_fails = True
-        self.new.write_text('table inet anysda_ytquic { }\n')
-        with self.assertRaises(apply.Failed) as caught:
-            self.applier.nft('anysda_ytquic', self.new, 60)
-        self.assertEqual(caught.exception.code, 3)
-        loads = [argv[-1] for argv in self.host.ran('/usr/sbin/nft', '-f')]
-        self.assertTrue(loads[-1].endswith('nft-anysda_ytquic.restore'))
-
 
 if __name__ == '__main__':
     unittest.main()

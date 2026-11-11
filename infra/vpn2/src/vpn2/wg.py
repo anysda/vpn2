@@ -18,10 +18,6 @@ KEY = r'[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]='
 BLANK = r'[ \t\v\f\r]'
 # То же для одной строки файла, у которой уже нет \n.
 SPACE = ' \t\n\v\f\r'
-# \s берёт последним U+3000; в latin-1 тексте каждый такой символ виден и как UTF-8 байты.
-FOREIGN_SPACE = '|'.join(sorted({re.escape(view) for code in range(0x3001) if chr(code).isspace()
-                                 for view in (chr(code), chr(code).encode().decode('latin-1'))},
-                                key=len, reverse=True))
 # Ключи, которые получает wg syncconf, и значения, какие wg читает, когда BLANK убран.
 # Имена секций и ключей wg сравнивает в любом ASCII-регистре (strncasecmp).
 WG_ADDRESS = '-?[0-9A-Fa-f.:]+(?:/[0-9]+)?'
@@ -122,75 +118,6 @@ def split(text):
     return '\n'.join(lines[:cut]).rstrip(SPACE) + '\n', '\n'.join(lines[cut:])
 
 
-def check(text):
-    """Файл wg0.conf годен для установки: каждая секция и ключ читаются так же, как их читает wg.
-
-    WgError с текстом отказа, если нет: секция или ключ не на месте, значение не читается,
-    [Interface] после [Peer], не один PublicKey у пира, нет ListenPort или PrivateKey.
-    """
-    section, quick, public, ports = None, False, [], []
-    for item in text.split('\n'):
-        name, value = line(item)
-        # Секция wg-quick: любая строка, чей обрезанный ключ начинается с [, закрывает её,
-        # а открывает ту, что он вырезает, только [Interface] в любом регистре.
-        key = item.split('#', 1)[0].split('=', 1)[0].strip(' \t\v\f\r')
-        quick = _lower(key) == '[interface]' if key.startswith('[') else quick
-        if name in WG_SECTIONS:
-            # wg читает и второй [Interface], но split() держит шапкой только первый:
-            # ключи под вторым остались бы в хвосте пиров и перекрыли бы новую шапку.
-            if section == '[Peer]' and name == '[Interface]':
-                raise WgError(f'{CONF_PATH}: {item!a} after [Peer] number {len(public)}; '
-                              'move the keys under it into the [Interface] of the config you install '
-                              'and delete that section from the file')
-            section = name
-            public += [0] if name == '[Peer]' else []
-            continue
-        if not name:
-            # Строка, которую \s Python читает как ключ syncconf, wg должен читать так же.
-            if line(re.sub(FOREIGN_SPACE, '', item))[0]:
-                raise WgError(f'wg cannot read {item!a}')
-            # wg-quick read_bool: значение после первого =, до #, без краёв, - true или false.
-            saved = item.split('#', 1)[0].partition('=')[2].strip(SPACE).lower()
-            if quick and _lower(key) == 'saveconfig' and saved not in ('true', 'false'):
-                raise WgError(f'SaveConfig: wg-quick takes true or false, not {item!a}')
-            # Любая другая строка в шапке останавливает wg-quick up («Line unrecognized»).
-            # Хвост пиров - живой файл, здесь не проверяется.
-            if value and section != '[Peer]' and not (
-                    quick and re.fullmatch('|'.join(WG_QUICK_KEYS), key, re.I | re.A)):
-                raise WgError(f'wg cannot read {item!a}')
-            continue
-        if name not in WG_SECTIONS.get(section, ()):
-            raise WgError(f'{name} in {section or "no section"}: wg cannot read {item!a}')
-        if not re.fullmatch(WG_VALUES[name], value):
-            raise WgError(f'{name}: wg cannot read {item!a}')
-        # wg parse_fwmark(): strtoul() по основанию 16 после 0x в нижнем регистре, иначе 10.
-        if name == 'FwMark' and value.lower() != 'off' and \
-                int(value, 16 if value.startswith('0x') else 10) > 0xffffffff:
-            raise WgError(f'FwMark: wg takes 0/off or 0-0xffffffff, not {item!a}')
-        if name == 'PublicKey':
-            public[-1] += 1
-        ports += [int(value)] if name == 'ListenPort' else []
-    if not any(line(item)[0] == 'PrivateKey' for item in text.split('\n')):
-        raise WgError('[Interface] PrivateKey missing')
-    if not ports or not all(0 < port < 65536 for port in ports):
-        raise WgError('[Interface] ListenPort missing')
-    if any(count != 1 for count in public):
-        raise WgError('[Peer] without one valid PublicKey')
-
-
-def syncconf_body(text):
-    """Что отдать `wg syncconf wg0 /dev/stdin`: только ключи wg, строки как написаны (с комментариями).
-
-    Address и прочее - wg-quick, их тут нет. Строки делятся только по \\n, как у wg.
-    Возвращает тело целиком, с завершающим \\n.
-    """
-    header, peers = split(text)
-    body = '\n'.join(item for item in header.split('\n')
-                     if line(item)[0] in ('[Interface]', *WG_SECTIONS['[Interface]'])) + '\n' + \
-        '\n'.join(item for item in peers.split('\n') if line(item)[0] in ('[Peer]', *WG_SECTIONS['[Peer]']))
-    return body + '\n'
-
-
 def _pairs(text):
     """(имя, значение) каждой строки как их видят wg-quick и wg: NUL вон, до первого #, без пробелов."""
     return [re.sub(r'[ \t\n\v\f\r]', '', item.replace('\0', '').split('#', 1)[0]).partition('=')
@@ -216,42 +143,6 @@ def private_key(text, *, interface_only=True):
         if inside and _lower(clean).startswith('privatekey='):
             key = clean.partition('=')[2]
     return key or None
-
-
-def public_keys(text):
-    """Множество PublicKey всех пиров (любая секция, любой регистр имени, пустые не в счёт)."""
-    return {value for name, eq, value in _pairs(text) if eq and value and _lower(name) == 'publickey'}
-
-
-def drop_peers(text, keys):
-    """text без пиров, чей (последний) PublicKey в keys; остальные строки байт в байт (latin-1 текст).
-
-    Комментарии вплотную над секцией - её подпись, уходят с ней; пустые строки и комментарии
-    в конце файла остаются на месте.
-    """
-    def detach_notes(block):
-        n = len(block)
-        while n and not block[n - 1][0] and '#' in block[n - 1][2]:
-            n -= 1
-        notes = block[n:]
-        del block[n:]
-        return notes
-
-    blocks = [[]]
-    for row in re.findall(r'[^\n]*\n|[^\n]+', text):
-        clean = re.sub(r'[ \t\n\v\f\r]', '', row.replace('\0', '').split('#', 1)[0])
-        if clean.startswith('['):
-            blocks.append(detach_notes(blocks[-1]))
-        blocks[-1].append((_lower(clean), clean.partition('=')[2], row))
-    blocks.append(detach_notes(blocks[-1]))
-    kept = []
-    for block in blocks:
-        found = [value for name, value, _ in block if name.startswith('publickey=')]
-        names = [name for name, _, _ in block if name]
-        if names and names[0] == '[peer]' and found and found[-1] in keys:
-            continue
-        kept += [row for _, _, row in block]
-    return ''.join(kept)
 
 
 def addresses(text):
@@ -502,23 +393,6 @@ def read(data, *, run=run):
 def conf_peers(data, *, run=run):
     """Пиры wg0.conf, какими их держит wg: ключ, PSK, AllowedIPs."""
     return read(data, run=run)[1]
-
-
-def parse_dump(text):
-    """`wg show all dump` -> {интерфейс: {listen_port, peers}}; peers - отсортированные AllowedIPs пиров.
-
-    Шапка - 5 полей (имя, ключи, порт, fwmark), пир - 8 и больше (в слепок идёт 5-е: allowed-ips).
-    """
-    records = {}
-    for row in text.splitlines():
-        fields = row.split('\t')
-        if len(fields) == 5:
-            records.setdefault(fields[0], {'peers': []})['listen_port'] = fields[3]
-        elif len(fields) >= 5:
-            records.setdefault(fields[0], {'peers': []})['peers'].append(fields[4])
-    for record in records.values():
-        record['peers'].sort()
-    return records
 
 
 def _table(text, parts):

@@ -2,7 +2,7 @@
 
 29-openvpn writes server.conf itself, and only 29-control records it as last good; restore lays
 /etc/openvpn from the archive and starts openvpn. A deploy failing between them, or a restore,
-left a last good older than what runs: a rollback or a failed install brought back the old port.
+left a last good older than what runs: a failed install brought back the old port.
 The role's steps run from the vpn2 package, 29-control as cut from its script; vpn2-apply is the
 real apply.py on the fake host of test_apply, rooted in the test directory.
 """
@@ -119,11 +119,6 @@ PATH={self.work}/bin:$PATH
     def good(self):
         return (self.state / 'openvpn.good').read_text()
 
-    def rolled_back(self):
-        rolled = self.vpn2_apply_run('rollback', 'openvpn')
-        self.assertEqual(rolled.returncode, 3, rolled.stderr)
-        return rolled.stderr
-
     def failed_install(self):
         broken = self.work / 'broken.conf'
         broken.write_text(self.live() + 'push "BROKEN"\n')
@@ -137,12 +132,6 @@ PATH={self.work}/bin:$PATH
         self.deployed(1194)
         self.assertIn('port 1194\n', self.good())
         return self.deployed(1195, control=False)
-
-    def test_1_rollback_after_deploy_failed_past_29_openvpn_keeps_new_port(self):
-        """1 29-openvpn 1194 -> 1195, a later stage fails: rollback keeps 1195."""
-        output = self.stage_failed_after_29_openvpn()
-        output += self.rolled_back()
-        self.assertEqual(self.port(), 'port 1195', output)
 
     def test_1_failed_install_after_deploy_failed_past_29_openvpn_keeps_new_port(self):
         """1 29-openvpn 1194 -> 1195, a later stage fails: a rejected install returns to 1195."""
@@ -160,8 +149,8 @@ PATH={self.work}/bin:$PATH
         self.assertEqual(self.live(), good, output)
         self.assertIn('port 1195\n', self.live(), output)
 
-    def test_4_29_openvpn_failing_itself_leaves_the_working_conf_after_rollback(self):
-        """4 openvpn does not come up with 1195: the stage fails, rollback returns to 1194."""
+    def test_4_29_openvpn_failing_itself_leaves_the_working_conf_as_last_good(self):
+        """4 openvpn does not come up with 1195: the stage fails, last good stays 1194."""
         self.deployed(1194)
         old = self.live()
         (self.work / 'down').write_text('port 1195\n')
@@ -169,14 +158,11 @@ PATH={self.work}/bin:$PATH
         output = result.stdout + result.stderr
         self.assertNotEqual(result.returncode, 0, output)
         self.assertEqual(self.good(), old, output)
-        output += self.rolled_back()
-        self.assertEqual(self.live(), old, output)
 
     def test_4_first_install_without_good_keeps_the_new_conf(self):
-        """4 first install, a later stage fails: rollback leaves the stage's conf, the next deploy marks it."""
+        """4 first install, a later stage fails: the stage's conf stays, the next deploy marks it."""
         output = self.deployed(1194, control=False)
         new = self.live()
-        self.vpn2_apply_run('rollback', 'openvpn')
         self.assertEqual(self.live(), new, output)
         output += self.deployed(1194)
         self.assertEqual(self.good(), self.live(), output)

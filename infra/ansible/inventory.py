@@ -34,10 +34,14 @@ def raw(value):
     return value
 
 
-def passed_through(environ, tags):
-    """Переменные запуска, которые bash отдавал ролям мимо config.yaml (его значения сильнее)."""
+def passed_through(environ, tags, entry=()):
+    """Переменные запуска, которые оператор задаёт ролям мимо config.yaml (его значения сильнее).
+
+    entry - имена, которые entry задаёт конфиг: deploy.sh держит их в своём окружении (load_env ru)
+    и с ним же запускает плеи экзитов. Экзиту они не нужны и среди них секреты entry.
+    """
     names = nodevars.RUN_NAMES | nodevars.CONFIG_NAMES | nodevars.exit_names(tags)
-    return {name: environ[name] for name in names if name in environ}
+    return {name: environ[name] for name in names if name in environ and name not in entry}
 
 
 def exits_list(env):
@@ -91,9 +95,9 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
         # Такой конфиг деплой отвергает раньше (config2env.py); узлы остаются видны, переменных нет.
         result['all']['vars'] = {'vpn2_env_error': error.key}
         return raw(result)
-    extra = passed_through(environ, [tag for tag in nodes if tag != 'ru'])
+    tags = [tag for tag in nodes if tag != 'ru']
     for tag, env in nodes.items():
-        env = {**extra, **env}
+        env = {**passed_through(environ, tags, () if tag == 'ru' else nodes['ru']), **env}
         if environ.get('VPN2_PRESERVE_ADMIN') == '1':
             env.pop('ADMIN_PASSWORD', None)
         exits = exits_list(env)

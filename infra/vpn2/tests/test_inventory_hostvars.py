@@ -79,8 +79,22 @@ def test_run_settings_pass_through_and_config_wins():
         env = envs(result)[tag]
         assert (env['VPN2_INFRA'], env['PANEL_IMAGE'], env['NL_HY2_MGMT_PORT']) == ('/srv/infra', 'panel:env', '9444')
         assert 'HOME' not in env and 'VAULT_TOKEN' not in env
-    # ru.env задаёт YT_ROUTE сам; экзиту он, как и в bash, достаётся из окружения запуска.
-    assert (envs(result)['ru']['YT_ROUTE'], envs(result)['nl']['YT_ROUTE']) == ('off', 'direct')
+    # YT_ROUTE задаёт конфиг entry: его значение сильнее окружения, а экзиту имя не достаётся вовсе.
+    assert envs(result)['ru']['YT_ROUTE'] == 'off' and 'YT_ROUTE' not in envs(result)['nl']
+
+
+def test_entry_config_does_not_reach_exit_through_run_environment():
+    # deploy.sh держит в окружении переменные entry (load_env ru) и с ними же запускает плеи экзитов.
+    with tempfile.TemporaryDirectory() as tmp:
+        _, _, clean = build(FULL, tmp)
+    entry = envs(clean)['ru']
+    leaked = {name: value for name, value in entry.items() if name not in envs(clean)['nl']}
+    assert {'ADMIN_PASSWORD', 'TELEGRAM_BOT_TOKEN', 'BACKUP_PASSPHRASE', 'SSO_CLIENT_SECRET'} <= set(leaked)
+    with tempfile.TemporaryDirectory() as tmp:
+        _, _, result = build(FULL, tmp, environ=dict(entry, VPN2_INFRA='/srv/infra', EMERGENCY_IMAGE='img:run'))
+    for tag, env in envs(result).items():
+        expected = dict(envs(clean)[tag], VPN2_INFRA='/srv/infra', EMERGENCY_IMAGE='img:run')
+        assert env == expected, tag
 
 
 def test_preserved_admin_password_is_absent():

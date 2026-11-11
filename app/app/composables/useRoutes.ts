@@ -32,20 +32,10 @@ export function useRoutes() {
     server: false,
   })
 
-  let timer: ReturnType<typeof setInterval> | null = null
-
-  onMounted(() => {
-    if (!timer) {
-      timer = setInterval(() => {
-        void refreshRules()
-        void refreshOutbounds()
-      }, 4000)
-    }
-  })
-
-  onUnmounted(() => {
-    if (timer) { clearInterval(timer); timer = null }
-  })
+  useEvery(() => {
+    void refreshRules()
+    void refreshOutbounds()
+  }, 4000)
 
   useVisibleRefresh(() => {
     void refreshRules()

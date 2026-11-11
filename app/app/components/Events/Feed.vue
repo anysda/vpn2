@@ -5,9 +5,7 @@ import { timeOrDdmmMsk } from '~/utils/format'
 const { data, refresh } = useFetch<PanelEvent[]>('/api/events', { query: { limit: 30 }, default: () => [] })
 
 // Журнал пишется сторожем раз в 30 с — чаще спрашивать незачем.
-let timer: ReturnType<typeof setInterval> | null = null
-onMounted(() => { timer = setInterval(() => void refresh(), 30_000) })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+useEvery(refresh, 30_000)
 useVisibleRefresh(refresh)
 
 // края ленты гаснут только там, где за ними что-то есть

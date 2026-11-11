@@ -1,7 +1,7 @@
 /* Клиенты и ключи: перенос #t-clients из макета. .clp - страница, .clm - её модалки. */
 .clp .ha{display:flex;gap:8px}
 .clp .tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
-.clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .crt .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
+.clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .cxp .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
 /* фильтр */
 .clp .seg{position:relative;display:inline-flex;gap:6px;margin-bottom:14px}
 .clp .seg>a{height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 13px var(--font-sans);cursor:pointer;text-decoration:none;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
@@ -117,16 +117,17 @@
   .clp .clist{flex:none;padding:6px}
   .clp .thead{display:none}
   .clp .crows{flex:none;height:auto;padding:0}
-  .clp .crow{grid-template-columns:auto minmax(0,1fr) auto;gap:12px;height:auto;padding:10px;color:var(--t3);touch-action:manipulation;-webkit-user-select:none;user-select:none}
+  .clp .crow{grid-template-columns:auto minmax(0,1fr) auto;gap:3px 12px;height:auto;padding:10px;color:var(--t3);touch-action:manipulation;-webkit-user-select:none;user-select:none}
   .clp .crow:hover{background:none}
   .clp .crow:active{background:rgba(var(--fg),.05);transform:scale(.99)}
-  .clp .crow .who{display:block}
+  .clp .crow .who{display:contents}
+  .clp .crow .av,.clp .crow .who>div{grid-row:span 2}
   .clp .crow .who b{font-size:14px}
   .clp .crow .who small{margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .clp .crt{display:flex;flex-direction:column;align-items:flex-end;gap:3px;text-align:right}
-  .clp .crt .t1{font-size:13px}
-  .clp .crt small{color:var(--t3);font-size:11px;white-space:nowrap}
-  .clp .crow .crt .tag{height:24px;font-size:11.5px}
+  .clp .crow .cdn,.clp .crow .t1 small{display:none}
+  .clp .crow .t1{align-self:end;justify-self:end;font-size:13px}
+  .clp .crow .cxp{display:flex;align-self:start;justify-self:end;color:var(--t3);font-size:11px;white-space:nowrap}
+  .clp .crow .cxp .tag{height:24px;font-size:11.5px}
   .clp.m-list .cdet,.clp.m-client .head,.clp.m-client .seg,.clp.m-client .ccol{display:none}
   .clp .cdet{padding:20px 18px;animation:clp-scr .3s var(--ease)}
   .clp .cdh{flex-wrap:wrap}
@@ -138,13 +139,12 @@
   .clp .crw .bta{margin-left:0}
   .clp .crw+.sub{margin-top:6px}
   .clp .devl{height:auto;margin-right:0;padding-right:0;overflow:visible}
-  .clp .dev{display:block;padding:11px 12px}
-  .clp .dev.nod{padding:18px}
-  .clp .kb.dvt{align-items:center;gap:10px}
-  .clp .dvt>div{flex:1;min-width:0}
-  .clp .kb.dvt button.ic{width:34px;height:34px}
-  .clp .kb.dk3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
-  .clp .kb.dk3 button{height:34px;padding:0;font-size:12px}
+  .clp .dev{display:flex;flex-wrap:wrap;gap:10px 6px;padding:11px 12px}
+  .clp .dev>div:first-child{flex:1 1 calc(100% - 100px)}
+  .clp .dev.nod{display:block;padding:18px}
+  .clp .dev .kb{display:contents}
+  .clp .kb button{order:1;flex:1 1 30%;height:34px;padding:0;font-size:12px}
+  .clp .kb button.ic{order:0;flex:none;width:34px;margin-left:4px}
   .clp .acts .pill{flex:1;height:40px;padding:0 8px;font-size:13px}
   .clp .acts .pill:first-child{flex:1 1 100%}
   .clp button,.clp [role=button],.clm.bs button{touch-action:manipulation;-webkit-user-select:none;user-select:none}

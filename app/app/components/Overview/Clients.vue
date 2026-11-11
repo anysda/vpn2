@@ -6,9 +6,7 @@ import { peakBand, ru } from '~/utils/overview'
 interface ClientsOnline { total: number, online: number, hourly: number[] }
 
 const { data, refresh } = useFetch<ClientsOnline>('/api/ops/clients-online', { server: false })
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => void refresh(), 60_000) })
-onBeforeUnmount(() => clearInterval(timer))
+useEvery(refresh, 60_000)
 
 const cards = computed(() => {
   const d = data.value

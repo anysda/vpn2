@@ -4,5 +4,5 @@
     "strict": true, "skipLibCheck": true, "lib": ["ES2022", "DOM"],
     "types": ["vite/client"], "paths": { "#shared/*": ["../shared/*"] }
   },
-  "include": ["./*.vue", "./main.ts", "../app/components/Panel/*.vue"]
+  "include": ["./*.vue", "./main.ts"]
 }

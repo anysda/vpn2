@@ -1,11 +1,8 @@
 <script setup lang="ts">
-import { useClientDevices } from '~/composables/useClients'
-
 const props = defineProps<{ clientId: number }>()
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ added: [] }>()
 
-const { addDevice } = useClientDevices()
 const toast = useToast()
 
 const name = ref('')

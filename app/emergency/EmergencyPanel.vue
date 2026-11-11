@@ -1,11 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import BackButton from '../app/components/Panel/BackButton.vue'
-import BroadcastForm from '../app/components/Panel/BroadcastForm.vue'
-import ClientRow from '../app/components/Panel/ClientRow.vue'
-import type { ClientDot } from '../app/components/Panel/ClientRow.vue'
-import ClientHeading from '../app/components/Panel/ClientHeading.vue'
-import DeviceName from '../app/components/Panel/DeviceName.vue'
 import { initials } from '../app/utils/clients-view'
 
 type Connection = 'connected' | 'seen' | 'never' | 'unknown' | 'blocked' | 'expired'
@@ -34,7 +28,6 @@ const received = ref(Date.now())
 const statusText: Record<Connection, string> = { connected: 'Подключён', seen: 'Подключался', never: 'Нет', unknown: 'Статус неизвестен', blocked: 'Заблокирован', expired: 'Срок истёк' }
 // Как в основной панели: у клиента без доступа вместо точки метка состояния.
 const denied = (c: Client) => c.status === 'blocked' || c.status === 'expired'
-const dot = (c: Client): ClientDot | null => denied(c) ? null : c.status === 'connected' ? { cls: 'on', title: statusText[c.status] } : { cls: '', color: 'var(--t4)', title: statusText[c.status] }
 const clients = computed(() => state.value?.clients.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase())) ?? [])
 const selected = computed(() => state.value?.clients.find(c => c.id === selectedId.value))
 // Таймер тикает раз в секунду, а ответ приходит между тиками: now бывает меньше received.
@@ -128,7 +121,9 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
   </div>
   <div v-else class="wrap">
     <header ref="header">
-      <BackButton v-if="mobile && screen === 'client'" @back="back" />
+      <button v-if="mobile && screen === 'client'" type="button" class="ib cbk" aria-label="Назад" @click="back">
+        <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+      </button>
       <div class="logo"><span>anysda-vpn2</span></div>
       <div v-if="mobile" class="mhead"><h1>Аварийный режим</h1><p>{{ state.exit_name }}</p></div>
       <p class="mode">Аварийный режим</p>
@@ -154,26 +149,77 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
             <div class="thead"><span>Клиент</span><span>Устройства</span><span>Подключение</span></div>
             <div class="crows scroll">
               <div v-if="!clients.length" class="more">Ничего не найдено</div>
-              <ClientRow v-for="c in clients" v-else :key="c.id" :name="c.name" :initials="initials(c.name)" :selected="c.id === selectedId" :mobile="mobile" :dot="dot(c)" @select="select(c.id)">
-                <template #meta>{{ mobile ? `${c.devices.length} · ${c.telegram ? 'Telegram' : 'без Telegram'}` : c.telegram ? 'Telegram' : 'без Telegram' }}</template>
-                <div v-if="mobile" class="crt"><span v-if="denied(c)" class="tag access-tag">{{ statusText[c.status] }}</span><small v-else>{{ statusText[c.status] }}</small></div>
-                <template v-else><span>{{ c.devices.length }}</span><span><span v-if="denied(c)" class="tag access-tag">{{ statusText[c.status] }}</span><template v-else>{{ statusText[c.status] }}</template></span></template>
-              </ClientRow>
+              <div
+                v-for="c in clients"
+                v-else
+                :key="c.id"
+                class="crow"
+                :class="{ on: !mobile && c.id === selectedId }"
+                role="button"
+                tabindex="0"
+                :aria-pressed="c.id === selectedId"
+                data-testid="client-row"
+                @click="select(c.id)"
+                @keydown.enter.prevent="select(c.id)"
+                @keydown.space.prevent="select(c.id)">
+                <div class="who">
+                  <span class="av" :title="denied(c) ? undefined : statusText[c.status]">
+                    {{ initials(c.name) }}<i
+                      v-if="!denied(c)"
+                      :class="{ on: c.status === 'connected' }"
+                      :style="c.status === 'connected' ? undefined : { background: 'var(--t4)' }"
+                      data-testid="client-online" />
+                  </span>
+                  <div>
+                    <b><span>{{ c.name }}</span></b>
+                    <small>{{ mobile ? `${c.devices.length} · ` : '' }}{{ c.telegram ? 'Telegram' : 'без Telegram' }}</small>
+                  </div>
+                </div>
+                <span class="cdn">{{ c.devices.length }}</span>
+                <span class="cxp">
+                  <span v-if="denied(c)" class="tag access-tag">{{ statusText[c.status] }}</span>
+                  <template v-else>{{ statusText[c.status] }}</template>
+                </span>
+              </div>
             </div>
           </div>
-          <BroadcastForm v-model="message" :configured="state.bot_ready" :sending="sending" :result="result" button-label="Отправить сообщение" @send="send" />
+          <div class="card sc bc">
+            <div class="sh"><h3>Рассылка от бота</h3></div>
+            <textarea v-model="message" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
+            <div class="arow">
+              <span v-if="!state.bot_ready" class="hint">Сначала настройте Telegram-бота</span>
+              <button
+                type="button"
+                class="pill w"
+                style="margin-left:auto"
+                :disabled="!state.bot_ready || sending || !message.trim()"
+                @click="send">
+                Отправить сообщение
+              </button>
+            </div>
+            <p v-if="result" class="hint" role="status">{{ result }}</p>
+          </div>
         </div>
         <div class="card cdet lit" data-testid="client-detail">
           <div v-if="selected" class="cdet-in">
-            <ClientHeading :initials="initials(selected.name)" :subtitle="selected.telegram ? 'Привязан к Telegram' : 'Telegram не привязан'" :status="statusText[selected.status]" :status-class="denied(selected) ? 'access-tag' : selected.status === 'connected' ? 'ok' : ''"><h2>{{ selected.name }}</h2></ClientHeading>
+            <div class="cdh">
+              <span class="av">{{ initials(selected.name) }}</span>
+              <div style="min-width:0">
+                <h2>{{ selected.name }}</h2>
+                <small>{{ selected.telegram ? 'Привязан к Telegram' : 'Telegram не привязан' }}</small>
+              </div>
+              <span class="tag" :class="denied(selected) ? 'access-tag' : selected.status === 'connected' ? 'ok' : ''">
+                {{ statusText[selected.status] }}
+              </span>
+            </div>
             <p v-if="!selected.telegram" class="al">Нет Telegram. Материалы доступны ниже для ручной передачи.</p>
             <p v-if="!selected.allowed" class="al">Доступ запрещён или срок истёк. Профили недоступны.</p>
             <p v-if="selected.delivery_error" class="al red" data-testid="delivery-error">{{ selected.delivery_error }}</p>
             <div class="sub"><h3>Девайсы {{ selected.devices.length }}</h3></div>
             <div class="devl scroll">
               <div v-for="dev in selected.devices" :key="dev.id" class="dev" data-testid="device-row">
-                <DeviceName :name="dev.name" />
-                <div class="kb" :class="{ dk3: mobile }"><button type="button" :disabled="!dev.ready" @click="openProfile(dev.id)">Hysteria2</button></div>
+                <div><b>{{ dev.name }}</b></div>
+                <div class="kb"><button type="button" :disabled="!dev.ready" @click="openProfile(dev.id)">Hysteria2</button></div>
                 <div v-if="profile?.id === dev.id" class="profile clm">
                   <div class="kvr"><span>Ссылка</span><code>{{ profile.uri }}</code></div>
                   <img class="qr" :src="`/api/profile/${dev.id}/qr`" alt="QR профиля Hysteria2">

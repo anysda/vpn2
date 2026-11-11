@@ -53,19 +53,8 @@ export function useMonitoring() {
     server: false,
   })
 
-  let timer: ReturnType<typeof setInterval> | null = null
-  onMounted(() => {
-    if (!timer) {
-      timer = setInterval(() => {
-        void refreshNodes()
-      }, 2000)
-    }
-  })
-  onUnmounted(() => { if (timer) { clearInterval(timer); timer = null } })
-
-  useVisibleRefresh(() => {
-    void refreshNodes()
-  })
+  useEvery(refreshNodes, 2000)
+  useVisibleRefresh(refreshNodes)
 
   async function setExitDisabled(tag: string, disabled: boolean) {
     await $fetch(`/api/ops/exits/${encodeURIComponent(tag)}`, {

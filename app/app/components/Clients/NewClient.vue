@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { useClients } from '~/composables/useClients'
 import { parseRuDateUtc } from '~/utils/format'
-import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { maskRuDate } from '~/utils/ru-date-mask'
 
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ created: [id: number] }>()
 
-const { create, sendPasswordToTg } = useClients()
 const { canSend: canSendTg, reason: tgReason } = useTelegramStatus()
 const toast = useToast()
 
@@ -53,7 +50,7 @@ async function submit() {
   }
   busy.value = true
   try {
-    const client = await create({
+    const client = await createClient({
       name: n,
       filterTraffic: filterTraffic.value,
       expiresAt,
@@ -64,7 +61,7 @@ async function submit() {
     emit('created', client.id)
     if (sendBot.value && canSendTg.value) {
       try {
-        await sendPasswordToTg(client.id)
+        await sendBotAccess(client.id)
         toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' })
       }
       catch {

@@ -25,9 +25,7 @@ const { data, error, refresh } = useFetch<Summary>('/api/dns/summary', { server:
 watch(data, (v, old) => {
   if (v && !old) void nextTick(() => cascade(root.value))
 })
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => void refresh(), 60_000) })
-onUnmounted(() => clearInterval(timer))
+useEvery(refresh, 60_000)
 useVisibleRefresh(refresh)
 
 const dec = (v: number) => (Math.round(v * 10) / 10).toString().replace('.', ',')

@@ -6,9 +6,7 @@ import { ru, useWake } from '~/utils/overview'
 interface AdguardSummary { available: boolean, totalToday: number, blockedToday: number, blockRatePct: number, avgMs: number }
 
 const { data, refresh } = useFetch<AdguardSummary>('/api/ops/adguard', { server: false })
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => void refresh(), 30_000) })
-onBeforeUnmount(() => clearInterval(timer))
+useEvery(refresh, 30_000)
 
 const N = 11, R = 58, W = 22, C = 2 * Math.PI * R, SEG = C / N, GAP = 5
 const ok = computed(() => Boolean(data.value?.available))

@@ -9,9 +9,7 @@ interface Traffic { period: Period, step: number, starts: number[], total: numbe
 
 const props = defineProps<{ period: Period }>()
 const { data, refresh } = useFetch<Traffic>('/api/ops/traffic', { query: computed(() => ({ period: props.period })), server: false })
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => void refresh(), 60_000) })
-onBeforeUnmount(() => clearInterval(timer))
+useEvery(refresh, 60_000)
 
 const W = 400, H = 140, PAD = 14
 const gb = computed(() => (data.value?.total ?? []).map(bytesToGbDec))

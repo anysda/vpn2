@@ -18,6 +18,14 @@
 .clp .thead,.clp .crow{grid-template-columns:minmax(0,1.6fr) .8fr 1fr}
 .clp .crows{min-height:180px}
 .clp .devl{height:auto;max-height:65vh}
+/* Рассылка: те же правила, что у карточки рассылки основной панели. */
+.bc{padding:20px 22px;display:flex;flex-direction:column;min-height:270px}
+.bc .sh h3{color:var(--t1);font-size:15px}
+.bc textarea{margin:14px 0 0;flex:1;min-height:120px;resize:none;border-radius:14px;padding:14px 16px;background:var(--sunk);border:1px solid rgba(var(--fg),.05);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));color:var(--t1);font:400 14px/1.5 var(--font-sans);outline:0}
+.bc textarea:focus{border-color:rgba(var(--fg),.25)}
+.bc .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
+.bc .arow .pill{height:40px}
+.bc .hint{font-size:12px;color:var(--t3)}
 .profile{grid-column:1/-1;min-width:0}
 .profile code{overflow-wrap:anywhere}
 /* Тихая зона уже в PNG (4 модуля): без рамки QR в узкой колонке держит 4 px на модуль. */
@@ -38,5 +46,11 @@
   .wrap>header>.mode{display:none}
   .clp .crow{grid-template-columns:auto minmax(0,1fr) auto}
   .clp .crows{min-height:0}
+  /* Справа одна надпись - по центру строки; у девайса одна кнопка в треть ширины под именем. */
+  .clp .crow .cxp{grid-row:span 2;align-self:center}
+  .clp .dev{display:block}
+  .clp .dev .kb{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}
+  .bc{padding:20px 18px;min-height:0}
+  .bc textarea{flex:none}
   .emergency-state{margin-bottom:0}
 }

@@ -8,9 +8,7 @@ import { gbDecRound1, mskDayNumLabel, WD_MON } from '~/utils/format'
 // клиентов в сети за сутки, «Трафик» — ГБ всех клиентов за сутки (МСК).
 interface Day { day: number, online: number, bytes: number }
 const { data, refresh } = useFetch<{ today: number, days: Day[] }>('/api/ops/activity', { server: false })
-let timer: ReturnType<typeof setInterval> | undefined
-onMounted(() => { timer = setInterval(() => void refresh(), 300_000) })
-onBeforeUnmount(() => clearInterval(timer))
+useEvery(refresh, 300_000)
 
 type Mode = 'on' | 'tr'
 const mode = ref<Mode>('on')

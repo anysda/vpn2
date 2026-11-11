@@ -53,7 +53,7 @@ mirrors=${APT_DEBS_MIRRORS-https://mirrors.edge.kernel.org/ubuntu https://ftp.ha
 sources() {
   local mirror=$1 st code
   [ -n "$mirror" ] || return 0
-  st=$(mktemp -d); chmod 755 "$st"
+  st=$(mktemp -d); mkdir -p "$st/lists/partial"; chmod 755 "$st"
   # shellcheck disable=SC1091
   code=$(. /etc/os-release; echo "$VERSION_CODENAME")
   printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] %s %s main universe restricted multiverse\n' \
@@ -106,7 +106,7 @@ index() {
 # Единственный источник apt - каталог набора: к зеркалам запросов нет.
 install_local() {
   local st p out
-  st=$(mktemp -d); chmod 755 "$st" "$work"
+  st=$(mktemp -d); mkdir -p "$st/lists/partial"; chmod 755 "$st" "$work"
   printf 'deb [trusted=yes] file:%s ./\n' "$work" > "$st/sources.list"
   local loc=(-o Dir::Etc::sourcelist="$st/sources.list" -o Dir::Etc::sourceparts=- -o Dir::State::lists="$st/lists"
     -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache= -o DPkg::Lock::Timeout=60)

@@ -73,28 +73,11 @@
     dest: /etc/systemd/system/anysda-wg-routing.service
     mode: '0644'
 
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ wireguard_infra }}/lib/{{ item }}"
-    dest: "{{ wireguard_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
-
 - name: Ресурсы юнита маршрутизации
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-wg-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ wireguard_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: wireguard_step
-  changed_when: "'changed=1' in wireguard_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-wg-routing]
 
 - name: Скрипт маршрутизации wg0
   ansible.builtin.copy:

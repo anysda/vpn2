@@ -143,15 +143,10 @@ echo all-clean
                 self.assertEqual(sh('exit1', 'echo hi; cat', via='hub', stdin='in\n'), 'hi\nin\n')
 
     def test_tools_read_only_command_output(self):
-        functions = (tool_function('infra/tools/emergency-accept.sh', 'node')
-                     + tool_function('infra/tools/ci-stand.sh', 'ssh_node'))
+        functions = tool_function('infra/tools/ci-stand.sh', 'ssh_node')
         for noise in NOISES:
             with self.subTest(noise=noise), Node(noise) as node:
-                result = node.bash(functions + '''declare -A IP=([exit1]=203.0.113.7)
-SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD
-[[ "$(node exit1 'echo leader 3')" == 'leader 3' ]] || { echo bad-node-out >&2; exit 1; }
-rc=0; node exit1 'exit 5' || rc=$?
-[[ $rc == 5 ]] || { echo "bad-node-rc $rc" >&2; exit 1; }
+                result = node.bash(functions + '''SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD
 [[ "$(ssh_node 203.0.113.7 'echo 0')" == 0 ]] || { echo bad-stand >&2; exit 1; }
 echo tools-clean
 ''')

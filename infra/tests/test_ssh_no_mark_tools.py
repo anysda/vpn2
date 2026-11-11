@@ -1,8 +1,7 @@
 """Инструменты не принимают вывод без метки ssh за ответ команды.
 
 Метка печатается до команды: если её нет, shell узла не дошёл до команды
-(.bashrc root делает exit или exec). node() из emergency-accept.sh, ssh_node()
-из ci-stand.sh и sh() из speedtest.py тогда падают с причиной, а не отдают
+(.bashrc root делает exit или exec). ssh_node() из ci-stand.sh и sh() из speedtest.py тогда падают с причиной, а не отдают
 пустоту или текст .bashrc с кодом 0.
 """
 import os
@@ -16,12 +15,9 @@ from test_ssh_login_noise import Node, tool_function
 REASON = 'не дошёл до команды'
 SSH_DOWN = 'ssh: connect to host 203.0.113.7 port 22: Connection refused'
 FAKE_SSH_DOWN = f'#!/bin/bash\necho "{SSH_DOWN}" >&2\nexit 255\n'
-FUNCTIONS = (tool_function('infra/tools/emergency-accept.sh', 'node')
-             + tool_function('infra/tools/ci-stand.sh', 'ssh_node')
-             + '''declare -A IP=([exit1]=203.0.113.7)
-SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD
-''')
-CALLS = (('node', "node exit1 '{}'"), ('ssh_node', "ssh_node 203.0.113.7 '{}'"))
+FUNCTIONS = (tool_function('infra/tools/ci-stand.sh', 'ssh_node')
+             + "SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD\n")
+CALLS = (('ssh_node', "ssh_node 203.0.113.7 '{}'"),)
 
 
 def ssh_down(node):

@@ -3,7 +3,6 @@
 
 import argparse
 from contextlib import closing
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -244,27 +243,12 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
             raise ReleaseError('local service API is incompatible')
 
 
-def hold_lock(state):
-    state.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (state / 'deploy.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ReleaseError('deploy already running') from exc
-        journal = state / 'operation.json'
-        if journal.exists() and read_json(journal)['phase'] not in ('complete', 'aborted', 'rolled-back'):
-            raise ReleaseError('unfinished deploy; inspect operation.json and run deploy recovery before retry')
-        print('locked', flush=True)
-        # EOF from a disconnected orchestrator releases flock. The journal stays.
-        sys.stdin.readline()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--state', type=Path, default=Path('/var/lib/vpn2-deploy'))
     parser.add_argument('--database', type=Path, default=Path('/var/lib/anysda-vpn2/db.sqlite'))
     parser.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
-    parser.add_argument('action', choices=('hold', 'preflight', 'prepare', 'backup', 'phase', 'complete', 'compatible', 'image-contract', 'record-rollback'))
+    parser.add_argument('action', choices=('preflight', 'prepare', 'backup', 'phase', 'complete', 'compatible', 'image-contract', 'record-rollback'))
     parser.add_argument('--image')
     parser.add_argument('--contract', type=Path)
     parser.add_argument('--migrating', action='store_true')
@@ -277,9 +261,6 @@ def main():
     args = parser.parse_args()
     os.umask(0o077)
     try:
-        if args.action == 'hold':
-            hold_lock(args.state)
-            return 0
         args.state.mkdir(parents=True, exist_ok=True, mode=0o700)
         if args.action == 'image-contract':
             atomic_json(args.contract, image_contract(args.image))

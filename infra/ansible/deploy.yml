@@ -160,8 +160,8 @@
         quiet: true
     - name: Забранное - на entry
       ansible.builtin.copy:
-        content: "{{ pulled.stdout.split('@@@')[item.0] | trim }}\n"
-        dest: "{{ out }}/{{ inventory_hostname }}.{{ item.1 }}"
+        content: "{{ pulled.stdout.split('@@@')[part] | trim }}\n"
+        dest: "{{ out }}/{{ inventory_hostname }}.{{ item }}"
         mode: "0600"
       loop: [env, pem, pub, reality]
       loop_control: {index_var: part}

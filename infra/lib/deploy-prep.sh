@@ -68,7 +68,7 @@ pull_secrets() {
   active=$(expand_hosts foreign)
   got=$(mktemp -d -p "$TMP")
   [[ -z "$active" ]] || service --tags secrets --limit "${active// /,}" -e "out=$got" >"$got/log" 2>&1 \
-    || { grep -E 'fatal:|секреты не похожи' "$got/log" >&2; die 'секреты экзитов не получены, стадию 20 не запускаю'; }
+    || { grep -vE '^$|^(PLAY|TASK|ok:|skipping:)' "$got/log" | tail -n 8 >&2 || true; die 'секреты экзитов не получены, стадию 20 не запускаю'; }
   for host in $(exit_tags); do
     if ! grep -qw -- "$host" <<<"$active"; then
       upper=$(tr 'a-z-' 'A-Z_' <<<"$host")

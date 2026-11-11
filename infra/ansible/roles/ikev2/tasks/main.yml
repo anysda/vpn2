@@ -38,28 +38,11 @@
     name: strongswan-starter
     enabled: true
 
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ ikev2_infra }}/lib/{{ item }}"
-    dest: "{{ ikev2_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
-
 - name: Ресурсы charon
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources strongswan-starter; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ ikev2_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: ikev2_step
-  changed_when: "'changed=1' in ikev2_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [strongswan-starter]
 
 # Один шаг под замком применения сертификата: режим, сертификаты, конфиг,
 # рестарт charon только при смене его входов, загрузка creds, пулов и conns,
@@ -105,19 +88,10 @@
     mode: '0644'
 
 - name: Ресурсы юнита маршрутизации
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ ikev2_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: ikev2_step
-  changed_when: "'changed=1' in ikev2_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-ikev2-routing]
 
 - name: Скрипт маршрутизации xfrm0
   ansible.builtin.template:
@@ -168,19 +142,10 @@
   loop: [anysda-ikev2-sync.service, anysda-ikev2-sync.timer]
 
 - name: Ресурсы anysda-ikev2-sync
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-sync; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ ikev2_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: ikev2_step
-  changed_when: "'changed=1' in ikev2_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-ikev2-sync]
 
 - name: Таймер anysda-ikev2-sync включён
   ansible.builtin.systemd_service:
@@ -209,19 +174,10 @@
   block:
     # Drop-in до записи юнита: systemd читает его вместе с юнитом при reload.
     - name: Ресурсы anysda-ikev2-cert-sync
-      ansible.builtin.command:
-        argv:
-          - /bin/bash
-          - --norc
-          - -euo
-          - pipefail
-          - -c
-          - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-cert-sync; echo "changed=$ENTRY_DROPIN_CHANGED"'
-          - "{{ ikev2_tmp }}"
-      environment:
-        ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-      register: ikev2_step
-      changed_when: "'changed=1' in ikev2_step.stdout"
+      ansible.builtin.include_role:
+        name: resources
+      vars:
+        resources_units: [anysda-ikev2-cert-sync]
 
     # Слежение ставится и когда каталога Caddy ещё нет. Таймер страхует пропущенные
     # события, запись cert и key порознь и временный отказ charon.

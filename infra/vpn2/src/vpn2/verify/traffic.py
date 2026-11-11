@@ -953,36 +953,34 @@ def wg_apply_check(report):
 
 def wg_apply_once(report, label, component):
     """Одна попытка; непустой ответ - набор пиров сдвинула панель, строки отчёта ещё нет."""
-    if not CONTROL_SOCKET.exists():
-        report.add(label, component, FAIL, 'нет сокета службы управления')
+    def done(status, reason):
+        report.add(label, component, status, reason)
         return ''
+
+    if not CONTROL_SOCKET.exists():
+        return done(FAIL, 'нет сокета службы управления')
     try:
         text = WG_CONF.read_bytes()
         live = set(run('wg', 'show', 'wg0', 'peers').stdout.split())
     except (OSError, RuntimeError):
-        report.add(label, component, FAIL, 'нет wg0 или wg0.conf')
-        return ''
+        return done(FAIL, 'нет wg0 или wg0.conf')
     try:
         peers = apply_peers(text)
     except ValueError as error:
         # Нечем спросить wg - не проверено; отказ wg - сбой.
-        report.add(label, component, UNKNOWN if 'проверить нечем' in str(error) else FAIL, str(error))
-        return ''
+        return done(UNKNOWN if 'проверить нечем' in str(error) else FAIL, str(error))
     if peers is None:
-        report.add(label, component, UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')
-        return ''
+        return done(UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')
     if {peer['key'] for peer in peers} != live:
         # Служба управления посреди применения: пиры уже в wg0, файл ещё прежний.
         return 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен'
     try:
         version = json.loads(CONTROL_WG_STATE.read_text())['version'] if CONTROL_WG_STATE.exists() else 0
     except (OSError, ValueError, KeyError, TypeError):
-        report.add(label, component, FAIL, 'состояние версий службы не читается')
-        return ''
+        return done(FAIL, 'состояние версий службы не читается')
     address = next(iter(WireGuard.free_addresses(1)), None)
     if not address:
-        report.add(label, component, UNKNOWN, 'нет свободного адреса в подсети wg0')
-        return ''
+        return done(UNKNOWN, 'нет свободного адреса в подсети wg0')
     save_file(WG_CONF, 'wg0.conf')
     save_file(CONTROL_WG_STATE, 'control-wg.json')
     private = run('wg', 'genkey').stdout.strip()
@@ -998,21 +996,16 @@ def wg_apply_once(report, label, component):
                 # устройство, только что выпущенное в панели.
                 forget_wg_apply()
                 return f'панель применяла пиров одновременно с проверкой, wg.apply отклонён: {error}'
-            report.add(label, component, FAIL, f'wg.apply с тестовым пиром отклонён: {error}')
-            return ''
+            return done(FAIL, f'wg.apply с тестовым пиром отклонён: {error}')
         if test['key'] not in run('wg', 'show', 'wg0', 'peers').stdout.split():
-            report.add(label, component, FAIL, 'wg.apply ответил успехом, но пира нет в wg show wg0')
-            return ''
+            return done(FAIL, 'wg.apply ответил успехом, но пира нет в wg show wg0')
         try:
             control_call('wg.apply', {'version': version + 2, 'peers': peers})
         except ControlError as error:
-            report.add(label, component, FAIL, f'wg.apply без тестового пира отклонён: {error}')
-            return ''
+            return done(FAIL, f'wg.apply без тестового пира отклонён: {error}')
         if test['key'] in run('wg', 'show', 'wg0', 'peers').stdout.split():
-            report.add(label, component, FAIL, 'тестовый пир остался в wg0 после wg.apply')
-            return ''
-        report.add(label, component, OK, 'тестовый пир применён через wg.apply, виден в wg0 и убран')
-        return ''
+            return done(FAIL, 'тестовый пир остался в wg0 после wg.apply')
+        return done(OK, 'тестовый пир применён через wg.apply, виден в wg0 и убран')
     finally:
         restore_wg_apply()
 

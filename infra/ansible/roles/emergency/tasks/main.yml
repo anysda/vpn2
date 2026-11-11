@@ -9,12 +9,11 @@
     argv: ["{{ emergency_vpn2 }}", emergency, agent, --help]
   changed_when: false
 
-- name: Библиотеки деплоя
+- name: Библиотека выпусков
   ansible.builtin.copy:
-    src: "{{ emergency_infra }}/lib/{{ item }}"
+    src: "{{ emergency_infra }}/lib/release.sh"
     dest: "{{ emergency_tmp }}/"
     mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py, release.sh]
   changed_when: false
 
 - name: Наблюдатели слышат друг друга

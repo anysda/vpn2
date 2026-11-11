@@ -1,18 +1,9 @@
 ---
 - name: Ресурсы юнита наблюдателя
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources "$1"; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ emergency_tmp }}"
-      - vpn2-emergency
-  environment: "{{ emergency_env }}"
-  register: emergency_resources
-  changed_when: "'changed=1' in emergency_resources.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [vpn2-emergency]
 
 - name: Наблюдатель включён
   ansible.builtin.systemd_service:
@@ -41,19 +32,10 @@
       register: emergency_snapshot_unit
 
     - name: Ресурсы юнита передачи
-      ansible.builtin.command:
-        argv:
-          - /bin/bash
-          - --norc
-          - -euo
-          - pipefail
-          - -c
-          - 'source "$0/entry-resources.sh"; entry_unit_resources "$1"; echo "changed=$ENTRY_DROPIN_CHANGED"'
-          - "{{ emergency_tmp }}"
-          - vpn2-emergency-snapshot
-      environment: "{{ emergency_env }}"
-      register: emergency_snapshot_resources
-      changed_when: "'changed=1' in emergency_snapshot_resources.stdout"
+      ansible.builtin.include_role:
+        name: resources
+      vars:
+        resources_units: [vpn2-emergency-snapshot]
 
     - name: Передача включена
       ansible.builtin.systemd_service:

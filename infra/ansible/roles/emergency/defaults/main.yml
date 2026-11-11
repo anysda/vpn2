@@ -1,6 +1,6 @@
 ---
 emergency_entry: "{{ inventory_hostname == 'ru' }}"
-emergency_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+emergency_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 emergency_tmp: /tmp/anysda
 # Агент, heartbeat, выбор лидера и аварийный hy2 - пакет vpn2 из venv узла.
 emergency_venv: /opt/vpn2/venv
@@ -21,7 +21,7 @@ emergency_peers: >-
   {{ emergency_config.nodes | dict2items | rejectattr('key', 'equalto', emergency_config.node)
      | map(attribute='value.host') | list
      + ([] if emergency_config.node == emergency_config.entry_id | default('entry') else ['any']) }}
-emergency_hy2_port: "{{ lookup('ansible.builtin.env', 'EMERGENCY_HY2_PORT') | default('18443', true) }}"
+emergency_hy2_port: "{{ vpn2_env.EMERGENCY_HY2_PORT | default('18443', true) }}"
 emergency_hy2_units: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.service]
 
 # Docker - хранилище образа со статикой; polkitd даёт агенту в песочнице
@@ -29,18 +29,17 @@ emergency_hy2_units: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.servi
 emergency_packages: [qrencode, curl, openssl, nftables, polkitd]
 
 emergency_tls_lib: /usr/local/lib/vpn2/vpn2_tls.py
-emergency_tls_acme_url: "{{ lookup('ansible.builtin.env', 'TLS_ACME_URL') | default('https://acme-v02.api.letsencrypt.org/directory', true) }}"
-emergency_tls_acme_root: "{{ lookup('ansible.builtin.env', 'TLS_ACME_ROOT') }}"
-emergency_tls_wait: "{{ lookup('ansible.builtin.env', 'TLS_INITIAL_WAIT') | default('60', true) }}"
+emergency_tls_acme_url: "{{ vpn2_env.TLS_ACME_URL | default('https://acme-v02.api.letsencrypt.org/directory', true) }}"
+emergency_tls_acme_root: "{{ vpn2_env.TLS_ACME_ROOT | default('') }}"
+emergency_tls_wait: "{{ vpn2_env.TLS_INITIAL_WAIT | default('60', true) }}"
 
 # Окружение шагов, которые зовут библиотеки деплоя на узле.
 emergency_env:
   HOST_TAG: 23-emergency
-  VPN2_DEVELOPMENT: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') | default('false', true) }}"
-  VPN2_RELEASE_MANIFEST: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
-  EMERGENCY_IMAGE: "{{ lookup('ansible.builtin.env', 'EMERGENCY_IMAGE') }}"
-  EMERGENCY_IMAGE_PULL: "{{ lookup('ansible.builtin.env', 'EMERGENCY_IMAGE_PULL') | default('true', true) }}"
-  ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+  VPN2_DEVELOPMENT: "{{ vpn2_env.VPN2_DEVELOPMENT | default('false', true) }}"
+  VPN2_RELEASE_MANIFEST: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('/tmp/anysda/release-manifest.json', true) }}"
+  EMERGENCY_IMAGE: "{{ vpn2_env.EMERGENCY_IMAGE | default('') }}"
+  EMERGENCY_IMAGE_PULL: "{{ vpn2_env.EMERGENCY_IMAGE_PULL | default('true', true) }}"
 
 # Общая обвязка шагов на bash: библиотека деплоя из emergency_tmp.
 emergency_bash: [/bin/bash, --norc, -euo, pipefail, -c]

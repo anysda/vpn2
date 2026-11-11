@@ -273,8 +273,13 @@ def host_tls(environ, say, tx, root='', lib=TLS):
     return tls_host, site, _publish(root + CADDY[0], caddyfile(tls_host, site, root), 0o644)
 
 
-def caddy():
-    """Правила ufw и перезапуск Caddy при смене входов. Вернуть, перезапущен ли он."""
+def caddy(regated=False):
+    """Правила ufw и перезапуск Caddy при смене входов. Вернуть, перезапущен ли он.
+
+    Вставку панели ведёт vpn2_tls.py и после каждой своей правки сам перечитывает
+    Caddy: в отпечаток она не входит, иначе деплой после выпуска сертификата
+    перезапускал бы Caddy зря. regated - вставку переписала подготовка TLS этого деплоя.
+    """
     from vpn2 import firewall
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
@@ -282,7 +287,10 @@ def caddy():
     _quiet('ufw', 'delete', 'allow', '3001/tcp')
     if _quiet('caddy', 'validate', '--config', CADDY[0]):
         raise StageError('конфиг caddy невалиден')
-    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY])
+    if regated:
+        svc.forget('caddy')
+    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service',
+                                            *CADDY[:3]])
 
 
 def _kept(docker, spec):
@@ -363,9 +371,10 @@ def _stage(environ, docker, say, tx, image, sleep):
                    stderr=subprocess.DEVNULL)
     openvpn = Openvpn(say)
     tx.files_restored = openvpn.restored
+    gate = _read(CADDY[3])
     _host, _site, published = host_tls(environ, say, tx)
     changed |= published
-    changed |= caddy()
+    changed |= caddy(regated=_read(CADDY[3]) != gate)
 
     say('[4/4] run container')
     engine.drop_timezone_dir()

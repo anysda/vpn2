@@ -47,7 +47,7 @@ function wgEndpoint(host: string): string {
 }
 
 /** Пара ключей WireGuard: сырые 32 байта X25519 из хвоста DER, в base64. */
-export function generateWgKeypair(): { privateKey: string, publicKey: string } {
+function generateWgKeypair(): { privateKey: string, publicKey: string } {
   const { privateKey, publicKey } = generateKeyPairSync('x25519')
   const priv = (privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).subarray(-32)
   const pub = (publicKey.export({ format: 'der', type: 'spki' }) as Buffer).subarray(-32)

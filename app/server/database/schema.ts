@@ -2,20 +2,15 @@ import { sql } from 'drizzle-orm'
 import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import type { AccessOperation } from '../../shared/access-operation'
 
+const createdAt = integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(strftime('%s','now'))`)
 const timestamps = {
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(strftime('%s','now'))`),
-  updatedAt: integer('updated_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(strftime('%s','now'))`),
+  createdAt,
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(strftime('%s','now'))`),
 }
 
 /**
- * Учётки панели. Вход, сессии, 2FA и SSO ведёт better-auth (server/utils/auth.ts):
- * таблица у него называется моделью `user`, поля name/email/emailVerified/image
- * обязательны для библиотеки. Почта у учёток не настоящая (`u<id>@panel.invalid`):
- * по ней better-auth привязывает вход через Authentik к уже выбранной учётке.
+ * Учётки панели; вход, сессии, 2FA и SSO ведёт better-auth (utils/auth.ts).
+ * Почта синтетическая (`u<id>@panel.invalid`): по ней привязывается вход через Authentik.
  */
 export const users = sqliteTable('users', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -26,21 +21,14 @@ export const users = sqliteTable('users', {
   emailVerified: integer('email_verified', { mode: 'boolean' }).notNull().default(true),
   image: text('image'),
   twoFactorEnabled: integer('two_factor_enabled', { mode: 'boolean' }).notNull().default(false),
-  // Секрет 2FA, заведённый до better-auth (base32 от 20 байт). Библиотека хранит
-  // ключ строкой и такой секрет проверить не может; его проверяет хук в
-  // server/utils/auth.ts, пока человек не перевыпустит 2FA. null - 2FA новая или нет.
+  // Секрет 2FA, заведённый до better-auth (base32): его проверяет хук в utils/auth.ts.
   legacyTotpSecret: text('totp_secret'),
-  // Последний принятый 30-секундный шаг TOTP. Код этого и более раннего шага
-  // второй раз не принимается (RFC 6238, 5.2, VPN2-62): better-auth сам повтор
-  // кода в окне не гасит.
+  // Последний принятый шаг TOTP: код этого и более раннего шага повторно не принимается (VPN2-62).
   totpLastStep: integer('totp_last_step'),
   ...timestamps,
 })
 
-/**
- * argon2 последнего применённого admin.password из config.yaml. Отдельно от
- * пароля учётки: смену в панели init не путает со сменой в конфиге.
- */
+/** argon2 последнего применённого admin.password из config.yaml: смену в панели init не путает со сменой в конфиге. */
 export const adminConfigPassword = sqliteTable('admin_config_password', {
   userId: integer('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
   hash: text('hash').notNull(),
@@ -98,48 +86,33 @@ export const twoFactors = sqliteTable('two_factors', {
   index('two_factors_secret_idx').on(table.secret),
 ])
 
-/**
- * Клиент = человек. Его устройства — в таблице `devices`.
- * Статус («активен» / «заморожен») НЕ хранится — вычисляется из
- * frozenManual + expiresAt, см. server/utils/client-status.ts.
- */
+/** Клиент = человек. Статус не хранится: считается из frozenManual и expiresAt (utils/client-status.ts). */
 export const clients = sqliteTable('clients', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   accessVersion: integer('access_version').notNull().default(0),
   deleting: integer('deleting', { mode: 'boolean' }).notNull().default(false),
   name: text('name').notNull(),
-  // Фильтрация трафика (AdGuard DNS) — задаётся при создании, наследуется
-  // всеми девайсами клиента.
+  // Фильтрация трафика (AdGuard DNS), наследуется всеми устройствами клиента.
   filterTraffic: integer('filter_traffic', { mode: 'boolean' }).notNull().default(true),
-  // Срок действия. null — бессрочно. По истечении клиент попадает в
-  // «заморозку» (не удаляется); продление срока возвращает в «активен».
+  // null - бессрочно. По истечении клиент заморожен, продление возвращает доступ.
   expiresAt: integer('expires_at', { mode: 'timestamp' }),
-  // Лимит девайсов. null — безлимит.
+  // null - безлимит.
   deviceLimit: integer('device_limit').default(3),
-  // Ручная заморозка. Эффективный статус «заморожен» = frozenManual ИЛИ
-  // истёкший срок.
   frozenManual: integer('frozen_manual', { mode: 'boolean' }).notNull().default(false),
-  // Пароль доступа клиента — 20 символов [A-Za-z]. Им же клиент привязывает
-  // свой Telegram к боту (диплинк ?start=<password>).
+  // 20 символов [A-Za-z]; им же клиент привязывает Telegram (диплинк ?start=<password>).
   password: text('password').notNull(),
-  // Telegram привязанного клиента — для самообслуживания в боте.
-  // null — клиент ещё не привязал свой Telegram.
   tgChatId: integer('tg_chat_id'),
   tgUsername: text('tg_username'),
-  // Предпочитаемый экзит (тег узла, напр. «ch»). null — авто: трафик идёт по
-  // дорожкам. Пока узел выключен или мёртв — через foreign-best (переключает
-  // failover-watchdog, см. server/utils/client-prefs.ts).
+  // Предпочитаемый экзит (тег узла); null - авто. См. utils/client-prefs.ts.
   preferredExit: text('preferred_exit'),
   ...timestamps,
 })
 
-/** Девайс = устройство клиента, со своими ключами WG/OVPN/IKEv2. */
+/** Устройство клиента со своими ключами WG/OVPN/IKEv2. */
 export const devices = sqliteTable('devices', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   deleting: integer('deleting', { mode: 'boolean' }).notNull().default(false),
-  clientId: integer('client_id')
-    .notNull()
-    .references(() => clients.id, { onDelete: 'cascade' }),
+  clientId: integer('client_id').notNull().references(() => clients.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   wgPrivateKey: text('wg_private_key'),
   wgPublicKey: text('wg_public_key'),
@@ -147,62 +120,43 @@ export const devices = sqliteTable('devices', {
   wgIp: text('wg_ip'),
   ovpnCert: text('ovpn_cert'),
   ovpnKey: text('ovpn_key'),
-  // Постоянный адрес OpenVPN: ccd устройства пушит его через ifconfig-push,
-  // по нему роутер узнаёт устройство (предпочитаемый экзит). Выдаёт
-  // server/utils/openvpn.ts из 10.67.67.2-239.
+  // Постоянный адрес OpenVPN (ifconfig-push в ccd): по нему роутер узнаёт устройство.
   ovpnIp: text('ovpn_ip'),
-  // IKEv2 EAP-MSCHAPv2 креды. username — slug «<клиент>-<девайс>» через
-  // naming.ts, стабилен на всю жизнь устройства; password — 20 символов
-  // [A-Za-z0-9], меняется при reissue; ip — статический /32 из пула
-  // 10.68.68.0/24 (.1 — server). См. server/utils/ikev2.ts.
+  // IKEv2 EAP-MSCHAPv2: логин стабилен, пароль меняется при перевыпуске, адрес статический.
   ikev2Username: text('ikev2_username'),
   ikev2Password: text('ikev2_password'),
   ikev2Ip: text('ikev2_ip'),
-  // Накопительный трафик девайса за всё время (WG+OpenVPN+IKEv2), байты.
-  // Копит фоновый сборщик (server/utils/traffic-collector.ts).
+  // Накопительный трафик устройства по всем протоколам, байты (utils/traffic-collector.ts).
   rxTotal: integer('rx_total').notNull().default(0),
   txTotal: integer('tx_total').notNull().default(0),
   ...timestamps,
 }, table => [
   index('devices_client_idx').on(table.clientId),
-  // Адрес туннеля один на устройство: без UNIQUE два параллельных создания
-  // выбирали один и тот же свободный адрес (VPN2-50).
+  // UNIQUE защищает от гонки параллельных созданий за адрес и логин (VPN2-50, VPN2-70).
   uniqueIndex('devices_wg_ip_unique').on(table.wgIp),
   uniqueIndex('devices_ikev2_ip_unique').on(table.ikev2Ip),
   uniqueIndex('devices_ovpn_ip_unique').on(table.ovpnIp),
-  // Логин IKEv2 — id в secrets swanctl: на одинаковом логине пускает только
-  // одного. buildIkev2Username выбирает свободный, но без UNIQUE два
-  // параллельных создания брали один и тот же (VPN2-70).
   uniqueIndex('devices_ikev2_username_unique').on(table.ikev2Username),
 ])
 
 /**
- * Idempotency-Key запросов создания устройства. Нет каскада: ключ переживает
- * удаление устройства и клиента, повтор после удаления получает отказ, а не
- * новое устройство. С другим телом (request_hash) или клиентом — отказ.
+ * Idempotency-Key создания устройства. Каскада нет: повтор после удаления
+ * получает отказ, а не новое устройство; с другим телом или клиентом тоже отказ.
  */
 export const deviceRequests = sqliteTable('device_requests', {
   idempotencyKey: text('idempotency_key').primaryKey(),
   requestHash: text('request_hash').notNull(),
   clientId: integer('client_id').notNull(),
   deviceId: integer('device_id').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(strftime('%s','now'))`),
+  createdAt,
 })
 
 /**
- * Почасовой трафик девайса (WG+OpenVPN+IKEv2), байты. Наполняет тот же сборщик,
- * что и devices.rx_total/tx_total (server/utils/traffic-collector.ts); из него
- * считаются трафик клиента за сутки/неделю и ТОП. Час — unix-секунды начала
- * часа (UTC): полночь МСК (UTC+3) совпадает с границей часа. Сутки старше двух
- * недель сборщик сворачивает в одну запись с hour = 00:00 МСК, старше года
- * удаляет.
+ * Почасовой трафик устройства, байты; hour - unix-секунды начала часа (UTC).
+ * Сутки старше двух недель сборщик сворачивает в одну запись, старше года удаляет.
  */
 export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
-  deviceId: integer('device_id')
-    .notNull()
-    .references(() => devices.id, { onDelete: 'cascade' }),
+  deviceId: integer('device_id').notNull().references(() => devices.id, { onDelete: 'cascade' }),
   hour: integer('hour').notNull(),
   rx: integer('rx').notNull().default(0),
   tx: integer('tx').notNull().default(0),
@@ -211,11 +165,7 @@ export const deviceTrafficHourly = sqliteTable('device_traffic_hourly', {
   index('device_traffic_hourly_hour_idx').on(table.hour),
 ])
 
-/**
- * Состояние сборщиков, которое должно пережить рестарт панели: name → JSON.
- * 'ikev2' — последние байт-счётчики живых IKE_SA (server/utils/ikev2-counters.ts).
- * 'client-exit-hosts' — последняя карта тег → адрес для переноса выбора клиентов.
- */
+/** Состояние, переживающее рестарт панели: name → JSON (счётчики IKEv2, карта адресов экзитов, версии control). */
 export const collectorState = sqliteTable('collector_state', {
   name: text('name').primaryKey(),
   value: text('value').notNull(),
@@ -261,16 +211,10 @@ export const routes = sqliteTable('routes', {
   type: text('type', { enum: ['domain', 'ip_cidr'] }).notNull(),
   value: text('value').notNull().unique(),
   outbound: text('outbound').notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp' })
-    .notNull()
-    .default(sql`(strftime('%s','now'))`),
+  createdAt,
 })
 
-/**
- * Журнал событий для ленты на Обзоре (server/utils/events.ts), хранится 30 дней.
- * level: alarm — тревога, warn — предупреждение, info — запись, ok — восстановление.
- * key — защита от повтора (напоминание об одном сроке уходит один раз).
- */
+/** Журнал событий ленты Обзора, хранится 30 дней. key защищает от повтора. */
 export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   at: integer('at').notNull(),
@@ -283,11 +227,7 @@ export const events = sqliteTable('events', {
   key: text('key').unique(),
 }, table => [index('events_at_idx').on(table.at), index('events_object_idx').on(table.object, table.at)])
 
-export type User =typeof users.$inferSelect
-export type NewUser = typeof users.$inferInsert
+export type User = typeof users.$inferSelect
 export type Client = typeof clients.$inferSelect
-export type NewClient = typeof clients.$inferInsert
 export type Device = typeof devices.$inferSelect
-export type NewDevice = typeof devices.$inferInsert
 export type Route = typeof routes.$inferSelect
-export type NewRoute = typeof routes.$inferInsert

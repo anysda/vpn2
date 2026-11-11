@@ -60,6 +60,9 @@
 - {section: ports, name: 'udp *:3[2-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
 - {section: ports, name: 'udp *:[45][0-9][0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
 - {section: ports, name: 'udp *:60[0-9][0-9][0-9] sing-box', field: '*', reason: исходящий UDP-сокет sing-box на случайном порту ядра 32768-60999}
+- {section: ports, name: 'udp *:3[2-9][0-9][0-9][0-9] systemd-timesyn', field: '*', reason: исходящий UDP-сокет опроса NTP на случайном порту ядра 32768-60999}
+- {section: ports, name: 'udp *:[45][0-9][0-9][0-9][0-9] systemd-timesyn', field: '*', reason: исходящий UDP-сокет опроса NTP на случайном порту ядра 32768-60999}
+- {section: ports, name: 'udp *:60[0-9][0-9][0-9] systemd-timesyn', field: '*', reason: исходящий UDP-сокет опроса NTP на случайном порту ядра 32768-60999}
 - {section: units, name: 'var-lib-docker-rootfs-overlayfs-*.mount', field: '*', reason: точка монтирования контейнера с его случайным идентификатором}
 - {section: units, name: 'vpn2-ci-warm.service', field: '*', reason: разовый юнит прогрева стенда CI - не продукт}
 - {section: units, name: 'apt-news.service', field: '*', reason: разовая служба Ubuntu - её запускает хук apt и она живёт секунды}

@@ -1,10 +1,13 @@
 import json
 import os
+from pathlib import Path
 
 import pytest
 
 from vpn2 import snapshot
 from vpn2.snapshot import collect, diff
+
+REPO = Path(__file__).resolve().parents[3]
 
 UNIT_FILES = """\
 -.mount                                      generated       -
@@ -238,6 +241,23 @@ def test_ports(root):
     assert ports['tcp 0.0.0.0:443 anyd,nginx'] == {'process': 'anyd,nginx'}
     assert ports['udp 127.0.0.53%lo:53'] == {'process': ''}
     assert ports['tcp [::]:22'] == {'process': ''}
+
+
+@pytest.mark.parametrize('port, hidden', [
+    (32768, True), (39999, True), (40000, True), (59999, True), (60871, True), (60999, True),
+    (123, False), (31999, False), (61000, False), (6087, False),
+])
+def test_ports_timesyncd_random_port_is_ignored_by_stand_rules(root, port, hidden):
+    """Сокет опроса NTP живёт секунды: в слепок попадает случайно, порт каждый раз новый."""
+    rules = snapshot.load_ignore(REPO / 'infra/tests/fixtures/snapshot/ignore.yml')
+    line = f'udp UNCONN 0 0 0.0.0.0:{port} 0.0.0.0:* users:(("systemd-timesyn",pid=5,fd=6))\n'
+    quiet, polling = collect(root, fake({'ss': (0, '')})), collect(root, fake({'ss': (0, line)}))
+    assert polling['ports'] == {f'udp 0.0.0.0:{port} systemd-timesyn': {'process': 'systemd-timesyn'}}
+    assert bool(diff(quiet, polling)) and bool(diff(polling, quiet))
+    assert (diff(quiet, polling, rules) == []) is hidden
+    assert (diff(polling, quiet, rules) == []) is hidden
+    other = collect(root, fake({'ss': (0, line.replace('systemd-timesyn', 'python3'))}))
+    assert diff(quiet, other, rules)
 
 
 def test_ports_random_singbox_port_is_ignorable(root):

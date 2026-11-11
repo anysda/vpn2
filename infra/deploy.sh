@@ -785,16 +785,6 @@ run_stage_on_host() {
     fi
   fi
 
-  # 19-yt-zapret генерит nft-таблицу блокировки QUIC к Google: нужен снапшот
-  # списка префиксов (fallback, если gstatic недоступен при прогоне).
-  if [[ "$stage" == "19-yt-zapret" ]]; then
-    for f in google-prefixes.json install-yt-pot.sh; do
-      local lib="$DEPLOY_ROOT/lib/$f"
-      [[ -f "$lib" ]] || die "lib/$f не найден"
-      push "$lib" "$f" || return 1
-    done
-  fi
-
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
   # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.

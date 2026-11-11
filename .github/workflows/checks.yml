@@ -28,7 +28,7 @@ jobs:
       - name: мастер на Python из Debian 12
         run: |
           python3 --version
-          pip install --quiet pytest pyyaml
+          pip install --quiet pytest
           PYTHONPATH=infra/vpn2/src python3 -m pytest infra/vpn2/tests/test_setup.py -p no:cacheprovider
 
   python-lint:

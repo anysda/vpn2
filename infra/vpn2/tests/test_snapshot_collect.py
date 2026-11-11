@@ -207,32 +207,159 @@ def test_units_merge_both_lists(root):
     assert units['ssh.service'] == {'enabled': 'enabled', 'active': 'active'}
     assert units['boot.mount'] == {'enabled': 'generated', 'active': 'active'}
     assert units['getty@.service'] == {'enabled': 'enabled'}
-    assert units['rescue.service'] == {'active': 'inactive'}
+    assert 'rescue.service' not in units, 'загружен и не запущен - то же, что не загружен'
 
 
-def _transient(root, service, state, timer=True, kind='simple'):
+def _units(root, files, loaded, show=''):
+    return collect(root, fake({'systemctl list-unit-files': (0, files),
+                                 'systemctl list-units': (0, loaded),
+                                 'systemctl show': (0, show)}))['units']
+
+
+def _transient(root, service, state, timer=True, kind='simple', sub='x', restart='no'):
     names = [service] + ([service.replace('.service', '.timer')] if timer else [])
-    rows = ''.join(f'{n}  loaded  {state if n == service else "active"}  x  d\n' for n in names)
-    show = f'Id={service}\nType={kind}\n\nId=ssh.service\nType=notify\n'
-    return collect(root, fake({'systemctl list-units': (0, rows),
-                                 'systemctl show': (0, show)}))['units'][service]['active']
+    rows = ''.join(f'{n}  loaded  {state if n == service else "active"}  {sub}  d\n' for n in names)
+    show = f'Id={service}\nType={kind}\nRestart={restart}\n\nId=ssh.service\nType=notify\nRestart=on-failure\n'
+    return _units(root, '', rows, show).get(service, {}).get('active')
 
 
-def test_timer_service_transient_states_are_inactive(root):
-    assert _transient(root, 'sync.service', 'activating') == 'inactive'
-    assert _transient(root, 'sync.service', 'deactivating') == 'inactive'
+def test_timer_service_passing_states_are_not_written(root):
+    assert _transient(root, 'sync.service', 'activating') is None
+    assert _transient(root, 'sync.service', 'deactivating') is None
+    assert _transient(root, 'sync.service', 'active', sub='running') is None
 
 
-def test_oneshot_service_without_timer_activating_is_inactive(root):
-    assert _transient(root, 'job.service', 'activating', timer=False, kind='oneshot') == 'inactive'
+def test_oneshot_service_without_timer_activating_is_not_written(root):
+    assert _transient(root, 'job.service', 'activating', timer=False, kind='oneshot') is None
 
 
-def test_timer_service_failed_stays_failed(root):
-    assert _transient(root, 'sync.service', 'failed') == 'failed'
+def test_oneshot_that_remains_after_exit_is_active(root):
+    assert _transient(root, 'wg-quick@wg0.service', 'active', timer=False, kind='oneshot',
+                      sub='exited') == 'active'
+
+
+@pytest.mark.parametrize('kind,timer', [('simple', True), ('oneshot', False), ('idle', False)])
+def test_run_once_service_failed_stays_failed(root, kind, timer):
+    assert _transient(root, 'sync.service', 'failed', timer=timer, kind=kind, sub='failed') == 'failed'
 
 
 def test_plain_service_activating_is_kept(root):
     assert _transient(root, 'daemon.service', 'activating', timer=False) == 'activating'
+
+
+def test_idle_service_that_restarts_is_a_daemon(root):
+    """getty тоже Type=idle, но Restart=always: её active - удерживаемое состояние."""
+    for sub in ('start-pre', 'running'):
+        assert _transient(root, 'console-getty.service', 'active', timer=False, kind='idle',
+                          sub=sub, restart='always') == 'active'
+
+
+# Разовые службы Ubuntu: (служба, Type, есть таймер, строка list-units на ходу).
+# dmesg - Type=idle: её фазы запуска systemd показывает как active (замер на 26.04).
+RUN_ONCE = [
+    ('dmesg.service', 'idle', False, 'active   start-pre'),
+    ('dmesg.service', 'idle', False, 'active   running'),
+    ('dmesg.service', 'idle', False, 'active   start-post'),
+    ('dmesg.service', 'idle', False, 'deactivating stop-sigterm'),
+    ('apt-news.service', 'oneshot', False, 'activating start'),
+    ('esm-cache.service', 'oneshot', False, 'activating start'),
+    ('e2scrub_reap.service', 'oneshot', False, 'activating start'),
+    ('e2scrub_all.service', 'oneshot', True, 'activating start'),
+    ('apt-daily.service', 'oneshot', True, 'activating start'),
+    ('apt-daily-upgrade.service', 'oneshot', True, 'activating start-pre'),
+    ('fstrim.service', 'oneshot', True, 'activating start'),
+    ('systemd-tmpfiles-clean.service', 'oneshot', True, 'activating start'),
+    ('man-db.service', 'oneshot', True, 'activating start'),
+    ('motd-news.service', 'oneshot', True, 'deactivating stop'),
+    ('fwupd-refresh.service', 'oneshot', True, 'activating start'),
+    ('logrotate.service', 'simple', True, 'active   running'),
+]
+
+
+def _run_once_units(root, service, kind, timer, row):
+    """Юниты узла: служба на ходу (row), отработала (dead) или выгружена (None)."""
+    files = f'ssh.service enabled enabled\n{service} enabled enabled\n'
+    loaded = 'ssh.service loaded active running d\n'
+    if timer:
+        name = service.replace('.service', '.timer')
+        files += f'{name} enabled enabled\n'
+        loaded += f'{name} loaded active waiting d\n'
+    if row:
+        loaded += f'{service} loaded {row} d\n'
+    show = f'Id={service}\nType={kind}\nRestart=no\n\nId=ssh.service\nType=notify\nRestart=on-failure\n'
+    return _units(root, files, loaded, show if row and 'dead' not in row else '')
+
+
+@pytest.mark.parametrize('service,kind,timer,row', RUN_ONCE)
+def test_run_once_unit_is_the_same_running_finished_and_unloaded(root, service, kind, timer, row):
+    running = _run_once_units(root, service, kind, timer, row)
+    finished = _run_once_units(root, service, kind, timer, 'inactive dead')
+    unloaded = _run_once_units(root, service, kind, timer, None)
+    assert running == finished == unloaded
+    assert running[service] == {'enabled': 'enabled'}
+    assert running == _run_once_units(root, service, kind, timer, row), 'два слепка подряд равны'
+
+
+BOOT_FILES = """\
+ssh.service        enabled  enabled
+dmesg.service      enabled  enabled
+e2scrub_reap.service enabled enabled
+apt-news.service   static   -
+cloud-final.service enabled enabled
+systemd-fsckd.service static -
+"""
+BOOT_SHOW = ('Id=dmesg.service\nType=idle\nRestart=no\n\nId=e2scrub_reap.service\nType=oneshot\nRestart=no\n\n'
+             'Id=apt-news.service\nType=oneshot\nRestart=no\n\nId=cloud-final.service\nType=oneshot\nRestart=no\n\n'
+             'Id=ssh.service\nType=notify\nRestart=on-failure\n')
+BOOTING = """\
+ssh.service          loaded active     running   d
+dmesg.service        loaded active     start-pre d
+e2scrub_reap.service loaded activating start     d
+apt-news.service     loaded activating start     d
+cloud-final.service  loaded active     exited    d
+firewalld.service    not-found inactive dead     d
+"""
+SETTLED = """\
+ssh.service          loaded active     running   d
+dmesg.service        loaded inactive   dead      d
+cloud-final.service  loaded active     exited    d
+"""
+
+
+def test_baseline_right_after_boot_leaves_no_system_units(root):
+    """База снята, пока загрузка доигрывает разовые службы; после установки они отработали."""
+    base = _units(root, BOOT_FILES, BOOTING, BOOT_SHOW)
+    assert base['dmesg.service'] == {'enabled': 'enabled'}
+    assert 'firewalld.service' not in base
+    after = _units(root, BOOT_FILES, SETTLED, BOOT_SHOW)
+    assert snapshot.subtract({'units': after}, {'units': base}) == {}
+
+
+def test_new_enabled_unit_is_still_reported_as_extra(root):
+    base = _units(root, BOOT_FILES, BOOTING, BOOT_SHOW)
+    files = BOOT_FILES + 'intruder.service enabled enabled\nonce.service enabled enabled\n'
+    loaded = SETTLED + 'intruder.service loaded active running d\nonce.service loaded inactive dead d\n'
+    show = BOOT_SHOW + '\nId=intruder.service\nType=simple\nRestart=always\n'
+    left = snapshot.subtract({'units': _units(root, files, loaded, show)}, {'units': base})
+    assert left == {'units': {'intruder.service': {'enabled': 'enabled', 'active': 'active'},
+                              'once.service': {'enabled': 'enabled'}}}
+    assert diff({'units': {}}, left) == ['units intruder.service: лишнее в текущем',
+                                         'units once.service: лишнее в текущем']
+
+
+def test_stopped_daemon_is_named(root):
+    up = _units(root, 'xray.service enabled enabled\n', 'xray.service loaded active running d\n')
+    down = _units(root, 'xray.service enabled enabled\n', 'xray.service loaded inactive dead d\n')
+    gone = _units(root, 'xray.service enabled enabled\n', '')
+    assert down == gone == {'xray.service': {'enabled': 'enabled'}}
+    assert diff({'units': up}, {'units': down}) == ['units xray.service active: "active" -> нет']
+
+
+def test_stand_rules_do_not_hide_run_once_units_by_name():
+    """Разовые службы закрыты сборщиком по природе юнита, списком имён их не прячут."""
+    rules = snapshot.load_ignore(REPO / 'infra/tests/fixtures/snapshot/ignore.yml')
+    hidden = {rule['name'] for rule in rules if rule['section'] == 'units'}
+    assert not hidden & {service for service, *_ in RUN_ONCE}
 
 
 def test_ports(root):

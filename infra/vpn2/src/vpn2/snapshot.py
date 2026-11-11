@@ -398,40 +398,53 @@ def _table(lines):
     return rows
 
 
-def _service_types(out):
-    """Блоки "Id=...", "Type=..." через пустую строку: {служба: Type}."""
-    types = {}
+def _service_props(out):
+    """Блоки "Id=...", "Type=...", "Restart=..." через пустую строку: {служба: {свойство: значение}}."""
+    props = {}
     for block in out.split('\n\n'):
         pairs = dict(line.split('=', 1) for line in block.splitlines() if '=' in line)
         if 'Id' in pairs:
-            types[pairs['Id']] = pairs.get('Type', '')
-    return types
+            props[pairs['Id']] = pairs
+    return props
+
+
+def _runs_once(name, records, props):
+    """Служба, что отрабатывает и выходит: oneshot, служба таймера, Type=idle без перезапуска (dmesg)."""
+    if not name.endswith('.service'):
+        return False
+    kind = props.get(name, {})
+    return (f'{name[:-len(".service")]}.timer' in records or kind.get('Type') == 'oneshot'
+            or (kind.get('Type') == 'idle' and kind.get('Restart') == 'no'))
 
 
 def _units(run):
     """Юниты systemd: enabled из list-unit-files, active из list-units.
-    У службы таймера и у oneshot activating/deactivating пишутся как inactive (гонка запуска)."""
+    Слепок не зависит от момента: inactive не пишется (загружен и стоит = не загружен),
+    у разовой службы пишется только то, что systemd удерживает, - failed и active/exited;
+    её проходные состояния (у Type=idle фазы запуска видны как active) не пишутся."""
     files = ['systemctl', 'list-unit-files', '--no-legend', '--plain', f'--type={_UNITS_TYPES}']
     loaded = ['systemctl', 'list-units', '--all', '--no-legend', '--plain',
               f'--type={_UNITS_TYPES}']
-    records = {}
-    for argv, field, column in ((files, 'enabled', 1), (loaded, 'active', 2)):
-        code, out = run(argv)
-        if code != 0:
-            return _failed(argv, code)
-        for columns in _table(out):
-            if len(columns) > column:
-                records.setdefault(columns[0], {})[field] = columns[column]
-    show = ['systemctl', 'show', '--property=Id,Type', '*.service']
+    code, out = run(files)
+    if code != 0:
+        return _failed(files, code)
+    records = {columns[0]: {'enabled': columns[1]} for columns in _table(out) if len(columns) > 1}
+    code, out = run(loaded)
+    if code != 0:
+        return _failed(loaded, code)
+    states = {columns[0]: columns[2:4] for columns in _table(out) if len(columns) > 3}
+    show = ['systemctl', 'show', '--property=Id,Type,Restart', '*.service']
     code, out = run(show)
     if code != 0:
         return _failed(show, code)
-    types = _service_types(out)
-    for name, record in records.items():
-        if not name.endswith('.service') or record.get('active') not in ('activating', 'deactivating'):
+    props = _service_props(out)
+    names = set(records) | set(states)
+    for name, (active, sub) in states.items():
+        if active == 'inactive':
             continue
-        if f'{name[:-len(".service")]}.timer' in records or types.get(name) == 'oneshot':
-            record['active'] = 'inactive'
+        if _runs_once(name, names, props) and not (active == 'failed' or (active, sub) == ('active', 'exited')):
+            continue
+        records.setdefault(name, {})['active'] = active
     return records
 
 

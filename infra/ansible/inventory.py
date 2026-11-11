@@ -104,12 +104,27 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
     return raw(result)
 
 
+def ancestors():
+    """Командные строки процессов-предков, от ближайшего."""
+    pid = os.getppid()
+    while pid > 1:
+        try:
+            words = [os.fsdecode(word) for word in Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0') if word]
+            pid = int(Path(f'/proc/{pid}/stat').read_text(encoding='utf-8', errors='replace').rpartition(')')[2].split()[1])
+        except (OSError, ValueError, IndexError):
+            return
+        yield words
+
+
 def asked_by_ansible_inventory():
-    try:
-        words = Path(f'/proc/{os.getppid()}/cmdline').read_bytes().split(b'\0')
-    except OSError:
-        return False
-    return any(Path(os.fsdecode(word)).name == 'ansible-inventory' for word in words[:2])
+    """Инвентарь спросил ansible-inventory: как бы его ни запустили - файлом, обёрткой или модулем."""
+    for words in ancestors():
+        names = [Path(word).name for word in words]
+        if 'ansible-inventory' in names or 'ansible.cli.inventory' in names:
+            return True
+        if any(pair == ('ansible', 'inventory') for pair in zip(names, names[1:])):
+            return True
+    return False
 
 
 def main(argv):

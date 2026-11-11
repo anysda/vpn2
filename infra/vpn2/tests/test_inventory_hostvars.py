@@ -151,13 +151,15 @@ def test_ansible_reads_values_verbatim_and_inventory_listing_is_masked():
     with tempfile.TemporaryDirectory() as tmp:
         env = run_script(tmp, JINJA, ANSIBLE_LOCALHOST_WARNING='False')
         launcher = Path(tmp) / 'inventory.sh'
-        launcher.write_text(f'#!/bin/sh\nexec {sys.executable} {SCRIPT} "$@"\n', encoding='utf-8')
+        launcher.write_text(f'#!/bin/sh\ntr "\\0" " " < /proc/$PPID/cmdline >> {tmp}/asked\necho >> {tmp}/asked\n'
+                            f'exec {sys.executable} {SCRIPT} "$@"\n', encoding='utf-8')
         launcher.chmod(0o755)
         message = '{{ ansible_password }}|{{ vpn2_env.SSH_PASS }}|{{ vpn2_env.NOPE | default("") }}|{{ vpn2_node.role }}'
         play = subprocess.run(['ansible', '-i', str(launcher), 'ru', '-c', 'local', '-m', 'ansible.builtin.debug',
                                '-a', 'msg=' + message], env=env, capture_output=True, text=True, timeout=120)
         listing = subprocess.run(['ansible-inventory', '-i', str(launcher), '--list'], env=env,
                                  capture_output=True, text=True, timeout=120)
+        asked = (Path(tmp) / 'asked').read_text(encoding='utf-8')
     assert 'a{{ 1 + 1 }}b{% x %}|a{{ 1 + 1 }}b{% x %}||entry' in play.stdout, play.stdout + play.stderr
-    assert listing.returncode == 0 and '"SSH_PASS": "***"' in listing.stdout, listing.stdout + listing.stderr
+    assert listing.returncode == 0 and '"SSH_PASS": "***"' in listing.stdout, f'инвентарь спрашивали:\n{asked}'
     assert '1 + 1' not in listing.stdout

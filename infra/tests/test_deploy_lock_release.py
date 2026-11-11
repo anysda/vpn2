@@ -82,6 +82,13 @@ class DeployLockReleaseTests(unittest.TestCase):
                 done = tree.run()
                 self.assertEqual((done.returncode, done.stderr), (7, 'fatal\n'), done.stdout + done.stderr)
 
+    def test_next_run_starts_at_once_after_recover_stage_and_full_run(self):
+        with Checkout(HELPER + 'echo "run $*"\n') as tree:
+            for args in (('recover',), ('30-frontend', 'ru'), (), ('recover',)):
+                done = tree.run(*args)
+                self.assertEqual((done.returncode, done.stdout), (0, f'run {" ".join(args)}\n'),
+                                 done.stdout + done.stderr)
+
     def test_children_of_orchestrator_do_not_hold_lock_descriptor(self):
         with Checkout('ls -l /proc/$$/fd > "$MARK/fds"\n') as tree:
             done = tree.run()

@@ -3,21 +3,14 @@ import QRCode from 'qrcode-svg'
 
 const pad = 4
 
-// ecl 'L': сплит-туннель раздувает конфиг до ~950 байт и больше, при 'M' QR
-// получается настолько плотным, что телефон его с экрана уже не берёт.
+// ecl 'L': конфиг со сплит-туннелем около 950 байт, при 'M' телефон QR с экрана уже не берёт.
 function qrMatrix(content: string): boolean[][] {
-  const qr = new QRCode({ content, padding: 0, ecl: 'L' }) as unknown as {
-    qrcode: { modules: boolean[][] }
-  }
-  return qr.qrcode.modules
+  return (new QRCode({ content, padding: 0, ecl: 'L' }) as unknown as { qrcode: { modules: boolean[][] } }).qrcode.modules
 }
 
 /**
- * Свой вывод вместо `.svg()` библиотеки: та рисует отдельный <rect> со стилем
- * на каждый модуль и с дробными координатами (512px / N модулей), и на таком
- * конфиге выходил мегабайт. Здесь один path в единицах модуля: подряд идущие
- * тёмные модули строки сливаются в один отрезок. Свой размер - 4 px на модуль:
- * меньше камера телефона с экрана ПК не берёт; уже контента ужимает CSS.
+ * Свой вывод вместо `.svg()` библиотеки (та даёт мегабайт): один path, подряд
+ * идущие тёмные модули сливаются в отрезок. 4 px на модуль: меньше камера с экрана не берёт.
  */
 export function qrSvg(content: string): string {
   const m = qrMatrix(content)
@@ -46,9 +39,8 @@ function chunk(type: string, data: Buffer): Buffer {
 }
 
 /**
- * PNG для Telegram, как рисовал бот: чёрное на белом, поле 4 модуля, модуль -
- * наибольший из 1..10 px, при котором сторона не больше 1280 px (больше
- * Telegram фото ужимает). 8-битный серый, строки без фильтра.
+ * PNG для Telegram: чёрное на белом, поле 4 модуля, модуль до 10 px при стороне
+ * не больше 1280 px (больше Telegram ужимает). 8-битный серый, строки без фильтра.
  */
 export function qrPng(content: string): Buffer {
   const m = qrMatrix(content)
@@ -78,10 +70,7 @@ export function qrPng(content: string): Buffer {
   ])
 }
 
-/**
- * Событие «отправить WireGuard в Telegram» для бота. QR рисует панель, бот
- * пересылает PNG как есть: своего генератора у него нет.
- */
+/** Событие «отправить WireGuard в Telegram»: QR рисует панель, бот пересылает PNG как есть. */
 export function wgBotEvent(name: string, conf: string) {
   return { type: 'client_send_wireguard' as const, name, conf, qr: qrPng(conf).toString('base64') }
 }

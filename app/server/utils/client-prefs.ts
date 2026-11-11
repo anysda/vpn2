@@ -25,15 +25,13 @@ async function reconcileExits(): Promise<void> {
   const current = Object.fromEntries(tags.sort().map(tag => [tag, hosts[tag]!]))
   const value = JSON.stringify(current)
   const db = useDb()
-  // Обычная синхронизация устройств не должна брать SQLite write-lock:
-  // карта меняется только при деплое. В транзакции проверяем её повторно.
+  // Обычная синхронизация не должна брать write-lock: карта меняется только при деплое.
   const [known] = await db.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
   if (known?.value === value) return
   const changes = await db.transaction(async (tx) => {
     const [saved] = await tx.select().from(collectorState).where(eq(collectorState.name, EXIT_MAP_STATE))
     if (saved?.value === value) return []
-    // При первом обновлении со старой панели стадия 30 передаёт её NUXT_NODE_HOSTS.
-    // В дальнейшем карта в БД переживает рестарты, восстановление и повтор деплоя.
+    // При первом обновлении со старой панели деплой передаёт её NUXT_NODE_HOSTS, дальше карта живёт в базе.
     const previous: Record<string, string> = saved ? JSON.parse(saved.value) : exitHosts(String(cfg.previousNodeHosts || ''))
     const rows = await tx.select({ id: clients.id, oldTag: clients.preferredExit })
       .from(clients).where(isNotNull(clients.preferredExit))
@@ -41,8 +39,7 @@ async function reconcileExits(): Promise<void> {
     for (const row of rows) {
       const oldTag = row.oldTag!
       const matches = Object.keys(current).filter(tag => current[tag] === previous[oldTag])
-      // Адрес однозначно узнаёт переименование, включая перестановку тегов.
-      // Если адрес сменился, существующий тег сохраняет выбор владельца.
+      // Адрес узнаёт переименование тега; если адрес сменился, существующий тег сохраняет выбор.
       const newTag = matches.length === 1 ? matches[0]! : Object.hasOwn(current, oldTag) ? oldTag : null
       if (newTag === oldTag) continue
       await tx.update(clients).set({ preferredExit: newTag, updatedAt: new Date() }).where(eq(clients.id, row.id))
@@ -53,20 +50,14 @@ async function reconcileExits(): Promise<void> {
     return changed
   })
   for (const change of changes) {
-    useLogger().info(change, change.newTag
-      ? `client exit preference: ${change.oldTag} → ${change.newTag}`
-      : `client exit preference: ${change.oldTag} → авто (экзит удалён или адрес неоднозначен)`)
+    useLogger().info(change, `client exit preference: ${change.oldTag} → ${change.newTag ?? 'авто (экзит удалён или адрес неоднозначен)'}`)
   }
 }
 
 /**
- * Файл предпочитаемых экзитов для роутера: { "<узел>": ["10.66.66.2", …] }.
- * anysda-apply-routes (стадия 20) кладёт IP каждого узла в свой набор правил
- * client-pref-<узел> с выходом pin-hy2-<узел>-direct: sing-box перечитывает
- * набор на ходу, соединения не рвутся. Пока узел выключен, мёртв или в
- * штрафной, failover-watchdog держит pin на foreign-best. Берём постоянные IP
- * устройства во всех трёх протоколах: WireGuard, OpenVPN (ccd ifconfig-push)
- * и IKEv2 (пул из одного адреса на устройство).
+ * Предпочитаемые экзиты для роутера: { "<узел>": ["10.66.66.2", …] } с
+ * постоянными адресами устройства во всех трёх протоколах. sing-box
+ * перечитывает набор на ходу, соединения не рвутся.
  */
 async function writePrefs(): Promise<void> {
   await reconcileExits()

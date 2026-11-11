@@ -5,14 +5,7 @@ import { agh } from './agh-client'
 import type { CheckHost } from './agh-parse'
 import { sameRewrite, type Rewrite } from './dns-settings'
 
-export interface AghFilter {
-  id: number
-  name: string
-  url: string
-  enabled: boolean
-  rules_count: number
-  last_updated?: string
-}
+export interface AghFilter { id: number, name: string, url: string, enabled: boolean, rules_count: number, last_updated?: string }
 
 export interface AghFilteringStatus {
   enabled: boolean
@@ -26,10 +19,8 @@ interface AghService { id: string, name: string, icon_svg?: string, group_id?: s
 
 /** Адрес в туннеле → имя клиента панели (по всем протоколам устройства). */
 export async function panelNames(): Promise<Map<string, string>> {
-  const rows = await useDb()
-    .select({ name: clients.name, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
-    .from(devices)
-    .innerJoin(clients, eq(devices.clientId, clients.id))
+  const rows = await useDb().select({ name: clients.name, wg: devices.wgIp, ovpn: devices.ovpnIp, ikev2: devices.ikev2Ip })
+    .from(devices).innerJoin(clients, eq(devices.clientId, clients.id))
   const names = new Map<string, string>()
   for (const r of rows) {
     for (const ip of [r.wg, r.ovpn, r.ikev2]) if (ip) names.set(ip, r.name)
@@ -66,10 +57,7 @@ export function listsView(st: AghFilteringStatus) {
   return { interval: st.interval, black: (st.filters ?? []).map(row), white: (st.whitelist_filters ?? []).map(row) }
 }
 
-/**
- * Состояние AdGuard после действия: если /control/filtering/status показывает
- * не то, что просили, человеку — ошибка, а не тост «готово».
- */
+/** Состояние AdGuard после действия: показывает не то, что просили, - человеку ошибка, а не «готово». */
 export async function confirmFiltering(ok: (st: AghFilteringStatus) => boolean, what: string): Promise<AghFilteringStatus> {
   const st = await filteringStatus()
   if (!ok(st)) throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: `AdGuard не применил изменение: ${what}` })
@@ -80,12 +68,7 @@ export function findList(st: AghFilteringStatus, url: string, white: boolean): A
   return ((white ? st.whitelist_filters : st.filters) ?? []).find(f => f.url === url)
 }
 
-/**
- * check_host, пока ответ не станет нужным, но не дольше `ms`. Правила и
- * списки AdGuard применяет не сразу: после set_rules / set_url движок
- * пересобирается в фоне (на 180 тыс. правил — около полсекунды), и до этого
- * check_host отвечает по-старому.
- */
+/** check_host, пока ответ не станет нужным, но не дольше `ms`: после смены правил AdGuard пересобирает движок в фоне. */
 export async function checkUntil(name: string, client: string | undefined, done: (r: CheckHost) => boolean, ms = 5000): Promise<CheckHost> {
   const until = Date.now() + ms
   for (;;) {
@@ -95,9 +78,8 @@ export async function checkUntil(name: string, client: string | undefined, done:
   }
 }
 
-/** Ответ ссылается на своё правило, которого уже нет, — движок ещё старый. */
-export const citesGone = (r: CheckHost, gone: string[]) =>
-  !!r.rules?.some(x => x.filter_list_id === 0 && gone.includes(x.text))
+/** Ответ ссылается на своё правило, которого уже нет: движок ещё старый. */
+export const citesGone = (r: CheckHost, gone: string[]) => !!r.rules?.some(x => x.filter_list_id === 0 && gone.includes(x.text))
 
 /** Перезаписи DNS: AdGuard отдаёт null, когда их нет. */
 export async function rewriteList(): Promise<Rewrite[]> {

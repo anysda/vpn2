@@ -30,7 +30,7 @@
 
 - name: Swap узлу с памятью меньше 4 ГБ
   ansible.builtin.command:
-    argv: "{{ base_host + ['swap', '--manifest', base_manifest] }}"
+    argv: "{{ base_host + ['swap', '--manifest', base_manifest, '--install-bytes', base_swap_install_bytes | string] }}"
   register: base_step
   changed_when: "'vpn2: changed' in base_step.stdout"
 

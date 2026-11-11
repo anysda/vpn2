@@ -5,6 +5,12 @@ base_tmp: /tmp/anysda
 base_manifest: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
 base_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
 
+# Сколько диска занято на entry после полной установки, без swap: замер на
+# узле 2 ГБ / 10 ГБ дал 5556 МиБ, здесь с запасом. Swap создаётся первым шагом
+# и это место не берёт, иначе следующему деплою не хватит свободного перед
+# бэкапом. На экзите такой проверки нет, и установка там лёгкая.
+base_swap_install_bytes: "{{ 6442450944 if base_entry else 0 }}"  # 6 ГиБ
+
 # Шаги узла из пакета vpn2. На entry venv ставит деплой; на чистом экзите venv
 # ещё нет, и модуль запускается системным python прямо из колеса.
 base_host_entry: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]

@@ -1,5 +1,6 @@
 """Шаги узла из ролей: числа и строки сверены со стадией 00-bootstrap.sh и anysda-svc.sh."""
 import hashlib
+from pathlib import Path
 import subprocess
 import types
 
@@ -23,6 +24,61 @@ MIN_FREE = 2147483648
 ])
 def test_swap_plan_matches_stage(mem_kb, avail, size, text):
     assert swap.plan(mem_kb, avail, MIN_FREE) == (size, text)
+
+
+MIB = 1024 ** 2
+ENTRY_INSTALL = 6 * 1024 ** 3  # base_swap_install_bytes роли base для entry
+ENTRY_MEASURED = 5556          # МиБ занято на entry 2 ГБ / 10 ГБ после установки, без swap
+CLEAN_OS = 2000                # МиБ занято чистой Ubuntu до первого шага
+# Диск entry: МиБ всего на ФС и резерв ext4, которого нет в «свободно».
+DISK_10 = (9978, 527)
+DISK_8 = (7950, 420)
+DISK_40 = (40200, 2010)
+
+
+def disk(layout, used):
+    total, reserved = layout
+    return types.SimpleNamespace(free=(total - reserved - used) * MIB, used=used * MIB)
+
+
+def test_role_gives_the_entry_install_size_this_file_counts_with():
+    defaults = (Path(__file__).parents[2] / 'ansible/roles/base/defaults/main.yml').read_text()
+    assert f'base_swap_install_bytes: "{{{{ {ENTRY_INSTALL} if base_entry else 0 }}}}"' in defaults
+    tasks = (Path(__file__).parents[2] / 'ansible/roles/base/tasks/main.yml').read_text()
+    assert "'--install-bytes', base_swap_install_bytes | string]" in tasks
+
+
+@pytest.mark.parametrize('layout, size_mib, text', [
+    (DISK_10, 747, 'swap: /swapfile 747 МиБ (урезан, деплою оставлено 2048 + 512, установке 4144; '
+                   'свободно 7451 МиБ)'),
+    (DISK_8, 0, 'swap пропущен: свободно 5530 МиБ, деплою нужно 2048 + 512, установке 4144, '
+                'swap меньше 256 МиБ не создаю'),
+    (DISK_40, 1966, 'swap: /swapfile 1966 МиБ (RAM 1966 МиБ; свободно 36190 МиБ)'),
+])
+def test_swap_plan_on_a_clean_entry_keeps_room_for_the_install(layout, size_mib, text):
+    clean = disk(layout, CLEAN_OS)
+    size, said = swap.plan(2014000, clean.free, MIN_FREE, swap.pending(ENTRY_INSTALL, clean.used))
+    assert (size // MIB, said) == (size_mib, text)
+    # the install lands after swap: what is free then is what the next deploy sees
+    after = disk(layout, ENTRY_MEASURED).free - size
+    if size:
+        assert after >= MIN_FREE + 512 * MIB
+
+
+def test_swap_plan_without_install_size_is_the_old_one_and_starves_the_next_deploy():
+    clean = disk(DISK_10, CLEAN_OS)
+    size, _ = swap.plan(2014000, clean.free, MIN_FREE)
+    assert size // MIB == 1966
+    assert disk(DISK_10, ENTRY_MEASURED).free - size < MIN_FREE
+
+
+def test_swap_plan_after_the_install_counts_only_what_is_left_of_it():
+    # swap removed by hand on an installed 10 GB entry: the next deploy sizes it to the same room
+    installed = disk(DISK_10, ENTRY_MEASURED)
+    size, _ = swap.plan(2014000, installed.free, MIN_FREE, swap.pending(ENTRY_INSTALL, installed.used))
+    assert size // MIB == 747
+    # a node that holds more than the install size: nothing more is kept for it
+    assert swap.pending(ENTRY_INSTALL, 7000 * MIB) == 0
 
 
 def test_min_free_falls_back_without_manifest(tmp_path):
@@ -263,8 +319,9 @@ def test_nft_preserve_writes_dropin_once(tmp_path):
 class SwapNode:
     """Узел 2 ГБ без swap: swapon не берёт файл с дырами, пока его не записал dd."""
 
-    def __init__(self, tmp_path, monkeypatch, *, virt='none'):
-        self.root, self.calls, self.virt = tmp_path, [], virt
+    def __init__(self, tmp_path, monkeypatch, *, virt='none', usage=None, holes=True):
+        self.root, self.calls, self.virt, self.holes, self.sizes = tmp_path, [], virt, holes, []
+        self.usage = usage or types.SimpleNamespace(free=20 * 1024 ** 3, used=2 * 1024 ** 3)
         self.file = tmp_path / 'swapfile'
         for name, text in (('proc/meminfo', 'MemTotal: 2014000 kB\n'), ('proc/swaps', 'Filename Type\n'),
                            ('etc/fstab', '/dev/vda1 / ext4 defaults 0 1\n'), ('etc/sysctl.d/.keep', '')):
@@ -273,9 +330,14 @@ class SwapNode:
         monkeypatch.setattr(swap, 'SWAPFILE', str(self.file))
         monkeypatch.setattr(swap, '_ok', self.ok)
         monkeypatch.setattr(swap.shutil, 'which', lambda _name: '/usr/bin/systemd-detect-virt')
-        monkeypatch.setattr(swap.shutil, 'disk_usage', lambda _path: types.SimpleNamespace(free=20 * 1024 ** 3))
+        monkeypatch.setattr(swap.shutil, 'disk_usage', lambda _path: self.disk_usage())
         monkeypatch.setattr(swap.subprocess, 'run', self.run)
-        self.written = False
+        self.written, self.counted = False, 0
+
+    def disk_usage(self):
+        # the leftover file is part of `usage`; once it is removed the disk gets its room back
+        gone = 0 if self.file.exists() and self.file.stat().st_size == self.counted else self.counted
+        return types.SimpleNamespace(free=self.usage.free + gone, used=self.usage.used - gone)
 
     def run(self, *_, **__):
         return types.SimpleNamespace(stdout=self.virt + '\n', returncode=0)
@@ -284,10 +346,17 @@ class SwapNode:
         self.calls.append(argv[0])
         if argv[0] == 'fallocate':
             self.file.write_bytes(b'')
+            self.sizes.append(int(argv[2]) // MIB)
         if argv[0] == 'dd':
             self.file.write_bytes(b'')
             self.written = True
-        return argv[0] != 'swapon' or self.written
+        return argv[0] != 'swapon' or self.written or not self.holes
+
+    def leftover(self, size_mib):
+        """A swap file of that size that is off; the disk usage of the node counts it."""
+        with self.file.open('wb') as output:
+            output.truncate(size_mib * MIB)
+        self.counted = size_mib * MIB
 
 
 def test_swap_holey_file_recreated_with_dd(tmp_path, monkeypatch):
@@ -315,6 +384,53 @@ def test_swap_skipped_in_container_and_with_active_swap(tmp_path, monkeypatch):
     (tmp_path / 'proc/swaps').write_text('Filename Type\n/swapfile file 1 0 -2\n')
     assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path) is False
     assert node.calls == []
+
+
+def test_swap_on_a_clean_10gb_entry_is_sized_below_the_install(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_10, CLEAN_OS), holes=False), []
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is True
+    assert node.sizes == [747] and node.calls == ['fallocate', 'mkswap', 'swapon']
+    # the repeated deploy after the full install: swap is on, nothing is touched
+    (tmp_path / 'proc/swaps').write_text('Filename Type\n/swapfile file 764928 0 -2\n')
+    node.usage, node.calls = disk(DISK_10, ENTRY_MEASURED + 747), []
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is False
+    assert node.calls == [] and len(lines) == 1
+
+
+def test_swap_leftover_file_larger_than_its_room_is_recreated(tmp_path, monkeypatch):
+    # the 1962 MiB file of an older deploy, switched off by hand and left on a 10 GB entry
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_10, ENTRY_MEASURED + 1962), holes=False), []
+    node.leftover(1962)
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is True
+    assert lines[0] == f'swap: имеющийся {node.file} 1962 МиБ не по месту, пересоздаю'
+    assert node.sizes == [747] and node.calls == ['fallocate', 'mkswap', 'swapon']
+
+
+def test_swap_leftover_file_that_fits_is_switched_on_as_is(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_40, ENTRY_MEASURED + 1966), holes=False), []
+    node.leftover(1966)
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is True
+    assert lines == [f'swap: включаю имеющийся {node.file}'] and node.calls == ['swapon']
+
+
+def test_swap_on_a_clean_8gb_entry_is_skipped_and_node_stays_as_is(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_8, CLEAN_OS)), []
+    assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is False
+    assert node.calls == [] and 'установке 4144' in lines[0]
+    assert 'swapfile' not in (tmp_path / 'etc/fstab').read_text()
+
+
+def test_swap_step_passes_the_install_size(monkeypatch):
+    seen = {}
+
+    def ensure(manifest, say, **kwargs):
+        say('swap: stub')
+        seen.update(kwargs, manifest=manifest)
+
+    monkeypatch.setattr(swap, 'ensure', ensure)
+    assert host.main(['swap', '--manifest', 'm.json', '--install-bytes', str(ENTRY_INSTALL)]) == 0
+    assert seen == {'manifest': 'm.json', 'install_bytes': ENTRY_INSTALL}
+    assert host.main(['swap']) == 0 and seen['install_bytes'] == 0
 
 
 def test_f2b_ignore_skips_garbage():

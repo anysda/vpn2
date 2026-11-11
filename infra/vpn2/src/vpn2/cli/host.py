@@ -55,7 +55,7 @@ def _nft_preserve(args):
 
 
 def _swap(args):
-    return swap.ensure(args.manifest, _say)
+    return swap.ensure(args.manifest, _say, install_bytes=args.install_bytes)
 
 
 def _ufw(args):
@@ -348,6 +348,8 @@ def main(argv):
     sub.add_parser('nft-preserve').set_defaults(run=_nft_preserve)
     item = sub.add_parser('swap')
     item.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
+    item.add_argument('--install-bytes', type=int, default=0,
+                      help='место на диске после полной установки узла, байт')
     item.set_defaults(run=_swap)
     item = sub.add_parser('ufw')
     item.add_argument('--only-rules', action='store_true',

@@ -21,7 +21,7 @@ import sys
 import tempfile
 import unittest
 
-ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[3]))
 KEY = {name: name * 42 + 'A=' for name in 'abcs'}
 PEER = {'a': {'key': KEY['a'], 'preshared_key': KEY['c'], 'ip': '10.66.66.2'},
         'b': {'key': KEY['b'], 'preshared_key': KEY['c'], 'ip': '10.66.66.3'}}

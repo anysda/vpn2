@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 
-ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[3]))
 CONTROL = ROOT / 'infra/ansible/roles/control'
 
 
@@ -40,6 +40,8 @@ class ControlTests(unittest.TestCase):
         cls.pools = json.loads((ROOT / 'app/shared/vpn-pools.json').read_text())
 
     def setUp(self):
+        # The served files must be readable to others: not under the umask of whoever runs the tests.
+        self.addCleanup(os.umask, os.umask(0o022))
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
         self.root = Path(self.work.name)

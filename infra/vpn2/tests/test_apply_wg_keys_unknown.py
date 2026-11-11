@@ -15,8 +15,7 @@ import unittest
 
 from test_apply import HEADER, apply, peer
 from test_apply_wg_keys import Host
-from test_wg_conf_wg_oracle import IP, WG, WG_QUICK, oracle
-from wg_root import as_root
+from wg_oracle import IP, WG, WG_QUICK, as_root, oracle
 
 # Lines in [Interface] wg-quick gives to wg and wg does not read.
 UNKNOWN = {

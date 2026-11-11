@@ -12,11 +12,13 @@ wg_conf.py from /usr/local/lib/anysda, not from a wg_conf.py next to itself.
 import json
 from pathlib import Path
 import re
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_control import module
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/tests'))
+from test_control import module  # noqa: E402
 from test_wg_conf_allowedips_net import apply_gate
 from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT, cut, source
 from test_wg_conf_module import BASE, CANONICAL, DEVICES, backup_check, conf

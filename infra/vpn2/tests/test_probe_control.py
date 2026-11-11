@@ -19,7 +19,7 @@ import unittest
 from unittest import mock
 
 
-ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[3]))
 TOOL = """#!/usr/bin/python3
 import os
 from pathlib import Path
@@ -109,7 +109,7 @@ class ProbeControlTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         spec = importlib.util.spec_from_file_location('probe_control_under_test',
-                                                      ROOT / 'infra/tests/probe_control.py')
+                                                      ROOT / 'infra/vpn2/tests/probe_control.py')
         self.probe = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.probe)
         self.probe.ROOT = self.root

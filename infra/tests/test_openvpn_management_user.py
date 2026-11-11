@@ -66,7 +66,7 @@ class OpenvpnManagementUserTests(unittest.TestCase):
         (self.work / 'bin').mkdir()
         (self.work / 'apply.py').write_text(WRAPPER)
         self.vpn2_apply = self.work / 'bin/vpn2-apply'
-        self.vpn2_apply.write_text(f'#!/bin/sh\nexec python3 {self.work}/apply.py {ROOT}/infra/tests '
+        self.vpn2_apply.write_text(f'#!/bin/sh\nexec python3 {self.work}/apply.py {ROOT}/infra/vpn2/tests '
                                    f'{self.root} {self.state} {self.work}/restarts "$@"\n')
         self.vpn2_apply.chmod(0o755)
         self.restarts = self.work / 'restarts'

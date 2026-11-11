@@ -82,7 +82,8 @@ class OpenvpnCheckEnvironmentTests(unittest.TestCase):
         shutil.copy(ROOT / 'infra/vpn2/src/vpn2/control/apply.py', copy / 'infra/vpn2/src/vpn2/control')
         for name in ('__init__.py', 'wg.py'):
             shutil.copy(ROOT / 'infra/vpn2/src/vpn2' / name, copy / 'infra/vpn2/src/vpn2')
-        shutil.copytree(Path(__file__).parent, copy / 'infra/tests', ignore=shutil.ignore_patterns('__pycache__'))
+        shutil.copytree(Path(__file__).parent, copy / 'infra/vpn2/tests',
+                        ignore=shutil.ignore_patterns('__pycache__', 'fixtures'))
         for path in (copy, *copy.rglob('*')):
             path.chmod(0o755 if path.is_dir() else 0o644)
         for name, prefix in ENVIRONMENTS.items():
@@ -94,7 +95,7 @@ class OpenvpnCheckEnvironmentTests(unittest.TestCase):
                 ran = subprocess.run(prefix + ['env', '-i', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', f'{INSIDE}={name}',
                                                f'VPN2_TEST_ROOT={copy}', sys.executable, '-B', '-m', 'unittest', '-v',
                                                f'{Path(__file__).stem}.{Inside.__name__}'],
-                                     cwd=copy / 'infra/tests', capture_output=True, text=True, timeout=600)
+                                     cwd=copy / 'infra/vpn2/tests', capture_output=True, text=True, timeout=600)
                 self.assertEqual(ran.returncode, 0, ran.stdout + ran.stderr[-4000:])
                 self.assertNotIn('skipped', ran.stderr)
                 self.assertRegex(ran.stderr, r'Ran [1-9]\d* tests')

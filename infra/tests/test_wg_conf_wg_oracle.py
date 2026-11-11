@@ -15,12 +15,10 @@ through stdin, wg-quick runs as a copy. Root via `sudo -n` (wg_root), else skipp
 """
 import base64
 import calendar
-import itertools
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -32,8 +30,8 @@ from test_wg_conf_allowedips_prefix import OLD_LINES, VT, conf as prefix_conf
 from test_wg_conf_lines import forms as line_forms
 from test_wg_conf_module import CANONICAL, FORMS, LIB, conf as module_conf
 from wg_root import as_root
+from wg_oracle import IP, WG, WG_QUICK, ns_wg, oracle  # noqa: F401
 
-WG, WG_QUICK, IP = shutil.which('wg'), shutil.which('wg-quick'), shutil.which('ip')
 S = base64.b64encode(b'0123456789abcdef0123456789abcdef')
 A = base64.b64encode(bytes(range(64, 96)))
 B = base64.b64encode(bytes(range(96, 128)))
@@ -240,47 +238,6 @@ def own_files():
     found |= {f'prefix-{form}': prefix_conf(form).encode() for form in OLD_LINES}
     found['module-canonical'] = module_conf(CANONICAL).encode()
     return found
-
-
-_names = itertools.count()
-
-
-def ns_wg(body, *show):
-    """`wg setconf wg0 /dev/stdin` of `body` on a fresh wg0 in a temporary netns: (error or None, dump lines)."""
-    name = f'vpn2t12o{os.getpid()}x{next(_names)}'
-    subprocess.run([IP, 'netns', 'add', name], check=True, capture_output=True)
-    try:
-        subprocess.run([IP, '-n', name, 'link', 'add', 'wg0', 'type', 'wireguard'], check=True, capture_output=True)
-        done = subprocess.run([IP, 'netns', 'exec', name, WG, 'setconf', 'wg0', '/dev/stdin'], input=body,
-                              capture_output=True, check=False)
-        if done.returncode:
-            return done.stderr.decode(errors='replace').strip() or 'rejected', []
-        dump = subprocess.run([IP, 'netns', 'exec', name, WG, 'show', 'wg0', *(show or ('dump',))], check=True,
-                              capture_output=True).stdout.decode()
-        return None, dump.splitlines()
-    finally:
-        subprocess.run([IP, 'netns', 'del', name], check=False, capture_output=True)
-
-
-def oracle(raw):
-    """wg-quick strip (a copy of the script) + wg: (error or None, private key, sorted [(key, PSK, AllowedIPs)])."""
-    with tempfile.TemporaryDirectory() as directory:
-        top = Path(directory)
-        shutil.copy(WG_QUICK, top / 'wg-quick')
-        (top / 'wg0.conf').write_bytes(raw)
-        (top / 'wg0.conf').chmod(0o600)
-        strip = subprocess.run(['bash', str(top / 'wg-quick'), 'strip', str(top / 'wg0.conf')],
-                               capture_output=True, check=False)
-    if strip.returncode:
-        return 'wg-quick: ' + strip.stderr.decode(errors='replace').strip(), None, None
-    error, dump = ns_wg(strip.stdout)
-    if error:
-        return error, None, None
-    peers = []
-    for line in dump[1:]:
-        key, psk, _endpoint, ips_ = line.split('\t')[:4]
-        peers.append((key, '' if psk == '(none)' else psk, sorted([] if ips_ == '(none)' else ips_.split(','))))
-    return None, dump[0].split('\t')[0], sorted(peers)
 
 
 def backup(raw, rows):

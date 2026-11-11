@@ -14,8 +14,7 @@ import unittest
 
 from test_apply import HEADER, apply, peer
 from test_apply_wg_keys import Host
-from test_wg_conf_wg_oracle import IP, WG, WG_QUICK, oracle
-from wg_root import as_root
+from wg_oracle import IP, WG, WG_QUICK, as_root, oracle
 
 # SaveConfig lines wg-quick's read_bool refuses.
 REJECTED = {'maybe': 'SaveConfig = maybe', 'empty': 'SaveConfig =', 'one': 'SaveConfig = 1',

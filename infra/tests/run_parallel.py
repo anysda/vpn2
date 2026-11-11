@@ -54,8 +54,7 @@ LONG = 40
 NICE = 10
 CRITICAL = 0.6
 QUIET = ('test_verify_exit_ssh_limit_edge', 'test_verify_exit_ssh_remote_code', 'test_ssh_limit_remote_code',
-         'test_control', 'test_release', 'test_probe_reads', 'test_udp_cut_switch_time',
-         'test_watchdog_package')
+         'test_release', 'test_probe_reads', 'test_udp_cut_switch_time', 'test_watchdog_package')
 
 
 def flatten(suite):

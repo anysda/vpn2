@@ -14,7 +14,23 @@ import unittest
 
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_check_env import hanging
-from test_verify_exit_target_retry_stop import alive
+
+
+def alive(pid):
+    # The leader is a zombie while its other threads still exit: the descriptors and the port stay open.
+    try:
+        tasks = list(Path(f'/proc/{pid}/task').iterdir())
+    except OSError:
+        return False
+    for task in tasks:
+        try:
+            state = (task / 'stat').read_text().rsplit(')', 1)[1].split()[0]
+        except OSError:
+            continue
+        if state != 'Z':
+            return True
+    return False
+
 
 TESTS = Path(__file__).resolve().parent
 SIGNALS = ('SIGTERM', 'SIGHUP', 'SIGINT')

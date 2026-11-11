@@ -526,9 +526,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: pip install ./infra/vpn2 pytest
+      - name: openvpn и wireguard-tools для тестов apply
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends openvpn wireguard-tools
+      - run: pip install ./infra/vpn2 pytest pytest-xdist
       - run: vpn2 version
-      - run: python -m pytest infra/vpn2/tests -q
+      - name: pytest
+        run: |
+          set -o pipefail
+          python -m pytest infra/vpn2/tests -q -n auto --dist loadgroup -rs | tee /tmp/pytest.log
+          # Тест apply без openvpn, wg или sudo пропускается: в CI это отказ, а не зелёный прогон.
+          ! grep -E 'SKIPPED.*(needs |cannot be made here)' /tmp/pytest.log
 
   ansible:
     name: роли ansible

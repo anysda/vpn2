@@ -1,7 +1,7 @@
 ---
 # Какую службу compose.yaml ставит плей: monitoring, panel или telegram.
 containers_service: ''
-containers_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+containers_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 containers_tmp: /tmp/anysda
 containers_vpn2: /opt/vpn2/venv/bin/vpn2
 containers_bash: [/bin/bash, --norc, -euo, pipefail, -c]
@@ -67,12 +67,12 @@ containers_env_common:
   - VPN2_PANEL_FOLLOWS
   - VPN2_RELEASE_MANIFEST
 containers_env_exit_prefix: [DOMAIN, MGMT_IP]
-containers_exits: "{{ lookup('ansible.builtin.env', 'EXIT_TAGS').split() | map('upper') | map('replace', '-', '_') | list }}"
+containers_exits: "{{ (vpn2_env.EXIT_TAGS | default('')).split() | map('upper') | map('replace', '-', '_') | list }}"
 containers_env_names: >-
   {{ containers_env_common
      + (containers_env_exit_prefix | product(containers_exits) | map('join', '_') | list) }}
 # Версия VictoriaMetrics закреплена в versions.yml: с :latest узлы жили на разных версиях.
 containers_env: >-
-  {{ dict(containers_env_names | zip(query('ansible.builtin.env', *containers_env_names)))
+  {{ dict(containers_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', containers_env_names) | items2dict)
      | combine({'VM_VERSION': (lookup('ansible.builtin.file', containers_infra ~ '/versions.yml')
                                | from_yaml).victoriametrics}) }}

@@ -46,7 +46,7 @@
       - "{{ containers_tmp }}"
       - vpn2-tls
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: containers_tls_resources
   changed_when: "'changed=1' in containers_tls_resources.stdout"
 

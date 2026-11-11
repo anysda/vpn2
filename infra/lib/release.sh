@@ -35,9 +35,3 @@ release_image() {
   release_py --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
     image "$component" --requested "$requested" "${args[@]}"
 }
-
-release_artifact() {
-  local name="$1" destination="$2"
-  release_py --manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}" \
-    artifact "$name" "$destination"
-}

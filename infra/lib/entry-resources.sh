@@ -9,11 +9,6 @@ entry_resources() {
   eval "$rendered"
 }
 
-entry_adguard_resources() {
-  ENTRY_RESOURCE_OVERRIDES="${ENTRY_RESOURCE_OVERRIDES:-}" \
-    python3 "$ENTRY_RESOURCE_TOOL" --agh-config "$@"
-}
-
 # Пишет drop-in, только если тело сменилось; смену отмечает ENTRY_DROPIN_CHANGED=1.
 entry_dropin_write() {
   local dir=$1 rendered=$2 file="$1/zz-vpn2-resources.conf"

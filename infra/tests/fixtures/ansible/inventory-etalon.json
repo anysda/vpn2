@@ -6,14 +6,110 @@
         "ansible_password": "stand-pass",
         "ansible_ssh_common_args": "-o UserKnownHostsFile=@STATE@/known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password -o ConnectTimeout=10",
         "ansible_ssh_private_key_file": "~/.ssh/id_ed25519",
-        "ansible_user": "root"
+        "ansible_user": "root",
+        "vpn2_env": {
+          "ADMIN_SSH_PUBKEY": "",
+          "AGH_PORT": "3000",
+          "DOMAIN_NL": "198.18.10.20",
+          "ENTRY_HOST": "198.18.10.10",
+          "EXIT_TAGS": "nl",
+          "HOST_TAG": "nl",
+          "HY2_DIRECT_PORT": "443",
+          "HY2_DOWN_MBPS": "",
+          "HY2_MGMT_PORT": "8444",
+          "HY2_UP_MBPS": "",
+          "HY2_WARP_PORT": "8443",
+          "MGMT_IP": "10.99.0.2",
+          "MGMT_IP_NL": "10.99.0.2",
+          "MGMT_IP_RU": "10.99.0.1",
+          "NL_HY2_DIRECT_PORT": "443",
+          "NL_HY2_DOWN_MBPS": "",
+          "NL_HY2_UP_MBPS": "",
+          "PUB_IP": "198.18.10.20",
+          "SSH_HOST": "198.18.10.20",
+          "SSH_PASS": "stand-pass",
+          "SSH_USER": "root"
+        },
+        "vpn2_exits": [
+          {
+            "env_tag": "NL",
+            "host": "198.18.10.20",
+            "hy2_direct_port": 443,
+            "hy2_down_mbps": null,
+            "hy2_insecure": false,
+            "hy2_up_mbps": null,
+            "mgmt_ip": "10.99.0.2",
+            "tag": "nl"
+          }
+        ],
+        "vpn2_node": {
+          "host": "198.18.10.20",
+          "mgmt_ip": "10.99.0.2",
+          "role": "exit",
+          "tag": "nl"
+        }
       },
       "ru": {
         "ansible_host": "198.18.10.10",
         "ansible_password": "stand-pass",
         "ansible_ssh_common_args": "-o UserKnownHostsFile=@STATE@/known_hosts -o StrictHostKeyChecking=accept-new -o PreferredAuthentications=publickey,password -o ConnectTimeout=10",
         "ansible_ssh_private_key_file": "~/.ssh/id_ed25519",
-        "ansible_user": "root"
+        "ansible_user": "root",
+        "vpn2_env": {
+          "ADMIN_PASSWORD": "",
+          "ADMIN_SSH_PUBKEY": "",
+          "ADMIN_USER": "anysda",
+          "AGH_PORT": "3000",
+          "BACKUP_BACKEND": "local",
+          "BACKUP_ENABLED": "true",
+          "BACKUP_LOCAL_DIR": "/var/backups/anysda-vpn2",
+          "BACKUP_PASSPHRASE": "stand-etalon",
+          "BACKUP_RETENTION": "10",
+          "BACKUP_SCHEDULE": "off",
+          "DOMAIN_NL": "198.18.10.20",
+          "ENTRY_HOST": "198.18.10.10",
+          "ENTRY_RESOURCE_OVERRIDES": "{}",
+          "EXIT_TAGS": "nl",
+          "HOST_TAG": "ru",
+          "HY2_DIRECT_PORT": "443",
+          "HY2_MGMT_PORT": "8444",
+          "HY2_WARP_PORT": "8443",
+          "MGMT_IP": "10.99.0.1",
+          "MGMT_IP_NL": "10.99.0.2",
+          "MGMT_IP_RU": "10.99.0.1",
+          "NL_HY2_DIRECT_PORT": "443",
+          "NL_HY2_DOWN_MBPS": "",
+          "NL_HY2_UP_MBPS": "",
+          "PANEL_DOMAIN": "",
+          "PUB_IP_OUT": "198.18.10.10",
+          "SSH_HOST": "198.18.10.10",
+          "SSH_PASS": "stand-pass",
+          "SSH_USER": "root",
+          "SSO_ENABLED": "false",
+          "SSO_REQUESTED": "false",
+          "YT_MARK": "256",
+          "YT_QUIC": "block",
+          "YT_ROUTE": "off",
+          "YT_ZAPRET_OFFLOAD": "keep"
+        },
+        "vpn2_exits": [
+          {
+            "env_tag": "NL",
+            "host": "198.18.10.20",
+            "hy2_direct_port": 443,
+            "hy2_down_mbps": null,
+            "hy2_insecure": false,
+            "hy2_up_mbps": null,
+            "mgmt_ip": "10.99.0.2",
+            "tag": "nl"
+          }
+        ],
+        "vpn2_node": {
+          "host": "198.18.10.10",
+          "mgmt_ip": "10.99.0.1",
+          "role": "entry",
+          "tag": "ru"
+        }
       }
     }
   },

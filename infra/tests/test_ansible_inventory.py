@@ -24,7 +24,8 @@ def render(extra_exits=''):
 def run(directory, text, *args):
     path = Path(directory) / 'config.yaml'
     path.write_text(text, encoding='utf-8')
-    env = dict(os.environ, VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
+    # Окружение пустое: настройки запуска из окружения инвентарь отдаёт узлам, эталону они не нужны.
+    env = dict(PATH=os.environ['PATH'], VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
                VPN2_STATE_DIR=str(Path(directory) / 'state'))
     return subprocess.run([sys.executable, 'infra/ansible/inventory.py', *args], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=30)

@@ -35,9 +35,7 @@ const cards = computed(() => {
       <h3>{{ c.title }}</h3>
       <div class="nums"><OverviewNum class="big" :value="c.value" :dur="900" :delay="1000 + i * 120" /><span class="tag">{{ c.share }}</span></div>
       <OverviewLine
-        :data="c.data" :w="200" :h="80" :fill="false" :band="c.band" :dots="c.band ?? []"
-        :live="c.live" :live-idx="1" :draw="[1000 + i * 120, 1000]"
-      />
+        :data="c.data" :w="200" :h="80" :fill="false" :band="c.band" :dots="c.band ?? []" :live="c.live" :live-idx="1" :draw="[1000 + i * 120, 1000]" />
     </div>
   </div>
 </template>

@@ -64,18 +64,9 @@ function allOff() {
     </div>
     <div class="svg2">
       <div
-        v-for="s in data?.all ?? []"
-        :key="s.id"
-        class="card sv"
-        :class="{ on: blocked.has(s.id) }"
-        role="switch"
-        tabindex="0"
-        :aria-checked="blocked.has(s.id)"
-        :aria-label="s.name"
-        @click="toggle(s.id)"
-        @keydown.enter.prevent="toggle(s.id)"
-        @keydown.space.prevent="toggle(s.id)"
-      >
+        v-for="s in data?.all ?? []" :key="s.id" class="card sv" :class="{ on: blocked.has(s.id) }" role="switch" tabindex="0"
+        :aria-checked="blocked.has(s.id)" :aria-label="s.name" @click="toggle(s.id)" @keydown.enter.prevent="toggle(s.id)"
+        @keydown.space.prevent="toggle(s.id)">
         <div class="st">
           <span class="lo">{{ s.name[0] }}</span><span class="tog" :class="{ on: blocked.has(s.id) }"><i /></span>
         </div>

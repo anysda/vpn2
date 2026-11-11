@@ -74,13 +74,7 @@ const titleId = computed(() => `${id}-t`)
     <div ref="box" class="clm bs" :class="{ wide }">
       <div class="mh">
         <h2>{{ title }}</h2>
-        <button
-          v-if="closable"
-          type="button"
-          class="xb"
-          aria-label="Закрыть"
-          @click="close"
-        >
+        <button v-if="closable" type="button" class="xb" aria-label="Закрыть" @click="close">
           <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>
@@ -88,31 +82,13 @@ const titleId = computed(() => `${id}-t`)
     </div>
   </BottomSheet>
   <Teleport v-else-if="mounted" to="body">
-    <div
-      class="ovl clm"
-      :class="{ on }"
-      @mousedown.self="close"
-    >
-      <div
-        ref="box"
-        class="card modal"
-        :class="{ wide }"
-        role="dialog"
-        aria-modal="true"
-        :aria-labelledby="titleId"
-        tabindex="-1"
-      >
+    <div class="ovl clm" :class="{ on }" @mousedown.self="close">
+      <div ref="box" class="card modal" :class="{ wide }" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1">
         <div class="mh">
           <h2 :id="titleId">
             {{ title }}
           </h2>
-          <button
-            v-if="closable"
-            type="button"
-            class="xb"
-            aria-label="Закрыть"
-            @click="close"
-          >
+          <button v-if="closable" type="button" class="xb" aria-label="Закрыть" @click="close">
             <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>

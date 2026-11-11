@@ -67,11 +67,10 @@ const opened = computed(() => props.nodes.find(n => n.tag === openTag.value) ?? 
 <template>
   <section ref="box" class="r3 ov-nodes" :style="{ '--n': Math.min(Math.max(nodes.length, 1), 5) }">
     <div
-      v-for="(c, i) in cards" :key="c.n.tag"
-      class="card node" :class="{ lit: c.h.lit && !c.n.disabled, off: c.n.disabled, full: c.n.tag === 'ru' && cards.length % 2 === 1 }"
-      role="button" tabindex="0" :aria-label="`${c.name}: подробности`" :data-tag="c.n.tag"
-      @click="openTag = c.n.tag" @keydown.enter.prevent="openTag = c.n.tag" @keydown.space.prevent="openTag = c.n.tag"
-    >
+      v-for="(c, i) in cards" :key="c.n.tag" class="card node"
+      :class="{ lit: c.h.lit && !c.n.disabled, off: c.n.disabled, full: c.n.tag === 'ru' && cards.length % 2 === 1 }" role="button" tabindex="0"
+      :aria-label="`${c.name}: подробности`" :data-tag="c.n.tag" @click="openTag = c.n.tag" @keydown.enter.prevent="openTag = c.n.tag"
+      @keydown.space.prevent="openTag = c.n.tag">
       <div class="nt">
         <div>{{ c.name }}<small>{{ c.sub }}</small></div>
         <span class="ar"><svg class="i" viewBox="0 0 24 24"><path d="M8 16L16 8M9 8h7v7" /></svg></span>
@@ -80,18 +79,14 @@ const opened = computed(() => props.nodes.find(n => n.tag === openTag.value) ?? 
         <OverviewNum class="big" :value="c.h.big" :dur="800" :delay="520 + i * 90 + 160" /><span>{{ c.h.bigLabel }}</span>
       </div>
       <OverviewLine
-        class="sp" :data="c.data" :w="200" :h="44" :pad="4"
-        :col="c.h.kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'"
-        :live="c.h.kind === 'ok' ? true : 'bad'" :live-idx="2 + i" :draw="[520 + i * 90 + 160, 800]"
-      />
+        class="sp" :data="c.data" :w="200" :h="44" :pad="4" :col="c.h.kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'"
+        :live="c.h.kind === 'ok' ? true : 'bad'" :live-idx="2 + i" :draw="[520 + i * 90 + 160, 800]" />
       <div class="ft">
         <span class="tag" :class="c.n.disabled ? '' : c.h.kind === 'ok' ? 'ok' : 'badt'">{{ c.n.disabled ? 'ВЫКЛ' : c.h.tag }}</span>
         <span class="m">{{ c.h.meta }}</span>
       </div>
     </div>
     <OverviewNodeModal
-      v-model:open="open" :node="opened" :nodes="nodes" :data="opened ? series[opened.tag] ?? [] : []"
-      :set-exit-disabled="setExitDisabled"
-    />
+      v-model:open="open" :node="opened" :nodes="nodes" :data="opened ? series[opened.tag] ?? [] : []" :set-exit-disabled="setExitDisabled" />
   </section>
 </template>

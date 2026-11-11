@@ -153,13 +153,7 @@ async function disableTotp() {
         <input class="in mono" readonly :value="totpSecret" aria-label="Секрет">
       </div>
       <label class="fld qrcode"><span>Введи 6-значный код из приложения</span><input
-        v-model="totpCode"
-        class="in mono"
-        placeholder="123 456"
-        inputmode="numeric"
-        autocomplete="one-time-code"
-        autofocus
-      ></label>
+        v-model="totpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code" autofocus></label>
       <div class="fld">
         <span /><code />
         <button type="button" class="pill" @click="cancelSetup">Отмена</button>
@@ -168,12 +162,7 @@ async function disableTotp() {
     </form>
   </div>
 
-  <UModal
-    v-if="!mobile"
-    v-model:open="disableConfirm"
-    title="Выключить 2FA?"
-    :ui="{ overlay: 'stg-ovl', content: 'card stg-modal' }"
-  >
+  <UModal v-if="!mobile" v-model:open="disableConfirm" title="Выключить 2FA?" :ui="{ overlay: 'stg-ovl', content: 'card stg-modal' }">
     <template #content>
       <form @submit.prevent="disableTotp">
         <div class="mh">
@@ -182,12 +171,7 @@ async function disableTotp() {
         </div>
         <label class="fl2"><span>Пароль</span><input v-model="disablePwd" class="in" type="password" autocomplete="current-password"></label>
         <label class="fl2"><span>Код 2FA (6 цифр)</span><input
-          v-model="disableTotpCode"
-          class="in mono"
-          placeholder="123 456"
-          inputmode="numeric"
-          autocomplete="one-time-code"
-        ></label>
+          v-model="disableTotpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code"></label>
         <div class="mf">
           <button type="button" class="pill" @click="disableConfirm = false">Отмена</button>
           <button type="submit" class="pill redw" :disabled="disableLoading">Выключить</button>
@@ -203,12 +187,7 @@ async function disableTotp() {
       </div>
       <label class="fl2"><span>Пароль</span><input v-model="disablePwd" class="in" type="password" autocomplete="current-password"></label>
       <label class="fl2"><span>Код 2FA (6 цифр)</span><input
-        v-model="disableTotpCode"
-        class="in mono"
-        placeholder="123 456"
-        inputmode="numeric"
-        autocomplete="one-time-code"
-      ></label>
+        v-model="disableTotpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code"></label>
       <div class="bsf">
         <button type="button" class="pill" @click="disableConfirm = false">Отмена</button>
         <button type="submit" class="pill redw" :disabled="disableLoading">Выключить</button>

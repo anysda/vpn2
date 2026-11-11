@@ -95,18 +95,8 @@ onUnmounted(() => {
   <Teleport to="#teleports">
     <div class="bso" :class="{ on: open }" aria-hidden="true" @click="emit('close')" />
     <div
-      ref="panel"
-      class="bsh"
-      :class="{ on: open }"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="label"
-      :aria-hidden="!open"
-      :inert="!open"
-      tabindex="-1"
-      @pointerdown.capture="onPress"
-      @click.capture="onClick"
-    >
+      ref="panel" class="bsh" :class="{ on: open }" role="dialog" aria-modal="true" :aria-label="label" :aria-hidden="!open" :inert="!open"
+      tabindex="-1" @pointerdown.capture="onPress" @click.capture="onClick">
       <slot />
       <div v-if="$slots.foot" class="bsf">
         <slot name="foot" />

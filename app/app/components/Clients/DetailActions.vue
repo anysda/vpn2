@@ -76,12 +76,7 @@ async function toggleFreeze() {
     <button type="button" class="pill" @click="askReissueAll">
       Перевыпустить все ключи
     </button>
-    <button
-      type="button"
-      class="pill"
-      :disabled="freezing"
-      @click="toggleFreeze"
-    >
+    <button type="button" class="pill" :disabled="freezing" @click="toggleFreeze">
       {{ detail.frozenManual ? 'Разморозить' : 'Заморозить' }}
     </button>
     <button type="button" class="pill red" @click="askRemoveClient">

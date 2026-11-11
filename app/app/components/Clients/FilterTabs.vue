@@ -40,10 +40,8 @@ onUnmounted(() => removeEventListener('resize', onResize))
 <template>
   <div ref="seg" class="seg gl">
     <NuxtLink
-      v-for="[f, label] in ([['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const)"
-      :key="f" :to="to(f)" replace role="button" :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }"
-      @keydown.space.prevent="press"
-    >
+      v-for="[f, label] in ([['all', 'Все'], ['exp', 'Истекают'], ['frz', 'Заморожены']] as const)" :key="f" :to="to(f)" replace role="button"
+      :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }" @keydown.space.prevent="press">
       {{ label }} <b>{{ counts[f] }}</b>
     </NuxtLink>
     <span ref="glideEl" class="glide now" />

@@ -92,8 +92,7 @@ async function apply(x: NodeMetric, disabled: boolean) {
         <span class="tag">{{ n.disabled ? 'ВЫКЛ' : `${n.activeDevices ?? 0} устр.` }}</span>
         <button
           type="button" class="tog" :class="{ on: !n.disabled }" role="switch" :aria-checked="!n.disabled"
-          :aria-label="`${name}: ${n.disabled ? 'включить' : 'выключить'}`" :disabled="busy" @click="onToggle"
-        ><i /></button>
+          :aria-label="`${name}: ${n.disabled ? 'включить' : 'выключить'}`" :disabled="busy" @click="onToggle"><i /></button>
       </div>
       <button v-else type="button" class="xb" aria-label="Закрыть" @click="emit('close')">
         <svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>

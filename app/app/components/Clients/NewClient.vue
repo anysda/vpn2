@@ -84,42 +84,16 @@ async function submit() {
 
 <template>
   <ClientsModal v-model:open="open" title="Новый клиент" closable>
-    <label class="fl2"><span>Имя</span><input
-      v-model="name"
-      class="in"
-      placeholder="Иван Иванов"
-      @keydown.enter="submit"
-    ></label>
+    <label class="fl2"><span>Имя</span><input v-model="name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
     <label class="fl2"><span>Срок действия</span><input
-      :value="expires"
-      class="in"
-      placeholder="ДД.ММ.ГГГГ"
-      inputmode="numeric"
-      maxlength="10"
-      @input="onExpiresInput"
-      @keydown.enter="submit"
-    ><small class="sub2" style="margin:0">пусто = бессрочно</small></label>
+      :value="expires" class="in" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" maxlength="10" @input="onExpiresInput" @keydown.enter="submit"><small class="sub2" style="margin:0">пусто = бессрочно</small></label>
     <div class="fl2">
       <span>Лимит девайсов</span>
       <div class="arow" style="margin:0">
-        <input
-          v-model="limit"
-          class="in"
-          type="number"
-          min="1"
-          style="width:120px"
-          aria-label="Лимит девайсов"
-          :disabled="unlimited"
-        >
+        <input v-model="limit" class="in" type="number" min="1" style="width:120px" aria-label="Лимит девайсов" :disabled="unlimited">
         <button
-          type="button"
-          class="pill"
-          :class="{ on: unlimited }"
-          title="Безлимитно"
-          aria-label="Безлимитно"
-          :aria-pressed="unlimited"
-          @click="unlimited = !unlimited"
-        >
+          type="button" class="pill" :class="{ on: unlimited }" title="Безлимитно" aria-label="Безлимитно" :aria-pressed="unlimited"
+          @click="unlimited = !unlimited">
           ∞
         </button>
       </div>
@@ -127,14 +101,8 @@ async function submit() {
     <div class="crw" style="margin-top:18px">
       <span>Фильтровать трафик (AdGuard)</span>
       <button
-        type="button"
-        class="tog"
-        :class="{ on: filterTraffic }"
-        role="switch"
-        :aria-checked="filterTraffic"
-        aria-label="Фильтровать трафик (AdGuard)"
-        @click="filterTraffic = !filterTraffic"
-      >
+        type="button" class="tog" :class="{ on: filterTraffic }" role="switch" :aria-checked="filterTraffic" aria-label="Фильтровать трафик (AdGuard)"
+        @click="filterTraffic = !filterTraffic">
         <i />
       </button>
     </div>
@@ -142,15 +110,8 @@ async function submit() {
       <span>Отправить доступ к боту</span>
       <span :title="canSendTg ? undefined : tgReason">
         <button
-          type="button"
-          class="tog"
-          :class="{ on: sendBot && canSendTg }"
-          role="switch"
-          :aria-checked="sendBot && canSendTg"
-          aria-label="Отправить доступ к боту"
-          :disabled="!canSendTg"
-          @click="sendBot = !sendBot"
-        >
+          type="button" class="tog" :class="{ on: sendBot && canSendTg }" role="switch" :aria-checked="sendBot && canSendTg"
+          aria-label="Отправить доступ к боту" :disabled="!canSendTg" @click="sendBot = !sendBot">
           <i />
         </button>
       </span>

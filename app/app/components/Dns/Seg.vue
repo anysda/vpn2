@@ -50,14 +50,8 @@ defineExpose({ glide })
 <template>
   <div ref="box" class="seg" :class="{ sm: small, gl: glided }" role="tablist">
     <button
-      v-for="o in options"
-      :key="o.value"
-      type="button"
-      role="tab"
-      :class="{ on: o.value === model }"
-      :aria-selected="o.value === model"
-      @click="click(o.value)"
-    >
+      v-for="o in options" :key="o.value" type="button" role="tab" :class="{ on: o.value === model }" :aria-selected="o.value === model"
+      @click="click(o.value)">
       {{ o.label }}
     </button>
     <span class="glide now" aria-hidden="true" />

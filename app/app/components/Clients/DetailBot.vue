@@ -50,19 +50,9 @@ function askUnlink() {
     <span>Бот · <b>{{ detail.tgLinked ? (detail.tgUsername ? `@${detail.tgUsername}` : 'привязан') : 'не привязан' }}</b></span>
     <div class="bta">
       <span :title="canSendTg ? undefined : tgReason">
-        <button
-          type="button"
-          class="pill w"
-          :disabled="!canSendTg || sendingPwd"
-          @click="sendPassword"
-        >Отправить доступ к боту</button>
+        <button type="button" class="pill w" :disabled="!canSendTg || sendingPwd" @click="sendPassword">Отправить доступ к боту</button>
       </span>
-      <button
-        v-if="detail.tgLinked"
-        type="button"
-        class="pill red"
-        @click="askUnlink"
-      >
+      <button v-if="detail.tgLinked" type="button" class="pill red" @click="askUnlink">
         Отозвать доступ к боту
       </button>
     </div>

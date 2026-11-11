@@ -141,12 +141,8 @@ onUnmounted(() => {
         </button>
         <nav ref="nav" class="tabs" :class="{ gl: glided }">
           <NuxtLink
-            v-for="t in TAB_PAGES"
-            :key="t.path"
-            :to="t.path"
-            :class="{ on: route.path === t.path }"
-            :aria-current="route.path === t.path ? 'page' : undefined"
-          >
+            v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }"
+            :aria-current="route.path === t.path ? 'page' : undefined">
             {{ t.label }}
           </NuxtLink>
           <span ref="glideEl" class="glide now" aria-hidden="true" />
@@ -155,24 +151,13 @@ onUnmounted(() => {
           <BotDeliveryStatus />
           <div class="pw">
             <button
-              type="button"
-              class="me"
-              :aria-expanded="pop === 'me'"
-              aria-haspopup="menu"
-              :aria-label="mobile ? `Меню @${name}` : undefined"
-              @click.stop="toggleMenu"
-            >
+              type="button" class="me" :aria-expanded="pop === 'me'" aria-haspopup="menu" :aria-label="mobile ? `Меню @${name}` : undefined"
+              @click.stop="toggleMenu">
               <i aria-hidden="true">{{ initial }}</i>
               <div>@{{ name }}</div>
               <svg class="i cv" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
             </button>
-            <div
-              class="card pop menu"
-              :class="{ on: pop === 'me' }"
-              role="menu"
-              :aria-hidden="pop !== 'me'"
-              :inert="pop !== 'me'"
-            >
+            <div class="card pop menu" :class="{ on: pop === 'me' }" role="menu" :aria-hidden="pop !== 'me'" :inert="pop !== 'me'">
               <NuxtLink v-for="l in PROFILE_LINKS" :key="l.to" :to="l.to" role="menuitem">
                 {{ l.label }}
               </NuxtLink>
@@ -187,12 +172,8 @@ onUnmounted(() => {
       <div ref="barEl" class="mbar">
         <nav ref="bar" class="tabs" :class="{ gl: barGlided }" aria-label="Разделы">
           <NuxtLink
-            v-for="t in TAB_PAGES"
-            :key="t.path"
-            :to="t.path"
-            :class="{ on: route.path === t.path }"
-            :aria-current="route.path === t.path ? 'page' : undefined"
-          >
+            v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }"
+            :aria-current="route.path === t.path ? 'page' : undefined">
             {{ t.label }}
           </NuxtLink>
           <span ref="barGlideEl" class="glide now" aria-hidden="true" />

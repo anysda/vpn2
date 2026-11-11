@@ -142,51 +142,24 @@ watch(error, (msg) => {
             <label class="fl2">
               <span>Логин</span>
               <input
-                ref="userInput"
-                v-model="state.username"
-                class="in"
-                required
-                :disabled="needsTotp || loading"
-                autocomplete="username"
-                autocapitalize="none"
-                spellcheck="false"
-              >
+                ref="userInput" v-model="state.username" class="in" required :disabled="needsTotp || loading" autocomplete="username"
+                autocapitalize="none" spellcheck="false">
             </label>
             <label class="fl2">
               <span>Пароль</span>
-              <input
-                v-model="state.password"
-                class="in"
-                type="password"
-                required
-                :disabled="needsTotp || loading"
-                autocomplete="current-password"
-              >
+              <input v-model="state.password" class="in" type="password" required :disabled="needsTotp || loading" autocomplete="current-password">
             </label>
             <label v-if="needsTotp" ref="codeField" class="fl2">
               <span>Код из аутентификатора</span>
               <input
-                ref="codeInput"
-                v-model="state.totpCode"
-                class="in mono"
-                required
-                placeholder="123 456"
-                inputmode="numeric"
-                enterkeyhint="done"
-                autocomplete="one-time-code"
-              >
+                ref="codeInput" v-model="state.totpCode" class="in mono" required placeholder="123 456" inputmode="numeric" enterkeyhint="done"
+                autocomplete="one-time-code">
             </label>
             <div v-if="error" class="al red" role="alert">
               {{ error }}
             </div>
             <div class="mf">
-              <button
-                v-if="needsTotp"
-                type="button"
-                class="pill"
-                :disabled="loading"
-                @click="reset"
-              >
+              <button v-if="needsTotp" type="button" class="pill" :disabled="loading" @click="reset">
                 Назад
               </button>
               <button type="submit" class="pill w lgo" :disabled="loading">

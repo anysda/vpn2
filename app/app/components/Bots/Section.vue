@@ -83,33 +83,12 @@ async function save() {
     </div>
     <div class="fg2">
       <label class="fld"><span>Token</span><input
-        v-model="newToken"
-        class="in mono"
-        :type="showToken ? 'text' : 'password'"
-        autocomplete="off"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        :placeholder="data?.bot_token_masked || ''"
-      ><button type="button" class="xb eye" aria-label="Показать" :aria-pressed="showToken" @click="showToken = !showToken"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" /></svg></button></label>
+        v-model="newToken" class="in mono" :type="showToken ? 'text' : 'password'" autocomplete="off" data-1p-ignore data-lpignore="true"
+        data-bwignore :placeholder="data?.bot_token_masked || ''"><button type="button" class="xb eye" aria-label="Показать" :aria-pressed="showToken" @click="showToken = !showToken"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" /></svg></button></label>
       <label class="fld"><span>Chat ID</span><input
-        v-model="newChatId"
-        class="in mono"
-        autocomplete="off"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        inputmode="numeric"
-      ></label>
+        v-model="newChatId" class="in mono" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore inputmode="numeric"></label>
       <label class="fld"><span>Никнейм админа бота</span><input
-        v-model="newAdminUsername"
-        class="in"
-        autocomplete="off"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        placeholder="@ник"
-      ></label>
+        v-model="newAdminUsername" class="in" autocomplete="off" data-1p-ignore data-lpignore="true" data-bwignore placeholder="@ник"></label>
       <div class="fld">
         <span />
         <button type="button" class="pill w" :disabled="!dirty || saving" @click="save">Сохранить</button>

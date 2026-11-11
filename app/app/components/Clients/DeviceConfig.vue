@@ -149,12 +149,7 @@ const ikeRows = computed(() => {
 </script>
 
 <template>
-  <ClientsModal
-    v-model:open="open"
-    :title="title"
-    :wide="kind === 'ike' || (kind === 'wg' && qrWide)"
-    closable
-  >
+  <ClientsModal v-model:open="open" :title="title" :wide="kind === 'ike' || (kind === 'wg' && qrWide)" closable>
     <template v-if="kind === 'wg'">
       <p class="mt">
         Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
@@ -162,12 +157,7 @@ const ikeRows = computed(() => {
       <div v-if="hasAAAA" class="al amb">
         Уберите у домена IPv6-запись (AAAA), иначе у клиентов на Linux VPN может не заработать.
       </div>
-      <img
-        :src="qrSrc"
-        alt="WireGuard QR"
-        class="qr"
-        @load="qrWide = ($event.target as HTMLImageElement).naturalWidth > 388"
-      >
+      <img :src="qrSrc" alt="WireGuard QR" class="qr" @load="qrWide = ($event.target as HTMLImageElement).naturalWidth > 388">
     </template>
 
     <template v-else-if="kind === 'ovpn'">
@@ -199,23 +189,12 @@ const ikeRows = computed(() => {
             <span>{{ r.k }}</span>
             <code>{{ r.sec && !showPass ? '•'.repeat(20) : r.v }}</code>
             <span class="r2">
-              <button
-                v-if="r.sec"
-                type="button"
-                class="xb"
-                aria-label="Показать"
-                :aria-pressed="showPass"
-                @click="showPass = !showPass"
-              >
+              <button v-if="r.sec" type="button" class="xb" aria-label="Показать" :aria-pressed="showPass" @click="showPass = !showPass">
                 <svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" /></svg>
               </button>
               <button
-                type="button"
-                class="xb"
-                aria-label="Копировать"
-                :style="copied === r.lab ? 'color:var(--green)' : undefined"
-                @click="copyField(r.lab, r.v, $event.currentTarget as HTMLElement)"
-              >
+                type="button" class="xb" aria-label="Копировать" :style="copied === r.lab ? 'color:var(--green)' : undefined"
+                @click="copyField(r.lab, r.v, $event.currentTarget as HTMLElement)">
                 <svg v-if="copied === r.lab" class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
                 <svg v-else class="i" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5" /><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" /></svg>
               </button>
@@ -230,13 +209,7 @@ const ikeRows = computed(() => {
         <button type="button" class="pill" :disabled="!creds" @click="copyAll">
           Копировать
         </button>
-        <a
-          v-if="creds?.hasCa"
-          class="pill"
-          :href="useDeviceAccess('ike').caCrtUrl()"
-          target="_blank"
-          rel="noopener"
-        >Скачать CA</a>
+        <a v-if="creds?.hasCa" class="pill" :href="useDeviceAccess('ike').caCrtUrl()" target="_blank" rel="noopener">Скачать CA</a>
       </template>
       <template v-else>
         <button type="button" class="pill" :disabled="!conf" @click="copyConf">
@@ -247,12 +220,7 @@ const ikeRows = computed(() => {
         </button>
       </template>
       <span :title="canSendTg ? undefined : tgReason">
-        <button
-          type="button"
-          class="pill w"
-          :disabled="!canSendTg || sending || (kind === 'ike' ? !creds : !conf)"
-          @click="sendTg"
-        >
+        <button type="button" class="pill w" :disabled="!canSendTg || sending || (kind === 'ike' ? !creds : !conf)" @click="sendTg">
           В TG
         </button>
       </span>

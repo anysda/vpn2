@@ -26,21 +26,14 @@ const title = computed(() => asking.value ? `Выключить ${name.value}?` 
   <BottomSheet v-if="mobile" :open="open" :label="title" @close="open = false">
     <div class="ov-sh">
       <OverviewNodeBody
-        v-model:asking="asking" :node="n" :nodes="nodes" :data="data" :open="open"
-        :set-exit-disabled="setExitDisabled" @close="open = false"
-      />
+        v-model:asking="asking" :node="n" :nodes="nodes" :data="data" :open="open" :set-exit-disabled="setExitDisabled" @close="open = false" />
     </div>
   </BottomSheet>
   <UModal
-    v-else
-    v-model:open="open" :title="title" :close="false"
-    :ui="{ overlay: 'ov-ovl', content: asking ? 'card ov-modal' : 'card ov-modal wide' }"
-  >
+    v-else v-model:open="open" :title="title" :close="false" :ui="{ overlay: 'ov-ovl', content: asking ? 'card ov-modal' : 'card ov-modal wide' }">
     <template #content>
       <OverviewNodeBody
-        v-model:asking="asking" :node="n" :nodes="nodes" :data="data" :open="open"
-        :set-exit-disabled="setExitDisabled" @close="open = false"
-      />
+        v-model:asking="asking" :node="n" :nodes="nodes" :data="data" :open="open" :set-exit-disabled="setExitDisabled" @close="open = false" />
     </template>
   </UModal>
 </template>

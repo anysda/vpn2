@@ -109,15 +109,8 @@ async function del() {
       <div class="rwt">
         <div v-for="r in data ?? []" :key="key(r)" :class="{ off: !r.enabled }">
           <button
-            type="button"
-            class="tog"
-            :class="{ on: r.enabled }"
-            role="switch"
-            :aria-checked="r.enabled"
-            :aria-label="r.domain"
-            :disabled="busy.has(key(r))"
-            @click="toggle(r)"
-          >
+            type="button" class="tog" :class="{ on: r.enabled }" role="switch" :aria-checked="r.enabled" :aria-label="r.domain"
+            :disabled="busy.has(key(r))" @click="toggle(r)">
             <i />
           </button>
           <span class="mono">{{ r.domain }}</span>

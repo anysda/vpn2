@@ -130,73 +130,30 @@ onBeforeUnmount(() => {
   <section class="rtop">
     <div class="card chk">
       <h3>Проверить адрес</h3>
-      <label class="inp big2"><svg
-        class="i"
-        viewBox="0 0 24 24"
-      ><circle
-        cx="11"
-        cy="11"
-        r="6.5"
-      /><path d="M16 16l4 4" /></svg><input
-        v-model="query"
-        :placeholder="EXAMPLE"
-        spellcheck="false"
-        aria-label="Проверить адрес"
-      ></label>
-      <div
-        :class="['chain', { demo: isExample }]"
-        data-testid="route-check"
-      >
+      <label class="inp big2"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg><input
+        v-model="query" :placeholder="EXAMPLE" spellcheck="false" aria-label="Проверить адрес"></label>
+      <div :class="['chain', { demo: isExample }]" data-testid="route-check">
         <template v-if="checked">
-          <div
-            class="ch"
-            style="--bar:var(--acc)"
-          >
+          <div class="ch" style="--bar:var(--acc)">
             {{ checked.query }}
-          </div><span class="ar2" /><div
-            class="ch"
-            style="--bar:var(--g2)"
-          >
+          </div><span class="ar2" /><div class="ch" style="--bar:var(--g2)">
             {{ checkRule }}
-          </div><span class="ar2" /><div
-            :class="['ch', { bad: checked.delay === null }]"
-            style="--bar:var(--acc)"
-          >
+          </div><span class="ar2" /><div :class="['ch', { bad: checked.delay === null }]" style="--bar:var(--acc)">
             {{ checkOut }}<b>{{ checked.delay ?? '—' }} мс</b>
           </div><span class="why">{{ WHY[checked.reason] }}</span>
         </template>
-        <span
-          v-else-if="checkError"
-          class="why"
-        >{{ checkError }}</span>
+        <span v-else-if="checkError" class="why">{{ checkError }}</span>
       </div>
     </div>
-    <form
-      class="card addr"
-      @submit.prevent="add"
-    >
+    <form class="card addr" @submit.prevent="add">
       <h3>Новое правило</h3>
       <label class="inp big2"><input
-        v-model="newValue"
-        placeholder="netflix.com / *.openai.com / 8.8.8.8/32"
-        spellcheck="false"
-        aria-label="Новое правило"
-      ></label>
+        v-model="newValue" placeholder="netflix.com / *.openai.com / 8.8.8.8/32" spellcheck="false" aria-label="Новое правило"></label>
       <div class="arow">
         <USelect
-          v-model="newOutbound"
-          :items="options"
-          variant="none"
-          trailing-icon="i-lucide-chevron-down"
-          class="sel"
-          :ui="{ base: 'sel-b', trailing: 'pe-[13px]', trailingIcon: 'size-[17px] text-(--t2)', value: 'text-(--t1)' }"
-          aria-label="Выход"
-        />
-        <button
-          type="submit"
-          class="pill w"
-          :disabled="!newValue.trim() || !newOutbound"
-        >
+          v-model="newOutbound" :items="options" variant="none" trailing-icon="i-lucide-chevron-down" class="sel"
+          :ui="{ base: 'sel-b', trailing: 'pe-[13px]', trailingIcon: 'size-[17px] text-(--t2)', value: 'text-(--t1)' }" aria-label="Выход" />
+        <button type="submit" class="pill w" :disabled="!newValue.trim() || !newOutbound">
           Добавить
         </button>
       </div>

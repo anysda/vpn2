@@ -81,10 +81,7 @@ function move(e: PointerEvent) {
       <span class="big"><OverviewNum :value="big" :dur="1300" :delay="120" /><small>ГБ</small></span>
       <span><span v-if="delta" class="tag">{{ delta }} <span class="q" :title="period === 'day' ? 'Сравнение с тем же временем вчера' : 'Сравнение с тем же временем неделю назад'">?</span></span></span>
     </div>
-    <OverviewLine
-      :data="gb" :w="W" :h="H" :pad="PAD" :band="band" :dots="band ?? []"
-      live :draw="[120, 1300]"
-    />
+    <OverviewLine :data="gb" :w="W" :h="H" :pad="PAD" :band="band" :dots="band ?? []" live :draw="[120, 1300]" />
     <span ref="rul" class="rul" :class="{ now }" />
     <span ref="tip" class="qtip wv" :class="{ now, r: flip }"><i /><div><b>{{ tipInfo.v }}</b> за {{ tipInfo.unit }}<small>{{ tipInfo.sub }}</small></div></span>
   </div>

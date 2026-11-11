@@ -70,10 +70,9 @@ watch(segs, (s) => {
       <svg ref="svg" viewBox="0 0 150 150" aria-hidden="true">
         <circle cx="75" cy="75" :r="R" fill="none" stroke="rgba(var(--fg),.04)" :stroke-width="W" />
         <circle
-          v-for="s in segs" :key="s.key" cx="75" cy="75" :r="R" fill="none" :stroke-width="W"
-          :stroke-dasharray="s.dash" :stroke-dashoffset="s.off" transform="rotate(-90 75 75)" stroke-linecap="butt"
-          :style="{ stroke: s.c, filter: s.glow ? 'drop-shadow(0 0 6px rgba(var(--glow),calc(.45*var(--gk))))' : undefined }"
-        />
+          v-for="s in segs" :key="s.key" cx="75" cy="75" :r="R" fill="none" :stroke-width="W" :stroke-dasharray="s.dash" :stroke-dashoffset="s.off"
+          transform="rotate(-90 75 75)" stroke-linecap="butt"
+          :style="{ stroke: s.c, filter: s.glow ? 'drop-shadow(0 0 6px rgba(var(--glow),calc(.45*var(--gk))))' : undefined }" />
       </svg>
       <div class="ct">
         <OverviewNum tag="b" :value="nodes.length ? ru(total) : '—'" :dur="1100" :delay="260" /><span>Мбит/с сейчас</span>

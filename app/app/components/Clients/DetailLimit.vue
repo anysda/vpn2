@@ -73,36 +73,19 @@ function limitInfinity() {
   <div class="crw">
     <span>Лимит девайсов<template v-if="detail.deviceLimit === null"> · <b>лимит снят (∞)</b></template></span>
     <div class="stp">
-      <button
-        type="button"
-        aria-label="Меньше"
-        :disabled="detail.deviceLimit !== null && detail.deviceLimit <= minLimit"
-        @click="limitMinus"
-      >
+      <button type="button" aria-label="Меньше" :disabled="detail.deviceLimit !== null && detail.deviceLimit <= minLimit" @click="limitMinus">
         −
       </button>
       <input
-        v-model="limDraft"
-        class="in"
-        placeholder="∞"
-        inputmode="numeric"
-        aria-label="Лимит девайсов"
-        @change="onLimitChange"
-        @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-      >
+        v-model="limDraft" class="in" placeholder="∞" inputmode="numeric" aria-label="Лимит девайсов" @change="onLimitChange"
+        @keydown.enter.prevent="($event.target as HTMLInputElement).blur()">
       <button type="button" aria-label="Больше" @click="limitPlus">
         +
       </button>
     </div>
     <button
-      type="button"
-      class="pill"
-      :class="{ on: detail.deviceLimit === null }"
-      title="Безлимитно"
-      aria-label="Безлимитно"
-      :aria-pressed="detail.deviceLimit === null"
-      @click="limitInfinity"
-    >
+      type="button" class="pill" :class="{ on: detail.deviceLimit === null }" title="Безлимитно" aria-label="Безлимитно"
+      :aria-pressed="detail.deviceLimit === null" @click="limitInfinity">
       ∞
     </button>
   </div>

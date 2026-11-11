@@ -57,12 +57,7 @@ function askRemoveDevice(dev: Device) {
   <div class="sub">
     <h3>Девайсы {{ detail.devices.length }} / {{ detail.deviceLimit ?? '∞' }}</h3>
     <span :title="limitReached ? 'Достигнут лимит девайсов' : undefined">
-      <button
-        type="button"
-        class="pill"
-        :disabled="limitReached"
-        @click="$emit('add')"
-      >+ девайс</button>
+      <button type="button" class="pill" :disabled="limitReached" @click="$emit('add')">+ девайс</button>
     </span>
   </div>
   <div class="devl scroll">
@@ -73,20 +68,10 @@ function askRemoveDevice(dev: Device) {
           <PanelDeviceName :name="dev.name">
             <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
           </PanelDeviceName>
-          <button
-            type="button"
-            class="ic"
-            aria-label="Перевыпустить ключи девайса"
-            @click="askReissueDevice(dev)"
-          >
+          <button type="button" class="ic" aria-label="Перевыпустить ключи девайса" @click="askReissueDevice(dev)">
             <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
           </button>
-          <button
-            type="button"
-            class="ic"
-            aria-label="Удалить девайс"
-            @click="askRemoveDevice(dev)"
-          >
+          <button type="button" class="ic" aria-label="Удалить девайс" @click="askRemoveDevice(dev)">
             <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
           </button>
         </div>
@@ -106,8 +91,7 @@ function askRemoveDevice(dev: Device) {
         <PanelDeviceName :name="dev.name">
           <small
             :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
-            :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeBinRu(dev.rxTotal)} ↑ ${sizeBinRu(dev.txTotal)}` : undefined"
-          >{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
+            :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeBinRu(dev.rxTotal)} ↑ ${sizeBinRu(dev.txTotal)}` : undefined">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
         </PanelDeviceName>
         <div class="kb">
           <button type="button" @click="$emit('config', dev, 'wg')">
@@ -120,21 +104,10 @@ function askRemoveDevice(dev: Device) {
             IKEv2
           </button>
           <button
-            type="button"
-            class="ic"
-            title="Перевыпустить ключи девайса"
-            aria-label="Перевыпустить ключи девайса"
-            @click="askReissueDevice(dev)"
-          >
+            type="button" class="ic" title="Перевыпустить ключи девайса" aria-label="Перевыпустить ключи девайса" @click="askReissueDevice(dev)">
             <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
           </button>
-          <button
-            type="button"
-            class="ic"
-            title="Удалить девайс"
-            aria-label="Удалить девайс"
-            @click="askRemoveDevice(dev)"
-          >
+          <button type="button" class="ic" title="Удалить девайс" aria-label="Удалить девайс" @click="askRemoveDevice(dev)">
             <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
           </button>
         </div>

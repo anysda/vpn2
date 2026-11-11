@@ -312,16 +312,8 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
                 Ничего не найдено
               </div>
               <PanelClientRow
-                v-for="c in rows"
-                v-else
-                :key="c.id"
-                :name="c.name"
-                :initials="initials(c.name)"
-                :selected="c.id === selectedId"
-                :mobile="mobile"
-                :dot="dot(c)"
-                @select="select(c.id)"
-              >
+                v-for="c in rows" v-else :key="c.id" :name="c.name" :initials="initials(c.name)" :selected="c.id === selectedId" :mobile="mobile"
+                :dot="dot(c)" @select="select(c.id)">
                 <template #icons><span v-if="c.filterTraffic" title="Фильтрация рекламы и трекеров включена"><svg class="i bi2" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.4-3.4 8.2-8 9-4.6-.8-8-4.6-8-9V6z" /></svg></span><span v-if="c.tgLinked" title="Привязан к Telegram"><svg class="i bi2" viewBox="0 0 24 24"><path d="M21 4L3 11l6 2.4M21 4l-3 16-6.5-4.7M21 4L9 13.4V19l2.6-3.2" /></svg></span></template>
                 <template #meta>{{ mobile ? meta(c) : tgText(c) }}</template>
                 <div v-if="mobile" class="crt">
@@ -334,8 +326,7 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
                   <span>{{ c.deviceCount }}/{{ c.deviceLimit ?? '∞' }}</span>
                   <span
                     class="t1"
-                    :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeBinRu(traffic(c.id)?.dayRx)} ↑ ${sizeBinRu(traffic(c.id)?.dayTx)}` : undefined"
-                  >{{ today(c) }}<small>всего {{ sizeBinRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
+                    :title="(traffic(c.id)?.dayRx ?? 0) + (traffic(c.id)?.dayTx ?? 0) > 0 ? `↓ ${sizeBinRu(traffic(c.id)?.dayRx)} ↑ ${sizeBinRu(traffic(c.id)?.dayTx)}` : undefined">{{ today(c) }}<small>всего {{ sizeBinRu((traffic(c.id)?.rxBytes ?? c.rxTotal) + (traffic(c.id)?.txBytes ?? c.txTotal)) }}</small></span>
                   <span>{{ c.preferredExit ? c.preferredExit.toUpperCase() : 'Авто' }}</span>
                   <span>
                     <span v-if="c.status === 'frozen'" class="tag access-tag">{{ c.accessStatus }}</span>
@@ -351,15 +342,8 @@ const meta = (c: Client) => `${c.deviceCount}/${c.deviceLimit ?? '∞'} · ${c.p
       </div>
       <div class="card cdet lit" data-testid="client-detail">
         <ClientsDetail
-          v-if="selectedId !== null && (!mobile || screen === 'client')"
-          :client-id="selectedId"
-          :traffic="traffic(selectedId)"
-          :exits="exitTags"
-          @changed="refreshClients"
-          @deleting="onDeleting"
-          @deleted="onRemoved"
-          @gone="onRemoved"
-        />
+          v-if="selectedId !== null && (!mobile || screen === 'client')" :client-id="selectedId" :traffic="traffic(selectedId)" :exits="exitTags"
+          @changed="refreshClients" @deleting="onDeleting" @deleted="onRemoved" @gone="onRemoved" />
         <div v-else class="more">
           Выбери клиента в списке
         </div>

@@ -75,14 +75,7 @@ onUnmounted(() => ro?.disconnect())
         <span><span class="dot" style="background:var(--red)" />Заблокированные</span>
       </div>
     </div>
-    <div
-      ref="plot"
-      class="plot"
-      :class="{ hv: hover }"
-      @pointerenter="enter"
-      @pointermove="pick"
-      @pointerleave="leave"
-    >
+    <div ref="plot" class="plot" :class="{ hv: hover }" @pointerenter="enter" @pointermove="pick" @pointerleave="leave">
       <svg :viewBox="`0 0 ${W} ${H}`" preserveAspectRatio="none" aria-hidden="true">
         <defs>
           <linearGradient id="dns-qg" x1="0" y1="0" x2="0" y2="1">
@@ -101,11 +94,8 @@ onUnmounted(() => ro?.disconnect())
       </svg>
       <span class="rul" :class="{ now: instant }" :style="{ transform: `translateX(${pos.x}px)` }" />
       <span
-        v-if="n && size.w"
-        class="qtip"
-        :class="{ now: instant, r: idx < n * 0.3 }"
-        :style="{ left: 0, top: 0, transform: `translate(${pos.x}px,${pos.y}px)` }"
-      >
+        v-if="n && size.w" class="qtip" :class="{ now: instant, r: idx < n * 0.3 }"
+        :style="{ left: 0, top: 0, transform: `translate(${pos.x}px,${pos.y}px)` }">
         <i /><div><b>{{ grp(q[idx] ?? 0) }}</b> запросов · <em>{{ grp(b[idx] ?? 0) }}</em> заблок.<small>{{ span(idx) }}</small></div>
       </span>
     </div>

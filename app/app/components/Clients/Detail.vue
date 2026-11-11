@@ -229,33 +229,18 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
       <PanelClientHeading
         :initials="initials(detail.name)"
         :subtitle="detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан'"
-        :status="tag?.text" :status-class="tag ? `access-tag ${tag.cls}` : undefined"
-      >
+        :status="tag?.text" :status-class="tag ? `access-tag ${tag.cls}` : undefined">
           <h2
-            ref="nameEl"
-            contenteditable="plaintext-only"
-            spellcheck="false"
-            title="Имя клиента"
-            @blur="saveName"
-            @keydown.enter.prevent="nameEl?.blur()"
-          />
+            ref="nameEl" contenteditable="plaintext-only" spellcheck="false" title="Имя клиента" @blur="saveName"
+            @keydown.enter.prevent="nameEl?.blur()" />
       </PanelClientHeading>
 
       <div class="kgrid">
         <div>
           <span>Истекает</span>
           <input
-            :value="expDraft"
-            class="in"
-            placeholder="бессрочно"
-            title="Пусто = бессрочно"
-            aria-label="Истекает"
-            inputmode="numeric"
-            maxlength="10"
-            @input="onExpInput"
-            @blur="saveExpiry"
-            @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
-          >
+            :value="expDraft" class="in" placeholder="бессрочно" title="Пусто = бессрочно" aria-label="Истекает" inputmode="numeric" maxlength="10"
+            @input="onExpInput" @blur="saveExpiry" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()">
         </div>
         <div><span>Создан</span><b>{{ created }}</b></div>
         <div>
@@ -285,30 +270,14 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
         </span>
       </div>
 
-      <ClientsDetailDevices
-        :detail="detail"
-        :confirm="confirm"
-        :reload="changed"
-        @add="newDevOpen = true"
-        @config="openConfig"
-      />
+      <ClientsDetailDevices :detail="detail" :confirm="confirm" :reload="changed" @add="newDevOpen = true" @config="openConfig" />
 
       <ClientsDetailActions
-        :detail="detail"
-        :confirm="confirm"
-        :reload="changed"
-        @deleting="(id, accepted) => emit('deleting', id, accepted)"
-        @accepted="onDeleteAccepted"
-      />
+        :detail="detail" :confirm="confirm" :reload="changed" @deleting="(id, accepted) => emit('deleting', id, accepted)"
+        @accepted="onDeleteAccepted" />
 
       <ClientsNewDevice v-model:open="newDevOpen" :client-id="detail.id" @added="changed" />
-      <ClientsDeviceConfig
-        v-if="cfgDevice"
-        v-model:open="cfgOpen"
-        :client-id="detail.id"
-        :device="cfgDevice"
-        :kind="cfgKind"
-      />
+      <ClientsDeviceConfig v-if="cfgDevice" v-model:open="cfgOpen" :client-id="detail.id" :device="cfgDevice" :kind="cfgKind" />
     </template>
 
     <ClientsAsk ref="asker" />

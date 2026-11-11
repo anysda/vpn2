@@ -182,15 +182,8 @@ const sections = computed(() => data.value
       <div class="ftab">
         <div v-for="l in s.rows" :key="l.url" :class="{ off: !l.enabled }">
           <button
-            type="button"
-            class="tog"
-            :class="{ on: l.enabled }"
-            role="switch"
-            :aria-checked="l.enabled"
-            :aria-label="l.name"
-            :disabled="busy.has(key(l, s.white))"
-            @click="toggle(l, s.white)"
-          >
+            type="button" class="tog" :class="{ on: l.enabled }" role="switch" :aria-checked="l.enabled" :aria-label="l.name"
+            :disabled="busy.has(key(l, s.white))" @click="toggle(l, s.white)">
             <i />
           </button>
           <div style="min-width:0">

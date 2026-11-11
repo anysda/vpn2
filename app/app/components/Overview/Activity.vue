@@ -150,17 +150,13 @@ function pick(m: Mode) {
     </div>
     <div
       ref="grid" class="agrid"
-      :style="geo ? { gridTemplateColumns: `22px repeat(${geo.N},${geo.c}px)`, gridTemplateRows: `14px repeat(7,${geo.c}px)` } : undefined"
-    >
+      :style="geo ? { gridTemplateColumns: `22px repeat(${geo.N},${geo.c}px)`, gridTemplateRows: `14px repeat(7,${geo.c}px)` } : undefined">
       <template v-if="geo">
         <span v-for="d in [0, 2, 4]" :key="`d${d}`" class="hd" :style="{ gridRow: d + 2, gridColumn: 1 }">{{ D[d] }}</span>
         <span v-for="m in geo.months" :key="`m${m.w}`" class="hh" :style="{ gridRow: 1, gridColumn: `${m.w + 2}/span 4` }">{{ m.m }}</span>
         <i
-          v-for="x in geo.cells" :key="x.day" :data-day="x.day"
-          :class="{ pk: x.day === geo.pk, sel: x.day === selDay }"
-          :style="{ '--a': x.a, gridRow: x.d + 2, gridColumn: x.w + 2 }"
-          @mouseenter="sel = x.day" @click="sel = x.day"
-        />
+          v-for="x in geo.cells" :key="x.day" :data-day="x.day" :class="{ pk: x.day === geo.pk, sel: x.day === selDay }"
+          :style="{ '--a': x.a, gridRow: x.d + 2, gridColumn: x.w + 2 }" @mouseenter="sel = x.day" @click="sel = x.day" />
       </template>
     </div>
     <div class="afoot">

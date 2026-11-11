@@ -103,15 +103,8 @@ async function saveSso() {
         <span v-if="ssoForm.enabled" class="tag ok"><span class="dot" style="background:var(--green)" />Включён</span>
         <span v-else class="tag">Выключен</span>
         <button
-          type="button"
-          role="switch"
-          class="tog"
-          :class="{ on: ssoForm.enabled }"
-          :aria-checked="ssoForm.enabled"
-          aria-label="Вход через Authentik"
-          :disabled="!ssoLoaded || ssoSaving"
-          @click="ssoForm.enabled = !ssoForm.enabled"
-        ><i /></button>
+          type="button" role="switch" class="tog" :class="{ on: ssoForm.enabled }" :aria-checked="ssoForm.enabled" aria-label="Вход через Authentik"
+          :disabled="!ssoLoaded || ssoSaving" @click="ssoForm.enabled = !ssoForm.enabled"><i /></button>
       </div>
     </div>
     <div v-if="ssoLoadError" role="alert" class="al red">
@@ -135,40 +128,24 @@ async function saveSso() {
       </div>
       <label class="fld"><span>client_id</span><input v-model="ssoForm.clientId" class="in mono" autocomplete="off"></label>
       <label class="fld"><span>client_secret</span><input
-        v-model="ssoForm.clientSecret"
-        class="in mono"
-        type="password"
-        autocomplete="new-password"
-        :placeholder="ssoSecretMasked ? 'оставить прежний' : ''"
-      ><small v-if="ssoSecretMasked" class="hl">сохранён: {{ ssoSecretMasked }}</small></label>
+        v-model="ssoForm.clientSecret" class="in mono" type="password" autocomplete="new-password"
+        :placeholder="ssoSecretMasked ? 'оставить прежний' : ''"><small v-if="ssoSecretMasked" class="hl">сохранён: {{ ssoSecretMasked }}</small></label>
       <label class="fld"><span>Кого пускать</span><input v-model="ssoForm.allowedSubs" class="in mono"><small class="hl">uuid пользователя Authentik (sub), через запятую; с логином панели: uuid:логин</small></label>
       <label class="fld"><span>Адрес возврата</span><input v-model="ssoForm.redirectUrl" class="in mono"><small class="hl">Его же впишите в Redirect URI провайдера в Authentik</small></label>
       <label class="fld"><span>Подпись кнопки</span><input v-model="ssoForm.label" class="in" placeholder="Authentik"></label>
       <div class="fld">
         <span>Бесшовный вход</span><code>сразу уводить в Authentik</code>
         <button
-          type="button"
-          role="switch"
-          class="tog"
-          :class="{ on: ssoForm.autoRedirect }"
-          :aria-checked="ssoForm.autoRedirect"
-          aria-label="Бесшовный вход"
-          @click="ssoForm.autoRedirect = !ssoForm.autoRedirect"
-        ><i /></button>
+          type="button" role="switch" class="tog" :class="{ on: ssoForm.autoRedirect }" :aria-checked="ssoForm.autoRedirect"
+          aria-label="Бесшовный вход" @click="ssoForm.autoRedirect = !ssoForm.autoRedirect"><i /></button>
       </div>
       <div class="fld">
         <span>Оставить вход по паролю</span>
         <code v-if="ssoForm.passwordLogin">аварийный вход /login?direct=1 работает</code>
         <code v-else style="color:var(--amber)">Без пароля аварийного входа /login?direct=1 нет. Выключается отдельным сохранением, после входа через Authentik.</code>
         <button
-          type="button"
-          role="switch"
-          class="tog"
-          :class="{ on: ssoForm.passwordLogin }"
-          :aria-checked="ssoForm.passwordLogin"
-          aria-label="Оставить вход по паролю"
-          @click="ssoForm.passwordLogin = !ssoForm.passwordLogin"
-        ><i /></button>
+          type="button" role="switch" class="tog" :class="{ on: ssoForm.passwordLogin }" :aria-checked="ssoForm.passwordLogin"
+          aria-label="Оставить вход по паролю" @click="ssoForm.passwordLogin = !ssoForm.passwordLogin"><i /></button>
       </div>
       <div class="fld">
         <span /><code />

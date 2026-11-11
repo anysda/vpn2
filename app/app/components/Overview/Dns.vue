@@ -35,10 +35,9 @@ watch(data, (d) => {
     <div class="ring">
       <svg ref="svg" viewBox="0 0 150 150" aria-hidden="true">
         <circle
-          v-for="i in N" :key="i" cx="75" cy="75" :r="R" fill="none" :stroke-width="W"
-          :stroke-dasharray="`${SEG - GAP} ${C - SEG + GAP}`" :stroke-dashoffset="-(i - 1) * SEG" transform="rotate(-90 75 75)"
-          :style="i === 1 ? { stroke: 'var(--acc)', filter: 'drop-shadow(0 0 6px rgba(var(--glow),calc(.5*var(--gk))))' } : { stroke: 'var(--g5)' }"
-        />
+          v-for="i in N" :key="i" cx="75" cy="75" :r="R" fill="none" :stroke-width="W" :stroke-dasharray="`${SEG - GAP} ${C - SEG + GAP}`"
+          :stroke-dashoffset="-(i - 1) * SEG" transform="rotate(-90 75 75)"
+          :style="i === 1 ? { stroke: 'var(--acc)', filter: 'drop-shadow(0 0 6px rgba(var(--glow),calc(.5*var(--gk))))' } : { stroke: 'var(--g5)' }" />
       </svg>
       <div class="ct">
         <OverviewNum tag="b" :value="ok ? `${ru(data!.blockRatePct, 1)}%` : '—'" :dur="900" :delay="380" /><span>заблокировано</span>

@@ -10,10 +10,7 @@ const message = defineModel<string>({ required: true })
     <textarea v-model="message" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
     <div class="arow">
       <span v-if="!configured" class="hint">Сначала настройте Telegram-бота</span>
-      <button
-        type="button" class="pill w" style="margin-left:auto"
-        :disabled="!configured || sending || !message.trim()" @click="$emit('send')"
-      >{{ buttonLabel }}</button>
+      <button type="button" class="pill w" style="margin-left:auto" :disabled="!configured || sending || !message.trim()" @click="$emit('send')">{{ buttonLabel }}</button>
     </div>
     <p v-if="result" class="hint" role="status">{{ result }}</p>
   </div>

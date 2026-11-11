@@ -155,24 +155,10 @@ async function deleteRule(rule: Route) {
 </script>
 
 <template>
-  <RoutesTop
-    :rules="rules"
-    :cells="cells"
-    :create="create"
-    @hit="hit = $event"
-    @added="onAdded"
-  />
+  <RoutesTop :rules="rules" :cells="cells" :create="create" @hit="hit = $event" @added="onAdded" />
 
-  <section
-    ref="board"
-    class="board"
-    :style="{ gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(min-content,1fr))` }"
-  >
-    <div
-      v-for="col in columns"
-      :key="col.tag"
-      :class="['card', 'ex', { badx: col.delay === null }]"
-    >
+  <section ref="board" class="board" :style="{ gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(min-content,1fr))` }">
+    <div v-for="col in columns" :key="col.tag" :class="['card', 'ex', { badx: col.delay === null }]">
       <div class="eh">
         <div>
           <b>{{ col.name }}</b><small>{{ col.sub }}</small>
@@ -180,43 +166,20 @@ async function deleteRule(rule: Route) {
         <span :class="['rt', rtc(col.delay)]">{{ col.delay ?? '—' }}<small>мс</small></span>
       </div>
       <div
-        v-for="cell in col.cells"
-        :key="cell.outbound"
-        :class="['cell', { empty: !rulesFor(cell.outbound).length, warp: cell.warp, over: over === cell.outbound }]"
-        :data-outbound="cell.outbound"
-        @dragover="onDragOver(cell.outbound, $event)"
-        @drop="onDrop(cell.outbound, $event)"
-      >
+        v-for="cell in col.cells" :key="cell.outbound"
+        :class="['cell', { empty: !rulesFor(cell.outbound).length, warp: cell.warp, over: over === cell.outbound }]" :data-outbound="cell.outbound"
+        @dragover="onDragOver(cell.outbound, $event)" @drop="onDrop(cell.outbound, $event)">
         <div class="cl">
           <span>{{ cell.label }}</span><i :class="rtc(cell.delay)">{{ cell.delay ?? '—' }} мс</i>
         </div>
         <div :class="['rcs', { scroll: rulesFor(cell.outbound).length > 4 }]">
           <div
-            v-for="rule in rulesFor(cell.outbound)"
-            :key="rule.id"
-            :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id, hit: hit === rule.id }]"
-            :data-id="rule.id"
-            :draggable="!mobile"
-            :role="mobile ? 'button' : undefined"
-            :tabindex="mobile ? 0 : undefined"
-            :aria-haspopup="mobile ? 'dialog' : undefined"
-            @dragstart="onDragStart(rule, $event)"
-            @dragend="onDragEnd"
-            @click="onRuleTap(rule)"
-            @keydown.enter="onRuleTap(rule)"
-          >
-            <span class="rtx">{{ rule.value }}</span><button
-              class="x"
-              type="button"
-              aria-label="Удалить"
-              @click="deleteRule(rule)"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.4"
-              ><path d="M6 6l12 12M18 6L6 18" /></svg>
+            v-for="rule in rulesFor(cell.outbound)" :key="rule.id"
+            :class="['rc', { drag: dragging === rule.id, new: fresh === rule.id, hit: hit === rule.id }]" :data-id="rule.id" :draggable="!mobile"
+            :role="mobile ? 'button' : undefined" :tabindex="mobile ? 0 : undefined" :aria-haspopup="mobile ? 'dialog' : undefined"
+            @dragstart="onDragStart(rule, $event)" @dragend="onDragEnd" @click="onRuleTap(rule)" @keydown.enter="onRuleTap(rule)">
+            <span class="rtx">{{ rule.value }}</span><button class="x" type="button" aria-label="Удалить" @click="deleteRule(rule)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>
           </div>
         </div>
@@ -226,12 +189,7 @@ async function deleteRule(rule: Route) {
   <p class="hint">
     {{ mobile ? 'Нажми на правило, чтобы перенести его на другой выход.' : 'Перетаскивай правила между выходами.' }} Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
   </p>
-  <BottomSheet
-    v-if="mobile"
-    :open="!!pickedRule"
-    label="Перенос правила"
-    @close="picked = null"
-  >
+  <BottomSheet v-if="mobile" :open="!!pickedRule" label="Перенос правила" @close="picked = null">
     <template v-if="sheetRule">
       <h2 class="rsh">
         {{ sheetRule.value }}
@@ -240,20 +198,11 @@ async function deleteRule(rule: Route) {
         Выход
       </p>
       <button
-        v-for="c in cells"
-        :key="c.outbound"
-        type="button"
-        :class="['ro', { on: c.outbound === sheetRule.outbound, warp: c.warp }]"
-        :aria-pressed="c.outbound === sheetRule.outbound"
-        @click="pickOutbound(c.outbound)"
-      >
+        v-for="c in cells" :key="c.outbound" type="button" :class="['ro', { on: c.outbound === sheetRule.outbound, warp: c.warp }]"
+        :aria-pressed="c.outbound === sheetRule.outbound" @click="pickOutbound(c.outbound)">
         <span>{{ c.name }}</span><i :class="rtc(c.delay)">{{ c.delay ?? '—' }} мс</i>
       </button>
-      <button
-        type="button"
-        class="pill red rdel"
-        @click="deletePicked"
-      >
+      <button type="button" class="pill red rdel" @click="deletePicked">
         Удалить
       </button>
     </template>

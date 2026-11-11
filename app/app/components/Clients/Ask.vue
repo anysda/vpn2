@@ -44,13 +44,7 @@ defineExpose({ confirm })
       <button type="button" class="pill" @click="askOpen = false">
         Отмена
       </button>
-      <button
-        type="button"
-        class="pill"
-        :class="ask?.danger ? 'redw' : 'w'"
-        :disabled="askBusy"
-        @click="runAsk"
-      >
+      <button type="button" class="pill" :class="ask?.danger ? 'redw' : 'w'" :disabled="askBusy" @click="runAsk">
         {{ ask?.act }}
       </button>
     </div>

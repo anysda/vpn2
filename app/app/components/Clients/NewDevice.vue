@@ -37,12 +37,7 @@ async function submit() {
 
 <template>
   <ClientsModal v-model:open="open" title="Новый девайс" closable>
-    <label class="fl2"><span>Название девайса</span><input
-      v-model="name"
-      class="in"
-      placeholder="напр. iPhone"
-      @keydown.enter="submit"
-    ></label>
+    <label class="fl2"><span>Название девайса</span><input v-model="name" class="in" placeholder="напр. iPhone" @keydown.enter="submit"></label>
     <div class="mf">
       <button type="button" class="pill" @click="open = false">
         Отмена

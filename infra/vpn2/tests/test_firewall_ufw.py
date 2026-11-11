@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vpn2 import firewall
+from vpn2 import entryvpn, firewall
 from vpn2.firewall import FirewallError
 
 HEADER = "Added user rules (see 'ufw status' for running firewall):"
@@ -124,7 +124,7 @@ def test_reconcile_non_ascii_comment_and_alias():
     assert old not in ufw.rules and manual in ufw.rules
     dns_old = DNS + ['comment', 'wireguard → AdGuard DNS']
     ufw = FakeUfw([dns_old, ['allow', '53/tcp', 'comment', 'manual DNS']])
-    rules = firewall.dns_rules('192.0.2.53', ['203.0.113.0/24'])
+    rules = entryvpn.dns_rules('192.0.2.53', ['203.0.113.0/24'])
     added, deleted = firewall.ufw_reconcile('wireguard → AdGuard DNS', rules, run=ufw)
     assert len(added) == 2 and len(deleted) == 1
     assert dns_old not in ufw.rules and len(ufw.rules) == 3
@@ -180,14 +180,14 @@ def test_reconcile_timeout_is_firewall_error():
 
 
 def test_dns_rules():
-    assert firewall.dns_rules('192.0.2.53', []) == []
-    assert firewall.dns_rules('192.0.2.53', ['198.51.100.0/24', '203.0.113.0/24']) == [
+    assert entryvpn.dns_rules('192.0.2.53', []) == []
+    assert entryvpn.dns_rules('192.0.2.53', ['198.51.100.0/24', '203.0.113.0/24']) == [
         'proto udp from 198.51.100.0/24 to 192.0.2.53 port 53',
         'proto tcp from 198.51.100.0/24 to 192.0.2.53 port 53',
         'proto udp from 203.0.113.0/24 to 192.0.2.53 port 53',
         'proto tcp from 203.0.113.0/24 to 192.0.2.53 port 53']
     ufw = FakeUfw([DNS + ['comment', 'DNS']])
-    rules = firewall.dns_rules('192.0.2.53', ['198.51.100.0/24'])
+    rules = entryvpn.dns_rules('192.0.2.53', ['198.51.100.0/24'])
     assert firewall.ufw_reconcile('DNS', rules, run=ufw) == (
         ['allow proto tcp from 198.51.100.0/24 to 192.0.2.53 port 53'], [])
 
@@ -218,7 +218,6 @@ def test_ufw_chains_lost(tmp_path):
     assert firewall.ufw_chains_lost(conf=conf, run=iptables(chain=False))
     assert not firewall.ufw_chains_lost(conf=conf, run=iptables())
     assert not firewall.ufw_chains_lost(conf=conf, run=iptables(jump=False))
-    assert firewall.ufw_chains_lost(conf=conf, require_input_jump=True, run=iptables(jump=False))
     assert firewall.ufw_chains_lost(conf=conf, run=missing)
     conf.write_text('ENABLED=no\n')
     assert not firewall.ufw_chains_lost(conf=conf, run=iptables(chain=False))

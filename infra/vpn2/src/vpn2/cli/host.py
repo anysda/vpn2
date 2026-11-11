@@ -314,7 +314,6 @@ def main(argv):
     item = sub.add_parser('exit-config')
     item.add_argument('--template', required=True)
     item.set_defaults(run=lambda args: exitnode.configure(os.environ, args.template, _say))
-    sub.add_parser('exit-hy2hop').set_defaults(run=lambda args: exitnode.hy2hop(os.environ, _say))
     item = sub.add_parser('sshd')
     item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
     item.set_defaults(run=lambda args: sshd(args.password))

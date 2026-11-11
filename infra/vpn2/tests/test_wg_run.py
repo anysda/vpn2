@@ -52,11 +52,10 @@ def test_run_defaults_and_str_input():
     assert (result.returncode, result.stdout) == (0, 'привет'.encode())
 
 
-@pytest.mark.parametrize(('func', 'name'), [(wg.genkey, 'genkey'), (wg.genpsk, 'genpsk')])
-def test_genkey_genpsk(func, name):
+def test_genkey():
     fake = Fake(done(out=A + '\n'), done(out=A + '\n'))
-    assert func(run=fake) == func(run=fake) == A
-    assert fake.calls[0][0] == ['wg', name]
+    assert wg.genkey(run=fake) == wg.genkey(run=fake) == A
+    assert fake.calls[0][0] == ['wg', 'genkey']
 
 
 def test_genkey_refusals():
@@ -67,7 +66,7 @@ def test_genkey_refusals():
     with pytest.raises(WgUnchecked, match='нет wg'):
         wg.genkey(run=Fake(FileNotFoundError()))
     with pytest.raises(WgUnchecked, match='не ответил за 30 с'):
-        wg.genpsk(run=Fake(subprocess.TimeoutExpired('wg', 30)))
+        wg.genkey(run=Fake(subprocess.TimeoutExpired('wg', 30)))
 
 
 def test_pubkey_private_only_via_stdin():
@@ -227,8 +226,8 @@ def test_transfer_not_a_number():
 
 @pytest.mark.skipif(shutil.which('wg') is None, reason='нет wg')
 def test_real_wg_keys():
-    private, psk = wg.genkey(), wg.genpsk()
-    assert wg.valid_key(private, nonzero=True) and wg.valid_key(psk, nonzero=True)
+    private = wg.genkey()
+    assert wg.valid_key(private, nonzero=True)
     assert wg.pubkey(private) == wg.pubkey(private) != private
     with pytest.raises(WgError):
         wg.pubkey('garbage')

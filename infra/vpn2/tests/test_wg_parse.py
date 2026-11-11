@@ -159,39 +159,3 @@ def test_addresses_wg_quick_rules():
     # нет секции: wg-quick Address не берёт
     assert wg.addresses('Address = 1.2.3.4/32\n') == []
     assert wg.addresses('[Interface]\nAddrеss = 1.2.3.4/32\n') == []
-
-
-WGCF = f'''[Interface]
-PrivateKey = {S}
-Address = 172.16.0.2/32
-Address = 2001:db8::2/128
-DNS = 1.1.1.1
-MTU = 1280
-[Peer]
-PublicKey = {A}
-AllowedIPs = 0.0.0.0/0
-Endpoint = engage.example.net:2408
-'''
-
-
-def test_profile_wgcf():
-    assert wg.profile(WGCF) == {'private_key': S, 'address': '172.16.0.2', 'public_key': A,
-                                'endpoint': ('engage.example.net', '2408')}
-    assert wg.profile(WGCF) == wg.profile(WGCF)
-
-
-def test_profile_forms_old_awk_broke_on():
-    text = WGCF.replace(' = ', '=').replace('PrivateKey', 'privatekey').replace('\n', '\r\n')
-    assert wg.profile(text) == wg.profile(WGCF)
-    one_line = '[Interface]\nAddress = 2001:db8::2/128, 172.16.0.2/32\n[Peer]\nEndpoint = [2001:db8::1]:2408 # c\n'
-    assert wg.profile(one_line) == {'private_key': None, 'address': '172.16.0.2', 'public_key': None,
-                                    'endpoint': ('[2001:db8::1]', '2408')}
-
-
-def test_profile_empty_and_broken():
-    empty = {'private_key': None, 'address': None, 'public_key': None, 'endpoint': None}
-    assert wg.profile('') == empty
-    assert wg.profile('PrivateKey\nAddress 1.2.3.4\n# Endpoint = a:1\n') == empty
-    assert wg.profile('Address = 2001:db8::2/128\n')['address'] is None
-    assert wg.profile('Endpoint = nohost\n')['endpoint'] == ('', 'nohost')
-    assert wg.profile('Эндпоинт = а:1\n') == empty

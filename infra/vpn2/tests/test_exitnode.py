@@ -264,31 +264,3 @@ def test_configure_is_idempotent_and_applies_bandwidth(node, tmp_path):
     assert 'up_mbps' not in by_tag['hy2-mgmt-in']
     with pytest.raises(ValueError, match='PUB_IP'):
         exitnode.configure({**ENV, 'PUB_IP': ''}, TEMPLATE, node.say, **args)
-
-
-def test_hop_settings_defaults_and_overrides():
-    assert exitnode.hop_settings(ENV) == (True, exitnode.HOP_DEFAULTS, {'direct': 443, 'warp': 444, 'mgmt': 445})
-    enabled, ranges, _ = exitnode.hop_settings({**ENV, 'HY2_HOP_ENABLED': '0', 'HY2_HOP_WARP': '40000-40010'})
-    assert not enabled and ranges['warp'] == '40000-40010' and ranges['direct'] == exitnode.HOP_DEFAULTS['direct']
-
-
-def test_hy2hop_writes_checks_and_loads_table(node, tmp_path):
-    conf = tmp_path / 'hy2hop.nft'
-    assert exitnode.hy2hop(ENV, node.say, conf=conf, run=node.run)
-    text = conf.read_text()
-    assert 'table inet vpn2_hy2hop' in text and '20000-24999' in text and '443' in text
-    assert node.calls == [['nft', '-c', '-f', str(conf)], ['nft', '-f', str(conf)]]
-    # Повтор файл не трогает, но таблицу грузит: после перезагрузки nft её могло не быть.
-    node.calls.clear()
-    assert not exitnode.hy2hop(ENV, node.say, conf=conf, run=node.run)
-    assert node.calls[-1] == ['nft', '-f', str(conf)]
-
-
-def test_hy2hop_disabled_removes_table_and_file(node, tmp_path):
-    conf = tmp_path / 'hy2hop.nft'
-    exitnode.hy2hop(ENV, node.say, conf=conf, run=node.run)
-    node.calls.clear()
-    assert exitnode.hy2hop({**ENV, 'HY2_HOP_ENABLED': '0'}, node.say, conf=conf, run=node.run)
-    assert not conf.exists()
-    assert node.calls == [['nft', 'delete', 'table', 'inet', 'vpn2_hy2hop']]
-    assert not exitnode.hy2hop({**ENV, 'HY2_HOP_ENABLED': '0'}, node.say, conf=conf, run=node.run)

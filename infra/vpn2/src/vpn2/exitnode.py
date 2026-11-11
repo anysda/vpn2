@@ -14,7 +14,6 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from vpn2 import firewall
 from vpn2.watchdog import hy2_bandwidth
 
 WGCF = '/usr/local/bin/wgcf'
@@ -31,9 +30,6 @@ WARP_PLACEHOLDER = {
     'WGCF_RESERVED_JSON': '[0,0,0]',
 }
 WARP_PEER_FALLBACK = '162.159.192.1'
-CHANNELS = ('direct', 'warp', 'mgmt')
-HOP_DEFAULTS = {'direct': '20000-24999', 'warp': '25000-29999', 'mgmt': '30000-30999'}
-HY2HOP_CONF = '/etc/nftables-hy2hop.conf'
 
 
 def _output(argv, run, **kwargs):
@@ -393,43 +389,3 @@ def configure(env, template, say, *, etc='/etc/anysda', box='/etc/sing-box', run
     values['HY2_BANDWIDTH_FIELDS'] = bandwidth_fragment(env)
     changed = apply_config(box, render_config(Path(template).read_text(), values), run)
     return changed or created or issued
-
-
-def hop_settings(env):
-    """(включена ли смена портов, диапазоны каналов, порты каналов) из окружения узла.
-
-    Без ports.hy2_hop в config.yaml окружение их не несёт - умолчания здесь,
-    как HY2_HOP_DEFAULTS для стороны entry.
-    """
-    ranges = {channel: env.get(f'HY2_HOP_{channel.upper()}') or HOP_DEFAULTS[channel]
-              for channel in CHANNELS}
-    listen = {channel: int(env[f'HY2_{channel.upper()}_PORT']) for channel in CHANNELS}
-    return (env.get('HY2_HOP_ENABLED') or '1') == '1', ranges, listen
-
-
-def hy2hop(env, say, *, conf=HY2HOP_CONF, run=subprocess.run):
-    """Таблица перенаправления диапазонов смены портов hy2; True - файл изменён.
-
-    Outbound entry раз в HY2_HOP_INTERVAL переходит на другой порт диапазона
-    своего канала, экзит перенаправляет диапазон на порт канала: фильтр
-    провайдера по 5-tuple режет один поток, а не канал. Таблица своя, таблицы
-    ufw и docker не трогаются.
-    """
-    enabled, ranges, listen = hop_settings(env)
-    conf = Path(conf)
-    if not enabled:
-        run(['nft', 'delete', 'table', 'inet', 'vpn2_hy2hop'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        existed = conf.is_file()
-        conf.unlink(missing_ok=True)
-        return existed
-    say('смена портов hy2: ' + ', '.join(f'{channel} {ranges[channel]}' for channel in CHANNELS))
-    text = firewall.hy2hop_table(
-        {channel: tuple(int(edge) for edge in ranges[channel].split('-')) for channel in CHANNELS},
-        listen)
-    changed = not conf.is_file() or conf.read_text() != text
-    if changed:
-        conf.write_text(text)
-    run(['nft', '-c', '-f', str(conf)], check=True)
-    run(['nft', '-f', str(conf)], check=True)
-    return changed

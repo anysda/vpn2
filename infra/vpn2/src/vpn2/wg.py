@@ -164,28 +164,6 @@ def addresses(text):
     return found
 
 
-def profile(text):
-    """Клиентский профиль (wgcf): {private_key, address, public_key, endpoint}; нет - None.
-
-    Имена в любом регистре, пробелы вокруг `=` любые или никаких, до первого #. Ключи берутся
-    последние, address - первый IPv4 без маски, endpoint - (host, port) по последнему `:`.
-    """
-    found = {}
-    for row in text.split('\n'):
-        name, eq, value = row.split('#', 1)[0].partition('=')
-        if eq:
-            found.setdefault(_lower(name.strip(SPACE)), []).append(value.strip(SPACE))
-    address = next((item.partition('/')[0] for value in found.get('address', [])
-                    for item in re.split(r'[, \t]+', value) if item and ':' not in item), None)
-    endpoint = None
-    if found.get('endpoint'):
-        host, _, port = found['endpoint'][-1].replace(' ', '').rpartition(':')
-        endpoint = (host, port)
-    last = {name: found[name][-1] for name in ('privatekey', 'publickey') if name in found}
-    return {'private_key': last.get('privatekey'), 'address': address,
-            'public_key': last.get('publickey'), 'endpoint': endpoint}
-
-
 
 
 # Шаг 2: внешний wg, рендер и вывод `wg show`.
@@ -226,7 +204,7 @@ def _call(argv, runner, *, data=None, timeout=TIMEOUT, name=None):
 
 
 def _tool(argv, runner, *, data=None):
-    """Вывод `wg genkey|genpsk|pubkey` без пробелов по краям; отказ - WgError без ключа в тексте."""
+    """Вывод `wg genkey|pubkey` без пробелов по краям; отказ - WgError без ключа в тексте."""
     done = _call(argv, runner, data=data)
     if done.returncode:
         raise WgError(f'{argv[0]} {argv[1]}: код {done.returncode}')
@@ -239,11 +217,6 @@ def _tool(argv, runner, *, data=None):
 def genkey(*, run=run):
     """Новый приватный ключ (`wg genkey`)."""
     return _tool(['wg', 'genkey'], run)
-
-
-def genpsk(*, run=run):
-    """Новый общий ключ (`wg genpsk`)."""
-    return _tool(['wg', 'genpsk'], run)
 
 
 def pubkey(private, *, run=run):

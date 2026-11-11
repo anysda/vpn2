@@ -1,26 +1,20 @@
-"""NFT block of vpn2.firewall: text generators, wrappers and the guard snapshot."""
+"""NFT block of vpn2.firewall: text generators and nftables.conf."""
 import json
 import os
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
+import jinja2
 import pytest
 
 from vpn2 import firewall
-from vpn2.firewall import FirewallError
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'firewall'
 GOOG = Path(__file__).parents[2] / 'lib' / 'google-prefixes.json'
-RANGES = {'DIRECT': (20000, 24999), 'WARP': (25000, 29999), 'MGMT': (30000, 30999)}
+HY2HOP = Path(__file__).parents[2] / 'ansible/roles/exit/templates/nftables-hy2hop.conf.j2'
 
 
 def fixture(name):
     return (FIXTURES / name).read_text()
-
-
-def done(stdout='', code=0, stderr=''):
-    return SimpleNamespace(returncode=code, stdout=stdout, stderr=stderr)
 
 
 # --- generators -------------------------------------------------------------
@@ -87,91 +81,21 @@ def test_load_google_prefixes_rejects_bad_file(tmp_path, body):
         firewall.load_google_prefixes(path)
 
 
+def hy2hop(direct, warp, mgmt):
+    """Шаблон роли exit с портами каналов и диапазонами по умолчанию."""
+    env = jinja2.Environment(trim_blocks=True, keep_trailing_newline=True)
+    return env.from_string(HY2HOP.read_text()).render(
+        vpn2_env={'HY2_DIRECT_PORT': direct, 'HY2_WARP_PORT': warp, 'HY2_MGMT_PORT': mgmt},
+        exit_hop_direct='20000-24999', exit_hop_warp='25000-29999', exit_hop_mgmt='30000-30999')
+
+
 def test_hy2hop_table_plain_and_inside():
-    plain = firewall.hy2hop_table(RANGES, {'DIRECT': 443, 'WARP': 8443, 'MGMT': 30500})
+    plain = hy2hop('443', '8443', '30500')
     assert plain == fixture('hy2hop_plain.nft')
     assert 'udp dport 30000-30999 udp dport != 30500 redirect to :30500' in plain
-    inside = firewall.hy2hop_table(RANGES, {'DIRECT': 20100, 'WARP': 18443, 'MGMT': 8444})
+    inside = hy2hop('20100', '18443', '8444')
     assert inside == fixture('hy2hop_inside.nft')
     assert 'udp dport 20000-24999 udp dport != 20100 redirect to :20100' in inside
-    assert firewall.hy2hop_table(RANGES, {'DIRECT': 20100, 'WARP': 18443, 'MGMT': 8444}) == inside
-
-
-# --- wrappers over nft ------------------------------------------------------
-
-class Recorder:
-    """run double: answers by the first matching prefix, records every call."""
-
-    def __init__(self, answers=(), default=None):
-        self.answers = list(answers)
-        self.default = default or done()
-        self.calls = []
-
-    def __call__(self, argv, input=None, **_):  # noqa: A002
-        self.calls.append((list(argv), input))
-        for prefix, reply in self.answers:
-            if list(argv[:len(prefix)]) == prefix:
-                if isinstance(reply, BaseException):
-                    raise reply
-                return reply
-        return self.default
-
-    def argvs(self):
-        return [argv for argv, _ in self.calls]
-
-
-def test_nft_list_table():
-    run = Recorder([(['nft', 'list', 'table', 'inet', 'a'], done('table inet a {\n}\n'))],
-                   default=done(code=1, stderr='No such file or directory'))
-    assert firewall.nft_list_table('a', run=run) == 'table inet a {\n}\n'
-    assert firewall.nft_list_table('gone', run=run) is None
-    assert firewall.nft_list_table('a', run=Recorder([(['nft'], FileNotFoundError('nft'))])) is None
-    assert firewall.nft_list_table('a', 'ip', run=run) is None
-    assert run.argvs()[-1] == ['nft', 'list', 'table', 'ip', 'a']
-
-
-def test_nft_delete_table_never_raises():
-    assert firewall.nft_delete_table('a', run=Recorder()) is True
-    assert firewall.nft_delete_table('a', run=Recorder(default=done(code=1))) is False
-    assert firewall.nft_delete_table('a', run=Recorder([(['nft'], FileNotFoundError('nft'))])) is False
-    assert firewall.nft_delete_table('a', run=Recorder([(['nft'], subprocess.TimeoutExpired('nft', 1))])) is False
-    run = Recorder()
-    firewall.nft_delete_table('a', 'ip', run=run)
-    assert run.argvs() == [['nft', 'delete', 'table', 'ip', 'a']]
-
-
-def ruleset(*rules):
-    return json.dumps({'nftables': [{'metainfo': {}}, {'table': {'name': 'ytzapret'}}]
-                       + [{'rule': {'expr': list(expr)}} for expr in rules]})
-
-
-def counted(packets, queue):
-    return [{'match': {}}, {'counter': {'packets': packets, 'bytes': 1}}, {'queue': {'num': queue}}]
-
-
-def test_queued_packets_sums_counters_of_queue_rules():
-    out = ruleset(counted(5, 200), counted(7, 200), counted(100, 201),
-                  [{'counter': {'packets': 9, 'bytes': 1}}, {'accept': None}])
-    run = Recorder(default=done(out))
-    assert firewall.queued_packets('ytzapret', 200, run=run) == 12
-    assert firewall.queued_packets('ytzapret', 201, run=run) == 100
-    assert run.argvs()[0] == ['nft', '-j', 'list', 'table', 'inet', 'ytzapret']
-
-
-@pytest.mark.parametrize('out', [
-    ruleset(),
-    ruleset([{'queue': {'num': 200}}]),         # queue rule without a counter
-    ruleset(counted(3, 201)),                   # other queue
-    '{"nothing": 1}', 'not json', '',
-])
-def test_queued_packets_without_counters_is_lookup_error(out):
-    with pytest.raises(LookupError):
-        firewall.queued_packets('ytzapret', 200, run=Recorder(default=done(out)))
-
-
-def test_queued_packets_nft_failure_is_firewall_error():
-    with pytest.raises(FirewallError):
-        firewall.queued_packets('ytzapret', 200, run=Recorder(default=done(code=1, stderr='no table')))
 
 
 # --- nftables.conf ----------------------------------------------------------
@@ -203,182 +127,3 @@ def test_preserve_nftables_conf_leaves_other_files_alone(tmp_path):
     assert not (tmp_path / 'nftables.conf.before-vpn2').exists()
     conf.write_text('')
     assert firewall.preserve_nftables_conf(conf) is False
-
-
-# --- GuardSnapshot ----------------------------------------------------------
-
-class FakeHost:
-    """ufw and nft double with state: tables dict, ufw active flag, call log."""
-
-    def __init__(self, ufw=True, active=True, tables=None, nft=True, fail=()):
-        self.ufw, self.active, self.nft = ufw, active, nft
-        self.tables = dict(tables or {})
-        self.fail = set(fail)
-        self.log = []
-
-    def __call__(self, argv, **_):
-        argv = list(argv)
-        self.log.append(' '.join(argv))
-        if argv[0] == 'ufw':
-            if not self.ufw:
-                raise FileNotFoundError('ufw')
-            if ' '.join(argv[1:]) in self.fail:
-                return done(code=1, stderr='ufw failed')
-            if argv[1] == 'status':
-                return done('Status: active\n' if self.active else 'Status: inactive\n')
-            if argv[1:] == ['--force', 'enable']:
-                self.active = True
-            if argv[1:] == ['--force', 'disable']:
-                self.active = False
-            return done()
-        if not self.nft:
-            raise FileNotFoundError('nft')
-        if argv[1:3] == ['list', 'table']:
-            name = argv[4]
-            return done(self.tables[name]) if name in self.tables else done(code=1)
-        if argv[1] == 'delete':
-            return done() if self.tables.pop(argv[4], None) is not None else done(code=1)
-        if argv[1] == '-f':
-            if 'nft -f' in self.fail:
-                return done(code=1, stderr='nft refused')
-            text = Path(argv[2]).read_text()
-            self.tables[text.split()[2]] = text
-            return done()
-        raise AssertionError(argv)
-
-
-def make_etc(tmp_path):
-    etc = tmp_path / 'etc'
-    (etc / 'ufw' / 'applications.d').mkdir(parents=True)
-    (etc / 'default').mkdir()
-    (etc / 'ufw' / 'user.rules').write_bytes(b'### RULES ###\n-A ufw-user-input -p tcp --dport 22 -j ACCEPT\n')
-    (etc / 'ufw' / 'applications.d' / 'панель-→.profile').write_bytes('[Панель]\nports=8443/tcp\n'.encode())
-    os.chmod(etc / 'ufw' / 'user.rules', 0o640)
-    (etc / 'default' / 'ufw').write_text('DEFAULT_INPUT_POLICY="DROP"\n')
-    return etc
-
-
-def tree(root):
-    return {str(path.relative_to(root)): (path.read_bytes() if path.is_file() else None, path.stat().st_mode)
-            for path in sorted(root.rglob('*'))}
-
-
-TABLES = ['inet ytzapret', 'inet anysda_ytquic']
-T1 = 'table inet ytzapret {\n    chain c {\n    }\n}\n'
-
-
-def test_guard_snapshot_roundtrip_is_byte_exact(tmp_path):
-    etc = make_etc(tmp_path)
-    before = tree(etc)
-    host = FakeHost(tables={'ytzapret': T1})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    (etc / 'ufw' / 'user.rules').write_text('broken\n')
-    (etc / 'ufw' / 'extra').write_text('new')
-    (etc / 'default' / 'ufw').write_text('changed\n')
-    host.active, host.tables['ytzapret'] = False, 'table inet ytzapret {\n}\n'
-    host.tables['anysda_ytquic'] = 'table inet anysda_ytquic {\n}\n'
-    assert guard.restore() is True
-    assert tree(etc) == before
-    assert host.active is True
-    assert host.tables == {'ytzapret': T1}
-    assert 'ufw --force enable' in host.log and 'ufw reload' in host.log
-    assert not (etc / 'ufw.vpn2-guard').exists()
-
-
-def test_guard_restore_repeats_with_the_same_result(tmp_path):
-    etc = make_etc(tmp_path)
-    before = tree(etc)
-    host = FakeHost(tables={'ytzapret': T1})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    assert guard.restore() and guard.restore()
-    assert tree(etc) == before and host.tables == {'ytzapret': T1}
-
-
-def test_guard_ufw_was_inactive_restore_disables(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost(active=False)
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    host.active = True
-    assert guard.restore() is True
-    assert host.active is False
-    assert 'ufw reload' not in host.log and 'ufw --force disable' in host.log
-
-
-def test_guard_table_was_absent_restore_only_deletes(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost()
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    assert not list((tmp_path / 'guard' / 'snap').glob('nft-*'))
-    host.tables['ytzapret'] = T1
-    host.log.clear()
-    assert guard.restore() is True
-    assert host.tables == {}
-    assert not any(line.startswith('nft -f') for line in host.log)
-
-
-def test_guard_without_ufw_marks_and_restore_skips_ufw(tmp_path):
-    etc = tmp_path / 'etc'
-    etc.mkdir()
-    host = FakeHost(ufw=False, tables={'ytzapret': T1})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    assert (tmp_path / 'guard' / 'snap' / 'no-ufw').exists()
-    host.tables.clear()
-    assert guard.restore() is True
-    assert host.tables == {'ytzapret': T1}
-    assert not (etc / 'ufw').exists()
-
-
-def test_guard_restore_nft_refusal_returns_false_not_raises(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost(tables={'ytzapret': T1, 'anysda_ytquic': 'table inet anysda_ytquic {\n}\n'})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    host.fail = {'nft -f'}
-    assert guard.restore() is False
-    # a failure does not stop the rest: both tables were tried, ufw was restored
-    assert sum(line.startswith('nft -f') for line in host.log) == 2
-    assert 'ufw reload' in host.log
-
-
-def test_guard_restore_ufw_refusal_returns_false_and_goes_on(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost(tables={'ytzapret': T1})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    host.tables.clear()
-    host.fail = {'--force enable'}
-    assert guard.restore() is False
-    assert host.tables == {'ytzapret': T1}
-    assert 'ufw reload' not in host.log
-
-
-def test_guard_restore_timeout_and_missing_nft(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost(tables={'ytzapret': T1})
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-
-    def slow(argv, **_):
-        if argv[0] == 'ufw':
-            raise subprocess.TimeoutExpired(argv, 30)
-        return host(argv)
-    guard.run = slow
-    assert guard.restore() is False
-    guard.run = FakeHost(nft=False)
-    assert guard.restore() is True       # no nft: skipped, like command -v
-
-
-def test_guard_take_ufw_status_timeout_propagates(tmp_path):
-    etc = make_etc(tmp_path)
-
-    def slow(argv, **_):
-        raise subprocess.TimeoutExpired(argv, 30)
-    with pytest.raises(FirewallError):
-        firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=slow)
-
-
-def test_guard_take_twice_replaces_the_snapshot(tmp_path):
-    etc = make_etc(tmp_path)
-    host = FakeHost(tables={'ytzapret': T1})
-    firewall.GuardSnapshot.take(tmp_path / 'guard', TABLES, etc, run=host)
-    host.tables.clear()
-    guard = firewall.GuardSnapshot.take(tmp_path / 'guard', [('inet', 'ytzapret')], etc, run=host)
-    assert not list((tmp_path / 'guard' / 'snap').glob('nft-*'))
-    assert guard.restore() is True

@@ -1617,6 +1617,7 @@ def main(serial=False):
     if not serial:
         threading.Thread(target=_transport_loop, daemon=True).start()
     while True:
+        start = time.monotonic()
         if serial:
             _transport_pass()
         try:
@@ -1639,5 +1640,7 @@ def main(serial=False):
             print(f'pins/tg error: {e}', file=sys.stderr, flush=True)
         # после tick'ов: selector'ы уже уведены — рвём хвосты через выключенные узлы
         _drop_disabled_conns(conns)
-        time.sleep(INTERVAL)
+        # Такт считаем от начала цикла: проход, прождавший чужой тайм-аут,
+        # не отодвигает следующую проверку выбранного выхода ещё на INTERVAL.
+        time.sleep(max(0.0, INTERVAL - (time.monotonic() - start)))
 

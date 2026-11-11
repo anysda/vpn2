@@ -7,6 +7,7 @@
 import contextlib
 import io
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -229,6 +230,73 @@ class UdpCutWindowTests(unittest.TestCase):
         back = run.moved('transport-aa-direct', 'hy2')
         self.assertGreaterEqual(back - calm, w.TCP_RETURN - w.INTERVAL - 1)
         self.assertEqual(len(run.events), 2, run.events)
+
+
+class MainModel(Model):
+    """Общий цикл сторожа на модельных часах; проверка каналов выключена.
+    Bot API молчит через все выходы: его обход стоит цикла полного тайм-аута."""
+
+    def probe_all(self, members, url=None, known_dead=None, slow=None, recheck=None):
+        w = self.w
+        if url != w.TG_PROBE_URL:
+            return super().probe_all(members, url, known_dead, slow, recheck)
+        patient = [m for m in members if m not in (known_dead or ())]
+        self.clock.mono += w.TIMEOUT_MS / 1000.0 if patient else w.KNOWN_DEAD_WAIT
+        return {m: None for m in members}, {m: 'timed out' for m in members}
+
+    def probe(self, tag, out, errs=None, url=None):
+        """До-проверка выбранного выхода: одна проба, ждут её целиком.
+        Проба запасной ноги идёт своим потоком рядом и времени цикла не стоит."""
+        took, out[tag] = self.link.answer(tag, self.clock.mono, self.w.TIMEOUT_MS / 1000.0)
+        if threading.current_thread() is threading.main_thread():
+            self.clock.mono += took
+        if out[tag] is None and errs is not None:
+            errs[tag] = 'timed out'
+
+    def run(self):
+        w = self.w
+        with patch.object(w, '_req', self.link.req), patch.object(w, '_probe_all', self.probe_all), \
+                patch.object(w, '_probe', self.probe), \
+                patch.object(w, 'time', self.clock), patch.object(w, '_transport_loop', lambda: None), \
+                patch.object(w, '_restart_sing_box', create=True), \
+                patch.object(w, '_bot_event', side_effect=lambda *a, **k: self.events.append(a)), \
+                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.out):
+            try:
+                w.main()
+            except fr.Stop:
+                pass
+        return self
+
+
+class ExitDeathWindowTests(unittest.TestCase):
+    LIMIT = 14.0    # docs/failover.md: смерть экзита - переезд за 10-14 с
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = tmp.name
+
+    def death(self, phase, warm=60.0):
+        """Экзит aa умер целиком (UDP и TCP) в фазе phase; когда выбор ушёл на bb."""
+        cut = START + warm + phase
+        span = [(cut, cut + 120)]
+        model = MainModel(self.tmp, warm + phase + 30)
+        model.link.cuts = {('aa', 'udp'): span, ('aa', 'tcp'): span}
+        model.run()
+        w = model.w
+        self.assertIn('Bot API не отвечает ни через один экзит', model.out.getvalue())
+        moves = [at for at, name, target in model.link.moves if name == w.GROUP and '-bb-' in target]
+        return (moves[0] - cut) if moves else None
+
+    def test_death_at_every_phase_switches_in_documented_time(self):
+        # Окно шире периода обхода Bot API: обрыв попадает и на сам обход.
+        worst = (0.0, None)
+        for i in range(int(34 / 0.1) + 1):
+            phase = round(i * 0.1, 1)
+            took = self.death(phase)
+            self.assertIsNotNone(took, f'фаза {phase}')
+            worst = max(worst, (took, phase))
+        self.assertLessEqual(worst[0], self.LIMIT, f'худшая фаза {worst[1]} с')
 
 
 if __name__ == '__main__':

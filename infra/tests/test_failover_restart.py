@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -69,7 +70,8 @@ class Clash:
 
 
 class Clock:
-    """Одни часы на monotonic и time; проверка = sleep(INTERVAL) в main()."""
+    """Одни часы на monotonic и time; проверка = sleep в конце цикла main():
+    он добирает такт до INTERVAL от начала цикла."""
 
     def __init__(self, interval, mono=1000.0, wall=1_800_000_000.0):
         self.interval = interval
@@ -86,7 +88,7 @@ class Clock:
 
     def sleep(self, seconds):
         self.mono += seconds
-        if seconds != self.interval:
+        if sys._getframe(1).f_code.co_name != 'main':
             return   # до-проверка внутри тика
         self.checks += 1
         if self.on_check:

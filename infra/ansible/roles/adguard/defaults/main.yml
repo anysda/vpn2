@@ -1,5 +1,5 @@
 ---
-adguard_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+adguard_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 adguard_tmp: /tmp/anysda
 adguard_vpn2: /opt/vpn2/venv/bin/vpn2
 adguard_step: ["{{ adguard_vpn2 }}", adguard]
@@ -17,4 +17,4 @@ adguard_env_names:
   - ENTRY_RESOURCE_OVERRIDES
   - VPN2_RELEASE_MANIFEST
   - VPN2_DEVELOPMENT
-adguard_env: "{{ dict(adguard_env_names | zip(query('ansible.builtin.env', *adguard_env_names))) }}"
+adguard_env: "{{ dict(adguard_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', adguard_env_names) | items2dict) }}"

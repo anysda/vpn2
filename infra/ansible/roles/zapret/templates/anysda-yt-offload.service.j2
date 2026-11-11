@@ -1,0 +1,14 @@
+[Unit]
+Description=anysda-vpn2 — выключить TSO/GSO/GRO на {{ zapret_v.wan }} (десинк YouTube)
+After=network-online.target
+Wants=network-online.target
+Before=anysda-yt-nfqws.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ethtool -K {{ zapret_v.wan }} tso off gso off gro off
+ExecStop=/usr/sbin/ethtool -K {{ zapret_v.wan }} tso on gso on gro on
+
+[Install]
+WantedBy=multi-user.target

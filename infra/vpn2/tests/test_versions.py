@@ -39,11 +39,11 @@ STAGE_LINES = {
     'sing_box_sha256_arm64': ('lib/install-sing-box.sh', "readonly SB_SHA256_ARM64='{v}'"),
     'node_exporter': ('ansible/roles/base/defaults/main.yml', "base_node_exporter_version: '{v}'"),
     'adguard': ('vpn2/src/vpn2/adguard/stage.py', "AGH_VER = '{v}'\n"),
-    'yt_node': ('scripts/19-yt-zapret.sh', 'https://nodejs.org/dist/{v}/node-{v}-linux-x64.tar.xz'),
-    'yt_node_sha256': ('scripts/19-yt-zapret.sh', '{v}'),
+    'yt_node': ('vpn2/src/vpn2/zapret/stage.py', "NODE_VER = '{v}'\n"),
+    'yt_node_sha256': ('vpn2/src/vpn2/zapret/stage.py', "NODE_SHA256 = '{v}'\n"),
     'yt_pot': ('lib/install-yt-pot.sh', 'pot_version={v}\n'),
     'yt_pot_sha256': ('lib/install-yt-pot.sh', '{v}'),
-    'zapret2': ('scripts/19-yt-zapret.sh', 'YT_ZAPRET_REF="${{YT_ZAPRET_REF:-{v}}}"'),
+    'zapret2': ('vpn2/src/vpn2/zapret/stage.py', "ZAPRET_REF = '{v}'\n"),
 }
 
 

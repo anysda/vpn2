@@ -1,0 +1,14 @@
+[Unit]
+Description=anysda-vpn2 — nft-блокировка QUIC (UDP/443) к Google
+After=network-online.target
+Wants=network-online.target
+Before=sing-box.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-yt-quic-refresh.sh
+ExecStop=/usr/sbin/nft delete table inet anysda_ytquic
+
+[Install]
+WantedBy=multi-user.target

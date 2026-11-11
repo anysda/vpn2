@@ -1,0 +1,6 @@
+[Unit]
+Description=anysda-vpn2 — обновление списка IP-диапазонов Google
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-yt-quic-refresh.sh

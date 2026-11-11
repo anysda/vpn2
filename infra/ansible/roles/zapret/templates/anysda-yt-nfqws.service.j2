@@ -1,0 +1,20 @@
+[Unit]
+Description=anysda-vpn2 — nfqws2 (DPI-десинк YouTube на РФ-выходе)
+After=network-online.target anysda-yt-nft.service
+Wants=network-online.target
+Requires=anysda-yt-nft.service
+# Демон обязан подниматься всегда: при его смерти правило queue ... bypass
+# пропускает трафик без десинка, то есть YouTube молча упирается в DPI.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart={{ zapret_v.bin }} --qnum={{ zapret_v.queue }}{{ zapret_v.lua_init }} {{ zapret_v.strategy }}
+ExecStartPost=/usr/local/sbin/anysda-yt-nfqws-ready $MAINPID
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

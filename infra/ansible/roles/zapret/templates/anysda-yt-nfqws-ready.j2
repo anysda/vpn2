@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+for (( i=0; i<50; i++ )); do
+  if awk -v q={{ zapret_v.queue }} -v p="${1:?PID nfqws2}" \
+    '$1 == q && $2 == p { found = 1 } END { exit !found }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+    exit 0
+  fi
+  sleep 0.1
+done
+echo 'nfqws2 не занял свою очередь за 5 секунд' >&2
+exit 1

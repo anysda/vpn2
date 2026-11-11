@@ -1,0 +1,17 @@
+[Unit]
+Description=anysda-vpn2 — видеопроба YouTube и запасной VPN-путь
+After=sing-box.service
+ConditionPathExists=/etc/sing-box/config.json
+
+[Service]
+Type=oneshot
+ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt
+TimeoutStartSec=240
+# OOM-kill yt-dlp/node по MemoryMax не гасит контроллер: он пишет «лимит памяти».
+OOMPolicy=continue
+StateDirectory=anysda-yt-failover
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

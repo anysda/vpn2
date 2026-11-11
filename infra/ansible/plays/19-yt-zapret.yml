@@ -1,0 +1,6 @@
+---
+- name: Десинк YouTube на entry
+  hosts: entry
+  tags: [19-yt-zapret]
+  roles:
+    - zapret

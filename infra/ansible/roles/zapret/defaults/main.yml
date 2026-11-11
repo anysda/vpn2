@@ -1,0 +1,55 @@
+---
+zapret_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+zapret_tmp: /tmp/anysda
+zapret_vpn2: /opt/vpn2/venv/bin/vpn2
+zapret_step: ["{{ zapret_vpn2 }}", zapret]
+zapret_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
+zapret_units: /etc/systemd/system
+
+# youtube.route и youtube.quic из config.yaml: роль ставит десинк только при
+# route=zapret, иначе снимает развёрнутое.
+zapret_route: "{{ lookup('ansible.builtin.env', 'YT_ROUTE') | default('off', true) }}"
+zapret_quic: "{{ lookup('ansible.builtin.env', 'YT_QUIC') | default('block', true) }}"
+
+# zapret2 - чистый C: g++ из build-essential не нужен.
+zapret_packages:
+  - gcc
+  - make
+  - libc6-dev
+  - git
+  - ca-certificates
+  - libcap-dev
+  - libnetfilter-queue-dev
+  - libnfnetlink-dev
+  - libmnl-dev
+  - zlib1g-dev
+  - libluajit-5.1-dev
+  - luajit
+  - nftables
+  - ethtool
+  - curl
+  - python3-venv
+  - xz-utils
+  - kmod
+
+# Юниты с долей CPU и памяти по ресурсам entry (infra/lib/entry-resources.sh).
+zapret_resource_skip: >-
+  {{ ([] if zapret_v.offload == 'off' else ['anysda-yt-offload'])
+     + ([] if zapret_quic == 'block' else ['anysda-yt-quic', 'anysda-yt-quic-refresh']) }}
+
+# Переменные стадии, которые читают шаги.
+zapret_env_names:
+  - YT_ROUTE
+  - YT_QUIC
+  - YT_MARK
+  - YT_ZAPRET_QUEUE
+  - YT_ZAPRET_REPO
+  - YT_ZAPRET_REF
+  - YT_ZAPRET_BASE
+  - YT_ZAPRET_WINDOW_SCALE
+  - YT_ZAPRET_STRATEGY
+  - YT_ZAPRET_WSCALE
+  - YT_ZAPRET_OFFLOAD
+  - VPN2_RELEASE_MANIFEST
+  - VPN2_DEVELOPMENT
+zapret_env: "{{ dict(zapret_env_names | zip(query('ansible.builtin.env', *zapret_env_names))) }}"

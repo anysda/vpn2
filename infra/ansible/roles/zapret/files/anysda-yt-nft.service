@@ -1,0 +1,18 @@
+[Unit]
+Description=anysda-vpn2 — nft-цепочки десинка YouTube (+ conntrack be_liberal)
+After=network-online.target nftables.service
+Wants=network-online.target
+Before=anysda-yt-nfqws.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# be_liberal сбрасывается при выгрузке модуля conntrack — ставим тут же.
+ExecStart=/sbin/sysctl -w net.netfilter.nf_conntrack_tcp_be_liberal=1
+ExecStart=/usr/sbin/nft -f /etc/nftables-yt-zapret.conf
+ExecReload=/usr/sbin/nft -f /etc/nftables-yt-zapret.conf
+# Сносим ТОЛЬКО свою таблицу — чужие правила (ufw, docker, fail2ban) не трогаем.
+ExecStop=/bin/sh -c '/usr/sbin/nft delete table inet ytzapret 2>/dev/null; true'
+
+[Install]
+WantedBy=multi-user.target

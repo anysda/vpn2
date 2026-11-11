@@ -1,2 +1,0 @@
-[console_scripts]
-vpn2 = vpn2.cli:main

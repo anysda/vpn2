@@ -275,10 +275,12 @@ release_complete
         release = module('release')
         expected = 'sha256:' + 'a' * 64
         manifest = {'images': {'panel': {'amd64': {'repository': 'example/panel', 'digest': expected, 'config': expected}}}}
-        answers = [subprocess.TimeoutExpired(['docker', 'pull'], 300),
-                   json.dumps([{'Id': expected, 'Architecture': 'amd64'}])]
-        with patch.object(release, 'command', side_effect=answers):
+        answers = [subprocess.TimeoutExpired(['docker', 'pull'], 1200)] * 3 + [
+            json.dumps([{'Id': expected, 'Architecture': 'amd64'}])]
+        with patch.object(release, 'command', side_effect=answers) as run, \
+                patch.object(release, 'PULL_PAUSES', (0, 0)), patch('sys.stderr', io.StringIO()):
             self.assertEqual(release.image(manifest, 'panel', arch='amd64'), expected)
+        self.assertEqual(run.call_count, 4)
 
     def test_corrupt_download_rejected_before_copy_or_extract(self):
         release = module('release')

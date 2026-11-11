@@ -28,6 +28,10 @@ MANIFEST_MEDIA_TYPE = 'application/vnd.anysda.vpn2.release-manifest.v1+json'
 # A freshly started dockerd can break a layer extraction (snapshot not found,
 # context canceled); the same pull a few seconds later succeeds.
 PULL_PAUSES = (5, 15)
+COMMAND_TIMEOUT = 300
+# An image is hundreds of megabytes: at 250 KB/s it does not fit the command limit.
+# Docker keeps the layers it has finished, so the next attempt continues the download.
+PULL_TIMEOUT = 1200
 # releases/download can answer 503/504 for an hour while the releases API works:
 # transient errors are retried, then a github.com asset is taken through the API.
 DOWNLOAD_PAUSES = (3, 10, 30)
@@ -81,8 +85,8 @@ def load(path):
     return manifest
 
 
-def command(args):
-    result = subprocess.run(args, capture_output=True, text=True, timeout=300)
+def command(args, timeout=None):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout or COMMAND_TIMEOUT)
     if result.returncode:
         # Registry output and docker inspect may contain credentials. Never echo it.
         error = ReleaseError(f'{args[0]} {args[1]} failed')
@@ -106,10 +110,13 @@ def pull_image(component, selected):
     attempts = len(PULL_PAUSES) + 1
     for attempt in range(1, attempts + 1):
         try:
-            command(['docker', 'pull', selected])
+            command(['docker', 'pull', selected], PULL_TIMEOUT)
             return ''
         except ReleaseError as exc:
             error = exc.detail or str(exc)
+        except subprocess.TimeoutExpired:
+            error = (f'no answer in {PULL_TIMEOUT} s (the link to the image registry is too slow '
+                     'or stalled; finished layers are kept)')
         if attempt < attempts:
             pause = PULL_PAUSES[attempt - 1]
             print(f'release: {component}: docker pull failed ({attempt}/{attempts}), '
@@ -132,10 +139,8 @@ def image(manifest, component, requested='', pull=True, arch=None):
     selected = requested or reference
     failure = ''
     if pull:
-        try:
-            failure = pull_image(component, selected)
-        except subprocess.TimeoutExpired:
-            pass  # A local image must still pass the immutable digest check.
+        # A failed pull is not final: a local image must still pass the immutable digest check.
+        failure = pull_image(component, selected)
     try:
         try:
             actual = json.loads(command(['docker', 'image', 'inspect', selected]))[0]
@@ -147,7 +152,8 @@ def image(manifest, component, requested='', pull=True, arch=None):
             actual = json.loads(command(['docker', 'image', 'inspect', expected['config']]))[0]
     except ReleaseError as exc:
         if not failure:
-            raise
+            raise ReleaseError(f'{component}: image {selected} is not on this node '
+                               f'({exc})') from exc
         raise ReleaseError(f'{component}: image {selected} not downloaded after '
                            f'{len(PULL_PAUSES) + 1} attempts, docker: {failure}. Check that the '
                            'entry reaches the image registry and run ./deploy.sh again') from exc

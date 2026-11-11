@@ -1,0 +1,7 @@
+---
+- name: VictoriaMetrics на entry
+  hosts: entry
+  tags: [25-monitoring]
+  roles:
+    - role: containers
+      containers_service: monitoring

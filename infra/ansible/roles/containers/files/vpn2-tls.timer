@@ -1,0 +1,7 @@
+[Unit]
+Description=Check VPN2 TLS lifecycle every minute
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+[Install]
+WantedBy=timers.target

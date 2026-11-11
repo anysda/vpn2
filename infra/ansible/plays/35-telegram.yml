@@ -1,0 +1,7 @@
+---
+- name: Телеграм-бот на entry
+  hosts: entry
+  tags: [35-telegram]
+  roles:
+    - role: containers
+      containers_service: telegram

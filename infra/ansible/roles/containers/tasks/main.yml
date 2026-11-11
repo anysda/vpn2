@@ -1,0 +1,58 @@
+---
+# Контейнеры entry под одним compose.yaml: VictoriaMetrics, панель и бот. Плей
+# ставит одну службу; описание службы, замену контейнера и отметку стадии ведёт
+# пакет vpn2 (vpn2.containers), роль готовит ему хост.
+- name: Служба названа
+  ansible.builtin.assert:
+    that: containers_service in containers_tools
+    quiet: true
+
+- name: Команда vpn2
+  ansible.builtin.stat:
+    path: "{{ containers_vpn2 }}"
+  register: containers_vpn2_stat
+  failed_when: not (containers_vpn2_stat.stat.executable | default(false))
+
+# Docker ставит базовая роль без плагина compose: экзитам он не нужен.
+- name: Плагин docker compose
+  ansible.builtin.command:
+    argv: "{{ containers_bash + [containers_compose_step, containers_tmp] }}"
+  environment: "{{ containers_env }}"
+  vars:
+    containers_compose_step: |
+      source "$0/anysda-svc.sh"
+      if docker compose version >/dev/null 2>&1; then exit 0; fi
+      docker_apt_source
+      apt_update_if_stale
+      DEBIAN_FRONTEND=noninteractive apt_get install -y -qq docker-compose-plugin >/dev/null
+      docker compose version >/dev/null
+      echo changed=1
+  register: containers_compose
+  changed_when: "'changed=1' in containers_compose.stdout"
+
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ containers_infra }}/lib/{{ item }}"
+    dest: "{{ containers_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  changed_when: false
+
+- name: Инструменты шага
+  ansible.builtin.copy:
+    src: "{{ containers_infra }}/{{ item.src }}"
+    dest: "{{ containers_tmp }}/{{ item.dest }}"
+    mode: '0644'
+  loop: "{{ containers_tools[containers_service] }}"
+  changed_when: false
+
+- name: Caddy и срок сертификата панели
+  ansible.builtin.include_tasks: panel.yml
+  when: containers_service == 'panel'
+
+- name: "Служба {{ containers_service }}"
+  ansible.builtin.command:
+    argv: ["{{ containers_vpn2 }}", containers, "{{ containers_service }}"]
+  environment: "{{ containers_env }}"
+  register: containers_step
+  changed_when: "'changed=1' in containers_step.stdout"

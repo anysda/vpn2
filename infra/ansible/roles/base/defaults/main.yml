@@ -1,9 +1,9 @@
 ---
 base_entry: "{{ inventory_hostname == 'ru' }}"
-base_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+base_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 base_tmp: /tmp/anysda
-base_manifest: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
-base_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
+base_manifest: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('/tmp/anysda/release-manifest.json', true) }}"
+base_wheel: "{{ vpn2_env.VPN2_WHEEL | default('') }}"
 
 # Сколько диска занято на entry после полной установки, без swap: замер на
 # узле 2 ГБ / 10 ГБ дал 5556 МиБ, здесь с запасом. Swap создаётся первым шагом
@@ -80,8 +80,8 @@ base_packages_backup: [age, expect, sqlite3]
 base_packages: >-
   {{ base_packages_common
      + (base_packages_entry if base_entry else [])
-     + (base_packages_zapret if base_entry and lookup('ansible.builtin.env', 'YT_ROUTE') == 'zapret' else [])
-     + (base_packages_backup if base_entry and lookup('ansible.builtin.env', 'BACKUP_ENABLED') == 'true' else []) }}
+     + (base_packages_zapret if base_entry and vpn2_env.YT_ROUTE | default('') == 'zapret' else [])
+     + (base_packages_backup if base_entry and vpn2_env.BACKUP_ENABLED | default('') == 'true' else []) }}
 
 # default_qdisc не меняет уже созданный WAN. Экзит держит fq с flow_limit 1000:
 # один hy2-поток несёт трафик всех клиентов. WAN entry - pfifo_fast: fq снижает
@@ -90,7 +90,7 @@ base_wan_qdisc: "{{ 'pfifo_fast' if base_entry else 'fq' }}"
 
 base_orchestrator_keys: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/orchestrator_keys', errors='ignore') | default('', true) }}"
 base_entry_mgmt_key: "{{ lookup('ansible.builtin.file', base_infra ~ '/secrets/rendered/entry_mgmt_key', errors='ignore') | default('', true) }}"
-base_admin_key: "{{ lookup('ansible.builtin.env', 'ADMIN_SSH_PUBKEY') }}"
+base_admin_key: "{{ vpn2_env.ADMIN_SSH_PUBKEY | default('') }}"
 base_keys: "{{ (base_orchestrator_keys.splitlines() + [base_admin_key]) | map('trim') | select | unique | list }}"
 # Entry: пароль отключается, только когда ключ есть у человека-админа - ключ
 # оркестратора живёт на самой entry и после её переустановки не поможет.
@@ -104,11 +104,11 @@ base_ufw_entry:
   - {comment: caddy HTTP + ACME challenge, aliases: [caddy HTTP панель], rules: [80/tcp]}
 base_ufw_exit:
   - {comment: ssh, rules: [22/tcp]}
-  - {comment: hysteria2 direct, rules: ["{{ lookup('ansible.builtin.env', 'HY2_DIRECT_PORT') }}/udp"]}
-  - {comment: hysteria2 warp, rules: ["{{ lookup('ansible.builtin.env', 'HY2_WARP_PORT') }}/udp"]}
+  - {comment: hysteria2 direct, rules: ["{{ vpn2_env.HY2_DIRECT_PORT | default('') }}/udp"]}
+  - {comment: hysteria2 warp, rules: ["{{ vpn2_env.HY2_WARP_PORT | default('') }}/udp"]}
   - comment: hysteria2 mgmt
     aliases: [hysteria2 mgmt (monitoring)]
-    rules: ["{{ lookup('ansible.builtin.env', 'HY2_MGMT_PORT') }}/udp"]
+    rules: ["{{ vpn2_env.HY2_MGMT_PORT | default('') }}/udp"]
   - {comment: caddy HTTP + ACME challenge, aliases: [caddy HTTP панель], rules: []}
   - {comment: caddy HTTPS панель, rules: []}
 base_ufw: "{{ base_ufw_entry if base_entry else base_ufw_exit }}"

@@ -3,7 +3,7 @@
 # пароле узла иначе запирает entry на час. Список пересобирается каждым деплоем.
 - name: Адреса, которые fail2ban не банит
   ansible.builtin.command:
-    argv: "{{ base_host + ['f2b-ignore', lookup('ansible.builtin.env', 'ENTRY_HOST')] }}"
+    argv: "{{ base_host + ['f2b-ignore', vpn2_env.ENTRY_HOST | default('')] }}"
   register: base_f2b_ignore
   changed_when: false
 
@@ -42,7 +42,7 @@
       ansible.builtin.command:
         argv: >-
           {{ base_host[:-1] + ['vpn2.release']
-             + ([] if lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') == 'true' else ['--manifest', base_manifest])
+             + ([] if vpn2_env.VPN2_DEVELOPMENT | default('') == 'true' else ['--manifest', base_manifest])
              + ['artifact', 'node-exporter', base_tmp ~ '/' ~ base_node_exporter_archive ~ '.tar.gz',
                 '--url', base_node_exporter_url, '--sha256', base_node_exporter_sha256] }}
       changed_when: true

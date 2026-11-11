@@ -14,7 +14,6 @@ LOOKUPS_LEFT = {
     'verify': 4,
 
     'backup': 16,
-    'base': 11,
     'emergency': 10,
 
     'ikev2': 10,

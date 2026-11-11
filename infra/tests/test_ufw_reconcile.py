@@ -95,7 +95,7 @@ class UfwReconcileTests(unittest.TestCase):
         defaults = source('infra/ansible/roles/base/defaults/main.yml')
         block = defaults.split('base_ufw_exit:\n', 1)[1].split('base_ufw:', 1)[0]
         ports = {'HY2_DIRECT_PORT': '443', 'HY2_WARP_PORT': '444', 'HY2_MGMT_PORT': '445'}
-        block = re.sub(r"\{\{ lookup\('ansible.builtin.env', '(\w+)'\) \}\}", lambda m: ports[m[1]], block)
+        block = re.sub(r"\{\{ vpn2_env\.(\w+) \| default\(''\) \}\}", lambda m: ports[m[1]], block)
         groups = {group['comment']: group for group in yaml.safe_load(block)}
         for comment, desired in [('ssh', '22/tcp'), ('hysteria2 direct', '443/udp'),
                                  ('hysteria2 warp', '444/udp'), ('hysteria2 mgmt', '445/udp')]:

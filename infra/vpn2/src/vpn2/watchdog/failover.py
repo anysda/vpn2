@@ -201,6 +201,7 @@ _restart_gen = 0          # перезапусков sing-box сторожем
 _rise_gen = 0             # сколько из них transport_tick уже учёл
 _switch_gen = 0           # проходов transport_tick, переключивших канал
 _switch_seen = 0          # сколько из них restart_tick уже учёл
+_pin_switch_seen = 0      # сколько из них pins_tick уже учёл
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
 _slow_probes: dict = {}   # (тег, url) -> (поток, итог, причины) пробы, которую не стали ждать
@@ -1081,6 +1082,18 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
+def _spare_leg_answers(base, proxies):
+    """У канала выхода base отвечает невыбранная нога: канал переведёт проверка
+    каналов. Ногу, чью смерть та уже учла, не пробуем."""
+    for s, (hy2, tcp, _, _) in _transport_pairs(proxies).items():
+        if hy2 == 'transport-' + base:
+            leg = tcp if proxies[s].get('now') == hy2 else hy2
+            if leg in _known_dead:
+                return False
+            return _probe_all([leg])[0][leg] is not None
+    return False
+
+
 def pins_tick(proxies, conns=None):
     """pin-<выход> (ручные маршруты и предпочитаемый экзит клиента): на своём
     выходе, пока узел включён, выход жив (DEAD_AFTER промахов подряд — мёртв) и
@@ -1091,9 +1104,12 @@ def pins_tick(proxies, conns=None):
     Selector меняет выход только новым соединениям. При возврате pin на свой
     выход закрываем те, что открылись через запасной: иначе долгоживущие (push,
     мессенджеры) часами шли бы не через выбранный экзит."""
+    global _pin_switch_seen
     if _tick_alive is None:
         return   # замеров нет (ошибка тика) — ничего не двигаем
     t = time.monotonic()
+    # Канал переключён после прошлого прохода - замер шёл ещё по старой ноге.
+    moved, _pin_switch_seen = _pin_switch_seen != _switch_gen, _switch_gen
     for tag in set(_warp_miss) | {x for x in _tick_alive if x.endswith('-warp')}:
         if tag in _tick_alive:
             _warp_miss[tag] = 0
@@ -1104,7 +1120,16 @@ def pins_tick(proxies, conns=None):
         if not name.startswith(PIN_PREFIX) or str(p.get('type', '')).lower() != 'selector':
             continue
         base = name[len(PIN_PREFIX):]
-        _pin_miss[base] = 0 if base in _tick_alive else _pin_miss.get(base, 0) + 1
+        miss = _pin_miss.get(base, 0)
+        if base in _tick_alive or (moved and miss < DEAD_AFTER):
+            miss = 0
+        elif miss + 1 == DEAD_AFTER and _spare_leg_answers(base, proxies):
+            # Выход ещё не признан мёртвым, а запасная нога канала жива:
+            # счёт с нуля, маршрут и штрафную не трогаем.
+            miss = 0
+        else:
+            miss += 1
+        _pin_miss[base] = miss
         node = _node_of(base)
         # Выход не основной — tick() его смерть не штрафует, и маршрут вернулся
         # бы на первом же удачном замере. Штрафуем узел в момент признания

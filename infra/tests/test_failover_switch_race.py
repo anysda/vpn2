@@ -48,7 +48,7 @@ class RaceClash(tf.Clash):
         return super().req(method, path, body, **kw)
 
 
-class TestSwitchRace(unittest.TestCase):
+class RaceCase(unittest.TestCase):
     EXITS = ('hy2-aa-direct', 'hy2-aa-warp')
 
     def setUp(self):
@@ -85,6 +85,8 @@ class TestSwitchRace(unittest.TestCase):
     def on_tcp(self):
         return all(tf.is_reality(self.clash.leaf(t)) for t in self.EXITS)
 
+
+class TestSwitchRace(RaceCase):
     def test_switch_lands_inside_third_dead_check(self):
         self.check()
         self.clash.udp.discard('aa')
@@ -134,6 +136,70 @@ class TestSwitchRace(unittest.TestCase):
         self.check()
         self.assertEqual(len(self.run_.restarts), 1,
                          'мертвы hy2 и TCP - перезапуск на третьей проверке\n' + self.log())
+
+
+class TestPinSwitchRace(RaceCase):
+    """Тот же обрыв UDP глазами ручных маршрутов: запасной TCP жив - узел не
+    идёт в штрафную, pin не уходит со своего выхода."""
+    PIN = 'pin-hy2-aa-direct'
+
+    def check(self, n=1):
+        for _ in range(n):
+            super().check()
+            self.w.pins_tick(self.clash.req('GET', '/proxies')['proxies'])
+
+    def pin_now(self):
+        return self.clash.req('GET', '/proxies')['proxies'][self.PIN]['now']
+
+    def assert_untouched(self):
+        self.assertNotIn('в штрафной', self.log())
+        self.assertNotIn('foreign-best', self.log())
+        self.assertEqual(self.pin_now(), 'hy2-aa-direct', self.log())
+
+    def test_switch_lands_inside_last_miss(self):
+        self.check()
+        self.clash.udp.discard('aa')
+        self.check(self.w.DEAD_AFTER - 1)
+        self.clash.freeze(self.EXITS, self.channels)
+        self.check()
+        self.clash.frozen = {}
+        self.assertTrue(self.on_tcp(), self.log())
+        self.assert_untouched()
+        self.check(5)
+        self.assert_untouched()
+
+    def test_misses_before_channel_verdict(self):
+        self.check()
+        self.clash.udp.discard('aa')
+        self.check(self.w.DEAD_AFTER + 1)
+        self.assert_untouched()
+        self.channels()
+        self.check(5)
+        self.assert_untouched()
+
+    def test_tcp_dies_after_switch_counts_from_zero(self):
+        self.check()
+        self.clash.udp.discard('aa')
+        self.check(self.w.DEAD_AFTER - 1)
+        self.clash.freeze(self.EXITS, self.channels)
+        self.check()
+        self.clash.frozen = {}
+        self.clash.tcp.discard('aa')
+        self.check(self.w.DEAD_AFTER - 1)
+        self.assert_untouched()
+        self.check()
+        self.assertIn('в штрафной', self.log())
+        self.assertNotEqual(self.pin_now(), 'hy2-aa-direct', self.log())
+
+    def test_both_legs_dead_pin_leaves_on_last_miss(self):
+        self.check()
+        self.clash.udp.discard('aa')
+        self.clash.tcp.discard('aa')
+        self.check(self.w.DEAD_AFTER - 1)
+        self.assert_untouched()
+        self.check()
+        self.assertIn('в штрафной', self.log())
+        self.assertNotEqual(self.pin_now(), 'hy2-aa-direct', self.log())
 
 
 if __name__ == '__main__':

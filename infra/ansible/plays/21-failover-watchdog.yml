@@ -1,6 +1,0 @@
----
-- name: Сторожа экзитов и TPROXY на entry
-  hosts: entry
-  tags: [21-failover-watchdog]
-  roles:
-    - failover

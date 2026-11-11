@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import real_site_tree
 from test_deploy import ROOT, source
 import test_verify
 
@@ -30,9 +31,7 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
                 f'HOST_TAG={host}\nTELEGRAM_BOT_TOKEN=fixture\nTELEGRAM_CHAT_ID=1\n')
             (root / f'{host}.out').write_text(result.stdout)
             (root / f'{host}.rc').write_text(str(result.returncode))
-        (root / 'ansible/plays').mkdir(parents=True)
-        for path in (ROOT / 'infra/ansible/plays').glob('*.yml'):
-            (root / 'ansible/plays' / path.name).touch()
+        real_site_tree(root)
         for path in ('lib/anysda-svc.sh', 'lib/ansible-venv.sh',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):

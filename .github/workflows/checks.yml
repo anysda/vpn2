@@ -562,10 +562,7 @@ jobs:
       - run: pip install -c infra/ansible/constraints.txt ansible-core ansible-lint==26.10.1
       - run: ansible-galaxy collection install -r infra/ansible/requirements.yml -p /tmp/collections
       - name: syntax-check
-        run: |
-          for play in infra/ansible/plays/*.yml; do
-            ansible-playbook -i localhost, --syntax-check "$play"
-          done
-      - run: ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/plays infra/ansible/roles
+        run: ansible-playbook -i localhost, --syntax-check infra/ansible/site.yml
+      - run: ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/site.yml infra/ansible/roles
       # Задачам роли нужен настоящий ansible: в заданиях infra его нет, там тест пропускается
       - run: python3 -m unittest -v infra/tests/test_role_control_data.py

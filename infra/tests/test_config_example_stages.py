@@ -6,10 +6,12 @@ import re
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE = ROOT / 'config.example.yaml'
-SCRIPTS = ROOT / 'infra' / 'scripts'
-PLAYS = ROOT / 'infra' / 'ansible' / 'plays'
+SITE = ROOT / 'infra' / 'ansible' / 'site.yml'
+ROLES = ROOT / 'infra' / 'ansible' / 'roles'
 
 BLOCK = re.compile(r'^# ([a-z_][a-z0-9_]*):\s*$')
 CHILD = re.compile(r'^# {2,}\S')
@@ -53,6 +55,9 @@ class ConfigExampleStagesTests(unittest.TestCase):
     def setUp(self):
         self.lines = EXAMPLE.read_text(encoding='utf-8').splitlines()
         self.blocks = commented_blocks(self.lines)
+        # Стадия -> имена ролей её плея.
+        self.stages = {play['tags'][0]: {role['role'] if isinstance(role, dict) else role for role in play['roles']}
+                       for play in yaml.safe_load(SITE.read_text(encoding='utf-8'))}
 
     def test_parser_sees_commented_blocks(self):
         for key in ('alerts', 'failover', 'wireguard', 'telegram'):
@@ -72,17 +77,15 @@ class ConfigExampleStagesTests(unittest.TestCase):
                  for stage in STAGE.findall(line)]
         self.assertTrue(named)
         absent = [f'{stage} (config.example.yaml:{number})' for number, stage in named
-                  if not (SCRIPTS / f'{stage}.sh').is_file() and not (PLAYS / f'{stage}.yml').is_file()]
-        self.assertEqual(absent, [], 'стадии нет ни в infra/scripts, ни в infra/ansible/plays')
+                  if stage not in self.stages]
+        self.assertEqual(absent, [], 'стадии нет в infra/ansible/site.yml')
 
     def test_alerts_names_stage_writing_thresholds(self):
         alert = re.compile(r'\bALERT_[A-Z_]+')
-        writers = {path.stem for path in SCRIPTS.glob('*.sh') if alert.search(path.read_text(encoding='utf-8'))}
         # Стадию ведёт роль: пороги читает роль, названная в плее.
-        roles = {path.parent.parent.name for path in PLAYS.parent.glob('roles/*/defaults/main.yml')
+        roles = {path.parent.parent.name for path in ROLES.glob('*/defaults/main.yml')
                  if alert.search(path.read_text(encoding='utf-8'))}
-        writers |= {path.stem for path in PLAYS.glob('*.yml')
-                    if any(f'role: {role}' in path.read_text(encoding='utf-8') for role in roles)}
+        writers = {stage for stage, named in self.stages.items() if roles & named}
         self.assertTrue(writers, 'ни одна стадия не пишет ALERT_*')
         _, chunk = self.blocks['alerts']
         named = {stage for line in chunk if AFTER in line for stage in STAGE.findall(line)}

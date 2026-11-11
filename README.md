@@ -329,8 +329,9 @@ entry и пишет об этом в бот; настройка и выключ�
 ```
 
 Полный список стадий и групп нод - `./deploy.sh --help`. Каждая стадия -
-плей `infra/ansible/plays/<стадия>.yml`, а что именно она делает на ноде,
-описано в ролях `infra/ansible/roles/`.
+плей с её тегом в `infra/ansible/site.yml`, а что именно она делает на ноде,
+описано в ролях `infra/ansible/roles/`. Стадия entry на экзите (и стадия
+экзитов на entry) не запускается: `./deploy.sh 30-frontend se` - отказ.
 
 ### Обновление и откат панели
 
@@ -427,7 +428,7 @@ export ANSIBLE_COLLECTIONS_PATH=/tmp/collections
 ansible-galaxy collection install -r infra/ansible/requirements.yml \
   -p /tmp/collections
 ansible-lint --profile production --offline --project-dir infra/ansible \
-  infra/ansible/plays infra/ansible/roles
+  infra/ansible/site.yml infra/ansible/roles
 
 # панель: линт, типы, unit-тесты (vitest), сквозные тесты (Playwright)
 cd app && pnpm install

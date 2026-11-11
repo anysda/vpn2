@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import site_tree
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 DEPLOY = (ROOT / 'infra/deploy.sh').read_text()
@@ -57,9 +59,7 @@ ssh_exec() { echo "ssh_exec $*" >> ssh; }
 class PlayForkTests(unittest.TestCase):
     def tree(self, directory, *plays):
         root = Path(directory)
-        (root / 'ansible/plays').mkdir(parents=True)
-        for play in plays:
-            (root / 'ansible/plays' / f'{play}.yml').write_text('- hosts: all\n')
+        site_tree(root, plays)
         return root
 
     def test_stage_with_play_goes_to_run_play_only(self):
@@ -87,9 +87,10 @@ echo "rc=$rc"
     def test_stage_without_play_dies_naming_help(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.tree(directory)
-            script = STUBS + function('run_stage_on_host') + '''
+            script = STUBS + function('stage_nodes') + '''
 run_play() { echo "run_play $*" >> calls; }
-run_stage_on_host 42-x ru
+hosts=$(stage_nodes 42-x ru)
+run_play 42-x $hosts
 '''
             result = bash(script, directory)
             self.assertEqual(result.returncode, 1, result.stdout)
@@ -141,7 +142,7 @@ run_stage_on_host 42-x ru
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.splitlines(), [
                     f'[nl]cfg={root}/ansible/ansible.cfg conf={root}/../config.yaml',
-                    f'[nl]args={root}/ansible/plays/42-x.yml --limit nl --tags 42-x',
+                    f'[nl]args={root}/ansible/site.yml --limit nl --tags 42-x',
                     f'rc={rc}'])
                 self.assertFalse((root / 'calls').exists(), 'venv готов - установка не нужна')
 
@@ -207,9 +208,8 @@ run_stage_on_host 42-x ru
                 root = Path(directory)
                 (root / 'scripts').mkdir()
                 (root / 'scripts/42-x.sh').touch()
-                (root / 'ansible/plays').mkdir(parents=True)
-                (root / 'ansible/plays/43-y.yml').touch()
-                script = (STUBS + 'expand_hosts() { :; }\nset -- ' + stage + ' ru\n'
+                site_tree(root, ['43-y'])
+                script = (STUBS + function('stage_nodes') + 'expand_hosts() { :; }\nset -- ' + stage + ' ru\n'
                           + stage_args_check() + 'echo passed\n')
                 result = bash(script, directory)
                 if ok:

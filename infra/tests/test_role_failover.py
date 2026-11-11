@@ -8,6 +8,8 @@ import unittest
 
 import yaml
 
+from play_stage import site_play
+
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/failover'
 SNAPSHOTS = ROOT / 'infra/tests/fixtures/snapshot'
@@ -44,7 +46,7 @@ class FailoverRoleTests(unittest.TestCase):
         self.assertEqual(copied, INSTALLED)
 
     def test_play_runs_role_on_entry_under_stage_tag(self):
-        play, = yaml.safe_load((ROOT / 'infra/ansible/plays/21-failover-watchdog.yml').read_text())
+        play = site_play('21-failover-watchdog')
         self.assertEqual(play['hosts'], 'entry')
         self.assertEqual(play['tags'], ['21-failover-watchdog'])
         self.assertEqual(play['roles'], ['failover'])

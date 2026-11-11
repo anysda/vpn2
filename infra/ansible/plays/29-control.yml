@@ -1,6 +1,0 @@
----
-- name: Локальный API управления узлом
-  hosts: entry
-  tags: [29-control]
-  roles:
-    - control

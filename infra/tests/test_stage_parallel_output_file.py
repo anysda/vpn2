@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import real_site_tree
 from test_deploy import source
 from test_stage_exit_login_hang import FAKE_SSH, FAKE_SSHPASS, STUBS
 
@@ -52,6 +53,7 @@ def deploy():
             (root / path).touch()
         (root / 'vpn2/src/vpn2').mkdir(parents=True)
         (root / 'vpn2/src/vpn2/__init__.py').touch()
+        real_site_tree(root)
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (root / 'bin' / name).write_text(text)
             (root / 'bin' / name).chmod(0o755)

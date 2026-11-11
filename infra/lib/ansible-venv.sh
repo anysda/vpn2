@@ -310,7 +310,7 @@ ansible_venv_ensure() {
   _VENV_READY=1
 }
 
-# Стадия плеем ansible: infra/ansible/plays/<стадия>.yml на одном хосте.
+# Стадия плеем ansible: плей infra/ansible/site.yml с тегом стадии на одном хосте.
 # Обвес тот же, что у стадии-скрипта: окружение хоста, манифест выпуска,
 # подготовка apt и сторож отката фаервола с пульсом.
 run_play() {
@@ -356,7 +356,7 @@ bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh;
     [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || unset ADMIN_PASSWORD
     [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || export VPN2_PRESERVE_ADMIN=1
     ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
-      "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/plays/$stage.yml" \
+      "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/site.yml" \
       --limit "$host" --tags "$stage" </dev/null 2>&1 | sed -u "s/^/[$host]/"
   ) || rc=$?
   if [[ -n "$beat" ]]; then

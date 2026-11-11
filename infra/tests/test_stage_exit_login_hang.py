@@ -18,6 +18,7 @@ import tempfile
 import time
 import unittest
 
+from play_stage import site_tree
 from test_deploy import source
 
 FAKE_SSHPASS = '#!/bin/bash\n[[ $1 == -e ]] && shift\nexec "$@"\n'
@@ -53,14 +54,14 @@ if [[ $tag == "${FAKE_BASHRC_TAG:-}" ]]; then
 fi
 exec bash -c "$cmd"
 '''
-# Вызов: ansible-playbook plays/<стадия>.yml --limit <узел> --tags <стадия>;
+# Вызов: ansible-playbook site.yml --limit <узел> --tags <стадия>;
 # метку узла строкам ставит run_play.
 PLAYBOOK = r'''#!/bin/bash
 set -euo pipefail
 if [[ $3 == "${FAKE_SLOW_TAG:-}" ]]; then
   for i in $(seq "$FAKE_SLOW"); do echo " установка, шаг $i"; sleep 1; done
 fi
-echo " ✓ стадия $(basename "$1" .yml) пройдена"
+echo " ✓ стадия $5 пройдена"
 '''
 # Стадия без своих ролей: предел входа общий для всех стадий.
 PROBE = '42-probe'
@@ -107,7 +108,7 @@ def deploy(stage, group, deadline, **fake):
     with tempfile.TemporaryDirectory(prefix='stage-exit-login-hang-') as directory:
         top = Path(directory)
         root = top / 'infra'
-        for sub in ('envs', 'ansible/plays', 'lib', 'venv/bin', 'bin', 'nodes', 'tmp'):
+        for sub in ('envs', 'ansible', 'lib', 'venv/bin', 'bin', 'nodes', 'tmp'):
             (root / sub).mkdir(parents=True)
         (top / 'app/shared').mkdir(parents=True)
         (top / 'app/shared/vpn-pools.json').write_text('{}\n')
@@ -117,8 +118,8 @@ def deploy(stage, group, deadline, **fake):
         for tag in ('ru',) + EXITS:
             (root / f'envs/{tag}.env').write_text(
                 f'HOST_TAG={tag}\nSSH_HOST={tag}.example\nSSH_USER=root\nSSH_PASS=fixture\n')
-        for name in (PROBE, '10-foreign'):
-            (root / f'ansible/plays/{name}.yml').write_text('- hosts: all\n')
+        site_tree(root, [PROBE])
+        site_tree(root, ['10-foreign'], hosts='exits')
         (root / 'venv/bin/ansible-playbook').write_text(PLAYBOOK)
         (root / 'venv/bin/ansible-playbook').chmod(0o755)
         (root / 'lib/ssh.sh').write_text(source('infra/lib/ssh.sh'))

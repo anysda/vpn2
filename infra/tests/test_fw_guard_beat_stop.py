@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 import unittest
 
-from play_stage import PLAY_STUBS, play_tree, run_play_source
+from play_stage import PLAY_STUBS, play_tree, real_site_tree, run_play_source
 from test_fw_guard_entry_beat import functions
 
 
@@ -50,7 +50,8 @@ def deploy(body, timeout=60):
         root = Path(directory)
         for path in ('envs', 'lib'):
             (root / path).mkdir()
-        play_tree(root, ['29-openvpn'], STUBS)
+        real_site_tree(root)
+        play_tree(root, [], STUBS)
         (root / 'envs/all.env').write_text('COMMON=1\n')
         for host in ('ru', 'se'):
             (root / f'envs/{host}.env').write_text(f'HOST_TAG={host}\n')

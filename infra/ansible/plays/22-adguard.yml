@@ -1,6 +1,0 @@
----
-- name: AdGuard Home на entry
-  hosts: entry
-  tags: [22-adguard]
-  roles:
-    - adguard

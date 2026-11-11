@@ -737,8 +737,23 @@ run_stage_on_host() {
   if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog|27-ikev2|28-wireguard|29-openvpn) ]]; then
     ansible_venv_ensure fresh
   fi
-  [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]] || die "нет такой стадии: $stage (список: ./deploy.sh --help)"
   run_play "$stage" "$host"
+}
+
+# Стадии, их узлы и порядок записаны в ansible/site.yml, читает его пакет.
+# stage_nodes СТАДИЯ УЗЕЛ... - узлы из перечисленных, у которых стадия есть.
+# С STAGE_REFUSE_EMPTY=1 пустой итог - отказ: стадия entry на экзите и наоборот.
+stage_nodes() {
+  local stage="$1" out rc=0 refuse=()
+  shift
+  [[ -z "${STAGE_REFUSE_EMPTY:-}" ]] || refuse=(--refuse-empty)
+  out=$(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages nodes \
+          --site "$DEPLOY_ROOT/ansible/site.yml" "${refuse[@]}" "$stage" "$@" 2>&1) || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$out" ;;
+    3) die "$out" ;;
+    *) HOST_TAG=deploy die "$out" ;;
+  esac
 }
 
 # ----------------------------------------------------------------------------
@@ -775,14 +790,15 @@ run_stage() {
   fi
 
   local hosts; hosts=$(expand_hosts "$group" 2>/dev/null)
+  # all = entry и экзиты: стадия идёт только на узлы, у которых она есть.
+  # shellcheck disable=SC2086  # список узлов через пробел
+  hosts=$(stage_nodes "$stage" $hosts) || return 1
   if [[ "$stage" == 10-foreign ]]; then
     local host count=0
     for host in $(expand_hosts foreign); do count=$((count + 1)); done
     [[ "$count" != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
     [[ "$group" != ru ]] || HOST_TAG=deploy die '10-foreign - стадия экзитов, на entry её нет: группа foreign, all или тег экзита'
     for host in $hosts; do
-      # all = entry и экзиты: у entry этой стадии нет.
-      [[ "$host" != ru ]] || continue
       run_stage_on_host "$stage" "$host" || return 1
       run_stage_on_host 99-verify "$host" || return 1
     done
@@ -1624,10 +1640,11 @@ case "${1:-}" in
     ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
-    [[ -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
-    expand_hosts "$2" >/dev/null
-    [[ "$1" != 10-foreign || "$2" != ru ]] \
-      || HOST_TAG=deploy die '10-foreign - стадия экзитов, на entry её нет: группа foreign, all или тег экзита'
+    stage_nodes "$1" >/dev/null
+    stage_group=$(expand_hosts "$2")
+    # Стадия entry на экзите (и наоборот) - отказ, а не пустой проход с кодом 0.
+    # shellcheck disable=SC2086  # список узлов через пробел
+    STAGE_REFUSE_EMPTY=1 stage_nodes "$1" $stage_group >/dev/null
     ;;
 esac
 release_start "$@"

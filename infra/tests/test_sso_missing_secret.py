@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from containers_support import FACTS, compose, panel
+from play_stage import real_site_tree
 from test_deploy import bash, function, source
 
 
@@ -58,11 +59,11 @@ class SsoMissingSecretTests(unittest.TestCase):
 
     def test_notice_is_once_at_end_of_pipeline_or_frontend_stage(self):
         deploy = source('infra/deploy.sh')
-        functions = function('print_summary') + function('do_all')
+        functions = function('print_summary') + function('do_all') + function('stage_nodes')
         if 'print_sso_notice() {' in deploy:
             functions += function('print_sso_notice')
         dispatch = deploy.split('case "${1:-}" in', 1)[1]
-        for mode in ('', '30-frontend ru', '30-frontend foreign', '99-verify all'):
+        for mode in ('', '30-frontend ru', '23-emergency foreign', '99-verify all'):
             for runtime, enabled, secret in ((False, True, ''), (True, True, ''),
                                              (False, True, SECRET), (False, False, '')):
                 with self.subTest(mode=mode, runtime=runtime, enabled=enabled, secret=secret):
@@ -70,9 +71,7 @@ class SsoMissingSecretTests(unittest.TestCase):
                         root = Path(directory)
                         (root / 'envs').mkdir()
                         (root / 'lib').mkdir()
-                        (root / 'ansible/plays').mkdir(parents=True)
-                        for stage in ('30-frontend', '99-verify'):
-                            (root / 'ansible/plays' / (stage + '.yml')).touch()
+                        real_site_tree(root)
                         # Isolate notice placement; release acceptance is tested separately.
                         (root / 'lib/deploy-release.sh').write_text(
                             'release_start() { :; }\nrelease_complete() { :; }\n')
@@ -97,7 +96,7 @@ prep_orchestrator_key() { :; }
 prep_entry_mgmt_key() { :; }
 run_stage() { echo "STAGE $*"; }
 run_tracks() { :; }
-expand_hosts() { echo exit; }
+expand_hosts() { case "$1" in ru) echo ru ;; all) echo ru exit ;; *) echo exit ;; esac; }
 verify_and_rotate_ports() { :; }
 prefetch_images() { _PREFETCH_PID=0; }
 wait() { :; }

@@ -1,0 +1,113 @@
+---
+# Единственный вход деплоя: один плей на стадию, тег плея - имя стадии.
+# Порядок плеев - порядок полного деплоя, hosts - узлы стадии (all, entry, exits).
+# `./deploy.sh 30-frontend ru` = `ansible-playbook site.yml --tags 30-frontend --limit ru`.
+# Список стадий отсюда читает и проверка аргументов deploy.sh (vpn2.stages):
+# у плея обязательны `hosts:` и `tags: [стадия]` одной строкой.
+
+- name: Общая база узла
+  hosts: all
+  tags: [00-bootstrap]
+  roles:
+    - base
+
+- name: Служебный слой узла
+  hosts: all
+  tags: [05-mgmt-mesh]
+  roles:
+    - mgmt
+
+- name: Экзит - sing-box, WARP и каналы до entry
+  hosts: exits
+  serial: 1
+  tags: [10-foreign]
+  roles:
+    - exit
+
+- name: Сервер WireGuard на entry
+  hosts: entry
+  tags: [28-wireguard]
+  roles:
+    - wireguard
+
+- name: Сервер OpenVPN на entry
+  hosts: entry
+  tags: [29-openvpn]
+  roles:
+    - openvpn
+
+- name: Десинк YouTube на entry
+  hosts: entry
+  tags: [19-yt-zapret]
+  roles:
+    - zapret
+
+- name: Роутер sing-box на entry
+  hosts: entry
+  tags: [20-ru-router]
+  roles:
+    - router
+
+- name: Сторожа экзитов и TPROXY на entry
+  hosts: entry
+  tags: [21-failover-watchdog]
+  roles:
+    - failover
+
+- name: AdGuard Home на entry
+  hosts: entry
+  tags: [22-adguard]
+  roles:
+    - adguard
+
+- name: Наблюдатель аварийки и аварийный вход
+  hosts: all
+  serial: 1
+  tags: [23-emergency]
+  roles:
+    - emergency
+
+- name: VictoriaMetrics на entry
+  hosts: entry
+  tags: [25-monitoring]
+  roles:
+    - role: containers
+      containers_service: monitoring
+
+- name: Резервные копии entry
+  hosts: entry
+  tags: [26-backup]
+  roles:
+    - backup
+
+- name: Сервер IKEv2 на entry
+  hosts: entry
+  tags: [27-ikev2]
+  roles:
+    - ikev2
+
+- name: Локальный API управления узлом
+  hosts: entry
+  tags: [29-control]
+  roles:
+    - control
+
+- name: Телеграм-бот на entry
+  hosts: entry
+  tags: [35-telegram]
+  roles:
+    - role: containers
+      containers_service: telegram
+
+- name: Панель и Caddy на entry
+  hosts: entry
+  tags: [30-frontend]
+  roles:
+    - role: containers
+      containers_service: panel
+
+- name: Проверка узла после деплоя
+  hosts: all
+  tags: [99-verify]
+  roles:
+    - verify

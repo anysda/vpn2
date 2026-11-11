@@ -10,6 +10,8 @@ import unittest
 
 import yaml
 
+from play_stage import site_play
+
 from adguard_support import render_unit, stage
 
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
@@ -68,7 +70,7 @@ class AdguardRoleTests(unittest.TestCase):
             self.assertEqual(task['changed_when'], expected)
 
     def test_play_runs_role_under_stage_tag(self):
-        play, = yaml.safe_load((ROOT / 'infra/ansible/plays/22-adguard.yml').read_text())
+        play = site_play('22-adguard')
         self.assertEqual((play['hosts'], play['tags'], play['roles']), ('entry', ['22-adguard'], ['adguard']))
 
     def test_restore_wrapper_runs_config_and_restart(self):

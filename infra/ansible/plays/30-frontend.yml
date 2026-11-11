@@ -1,7 +1,0 @@
----
-- name: Панель и Caddy на entry
-  hosts: entry
-  tags: [30-frontend]
-  roles:
-    - role: containers
-      containers_service: panel

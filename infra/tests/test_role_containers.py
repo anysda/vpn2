@@ -6,6 +6,8 @@ import unittest
 
 import yaml
 
+from play_stage import site_play
+
 ROOT = Path(os.environ.get('VPN2_AUDIT_ROOT', Path(__file__).resolve().parents[2]))
 ROLE = ROOT / 'infra/ansible/roles/containers'
 PACKAGE = ROOT / 'infra/vpn2/src/vpn2/containers'
@@ -36,7 +38,7 @@ class ContainersRoleTests(unittest.TestCase):
     def test_plays_run_role_under_stage_tag(self):
         for stage, service in PLAYS.items():
             with self.subTest(stage=stage):
-                play, = yaml.safe_load((ROOT / f'infra/ansible/plays/{stage}.yml').read_text())
+                play = site_play(stage)
                 self.assertEqual((play['hosts'], play['tags']), ('entry', [stage]))
                 self.assertEqual(play['roles'], [{'role': 'containers', 'containers_service': service}])
         self.assertEqual(sorted(self.defaults['containers_tools']), sorted(PLAYS.values()))

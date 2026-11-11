@@ -172,11 +172,10 @@ class DeployGuardTests(unittest.TestCase):
     def run_stage(self, stage, disarm_rc=0):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for path in ('ansible/plays', 'lib', 'venv/bin'):
+            for path in ('ansible', 'lib', 'venv/bin'):
                 (root / path).mkdir(parents=True)
-            (root / 'ansible/plays' / f'{stage}.yml').touch()
             playbook = root / 'venv/bin/ansible-playbook'
-            playbook.write_text('#!/bin/bash\necho "play $(basename "$1")"\n')
+            playbook.write_text('#!/bin/bash\necho "play $5.yml"\n')
             playbook.chmod(0o755)
             source = (ROOT / 'infra/deploy.sh').read_text()
             settings = ''.join(line + '\n' for line in source.splitlines()

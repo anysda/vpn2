@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import site_tree
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 ROUNDS = 20
@@ -72,8 +74,7 @@ def nonblocking(fd):
 class SharedStdinTests(unittest.TestCase):
     def tree(self, directory):
         root = Path(directory)
-        (root / 'ansible/plays').mkdir(parents=True)
-        (root / 'ansible/plays/42-x.yml').write_text('- hosts: all\n')
+        site_tree(root, ['42-x'])
         venv = root / 'vpn2/venv'
         (venv / 'bin').mkdir(parents=True)
         (venv / '.vpn2-pins').write_text('x\n')

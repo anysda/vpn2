@@ -18,7 +18,8 @@ import types
 import unittest
 from unittest.mock import patch
 
-import yaml
+
+from play_stage import site_play
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
@@ -1180,7 +1181,7 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertIn("'23-emergency:foreign'", deploy)
         self.assertIn('"23-emergency:ru ', deploy)
         self.assertIn('-m vpn2.emergency provision', deploy)
-        play = yaml.safe_load((ROOT / 'infra/ansible/plays/23-emergency.yml').read_text())[0]
+        play = site_play('23-emergency')
         self.assertEqual((play['hosts'], play['tags'], play['roles']), ('all', ['23-emergency'], ['emergency']))
         unit = (role / 'templates/vpn2-emergency.service.j2').read_text()
         self.assertIn('User=vpn2-emergency', unit)

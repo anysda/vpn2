@@ -3,12 +3,14 @@ import unittest
 
 import yaml
 
-from zapret_support import ROLE, ROOT, VALUES, render, stage, tasks
+from play_stage import site_play
+
+from zapret_support import ROLE, VALUES, render, stage, tasks
 
 
 class ZapretRoleTests(unittest.TestCase):
     def test_play_runs_role_under_stage_tag(self):
-        play, = yaml.safe_load((ROOT / 'infra/ansible/plays/19-yt-zapret.yml').read_text())
+        play = site_play('19-yt-zapret')
         self.assertEqual((play['hosts'], play['tags'], play['roles']), ('entry', ['19-yt-zapret'], ['zapret']))
 
     def test_route_selects_teardown_or_desync(self):

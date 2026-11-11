@@ -68,7 +68,8 @@ class Tree:
         (self.root / 'app/shared').mkdir(parents=True)
         shutil.copyfile(ROOT / 'app/shared/vpn-pools.json', self.root / 'app/shared/vpn-pools.json')
         # Пустая стадия-плей: venv не собирается, ansible-playbook подставной.
-        (infra / 'ansible/plays' / f'{NOOP_STAGE}.yml').write_text('- hosts: all\n')
+        with (infra / 'ansible/site.yml').open('a') as site:
+            site.write(f'- hosts: all\n  tags: [{NOOP_STAGE}]\n')
         with (infra / 'lib/ansible-venv.sh').open('a') as library:
             library.write('ansible_venv_ensure() { :; }\n')
         playbook = self.root / 'vpn2/venv/bin/ansible-playbook'
@@ -164,7 +165,6 @@ class JournalTests(unittest.TestCase):
 
     def test_foreign_stage_on_entry_refused_before_release(self):
         with Tree() as tree:
-            (tree.root / 'infra/ansible/plays/10-foreign.yml').write_text('- hosts: all\n')
             refused = tree.deploy('5', '10-foreign', 'ru')
             output = refused.stdout + refused.stderr
             self.assertNotEqual(refused.returncode, 0, output)
@@ -177,6 +177,28 @@ class JournalTests(unittest.TestCase):
             # Следующая стадия идёт без recover.
             following = tree.deploy('5', NOOP_STAGE, 'ru')
             self.assertEqual(following.returncode, 0, following.stdout + following.stderr)
+
+    def test_entry_stage_on_exit_refused_before_release(self):
+        # Раньше `30-frontend se` был пустым проходом с кодом 0: стадии на экзите нет.
+        with Tree() as tree:
+            for group in ('se', 'foreign'):
+                with self.subTest(group=group):
+                    refused = tree.deploy('5', '30-frontend', group)
+                    output = refused.stdout + refused.stderr
+                    self.assertEqual(refused.returncode, 1, output)
+                    fatal = [line for line in refused.stderr.splitlines() if 'FATAL' in line]
+                    self.assertEqual(fatal, ['[deploy] FATAL: 30-frontend - стадия entry, на экзитах её нет: '
+                                             'группа ru или all'], output)
+                    self.assertFalse(tree.journal().exists(), output)
+                    self.assertEqual(tree.copies(), [], output)
+
+    def test_unknown_stage_names_help(self):
+        with Tree() as tree:
+            refused = tree.deploy('5', '30-frontnd', 'ru')
+            output = refused.stdout + refused.stderr
+            self.assertEqual(refused.returncode, 1, output)
+            self.assertIn('FATAL: нет такой стадии: 30-frontnd (список: ./deploy.sh --help)', refused.stderr)
+            self.assertFalse(tree.journal().exists(), output)
 
     def test_open_journal_is_one_fatal_line_and_recover_passes(self):
         with Tree() as tree:

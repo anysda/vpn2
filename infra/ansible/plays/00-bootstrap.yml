@@ -1,6 +1,0 @@
----
-- name: Общая база узла
-  hosts: all
-  tags: [00-bootstrap]
-  roles:
-    - base

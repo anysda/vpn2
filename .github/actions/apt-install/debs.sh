@@ -45,32 +45,53 @@ pull() {
   say "набор $ref: $(find "$work" -name '*.deb' | wc -l) .deb, $(du -sh "$work" | cut -f1), $((SECONDS - t0)) с"
 }
 
-# С зеркал: три попытки, каждая не дольше 90 с, с сообщением - не тишина до
-# предела шага. Качаются только .deb, которых нет в образе раннера.
+# Запасные зеркала вне зоны ubuntu.com: сбой DNS Canonical их не задевает.
+# Подписи архива те же - apt сверяет их ключом Ubuntu из образа раннера.
+mirrors=${APT_DEBS_MIRRORS-https://mirrors.edge.kernel.org/ubuntu https://ftp.halifax.rwth-aachen.de/ubuntu}
+
+# Параметры apt для попытки: пусто - штатные зеркала раннера, иначе одно запасное.
+sources() {
+  local mirror=$1 st code
+  [ -n "$mirror" ] || return 0
+  st=$(mktemp -d); chmod 755 "$st"
+  # shellcheck disable=SC1091
+  code=$(. /etc/os-release; echo "$VERSION_CODENAME")
+  printf 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] %s %s main universe restricted multiverse\n' \
+    "$mirror" "$code" "$mirror" "$code-updates" "$mirror" "$code-security" > "$st/sources.list"
+  printf '%s\n' -o "Dir::Etc::sourcelist=$st/sources.list" -o Dir::Etc::sourceparts=- \
+    -o "Dir::State::lists=$st/lists" -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=
+}
+
+# С сети: штатные зеркала раннера, затем запасные. Попытка не дольше 90 с и с
+# сообщением - не тишина до предела шага. Качаются только .deb, которых нет в
+# образе раннера.
 fetch() {
-  local n log
+  local n=0 log mirror total src=() all=('')
   sudo rm -rf "$work"; mkdir -p "$work"
   log=$(mktemp)
   local net=(-o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15
     -o DPkg::Lock::Timeout=60)
-  for n in 1 2 3; do
-    say "зеркала Ubuntu, попытка $n из 3: индекс и .deb для $# пакетов"
+  read -ra src <<< "$mirrors"; all+=("${src[@]}"); total=${#all[@]}
+  for mirror in "${all[@]}"; do
+    n=$((n + 1))
+    say "попытка $n из $total, ${mirror:-зеркала раннера}: индекс и .deb для $# пакетов"
+    mapfile -t src < <(sources "$mirror")
     # shellcheck disable=SC2024  # журнал - свой файл, sudo для него не нужен
-    if sudo timeout 30 apt-get -q "${net[@]}" update >"$log" 2>&1 \
-      && sudo timeout 60 apt-get -q "${net[@]}" install -y --download-only --no-install-recommends \
+    if sudo timeout 30 apt-get -q --error-on=any "${net[@]}" "${src[@]}" update >"$log" 2>&1 \
+      && sudo timeout 60 apt-get -q "${net[@]}" "${src[@]}" install -y --download-only --no-install-recommends \
         -o Dir::Cache::Archives="$work/archives" "$@" >>"$log" 2>&1; then
       if compgen -G "$work/archives/*.deb" >/dev/null; then sudo mv "$work"/archives/*.deb "$work/"; fi
       sudo rm -rf "$work/archives"; sudo chown -R "$(id -u):$(id -g)" "$work"
-      say "с зеркал: $(find "$work" -name '*.deb' | wc -l) .deb, $(du -sh "$work" | cut -f1), $((SECONDS - t0)) с"
+      say "с сети, ${mirror:-зеркала раннера}: $(find "$work" -name '*.deb' | wc -l) .deb, $(du -sh "$work" | cut -f1), $((SECONDS - t0)) с"
       return 0
     fi
     grep -E '^(E:|W:|Err:)' "$log" | head -n 5 | sed 's/^/[apt-install]   /' || :
     if grep -q '^E: Unable to locate package' "$log"; then
       die "пакет не найден в зеркалах: $(sed -n 's/^E: Unable to locate package //p' "$log" | tr '\n' ' ')"
     fi
-    [ "$n" -lt 3 ] && sleep $((n * 5))
+    sudo rm -rf "$work/archives"
   done
-  die "набора в ghcr нет и зеркала Ubuntu не ответили за три попытки ($((SECONDS - t0)) с). Набор выкладывает images.yml на dev; зеркала оживут - перезапустить задание"
+  die "набора в ghcr нет, и ни штатные, ни запасные зеркала Ubuntu не ответили за $total попыток ($((SECONDS - t0)) с). Набор выкладывает images.yml на dev; зеркала оживут - перезапустить задание"
 }
 
 index() {

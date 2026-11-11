@@ -1,7 +1,5 @@
 ---
 mgmt_entry: "{{ inventory_hostname == 'ru' }}"
-mgmt_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
-mgmt_tmp: /tmp/anysda
 # Локальный служебный адрес entry: на него завязаны clash-api sing-box,
 # AdGuard, панель и сторожа. Границу он не пересекает.
 mgmt_ip: "{{ vpn2_env.MGMT_IP | default('10.99.0.1', true) }}"

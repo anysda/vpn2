@@ -42,30 +42,11 @@
     dest: /usr/local/sbin/anysda-tproxy-watchdog.sh
     mode: '0755'
 
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ failover_infra }}/lib/{{ item }}"
-    dest: "{{ failover_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
-
 - name: Ресурсы юнитов сторожей
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources "$1"; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ failover_tmp }}"
-      - "{{ item }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  loop: [anysda-failover-watchdog, anysda-tproxy-watchdog]
-  register: failover_step
-  changed_when: "'changed=1' in failover_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-failover-watchdog, anysda-tproxy-watchdog]
 
 - name: Сторож экзитов включён
   ansible.builtin.systemd_service:

@@ -60,28 +60,11 @@
         dest: /etc/systemd/system/anysda-mgmt-loopback.service
         mode: '0644'
 
-    - name: Библиотека ресурсов
-      ansible.builtin.copy:
-        src: "{{ mgmt_infra }}/lib/{{ item }}"
-        dest: "{{ mgmt_tmp }}/"
-        mode: '0644'
-      loop: [entry-resources.sh, entry_resources.py]
-      changed_when: false
-
     - name: Ресурсы юнита служебного адреса
-      ansible.builtin.command:
-        argv:
-          - /bin/bash
-          - --norc
-          - -euo
-          - pipefail
-          - -c
-          - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-mgmt-loopback; echo "changed=$ENTRY_DROPIN_CHANGED"'
-          - "{{ mgmt_tmp }}"
-      environment:
-        ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-      register: mgmt_step
-      changed_when: "'changed=1' in mgmt_step.stdout"
+      ansible.builtin.include_role:
+        name: resources
+      vars:
+        resources_units: [anysda-mgmt-loopback]
 
     - name: Служебный адрес висит на lo
       ansible.builtin.systemd_service:

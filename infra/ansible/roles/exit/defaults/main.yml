@@ -17,8 +17,6 @@ exit_host:
 
 # Библиотеки и шаблон, которые шаги роли читают на узле из exit_tmp.
 exit_libs:
-  - "{{ exit_infra }}/lib/entry-resources.sh"
-  - "{{ exit_infra }}/lib/entry_resources.py"
   - "{{ exit_infra }}/lib/install-sing-box.sh"
   - "{{ exit_infra }}/configs/sing-box-server.json.tpl"
   - "{{ exit_wheel }}"

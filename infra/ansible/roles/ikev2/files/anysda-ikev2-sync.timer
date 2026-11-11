@@ -1,0 +1,11 @@
+[Unit]
+Description=anysda-vpn2 — IKEv2 creds/counters sync every 10s
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=anysda-ikev2-sync.service
+
+[Install]
+WantedBy=timers.target

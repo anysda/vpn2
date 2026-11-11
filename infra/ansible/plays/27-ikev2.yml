@@ -1,0 +1,6 @@
+---
+- name: Сервер IKEv2 на entry
+  hosts: entry
+  tags: [27-ikev2]
+  roles:
+    - ikev2

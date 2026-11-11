@@ -1,0 +1,13 @@
+[Unit]
+Description=anysda-vpn2 — xfrm0 (IKEv2) + TPROXY to sing-box
+After=network-online.target sing-box.service strongswan-starter.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/anysda-ikev2-routing.sh up
+ExecStop=/usr/local/sbin/anysda-ikev2-routing.sh down
+
+[Install]
+WantedBy=multi-user.target

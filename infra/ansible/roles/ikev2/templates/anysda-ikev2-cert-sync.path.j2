@@ -1,0 +1,10 @@
+[Unit]
+Description=anysda-vpn2 — watch Caddy certificate and key
+
+[Path]
+PathChanged={{ ikev2_le_cert }}
+PathChanged={{ ikev2_le_key }}
+Unit=anysda-ikev2-cert-sync.service
+
+[Install]
+WantedBy=multi-user.target

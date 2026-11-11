@@ -1,0 +1,8 @@
+[Unit]
+Description=anysda-vpn2 — apply panel IKEv2 creds + dump traffic counters
+After=strongswan-starter.service
+Requires=strongswan-starter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-ikev2-sync.py

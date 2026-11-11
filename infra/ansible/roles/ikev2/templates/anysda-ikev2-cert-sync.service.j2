@@ -1,0 +1,7 @@
+[Unit]
+Description=anysda-vpn2 — apply Caddy certificate and IKE identity
+After=strongswan-starter.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/anysda-ikev2-le-sync.sh "{{ ikev2_le_cert }}" "{{ ikev2_le_key }}" "{{ ikev2_le_domain }}"

@@ -1,0 +1,263 @@
+"""Сервер IKEv2 на entry: режим сертификата, свой CA, конфиг swanctl, загрузка в charon.
+
+Режимов два. letsencrypt: адрес профилей - домен панели, Caddy выдал на него
+сертификат (или пара восстановлена из бэкапа в swanctl), и профилей по IP со своим CA
+ещё не выдавали. self-signed: иначе; свой ECDSA CA, в SAN адрес профилей и IP входа.
+Панель читает режим и адрес из /etc/anysda/ikev2-mode и ikev2-server-host.
+"""
+import glob
+import os
+import subprocess
+import time
+from pathlib import Path
+from string import Template
+from typing import NamedTuple
+
+from vpn2 import pki
+from vpn2.fsutil import lock
+
+ETC = '/etc/anysda'
+SWANCTL = '/etc/swanctl'
+PKI = '/etc/strongswan/pki'
+LOCK = '/run/anysda-ikev2-cert.lock'
+LE_SYNC = '/usr/local/sbin/anysda-ikev2-le-sync.sh'
+CADDY = '/var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory'
+UNIT = 'strongswan-starter'
+# v6-пул только для быстрого отказа, как fd66:66:: у WG: без него ::/0 в туннель
+# не попадает, и v6 клиента уходит мимо VPN со своим настоящим адресом.
+SUBNET6 = 'fd68:68::/112'
+# starter и его charon названы явно: strongSwan 6 по умолчанию выбирает charon-systemd,
+# а starter только рекомендует strongswan-charon. EAP-MSCHAPv2 и crypto-плагины тоже
+# приходят через Recommends, они нужны и при APT::Install-Recommends=0.
+PACKAGES = ('strongswan', 'strongswan-starter', 'strongswan-charon', 'strongswan-pki', 'strongswan-swanctl',
+            'libcharon-extauth-plugins', 'libcharon-extra-plugins',
+            'libstrongswan-standard-plugins', 'libstrongswan-extra-plugins')
+# Второй charon рядом со starter дрался бы за 500/4500.
+CONFLICT = 'charon-systemd'
+# Только то, что charon читает при старте: сертификаты, conns и пулы swanctl грузит
+# в живой charon без рестарта, а рестарт рвёт все сессии IKEv2.
+STARTER_INPUTS = ('/usr/lib/ipsec/charon', '/usr/lib/ipsec/starter', '/usr/lib/ipsec/plugins/*.so',
+                  '/usr/lib/systemd/system/strongswan-starter.service', '/etc/strongswan.conf',
+                  '/etc/strongswan.d/*.conf', '/etc/strongswan.d/charon/*.conf')
+CONF = Template('''# Managed by stage 27-ikev2 — НЕ редактировать вручную.
+# Динамический conf раскатывает панель (server/utils/ikev2.ts) в
+# /etc/swanctl/conf.d/anysda-clients.conf: секреты, а также conn и пул из
+# одного адреса на каждое устройство, унаследованные от conn и пула ниже.
+# Там же общей conn дописано требование группы, чтобы после EAP charon
+# переходил на conn устройства (постоянный адрес, VPN2-115).
+
+connections {
+  anysda-ikev2 {
+    version       = 2
+    # Набор ОБЯЗАН перекрываться с нативными клиентами, иначе IKE_SA_INIT
+    # отлетает с NO_PROPOSAL_CHOSEN (Windows рисует «Policy match error»).
+    # ⚠️ Windows 10/11 в дефолтной политике предлагает ЕДИНСТВЕННУЮ DH-группу
+    # MODP_1024 (group 2) - ни ecp384, ни modp2048 в его списке нет вообще,
+    # поднять её можно только реестром/PowerShell на каждой машине. Поэтому
+    # modp1024 держим последним запасным вариантом: шифр при этом остаётся
+    # AES-GCM-256/SHA-384, слабое место только обмен ключами.
+    # Порядок = приоритет (charon.prefer_configured_proposals): сильное первым,
+    # клиент послабее сам сползёт вниз по списку.
+    proposals     = aes256gcm16-prfsha384-ecp384,aes256gcm16-prfsha384-modp2048,aes256gcm16-prfsha256-ecp256,aes256-sha256-ecp256,aes256-sha256-modp2048,aes256gcm16-prfsha384-modp1024,aes256-sha256-modp1024,aes128-sha256-modp1024
+    dpd_delay     = 30s
+    pools         = anysda-ikev2-pool, anysda-ikev2-pool6
+    fragmentation = yes
+    encap         = yes
+    rekey_time    = 0s
+
+    local-server {
+      auth  = pubkey
+      certs = anysda-server.crt
+      id    = $IKEV2_LOCAL_ID
+    }
+    remote-client {
+      auth   = eap-mschapv2
+      eap_id = %any
+    }
+    children {
+      net {
+        local_ts      = 0.0.0.0/0, ::/0
+        # ⚠️ Нативные клиенты не делают PFS в CHILD_SA (KE-payload не шлют),
+        # поэтому варианты БЕЗ DH-группы обязаны быть в списке, иначе SA
+        # развалится уже после успешной аутентификации. esn-noesn - оба
+        # режима, Windows просит ESN, strongSwan по умолчанию только noesn.
+        esp_proposals = aes256gcm16-ecp384-esn-noesn,aes256gcm16-esn-noesn,aes128gcm16-esn-noesn,aes256-sha256-esn-noesn,aes256-sha1-esn-noesn,aes128-sha256-esn-noesn,aes128-sha1-esn-noesn
+        rekey_time    = 0s
+        # DF во внешний ESP не копируем: на пути с MTU меньше ~1465 пакет
+        # с DF молча теряется (ICMP до entry не доходит), и HTTPS у клиента
+        # виснет на первом полном сегменте. Без DF роутер его дробит, как у WG.
+        copy_df       = no
+        # XFRM-interface if_id=42 — pakets из IPsec policy кладутся в xfrm0.
+        # iptables PREROUTING -i xfrm0 ставит mark 0x42 → TPROXY 7898 (sing-box).
+        if_id_in  = 42
+        if_id_out = 42
+      }
+    }
+  }
+}
+
+pools {
+  anysda-ikev2-pool {
+    addrs = $IKEV2_SUBNET
+    dns   = $IKEV2_DNS
+  }
+  anysda-ikev2-pool6 {
+    addrs = $IKEV2_SUBNET6
+  }
+}
+
+# secrets {} и conn устройств — раскатывает панель в conf.d/anysda-clients.conf.
+''')
+
+
+class Plan(NamedTuple):
+    mode: str
+    server_host: str
+    le_domain: str
+    le_cert: str
+    le_key: str
+    local_id: str
+
+
+def _read(path):
+    try:
+        return Path(path).read_text(errors='replace')
+    except OSError:
+        return ''
+
+
+def _filled(path):
+    try:
+        return os.stat(path).st_size > 0
+    except OSError:
+        return False
+
+
+def _readable(path):
+    return bool(path) and os.access(path, os.R_OK)
+
+
+def plan(entry_host, public_host, panel_domain, *, etc=ETC, swanctl=SWANCTL, caddy=CADDY):
+    """Режим сертификата сервера по настройкам и состоянию узла.
+
+    Профили по IP со своим CA уже выданы, а сертификат Let's Encrypt IP не содержит:
+    такой сервер остаётся на своём CA, отметка ikev2-own-ca-kept ставится здесь же.
+    """
+    etc = Path(etc)
+    mode, host = _read(etc / 'ikev2-mode'), _read(etc / 'ikev2-server-host')
+    kept = etc / 'ikev2-own-ca-kept'
+    if public_host != entry_host and mode == 'self-signed' and host == entry_host:
+        kept.touch()
+    le_domain = panel_domain if panel_domain and public_host == panel_domain and not kept.exists() else ''
+    le_cert = f'{caddy}/{le_domain}/{le_domain}.crt' if le_domain else ''
+    le_key = f'{caddy}/{le_domain}/{le_domain}.key' if le_domain else ''
+    # Restore возвращает действующую пару LE в swanctl, а Caddy на чистом узле мог ещё
+    # не получить свой сертификат: доверие клиентов не меняется.
+    restored = (le_domain and mode == 'letsencrypt' and host == le_domain
+                and _filled(f'{swanctl}/x509/anysda-server.crt')
+                and _filled(f'{swanctl}/private/anysda-server.key'))
+    if (_readable(le_cert) and _readable(le_key)) or restored:
+        return Plan('letsencrypt', le_domain, le_domain, le_cert, le_key, le_domain)
+    # Идентификатор сервера берётся из IDr клиента (у старых профилей IP, у новых домен),
+    # оба есть в SAN своего сертификата.
+    local_id = '%any' if public_host != entry_host else public_host
+    return Plan('self-signed', public_host, le_domain, le_cert, le_key, local_id)
+
+
+def conf_text(local_id, subnet, dns):
+    """Базовая conn и пулы swanctl; conn устройств и секреты дописывает панель."""
+    return CONF.substitute(IKEV2_LOCAL_ID=local_id, IKEV2_SUBNET=subnet, IKEV2_DNS=dns, IKEV2_SUBNET6=SUBNET6)
+
+
+def _put(path, body, mode):
+    """Файл с содержимым body и правами mode; True - что-то сменилось."""
+    path = Path(path)
+    try:
+        same = path.read_bytes() == body and (path.stat().st_mode & 0o777) == mode
+    except OSError:
+        same = False
+    if not same:
+        path.write_bytes(body)
+        path.chmod(mode)
+    return not same
+
+
+def _creds(swanctl):
+    return {str(path): path.read_bytes() for name in ('x509ca', 'x509', 'private')
+            for path in sorted(Path(swanctl, name).glob('*')) if path.is_file()}
+
+
+def own_certs(public_host, entry_host, say, *, target=PKI, swanctl=SWANCTL, run=pki.run):
+    """Свой CA и сертификат сервера: сборка одной подменой каталога и выкладка в swanctl."""
+    with pki.transaction(target) as work:
+        say(f'[3/8] self-signed server cert (CN={public_host})')
+        pki.build_ikev2(work, public_host, entry_host, say=say, run=run)
+    target = Path(target)
+    for name, dest, mode in (('ca.crt', 'x509ca/anysda-ca.crt', 0o644),
+                             ('server.crt', 'x509/anysda-server.crt', 0o644),
+                             ('server.key', 'private/anysda-server.key', 0o600)):
+        _put(Path(swanctl, dest), (target / name).read_bytes(), mode)
+
+
+def starter_inputs():
+    return [path for pattern in STARTER_INPUTS for path in (sorted(glob.glob(pattern)) or [pattern])]
+
+
+def _settle(run, sleep, tries=10):
+    # Готов - когда charon отвечает по vici: им ниже грузятся creds и conns.
+    for _ in range(tries):
+        if run(['swanctl', '--stats'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            return
+        sleep(0.2)
+
+
+def server(entry_host, public_host, panel_domain, subnet, dns, say, restart, *,
+           etc=ETC, swanctl=SWANCTL, target=PKI, caddy=CADDY, lock_path=LOCK, le_sync=LE_SYNC,
+           run=subprocess.run, pki_run=pki.run, sleep=time.sleep):
+    """Сертификаты, конфиг и загрузка в charon под замком применения сертификата.
+
+    restart() - перезапуск strongswan-starter по отпечатку входов, True при рестарте.
+    Отметки режима публикуются после успешной загрузки конфигурации. True - узел изменён.
+    """
+    etc = Path(etc)
+    for path in (target, f'{swanctl}/conf.d', etc):
+        Path(path).mkdir(parents=True, exist_ok=True)
+    for name in ('x509ca', 'x509', 'private'):
+        Path(swanctl, name).mkdir(mode=0o700, exist_ok=True)
+        Path(swanctl, name).chmod(0o700)
+    with lock(lock_path):
+        chosen = plan(entry_host, public_host, panel_domain, etc=etc, swanctl=swanctl, caddy=caddy)
+        if chosen.mode == 'self-signed' and chosen.le_domain:
+            say(f'PANEL_DOMAIN={chosen.le_domain} задан, но Caddy ещё не выдал LE-cert')
+            say('  → временно self-signed; сертификат Caddy применится автоматически (проверка каждые 30 с)')
+        say(f'mode={chosen.mode} server-host={chosen.server_host}')
+        before = _creds(swanctl)
+        if chosen.mode == 'letsencrypt':
+            say(f'[2/8] LE-cert от Caddy ({chosen.le_domain})')
+            # Свой CA из режима self-signed путает charon при поиске цепочки.
+            Path(swanctl, 'x509ca/anysda-ca.crt').unlink(missing_ok=True)
+            if _readable(chosen.le_cert) and _readable(chosen.le_key):
+                run([le_sync, chosen.le_cert, chosen.le_key], check=True)
+            else:
+                say('  сохраняю восстановленные LE-cert/key/chain из swanctl до выдачи Caddy')
+        else:
+            say('[2/8] self-signed CA')
+            own_certs(public_host, entry_host, say, target=target, swanctl=swanctl, run=pki_run)
+        changed = _creds(swanctl) != before
+        say('[4/8] swanctl conf')
+        text = conf_text(chosen.local_id, subnet, dns).encode()
+        changed |= _put(Path(swanctl, 'conf.d/anysda.conf'), text, 0o644)
+        say('[6/8] strongswan-starter service')
+        restarted = restart()
+        if restarted:
+            _settle(run, sleep)
+        # CA, creds, пулы и conns - в работающий charon.
+        for what in ('--load-creds', '--load-pools', '--load-conns'):
+            run(['swanctl', what], check=True, stdout=subprocess.DEVNULL)
+        for name, value in (('ikev2-server-host', chosen.server_host), ('ikev2-mode', chosen.mode),
+                            ('ikev2-domain', chosen.le_domain)):
+            changed |= _put(etc / name, value.encode(), 0o644)
+        # Файл оставался от прежних версий стадии: профили по IP работают и так.
+        (etc / 'ikev2-profile-notice').unlink(missing_ok=True)
+        say(f'27-ikev2 — mode={chosen.mode} server-host={chosen.server_host}')
+    return changed or restarted

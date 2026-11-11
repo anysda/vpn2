@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import apt, entryvpn, exitnode, firewall, pki, swap
+from vpn2 import apt, entryvpn, exitnode, firewall, ikev2, pki, swap
 
 CHANGED = 'vpn2: changed'
 APPLIED_DIR = Path('/var/lib/anysda/applied')
@@ -320,6 +320,20 @@ def _ovpn_restart(args):
     return ovpn_restart()
 
 
+def _ikev2_packages(args):
+    del args
+    changed = apt.install(ikev2.PACKAGES)
+    if apt.have([ikev2.CONFLICT]):
+        apt.apt_get(['purge', '-y', '-qq', ikev2.CONFLICT], quiet=True)
+        changed = True
+    return changed
+
+
+def _ikev2_server(args):
+    return ikev2.server(args.entry_host, args.public_host, args.panel_domain, args.subnet, args.dns, _say,
+                        lambda: restart_if_changed(ikev2.UNIT, ikev2.starter_inputs()))
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='action', required=True)
@@ -370,6 +384,15 @@ def main(argv):
     item.set_defaults(run=_ovpn_server_conf)
     sub.add_parser('ovpn-restart', help='рестарт OpenVPN при смене входов и отметка last good') \
         .set_defaults(run=_ovpn_restart)
+    sub.add_parser('ikev2-packages', help='strongSwan со starter, без charon-systemd') \
+        .set_defaults(run=_ikev2_packages)
+    item = sub.add_parser('ikev2-server', help='сертификаты, конфиг swanctl и загрузка в charon')
+    item.add_argument('--entry-host', required=True)
+    item.add_argument('--public-host', required=True, help='адрес сервера в профилях')
+    item.add_argument('--panel-domain', default='')
+    item.add_argument('--subnet', required=True)
+    item.add_argument('--dns', required=True)
+    item.set_defaults(run=_ikev2_server)
     item = sub.add_parser('venv')
     item.add_argument('wheel')
     item.add_argument('--root', default='/opt/vpn2')

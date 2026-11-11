@@ -1,0 +1,28 @@
+---
+ikev2_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+ikev2_tmp: /tmp/anysda
+ikev2_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
+ikev2_env:
+  HOST_TAG: "{{ inventory_hostname }}"
+ikev2_entry_host: "{{ lookup('ansible.builtin.env', 'ENTRY_HOST') }}"
+ikev2_panel_domain: "{{ lookup('ansible.builtin.env', 'PANEL_DOMAIN') }}"
+# Адрес сервера в профилях тот же, что у WG и OpenVPN: entry.public_host,
+# иначе домен панели, иначе IP входа.
+ikev2_public_host: >-
+  {{ lookup('ansible.builtin.env', 'WG_PUBLIC_HOST') | default(ikev2_panel_domain, true)
+     | default(ikev2_entry_host, true) }}
+ikev2_subnet: "{{ lookup('ansible.builtin.env', 'IKEV2_SUBNET') | default('10.68.68.0/24', true) }}"
+# Единственный список пулов общий с панелью.
+ikev2_pools: "{{ lookup('ansible.builtin.file', ikev2_infra ~ '/../app/shared/vpn-pools.json') | from_json }}"
+ikev2_subnets: "{{ ikev2_pools.ikev2.subnets }}"
+# v6-пул только для быстрого отказа: REJECT на xfrm0 уводит клиента на v4.
+ikev2_subnet6: fd68:68::/112
+# Клиенты IKEv2 резолвят через AdGuard на mgmt-адресе entry.
+ikev2_dns: "{{ lookup('ansible.builtin.env', 'IKEV2_DNS') | default('10.99.0.1', true) }}"
+ikev2_ufw:
+  - {comment: ikev2 IKE, rules: [500/udp]}
+  - {comment: ikev2 NAT-T, rules: [4500/udp]}
+  - comment: ikev2 → AdGuard DNS
+    dns: {to: "{{ ikev2_dns }}", subnets: "{{ ikev2_subnets }}"}
+ikev2_caddy_certs: /var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory
+ikev2_le_domain: "{{ ikev2_domain.content | default('') | b64decode }}"

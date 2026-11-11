@@ -427,3 +427,64 @@ def build_openvpn(directory, *, run=run):
         path.chmod(0o600)
     for path in (ca, cert, crl):
         path.chmod(0o644)
+
+
+def _san_names(cert, run):
+    try:
+        done = _call(run, ['openssl', 'x509', '-in', str(cert), '-noout', '-ext', 'subjectAltName'])
+    except PkiError:
+        return set()
+    return {part.lstrip(' ') for line in done.stdout.splitlines() for part in line.split(',')}
+
+
+def san_entry(name):
+    """Запись SAN, как её печатает openssl: адрес из цифр и точек - IP, иначе DNS."""
+    return f'IP Address:{name}' if re.fullmatch(r'[0-9.]+', name) else f'DNS:{name}'
+
+
+def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=run):
+    """Свой CA IKEv2 и сертификат сервера в directory, как стадия 27.
+
+    CA выпускается один раз на 10 лет. Сертификат сервера (5 лет) перевыпускается, когда
+    истёк, не сходится с CA или в SAN нет адреса профилей public либо IP входа; ключ и
+    CA при этом прежние, выданные профили продолжают работать.
+    """
+    pki = Path(directory)
+    ca, ca_key = pki / 'ca.crt', pki / 'ca.key'
+    require_key(ca_key, ca, run=run)
+    if not cert_valid(ca, run=run):
+        say('generating CA (ECDSA P-256, 10y)')
+        done = _checked(run, ['pki', '--self', '--in', str(ca_key), '--type', 'ecdsa',
+                              '--dn', 'CN=anysda-vpn2 IKEv2 CA', '--ca', '--lifetime', '3650',
+                              '--outform', 'pem'], 'pki --self')
+        ca.write_text(done.stdout)
+    ca_key.chmod(0o600)
+    ca.chmod(0o644)
+    _require_pair(ca_key, ca, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
+
+    sans = [public] if public == entry_host else [public, entry_host]
+    key, cert = pki / 'server.key', pki / 'server.crt'
+    require_key(key, cert, run=run)
+    issue = not (pair_valid(key, cert, run=run) and verify(ca, cert, run=run))
+    if not issue:
+        have = _san_names(cert, run)
+        for name in sans:
+            if san_entry(name) not in have:
+                say(f'SAN не содержит {name}, перевыпуск server cert')
+                issue = True
+    if issue:
+        pub = pki / 'server.pub'
+        pub.write_text(_checked(run, ['pki', '--pub', '--in', str(key), '--type', 'ecdsa', '--outform', 'pem'],
+                                'pki --pub').stdout)
+        done = _checked(run, ['pki', '--issue', '--cacert', str(ca), '--cakey', str(ca_key),
+                              '--in', str(pub), '--type', 'pub', '--dn', f'CN={public}',
+                              *(f'--san={name}' for name in sans),
+                              '--flag', 'serverAuth', '--flag', 'ikeIntermediate',
+                              '--lifetime', '1825', '--outform', 'pem'], 'pki --issue')
+        pub.unlink()
+        cert.write_text(done.stdout)
+    _require_pair(key, cert, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
+    for path, mode in ((ca_key, 0o600), (key, 0o600), (ca, 0o644), (cert, 0o644)):
+        path.chmod(mode)

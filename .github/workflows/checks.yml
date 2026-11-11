@@ -44,6 +44,7 @@ jobs:
         run: git ls-files -z '*.py' | xargs -0 pipx run --spec ruff==0.17.4 ruff check --isolated --select E9,F,ARG,ERA
       - name: vulture
         run: git ls-files -z '*.py' | xargs -0 pipx run --spec vulture==2.16 vulture --min-confidence 0
+      - run: pip install --quiet ./infra/vpn2
       - name: config2env на config.example.yaml
         run: |
           d=$(mktemp -d)

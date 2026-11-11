@@ -1,0 +1,2 @@
+2: eth0: <UP>
+    inet 203.0.113.10/24 brd 203.0.113.255 scope global eth0

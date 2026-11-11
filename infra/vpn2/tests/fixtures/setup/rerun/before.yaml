@@ -1,0 +1,32 @@
+# Keep this comment
+entry:
+  host: 192.0.2.10
+  password: old entry password # entry credential
+  public_host: 192.0.2.11 # public endpoint
+exits:
+  - tag: se
+    host: 192.0.2.2
+    password: 'old # exit password' # exit credential
+    hy2_direct_port: 5443 # selected for this exit
+admin:
+  user: "oldadmin" # panel login
+  password: old password
+  ssh_pubkey: ssh-ed25519 old
+ports:
+  hy2_direct: 4443 # keep this port
+panel:
+  domain: old.example.com
+  image: example/panel:pinned
+sso:
+  label: MyProvider
+  allowed_subs: 'alice,bob'
+backup:
+  enabled: true
+  retention: 42
+  local:
+    dir: /srv/archives # custom directory
+  s3:
+    bucket: saved-bucket
+youtube:
+  route: direct
+  quic: allow

@@ -238,10 +238,12 @@ _ansible_venv_install_locked() {
 
 ansible_venv_install() {
   mkdir -p "$VPN2_ROOT"
+  # stdin свой: ssh соседних цепочек делает общий stdin деплоя неблокирующим,
+  # и ansible-galaxy на нём отказывает.
   (
     flock 9
     _ansible_venv_install_locked
-  ) 9>"$VPN2_ROOT/.lock"
+  ) 9>"$VPN2_ROOT/.lock" </dev/null
 }
 
 # Закрывает унаследованные дескрипторы старше 2 (кроме 255 - файл самого

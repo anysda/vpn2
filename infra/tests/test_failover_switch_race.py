@@ -49,13 +49,14 @@ class RaceClash(tf.Clash):
 
 
 class RaceCase(unittest.TestCase):
+    NODES = ('aa',)
     EXITS = ('hy2-aa-direct', 'hy2-aa-warp')
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.w = fr.watchdog(tmp.name)
-        self.clash = RaceClash(tf.router_config(('aa',)))
+        self.clash = RaceClash(tf.router_config(self.NODES))
         self.run_ = fr.Run(self.w, self.clash, fr.Clock(self.w.INTERVAL))
         stack = contextlib.ExitStack()
         self.addCleanup(stack.close)
@@ -200,6 +201,128 @@ class TestPinSwitchRace(RaceCase):
         self.check()
         self.assertIn('в штрафной', self.log())
         self.assertNotEqual(self.pin_now(), 'hy2-aa-direct', self.log())
+
+
+class TestExitChoiceRace(RaceCase):
+    """Тот же обрыв UDP глазами основного выбора при двух узлах: запасной TCP
+    текущего узла жив - выбор остаётся на нём, штрафной нет."""
+    NODES = ('aa', 'bb')
+
+    def setUp(self):
+        super().setUp()
+        self.check()
+        self.cur = self.choice()
+        self.node = self.w._node_of(self.cur)
+        self.EXITS = (f'hy2-{self.node}-direct', f'hy2-{self.node}-warp')
+
+    def choice(self):
+        return self.clash.now[self.w.GROUP]
+
+    def assert_untouched(self):
+        self.assertEqual(self.choice(), self.cur, self.log())
+        self.assertNotIn('в штрафной', self.log())
+        self.assertNotIn('switch ->', self.log())
+        self.assertEqual(self.run_.restarts, [], self.log())
+
+    def assert_switched_with_penalty(self):
+        self.assertNotEqual(self.w._node_of(self.choice()), self.node, self.log())
+        self.assertIn(f'узел {self.node} в штрафной', self.log())
+
+    def test_verdict_before_channel_check(self):
+        self.clash.udp.discard(self.node)
+        self.check(self.w.DEAD_AFTER + 1)
+        self.assert_untouched()
+        self.channels()
+        self.assertTrue(self.on_tcp(), self.log())
+        self.check(5)
+        self.assert_untouched()
+
+    def test_switch_lands_inside_the_probe(self):
+        self.clash.udp.discard(self.node)
+        # пробы ушли по hy2, каналы переключились, пока они в пути
+        self.clash.freeze(self.EXITS, self.channels)
+        self.check()
+        self.clash.frozen = {}
+        self.assertTrue(self.on_tcp(), self.log())
+        self.assert_untouched()
+        self.check(5)
+        self.assert_untouched()
+
+    def test_both_nodes_lose_udp_at_once(self):
+        self.clash.udp.clear()
+        self.check(self.w.DEAD_AFTER + 1)
+        self.assert_untouched()
+        self.channels()
+        self.check(5)
+        self.assert_untouched()
+
+    def test_other_node_already_on_tcp(self):
+        self.clash.udp.clear()
+        other = next(n for n in self.NODES if n != self.node)
+        for kind in ('direct', 'warp'):
+            self.clash.req('PUT', f'/proxies/transport-{other}-{kind}',
+                           {'name': f'transport-tcp-{other}-{kind}'})
+        self.check(self.w.DEAD_AFTER + 1)
+        self.assert_untouched()
+        self.channels()
+        self.check(5)
+        self.assert_untouched()
+
+    def test_udp_and_tcp_dead_switch_and_penalty_on_the_same_check(self):
+        self.clash.udp.discard(self.node)
+        self.clash.tcp.discard(self.node)
+        self.check()
+        self.assert_switched_with_penalty()
+
+    def test_udp_back_before_channel_check(self):
+        self.clash.udp.discard(self.node)
+        self.check(2)
+        self.clash.udp.add(self.node)
+        self.check(3)
+        self.assert_untouched()
+        self.assertFalse(self.on_tcp(), self.log())
+        # ожидание канала не тянется в следующую, настоящую смерть
+        self.clash.udp.discard(self.node)
+        self.clash.tcp.discard(self.node)
+        self.check()
+        self.assert_switched_with_penalty()
+
+    def test_tcp_dies_while_waiting_for_channel_check(self):
+        self.clash.udp.discard(self.node)
+        self.check(2)
+        self.assert_untouched()
+        self.clash.tcp.discard(self.node)
+        self.check()
+        self.assert_switched_with_penalty()
+
+    def test_channel_never_moved_wait_is_bounded(self):
+        self.clash.udp.discard(self.node)
+        checks = int(self.w.LEG_WAIT / self.w.INTERVAL) + 2
+        self.check(checks - 3)
+        self.assert_untouched()
+        self.check(3)
+        self.assert_switched_with_penalty()
+
+    def test_pinned_route_and_choice_stay(self):
+        pin = 'pin-' + self.cur
+        self.assertIn(pin, self.clash.now, 'в модели нет ручного маршрута текущего выхода')
+        self.clash.udp.discard(self.node)
+        for _ in range(self.w.DEAD_AFTER + 1):
+            self.check()
+            self.w.pins_tick(self.clash.req('GET', '/proxies')['proxies'])
+        self.assert_untouched()
+        self.assertNotIn('foreign-best', self.log())
+        self.assertEqual(self.clash.now[pin], self.cur, self.log())
+
+
+class TestSingleExitChoice(RaceCase):
+    def test_single_exit_choice_untouched(self):
+        self.check()
+        self.clash.udp.discard('aa')
+        self.check(self.w.DEAD_AFTER + 1)
+        self.assertIn('все экзиты не отвечают, выбор не трогаю', self.log())
+        self.assertNotIn('в штрафной', self.log())
+        self.assertNotIn('switch ->', self.log())
 
 
 if __name__ == '__main__':

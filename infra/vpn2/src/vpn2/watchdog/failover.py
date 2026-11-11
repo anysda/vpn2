@@ -202,6 +202,11 @@ _rise_gen = 0             # сколько из них transport_tick уже у�
 _switch_gen = 0           # проходов transport_tick, переключивших канал
 _switch_seen = 0          # сколько из них restart_tick уже учёл
 _pin_switch_seen = 0      # сколько из них pins_tick уже учёл
+# Текущий экзит мёртв, а невыбранная нога его канала отвечает: канал переведёт
+# проверка каналов - за свой проход либо через HY2_RISE после аварии. Дольше
+# не ждём: выбор уходит на другой узел, как с мёртвого.
+LEG_WAIT           = HY2_RISE + INTERVAL + DEAD_AFTER * (TIMEOUT_MS / 1000.0 + 1.0)
+_leg_wait: dict = {}      # текущий экзит -> monotonic, с которого ждём перевода его канала
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
 _slow_probes: dict = {}   # (тег, url) -> (поток, итог, причины) пробы, которую не стали ждать
@@ -498,6 +503,7 @@ def tick():
     global _tick_alive, _all_dead
     _tick_alive = None   # дорожки балансируем только по замерам удачного тика
     _all_dead = None
+    switch_gen = _switch_gen   # канал переключён позже - пробы шли по старой ноге
     group = _req('GET', f'/proxies/{urllib.parse.quote(GROUP)}')
     if group.get('type', '').lower() != 'selector':
         raise RuntimeError(f'{GROUP}: ожидался selector, получен {group.get("type")}')
@@ -545,6 +551,7 @@ def tick():
                                    f'{" и не отвечает" if fallback else ""}')
         return
     if now in alive:
+        _leg_wait.clear()
         # текущий жив — switch лишь по УСТОЙЧИВОМУ преимуществу по скорости:
         # один и тот же экзит лучше на >TOLERANCE LATENCY_HOLD тиков подряд
         # (анти-флап — замеры delay через QUIC шумят).
@@ -569,6 +576,9 @@ def tick():
     # Текущий — член группы, но не ответил. НЕ ждём следующий тик: тут же
     # до-проверяем его ещё (DEAD_AFTER-1) раз подряд. Ожил на любой — транзиент.
     last_err = errs.get(now, '?')
+    # Запасную ногу канала пробуем заодно с до-проверками: вердикт по ней готов
+    # к их концу и срок смены мёртвого экзита не растёт.
+    leg, leg_out, leg_probe = _spare_leg_start(now)
     for k in range(1, DEAD_AFTER):
         time.sleep(CONFIRM_GAP)
         c: dict = {}
@@ -578,10 +588,30 @@ def tick():
             # До-проверка — свежий успешный замер и для дорожек/пинов.
             # Иначе они накопят DEAD_AFTER промахов и уведут живой выход.
             alive[now] = c[now]
+            _leg_wait.clear()
             print(f'{now}: промах ({last_err}), но до-проверка {k}/{DEAD_AFTER - 1} '
                   f'ожила ({c[now]}ms), транзиент, selector не трогаю', flush=True)
             return
         last_err = e.get(now, last_err)
+
+    # Проверка каналов идёт своим потоком. Канал переключён, пока шли пробы, -
+    # они шли по старой ноге. Отвечает невыбранная нога - канал переведёт
+    # проверка каналов: узел жив, выбор и штрафную не трогаем. Ждём её не
+    # дольше LEG_WAIT, дальше - как с мёртвым.
+    if _switch_gen != switch_gen:
+        return
+    if leg_probe is not None:
+        t = time.monotonic()
+        leg_probe.join(max(0.0, leg_out['start'] + JOIN_DEADLINE - t))
+        if leg_out.get(leg) is not None:
+            if now not in _leg_wait:
+                _leg_wait[now] = t
+                print(f'{now} мёртв ({DEAD_AFTER}× промахов, последний: {last_err}), но {leg} '
+                      f'отвечает: канал переведёт проверка каналов, выбор не трогаю', flush=True)
+            if t - _leg_wait[now] < LEG_WAIT:
+                return
+            last_err = f'{last_err}; канал не переведён на {leg} за {LEG_WAIT:.0f}с'
+    _leg_wait.clear()
 
     other = _node_alive(now, alive)
     if other:
@@ -1082,16 +1112,36 @@ def lanes_tick(conns):
         print(f'выравнивание неактивных дорожек: {" ".join(levelled)}', flush=True)
 
 
-def _spare_leg_answers(base, proxies):
-    """У канала выхода base отвечает невыбранная нога: канал переведёт проверка
-    каналов. Ногу, чью смерть та уже учла, не пробуем."""
+def _spare_leg(base, proxies):
+    """Невыбранная нога канала выхода base или None. Ногу, чью смерть проверка
+    каналов уже учла, не пробуем."""
     for s, (hy2, tcp, _, _) in _transport_pairs(proxies).items():
         if hy2 == 'transport-' + base:
             leg = tcp if proxies[s].get('now') == hy2 else hy2
-            if leg in _known_dead:
-                return False
-            return _probe_all([leg])[0][leg] is not None
-    return False
+            return None if leg in _known_dead else leg
+    return None
+
+
+def _spare_leg_answers(base, proxies):
+    """У канала выхода base отвечает невыбранная нога: канал переведёт проверка
+    каналов."""
+    leg = _spare_leg(base, proxies)
+    return leg is not None and _probe_all([leg])[0][leg] is not None
+
+
+def _spare_leg_start(base):
+    """Запустить пробу невыбранной ноги канала выхода base, не дожидаясь её:
+    (нога, итог, поток); ноги нет - (None, {}, None). В итоге - время запуска."""
+    try:
+        leg = _spare_leg(base, _req('GET', '/proxies').get('proxies') or {})
+    except Exception:
+        leg = None
+    if leg is None:
+        return None, {}, None
+    out = {'start': time.monotonic()}
+    thread = threading.Thread(target=_probe, args=(leg, out), daemon=True)
+    thread.start()
+    return leg, out, thread
 
 
 def pins_tick(proxies, conns=None):

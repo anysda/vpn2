@@ -24,9 +24,12 @@ release_download() {
   PYTHONPATH=$src python3 -m vpn2.release "${manifest[@]}" artifact "$name" "$destination" --url "$url" ${sha:+--sha256 "$sha"}
 }
 
-UFW_RULES_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/ufw-rules.py
+# Пакет лежит рядом с библиотекой при деплое и в infra/vpn2/src в дереве.
 ufw_sync_rules() {
-  python3 "$UFW_RULES_FILE" "$@"
+  local src
+  src=$(dirname "${BASH_SOURCE[0]:-$0}")
+  [[ -d "$src/vpn2/cli" ]] || src=$src/../vpn2/src
+  PYTHONPATH=$src python3 -m vpn2.cli ufw sync "$@"
 }
 
 ufw_sync_dns() {

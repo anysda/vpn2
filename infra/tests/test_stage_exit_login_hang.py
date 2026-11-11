@@ -72,7 +72,7 @@ EXITS = ('nl', 'de')
 NOISE = ('Welcome to exit node', 'motd line')
 HUNG = re.compile(r'\bnl\b.*завис|завис.*\bnl\b')
 STUBS = ('lib/anysda-pki.sh', 'lib/release.sh', 'lib/deploy_state.py',
-         'lib/panel-transaction.sh', 'lib/ufw-rules.py', 'lib/wg_conf.py', 'lib/hy2_bandwidth.py',
+         'lib/panel-transaction.sh', 'lib/wg_conf.py', 'lib/hy2_bandwidth.py',
          'lib/install-sing-box.sh', 'configs/sing-box-server.json.tpl')
 
 

@@ -763,7 +763,6 @@ run_stage_on_host() {
   if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
     push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
   fi
-  push "$DEPLOY_ROOT/lib/ufw-rules.py" || return 1
   local guard=''
   if fw_guard_stage "$stage"; then
     push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1

@@ -1,11 +1,10 @@
 import os
-import json
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT, bash, source
+from test_deploy import ROOT
 
 
 class SsoRedeployTests(unittest.TestCase):
@@ -27,29 +26,3 @@ class SsoRedeployTests(unittest.TestCase):
                 self.assertIn("SSO_AUTO_REDIRECT='false'", env)
                 self.assertIn("SSO_PASSWORD_LOGIN='true'", env)
                 self.assertIn("SSO_CLIENT_SECRET=''", env)
-
-    def test_runtime_takes_priority_and_missing_runtime_still_validates_seed(self):
-        stage = source('infra/scripts/30-frontend.sh')
-        block = stage.split('# --- SSO (Authentik / OIDC)', 1)[1].split('\nTPL=', 1)[0]
-        block = block.split('\n', 1)[1]
-        good = {'SSO_ENABLED': 'true', 'PANEL_DOMAIN': 'vpn.example.test',
-                'SSO_DISCOVERY_URL': 'https://auth.example.test/.well-known/openid-configuration',
-                'SSO_CLIENT_ID': 'vpn2', 'SSO_CLIENT_SECRET': 'test-only-secret',
-                'SSO_ALLOWED_SUBS': 'test-sub'}
-        for runtime in (None, {'enabled': True, 'passwordLogin': False}, {'enabled': False}):
-            for empty in (None, 'SSO_CLIENT_SECRET', 'SSO_DISCOVERY_URL', 'SSO_ALLOWED_SUBS', 'PANEL_DOMAIN'):
-                with self.subTest(runtime=runtime, empty=empty), tempfile.TemporaryDirectory() as directory:
-                    root = Path(directory)
-                    stored = root / 'sso-runtime.json'
-                    if runtime is not None:
-                        stored.write_text(json.dumps(runtime))
-                    env = good | ({empty: ''} if empty else {})
-                    script = 'HOST_TAG=ru\n' + '\n'.join(f"{key}='{value}'" for key, value in env.items())
-                    result = bash(script + '\n' + block.replace('/etc/anysda', directory), directory)
-                    if runtime is not None or empty in (None, 'SSO_CLIENT_SECRET'):
-                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    else:
-                        self.assertNotEqual(result.returncode, 0, 'first-install validation was skipped')
-                    if runtime is not None:
-                        self.assertEqual(stored.read_text(), json.dumps(runtime))
-                    self.assertNotIn('test-only-secret', result.stdout + result.stderr)

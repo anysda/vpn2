@@ -63,18 +63,13 @@ class UfwReconcileTests(unittest.TestCase):
             ('27-ikev2', 'ikev2 IKE', '500/udp'),
             ('27-ikev2', 'ikev2 NAT-T', '4500/udp'),
             ('29-openvpn', 'openvpn listener', '1194/tcp'),
-            ('30-frontend', 'caddy HTTP', '80/tcp'),
-            ('30-frontend', 'caddy HTTPS', '443/tcp'),
         ]
         for stage, comment, desired in cases:
             with self.subTest(stage=stage, comment=comment):
                 line = next(line.strip() for line in source(f'infra/scripts/{stage}.sh').splitlines()
                             if comment in line and ('ufw allow' in line or 'ufw_sync_rules' in line))
-                # Use the exact comment from the old installation, including aliases.
-                old_comment = {'caddy HTTP': 'caddy HTTP панель',
-                               'caddy HTTPS': 'caddy HTTPS панель'}.get(comment, comment)
-                old = ['allow', '59999/udp', 'comment', old_comment]
-                manual = ['allow', '59998/udp', 'comment', 'manual ' + old_comment]
+                old = ['allow', '59999/udp', 'comment', comment]
+                manual = ['allow', '59998/udp', 'comment', 'manual ' + comment]
                 variables = 'WG_PORT=51820 OVPN_PORT=1194 OVPN_FW_PROTO=tcp HY2_DIRECT_PORT=443 HY2_WARP_PORT=444 HY2_MGMT_PORT=445\n'
                 result = self.run_commands(variables + line + '\n' + line, [old, manual])
                 self.assertNotIn(old, result)

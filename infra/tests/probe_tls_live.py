@@ -34,6 +34,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'telegram/tests'), str(ROOT / 'telegram')]
 from support import import_bot  # noqa: E402
 from probe_io import read_to_close  # noqa: E402
+from containers_support import panel_tls  # noqa: E402
 
 spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/lib/vpn2_tls.py')
 tls = importlib.util.module_from_spec(spec)
@@ -154,48 +155,35 @@ def newer(config, previous):
     return item if item and item['fingerprint'] != previous['fingerprint'] else None
 
 
-def stage_block(root):
-    """TLS part of stage 30 with system paths moved into the probe directory."""
-    stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-    start = stage.index('if [[ -n "${PANEL_DOMAIN:-}" ]]; then', stage.index('TLS_LIB='))
-    block = stage[start:stage.index('\nufw_sync_rules', start)]
-    for path, moved in (('/usr/local/lib/vpn2/vpn2_tls.py', ROOT / 'infra/lib/vpn2_tls.py'),
-                        ('/etc/vpn2/tls/config.json', root / 'config.json'),
-                        ('/etc/vpn2/tls/panel/secure', root / 'panel/secure'),
-                        ('/var/lib/caddy/.local/share/caddy', root / 'data/caddy'),
-                        ('/etc/caddy', root)):
-        block = block.replace(path, str(moved))
-    # Rollback of the snippets is covered by test_tls; here only the rendered result matters.
-    return 'panel_guard_files() { :; }\n' + block
-
-
 def panel_scenario(root, ports, queue, bot_url, ca):
     http_port, https_port, admin_port, panel_port = ports
     public = f'https://{HOST}:{https_port}'
-    subprocess.run(['bash', '-eu', '-c', stage_block(root)], check=True, capture_output=True,
-                   env=dict(os.environ, PANEL_DOMAIN='', ENTRY_HOST=HOST, HOST_TAG='ru',
-                            TLS_ACME_URL=ca['url'], TLS_ACME_ROOT=str(ca['root'])))
-    config = json.loads((root / 'config.json').read_text())
+    # Шаг TLS стадии панели; откат вставок покрыт test_tls, здесь важен сам результат.
+    staged = panel_tls(root, '', dict(os.environ, TLS_ACME_URL=ca['url'], TLS_ACME_ROOT=str(ca['root'])),
+                       entry=HOST)
+    assert staged.returncode == 0, staged.stdout + staged.stderr
+    etc, secure = root / 'etc/caddy', root / 'etc/vpn2/tls/panel'
+    config = json.loads((root / 'etc/vpn2/tls/config.json').read_text())
     # Test-only: bot endpoint and secret of the in-process bot, test ports.
     config.update(bot_url=bot_url, bot_secret=str(root / 'bot-secret'), panel_container=ca['panel'],
-                  output_dir=str(root / 'ip'))
+                  output_dir=str(root / 'ip'), storage=str(root / 'data/caddy'))
     tls.atomic(root / 'bot-secret', ca['secret'])
-    caddyfile = (root / 'Caddyfile').read_text()
-    assert f'https://{HOST} {{' in caddyfile and 'profile shortlived' in (root / 'vpn2-tls.conf').read_text()
+    caddyfile = (etc / 'Caddyfile').read_text()
+    assert f'https://{HOST} {{' in caddyfile and 'profile shortlived' in (etc / 'vpn2-tls.conf').read_text()
     caddyfile = caddyfile.replace('auto_https disable_redirects', (
         f'auto_https disable_redirects\n    admin {HOST}:{admin_port}\n    renew_interval 1s\n'
         f'    http_port {http_port}\n    https_port {https_port}'))
     caddyfile = caddyfile.replace(':80 {', f':{http_port} {{').replace(
         f'https://{HOST} {{', f'{public} {{').replace('127.0.0.1:51821', f'127.0.0.1:{panel_port}')
-    tls.atomic(root / 'Caddyfile', caddyfile, 0o644)
+    tls.atomic(etc / 'Caddyfile', caddyfile, 0o644)
     docker('run', '-d', '--rm', '--name', ca['panel'], '--network', 'host',
-           '-v', f'{root}/panel:/run/vpn2-tls:ro', '-e', f'PORT={panel_port}', '-e', 'HOST=127.0.0.1',
+           '-v', f'{secure}:/run/vpn2-tls:ro', '-e', f'PORT={panel_port}', '-e', 'HOST=127.0.0.1',
            '-e', 'NUXT_SESSION_PASSWORD=test-session-password-at-least-thirty-two-characters',
            '-e', 'NUXT_ADMIN_USER=admin', '-e', 'NUXT_ADMIN_PASSWORD=test-password-only',
            '-e', 'NUXT_DATABASE_URL=file:/tmp/test.sqlite', PANEL, 'sh', '-ec',
            'export NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure); '
            'node scripts/migrate.mjs; exec node .output/server/index.mjs')
-    caddy = Caddy(root, root / 'Caddyfile')
+    caddy = Caddy(root, etc / 'Caddyfile')
     state_path = root / 'state.json'
     try:
         caddy.start()
@@ -203,7 +191,7 @@ def panel_scenario(root, ports, queue, bot_url, ca):
         wait_for(lambda: 'could not get certificate' in caddy.log.read_text())
         assert not tick(config, state_path, caddy, initial=True)
         assert get(f'http://{HOST}:{http_port}/api/version') == 200
-        assert (root / 'panel/secure').read_text() == 'false\n'
+        assert (secure / 'secure').read_text() == 'false\n'
         event = take(queue)
         assert 'ошибка выпуска' in event['text'] and 'сертификата нет' in event['text'], event
         print('1. first issuance, ACME down: HTTP 200 kept, Secure=false; outbox:', event['text'].splitlines()[0],
@@ -228,7 +216,7 @@ def panel_scenario(root, ports, queue, bot_url, ca):
         recovered = take(queue)
         assert 'обновлено' in recovered['text'], recovered
         lifetime = (first['end'] - first['start']) / 3600
-        window = (root / 'vpn2-tls.conf').read_text().split('renewal_window_ratio ')[1].split()[0]
+        window = (etc / 'vpn2-tls.conf').read_text().split('renewal_window_ratio ')[1].split()[0]
         print(f'2. IP certificate: HTTPS 200 verified, SAN IP:{HOST}, lifetime {lifetime:.0f}h, window ratio {window}, '
               f'HTTP -> {redirect[0].split(" ", 1)[1]}, Set-Cookie Secure, export {(root / "ip/fullchain.pem").exists()}; '
               f'outbox: {recovered["text"].splitlines()[0]}',

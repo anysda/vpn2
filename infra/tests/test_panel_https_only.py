@@ -25,6 +25,7 @@ import threading
 import time
 import unittest
 
+from containers_support import panel_tls
 import release_fetch
 
 
@@ -152,17 +153,7 @@ class Entry:
         self.render()
 
     def render(self):
-        stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        start = stage.index('if [[ -n "${PANEL_DOMAIN:-}" ]]; then', stage.index('TLS_LIB='))
-        block = stage[start:stage.index('\nufw_sync_rules', start)]
-        (self.dir / 'etc/caddy').mkdir(parents=True, exist_ok=True)
-        block = block.replace('/usr/local/lib/vpn2/vpn2_tls.py', f'{ROOT}/infra/lib/vpn2_tls.py')
-        for prefix in ('/etc/', '/var/'):
-            block = block.replace(prefix, f'{self.dir}{prefix}')
-        block = (f'source {ROOT}/infra/lib/panel-transaction.sh\npanel_state={self.dir}/panel-state\n'
-                 f'systemctl() {{ echo "systemctl $*" >> {self.dir}/commands.log; }}\n{block}\n')
-        result = subprocess.run(['bash', '-eu', '-c', block], capture_output=True, text=True, timeout=60,
-                                env=dict(self.env, HOST_TAG='ru', ENTRY_HOST=IP, PANEL_DOMAIN=self.domain))
+        result = panel_tls(self.dir, self.domain, self.env, entry=IP)
         self.test.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def tick(self, initial=False):

@@ -1,20 +1,14 @@
-"""Пароль AdGuard в роли adguard и в env Docker стадии 30: bcrypt и длинный UTF-8."""
+"""Пароль AdGuard в роли adguard и в окружении панели: bcrypt и длинный UTF-8."""
 import hashlib
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 import unittest
 
 from adguard_support import stage
-from test_deploy import ROOT, source
 
 
 class AdguardPasswordTests(unittest.TestCase):
     def test_stage_and_panel_use_same_complete_password(self):
-        frontend = source('infra/scripts/30-frontend.sh')
-        argument = next(line.strip().removesuffix(' \\') for line in frontend.splitlines()
-                        if '-e NUXT_AGH_PASSWORD=' in line)
         for password in ('short-ASCII', 'a' * 72, 'a' * 73, 'a' * 256, 'a' * 300,
                          'я' * 36, 'я' * 37, '🔑' * 300, 'a' * 299 + 'b'):
             with self.subTest(length=len(password.encode())), tempfile.TemporaryDirectory() as directory:
@@ -22,13 +16,7 @@ class AdguardPasswordTests(unittest.TestCase):
                 (work / 'anysda').mkdir()
                 user, backend, _ = stage.credentials({'ADMIN_PASSWORD': password}, work / 'anysda')
                 digest = stage.new_hash(backend)
-                result = subprocess.run(['bash', '-euo', 'pipefail', '-c',
-                    f'source "{ROOT}/infra/lib/anysda-svc.sh"\n'
-                    'capture() { printf "%s" "${2#NUXT_AGH_PASSWORD=}" > "$TMPDIR/panel-password"; }\n'
-                    'capture ' + argument + '\n'],
-                    env=dict(os.environ, ADMIN_PASS=password, TMPDIR=directory), text=True, capture_output=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                panel = (work / 'panel-password').read_text()
+                panel = stage.agh_password(password)
                 self.assertTrue(stage.hash_matches(user, panel, digest))
                 expected = password.encode()
                 if len(expected) > 72:

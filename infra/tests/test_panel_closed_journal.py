@@ -90,9 +90,7 @@ class PanelClosedJournalTests(unittest.TestCase):
         self.assertIn(LINE + 'сертификат истёк', lines[-1])
 
     def test_timer_lines_share_the_logger_identifier(self):
-        stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        unit = stage[stage.index('cat > /etc/systemd/system/vpn2-tls.service'):]
-        unit = unit[:unit.index('\nEOF\n')]
+        unit = (ROOT / 'infra/ansible/roles/containers/files/vpn2-tls.service').read_text()
         self.assertIn('\nSyslogIdentifier=vpn2-tls', unit)
 
 

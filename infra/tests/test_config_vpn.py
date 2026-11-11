@@ -5,7 +5,10 @@ import tempfile
 import unittest
 
 import test_config_validation as validation
+from containers_support import FACTS, compose
 from test_deploy import bash, function, source
+
+PANEL_VPN = ('NUXT_WG_LISTEN_PORT', 'NUXT_WG_MTU', 'NUXT_WG_SPLIT_LOCAL', 'NUXT_OVPN_PORT', 'NUXT_OVPN_PROTO')
 
 
 class VpnConfigTests(unittest.TestCase):
@@ -41,18 +44,14 @@ done
                         "WG_MTU='1380'\nWG_SPLIT_LOCAL='false'\n")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, expected * 3)
-            # Выполняем настоящие подстановки docker run, не запускаем Docker.
-            frontend = '\n'.join(line.strip().removesuffix('\\') for line in
-                                 source('infra/scripts/30-frontend.sh').splitlines()
-                                 if '-e NUXT_' in line and any(key in line for key in
-                                    ('WG_LISTEN_PORT=', 'OVPN_PORT=', 'OVPN_PROTO=',
-                                     'WG_MTU=', 'WG_SPLIT_LOCAL=')))
-            result = bash('source infra/secrets/rendered/ru.env\nprintf "%s\\n" '
-                          + frontend.replace('\n', ' '), directory)
+            # Те же значения доходят до окружения панели в compose.yaml.
+            result = bash('set -a\nsource infra/secrets/rendered/ru.env\nenv -0', directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual([line for line in result.stdout.splitlines() if line != '-e'], [
-                'NUXT_WG_LISTEN_PORT=51830', 'NUXT_WG_MTU=1380',
-                'NUXT_WG_SPLIT_LOCAL=false', 'NUXT_OVPN_PORT=1195', 'NUXT_OVPN_PROTO=tcp'])
+            environ = dict(item.split('=', 1) for item in result.stdout.split('\0') if item)
+            panel = compose.panel_environment({'AGH_PORT': '3000', **environ}, FACTS)
+            self.assertEqual({name: panel[name] for name in panel if name in PANEL_VPN}, {
+                'NUXT_WG_LISTEN_PORT': '51830', 'NUXT_WG_MTU': '1380',
+                'NUXT_WG_SPLIT_LOCAL': 'false', 'NUXT_OVPN_PORT': '1195', 'NUXT_OVPN_PROTO': 'tcp'})
 
     def test_omitted_keys_preserve_env_bytes_and_stage_defaults(self):
         # Получено на origin/dev для CONFIG; не обновлять при добавлении опций.

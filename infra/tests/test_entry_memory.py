@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import shutil
 import subprocess
@@ -23,13 +22,10 @@ ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents
 TOOL = ROOT / "infra/lib/entry_resources.py"
 sys.path.insert(0, str(ROOT / "infra/vpn2/src"))
 from adguard_support import render_unit  # noqa: E402
+from containers_support import FACTS, compose  # noqa: E402
 from vpn2.adguard import dns as adguard_dns, stage as adguard  # noqa: E402
 
-SERVICES = {"panel": "30-frontend.sh", "bot": "35-telegram.sh", "vm": "25-monitoring.sh"}
-
-
-def stage(name):
-    return (ROOT / "infra/scripts" / name).read_text()
+SERVICES = ("panel", "bot", "vm")
 
 
 def module():
@@ -47,15 +43,20 @@ def render(ram, disk, service, overrides=None):
 
 
 def docker_args(service, ram, disk=8192, overrides=None):
-    command = re.search(r"^ *docker run -d .*?(?=\n}\n|\n\n)", stage(SERVICES[service]), re.M | re.S)[0]
-    # Старые деревья тоже исполняются: проверяем реальные неверные флаги,
-    # а не только отсутствие нового модуля.
-    setup = render(ram, disk, service, overrides) if TOOL.exists() else ""
-    result = subprocess.run(
-        ["bash", "-c", setup + "\ncat() { :; }; docker() { printf '%s\\0' \"$@\" >&2; }; " + command],
-        capture_output=True, check=True,
-    )
-    return result.stderr.decode().split("\0")[:-1]
+    """Служба compose.yaml в виде флагов docker run: лимиты, окружение, аргументы программы."""
+    text = render(ram, disk, service, overrides)
+    if service == "vm":
+        described = compose.vm_service("image", text, "")
+    elif service == "bot":
+        described = compose.bot_service({}, "image", text, secret="s", user="1:1", panel_gid=2)
+    else:
+        environ = {"HOST_TAG": "ru", "ENTRY_HOST": "192.0.2.1", "AGH_PORT": "3000"}
+        described = compose.panel_service(environ, "image", text, FACTS, user="1:1", control_gid=2)
+    args = []
+    if "mem_limit" in described:
+        args += ["--memory", described["mem_limit"], "--memory-swap", described["memswap_limit"]]
+    args += [f"{name}={value}" for name, value in described.get("environment", {}).items()]
+    return args + described.get("command", [])
 
 
 class EntryMemoryTest(unittest.TestCase):
@@ -82,7 +83,7 @@ class EntryMemoryTest(unittest.TestCase):
                      "-search.maxMemoryPerQuery=16MiB", "-search.maxConcurrentRequests=4",
                      "-search.latencyOffset=1s"):
             self.assertIn(flag, args)
-        self.assertIn("scrape_interval: 2s", stage("25-monitoring.sh"))
+        self.assertIn("scrape_interval: 2s", compose.scrape_config({"ENTRY_HOST": "192.0.2.1"})[0])
 
     def test_expected_table(self):
         calc = module().calculate
@@ -157,10 +158,13 @@ class EntryMemoryTest(unittest.TestCase):
             self.assertIn("-retentionPeriod=11d", result.stdout)
 
     def test_stages_load_and_deploy_ships_library(self):
-        for service, name in SERVICES.items():
-            script = stage(name)
-            self.assertIn(f"entry_resources {service}", script)
-            self.assertIn('source "$RESOURCE_LIB"', script)
+        # Контейнеры ставит роль containers: библиотеку кладёт она, профиль читает шаг службы.
+        role = yaml.safe_load((ROOT / "infra/ansible/roles/containers/tasks/main.yml").read_text())
+        self.assertEqual([task["loop"] for task in role if task["name"] == "Библиотека ресурсов"],
+                         [["entry-resources.sh", "entry_resources.py"]])
+        package = ROOT / "infra/vpn2/src/vpn2/containers"
+        for service, module_name in (("panel", "panel"), ("bot", "telegram"), ("vm", "monitoring")):
+            self.assertIn(f"resource_text(environ, '{service}')", (package / f"{module_name}.py").read_text())
         # AdGuard ставит роль: библиотеку кладёт она же, профиль берёт шаг limits.
         tasks = yaml.safe_load((ROOT / "infra/ansible/roles/adguard/tasks/main.yml").read_text())
         shipped = [name for task in tasks if "lib/" in str(task.get("ansible.builtin.copy", {}).get("src"))

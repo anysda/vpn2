@@ -3,7 +3,7 @@ import tempfile
 import unittest
 
 import test_config_validation as validation
-from test_deploy import source
+from containers_support import FACTS, compose
 from test_setup_input import prepare, run_setup
 
 
@@ -29,11 +29,7 @@ class DomainTests(unittest.TestCase):
                 self.assertEqual(result.stdout, expected)
 
     def test_client_configs_use_panel_domain_unless_public_host_is_set(self):
-        # Настоящие подстановки docker run панели из 30-frontend, без Docker.
-        frontend = ' '.join(line.strip().removesuffix('\\') for line in
-                            source('infra/scripts/30-frontend.sh').splitlines()
-                            if '-e NUXT_WG_PUBLIC_HOST=' in line or '-e NUXT_OVPN_PUBLIC_HOST=' in line)
-        script = 'source infra/envs/all.env; source infra/envs/ru.env; printf "%s|" ' + frontend
+        script = 'set -a; source infra/envs/all.env; source infra/envs/ru.env; env -0'
         cases = (('', '192.0.2.1'), ('panel:\n  domain: VPN.Example.COM\n', 'vpn.example.com'))
         for extra, expected in cases:
             for public in ('', 'edge.example.net'):
@@ -47,9 +43,10 @@ class DomainTests(unittest.TestCase):
                     result = subprocess.run(['bash', '-euc', script], cwd=directory,
                                             capture_output=True, text=True, timeout=5)
                     self.assertEqual(result.returncode, 0, result.stderr)
+                    environ = dict(item.split('=', 1) for item in result.stdout.split('\0') if item)
+                    panel = compose.panel_environment({'AGH_PORT': '3000', **environ}, FACTS)
                     host = public or expected
-                    self.assertEqual(result.stdout,
-                                     f'-e|NUXT_WG_PUBLIC_HOST={host}|-e|NUXT_OVPN_PUBLIC_HOST={host}|')
+                    self.assertEqual((panel['NUXT_WG_PUBLIC_HOST'], panel['NUXT_OVPN_PUBLIC_HOST']), (host, host))
 
     def test_wizard_accepts_idn(self):
         answers = ['1', 'root secret', '192.0.2.2', 'exit secret', 'se', '', '', '',

@@ -1,10 +1,9 @@
-import hashlib
-import json
 from pathlib import Path
 import shlex
 import tempfile
 import unittest
 
+from containers_support import FACTS, compose, panel
 from test_deploy import bash, function, source
 
 
@@ -14,79 +13,48 @@ NOTICE = ('SSO не включён, потому что не задан секр
 SECRET = 'test-only-sso-secret'
 
 
-def seed_block():
-    return source('infra/scripts/30-frontend.sh').split(
-        '# --- SSO (Authentik / OIDC)', 1)[1].split('\nTPL=', 1)[0].split('\n', 1)[1]
+SEED = {'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000', 'SSO_ENABLED': 'true',
+        'SSO_PASSWORD_LOGIN': 'false', 'SSO_CLIENT_ID': 'vpn2', 'SSO_ALLOWED_SUBS': 'test-sub',
+        'SSO_DISCOVERY_URL': 'https://auth.example.test/.well-known/openid-configuration'}
 
 
-def container_block():
-    stage = source('infra/scripts/30-frontend.sh')
-    return '''
-ENTRY_HOST=192.0.2.1 EXIT_TAGS='' MGMT_IP=192.0.2.1 AGH_PORT=3000
-ADMIN_USER=admin ADMIN_PASS=test-only-password SESSION_SECRET=test-only-session
-NODE_HOSTS=ru=192.0.2.1 PANEL_IMAGE=test-only-image
-PANEL_UID=10001 PANEL_GID=10001 CONTROL_GID=10003
-docker() { printf '%s\\n' "$@" > docker.args; }
-docker run -d \\
-''' + stage.split('docker run -d \\\n', 1)[1].split('\n}\n', 1)[0]
+def panel_env(environ, runtime):
+    """Решение стадии панели о SSO и окружение контейнера, которое из него выходит."""
+    said = []
+    facts = panel.sso(environ, runtime, said.append)
+    return facts, compose.panel_environment(environ, {**FACTS, **facts}), '\n'.join(said)
 
 
 class SsoMissingSecretTests(unittest.TestCase):
     def test_empty_secret_disables_sso_and_allows_password(self):
         for domain in ('vpn.example.test', ''):
-            for secret in ("SSO_CLIENT_SECRET=''", "SSO_CLIENT_SECRET='  '", 'unset SSO_CLIENT_SECRET'):
-                with self.subTest(domain=domain, secret=secret), tempfile.TemporaryDirectory() as directory:
-                    result = bash(f'''
-HOST_TAG=ru
-SSO_ENABLED=true
-SSO_PASSWORD_LOGIN=false
-SSO_CLIENT_ID=vpn2
-SSO_DISCOVERY_URL=https://auth.example.test/.well-known/openid-configuration
-SSO_ALLOWED_SUBS=test-sub
-PANEL_DOMAIN={shlex.quote(domain)}
-{secret}
-''' + (seed_block() + container_block()).replace('/etc/anysda', directory) + '''
-printf 'effective=%s password=%s redirect=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LOGIN" "$SSO_REDIRECT_URL"
-''', directory)
-                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                    self.assertIn('effective=false password=true redirect=', result.stdout)
-                    self.assertNotIn(NOTICE, result.stdout + result.stderr)
-                    self.assertFalse((Path(directory) / 'sso-runtime.json').exists())
-                    args = (Path(directory) / 'docker.args').read_text().splitlines()
-                    self.assertIn('NUXT_PUBLIC_SSO_ENABLED=false', args)
-                    self.assertIn('NUXT_PUBLIC_SSO_AUTO_REDIRECT=false', args)
-                    self.assertIn('NUXT_SSO_PASSWORD_LOGIN=true', args)
-                    self.assertIn('NUXT_OAUTH_OIDC_CLIENT_SECRET=' + ('  ' if "='  '" in secret else ''), args)
+            for secret in ('', '  ', None):
+                with self.subTest(domain=domain, secret=secret):
+                    environ = {**SEED, 'PANEL_DOMAIN': domain}
+                    if secret is not None:
+                        environ['SSO_CLIENT_SECRET'] = secret
+                    facts, env, said = panel_env(environ, False)
+                    self.assertEqual([facts['sso_enabled'], facts['sso_password_login'],
+                                      facts['sso_redirect_url']], ['false', 'true', ''])
+                    self.assertNotIn(NOTICE, said)
+                    self.assertEqual(env['NUXT_PUBLIC_SSO_ENABLED'], 'false')
+                    self.assertEqual(env['NUXT_PUBLIC_SSO_AUTO_REDIRECT'], 'false')
+                    self.assertEqual(env['NUXT_SSO_PASSWORD_LOGIN'], 'true')
+                    self.assertEqual(env['NUXT_OAUTH_OIDC_CLIENT_SECRET'], secret or '')
 
     def test_runtime_is_preserved_and_complete_seed_still_enables_sso(self):
-        for runtime in (None, {'enabled': True, 'passwordLogin': False, 'clientSecret': SECRET}):
-            with self.subTest(runtime=runtime), tempfile.TemporaryDirectory() as directory:
-                stored = Path(directory) / 'sso-runtime.json'
+        for runtime in (False, True):
+            with self.subTest(runtime=runtime):
+                environ = {**SEED, 'PANEL_DOMAIN': 'vpn.example.test',
+                           'SSO_CLIENT_SECRET': '' if runtime else SECRET}
+                facts, env, said = panel_env(environ, runtime)
+                expected = ['false', 'true'] if runtime else ['true', 'false']
+                self.assertEqual([facts['sso_enabled'], facts['sso_password_login']], expected)
+                self.assertNotIn(SECRET, said)
                 if runtime:
-                    stored.write_text(json.dumps(runtime))
-                    before = hashlib.sha256(stored.read_bytes()).hexdigest()
-                result = bash(f'''
-HOST_TAG=ru
-SSO_ENABLED=true
-SSO_PASSWORD_LOGIN=false
-PANEL_DOMAIN=vpn.example.test
-SSO_CLIENT_ID=vpn2
-SSO_CLIENT_SECRET={shlex.quote('' if runtime else SECRET)}
-SSO_DISCOVERY_URL=https://auth.example.test/.well-known/openid-configuration
-SSO_ALLOWED_SUBS=test-sub
-''' + (seed_block() + container_block()).replace('/etc/anysda', directory) + '''
-printf 'effective=%s password=%s\n' "$SSO_ENABLED" "$SSO_PASSWORD_LOGIN"
-''', directory)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                expected = 'effective=false password=true' if runtime else 'effective=true password=false'
-                self.assertIn(expected, result.stdout)
-                self.assertNotIn(SECRET, result.stdout + result.stderr)
-                if runtime:
-                    self.assertEqual(hashlib.sha256(stored.read_bytes()).hexdigest(), before)
-                    args = (Path(directory) / 'docker.args').read_text().splitlines()
-                    self.assertIn('NUXT_PUBLIC_SSO_ENABLED=false', args)
-                    self.assertIn('NUXT_PUBLIC_SSO_AUTO_REDIRECT=false', args)
-                    self.assertIn('NUXT_SSO_PASSWORD_LOGIN=true', args)
+                    self.assertEqual(env['NUXT_PUBLIC_SSO_ENABLED'], 'false')
+                    self.assertEqual(env['NUXT_PUBLIC_SSO_AUTO_REDIRECT'], 'false')
+                    self.assertEqual(env['NUXT_SSO_PASSWORD_LOGIN'], 'true')
 
     def test_notice_is_once_at_end_of_pipeline_or_frontend_stage(self):
         deploy = source('infra/deploy.sh')

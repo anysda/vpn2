@@ -85,8 +85,7 @@ class Deploy:
         for tag, ip in (('ru', ENTRY_IP), ('alpha', EXIT_IP)):
             (self.root / f'envs/{tag}.env').write_text(
                 f'HOST_TAG={tag}\nSSH_HOST={ip}\nSSH_USER=root\nSSH_PASS=fixture\n')
-        for name in ('ssh.sh', 'anysda-svc.sh', 'ansible-venv.sh', 'deploy-release.sh', 'deploy_state.py',
-                     'panel-transaction.sh'):
+        for name in ('ssh.sh', 'anysda-svc.sh', 'ansible-venv.sh', 'deploy-release.sh', 'deploy_state.py'):
             (self.root / 'lib' / name).write_text((ROOT / 'infra/lib' / name).read_text())
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (self.fake / 'bin' / name).write_text(text)

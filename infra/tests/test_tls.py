@@ -13,10 +13,13 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 
+from containers_support import FACTS, compose, panel_tls
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 # Real Caddy (same version as CADDY_VER in infra/lib/anysda-svc.sh) validates the generated files when present.
 CADDY = os.environ.get('CADDY_BIN') or shutil.which('caddy')
+PANEL = ROOT / 'infra/vpn2/src/vpn2/containers/panel.py'
 # Caddy 2.11.7 journal record for an unreachable ACME directory.
 REFUSED = {'level': 'error', 'logger': 'tls.obtain', 'msg': 'could not get certificate from issuer',
            'identifier': '192.0.2.1', 'issuer': '127.0.0.1:1-directory',
@@ -34,20 +37,13 @@ def load_tls():
     return module
 
 
-def render_stage(directory, domain, after=''):
-    """Run the TLS part of stage 30 inside the panel transaction, paths moved into a temporary directory."""
-    stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-    start = stage.index('if [[ -n "${PANEL_DOMAIN:-}" ]]; then', stage.index('TLS_LIB='))
-    block = stage[start:stage.index('\nufw_sync_rules', start)]
-    Path(directory, 'etc/caddy').mkdir(parents=True, exist_ok=True)
-    block = block.replace('/usr/local/lib/vpn2/vpn2_tls.py', f'{ROOT}/infra/lib/vpn2_tls.py')
-    for prefix in ('/etc/', '/var/'):
-        block = block.replace(prefix, directory + prefix)
-    block = (f'source {ROOT}/infra/lib/panel-transaction.sh\npanel_state={directory}/panel-state\n'
-             f'systemctl() {{ echo "systemctl $*" >> {directory}/systemctl.log; }}\n{block}\n{after}')
-    return subprocess.run(['bash', '-eu', '-c', block],
-                          env=dict(os.environ, HOST_TAG='ru', ENTRY_HOST='192.0.2.1', PANEL_DOMAIN=domain),
-                          capture_output=True, text=True, timeout=30)
+def render_stage(directory, domain, fail=False):
+    """TLS-шаг стадии панели под её транзакцией, пути перенесены во временный каталог."""
+    stubs = Path(directory, 'bin')
+    stubs.mkdir(exist_ok=True)
+    (stubs / 'systemctl').write_text(f'#!/bin/sh\necho "systemctl $*" >> {directory}/systemctl.log\n')
+    (stubs / 'systemctl').chmod(0o755)
+    return panel_tls(directory, domain, dict(os.environ, PATH=f'{stubs}:{os.environ["PATH"]}'), fail)
 
 
 def caddy_validate(test, caddyfile):
@@ -93,32 +89,34 @@ class TlsStageTests(unittest.TestCase):
             caddy_validate(self, Path(directory) / 'etc/caddy/Caddyfile')
 
     def test_failed_panel_release_restores_previous_tls_snippets(self):
-        failure = 'panel_changed=true panel_old=false\ntrap panel_failure EXIT\nfalse'
         names = ('etc/caddy/Caddyfile', 'etc/caddy/vpn2-tls.conf', 'etc/caddy/vpn2-http.conf',
                  'etc/vpn2/tls/config.json', 'etc/vpn2/tls/panel/secure')
         with tempfile.TemporaryDirectory() as directory:
             # First installation fails: none of the new snippets stays behind.
-            result = render_stage(directory, '', failure)
+            result = render_stage(directory, '', fail=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual([n for n in names if (Path(directory) / n).exists()], [])
             # Working IP release, then a failed domain release returns the IP snippets and reloads Caddy.
             self.assertEqual(render_stage(directory, '').returncode, 0)
             before = {n: (Path(directory) / n).read_bytes() for n in names}
-            result = render_stage(directory, 'vpn.example.test', failure)
+            result = render_stage(directory, 'vpn.example.test', fail=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual({n: (Path(directory) / n).read_bytes() for n in names}, before)
             self.assertIn('systemctl reload-or-restart caddy', (Path(directory) / 'systemctl.log').read_text())
         # The first certificate is requested only after the panel release is committed.
-        stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        self.assertLess(stage.index('panel_guard_files /etc/caddy/Caddyfile'), stage.index('--prepare'))
-        self.assertLess(stage.index('\npanel_finish\n'), stage.index('vpn2_tls.py --initial'))
-        self.assertLess(stage.index('\npanel_finish\n'), stage.index('enable --now vpn2-tls.timer'))
+        stage = PANEL.read_text()
+        tls = stage[stage.index('def host_tls('):stage.index('def caddy(')]
+        self.assertLess(tls.index('tx.guard_files('), tls.index("'--prepare'"))
+        body = stage[stage.index('def _stage('):]
+        self.assertLess(body.index('tx.finish()'), body.index("'--initial'"))
+        self.assertLess(body.index('tx.finish()'), body.index("'enable', '--now', 'vpn2-tls.timer'"))
 
     def test_panel_reads_secure_flag_from_file_on_every_start(self):
-        stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        self.assertIn("NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure)", stage)
-        self.assertIn('-v /etc/vpn2/tls/panel:/run/vpn2-tls:ro', stage)
-        self.assertNotIn('-e NUXT_SESSION_COOKIE_SECURE=', stage)
+        service = compose.panel_service({'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000'},
+                                        'image', '', FACTS, user='1:1', control_gid=2)
+        self.assertIn('NUXT_SESSION_COOKIE_SECURE=$(cat /run/vpn2-tls/secure)', ' '.join(service['command']))
+        self.assertIn('/etc/vpn2/tls/panel:/run/vpn2-tls:ro', service['volumes'])
+        self.assertNotIn('NUXT_SESSION_COOKIE_SECURE', service['environment'])
 
 
 class TlsTests(unittest.TestCase):

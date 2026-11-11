@@ -64,10 +64,9 @@ class PanelClosedUnitJournalTests(unittest.TestCase):
         self.each_mode(check)
 
     def test_installation_starts_the_service_after_the_initial_run(self):
-        stage = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        tail = stage[stage.index('vpn2_tls.py --initial'):]
-        tail = tail[:tail.index('Панель:')]
-        start = re.search(r'^systemctl start vpn2-tls\.service\b(?!.*--no-block)', tail, re.M)
+        stage = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
+        tail = stage[stage.index("'--initial'"):stage.rindex('_summary(environ, say, admin_user')]
+        start = re.search(r"\['systemctl', 'start', 'vpn2-tls\.service'\]", tail)
         self.assertIsNotNone(start, tail)
 
     def test_state_changed_between_installation_and_service(self):

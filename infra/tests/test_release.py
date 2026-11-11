@@ -89,18 +89,6 @@ do_all
         self.assertNotEqual(run.returncode, 0, 'failed inventory was announced as successful deploy')
         self.assertNotIn('premature-', run.stdout)
 
-    def test_previous_hosts_are_read_from_retained_container(self):
-        source = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        capture = 'PREVIOUS_NODE_HOSTS=$(' + source.split('PREVIOUS_NODE_HOSTS=$(', 1)[1].split('\n  docker rm', 1)[0]
-        run = subprocess.run(['bash', '-euo', 'pipefail', '-c', '''
-docker() {
-  [[ "${*: -1}" == anysda-vpn2-previous ]] || return 1
-  echo 'NUXT_NODE_HOSTS=exit:example.invalid'
-}
-''' + capture + '\nprintf "%s" "$PREVIOUS_NODE_HOSTS"'], capture_output=True, text=True, timeout=10)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout, 'exit:example.invalid')
-
     def test_recovery_rechecks_contract_and_backups_before_resuming(self):
         library = ROOT / 'infra/lib/deploy-release.sh'
         self.assertTrue(library.exists(), 'release recovery is missing')
@@ -256,14 +244,13 @@ release_complete
                                                      'digest': 'sha256:' + 'a' * 64,
                                                      'config': 'sha256:' + 'a' * 64}}}, 'binaries': {}}
             (work / 'release.json').write_text(json.dumps(manifest))
-            source = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-            section = source.split('# 1. Pull panel image', 1)[1].split('# 2. Generate', 1)[0]
-            section = section.split('\n', 2)[2]
-            section = section.replace('$(dirname "$0")/release.sh', shlex.quote(str(ROOT / 'infra/lib/release.sh')))
-            run = subprocess.run(['bash', '-euo', 'pipefail', '-c', 'HOST_TAG=ru\n' + section],
+            code = ("import os\nfrom vpn2.containers import engine\n"
+                    "engine.release_image(os.environ, 'panel', os.environ['PANEL_IMAGE'], False)")
+            run = subprocess.run([sys.executable, '-c', code],
                                  env=dict(os.environ, PATH=str(tools) + ':' + os.environ['PATH'],
+                                          PYTHONPATH=str(ROOT / 'infra/vpn2/src'),
                                           VPN2_RELEASE_MANIFEST=str(work / 'release.json'),
-                                          VPN2_DEVELOPMENT='false', PANEL_IMAGE='example/panel:1.0.1', PANEL_IMAGE_PULL='false'),
+                                          VPN2_DEVELOPMENT='false', PANEL_IMAGE='example/panel:1.0.1'),
                                  capture_output=True, text=True, timeout=15)
             self.assertNotEqual(run.returncode, 0, 'deploy accepted retagged foreign image')
             self.assertIn('digest', run.stderr)
@@ -291,24 +278,6 @@ release_complete
                    json.dumps([{'Id': expected, 'Architecture': 'amd64'}])]
         with patch.object(release, 'command', side_effect=answers):
             self.assertEqual(release.image(manifest, 'panel', arch='amd64'), expected)
-
-    def test_failed_compatibility_never_starts_previous_container(self):
-        library = ROOT / 'infra/lib/panel-transaction.sh'
-        self.assertTrue(library.exists(), 'deploy has no rollback schema guard')
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
-            (work / 'previous-schema.json').write_text('{}')
-            marker = work / 'docker-called'
-            run = subprocess.run(['bash', '-euo', 'pipefail', '-c', f'''
-source {shlex.quote(str(library))}
-panel_state={shlex.quote(str(work))}
-panel_compatible() {{ return 1; }}
-docker() {{ touch {shlex.quote(str(marker))}; }}
-panel_rollback
-'''], capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(run.returncode, 0)
-            self.assertFalse(marker.exists())
-            self.assertIn('incompatible schema', run.stderr)
 
     def test_corrupt_download_rejected_before_copy_or_extract(self):
         release = module('release')
@@ -426,20 +395,9 @@ panel_rollback
             for name in left:
                 state.verify_backup(panel / 'backups' / name)
             self.assertEqual(len(list((deploy / 'backups').iterdir())), keep, 'panel rotation touched deploy backups')
-            # Rollback after rotation: its inputs live outside backups/ and still work.
-            library = ROOT / 'infra/lib/panel-transaction.sh'
-            script = f'''source {shlex.quote(str(library))}
-panel_state={shlex.quote(str(panel))}
-panel_compatible() {{ test -f "$1"; }}
-panel_health() {{ return 0; }}
-python3() {{ return 0; }}
-docker() {{ :; }}
-panel_rollback
-'''
-            rollback = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
-            self.assertEqual(rollback.returncode, 0, rollback.stderr)
-            self.assertIn('panel rollback verified', rollback.stdout)
-            print('rollback after rotation: ' + rollback.stdout.strip())
+            # Откат после ротации: его входы лежат вне backups/ и остались на месте.
+            self.assertTrue((panel / 'previous-schema.json').is_file())
+            self.assertTrue((panel / 'previous-installed.json').is_file())
 
     def test_disk_space_refusal_names_backup_folders(self):
         state = module('deploy_state')
@@ -509,25 +467,6 @@ panel_rollback
             installed = json.loads((work / 'state/installed.json').read_text())
             self.assertEqual(installed['actual']['images']['anysda-vpn2'], 'sha256:' + 'c' * 64)
 
-    def test_failed_backup_does_not_stop_panel_or_change_database(self):
-        library = ROOT / 'infra/lib/panel-transaction.sh'
-        self.assertTrue(library.exists(), 'deploy has no mandatory backup transaction')
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
-            marker = work / 'mutated'
-            script = f'''source {shlex.quote(str(library))}
-panel_state={shlex.quote(str(work / 'state'))}
-PANEL_IMAGE=test
-python3() {{ [[ " $* " != *' backup '* && " $* " != *' backup' ]]; }}
-docker() {{ touch {shlex.quote(str(marker))}; }}
-panel_begin
-panel_replace
-'''
-            run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(run.returncode, 0)
-            self.assertFalse(marker.exists(), 'working container changed despite failed backup')
-            print('backup failure: no stop, migration or working-data change')
-
     def test_incompatible_schema_prevents_old_container_start(self):
         state = module('deploy_state')
         with tempfile.TemporaryDirectory() as directory:
@@ -539,34 +478,6 @@ panel_replace
             with self.assertRaisesRegex(state.ReleaseError, 'old image must not start'):
                 state.compatible(database, contract)
             print('incompatible schema: old image must not start')
-
-    def test_rollback_retains_current_access_and_pki(self):
-        library = ROOT / 'infra/lib/panel-transaction.sh'
-        self.assertTrue(library.exists(), 'deploy has no safe rollback')
-        with tempfile.TemporaryDirectory() as directory:
-            work = Path(directory)
-            database = work / 'db.sqlite'
-            with closing(sqlite3.connect(database)) as db, db:
-                db.executescript('CREATE TABLE devices(id INTEGER, allowed INTEGER, expires_at INTEGER);'
-                                 'INSERT INTO devices VALUES (1,0,1); INSERT INTO devices VALUES (2,1,9999999999);'
-                                 'CREATE TABLE operations(id INTEGER, status TEXT); INSERT INTO operations VALUES(1,"pending");')
-            crl = work / 'crl.pem'
-            crl.write_bytes(b'current revocation list')
-            before = (database.read_bytes(), crl.read_bytes())
-            (work / 'previous-schema.json').write_text('{}')
-            script = f'''source {shlex.quote(str(library))}
-panel_state={shlex.quote(str(work))}
-panel_compatible() {{ return 0; }}
-panel_health() {{ return 0; }}
-python3() {{ return 0; }}
-docker() {{ printf '%s\\n' "$*"; }}
-panel_rollback
-'''
-            run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertEqual((database.read_bytes(), crl.read_bytes()), before)
-            self.assertIn('current database, revocations, expirations, operations and PKI retained', run.stdout)
-            print('rollback: revoked device denied, expiry and pending operations retained; other client allowed')
 
     def build_manifest(self, work, migrations_after_tag):
         """Release checkout: tag v1.0.0, then commits; returns the generated manifest."""

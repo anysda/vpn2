@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 
+from containers_support import panel
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))
@@ -63,8 +64,10 @@ class PanelProxyTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
-        for path in ['app/e2e/support/panel-stand.sh', 'infra/scripts/30-frontend.sh']:
-            blocks = list(proxy_blocks((ROOT / path).read_text()))
+        sources = {'app/e2e/support/panel-stand.sh': (ROOT / 'app/e2e/support/panel-stand.sh').read_text(),
+                   'vpn2.containers.panel': panel.caddyfile('192.0.2.1', 'https://192.0.2.1')}
+        for path, source in sources.items():
+            blocks = list(proxy_blocks(source))
             # Stage 30 keeps one proxy snippet for domain and IP sites.
             self.assertEqual(len(blocks), 1)
             for index, block in enumerate(blocks):

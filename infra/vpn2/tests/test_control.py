@@ -23,6 +23,7 @@ CONTROL = ROOT / 'infra/ansible/roles/control'
 
 
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+from vpn2.containers import compose  # noqa: E402
 
 
 def module(name):
@@ -767,34 +768,41 @@ class ControlTests(unittest.TestCase):
         self.assertFalse(result['result']['present'])
 
     def test_management_uid_switch_is_transactional_and_survives_redeploy(self):
-        panel = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
+        panel = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
         stage = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
         self.assertIn('management-client-user ${OVPN_CONTROL_USER}', stage)
         self.assertIn('OVPN_CONTROL_USER=vpn2-control', stage)
-        switch = panel.index("'management-client-user vpn2-control'")
-        guard = panel.index('panel_guard_files /etc/caddy')
-        self.assertLess(panel.index('\npanel_begin'), guard)
+        self.assertIn("OVPN_USER = 'management-client-user vpn2-control'", panel)
+        body = panel[panel.index('def _stage('):]
+        guard, switch = body.index('host_tls(environ, say, tx)'), body.index('openvpn.switch()')
+        self.assertLess(body.index('tx.begin(image)'), guard)
         self.assertLess(guard, switch)
-        self.assertIn('/etc/openvpn/server/server.conf', panel[guard:switch])
-        self.assertIn('systemctl try-restart openvpn-server@server', panel)
+        self.assertIn('OVPN_CONF)])', panel[panel.index('tx.guard_files('):panel.index("'--prepare'")])
+        self.assertIn("['systemctl', 'try-restart', 'openvpn-server@server']", panel)
         self.assertIn('pwd.getpwnam(\'vpn2-control\').pw_uid',
                       (ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py').read_text())
 
     def test_no_system_execution_or_writable_config_mounts_in_panel(self):
         for path in (ROOT / 'app/server').rglob('*.ts'):
             self.assertNotIn('node:child_process', path.read_text(), str(path))
-        panel = (ROOT / 'infra/scripts/30-frontend.sh').read_text()
-        bot = (ROOT / 'infra/scripts/35-telegram.sh').read_text()
-        for stage in (panel, bot):
-            self.assertIn('--user ', stage)
-            self.assertIn('--cap-drop ALL', stage)
-            self.assertNotIn('--cap-add', stage)
-            self.assertNotIn('--pid host', stage)
-            self.assertNotIn('docker.sock', stage)
+        environ = {'HOST_TAG': 'ru', 'ENTRY_HOST': '192.0.2.1', 'AGH_PORT': '3000'}
+        facts = dict.fromkeys(('session', 'clash', 'tgbot', 'admin_user', 'agh_password', 'sso_enabled',
+                               'sso_auto_redirect', 'sso_password_login', 'sso_redirect_url'), '')
+        panel = compose.panel_service(environ, 'image', '', facts, user='10001:10001', control_gid=10003)
+        bot = compose.bot_service(environ, 'image', '', secret='s', user='10002:10002', panel_gid=10001)
+        for service in (panel, bot):
+            self.assertRegex(service['user'], r'^[1-9]\d*:[1-9]\d*$')
+            self.assertEqual(service['cap_drop'], ['ALL'])
+            self.assertNotIn('cap_add', service)
+            self.assertNotIn('pid', service)
+            self.assertNotIn('privileged', service)
+            self.assertNotIn('docker.sock', str(service))
+        mounts = [volume.split(':')[0] for volume in panel['volumes']]
         for directory in ('wireguard', 'openvpn', 'strongswan', 'swanctl'):
-            self.assertNotIn('-v /etc/' + directory, panel)
-        self.assertNotIn('-v /etc/anysda:/etc/anysda', panel)
-        self.assertLess(panel.index('scripts/control-probe.mjs'), panel.index('\npanel_begin'))
+            self.assertFalse([mount for mount in mounts if mount.startswith('/etc/' + directory)], mounts)
+        self.assertNotIn('/etc/anysda', mounts)
+        stage = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
+        self.assertLess(stage.index('scripts/control-probe.mjs'), stage.index('tx.begin(image)'))
         socket_unit = (CONTROL / 'templates/vpn2-control.socket.j2').read_text()
         self.assertIn('PartOf=vpn2-control.service', socket_unit)
 

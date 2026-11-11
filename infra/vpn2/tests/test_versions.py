@@ -15,7 +15,6 @@ STAGE_PINS = {
     'sing_box': ('lib/install-sing-box.sh', 'SB_VER'),
     'wgcf': ('ansible/roles/exit/defaults/main.yml', 'exit_wgcf_version'),
     'caddy': ('lib/anysda-svc.sh', 'CADDY_VER'),
-    'victoriametrics': ('scripts/25-monitoring.sh', 'VM_VER'),
 }
 
 
@@ -55,7 +54,8 @@ def check_lines(pins):
 
 
 def test_keys():
-    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', *STAGE_PINS, *STAGE_LINES}
+    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', 'victoriametrics', *STAGE_PINS,
+                                             *STAGE_LINES}
 
 
 def test_matches_stages():

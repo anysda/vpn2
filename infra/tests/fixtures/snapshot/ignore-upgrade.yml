@@ -1,7 +1,6 @@
 # Допуски слепка после обновления с выпуска (сценарий 4 карточки VPN2-751);
 # склеивается cat с ignore.yml, строки добавляются с причиной по прогону.
 
-- {section: containers, name: anysda-vpn2-previous, field: '*', reason: обновление пересоздаёт панель и оставляет контейнер выпуска для отката}
 - {section: files, name: '/var/lib/vpn2-deploy/panel/files/*', field: '*', reason: копия конфигурации прежней панели для отката}
 - {section: files, name: '/var/lib/vpn2-deploy/panel/previous-*.json', field: '*', reason: запись и схема прежней панели для отката}
 - {section: files, name: /var/lib/anysda-vpn2/db.sqlite, field: sha256, reason: пересозданная панель пишет в базу при старте}

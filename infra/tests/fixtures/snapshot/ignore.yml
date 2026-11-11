@@ -24,6 +24,7 @@
 - {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты; остальное сверяет shape}
 - {section: files, name: '/opt/anysda-vpn2/infra/secrets/*', field: sha256, reason: каталог созданных при установке секретов}
 - {section: files, name: '/opt/anysda-vpn2/infra/secrets/rendered/nl.env', field: '*', reason: окружение скриптовой стадии экзита - таких стадий больше нет; после обновления с выпуска файл остаётся от прежнего деплоя}
+- {section: files, name: '/opt/anysda-vpn2/infra/secrets/rendered/ru.env', field: '*', reason: окружение скриптовой стадии entry - таких стадий больше нет; после обновления с выпуска файл остаётся от прежнего деплоя}
 
 # Конфиги, в которые вписаны созданные секреты
 - {section: files, name: '/etc/vpn2/compose/compose.yaml', field: sha256, reason: окружение служб содержит созданные секреты и digest образов сборки}

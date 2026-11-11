@@ -26,8 +26,7 @@ async function submit() {
     emit('added')
   }
   catch (e) {
-    const err = e as { data?: { message?: string }, statusMessage?: string }
-    toast.add({ title: err.data?.message ?? err.statusMessage ?? 'Не удалось добавить девайс', color: 'error' })
+    toast.add({ title: errText(e, 'Не удалось добавить девайс'), color: 'error' })
   }
   finally {
     busy.value = false
@@ -36,15 +35,17 @@ async function submit() {
 </script>
 
 <template>
-  <ClientsModal v-model:open="open" title="Новый девайс" closable>
-    <label class="fl2"><span>Название девайса</span><input v-model="name" class="in" placeholder="напр. iPhone" @keydown.enter="submit"></label>
-    <div class="mf">
-      <button type="button" class="pill" @click="open = false">
-        Отмена
-      </button>
-      <button type="button" class="pill w" :disabled="!name.trim() || busy" @click="submit">
-        Добавить
-      </button>
-    </div>
-  </ClientsModal>
+  <PanelModal
+    v-model:open="open"
+    class="clm"
+    title="Новый девайс"
+    closable
+    ok="Добавить"
+    :ok-disabled="!name.trim() || busy"
+    @ok="submit">
+    <label class="fl2">
+      <span>Название девайса</span>
+      <input v-model="name" class="in" placeholder="напр. iPhone" @keydown.enter="submit">
+    </label>
+  </PanelModal>
 </template>

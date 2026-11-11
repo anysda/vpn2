@@ -1,11 +1,8 @@
 /* Обзор: правила макета, которых нет в main.css. Всё под .ov (страница) и
    .ov-modal (модалки узла и подтверждения, они уходят в body). */
-
-.ov .card h3{font-size:14px;font-weight:500;color:var(--t2)}
 .ov .ha{display:flex;gap:8px}
-.ov .tag,:is(.ov-modal,.ov-sh) .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
+:is(.ov-modal,.ov-sh) .tag{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:999px;background:rgba(var(--fg),.06);color:var(--t2);font-size:11.5px;white-space:nowrap}
 .ov .tag .q{width:14px;height:14px;border-radius:50%;background:rgba(var(--fg),.12);display:grid;place-items:center;font-size:9px}
-
 /* ряд 1: события, трафик, выходы, DNS. Ленте — ширина под строку целиком,
    остальным — сколько нужно кольцу и легенде; высота ряда от соседей ленты */
 .ov .r1{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:12px}
@@ -13,17 +10,11 @@
 .ov .wave{display:flex;flex-direction:column;height:272px}
 .ov .wave .top{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 .ov .wave .plot{flex:1;min-height:0;width:100%;margin-top:6px}
-.ov .big small{font-size:18px;color:var(--t3);font-weight:300;letter-spacing:0;margin-left:4px}
 /* линейка и подсказка на графике трафика */
-.ov .rul{position:absolute;top:0;bottom:0;left:0;width:1px;background:var(--line2);pointer-events:none;opacity:0;transition:opacity .15s var(--ease),transform .2s var(--ease)}
-.ov .hv .rul{opacity:1}
 .ov .qtip{position:absolute;left:0;top:0;pointer-events:none;transition:transform .2s var(--ease),opacity .15s var(--ease)}
-.ov .qtip i{position:absolute;left:-5px;top:-5px;width:10px;height:10px;border-radius:50%;background:var(--card-b);border:1.5px solid var(--t1);box-shadow:0 0 12px rgba(var(--glow),calc(.5*var(--gk)))}
 .ov .qtip div{position:absolute;right:14px;top:-14px;white-space:nowrap;padding:8px 12px;border-radius:12px;background:var(--tip);border:1px solid var(--line2);font-size:12px;color:var(--t2);box-shadow:0 12px 30px rgba(0,0,0,calc(.5*var(--shk)))}
-.ov .qtip b{color:var(--t1);font-weight:500}.ov .qtip small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
-.ov .qtip.r div{right:auto;left:14px}
+.ov .qtip small{display:block;color:var(--t3);font-size:11px;margin-top:2px}
 .ov .qtip.wv{opacity:0;z-index:3}.ov .hv .qtip.wv{opacity:1}
-.ov .qtip.now,.ov .rul.now{transition:none}
 .ov .donut{display:flex;flex-direction:column;height:272px}
 /* класс макета совпадает с утилитой Tailwind ring — её тень здесь не нужна */
 .ov .donut .ring{position:relative;flex:1;display:grid;place-items:center;box-shadow:none}
@@ -36,7 +27,6 @@
 .ov .leg em{font-style:normal;color:var(--t1);text-align:right}
 .ov .leg i{font-style:normal;color:var(--t3);text-align:right}
 .ov .leg .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-
 /* узлы */
 .ov .r3{display:grid;grid-template-columns:repeat(var(--n,5),1fr);gap:12px;margin-bottom:12px}
 .ov .node{height:236px;display:flex;flex-direction:column;padding:16px 16px 14px;cursor:pointer;text-align:left;font:inherit;color:inherit;
@@ -56,18 +46,13 @@
 .ov .node .ft{display:flex;align-items:center;gap:6px;margin-top:10px;font-size:11px;color:var(--t3)}
 .ov .node .ft .tag{height:22px;font-size:11px}
 .ov .node .ft .m{margin-left:auto;white-space:nowrap}
-.ov .tag.ok{color:var(--green);border:1px solid rgba(var(--grn-rgb),.3);background:rgba(var(--grn-rgb),.06)}
-.ov .tag.badt{color:var(--red);border:1px solid rgba(var(--red-rgb),.35);background:rgba(var(--red-rgb),.08)}
 .ov .node.lit{background:linear-gradient(160deg,var(--lit-a) 0%,var(--lit-b) 38%,var(--lit-c) 100%);border-color:rgba(var(--fg),.14)}
 .ov .node.lit .nt small,.ov .node.lit .cpu span{color:var(--lit-t)}
 @media (hover:hover){.ov .node:hover .ar{transform:translate(2px,-2px);color:var(--t1);border-color:rgba(var(--fg),.3)}}
-
 /* активность и клиенты */
 .ov .ra{display:grid;grid-template-columns:minmax(0,1.9fr) minmax(0,1.15fr) minmax(0,1fr);gap:12px;margin-bottom:12px;align-items:start}
 .ov .stack{display:grid;gap:12px}
 /* активность: недели столбцами, дни строками */
-.ov .fhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
-.ov .fhead h3{color:var(--t1);font-size:15px}
 .ov .act{display:flex;flex-direction:column;padding:16px 20px;height:272px}
 .ov .act .fhead{margin-bottom:8px}.ov .act .fhead h3{line-height:28px}
 .ov .agrid{display:grid;gap:4px;align-items:center}
@@ -84,25 +69,16 @@
 /* сегменты со скользящей пилюлей (сама .glide — в main.css) */
 .ov .seg{position:relative;display:inline-flex;gap:6px}
 .ov .seg button{height:34px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t2);font:500 12.5px var(--font-sans);cursor:pointer;display:flex;align-items:center;gap:8px;transition:transform .14s var(--ease),color .2s,background-color .2s,border-color .2s}
-.ov .seg button:active{transform:scale(.96)}
-.ov .seg button.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
-.ov .seg.gl button.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
 .ov .mini{display:grid;grid-template-rows:auto 1fr auto;row-gap:6px;height:130px;padding:16px 18px}
 .ov .mini .nums{grid-row:3;display:flex;align-items:center;gap:10px}
 .ov .mini .big{font-size:36px}
 .ov .mini .plot{grid-row:2;width:100%;height:100%;min-height:0}
-
 /* рассылка */
-.ov .sc{padding:20px 22px;display:flex;flex-direction:column;min-height:270px}
-.ov .sh{display:flex;justify-content:space-between;align-items:center}
 .ov .sh h3{color:var(--t1);font-size:15px}
 .ov .bc{display:flex;flex-direction:column}
 .ov .bc textarea{margin:14px 0 0;flex:1;min-height:120px;resize:none;border-radius:14px;padding:14px 16px;background:var(--sunk);border:1px solid rgba(var(--fg),.05);box-shadow:inset 0 2px 10px rgba(0,0,0,calc(.5*var(--shk)));color:var(--t1);font:400 14px/1.5 var(--font-sans);outline:0}
 .ov .bc textarea:focus{border-color:rgba(var(--fg),.25)}
-.ov .arow{display:flex;gap:8px;margin-top:12px;align-items:center}
-.ov .arow .pill{height:40px}
 .ov .bc .hint{font-size:12px;color:var(--t3)}
-
 /* графики: точки, живая точка на конце, перекат цифр */
 .ov .plot{position:relative}
 .ov .plot>svg{display:block;width:100%;height:100%;overflow:visible}
@@ -113,7 +89,6 @@
 @keyframes ov-halo{0%{transform:scale(1);opacity:.6}75%,100%{transform:scale(3);opacity:0}}
 x-d{display:inline-block;position:relative;clip-path:inset(0 -.2em)}
 x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
-
 /* модалки: узел и подтверждение (UModal с классами макета) */
 .ov-modal{position:fixed;left:50%;top:50%;z-index:51;width:min(460px,calc(100vw - 48px));max-width:none;max-height:calc(100vh - 48px);overflow:auto;padding:22px 24px;translate:-50% -50%;
   background:linear-gradient(180deg,var(--pop-a),var(--pop-b));scrollbar-width:thin;scrollbar-color:rgba(var(--fg),.14) transparent;outline:0}
@@ -149,7 +124,6 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
 :is(.ov-modal,.ov-sh) .tog:active i{transform:scaleX(1.25);transform-origin:left}
 :is(.ov-modal,.ov-sh) .tog.on:active i{transform:translateX(18px) scaleX(1.25);transform-origin:right}
 :is(.ov-modal,.ov-sh) .tog:disabled{cursor:default;opacity:.6}
-
 @media (max-width:1360px){
   .ov .big{font-size:40px}
   .ov .node .cpu .big{font-size:34px}
@@ -182,7 +156,6 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .r1>.ov-exits,.ov .r1>.ov-dns{grid-column:auto;align-self:stretch}
   .ov .ra>.ov-clients{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   .ov .r1>.card{padding:18px 20px}
-
   /* ноды: пары, нечётный entry на всю ширину */
   .ov .node{height:184px;padding:14px 14px 12px;min-width:0;touch-action:manipulation;-webkit-user-select:none;user-select:none}
   .ov .node.full{grid-column:1/-1}
@@ -196,17 +169,14 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .node .cpu .big{font-size:34px}
   .ov .node .sp{height:36px}
   .ov .node .ft .m{min-width:0;overflow:hidden;text-overflow:ellipsis}
-
   /* трафик: высота по содержимому, график 110 */
   .ov .wave{height:auto}
   .ov .wave .plot{flex:none;height:110px;margin-top:12px}
-
   /* выходы и DNS: кольцо 124, легенда в три колонки */
   .ov .r1>.donut{height:auto;padding:16px 14px 14px}
   .ov .donut .ring{flex:none;margin:12px 0}
   .ov .leg div{grid-template-columns:auto minmax(0,1fr) auto}
   .ov .ov-exits .leg em,.ov .ov-dns .leg i{display:none}
-
   /* активность: легенда и выбранный день в столбик под сеткой */
   .ov .act{height:auto;padding:16px}
   .ov .act .fhead{margin-bottom:10px}
@@ -216,13 +186,10 @@ x-d>x-n,x-d>x-o{display:inline-block}x-d>x-o{position:absolute;left:0;top:0}
   .ov .afoot{flex-direction:column;align-items:flex-start;gap:8px;padding-top:12px;font-size:11.5px}
   .ov .aleg i{width:10px;height:10px}
   .ov .aleg span:first-child{margin-right:2px}.ov .aleg span:last-child{margin-left:2px}
-  .ov .seg button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
-
   /* клиенты онлайн и офлайн рядом */
   .ov .mini{padding:16px 16px 14px;min-width:0}
   .ov .mini h3{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ov .mini .big{font-size:32px}
-
   /* шторка ноды: сетка 3×3, кнопки футера на всю ширину по 46 */
   .ov-sh .mh>div:first-child{min-width:0}
   .ov-sh .mh .ha{flex:none}

@@ -52,7 +52,7 @@ async function load(more = false) {
 
 function wave() {
   requestAnimationFrame(() => [...(list.value?.children ?? [])].slice(0, 12).forEach((r, i) =>
-    anim(r, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 300, delay: i * 28 })))
+    rise(r, { duration: 300, delay: i * 28 })))
 }
 
 async function reload() {

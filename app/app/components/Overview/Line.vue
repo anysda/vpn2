@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { anim } from '~/utils/clients-view'
-import { smooth } from '~/utils/dns-motion'
 import { drawSvg, linePoints, reduced, useWake } from '~/utils/overview'
 
 // Линия макета (line + dotsHTML + liveDot): svg тянется по обёртке, кружки

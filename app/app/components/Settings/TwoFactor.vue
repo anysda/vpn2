@@ -3,17 +3,16 @@ import QRCode from 'qrcode-svg'
 
 const { user, fetch: refreshSession } = useAuthSession()
 const toast = useToast()
-// Телефон: окно «Выключить 2FA?» — нижней шторкой вместо модалки.
-const mobile = useMobile()
 
 const totpEnabled = computed(() => user.value?.twoFactorEnabled ?? false)
 
-const setupState = ref<'idle' | 'setup' | 'confirming'>('idle')
-const totpSecret = ref('')
+const step = ref<'idle' | 'setup'>('idle')
 const totpUri = ref('')
-const totpCode = ref('')
-const setupPwd = ref('')
-const totpLoading = ref(false)
+const totpSecret = computed(() => totpUri.value ? new URL(totpUri.value).searchParams.get('secret') ?? '' : '')
+const pwd = ref('')
+const code = ref('')
+const busy = ref(false)
+const disableOpen = ref(false)
 
 // QR разметкой: квадрат на каждый тёмный модуль, тихая зона 4 модуля, 4 px на модуль
 // (меньше камера с экрана не берёт); ecl L - версия ниже, модуль крупнее.
@@ -24,98 +23,57 @@ const totpQr = computed(() => {
   return { size: modules.length + 8, dark }
 })
 
-async function startSetup() {
-  if (!setupPwd.value) {
-    toast.add({ title: 'Введите текущий пароль', color: 'error' })
-    return
-  }
-  totpLoading.value = true
+function reset() {
+  step.value = 'idle'
+  totpUri.value = pwd.value = code.value = ''
+}
+watch(disableOpen, reset)
+
+/** Шаг 2FA: пока запрос идёт, кнопки выключены; отказ - тостом `fail` с текстом сервера. */
+async function call<T>(path: string, body: object, fail: string, done: (r: T) => unknown) {
+  busy.value = true
   try {
-    const r = await $fetch<{ totpURI: string }>('/api/auth/two-factor/enable', {
-      method: 'POST',
-      body: { password: setupPwd.value },
-    })
-    totpSecret.value = new URL(r.totpURI).searchParams.get('secret') ?? ''
-    totpUri.value = r.totpURI
-    setupPwd.value = ''
-    setupState.value = 'setup'
+    await done(await $fetch<unknown>(`/api/auth/two-factor/${path}`, { method: 'POST', body }) as T)
   }
   catch (e) {
-    const err = e as { statusMessage?: string, message?: string }
-    toast.add({ title: 'Ошибка setup', color: 'error', description: err.statusMessage ?? err.message })
+    toast.add({ title: fail, color: 'error', description: errText(e, '') || undefined })
   }
   finally {
-    totpLoading.value = false
+    busy.value = false
   }
 }
 
 // Код из аутентификатора: 6 цифр, пробелы и прочее не в счёт.
-const sixDigits = (v: string) => v.replace(/\D/g, '').length === 6
-
-async function confirmSetup() {
-  if (!sixDigits(totpCode.value)) {
-    toast.add({ title: 'Код не подошёл', color: 'error' })
-    return
-  }
-  totpLoading.value = true
-  try {
-    // Первый код включает 2FA; остальные сессии сервер рвёт.
-    await $fetch('/api/auth/two-factor/verify-totp', {
-      method: 'POST',
-      body: { code: totpCode.value.replace(/\s/g, '') },
-    })
-    await refreshSession()
-    toast.add({ title: '2FA включена', color: 'success' })
-    setupState.value = 'idle'
-    totpSecret.value = ''
-    totpUri.value = ''
-    totpCode.value = ''
-  }
-  catch (e) {
-    const err = e as { statusMessage?: string, message?: string }
-    toast.add({ title: 'Неверный код', color: 'error', description: err.statusMessage ?? err.message })
-  }
-  finally {
-    totpLoading.value = false
-  }
+function digits(ready = true) {
+  if (ready && code.value.replace(/\D/g, '').length === 6) return code.value.replace(/\s/g, '')
+  toast.add({ title: 'Код не подошёл', color: 'error' })
 }
 
-function cancelSetup() {
-  setupState.value = 'idle'
-  totpSecret.value = ''
-  totpUri.value = ''
-  totpCode.value = ''
+function startSetup() {
+  if (!pwd.value) return toast.add({ title: 'Введите текущий пароль', color: 'error' })
+  return call<{ totpURI: string }>('enable', { password: pwd.value }, 'Ошибка setup', (r) => {
+    totpUri.value = r.totpURI
+    pwd.value = ''
+    step.value = 'setup'
+  })
 }
 
-const disableConfirm = ref(false)
-const disablePwd = ref('')
-const disableTotpCode = ref('')
-const disableLoading = ref(false)
+// Первый код включает 2FA; остальные сессии сервер рвёт.
+function confirmSetup() {
+  const c = digits()
+  if (c) return call('verify-totp', { code: c }, 'Неверный код', () => finish('2FA включена'))
+}
 
-async function disableTotp() {
-  if (!disablePwd.value || !sixDigits(disableTotpCode.value)) {
-    toast.add({ title: 'Код не подошёл', color: 'error' })
-    return
-  }
-  disableLoading.value = true
-  try {
-    await $fetch('/api/auth/two-factor/disable', {
-      method: 'POST',
-      body: { password: disablePwd.value, code: disableTotpCode.value.replace(/\s/g, '') },
-    })
-    await refreshSession()
-    toast.add({ title: '2FA выключена', color: 'success' })
-    disableConfirm.value = false
-    disablePwd.value = ''
-    disableTotpCode.value = ''
-  }
-  catch (e) {
-    const err = e as { statusMessage?: string, message?: string }
-    toast.add({ title: 'Ошибка', color: 'error', description: err.statusMessage ?? err.message })
-  }
-  finally {
-    disableLoading.value = false
-  }
+function disableTotp() {
+  const c = digits(!!pwd.value)
+  if (c) return call('disable', { password: pwd.value, code: c }, 'Ошибка', () => finish('2FA выключена'))
+}
+
+async function finish(title: string) {
+  await refreshSession()
+  toast.add({ title, color: 'success' })
+  disableOpen.value = false
+  reset()
 }
 </script>
 
@@ -123,75 +81,90 @@ async function disableTotp() {
   <div id="tfa">
     <div class="sh">
       <h3>Двухфакторный вход</h3>
-      <span v-if="totpEnabled" class="tag ok">Включена</span>
-      <span v-else class="tag">Выключена</span>
+      <span class="tag" :class="{ ok: totpEnabled }">{{ totpEnabled ? 'Включена' : 'Выключена' }}</span>
     </div>
     <template v-if="totpEnabled">
-      <p class="mt">2FA активна. Для отключения подтверди пароль и код из аутентификатора.</p>
+      <p class="mt">
+        2FA активна. Для отключения подтверди пароль и код из аутентификатора.
+      </p>
       <div class="fld">
         <span>Аутентификатор</span><code />
-        <button type="button" class="pill red" @click="disableConfirm = true">Выключить 2FA</button>
+        <button type="button" class="pill red" @click="disableOpen = true">
+          Выключить 2FA
+        </button>
       </div>
     </template>
-    <form v-else-if="setupState === 'idle'" @submit.prevent="startSetup">
-      <p class="mt">При входе панель спросит 6-значный код из приложения-аутентификатора (Aegis, Google Authenticator, 1Password) при входе.</p>
-      <label class="fld"><span>Текущий пароль</span><input v-model="setupPwd" class="in" type="password" autocomplete="current-password"></label>
+    <form v-else-if="step === 'idle'" @submit.prevent="startSetup">
+      <p class="mt">
+        При входе панель спросит 6-значный код из приложения-аутентификатора (Aegis, Google Authenticator, 1Password) при входе.
+      </p>
+      <label class="fld">
+        <span>Текущий пароль</span>
+        <input v-model="pwd" class="in" type="password" autocomplete="current-password">
+      </label>
       <div class="fld">
         <span /><code />
-        <button type="submit" class="pill w" :disabled="totpLoading">Включить 2FA</button>
+        <button type="submit" class="pill w" :disabled="busy">
+          Включить 2FA
+        </button>
       </div>
     </form>
     <form v-else @submit.prevent="confirmSetup">
-      <p class="mt">Отсканируй QR в аутентификаторе или вставь секрет вручную:</p>
+      <p class="mt">
+        Отсканируй QR в аутентификаторе или вставь секрет вручную:
+      </p>
       <div class="qrrow">
         <div class="qr">
-          <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" :style="{ width: `${totpQr.size * 4}px` }" shape-rendering="crispEdges">
+          <svg
+            v-if="totpQr"
+            xmlns="http://www.w3.org/2000/svg"
+            :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`"
+            :style="{ width: `${totpQr.size * 4}px` }"
+            shape-rendering="crispEdges">
             <rect :width="totpQr.size" :height="totpQr.size" fill="#fff" />
             <rect v-for="m in totpQr.dark" :key="`${m.x}-${m.y}`" :x="m.x" :y="m.y" width="1" height="1" fill="#000" />
           </svg>
         </div>
         <input class="in mono" readonly :value="totpSecret" aria-label="Секрет">
       </div>
-      <label class="fld qrcode"><span>Введи 6-значный код из приложения</span><input
-        v-model="totpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code" autofocus></label>
+      <label class="fld qrcode">
+        <span>Введи 6-значный код из приложения</span>
+        <input v-model="code" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code" autofocus>
+      </label>
       <div class="fld">
         <span /><code />
-        <button type="button" class="pill" @click="cancelSetup">Отмена</button>
-        <button type="submit" class="pill w" :disabled="totpLoading">Подтвердить</button>
+        <button type="button" class="pill" @click="reset">
+          Отмена
+        </button>
+        <button type="submit" class="pill w" :disabled="busy">
+          Подтвердить
+        </button>
       </div>
     </form>
   </div>
 
-  <UModal v-if="!mobile" v-model:open="disableConfirm" title="Выключить 2FA?" :ui="{ overlay: 'stg-ovl', content: 'card stg-modal' }">
-    <template #content>
-      <form @submit.prevent="disableTotp">
-        <div class="mh">
-          <h2>Выключить 2FA?</h2>
-          <button type="button" class="xb" aria-label="Закрыть" @click="disableConfirm = false"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
-        </div>
-        <label class="fl2"><span>Пароль</span><input v-model="disablePwd" class="in" type="password" autocomplete="current-password"></label>
-        <label class="fl2"><span>Код 2FA (6 цифр)</span><input
-          v-model="disableTotpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code"></label>
-        <div class="mf">
-          <button type="button" class="pill" @click="disableConfirm = false">Отмена</button>
-          <button type="submit" class="pill redw" :disabled="disableLoading">Выключить</button>
-        </div>
-      </form>
-    </template>
-  </UModal>
-  <BottomSheet v-else :open="disableConfirm" label="Выключить 2FA?" @close="disableConfirm = false">
-    <form class="stg-sheet" @submit.prevent="disableTotp">
-      <div class="mh">
-        <h2>Выключить 2FA?</h2>
-        <button type="button" class="xb" aria-label="Закрыть" @click="disableConfirm = false"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
-      </div>
-      <label class="fl2"><span>Пароль</span><input v-model="disablePwd" class="in" type="password" autocomplete="current-password"></label>
-      <label class="fl2"><span>Код 2FA (6 цифр)</span><input
-        v-model="disableTotpCode" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code"></label>
-      <div class="bsf">
-        <button type="button" class="pill" @click="disableConfirm = false">Отмена</button>
-        <button type="submit" class="pill redw" :disabled="disableLoading">Выключить</button>
-      </div>
-    </form>
-  </BottomSheet>
+  <PanelModal
+    v-model:open="disableOpen"
+    class="stg"
+    title="Выключить 2FA?"
+    closable
+    ok="Выключить"
+    ok-class="redw"
+    :ok-disabled="busy"
+    @ok="disableTotp">
+    <label class="fl2">
+      <span>Пароль</span>
+      <input v-model="pwd" class="in" type="password" autocomplete="current-password" @keydown.enter="disableTotp">
+    </label>
+    <label class="fl2">
+      <span>Код 2FA (6 цифр)</span>
+      <input
+        v-model="code"
+        class="in mono"
+        placeholder="123 456"
+        inputmode="numeric"
+        autocomplete="one-time-code"
+        @keydown.enter="disableTotp">
+    </label>
+  </PanelModal>
 </template>

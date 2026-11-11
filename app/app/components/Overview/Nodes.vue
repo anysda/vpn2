@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { NodeMetric } from '~/composables/useMonitoring'
-import { anim } from '~/utils/clients-view'
 import { useWake } from '~/utils/overview'
 import { exitName, nodeHealth, nodeSubtitle } from '~/utils/overview-nodes'
 

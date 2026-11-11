@@ -1,5 +1,4 @@
 import { inject, type InjectionKey } from 'vue'
-import { anim } from './clients-view'
 
 // Графики и движение обзора, перенесены из макета без изменений.
 

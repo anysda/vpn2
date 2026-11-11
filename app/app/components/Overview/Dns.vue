@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { anim } from '~/utils/clients-view'
 import { ru, useWake } from '~/utils/overview'
 
 // DNS сегодня: кольцо из 11 сегментов, акцентный первый — как в макете.

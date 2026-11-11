@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { ClientDetail } from '~/composables/useClients'
 import { useClients } from '~/composables/useClients'
-import { errTitle } from '~/utils/clients-view'
 import type { AccessOperation } from '#shared/access-operation'
 import type { Confirm } from './Ask.vue'
 
@@ -63,7 +62,7 @@ async function toggleFreeze() {
     await props.reload()
   }
   catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка'), color: 'error' })
+    toast.add({ title: errText(e, 'Ошибка'), color: 'error' })
   }
   finally {
     freezing.value = false

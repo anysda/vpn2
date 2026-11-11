@@ -20,16 +20,3 @@ export function expiringInDays(expiresAt: string | null, status: string, now = D
 export function inDaysRu(n: number): string {
   return `через ${n} ${plural(n, 'day')}`
 }
-
-const EASE = 'cubic-bezier(.23,1,.32,1)'
-
-/** Анимация из макета: WAAPI, «уменьшить движение» её выключает. */
-export function anim(el: Element | null | undefined, keyframes: Keyframe[], o: KeyframeAnimationOptions) {
-  if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return null
-  return el.animate(keyframes, { easing: EASE, fill: 'backwards', ...o })
-}
-
-/** Текст ошибки сервера или запасной заголовок тоста. */
-export function errTitle(e: unknown, fallback: string): string {
-  return (e as { statusMessage?: string }).statusMessage ?? fallback
-}

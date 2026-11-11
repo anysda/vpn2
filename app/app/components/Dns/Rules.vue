@@ -36,7 +36,7 @@ async function check() {
     if (Date.now() < settleUntil) setTimeout(() => my === seq && void check(), 250)
     if (changed) {
       await nextTick()
-      anim(fres.value?.firstElementChild, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 220 })
+      rise(fres.value?.firstElementChild, { duration: 220 }, 4)
     }
   }
   catch (e) {

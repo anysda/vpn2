@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 import { activityScale } from '~/utils/activity-scale'
-import { anim } from '~/utils/clients-view'
 import { ru, useWake } from '~/utils/overview'
 import { gbDecRound1, mskDayNumLabel, WD_MON } from '~/utils/format'
 

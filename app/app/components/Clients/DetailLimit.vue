@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { ClientDetail } from '~/composables/useClients'
 import { useClients } from '~/composables/useClients'
-import { errTitle } from '~/utils/clients-view'
 
 const props = defineProps<{ detail: ClientDetail }>()
 const emit = defineEmits<{ saved: [id: number, limit: number | null] }>()
@@ -35,7 +34,7 @@ async function saveLimit(next: number | null, withToast: boolean) {
     if (withToast || res.warning) toast.add(doneToast('Лимит девайсов сохранён', res.warning))
   }
   catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка сохранения лимита'), color: 'error' })
+    toast.add({ title: errText(e, 'Ошибка сохранения лимита'), color: 'error' })
     limDraft.value = d.deviceLimit === null ? '' : String(d.deviceLimit)
   }
 }

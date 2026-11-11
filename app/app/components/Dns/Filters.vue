@@ -124,15 +124,15 @@ function confirmDel() {
       </div>
     </div>
 
-    <DnsModal v-model:open="add.open" title="Добавить список" close-btn ok="Добавить" :ok-disabled="!addReady" @ok="save">
+    <PanelModal v-model:open="add.open" class="dns" title="Добавить список" closable ok="Добавить" :ok-disabled="!addReady" @ok="save">
       <label class="fl2"><span>Название</span><input v-model="add.name" class="in" placeholder="напр. HaGeZi Light" @keydown.enter="save"></label>
       <label class="fl2"><span>Адрес списка</span><input v-model="add.url" class="in mono" placeholder="https://…" @keydown.enter="save"></label>
-    </DnsModal>
+    </PanelModal>
 
-    <DnsModal v-model:open="del.open" title="Удалить список?" ok="Удалить" ok-class="redw" @ok="confirmDel">
+    <PanelModal v-model:open="del.open" class="dns" title="Удалить список?" ok="Удалить" ok-class="redw" @ok="confirmDel">
       <p class="mt">
         Удалить список «{{ del.l?.name }}»? Его правила перестанут применяться.
       </p>
-    </DnsModal>
+    </PanelModal>
   </div>
 </template>

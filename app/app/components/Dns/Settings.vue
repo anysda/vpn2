@@ -193,15 +193,16 @@ function confirmAsk() {
       </div>
     </div>
 
-    <DnsModal v-model:open="edit.open" :title="edit.name" close-btn ok="Сохранить" :ok-disabled="busy.has(edit.k)" @ok="saveEdit">
+    <PanelModal v-model:open="edit.open" class="dns" :title="edit.name" closable ok="Сохранить" :ok-disabled="busy.has(edit.k)" @ok="saveEdit">
       <label class="fl2">
         <span>{{ edit.name }}</span>
         <input v-model="edit.val" class="in" :class="{ mono: edit.mono }" spellcheck="false" @keydown.enter="saveEdit">
       </label>
-    </DnsModal>
+    </PanelModal>
 
-    <DnsModal
-      v-model:open="ask.open"
+    <PanelModal
+v-model:open="ask.open"
+      class="dns"
       :title="ASK[ask.what].title"
       :ok="ASK[ask.what].btn"
       :ok-class="ask.what === 'cache' ? 'w' : 'redw'"
@@ -209,6 +210,6 @@ function confirmAsk() {
       <p class="mt">
         {{ ASK[ask.what].text }}
       </p>
-    </DnsModal>
+    </PanelModal>
   </div>
 </template>

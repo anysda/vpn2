@@ -4,7 +4,6 @@ import type { ConfigKind } from '~/composables/useDeviceAccess'
 import { useDeviceAccess } from '~/composables/useDeviceAccess'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
 import { copyText } from '~/utils/clipboard'
-import { anim } from '~/utils/clients-view'
 
 const props = defineProps<{ clientId: number, device: Device, kind: ConfigKind }>()
 const open = defineModel<boolean>('open', { default: false })
@@ -149,7 +148,7 @@ const ikeRows = computed(() => {
 </script>
 
 <template>
-  <ClientsModal v-model:open="open" :title="title" :wide="kind === 'ike' || (kind === 'wg' && qrWide)" closable>
+  <PanelModal v-model:open="open" class="clm" :title="title" :wide="kind === 'ike' || (kind === 'wg' && qrWide)" closable>
     <template v-if="kind === 'wg'">
       <p class="mt">
         Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
@@ -225,5 +224,5 @@ const ikeRows = computed(() => {
         </button>
       </span>
     </div>
-  </ClientsModal>
+  </PanelModal>
 </template>

@@ -73,8 +73,7 @@ async function submit() {
     }
   }
   catch (e) {
-    const err = e as { statusMessage?: string }
-    toast.add({ title: err.statusMessage ?? 'Ошибка', color: 'error' })
+    toast.add({ title: errText(e), color: 'error' })
   }
   finally {
     busy.value = false
@@ -83,16 +82,34 @@ async function submit() {
 </script>
 
 <template>
-  <ClientsModal v-model:open="open" title="Новый клиент" closable>
-    <label class="fl2"><span>Имя</span><input v-model="name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
-    <label class="fl2"><span>Срок действия</span><input
-      :value="expires" class="in" placeholder="ДД.ММ.ГГГГ" inputmode="numeric" maxlength="10" @input="onExpiresInput" @keydown.enter="submit"><small class="sub2" style="margin:0">пусто = бессрочно</small></label>
+  <PanelModal v-model:open="open" class="clm" title="Новый клиент" closable ok="Создать" :ok-disabled="busy" @ok="submit">
+    <label class="fl2">
+      <span>Имя</span>
+      <input v-model="name" class="in" placeholder="Иван Иванов" @keydown.enter="submit">
+    </label>
+    <label class="fl2">
+      <span>Срок действия</span>
+      <input
+        :value="expires"
+        class="in"
+        placeholder="ДД.ММ.ГГГГ"
+        inputmode="numeric"
+        maxlength="10"
+        @input="onExpiresInput"
+        @keydown.enter="submit">
+      <small class="sub2" style="margin:0">пусто = бессрочно</small>
+    </label>
     <div class="fl2">
       <span>Лимит девайсов</span>
       <div class="arow" style="margin:0">
         <input v-model="limit" class="in" type="number" min="1" style="width:120px" aria-label="Лимит девайсов" :disabled="unlimited">
         <button
-          type="button" class="pill" :class="{ on: unlimited }" title="Безлимитно" aria-label="Безлимитно" :aria-pressed="unlimited"
+          type="button"
+          class="pill"
+          :class="{ on: unlimited }"
+          title="Безлимитно"
+          aria-label="Безлимитно"
+          :aria-pressed="unlimited"
           @click="unlimited = !unlimited">
           ∞
         </button>
@@ -100,29 +117,13 @@ async function submit() {
     </div>
     <div class="crw" style="margin-top:18px">
       <span>Фильтровать трафик (AdGuard)</span>
-      <button
-        type="button" class="tog" :class="{ on: filterTraffic }" role="switch" :aria-checked="filterTraffic" aria-label="Фильтровать трафик (AdGuard)"
-        @click="filterTraffic = !filterTraffic">
-        <i />
-      </button>
+      <ToggleSwitch :on="filterTraffic" label="Фильтровать трафик (AdGuard)" @click="filterTraffic = !filterTraffic" />
     </div>
     <div class="crw">
       <span>Отправить доступ к боту</span>
       <span :title="canSendTg ? undefined : tgReason">
-        <button
-          type="button" class="tog" :class="{ on: sendBot && canSendTg }" role="switch" :aria-checked="sendBot && canSendTg"
-          aria-label="Отправить доступ к боту" :disabled="!canSendTg" @click="sendBot = !sendBot">
-          <i />
-        </button>
+        <ToggleSwitch :on="sendBot && canSendTg" label="Отправить доступ к боту" :disabled="!canSendTg" @click="sendBot = !sendBot" />
       </span>
     </div>
-    <div class="mf">
-      <button type="button" class="pill" @click="open = false">
-        Отмена
-      </button>
-      <button type="button" class="pill w" :disabled="busy" @click="submit">
-        Создать
-      </button>
-    </div>
-  </ClientsModal>
+  </PanelModal>
 </template>

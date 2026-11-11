@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ClientDetail, ClientTraffic, Device } from '~/composables/useClients'
 import { useClientDetail, useClients } from '~/composables/useClients'
-import { anim, errTitle, expiringInDays, initials } from '~/utils/clients-view'
+import { expiringInDays, initials } from '~/utils/clients-view'
 import { dateRuLocal, formatRuDateUtc, parseRuDateUtc, sizeBinRu } from '~/utils/format'
 import { maskRuDate } from '~/utils/ru-date-mask'
 import type { ConfigKind } from '~/composables/useDeviceAccess'
@@ -56,7 +56,7 @@ async function load(animate = false) {
     if (version !== loadVersion) return
     // Пропавший клиент — не ошибка: страница молча выберет следующего.
     if (isGone(e)) return emit('gone', props.clientId)
-    toast.add({ title: errTitle(e, 'Не удалось загрузить клиента'), color: 'error' })
+    toast.add({ title: errText(e, 'Не удалось загрузить клиента'), color: 'error' })
   }
 }
 
@@ -98,7 +98,7 @@ async function saveName() {
     emit('changed')
   }
   catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка сохранения'), color: 'error' })
+    toast.add({ title: errText(e, 'Ошибка сохранения'), color: 'error' })
   }
 }
 
@@ -133,7 +133,7 @@ async function saveExpiry() {
     await changed()
   }
   catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка сохранения'), color: 'error' })
+    toast.add({ title: errText(e, 'Ошибка сохранения'), color: 'error' })
   }
 }
 
@@ -169,7 +169,7 @@ async function saveExit(e: Event) {
     emit('changed')
   }
   catch (err) {
-    toast.add({ title: errTitle(err, 'Ошибка'), color: 'error' })
+    toast.add({ title: errText(err, 'Ошибка'), color: 'error' })
     el.value = d.preferredExit ?? ''
   }
 }

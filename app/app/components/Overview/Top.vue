@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { anim } from '~/utils/clients-view'
 import { sizeBinRu } from '~/utils/format'
 import { useWake } from '~/utils/overview'
 
@@ -29,7 +28,7 @@ watch(rows, (r) => {
   shown = true
   if (!wake.on) return
   nextTick(() => list.value?.querySelectorAll(':scope>button').forEach((b, i) =>
-    anim(b, [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }], { duration: 380, delay: wake.at(900 + Math.min(i, 6) * 60) })))
+    rise(b, { duration: 380, delay: wake.at(900 + Math.min(i, 6) * 60) }, 4)))
 }, { immediate: true })
 </script>
 

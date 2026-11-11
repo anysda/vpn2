@@ -75,15 +75,15 @@ function confirmDel() {
       </div>
     </div>
 
-    <DnsModal v-model:open="add.open" title="Добавить перезапись" close-btn ok="Добавить" :ok-disabled="!addReady" @ok="save">
+    <PanelModal v-model:open="add.open" class="dns" title="Добавить перезапись" closable ok="Добавить" :ok-disabled="!addReady" @ok="save">
       <label class="fl2"><span>Домен</span><input v-model="add.domain" class="in mono" placeholder="напр. nas.home" spellcheck="false" @keydown.enter="save"></label>
       <label class="fl2"><span>Ответ</span><input v-model="add.answer" class="in mono" placeholder="IP или домен" spellcheck="false" @keydown.enter="save"></label>
-    </DnsModal>
+    </PanelModal>
 
-    <DnsModal v-model:open="del.open" title="Удалить перезапись?" ok="Удалить" ok-class="redw" @ok="confirmDel">
+    <PanelModal v-model:open="del.open" class="dns" title="Удалить перезапись?" ok="Удалить" ok-class="redw" @ok="confirmDel">
       <p class="mt">
         Удалить перезапись «{{ del.r?.domain }}»? Запрос снова пойдёт на серверы выше.
       </p>
-    </DnsModal>
+    </PanelModal>
   </div>
 </template>

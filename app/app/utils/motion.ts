@@ -1,11 +1,19 @@
-// Движение вкладки DNS по макету: появление, лесенка карточек, смена
-// подраздела через View Transitions, кривые графиков. Сама анимация — общая
-// anim из clients-view: то же движение, что на экране клиентов.
-import { anim } from './clients-view'
-
+// Движение панели по макету: появление, лесенка карточек, смена подраздела
+// через View Transitions, кривые графиков.
 export const EO = 'cubic-bezier(.23,1,.32,1)'
 
 export const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/** Анимация из макета: WAAPI, «уменьшить движение» её выключает. */
+export function anim(el: Element | null | undefined, keyframes: Keyframe[], o: KeyframeAnimationOptions) {
+  if (!el || reducedMotion()) return null
+  return el.animate(keyframes, { easing: EO, fill: 'backwards', ...o })
+}
+
+/** Появление снизу: элемент поднимается на `dy` пикселей и проявляется. */
+export function rise(el: Element | null | undefined, o: KeyframeAnimationOptions, dy = 6) {
+  return anim(el, [{ opacity: 0, transform: `translateY(${dy}px)` }, { opacity: 1, transform: 'none' }], o)
+}
 
 let reveal: IntersectionObserver | null | undefined
 
@@ -18,7 +26,7 @@ function revealer() {
           if (!e.isIntersecting) return
           reveal?.unobserve(e.target)
           e.target.classList.remove('rv')
-          anim(e.target, [{ opacity: 0, transform: 'translateY(18px)' }, { opacity: 1, transform: 'none' }], { duration: 560, delay: k++ * 60 })
+          rise(e.target, { duration: 560, delay: k++ * 60 }, 18)
         })
       }, { rootMargin: '0px 0px -6% 0px' })
     : null
@@ -33,7 +41,7 @@ export function cascade(box: HTMLElement | null | undefined) {
   let k = 0
   cards.forEach((c) => {
     if (c.getBoundingClientRect().top < innerHeight) {
-      anim(c, [{ opacity: 0, transform: 'translateY(22px)' }, { opacity: 1, transform: 'none' }], { duration: 520, delay: 60 + Math.min(k++, 8) * 55 })
+      rise(c, { duration: 520, delay: 60 + Math.min(k++, 8) * 55 }, 22)
     }
     else {
       const io = revealer()

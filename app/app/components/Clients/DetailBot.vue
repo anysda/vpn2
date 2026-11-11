@@ -2,7 +2,6 @@
 import type { ClientDetail } from '~/composables/useClients'
 import { useClients } from '~/composables/useClients'
 import { useTelegramStatus } from '~/composables/useTelegramStatus'
-import { errTitle } from '~/utils/clients-view'
 import type { Confirm } from './Ask.vue'
 
 const props = defineProps<{ detail: ClientDetail, confirm: Confirm }>()
@@ -20,7 +19,7 @@ async function sendPassword() {
     toast.add({ title: 'Приглашение отправлено в Telegram', color: 'success' })
   }
   catch (e) {
-    toast.add({ title: errTitle(e, 'Ошибка отправки'), color: 'error' })
+    toast.add({ title: errText(e, 'Ошибка отправки'), color: 'error' })
   }
   finally {
     sendingPwd.value = false

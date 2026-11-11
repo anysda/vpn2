@@ -8,7 +8,7 @@ import type { AccessOperation } from '#shared/access-operation'
 import type { ClientDot } from '~/components/Panel/ClientRow.vue'
 import type { Filter } from '~/components/Clients/FilterTabs.vue'
 import { useExitTags } from '~/composables/useRoutes'
-import { anim, expiringInDays, inDaysRu, initials } from '~/utils/clients-view'
+import { expiringInDays, inDaysRu, initials } from '~/utils/clients-view'
 import { expiryLabelLocal, sizeBinRu } from '~/utils/format'
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
@@ -247,7 +247,7 @@ async function onRemoved(id: number) {
 const rowsEl = ref<HTMLElement>()
 watch([filter, search], () => nextTick(() => {
   ;[...(rowsEl.value?.querySelectorAll('.crow') ?? [])].slice(0, 12).forEach((r, i) =>
-    anim(r, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 320, delay: i * 28 }))
+    rise(r, { duration: 320, delay: i * 28 }))
 }))
 
 

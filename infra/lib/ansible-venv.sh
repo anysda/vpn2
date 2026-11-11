@@ -349,6 +349,9 @@ bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh;
     export VPN2_WHEEL="$wheel" VPN2_WHEEL_SHA256="$wheel_sha" VPN2_INFRA="$DEPLOY_ROOT"
     VPN2_SOURCE_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
     export VPN2_SOURCE_ROOT
+    # После restore стадии читают пароль панели из восстановленного файла,
+    # а не засевают его заново из config.yaml.
+    [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || unset ADMIN_PASSWORD
     ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
       "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/plays/$stage.yml" \
       --limit "$host" --tags "$stage" 2>&1 | sed -u "s/^/[$host]/"

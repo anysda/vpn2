@@ -5,6 +5,7 @@ import subprocess
 import types
 
 import pytest
+import yaml
 
 from vpn2 import apt, swap
 from vpn2.cli import host
@@ -46,6 +47,19 @@ def test_role_gives_the_entry_install_size_this_file_counts_with():
     assert f'base_swap_install_bytes: "{{{{ {ENTRY_INSTALL} if base_entry else 0 }}}}"' in defaults
     tasks = (Path(__file__).parents[2] / 'ansible/roles/base/tasks/main.yml').read_text()
     assert "'--install-bytes', base_swap_install_bytes | string]" in tasks
+
+
+def test_role_work_directory_is_not_reported_as_node_state():
+    # The deploy removes it on an exit after every stage: making it again is not a change.
+    tasks = yaml.safe_load((Path(__file__).parents[2] / 'ansible/roles/base/tasks/main.yml').read_text())
+    work = [task for task in tasks if '{{ base_tmp }}' in str(task.get('ansible.builtin.file', {}))
+            or '{{ base_tmp }}' in str(task.get('loop', ''))]
+    assert [task['name'] for task in work] == ['Рабочий каталог стадий']
+    assert work[0]['changed_when'] is False
+    assert work[0]['ansible.builtin.file'] == {'path': '{{ base_tmp }}', 'state': 'directory',
+                                               'owner': 'root', 'group': 'root', 'mode': '0755'}
+    assert tasks.index(work[0]) < next(index for index, task in enumerate(tasks)
+                                       if '{{ base_tmp }}' in str(task.get('ansible.builtin.copy', {})))
 
 
 @pytest.mark.parametrize('layout, size_mib, text', [

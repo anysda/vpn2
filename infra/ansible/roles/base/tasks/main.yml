@@ -4,7 +4,18 @@
     path: "{{ item }}"
     state: directory
     mode: '0755'
-  loop: [/var/anysda/.stamps, /etc/anysda, /var/lib/anysda, "{{ base_tmp }}", /etc/systemd/networkd.conf.d]
+  loop: [/var/anysda/.stamps, /etc/anysda, /var/lib/anysda, /etc/systemd/networkd.conf.d]
+
+# Рабочий каталог стадий - не состояние узла: на экзите деплой стирает его
+# после каждой стадии, и он живёт в /tmp до перезагрузки.
+- name: Рабочий каталог стадий
+  ansible.builtin.file:
+    path: "{{ base_tmp }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  changed_when: false
 
 - name: Библиотеки шагов и колесо vpn2
   ansible.builtin.copy:

@@ -393,6 +393,42 @@ def test_empty_passphrase_is_one_russian_event(tmp_path, monkeypatch):
     assert sent[0]['stdin'] == f'Authorization: Bearer {SECRET}\n'
 
 
+def _no_space(args, **kwargs):
+    if args[0] == 'tar':
+        return subprocess.CompletedProcess(args, 2, b'', b'tar: write error: No space left on device\n')
+    return subprocess.run(args, **kwargs)
+
+
+@pytest.mark.parametrize(('extra', 'stub_env', 'run', 'code'), [
+    ({}, {}, _no_space, 2),
+    ({}, {'STUB_AGE_FAIL': '7'}, subprocess.run, 7),
+    (S3, {'STUB_AWS_FAIL': 'cp'}, subprocess.run, 9),
+], ids=['no-space', 'encrypt-fails', 'upload-target-down'])
+def test_failure_at_any_step_is_one_backup_failed_event(tmp_path, monkeypatch, extra, stub_env, run, code):
+    """На каком бы шаге ни оборвался бэкап, панель получает ровно одно backup_failed - его она шлёт в Telegram."""
+    root, paths = node(tmp_path, monkeypatch)
+    put(root / 's3list', '')
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3list'))
+    for key, value in stub_env.items():
+        monkeypatch.setenv(key, value)
+    vals = values(root, **extra)
+    write_env(root, vals)
+    rc = create(env.settings(vals, paths.env_file), paths=paths, run=run, out=StringIO(), err=StringIO(), now=NOW,
+                check=lambda _b, _o, _e: 0, sleep=lambda _s: None)
+    assert rc == code
+    posted = [e for e in events(root) if e['argv'][-1] == backup_run.notify.PANEL_URL]
+    assert len(posted) == 1
+    assert json.loads(posted[0]['argv'][posted[0]['argv'].index('-d') + 1]) == {
+        'type': 'backup_failed', 'detail': f'код выхода {code}'}
+    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
+
+
+def test_success_posts_no_event(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    assert go(root, paths)[0] == 0
+    assert not [e for e in events(root) if e['argv'][-1] == backup_run.notify.PANEL_URL]
+
+
 def test_rotate_local_keeps_newest(tmp_path):
     for index in range(4):
         archive = put(tmp_path / f'anysda-vpn2-{index}.tar.gz.age', 'x')

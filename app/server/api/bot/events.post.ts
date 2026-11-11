@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import { requireBotAuth } from '../../utils/bot-api'
+import { notifyBackupFailed } from '../../utils/bot-events'
 import { recordEvent } from '../../utils/events'
 import { readBodyAs } from '../../utils/validate'
 
 // Тревоги, о которых панель узнаёт только снаружи: от бота (Telegram отверг
 // сообщение) и от скрипта бэкапа на этой же ноде (бэкап не удался или архив
-// сохранён с предупреждением). Только перечисленные типы.
+// сохранён с предупреждением). Только перечисленные типы. Отказ бэкапа кроме
+// ленты уходит админу в Telegram: в панель он может не заглядывать.
 const Body = z.discriminatedUnion('type', [
   z.object({ type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']) }),
   z.object({ type: z.literal('backup_failed'), detail: z.string().trim().max(200).default('') }),
@@ -26,6 +28,7 @@ export default defineEventHandler(async (event) => {
   }
   else {
     await recordEvent({ type: 'backup_failed', level: 'alarm', object: 'backup', title: 'Бэкап не удался', detail: body.detail })
+    await notifyBackupFailed(body.detail)
   }
   return { ok: true }
 })

@@ -52,13 +52,19 @@ function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'sta
  * Запись завершена до первого POST. Один UUID на все попытки, в том числе после рестарта.
  * Без настроенного бота доставлять некому: в очередь не ставим, ответ null.
  */
-export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`): Promise<BotDelivery | null> {
+export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`, single = false): Promise<BotDelivery | null> {
   if (!botConfigured()) return null
   const now = Date.now()
   const body = JSON.stringify({ ...payload, type })
   if (Buffer.byteLength(body) > 128 * 1024) throw createError({ statusCode: 413, message: 'Уведомление слишком большое. Повторов не будет.' })
   const row = { id: randomUUID(), label, payload: body, status: 'queued' as const, attempts: 0, due: now, expires: now + TTL, created: now }
-  await useDb().transaction(async (tx) => {
+  const pending = await useDb().transaction(async (tx) => {
+    // single: пока прежнее сообщение с той же подписью ждёт доставки, второе
+    // не ставится - после простоя бота приходит одно, а не пачка.
+    if (single) {
+      const [waiting] = await tx.select().from(botOutbox).where(and(eq(botOutbox.label, label), eq(botOutbox.status, 'queued'))).limit(1)
+      if (waiting) return waiting
+    }
     await tx.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
     // Лимит включает историю. При нехватке места освобождаем только
     // подтверждённую запись; ожидающие и ошибки молча не вытесняем.
@@ -70,6 +76,7 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
     }
     await tx.insert(botOutbox).values(row)
   })
+  if (pending) return delivery(pending)
   await attempt(row.id)
   const [saved] = await useDb().select().from(botOutbox).where(eq(botOutbox.id, row.id))
   // Конкурентная вставка вправе вытеснить только уже подтверждённую запись.
@@ -148,6 +155,14 @@ export async function botDeliveries(): Promise<BotDelivery[]> {
 
 export function notifyClient(chatId: number, text: string, name: string): Promise<BotDelivery | null> {
   return notifyBot('client_notify', { chatId, text }, `Уведомление клиенту «${name}»`)
+}
+
+/**
+ * Отказ бэкапа - админу в Telegram. Строка ленты уже записана, поэтому сбой
+ * очереди запрос скрипта бэкапа не роняет.
+ */
+export async function notifyBackupFailed(detail: string): Promise<void> {
+  await notifyWarning(notifyBot('system_alert', { subject: 'Бэкап не удался', detail }, 'Сообщение об отказе бэкапа', true))
 }
 
 /**

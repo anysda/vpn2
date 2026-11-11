@@ -200,6 +200,8 @@ class BackupRestore(unittest.TestCase):
         result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force')
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
         # Шаг роли ikev2 после restore; службы и swanctl - заглушки.
+        # Установка сразу с доменом своего CA не имеет: с ним сервер отдавал бы обе цепочки.
+        Path('/etc/swanctl/x509ca/anysda-ca.crt').unlink(missing_ok=True)
         Path('/etc/strongswan.d').mkdir(exist_ok=True)
         put('/test-bin/swanctl', '#!/bin/sh\necho anysda-ikev2\n', 0o755)
         self.assertFalse(Path('/var/lib/caddy/.local/share/caddy/certificates').exists())

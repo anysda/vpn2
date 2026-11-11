@@ -5,8 +5,26 @@ from nodevars_support import ROOT
 from vpn2 import nodevars
 
 ANSIBLE = ROOT / 'infra/ansible'
-# Столько обращений к окружению осталось в ролях. Число только уменьшают: убрал lookup - снизь его.
-LOOKUPS_LEFT = 115
+# Столько обращений к окружению осталось в каждой роли. Число только уменьшают: убрал lookup - снизь
+# его, дошёл до нуля - убери строку. Роли стоят группами шага 2: правки групп не задевают друг друга.
+LOOKUPS_LEFT = {
+    'exit': 28,
+    'failover': 5,
+    'control': 1,
+    'verify': 4,
+
+    'backup': 16,
+    'base': 12,
+    'emergency': 10,
+
+    'ikev2': 10,
+    'openvpn': 6,
+    'router': 6,
+    'wireguard': 5,
+    'zapret': 5,
+    'containers': 4,
+    'adguard': 3,
+}
 CALL = re.compile(r"(?:lookup|query)\(\s*'(?:ansible\.builtin\.)?env'\s*,\s*([^)]*)\)")
 NAME = r'[A-Z][A-Z0-9_]*'
 LIST_KEY = re.compile(r'^([a-z0-9_]+_env_(?:names|common|exit_prefix|exit_suffix)):\s*(.*)$')
@@ -39,12 +57,22 @@ def listed():
     return out
 
 
+def owner(path):
+    """Роль, которой принадлежит файл; плеи и общие файлы считаются под своим путём."""
+    parts = path.relative_to(ANSIBLE).parts
+    return parts[1] if parts[0] == 'roles' else '/'.join(parts)
+
+
 def test_lookup_count_does_not_grow():
-    found = len(calls())
-    assert found <= LOOKUPS_LEFT, (
-        f'обращений к окружению в infra/ansible стало {found}, было {LOOKUPS_LEFT}: '
-        "новое значение бери из hostvars (vpn2_env.ИМЯ | default('')), а не через lookup('env')")
-    assert found == LOOKUPS_LEFT, f'обращений стало меньше ({found}): снизь LOOKUPS_LEFT в этом тесте'
+    found = {}
+    for path, _ in calls():
+        found[owner(path)] = found.get(owner(path), 0) + 1
+    grown = {name: (LOOKUPS_LEFT.get(name, 0), count) for name, count in found.items()
+             if count > LOOKUPS_LEFT.get(name, 0)}
+    assert grown == {}, (
+        f'обращений к окружению стало больше (было, стало): {grown}. '
+        "Новое значение бери из hostvars (vpn2_env.ИМЯ | default('')), а не через lookup('env')")
+    assert found == LOOKUPS_LEFT, 'обращений стало меньше: снизь числа LOOKUPS_LEFT в этом тесте'
 
 
 def test_counter_sees_every_spelling():

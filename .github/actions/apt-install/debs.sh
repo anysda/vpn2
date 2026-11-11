@@ -75,7 +75,7 @@ fetch() {
   for mirror in "${all[@]}"; do
     n=$((n + 1))
     say "попытка $n из $total, ${mirror:-зеркала раннера}: индекс и .deb для $# пакетов"
-    mapfile -t src < <(sources "$mirror")
+    mapfile -t src < <(sources "$mirror"); sudo mkdir -p "$work/archives/partial"
     # shellcheck disable=SC2024  # журнал - свой файл, sudo для него не нужен
     if sudo timeout 30 apt-get -q --error-on=any "${net[@]}" "${src[@]}" update >"$log" 2>&1 \
       && sudo timeout 60 apt-get -q "${net[@]}" "${src[@]}" install -y --download-only --no-install-recommends \

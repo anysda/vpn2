@@ -44,6 +44,12 @@ def module(name):
 
 
 class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        # deploy_state.main() sets umask 077 for the process, as the command does: the next test gets the old one.
+        before = os.umask(0)
+        os.umask(before)
+        self.addCleanup(os.umask, before)
+
     def test_each_exit_bootstrap_waits_for_previous_exit_update(self):
         source = (ROOT / 'infra/deploy.sh').read_text()
         functions = ''

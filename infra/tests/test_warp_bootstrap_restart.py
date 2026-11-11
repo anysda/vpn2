@@ -43,6 +43,7 @@ class TestWarpBootstrapRestart(unittest.TestCase):
                 patch.object(self.wd.subprocess, 'run', side_effect=lambda *_args, **_kwargs: restarts.append(clock[0])), \
                 patch.object(self.wd, 'log'):
             self.wd.run(CONFIG, self.state, bootstrap=True)
+        self.waited = clock[0] - start
         return restarts
 
     def test_first_failed_probe_restarts_at_once(self):
@@ -52,10 +53,12 @@ class TestWarpBootstrapRestart(unittest.TestCase):
     def test_live_warp_is_not_restarted(self):
         self.assertEqual(self.bootstrap([True]), [])
 
-    def test_failed_restart_keeps_backoff_for_second(self):
+    def test_dead_warp_costs_one_limit_and_one_restart(self):
+        # Второй перезапуск ждал бы общий backoff в 300 с: это дело таймера, не прогона.
         restarts = self.bootstrap(iter(lambda: False, True))
-        self.assertEqual(len(restarts), 2)
-        self.assertEqual(restarts[1] - restarts[0], self.wd.BACKOFF[0])
+        self.assertEqual(restarts, [1000])
+        self.assertLessEqual(self.waited, self.wd.BOOTSTRAP_SECONDS)
+        self.assertLess(self.wd.BOOTSTRAP_SECONDS, self.wd.BACKOFF[0])
 
     def test_timer_backoff_is_honoured(self):
         # The timer restarted 100 s ago: its backoff holds, WARP revives by itself.

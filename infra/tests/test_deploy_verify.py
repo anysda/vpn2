@@ -165,5 +165,19 @@ class DeployVerifyTests(unittest.TestCase):
                     self.assertEqual(result.returncode, code, result.stdout)
                     self.assertIn('exit: exits[].hy2_insecure: true', result.stdout)
 
+    def test_dead_warp_reaches_summary_without_changing_code(self):
+        line = '[exit] ⚠ WARP: Cloudflare не отвечает, сторож повторяет попытки — экзит работает без канала warp'
+        healthy = subprocess.CompletedProcess([], 0, '[ru] ✓ sing-box active\n')
+        result = orchestrate(healthy, subprocess.CompletedProcess([], 0, '[exit] ✓ sing-box active\n' + line + '\n'))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        summary = result.stdout[result.stdout.index('деплой завершён'):]
+        self.assertIn('⚠ деплой завершён с предупреждениями', result.stdout)
+        self.assertIn(line, summary)
+        # Всё измерено: бот не получает «не все проверки измерены».
+        self.assertIn('"verify_unmeasured":false', result.event.replace('\\', ''))
+        clean = orchestrate(healthy, subprocess.CompletedProcess([], 0, '[exit] ✓ sing-box active\n'))
+        self.assertNotIn('с предупреждениями', clean.stdout)
+
+
 if __name__ == '__main__':
     unittest.main()

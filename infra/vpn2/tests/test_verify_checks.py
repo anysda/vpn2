@@ -66,6 +66,8 @@ def node(tmp_path, monkeypatch):
     (tmp_path / 'tls.json').write_text('{}')
     monkeypatch.setattr(stage, 'STAMPS', stamps)
     monkeypatch.setattr(stage, 'TLS_CONFIG', tmp_path / 'tls.json')
+    monkeypatch.setattr(stage, 'SINGBOX_CONFIG', tmp_path / 'sing-box.json')
+    monkeypatch.setattr(stage, 'WARP_STATE', tmp_path / 'warp.json')
     monkeypatch.setattr(host, 'command', lambda *_argv: (0, ''))
     monkeypatch.setattr(host, 'recv_queue', lambda: '0')
     monkeypatch.setattr(emergency, 'ip_certificate', lambda _config, _cert: True)
@@ -90,6 +92,31 @@ def test_entry_without_youtube_skips_only_its_checks(node):
 def test_exit_checks_in_order(node):
     assert stage.run({'HOST_TAG': 'nl', 'MGMT_IP': '10.0.0.2', 'HY2_MGMT_PORT': '8444'}) == 0
     assert node == BASIC + EXIT
+
+
+def warp_config(address):
+    return json.dumps({'endpoints': [{'tag': 'warp', 'type': 'wireguard', 'peers': [{'address': address}]}]})
+
+
+@pytest.mark.parametrize('address, state, reason', [
+    ('162.159.192.1', {'healthy_since': 5}, None),
+    ('162.159.192.1', {'bad_since': 5, 'restarts': [5]}, 'Cloudflare не отвечает, сторож повторяет попытки'),
+    ('127.0.0.1', {}, 'профиля Cloudflare нет, регистрация не прошла'),
+])
+def test_exit_warns_about_dead_warp(node, tmp_path, capsys, address, state, reason):
+    (tmp_path / 'sing-box.json').write_text(warp_config(address))
+    (tmp_path / 'warp.json').write_text(json.dumps(state))
+    assert stage.run({'HOST_TAG': 'nl', 'MGMT_IP': '10.0.0.2', 'HY2_MGMT_PORT': '8444'}) == 0
+    assert node == BASIC + EXIT
+    warnings = [line for line in capsys.readouterr().err.splitlines() if '⚠ WARP' in line]
+    expected = [f'[nl] ⚠ WARP: {reason} — экзит работает без канала warp; повтор: ./deploy.sh 10-foreign nl']
+    assert warnings == (expected if reason else [])
+
+
+def test_warp_state_unreadable_is_not_a_warning(tmp_path):
+    (tmp_path / 'c').write_text(warp_config('162.159.192.1'))
+    assert stage.warp_trouble(tmp_path / 'c', tmp_path / 'none') is None
+    assert stage.warp_trouble(tmp_path / 'none', tmp_path / 'none') is None
 
 
 def test_missing_environment_is_failure(capsys):

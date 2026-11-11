@@ -17,8 +17,10 @@ DEAD_AFTER = 180
 BACKOFF = (300, 600, 1200, 1800)
 MAX_PER_HOUR = 3
 HEALTHY_RESET = 300
-BOOTSTRAP_SECONDS = 540
-BOOTSTRAP_RESTARTS = 2
+# Предел ожидания WARP за прогон установки: дольше деплой не ждёт, экзит
+# работает без WARP, дальше его поднимает таймер.
+BOOTSTRAP_SECONDS = 60
+BOOTSTRAP_STEP = 5
 PROBE_URLS = ('https://www.gstatic.com/generate_204', 'https://cp.cloudflare.com/generate_204')
 
 
@@ -121,25 +123,17 @@ def run(config, path, bootstrap=False):
 
 def _run_locked(config, path, bootstrap):
     deadline = time.monotonic() + BOOTSTRAP_SECONDS
-    attempts = 0
     while True:
         # Fresh sing-box does not revive a stalled WARP by itself, and only a
         # restart does: during deployment restart after the first failed probe.
-        # The shared backoff and hourly cap still bound every restart.
+        # The shared backoff and hourly cap still bound every restart; a second
+        # restart is the timer's job, deployment does not wait for its backoff.
         action = tick(config, path, bootstrap, 0 if bootstrap else DEAD_AFTER)
         if not bootstrap or action in ('healthy', 'recovered'):
             return
-        attempts += action == 'restart'
-        if attempts >= BOOTSTRAP_RESTARTS:
-            # Give the last restart a chance before the warning.
-            time.sleep(10)
-            if probe(config):
-                log('WARP recovered after deployment restart', bootstrap)
-                return
-            break
         if time.monotonic() >= deadline:
             break
-        time.sleep(10)
+        time.sleep(BOOTSTRAP_STEP)
     log('WARNING WARP still unavailable; exit continues without WARP; timer will retry', True)
 
 

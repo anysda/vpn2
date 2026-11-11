@@ -14,6 +14,7 @@ import time
 
 from vpn2.verify import emergency, host
 from vpn2.verify.exitssh import exit_ssh
+from vpn2.watchdog import warp
 
 REPORT = '/var/lib/anysda/verify-report.json'
 TRAFFIC = Path(__file__).with_name('traffic.py')
@@ -26,6 +27,8 @@ TLS_CONFIG = Path('/etc/vpn2/tls/config.json')
 TLS_CERT = '/etc/vpn2/tls/ip/fullchain.pem'
 NETWORKD_DROPIN = Path('/etc/systemd/networkd.conf.d/60-anysda-foreign.conf')
 IKEV2_STATUS = Path('/etc/anysda/ikev2-status.json')
+SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
+WARP_STATE = Path('/var/lib/anysda-warp-watchdog/state.json')
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
 YT_FAILOVER = ('/opt/vpn2/venv/bin/vpn2', 'watchdog', 'yt')
 TRAFFIC_LABEL = 'трафик: контрольный клиент'
@@ -262,6 +265,17 @@ def entry(stage):
         stage.check('аварийка: отправка снимка клиентов enabled и active', emergency.sender)
 
 
+def warp_trouble(config=None, state=None):
+    """Почему канал warp экзита не работает; None - работает или не узнать."""
+    try:
+        if not warp.enabled(json.loads(Path(config or SINGBOX_CONFIG).read_text())):
+            return 'профиля Cloudflare нет, регистрация не прошла'
+        dead = 'bad_since' in json.loads(Path(state or WARP_STATE).read_text())
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+    return 'Cloudflare не отвечает, сторож повторяет попытки' if dead else None
+
+
 def exit_node(stage):
     port = stage.env.get('HY2_MGMT_PORT')
     if port:
@@ -271,6 +285,10 @@ def exit_node(stage):
     for name, variable, default in (('direct', 'HY2_DIRECT_PORT', '443'), ('warp', 'HY2_WARP_PORT', '8443')):
         port = stage.get(variable, default)
         stage.check(f'Hysteria2 {name}: udp/{port} слушает', host.udp, port)
+    trouble = warp_trouble()
+    if trouble:
+        stage.warning(f'WARP: {trouble} — экзит работает без канала warp; '
+                      f'повтор: ./deploy.sh 10-foreign {stage.tag}')
     if not stage.image:
         return
     stage.check('аварийка: Hysteria2 в ожидании', emergency.standby, EMERGENCY_HY2,

@@ -145,14 +145,17 @@ class TestWarpWatchdog(unittest.TestCase):
             self.wd.run(self.config, self.state, bootstrap=True)
         self.assertEqual(systemctl.call_count, 1)
 
-    def test_bootstrap_stops_after_two_restarts_with_warning(self):
+    def test_bootstrap_stops_at_run_limit_with_warning(self):
+        clock = iter(range(0, 6000, 5))
         with patch.object(self.wd, 'probe', return_value=False), \
-                patch.object(self.wd.time, 'time', side_effect=range(0, 600, 30)), \
+                patch.object(self.wd.time, 'time', side_effect=range(0, 6000, 5)), \
+                patch.object(self.wd.time, 'monotonic', side_effect=lambda: next(clock)), \
                 patch.object(self.wd.time, 'sleep'), \
                 patch.object(self.wd.subprocess, 'run') as systemctl, \
                 patch.object(self.wd, 'log') as log:
             self.wd.run(self.config, self.state, bootstrap=True)
-        self.assertEqual(systemctl.call_count, 2)
+        self.assertEqual(systemctl.call_count, 1)
+        self.assertLessEqual(next(clock), self.wd.BOOTSTRAP_SECONDS + 10)
         self.assertIn('WARNING WARP still unavailable', log.call_args.args[0])
 
     def test_bootstrap_respects_existing_hourly_budget_and_deadline(self):

@@ -123,7 +123,7 @@
   when: "'vpn2: changed' in exit_restart.stdout"
 
 # Даже при прежнем конфиге WARP проверяется. Проверка и таймер делят один flock
-# и бюджет: не больше двух добавочных попыток за прогон и трёх за скользящий час.
+# и бюджет: один перезапуск и не дольше минуты ожидания за прогон, три перезапуска за скользящий час.
 - name: Проверка WARP
   ansible.builtin.command:
     argv: ["{{ exit_vpn2 }}", watchdog, warp, --bootstrap]
@@ -135,7 +135,7 @@
 - name: Предупреждение о WARP
   ansible.builtin.debug:
     msg: "WARNING: проверка WARP не удалась; экзит продолжает работу"
-  when: exit_warp_enabled and exit_warp_check.rc != 0
+  when: exit_warp_enabled and (exit_warp_check.rc != 0 or 'WARNING' in exit_warp_check.stdout)
 
 - name: Таймер сторожа WARP
   ansible.builtin.systemd_service:

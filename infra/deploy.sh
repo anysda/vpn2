@@ -23,6 +23,8 @@ source "$DEPLOY_ROOT/lib/ssh.sh"
 # «стадия<TAB>группа<TAB>время», колонки выравнивает print_summary
 _STAGE_LOG=()
 _VERIFY_WARNINGS=()
+# Установка прошла и всё измерено, но оператору надо знать: экзит без WARP.
+_DEPLOY_WARNINGS=()
 SKIPPED_EXIT_TAGS=''
 _TOTAL_T0=0
 
@@ -97,7 +99,7 @@ print_summary() {
   # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
   local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
   local title_str="  деплой завершён  ·  ${timing}  "
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
+  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "${_DEPLOY_WARNINGS[*]:-}" || -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
     title_str="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
   fi
   local _rows=("$title_str")
@@ -148,6 +150,7 @@ print_summary() {
     warn '99-verify: установка завершена, но не все проверки измерены'
     printf '%s\n' "${_VERIFY_WARNINGS[@]}"
   fi
+  [[ -z "${_DEPLOY_WARNINGS[*]:-}" ]] || printf '%s\n' "${_DEPLOY_WARNINGS[@]}"
   if [[ -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
     HOST_TAG=deploy warn "pre-flight: экзиты пропущены из-за недоступного SSH: $SKIPPED_EXIT_TAGS"
   fi
@@ -906,6 +909,11 @@ run_stage() {
     pid=${pids[$i]}
     host_rc=0
     wait "$pid" || host_rc=$?
+    if [[ -n "$verify_logs" ]]; then
+      while IFS= read -r line; do
+        [[ "$line" != '['*'] ⚠ WARP: '* ]] || _DEPLOY_WARNINGS+=("$line")
+      done < "$verify_logs/${nodes[$i]}"
+    fi
     if [[ "$stage" == 99-verify && $host_rc -eq 2 ]]; then
       incomplete=1
       local found=0
@@ -1464,6 +1472,7 @@ do_all() {
   _TOTAL_T0=$(date +%s)
   _STAGE_LOG=()
   _VERIFY_WARNINGS=()
+  _DEPLOY_WARNINGS=()
 
   pause_entry_auto_updates
   install_prereqs venv

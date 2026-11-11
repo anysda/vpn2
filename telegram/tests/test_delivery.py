@@ -21,7 +21,7 @@ from aiohttp import web
 
 CHILD = '''
 import asyncio, os
-from support import import_bot
+from harness import import_bot
 bot = import_bot({key: os.environ[key] for key in (
     'TG_PROXY', 'TGBOT_EVENT_PORT', 'TGBOT_OUTBOX_PATH', 'SSL_CERT_FILE',
     'TGBOT_POLL_STALL_SEC', 'ANYSDA_URL')})

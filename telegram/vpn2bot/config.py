@@ -8,14 +8,12 @@ import re
 class _RedactTokenFormatter(logging.Formatter):
     """Вырезает токен бота из любой строки лога, включая трассировки:
     python-telegram-bot кладёт токен прямо в текст InvalidToken."""
-    token = ''
-    secret = ''
+    secrets: tuple = ()
 
     def format(self, record: logging.LogRecord) -> str:
         text = super().format(record)
-        for value in (self.token, self.secret):
-            if value:
-                text = text.replace(value, '<secret>')
+        for value in filter(None, self.secrets):
+            text = text.replace(value, '<secret>')
         return re.sub(r'(https?://)[^/\s@]+@', r'\1<credentials>@', text)
 
 
@@ -27,19 +25,13 @@ logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 log = logging.getLogger('tgbot')
 
-# Runtime config поверх env-vars: если файл существует — он перебивает токен/чат_id.
-# Используется панелью (Боты): при сохранении в UI Nuxt пишет сюда, бот сам
-# делает os._exit(0) при изменении mtime, docker --restart always
-# перезапускает контейнер с новыми значениями.
+# Настройки из панели («Боты») перебивают env: панель пишет файл, бот по смене
+# mtime выходит, docker --restart поднимает его с новыми значениями.
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
 
 
 def _load_runtime() -> tuple[str, int, str]:
-    """Прочитать bot_token / chat_id / admin_username (env + runtime.json).
-
-    runtime.json перебивает env. admin_username — никнейм админа без @,
-    используется в сообщении непривязанным людям («напишите администратору»).
-    """
+    """Токен, Chat ID и никнейм админа без @ (он в ответе непривязанным людям)."""
     token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
     env_chat = os.environ.get('TELEGRAM_CHAT_ID', '0').strip()
     chat = ''
@@ -56,39 +48,32 @@ def _load_runtime() -> tuple[str, int, str]:
     # Кривой chat_id (например «@mychannel») не должен ронять бота по кругу:
     # откат на env; если и там не число — 0, дальше та же ошибка, что и без env.
     for source, raw in (('telegram-runtime.json', chat), ('TELEGRAM_CHAT_ID', env_chat)):
-        if not raw:
-            continue
         if re.fullmatch(r'-?[0-9]+', raw):
             return token, int(raw), admin
-        log.error('chat_id %r из %s не число', raw, source)
+        if raw:
+            log.error('chat_id %r из %s не число', raw, source)
     return token, 0, admin
 
 
 TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
-_RedactTokenFormatter.token = TOKEN
-SECRET     = os.environ.get('TGBOT_SECRET', '')
-_RedactTokenFormatter.secret = SECRET
+SECRET = os.environ.get('TGBOT_SECRET', '')
 if not SECRET:
     raise RuntimeError(
         'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
         'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.'
     )
+_RedactTokenFormatter.secrets = (TOKEN, SECRET)
+# Порт, на котором панель шлёт события боту и docker спрашивает /health.
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
+OUTBOX_PATH = os.environ.get('TGBOT_OUTBOX_PATH', '/var/lib/anysda-tgbot/outbox.sqlite')
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
-# Telegram API egress: RU-нода в Москве api.telegram.org напрямую не достаёт,
-# поэтому Telegram-клиенты бота ходят через этот локальный HTTP-прокси
-# (sing-box mixed-инбаунд → foreign-best → экзит). Обращения к Nuxt API на
-# 127.0.0.1 проксировать НЕ нужно — _local идёт напрямую.
-TG_PROXY   = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
-# Сторож поллера: сколько секунд без успешного getUpdates считать зависанием.
-# 03-08-2026 после флапа экзитов sing-box порвал CONNECT-тоннели, сокеты бота
-# остались в CLOSE-WAIT, а поллер молча встал: процесс жив, monitor_loop тикает,
-# апдейты из Telegram не забираются ~38 часов и НИ ОДНОЙ ошибки в логе. Лечится
-# только рестартом, поэтому сторож роняет процесс — docker поднимет заново.
-# Нормальный интервал long-poll ≈ 10с, так что 300с — заведомо аномалия. 0 = выкл.
+# Локальный HTTP-прокси sing-box до экзита: Telegram доступен только через него.
+TG_PROXY = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
+# Сколько секунд без успешного getUpdates считать зависанием поллера (см.
+# api.poll_watchdog). Обычный long-poll отвечает за ~10 с. 0 = сторож выключен.
 POLL_STALL_SEC = int(os.environ.get('TGBOT_POLL_STALL_SEC', '300'))
 # Отвергнутый токен сам не починится: сколько ждать перед выходом под рестарт.
 INVALID_TOKEN_PAUSE_SEC = int(os.environ.get('TGBOT_INVALID_TOKEN_PAUSE_SEC', '300'))
 
-# username бота — заполняется в main() через getMe; нужен для диплинков-приглашений.
+# username бота — заполняется при старте через getMe; нужен для диплинков-приглашений.
 BOT_USERNAME: str | None = None

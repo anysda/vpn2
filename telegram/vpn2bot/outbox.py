@@ -76,10 +76,7 @@ class Outbox:
                 or len(text.encode('utf-16-le')) // 2 > 4096):
             raise ValueError('invalid notification text')
 
-    def enqueue(self, payload: dict, delivery_id=None) -> int:
-        return self.enqueue_batch([payload], delivery_id)
-
-    def enqueue_batch(self, payloads, delivery_id=None) -> int:
+    def enqueue(self, payloads, delivery_id=None) -> int:
         if not payloads or len(payloads) > MAX_EVENTS:
             raise QueueFull()
         for payload in payloads:

@@ -1,0 +1,5858 @@
+{
+ "client/link": [
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "secret",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "✅ Доступ к VPN активирован для *Иван*\\_*П*.",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "secret",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "✅ Доступ к VPN активирован для *Иван*\\_*П*.",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ]
+ ],
+ "client/link_refused": [
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "a",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Ссылка недействительна. Запросите новое приглашение у администратора."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "b",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Лимит меньше числа устройств: сначала удалите лишние."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "c",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Панель временно недоступна. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/link",
+   {
+    "password": "d",
+    "chatId": 200,
+    "username": "test"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ]
+ ],
+ "client/menu": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 Телефон",
+        "callback_data": "dev:1"
+       }
+      ],
+      [
+       {
+        "text": "📱 Ноут_2",
+        "callback_data": "dev:2"
+       }
+      ]
+     ]
+    }
+   }
+  ]
+ ],
+ "client/menu_variants": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Аня*.\nУстройства: 0 из ∞.\nДоступ бессрочный.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Без лимита*.\nУстройства: 1 из ∞.\nДоступ бессрочный.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "У вас пока нет устройств. Нажмите «➕ Добавить устройство» в меню.",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "📱 *Ваши устройства* (1/∞)\nСостояние не подтверждено\nWireGuard: Заменена\nIKEv2: Заменена\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 ?",
+        "callback_data": "dev:3"
+       }
+      ]
+     ]
+    }
+   }
+  ]
+ ],
+ "client/not_linked": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ]
+ ],
+ "client/not_linked_admin_named": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔑 Чтобы получить доступ к VPN, напишите администратору: @boss_admin"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔑 Чтобы получить доступ к VPN, напишите администратору: @boss_admin"
+   }
+  ]
+ ],
+ "client/panel_trouble": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Панель временно недоступна. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Не удалось выполнить запрос. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Клиент удаляется"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Клиент удаляется",
+    "show_alert": true
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Сервис временно недоступен. Попробуйте позже.",
+    "show_alert": true
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Не удалось выполнить запрос. Попробуйте позже.",
+    "show_alert": true
+   }
+  ]
+ ],
+ "client/add_device": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices",
+   {
+    "chatId": 200,
+    "name": "Ноут_3"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "✅ Устройство «Ноут_3» добавлено."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 Телефон",
+        "callback_data": "dev:1"
+       }
+      ],
+      [
+       {
+        "text": "📱 Ноут_2",
+        "callback_data": "dev:2"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ]
+ ],
+ "client/add_device_refused": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices",
+   {
+    "chatId": 200,
+    "name": "A"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices",
+   {
+    "chatId": 200,
+    "name": "A"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Устройство с таким названием уже есть."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices",
+   {
+    "chatId": 200,
+    "name": "A"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices",
+   {
+    "chatId": 200,
+    "name": "A"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Не найдено: возможно, его уже удалили."
+   }
+  ]
+ ],
+ "client/add_device_over_limit": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Достигнут лимит устройств. Обратитесь к администратору."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 2.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ]
+ ],
+ "client/buttons": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 Телефон",
+        "callback_data": "dev:1"
+       }
+      ],
+      [
+       {
+        "text": "📱 Ноут_2",
+        "callback_data": "dev:2"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "WireGuard",
+        "callback_data": "wg:1"
+       },
+       {
+        "text": "OpenVPN",
+        "callback_data": "ovpn:1"
+       }
+      ],
+      [
+       {
+        "text": "🔄 Перевыпустить ключи",
+        "callback_data": "reic:1"
+       },
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "del:1"
+       }
+      ],
+      [
+       {
+        "text": "‹ Назад",
+        "callback_data": "devs"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Устройство не найдено",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 Телефон",
+        "callback_data": "dev:1"
+       }
+      ],
+      [
+       {
+        "text": "📱 Ноут_2",
+        "callback_data": "dev:2"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг WireGuard…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-config?chatId=200",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-qrcode.png?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendPhoto",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "photo",
+    "qr.png",
+    "\\x89PNG\r\n\u001a\nqr"
+   ]
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "ivan-phone.conf",
+    "[Interface]\nPrivateKey = тест\n"
+   ]
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Устройство не найдено",
+    "show_alert": true
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг OpenVPN…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/2/ovpn-config?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "200",
+    "caption": "*Ноут*\\_*2* — OpenVPN",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "Ноут_2.ovpn",
+    "client\nremote vpn 1194\n"
+   ]
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Устройство не найдено",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "🔄 *Перевыпустить ключи?*\n\nСтарые конфиги перестанут работать — нужно будет выдать новые на все устройства.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Да",
+        "callback_data": "reicyes:1"
+       },
+       {
+        "text": "✖ Отмена",
+        "callback_data": "dev:1"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Перевыпускаю ключи…"
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices/1/reissue",
+   {
+    "chatId": 200
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "Перевыпуск выполняется\n\n📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "WireGuard",
+        "callback_data": "wg:1"
+       },
+       {
+        "text": "OpenVPN",
+        "callback_data": "ovpn:1"
+       }
+      ],
+      [
+       {
+        "text": "🔄 Перевыпустить ключи",
+        "callback_data": "reic:1"
+       },
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "del:1"
+       }
+      ],
+      [
+       {
+        "text": "‹ Назад",
+        "callback_data": "devs"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Перевыпускаю ключи…"
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices/9/reissue",
+   {
+    "chatId": 200
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Не найдено: возможно, его уже удалили.",
+    "show_alert": true
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "🗑 *Удалить устройство «Телефон»?*\n\nКонфиги этого устройства перестанут работать.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Да",
+        "callback_data": "delyes:1"
+       },
+       {
+        "text": "✖ Отмена",
+        "callback_data": "dev:1"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "🗑 *Удалить устройство «?»?*\n\nКонфиги этого устройства перестанут работать.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Да",
+        "callback_data": "delyes:9"
+       },
+       {
+        "text": "✖ Отмена",
+        "callback_data": "dev:9"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Удаляю устройство…"
+   }
+  ],
+  [
+   "panel",
+   "DELETE",
+   "/api/bot/devices/1?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 Телефон",
+        "callback_data": "dev:1"
+       }
+      ],
+      [
+       {
+        "text": "📱 Ноут_2",
+        "callback_data": "dev:2"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Удаляю устройство…"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Некорректное устройство",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ]
+ ],
+ "client/buttons_unlinked_mid_request": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг WireGuard…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-config?chatId=200",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-qrcode.png?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг OpenVPN…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/2/ovpn-config?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Перевыпускаю ключи…"
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices/1/reissue",
+   {
+    "chatId": 200
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Удаляю устройство…"
+   }
+  ],
+  [
+   "panel",
+   "DELETE",
+   "/api/bot/devices/1?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Чтобы пользоваться VPN, откройте ссылку-приглашение от администратора."
+   }
+  ]
+ ],
+ "client/buttons_fail": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг WireGuard…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-config?chatId=200",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-qrcode.png?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Панель временно недоступна. Попробуйте позже.",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ Панель временно недоступна. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг OpenVPN…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/2/ovpn-config?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "OpenVPN выключен. Обратитесь к администратору.",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "❌ OpenVPN выключен. Обратитесь к администратору."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Перевыпускаю ключи…"
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/devices/1/reissue",
+   {
+    "chatId": 200
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Сервис временно недоступен. Попробуйте позже.",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Удаляю устройство…"
+   }
+  ],
+  [
+   "panel",
+   "DELETE",
+   "/api/bot/devices/1?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Клиент удаляется",
+    "show_alert": true
+   }
+  ]
+ ],
+ "client/markdown_refused": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "WireGuard",
+        "callback_data": "wg:1"
+       },
+       {
+        "text": "OpenVPN",
+        "callback_data": "ovpn:1"
+       }
+      ],
+      [
+       {
+        "text": "🔄 Перевыпустить ключи",
+        "callback_data": "reic:1"
+       },
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "del:1"
+       }
+      ],
+      [
+       {
+        "text": "‹ Назад",
+        "callback_data": "devs"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "WireGuard",
+        "callback_data": "wg:1"
+       },
+       {
+        "text": "OpenVPN",
+        "callback_data": "ovpn:1"
+       }
+      ],
+      [
+       {
+        "text": "🔄 Перевыпустить ключи",
+        "callback_data": "reic:1"
+       },
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "del:1"
+       }
+      ],
+      [
+       {
+        "text": "‹ Назад",
+        "callback_data": "devs"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Готовлю конфиг WireGuard…"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-config?chatId=200",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/devices/1/wg-qrcode.png?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendPhoto",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "photo",
+    "qr.png",
+    "\\x89PNG\r\n\u001a\nqr"
+   ]
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendPhoto",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard"
+   },
+   [
+    "photo",
+    "qr.png",
+    "\\x89PNG\r\n\u001a\nqr"
+   ]
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "ivan-phone.conf",
+    "[Interface]\nPrivateKey = тест\n"
+   ]
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "200",
+    "caption": "*Телефон* — WireGuard"
+   },
+   [
+    "document",
+    "ivan-phone.conf",
+    "[Interface]\nPrivateKey = тест\n"
+   ]
+  ]
+ ],
+ "client/edge": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Пришлите название устройства (например: Телефон, Ноутбук)."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "Название не распознано. Откройте меню: /start"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Без лимита*.\nУстройства: 1 из ∞.\nДоступ бессрочный.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *?*\nПротоколы: нет конфигов\n\nВыберите действие:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "WireGuard",
+        "callback_data": "wg:3"
+       },
+       {
+        "text": "OpenVPN",
+        "callback_data": "ovpn:3"
+       }
+      ],
+      [
+       {
+        "text": "🔄 Перевыпустить ключи",
+        "callback_data": "reic:3"
+       },
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "del:3"
+       }
+      ],
+      [
+       {
+        "text": "‹ Назад",
+        "callback_data": "devs"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 200,
+    "message_id": 1,
+    "text": "📱 *Ваши устройства* (1/∞)\nСостояние не подтверждено\nWireGuard: Заменена\nIKEv2: Заменена\nВыберите устройство:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "📱 ?",
+        "callback_data": "dev:3"
+       }
+      ]
+     ]
+    }
+   }
+  ]
+ ],
+ "client/strangers": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ]
+ ],
+ "admin/commands": [
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "*Состояние системы*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "*Exit-ноды*\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Иван_П — 2 девайса · лимит: 3 · Доступ включён",
+        "callback_data": "acl:c1"
+       }
+      ],
+      [
+       {
+        "text": "❄️ Анна — 5 девайсов · лимит: ∞",
+        "callback_data": "acl:c2"
+       }
+      ],
+      [
+       {
+        "text": "⏳ Пётр — 1 девайс · лимит: 1 · Состояние не подтверждено",
+        "callback_data": "acl:c3"
+       }
+      ],
+      [
+       {
+        "text": "✅ Заменён — 21 девайс · лимит: ∞ · Ключи перевыпущены",
+        "callback_data": "acl:c4"
+       }
+      ],
+      [
+       {
+        "text": "❄️ ? — 0 девайсов · лимит: ∞",
+        "callback_data": "acl:None"
+       }
+      ],
+      [
+       {
+        "text": "➕ Создать клиента",
+        "callback_data": "anew"
+       }
+      ]
+     ]
+    }
+   }
+  ]
+ ],
+ "admin/commands_fail": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Нет нод",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Клиент удаляется"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ]
+ ],
+ "admin/cards": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Иван_П — 2 девайса · лимит: 3 · Доступ включён",
+        "callback_data": "acl:c1"
+       }
+      ],
+      [
+       {
+        "text": "❄️ Анна — 5 девайсов · лимит: ∞",
+        "callback_data": "acl:c2"
+       }
+      ],
+      [
+       {
+        "text": "⏳ Пётр — 1 девайс · лимит: 1 · Состояние не подтверждено",
+        "callback_data": "acl:c3"
+       }
+      ],
+      [
+       {
+        "text": "✅ Заменён — 21 девайс · лимит: ∞ · Ключи перевыпущены",
+        "callback_data": "acl:c4"
+       }
+      ],
+      [
+       {
+        "text": "❄️ ? — 0 девайсов · лимит: ∞",
+        "callback_data": "acl:None"
+       }
+      ],
+      [
+       {
+        "text": "➕ Создать клиента",
+        "callback_data": "anew"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "☀️ Разморозить",
+        "callback_data": "afz:c2"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c2"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c2"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c2"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c3",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Пётр*\nЖелаемое состояние: активен ✅\nСостояние не подтверждено\nWireGuard: ошибка\\_x\nУстройств: 1/1\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c3"
+       }
+      ],
+      [
+       {
+        "text": "Повторить",
+        "callback_data": "aretry:c3"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c3"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c3"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c3"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c3"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c3"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c4",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Заменён*\nЖелаемое состояние: активен ✅\nКлючи перевыпущены\nWireGuard: Заменена\nУстройств: 21/∞\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c4"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c4"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c4"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c4"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c4"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c4"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ]
+ ],
+ "admin/freeze": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c1",
+   {
+    "frozenManual": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Отключение запущено"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c2",
+   {
+    "frozenManual": false
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Включение запущено"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "☀️ Разморозить",
+        "callback_data": "afz:c2"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c2"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c2"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c2"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c3",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c3",
+   {
+    "frozenManual": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Клиент удаляется",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/retry": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c3",
+   null
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/admin/access-operations/0a1b2c3d-0000-4000-8000-00000000abcd/retry",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Повтор запущен"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c3",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Пётр*\nЖелаемое состояние: активен ✅\nСостояние не подтверждено\nWireGuard: ошибка\\_x\nУстройств: 1/1\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c3"
+       }
+      ],
+      [
+       {
+        "text": "Повторить",
+        "callback_data": "aretry:c3"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c3"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c3"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c3"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c3"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c3"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Операция не найдена",
+    "show_alert": true
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c4",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Операция не найдена",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/limit": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c1",
+   {
+    "deviceLimit": 4
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит: 4"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c1",
+   {
+    "deviceLimit": 2
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит: 2"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит уже безлимитный"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c2",
+   {
+    "deviceLimit": 5
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит: 5"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "☀️ Разморозить",
+        "callback_data": "afz:c2"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c2"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c2"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c2"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c4",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c4",
+   {
+    "deviceLimit": 21
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит: 21"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c4",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👤 *Заменён*\nЖелаемое состояние: активен ✅\nКлючи перевыпущены\nWireGuard: Заменена\nУстройств: 21/∞\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c4"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c4"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c4"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c4"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c4"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c4"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c3",
+   null
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c3",
+   {
+    "deviceLimit": 0
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Лимит меньше числа устройств: сначала удалите лишние.",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/expiry": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* или слово «бессрочно».",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ Неверный формат. Пришлите дату как *ДД.ММ.ГГГГ* или слово «бессрочно».",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c1",
+   {
+    "expiresAt": "2027-12-31T00:00:00.000Z"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Срок действия обновлён."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* или слово «бессрочно».",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c2",
+   {
+    "expiresAt": null
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Срок действия снят (бессрочно)."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "☀️ Разморозить",
+        "callback_data": "afz:c2"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c2"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c2"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c2"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* или слово «бессрочно».",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c3",
+   {
+    "expiresAt": "2028-02-01T00:00:00.000Z"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Не удалось выполнить запрос. Попробуйте позже."
+   }
+  ]
+ ],
+ "admin/new_client": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "➕ Пришлите имя нового клиента."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/admin/clients",
+   {
+    "name": "Новый_клиент"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ Клиент «Новый_клиент» создан."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "☀️ Разморозить",
+        "callback_data": "afz:c2"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c2"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c2"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c2"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c2"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "➕ Пришлите имя нового клиента."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/admin/clients",
+   {
+    "name": "Дубль"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Такой клиент уже есть."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "➕ Пришлите имя нового клиента."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/admin/clients",
+   {
+    "name": "Сбой"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "❌ Сервис временно недоступен. Попробуйте позже."
+   }
+  ]
+ ],
+ "admin/edge": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "➕ Пришлите имя нового клиента."
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Имя не распознано. Пришлите имя клиента ещё раз."
+   }
+  ],
+  [
+   "panel",
+   "POST",
+   "/api/bot/admin/clients",
+   {
+    "name": "Имя"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ Клиент «Имя» создан."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🗓 Пришлите дату окончания доступа в формате *ДД.ММ.ГГГГ* или слово «бессрочно».",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "PATCH",
+   "/api/bot/admin/clients/c1",
+   {
+    "expiresAt": null
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Срок действия снят (бессрочно)."
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "❄️ Заморозить",
+        "callback_data": "afz:c1"
+       }
+      ],
+      [
+       {
+        "text": "➖ Лимит",
+        "callback_data": "alm-:c1"
+       },
+       {
+        "text": "➕ Лимит",
+        "callback_data": "alm+:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗓 Срок",
+        "callback_data": "aexp:c1"
+       }
+      ],
+      [
+       {
+        "text": "📨 Отправить приглашение",
+        "callback_data": "ainv:c1"
+       }
+      ],
+      [
+       {
+        "text": "🗑 Удалить",
+        "callback_data": "adel:c1"
+       }
+      ],
+      [
+       {
+        "text": "‹ К списку",
+        "callback_data": "acl"
+       }
+      ]
+     ]
+    }
+   }
+  ]
+ ],
+ "admin/invite": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Отправляю приглашение…"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "📨 Приглашение для «Иван_П». Перешлите клиенту сообщение ниже ↓"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔐 Вам предоставлен доступ к VPN. Откройте ссылку и нажмите «Запустить»:\nhttps://t.me/vpn_test_bot?start=pw-1"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "У клиента нет пароля для приглашения",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/invite_without_bot_name": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Отправляю приглашение…"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "📨 Приглашение для «Иван_П». Перешлите клиенту сообщение ниже ↓"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔐 Вам предоставлен доступ к VPN.\nНайдите нашего бота в Telegram и отправьте ему сообщение:\n/start pw-1"
+   }
+  ]
+ ],
+ "admin/delete": [
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "🗑 *Удалить клиента «Иван*\\_*П»?*\n\nВсе его устройства и конфиги перестанут работать.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Да",
+        "callback_data": "adyes:c1"
+       },
+       {
+        "text": "✖ Отмена",
+        "callback_data": "acl:c1"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "DELETE",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Отключение запущено"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Иван_П — 2 девайса · лимит: 3 · Доступ включён",
+        "callback_data": "acl:c1"
+       }
+      ],
+      [
+       {
+        "text": "❄️ Анна — 5 девайсов · лимит: ∞",
+        "callback_data": "acl:c2"
+       }
+      ],
+      [
+       {
+        "text": "⏳ Пётр — 1 девайс · лимит: 1 · Состояние не подтверждено",
+        "callback_data": "acl:c3"
+       }
+      ],
+      [
+       {
+        "text": "✅ Заменён — 21 девайс · лимит: ∞ · Ключи перевыпущены",
+        "callback_data": "acl:c4"
+       }
+      ],
+      [
+       {
+        "text": "❄️ ? — 0 девайсов · лимит: ∞",
+        "callback_data": "acl:None"
+       }
+      ],
+      [
+       {
+        "text": "➕ Создать клиента",
+        "callback_data": "anew"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": 100,
+    "message_id": 1,
+    "text": "🗑 *Удалить клиента «Анна»?*\n\nВсе его устройства и конфиги перестанут работать.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Да",
+        "callback_data": "adyes:c2"
+       },
+       {
+        "text": "✖ Отмена",
+        "callback_data": "acl:c2"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "panel",
+   "DELETE",
+   "/api/bot/admin/clients/c2",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Клиент удаляется",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/button_crash": [
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Сервис временно недоступен. Попробуйте позже.",
+    "show_alert": true
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients/c1",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback",
+    "text": "Панель временно недоступна. Попробуйте позже.",
+    "show_alert": true
+   }
+  ]
+ ],
+ "admin/group_chat": [
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 7
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": -100500,
+    "text": "*Состояние системы*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 7
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": -100500,
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 8
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 8
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 8
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 7
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/answerCallbackQuery",
+   {
+    "callback_query_id": "callback"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/bot/admin/clients",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/editMessageText",
+   {
+    "chat_id": -100500,
+    "message_id": 1,
+    "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "inline_keyboard": [
+      [
+       {
+        "text": "✅ Иван_П — 2 девайса · лимит: 3 · Доступ включён",
+        "callback_data": "acl:c1"
+       }
+      ],
+      [
+       {
+        "text": "❄️ Анна — 5 девайсов · лимит: ∞",
+        "callback_data": "acl:c2"
+       }
+      ],
+      [
+       {
+        "text": "⏳ Пётр — 1 девайс · лимит: 1 · Состояние не подтверждено",
+        "callback_data": "acl:c3"
+       }
+      ],
+      [
+       {
+        "text": "✅ Заменён — 21 девайс · лимит: ∞ · Ключи перевыпущены",
+        "callback_data": "acl:c4"
+       }
+      ],
+      [
+       {
+        "text": "❄️ ? — 0 девайсов · лимит: ∞",
+        "callback_data": "acl:None"
+       }
+      ],
+      [
+       {
+        "text": "➕ Создать клиента",
+        "callback_data": "anew"
+       }
+      ]
+     ]
+    }
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/getChatMember",
+   {
+    "chat_id": -100500,
+    "user_id": 7
+   }
+  ]
+ ],
+ "events/refused": [
+  [
+   "event",
+   403,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ]
+ ],
+ "events/queued": [
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 1, \"delivery_id\": \"d-1\"}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 100,
+    "text": "👤 Новый клиент: *Иван*\\_*П*",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 1, \"delivery_id\": null}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 100,
+    "text": "👤 Новый клиент: *?*",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 2, \"delivery_id\": \"d-2\"}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 200,
+    "text": "Работы *ночью*"
+   }
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 300,
+    "text": "Работы *ночью*"
+   }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 1, \"delivery_id\": null}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 200,
+    "text": "Лимит изменён"
+   }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 1, \"delivery_id\": null}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *backup*\\_*failed*\n\ndisk \\[full]",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "{\"ok\": true, \"event_id\": 1, \"delivery_id\": null}"
+  ],
+  [
+   "queued",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *system alert*",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "events/queue_refused": [
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   "invalid notification"
+  ],
+  [
+   "event",
+   400,
+   null
+  ],
+  [
+   "event",
+   400,
+   null
+  ]
+ ],
+ "events/configs": [
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendPhoto",
+   {
+    "chat_id": "100",
+    "caption": "*ivan*\\_*phone* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "photo",
+    "qr.png",
+    "\\x89PNG\r\n\u001a\nqr"
+   ]
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "100",
+    "caption": "*ivan*\\_*phone* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "ivan_phone.conf",
+    "[Interface]\n"
+   ]
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "100",
+    "caption": "*Аня* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "Аня.conf",
+    "c"
+   ]
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "100",
+    "caption": "*Аня* — WireGuard",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "Аня.conf",
+    "c"
+   ]
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "100",
+    "caption": "*ivan*\\_*phone* — OpenVPN",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "ivan_phone.ovpn",
+    "client\n"
+   ]
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Сервер: `vpn.example`\nЛогин: `ivan_p`\nПароль: `p*w`\n\n*ivan*\\_*p* — IKEv2",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendDocument",
+   {
+    "chat_id": "100",
+    "caption": "*ivan*\\_*p* — CA-сертификат IKEv2",
+    "parse_mode": "Markdown"
+   },
+   [
+    "document",
+    "ivan_p-ca.crt",
+    "-----BEGIN CERTIFICATE-----\n"
+   ]
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "Сервер: `?`\nЛогин: `?`\nПароль: `?`\n\n*?* — IKEv2",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "events/invite": [
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "📨 Приглашение для «Иван_П». Перешлите клиенту сообщение ниже ↓"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔐 Вам предоставлен доступ к VPN. Откройте ссылку и нажмите «Запустить»:\nhttps://t.me/vpn_test_bot?start=pw-1"
+   }
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ]
+ ],
+ "events/invite_without_bot_name": [
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "📨 Приглашение для «?». Перешлите клиенту сообщение ниже ↓"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔐 Вам предоставлен доступ к VPN.\nНайдите нашего бота в Telegram и отправьте ему сообщение:\n/start pw-1"
+   }
+  ]
+ ],
+ "events/deploy": [
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *Установка завершена с предупреждениями*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "events/deploy_panel_warming_up": [
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *Установка завершена*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "event",
+   200,
+   "ok"
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *Установка завершена с предупреждениями*\n\n? Не проверено: часть проверок не измерена. Причины — в сводке деплоя 99-verify.",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "monitor/node_down": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 *Нода RU лежит* — метрик нет больше 5 мин",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🟢 *Нода RU восстановилась*",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 *Нода ? лежит* — метрик нет больше 5 мин",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ]
+ ],
+ "monitor/load": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *RU*: нагрузка на CPU выше 80% (100%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *RU*: нагрузка на RAM выше 80% (95%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *RU*: CPU вернулся в норму (70%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *RU*: RAM вернулся в норму (60%)",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "monitor/small_node": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *S1*: нагрузка на CPU выше 95% (96%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *S1*: нагрузка на RAM выше 90% (91%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *S1*: CPU вернулся в норму (84%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *S1*: RAM вернулся в норму (79%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *BIG*: нагрузка на CPU выше 80% (96%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *BIG*: нагрузка на RAM выше 80% (91%)",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "monitor/thresholds_from_env": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *S1*: нагрузка на CPU выше 50% (55%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *S1*: нагрузка на RAM выше 60% (65%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *S1*: CPU вернулся в норму (39%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "✅ *S1*: RAM вернулся в норму (49%)",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ],
+ "monitor/panel_outage": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 Панель недоступна — мониторинговые данные не поступают"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🟢 Панель снова доступна"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 Панель недоступна — мониторинговые данные не поступают"
+   }
+  ]
+ ],
+ "monitor/telegram_trouble": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *RU*: нагрузка на CPU выше 80% (90%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *RU*: нагрузка на CPU выше 80% (90%)",
+    "parse_mode": "Markdown"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 Панель недоступна — мониторинговые данные не поступают"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🔴 Панель недоступна — мониторинговые данные не поступают"
+   }
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "🟢 Панель снова доступна"
+   }
+  ]
+ ],
+ "monitor/broken_status": [
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "panel",
+   "GET",
+   "/api/ops/bot-snapshot",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 100,
+    "text": "⚠️ *RU*: нагрузка на CPU выше 80% (90%)",
+    "parse_mode": "Markdown"
+   }
+  ]
+ ]
+}

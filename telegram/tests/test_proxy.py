@@ -4,7 +4,7 @@ import unittest
 import httpx
 from aiohttp import web
 
-from support import import_bot
+from harness import import_bot
 
 
 class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
@@ -32,10 +32,10 @@ class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
         bot = import_bot({'ANYSDA_URL': f'http://127.0.0.1:{ports[0]}',
                         'HTTP_PROXY': proxy_url, 'HTTPS_PROXY': proxy_url,
                         'ALL_PROXY': proxy_url, 'NO_PROXY': ''})
-        self.addAsyncCleanup(bot.transport._local.aclose)
-        self.addAsyncCleanup(bot.transport._tg.aclose)
-        await bot.panel.api_status()
-        await bot.panel.api_link(200, 'TEST_ONLY_PASSWORD', 'test')
+        self.addAsyncCleanup(bot.api.panel_http.aclose)
+        self.addAsyncCleanup(bot.api.telegram_http.aclose)
+        await bot.api.status()
+        await bot.api.panel('POST', '/api/bot/link', {'chatId': 200, 'password': 'TEST_ONLY_PASSWORD'})
         self.assertEqual(len(proxy_requests), 0, 'panel requests leaked to environment proxy')
         self.assertEqual(panel_requests, [f'Bearer {bot.config.SECRET}'] * 2)
 
@@ -57,11 +57,11 @@ class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(close_server)
         proxy_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
         bot = import_bot({'TG_PROXY': proxy_url, 'HTTPS_PROXY': 'http://127.0.0.1:9'})
-        self.addAsyncCleanup(bot.transport._local.aclose)
-        self.addAsyncCleanup(bot.transport._tg.aclose)
+        self.addAsyncCleanup(bot.api.panel_http.aclose)
+        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         with self.assertRaises(httpx.ProxyError):
-            await bot.transport.tg_send(100, 'test')
-        request = bot.transport._WatchedRequest(proxy=bot.config.TG_PROXY)
+            await bot.api.send(100, 'test')
+        request = bot.api.WatchedRequest(proxy=bot.config.TG_PROXY)
         self.addAsyncCleanup(request.shutdown)
         with self.assertRaises(Exception):
             await request.do_request('https://api.telegram.org/test/getUpdates', 'POST')

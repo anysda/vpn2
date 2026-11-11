@@ -24,7 +24,7 @@ import zlib
 
 import httpx
 
-from support import import_bot, update
+from harness import import_bot, update
 
 HERE = Path(__file__).resolve().parent
 LIVE = bool(os.environ.get('QR_WORST_PNG'))
@@ -106,8 +106,8 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
         self.bot = import_bot()
-        self.addAsyncCleanup(self.bot.transport._local.aclose)
-        self.addAsyncCleanup(self.bot.transport._tg.aclose)
+        self.addAsyncCleanup(self.bot.api.panel_http.aclose)
+        self.addAsyncCleanup(self.bot.api.telegram_http.aclose)
         self.conf = WORST.read_text()
         self.png = WORST_PNG.read_bytes()
         self.panel_calls = []
@@ -125,7 +125,7 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
         tg = httpx.AsyncClient(base_url='http://tg.test/bot', transport=httpx.MockTransport(self.telegram))
         self.addAsyncCleanup(local.aclose)
         self.addAsyncCleanup(tg.aclose)
-        return patch.object(self.bot.transport, '_local', local), patch.object(self.bot.transport, '_tg', tg)
+        return patch.object(self.bot.api, 'panel_http', local), patch.object(self.bot.api, 'telegram_http', tg)
 
     def panel(self, png_status=200):
         def answer(request):
@@ -144,7 +144,7 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_gets_the_panels_png_and_the_config(self):
         local, tg = self.clients(self.panel())
         with local, tg:
-            await self.bot.client.on_callback(update(data='wg:7'), None)
+            await self.bot.handlers.dispatch(update('client', ('press', 'wg:7')), None)
         self.assertEqual(self.panel_calls, [
             'GET /api/bot/client?chatId=200',
             'GET /api/bot/devices/7/wg-config?chatId=200',
@@ -161,7 +161,7 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
     async def test_panel_failure_on_png_sends_nothing_but_the_usual_error(self):
         local, tg = self.clients(self.panel(png_status=502))
         with local, tg:
-            await self.bot.client.on_callback(update(data='wg:7'), None)
+            await self.bot.handlers.dispatch(update('client', ('press', 'wg:7')), None)
         self.assertEqual([method for method, _ in self.sent], ['answerCallbackQuery', 'answerCallbackQuery'])
         self.assertEqual(json.loads(self.sent[1][1]), {
             'callback_query_id': 'callback', 'show_alert': True,

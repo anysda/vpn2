@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from support import import_bot
+from harness import import_bot
 
 
 class OutboxTests(unittest.IsolatedAsyncioTestCase):
@@ -15,8 +15,8 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         # Свежий импорт пакета один на тест: очередь, исключения и подмены
         # 'vpn2bot.outbox.X' должны жить в одном и том же модуле.
         self.bot = import_bot()
-        self.addAsyncCleanup(self.bot.transport._local.aclose)
-        self.addAsyncCleanup(self.bot.transport._tg.aclose)
+        self.addAsyncCleanup(self.bot.api.panel_http.aclose)
+        self.addAsyncCleanup(self.bot.api.telegram_http.aclose)
         self.Outbox, self.QueueFull = self.bot.outbox.Outbox, self.bot.outbox.QueueFull
         self.TelegramSendError = self.bot.outbox.TelegramSendError
         directory = tempfile.TemporaryDirectory(prefix='tgbot-outbox-')
@@ -83,7 +83,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_broadcast_waits_for_concurrent_writer_and_delivery(self):
         bot = self.bot
-        self.queue.enqueue({'chat_id': 100, 'text': 'pending'})
+        self.queue.enqueue([{'chat_id': 100, 'text': 'pending'}])
         request = SimpleNamespace(
             headers={'X-Tgbot-Secret': bot.config.SECRET}, app={bot.events.OUTBOX_KEY: self.queue},
             json=AsyncMock(return_value={'type': 'broadcast', 'chatIds': [200, 300, 200],
@@ -116,8 +116,8 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
                 await worker
 
     async def test_write_transactions_wait_for_reserved_lock(self):
-        event_id = self.queue.enqueue({'chat_id': 200, 'text': 'pending'})
-        for operation, args in ((self.queue.enqueue, ({'chat_id': 300, 'text': 'new'},)),
+        event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'pending'}])
+        for operation, args in ((self.queue.enqueue, ([{'chat_id': 300, 'text': 'new'}],)),
                                 (self.queue.claim, ()),
                                 (self.queue.retry, (event_id, 60, True)),
                                 (self.queue.remove, (event_id,))):
@@ -171,33 +171,33 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
     def test_receipt_is_bound_to_payload_and_never_evicted_for_capacity(self):
         payload = {'chat_id': 200, 'text': 'original'}
         with patch('vpn2bot.outbox.MAX_RECEIPTS', 1):
-            event_id = self.queue.enqueue(payload, 'stable-id')
+            event_id = self.queue.enqueue([payload], 'stable-id')
             self.queue.remove(event_id)
-            self.assertEqual(self.Outbox(self.queue.path).enqueue(payload, 'stable-id'), event_id)
+            self.assertEqual(self.Outbox(self.queue.path).enqueue([payload], 'stable-id'), event_id)
             with self.assertRaises(ValueError):
-                self.queue.enqueue({'chat_id': 200, 'text': 'different'}, 'stable-id')
+                self.queue.enqueue([{'chat_id': 200, 'text': 'different'}], 'stable-id')
             with self.assertRaises(self.QueueFull):
-                self.queue.enqueue(payload, 'new-id')
+                self.queue.enqueue([payload], 'new-id')
             self.assertEqual(self.rows(), [])
 
     async def test_validation_and_bounded_queue_expiry(self):
         for text in ('', [], 'x' * 4097, '\U0001f600' * 2049):
             with self.assertRaises(ValueError):
-                self.queue.enqueue({'chat_id': 200, 'text': text})
+                self.queue.enqueue([{'chat_id': 200, 'text': text}])
         with patch('vpn2bot.outbox.MAX_EVENTS', 2), patch('vpn2bot.outbox.time.time', return_value=100):
-            self.queue.enqueue({'chat_id': 200, 'text': 'a'})
-            self.queue.enqueue({'chat_id': 200, 'text': 'b'})
+            self.queue.enqueue([{'chat_id': 200, 'text': 'a'}])
+            self.queue.enqueue([{'chat_id': 200, 'text': 'b'}])
             with self.assertRaises(self.QueueFull):
-                self.queue.enqueue({'chat_id': 200, 'text': 'c'})
+                self.queue.enqueue([{'chat_id': 200, 'text': 'c'}])
         with patch('vpn2bot.outbox.time.time', return_value=100 + 86400):
             self.assertIsNone(self.queue.claim())
         self.assertEqual(self.rows(), [])
 
     async def test_lease_survives_reopen_and_preserves_chat_order(self):
         with patch('vpn2bot.outbox.time.time', return_value=100):
-            first = self.queue.enqueue({'chat_id': 200, 'text': 'first'})
-            second = self.queue.enqueue({'chat_id': 200, 'text': 'second'})
-            other = self.queue.enqueue({'chat_id': 300, 'text': 'other'})
+            first = self.queue.enqueue([{'chat_id': 200, 'text': 'first'}])
+            second = self.queue.enqueue([{'chat_id': 200, 'text': 'second'}])
+            other = self.queue.enqueue([{'chat_id': 300, 'text': 'other'}])
             self.assertEqual(self.queue.claim()['id'], first)
             reopened = self.Outbox(self.queue.path)
             self.assertEqual(reopened.claim()['id'], other)
@@ -208,7 +208,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(reopened.claim()['id'], second)
 
     async def test_success_is_not_resent_when_ack_commit_fails(self):
-        self.queue.enqueue({'chat_id': 200, 'text': 'once'})
+        self.queue.enqueue([{'chat_id': 200, 'text': 'once'}])
         send = AsyncMock()
         remove = self.queue.remove
         with patch.object(self.queue, 'remove', side_effect=[sqlite3.OperationalError('busy'), None]) as ack:
@@ -218,7 +218,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_backoff_ambiguous_send_and_permanent_error(self):
         for error, minimum in ((self.TelegramSendError(503), 5), (TimeoutError(), 60)):
-            event_id = self.queue.enqueue({'chat_id': 200, 'text': 'retry'})
+            event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
             now = time.time()
             send = AsyncMock(side_effect=error)
             await self.worker_until(send, lambda: bool(self.rows()) and self.rows()[0][2] < now + 100
@@ -226,13 +226,13 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(self.rows()[0][2], now + minimum)
             send.assert_awaited_once()
             self.queue.remove(event_id)
-        self.queue.enqueue({'chat_id': 200, 'text': 'blocked recipient'})
+        self.queue.enqueue([{'chat_id': 200, 'text': 'blocked recipient'}])
         await self.worker_until(AsyncMock(side_effect=self.TelegramSendError(403)), lambda: not self.rows())
 
     async def test_permanent_rejection_is_reported_once_and_report_failure_is_harmless(self):
         reported = AsyncMock(side_effect=[RuntimeError('panel down'), None])
         for text in ('first', 'second'):
-            self.queue.enqueue({'chat_id': 200, 'text': text})
+            self.queue.enqueue([{'chat_id': 200, 'text': text}])
             worker = asyncio.create_task(self.queue.run(AsyncMock(side_effect=self.TelegramSendError(403)), reported))
             try:
                 async with asyncio.timeout(5):
@@ -245,14 +245,14 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(reported.await_args_list[0].args, ({'chat_id': 200, 'text': 'first'}, 403))
         self.assertEqual(reported.await_count, 2)
         # Повторяемые ошибки — не отказ.
-        self.queue.enqueue({'chat_id': 200, 'text': 'retry'})
+        self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
         await self.worker_until(AsyncMock(side_effect=self.TelegramSendError(503)), lambda: self.rows()[0][1] == 1)
         self.assertEqual(reported.await_count, 2)
 
     async def test_bot_reports_rejection_to_panel_journal(self):
         bot = self.bot
         response = Mock(raise_for_status=Mock())
-        with patch.object(bot.transport._local, 'post', AsyncMock(return_value=response)) as post:
+        with patch.object(bot.api.panel_http, 'post', AsyncMock(return_value=response)) as post:
             await bot.events.report_rejected({'chat_id': bot.config.CHAT_ID, 'text': 'x'}, 400)
             await bot.events.report_rejected({'chat_id': bot.config.CHAT_ID + 1, 'text': 'x'}, 403)
         self.assertEqual([c.args[0] for c in post.await_args_list], ['/api/bot/events'] * 2)
@@ -260,14 +260,14 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             {'type': 'telegram_rejected', 'status': 400, 'recipient': 'admin'},
             {'type': 'telegram_rejected', 'status': 403, 'recipient': 'client'},
         ])
-        self.assertTrue(post.await_args_list[0].kwargs['headers']['Authorization'].startswith('Bearer '))
+        self.assertTrue(bot.api.panel_http.headers['Authorization'].startswith('Bearer '))
 
     async def test_retry_after_pauses_all_recipients_and_survives_restart(self):
-        self.queue.enqueue({'chat_id': 200, 'text': 'rate limited'})
+        self.queue.enqueue([{'chat_id': 200, 'text': 'rate limited'}])
         send = AsyncMock(side_effect=self.TelegramSendError(429, 600))
         await self.worker_until(send, lambda: self.rows()[0][2] > time.time() + 500)
         reopened = self.Outbox(self.queue.path)
-        reopened.enqueue({'chat_id': 300, 'text': 'new recipient'})
+        reopened.enqueue([{'chat_id': 300, 'text': 'new recipient'}])
         self.assertIsNone(reopened.claim())
         send.assert_awaited_once()
 

@@ -1,14 +1,14 @@
 ---
-openvpn_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+openvpn_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 openvpn_tmp: /tmp/anysda
 openvpn_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 openvpn_env:
   HOST_TAG: "{{ inventory_hostname }}"
-openvpn_port: "{{ lookup('ansible.builtin.env', 'OVPN_PORT') | default('1194', true) }}"
+openvpn_port: "{{ vpn2_env.OVPN_PORT | default('1194', true) }}"
 # udp, udp4, udp6, tcp, tcp4, tcp6 и те же tcp с суффиксом -server.
-openvpn_proto: "{{ lookup('ansible.builtin.env', 'OVPN_PROTO') | default('udp', true) }}"
+openvpn_proto: "{{ vpn2_env.OVPN_PROTO | default('udp', true) }}"
 # Сеть tun0 без маски: первая подсеть пула.
-openvpn_subnet: "{{ lookup('ansible.builtin.env', 'OVPN_SUBNET') | default('10.67.67.0', true) }}"
+openvpn_subnet: "{{ vpn2_env.OVPN_SUBNET | default('10.67.67.0', true) }}"
 # Единственный список пулов общий с панелью.
 openvpn_pools: "{{ lookup('ansible.builtin.file', openvpn_infra ~ '/../app/shared/vpn-pools.json') | from_json }}"
 openvpn_subnets: "{{ openvpn_pools.ovpn.subnets }}"

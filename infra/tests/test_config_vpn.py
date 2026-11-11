@@ -53,8 +53,8 @@ class VpnConfigTests(unittest.TestCase):
                 self.assertEqual(actual, expected)
                 # Порт и протокол OpenVPN по умолчанию даёт роль, как и порт WireGuard.
                 openvpn = source('infra/ansible/roles/openvpn/defaults/main.yml')
-                self.assertIn("lookup('ansible.builtin.env', 'OVPN_PORT') | default('1194', true)", openvpn)
-                self.assertIn("lookup('ansible.builtin.env', 'OVPN_PROTO') | default('udp', true)", openvpn)
+                self.assertIn("vpn2_env.OVPN_PORT | default('1194', true)", openvpn)
+                self.assertIn("vpn2_env.OVPN_PROTO | default('udp', true)", openvpn)
                 self.assertIn("lookup('ansible.builtin.env', 'WG_LISTEN_PORT') | default('51820', true)",
                               source('infra/ansible/roles/wireguard/defaults/main.yml'))
 

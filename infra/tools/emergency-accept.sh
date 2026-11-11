@@ -132,6 +132,15 @@ leaders() {
   echo "${out[*]}"
 }
 
+# Тег единственного лидера. Без него сценарию не на ком работать: отказ с
+# причиной до первого действия на узлах. Звать как leader=$(one_leader) || exit.
+one_leader() {
+  local current
+  current=$(leaders)
+  [[ -n "$current" && "$current" != *' '* ]] || die "нужен один лидер, есть: '$current'"
+  echo "$current"
+}
+
 # Ждать, пока лидеров ровно один и его выдача готова; печатает тег.
 wait_leader() {
   local limit=$1 except=${2:-} started=$SECONDS current
@@ -398,7 +407,7 @@ cmd_telegram_block() {
 
 cmd_sessions_blind() {
   local seconds=$1 leader
-  leader=$(leaders)
+  leader=$(one_leader) || exit
   trap firewall_clear EXIT
   firewall "$leader" "  chain o { type filter hook output priority -10; ip daddr 127.0.0.1 tcp dport 18443 meta skuid vpn2-emergency reject with tcp reset; }"
   log "API сессий Hysteria2 на $leader закрыт $seconds с"
@@ -411,7 +420,7 @@ cmd_sessions_blind() {
 
 cmd_entry_not_ready() {
   local minutes=$1 since leader
-  leader=$(leaders)
+  leader=$(one_leader) || exit
   since=$(date -u '+%Y-%m-%d %H:%M:%S')
   node "$ENTRY_TAG" 'systemctl stop sing-box && systemctl start vpn2-emergency'
   log "агент entry запущен при остановленном sing-box, $minutes мин"
@@ -426,7 +435,7 @@ cmd_entry_not_ready() {
 
 cmd_recover() {
   local since leader
-  leader=$(leaders)
+  leader=$(one_leader) || exit
   since=$(date -u '+%Y-%m-%d %H:%M:%S')
   node "$ENTRY_TAG" 'systemctl start sing-box vpn2-emergency'
   log 'entry поднят, ждём фиксации срока до 6 мин'
@@ -443,7 +452,7 @@ cmd_recover() {
 
 cmd_recover_cancel() {
   local since leader
-  leader=$(leaders)
+  leader=$(one_leader) || exit
   since=$(date -u '+%Y-%m-%d %H:%M:%S')
   node "$ENTRY_TAG" systemctl stop vpn2-emergency
   log 'агент entry снова остановлен, ждём отмены до 3 мин'
@@ -510,7 +519,7 @@ cmd_client() {
   local action=$1 leader uri
   case $action in
     up)
-      leader=$(leaders)
+      leader=$(one_leader) || exit
       uri=$(node "$leader" "python3 - $STATE $2" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1] + '/hy2/generation.json'))
@@ -551,7 +560,8 @@ PY
 
 cmd_indicator() {
   local leader text
-  leader=${PANEL_TAG:-$(leaders)}
+  leader=${PANEL_TAG:-}
+  [[ -n "$leader" ]] || leader=$(one_leader) || exit
   text=$(printf %q "${1:-}")
   node "$leader" "python3 - $STATE ${IP[$leader]} $text" <<'PY'
 import json, ssl, sys, time, urllib.request
@@ -559,6 +569,11 @@ base = f'https://{sys.argv[2]}'
 password = json.load(open(sys.argv[1] + '/web-auth.json'))['password']
 headers = {'Origin': base, 'Content-Type': 'application/json'}
 ctx = ssl.create_default_context()
+# У адреса без общего сертификата (LAN) панель отдаёт свой: доверяем ровно ему.
+try:
+    ctx.load_verify_locations(sys.argv[1] + '/web-tls/cert.pem')
+except FileNotFoundError:
+    pass
 req = urllib.request.Request(base + '/api/login', json.dumps({'password': password}).encode(), headers)
 with urllib.request.urlopen(req, context=ctx, timeout=10) as r:
     cookie = r.headers['Set-Cookie'].split(';', 1)[0]

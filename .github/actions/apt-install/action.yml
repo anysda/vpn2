@@ -1,0 +1,15 @@
+name: apt-install
+description: Пакеты apt на раннер из набора .deb в ghcr, без зеркал Ubuntu во время прогона
+inputs:
+  packages:
+    description: Пакеты через пробел; каждый должен быть в packages.txt
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        read -ra pkgs <<< "$PACKAGES"
+        "$GITHUB_ACTION_PATH/debs.sh" install "${pkgs[@]}"

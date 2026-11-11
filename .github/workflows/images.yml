@@ -170,6 +170,21 @@ jobs:
           name: digest-${{ matrix.name }}
           path: ${{ matrix.name }}.txt
 
+  # Набор .deb для шагов apt-install в checks и stand: под образ раннера этого
+  # задания и список packages.txt. Тег уже выложен - задание кончается за секунды.
+  ci-debs:
+    name: пакеты раннера для CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: .github/actions/apt-install/debs.sh publish
+
   manifest:
     name: манифест выпуска
     needs: build

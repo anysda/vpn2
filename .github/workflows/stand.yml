@@ -70,6 +70,14 @@ jobs:
           key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
           restore-keys: stand-apt-${{ matrix.os }}-
 
+      # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
+      # видит их на месте и свой apt-get не зовёт.
+      - name: qemu и прокси apt
+        timeout-minutes: 5
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
+
       # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
         run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
@@ -248,6 +256,14 @@ jobs:
           key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
           restore-keys: stand-apt-${{ matrix.os }}-
 
+      # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
+      # видит их на месте и свой apt-get не зовёт.
+      - name: qemu и прокси apt
+        timeout-minutes: 5
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
+
       # ВМ грузятся, пока собирается образ панели. STAND_OS sudo сам не передаёт.
       - name: up (фоном)
         run: sudo --preserve-env=STAND_OS infra/tools/ci-stand.sh up-bg
@@ -351,6 +367,14 @@ jobs:
           path: /var/tmp/vpn2-apt-cache
           key: stand-apt-26.04-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
           restore-keys: stand-apt-26.04-
+
+      # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
+      # видит их на месте и свой apt-get не зовёт.
+      - name: qemu и прокси apt
+        timeout-minutes: 5
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qemu-system-x86 qemu-utils cloud-image-utils apt-cacher-ng
 
       - name: up
         id: up

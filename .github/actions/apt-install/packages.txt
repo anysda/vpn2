@@ -1,0 +1,21 @@
+# Все пакеты apt, которые задания ставят на раннер. Из списка images.yml
+# собирает набор .deb под образ раннера; задание берёт из набора свои пакеты.
+# Пакет, которого здесь нет, apt-install не ставит.
+
+# checks.yml
+apache2-utils
+iproute2
+iptables
+libstrongswan-standard-plugins
+nftables
+openvpn
+qrencode
+strongswan-pki
+wireguard-tools
+zbar-tools
+
+# stand.yml: ВМ стенда и прокси apt
+apt-cacher-ng
+cloud-image-utils
+qemu-system-x86
+qemu-utils

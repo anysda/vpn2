@@ -81,10 +81,11 @@ jobs:
         run: lscpu | grep -E '^(Model name|CPU\(s\)|Thread\(s\) per core):'
       - name: зависимости инфраструктуры
         timeout-minutes: 5
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
-          python3 -m pip install PyYAML==6.0.3
+        uses: ./.github/actions/apt-install
+        with:
+          packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
+      - run: python3 -m pip install PyYAML==6.0.3
+        timeout-minutes: 5
       # Тесты панели качают Caddy при импорте в каждой части; releases/download
       # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.
       - name: Caddy для тестов панели
@@ -164,12 +165,15 @@ jobs:
           python-version: '3.15'
           cache: pip
           cache-dependency-path: telegram/requirements.txt
+      # zbarimg раскодирует PNG QR бота (test_qr_size.py).
+      - name: zbarimg
+        timeout-minutes: 5
+        uses: ./.github/actions/apt-install
+        with:
+          packages: zbar-tools
       - name: регрессии Telegram-бота
         timeout-minutes: 10
         run: |
-          # zbarimg раскодирует PNG QR бота (test_qr_size.py).
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends zbar-tools
           python3 -m pip install -r telegram/requirements.txt
           # Модули в параллельных процессах; сумма тестов частей сверяется с найденной
           python3 infra/tests/run_parallel.py --dir telegram/tests
@@ -456,9 +460,9 @@ jobs:
       - name: qrencode и zbarimg для размера QR
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 5
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends qrencode zbar-tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: qrencode zbar-tools
       - name: сборка панели
         if: steps.paths.outputs.run == 'true'
         timeout-minutes: 10
@@ -531,9 +535,9 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: openvpn и wireguard-tools для тестов apply
         timeout-minutes: 5
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends openvpn wireguard-tools
+        uses: ./.github/actions/apt-install
+        with:
+          packages: openvpn wireguard-tools
       - run: pip install ./infra/vpn2 pytest pytest-xdist
       - run: vpn2 version
       - name: pytest

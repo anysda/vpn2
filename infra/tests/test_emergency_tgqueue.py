@@ -130,7 +130,7 @@ class TelegramQueueTests(unittest.TestCase):
         (self.state / 'fixture.json').write_text(json.dumps(self.snapshot))
 
     def enqueue(self, client_id=1, **kwargs):
-        return tgqueue.enqueue_client(self.state, client_id=client_id,
+        return tgqueue.enqueue_clients(self.state, clients=[client_id],
                                       **(self.base | {'exit_url': 'https://203.0.113.1',
                                                      'profiles': self.profiles, 'now': NOW} | kwargs))
 
@@ -570,7 +570,7 @@ class TelegramQueueTests(unittest.TestCase):
         directory.mkdir()
         (directory / 'fixture.json').write_text((self.state / 'fixture.json').read_text())
         for client_id in range(1, count + 1):
-            tgqueue.enqueue_client(directory, client_id=client_id, **(self.base | {
+            tgqueue.enqueue_clients(directory, clients=[client_id], **(self.base | {
                 'exit_url': 'https://203.0.113.1', 'profiles': self.profiles_many, 'now': NOW}))
         output = subprocess.run([sys.executable, __file__, '--rss', str(directory), self.api, str(count)],
                                 capture_output=True, text=True, check=True).stdout.split()

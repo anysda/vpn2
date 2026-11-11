@@ -237,22 +237,6 @@ def _notification(event, deadline, admin=False):
     return ADMIN_RETURN_CANCELLED if admin else RETURN_CANCELLED
 
 
-def enqueue_client(state_dir, *, emergency_id, generation, client_id, bundle_version,
-                   exit_name, issued_at, exit_url=None, profiles=None, event='initial',
-                   deadline=None, now=None):
-    """Queue only the client's snapshot device IDs; profiles is hy2.start's map.
-
-    Normal profiles are sent as intact URI messages. Oversized URIs are UTF-8
-    documents, avoiding unusable split credentials. No password/admin payload
-    argument exists on the client path. Device names remain plain, unparsed text.
-    """
-    row = _client_row(_snapshot(state_dir), client_id, emergency_id=emergency_id,
-                      generation=generation, bundle_version=bundle_version, exit_name=exit_name,
-                      issued_at=issued_at, exit_url=exit_url, profiles=profiles, event=event,
-                      deadline=deadline, now=now)
-    return _put(state_dir, 'client', *row)
-
-
 def _client_row(snapshot, client_id, *, emergency_id, generation, bundle_version, exit_name,
                 issued_at, exit_url=None, profiles=None, event='initial', deadline=None, now=None):
     if event not in EVENTS:

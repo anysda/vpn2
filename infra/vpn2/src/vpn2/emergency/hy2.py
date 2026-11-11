@@ -1,14 +1,11 @@
-"""Generation-scoped emergency Hysteria2; no dependency on the agent event loop.
+"""Аварийный Hysteria2 одной выдачи: учётки, сертификат, самопроверка, сеансы.
 
-start/stop/selftest are called by the lifecycle. devices contains authorised
-snapshot devices with id/name (or allowed/expires_at for an additional check).
-Installation and event wiring are deliberately separate from this module.
+start/stop зовёт агент. Службу ведёт systemd, правила nftables ставят её
+ExecStartPre/ExecStopPost через `vpn2 emergency hy2 open|close`.
 """
 
 import argparse
 import contextlib
-from datetime import datetime, timezone
-import fcntl
 import hashlib
 import http.client
 import ipaddress
@@ -23,10 +20,10 @@ import socket
 import ssl
 import subprocess
 import tempfile
-import threading
 import time
 from urllib.parse import quote, urlencode
 
+from .. import fsutil
 
 STATE = Path('/var/lib/vpn2-emergency')
 OPTIONS = Path('/etc/vpn2/emergency-hy2.json')
@@ -34,17 +31,16 @@ UNIT = 'vpn2-emergency-hy2.service'
 PROBE_UNIT = 'vpn2-emergency-hy2-probe.service'
 MOUNT = Path('/run/vpn2-emergency-hy2')
 LOG = logging.getLogger(__name__)
-# Sessions: the instance's own Clash API on loopback TCP (same number as the
-# QUIC port) lists live streams; every device has its own route rule, so the
-# rule name carries the Hysteria2 user. Polled from the agent process.
-SESSIONS_EVERY = 12
+# Сеансы: Clash API самого экземпляра на loopback (номер порта тот же) отдаёт
+# живые потоки; у каждого устройства своё правило маршрута, в его имени - учётка.
 SESSIONS_STALE = 40
 DEVICE_USER = re.compile(r'g(\d+)-d(\d+)')
 SESSION_RULE = re.compile(rb'"rule":"auth_user=g(\d+)-d(\d+) ')
+INACTIVE = {'generation': -1, 'active': False}
 
 
 def command(args, **kwargs):
-    """Never include command output or arguments (possibly credentials) in errors."""
+    """В ошибку не попадают ни вывод, ни аргументы: там могут быть учётки."""
     try:
         return subprocess.run(args, check=True, capture_output=True, timeout=30, **kwargs)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -55,18 +51,17 @@ def atomic(path, data):
     fsutil.atomic(path, data if isinstance(data, bytes) else json.dumps(data), 0o640)
 
 
-@contextlib.contextmanager
-def locked(state_dir):
+def home(state_dir):
     directory = Path(state_dir) / 'hy2'
     directory.mkdir(mode=0o750, parents=True, exist_ok=True)
-    with (directory / 'lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        yield directory
+    return directory
 
 
 def read_state(directory):
-    path = directory / 'generation.json'
-    return json.loads(path.read_text()) if path.exists() else {'generation': -1, 'active': False}
+    try:
+        return json.loads((Path(directory) / 'generation.json').read_text())
+    except (OSError, ValueError):
+        return dict(INACTIVE)
 
 
 def settings(options=None):
@@ -112,53 +107,34 @@ def read_pair(source):
         return None
 
 
-def stage(pair, directory, server_ip):
-    """Check one copy of the common pair and keep it staged next to the live one.
-
-    The renewal publishes both files with one symlink switch; separate reads of
-    the source may straddle it, so the copy checked is the copy installed.
-    """
-    cert, key = directory / 'incoming-fullchain.pem', directory / 'incoming-privkey.pem'
-    atomic(key, pair[1])
-    atomic(cert, pair[0])
-    problem = trusted_problem(cert, key, server_ip)
-    if problem:
-        cert.unlink()
-        key.unlink()
+def adopt(directory, options, pair):
+    """Поставить общую пару; проверяется та же копия, что встанет на место."""
+    incoming = directory / 'incoming-fullchain.pem', directory / 'incoming-privkey.pem'
+    atomic(incoming[1], pair[1])
+    atomic(incoming[0], pair[0])
+    problem = trusted_problem(*incoming, options['server_ip'])
+    if not problem:
+        # sing-box следит за обоими путями и перечитывает пару после второго переименования.
+        os.replace(incoming[1], directory / 'privkey.pem')
+        os.replace(incoming[0], directory / 'fullchain.pem')
     return problem
 
 
-def install(directory):
-    # sing-box watches both paths and reloads the pair after each rename: the
-    # first rename logs one key mismatch error, the second loads the new pair.
-    for name in ('privkey.pem', 'fullchain.pem'):
-        os.replace(directory / f'incoming-{name}', directory / name)
-    handle = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(handle)
-    finally:
-        os.close(handle)
-
-
 def certificate(directory, options):
-    source = Path(options['tls_dir'])
-    pair = read_pair(source)
-    problem = stage(pair, directory, options['server_ip']) if pair else f'no certificate at {source}'
-    if problem:
-        LOG.warning('Emergency TLS: %s; self-signed certificate, pinSHA256 in profiles', problem)
-        cert, key = directory / 'fullchain.pem', directory / 'privkey.pem'
-        # Reuse only a current fallback during the same issuance. A new generation
-        # may replace it; previously distributed pins must never silently change.
-        command(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt',
-                 'ec_paramgen_curve:P-256', '-nodes', '-days', '3650',
-                 '-subj', '/CN=emergency', '-addext', f"subjectAltName=IP:{options['server_ip']}",
-                 '-keyout', str(key), '-out', str(cert)])
-        key.chmod(0o640)
-        cert.chmod(0o640)
-        fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
-        return fingerprint
-    install(directory)
-    return None
+    """Общий сертификат на IP узла, иначе самоподписанный; возвращает pin или None."""
+    pair = read_pair(Path(options['tls_dir']))
+    problem = adopt(directory, options, pair) if pair else f"no certificate at {options['tls_dir']}"
+    if not problem:
+        return None
+    cert, key = directory / 'fullchain.pem', directory / 'privkey.pem'
+    LOG.warning('Emergency TLS: %s; self-signed certificate, pinSHA256 in profiles', problem)
+    command(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+             '-nodes', '-days', '3650', '-subj', '/CN=emergency',
+             '-addext', f"subjectAltName=IP:{options['server_ip']}",
+             '-keyout', str(key), '-out', str(cert)])
+    key.chmod(0o640)
+    cert.chmod(0o640)
+    return hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
 
 
 def profile(options, password, name, pin):
@@ -202,29 +178,20 @@ def server_config(options, users, api_secret=None):
 
 class SystemRuntime:
     def service(self, action):
-        # The agent runs with NoNewPrivileges, so no sudo: a polkit rule from
-        # the emergency role lets only its user start/stop/restart this one unit.
+        # Агент работает с NoNewPrivileges, sudo нет: правило polkit роли
+        # разрешает его пользователю start/stop/restart только этой службы.
         command(['/usr/bin/systemctl', action, UNIT])
 
     def probe(self, state_dir):
         if os.geteuid() == 0:
             return probe(state_dir)
-        # sing-box needs AF_NETLINK, which the agent sandbox does not grant;
-        # the oneshot unit runs probe() and start returns its exit status.
+        # sing-box нужен AF_NETLINK, которого в песочнице агента нет:
+        # probe() выполняет oneshot-служба, её код возврата и есть ответ.
         try:
             command(['/usr/bin/systemctl', 'start', PROBE_UNIT])
         except RuntimeError:
             return False
         return True
-
-    def restart(self):
-        self.service('restart')
-
-    def ensure_started(self):
-        self.service('start')
-
-    def stop(self):
-        self.service('stop')
 
 
 def materials(directory, state):
@@ -239,141 +206,73 @@ def materials(directory, state):
     return result
 
 
-def authorised(devices):
-    result = []
-    now = datetime.now(timezone.utc)
-    for device in devices:
-        if device.get('allowed', True) is not True:
-            continue
-        expiry = device.get('expires_at')
-        if expiry and datetime.fromisoformat(expiry.replace('Z', '+00:00')) <= now:
-            continue
-        if type(device['id']) is not int or device['id'] < 1 or not isinstance(device['name'], str):
-            raise ValueError('emergency hy2: invalid device')
-        result.append({'id': device['id'], 'name': device['name']})
-    if len({item['id'] for item in result}) != len(result):
-        raise ValueError('emergency hy2: duplicate device id')
-    return sorted(result, key=lambda device: device['id'])
-
-
 def start(state_dir, generation, devices, *, options=None, runtime=None):
+    """Поднять выдачу; повтор той же выдачи (рестарт агента) учётки не меняет."""
     options = settings(options)
     runtime = runtime or SystemRuntime()
-    devices = authorised(devices)
-    if type(generation) is not int or generation < 0:
-        raise ValueError('emergency hy2: invalid generation')
-    with locked(state_dir) as directory:
-        state = read_state(directory)
-        if revoked_state(state, generation):
-            raise ValueError('emergency hy2: generation revoked')
-        # An issuance that never passed its self-test handed nothing out: the
-        # retry mints fresh credentials under the same number.
-        same = generation == state['generation'] and state['active']
-        if same:
-            previous = [{'id': item['id'], 'name': item['name']} for item in state['devices']]
-            if previous != devices or state['options'] != options:
-                raise ValueError('emergency hy2: changed issuance requires a new generation')
-            validate(directory)
-        else:
-            # Durable tombstone BEFORE stopping or replacing anything: a crash
-            # cannot turn old credentials into an active issuance on restart.
-            atomic(directory / 'generation.json', {'generation': generation, 'active': False})
-            runtime.stop()
-            for path in directory.glob('device-*.txt'):
-                path.unlink()
-            pin = certificate(directory, options)
-            users, issued = [], []
-            for device in devices:
-                password = secrets.token_urlsafe(32)
-                users.append({'name': f"g{generation}-d{device['id']}", 'password': password})
-                issued.append({**device, 'uri': profile(options, password, device['name'], pin)})
-            # Readiness uses its own credential, never returned to a user.
-            probe_password = secrets.token_urlsafe(32)
-            users.append({'name': f'g{generation}-readiness', 'password': probe_password})
-            api_secret = secrets.token_urlsafe(32)
-            config = server_config(options, users, api_secret)
-            atomic(directory / 'server.json', config)
-            state = {'generation': generation, 'active': True, 'devices': issued,
-                     'options': options, 'probe_password': probe_password, 'pin': pin,
-                     'api_secret': api_secret,
-                     'config_sha256': hashlib.sha256((directory / 'server.json').read_bytes()).hexdigest()}
-            atomic(directory / 'generation.json', state)
-        try:
-            if same:
-                runtime.ensure_started()
-            else:
-                runtime.restart()
-            if not selftest(state_dir, runtime=runtime):
-                raise RuntimeError('emergency hy2: real connection self-test failed')
-            return materials(directory, state)
-        except BaseException:
-            # Credentials of a resumed generation are already with the clients:
-            # those are revoked. Fresh ones were never returned, so the number
-            # may be retried without a new generation and a new broadcast.
-            atomic(directory / 'generation.json',
-                   {'generation': generation, 'active': False, **({} if same else {'unissued': True})})
-            runtime.stop()
-            raise
-
-
-def revoked_state(state, generation):
-    return generation < state['generation'] or (
-        generation == state['generation'] and not state['active'] and not state.get('unissued'))
-
-
-def revoked(state_dir, generation):
-    """True when this generation can never be started again: a new one is needed."""
-    return revoked_state(read_state(Path(state_dir) / 'hy2'), generation)
+    directory = home(state_dir)
+    state = read_state(directory)
+    resumed = state['active'] and state['generation'] == generation
+    if not resumed:
+        devices = sorted(({'id': d['id'], 'name': d['name']} for d in devices), key=lambda d: d['id'])
+        if type(generation) is not int or generation < 0 or len({d['id'] for d in devices}) != len(devices):
+            raise ValueError('emergency hy2: invalid issuance')
+        stop(state_dir, runtime=runtime)
+        pin = certificate(directory, options)
+        users, issued = [], []
+        for device in devices:
+            password = secrets.token_urlsafe(32)
+            users.append({'name': f"g{generation}-d{device['id']}", 'password': password})
+            issued.append({**device, 'uri': profile(options, password, device['name'], pin)})
+        # У самопроверки своя учётка, пользователю она не выдаётся.
+        probe_password, api_secret = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
+        users.append({'name': f'g{generation}-readiness', 'password': probe_password})
+        atomic(directory / 'server.json', server_config(options, users, api_secret))
+        state = {'generation': generation, 'active': True, 'devices': issued, 'options': options,
+                 'probe_password': probe_password, 'pin': pin, 'api_secret': api_secret}
+        atomic(directory / 'generation.json', state)
+    try:
+        runtime.service('start' if resumed else 'restart')
+        if not runtime.probe(state_dir):
+            raise RuntimeError('emergency hy2: real connection self-test failed')
+        return materials(directory, state)
+    except BaseException:
+        stop(state_dir, runtime=runtime)
+        raise
 
 
 def stop(state_dir, *, runtime=None):
-    with locked(state_dir) as directory:
-        state = read_state(directory)
-        atomic(directory / 'generation.json', {'generation': state['generation'], 'active': False})
-        (runtime or SystemRuntime()).stop()
-        # Keep the tombstone even if file cleanup is interrupted.
-        for path in directory.glob('device-*.txt'):
-            path.unlink()
-        (directory / 'server.json').unlink(missing_ok=True)
+    directory = home(state_dir)
+    atomic(directory / 'generation.json', {'generation': read_state(directory)['generation'], 'active': False})
+    (runtime or SystemRuntime()).service('stop')
+    for path in [*directory.glob('device-*.txt'), directory / 'server.json', directory / 'sessions.json']:
+        path.unlink(missing_ok=True)
 
 
-def validate(directory):
+def active_state(directory):
     state = read_state(directory)
     if not state['active']:
         raise ValueError('emergency hy2: inactive generation')
-    digest = hashlib.sha256((directory / 'server.json').read_bytes()).hexdigest()
-    if digest != state['config_sha256']:
-        raise ValueError('emergency hy2: configuration does not match generation')
     return state
 
 
-# The last common pair refused per state directory: warned about once.
-SKIPPED = {}
-
-
 def refresh_tls(state_dir):
-    """Renewal hook: copy the common IP certificate without changing credentials.
+    """Обновлённый общий сертификат доходит до идущей выдачи; учётки не меняются.
 
-    Cheap enough for every agent tick: nothing happens unless the common
-    certificate changed. A pinned fallback is immutable for its generation;
-    changing its leaf would invalidate distributed profiles.
+    Самоподписанный запасной сертификат на всю выдачу один: смена листа
+    сломала бы розданные профили с pinSHA256.
     """
-    with locked(state_dir) as directory:
-        state = read_state(directory)
-        if not state['active'] or state['pin']:
-            return False
-        options = state['options']
-        pair = read_pair(Path(options['tls_dir']))
-        if pair is None or pair == read_pair(directory) or pair == SKIPPED.get(directory):
-            return False
-        problem = stage(pair, directory, options['server_ip'])
-        if problem:
-            SKIPPED[directory] = pair
-            LOG.warning('Emergency TLS renewal skipped: %s', problem)
-            return False
-        install(directory)
-        LOG.info('Emergency TLS certificate renewed for Hysteria2')
-        return True
+    directory = home(state_dir)
+    state = read_state(directory)
+    if not state['active'] or state['pin']:
+        return False
+    pair = read_pair(Path(state['options']['tls_dir']))
+    if pair is None or pair == read_pair(directory):
+        return False
+    if adopt(directory, state['options'], pair):
+        return False
+    LOG.info('Emergency TLS certificate renewed for Hysteria2')
+    return True
 
 
 def listening(port):
@@ -387,15 +286,11 @@ def listening(port):
     return False
 
 
-def selftest(state_dir, *, runtime=None):
-    return (runtime or SystemRuntime()).probe(state_dir)
-
-
 def probe(state_dir):
     """Authenticate via QUIC and fetch a public URL through the actual instance."""
     directory = Path(state_dir) / 'hy2'
     try:
-        state = validate(directory)
+        state = active_state(directory)
         options = state['options']
         deadline = time.monotonic() + 15
         # A QUIC handshake sent before the server binds backs off for seconds.
@@ -465,11 +360,7 @@ def firewall_rules(uid, port, active):
 
 
 def live_devices(state, *, timeout=3):
-    """Device ids of the state's generation with a live stream right now.
-
-    The answer is scanned in chunks: memory stays bounded with any number of
-    connections. Raises OSError/HTTPException/RuntimeError when unknown.
-    """
+    """Устройства выдачи с живым потоком прямо сейчас; ответ читается кусками."""
     connection = http.client.HTTPConnection('127.0.0.1', state['options']['port'], timeout=timeout)
     try:
         connection.request('GET', '/connections',
@@ -477,10 +368,8 @@ def live_devices(state, *, timeout=3):
         response = connection.getresponse()
         if response.status != 200:
             raise RuntimeError(f'emergency hy2: session API answered {response.status}')
-        found, tail, deadline = set(), b'', time.monotonic() + timeout
+        found, tail = set(), b''
         while chunk := response.read(65536):
-            if time.monotonic() > deadline:
-                raise RuntimeError('emergency hy2: session API too slow')
             data = tail + chunk
             found.update(int(match[2]) for match in SESSION_RULE.finditer(data)
                          if int(match[1]) == state['generation'])
@@ -491,14 +380,10 @@ def live_devices(state, *, timeout=3):
 
 
 def poll_sessions(state_dir, *, fetch=live_devices, clock=time.time):
-    """One observation of the current generation into hy2/sessions.json.
-
-    Kept: devices live now and, per issuance, the flag "had a session". No
-    history; a new generation starts from an empty flag set.
-    """
+    """Одно наблюдение текущей выдачи в hy2/sessions.json: кто на связи и кто был."""
     directory = Path(state_dir) / 'hy2'
     state = read_state(directory)
-    if not state['active'] or 'api_secret' not in state:
+    if not state['active']:
         return None
     path = directory / 'sessions.json'
     try:
@@ -518,11 +403,7 @@ def poll_sessions(state_dir, *, fetch=live_devices, clock=time.time):
 
 
 def connections(state_dir, generation, *, clock=time.time):
-    """{device_id: connected|seen|never} of an issuance; {} = status unknown.
-
-    Unknown: another or inactive generation, source unreachable, or the
-    observation is older than SESSIONS_STALE (poller not running).
-    """
+    """{device_id: connected|seen|never} выдачи; {} - состояние неизвестно."""
     directory = Path(state_dir) / 'hy2'
     try:
         state = read_state(directory)
@@ -536,49 +417,6 @@ def connections(state_dir, generation, *, clock=time.time):
     live, seen = set(record['live']), set(record['seen'])
     return {device['id']: 'connected' if device['id'] in live else
             'seen' if device['id'] in seen else 'never' for device in state['devices']}
-
-
-class SessionWatch(threading.Thread):
-    """Daemon poller inside the agent process; no separate service."""
-
-    def __init__(self, state_dir, every=SESSIONS_EVERY, fetch=live_devices):
-        super().__init__(name='hy2-sessions', daemon=True)
-        self.state_dir, self.every, self.fetch = state_dir, every, fetch
-        self.stopped = threading.Event()
-
-    def run(self):
-        while True:
-            try:
-                poll_sessions(self.state_dir, fetch=self.fetch)
-            except Exception:  # noqa: BLE001 - the poller must outlive any bad tick
-                LOG.warning('Emergency session poll failed', exc_info=True)
-            if self.stopped.wait(self.every):
-                return
-
-    def stop(self):
-        """Stop and wait for the last pass, so nothing writes into the state directory afterwards.
-
-        No time limit: a pass is bounded by the API timeout, and a slow disk
-        must not let a write land after the caller has moved on.
-        """
-        self.stopped.set()
-        if self.is_alive() and self is not threading.current_thread():
-            self.join()
-
-
-_watches, _watches_lock = {}, threading.Lock()
-
-
-def watch(state_dir, **kwargs):
-    """Start (once per state directory) the session poller; idempotent."""
-    key = str(Path(state_dir).resolve())
-    with _watches_lock:
-        current = _watches.get(key)
-        # A stopped poller may still be finishing its last pass: never reuse it.
-        if current is None or not current.is_alive() or current.stopped.is_set():
-            current = _watches[key] = SessionWatch(state_dir, **kwargs)
-            current.start()
-        return current
 
 
 def firewall(active):
@@ -615,11 +453,9 @@ def main(argv=None):
     if args.action == 'probe':
         raise SystemExit(0 if probe(STATE) else 1)
     if args.action == 'open':
-        validate(STATE / 'hy2')
+        active_state(STATE / 'hy2')
     firewall(args.action == 'open')
 
 
 if __name__ == '__main__':
     main()
-
-from .. import fsutil

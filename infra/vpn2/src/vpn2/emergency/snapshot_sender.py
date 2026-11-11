@@ -1,16 +1,14 @@
-"""Entry snapshot publisher: read-only panel data, delivery over management SSH.
+"""Рассылка снимка клиентов с entry: данные панели только на чтение, доставка по служебному ssh.
 
-Runs on the entry as a separate system service. The panel never gets root:
-panel data is read by a child process running as the panel user, while this
-process only uses the entry's existing management SSH key with the pinned
-exit host keys. Logs contain fixed status counts only.
+Отдельная служба entry. Панель root не получает: её данные читает дочерний
+процесс под пользователем панели, а эта служба лишь кладёт готовый файл на
+каждый экзит ключом entry. В журнале - только счётчики исходов.
 
-Access is taken from the panel access model: a client is allowed only when
-its desired state is enabled (not deleting, not frozen, not expired) and the
-current access operation (version == clients.access_version) enables it and
-is confirmed by the VPN services. A confirmed operation that the panel only
-rechecks (pending again, same version) stays allowed; a new edit, anything
-unknown or never confirmed denies.
+Клиент допущен, когда желаемое состояние включено (не удаляется, не заморожен,
+срок не истёк), а текущая операция доступа (version == clients.access_version)
+его включает и подтверждена службами VPN. Подтверждённая операция на перепроверке
+(снова pending, версия та же) остаётся допуском; новая правка, неизвестное или
+неподтверждённое - отказ.
 """
 
 import argparse
@@ -23,22 +21,16 @@ import subprocess
 import sys
 import time
 
+from .. import fsutil
 from . import snapshot
-
 
 RECONCILE_SECONDS = 60
 POLL_SECONDS = 5
 SSH_TIMEOUT = 30
-KEEP_PRODUCED = 16
-# setpriv, not runuser: no PAM session lines in the journal on every call.
-# Экзит, не обновлённый этим деплоем с прошлого выпуска, держит приёмник
-# под прежним именем в /opt/vpn2-emergency; venv с пакетом у него может не быть.
-REMOTE = ('run="/opt/vpn2/venv/bin/vpn2 emergency snapshot"; '
-          '[ ! -d /opt/vpn2-emergency/vpn2_emergency ] || '
-          '{ cd /opt/vpn2-emergency && run="/usr/bin/python3 -B -m vpn2_emergency.snapshot"; }; '
-          'exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency '
-          '--init-groups -- $run receive '
-          '--config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency')
+# setpriv, а не runuser: без строк сеанса PAM в журнале на каждый вызов.
+REMOTE = ("exec setpriv --reuid=vpn2-emergency --regid=vpn2-emergency --init-groups -- sh -c '"
+          'umask 077; f=/var/lib/vpn2-emergency/snapshot.json; cat > "$f.new" && '
+          '[ "$(stat -c %s "$f.new")" = {size} ] && mv "$f.new" "$f"\'')
 
 
 def _chat_id(value):
@@ -124,168 +116,74 @@ def collect_as(user, database, telegram_file, now):
 
 
 def exits_from(agent_config):
-    """Membership exactly as the agent sees it; priority keeps deploy order."""
+    """Состав как у агента; приоритет - порядок из конфига."""
     entry = agent_config.get('entry_id', 'entry')
-    return [{'id': tag, 'name': tag, 'ip': item['host'], 'priority': index}
-            for index, (tag, item) in enumerate(
-                (tag, item) for tag, item in agent_config['nodes'].items() if tag != entry)]
+    tags = [tag for tag in agent_config['nodes'] if tag != entry]
+    return [{'id': tag, 'name': tag, 'ip': agent_config['nodes'][tag]['host'], 'priority': index}
+            for index, tag in enumerate(tags)]
 
 
-def ssh_deliver(ssh, exit_id, request):
-    """Existing management session: entry key, pinned host key, request on stdin."""
+def push(ssh, exit_id, raw):
+    """Файл целиком по служебному ssh; обрезанная передача на место не встаёт."""
+    remote = REMOTE.format(size=len(raw))
     command = [*ssh, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
-               '-o', 'UpdateHostKeys=no', '-o', 'ConnectTimeout=10', exit_id, REMOTE]
+               '-o', 'UpdateHostKeys=no', '-o', 'ConnectTimeout=10', exit_id, remote]
     try:
-        result = subprocess.run(command, input=snapshot.encode(request), capture_output=True,
-                                timeout=SSH_TIMEOUT, check=False)
-        response = json.loads(result.stdout[:65536].decode().strip().splitlines()[-1])
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError, UnicodeDecodeError):
-        return {'status': 'unavailable'}
-    if not isinstance(response, dict) or response.get('status') not in snapshot.STATUSES:
-        return {'status': 'unavailable'}
-    return response
+        return subprocess.run(command, input=raw, capture_output=True, timeout=SSH_TIMEOUT,
+                              check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
-def _content(value):
-    return {k: v for k, v in value.items() if k not in ('version', 'created_at')}
-
-
-def _new_state(installation_id):
-    return {'installation_id': installation_id, 'snapshot': None, 'produced': [], 'floor': 0,
-            'acks': {}, 'confirmed': {}, 'access': {}, 'holds': {}, 'blocked': {}, 'granted': {}}
-
-
-def _keep_granted(state, clients):
-    """The panel periodically rechecks a confirmed operation and marks it
-    pending while the VPN services do not answer; the version stays the same.
-    Access confirmed for that version stays granted until a new edit."""
-    granted = state.setdefault('granted', {})
+def _keep_granted(granted, clients):
+    """Панель перепроверяет подтверждённую операцию и на это время помечает её
+    pending с той же версией: доступ, подтверждённый для версии, держится до новой правки."""
     for client in clients:
-        key, version = str(client['id']), client['access_version']
+        key, version = str(client['id']), client.pop('access_version')
+        recheck = client.pop('recheck', False)
         if client['allowed']:
             granted[key] = version
-        elif client.pop('recheck', False) and granted.get(key) == version:
+        elif recheck and granted.get(key) == version:
             client['allowed'] = True
         else:
             granted.pop(key, None)
-        client.pop('recheck', None)
-    present = {str(client['id']) for client in clients}
-    for key in set(granted) - present:
+    for key in set(granted) - {str(client['id']) for client in clients}:
         del granted[key]
 
 
-def _track_access(state, clients):
-    """A lower access version than seen means a restored panel database."""
-    for client in clients:
-        key, version = str(client['id']), client['access_version']
-        held = state['holds'].get(key)
-        if held is not None and version != held:
-            del state['holds'][key]
-        seen = state['access'].get(key)
-        if seen is not None and version < seen:
-            state['holds'][key] = version
-            state['access'][key] = version
-        else:
-            state['access'][key] = max(version, seen if seen is not None else version)
-    present = {str(client['id']) for client in clients}
-    for key in set(state['holds']) - present:
-        del state['holds'][key]
-
-
-def _hold_widening(state, clients, exit_allowed):
-    """Grants the exit does not have stay denied until the next panel edit."""
-    allowed = set(exit_allowed)
-    for client in clients:
-        if client['allowed'] and client['id'] not in allowed:
-            state['holds'][str(client['id'])] = client['access_version']
-
-
-def _image(state, data, exits, installation_id, now):
-    clients = [{k: v for k, v in client.items() if k != 'access_version'}
-               | {'allowed': client['allowed'] and str(client['id']) not in state['holds']}
-               for client in data['clients']]
-    content = {'schema': 1, 'installation_id': installation_id, 'exits': exits,
-               'admin_chat_id': data['admin_chat_id'], 'bot_token': data['bot_token'],
-               'clients': clients}
-    previous = state['snapshot']
-    if (previous is not None and _content(previous) == content
-            and previous['version'] > state['floor']):
-        return False
-    version = max(previous['version'] if previous else 0, state['floor']) + 1
-    state['snapshot'] = snapshot.validate(content | {'version': version,
-                                                     'created_at': snapshot.iso_time(now)})
-    state['produced'] = (state['produced'] + [snapshot.digest(state['snapshot'])])[-KEEP_PRODUCED:]
-    return True
-
-
 def run_once(config, deliver, collector, now=None):
-    """One pass: new version only on change, confirmation every minute per exit."""
+    """Один проход: новая версия только при изменении, файл каждому экзиту раз в минуту."""
     now = time.time() if now is None else now
-    state_dir = config['state_dir']
-    installation_id = config['agent']['installation_id']
-    exits = exits_from(config['agent'])
-    with snapshot.locked(state_dir, 'sender.lock'):
-        path = Path(state_dir) / 'sender.json'
-        try:
-            state = snapshot.read_private(path)
-        except FileNotFoundError:
-            state = None
-        if state is None or state.get('installation_id') != installation_id:
-            state = _new_state(installation_id)
-        data = collector(now)
-        if not isinstance(state['blocked'], dict):
-            # Older state blocked such exits for good.
-            state['blocked'] = {}
-        reconcile = config.get('reconcile_seconds', RECONCILE_SECONDS)
-        _keep_granted(state, data['clients'])
-        _track_access(state, data['clients'])
-        results = {}
-        for _round in range(3):
-            if _image(state, data, exits, installation_id, now):
-                # Persist before the first send: a retry after a crash is identical.
-                snapshot.atomic_write(path, state)
-            current = state['snapshot']
-            current_digest = snapshot.digest(current)
-            again = False
-            for node in exits:
-                exit_id = node['id']
-                # An exit still configured for another installation is asked
-                # again later: stage 23 replaces its identity in parallel.
-                if now - state['blocked'].get(exit_id, now - reconcile) < reconcile:
-                    results[exit_id] = 'wrong-installation'
-                    continue
-                if state['acks'].get(exit_id) == current_digest:
-                    if now - state['confirmed'].get(exit_id, 0) < reconcile:
-                        results[exit_id] = 'unchanged'
-                        continue
-                    request = {'op': 'confirm', 'version': current['version'],
-                               'digest': current_digest}
-                else:
-                    request = {'op': 'put', 'snapshot': current,
-                               'expected_digest': state['acks'].get(exit_id)}
-                response = deliver(exit_id, request)
-                status = response.get('status')
-                results[exit_id] = status
-                state['blocked'].pop(exit_id, None)
-                if status in ('accepted', 'unchanged'):
-                    state['acks'][exit_id] = current_digest
-                    state['confirmed'][exit_id] = now
-                elif status in ('stale', 'conflict'):
-                    seen = response.get('digest')
-                    version = response.get('version')
-                    if seen is not None and seen not in state['produced']:
-                        # Unknown newer data on the exit, e.g. a restored entry.
-                        _hold_widening(state, data['clients'], response.get('allowed') or [])
-                    if type(version) is int:
-                        state['floor'] = max(state['floor'], version)
-                    state['acks'][exit_id] = seen
-                    again = True
-                elif status == 'wrong-installation':
-                    state['blocked'][exit_id] = now
-                snapshot.atomic_write(path, state)
-            if not again:
-                break
-        return results
+    path = Path(config['state_dir']) / 'sender.json'
+    installation = config['agent']['installation_id']
+    try:
+        state = json.loads(path.read_text())
+    except (OSError, ValueError):
+        state = {}
+    if state.get('installation_id') != installation:
+        state = {'installation_id': installation, 'image': None, 'granted': {}, 'sent': {}}
+    data = collector(now)
+    _keep_granted(state['granted'], data['clients'])
+    content = {'schema': 1, 'installation_id': installation, 'exits': exits_from(config['agent']),
+               'admin_chat_id': data['admin_chat_id'], 'bot_token': data['bot_token'],
+               'clients': data['clients']}
+    image = state['image']
+    if image is None or {k: v for k, v in image.items() if k not in ('version', 'created_at')} != content:
+        image = snapshot.validate(content | {'version': (image['version'] if image else 0) + 1,
+                                             'created_at': snapshot.iso_time(now)})
+        state['image'], state['sent'] = image, {}
+    raw, results = snapshot.encode(image), {}
+    for node in content['exits']:
+        exit_id = node['id']
+        if now - state['sent'].get(exit_id, 0) < RECONCILE_SECONDS:
+            results[exit_id] = 'unchanged'
+        elif deliver(exit_id, raw):
+            state['sent'][exit_id], results[exit_id] = now, 'accepted'
+        else:
+            results[exit_id] = 'unavailable'
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fsutil.atomic(path, snapshot.encode(state))
+    return results
 
 
 def main(argv=None):
@@ -314,22 +212,21 @@ def main(argv=None):
         try:
             config = {'state_dir': args.state_dir,
                       'agent': json.loads(Path(args.agent_config).read_text())}
-            results = run_once(
-                config, lambda exit_id, request: ssh_deliver(ssh, exit_id, request),
-                lambda now: collect_as(args.panel_user or None, args.database,
-                                       args.telegram_file, now))
-            # Fixed vocabulary only: no tokens, names or exception text.
+            results = run_once(config, lambda exit_id, raw: push(ssh, exit_id, raw),
+                               lambda now: collect_as(args.panel_user or None, args.database,
+                                                      args.telegram_file, now))
+            # Только счётчики исходов: ни токенов, ни имён, ни текста ошибок.
             values = list(results.values())
             line = json.dumps({status: values.count(status) for status in sorted(set(values))})
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
             results, line = {'source': 'unavailable'}, 'snapshot source unavailable'
-        # A quiet journal: deliveries and changes of state only, not every poll.
         if line != last or 'accepted' in results.values():
             print(line, flush=True)
             last = line
         if args.once:
             return 0 if all(v in ('accepted', 'unchanged') for v in results.values()) else 1
         time.sleep(POLL_SECONDS)
+
 
 if __name__ == '__main__':
     raise SystemExit(main())

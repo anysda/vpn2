@@ -7,8 +7,8 @@ import { dbOps, dbResults, fakeEvent, installStubs } from '../test/stubs'
 import { control, controlApply } from './control'
 import { recordEvent } from './events'
 import { loadServerKeys, syncWireguardConfig } from './wireguard'
-import { caReady, ensureDeviceOvpn, killOvpnClient, revokeAccessCert } from './openvpn'
-import { ikev2Mode, syncIkev2 } from './ikev2'
+import { buildOvpnConfig, caReady, ensureDeviceOvpn, killOvpnClient, revokeAccessCert } from './openvpn'
+import { buildIkev2ClientInfo, ikev2Mode, ikev2ServerReady, readIkev2CaPem, syncIkev2 } from './ikev2'
 import { reportControlExpiry, syncControlExpiry } from './expiry'
 import { toggleExit } from './exit-control'
 import { syncRoutesFile } from './routes-sync'
@@ -20,7 +20,8 @@ import routeCheck from '../api/routes/check.get'
 vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
 
 // Примеры запросов и ответов control - общие со службой: те же запросы
-// infra/tests/test_control.py пропускает через проверку contract.py.
+// infra/vpn2/tests/test_control.py пропускает через проверку contract.py, а ответы
+// настоящего исполнителя сверяет с записанными infra/vpn2/tests/test_control_replies.py.
 // Поле version в *.apply дописывает controlApply, вызывающий код его не шлёт.
 interface Example { method: string, params: Record<string, unknown>, result: unknown }
 const serverDir = fileURLToPath(new URL('..', import.meta.url))
@@ -38,6 +39,55 @@ vi.mock('./access-lock', () => ({ withAccessLock: (action: () => Promise<void>) 
 vi.mock('./events', async importOriginal => ({ ...(await importOriginal<object>()), recordEvent: vi.fn(async () => true) }))
 
 const sent: Example[] = []
+const label = (e: Example) => e.method === 'settings.apply' || e.method.endsWith('.read')
+  ? `${e.method}:${e.params.resource ?? e.params.protocol}`
+  : e.method
+
+// Учёт чтения: записанный ответ уходит панели в обёртке, которая помнит каждое прочитанное поле
+// (путь от корня ответа, элементы списков свёрнуты в []) и каждое поле, которого в ответе нет.
+// Поле, переименованное или добавленное в примере, панель не прочтёт - последний блок файла это ловит.
+const read = new Map<string, Set<string>>()
+const absent = new Set<string>()
+const ownData = (target: object, key: string | symbol): key is string =>
+  typeof key === 'string' && (Array.isArray(target) ? /^\d+$/.test(key) : Object.hasOwn(target, key))
+function tracked<T>(value: T, name: string, path: string): T {
+  if (value === null || typeof value !== 'object') return value
+  const seen = read.get(name) ?? read.set(name, new Set()).get(name)!
+  const at = (target: object, key: string) => Array.isArray(target) ? `${path}[]` : path ? `${path}.${key}` : key
+  const leaf = (target: object, key: string) => {
+    if (typeof Reflect.get(target, key) !== 'object') seen.add(at(target, key))
+  }
+  return new Proxy(value, {
+    get(target, key, receiver) {
+      const item: unknown = Reflect.get(target, key, receiver)
+      if (ownData(target, key)) {
+        leaf(target, key)
+        return tracked(item, name, at(target, key))
+      }
+      // then спрашивает await, toJSON - JSON.stringify: это не поля ответа.
+      if (typeof key === 'string' && !(key in target) && key !== 'then' && key !== 'toJSON') absent.add(`${name}: ${at(target, key)}`)
+      return item
+    },
+    has(target, key) {
+      if (ownData(target, key)) leaf(target, key)
+      else if (typeof key === 'string' && !(key in target)) absent.add(`${name}: ${at(target, key)}`)
+      return Reflect.has(target, key)
+    },
+    // Перечисление имён (Object.keys, entries, in-циклы) читает имена полей: для словарей
+    // «ключ - значение» имя и есть данные.
+    ownKeys(target) {
+      for (const key of Object.keys(target)) leaf(target, key)
+      return Reflect.ownKeys(target)
+    },
+  })
+}
+/** Все поля записанного ответа теми же путями, что в учёте чтения, и тип каждого. */
+function leaves(value: unknown, path = ''): [string, string][] {
+  if (value === null || typeof value !== 'object') return [[path, value === null ? 'null' : typeof value]]
+  if (Array.isArray(value)) return value.flatMap(item => leaves(item, `${path}[]`))
+  return Object.entries(value).flatMap(([key, item]) => leaves(item, path ? `${path}.${key}` : key))
+}
+
 /** Отвечает записанным примером; запроса, которого в примерах нет, панель слать не должна. */
 function answer(apply: boolean) {
   return (async (method: string, params: Record<string, unknown>) => {
@@ -45,12 +95,10 @@ function answer(apply: boolean) {
     const example = examples.find(e => e.method === method && isDeepStrictEqual(e.params, wire))
     if (!example) throw new Error(`нет записанного примера: ${method} ${JSON.stringify(wire)}`)
     sent.push(example)
-    return example.result
+    return tracked(example.result, label(example), '')
   }) as never
 }
-const sentMethods = () => sent.map(e => e.method === 'settings.apply' || e.method.endsWith('.read')
-  ? `${e.method}:${e.params.resource ?? e.params.protocol}`
-  : e.method)
+const sentMethods = () => sent.map(label)
 
 beforeEach(() => {
   installStubs({ wgEnabled: true, ovpnEnabled: true, ikev2Enabled: true })
@@ -131,10 +179,14 @@ n4qpQjeoJr1ooyLVvlUpWV00jLkyAYSfRP+Lars=
 const example = (method: string, pick: (params: Record<string, never>) => boolean = () => true) =>
   examples.find(e => e.method === method && pick(e.params as Record<string, never>))!
 const date = (iso: string | null) => iso ? new Date(iso) : null
+// Клиент и операция доступа для сверок accessAdapter.read: срок тот же, что в записанных ответах.
+const accessClient = { id: 7, accessVersion: 3, deleting: false, frozenManual: false, filterTraffic: false, expiresAt: new Date('2031-05-06T07:08:09.000Z') }
+const accessOperation = { clientId: 7, version: 3, kind: 'update', deviceId: null, protocols: { openvpn: { confirmedVersion: null } } } as never
+const noPayload = { retired: [], rotateOvpn: [] } as never
 
 describe('контракт control: живые вызовы панели шлют записанные запросы и разбирают записанные ответы', () => {
   it('profile.read: ключ сервера WireGuard, готовность CA OpenVPN, режим IKEv2', async () => {
-    expect(await loadServerKeys()).toEqual(example('profile.read', p => p.protocol === 'wg').result)
+    expect((await loadServerKeys()).publicKey).toBe('AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=')
     expect(await caReady()).toBe(true)
     expect(await ikev2Mode()).toBe('letsencrypt')
     expect(sentMethods()).toEqual(['profile.read:wg', 'profile.read:openvpn', 'profile.read:ikev2'])
@@ -211,12 +263,8 @@ describe('контракт control: живые вызовы панели шлю�
   })
 
   it('state.read и openvpn.certificate: проверка операции доступа сверяет сертификат устройства', async () => {
-    const operation = { clientId: 7, version: 3, kind: 'update', deviceId: null, protocols: { openvpn: { confirmedVersion: null } } }
-    dbResults.push(
-      [{ id: 7, accessVersion: 3, deleting: false, frozenManual: false, filterTraffic: false, expiresAt: new Date('2031-05-06T07:08:09.000Z') }],
-      [{ id: 12, clientId: 7, deleting: false, ovpnCert: certDev12 }],
-    )
-    expect(await accessAdapter.read('openvpn', operation as never, { retired: [], rotateOvpn: [] } as never)).toBe(true)
+    dbResults.push([accessClient], [{ id: 12, clientId: 7, deleting: false, ovpnCert: certDev12 }])
+    expect(await accessAdapter.read('openvpn', accessOperation, noPayload)).toBe(true)
     expect(sentMethods()).toEqual(['state.read:openvpn', 'openvpn.certificate'])
   })
 
@@ -246,5 +294,109 @@ describe('контракт control: живые вызовы панели шлю�
     ])
     await syncClientPrefsFile()
     expect(sentMethods()).toEqual(['settings.apply:preferences'])
+  })
+
+  it('profile.read: профиль OpenVPN несёт CA и ключ tls-crypt из ответа', async () => {
+    const config = await buildOvpnConfig({
+      clientCert: 'client-cert', clientKey: 'client-key', serverHost: '203.0.113.7', serverPort: 1194, proto: 'udp', dns: ['10.99.0.1'],
+    })
+    expect(config).toContain('<ca>\ntest-ca\n</ca>')
+    expect(config).toContain('<tls-crypt>\ntest-tls-crypt\n</tls-crypt>')
+    expect(sentMethods()).toEqual(['profile.read:openvpn'])
+  })
+
+  it('profile.read: реквизиты IKEv2 берут адрес, домен, готовность и CA из ответа', async () => {
+    dbResults.push([{ id: 12, ikev2Username: 'user-12', ikev2Password: 'test-pass-0012', ikev2Ip: '10.68.68.2' }])
+    expect(await buildIkev2ClientInfo(12)).toEqual({
+      server: '203.0.113.7', remoteId: '203.0.113.7', username: 'user-12', password: 'test-pass-0012',
+      caCertPem: null, certificatePending: true,
+    })
+    expect(await ikev2ServerReady()).toBe(true)
+    expect(await readIkev2CaPem()).toBe('')
+    expect(new Set(sentMethods())).toEqual(new Set(['profile.read:ikev2']))
+  })
+
+  it('state.read: пир WireGuard на адресе устройства сверяется по ключу и адресам', async () => {
+    const state = example('state.read', p => p.protocol === 'wg').result as { peers: Record<string, string[]> }
+    const [key, addresses] = Object.entries(state.peers)[0]!
+    const device = { id: 12, clientId: 7, deleting: false, wgPublicKey: key, wgIp: addresses[0]!.replace('/32', '') }
+    dbResults.push([accessClient], [device], [accessClient], [{ ...device, wgPublicKey: 'other-key' }])
+    expect(await accessAdapter.read('wg', accessOperation, noPayload)).toBe(true)
+    // На адресе устройства чужой ключ: адреса пиров из ответа это показывают.
+    expect(await accessAdapter.read('wg', accessOperation, noPayload)).toBe(false)
+    expect(sentMethods()).toEqual(['state.read:wg', 'state.read:wg'])
+  })
+
+  it('state.read: учётная запись IKEv2 сверяется по устройству, отпечатку и сессиям', async () => {
+    const live = { id: 12, clientId: 7, deleting: false, ikev2Username: 'user-12', ikev2Password: 'test-pass-0012', ikev2Ip: '10.68.68.2' }
+    const gone = { id: 13, clientId: 7, deleting: true, ikev2Username: 'user-13', ikev2Password: 'test-pass-0013', ikev2Ip: '10.68.68.3' }
+    dbResults.push([{ ...accessClient, filterTraffic: true }], [live, gone],
+      [{ ...accessClient, filterTraffic: true }], [{ ...live, deleting: true }])
+    expect(await accessAdapter.read('ikev2', accessOperation, noPayload)).toBe(true)
+    // Снятое устройство с живой сессией в ответе - доступ ещё не снят.
+    expect(await accessAdapter.read('ikev2', accessOperation, noPayload)).toBe(false)
+    expect(sentMethods()).toEqual(['state.read:ikev2', 'state.read:ikev2'])
+  })
+
+  it('openvpn.certificate: перевыпуск ждёт годного сертификата, отзыв - отозванного', async () => {
+    const device = { id: 12, clientId: 7, deleting: false, ovpnCert: certDev12 }
+    dbResults.push([accessClient], [device], [accessClient], [device])
+    expect(await accessAdapter.read('openvpn', accessOperation, { retired: [], rotateOvpn: [{ id: 12, cert: 'old-cert' }] } as never)).toBe(true)
+    const retired = [{ id: 12, wgPublicKey: null, ovpnCert: certDev12 }]
+    expect(await accessAdapter.read('openvpn', accessOperation, { retired, rotateOvpn: [] } as never)).toBe(false)
+    expect(new Set(sentMethods())).toEqual(new Set(['state.read:openvpn', 'openvpn.certificate']))
+  })
+})
+
+// Стоит последним: считает чтения всех живых вызовов выше.
+describe('контракт control: каждое поле записанных ответов панель читает', () => {
+  const a = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8='
+  const b = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA='
+  // Поля ответов, как их знает панель: путь и тип. Минус перед типом - панель поле не читает
+  // (служба его отдаёт, форму держит infra/vpn2/tests/test_control_replies.py).
+  const fields: Record<string, Record<string, string>> = {
+    'profile.read:wg': { publicKey: 'string' },
+    'profile.read:openvpn': { ready: 'boolean', ca: 'string', tlsCrypt: 'string' },
+    'profile.read:ikev2': { ready: 'boolean', mode: 'string', host: 'string', domain: 'string', ca: 'string' },
+    'state.read:wg': { [`peers.${a}[]`]: 'string', [`expires.${a}`]: 'string' },
+    'state.read:openvpn': { 'sessions.dev_12': 'string', 'expires.12': 'string' },
+    'state.read:ikev2': {
+      'devices[]': 'number', 'sas[].id': '-number', 'sas[].username': 'string', 'credentials.user-12': 'string', 'expires.12': 'string',
+    },
+    'traffic.read:wg': { 'samples[].key': 'string', 'samples[].rx': 'number', 'samples[].tx': 'number' },
+    'traffic.read:openvpn': { 'samples[].device_id': 'number', 'samples[].rx': 'number', 'samples[].tx': 'number' },
+    'traffic.read:ikev2': { 'samples[].uniqueid': 'string', 'samples[].username': 'string', 'samples[].rx': 'number', 'samples[].tx': 'number' },
+    'wg.apply': { 'version': '-number', [`observed.peers.${a}[]`]: '-string', [`observed.peers.${b}[]`]: '-string' },
+    'ikev2.apply': {
+      'version': '-number', 'observed.devices[]': '-number', 'observed.sas[].id': '-number', 'observed.sas[].username': '-string',
+      'observed.credentials.user-1': '-string', 'observed.credentials.user-2': '-string',
+    },
+    'openvpn.apply': {
+      'version': '-number', 'observed.device_id': '-number', 'observed.allowed': '-boolean', 'observed.sessions': '-number',
+      'observed.revoked': '-boolean',
+    },
+    'openvpn.issue': { cert: 'string', key: 'string' },
+    'openvpn.revoke': { revoked: '-boolean' },
+    'openvpn.disconnect': { killed: 'boolean' },
+    'openvpn.certificate': { valid: 'boolean', revoked: 'boolean', allowed: 'boolean', present: 'boolean' },
+    'settings.read:disabled-exits': { 'config.disabled[]': 'string' },
+    'settings.apply:disabled-exits': { 'config.disabled[]': '-string' },
+    'settings.apply:routes': { 'config[].type': '-string', 'config[].value': '-string', 'config[].outbound': '-string' },
+    'settings.apply:preferences': { 'config.fra[]': '-string' },
+    'routes.plan': { revision: 'string', size: 'number', data: 'string' },
+    'expiry.run': {
+      'removed[].protocol': 'string', 'removed[].id': 'number', 'removed[].expires_at': 'string', 'removed[].at': 'string',
+      'latest[].protocol': '-string', 'latest[].id': '-number', 'latest[].expires_at': '-string', 'failed[]': '-string',
+    },
+  }
+
+  it('у каждого поля записанного ответа ожидаемые имя и тип, прочитано всё, что панели нужно', () => {
+    const seen = Object.fromEntries(examples.map(e => [label(e), Object.fromEntries(
+      leaves(e.result).map(([path, type]) => [path, (read.get(label(e))?.has(path) ? '' : '-') + type]))]))
+    expect(seen).toEqual(fields)
+  })
+
+  it('полей, которых в записанных ответах нет, панель не читает', () => {
+    expect([...absent]).toEqual([])
   })
 })

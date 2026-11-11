@@ -6,7 +6,7 @@ from vpn2 import nodevars
 
 ANSIBLE = ROOT / 'infra/ansible'
 # Столько обращений к окружению осталось в ролях. Число только уменьшают: убрал lookup - снизь его.
-LOOKUPS_LEFT = 119
+LOOKUPS_LEFT = 115
 CALL = re.compile(r"(?:lookup|query)\(\s*'(?:ansible\.builtin\.)?env'\s*,\s*([^)]*)\)")
 NAME = r'[A-Z][A-Z0-9_]*'
 LIST_KEY = re.compile(r'^([a-z0-9_]+_env_(?:names|common|exit_prefix|exit_suffix)):\s*(.*)$')

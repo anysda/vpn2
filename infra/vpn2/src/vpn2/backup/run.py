@@ -1,5 +1,6 @@
 """Создание бэкапа: ход anysda-backup.sh (строки 250-577) по блокам, код выхода как у скрипта."""
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -67,9 +68,11 @@ class Paths:
 class _Stop(Exception):
     """Ход прерван: code - код выхода скрипта (set -e или явный exit)."""
 
-    def __init__(self, code):
+    def __init__(self, code, why='', program=''):
         super().__init__(code)
         self.code = code
+        self.why = why
+        self.program = program
 
 
 class _State:
@@ -78,13 +81,39 @@ class _State:
     def __init__(self):
         self.fail_reason = ''
         self.warning = ''
+        self.step = ''
+        self.tail = None
+
+    def enter(self, step):
+        """step - чем кончился бы сбой на этом шаге; причину ищем только в его выводе."""
+        self.step = step
+        if self.tail:
+            self.tail.line = ''
+
+
+class _Tail:
+    """err хода: пишет дальше как есть и помнит последнюю непустую строку."""
+
+    def __init__(self, err):
+        self.err = err
+        self.line = ''
+
+    def write(self, text):
+        for line in str(text).splitlines():
+            if line.strip():
+                self.line = line.strip()
+        return self.err.write(text)
+
+    def __getattr__(self, name):
+        return getattr(self.err, name)
 
 
 class _Done:
-    def __init__(self, returncode, stdout=b'', stderr=b''):
+    def __init__(self, returncode, stdout=b'', stderr=b'', missing=False):
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+        self.missing = missing
 
 
 def _text(data):
@@ -98,7 +127,7 @@ def _exec(run, args, err, *, quiet=False, **kwargs):
     except OSError as exc:
         if not quiet:
             err.write(f'{args[0]}: {exc.strerror}\n')
-        return _Done(127)
+        return _Done(127, missing=True)
     if not quiet and done.stderr:
         err.write(_text(done.stderr))
     return done
@@ -108,8 +137,13 @@ def _must(run, args, err, **kwargs):
     """Как команда под set -e: код не 0 обрывает ход тем же кодом."""
     done = _exec(run, args, err, **kwargs)
     if done.returncode != 0:
-        raise _Stop(done.returncode)
+        raise _failed(done, args[0])
     return done
+
+
+def _failed(done, program):
+    missing = getattr(done, 'missing', False)
+    return _Stop(done.returncode, f'программа {program} не найдена' if missing else '', program)
 
 
 def _post(run, args, secret_header, body):
@@ -339,7 +373,7 @@ def pack_and_encrypt(work, name, passphrase, run, err):
         archive.encrypt(plain, encrypted, passphrase, run=_pty, wiper=lambda path: archive.wipe(path, run=run))
     except archive.ArchiveError as exc:
         if codes and codes[0] != 0:
-            raise _Stop(codes[0]) from None
+            raise _Stop(codes[0], program='age') from None
         err.write(exc.message + '\n')
         raise _Stop(exc.code) from None
     return encrypted
@@ -389,12 +423,14 @@ def upload_s3(settings, final, key, run, out, err):
     out.write(f'anysda-backup: uploading to {target}/{key}\n')
     done = _aws(settings, run, err, 's3', 'cp', final, f'{target}/{key}', '--only-show-errors')
     if done.returncode != 0:
-        raise _Stop(done.returncode)
+        raise _failed(done, 'aws')
     listing = _aws(settings, run, err, 's3', 'ls', f'{target}/')
     names = [(line.split() or [''])[-1] for line in _text(listing.stdout).splitlines()]
     keys = sorted(n for n in names if re.fullmatch(r'anysda-vpn2-.*\.tar\.gz\.age', n))
     if not keys:
-        raise _Stop(listing.returncode or 1)
+        if listing.returncode != 0:
+            raise _failed(listing, 'aws')
+        raise _Stop(1, 'архива нет в списке бакета')
     keep = _keep(settings.retention)
     old = keys[:len(keys) - keep] if keep > 0 else keys
     for name in old:
@@ -402,10 +438,10 @@ def upload_s3(settings, final, key, run, out, err):
             continue
         done = _aws(settings, run, err, 's3', 'rm', f'{target}/{name}', '--only-show-errors')
         if done.returncode != 0:
-            raise _Stop(done.returncode)
+            raise _failed(done, 'aws')
         out.write(f'anysda-backup: s3 rotated out {name}\n')
     if listing.returncode != 0:
-        raise _Stop(listing.returncode)
+        raise _failed(listing, 'aws')
 
 
 def summary(settings, final, size, digest, warning, out):
@@ -435,6 +471,7 @@ def _make(settings, paths, state, run, out, err, now, check, sleep, wait):
         state.fail_reason = 'нет пароля шифрования'
         raise _Stop(2)
     source_root = _source_root(paths)
+    state.enter('каталог для архива не подготовлен')
     os.makedirs(settings.local_dir, exist_ok=True)
     os.chmod(settings.local_dir, 0o700)
     with archive.workdir(paths.work_parent, '.backup-tmp.', run=run) as work:
@@ -442,17 +479,52 @@ def _make(settings, paths, state, run, out, err, now, check, sleep, wait):
         name = env.bundle_name(ts)
         bundle_dir = work / name
         os.makedirs(bundle_dir)
+        state.enter('копирование /etc/anysda не прошло')
         copy_etc_anysda(bundle_dir, paths, run, err)
+        state.enter('снимок базы и ключей не снят')
         take_slices(bundle_dir, paths, state, run, err, check, sleep, wait)
+        state.enter('копирование настроек служб не прошло')
         copy_extras(bundle_dir, paths, run, err)
+        state.enter('описание архива не записано')
         write_manifest(bundle_dir, source_root, ts, run, err)
+        state.enter('упаковка и шифрование не прошли')
         encrypted = pack_and_encrypt(work, name, settings.passphrase, run, err)
         final = f'{settings.local_dir}/{name}.tar.gz.age'
+        state.enter('архив не сохранён на диск')
         size, digest = publish(encrypted, final)
+        state.enter('старые архивы не убраны')
         rotate_local(settings.local_dir, final, settings.retention, out)
         if settings.backend == 's3':
+            state.enter('выгрузка в S3 не прошла')
             upload_s3(settings, final, f'{name}.tar.gz.age', run, out, err)
         return summary(settings, final, size, digest, state.warning, out)
+
+
+NO_SPACE = 'нет места на диске'
+
+
+def _line_cause(line):
+    return NO_SPACE if 'No space left on device' in line else line
+
+
+def _error_cause(exc):
+    if isinstance(exc, subprocess.TimeoutExpired):
+        program = exc.cmd[0] if isinstance(exc.cmd, (list, tuple)) else exc.cmd
+        return f'{Path(str(program)).name}: нет ответа за {exc.timeout:g} с'
+    if not isinstance(exc, OSError) or not exc.strerror:
+        return str(exc) or type(exc).__name__
+    where = f' ({exc.filename})' if exc.filename else ''
+    return (NO_SPACE if exc.errno == errno.ENOSPC else exc.strerror) + where
+
+
+def _explain(state, settings, paths, cause):
+    """Причина для события: шаг и что на нём случилось; пароль и ключи в текст не попадают."""
+    if state.fail_reason or not state.step:
+        return
+    for secret in (settings.passphrase, settings.s3_access_key, settings.s3_secret_key, _secret(paths)):
+        if secret:
+            cause = cause.replace(secret, '***')
+    state.fail_reason = f'{state.step}: {cause}'
 
 
 def create(settings, *, paths=Paths(), run=subprocess.run, out=None, err=None, now=None,
@@ -466,12 +538,16 @@ def create(settings, *, paths=Paths(), run=subprocess.run, out=None, err=None, n
     err = sys.stderr if err is None else err
     check = check or _default_check
     state, rc = _State(), 1
+    err = state.tail = _Tail(err)
     old_umask = os.umask(0o077)
     try:
         rc = _make(settings, paths, state, run, out, err, now, check, sleep, lock_wait)
     except _Stop as stop:
         rc = stop.code
+        _explain(state, settings, paths, stop.why or _line_cause(err.line)
+                 or (f'{stop.program}: ' if stop.program else '') + f'код выхода {rc}')
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        _explain(state, settings, paths, _error_cause(exc))
         err.write(f'anysda-backup: {type(exc).__name__}: {exc}\n')
         rc = 1
     finally:

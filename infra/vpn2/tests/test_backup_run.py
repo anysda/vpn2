@@ -285,7 +285,30 @@ def test_create_matches_bash(tmp_path, monkeypatch, label, extra, old, scenario,
     assert shell['rc'] == code, label
     if label == 'empty-passphrase':
         shell = deviate_single_event(shell)
+    if label in CAUSES:
+        shell = deviate_cause(python, shell, CAUSES[label], code)
     assert python == shell
+
+
+CAUSES = {'sqlite-fails': 'снимок базы и ключей не снят: Error: ',
+          'age-fails': 'упаковка и шифрование не прошли: age: код выхода 7',
+          'age-no-file': 'упаковка и шифрование не прошли: ',
+          's3-upload-fails': 'выгрузка в S3 не прошла: aws: boom',
+          's3-list-empty': 'выгрузка в S3 не прошла: архива нет в списке бакета',
+          's3-rm-fails': 'выгрузка в S3 не прошла: aws: boom'}
+
+
+def deviate_cause(python, shell, cause, code):
+    """Отличие от скрипта: событие о сбое называет шаг и причину, скрипт слал только код выхода."""
+    ours, theirs = json.loads(python['calls'][-1]), json.loads(shell['calls'][-1])
+    place = ours['argv'].index('-d') + 1
+    event = json.loads(ours['argv'][place])
+    assert event['type'] == 'backup_failed' and event['detail'].startswith(cause)
+    assert len(event['detail']) > len(cause) or not cause.endswith(': ')
+    assert json.loads(theirs['argv'][place]) == {**event, 'detail': f'код выхода {code}'}
+    ours['argv'][place] = theirs['argv'][place]
+    assert ours == theirs
+    return {**shell, 'calls': [*shell['calls'][:-1], python['calls'][-1]]}
 
 
 def deviate_single_event(result):
@@ -448,3 +471,162 @@ def test_default_check_without_db_passes(tmp_path):
     bundle.mkdir()
     assert backup_run._default_check(str(bundle), StringIO(), StringIO()) == 0
     assert not (bundle / 'manifest.json').exists()
+
+
+# ---- причина сбоя в событии: шаг и последняя содержательная строка ----
+
+def failed(root, paths, monkeypatch, *, extra=None, stub_env=None, run=None):
+    vals = values(root, **(extra or {}))
+    write_env(root, vals)
+    put(root / 's3list', '')
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 's3list'))
+    for name, value in (stub_env or {}).items():
+        monkeypatch.setenv(name, value)
+    more = {'run': run} if run else {}
+    rc = create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=StringIO(), now=NOW,
+                check=lambda _b, _o, _e: 0, sleep=lambda _s: None, **more)
+    sent = [record for record in events(root) if '-d' in record['argv']]
+    assert len(sent) == 1
+    event = json.loads(sent[0]['argv'][sent[0]['argv'].index('-d') + 1])
+    assert event['type'] == 'backup_failed'
+    return rc, event['detail']
+
+
+def program(name, code=1, stderr=b'', error=None):
+    real = subprocess.run
+
+    def run(args, **kwargs):
+        if args[0] != name:
+            return real(args, **kwargs)
+        if error:
+            raise error
+        return subprocess.CompletedProcess(args, code, b'', stderr)
+
+    return run
+
+
+@pytest.mark.parametrize(('where', 'tail'), [('{out}/x.age', ' ({out}/x.age)'), (None, '')])
+def test_full_disk_at_the_archive_directory_is_named(tmp_path, monkeypatch, where, tail):
+    root, paths = node(tmp_path, monkeypatch)
+    out = str(root / 'out dir')
+
+    def move(_source, _target):
+        raise OSError(28, 'No space left on device', where and where.format(out=out))
+
+    monkeypatch.setattr(backup_run.shutil, 'move', move)
+    rc, detail = failed(root, paths, monkeypatch)
+    assert rc == 1
+    assert detail == 'архив не сохранён на диск: нет места на диске' + tail.format(out=out)
+    assert not list(Path(paths.work_parent).glob('.backup-tmp.*'))
+
+
+def test_full_disk_seen_by_a_program_is_named(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    stderr = b"cp: error writing '/var/lib/x/etc-anysda/a.env': No space left on device\n"
+    rc, detail = failed(root, paths, monkeypatch, run=program('cp', stderr=stderr))
+    assert rc == 1
+    assert detail == 'копирование /etc/anysda не прошло: нет места на диске'
+
+
+def test_other_os_error_names_the_step_and_the_file(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    monkeypatch.setattr(backup_run.shutil, 'move',
+                        lambda _s, _t: (_ for _ in ()).throw(PermissionError(13, 'Permission denied', '/var/b/x.age')))
+    _rc, detail = failed(root, paths, monkeypatch)
+    assert detail == 'архив не сохранён на диск: Permission denied (/var/b/x.age)'
+
+
+def test_s3_upload_failure_carries_the_last_line(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    rc, detail = failed(root, paths, monkeypatch, extra=S3, stub_env={'STUB_AWS_FAIL': 'cp'})
+    assert rc == 9
+    assert detail == 'выгрузка в S3 не прошла: aws: boom'
+
+
+def test_s3_without_the_program_says_so(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    rc, detail = failed(root, paths, monkeypatch, extra=S3,
+                        run=program('aws', error=FileNotFoundError(2, 'No such file or directory')))
+    assert rc == 127
+    assert detail == 'выгрузка в S3 не прошла: программа aws не найдена'
+
+
+def test_s3_listing_without_the_new_archive(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    rc, detail = failed(root, paths, monkeypatch, extra=S3)
+    assert rc == 1
+    assert detail == 'выгрузка в S3 не прошла: архива нет в списке бакета'
+
+
+def test_s3_rotation_failure_is_the_same_step(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    put(root / 'list', LISTING)
+    vals = {**S3, 'BACKUP_RETENTION': '0'}
+    write_env(root, values(root, **vals))
+    monkeypatch.setenv('STUB_S3_LIST', str(root / 'list'))
+    monkeypatch.setenv('STUB_AWS_FAIL', 'rm')
+    settings = env.settings(values(root, **vals), paths.env_file)
+    assert create(settings, paths=paths, out=StringIO(), err=StringIO(), now=NOW,
+                  check=lambda _b, _o, _e: 0, sleep=lambda _s: None) == 9
+    sent = events(root)
+    assert json.loads(sent[-1]['argv'][sent[-1]['argv'].index('-d') + 1])['detail'] == (
+        'выгрузка в S3 не прошла: aws: boom')
+
+
+def test_cause_is_the_last_meaningful_line_without_secrets(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    stderr = ('upload failed: ./a to s3://bucket/a\n\nAn error occurred (SignatureDoesNotMatch) for key '
+              f"{S3['ANYSDA_S3_ACCESS_KEY']} secret {S3['ANYSDA_S3_SECRET_KEY']} token {SECRET}\n  \n").encode()
+    _rc, detail = failed(root, paths, monkeypatch, extra=S3, run=program('aws', code=255, stderr=stderr))
+    assert detail.startswith('выгрузка в S3 не прошла: An error occurred (SignatureDoesNotMatch) for key *** secret')
+    for secret in (S3['ANYSDA_S3_ACCESS_KEY'], S3['ANYSDA_S3_SECRET_KEY'], SECRET, 'парольная фраза'):
+        assert secret not in detail
+    assert 'upload failed' not in detail
+
+
+def test_long_cause_is_cut_and_stays_one_line(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    _rc, detail = failed(root, paths, monkeypatch, extra=S3,
+                         run=program('aws', stderr=('fatal error: ' + 'x' * 900 + '\n').encode()))
+    assert detail.startswith('выгрузка в S3 не прошла: fatal error: xxx') and len(detail) <= 200 and '\n' not in detail
+
+
+def test_database_snapshot_failure_names_the_step(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch, db_bytes=b'not a database')
+    rc, detail = failed(root, paths, monkeypatch)
+    assert rc != 0
+    assert detail.startswith('снимок базы и ключей не снят: ') and 'not a database' in detail
+
+
+def test_silent_failure_names_the_step_and_the_code(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    rc, detail = failed(root, paths, monkeypatch, run=program('sqlite3', code=5))
+    assert rc == 5
+    assert detail == 'снимок базы и ключей не снят: sqlite3: код выхода 5'
+
+
+def test_encryption_failure_names_the_step(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    rc, detail = failed(root, paths, monkeypatch, stub_env={'STUB_AGE_NOFILE': '1'})
+    assert rc == 3
+    assert detail.startswith('упаковка и шифрование не прошли: ')
+
+
+def test_earlier_warning_is_not_taken_for_the_cause(tmp_path, monkeypatch):
+    root, paths = node(tmp_path, monkeypatch)
+    vals = values(root, **S3)
+    write_env(root, vals)
+    monkeypatch.setenv('STUB_AWS_FAIL', 'cp')
+    monkeypatch.setattr(backup_run, '_exec', silent_aws(backup_run._exec))
+    rc = create(env.settings(vals, paths.env_file), paths=paths, out=StringIO(), err=StringIO(), now=NOW,
+                check=lambda _b, _o, e: e.write('шум сверки\n') or 0, sleep=lambda _s: None)
+    sent = events(root)
+    assert rc == 9
+    assert json.loads(sent[-1]['argv'][sent[-1]['argv'].index('-d') + 1])['detail'] == (
+        'выгрузка в S3 не прошла: aws: код выхода 9')
+
+
+def silent_aws(real):
+    def call(run, args, err, **kwargs):
+        return real(run, args, err, **{**kwargs, 'quiet': args[0] == 'aws' or kwargs.get('quiet', False)})
+    return call

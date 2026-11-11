@@ -240,7 +240,6 @@
  "test_config_example_stages[general]": 1,
  "test_config_permissions[general]": 1,
  "test_config_publish[general]": 1,
- "test_config_stage_env[general]": 1,
  "test_config_vpn.VpnConfigTests[1]": 1,
  "test_config_yaml_forms.SafeDumpConfigTests[0]": 1,
  "test_config_yaml_forms.SafeDumpConfigTests[1]": 1,

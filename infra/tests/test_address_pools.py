@@ -57,20 +57,12 @@ class AddressPoolTests(unittest.TestCase):
                         continue
                     self.assertTrue(any(address in net for net in known), f'unclassified pool/address {literal} in {path}')
 
-    def test_deployed_manifest_and_shell_match_panel(self):
-        pools = json.loads(source('app/shared/vpn-pools.json'))
-        with tempfile.TemporaryDirectory() as directory:
-            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\nvpn_pool_subnets wg ovpn ikev2', directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.split(), [n for p in ('wg', 'ovpn', 'ikev2') for n in pools[p]['subnets']])
-        self.assertIn('push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return', source('infra/deploy.sh'))
-
     def test_wireguard_routes_on_start(self):
         routing = vpn_roles.routing('28-wireguard')
         with tempfile.TemporaryDirectory() as directory:
             routing = routing.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
-            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n' + '''
-WG_SUBNETS=$(vpn_pool_subnets wg)
+            subnets = ' '.join(json.loads(source('app/shared/vpn-pools.json'))['wg']['subnets'])
+            result = bash(f"WG_SUBNETS='{subnets}'" + '''
 ip() { echo "ip $*"; }
 iptables() { [[ " $* " != *" -C "* ]] && echo "iptables $*"; }
 ip6tables() { [[ " $* " != *" -C "* ]] && echo "ip6tables $*"; }

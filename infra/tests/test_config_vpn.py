@@ -6,7 +6,7 @@ import unittest
 
 import test_config_validation as validation
 from containers_support import FACTS, compose
-from test_deploy import bash, function, source
+from test_deploy import bash, source
 
 PANEL_VPN = ('NUXT_WG_LISTEN_PORT', 'NUXT_WG_MTU', 'NUXT_WG_SPLIT_LOCAL', 'NUXT_OVPN_PORT', 'NUXT_OVPN_PROTO')
 
@@ -21,31 +21,14 @@ class VpnConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             result = self.convert(extra, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            root = Path(directory)
-            (root / 'infra/scripts').mkdir()
-            for stage in ('28-wireguard', '29-openvpn', '30-frontend'):
-                (root / 'infra/scripts' / (stage + '.sh')).touch()
-            result = bash(function('run_stage_on_host') + '''
-DEPLOY_ROOT="$PWD/infra"
-load_env() { :; }
-log() { :; }
-die() { return 1; }
-push() {
-  if [[ $1 == */rendered/ru.env ]]; then
-    grep -E '^(WG_LISTEN_PORT|OVPN_PORT|OVPN_PROTO|WG_MTU|WG_SPLIT_LOCAL)=' "$1"
-  fi
-  return 1
-}
-for stage in 28-wireguard 29-openvpn 30-frontend; do
-  run_stage_on_host "$stage" ru || :
-done
-''', directory)
+            result = bash("grep -hE '^(WG_LISTEN_PORT|OVPN_PORT|OVPN_PROTO|WG_MTU|WG_SPLIT_LOCAL)=' "
+                          'infra/envs/all.env infra/envs/ru.env', directory)
             expected = ("WG_LISTEN_PORT='51830'\nOVPN_PORT='1195'\nOVPN_PROTO='tcp'\n"
                         "WG_MTU='1380'\nWG_SPLIT_LOCAL='false'\n")
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout, expected * 3)
+            self.assertEqual(result.stdout, expected)
             # Те же значения доходят до окружения панели в compose.yaml.
-            result = bash('set -a\nsource infra/secrets/rendered/ru.env\nenv -0', directory)
+            result = bash('set -a\nsource infra/envs/all.env\nsource infra/envs/ru.env\nenv -0', directory)
             self.assertEqual(result.returncode, 0, result.stderr)
             environ = dict(item.split('=', 1) for item in result.stdout.split('\0') if item)
             panel = compose.panel_environment({'AGH_PORT': '3000', **environ}, FACTS)

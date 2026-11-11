@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import PLAY_STUBS, play_tree, run_play_source
+
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 
@@ -29,40 +31,29 @@ def bash(script, directory):
 
 class DeployTests(unittest.TestCase):
     def test_restore_stages_preserve_archive_password_but_deploy_applies_seed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'scripts').mkdir()
-            for stage in ('29-openvpn', '20-ru-router', '21-failover-watchdog',
-                          '26-backup', '27-ikev2', '35-telegram', '30-frontend'):
-                (root / 'scripts' / (stage + '.sh')).touch()
-            (root / 'envs').mkdir()
-            (root / 'envs/all.env').write_text('HOST_TAG=ru\n')
-            (root / 'envs/ru.env').write_text('ADMIN_PASSWORD=current-seed\n')
-            (root / 'secrets').mkdir()
-            (root / 'secrets/foreign-secrets.env').touch()
-            (root / 'lib').mkdir()
-            for library in ('anysda-backup.sh',
-                            'anysda-restore.sh', 'anysda-backup-list.sh'):
-                (root / 'lib' / library).touch()
-            script = function('run_stage_on_host') + function('do_restore') + '''
+        stubs = '''
 DEPLOY_ROOT=$PWD
-load_env() { :; }
-ansible_venv_ensure() { :; }
+load_env() { export ADMIN_PASSWORD=current-seed; }
 log() { :; }
 ok() { :; }
 ssh_exec() { :; }
-push() {
-  if [[ $1 == */rendered/ru.env ]]; then
-    ( source "$1"; echo "password=${ADMIN_PASSWORD:-archive}" )
-  fi
-}
+push() { :; }
+fw_guard_stage() { return 1; }
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            play_tree(directory, ('29-openvpn', '20-ru-router', '21-failover-watchdog', '26-backup',
+                                  '27-ikev2', '35-telegram', '30-frontend'), stubs,
+                      'echo "password=${ADMIN_PASSWORD:-archive}"\n')
+            script = (function('run_stage_on_host') + function('do_restore') + run_play_source()
+                      + stubs + PLAY_STUBS + '''
 run_stage() { run_stage_on_host "$1" "$2"; }
 do_restore latest --force
 run_stage 30-frontend ru
-'''
+''')
             result = bash(script, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.splitlines(), ['password=archive'] * 7 + ['password=current-seed'])
+            self.assertEqual(result.stdout.splitlines(),
+                             ['[ru]password=archive'] * 7 + ['[ru]password=current-seed'])
 
     def test_restore_dry_run_only_asks_entry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -177,17 +168,11 @@ ssh_exec() {{
             for step in ('exec flock', 'deploy_state.py backup', 'deploy_state.py phase --phase applying'):
                 self.assertIn(step, before)
 
-    def test_failed_upload_never_runs_stale_stage(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'scripts').mkdir()
-            (root / 'scripts/30-frontend.sh').touch()
-            (root / 'envs').mkdir()
-            (root / 'envs/all.env').write_text('COMMON=1\n')
-            (root / 'envs/ru.env').write_text('HOST_TAG=ru\nSSH_PASS=fake\n')
-            script = function('run_stage_on_host') + '''
+    def test_failed_upload_never_runs_stale_play(self):
+        stubs = '''
 DEPLOY_ROOT=$PWD
-load_env() { return 0; }
+FW_GUARD_WINDOW=90
+load_env() { HOST_TAG=$1; }
 log() { :; }
 ok() { :; }
 warn() { :; }
@@ -196,18 +181,26 @@ count=0
 push() { count=$((count + 1)); [[ $count != $FAIL_AT ]]; }
 ssh_exec() {
   if [[ $* == *apt_prepare* ]]; then [[ $FAIL_AT != apt ]]; return; fi
-  echo "REMOTE EXECUTED"
+  if [[ $* == *'fw-guard.sh arm'* ]]; then [[ $FAIL_AT != arm ]]; return; fi
 }
-if run_stage_on_host 30-frontend ru; then exit 0; else exit 23; fi
+fw_guard_stage() { return 0; }
+fw_guard_entry_baseline() { :; }
+fw_guard_beat() { command sleep 5; }
+fw_guard_disarm() { :; }
 '''
-            for failure in ('1', '2', '3', '4', 'apt'):
+        with tempfile.TemporaryDirectory() as directory:
+            play_tree(directory, ['30-frontend'], stubs, 'echo "PLAY EXECUTED"\n')
+            script = (function('run_stage_on_host') + run_play_source() + stubs + PLAY_STUBS
+                      + 'if run_stage_on_host 30-frontend ru; then exit 0; else exit 23; fi\n')
+            # Библиотека стадий, сторож фаервола, подготовка apt, взвод сторожа.
+            for failure in ('1', '2', 'apt', 'arm'):
                 with self.subTest(failure=failure):
                     result = bash(f'FAIL_AT={failure}\n' + script, directory)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
-                    self.assertNotIn('REMOTE EXECUTED', result.stdout)
+                    self.assertNotIn('PLAY EXECUTED', result.stdout)
             result = bash('FAIL_AT=none\n' + script, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(result.stdout.count('REMOTE EXECUTED'), 1)
+            self.assertEqual(result.stdout.count('PLAY EXECUTED'), 1)
 
 
 if __name__ == '__main__':

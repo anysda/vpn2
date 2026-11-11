@@ -30,9 +30,9 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
                 f'HOST_TAG={host}\nTELEGRAM_BOT_TOKEN=fixture\nTELEGRAM_CHAT_ID=1\n')
             (root / f'{host}.out').write_text(result.stdout)
             (root / f'{host}.rc').write_text(str(result.returncode))
-        # Стадии-плеи идут тем же путём, что и bash-стадии: каталога плеев в макете нет.
-        for path in (*(ROOT / 'infra/scripts').glob('*.sh'), *(ROOT / 'infra/ansible/plays').glob('*.yml')):
-            (root / 'scripts' / f'{path.stem}.sh').touch()
+        (root / 'ansible/plays').mkdir(parents=True)
+        for path in (ROOT / 'infra/ansible/plays').glob('*.yml'):
+            (root / 'ansible/plays' / path.name).touch()
         for path in ('lib/anysda-svc.sh', 'lib/ansible-venv.sh',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):
@@ -54,8 +54,6 @@ ssh_exec() {
   if [[ $* == *apt_prepare* ]]; then [[ $FAILURE != apt ]] || return 2
   elif [[ $* == *deploy_done* ]]; then
     printf '%s\n' "$*" > "$DEPLOY_ROOT/event"
-  elif [[ $* == *30-frontend.sh* && $FAILURE == other-stage ]]; then
-    return 2
   fi
 }
 # Плей стадии 99, как его видит deploy.sh: файл узла с кодом и выводом проверки,
@@ -65,6 +63,11 @@ run_play() {
   load_env "$2"
   push
   ssh_exec apt_prepare
+  if [[ $1 != 99-verify ]]; then
+    [[ $1 != 30-frontend || $FAILURE != other-stage ]] || return 2
+    ok "[$1 → $2] done"
+    return 0
+  fi
   [[ $HOST_TAG != ru ]] || sleep 1  # экзит завершается раньше ru: ловит потерю кода в wait
   code=$(<"$DEPLOY_ROOT/$HOST_TAG.rc")
   { echo "$code"; cat "$DEPLOY_ROOT/$HOST_TAG.out"; } > "$VPN2_VERIFY_OUT/$2"

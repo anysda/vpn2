@@ -52,11 +52,12 @@ class UfwReconcileTests(unittest.TestCase):
             ufw = Path(directory, 'ufw')
             ufw.write_text(FAKE_UFW)
             ufw.chmod(0o755)
-            env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'], UFW_STATE=str(state))
-            script = f'source {shlex.quote(str(ROOT / "infra/lib/anysda-svc.sh"))}\n' + commands
-            result = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], env=env,
-                                    capture_output=True, text=True, timeout=30)
-            self.assertEqual(result.returncode, 0, result.stderr)
+            env = dict(os.environ, PATH=directory + ':' + os.environ['PATH'], UFW_STATE=str(state),
+                       PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
+            for command in commands:
+                result = subprocess.run([sys.executable, '-B', '-m', 'vpn2.cli', 'ufw', 'sync', *command],
+                                        env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(state.read_text())
 
     def test_vpn_roles_remove_owned_stale_rules(self):
@@ -124,8 +125,8 @@ class UfwReconcileTests(unittest.TestCase):
     def test_unchanged_and_manual_rules_are_not_rewritten(self):
         rules = [['allow', '51820/udp', 'comment', 'manual listener'],
                  shlex.split('allow from 198.51.100.0/24 to 192.0.2.53 port 53 proto udp') + ['comment', 'DNS']]
-        result = self.run_commands("ufw_sync_rules 'wireguard listener' 51820/udp\n"
-                                   "ufw_sync_rules DNS 'proto udp from 198.51.100.0/24 to 192.0.2.53 port 53'", rules)
+        result = self.run_commands([['wireguard listener', '51820/udp'],
+                                    ['DNS', 'proto udp from 198.51.100.0/24 to 192.0.2.53 port 53']], rules)
         self.assertEqual(result, rules)
 
 

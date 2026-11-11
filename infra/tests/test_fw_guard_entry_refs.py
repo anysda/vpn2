@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import PLAY_STUBS, play_tree, run_play_source
 from test_fw_guard_entry_beat import ROOT, STUBS, functions
 
 
@@ -97,9 +98,9 @@ class EntryBeatReferenceExitTests(unittest.TestCase):
                         stage='28-wireguard', extra=''):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for path in ('scripts', 'envs', 'lib'):
+            for path in ('envs', 'lib'):
                 (root / path).mkdir()
-            (root / 'scripts' / f'{stage}.sh').touch()
+            play_tree(root, [stage], STUBS + NET + extra)
             (root / 'envs/all.env').write_text(f'ENTRY_HOST={entry_host}\n')
             for tag in ('ru', 'se', 'fi'):
                 (root / f'envs/{tag}.env').write_text(f'HOST_TAG={tag}\n')
@@ -109,7 +110,7 @@ class EntryBeatReferenceExitTests(unittest.TestCase):
             if lose:
                 (root / 'lose').write_text(f'{lose}\n')
             script = (functions(ROOT / 'infra/lib/ssh.sh') + functions(ROOT / 'infra/deploy.sh')
-                      + STUBS + NET + extra + f'''
+                      + run_play_source() + STUBS + PLAY_STUBS + NET + extra + f'''
 FW_GUARD_STAGES='{stage}'
 FW_GUARD_WINDOW={WINDOW}
 ENTRY_HOST={entry_host}

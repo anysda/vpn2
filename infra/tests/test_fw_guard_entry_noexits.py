@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import PLAY_STUBS, play_tree, run_play_source
 from test_fw_guard_entry_beat import ENTRY, EXIT, ROOT, STUBS, functions
 
 
@@ -25,9 +26,9 @@ class EntryBeatWithoutExitsTests(unittest.TestCase):
     def run_entry_stage(self, exit_tags, extra='', skipped='', stage='00-bootstrap'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for path in ('scripts', 'envs', 'lib'):
+            for path in ('envs', 'lib'):
                 (root / path).mkdir()
-            (root / 'scripts' / f'{stage}.sh').touch()
+            play_tree(root, [stage], STUBS + extra)
             (root / 'envs/all.env').write_text(f'ENTRY_HOST={ENTRY}\n')
             (root / 'envs/ru.env').write_text('HOST_TAG=ru\n')
             (root / 'envs/se.env').write_text('HOST_TAG=se\n')
@@ -36,7 +37,7 @@ class EntryBeatWithoutExitsTests(unittest.TestCase):
             settings = ''.join(line + '\n' for line in source.splitlines()
                                if line.startswith(('FW_GUARD_STAGES=', 'FW_GUARD_WINDOW=')))
             script = (settings + functions(ROOT / 'infra/lib/ssh.sh')
-                      + functions(ROOT / 'infra/deploy.sh') + STUBS + extra + f'''
+                      + functions(ROOT / 'infra/deploy.sh') + run_play_source() + STUBS + PLAY_STUBS + extra + f'''
 DEPLOY_ROOT=$PWD
 STAGE={stage}
 SKIPPED_EXIT_TAGS='{skipped}'

@@ -1,4 +1,4 @@
-"""Развилка стадии: плей ansible, если он есть, иначе прежний bash-скрипт."""
+"""Стадия - плей ansible: вызов run_play, его обвес и отказ стадии без плея."""
 import os
 from pathlib import Path
 import subprocess
@@ -57,8 +57,6 @@ ssh_exec() { echo "ssh_exec $*" >> ssh; }
 class PlayForkTests(unittest.TestCase):
     def tree(self, directory, *plays):
         root = Path(directory)
-        (root / 'scripts').mkdir()
-        (root / 'scripts/42-x.sh').touch()
         (root / 'ansible/plays').mkdir(parents=True)
         for play in plays:
             (root / 'ansible/plays' / f'{play}.yml').write_text('- hosts: all\n')
@@ -86,21 +84,17 @@ echo "rc=$rc"
             result = bash(script, directory)
             self.assertEqual(result.stdout.strip(), 'rc=3', result.stderr)
 
-    def test_stage_without_play_keeps_bash_path(self):
+    def test_stage_without_play_dies_naming_help(self):
         with tempfile.TemporaryDirectory() as directory:
             root = self.tree(directory)
             script = STUBS + function('run_stage_on_host') + '''
 run_play() { echo "run_play $*" >> calls; }
-mkdir -p envs; touch envs/all.env envs/ru.env
 run_stage_on_host 42-x ru
 '''
             result = bash(script, directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            calls = (root / 'calls').read_text().splitlines()
-            self.assertEqual(calls[0], 'load_env ru')
-            self.assertNotIn('run_play', '\n'.join(calls))
-            self.assertIn(f'push {root}/scripts/42-x.sh', calls)
-            self.assertEqual(calls[-1], 'ssh_exec')
+            self.assertEqual(result.returncode, 1, result.stdout)
+            self.assertIn('die: нет такой стадии: 42-x (список: ./deploy.sh --help)', result.stderr)
+            self.assertFalse((root / 'calls').exists())
 
     def test_fw_guard_stage_play_runs_between_arm_and_disarm(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -205,8 +199,9 @@ run_stage_on_host 42-x ru
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((root / 'calls').read_text().splitlines(), ['start', 'wait'])
 
-    def test_stage_args_accept_play_only_and_reject_neither(self):
-        for stage, ok in (('42-x', True), ('43-y', True), ('44-z', False)):
+    def test_stage_args_accept_play_and_reject_the_rest(self):
+        # 42-x - имя прежнего скрипта стадии без плея: такой стадии больше нет.
+        for stage, ok in (('42-x', False), ('43-y', True), ('44-z', False)):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / 'scripts').mkdir()
@@ -220,7 +215,7 @@ run_stage_on_host 42-x ru
                     self.assertEqual(result.stdout.strip(), 'passed', result.stderr)
                 else:
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn('die: нет такой стадии: 44-z', result.stderr)
+                    self.assertIn(f'die: нет такой стадии: {stage}', result.stderr)
 
     def test_prereqs_start_venv_only_on_full_run(self):
         for args, started in (('', False), ('venv', True)):

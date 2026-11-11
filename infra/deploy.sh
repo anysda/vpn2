@@ -725,89 +725,8 @@ run_stage_on_host() {
   if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog|27-ikev2|28-wireguard|29-openvpn) ]]; then
     ansible_venv_ensure fresh
   fi
-  if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi
-
-  local script="$DEPLOY_ROOT/scripts/${stage}.sh"
-  [[ -f "$script" ]] || die "no such stage: $stage (expected at $script)"
-
-  load_env "$host" || return 1
-  log "[$stage → $host] starting"
-
-  # Ship a self-contained env file alongside the stage script.
-  # SSH_PASS — локальный секрет оркестратора, не должен покидать машину деплоя.
-  local rendered_env="$DEPLOY_ROOT/secrets/rendered/${host}.env"
-  mkdir -p "$(dirname "$rendered_env")" || return 1
-  chmod 700 "$(dirname "$rendered_env")" || return 1
-  {
-    cat "$DEPLOY_ROOT/envs/all.env" || return 1
-    echo
-    grep -v '^SSH_PASS=' "$DEPLOY_ROOT/envs/${host}.env"
-    if [[ "${RESTORE_PRESERVE_ADMIN:-0}" == 1 ]]; then
-      echo 'unset ADMIN_PASSWORD'
-    fi
-    printf 'VPN2_DEVELOPMENT=%q\n' "${VPN2_DEVELOPMENT:-false}"
-    printf 'VPN2_PANEL_FOLLOWS=%q\n' "${VPN2_PANEL_FOLLOWS:-false}"
-    echo 'VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json'
-    # Клон, из которого идёт деплой: restore, backup и speedtest на entry
-    # берут исходники отсюда (26-backup записывает путь в /etc/anysda/source-root).
-    printf 'VPN2_SOURCE_ROOT=%q\n' "$(cd "$DEPLOY_ROOT/.." && pwd)"
-  } > "$rendered_env" || return 1
-  chmod 600 "$rendered_env" || return 1
-
-  push "$rendered_env" "${host}.env" || return 1
-  push "$script" || return 1
-  # Общие функции стадий (перезапуск службы только при смене её входов).
-  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
-  push "$DEPLOY_ROOT/lib/anysda-pki.sh" || return 1
-  push "$DEPLOY_ROOT/lib/release.sh" || return 1
-  # Пакет vpn2 рядом со стадией: выпуск (vpn2.release) и код службы управления.
-  push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2 || return 1
-  push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
-  # Ресурсы юнитов и docker: стадия, ставящая юнит, пишет его drop-in.
-  if grep -q 'source "$RESOURCE_LIB"' "$script"; then
-    push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
-    push "$DEPLOY_ROOT/lib/entry_resources.py" || return 1
-  fi
-  if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
-    push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
-  fi
-  local guard=''
-  if fw_guard_stage "$stage"; then
-    push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
-    guard="bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW || exit 1; "
-  fi
-  push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
-
-  # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
-  # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
-  # первой же стадии, задолго до 30-frontend. Убираем его до любой стадии.
-  # --norc: вложенный bash по ssh читает ~/.bashrc узла, а его `[ -z "$PS1" ]` под -u
-  # сыплет «PS1: unbound variable» в лог каждой стадии.
-  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
-bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
-  # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
-  # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
-  local rc=0 beat='' owner=$BASHPID
-  if [[ -n "$guard" ]]; then
-    FW_GUARD_ENTRY_REFS=''
-    [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
-    fw_guard_beat "$owner" &
-    beat=$!
-  fi
-  ssh_exec "chmod +x /tmp/anysda/$(basename "$script") || exit 1; ${guard}/tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=$?
-  if [[ -n "$beat" ]]; then
-    kill "$beat" 2>/dev/null || true
-    wait "$beat" 2>/dev/null || true
-    fw_guard_disarm "$stage" || rc=1
-  fi
-  # Экзиту env с адресами entry и соседей нужен только на время стадии:
-  # каждая стадия кладёт свои файлы заново. На entry /tmp/anysda не трогаем.
-  if [[ "$host" != ru ]]; then
-    ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
-  fi
-  [[ $rc -eq 0 ]] || return 1
-
-  ok "[$stage → $host] done"
+  [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]] || die "нет такой стадии: $stage (список: ./deploy.sh --help)"
+  run_play "$stage" "$host"
 }
 
 # ----------------------------------------------------------------------------
@@ -1613,6 +1532,7 @@ do_restore() {
     flags+=" '$flag'"
     [[ "$flag" != --dry-run ]] || dry_run=1
   done
+  # shellcheck disable=SC2034  # читает run_play: пароль панели после restore не засевается
   local RESTORE_PRESERVE_ADMIN=1
   load_env ru
   # Если архив — локальный путь на оркестраторе, scp'им на entry.
@@ -1671,7 +1591,7 @@ case "${1:-}" in
   ''|recover|backup|backup-list|restore|rollback) ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
-    [[ -f "$DEPLOY_ROOT/scripts/$1.sh" || -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
+    [[ -f "$DEPLOY_ROOT/ansible/plays/$1.yml" ]] || die "нет такой стадии: $1 (список: ./deploy.sh --help)"
     expand_hosts "$2" >/dev/null
     ;;
 esac

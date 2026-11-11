@@ -172,9 +172,6 @@ class EntryMemoryTest(unittest.TestCase):
         self.assertEqual(shipped, ["entry-resources.sh", "entry_resources.py"])
         self.assertIn("limits", [task["ansible.builtin.command"]["argv"].split("'")[1] for task in tasks
                                  if "adguard_step" in str(task.get("ansible.builtin.command", {}).get("argv"))])
-        deploy = (ROOT / "infra/deploy.sh").read_text()
-        for filename in ("entry-resources.sh", "entry_resources.py"):
-            self.assertIn(f'push "$DEPLOY_ROOT/lib/{filename}"', deploy)
 
     def test_deployed_library_and_invalid_override_fail_fast(self):
         with tempfile.TemporaryDirectory() as directory:

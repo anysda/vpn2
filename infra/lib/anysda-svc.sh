@@ -24,33 +24,6 @@ release_download() {
   PYTHONPATH=$src python3 -m vpn2.release "${manifest[@]}" artifact "$name" "$destination" --url "$url" ${sha:+--sha256 "$sha"}
 }
 
-# Пакет лежит рядом с библиотекой при деплое и в infra/vpn2/src в дереве.
-ufw_sync_rules() {
-  local src
-  src=$(dirname "${BASH_SOURCE[0]:-$0}")
-  [[ -d "$src/vpn2/cli" ]] || src=$src/../vpn2/src
-  PYTHONPATH=$src python3 -m vpn2.cli ufw sync "$@"
-}
-
-ufw_sync_dns() {
-  local comment=$1 destination=$2 subnet
-  shift 2
-  local rules=()
-  for subnet in "$@"; do
-    rules+=("proto udp from $subnet to $destination port 53"
-            "proto tcp from $subnet to $destination port 53")
-  done
-  ufw_sync_rules "$comment" "${rules[@]}"
-}
-
-# Единственный список пулов общий с панелью. При деплое файл лежит рядом
-# с библиотекой; при restore — в app/shared исходного дерева.
-VPN_POOLS_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/vpn-pools.json
-[[ -f "$VPN_POOLS_FILE" ]] || VPN_POOLS_FILE=$(dirname "${BASH_SOURCE[0]:-$0}")/../../app/shared/vpn-pools.json
-vpn_pool_subnets() {
-  python3 -c 'import json, sys; p=json.load(open(sys.argv[1])); print(" ".join(n for k in sys.argv[2:] for n in p[k]["subnets"]))' "$VPN_POOLS_FILE" "$@"
-}
-
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
 # bcrypt ограничен 72 байтами. Короткие пароли совместимы со старыми
@@ -80,17 +53,6 @@ nftables_preserve_rules() {
 ExecStop=
 EOF
   systemctl daemon-reload
-}
-
-# Активный oneshot и прежний отпечаток не доказывают наличие правил в ядре.
-# При миграции после старого flush перезапускаем только routing, сохраняя
-# Environment юнита (MSS и все пулы WG), без рестарта VPN-туннеля.
-vpn_routing_ensure() {
-  local unit=$1 iface=$2 chain=$3
-  if ! iptables -t mangle -C PREROUTING -i "$iface" -j "$chain" 2>/dev/null; then
-    svc_say "$unit: цепочка $chain пропала, восстанавливаю"
-    systemctl restart "$unit"
-  fi
 }
 
 # При обновлении уже пострадавшей установки enabled-флаг ufw остался на

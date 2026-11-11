@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import PLAY_STUBS, play_tree, run_play_source
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 ENTRY = '198.51.100.10'
@@ -106,9 +107,9 @@ class EntryGuardBeatTests(unittest.TestCase):
     def run_stage(self, host, external_open, stage='28-wireguard'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for path in ('scripts', 'envs', 'lib'):
+            for path in ('envs', 'lib'):
                 (root / path).mkdir()
-            (root / 'scripts' / f'{stage}.sh').touch()
+            play_tree(root, [stage], STUBS)
             (root / 'envs/all.env').write_text(f'ENTRY_HOST={ENTRY}\n')
             (root / 'envs/ru.env').write_text('HOST_TAG=ru\n')
             (root / 'envs/se.env').write_text('HOST_TAG=se\n')
@@ -121,7 +122,7 @@ class EntryGuardBeatTests(unittest.TestCase):
             settings = ''.join(line + '\n' for line in source.splitlines()
                                if line.startswith(('FW_GUARD_STAGES=', 'FW_GUARD_WINDOW=')))
             script = (settings + functions(ROOT / 'infra/lib/ssh.sh')
-                      + functions(ROOT / 'infra/deploy.sh') + STUBS + f'''
+                      + functions(ROOT / 'infra/deploy.sh') + run_play_source() + STUBS + PLAY_STUBS + f'''
 DEPLOY_ROOT=$PWD
 STAGE={stage}
 SKIPPED_EXIT_TAGS=''

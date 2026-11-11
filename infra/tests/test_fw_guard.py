@@ -163,23 +163,32 @@ def deploy_function(name):
     return f'{name}() {{' + body + '\n}\n'
 
 
+def library_function(name):
+    body = (ROOT / 'infra/lib/ansible-venv.sh').read_text().split(f'{name}() {{', 1)[1].split('\n}', 1)[0]
+    return f'{name}() {{' + body + '\n}\n'
+
+
 class DeployGuardTests(unittest.TestCase):
     def run_stage(self, stage, disarm_rc=0):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for path in ('scripts', 'envs', 'lib'):
-                (root / path).mkdir()
-            (root / 'scripts' / f'{stage}.sh').touch()
-            (root / 'envs/all.env').write_text('COMMON=1\n')
-            (root / 'envs/ru.env').write_text('HOST_TAG=ru\n')
+            for path in ('ansible/plays', 'lib', 'venv/bin'):
+                (root / path).mkdir(parents=True)
+            (root / 'ansible/plays' / f'{stage}.yml').touch()
+            playbook = root / 'venv/bin/ansible-playbook'
+            playbook.write_text('#!/bin/bash\necho "play $(basename "$1")"\n')
+            playbook.chmod(0o755)
             source = (ROOT / 'infra/deploy.sh').read_text()
             settings = ''.join(line + '\n' for line in source.splitlines()
                                if line.startswith(('FW_GUARD_STAGES=', 'FW_GUARD_WINDOW=')))
             script = settings + ''.join(deploy_function(name) for name in (
-                'fw_guard_stage', 'fw_guard_beat', 'fw_guard_disarm', 'run_stage_on_host')) + f'''
+                'fw_guard_stage', 'fw_guard_beat', 'fw_guard_disarm', 'run_stage_on_host')) + library_function('run_play') + f'''
 DEPLOY_ROOT=$PWD
+VPN2_ROOT=$PWD
 HOST_TAG=ru
 load_env() {{ :; }}
+ansible_venv_ensure() {{ :; }}
+fw_guard_entry_baseline() {{ :; }}
 log() {{ :; }}
 ok() {{ :; }}
 warn() {{ echo "WARN $*"; }}
@@ -195,14 +204,18 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
             return subprocess.run(['bash', '-euo', 'pipefail', '-c', script], cwd=directory,
                                   text=True, capture_output=True, timeout=30)
 
-    def test_guarded_stage_arms_before_script_and_disarms_after(self):
-        result = self.run_stage('28-wireguard')
-        out = result.stdout
-        self.assertIn('push fw-guard.sh', out)
-        stage = next(line for line in out.splitlines() if '/tmp/anysda/28-wireguard.sh /tmp' in line)
-        self.assertRegex(stage, r'fw-guard\.sh arm 28-wireguard \d+ \|\| exit 1; /tmp/anysda/28-wireguard\.sh')
-        self.assertIn('fresh bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm 28-wireguard', out)
-        self.assertIn('RESULT=0', out)
+    def guarded(self, stage):
+        result = self.run_stage(stage)
+        lines = result.stdout.splitlines()
+        self.assertIn('push fw-guard.sh', lines, result.stderr)
+        arm = next(i for i, line in enumerate(lines) if f'fw-guard.sh arm {stage} ' in line)
+        play = next(i for i, line in enumerate(lines) if line == f'[ru]play {stage}.yml')
+        self.assertLess(arm, play)
+        self.assertIn(f'fresh bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm {stage}', result.stdout)
+        self.assertIn('RESULT=0', result.stdout)
+
+    def test_guarded_stage_arms_before_play_and_disarms_after(self):
+        self.guarded('28-wireguard')
 
     def test_rolled_back_firewall_fails_the_stage(self):
         result = self.run_stage('27-ikev2', disarm_rc=3)
@@ -210,13 +223,7 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
         self.assertIn('RESULT=1', result.stdout)
 
     def test_emergency_stage_is_guarded(self):
-        result = self.run_stage('23-emergency')
-        out = result.stdout
-        self.assertIn('push fw-guard.sh', out)
-        stage = next(line for line in out.splitlines() if '/tmp/anysda/23-emergency.sh /tmp' in line)
-        self.assertRegex(stage, r'fw-guard\.sh arm 23-emergency \d+ \|\| exit 1; /tmp/anysda/23-emergency\.sh')
-        self.assertIn('fresh bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm 23-emergency', out)
-        self.assertIn('RESULT=0', out)
+        self.guarded('23-emergency')
 
     def test_rolled_back_emergency_firewall_fails_the_stage(self):
         result = self.run_stage('23-emergency', disarm_rc=3)
@@ -226,6 +233,7 @@ if run_stage_on_host {stage} ru; then echo RESULT=0; else echo RESULT=1; fi
     def test_stage_that_keeps_the_firewall_is_not_guarded(self):
         result = self.run_stage('35-telegram')
         self.assertNotIn('fw-guard', result.stdout)
+        self.assertIn('[ru]play 35-telegram.yml', result.stdout)
         self.assertIn('RESULT=0', result.stdout)
 
     def test_every_stage_that_changes_the_firewall_is_guarded(self):

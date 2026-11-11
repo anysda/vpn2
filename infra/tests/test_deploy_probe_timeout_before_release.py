@@ -65,7 +65,14 @@ class Tree:
                         ignore=shutil.ignore_patterns('tests', 'envs', 'secrets', 'state'))
         (self.root / 'app/shared').mkdir(parents=True)
         shutil.copyfile(ROOT / 'app/shared/vpn-pools.json', self.root / 'app/shared/vpn-pools.json')
-        (infra / 'scripts' / f'{NOOP_STAGE}.sh').write_text('true\n')
+        # Пустая стадия-плей: venv не собирается, ansible-playbook подставной.
+        (infra / 'ansible/plays' / f'{NOOP_STAGE}.yml').write_text('- hosts: all\n')
+        with (infra / 'lib/ansible-venv.sh').open('a') as library:
+            library.write('ansible_venv_ensure() { :; }\n')
+        playbook = self.root / 'vpn2/venv/bin/ansible-playbook'
+        playbook.parent.mkdir(parents=True)
+        playbook.write_text('#!/bin/sh\nexit 0\n')
+        playbook.chmod(0o755)
         envs = infra / 'envs'
         envs.mkdir()
         (envs / 'all.env').write_text('')
@@ -90,7 +97,8 @@ class Tree:
         home.mkdir()
         self.env = {key: value for key, value in os.environ.items() if key != 'SSH_PROBE_TIMEOUT'}
         self.env.update(PATH=f'{tools}:{os.environ["PATH"]}', HOME=str(home),
-                        FAKE_NODE=str(self.node), VPN2_DEVELOPMENT='true')
+                        FAKE_NODE=str(self.node), VPN2_DEVELOPMENT='true',
+                        VPN2_ROOT=str(self.root / 'vpn2'))
 
     def deploy(self, timeout, *args):
         env = dict(self.env)

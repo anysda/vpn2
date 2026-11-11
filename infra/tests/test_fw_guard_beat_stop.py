@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 
+from play_stage import PLAY_STUBS, play_tree, run_play_source
 from test_fw_guard_entry_beat import functions
 
 
@@ -44,12 +45,12 @@ def deploy(body, timeout=60):
     settings = ''.join(line + '\n' for line in source.splitlines()
                        if line.startswith(('FW_GUARD_STAGES=', 'FW_GUARD_WINDOW=')))
     script = (settings + functions(ROOT / 'infra/lib/ssh.sh') + functions(ROOT / 'infra/deploy.sh')
-              + STUBS + 'DEPLOY_ROOT=$PWD\nSKIPPED_EXIT_TAGS=\n' + body)
+              + run_play_source() + STUBS + PLAY_STUBS + 'DEPLOY_ROOT=$PWD\nSKIPPED_EXIT_TAGS=\n' + body)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        for path in ('scripts', 'envs', 'lib'):
+        for path in ('envs', 'lib'):
             (root / path).mkdir()
-        (root / 'scripts/29-openvpn.sh').touch()
+        play_tree(root, ['29-openvpn'], STUBS)
         (root / 'envs/all.env').write_text('COMMON=1\n')
         for host in ('ru', 'se'):
             (root / f'envs/{host}.env').write_text(f'HOST_TAG={host}\n')
@@ -76,6 +77,7 @@ class BeatStopsWithStageTests(unittest.TestCase):
     def stage(self, rc):
         return deploy(f'''
 STAGE=29-openvpn STAGE_RC={rc}
+export STAGE_RC
 HOST_TAG=se
 if run_stage_on_host 29-openvpn se; then echo RESULT=0; else echo RESULT=1; fi
 settled

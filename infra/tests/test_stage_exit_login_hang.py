@@ -1,7 +1,8 @@
 """Зависший вход на экзит не держит стадию: предел на вход до метки начала.
 
-Настоящие run_stage и run_stage_on_host из infra/deploy.sh с настоящим
-infra/lib/ssh.sh (push, ssh_exec, ssh_fresh). sshpass и ssh подменены:
+Настоящие run_stage, run_stage_on_host и run_play с настоящим
+infra/lib/ssh.sh (push, ssh_exec, ssh_fresh). Подменены sshpass, ssh и
+ansible-playbook:
 подставной ssh ведёт себя как login shell узла - сначала .bashrc (зависание,
 шум или exit по режиму), потом команда через bash, а пути узла (/tmp/anysda,
 /run/vpn2-fw-guard, apt) переписаны в каталог узла во временной папке.
@@ -37,7 +38,7 @@ if [[ $tag == "${FAKE_HANG_TAG:-}" ]]; then
   case $FAKE_HANG_ON in
     all) hang=1 ;;
     push) [[ $cmd == *'cat > '* || $cmd == *'tar -xmf'* ]] && hang=1 ;;
-    script) [[ $cmd == *'chmod +x '* ]] && hang=1 ;;
+    prepare) [[ $cmd == *apt_prepare* ]] && hang=1 ;;
   esac
 fi
 if (( hang )); then
@@ -52,28 +53,35 @@ if [[ $tag == "${FAKE_BASHRC_TAG:-}" ]]; then
 fi
 exec bash -c "$cmd"
 '''
-STAGE = r'''#!/bin/bash
+# Вызов: ansible-playbook plays/<стадия>.yml --limit <узел> --tags <стадия>;
+# метку узла строкам ставит run_play.
+PLAYBOOK = r'''#!/bin/bash
 set -euo pipefail
-source "$1"
-if [[ $HOST_TAG == "${FAKE_SLOW_TAG:-}" ]]; then
-  for i in $(seq "$FAKE_SLOW"); do echo "[$HOST_TAG] установка, шаг $i"; sleep 1; done
+if [[ $3 == "${FAKE_SLOW_TAG:-}" ]]; then
+  for i in $(seq "$FAKE_SLOW"); do echo " установка, шаг $i"; sleep 1; done
 fi
-echo "[$HOST_TAG] ✓ стадия $(basename "$0" .sh) пройдена"
+echo " ✓ стадия $(basename "$1" .yml) пройдена"
 '''
-# Стадия-скрипт без своих файлов и плея: предел входа общий для всех стадий.
+# Стадия без своих ролей: предел входа общий для всех стадий.
 PROBE = '42-probe'
-# Плей стадии 99 после 10-foreign: проверка прошла, вывода нет.
+# Плей стадии 99 после 10-foreign: проверка прошла, вывода нет. Остальные
+# стадии идут настоящим run_play, venv и колесо экзита - без сборки.
 PLAY = '''
-run_play() { load_env "$2"; echo 0 > "$VPN2_VERIFY_OUT/$2"; }
+eval "real_$(declare -f run_play)"
+run_play() {
+  if [[ $1 == 99-verify ]]; then load_env "$2"; echo 0 > "$VPN2_VERIFY_OUT/$2"; return; fi
+  real_run_play "$@"
+}
+ansible_venv_ensure() { :; }
+ansible_wheel_build() { :; }
+ansible_wheel_path() { echo "$DEPLOY_ROOT/wheel.whl"; }
 '''
 LIMIT = 3
 HANG = 60
 EXITS = ('nl', 'de')
 NOISE = ('Welcome to exit node', 'motd line')
 HUNG = re.compile(r'\bnl\b.*завис|завис.*\bnl\b')
-STUBS = ('lib/anysda-pki.sh', 'lib/release.sh', 'lib/deploy_state.py',
-         'lib/wg_conf.py', 'lib/hy2_bandwidth.py',
-         'lib/install-sing-box.sh', 'configs/sing-box-server.json.tpl')
+STUBS = ('wheel.whl',)
 
 
 def alive(pids):
@@ -99,7 +107,7 @@ def deploy(stage, group, deadline, **fake):
     with tempfile.TemporaryDirectory(prefix='stage-exit-login-hang-') as directory:
         top = Path(directory)
         root = top / 'infra'
-        for sub in ('envs', 'scripts', 'lib', 'configs', 'bin', 'nodes', 'tmp'):
+        for sub in ('envs', 'ansible/plays', 'lib', 'venv/bin', 'bin', 'nodes', 'tmp'):
             (root / sub).mkdir(parents=True)
         (top / 'app/shared').mkdir(parents=True)
         (top / 'app/shared/vpn-pools.json').write_text('{}\n')
@@ -110,16 +118,15 @@ def deploy(stage, group, deadline, **fake):
             (root / f'envs/{tag}.env').write_text(
                 f'HOST_TAG={tag}\nSSH_HOST={tag}.example\nSSH_USER=root\nSSH_PASS=fixture\n')
         for name in (PROBE, '10-foreign'):
-            (root / f'scripts/{name}.sh').write_text(STAGE)
-            (root / f'scripts/{name}.sh').chmod(0o755)
+            (root / f'ansible/plays/{name}.yml').write_text('- hosts: all\n')
+        (root / 'venv/bin/ansible-playbook').write_text(PLAYBOOK)
+        (root / 'venv/bin/ansible-playbook').chmod(0o755)
         (root / 'lib/ssh.sh').write_text(source('infra/lib/ssh.sh'))
         (root / 'lib/anysda-svc.sh').write_text('apt_prepare() { :; }\n')
         (root / 'lib/ansible-venv.sh').write_text(source('infra/lib/ansible-venv.sh'))
         (root / 'lib/fw-guard.sh').write_text('exit 0\n')
         for path in STUBS:
             (root / path).touch()
-        (root / 'vpn2/src/vpn2').mkdir(parents=True)
-        (root / 'vpn2/src/vpn2/__init__.py').touch()
         for name, text in (('ssh', FAKE_SSH), ('sshpass', FAKE_SSHPASS)):
             (root / 'bin' / name).write_text(text)
             (root / 'bin' / name).chmod(0o755)
@@ -132,7 +139,7 @@ def deploy(stage, group, deadline, **fake):
         env = {k: v for k, v in os.environ.items()
                if k not in ('VPN2_RELEASE_MANIFEST', 'SKIPPED_EXIT_TAGS')}
         env.update({'PATH': f"{root / 'bin'}:{os.environ['PATH']}", 'TMPDIR': str(root / 'tmp'),
-                    'SSH_PROBE_TIMEOUT': str(LIMIT), 'FAKE_NODES': str(root / 'nodes'),
+                    'SSH_PROBE_TIMEOUT': str(LIMIT), 'VPN2_ROOT': str(root), 'FAKE_NODES': str(root / 'nodes'),
                     'FAKE_PIDS': str(pids), 'FAKE_HANGS': str(hangs), 'FAKE_SLEEP': str(HANG)})
         env.update({f'FAKE_{k.upper()}': str(v) for k, v in fake.items()})
         log = root / 'out'
@@ -197,8 +204,8 @@ class StageExitLoginHangTests(unittest.TestCase):
         self.assertNotRegex(run.out, 'завис')
         self.assertEqual(run.leftover, [])
 
-    def test_3_hang_in_push_or_stage_launch_without_retries(self):
-        for where in ('push', 'script'):
+    def test_3_hang_in_push_or_apt_prepare_without_retries(self):
+        for where in ('push', 'prepare'):
             with self.subTest(where=where):
                 run = deploy(PROBE, 'all', 3 * LIMIT, hang_tag='nl', hang_on=where)
                 self.assert_hung_exit_reported(run)

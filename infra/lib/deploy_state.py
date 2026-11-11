@@ -19,6 +19,7 @@ try:  # при деплое пакет лежит рядом (/tmp/anysda/vpn2)
     import vpn2.release  # noqa: F401
 except ImportError:  # дерево исходников
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'vpn2/src'))
+from vpn2 import swap  # noqa: E402
 from vpn2.release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256  # noqa: E402
 
 
@@ -222,6 +223,10 @@ def preflight(manifest, database, state, os_release=Path('/etc/os-release'), mem
         raise ReleaseError('unsupported operating system')
     if architecture() not in manifest['architectures']:
         raise ReleaseError('unsupported architecture')
+    if shutil.disk_usage(state).free < manifest['min_free_bytes']:
+        # The swap file an older deploy sized to all free space gives the room back by itself.
+        swap.release(manifest['min_free_bytes'], print, proc=meminfo.parent,
+                     install_bytes=swap.ENTRY_INSTALL if database.exists() else 0)
     if shutil.disk_usage(state).free < manifest['min_free_bytes']:
         raise ReleaseError('insufficient disk space before backup; services unchanged; ' + backup_usage(state) +
                            swapfile_usage())

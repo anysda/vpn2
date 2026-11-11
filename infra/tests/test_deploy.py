@@ -43,7 +43,7 @@ fw_guard_stage() { return 1; }
         with tempfile.TemporaryDirectory() as directory:
             play_tree(directory, ('29-openvpn', '20-ru-router', '21-failover-watchdog', '26-backup',
                                   '27-ikev2', '35-telegram', '30-frontend'), stubs,
-                      'echo "password=${ADMIN_PASSWORD:-archive}"\n')
+                      'echo "password=${ADMIN_PASSWORD:-archive} preserve=${VPN2_PRESERVE_ADMIN:-0}"\n')
             script = (function('run_stage_on_host') + function('do_restore') + run_play_source()
                       + stubs + PLAY_STUBS + '''
 run_stage() { run_stage_on_host "$1" "$2"; }
@@ -53,7 +53,7 @@ run_stage 30-frontend ru
             result = bash(script, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.splitlines(),
-                             ['[ru]password=archive'] * 7 + ['[ru]password=current-seed'])
+                             ['[ru]password=archive preserve=1'] * 7 + ['[ru]password=current-seed preserve=0'])
 
     def test_restore_dry_run_only_asks_entry(self):
         with tempfile.TemporaryDirectory() as directory:

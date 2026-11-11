@@ -103,20 +103,13 @@ source routing.sh up
             self.assertEqual(result.returncode, 0, result.stderr)
             for cidr in pools['ikev2']['subnets']:
                 self.assertIn(f'ip route replace {cidr} dev xfrm0', result.stdout)
-            ovpn = source('infra/scripts/29-openvpn.sh')
-            loop = 'for subnet in $OVPN_SUBNETS;' + ovpn.split('for subnet in $OVPN_SUBNETS;', 1)[1].split('\ndone', 1)[0] + '\ndone'
-            result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n' + '''
-OVPN_SUBNETS=$(vpn_pool_subnets ovpn)
-OVPN_SUBNET=10.67.67.0
-OVPN_DIR=$PWD
-''' + loop, directory)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            routes = (Path(directory) / 'server.conf').read_text().splitlines()
-            self.assertEqual(routes, [f'route {cidr[:-3]} 255.255.255.0' for cidr in pools['ovpn']['subnets'][1:]])
+        conf = vpn_roles.package('entryvpn').ovpn_server_conf('1194', 'udp', '10.67.67.0', pools['ovpn']['subnets'], 'root')
+        routes = [line for line in conf.splitlines() if line.startswith('route ')]
+        self.assertEqual(routes, [f'route {cidr[:-3]} 255.255.255.0' for cidr in pools['ovpn']['subnets'][1:]])
 
     def test_dns_firewall_and_adguard_cover_every_subnet(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
-        for key, filename, variable in [('ovpn', '29-openvpn', 'OVPN_SUBNETS'), ('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
+        for key, filename, variable in [('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
             stage = source(f'infra/scripts/{filename}.sh')
             loop = next(line for line in stage.splitlines() if line.startswith('ufw_sync_dns '))
             with tempfile.TemporaryDirectory() as directory:
@@ -134,11 +127,12 @@ ufw_sync_rules() {
                 for cidr in pools[key]['subnets']:
                     for protocol in ('tcp', 'udp'):
                         self.assertIn(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53', rules)
-        for key, role in [('wg', 'wireguard')]:
+        for key, role in [('wg', 'wireguard'), ('ovpn', 'openvpn')]:
             defaults = vpn_roles.role_defaults(role)
             self.assertIn(f'{role}_subnets: "{{{{ {role}_pools.{key}.subnets }}}}"', defaults)
             self.assertIn(f"{role}_infra ~ '/../app/shared/vpn-pools.json'", defaults)
-            values = {f'{role}_port': '1', f'{role}_dns': '10.99.0.1', f'{role}_subnets': pools[key]['subnets']}
+            values = {f'{role}_port': '1', f'{role}_ufw_proto': 'udp', f'{role}_dns': '10.99.0.1',
+                      f'{role}_subnets': pools[key]['subnets']}
             rules = [' '.join(rule) for rule in vpn_roles.ufw_apply(vpn_roles.ufw_groups(role, values), [], FAKE_UFW)]
             for cidr in pools[key]['subnets']:
                 for protocol in ('tcp', 'udp'):

@@ -3,15 +3,16 @@
 29-openvpn writes server.conf itself, and only 29-control records it as last good; restore lays
 /etc/openvpn from the archive and starts openvpn. A deploy failing between them, or a restore,
 left a last good older than what runs: a rollback or a failed install brought back the old port.
-The stage, 29-control and restore run as they are, cut from the scripts; vpn2-apply is the real
-apply.py on the fake host of test_apply, rooted in the test directory.
+The role's steps run from the vpn2 package, 29-control as cut from its script; vpn2-apply is the
+real apply.py on the fake host of test_apply, rooted in the test directory.
 """
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT, source
+from test_deploy import ROOT
+import vpn_roles
 
 OPENVPN = '/usr/sbin/openvpn'
 # Unit inactive while the live server.conf holds the text of work/down: for the stage's
@@ -43,10 +44,6 @@ apply.main()
 CONTROL_MARK = ('rc=0\n/usr/local/sbin/vpn2-apply resume openvpn || rc=$?\n[[ $rc == 0 || $rc == 3 ]] || exit "$rc"\n/usr/local/sbin/vpn2-apply mark openvpn >/dev/null 2>&1 || true\n')
 
 
-def between(text, start, end):
-    return text[text.index(start):text.index(end, text.index(start))]
-
-
 @unittest.skipUnless(Path(OPENVPN).exists(), 'needs ' + OPENVPN)
 class OpenvpnGoodAfterStageTests(unittest.TestCase):
     def setUp(self):
@@ -71,33 +68,26 @@ class OpenvpnGoodAfterStageTests(unittest.TestCase):
         self.vpn2_apply.write_text(f'#!/bin/sh\nexec python3 {self.work}/apply.py {ROOT}/infra/vpn2/tests '
                                    f'{self.root} {self.state} {self.work} "$@"\n')
         self.vpn2_apply.chmod(0o755)
+        # The role's steps call systemctl from PATH.
+        systemctl = self.work / 'bin/systemctl'
+        systemctl.write_text(f'''#!/bin/bash
+if [[ $1 == is-active || $1 == restart ]] && [[ -s {self.work}/down ]] \\
+    && grep -qF -- "$(< {self.work}/down)" {self.base}/server.conf; then
+  exit 3
+fi
+exit 0
+''')
+        systemctl.chmod(0o755)
 
     def rooted(self, text):
         return text.replace('/usr/local/sbin/vpn2-apply', str(self.vpn2_apply)) \
             .replace('/etc/', f'{self.root}/etc/').replace('/run/', f'{self.root}/run/') \
             .replace('/var/lib/', f'{self.root}/var/lib/')
 
-    def header(self, port=1194):
-        return source('infra/lib/anysda-svc.sh') + f'''
+    def header(self):
+        return f'''
 HOST_TAG=ru
-SVC_FP_DIR={self.work}/applied
-OVPN_PORT={port} OVPN_PROTO=udp OVPN_SERVER_PROTO=udp OVPN_SUBNET=10.67.67.0 OVPN_SUBNETS=10.67.67.0/24
-OVPN_DIR={self.base}
-PKI=$OVPN_DIR/pki
 PATH={self.work}/bin:$PATH
-systemctl() {{
-  if [[ $1 == is-active || $1 == restart ]] && [[ -s {self.work}/down ]] \\
-      && grep -qF -- "$(< {self.work}/down)" {self.base}/server.conf; then
-    return 3
-  fi
-  return 0
-}}
-sysctl() {{ :; }}
-ufw_sync_rules() {{ :; }}
-ufw_sync_dns() {{ :; }}
-id() {{ return 1; }}
-docker() {{ :; }}
-swanctl() {{ :; }}
 '''
 
     def bash(self, script):
@@ -106,12 +96,10 @@ swanctl() {{ :; }}
 
     def deploy(self, port, control=True):
         """29-openvpn with the port; then 29-control records last good, unless a stage between fails."""
-        stage = source('infra/scripts/29-openvpn.sh')
-        steps = between(stage, 'OVPN_CONTROL_USER=', 'mkdir -p /var/anysda/.stamps') \
-            + between(stage, '# ── 4. server.conf', '# ── 6. tun0')
+        steps = vpn_roles.ovpn_stage(self.root, self.work / 'applied', self.vpn2_apply, port)
         if control:
-            steps += 'echo "== 29-control"\n' + CONTROL_MARK
-        return self.bash(self.header(port) + 'echo "== 29-openvpn"\n' + self.rooted(steps))
+            steps += 'echo "== 29-control"\n' + self.rooted(CONTROL_MARK)
+        return self.bash(self.header() + 'echo "== 29-openvpn"\n' + steps)
 
     def deployed(self, port, control=True):
         result = self.deploy(port, control)

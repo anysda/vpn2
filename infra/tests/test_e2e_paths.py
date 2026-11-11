@@ -32,7 +32,7 @@ class E2ePathsTests(unittest.TestCase):
                 (['infra/deploy.sh', 'app/e2e/run-local.sh'], 'true'),
                 (['app/shared/vpn-pools.json'], 'true'),
                 (['infra/lib/entry_resources.py'], 'true'),
-                (['infra/scripts/29-openvpn.sh'], 'true'),
+                (['infra/vpn2/src/vpn2/pki.py'], 'true'),
                 (['infra/vpn2/src/vpn2/containers/panel.py'], 'true'),
                 (['infra/tools/speedtest.py'], 'true'),
                 (['infra/lib/config2env.py'], 'true'),

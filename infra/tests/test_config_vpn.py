@@ -68,16 +68,10 @@ done
                 actual = {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
                           for path in (Path(directory) / 'infra/envs').glob('*.env')}
                 self.assertEqual(actual, expected)
-                assignments = '\n'.join(line for stage in ('29-openvpn',)
-                                        for line in source(f'infra/scripts/{stage}.sh').splitlines()
-                                        if line.startswith(('WG_PORT=', 'OVPN_PORT=', 'OVPN_PROTO=')))
-                result = bash('unset WG_LISTEN_PORT OVPN_PORT OVPN_PROTO\n'
-                              'source infra/envs/all.env\nsource infra/envs/ru.env\n'
-                              + assignments + '\nprintf "%s/%s/%s\\n" "${WG_LISTEN_PORT:-}" "$OVPN_PORT" "$OVPN_PROTO"',
-                              directory)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, '/1194/udp\n')
-                # Порт WireGuard по умолчанию даёт роль.
+                # Порт и протокол OpenVPN по умолчанию даёт роль, как и порт WireGuard.
+                openvpn = source('infra/ansible/roles/openvpn/defaults/main.yml')
+                self.assertIn("lookup('ansible.builtin.env', 'OVPN_PORT') | default('1194', true)", openvpn)
+                self.assertIn("lookup('ansible.builtin.env', 'OVPN_PROTO') | default('udp', true)", openvpn)
                 self.assertIn("lookup('ansible.builtin.env', 'WG_LISTEN_PORT') | default('51820', true)",
                               source('infra/ansible/roles/wireguard/defaults/main.yml'))
 

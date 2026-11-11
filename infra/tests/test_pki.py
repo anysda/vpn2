@@ -63,25 +63,18 @@ class PkiTests(unittest.TestCase):
         self.env["PKI_MARKER"] = str(self.base / "fault-reached")
 
     def stage(self, protocol, fault="", mode="before"):
-        if protocol == "wg":
+        if protocol in ("wg", "ovpn"):
             target = self.base / protocol
             target.mkdir(exist_ok=True)
-            result = vpn_roles.wg_identity(target, env=dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode))
+            step = vpn_roles.wg_identity if protocol == "wg" else vpn_roles.ovpn_pki
+            result = step(target, env=dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode))
             result.stdout += result.stderr
             return result
-        names = {"ike": "27-ikev2", "ovpn": "29-openvpn"}
-        body = (ROOT / "infra/scripts" / f"{names[protocol]}.sh").read_text()
-        if protocol == "ike":
-            body = body.split('  echo "[$HOST_TAG] [2/8] self-signed CA"', 1)[1]
-            body = body.split('  install -m 644 "$PKI/ca.crt"', 1)[0]
-        else:
-            body = body.split("# ── 2. openssl.cnf", 1)[1].split("\n", 1)[1]
-            body = body.split("# ── 4. server.conf", 1)[0]
+        body = (ROOT / "infra/scripts/27-ikev2.sh").read_text()
+        body = body.split('  echo "[$HOST_TAG] [2/8] self-signed CA"', 1)[1]
+        body = body.split('  install -m 644 "$PKI/ca.crt"', 1)[0]
         target = self.base / protocol
         target.mkdir(exist_ok=True)
-        if protocol == "ovpn":
-            (target / "newcerts").mkdir(exist_ok=True)
-        body = body.replace("/etc/openvpn/server/pki", str(target))
         lib = ROOT / "infra/lib/anysda-pki.sh"
         prelude = f"source {shlex.quote(str(lib))}\n" if lib.exists() else ""
         command = "set -euo pipefail\n" + prelude
@@ -123,8 +116,7 @@ class PkiTests(unittest.TestCase):
     def test_failed_generation_retry_ovpn(self):
         self.failed_generation_retry("ovpn", ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",
                                               "openssl:req:-x509", "openssl:req:sign",
-                                              "openssl:ca:sign", "openvpn:--genkey", "openssl:ca:-gencrl",
-                                              "python3:-"))
+                                              "openssl:ca:sign", "openvpn:--genkey", "openssl:ca:-gencrl"))
 
     def failed_generation_retry(self, protocol, faults):
         for fault in faults:
@@ -243,13 +235,16 @@ class PkiTests(unittest.TestCase):
         self.good("ovpn")
         target = self.base / "ovpn"
         key, csr, cert = (str(self.base / name) for name in ("client.key", "client.csr", "client.crt"))
+        # openssl.cnf комплекта смотрит в каталог узла: панели нужна копия с каталогом теста.
+        cnf = self.base / "client.cnf"
+        cnf.write_text((target / "openssl.cnf").read_text().replace("/etc/openvpn/server/pki", str(target)))
         commands = [
             ["openssl", "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
              "-nodes", "-keyout", key, "-out", csr, "-subj", "/CN=regression-client"],
-            ["openssl", "ca", "-batch", "-config", str(target / "openssl.cnf"), "-extensions", "client_ext",
+            ["openssl", "ca", "-batch", "-config", str(cnf), "-extensions", "client_ext",
              "-in", csr, "-out", cert],
-            ["openssl", "ca", "-config", str(target / "openssl.cnf"), "-revoke", cert],
-            ["openssl", "ca", "-config", str(target / "openssl.cnf"), "-gencrl", "-out", str(target / "crl.pem")],
+            ["openssl", "ca", "-config", str(cnf), "-revoke", cert],
+            ["openssl", "ca", "-config", str(cnf), "-gencrl", "-out", str(target / "crl.pem")],
         ]
         for command in commands:
             subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

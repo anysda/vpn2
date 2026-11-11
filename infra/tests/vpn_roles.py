@@ -1,12 +1,13 @@
 """VPN-серверы entry для тестов: скрипты маршрутизации ролей и шаги пакета vpn2."""
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ROLES = {'28-wireguard': ('wireguard', 'anysda-wg-routing.sh')}
+ROLES = {'28-wireguard': ('wireguard', 'anysda-wg-routing.sh'), '29-openvpn': ('openvpn', 'anysda-ovpn-routing.sh')}
 
 
 def routing(stage):
@@ -16,6 +17,15 @@ def routing(stage):
         return (ROOT / 'infra/ansible/roles' / role / 'files' / name).read_text()
     text = (ROOT / 'infra/scripts' / f'{stage}.sh').read_text()
     return text.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+
+
+def package(name):
+    """Модуль пакета vpn2, например package('entryvpn')."""
+    import importlib
+    src = str(ROOT / 'infra/vpn2/src')
+    if src not in sys.path:
+        sys.path.insert(0, src)
+    return importlib.import_module(f'vpn2.{name}')
 
 
 def role_tasks(role):
@@ -36,6 +46,40 @@ def wg_identity(root, *, env=None, stub=None):
             env['PATH'] = f'{directory}:{env["PATH"]}'
         return subprocess.run([sys.executable, '-c', code, str(root)], env=env, text=True,
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
+
+
+def ovpn_pki(target, *, env=None):
+    """Шаг `ovpn-pki` роли openvpn: комплект PKI в каталоге target."""
+    code = ('import sys\nfrom vpn2 import entryvpn, pki\n'
+            'try:\n    entryvpn.ovpn_pki(target=sys.argv[1], dirs=())\n'
+            'except pki.PkiError as error:\n    sys.exit(str(error))\n')
+    env = dict(env or os.environ, PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
+    return subprocess.run([sys.executable, '-c', code, str(target)], env=env, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, check=False)
+
+
+OVPN_STAGE = '''import subprocess
+import sys
+from vpn2 import entryvpn
+from vpn2.cli import host
+root, applied, apply, port = sys.argv[1:]
+directory = root + entryvpn.OVPN_DIR
+try:
+    entryvpn.ovpn_write_conf(port, 'udp', '10.67.67.0', ['10.67.67.0/24'], directory=directory,
+                             marker=root + entryvpn.OVPN_API_MANAGED)
+    host.ovpn_restart(directory=directory, applied=applied, apply=apply)
+except (RuntimeError, subprocess.CalledProcessError) as error:
+    sys.exit(str(error))
+'''
+
+
+def ovpn_stage(root, applied, apply, port=1194):
+    """Строка bash: шаги `ovpn-server-conf` и `ovpn-restart` роли openvpn на дереве root.
+
+    systemctl и vpn2-apply берутся подставные: первый из PATH, второй путём apply.
+    """
+    return shlex.join(['env', f'PYTHONPATH={ROOT / "infra/vpn2/src"}', sys.executable, '-B', '-c', OVPN_STAGE,
+                       str(root), str(applied), str(apply), str(port)]) + '\n'
 
 
 def role_defaults(role):

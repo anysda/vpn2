@@ -40,7 +40,8 @@ p.write_text(json.dumps(rules))
 '''
 
 # Роли VPN-серверов: значения переменных для групп DNS.
-DNS_VALUES = {'wireguard': {'wireguard_dns': '10.99.0.1', 'wireguard_subnets': ['198.51.100.0/24']}}
+DNS_VALUES = {role: {f'{role}_dns': '10.99.0.1', f'{role}_subnets': ['198.51.100.0/24']}
+              for role in ('wireguard', 'openvpn')}
 
 
 class UfwReconcileTests(unittest.TestCase):
@@ -62,7 +63,6 @@ class UfwReconcileTests(unittest.TestCase):
         cases = [
             ('27-ikev2', 'ikev2 IKE', '500/udp'),
             ('27-ikev2', 'ikev2 NAT-T', '4500/udp'),
-            ('29-openvpn', 'openvpn listener', '1194/tcp'),
         ]
         for stage, comment, desired in cases:
             with self.subTest(stage=stage, comment=comment):
@@ -79,7 +79,8 @@ class UfwReconcileTests(unittest.TestCase):
 
     def test_vpn_roles_remove_owned_stale_rules(self):
         for role, values, comment, desired in [
-                ('wireguard', {'wireguard_port': '51820'}, 'wireguard listener', '51820/udp')]:
+                ('wireguard', {'wireguard_port': '51820'}, 'wireguard listener', '51820/udp'),
+                ('openvpn', {'openvpn_port': '1194', 'openvpn_ufw_proto': 'tcp'}, 'openvpn listener', '1194/tcp')]:
             with self.subTest(role=role, comment=comment):
                 group = next(g for g in vpn_roles.ufw_groups(role, values | DNS_VALUES[role]) if g['comment'] == comment)
                 old = ['allow', '59999/udp', 'comment', comment]
@@ -94,7 +95,7 @@ class UfwReconcileTests(unittest.TestCase):
         for role, values in DNS_VALUES.items():
             with self.subTest(role=role):
                 comment = f'{role} → AdGuard DNS'
-                group = next(g for g in vpn_roles.ufw_groups(role, values | {f'{role}_port': '1'}) if g['comment'] == comment)
+                group = next(g for g in vpn_roles.ufw_groups(role, values | {f'{role}_port': '1', f'{role}_ufw_proto': 'udp'}) if g['comment'] == comment)
                 old = shlex.split('allow from 198.51.100.0/24 to 192.0.2.53 port 53 proto udp') + ['comment', comment]
                 manual = ['allow', '53/tcp', 'comment', 'manual DNS']
                 result = vpn_roles.ufw_apply([group], [old, manual], FAKE_UFW)
@@ -138,8 +139,7 @@ class UfwReconcileTests(unittest.TestCase):
                 self.assertTrue(any(r[:2] == ['allow', desired] for r in result))
 
     def test_dns_changes_replace_only_owned_rules(self):
-        for stage, service, variable in [('27-ikev2', 'ikev2', 'IKEV2'),
-                                          ('29-openvpn', 'openvpn', 'OVPN')]:
+        for stage, service, variable in [('27-ikev2', 'ikev2', 'IKEV2')]:
             with self.subTest(stage=stage):
                 text = source(f'infra/scripts/{stage}.sh')
                 if 'ufw_sync_dns' in text:

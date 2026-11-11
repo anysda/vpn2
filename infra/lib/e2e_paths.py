@@ -13,7 +13,7 @@ DEPENDENCIES = {
     '.github/workflows/checks.yml',
     'infra/lib/e2e_paths.py',
     'infra/lib/entry_resources.py',
-    'infra/scripts/29-openvpn.sh',
+    'infra/vpn2/src/vpn2/pki.py',
     'infra/vpn2/src/vpn2/containers/compose.py',
     'infra/vpn2/src/vpn2/containers/panel.py',
     'infra/tools/speedtest.py',

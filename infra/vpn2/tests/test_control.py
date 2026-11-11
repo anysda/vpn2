@@ -769,9 +769,10 @@ class ControlTests(unittest.TestCase):
 
     def test_management_uid_switch_is_transactional_and_survives_redeploy(self):
         panel = (ROOT / 'infra/vpn2/src/vpn2/containers/panel.py').read_text()
-        stage = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
-        self.assertIn('management-client-user ${OVPN_CONTROL_USER}', stage)
-        self.assertIn('OVPN_CONTROL_USER=vpn2-control', stage)
+        from vpn2 import entryvpn
+        self.assertIn('management-client-user {user}\n', entryvpn.OVPN_CONF)
+        self.assertEqual(entryvpn.ovpn_control_user(self.file('/etc/vpn2-control/api-managed', '')), 'vpn2-control')
+        self.assertEqual(entryvpn.ovpn_control_user('/nonexistent/api-managed'), 'root')
         self.assertIn("OVPN_USER = 'management-client-user vpn2-control'", panel)
         body = panel[panel.index('def _stage('):]
         guard, switch = body.index('host_tls(environ, say, tx)'), body.index('openvpn.switch()')

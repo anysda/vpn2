@@ -1,12 +1,10 @@
 """OpenVPN candidate lines are split into words as openvpn 2.7 splits them, with the real openvpn."""
-import re
 import shutil
-import subprocess
 import unittest
 
-from test_apply import ROOT
 import test_apply_openvpn_candidate as candidate
 from test_apply_openvpn_candidate import WORKING
+from vpn2 import entryvpn
 
 
 class OpenvpnTokenizeTests(unittest.TestCase):
@@ -149,22 +147,18 @@ class OpenvpnTokenizeTests(unittest.TestCase):
         self.applied(WORKING + 'cipher aes-256-gcm\ndata-ciphers aes-256-gcm:chacha20-poly1305\n')
 
     def template(self, proto, fastio):
-        script = (ROOT / 'infra/scripts/29-openvpn.sh').read_text()
-        body = re.search(r'cat > "\$OVPN_DIR/server.conf" <<EOF\n(.*?\nEOF\n)', script, re.S)[1]
-        env = {'OVPN_PORT': '1194', 'OVPN_SERVER_PROTO': proto, 'OVPN_SUBNET': '10.8.0.0',
-               'PKI': str(self.base / 'pki'), 'OVPN_DIR': str(self.base), 'OVPN_FASTIO': fastio,
-               'OVPN_CONTROL_USER': 'root', 'PATH': '/usr/bin:/bin'}
-        text = subprocess.run(['bash', '-c', 'cat <<EOF\n' + body], env=env, check=True,
-                              capture_output=True, text=True).stdout
-        self.assertNotIn('$', text)
-        return text + 'route 10.8.1.0 255.255.255.0\n'
+        text = entryvpn.ovpn_server_conf('1194', proto, '10.8.0.0', ['10.8.0.0/24', '10.8.1.0/24'], 'root',
+                                         directory=str(self.base))
+        self.assertEqual('\nfast-io\n' in text, fastio)
+        self.assertIn('route 10.8.1.0 255.255.255.0\n', text)
+        return text
 
-    # The allowed directives are exactly what 29-openvpn.sh writes.
-    def test_udp_server_template_from_the_script_is_applied(self):
-        self.applied(self.template('udp', 'fast-io'))
+    # The allowed directives are exactly what the openvpn role writes.
+    def test_udp_server_template_of_the_role_is_applied(self):
+        self.applied(self.template('udp', True))
 
-    def test_tcp_server_template_from_the_script_is_applied(self):
-        self.applied(self.template('tcp-server', ''))
+    def test_tcp_server_template_of_the_role_is_applied(self):
+        self.applied(self.template('tcp-server', False))
 
 
 if __name__ == '__main__':

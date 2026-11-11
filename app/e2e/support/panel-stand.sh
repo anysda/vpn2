@@ -54,10 +54,10 @@ stand_up() {
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"
   dk exec -d "$name" node /tmp/fake-backends.mjs
 
-  # openssl.cnf берём из стадии 29 как есть, чтобы `openssl ca` в панели работал
+  # openssl.cnf берём у пакета vpn2 как есть, чтобы `openssl ca` в панели работал
   # с тем же конфигом, что на ноде.
-  awk '/cat > "\$PKI\/openssl.cnf" <</ {f=1; next} f && /^EOF$/ {exit} f' \
-    "$STAND_REPO_DIR/infra/scripts/29-openvpn.sh" \
+  PYTHONPATH="$STAND_REPO_DIR/infra/vpn2/src" python3 -c \
+    'import sys; from vpn2 import pki; sys.stdout.write(pki.openssl_cnf())' \
     | dk exec -i "$name" sh -c 'mkdir -p /etc/openvpn/server/pki && cat > /etc/openvpn/server/pki/openssl.cnf'
 
   dk exec -i -e PUBLIC_HOST=$PUBLIC_HOST "$name" bash -s <<'IN'

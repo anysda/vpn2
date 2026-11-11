@@ -743,7 +743,10 @@ def main():
 
     # Переменные узлов считает пакет: те же, что получает ansible через inventory.py.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
-    from vpn2 import config, nodevars
+    try:
+        from vpn2 import config, nodevars
+    except ImportError as error:
+        sys.exit(f'ERROR: {error}. Нужен пакет python3-yaml: apt install python3-yaml')
     try:
         nodes = nodevars.env_by_node(config.loads(config_path.read_text()), state=state_dir(),
                                      repo_root=repo_root, development=development)

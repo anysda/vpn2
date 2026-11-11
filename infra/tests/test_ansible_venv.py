@@ -65,10 +65,10 @@ def tree_status():
     return res.stdout
 
 
-def install(tmp_path, bin_dir, infra_dir):
+def install(tmp_path, bin_dir, infra_dir, **env):
     return bash('ansible_venv_install',
                 VPN2_ROOT=str(tmp_path / 'root'), ANSIBLE_VENV_INFRA=str(infra_dir),
-                VPN2_PYTHON=str(bin_dir / 'python3'))
+                VPN2_PYTHON=str(bin_dir / 'python3'), **env)
 
 
 class AnsibleVenvTest(unittest.TestCase):
@@ -106,11 +106,34 @@ class AnsibleVenvTest(unittest.TestCase):
         bin_dir.mkdir()
         calls = self.tmp / 'calls'
         stub = bin_dir / 'python3'
+        # `-m venv <каталог>` оставляет каталог с bin/vpn2 и bin/ansible-galaxy;
+        # вызов с подстрокой из FAIL_ON падает - так обрывается сборка.
         stub.write_text('#!/bin/sh\n'
                         'if [ "$1" = "-V" ]; then echo "Python 3.0.0"; exit 0; fi\n'
-                        f'echo "$*" >> {calls}\n')
+                        f'echo "$*" >> {calls}\n'
+                        'if [ -n "$FAIL_ON" ]; then case "$*" in *"$FAIL_ON"*) exit 1;; esac; fi\n'
+                        '[ "$1" = "-m" ] || exit 0\n'
+                        'for dir; do :; done\n'
+                        'mkdir -p "$dir/bin"\n'
+                        f'printf \'#!/bin/sh\\necho "galaxy $*" >> {calls}\\n\' > "$dir/bin/ansible-galaxy"\n'
+                        'printf \'#!/bin/sh\\necho vpn2\\n\' > "$dir/bin/vpn2"\n'
+                        'chmod +x "$dir/bin/ansible-galaxy" "$dir/bin/vpn2"\n')
         stub.chmod(0o755)
         return bin_dir, calls
+
+    def edit_source(self, infra):
+        with open(infra / 'vpn2/src/vpn2/config.py', 'a') as f:
+            f.write('\n# правка\n')
+        build(self, self.tmp, infra)
+
+    def installed(self, bin_dir, infra, **env):
+        res = install(self.tmp, bin_dir, infra, **env)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        venv = self.tmp / 'root/venv'
+        self.assertTrue(venv.is_symlink(), 'venv - симлинк на сборку')
+        self.assertEqual(subprocess.run([venv / 'bin/vpn2'], capture_output=True, text=True).stdout,
+                         'vpn2\n')
+        return res, venv.resolve()
 
     def venv_wait(self, mode):
         log = self.tmp / 'venv.log'
@@ -193,29 +216,109 @@ class AnsibleVenvTest(unittest.TestCase):
         bin_dir, calls = self.fake_python()
         build(self, self.tmp, infra)
         root = self.tmp / 'root'
+        # первая установка: загрузка колёс в склад, сборка рядом, коллекции
+        _, first = self.installed(bin_dir, infra)
+        lines = calls.read_text().splitlines()
+        self.assertEqual([' download ' in x for x in lines], [True, False, False, False, False])
+        self.assertTrue(lines[1].startswith('-m venv --without-pip')
+                        and '--clear' not in lines[1])
+        self.assertTrue('--no-index --find-links' in lines[2] and lines[2].endswith('ansible-core'))
+        self.assertTrue('--no-index --no-deps' in lines[3] and lines[4].startswith('galaxy '))
+        self.assertEqual(first.parent, (root / 'venvs').resolve())
+        # те же пины и колесо: ни одного вызова, сборка та же
+        res, same = self.installed(bin_dir, infra)
+        self.assertIn('пины те же, без загрузки', res.stdout)
+        self.assertEqual(calls.read_text().splitlines(), lines)
+        self.assertEqual(same, first)
+        # другое колесо: новая сборка без сети, прежняя снесена
+        self.edit_source(infra)
+        res, second = self.installed(bin_dir, infra)
+        self.assertIn('колесо vpn2 обновлено', res.stdout)
+        added = calls.read_text().splitlines()[len(lines):]
+        self.assertEqual(len(added), 3, added)
+        self.assertTrue(added[0].startswith('-m venv') and '--no-index' in added[1]
+                        and '--no-index' in added[2])
+        self.assertNotEqual(second, first)
+        self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
+        self.assertEqual((root / 'venv/.vpn2-wheel').read_text(),
+                         (root / 'wheels/.src-sha256').read_text())
+        # другие пины: склад и коллекции качаются заново
+        lines = calls.read_text().splitlines()
+        with open(infra / 'ansible/constraints.txt', 'a') as f:
+            f.write('\n# правка\n')
+        res, third = self.installed(bin_dir, infra)
+        added = calls.read_text().splitlines()[len(lines):]
+        self.assertTrue(' download ' in added[0] and added[-1].startswith('galaxy '), added)
+        self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [third.name])
+
+    @NEEDS_WHEEL
+    @NEEDS_PIP_WHEEL
+    def test_aborted_build_leaves_current_venv_working(self):
+        infra = self.infra()
+        bin_dir, _ = self.fake_python()
+        build(self, self.tmp, infra)
+        root = self.tmp / 'root'
+        _, first = self.installed(bin_dir, infra)
+        marks = [(root / 'venv' / x).read_text() for x in ('.vpn2-pins', '.vpn2-wheel')]
+        self.edit_source(infra)
+        res = install(self.tmp, bin_dir, infra, FAIL_ON='--no-deps')
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual((root / 'venv').resolve(), first)
+        self.assertEqual([(root / 'venv' / x).read_text() for x in ('.vpn2-pins', '.vpn2-wheel')],
+                         marks)
+        self.assertEqual(subprocess.run([root / 'venv/bin/vpn2'], capture_output=True).returncode, 0)
+        # повтор: оборванная сборка снесена и собрана заново
+        _, second = self.installed(bin_dir, infra)
+        self.assertNotEqual(second, first)
+        self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
+
+    @NEEDS_WHEEL
+    @NEEDS_PIP_WHEEL
+    def test_directory_of_old_release_becomes_link(self):
+        infra = self.infra()
+        bin_dir, calls = self.fake_python()
+        build(self, self.tmp, infra)
+        root = self.tmp / 'root'
         venv = root / 'venv'
         venv.mkdir(parents=True)
         pin = bash('ansible_venv_pins', ANSIBLE_VENV_INFRA=str(infra),
                    VPN2_PYTHON=str(bin_dir / 'python3')).stdout.strip()
         (venv / '.vpn2-pins').write_text(pin + '\n')
         (venv / '.vpn2-wheel').write_text((root / 'wheels/.src-sha256').read_text())
-        # тот же маркер колеса: ни одного вызова
+        # метки те же: каталог прежнего выпуска не трогается
         res = install(self.tmp, bin_dir, infra)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn('пины те же, без загрузки', res.stdout)
         self.assertFalse(calls.exists())
-        # другое колесо: один вызов с --no-index
-        with open(infra / 'vpn2/src/vpn2/config.py', 'a') as f:
-            f.write('\n# правка\n')
+        self.assertFalse(venv.is_symlink())
+        # другое колесо: каталог уступает место симлинку, коллекции не качаются
+        self.edit_source(infra)
+        self.installed(bin_dir, infra)
+        self.assertFalse(any(x.startswith('galaxy ') for x in calls.read_text().splitlines()))
+        self.assertEqual(len(list((root / 'venvs').iterdir())), 1)
+        self.assertEqual(sorted(x.name for x in root.iterdir() if x.name.startswith('venv')),
+                         ['venv', 'venvs'])
+
+    @NEEDS_WHEEL
+    @NEEDS_PIP_WHEEL
+    def test_build_of_running_process_is_kept(self):
+        infra = self.infra()
+        bin_dir, _ = self.fake_python()
         build(self, self.tmp, infra)
-        res = install(self.tmp, bin_dir, infra)
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn('колесо vpn2 обновлено', res.stdout)
-        lines = calls.read_text().splitlines()
-        self.assertTrue(len(lines) == 1 and '--no-index' in lines[0]
-                        and '--force-reinstall' in lines[0])
-        self.assertEqual((venv / '.vpn2-wheel').read_text(),
-                         (root / 'wheels/.src-sha256').read_text())
+        root = self.tmp / 'root'
+        _, first = self.installed(bin_dir, infra)
+        # Командная строка службы из venv: настоящий путь сборки.
+        service = subprocess.Popen(['python3', '-c', 'import time; time.sleep(120)',
+                                    f'{first}/bin/vpn2'])
+        try:
+            self.edit_source(infra)
+            _, second = self.installed(bin_dir, infra)
+            self.assertTrue(first.is_dir(), 'сборка живого процесса снесена')
+        finally:
+            service.kill()
+            service.wait()
+        self.installed(bin_dir, infra)
+        self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
 
     def test_background_install_does_not_hold_deploy_lock(self):
         # Деплой берёт замок через exec {fd}> и падает; фон с sleep ещё идёт,

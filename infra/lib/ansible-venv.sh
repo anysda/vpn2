@@ -104,36 +104,95 @@ _venv_retry() {
   return 1
 }
 
+# Сборка занята: её путь стоит в командной строке живого процесса. Служба,
+# запущенная из venv, держит настоящий каталог сборки, а не симлинк.
+_venv_in_use() {
+  local f
+  for f in /proc/[0-9]*/cmdline; do
+    [[ "$(tr '\0' ' ' 2>/dev/null <"$f")" == *"/venvs/$1/"* ]] && return 0
+  done
+  return 1
+}
+
+# Сносит сборки, кроме действующей и занятых процессами; оборванная уходит тоже.
+_venv_prune() {
+  local keep dir
+  keep="$(readlink "$VPN2_ROOT/venv" 2>/dev/null || true)"
+  rm -rf "$VPN2_ROOT/venvs/.replaced"
+  for dir in "$VPN2_ROOT"/venvs/*/; do
+    [[ -d "$dir" ]] || continue
+    dir="${dir%/}"
+    [[ "venvs/${dir##*/}" != "$keep" ]] || continue
+    _venv_in_use "${dir##*/}" || rm -rf "$dir"
+  done
+}
+
+# $VPN2_ROOT/venv - симлинк на сборку $1 из venvs: подмена одним переименованием,
+# команда из venv запускается в любой миг.
+_venv_switch() {
+  local venv="$VPN2_ROOT/venv" aside="$VPN2_ROOT/venvs/.replaced"
+  rm -rf "$venv.new"
+  ln -s "venvs/$1" "$venv.new" || return 1
+  if [[ -d "$venv" && ! -L "$venv" ]]; then
+    # Каталог прежних выпусков: обмен именами одним вызовом (coreutils 9.5),
+    # без него один раз окно в два переименования.
+    if mv --exchange -T "$venv.new" "$venv" 2>/dev/null; then
+      rm -rf "$venv.new"
+      return 0
+    fi
+    rm -rf "$aside"
+    mv "$venv" "$aside" || return 1
+    mv -T "$venv.new" "$venv" || return 1
+    rm -rf "$aside"
+    return 0
+  fi
+  mv -T "$venv.new" "$venv"
+}
+
+# Новая сборка ставится рядом, в $VPN2_ROOT/venvs/<пины>-<колесо>, действующая
+# до подмены не трогается: оборванная установка оставляет каталог без метки
+# .vpn2-pins, следующий запуск его сносит. Колёса ansible-core лежат в
+# $VPN2_ROOT/pip-wheels: сеть нужна только при смене пинов.
 _ansible_venv_install_locked() {
-  local venv="$VPN2_ROOT/venv" pins pip wheel src
+  local venv="$VPN2_ROOT/venv" store="$VPN2_ROOT/pip-wheels" pins pip wheel src had new
+  local constraints="$ANSIBLE_VENV_INFRA/ansible/constraints.txt"
   pins="$(ansible_venv_pins)"
   wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
   src="$(cat "$VPN2_ROOT/wheels/.src-sha256")"
   pip="$(ls "$PYTHON_WHEELS_DIR"/pip-*.whl 2>/dev/null | head -n1)"
-  if [[ -f "$venv/.vpn2-pins" && "$(cat "$venv/.vpn2-pins")" == "$pins" ]]; then
-    if [[ -f "$venv/.vpn2-wheel" && "$(cat "$venv/.vpn2-wheel")" == "$src" ]]; then
-      log "ansible: пины те же, без загрузки"
-      return 0
-    fi
-    [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
-    rm -f "$venv/.vpn2-wheel"
-    "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
-      --no-index --no-deps --force-reinstall "$wheel" || return 1
-    printf '%s\n' "$src" >"$venv/.vpn2-wheel"
-    log "ansible: пины те же, колесо vpn2 обновлено"
+  had="$(cat "$venv/.vpn2-pins" 2>/dev/null || true)"
+  if [[ "$had" == "$pins" && "$(cat "$venv/.vpn2-wheel" 2>/dev/null || true)" == "$src" ]]; then
+    _venv_prune
+    log "ansible: пины те же, без загрузки"
     return 0
   fi
   [[ -n "$pip" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
-  rm -f "$venv/.vpn2-pins" "$venv/.vpn2-wheel"
-  "$VPN2_PYTHON" -m venv --without-pip --clear "$venv" || return 1
-  _venv_retry "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install \
-    --disable-pip-version-check -c "$ANSIBLE_VENV_INFRA/ansible/constraints.txt" ansible-core || return 1
-  "$VPN2_PYTHON" "$pip/pip" --python "$venv/bin/python" install --disable-pip-version-check \
-    --no-index --no-deps "$wheel" || return 1
-  _venv_retry "$venv/bin/ansible-galaxy" collection install \
-    -r "$ANSIBLE_VENV_INFRA/ansible/requirements.yml" -p "$VPN2_ROOT/collections" || return 1
-  printf '%s\n' "$src" >"$venv/.vpn2-wheel"
-  printf '%s\n' "$pins" >"$venv/.vpn2-pins"
+  new="$VPN2_ROOT/venvs/${pins:0:12}-${src:0:12}"
+  if [[ ! -f "$new/.vpn2-pins" ]]; then
+    rm -rf "$new"
+    if [[ "$(cat "$store/.vpn2-pins" 2>/dev/null || true)" != "$pins" ]]; then
+      rm -rf "$store"
+      mkdir -p "$store"
+      _venv_retry "$VPN2_PYTHON" "$pip/pip" download --disable-pip-version-check \
+        --only-binary :all: -d "$store" -c "$constraints" ansible-core || return 1
+      printf '%s\n' "$pins" >"$store/.vpn2-pins"
+    fi
+    mkdir -p "$VPN2_ROOT/venvs"
+    "$VPN2_PYTHON" -m venv --without-pip "$new" || return 1
+    "$VPN2_PYTHON" "$pip/pip" --python "$new/bin/python" install --disable-pip-version-check \
+      --no-index --find-links "$store" -c "$constraints" ansible-core || return 1
+    "$VPN2_PYTHON" "$pip/pip" --python "$new/bin/python" install --disable-pip-version-check \
+      --no-index --no-deps "$wheel" || return 1
+  fi
+  if [[ "$had" != "$pins" ]]; then
+    _venv_retry "$new/bin/ansible-galaxy" collection install \
+      -r "$ANSIBLE_VENV_INFRA/ansible/requirements.yml" -p "$VPN2_ROOT/collections" || return 1
+  fi
+  printf '%s\n' "$src" >"$new/.vpn2-wheel"
+  printf '%s\n' "$pins" >"$new/.vpn2-pins"
+  _venv_switch "${new##*/}" || return 1
+  _venv_prune
+  [[ "$had" != "$pins" ]] || log "ansible: пины те же, колесо vpn2 обновлено"
 }
 
 ansible_venv_install() {

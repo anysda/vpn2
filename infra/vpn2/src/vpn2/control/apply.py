@@ -44,7 +44,7 @@ RESOURCES = {
     'wg': {'path': '/etc/wireguard/wg0.conf', 'mode': 0o600,
            'verify': [['/usr/bin/wg', 'show', 'wg0', 'listen-port']]},
 }
-# The directives infra/scripts/29-openvpn.sh writes, in every version so far:
+# The directives the openvpn role (entryvpn.OVPN_CONF) writes, in every version so far:
 # restore() checks a last good config an older version wrote. openvpn reads a
 # directive past the first word too (setenv opt, a BOM, config), and some run
 # while it parses (log, plugin, providers): only a known name is let through.

@@ -135,7 +135,7 @@ svc_restart_if_changed() {
   svc_say "$unit перезапущен"
 }
 
-# Входы openvpn-server@server. Его перезапускают 29-openvpn и смена UID
+# Входы openvpn-server@server. Его перезапускают роль openvpn и смена UID
 # management в 30-frontend: отпечаток один, иначе следующий деплой видит
 # «изменение» и рвёт всех OpenVPN-клиентов. CRL и ccd OpenVPN перечитывает сам
 # на каждом подключении, их в отпечатке нет.

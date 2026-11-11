@@ -299,6 +299,27 @@ def _routing_ensure(args):
     return entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)
 
 
+def _ovpn_pki(args):
+    del args
+    return entryvpn.ovpn_pki()
+
+
+def _ovpn_server_conf(args):
+    return entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)
+
+
+def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=None, apply=entryvpn.OVPN_APPLY):
+    """Рестарт OpenVPN по общему со стадией панели отпечатку входов."""
+    return entryvpn.ovpn_restart(
+        lambda: restart_if_changed(entryvpn.OVPN_UNIT, entryvpn.ovpn_inputs(directory), applied=applied),
+        _say, apply=apply)
+
+
+def _ovpn_restart(args):
+    del args
+    return ovpn_restart()
+
+
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 host', description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest='action', required=True)
@@ -340,6 +361,15 @@ def main(argv):
     item.add_argument('iface')
     item.add_argument('chain')
     item.set_defaults(run=_routing_ensure)
+    sub.add_parser('ovpn-pki', help='каталоги и комплект PKI сервера OpenVPN').set_defaults(run=_ovpn_pki)
+    item = sub.add_parser('ovpn-server-conf', help='server.conf сервера OpenVPN')
+    item.add_argument('--port', required=True)
+    item.add_argument('--proto', required=True)
+    item.add_argument('--subnet', required=True, help='сеть tun0 без маски')
+    item.add_argument('pool', nargs='+', help='подсети пула клиентов')
+    item.set_defaults(run=_ovpn_server_conf)
+    sub.add_parser('ovpn-restart', help='рестарт OpenVPN при смене входов и отметка last good') \
+        .set_defaults(run=_ovpn_restart)
     item = sub.add_parser('venv')
     item.add_argument('wheel')
     item.add_argument('--root', default='/opt/vpn2')

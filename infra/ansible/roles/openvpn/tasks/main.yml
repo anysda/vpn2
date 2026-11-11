@@ -1,0 +1,123 @@
+---
+# Сервер OpenVPN на tun0: EC PKI (CA, сертификат сервера, tls-crypt), трафик
+# клиентов уходит в ту же цепочку TPROXY sing-box, что у WireGuard. Панель
+# выпускает и отзывает сертификаты клиентов этим CA и ведёт ccd.
+- name: Каталог отметок стадий
+  ansible.builtin.file:
+    path: /var/anysda/.stamps
+    state: directory
+    mode: '0755'
+
+- name: Пакеты openvpn и openssl
+  ansible.builtin.command:
+    argv: "{{ openvpn_host + ['packages', 'openvpn', 'openssl'] }}"
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+# Ключи переживают повторы: комплект собирается в копии и подменяет прежний
+# целиком, действующие ключи не перевыпускаются.
+- name: Каталоги сервера и комплект PKI
+  ansible.builtin.command:
+    argv: "{{ openvpn_host + ['ovpn-pki'] }}"
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Конфиг server.conf
+  ansible.builtin.command:
+    argv: >-
+      {{ openvpn_host + ['ovpn-server-conf', '--port', openvpn_port, '--proto', openvpn_proto,
+         '--subnet', openvpn_subnet] + openvpn_subnets }}
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Пересылка пакетов между интерфейсами
+  ansible.builtin.command:
+    cmd: sysctl -w net.ipv4.ip_forward=1
+  changed_when: false
+
+- name: Порт OpenVPN и DNS клиентов в ufw
+  ansible.builtin.command:
+    argv: "{{ openvpn_host + ['ufw', '--only-rules', openvpn_ufw | to_json] }}"
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Служба openvpn-server@server включена
+  ansible.builtin.systemd_service:
+    name: openvpn-server@server
+    enabled: true
+
+- name: Библиотека ресурсов
+  ansible.builtin.copy:
+    src: "{{ openvpn_infra }}/lib/{{ item }}"
+    dest: "{{ openvpn_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py]
+  changed_when: false
+
+- name: Ресурсы сервера OpenVPN
+  ansible.builtin.command:
+    argv: "{{ openvpn_resources + ['openvpn-server@server'] }}"
+  environment: "{{ openvpn_resources_env }}"
+  register: openvpn_step
+  changed_when: "'changed=1' in openvpn_step.stdout"
+
+# Рестарт рвёт всех клиентов OpenVPN: только при смене конфига, сертификатов
+# или бинарника. Поднявшийся server.conf отмечается как last good.
+- name: Сервер OpenVPN запущен с текущими входами
+  ansible.builtin.command:
+    argv: "{{ openvpn_host + ['ovpn-restart'] }}"
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Юнит маршрутизации tun0
+  ansible.builtin.copy:
+    src: anysda-ovpn-routing.service
+    dest: /etc/systemd/system/anysda-ovpn-routing.service
+    mode: '0644'
+
+- name: Ресурсы юнита маршрутизации
+  ansible.builtin.command:
+    argv: "{{ openvpn_resources + ['anysda-ovpn-routing'] }}"
+  environment: "{{ openvpn_resources_env }}"
+  register: openvpn_step
+  changed_when: "'changed=1' in openvpn_step.stdout"
+
+- name: Скрипт маршрутизации tun0
+  ansible.builtin.copy:
+    src: anysda-ovpn-routing.sh
+    dest: /usr/local/sbin/anysda-ovpn-routing.sh
+    mode: '0755'
+
+- name: Маршрутизация tun0 включена
+  ansible.builtin.systemd_service:
+    name: anysda-ovpn-routing
+    enabled: true
+    daemon_reload: true
+
+- name: Маршрутизация tun0 запущена с текущими входами
+  ansible.builtin.command:
+    argv: >-
+      {{ openvpn_host + ['restart-if-changed', 'anysda-ovpn-routing',
+         '/etc/systemd/system/anysda-ovpn-routing.service', '/usr/local/sbin/anysda-ovpn-routing.sh'] }}
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Цепочка TPROXY tun0 на месте
+  ansible.builtin.command:
+    argv: "{{ openvpn_host + ['routing-ensure', 'anysda-ovpn-routing', 'tun0', 'ANYSDA_OVPN_TPROXY'] }}"
+  environment: "{{ openvpn_env }}"
+  register: openvpn_step
+  changed_when: "'vpn2: changed' in openvpn_step.stdout"
+
+- name: Отметка стадии
+  ansible.builtin.copy:
+    content: ''
+    dest: /var/anysda/.stamps/29-openvpn
+    force: false
+    mode: '0644'

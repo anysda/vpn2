@@ -722,7 +722,7 @@ run_stage_on_host() {
   local stage="$1" host="$2"
   if [[ "$stage" == 99-verify ]]; then run_verify "$host"; return; fi
   # Стадии entry, зовущие команду vpn2: venv с пакетом обязан быть готов до них.
-  if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog|28-wireguard) ]]; then
+  if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog|28-wireguard|29-openvpn) ]]; then
     ansible_venv_ensure fresh
   fi
   if [[ -f "$DEPLOY_ROOT/ansible/plays/$stage.yml" ]]; then run_play "$stage" "$host"; return; fi

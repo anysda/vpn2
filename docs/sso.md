@@ -176,7 +176,7 @@ OpenVPN, IKEv2 и sing-box не запускаются; при старте па
 | `app/app/pages/settings.vue` | карточка «Вход через Authentik» в «Настройках» |
 | `app/app/middleware/auth.global.ts` | авторедирект неавторизованного в IdP |
 | `app/app/pages/login.vue` | форма break-glass, кнопка входа, коды ошибок |
-| `infra/scripts/30-frontend.sh` | env контейнера (засев) + защёлка «SSO без HTTPS» |
+| `infra/vpn2/src/vpn2/containers/panel.py`, `compose.py` | env контейнера (засев) + защёлка «SSO без HTTPS» |
 | `infra/lib/config2env.py` | блок `sso:` из `config.yaml` → `ru.env` (засев) |
 
 Протокол ведёт [better-auth](https://www.better-auth.com/) (плагин

@@ -54,7 +54,7 @@ case ${1:-up} in
     ;;
 esac
 
-# Нет docker - ставим тем же кодом, что стадия 25-monitoring на ноде
+# Нет docker - ставим тем же кодом, что деплой на ноде
 # (infra/lib/anysda-svc.sh). Так же доставляем curl и openssl: ими пользуется
 # panel-stand.sh. Нужен root.
 ensure_host_tools() {

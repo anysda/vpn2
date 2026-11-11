@@ -23,7 +23,7 @@ export function isLoopbackAddr(ip: string | undefined): boolean {
  * X-Forwarded-For: Caddy ставит его на каждый проксируемый запрос, а бот и
  * прочие локальные вызовы идут на 127.0.0.1:51821 мимо него и такого
  * заголовка не шлют. Основной замок — 404 на эти пути в Caddyfile
- * (infra/scripts/30-frontend.sh), это второй.
+ * (infra/vpn2/src/vpn2/containers/panel.py), это второй.
  */
 function isDirectLocal(event: H3Event): boolean {
   if (!isLoopbackAddr(event.node.req.socket.remoteAddress)) return false

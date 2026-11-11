@@ -244,7 +244,7 @@ export async function fetchDailyTraffic(instances: string[]): Promise<Map<string
 
 /**
  * Map exit tags → MGMT IPs. Источник истины — runtimeConfig.mgmtIps (env
- * `NUXT_MGMT_IPS`), формат "tag:ip,tag:ip,...", приходит из 30-frontend.sh
+ * `NUXT_MGMT_IPS`), формат "tag:ip,tag:ip,...", приходит из стадии 30-frontend
  * со СТАБИЛЬНЫМИ индексами из config.yaml (исключённые экзиты резервируют
  * свой индекс, не сдвигая соседей). Это критично: wgmgmt-туннель на ноде
  * физически прописан на конкретный 10.99.0.X — если посчитать индекс

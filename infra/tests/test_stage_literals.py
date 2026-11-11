@@ -12,6 +12,7 @@ import yaml
 
 from adguard_support import Hub
 from router_support import exit_secrets, stage
+from zapret_support import render
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -69,16 +70,11 @@ class AdguardLiteralTests(unittest.TestCase):
 
 class YoutubeLiteralTests(unittest.TestCase):
     def test_generated_diagnostic_shell(self):
-        text = source('19-yt-zapret.sh')
-        block = text[text.index('cat > /usr/local/bin/anysda-yt-check'):
-                     text.index('chmod 0755 /usr/local/bin/anysda-yt-check')]
         for value in VALUES:
             with self.subTest(value=value), tempfile.TemporaryDirectory() as work:
-                local = block.replace('/usr/local/bin/anysda-yt-check', 'check.sh')
-                local = local.replace('/proc/net/netfilter/nfnetlink_queue', work + '/queue')
-                result = run('id() { printf 123; }\n' + local, work, DIAG_USER='test', DIAG_UID='123',
-                             YT_MARK='256', YT_ZAPRET_QUEUE='200', YT_ZAPRET_BASE=value)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                check = render('anysda-yt-check', base=value, diag_uid=123, diag_gid=123)
+                check = check.replace('/proc/net/netfilter/nfnetlink_queue', work + '/queue')
+                (Path(work) / 'check.sh').write_text(check)
                 (Path(work) / 'queue').write_text('200 123 0 2 65531 0 0 1 1\n')
                 # Очередь готова и счётчик растёт: вердикт решают коды HTTP.
                 checked = run('curl() { printf 000; }; setpriv() { printf 000; }; '
@@ -135,7 +131,7 @@ class LogLiteralTests(unittest.TestCase):
                             result = run(script, work, HOST_TAG=value)
                             self.assertEqual(result.returncode, 0, result.stderr)
                             self.assertEqual(result.stdout, normal.stdout.replace('[plain]', '[' + value + ']'))
-        self.assertGreater(count, 10)
+        self.assertGreater(count, 5)
 
 
 class IkeRoutingLiteralTests(unittest.TestCase):

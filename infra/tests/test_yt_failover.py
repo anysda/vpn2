@@ -9,7 +9,8 @@ import unittest
 from unittest.mock import patch
 
 from router_support import exit_cert
-from test_deploy import ROOT, source
+from test_deploy import ROOT
+from zapret_support import role_file, stage, tasks
 import watchdog_src
 
 
@@ -146,11 +147,16 @@ class YoutubeFailoverTests(unittest.TestCase):
             self.assertIn('0-4194303', curl)
 
     def test_install_and_teardown_own_timer(self):
-        stage = source('infra/scripts/19-yt-zapret.sh')
-        self.assertIn('systemctl enable --now anysda-yt-failover.timer', stage)
-        self.assertIn('systemctl disable --now anysda-yt-failover.timer', stage)
-        self.assertIn('systemctl stop anysda-yt-failover.service', stage)
-        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt\n', stage)
+        enabled = [task['ansible.builtin.systemd_service'] for task in tasks()
+                   if task.get('ansible.builtin.systemd_service', {}).get('name') == 'anysda-yt-failover.timer']
+        self.assertEqual([(unit['enabled'], unit['state']) for unit in enabled], [(True, 'started')])
+        with patch.object(stage, '_quiet', return_value=False) as quiet, patch.object(stage, '_remove'), \
+                patch.object(stage.subprocess, 'run'):
+            stage.teardown()
+        calls = [call.args for call in quiet.call_args_list]
+        self.assertIn(('systemctl', 'disable', '--now', 'anysda-yt-failover.timer'), calls)
+        self.assertIn(('systemctl', 'stop', 'anysda-yt-failover.service'), calls)
+        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt\n', role_file('anysda-yt-failover.service'))
 
     def test_quic_diagnostic_cannot_silently_fall_back_to_tcp(self):
         watch = load_watch()

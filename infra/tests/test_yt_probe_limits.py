@@ -14,7 +14,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from test_deploy import ROOT, source
+from test_deploy import ROOT
+from zapret_support import role_file
 from test_yt_failover import load_watch
 
 YTDLP = '/opt/anysda-yt-probe/bin/yt-dlp'
@@ -170,8 +171,7 @@ class ProbeLimitTests(unittest.TestCase):
                 self.assertGreaterEqual(int(dropin(ram)['MemoryMax'].rstrip('M')), 300)
         # Без OOMPolicy=continue systemd гасит всю службу при первом OOM-kill
         # ребёнка, и контроллер не успевает записать строку о лимите.
-        stage = source('infra/scripts/19-yt-zapret.sh')
-        unit = stage.split('cat > /etc/systemd/system/anysda-yt-failover.service', 1)[1].split('EOF', 2)[1]
+        unit = role_file('anysda-yt-failover.service')
         self.assertIn('OOMPolicy=continue', unit.splitlines())
 
 

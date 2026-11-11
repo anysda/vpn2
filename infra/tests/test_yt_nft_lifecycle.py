@@ -1,19 +1,16 @@
 from pathlib import Path
-import re
 import tempfile
 import unittest
 
-from test_deploy import bash, source
+from test_deploy import bash
+from zapret_support import role_file
 
 
 class NftLifecycleTests(unittest.TestCase):
     def test_nft_start_and_reload_restore_only_existing_tables(self):
-        stage = source('infra/scripts/19-yt-zapret.sh')
-        match = re.search(r'cat > /etc/systemd/system/nftables.service.d/[^ ]+ <<\x27EOF\x27\n(.*?)\nEOF',
-                          stage, re.S)
-        self.assertIsNotNone(match, 'nftables restart/reload loses YouTube tables')
+        dropin = role_file('nftables-90-anysda-youtube.conf')
         for event in ('ExecStartPost', 'ExecReload'):
-            command = next(line.split('=', 1)[1] for line in match[1].splitlines()
+            command = next(line.split('=', 1)[1] for line in dropin.splitlines()
                            if line.startswith(event + '='))
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

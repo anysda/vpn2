@@ -53,29 +53,12 @@ function toggleMenu() {
 
 // Скользящая пилюля под активной вкладкой, как в макете: в шапке и в таб-баре.
 const nav = ref<HTMLElement>()
-const glideEl = ref<HTMLElement>()
 const glided = ref(false)
 const bar = ref<HTMLElement>()
-const barGlideEl = ref<HTMLElement>()
 const barGlided = ref(false)
-function place(box: HTMLElement | undefined, g: HTMLElement | undefined, done: Ref<boolean>, jump: boolean) {
-  const on = box?.querySelector<HTMLElement>(':scope>a.on')
-  if (!box || !g || !on || !box.offsetWidth) {
-    done.value = false
-    return
-  }
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-  g.classList.toggle('now', jump || !done.value || reduce)
-  const r = on.getBoundingClientRect(), q = box.getBoundingClientRect()
-  g.style.height = `${r.height}px`
-  g.style.width = `${r.width}px`
-  g.style.transform = `translate(${r.left - q.left - box.clientLeft}px,${r.top - q.top - box.clientTop}px)`
-  if (!done.value || jump) requestAnimationFrame(() => g.classList.remove('now'))
-  done.value = true
-}
 function glide(jump = false) {
-  place(nav.value, glideEl.value, glided, jump)
-  place(bar.value, barGlideEl.value, barGlided, jump)
+  glided.value = placeGlide(nav.value, glided.value, jump)
+  barGlided.value = placeGlide(bar.value, barGlided.value, jump)
 }
 const onResize = () => glide(true)
 
@@ -126,7 +109,9 @@ onUnmounted(() => {
     <div class="light" />
     <div class="wrap">
       <header ref="headEl">
-        <PanelBackButton v-if="backTo" @back="stack.leave(backTo)" />
+        <button v-if="backTo" type="button" class="ib cbk" aria-label="Назад" @click="stack.leave(backTo)">
+          <svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></svg>
+        </button>
         <div class="logo">
           <span>anysda-vpn2</span>
         </div>
@@ -145,7 +130,7 @@ onUnmounted(() => {
             :aria-current="route.path === t.path ? 'page' : undefined">
             {{ t.label }}
           </NuxtLink>
-          <span ref="glideEl" class="glide now" aria-hidden="true" />
+          <span class="glide now" aria-hidden="true" />
         </nav>
         <div class="hr">
           <BotDeliveryStatus />
@@ -176,7 +161,7 @@ onUnmounted(() => {
             :aria-current="route.path === t.path ? 'page' : undefined">
             {{ t.label }}
           </NuxtLink>
-          <span ref="barGlideEl" class="glide now" aria-hidden="true" />
+          <span class="glide now" aria-hidden="true" />
         </nav>
       </div>
       <BottomSheet v-if="mobile" :open="pop === 'me'" label="Меню профиля" @close="pop = null">

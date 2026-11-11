@@ -226,14 +226,16 @@ const created = computed(() => (detail.value ? dateRuLocal(detail.value.createdA
 <template>
   <div ref="root" class="cdet-in" :inert="stale" :aria-busy="stale">
     <template v-if="detail">
-      <PanelClientHeading
-        :initials="initials(detail.name)"
-        :subtitle="detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан'"
-        :status="tag?.text" :status-class="tag ? `access-tag ${tag.cls}` : undefined">
+      <div class="cdh">
+        <span class="av">{{ initials(detail.name) }}</span>
+        <div style="min-width:0">
           <h2
             ref="nameEl" contenteditable="plaintext-only" spellcheck="false" title="Имя клиента" @blur="saveName"
             @keydown.enter.prevent="nameEl?.blur()" />
-      </PanelClientHeading>
+          <small>{{ detail.tgLinked ? (detail.tgUsername ? `Привязан к Telegram · @${detail.tgUsername}` : 'Привязан к Telegram') : 'Telegram не привязан' }}</small>
+        </div>
+        <span v-if="tag?.text" class="tag" :class="`access-tag ${tag.cls}`">{{ tag.text }}</span>
+      </div>
 
       <div class="kgrid">
         <div>

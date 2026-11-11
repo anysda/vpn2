@@ -8,18 +8,7 @@ const box = ref<HTMLElement>()
 const glided = ref(false)
 
 function glide(jump = false) {
-  const b = box.value
-  const g = b?.querySelector<HTMLElement>(':scope>.glide')
-  const on = b?.querySelector<HTMLElement>(':scope>button.on')
-  if (!b || !g || !on || !b.offsetWidth) return
-  jump ||= !glided.value || reducedMotion()
-  g.classList.toggle('now', jump)
-  const r = on.getBoundingClientRect(), q = b.getBoundingClientRect()
-  g.style.height = `${r.height}px`
-  g.style.width = `${r.width}px`
-  g.style.transform = `translate(${r.left - q.left - b.clientLeft + b.scrollLeft}px,${r.top - q.top - b.clientTop + b.scrollTop}px)`
-  if (jump) requestAnimationFrame(() => g.classList.remove('now'))
-  glided.value = true
+  if (placeGlide(box.value, glided.value, jump)) glided.value = true
 }
 
 function click(v: T) {

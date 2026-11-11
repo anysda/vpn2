@@ -11,20 +11,9 @@ const press = (e: KeyboardEvent) => (e.currentTarget as HTMLElement).click()
 
 // Подложка активного сегмента ездит за кнопкой, как в шапке.
 const seg = ref<HTMLElement>()
-const glideEl = ref<HTMLElement>()
 const glided = ref(false)
 function glide(jump = false) {
-  const box = seg.value, g = glideEl.value
-  const on = box?.querySelector<HTMLElement>(':scope>.on')
-  if (!box || !g || !on || !box.offsetWidth) return
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-  g.classList.toggle('now', jump || !glided.value || reduce)
-  const r = on.getBoundingClientRect(), q = box.getBoundingClientRect()
-  g.style.width = `${r.width}px`
-  g.style.height = `${r.height}px`
-  g.style.transform = `translate(${r.left - q.left - box.clientLeft}px,${r.top - q.top - box.clientTop}px)`
-  if (!glided.value || jump) requestAnimationFrame(() => g.classList.remove('now'))
-  glided.value = true
+  if (placeGlide(seg.value, glided.value, jump)) glided.value = true
 }
 const onResize = () => glide(true)
 watch(() => props.filter, () => nextTick(() => requestAnimationFrame(() => glide())))
@@ -44,6 +33,6 @@ onUnmounted(() => removeEventListener('resize', onResize))
       :aria-pressed="filter === f" :aria-current="undefined" :class="{ on: filter === f }" @keydown.space.prevent="press">
       {{ label }} <b>{{ counts[f] }}</b>
     </NuxtLink>
-    <span ref="glideEl" class="glide now" />
+    <span class="glide now" />
   </div>
 </template>

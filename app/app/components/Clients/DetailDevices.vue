@@ -65,9 +65,10 @@ function askRemoveDevice(dev: Device) {
       <!-- телефон: имя и ↻ 🗑 строкой, под ними три протокола -->
       <template v-if="mobile">
         <div class="kb dvt">
-          <PanelDeviceName :name="dev.name">
+          <div>
+            <b>{{ dev.name }}</b>
             <small :class="{ tr: dev.rxTotal + dev.txTotal > 0 }">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-          </PanelDeviceName>
+          </div>
           <button type="button" class="ic" aria-label="Перевыпустить ключи девайса" @click="askReissueDevice(dev)">
             <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>
           </button>
@@ -88,11 +89,12 @@ function askRemoveDevice(dev: Device) {
         </div>
       </template>
       <template v-else>
-        <PanelDeviceName :name="dev.name">
+        <div>
+          <b>{{ dev.name }}</b>
           <small
             :class="{ tr: dev.rxTotal + dev.txTotal > 0 }"
             :title="dev.rxTotal + dev.txTotal > 0 ? `↓ ${sizeBinRu(dev.rxTotal)} ↑ ${sizeBinRu(dev.txTotal)}` : undefined">{{ dev.rxTotal + dev.txTotal > 0 ? sizeBinRu(dev.rxTotal + dev.txTotal) : 'нет трафика' }}</small>
-        </PanelDeviceName>
+        </div>
         <div class="kb">
           <button type="button" @click="$emit('config', dev, 'wg')">
             WG

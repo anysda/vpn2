@@ -33,3 +33,5 @@ e2e
 playwright.config.ts
 **/*.test.ts
 vitest.config.ts
+# Снимки drizzle нужны только генератору миграций: панель и migrate.mjs читают _journal.json.
+server/database/migrations/meta/*_snapshot.json

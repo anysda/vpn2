@@ -41,6 +41,19 @@ curl() { return 0; }
         self.assertIn('node scripts/migrate.mjs', args[-1])
         self.assertIn('exec node .output/server/index.mjs', args[-1])
 
+    def test_drizzle_snapshots_stay_out_of_panel_image(self):
+        ignore = (ROOT / 'app/.dockerignore').read_text().splitlines()
+        self.assertIn('server/database/migrations/meta/*_snapshot.json', ignore)
+        meta = ROOT / 'app/server/database/migrations/meta'
+        kept = sorted(path.name for path in meta.iterdir() if not path.match('*_snapshot.json'))
+        # Образу остаётся журнал: его читают migrate.mjs и панель при старте.
+        self.assertEqual(kept, ['_journal.json'])
+        self.assertGreater(len(list(meta.glob('*_snapshot.json'))), 0)
+        for reader in ('app/scripts/migrate.mjs', 'app/server/plugins/init.ts'):
+            text = (ROOT / reader).read_text()
+            self.assertIn('meta/_journal.json', text)
+            self.assertNotIn('snapshot', text.lower())
+
     def test_upgrade_preserves_database_owner(self):
         source = (ROOT / 'app/e2e/pool-upgrade.sh').read_text()
         # docker cp defaults to root ownership in the destination container,

@@ -155,9 +155,20 @@ def placeholders(out, final):
     if not final.is_file() or 'size:' not in out:
         return out
     digest = hashlib.sha256(final.read_bytes()).hexdigest()
-    assert f"{'size:':<12} {final.stat().st_size} bytes\n" in out
+    size = f"{'size:':<12} {final.stat().st_size} bytes\n"
+    assert size in out
     assert f"{'hash:':<12} sha256:{digest}\n" in out
-    return out.replace(str(final.stat().st_size), '<SIZE>').replace(digest, '<HASH>')
+    # Цифры размера случайно встречаются и внутри хэша: размер меняем только в его строке.
+    return out.replace(size, f"{'size:':<12} <SIZE> bytes\n").replace(digest, '<HASH>')
+
+
+def test_placeholders_keep_hash_that_contains_size_digits(tmp_path):
+    final = tmp_path / 'archive'
+    final.write_bytes(b'12345')
+    digest = hashlib.sha256(final.read_bytes()).hexdigest()
+    assert '5' in digest
+    out = f"{'size:':<12} 5 bytes\n{'hash:':<12} sha256:{digest}\n"
+    assert placeholders(out, final) == f"{'size:':<12} <SIZE> bytes\n{'hash:':<12} sha256:<HASH>\n"
 
 
 def snapshot(root, rc, out, err, log):

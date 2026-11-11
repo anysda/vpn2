@@ -63,6 +63,8 @@ type=selector (см. gen-router-config.py) — управляется через
 мертвы все выходы RESTART_AFTER_CHECKS проверок (циклов) подряд, вотчдог
 перезапускает sing-box, пишет в журнал и шлёт событие в бот. Жив хоть один
 выход — счётчик с нуля; clash-api не ответил — проверки не было, счётчик стоит.
+Канал с запасным TCP перезапуском не лечим, пока жива его вторая нога: счётчик
+с нуля после каждого переключения канала и когда невыбранная нога отвечает.
 Время перезапуска лежит рядом с LANE_STATE_FILE (restart.json): предел частоты
 переживает перезапуск вотчдога.
 
@@ -197,6 +199,8 @@ HY2_RISE           = float(os.environ.get('HY2_RISE_S', '10'))
 _hy2_rise: dict = {}      # selector -> monotonic возврата TCP при мёртвом hy2; None - канал мёртв
 _restart_gen = 0          # перезапусков sing-box сторожем
 _rise_gen = 0             # сколько из них transport_tick уже учёл
+_switch_gen = 0           # проходов transport_tick, переключивших канал
+_switch_seen = 0          # сколько из них restart_tick уже учёл
 _tcp_nodes: set = set()   # узлы, о переходе которых на TCP уже сказано
 _known_dead: set = set()  # теги каналов, чья смерть учтена прошлым проходом transport_tick
 _slow_probes: dict = {}   # (тег, url) -> (поток, итог, причины) пробы, которую не стали ждать
@@ -868,17 +872,48 @@ def _entry_pressure():
     return f"{'/'.join(hot)}; PSI some avg10: {nums}"
 
 
+def _spare_leg_alive():
+    """Невыбранная нога канала (запасной TCP либо hy2), которая отвечает, или
+    None. Такой канал переведёт проверка каналов - перезапуск sing-box лишний."""
+    try:
+        proxies = _req('GET', '/proxies').get('proxies') or {}
+    except Exception:
+        return None
+    legs = [tcp if proxies[s].get('now') == hy2 else hy2
+            for s, (hy2, tcp, _, kind) in _transport_pairs(proxies).items() if kind != 'mgmt']
+    if not legs:
+        return None
+    delays, _ = _probe_all(legs)
+    return next((leg for leg in sorted(legs) if delays[leg] is not None), None)
+
+
 def restart_tick():
     """Одна проверка: мертвы все выходы всех включённых узлов — копим подряд;
     набралось RESTART_AFTER_CHECKS и прошло RESTART_MIN_INTERVAL с прошлого
-    перезапуска — перезапускаем sing-box."""
-    global _dead_streak, _restarted, _restart_gen
-    if RESTART_AFTER_CHECKS <= 0 or _all_dead is None:
+    перезапуска — перезапускаем sing-box.
+    Проверка каналов идёт своим потоком. Канал переключён после прошлой
+    проверки - её пробы шли ещё по старой ноге: счёт с нуля. Набралось, а у
+    канала отвечает невыбранная нога - его переведёт проверка каналов: счёт с
+    нуля, перезапуска нет."""
+    global _dead_streak, _restarted, _restart_gen, _switch_seen
+    if RESTART_AFTER_CHECKS <= 0:
+        return
+    if _switch_seen != _switch_gen:
+        _switch_seen, _dead_streak = _switch_gen, 0
+        return
+    if _all_dead is None:
         return
     _dead_streak = _dead_streak + 1 if _all_dead else 0
     t = time.monotonic()
     if _dead_streak < RESTART_AFTER_CHECKS or (
             _restarted is not None and t - _restarted < RESTART_MIN_INTERVAL):
+        return
+    leg = _spare_leg_alive()
+    if leg or _switch_seen != _switch_gen:
+        if leg:
+            print(f'выходы мертвы {_dead_streak} пр. подряд, но {leg} отвечает: '
+                  f'канал переведёт проверка каналов, sing-box не трогаю', flush=True)
+        _dead_streak = 0
         return
     checks, _dead_streak, _restarted = _dead_streak, 0, t
     _restart_gen += 1
@@ -1299,7 +1334,7 @@ def transport_tick(proxies):
     не ждём дольше KNOWN_DEAD_WAIT и заново не до-проверяем.
     Событие узла «UDP недоступен / снова работает» - по каналу direct.
     Служебный mgmt идёт за direct своего узла: сам он до PROBE_URL не ходит."""
-    global _rise_gen
+    global _rise_gen, _switch_gen
     pairs = _transport_pairs(proxies)
     if not pairs:
         return
@@ -1397,6 +1432,9 @@ def transport_tick(proxies):
     for s, (hy2, tcp, node, kind) in pairs.items():
         if kind == 'mgmt':
             want[s] = tcp if lead.get(node) else hy2
+    if any(want[s] != proxies[s].get('now') for s in deciders):
+        _switch_gen += 1   # до PUT: замер выходов, идущий сейчас, уже не в счёт
+    for s in pairs:
         if want[s] != proxies[s].get('now'):
             _req('PUT', f'/proxies/{urllib.parse.quote(s)}', {'name': want[s]})
             print(f'{s} -> {want[s]}', flush=True)

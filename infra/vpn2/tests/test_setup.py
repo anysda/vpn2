@@ -1,8 +1,8 @@
 """Мастер setup.sh: эталон прежнего bash-мастера и отказные ветки.
 
 Каталог fixtures/setup/<сценарий> записан со старого setup.sh: ответы, ответы
-подставных ip/curl/dig, весь вывод и итоговый config.yaml. Новый мастер обязан
-повторить их байт в байт. Тест идёт и на Python 3.11 - старшей системной версии
+подставных ip/curl/dig, весь вывод и итоговый config.yaml (expected.yaml: имя
+config.yaml в репе не хранится). Новый мастер обязан повторить их байт в байт. Тест идёт и на Python 3.11 - старшей системной версии
 Debian 12, поэтому берёт из пакета только vpn2.setup.
 """
 import os
@@ -25,8 +25,7 @@ MINIMAL_STUBS = {'ipify': '192.0.2.1', 'geo-198.51.100.2': '{}'}
 
 
 def recorded(name, file):
-    """Файл эталона как записан: вывод терминала хранит \\r\\n."""
-    return (FIXTURES / name / file).read_bytes().decode()
+    return (FIXTURES / name / file).read_text()
 
 
 def scenario(tmp_path, name):
@@ -46,8 +45,8 @@ def test_matches_bash_wizard(tmp_path, name):
     assert code == 0, output
     assert normalize(output, root) == recorded(name, 'output')
     config = root / 'config.yaml'
-    if (FIXTURES / name / 'config.yaml').exists():
-        assert normalize(config.read_text(), root) == recorded(name, 'config.yaml')
+    if name != 'cancel':
+        assert normalize(config.read_text(), root) == recorded(name, 'expected.yaml')
         assert config.stat().st_mode & 0o777 == 0o600
     else:
         assert not config.exists()
@@ -61,9 +60,11 @@ def test_colors_on_terminal_match_bash_wizard(tmp_path):
     root = scenario(tmp_path, 'colors')
     code, stdout, stderr = run_tty(root, recorded('colors', 'answers'))
     assert code == 0, stderr
-    assert normalize(stdout, root) == recorded('colors', 'stdout')
+    # Терминал дописывает \r к каждому переводу строки, эталон хранится без него.
+    assert '\n' in stdout and stdout.count('\r\n') == stdout.count('\n')
+    assert normalize(stdout.replace('\r\n', '\n'), root) == recorded('colors', 'stdout')
     assert normalize(stderr, root) == recorded('colors', 'stderr')
-    assert normalize((root / 'config.yaml').read_text(), root) == recorded('colors', 'config.yaml')
+    assert normalize((root / 'config.yaml').read_text(), root) == recorded('colors', 'expected.yaml')
 
 
 def test_save_and_repeat(tmp_path):

@@ -1,0 +1,38 @@
+# anysda-vpn — конфигурация (chmod 600 — содержит пароли)
+# Создано ./setup.sh <STAMP>
+
+entry:
+  host: '198.51.100.77'
+  password: 'e'
+
+exits:
+  - tag: nl
+    host: '198.51.100.9'
+    password: 'x'
+
+  - tag: nl2
+    host: '198.51.100.10'
+    password: 'y'
+
+admin:
+  user: 'admin'
+  password: ''
+  # password не задан — будет сгенерирован при первом деплое
+  ssh_pubkey: ''
+
+panel:
+  domain: 'b.example.org'
+
+telegram:
+  bot_token: ''
+  chat_id: ''
+  admin_username: ''
+
+backup:
+  enabled: true
+  backend: local
+  passphrase: '<GENERATED>'
+  schedule: 'off'
+
+youtube:
+  route: 'off'

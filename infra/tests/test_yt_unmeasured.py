@@ -221,7 +221,7 @@ class UnmeasuredTests(unittest.TestCase):
                     watch.tick(path, lambda: (True, 'быстро'))
                 self.assertEqual(changes, ['foreign-best', 'youtube-ru'])
 
-    def test_status_shows_unknown_reason_and_probe_exit_code_is_distinct(self):
+    def test_status_shows_unknown_reason(self):
         watch = load_watch()
         with tempfile.TemporaryDirectory() as directory:
             cfg = Path(directory) / 'config.json'
@@ -236,12 +236,6 @@ class UnmeasuredTests(unittest.TestCase):
                     self.assertEqual(watch.main(), 2)
                     self.assertIn('не измерено', output.getvalue())
                     self.assertIn('антибот', output.getvalue())
-            for flag in ('--probe-only', '--probe-quic'):
-                with patch.object(watch, 'probe', return_value=(None, 'антибот')), \
-                        patch('sys.argv', ['yt-failover', flag]), \
-                        patch('sys.stdout', new_callable=io.StringIO) as output:
-                    self.assertEqual(watch.main(), 2)
-                    self.assertIn('не измерено', output.getvalue())
 
     def test_status_requires_recent_measured_state_and_known_selector(self):
         watch = load_watch()

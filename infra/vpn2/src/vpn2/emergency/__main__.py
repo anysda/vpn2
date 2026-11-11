@@ -7,7 +7,6 @@ import sys
 COMMANDS = {
     'agent': 'agent',
     'hy2': 'hy2',
-    'snapshot': 'snapshot',
     'snapshot-sender': 'snapshot_sender',
     'provision': 'provision',
 }

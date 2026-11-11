@@ -6,7 +6,6 @@ from contextlib import redirect_stderr
 import hashlib
 import http.client
 import importlib
-import inspect
 import io
 import json
 import logging
@@ -268,9 +267,6 @@ class EmergencyWebTests(unittest.TestCase):
         expected = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest().upper()
         message = self.panel.on_emergency_leader('event', 1)
         self.assertEqual(message['certificate_fingerprint'], expected)
-        tgqueue = importlib.import_module('vpn2.emergency.tgqueue')
-        accepted = inspect.signature(tgqueue.enqueue_admin).parameters
-        self.assertLessEqual(set(message), set(accepted))
         self.assertTrue(message['panel_ready'])
         trusted = ssl.create_default_context(cafile=str(cert))
         conn = http.client.HTTPSConnection('127.0.0.1', self.server.server_port, context=trusted)

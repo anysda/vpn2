@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from .. import fsutil
-from . import tgqueue
+from . import spool
 
 LOG = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ START_PAGES = {'starting': (202, 'Аварийный режим запускае
 
 
 def _delivery_kind(row, emergency_id, generation):
-    """Summary bucket of a tgqueue.delivery_status row; None outside the current generation."""
+    """Summary bucket of a spool row; None outside the current generation."""
     if (row.get('emergency'), row.get('generation')) != (emergency_id, generation):
         return None
     state, reason = row.get('state'), row.get('reason')
@@ -81,7 +81,7 @@ def _delivery_kind(row, emergency_id, generation):
 
 
 def delivery_summary(rows, emergency_id, generation):
-    """Count tgqueue.delivery_status rows of the current emergency generation only."""
+    """Count spool rows of the current emergency generation only."""
     counts = dict(sent=0, pending=0, errors=0, without_telegram=0, denied=0)
     for row in rows:
         kind = _delivery_kind(row, emergency_id, generation)
@@ -137,7 +137,7 @@ class Panel:
         self.snapshot_loader = snapshot_loader
         self.profiles = profiles
         self.connections = connections
-        self.delivery = delivery or (lambda _generation: tgqueue.delivery_status(self.directory))
+        self.delivery = delivery or (lambda _generation: spool.rows(self.directory, audience='client'))
         self.broadcast = broadcast
         self.lock = threading.RLock()
         self.auth = json.loads(self.auth_file.read_text()) if self.auth_file.exists() else {}
@@ -154,9 +154,8 @@ class Panel:
     def on_emergency_leader(self, emergency_id, generation, autonomous=False, event='initial'):
         """Return admin-only payload AFTER make_server has bound HTTPS.
 
-        The keys are tgqueue.enqueue_admin arguments: the caller adds
-        bundle_version, issued_at and event. Restarting within one generation
-        returns the same password, so a repeated enqueue stays a no-op.
+        Restarting within one generation returns the same password, so the
+        admin message is not sent twice.
         event is the lifecycle's notice for this generation: the panel says the
         leader changed only for 'leader_changed', never by the generation number,
         which keeps counting across emergencies.

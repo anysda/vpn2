@@ -261,8 +261,8 @@ class VerifyTest(unittest.TestCase):
                          'admin_chat_id': None, 'bot_token': None,
                          'exits': [{'id': 'exit', 'name': 'exit', 'ip': '198.51.100.20', 'priority': 0}],
                          'clients': []}
-                accepted = snapshot.accept(snapshots, image, None, 'test', time.time() - age)
-                self.assertEqual(accepted['status'], 'accepted')
+                (snapshots / snapshot.NAME).write_bytes(snapshot.encode(image))
+                os.utime(snapshots / snapshot.NAME, (time.time() - age,) * 2)
             # Штамп 10-foreign новее штампа 23: verify сразу после 10-foreign.
             foreign = root / 'stamps/10-foreign'
             foreign.touch()

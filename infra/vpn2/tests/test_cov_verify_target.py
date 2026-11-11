@@ -18,7 +18,6 @@ NONCE = '0123456789abcdef0123456789abcdef'
 @pytest.fixture
 def port():
     server = ThreadingHTTPServer(('127.0.0.1', 0), target.Handler)
-    server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server.server_address[1]

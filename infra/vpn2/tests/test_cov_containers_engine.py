@@ -195,9 +195,6 @@ class Answer(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
-    def log_message(self, *_args):
-        pass
-
 
 @pytest.fixture
 def web():

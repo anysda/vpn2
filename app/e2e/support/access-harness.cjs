@@ -44,5 +44,10 @@ module.exports = function harness(root, database, adapter, runtime = {}) {
     overrides.delete(relative)
     overrides.set(relative, { ...load(relative), ...replaced })
   }
-  return { load, overrides, patch }
+  // Обработчик из таблицы маршрутов: route('clients PATCH /clients/:id').
+  function route(name) {
+    const [resource, key] = name.split(/ (.*)/)
+    return load(`app/server/resources/${resource}.ts`).default[key]
+  }
+  return { load, overrides, patch, route }
 }

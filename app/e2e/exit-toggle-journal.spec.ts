@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { serverModule } from './support/server-module'
+import { apiRoute, serverModule } from './support/server-module'
 
 // Настоящие PATCH /api/ops/exits/<tag> и toggleExit; подменён только сервис
 // управления: чтение и запись отвечают с разной задержкой, как под нагрузкой.
@@ -26,15 +26,15 @@ test('одновременные переключения экзита: журн
 
   const events: string[] = []
   const logs: Array<{ wasDisabled?: boolean, disabled: boolean }> = []
-  const handler = serverModule<{ default: (event: { tag: string, disabled: boolean }) => Promise<unknown> }>('server/api/ops/exits/[tag].patch.ts', {
-    '../../../utils/auth': { requireAuth: async () => ({ name: 'admin' }) },
-    '../../../utils/events': {
+  const handler = apiRoute<(event: { tag: string, disabled: boolean }) => Promise<unknown>>('ops', 'PATCH /ops/exits/:tag', {
+    '../utils/auth': { requireAuth: async () => ({ name: 'admin' }) },
+    '../utils/events': {
       actorOf: () => 'admin',
       joinDetail: (...parts: string[]) => parts.join(' · '),
       recordEvent: async (row: { type: string }) => { events.push(row.type) },
     },
-    '../../../utils/exit-control': exitControl,
-    '../../../utils/vm-client': { nodeInstances: () => ['ru', 'se', 'fi', 'at'].map(tag => ({ tag })) },
+    '../utils/exit-control': exitControl,
+    '../utils/vm-client': { nodeInstances: () => ['ru', 'se', 'fi', 'at'].map(tag => ({ tag })) },
   }, {
     defineEventHandler: (fn: unknown) => fn,
     getRouterParam: (event: { tag: string }) => event.tag,
@@ -42,7 +42,7 @@ test('одновременные переключения экзита: журн
     createError: (init: { statusMessage: string }) => Object.assign(new Error(init.statusMessage), init),
     useLogger: () => ({ info: (fields: { wasDisabled?: boolean, disabled: boolean }) => { logs.push(fields) } }),
     setTimeout,
-  }).default
+  })
 
   const results = await Promise.all(Array.from({ length: 30 }, (_, i) => handler({ tag: 'se', disabled: i % 2 === 0 })))
   expect(results).toHaveLength(30)

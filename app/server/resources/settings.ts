@@ -19,11 +19,10 @@ const DAY = 24 * 60 * 60 * 1000
 // сообщение) и от скрипта бэкапа на этой же ноде (бэкап не удался или архив
 // сохранён с предупреждением). Только перечисленные типы. Отказ бэкапа кроме
 // ленты уходит админу в Telegram: в панель он может не заглядывать.
-const Detail = z.string().trim().max(200).default('')
 const BotEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('telegram_rejected'), status: z.number().int().min(100).max(599), recipient: z.enum(['admin', 'client']) }),
-  z.object({ type: z.literal('backup_failed'), detail: Detail }),
-  z.object({ type: z.literal('backup_warning'), detail: Detail }),
+  z.object({ type: z.literal('backup_failed'), detail: z.string().trim().max(200).default('') }),
+  z.object({ type: z.literal('backup_warning'), detail: z.string().trim().max(200).default('') }),
 ])
 
 const Telegram = z.object({

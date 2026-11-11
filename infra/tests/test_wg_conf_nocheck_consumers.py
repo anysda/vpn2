@@ -295,7 +295,7 @@ class BackupEventTests(unittest.TestCase):
     """3 the event of the copy: the schema the package cuts the detail for (vpn2.notify.clean_detail)."""
 
     def test_schema_copy_is_the_panel_schema(self):
-        self.assertIn(SCHEMA, source('app/server/api/bot/events.post.ts').splitlines()[11])
+        self.assertIn(SCHEMA, source('app/server/resources/settings.ts'))
 
 
 if __name__ == '__main__':

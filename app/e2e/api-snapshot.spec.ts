@@ -5,12 +5,12 @@ import { fileURLToPath } from 'node:url'
 import type { APIRequestContext } from '@playwright/test'
 import { expect, loginApi, test } from './support/fixtures'
 import { container } from './support/openvpn-ca'
+import { apiRouteKeys } from './support/server-module'
 // @ts-expect-error модуль .mjs без деклараций: обход запускается и из скрипта
 import { walk, snapshotFiles } from './support/api-snapshot.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures', 'api-snapshot')
-const serverApi = join(here, '..', 'server', 'api')
 const docker = (process.env.DOCKER || 'docker').split(/\s+/)
 
 interface Reply { status: number, type: string, text: string }
@@ -20,16 +20,19 @@ function files(dir: string): string[] {
     e.isDirectory() ? files(join(dir, e.name)) : [join(dir, e.name)])
 }
 
-/** Маршруты из дерева server/api: bot, admin, clients и ops/bot-snapshot. */
+/** Имя записи снимка (`clients/[id]/index.get`) ключом таблицы маршрутов (`GET /clients/:id`). */
+function routeKey(name: string): string {
+  const [, path, method] = /^(.*?)(?:\/index)?\.(\w+)$/.exec(name)!
+  return `${method!.toUpperCase()} /${path!.replace(/\[(\w+)\]/g, ':$1')}`
+}
+
+/** Маршруты из таблиц server/resources: bot, admin, clients и ops/bot-snapshot. */
 function routes(): string[] {
-  const own = ['bot', 'admin', 'clients'].flatMap(d => files(join(serverApi, d)))
-  return [...own, join(serverApi, 'ops', 'bot-snapshot.get.ts')]
-    .map(f => relative(serverApi, f).replace(/\.ts$/, ''))
-    .sort()
+  return apiRouteKeys().filter(key => /^\w+ \/(bot|admin|clients)(\/|$)|^GET \/ops\/bot-snapshot$/.test(key)).sort()
 }
 
 function recorded(): string[] {
-  return files(fixtures).map(f => relative(fixtures, f).replace(/\.json$/, '')).sort()
+  return files(fixtures).map(f => routeKey(relative(fixtures, f).replace(/\.json$/, ''))).sort()
 }
 
 /** Бот-ручки доступны только изнутри контейнера панели с секретом бота. */
@@ -120,7 +123,7 @@ test.describe('снимок ответов API панели', () => {
   test('каждому маршруту есть запись и каждой записи есть маршрут', () => {
     expect(recorded()).toEqual(routes())
     expect(walked, 'обход должен был отработать').toBe(true)
-    expect([...actual.keys()].sort()).toEqual(routes())
+    expect([...actual.keys()].map(routeKey).sort()).toEqual(routes())
   })
 
   test('записи совпадают с эталоном байт в байт', async () => {

@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Маршруты бота проверяют вход так же, как маршруты админки. Лежит в utils:
-// файл под server/api Nitro принял бы за маршрут.
+// Маршруты бота проверяют вход так же, как маршруты админки.
 const calls = vi.hoisted(() => ({
   createClient: vi.fn(async (body: unknown) => ({ created: body })),
   updateClient: vi.fn(async (_id: number, body: unknown) => ({ updated: body })),

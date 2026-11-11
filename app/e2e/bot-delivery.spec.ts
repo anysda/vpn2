@@ -6,7 +6,7 @@ import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { expect, test } from '@playwright/test'
 import * as schema from '../server/database/schema'
-import { serverModule } from './support/server-module'
+import { apiRoute, serverModule } from './support/server-module'
 import { eq } from 'drizzle-orm'
 import * as outbounds from '../shared/outbounds'
 import * as plural from '../shared/plural'
@@ -140,14 +140,14 @@ test.describe('bot-delivery', () => {
         './events': { recordEvent: async () => true },
       }, globals,
     )
-    const broadcast = serverModule<{ default: (event: unknown) => Promise<unknown> }>(
-      new URL('../server/api/admin/broadcast.post.ts', import.meta.url), {
-        '../../database/client': { useDb: () => ({ select: () => ({ from: () => ({ where: async () => [{ chatId: 100 }] }) }) }) },
-        '../../database/schema': schema,
-        '../../utils/auth': { requireAuth: async () => {} },
-        '../../utils/bot-events': events,
-        '../../utils/telegram-config': telegram,
-        '../../utils/validate': { readBodyAs: async () => ({ text: 'объявление' }) },
+    const broadcast = apiRoute<(event: unknown) => Promise<unknown>>(
+      'settings', 'POST /admin/broadcast', {
+        '../database/client': { useDb: () => ({ select: () => ({ from: () => ({ where: async () => [{ chatId: 100 }] }) }) }) },
+        '../database/schema': schema,
+        '../utils/auth': { requireAuth: async () => {} },
+        '../utils/bot-events': events,
+        '../utils/telegram-config': telegram,
+        '../utils/validate': { readBodyAs: async () => ({ text: 'объявление' }) },
       }, { ...globals, defineEventHandler: (fn: unknown) => fn },
     )
     const outbox = async () => (await db.select({ status: schema.botOutbox.status, attempts: schema.botOutbox.attempts }).from(schema.botOutbox))
@@ -164,7 +164,7 @@ test.describe('bot-delivery', () => {
       const created = await events.notifyBot('client_created', { name: 'Новый' })
       await events.retryBotEvents()
       const left = await outbox()
-      const sent = await broadcast.default({}).catch((error: { statusCode?: number, message?: string }) => ({ statusCode: error.statusCode, message: error.message }))
+      const sent = await broadcast({}).catch((error: { statusCode?: number, message?: string }) => ({ statusCode: error.statusCode, message: error.message }))
       console.log('без бота:', JSON.stringify({ shown: shown.length, created, outbox: left, broadcast: sent }))
       expect(shown, 'накопленное не показывать очередью').toEqual([])
       expect(created, 'новое уведомление не ставить').toBeNull()
@@ -175,7 +175,7 @@ test.describe('bot-delivery', () => {
       // Бот настроен: прежнее поведение.
       configured = true
       expect(await events.notifyBot('client_created', { name: 'Новый' })).toMatchObject({ status: 'accepted' })
-      expect(await broadcast.default({})).toMatchObject({ recipients: 1, delivery: { label: 'Рассылка', status: 'accepted' } })
+      expect(await broadcast({})).toMatchObject({ recipients: 1, delivery: { label: 'Рассылка', status: 'accepted' } })
       expect(posts).toBe(2)
     }
     finally {

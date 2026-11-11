@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
@@ -15,6 +15,7 @@ export function serverModule<T = Record<string, unknown>>(
   file: URL | string,
   mocks: Record<string, unknown>,
   globals: Record<string, unknown> = {},
+  lazy = false,
 ): T {
   const filename = typeof file === 'string' ? resolve(process.env.E2E_SERVER_ROOT || '.', file) : fileURLToPath(file)
   const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -37,12 +38,38 @@ export function serverModule<T = Record<string, unknown>>(
       // Относительный импорт без подмены (например, общий list-order) исполняем
       // настоящим модулем и теми же подменами, а не ищем от каталога загрузчика.
       const sibling = name.startsWith('.') ? `${resolve(dirname(filename), name)}.ts` : ''
-      if (sibling && (process.env.SERVER_REVISION || existsSync(sibling))) return serverModule(sibling, mocks, globals)
+      if (sibling && (process.env.SERVER_REVISION || existsSync(sibling))) {
+        const load = () => serverModule<object>(sibling, mocks, globals, lazy)
+        if (!lazy) return load()
+        let loaded: object | undefined
+        return new Proxy({}, { get: (_, key) => Reflect.get(loaded ??= load(), key) })
+      }
       return require(name)
     },
     ...globals,
   }, { filename })
   return exports as T
+}
+
+/**
+ * Обработчик из таблицы маршрутов `server/resources/<resource>.ts` по ключу
+ * `МЕТОД /путь`. Подмена `../utils/x` действует и на `./x` внутри utils;
+ * модуль без подмены исполняется настоящим при первом обращении к нему.
+ */
+export function apiRoute<T>(resource: string, key: string, mocks: Record<string, unknown>, globals: Record<string, unknown> = {}): T {
+  const all = { ...mocks }
+  for (const [name, mock] of Object.entries(mocks)) {
+    if (name.startsWith('../utils/')) all[name.replace('../utils/', './')] = mock
+  }
+  const file = new URL(`../../server/resources/${resource}.ts`, import.meta.url)
+  return serverModule<{ default: Record<string, T> }>(file, all, globals, true).default[key]!
+}
+
+/** Ключи `МЕТОД /путь` всех таблиц маршрутов `server/resources`. */
+export function apiRouteKeys(): string[] {
+  const dir = fileURLToPath(new URL('../../server/resources/', import.meta.url))
+  return readdirSync(dir).flatMap(file =>
+    [...readFileSync(resolve(dir, file), 'utf8').matchAll(/^ {2}'([A-Z]+ \/[^']*)': /gm)].map(match => match[1]!))
 }
 
 export class FakeClock {

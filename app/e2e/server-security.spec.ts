@@ -1,5 +1,5 @@
-import { readdirSync } from 'node:fs'
 import { expect, loginApi, test, uniq } from './support/fixtures'
+import { apiRouteKeys } from './support/server-module'
 
 test('CSRF: чужой Origin не может создать клиента через HTML-форму', async ({ page, guard, baseURL }) => {
   await loginApi(page)
@@ -75,17 +75,15 @@ test('параллельное создание устройств соблюд�
 })
 
 test('все маршруты панели требуют сессию до чтения тела и обращения к устройствам', async ({ request }) => {
-  const files = readdirSync('server/api', { recursive: true }) as string[]
   let checked = 0
-  for (const file of files) {
-    if (/^(bot\/|auth\/|sso\.|version\.|ops\/bot-snapshot\.)/.test(file)) continue
-    const match = /^(.*)\.(get|post|put|patch|delete)\.ts$/.exec(file)
-    if (!match) continue
-    const path = `/api/${match[1]!.replace(/\/index$/, '').replace(/\[id\]|\[deviceId\]/g, '999999').replace('[tag]', 'nl')}`
-    const response = await request.fetch(path, { method: match[2]!.toUpperCase() })
+  for (const file of apiRouteKeys()) {
+    const [method, route] = file.split(' ') as [string, string]
+    if (/^\/(bot\/|auth\/|sso$|version$|ops\/bot-snapshot$)/.test(route)) continue
+    const path = `/api${route.replace(/:id|:deviceId/g, '999999').replace(':tag', 'nl')}`
+    const response = await request.fetch(path, { method })
     // Фоновый опрос уведомлений переживает выход без 401, как get-session,
     // но без сессии отдаёт только пустой список.
-    if (file === 'admin/bot-deliveries.get.ts') {
+    if (file === 'GET /admin/bot-deliveries') {
       expect(response.status(), file).toBe(200)
       expect(await response.json(), file).toEqual([])
       continue

@@ -47,7 +47,7 @@ async function panel(runtime: Record<string, unknown> = {}) {
   app.overrides.set('app/server/utils/wireguard.ts', { ensureDeviceWg: async () => {}, syncWireguardConfig: async () => {} })
   app.overrides.set('app/server/utils/ikev2.ts', { ensureDeviceIkev2: async () => {}, syncIkev2: async () => {} })
   app.overrides.set('app/server/utils/client-prefs.ts', { syncClientPrefsFile: async () => {} })
-  const route = (name: string): Handler => app.load(`app/server/api/${name}.ts`).default
+  const route = (name: string): Handler => app.route(name)
   const useBot = () => {
     app.patch('app/server/utils/bot-api.ts', { requireBotAuth: () => {} })
   }
@@ -171,7 +171,7 @@ test('VPN2-461: сохранение списка SSO отзывает сесс�
     })
     app.overrides.delete('app/server/utils/auth.ts')
     const auth = app.load('app/server/utils/auth.ts')
-    const ssoPut = route('admin/sso.put')
+    const ssoPut = route('settings PUT /admin/sso')
 
     for (const username of ['admin', 'bob']) {
       const [user] = await db.insert(schema.users).values({ username, name: username, email: `${username}@panel.invalid` }).returning()
@@ -216,7 +216,7 @@ test('VPN2-462: лимит, сниженный во время двух пара
     const paused = gate(2)
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
     app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
-    const post = route('clients/[id]/devices/index.post')
+    const post = route('devices POST /clients/:id/devices')
     const [client] = await db.insert(schema.clients).values({ name: 'limit', password: 'limit-invite', deviceLimit: 3 }).returning()
     const requests = ['phone', 'laptop'].map(name => call(post, { params: { id: String(client!.id) }, body: { name } }))
     await paused.waiting
@@ -239,8 +239,8 @@ test('VPN2-467: при полной очереди бота отзыв Telegram 
   const { schema, db, route, useBot, close } = await panel()
   try {
     useBot()
-    const unlink = route('clients/[id]/unlink.post')
-    const link = route('bot/link.post')
+    const unlink = route('clients POST /clients/:id/unlink')
+    const link = route('clients POST /bot/link')
     const [client] = await db.insert(schema.clients).values({ name: 'queue', password: 'old-invite-password', tgChatId: 900, tgUsername: 'queue_user' }).returning()
     const now = Date.now()
     await db.insert(schema.botOutbox).values(Array.from({ length: 1024 }, (_, i) => ({
@@ -297,8 +297,8 @@ test('VPN2-468: отзыв между проверкой приглашения 
       },
     })
     app.overrides.set('app/server/database/client.ts', { useDb: () => wrapped })
-    const unlink = route('clients/[id]/unlink.post')
-    const link = route('bot/link.post')
+    const unlink = route('clients POST /clients/:id/unlink')
+    const link = route('clients POST /bot/link')
     const [client] = await db.insert(schema.clients).values({ name: 'race', password: 'invite-before-revoke' }).returning()
 
     let revoked: Outcome | null = null
@@ -322,8 +322,8 @@ test('VPN2-468: отзыв бота во время добавления уст�
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
     app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
-    const add = route('bot/devices/index.post')
-    const unlink = route('clients/[id]/unlink.post')
+    const add = route('devices POST /bot/devices')
+    const unlink = route('clients POST /clients/:id/unlink')
     const [client] = await db.insert(schema.clients).values({ name: 'bot-add', password: 'bot-add-invite', tgChatId: 555 }).returning()
     const request = call(add, { body: { chatId: 555, name: 'phone' } })
     await paused.waiting
@@ -351,9 +351,9 @@ test('VPN2-476: отзыв бота во время удаления и пере
     } })
     app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
-    const remove = route('bot/devices/[deviceId].delete')
-    const reissue = route('bot/devices/[deviceId]/reissue.post')
-    const unlink = route('clients/[id]/unlink.post')
+    const remove = route('devices DELETE /bot/devices/:deviceId')
+    const reissue = route('devices POST /bot/devices/:deviceId/reissue')
+    const unlink = route('clients POST /clients/:id/unlink')
     const [client] = await db.insert(schema.clients).values({ name: 'bot-ops', password: 'bot-ops-invite', tgChatId: 556 }).returning()
     const created = await db.insert(schema.devices).values(Array.from({ length: 5 }, (_, i) => ({
       clientId: client!.id, name: `dev-${i}`, wgPrivateKey: `priv-${i}`, wgPublicKey: `pub-${i}`, wgPresharedKey: `psk-${i}`, ikev2Password: `ike-${i}`,
@@ -440,9 +440,9 @@ test('VPN2-479: отвязка Telegram во время выдачи конфи�
       },
     })
     useBot()
-    const wg = route('bot/devices/[deviceId]/wg-config.get')
-    const ovpn = route('bot/devices/[deviceId]/ovpn-config.get')
-    const unlink = route('clients/[id]/unlink.post')
+    const wg = route('devices GET /bot/devices/:deviceId/wg-config')
+    const ovpn = route('devices GET /bot/devices/:deviceId/ovpn-config')
+    const unlink = route('clients POST /clients/:id/unlink')
     const [client] = await db.insert(schema.clients).values({ name: 'bot-config', password: 'bot-config-invite', tgChatId: 558 }).returning()
     // Первый без ключей WG - их запишет сам запрос; второй с готовыми.
     const created = await db.insert(schema.devices).values([

@@ -161,7 +161,7 @@ async function ensureDeviceOvpnOnce(deviceId: number) {
   return updated
 }
 
-/** Перевыпуск сертификата устройства: старый отзывается в CRL, выдаётся новый. */
+/** Перевыпуск OVPN-сертификата девайса: старый отзывается в CRL, выдаётся новый. */
 export function reissueDeviceOvpn(deviceId: number, clientId: number, version: number) {
   return withCaLock(async () => {
     try {

@@ -172,7 +172,7 @@ OpenVPN, IKEv2 и sing-box не запускаются; при старте па
 | `app/server/routes/auth/authentik.get.ts` | точка входа и callback `/auth/authentik` |
 | `app/server/utils/auth.ts` | better-auth: провайдер `authentik` (genericOAuth), сессии |
 | `app/server/utils/sso.ts` | настройки (`/etc/anysda/sso-runtime.json`, засев из env), allow-список, привязка по `sub`, отказы |
-| `app/server/api/admin/sso.*` | настройки из панели: чтение, сохранение с проверками, «Проверить» |
+| `app/server/resources/settings.ts` | настройки из панели: чтение, сохранение с проверками, «Проверить» |
 | `app/app/components/Settings/Sso.vue` | карточка «Вход через Authentik» в «Настройках» |
 | `app/app/middleware/auth.global.ts` | авторедирект неавторизованного в IdP |
 | `app/app/pages/login.vue` | форма break-glass, кнопка входа, коды ошибок |

@@ -541,11 +541,11 @@ test.describe('access-routes', () => {
   const harness = require('./support/access-harness.cjs')
   const root = process.env.VPN2_TEST_ROOT || path.resolve('..')
   const routes = [
-    'clients/[id].patch', 'clients/[id].delete', 'clients/[id]/reissue.post',
-    'clients/[id]/devices/[deviceId].delete', 'clients/[id]/devices/[deviceId]/reissue.post',
-    'bot/admin/clients/[id].patch', 'bot/admin/clients/[id].delete',
-    'bot/devices/[deviceId].delete', 'bot/devices/[deviceId]/reissue.post',
-    'access-operations/[id]/retry.post', 'bot/admin/access-operations/[id]/retry.post',
+    'clients PATCH /clients/:id', 'clients DELETE /clients/:id', 'clients POST /clients/:id/reissue',
+    'devices DELETE /clients/:id/devices/:deviceId', 'devices POST /clients/:id/devices/:deviceId/reissue',
+    'clients PATCH /bot/admin/clients/:id', 'clients DELETE /bot/admin/clients/:id',
+    'devices DELETE /bot/devices/:deviceId', 'devices POST /bot/devices/:deviceId/reissue',
+    'clients POST /access-operations/:id/retry', 'clients POST /bot/admin/access-operations/:id/retry',
   ]
 
   for (const route of routes) {
@@ -565,10 +565,7 @@ test.describe('access-routes', () => {
         app.overrides.set('app/server/utils/events.ts', { actorOf: () => 'panel', BOT_ACTOR: 'bot', recordEvent: async () => {}, joinDetail: () => '' })
         app.overrides.set('app/server/utils/validate.ts', { readBodyAs: async () => ({ chatId: 123, frozenManual: true }) })
         app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => { notifications++ } })
-        app.overrides.set('app/server/utils/client-ops.ts', {
-          updateClient: async () => result, deleteClient: async () => ({ operation }), deleteDevice: async () => ({ ...device, operation }),
-        })
-        app.overrides.set('app/server/utils/access-operations.ts', { accessRequestKey: () => 'request-key', enqueueAccess: async () => ({ client, operation }), retryAccess: async () => operation })
+                app.overrides.set('app/server/utils/access-operations.ts', { accessRequestKey: () => 'request-key', enqueueAccess: async () => ({ client, operation }), retryAccess: async () => operation })
         app.overrides.set('app/server/utils/bot-api.ts', {
           requireBotAuth: () => {}, clientByChat: async () => client, botClientView: async () => ({ ...client, devices: [device] }),
         })
@@ -578,8 +575,9 @@ test.describe('access-routes', () => {
             syncWireguardConfig: async () => {}, syncOpenvpnConfig: async () => {}, syncIkev2: async () => {},
           })
         }
+        app.patch('app/server/utils/client-ops.ts', { updateClient: async () => result })
         const event = { params: { id: String(client!.id), deviceId: String(device!.id) }, query: { chatId: 123 }, status: 200 }
-        const handler = app.load(`app/server/api/${route}.ts`).default
+        const handler = app.route(route)
         const response = await handler(event)
         expect(event.status).toBe(202)
         expect(response.operation).toEqual(operation)

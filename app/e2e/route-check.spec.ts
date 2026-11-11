@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { ClashProxy } from '../server/utils/clash-client'
-import { serverModule } from './support/server-module'
+import { apiRoute, serverModule } from './support/server-module'
 import * as outbounds from '../shared/outbounds'
 
 test.describe('visible-outbounds', () => {
@@ -26,24 +26,23 @@ test.describe('visible-outbounds', () => {
 
   test('API маршрутов и бота показывают только пользовательские выходы, даже без RTT', async () => {
     const client = clash()
-    const routes = serverModule<{ default: (event: unknown) => Promise<Array<{ name: string }>> }>(
-      new URL('../server/api/routes/outbounds.get.ts', import.meta.url), {
-        '../../utils/auth': { requireAuth: async () => {} },
-        '../../utils/clash-client': client,
+    const routes = apiRoute<(event: unknown) => Promise<Array<{ name: string }>>>(
+      'routes', 'GET /routes/outbounds', {
+        '../utils/auth': { requireAuth: async () => {} },
+        '../utils/clash-client': client,
       }, { defineEventHandler: (fn: unknown) => fn },
     )
-    const bot = serverModule<{ default: (event: unknown) => Promise<{ outbounds: Array<{ name: string }> }> }>(
-      new URL('../server/api/ops/bot-snapshot.get.ts', import.meta.url), {
-        '../../database/client': { useDb: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }) },
-        '../../database/schema': { clients: {} },
-        '../../utils/bot-api': { requireBotAuth: () => {} },
-        '../../utils/client-status': { clientStatus: () => 'active' },
-        '../../utils/clash-client': { ...client, fetchConnections: async () => null },
-        '../../utils/vm-client': { nodeInstances: () => [], fetchNodeMetrics: async () => [] },
+    const bot = apiRoute<(event: unknown) => Promise<{ outbounds: Array<{ name: string }> }>>(
+      'ops', 'GET /ops/bot-snapshot', {
+        '../database/client': { useDb: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }) },
+        '../utils/bot-api': { requireBotAuth: () => {} },
+        '../utils/client-status': { clientStatus: () => 'active' },
+        '../utils/clash-client': { ...client, fetchConnections: async () => null },
+        '../utils/vm-client': { nodeInstances: () => [], fetchNodeMetrics: async () => [] },
       }, { defineEventHandler: (fn: unknown) => fn },
     )
-    expect.soft((await routes.default({})).map(p => p.name)).toEqual(visible)
-    expect((await bot.default({})).outbounds.map(p => p.name)).toEqual(visible)
+    expect.soft((await routes({})).map(p => p.name)).toEqual(visible)
+    expect((await bot({})).outbounds.map(p => p.name)).toEqual(visible)
   })
 
   test('карточки узлов и парсер UI сохраняют тег с дефисом и исключают служебные выходы', () => {

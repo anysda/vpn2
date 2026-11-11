@@ -105,9 +105,8 @@ def inventory():
             mismatch.append(f"{path.name}: [Service] {total}, разобрано {found}")
     for path in sorted(ROLES.glob("*/files/*.service")):
         units.append((path.stem, f"role:{path.parts[-3]}", 1, path.read_text()))
-    for role in ("adguard", "zapret"):
-        for path in sorted(ROLES.glob(f"{role}/templates/*.service.j2")):
-            units.append((path.name.removesuffix(".service.j2"), f"role:{role}", 1, path.read_text()))
+    for path in sorted(ROLES.glob("*/templates/*.service.j2")):
+        units.append((path.name.removesuffix(".service.j2"), f"role:{path.parts[-3]}", 1, path.read_text()))
     return units, mismatch
 
 

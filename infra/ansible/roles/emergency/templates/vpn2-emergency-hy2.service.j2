@@ -18,6 +18,10 @@ ExecStart=/usr/local/bin/sing-box run -c /run/vpn2-emergency-hy2/server.json
 ExecStopPost=+/opt/vpn2/venv/bin/vpn2 emergency hy2 close
 Restart=on-failure
 RestartSec=3
+# Exits get no entry drop-in, so the ceiling lives here: one sing-box inbound
+# for the clients of a lost entry must not starve the main sing-box.
+MemoryHigh=192M
+MemoryMax=256M
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

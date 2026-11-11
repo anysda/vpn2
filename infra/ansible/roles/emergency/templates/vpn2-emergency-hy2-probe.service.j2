@@ -10,6 +10,8 @@ UMask=0077
 WorkingDirectory=/opt/vpn2-emergency
 ExecStart=/opt/vpn2/venv/bin/vpn2 emergency hy2 probe
 TimeoutStartSec=40
+# The probe is the CLI plus a short-lived sing-box client.
+MemoryMax=192M
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

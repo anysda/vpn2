@@ -553,11 +553,15 @@ fw_guard_exit_sees_entry() {
 # Все экзиты из списка разом, строка «тег код» на каждый: шаг пульса - одна
 # сессия, сколько бы экзитов ни молчало до потолка, и окно сторожа не съедается.
 fw_guard_exits_see_entry() {
-  local tag
+  # Ждём свои пробы поимённо. Голый `wait` в подстановке `$(...)` берёт и
+  # coproc замка деплоя из оболочки-родителя: bash 5.3 там без конца пишет
+  # «wait: pid N is not a child of this shell».
+  local tag pid pids=()
   for tag in $1; do
     ( rc=0; fw_guard_exit_sees_entry "$tag" || rc=$?; echo "$tag $rc" ) &
+    pids+=("$!")
   done
-  wait
+  for pid in "${pids[@]}"; do wait "$pid" || true; done
 }
 
 # Опрос всех экзитов из списка, а не первого ответившего: экзит, у которого нет
@@ -620,15 +624,17 @@ fw_guard_entry_baseline() {
   fi
 }
 
-# Пульс сторожу: новое соединение каждые 5 с, пока жив deploy.sh. На entry с
+# Пульс сторожу: новое соединение каждые 5 с, пока жива оболочка стадии
+# (её pid - первым аргументом). Стадия вышла мимо останова пульса (die,
+# сигнал) - пульс кончается сам, и сторож откатывает фаервол по окну. На entry с
 # опорными экзитами пульс пропущен, только когда ответившие экзиты не видят
 # вход: его закрыла стадия, сторож откатит фаервол по окну. ssh entry→экзит -
 # исходящее соединение entry, закрытый вход его не рвёт, поэтому молчание всех
 # экзитов (ребут, перезапуск sshd в их стадии) о входе не говорит: пульс через
 # lo и один warn. Закрытый вход при молчащих экзитах так не поймать.
 fw_guard_beat() {
-  local outside gone=0
-  while kill -0 $$ 2>/dev/null; do
+  local owner=${1:-$$} outside gone=0
+  while kill -0 "$owner" 2>/dev/null; do
     outside=0
     if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
       fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || outside=$?
@@ -793,11 +799,11 @@ run_stage_on_host() {
 bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; apt_prepare'" | sed -u "s/^/[$host]/" || return 1
   # Явный return: под `if`/`||` (перекатка порта, ветка мёртвых экзитов) set -e
   # не действует, и упавшая стадия возвращала 0 по последнему `ok`.
-  local rc=0 beat=''
+  local rc=0 beat='' owner=$BASHPID
   if [[ -n "$guard" ]]; then
     FW_GUARD_ENTRY_REFS=''
     [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
-    fw_guard_beat &
+    fw_guard_beat "$owner" &
     beat=$!
   fi
   ssh_exec "chmod +x /tmp/anysda/$(basename "$script") || exit 1; ${guard}/tmp/anysda/$(basename "$script") /tmp/anysda/${host}.env" || rc=$?
@@ -854,7 +860,10 @@ run_stage() {
     local host count=0
     for host in $(expand_hosts foreign); do count=$((count + 1)); done
     [[ "$count" != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
+    [[ "$group" != ru ]] || HOST_TAG=deploy die '10-foreign - стадия экзитов, на entry её нет: группа foreign, all или тег экзита'
     for host in $hosts; do
+      # all = entry и экзиты: у entry этой стадии нет.
+      [[ "$host" != ru ]] || continue
       run_stage_on_host "$stage" "$host" || return 1
       run_stage_on_host 99-verify "$host" || return 1
     done

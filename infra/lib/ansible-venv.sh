@@ -291,14 +291,14 @@ run_play() {
   [[ "$stage" != 00-bootstrap ]] || prepare='apt_prepare; apt_auto_pause'
   ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
 bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; $prepare'" | sed -u "s/^/[$host]/" || return 1
-  local rc=0 beat=''
+  local rc=0 beat='' owner=$BASHPID
   if fw_guard_stage "$stage"; then
     push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
     ssh_exec "bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW" || return 1
     # shellcheck disable=SC2034  # читают fw_guard_beat и fw_guard_disarm в deploy.sh
     FW_GUARD_ENTRY_REFS=''
     [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
-    fw_guard_beat &
+    fw_guard_beat "$owner" &
     beat=$!
   fi
   (

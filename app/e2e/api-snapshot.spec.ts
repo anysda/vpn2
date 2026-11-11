@@ -6,7 +6,7 @@ import type { APIRequestContext } from '@playwright/test'
 import { expect, loginApi, test } from './support/fixtures'
 import { container } from './support/openvpn-ca'
 // @ts-expect-error модуль .mjs без деклараций: обход запускается и из скрипта
-import { walk, snapshotFiles } from '../scripts/api-snapshot.mjs'
+import { walk, snapshotFiles } from './support/api-snapshot.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const fixtures = join(here, 'fixtures', 'api-snapshot')

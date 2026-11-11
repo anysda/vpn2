@@ -48,7 +48,7 @@
   ansible.builtin.command:
     argv: [bash, "{{ exit_tmp }}/install-sing-box.sh"]
   environment:
-    VPN2_DEVELOPMENT: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') }}"
+    VPN2_DEVELOPMENT: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') }}"
     VPN2_RELEASE_MANIFEST: "{{ exit_manifest }}"
   register: exit_step
   changed_when: "'уже установлен' not in exit_step.stdout"
@@ -87,7 +87,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources sing-box; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ exit_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: exit_step
   changed_when: "'changed=1' in exit_step.stdout"
 
@@ -101,7 +101,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-warp-watchdog; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ exit_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: exit_step
   changed_when: "'changed=1' in exit_step.stdout"
   when: exit_warp_enabled

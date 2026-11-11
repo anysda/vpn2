@@ -42,7 +42,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-hy2hop; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ exit_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   when: exit_hop_enabled
   register: exit_step
   changed_when: "'changed=1' in exit_step.stdout"

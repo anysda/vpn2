@@ -1,9 +1,9 @@
 ---
-exit_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+exit_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 exit_tmp: /tmp/anysda
-exit_manifest: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
-exit_development: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') == 'true' }}"
-exit_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
+exit_manifest: "{{ vpn2_env.VPN2_RELEASE_MANIFEST | default('/tmp/anysda/release-manifest.json', true) }}"
+exit_development: "{{ vpn2_env.VPN2_DEVELOPMENT | default('') == 'true' }}"
+exit_wheel: "{{ vpn2_env.VPN2_WHEEL | default('') }}"
 
 # Шаги узла идут системным python прямо из колеса этого деплоя: venv экзита
 # обновляет только первая стадия, а эту запускают и отдельно.
@@ -26,18 +26,18 @@ exit_libs:
 # Окружение узла из config.yaml: его читают шаги пакета vpn2.
 exit_env:
   HOST_TAG: "{{ inventory_hostname }}"
-  PUB_IP: "{{ lookup('ansible.builtin.env', 'PUB_IP') }}"
-  HY2_DIRECT_PORT: "{{ lookup('ansible.builtin.env', 'HY2_DIRECT_PORT') }}"
-  HY2_WARP_PORT: "{{ lookup('ansible.builtin.env', 'HY2_WARP_PORT') }}"
-  HY2_MGMT_PORT: "{{ lookup('ansible.builtin.env', 'HY2_MGMT_PORT') }}"
-  HY2_UP_MBPS: "{{ lookup('ansible.builtin.env', 'HY2_UP_MBPS') }}"
-  HY2_DOWN_MBPS: "{{ lookup('ansible.builtin.env', 'HY2_DOWN_MBPS') }}"
-  REALITY_SNI: "{{ lookup('ansible.builtin.env', 'REALITY_SNI') }}"
-  REALITY_PORT: "{{ lookup('ansible.builtin.env', 'REALITY_PORT') }}"
-  HY2_HOP_ENABLED: "{{ lookup('ansible.builtin.env', 'HY2_HOP_ENABLED') }}"
-  HY2_HOP_DIRECT: "{{ lookup('ansible.builtin.env', 'HY2_HOP_DIRECT') }}"
-  HY2_HOP_WARP: "{{ lookup('ansible.builtin.env', 'HY2_HOP_WARP') }}"
-  HY2_HOP_MGMT: "{{ lookup('ansible.builtin.env', 'HY2_HOP_MGMT') }}"
+  PUB_IP: "{{ vpn2_env.PUB_IP | default('') }}"
+  HY2_DIRECT_PORT: "{{ vpn2_env.HY2_DIRECT_PORT | default('') }}"
+  HY2_WARP_PORT: "{{ vpn2_env.HY2_WARP_PORT | default('') }}"
+  HY2_MGMT_PORT: "{{ vpn2_env.HY2_MGMT_PORT | default('') }}"
+  HY2_UP_MBPS: "{{ vpn2_env.HY2_UP_MBPS | default('') }}"
+  HY2_DOWN_MBPS: "{{ vpn2_env.HY2_DOWN_MBPS | default('') }}"
+  REALITY_SNI: "{{ vpn2_env.REALITY_SNI | default('') }}"
+  REALITY_PORT: "{{ vpn2_env.REALITY_PORT | default('') }}"
+  HY2_HOP_ENABLED: "{{ vpn2_env.HY2_HOP_ENABLED | default('') }}"
+  HY2_HOP_DIRECT: "{{ vpn2_env.HY2_HOP_DIRECT | default('') }}"
+  HY2_HOP_WARP: "{{ vpn2_env.HY2_HOP_WARP | default('') }}"
+  HY2_HOP_MGMT: "{{ vpn2_env.HY2_HOP_MGMT | default('') }}"
 
 # Сторож WARP живёт в пакете vpn2: venv экзита ставит первая стадия.
 exit_vpn2: /opt/vpn2/venv/bin/vpn2
@@ -50,21 +50,21 @@ exit_wgcf_url: >-
 
 # Без ports.hy2_hop в config.yaml окружение диапазонов не несёт: умолчания те
 # же, что в пакете vpn2 (exitnode.HOP_DEFAULTS) и на стороне entry.
-exit_hop_enabled: "{{ lookup('ansible.builtin.env', 'HY2_HOP_ENABLED') | default('1', true) == '1' }}"
-exit_hop_direct: "{{ lookup('ansible.builtin.env', 'HY2_HOP_DIRECT') | default('20000-24999', true) }}"
-exit_hop_warp: "{{ lookup('ansible.builtin.env', 'HY2_HOP_WARP') | default('25000-29999', true) }}"
-exit_hop_mgmt: "{{ lookup('ansible.builtin.env', 'HY2_HOP_MGMT') | default('30000-30999', true) }}"
-exit_reality_port: "{{ lookup('ansible.builtin.env', 'REALITY_PORT') | default('4443', true) }}"
+exit_hop_enabled: "{{ vpn2_env.HY2_HOP_ENABLED | default('1', true) == '1' }}"
+exit_hop_direct: "{{ vpn2_env.HY2_HOP_DIRECT | default('20000-24999', true) }}"
+exit_hop_warp: "{{ vpn2_env.HY2_HOP_WARP | default('25000-29999', true) }}"
+exit_hop_mgmt: "{{ vpn2_env.HY2_HOP_MGMT | default('30000-30999', true) }}"
+exit_reality_port: "{{ vpn2_env.REALITY_PORT | default('4443', true) }}"
 
 # Порты hy2 открывает и роль base; здесь - порты своего экзита из config.yaml.
 # clash-api слушает 127.0.0.1 и наружу не открывается. Пустая группа снимает
 # правила отключённой смены портов.
 exit_ufw:
-  - {comment: hysteria2 direct, rules: ["{{ lookup('ansible.builtin.env', 'HY2_DIRECT_PORT') }}/udp"]}
-  - {comment: hysteria2 warp, rules: ["{{ lookup('ansible.builtin.env', 'HY2_WARP_PORT') }}/udp"]}
+  - {comment: hysteria2 direct, rules: ["{{ vpn2_env.HY2_DIRECT_PORT | default('') }}/udp"]}
+  - {comment: hysteria2 warp, rules: ["{{ vpn2_env.HY2_WARP_PORT | default('') }}/udp"]}
   - comment: hysteria2 mgmt
     aliases: [hysteria2 mgmt (monitoring)]
-    rules: ["{{ lookup('ansible.builtin.env', 'HY2_MGMT_PORT') }}/udp"]
+    rules: ["{{ vpn2_env.HY2_MGMT_PORT | default('') }}/udp"]
   - {comment: vless reality, rules: ["{{ exit_reality_port }}/tcp"]}
   - comment: hysteria2 hop direct
     rules: "{{ [exit_hop_direct | replace('-', ':') ~ '/udp'] if exit_hop_enabled else [] }}"

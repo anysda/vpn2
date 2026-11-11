@@ -1,5 +1,4 @@
 """Переменные узла из пакета (vpn2.nodevars) равны env-файлам config2env.py ключ в ключ."""
-import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -176,23 +175,6 @@ def test_matrix_equals_config2env(name):
     assert before == []
     assert after == []
     assert all(isinstance(value, str) for env in old.values() for value in env.values())
-
-
-def test_matrix_covers_every_env_name_of_config2env():
-    # Имя, которое config2env пишет, а матрица ни разу не получила, сверкой не покрыто.
-    source = (samples.ROOT / 'infra/lib/config2env.py').read_text(encoding='utf-8')
-    main = source[source.index('def main():'):]
-    written = set(re.findall(r"""f?["']([A-Z][A-Z0-9_]*)=""", main)) | set(re.findall(r"'([A-Z][A-Z0-9_]+)'", main))
-    written |= {'HY2_HOP_DIRECT', 'HY2_HOP_WARP', 'HY2_HOP_MGMT', 'DOMAIN_NL', 'MGMT_IP_NL', 'NL_HY2_UP_MBPS',
-                'NL_HY2_DOWN_MBPS', 'NL_HY2_INSECURE', 'NL_HY2_DIRECT_PORT'}
-    seen = set()
-    for text, options in MATRIX.values():
-        old, _, _ = compare(text, **options)
-        seen.update(name for env in old.values() for name in env)
-    seen |= {re.sub(r'^(DE_2|US)_', 'NL_', name) for name in seen}
-    written.discard('VPN2_DEVELOPMENT')  # читается, а не пишется
-    assert written - seen == set()
-    assert len(written) >= 70
 
 
 def test_samples_of_repo_equal_config2env():

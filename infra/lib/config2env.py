@@ -8,7 +8,6 @@ config2env.py — читает config.yaml, пишет infra/envs/*.env
 
 import base64
 import ipaddress
-import json
 import os
 import re
 import sys
@@ -16,7 +15,7 @@ from pathlib import Path
 
 # Модуль рядом со скриптом: так импорт работает и при загрузке по пути файла.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields  # noqa: E402
+from hy2_bandwidth import HY2_HOP_DEFAULTS  # noqa: E402
 
 
 def shq(v):
@@ -709,6 +708,11 @@ def assign_mgmt_octets(repo_root, exits):
             + ''.join(f'{t} {n}\n' for t, n in sorted(pinned.items(), key=lambda kv: kv[1])))
 
 
+def plain(value):
+    """Число пишется без кавычек: строки env читают и глазами, и grep."""
+    return value if value.isdigit() else shq(value)
+
+
 def main():
     repo_root = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path.cwd()
     config_path = repo_root / 'config.yaml'
@@ -721,356 +725,42 @@ def main():
     validate_network(cfg)
     materialize_orchestrator_key(cfg)
 
-    entry = cfg.get('entry', {})
     exits = cfg.get('exits', [])
-    ports = cfg.get('ports', {})
-
-    # Проверяем до записи env/state: неполная пара не должна молча включать
-    # разные алгоритмы в двух направлениях. Скорости заданы со стороны экзита.
-    for ex in exits:
-        try:
-            bandwidth_fields(ex.get('hy2_up_mbps'), ex.get('hy2_down_mbps'),
-                             label=f'exits[{ex.get("tag", "?")}]')
-        except ValueError as error:
-            sys.exit(f'ERROR: {error}')
-
-    # Пустой пароль иначе всплывёт только на стадии 26, после части деплоя.
-    backup = cfg.get('backup', {})
-    backup_on = backup.get('enabled', '').lower() in ('true', 'yes', 'y', '1')
-    if backup_on and not backup.get('passphrase', ''):
-        config_error('backup.passphrase', 'пустой при включённом бэкапе — задай его '
-                     '(или запусти ./setup.sh), либо выключи backup.enabled')
-
-    # MGMT_IP закреплён за тегом (до исключения по UDP-фильтру), а не за
-    # позицией в списке: см. assign_mgmt_octets.
+    # MGMT_IP закреплён за тегом, а не за позицией в списке: октеты пишутся в состояние деплоя.
     assign_mgmt_octets(repo_root, exits)
+    skipped = sorted(load_excluded_exits(repo_root) & {e.get('tag') for e in exits})
+    if skipped:
+        print(f'config2env: исключены по UDP-фильтру: {", ".join(skipped)} '
+              f'({state_dir()}/excluded-exits.txt) — '
+              f'их MGMT_IP-индексы зарезервированы и не переиспользуются')
+    development = os.environ.get('VPN2_DEVELOPMENT') == 'true'
+    for key in ('panel', 'tgbot'):
+        image = cfg.get(key, {}).get('image', '')
+        if image and not development:
+            # stdout: внутренние перегенерации deploy глушат его, предупреждение одно.
+            print(f'config2env: {key}.image: {image} не используется - образ берётся из манифеста '
+                  'сборки по digest; строку можно удалить (нужна только для --development)')
 
-    # Применить persistent UDP-фильтр от verify_and_rotate_ports. Эти экзиты
-    # деплой не настраивает ни в одной стадии, пока verify не подтвердит
-    # обратное (для re-include — удалить тег из excluded-exits.txt и
-    # перезапустить ./deploy.sh; verify прогонится заново при do_all).
-    excluded = load_excluded_exits(repo_root)
-    if excluded:
-        kept = [e for e in exits if e.get('tag') not in excluded]
-        skipped = [e['tag'] for e in exits if e.get('tag') in excluded]
-        if skipped:
-            print(f'config2env: исключены по UDP-фильтру: {", ".join(skipped)} '
-                  f'({state_dir()}/excluded-exits.txt) — '
-                  f'их MGMT_IP-индексы зарезервированы и не переиспользуются')
-        exits = kept
-
-    if not entry.get('host'):
-        print('ERROR: entry.host не задан в config.yaml', file=sys.stderr)
-        sys.exit(1)
-    if not exits:
-        print('ERROR: exits пустой — нужна хотя бы одна выходная нода', file=sys.stderr)
-        sys.exit(1)
-
-    entry_host = entry['host']
-
-    # Дефолтные порты
-    hy2_direct = ports.get('hy2_direct', '443')
-    hy2_warp   = ports.get('hy2_warp',   '8443')
-    # Служебный Hysteria2 (скрейп node_exporter из-за границы вместо WG-mesh).
-    hy2_mgmt   = ports.get('hy2_mgmt',   '8444')
-    # Смена порта клиентом hy2: фильтр, режущий один UDP-поток по 5-tuple,
-    # не держит VPN лёжа. Экзит перенаправляет диапазон на порт канала.
-    # Без ports.hy2_hop all.env прежний, умолчания у стадий.
-    hop_lines = []
-    if cfg['hy2_hop'] is not None:
-        hop_enabled, hop_ranges, hop_interval = hy2_hop_settings(cfg['hy2_hop'])
-        hop_lines = [f'HY2_HOP_ENABLED={int(hop_enabled)}',
-                     *(f'HY2_HOP_{c.upper()}={a}-{b}' for c, (a, b) in hop_ranges.items()),
-                     f'HY2_HOP_INTERVAL={hop_interval}']
-
-    # Ключ человека-админа: если задан, 00-bootstrap отключает парольный вход;
-    # если пусто — пароль остаётся (VPN2-31, чтобы не запереть себя без ключа).
-    admin_cfg = cfg.get('admin', {}) or {}
-    admin_ssh_pubkey = (admin_cfg.get('ssh_pubkey') or '').strip()
+    # Переменные узлов считает пакет: те же, что получает ansible через inventory.py.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/src'))
+    from vpn2 import config, nodevars
+    try:
+        nodes = nodevars.env_by_node(config.loads(config_path.read_text()), state=state_dir(),
+                                     repo_root=repo_root, development=development)
+    except config.ConfigError as error:
+        sys.exit(f'ERROR: {error}')
 
     envs_dir = repo_root / 'infra' / 'envs'
     envs_dir.mkdir(parents=True, exist_ok=True)
-
-    exit_tags = ' '.join(e['tag'] for e in exits)
-
-    # ------------------------------------------------------------------
-    # all.env
-    # ------------------------------------------------------------------
-    lines = [
-        f'ENTRY_HOST={shq(entry_host)}',
-        '',
-        'AGH_PORT=3000',
-        '',
-        f'HY2_DIRECT_PORT={hy2_direct}',
-        f'HY2_WARP_PORT={hy2_warp}',
-        f'HY2_MGMT_PORT={hy2_mgmt}',
-        *hop_lines,
-        '',
-        f'ADMIN_SSH_PUBKEY={shq(admin_ssh_pubkey)}',
-        '',
-        f'EXIT_TAGS={shq(exit_tags)}',
-    ]
-
-    # Адрес сервера в клиентских WG/OVPN-конфигах. Домен вместо IP: при смене
-    # IP entry хватает A-записи, конфиги у клиентов не перевыпускаются.
-    # Без public_host адресом служит домен панели: он уже указывает на entry.
-    public_host = (str(entry.get('public_host') or '').strip()
-                   or str(cfg['panel'].get('domain') or ''))
-    if public_host:
-        lines += ['', f'WG_PUBLIC_HOST={shq(public_host)}', f'OVPN_PUBLIC_HOST={shq(public_host)}']
-
-    # В именах env дефис тега заменяем на _: shell не допускает дефисы.
-    # Сам тег (имена файлов, outbound, метки) сохраняем без изменений.
-    # Per-exit server IP (используется как адрес для подключения Hysteria2)
-    for ex in exits:
-        tag = ex['tag'].upper().replace('-', '_')
-        lines.append(f"DOMAIN_{tag}={shq(ex['host'])}")
-        for key in ('up', 'down'):
-            lines.append(f"{tag}_HY2_{key.upper()}_MBPS={shq(ex.get(f'hy2_{key}_mbps', ''))}")
-        # Без закреплённого сертификата экзита генератор роутера отказывает;
-        # insecure — только явным флагом (совместимость, deploy предупреждает).
-        if str(ex.get('hy2_insecure', '')).lower() in ('true', 'yes', 'y', '1'):
-            lines.append(f'{tag}_HY2_INSECURE=1')
-
-    # Per-host MGMT IPs (октет закреплён за тегом, см. assign_mgmt_octets).
-    lines.append('')
-    lines.append('MGMT_IP_RU=10.99.0.1')
-    for ex in exits:
-        tag = ex['tag'].upper().replace('-', '_')
-        lines.append(f"MGMT_IP_{tag}=10.99.0.{ex['_mgmt_idx']}")
-
-    # Per-exit Hysteria2 direct port
-    lines.append('')
-    for ex in exits:
-        tag = ex['tag'].upper().replace('-', '_')
-        port = ex.get('hy2_direct_port', hy2_direct)
-        lines.append(f'{tag}_HY2_DIRECT_PORT={port}')
-
-    (envs_dir / 'all.env').write_text('\n'.join(lines) + '\n')
-
-    # ------------------------------------------------------------------
-    # ru.env (entry node)
-    # ------------------------------------------------------------------
-    entry_pass = entry.get('password', '')
-    if not entry_pass:
-        print('ERROR: entry.password не задан в config.yaml — перезапусти ./setup.sh',
-              file=sys.stderr)
-        sys.exit(1)
-
-    admin = cfg.get('admin', {})
-    admin_user = admin.get('user', 'anysda') or 'anysda'
-    admin_password = admin.get('password', '')  # пусто → auto-gen в 22-adguard
-
-    panel_domain = cfg.get('panel', {}).get('domain', '')
-    # Образы панели и бота из конфига - только для ./deploy.sh --development.
-    # Проверенный деплой берёт их по digest из манифеста commit; строка из
-    # прежней установки (…/panel:1.0.0) не должна валить обновление.
-    panel_image = cfg.get('panel', {}).get('image', '')
-    tgbot_image = cfg.get('tgbot', {}).get('image', '')
-    if os.environ.get('VPN2_DEVELOPMENT') != 'true':
-        for key, value in (('panel.image', panel_image), ('tgbot.image', tgbot_image)):
-            if value:
-                # stdout: внутренние перегенерации deploy глушат его, предупреждение одно.
-                print(f'config2env: {key}: {value} не используется - образ берётся из манифеста '
-                      'сборки по digest; строку можно удалить (нужна только для --development)')
-        panel_image = tgbot_image = ''
-
-    lines = [
-        "HOST_TAG='ru'",
-        '',
-        "SSH_USER='root'",
-        f"SSH_HOST={shq(entry_host)}",
-        f"SSH_PASS={shq(entry_pass)}",
-        '',
-        f"PUB_IP_OUT={shq(entry_host)}",
-        '',
-        "MGMT_IP='10.99.0.1'",
-        '',
-        f"ADMIN_USER={shq(admin_user)}",
-        f"ADMIN_PASSWORD={shq(admin_password)}",
-        f"PANEL_DOMAIN={shq(panel_domain)}",
-        # Только явные значения. Характеристики читают стадии на entry.
-        f"ENTRY_RESOURCE_OVERRIDES={shq(json.dumps(cfg['entry_resources']))}",
-    ]
-    if panel_image:
-        lines.append(f"PANEL_IMAGE={shq(panel_image)}")
-    if tgbot_image:
-        lines.append(f"TGBOT_IMAGE={shq(tgbot_image)}")
-    # Только явные настройки: без новых ключей env остаются байт в байт
-    # прежними, а умолчания по-прежнему принадлежат стадиям 28/29/30.
-    for key, variable in (('wireguard', 'WG_LISTEN_PORT'), ('openvpn', 'OVPN_PORT')):
-        if key in ports:
-            lines.append(f'{variable}={shq(int(ports[key]))}')
-    if 'proto' in cfg['openvpn']:
-        lines.append(f"OVPN_PROTO={shq(cfg['openvpn']['proto'])}")
-    if 'mtu' in cfg['wireguard']:
-        lines.append(f"WG_MTU={shq(int(cfg['wireguard']['mtu']))}")
-    if 'split_local' in cfg['wireguard']:
-        split_local = cfg['wireguard']['split_local'].lower() in ('true', 'yes', 'y', '1')
-        lines.append(f"WG_SPLIT_LOCAL={shq('true' if split_local else 'false')}")
-    # Сторож экзитов (стадия 21): перезапуск sing-box, когда мертвы все каналы.
-    for key, variable in (('restart_after_checks', 'RESTART_AFTER_CHECKS'),
-                          ('restart_min_interval', 'RESTART_MIN_INTERVAL_S')):
-        if key in cfg['failover']:
-            lines.append(f"{variable}={shq(int(cfg['failover'][key]))}")
-    tg = cfg.get('telegram', {})
-    if tg.get('bot_token') and tg.get('chat_id'):
-        lines += [
-            '',
-            f"TELEGRAM_BOT_TOKEN={shq(tg['bot_token'])}",
-            f"TELEGRAM_CHAT_ID={shq(tg['chat_id'])}",
-        ]
-        if tg.get('admin_username'):
-            lines.append(f"TELEGRAM_ADMIN_USERNAME={shq(tg['admin_username'])}")
-    # Пороги тревог бота: только явные, иначе бот считает их по размеру узла.
-    for key, variable in (('cpu_pct', 'ALERT_CPU_PCT'), ('ram_pct', 'ALERT_RAM_PCT'),
-                          ('window', 'ALERT_WINDOW_SEC')):
-        if key in cfg['alerts']:
-            lines.append(f"{variable}={shq(int(cfg['alerts'][key]))}")
-
-
-    # YouTube-секция. Читают обе стадии: 20-ru-router (vpn2.router.config
-    # строит outbound youtube-ru и правила) и 19-yt-zapret (десинк). Пустая
-    # секция → YT_ROUTE=off, поведение ровно как до появления фичи.
-    yt = cfg.get('youtube', {})
-    yt_route = (yt.get('route', '') or 'off').lower()
-    if yt_route not in ('off', 'zapret', 'direct'):
-        print(f"ERROR: youtube.route='{yt_route}' — допустимо off | zapret | direct",
-              file=sys.stderr)
-        sys.exit(1)
-    yt_quic = (yt.get('quic', '') or 'block').lower()
-    if yt_quic not in ('block', 'allow'):
-        print(f"ERROR: youtube.quic='{yt_quic}' — допустимо block | allow", file=sys.stderr)
-        sys.exit(1)
-    lines += [
-        '',
-        f"YT_ROUTE={shq(yt_route)}",
-        f"YT_QUIC={shq(yt_quic)}",
-        f"YT_MARK={shq(yt.get('mark', '256') or '256')}",
-        f"YT_ZAPRET_OFFLOAD={shq((yt.get('offload', '') or 'keep').lower())}",
-    ]
-    # Необязательные переопределения — пишем только если заданы, чтобы дефолты
-    # жили в одном месте (в стадии 19), а не размножались по конфигам.
-    if yt.get('window_scale'):
-        window_scale = yt['window_scale']
-        if not re.fullmatch(r'native|[0-9]|1[0-4]', window_scale):
-            print('ERROR: youtube.window_scale — допустимо native или 0..14', file=sys.stderr)
-            sys.exit(1)
-        lines.append(f"YT_ZAPRET_WINDOW_SCALE={shq(window_scale)}")
-    if yt.get('strategy'):
-        lines.append(f"YT_ZAPRET_STRATEGY={shq(yt['strategy'])}")
-    if yt.get('zapret_ref'):
-        lines.append(f"YT_ZAPRET_REF={shq(yt['zapret_ref'])}")
-    if yt.get('domains'):
-        lines.append(f"YT_DOMAINS={shq(yt['domains'])}")
-
-    # SSO-секция (Authentik / OIDC). Читает стадия 30-frontend. Пустая секция
-    # или enabled=false → SSO_ENABLED='false', панель ведёт себя ровно как до
-    # появления фичи (форма с логином и паролем).
-    sso = cfg.get('sso', {})
-    sso_requested = (sso.get('enabled', '') or '').lower() in ('true', 'yes', 'y', '1')
-    client_secret = sso.get('client_secret', '') or ''
-    sso_on = sso_requested and bool(client_secret.strip())
-    # Намерение нужно только для итоговой подсказки деплоя; засев всегда безопасен.
-    lines += ['', f"SSO_REQUESTED={shq('true' if sso_requested else 'false')}",
-              f"SSO_ENABLED={shq('true' if sso_on else 'false')}"]
-    if sso_requested:
-        # discovery_url можно задать целиком; иначе собираем из адреса IdP и
-        # slug'а приложения — у Authentik ручка ВСЕГДА такая.
-        discovery = sso.get('discovery_url', '')
-        if not discovery:
-            base = (sso.get('base_url', '') or '').rstrip('/')
-            slug = sso.get('app_slug', '') or 'vpn2'
-            if base:
-                discovery = f'{base}/application/o/{slug}/.well-known/openid-configuration'
-        client_id = sso.get('client_id', '') or 'vpn2'
-        allowed_subs = sso.get('allowed_subs', '')
-        # Проверять полноту засева можно только на entry: стадия 30 знает,
-        # сохранены ли уже приоритетные настройки в профиле панели.
-        lines += [
-            f'SSO_DISCOVERY_URL={shq(discovery)}',
-            f'SSO_CLIENT_ID={shq(client_id)}',
-            f'SSO_CLIENT_SECRET={shq(client_secret)}',
-            f'SSO_ALLOWED_SUBS={shq(allowed_subs)}',
-            f"SSO_LABEL={shq(sso.get('label', '') or 'Authentik')}",
-            # Бесшовность (форму не видно вообще). false — форма остаётся, но с
-            # кнопкой входа через IdP.
-            f"SSO_AUTO_REDIRECT={shq('false' if not sso_on or (sso.get('auto_redirect', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
-            # Парольный вход. Стандарт флота — «спрятан, но жив», поэтому по
-            # умолчанию true; false рубит его наглухо (и break-glass тоже!).
-            f"SSO_PASSWORD_LOGIN={shq('false' if sso_on and (sso.get('password_login', '') or '').lower() in ('false', 'no', 'n', '0') else 'true')}",
-        ]
-
-    # Backup-секция. Выгружаем как BACKUP_* переменные; пустая backup секция /
-    # enabled=false → ничего не пишем, 26-backup увидит отсутствие и пропустится.
-    if backup_on:
-        lines += [
-            '',
-            "BACKUP_ENABLED='true'",
-            f"BACKUP_BACKEND={shq(backup.get('backend', 'local'))}",
-            f"BACKUP_PASSPHRASE={shq(backup.get('passphrase', ''))}",
-            f"BACKUP_RETENTION={shq(backup.get('retention', '10'))}",
-            f"BACKUP_SCHEDULE={shq(backup.get('schedule', 'daily'))}",
-            f"BACKUP_LOCAL_DIR={shq(backup.get('local', {}).get('dir', '/var/backups/anysda-vpn2'))}",
-        ]
-        s3 = backup.get('s3', {})
-        if backup.get('backend') == 's3' and s3:
-            lines += [
-                f"BACKUP_S3_ENDPOINT={shq(s3.get('endpoint', ''))}",
-                f"BACKUP_S3_BUCKET={shq(s3.get('bucket', ''))}",
-                # region — обязателен для cloud.ru/yandex/selectel и т.п. (SigV4).
-                # Пустое значение оставит дефолт aws-cli (us-east-1).
-                f"BACKUP_S3_REGION={shq(s3.get('region', ''))}",
-                f"BACKUP_S3_ACCESS_KEY={shq(s3.get('access_key', ''))}",
-                f"BACKUP_S3_SECRET_KEY={shq(s3.get('secret_key', ''))}",
-            ]
-
-    ru_env = envs_dir / 'ru.env'
-    prepare_private(ru_env)
-    ru_env.write_text('\n'.join(lines) + '\n')
-
-    # ------------------------------------------------------------------
-    # Per-exit env files (октет закреплён за тегом, см. assign_mgmt_octets).
-    # ------------------------------------------------------------------
-    for ex in exits:
-        tag      = ex['tag']
-        host     = ex['host']
-        password = ex.get('password', '')
-        mgmt_ip  = f"10.99.0.{ex['_mgmt_idx']}"
-        hy2_port = ex.get('hy2_direct_port', hy2_direct)
-
-        if not password:
-            print(f'ERROR: exits[{tag}].password не задан — перезапусти ./setup.sh',
-                  file=sys.stderr)
-            sys.exit(1)
-
-        lines = [
-            f"HOST_TAG={shq(tag)}",
-            '',
-            "SSH_USER='root'",
-            f"SSH_HOST={shq(host)}",
-            f"SSH_PASS={shq(password)}",
-            '',
-            f"PUB_IP={shq(host)}",
-            '',
-            f"MGMT_IP={shq(mgmt_ip)}",
-            f"HY2_UP_MBPS={shq(ex.get('hy2_up_mbps', ''))}",
-            f"HY2_DOWN_MBPS={shq(ex.get('hy2_down_mbps', ''))}",
-        ]
-        if str(hy2_port) != str(hy2_direct):
-            lines.append(f'HY2_DIRECT_PORT={hy2_port}')
-
-        ex_env = envs_dir / f'{tag}.env'
-        prepare_private(ex_env)
-        ex_env.write_text('\n'.join(lines) + '\n')
-
-    # ------------------------------------------------------------------
-    # exits.env
-    # ------------------------------------------------------------------
-    (envs_dir / 'exits.env').write_text(f'EXIT_TAGS={shq(exit_tags)}\n')
-
-    print(f'Сгенерировано: all.env, ru.env, '
-          f'{", ".join(e["tag"] + ".env" for e in exits)}, exits.env')
+    # all.env - общее для всех узлов; файл узла полон сам по себе и читается после него.
+    shared = {name: value for name, value in nodes['ru'].items() if all(name in env for env in nodes.values())}
+    for name, env in {'all': shared, **nodes}.items():
+        path = envs_dir / f'{name}.env'
+        prepare_private(path)
+        path.write_text(''.join(f'{key}={plain(value)}\n' for key, value in env.items()))
+    exit_tags = [tag for tag in nodes if tag != 'ru']
+    (envs_dir / 'exits.env').write_text(f'EXIT_TAGS={shq(" ".join(exit_tags))}\n')
+    print(f'Сгенерировано: all.env, ru.env, {", ".join(tag + ".env" for tag in exit_tags)}, exits.env')
 
 
 if __name__ == '__main__':

@@ -20,7 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = Path(__file__).parent / 'fixtures/setup'
 
 COPIED = ('setup.sh', 'infra/lib/config2env.py', 'infra/lib/hy2_bandwidth.py',
-          'infra/vpn2/src/vpn2/__init__.py', 'infra/vpn2/src/vpn2/setup.py')
+          'infra/vpn2/src/vpn2/__init__.py', 'infra/vpn2/src/vpn2/setup.py', 'infra/vpn2/src/vpn2/config.py',
+          'infra/vpn2/src/vpn2/nodevars.py', 'infra/vpn2/src/vpn2/watchdog/__init__.py',
+          'infra/vpn2/src/vpn2/watchdog/hy2_bandwidth.py')
 
 STUBS = {
     'ip': '''case "$*" in *route*) f=ip-route ;; *) f=ip-addr ;; esac

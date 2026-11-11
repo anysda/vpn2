@@ -89,7 +89,7 @@ class WindowTests(unittest.TestCase):
                     self.assertIn('youtube.window_scale', result.stderr)
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn(f"YT_ZAPRET_WINDOW_SCALE='{scale}'", (root / 'infra/envs/ru.env').read_text())
+                    self.assertIn(f'YT_ZAPRET_WINDOW_SCALE=' + (scale if scale.isdigit() else f"'{scale}'"), (root / 'infra/envs/ru.env').read_text())
 
 
 if __name__ == '__main__':

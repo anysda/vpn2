@@ -143,7 +143,7 @@ echo all-clean
                 self.assertEqual(sh('exit1', 'echo hi; cat', via='hub', stdin='in\n'), 'hi\nin\n')
 
     def test_tools_read_only_command_output(self):
-        functions = tool_function('infra/tools/ci-stand.sh', 'ssh_node')
+        functions = tool_function('infra/tests/ci-stand.sh', 'ssh_node')
         for noise in NOISES:
             with self.subTest(noise=noise), Node(noise) as node:
                 result = node.bash(functions + '''SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD

@@ -449,13 +449,13 @@ IKEv2, повторный деплой без изменений и восста
 `stand.yml` на каждый пуш в `dev`. Локально, на машине с KVM:
 
 ```bash
-sudo infra/tools/ci-stand.sh up
-sudo infra/tools/ci-stand.sh deploy <образ панели>
-sudo infra/tools/ci-stand.sh verify
-sudo infra/tools/ci-stand.sh down
+sudo infra/tests/ci-stand.sh up
+sudo infra/tests/ci-stand.sh deploy <образ панели>
+sudo infra/tests/ci-stand.sh verify
+sudo infra/tests/ci-stand.sh down
 ```
 
-Остальные сценарии стенда перечислены в начале `infra/tools/ci-stand.sh`.
+Остальные сценарии стенда перечислены в начале `infra/tests/ci-stand.sh`.
 
 **Версии компонентов.** Версии и контрольные суммы всего, что деплой
 скачивает со стороны (sing-box, AdGuard Home, Caddy, VictoriaMetrics,

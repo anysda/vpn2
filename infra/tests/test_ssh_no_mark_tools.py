@@ -15,7 +15,7 @@ from test_ssh_login_noise import Node, tool_function
 REASON = 'не дошёл до команды'
 SSH_DOWN = 'ssh: connect to host 203.0.113.7 port 22: Connection refused'
 FAKE_SSH_DOWN = f'#!/bin/bash\necho "{SSH_DOWN}" >&2\nexit 255\n'
-FUNCTIONS = (tool_function('infra/tools/ci-stand.sh', 'ssh_node')
+FUNCTIONS = (tool_function('infra/tests/ci-stand.sh', 'ssh_node')
              + "SSH_KEY='' KNOWN_HOSTS='' STAND_DIR=$PWD\n")
 CALLS = (('ssh_node', "ssh_node 203.0.113.7 '{}'"),)
 

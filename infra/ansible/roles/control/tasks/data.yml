@@ -62,6 +62,10 @@
   loop: "{{ control_data_files.files }}"
   loop_control:
     label: "{{ item.path }}"
+  # Панель работает: журнал отката и WAL SQLite живут доли секунды и к этой
+  # задаче могут исчезнуть. Исчезнувшему файлу владелец не нужен.
+  register: control_data_owner
+  failed_when: control_data_owner is failed and control_data_owner.state | default('') != 'absent'
 
 - name: Настройки бота
   ansible.builtin.stat:

@@ -567,3 +567,5 @@ jobs:
             ansible-playbook -i localhost, --syntax-check "$play"
           done
       - run: ansible-lint --profile production --offline --project-dir infra/ansible infra/ansible/plays infra/ansible/roles
+      # Задачам роли нужен настоящий ansible: в заданиях infra его нет, там тест пропускается
+      - run: python3 -m unittest -v infra/tests/test_role_control_data.py

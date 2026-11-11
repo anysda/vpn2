@@ -76,8 +76,13 @@ class ConfigExampleStagesTests(unittest.TestCase):
         self.assertEqual(absent, [], 'стадии нет ни в infra/scripts, ни в infra/ansible/plays')
 
     def test_alerts_names_stage_writing_thresholds(self):
-        writers = {path.stem for path in SCRIPTS.glob('*.sh')
-                   if re.search(r'\bALERT_[A-Z_]+', path.read_text(encoding='utf-8'))}
+        alert = re.compile(r'\bALERT_[A-Z_]+')
+        writers = {path.stem for path in SCRIPTS.glob('*.sh') if alert.search(path.read_text(encoding='utf-8'))}
+        # Стадию ведёт роль: пороги читает роль, названная в плее.
+        roles = {path.parent.parent.name for path in PLAYS.parent.glob('roles/*/defaults/main.yml')
+                 if alert.search(path.read_text(encoding='utf-8'))}
+        writers |= {path.stem for path in PLAYS.glob('*.yml')
+                    if any(f'role: {role}' in path.read_text(encoding='utf-8') for role in roles)}
         self.assertTrue(writers, 'ни одна стадия не пишет ALERT_*')
         _, chunk = self.blocks['alerts']
         named = {stage for line in chunk if AFTER in line for stage in STAGE.findall(line)}

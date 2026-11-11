@@ -453,6 +453,7 @@ apt_prepare() {
 # потерянный доступ. Здесь sshd лежит секунды, сторож ещё не взведён, фаервол
 # не тронут. После первой установки (метка стадии) общий заход пакетов не
 # идёт, обновлять нечего. sshd не вернулся - стадия падает до правок фаервола.
+# Строка об этом идёт в stdout: там её получает приставка с именем узла.
 APT_SSHD_STAMP=/var/anysda/.stamps/00-bootstrap
 APT_SSHD_WAIT=60
 apt_sshd_versions() {
@@ -484,7 +485,7 @@ apt_sshd_first() {
   t0=$SECONDS
   until sshd_answers; do
     if (( SECONDS - t0 >= APT_SSHD_WAIT )); then
-      svc_say "sshd не отвечает $((SECONDS - t0)) с после обновления openssh-server, фаервол не тронут: journalctl -u ssh" >&2
+      svc_say "sshd не отвечает $((SECONDS - t0)) с после обновления openssh-server, фаервол не тронут: journalctl -u ssh"
       return 1
     fi
     sleep 2

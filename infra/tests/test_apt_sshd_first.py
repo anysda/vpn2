@@ -70,7 +70,7 @@ echo "rc=$rc"
     def test_dead_sshd_after_upgrade_fails_the_stage_before_the_guard(self):
         result, calls = self.run_first(answers='false')
         self.assertEqual(result.stdout.splitlines()[-1], 'rc=1', result.stderr)
-        self.assertIn('sshd не отвечает', result.stderr)
+        self.assertIn('sshd не отвечает', result.stdout)
         self.assertIn('answers', calls)
 
 

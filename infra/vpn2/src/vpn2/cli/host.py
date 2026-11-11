@@ -26,10 +26,6 @@ def _say(text):
     print(f"[{os.environ.get('HOST_TAG', 'anysda')}]   {text}", flush=True)
 
 
-def _packages(args):
-    return apt.install(args.package, docker=args.docker)
-
-
 NFT_DROPIN = '''[Service]
 # Stopping this loader must not remove rules owned by other services.
 ExecStop=
@@ -47,15 +43,6 @@ def nft_preserve(*, root='/', run=subprocess.run):
         run(['systemctl', 'daemon-reload'], check=True)
         changed = True
     return changed
-
-
-def _nft_preserve(args):
-    del args
-    return nft_preserve()
-
-
-def _swap(args):
-    return swap.ensure(args.manifest, _say, install_bytes=args.install_bytes)
 
 
 def _ufw(args):
@@ -277,51 +264,11 @@ def sshd(password, *, root='/', run=subprocess.run):
     return changed
 
 
-def _exit_config(args):
-    return exitnode.configure(os.environ, args.template, _say)
-
-
-def _exit_hy2hop(args):
-    del args
-    return exitnode.hy2hop(os.environ, _say)
-
-
-def _sshd(args):
-    return sshd(args.password)
-
-
-def _wg_identity(args):
-    return entryvpn.wg_identity(args.port, args.address)
-
-
-def _wg_apply(args):
-    del args
-    return entryvpn.wg_apply(_say)
-
-
-def _routing_ensure(args):
-    return entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say)
-
-
-def _ovpn_pki(args):
-    del args
-    return entryvpn.ovpn_pki()
-
-
-def _ovpn_server_conf(args):
-    return entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool)
-
-
 def ovpn_restart(*, directory=entryvpn.OVPN_DIR, applied=None, apply=entryvpn.OVPN_APPLY):
     """Рестарт OpenVPN по общему со стадией панели отпечатку входов."""
     return entryvpn.ovpn_restart(
         lambda: restart_if_changed(entryvpn.OVPN_UNIT, entryvpn.ovpn_inputs(directory), applied=applied),
         _say, apply=apply)
-
-
-def _ovpn_restart(args):
-    del args
-    return ovpn_restart()
 
 
 def _ikev2_packages(args):
@@ -344,13 +291,13 @@ def main(argv):
     item = sub.add_parser('packages')
     item.add_argument('--docker', action='store_true')
     item.add_argument('package', nargs='+')
-    item.set_defaults(run=_packages)
-    sub.add_parser('nft-preserve').set_defaults(run=_nft_preserve)
+    item.set_defaults(run=lambda args: apt.install(args.package, docker=args.docker))
+    sub.add_parser('nft-preserve').set_defaults(run=lambda args: nft_preserve())
     item = sub.add_parser('swap')
     item.add_argument('--manifest', default='/tmp/anysda/release-manifest.json')
     item.add_argument('--install-bytes', type=int, default=0,
                       help='место на диске после полной установки узла, байт')
-    item.set_defaults(run=_swap)
+    item.set_defaults(run=lambda args: swap.ensure(args.manifest, _say, install_bytes=args.install_bytes))
     item = sub.add_parser('ufw')
     item.add_argument('--only-rules', action='store_true',
                       help='только правила групп: политику и включение ufw не трогать')
@@ -366,30 +313,32 @@ def main(argv):
     item.set_defaults(run=_restart_if_changed)
     item = sub.add_parser('exit-config')
     item.add_argument('--template', required=True)
-    item.set_defaults(run=_exit_config)
-    sub.add_parser('exit-hy2hop').set_defaults(run=_exit_hy2hop)
+    item.set_defaults(run=lambda args: exitnode.configure(os.environ, args.template, _say))
+    sub.add_parser('exit-hy2hop').set_defaults(run=lambda args: exitnode.hy2hop(os.environ, _say))
     item = sub.add_parser('sshd')
     item.add_argument('password', choices=('yes', 'no'), help='парольный вход')
-    item.set_defaults(run=_sshd)
+    item.set_defaults(run=lambda args: sshd(args.password))
     item = sub.add_parser('wg-identity', help='ключи сервера WireGuard и начальный wg0.conf')
     item.add_argument('--port', required=True)
     item.add_argument('--address', required=True)
-    item.set_defaults(run=_wg_identity)
-    sub.add_parser('wg-apply', help='wg0.conf в ядро без лишнего рестарта').set_defaults(run=_wg_apply)
+    item.set_defaults(run=lambda args: entryvpn.wg_identity(args.port, args.address))
+    sub.add_parser('wg-apply', help='wg0.conf в ядро без лишнего рестарта') \
+        .set_defaults(run=lambda args: entryvpn.wg_apply(_say))
     item = sub.add_parser('routing-ensure', help='вернуть пропавшую цепочку TPROXY службы')
     item.add_argument('unit')
     item.add_argument('iface')
     item.add_argument('chain')
-    item.set_defaults(run=_routing_ensure)
-    sub.add_parser('ovpn-pki', help='каталоги и комплект PKI сервера OpenVPN').set_defaults(run=_ovpn_pki)
+    item.set_defaults(run=lambda args: entryvpn.routing_ensure(args.unit, args.iface, args.chain, _say))
+    sub.add_parser('ovpn-pki', help='каталоги и комплект PKI сервера OpenVPN') \
+        .set_defaults(run=lambda args: entryvpn.ovpn_pki())
     item = sub.add_parser('ovpn-server-conf', help='server.conf сервера OpenVPN')
     item.add_argument('--port', required=True)
     item.add_argument('--proto', required=True)
     item.add_argument('--subnet', required=True, help='сеть tun0 без маски')
     item.add_argument('pool', nargs='+', help='подсети пула клиентов')
-    item.set_defaults(run=_ovpn_server_conf)
+    item.set_defaults(run=lambda args: entryvpn.ovpn_write_conf(args.port, args.proto, args.subnet, args.pool))
     sub.add_parser('ovpn-restart', help='рестарт OpenVPN при смене входов и отметка last good') \
-        .set_defaults(run=_ovpn_restart)
+        .set_defaults(run=lambda args: ovpn_restart())
     sub.add_parser('ikev2-packages', help='strongSwan со starter, без charon-systemd') \
         .set_defaults(run=_ikev2_packages)
     item = sub.add_parser('ikev2-server', help='сертификаты, конфиг swanctl и загрузка в charon')

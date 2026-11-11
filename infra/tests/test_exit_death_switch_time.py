@@ -78,8 +78,10 @@ class TestExitDeathSwitchTime(unittest.TestCase):
     def test_dead_neighbour_does_not_delay_the_exit_switch(self):
         with tempfile.TemporaryDirectory() as tmp:
             w = fr.watchdog(tmp, **ENV)
-            # Учтённо мёртвых ждут коротко два прохода цикла: опрос экзитов и поиск зависших.
-            limit = w.INTERVAL + 2 * w.KNOWN_DEAD_WAIT + w.DEAD_AFTER * ut.PROBE_S \
+            # Проход, в который попала смерть узла, ждёт учтённо мёртвых коротко
+            # трижды: опрос экзитов, поиск зависших и проба выхода Telegram
+            # (он шёл через умерший узел).
+            limit = w.INTERVAL + 3 * w.KNOWN_DEAD_WAIT + w.DEAD_AFTER * ut.PROBE_S \
                 + (w.DEAD_AFTER - 1) * w.CONFIRM_GAP + SLACK
             for warm in (4.0, 4.3, 4.6, 4.9):
                 with self.subTest(warm=warm):

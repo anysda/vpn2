@@ -14,10 +14,6 @@ PO-токен bgutil. Не более двух попыток; сетевой ba
 Неизмеренная проба (антибот, экстрактор, локальная диагностика) замораживает
 счётчики и маршрут. «Не измерено» уходит один раз, когда провал длится без
 перерыва дольше часа; «возобновлено» — только после такого алерта.
---probe-only проверяет поток без изменения маршрута или состояния.
-Коды пробы: 0 — успех, 1 — поломка обхода/сетевой провал видео, 2 — не измерено.
---probe-quic отдельно измеряет QUIC (нужен curl с HTTP3); результат не меняет
-selector: при allow владелец допускает задержку до отката плеера на TCP.
 --status читает selector и последнюю пробу: 2, если свежего измерения нет.
 """
 import json
@@ -127,7 +123,7 @@ def memory_killed(result, before):
     return after is not None and after > before
 
 
-def probe_media(user, video, client, quic=False, cache=None):
+def probe_media(user, video, client, cache=None):
     try:
         prefix = ['setpriv', f'--reuid={user.pw_uid}', f'--regid={user.pw_gid}', '--clear-groups']
         extra = []
@@ -173,7 +169,7 @@ def probe_media(user, video, client, quic=False, cache=None):
             return None, f'локальный PO-токен не получен, client={client}'
         # Range ограничивает расход трафика. --max-filesize также защищает от
         # CDN, игнорирующего Range. Ни HTTP 200, ни оборванная передача не OK.
-        cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http3-only' if quic else '--http1.1',
+        cmd = prefix + ['curl', '-q', '-4', '--noproxy', '*', '--http1.1',
                         '--silent', '--show-error', '--fail', '--connect-timeout', '5',
                         '--location', '--max-redirs', '3', '--proto-redir', '=https',
                         '--max-time', '20', '--range', f'0-{SAMPLE_BYTES - 1}',
@@ -201,8 +197,7 @@ def probe_media(user, video, client, quic=False, cache=None):
         effective = urllib.parse.urlsplit(effective_url)
         if effective.scheme != 'https' or not (effective.hostname or '').endswith('.googlevideo.com'):
             return None, 'CDN перенаправил запрос за пределы HTTPS Googlevideo'
-        transport = 'QUIC' if quic else 'TCP'
-        return good, (f'{transport} video: HTTP {stats.get("http_code", 0)}, '
+        return good, (f'TCP video: HTTP {stats.get("http_code", 0)}, '
                       f'{stats.get("size_download", 0)} байт, '
                       f'{stats.get("speed_download", 0)} байт/с, curl={result.returncode}, '
                       f'CDN={effective.hostname}, client={client}' + (', PO=local' if cache else ''))
@@ -216,7 +211,7 @@ def probe_media(user, video, client, quic=False, cache=None):
         return None, f'видеопроба не завершена: {type(error).__name__}'
 
 
-def probe(quic=False):
+def probe():
     try:
         # Ответ CDN без живой очереди десинка не считается успехом.
         ready = subprocess.run(['/usr/local/bin/anysda-yt-check'],
@@ -226,17 +221,17 @@ def probe(quic=False):
         if ready.returncode:
             return None, 'A/B-проверка не завершена; проверить утилиты диагностики'
         user = pwd.getpwnam('ytzdiag')
-        good, detail = probe_media(user, VIDEO, PLAYER_CLIENT, quic)
+        good, detail = probe_media(user, VIDEO, PLAYER_CLIENT)
         if good is not None or detail.startswith((MEMORY_LIMIT, NETWORK_FAILURE)):
             # Медленный/оборванный поток — измеренный bad. Другой CDN не
             # должен маскировать сетевой провал успехом резервного ролика.
             # Лимит памяти и сеть второй заход не лечит, а память он берёт больше.
             return good, detail
-        # Кэш одноразовый: нет зависимости от /root, состояния прошлого
-        # запуска или гонок --probe-only с таймером. Работает с PrivateTmp.
+        # Кэш одноразовый: нет зависимости от /root и состояния прошлого
+        # запуска. Работает с PrivateTmp.
         with tempfile.TemporaryDirectory(prefix='anysda-yt-pot-') as cache:
             os.chown(cache, user.pw_uid, user.pw_gid)
-            fallback, fallback_detail = probe_media(user, POT_VIDEO, 'mweb', quic, cache)
+            fallback, fallback_detail = probe_media(user, POT_VIDEO, 'mweb', cache)
         return fallback, f'{fallback_detail}; первая проба: {detail}'
     except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
         return None, f'видеопроба не завершена: {type(error).__name__}'
@@ -311,10 +306,6 @@ def tick(path, sample):
 
 def main(argv=None):
     args = sys.argv[1:] if argv is None else list(argv)
-    if args in (['--probe-only'], ['--probe-quic']):
-        good, detail = probe(quic=args[0] == '--probe-quic')
-        print(('не измерено: ' if good is None else '') + detail)
-        return 2 if good is None else 0 if good else 1
     cfg = json.loads(CONFIG.read_text())
     if not any(o.get('tag') == 'youtube-auto' for o in cfg.get('outbounds', [])):
         # Стадия 19 предшествует 20: старый роутер пока без selector.

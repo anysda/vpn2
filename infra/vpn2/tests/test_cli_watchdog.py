@@ -14,21 +14,6 @@ def test_unknown_name(capsys):
     assert "Использование" in capsys.readouterr().err
 
 
-def test_hy2_prints_fragment(monkeypatch, capsys):
-    monkeypatch.setenv("HY2_UP_MBPS", "10")
-    monkeypatch.setenv("HY2_DOWN_MBPS", "20")
-    assert cli.main(["watchdog", "hy2"]) == 0
-    assert capsys.readouterr().out.strip() == '"up_mbps": 10, "down_mbps": 20,'
-
-
-def test_hy2_rejects_half_pair(monkeypatch):
-    monkeypatch.setenv("HY2_UP_MBPS", "10")
-    monkeypatch.delenv("HY2_DOWN_MBPS", raising=False)
-    with pytest.raises(SystemExit) as error:
-        cli.main(["watchdog", "hy2"])
-    assert "нужны обе скорости" in str(error.value)
-
-
 @pytest.mark.parametrize("kind", sorted(watchdog.KINDS))
 def test_every_kind_resolves(kind):
     module, entry = watchdog.KINDS[kind]

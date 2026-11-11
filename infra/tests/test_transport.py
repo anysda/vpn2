@@ -10,7 +10,6 @@ import tempfile
 import unittest
 
 from router_support import exit_cert, exit_secrets, stage
-import watchdog_src
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -144,11 +143,6 @@ class HysteriaTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('нужны обе скорости', result.stderr)
                 self.assertFalse((root / 'infra/envs').exists())
-                result = subprocess.run(watchdog_src.command('hy2'),
-                                        env=dict(os.environ, HY2_UP_MBPS=up, HY2_DOWN_MBPS=down),
-                                        capture_output=True, text=True)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertEqual(result.stdout, '')
 
 
 if __name__ == '__main__':

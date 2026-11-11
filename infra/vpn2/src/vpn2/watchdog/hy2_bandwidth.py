@@ -1,10 +1,7 @@
 """Необязательная скорость Hysteria2 в Мбит/с, с точки зрения экзита,
 и умолчания смены портов hy2 для config2env и генератора entry."""
 
-import json
-import os
 import re
-import sys
 
 # Нет ports.hy2_hop в config.yaml - в all.env ни одной строки HY2_HOP_*,
 # значения отсюда. Сторона экзита - те же числа в vpn2.exitnode.
@@ -25,13 +22,3 @@ def bandwidth_fields(up, down, *, label='Hysteria2', client=False):
         up_mbps, down_mbps = down_mbps, up_mbps
     return {'up_mbps': up_mbps, 'down_mbps': down_mbps}
 
-
-def main(argv=None):
-    """Фрагмент объекта для envsubst, пустой в штатном режиме BBR."""
-    del argv
-    try:
-        fields = bandwidth_fields(os.environ.get('HY2_UP_MBPS'), os.environ.get('HY2_DOWN_MBPS'))
-    except ValueError as error:
-        sys.exit(f'ERROR: {error}')
-    print(json.dumps(fields)[1:-1] + ',' if fields else '')
-    return 0

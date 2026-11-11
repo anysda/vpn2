@@ -158,22 +158,6 @@ class YoutubeFailoverTests(unittest.TestCase):
         self.assertIn(('systemctl', 'stop', 'anysda-yt-failover.service'), calls)
         self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 watchdog yt\n', role_file('anysda-yt-failover.service'))
 
-    def test_quic_diagnostic_cannot_silently_fall_back_to_tcp(self):
-        watch = load_watch()
-        responses = [subprocess.CompletedProcess([], 0),
-                     subprocess.CompletedProcess([], 0, json.dumps({
-                         'url': 'https://rr1.example.googlevideo.com/videoplayback'})),
-                     subprocess.CompletedProcess([], 2, ''),
-                     subprocess.CompletedProcess([], 1, '', 'no formats')]
-        with patch.object(watch.subprocess, 'run', side_effect=responses) as run, \
-                patch.object(watch.os, 'chown'), \
-                patch.object(watch.pwd, 'getpwnam') as user:
-            user.return_value.pw_uid = user.return_value.pw_gid = 42
-            good, detail = watch.probe(quic=True)
-            self.assertFalse(good)
-            self.assertIn('--http3-only', run.call_args_list[2].args[0])
-            self.assertIn('curl=2', detail)
-
     def test_login_challenge_is_not_reported_as_successful_bypass(self):
         watch = load_watch()
         with patch.object(watch.subprocess, 'run', side_effect=[

@@ -1,4 +1,4 @@
-"""vpn2 watchdog failover|failover-env|warp|yt|hy2 - сторожа entry и экзита."""
+"""vpn2 watchdog failover|failover-env|warp|yt - сторожа entry и экзита."""
 
 import importlib
 import sys
@@ -10,7 +10,6 @@ KINDS = {
     'failover-env': ('failover_env', 'main'),
     'warp': ('warp', 'main'),
     'yt': ('yt', 'run'),
-    'hy2': ('hy2_bandwidth', 'main'),
 }
 
 

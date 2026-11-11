@@ -3,6 +3,7 @@
 VPN2_TEST_ROOT позволяет прогнать те же проверки против другой ревизии.
 """
 import os
+import pwd
 import re
 from pathlib import Path
 import subprocess
@@ -70,7 +71,7 @@ do_restore latest --force --dry-run
             self.assertRegex(lines[0], r"^ssh: VPN2_DEVELOPMENT=(true|false) "
                                        r"/usr/local/bin/anysda-restore\.sh 'latest' '--force' '--dry-run'$")
 
-    def run_deploy(self, directory, *args, restore_rc=0, backup_rc=0):
+    def run_deploy(self, directory, *args, restore_rc=0, backup_rc=0, without=()):
         """Настоящие infra/deploy.sh и deploy-release.sh, транспорт до entry подставной."""
         root = Path(directory)
         (root / 'lib').mkdir()
@@ -93,6 +94,7 @@ expand_hosts() {{ case $1 in ru|all) echo ru ;; *) die "unknown host group: $1" 
 push() {{ echo "push: $*" >> "$DEPLOY_ROOT/calls"; }}
 ssh_exec() {{
   echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
+  echo "$HOME" > "$DEPLOY_ROOT/home"
   if [[ "$1" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
   # Проход до выпуска отказа не находит, падает само восстановление.
   if [[ "$1" == *anysda-restore.sh*--dry-run* || "$1" == *anysda-restore.sh*--preflight* ]]; then return 0; fi
@@ -108,10 +110,21 @@ ssh_exec() {{
 ''')
         environment = dict(os.environ, PATH=f'{root / "bin"}:{os.environ["PATH"]}',
                            VPN2_DEVELOPMENT='true')
+        for name in without:
+            environment.pop(name, None)
         result = subprocess.run(['bash', str(root / 'deploy.sh'), *args], cwd=directory, env=environment,
                                 text=True, capture_output=True, timeout=15)
         calls = root / 'calls'
         return result, calls.read_text().splitlines() if calls.exists() else []
+
+    def test_deploy_started_without_home_takes_it_from_passwd(self):
+        # Юнит systemd без User= и systemd-run переменную HOME не задают.
+        with tempfile.TemporaryDirectory() as directory:
+            result, calls = self.run_deploy(directory, 'backup', without=('HOME',))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, ['ssh: /usr/local/bin/anysda-backup.sh'])
+            self.assertEqual((Path(directory) / 'home').read_text().strip(),
+                             pwd.getpwuid(os.getuid()).pw_dir)
 
     def test_restore_dry_run_opens_no_release(self):
         for args, archive in ((('restore', 'latest', '--dry-run'), 'latest'),

@@ -13,6 +13,14 @@
 
 set -euo pipefail
 
+# Юнит systemd без User= и systemd-run переменную HOME не задают, а ключ
+# оркестратора и ssh живут в домашнем каталоге.
+if [[ -z "${HOME:-}" ]]; then
+  HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
+  [[ -n "$HOME" ]] || { echo 'deploy: у пользователя нет домашнего каталога (HOME пуст, в passwd его нет)' >&2; exit 1; }
+fi
+export HOME
+
 DEPLOY_ROOT="$(cd "$(dirname "$0")" && pwd)"
 export DEPLOY_ROOT
 

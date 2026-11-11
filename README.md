@@ -93,21 +93,28 @@ Exit-ноды связаны с entry-нодой туннелями Hysteria2 и
 
 **Стек.** Nuxt 4 (Vue 3, TypeScript) · Nuxt UI 4 · Drizzle ORM + SQLite ·
 better-auth · sing-box · WireGuard · OpenVPN · strongSwan · AdGuard Home ·
-VictoriaMetrics + node_exporter · Caddy · Python (`python-telegram-bot`).
+VictoriaMetrics + node_exporter · Caddy · Ansible · Python
+(`python-telegram-bot`).
 
 **Структура репозитория.**
 
 ```
-app/            панель (Nuxt 4)
-infra/          деплой: стадии, шаблоны конфигов, сторож экзитов, тесты
-telegram/       бот
-deploy.sh       точка входа деплоя
-setup.sh        интерактивный мастер config.yaml
+app/                 панель (Nuxt 4)
+  shared/            данные, общие для панели, бота и деплоя
+infra/
+  ansible/           деплой: роль и плей на стадию, инвентарь из config.yaml
+  vpn2/              пакет Python: логика на нодах и команда vpn2
+  versions.yml       закреплённые версии внешних компонентов
+  tools/             стенд на KVM и замер скорости
+telegram/vpn2bot/    бот
+deploy.sh            точка входа деплоя
+setup.sh             интерактивный мастер config.yaml
 config.example.yaml
-docs/           инструкции и скриншоты
+docs/                инструкции и скриншоты
 ```
 
-Эталонные снимки панели (`app/e2e/screenshots.spec.ts`) — ручная сверка, в шарды e2e не входят: запуск кнопкой `shots.yml` с веткой на входе или пушем в ветку `shots/<имя>` (запускает только снимки, без `checks`); все снимки красные с краями глифов — известное плавание VPN2-797, лечится повтором рана.
+Как запускать тесты и где менять версии компонентов -
+[Разработка и тесты](#разработка-и-тесты).
 
 **Документация.**
 
@@ -181,6 +188,17 @@ cd vpn2
 проверяет SSH ко всем нодам, поднимает mgmt-сеть и Hysteria2 на exit-нодах,
 а на entry-ноде - VPN-серверы, роутер, сторож, AdGuard, мониторинг, панель
 и бота. Повторный запуск безопасен: стадии идемпотентны.
+
+Для своей работы деплой заводит на entry-ноде каталог `/opt/vpn2`:
+виртуальное окружение Python с Ansible закреплённой версии и пакет `vpn2`.
+Тот же пакет уезжает на exit-ноды. Ставить что-либо руками не нужно, в
+системный Python ничего не попадает.
+
+Состояние деплоя - адреса mgmt-сети экзитов, список выключенных экзитов,
+манифест установленной сборки, ключи SSH нод - лежит в
+`/var/lib/anysda-vpn2/state/`, а не в каталоге с исходниками. Каталог
+`vpn2` можно удалить и скачать заново, установка этого не заметит.
+Состояние входит в резервную копию.
 
 Если сборка для свежего commit ещё идёт, deploy скажет об этом и ничего не
 изменит: подождите 10-15 минут и запустите снова.
@@ -309,7 +327,28 @@ entry и пишет об этом в бот; настройка и выключ�
 ./deploy.sh 99-verify all        # проверка после деплоя
 ```
 
-Полный список стадий - `infra/scripts/`.
+Полный список стадий и групп нод - `./deploy.sh --help`. Каждая стадия -
+плей `infra/ansible/plays/<стадия>.yml`, а что именно она делает на ноде,
+описано в ролях `infra/ansible/roles/`.
+
+### Обновление и откат панели
+
+`git pull && ./deploy.sh` заменяет панель под защитой: новая версия
+переносит базу на свою схему и должна ответить на проверку здоровья. Пока
+идёт перенос, изменения из панели приостановлены, VPN продолжает работать.
+Если новая панель не поднялась, деплой сам возвращает прежний образ.
+
+Вернуть прежнюю панель вручную после удачного обновления:
+
+```bash
+./deploy.sh rollback
+```
+
+Откат меняет только образ панели. База, отзывы устройств, сроки доступа и
+ключи остаются текущими, назад они не откатываются никогда. Поэтому откат
+возможен, только если прежняя версия понимает нынешнюю схему базы; иначе
+деплой откажет и предложит поставить совместимую сборку. Вернуть сами
+данные - это `./deploy.sh restore` из резервной копии.
 
 ## Резервные копии
 
@@ -361,6 +400,66 @@ recovery архивы должны жить вне entry-ноды: S3 у дру�
 
 Бот не перевыпускает ключи, не трогает маршруты и не меняет свои
 настройки - это только в панели.
+
+## Разработка и тесты
+
+Тесты на установку не влияют и для работы сервиса не нужны. Все команды -
+из корня репозитория. Точный набор пакетов для каждого набора тестов - в
+`.github/workflows/checks.yml`: CI запускает то же самое.
+
+```bash
+# пакет vpn2: разбор config.yaml, бэкап, сторож, шаги стадий
+pip install ./infra/vpn2 pytest pytest-xdist
+python3 -m pytest infra/vpn2/tests -n auto --dist loadgroup
+
+# регрессии деплоя и маршрутизации
+python3 infra/tests/run_parallel.py
+
+# бот
+pip install -r telegram/requirements.txt
+python3 infra/tests/run_parallel.py --dir telegram/tests
+
+# роли и плеи Ansible
+pip install -c infra/ansible/constraints.txt ansible-core ansible-lint
+export ANSIBLE_CONFIG=infra/ansible/ansible.cfg
+export ANSIBLE_COLLECTIONS_PATH=/tmp/collections
+ansible-galaxy collection install -r infra/ansible/requirements.yml \
+  -p /tmp/collections
+ansible-lint --profile production --offline --project-dir infra/ansible \
+  infra/ansible/plays infra/ansible/roles
+
+# панель: линт, типы, unit-тесты (vitest), сквозные тесты (Playwright)
+cd app && pnpm install
+pnpm lint && pnpm typecheck
+pnpm test:unit
+pnpm e2e:local
+```
+
+Сквозным тестам панели нужен Docker: `pnpm e2e:local` сам собирает образ
+панели и поднимает её с подставными VPN-службами. Эталонные снимки экранов
+(`app/e2e/screenshots.spec.ts`) в обычный прогон не входят и сверяются
+отдельно: кнопкой запуска `shots.yml` или пушем в ветку `shots/<имя>`.
+
+**Стенд.** Полная установка проверяется на двух виртуальных машинах под
+KVM, entry и экзит, на Ubuntu 24.04 и 26.04: штатный `./deploy.sh` с
+entry-ноды, затем `99-verify` с настоящим трафиком WireGuard, OpenVPN и
+IKEv2, повторный деплой без изменений и восстановление из архива. В CI это
+`stand.yml` на каждый пуш в `dev`. Локально, на машине с KVM:
+
+```bash
+sudo infra/tools/ci-stand.sh up
+sudo infra/tools/ci-stand.sh deploy <образ панели>
+sudo infra/tools/ci-stand.sh verify
+sudo infra/tools/ci-stand.sh down
+```
+
+Остальные сценарии стенда перечислены в начале `infra/tools/ci-stand.sh`.
+
+**Версии компонентов.** Версии и контрольные суммы всего, что деплой
+скачивает со стороны (sing-box, AdGuard Home, Caddy, VictoriaMetrics,
+zapret2, Ansible и другие), записаны в одном файле `infra/versions.yml`.
+Обновить компонент - поменять строку там; при обычном `./deploy.sh`
+скачанное сверяется с манифестом сборки этого commit.
 
 ## Лицензия
 

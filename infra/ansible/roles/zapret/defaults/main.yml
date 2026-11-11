@@ -1,5 +1,5 @@
 ---
-zapret_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+zapret_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 zapret_tmp: /tmp/anysda
 zapret_vpn2: /opt/vpn2/venv/bin/vpn2
 zapret_step: ["{{ zapret_vpn2 }}", zapret]
@@ -8,8 +8,8 @@ zapret_units: /etc/systemd/system
 
 # youtube.route и youtube.quic из config.yaml: роль ставит десинк только при
 # route=zapret, иначе снимает развёрнутое.
-zapret_route: "{{ lookup('ansible.builtin.env', 'YT_ROUTE') | default('off', true) }}"
-zapret_quic: "{{ lookup('ansible.builtin.env', 'YT_QUIC') | default('block', true) }}"
+zapret_route: "{{ vpn2_env.YT_ROUTE | default('off', true) }}"
+zapret_quic: "{{ vpn2_env.YT_QUIC | default('block', true) }}"
 
 # zapret2 - чистый C: g++ из build-essential не нужен.
 zapret_packages:
@@ -52,4 +52,4 @@ zapret_env_names:
   - YT_ZAPRET_OFFLOAD
   - VPN2_RELEASE_MANIFEST
   - VPN2_DEVELOPMENT
-zapret_env: "{{ dict(zapret_env_names | zip(query('ansible.builtin.env', *zapret_env_names))) }}"
+zapret_env: "{{ dict(zapret_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', zapret_env_names) | items2dict) }}"

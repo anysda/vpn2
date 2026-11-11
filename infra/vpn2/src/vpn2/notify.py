@@ -98,6 +98,14 @@ def bot_event(event, *, secret_file=SECRET_FILE, url=BOT_URL, timeout=5, confirm
     return _post(event, url, {'X-Tgbot-Secret': secret}, timeout, opener, bool(confirm))
 
 
+def panel_event(event, *, secret_file=SECRET_FILE, url=PANEL_URL, timeout=5, opener=None):
+    """Событие журналу панели: Bearer тем же секретом, SENT на любой 2xx."""
+    secret = _read_secret(secret_file)
+    if not secret:
+        return Outcome.NO_BOT
+    return _post(event, url, {'Authorization': f'Bearer {secret}'}, timeout, opener, None)
+
+
 def flush(pending, **kwargs):
     """Шлёт очередь по порядку, снимает с головы только доставленное; на первом
     не-SENT стоп. Список меняется на месте. Пустая очередь -> SENT."""

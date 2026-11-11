@@ -1,5 +1,5 @@
 ---
-control_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+control_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 # Служба, таймер срока и vpn2-apply - входы в пакет vpn2 из venv деплоя.
 control_venv: /opt/vpn2/venv
 control_vpn2: "{{ control_venv }}/bin/vpn2"

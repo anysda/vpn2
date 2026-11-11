@@ -4,6 +4,9 @@ import re
 
 import pytest
 
+# Hooks and the autouse fixture are called by pytest by name.
+__all__ = ['pytest_collection_modifyitems', 'pytest_configure', 'umask_restored']
+
 # Tests on a fresh wg0 in a netns share the host: one worker runs them all.
 HOST = re.compile(r'wg_oracle|/run/netns')
 

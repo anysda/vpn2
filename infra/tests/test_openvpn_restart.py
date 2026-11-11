@@ -37,7 +37,7 @@ class OpenvpnRestartTests(unittest.TestCase):
                 'management-client-user root\n')
             (work / 'apply.py').write_text(WRAPPER)
             vpn2_apply = work / 'vpn2-apply'
-            vpn2_apply.write_text(f'#!/bin/sh\nexec python3 {work}/apply.py {ROOT}/infra/tests '
+            vpn2_apply.write_text(f'#!/bin/sh\nexec python3 {work}/apply.py {ROOT}/infra/vpn2/tests '
                                   f'{root} {work}/state {work}/restarts "$@"\n')
             vpn2_apply.chmod(0o755)
             switch = switch.replace('/usr/local/sbin/vpn2-apply', str(vpn2_apply)) \

@@ -23,6 +23,7 @@
 - {section: files, name: '/var/lib/anysda-vpn2/state/known_hosts', field: sha256, reason: ключи узлов стенда случайные}
 - {section: files, name: '/opt/anysda-vpn2/infra/envs/*.env', field: sha256, reason: окружение узла содержит созданные секреты; остальное сверяет shape}
 - {section: files, name: '/opt/anysda-vpn2/infra/secrets/*', field: sha256, reason: каталог созданных при установке секретов}
+- {section: files, name: '/opt/anysda-vpn2/infra/secrets/rendered/nl.env', field: '*', reason: окружение скриптовой стадии экзита - таких стадий больше нет; после обновления с выпуска файл остаётся от прежнего деплоя}
 
 # Конфиги, в которые вписаны созданные секреты
 - {section: files, name: '/etc/anysda/anysda-config.yaml', field: sha256, reason: содержит созданные пароли и ключи; остальное сверяет shape}

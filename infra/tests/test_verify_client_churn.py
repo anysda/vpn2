@@ -12,6 +12,7 @@
 """
 import importlib.util
 import io
+import tempfile
 import types
 import unittest
 from contextlib import redirect_stdout
@@ -93,8 +94,8 @@ class Tunnel:
         if self.world.session == identity:
             self.world.session = None
 
-    def lost(self, identity):
-        return self.world.session != identity
+    def lost(self, identity, linked):
+        return linked and self.world.session != identity
 
 
 class Peers(Tunnel):
@@ -107,7 +108,7 @@ class Peers(Tunnel):
     def ensure(self, identity):
         self.grant(identity)
 
-    def lost(self, identity):
+    def lost(self, identity, _linked):
         return identity not in self.world.granted
 
     @staticmethod
@@ -147,6 +148,7 @@ def check(world, kind=Peers):
             mock.patch.object(vt.Namespace, 'source', staticmethod(lambda: SOURCE)), \
             mock.patch.object(vt.time, 'sleep', lambda _seconds: None), redirect_stdout(io.StringIO()):
         verifier.protocol(kind(world))
+    world.reasons = [row['reason'] for row in report.rows]
     return {row['check']: row['result'] for row in report.rows}, report.code()
 
 
@@ -202,9 +204,88 @@ class ClientListMovesTests(unittest.TestCase):
     def test_panel_applying_at_every_step_is_not_measured(self):
         for kind in (Peers, Tunnel):
             with self.subTest(kind=kind.name):
-                rows, code = check(World(lambda _tick: True), kind)
-                self.assertEqual((code, set(rows.values())), (2, {UNKNOWN}))
-                self.assertIn('панель', ' '.join(rows))
+                world = World(lambda _tick: True)
+                rows, code = check(world, kind)
+                self.assertEqual((code, FAIL in rows.values()), (2, False))
+                self.assertIn('панель', ' '.join(world.reasons))
+
+
+class Control:
+    """Служба управления с пирами wg0; панель успевает применить свой список `races` раз."""
+
+    def __init__(self, races=0, error='conflict'):
+        self.races, self.error = races, error
+        self.live = ['panel-1']
+        self.calls = 0
+
+    def call(self, _method, params):
+        self.calls += 1
+        if self.races:
+            self.races -= 1
+            if self.error in ('stale', 'conflict'):
+                self.live.append(f'panel-{len(self.live) + 1}')  # устройство, выпущенное в панели
+            raise vt.ControlError(self.error)
+        self.live = [peer['key'] for peer in params['peers']]
+
+    def run(self, *args, **_kwargs):
+        if args[:4] == ('wg', 'show', 'wg0', 'peers'):
+            return types.SimpleNamespace(stdout=' '.join(self.live))
+        return types.SimpleNamespace(stdout={'genkey': 'private', 'pubkey': 'verify', 'genpsk': 'psk'}[args[1]])
+
+    def peers(self, _text):
+        return [{'key': key, 'preshared_key': 'psk', 'ip': '10.66.66.2'} for key in self.live]
+
+
+def apply_check(control):
+    """wg_apply_check на модели службы: строки отчёта, код, сколько раз возвращено сохранённое."""
+    report = vt.Report('ru')
+    restored = []
+
+    def restore():
+        # как настоящий: без сохранённой копии возвращать нечего
+        if (vt.WORK / 'wg0.conf').exists():
+            restored.append(vt.forget_wg_apply())
+    with tempfile.TemporaryDirectory() as directory:
+        work = Path(directory)
+        (work / 'conf').write_bytes(b'')
+        with mock.patch.multiple(vt, WORK=work / 'work', WG_CONF=work / 'conf', CONTROL_SOCKET=work,
+                                 CONTROL_WG_STATE=work / 'absent.json', run=control.run,
+                                 control_call=control.call, apply_peers=control.peers,
+                                 restore_wg_apply=restore), \
+                mock.patch.object(vt.WireGuard, 'free_addresses', staticmethod(lambda _count: ['10.66.66.250'])), \
+                mock.patch.object(vt.time, 'sleep', lambda _seconds: None), redirect_stdout(io.StringIO()):
+            vt.WORK.mkdir()
+            vt.wg_apply_check(report)
+            left = sorted(item.name for item in vt.WORK.iterdir())
+    return [(row['result'], row['reason']) for row in report.rows], report.code(), len(restored), left
+
+
+class PanelAppliesDuringApplyCheckTests(unittest.TestCase):
+    def test_quiet_panel(self):
+        control = Control()
+        rows, code, restored, _left = apply_check(control)
+        self.assertEqual(([result for result, _ in rows], code, restored, control.live), ([OK], 0, 1, ['panel-1']))
+
+    def test_panel_applied_first_is_not_rolled_back(self):
+        # Панель применила своё между снимком проверки и её wg.apply: служба ответила
+        # conflict и ничего не меняла. Возврат сохранённого снял бы устройство панели.
+        for error in ('conflict', 'stale'):
+            with self.subTest(error=error):
+                control = Control(races=1, error=error)
+                rows, code, restored, _left = apply_check(control)
+                self.assertEqual(([result for result, _ in rows], code, restored), ([OK], 0, 1))
+                self.assertEqual(control.live, ['panel-1', 'panel-2'])
+
+    def test_panel_applying_every_time_is_not_measured(self):
+        control = Control(races=99)
+        rows, code, restored, left = apply_check(control)
+        self.assertEqual(([result for result, _ in rows], code, restored, left), ([UNKNOWN], 2, 0, []))
+        self.assertIn('панель', rows[0][1])
+        self.assertLess(control.calls, 10)
+
+    def test_refused_apply_stays_an_error(self):
+        rows, code, restored, _left = apply_check(Control(races=1, error='unavailable'))
+        self.assertEqual(([result for result, _ in rows], code, restored), ([FAIL], 1, 1))
 
 
 if __name__ == '__main__':

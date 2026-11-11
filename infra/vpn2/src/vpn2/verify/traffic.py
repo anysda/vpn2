@@ -94,7 +94,13 @@ TG_PROXY = ('127.0.0.1', 7897)
 TARGET = Path(__file__).with_name('target.py')
 # Служба управления (vpn2.control): панель применяет пиров WireGuard её методом wg.apply.
 CONTROL_SOCKET = Path('/run/vpn2-control/control.sock')
-CONTROL_WG_STATE = Path('/var/lib/vpn2-control/wg.json')
+CONTROL_STATE = Path('/var/lib/vpn2-control')
+CONTROL_WG_STATE = CONTROL_STATE / 'wg.json'
+# Панель при каждом выпуске и удалении устройства применяет свой полный список
+# клиентов и этим снимает временный доступ проверки. Столько раз подряд проверка
+# возвращает доступ и повторяет попытку; дальше - «не проверено».
+RESTORES = 8
+MOVING = 'панель меняла список клиентов при каждой попытке, причина неразличима: '
 WG_CONF = Path('/etc/wireguard/wg0.conf')
 INTERNET = (('connectivitycheck.gstatic.com', '/generate_204', 204),
             ('www.google.com', '/generate_204', 204),
@@ -115,14 +121,28 @@ def ns(*args, **kwargs):
     return run('ip', 'netns', 'exec', NS, *args, **kwargs)
 
 
+def applied():
+    """Отметка применений службы управления: её файлы состояния меняются каждым применением."""
+    try:
+        return sorted((item.name, item.stat().st_mtime_ns, item.stat().st_ino)
+                      for item in CONTROL_STATE.iterdir() if item.is_file())
+    except OSError:
+        return []
+
+
 class Report:
     """Строки отчёта: проверка, компонент, результат, причина, время."""
 
     def __init__(self, tag):
         self.tag = tag
         self.rows = []
+        self.blurred = False
 
     def add(self, check, component, status, reason):
+        # Попытки исчерпаны под применениями панели: сбой не доказан, но и успеха нет.
+        if status == FAIL and self.blurred:
+            status, reason = UNKNOWN, MOVING + reason
+        self.blurred = False
         row = {'check': check, 'component': component, 'result': STATUSES[status], 'reason': reason,
                'time': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
         self.rows.append(row)
@@ -408,6 +428,11 @@ class WireGuard:
         peer['revoked'] = True
         run('wg', 'set', 'wg0', 'peer', peer['public'], 'remove')
 
+    def lost(self, identity, _linked):
+        """Пира проверки на сервере нет, хотя он не отозван: его снял чужой syncconf."""
+        peer = self.peers[identity]
+        return not peer['revoked'] and peer['public'] not in run('wg', 'show', 'wg0', 'peers').stdout.split()
+
     def cleanup(self):
         self.down()
         for path in WORK.glob('wg-*.pub'):
@@ -619,6 +644,14 @@ class IKEv2:
         secret['revoked'] = True
         self.server_conf()
         self.terminate(secret['id'])
+
+    def lost(self, identity, linked):
+        """Подключение удалось, а сессии на сервере нет: её закрыла служба управления.
+
+        Применяя список панели, она рвёт сессии логинов не из списка. Без удавшегося
+        подключения отсутствие сессии ничего не говорит.
+        """
+        return bool(linked) and not self.server_sas(self.secrets[identity]['id'])
 
     def cleanup(self):
         self.down()
@@ -857,41 +890,62 @@ def restore_wg_apply():
         restore_file(CONTROL_WG_STATE, 'control-wg.json')
 
 
+def forget_wg_apply():
+    """Сохранённые копии снимаются без возврата: на узле уже состояние панели, не проверки."""
+    for name in ('wg0.conf', 'control-wg.json'):
+        for suffix in ('', '.absent', '.owner'):
+            (WORK / (name + suffix)).unlink(missing_ok=True)
+
+
 def wg_apply_check(report):
     """Тестовый пир через wg.apply: виден в `wg show wg0`, затем убран тем же методом.
 
     Метод получает полный набор пиров, поэтому набор берётся из wg0.conf и
-    сверяется с живым wg0. Граница: панель, применившая пиров в те секунды,
-    пока идёт проверка, получает stale или conflict и повторяет позже.
+    сверяется с живым wg0. Панель может применить свой набор в те же секунды:
+    до первого wg.apply проверки она проходит, и проверка начинает заново со
+    свежего набора; после него панель получает stale или conflict и повторяет позже.
     """
     label, component = 'применение пира', 'WireGuard'
+    for _ in range(4):
+        moving = wg_apply_once(report, label, component)
+        if not moving:
+            return
+        time.sleep(1.5)
+    report.add(label, component, UNKNOWN, moving)
+
+
+def wg_apply_once(report, label, component):
+    """Одна попытка; непустой ответ - набор пиров сдвинула панель, строки отчёта ещё нет."""
     if not CONTROL_SOCKET.exists():
         report.add(label, component, FAIL, 'нет сокета службы управления')
-        return
+        return ''
     try:
         text = WG_CONF.read_bytes()
         live = set(run('wg', 'show', 'wg0', 'peers').stdout.split())
     except (OSError, RuntimeError):
         report.add(label, component, FAIL, 'нет wg0 или wg0.conf')
-        return
+        return ''
     try:
         peers = apply_peers(text)
     except ValueError as error:
         # Нечем спросить wg - не проверено; отказ wg - сбой.
         report.add(label, component, UNKNOWN if 'проверить нечем' in str(error) else FAIL, str(error))
-        return
-    if peers is None or {peer['key'] for peer in peers} != live:
+        return ''
+    if peers is None:
         report.add(label, component, UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')
-        return
+        return ''
+    if {peer['key'] for peer in peers} != live:
+        # Служба управления посреди применения: пиры уже в wg0, файл ещё прежний.
+        return 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен'
     try:
         version = json.loads(CONTROL_WG_STATE.read_text())['version'] if CONTROL_WG_STATE.exists() else 0
     except (OSError, ValueError, KeyError, TypeError):
         report.add(label, component, FAIL, 'состояние версий службы не читается')
-        return
+        return ''
     address = next(iter(WireGuard.free_addresses(1)), None)
     if not address:
         report.add(label, component, UNKNOWN, 'нет свободного адреса в подсети wg0')
-        return
+        return ''
     save_file(WG_CONF, 'wg0.conf')
     save_file(CONTROL_WG_STATE, 'control-wg.json')
     private = run('wg', 'genkey').stdout.strip()
@@ -901,20 +955,27 @@ def wg_apply_check(report):
         try:
             control_call('wg.apply', {'version': version + 1, 'peers': peers + [test]})
         except ControlError as error:
+            if str(error) in ('stale', 'conflict'):
+                # Панель применила свой набор после снимка проверки. Служба отказала до
+                # любых изменений: возвращать нечего, а возврат сохранённого снял бы
+                # устройство, только что выпущенное в панели.
+                forget_wg_apply()
+                return f'панель применяла пиров одновременно с проверкой, wg.apply отклонён: {error}'
             report.add(label, component, FAIL, f'wg.apply с тестовым пиром отклонён: {error}')
-            return
+            return ''
         if test['key'] not in run('wg', 'show', 'wg0', 'peers').stdout.split():
             report.add(label, component, FAIL, 'wg.apply ответил успехом, но пира нет в wg show wg0')
-            return
+            return ''
         try:
             control_call('wg.apply', {'version': version + 2, 'peers': peers})
         except ControlError as error:
             report.add(label, component, FAIL, f'wg.apply без тестового пира отклонён: {error}')
-            return
+            return ''
         if test['key'] in run('wg', 'show', 'wg0', 'peers').stdout.split():
             report.add(label, component, FAIL, 'тестовый пир остался в wg0 после wg.apply')
-            return
+            return ''
         report.add(label, component, OK, 'тестовый пир применён через wg.apply, виден в wg0 и убран')
+        return ''
     finally:
         restore_wg_apply()
 
@@ -1206,15 +1267,65 @@ class Verifier:
                 '-m', 'comment', '--comment', COMMENT, '-j', 'ACCEPT')
             self.relay_ok = relay_reachable(self.relay, self.targets.port)
 
+    # Действующий доступ проверки: кто и куда подключён, отметка службы управления
+    # перед подключением и удалось ли оно.
+    link = None
+    stamp = None
+    linked = False
+
+    def attach(self, protocol):
+        """Одно подключение действующего доступа; перед ним на сервер возвращаются пиры проверки."""
+        identity, endpoint = self.link
+        self.stamp = applied()
+        if hasattr(protocol, 'ensure'):
+            for peer in protocol.peers:
+                protocol.ensure(peer)
+        self.linked = bool(protocol.connect(identity, endpoint))
+        return self.linked
+
+    def moved(self, protocol):
+        """След панели: служба управления применяла список после подключения или доступ пропал с сервера."""
+        if self.link is None:
+            return False
+        lost = getattr(protocol, 'lost', None)
+        return applied() != self.stamp or bool(lost and lost(self.link[0], self.linked))
+
+    def connect(self, protocol, identity, endpoint):
+        """Подключение действующего доступа. Помешала панель - повтор, пока она не оставит попытку в покое."""
+        self.report.blurred = False
+        self.link = (identity, endpoint)
+        for _ in range(RESTORES + 1):
+            if self.attach(protocol):
+                return True
+            if not self.moved(protocol):
+                return False
+        self.report.blurred = True
+        return False
+
     def probe(self, protocol, kind, args, dest=None, retry=True):
-        source = Namespace.source()
-        result, seen = in_namespace(self.router, source, kind, args, dest)
-        if retry and not result and hasattr(protocol, 'ensure'):
+        result, seen = in_namespace(self.router, Namespace.source(), kind, args, dest)
+        if result or not retry:
+            return result, seen
+        self.report.blurred = False
+        # Панель выпустила или удалила устройство и применила свой список: временный
+        # пир снят, сессия закрыта. Это видно по службе управления, а не угадывается:
+        # без следа панели неудача пробы остаётся неудачей.
+        for _ in range(RESTORES):
+            if not self.moved(protocol):
+                break
+            self.attach(protocol)
+            result, seen = in_namespace(self.router, Namespace.source(), kind, args, dest)
+            if result:
+                return result, seen
+        else:
+            if self.moved(protocol):
+                self.report.blurred = True
+                return result, seen
+        if hasattr(protocol, 'ensure'):
             for identity in protocol.peers:
                 protocol.ensure(identity)
             time.sleep(2)
-            source = Namespace.source()
-            result, seen = in_namespace(self.router, source, kind, args, dest)
+            result, seen = in_namespace(self.router, Namespace.source(), kind, args, dest)
         return result, seen
 
     def paths(self, protocol):
@@ -1228,7 +1339,7 @@ class Verifier:
             for _ in range(4):
                 result, seen = self.probe(protocol, 'echo', self.echo_args(), (ECHO_IP, port))
                 leaves = {s['chains'][0] for s in seen if s['chains']}
-                if result and result['local'] and leaves == {DIRECT}:
+                if result and result['local'] and leaves == {DIRECT} or self.report.blurred:
                     break
                 time.sleep(3)
             if result and result['local'] and leaves == {DIRECT}:
@@ -1252,13 +1363,15 @@ class Verifier:
                 leaves = {s['chains'][0] for s in seen if s['chains']}
                 rules = {s['rule'] + ' ' + s['payload'] for s in seen}
                 path_ok = bool(result) and result['local'] and leaves == {expected}
-                if path_ok:
+                if path_ok or self.report.blurred:
                     break
                 time.sleep(3)
+            blurred = self.report.blurred  # обе строки ниже - об одной и той же пробе
             self.report.add(f'маршрут: через экзит {tag}', name, OK if path_ok else FAIL,
                             f'эхо экзита ответило с самого экзита через {expected}' if path_ok else
                             f'нет эха экзита или неверный выход: {sorted(leaves) or "нет соединения"}')
             manual = any(f'manual-pin-hy2-{tag}-direct' in r for r in rules)
+            self.report.blurred = blurred
             self.report.add(f'ручное правило {tag}', name, OK if path_ok and manual else FAIL,
                             'запрос выбрал ручной маршрут панели' if path_ok and manual else
                             'ручной маршрут не сработал')
@@ -1370,7 +1483,7 @@ class Verifier:
 
     def revocation(self, protocol):
         name = protocol.name
-        if not protocol.connect('a', (HOST_IP, protocol.ports[0][1])) or not self.echo_ok(protocol):
+        if not self.connect(protocol, 'a', (HOST_IP, protocol.ports[0][1])) or not self.echo_ok(protocol):
             self.report.add('отзыв', name, FAIL, 'повторное подключение старого доступа до отзыва не удалось')
             return False
         protocol.revoke('a')
@@ -1378,7 +1491,7 @@ class Verifier:
         live = self.echo_ok(protocol, retry=False)
         again = protocol.connect('a', (HOST_IP, protocol.ports[0][1])) and self.echo_ok(protocol, retry=False)
         protocol.issue('b', self.addresses[1] if self.addresses else None)
-        fresh = protocol.connect('b', (HOST_IP, protocol.ports[0][1])) and self.echo_ok(protocol)
+        fresh = self.connect(protocol, 'b', (HOST_IP, protocol.ports[0][1])) and self.echo_ok(protocol)
         if not live and not again and fresh:
             self.report.add('отзыв', name, OK, 'старый доступ и его сессия закрыты, новый передаёт данные')
         else:
@@ -1405,8 +1518,8 @@ class Verifier:
         for pause in (0, 15, 45):
             time.sleep(pause)
             relay_port = self.relay.start(proto, port)
-            connected = protocol.connect('b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
-            if connected:
+            connected = self.connect(protocol, 'b', (HOST_IP, relay_port)) and self.echo_ok(protocol)
+            if connected or self.report.blurred:
                 break
         self.report.add('внешняя проба портов', name, OK if connected else FAIL,
                         f'{proto}/{port} открыт с адреса экзита, туннель передаёт данные' if connected else
@@ -1416,7 +1529,7 @@ class Verifier:
         name = protocol.name
         self.addresses = protocol.free_addresses(2) if hasattr(protocol, 'free_addresses') else []
         protocol.issue('a', self.addresses[0] if self.addresses else None)
-        connected = protocol.connect('a', (HOST_IP, protocol.ports[0][1]))
+        connected = self.connect(protocol, 'a', (HOST_IP, protocol.ports[0][1]))
         source = Namespace.source() if connected else None
         if not connected or not source:
             self.report.add('подключение', name, FAIL, f'клиент не подключился к {protocol.ports[0][0]}/'

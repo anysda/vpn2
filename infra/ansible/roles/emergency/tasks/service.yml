@@ -95,3 +95,12 @@
     content: "image {{ emergency_image }}\n"
     dest: /var/anysda/.stamps/23-emergency
     mode: '0644'
+
+# Verify узнаёт пройденную стадию по времени отметки: оно должно быть новее
+# штампа 10-foreign и после повторного деплоя, когда образ прежний.
+- name: Время отметки стадии
+  ansible.builtin.file:
+    path: /var/anysda/.stamps/23-emergency
+    state: touch
+    mode: '0644'
+  changed_when: false

@@ -311,9 +311,14 @@ class EmergencyImageTests(unittest.TestCase):
     def test_stamp_tells_verify_to_expect_the_image(self):
         # 99-verify требует образ только после этой стадии: пустую отметку
         # оставляла стадия до образа.
-        last = self.tasks('service.yml')[-1]
-        self.assertEqual(last['ansible.builtin.copy']['dest'], '/var/anysda/.stamps/23-emergency')
-        self.assertEqual(last['ansible.builtin.copy']['content'], 'image {{ emergency_image }}\n')
+        written, last = self.tasks('service.yml')[-2:]
+        self.assertEqual(written['ansible.builtin.copy']['dest'], '/var/anysda/.stamps/23-emergency')
+        self.assertEqual(written['ansible.builtin.copy']['content'], 'image {{ emergency_image }}\n')
+        # Verify узнаёт пройденную стадию по времени отметки: оно новее штампа
+        # 10-foreign и после повторного деплоя без правок.
+        self.assertEqual(last['ansible.builtin.file'],
+                         {'path': '/var/anysda/.stamps/23-emergency', 'state': 'touch', 'mode': '0644'})
+        self.assertIs(last['changed_when'], False)
         leftovers = next(task for task in self.tasks('service.yml') if task['name'].startswith('Копии пакета'))
         self.assertEqual(leftovers['loop'], ['vpn2', 'vpn2_emergency'])
         self.assertEqual(leftovers['ansible.builtin.file']['state'], 'absent')

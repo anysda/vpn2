@@ -32,7 +32,7 @@
 
 - name: Библиотека ресурсов
   ansible.builtin.copy:
-    src: "{{ containers_infra }}/lib/{{ item }}"
+    src: "{{ role_path }}/../resources/files/{{ item }}"
     dest: "{{ containers_tmp }}/"
     mode: '0644'
   loop: [entry-resources.sh, entry_resources.py]

@@ -32,7 +32,7 @@ zapret_packages:
   - xz-utils
   - kmod
 
-# Юниты с долей CPU и памяти по ресурсам entry (infra/lib/entry-resources.sh).
+# Юниты с долей CPU и памяти по ресурсам entry (infra/ansible/roles/resources/files/entry-resources.sh).
 zapret_resource_skip: >-
   {{ ([] if zapret_v.offload == 'off' else ['anysda-yt-offload'])
      + ([] if zapret_quic == 'block' else ['anysda-yt-quic', 'anysda-yt-quic-refresh']) }}

@@ -8,7 +8,7 @@ lib=${1:?каталог библиотек}
 home=${2:?каталог аварийки}
 venv=${VPN2_VENV:-/opt/vpn2/venv}
 container=vpn2-emergency
-# shellcheck source=infra/lib/release.sh
+# shellcheck source=infra/ansible/roles/emergency/files/release.sh
 source "$lib/release.sh"
 # Пакет выпуска на узле лежит в venv, копии рядом с библиотекой нет.
 release_py() { "$venv/bin/python" -m vpn2.release "$@"; }

@@ -168,7 +168,7 @@ exit 0
             if not lib.exists():
                 lib.mkdir(parents=True)
                 self.addCleanup(shutil.rmtree, lib)
-            shutil.copy(REPO / 'infra/lib/wg_conf.py', lib / 'wg_conf.py')
+            shutil.copy(REPO / 'infra/ansible/roles/backup/files/wg_conf.py', lib / 'wg_conf.py')
             self.addCleanup((lib / 'wg_conf.py').unlink, True)
         return run('bash', str(REPO / 'infra/lib' / ('anysda-' + name + '.sh')),
                    *args, env=self.env)

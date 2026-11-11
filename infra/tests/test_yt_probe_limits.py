@@ -154,7 +154,7 @@ class ProbeLimitTests(unittest.TestCase):
                 self.assertEqual(state['good'], 1)
 
     def test_probe_unit_limit_follows_tier_and_survives_oom_kill(self):
-        tool = ROOT / 'infra/lib/entry_resources.py'
+        tool = ROOT / 'infra/ansible/roles/resources/files/entry_resources.py'
 
         def dropin(ram):
             out = subprocess.check_output([sys.executable, str(tool), '--ram-mib', str(ram),

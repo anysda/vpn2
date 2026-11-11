@@ -16,8 +16,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ROOT / "infra/lib/entry-resources.sh"
-TOOL = ROOT / "infra/lib/entry_resources.py"
+LIB = ROOT / "infra/ansible/roles/resources/files/entry-resources.sh"
+TOOL = ROOT / "infra/ansible/roles/resources/files/entry_resources.py"
 DROPIN = "zz-vpn2-resources.conf"
 PROTECTED = ("sing-box", "strongswan-starter", "openvpn-server@server")
 

@@ -122,7 +122,7 @@ class BackupRestore(unittest.TestCase):
             # Формат старого архива: только wg0.conf, ключ содержит padding '='.
             (WG / 'server.priv').unlink()
             (WG / 'server.pub').unlink()
-        result = run('bash', str(backup_root / 'infra/lib/anysda-backup.sh'))
+        result = run('bash', str(backup_root / 'infra/ansible/roles/backup/files/anysda-backup.sh'))
         self.assertIn('backup:', result.stdout)
         clean_host()
         if not bare:
@@ -131,7 +131,7 @@ class BackupRestore(unittest.TestCase):
         else:
             DATA.mkdir(parents=True)
             put('/etc/anysda/backup.env', env)
-        result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force', check=False)
+        result = run('bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-restore.sh'), 'latest', '--force', check=False)
         print(f'\n{self.id()}: restore exit={result.returncode}\n'
               + '\n'.join((result.stdout + result.stderr).splitlines()[-8:]), flush=True)
         self.assertEqual(result.returncode, 0)
@@ -176,11 +176,11 @@ class BackupRestore(unittest.TestCase):
         (WG / 'server.priv').unlink()
         (WG / 'server.pub').unlink()
         put(WG / 'wg0.conf', '[Interface]\nPrivateKey = invalid\n')
-        run('bash', str(ROOT / 'infra/lib/anysda-backup.sh'))
+        run('bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-backup.sh'))
         clean_host()
         fixture()
         original = identity()
-        result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force', check=False)
+        result = run('bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-restore.sh'), 'latest', '--force', check=False)
         self.assertEqual(result.returncode, 5)
         self.assertNotIn('останавливаю сервисы', result.stdout)
         self.assertFalse(Path('/test-panel-started').exists())
@@ -194,10 +194,10 @@ class BackupRestore(unittest.TestCase):
                  ('x509/anysda-server.crt', 'private/anysda-server.key', 'x509ca/anysda-le-chain-1.crt')]
         original = {p: p.read_bytes() for p in paths}
         put('/test-expected.pub', (WG / 'server.pub').read_text())
-        run('bash', str(ROOT / 'infra/lib/anysda-backup.sh'))
+        run('bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-backup.sh'))
         clean_host()
         fixture()
-        result = run('bash', str(ROOT / 'infra/lib/anysda-restore.sh'), 'latest', '--force')
+        result = run('bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-restore.sh'), 'latest', '--force')
         self.assertIn('anysda-restore: SUCCESS', result.stdout)
         # Шаг роли ikev2 после restore; службы и swanctl - заглушки.
         # Установка сразу с доменом своего CA не имеет: с ним сервер отдавал бы обе цепочки.

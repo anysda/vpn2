@@ -16,7 +16,7 @@
 
 - name: Команды бэкапа, восстановления и списка архивов
   ansible.builtin.copy:
-    src: "{{ backup_infra }}/lib/{{ item }}"
+    src: "{{ item }}"
     dest: "/usr/local/bin/{{ item }}"
     mode: '0755'
   loop: "{{ backup_commands }}"

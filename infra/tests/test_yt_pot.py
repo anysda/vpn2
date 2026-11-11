@@ -117,7 +117,7 @@ class PotTests(unittest.TestCase):
                 stage.install_probe({'PATH': '/usr/bin', 'VPN2_YT_POT_INSTALL': '/x/install-yt-pot.sh'}, venv)
         self.assertEqual(run.call_args.args[0], ['bash', '/x/install-yt-pot.sh', venv])
         self.assertIn('TimeoutStartSec=240', role_file('anysda-yt-failover.service'))
-        installer = source('infra/lib/install-yt-pot.sh')
+        installer = source('infra/ansible/roles/zapret/files/install-yt-pot.sh')
         self.assertIn('sha256sum -c -', installer)
         self.assertIn('ci --no-audit', installer)
         self.assertIn('prune --omit=dev', installer)

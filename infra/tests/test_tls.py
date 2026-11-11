@@ -28,7 +28,7 @@ REFUSED = {'level': 'error', 'logger': 'tls.obtain', 'msg': 'could not get certi
 
 
 def load_tls():
-    library = ROOT / 'infra/lib/vpn2_tls.py'
+    library = ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'
     if not library.exists():
         raise AssertionError('shared TLS lifecycle is missing: the IP panel stays on HTTP')
     spec = importlib.util.spec_from_file_location('vpn2_tls', library)
@@ -136,7 +136,7 @@ class TlsTests(unittest.TestCase):
 
     def test_exit_role_is_acme_client_on_port_80_and_leaves_443_free(self):
         with tempfile.TemporaryDirectory() as directory:
-            subprocess.run(['python3', str(ROOT / 'infra/lib/vpn2_tls.py'), '--prepare', '--role', 'exit',
+            subprocess.run(['python3', str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'), '--prepare', '--role', 'exit',
                             '--config', f'{directory}/config.json', '--caddy-dir', directory,
                             '--host', '198.51.100.7', '--cert-group', 'root'], check=True, timeout=30)
             caddyfile = (Path(directory) / 'Caddyfile').read_text()

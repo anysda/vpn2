@@ -14,7 +14,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ROOT / "infra/lib/entry-resources.sh"
+LIB = ROOT / "infra/ansible/roles/resources/files/entry-resources.sh"
 WARNING = "запись не прошла"
 THREADED = ("import sys, threading, time\n"
             "for _ in range(3):\n"

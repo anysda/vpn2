@@ -22,7 +22,7 @@
 
 - name: Библиотека TLS
   ansible.builtin.copy:
-    src: "{{ containers_infra }}/lib/vpn2_tls.py"
+    src: "vpn2_tls.py"
     dest: "{{ containers_tls_lib }}"
     mode: '0755'
 

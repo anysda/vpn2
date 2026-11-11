@@ -42,7 +42,7 @@ class AdguardRoleTests(unittest.TestCase):
 
     def test_units_render_to_snapshot_on_stand_machine(self):
         # Эталон снят на машине стенда с 4 ГБ: лимиты памяти там сняты.
-        profile = stage.limits({'VPN2_ENTRY_RESOURCES': str(ROOT / 'infra/lib/entry_resources.py')},
+        profile = stage.limits({'VPN2_ENTRY_RESOURCES': str(ROOT / 'infra/ansible/roles/resources/files/entry_resources.py')},
                                '--ram-mib', '4096', '--free-mib', '8192')
         for reference, files in snapshots():
             for unit in UNITS:
@@ -95,7 +95,7 @@ class AdguardRoleTests(unittest.TestCase):
                     self.assertEqual([line.split()[:2] for line in lines],
                                      [['adguard', 'config'], ['adguard', 'restart']])
                     self.assertIn('port=3000 pass=unset', lines[0])
-                    self.assertIn(f'res={ROOT}/infra/lib/entry_resources.py pools={ROOT}/app/shared/vpn-pools.json',
+                    self.assertIn(f'res={ROOT}/infra/ansible/roles/resources/files/entry_resources.py pools={ROOT}/app/shared/vpn-pools.json',
                                   lines[0])
 
 

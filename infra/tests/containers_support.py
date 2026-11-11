@@ -38,5 +38,5 @@ def panel_tls(directory, domain, env=None, fail=False, entry='192.0.2.1'):
     Path(directory, 'etc/caddy').mkdir(parents=True, exist_ok=True)
     env = dict(env or os.environ, HOST_TAG='ru', ENTRY_HOST=entry, PANEL_DOMAIN=domain,
                PYTHONPATH=str(ROOT / 'infra/vpn2/src'))
-    return subprocess.run([sys.executable, '-c', PANEL_TLS, str(directory), str(ROOT / 'infra/lib/vpn2_tls.py'),
+    return subprocess.run([sys.executable, '-c', PANEL_TLS, str(directory), str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'),
                            'fail' if fail else ''], env=env, capture_output=True, text=True, timeout=60)

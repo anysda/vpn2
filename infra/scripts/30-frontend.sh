@@ -13,7 +13,7 @@ set +a
 case "$HOST_TAG" in ru) ;; *) echo "[$HOST_TAG] 30-frontend только для entry - пропуск"; exit 0;; esac
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-export VPN2_ENTRY_RESOURCES="$root/infra/lib/entry_resources.py"
+export VPN2_ENTRY_RESOURCES="$root/infra/ansible/roles/resources/files/entry_resources.py"
 export VPN2_PANEL_CONFIG_TPL="$root/infra/configs/anysda-config.yaml.tpl"
 export VPN2_DEPLOY_STATE="$root/infra/lib/deploy_state.py"
 exec "${VPN2_BIN:-/opt/vpn2/venv/bin/vpn2}" containers panel

@@ -87,7 +87,7 @@
 
 - name: Библиотека TLS
   ansible.builtin.copy:
-    src: "{{ emergency_infra }}/lib/vpn2_tls.py"
+    src: "{{ role_path }}/../containers/files/vpn2_tls.py"
     dest: "{{ emergency_tls_lib }}"
     mode: '0755'
 

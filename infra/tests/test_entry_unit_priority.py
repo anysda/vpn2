@@ -3,7 +3,7 @@
 Контракт:
 - `entry_resources.py --ram-mib R --free-mib F --unit <юнит>` печатает тело
   drop-in `[Service]` для юнита (имя без `.service`) по ступени памяти;
-- `entry_unit_resources <юнит>` из infra/lib/entry-resources.sh пишет его в
+- `entry_unit_resources <юнит>` из infra/ansible/roles/resources/files/entry-resources.sh пишет его в
   `${ENTRY_UNIT_DIR:-/etc/systemd/system}/<юнит>.service.d/zz-vpn2-resources.conf`;
 - стадия, ставящая юнит, зовёт `entry_unit_resources <юнит>`.
 charon - пакетный strongswan-starter (стадия 27).
@@ -25,8 +25,8 @@ import yaml
 
 
 ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents[2]))
-TOOL = ROOT / "infra/lib/entry_resources.py"
-LIB = ROOT / "infra/lib/entry-resources.sh"
+TOOL = ROOT / "infra/ansible/roles/resources/files/entry_resources.py"
+LIB = ROOT / "infra/ansible/roles/resources/files/entry-resources.sh"
 ROLES = ROOT / "infra/ansible/roles"
 DROPIN = "zz-vpn2-resources.conf"
 PROTECTED = {"sing-box": ("role:router", "role:exit"),

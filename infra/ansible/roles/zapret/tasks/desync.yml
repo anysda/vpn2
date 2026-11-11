@@ -147,7 +147,7 @@
     # в момент установки дыры не будет.
     - name: Снимок списка сетей Google
       ansible.builtin.copy:
-        src: "{{ zapret_infra }}/lib/google-prefixes.json"
+        src: "google-prefixes.json"
         dest: /var/lib/anysda/google-prefixes.json
         force: false
         mode: '0644'
@@ -188,7 +188,7 @@
 
 - name: Библиотека ресурсов
   ansible.builtin.copy:
-    src: "{{ zapret_infra }}/lib/{{ item }}"
+    src: "{{ item }}"
     dest: "{{ zapret_tmp }}/"
     mode: '0644'
   loop: [install-yt-pot.sh]

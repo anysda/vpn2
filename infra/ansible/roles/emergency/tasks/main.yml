@@ -11,7 +11,7 @@
 
 - name: Библиотека выпусков
   ansible.builtin.copy:
-    src: "{{ emergency_infra }}/lib/release.sh"
+    src: "release.sh"
     dest: "{{ emergency_tmp }}/"
     mode: '0644'
   changed_when: false

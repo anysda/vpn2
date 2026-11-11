@@ -6,7 +6,7 @@
 # Библиотека копируется один раз за плей: рабочий каталог живёт до конца стадии.
 - name: Библиотека ресурсов
   ansible.builtin.copy:
-    src: "{{ resources_infra }}/lib/{{ item }}"
+    src: "{{ role_path }}/../resources/files/{{ item }}"
     dest: "{{ resources_tmp }}/"
     mode: '0644'
   loop: [entry-resources.sh, entry_resources.py]

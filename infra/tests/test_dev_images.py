@@ -54,7 +54,7 @@ class DevelopmentImageTests(unittest.TestCase):
             docker.chmod(0o755)
             env = dict(os.environ, PATH=f'{tmp}:{os.environ["PATH"]}', VPN2_DEVELOPMENT='true',
                        FAKE_PULL='ok' if pulled else 'fail', FAKE_REVISION=REVISION)
-            script = f'source {ROOT / "infra/lib/release.sh"}; release_image panel "" {pull}'
+            script = f'source {ROOT / "infra/ansible/roles/emergency/files/release.sh"}; release_image panel "" {pull}'
             return subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True, check=True)
 
     def test_pulled_image_names_its_revision(self):

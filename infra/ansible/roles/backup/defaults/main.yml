@@ -29,6 +29,6 @@ backup_aws_cli_url: "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{{ bac
 # Три команды на entry и то, что они берут с узла вне клона.
 backup_commands: [anysda-backup.sh, anysda-restore.sh, anysda-backup-list.sh]
 backup_node_lib:
-  - lib/wg_conf.py
+  - ansible/roles/backup/files/wg_conf.py
   - lib/anysda-svc.sh
   - ../app/shared/vpn-pools.json

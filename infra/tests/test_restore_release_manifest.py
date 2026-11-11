@@ -26,7 +26,7 @@ class RestoreReleaseManifestTests(unittest.TestCase):
         self.state.mkdir()
 
     def test_stage_default_path_is_the_one_restore_overrides(self):
-        text = (ROOT / 'infra/lib/release.sh').read_text()
+        text = (ROOT / 'infra/ansible/roles/emergency/files/release.sh').read_text()
         self.assertEqual(text.count('"${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}"'), 2)
 
     def release_start(self, manifest):

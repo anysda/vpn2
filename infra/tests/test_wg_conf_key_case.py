@@ -165,7 +165,7 @@ class WgConfKeyCaseTests(unittest.TestCase):
                 con.close()
                 (root / 'etc-wireguard').mkdir()
                 (root / 'etc-wireguard/wg0.conf').write_text(conf(style))
-                done = subprocess.run(['bash', str(ROOT / 'infra/lib/anysda-backup.sh'), '--check-bundle', directory],
+                done = subprocess.run(['bash', str(ROOT / 'infra/ansible/roles/backup/files/anysda-backup.sh'), '--check-bundle', directory],
                                       env=dict(os.environ, ANYSDA_LIB_DIR=str(ROOT / 'infra/lib')),
                                       capture_output=True, text=True, timeout=60, check=False)
             code, lines, err = done.returncode, done.stdout.splitlines(), done.stderr

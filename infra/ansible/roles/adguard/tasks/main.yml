@@ -17,7 +17,7 @@
 
 - name: Библиотека ресурсов
   ansible.builtin.copy:
-    src: "{{ adguard_infra }}/lib/{{ item }}"
+    src: "{{ role_path }}/../resources/files/{{ item }}"
     dest: "{{ adguard_tmp }}/"
     mode: '0644'
   loop: [entry-resources.sh, entry_resources.py]

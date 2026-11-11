@@ -158,7 +158,7 @@ class Entry:
 
     def tick(self, initial=False):
         """One vpn2-tls.service run (timer) or the --initial run of the installation."""
-        command = [sys.executable, str(ROOT / 'infra/lib/vpn2_tls.py'),
+        command = [sys.executable, str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'),
                    '--config', str(self.dir / 'etc/vpn2/tls/config.json')]
         if initial:
             command += ['--initial', '--wait', '0']

@@ -36,7 +36,7 @@ from support import import_bot  # noqa: E402
 from probe_io import read_to_close  # noqa: E402
 from containers_support import panel_tls  # noqa: E402
 
-spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/lib/vpn2_tls.py')
+spec = importlib.util.spec_from_file_location('vpn2_tls', ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py')
 tls = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tls)
 DOCKER = shlex.split(os.environ.get('DOCKER', 'docker'))
@@ -255,7 +255,7 @@ def panel_scenario(root, ports, queue, bot_url, ca):
 
 def exit_scenario(root, ports, ca):
     http_port, local_port, admin_port = ports
-    subprocess.run(['python3', str(ROOT / 'infra/lib/vpn2_tls.py'), '--prepare', '--role', 'exit',
+    subprocess.run(['python3', str(ROOT / 'infra/ansible/roles/containers/files/vpn2_tls.py'), '--prepare', '--role', 'exit',
                     '--config', f'{root}/config.json', '--caddy-dir', str(root), '--host', HOST,
                     '--storage', f'{root}/data/caddy', '--output-dir', f'{root}/ip',
                     '--acme-url', ca['url'], '--acme-root', str(ca['root']),

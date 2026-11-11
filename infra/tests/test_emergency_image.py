@@ -154,7 +154,7 @@ class EmergencyImageTests(unittest.TestCase):
         (fake / 'bin/docker').write_text(DOCKER)
         (fake / 'bin/docker').chmod(0o755)
         (fake / 'lib').mkdir()
-        shutil.copy(ROOT / 'infra/lib/release.sh', fake / 'lib')
+        shutil.copy(ROOT / 'infra/ansible/roles/emergency/files/release.sh', fake / 'lib')
         (fake / 'home').mkdir()
         (fake / 'state.json').write_text(json.dumps({'registry': {}, 'images': {}, 'containers': {}}))
         return fake

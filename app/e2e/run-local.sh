@@ -73,7 +73,7 @@ fi
 started=$SECONDS
 PASS=$(openssl rand -hex 12)
 # Проверяем панель именно с установочным профилем entry 2 ГБ.
-resource_args=$(python3 "$APP_DIR/../infra/lib/entry_resources.py" \
+resource_args=$(python3 "$APP_DIR/../infra/ansible/roles/resources/files/entry_resources.py" \
   --ram-mib 2048 --free-mib 8192 --service panel)
 eval "$resource_args"
 # Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за

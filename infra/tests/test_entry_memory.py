@@ -19,7 +19,7 @@ import yaml
 
 
 ROOT = Path(os.environ.get("ENTRY_MEMORY_ROOT", Path(__file__).resolve().parents[2]))
-TOOL = ROOT / "infra/lib/entry_resources.py"
+TOOL = ROOT / "infra/ansible/roles/resources/files/entry_resources.py"
 sys.path.insert(0, str(ROOT / "infra/vpn2/src"))
 from adguard_support import render_unit  # noqa: E402
 from containers_support import FACTS, compose  # noqa: E402
@@ -152,7 +152,7 @@ class EntryMemoryTest(unittest.TestCase):
                            capture_output=True, check=True,
                            env={**os.environ, 'VPN2_STATE_DIR': f'{root}/state'})
             command = (f"source {shlex.quote(str(root / 'infra/envs/ru.env'))}; "
-                       f"source {shlex.quote(str(ROOT / 'infra/lib/entry-resources.sh'))}; "
+                       f"source {shlex.quote(str(ROOT / 'infra/ansible/roles/resources/files/entry-resources.sh'))}; "
                        "entry_resources vm; printf '%s\\n' \"${ENTRY_RUNTIME_ARGS[@]}\"")
             result = subprocess.run(["bash", "-eu", "-c", command], capture_output=True, check=True, text=True)
             self.assertIn("-retentionPeriod=11d", result.stdout)

@@ -1,14 +1,14 @@
 ---
-wireguard_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+wireguard_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
 wireguard_tmp: /tmp/anysda
 wireguard_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 wireguard_env:
   HOST_TAG: "{{ inventory_hostname }}"
 
-wireguard_port: "{{ lookup('ansible.builtin.env', 'WG_LISTEN_PORT') | default('51820', true) }}"
-wireguard_address: "{{ lookup('ansible.builtin.env', 'WG_SERVER_IP') | default('10.66.66.1', true) }}"
+wireguard_port: "{{ vpn2_env.WG_LISTEN_PORT | default('51820', true) }}"
+wireguard_address: "{{ vpn2_env.WG_SERVER_IP | default('10.66.66.1', true) }}"
 # MSS под MTU, который панель пишет в конфиг клиента (NUXT_WG_MTU панели).
-wireguard_mss: "{{ (lookup('ansible.builtin.env', 'WG_MTU') | default('1420', true) | int) - 40 }}"
+wireguard_mss: "{{ (vpn2_env.WG_MTU | default('1420', true) | int) - 40 }}"
 # Единственный список пулов общий с панелью.
 wireguard_pools: "{{ lookup('ansible.builtin.file', wireguard_infra ~ '/../app/shared/vpn-pools.json') | from_json }}"
 wireguard_subnets: "{{ wireguard_pools.wg.subnets }}"

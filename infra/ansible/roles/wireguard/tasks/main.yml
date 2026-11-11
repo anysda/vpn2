@@ -92,7 +92,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-wg-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ wireguard_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: wireguard_step
   changed_when: "'changed=1' in wireguard_step.stdout"
 

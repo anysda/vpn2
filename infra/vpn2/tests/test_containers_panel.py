@@ -202,3 +202,48 @@ def test_dead_panel_fails_with_log_tail(logs, http_up):
     kept = Inspect(None, 'panel init failed')
     panel._diagnose(kept, said.append, True, True)
     assert kept.asked == []
+
+
+@pytest.fixture
+def caddy_host(tmp_path, monkeypatch):
+    """Caddy узла: вставки в каталоге теста, systemctl подменён. Вернуть вставку панели и перезапуски."""
+    from vpn2 import firewall
+    files = [tmp_path / name for name in ('Caddyfile', 'vpn2-tls.conf', 'vpn2-http.conf', 'vpn2-panel.conf')]
+    for item in files:
+        item.write_text(item.name)
+    restarts = []
+
+    def run(argv, **_kwargs):
+        if argv[:2] == ['systemctl', 'restart']:
+            restarts.append(argv[2])
+        return subprocess.CompletedProcess(argv, 0)
+    restart, forget, applied = svc.restart_if_changed, svc.forget, tmp_path / 'applied'
+    monkeypatch.setattr(panel, 'CADDY', [str(item) for item in files])
+    monkeypatch.setattr(panel.subprocess, 'run', run)
+    monkeypatch.setattr(firewall, 'ufw_reconcile', lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(svc, 'restart_if_changed', lambda unit, paths: restart(unit, paths, applied))
+    monkeypatch.setattr(svc, 'forget', lambda unit: forget(unit, applied))
+    return files, restarts
+
+
+def test_gate_opened_by_certificate_does_not_restart_caddy(caddy_host):
+    # Вставку панели ведёт vpn2_tls.py: открыл панель после выпуска сертификата и сам
+    # перечитал Caddy. Следующий деплой видел «новый» файл, перезапускал Caddy и
+    # отчитывался changed=1 при нетронутом узле.
+    files, restarts = caddy_host
+    assert panel.caddy() is True
+    files[3].write_text('import to_panel\n')
+    assert panel.caddy() is False
+    assert restarts == ['caddy']
+    # Отрицательный контроль: вход, который пишет деплой, перезапускает по-прежнему.
+    files[0].write_text('другой Caddyfile')
+    assert panel.caddy() is True
+    assert restarts == ['caddy', 'caddy']
+
+
+def test_gate_rewritten_by_deploy_restarts_caddy(caddy_host):
+    # Смена узла или пропавшая вставка: подготовка TLS закрыла панель сама, Caddy об этом не знает.
+    _files, restarts = caddy_host
+    panel.caddy()
+    assert panel.caddy(regated=True) is True
+    assert restarts == ['caddy', 'caddy']

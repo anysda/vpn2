@@ -1,7 +1,5 @@
 import { tabDirection } from '~/utils/tab-pages'
 
-const EASE = 'cubic-bezier(.23,1,.32,1)'
-
 // Переход между разделами шапки как в макете: старая страница уходит, новая
 // въезжает со стороны пункта меню (View Transitions). Без поддержки, на телефоне,
 // при «уменьшить движение» и при жесте «назад» самого браузера — обычная смена.
@@ -59,38 +57,8 @@ export default defineNuxtPlugin((nuxtApp) => {
   nuxtApp.hook('app:error', release)
   nuxtApp.hook('page:finish', () => {
     release()
-    cascade(document.querySelector<HTMLElement>('.tab.on'))
+    // Вход и первая сцена Обзора выводят карточки сами.
+    const tab = document.querySelector<HTMLElement>('.tab.on')
+    if (!tab?.classList.contains('login') && !tab?.hasAttribute('data-wake')) cascade(tab)
   })
-
-  // Карточки раздела поднимаются лесенкой; те, что ниже экрана, — при прокрутке.
-  const reveal = 'IntersectionObserver' in window && !reduced.matches
-    ? new IntersectionObserver((entries) => {
-        let k = 0
-        entries.forEach((e) => {
-          if (!e.isIntersecting) return
-          reveal?.unobserve(e.target)
-          e.target.classList.remove('rv')
-          e.target.animate([{ opacity: 0, transform: 'translateY(18px)' }, { opacity: 1, transform: 'none' }],
-            { duration: 560, delay: k++ * 60, easing: EASE, fill: 'backwards' })
-        })
-      }, { rootMargin: '0px 0px -6% 0px' })
-    : null
-
-  function cascade(tab: HTMLElement | null) {
-    if (reduced.matches || !tab || tab.classList.contains('login') || tab.hasAttribute('data-wake')) return
-    const cards = [...tab.querySelectorAll<HTMLElement>('.card, .card-ui')]
-      .filter(c => c.offsetWidth && !c.parentElement?.closest('.card, .card-ui'))
-    let k = 0
-    cards.forEach((c) => {
-      if (c.getBoundingClientRect().top < innerHeight) {
-        c.animate([{ opacity: 0, transform: 'translateY(22px)' }, { opacity: 1, transform: 'none' }],
-          { duration: 520, delay: 60 + Math.min(k++, 8) * 55, easing: EASE, fill: 'backwards' })
-      }
-      else if (reveal && !c.dataset.rv) {
-        c.dataset.rv = '1'
-        c.classList.add('rv')
-        reveal.observe(c)
-      }
-    })
-  }
 })

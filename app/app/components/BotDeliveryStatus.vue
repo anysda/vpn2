@@ -13,12 +13,11 @@ const sheetList = ref<InstanceType<typeof BotDeliveryRows>>()
 
 function toggle() {
   pop.value = open.value ? null : 'bell'
-  if (!open.value || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  if (!open.value) return
   // Строки проявляются лесенкой, как в макете.
   const box = (mobile.value ? sheetList : list).value?.$el as HTMLElement | undefined
   requestAnimationFrame(() => [...(box?.children ?? [])].slice(0, 6).forEach((row, i) =>
-    row.animate([{ opacity: 0, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }],
-      { duration: 240, delay: 40 + i * 30, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })))
+    rise(row, { duration: 240, delay: 40 + i * 30 }, -4)))
 }
 let timer: ReturnType<typeof setInterval> | undefined
 let running = false

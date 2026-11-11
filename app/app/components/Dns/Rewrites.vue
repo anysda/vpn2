@@ -3,14 +3,8 @@
 // список из /control/rewrite/list — показываем то, что AdGuard применил.
 interface Rewrite { domain: string, answer: string, enabled: boolean }
 
-const { data, load, busy, api, change, removeRow } = useDnsSection<Rewrite[]>('/api/dns/rewrites')
+const { data, load, busy, api, change, toggleRow, removeRow } = useDnsSection<Rewrite[]>('/api/dns/rewrites')
 const key = (r: Rewrite) => `${r.domain}|${r.answer}`
-
-async function toggle(r: Rewrite) {
-  r.enabled = !r.enabled
-  const sent = await change(key(r), api('PATCH', { domain: r.domain, answer: r.answer, enabled: r.enabled }))
-  if (!sent) r.enabled = !r.enabled
-}
 
 const add = reactive({ open: false, domain: '', answer: '' })
 const addReady = computed(() => !!add.domain.trim() && !!add.answer.trim() && !busy.value.has('add'))
@@ -41,17 +35,11 @@ function confirmDel() {
   <div>
     <DnsLoadError :of="load" />
     <div class="card fl">
-      <div class="fhead">
-        <div>
-          <h3>Перезаписи DNS</h3>
-          <p class="sub2">
-            Свой ответ на запрос: внутренние адреса, заглушки
-          </p>
-        </div>
+      <DnsHead title="Перезаписи DNS" sub="Свой ответ на запрос: внутренние адреса, заглушки">
         <button type="button" class="pill w" @click="openAdd">
           <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>Добавить перезапись
         </button>
-      </div>
+      </DnsHead>
       <div class="rwt">
         <div class="th">
           <span /><span>Домен</span><span /><span>Ответ</span><span>Зачем</span><span />
@@ -61,7 +49,7 @@ function confirmDel() {
         <div v-for="r in data ?? []" :key="key(r)" :class="{ off: !r.enabled }">
           <button
             type="button" class="tog" :class="{ on: r.enabled }" role="switch" :aria-checked="r.enabled" :aria-label="r.domain"
-            :disabled="busy.has(key(r))" @click="toggle(r)">
+            :disabled="busy.has(key(r))" @click="toggleRow(r, key(r), { domain: r.domain, answer: r.answer })">
             <i />
           </button>
           <span class="mono">{{ r.domain }}</span>

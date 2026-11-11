@@ -2,17 +2,7 @@ import { inject, type InjectionKey } from 'vue'
 
 // Графики и движение обзора, перенесены из макета без изменений.
 
-const EO = 'cubic-bezier(.23,1,.32,1)'
 const EIO = 'cubic-bezier(.77,0,.175,1)'
-export const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
-
-type Pt = [number, number]
-
-/** Точки линии: значения растянуты между min и max с отступом pad сверху и снизу. */
-export function linePoints(data: number[], W: number, H: number, pad: number): Pt[] {
-  const mx = Math.max(...data), mn = Math.min(...data)
-  return data.map((v, i) => [i * (W / (data.length - 1)), pad + (H - 2 * pad) * (1 - (v - mn) / (mx - mn || 1))])
-}
 
 /** Окно из `len` соседних точек с наибольшей суммой — подсвеченная полоса графика. */
 export function peakBand(data: number[], len = 4): [number, number] | null {
@@ -27,7 +17,7 @@ export function peakBand(data: number[], len = 4): [number, number] | null {
 
 // счёт с нуля: 214 → «214», 9,1% → «9,1%», 2 283 → «2 283»
 export function count(e: Element | null | undefined, dur = 900, delay = 0) {
-  if (reduced() || !e) return
+  if (reducedMotion() || !e) return
   const t = [...e.childNodes].find((n): n is Text => n.nodeType === 3 && /\d/.test((n as Text).data))
   if (!t) return
   const src = t.data, m = src.match(/\d[\d\s]*(?:,\d+)?/)
@@ -51,7 +41,7 @@ export function count(e: Element | null | undefined, dur = 900, delay = 0) {
 
 // линия рисуется слева направо, заливка проявляется следом, точки загораются, когда линия до них дошла
 export function drawSvg(svg: SVGSVGElement | null | undefined, delay = 0, dur = 1100) {
-  if (reduced() || !svg) return
+  if (reducedMotion() || !svg) return
   const P = [...svg.querySelectorAll('path')], ln = P.find(p => p.getAttribute('fill') === 'none')
   if (!ln) return
   const L = ln.getTotalLength()
@@ -67,7 +57,7 @@ export function drawSvg(svg: SVGSVGElement | null | undefined, delay = 0, dur = 
 
 // кольцо закручивается по часовой: каждый сегмент тянется, когда до него дошла очередь
 export function sweep(svg: SVGSVGElement | null | undefined, delay = 0, dur = 1000) {
-  if (reduced() || !svg) return
+  if (reducedMotion() || !svg) return
   const S = [...svg.querySelectorAll('circle[stroke-dasharray]')]
   if (!S.length) return
   const C = 2 * Math.PI * +S[0]!.getAttribute('r')!
@@ -83,7 +73,7 @@ export function sweep(svg: SVGSVGElement | null | undefined, delay = 0, dur = 10
 export function roll(w: HTMLElement, s: string) {
   const old = w.textContent ?? ''
   if (old === s) return
-  if (reduced() || old.length !== s.length) {
+  if (reducedMotion() || old.length !== s.length) {
     w.textContent = s
     return
   }

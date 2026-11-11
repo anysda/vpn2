@@ -90,8 +90,3 @@ export function sparkPoints(data: number[], W: number, H: number, pad: number): 
   const mx = Math.max(...v), mn = Math.min(...v)
   return v.map((x, i) => [i * (W / (v.length - 1)), pad + (H - 2 * pad) * (1 - (x - mn) / (mx - mn || 1))])
 }
-
-/** Число с пробелами по разрядам: 2283 → «2 283». */
-export function grp(n: number): string {
-  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
-}

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { ddmmLocal, pad2 } from '~/utils/format'
 // График запросов сводки: все и заблокированные, линейка с подсказкой
 // ведётся курсором, без курсора подсказка стоит на пике.
 const props = defineProps<{ q: number[], b: number[], units: 'hours' | 'days' }>()
@@ -96,7 +95,7 @@ onUnmounted(() => ro?.disconnect())
       <span
         v-if="n && size.w" class="qtip" :class="{ now: instant, r: idx < n * 0.3 }"
         :style="{ left: 0, top: 0, transform: `translate(${pos.x}px,${pos.y}px)` }">
-        <i /><div><b>{{ grp(q[idx] ?? 0) }}</b> запросов · <em>{{ grp(b[idx] ?? 0) }}</em> заблок.<small>{{ span(idx) }}</small></div>
+        <i /><div><b>{{ ru(q[idx] ?? 0) }}</b> запросов · <em>{{ ru(b[idx] ?? 0) }}</em> заблок.<small>{{ span(idx) }}</small></div>
       </span>
     </div>
     <div class="hrs">

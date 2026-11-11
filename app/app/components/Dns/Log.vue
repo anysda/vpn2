@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { hmsOrDdmmHmLocal } from '~/utils/format'
 // Журнал запросов: фильтр, поиск по домену и клиенту, блокировка и
 // разблокировка из строки своим правилом AdGuard.
 type Kind = 'ok' | 'blk' | 'rw' | 'safe'

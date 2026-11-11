@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { linePoints, peakBand, ru } from '~/utils/overview'
-import { bytesToGbDec, gbDecNumRu, hourRangeRu, mskHourFromSec, mskWeekdayDateFromSec } from '~/utils/format'
 
 // Трафик за сутки (по часам) или неделю (по суткам МСК): сумма экзитов,
 // рядом — сравнение с тем же окном периодом раньше. Линейка ведёт по точкам.
@@ -48,7 +46,7 @@ function idx(e: PointerEvent) {
 }
 function place(i: number, jump: boolean) {
   const r = svgRect(), c = card.value?.getBoundingClientRect()
-  const p = linePoints(gb.value, W, H, PAD)[i]
+  const p = sparkPoints(gb.value, W, H, PAD)[i]
   if (!r || !c || !p || !rul.value || !tip.value) return
   now.value = jump
   const x = r.left - c.left + p[0] / W * r.width, y = r.top - c.top + p[1] / H * r.height

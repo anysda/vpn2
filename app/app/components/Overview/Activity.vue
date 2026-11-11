@@ -1,8 +1,5 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
-import { activityScale } from '~/utils/activity-scale'
-import { ru, useWake } from '~/utils/overview'
-import { gbDecRound1, mskDayNumLabel, WD_MON } from '~/utils/format'
 
 // Активность: недели столбцами, дни строками, как в GitHub. «Онлайн» —
 // клиентов в сети за сутки, «Трафик» — ГБ всех клиентов за сутки (МСК).
@@ -104,18 +101,9 @@ watch(geo, (g) => {
 
 // пилюля сегмента скользит к выбранной кнопке
 const seg = ref<HTMLElement>()
-const glide = ref<HTMLElement>()
 const glided = ref(false)
 function moveGlide(jump: boolean) {
-  const box = seg.value, g = glide.value, on = box?.querySelector<HTMLElement>(':scope>button.on')
-  if (!box || !g || !on || !box.offsetWidth) return
-  const r = on.getBoundingClientRect(), q = box.getBoundingClientRect()
-  g.classList.toggle('now', jump || !glided.value)
-  g.style.height = `${r.height}px`
-  g.style.width = `${r.width}px`
-  g.style.transform = `translate(${r.left - q.left - box.clientLeft}px,${r.top - q.top - box.clientTop}px)`
-  if (jump || !glided.value) requestAnimationFrame(() => g.classList.remove('now'))
-  glided.value = true
+  if (placeGlide(seg.value, glided.value, jump)) glided.value = true
 }
 const onResize = () => moveGlide(true)
 onMounted(() => {
@@ -142,7 +130,7 @@ function pick(m: Mode) {
       <div ref="seg" class="seg sm" :class="{ gl: glided }" role="group" aria-label="Что показывать">
         <button type="button" :class="{ on: mode === 'on' }" :aria-pressed="mode === 'on'" @click="pick('on')">Онлайн</button>
         <button type="button" :class="{ on: mode === 'tr' }" :aria-pressed="mode === 'tr'" @click="pick('tr')">Трафик</button>
-        <span ref="glide" class="glide now" />
+        <span class="glide now" />
       </div>
     </div>
     <div

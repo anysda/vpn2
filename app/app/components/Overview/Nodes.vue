@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import type { NodeMetric } from '~/composables/useMonitoring'
-import { useWake } from '~/utils/overview'
-import { exitName, nodeHealth, nodeSubtitle } from '~/utils/overview-nodes'
 
 // Узлы: entry и экзиты карточками. Спарклайн — CPU за последние 13 опросов:
 // начало из VM, дальше каждый опрос /api/ops/nodes дописывает точку справа.

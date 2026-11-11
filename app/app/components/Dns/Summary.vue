@@ -51,21 +51,21 @@ const lists = computed(() => data.value
         <div class="card">
           <h3>Запросы DNS</h3>
           <div class="nums">
-            <span class="big">{{ grp(data.queries) }}</span><span class="tag">{{ period }}</span>
+            <span class="big">{{ ru(data.queries) }}</span><span class="tag">{{ period }}</span>
           </div>
           <DnsSpark :data="data.q" />
         </div>
         <div class="card lit">
           <h3>Заблокировано фильтрами</h3>
           <div class="nums">
-            <span class="big">{{ grp(data.blocked) }}</span><span class="tag">{{ dec(data.blockedPct) }}%</span>
+            <span class="big">{{ ru(data.blocked) }}</span><span class="tag">{{ dec(data.blockedPct) }}%</span>
           </div>
           <DnsSpark :data="data.b" />
         </div>
         <div class="card">
           <h3>Заблокировано угроз</h3>
           <div class="nums">
-            <span class="big">{{ grp(data.threats) }}</span><span class="tag badt">фишинг, вредонос</span>
+            <span class="big">{{ ru(data.threats) }}</span><span class="tag badt">фишинг, вредонос</span>
           </div>
           <DnsSpark :data="data.t" col="var(--red-t)" />
         </div>
@@ -103,7 +103,7 @@ const lists = computed(() => data.value
           </div>
           <ul :class="{ red: l.red }">
             <li v-for="[name, c] in l.rows" :key="name">
-              <span>{{ name }}</span><b>{{ grp(c) }}</b><span class="tb"><i :style="{ width: `${c / (l.rows[0]?.[1] || 1) * 100}%` }" /></span>
+              <span>{{ name }}</span><b>{{ ru(c) }}</b><span class="tb"><i :style="{ width: `${c / (l.rows[0]?.[1] || 1) * 100}%` }" /></span>
             </li>
           </ul>
         </div>

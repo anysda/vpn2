@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { EventLevel, PanelEvent } from '#shared/events'
-import { timeOrDdmmMsk } from '~/utils/format'
 
 const { data, refresh } = useFetch<PanelEvent[]>('/api/events', { query: { limit: 30 }, default: () => [] })
 

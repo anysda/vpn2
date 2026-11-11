@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { drawSvg, linePoints, reduced, useWake } from '~/utils/overview'
 
 // Линия макета (line + dotsHTML + liveDot): svg тянется по обёртке, кружки
 // и живая точка — html поверх, чтобы не плющились вместе с viewBox.
@@ -26,7 +25,7 @@ const svg = ref<SVGSVGElement>()
 const host = ref<HTMLElement>()
 const wake = useWake()
 
-const pts = computed(() => props.data.length > 1 ? linePoints(props.data, props.w, props.h, props.pad) : [])
+const pts = computed(() => props.data.length > 1 ? sparkPoints(props.data, props.w, props.h, props.pad) : [])
 const bandRect = computed(() => {
   const p = pts.value, b = props.band
   if (!b || !p[b[0]] || !p[b[1]]) return null
@@ -151,7 +150,7 @@ watch(() => props.data, (now, old) => {
   if (!drawn) return firstDraw()
   const shifted = old && old.length === now.length && old.length > 1
     && old.slice(1).join() === now.slice(0, -1).join()
-  if (!shifted || props.band || props.dots.length || reduced() || document.hidden) return stop()
+  if (!shifted || props.band || props.dots.length || reducedMotion() || document.hidden) return stop()
   const t = performance.now()
   if (lastShift && t - lastShift > 500 && t - lastShift < 10_000) period = period * 0.6 + (t - lastShift) * 0.4
   lastShift = t

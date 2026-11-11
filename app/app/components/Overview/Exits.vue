@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import type { NodeMetric } from '~/composables/useMonitoring'
-import { ru, sweep, useWake } from '~/utils/overview'
-import { exitName, nodeHealth } from '~/utils/overview-nodes'
 
 // Выходы: доля каждого экзита в текущем трафике. Лидер — акцентом со
 // свечением, остальные здоровые — оттенками серого одной строкой легенды,

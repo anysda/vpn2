@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { Route } from '~/composables/useRoutes'
 import type { Cell } from '~/utils/routes-view'
-import { countryName } from '~/utils/routes-view'
 
 /** Верх раздела: проверка адреса и форма нового правила. */
 const props = defineProps<{

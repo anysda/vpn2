@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { useTelegramStatus } from '~/composables/useTelegramStatus'
 
 const { status: data, refresh } = useTelegramStatus(10_000)
 

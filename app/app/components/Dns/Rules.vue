@@ -59,17 +59,11 @@ const apply = () => act('save', async () => {
   <DnsLoadError :of="load" />
   <div class="rgrid">
     <div class="card cr">
-      <div class="fhead">
-        <div>
-          <h3>Свои правила</h3>
-          <p class="sub2">
-            Одно правило на строку. Срабатывают раньше списков
-          </p>
-        </div>
+      <DnsHead title="Свои правила" sub="Одно правило на строку. Срабатывают раньше списков">
         <button type="button" class="pill w" :disabled="!data || busy.has('save')" @click="apply">
           Применить
         </button>
-      </div>
+      </DnsHead>
       <textarea v-model="text" spellcheck="false" aria-label="Свои правила" :disabled="!data" :readonly="busy.has('save')" />
     </div>
     <div class="rside">

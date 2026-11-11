@@ -1,15 +1,10 @@
 <script setup lang="ts">
 import type { Route } from '~/composables/useRoutes'
-import { useRoutes } from '~/composables/useRoutes'
-import { routeColumns, rtc } from '~/utils/routes-view'
 
 const { rules, outbounds, create, patch, remove } = useRoutes()
 const toast = useToast()
 // На телефоне перетаскивания нет: тап по правилу открывает шторку выбора выхода.
 const mobile = useMobile()
-
-const EASE = 'cubic-bezier(.23,1,.32,1)'
-const reduced = () => import.meta.client && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const columns = computed(() => routeColumns(outbounds.value))
 const cells = computed(() => columns.value.flatMap(c => c.cells))
@@ -78,17 +73,15 @@ async function onDrop(outbound: string, e: DragEvent) {
   if (!rule || rule.outbound === outbound) return
   const { clientX: x0, clientY: y0 } = e
   // Правило ложится в ячейку из точки, где его отпустили.
-  if (!reduced()) {
-    void nextTick(() => requestAnimationFrame(() => {
-      const el = chipEl(id)
-      if (!el) return
-      const r = el.getBoundingClientRect()
-      el.animate([
-        { transform: `translate(${x0 - r.left - r.width / 2}px,${y0 - r.top - r.height / 2}px) scale(1.04)`, boxShadow: '0 12px 30px rgba(0,0,0,.5)' },
-        { transform: 'none', boxShadow: '0 0 0 rgba(0,0,0,0)' },
-      ], { duration: 380, easing: EASE })
-    }))
-  }
+  void nextTick(() => requestAnimationFrame(() => {
+    const el = chipEl(id)
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    anim(el, [
+      { transform: `translate(${x0 - r.left - r.width / 2}px,${y0 - r.top - r.height / 2}px) scale(1.04)`, boxShadow: '0 12px 30px rgba(0,0,0,.5)' },
+      { transform: 'none', boxShadow: '0 0 0 rgba(0,0,0,0)' },
+    ], { duration: 380 })
+  }))
   await move(rule, outbound)
 }
 
@@ -135,19 +128,16 @@ function deletePicked() {
 // ---------- удаление ----------
 async function deleteRule(rule: Route) {
   const el = chipEl(rule.id)
-  let anim: Animation | null = null
-  if (el && !reduced()) {
-    // Удалённое схлопывается до запроса, чтобы ответ сервера не обрывал движение.
-    el.style.pointerEvents = 'none'
-    anim = el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EASE, fill: 'forwards' })
-    await anim.finished.catch(() => {})
-  }
+  // Удалённое схлопывается до запроса, чтобы ответ сервера не обрывал движение.
+  const fade = anim(el, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, fill: 'forwards' })
+  if (el && fade) el.style.pointerEvents = 'none'
+  await fade?.finished.catch(() => {})
   try {
     await remove(rule.id)
     toast.add({ title: `«${rule.value}» удалено`, color: 'success' })
   }
   catch (e) {
-    anim?.cancel()
+    fade?.cancel()
     if (el) el.style.pointerEvents = ''
     toast.add({ title: 'Ошибка', color: 'error', description: (e as Error).message })
   }

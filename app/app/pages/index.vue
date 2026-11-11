@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import '~/assets/css/overview.css'
-import { WAKE } from '~/utils/overview'
-import { sortNodes } from '~/utils/overview-nodes'
 
 useHead({ title: 'Обзор — anysda-vpn2' })
 definePageMeta({ title: 'Обзор' })
@@ -19,12 +17,10 @@ onMounted(async () => {
   // мобильная разметка встаёт после монтирования: анимировать уже её
   await nextTick()
   woke.value = true
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  if (reducedMotion()) return
   wake.on = true
   wake.t0 = performance.now()
-  const ev = tab.value?.querySelector('.r1>.ev')
-  ev?.animate([{ opacity: 0, transform: 'translateY(14px)' }, { opacity: 1, transform: 'none' }],
-    { duration: 600, delay: 120, easing: 'cubic-bezier(.23,1,.32,1)', fill: 'backwards' })
+  rise(tab.value?.querySelector('.r1>.ev'), { duration: 600, delay: 120 }, 14)
   setTimeout(() => { wake.on = false }, 3000)
 })
 

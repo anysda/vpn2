@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { NodeMetric } from '~/composables/useMonitoring'
-import { exitName } from '~/utils/overview-nodes'
 
 // Окно узла: модалка на десктопе, нижняя шторка на телефоне. Содержимое общее,
 // подтверждение выключения встаёт в том же окне вместо подробностей.

@@ -30,20 +30,14 @@ function toggle(id: string) {
 <template>
   <div>
     <DnsLoadError :of="load" />
-    <div class="fhead svh">
-      <div>
-        <h3>Блокировка сервисов</h3>
-        <p class="sub2">
-          Для всех клиентов. Для одного клиента — во вкладке «Клиенты»
-        </p>
-      </div>
+    <DnsHead class="svh" title="Блокировка сервисов" sub="Для всех клиентов. Для одного клиента — во вкладке «Клиенты»">
       <div class="ha">
         <span class="tag" style="height:36px;padding:0 14px">{{ count }}</span>
         <button type="button" class="pill" :disabled="!data" @click="save(new Set(), 'Все сервисы разблокированы')">
           Разблокировать все
         </button>
       </div>
-    </div>
+    </DnsHead>
     <div class="svg2">
       <div
         v-for="s in data?.all ?? []" :key="s.id" class="card sv" :class="{ on: blocked.has(s.id) }" role="switch" tabindex="0"

@@ -1,8 +1,5 @@
 <script setup lang="ts">
 import type { NodeMetric } from '~/composables/useMonitoring'
-import { count, drawSvg, ru } from '~/utils/overview'
-import { exitName, level, nodeHealth, uptimeShort } from '~/utils/overview-nodes'
-import { gbDecRu, gibLatin, gibTotalLatin } from '~/utils/format'
 
 // Содержимое окна узла: подробности и выключение экзита. Одно и то же в
 // модалке десктопа и в шторке телефона; подтверждение встаёт вместо подробностей.

@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { sizeBinRu } from '~/utils/format'
-import { useWake } from '~/utils/overview'
 
 // Топ клиентов по трафику за сутки или неделю (переключатель в шапке Обзора).
 // Полоса — доля от лидера, клик открывает клиента.

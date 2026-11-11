@@ -11,6 +11,12 @@ export function useDnsSection<T>(url: string) {
   const change = <R extends T>(key: string, req: () => Promise<R>, done?: string | ((r: R) => string)) =>
     act(key, () => latest(req), done)
 
+  /** Тумблер строки: переключается сразу, при отказе сервера возвращается. */
+  async function toggleRow(row: { enabled: boolean }, key: string, body: object) {
+    row.enabled = !row.enabled
+    if (!await change(key, api('PATCH', { ...body, enabled: row.enabled }))) row.enabled = !row.enabled
+  }
+
   /** Удаление строки: после ответа строка гаснет и только потом уходит из списка. */
   const removeRow = (row: HTMLElement | null, body: object, done: string) => change('del', async () => {
     const v = await api('DELETE', body)()
@@ -18,5 +24,5 @@ export function useDnsSection<T>(url: string) {
     return v
   }, done)
 
-  return { data, load, toast, busy, act, api, change, removeRow }
+  return { data, load, toast, busy, act, api, change, toggleRow, removeRow }
 }

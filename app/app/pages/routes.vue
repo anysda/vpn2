@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
-import { ROUTES_KEY } from '~/composables/useRoutes'
 import type { Route } from '~/composables/useRoutes'
 
 useHead({ title: 'Маршруты — anysda-vpn2' })

@@ -29,15 +29,9 @@ const ips = (l: string[]) => l.length ? l.slice(0, 2).join(', ') + (l.length > 2
   <div>
     <DnsLoadError :of="load" />
     <div class="card fl">
-      <div class="fhead">
-        <div>
-          <h3>Клиенты DNS</h3>
-          <p class="sub2">
-            Узнаются по адресу в туннеле. Настройки здесь сильнее общих
-          </p>
-        </div>
+      <DnsHead title="Клиенты DNS" sub="Узнаются по адресу в туннеле. Настройки здесь сильнее общих">
         <span v-if="data" class="tag">{{ tag }}</span>
-      </div>
+      </DnsHead>
       <div class="dct">
         <div class="th">
           <span>Клиент</span><span>Адреса</span><span>Фильтры</span><span>Безопасный поиск</span><span>Сервисы</span><span>Запросов</span>
@@ -57,7 +51,7 @@ const ips = (l: string[]) => l.length ? l.slice(0, 2).join(', ') + (l.length > 2
             <span v-else class="tag">как у всех</span>
           </span>
           <span class="svc" :class="{ dflt: !c.services }">{{ c.services ?? 'как у всех' }}</span>
-          <span>{{ grp(c.queries) }}</span>
+          <span>{{ ru(c.queries) }}</span>
         </div>
       </div>
     </div>

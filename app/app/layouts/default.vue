@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { TAB_PAGES } from '~/utils/tab-pages'
 
 const { user, clear } = useAuthSession()
 const route = useRoute()

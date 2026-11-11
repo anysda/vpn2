@@ -1,19 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { installStubs } from '../../test/stubs'
+import { installStubs } from './stubs'
 
 const recordEvent = vi.hoisted(() => vi.fn())
 const notifyBackupFailed = vi.hoisted(() => vi.fn())
 const body = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
 
-vi.mock('../../utils/bot-api', async () => (await import('../../test/stubs')).botApiModule)
-vi.mock('../../utils/events', () => ({ recordEvent }))
-vi.mock('../../utils/bot-events', () => ({ notifyBackupFailed }))
-vi.mock('../../utils/validate', () => ({
+vi.mock('../utils/bot-api', async () => (await import('./stubs')).botApiModule)
+vi.mock('../utils/events', () => ({ recordEvent }))
+vi.mock('../utils/bot-events', () => ({ notifyBackupFailed }))
+vi.mock('../utils/validate', () => ({
   readBodyAs: async (_event: unknown, schema: { parse: (v: unknown) => unknown }) => schema.parse(body.value),
 }))
 vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
 
-const handler = (await import('./events.post')).default as unknown as (event: unknown) => Promise<unknown>
+const handler = (await import('../api/bot/events.post')).default as unknown as (event: unknown) => Promise<unknown>
 
 beforeEach(() => {
   installStubs()

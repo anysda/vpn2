@@ -29,7 +29,8 @@ def say(text):
 
 
 def _run(argv, **kwargs):
-    return subprocess.run(argv, text=True, **kwargs)
+    kwargs.setdefault('text', True)
+    return subprocess.run(argv, **kwargs)
 
 
 def lock_holders(locks=LOCKS):
@@ -201,7 +202,32 @@ def docker_source_line(os_release, arch):
                     f'https://download.docker.com/linux/{distro} {codename} stable')
 
 
-def docker_source(*, root='/', get=apt_get, run=None):
+def _docker_key(url, key, *, run, sleep, say):
+    """Ключ Docker: загрузка с повтором, запись целиком или никак."""
+    for attempt in range(1, FETCH_TRIES + 1):
+        try:
+            armored = run(['curl', '-fsSL', '--connect-timeout', '20', '--max-time', '120', url],
+                          stdout=subprocess.PIPE, check=True, text=False).stdout
+            break
+        except subprocess.CalledProcessError as error:
+            if attempt >= FETCH_TRIES:
+                print(f"[{os.environ.get('HOST_TAG', 'anysda')}]   ключ Docker не скачался с {url} "
+                      f'за {attempt} попытки: curl, код {error.returncode}', file=sys.stderr)
+                raise
+            say(f'ключ Docker: curl, код {error.returncode}, повтор через {5 * attempt} с')
+            sleep(5 * attempt)
+    part = key.with_name(key.name + '.part')
+    try:
+        subprocess.run(['gpg', '--dearmor', '--yes', '-o', str(part)], input=armored, check=True)
+        if part.stat().st_size == 0:
+            raise RuntimeError(f'Docker: по адресу {url} пришёл пустой ключ')
+        part.chmod(part.stat().st_mode | 0o444)
+        os.replace(part, key)
+    finally:
+        part.unlink(missing_ok=True)
+
+
+def docker_source(*, root='/', get=apt_get, run=None, sleep=time.sleep, say=say):
     """Официальный источник Docker; файл переписывается только при отличии."""
     run = run or _run
     root = Path(root)
@@ -215,10 +241,8 @@ def docker_source(*, root='/', get=apt_get, run=None):
     keyrings.mkdir(mode=0o755, parents=True, exist_ok=True)
     key = keyrings / 'docker.gpg'
     if not key.is_file() or key.stat().st_size == 0:
-        armored = run(['curl', '-fsSL', f'https://download.docker.com/linux/{distro}/gpg'],
-                      stdout=subprocess.PIPE, check=True, text=False).stdout
-        subprocess.run(['gpg', '--dearmor', '--yes', '-o', str(key)], input=armored, check=True)
-        key.chmod(key.stat().st_mode | 0o444)
+        _docker_key(f'https://download.docker.com/linux/{distro}/gpg', key,
+                    run=run, sleep=sleep, say=say)
     target = root / 'etc/apt/sources.list.d/docker.list'
     try:
         current = target.read_text()

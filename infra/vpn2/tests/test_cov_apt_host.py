@@ -48,17 +48,23 @@ elif name == 'apt-get':
     sys.stderr.write(read('apt.err'))
     sys.exit(code)
 elif name == 'curl':
-    if read('curl.rc'):
+    left = int(read('curl.fails') or 0)
+    if left > 0:
+        open(os.path.join(box, 'curl.fails'), 'w').write(str(left - 1))
+    if read('curl.rc') or left > 0:
         sys.exit(22)
-    sys.stdout.write('ARMORED ' + args[-1])
+    sys.stdout.write(read('curl.out') if os.path.exists(os.path.join(box, 'curl.out'))
+                     else 'ARMORED ' + args[-1])
 elif name == 'gpg':
-    open(args[args.index('-o') + 1], 'w').write('KEY ' + sys.stdin.read())
+    body = sys.stdin.read()
+    if read('gpg.rc'):
+        open(args[args.index('-o') + 1], 'w').write('KE')
+        sys.exit(2)
+    open(args[args.index('-o') + 1], 'w').write('KEY ' + body if body else '')
 '''
 NAMES = ('fuser', 'lslocks', 'dpkg', 'dpkg-query', 'apt-get', 'curl', 'gpg')
 OS_RELEASE = 'PRETTY_NAME="Ubuntu 26.04"\nID=ubuntu\nVERSION_CODENAME=resolute\n'
-# Загрузка ключа Docker падает TypeError: _run задаёт text=True, а вызов curl передаёт text=False.
-KEY_BUG = pytest.mark.xfail(strict=True, raises=TypeError,
-                            reason='apt.docker_source: curl зовётся с двумя значениями text')
+CURL = 'curl -fsSL --connect-timeout 20 --max-time 120 https://download.docker.com/linux/ubuntu/gpg'
 LINE = ('deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] '
         'https://download.docker.com/linux/ubuntu resolute stable\n')
 
@@ -212,7 +218,6 @@ def test_busy_apt_gets_the_short_lock_timeout_after_giving_up(host, tmp_path, ca
     assert '[ru]   apt всё ещё занят, ожидание уже исчерпано, продолжаю' in capsys.readouterr().out
 
 
-@KEY_BUG
 def test_docker_source_is_written_once(host):
     host.put('installed', 'ca-certificates\ncurl\ngnupg\n')
     apt.docker_source(root=host.root)
@@ -221,14 +226,13 @@ def test_docker_source_is_written_once(host):
     assert target.read_text() == LINE
     assert key.read_text() == 'KEY ARMORED https://download.docker.com/linux/ubuntu/gpg'
     assert key.stat().st_mode & 0o444 == 0o444
-    assert host.calls('curl') == ['curl -fsSL https://download.docker.com/linux/ubuntu/gpg']
+    assert host.calls('curl') == [CURL]
     before = (target.stat().st_mtime_ns, key.stat().st_mtime_ns)
     apt.docker_source(root=host.root)
     assert (target.stat().st_mtime_ns, key.stat().st_mtime_ns) == before
     assert host.calls('curl') == [] and host.calls('apt-get') == []
 
 
-@KEY_BUG
 def test_docker_source_repairs_a_foreign_line_and_an_empty_key(host):
     host.put('installed', 'ca-certificates\ncurl\ngnupg\n')
     target = host.root / 'etc/apt/sources.list.d/docker.list'
@@ -241,7 +245,6 @@ def test_docker_source_repairs_a_foreign_line_and_an_empty_key(host):
     assert target.read_text() == LINE and key.read_text().startswith('KEY ')
 
 
-@KEY_BUG
 def test_docker_source_installs_its_tools_first(host):
     apt.docker_source(root=host.root)
     assert host.calls('apt-get') == [
@@ -270,11 +273,65 @@ def test_foreign_system_is_refused_before_any_change(host, text, reason):
     assert host.calls('apt-get') == [] and not (host.root / 'etc/apt').exists()
 
 
-@KEY_BUG
-def test_failed_key_download_leaves_no_source(host):
+def test_failed_key_download_leaves_no_source(host, capfd):
     host.put('installed', 'ca-certificates\ncurl\ngnupg\n')
     host.put('curl.rc', '1')
+    pauses = []
     with pytest.raises(subprocess.CalledProcessError, match='curl'):
-        apt.docker_source(root=host.root)
+        apt.docker_source(root=host.root, sleep=pauses.append)
     assert not (host.root / 'etc/apt/sources.list.d/docker.list').exists()
     assert not (host.root / 'etc/apt/keyrings/docker.gpg').exists()
+    assert host.calls('curl') == [CURL] * apt.FETCH_TRIES and pauses == [5, 10]
+    err = capfd.readouterr().err
+    assert ('[ru]   ключ Docker не скачался с https://download.docker.com/linux/ubuntu/gpg '
+            'за 3 попытки: curl, код 22') in err
+    host.put('curl.rc', '')
+    apt.docker_source(root=host.root, sleep=pauses.append)
+    assert (host.root / 'etc/apt/sources.list.d/docker.list').read_text() == LINE
+    assert (host.root / 'etc/apt/keyrings/docker.gpg').read_text().startswith('KEY ')
+
+
+@pytest.mark.parametrize('fails', [1, 2])
+def test_key_download_survives_a_transient_failure(host, fails, capsys):
+    host.put('installed', 'ca-certificates\ncurl\ngnupg\n')
+    host.put('curl.fails', str(fails))
+    pauses = []
+    apt.docker_source(root=host.root, sleep=pauses.append)
+    assert host.calls('curl') == [CURL] * (fails + 1) and pauses == [5, 10][:fails]
+    assert (host.root / 'etc/apt/keyrings/docker.gpg').read_text().startswith('KEY ARMORED')
+    assert (host.root / 'etc/apt/sources.list.d/docker.list').read_text() == LINE
+    assert '[ru]   ключ Docker: curl, код 22, повтор через 5 с' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('case', ['gpg-cut', 'empty-body'])
+def test_cut_key_leaves_no_partial_file(host, case):
+    host.put('installed', 'ca-certificates\ncurl\ngnupg\n')
+    host.put('gpg.rc' if case == 'gpg-cut' else 'curl.out', '1' if case == 'gpg-cut' else '')
+    with pytest.raises((subprocess.CalledProcessError, RuntimeError)):
+        apt.docker_source(root=host.root)
+    keyrings = host.root / 'etc/apt/keyrings'
+    assert list(keyrings.iterdir()) == []
+    assert not (host.root / 'etc/apt/sources.list.d/docker.list').exists()
+    (host.box / ('gpg.rc' if case == 'gpg-cut' else 'curl.out')).unlink()
+    apt.docker_source(root=host.root)
+    assert [path.name for path in keyrings.iterdir()] == ['docker.gpg']
+
+
+def test_entry_with_docker_keeps_its_sources_alone(host):
+    (host.bin / 'docker').symlink_to(host.box / 'tool')
+    host.put('installed', 'jq\n')
+    assert apt.install(['jq'], docker=True) is False
+    assert host.calls('curl') == [] and not (host.root / 'etc/apt').exists()
+
+
+def test_entry_without_docker_gets_source_and_packages(host, monkeypatch):
+    real = apt.docker_source
+    monkeypatch.setattr(apt, 'docker_source', lambda **kw: real(root=host.root, **kw))
+    host.put('installed', 'ca-certificates\ncurl\ngnupg\njq\n')
+    assert apt.install(['jq'], docker=True) is True
+    calls = host.calls()
+    assert [line for line in calls if line.startswith('curl')] == [CURL]
+    assert [line for line in calls if line.startswith('apt-get')] == [
+        f'apt-get -o DPkg::Lock::Timeout={apt.LOCK_TIMEOUT} install -y -qq jq '
+        + ' '.join(apt.DOCKER_PKGS + apt.DOCKER_SKIP)]
+    assert (host.root / 'etc/apt/sources.list.d/docker.list').read_text() == LINE

@@ -50,7 +50,8 @@
 - {section: files, name: '/etc/vpn2/tls/state.json', field: sha256, reason: состояние сертификата с датой выпуска}
 - {section: files, name: '/var/lib/anysda/verify-report.json', field: sha256, reason: отчёт verify с меткой времени; его строки сверяет раздел verify}
 - {section: files, name: '/var/lib/anysda-failover-watchdog/lanes.json', field: sha256, reason: замеры линий сторожа с меткой времени}
-- {section: files, name: '/var/lib/anysda-warp-watchdog/state.json', field: sha256, reason: состояние сторожа WARP с меткой времени}
+- {section: files, name: '/var/lib/anysda-failover-watchdog/restart.json', field: sha256, reason: время последнего перезапуска sing-box сторожем}
+- {section: files, name: '/var/lib/anysda-*/state.json', field: sha256, reason: состояние сторожа с меткой времени переписывает его таймер - WARP и YouTube}
 - {section: files, name: '/var/lib/anysda-vpn2/db.sqlite-*', field: sha256, reason: журнал записи SQLite работающей панели}
 - {section: files, name: '/var/lib/vpn2-deploy/operation.json', field: sha256, reason: журнал операции деплоя с меткой времени}
 - {section: files, name: '/var/lib/vpn2-deploy/panel/operation.json', field: sha256, reason: журнал операции панели с меткой времени}

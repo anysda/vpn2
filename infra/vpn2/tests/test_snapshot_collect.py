@@ -6,6 +6,7 @@ import pytest
 
 from vpn2 import snapshot
 from vpn2.snapshot import collect, diff
+from vpn2.watchdog import failover, yt
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -527,3 +528,50 @@ def test_base_image_env_is_dropped(root):
         'NODE_VERSION=22', 'LANG=C.UTF-8', 'TZ=UTC', 'PANEL_SECRET=s', 'PYTHONUNBUFFERED=1']})
     record = collect(root, fake({'docker inspect': (0, json.dumps([item]))}))['containers']['xray']
     assert record['env'] == ['PANEL_SECRET=<скрыто>', 'PYTHONUNBUFFERED=1', 'TZ=UTC']
+
+
+# Состояние, которое сторожа переписывают по таймеру: имена берутся из их кода.
+WATCHDOG_STATE = (str(yt.STATE), '/var/lib/anysda-warp-watchdog/state.json',
+                  failover.LANE_STATE_FILE, failover.RESTART_STATE_FILE)
+STAND_RULES = REPO / 'infra/tests/fixtures/snapshot/ignore.yml'
+
+
+@pytest.fixture
+def installed(root):
+    """Узел после установки: состояние сторожей и конфиг рядом с ним."""
+    for name in WATCHDOG_STATE:
+        path = root / name.lstrip('/')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"checked_at": 1}\n')
+        path.chmod(0o644)
+    (root / 'var/lib/anysda-yt-failover/exits.conf').write_text('exit1\n')
+    return root
+
+
+@pytest.mark.parametrize('name', WATCHDOG_STATE)
+def test_timer_rewrite_of_watchdog_state_is_hidden_by_stand_rules(installed, name):
+    rules = snapshot.load_ignore(STAND_RULES)
+    before = collect(installed, fake())
+    (installed / name.lstrip('/')).write_text('{"checked_at": 2}\n')
+    after = collect(installed, fake())
+    assert diff(before, after) == [f'files {name} sha256: ' + diff(before, after)[0].split('sha256: ')[1]]
+    assert diff(before, after, rules) == []
+
+
+@pytest.mark.parametrize('name', WATCHDOG_STATE[:3])
+def test_watchdog_state_wrong_mode_is_still_named(installed, name):
+    before = collect(installed, fake())
+    (installed / name.lstrip('/')).chmod(0o666)
+    lines = diff(before, collect(installed, fake()), snapshot.load_ignore(STAND_RULES))
+    assert lines == [f'files {name} mode: "0644" -> "0666"']
+
+
+def test_config_change_is_caught_next_to_rewritten_state(installed):
+    before = collect(installed, fake())
+    for name in WATCHDOG_STATE:
+        (installed / name.lstrip('/')).write_text('{"checked_at": 3}\n')
+    (installed / 'etc/plain.conf').write_text('changed\n')
+    (installed / 'var/lib/anysda-yt-failover/exits.conf').write_text('exit2\n')
+    lines = diff(before, collect(installed, fake()), snapshot.load_ignore(STAND_RULES))
+    assert [line.split(' sha256: ')[0] for line in lines] == [
+        'files /etc/plain.conf', 'files /var/lib/anysda-yt-failover/exits.conf']

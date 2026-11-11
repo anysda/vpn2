@@ -28,7 +28,7 @@ def test_swap_plan_matches_stage(mem_kb, avail, size, text):
 
 
 MIB = 1024 ** 2
-ENTRY_INSTALL = 6 * 1024 ** 3  # base_swap_install_bytes роли base для entry
+ENTRY_INSTALL = swap.ENTRY_INSTALL  # base_swap_install_bytes роли base для entry
 ENTRY_MEASURED = 5556          # МиБ занято на entry 2 ГБ / 10 ГБ после установки, без swap
 CLEAN_OS = 2000                # МиБ занято чистой Ubuntu до первого шага
 # Диск entry: МиБ всего на ФС и резерв ext4, которого нет в «свободно».
@@ -43,6 +43,7 @@ def disk(layout, used):
 
 
 def test_role_gives_the_entry_install_size_this_file_counts_with():
+    assert ENTRY_INSTALL == 6 * 1024 ** 3
     defaults = (Path(__file__).parents[2] / 'ansible/roles/base/defaults/main.yml').read_text()
     assert f'base_swap_install_bytes: "{{{{ {ENTRY_INSTALL} if base_entry else 0 }}}}"' in defaults
     tasks = (Path(__file__).parents[2] / 'ansible/roles/base/tasks/main.yml').read_text()
@@ -330,6 +331,9 @@ def test_nft_preserve_writes_dropin_once(tmp_path):
     assert len(calls) == 1
 
 
+SWAPS_HEAD = 'Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n'
+
+
 class SwapNode:
     """Узел 2 ГБ без swap: swapon не берёт файл с дырами, пока его не записал dd."""
 
@@ -337,7 +341,9 @@ class SwapNode:
         self.root, self.calls, self.virt, self.holes, self.sizes = tmp_path, [], virt, holes, []
         self.usage = usage or types.SimpleNamespace(free=20 * 1024 ** 3, used=2 * 1024 ** 3)
         self.file = tmp_path / 'swapfile'
-        for name, text in (('proc/meminfo', 'MemTotal: 2014000 kB\n'), ('proc/swaps', 'Filename Type\n'),
+        self.swapoff_works = True
+        for name, text in (('proc/meminfo', 'MemTotal: 2014000 kB\nMemAvailable: 1228800 kB\n'),
+                           ('proc/swaps', SWAPS_HEAD),
                            ('etc/fstab', '/dev/vda1 / ext4 defaults 0 1\n'), ('etc/sysctl.d/.keep', '')):
             (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / name).write_text(text)
@@ -364,6 +370,10 @@ class SwapNode:
         if argv[0] == 'dd':
             self.file.write_bytes(b'')
             self.written = True
+        if argv[0] == 'swapoff':
+            if self.swapoff_works:
+                (self.root / 'proc/swaps').write_text(SWAPS_HEAD)
+            return self.swapoff_works
         return argv[0] != 'swapon' or self.written or not self.holes
 
     def leftover(self, size_mib):
@@ -371,6 +381,15 @@ class SwapNode:
         with self.file.open('wb') as output:
             output.truncate(size_mib * MIB)
         self.counted = size_mib * MIB
+
+    def active(self, size_mib, used_mib=0, extra=''):
+        """The same file switched on, used_mib of it holding pages."""
+        self.leftover(size_mib)
+        (self.root / 'proc/swaps').write_text(
+            f'{SWAPS_HEAD}{self.file} file {size_mib * 1024 - 4} {used_mib * 1024} -2\n{extra}')
+
+    def available(self, mib):
+        (self.root / 'proc/meminfo').write_text(f'MemTotal: 2014000 kB\nMemAvailable: {mib * 1024} kB\n')
 
 
 def test_swap_holey_file_recreated_with_dd(tmp_path, monkeypatch):
@@ -432,6 +451,137 @@ def test_swap_on_a_clean_8gb_entry_is_skipped_and_node_stays_as_is(tmp_path, mon
     assert swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL) is False
     assert node.calls == [] and 'установке 4144' in lines[0]
     assert 'swapfile' not in (tmp_path / 'etc/fstab').read_text()
+
+
+def test_fstab_line_of_a_swap_file_that_is_gone_for_good_is_dropped(tmp_path, monkeypatch):
+    # switched off and removed by the hint of the older refusal, and the disk has no room for a new one
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_8, ENTRY_MEASURED)), []
+    (tmp_path / 'etc/fstab').write_text(f'/dev/vda1 / ext4 defaults 0 1\n{node.file} none swap sw 0 0\n')
+    assert heal(tmp_path, lines) is True
+    assert (tmp_path / 'etc/fstab').read_text() == '/dev/vda1 / ext4 defaults 0 1\n'
+    assert heal(tmp_path, lines) is False and node.calls == []
+
+
+OLD_SWAP = 1962       # МиБ: /swapfile, который ставил v1.1.5 на узле 2 ГБ
+UPDATED = 5682        # МиБ занято без swap на узле из карточки после обновления на dev (свободно 1807)
+
+
+def old_node(tmp_path, monkeypatch, layout=DISK_10, used=UPDATED, **active):
+    node = SwapNode(tmp_path, monkeypatch, usage=disk(layout, used + OLD_SWAP), holes=False)
+    node.active(OLD_SWAP, **active)
+    (tmp_path / 'etc/fstab').write_text(f'/dev/vda1 / ext4 defaults 0 1\n{node.file} none swap sw 0 0\n')
+    return node, []
+
+
+def heal(tmp_path, lines):
+    return swap.ensure(tmp_path / 'none.json', lines.append, root=tmp_path, install_bytes=ENTRY_INSTALL)
+
+
+@pytest.mark.parametrize('used', [5386, UPDATED])  # перед обновлением с v1.1.5 (свободно 2103) и после него
+def test_swap_of_an_older_deploy_is_brought_to_the_planned_size(tmp_path, monkeypatch, used):
+    node, lines = old_node(tmp_path, monkeypatch, used=used)
+    assert disk(DISK_10, used + OLD_SWAP).free < MIN_FREE + 512 * MIB
+    assert heal(tmp_path, lines) is True
+    assert node.calls == ['swapoff', 'fallocate', 'mkswap', 'swapon'] and node.sizes == [747]
+    assert lines[0] == (f'swap: включённый {node.file} {OLD_SWAP} МиБ занимает место деплоя, '
+                        'пересоздаю в 747 МиБ')
+    assert (tmp_path / 'etc/fstab').read_text().count(str(node.file)) == 1
+    # what the next deploy sees: room for its check, and the healed swap is left alone
+    node.active(747)
+    node.usage, node.calls, said = disk(DISK_10, used + 747), [], len(lines)
+    assert node.usage.free >= MIN_FREE + 512 * MIB
+    assert heal(tmp_path, lines) is False
+    assert node.calls == [] and len(lines) == said
+
+
+def test_swap_in_use_above_free_memory_is_left_on(tmp_path, monkeypatch):
+    node, lines = old_node(tmp_path, monkeypatch, used_mib=900)
+    node.available(500)
+    assert heal(tmp_path, lines) is False
+    assert node.calls == [] and node.file.stat().st_size == OLD_SWAP * MIB
+    assert lines == [f'swap: {node.file} {OLD_SWAP} МиБ занимает место деплоя, но выключить его нельзя: '
+                     'в нём 900 МиБ, свободной памяти 500 МиБ; оставлен как есть']
+    # the same pages fit into memory: healed
+    node.available(1200)
+    assert heal(tmp_path, lines) is True and node.sizes == [747]
+
+
+def test_swap_that_does_not_switch_off_is_left_on(tmp_path, monkeypatch):
+    node, lines = old_node(tmp_path, monkeypatch)
+    node.swapoff_works = False
+    assert heal(tmp_path, lines) is False
+    assert node.calls == ['swapoff'] and node.file.stat().st_size == OLD_SWAP * MIB
+    assert lines[-1] == f'swap: swapoff {node.file} не прошёл, оставлен как есть'
+
+
+@pytest.mark.parametrize('swaps', [
+    '/dev/vda2 partition 2009084 0 -2\n',
+    '/swap.img file 2009084 0 -2\n',
+])
+def test_swap_that_is_not_our_file_is_not_touched(tmp_path, monkeypatch, swaps):
+    node, lines = old_node(tmp_path, monkeypatch)
+    # alone, and next to our file: a node somebody set up by hand stays as it is
+    for text in (SWAPS_HEAD + swaps, (tmp_path / 'proc/swaps').read_text() + swaps):
+        (tmp_path / 'proc/swaps').write_text(text)
+        assert heal(tmp_path, lines) is False
+    assert node.calls == [] and lines == [] and node.file.stat().st_size == OLD_SWAP * MIB
+
+
+def test_old_swap_on_a_40gb_entry_is_left_alone(tmp_path, monkeypatch):
+    node, lines = old_node(tmp_path, monkeypatch, layout=DISK_40)
+    assert heal(tmp_path, lines) is False
+    assert node.calls == [] and lines == []
+
+
+def test_old_swap_with_no_room_for_any_is_removed_with_its_fstab_line(tmp_path, monkeypatch):
+    node, lines = old_node(tmp_path, monkeypatch, layout=DISK_8, used=ENTRY_MEASURED)
+    assert heal(tmp_path, lines) is True
+    assert node.calls == ['swapoff'] and not node.file.exists()
+    assert 'пересоздаю' not in lines[0] and 'убираю' in lines[0] and lines[1].startswith('swap пропущен')
+    assert (tmp_path / 'etc/fstab').read_text() == '/dev/vda1 / ext4 defaults 0 1\n'
+    node.calls = []
+    assert heal(tmp_path, lines) is False and node.calls == []
+
+
+def test_healed_swap_is_not_reshaped_for_a_few_megabytes(tmp_path, monkeypatch):
+    # the disk fills up slowly: swap is rebuilt in steps of 256 MiB, not on every deploy
+    node = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_10, 6244 + 747), holes=False)
+    node.active(747)
+    assert MIN_FREE + 512 * MIB - node.usage.free == 100 * MIB
+    assert heal(tmp_path, []) is False and node.calls == []
+    node.usage = disk(DISK_10, 6444 + 747)
+    assert heal(tmp_path, []) is True and node.sizes == [447]
+
+
+def release(tmp_path, lines, install=ENTRY_INSTALL):
+    return swap.release(MIN_FREE, lines.append, proc=tmp_path / 'proc', install_bytes=install)
+
+
+def test_release_before_the_backup_check_heals_the_node_stuck_after_update(tmp_path, monkeypatch):
+    node, lines = old_node(tmp_path, monkeypatch)
+    assert node.usage.free == 1807 * MIB < MIN_FREE
+    assert release(tmp_path, lines) is True
+    assert node.calls == ['swapoff', 'fallocate', 'mkswap', 'swapon'] and node.sizes == [747]
+    assert node.disk_usage().free - 747 * MIB >= MIN_FREE + 512 * MIB
+
+
+def test_release_removes_a_switched_off_file_and_leaves_the_rest(tmp_path, monkeypatch):
+    node, lines = SwapNode(tmp_path, monkeypatch, usage=disk(DISK_10, UPDATED + OLD_SWAP), holes=False), []
+    node.leftover(OLD_SWAP)
+    assert release(tmp_path, lines) is True
+    assert node.calls == [] and not node.file.exists()
+    assert lines == [f'swap: выключенный {node.file} {OLD_SWAP} МиБ занимает место деплоя, убираю']
+    # no file, a container, somebody's partition, a host without /proc/swaps: nothing to give back
+    assert release(tmp_path, lines) is False
+    node.active(OLD_SWAP)
+    node.virt = 'lxc'
+    assert release(tmp_path, lines) is False
+    node.virt = 'none'
+    (tmp_path / 'proc/swaps').write_text(SWAPS_HEAD + '/dev/vda2 partition 2009084 0 -2\n')
+    assert release(tmp_path, lines) is False
+    (tmp_path / 'proc/swaps').unlink()
+    assert release(tmp_path, lines) is False
+    assert node.calls == [] and len(lines) == 1 and node.file.exists()
 
 
 def test_swap_step_passes_the_install_size(monkeypatch):

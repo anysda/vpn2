@@ -128,5 +128,73 @@ class PreflightAfterCleanInstallTests(unittest.TestCase):
         self.assertIn('insufficient disk space before backup', self.refusal(free - room - 1))
 
 
+class PreflightHealsOldSwapTests(unittest.TestCase):
+    """Entry installed by v1.1.5 and updated: 1807 MiB free, /swapfile 1962 MiB is on.
+
+    The check gives the swap step of the package a chance before it refuses:
+    no manual swapoff on update. What the step does to the file is covered in
+    infra/vpn2/tests/test_host.py; here - that preflight calls it and counts again.
+    """
+
+    def preflight(self, free_before, freed, entry=True):
+        state = module('deploy_state')
+        release = module('release')
+        free, calls = [free_before], []
+
+        def give_back(min_free, say, *, proc, install_bytes):
+            calls.append((min_free, str(proc), install_bytes))
+            if freed:
+                say('swap: stub')
+                free[0] += freed
+            return bool(freed)
+
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            (work / 'os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+            (work / 'meminfo').write_text('MemAvailable: 4000000 kB\n')
+            if entry:
+                (work / 'db.sqlite').write_bytes(b'')
+            manifest = {'os': {'ubuntu': ['26.04']}, 'architectures': [release.architecture()],
+                        'min_free_bytes': 2 * GIB, 'min_memory_bytes': 0, 'database': {},
+                        'local_service_api': {'min': 0, 'max': 2 ** 31}}
+            usage = patch.object(state.shutil, 'disk_usage', lambda _path: type('Usage', (), {'free': free[0]}))
+            with usage, fake_swapfile(1962 * MIB), patch.object(state.swap, 'release', give_back), \
+                    patch.object(state, 'compatible', lambda *_args, **_kwargs: None):
+                try:
+                    state.preflight(manifest, work / 'db.sqlite', work, work / 'os-release', work / 'meminfo',
+                                    warn=False)
+                    refusal = ''
+                except state.ReleaseError as refused:
+                    refusal = str(refused)
+            return refusal, [(low, place == str(work), install) for low, place, install in calls]
+
+    def test_1_stuck_entry_goes_on_after_swap_gave_the_room_back(self):
+        refusal, calls = self.preflight(1807 * MIB, (1962 - 747) * MIB)
+        self.assertEqual(refusal, '')
+        self.assertEqual(calls, [(2 * GIB, True, 6 * GIB)])
+
+    def test_2_exit_has_no_install_to_keep_room_for(self):
+        refusal, calls = self.preflight(1807 * MIB, (1962 - 747) * MIB, entry=False)
+        self.assertEqual((refusal, calls), ('', [(2 * GIB, True, 0)]))
+
+    def test_3_swap_that_could_not_be_healed_keeps_the_refusal(self):
+        refusal, calls = self.preflight(1807 * MIB, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn('insufficient disk space before backup; services unchanged', refusal)
+        self.assertIn('/swapfile 1962 MiB', refusal)
+
+    def test_4_room_given_back_but_still_too_little_is_refused(self):
+        refusal, _ = self.preflight(500 * MIB, 1215 * MIB)
+        self.assertIn('insufficient disk space before backup', refusal)
+
+    def test_5_enough_room_leaves_swap_alone(self):
+        self.assertEqual(self.preflight(2 * GIB, 0), ('', []))
+
+    def test_6_swap_state_is_read_next_to_meminfo_never_from_the_machine_running_the_test(self):
+        from vpn2 import swap
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(swap.release(2 ** 62, self.fail, proc=directory, install_bytes=0))
+
+
 if __name__ == '__main__':
     unittest.main()

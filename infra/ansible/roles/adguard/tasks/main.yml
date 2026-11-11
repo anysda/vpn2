@@ -99,13 +99,6 @@
   register: adguard_restart
   changed_when: "'changed=1' in adguard_restart.stdout"
 
-- name: Правила ufw прежней mesh-сети убраны
-  ansible.builtin.command:
-    argv: "{{ adguard_step + ['legacy'] }}"
-  environment: "{{ adguard_env }}"
-  register: adguard_legacy
-  changed_when: "'changed=1' in adguard_legacy.stdout"
-
 - name: Отметка стадии
   ansible.builtin.copy:
     content: ''

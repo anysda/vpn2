@@ -1,8 +1,6 @@
 import io
 import json
 import socket
-import threading
-import time
 import urllib.error
 import urllib.parse
 from pathlib import Path

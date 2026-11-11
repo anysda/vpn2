@@ -282,20 +282,9 @@ def restart():
     return changed
 
 
-def legacy(environ):
-    """Правила ufw прежней mesh-сети: порт 53 теперь открывают стадии туннелей."""
-    bind = environ.get('MGMT_IP') or '10.99.0.1'
-    changed = False
-    for proto in ('udp', 'tcp'):
-        done = subprocess.run(['ufw', 'delete', 'allow', 'proto', proto, 'from', '10.99.0.0/24', 'to', bind,
-                               'port', '53'], capture_output=True, text=True, check=False)
-        changed |= done.returncode == 0 and 'non-existent' not in done.stdout + done.stderr
-    return changed
-
-
 def main(argv):
     parser = argparse.ArgumentParser(prog='vpn2 adguard')
-    parser.add_argument('step', choices=('binary', 'limits', 'config', 'restart', 'legacy'))
+    parser.add_argument('step', choices=('binary', 'limits', 'config', 'restart'))
     args = parser.parse_args(argv)
     environ = os.environ
     try:
@@ -306,10 +295,8 @@ def main(argv):
             changed = install_binary(environ)
         elif args.step == 'config':
             changed = configure(environ)
-        elif args.step == 'restart':
-            changed = restart()
         else:
-            changed = legacy(environ)
+            changed = restart()
     except (StageError, KeyError, OSError, subprocess.CalledProcessError) as error:
         sys.stderr.write(f'vpn2 adguard {args.step}: {error!r}\n')
         return 1

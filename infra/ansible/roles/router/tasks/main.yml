@@ -45,11 +45,11 @@
     argv: "{{ router_step + ['entry-addrs'] }}"
   changed_when: false
 
-- name: Следы прежних выпусков убраны
-  ansible.builtin.command:
-    argv: "{{ router_step + ['legacy'] }}"
-  register: router_legacy
-  changed_when: "'changed=1' in router_legacy.stdout"
+- name: Скрипты прежних выпусков убраны
+  ansible.builtin.file:
+    path: "/usr/local/sbin/{{ item }}"
+    state: absent
+  loop: [vpn2-entry-addrs, anysda-apply-routes.py]
 
 - name: Секреты экзитов
   ansible.builtin.copy:

@@ -1,4 +1,4 @@
-"""vpn2 router rule-sets|base-config|restart|ssh-config|legacy - шаги роли router.
+"""vpn2 router rule-sets|base-config|restart|ssh-config - шаги роли router.
 
 Каждый шаг печатает последней строкой `changed=0|1`: по ней роль решает,
 менялся ли узел.
@@ -10,7 +10,6 @@ import io
 import os
 import re
 import secrets
-import shutil
 import string
 import subprocess
 import sys
@@ -303,37 +302,6 @@ def ssh_config(tags, environ, hostkeys, ssh_dir=SSH_DIR):
     return changed
 
 
-def legacy():
-    """Следы Shadowsocks/Outline прежних выпусков; на чистом узле ничего не делает."""
-    changed = False
-    for unit in ('anysda-iptables', 'outline-ss-server'):
-        path = Path(f'/etc/systemd/system/{unit}.service')
-        if path.is_file():
-            subprocess.run(['systemctl', 'disable', '--now', unit], capture_output=True)
-            path.unlink()
-            changed = True
-    script = Path('/usr/local/sbin/anysda-iptables.sh')
-    if os.access(script, os.X_OK):
-        subprocess.run([str(script), 'down'], capture_output=True)
-    for path in (script, Path('/usr/local/bin/outline-ss-server'), Path('/etc/outline-ss-server'),
-                 Path('/usr/local/sbin/vpn2-entry-addrs'), Path('/usr/local/sbin/anysda-apply-routes.py')):
-        if path.is_dir():
-            shutil.rmtree(path)
-            changed = True
-        elif path.exists():
-            path.unlink()
-            changed = True
-    if subprocess.run(['id', 'outline'], capture_output=True).returncode == 0:
-        subprocess.run(['userdel', 'outline'], capture_output=True)
-        changed = True
-    # clash-api слушает адрес на lo: правило ufw времён mesh больше не нужно.
-    rule = ['allow', 'proto', 'tcp', 'from', '10.99.0.0/24', 'to', 'any', 'port', '9090']
-    if shutil.which('ufw'):
-        out = subprocess.run(['ufw', 'delete', *rule], capture_output=True, text=True).stdout
-        changed |= 'Rule deleted' in out
-    return changed
-
-
 def base_config(args):
     foreign_file = Path(args.secrets)
     if not foreign_file.is_file():
@@ -359,7 +327,6 @@ def main(argv):
     sub.add_parser('restart')
     step = sub.add_parser('ssh-config')
     step.add_argument('--hostkeys', default='/tmp/anysda/exit-hostkeys')
-    sub.add_parser('legacy')
     args = parser.parse_args(argv)
     try:
         if args.step == 'rule-sets':
@@ -368,10 +335,8 @@ def main(argv):
             changed = base_config(args)
         elif args.step == 'restart':
             changed = restart()
-        elif args.step == 'ssh-config':
-            changed = ssh_config(os.environ.get('EXIT_TAGS', '').split(), os.environ, args.hostkeys)
         else:
-            changed = legacy()
+            changed = ssh_config(os.environ.get('EXIT_TAGS', '').split(), os.environ, args.hostkeys)
     except (StageError, subprocess.CalledProcessError) as error:
         sys.stderr.write(f'{error}\n')
         return 1

@@ -10,7 +10,7 @@ KINDS = {
     'apply-routes': ('apply_routes', 'main'),
 }
 # Шаги установки: разбирает сам модуль vpn2.router.stage.
-STEPS = ('rule-sets', 'base-config', 'restart', 'ssh-config', 'legacy')
+STEPS = ('rule-sets', 'base-config', 'restart', 'ssh-config')
 
 
 def main(argv):

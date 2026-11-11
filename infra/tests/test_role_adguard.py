@@ -63,7 +63,7 @@ class AdguardRoleTests(unittest.TestCase):
             argv = str(task.get('ansible.builtin.command', {}).get('argv'))
             if 'adguard_step' in argv:
                 steps[argv.split("'")[1]] = task
-        self.assertEqual(list(steps), ['binary', 'config', 'limits', 'restart', 'legacy'])
+        self.assertEqual(list(steps), ['binary', 'config', 'limits', 'restart'])
         for name, task in steps.items():
             # Шаг сам говорит, менял ли он хост: повтор роли остаётся без изменений.
             expected = False if name == 'limits' else f"'changed=1' in {task['register']}.stdout"

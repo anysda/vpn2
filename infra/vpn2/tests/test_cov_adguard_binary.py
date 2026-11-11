@@ -94,35 +94,6 @@ def rule(proto, bind='10.99.0.1'):
     return f'allow proto {proto} from 10.99.0.0/24 to {bind} port 53'
 
 
-def test_legacy_rules_are_removed_once(ufw):
-    ufw.write_text('\n'.join([rule('udp'), 'allow 22/tcp', rule('tcp')]))
-    assert stage.legacy({}) is True
-    assert ufw.read_text() == 'allow 22/tcp'
-    assert stage.legacy({}) is False
-
-
-def test_legacy_follows_the_management_address(ufw):
-    ufw.write_text(rule('udp', '10.99.0.7'))
-    assert stage.legacy({'MGMT_IP': '10.99.0.1'}) is False
-    assert stage.legacy({'MGMT_IP': '10.99.0.7'}) is True
-    assert ufw.read_text() == ''
-
-
-def test_legacy_step_reports_changed_last(ufw, capsys):
-    ufw.write_text(rule('tcp'))
-    assert stage.main(['legacy']) == 0
-    assert capsys.readouterr().out.splitlines()[-1] == 'changed=1'
-    assert stage.main(['legacy']) == 0
-    assert capsys.readouterr().out.splitlines()[-1] == 'changed=0'
-
-
-def test_step_without_its_program_is_an_error_for_the_operator(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv('PATH', str(tmp_path))
-    assert stage.main(['legacy']) == 1
-    out, err = capsys.readouterr()
-    assert err.startswith('vpn2 adguard legacy: FileNotFoundError') and 'changed=' not in out
-
-
 def test_unknown_step_is_a_usage_error(capsys):
     with pytest.raises(SystemExit) as stop:
         stage.main(['everything'])

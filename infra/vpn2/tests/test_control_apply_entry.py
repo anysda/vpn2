@@ -3,8 +3,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import wg
-from vpn2.control import apply
 
 INFRA = Path(__file__).resolve().parents[2]
 SRC = INFRA / 'vpn2/src'

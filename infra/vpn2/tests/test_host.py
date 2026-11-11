@@ -374,11 +374,25 @@ def test_exit_venv_aborted_build_leaves_the_current_one(tmp_path):
     assert [item.name for item in (tmp_path / 'root/venvs').iterdir()] == [link.resolve().name]
 
 
-def test_exit_venv_directory_of_old_release_becomes_link(tmp_path):
+@pytest.mark.parametrize('exchange', [True, False])
+def test_exit_venv_directory_of_old_release_becomes_link(tmp_path, monkeypatch, exchange):
+    # One rename syscall does the swap, whatever coreutils the host has; two
+    # renames are the path only where the syscall is refused.
+    seen = []
+    real = host.pki._exchange
+
+    def swap_names(source, target):
+        seen.append(target.name)
+        if not exchange:
+            raise OSError(38, 'no renameat2')
+        real(source, target)
+
+    monkeypatch.setattr(host.pki, '_exchange', swap_names)
     old = tmp_path / 'root/venv'
     old.mkdir(parents=True)
     (old / '.vpn2-wheel').write_text('old\n')
     assert exit_venv(tmp_path, b'one') == 0
+    assert seen == ['venv']
     assert old.is_symlink() and exit_venv_runs(tmp_path) == 'vpn2\n'
     assert sorted(item.name for item in (tmp_path / 'root').iterdir()) == ['venv', 'venvs']
     assert len(list((tmp_path / 'root/venvs').iterdir())) == 1

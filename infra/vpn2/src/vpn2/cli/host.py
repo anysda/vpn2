@@ -193,13 +193,15 @@ def _venv(args):
     fresh.symlink_to(f'venvs/{venv.name}')
     if not link.is_dir() or link.is_symlink():
         fresh.replace(link)
-    elif subprocess.run(['mv', '--exchange', '-T', str(fresh), str(link)],
-                        stderr=subprocess.DEVNULL).returncode == 0:
-        # Каталог прежних выпусков: обмен именами одним вызовом (coreutils 9.5).
-        shutil.rmtree(fresh)
     else:
-        link.rename(aside)
-        fresh.replace(link)
+        # Каталог прежних выпусков: обмен именами одним системным вызовом, на
+        # любой coreutils; два переименования - только где обмена нет.
+        try:
+            pki._exchange(fresh, link)
+            shutil.rmtree(fresh)
+        except OSError:
+            link.rename(aside)
+            fresh.replace(link)
     for old in builds.iterdir():
         if old.name != venv.name and not _venv_in_use(old.name):
             shutil.rmtree(old)

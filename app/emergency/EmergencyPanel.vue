@@ -183,7 +183,7 @@ onUnmounted(() => { clearInterval(timer); observer?.disconnect(); removeEventLis
               </div>
             </div>
           </div>
-          <div class="card sc bc">
+          <div class="card sc bc ov-broadcast">
             <div class="sh"><h3>Рассылка от бота</h3></div>
             <textarea v-model="message" maxlength="4096" placeholder="Текст сообщения всем клиентам с ботом" aria-label="Сообщение юзерам" />
             <div class="arow">

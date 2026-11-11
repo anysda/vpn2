@@ -46,7 +46,7 @@ test.describe('emergency', () => {
     // Сохранённые элементы основной страницы: шрифт, размеры, скругления и отступы должны совпасть.
     const desktopRetained = ['.wrap>header .logo span', '.head h1', '.inp input', '.thead span',
       '.crow', '.crow .who b', '.crow .who small', '.crow .av', '.cdh h2', '.cdh .av', '.dev b', '.ov-broadcast textarea']
-    const mobileListRetained = ['.mhead h1', '.mhead p', '.crow', '.crow>.av', '.crow .who b', '.crow .who small']
+    const mobileListRetained = ['.mhead h1', '.mhead p', '.crow', '.crow .av', '.crow .who b', '.crow .who small']
     const mobileDetailRetained = ['.wrap>header .cbk', '.mhead h1', '.cdh h2', '.cdh .av', '.dev b']
     // Снимок после конца анимаций: смена ширины перестраивает каркас с плавным появлением.
     async function shot(target: Page, name: string) {

@@ -915,8 +915,8 @@ test.describe('mobile-clients', { tag: '@mobile' }, () => {
   async function rowFits(row: Locator) {
     const m = await row.evaluate((el) => {
       const r = el.getBoundingClientRect()
-      const who = el.querySelector('.who')!.getBoundingClientRect()
-      const right = el.querySelector('.crt')!.getBoundingClientRect()
+      const who = el.querySelector('.who>div')!.getBoundingClientRect()
+      const right = el.querySelector('.cxp')!.getBoundingClientRect()
       const name = el.querySelector('.who b')!.getBoundingClientRect()
       return { h: r.height, right: r.right, vw: document.documentElement.clientWidth, gap: right.left - who.right, nameH: name.height }
     })

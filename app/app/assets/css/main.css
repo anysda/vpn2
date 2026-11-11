@@ -14,7 +14,7 @@
    полный набор @font-face в каждый CSS, где назван шрифт, и при переходах по
    разделам копии копились бы в document.fonts. Файлы - из пакета
    @fontsource-variable/manrope (поставщик manrope в nuxt.config.ts).
-   Остальное, и panel.css тоже, берёт var(--font-sans) (e2e/fonts.spec.ts). */
+   Остальное, и panel.css тоже, берёт var(--font-sans). */
 @theme static {
   --font-sans: 'Manrope', system-ui, sans-serif;
 }

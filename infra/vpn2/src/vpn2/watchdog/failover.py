@@ -309,12 +309,15 @@ def _probe(tag, out, errs=None, url=PROBE_URL):
             errs[tag] = probe.probe_error(e)
 
 
-def _probe_all(members, url=PROBE_URL, known_dead=None, slow=None):
+def _probe_all(members, url=PROBE_URL, known_dead=None, slow=None, recheck=None):
     """Параллельный опрос всех членов. Тик не виснет дольше JOIN_DEADLINE —
     мёртвый экзит не тормозит остальных.
     known_dead задаёт проверка каналов: теги, чья смерть уже учтена. Их ответа
     ждём только KNOWN_DEAD_WAIT; не дождались - проба идёт дальше, её итог
-    заберёт следующий такой опрос. slow - где лежат недождавшиеся пробы."""
+    заберёт следующий такой опрос. slow - где лежат недождавшиеся пробы.
+    recheck = (теги, итог): опрос ждёт молчащего дольше такта - ответившие теги
+    пробуем второй раз, их вторые ответы кладём в итог. Иначе канал, умерший
+    сразу после своего ответа, ждал бы чужой тайм-аут без проверки."""
     slow = _slow_probes if slow is None else slow
     probes = {}
     for m in members:
@@ -328,9 +331,23 @@ def _probe_all(members, url=PROBE_URL, known_dead=None, slow=None):
         probes[m] = probe
     hurry = known_dead or ()
     start = time.monotonic()
+    second = {}
+    patient = [m for m in probes if m not in hurry]
+    if recheck:
+        for m in patient:
+            probes[m][0].join(max(0.0, start + INTERVAL - time.monotonic()))
+        if any(probes[m][0].is_alive() for m in patient):
+            for m in recheck[0]:
+                if m in patient and probes[m][1].get(m) is not None:
+                    out = {}
+                    second[m] = (threading.Thread(target=_probe, args=(m, out, None, url), daemon=True), out)
+                    second[m][0].start()
     for m in sorted(probes, key=lambda m: m in hurry):
         wait = KNOWN_DEAD_WAIT if m in hurry else JOIN_DEADLINE
         probes[m][0].join(max(0.0, start + wait - time.monotonic()))
+    for m, (thread, out) in second.items():
+        thread.join(max(0.0, start + INTERVAL + JOIN_DEADLINE - time.monotonic()))
+        recheck[1][m] = out.get(m)
     result: dict = {}
     errors: dict = {}
     for m, (thread, out, errs) in probes.items():
@@ -1426,7 +1443,9 @@ def transport_tick(proxies):
     spare = {v[0]: v[1] for v in deciders.values()}
     first = [v[0] for v in deciders.values()] \
         + [v[1] for s, v in deciders.items() if s in on_tcp or v[0] in known]
-    delays, _ = _probe_all(first, known_dead=known)
+    second: dict = {}
+    delays, _ = _probe_all(first, known_dead=known,
+                           recheck=([v[0] for s, v in deciders.items() if s not in on_tcp], second))
     tries = dict.fromkeys(first, 1)
     dead = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is None]
     fresh = [h for h in dead if h not in known]
@@ -1441,6 +1460,10 @@ def transport_tick(proxies):
     # этого не растёт: недосчитанное переходит в следующий, он идёт без паузы.
     miss = {h: 1 + _late_miss.get(h, 0) for h in fresh}
     watch = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is not None]
+    # Ответивший умер, пока опрос ждал молчащего соседа: вторая проба это уже
+    # показала, счёт его промахов идёт с неё.
+    miss.update({h: 1 for h in watch if h in second and second[h] is None})
+    watch = [h for h in watch if h not in miss]
     for _ in range(DEAD_AFTER - 1):
         fresh = [h for h in miss if miss[h] < DEAD_AFTER]
         if not fresh and not tcp_dead and not hy2_miss:
@@ -1467,7 +1490,20 @@ def transport_tick(proxies):
         hy2_miss = [h for h in hy2_miss if again[h] is None]
     _late_miss.clear()
     _late_miss.update({h: n for h, n in miss.items() if n < DEAD_AFTER})
-    dead = [h for h in dead if h in known or miss.get(h, 0) >= DEAD_AFTER]
+    dead = [h for h in dead if h in known] + [h for h, n in miss.items() if n >= DEAD_AFTER]
+    # Канал с готовым вердиктом (hy2 мёртв, TCP ответил) до-проверку чужого TCP
+    # не ждёт: она стоит ещё тайм-аут пробы, а простой идёт у клиента.
+    for s, (hy2, tcp, node, kind) in deciders.items():
+        if s in on_tcp or s in _hy2_rise or hy2 not in dead or delays.get(tcp) is None:
+            continue
+        _switch_gen += 1   # до PUT: замер выходов, идущий сейчас, уже не в счёт
+        follow = [m for m, v in pairs.items() if v[3] == 'mgmt' and v[2] == node and kind == 'direct']
+        for name in (s, *follow):
+            target = pairs[name][1]
+            if proxies[name].get('now') != target:
+                _req('PUT', f'/proxies/{urllib.parse.quote(name)}', {'name': target})
+                proxies[name]['now'] = target
+                print(f'{name} -> {target}', flush=True)
     # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка
     # до DEAD_AFTER проб, иначе канал остаётся на мёртвом hy2.
     while True:
@@ -1554,9 +1590,12 @@ def _transport_pass():
 def _transport_loop():
     """Свой такт проверки каналов: остальные проходы цикла её не задерживают."""
     while True:
+        start = time.monotonic()
         _transport_pass()
+        # Такт считаем от начала прохода: медленная проба живого канала не
+        # отодвигает следующую проверку остальных.
         if not _late_miss:
-            time.sleep(INTERVAL)
+            time.sleep(max(0.0, INTERVAL - (time.monotonic() - start)))
 
 
 def main(serial=False):

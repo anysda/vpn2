@@ -1,8 +1,9 @@
 """Bounded, crash-safe state; monotonic timestamps are scoped to a host boot."""
 
 import json
-import os
 from pathlib import Path
+
+from .. import fsutil
 
 MAX_STATE_BYTES = 262144
 
@@ -32,15 +33,4 @@ class State:
         raw = json.dumps(self.data, separators=(',', ':'), allow_nan=False).encode()
         if len(raw) > MAX_STATE_BYTES:
             raise ValueError('agent state exceeds limit')
-        temporary = self.directory / 'agent.json.new'
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, self.path)
-        directory_fd = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        fsutil.atomic(self.path, raw)

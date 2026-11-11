@@ -20,7 +20,7 @@ ROLE = ROOT / 'infra/ansible/roles/emergency'
 
 def module():
     path = ROOT / 'infra/vpn2/src/vpn2/emergency/hy2.py'
-    spec = importlib.util.spec_from_file_location('emergency_hy2', path)
+    spec = importlib.util.spec_from_file_location('vpn2.emergency.hy2_fresh', path)
     loaded = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(loaded)
     return loaded

@@ -2,7 +2,6 @@
 
 import argparse
 import fcntl
-import importlib
 import json
 import logging
 from pathlib import Path
@@ -16,27 +15,8 @@ import uuid
 from .heartbeat import Heartbeat, MAX_PACKET, MISSED, PERIOD, decode, encode
 from .leader import Leader
 from .lifecycle import Lifecycle
+from .snapshot import discard as discard_snapshot, load as load_snapshot
 from .state import State
-
-
-def load_snapshot(state_dir):
-    try:
-        module = importlib.import_module('.snapshot', __package__)
-    except ModuleNotFoundError as error:
-        if error.name != __package__ + '.snapshot':
-            raise
-        return None
-    return module.load(state_dir)
-
-
-def discard_snapshot(state_dir, installation_id):
-    try:
-        module = importlib.import_module('.snapshot', __package__)
-    except ModuleNotFoundError as error:
-        if error.name != __package__ + '.snapshot':
-            raise
-        return False
-    return module.discard(state_dir, installation_id)
 
 
 class Agent:
@@ -154,7 +134,8 @@ class Agent:
             if snapshot is not None:
                 exits = snapshot['exits']
                 if self.leader is None:
-                    self.leader = Leader(self.state, self.node, exits, self.installation, now, wall=self.wall)
+                    self.leader = Leader(self.state, self.node, exits, self.installation, now,
+                                         self.lifecycle, self.wall)
                 elif {item['id']: (item['priority'], item['id']) for item in exits} != self.leader.ranks:
                     # Membership changes require a full lease without voting.
                     # Wave integration can explicitly restart after snapshot update.
@@ -295,7 +276,6 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     agent = Agent(json.loads(Path(args.config).read_text()), args.state_dir)
     agent.lifecycle = Lifecycle(agent)
-    agent.lifecycle.attach()
 
     def stop(_signum, _frame):
         agent.stop_requested = True

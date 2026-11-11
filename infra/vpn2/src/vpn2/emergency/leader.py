@@ -10,7 +10,6 @@ import math
 import time
 import uuid
 
-from . import hooks
 from .heartbeat import MISSED, PERIOD
 
 # Failover budget is 90 s. A follower honours the dead leader for LEASE after
@@ -59,13 +58,20 @@ def valid_recovery(value):
                     for key in ('confirmed', *optional)))
 
 
+class _Silent:
+    """Stands in for the lifecycle until one is attached."""
+
+    def __getattr__(self, name):
+        return lambda *args: None
+
+
 class Leader:
-    def __init__(self, state, node, exits, installation, now, events=hooks, wall=time.time):
+    def __init__(self, state, node, exits, installation, now, events=None, wall=time.time):
         self.state = state
         self.wall = wall
         self.node = node
         self.installation = installation
-        self.events = events
+        self.events = events or _Silent()
         self.ranks = {item['id']: (item['priority'], item['id']) for item in exits}
         if node not in self.ranks or len(self.ranks) > 64:
             raise ValueError('invalid election membership')

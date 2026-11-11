@@ -24,7 +24,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
-from vpn2.emergency import hooks, hy2, tgqueue, web  # noqa: E402
+from vpn2.emergency import hy2, tgqueue, web  # noqa: E402
 from vpn2.emergency.leader import GUARD, STABLE, Leader  # noqa: E402
 from vpn2.emergency.state import State  # noqa: E402
 from vpn2.emergency import lifecycle  # noqa: E402
@@ -135,7 +135,7 @@ class Agent:
         self.snapshot_loader = load_snapshot
         self.ready = False
         self.entry_check = None
-        self.leader = Leader(self.state, 'a', EXITS, 'fixture', 0, events=hooks, wall=wall)
+        self.leader = Leader(self.state, 'a', EXITS, 'fixture', 0, wall=wall)
 
 
 class LifecycleTests(unittest.TestCase):
@@ -161,7 +161,6 @@ class LifecycleTests(unittest.TestCase):
         self.addCleanup(self.bot.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(self.bot.shutdown)
-        self.addCleanup(hooks._listeners.clear)
         self.wall = WALL
         self.now = 0.0
         self.hy2 = FakeHy2()
@@ -179,12 +178,11 @@ class LifecycleTests(unittest.TestCase):
         return server
 
     def make(self):
-        hooks._listeners.clear()
         cycle = lifecycle.Lifecycle(
             self.agent, hy2_module=self.hy2, web_module=types.SimpleNamespace(make_server=self.make_server),
             threaded=False, api_base=f'http://127.0.0.1:{self.bot.server_port}',
             probe_ready=lambda: True, probe_entry=lambda _host: True)
-        cycle.attach()
+        self.agent.leader.events = cycle
         return cycle
 
     def advance(self, seconds, ready=True):
@@ -228,14 +226,13 @@ class LifecycleTests(unittest.TestCase):
         static = self.directory / 'static'
         static.mkdir()
         (static / 'instructions.html').write_bytes((ROOT / 'app/emergency/instructions.html').read_bytes())
-        self.agent.leader = Leader(self.agent.state, 'a', exits, 'fixture', 0, events=hooks, wall=self.agent.wall)
-        hooks._listeners.clear()
+        self.agent.leader = Leader(self.agent.state, 'a', exits, 'fixture', 0, wall=self.agent.wall)
         make_server = functools.partial(web.make_server, static_dir=static, cert_dir=self.directory / 'no-tls')
         cycle = lifecycle.Lifecycle(
             self.agent, hy2_module=self.hy2, web_module=types.SimpleNamespace(make_server=make_server),
             threaded=False, panel_address=('127.0.0.1', 0), api_base=f'http://127.0.0.1:{self.bot.server_port}',
             probe_ready=lambda: True, probe_entry=lambda _host: True)
-        cycle.attach()
+        self.agent.leader.events = cycle
         self.addCleanup(cycle.close)
 
         def get(path):
@@ -439,7 +436,7 @@ class LifecycleTests(unittest.TestCase):
         sent = len(self.bot.texts)
         self.agent.state.save()
         wall = self.agent.wall
-        self.agent.leader = Leader(self.agent.state, 'a', EXITS, 'fixture', self.now, events=hooks, wall=wall)
+        self.agent.leader = Leader(self.agent.state, 'a', EXITS, 'fixture', self.now, wall=wall)
         self.lifecycle = self.make()
         self.advance(30)
         self.assertEqual(self.agent.leader.data['recovery']['deadline'], deadline)
@@ -452,8 +449,7 @@ class LifecycleTests(unittest.TestCase):
         self.agent.state.data['clock_boot'] = 'other'
         self.agent.state.save()
         self.agent.state = State(self.directory)
-        self.agent.leader = Leader(self.agent.state, 'a', EXITS, 'fixture', self.now, events=hooks,
-                                   wall=self.agent.wall)
+        self.agent.leader = Leader(self.agent.state, 'a', EXITS, 'fixture', self.now, wall=self.agent.wall)
         self.assertEqual(self.agent.leader.data['role'], 'observer')
         self.lifecycle = self.make()
         self.advance(GUARD + 60, ready=None)
@@ -598,17 +594,15 @@ class RealHy2Tests(unittest.TestCase):
         self.addCleanup(self.clash.server_close)
         self.addCleanup(thread.join)
         self.addCleanup(self.clash.shutdown)
-        self.addCleanup(hooks._listeners.clear)
         self.now, self.wall = 0.0, WALL
         self.agent = Agent(self.directory, lambda: self.wall)
-        hooks._listeners.clear()
         self.lifecycle = lifecycle.Lifecycle(
             self.agent, threaded=False, panel_address=('127.0.0.1', 0),
             hy2_options={'server_ip': '203.0.113.10', 'port': self.clash.server_port,
                          'tls_dir': str(self.directory / 'no-tls'),
                          'runtime_dir': str(self.directory / 'hy2')},
             api_base='http://127.0.0.1:9', probe_ready=lambda: True, probe_entry=lambda _host: True)
-        self.lifecycle.attach()
+        self.agent.leader.events = self.lifecycle
         self.addCleanup(self.lifecycle.close)
 
     def advance(self, seconds, ready=None):
@@ -694,7 +688,6 @@ class RealHy2Tests(unittest.TestCase):
         # by Hysteria2 and the panel; an open panel connection keeps its own.
         renewals = Renewals(self.directory, '203.0.113.10')
         self.lifecycle.close()
-        hooks._listeners.clear()
         make_server = functools.partial(web.make_server, cert_dir=renewals.output)
         self.lifecycle = lifecycle.Lifecycle(
             self.agent, threaded=False, panel_address=('127.0.0.1', 0),
@@ -702,7 +695,7 @@ class RealHy2Tests(unittest.TestCase):
             hy2_options={'server_ip': '203.0.113.10', 'port': self.clash.server_port,
                          'tls_dir': str(renewals.output), 'runtime_dir': str(self.directory / 'hy2')},
             api_base='http://127.0.0.1:9', probe_ready=lambda: True, probe_entry=lambda _host: True)
-        self.lifecycle.attach()
+        self.agent.leader.events = self.lifecycle
         self.addCleanup(self.lifecycle.close)
 
         def connect():

@@ -1,6 +1,6 @@
 """Generation-scoped emergency Hysteria2; no dependency on the agent event loop.
 
-start/stop/selftest are called by the leader hooks. devices contains authorised
+start/stop/selftest are called by the lifecycle. devices contains authorised
 snapshot devices with id/name (or allowed/expires_at for an additional check).
 Installation and event wiring are deliberately separate from this module.
 """
@@ -52,23 +52,7 @@ def command(args, **kwargs):
 
 
 def atomic(path, data):
-    path = Path(path)
-    raw = data if isinstance(data, bytes) else json.dumps(data).encode()
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.new-')
-    try:
-        with os.fdopen(fd, 'wb') as output:
-            os.fchmod(output.fileno(), 0o640)
-            output.write(raw)
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+    fsutil.atomic(path, data if isinstance(data, bytes) else json.dumps(data), 0o640)
 
 
 @contextlib.contextmanager
@@ -637,3 +621,5 @@ def main(argv=None):
 
 if __name__ == '__main__':
     main()
+
+from .. import fsutil

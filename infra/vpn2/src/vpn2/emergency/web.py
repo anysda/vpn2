@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
+from .. import fsutil
 from . import tgqueue
 
 LOG = logging.getLogger(__name__)
@@ -148,13 +149,7 @@ class Panel:
         self.fingerprint = None
 
     def _save(self):
-        temporary = self.auth_file.with_suffix('.tmp')
-        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as output:
-            json.dump(self.auth, output)
-            output.flush()
-            os.fsync(output.fileno())
-        temporary.replace(self.auth_file)
+        fsutil.atomic(self.auth_file, json.dumps(self.auth))
 
     def on_emergency_leader(self, emergency_id, generation, autonomous=False, event='initial'):
         """Return admin-only payload AFTER make_server has bound HTTPS.

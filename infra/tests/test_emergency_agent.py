@@ -3,7 +3,6 @@
 The same assertions can target an older tree using VPN2_TEST_ROOT.
 """
 
-import importlib.util
 import inspect
 import json
 import logging
@@ -24,7 +23,7 @@ from play_stage import site_play
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
-from vpn2.emergency import hooks, lifecycle, tgqueue, web  # noqa: E402
+from vpn2.emergency import lifecycle, tgqueue, web  # noqa: E402
 from vpn2.emergency.agent import Agent  # noqa: E402
 from vpn2.emergency.heartbeat import PERIOD, Heartbeat, decode, encode  # noqa: E402
 from vpn2.emergency.leader import GUARD, LEASE, TRANSITION, Leader  # noqa: E402
@@ -1139,25 +1138,8 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertEqual(agent.addresses['entry'], before)
         self.assertEqual(challenge['kind'], 'poll')
 
-    def test_hooks_contract(self):
-        calls = []
-        for event in ('on_emergency_leader', 'on_step_down', 'on_entry_recovered', 'on_emergency_end'):
-            hooks.subscribe(event, lambda *args: calls.append(args))
-        try:
-            hooks.on_emergency_leader('e', 1, False)
-            hooks.on_step_down('b')
-            hooks.on_entry_recovered(900)
-            hooks.on_emergency_end()
-            self.assertEqual(calls, [('e', 1, False), ('b',), (900,), ()])
-            with self.assertRaises(ValueError):
-                hooks.subscribe('invalid', calls.append)
-        finally:
-            hooks._listeners.clear()
-
     def test_provision_is_stable_private_and_separate_from_client_secrets(self):
-        spec = importlib.util.spec_from_file_location('provision', ROOT / 'infra/vpn2/src/vpn2/emergency/provision.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        from vpn2.emergency import provision as module
         (self.root / 'config.yaml').write_text(
             'entry: {host: 192.0.2.1, password: excluded}\n'
             'exits: [{tag: a, host: 192.0.2.2, password: excluded}, '

@@ -3,7 +3,6 @@
 import argparse
 import fcntl
 import json
-import os
 from pathlib import Path
 import secrets
 import uuid
@@ -38,13 +37,7 @@ def provision(root):
 
 
 def private_json(path, data):
-    temporary = path.with_suffix('.new')
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, 'w') as stream:
-        json.dump(data, stream)
-        stream.flush()
-        os.fsync(stream.fileno())
-    os.replace(temporary, path)
+    fsutil.atomic(path, json.dumps(data))
 
 
 def main(argv=None):
@@ -55,3 +48,5 @@ def main(argv=None):
 
 if __name__ == '__main__':
     main()
+
+from .. import fsutil

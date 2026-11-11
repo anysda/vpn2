@@ -17,7 +17,7 @@ import subprocess
 import threading
 from urllib import request
 
-from . import hooks, hy2, tgqueue, web
+from . import hy2, tgqueue, web
 from .heartbeat import MISSED, OUTAGE
 from .leader import GUARD, deadline_after
 
@@ -138,10 +138,6 @@ class Lifecycle:
     @property
     def record(self):
         return self.agent.state.data.setdefault('lifecycle', {})
-
-    def attach(self):
-        for name in ('on_emergency_leader', 'on_step_down', 'on_entry_recovered', 'on_emergency_end'):
-            hooks.subscribe(name, getattr(self, name))
 
     def close(self):
         if self.jobs is not None:

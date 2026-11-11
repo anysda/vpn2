@@ -15,7 +15,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import time
 
 
@@ -130,21 +129,7 @@ def atomic_write(path, value):
     raw = encode(value)
     if len(raw) > MAX_BYTES:
         raise ValueError('state too large')
-    path = Path(path)
-    fd, name = tempfile.mkstemp(prefix='.snapshot-', dir=path.parent)
-    try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        Path(name).unlink(missing_ok=True)
+    fsutil.atomic(path, raw)
 
 
 @contextmanager
@@ -320,3 +305,5 @@ def main(argv=None):
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
+from .. import fsutil

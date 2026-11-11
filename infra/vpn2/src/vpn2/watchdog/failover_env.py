@@ -2,7 +2,7 @@
 
 Настройки сторожа правятся руками в env-файле: передеплой переносит текущие
 значения, а где строки нет или значение битое, ставит умолчание. Адрес и
-секрет clash-api, группу и файл стоянки задаёт сам деплой.
+секрет clash-api и группу задаёт сам деплой.
 """
 
 import argparse
@@ -20,31 +20,19 @@ INT = r'[0-9]+'
 NUM = r'[0-9]+(?:\.[0-9]+)?'
 # имя, умолчание, допустимое значение
 SETTINGS = (
-    ('PROBE_URL', 'http://www.gstatic.com/generate_204', r'https?://\S+'),
     ('INTERVAL', '2', NUM),
     ('PROBE_TIMEOUT_MS', '3000', INT),
-    ('TOLERANCE_MS', '120', INT),
     ('DEAD_AFTER', '3', INT),
-    ('CONFIRM_GAP', '0.4', NUM),
+    ('TOLERANCE_MS', '120', INT),
     ('LATENCY_HOLD', '4', INT),
-    ('COOLDOWN_S', '60', NUM),
-    ('MAX_COOLDOWN_S', '600', NUM),
-    ('PENALTY_RESET_S', '300', NUM),
     ('BALANCE', 'on', 'on|off'),
-    ('BALANCE_MARGIN_MS', '150', INT),
-    ('ACTIVE_BPS', '20000', NUM),
-    ('REBALANCE_INTERVAL_S', '300', NUM),
-    ('IMBALANCE_SHARE', '0.35', NUM),
-    ('IMBALANCE_MIN_MBPS', '5', NUM),
-    ('MIN_DWELL_S', '1800', NUM),
-    ('IDLE_DWELL_S', '600', NUM),
-    ('RATE_TAU_S', '300', NUM),
     ('WARP_RETURN_S', '600', NUM),
-    ('LAT_TAU_S', '30', NUM),
-    ('SLOW_HOLD_S', '60', NUM),
-    ('TG_GROUP', 'tg-best', r'[A-Za-z0-9_-]+'),
-    ('TG_PROBE_URL', 'https://api.telegram.org', r'https://\S+'),
+    ('TCP_RETURN_S', '60', NUM),
+    ('HY2_RISE_S', '10', NUM),
     ('TG_INTERVAL_S', '30', NUM),
+    ('STUCK_AFTER_CHECKS', '30', INT),
+    ('PRESSURE_MEM_AVG10', '10', NUM),
+    ('PRESSURE_CPU_AVG10', '60', NUM),
     ('RESTART_AFTER_CHECKS', '3', INT),
     ('RESTART_MIN_INTERVAL_S', '600', INT),
 )
@@ -59,8 +47,7 @@ def render(previous, secret, environ):
     """Текст env-файла: previous - прежний файл, environ - окружение стадии."""
     lines = [f'CLASH_API=http://{environ.get("MGMT_IP") or "10.99.0.1"}:9090',
              f'CLASH_SECRET={secret}',
-             'WATCH_GROUP=foreign-best',
-             'LANE_STATE_FILE=/var/lib/anysda-failover-watchdog/lanes.json']
+             'WATCH_GROUP=foreign-best']
     for key, default, pattern in SETTINGS:
         if key in FROM_CONFIG:
             value = environ.get(key)

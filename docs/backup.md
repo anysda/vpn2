@@ -16,6 +16,9 @@
   `/etc/swanctl`);
 - хранилище Caddy (`/var/lib/caddy/.local/share/caddy`: сертификаты, ключи,
   ACME-аккаунты);
+- состояние деплоя (`/var/lib/anysda-vpn2/state/`): адреса mgmt-сети
+  экзитов, список выключенных экзитов, манифест установленной сборки - без
+  него новая entry раздала бы экзитам адреса заново;
 - `manifest.json` с SHA-256 каждого компонента.
 
 Архив шифруется [`age`](https://github.com/FiloSottile/age) (symmetric

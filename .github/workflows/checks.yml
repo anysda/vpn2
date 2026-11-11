@@ -26,7 +26,10 @@ jobs:
         with:
           python-version: '3.11'
       - name: мастер на Python из Debian 12
-        run: bash infra/tests/setup-compat.sh
+        run: |
+          python3 --version
+          pip install --quiet pytest pyyaml
+          PYTHONPATH=infra/vpn2/src python3 -m pytest infra/vpn2/tests/test_setup.py -p no:cacheprovider
 
   python-lint:
     name: линт Python

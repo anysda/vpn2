@@ -4,34 +4,22 @@
   example - config.example.yaml из корня репы;
   tests   - строковые константы infra/tests/*.py, где с нулевого отступа
             начинается строка entry:, exits:, admin: или panel:;
-  wizard  - config.yaml, который пишет мастер setup.sh (подготовка как в
-            infra/tests/setup-compat.sh).
+  wizard  - config.yaml, который пишет мастер setup.sh на ответы эталона
+            fixtures/setup/minimal.
 """
 import ast
 import importlib.util
 import re
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
+
+from setup_support import FIXTURES, prepare, run
 
 ROOT = Path(__file__).resolve().parents[3]
 TOP_KEY = re.compile(r'^(entry|exits|admin|panel):', re.MULTILINE)
 
-WIZARD_STUBS = r"""
-ip() { return 0; }
-dig() { return 0; }
-curl() {
-  case "$*" in
-    *api.ipify.org*) printf '192.0.2.1' ;;
-    *ip-api.com*) printf '{}' ;;
-    *) return 1 ;;
-  esac
-}
-export -f ip dig curl
-printf '%s\n' 1 test-entry-password 198.51.100.2 test-exit-password de \
-  '' '' '' n n n n y | bash "$1/setup.sh" > "$1/output" 2>&1
-"""
+WIZARD_ANSWERS = (FIXTURES / 'minimal/answers').read_text()
+WIZARD_STUBS = {'ipify': '192.0.2.1', 'geo-198.51.100.2': '{}'}
 
 
 def load_oracle():
@@ -67,14 +55,9 @@ def tests_samples():
 
 def wizard_samples():
     with tempfile.TemporaryDirectory() as tmp:
-        fixture = Path(tmp)
-        (fixture / 'infra/lib').mkdir(parents=True)
-        shutil.copy(ROOT / 'setup.sh', fixture)
-        for name in ('config2env.py', 'hy2_bandwidth.py'):
-            shutil.copy(ROOT / 'infra/lib' / name, fixture / 'infra/lib')
-        subprocess.run(['bash', '-c', WIZARD_STUBS, 'bash', str(fixture)], check=False,
-                       stdin=subprocess.DEVNULL, timeout=120)
-        config = fixture / 'config.yaml'
+        root = prepare(tmp, stubs=WIZARD_STUBS)
+        run(root, WIZARD_ANSWERS, timeout=120)
+        config = root / 'config.yaml'
         return {'wizard': config.read_text()} if config.exists() else {}
 
 

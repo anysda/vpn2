@@ -19,21 +19,25 @@ import yaml
 from test_deploy import ROOT
 
 
-COMMAND = '''
-ip() { printf 'default via 192.0.2.254 dev eth0\\n    inet 192.0.2.1/24 scope global eth0\\n'; }
-curl() { printf '{}'; }
-dig() { printf '192.0.2.1\\n'; }
-export -f ip curl dig
-exec bash setup.sh
-'''
+STUBS = {
+    'ip': "printf 'default via 192.0.2.254 dev eth0\\n    inet 192.0.2.1/24 scope global eth0\\n'",
+    'curl': "printf '{}'",
+    'dig': "printf '192.0.2.1\\n'",
+}
+COMMAND = 'PATH="$PWD/stubs:$PATH" exec bash setup.sh'
+COPIED = ('setup.sh', 'infra/lib/config2env.py', 'infra/lib/hy2_bandwidth.py',
+          'infra/vpn2/src/vpn2/__init__.py', 'infra/vpn2/src/vpn2/setup.py')
 
 
 def prepare(directory):
     root = Path(directory)
-    shutil.copy(ROOT / 'setup.sh', root)
-    (root / 'infra/lib').mkdir(parents=True)
-    shutil.copy(ROOT / 'infra/lib/config2env.py', root / 'infra/lib')
-    shutil.copy(ROOT / 'infra/lib/hy2_bandwidth.py', root / 'infra/lib')
+    for name in COPIED:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ROOT / name, root / name)
+    (root / 'stubs').mkdir()
+    for name, body in STUBS.items():
+        (root / 'stubs' / name).write_text(f'#!/bin/sh\n{body}\n')
+        (root / 'stubs' / name).chmod(0o755)
     return root
 
 
@@ -305,21 +309,6 @@ youtube:
                 self.assertEqual(config.stat().st_mode & 0o777, 0o600)
                 self.assertIn('обновляет только спрошенные поля', output)
                 self.assertIn('остальные настройки и комментарии в config.yaml сохраняются', output)
-
-    def test_exit_tag_syntax(self):
-        body = (ROOT / 'setup.sh').read_text().split('validate_tag() {', 1)[1].split('\n}', 1)[0]
-        script = 'fail() { echo "$*" >&2; }\nvalidate_tag() {' + body + '\n}\nvalidate_tag "$1" "$2"'
-        for tag in ('a', 'us2', 'us-2', 'us--2', '-us', 'us-', 'US', 'us_2',
-                    'ru', 'all', 'exits', 'foreign'):
-            with self.subTest(tag=tag):
-                result = subprocess.run(['bash', '-euc', script, 'tag-test', tag, ''],
-                                        capture_output=True, text=True, timeout=5)
-                self.assertEqual(result.returncode == 0,
-                                 tag in ('a', 'us2', 'us-2', 'us--2'), result.stderr)
-        result = subprocess.run(['bash', '-euc', script, 'tag-test', 'us-2', 'se us-2 us2'],
-                                capture_output=True, text=True, timeout=5)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('уже используется', result.stderr)
 
     def test_hyphenated_tag_through_wizard(self):
         answers = ['1', 'root secret', '192.0.2.2', 'exit secret', 'us-2',

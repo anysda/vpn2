@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_deploy import ROOT, source
+from test_deploy import ROOT
 
 
 class ConfigPermissionTests(unittest.TestCase):
@@ -48,43 +48,6 @@ class ConfigPermissionTests(unittest.TestCase):
                 self.assertIn('CANARY_SECRET', (root / 'infra/envs' / name).read_text())
         finally:
             os.umask(mask)
-
-    def test_setup_config_is_private_before_write(self):
-        setup = source('setup.sh')
-        code = setup.split(" <<'PYEOF'\n", 1)[1].split('\nPYEOF', 1)[0]
-        for existing in (False, True):
-            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
-                target = Path(directory) / 'config.yaml'
-                if existing:
-                    target.write_text("youtube:\n  route: 'off'\n")
-                    target.chmod(0o644)
-                original = os.fdopen
-                written = []
-
-                def private_fdopen(*args, **kwargs):
-                    stream = original(*args, **kwargs)
-                    write = stream.write
-
-                    def private_write(data):
-                        self.assertEqual(os.fstat(stream.fileno()).st_mode & 0o777, 0o600)
-                        written.append(data)
-                        return write(data)
-
-                    stream.write = private_write
-                    return stream
-
-                env = dict(CONFIG_FILE=str(target), ENTRY_IP='192.0.2.1', ENTRY_PASS='CANARY_SECRET',
-                           EXITS_YAML='', ADMIN_USER='admin', ADMIN_PASS='CANARY_SECRET')
-                mask = os.umask(0o022)
-                try:
-                    with patch.dict(os.environ, env, clear=True), patch('os.fdopen', private_fdopen), \
-                            patch('sys.argv', ['-', str(ROOT / 'infra/lib/config2env.py')]):
-                        exec(compile(code, 'setup.sh', 'exec'), {})
-                    self.assertEqual(len(written), 1)
-                    self.assertIn('CANARY_SECRET', target.read_text())
-                    self.assertEqual(target.stat().st_mode & 0o777, 0o600)
-                finally:
-                    os.umask(mask)
 
 
 if __name__ == '__main__':

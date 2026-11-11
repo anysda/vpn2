@@ -359,8 +359,45 @@ class Namespace:
         return src if src and src != NS_IP else None
 
 
+class Tap:
+    """Счётчики на самом entry: пакеты с адреса проверки из туннеля и пакеты обратно на него.
+
+    Запрос пришёл, а обратно не ушло ничего - не ответил сервер. Панель здесь ни при чём:
+    ответ на снятый ею доступ всё равно прошёл бы POSTROUTING и был бы сосчитан.
+    """
+    RULES = (('raw', 'PREROUTING', '-s'), ('mangle', 'POSTROUTING', '-d'))
+
+    def __init__(self, source):
+        self.source = source
+        self.unanswered = False
+
+    def rule(self, action, table, chain, side):
+        return run('iptables', '-w', '-t', table, action, chain, side, self.source,
+                   '-m', 'comment', '--comment', COMMENT, check=False)
+
+    def count(self, table, chain):
+        listing = run('iptables', '-w', '-t', table, '-nvxL', chain, check=False).stdout
+        for line in listing.splitlines():
+            words = line.split()
+            if f'/* {COMMENT} */' in line and self.source in words and words[0].isdigit():
+                return int(words[0])
+        return 0
+
+    def __enter__(self):
+        for table, chain, side in self.RULES if self.source else ():
+            self.rule('-I', table, chain, side)
+        return self
+
+    def __exit__(self, *_error):
+        if self.source:
+            came, went = (self.count(table, chain) for table, chain, _side in self.RULES)
+            self.unanswered = came > 0 and went == 0
+            for table, chain, side in self.RULES:
+                self.rule('-D', table, chain, side)
+
+
 def clean_iptables():
-    for table in ('filter', 'nat', 'mangle'):
+    for table in ('filter', 'nat', 'mangle', 'raw'):
         dump = run('iptables-save', '-t', table, check=False).stdout
         for line in dump.splitlines():
             if line.startswith('-A ') and f'--comment {COMMENT}' in line:
@@ -1314,8 +1351,14 @@ class Verifier:
             if not self.moved(protocol):
                 break
             self.attach(protocol)
-            result, seen = in_namespace(self.router, Namespace.source(), kind, args, dest)
+            source = Namespace.source()
+            with Tap(source) as tap:
+                result, seen = in_namespace(self.router, source, kind, args, dest)
             if result:
+                return result, seen
+            # Запрос до сервера дошёл, ответа сервер не дал: поломка настоящая, как бы часто
+            # панель ни меняла список. Не дошёл запрос или пропал ответ - попытка не в счёт.
+            if tap.unanswered:
                 return result, seen
         else:
             if self.moved(protocol):

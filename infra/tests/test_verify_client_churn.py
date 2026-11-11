@@ -41,9 +41,12 @@ SOURCE = '10.8.0.250'
 class World:
     """Сервер с временными доступами проверки и панель со своим списком клиентов."""
 
-    def __init__(self, applies=(), broken=()):
+    def __init__(self, applies=(), broken=(), cuts=None):
         self.applies = applies      # ходы, на которых панель применяет список; или функция от хода
-        self.broken = set(broken)   # виды проб, которые на самом деле не работают
+        self.broken = broken        # виды проб, которые на самом деле не работают; или функция от хода
+        self.cuts = cuts            # функция от хода: панель применяет список между запросом и ответом
+        self.came = self.went = 0   # пакеты доступа проверки на сервере: пришло из туннеля, ушло обратно
+        self.probes = {}            # вид пробы -> ход первой такой пробы
         self.tick = 0
         self.stamp = 0
         self.granted = set()
@@ -55,9 +58,43 @@ class World:
             raise AssertionError('проверка не кончается')
         due = self.applies(self.tick) if callable(self.applies) else self.tick in self.applies
         if due:
-            self.stamp += 1
-            self.granted.clear()
-            self.session = None
+            self.apply()
+
+    def apply(self):
+        self.stamp += 1
+        self.granted.clear()
+        self.session = None
+
+    def fails(self, probe):
+        return probe in (self.broken(self.tick) if callable(self.broken) else self.broken)
+
+    def exchange(self, probe):
+        """Одна проба через доступ проверки: True - ответ дошёл до клиента."""
+        self.step()
+        self.probes.setdefault(probe, self.tick)
+        if self.session is None:
+            return False
+        self.came += 1
+        replied = not self.fails(probe)
+        self.went += replied
+        if self.cuts and self.cuts(self.tick):
+            self.apply()
+            return False
+        return replied
+
+
+class Counters:
+    """Счётчики пакетов на сервере вместо правил iptables."""
+
+    def __init__(self, world):
+        self.world = world
+
+    def __enter__(self):
+        self.world.came = self.world.went = 0
+        return self
+
+    def __exit__(self, *_error):
+        self.unanswered = self.world.came > 0 and self.world.went == 0
 
 
 class Tunnel:
@@ -136,14 +173,14 @@ def check(world, kind=Peers):
     verifier.relay, verifier.relay_ok = types.SimpleNamespace(start=lambda _proto, _port: 40000), True
 
     def in_namespace(_router, _source, probe, args, _dest=None):
-        world.step()
-        if world.session is None or probe in world.broken:
+        if not world.exchange(probe):
             return None, []
         result, chain = answer(probe, args)
         return result, [{'chains': [chain], 'rule': 'rule_set', 'payload': 'manual-pin-' + chain}]
 
     with mock.patch.object(vt, 'in_namespace', in_namespace), \
             mock.patch.object(vt, 'applied', lambda: world.stamp, create=True), \
+            mock.patch.object(vt, 'Tap', lambda _source: Counters(world), create=True), \
             mock.patch.object(vt, 'probe_internet', lambda *_args: True), \
             mock.patch.object(vt.Namespace, 'source', staticmethod(lambda: SOURCE)), \
             mock.patch.object(vt.time, 'sleep', lambda _seconds: None), redirect_stdout(io.StringIO()):
@@ -208,6 +245,136 @@ class ClientListMovesTests(unittest.TestCase):
                 rows, code = check(world, kind)
                 self.assertEqual((code, FAIL in rows.values()), (2, False))
                 self.assertIn('панель', ' '.join(world.reasons))
+
+
+def always(_tick):
+    return True
+
+
+class BreakageUnderConstantChurnTests(unittest.TestCase):
+    """Панель снимает доступ во время каждой пробы: запрос доходит, ответ уже некому отдать."""
+    ROWS = {'echo': 'маршрут: прямой', 'dns': 'DNS AdGuard', 'egress': 'интернет через экзит se',
+            'internet': 'интернет через экзит'}
+
+    def test_healthy_probes_are_not_measured_and_not_red(self):
+        for kind in (Peers, Tunnel):
+            with self.subTest(kind=kind.name):
+                world = World(cuts=always)
+                rows, code = check(world, kind)
+                self.assertEqual((code, FAIL in rows.values()), (2, False))
+                self.assertEqual(rows['DNS AdGuard'], UNKNOWN)
+                self.assertIn('панель', ' '.join(world.reasons))
+
+    def test_every_row_class_goes_red_on_a_real_breakage(self):
+        for kind in (Peers, Tunnel):
+            for probe, row in self.ROWS.items():
+                with self.subTest(kind=kind.name, probe=probe):
+                    world = World(cuts=always, broken={probe})
+                    rows, code = check(world, kind)
+                    self.assertEqual((rows[row], code), (FAIL, 1))
+                    self.assertNotIn('панель меняла', world.reasons[list(rows).index(row)])
+
+    def test_broken_dns_is_red_on_both_rows(self):
+        for kind in (Peers, Tunnel):
+            with self.subTest(kind=kind.name):
+                rows, code = check(World(cuts=always, broken={'dns'}), kind)
+                self.assertEqual((rows['DNS AdGuard'], rows['DNS внешний'], code), (FAIL, FAIL, 1))
+
+    def test_breakage_that_appears_during_the_run_is_red(self):
+        for kind in (Peers, Tunnel):
+            quiet = World()
+            check(quiet, kind)
+            start = quiet.probes['dns']
+            with self.subTest(kind=kind.name):
+                world = World(lambda tick: tick % 3 == 0, broken=lambda tick: {'dns'} if tick >= start else set())
+                rows, code = check(world, kind)
+                self.assertEqual((rows['маршрут: прямой'], rows['DNS AdGuard'], code), (OK, FAIL, 1))
+
+    def test_breakage_healed_before_the_row_is_green(self):
+        for kind in (Peers, Tunnel):
+            quiet = World()
+            check(quiet, kind)
+            healed = quiet.probes['dns']
+            with self.subTest(kind=kind.name):
+                world = World(lambda tick: tick % 3 == 0, broken=lambda tick: {'dns'} if tick < healed else set())
+                self.assertEqual(check(world, kind), GREEN)
+
+    def test_breakage_healed_between_attempts_is_green(self):
+        # Запрос первой попытки до сервера не дошёл (доступ снят), ко второй поломки уже нет.
+        for kind in (Peers, Tunnel):
+            quiet = World()
+            check(quiet, kind)
+            first = quiet.probes['dns']
+            with self.subTest(kind=kind.name):
+                world = World({first}, broken=lambda tick: {'dns'} if tick <= first else set())
+                self.assertEqual(check(world, kind), GREEN)
+
+    def test_access_that_never_carries_a_request_is_not_measured(self):
+        # Проверка не смогла выполниться: до сервера не дошёл ни один запрос.
+        for kind in (Peers, Tunnel):
+            with self.subTest(kind=kind.name):
+                rows, code = check(World(always, broken={'dns'}), kind)
+                self.assertEqual((code, FAIL in rows.values()), (2, False))
+
+
+LISTING = '''Chain {chain} (policy ACCEPT 9 packets, 900 bytes)
+    pkts      bytes target     prot opt in     out     source               destination
+       7      420 DROP       udp  --  wg0    *       0.0.0.0/0            0.0.0.0/0            udp dpt:53
+{rows}'''
+ROW = '      {count}      180            all  --  *      *       {source}           {dest}            /* vpn2-verify */\n'
+
+
+class TapTests(unittest.TestCase):
+    """Счётчики на entry: правила с меткой проверки ставятся, читаются и снимаются."""
+
+    def tap(self, came, went, source=SOURCE):
+        calls = []
+
+        def run(*args, **_kwargs):
+            calls.append(args)
+            out = ''
+            if '-nvxL' in args:
+                incoming = args[-1] == 'PREROUTING'
+                row = ROW.format(count=came if incoming else went, source=SOURCE if incoming else '0.0.0.0/0',
+                                 dest='0.0.0.0/0' if incoming else SOURCE)
+                out = LISTING.format(chain=args[-1], rows=row)
+            return types.SimpleNamespace(stdout=out, returncode=0)
+
+        with mock.patch.object(vt, 'run', run):
+            with vt.Tap(source) as tap:
+                pass
+        return tap.unanswered, calls
+
+    def test_request_without_any_reply_is_unanswered(self):
+        self.assertEqual([self.tap(came, went)[0] for came, went in ((1, 0), (4, 0), (1, 1), (0, 0), (0, 3))],
+                         [True, True, False, False, False])
+
+    def test_rules_carry_the_mark_and_are_removed(self):
+        _unanswered, calls = self.tap(1, 0)
+        rule = ('-m', 'comment', '--comment', vt.COMMENT)
+        self.assertEqual([call for call in calls if '-nvxL' not in call], [
+            ('iptables', '-w', '-t', 'raw', '-I', 'PREROUTING', '-s', SOURCE, *rule),
+            ('iptables', '-w', '-t', 'mangle', '-I', 'POSTROUTING', '-d', SOURCE, *rule),
+            ('iptables', '-w', '-t', 'raw', '-D', 'PREROUTING', '-s', SOURCE, *rule),
+            ('iptables', '-w', '-t', 'mangle', '-D', 'POSTROUTING', '-d', SOURCE, *rule)])
+
+    def test_without_a_tunnel_address_nothing_is_touched_or_claimed(self):
+        self.assertEqual(self.tap(1, 0, source=None), (False, []))
+
+    def test_interrupted_run_leaves_no_rule_behind(self):
+        dumps = {'raw': f'-A PREROUTING -s {SOURCE}/32 -m comment --comment {vt.COMMENT}\n', 'filter': '',
+                 'nat': '', 'mangle': f'-A POSTROUTING -d {SOURCE}/32 -m comment --comment {vt.COMMENT}\n'}
+        removed = []
+
+        def run(*args, **_kwargs):
+            if args[0] == 'iptables-save':
+                return types.SimpleNamespace(stdout=dumps[args[2]], returncode=0)
+            removed.append(args[3:6])
+            return types.SimpleNamespace(stdout='', returncode=0)
+
+        with mock.patch.object(vt, 'run', run):
+            vt.clean_iptables()
+        self.assertEqual(sorted(removed), [('mangle', '-D', 'POSTROUTING'), ('raw', '-D', 'PREROUTING')])
 
 
 class Control:

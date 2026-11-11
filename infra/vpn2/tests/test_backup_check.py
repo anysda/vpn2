@@ -4,29 +4,17 @@ import json
 import shutil
 import sqlite3
 import subprocess
-from pathlib import Path
 
 import pytest
 from vpn2 import wg
 from vpn2.backup import check
 from vpn2.cli import backup as cli_backup
 
-LIB = Path(__file__).resolve().parents[2] / 'lib'
-SCRIPT = Path(__file__).resolve().parent / 'fixtures' / 'backup' / 'anysda-backup.sh'
-NEEDS = pytest.mark.skipif(not all(shutil.which(n) for n in ('bash', 'python3', 'sqlite3')),
-                           reason='нужны bash, python3 и sqlite3')
 # Ключи ненастоящие: собраны из частей.
 K1, K2, K3 = ('A' * 42 + c + '=' for c in 'BCD')
 PSK = 'P' * 42 + 'Q='
 STAMP = '2026-01-02T030405Z'
 NOW = 1767323045  # STAMP в секундах эпохи
-# wg_conf для bash-стороны: пиры - JSON в самом wg0.conf, «ERR:...» - отказ.
-STUB = ('import json\n'
-        'def conf_peers(data):\n'
-        '    text = data.decode()\n'
-        '    if text.startswith("ERR:"):\n'
-        '        raise ValueError(text[4:])\n'
-        '    return json.loads(text)\n')
 SCHEMA = ('CREATE TABLE clients (id INTEGER, frozen_manual INTEGER, expires_at INTEGER);'
           'CREATE TABLE devices (id INTEGER, name TEXT, client_id INTEGER, deleting INTEGER, ovpn_cert TEXT,'
           ' wg_public_key TEXT, wg_preshared_key TEXT, wg_ip TEXT,'
@@ -89,12 +77,6 @@ def stub_conf_peers(data, **_):
     if text.startswith('ERR:'):
         raise (wg.WgUnchecked if 'нечем' in text else wg.WgError)(text[4:])
     return json.loads(text)
-
-
-def run_bash(root, lib):
-    done = subprocess.run(['bash', str(SCRIPT), '--check-bundle', str(root)], capture_output=True, text=True,
-                          env={'PATH': '/usr/bin:/bin', 'ANYSDA_LIB_DIR': str(lib)}, check=False)
-    return done.returncode, done.stdout, done.stderr
 
 
 # --- значения на каждый код ---
@@ -210,58 +192,6 @@ def test_check_leaves_no_open_connection(tmp_path, monkeypatch):
         assert con.execute('SELECT name FROM devices').fetchall() == [('после сверки',)]
 
 
-# --- прямая сверка с bash: удалить вместе с bash-телом (anysda-backup.sh --check-bundle) ---
-def good(root, **extra):
-    return build(root, devices=[dev(1), dev(2, 'Два', key=K2, user='v', pw='w')], clients=[CLIENT],
-                 peers=extra.pop('peers', [peer(K1), peer(K2)]), swanctl=swan((1, 'u', 'p'), (2, 'v', 'w')), **extra)
-
-
-def sets(tmp):
-    """Именованные наборы для сверки; wg0.conf в них - JSON для заглушки или настоящий текст."""
-    real = f'[Interface]\nPrivateKey = {K1}\n[Peer]\nPublicKey = {K2}\n'
-    corrupt = build(tmp / 'corrupt', db=False)
-    (corrupt / 'db.sqlite').write_bytes(b'not a database' * 100)
-    extra = good(tmp / 'extra')
-    (extra / 'лишний файл.txt').write_text('x')
-    nopeer = build(tmp / 'nopeer', devices=[dev(1)], clients=[CLIENT], peers=[], swanctl=swan((1, 'u', 'p')))
-    return {
-        'годный': good(tmp / 'good'),
-        'без манифеста': good(tmp / 'nomanifest', manifest=False),
-        'испорченная БД': corrupt,
-        'без wg0.conf': build(tmp / 'nowg', devices=[dev(1)], clients=[CLIENT], swanctl=swan((1, 'u', 'p'))),
-        'битый wg0.conf': build(tmp / 'badwg', devices=[dev(1)], clients=[CLIENT], peers=real + 'Bogus = 1\n'),
-        'настоящий wg0.conf': build(tmp / 'realwg', devices=[dev(1)], clients=[CLIENT], peers=real),
-        'лишний файл': extra,
-        'пустой каталог': (tmp / 'empty').mkdir() or tmp / 'empty',
-        'имя с пробелом': good(tmp / 'имя с  пробелом'),
-        'нет пира': nopeer,
-        'без db': build(tmp / 'nodb', db=False),
-    }
-
-
-@NEEDS
-@pytest.mark.parametrize('name', ['годный', 'без манифеста', 'испорченная БД', 'без wg0.conf', 'битый wg0.conf',
-                                  'настоящий wg0.conf', 'лишний файл', 'пустой каталог', 'имя с пробелом',
-                                  'нет пира', 'без db'])
-@pytest.mark.parametrize('stubbed', [True, False])
-def test_same_as_bash(tmp_path, monkeypatch, name, stubbed):
-    lib = tmp_path / 'stublib'
-    lib.mkdir()
-    (lib / 'wg_conf.py').write_text(STUB)
-    if stubbed and 'wg0.conf' in name and name != 'без wg0.conf':
-        pytest.skip('заглушка читает JSON, а не текст wg0.conf')
-    root = sets(tmp_path)[name]
-    if stubbed:
-        monkeypatch.setattr(wg, 'conf_peers', stub_conf_peers)
-    code, out, err = run_py(root)
-    b_code, b_out, b_err = run_bash(root, lib if stubbed else LIB)
-    assert (code, out) == (b_code, b_out)
-    if code == 1:  # у bash traceback, у пакета последняя строка того же сообщения
-        assert b_err.rstrip().splitlines()[-1] == 'sqlite3.' + err.rstrip()
-    else:
-        assert err == b_err
-
-
 def make_pki(base):
     """Свой CA через openssl: два сертификата, первый отозван. -> (pem первого, pem второго, crl.pem)."""
     base.mkdir()
@@ -289,12 +219,10 @@ def make_pki(base):
     return [(base / f).read_text() for f in ('a.pem', 'b.pem', 'crl.pem')]
 
 
-@NEEDS
 @pytest.mark.skipif(shutil.which('openssl') is None, reason='нужен openssl')
-def test_revoked_certificate_same_as_bash(tmp_path):
+def test_revoked_certificate_is_reported(tmp_path):
     revoked, live, crl = make_pki(tmp_path / 'pki')
     root = build(tmp_path / 'b', devices=[dev(1, 'Отозван', cert=revoked), dev(2, cert=live), dev(3, deleting=1, cert=revoked)],
                  clients=[CLIENT], crl=crl)
     code, out, err = run_py(root)
     assert (code, out, err) == (3, 'устройство 1 «Отозван»: сертификат A отозван в CRL\n', '')
-    assert run_bash(root, LIB) == (code, out, err)

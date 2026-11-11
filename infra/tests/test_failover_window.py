@@ -87,7 +87,7 @@ class Model:
         self.out = io.StringIO()
         self.events = []
 
-    def probe_all(self, members, url=None, known_dead=None, slow=None, recheck=None):
+    def probe_all(self, members, _url=None, known_dead=None, recheck=None, **_slow):
         w, start = self.w, self.clock.mono
         timeout = w.TIMEOUT_MS / 1000.0
         hurry = known_dead or ()
@@ -236,15 +236,15 @@ class MainModel(Model):
     """Общий цикл сторожа на модельных часах; проверка каналов выключена.
     Bot API молчит через все выходы: его обход стоит цикла полного тайм-аута."""
 
-    def probe_all(self, members, url=None, known_dead=None, slow=None, recheck=None):
+    def probe_all(self, members, url=None, known_dead=None, **rest):
         w = self.w
         if url != w.TG_PROBE_URL:
-            return super().probe_all(members, url, known_dead, slow, recheck)
+            return super().probe_all(members, url, known_dead, **rest)
         patient = [m for m in members if m not in (known_dead or ())]
         self.clock.mono += w.TIMEOUT_MS / 1000.0 if patient else w.KNOWN_DEAD_WAIT
         return {m: None for m in members}, {m: 'timed out' for m in members}
 
-    def probe(self, tag, out, errs=None, url=None):
+    def probe(self, tag, out, errs=None, _url=None):
         """До-проверка выбранного выхода: одна проба, ждут её целиком.
         Проба запасной ноги идёт своим потоком рядом и времени цикла не стоит."""
         took, out[tag] = self.link.answer(tag, self.clock.mono, self.w.TIMEOUT_MS / 1000.0)
@@ -259,7 +259,7 @@ class MainModel(Model):
                 patch.object(w, '_probe', self.probe), \
                 patch.object(w, 'time', self.clock), patch.object(w, '_transport_loop', lambda: None), \
                 patch.object(w, '_restart_sing_box', create=True), \
-                patch.object(w, '_bot_event', side_effect=lambda *a, **k: self.events.append(a)), \
+                patch.object(w, '_bot_event', side_effect=lambda *a, **_k: self.events.append(a)), \
                 contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.out):
             try:
                 w.main()

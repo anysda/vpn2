@@ -105,7 +105,7 @@ release_start() {
   for host in $(expand_hosts all); do
     load_env "$host"
     push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2
-    for lib in deploy_state.py panel-transaction.sh anysda-svc.sh; do push "$DEPLOY_ROOT/lib/$lib"; done
+    for lib in deploy_state.py anysda-svc.sh; do push "$DEPLOY_ROOT/lib/$lib"; done
     if [[ "$action" != rollback && "$action" != recover ]]; then
       ssh_exec 'python3 -c '\''import json,pathlib; p=pathlib.Path("/var/lib/vpn2-deploy/operation.json"); assert not p.exists() or json.loads(p.read_text())["phase"] in ("complete","aborted","rolled-back"), "unfinished deploy: inspect operation.json and recover first"'\'
     fi
@@ -172,5 +172,5 @@ release_complete() {
 
 release_rollback() {
   load_env ru
-  ssh_exec 'bash --norc -euo pipefail -c '\''source /tmp/anysda/panel-transaction.sh; install -d -m 700 "$panel_state"; exec 9>"$panel_state/transaction.lock"; flock -n 9; panel_rollback; python3 /tmp/anysda/deploy_state.py phase --phase rolled-back'\'
+  ssh_exec '/opt/vpn2/venv/bin/vpn2 containers rollback && python3 /tmp/anysda/deploy_state.py phase --phase rolled-back'
 }

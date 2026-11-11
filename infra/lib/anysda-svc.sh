@@ -410,8 +410,9 @@ apt_have() {
 # а не `curl get.docker.com | sh`. Файл
 # источника переписываем только при отличии: иначе apt_update_if_stale
 # решит, что списки устарели. Docker нужен только entry (25/30/35).
-# shellcheck disable=SC2034  # читают 00-bootstrap и 25-monitoring
-# buildx/compose на узле не зовёт никто (образы собирает CI), а их и rootless-extras
+# shellcheck disable=SC2034  # читают роли emergency и containers
+# buildx на узле не зовёт никто (образы собирает CI), compose нужен только entry и
+# ставится ролью containers; их и rootless-extras
 # тянут Recommends docker-ce/docker-ce-cli: минус ~130 МБ распаковки на 1 ядре.
 DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io)
 # shellcheck disable=SC2034

@@ -763,7 +763,6 @@ run_stage_on_host() {
   # Пакет vpn2 рядом со стадией: выпуск (vpn2.release) и код службы управления.
   push "$DEPLOY_ROOT/vpn2/src/vpn2" vpn2 || return 1
   push "$DEPLOY_ROOT/lib/deploy_state.py" || return 1
-  push "$DEPLOY_ROOT/lib/panel-transaction.sh" || return 1
   # Ресурсы юнитов и docker: стадия, ставящая юнит, пишет его drop-in.
   if grep -q 'source "$RESOURCE_LIB"' "$script"; then
     push "$DEPLOY_ROOT/lib/entry-resources.sh" || return 1
@@ -777,21 +776,7 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
     guard="bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW || exit 1; "
   fi
-  if [[ "$stage" == @(30-frontend|35-telegram) ]]; then
-    push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
-  fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
-
-  # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
-  # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
-  # thing 30-frontend still needs from the orchestrator side is the rails
-  # template (anysda-config.yaml.tpl).
-  if [[ "$stage" == @(30-frontend|35-telegram) ]]; then
-    push "$DEPLOY_ROOT/configs/anysda-config.yaml.tpl" "anysda-config.yaml.tpl" || return 1
-    if [[ "$stage" == "35-telegram" ]]; then
-      push "$DEPLOY_ROOT/scripts/30-frontend.sh" || return 1
-    fi
-  fi
 
   # Раньше 30-frontend ставил Caddy из APT-репо Cloudsmith, а оно теперь отвечает
   # 402 Payment Required: оставшийся на старой ноде список валит apt-get update
@@ -1421,7 +1406,7 @@ except Exception:
 # Образы панели и бота тянем в фоне, пока ru занята стадиями 23-27:
 # 30/35 потом делают свой docker pull по уже скачанным слоям. Сбой
 # предзагрузки не страшен - стадии тянут образ сами и сами падают без него.
-# Имена образов - те же умолчания, что в 30-frontend.sh / 35-telegram.sh.
+# Имена образов - те же умолчания, что у стадий 30-frontend и 35-telegram (vpn2.containers.engine).
 prefetch_images() {
   (
     load_env ru

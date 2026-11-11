@@ -48,8 +48,11 @@ def sync_runtime(environ, previous_env, etc=ETC):
     path, taken = Path(etc, 'telegram-runtime.json'), Path(etc, 'telegram-from-config.json')
     current = _from_config(environ)
     changed = False
-    if not os.path.lexists(path):
-        fsutil.atomic(path, json.dumps(current), mode=0o600, encoding='utf-8')
+    if not path.is_file():
+        # Роль control ставит ссылку в каталог панели раньше, чем появится цель: пишем сквозь неё.
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(json.dumps(current))
+        os.chmod(path, 0o600)
         changed = True
     runtime = json.loads(path.read_text())
     try:

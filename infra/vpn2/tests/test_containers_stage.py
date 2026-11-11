@@ -119,6 +119,17 @@ def test_bot_settings_follow_config_changes_but_keep_panel_edits(tmp_path):
     assert runtime(tmp_path) == {'bot_token': '', 'chat_id': '-2', 'admin_username': 'boss'}
 
 
+def test_bot_settings_are_created_through_dangling_link(tmp_path):
+    """Роль control ставит ссылку на настройки бота до первой стадии бота: цели ещё нет."""
+    target = tmp_path / 'panel' / 'telegram-runtime.json'
+    target.parent.mkdir()
+    link = tmp_path / 'telegram-runtime.json'
+    link.symlink_to(target)
+    assert telegram.sync_runtime({'TELEGRAM_CHAT_ID': '-1'}, [], tmp_path) is True
+    assert link.is_symlink() and json.loads(target.read_text())['chat_id'] == '-1'
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
 def test_bot_settings_of_old_install_come_from_container_env(tmp_path):
     """Установка без telegram-from-config.json: прошлые значения берутся из env старого бота."""
     (tmp_path / 'telegram-runtime.json').write_text(json.dumps({'bot_token': 'ui', 'chat_id': '-1'}))

@@ -50,28 +50,11 @@
     name: openvpn-server@server
     enabled: true
 
-- name: Библиотека ресурсов
-  ansible.builtin.copy:
-    src: "{{ openvpn_infra }}/lib/{{ item }}"
-    dest: "{{ openvpn_tmp }}/"
-    mode: '0644'
-  loop: [entry-resources.sh, entry_resources.py]
-  changed_when: false
-
 - name: Ресурсы сервера OpenVPN
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources openvpn-server@server; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ openvpn_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: openvpn_step
-  changed_when: "'changed=1' in openvpn_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [openvpn-server@server]
 
 # Рестарт рвёт всех клиентов OpenVPN: только при смене конфига, сертификатов
 # или бинарника. Поднявшийся server.conf отмечается как last good.
@@ -89,19 +72,10 @@
     mode: '0644'
 
 - name: Ресурсы юнита маршрутизации
-  ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ovpn-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
-      - "{{ openvpn_tmp }}"
-  environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
-  register: openvpn_step
-  changed_when: "'changed=1' in openvpn_step.stdout"
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [anysda-ovpn-routing]
 
 - name: Скрипт маршрутизации tun0
   ansible.builtin.copy:

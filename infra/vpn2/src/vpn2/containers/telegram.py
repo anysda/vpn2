@@ -56,7 +56,8 @@ def sync_runtime(environ, previous_env, etc=ETC):
         previous = json.loads(taken.read_text())
     except (OSError, ValueError):
         previous = None
-    if not isinstance(previous, dict):
+    recorded = isinstance(previous, dict)
+    if not recorded:
         env = dict(item.split('=', 1) for item in previous_env if '=' in item)
         previous = {field: env.get('TELEGRAM_' + field.upper(), '') for field in FIELDS}
     edited = False
@@ -72,7 +73,7 @@ def sync_runtime(environ, previous_env, etc=ETC):
         # Файл может быть ссылкой в каталог панели: пишем в цель, владелец и права прежние.
         with open(path, 'w', encoding='utf-8') as handle:
             handle.write(json.dumps(runtime) + '\n')
-    if previous != current or not taken.is_file():
+    if previous != current or not recorded:
         fsutil.atomic(taken, json.dumps(current), mode=0o600, encoding='utf-8')
     return changed or edited
 

@@ -27,7 +27,7 @@ class Docker:
     def image_id(self, reference):
         return reference if reference in self.images else ''
 
-    def call(self, *args, check=True, **_kwargs):
+    def call(self, *args, **_kwargs):
         self.events.append(('docker', *args))
         if args[:2] == ('rm', '-f'):
             self.containers.pop(args[2], None)
@@ -221,6 +221,23 @@ def test_incompatible_candidate_never_touches_running_panel(world):
     tx.failure()
     assert docker.containers[compose.PANEL]['Image'] == OLD
     assert not [event for event in events if event[0] == 'docker']
+
+
+def test_failed_backup_leaves_running_panel_and_database(world):
+    """Копия обязательна: без неё прежнюю панель не останавливают и базу не мигрируют."""
+    events, refused, make = world
+    refused.add('backup')
+    docker = Docker(events, {compose.PANEL: panel()})
+    tx, _, _ = make(docker)
+    tx.begin(NEW)
+    with pytest.raises(transaction.TransactionError):
+        tx.replace(NEW)
+    assert docker.containers[compose.PANEL]['Image'] == OLD
+    assert not [event for event in events if event[0] == 'docker']
+    # Отрицательный контроль: с копией тот же вызов останавливает панель и мигрирует.
+    refused.clear()
+    tx.replace(NEW)
+    assert ('docker', 'rm', '-f', compose.PANEL) in events
 
 
 def test_host_files_return_on_failure(world, tmp_path):

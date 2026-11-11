@@ -1,0 +1,46 @@
+{
+    # :80 только переадресует на HTTPS (/etc/caddy/vpn2-http.conf), ACME
+    # HTTP-01 Caddy отвечает до маршрутов. Панель открыта лишь при действующем
+    # сертификате от CA: /etc/caddy/vpn2-panel.conf ведёт vpn2_tls.py.
+    auto_https disable_redirects
+    # Клиент по IP не шлёт SNI.
+    default_sni 192.0.2.1
+    # HTTP/3 выключен намеренно: Caddy с h3 держит *:443/udp, а sing-box при
+    # возврате UDP через tproxy биндит transparent-сокет на <адрес-цели>:443.
+    # Порт занят -> «bind: address already in use», и QUIC-ответы не доходят
+    # НИ ДО ОДНОГО клиента туннеля (VPN2-22). Панели h3 не нужен.
+    servers {
+        protocols h1 h2
+    }
+}
+# Пути бота — только для самой ноды: бот ходит на 127.0.0.1:51821 мимо
+# Caddy. Caddy сам подключается к
+# панели с 127.0.0.1, поэтому проверка loopback в панели отсюда бесполезна:
+# закрываем здесь (VPN2-51). Остальной /api/ops (nodes, adguard) зовёт
+# браузер админа со страницы мониторинга — его не трогаем.
+(internal_only) {
+    @internal path /api/bot /api/bot/* /api/ops/bot-snapshot
+    respond @internal 404
+}
+# X-Forwarded-For панели ставит только Caddy, перезаписывая присланный
+# клиентом: по нему считается лимит попыток входа (VPN2-63). По умолчанию
+# Caddy и так перезаписывает, но с trusted_proxies начал бы дописывать;
+# его предупреждение «Unnecessary header_up» при запуске ожидаемо.
+(to_panel) {
+    reverse_proxy 127.0.0.1:51821 {
+        header_up X-Forwarded-For {remote_host}
+        # Node closes idle HTTP/1 sockets; never reuse one for a mutating POST.
+        transport http {
+            keepalive off
+        }
+    }
+}
+https://192.0.2.1 {
+    import /etc/caddy/vpn2-tls.conf
+    import internal_only
+    encode gzip
+    import /etc/caddy/vpn2-panel.conf
+}
+:80 {
+    import /etc/caddy/vpn2-http.conf
+}

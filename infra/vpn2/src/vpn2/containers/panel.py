@@ -29,6 +29,8 @@ TEMPLATE = '/tmp/anysda/anysda-config.yaml.tpl'
 SSO_RUNTIME = f'{ETC}/sso-runtime.json'
 TLS = '/usr/local/lib/vpn2/vpn2_tls.py'
 TLS_CONFIG = '/etc/vpn2/tls/config.json'
+SECURE = '/etc/vpn2/tls/panel/secure'
+MANAGED = '/etc/vpn2-control/api-managed'
 CADDY = ['/etc/caddy/Caddyfile', '/etc/caddy/vpn2-tls.conf', '/etc/caddy/vpn2-http.conf',
          '/etc/caddy/vpn2-panel.conf']
 OVPN_CONF = '/etc/openvpn/server/server.conf'
@@ -78,7 +80,7 @@ def admin_password(environ, etc=ETC):
     return path.read_text(), changed
 
 
-def sso(environ, runtime_exists, say=lambda text: None):
+def sso(environ, runtime_exists, say=lambda _text: None):
     """Засев SSO из config.yaml: безопасен и после удаления настроек профиля панели."""
     get = environ.get
     enabled = get('SSO_ENABLED') or 'false'
@@ -132,8 +134,9 @@ def session_secret(etc=ETC):
     return path.read_text().strip(), changed
 
 
-def caddyfile(tls_host, site):
-    return CADDYFILE.replace('@TLS_HOST@', tls_host).replace('@SITE@', site)
+def caddyfile(tls_host, site, root=''):
+    return (CADDYFILE.replace('@TLS_HOST@', tls_host).replace('@SITE@', site)
+            .replace('import /etc/caddy/', f'import {root}/etc/caddy/'))
 
 
 CADDYFILE = '''{
@@ -245,28 +248,41 @@ class Openvpn:
             subprocess.run(['systemctl', 'start', 'vpn2-tls.timer'], check=False)
 
 
-def tls_prepare(environ, tls_host, out):
+def host_tls(environ, say, tx, root='', lib=TLS):
+    """Вставки TLS и Caddyfile под охраной выпуска панели. Вернуть узел, сайт и менялся ли Caddyfile.
+
+    root переносит /etc и /var в каталог теста.
+    """
+    domain = environ.get('PANEL_DOMAIN') or ''
+    entry = environ['ENTRY_HOST']
+    if domain:
+        tls_host, site, out = domain, domain, '/etc/vpn2/tls/domain'
+        say(f"  домен панели: {domain} (HTTPS через Let's Encrypt)")
+    else:
+        tls_host, site, out = entry, f'https://{entry}', '/etc/vpn2/tls/ip'
+        say(f"  домен не задан — HTTPS на IP {entry} (Let's Encrypt, ~6 дней)")
+    # Вставки TLS и server.conf принадлежат выпуску панели: откат возвращает их вместе с ней.
+    tx.guard_files([root + path for path in (*CADDY, TLS_CONFIG, SECURE, MANAGED, OVPN_CONF)])
     subprocess.run(
-        [sys.executable, TLS, '--prepare', '--role', 'panel', '--config', TLS_CONFIG,
-         '--caddy-dir', '/etc/caddy', '--storage', '/var/lib/caddy/.local/share/caddy',
-         '--secure-file', '/etc/vpn2/tls/panel/secure', '--bot-secret', f'{ETC}/tgbot-secret.txt',
-         '--panel-container', compose.PANEL, '--host', tls_host, '--output-dir', out,
+        [sys.executable, lib, '--prepare', '--role', 'panel', '--config', root + TLS_CONFIG,
+         '--caddy-dir', f'{root}/etc/caddy', '--storage', f'{root}/var/lib/caddy/.local/share/caddy',
+         '--secure-file', root + SECURE, '--bot-secret', f'{root}{ETC}/tgbot-secret.txt',
+         '--panel-container', compose.PANEL, '--host', tls_host, '--output-dir', root + out,
          '--acme-url', environ.get('TLS_ACME_URL') or 'https://acme-v02.api.letsencrypt.org/directory',
          '--acme-root', environ.get('TLS_ACME_ROOT') or ''], check=True)
+    return tls_host, site, _publish(root + CADDY[0], caddyfile(tls_host, site, root), 0o644)
 
 
-def caddy(tls_host, site):
-    """Caddyfile, правила ufw и перезапуск Caddy при смене входов. Вернуть, менялось ли что-то."""
+def caddy():
+    """Правила ufw и перезапуск Caddy при смене входов. Вернуть, перезапущен ли он."""
     from vpn2 import firewall
-    changed = _publish(CADDY[0], caddyfile(tls_host, site), 0o644)
     firewall.ufw_reconcile('caddy HTTP + ACME challenge', ['80/tcp'], ['caddy HTTP панель'])
     firewall.ufw_reconcile('caddy HTTPS панель', ['443/tcp'])
     # Веб-интерфейс AdGuard наружу не открыт; порт 3001 прошлых установок закрываем.
     _quiet('ufw', 'delete', 'allow', '3001/tcp')
     if _quiet('caddy', 'validate', '--config', CADDY[0]):
         raise StageError('конфиг caddy невалиден')
-    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service',
-                                            *CADDY]) or changed
+    return svc.restart_if_changed('caddy', ['/usr/bin/caddy', '/usr/lib/systemd/system/caddy.service', *CADDY])
 
 
 def _kept(docker, spec):
@@ -345,21 +361,11 @@ def _stage(environ, docker, say, tx, image, sleep):
     say('[3/4] caddy')
     subprocess.run(['systemctl', 'stop', 'vpn2-tls.timer', 'vpn2-tls.service'], check=False,
                    stderr=subprocess.DEVNULL)
-    domain = environ.get('PANEL_DOMAIN') or ''
-    entry = environ['ENTRY_HOST']
-    if domain:
-        tls_host, site, out = domain, domain, '/etc/vpn2/tls/domain'
-        say(f"  домен панели: {domain} (HTTPS через Let's Encrypt)")
-    else:
-        tls_host, site, out = entry, f'https://{entry}', '/etc/vpn2/tls/ip'
-        say(f"  домен не задан — HTTPS на IP {entry} (Let's Encrypt, ~6 дней)")
-    # Вставки TLS и server.conf принадлежат выпуску панели: откат возвращает их вместе с ней.
     openvpn = Openvpn(say)
     tx.files_restored = openvpn.restored
-    tx.guard_files([*CADDY, TLS_CONFIG, '/etc/vpn2/tls/panel/secure', '/etc/vpn2-control/api-managed',
-                    OVPN_CONF])
-    tls_prepare(environ, tls_host, out)
-    changed |= caddy(tls_host, site)
+    _host, _site, published = host_tls(environ, say, tx)
+    changed |= published
+    changed |= caddy()
 
     say('[4/4] run container')
     engine.drop_timezone_dir()
@@ -368,7 +374,7 @@ def _stage(environ, docker, say, tx, image, sleep):
     subprocess.run(['systemctl', 'stop', 'anysda-ikev2-sync.timer', 'anysda-ikev2-sync.service'],
                    check=False, stderr=subprocess.DEVNULL)
     changed |= openvpn.switch()
-    managed = Path('/etc/vpn2-control/api-managed')
+    managed = Path(MANAGED)
     changed |= not managed.exists()
     managed.touch()
     subprocess.run(['systemctl', 'start', 'anysda-ikev2-sync.timer'], check=False, stderr=subprocess.DEVNULL)

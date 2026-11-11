@@ -319,3 +319,80 @@ def test_swap_skipped_in_container_and_with_active_swap(tmp_path, monkeypatch):
 
 def test_f2b_ignore_skips_garbage():
     assert host.f2b_ignore('127.0.0.1 1 22', 'entry.example', lambda _name: ['not-an-ip;rm']) == ['127.0.0.1/8', '::1']
+
+
+def exit_venv(tmp_path, wheel_bytes, fail=''):
+    """`vpn2 host venv` with a stub python: `-m venv` leaves bin/vpn2, a call with `fail` in it fails."""
+    stub = tmp_path / 'python3'
+    stub.write_text('#!/bin/sh\n'
+                    f'echo "$*" >> {tmp_path}/calls\n'
+                    f'case "$*" in *"{fail or "no such call"}"*) exit 1;; esac\n'
+                    '[ "$1" = "-m" ] || exit 0\n'
+                    'for dir; do :; done\n'
+                    'mkdir -p "$dir/bin" && printf \'#!/bin/sh\\necho vpn2\\n\' > "$dir/bin/vpn2" '
+                    '&& chmod +x "$dir/bin/vpn2"\n')
+    stub.chmod(0o755)
+    (tmp_path / 'pip').mkdir(exist_ok=True)
+    (tmp_path / 'pip/pip-1-py3-none-any.whl').write_bytes(b'')
+    wheel = tmp_path / 'vpn2-1-py3-none-any.whl'
+    wheel.write_bytes(wheel_bytes)
+    return host.main(['venv', str(wheel), '--root', str(tmp_path / 'root'),
+                      '--pip-dir', str(tmp_path / 'pip'), '--python', str(stub)])
+
+
+def exit_venv_runs(tmp_path):
+    return subprocess.run([tmp_path / 'root/venv/bin/vpn2'], capture_output=True, text=True).stdout
+
+
+def test_exit_venv_is_built_aside_and_switched_by_link(tmp_path, capsys):
+    link = tmp_path / 'root/venv'
+    assert exit_venv(tmp_path, b'one') == 0
+    assert capsys.readouterr().out.endswith(host.CHANGED + '\n')
+    first = link.resolve()
+    assert link.is_symlink() and first.parent == (tmp_path / 'root/venvs').resolve()
+    assert (link / '.vpn2-wheel').read_text() == hashlib.sha256(b'one').hexdigest() + '\n'
+    calls = (tmp_path / 'calls').read_text()
+    assert '--clear' not in calls and '--system-site-packages' in calls and '--no-index' in calls
+    # the same wheel: nothing is called
+    assert exit_venv(tmp_path, b'one') == 0
+    assert host.CHANGED not in capsys.readouterr().out
+    assert (tmp_path / 'calls').read_text() == calls and link.resolve() == first
+    # another wheel: a new build, the old one is gone
+    assert exit_venv(tmp_path, b'two') == 0
+    assert link.resolve() != first and exit_venv_runs(tmp_path) == 'vpn2\n'
+    assert [item.name for item in (tmp_path / 'root/venvs').iterdir()] == [link.resolve().name]
+
+
+def test_exit_venv_aborted_build_leaves_the_current_one(tmp_path):
+    link = tmp_path / 'root/venv'
+    assert exit_venv(tmp_path, b'one') == 0
+    first = link.resolve()
+    assert exit_venv(tmp_path, b'two', fail=' install ') == 1
+    assert link.resolve() == first and exit_venv_runs(tmp_path) == 'vpn2\n'
+    assert (link / '.vpn2-wheel').read_text() == hashlib.sha256(b'one').hexdigest() + '\n'
+    assert exit_venv(tmp_path, b'two') == 0
+    assert [item.name for item in (tmp_path / 'root/venvs').iterdir()] == [link.resolve().name]
+
+
+def test_exit_venv_directory_of_old_release_becomes_link(tmp_path):
+    old = tmp_path / 'root/venv'
+    old.mkdir(parents=True)
+    (old / '.vpn2-wheel').write_text('old\n')
+    assert exit_venv(tmp_path, b'one') == 0
+    assert old.is_symlink() and exit_venv_runs(tmp_path) == 'vpn2\n'
+    assert sorted(item.name for item in (tmp_path / 'root').iterdir()) == ['venv', 'venvs']
+    assert len(list((tmp_path / 'root/venvs').iterdir())) == 1
+
+
+def test_exit_venv_build_of_running_process_is_kept(tmp_path):
+    assert exit_venv(tmp_path, b'one') == 0
+    first = (tmp_path / 'root/venv').resolve()
+    service = subprocess.Popen(['python3', '-c', 'import time; time.sleep(120)', f'{first}/bin/vpn2'])
+    try:
+        assert exit_venv(tmp_path, b'two') == 0
+        assert first.is_dir()
+    finally:
+        service.kill()
+        service.wait()
+    assert exit_venv(tmp_path, b'three') == 0
+    assert not first.exists()

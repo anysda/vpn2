@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -165,14 +166,54 @@ def _venv(args):
     pips = sorted(glob.glob(os.path.join(args.pip_dir, 'pip-*.whl')))
     if not pips:
         raise RuntimeError(f'нет pip-*.whl в {args.pip_dir} (пакет python3-venv)')
-    venv = root / 'venv'
-    subprocess.run(['/usr/bin/python3', '-m', 'venv', '--without-pip', '--system-site-packages',
-                    '--clear', str(venv)], check=True)
-    subprocess.run(['/usr/bin/python3', pips[-1] + '/pip', '--python', str(venv / 'bin/python'),
+    # Сборка ставится рядом и подменяет действующую одним переименованием:
+    # сторож или таймер, зовущий venv/bin/vpn2, не застаёт пустой каталог.
+    link = root / 'venv'
+    builds = root / 'venvs'
+    venv = builds / digest[:16]
+    if venv.exists():
+        shutil.rmtree(venv)
+    builds.mkdir(parents=True, exist_ok=True)
+    python = args.python
+    subprocess.run([python, '-m', 'venv', '--without-pip', '--system-site-packages',
+                    str(venv)], check=True)
+    subprocess.run([python, pips[-1] + '/pip', '--python', str(venv / 'bin/python'),
                     'install', '--no-index', '--no-deps', '--disable-pip-version-check',
                     args.wheel], check=True, stdout=subprocess.DEVNULL)
-    mark.write_text(digest + '\n')
+    (venv / '.vpn2-wheel').write_text(digest + '\n')
+    fresh = root / 'venv.new'
+    aside = builds / '.replaced'
+    for leftover in fresh, aside:
+        if leftover.is_symlink():
+            leftover.unlink()
+        elif leftover.exists():
+            shutil.rmtree(leftover)
+    fresh.symlink_to(f'venvs/{venv.name}')
+    if not link.is_dir() or link.is_symlink():
+        fresh.replace(link)
+    elif subprocess.run(['mv', '--exchange', '-T', str(fresh), str(link)],
+                        stderr=subprocess.DEVNULL).returncode == 0:
+        # Каталог прежних выпусков: обмен именами одним вызовом (coreutils 9.5).
+        shutil.rmtree(fresh)
+    else:
+        link.rename(aside)
+        fresh.replace(link)
+    for old in builds.iterdir():
+        if old.name != venv.name and not _venv_in_use(old.name):
+            shutil.rmtree(old)
     return True
+
+
+def _venv_in_use(name):
+    """Путь сборки стоит в командной строке живого процесса."""
+    needle = f'/venvs/{name}/'.encode()
+    for item in glob.glob('/proc/[0-9]*/cmdline'):
+        try:
+            if needle in Path(item).read_bytes():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 SSHD_HEADER = '# anysda-vpn — set by infra/scripts/00-bootstrap.sh'
@@ -276,6 +317,7 @@ def main(argv):
     item.add_argument('wheel')
     item.add_argument('--root', default='/opt/vpn2')
     item.add_argument('--pip-dir', default='/usr/share/python-wheels')
+    item.add_argument('--python', default='/usr/bin/python3')
     item.set_defaults(run=_venv)
     args = parser.parse_args(argv)
     try:

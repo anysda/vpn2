@@ -230,7 +230,7 @@ def ovpn_pki(*, target=OVPN_PKI, dirs=OVPN_DIRS, run=pki.run):
 
 
 def ovpn_inputs(directory=OVPN_DIR):
-    """Входы openvpn-server@server; тот же список у ovpn_inputs в anysda-svc.sh.
+    """Входы openvpn-server@server: их отпечаток решает, перезапускать ли службу.
 
     CRL и ccd OpenVPN перечитывает сам на каждом подключении, их в отпечатке нет.
     """

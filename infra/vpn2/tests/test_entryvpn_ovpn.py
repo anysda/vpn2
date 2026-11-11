@@ -1,15 +1,12 @@
 """Шаги роли openvpn: server.conf сверен со стадией 29-openvpn.sh байт в байт."""
 import hashlib
-import os
 from pathlib import Path
-import subprocess
 import types
 
 import pytest
 
 from vpn2 import entryvpn, pki
 
-ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[3]))
 POOL = ['10.67.67.0/24', '10.67.68.0/24']
 # sha256 текста, который стадия писала heredoc-ом при тех же порте, сети и пуле.
 STAGE_CONF = {
@@ -51,12 +48,6 @@ def test_write_conf_changes_only_with_inputs(tmp_path):
     assert write('1195') is True
     assert 'management-client-user vpn2-control\n' in (tmp_path / 'server.conf').read_text()
     assert write('1195') is False
-
-
-def test_inputs_are_the_list_of_the_shell_library():
-    script = f'source {ROOT}/infra/lib/anysda-svc.sh; OVPN_DIR=/x; ovpn_inputs; printf "%s\\n" "${{OVPN_INPUTS[@]}}"'
-    done = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], text=True, capture_output=True, check=True)
-    assert done.stdout.splitlines() == entryvpn.ovpn_inputs('/x')
 
 
 def test_pki_makes_directories_and_reports_change(tmp_path, monkeypatch):

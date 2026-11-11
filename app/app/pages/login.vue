@@ -85,31 +85,24 @@ function reset() {
 
 // Движение входа из макета: карточка выплывает, шаг кода выезжает, ошибка
 // коротко встряхивает форму.
-const EASE = 'cubic-bezier(.23,1,.32,1)'
 const card = ref<HTMLElement>()
 const codeField = ref<HTMLElement>()
 const codeInput = ref<HTMLInputElement>()
 const userInput = ref<HTMLInputElement>()
-const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 onMounted(() => {
   userInput.value?.focus()
-  if (still()) return
-  card.value?.animate([{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }],
-    { duration: 500, easing: EASE, fill: 'backwards' })
+  anim(card.value, [{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: 500 })
 })
 watch(needsTotp, async (on) => {
   if (!on) return
   await nextTick()
-  if (!still()) {
-    codeField.value?.animate([{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }],
-      { duration: 300, easing: EASE, fill: 'backwards' })
-  }
+  rise(codeField.value, { duration: 300 }, -6)
   setTimeout(() => codeInput.value?.focus(), 30)
 })
 watch(error, (msg) => {
-  if (!msg || still()) return
-  card.value?.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }],
-    { duration: 340, easing: 'ease-out' })
+  if (!msg) return
+  anim(card.value, [{ transform: 'translateX(0)' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }],
+    { duration: 340, easing: 'ease-out', fill: 'none' })
 })
 </script>
 

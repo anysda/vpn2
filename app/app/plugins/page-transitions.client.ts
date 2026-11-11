@@ -5,7 +5,6 @@ import { tabDirection } from '~/utils/tab-pages'
 // при «уменьшить движение» и при жесте «назад» самого браузера — обычная смена.
 export default defineNuxtPlugin((nuxtApp) => {
   const html = document.documentElement
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   // На телефоне вкладка только проявляется (main.css), без въезда сбоку.
   const phone = matchMedia('(max-width: 720px)')
   const router = useRouter()
@@ -18,7 +17,7 @@ export default defineNuxtPlugin((nuxtApp) => {
 
   router.beforeResolve(async (to, from) => {
     const dir = tabDirection(from.path, to.path)
-    const skip = !dir || reduced.matches || phone.matches || uaTransition || !document.startViewTransition
+    const skip = !dir || reducedMotion() || phone.matches || uaTransition || !document.startViewTransition
     uaTransition = false
     if (skip) return
 

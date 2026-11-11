@@ -276,8 +276,8 @@ def test_new_passphrase_only_by_explicit_input_with_warning(tmp_path):
     root, config = filled(tmp_path)
     before = config.read_text()
     old = value(config, 'passphrase')
-    # 23 вопроса до passphrase: Enter, затем новое значение.
-    code, output = rerun(root, '\n' * 23 + 'brand new passphrase\n' + ENTER)
+    # 20 вопросов до passphrase: Enter, затем новое значение.
+    code, output = rerun(root, '\n' * 20 + 'brand new passphrase\n' + ENTER)
     assert code == 0, output
     assert config.read_text() == before.replace(f'passphrase: {old}', "passphrase: 'brand new passphrase'")
     assert 'Enter — оставить прежний' in output
@@ -352,3 +352,94 @@ def test_broken_config_stops_before_questions(tmp_path):
     assert 'ERROR: config.yaml: panel.image' in output and 'CANARY' not in output
     assert 'Количество' not in output
     assert config.read_text() == text
+
+
+def test_new_fields_join_their_section(tmp_path):
+    """Включённые впервые бэкапы и заданный пароль: строки встают к своим секциям."""
+    answers = ['1', 'p', '198.51.100.2', 'p', 'de', '', '', '', 'n', 'n', 'n', 'n', 'y']
+    root, config = filled(tmp_path, stubs=STUBS)
+    config.unlink()
+    assert run(root, lines(*answers))[0] == 0
+    before = config.read_text()
+    assert "  enabled: false\n\nyoutube:" in before and 'password не задан' in before
+    code, output = rerun(root, lines('', '', '', '', '', '', 'OwnAdminPw-1', 'OwnAdminPw-1', '',
+                                     '', '', 'y', '', '', 'typed passphrase') + ENTER)
+    assert code == 0, output
+    comment = '  # password не задан — будет сгенерирован при первом деплое\n'
+    assert config.read_text() == (
+        before.replace("  password: ''\n" + comment, "  password: 'OwnAdminPw-1'\n")
+        # backend и schedule не записаны: config2env читает их как local и daily.
+        .replace("  enabled: false\n", "  enabled: true\n  passphrase: 'typed passphrase'\n"))
+
+
+def test_last_exit_replaced_keeps_blank_line_before_next_section(tmp_path):
+    root, config = filled(tmp_path)
+    before = config.read_text()
+    code, output = rerun(root, lines('', '', '', '', '', '198.51.100.9', 'pw 9', 'nl') + ENTER)
+    assert code == 0, output
+    assert config.read_text() == before.replace(
+        "  - tag: se\n    host: '198.51.100.3'\n    password: 'exit pw 2'",
+        "  - tag: nl\n    host: '198.51.100.9'\n    password: 'pw 9'")
+
+
+def test_stub_file_is_filled_like_a_clean_machine(tmp_path):
+    """Файл без нод - заготовка: вопросы первого запуска, её строки остаются."""
+    root, config = filled(tmp_path, "# заметка\npanel:\n  image: example/panel:pinned\n")
+    code, output = rerun(root, lines('1', 'p', '198.51.100.2', 'p', 'de', '', '', '', 'n', 'n',
+                                     'n', 'y', 'y'))
+    assert code == 0, output
+    assert 'Логин [admin]' in output and 'Найден config.yaml' not in output
+    assert config.read_text() == '''# заметка
+panel:
+  image: example/panel:pinned
+  domain: ''
+
+entry:
+  host: '192.0.2.1'
+  password: 'p'
+
+exits:
+  - tag: de
+    host: '198.51.100.2'
+    password: 'p'
+
+admin:
+  user: 'admin'
+  password: ''
+  ssh_pubkey: ''
+
+telegram:
+  bot_token: ''
+  chat_id: ''
+  admin_username: ''
+
+backup:
+  enabled: false
+
+youtube:
+  route: 'zapret'
+'''
+
+
+def test_config_changed_during_questions_is_not_overwritten(tmp_path):
+    root, config = filled(tmp_path)
+    master, slave = pty.openpty()
+    try:
+        with subprocess.Popen(['bash', str(root / 'setup.sh')], cwd=root, env=environment(root),
+                              stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              start_new_session=True) as process:
+            try:
+                wait_for(process.stdout, 'Количество [2]')
+                edited = config.read_text() + '# правка в другом окне\n'
+                config.write_text(edited)
+                os.write(master, b'\n' * 7 + b'chief\n' + b'\n' * 40)
+                output = process.communicate(timeout=20)[0].decode()
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+        assert process.returncode == 1, output
+        assert 'config.yaml изменился, пока шли вопросы' in output
+        assert config.read_text() == edited
+    finally:
+        os.close(master)
+        os.close(slave)

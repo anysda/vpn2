@@ -160,8 +160,9 @@ exits:
             ])
 
     def test_rerun_disables_options_and_preserves_orchestrator_key(self):
+        # Пароль админа на Enter остаётся прежним, ключ убирает явный «-».
         answers = ['1', 'entry secret', '192.0.2.2', 'exit secret', 'se',
-                   '', '', '', 'n', 'n', 'n', 'n', 'y']
+                   '', '', '-', 'n', 'n', 'n', 'n', 'y']
         existing = '''entry:
   host: 192.0.2.1
   password: old
@@ -201,8 +202,9 @@ orchestrator_pubkey: 'ssh-ed25519 fake' # synthetic public key
             self.assertEqual(actual['backup']['retention'], 42)
             self.assertEqual(actual['backup']['local'], {'dir': '/srv/archives'})
             self.assertEqual(actual['youtube'], {'route': 'off', 'quic': 'allow'})
-            self.assertFalse(actual['admin'].get('password'))
-            self.assertFalse(actual['admin'].get('ssh_pubkey'))
+            self.assertEqual(actual['admin'], {'password': 'old password', 'ssh_pubkey': ''})
+            self.assertEqual(actual['entry']['password'], 'entry secret')
+            self.assertEqual(actual['exits'][0]['password'], 'exit secret')
             self.assertFalse(actual['panel'].get('domain'))
             self.assertEqual(actual['panel']['image'], 'example/panel:pinned')
             self.assertFalse(any(actual['telegram'].values()))
@@ -235,9 +237,14 @@ orchestrator_pubkey: 'ssh-ed25519 fake' # synthetic public key
                 self.assertEqual(list(root.glob('.config-*.yaml')), [])
 
     def test_rerun_preserves_unprompted_settings(self):
-        answers = ['1', 'new entry password', '192.0.2.3', 'new exit password', 'se',
-                   'newadmin', 'new password', 'new password', '', 'n', 'n',
-                   'y', 'n', 'local', 'new backup password', 'y', 'y']
+        # Первый проход: адрес entry подтверждается (записан не тот, что определился),
+        # ключ админа убирается явным «-». Второй проход повторяет те же ответы.
+        answers = [['1', '192.0.2.1', 'new entry password', '192.0.2.3', 'new exit password', 'se',
+                    'newadmin', 'new password', 'new password', '-', 'n', 'n',
+                    'y', 'n', 'local', 'new backup password', 'y', 'y'],
+                   ['1', 'new entry password', '192.0.2.3', 'new exit password', 'se',
+                    'newadmin', 'new password', 'new password', '', 'n', 'n',
+                    'y', 'n', 'local', 'new backup password', 'y', 'y']]
         existing = '''# Keep this comment
 entry:
   host: 192.0.2.10
@@ -276,7 +283,7 @@ youtube:
             config = root / 'config.yaml'
             config.write_text(existing)
             for attempt in range(2):
-                code, output = run_setup(directory, '\n'.join(answers) + '\n')
+                code, output = run_setup(directory, '\n'.join(answers[attempt]) + '\n')
                 self.assertEqual(code, 0, output)
                 if attempt == 0:
                     print(''.join(difflib.unified_diff(existing.splitlines(True),
@@ -289,7 +296,7 @@ youtube:
                 self.assertEqual(actual['backup']['retention'], 42)
                 self.assertEqual(actual['backup']['local'], {'dir': '/srv/archives'})
                 self.assertEqual(actual['backup']['s3'], {'bucket': 'saved-bucket'})
-                self.assertEqual(actual['youtube'], {'route': 'zapret', 'quic': 'allow'})
+                self.assertEqual(actual['youtube'], {'route': 'direct', 'quic': 'allow'})
                 self.assertEqual(actual['exits'], [{'tag': 'se', 'host': '192.0.2.3',
                                                   'password': 'new exit password',
                                                   'hy2_direct_port': 5443}])

@@ -53,7 +53,7 @@ def test_matches_bash_wizard(tmp_path, name):
 
 
 def test_scenarios_cover_every_branch():
-    assert SCENARIOS == ['branches', 'cancel', 'full', 'manual-entry', 'minimal', 'rerun']
+    assert SCENARIOS == ['branches', 'cancel', 'full', 'manual-entry', 'minimal']
 
 
 def test_colors_on_terminal_match_bash_wizard(tmp_path):
@@ -191,8 +191,11 @@ def test_config_is_private_before_write(tmp_path, monkeypatch, existing):
     monkeypatch.setattr(setup, 'ROOT', tmp_path)
     monkeypatch.setattr(os, 'fdopen', private_fdopen)
     os.umask(0o022)
-    setup.save(setup.render('192.0.2.1', 'CANARY_SECRET', [('de', '192.0.2.2', 'CANARY_SECRET')],
-                            ('admin', 'CANARY_SECRET', ''), '', ('', '', ''), None, 'off'))
+    answers = setup.defaults()
+    answers['entry'] = {'host': '192.0.2.1', 'password': 'CANARY_SECRET'}
+    answers['exits'] = [('de', '192.0.2.2', 'CANARY_SECRET')]
+    answers['admin']['password'] = 'CANARY_SECRET'
+    setup.save(setup.render(answers))
     assert len(written) == 1
     assert target.read_text().count('CANARY_SECRET') == 3
     assert target.stat().st_mode & 0o777 == 0o600

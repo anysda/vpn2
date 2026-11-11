@@ -6,37 +6,22 @@ import { useDb } from '../database/client'
 import { accounts, users } from '../database/schema'
 
 /**
- * SSO через Authentik (OIDC). Протокол ведёт better-auth (server/utils/auth.ts),
- * здесь только настройки и правило «кого пускаем».
- *
- * Модель доступа ЖЁСТЧЕ, чем «пустил всех, кто вошёл в IdP»:
- *
- *  1. Панель НИКОГДА не заводит учётку из IdP. Только привязывает вход к уже
- *     существующей. Иначе первый же чужой вход создал бы админа — в Authentik
- *     этого флота каждый пользователь суперюзер.
- *  2. Привязка — по `sub` (uuid пользователя в IdP), не по имени и не по почте
- *     из IdP: имя человек меняет сам, а auto-link по почте — вектор захвата.
- *     Почту better-auth получает от нас (синтетическую почту выбранной учётки),
- *     не от IdP.
- *  3. Кто вообще может войти — задаётся явным списком uuid (`allowedSubs`).
- *     Пустой список = не пустит никого; отсутствие привязки — не повод её создать.
+ * SSO через Authentik (OIDC): настройки и правило «кого пускаем»; протокол
+ * ведёт better-auth (utils/auth.ts). Панель не заводит учётку из IdP, только
+ * привязывает вход к существующей, по `sub` из явного списка `allowedSubs`:
+ * имя человек меняет сам, а привязка по почте из IdP - вектор захвата.
  */
 
 export const SSO_PROVIDER = 'authentik'
 
-/**
- * Настройки SSO задаются в профиле панели и лежат здесь. Блок `sso:` в
- * config.yaml (через env стадии 30) только засевает их, пока файла нет: после
- * первого сохранения из профиля главнее панель, повторный деплой файл не трогает.
- */
+/** Настройки из профиля панели; блок `sso:` config.yaml только засевает их, пока файла нет. */
 const RUNTIME_PATH = '/var/lib/anysda-vpn2/runtime/sso-runtime.json'
 
 /** То, что хранится и правится в профиле. */
 export interface SsoStored {
   enabled: boolean
-  /** адрес Authentik (https://auth.example.com) или сразу discovery URL */
+  /** адрес Authentik или сразу discovery URL (тогда appSlug не нужен) */
   authentikUrl: string
-  /** slug приложения в Authentik; не нужен, если authentikUrl — discovery URL */
   appSlug: string
   clientId: string
   clientSecret: string
@@ -45,20 +30,7 @@ export interface SsoStored {
   label: string
   autoRedirect: boolean
   passwordLogin: boolean
-  /** адрес возврата, его же надо прописать у провайдера в Authentik */
-  redirectUrl: string
-}
-
-export interface SsoSettings {
-  enabled: boolean
-  autoRedirect: boolean
-  passwordLogin: boolean
-  label: string
-  /** sub → локальный логин (null = «единственная учётка панели») */
-  allowed: Map<string, string | null>
-  discoveryUrl: string
-  clientId: string
-  clientSecret: string
+  /** адрес возврата, его же прописывают у провайдера в Authentik */
   redirectUrl: string
 }
 
@@ -154,7 +126,8 @@ export function defaultRedirectUrl(event: H3Event): string {
   return `${proto}://${getRequestHost(event, { xForwardedHost: true })}/auth/authentik`
 }
 
-export function ssoSettings(): SsoSettings {
+/** `allowed`: sub → локальный логин (null = единственная учётка панели). */
+export function ssoSettings() {
   const s = load().stored
   const discoveryUrl = discoveryFrom(s.authentikUrl, s.appSlug)
   const enabled = s.enabled && !!s.clientId.trim() && !!discoveryUrl && !!s.clientSecret.trim()
@@ -171,40 +144,21 @@ export function ssoSettings(): SsoSettings {
   }
 }
 
-/**
- * Настроен ли сам OIDC-клиент. Проверяется ДО редиректа в IdP: иначе человек
- * уходит на Authentik и возвращается в ошибку, вместо того чтобы увидеть форму.
- */
-export function ssoConfigured(s: SsoSettings = ssoSettings()): boolean {
-  return !!s.clientId.trim() && !!s.discoveryUrl && !!s.clientSecret.trim()
-}
-
 export class SsoDenied extends Error {
   constructor(public code: string, message: string) {
     super(message)
   }
 }
 
-/**
- * Находит локальную учётку для вошедшего в IdP человека. Бросает SsoDenied,
- * если пускать нельзя. Ничего не пишет: привязку (строку accounts) после этого
- * создаёт better-auth, найдя учётку по возвращённой почте.
- */
+/** Локальная учётка для вошедшего в IdP или SsoDenied. Привязку потом создаёт better-auth по почте. */
 export async function resolveSsoUser(sub: string, preferredUsername?: string) {
-  if (!sub) {
-    throw new SsoDenied('sso_no_sub', 'IdP не вернул sub')
-  }
+  if (!sub) throw new SsoDenied('sso_no_sub', 'IdP не вернул sub')
   const db = useDb()
 
-  // Список проверяется ПЕРВЫМ, и для уже привязанных тоже: привязка в БД
-  // переживает удаление sub из sso.allowed_subs, и без этой проверки убранный
-  // из списка человек продолжал бы входить (VPN2-43).
+  // Список проверяется первым и для уже привязанных: привязка переживает удаление sub (VPN2-43).
   const { allowed } = ssoSettings()
   if (!allowed.has(sub)) {
-    throw new SsoDenied(
-      'sso_not_allowed',
-      `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`,
-    )
+    throw new SsoDenied('sso_not_allowed', `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`)
   }
 
   const [linked] = await db
@@ -221,19 +175,13 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
   if (wantUsername) {
     const found = await db.select().from(users).where(eq(users.username, wantUsername)).limit(1)
     target = found[0]
-    if (!target) {
-      throw new SsoDenied('sso_no_local_user', `в панели нет учётки «${wantUsername}»`)
-    }
+    if (!target) throw new SsoDenied('sso_no_local_user', `в панели нет учётки «${wantUsername}»`)
   }
   else {
-    // Логин не указан — привязываем к единственной учётке панели. Если их
-    // несколько, угадывать не будем: учётку надо назвать явно.
+    // Логин не указан: единственная учётка панели; из нескольких не угадываем.
     const all = await db.select().from(users).limit(2)
     if (all.length !== 1) {
-      throw new SsoDenied(
-        'sso_ambiguous',
-        `учёток в панели ${all.length} — в sso.allowed_subs нужен формат <sub>:<логин>`,
-      )
+      throw new SsoDenied('sso_ambiguous', `учёток в панели ${all.length} — в sso.allowed_subs нужен формат <sub>:<логин>`)
     }
     target = all[0]!
   }
@@ -243,20 +191,12 @@ export async function resolveSsoUser(sub: string, preferredUsername?: string) {
     .from(accounts)
     .where(and(eq(accounts.userId, target.id), eq(accounts.providerId, SSO_PROVIDER)))
     .limit(1)
-  if (other) {
-    throw new SsoDenied(
-      'sso_already_linked',
-      `учётка «${target.username}» уже привязана к другому sub`,
-    )
-  }
+  if (other) throw new SsoDenied('sso_already_linked', `учётка «${target.username}» уже привязана к другому sub`)
 
   return target
 }
 
-/**
- * Читает discovery: отвечает ли там OpenID-провайдер. Для кнопки «Проверить»
- * в профиле и перед выключением парольного входа.
- */
+/** Отвечает ли по адресу OpenID-провайдер: кнопка «Проверить» и выключение парольного входа. */
 export async function probeDiscovery(url: string): Promise<{ ok: true, issuer: string } | { ok: false, message: string }> {
   let res: Response
   try {

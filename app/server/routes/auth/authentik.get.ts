@@ -1,20 +1,14 @@
 import { LOGIN_FORM, resetAuth, useAuth } from '../../utils/auth'
-import { SSO_PROVIDER, ssoConfigured, ssoSettings } from '../../utils/sso'
+import { SSO_PROVIDER, ssoSettings } from '../../utils/sso'
 
 /**
- * Точка входа и адрес возврата SSO: GET /auth/authentik.
- *
- * Протокол (state, PKCE, nonce, обмен кода) ведёт better-auth. Адрес возврата
- * у провайдера в Authentik прежний — /auth/authentik (NUXT_OAUTH_OIDC_REDIRECT_URL),
- * поэтому пришедший с кодом запрос пересылаем в колбэк библиотеки как есть.
+ * Точка входа и адрес возврата SSO. Протокол ведёт better-auth; запрос с кодом
+ * пересылаем в её колбэк: адрес возврата у провайдера прежний, /auth/authentik.
  */
 export default defineEventHandler(async (event) => {
-  const s = ssoSettings()
-  if (!s.enabled || !ssoConfigured(s)) {
-    // Рубильник выключен или клиент недонастроен — молча возвращаем на форму.
-    // Ровно этот путь не даёт зациклиться: middleware шлёт сюда, мы шлём на
-    // /login?direct=1, а там авторедирект уже не срабатывает.
-    useLogger().warn({ enabled: s.enabled, configured: ssoConfigured(s) }, 'sso: запрос при выключенном SSO')
+  if (!ssoSettings().enabled) {
+    // На форму с direct=1: там авторедирект не срабатывает, петли нет.
+    useLogger().warn('sso: запрос при выключенном SSO')
     return sendRedirect(event, `${LOGIN_FORM}&error=sso_off`)
   }
 
@@ -35,9 +29,7 @@ export default defineEventHandler(async (event) => {
     return sendRedirect(event, response.url)
   }
   catch (err) {
-    // Authentik недоступен или discovery не прочитался — форма и есть break-glass.
-    // Discovery библиотека читает один раз при сборке экземпляра: пересобираем,
-    // чтобы следующая попытка прочитала его заново, а не до рестарта панели.
+    // Форма и есть break-glass. Экземпляр пересобираем: discovery читается при сборке.
     useLogger().error({ err }, 'sso: не удалось начать вход через Authentik')
     resetAuth()
     return sendRedirect(event, `${LOGIN_FORM}&error=sso_failed`)

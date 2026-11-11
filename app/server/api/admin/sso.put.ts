@@ -34,9 +34,8 @@ const isHttpUrl = (s: string) => /^https?:\/\/[^/\s]+/.test(s)
 const PROTOCOL: (keyof SsoStored)[] = ['enabled', 'authentikUrl', 'appSlug', 'clientId', 'clientSecret', 'allowedSubs', 'redirectUrl']
 
 /**
- * Сохранение SSO из профиля. Правило одно: после сохранения в панель
- * должен войти хоть кто-то. Отсюда проверки как в config2env.py и запрет
- * выключить пароль, пока вход через Authentik не доказан этой же сессией.
+ * Сохранение SSO из профиля: после него в панель должен войти хоть кто-то.
+ * Пароль выключается, только когда вход через Authentik доказан этой же сессией.
  */
 export default defineEventHandler(async (event) => {
   const session = await useAuth().api.getSession({ headers: event.headers })
@@ -76,12 +75,8 @@ export default defineEventHandler(async (event) => {
   }
 
   if (!next.passwordLogin) {
-    // Выключить пароль можно, только войдя через Authentik этой же сессией и
-    // не меняя в том же сохранении настройки входа: иначе неверный SSO оставил
-    // бы панель без входа. Break-glass /login?direct=1 тогда тоже закрыт.
-    if (!next.enabled) {
-      reject('sso_password_needed', 'Без SSO парольный вход выключить нельзя')
-    }
+    // Иначе неверный SSO оставил бы панель без входа: break-glass тогда тоже закрыт.
+    if (!next.enabled) reject('sso_password_needed', 'Без SSO парольный вход выключить нельзя')
     const loginMethod = (session.session as { loginMethod?: string | null }).loginMethod
     if (loginMethod !== 'sso' || !cur.enabled) {
       reject('sso_not_proven', 'Пароль выключается только после входа через Authentik: сохраните SSO, выйдите и войдите через него')
@@ -102,8 +97,7 @@ export default defineEventHandler(async (event) => {
   }
 
   writeSsoStored(next)
-  // Список проверяется только при входе: действующие сессии убранных из него
-  // (или все SSO-сессии, если SSO выключили) удаляются здесь же.
+  // Сессии убранных из списка (или все SSO-сессии) удаляются сразу.
   const revoked = await revokeDisallowedSsoSessions()
   const changed = (Object.keys(next) as (keyof SsoStored)[]).filter(k => next[k] !== cur[k])
   if (changed.length) {
@@ -115,9 +109,6 @@ export default defineEventHandler(async (event) => {
   }
   // Провайдер better-auth собирается из настроек при создании экземпляра.
   resetAuth()
-  useLogger().info(
-    { enabled: next.enabled, clientId: next.clientId, discovery: discoveryFrom(next.authentikUrl, next.appSlug), passwordLogin: next.passwordLogin, revokedSessions: revoked },
-    'sso settings updated from profile',
-  )
+  useLogger().info({ enabled: next.enabled, clientId: next.clientId, passwordLogin: next.passwordLogin, revokedSessions: revoked }, 'sso settings updated from profile')
   return { ok: true }
 })

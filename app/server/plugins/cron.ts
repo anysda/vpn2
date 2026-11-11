@@ -10,8 +10,7 @@ export default defineNitroPlugin((nitroApp) => {
   let running: Promise<void> | null = null
 
   function runTick() {
-    // Медленный helper не должен накапливать параллельные тики и записи
-    // счётчиков. Следующий интервал перечитает актуальное состояние.
+    // Медленный тик не накапливает параллельные.
     if (running) return
     running = tick()
       .catch(err => log.error({ err }, 'cron: tick failed'))
@@ -21,32 +20,15 @@ export default defineNitroPlugin((nitroApp) => {
   async function tick() {
     await enqueueExpiredAccess()
     await runAccessOperations()
-
-    // Что сервис снял по сроку сам (панель стояла) — в журнал один раз.
-    await reportControlExpiry().catch(err =>
-      log.error({ err }, 'cron: control expiry report failed'),
-    )
-    await syncControlExpiry().catch(err =>
-      log.error({ err }, 'cron: control expiry sync failed'),
-    )
-
-    // Предпочитаемые экзиты: самоисцеление файла (устройства, добавленные
-    // ботом, удалённые клиенты). Без изменений файл не переписывается.
-    await syncClientPrefsFile().catch(err =>
-      log.error({ err }, 'cron: client prefs sync failed'),
-    )
-
-    // Накопительный трафик по всем протоколам (WG+OpenVPN+IKEv2), per-device.
-    await collectTraffic().catch(err =>
-      log.error({ err }, 'cron: traffic collection failed'),
-    )
+    await reportControlExpiry().catch(err => log.error({ err }, 'cron: control expiry report failed'))
+    await syncControlExpiry().catch(err => log.error({ err }, 'cron: control expiry sync failed'))
+    await syncClientPrefsFile().catch(err => log.error({ err }, 'cron: client prefs sync failed'))
+    await collectTraffic().catch(err => log.error({ err }, 'cron: traffic collection failed'))
   }
 
-  // Delay first tick so init plugin has time to run migrations. Without this
-  // the first tick races and fails with "no such table" on a fresh DB.
-  const FIRST_TICK_DELAY_MS = 5_000
+  // Первый тик с задержкой: init должен успеть проверить базу.
+  const firstTick = setTimeout(runTick, 5_000)
 
-  const firstTick = setTimeout(runTick, FIRST_TICK_DELAY_MS)
   const handle = setInterval(runTick, INTERVAL_MS)
 
   nitroApp.hooks.hook('close', async () => {

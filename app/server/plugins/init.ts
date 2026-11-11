@@ -12,15 +12,8 @@ import { markPanelReady } from '../utils/panel-ready'
 import { ControlUnavailable } from '../utils/control'
 import { compactAccessOperations } from '../utils/access-operations'
 
-function generatePassword(): string {
-  return randomBytes(13).toString('base64url').slice(0, 18)
-}
-
 export default defineNitroPlugin((nitroApp) => {
-  // Nitro не ждёт async-плагин: брошенная здесь ошибка уходила в
-  // unhandledRejection, а панель продолжала отвечать без миграций или с
-  // несинхронизированным админом. Падаем процессом — контейнер это покажет,
-  // а 30-frontend напечатает журнал.
+  // Nitro не ждёт async-плагин: без миграций или админа падаем процессом.
   const ready = initPanel().then(() => {
     markPanelReady()
     useLogger().info('panel init complete')
@@ -29,8 +22,7 @@ export default defineNitroPlugin((nitroApp) => {
     console.error('panel init failed:', err)
     process.exit(1)
   })
-  // Обработчик request Nitro ждёт, в отличие от async-плагина. В том числе
-  // /api/version не должен сообщать о готовности до создания администратора.
+  // Запросы (и /api/version) ждут готовности.
   nitroApp.hooks.hook('request', () => ready)
   return ready
 })
@@ -73,7 +65,7 @@ async function initPanel() {
 
   if (existing.length === 0) {
     if (!desiredPassword) {
-      desiredPassword = generatePassword()
+      desiredPassword = randomBytes(13).toString('base64url').slice(0, 18)
       const pwdPath = '/var/lib/anysda-vpn2/admin-password.txt'
       try {
         const dir = dirname(pwdPath)
@@ -87,8 +79,7 @@ async function initPanel() {
     }
     const passwordHash = await hashPassword(desiredPassword)
     await localDb.transaction(async (tx) => {
-      // Почта учётки синтетическая и привязана к id (см. schema.ts), а id
-      // известен только после вставки.
+      // Синтетическая почта привязана к id, а он известен только после вставки.
       const [row] = await tx.insert(users).values({
         username: desiredUser,
         name: desiredUser,
@@ -115,12 +106,9 @@ async function initPanel() {
         .where(eq(users.id, current.id))
       changed.push('username')
     }
-    // Пароль из конфига применяется, только когда сменили сам конфиг: init
-    // сравнивает его с последним применённым значением, а не с паролем
-    // учётки, иначе смена в панели откатывалась бы на каждом перезапуске.
-    // Вместе с применённым паролем рвутся все сессии, как при смене в панели
-    // (VPN2-49). Без записи о прошлом применении (установка до этой схемы)
-    // конфиг применяется, как раньше.
+    // Пароль из конфига применяется, только когда сменили сам конфиг (сравнение
+    // с последним применённым), иначе смена в панели откатывалась бы на каждом
+    // перезапуске. Вместе с ним рвутся все сессии (VPN2-49).
     const yamlPassword = yamlConfig?.admin?.password
     if (yamlPassword) {
       const [applied] = await localDb.select().from(adminConfigPassword)
@@ -148,15 +136,12 @@ async function initPanel() {
     if (changed.length > 0) log.info({ keys: changed }, 'admin user synced from config.yaml')
   }
 
-  // 3. Список SSO мог смениться в config.yaml, пока панель стояла: сессии
-  // тех, кого в нём больше нет, не доживают свои сутки.
+  // 3. Список SSO мог смениться, пока панель стояла.
   const revoked = await revokeDisallowedSsoSessions()
   if (revoked > 0) log.info({ count: revoked }, 'sso sessions revoked: sub no longer allowed')
 
-  // 4. 2FA, включённая до better-auth: секрет остаётся в users.totp_secret и
-  // проверяется хуком в utils/auth.ts, а библиотеке нужна своя строка, чтобы
-  // она спрашивала код при входе. Её секрет случайный: коды человека он не
-  // проверяет, только код, который подставляет хук.
+  // 4. 2FA, включённая до better-auth: библиотеке нужна своя строка со случайным
+  // секретом, чтобы она спрашивала код; сам код проверяет хук в utils/auth.ts.
   const legacy = await localDb.select({ id: users.id }).from(users)
     .leftJoin(twoFactors, eq(twoFactors.userId, users.id))
     .where(and(isNotNull(users.legacyTotpSecret), isNull(twoFactors.id)))

@@ -9,8 +9,7 @@ export const TOTP_PERIOD = 30
 export const TOTP_ISSUER = 'anysda-vpn2'
 
 type OtpKey = string | CryptoKey
-// createOTP в типах принимает только строку, но внутри отдаёт ключ в
-// WebCrypto как есть — CryptoKey проходит (сверено с RFC 4226).
+// В типах createOTP ключ только строка, но CryptoKey проходит как есть.
 export const otp = (key: OtpKey) => createOTP(key as string, { period: TOTP_PERIOD, digits: 6 })
 
 /** Секрет, заведённый до better-auth: base32 от сырых байт ключа. */
@@ -19,12 +18,8 @@ async function legacyKey(secret: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
 }
 
-interface TotpKeys {
-  /** чем проверять код человека */
-  check: OtpKey
-  /** секрет библиотеки — им проверяет она сама */
-  library: string
-}
+/** check: чем проверять код человека; library: секрет библиотеки. */
+interface TotpKeys { check: OtpKey, library: string }
 
 export async function totpKeys(secretConfig: unknown, userId: number): Promise<TotpKeys | null> {
   const db = useDb()
@@ -39,11 +34,7 @@ export async function totpKeys(secretConfig: unknown, userId: number): Promise<T
   return { check: row.legacy ? await legacyKey(row.legacy) : library, library }
 }
 
-/**
- * Проверяет код (±1 шаг на расхождение часов) и гасит его: шаг пишется в
- * users.totp_last_step условным update — из двух параллельных запросов с
- * одним кодом пройдёт ровно один. Возвращает шаг или null.
- */
+/** Проверяет код (±1 шаг) и гасит его условным update: из параллельных запросов пройдёт один. */
 export async function consumeCode(userId: number, key: OtpKey, code: unknown): Promise<number | null> {
   const token = String(code ?? '').replace(/\s/g, '')
   if (!/^\d{6}$/.test(token)) return null

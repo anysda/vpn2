@@ -8,17 +8,12 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import * as schema from '../database/schema'
 import { consumeCode, otp, TOTP_ISSUER, TOTP_PERIOD, totpKeys } from './auth-totp'
-import { resolveSsoUser, SSO_PROVIDER, SsoDenied, ssoConfigured, ssoSettings } from './sso'
+import { resolveSsoUser, SSO_PROVIDER, SsoDenied, ssoSettings } from './sso'
 
 /**
- * Вход, сессии, 2FA и SSO панели — на better-auth. Своего здесь только то,
- * чего в библиотеке нет:
- *  - argon2 с прежними параметрами, чтобы старые хеши паролей подходили;
- *  - проверка 2FA-секретов, заведённых до библиотеки, и гашение кода
- *    (код этого и более раннего шага второй раз не пройдёт, VPN2-62);
- *  - правило «кого пускаем через SSO» (utils/sso.ts);
- *  - отзыв остальных сессий при смене пароля и включении/выключении 2FA;
- *  - отзыв SSO-сессий тех, кого убрали из списка SSO.
+ * Вход, сессии, 2FA и SSO панели на better-auth. Своё здесь: argon2 с прежними
+ * параметрами, 2FA-секреты старого формата и гашение кода (VPN2-62), правило
+ * допуска через SSO (utils/sso.ts), отзыв сессий при смене пароля, 2FA и списка SSO.
  */
 
 /** Форма входа, где нет авторедиректа в SSO: break-glass. */
@@ -39,18 +34,9 @@ export async function verifyPassword(hashed: string, plain: string): Promise<boo
   }
 }
 
-/** Удаляет все сессии учётки, кроме `keepToken`. */
-async function revokeOtherSessions(userId: number, keepToken: string) {
-  await useDb()
-    .delete(schema.sessions)
-    .where(and(eq(schema.sessions.userId, userId), ne(schema.sessions.token, keepToken)))
-}
-
 /**
- * Удаляет SSO-сессии учёток, чей sub больше не в списке SSO; при выключенном
- * SSO — все SSO-сессии. Список проверяется при входе (resolveSsoUser), а
- * сессия живёт сутки: без этого убранный продолжал бы работать до её конца.
- * Вход паролем список SSO не касается. Возвращает число удалённых сессий.
+ * Удаляет SSO-сессии учёток, чей sub больше не в списке SSO (при выключенном
+ * SSO все): сессия живёт сутки, убранный не должен её дожить. Возвращает число.
  */
 export async function revokeDisallowedSsoSessions(sso = ssoSettings()): Promise<number> {
   const subs = sso.enabled ? [...sso.allowed.keys()] : []
@@ -86,18 +72,13 @@ function requireCodeShape(code: unknown) {
   }
 }
 
-function isSignInStep(ctx: HookCtx): boolean {
-  return !!ctx.getCookie(ctx.context.createAuthCookie(TWO_FACTOR_COOKIE).name)
-}
-
 const panelGuard = (): BetterAuthPlugin => ({
   id: 'panel-guard',
   hooks: {
     before: [
       {
-        // Парольный вход по стандарту флота не удаляется, а прячется с формы:
-        // при включённом SSO сюда попадают через break-glass /login?direct=1.
-        // NUXT_SSO_PASSWORD_LOGIN=false рубит его наглухо.
+        // При включённом SSO сюда попадают через break-glass /login?direct=1;
+        // NUXT_SSO_PASSWORD_LOGIN=false закрывает парольный вход совсем.
         matcher: ctx => ctx.path === '/sign-in/username',
         handler: createAuthMiddleware(async () => {
           if (!ssoSettings().passwordLogin) {
@@ -106,10 +87,8 @@ const panelGuard = (): BetterAuthPlugin => ({
         }),
       },
       {
-        // Код проверяем сами: библиотека не умеет старые секреты и не гасит
-        // повтор кода. Дальше она получает код, заведомо подходящий (проверка
-        // прошла) или заведомо нет (не прошла) — счётчики неудач и блокировку
-        // ведёт она.
+        // Код проверяем сами (старые секреты, гашение повтора), а библиотеке
+        // подставляем заведомо верный или заведомо неверный: счётчики неудач ведёт она.
         matcher: ctx => ctx.path === '/two-factor/verify-totp',
         handler: createAuthMiddleware(async (ctx) => {
           const body = { ...(ctx.body ?? {}), trustDevice: false }
@@ -124,8 +103,7 @@ const panelGuard = (): BetterAuthPlugin => ({
         }),
       },
       {
-        // Выключение 2FA: пароль и действующий код. Библиотека спрашивает
-        // только пароль.
+        // Выключение 2FA: пароль и действующий код (библиотека спрашивает только пароль).
         matcher: ctx => ctx.path === '/two-factor/disable',
         handler: createAuthMiddleware(async (ctx) => {
           const session = await getSessionFromCtx(ctx)
@@ -157,9 +135,7 @@ const panelGuard = (): BetterAuthPlugin => ({
     ],
     after: [
       {
-        // Метку в приложении-аутентификаторе библиотека строит из почты, а она
-        // у нас синтетическая — ставим прежнюю «anysda-vpn2:<логин>». Резервные
-        // коды не отдаём: их ручки отключены.
+        // Метка в аутентификаторе: «anysda-vpn2:<логин>» вместо синтетической почты.
         matcher: ctx => ctx.path === '/two-factor/enable',
         handler: createAuthMiddleware(async (ctx) => {
           const r = ctx.context.returned as { totpURI?: unknown } | undefined
@@ -175,15 +151,16 @@ const panelGuard = (): BetterAuthPlugin => ({
         }),
       },
       {
-        // Включение и выключение 2FA пересоздают только текущую сессию —
-        // остальные рвём сами.
+        // Включение и выключение 2FA пересоздают текущую сессию, остальные рвём сами.
         matcher: ctx => ctx.path === '/two-factor/verify-totp' || ctx.path === '/two-factor/disable',
         handler: createAuthMiddleware(async (ctx) => {
           const fresh = ctx.context.newSession
           if (!fresh) return
-          if (ctx.path === '/two-factor/verify-totp' && isSignInStep(ctx)) return
+          const cookie = ctx.getCookie(ctx.context.createAuthCookie(TWO_FACTOR_COOKIE).name)
+          if (ctx.path === '/two-factor/verify-totp' && cookie) return
           const userId = Number(fresh.user.id)
-          await revokeOtherSessions(userId, fresh.session.token)
+          await useDb().delete(schema.sessions)
+            .where(and(eq(schema.sessions.userId, userId), ne(schema.sessions.token, fresh.session.token)))
           if (ctx.path === '/two-factor/disable') {
             await useDb()
               .update(schema.users)
@@ -195,9 +172,6 @@ const panelGuard = (): BetterAuthPlugin => ({
     ],
   },
 })
-
-// --- экземпляр ---------------------------------------------------------------
-
 function buildAuth() {
   const cfg = useRuntimeConfig()
   const sso = ssoSettings()
@@ -205,8 +179,7 @@ function buildAuth() {
   return betterAuth({
     appName: TOTP_ISSUER,
     secret: String(cfg.session.password ?? ''),
-    // Адрес панели берётся из Host запроса: у одной установки их бывает
-    // несколько (домен, IP), а перечислять их здесь нечем.
+    // Адрес панели берётся из Host запроса: у установки их бывает несколько.
     baseURL: {
       allowedHosts: ['*'],
       protocol: cfg.session.cookie.secure ? 'https' : 'http',
@@ -228,8 +201,7 @@ function buildAuth() {
       expiresIn: 60 * 60 * 24,
       cookieCache: { enabled: false },
       additionalFields: {
-        // Без defaultValue: при вкл/выкл 2FA библиотека пересоздаёт сессию
-        // из старой, и значение по умолчанию затёрло бы перенесённое.
+        // Без defaultValue: оно затёрло бы значение при пересоздании сессии.
         loginMethod: { type: 'string', required: false, input: false },
       },
     },
@@ -243,9 +215,7 @@ function buildAuth() {
       enabled: true,
       disableSignUp: true,
       minPasswordLength: 8,
-      // В config.yaml и старом входе длина пароля не ограничивалась. Лимит
-      // библиотеки применяется и при проверке существующего пароля, поэтому
-      // ограничиваем только новый пароль в хуке /change-password выше.
+      // Старые пароли любой длины; новый ограничен в хуке /change-password.
       maxPasswordLength: Number.MAX_SAFE_INTEGER,
       password: {
         hash: hashPassword,
@@ -255,8 +225,7 @@ function buildAuth() {
     advanced: {
       database: { generateId: 'serial' },
       useSecureCookies: !!cfg.session.cookie.secure,
-      // Адрес клиента: ручка /api/auth/* кладёт в X-Forwarded-For адрес,
-      // которому верит (см. server/api/auth/[...all].ts).
+      // X-Forwarded-For выставляет ручка /api/auth/* (адрес, которому она верит).
       ipAddress: { ipAddressHeaders: ['x-forwarded-for'] },
     },
     rateLimit: {
@@ -264,9 +233,7 @@ function buildAuth() {
       storage: 'memory',
       window: 60,
       max: 100,
-      // Всё, что проверяет пароль или код 2FA, считает неудачи сама ручка
-      // /api/auth/* (server/api/auth/[...all].ts): библиотека считала бы и
-      // удачные попытки.
+      // Неудачи пароля и кода считает сама ручка /api/auth/*.
       customRules: {
         '/sign-in/username': false,
         '/change-password': false,
@@ -296,10 +263,9 @@ function buildAuth() {
         issuer: TOTP_ISSUER,
         schema: { twoFactor: { modelName: 'twoFactors' } },
       }),
-      // Провайдер есть, только когда SSO включено и настроено; без него
-      // /auth/authentik отвечает sso_off раньше, чем дойдёт до библиотеки.
+      // Без настроенного SSO /auth/authentik отвечает sso_off раньше библиотеки.
       genericOAuth({
-        config: sso.enabled && ssoConfigured(sso)
+        config: sso.enabled
           ? [{
           providerId: SSO_PROVIDER,
           discoveryUrl: sso.discoveryUrl,
@@ -320,8 +286,7 @@ function buildAuth() {
             }
             catch (err) {
               if (!(err instanceof SsoDenied)) throw err
-              // Причину пишем в лог, наружу только код: в браузере незачем
-              // знать, есть ли в панели такая учётка.
+              // Причина в лог, в браузер только код.
               useLogger().warn({ sub, preferred, reason: err.message }, 'sso: вход отклонён')
               throw new APIError('FOUND', undefined, { Location: `${LOGIN_FORM}&error=${err.code}` })
             }
@@ -342,7 +307,6 @@ export function useAuth(): Auth {
   return _auth
 }
 
-/** Пересобрать экземпляр со свежими настройками (SSO из профиля). */
 export function resetAuth() {
   _auth = null
 }

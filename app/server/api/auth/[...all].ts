@@ -5,20 +5,10 @@ import { SSO_PROVIDER } from '../../utils/sso'
 import { FIELD_LABELS } from '../../utils/validate'
 
 /**
- * Все ручки входа, сессий и 2FA — better-auth (server/utils/auth.ts).
- *
- * Здесь то, чего библиотека за нас не сделает:
- *
- * 1. Адрес клиента для ограничителя попыток. X-Forwarded-For принимается
- *    только с loopback, то есть от Caddy на этой же ноде (он перезаписывает
- *    заголовок, см. infra/vpn2/src/vpn2/containers/panel.py), и берётся последний адрес.
- *    Остальным заголовок заменяем адресом сокета: своё значение на каждую
- *    попытку — и лимит не сработал бы никогда (VPN2-63).
- * 2. Список открытых ручек и проверка Origin — см. OPEN ниже.
- * 3. Лимит попыток для всего, что проверяет пароль или код 2FA: считаются
- *    только неудачи, окно от первой неудачи (loginAttempt ниже).
- * 4. Вид ошибок. Фронт и бот ждут код в `statusMessage` и русский текст в
- *    `message`, как у остальных ручек панели.
+ * Ручки входа, сессий и 2FA ведёт better-auth (utils/auth.ts). Здесь: адрес
+ * клиента для лимита (X-Forwarded-For только с loopback, от Caddy этой ноды,
+ * VPN2-63), список открытых ручек с проверкой Origin, лимит неудачных попыток
+ * и вид ошибок: код в `statusMessage`, русский текст в `message`.
  */
 
 const TEXT: Record<string, string> = {
@@ -76,12 +66,8 @@ async function humanError(res: Response): Promise<Response> {
 }
 
 /**
- * Наружу открыты только ручки, которыми пользуется панель. Адрес панели
- * библиотека берёт из Host (allowedHosts: ['*']), а с ним доверенным считает
- * любой Origin и любой callbackURL — остальные ручки (сброс пароля, привязка
- * соцсетей, /reset-password/:token с редиректом по callbackURL) стали бы
- * открытым редиректом. Вход через Authentik начинает /auth/authentik прямым
- * вызовом, мимо этого списка.
+ * Открыты только ручки, которыми пользуется панель: библиотека доверяет любому
+ * Origin и callbackURL (allowedHosts: ['*']), остальные стали бы открытым редиректом.
  */
 const OPEN: Record<string, ReadonlySet<string>> = {
   GET: new Set(['/get-session', '/ok', `/callback/${SSO_PROVIDER}`]),
@@ -95,32 +81,14 @@ const OPEN: Record<string, ReadonlySet<string>> = {
   ]),
 }
 
-/** Ручки, где перебирают пароль или код. Лимит у каждой свой, на адрес. */
-function limited(path: string): boolean {
-  return path === '/sign-in/username' || path === '/change-password' || path.startsWith('/two-factor/')
-}
-
 const LOGIN_WINDOW_SEC = 300
 
 /*
- * Лимит неудачных попыток входа и проверки кода 2FA (VPN2-162).
- *
- * Встроенный ограничитель better-auth считает каждый запрос, удачный тоже, и
- * отсчитывает окно от последнего пропущенного запроса: десять верных входов
- * подряд с паузами меньше окна дают блокировку. Здесь считаются только
- * неудачи, а окно фиксированное: от первой неудачи до window секунд после неё.
- *
- * Попытка занимает место в счёте до ответа: параллельная пачка запросов не
- * проскочит мимо лимита, пока первые ещё проверяются. Удачный ответ место
- * освобождает, неудачный оставляет как неудачу.
+ * Лимит неудач входа и кода 2FA (VPN2-162): считаются только неудачи, окно
+ * фиксированное, от первой неудачи. Попытка занимает место до ответа, так что
+ * параллельная пачка мимо лимита не проскочит.
  */
-
-interface Entry {
-  failures: number
-  pending: number
-  /** Начало окна: время первой неудачи, 0 — неудач ещё не было. */
-  since: number
-}
+interface Entry { failures: number, pending: number, since: number }
 
 const entries = new Map<string, Entry>()
 const MAX_ENTRIES = 100_000
@@ -132,11 +100,7 @@ function prune(now: number, windowMs: number) {
   }
 }
 
-/**
- * Занять попытку. null — можно идти дальше, затем обязательно позвать
- * finish(key, ok). Число — попытки исчерпаны, через столько секунд окно
- * закончится.
- */
+/** Занять попытку: null - можно, затем loginFinish(key, ok); число - секунд до конца окна. */
 export function loginAttempt(key: string, max: number, windowSec: number): number | null {
   const now = Date.now()
   const windowMs = windowSec * 1000
@@ -202,7 +166,8 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 403, statusMessage: 'invalid_origin', message: 'Запрос не со страницы панели' })
   }
   const ip = clientAddress(event)
-  const key = limited(path) ? `${ip}|${path}` : null
+  const limited = path === '/sign-in/username' || path === '/change-password' || path.startsWith('/two-factor/')
+  const key = limited ? `${ip}|${path}` : null
   if (key) {
     const max = Number(useRuntimeConfig().authLoginMaxAttempts) || 10
     const retryAfter = loginAttempt(key, max, LOGIN_WINDOW_SEC)

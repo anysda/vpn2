@@ -6,22 +6,13 @@ const CYR: Record<string, string> = {
   ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
 }
 
-/**
- * Имя → слаг латиницей: кириллица транслитерируется, регистр опускается,
- * пробелы и прочие символы → «-», повторы схлопываются. Английские имена
- * остаются как есть (без транслита). «Артём Фёдоров» → «artem-fedorov»,
- * «John» → «john», «iPhone 14» → «iphone-14». Имена без пробелов — без тире.
- */
+/** Имя → слаг латиницей: «Артём Фёдоров» → «artem-fedorov», «iPhone 14» → «iphone-14». */
 export function slugify(s: string): string {
   const latin = s.trim().toLowerCase().replace(/[Ѐ-ӿ]/g, ch => CYR[ch] ?? '')
   return latin.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 }
 
-/**
- * Общее имя файла (.conf / .ovpn) и подпись при отправке в Telegram.
- * wg-quick использует его как имя интерфейса: максимум 15 ASCII-символов.
- * Суффикс из ID различает устройства даже при совпадении/сокращении слагов.
- */
+/** Имя файла конфига и подпись в Telegram: до 15 ASCII-символов (имя интерфейса wg-quick), суффикс из ID различает устройства. */
 export function deviceConfigName(clientName: string, deviceName: string, deviceId: number): string {
   const suffix = `-${deviceId.toString(36)}`
   const label = `${slugify(clientName)}-${slugify(deviceName)}`

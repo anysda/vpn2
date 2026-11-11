@@ -7,9 +7,7 @@ let _db: ReturnType<typeof drizzle<typeof schema>> | null = null
 /** Один владелец соединения до конца транзакции, включая её async-шаги. */
 function panelClient(url: string): Client {
   const client = createClient({ url, concurrency: 1, timeout: 5000 })
-  // WAL сохраняется в файле; timeout — на каждом соединении, в том числе
-  // после reconnect. Ожидание SQLite нужно только для ДРУГОГО процесса:
-  // блокировать event loop в ожидании собственной транзакции нельзя.
+  // WAL и timeout на каждом соединении, в том числе после reconnect.
   let ready = client.execute('PRAGMA journal_mode=WAL')
   void ready.catch(() => {})
   let tail = Promise.resolve()
@@ -73,10 +71,7 @@ export function useDb() {
   return _db
 }
 
-/**
- * Нарушение UNIQUE. drizzle заворачивает ошибку libsql в свою, поэтому
- * смотрим всю цепочку `cause`.
- */
+/** Нарушение UNIQUE: drizzle заворачивает ошибку libsql, смотрим цепочку `cause`. */
 export function isUniqueViolation(err: unknown): boolean {
   for (let e = err as { code?: unknown, message?: unknown, cause?: unknown } | undefined, i = 0; e && i < 5; e = e.cause as typeof e, i++) {
     if (e.code === 'SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(String(e.message ?? ''))) return true
@@ -84,9 +79,5 @@ export function isUniqueViolation(err: unknown): boolean {
   return false
 }
 
-/**
- * Сколько раз пробовать занять адрес из пула. Каждый конфликт значит, что
- * параллельный запрос успел занять свой, так что запас ограничен только
- * числом одновременных созданий.
- */
+/** Сколько раз пробовать занять адрес из пула: конфликт значит, что параллельный запрос занял свой. */
 export const IP_CLAIM_ATTEMPTS = 50

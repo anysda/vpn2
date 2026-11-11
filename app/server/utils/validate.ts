@@ -15,11 +15,7 @@ export const FIELD_LABELS: Record<string, string> = {
   deviceLimit: 'Лимит устройств',
 }
 
-/**
- * Тело запроса по схеме zod. readValidatedBody отдаёт человеку английское
- * «Invalid JSON body», а с `Schema.parse` — дамп zod в JSON; оба доходили до
- * тоста и до Telegram. Здесь код в `statusMessage`, текст по-русски в `message`.
- */
+/** Тело запроса по схеме zod: код в `statusMessage`, русский текст в `message`. */
 export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schema: ZodType<T>): Promise<T> {
   let body: unknown
   try {

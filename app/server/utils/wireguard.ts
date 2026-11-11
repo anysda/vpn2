@@ -23,10 +23,8 @@ function isPublicIpv4(address: string): boolean {
 }
 
 /**
- * IPv6 endpoint попадает в split-local 2000::/3. Используем IPv4 входа;
- * при IPv6 в entry.host — единственный публичный IPv4 интерфейсов сервера
- * (панель разворачивается с --network host). За NAT нужен явный IPv4 входа.
- * Домены сохраняем; о наличии AAAA отдельно предупреждаем в панели.
+ * IPv6 endpoint попал бы в split-local 2000::/3, поэтому берём IPv4 входа, а без
+ * него единственный публичный IPv4 интерфейсов сервера. Домены сохраняем.
  */
 function wgEndpoint(host: string): string {
   const literal = host.trim().replace(/^\[(.*)\]$/, '$1')
@@ -48,32 +46,19 @@ function wgEndpoint(host: string): string {
   })
 }
 
-/**
- * WireGuard keypair. Uses Node's native X25519 — no `wg` binary required.
- * Both fields are 32-byte raw keys encoded as base64.
- */
-function generateWgKeypair(): { privateKey: string, publicKey: string } {
+/** Пара ключей WireGuard: сырые 32 байта X25519 из хвоста DER, в base64. */
+export function generateWgKeypair(): { privateKey: string, publicKey: string } {
   const { privateKey, publicKey } = generateKeyPairSync('x25519')
-  // X25519 raw key sits at the tail of the DER export (last 32 bytes).
   const priv = (privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer).subarray(-32)
   const pub = (publicKey.export({ format: 'der', type: 'spki' }) as Buffer).subarray(-32)
   return { privateKey: priv.toString('base64'), publicKey: pub.toString('base64') }
 }
 
-function generateWgPresharedKey(): string {
-  return randomBytes(32).toString('base64')
-}
-
-/**
- * ULA-адрес клиента в туннеле, парный к его `10.66.66.N`. Один и тот же
- * последний октет на обоих концах, единственный ULA-источник у хаба, чтобы
- * стеки Apple/Android по RFC 6724 сами предпочли v4 живому пиру.
- */
+/** ULA-адрес клиента, парный к его v4: тот же последний октет, чтобы стеки по RFC 6724 предпочли v4. */
 function wgUlaAddress(wgIp: string): string {
   const m = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.(\d{1,3})$/.exec(wgIp)
   if (!m) throw new Error(`wgUlaAddress: не разобран v4-адрес "${wgIp}"`)
-  // Сохраняем ULA старой /24 побайтно. Новые /24 получают отдельное поле,
-  // иначе .2 из разных подсетей претендовали бы на один AllowedIPs /128.
+  // Старая /24 сохраняет прежний ULA, новые получают номер подсети отдельным полем.
   const subnet = wgIp.split('.')[2]
   return wgIp.startsWith('10.66.66.') ? `fd66:66::${m[1]}` : `fd66:66::${subnet}:${m[1]}`
 }
@@ -87,16 +72,12 @@ export interface WgClientConfigParams {
   serverPort: number
   dns?: string
   mtu?: number
-  /**
-   * true (по умолчанию) — локальные сети клиента остаются мимо туннеля,
-   * см. `wgAllowedIps`. false — классический full-tunnel 0.0.0.0/0.
-   */
+  /** true (по умолчанию): локальные сети клиента идут мимо туннеля, см. `wgAllowedIps`. */
   splitLocal?: boolean
-  /** Сети, которые всё-таки должны идти В туннель: wg-сегмент и mgmt (DNS). */
+  /** Сети, которые всё-таки идут в туннель: wg-сегмент и mgmt (DNS). */
   tunnelPrefixes?: string[]
 }
 
-/** Render a client-facing wg-quick .conf string. */
 export function buildWgClientConfig(p: WgClientConfigParams): string {
   const dns = p.dns ?? '10.99.0.1'
   const mtu = p.mtu ?? 1420
@@ -125,20 +106,14 @@ export function buildWgClientConfig(p: WgClientConfigParams): string {
   ].join('\n')
 }
 
-/** Only the public server key crosses the privilege boundary. */
 export async function loadServerKeys(): Promise<{ publicKey: string }> {
   return control('profile.read', { protocol: 'wg' })
 }
 
 /**
- * Ensure the given DEVICE has WG keys + an IP. If missing, fill them in and
- * persist. Returns the (possibly newly-populated) device record.
- *
- * Адрес выбирается по снимку занятых, а между снимком и записью параллельный
- * запрос может занять тот же. Защита — UNIQUE на devices.wg_ip: проигравший
- * получает конфликт и берёт следующий свободный (VPN2-50). Запись условная
- * (адрес у строки ещё тот, что мы прочли), чтобы параллельный вызов для того
- * же устройства не перетёр уже выданные ключи.
+ * Выдаёт устройству ключи и адрес WG, если их нет. От гонки за адрес защищает
+ * UNIQUE на devices.wg_ip: проигравший берёт следующий (VPN2-50); запись
+ * условная, чтобы параллельный вызов не перетёр выданные ключи.
  */
 export async function ensureDeviceWg(deviceId: number) {
   const db = useDb()
@@ -150,7 +125,6 @@ export async function ensureDeviceWg(deviceId: number) {
 
     const all = await db.select({ ip: devicesTable.wgIp }).from(devicesTable)
     const kp = generateWgKeypair()
-    const psk = generateWgPresharedKey()
     const ip = row.wgIp ?? nextPoolAddress('wg', all.map(r => r.ip))
 
     try {
@@ -159,7 +133,7 @@ export async function ensureDeviceWg(deviceId: number) {
         .set({
           wgPrivateKey: row.wgPrivateKey ?? kp.privateKey,
           wgPublicKey: row.wgPublicKey ?? kp.publicKey,
-          wgPresharedKey: row.wgPresharedKey ?? psk,
+          wgPresharedKey: row.wgPresharedKey ?? randomBytes(32).toString('base64'),
           wgIp: ip,
           updatedAt: new Date(),
         })
@@ -169,7 +143,6 @@ export async function ensureDeviceWg(deviceId: number) {
         ))
         .returning()
       if (updated) return updated
-      // Строку успел дописать параллельный вызов — перечитываем.
     }
     catch (err) {
       if (!isUniqueViolation(err)) throw err
@@ -177,13 +150,7 @@ export async function ensureDeviceWg(deviceId: number) {
     if (attempt >= IP_CLAIM_ATTEMPTS) throw new Error(`device ${deviceId}: не удалось занять адрес WG`)
   }
 }
-
-
-/**
- * Render the WG server config from ALL devices and apply it via `wg syncconf`.
- * A device's peer is included only if its client is active (not frozen and
- * not expired). Call after any change touching devices or client status.
- */
+/** Серверный конфиг WG из всех устройств; пир есть только у активного клиента. */
 async function syncWireguardConfigOnce(): Promise<void> {
   const cfg = useRuntimeConfig()
   if (!cfg.wgEnabled) return
@@ -207,5 +174,4 @@ async function syncWireguardConfigOnce(): Promise<void> {
   await controlApply('wg.apply', { peers })
 }
 
-/** Параллельные вызовы (создание устройств пачкой) идут по очереди, см. coalesceRuns. */
 export const syncWireguardConfig = coalesceRuns(syncWireguardConfigOnce)

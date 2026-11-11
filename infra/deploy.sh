@@ -1530,11 +1530,12 @@ do_restore() {
   # Имя архива необязательно: `restore --dry-run` - это latest с флагом.
   local archive=latest
   if [[ -n "${1:-}" && "$1" != -* ]]; then archive=$1; shift; fi
-  local flags="" flag dry_run=0
+  local flags="" flag dry_run=0 preflight=0
   for flag in "$@"; do
     [[ -n "$flag" ]] || continue
     flags+=" '$flag'"
     [[ "$flag" != --dry-run ]] || dry_run=1
+    [[ "$flag" != --preflight ]] || preflight=1
   done
   # shellcheck disable=SC2034  # читает run_play: пароль панели после restore не засевается
   local RESTORE_PRESERVE_ADMIN=1
@@ -1555,7 +1556,7 @@ do_restore() {
     archive="$base"
   fi
   ssh_exec "VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} /usr/local/bin/anysda-restore.sh '$archive'$flags" || return $?
-  (( ! dry_run )) || return 0
+  (( ! dry_run && ! preflight )) || return 0
   # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
   # которого он снят, а запущенные службы собраны под секреты текущего: бот
   # отвечает панели 403, вотчдог получает 401 от clash-api, у OpenVPN из
@@ -1566,6 +1567,20 @@ do_restore() {
   for s in 29-openvpn 20-ru-router 21-failover-watchdog 26-backup 27-ikev2 35-telegram 30-frontend; do
     run_stage "$s" ru
   done
+}
+
+# Проход restore до открытия выпуска: узел проверяет архив, расшифровку, версию
+# и живую базу без --force и отказывает теми же кодом и строкой, данные и службы
+# не тронуты. Пакет узла старше дерева флага не знает - тогда прежний --dry-run.
+restore_preflight() {
+  local out rc=0
+  out=$(do_restore "$@" --preflight 2>&1) || rc=$?
+  if (( rc == 2 )) && [[ "$out" == *'неизвестный аргумент: --preflight'* ]]; then
+    rc=0
+    out=$(do_restore "$@" --dry-run 2>&1) || rc=$?
+  fi
+  (( rc == 0 )) || printf '%s\n' "$out" >&2
+  return "$rc"
 }
 
 # Читает список тегов выходных нод из envs/exits.env
@@ -1594,9 +1609,10 @@ source "$DEPLOY_ROOT/lib/deploy-release.sh"
 case "${1:-}" in
   ''|recover|backup|backup-list|rollback) ;;
   restore)
-    # Архива нет или он не тот: пробный проход отказывает той же строкой и
-    # кодом, выпуск ещё не открыт.
-    [[ " ${*:2} " == *' --dry-run '* ]] || do_restore "${@:2}" --dry-run >/dev/null || exit $?
+    # Любой отказ restore до начала работ (архива нет, не тот пароль, версия,
+    # живая база без --force) приходит здесь: выпуск ещё не открыт, и
+    # подсказанный повтор идёт сразу, без recover.
+    [[ " ${*:2} " == *' --dry-run '* ]] || restore_preflight "${@:2}" || exit $?
     ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"

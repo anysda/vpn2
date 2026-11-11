@@ -3,6 +3,9 @@
 Коды выхода: 2 настройки и аргументы, 3 нет архива, 4 расшифровка, 5 архив или узел не годятся,
 6 живая база без --force, 7 99-verify, 8 пароли не пересинхронизированы, 9 несовместимая версия,
 10 откат после сбоя посреди замены.
+
+`--preflight` - проход деплоя перед открытием выпуска: все отказы до первого изменения узла теми же
+кодом и строкой (архив, расшифровка, манифест, версия, живая база без --force), службы и данные не тронуты.
 """
 import glob
 import os
@@ -164,9 +167,12 @@ def restore(argv, *, node=Node(), run=subprocess.run, out=None, err=None, now=No
                             allow=args.allow_incompatible, out=out, err=err)
         prepare.check_bundle_report(bundle_dir, checker=_check, out=lambda line: print(line, file=err, flush=True))
         prepare.wg_key_material(bundle_dir, run=run)
-        prepare.config_template(source_root, dest_dir=node.at(node.template_dir))
+        prepare.config_template(source_root, dest_dir=work / 'template' if args.preflight
+                                else node.at(node.template_dir))
         live_db = node.at(f'{node.state_dir}/db.sqlite')
         prepare.guards(force=args.force, bundle_dir=bundle_dir, db_path=live_db, run=run)
+        if args.preflight:
+            return
         owner, mode = _db_stat(live_db)
         moment = (now or datetime.now(UTC)).astimezone(UTC)
         stamp = moment.strftime('%Y-%m-%dT%H%M%S.') + f'{moment.microsecond * 1000:09d}Z'

@@ -210,3 +210,48 @@ def test_s3_backend_without_keys_restores_local_archive(node):
     assert code == 0 and '  BACKUP_S3_BUCKET: parameter null or not set\n' in err
     code, _out, err = go(root, paths, ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age'])
     assert (code, err) == (1, 'anysda-restore: BACKUP_S3_BUCKET: parameter null or not set\n')
+
+
+def _state(tmp, root, paths):
+    """Всё, что отказ до начала работ обязан оставить как было."""
+    calls = (tmp / 'calls.log').read_text() if (tmp / 'calls.log').exists() else ''
+    return ((Path(paths.etc_anysda) / 'admin-password').read_text(), 'systemctl' in calls, 'docker stop' in calls,
+            leftovers(root), list((root / 'out dir/.pre-restore').glob('*')), (root / 'tmp/anysda').exists())
+
+
+UNTOUCHED = ('changed\n', False, False, [], [], False)
+
+
+@needs_tools
+def test_preflight_passes_without_touching_node(node):
+    tmp, root, paths, _vals = node
+    code, out, err = go(root, paths, ['latest', '--preflight'])
+    assert code == 0, err
+    assert 'SUCCESS' not in out and 'останавливаю сервисы' not in out
+    assert _state(tmp, root, paths) == UNTOUCHED
+    assert go(root, paths)[0] == 0
+
+
+@needs_tools
+@pytest.mark.parametrize('reason', ['no-archive', 'passphrase', 'no-force', 'version', 'no-caddy'])
+def test_preflight_refuses_like_the_real_run(node, monkeypatch, reason):
+    """Проход перед открытием выпуска отказывает тем же кодом и той же строкой, что сам restore."""
+    tmp, root, paths, _vals = node
+    argv = ['latest']
+    if reason == 'no-archive':
+        argv = ['anysda-vpn2-2020-01-01T000000Z.tar.gz.age']
+    elif reason == 'passphrase':
+        monkeypatch.setenv('STUB_AGE_FAIL', '1')
+    elif reason == 'no-force':
+        conn = sqlite3.connect(paths.db)
+        conn.execute('insert into clients values (1)')
+        conn.commit()
+        conn.close()
+    elif reason == 'version':
+        os.unlink(tmp / 'src/app/server/database/migrations/meta/_journal.json')
+    else:
+        monkeypatch.setenv('IDS', 'vpn2-panel')
+    code, _out, err = go(root, paths, [*argv, '--preflight'])
+    expected = {'no-archive': 3, 'passphrase': 4, 'no-force': 6, 'version': 9, 'no-caddy': 5}[reason]
+    assert _state(tmp, root, paths) == UNTOUCHED
+    assert (code, err) == (expected, go(root, paths, argv)[2])

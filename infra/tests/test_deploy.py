@@ -94,8 +94,8 @@ push() {{ echo "push: $*" >> "$DEPLOY_ROOT/calls"; }}
 ssh_exec() {{
   echo "ssh: $1" >> "$DEPLOY_ROOT/calls"
   if [[ "$1" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
-  # Пробный проход до выпуска архив находит, падает само восстановление.
-  if [[ "$1" == *anysda-restore.sh*--dry-run* ]]; then return 0; fi
+  # Проход до выпуска отказа не находит, падает само восстановление.
+  if [[ "$1" == *anysda-restore.sh*--dry-run* || "$1" == *anysda-restore.sh*--preflight* ]]; then return 0; fi
   if [[ "$1" == *anysda-restore.sh* ]]; then return {restore_rc}; fi
   if [[ "$1" == *anysda-backup.sh* ]]; then
     # Код 4 настоящей копии при расхождении - со строкой warning: в финале.
@@ -166,7 +166,7 @@ ssh_exec() {{
             self.assertNotEqual(result.returncode, 0)
             remote = [call for call in calls if call.startswith('ssh: ')]
             restore = next(i for i, call in enumerate(remote)
-                           if 'anysda-restore.sh' in call and '--dry-run' not in call)
+                           if 'anysda-restore.sh' in call and '--preflight' not in call)
             before = '\n'.join(remote[:restore])
             for step in ('exec flock', 'deploy_state.py backup', 'deploy_state.py phase --phase applying'):
                 self.assertIn(step, before)

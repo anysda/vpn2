@@ -12,7 +12,7 @@ from vpn2.backup.errors import RestoreError
 
 _NAME = re.compile(r'anysda-vpn2-([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z)\.tar\.gz\.age')
 _FLAGS = {'--force': 'force', '-f': 'force', '--dry-run': 'dry_run',
-          '--allow-incompatible': 'allow_incompatible'}
+          '--allow-incompatible': 'allow_incompatible', '--preflight': 'preflight'}
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class Args:
     force: bool = False
     dry_run: bool = False
     allow_incompatible: bool = False
+    preflight: bool = False
 
 
 def parse_args(argv):

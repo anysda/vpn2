@@ -19,22 +19,16 @@ const TAGS: Record<Kind, { cls: string, text: string }> = {
   safe: { cls: 'tag badt', text: 'угроза' },
 }
 
-const toast = useToast()
+const { toast, busy, act } = useAct()
 const f = ref<Filter>('all')
 const q = ref('')
 const rows = ref<Row[]>([])
 const older = ref<string | null>(null)
 const loading = ref(false)
 const error = ref('')
-const busy = ref<string | null>(null)
 const list = ref<HTMLElement>()
 const pill = ref<HTMLElement>()
 let seq = 0
-
-const errText = (e: unknown) => {
-  const x = e as { data?: { message?: string }, statusMessage?: string, message?: string }
-  return x.data?.message ?? x.statusMessage ?? x.message ?? 'Ошибка'
-}
 
 async function load(more = false) {
   const my = ++seq
@@ -67,11 +61,7 @@ async function reload() {
   wave()
 }
 
-let typing: ReturnType<typeof setTimeout> | undefined
-watch(q, () => {
-  clearTimeout(typing)
-  typing = setTimeout(() => void load(), 300)
-})
+watch(q, debounce(() => void load(), 300))
 watch(f, () => void reload())
 
 async function refreshLog() {
@@ -101,25 +91,14 @@ function onPageScroll() {
 onMounted(() => addEventListener('scroll', onPageScroll, { passive: true }))
 onUnmounted(() => removeEventListener('scroll', onPageScroll))
 
-async function act(r: Row) {
+function rule(r: Row) {
   const block = r.kind === 'ok'
-  busy.value = r.domain
-  try {
+  return act(r.domain, async () => {
     await $fetch('/api/dns/log-rule', { method: 'POST', body: { domain: r.domain, block, client: r.ip } })
     for (const x of rows.value) {
-      if (x.domain === r.domain && x.kind !== 'rw') {
-        x.kind = block ? 'blk' : 'ok'
-        x.detail = 'Свои правила'
-      }
+      if (x.domain === r.domain && x.kind !== 'rw') Object.assign(x, { kind: block ? 'blk' : 'ok', detail: 'Свои правила' })
     }
-    toast.add({ title: `${r.domain}: ${block ? 'заблокирован' : 'разблокирован'} своим правилом` })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    busy.value = null
-  }
+  }, `${r.domain}: ${block ? 'заблокирован' : 'разблокирован'} своим правилом`)
 }
 
 const today = new Date().toDateString()
@@ -134,14 +113,11 @@ onMounted(() => void load())
         <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
         <input v-model="q" placeholder="Домен или клиент" aria-label="Домен или клиент">
       </label>
-      <!-- «Обновить» в разметке там же, где на экране: на телефоне рядом с поиском, на ПК в конце ряда -->
-      <button v-if="mobile" ref="pill" type="button" class="pill" @click="refreshLog">
+      <!-- «Обновить» в разметке сразу за поиском: на телефоне там и стоит, на ПК уходит в конец ряда (dns.css) -->
+      <button ref="pill" type="button" class="pill" @click="refreshLog">
         <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Обновить
       </button>
       <DnsSeg v-model="f" :options="FILTERS" small @pick="v => f = v" />
-      <button v-if="!mobile" ref="pill" type="button" class="pill" style="margin-left:auto" @click="refreshLog">
-        <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Обновить
-      </button>
     </div>
     <div class="card logc">
       <div class="lt">
@@ -164,7 +140,7 @@ onMounted(() => void load())
             <b style="font-weight:400">{{ r.client }}</b><small class="mono" style="font-size:11px!important">{{ r.ip }}</small>
           </div>
           <span v-if="r.kind === 'rw'" />
-          <button v-else type="button" class="pill ac" :disabled="busy === r.domain" @click="act(r)">
+          <button v-else type="button" class="pill ac" :disabled="busy.has(r.domain)" @click="rule(r)">
             {{ r.kind === 'ok' ? 'Заблокировать' : 'Разблокировать' }}
           </button>
         </div>

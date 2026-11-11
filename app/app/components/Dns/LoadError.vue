@@ -1,16 +1,15 @@
 <script setup lang="ts">
 // Первая загрузка подраздела не удалась: причина и повтор без перезагрузки страницы.
-defineProps<{ message: string, pending?: boolean }>()
-defineEmits<{ retry: [] }>()
+defineProps<{ of: { data: Ref<unknown>, error: Ref<unknown>, status: Ref<string>, refresh: () => unknown } }>()
 </script>
 
 <template>
-  <div class="card lerr">
+  <div v-if="of.error.value && !of.data.value" class="card lerr">
     <h3 role="alert">
-      {{ message }}
+      {{ errText(of.error.value) }}
     </h3>
     <p class="mt">
-      <button type="button" class="pill" :disabled="pending" @click="$emit('retry')">
+      <button type="button" class="pill" :disabled="of.status.value === 'pending'" @click="of.refresh()">
         Повторить загрузку
       </button>
     </p>

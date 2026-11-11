@@ -7,21 +7,7 @@ import { todayYesterdayHmLocal } from '~/utils/format'
 interface List { name: string, url: string, enabled: boolean, rules: number, updated: string | null }
 interface View { interval: number, black: List[], white: List[] }
 
-const toast = useToast()
-const { data, error, status, refresh } = useFetch<View>('/api/dns/filters', { server: false, lazy: true })
-const latest = latestWins<View>(
-  v => (data.value = { interval: v.interval, black: v.black, white: v.white }),
-  () => $fetch<View>('/api/dns/filters'),
-)
-const busy = ref(new Set<string>())
-const updating = ref(false)
-
-const errText = (e: unknown) => {
-  const x = e as { data?: { message?: string }, statusMessage?: string, message?: string }
-  return x.data?.message ?? x.statusMessage ?? x.message ?? 'Ошибка'
-}
-
-const key = (l: List, white: boolean) => `${white ? 'w' : 'b'}|${l.url}`
+const { data, load, busy, api, change, removeRow } = useDnsSection<View>('/api/dns/filters')
 
 function every(h: number) {
   if (!h) return 'не обновляются'
@@ -32,128 +18,67 @@ function every(h: number) {
   return `обновляются раз в ${d} ${plural(d, 'day')}`
 }
 
-const sub = computed(() => {
+const sections = computed(() => {
   const v = data.value
-  if (!v) return ''
+  if (!v) return []
   const on = v.black.filter(l => l.enabled)
   const rules = on.reduce((a, l) => a + l.rules, 0)
-  return `Включено ${on.length} из ${v.black.length} · ${grp(rules)} ${plural(rules, 'rule')} · ${every(v.interval)}`
+  const sub = `Включено ${on.length} из ${v.black.length} · ${grp(rules)} ${plural(rules, 'rule')} · ${every(v.interval)}`
+  return [
+    { white: false, title: 'Чёрные списки', sub, rows: v.black },
+    { white: true, title: 'Белые списки', sub: 'Адреса отсюда не блокируются никогда', rows: v.white },
+  ]
 })
 
 function updated(l: List) {
   if (!l.enabled) return 'выключен'
-  if (!l.updated) return '—'
-  return todayYesterdayHmLocal(l.updated)
+  return l.updated ? todayYesterdayHmLocal(l.updated) : '—'
 }
 
 // Строка телефона: правил и обновление — одной строкой под адресом.
-function meta(l: List) {
-  if (!l.enabled || !l.rules) return updated(l)
-  return `${grp(l.rules)} ${plural(l.rules, 'rule')} · ${updated(l)}`
-}
+const meta = (l: List) => l.enabled && l.rules ? `${grp(l.rules)} ${plural(l.rules, 'rule')} · ${updated(l)}` : updated(l)
 
 async function toggle(l: List, white: boolean) {
-  const k = key(l, white)
-  busy.value.add(k)
-  const want = !l.enabled
-  l.enabled = want
-  try {
-    await latest(() => $fetch<View>('/api/dns/filters', { method: 'PATCH', body: { url: l.url, white, enabled: want } }))
-  }
-  catch (e) {
-    l.enabled = !want
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    busy.value.delete(k)
-  }
+  l.enabled = !l.enabled
+  const sent = await change(`${white}|${l.url}`, api('PATCH', { url: l.url, white, enabled: l.enabled }))
+  if (!sent) l.enabled = !l.enabled
 }
 
-async function check() {
-  updating.value = true
-  try {
-    const r = await latest(() => $fetch<View & { updated: number }>('/api/dns/filters/refresh', { method: 'POST' }))
-    toast.add({ title: r.updated
-      ? `Списки обновлены: ${r.updated} ${plural(r.updated, 'list')}`
-      : 'Списки обновлены, новых правил нет' })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    updating.value = false
-  }
-}
+const check = () => change('check', api<View & { updated: number }>('POST', undefined, '/refresh'), r => r.updated
+  ? `Списки обновлены: ${r.updated} ${plural(r.updated, 'list')}`
+  : 'Списки обновлены, новых правил нет')
 
 // Добавление: одно окно на оба раздела, раздел запоминается при открытии.
-const addOpen = ref(false)
-const addWhite = ref(false)
-const addName = ref('')
-const addUrl = ref('')
-const adding = ref(false)
-const addReady = computed(() => !!addName.value.trim() && !!addUrl.value.trim() && !adding.value)
+const add = reactive({ open: false, white: false, name: '', url: '' })
+const addReady = computed(() => !!add.name.trim() && !!add.url.trim() && !busy.value.has('add'))
 
 function openAdd(white: boolean) {
-  addWhite.value = white
-  addName.value = ''
-  addUrl.value = ''
-  addOpen.value = true
+  Object.assign(add, { open: true, white, name: '', url: '' })
 }
 
-async function add() {
+async function save() {
   if (!addReady.value) return
-  adding.value = true
-  const name = addName.value.trim()
-  try {
-    await latest(() => $fetch<View>('/api/dns/filters', { method: 'POST', body: { name, url: addUrl.value.trim(), white: addWhite.value } }))
-    addOpen.value = false
-    toast.add({ title: `Список «${name}» добавлен` })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    adding.value = false
-  }
+  const name = add.name.trim()
+  const sent = await change('add', api('POST', { name, url: add.url.trim(), white: add.white }), `Список «${name}» добавлен`)
+  if (sent) add.open = false
 }
 
 // Удаление: подтверждение, строка гаснет, потом уходит из списка.
-const delOpen = ref(false)
-const delList = ref<{ l: List, white: boolean, row: HTMLElement | null } | null>(null)
+const del = reactive({ open: false, white: false, l: null as List | null, row: null as HTMLElement | null })
 
 function askDel(l: List, white: boolean, e: MouseEvent) {
-  delList.value = { l, white, row: (e.currentTarget as HTMLElement).closest<HTMLElement>('.ftab > div') }
-  delOpen.value = true
+  Object.assign(del, { open: true, white, l, row: (e.currentTarget as HTMLElement).closest('.ftab > div') })
 }
 
-async function del() {
-  const d = delList.value
-  delOpen.value = false
-  if (!d) return
-  try {
-    await latest(async () => {
-      const v = await $fetch<View>('/api/dns/filters', { method: 'DELETE', body: { url: d.l.url, white: d.white } })
-      await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
-      return v
-    })
-    toast.add({ title: `Список «${d.l.name}» удалён` })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
+function confirmDel() {
+  del.open = false
+  if (del.l) void removeRow(del.row, { url: del.l.url, white: del.white }, `Список «${del.l.name}» удалён`)
 }
-
-const sections = computed(() => data.value
-  ? [
-      { white: false, title: 'Чёрные списки', sub: sub.value, rows: data.value.black },
-      { white: true, title: 'Белые списки', sub: 'Адреса отсюда не блокируются никогда', rows: data.value.white },
-    ]
-  : [])
 </script>
 
 <template>
   <div>
-    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
+    <DnsLoadError :of="load" />
     <div v-for="s in sections" :key="s.title" class="card fl">
       <div class="fhead">
         <div>
@@ -163,7 +88,7 @@ const sections = computed(() => data.value
           </p>
         </div>
         <div v-if="!s.white" class="ha">
-          <button type="button" class="pill" :disabled="updating" @click="check">
+          <button type="button" class="pill" :disabled="busy.has('check')" @click="check">
             <svg class="i" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" /></svg>Проверить обновления
           </button>
           <button type="button" class="pill w" @click="openAdd(false)">
@@ -183,7 +108,7 @@ const sections = computed(() => data.value
         <div v-for="l in s.rows" :key="l.url" :class="{ off: !l.enabled }">
           <button
             type="button" class="tog" :class="{ on: l.enabled }" role="switch" :aria-checked="l.enabled" :aria-label="l.name"
-            :disabled="busy.has(key(l, s.white))" @click="toggle(l, s.white)">
+            :disabled="busy.has(`${s.white}|${l.url}`)" @click="toggle(l, s.white)">
             <i />
           </button>
           <div style="min-width:0">
@@ -199,31 +124,15 @@ const sections = computed(() => data.value
       </div>
     </div>
 
-    <DnsModal v-model:open="addOpen" title="Добавить список" close-btn>
-      <label class="fl2"><span>Название</span><input v-model="addName" class="in" placeholder="напр. HaGeZi Light" @keydown.enter="add"></label>
-      <label class="fl2"><span>Адрес списка</span><input v-model="addUrl" class="in mono" placeholder="https://…" @keydown.enter="add"></label>
-      <template #foot="{ close }">
-        <button type="button" class="pill" @click="close">
-          Отмена
-        </button>
-        <button type="button" class="pill w" :disabled="!addReady" @click="add">
-          Добавить
-        </button>
-      </template>
+    <DnsModal v-model:open="add.open" title="Добавить список" close-btn ok="Добавить" :ok-disabled="!addReady" @ok="save">
+      <label class="fl2"><span>Название</span><input v-model="add.name" class="in" placeholder="напр. HaGeZi Light" @keydown.enter="save"></label>
+      <label class="fl2"><span>Адрес списка</span><input v-model="add.url" class="in mono" placeholder="https://…" @keydown.enter="save"></label>
     </DnsModal>
 
-    <DnsModal v-model:open="delOpen" title="Удалить список?">
+    <DnsModal v-model:open="del.open" title="Удалить список?" ok="Удалить" ok-class="redw" @ok="confirmDel">
       <p class="mt">
-        Удалить список «{{ delList?.l.name }}»? Его правила перестанут применяться.
+        Удалить список «{{ del.l?.name }}»? Его правила перестанут применяться.
       </p>
-      <template #foot="{ close }">
-        <button type="button" class="pill" @click="close">
-          Отмена
-        </button>
-        <button type="button" class="pill redw" @click="del">
-          Удалить
-        </button>
-      </template>
     </DnsModal>
   </div>
 </template>

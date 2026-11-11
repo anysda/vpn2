@@ -83,6 +83,7 @@
 /* ---------- журнал ---------- */
 .dns .tbar{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .dns .tbar .inp input{width:240px}
+.dns .tbar>.pill{order:1;margin-left:auto}
 .dns .logc{padding:8px 10px 8px}
 .dns .lt>div{display:grid;grid-template-columns:96px 1.5fr 1.4fr 1.1fr 150px;align-items:center;gap:12px;min-height:58px;padding:0 12px;border-top:1px solid rgba(var(--fg),.05);font-size:13px;transition:background-color .15s var(--ease)}
 .dns .lt .th{min-height:40px;border-top:0;color:var(--t3);font-size:12px}
@@ -272,7 +273,7 @@
   /* журнал: поиск и «Обновить» в ряд, фильтр ниже прокручивается вбок */
   .dns .tbar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px 8px;margin:0}
   .dns .tbar .inp{height:40px;min-width:0}
-  .dns .tbar>.pill{height:40px}
+  .dns .tbar>.pill{height:40px;order:0;margin-left:0}
   .dns .tbar .seg{grid-column:1/-1;display:flex;margin:0 -16px;padding:0 16px;overflow-x:auto;scrollbar-width:none;overscroll-behavior-x:contain}
   .dns .tbar .seg::-webkit-scrollbar{display:none}
   .dns .tbar .seg button{flex:none;white-space:nowrap}

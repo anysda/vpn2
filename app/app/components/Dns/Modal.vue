@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // Окно макета: затемнение с размытием, карточка въезжает, строки — лесенкой.
 // В body, чтобы position:fixed не ломался под анимированными предками.
-// На телефоне то же содержимое — в общей нижней шторке.
+// На телефоне то же содержимое — в общей нижней шторке. Внизу всегда «Отмена»
+// и одно действие.
 const open = defineModel<boolean>('open', { required: true })
-defineProps<{ title: string, closeBtn?: boolean }>()
+defineProps<{ title: string, closeBtn?: boolean, ok: string, okClass?: string, okDisabled?: boolean }>()
+defineEmits<{ ok: [] }>()
 
 const box = ref<HTMLElement>()
 const id = useId()
@@ -11,10 +13,6 @@ const mobile = useMobile()
 
 function close() {
   open.value = false
-}
-
-function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && open.value && !mobile.value) close()
 }
 
 watch(open, async (v) => {
@@ -31,6 +29,9 @@ watch(open, async (v) => {
   }, 60)
 })
 
+function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && open.value && !mobile.value) close()
+}
 onMounted(() => addEventListener('keydown', onKey))
 onUnmounted(() => removeEventListener('keydown', onKey))
 </script>
@@ -46,7 +47,12 @@ onUnmounted(() => removeEventListener('keydown', onKey))
       </div>
       <slot />
       <div class="bsf">
-        <slot name="foot" :close="close" />
+        <button type="button" class="pill" @click="close">
+          Отмена
+        </button>
+        <button type="button" class="pill" :class="okClass ?? 'w'" :disabled="okDisabled" @click="$emit('ok')">
+          {{ ok }}
+        </button>
       </div>
     </div>
   </BottomSheet>
@@ -64,7 +70,12 @@ onUnmounted(() => removeEventListener('keydown', onKey))
           </div>
           <slot />
           <div class="mf">
-            <slot name="foot" :close="close" />
+            <button type="button" class="pill" @click="close">
+              Отмена
+            </button>
+            <button type="button" class="pill" :class="okClass ?? 'w'" :disabled="okDisabled" @click="$emit('ok')">
+              {{ ok }}
+            </button>
           </div>
         </div>
       </div>

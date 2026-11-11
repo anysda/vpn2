@@ -3,92 +3,43 @@
 // список из /control/rewrite/list — показываем то, что AdGuard применил.
 interface Rewrite { domain: string, answer: string, enabled: boolean }
 
-const toast = useToast()
-const { data, error, status, refresh } = useFetch<Rewrite[]>('/api/dns/rewrites', { server: false, lazy: true })
-const latest = latestWins<Rewrite[]>(v => (data.value = v), () => $fetch<Rewrite[]>('/api/dns/rewrites'))
-const busy = ref(new Set<string>())
-
-const errText = (e: unknown) => {
-  const x = e as { data?: { message?: string }, statusMessage?: string, message?: string }
-  return x.data?.message ?? x.statusMessage ?? x.message ?? 'Ошибка'
-}
-
+const { data, load, busy, api, change, removeRow } = useDnsSection<Rewrite[]>('/api/dns/rewrites')
 const key = (r: Rewrite) => `${r.domain}|${r.answer}`
 
 async function toggle(r: Rewrite) {
-  const k = key(r)
-  busy.value.add(k)
-  const want = !r.enabled
-  r.enabled = want
-  try {
-    await latest(() => $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'PATCH', body: { domain: r.domain, answer: r.answer, enabled: want } }))
-  }
-  catch (e) {
-    r.enabled = !want
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    busy.value.delete(k)
-  }
+  r.enabled = !r.enabled
+  const sent = await change(key(r), api('PATCH', { domain: r.domain, answer: r.answer, enabled: r.enabled }))
+  if (!sent) r.enabled = !r.enabled
 }
 
-const addOpen = ref(false)
-const addDomain = ref('')
-const addAnswer = ref('')
-const adding = ref(false)
-const addReady = computed(() => !!addDomain.value.trim() && !!addAnswer.value.trim() && !adding.value)
+const add = reactive({ open: false, domain: '', answer: '' })
+const addReady = computed(() => !!add.domain.trim() && !!add.answer.trim() && !busy.value.has('add'))
 
 function openAdd() {
-  addDomain.value = ''
-  addAnswer.value = ''
-  addOpen.value = true
+  Object.assign(add, { open: true, domain: '', answer: '' })
 }
 
-async function add() {
+async function save() {
   if (!addReady.value) return
-  adding.value = true
-  try {
-    await latest(() => $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'POST', body: { domain: addDomain.value, answer: addAnswer.value } }))
-    addOpen.value = false
-    toast.add({ title: `Перезапись «${addDomain.value.trim().toLowerCase().replace(/\.$/, '')}» добавлена` })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    adding.value = false
-  }
+  const done = `Перезапись «${add.domain.trim().toLowerCase().replace(/\.$/, '')}» добавлена`
+  if (await change('add', api('POST', { domain: add.domain, answer: add.answer }), done)) add.open = false
 }
 
-const delOpen = ref(false)
-const delRw = ref<{ r: Rewrite, row: HTMLElement | null } | null>(null)
+const del = reactive({ open: false, r: null as Rewrite | null, row: null as HTMLElement | null })
 
 function askDel(r: Rewrite, e: MouseEvent) {
-  delRw.value = { r, row: (e.currentTarget as HTMLElement).closest<HTMLElement>('.rwt > div') }
-  delOpen.value = true
+  Object.assign(del, { open: true, r, row: (e.currentTarget as HTMLElement).closest('.rwt > div') })
 }
 
-async function del() {
-  const d = delRw.value
-  delOpen.value = false
-  if (!d) return
-  try {
-    await latest(async () => {
-      const v = await $fetch<Rewrite[]>('/api/dns/rewrites', { method: 'DELETE', body: { domain: d.r.domain, answer: d.r.answer } })
-      await anim(d.row, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'scale(.94)' }], { duration: 160, easing: EO, fill: 'forwards' })?.finished
-      return v
-    })
-    toast.add({ title: `Перезапись «${d.r.domain}» удалена` })
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
+function confirmDel() {
+  del.open = false
+  if (del.r) void removeRow(del.row, { domain: del.r.domain, answer: del.r.answer }, `Перезапись «${del.r.domain}» удалена`)
 }
 </script>
 
 <template>
   <div>
-    <DnsLoadError v-if="error && !data" :message="errText(error)" :pending="status === 'pending'" @retry="refresh()" />
+    <DnsLoadError :of="load" />
     <div class="card fl">
       <div class="fhead">
         <div>
@@ -124,31 +75,15 @@ async function del() {
       </div>
     </div>
 
-    <DnsModal v-model:open="addOpen" title="Добавить перезапись" close-btn>
-      <label class="fl2"><span>Домен</span><input v-model="addDomain" class="in mono" placeholder="напр. nas.home" spellcheck="false" @keydown.enter="add"></label>
-      <label class="fl2"><span>Ответ</span><input v-model="addAnswer" class="in mono" placeholder="IP или домен" spellcheck="false" @keydown.enter="add"></label>
-      <template #foot="{ close }">
-        <button type="button" class="pill" @click="close">
-          Отмена
-        </button>
-        <button type="button" class="pill w" :disabled="!addReady" @click="add">
-          Добавить
-        </button>
-      </template>
+    <DnsModal v-model:open="add.open" title="Добавить перезапись" close-btn ok="Добавить" :ok-disabled="!addReady" @ok="save">
+      <label class="fl2"><span>Домен</span><input v-model="add.domain" class="in mono" placeholder="напр. nas.home" spellcheck="false" @keydown.enter="save"></label>
+      <label class="fl2"><span>Ответ</span><input v-model="add.answer" class="in mono" placeholder="IP или домен" spellcheck="false" @keydown.enter="save"></label>
     </DnsModal>
 
-    <DnsModal v-model:open="delOpen" title="Удалить перезапись?">
+    <DnsModal v-model:open="del.open" title="Удалить перезапись?" ok="Удалить" ok-class="redw" @ok="confirmDel">
       <p class="mt">
-        Удалить перезапись «{{ delRw?.r.domain }}»? Запрос снова пойдёт на серверы выше.
+        Удалить перезапись «{{ del.r?.domain }}»? Запрос снова пойдёт на серверы выше.
       </p>
-      <template #foot="{ close }">
-        <button type="button" class="pill" @click="close">
-          Отмена
-        </button>
-        <button type="button" class="pill redw" @click="del">
-          Удалить
-        </button>
-      </template>
     </DnsModal>
   </div>
 </template>

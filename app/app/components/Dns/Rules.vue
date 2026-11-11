@@ -7,38 +7,15 @@
 // показывает причину и «Повторить загрузку».
 interface Verdict { kind: 'blk' | 'ok' | 'rw', label: string, why: [string, string, string] }
 
-const toast = useToast()
+const { data, load, toast, busy, act } = useDnsSection<{ text: string }>('/api/dns/rules')
 const text = ref('')
-const loaded = ref(false)
-const loading = ref(false)
-const loadError = ref('')
-const saving = ref(false)
+watch(data, (v) => {
+  if (v) text.value = v.text
+}, { immediate: true })
 const q = ref('')
 const res = ref<Verdict | null>(null)
 const fres = ref<HTMLElement>()
 let seq = 0
-
-const errText = (e: unknown) => {
-  const x = e as { data?: { message?: string }, statusMessage?: string, message?: string }
-  return x.data?.message ?? x.statusMessage ?? x.message ?? 'Ошибка'
-}
-
-async function load() {
-  loading.value = true
-  try {
-    text.value = (await $fetch<{ text: string }>('/api/dns/rules')).text
-    loaded.value = true
-    loadError.value = ''
-  }
-  catch (e) {
-    loadError.value = errText(e)
-  }
-  finally {
-    loading.value = false
-  }
-}
-onMounted(load)
-
 // AdGuard пересобирает фильтры в фоне и ещё с полсекунды отвечает по старым
 // правилам: 2 с после «Применить» проверку повторяем, в том числе для домена,
 // набранного уже после применения.
@@ -63,36 +40,23 @@ async function check() {
     }
   }
   catch (e) {
-    if (my === seq) res.value = null
-    if (my === seq && (e as { statusCode?: number }).statusCode !== 400) toast.add({ title: errText(e), color: 'error' })
+    if (my !== seq) return
+    res.value = null
+    if ((e as { statusCode?: number }).statusCode !== 400) toast.add({ title: errText(e), color: 'error' })
   }
 }
 
-let typing: ReturnType<typeof setTimeout> | undefined
-watch(q, () => {
-  clearTimeout(typing)
-  typing = setTimeout(() => void check(), 250)
-})
+watch(q, debounce(() => void check(), 250))
 
-async function apply() {
-  saving.value = true
-  try {
-    text.value = (await $fetch<{ text: string }>('/api/dns/rules', { method: 'PUT', body: { text: text.value } })).text
-    toast.add({ title: 'Свои правила применены' })
-    settleUntil = Date.now() + 2000
-    void check()
-  }
-  catch (e) {
-    toast.add({ title: errText(e), color: 'error' })
-  }
-  finally {
-    saving.value = false
-  }
-}
+const apply = () => act('save', async () => {
+  text.value = (await $fetch<{ text: string }>('/api/dns/rules', { method: 'PUT', body: { text: text.value } })).text
+  settleUntil = Date.now() + 2000
+  void check()
+}, 'Свои правила применены')
 </script>
 
 <template>
-  <DnsLoadError v-if="loadError" :message="loadError" :pending="loading" @retry="load" />
+  <DnsLoadError :of="load" />
   <div class="rgrid">
     <div class="card cr">
       <div class="fhead">
@@ -102,11 +66,11 @@ async function apply() {
             Одно правило на строку. Срабатывают раньше списков
           </p>
         </div>
-        <button type="button" class="pill w" :disabled="!loaded || saving" @click="apply">
+        <button type="button" class="pill w" :disabled="!data || busy.has('save')" @click="apply">
           Применить
         </button>
       </div>
-      <textarea v-model="text" spellcheck="false" aria-label="Свои правила" :disabled="!loaded" :readonly="saving" />
+      <textarea v-model="text" spellcheck="false" aria-label="Свои правила" :disabled="!data" :readonly="busy.has('save')" />
     </div>
     <div class="rside">
       <div class="card chk2">

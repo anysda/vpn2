@@ -1,18 +1,19 @@
 <script setup lang="ts">
 import '~/assets/css/dns.css'
+import { DnsClients, DnsFilters, DnsLog, DnsRewrites, DnsRules, DnsServices, DnsSettings, DnsSummary } from '#components'
 
 useHead({ title: 'DNS — anysda-vpn2' })
 definePageMeta({ title: 'DNS' })
 
 const SUBS = [
-  { value: 'sum', label: 'Сводка' },
-  { value: 'log', label: 'Журнал' },
-  { value: 'flt', label: 'Фильтры' },
-  { value: 'rules', label: 'Свои правила' },
-  { value: 'rw', label: 'Перезаписи' },
-  { value: 'svc', label: 'Сервисы' },
-  { value: 'cl', label: 'Клиенты' },
-  { value: 'set', label: 'Настройки DNS' },
+  { value: 'sum', label: 'Сводка', view: DnsSummary },
+  { value: 'log', label: 'Журнал', view: DnsLog },
+  { value: 'flt', label: 'Фильтры', view: DnsFilters },
+  { value: 'rules', label: 'Свои правила', view: DnsRules },
+  { value: 'rw', label: 'Перезаписи', view: DnsRewrites },
+  { value: 'svc', label: 'Сервисы', view: DnsServices },
+  { value: 'cl', label: 'Клиенты', view: DnsClients },
+  { value: 'set', label: 'Настройки DNS', view: DnsSettings },
 ] as const
 type Sub = typeof SUBS[number]['value']
 
@@ -35,29 +36,8 @@ async function pick(v: Sub, dir: 'fwd' | 'back') {
     <div class="head">
       <DnsSeg v-model="sub" class="dseg" :options="SUBS" @pick="pick" />
     </div>
-    <section v-if="seen.has('sum')" class="dpan" :class="{ on: sub === 'sum' }">
-      <DnsSummary />
-    </section>
-    <section v-if="seen.has('log')" class="dpan" :class="{ on: sub === 'log' }">
-      <DnsLog />
-    </section>
-    <section v-if="seen.has('flt')" class="dpan" :class="{ on: sub === 'flt' }">
-      <DnsFilters />
-    </section>
-    <section v-if="seen.has('rules')" class="dpan" :class="{ on: sub === 'rules' }">
-      <DnsRules />
-    </section>
-    <section v-if="seen.has('rw')" class="dpan" :class="{ on: sub === 'rw' }">
-      <DnsRewrites />
-    </section>
-    <section v-if="seen.has('svc')" class="dpan" :class="{ on: sub === 'svc' }">
-      <DnsServices />
-    </section>
-    <section v-if="seen.has('cl')" class="dpan" :class="{ on: sub === 'cl' }">
-      <DnsClients />
-    </section>
-    <section v-if="seen.has('set')" class="dpan" :class="{ on: sub === 'set' }">
-      <DnsSettings />
+    <section v-for="s in SUBS.filter(x => seen.has(x.value))" :key="s.value" class="dpan" :class="{ on: sub === s.value }">
+      <component :is="s.view" />
     </section>
   </main>
 </template>

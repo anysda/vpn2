@@ -1,1666 +1,295 @@
 #!/usr/bin/env bash
-# anysda-vpn2 — оркестратор деплоя
-#
-# Использование:
-#   ./deploy.sh                   полный pipeline: prereqs → проверки → деплой
-#   ./deploy.sh <stage> <group>   одна стадия на группу нод
-#
-# Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 19-yt-zapret |
-#           20-ru-router | 28-wireguard | 29-openvpn | 21-failover-watchdog |
-#           22-adguard | 23-emergency | 25-monitoring | 26-backup | 27-ikev2 |
-#           35-telegram | 30-frontend | 99-verify
-# Группы:   ru | foreign | all | <конкретный тег экзита>
-
+# anysda-vpn2 - оркестратор деплоя. Стадии - плеи infra/ansible/site.yml (тег = стадия),
+# служебные шаги вокруг них - infra/ansible/deploy.yml. Здесь только порядок, журнал,
+# сторож фаервола и то, что видит оператор. Запускается на entry через ./deploy.sh.
 set -euo pipefail
 
-# Юнит systemd без User= и systemd-run переменную HOME не задают, а ключ
-# оркестратора и ssh живут в домашнем каталоге.
+# Юнит systemd без User= и systemd-run переменную HOME не задают, а ключ оркестратора живёт в ней.
 if [[ -z "${HOME:-}" ]]; then
   HOME=$(getent passwd "$(id -u)" | cut -d: -f6)
   [[ -n "$HOME" ]] || { echo 'deploy: у пользователя нет домашнего каталога (HOME пуст, в passwd его нет)' >&2; exit 1; }
 fi
-export HOME
-
 DEPLOY_ROOT="$(cd "$(dirname "$0")" && pwd)"
-export DEPLOY_ROOT
+REPO=$(dirname "$DEPLOY_ROOT")
+export HOME DEPLOY_ROOT
 
-# shellcheck source=lib/ssh.sh
-source "$DEPLOY_ROOT/lib/ssh.sh"
+if [[ -t 2 ]]; then C_R='\033[31m' C_G='\033[32m' C_Y='\033[33m' C_B='\033[34m' C_END='\033[0m'
+else C_R='' C_G='' C_Y='' C_B='' C_END=''; fi
+HOST_TAG=deploy
+log()  { printf '%b[%s]%b %s\n' "$C_B" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
+ok()   { printf '%b[%s]%b %s\n' "$C_G" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
+warn() { printf '%b[%s]%b %s\n' "$C_Y" "${HOST_TAG:-?}" "$C_END" "$*" >&2; }
+die()  { printf '%b[%s] FATAL:%b %s\n' "$C_R" "${HOST_TAG:-?}" "$C_END" "$*" >&2; exit 1; }
+step() { printf '%b==>%b %s\n' "$C_B" "$C_END" "$*"; }
 
-# Accumulated stage log for the final summary (populated by run_stage):
-# «стадия<TAB>группа<TAB>время», колонки выравнивает print_summary
-_STAGE_LOG=()
-_VERIFY_WARNINGS=()
-# Установка прошла и всё измерено, но оператору надо знать: экзит без WARP.
-_DEPLOY_WARNINGS=()
-SKIPPED_EXIT_TAGS=''
-_TOTAL_T0=0
+for lib in state-dir anysda-svc ansible-venv deploy-report deploy-prep deploy-backup port-rotate; do
+  # shellcheck disable=SC1090
+  source "$DEPLOY_ROOT/lib/$lib.sh"
+done
 
-exit_is_skipped() {
-  grep -qw -- "$1" <<<"${SKIPPED_EXIT_TAGS:-}"
+_STAGE_LOG=() _VERIFY_WARNINGS=() _DEPLOY_WARNINGS=() SKIPPED_EXIT_TAGS='' _TOTAL_T0=0
+MUTATING=false OPENED=false TMP='' BEAT='' PLAY=''
+MANIFEST=${VPN2_RELEASE_MANIFEST:-}
+GUARDED=' 00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 23-emergency 27-ikev2 28-wireguard 29-openvpn 30-frontend '
+GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
+FRESH_LOGIN='-o ControlMaster=no -o ControlPath=none'
+export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_INFRA=$DEPLOY_ROOT VPN2_SOURCE_ROOT=$REPO
+export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
+
+exit_tags() {
+  [[ -f "$DEPLOY_ROOT/envs/exits.env" ]] || die "envs/exits.env не найден — запусти ./setup.sh"
+  ( source "$DEPLOY_ROOT/envs/exits.env"; echo "${EXIT_TAGS:-}" )
 }
 
-active_exit_tags() {
-  local tag active=()
-  for tag in $(exit_tags); do
-    exit_is_skipped "$tag" || active+=("$tag")
-  done
-  printf '%s\n' "${active[*]}"
-}
-
-# ----------------------------------------------------------------------------
-# Banner
-# ----------------------------------------------------------------------------
-print_banner() {
-  local exits; exits=$(exit_tags 2>/dev/null || echo "")
-  printf '\n'
-  printf '%b  ┌──────────────────────────────────────────┐%b\n' "$C_B" "$C_END"
-  printf '%b  │%b  anysda-vpn2 ·  deployment orchestrator  %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
-  printf '%b  │%b                                          %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
-  printf '%b  │%b  RU entry    →  sing-box router          %b│%b\n' "$C_B" "$C_END" "$C_B" "$C_END"
-  if [[ -n "$exits" ]]; then
-    for t in $exits; do
-      local upper; upper=$(printf '%s' "$t" | tr a-z A-Z)
-      printf '%b  │%b              →  %-3s экзит                %b│%b\n' "$C_B" "$C_END" "$upper" "$C_B" "$C_END"
-    done
-  fi
-  printf '%b  └──────────────────────────────────────────┘%b\n' "$C_B" "$C_END"
-  printf '\n'
-}
-
-# ----------------------------------------------------------------------------
-# Summary printed after do_all
-# ----------------------------------------------------------------------------
-print_summary() {
-  local total=$(( $(date +%s) - _TOTAL_T0 ))
-  local mins=$(( total / 60 )) secs=$(( total % 60 ))
-  local timing="${mins}m ${secs}s"
-  [[ "$mins" -eq 0 ]] && timing="${secs}s"
-
-  # shellcheck disable=SC1091
-  local _ru_host _panel_url _admin_user _admin_pass
-  source "$DEPLOY_ROOT/envs/all.env" 2>/dev/null || true
-  source "$DEPLOY_ROOT/envs/ru.env"  2>/dev/null || true
-  _ru_host="${SSH_HOST:-${ENTRY_HOST:-}}"
-  if [[ -n "${PANEL_DOMAIN:-}" ]]; then
-    _panel_url="https://${PANEL_DOMAIN}/"
-  else
-    _panel_url="http://${_ru_host}/"
-    # Без домена HTTPS по IP включается после первого сертификата.
-    if [[ "$(ssh_exec 'cat /etc/vpn2/tls/panel/secure' 2>/dev/null)" == true ]]; then
-      _panel_url="https://${ENTRY_HOST:-$_ru_host}/"
-    fi
-  fi
-  _admin_user="${ADMIN_USER:-admin}"
-  # Сам пароль в рамку не выводим: она остаётся в логах деплоя и в истории
-  # терминала. Заданный в config.yaml человек ввёл сам в ./setup.sh, а
-  # сгенерированный (22-adguard/30-frontend) лежит на entry, куда у него есть
-  # root-доступ по ssh, — печатаем, откуда его взять.
-  if [[ -n "${ADMIN_PASSWORD:-}" ]]; then
-    _admin_pass="задан в config.yaml (admin.password)"
-  else
-    _admin_pass="ssh ${SSH_USER:-root}@${_ru_host} cat /etc/anysda/admin-password.txt"
-  fi
-
-  # Считаем макс. display-ширину по всем будущим строкам (UTF-8 char count
-  # через bash ${#var} в LC_ALL=C.UTF-8). Затем рисуем рамку по этой ширине,
-  # каждую строку добиваем пробелами до правого │ — выравнивание гарантировано.
-  local _LC_PREV="${LC_ALL:-}"; LC_ALL=C.UTF-8
-  local title_str="  деплой завершён  ·  ${timing}  "
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}" || -n "${_DEPLOY_WARNINGS[*]:-}" || -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
-    title_str="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
-  fi
-  local _rows=("$title_str")
-  # Колонки стадий: ширина по самому длинному значению в символах, а не
-  # зашитая (21-failover-watchdog не влезал в %-18s и сдвигал свою строку).
-  local entry s g t w1=0 w2=0 w3=0 _stages=()
-  for entry in "${_STAGE_LOG[@]}"; do
-    IFS=$'\t' read -r s g t <<< "$entry"
-    (( ${#s} > w1 )) && w1=${#s}
-    (( ${#g} > w2 )) && w2=${#g}
-    (( ${#t} > w3 )) && w3=${#t}
-  done
-  for entry in "${_STAGE_LOG[@]}"; do
-    IFS=$'\t' read -r s g t <<< "$entry"
-    _stages+=("$s$(printf '%*s' $(( w1 - ${#s} + 2 )) '')$g$(printf '%*s' $(( w2 - ${#g} + w3 - ${#t} + 2 )) '')$t")
-  done
-  for entry in "${_stages[@]}"; do _rows+=("  ${entry}  "); done
-  _rows+=("  Panel:    ${_panel_url}")
-  _rows+=("  Login:    ${_admin_user}")
-  _rows+=("  Password: ${_admin_pass}")
-  local W=0 r
-  for r in "${_rows[@]}"; do (( ${#r} > W )) && W=${#r}; done
-  W=$(( W + 12 ))                                 # запас по правому краю для воздуха
-  local BAR; BAR=$(printf '─%.0s' $(seq 1 $W))
-
-  _row() {
-    local text="$1"
-    local pad=$(( W - ${#text} ))
-    (( pad < 0 )) && pad=0
-    printf '%b  │%b%s%*s%b│%b\n' "$C_G" "$C_END" "$text" "$pad" "" "$C_G" "$C_END"
-  }
-
-  printf '\n'
-  printf '%b  ┌%s┐%b\n' "$C_G" "$BAR" "$C_END"
-  _row "$title_str"
-  printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
-  for entry in "${_stages[@]}"; do _row "  ${entry}  "; done
-  printf '%b  ├%s┤%b\n' "$C_G" "$BAR" "$C_END"
-  _row "  Panel:    ${_panel_url}"
-  _row "  Login:    ${_admin_user}"
-  _row "  Password: ${_admin_pass}"
-  printf '%b  └%s┘%b\n' "$C_G" "$BAR" "$C_END"
-  printf '\n'
-  LC_ALL="$_LC_PREV"
-  print_ikev2_notice
-  print_sso_notice
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
-    warn '99-verify: установка завершена, но не все проверки измерены'
-    printf '%s\n' "${_VERIFY_WARNINGS[@]}"
-  fi
-  [[ -z "${_DEPLOY_WARNINGS[*]:-}" ]] || printf '%s\n' "${_DEPLOY_WARNINGS[@]}"
-  if [[ -n "${SKIPPED_EXIT_TAGS:-}" ]]; then
-    HOST_TAG=deploy warn "pre-flight: экзиты пропущены из-за недоступного SSH: $SKIPPED_EXIT_TAGS"
-  fi
-}
-
-print_ikev2_notice() {
-  (
-    load_env ru
-    ssh_exec '
-      mode=$(cat /etc/anysda/ikev2-mode) || exit 1
-      host=$(cat /etc/anysda/ikev2-server-host) || exit 1
-      domain=$(cat /etc/anysda/ikev2-domain 2>/dev/null || true)
-      printf "IKEv2: mode=%s server-host=%s\n" "$mode" "$host"
-      if [ -n "$domain" ] && { [ "$mode" != letsencrypt ] || [ "$host" != "$domain" ]; }; then
-        printf "IKEv2: ожидается сертификат Caddy для %s; автоматическая проверка каждые 30 с.\n" "$domain"
-      fi
-    ' || warn 'IKEv2: не удалось прочитать состояние сервера'
-  )
-}
-
-# Засев решается на entry: локальное отсутствие секрета не означает, что
-# SSO выключен, если там уже сохранены настройки профиля панели.
-print_sso_notice() {
-  (
-    load_env ru
-    local secret="${SSO_CLIENT_SECRET:-}"
-    if [[ "${SSO_REQUESTED:-${SSO_ENABLED:-false}}" == true && -z "${secret//[[:space:]]/}" ]] \
-       && ssh_exec 'test ! -f /etc/anysda/sso-runtime.json' >/dev/null 2>&1; then
-      printf '%s\n' 'SSO не включён, потому что не задан секрет. Входите по паролю администратора. Чтобы включить SSO, заполните sso.client_secret в config.yaml и запустите ./deploy.sh 30-frontend ru.'
-    fi
-  )
-}
-
-# ----------------------------------------------------------------------------
-# Ожидание блокировок apt/dpkg (unattended-upgrades на свежей Ubuntu) - общие
-# apt_prepare/apt_get из lib/anysda-svc.sh: и здесь, и на нодах перед стадией.
-# ----------------------------------------------------------------------------
-# shellcheck source=infra/lib/anysda-svc.sh
-source "$DEPLOY_ROOT/lib/anysda-svc.sh"
-# shellcheck source=infra/lib/ansible-venv.sh
-source "$DEPLOY_ROOT/lib/ansible-venv.sh"
-
-# ----------------------------------------------------------------------------
-# Оркестратор обычно запускают на самом entry. Свежий entry через минуту после
-# загрузки уходит в unattended-upgrade, и install_prereqs ждал его до 15 минут
-# раньше, чем 00-bootstrap успевал поставить паузу. Поэтому на entry пауза
-# идёт первым делом; на чужом оркестраторе её ставит 00-bootstrap.
-# ----------------------------------------------------------------------------
-entry_is_local() {
-  local host
-  # shellcheck disable=SC1091
-  host=$(source "$DEPLOY_ROOT/envs/ru.env" 2>/dev/null; echo "${SSH_HOST:-}")
-  [[ -n "$host" ]] || return 1
-  [[ "$host" == 127.* || "$host" == localhost ]] && return 0
-  [[ " $(hostname -I 2>/dev/null) " == *" $host "* ]]
-}
-
-pause_entry_auto_updates() {
-  [[ -d /run/systemd/system ]] && entry_is_local || return 0
-  # install_prereqs тоже может вызвать needrestart до стадии 00.
-  nftables_preserve_rules
-  printf '%b==>%b автообновления entry на паузу до конца деплоя\n' "$C_B" "$C_END"
-  HOST_TAG=ru apt_auto_pause
-}
-
-# ----------------------------------------------------------------------------
-# Установка локальных пререквизитов (на самом оркестраторе).
-# Apt-пакеты + Docker (для pull/run, build больше не нужен).
-# Идемпотентна — если всё уже стоит, no-op за секунду.
-# ----------------------------------------------------------------------------
-install_prereqs() {
-  printf '%b==>%b проверяю локальные зависимости\n' "$C_B" "$C_END"
-  local missing=()
-  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
-    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-  done
-
-  # Docker оркестратору не нужен: образы тянут 30/35 на самом entry, и ставит
-  # его там 00-bootstrap одним заходом apt с остальными пакетами (отдельный
-  # заход dpkg ~3 с на ядро).
-  local pkgs=()
-  for cmd in "${missing[@]}"; do
-    case "$cmd" in
-      ssh|scp) pkgs+=(openssh-client) ;;
-      envsubst) pkgs+=(gettext-base) ;;
-      *) pkgs+=("$cmd") ;;
-    esac
-  done
-  # ca-certificates - только если его нет: стоящий apt обновил бы, и его
-  # configure (~5 с) задерживал бы экзиты, ждущие sshpass. Обновит его, как и
-  # раньше, 00-bootstrap entry тем же списком пакетов.
-  # venv нужен только полному запуску (do_all зовёт с аргументом venv); служебные
-  # слова и одиночная стадия идут через release_start без него.
-  [[ "${1:-}" != venv ]] || apt_have python3-venv || pkgs+=(python3-venv)
-  # setuptools-whl до 70.1 (Ubuntu 24.04) собирает колесо только с пакетом wheel.
-  if [[ "${1:-}" == venv ]] && ! apt_have python3-wheel \
-      && dpkg --compare-versions "$(apt-cache policy python3-setuptools-whl 2>/dev/null \
-        | awk '/Candidate:/ {print $2}')" lt 70.1; then
-    pkgs+=(python3-wheel)
-  fi
-  [[ ${#pkgs[@]} -eq 0 ]] || apt_have ca-certificates || pkgs+=(ca-certificates)
-  [[ ${#pkgs[@]} -eq 0 ]] || _install_prereq_pkgs "${pkgs[@]}"
-  # venv с ansible-core качается в фоне, пока идут первые стадии; ждёт его do_all.
-  [[ "${1:-}" != venv ]] || ansible_venv_start
-
-  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
-    printf '  %-10s %b✓%b\n' "$cmd" "$C_G" "$C_END"
-  done
-}
-
-_install_prereq_pkgs() {
-  local pkgs=("$@") missing=()
-  for cmd in ssh scp sshpass envsubst curl python3 rsync openssl; do
-    command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
-  done
-  [[ -f /etc/debian_version ]] \
-    || die "не хватает: ${missing[*]}. На не-Debian/Ubuntu поставь руками."
-  printf '  ставлю недостающее: %s\n' "${missing[*]}"
-  export DEBIAN_FRONTEND=noninteractive
-  apt_prepare
-  # Оркестратор на самом entry: репо docker - до update, тогда 00-bootstrap
-  # ставит docker по свежим спискам без второго update.
-  if entry_is_local && ! command -v docker >/dev/null 2>&1; then
-    docker_apt_source
-  fi
-  apt_get update -qq
-  # sshpass и компания служб не обновляют: обход needrestart после dpkg (~3 с)
-  # здесь только задерживает экзиты, которые ждут sshpass.
-  NEEDRESTART_SUSPEND=1 apt_get install -y -qq --no-install-recommends "${pkgs[@]}" >/dev/null
-}
-
-# ----------------------------------------------------------------------------
-# Проверка env-файлов всех нод. die при первой ошибке.
-# ----------------------------------------------------------------------------
-do_check() {
-  printf '\n%b==>%b env-файлы\n' "$C_B" "$C_END"
-  local fail=0
-  local all_hosts="ru $(exit_tags)"
-  for tag in $all_hosts; do
-    local f="${tag}.env"
-    if [[ -f "$DEPLOY_ROOT/envs/$f" ]]; then
-      printf '  %-12s %b✓%b\n' "$f" "$C_G" "$C_END"
-    else
-      printf '  %-12s %b✗ нет%b  (запусти ./setup.sh)\n' "$f" "$C_R" "$C_END"; fail=1
-    fi
-  done
-  [[ $fail -eq 0 ]] || die "не хватает env-файлов — запусти ./setup.sh"
-
-  # SSH_PROBE_TIMEOUT общий для всех нод: неверный останавливает деплой здесь,
-  # одной строкой, до опроса нод.
-  local probe_limit
-  probe_limit=$(ssh_probe_limit 2>&1) || HOST_TAG=deploy die "$probe_limit"
-
-  # Доступность SSH проверяет preflight_ssh следом, всех нод сразу.
-  printf '\n'
-}
-
-# ----------------------------------------------------------------------------
-# Pre-stage hook for 20-ru-router: pull Hysteria2 secrets from US/SE.
-# ----------------------------------------------------------------------------
-# Экзиты с exits[].hy2_insecure: true работают без проверки сертификата.
-# Предупреждаем при сборке роутера и в итоге 99-verify.
-warn_insecure_exits() {
-  local env="$DEPLOY_ROOT/envs/all.env" host upper
-  [[ -f "$env" ]] || return 0
-  for host in $(exit_tags); do
-    upper=$(printf '%s' "$host" | tr 'a-z-' 'A-Z_')
-    if grep -qx "${upper}_HY2_INSECURE=1" "$env"; then
-      HOST_TAG=deploy warn "$host: exits[].hy2_insecure: true — сертификат экзита не проверяется, подмену экзита на пути entry → экзит не видно"
-    fi
-  done
-  return 0
-}
-
-prep_ru_router() {
-  log "prep: тяну секреты Hysteria2 + clash-api с экзит-нод"
-  local sec="$DEPLOY_ROOT/secrets/foreign-secrets.env"
-  # Для временно недоступного экзита нужны секреты прошлого успешного
-  # деплоя: конфигурация хаба сохраняет его outbound до следующего запуска.
-  local cached=''
-  [[ -f "$sec" ]] && cached=$(<"$sec")
-  # Права закрываем до записи: сбор может оборваться между экзитами.
-  install -d -m 700 "$DEPLOY_ROOT/secrets" || return
-  install -m 600 /dev/null "$sec" || return
-
-  for host in $(exit_tags); do
-    if exit_is_skipped "$host"; then
-      local upper kept kept_count
-      upper=$(printf '%s' "$host" | tr 'a-z-' 'A-Z_')
-      kept=$(grep -E "^${upper}_(DIRECT|WARP|OBFS|MGMT|CLASH)=" <<<"$cached" || true)
-      kept_count=$(grep -c . <<<"$kept" || true)
-      [[ $kept_count -eq 5 ]] \
-        || die "$host пропущен в pre-flight, но в прошлом деплое нет его 5 секретов; сначала верни SSH и запусти ./deploy.sh"
-      printf '%s\n' "$kept" >> "$sec"
-      warn "prep: $host пропущен, использую сохранённые секреты"
-      continue
-    fi
-    load_env "$host"
-    log "забираю секреты с $host"
-    local payload; payload=$(ssh_exec '
-      echo "DIRECT=$(cat /etc/anysda/hy2-direct.pwd)"
-      echo "WARP=$(cat /etc/anysda/hy2-warp.pwd)"
-      echo "OBFS=$(cat /etc/anysda/hy2-obfs.pwd)"
-      echo "MGMT=$(cat /etc/anysda/hy2-mgmt.pwd)"
-      echo "CLASH=$(cat /etc/anysda/clash-secret.txt)"
-    ')
-
-    # PEM-сертификат экзита закрепляется на entry: без него генератор роутера
-    # отказывает. Берём тот, что sing-box экзита реально отдаёт; копия
-    # /etc/anysda/hy2-tls.crt есть не на всех установках.
-    mkdir -p "$DEPLOY_ROOT/secrets/exit-certs"
-    chmod 700 "$DEPLOY_ROOT/secrets/exit-certs"
-    local pem="$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
-    if (umask 077; ssh_exec 'cat /etc/sing-box/tls.crt 2>/dev/null || cat /etc/anysda/hy2-tls.crt' \
-          > "$pem.tmp") && [[ -s "$pem.tmp" ]]; then
-      mv -f "$pem.tmp" "$pem"
-      log "забрал TLS-cert экзита $host"
-    else
-      rm -f "$pem.tmp" "$pem"
-      warn "на $host нет сертификата Hysteria2 — закрепится ранее сохранённый на entry, иначе 20-ru-router откажет (передеплой 10-foreign)"
-    fi
-    # Хост-ключ экзита для known_hosts entry: ssh <tag> ходит на 127.0.0.1
-    # через служебный туннель, сверять ключ по адресу нельзя (у всех один).
-    mkdir -p "$DEPLOY_ROOT/secrets/exit-hostkeys"
-    ssh_exec 'cat /etc/ssh/ssh_host_ed25519_key.pub' \
-      > "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" 2>/dev/null \
-      || rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
-    # Открытая часть Reality (запасной TCP-канал) - строго четыре известные
-    # строки; нет её - entry держит прошлую, а на старом экзите остаётся без резерва.
-    local reality="$DEPLOY_ROOT/secrets/exit-certs/$host.reality"
-    if ssh_exec 'cat /etc/anysda/reality.pub' > "$reality.tmp" 2>/dev/null \
-       && [[ $(grep -cE '^(PUB=[A-Za-z0-9_-]{43}|SID=[0-9a-f]{0,16}|SNI=[A-Za-z0-9.-]{1,253}|PORT=[0-9]{1,5})$' \
-                 "$reality.tmp") -eq 4 && $(wc -l < "$reality.tmp") -eq 4 ]]; then
-      mv -f "$reality.tmp" "$reality"
-    else
-      rm -f "$reality.tmp"
-      warn "на $host нет ключа Reality - запасной TCP-канал до него не включится (передеплой 10-foreign)"
-    fi
-    # Экзит доверен меньше entry, а 20-ru-router читает этот файл от root.
-    # Пропускаем только известные ключи со значением в алфавите gen_pwd
-    # из 10-foreign; сертификат и хост-ключ должны разбираться как есть.
-    if [[ -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" ]] \
-       && ! openssl x509 -noout -in "$DEPLOY_ROOT/secrets/exit-certs/$host.pem" 2>/dev/null; then
-      rm -f "$DEPLOY_ROOT/secrets/exit-certs/$host.pem"
-      die "$host отдал не PEM-сертификат Hysteria2"
-    fi
-    if [[ -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" ]] \
-       && ! ssh-keygen -lf "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub" >/dev/null 2>&1; then
-      rm -f "$DEPLOY_ROOT/secrets/exit-hostkeys/$host.pub"
-      die "$host отдал не ssh-ключ в /etc/ssh/ssh_host_ed25519_key.pub"
-    fi
-    local k v seen=0
-    while IFS='=' read -r k v; do
-      [[ -n "$k" ]] || continue
-      case "$k" in DIRECT|WARP|OBFS|MGMT|CLASH) ;; *) die "$host отдал лишний ключ секретов: $k" ;; esac
-      [[ "$v" =~ ^[A-Za-z0-9+/]{16,128}$ ]] \
-        || die "$host: секрет $k не похож на пароль из 10-foreign (16-128 знаков A-Z a-z 0-9 + /), стадию 20 не запускаю"
-      printf '%s_%s=%s\n' "$(echo "$host" | tr 'a-z-' 'A-Z_')" "$k" "$v" >> "$sec"
-      seen=$((seen + 1))
-    done <<<"$payload"
-    [[ $seen -eq 5 ]] || die "$host отдал $seen секретов из 5"
-  done
-  chmod 600 "$sec"
-  ok "секреты записаны в secrets/foreign-secrets.env"
-}
-
-# ----------------------------------------------------------------------------
-# One-time (до параллельного fan-out 00-bootstrap): keypair оркестратора +
-# сборка orchestrator_keys. Делается ОДИН раз — иначе при параллельном
-# 00-bootstrap несколько хостов гонялись бы за один ключ и config.yaml.
-# ----------------------------------------------------------------------------
-prep_orchestrator_key() {
-  mkdir -p "${HOME}/.ssh" && chmod 700 "${HOME}/.ssh"
-  # config2env мог разложить ключ из config.yaml — тогда файл уже на месте.
-  if [[ ! -f "${HOME}/.ssh/id_ed25519" ]]; then
-    log "keypair оркестратора отсутствует — генерю ed25519"
-    ssh-keygen -t ed25519 -N '' -C 'anysda-orchestrator' -f "${HOME}/.ssh/id_ed25519" -q
-  fi
-  [[ -f "${HOME}/.ssh/id_ed25519.pub" ]] || \
-    ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" > "${HOME}/.ssh/id_ed25519.pub"
-  cat "${HOME}/.ssh/id_ed25519.pub" >> "${HOME}/.ssh/authorized_keys"
-  awk 'NF && !seen[$0]++' "${HOME}/.ssh/authorized_keys" > "${HOME}/.ssh/authorized_keys.u" \
-    && mv "${HOME}/.ssh/authorized_keys.u" "${HOME}/.ssh/authorized_keys"
-  chmod 600 "${HOME}/.ssh/authorized_keys"
-  # Персистим ключ в config.yaml — чтобы пережил пересоздание entry-ноды.
-  local _cfg="$DEPLOY_ROOT/../config.yaml"
-  if [[ -f "$_cfg" ]] && ! grep -q '^orchestrator_key:' "$_cfg"; then
-    log "сохраняю orchestrator-ключ в config.yaml (переживёт пересоздание entry)"
-    {
-      echo ''
-      echo '# orchestrator SSH-ключ — НЕ удалять: нужен для повторного деплоя'
-      echo '# с пересозданной entry-ноды. config.yaml надо сохранять/переносить.'
-      echo "orchestrator_key: $(base64 -w0 < "${HOME}/.ssh/id_ed25519")"
-      echo "orchestrator_pubkey: $(cat "${HOME}/.ssh/id_ed25519.pub")"
-    } >> "$_cfg"
-  fi
-  local combined="$DEPLOY_ROOT/secrets/rendered/orchestrator_keys"
-  mkdir -p "$(dirname "$combined")"
-  chmod 700 "$(dirname "$combined")" 2>/dev/null || true
-  : > "$combined"
-  for src in "${HOME}/.ssh/id_ed25519.pub" "${HOME}/.ssh/id_rsa.pub" "${HOME}/.ssh/authorized_keys"; do
-    [[ -f "$src" ]] && cat "$src" >> "$combined"
-  done
-  awk 'NF && !seen[$0]++' "$combined" > "${combined}.uniq" && mv "${combined}.uniq" "$combined"
-  chmod 600 "$combined"
-}
-
-# ----------------------------------------------------------------------------
-# Свой ключ entry для ssh на экзиты через служебный hy2-туннель (стадия 20
-# пишет ~/.ssh/config с хостами по тегам). Генерится на самой entry, а не
-# на машине деплоя. Публичная часть уходит на экзиты в 00-bootstrap; там она
-# заменяет прежний ключ entry по комментарию anysda-entry-mgmt, так что
-# пересозданная entry не копит старые ключи.
-# ----------------------------------------------------------------------------
-ENTRY_MGMT_KEY_COMMENT='anysda-entry-mgmt'
-
-prep_entry_mgmt_key() {
-  local out="$DEPLOY_ROOT/secrets/rendered/entry_mgmt_key"
-  mkdir -p "$(dirname "$out")"
-  rm -f "$out"
-  local pub
-  pub=$(load_env ru && ssh_exec "
-    mkdir -p /root/.ssh && chmod 700 /root/.ssh
-    [ -f /root/.ssh/id_ed25519_mgmt ] || ssh-keygen -t ed25519 -N '' -q \
-      -C '$ENTRY_MGMT_KEY_COMMENT' -f /root/.ssh/id_ed25519_mgmt
-    cat /root/.ssh/id_ed25519_mgmt.pub") || pub=''
-  if [[ "$pub" != ssh-ed25519\ *" $ENTRY_MGMT_KEY_COMMENT" ]]; then
-    HOST_TAG=deploy warn "ключ entry для ssh на экзиты не получен — на экзитах остаётся прежний"
-    return 0
-  fi
-  printf '%s\n' "$pub" > "$out"
-  chmod 600 "$out"
-}
-
-# ----------------------------------------------------------------------------
-# Run a stage on one host
-# ----------------------------------------------------------------------------
-# Стадии, которые меняют ufw или свои nft-таблицы. На время такой стадии на
-# ноде стоит сторож lib/fw-guard.sh: если новые ssh-входы не проходят дольше
-# окна, он сам возвращает фаервол к состоянию до стадии. Таблицы
-# inet vpn2_emergency_hy2 (23-emergency) в снимке сторожа нет намеренно: она
-# закрывает только UDP-порт аварийки и исходящие vpn2-hy2, ssh перекрыть не
-# может, а её откат сломал бы идущий аварийный режим. 99-verify фаервол не меняет.
-FW_GUARD_STAGES='00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 23-emergency 27-ikev2 28-wireguard 29-openvpn 30-frontend'
-FW_GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
-
-fw_guard_stage() {
-  [[ " $FW_GUARD_STAGES " == *" $1 "* ]]
-}
-
-# deploy.sh идёт с самой entry, и её ssh к себе ходит через lo: такой вход
-# проходит и тогда, когда стадия закрыла ssh снаружи. Внешний вход проверяет
-# экзит: новое ssh-соединение к нему и TCP к ENTRY_HOST:22 оттуда, всё в пределах
-# шага пульса.
-
-# Какой адрес entry.host: local - экзит по нему увидит свой же sshd (loopback,
-# не задан), private - внутренняя сеть или CGNAT (entry за NAT), иначе public.
-# Классы - только у литеральных IP. Имя на entry не разрешаем: её /etc/hosts
-# (cloud-init пишет «127.0.1.1 <имя>») дал бы loopback, а экзит разрешает имя
-# своим DNS. Имя, которого экзиты до стадии не видят, baseline уводит в lo.
-fw_guard_entry_addr_kind() {
-  local addr=$1
-  if [[ -n $addr && ! $addr =~ ^[0-9.]+$ && $addr != *:* ]]; then
-    [[ ${addr,,} == localhost || ${addr,,} == localhost.* ]] && echo local || echo public
-    return
-  fi
-  case $addr in
-    ''|127.*|0.0.0.0|::|::1) echo local ;;
-    10.*|192.168.*|169.254.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) echo private ;;
-    100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) echo private ;;
-    [fF][cCdD]*:*|[fF][eE]80:*) echo private ;;
-    *) echo public ;;
+# Группа → узлы через пробел; экзиты, пропущенные в pre-flight, в стадии не идут.
+expand_hosts() {
+  local group=$1 tag all active=()
+  all=$(exit_tags)
+  for tag in $all; do grep -qw -- "$tag" <<<"$SKIPPED_EXIT_TAGS" || active+=("$tag"); done
+  case "$group" in
+    ru) echo ru ;;
+    foreign|all)
+      [[ -n "$all" ]] || die "EXIT_TAGS пустой — перезапусти ./deploy.sh"
+      [[ "$group" == foreign ]] && echo "${active[*]}" || echo "ru ${active[*]}" ;;
+    *) grep -qw -- "$group" <<<"${active[*]}" \
+         || die "unknown host group: $group (доступные: ru foreign all или тег из config.yaml)"
+       echo "$group" ;;
   esac
 }
 
-# Видит ли экзит TAG вход на ENTRY_HOST:22. Код: 0 видит, 1 не видит, 3 не ответил.
-# Экзит печатает метку сразу после входа, до TCP-пробы: метка пришла, а дальше
-# отказ или таймаут сессии - экзит ответил и входа не видит (вход закрыт отбросом,
-# медленный вход по ssh съел время пробы). Без метки - не ответил. Потолок сессии
-# - медленный вход по ssh (до 10 с) и TCP-проба (3 с) с запасом.
-fw_guard_exit_sees_entry() {
-  local check rc=0 mark=vpn2-fw-guard-exit-answered
-  printf -v check 'echo %s; if timeout 3 bash -c %q 2>/dev/null; then exit 0; fi; exit 1' \
-    "$mark" "exec 3<>/dev/tcp/$ENTRY_HOST/22"
-  (
-    load_env "$1" || exit 9
-    code=0
-    out=$(SSH_PROBE_TIMEOUT=15 ssh_fresh "$check" 2>/dev/null) || code=$?
-    # 1 - ответ команды на экзите; отличаем от die в load_env.
-    if (( code == 1 )) || { (( code == 124 || code == 137 )) &&
-         [[ $'\n'$out$'\n' == *$'\n'"$mark"$'\n'* ]]; }; then
-      code=10
-    fi
-    exit "$code"
-  ) >/dev/null 2>&1 || rc=$?
-  case $rc in
-    0) return 0 ;;
-    10) return 1 ;;
-  esac
-  return 3
-}
-
-# Все экзиты из списка разом, строка «тег код» на каждый: шаг пульса - одна
-# сессия, сколько бы экзитов ни молчало до потолка, и окно сторожа не съедается.
-fw_guard_exits_see_entry() {
-  # Ждём свои пробы поимённо. Голый `wait` в подстановке `$(...)` берёт и
-  # coproc замка деплоя из оболочки-родителя: bash 5.3 там без конца пишет
-  # «wait: pid N is not a child of this shell».
-  local tag pid pids=()
-  for tag in $1; do
-    ( rc=0; fw_guard_exit_sees_entry "$tag" || rc=$?; echo "$tag $rc" ) &
-    pids+=("$!")
-  done
-  for pid in "${pids[@]}"; do wait "$pid" || true; done
-}
-
-# Опрос всех экзитов из списка, а не первого ответившего: экзит, у которого нет
-# пути до entry:22, не перекрывает остальных.
-# Код: 0 хоть один видит вход, 1 ответившие не видят, 3 ни один не ответил.
-fw_guard_entry_probe() {
-  local codes
-  codes=$(fw_guard_exits_see_entry "$1")
-  [[ $codes$'\n' == *$' 0\n'* ]] && return 0
-  [[ $codes$'\n' == *$' 1\n'* ]] && return 1
-  return 3
-}
-
-# Перед arm стадии на entry, пока фаервол ещё прежний. Опорные экзиты - те, что
-# видят вход снаружи сейчас: во время стадии «закрыт» значит, что его не видит ни
-# один из них, то есть закрыла стадия, а не путь экзита. Внешней точки нет
-# (экзитов нет, они не отвечают, entry.host локальный, entry за NAT) - опорных
-# нет, пульс через lo и один warn с причиной. Так же и публичный entry.host,
-# который до стадии не видит ни один ответивший экзит (провайдер режет 22
-# снаружи, NAT с публичным адресом, у экзитов закрыт исходящий 22): закрыла ли
-# вход стадия, отсюда не отличить.
-FW_GUARD_ENTRY_REFS=''
-fw_guard_entry_baseline() {
-  local stage=$1 tags tag rc kind open='' answered=''
-  FW_GUARD_ENTRY_REFS=''
-  tags=$(active_exit_tags 2>/dev/null) || tags=''
-  if [[ -z "${tags// /}" ]]; then
-    warn "[fw-guard] вход на entry снаружи не проверяется: экзитов нет"
-    return 0
-  fi
-  kind=$(fw_guard_entry_addr_kind "${ENTRY_HOST:-}")
-  if [[ $kind == local ]]; then
-    warn "[fw-guard] вход на entry снаружи не проверяется: entry.host '${ENTRY_HOST:-}' локальный, экзит увидел бы свой sshd"
-    return 0
-  fi
-  # Экзиты, ответившие «вижу», - сразу опорные. Ответившие «не вижу» перед
-  # выводом «не виден ни одному» пробуются ещё 2 раза через 5 с: одна потерянная
-  # TCP-проба не должна оставить стадию без опорных.
-  local probe=$tags try codes
-  for try in 1 2 3; do
-    (( try == 1 )) || sleep 5
-    codes=$(fw_guard_exits_see_entry "$probe")
-    probe=''
-    while read -r tag rc; do
-      case $rc in
-        0) open+=" $tag" ;;
-        1) probe+=" $tag"; [[ " $answered " == *" $tag "* ]] || answered+=" $tag" ;;
-      esac
-    done <<< "$codes"
-    [[ -z $open && -n $probe ]] || break
-  done
-  if [[ -n $open ]]; then
-    FW_GUARD_ENTRY_REFS=${open# }
-  elif [[ -z $answered ]]; then
-    warn "[fw-guard] вход на entry снаружи не проверяется: экзиты пока не отвечают по ssh"
-  elif [[ $kind == private ]]; then
-    warn "[fw-guard] вход на entry снаружи не проверяется: entry.host $ENTRY_HOST внутренний и до стадии не виден ни одному экзиту (entry за NAT)"
-  else
-    warn "[fw-guard] до стадии вход на $ENTRY_HOST:22 снаружи не виден ни одному экзиту (${answered# }) - вход на entry снаружи не проверяется"
-  fi
-}
-
-# Пульс сторожу: новое соединение каждые 5 с, пока жива оболочка стадии
-# (её pid - первым аргументом). Стадия вышла мимо останова пульса (die,
-# сигнал) - пульс кончается сам, и сторож откатывает фаервол по окну. На entry с
-# опорными экзитами пульс пропущен, только когда ответившие экзиты не видят
-# вход: его закрыла стадия, сторож откатит фаервол по окну. ssh entry→экзит -
-# исходящее соединение entry, закрытый вход его не рвёт, поэтому молчание всех
-# экзитов (ребут, перезапуск sshd в их стадии) о входе не говорит: пульс через
-# lo и один warn. Закрытый вход при молчащих экзитах так не поймать.
-fw_guard_beat() {
-  local owner=${1:-$$} outside gone=0 nap=''
-  # Пауза не переживает пульс: осиротевший sleep ещё 5 с держал бы замок
-  # деплоя и вывод, и команда сразу следом видела бы «deploy уже выполняется».
-  # Убитую паузу пульс дожидается: под нагрузкой она умирает не сразу и ещё держит замок.
-  trap '[[ -z "$nap" ]] || { kill "$nap" 2>/dev/null; wait "$nap" 2>/dev/null; }; exit 0' TERM
-  while kill -0 "$owner" 2>/dev/null; do
-    outside=0
-    if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
-      fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || outside=$?
-      if (( outside == 3 && ! gone )); then
-        warn "[fw-guard] экзиты перестали отвечать по ssh, вход на entry снаружи не проверяется - пульс через lo"
-        gone=1
-      fi
-    fi
-    if (( outside != 1 )); then
-      ssh_fresh 'bash --norc /run/vpn2-fw-guard/fw-guard.sh beat' >/dev/null 2>&1 || true
-    fi
-    sleep 5 & nap=$!
-    wait "$nap" || true
-  done
-}
-
-# Снять сторожа тоже новым соединением. Пока оно не проходит, сторож успеет
-# откатить фаервол, и тогда disarm ответит кодом 3.
-fw_guard_disarm() {
-  local stage=$1 deadline rc out waited=0
-  # disarm на entry идёт через lo и снял бы сторожа при закрытом входе снаружи.
-  # Проба по шагу пульса, пока ответившие опорные экзиты не видят вход: одна
-  # потерянная проба не решает. Не видят дольше окна - пульса не было, сторож
-  # откатил, и disarm ответит кодом 3. Ни один не ответил (код 3) - о входе
-  # это не говорит, как и в пульсе: disarm сразу.
-  if [[ "$HOST_TAG" == ru && -n "${FW_GUARD_ENTRY_REFS:-}" ]]; then
-    while :; do
-      rc=0
-      fw_guard_entry_probe "$FW_GUARD_ENTRY_REFS" || rc=$?
-      (( rc == 1 )) || break
-      if (( waited >= FW_GUARD_WINDOW + 5 )); then
-        warn "[$stage → $HOST_TAG] экзиты не видят вход по ssh на entry снаружи ${waited} с, сторож должен был откатить фаервол"
-        break
-      fi
-      sleep 5
-      waited=$(( waited + 5 ))
-    done
-  fi
-  deadline=$(( $(date +%s) + FW_GUARD_WINDOW + 30 ))
-  while :; do
-    rc=0
-    out=$(ssh_fresh "bash --norc /run/vpn2-fw-guard/fw-guard.sh disarm $stage" 2>&1) || rc=$?
-    case $rc in
-      # 4: сторожа нет - стадия упала до arm, и её ошибка уже в rc.
-      0|4) return 0 ;;
-      3) warn "[$stage → $HOST_TAG] $out"; return 1 ;;
-      # Shell узла не дошёл до команды: причина в $out, повтор не поможет.
-      "$_SSH_NO_MARK") warn "[$stage → $HOST_TAG] $out"; return 1 ;;
-    esac
-    if (( $(date +%s) >= deadline )); then
-      warn "[$stage → $HOST_TAG] после стадии нода не пускает новые ssh-входы ${FW_GUARD_WINDOW} с и дольше; сторож фаервола должен был откатить ufw, проверь вход руками"
-      return 1
-    fi
-    sleep 5
-  done
-}
-
-# Стадия 99 на одном хосте: плей запускает `vpn2 verify`, вывод проверки
-# печатается как есть. Код 2 «не все проверки измерены» берётся из кода самой
-# проверки: у ansible-playbook 2 значит упавшую задачу, это отказ.
-run_verify() {
-  local host="$1" rc=0 code='' text=''
-  local -x VPN2_VERIFY_OUT
-  VPN2_VERIFY_OUT=$(mktemp -d) || return 1
-  # Итог стадии печатается после вывода проверки, а не после плея.
-  # shellcheck disable=SC2329  # зовёт run_play
-  ( ok() { :; }; run_play 99-verify "$host" ) || rc=$?
-  HOST_TAG="$host"  # окружение узла осталось в субшелле, метка строк итога - здесь
-  if [[ -f "$VPN2_VERIFY_OUT/$host" ]]; then
-    { IFS= read -r code; text=$(cat); } < "$VPN2_VERIFY_OUT/$host"
-    [[ -z "$text" ]] || printf '%s\n' "$text"
-  fi
-  rm -r -- "$VPN2_VERIFY_OUT"
-  if [[ $rc -eq 0 && "$code" == 2 ]]; then
-    warn "[99-verify → $host] не все проверки измерены"
-    return 2
-  fi
-  [[ $rc -eq 0 && "$code" == 0 ]] || return 1
-  ok "[99-verify → $host] done"
-}
-
-run_stage_on_host() {
-  local stage="$1" host="$2"
-  if [[ "$stage" == 99-verify ]]; then run_verify "$host"; return; fi
-  # Стадии entry, зовущие команду vpn2: venv с пакетом обязан быть готов до них.
-  if [[ "$host" == ru && "$stage" == @(19-yt-zapret|20-ru-router|21-failover-watchdog|27-ikev2|28-wireguard|29-openvpn) ]]; then
-    ansible_venv_ensure fresh
-  fi
-  run_play "$stage" "$host"
-}
-
-# Стадии, их узлы и порядок записаны в ansible/site.yml, читает его пакет.
-# stage_nodes СТАДИЯ УЗЕЛ... - узлы из перечисленных, у которых стадия есть.
-# С STAGE_REFUSE_EMPTY=1 пустой итог - отказ: стадия entry на экзите и наоборот.
+# Узлы стадии через запятую: порядок и принадлежность стадий знает site.yml.
 stage_nodes() {
-  local stage="$1" out rc=0 refuse=()
-  shift
-  [[ -z "${STAGE_REFUSE_EMPTY:-}" ]] || refuse=(--refuse-empty)
+  local out rc=0
   out=$(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages nodes \
-          --site "$DEPLOY_ROOT/ansible/site.yml" "${refuse[@]}" "$stage" "$@" 2>&1) || rc=$?
-  case "$rc" in
-    0) printf '%s\n' "$out" ;;
-    3) die "$out" ;;
-    *) HOST_TAG=deploy die "$out" ;;
-  esac
+          --site "$DEPLOY_ROOT/ansible/site.yml" "$@" 2>&1) || rc=$?
+  (( rc == 0 )) || die "$out"
+  tr ' ' ',' <<<"$out"
 }
 
-# ----------------------------------------------------------------------------
-# Run a stage across a host group, with timing
-# ----------------------------------------------------------------------------
+# Плей идёт фоном под wait: сигнал оператора прерывает ожидание сразу, а не после стадии.
+play() {
+  local rc=0
+  ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$REPO/config.yaml" \
+    "$VPN2_ROOT/venv/bin/ansible-playbook" "$@" </dev/null &
+  PLAY=$!
+  wait "$PLAY" || rc=$?
+  PLAY=''
+  return "$rc"
+}
+service() { play "$DEPLOY_ROOT/ansible/deploy.yml" -e "manifest=$MANIFEST" "$@"; }
+
+# Сторож фаервола (lib/fw-guard.sh на узле) откатывает ufw и таблицы стадии, если новые
+# ssh-входы пропали дольше окна. Пульс - отдельный запуск с новым входом: открытое
+# соединение стадии живёт и при сломанном правиле. Вход на entry снаружи видят экзиты.
+guard_beat() {
+  local nodes outside=false
+  nodes=$(expand_hosts all | tr ' ' ',')
+  ANSIBLE_SSH_ARGS=$FRESH_LOGIN service --tags beat --limit "$nodes" -e "out=$TMP" >/dev/null 2>&1 || true
+  if [[ -e "$TMP/entry-outside" ]]; then
+    outside=true
+  elif [[ -z "${GUARD_WARNED:-}" ]]; then
+    GUARD_WARNED=1
+    warn '[fw-guard] вход на entry снаружи не проверяется: до стадии его не видит ни один экзит'
+  fi
+  while sleep 5; do
+    ANSIBLE_SSH_ARGS=$FRESH_LOGIN service --tags beat --limit "$nodes" -e "entry_outside=$outside" >/dev/null 2>&1 || true
+  done &
+  BEAT=$!
+}
+
+guard_finish() {
+  local stage=$1 nodes=$2 rc deadline=$(( $(date +%s) + GUARD_WINDOW + 30 ))
+  kill "$BEAT" 2>/dev/null || true
+  wait "$BEAT" 2>/dev/null || true
+  BEAT=''
+  # Код 4 - узел не пустил: ждём окно сторожа, он вернёт фаервол, и вход появится.
+  while rc=0; ANSIBLE_SSH_ARGS=$FRESH_LOGIN service --tags finish --limit "$nodes" -e "stage=$stage" || rc=$?
+        (( rc == 4 && $(date +%s) < deadline )); do sleep 5; done
+  (( rc != 4 )) || warn "после стадии $stage нода не пускает новые ssh-входы дольше окна сторожа - проверь вход руками"
+  return "$rc"
+}
+
+# Одна стадия на узлах (через запятую): подготовка, сторож, плей стадии, снятие сторожа.
+stage_once() {
+  local stage=$1 nodes=$2 rc=0
+  log "[$stage → $nodes] starting"
+  [[ "$GUARDED" != *" $stage "* ]] || guard_beat
+  play "$DEPLOY_ROOT/ansible/deploy.yml" "$DEPLOY_ROOT/ansible/site.yml" --tags "prepare,$stage" \
+    --limit "$nodes" -e "stage=$stage" -e "manifest=$MANIFEST" || rc=$?
+  if [[ -n "$BEAT" ]]; then
+    guard_finish "$stage" "$nodes" || rc=1
+  else
+    service --tags cleanup --limit "$nodes" >/dev/null 2>&1 || warn "[$stage → $nodes] не удалось убрать /tmp/anysda"
+  fi
+  return "$rc"
+}
+
+# 99-verify: 0 - всё измерено, 2 - не всё (установка годна), 1 - отказ.
+verify() {
+  local nodes=$1 rc=0 result=0 host code text found
+  VPN2_VERIFY_OUT=$(mktemp -d -p "$TMP")
+  export VPN2_VERIFY_OUT
+  stage_once 99-verify "$nodes" || rc=$?
+  for host in ${nodes//,/ }; do
+    code='' text=''
+    [[ ! -f "$VPN2_VERIFY_OUT/$host" ]] || { IFS= read -r code; text=$(cat); } < "$VPN2_VERIFY_OUT/$host"
+    [[ -z "$text" ]] || printf '%s\n' "$text"
+    found=$(grep -E '^\[.*\] ⚠ WARP: ' <<<"$text" || true)
+    [[ -z "$found" ]] || mapfile -t -O "${#_DEPLOY_WARNINGS[@]}" _DEPLOY_WARNINGS <<<"$found"
+    if [[ $rc -eq 0 && "$code" == 2 ]]; then
+      warn "[99-verify → $host] не все проверки измерены"
+      found=$(grep -E '^\[.*\] \? .*не проверено:' <<<"$text" || true)
+      mapfile -t -O "${#_VERIFY_WARNINGS[@]}" _VERIFY_WARNINGS \
+        <<<"${found:-[$host] ? не проверено: 99-verify вернул код 2; подробности выше}"
+      (( result == 1 )) || result=2
+    elif [[ $rc -ne 0 || "$code" != 0 ]]; then
+      result=1
+    else
+      ok "[99-verify → $host] done"
+    fi
+  done
+  return "$result"
+}
+
 run_stage() {
-  local stage="$1" group="$2"
-  local t0; t0=$(date +%s)
-
-  case "$stage" in
-    20-ru-router) prep_ru_router; warn_insecure_exits ;;
-    23-emergency)
-      # Выпуск до переноса аварийки в пакет запускал её из checkout: после
-      # git pull от каталога остаётся один __pycache__. Собранную статику
-      # страницы (static/) не трогаем: rmdir снимает только пустой каталог.
-      if [[ ! -e "$DEPLOY_ROOT/emergency/vpn2_emergency/__init__.py" ]]; then
-        rm -rf -- "$DEPLOY_ROOT/emergency/vpn2_emergency/__pycache__"
-        rmdir "$DEPLOY_ROOT/emergency/vpn2_emergency" 2>/dev/null || true
-      fi
-      PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.emergency provision "$DEPLOY_ROOT/.." || return 1
-      # Агент аварийки на entry идёт из venv: стадии он нужен готовым. Фоновая
-      # установка do_all держит замок, при тех же пинах здесь ничего не качается.
-      if [[ " $(expand_hosts "$group") " == *' ru '* ]]; then
-        ansible_wheel_build || return 1
-        ansible_venv_install >>"$VENV_LOG" 2>&1 \
-          || { tail -n 20 "$VENV_LOG" >&2; die "ansible: venv не установился, аварийке entry он нужен; лог $VENV_LOG"; }
-      fi ;;
-  esac
-  # Полный прогон готовит ключи один раз до параллельных цепочек (do_all):
-  # две цепочки с 00-bootstrap иначе разом переписали бы одни и те же файлы.
-  if [[ "$stage" == "00-bootstrap" && -z "${_BOOTSTRAP_KEYS_READY:-}" ]]; then
-    prep_orchestrator_key
-    prep_entry_mgmt_key
-  fi
-
-  local hosts; hosts=$(expand_hosts "$group" 2>/dev/null)
-  # all = entry и экзиты: стадия идёт только на узлы, у которых она есть.
+  local stage=$1 group=$2 t0 hosts nodes host rc=0 t
+  t0=$(date +%s)
+  hosts=$(expand_hosts "$group")
   # shellcheck disable=SC2086  # список узлов через пробел
-  hosts=$(stage_nodes "$stage" $hosts) || return 1
-  if [[ "$stage" == 10-foreign ]]; then
-    local host count=0
-    for host in $(expand_hosts foreign); do count=$((count + 1)); done
-    [[ "$count" != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
-    [[ "$group" != ru ]] || HOST_TAG=deploy die '10-foreign - стадия экзитов, на entry её нет: группа foreign, all или тег экзита'
-    for host in $hosts; do
-      run_stage_on_host "$stage" "$host" || return 1
-      run_stage_on_host 99-verify "$host" || return 1
-    done
-    _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$(( $(date +%s) - t0 ))s")
-    return 0
-  fi
-  # Стадии независимы по нодам — гоняем хосты параллельно. Каждый
-  # run_stage_on_host уходит в свой субшелл (из-за `&`), поэтому глобалы
-  # load_env (SSH_HOST/SSH_PASS/...) не пересекаются между нодами.
-  local pids=() nodes=() rc=0 incomplete=0 host_rc pid i h line
-  local verify_logs=''
-  if [[ "$stage" == 99-verify ]]; then
-    # Причины нужны print_summary в родительском процессе, а вывод идёт сразу.
-    verify_logs=$(mktemp -d)
-    local skipped
-    for skipped in ${SKIPPED_EXIT_TAGS:-}; do
-      case "$group" in
-        all|foreign|"$skipped")
-          printf '[%s] ⊘ пропущен: SSH недоступен в pre-flight\n' "$skipped"
-          incomplete=1
-          ;;
-      esac
-    done
-  fi
-  for h in $hosts; do
-    if [[ -n "$verify_logs" ]]; then
-      # Подоболочка: у голого `cmd | tee &` $! — это tee, и bash 5.2
-      # отдаёт wait её код 0, если задание уже завершилось.
-      # GNU tee: uutils tee пишет в stdout через splice, а splice берёт позицию
-      # общего файла без блокировки - при `deploy.sh > log` tee узлов пишут по
-      # одному смещению и затирают строки друг друга. В Ubuntu 26.04 это gnutee.
-      ( set -o pipefail; run_stage_on_host "$stage" "$h" 2>&1 | "$(command -v gnutee || echo tee)" "$verify_logs/$h" ) &
-    else
-      run_stage_on_host "$stage" "$h" &
-    fi
-    pids+=("$!")
-    nodes+=("$h")
-  done
-  for i in "${!pids[@]}"; do
-    pid=${pids[$i]}
-    host_rc=0
-    wait "$pid" || host_rc=$?
-    if [[ -n "$verify_logs" ]]; then
-      while IFS= read -r line; do
-        [[ "$line" != '['*'] ⚠ WARP: '* ]] || _DEPLOY_WARNINGS+=("$line")
-      done < "$verify_logs/${nodes[$i]}"
-    fi
-    if [[ "$stage" == 99-verify && $host_rc -eq 2 ]]; then
-      incomplete=1
-      local found=0
-      while IFS= read -r line; do
-        if [[ "$line" == '['*'] ? '*'не проверено:'* ]]; then
-          _VERIFY_WARNINGS+=("$line")
-          found=1
-        fi
-      done < "$verify_logs/${nodes[$i]}"
-      if [[ $found -eq 0 ]]; then
-        _VERIFY_WARNINGS+=("[${nodes[$i]}] ? не проверено: 99-verify вернул код 2; подробности выше")
-      fi
-    elif [[ $host_rc -ne 0 ]]; then
-      rc=1
-    fi
-  done
-  [[ -z "$verify_logs" ]] || rm -r -- "$verify_logs"
-  # Предупреждение об экзитах без проверки сертификата - при любом исходе verify.
-  [[ "$stage" != 99-verify ]] || warn_insecure_exits
-  # HOST_TAG тут остаётся от последнего source-нутого env, подпись была чужой ноды
-  [[ $rc -eq 0 ]] || HOST_TAG=deploy die "стадия $stage: одна или несколько нод завершились с ошибкой"
-
-  local elapsed=$(( $(date +%s) - t0 ))
-  local mins=$(( elapsed / 60 )) secs=$(( elapsed % 60 ))
-  local t="${mins}m ${secs}s"; [[ "$mins" -eq 0 ]] && t="${secs}s"
-  _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"$t")
-  if [[ "$stage" == 99-verify && -n "${_VERIFY_WARNINGS[*]:-}" ]]; then
-    HOST_TAG=deploy warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
-  fi
-  if [[ $incomplete -eq 1 ]]; then return 2; fi
-  return 0
-}
-
-# ----------------------------------------------------------------------------
-# Pre-flight: проверка SSH на всех нодах ДО запуска любых стейджей.
-# Хостеры иногда geo-блокируют SSH-баннер из RU направления (TCP открыт,
-# sshd не отвечает) — это не наша проблема, но без preflight деплой
-# падает где-нибудь в середине 00-bootstrap. Лучше сразу сказать.
-# ----------------------------------------------------------------------------
-# TCP :22 reachability probe (no creds needed). Used both for the reference
-# endpoints and as a quick liveness check. Returns 0 if a banner-bearing
-# socket opens within the timeout.
-_tcp22_open() {
-  local hostport="$1"
-  timeout 8 bash -c "exec 3<>/dev/tcp/${hostport}" 2>/dev/null
-}
-
-# Одна нода для preflight_ssh, в фоне: строки для человека - в stdout,
-# итог - файлом <host>.ok или <host>.fail с причиной в каталоге $4.
-_preflight_host() {
-  local h="$1" attempts="$2" budget="$3" dir="$4"
-  load_env "$h"
-  local ok=0 try reason='' kind=net prc pause auth_tries=0 limit
-  local t1 took spent n probe_limit
-  # Бюджет в микросекундах: время проб меряет EPOCHREALTIME, паузы считаются
-  # по заказанной длине. У целых SECONDS проба в 10 мс через границу секунды
-  # стоила бы 1 с, и число попыток зависело бы от того, где началась секунда.
-  local used=0 budget_us=$((budget * 1000000))
-  if [[ -z "${SSH_PASS:-}" ]]; then
-    reason='SSH_PASS пустой — перезапусти ./setup.sh'
-  else
-    probe_limit=$(ssh_probe_limit)
-    for ((try=1; try<=attempts; try++)); do
-      t1=${EPOCHREALTIME/[.,]/}; prc=0; reason=$(ssh_probe) || prc=$?
-      took=$(( ${EPOCHREALTIME/[.,]/} - t1 )); used=$((used + took))
-      if [[ $prc -eq 0 ]]; then ok=1; break; fi
-      # Предел в строке - тот, которым цикл закончится при таком же ответе:
-      # отказ во входе пробуется дважды, host-key - ни разу больше.
-      limit=$attempts
-      case $prc in
-        2) kind=hostkey; limit=$try ;;
-        "$_SSH_NO_MARK") kind=bashrc; limit=$try ;;
-        3) kind=auth; auth_tries=$((auth_tries + 1))
-           (( try + 2 - auth_tries >= attempts )) || limit=$((try + 2 - auth_tries)) ;;
-        *) kind=net ;;
-      esac
-      # И тот, что уместится в PREFLIGHT_BUDGET, если следующие попытки
-      # ответят так же долго: висящая нода съедает таймаут ssh_probe на каждой,
-      # и до пятой не доходит. Расчёт повторяет проверку бюджета ниже.
-      spent=$used; n=$try
-      while (( n < limit )); do
-        pause=$((n * 3))
-        [[ $kind != auth || $n -ne $try ]] || pause=${PREFLIGHT_AUTH_PAUSE:-30}
-        (( spent + (pause + probe_limit) * 1000000 <= budget_us )) || break
-        spent=$((spent + pause * 1000000 + took)); n=$((n + 1))
-      done
-      limit=$n
-      printf '  %-30s попытка %d/%d: %s\n' "${SSH_USER}@${SSH_HOST} ($h)" "$try" "$limit" "$reason"
-      # Сменившийся host-key и exit в .bashrc ждать бесполезно: их убирает человек.
-      [[ $kind != hostkey && $kind != bashrc ]] || break
-      pause=$((try * 3))
-      # Каждый неверный пароль fail2ban ноды засчитывает адресу entry
-      # (maxretry 5 за 10 минут в 00-bootstrap). Повтор один и с паузой:
-      # после переустановки ОС провайдер выставляет пароль не сразу. Два
-      # запуска подряд дают ноде 4 неудачи - ниже порога бана.
-      if [[ $kind == auth ]]; then
-        (( auth_tries < 2 )) || break
-        pause=${PREFLIGHT_AUTH_PAUSE:-30}
-        printf '  %-30s повтор через %d с: если ОС только что переустановили, пароль мог ещё не выставиться\n' \
-          "${SSH_USER}@${SSH_HOST} ($h)" "$pause"
-      fi
-      (( try < attempts )) || break
-      if (( used + (pause + probe_limit) * 1000000 > budget_us )); then
-        printf '  %-30s время pre-flight на ноду вышло (%d с), больше попыток не будет\n' \
-          "${SSH_USER}@${SSH_HOST} ($h)" "$budget"
-        break
-      fi
-      sleep "$pause"; used=$((used + pause * 1000000))
-    done
-  fi
-  if [[ $ok -eq 1 ]]; then
-    printf '  %-30s %b✓%b\n' "${SSH_USER}@${SSH_HOST} ($h)" "$C_G" "$C_END"
-    : >"$dir/$h.ok"
-  else
-    printf '  %-30s %b✗ нода %s (%s) недоступна по ssh с entry: %s%b\n' \
-      "${SSH_USER}@${SSH_HOST} ($h)" "$C_R" "$h" "$SSH_HOST" "$reason" "$C_END"
-    echo "нода $h ($SSH_HOST) недоступна по ssh с entry: $reason" >"$dir/$h.fail"
-    echo "$kind" >"$dir/$h.kind"
-    [[ $kind != hostkey ]] || ssh_hostkey_fix >"$dir/$h.fix"
-  fi
-}
-
-preflight_ssh() {
-  printf '%b==>%b pre-flight: доступность SSH\n' "$C_B" "$C_END"
-  local attempts="${PREFLIGHT_ATTEMPTS:-5}"
-  # Потолок на ноду: быстрые отказы (refused, флап sshd) успевают пройти все
-  # попытки, а висящая нода отпускается после двух таймаутов ssh_probe.
-  local budget="${PREFLIGHT_BUDGET:-90}"
-
-  # ── Per-node SSH check, с ретраями (терпим transient-сбои) ────────────────
-  # Ноды опрашиваем разом, вывод печатаем в прежнем порядке: по очереди
-  # четыре живые ноды стоили ~3 с, висящая - по 90 с на каждую.
-  local hosts; hosts=$(expand_hosts all)
-  local reasons=() fixes=() skipped=() pids=() auth=0 net=0 h dir pid; dir=$(mktemp -d)
-  for h in $hosts; do
-    _preflight_host "$h" "$attempts" "$budget" "$dir" >"$dir/$h.log" 2>&1 &
-    pids+=("$!")
-  done
-  # The deploy lock is another long-lived child; it must outlive preflight.
-  for pid in "${pids[@]}"; do wait "$pid" || true; done
-  for h in $hosts; do
-    cat "$dir/$h.log"
-    [[ -f "$dir/$h.ok" ]] && continue
-    local reason kind
-    reason=$(cat "$dir/$h.fail" 2>/dev/null || echo "нода $h: проверка не выполнилась")
-    kind=$(cat "$dir/$h.kind" 2>/dev/null || true)
-    # Пропускается только экзит, до которого нет сети. Сменённый host-key и
-    # отказ во входе и exit в .bashrc сами не пройдут: это ошибка настройки,
-    # деплой стоит.
-    if [[ "$h" != ru && $kind != hostkey && $kind != auth && $kind != bashrc ]]; then
-      skipped+=("$h")
-      printf '  %b⚠ Экзит %s пропущен: SSH недоступен в pre-flight%b\n' "$C_Y" "$h" "$C_END"
-      continue
-    fi
-    reasons+=("$reason")
-    case $kind in
-      hostkey) fixes+=("$(cat "$dir/$h.fix")") ;;
-      auth)    auth=1 ;;
-      bashrc)  ;;
-      *)       net=1 ;;
-    esac
-  done
-  rm -rf "$dir"
-
-  SKIPPED_EXIT_TAGS="${skipped[*]}"
-
-  # Недоступный экзит не меняет конфигурацию хаба: его пропускают только
-  # fan-out стадии этого запуска. Недоступный entry остаётся стоп-сигналом.
-  if [[ ${#reasons[@]} -eq 0 ]]; then
-    [[ ${#skipped[@]} -eq 0 ]] || printf '  %b⚠ Продолжаю без экзитов: %s%b\n' "$C_Y" "${skipped[*]}" "$C_END"
-    printf '\n'
-    return 0
-  fi
-
-  printf '\n%b✗ Недоступны по SSH:%b\n' "$C_R" "$C_END"
-  printf '  %s\n' "${reasons[@]}"
-  if [[ ${#fixes[@]} -gt 0 ]]; then
-    printf '  Сменился host-key ноды: так бывает после переустановки ОС на том же IP.\n'
-    printf '  Новый ключ сам не принимается - это защита от подмены ноды.\n'
-    printf '  Если ОС переустанавливал ты, убери старый ключ и повтори ./deploy.sh:\n'
-    printf '    %s\n' "${fixes[@]}"
-  fi
-  if [[ $auth -eq 1 ]]; then
-    printf '  Нода отказала во входе:\n'
-    printf '    1. ключ anysda-orchestrator в /root/.ssh/authorized_keys на ноде: после 00-bootstrap экзит пускает только по нему\n'
-    printf '    2. пароль root в config.yaml\n'
-    printf '    3. PasswordAuthentication=yes в /etc/ssh/sshd_config на ноде\n'
-    printf '    4. если ОС на ноде только что переустановили, пароль мог ещё не выставиться: повтори ./deploy.sh через минуту\n'
-  fi
-  [[ $net -eq 1 ]] && _preflight_net_hint
-  HOST_TAG=deploy die "pre-flight: недоступных по ssh нод: ${#reasons[@]}, деплой не запускался"
-}
-
-# Подсказка для нод, до чьего sshd не дошли: режет ли провайдер entry
-# исходящий :22 или дело в самих нодах.
-_preflight_net_hint() {
-  # ── Часть нод не пускает — опрашиваем эталонный :22 ТОЛЬКО для диагноза ────
-  # Эталон github/gitlab — диагностический фактор, НЕ блокер. Сюда мы
-  # попадаем только когда ноды уже не пустили; эталон лишь помогает понять,
-  # режет ли провайдер центральной ноды исходящий :22, или дело в самих
-  # нодах. Если github/gitlab заблокированы РКН, но ноды живые — этот код
-  # вообще не выполняется.
-  local ref_ok=0 ref i
-  for ((i=1; i<=3; i++)); do
-    for ref in github.com gitlab.com; do
-      if _tcp22_open "$ref/22"; then ref_ok=1; break 2; fi
-    done
-    sleep 2
-  done
-
-  if [[ $ref_ok -eq 0 ]]; then
-    printf '  Эталонные github.com:22 / gitlab.com:22 тоже недоступны.\n'
-    printf '  %bВероятно%b провайдер центральной ноды режет исходящий :22\n' "$C_Y" "$C_END"
-    printf '  (анти-абуз-фильтр). Решения:\n'
-    printf '    • тикет хостеру: «разблокируйте исходящий TCP-порт 22»\n'
-    printf '    • либо смени центральную ноду на провайдера без фильтра :22\n'
-    printf '  Если github/gitlab у тебя просто заблокированы — смотри пункты ниже.\n'
-  else
-    printf '  Исходящий :22 с центральной ноды работает (эталон OK) — дело в нодах:\n'
-  fi
-  printf '    1. IP ноды в config.yaml\n'
-  printf '    2. sshd на ноде запущен и слушает :22\n'
-  printf '    3. firewall / geo-блок на стороне провайдера ноды\n'
-}
-
-# ----------------------------------------------------------------------------
-# Post-stage 20: проверка Hysteria2 direct туннелей через clash API.
-# Если порт фильтруется на маршруте RU→exit (UDP:443 часто режут), перебираем
-# кандидаты, обновляем config.yaml + envs, передеплоиваем 10-foreign на этом
-# exit и 20-ru-router. Все кандидаты исчерпаны — die с понятным сообщением.
-# ----------------------------------------------------------------------------
-HY2_PORT_CANDIDATES=(443 4443 4444 8443 8444 33445)
-
-# Причина по коду ssh_exec, если команда на узел не дошла: 255 ssh (отказ во
-# входе или нет соединения, подробности ssh.sh печатает выше), 5/6/7 sshpass,
-# $_SSH_NO_MARK shell узла не дошёл до команды. Иначе код 1: это код команды
-# узла, и мёртвый туннель от сбоя входа отличает только он.
-_ssh_login_reason() {
-  case $1 in
-    255) echo 'ssh код 255: отказ во входе или нет соединения' ;;
-    5) echo 'sshpass код 5: отказ во входе (неверный пароль или sshd не пускает пользователя)' ;;
-    6) echo 'sshpass код 6: host-key узла неизвестен' ;;
-    7) echo 'sshpass код 7: сменился host-key узла' ;;
-    "$_SSH_NO_MARK") echo "код $_SSH_NO_MARK: $_SSH_NO_MARK_REASON" ;;
-    *) return 1 ;;
+  nodes=$(stage_nodes "$stage" $hosts)
+  [[ -n "$nodes" ]] || return 0
+  case "$stage" in
+    00-bootstrap) prep_keys ;;
+    20-ru-router) pull_secrets; warn_insecure_exits ;;
+    23-emergency) PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.emergency provision "$REPO" ;;
   esac
-}
-
-# Сбой входа на entry - не мёртвые туннели: экзиты не исключаем, порты не трогаем.
-# Тег и порт - экзит, уже перекаченный до сбоя: его порт не откатываем.
-_die_entry_login() {
-  local reason; reason=$(_ssh_login_reason "$1")
-  # Строка пробника или перекатки могла остаться недописанной.
-  printf '\n'
-  load_env ru
-  local what="туннели не проверены, экзиты и порты не менял"
-  [[ -n "${2:-}" ]] && what="экзит $2 уже перекачен на :$3, порт не откачен"
-  die "verify_and_rotate_ports: сбой входа по ssh на entry ($SSH_HOST): $reason; $what"
-}
-
-# Печатает delay (ms) и возвращает 0 если туннель ответил, 1 при таймауте/ошибке.
-# Команда до entry не дошла - код ssh_exec как есть (см. _ssh_login_reason).
-# kind: direct | warp — какой outbound экзита проверять.
-_clash_delay() {
-  local tag="$1" kind="${2:-direct}"
-  load_env ru
-  local secret resp d rc=0
-  secret=$(ssh_exec 'cat /etc/anysda/clash-secret.txt 2>/dev/null || true') || rc=$?
-  (( rc == 0 )) || { _ssh_login_reason "$rc" >/dev/null && return "$rc"; return 1; }
-  [[ -z "$secret" ]] && return 1
-  # Код curl 5/6/7 совпал бы с кодами sshpass: наружу его не отдаём.
-  resp=$(ssh_exec "curl -sS -m 8 -H 'Authorization: Bearer $secret' 'http://10.99.0.1:9090/proxies/hy2-${tag}-${kind}/delay?timeout=5000&url=http://cp.cloudflare.com/generate_204' 2>/dev/null || true") || rc=$?
-  (( rc == 0 )) || { _ssh_login_reason "$rc" >/dev/null && return "$rc"; return 1; }
-  d=$(printf '%s' "$resp" | grep -oE '"delay":[0-9]+' | sed -n 1p | grep -oE '[0-9]+' || true)
-  if [[ "$d" =~ ^[1-9][0-9]*$ ]]; then
-    printf '%s' "$d"
-    return 0
-  fi
-  return 1
-}
-
-# Текущий per-exit порт (из all.env: {TAG}_HY2_DIRECT_PORT).
-_current_port() {
-  local tag="$1"
-  local upper
-  upper=$(echo "$tag" | tr 'a-z-' 'A-Z_')
-  # shellcheck disable=SC1091
-  ( source "$DEPLOY_ROOT/envs/all.env"; eval "echo \${${upper}_HY2_DIRECT_PORT:-${HY2_DIRECT_PORT:-443}}" )
-}
-
-# Перекатывает порт экзита на нодах: 10-foreign на экзите, свежие секреты и
-# сертификаты с экзитов (prep_ru_router), 20-ru-router на entry. Без prep
-# entry собирался со старыми секретами — ротация не проходила никогда, а
-# `>/dev/null || true` это прятал (VPN2-40). Вывод — в лог, на ошибке хвост.
-_redeploy_exit_port() {
-  local tag="$1" log="$2"
-  if ( run_stage_on_host 10-foreign "$tag" && prep_ru_router && run_stage_on_host 20-ru-router ru ) >"$log" 2>&1; then
-    return 0
-  fi
-  printf '%b    ✗ перекатка %s упала, полный вывод: %s%b\n' "$C_R" "$tag" "$log" "$C_END"
-  tail -n 5 "$log" | sed 's/^/      /'
-  return 1
-}
-
-verify_and_rotate_ports() {
-  printf '%b==>%b verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n' "$C_B" "$C_END"
-  local t0; t0=$(date +%s)
-  local exits; exits=$(active_exit_tags)
-  local rotated_any=0
-  local fully_dead=()     # tags, у которых ВЕСЬ UDP-путь RU↔exit фильтруется
-  local state_dir="$VPN2_STATE_DIR"
-  mkdir -p "$state_dir"
-
-  for tag in $exits; do
-    local delay current rc=0
-    current=$(_current_port "$tag")
-    # 1. Быстрый путь: туннель отвечает на текущем порту → OK
-    delay=$(_clash_delay "$tag" direct) || rc=$?
-    if (( rc == 0 )); then
-      printf '  %-16s port=%-5s %bRTT=%sms ✓%b\n' "hy2-${tag}-direct" "$current" "$C_G" "$delay" "$C_END"
-      continue
-    fi
-    (( rc == 1 )) || _die_entry_login "$rc"
-    printf '  %-16s port=%-5s %b×%b\n' "hy2-${tag}-direct" "$current" "$C_Y" "$C_END"
-
-    # 2. Активная UDP-проверка: 5 случайных high-портов с python echo. Если
-    # ни на одном из них пакет не дошёл — UDP-путь физически отрезан, exit
-    # мертвый, исключаем. Если хоть один сработал — UDP проходит, hyt-rotation
-    # имеет смысл (хостер режет конкретные порты вроде 443/8443).
-    local exit_host
-    load_env "$tag"; exit_host="$SSH_HOST"
-    local probe_ports=(33445 39847 41001 51234 60123)
-    local udp_alive="" prc=0
-    printf '    UDP-пробник: '
-    for p in "${probe_ports[@]}"; do
-      prc=0
-      _probe_udp_one_port "$tag" "$exit_host" "$p" || prc=$?
-      if (( prc == 0 )); then
-        udp_alive="$p"
-        break
-      fi
-      (( prc == 1 )) || break
+  if [[ "$stage" == 10-foreign ]]; then
+    [[ $(exit_tags | wc -w) != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
+    # Экзиты обновляются по одному, следующий - только когда предыдущий прошёл проверку.
+    for host in ${nodes//,/ }; do
+      stage_once "$stage" "$host" && verify "$host" || { rc=1; break; }
     done
-    # Экзит не пустил по ssh: туннель не проверен, а не мёртв.
-    if (( prc > 1 )); then
-      printf '%bсбой входа по ssh на экзит %s (%s): %s — не проверен, не исключаю, порт не меняю%b\n' \
-        "$C_R" "$tag" "$exit_host" "$(_ssh_login_reason "$prc")" "$C_END"
-      continue
-    fi
-    if [[ -z "$udp_alive" ]]; then
-      printf '%bвсе 5 портов фильтруются → exit МЁРТВ, исключаю%b\n' "$C_R" "$C_END"
-      fully_dead+=("$tag")
-      continue
-    fi
-    printf '%bUDP проходит на :%s%b — пробую hy2 rotation\n' "$C_G" "$udp_alive" "$C_END"
-
-    # 3. UDP-путь жив → перебираем hy2-кандидаты до 2 попыток
-    local found=0 port tries=0 max_tries=2
-    for port in "${HY2_PORT_CANDIDATES[@]}"; do
-      [[ "$port" == "$current" ]] && continue
-      tries=$((tries + 1))
-      [[ $tries -gt $max_tries ]] && break
-      printf '    → пробую hy2 :%s ' "$port"
-      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "$port" >/dev/null
-      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null
-      _redeploy_exit_port "$tag" "$state_dir/rotate-${tag}-${port}.log" || continue
-      sleep 4
-      rc=0
-      delay=$(_clash_delay "$tag" direct) || rc=$?
-      if (( rc == 0 )); then
-        printf '%bRTT=%sms ✓%b\n' "$C_G" "$delay" "$C_END"
-        found=1; rotated_any=1
-        break
-      fi
-      (( rc == 1 )) || _die_entry_login "$rc" "$tag" "$port"
-      printf '%b×%b\n' "$C_R" "$C_END"
+  elif [[ "$stage" == 99-verify ]]; then
+    for host in $SKIPPED_EXIT_TAGS; do
+      printf '[%s] ⊘ пропущен: SSH недоступен в pre-flight\n' "$host"
+      rc=2
     done
-    if [[ $found -eq 0 ]]; then
-      printf '  %b⚠ hy2 rotation не подобрала рабочий порт для %s (UDP-путь есть, но\n' "$C_Y" "$tag"
-      printf '    hy2-кандидаты режутся). Откатываю порт на дефолт, оставляю как direct-dead.%b\n' "$C_END"
-      python3 "$DEPLOY_ROOT/lib/config-set-port.py" "$DEPLOY_ROOT/.." "$tag" "${HY2_DIRECT_PORT:-443}" >/dev/null
-      python3 "$DEPLOY_ROOT/lib/config2env.py"     "$DEPLOY_ROOT/.." >/dev/null
-      # Откат только в config.yaml оставлял экзит и entry на последнем
-      # кандидате — до следующего деплоя ноды и конфиг расходились.
-      _redeploy_exit_port "$tag" "$state_dir/rotate-${tag}-rollback.log" || true
-    fi
-  done
-
-  # Persist excluded exits + регенерим envs + redeploy 20-ru-router чтобы
-  # sing-box, vmagent (25-monitoring) и панель (30-frontend) увидели
-  # отфильтрованный EXIT_TAGS на последующих стадиях.
-  local state_file="$state_dir/excluded-exits.txt"
-  if [[ ${#fully_dead[@]} -gt 0 ]]; then
-    {
-      echo "# Экзиты, исключённые verify_and_rotate_ports."
-      echo "# config2env.py читает этот файл и убирает их из EXIT_TAGS на каждом"
-      echo "# деплое. Чтобы попробовать снова — удалить тег (или весь файл) и"
-      echo "# перезапустить ./deploy.sh — verify прогонится заново."
-      echo "# Сгенерировано $(date -u +%FT%TZ)."
-      for tag in "${fully_dead[@]}"; do echo "$tag"; done
-    } > "$state_file"
-    chmod 644 "$state_file"
-    printf '\n  %b⚠ Полностью недостижимые экзиты исключены из деплоя: %s%b\n' \
-      "$C_Y" "${fully_dead[*]}" "$C_END"
-    printf '    Записано в %s\n' "$state_file"
-    printf '    Регенерирую envs и пересобираю 20-ru-router чтобы\n'
-    printf '    стадии 25-monitoring / 30-frontend / 35-telegram\n'
-    printf '    не настраивались с мёртвыми нодами.\n'
-    python3 "$DEPLOY_ROOT/lib/config2env.py" "$DEPLOY_ROOT/.." >/dev/null
-    # 20-ru-router идёт только на entry и секреты экзитов берёт из файла, с
-    # мёртвыми нодами не связывается — недоступный экзит уронить её не может.
-    # Упала — значит сломан entry, и sing-box мог остаться на старом конфиге.
-    local reroute_log="$state_dir/excluded-reroute.log"
-    if ! run_stage_on_host 20-ru-router ru >"$reroute_log" 2>&1; then
-      printf '%b    ✗ 20-ru-router без исключённых экзитов упал, полный вывод: %s%b\n' "$C_R" "$reroute_log" "$C_END"
-      tail -n 15 "$reroute_log" | sed 's/^/      /'
-      die "verify_and_rotate_ports: entry не пересобран после исключения экзитов"
-    fi
+    verify "$nodes" || { (( $? == 2 )) && rc=2 || rc=1; }
+    warn_insecure_exits
   else
-    # Чистим state-файл если все живы — на случай если предыдущий deploy
-    # пометил экзит как мёртвый, а сейчас он ожил.
-    [[ -f "$state_file" ]] && rm -f "$state_file"
+    stage_once "$stage" "$nodes" && ok "[$stage → $nodes] done" || rc=1
   fi
-
-  # Если ВСЕ экзиты мертвы — система не функциональна.
-  local exits_count=0 dead_count=${#fully_dead[@]}
-  for _ in $exits; do exits_count=$((exits_count + 1)); done
-  if [[ $dead_count -gt 0 ]] && [[ $dead_count -eq $exits_count ]]; then
-    die "verify_and_rotate_ports: все экзиты недостижимы по UDP с RU направления"
-  fi
-
-  local elapsed=$(( $(date +%s) - t0 ))
-  local secs=$elapsed mins=0
-  if [[ $secs -ge 60 ]]; then mins=$((secs/60)); secs=$((secs%60)); fi
-  local t="${secs}s"; [[ $mins -gt 0 ]] && t="${mins}m ${secs}s"
-  if [[ $rotated_any -eq 1 ]]; then
-    _STAGE_LOG+=($'[port-rotate]\tforeign\t'"$t")
-  fi
-  if [[ ${#fully_dead[@]} -gt 0 ]]; then
-    _STAGE_LOG+=($'[excluded]\t'"${fully_dead[*]}"$'\t'"$t")
-  fi
-  printf '\n'
-}
-
-# ----------------------------------------------------------------------------
-# UDP-пробник между RU entry и exit на одном порту. Используется внутри
-# verify_and_rotate_ports как ground-truth: "UDP-путь физически существует
-# или нет". Не зависит от sing-box / hy2 / warp — обычный python echo.
-# Возвращает 0 если пакет проехал туда-обратно, 1 иначе. Экзит не пустил по
-# ssh - код ssh_exec (см. _ssh_login_reason), entry не пустил - die.
-# ----------------------------------------------------------------------------
-_probe_udp_one_port() {
-  local exit_tag="$1" exit_host="$2" port="$3" rc=0
-  # 1. На exit: открыть UFW, запустить python UDP echo с таймаутом
-  load_env "$exit_tag"
-  ssh_exec "
-    ufw allow ${port}/udp >/dev/null 2>&1 || true
-    nohup python3 -c 'import socket, sys
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(8)
-s.bind((\"\", ${port}))
-try:
-    data, addr = s.recvfrom(1024)
-    s.sendto(b\"PONG-\" + data, addr)
-except Exception:
-    pass
-' </dev/null >/dev/null 2>&1 &
-    sleep 1
-  " >/dev/null || rc=$?
-  if (( rc != 0 )); then
-    _ssh_login_reason "$rc" >/dev/null && return "$rc"
-    return 1
-  fi
-
-  # 2. С RU entry: отправить UDP-пробу, ждать echo
-  load_env "ru"
-  local result
-  result=$(ssh_exec "
-    timeout 5 python3 -c 'import socket, sys
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.settimeout(4)
-try:
-    s.sendto(b\"PING-${port}\", (\"${exit_host}\", ${port}))
-    data, _ = s.recvfrom(1024)
-    sys.stdout.write(data.decode())
-except Exception:
-    sys.stdout.write(\"TIMEOUT\")
-' 2>/dev/null || true
-  ") || rc=$?
-
-  # 3. Cleanup: убрать UFW-правило
-  load_env "$exit_tag"
-  ssh_exec "ufw delete allow ${port}/udp >/dev/null 2>&1 || true" >/dev/null 2>&1 || true
-  if (( rc != 0 )); then
-    _ssh_login_reason "$rc" >/dev/null && _die_entry_login "$rc"
-    return 1
-  fi
-
-  [[ "$result" == "PONG-PING-${port}" ]]
-}
-
-# ----------------------------------------------------------------------------
-# Full ordered pipeline
-# ----------------------------------------------------------------------------
-# Образы панели и бота тянем в фоне, пока ru занята стадиями 23-27:
-# 30/35 потом делают свой docker pull по уже скачанным слоям. Сбой
-# предзагрузки не страшен - стадии тянут образ сами и сами падают без него.
-# Имена образов - те же умолчания, что у стадий 30-frontend и 35-telegram (vpn2.containers.engine).
-prefetch_images() {
-  (
-    load_env ru
-    if [[ "${VPN2_DEVELOPMENT:-false}" != true ]]; then
-      ssh_exec 'PYTHONPATH=/tmp/anysda python3 -m vpn2.release --manifest /tmp/anysda/release-manifest.json image panel --offline' >/dev/null
-      exit
-    fi
-    local imgs=()
-    [[ "${PANEL_IMAGE_PULL:-true}" == false ]] || imgs+=("${PANEL_IMAGE:-ghcr.io/anysda/vpn2/panel:dev}")
-    [[ "${TGBOT_IMAGE_PULL:-true}" == false ]] || imgs+=("${TGBOT_IMAGE:-ghcr.io/anysda/vpn2/tgbot:dev}")
-    [[ ${#imgs[@]} -gt 0 ]] || exit 0
-    # Каждый образ отдельно: несобранный в реестре (свой образ панели) не
-    # отменяет предзагрузку остальных.
-    if ssh_exec "rc=0; for i in ${imgs[*]}; do docker pull -q \"\$i\" || rc=1; done; exit \$rc" >/dev/null 2>&1; then
-      log "предзагрузка образов: ${imgs[*]}"
-    else
-      warn "предзагрузка образов не вышла - стадии потянут сами"
-    fi
-  ) &
-  _PREFETCH_PID=$!
-}
-
-# Несколько цепочек стадий параллельно; внутри цепочки стадии идут по порядку.
-# Цепочка - строка "стадия:группа стадия:группа". Ждём все цепочки, потом
-# падаем, если упала хоть одна: брошенная на полпути цепочка хуже ожидания.
-run_tracks() {
-  local track pids=() outs=() rc=0 i
-  for track in "$@"; do
-    local out; out=$(mktemp)
-    outs+=("$out")
-    (
-      _STAGE_LOG=()
-      for s in $track; do run_stage "${s%%:*}" "${s#*:}"; done
-      printf '%s\n' "${_STAGE_LOG[@]}" > "$out"
-    ) &
-    pids+=("$!")
-  done
-  for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || rc=1
-    [[ -s "${outs[$i]}" ]] && mapfile -t -O "${#_STAGE_LOG[@]}" _STAGE_LOG < "${outs[$i]}"
-    rm -f "${outs[$i]}"
-  done
-  [[ $rc -eq 0 ]] || HOST_TAG=deploy die "параллельные стадии ($*): одна из цепочек завершилась с ошибкой"
+  (( rc != 1 )) || die "стадия $stage: одна или несколько нод завершились с ошибкой"
+  t=$(( $(date +%s) - t0 )); t="$(( t / 60 ))m $(( t % 60 ))s"
+  _STAGE_LOG+=("$stage"$'\t'"$group"$'\t'"${t#0m }")
+  [[ "$stage" != 99-verify || -z "${_VERIFY_WARNINGS[*]:-}" ]] \
+    || warn '99-verify: ⚠ не все проверки измерены; установка не требует отката'
+  return "$rc"
 }
 
 do_all() {
+  local stage where group verify_rc=0
   print_banner
   _TOTAL_T0=$(date +%s)
-  _STAGE_LOG=()
-  _VERIFY_WARNINGS=()
-  _DEPLOY_WARNINGS=()
-
-  pause_entry_auto_updates
-  install_prereqs venv
-  do_check
+  if [[ -d /run/systemd/system ]]; then
+    nftables_preserve_rules
+    step 'автообновления entry на паузу до конца деплоя'
+    HOST_TAG=ru apt_auto_pause
+  fi
   preflight_ssh
-
-  prep_orchestrator_key
-  prep_entry_mgmt_key
-  local _BOOTSTRAP_KEYS_READY=1
-  # Even bootstrap/firewall and management changes belong to the exit's
-  # sequential update. Stage 10 verifies it before the next exit starts.
-  local exit_track='' tag
-  for tag in $(expand_hosts foreign); do
-    exit_track+="00-bootstrap:$tag 05-mgmt-mesh:$tag 10-foreign:$tag "
-  done
-  # Стадии ru до 20 от экзитов не зависят (ключи готовы выше, секреты экзитов
-  # забирает только prep_ru_router перед 20) - гоняем их, пока ставятся экзиты.
-  # 19 строго ДО 20: сначала готовим путь десинка YouTube, потом sing-box
-  # начинает на него маршрутизировать. Обратный порядок = окно, в котором
-  # YouTube уже на РФ-выходе, а обходить DPI ещё нечем. Стадия сама валит
-  # деплой, если A/B-проверка не прошла.
-  run_tracks "$exit_track" \
-             "00-bootstrap:ru 05-mgmt-mesh:ru 28-wireguard:ru 29-openvpn:ru 19-yt-zapret:ru"
-  run_stage 20-ru-router     ru
-  verify_and_rotate_ports
-  run_stage 21-failover-watchdog ru
-  run_stage 22-adguard       ru
-  prefetch_images
-  # 23 на экзитах ставит docker и тянет образ аварийки (~20 с против ~8 с на
-  # ru): ru тем временем проходит 25/26/27, аварийка экзитов им не нужна.
-  # provision.py под замком и пишет атомарно - двум цепочкам он не мешает.
-  local exit_emergency=''
-  [[ -z "$(expand_hosts foreign)" ]] || exit_emergency='23-emergency:foreign'
-  run_tracks "$exit_emergency" \
-             "23-emergency:ru 25-monitoring:ru 26-backup:ru 27-ikev2:ru"
-  run_stage 29-control       ru
-  wait "$_PREFETCH_PID" || true
-  VPN2_PANEL_FOLLOWS=true run_stage 35-telegram ru
-  run_stage 30-frontend      ru
-  [[ -z ${_VENV_PID:-} ]] || ansible_venv_wait soft
-  local verify_rc=0
-  run_stage 99-verify        all || verify_rc=$?
-  [[ $verify_rc -ne 1 ]] || return 1
-
+  while read -r stage where <&3; do
+    case "$where" in entry) group=ru ;; exits) group=foreign ;; *) group=all ;; esac
+    case "$stage" in
+      99-verify)   run_stage "$stage" "$group" || verify_rc=$? ;;
+      35-telegram) VPN2_PANEL_FOLLOWS=true run_stage "$stage" "$group" ;;
+      *)           run_stage "$stage" "$group" ;;
+    esac
+    [[ "$stage" != 20-ru-router ]] || verify_and_rotate_ports
+  done 3< <(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages list --site "$DEPLOY_ROOT/ansible/site.yml")
+  (( verify_rc != 1 )) || return 1
   release_complete
   print_summary
   announce_deploy_done
-  # 2 — установка прошла, но не всё измерено: код доходит до CI.
   return "$verify_rc"
 }
 
-# ----------------------------------------------------------------------------
-# Бот включён, если токен и чат заданы в config.yaml или в панели (runtime.json
-# на узле). Переменные config уже загружены вызывающим.
-# ----------------------------------------------------------------------------
-tgbot_enabled() {
-  [[ -n "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_CHAT_ID:-}" ]] && return 0
-  ssh_exec "python3 -c 'import json, sys; r = json.load(open(\"/etc/anysda/telegram-runtime.json\")); sys.exit(not (r.get(\"bot_token\") and r.get(\"chat_id\")))'" >/dev/null 2>&1
-}
+release_cli() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -m vpn2.release --manifest "$MANIFEST" "$@" "$REPO"; }
 
-# ----------------------------------------------------------------------------
-# Поздравительный пинг боту: после успешного pipeline просим бота отправить
-# "Установка завершена" + текущие метрики в чат. Бот без токена - no-op.
-# ----------------------------------------------------------------------------
-announce_deploy_done() {
-  # shellcheck disable=SC1091
-  source "$DEPLOY_ROOT/envs/ru.env" 2>/dev/null || return 0
-  tgbot_enabled || return 0
-  local unmeasured=false
-  [[ -z "${_VERIFY_WARNINGS[*]:-}" ]] || unmeasured=true
-  ssh_exec "[ -f /etc/anysda/tgbot-secret.txt ] && curl -fsS --max-time 5 \
-      -H 'Content-Type: application/json' \
-      -H \"X-Tgbot-Secret: \$(cat /etc/anysda/tgbot-secret.txt)\" \
-      -d '{\"type\":\"deploy_done\",\"verify_unmeasured\":$unmeasured}' \
-      http://127.0.0.1:8877/event" >/dev/null 2>&1 || true
-}
-
-# ----------------------------------------------------------------------------
-# Entry point
-# ----------------------------------------------------------------------------
-usage() {
-  cat <<EOF
-anysda-vpn2 — деплой
-
-  ./deploy.sh                              полный pipeline: манифест commit → prereqs → проверки → деплой
-  ./deploy.sh --manifest <file>             то же без сети: манифест сборки из файла
-  ./deploy.sh --development [stage group]   явный режим разработки с локальными/плавающими образами
-  ./deploy.sh <stage> <group>              запустить одну стадию на группу нод
-  ./deploy.sh backup                       снять зашифрованный backup сейчас
-  ./deploy.sh restore [<name>|latest] [--force] [--dry-run]
-                                           восстановить из backup (default: latest)
-  ./deploy.sh backup-list                  список доступных backup'ов
-  ./deploy.sh recover                      проверенный полный повтор после прерывания
-  ./deploy.sh rollback                    совместимый откат панели без отката данных
-
-Стадии:   00-bootstrap | 05-mgmt-mesh | 10-foreign | 28-wireguard |
-          29-openvpn | 19-yt-zapret | 20-ru-router | 21-failover-watchdog |
-          22-adguard | 23-emergency | 25-monitoring | 26-backup | 27-ikev2 | 35-telegram | 30-frontend |
-          29-control | 99-verify
-Группы:   ru | foreign | all | <конкретный тег экзита>
-EOF
-  exit 0
-}
-
-# ----------------------------------------------------------------------------
-# backup/restore/backup-list — выполняются на entry через ssh_exec.
-# ----------------------------------------------------------------------------
-do_backup() {
-  load_env ru
-  local rc=0 out warning traps
-  out=$(mktemp)
-  # Ctrl-C и TERM посреди копии: убрать временный файл, вернуть ловушки deploy
-  # и умереть тем же сигналом. Прежние ловушки возвращаются и после копии.
-  traps=$(trap -p INT TERM)
-  # shellcheck disable=SC2064
-  trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -INT \$\$" INT
-  # shellcheck disable=SC2064
-  trap "rm -f '$out'; trap - INT TERM; eval \"\$traps\"; kill -TERM \$\$" TERM
-  # GNU tee - причина у 99-verify в run_stage: stderr ssh_exec пишет в тот же файл.
-  ssh_exec '/usr/local/bin/anysda-backup.sh' | "$(command -v gnutee || echo tee)" "$out" || rc=$?
-  warning=$(grep -m1 '^warning:' "$out" || true)
-  rm -f "$out"
-  trap - INT TERM
-  eval "$traps"
-  # Код 4 и «сверка не выполнена»: нечем было спросить wg или сверка упала
-  # (любой код, кроме 3) - архив годный, конфиги не проверены, перевыпуск не нужен.
-  if [[ $rc -eq 4 && $warning == *'сверка БД с конфигами VPN не выполнена'* ]]; then
-    warn 'архив сохранён, сверка с конфигами VPN не выполнена - не проверено, причина выше'
+# Выпуск открывается до изменений: манифест сверен с деревом, журнал прошлого деплоя закрыт,
+# на каждом узле проверки и снимок. С фазы applying узлы считаются изменёнными.
+release_start() {
+  local action=${1:-} out partial=false
+  if [[ "$VPN2_DEVELOPMENT" == true || "$action" == rollback ]]; then
+    MANIFEST=''
+  else
+    # Без --manifest берётся опубликованный манифест commit этого дерева.
+    [[ -n "$MANIFEST" ]] || { MANIFEST=$VPN2_STATE_DIR/release-manifest.json; release_cli fetch || exit 1; }
+    release_cli verify-tree || exit 1
+    [[ "$MANIFEST" -ef "$VPN2_STATE_DIR/release-manifest.json" ]] \
+      || install -m 600 "$MANIFEST" "$VPN2_STATE_DIR/release-manifest.json"
+  fi
+  tar -C "$DEPLOY_ROOT/vpn2/src" --exclude=__pycache__ -czf "$TMP/vpn2.tgz" vpn2
+  if [[ "$action" == rollback ]]; then
+    service --tags artifacts --limit ru -e "bundle=$TMP/vpn2.tgz" >/dev/null
     return 0
   fi
-  # Код 4 со строкой warning: копия дошла до финала, но БД и конфиги VPN
-  # расходятся (устройства в выводе выше). Архив годный - команда удалась.
-  # Код 4 без неё (sshpass «parse error», обрыв) - сбой, архива нет.
-  if [[ $rc -eq 4 && -n $warning ]]; then
-    warn 'архив сохранён с предупреждением: БД и конфиги VPN расходятся - перевыпусти перечисленные выше устройства в панели'
-    return 0
+  if [[ "$action" != recover ]] && ! out=$(service --tags journal 2>&1); then
+    out=$(grep -oE 'unfinished deploy on [^"]*\(or \./deploy\.sh rollback\)' <<<"$out" | head -n1 || true)
+    die "${out:-журнал деплоя на узлах не прочитан: проверь вход по ssh}"
   fi
-  return "$rc"
+  [[ -z "$action" || "$action" == recover ]] || partial=true
+  OPENED=true
+  service --tags release -e "bundle=$TMP/vpn2.tgz" -e "partial=$partial" || exit 1
+  MUTATING=true
 }
 
-do_backup_list() {
-  load_env ru
-  ssh_exec '/usr/local/bin/anysda-backup-list.sh'
+release_complete() {
+  [[ "$MUTATING" == true ]] || return 0
+  service --tags complete -e "bundle=$TMP/vpn2.tgz" >/dev/null || die 'запись о выпуске не закрыта: повтори ./deploy.sh recover'
+  MUTATING=false
 }
 
-do_restore() {
-  # Имя архива необязательно: `restore --dry-run` - это latest с флагом.
-  local archive=latest
-  if [[ -n "${1:-}" && "$1" != -* ]]; then archive=$1; shift; fi
-  local flags="" flag dry_run=0 preflight=0
-  for flag in "$@"; do
-    [[ -n "$flag" ]] || continue
-    flags+=" '$flag'"
-    [[ "$flag" != --dry-run ]] || dry_run=1
-    [[ "$flag" != --preflight ]] || preflight=1
-  done
-  # shellcheck disable=SC2034  # читает run_play: пароль панели после restore не засевается
-  local RESTORE_PRESERVE_ADMIN=1
-  load_env ru
-  # Если архив — локальный путь на оркестраторе, scp'им на entry.
-  # Иначе (имя файла или 'latest') — entry резолвит сам.
-  if [[ "$archive" != "latest" && -f "$archive" ]]; then
-    local base; base=$(basename "$archive")
-    if (( dry_run )); then
-      echo "restore: dry-run — загрузил бы на entry и восстановил локальный архив $base, ничего не изменено"
-      return 0
-    fi
-    log "scp локального архива на entry: $base"
-    push "$archive" "$base"
-    # Каталог - из backup.env, откуда его берёт anysda-restore.sh (backup.local.dir).
-    ssh_exec "dir=\$(f=/etc/anysda/backup.env; [ -r \"\$f\" ] && . \"\$f\"; echo \"\${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2}\") \
-      && mkdir -p \"\$dir\" && mv /tmp/anysda/'$base' \"\$dir/$base\" && chmod 600 \"\$dir/$base\""
-    archive="$base"
+on_exit() {
+  local code=$?
+  trap - EXIT INT TERM
+  kill $BEAT $PLAY 2>/dev/null || true
+  if (( code )) && [[ "$MUTATING" == true ]]; then
+    echo 'deploy interrupted: operation journal retained; inspect services, then run ./deploy.sh recover (or ./deploy.sh rollback)' >&2
+  elif (( code )) && [[ "$OPENED" == true ]]; then
+    service --tags abort >/dev/null 2>&1 || true
   fi
-  ssh_exec "VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} /usr/local/bin/anysda-restore.sh '$archive'$flags" || return $?
-  (( ! dry_run && ! preflight )) || return 0
-  # Архив возвращает /etc/anysda/* и конфиги OpenVPN/IKEv2 того деплоя, с
-  # которого он снят, а запущенные службы собраны под секреты текущего: бот
-  # отвечает панели 403, вотчдог получает 401 от clash-api, у OpenVPN из
-  # старого server.conf пропадает management, сертификат IKEv2 выписан на
-  # прежний IP. Пересобираем всё, что читает восстановленное (ключи и PKI
-  # стадии не трогают).
-  local s
-  for s in 29-openvpn 20-ru-router 21-failover-watchdog 26-backup 27-ikev2 35-telegram 30-frontend; do
-    run_stage "$s" ru
-  done
+  [[ -z "$TMP" ]] || rm -rf "$TMP"
+  exit "$code"
 }
 
-# Проход restore до открытия выпуска: узел проверяет архив, расшифровку, версию
-# и живую базу без --force и отказывает теми же кодом и строкой, данные и службы
-# не тронуты. Пакет узла старше дерева флага не знает - тогда прежний --dry-run.
-restore_preflight() {
-  local out rc=0
-  out=$(do_restore "$@" --preflight 2>&1) || rc=$?
-  if (( rc == 2 )) && [[ "$out" == *'неизвестный аргумент: --preflight'* ]]; then
-    rc=0
-    out=$(do_restore "$@" --dry-run 2>&1) || rc=$?
-  fi
-  (( rc == 0 )) || printf '%s\n' "$out" >&2
-  return "$rc"
-}
-
-# Читает список тегов выходных нод из envs/exits.env
-exit_tags() {
-  local exits_file="$DEPLOY_ROOT/envs/exits.env"
-  [[ -f "$exits_file" ]] || die "envs/exits.env не найден — запусти ./setup.sh"
-  # shellcheck disable=SC1090
-  source "$exits_file"
-  echo "${EXIT_TAGS:-}"
-}
-
-# Без аргументов → полный pipeline.
-# С двумя аргументами → одна стадия на группу.
-# -h / --help → подсказка.
-# SSH_PROBE_TIMEOUT общий для всех нод: неверный останавливает деплой и стадию
-# одной строкой до открытия выпуска, иначе запись остаётся в applying, и
-# следующий деплой требует recover.
-if [[ ! ${1:-} =~ ^(-h|--help|backup|backup-list|restore|rollback)$ ]]; then
-  probe_limit=$(ssh_probe_limit 2>&1) || HOST_TAG=deploy die "$probe_limit"
-fi
 case "${1:-}" in -h|--help) usage ;; esac
-# shellcheck source=infra/lib/deploy-release.sh
-source "$DEPLOY_ROOT/lib/deploy-release.sh"
-# Ошибка в аргументах стадии не открывает выпуск: иначе запись остаётся в
-# applying, и следующий деплой требует recover.
+TMP=$(mktemp -d)
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+dry_restore=false
+[[ "${1:-}" != restore || " ${*:2} " != *' --dry-run '* ]] || dry_restore=true
+# Ошибка в аргументах выпуск не открывает: иначе журнал остался бы в applying до recover.
 case "${1:-}" in
-  ''|recover|backup|backup-list|rollback) ;;
-  restore)
-    # Любой отказ restore до начала работ (архива нет, не тот пароль, версия,
-    # живая база без --force) приходит здесь: выпуск ещё не открыт, и
-    # подсказанный повтор идёт сразу, без recover.
-    [[ " ${*:2} " == *' --dry-run '* ]] || restore_preflight "${@:2}" || exit $?
-    ;;
+  ''|recover|rollback) ;;
+  backup)      do_backup; exit ;;
+  backup-list) /usr/local/bin/anysda-backup-list.sh; exit ;;
+  restore)     "$dry_restore" || restore_preflight "${@:2}" ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     stage_nodes "$1" >/dev/null
-    stage_group=$(expand_hosts "$2")
+    group=$(expand_hosts "$2")
     # Стадия entry на экзите (и наоборот) - отказ, а не пустой проход с кодом 0.
     # shellcheck disable=SC2086  # список узлов через пробел
-    STAGE_REFUSE_EMPTY=1 stage_nodes "$1" $stage_group >/dev/null
-    ;;
+    stage_nodes --refuse-empty "$1" $group >/dev/null ;;
 esac
-release_start "$@"
+"$dry_restore" || install_prereqs
+[[ "${1:-}" == 99-verify ]] || "$dry_restore" || release_start "$@"
 case "${1:-}" in
-  ''|recover)  do_all ;;
-  -h|--help)   usage ;;
-  backup)      do_backup ;;
-  backup-list) do_backup_list ;;
-  restore)     do_restore "${@:2}" ;;
-  rollback)    release_rollback ;;
-  *)
-    run_stage "$1" "$2"
-    if [[ "$1" == 30-frontend && ( "$2" == ru || "$2" == all ) ]]; then
-      print_sso_notice
-    fi
-    ;;
+  ''|recover) do_all ;;
+  restore)    do_restore "${@:2}" ;;
+  rollback)   /opt/vpn2/venv/bin/vpn2 containers rollback && python3 /tmp/anysda/deploy_state.py phase --phase rolled-back ;;
+  *)          run_stage "$1" "$2"
+              [[ "$1" != 30-frontend || "$2" == [!ra]* ]] || print_sso_notice ;;
 esac
 release_complete

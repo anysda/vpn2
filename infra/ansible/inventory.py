@@ -98,6 +98,8 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
     tags = [tag for tag in nodes if tag != 'ru']
     for tag, env in nodes.items():
         env = {**passed_through(environ, tags, () if tag == 'ru' else nodes['ru']), **env}
+        if tag == 'ru':
+            env.pop('VPN2_WHEEL', None)  # wheel нужен узлу без исходников, entry ставит пакет из дерева
         if environ.get('VPN2_PRESERVE_ADMIN') == '1':
             env.pop('ADMIN_PASSWORD', None)
         exits = exits_list(env)

@@ -12,8 +12,6 @@ PYTHON_WHEELS_DIR="${PYTHON_WHEELS_DIR:-/usr/share/python-wheels}"
 # Системный интерпретатор: колёса из PYTHON_WHEELS_DIR собраны под него, а python3
 # из PATH может оказаться чужим (pyenv, setup-python). Тест подменяет.
 VPN2_PYTHON="${VPN2_PYTHON:-/usr/bin/python3}"
-_VENV_PID=
-_VENV_READY=
 
 # Хэш исходников пакета vpn2: pyproject.toml и src/**/*.py, __pycache__ не входит.
 _vpn2_src_hash() {
@@ -247,126 +245,11 @@ ansible_venv_install() {
 }
 
 # Закрывает унаследованные дескрипторы старше 2 (кроме 255 - файл самого
-# скрипта): иначе фон держит замок деплоя верхнего deploy.sh, и после сбоя
-# деплоя следующий запуск видит «deploy уже выполняется».
-_close_inherited_fds() {
-  local f n
-  for f in /proc/$BASHPID/fd/*; do
-    n="${f##*/}"
-    [[ "$n" =~ ^[0-9]+$ ]] || continue
-    (( n > 2 && n != 255 )) || continue
-    eval "exec $n>&-" 2>/dev/null || true
-  done
-}
 
-# Колесо собирается синхронно, установка идёт в фоне.
-ansible_venv_start() {
-  ansible_wheel_build
-  mkdir -p "$(dirname "$VENV_LOG")"
-  ( _close_inherited_fds; ansible_venv_install ) >"$VENV_LOG" 2>&1 &
-  _VENV_PID=$!
-}
-
-# Ожидание фоновой установки. Без аргумента сбой фатален (плею venv нужен);
-# с `soft` - только предупреждение: хосты уже изменены, venv ни одной стадии не нужен.
-ansible_venv_wait() {
-  [[ -n "$_VENV_PID" ]] || return 0
-  local pid="$_VENV_PID" mode="${1:-}"
-  _VENV_PID=
-  if ! wait "$pid"; then
-    tail -n 20 "$VENV_LOG" >&2
-    if [[ "$mode" == soft ]]; then
-      HOST_TAG=deploy warn "ansible: venv не установился, лог $VENV_LOG; повторится при следующем запуске"
-      return 0
-    fi
-    die "ansible: venv не установился, лог $VENV_LOG"
-  fi
-  cat "$VENV_LOG" >&2
-}
-
-# venv готов к этой строке: фон дожидается, без фона ставится сейчас.
-# fresh - bash-стадии, зовущей команду vpn2: одиночный запуск после обновления
-# репы сверяет колесо с исходниками (при тех же пинах ничего не качает).
+# Колесо и venv под текущие пины: при тех же пинах - меньше секунды.
 ansible_venv_ensure() {
-  if [[ "$BASHPID" != "$$" ]]; then
-    # Хосты идут субшеллами: фон родителя не наш потомок, wait его не дождётся.
-    # Своя установка встаёт за его замком и при тех же пинах ничего не качает.
-    # Синхронно и без файла лога: успех молчит, неуспех показывает хвост.
-    local install_log
-    _VENV_PID=
-    install_log="$(mktemp)"
-    ansible_wheel_build
-    if ! ansible_venv_install >"$install_log" 2>&1; then
-      tail -n 20 "$install_log" >&2
-      rm -f "$install_log"
-      die "ansible: venv не установился"
-    fi
-    rm -f "$install_log"
-  elif [[ -z "$_VENV_PID" ]] && { [[ ! -f "$VPN2_ROOT/venv/.vpn2-pins" ]] \
-      || [[ "${1:-}" == fresh && -z "$_VENV_READY" ]]; }; then
-    ansible_venv_start
-  fi
-  ansible_venv_wait
-  _VENV_READY=1
-}
-
-# Стадия плеем ansible: плей infra/ansible/site.yml с тегом стадии на одном хосте.
-# Обвес тот же, что у стадии-скрипта: окружение хоста, манифест выпуска,
-# подготовка apt и сторож отката фаервола с пульсом.
-run_play() {
-  local stage="$1" host="$2"
-  ansible_venv_ensure
-  load_env "$host" || return 1
-  log "[$stage → $host] starting"
-  push "$DEPLOY_ROOT/lib/anysda-svc.sh" || return 1
-  if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && -f "$VPN2_RELEASE_MANIFEST" ]]; then
-    push "$VPN2_RELEASE_MANIFEST" release-manifest.json || return 1
-  fi
-  local wheel='' wheel_sha=''
-  if [[ "$host" != ru ]]; then
-    ansible_wheel_build || return 1
-    wheel="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
-    wheel_sha="$(sha256sum "$wheel" | cut -d' ' -f1)"
-  fi
-  # Пауза автообновлений и ожидание apt идут здесь, с живым выводом: внутри
-  # задачи ansible двадцать минут ожидания были бы тишиной.
-  local prepare=apt_prepare
-  [[ "$stage" != 00-bootstrap ]] || prepare='apt_prepare; apt_auto_pause; apt_sshd_first'
-  ssh_exec "rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg &&
-bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh; $prepare'" | sed -u "s/^/[$host]/" || return 1
-  local rc=0 beat='' owner=$BASHPID
-  if fw_guard_stage "$stage"; then
-    push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
-    ssh_exec "bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW" || return 1
-    # shellcheck disable=SC2034  # читают fw_guard_beat и fw_guard_disarm в deploy.sh
-    FW_GUARD_ENTRY_REFS=''
-    [[ "$HOST_TAG" != ru ]] || fw_guard_entry_baseline "$stage"
-    fw_guard_beat "$owner" &
-    beat=$!
-  fi
-  (
-    set -o pipefail
-    export VPN2_DEVELOPMENT="${VPN2_DEVELOPMENT:-false}" VPN2_PANEL_FOLLOWS="${VPN2_PANEL_FOLLOWS:-false}"
-    export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
-    export VPN2_WHEEL="$wheel" VPN2_WHEEL_SHA256="$wheel_sha" VPN2_INFRA="$DEPLOY_ROOT"
-    VPN2_SOURCE_ROOT="$(cd "$DEPLOY_ROOT/.." && pwd)"
-    export VPN2_SOURCE_ROOT
-    # После restore стадии читают пароль панели из восстановленного файла,
-    # а не засевают его заново из config.yaml.
-    [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || unset ADMIN_PASSWORD
-    [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || export VPN2_PRESERVE_ADMIN=1
-    ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
-      "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/site.yml" \
-      --limit "$host" --tags "$stage" </dev/null 2>&1 | sed -u "s/^/[$host]/"
-  ) || rc=$?
-  if [[ -n "$beat" ]]; then
-    kill "$beat" 2>/dev/null || true
-    wait "$beat" 2>/dev/null || true
-    fw_guard_disarm "$stage" || rc=1
-  fi
-  if [[ "$host" != ru ]]; then
-    ssh_exec 'rm -rf /tmp/anysda' || warn "[$stage → $host] не удалось убрать /tmp/anysda"
-  fi
-  [[ $rc -eq 0 ]] || return "$rc"
-  ok "[$stage → $host] done"
+  local log=$VPN2_ROOT/ansible-venv.log
+  mkdir -p "$VPN2_ROOT"
+  { ansible_wheel_build && ansible_venv_install; } >"$log" 2>&1 \
+    || { tail -n 20 "$log" >&2; die "ansible: venv не установился, лог $log"; }
 }

@@ -354,7 +354,7 @@ bash --norc -euo pipefail -c 'HOST_TAG=$stage; source /tmp/anysda/anysda-svc.sh;
     [[ "${RESTORE_PRESERVE_ADMIN:-0}" != 1 ]] || unset ADMIN_PASSWORD
     ANSIBLE_CONFIG="$DEPLOY_ROOT/ansible/ansible.cfg" VPN2_CONFIG="$DEPLOY_ROOT/../config.yaml" \
       "$VPN2_ROOT/venv/bin/ansible-playbook" "$DEPLOY_ROOT/ansible/plays/$stage.yml" \
-      --limit "$host" --tags "$stage" 2>&1 | sed -u "s/^/[$host]/"
+      --limit "$host" --tags "$stage" </dev/null 2>&1 | sed -u "s/^/[$host]/"
   ) || rc=$?
   if [[ -n "$beat" ]]; then
     kill "$beat" 2>/dev/null || true

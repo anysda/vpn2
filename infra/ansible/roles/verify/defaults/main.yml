@@ -1,9 +1,9 @@
 verify_entry: "{{ inventory_hostname == 'ru' }}"
 verify_tmp: /tmp/anysda
-verify_wheel: "{{ lookup('ansible.builtin.env', 'VPN2_WHEEL') }}"
+verify_wheel: "{{ vpn2_env.VPN2_WHEEL | default('') }}"
 # Каталог на машине деплоя: туда ложится файл узла с кодом и выводом проверки, deploy.sh
 # печатает вывод как есть. Пусто - плей запущен без deploy.sh, вывод не копится.
-verify_out: "{{ lookup('ansible.builtin.env', 'VPN2_VERIFY_OUT') }}"
+verify_out: "{{ vpn2_env.VPN2_VERIFY_OUT | default('') }}"
 
 # Проверку ведёт пакет этого деплоя: на entry он стоит в venv, на экзит
 # приезжает колесом и запускается системным python прямо из него.
@@ -30,12 +30,9 @@ verify_env_names:
   - VERIFY_TRAFFIC
 # Экзит без проверки сертификата: <ТЕГ>_HY2_INSECURE=1.
 verify_env_insecure: >-
-  {{ lookup('ansible.builtin.env', 'EXIT_TAGS').split() | map('upper') | map('replace', '-', '_')
+  {{ (vpn2_env.EXIT_TAGS | default('')).split() | map('upper') | map('replace', '-', '_')
      | map('regex_replace', '$', '_HY2_INSECURE') | list }}
 verify_env_all: "{{ verify_env_names + verify_env_insecure }}"
-# Незаданная переменная на узел не едет: пустая строка - тоже значение.
-verify_env_unset: __vpn2_unset__
-verify_env_values: "{{ query('ansible.builtin.env', *verify_env_all, default=verify_env_unset) }}"
+# Незаданная переменная на узел не едет (в vpn2_env её нет): пустая строка - тоже значение.
 verify_environment: >-
-  {{ dict(verify_env_all | zip(verify_env_values)) | dict2items
-     | rejectattr('value', 'eq', verify_env_unset) | items2dict }}
+  {{ vpn2_env | default({}) | dict2items | selectattr('key', 'in', verify_env_all) | items2dict }}

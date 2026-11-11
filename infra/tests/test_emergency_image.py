@@ -1,7 +1,7 @@
 """The emergency front ships as a registry image and is installed in standby.
 
-Stage 23 runs for real against a disposable root with fake host commands:
-docker, apt and systemd only record what the stage asks of them.
+The role's static step runs for real against a fake docker; the rest of the
+role is read as tasks.
 """
 import json
 import os
@@ -18,6 +18,7 @@ import test_release
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
+ROLE = ROOT / 'infra/ansible/roles/emergency'
 
 # State in $FAKE/state.json: registry tags, local images, containers, packages.
 DOCKER = r'''#!/usr/bin/env python3
@@ -58,6 +59,10 @@ elif args[:2] == ['image', 'inspect']:
     if image is None:
         sys.exit(1)
     print(image)
+elif args[0] == 'inspect':
+    if args[-1] not in state['containers']:
+        sys.exit(1)
+    print(state['containers'][args[-1]])
 elif args[:2] == ['rm', '-f']:
     if state['containers'].pop(args[2], None) is None:
         sys.exit(1)
@@ -85,83 +90,6 @@ elif args[:3] == ['image', 'rm', '-f']:
 else:
     sys.exit('unexpected docker ' + ' '.join(args))
 save()
-'''
-
-# Records the call; installing docker-ce places the docker command in PATH.
-RECORDER = r'''#!/usr/bin/env python3
-import json
-import os
-from pathlib import Path
-import shutil
-import sys
-
-fake = Path(os.environ['FAKE'])
-name = Path(sys.argv[0]).name
-args = sys.argv[1:]
-state = json.loads((fake / 'state.json').read_text())
-line = name + ' ' + ' '.join(args)
-if name == 'apt-get' and 'install' in args:
-    line += ' [daemon.json=%s]' % (fake / 'root/etc/docker/daemon.json').exists()
-    state['packages'] += [a for a in args if not a.startswith('-') and a != 'install' and not a.endswith('-')]
-    if 'docker-ce' in args:
-        shutil.copy(fake / 'docker', fake / 'bin/docker')
-    (fake / 'state.json').write_text(json.dumps(state))
-with open(fake / 'calls.log', 'a') as log:
-    log.write(line + '\n')
-if name == 'dpkg-query':
-    packages = args[2:]
-    print('\n'.join('installed' if p in state['packages'] else 'not-installed' for p in packages))
-elif name == 'dpkg':
-    print('amd64')
-elif name == 'getent':
-    sys.exit(0 if 'vpn2-emergency' in state['users'] else 2)
-elif name == 'useradd':
-    state['users'].append(args[-1])
-    (fake / 'state.json').write_text(json.dumps(state))
-elif name == 'systemctl' and args[:2] == ['is-active', '--quiet']:
-    sys.exit(0 if args[2] in ('vpn2-emergency.service', 'vpn2-emergency-snapshot.service') else 3)
-elif name == 'fuser':
-    sys.exit(1)
-elif name == 'curl' and '-o' not in args:
-    # Larger than a pipe buffer, like a real key: a reader that quits early
-    # breaks the pipe every time, not only when the scheduler says so.
-    print('public-key\n' * 20000, end='')
-elif name == 'gpg':
-    # Real gpg --dearmor reads its whole input before exiting.
-    sys.stdin.buffer.read()
-    Path(args[-1]).write_text('key')
-'''
-
-# install(1) as root sets owners; the fixture drops them and keeps the rest.
-INSTALL = '''#!/usr/bin/env python3
-import os
-import sys
-args, skip = [], False
-for arg in sys.argv[1:]:
-    if skip:
-        skip = False
-    elif arg in ('-o', '-g'):
-        skip = True
-    else:
-        args.append(arg)
-os.execv('/usr/bin/install', ['install', *args])
-'''
-
-CADDY = '''#!/usr/bin/env bash
-echo "caddy $*" >> "$FAKE/calls.log"
-[[ "$1" != version ]] || echo 'v2.11.9 h1:test'
-'''
-
-# The installer is exercised by its own tests; here it only logs.
-HY2_INSTALLER = '''#!/usr/bin/env bash
-echo "install-hy2 $*" >> "$FAKE/calls.log"
-'''
-
-# The host venv with the vpn2 package: stage 23 only asks whether it is there.
-VPN2 = '''#!/usr/bin/env bash
-echo "vpn2 $*" >> "$FAKE/calls.log"
-# Как настоящий диспетчер: без команды - справка и код 2.
-[[ "$1 $2" == 'emergency agent' ]] || exit 2
 '''
 
 
@@ -213,17 +141,26 @@ class EmergencyImageTests(unittest.TestCase):
         self.assertIn('release manifest not found', result.stderr)
 
     def test_activation_code_downloads_and_installs_nothing(self):
-        files = list((ROOT / 'infra/vpn2/src/vpn2/emergency').glob('*.py'))
-        files.append(ROOT / 'infra/emergency/install-hy2.sh')
-        for path in files:
+        for path in (ROOT / 'infra/vpn2/src/vpn2/emergency').glob('*.py'):
             text = path.read_text()
             for needle in ('apt-get', 'apt install', 'dpkg -i', 'pip install', 'docker ', 'ghcr.io'):
                 self.assertNotIn(needle, text, f'{path.name}: {needle}')
 
-    # --- stage 23 against a fake host ---------------------------------------
+    # --- шаг статики роли на поддельном Docker -------------------------------
 
-    def stage(self, fake, host, *, image, offline=False, static='static', venv=True):
-        """Run stage 23 for host with `image` published under the dev tag."""
+    def host(self, directory):
+        fake = Path(directory)
+        (fake / 'bin').mkdir()
+        (fake / 'bin/docker').write_text(DOCKER)
+        (fake / 'bin/docker').chmod(0o755)
+        (fake / 'lib').mkdir()
+        shutil.copy(ROOT / 'infra/lib/release.sh', fake / 'lib')
+        (fake / 'home').mkdir()
+        (fake / 'state.json').write_text(json.dumps({'registry': {}, 'images': {}, 'containers': {}}))
+        return fake
+
+    def static(self, fake, *, image, offline=False, static='static'):
+        """Шаг статики роли с образом `image` под тегом dev в реестре."""
         state = json.loads((fake / 'state.json').read_text())
         state['registry']['ghcr.io/anysda/vpn2/emergency:dev'] = image
         (fake / 'state.json').write_text(json.dumps(state))
@@ -234,231 +171,153 @@ class EmergencyImageTests(unittest.TestCase):
             for name in ('index.html', 'instructions.html'):
                 (layer / static / name).write_text(version)
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
-        root = fake / 'root'
-        config = fake / 'emergency.json'
-        config.write_text(json.dumps({'node': host, 'nodes': {
-            'ru': {'host': '198.51.100.10', 'port': 51821},
-            'exit': {'host': '198.51.100.20', 'port': 51821}}}))
-        for folder in ('etc/apt/sources.list.d', 'etc/systemd/system', 'etc/vpn2/tls'):
-            (root / folder).mkdir(parents=True, exist_ok=True)
-        (root / 'etc/os-release').write_text('ID=ubuntu\nVERSION_CODENAME=resolute\n')
-        (root / 'opt/vpn2-emergency').mkdir(parents=True, exist_ok=True)
-        stage_dir = fake / 'stage'
-        stage_dir.mkdir(exist_ok=True)
-        ref = os.environ.get('STAGE_REF')
-        source = subprocess.check_output(['git', 'show', f'{ref}:infra/scripts/23-emergency.sh'], cwd=ROOT,
-                                         text=True) if ref else (ROOT / 'infra/scripts/23-emergency.sh').read_text()
-        for path in ('/opt/vpn2-emergency', '/etc/', '/var/lib/vpn2-emergency', '/var/anysda',
-                     '/usr/local/lib/vpn2', '/var/lib/caddy'):
-            source = source.replace(path, str(root) + path)
-        (stage_dir / '23-emergency.sh').write_text(source)
-        svc = (ROOT / 'infra/lib/anysda-svc.sh').read_text().replace('/etc/', str(root) + '/etc/')
-        (stage_dir / 'anysda-svc.sh').write_text(svc)
-        shutil.copytree(ROOT / 'infra/vpn2/src/vpn2/release', stage_dir / 'vpn2/release', dirs_exist_ok=True)
-        for name in ('release.sh', 'vpn2_tls.py'):
-            if (ROOT / 'infra/lib' / name).exists():
-                shutil.copy(ROOT / 'infra/lib' / name, stage_dir / name)
-        # deploy.sh кладёт юниты и установщик рядом со стадией.
-        (stage_dir / 'install-hy2.sh').write_text(HY2_INSTALLER)
-        shutil.copy(ROOT / 'infra/emergency/vpn2-emergency-snapshot.service', stage_dir)
-        (fake / 'venv/bin').mkdir(parents=True, exist_ok=True)
-        (fake / 'venv/bin/vpn2').unlink(missing_ok=True)
-        if venv:
-            (fake / 'venv/bin/vpn2').write_text(VPN2)
-            (fake / 'venv/bin/vpn2').chmod(0o755)
-        env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{fake / 'sbin'}",
-               'HOST_TAG': host, 'VPN2_DEVELOPMENT': 'true', 'EMERGENCY_CONFIG_SOURCE': str(config),
-               'FAKE_OFFLINE': '1' if offline else '0', 'SVC_FP_DIR': str(root / 'var/lib/anysda/applied'),
-               'TLS_INITIAL_WAIT': '0', 'VPN2_VENV': str(fake / 'venv')}
+        env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{os.environ['PATH']}",
+               'VPN2_DEVELOPMENT': 'true', 'FAKE_OFFLINE': '1' if offline else '0'}
         env.pop('BASH_ENV', None)
         (fake / 'calls.log').write_text('')
-        result = subprocess.run(['bash', str(stage_dir / '23-emergency.sh')], env=env, text=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+        result = subprocess.run(['bash', str(ROLE / 'files/static.sh'), str(fake / 'lib'), str(fake / 'home')],
+                                env=env, text=True, capture_output=True, timeout=60)
         result.calls = (fake / 'calls.log').read_text().splitlines()
         result.state = json.loads((fake / 'state.json').read_text())
         return result
 
-    def host(self, directory):
-        fake = Path(directory)
-        (fake / 'bin').mkdir()
-        # The host's own tools without docker: a fresh exit has none.
-        (fake / 'sbin').mkdir()
-        for folder in ('/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'):
-            for tool in Path(folder).iterdir() if Path(folder).is_dir() else ():
-                link = fake / 'sbin' / tool.name
-                if tool.name not in ('docker', 'dockerd') and not os.path.lexists(link):
-                    link.symlink_to(tool)
-        (fake / 'docker').write_text(DOCKER)
-        (fake / 'docker').chmod(0o755)
-        for name in ('apt-get', 'dpkg-query', 'dpkg', 'getent', 'useradd', 'systemctl', 'ufw',
-                     'runuser', 'fuser', 'curl', 'gpg'):
-            (fake / 'bin' / name).write_text(RECORDER)
-            (fake / 'bin' / name).chmod(0o755)
-        (fake / 'bin/install').write_text(INSTALL)
-        (fake / 'bin/install').chmod(0o755)
-        # Caddy of the pinned version is already installed; validate accepts the config.
-        (fake / 'bin/caddy').write_text(CADDY)
-        (fake / 'bin/caddy').chmod(0o755)
-        (fake / 'state.json').write_text(json.dumps(
-            {'registry': {}, 'images': {}, 'containers': {}, 'users': [],
-             'packages': ['ca-certificates', 'curl', 'gnupg', 'openssl', 'nftables', 'qrencode']}))
-        return fake
-
-    def test_exit_gets_image_in_standby_and_update_removes_old_image(self):
-        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
+    def test_static_comes_from_image_and_update_removes_old_image(self):
+        with tempfile.TemporaryDirectory(prefix='emergency-static-') as directory:
             fake = self.host(directory)
-            root = fake / 'root'
-            # Копии пакета от прежних раскладок: выпуск и сборки до venv.
-            emergency = root / 'opt/vpn2-emergency'
-            for leftover in ('vpn2/emergency', 'vpn2_emergency'):
-                (emergency / leftover).mkdir(parents=True)
-                (emergency / leftover / 'agent.py').write_text('old')
-            first = self.stage(fake, 'exit', image='sha256:' + '1' * 64)
-            print(first.stdout, end='')
-            self.assertEqual(first.returncode, 0, first.stdout)
-            install = [c for c in first.calls if c.startswith('apt-get') and ' install ' in c]
-            self.assertEqual(len(install), 1, first.calls)
-            for package in ('docker-ce', 'polkitd', 'qrencode', 'nftables', 'openssl'):
-                self.assertIn(' ' + package + ' ', install[0] + ' ')
-            # Docker on the exit never gets a chance to rewrite the firewall.
-            self.assertIn('[daemon.json=True]', install[0])
-            self.assertEqual(json.loads((root / 'etc/docker/daemon.json').read_text()),
-                             {'bridge': 'none', 'iptables': False, 'ip6tables': False})
+            home = fake / 'home'
+            first = self.static(fake, image='sha256:' + '1' * 64)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertEqual(first.stdout.splitlines(), ['image=sha256:' + '1' * 64, 'changed=1'])
             self.assertIn('docker pull ghcr.io/anysda/vpn2/emergency:dev', first.calls)
+            # Остановленный контейнер без сети держит образ занятым.
             self.assertEqual(first.state['containers'], {'vpn2-emergency': 'sha256:' + '1' * 64})
-            self.assertEqual((emergency / 'static/instructions.html').read_text(), '1' * 64)
-            self.assertEqual(sorted(p.name for p in emergency.iterdir()), ['release.json', 'static'])
-            self.assertIn('vpn2 emergency agent --help', first.calls)
-            release = json.loads((root / 'opt/vpn2-emergency/release.json').read_text())
-            self.assertEqual(release, {'version': 'dev', 'revision': '1' * 40, 'image': 'sha256:' + '1' * 64})
-            self.assertIn('install-hy2 198.51.100.20 18443', first.calls)
-            self.assertTrue(any(c.startswith('runuser -u vpn2-emergency') for c in first.calls), first.calls)
-            unit = (root / 'etc/systemd/system/vpn2-emergency.service').read_text()
-            self.assertIn('User=vpn2-emergency', unit)
-            self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent --config ', unit)
-            self.assertIn('systemctl disable --now docker.service containerd.service', first.calls)
-            self.assertIn('systemctl enable --now docker.socket', first.calls)
-            # The client snapshot is sent by the entry only.
-            self.assertFalse((root / 'etc/systemd/system/vpn2-emergency-snapshot.service').exists())
-            self.assertFalse([c for c in first.calls if 'vpn2-emergency-snapshot' in c], first.calls)
-            self.assertIn('23-emergency done: image dev 111111111111', first.stdout)
-            # 99-verify demands the image only after this stage: an empty stamp
-            # belongs to the stage before the image.
-            stamp = (root / 'var/anysda/.stamps/23-emergency').read_text()
-            self.assertEqual(stamp.split(), ['image', 'sha256:' + '1' * 64])
+            self.assertEqual((home / 'static/instructions.html').read_text(), '1' * 64)
+            self.assertEqual(sorted(p.name for p in home.iterdir()), ['release.json', 'static'])
+            self.assertEqual(json.loads((home / 'release.json').read_text()),
+                             {'version': 'dev', 'revision': '1' * 40, 'image': 'sha256:' + '1' * 64})
 
-            second = self.stage(fake, 'exit', image='sha256:' + '2' * 64)
-            print(second.stdout, end='')
-            self.assertEqual(second.returncode, 0, second.stdout)
-            self.assertFalse([c for c in second.calls if c.startswith('apt-get')], second.calls)
+            # Повтор с тем же образом узел не трогает.
+            again = self.static(fake, image='sha256:' + '1' * 64)
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertEqual(again.stdout.splitlines(), ['image=sha256:' + '1' * 64])
+            self.assertFalse([c for c in again.calls if c.startswith(('docker create', 'docker cp', 'docker rm'))],
+                             again.calls)
+
+            second = self.static(fake, image='sha256:' + '2' * 64)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn('changed=1', second.stdout.splitlines())
             self.assertEqual(sorted(second.state['images']), ['sha256:' + '2' * 64])
             self.assertEqual(second.state['containers'], {'vpn2-emergency': 'sha256:' + '2' * 64})
-            self.assertEqual((emergency / 'static/instructions.html').read_text(), '2' * 64)
-            self.assertFalse((emergency / 'static.old').exists())
-            self.assertEqual(json.loads((root / 'opt/vpn2-emergency/release.json').read_text())['image'],
-                             'sha256:' + '2' * 64)
-            self.assertFalse(list((root / 'opt/vpn2-emergency').glob('.staging.*')))
+            self.assertEqual((home / 'static/instructions.html').read_text(), '2' * 64)
+            self.assertFalse((home / 'static.old').exists())
+            self.assertEqual(json.loads((home / 'release.json').read_text())['image'], 'sha256:' + '2' * 64)
+            self.assertFalse(list(home.glob('.staging.*')))
 
-            # Without the registry the installed image is kept and reused.
-            third = self.stage(fake, 'exit', image='sha256:' + '2' * 64, offline=True)
-            self.assertEqual(third.returncode, 0, third.stdout)
+            # Без реестра установленный образ остаётся и служит дальше.
+            third = self.static(fake, image='sha256:' + '2' * 64, offline=True)
+            self.assertEqual(third.returncode, 0, third.stderr)
+            self.assertEqual(third.stdout.splitlines(), ['image=sha256:' + '2' * 64])
             self.assertEqual(sorted(third.state['images']), ['sha256:' + '2' * 64])
 
-    def test_entry_keeps_its_docker_and_has_no_hysteria(self):
-        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
+    def test_static_accepts_image_built_before_host_venv(self):
+        with tempfile.TemporaryDirectory(prefix='emergency-static-') as directory:
             fake = self.host(directory)
-            shutil.copy(fake / 'docker', fake / 'bin/docker')
-            state = json.loads((fake / 'state.json').read_text())
-            state['packages'] = ['qrencode', 'curl', 'openssl', 'nftables', 'polkitd']
-            (fake / 'state.json').write_text(json.dumps(state))
-            result = self.stage(fake, 'ru', image='sha256:' + '3' * 64)
-            self.assertEqual(result.returncode, 0, result.stdout)
-            self.assertFalse((fake / 'root/etc/docker/daemon.json').exists())
-            self.assertFalse([c for c in result.calls if c.startswith(('apt-get', 'install-hy2', 'runuser'))],
-                             result.calls)
-            self.assertFalse([c for c in result.calls if 'docker.service' in c], result.calls)
-            self.assertEqual(result.state['containers'], {'vpn2-emergency': 'sha256:' + '3' * 64})
-            # VPN2-514: the entry sends the client snapshot to the exits as its own service.
-            unit = (fake / 'root/etc/systemd/system/vpn2-emergency-snapshot.service').read_text()
-            self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency snapshot-sender run', unit)
-            self.assertIn('WantedBy=multi-user.target', unit)
-            sender = [c for c in result.calls if 'vpn2-emergency-snapshot' in c]
-            self.assertEqual(sender, ['systemctl enable vpn2-emergency-snapshot.service',
-                                      'systemctl restart vpn2-emergency-snapshot.service',
-                                      'systemctl is-active --quiet vpn2-emergency-snapshot.service'],
-                             result.calls)
+            home = fake / 'home'
+            # Между пушем в dev и сборкой образа :dev в реестре лежит образ со
+            # статикой внутри пакета: шаг берёт её и оттуда.
+            older = self.static(fake, image='sha256:' + '5' * 64, static='vpn2/emergency/static')
+            self.assertEqual(older.returncode, 0, older.stderr)
+            self.assertEqual((home / 'static/index.html').read_text(), '5' * 64)
+            self.assertFalse((home / 'vpn2').exists())
+            broken = self.static(fake, image='sha256:' + '6' * 64, static='elsewhere')
+            self.assertEqual(broken.returncode, 1, broken.stdout)
+            self.assertIn('нет статики страницы', broken.stderr)
+            self.assertEqual((home / 'static/index.html').read_text(), '5' * 64)
+            self.assertFalse(list(home.glob('.staging.*')))
 
+    # --- задачи роли ----------------------------------------------------------
 
-    def issue(self, root, ip):
-        """Caddy storage holds an IP certificate from the configured ACME directory."""
-        folder = root / 'var/lib/caddy/.local/share/caddy/certificates/acme-v02.api.letsencrypt.org-directory' / ip
-        folder.mkdir(parents=True)
-        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-                        '-nodes', '-days', '6', '-subj', '/CN=' + ip, '-addext', 'subjectAltName=IP:' + ip,
-                        '-keyout', str(folder / (ip + '.key')), '-out', str(folder / (ip + '.crt'))],
-                       check=True, capture_output=True)
-        (folder / (ip + '.json')).write_text(json.dumps(
-            {'issuer_data': {'ca': 'https://acme-v02.api.letsencrypt.org/directory'}}))
-        return (folder / (ip + '.crt')).read_text()
+    def tasks(self, name):
+        """Задачи файла роли по порядку; блок наследует своё условие задачам."""
+        flat = []
+        for task in yaml.safe_load((ROLE / 'tasks' / name).read_text()):
+            for inner in task.get('block', [task]):
+                flat.append({'when': task.get('when'), **inner})
+        return flat
+
+    def names(self, name):
+        return [task['name'] for task in self.tasks(name)]
+
+    def test_role_needs_host_venv_before_anything_else(self):
+        first = self.tasks('main.yml')[0]
+        self.assertEqual(first['ansible.builtin.command']['argv'],
+                         ['{{ emergency_vpn2 }}', 'emergency', 'agent', '--help'])
+        defaults = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())
+        self.assertEqual(defaults['emergency_venv'], '/opt/vpn2/venv')
+
+    def test_exit_docker_never_touches_the_firewall(self):
+        self.assertEqual(json.loads((ROLE / 'files/docker-daemon.json').read_text()),
+                         {'bridge': 'none', 'iptables': False, 'ip6tables': False})
+        tasks = {task['name']: task for task in self.tasks('main.yml')}
+        self.assertEqual(tasks['Настройки Docker']['when'], 'not emergency_entry')
+        self.assertEqual(tasks['Настройки Docker']['ansible.builtin.copy']['dest'], '/etc/docker/daemon.json')
+        # Настройки лежат до установки: Docker ни разу не стартует с мостом.
+        order = self.names('main.yml')
+        self.assertLess(order.index('Настройки Docker'), order.index('Пакеты аварийки и Docker'))
+        idle = next(task for task in self.tasks('service.yml') if task['name'].startswith('Docker экзита'))
+        self.assertEqual(idle['when'], 'not emergency_entry')
+        step = idle['vars']['emergency_docker_idle']
+        self.assertIn('systemctl disable --now docker.service containerd.service', step)
+        self.assertIn('systemctl enable --now docker.socket', step)
+
+    def test_hysteria_and_certificate_belong_to_exit_snapshot_to_entry(self):
+        imports = {task['name']: task for task in self.tasks('main.yml') if 'ansible.builtin.import_tasks' in task}
+        self.assertEqual(imports['Аварийный вход экзита']['ansible.builtin.import_tasks'], 'exit.yml')
+        self.assertEqual(imports['Аварийный вход экзита']['when'], 'not emergency_entry')
+        for name in ('main.yml', 'service.yml'):
+            text = (ROLE / 'tasks' / name).read_text()
+            for needle in ('hy2', 'caddy', 'vpn2-tls'):
+                self.assertNotIn(needle, text.lower(), name)
+        # VPN2-514: список клиентов экзитам передаёт только entry, своей службой.
+        sender = [task for task in self.tasks('service.yml') if 'vpn2-emergency-snapshot' in json.dumps(task)]
+        self.assertEqual(len(sender), 4)
+        self.assertEqual({task['when'] for task in sender}, {'emergency_entry'})
+        unit = (ROLE / 'templates/vpn2-emergency-snapshot.service.j2').read_text()
+        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency snapshot-sender run', unit)
+        self.assertIn('WantedBy=multi-user.target', unit)
 
     def test_exit_keeps_lets_encrypt_ip_certificate_for_the_emergency(self):
-        """VPN2-517: deploy keeps a certificate on the exit IP, the emergency starts with it."""
-        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
-            fake = self.host(directory)
-            root = fake / 'root'
-            issued = self.issue(root, '198.51.100.20')
-            result = self.stage(fake, 'exit', image='sha256:' + '4' * 64)
-            self.assertEqual(result.returncode, 0, result.stdout)
-            tls = root / 'etc/vpn2/tls'
-            self.assertTrue((tls / 'config.json').is_file(), 'stage 23 does not set up the exit IP certificate')
-            config = json.loads((tls / 'config.json').read_text())
-            self.assertEqual((config['role'], config['host'], config['cert_group']),
-                             ('exit', '198.51.100.20', 'vpn2-emergency'))
-            self.assertEqual(config['output_dir'], str(tls / 'ip'))
-            # The agent and Hysteria2 read exactly this pair (web.make_server, hy2 tls_dir).
-            self.assertEqual((tls / 'ip/fullchain.pem').read_text(), issued)
-            self.assertTrue((tls / 'ip/privkey.pem').is_file())
-            # Caddy is only the ACME client: HTTP-01 on :80, 443 stays with the emergency panel.
-            caddyfile = (root / 'etc/caddy/Caddyfile').read_text()
-            self.assertIn('https://198.51.100.20:8443 {\n    bind 127.0.0.1', caddyfile)
-            self.assertIn('profile shortlived', (root / 'etc/caddy/vpn2-tls.conf').read_text())
-            self.assertIn('ufw allow 80/tcp comment vpn2 exit ACME challenge', result.calls)
-            self.assertIn('caddy validate --config ' + str(root / 'etc/caddy/Caddyfile'), result.calls)
-            self.assertIn('systemctl restart caddy', result.calls)
-            # Renewal every minute keeps the exported pair current between deploys.
-            self.assertIn('OnUnitInactiveSec=1min', (root / 'etc/systemd/system/vpn2-tls.timer').read_text())
-            self.assertIn('systemctl enable --now vpn2-tls.timer', result.calls)
-            # The panel certificate is prepared after the export, so it starts on the trusted pair.
-            calls = result.calls
-            self.assertLess(calls.index('systemctl enable --now vpn2-tls.timer'),
-                            next(i for i, c in enumerate(calls) if c.startswith('runuser -u vpn2-emergency')))
-            # The entry has its own Caddy from stage 30: stage 23 leaves it alone.
-            (Path(directory) / 'entry').mkdir()
-            entry = self.host(Path(directory) / 'entry')
-            shutil.copy(entry / 'docker', entry / 'bin/docker')
-            other = self.stage(entry, 'ru', image='sha256:' + '4' * 64)
-            self.assertEqual(other.returncode, 0, other.stdout)
-            self.assertFalse((entry / 'root/etc/vpn2/tls/config.json').exists())
-            self.assertFalse([c for c in other.calls if c.startswith('caddy ') or 'vpn2-tls' in c], other.calls)
+        """VPN2-517: деплой держит сертификат на IP экзита, авария стартует с ним."""
+        tasks = {task['name']: task for task in self.tasks('exit.yml')}
+        prepare = tasks['Настройки TLS и сниппеты Caddy']['ansible.builtin.command']['argv']
+        for flag, value in (('--role', 'exit'), ('--host', '{{ emergency_public_ip }}'),
+                            ('--output-dir', '/etc/vpn2/tls/ip'), ('--cert-group', 'vpn2-emergency')):
+            self.assertEqual(prepare[prepare.index(flag) + 1], value)
+        # Caddy здесь только клиент ACME: HTTP-01 на :80, 443 остаётся странице.
+        ports = [item['port'] for item in tasks['Порты аварийного входа и выпуска сертификата']['loop']]
+        self.assertEqual(ports, ['{{ emergency_hy2_port }}/udp', '443/tcp', '80/tcp'])
+        restart = tasks['Caddy идёт с текущими настройками']['vars']['emergency_caddy_restart']
+        self.assertLess(restart.index('caddy validate --config /etc/caddy/Caddyfile'),
+                        restart.index('svc_restart_if_changed caddy'))
+        # Продление раз в минуту держит выгруженную пару свежей между деплоями.
+        self.assertIn('OnUnitInactiveSec=1min', (ROLE / 'templates/vpn2-tls.timer.j2').read_text())
+        # Сертификат страницы готовится после выгрузки и стартует на доверенной паре.
+        order = self.names('exit.yml')
+        self.assertLess(order.index('Первый сертификат на IP'), order.index('Таймер TLS идёт'))
+        self.assertLess(order.index('Таймер TLS идёт'), order.index('Сертификат страницы аварийки'))
+        page = tasks['Сертификат страницы аварийки']['ansible.builtin.command']['argv']
+        self.assertEqual(page[:4], ['runuser', '-u', 'vpn2-emergency', '--'])
+
+    def test_stamp_tells_verify_to_expect_the_image(self):
+        # 99-verify требует образ только после этой стадии: пустую отметку
+        # оставляла стадия до образа.
+        last = self.tasks('service.yml')[-1]
+        self.assertEqual(last['ansible.builtin.copy']['dest'], '/var/anysda/.stamps/23-emergency')
+        self.assertEqual(last['ansible.builtin.copy']['content'], 'image {{ emergency_image }}\n')
+        leftovers = next(task for task in self.tasks('service.yml') if task['name'].startswith('Копии пакета'))
+        self.assertEqual(leftovers['loop'], ['vpn2', 'vpn2_emergency'])
+        self.assertEqual(leftovers['ansible.builtin.file']['state'], 'absent')
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
-
-    def test_stage_needs_host_venv_and_accepts_image_built_before_it(self):
-        with tempfile.TemporaryDirectory(prefix='emergency-stage-') as directory:
-            fake = self.host(directory)
-            missing = self.stage(fake, 'exit', image='sha256:' + '4' * 64, venv=False)
-            self.assertEqual(missing.returncode, 1, missing.stdout)
-            self.assertIn('нет пакета vpn2 с аварийкой', missing.stdout)
-            self.assertFalse([c for c in missing.calls if c.startswith(('docker', 'systemctl'))], missing.calls)
-            # Между пушем в dev и сборкой образа :dev в реестре лежит образ со
-            # статикой внутри пакета: стадия берёт её и оттуда.
-            older = self.stage(fake, 'exit', image='sha256:' + '5' * 64, static='vpn2/emergency/static')
-            self.assertEqual(older.returncode, 0, older.stdout)
-            emergency = fake / 'root/opt/vpn2-emergency'
-            self.assertEqual((emergency / 'static/index.html').read_text(), '5' * 64)
-            self.assertFalse((emergency / 'vpn2').exists())
-            broken = self.stage(fake, 'exit', image='sha256:' + '6' * 64, static='elsewhere')
-            self.assertEqual(broken.returncode, 1, broken.stdout)
-            self.assertIn('нет статики страницы', broken.stdout)
-            self.assertEqual((emergency / 'static/index.html').read_text(), '5' * 64)

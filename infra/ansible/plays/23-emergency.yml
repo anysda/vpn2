@@ -1,0 +1,7 @@
+---
+- name: Наблюдатель аварийки и аварийный вход
+  hosts: all
+  serial: 1
+  tags: [23-emergency]
+  roles:
+    - emergency

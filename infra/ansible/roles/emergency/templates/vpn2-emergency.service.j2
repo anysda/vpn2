@@ -1,0 +1,28 @@
+[Unit]
+Description=VPN emergency observer
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=vpn2-emergency
+Group=vpn2-emergency
+WorkingDirectory=/opt/vpn2-emergency
+ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent --config /etc/vpn2/emergency/agent.json --state-dir /var/lib/vpn2-emergency
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/vpn2-emergency
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Flat ~32 MB for days; exits get no entry drop-in, so the ceiling lives here.
+MemoryHigh=64M
+MemoryMax=96M
+# The emergency panel listens on 443 only while this exit leads; before an
+# emergency it serves just the admin's start link while the entry is silent.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LogRateLimitIntervalSec=60
+LogRateLimitBurst=10
+[Install]
+WantedBy=multi-user.target

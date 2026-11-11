@@ -769,21 +769,10 @@ run_stage_on_host() {
     push "$DEPLOY_ROOT/lib/fw-guard.sh" || return 1
     guard="bash --norc /tmp/anysda/fw-guard.sh arm $stage $FW_GUARD_WINDOW || exit 1; "
   fi
-  if [[ "$stage" == @(23-emergency|30-frontend|35-telegram) ]]; then
+  if [[ "$stage" == @(30-frontend|35-telegram) ]]; then
     push "$DEPLOY_ROOT/lib/vpn2_tls.py" || return 1
   fi
   push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return 1
-  # Агент аварийки - пакет vpn2 из venv хоста; образ из реестра везёт только
-  # статику страницы. Отсюда едут конфиг узла, юниты и установщик Hysteria2.
-  if [[ "$stage" == '23-emergency' ]]; then
-    push "$DEPLOY_ROOT/secrets/emergency/$host.json" emergency.json || return 1
-    local emergency_file emergency_files='vpn2-emergency-snapshot.service'
-    [[ "$host" == ru ]] \
-      || emergency_files='install-hy2.sh vpn2-emergency-hy2.service vpn2-emergency-hy2-probe.service'
-    for emergency_file in $emergency_files; do
-      push "$DEPLOY_ROOT/emergency/$emergency_file" || return 1
-    done
-  fi
 
   # Panel + tgbot images live in the public GitHub Container Registry (ghcr.io) —
   # 30-frontend / 35-telegram do `docker pull` directly on the host. The only
@@ -855,7 +844,7 @@ run_stage() {
         rm -rf -- "$DEPLOY_ROOT/emergency/vpn2_emergency/__pycache__"
         rmdir "$DEPLOY_ROOT/emergency/vpn2_emergency" 2>/dev/null || true
       fi
-      python3 "$DEPLOY_ROOT/emergency/provision.py" "$DEPLOY_ROOT/.." || return 1
+      PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.emergency provision "$DEPLOY_ROOT/.." || return 1
       # Агент аварийки на entry идёт из venv: стадии он нужен готовым. Фоновая
       # установка do_all держит замок, при тех же пинах здесь ничего не качается.
       if [[ " $(expand_hosts "$group") " == *' ru '* ]]; then

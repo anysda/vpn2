@@ -18,6 +18,8 @@ import types
 import unittest
 from unittest.mock import patch
 
+import yaml
+
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
 
@@ -1173,20 +1175,23 @@ class EmergencyAgentTests(unittest.TestCase):
         self.assertNotEqual(exit_config['node'], exit_config['entry_id'])
 
     def test_deploy_declares_agent_for_all_nodes(self):
-        stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
+        role = ROOT / 'infra/ansible/roles/emergency'
         deploy = (ROOT / 'infra/deploy.sh').read_text()
         self.assertIn("'23-emergency:foreign'", deploy)
         self.assertIn('"23-emergency:ru ', deploy)
-        self.assertIn('emergency/provision.py', deploy)
-        self.assertIn('User=vpn2-emergency', stage)
-        self.assertIn('LogRateLimitBurst=10', stage)
-        self.assertIn('AmbientCapabilities=CAP_NET_BIND_SERVICE', stage)
-        self.assertIn("ufw allow 443/tcp comment 'vpn2 emergency panel'", stage)
-        self.assertIn("print('any', port)", stage)
-        self.assertIn('systemctl is-active --quiet vpn2-emergency.service', stage)
-        result = subprocess.run(['bash', '-n', str(ROOT / 'infra/scripts/23-emergency.sh')],
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('-m vpn2.emergency provision', deploy)
+        play = yaml.safe_load((ROOT / 'infra/ansible/plays/23-emergency.yml').read_text())[0]
+        self.assertEqual((play['hosts'], play['tags'], play['roles']), ('all', ['23-emergency'], ['emergency']))
+        unit = (role / 'templates/vpn2-emergency.service.j2').read_text()
+        self.assertIn('User=vpn2-emergency', unit)
+        self.assertIn('LogRateLimitBurst=10', unit)
+        self.assertIn('AmbientCapabilities=CAP_NET_BIND_SERVICE', unit)
+        defaults = (role / 'defaults/main.yml').read_text()
+        # Экзит слышит hello переставленного entry с любого адреса, entry - только экзиты.
+        self.assertIn("else ['any']", defaults)
+        tasks = (role / 'tasks/exit.yml').read_text()
+        self.assertIn('{port: 443/tcp, comment: vpn2 emergency panel}', tasks)
+        self.assertIn('systemctl is-active --quiet "$unit"', defaults)
 
     def test_deploy_drops_release_package_leftover_from_checkout(self):
         deploy = (ROOT / 'infra/deploy.sh').read_text()

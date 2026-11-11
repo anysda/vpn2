@@ -19,7 +19,7 @@ def deploy_source():
 def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
     with tempfile.TemporaryDirectory(prefix='deploy-verify-') as directory:
         root = Path(directory)
-        for subdir in ('envs', 'scripts', 'lib', 'configs', 'secrets', 'tmp', 'emergency'):
+        for subdir in ('envs', 'scripts', 'lib', 'configs', 'secrets', 'tmp'):
             (root / subdir).mkdir()
         (root / 'envs/all.env').write_text('ENTRY_HOST=entry.example\nADMIN_PASSWORD=fixture\n'
                                            + ('EXIT_HY2_INSECURE=1\n' if insecure else ''))
@@ -33,7 +33,7 @@ def orchestrate(ru, foreign, mode='full', failure='', insecure=False):
         # Стадии-плеи идут тем же путём, что и bash-стадии: каталога плеев в макете нет.
         for path in (*(ROOT / 'infra/scripts').glob('*.sh'), *(ROOT / 'infra/ansible/plays').glob('*.yml')):
             (root / 'scripts' / f'{path.stem}.sh').touch()
-        for path in (                     'lib/anysda-svc.sh', 'lib/ansible-venv.sh', 'emergency/provision.py',
+        for path in ('lib/anysda-svc.sh', 'lib/ansible-venv.sh',
                      'lib/anysda-backup.sh', 'lib/anysda-restore.sh', 'lib/anysda-backup-list.sh',
                      'configs/sing-box-server.json.tpl', 'secrets/foreign-secrets.env'):
             (root / path).touch()

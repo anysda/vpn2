@@ -34,7 +34,7 @@ PROTECTED = {"sing-box": ("role:router", "role:exit"),
 BACKGROUND = {"anysda-yt-failover": "19-yt-zapret.sh",
               "anysda-failover-watchdog": "role:failover",
               "anysda-tproxy-watchdog": "role:failover",
-              "vpn2-emergency-snapshot": "23-emergency.sh"}
+              "vpn2-emergency-snapshot": "role:emergency"}
 EXIT_ONLY = {"role:exit"}
 HEREDOC = re.compile(r"""^\s*cat\s+>\s*(\S+)\s*<<-?\s*['"]?(\w+)['"]?\s*$""")
 INSTALL = re.compile(r"""^\s*install\s.*?([\w@.-]+\.service)"?\s+/etc/systemd/system/?\s*$""")
@@ -111,8 +111,8 @@ def inventory():
 def role_dropin_units(role):
     """Юниты, которым задачи роли зовут entry_unit_resources из подключённой библиотеки."""
     units = []
-    tasks = [task for path in sorted((ROLES / role / "tasks").glob("*.yml"))
-             for task in yaml.safe_load(path.read_text())]
+    tasks = [inner for path in sorted((ROLES / role / "tasks").glob("*.yml"))
+             for task in yaml.safe_load(path.read_text()) for inner in task.get("block", [task])]
     for task in tasks:
         argv = (task.get("ansible.builtin.command") or {}).get("argv") or []
         code = next((i for i, word in enumerate(argv) if 'source "$0/entry-resources.sh"' in str(word)), None)

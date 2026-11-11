@@ -1,0 +1,129 @@
+---
+# В обычной работе идёт только наблюдатель. Всё, что нужно аварийному входу -
+# статика страницы, юниты, пакеты, сертификаты - ставится здесь: активация не
+# ходит ни в реестр, ни к зеркалам пакетов.
+
+# Пакет на экзит ставит 00-bootstrap, на entry - деплой перед этой стадией.
+- name: Пакет vpn2 с аварийкой в окружении узла
+  ansible.builtin.command:
+    argv: ["{{ emergency_vpn2 }}", emergency, agent, --help]
+  changed_when: false
+
+- name: Библиотеки деплоя
+  ansible.builtin.copy:
+    src: "{{ emergency_infra }}/lib/{{ item }}"
+    dest: "{{ emergency_tmp }}/"
+    mode: '0644'
+  loop: [entry-resources.sh, entry_resources.py, release.sh]
+  changed_when: false
+
+- name: Наблюдатели слышат друг друга
+  ansible.builtin.command:
+    argv: [ufw, allow, proto, udp, from, "{{ item }}", to, any, port, "{{ emergency_node.port }}", comment, vpn2 emergency observer]
+  loop: "{{ emergency_peers }}"
+  register: emergency_ufw_peers
+  changed_when: "'Skipping' not in emergency_ufw_peers.stdout"
+
+# На экзите Docker только хранит образ: без моста и правил iptables он не
+# трогает ни файрвол экзита, ни пересылку.
+- name: Docker экзита без сети
+  when: not emergency_entry
+  block:
+    - name: Каталог настроек Docker
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        mode: '0755'
+
+    - name: Настройки Docker
+      ansible.builtin.copy:
+        src: docker-daemon.json
+        dest: /etc/docker/daemon.json
+        mode: '0644'
+      register: emergency_docker_config
+
+    - name: Идущий Docker перечитал настройки  # noqa: no-handler
+      ansible.builtin.command:
+        argv: "{{ emergency_bash + ['if systemctl is-active --quiet docker.service; then systemctl restart docker.service; fi'] }}"
+      when: emergency_docker_config is changed
+      changed_when: true
+
+- name: Пакеты аварийки и Docker
+  ansible.builtin.command:
+    argv: "{{ emergency_bash + [emergency_packages_step, emergency_tmp] + emergency_packages }}"
+  environment: "{{ emergency_env }}"
+  vars:
+    emergency_packages_step: |
+      source "$0/anysda-svc.sh"
+      pkgs=("$@"); skip=()
+      if ! command -v docker >/dev/null 2>&1; then
+        docker_apt_source
+        pkgs+=("${DOCKER_PKGS[@]}"); skip=("${DOCKER_SKIP[@]}")
+      fi
+      if apt_have "${pkgs[@]}"; then exit 0; fi
+      apt_update_if_stale
+      DEBIAN_FRONTEND=noninteractive apt_get install -y -qq "${pkgs[@]}" "${skip[@]}" >/dev/null
+      echo changed=1
+  register: emergency_packages_run
+  changed_when: "'changed=1' in emergency_packages_run.stdout"
+
+- name: Пользователь агента
+  ansible.builtin.user:
+    name: vpn2-emergency
+    system: true
+    home: "{{ emergency_state }}"
+    create_home: false
+    shell: /usr/sbin/nologin
+
+- name: Каталог настроек vpn2
+  ansible.builtin.file:
+    path: /etc/vpn2
+    state: directory
+    mode: '0755'
+
+- name: Каталоги аварийки
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: vpn2-emergency
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ emergency_state }}", owner: vpn2-emergency, mode: '0700'}
+    - {path: "{{ emergency_etc }}", owner: root, mode: '0750'}
+
+- name: Каталог статики и выпуска
+  ansible.builtin.file:
+    path: "{{ emergency_home }}"
+    state: directory
+    mode: '0755'
+
+- name: Состав аварийки
+  ansible.builtin.copy:
+    src: "{{ emergency_config_file }}"
+    dest: "{{ emergency_etc }}/agent.json"
+    owner: root
+    group: vpn2-emergency
+    mode: '0640'
+    validate: /usr/bin/python3 -m json.tool %s
+
+- name: Статика страницы из образа
+  ansible.builtin.script:
+    cmd: static.sh {{ emergency_tmp }} {{ emergency_home }}
+  environment: "{{ emergency_env }}"
+  register: emergency_static
+  changed_when: "'changed=1' in emergency_static.stdout"
+
+- name: Юнит наблюдателя
+  ansible.builtin.template:
+    src: vpn2-emergency.service.j2
+    dest: "{{ emergency_units }}/vpn2-emergency.service"
+    mode: '0644'
+  register: emergency_unit
+
+- name: Аварийный вход экзита
+  ansible.builtin.import_tasks: exit.yml
+  when: not emergency_entry
+
+- name: Наблюдатель и передача списка клиентов
+  ansible.builtin.import_tasks: service.yml

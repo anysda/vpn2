@@ -1,0 +1,60 @@
+---
+emergency_entry: "{{ inventory_hostname == 'ru' }}"
+emergency_infra: "{{ lookup('ansible.builtin.env', 'VPN2_INFRA') }}"
+emergency_tmp: /tmp/anysda
+# Агент, heartbeat, выбор лидера и аварийный hy2 - пакет vpn2 из venv узла.
+emergency_venv: /opt/vpn2/venv
+emergency_vpn2: "{{ emergency_venv }}/bin/vpn2"
+emergency_home: /opt/vpn2-emergency
+emergency_state: /var/lib/vpn2-emergency
+emergency_etc: /etc/vpn2/emergency
+emergency_units: /etc/systemd/system
+
+# Состав аварийки готовит деплой перед стадией: `vpn2 emergency provision`.
+emergency_config_file: "{{ emergency_infra }}/secrets/emergency/{{ inventory_hostname }}.json"
+emergency_config: "{{ lookup('ansible.builtin.file', emergency_config_file) | from_json }}"
+emergency_node: "{{ emergency_config.nodes[emergency_config.node] }}"
+emergency_public_ip: "{{ emergency_node.host }}"
+# Entry, переставленный на другой адрес, доказывает себя ключом: экзиты слышат
+# его hello отовсюду, проверяется HMAC, а не источник.
+emergency_peers: >-
+  {{ emergency_config.nodes | dict2items | rejectattr('key', 'equalto', emergency_config.node)
+     | map(attribute='value.host') | list
+     + ([] if emergency_config.node == emergency_config.entry_id | default('entry') else ['any']) }}
+emergency_hy2_port: "{{ lookup('ansible.builtin.env', 'EMERGENCY_HY2_PORT') | default('18443', true) }}"
+emergency_hy2_units: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.service]
+
+# Docker - хранилище образа со статикой; polkitd даёт агенту в песочнице
+# запустить Hysteria2.
+emergency_packages: [qrencode, curl, openssl, nftables, polkitd]
+
+emergency_tls_lib: /usr/local/lib/vpn2/vpn2_tls.py
+emergency_tls_acme_url: "{{ lookup('ansible.builtin.env', 'TLS_ACME_URL') | default('https://acme-v02.api.letsencrypt.org/directory', true) }}"
+emergency_tls_acme_root: "{{ lookup('ansible.builtin.env', 'TLS_ACME_ROOT') }}"
+emergency_tls_wait: "{{ lookup('ansible.builtin.env', 'TLS_INITIAL_WAIT') | default('60', true) }}"
+
+# Окружение шагов, которые зовут библиотеки деплоя на узле.
+emergency_env:
+  HOST_TAG: 23-emergency
+  VPN2_DEVELOPMENT: "{{ lookup('ansible.builtin.env', 'VPN2_DEVELOPMENT') | default('false', true) }}"
+  VPN2_RELEASE_MANIFEST: "{{ lookup('ansible.builtin.env', 'VPN2_RELEASE_MANIFEST') | default('/tmp/anysda/release-manifest.json', true) }}"
+  EMERGENCY_IMAGE: "{{ lookup('ansible.builtin.env', 'EMERGENCY_IMAGE') }}"
+  EMERGENCY_IMAGE_PULL: "{{ lookup('ansible.builtin.env', 'EMERGENCY_IMAGE_PULL') | default('true', true) }}"
+  ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+
+# Общая обвязка шагов на bash: библиотека деплоя из emergency_tmp.
+emergency_bash: [/bin/bash, --norc, -euo, pipefail, -c]
+
+# Отметка колеса лежит в venv и меняется вместе с пакетом.
+emergency_package_mark: "{{ emergency_venv }}/.vpn2-wheel"
+# Служба перезапускается, когда сменился отпечаток её входов.
+emergency_restart_step: |
+  source "$0/anysda-svc.sh"
+  unit=$1
+  shift
+  svc_restart_if_changed "$unit" "/etc/systemd/system/$unit.service" "$@" \
+    "/etc/systemd/system/$unit.service.d/"*.conf
+  echo "changed=$SVC_RESTARTED"
+  systemctl is-active --quiet "$unit"
+# Образ, из которого шаг статики взял страницу.
+emergency_image: "{{ emergency_static.stdout_lines | select('match', '^image=') | first | regex_replace('^image=', '') }}"

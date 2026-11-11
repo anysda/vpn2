@@ -15,6 +15,8 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from router_support import ROOT, SB
 
+ROLE = ROOT / 'infra/ansible/roles/emergency'
+
 
 def module():
     path = ROOT / 'infra/vpn2/src/vpn2/emergency/hy2.py'
@@ -209,7 +211,7 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertIn({'ip_cidr': ['203.0.113.1'], 'action': 'reject'}, rules)
 
     def test_independent_unit_is_not_started_at_boot(self):
-        service = (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text()
+        service = (ROLE / 'templates/vpn2-emergency-hy2.service.j2').read_text()
         self.assertIn('User=vpn2-hy2\n', service)
         self.assertIn('vpn2 emergency hy2 open', service)
         self.assertIn('vpn2 emergency hy2 close', service)
@@ -219,7 +221,7 @@ class EmergencyHy2Tests(unittest.TestCase):
     def test_unit_lives_only_while_its_agent_runs(self):
         # Without the binding a stopped agent left the emergency port open.
         unit = {}
-        for line in (ROOT / 'infra/emergency/vpn2-emergency-hy2.service').read_text().splitlines():
+        for line in (ROLE / 'templates/vpn2-emergency-hy2.service.j2').read_text().splitlines():
             if line.startswith('[Service]'):
                 break
             if '=' in line and not line.startswith('#'):
@@ -232,14 +234,14 @@ class EmergencyHy2Tests(unittest.TestCase):
         self.assertNotIn('Requires', unit)
 
     def test_sandboxed_agent_controls_unit_without_privilege_escalation(self):
-        stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
-        self.assertIn('NoNewPrivileges=true', stage)  # sudo cannot work inside the agent
+        agent = (ROLE / 'templates/vpn2-emergency.service.j2').read_text()
+        self.assertIn('NoNewPrivileges=true', agent)  # sudo cannot work inside the agent
         with patch.object(self.hy2.os, 'geteuid', return_value=1000), \
                 patch.object(self.hy2, 'command') as run:
             self.hy2.SystemRuntime().ensure_started()
         self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.UNIT])
         # sing-box cannot start without AF_NETLINK, which the agent lacks.
-        self.assertNotIn('AF_NETLINK', stage)
+        self.assertNotIn('AF_NETLINK', agent)
         with patch.object(self.hy2.os, 'geteuid', return_value=1000), \
                 patch.object(self.hy2, 'command') as run, \
                 patch.object(self.hy2, 'probe', side_effect=AssertionError('probe in sandbox')):
@@ -247,29 +249,30 @@ class EmergencyHy2Tests(unittest.TestCase):
             run.side_effect = RuntimeError('probe failed')
             self.assertFalse(self.hy2.SystemRuntime().probe(self.state))
         self.assertEqual(run.call_args.args[0], ['/usr/bin/systemctl', 'start', self.hy2.PROBE_UNIT])
-        probe_unit = (ROOT / 'infra/emergency' / self.hy2.PROBE_UNIT).read_text()
+        probe_unit = (ROLE / 'templates' / f'{self.hy2.PROBE_UNIT}.j2').read_text()
         for needle in ('Type=oneshot', 'User=vpn2-emergency', 'vpn2 emergency hy2 probe', 'AF_NETLINK'):
             self.assertIn(needle, probe_unit)
-        installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
-        self.assertNotIn('sudoers', installer)
+        rules = (ROLE / 'files/50-vpn2-emergency-hy2.rules').read_text()
+        self.assertNotIn('sudoers', (ROLE / 'tasks/exit.yml').read_text())
         for needle in ('org.freedesktop.systemd1.manage-units', '"vpn2-emergency-hy2.service"',
                        '"vpn2-emergency-hy2-probe.service"',
                        'subject.user == "vpn2-emergency"', '"start"', '"stop"', '"restart"'):
-            self.assertIn(needle, installer)
+            self.assertIn(needle, rules)
 
     def test_units_run_the_package_from_host_venv(self):
-        stage = (ROOT / 'infra/scripts/23-emergency.sh').read_text()
-        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent ', stage)
-        self.assertNotIn('python3 -B -m vpn2', stage)
-        units = {name: (ROOT / 'infra/emergency' / name).read_text()
+        agent = (ROLE / 'templates/vpn2-emergency.service.j2').read_text()
+        self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency agent ', agent)
+        self.assertNotIn('python3', agent)
+        units = {name: (ROLE / 'templates' / f'{name}.j2').read_text()
                  for name in (self.hy2.UNIT, self.hy2.PROBE_UNIT, 'vpn2-emergency-snapshot.service')}
         self.assertEqual(units[self.hy2.UNIT].count('/opt/vpn2/venv/bin/vpn2 emergency hy2 '), 2)
         for name, unit in units.items():
             with self.subTest(unit=name):
                 self.assertIn('/opt/vpn2/venv/bin/vpn2 emergency ', unit)
                 self.assertNotIn('python3', unit)
-        installer = (ROOT / 'infra/emergency/install-hy2.sh').read_text()
-        self.assertIn('/opt/vpn2/venv/bin/vpn2 emergency hy2 "$@"', installer)
+        role = (ROLE / 'defaults/main.yml').read_text() + (ROLE / 'tasks/exit.yml').read_text()
+        self.assertIn('emergency_vpn2: "{{ emergency_venv }}/bin/vpn2"', role)
+        self.assertIn('"$0" emergency hy2 endpoint', role)
 
     def poll(self, live):
         def fetch(_state):

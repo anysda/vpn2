@@ -219,7 +219,7 @@ def server_config(options, users, api_secret=None):
 class SystemRuntime:
     def service(self, action):
         # The agent runs with NoNewPrivileges, so no sudo: a polkit rule from
-        # install-hy2.sh lets only its user start/stop/restart this one unit.
+        # the emergency role lets only its user start/stop/restart this one unit.
         command(['/usr/bin/systemctl', action, UNIT])
 
     def probe(self, state_dir):

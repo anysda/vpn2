@@ -5,10 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from vpn2 import snapshot
-from vpn2.snapshot import SnapshotError, diff, dump, load, load_ignore, subtract, unused_ignore
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
+import snapshot
+from snapshot import (
+    SnapshotError,
+    diff,
+    dump,
+    load,
+    load_ignore,
+    subtract,
+    unused_ignore,
+)
 
-SRC = str(Path(snapshot.__file__).resolve().parents[1])
+TOOLS = str(Path(snapshot.__file__).resolve().parent)
 
 
 def file_record(sha, mode='0644'):
@@ -238,8 +247,8 @@ def test_dump_is_sorted_json_and_gz_bytes_are_stable(tmp_path):
 
 def test_import_works_without_yaml():
     code = ("import sys; sys.modules['yaml'] = None; "
-            "import vpn2.snapshot as s; "
+            "import snapshot as s; "
             "assert s.diff({'schema': 1}, {'schema': 1}) == []")
-    done = subprocess.run([sys.executable, '-c', code], env={'PYTHONPATH': SRC},
+    done = subprocess.run([sys.executable, '-c', code], env={'PYTHONPATH': TOOLS},
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr

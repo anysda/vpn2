@@ -1,12 +1,14 @@
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
-
-from vpn2 import snapshot
-from vpn2.snapshot import collect, diff
 from vpn2.watchdog import failover, yt
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
+import snapshot
+from snapshot import collect, diff
 
 REPO = Path(__file__).resolve().parents[3]
 

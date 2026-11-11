@@ -1,10 +1,14 @@
+import sys
+from pathlib import Path
+
 """Слепок: содержимое конфигов с секретами сверяется без секретов (shape), каталоги данных - без содержимого."""
 import json
 
 import pytest
 
-from vpn2 import snapshot
-from vpn2.snapshot import diff
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
+import snapshot
+from snapshot import diff
 
 WORD = 'pass' + 'word'
 

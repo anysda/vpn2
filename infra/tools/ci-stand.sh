@@ -576,17 +576,16 @@ warm_report() {
 entry_uptime() { ssh_node "$ENTRY" 'cut -d" " -f1 /proc/uptime' 2>/dev/null || echo '?'; }
 
 # /run - tmpfs вне корней слепка: инструмент и файлы слепка сами в него не
-# попадают. Пакет на узел не ставится, он запускается из этого каталога.
+# попадают. Инструмент - один файл на stdlib, на узел кладётся как есть.
 SNAP_DIR=/run/vpn2-snapshot
 
 snapshot_tool() {  # <адрес узла>
-  ssh_node "$1" "rm -rf $SNAP_DIR/vpn2 && mkdir -p $SNAP_DIR"
-  tar -C "$REPO_ROOT/infra/vpn2/src" --exclude=__pycache__ -czf - vpn2 | ssh_node "$1" "tar -xzf - -C $SNAP_DIR"
+  ssh_node "$1" "mkdir -p $SNAP_DIR && cat > $SNAP_DIR/snapshot.py" < "$REPO_ROOT/infra/tools/snapshot.py"
 }
 
 snapshot_run() {  # <адрес узла> <аргументы snapshot...>
   local out
-  out=$(ssh_node "$1" "PYTHONPATH=$SNAP_DIR python3 -B -m vpn2.cli snapshot ${*:2}" 2>&1) \
+  out=$(ssh_node "$1" "python3 -B $SNAP_DIR/snapshot.py ${*:2}" 2>&1) \
     || die "слепок на $1: код $?, хвост вывода:
 $(tail -n 20 <<<"$out")"
 }

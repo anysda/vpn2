@@ -57,7 +57,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources strongswan-starter; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ ikev2_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: ikev2_step
   changed_when: "'changed=1' in ikev2_step.stdout"
 
@@ -115,7 +115,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-routing; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ ikev2_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: ikev2_step
   changed_when: "'changed=1' in ikev2_step.stdout"
 
@@ -178,7 +178,7 @@
       - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-sync; echo "changed=$ENTRY_DROPIN_CHANGED"'
       - "{{ ikev2_tmp }}"
   environment:
-    ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+    ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
   register: ikev2_step
   changed_when: "'changed=1' in ikev2_step.stdout"
 
@@ -219,7 +219,7 @@
           - 'source "$0/entry-resources.sh"; entry_unit_resources anysda-ikev2-cert-sync; echo "changed=$ENTRY_DROPIN_CHANGED"'
           - "{{ ikev2_tmp }}"
       environment:
-        ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
+        ENTRY_RESOURCE_OVERRIDES: "{{ vpn2_env.ENTRY_RESOURCE_OVERRIDES | default('') }}"
       register: ikev2_step
       changed_when: "'changed=1' in ikev2_step.stdout"
 

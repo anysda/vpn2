@@ -10,20 +10,14 @@ import { accessStatus } from '../../shared/access-operation'
 
 const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 
-/** Адрес сокета — loopback этой ноды. */
 export function isLoopbackAddr(ip: string | undefined): boolean {
   return !!ip && LOOPBACK_ADDRS.has(ip)
 }
 
 /**
- * Запрос пришёл напрямую с этой ноды, а не снаружи через Caddy.
- *
- * Одного адреса сокета мало: Caddy сам ходит в панель с 127.0.0.1, и любой
- * запрос из интернета выглядит здесь как loopback (VPN2-51). Отличие —
- * X-Forwarded-For: Caddy ставит его на каждый проксируемый запрос, а бот и
- * прочие локальные вызовы идут на 127.0.0.1:51821 мимо него и такого
- * заголовка не шлют. Основной замок — 404 на эти пути в Caddyfile
- * (infra/vpn2/src/vpn2/containers/panel.py), это второй.
+ * Запрос пришёл напрямую с этой ноды, а не через Caddy: тот тоже ходит с
+ * 127.0.0.1 (VPN2-51), но ставит X-Forwarded-For. Основной замок - 404 на эти
+ * пути в Caddyfile, это второй.
  */
 function isDirectLocal(event: H3Event): boolean {
   if (!isLoopbackAddr(event.node.req.socket.remoteAddress)) return false
@@ -31,38 +25,27 @@ function isDirectLocal(event: H3Event): boolean {
   return !h['x-forwarded-for'] && !h['x-forwarded-host'] && !h.forwarded && !h.via
 }
 
-/**
- * Bearer-аутентификация бота по TGBOT_SECRET. Дополнительно требует, чтобы
- * запрос пришёл напрямую с этой ноды (бот сидит на той же ноде, что и панель,
- * и ходит на 127.0.0.1:51821).
- */
+/** Bearer-аутентификация бота по TGBOT_SECRET, только для запросов с этой же ноды. */
 export function requireBotAuth(event: H3Event): void {
-  if (!isDirectLocal(event)) {
-    throw createError({ statusCode: 403, statusMessage: 'loopback_only' })
-  }
-  const expected = String(useRuntimeConfig().tgbotSecret ?? '')
-  if (!expected) throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
-  const provided = (getHeader(event, 'authorization') ?? '').replace(/^Bearer\s+/i, '')
-  const a = Buffer.from(provided)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+  if (!isDirectLocal(event)) throw createError({ statusCode: 403, statusMessage: 'loopback_only' })
+  const expected = Buffer.from(String(useRuntimeConfig().tgbotSecret ?? ''))
+  if (!expected.length) throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
+  const provided = Buffer.from((getHeader(event, 'authorization') ?? '').replace(/^Bearer\s+/i, ''))
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
     throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
   }
 }
 
-/** Клиент, привязанный к данному Telegram-чату. 404 `not_linked`, если нет. */
+/** Клиент, привязанный к Telegram-чату. 404 `not_linked`, если такого нет. */
 export async function clientByChat(chatId: number) {
-  const db = useDb()
-  const [c] = await db.select().from(clients).where(eq(clients.tgChatId, chatId)).limit(1)
+  const [c] = await useDb().select().from(clients).where(eq(clients.tgChatId, chatId)).limit(1)
   if (!c) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
   return c
 }
 
 /**
- * Чат всё ещё привязан к клиенту. Клиента по чату ищут в начале запроса, а
- * между этим и ответом идут await: администратор мог отвязать Telegram.
- * Ответ с секретом (конфиг) перепроверяет привязку последним await перед
- * возвратом - отвязка, записанная до ответа, его не пропускает.
+ * Чат всё ещё привязан к клиенту. Ответ с секретом (конфиг) перепроверяет это
+ * последним await: администратор мог отвязать Telegram, пока шёл запрос.
  */
 export async function requireChatLinked(clientId: number, chatId: number): Promise<void> {
   const [linked] = await useDb().select({ id: clients.id }).from(clients)
@@ -70,16 +53,12 @@ export async function requireChatLinked(clientId: number, chatId: number): Promi
   if (!linked) throw createError({ statusCode: 404, statusMessage: 'not_linked' })
 }
 
-/** Сводка клиента для бота: имя, лимит девайсов и список девайсов. */
+/** Сводка клиента для бота: имя, лимит и список устройств. */
 export async function botClientView(clientId: number) {
   const db = useDb()
   const [c] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
   if (!c) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-  const devRows = await db
-    .select()
-    .from(devices)
-    .where(eq(devices.clientId, clientId))
-    .orderBy(...devicesOldestFirst)
+  const devRows = await db.select().from(devices).where(eq(devices.clientId, clientId)).orderBy(...devicesOldestFirst)
   const operation = await latestAccess(c.id)
   return {
     operation,

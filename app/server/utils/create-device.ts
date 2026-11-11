@@ -9,18 +9,9 @@ import { ensureDeviceOvpn } from './openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
 
 /** Строки журнала при сбое шагов выдачи: у бота и панели свои. */
-export interface ProvisionLog {
-  wg: string
-  ovpn: string
-  ikev2: string
-  wgSync: string
-  ikev2Sync: string
-}
+export interface ProvisionLog { wg: string, ovpn: string, ikev2: string, wgSync: string, ikev2Sync: string }
 
-/**
- * Ключ идемпотентности создания: из заголовка idempotency-key, как у операций
- * доступа. hash — отпечаток тела: тот же ключ с другим запросом отклоняется.
- */
+/** Ключ идемпотентности создания из заголовка idempotency-key; hash - отпечаток тела: тот же ключ с другим запросом отклоняется. */
 export function deviceRequestKey(event: H3Event, request: Record<string, unknown>) {
   const key = getHeader(event, 'idempotency-key')
   if (key === undefined) return undefined
@@ -29,11 +20,9 @@ export function deviceRequestKey(event: H3Event, request: Record<string, unknown
 }
 
 /**
- * Повтор известного ключа, чьё устройство удалено или удаляется, — 410 до
+ * Повтор известного ключа, чьё устройство удалено или удаляется, - 410 до
  * поиска владельца: клиента после удаления уже нет, а повтору нужен ответ
- * «устройство удалено», не «клиента нет». Совпадение отпечатка — тот же
- * запрос (в нём клиент панели или чат бота). Живое устройство, чужой
- * отпечаток и неизвестный ключ идут обычным путём с проверками владельца.
+ * «устройство удалено». Остальное идёт обычным путём с проверками владельца.
  */
 export async function rejectDeletedDeviceRepeat(idempotency?: { key: string, hash: string }) {
   if (!idempotency) return
@@ -47,13 +36,11 @@ export async function rejectDeletedDeviceRepeat(idempotency?: { key: string, has
 }
 
 /**
- * Проверка имени и лимита, всех пулов и резервирование — одна write-транзакция,
- * до выпуска ключей: параллельные запросы видят устройства друг друга.
- * guard получает имена устройств клиента и его строку, прочитанные в этой же
- * транзакции (лимит, привязку бота), и бросает ошибку, если создавать нельзя.
- * С ключом идемпотентности повтор отдаёт уже созданное устройство (replay);
- * ключ живёт в device_requests и переживает устройство: повтор для чужого
- * клиента — 409, для удалённого или удаляемого устройства — 410.
+ * Проверка имени и лимита, всех пулов и резервирование - одна write-транзакция
+ * до выпуска ключей: параллельные запросы видят устройства друг друга. guard
+ * получает имена устройств клиента и его строку и бросает ошибку, если
+ * создавать нельзя. Повтор с тем же ключом отдаёт созданное устройство;
+ * для чужого клиента - 409, для удалённого устройства - 410.
  */
 export async function createDeviceWithAddresses(
   clientId: number, name: string, enabled: { wg: boolean, ovpn: boolean },
@@ -84,27 +71,17 @@ export async function createDeviceWithAddresses(
     const ikev2Ip = nextPoolAddress('ikev2', used.map(r => r.ikev2))
     const [device] = await tx.insert(devices).values({ clientId, name, wgIp, ovpnIp, ikev2Ip }).returning()
     if (!device) throw new Error('insert_failed')
-    if (idempotency) {
-      await tx.insert(deviceRequests).values({
-        idempotencyKey: idempotency.key, requestHash: idempotency.hash, clientId, deviceId: device.id,
-      })
-    }
+    if (idempotency) await tx.insert(deviceRequests).values({ idempotencyKey: idempotency.key, requestHash: idempotency.hash, clientId, deviceId: device.id })
     return { device, replay: false }
   }, { behavior: 'immediate' })
 }
 
-/**
- * Ключи нового устройства и синхронизация протоколов, чтобы девайс был сразу
- * готов к выдаче конфигов. Сбой шага пишется в журнал и не прерывает остальные.
- */
+/** Ключи нового устройства и синхронизация протоколов. Сбой шага пишется в журнал и не прерывает остальные. */
 export async function provisionDeviceKeys(deviceId: number, ovpnReady: boolean, log: ProvisionLog) {
-  if (useRuntimeConfig().wgEnabled) {
-    await ensureDeviceWg(deviceId).catch(err => useLogger().error({ err }, log.wg))
-  }
-  if (ovpnReady) {
-    await ensureDeviceOvpn(deviceId).catch(err => useLogger().error({ err }, log.ovpn))
-  }
-  await ensureDeviceIkev2(deviceId).catch(err => useLogger().error({ err }, log.ikev2))
-  await syncWireguardConfig().catch(err => useLogger().error({ err }, log.wgSync))
-  await syncIkev2().catch(err => useLogger().error({ err }, log.ikev2Sync))
+  const logged = (message: string) => (err: unknown) => { useLogger().error({ err }, message) }
+  if (useRuntimeConfig().wgEnabled) await ensureDeviceWg(deviceId).catch(logged(log.wg))
+  if (ovpnReady) await ensureDeviceOvpn(deviceId).catch(logged(log.ovpn))
+  await ensureDeviceIkev2(deviceId).catch(logged(log.ikev2))
+  await syncWireguardConfig().catch(logged(log.wgSync))
+  await syncIkev2().catch(logged(log.ikev2Sync))
 }

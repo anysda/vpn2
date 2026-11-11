@@ -25,16 +25,9 @@ function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, re
 
 /** Отправка из запроса администратора: бот не ответил - 502 тому, кто нажал кнопку. */
 export async function sendBotEvent(body: Record<string, unknown>): Promise<void> {
-  try {
-    await postBotEvent(body, { timeout: 8000, retry: 0 })
-  }
-  catch (e) {
-    throw createError({
-      statusCode: 502,
-      statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram',
-      cause: e,
-    })
-  }
+  await postBotEvent(body, { timeout: 8000, retry: 0 }).catch((cause) => {
+    throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram', cause })
+  })
 }
 
 const DELAYS = [30, 60, 120, 240, 480].map(seconds => seconds * 1000)
@@ -66,8 +59,7 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
       if (waiting) return waiting
     }
     await tx.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
-    // Лимит включает историю. При нехватке места освобождаем только
-    // подтверждённую запись; ожидающие и ошибки молча не вытесняем.
+    // Лимит включает историю. При нехватке места освобождаем только подтверждённую запись.
     const [size] = await tx.select({ n: count() }).from(botOutbox)
     if (Number(size?.n) >= CAPACITY) {
       const [old] = await tx.select({ id: botOutbox.id }).from(botOutbox).where(eq(botOutbox.status, 'accepted')).orderBy(asc(botOutbox.created)).limit(1)
@@ -91,8 +83,7 @@ async function deliveryFailed(label: string): Promise<void> {
 function attempt(id: string): Promise<void> {
   const pending = inFlight.get(id)
   if (pending) return pending
-  // Если таймер успел занять новую запись, запрос ждёт его результата,
-  // а не выдаёт «не отправлено» посреди ещё выполняющегося POST.
+  // Запрос ждёт уже идущую попытку, а не выдаёт «не отправлено» посреди её POST.
   const pendingAttempt = attemptOnce(id).finally(() => { inFlight.delete(id) })
   inFlight.set(id, pendingAttempt)
   return pendingAttempt
@@ -134,8 +125,7 @@ async function attemptOnce(id: string) {
 export async function retryBotEvents() {
   const db = useDb()
   const now = Date.now()
-  // Ожидающие от времени, когда бот не был настроен (или его сняли), не
-  // доставить: удаляем, а не повторяем и не показываем очередью.
+  // Ожидающие от времени, когда бот не был настроен, не доставить: удаляем.
   if (!botConfigured()) await db.delete(botOutbox).where(eq(botOutbox.status, 'queued'))
   const expired = await db.update(botOutbox).set({ status: 'failed', payload: '' })
     .where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now))).returning({ label: botOutbox.label })
@@ -165,11 +155,7 @@ export async function notifyBackupFailed(detail: string): Promise<void> {
   await notifyWarning(notifyBot('system_alert', { subject: 'Бэкап не удался', detail }, 'Сообщение об отказе бэкапа', true))
 }
 
-/**
- * Изменение уже записано, уведомление о нём - вдогонку: сбой постановки в
- * очередь возвращается текстом предупреждения для ответа, а не ошибкой запроса.
- * У ошибок очереди текст для человека, прочие только в журнал.
- */
+/** Изменение уже записано: сбой постановки уведомления в очередь - текст предупреждения в ответе, а не ошибка запроса. */
 export function notifyWarning(send: Promise<unknown>, fallback = 'Уведомление клиенту не отправлено'): Promise<string | undefined> {
   return send.then(() => undefined, (err: unknown) => {
     useLogger().warn({ err }, 'notification not queued')

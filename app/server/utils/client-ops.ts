@@ -12,18 +12,14 @@ import { assertKnownOutbound } from './route-outbound'
 import { joinDetail, recordEvent } from './events'
 import { plural } from '../../shared/plural'
 
-/**
- * Общие операции над клиентами — используются и панелью (session-auth),
- * и ботом (Bearer-auth админский чат). Здесь же — валидация и уведомления
- * привязанному клиенту в Telegram.
- */
+/** Операции над клиентами, общие для панели и бота: проверки, запись, уведомления клиенту в Telegram. */
 
 export interface ClientPatch {
   name?: string
   expiresAt?: string | null
   deviceLimit?: number | null
   frozenManual?: boolean
-  // тег узла экзита или null — «авто»
+  /** Тег узла экзита или null - «авто». */
   preferredExit?: string | null
 }
 
@@ -33,7 +29,7 @@ export interface ClientCreateInput {
   expiresAt?: string | null
   deviceLimit?: number | null
 }
-/** Сообщение 409 при лимите ниже числа устройств. @internal */
+
 /** Сообщение 409 при лимите ниже числа устройств. */
 export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
 
@@ -47,29 +43,25 @@ function termText(expiresAt: Date | null): string {
 /** Срок действия нельзя ставить раньше завтрашней даты. */
 function assertExpiryAllowed(expiresAt: string | null | undefined): void {
   if (expiresAt && new Date(expiresAt).getTime() < minExpiryMs()) {
-    throw createError({
-      statusCode: 422,
-      statusMessage: 'invalid_expiry', message: 'Срок действия не может быть раньше завтрашней даты',
-    })
+    throw createError({ statusCode: 422, statusMessage: 'invalid_expiry', message: 'Срок действия не может быть раньше завтрашней даты' })
   }
 }
 
-/** Создать клиента (имя + опции). Пароль генерится автоматически. */
+/** 409, если имя занято другим клиентом. */
+async function assertNameFree(name: string, exceptId = 0): Promise<void> {
+  const dup = await useDb().select({ id: clients.id }).from(clients).where(and(eq(clients.name, name), ne(clients.id, exceptId))).limit(1)
+  if (dup.length) throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
+}
+
+/** Создаёт клиента; пароль генерируется автоматически. */
 export async function createClient(input: ClientCreateInput, actor: string): Promise<Client & { warning?: string }> {
   const db = useDb()
   assertExpiryAllowed(input.expiresAt)
 
   const name = input.name.trim()
-  const dup = await db.select({ id: clients.id }).from(clients).where(eq(clients.name, name)).limit(1)
-  if (dup.length > 0) {
-    throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
-  }
+  await assertNameFree(name)
 
-  const values: typeof clients.$inferInsert = {
-    name,
-    filterTraffic: input.filterTraffic ?? true,
-    password: generateClientPassword(),
-  }
+  const values: typeof clients.$inferInsert = { name, filterTraffic: input.filterTraffic ?? true, password: generateClientPassword() }
   if (input.expiresAt !== undefined) values.expiresAt = input.expiresAt ? new Date(input.expiresAt) : null
   if (input.deviceLimit !== undefined) values.deviceLimit = input.deviceLimit
 
@@ -81,7 +73,7 @@ export async function createClient(input: ClientCreateInput, actor: string): Pro
   return { ...row, ...(warning ? { warning } : {}) }
 }
 
-/** Обновить клиента: валидация, апдейт, ресинк WG/OVPN, уведомления клиенту. */
+/** Обновляет клиента: проверки, запись, операция доступа, уведомления клиенту. */
 export async function updateClient(id: number, patch: ClientPatch, actor: string, key?: string): Promise<Partial<Client> & { id: number, operation?: AccessOperation, warning?: string }> {
   const db = useDb()
   if (key && (patch.frozenManual !== undefined || patch.expiresAt !== undefined)) {
@@ -98,28 +90,18 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
   if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
 
-  // Лимит девайсов нельзя опустить ниже текущего числа устройств клиента.
   if (typeof patch.deviceLimit === 'number') {
     const [dc] = await db.select({ n: count() }).from(devices).where(eq(devices.clientId, id))
     const have = Number(dc?.n ?? 0)
     if (patch.deviceLimit < have) {
-      throw createError({
-        statusCode: 409,
-        statusMessage: 'device_limit_below_count', message: deviceLimitBelowCountText(have),
-      })
+      throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: deviceLimitBelowCountText(have) })
     }
   }
 
   const upd: Partial<typeof clients.$inferInsert> = { updatedAt: new Date() }
   if (patch.name !== undefined) {
-    const name = patch.name.trim()
-    const dup = await db.select({ id: clients.id }).from(clients)
-      .where(and(eq(clients.name, name), ne(clients.id, id)))
-      .limit(1)
-    if (dup.length > 0) {
-      throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${name}» уже существует` })
-    }
-    upd.name = name
+    upd.name = patch.name.trim()
+    await assertNameFree(upd.name, id)
   }
   if (patch.expiresAt !== undefined) upd.expiresAt = patch.expiresAt ? new Date(patch.expiresAt) : null
   if (patch.deviceLimit !== undefined) upd.deviceLimit = patch.deviceLimit
@@ -129,9 +111,8 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     upd.preferredExit = patch.preferredExit || null
   }
 
-  // Проверка sing-box выше уступает управление другим запросам. Имя могло
-  // стать занятым, а число устройств вырасти: проверяем ограничения в том
-  // же SQL, который записывает изменения, без отдельной write-транзакции.
+  // Проверка sing-box выше уступает управление другим запросам: имя могло
+  // стать занятым, а число устройств вырасти. Ограничения проверяет тот же SQL, что пишет.
   const conditions = [eq(clients.id, id)]
   if (upd.name !== undefined) {
     conditions.push(notExists(db.select({ id: clients.id }).from(clients)
@@ -146,17 +127,8 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   if (!row) {
     const [exists] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).limit(1)
     if (!exists) throw createError({ statusCode: 404, statusMessage: 'not_found' })
-    if (upd.name !== undefined) {
-      const dup = await db.select({ id: clients.id }).from(clients)
-        .where(and(eq(clients.name, upd.name), ne(clients.id, id))).limit(1)
-      if (dup.length) {
-        throw createError({ statusCode: 409, statusMessage: 'client_exists', message: `Клиент с именем «${upd.name}» уже существует` })
-      }
-    }
-    throw createError({
-      statusCode: 409,
-      statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента',
-    })
+    if (upd.name !== undefined) await assertNameFree(upd.name, id)
+    throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента' })
   }
 
   if (patch.preferredExit !== undefined) {
@@ -176,8 +148,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
     await recordEvent({ type: 'client_term', level: 'info', object, actor, title: `Срок изменён · ${row.name}`, detail: joinDetail(termText(row.expiresAt), actor) })
   }
 
-  // Уведомления привязанному клиенту об изменениях аккаунта. Изменение уже
-  // записано: сбой очереди бота - предупреждение в ответе, не ошибка.
+  // Изменение уже записано: сбой очереди бота - предупреждение в ответе, не ошибка.
   const chat = before.tgChatId
   const warnings: Array<string | undefined> = []
   if (chat) {
@@ -185,17 +156,11 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
       warnings.push(await notifyWarning(notifyClient(chat, `✏️ Имя вашего профиля изменено на «${row.name}».`, row.name)))
     }
     if (patch.deviceLimit !== undefined) {
-      const rank = (v: number | null) => (v === null ? Infinity : v)
-      const oldR = rank(before.deviceLimit)
-      const newR = rank(row.deviceLimit)
-      if (newR > oldR) {
-        warnings.push(await notifyWarning(notifyClient(chat, row.deviceLimit === null
-          ? '📈 Лимит устройств снят — теперь без ограничений.'
-          : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`, row.name)))
-      }
-      else if (newR < oldR) {
-        warnings.push(await notifyWarning(notifyClient(chat, `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.`, row.name)))
-      }
+      const rank = (v: number | null) => v ?? Infinity
+      const text = rank(row.deviceLimit) > rank(before.deviceLimit)
+        ? (row.deviceLimit === null ? '📈 Лимит устройств снят — теперь без ограничений.' : `📈 Ваш лимит устройств повышен до ${row.deviceLimit}.`)
+        : rank(row.deviceLimit) < rank(before.deviceLimit) ? `📉 Ваш лимит устройств понижен до ${row.deviceLimit}.` : ''
+      if (text) warnings.push(await notifyWarning(notifyClient(chat, text, row.name)))
     }
   }
   const warning = [...new Set(warnings.filter(Boolean))].join(' ')
@@ -203,14 +168,11 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   return { ...row, ...(queued ? { operation: queued.operation } : {}), ...(warning ? { warning } : {}) }
 }
 
-/** Удалить клиента: каскадно девайсы, ресинк WG, отзыв OVPN-сертификатов. */
+/** Удаление клиента и устройства идёт операцией доступа: сбой CA оставляет запись для повтора. */
 export async function deleteClient(id: number, actor: string, key?: string) {
-  const { operation } = await enqueueAccess({ clientId: id, kind: 'delete', actor, key })
-  return { operation }
+  return { operation: (await enqueueAccess({ clientId: id, kind: 'delete', actor, key })).operation }
 }
 
-/** Общее удаление устройства из панели и бота; ошибка CA оставляет запись для повтора. */
 export async function deleteDevice(clientId: number, deviceId: number, actor: string, key?: string) {
-  const { operation } = await enqueueAccess({ clientId, deviceId, kind: 'delete', actor, key })
-  return { operation }
+  return { operation: (await enqueueAccess({ clientId, deviceId, kind: 'delete', actor, key })).operation }
 }

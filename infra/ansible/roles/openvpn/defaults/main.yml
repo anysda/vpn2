@@ -4,18 +4,6 @@ openvpn_tmp: /tmp/anysda
 openvpn_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 openvpn_env:
   HOST_TAG: "{{ inventory_hostname }}"
-# Лимиты юнита из общей таблицы ресурсов entry; последним аргументом - имя юнита.
-openvpn_resources:
-  - /bin/bash
-  - --norc
-  - -euo
-  - pipefail
-  - -c
-  - 'source "$0/entry-resources.sh"; entry_unit_resources "$1"; echo "changed=$ENTRY_DROPIN_CHANGED"'
-  - "{{ openvpn_tmp }}"
-openvpn_resources_env:
-  ENTRY_RESOURCE_OVERRIDES: "{{ lookup('ansible.builtin.env', 'ENTRY_RESOURCE_OVERRIDES') }}"
-
 openvpn_port: "{{ lookup('ansible.builtin.env', 'OVPN_PORT') | default('1194', true) }}"
 # udp, udp4, udp6, tcp, tcp4, tcp6 и те же tcp с суффиксом -server.
 openvpn_proto: "{{ lookup('ansible.builtin.env', 'OVPN_PROTO') | default('udp', true) }}"

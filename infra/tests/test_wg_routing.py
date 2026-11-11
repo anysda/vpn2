@@ -1,13 +1,13 @@
 import tempfile
 import unittest
 
-from test_deploy import bash, source
+from test_deploy import bash
+from vpn_roles import routing as role_routing
 
 
 class RoutingTests(unittest.TestCase):
     def test_wireguard_down_preserves_shared_tproxy(self):
-        stage = source('infra/scripts/28-wireguard.sh')
-        routing = stage.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+        routing = role_routing('28-wireguard')
         with tempfile.TemporaryDirectory() as directory:
             routing = routing.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
             result = bash('''

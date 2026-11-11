@@ -21,9 +21,10 @@ import tempfile
 import time
 import unittest
 
-from test_wg_conf_allowedips_prefix import VT, cut, source
+from test_wg_conf_allowedips_prefix import VT
 from test_wg_conf_module import BASE, LIB, bundle, conf
 from test_wg_conf_wg_oracle import A, B, S, backup, mk, oracle
+import vpn_roles
 from wg_root import as_root
 
 WG, WG_QUICK, IP, NSENTER = shutil.which('wg'), shutil.which('wg-quick'), shutil.which('ip'), shutil.which('nsenter')
@@ -73,14 +74,12 @@ def holding_key():
     return found
 
 
-def shell_key(block, raw):
-    """A shell block that writes server.priv from wg0.conf `raw`: what it writes."""
+def role_key(raw):
+    """The wireguard role's wg-identity step on wg0.conf `raw`: the server.priv it writes."""
     with tempfile.TemporaryDirectory() as directory:
         top = Path(directory)
         (top / 'wg0.conf').write_bytes(raw)
-        script = ('set -euo pipefail\nwork=' + directory + '\nWG_BUNDLE=' + directory + '\n' +
-                  block.replace('/etc/wireguard/wg0.conf', str(top / 'wg0.conf')))
-        done = subprocess.run(['bash', '-c', script], capture_output=True, text=True, timeout=60, check=False)
+        done = vpn_roles.wg_identity(top)
         assert not done.returncode, done.stderr
         return (top / 'server.priv').read_text().strip()
 
@@ -142,13 +141,11 @@ class WgCheckEdgeTests(unittest.TestCase):
                             self.tearDown()
 
     def test_2_nul_as_wg_quick_and_wg(self):
-        stage = cut(source('infra/scripts/28-wireguard.sh'),
-                    '  if [[ ! -s "$work/server.priv" && -s /etc/wireguard/wg0.conf ]]; then', '\n  # Сбой вычисления')
         for name, raw in NUL_PRIVATE.items():
             error, private, _peers = oracle(raw)
             self.assertEqual((error, private), (None, S.decode()), name)
             with self.subTest('server.priv is the key wg holds', edge=name):
-                self.assertEqual(shell_key(stage, raw), private)
+                self.assertEqual(role_key(raw), private)
 
     def test_3_endpoint_name_is_a_refusal_in_time(self):
         raw = mk(peer=b'Endpoint = vpn.example.test:51820\n')

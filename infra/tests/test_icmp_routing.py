@@ -8,14 +8,15 @@ import tempfile
 import unittest
 
 from test_deploy import bash, source
+import vpn_roles
 
 
 PROTOCOLS = (('28-wireguard', 'wg0'), ('29-openvpn', 'tun0'), ('27-ikev2', 'xfrm0'))
 
 
 def routing_script(stage, directory):
-    text = source(f'infra/scripts/{stage}.sh')
     if stage == '27-ikev2':
+        text = source(f'infra/scripts/{stage}.sh')
         template = text.split('<<IPTSEOF\n', 1)[1].split('\nIPTSEOF', 1)[0]
         rendered = bash('''
 WAN_IF=wan
@@ -27,7 +28,7 @@ cat <<IPTSEOF
             raise RuntimeError(rendered.stderr)
         text = rendered.stdout
     else:
-        text = text.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+        text = vpn_roles.routing(stage)
     return text.replace('/run/anysda-vpn-routing.lock', str(Path(directory) / 'routing.lock'))
 
 

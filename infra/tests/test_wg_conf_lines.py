@@ -20,8 +20,9 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/tests'))
 from test_control import module  # noqa: E402
 from test_wg_conf_allowedips_net import apply_gate
-from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT, cut, source
+from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT
 from test_wg_conf_module import BASE, CANONICAL, DEVICES, backup_check, conf
+import vpn_roles
 from wg_root import as_root
 
 WG_QUICK = ('Address', 'DNS', 'MTU', 'Table', 'PreUp', 'PostUp', 'PreDown', 'PostDown', 'SaveConfig')
@@ -86,11 +87,12 @@ def with_lines(place, lines):
 
 
 def written():
-    """wg0.conf as the node has it: the header 28-wireguard.sh writes, the peers backend wg.apply writes."""
-    header = cut(source('infra/scripts/28-wireguard.sh'), '# Initial config', '\nEOF\n') + '\n'
-    values = {'WG_SERVER_IP': '10.66.66.1', 'WG_SERVER_ULA': 'fd66:66::1', 'WG_PORT': '51820',
-              'SERVER_PRIV': SERVER}
-    header = re.sub(r'\$\{(\w+)\}', lambda m: values[m.group(1)], header)
+    """wg0.conf as the node has it: the header the wireguard role writes, the peers backend wg.apply writes."""
+    with tempfile.TemporaryDirectory() as directory:
+        (Path(directory) / 'server.priv').write_text(SERVER + '\n')
+        done = vpn_roles.wg_identity(directory, stub=f'wg() {{ cat >/dev/null; echo {SERVER}; }}\n')
+        assert not done.returncode, done.stderr
+        header = (Path(directory) / 'wg0.conf').read_text()
     module('contract')
     peers = [{'key': key, 'preshared_key': psk, 'ip': ip} for _, _, key, psk, ip in DEVICES]
     with tempfile.TemporaryDirectory() as directory:

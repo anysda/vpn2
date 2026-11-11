@@ -12,6 +12,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+import vpn_roles
 from wg_root import as_root
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -63,7 +64,7 @@ def bash(script, directory):
 
 # Stub of wg: pubkey of an empty key fails, genkey gives a key the host never had.
 WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
-           '  local key; key=$(cat); [[ -n $key ]] || return 1; echo "pub-$key"; }\n')
+           '  local key; key=$(cat); [[ -n $key ]] || return 1; echo ' + FRESH + '; }\n')
 
 
 def pairs(text):
@@ -104,15 +105,12 @@ def verify_syncconf_body(style):
 
 
 def wireguard_rerun(style):
-    """28-wireguard.sh wireguard_keys_build on a host that has only wg0.conf."""
-    script = source('infra/scripts/28-wireguard.sh')
-    block = cut(script, 'wireguard_keys_build() {', '\n}\n') + '\n}\n'
+    """The wireguard role's wg-identity step on a host that has only wg0.conf."""
     with tempfile.TemporaryDirectory() as directory:
         etc = Path(directory) / 'etc-wireguard'
         (etc / 'keys').mkdir(parents=True)
         (etc / 'wg0.conf').write_text(conf(style))
-        result = bash(WG_STUB + block.replace('/etc/wireguard', str(etc)) +
-                      f'wireguard_keys_build {etc}/keys\n', directory)
+        result = vpn_roles.wg_identity(etc, stub=WG_STUB)
         priv = etc / 'keys/server.priv'
         return result.returncode, priv.read_text().strip() if priv.exists() else None, result.stderr
 

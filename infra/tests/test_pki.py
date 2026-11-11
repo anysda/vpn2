@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import unittest
 
+import vpn_roles
+
 
 ROOT = Path(os.environ.get("VPN2_TEST_ROOT", Path(__file__).resolve().parents[2]))
 WRAPPER = """#!/usr/bin/python3
@@ -61,14 +63,17 @@ class PkiTests(unittest.TestCase):
         self.env["PKI_MARKER"] = str(self.base / "fault-reached")
 
     def stage(self, protocol, fault="", mode="before"):
-        names = {"ike": "27-ikev2", "wg": "28-wireguard", "ovpn": "29-openvpn"}
+        if protocol == "wg":
+            target = self.base / protocol
+            target.mkdir(exist_ok=True)
+            result = vpn_roles.wg_identity(target, env=dict(self.env, PKI_FAIL=fault, PKI_FAIL_MODE=mode))
+            result.stdout += result.stderr
+            return result
+        names = {"ike": "27-ikev2", "ovpn": "29-openvpn"}
         body = (ROOT / "infra/scripts" / f"{names[protocol]}.sh").read_text()
         if protocol == "ike":
             body = body.split('  echo "[$HOST_TAG] [2/8] self-signed CA"', 1)[1]
             body = body.split('  install -m 644 "$PKI/ca.crt"', 1)[0]
-        elif protocol == "wg":
-            body = body.split('echo "[$HOST_TAG] [2/5] server keys"', 1)[1]
-            body = body.split("# ULA fast-fail:", 1)[0]
         else:
             body = body.split("# ── 2. openssl.cnf", 1)[1].split("\n", 1)[1]
             body = body.split("# ── 4. server.conf", 1)[0]
@@ -76,7 +81,6 @@ class PkiTests(unittest.TestCase):
         target.mkdir(exist_ok=True)
         if protocol == "ovpn":
             (target / "newcerts").mkdir(exist_ok=True)
-        body = body.replace("/etc/wireguard", str(target))
         body = body.replace("/etc/openvpn/server/pki", str(target))
         lib = ROOT / "infra/lib/anysda-pki.sh"
         prelude = f"source {shlex.quote(str(lib))}\n" if lib.exists() else ""
@@ -114,7 +118,7 @@ class PkiTests(unittest.TestCase):
                                              "pki:--self", "pki:--pub", "pki:--issue", "python3:-"))
 
     def test_failed_generation_retry_wg(self):
-        self.failed_generation_retry("wg", ("wg:genkey", "wg:pubkey", "python3:-"))
+        self.failed_generation_retry("wg", ("wg:genkey", "wg:pubkey"))
 
     def test_failed_generation_retry_ovpn(self):
         self.failed_generation_retry("ovpn", ("openssl:genpkey:ca.key", "openssl:genpkey:server.key",

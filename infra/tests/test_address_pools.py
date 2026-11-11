@@ -9,6 +9,8 @@ import unittest
 from adguard_support import Hub
 from router_support import exit_cert
 from test_deploy import ROOT, bash, source
+from test_ufw_reconcile import FAKE_UFW
+import vpn_roles
 
 
 class AddressPoolTests(unittest.TestCase):
@@ -64,8 +66,7 @@ class AddressPoolTests(unittest.TestCase):
         self.assertIn('push "$DEPLOY_ROOT/../app/shared/vpn-pools.json" || return', source('infra/deploy.sh'))
 
     def test_wireguard_routes_on_start(self):
-        stage = source('infra/scripts/28-wireguard.sh')
-        routing = stage.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+        routing = vpn_roles.routing('28-wireguard')
         with tempfile.TemporaryDirectory() as directory:
             routing = routing.replace('/run/anysda-vpn-routing.lock', directory + '/routing.lock')
             result = bash(f'source "{ROOT}/infra/lib/anysda-svc.sh"\n' + '''
@@ -115,7 +116,7 @@ OVPN_DIR=$PWD
 
     def test_dns_firewall_and_adguard_cover_every_subnet(self):
         pools = json.loads(source('app/shared/vpn-pools.json'))
-        for key, filename, variable in [('wg', '28-wireguard', 'WG_SUBNETS'), ('ovpn', '29-openvpn', 'OVPN_SUBNETS'), ('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
+        for key, filename, variable in [('ovpn', '29-openvpn', 'OVPN_SUBNETS'), ('ikev2', '27-ikev2', 'IKEV2_SUBNETS')]:
             stage = source(f'infra/scripts/{filename}.sh')
             loop = next(line for line in stage.splitlines() if line.startswith('ufw_sync_dns '))
             with tempfile.TemporaryDirectory() as directory:
@@ -133,6 +134,16 @@ ufw_sync_rules() {
                 for cidr in pools[key]['subnets']:
                     for protocol in ('tcp', 'udp'):
                         self.assertIn(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53', rules)
+        for key, role in [('wg', 'wireguard')]:
+            defaults = vpn_roles.role_defaults(role)
+            self.assertIn(f'{role}_subnets: "{{{{ {role}_pools.{key}.subnets }}}}"', defaults)
+            self.assertIn(f"{role}_infra ~ '/../app/shared/vpn-pools.json'", defaults)
+            values = {f'{role}_port': '1', f'{role}_dns': '10.99.0.1', f'{role}_subnets': pools[key]['subnets']}
+            rules = [' '.join(rule) for rule in vpn_roles.ufw_apply(vpn_roles.ufw_groups(role, values), [], FAKE_UFW)]
+            for cidr in pools[key]['subnets']:
+                for protocol in ('tcp', 'udp'):
+                    self.assertTrue(any(rule.startswith(f'allow proto {protocol} from {cidr} to 10.99.0.1 port 53 ')
+                                        for rule in rules), (cidr, protocol))
         with tempfile.TemporaryDirectory() as directory:
             hub = Hub(directory)
             hub.config.write_text('users: []\ndns:\n  aaaa_disabled: true\n  ratelimit_whitelist: [203.0.113.1]\n')

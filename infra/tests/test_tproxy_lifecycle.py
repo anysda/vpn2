@@ -3,6 +3,8 @@ import subprocess
 import sys
 import unittest
 
+import vpn_roles
+
 from router_support import ROOT, SB
 
 
@@ -24,8 +26,7 @@ class TproxyLifecycleTests(unittest.TestCase):
     def test_wireguard_stop_preserves_openvpn_routing(self):
         functions = []
         for stage, name in [('28-wireguard', 'wg'), ('29-openvpn', 'ovpn')]:
-            source = (ROOT / f'infra/scripts/{stage}.sh').read_text()
-            routing = source.split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+            routing = vpn_roles.routing(stage)
             functions.append(f'{name}() {{ bash -s -- "$1" <<\'ROUTING\'\n{routing}\nROUTING\n}}')
         shell = '\n'.join(functions) + '''
 set -euo pipefail

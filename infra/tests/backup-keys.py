@@ -144,10 +144,10 @@ class BackupRestore(unittest.TestCase):
         self.assertTrue(Path('/test-panel-started').exists(), Path('/test-panel.log').read_text())
         panel = run('node', '/repo/infra/tests/backup-panel.mjs', str(ROOT))
         print(panel.stdout.strip(), flush=True)
-        result = run('bash', str(ROOT / 'infra/scripts/28-wireguard.sh'),
-                     '/opt/anysda-vpn2/infra/envs/all.env', check=False)
+        # Шаг роли wireguard после восстановления: ключ сервера остаётся прежним.
+        result = run('env', f'PYTHONPATH={ROOT}/infra/vpn2/src', 'python3', '-B', '-m', 'vpn2.cli.host',
+                     'wg-identity', '--port', '51820', '--address', '10.66.66.1', check=False)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('28-wireguard done', result.stdout)
         self.assertEqual((WG / 'server.pub').read_bytes(), original[WG / 'server.pub'])
         self.assertEqual(run('wg', 'pubkey', input_text=(WG / 'server.priv').read_text()).stdout.encode(),
                          original[WG / 'server.pub'])
@@ -157,7 +157,7 @@ class BackupRestore(unittest.TestCase):
             run('openssl', 'verify', '-CAfile', str(pki / 'ca.crt'), str(pki / 'server.crt'))
             print(f'{pki}: ' + run('openssl', 'x509', '-in', str(pki / 'ca.crt'),
                                    '-noout', '-fingerprint', '-sha256').stdout.strip())
-        print('PASS: WG keypair + stage 28; OpenVPN CA/server/tls-crypt; IKEv2 CA/server/swanctl', flush=True)
+        print('PASS: WG keypair + роль wireguard; OpenVPN CA/server/tls-crypt; IKEv2 CA/server/swanctl', flush=True)
 
     def test_deployed_host(self):
         self.roundtrip(ROOT)

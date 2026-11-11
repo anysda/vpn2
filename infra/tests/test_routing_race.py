@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_deploy import source
+import vpn_roles
 
 
 class RoutingRaceTests(unittest.TestCase):
@@ -29,7 +29,7 @@ fi
             env = dict(os.environ, PATH=f'{root}:{os.environ["PATH"]}', RULES=str(root / 'rules'),
                        WG_SUBNETS='10.66.66.0/24')
             for stage in ('28-wireguard', '29-openvpn'):
-                routing = source(f'infra/scripts/{stage}.sh').split("<<'IPTSEOF'\n", 1)[1].split('\nIPTSEOF', 1)[0]
+                routing = vpn_roles.routing(stage)
                 routing = routing.replace('/run/anysda-vpn-routing.lock', str(root / 'routing.lock'))
                 script = 'iptables() { return 0; }\nip6tables() { [[ $1 != -C ]]; }\n' + routing
                 processes.append(subprocess.Popen(['bash', '-c', script], env=env,

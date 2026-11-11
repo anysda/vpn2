@@ -6,8 +6,20 @@ import { clients, devices } from '../database/schema'
 import { currentAccessByClient, latestAccess } from './access-operations'
 import { clientStatus } from './client-status'
 import { clientsNewestFirst, devicesOldestFirst } from './list-order'
+import { deviceConfigName } from './naming'
 
 const UNCONFIRMED = 'Состояние не подтверждено'
+
+/** Девайс в карточке клиента: общие поля панели и бота. */
+export function deviceView(client: { name: string }, d: typeof devices.$inferSelect) {
+  return {
+    id: d.id,
+    name: d.name,
+    configName: deviceConfigName(client.name, d.name, d.id),
+    hasWg: !!(d.wgPrivateKey && d.wgPublicKey && d.wgIp),
+    hasOvpn: !!(d.ovpnCert && d.ovpnKey),
+  }
+}
 
 /** Список клиентов для панели; бот берёт из него свои поля. */
 export async function clientList() {

@@ -16,7 +16,9 @@ vi.mock('./bot-api', () => ({
   clientByChat: async () => ({ id: 5 }),
   botClientView: async (id: number) => ({ id }),
 }))
-vi.mock('./client-ops', () => ({ createClient: calls.createClient, updateClient: calls.updateClient }))
+vi.mock('./client-ops', async importOriginal => ({
+  ...await importOriginal<typeof import('./client-ops')>(), createClient: calls.createClient, updateClient: calls.updateClient,
+}))
 vi.mock('./events', () => ({ BOT_ACTOR: 'bot' }))
 vi.mock('./access-operations', () => ({ accessRequestKey: () => 'key', enqueueAccess: calls.enqueueAccess }))
 vi.mock('./create-device', () => ({
@@ -42,11 +44,14 @@ vi.stubGlobal('setResponseStatus', (event: Event, status: number) => { event.sta
 vi.stubGlobal('useRuntimeConfig', () => ({ wgEnabled: true, ovpnEnabled: true }))
 vi.stubGlobal('useLogger', () => ({ error: calls.logged }))
 
-const route = async (path: string) => (await import(path)).default as Handler
-const createClientRoute = () => route('../api/bot/admin/clients/index.post')
-const patchClientRoute = () => route('../api/bot/admin/clients/[id].patch')
-const createDeviceRoute = () => route('../api/bot/devices/index.post')
-const deleteDeviceRoute = () => route('../api/bot/devices/[deviceId].delete')
+const table = async (name: 'clients' | 'devices', key: string) => {
+  const module = name === 'clients' ? await import('../resources/clients') : await import('../resources/devices')
+  return (module.default as unknown as Record<string, Handler>)[key]!
+}
+const createClientRoute = () => table('clients', 'POST /bot/admin/clients')
+const patchClientRoute = () => table('clients', 'PATCH /bot/admin/clients/:id')
+const createDeviceRoute = () => table('devices', 'POST /bot/devices')
+const deleteDeviceRoute = () => table('devices', 'DELETE /bot/devices/:deviceId')
 
 async function failure(run: Promise<unknown>) {
   const error = await run.then(() => null, (e: unknown) => e as { statusCode: number, statusMessage: string, message: string })

@@ -1,11 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auth, calls, dbRows, fakeEvent, fetchMock, installStubs, rejection, stubError } from '../test/stubs'
-import botWgConfig from '../api/bot/devices/[deviceId]/wg-config.get'
-import botWgQrPng from '../api/bot/devices/[deviceId]/wg-qrcode.png.get'
-import adminWgConfig from '../api/clients/[id]/devices/[deviceId]/wg-config.get'
-import adminWgQrPng from '../api/clients/[id]/devices/[deviceId]/wg-qrcode.png.get'
-import adminWgQrSvg from '../api/clients/[id]/devices/[deviceId]/wg-qrcode.svg.get'
-import sendWgToTg from '../api/clients/[id]/devices/[deviceId]/send-wg-to-tg.post'
+import devices from '../resources/devices'
 import { deviceConfigName } from './naming'
 import { qrPng, qrSvg } from './qr'
 
@@ -13,6 +8,13 @@ const wg = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).defineEventHandler = (handler: unknown) => handler
   return { keysReady: true, syncFails: false, params: undefined as unknown }
 })
+
+const botWgConfig = devices['GET /bot/devices/:deviceId/wg-config']
+const botWgQrPng = devices['GET /bot/devices/:deviceId/wg-qrcode.png']
+const adminWgConfig = devices['GET /clients/:id/devices/:deviceId/wg-config']
+const adminWgQrPng = devices['GET /clients/:id/devices/:deviceId/wg-qrcode.png']
+const adminWgQrSvg = devices['GET /clients/:id/devices/:deviceId/wg-qrcode.svg']
+const sendWgToTg = devices['POST /clients/:id/devices/:deviceId/send-wg-to-tg']
 
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)

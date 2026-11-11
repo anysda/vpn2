@@ -15,7 +15,7 @@ import { syncRoutesFile } from './routes-sync'
 import { accessAdapter } from './access-adapter'
 import { collectTraffic } from './traffic-collector'
 import { syncClientPrefsFile } from './client-prefs'
-import routeCheck from '../api/routes/check.get'
+import routes from '../resources/routes'
 
 vi.hoisted(() => vi.stubGlobal('defineEventHandler', (h: unknown) => h))
 
@@ -27,6 +27,8 @@ interface Example { method: string, params: Record<string, unknown>, result: unk
 const serverDir = fileURLToPath(new URL('..', import.meta.url))
 const examples: Example[] = JSON.parse(readFileSync(
   fileURLToPath(new URL('../../../infra/tests/fixtures/control/panel-calls.json', import.meta.url)), 'utf8'))
+
+const routeCheck = routes['GET /routes/check']
 
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,

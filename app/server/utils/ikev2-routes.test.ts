@@ -20,8 +20,8 @@ const info = {
   server: '203.0.113.7', remoteId: '203.0.113.7', username: 'anna-phone', password: 'P4ss',
   caCertPem: 'CA', certificatePending: false,
 }
-const { default: credentials } = await import('../api/clients/[id]/devices/[deviceId]/ikev2-credentials.get')
-const { default: sendIkev2 } = await import('../api/clients/[id]/devices/[deviceId]/send-ikev2-to-tg.post')
+const credentials = (await import('../resources/devices')).default['GET /clients/:id/devices/:deviceId/ikev2-credentials']
+const sendIkev2 = (await import('../resources/devices')).default['POST /clients/:id/devices/:deviceId/send-ikev2-to-tg']
 
 type Handler = (event: never) => Promise<unknown>
 const config = { tgbotSecret: 's3', tgbotEventPort: 9000, wgPublicHost: '' }

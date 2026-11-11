@@ -4,7 +4,7 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
 import { devicesOldestFirst } from './list-order'
-import { deviceConfigName } from './naming'
+import { deviceView } from './client-view'
 import { latestAccess } from './access-operations'
 import { accessStatus } from '../../shared/access-operation'
 
@@ -67,12 +67,6 @@ export async function botClientView(clientId: number) {
     name: c.name,
     deviceLimit: c.deviceLimit,
     expiresAt: c.expiresAt,
-    devices: devRows.map(d => ({
-      id: d.id,
-      name: d.name,
-      configName: deviceConfigName(c.name, d.name, d.id),
-      hasWg: !!(d.wgPrivateKey && d.wgPublicKey && d.wgIp),
-      hasOvpn: !!(d.ovpnCert && d.ovpnKey),
-    })),
+    devices: devRows.map(d => deviceView(c, d)),
   }
 }

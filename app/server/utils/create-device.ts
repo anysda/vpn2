@@ -8,8 +8,6 @@ import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
 import { ensureDeviceOvpn } from './openvpn'
 import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
 
-/** Строки журнала при сбое шагов выдачи: у бота и панели свои. */
-export interface ProvisionLog { wg: string, ovpn: string, ikev2: string, wgSync: string, ikev2Sync: string }
 
 /** Ключ идемпотентности создания из заголовка idempotency-key; hash - отпечаток тела: тот же ключ с другим запросом отклоняется. */
 export function deviceRequestKey(event: H3Event, request: Record<string, unknown>) {
@@ -77,11 +75,11 @@ export async function createDeviceWithAddresses(
 }
 
 /** Ключи нового устройства и синхронизация протоколов. Сбой шага пишется в журнал и не прерывает остальные. */
-export async function provisionDeviceKeys(deviceId: number, ovpnReady: boolean, log: ProvisionLog) {
-  const logged = (message: string) => (err: unknown) => { useLogger().error({ err }, message) }
-  if (useRuntimeConfig().wgEnabled) await ensureDeviceWg(deviceId).catch(logged(log.wg))
-  if (ovpnReady) await ensureDeviceOvpn(deviceId).catch(logged(log.ovpn))
-  await ensureDeviceIkev2(deviceId).catch(logged(log.ikev2))
-  await syncWireguardConfig().catch(logged(log.wgSync))
-  await syncIkev2().catch(logged(log.ikev2Sync))
+export async function provisionDeviceKeys(deviceId: number, ovpnReady: boolean) {
+  const logged = (step: string) => (err: unknown) => { useLogger().error({ err, deviceId }, `new device: ${step} failed`) }
+  if (useRuntimeConfig().wgEnabled) await ensureDeviceWg(deviceId).catch(logged('wg keys'))
+  if (ovpnReady) await ensureDeviceOvpn(deviceId).catch(logged('ovpn certificate'))
+  await ensureDeviceIkev2(deviceId).catch(logged('ikev2 credentials'))
+  await syncWireguardConfig().catch(logged('wg sync'))
+  await syncIkev2().catch(logged('ikev2 sync'))
 }

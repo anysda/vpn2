@@ -1,4 +1,5 @@
 import { and, count, eq, ne, notExists, sql } from 'drizzle-orm'
+import { z } from 'zod'
 import { useDb } from '../database/client'
 import type { Client } from '../database/schema'
 import { clients, devices } from '../database/schema'
@@ -14,21 +15,23 @@ import { plural } from '../../shared/plural'
 
 /** Операции над клиентами, общие для панели и бота: проверки, запись, уведомления клиенту в Telegram. */
 
-export interface ClientPatch {
-  name?: string
-  expiresAt?: string | null
-  deviceLimit?: number | null
-  frozenManual?: boolean
-  /** Тег узла экзита или null - «авто». */
-  preferredExit?: string | null
+const Name = z.string().trim().min(1).max(64)
+const Limits = {
+  expiresAt: z.iso.datetime().nullable().optional(),
+  // null — безлимит.
+  deviceLimit: z.number().int().min(1).max(999).nullable().optional(),
 }
-
-export interface ClientCreateInput {
-  name: string
-  filterTraffic?: boolean
-  expiresAt?: string | null
-  deviceLimit?: number | null
-}
+/** Создание клиента: девайсы добавляются потом, пароль генерируется автоматически. */
+export const ClientCreate = z.object({ name: Name, filterTraffic: z.boolean().optional(), ...Limits })
+export const ClientPatch = z.object({
+  name: Name.optional(),
+  ...Limits,
+  frozenManual: z.boolean().optional(),
+  // тег узла экзита (hy2-<тег>-direct должен существовать) или null — авто
+  preferredExit: z.string().regex(/^[a-z0-9-]{1,32}$/).nullable().optional(),
+})
+export type ClientCreateInput = z.infer<typeof ClientCreate>
+export type ClientPatch = z.infer<typeof ClientPatch>
 
 /** Сообщение 409 при лимите ниже числа устройств. */
 export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
@@ -168,11 +171,3 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   return { ...row, ...(queued ? { operation: queued.operation } : {}), ...(warning ? { warning } : {}) }
 }
 
-/** Удаление клиента и устройства идёт операцией доступа: сбой CA оставляет запись для повтора. */
-export async function deleteClient(id: number, actor: string, key?: string) {
-  return { operation: (await enqueueAccess({ clientId: id, kind: 'delete', actor, key })).operation }
-}
-
-export async function deleteDevice(clientId: number, deviceId: number, actor: string, key?: string) {
-  return { operation: (await enqueueAccess({ clientId, deviceId, kind: 'delete', actor, key })).operation }
-}

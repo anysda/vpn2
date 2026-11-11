@@ -13,7 +13,7 @@ vi.mock('../utils/validate', () => ({
 }))
 vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
 
-const handler = (await import('../api/bot/events.post')).default as unknown as (event: unknown) => Promise<unknown>
+const handler = (await import('../resources/settings')).default['POST /bot/events'] as unknown as (event: unknown) => Promise<unknown>
 
 beforeEach(() => {
   installStubs()

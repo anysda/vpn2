@@ -16,9 +16,9 @@ vi.mock('./openvpn', async () => {
   }
 })
 
-const { default: botConfig } = await import('../api/bot/devices/[deviceId]/ovpn-config.get')
-const { default: adminConfig } = await import('../api/clients/[id]/devices/[deviceId]/ovpn-config.get')
-const { default: sendOvpn } = await import('../api/clients/[id]/devices/[deviceId]/send-ovpn-to-tg.post')
+const botConfig = (await import('../resources/devices')).default['GET /bot/devices/:deviceId/ovpn-config']
+const adminConfig = (await import('../resources/devices')).default['GET /clients/:id/devices/:deviceId/ovpn-config']
+const sendOvpn = (await import('../resources/devices')).default['POST /clients/:id/devices/:deviceId/send-ovpn-to-tg']
 
 type Handler = (event: never) => Promise<unknown>
 const config = {

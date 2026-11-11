@@ -29,7 +29,8 @@ const steps = {
   wgSync: vi.mocked(syncWireguardConfig),
   ikev2Sync: vi.mocked(syncIkev2),
 }
-const log = { wg: 'L-wg', ovpn: 'L-ovpn', ikev2: 'L-ikev2', wgSync: 'L-wgSync', ikev2Sync: 'L-ikev2Sync' }
+const log = { wg: 'wg keys', ovpn: 'ovpn certificate', ikev2: 'ikev2 credentials', wgSync: 'wg sync', ikev2Sync: 'ikev2 sync' }
+const allLogged = Object.values(log).map(step => `new device: ${step} failed`)
 const logged: string[] = []
 
 beforeEach(() => {
@@ -51,55 +52,49 @@ function failStep(name: keyof typeof steps) {
 
 describe('provisionDeviceKeys', () => {
   it('порядок: ключи wg, ovpn, ikev2, затем сверка wg и ikev2', async () => {
-    await provisionDeviceKeys(5, true, log)
+    await provisionDeviceKeys(5, true)
     expect(calls).toEqual(['wg:5', 'ovpn:5', 'ikev2:5', 'wgSync', 'ikev2Sync'])
     expect(logged).toEqual([])
   })
 
   it('ovpnReady false - ключ OpenVPN не выдаётся, остальное как обычно', async () => {
-    await provisionDeviceKeys(5, false, log)
+    await provisionDeviceKeys(5, false)
     expect(calls).toEqual(['wg:5', 'ikev2:5', 'wgSync', 'ikev2Sync'])
   })
 
   it('wgEnabled выключен - ключ WireGuard не выдаётся, сверка wg идёт', async () => {
     installStubs({ wgEnabled: false })
-    await provisionDeviceKeys(5, true, log)
+    await provisionDeviceKeys(5, true)
     expect(calls).toEqual(['ovpn:5', 'ikev2:5', 'wgSync', 'ikev2Sync'])
   })
 
   it.each(Object.keys(steps) as (keyof typeof steps)[])('сбой шага %s - в журнал своей строкой, остальные шаги идут', async (name) => {
     failStep(name)
-    await provisionDeviceKeys(5, true, log)
+    await provisionDeviceKeys(5, true)
     expect(calls).toHaveLength(5)
     expect(calls).toContain(`${name}!`)
-    expect(logged).toEqual([log[name]])
+    expect(logged).toEqual([`new device: ${log[name]} failed`])
   })
 })
 
 const allFail = () => (Object.keys(steps) as (keyof typeof steps)[]).forEach(failStep)
 
-describe('маршруты создания отдают свои строки журнала', () => {
+describe('маршруты создания переживают сбой выдачи ключей', () => {
   it('бот', async () => {
-    const { default: route } = await import('../api/bot/devices/index.post')
+    const route = (await import('../resources/devices')).default['POST /bot/devices']
     dbRows.clients = [{ id: 7, tgChatId: 42 }]
     allFail()
     expect(await route({ body: { chatId: 42, name: 'phone' } } as never)).toBe('view')
-    expect(logged).toEqual([
-      'bot: ensureDeviceWg failed', 'bot: ensureDeviceOvpn failed', 'bot: ensureDeviceIkev2 failed',
-      'bot: wg sync failed', 'bot: ikev2 sync failed',
-    ])
+    expect(logged).toEqual(allLogged)
   })
 
   it('панель - и сверка настроек клиента после выдачи', async () => {
-    const { default: route } = await import('../api/clients/[id]/devices/index.post')
+    const route = (await import('../resources/devices')).default['POST /clients/:id/devices']
     dbRows.clients = [{ id: 7, name: 'Анна', tgChatId: null }]
     allFail()
     const event = Object.assign(fakeEvent({ id: '7' }) as object, { body: { name: 'phone' } })
     expect(await route(event as never)).toEqual({ id: 5, clientId: 7, name: 'phone', createdAt: 1 })
-    expect(logged).toEqual([
-      'ensureDeviceWg on add failed', 'ensureDeviceOvpn on add failed', 'ensureDeviceIkev2 on add failed',
-      'wg sync after device add failed', 'ikev2 sync after device add failed',
-    ])
+    expect(logged).toEqual(allLogged)
     expect(calls.at(-1)).toBe('prefs')
   })
 })

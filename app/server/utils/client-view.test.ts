@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { auth, calls, dbResults, fakeEvent, installStubs, rejection, stubError } from '../test/stubs'
-import adminList from '../api/clients/index.get'
-import adminCard from '../api/clients/[id].get'
-import botList from '../api/bot/admin/clients/index.get'
-import botCard from '../api/bot/admin/clients/[id].get'
+import clients from '../resources/clients'
 import { deviceConfigName } from './naming'
 
 const access = vi.hoisted(() => {
   (globalThis as Record<string, unknown>).defineEventHandler = (handler: unknown) => handler
   return { byClient: new Map<number, unknown>(), latest: null as unknown }
 })
+
+const adminList = clients['GET /clients']
+const adminCard = clients['GET /clients/:id']
+const botList = clients['GET /bot/admin/clients']
+const botCard = clients['GET /bot/admin/clients/:id']
 
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
@@ -80,8 +82,8 @@ describe('карточка клиента: поля и их порядок у а
       operation, deleting: false, id: 7, name: 'Anna', filterTraffic: true, expiresAt: anna.expiresAt, deviceLimit: 3, frozenManual: false,
       createdAt: created, status: 'active', tgLinked: true, tgUsername: 'anna', preferredExit: 'fra', rxTotal: 105, txTotal: 206,
       devices: [
-        { id: 12, name: 'laptop', configName: deviceConfigName('Anna', 'laptop', 12), createdAt: created, rxTotal: 100, txTotal: 200, hasWg: true, hasOvpn: false },
-        { id: 13, name: 'phone', configName: deviceConfigName('Anna', 'phone', 13), createdAt: created, rxTotal: 5, txTotal: 6, hasWg: false, hasOvpn: true },
+        { id: 12, name: 'laptop', configName: deviceConfigName('Anna', 'laptop', 12), hasWg: true, hasOvpn: false, createdAt: created, rxTotal: 100, txTotal: 200 },
+        { id: 13, name: 'phone', configName: deviceConfigName('Anna', 'phone', 13), hasWg: false, hasOvpn: true, createdAt: created, rxTotal: 5, txTotal: 6 },
       ],
     }))
   })

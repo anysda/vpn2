@@ -1435,22 +1435,41 @@ def transport_tick(proxies):
     # обнулять нечего.
     hy2_miss = [v[0] for s, v in deciders.items()
                 if s in on_tcp and delays[v[0]] is None and s in _hy2_since]
-    for _ in range(DEAD_AFTER - 1):
-        if not fresh and not tcp_dead and not hy2_miss:
+    # Пока идут до-проверки соседа, ответивший hy2 пробуем заодно: умер сразу
+    # после своей пробы - счёт его промахов идёт с этого же прохода, а не со
+    # следующего. Следим первые DEAD_AFTER - 1 пачек, дольше проход не растёт.
+    miss = dict.fromkeys(fresh, 1)
+    watch = [v[0] for s, v in deciders.items() if s not in on_tcp and delays[v[0]] is not None]
+    for n in range(2 * (DEAD_AFTER - 1)):
+        early = n < DEAD_AFTER - 1
+        fresh = [h for h in miss if miss[h] < DEAD_AFTER]
+        if not fresh and not (early and (tcp_dead or hy2_miss)):
             break
         time.sleep(CONFIRM_GAP)
         # TCP канала пробуем той же пачкой, что и до-проверку его hy2: решение
         # готово вместе с вердиктом по hy2, а не ещё через тайм-аут.
         tcp_try = [spare[h] for h in fresh if delays.get(spare[h]) is None]
-        again, _ = _probe_all(fresh + tcp_dead + hy2_miss + tcp_try, known_dead=set())
+        extra = watch + tcp_dead + hy2_miss if early else []
+        again, _ = _probe_all(fresh + extra + tcp_try, known_dead=set())
         for t in tcp_try:
             tries[t] = tries.get(t, 0) + 1
             delays[t] = again[t]
-        fresh = [h for h in fresh if again[h] is None]
+        for h in fresh:
+            if again[h] is None:
+                miss[h] += 1
+            else:
+                del miss[h]
+        if not early:
+            continue
+        for h in watch:
+            if again[h] is None:
+                miss[h] = 1
+                dead.append(h)
+        watch = [h for h in watch if again[h] is not None]
         tcp_dead = [t for t in tcp_dead if again[t] is None]
         delays.update({h: again[h] for h in hy2_miss if again[h] is not None})
         hy2_miss = [h for h in hy2_miss if again[h] is None]
-    dead = [h for h in dead if h in known or h in fresh]
+    dead = [h for h in dead if h in known or miss.get(h, 0) >= DEAD_AFTER]
     # hy2 мёртв, а TCP-проба промахнулась (warp через TCP шумит) - до-проверка
     # до DEAD_AFTER проб, иначе канал остаётся на мёртвом hy2.
     while True:

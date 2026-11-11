@@ -74,10 +74,50 @@ class SlowClash(tf.Clash):
 urllib = tf.urllib
 
 
-class TestUdpCutSwitchTime(unittest.TestCase):
+class MidPassClash(SlowClash):
+    """WARP-нога жива и отвечает медленнее direct. Обрыв падает внутрь прохода
+    проверки каналов: direct ответить успел, warp того же прохода - уже нет."""
+    WARP_S = 0.15
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.armed = False
+        self.cut_at = None
+
+    def alive(self, tag):
+        return tf.Clash.alive(self, tag)
+
+    def cut(self):
+        self.armed = True
+        deadline = time.monotonic() + 5
+        while self.cut_at is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return self.cut_at
+
+    def req(self, method, path, body=None, **kw):
+        if method == 'GET' and path.split('?')[0].endswith('/delay'):
+            name = urllib.parse.unquote(path.split('?')[0]).split('/')[2]
+            if name == f'transport-hy2-{NODE}-warp' and NODE in self.udp:
+                time.sleep(self.WARP_S)
+                if NODE not in self.udp:
+                    time.sleep(PROBE_S - self.WARP_S)
+                    raise urllib.error.HTTPError(path, 504, 'timeout', None, None)
+                return {'delay': int(self.WARP_S * 1000)}
+            if name == f'transport-hy2-{NODE}-direct' and self.armed and self.cut_at is None \
+                    and NODE in self.udp:
+                time.sleep(0.02)
+                self.udp.discard(NODE)
+                self.cut_at = time.monotonic()
+                return {'delay': 20}
+        return super().req(method, path, body, **kw)
+
+
+class SwitchTimeCase(unittest.TestCase):
+    CLASH = SlowClash
+
     def switch_time(self, w, warm):
         """Время от обрыва UDP до ухода direct на TCP; обрыв через warm с после старта."""
-        clash = SlowClash(tf.router_config((NODE,)))
+        clash = self.CLASH(tf.router_config((NODE,)))
         clock, out, restarts, events = StopTime(), io.StringIO(), [], []
         before = threading.active_count()
         with patch.object(w, '_req', clash.req), patch.object(w, 'time', clock), \
@@ -88,6 +128,7 @@ class TestUdpCutSwitchTime(unittest.TestCase):
             runner.start()
             time.sleep(warm)
             cut = clash.cut()
+            self.assertIsNotNone(cut, 'обрыв не случился\n' + out.getvalue()[-1500:])
             deadline = cut + 12 * PROBE_S
             tcp = f'transport-tcp-{NODE}-direct'
             while tcp not in clash.moved and time.monotonic() < deadline:
@@ -102,6 +143,8 @@ class TestUdpCutSwitchTime(unittest.TestCase):
         self.assertEqual(len([e for e in events if 'недоступен' in e[0]]), 1, events)
         return clash.moved[tcp] - cut, out.getvalue()
 
+
+class TestUdpCutSwitchTime(SwitchTimeCase):
     def test_dead_neighbour_and_other_passes_do_not_delay_the_switch(self):
         with tempfile.TemporaryDirectory() as tmp:
             w = fr.watchdog(tmp, **ENV)
@@ -112,6 +155,22 @@ class TestUdpCutSwitchTime(unittest.TestCase):
                     took, log = self.switch_time(fr.watchdog(tmp, **ENV), warm)
                     self.assertLessEqual(
                         took, limit, f'до ухода на TCP {took:.1f} с при пределе {limit:.1f} с\n' + log[-1500:])
+
+
+class TestUdpCutInsideChannelCheck(SwitchTimeCase):
+    """Обрыв между ответами direct и warp одного прохода: пока идут до-проверки
+    warp, direct не пробовали, и его смерть ждала следующего прохода - два
+    прохода подряд, на стенде 21,6 с вместо 10-14."""
+    CLASH = MidPassClash
+
+    def test_channel_dying_right_after_its_probe_is_seen_in_the_same_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            w = fr.watchdog(tmp, **ENV)
+            # Остаток первой пробы warp, затем DEAD_AFTER проб direct с паузами.
+            limit = PROBE_S + w.DEAD_AFTER * (PROBE_S + w.CONFIRM_GAP) + SLACK
+            took, log = self.switch_time(w, 3.0)
+            self.assertLessEqual(
+                took, limit, f'до ухода на TCP {took:.1f} с при пределе {limit:.1f} с\n' + log[-1500:])
 
 
 if __name__ == '__main__':

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Divert wg0 forwarded TCP+UDP into sing-box TPROXY on :7898 so WG clients
 # pick the same geoip routing as OpenVPN clients. Also: ULA fast-fail для
-# v6 (адрес fd66:66::1 на wg0): FORWARD ставится в DROP и v6 с wg0 отбивается
+# v6 (см. 28-wireguard.sh): FORWARD ставится в DROP и v6 с wg0 отбивается
 # REJECT, чтобы клиент получал icmp6-addr-unreachable, а не таймаут.
 set -euo pipefail
 ACTION=${1:-up}

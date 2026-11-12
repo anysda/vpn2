@@ -241,6 +241,8 @@ do_all() {
     [[ "$stage" != 20-ru-router ]] || verify_and_rotate_ports
   done 3< <(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages list --site "$DEPLOY_ROOT/ansible/site.yml")
   (( verify_rc != 1 )) || return 1
+  play "$DEPLOY_ROOT/ansible/site.yml" --tags old-layout -e verify_old_layout=true --limit "$(expand_hosts all | tr ' ' ',')" >/dev/null \
+    || warn 'остатки раскладки v1.1.5 не убраны: повтори ./deploy.sh'
   release_complete
   print_summary
   announce_deploy_done

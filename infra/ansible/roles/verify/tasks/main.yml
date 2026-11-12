@@ -32,3 +32,9 @@
     that: verify_run.rc in [0, 2]
     fail_msg: "verify: код {{ verify_run.rc }}"
     quiet: true
+
+# Отдельным запуском: deploy.sh зовёт его после зелёного 99-verify всех узлов.
+- name: Остатки раскладки v1.1.5
+  ansible.builtin.import_tasks: old-layout.yml
+  when: verify_old_layout | bool
+  tags: [old-layout]

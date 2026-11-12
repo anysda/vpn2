@@ -1,0 +1,23 @@
+---
+- name: Файлы и каталоги v1.1.5, которых нет в чистой установке
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ verify_old_layout_entry if verify_entry else verify_old_layout_exit }}"
+
+# Файл пишет и чистая установка, от v1.1.5 в нём остаются строки комментария.
+- name: Комментарии v1.1.5 в настройках пересылки
+  ansible.builtin.lineinfile:
+    path: /etc/sysctl.d/98-wg-forward.conf
+    regexp: '^#'
+    state: absent
+  when: verify_entry
+
+# Окружения скриптовых стадий v1.1.5 в checkout; ключи рядом нужны и чистой установке.
+- name: Окружения стадий v1.1.5 в checkout
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ query('fileglob', playbook_dir ~ '/../secrets/rendered/*.env') }}"
+  delegate_to: localhost
+  when: verify_entry

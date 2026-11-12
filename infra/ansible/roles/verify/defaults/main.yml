@@ -36,3 +36,21 @@ verify_env_all: "{{ verify_env_names + verify_env_insecure }}"
 # Незаданная переменная на узел не едет (в vpn2_env её нет): пустая строка - тоже значение.
 verify_environment: >-
   {{ vpn2_env | default({}) | dict2items | selectattr('key', 'in', verify_env_all) | items2dict }}
+
+# Что оставляет v1.1.5 и не создаёт чистая установка; сносится после зелёной проверки.
+verify_old_layout: false
+verify_old_layout_entry:
+  - /usr/local/sbin/anysda-apply-routes.py
+  - /usr/local/sbin/vpn2-entry-addrs
+  - /usr/local/lib/anysda/wg_conf.py
+  - /var/anysda/ikev2-clients.conf.sha256
+  - /var/anysda/ikev2-clients.state.json
+  - /var/lib/vpn2-apply/ikev2.good
+  - /var/lib/vpn2-apply/wg.good
+  - /var/lib/vpn2-deploy/deploy.lock
+  - /var/lib/vpn2-emergency/agent.json
+  - /var/lib/vpn2-emergency-sender/sender.lock
+verify_old_layout_exit:
+  - /var/lib/vpn2-emergency/snapshot-confirmed.json
+  - /var/lib/vpn2-emergency/snapshot.lock
+  - /var/lib/vpn2-emergency/web-tls

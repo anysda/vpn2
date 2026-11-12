@@ -6,3 +6,4 @@
 - {section: files, name: /var/lib/anysda-vpn2/db.sqlite, field: sha256, reason: пересозданная панель пишет в базу при старте}
 - {section: containers, name: anysda-vpn2, field: 'env:NUXT_PREVIOUS_NODE_HOSTS', reason: NUXT_PREVIOUS_NODE_HOSTS пуст при первой установке и заполняется со второго деплоя}
 - {section: files, name: /var/lib/vpn2-deploy/installed.json, field: '*', reason: запись об установленном выпуске - её пишет установка по манифесту и при деплое деревом её нет}
+- {section: files, name: '/etc/gshadow*', field: sha256, reason: группы выпуска созданы в другом порядке - строки файла идут иначе; имена и состав групп сверяет shape /etc/group}

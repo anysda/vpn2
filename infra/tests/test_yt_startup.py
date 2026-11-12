@@ -10,12 +10,13 @@ class StartupTests(unittest.TestCase):
     def test_conntrack_is_loaded_before_sysctl_and_at_boot(self):
         names = [task['name'] for task in tasks()]
         boot, load, apply = (names.index(name) for name in (
-            'Модуль conntrack при загрузке', 'Модуль conntrack загружен', 'Настройка conntrack применена'))
+            'Файлы десинка и видеопробы', 'Модуль conntrack загружен', 'Настройка conntrack применена'))
         self.assertLess(boot, apply)
         self.assertLess(load, apply)
         found = tasks()
-        self.assertEqual(found[boot]['ansible.builtin.copy']['content'], 'nf_conntrack\n')
-        self.assertEqual(found[boot]['ansible.builtin.copy']['dest'], '/etc/modules-load.d/anysda-yt-zapret.conf')
+        self.assertIn({'src': 'anysda-yt-zapret-modules.conf', 'dest': '/etc/modules-load.d/anysda-yt-zapret.conf'},
+                      found[boot]['loop'])
+        self.assertEqual(role_file('anysda-yt-zapret-modules.conf'), 'nf_conntrack\n')
         self.assertEqual(found[load]['ansible.builtin.command']['argv'], ['modprobe', 'nf_conntrack'])
         self.assertEqual(found[apply]['ansible.builtin.command']['argv'],
                          ['sysctl', '-p', '/etc/sysctl.d/97-anysda-yt-zapret.conf'])

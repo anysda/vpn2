@@ -24,13 +24,6 @@
     create_home: false
     shell: /usr/sbin/nologin
 
-# sysctl conntrack появляется только после modprobe; при загрузке modules-load идёт раньше systemd-sysctl.
-- name: Модуль conntrack при загрузке
-  ansible.builtin.copy:
-    content: "nf_conntrack\n"
-    dest: /etc/modules-load.d/anysda-yt-zapret.conf
-    mode: '0644'
-
 - name: Модуль conntrack загружен
   ansible.builtin.command:
     argv: [modprobe, nf_conntrack]
@@ -44,13 +37,15 @@
   loop: ["{{ zapret_units }}/nftables.service.d", "{{ zapret_units }}/sing-box.service.d", /var/lib/anysda]
 
 # nftables.service стирает ruleset при restart и reload: drop-in возвращает таблицы YouTube.
-# sing-box стартует после того, как nfqws2 занял свою очередь.
+# sing-box стартует после того, как nfqws2 занял свою очередь. sysctl conntrack появляется
+# только после modprobe; при загрузке modules-load идёт раньше systemd-sysctl.
 - name: Файлы десинка и видеопробы
   ansible.builtin.copy:
     src: "{{ item.src }}"
     dest: "{{ item.dest }}"
     mode: '0644'
   loop:
+    - {src: anysda-yt-zapret-modules.conf, dest: /etc/modules-load.d/anysda-yt-zapret.conf}
     - {src: 97-anysda-yt-zapret.conf, dest: /etc/sysctl.d/97-anysda-yt-zapret.conf}
     - {src: nftables-90-anysda-youtube.conf, dest: "{{ zapret_units }}/nftables.service.d/90-anysda-youtube.conf"}
     - {src: sing-box-90-anysda-youtube.conf, dest: "{{ zapret_units }}/sing-box.service.d/90-anysda-youtube.conf"}
@@ -82,23 +77,18 @@
     mode: '0644'
     validate: /usr/sbin/nft -c -f %s
 
+# Выключение TSO/GSO бьёт по скорости всей ноды: юнит офлоада только по youtube.offload: off.
 - name: Юниты и скрипты десинка
   ansible.builtin.template:
     src: "{{ item.src }}.j2"
     dest: "{{ item.dest }}"
     mode: "{{ item.mode | default('0644') }}"
-  loop:
-    - {src: anysda-yt-nfqws-ready, dest: /usr/local/sbin/anysda-yt-nfqws-ready, mode: '0755'}
-    - {src: anysda-yt-nfqws.service, dest: "{{ zapret_units }}/anysda-yt-nfqws.service"}
-    - {src: anysda-yt-check, dest: /usr/local/bin/anysda-yt-check, mode: '0755'}
-
-# Выключение TSO/GSO бьёт по скорости всей ноды: только по youtube.offload: off.
-- name: Юнит выключения офлоада
-  ansible.builtin.template:
-    src: anysda-yt-offload.service.j2
-    dest: "{{ zapret_units }}/anysda-yt-offload.service"
-    mode: '0644'
-  when: zapret_v.offload == 'off'
+  loop: >-
+    {{ [{'src': 'anysda-yt-nfqws-ready', 'dest': '/usr/local/sbin/anysda-yt-nfqws-ready', 'mode': '0755'},
+        {'src': 'anysda-yt-nfqws.service', 'dest': zapret_units ~ '/anysda-yt-nfqws.service'},
+        {'src': 'anysda-yt-check', 'dest': '/usr/local/bin/anysda-yt-check', 'mode': '0755'}]
+       + ([{'src': 'anysda-yt-offload.service', 'dest': zapret_units ~ '/anysda-yt-offload.service'}]
+          if zapret_v.offload == 'off' else []) }}
 
 - name: Офлоад оставлен как есть
   ansible.builtin.include_tasks: off.yml
@@ -112,7 +102,6 @@
     src: "{{ item.src }}"
     dest: "{{ item.dest }}"
     mode: "{{ item.mode | default('0644') }}"
-    force: "{{ item.force | default(true) }}"
   loop:
     - {src: anysda-yt-quic-refresh.sh, dest: /usr/local/sbin/anysda-yt-quic-refresh.sh, mode: '0755'}
     - {src: anysda-yt-quic.service, dest: "{{ zapret_units }}/anysda-yt-quic.service"}

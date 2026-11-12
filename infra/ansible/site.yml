@@ -60,9 +60,7 @@
 - name: VictoriaMetrics на entry
   hosts: entry
   tags: [25-monitoring]
-  roles:
-    - role: containers
-      containers_service: monitoring
+  roles: [{role: containers, containers_service: monitoring}]
 
 - name: Резервные копии entry
   hosts: entry
@@ -82,16 +80,12 @@
 - name: Телеграм-бот на entry
   hosts: entry
   tags: [35-telegram]
-  roles:
-    - role: containers
-      containers_service: telegram
+  roles: [{role: containers, containers_service: telegram}]
 
 - name: Панель и Caddy на entry
   hosts: entry
   tags: [30-frontend]
-  roles:
-    - role: containers
-      containers_service: panel
+  roles: [{role: containers, containers_service: panel}]
 
 - name: Проверка узла после деплоя
   hosts: all

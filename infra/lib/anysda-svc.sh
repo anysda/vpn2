@@ -20,10 +20,10 @@ svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
 # nftables.service не сбрасывает весь ruleset: в нём таблицы ufw, Docker, fail2ban.
 nftables_preserve_rules() {
-  local conf=/etc/nftables.conf
-  if [[ -f "$conf" ]] && grep -Eq '^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$' "$conf"; then
+  local conf=/etc/nftables.conf flush='^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$'
+  if [[ -f "$conf" ]] && grep -Eq "$flush" "$conf"; then
     [[ -e "$conf.before-vpn2" ]] || cp -a "$conf" "$conf.before-vpn2"
-    sed -i -E 's/^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$/# vpn2: preserve tables owned by ufw, routing, Docker and fail2ban/' "$conf"
+    sed -i -E "s/$flush/# vpn2: preserve tables owned by ufw, routing, Docker and fail2ban/" "$conf"
   fi
   mkdir -p /etc/systemd/system/nftables.service.d
   cat > /etc/systemd/system/nftables.service.d/10-anysda-preserve.conf <<'EOF'
@@ -59,15 +59,13 @@ svc_restart_if_changed() {
 svc_settle() {
   local sec=$1 i
   shift
-  if (( SVC_RESTARTED )); then
-    if (( $# )); then
-      for (( i = 0; i < sec * 5; i++ )); do
-        "$@" && break
-        sleep 0.2
-      done
-    else
-      sleep "$sec"
-    fi
+  if (( SVC_RESTARTED && $# )); then
+    for (( i = 0; i < sec * 5; i++ )); do
+      "$@" && break
+      sleep 0.2
+    done
+  elif (( SVC_RESTARTED )); then
+    sleep "$sec"
   fi
   SVC_RESTARTED=0
 }
@@ -254,13 +252,12 @@ DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io)
 # shellcheck disable=SC2034
 DOCKER_SKIP=(docker-ce-rootless-extras- docker-buildx-plugin- docker-compose-plugin-)
 docker_apt_source() {
-  local list=/etc/apt/sources.list.d/docker.list line distro codename release
-  release=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${VERSION_CODENAME:-}") || return
-  read -r distro codename <<<"$release"
-  case "$distro" in
-    debian|ubuntu) ;;
-    *) svc_say "Docker: неподдерживаемый ID в /etc/os-release: $distro" >&2; return 1 ;;
-  esac
+  local list=/etc/apt/sources.list.d/docker.list line distro codename
+  read -r distro codename < <(. /etc/os-release && echo "${ID:-} ${VERSION_CODENAME:-}")
+  if [[ "$distro" != @(debian|ubuntu) ]]; then
+    svc_say "Docker: неподдерживаемый ID в /etc/os-release: $distro" >&2
+    return 1
+  fi
   if [[ ! "$codename" =~ ^[a-z][a-z0-9-]*$ ]]; then
     svc_say "Docker: нет корректного VERSION_CODENAME в /etc/os-release" >&2
     return 1

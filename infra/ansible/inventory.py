@@ -148,9 +148,8 @@ def main(argv):
             cfg = load(path)
             if argv[0] == '--prepare':
                 return prepare(cfg, STATE_DIR, repo)
+            nodevars.validate(cfg)
             found = inventory(cfg, STATE_DIR, repo_root=repo)
-            if 'vpn2_env_error' in found['all'].get('vars', {}):
-                nodevars.validate(cfg)
             if argv[1:] and argv[1] not in found['_meta']['hostvars']:
                 sys.exit(f'ERROR: узла {argv[1]} нет в config.yaml')
             env = found['_meta']['hostvars'][argv[1]]['vpn2_env']

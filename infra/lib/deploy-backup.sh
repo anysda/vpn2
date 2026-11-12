@@ -18,9 +18,9 @@ do_backup() {
 # restore [<имя>|latest|<файл>] [--force] [--dry-run]: архив разворачивает anysda-restore.sh,
 # затем стадии пересобирают всё, что читает восстановленное (ключи и PKI стадии не трогают).
 do_restore() {
-  local archive=latest flags=() flag dir base stage
+  local archive=latest flags dir base stage
   if [[ -n "${1:-}" && "$1" != -* ]]; then archive=$1; shift; fi
-  for flag in "$@"; do [[ -z "$flag" ]] || flags+=("$flag"); done
+  flags=("$@")
   if [[ "$archive" != latest && -f "$archive" ]]; then
     base=$(basename "$archive")
     if [[ " ${flags[*]} " == *' --dry-run '* ]]; then
@@ -28,8 +28,7 @@ do_restore() {
       return 0
     fi
     dir=$(source /etc/anysda/backup.env 2>/dev/null; echo "${BACKUP_LOCAL_DIR:-/var/backups/anysda-vpn2}")
-    mkdir -p "$dir"
-    [[ "$archive" -ef "$dir/$base" ]] || install -m 600 "$archive" "$dir/$base"
+    [[ "$archive" -ef "$dir/$base" ]] || install -D -m 600 "$archive" "$dir/$base"
     archive=$base
   fi
   /usr/local/bin/anysda-restore.sh "$archive" "${flags[@]}" || return $?

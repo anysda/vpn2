@@ -34,7 +34,7 @@ install_prereqs() {
 # переживает пересоздание entry. Ключ entry для ssh на экзиты - отдельный.
 prep_keys() {
   local ssh=$HOME/.ssh cfg=$REPO/config.yaml out=$DEPLOY_ROOT/secrets/rendered src
-  mkdir -p "$ssh" "$out" && chmod 700 "$ssh" "$out"
+  install -d -m 700 "$ssh" "$out"
   if [[ ! -f "$ssh/id_ed25519" ]]; then
     log "keypair оркестратора отсутствует — генерю ed25519"
     ssh-keygen -t ed25519 -N '' -C 'anysda-orchestrator' -f "$ssh/id_ed25519" -q

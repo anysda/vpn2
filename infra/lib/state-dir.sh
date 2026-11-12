@@ -34,12 +34,9 @@ state_dir_migrate() {
     _state_move "$infra/.$name" "$VPN2_STATE_DIR/$name" || return 1
   done
   [[ ! -f "$VPN2_STATE_DIR/known_hosts" ]] || chmod 600 "$VPN2_STATE_DIR/known_hosts"
-  [[ -d "$infra/state" ]] || return 0
+  rm -f "$infra/state/deploy.lock"
   for src in "$infra/state"/* "$infra/state"/.[!.]*; do
-    [[ -f "$src" ]] || continue
-    name="${src##*/}"
-    if [[ "$name" == deploy.lock ]]; then rm -f "$src"; continue; fi
-    _state_move "$src" "$VPN2_STATE_DIR/$name" || return 1
+    [[ ! -f "$src" ]] || _state_move "$src" "$VPN2_STATE_DIR/${src##*/}" || return 1
   done
   rmdir "$infra/state" 2>/dev/null || true
 }

@@ -48,9 +48,7 @@ FRESH_LOGIN='-o ControlMaster=no -o ControlPath=none'
 export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_INFRA=$DEPLOY_ROOT VPN2_SOURCE_ROOT=$REPO VPN2_INVENTORY_SECRETS=show
 export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
 
-inventory() {
-  PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B "$DEPLOY_ROOT/ansible/inventory.py" "$@"
-}
+inventory() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B "$DEPLOY_ROOT/ansible/inventory.py" "$@"; }
 vpn2_module() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B -m "$@"; }
 
 # Переменные узлов из config.yaml на время запуска: ENVS/<узел>.env для source.
@@ -155,8 +153,7 @@ verify() {
     code='' text=''
     [[ ! -f "$VPN2_VERIFY_OUT/$host" ]] || { IFS= read -r code; text=$(cat); } < "$VPN2_VERIFY_OUT/$host"
     [[ -z "$text" ]] || printf '%s\n' "$text"
-    found=$(grep -E '^\[.*\] ⚠ WARP: ' <<<"$text" || true)
-    [[ -z "$found" ]] || mapfile -t -O "${#_DEPLOY_WARNINGS[@]}" _DEPLOY_WARNINGS <<<"$found"
+    mapfile -t -O "${#_DEPLOY_WARNINGS[@]}" _DEPLOY_WARNINGS < <(grep -E '^\[.*\] ⚠ WARP: ' <<<"$text" || true)
     if [[ $rc -eq 0 && "$code" == 2 ]]; then
       warn "[99-verify → $host] не все проверки измерены"
       found=$(grep -E '^\[.*\] \? .*не проверено:' <<<"$text" || true)

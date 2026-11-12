@@ -31,8 +31,6 @@ snapshot() {
     cp -a "$ETC/ufw" "$snap/ufw"
     [[ ! -f "$ETC/default/ufw" ]] || cp -a "$ETC/default/ufw" "$snap/default-ufw"
     if LC_ALL=C ufw status | grep -qx 'Status: active'; then touch "$snap/ufw-active"; fi
-  else
-    touch "$snap/no-ufw"
   fi
   for table in "${TABLES[@]}"; do
     file=$snap/nft-${table// /-}

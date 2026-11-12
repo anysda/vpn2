@@ -3,9 +3,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-case "${1:-}" in
-  -h|--help) exec "${REPO_ROOT}/infra/deploy.sh" "$@" ;;
-esac
+[[ "${1:-}" != @(-h|--help) ]] || exec "${REPO_ROOT}/infra/deploy.sh" "$@"
 
 if [[ -t 1 ]]; then R='\033[31m' E='\033[0m'; else R='' E=''; fi
 die() { printf '%b✗ %s%b\n' "$R" "$*" "$E" >&2; exit 1; }

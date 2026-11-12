@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091  # env узлов на время запуска: $ENVS/<узел>.env
 # Итог полного деплоя: рамка со стадиями и входом в панель, заметки и предупреждения.
 # Деплой идёт с entry, поэтому состояние entry читается с диска этой же машины.
 
 print_summary() {
   local timing url pass title row width=0 rows=()
   timing=$(elapsed "$_TOTAL_T0")
-  # shellcheck disable=SC1091
   source "$ENVS/ru.env"
   url="http://${SSH_HOST}/"
   [[ "$(cat /etc/vpn2/tls/panel/secure 2>/dev/null)" != true ]] || url="https://${ENTRY_HOST:-$SSH_HOST}/"
@@ -13,9 +13,8 @@ print_summary() {
   pass="ssh ${SSH_USER:-root}@${SSH_HOST} cat /etc/anysda/admin-password.txt"
   [[ -z "${ADMIN_PASSWORD:-}" ]] || pass='задан в config.yaml (admin.password)'
   title="  деплой завершён  ·  ${timing}  "
-  if [[ -n "${_VERIFY_WARNINGS[*]:-}${_DEPLOY_WARNINGS[*]:-}${SKIPPED_EXIT_TAGS:-}" ]]; then
-    title="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
-  fi
+  [[ -z "${_VERIFY_WARNINGS[*]:-}${_DEPLOY_WARNINGS[*]:-}${SKIPPED_EXIT_TAGS:-}" ]] \
+    || title="  ⚠ деплой завершён с предупреждениями  ·  ${timing}  "
   local LC_ALL=C.UTF-8
   mapfile -t rows < <(printf '%s\n' "${_STAGE_LOG[@]}" | column -t -s $'\t' | sed 's/^/  /')
   rows=("$title" - "${rows[@]}" - "  Panel:    $url" "  Login:    ${ADMIN_USER:-admin}" "  Password: $pass")
@@ -56,7 +55,6 @@ print_ikev2_notice() {
 }
 
 print_sso_notice() (
-  # shellcheck disable=SC1091
   source "$ENVS/ru.env"
   secret="${SSO_CLIENT_SECRET:-}"
   if [[ "${SSO_REQUESTED:-${SSO_ENABLED:-false}}" == true && -z "${secret//[[:space:]]/}" && ! -f /etc/anysda/sso-runtime.json ]]; then
@@ -68,7 +66,6 @@ print_sso_notice() (
 # стадия и панель: строка токена, чат строкой или числом).
 announce_deploy_done() (
   local runtime=/etc/anysda/telegram-runtime.json
-  # shellcheck disable=SC1091
   source "$ENVS/ru.env"
   if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
     grep -Eq '"bot_token": *"[^"]' "$runtime" 2>/dev/null && grep -Eq '"chat_id": *("[^"]|-?[1-9])' "$runtime" || exit 0

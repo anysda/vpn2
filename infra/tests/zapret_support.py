@@ -15,6 +15,8 @@ from vpn2.zapret import stage  # noqa: E402
 VALUES = {'mark': '256', 'queue': '200', 'base': '/opt/zapret2', 'bin': '/opt/zapret2/binaries/my/nfqws2',
           'strategy': '--lua-desync=wssize:wsize=1:scale=1 ' + stage.SPLIT, 'lua_init': ' --lua-init=@/x.lua',
           'wan': 'eth0', 'offload': 'keep', 'diag_uid': 42, 'diag_gid': 42, 'window_rules': ''}
+# Команда vpn2 скрипта проверки в тестах - пакет из дерева.
+VPN2_MOCK = f'vpn2() {{ PYTHONPATH={ROOT}/infra/vpn2/src {sys.executable} -m vpn2.cli "$@"; }}\n'
 
 
 def role_file(name):

@@ -7,10 +7,12 @@ YT_ZAPRET_QUEUE={{ zapret_v.queue_sh }}
 # A/B-проверка десинка YouTube на одном хосте: A - от диаг-пользователя (метка $YT_MARK,
 # десинк), B - от root без метки (контроль). Выход: 0 - путь живой; 1 - обход сломан; 2 - не измерено.
 set -uo pipefail
+# vpn2 - команда пакета из его venv.
+PATH=/opt/vpn2/venv/bin:$PATH
 HOST="${1:-https://www.youtube.com/}"
 TMO="${YT_CHECK_TIMEOUT:-15}"
 
-for tool in systemctl awk nft python3 setpriv curl date; do
+for tool in systemctl awk nft vpn2 setpriv curl date; do
   command -v "$tool" >/dev/null || { echo "UNKNOWN: нет утилиты $tool."; exit 2; }
 done
 
@@ -23,16 +25,7 @@ path_ready() {
     '$1 == q && $2 == p { found = 1 } END { exit !found }' /proc/net/netfilter/nfnetlink_queue
 }
 queued_packets() {
-  nft -j list table inet ytzapret | python3 -c '
-import json, sys
-queue = int(sys.argv[1])
-rules = [item["rule"]["expr"] for item in json.load(sys.stdin)["nftables"] if "rule" in item]
-counters = [expr["counter"]["packets"] for rule in rules
-            if any(expr.get("queue", {}).get("num") == queue for expr in rule)
-            for expr in rule if "counter" in expr]
-if not counters:
-    sys.exit(1)
-print(sum(counters))' "$YT_ZAPRET_QUEUE"
+  nft -j list table inet ytzapret | vpn2 zapret queued "$YT_ZAPRET_QUEUE"
 }
 if ! path_ready || ! before=$(queued_packets); then
   echo "FAIL: nft-правила или очередь nfqws2 не готовы."

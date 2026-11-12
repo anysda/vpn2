@@ -152,10 +152,6 @@ class EmergencyImageTests(unittest.TestCase):
         (fake / 'bin').mkdir()
         (fake / 'bin/docker').write_text(DOCKER)
         (fake / 'bin/docker').chmod(0o755)
-        (fake / 'venv/bin').mkdir(parents=True)
-        (fake / 'venv/bin/python').write_text(
-            f'#!/bin/sh\nPYTHONPATH={ROOT / "infra/vpn2/src"} exec {sys.executable} "$@"\n')
-        (fake / 'venv/bin/python').chmod(0o755)
         (fake / 'home').mkdir()
         (fake / 'state.json').write_text(json.dumps({'registry': {}, 'images': {}, 'containers': {}}))
         return fake
@@ -174,10 +170,10 @@ class EmergencyImageTests(unittest.TestCase):
             (layer / 'image.json').write_text(json.dumps({'version': 'dev', 'revision': version[:1] * 40}))
         env = {**os.environ, 'FAKE': str(fake), 'PATH': f"{fake / 'bin'}:{os.environ['PATH']}",
                'VPN2_DEVELOPMENT': 'true', 'FAKE_OFFLINE': '1' if offline else '0',
-               'VPN2_VENV': str(fake / 'venv')}
+               'PYTHONPATH': str(ROOT / 'infra/vpn2/src')}
         env.pop('BASH_ENV', None)
         (fake / 'calls.log').write_text('')
-        result = subprocess.run(['bash', str(ROLE / 'files/static.sh'), str(fake / 'home')],
+        result = subprocess.run([sys.executable, '-m', 'vpn2.cli', 'containers', 'emergency-static', str(fake / 'home')],
                                 env=env, text=True, capture_output=True, timeout=60)
         result.calls = (fake / 'calls.log').read_text().splitlines()
         result.state = json.loads((fake / 'state.json').read_text())

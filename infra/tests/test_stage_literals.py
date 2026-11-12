@@ -14,7 +14,7 @@ from adguard_support import Hub
 from containers_support import compose
 from vpn2 import containers
 from test_deploy import write_envs
-from zapret_support import render
+from zapret_support import VPN2_MOCK, render
 
 
 ROOT = Path(os.environ.get('VPN2_TEST_ROOT', Path(__file__).resolve().parents[2]))
@@ -77,12 +77,12 @@ class YoutubeLiteralTests(unittest.TestCase):
                 (Path(work) / 'check.sh').write_text(check)
                 (Path(work) / 'queue').write_text('200 123 0 2 65531 0 0 1 1\n')
                 # Очередь готова и счётчик растёт: вердикт решают коды HTTP.
-                checked = run('curl() { printf 000; }; setpriv() { printf 000; }; '
+                checked = run(VPN2_MOCK + 'curl() { printf 000; }; setpriv() { printf 000; }; '
                               'systemctl() { [[ $1 == is-active ]] || echo 123; }; '
                               'nft() { n=$(cat n 2>/dev/null || echo 0); echo $((n + 1)) > n; '
                               'printf \'{"nftables":[{"rule":{"expr":[{"counter":{"packets":%s}},'
                               '{"queue":{"num":200}}]}}]}\' "$n"; }; '
-                              'export -f curl setpriv systemctl nft; bash check.sh', work)
+                              'export -f curl setpriv systemctl nft vpn2; bash check.sh', work)
                 self.assertEqual(checked.returncode, 1, checked.stderr)
                 self.assertIn('  подбор стратегии: ' + value + '/blockcheck2.sh\n', checked.stdout)
                 self.assertFalse((Path(work) / 'INJECTED').exists())

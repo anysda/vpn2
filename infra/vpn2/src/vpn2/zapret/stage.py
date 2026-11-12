@@ -162,6 +162,15 @@ def shell_values(cfg):
     return {f'{name}_sh': shlex.quote(str(cfg[name])) for name in ('mark', 'base', 'queue')}
 
 
+def queued(queue, stream):
+    """Пакеты через очередь nfqws2 по `nft -j list table`; None - правил очереди нет."""
+    rules = [item['rule']['expr'] for item in json.load(stream)['nftables'] if 'rule' in item]
+    counters = [expr['counter']['packets'] for rule in rules
+                if any(expr.get('queue', {}).get('num') == queue for expr in rule)
+                for expr in rule if 'counter' in expr]
+    return sum(counters) if counters else None
+
+
 def facts(environ):
     cfg = settings(environ)
     wan = wan_iface()
@@ -213,6 +222,15 @@ STEPS = ('facts', 'source', 'restart', 'remeasure')
 
 
 def main(argv):
+    if argv[:1] == ['queued'] and len(argv) == 2:
+        try:
+            packets = queued(int(argv[1]), sys.stdin)
+        except (ValueError, KeyError, TypeError):
+            packets = None
+        if packets is None:
+            return 1
+        print(packets)
+        return 0
     parser = argparse.ArgumentParser(prog='vpn2 zapret')
     parser.add_argument('step', choices=STEPS)
     step = parser.parse_args(argv).step

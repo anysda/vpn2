@@ -64,12 +64,14 @@ print_sso_notice() (
   fi
 )
 
-# Бот включён, если токен и чат заданы в config.yaml или в панели.
+# Бот включён, если токен и чат заданы в config.yaml или в панели (telegram-runtime.json пишут
+# стадия и панель: строка токена, чат строкой или числом).
 announce_deploy_done() (
+  local runtime=/etc/anysda/telegram-runtime.json
   # shellcheck disable=SC1091
   source "$ENVS/ru.env"
   if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
-    python3 -c 'import json, sys; r = json.load(open("/etc/anysda/telegram-runtime.json")); sys.exit(not (r.get("bot_token") and r.get("chat_id")))' 2>/dev/null || exit 0
+    grep -Eq '"bot_token": *"[^"]' "$runtime" 2>/dev/null && grep -Eq '"chat_id": *("[^"]|-?[1-9])' "$runtime" || exit 0
   fi
   unmeasured=false; [[ -z "${_VERIFY_WARNINGS[*]:-}" ]] || unmeasured=true
   [[ ! -f /etc/anysda/tgbot-secret.txt ]] || curl -fsS --max-time 5 -H 'Content-Type: application/json' \

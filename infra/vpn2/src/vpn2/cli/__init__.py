@@ -118,7 +118,11 @@ def restore(argv):
 
 
 def containers(argv):
-    """vpn2 containers monitoring|telegram|panel|rollback - контейнеры entry под compose."""
+    """vpn2 containers monitoring|telegram|panel|rollback - контейнеры entry под compose;
+    emergency-static <каталог> - статика страницы аварийки (entry и экзиты)."""
+    if argv[:1] == ['emergency-static']:
+        from vpn2.containers import emergency
+        return emergency.main(argv[1:])
     from vpn2 import containers as stage
     parser = argparse.ArgumentParser(prog='vpn2 containers')
     parser.add_argument('command', choices=[*stage.STAGES, 'rollback'])

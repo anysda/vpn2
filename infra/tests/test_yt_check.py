@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from test_deploy import bash
-from zapret_support import render
+from zapret_support import VPN2_MOCK, render
 
 
 class YoutubeCheckTests(unittest.TestCase):
@@ -43,7 +43,7 @@ setpriv() {
 }
 '''
             script = check.replace('/proc/net/netfilter/nfnetlink_queue', str(root / 'queue'))
-            return bash(f'SCENARIO={scenario}\n' + mocks + 'set +e\n' + script, directory)
+            return bash(f'SCENARIO={scenario}\n' + mocks + VPN2_MOCK + 'set +e\n' + script, directory)
 
     def test_healthy_path(self):
         result = self.run_check('healthy')

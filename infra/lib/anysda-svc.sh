@@ -18,13 +18,6 @@ release_download() {
 
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
-# Пароль AdGuard под bcrypt: до 72 байт как есть, длиннее - sha256 от всего пароля.
-agh_password() {
-  printf '%s' "$1" | python3 -c 'import hashlib, sys
-p = sys.stdin.buffer.read()
-sys.stdout.buffer.write(p if len(p) <= 72 else hashlib.sha256(b"vpn2-adguard-v1\0" + p).hexdigest().encode())'
-}
-
 # nftables.service не сбрасывает весь ruleset: в нём таблицы ufw, Docker, fail2ban.
 nftables_preserve_rules() {
   local conf=/etc/nftables.conf

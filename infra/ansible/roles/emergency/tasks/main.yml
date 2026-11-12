@@ -90,8 +90,8 @@
     validate: /usr/bin/python3 -m json.tool %s
 
 - name: Статика страницы из образа
-  ansible.builtin.script:
-    cmd: static.sh {{ emergency_home }}
+  ansible.builtin.command:
+    argv: ["{{ emergency_vpn2 }}", containers, emergency-static, "{{ emergency_home }}"]
   environment: "{{ emergency_env }}"
   register: emergency_static
   changed_when: "'changed=1' in emergency_static.stdout"

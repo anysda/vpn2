@@ -62,7 +62,7 @@ class BypassFailureTests(unittest.TestCase):
                     self.assert_failover(watch)
 
     def test_missing_diagnostic_tools_are_unmeasured(self):
-        for scenario in ('missing_curl', 'missing_nft', 'missing_python3', 'bad_setpriv',
+        for scenario in ('missing_curl', 'missing_nft', 'missing_vpn2', 'bad_setpriv',
                          'dns', 'certificate', 'http_refusal'):
             with self.subTest(scenario=scenario):
                 ready = test_yt_check.YoutubeCheckTests().run_check(scenario)

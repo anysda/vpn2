@@ -215,16 +215,16 @@ class EmergencyWebTests(unittest.TestCase):
     def test_network_partition_recovery_and_cancel(self):
         self.panel.on_emergency_leader('event', 2, True)
         self.assertTrue(self.panel.view()['autonomous'])
-        self.panel.on_entry_recovered(time.monotonic() + 600)
+        self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600)
         self.assertIn(self.panel.view()['remaining'], (599, 600))
         resumed = self.web.Panel(self.directory, **self.options)
         self.assertIn(resumed.view()['remaining'], (599, 600))
         self.panel.on_return_cancelled()
         self.assertTrue(self.panel.view()['cancelled'])
         self.assertIsNone(self.panel.view()['remaining'])
-        self.panel.on_emergency_end()
+        self.panel.on_step_down()
         self.panel.on_return_cancelled()
-        self.panel.on_entry_recovered(time.monotonic() + 600)
+        self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600)
         self.assertFalse(self.panel.auth)
 
     def test_leader_change_comes_from_the_lifecycle_event(self):
@@ -233,7 +233,7 @@ class EmergencyWebTests(unittest.TestCase):
         self.panel.on_emergency_leader('event', 14, False, 'leader_changed')
         self.assertTrue(self.panel.view()['leader_changed'])
         self.assertTrue(self.web.Panel(self.directory, **self.options).view()['leader_changed'])
-        self.panel.on_emergency_end()
+        self.panel.on_step_down()
         self.assertFalse(self.panel.view()['leader_changed'])
 
     def test_panel_shows_the_deadline_from_the_notices(self):
@@ -251,7 +251,7 @@ class EmergencyWebTests(unittest.TestCase):
             self.assertIn(attribute, cookie)
         self.assertEqual(self.request('/api/state', cookie=cookie)[0], 200)
         self.panel.on_step_down()
-        self.assertFalse(self.panel.authenticated(cookie))
+        self.assertFalse(self.panel.session(cookie))
         self.panel.on_emergency_leader('event', 2)
         self.assertEqual(self.request('/api/state', cookie=cookie)[0], 401)
 
@@ -263,7 +263,7 @@ class EmergencyWebTests(unittest.TestCase):
 
     def test_fallback_fingerprint_and_ip_certificate(self):
         self.start()
-        cert = self.directory / 'web-tls/cert.pem'
+        cert = self.directory / 'hy2/fullchain.pem'
         expected = hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest().upper()
         message = self.panel.on_emergency_leader('event', 1)
         self.assertEqual(message['certificate_fingerprint'], expected)
@@ -295,23 +295,29 @@ class EmergencyWebTests(unittest.TestCase):
             with ssl._create_unverified_context().wrap_socket(raw) as connection:
                 return connection.getpeercert(binary_form=True)
 
+        hy2 = importlib.import_module('vpn2.emergency.hy2')
         first, second = issue('first'), issue('second')
-        publish('first', 'first')
-        self.start(cert_dir=source)
-        self.assertEqual(served(), first)
-        self.assertEqual(self.panel.fingerprint, hashlib.sha256(first).hexdigest().upper())
-        self.assertFalse(self.server.refresh_tls())
-        # A pair read across the renewal does not load; the settled pair does.
-        publish('second', 'first')
-        self.assertFalse(self.server.refresh_tls())
-        self.assertEqual(served(), first)
-        publish('second', 'second')
-        self.assertTrue(self.server.refresh_tls())
-        self.assertEqual(served(), second)
-        message = self.panel.on_emergency_leader('event', 1)
-        self.assertEqual(message['certificate_fingerprint'], hashlib.sha256(second).hexdigest().upper())
-        self.assertFalse(self.server.refresh_tls())
-        self.assertEqual(sorted(path.name for path in (self.directory / 'web-tls').iterdir()), [])
+        roots = self.directory / 'roots.pem'
+        roots.write_bytes((self.directory / 'first.pem').read_bytes() + (self.directory / 'second.pem').read_bytes())
+        pair = self.directory / 'hy2'
+        with patch.dict(os.environ, SSL_CERT_FILE=str(roots)):
+            publish('first', 'first')
+            self.start(cert_dir=source)
+            self.assertEqual(served(), first)
+            self.assertIsNone(self.panel.fingerprint)
+            self.assertFalse(self.server.refresh_tls())
+            # A pair read across the renewal does not load; the settled pair does.
+            publish('second', 'first')
+            self.assertFalse(hy2.refresh_tls(pair, '127.0.0.1', source))
+            self.assertFalse(self.server.refresh_tls())
+            self.assertEqual(served(), first)
+            publish('second', 'second')
+            self.assertTrue(hy2.refresh_tls(pair, '127.0.0.1', source))
+            self.assertTrue(self.server.refresh_tls())
+            self.assertEqual(served(), second)
+            self.assertIsNone(self.panel.on_emergency_leader('event', 1)['certificate_fingerprint'])
+            self.assertFalse(self.server.refresh_tls())
+        self.assertEqual(sorted(path.name for path in pair.iterdir()), ['fullchain.pem', 'privkey.pem'])
 
     def test_rejected_certificate_logs_one_line_without_traceback(self):
         self.start()
@@ -366,7 +372,7 @@ class EmergencyWebTests(unittest.TestCase):
 
     def test_instructions_local_public_without_snapshot_even_after_stepdown(self):
         self.start()
-        for transition in (lambda: None, lambda: self.panel.on_entry_recovered(time.monotonic() + 600),
+        for transition in (lambda: None, lambda: self.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600),
                            lambda: self.panel.on_step_down('two')):
             transition()
             status, headers, html = self.request('/instructions')

@@ -45,13 +45,13 @@ def main():
             command = json.loads(line)
             action = command['action']
             if action == 'recovery':
-                server.panel.on_entry_recovered(time.monotonic() + 600)
+                server.panel.on_entry_recovered(time.monotonic() + 600, time.time() + 600)
             elif action == 'cancel':
                 server.panel.on_return_cancelled()
             elif action == 'partition':
                 server.panel.on_emergency_leader('fixture', 3, True)
             elif action == 'end':
-                server.panel.on_emergency_end()
+                server.panel.on_step_down()
             elif action == 'fresh':
                 snapshot['created_at'] = datetime.now(timezone.utc).isoformat()
             elif action == 'never':

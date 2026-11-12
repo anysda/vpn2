@@ -336,7 +336,9 @@ class Exit(Agent):
                 LOG.exception('emergency worker pass failed')
 
     def panel(self, link_only=False):
-        if self.server is None:
+        if self.server is not None:
+            self.server.refresh_tls()
+        else:
             server = web.make_server(
                 self.directory, exit_id=self.node, public_ip=self.nodes[self.node][0],
                 snapshot_loader=lambda _directory: self.image(),
@@ -385,8 +387,7 @@ class Exit(Agent):
             spool.flush(self.directory, api, wall)
         if now - self.tls_at >= 60 and (self.server or self.issued):
             self.tls_at = now
-            if self.issued:
-                hy2.refresh_tls(self.directory)
+            hy2.refresh_tls(hy2.home(self.directory), self.nodes[self.node][0])
             if self.server:
                 self.server.refresh_tls()
 

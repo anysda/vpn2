@@ -27,16 +27,18 @@ from .. import fsutil
 
 STATE = Path('/var/lib/vpn2-emergency')
 OPTIONS = Path('/etc/vpn2/emergency-hy2.json')
+TLS_SOURCE = '/etc/vpn2/tls/ip'
 UNIT = 'vpn2-emergency-hy2.service'
 PROBE_UNIT = 'vpn2-emergency-hy2-probe.service'
 MOUNT = Path('/run/vpn2-emergency-hy2')
 LOG = logging.getLogger(__name__)
-# Сеансы: Clash API самого экземпляра на loopback (номер порта тот же) отдаёт
-# живые потоки; у каждого устройства своё правило маршрута, в его имени - учётка.
+# Clash API самого экземпляра на loopback (номер порта тот же) отдаёт живые
+# потоки; у каждого устройства своё правило маршрута, в его имени - учётка.
 SESSIONS_STALE = 40
 DEVICE_USER = re.compile(r'g(\d+)-d(\d+)')
 SESSION_RULE = re.compile(rb'"rule":"auth_user=g(\d+)-d(\d+) ')
 INACTIVE = {'generation': -1, 'active': False}
+END_CERT = '-----END CERTIFICATE-----'
 
 
 def command(args, **kwargs):
@@ -66,7 +68,7 @@ def read_state(directory):
 
 def settings(options=None):
     result = {
-        'port': 18443, 'tls_dir': '/etc/vpn2/tls/ip',
+        'port': 18443, 'tls_dir': TLS_SOURCE,
         'binary': '/usr/local/bin/sing-box', 'runtime_dir': str(MOUNT),
         'probe_url': 'https://cp.cloudflare.com/generate_204',
     }
@@ -77,26 +79,32 @@ def settings(options=None):
     return result
 
 
+def expiry(cert, key, server_ip, cafile=None):
+    """Конец срока пары, если TLS-клиент с корнями cafile (без него - системными) принимает её для IP."""
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(cert, key)
+    client = ssl.create_default_context(cafile=cafile)
+    if cafile:
+        client.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    to_client, to_server = ssl.MemoryBIO(), ssl.MemoryBIO()
+    sides = (client.wrap_bio(to_client, to_server, server_hostname=server_ip),
+             server.wrap_bio(to_server, to_client, server_side=True))
+    for _ in range(3):
+        for side in sides:
+            with contextlib.suppress(ssl.SSLWantReadError):
+                side.do_handshake()
+    return ssl.cert_time_to_seconds(sides[0].getpeercert()['notAfter'])
+
+
 def trusted_problem(cert, key, server_ip):
-    """None for a usable public IP certificate, otherwise a reason without secrets."""
-    if not cert.is_file() or not key.is_file():
-        return f'no certificate at {cert.parent}'
+    """None для пары, которой браузер доверяет на IP узла ещё час, иначе причина без секретов."""
     try:
-        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
-    except (OSError, ssl.SSLError):
-        return 'certificate and key cannot be loaded as a pair'
-    expiring = subprocess.run(['openssl', 'x509', '-in', str(cert), '-checkend', '3600', '-noout'],
-                              capture_output=True, timeout=30)
-    if expiring.returncode != 0:
-        return 'certificate expired or expires within an hour'
-    # Only the verify diagnostics are reported: they contain no key material.
-    verified = subprocess.run(['openssl', 'verify', '-purpose', 'sslserver', '-verify_ip', server_ip,
-                               '-untrusted', str(cert), str(cert)],
-                              capture_output=True, text=True, timeout=30)
-    if verified.returncode != 0:
-        errors = [line.split('lookup:', 1)[-1].strip() for line in
-                  (verified.stdout + verified.stderr).splitlines() if line.startswith('error ')]
-        return 'not trusted for ' + server_ip + ': ' + (errors[0] if errors else 'verification failed')
+        if expiry(cert, key, server_ip) < time.time() + 3600:
+            return 'certificate expires within an hour'
+    except ssl.SSLCertVerificationError as error:
+        return f'not trusted for {server_ip}: {error.verify_message}'
+    except (OSError, ValueError):
+        return f'no usable certificate pair at {Path(cert).parent}'
     return None
 
 
@@ -107,34 +115,67 @@ def read_pair(source):
         return None
 
 
-def adopt(directory, options, pair):
+def adopt(directory, server_ip, pair):
     """Поставить общую пару; проверяется та же копия, что встанет на место."""
     incoming = directory / 'incoming-fullchain.pem', directory / 'incoming-privkey.pem'
     atomic(incoming[1], pair[1])
     atomic(incoming[0], pair[0])
-    problem = trusted_problem(*incoming, options['server_ip'])
+    problem = trusted_problem(*incoming, server_ip)
     if not problem:
         # sing-box следит за обоими путями и перечитывает пару после второго переименования.
         os.replace(incoming[1], directory / 'privkey.pem')
         os.replace(incoming[0], directory / 'fullchain.pem')
+    for path in incoming:
+        path.unlink(missing_ok=True)
     return problem
 
 
-def certificate(directory, options):
-    """Общий сертификат на IP узла, иначе самоподписанный; возвращает pin или None."""
-    pair = read_pair(Path(options['tls_dir']))
-    problem = adopt(directory, options, pair) if pair else f"no certificate at {options['tls_dir']}"
-    if not problem:
+def fingerprint(directory, server_ip):
+    """SHA-256 листа пары, которой браузер не доверяет; None для доверенной."""
+    cert = directory / 'fullchain.pem'
+    if not trusted_problem(cert, directory / 'privkey.pem', server_ip):
         return None
+    leaf = cert.read_text().split(END_CERT)[0] + END_CERT
+    return hashlib.sha256(ssl.PEM_cert_to_DER_cert(leaf)).hexdigest()
+
+
+def certificate(directory, server_ip, source=TLS_SOURCE):
+    """Пара Hysteria2 и панели: общая на IP узла, иначе прежняя рабочая или новая самоподписанная."""
+    pair = read_pair(Path(source))
+    problem = adopt(directory, server_ip, pair) if pair else f'no certificate at {source}'
     cert, key = directory / 'fullchain.pem', directory / 'privkey.pem'
-    LOG.warning('Emergency TLS: %s; self-signed certificate, pinSHA256 in profiles', problem)
-    command(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-             '-nodes', '-days', '3650', '-subj', '/CN=emergency',
-             '-addext', f"subjectAltName=IP:{options['server_ip']}",
-             '-keyout', str(key), '-out', str(cert)])
-    key.chmod(0o640)
-    cert.chmod(0o640)
-    return hashlib.sha256(ssl.PEM_cert_to_DER_cert(cert.read_text())).hexdigest()
+    try:
+        usable = expiry(cert, key, server_ip, cafile=cert) > time.time() + 3600
+    except (OSError, ValueError):
+        usable = False
+    if problem and not usable:
+        LOG.warning('Emergency TLS: %s; self-signed certificate, pinSHA256 in profiles', problem)
+        command(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                 '-nodes', '-days', '3650', '-subj', '/CN=emergency',
+                 '-addext', f'subjectAltName=IP:{server_ip}',
+                 '-keyout', str(key), '-out', str(cert)])
+        key.chmod(0o640)
+        cert.chmod(0o640)
+    return fingerprint(directory, server_ip)
+
+
+def tls_pair(state_dir, server_ip, source=TLS_SOURCE):
+    """Каталог пары для панели; при идущей выдаче пару не трогаем: её pin в профилях."""
+    directory = home(state_dir)
+    if not read_state(directory)['active']:
+        certificate(directory, str(ipaddress.ip_address(server_ip)), source)
+    return directory
+
+
+def refresh_tls(directory, server_ip, source=TLS_SOURCE):
+    """Продлённая общая пара встаёт вместо доверенной; самоподписанная остаётся до конца выдачи."""
+    pair = read_pair(Path(source))
+    if pair is None or pair == read_pair(directory) or fingerprint(directory, server_ip):
+        return False
+    if adopt(directory, server_ip, pair):
+        return False
+    LOG.info('Emergency TLS certificate renewed')
+    return True
 
 
 def profile(options, password, name, pin):
@@ -148,12 +189,14 @@ def profile(options, password, name, pin):
     return f"hysteria2://{quote(password, safe='')}@{host}:{options['port']}/?{urlencode(query)}#{quote(name, safe='')}"
 
 
-def server_config(options, users, api_secret=None):
+def server_config(options, users, api_secret):
     directory = Path(options['runtime_dir'])
-    config = {
+    # Правила auth_user маршрут не меняют: по ним Clash API отличает устройства.
+    devices = [{'auth_user': [user['name']], 'action': 'route', 'outbound': 'internet'}
+               for user in users if DEVICE_USER.fullmatch(user['name'])]
+    return {
         'log': {'level': 'warn'},
-        # DNS over TLS: a node-local resolver is unreachable for the isolated user,
-        # and plain UDP answers can be spoofed on path.
+        # Локальный резолвер узла изолированному пользователю недоступен.
         'dns': {'servers': [{'type': 'tls', 'tag': 'public', 'server': '1.1.1.1'}]},
         'inbounds': [{'type': 'hysteria2', 'tag': 'emergency', 'listen': '::',
                       'listen_port': options['port'], 'users': users,
@@ -162,31 +205,23 @@ def server_config(options, users, api_secret=None):
         'outbounds': [{'type': 'direct', 'tag': 'internet'}],
         'route': {'default_domain_resolver': 'public', 'rules': [
             {'ip_is_private': True, 'action': 'reject'},
-            # Defence in depth; nftables (firewall_rules) is the enforcing layer.
             {'ip_cidr': [options['server_ip']], 'action': 'reject'},
+            *devices,
         ]},
+        'experimental': {'clash_api': {'external_controller': f"127.0.0.1:{options['port']}",
+                                       'secret': api_secret}},
     }
-    if api_secret is not None:
-        # Same route as without the rule: it only labels connections per device.
-        config['route']['rules'] += [
-            {'auth_user': [user['name']], 'action': 'route', 'outbound': 'internet'}
-            for user in users if DEVICE_USER.fullmatch(user['name'])]
-        config['experimental'] = {'clash_api': {
-            'external_controller': f"127.0.0.1:{options['port']}", 'secret': api_secret}}
-    return config
 
 
 class SystemRuntime:
     def service(self, action):
-        # Агент работает с NoNewPrivileges, sudo нет: правило polkit роли
-        # разрешает его пользователю start/stop/restart только этой службы.
+        # Агент работает с NoNewPrivileges: правило polkit роли разрешает его
+        # пользователю start/stop/restart только этих служб.
         command(['/usr/bin/systemctl', action, UNIT])
 
-    def probe(self, state_dir):
-        if os.geteuid() == 0:
-            return probe(state_dir)
-        # sing-box нужен AF_NETLINK, которого в песочнице агента нет:
-        # probe() выполняет oneshot-служба, её код возврата и есть ответ.
+    def probe(self, _state_dir):
+        # sing-box нужен AF_NETLINK, которого в песочнице агента нет: пробу
+        # выполняет oneshot-служба, её код возврата и есть ответ.
         try:
             command(['/usr/bin/systemctl', 'start', PROBE_UNIT])
         except RuntimeError:
@@ -218,7 +253,7 @@ def start(state_dir, generation, devices, *, options=None, runtime=None):
         if type(generation) is not int or generation < 0 or len({d['id'] for d in devices}) != len(devices):
             raise ValueError('emergency hy2: invalid issuance')
         stop(state_dir, runtime=runtime)
-        pin = certificate(directory, options)
+        pin = certificate(directory, options['server_ip'], options['tls_dir'])
         users, issued = [], []
         for device in devices:
             password = secrets.token_urlsafe(32)
@@ -254,25 +289,6 @@ def active_state(directory):
     if not state['active']:
         raise ValueError('emergency hy2: inactive generation')
     return state
-
-
-def refresh_tls(state_dir):
-    """Обновлённый общий сертификат доходит до идущей выдачи; учётки не меняются.
-
-    Самоподписанный запасной сертификат на всю выдачу один: смена листа
-    сломала бы розданные профили с pinSHA256.
-    """
-    directory = home(state_dir)
-    state = read_state(directory)
-    if not state['active'] or state['pin']:
-        return False
-    pair = read_pair(Path(state['options']['tls_dir']))
-    if pair is None or pair == read_pair(directory):
-        return False
-    if adopt(directory, state['options'], pair):
-        return False
-    LOG.info('Emergency TLS certificate renewed for Hysteria2')
-    return True
 
 
 def listening(port):

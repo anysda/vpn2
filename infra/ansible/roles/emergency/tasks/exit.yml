@@ -175,9 +175,9 @@
     argv: [systemctl, enable, --now, vpn2-tls.timer]
   changed_when: false
 
-# Сертификат страницы заранее; запасной самоподписанный с поздним сроком
-# обновит локальный openssl при активации, без сети.
-- name: Сертификат страницы аварийки
+# Пара аварийного входа заранее: общая на IP или самоподписанная; при идущей
+# выдаче шаг её не трогает.
+- name: Сертификат аварийного входа
   ansible.builtin.command:
     argv:
       - runuser
@@ -187,7 +187,7 @@
       - "{{ emergency_venv }}/bin/python"
       - -B
       - -c
-      - "import sys; from vpn2.emergency import web; web.tls_context(*sys.argv[1:])"
+      - "import sys; from vpn2.emergency import hy2; hy2.tls_pair(*sys.argv[1:])"
       - "{{ emergency_state }}"
       - "{{ emergency_public_ip }}"
       - /etc/vpn2/tls/ip

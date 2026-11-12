@@ -81,8 +81,9 @@ class Agent:
             pass
 
     def run_entry(self):
-        """Entry: пульс с признаком готовности каждому экзиту."""
+        """Entry: пульс с признаком готовности каждому экзиту - со своего порта, как экзит."""
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.bind((self.config.get('bind', '0.0.0.0'), self.nodes[self.node][1]))
             while not self.stop.is_set():
                 began = time.monotonic()
                 ready = readiness.entry_ready()

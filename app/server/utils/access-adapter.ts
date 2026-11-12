@@ -1,15 +1,8 @@
 import { createHash } from 'node:crypto'
-import { clientDns } from './client-dns'
-import { control } from './control'
 import { eq } from 'drizzle-orm'
 import type { AccessOperation, AccessProtocol } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
-import type { AccessPayload } from './access-payload'
-import { expiryForControl, isClientActive } from './client-status'
-import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
-import { certificateOf, ensureDeviceOvpn, killOvpnClient, ovpnCn, reissueDeviceOvpn, revokeAccessCert, syncOpenvpnConfig } from './openvpn'
-import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
 
 /** Узкий контракт для локального сервиса: только целевое состояние и его проверка. */
 export interface AccessAdapter {

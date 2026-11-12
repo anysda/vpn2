@@ -1,19 +1,10 @@
+import { createClient, updateClient } from '../utils/client-ops'
 import { and, eq, ne, sql } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { z } from 'zod'
 import type { ZodType } from 'zod'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
-import { accessRequestKey, enqueueAccess, getAccess, retryAccess } from '../utils/access-operations'
-import { accepted, admin, bot, idParam, notFound, recordIds } from '../utils/api'
-import { botClientView, clientByChat } from '../utils/bot-api'
-import { botSecretOrThrow, notifyClient, notifyWarning, sendBotEvent } from '../utils/bot-events'
-import { ONLINE_MIN_BYTES, PERIOD_ACTIVE_MIN_BYTES, historyStartSec, periodStartSec, periodTotalsByClient, recentBytesByClient } from '../utils/client-activity'
-import { ClientCreate, ClientPatch, createClient, updateClient } from '../utils/client-ops'
-import { clientCard, clientList, deviceView } from '../utils/client-view'
-import { BOT_ACTOR, actorOf } from '../utils/events'
-import { generateClientPassword } from '../utils/password'
-import { readBodyAs } from '../utils/validate'
 
 /** Привязка Telegram по паролю клиента (диплинк ?start=<password>). */
 const Link = z.object({ password: z.string().min(1), chatId: z.number().int(), username: z.string().optional() })

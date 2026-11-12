@@ -3,10 +3,6 @@ import type { H3Event } from 'h3'
 import { accessStatus } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
-import { currentAccessByClient, latestAccess } from './access-operations'
-import { clientStatus } from './client-status'
-import { clientsNewestFirst, devicesOldestFirst } from './list-order'
-import { deviceConfigName } from './naming'
 
 const UNCONFIRMED = 'Состояние не подтверждено'
 

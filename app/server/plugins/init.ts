@@ -4,12 +4,6 @@ import { dirname, resolve } from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { accounts, adminConfigPassword, sessions, users } from '../database/schema'
-import { hashPassword, revokeDisallowedSsoSessions, verifyPassword } from '../utils/auth'
-import { loadAnysdaConfig } from '../utils/anysda-config'
-import { syncClientPrefsFile } from '../utils/client-prefs'
-import { markPanelReady } from '../utils/panel-ready'
-import { ControlUnavailable } from '../utils/control'
-import { compactDatabase } from '../utils/access-operations'
 
 export default defineNitroPlugin((nitroApp) => {
   // Nitro не ждёт async-плагин: без миграций или админа падаем процессом.

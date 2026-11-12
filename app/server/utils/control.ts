@@ -8,10 +8,8 @@ export class ControlUnavailable extends Error {
   constructor() { super('Нет связи с локальным сервисом управления VPN') }
 }
 
-// Сервис принимает соединения по одному, очередь listen — Backlog=16 в
-// vpn2-control.socket. Сверх неё connect() к Unix-сокету сразу получает
-// EAGAIN, и запрос пропадал без попытки. Панель держит не больше 8 соединений,
-// остальные ждут здесь; срок 35 с считается от вызова, вместе с ожиданием.
+// Очередь listen сервиса - Backlog=16 в vpn2-control.socket, сверх неё connect() сразу получает
+// EAGAIN. Панель держит не больше 8 соединений, остальные ждут здесь; 35 с - от вызова.
 const CONNECTIONS = 8
 let open = 0
 const waiting: Array<() => void> = []
@@ -22,7 +20,7 @@ function release() {
   else open--
 }
 
-/** API v1: bounded JSON lines, no commands or paths supplied by callers. */
+/** Локальный сервис управления VPN, API v1: JSON-строка запроса и ответа до 1 МБ. */
 export function control<T>(method: string, params: Record<string, unknown>): Promise<T> {
   return new Promise((resolve, reject) => {
     let socket: Socket | undefined
@@ -78,11 +76,11 @@ export function control<T>(method: string, params: Record<string, unknown>): Pro
   })
 }
 
-let tail: Promise<unknown> = Promise.resolve()
+const applyQueue = serialQueue()
 
-/** Persist a separate version for each service resource, before sending it. */
+/** Изменение ресурса службы с версией: она растёт при смене содержимого и записана до отправки. */
 export function controlApply<T>(method: string, params: Record<string, unknown>): Promise<T> {
-  const run = tail.then(async () => {
+  return applyQueue(async () => {
     const name = `control:${method}:${params.device_id ?? params.resource ?? ''}`
     const digest = createHash('sha256').update(JSON.stringify(params)).digest('hex')
     const db = useDb()
@@ -96,6 +94,4 @@ export function controlApply<T>(method: string, params: Record<string, unknown>)
     }, { behavior: 'immediate' })
     return control<T>(method, { ...params, version })
   })
-  tail = run.catch(() => {})
-  return run
 }

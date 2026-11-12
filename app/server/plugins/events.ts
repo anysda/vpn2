@@ -1,8 +1,3 @@
-import { pruneEvents } from '../utils/events'
-import { remindExpiring } from '../utils/expiry-reminder'
-import { NODE_CHECK_MS, checkFailover, checkNodes } from '../utils/node-watch'
-import { isPanelReady } from '../utils/panel-ready'
-
 const PRUNE_MS = 3600_000
 
 // Журнал событий: сторож нод, failover и напоминания о сроке раз в 30 с,

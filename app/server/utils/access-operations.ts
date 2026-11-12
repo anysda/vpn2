@@ -6,15 +6,6 @@ import { accessProtocols, accessStatus, CONFIRMATION_FRESH_MS } from '../../shar
 import type { AccessKind, AccessOperation } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { accessOperations, botOutbox, clients, devices, events } from '../database/schema'
-import { isClientActive } from './client-status'
-import { accessAdapter } from './access-adapter'
-import type { AccessAdapter } from './access-adapter'
-import { botConfigured } from './telegram-config'
-import { withAccessLock } from './access-lock'
-import { carried, retire } from './access-payload'
-import type { AccessPayload, StoredOperation } from './access-payload'
-import { ControlUnavailable } from './control'
-import { wgKeypair } from './wireguard'
 
 const RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 300_000]
 type ClientPatch = Partial<typeof clients.$inferInsert>

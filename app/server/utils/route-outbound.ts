@@ -1,5 +1,3 @@
-import { fetchProxies, userVisibleOutbounds } from './clash-client'
-
 // Маршрут на outbound, которого нет в sing-box (опечатка, снятый экзит), роутер
 // не применит. Сверяемся с тем же списком, что панель показывает в выборе outbound'а.
 export async function assertKnownOutbound(outbound: string): Promise<void> {

@@ -1,11 +1,7 @@
 import { createHash, X509Certificate } from 'node:crypto'
-import { control, controlApply } from './control'
 import { and, eq, exists, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
-import { ovpnLocalRoutes } from './allowed-ips'
-import { expiryForControl, isClientActive } from './client-status'
-import { nextPoolAddress } from './address-pools'
 
 // openssl ca не блокирует index.txt/serial/crlnumber: выдача, перевыпуск и отзыв идут по очереди.
 let caQueue: Promise<unknown> = Promise.resolve()

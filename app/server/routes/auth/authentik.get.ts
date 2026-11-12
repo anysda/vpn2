@@ -1,6 +1,3 @@
-import { LOGIN_FORM, resetAuth, useAuth } from '../../utils/auth'
-import { SSO_PROVIDER, ssoSettings } from '../../utils/sso'
-
 /**
  * Точка входа и адрес возврата SSO. Протокол ведёт better-auth; запрос с кодом
  * пересылаем в её колбэк: адрес возврата у провайдера - /auth/authentik.

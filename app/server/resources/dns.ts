@@ -2,21 +2,6 @@ import { domainToASCII } from 'node:url'
 import { z } from 'zod'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
-import { agh } from '../utils/agh-client'
-import { logMatch, logRow, summarize, toggleRules, type AghLogEntry, type AghStats, type CheckHost, type LogRow } from '../utils/agh-parse'
-import { checkRules, verdict } from '../utils/agh-rules'
-import { admin } from '../utils/api'
-import {
-  blockedServices, checkUntil, citesGone, confirmFiltering, confirmRewrites, filteringStatus, findList, findRewrite,
-  listNames, listsView, panelNames, rewriteList, serviceCatalog, serviceNames,
-} from '../utils/dns-context'
-import {
-  checkRewrite, clientRows, parseBlock, parseBootstrap, parseRatelimit, sameRewrite, upstreamError, upstreamLines,
-  type AghPersistentClient, type PanelClient, type SettingsView,
-} from '../utils/dns-settings'
-import { settingsState, viewOf } from '../utils/dns-settings-read'
-import { clientsNewestFirst } from '../utils/list-order'
-import { readBodyAs } from '../utils/validate'
 
 const CheckQuery = z.object({ name: z.string().trim().toLowerCase().transform(s => domainToASCII(s.replace(/\.$/, '')) || s).pipe(z.string().regex(/^[a-z0-9_*.-]+$/).max(253)) })
 const LogQuery = z.object({
@@ -66,6 +51,10 @@ const userRules = (st: { user_rules?: string[] | null }) => (st.user_rules ?? []
 const post = (path: string, body?: Record<string, unknown>) => agh(path, { method: 'POST', body })
 const put = (path: string, body: Record<string, unknown>) => agh(path, { method: 'PUT', body })
 const ok = () => ({ ok: true })
+const filtersConfirmed = async (good: (st: Awaited<ReturnType<typeof filteringStatus>>) => boolean, what: string) =>
+  confirmAgh(await filteringStatus(), good, what)
+const rewritesConfirmed = async (good: (l: Awaited<ReturnType<typeof rewriteList>>) => boolean, what: string) =>
+  confirmAgh(await rewriteList(), good, what)
 
 type State = Awaited<ReturnType<typeof settingsState>>
 const dnsConfig = (body: Record<string, unknown>) => post('dns_config', body)
@@ -140,7 +129,6 @@ export default {
     return summarize(stats, names, info.upstream_mode, log.data ?? [])
   }),
 
-  /** «Проверка фильтрации»: что AdGuard ответит на запрос этого домена. */
   'GET /dns/check': admin(async (event) => {
     const q = CheckQuery.safeParse(getQuery(event))
     if (!q.success) throw createError({ statusCode: 400, statusMessage: 'bad_domain', message: 'Это не похоже на домен' })
@@ -152,7 +140,6 @@ export default {
     return verdict(r, listNames(st), services)
   }),
 
-  /** Клиенты панели глазами AdGuard: адреса в туннеле, свои настройки, запросы. */
   'GET /dns/clients': admin(async () => {
     const db = useDb()
     const [cl, dv, aghClients, stats, names] = await Promise.all([
@@ -162,7 +149,7 @@ export default {
       agh<AghStats>('stats'),
       serviceNames(),
     ])
-    const panel: PanelClient[] = cl.map(c => ({
+    const panel = cl.map(c => ({
       name: c.name,
       tg: c.tgUsername,
       filter: c.filterTraffic,
@@ -172,10 +159,7 @@ export default {
     return clientRows(panel, aghClients.clients ?? [], counts, names)
   }),
 
-  /**
-   * Журнал запросов. Поиск идёт и по именам клиентов панели, которых AdGuard не знает:
-   * страницы дочитываются здесь до WANT строк или SCAN страниц, `older` продолжает с места остановки.
-   */
+  /** Поиск идёт и по именам клиентов панели: страницы дочитываются до WANT строк или SCAN страниц, `older` продолжает. */
   'GET /dns/log': admin(async (event) => {
     const p = LogQuery.safeParse(getQuery(event))
     if (!p.success) throw createError({ statusCode: 400, statusMessage: 'invalid_query', message: 'Проверьте фильтр журнала' })
@@ -183,7 +167,7 @@ export default {
     const [names, st, services] = await Promise.all([panelNames(), filteringStatus(), serviceNames()])
     const lists = listNames(st)
     const byName = q && [...names.values()].some(n => n.toLowerCase().includes(q.toLowerCase()))
-    const rows: LogRow[] = []
+    const rows: Array<ReturnType<typeof logRow>> = []
     let older = p.data.older
     for (let i = 0; i < SCAN && rows.length < WANT; i++) {
       const page = await agh<{ data: AghLogEntry[] | null, oldest: string }>('querylog', {
@@ -198,10 +182,9 @@ export default {
   }),
 
   /**
-   * «Заблокировать» / «Разблокировать» из строки журнала своим правилом. Сначала снимается
-   * противоположное точное правило; новое добавляется, только если без него AdGuard отвечает
-   * по-прежнему. Не помогло и правило (домен держит блокировка сервиса) - свои правила
-   * возвращаются как были. Правила AdGuard применяет не сразу, ответ check_host ждём.
+   * «Заблокировать» / «Разблокировать» из строки журнала. Сначала снимается противоположное
+   * точное правило, новое добавляется, только если без него AdGuard отвечает по-прежнему.
+   * Не помогло и оно (домен держит блокировка сервиса) - свои правила возвращаются как были.
    */
   'POST /dns/log-rule': admin(async (event) => {
     const { domain, block, client } = await readBodyAs(event, LogRule)
@@ -226,7 +209,6 @@ export default {
   }),
 
   'GET /dns/rules': admin(async () => ({ text: userRules(await filteringStatus()) })),
-  /** Строку с ошибкой AdGuard молча пропустил бы: такой текст не отправляем, человеку номер строки и причина. */
   'PUT /dns/rules': admin(async (event) => {
     const lines = (await readBodyAs(event, z.object({ text: z.string().max(1_000_000) }))).text.replace(/\r/g, '').split('\n')
     while (lines.length && !lines.at(-1)!.trim()) lines.pop()
@@ -236,7 +218,7 @@ export default {
       throw createError({ statusCode: 422, statusMessage: 'bad_rules', message, data: { message, errors } })
     }
     await post('filtering/set_rules', { rules: lines })
-    return { text: userRules(await confirmFiltering(st => userRules(st) === lines.join('\n'), 'свои правила не сохранились')) }
+    return { text: userRules(await filtersConfirmed(st => userRules(st) === lines.join('\n'), 'свои правила не сохранились')) }
   }),
 
   'GET /dns/filters': admin(async () => listsView(await filteringStatus())),
@@ -244,19 +226,19 @@ export default {
   'POST /dns/filters': admin(async (event) => {
     const { name, url, white } = await readBodyAs(event, NewList)
     await agh('filtering/add_url', { method: 'POST', body: { name, url, whitelist: white }, timeout: 60_000 })
-    return listsView(await confirmFiltering(st => !!findList(st, url, white), `список «${name}» не появился`))
+    return listsView(await filtersConfirmed(st => !!findList(st, url, white), `список «${name}» не появился`))
   }),
   'PATCH /dns/filters': admin(async (event) => {
     const { url, white, enabled } = await readBodyAs(event, List.extend({ enabled: z.boolean() }))
     const f = findList(await filteringStatus(), url, white)
     if (!f) throw createError({ statusCode: 404, statusMessage: 'list_not_found', message: 'Такого списка уже нет в AdGuard' })
     await agh('filtering/set_url', { method: 'POST', body: { url, whitelist: white, data: { name: f.name, url, enabled } }, timeout: 60_000 })
-    return listsView(await confirmFiltering(st => findList(st, url, white)?.enabled === enabled, `список «${f.name}» ${enabled ? 'не включился' : 'не выключился'}`))
+    return listsView(await filtersConfirmed(st => findList(st, url, white)?.enabled === enabled, `список «${f.name}» ${enabled ? 'не включился' : 'не выключился'}`))
   }),
   'DELETE /dns/filters': admin(async (event) => {
     const { url, white } = await readBodyAs(event, List)
     await post('filtering/remove_url', { url, whitelist: white })
-    return listsView(await confirmFiltering(st => !findList(st, url, white), 'список остался'))
+    return listsView(await filtersConfirmed(st => !findList(st, url, white), 'список остался'))
   }),
   /** «Проверить обновления»: AdGuard перекачивает включённые списки, чёрные и белые. */
   'POST /dns/filters/refresh': admin(async () => {
@@ -268,7 +250,6 @@ export default {
   }),
 
   'GET /dns/rewrites': admin(() => rewriteList()),
-  /** Дубль AdGuard принимает молча - отказываем сами. */
   'POST /dns/rewrites': admin(async (event) => {
     const b = await readBodyAs(event, z.object({ domain: z.string().max(253), answer: z.string().max(253) }))
     const rw = { domain: b.domain.trim().toLowerCase().replace(/\.$/, ''), answer: b.answer.trim() }
@@ -278,22 +259,22 @@ export default {
       throw createError({ statusCode: 409, statusMessage: 'rewrite_exists', message: `Перезапись «${rw.domain}» → ${rw.answer} уже есть` })
     }
     await post('rewrite/add', { ...rw, enabled: true })
-    return confirmRewrites(l => l.some(x => sameRewrite(x, rw)), `перезапись «${rw.domain}» не появилась`)
+    return rewritesConfirmed(l => l.some(x => sameRewrite(x, rw)), `перезапись «${rw.domain}» не появилась`)
   }),
   'PATCH /dns/rewrites': admin(async (event) => {
     const { domain, answer, enabled } = await readBodyAs(event, Rewrite.extend({ enabled: z.boolean() }))
     const cur = await findRewrite(domain, answer)
     await put('rewrite/update', { target: cur, update: { domain, answer, enabled } })
-    return confirmRewrites(l => l.some(x => sameRewrite(x, cur) && x.enabled === enabled), `перезапись «${domain}» ${enabled ? 'не включилась' : 'не выключилась'}`)
+    return rewritesConfirmed(l => l.some(x => sameRewrite(x, cur) && x.enabled === enabled), `перезапись «${domain}» ${enabled ? 'не включилась' : 'не выключилась'}`)
   }),
   'DELETE /dns/rewrites': admin(async (event) => {
     const { domain, answer } = await readBodyAs(event, Rewrite)
     const cur = await findRewrite(domain, answer)
     await post('rewrite/delete', { domain: cur.domain, answer: cur.answer })
-    return confirmRewrites(l => !l.some(x => sameRewrite(x, cur)), `перезапись «${domain}» не удалилась`)
+    return rewritesConfirmed(l => !l.some(x => sameRewrite(x, cur)), `перезапись «${domain}» не удалилась`)
   }),
 
-  /** Каталог сервисов AdGuard и заблокированные для всех клиентов; расписание AdGuard не трогаем. */
+  /** Заблокированные для всех клиентов; расписание AdGuard не трогаем. */
   'GET /dns/services': admin(async () => {
     const [all, blocked] = await Promise.all([serviceCatalog(), blockedServices()])
     return { all: all.map(s => ({ id: s.id, name: s.name })), blocked: blocked.ids ?? [] }
@@ -311,14 +292,14 @@ export default {
     return { blocked: now }
   }),
 
-  'GET /dns/settings': admin(async () => viewOf(await settingsState())),
+  'GET /dns/settings': admin(async () => settingsView(await settingsState())),
   /** Одна настройка DNS; ответ - что AdGuard показывает после. */
   'PATCH /dns/settings': admin(async (event) => {
     const [key, value] = Object.entries(await readBodyAs(event, Setting))[0] as [string, never]
     await APPLY[key]!(value, await settingsState())
-    const view = viewOf(await settingsState())
+    const view = settingsView(await settingsState())
     const expected = EXPECT[key] ? EXPECT[key](value) : value
-    if (expected !== undefined && view[key as keyof SettingsView] !== expected) {
+    if (expected !== undefined && view[key as keyof typeof view] !== expected) {
       throw createError({ statusCode: 502, statusMessage: 'agh_not_applied', message: 'AdGuard не применил изменение настройки' })
     }
     return view
@@ -332,7 +313,6 @@ export default {
     await post(what === 'log' ? 'querylog_clear' : 'stats_reset')
     return ok()
   }),
-  /** AdGuard спрашивает каждый сервер выше и отвечает OK или текст ошибки. */
   'POST /dns/settings/upstreams-check': admin(async (event) => {
     const b = await readBodyAs(event, z.object({ upstreams: z.string().max(10_000), bootstrap: z.string().max(2000) }))
     const list = upstreamList(b.upstreams)

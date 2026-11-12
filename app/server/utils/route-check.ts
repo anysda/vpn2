@@ -1,9 +1,6 @@
 import { Resolver } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import { domainToASCII, domainToUnicode } from 'node:url'
-import { matchRoute } from './route-match'
-import type { Conn, RoutePlan } from './route-match'
-import type { ClashProxy } from './clash-client'
 
 export interface CheckQuery { domain?: string, ip?: string, shown: string }
 

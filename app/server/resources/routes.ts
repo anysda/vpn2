@@ -2,15 +2,6 @@ import { asc, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../database/client'
 import { devices, routes } from '../database/schema'
-import { admin, idParam, notFound } from '../utils/api'
-import { fetchProxies, userVisibleOutbounds } from '../utils/clash-client'
-import { control } from '../utils/control'
-import { actorOf, joinDetail, outboundLabel, recordEvent } from '../utils/events'
-import { clientConn, explain, parseQuery, resolveIp } from '../utils/route-check'
-import type { RoutePlan } from '../utils/route-match'
-import { assertKnownOutbound } from '../utils/route-outbound'
-import { detectRouteType, syncRoutesFile } from '../utils/routes-sync'
-import { readBodyAs } from '../utils/validate'
 
 const Outbound = z.string().min(1).max(64)
 const syncRoutes = () => syncRoutesFile().catch(err => useLogger().error({ err }, 'route sync failed'))

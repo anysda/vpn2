@@ -2,24 +2,9 @@ import { eq, gte, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { useDb } from '../database/client'
 import { clients, deviceTrafficHourly, devices } from '../database/schema'
-import { activityDays } from '../utils/activity-days'
-import { fetchAdguardStats } from '../utils/agh-client'
-import { admin, bot } from '../utils/api'
-import { fetchConnections, fetchProxies, userVisibleOutbounds } from '../utils/clash-client'
-import { ONLINE_MIN_BYTES, recentBytesByClient } from '../utils/client-activity'
-import { clientStatus } from '../utils/client-status'
-import { actorOf, joinDetail, recentEvents, recordEvent } from '../utils/events'
-import { exitNodeOf, readDisabledExits, toggleExit } from '../utils/exit-control'
-import { exitTraffic } from '../utils/exit-traffic'
-import { clientsNewestFirst } from '../utils/list-order'
-import { isPanelReady } from '../utils/panel-ready'
-import { PROMQL, fetchDailyTraffic, fetchNodeMetrics, nodeInstances } from '../utils/vm-client'
-import { rangeQuery } from '../utils/vm-range'
-import { wgEndpointHasAAAA } from '../utils/wg-endpoint-dns'
 
 const HOURS = 24
-// Спарклайн узла на обзоре: 13 точек с шагом опроса панели (2 с), дальше
-// страница сама дописывает свежие значения из /api/ops/nodes.
+// Спарклайн узла: 13 точек с шагом опроса панели (2 с), дальше страница дописывает их сама.
 const POINTS = 13
 const STEP = 2
 const EventsQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(4) })
@@ -28,8 +13,7 @@ const mbps = (bps: number | null | undefined) => bps != null ? bps * 8 / 1e6 : n
 
 export default {
   'GET /version': () => {
-    // Стадия 30 ждёт этот ответ перед печатью журнала переноса предпочтений.
-    // HTTP начинает слушать раньше завершения async init-плагина Nitro.
+    // HTTP слушает раньше конца инициализации, а деплой ждёт именно готовую панель.
     if (!isPanelReady()) {
       throw createError({ statusCode: 503, statusMessage: 'panel_starting', message: 'Панель запускается' })
     }
@@ -42,23 +26,13 @@ export default {
     return { hasAAAA: !!cfg.wgEnabled && await wgEndpointHasAAAA(String(cfg.wgPublicHost || '')) }
   }),
 
-  /** Сетка «Активность» на обзоре: клиенты в сети и трафик по суткам МСК. */
   'GET /ops/activity': admin(() => activityDays()),
   'GET /ops/adguard': admin(async () => {
     const snap = await fetchAdguardStats()
     return snap ? { available: true, ...snap } : { available: false }
   }),
-  /** Трафик за сутки или неделю по экзитам для обзора: ?period=day|week. */
   'GET /ops/traffic': admin(event => exitTraffic(getQuery(event).period === 'week' ? 'week' : 'day')),
 
-  /**
-   * Клиенты онлайн и офлайн для обзора.
-   *
-   * total  — все клиенты;
-   * online — сейчас в сети (трафик за 5 минут от ONLINE_MIN_BYTES, как в списке клиентов);
-   * hourly — 24 последних часа, старый первым: сколько клиентов набрали за час
-   *          от ONLINE_MIN_BYTES. Час без записей — 0, ряд не рвётся.
-   */
   'GET /ops/clients-online': admin(async () => {
     const hourNow = Math.floor(Date.now() / 3_600_000) * 3600
     const since = hourNow - (HOURS - 1) * 3600
@@ -86,7 +60,6 @@ export default {
     return { total: Number(count?.n ?? 0), online, hourly }
   }),
 
-  /** Недавняя загрузка CPU по узлам: { tag: [старое … новое] }, пропуск — null. */
   'GET /ops/nodes-cpu': admin(async () => {
     const end = Math.floor(Date.now() / 1000 / STEP) * STEP
     const series = await rangeQuery(PROMQL.cpu, end - (POINTS - 1) * STEP, end, STEP)
@@ -108,12 +81,8 @@ export default {
       fetchProxies(),
       fetchConnections(),
     ])
-    // Узел, через который сейчас уходит иностранный трафик вне дорожек (foreign-best).
     const activeNode = exitNodeOf(proxies.find(p => p.name === 'foreign-best')?.now)
-    // Дорожки lane-NN: сколько смотрит на каждый узел и сколько из них — через
-    // его warp. При BALANCE=off дорожки повторяют foreign-best и все стоят на
-    // одном узле — так и показываем. Дорожек нет (старый конфиг, clash API
-    // молчит) — null, а не ноль.
+    // Дорожки lane-NN по узлам и сколько из них через warp; дорожек нет (clash молчит) - null, а не ноль.
     const lanes = proxies.filter(p => p.name.startsWith('lane-'))
     const lanesByNode = new Map<string, { total: number, warp: number }>()
     for (const l of lanes) {
@@ -124,8 +93,7 @@ export default {
       if (l.now!.endsWith('-warp')) s.warp++
       lanesByNode.set(node, s)
     }
-    // Активные устройства на экзите: разные клиентские VPN-IP среди текущих
-    // соединений через узел (mgmt-туннели — служебные, не считаем).
+    // Активные устройства экзита: разные клиентские VPN-адреса в текущих соединениях через узел.
     const devicesByNode = new Map<string, Set<string>>()
     for (const c of conns?.connections ?? []) {
       const node = exitNodeOf(c.chains[0])
@@ -169,10 +137,6 @@ export default {
     const exits = nodeInstances().map(n => n.tag).filter(t => t !== 'ru')
     if (!exits.includes(tag)) throw createError({ statusCode: 404, statusMessage: 'unknown_exit' })
     const { disabled } = await readValidatedBody(event, z.object({ disabled: z.boolean() }).parse)
-    // Хотя бы один экзит должен остаться включённым — иначе watchdog'у некуда
-    // уводить иностранный трафик.
-    // Прежнее состояние и запись журнала - внутри очереди переключений: иначе
-    // одновременный PATCH успевает записать своё между чтением и записью.
     const written = await toggleExit(tag, disabled, exits, async (wasDisabled) => {
       useLogger().info({ tag, wasDisabled, disabled }, 'exit toggled manually')
       if (wasDisabled === disabled) return
@@ -185,7 +149,6 @@ export default {
     return { tag, disabled }
   }),
 
-  // Снимок для бота: по нему бот шлёт тревоги по нодам и сводки.
   'GET /ops/bot-snapshot': bot(async () => {
     const instances = nodeInstances()
     const [allClients, nodes, proxies, connections] = await Promise.all([
@@ -217,9 +180,7 @@ export default {
         rxMbps: mbps(nodes[i]?.rxBps),
         txMbps: mbps(nodes[i]?.txBps),
         uptimeSec: nodes[i]?.uptimeSec ?? null,
-        // возраст последних метрик ноды, сек — бот алертит при staleSec > 5 мин
         staleSec: nodes[i]?.staleSec ?? null,
-        // размер ноды — по нему бот выбирает пороги CPU/RAM и окно тревоги
         cores: nodes[i]?.cores ?? null,
         memTotalBytes: nodes[i]?.memTotalBytes ?? null,
       })),

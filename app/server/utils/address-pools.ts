@@ -1,4 +1,3 @@
-import { createError } from 'h3'
 import pools from '../../shared/vpn-pools.json' with { type: 'json' }
 
 type Protocol = 'wg' | 'ovpn' | 'ikev2'

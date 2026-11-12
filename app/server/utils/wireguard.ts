@@ -1,15 +1,9 @@
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { isIP } from 'node:net'
 import os from 'node:os'
-import { createError } from 'h3'
-import { control, controlApply } from './control'
 import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
-import { wgAllowedIps } from './allowed-ips'
-import { expiryForControl, isClientActive } from './client-status'
-import { coalesceRuns } from './coalesce'
-import { nextPoolAddress } from './address-pools'
 
 /** Только публичный IPv4: адрес туннеля, docker или LAN не годится для автоопределения. */
 function isPublicIpv4(address: string): boolean {

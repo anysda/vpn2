@@ -3,31 +3,17 @@ import { and, eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
-import { devicesOldestFirst } from './list-order'
-import { deviceView } from './client-view'
-import { latestAccess } from './access-operations'
 import { accessStatus } from '../../shared/access-operation'
 
-const LOOPBACK_ADDRS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-
-export function isLoopbackAddr(ip: string | undefined): boolean {
-  return !!ip && LOOPBACK_ADDRS.has(ip)
-}
-
 /**
- * Запрос пришёл напрямую с этой ноды, а не через Caddy: тот тоже ходит с
- * 127.0.0.1, но ставит X-Forwarded-For. Основной замок - 404 на эти
- * пути в Caddyfile, это второй.
+ * Bearer бота по TGBOT_SECRET, только напрямую с этой ноды: Caddy тоже ходит с 127.0.0.1,
+ * но ставит X-Forwarded-For. Основной замок - 404 на эти пути в Caddyfile.
  */
-function isDirectLocal(event: H3Event): boolean {
-  if (!isLoopbackAddr(event.node.req.socket.remoteAddress)) return false
-  const h = event.node.req.headers
-  return !h['x-forwarded-for'] && !h['x-forwarded-host'] && !h.forwarded && !h.via
-}
-
-/** Bearer-аутентификация бота по TGBOT_SECRET, только для запросов с этой же ноды. */
 export function requireBotAuth(event: H3Event): void {
-  if (!isDirectLocal(event)) throw createError({ statusCode: 403, statusMessage: 'loopback_only' })
+  const h = event.node.req.headers
+  if (!isLoopbackAddr(event.node.req.socket.remoteAddress) || h['x-forwarded-for'] || h['x-forwarded-host'] || h.forwarded || h.via) {
+    throw createError({ statusCode: 403, statusMessage: 'loopback_only' })
+  }
   const expected = Buffer.from(String(useRuntimeConfig().tgbotSecret ?? ''))
   if (!expected.length) throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
   const provided = Buffer.from((getHeader(event, 'authorization') ?? '').replace(/^Bearer\s+/i, ''))

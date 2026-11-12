@@ -1,8 +1,3 @@
-import { enqueueExpiredAccess, runAccessOperations } from '../utils/access-operations'
-import { collectTraffic } from '../utils/traffic-collector'
-import { reportControlExpiry, syncControlExpiry } from '../utils/expiry'
-import { syncClientPrefsFile } from '../utils/client-prefs'
-
 const INTERVAL_MS = 60_000
 
 export default defineNitroPlugin((nitroApp) => {

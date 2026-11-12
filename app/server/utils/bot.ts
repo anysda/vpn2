@@ -1,20 +1,120 @@
-import { randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
-import { and, asc, count, eq, gt, lt, lte, ne, or } from 'drizzle-orm'
-import { useDb } from '../database/client'
-import { botOutbox } from '../database/schema'
+import { randomUUID } from 'node:crypto'
+import { and, asc, count, desc, eq, gt, inArray, lt, lte, ne, or } from 'drizzle-orm'
 import type { BotDelivery } from '../../shared/bot-delivery'
-import { botConfigured } from './telegram-config'
-import { recordEvent } from './events'
+import type { EventLevel } from '../../shared/events'
+import { parseOutbound } from '../../shared/outbounds'
+import { useDb } from '../database/client'
+import { botOutbox, events } from '../database/schema'
 
-/** Секрет, которым панель подписывает события боту. Без него 503 до любых других действий. */
-export function botSecretOrThrow(): string {
-  const secret = String(useRuntimeConfig().tgbotSecret ?? '')
-  if (!secret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
-  return secret
+// Журнал событий панели (лента Обзора) и очередь уведомлений боту этой ноды.
+const EVENT_RETENTION_MS = 30 * 24 * 3600 * 1000
+
+export const BOT_ACTOR = 'через бота'
+
+export function actorOf(user: { username: string }): string {
+  return user.username ? `@${user.username}` : 'панель'
 }
 
-/** POST /event боту этой ноды. Таймаут и повтор у очереди и у прямой отправки разные. */
+/** Выход маршрута так, как его подписывает панель: «DE», «DE WARP». */
+export function outboundLabel(outbound: string): string {
+  const parsed = parseOutbound(outbound)
+  if (!parsed) return outbound
+  return `${parsed.tag.toUpperCase()}${parsed.variant === 'warp' ? ' WARP' : ''}`
+}
+
+/**
+ * true - запись добавлена; false - ключ `key` уже был или база недоступна: сбой журнала не
+ * ломает само действие.
+ */
+export async function recordEvent(input: {
+  type: string, level: EventLevel, title: string, detail?: string, object?: string | null, actor?: string | null, key?: string, at?: number
+}): Promise<boolean> {
+  try {
+    const rows = await useDb().insert(events).values({
+      at: input.at ?? Date.now(),
+      type: input.type,
+      level: input.level,
+      title: input.title,
+      detail: input.detail ?? '',
+      object: input.object ?? null,
+      actor: input.actor ?? null,
+      key: input.key ?? null,
+    }).onConflictDoNothing({ target: events.key }).returning({ id: events.id })
+    return rows.length > 0
+  }
+  catch (err) {
+    useLogger().error({ err, type: input.type }, 'event journal write failed')
+    return false
+  }
+}
+
+export function joinDetail(...parts: Array<string | null | undefined | false>): string {
+  return parts.filter(Boolean).join(' · ')
+}
+
+export const recentEvents = (limit: number) => useDb().select({
+  id: events.id, at: events.at, type: events.type, level: events.level, title: events.title, detail: events.detail,
+}).from(events).orderBy(desc(events.at), desc(events.id)).limit(limit)
+
+/** Последнее событие объекта из перечисленных типов - состояние после рестарта панели. */
+export async function lastEventOf(object: string, types: string[]): Promise<{ type: string, at: number, detail: string } | null> {
+  const [row] = await useDb().select({ type: events.type, at: events.at, detail: events.detail }).from(events)
+    .where(and(eq(events.object, object), inArray(events.type, types)))
+    .orderBy(desc(events.at), desc(events.id)).limit(1)
+  return row ?? null
+}
+
+export const pruneEvents = () => useDb().delete(events).where(lt(events.at, Date.now() - EVENT_RETENTION_MS))
+
+const TELEGRAM_PATH = '/var/lib/anysda-vpn2/runtime/telegram-runtime.json'
+
+/** admin_username - ник администратора бота без @: бот называет его людям без доступа. */
+export function readTelegramRuntime() {
+  const parsed = readJsonFile<Record<string, unknown>>(TELEGRAM_PATH) ?? {}
+  return {
+    bot_token: String(parsed.bot_token ?? ''),
+    chat_id: (parsed.chat_id ?? '') as string | number,
+    admin_username: String(parsed.admin_username ?? ''),
+  }
+}
+
+export const writeTelegramRuntime = (data: ReturnType<typeof readTelegramRuntime>) => writeJsonFile(TELEGRAM_PATH, data)
+
+/** Настроен = есть кому доставлять: секрет бота и токен с чатом из настроек, условие значка «НЕНАСТРОЕН». */
+export function botConfigured(): boolean {
+  const runtime = readTelegramRuntime()
+  return !!useRuntimeConfig().tgbotSecret && !!runtime.bot_token && !!runtime.chat_id
+}
+
+export function maskToken(token: string): string {
+  if (!token) return ''
+  if (token.length < 10) return '••••••'
+  return `${token.slice(0, 6)}..${token.slice(-4)}`
+}
+
+/**
+ * Жив = /health бота ответил 200 без waiting_token: с отвергнутым токеном порт бота остаётся в
+ * LISTEN без обработчика. Имя бот узнаёт у Telegram (getMe) и отдаёт в том же ответе.
+ */
+export async function botHealth(): Promise<{ running: boolean, username: string }> {
+  const port = Number(useRuntimeConfig().tgbotEventPort ?? 8877)
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })
+    if (!res.ok) return { running: false, username: '' }
+    const body = await res.json().catch(() => ({})) as { username?: unknown, waiting_token?: unknown }
+    if (body.waiting_token === true) return { running: false, username: '' }
+    return { running: true, username: typeof body.username === 'string' ? body.username : '' }
+  }
+  catch {
+    return { running: false, username: '' }
+  }
+}
+
+export function botSecretOrThrow() {
+  if (!useRuntimeConfig().tgbotSecret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
+}
+
 function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, retry: number }): Promise<unknown> {
   const url: string = `http://127.0.0.1:${Number(useRuntimeConfig().tgbotEventPort ?? 8877)}/event`
   return $fetch<unknown>(url, {
@@ -23,7 +123,6 @@ function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, re
   })
 }
 
-/** Отправка из запроса администратора: бот не ответил - 502 тому, кто нажал кнопку. */
 export async function sendBotEvent(body: Record<string, unknown>): Promise<void> {
   await postBotEvent(body, { timeout: 8000, retry: 0 }).catch((cause) => {
     throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram', cause })
@@ -41,10 +140,6 @@ function delivery(row: Pick<typeof botOutbox.$inferSelect, 'id' | 'label' | 'sta
   return { id: row.id, label: row.label, status: row.status, remaining: row.status === 'queued' ? MAX_ATTEMPTS - row.attempts : 0, created: row.created }
 }
 
-/**
- * Запись завершена до первого POST. Один UUID на все попытки, в том числе после рестарта.
- * Без настроенного бота доставлять некому: в очередь не ставим, ответ null.
- */
 export async function notifyBot(type: string, payload: Record<string, unknown>, label = `Уведомление о клиенте «${payload.name ?? '?'}»`, single = false): Promise<BotDelivery | null> {
   if (!botConfigured()) return null
   const now = Date.now()
@@ -52,14 +147,11 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
   if (Buffer.byteLength(body) > 128 * 1024) throw createError({ statusCode: 413, message: 'Уведомление слишком большое. Повторов не будет.' })
   const row = { id: randomUUID(), label, payload: body, status: 'queued' as const, attempts: 0, due: now, expires: now + TTL, created: now }
   const pending = await useDb().transaction(async (tx) => {
-    // single: пока прежнее сообщение с той же подписью ждёт доставки, второе
-    // не ставится - после простоя бота приходит одно, а не пачка.
     if (single) {
       const [waiting] = await tx.select().from(botOutbox).where(and(eq(botOutbox.label, label), eq(botOutbox.status, 'queued'))).limit(1)
       if (waiting) return waiting
     }
     await tx.delete(botOutbox).where(lt(botOutbox.created, now - RETENTION))
-    // Лимит включает историю. При нехватке места освобождаем только подтверждённую запись.
     const [size] = await tx.select({ n: count() }).from(botOutbox)
     if (Number(size?.n) >= CAPACITY) {
       const [old] = await tx.select({ id: botOutbox.id }).from(botOutbox).where(eq(botOutbox.status, 'accepted')).orderBy(asc(botOutbox.created)).limit(1)
@@ -71,11 +163,9 @@ export async function notifyBot(type: string, payload: Record<string, unknown>, 
   if (pending) return delivery(pending)
   await attempt(row.id)
   const [saved] = await useDb().select().from(botOutbox).where(eq(botOutbox.id, row.id))
-  // Конкурентная вставка вправе вытеснить только уже подтверждённую запись.
   return delivery(saved ?? { ...row, status: 'accepted' })
 }
 
-/** Повторов больше не будет — тревога в журнал. */
 async function deliveryFailed(label: string): Promise<void> {
   await recordEvent({ type: 'bot_delivery_failed', level: 'alarm', object: 'bot', title: 'Бот не принял уведомление', detail: label })
 }
@@ -83,7 +173,6 @@ async function deliveryFailed(label: string): Promise<void> {
 function attempt(id: string): Promise<void> {
   const pending = inFlight.get(id)
   if (pending) return pending
-  // Запрос ждёт уже идущую попытку, а не выдаёт «не отправлено» посреди её POST.
   const pendingAttempt = attemptOnce(id).finally(() => { inFlight.delete(id) })
   inFlight.set(id, pendingAttempt)
   return pendingAttempt
@@ -92,7 +181,6 @@ function attempt(id: string): Promise<void> {
 async function attemptOnce(id: string) {
   const db = useDb()
   const now = Date.now()
-  // Атомарная аренда и расход попытки ДО HTTP; два тика/запроса не шлют одновременно.
   const row = await db.transaction(async (tx) => {
     const [candidate] = await tx.select().from(botOutbox).where(and(eq(botOutbox.id, id), eq(botOutbox.status, 'queued'), lte(botOutbox.due, now)))
     if (!candidate) return
@@ -125,7 +213,6 @@ async function attemptOnce(id: string) {
 export async function retryBotEvents() {
   const db = useDb()
   const now = Date.now()
-  // Ожидающие от времени, когда бот не был настроен, не доставить: удаляем.
   if (!botConfigured()) await db.delete(botOutbox).where(eq(botOutbox.status, 'queued'))
   const expired = await db.update(botOutbox).set({ status: 'failed', payload: '' })
     .where(and(eq(botOutbox.status, 'queued'), lte(botOutbox.expires, now))).returning({ label: botOutbox.label })
@@ -147,15 +234,10 @@ export function notifyClient(chatId: number, text: string, name: string): Promis
   return notifyBot('client_notify', { chatId, text }, `Уведомление клиенту «${name}»`)
 }
 
-/**
- * Отказ бэкапа - админу в Telegram. Строка ленты уже записана, поэтому сбой
- * очереди запрос скрипта бэкапа не роняет.
- */
 export async function notifyBackupFailed(detail: string): Promise<void> {
   await notifyWarning(notifyBot('system_alert', { subject: 'Бэкап не удался', detail }, 'Сообщение об отказе бэкапа', true))
 }
 
-/** Изменение уже записано: сбой постановки уведомления в очередь - текст предупреждения в ответе, а не ошибка запроса. */
 export function notifyWarning(send: Promise<unknown>, fallback = 'Уведомление клиенту не отправлено'): Promise<string | undefined> {
   return send.then(() => undefined, (err: unknown) => {
     useLogger().warn({ err }, 'notification not queued')

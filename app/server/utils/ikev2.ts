@@ -1,13 +1,7 @@
 import { randomBytes } from 'node:crypto'
-import { control, controlApply } from './control'
 import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
-import { expiryForControl, isClientActive } from './client-status'
-import { slugify } from './naming'
-import { coalesceRuns } from './coalesce'
-import { nextPoolAddress } from './address-pools'
-import { clientDns } from './client-dns'
 
 interface Ikev2Profile { ready: boolean, mode: 'letsencrypt' | 'self-signed', host: string, domain: string, ca: string }
 const profile = (): Promise<Ikev2Profile> => control('profile.read', { protocol: 'ikev2' })

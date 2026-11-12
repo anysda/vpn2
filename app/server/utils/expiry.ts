@@ -1,13 +1,6 @@
 import { eq } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, devices, events } from '../database/schema'
-import { control } from './control'
-import { recordEvent } from './events'
-import { expiryForControl, isClientActive } from './client-status'
-import { syncWireguardConfig } from './wireguard'
-import { syncOpenvpnConfig } from './openvpn'
-import { syncIkev2 } from './ikev2'
-import { withAccessLock } from './access-lock'
 
 /**
  * Начало завтрашнего дня (UTC) в миллисекундах — минимально допустимый

@@ -1,4 +1,3 @@
-import { controlApply } from './control'
 import { eq, isNotNull } from 'drizzle-orm'
 import { useDb } from '../database/client'
 import { clients, collectorState, devices } from '../database/schema'

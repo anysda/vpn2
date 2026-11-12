@@ -3,10 +3,6 @@ import { eq } from 'drizzle-orm'
 import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, deviceRequests, devices } from '../database/schema'
-import { nextPoolAddress } from './address-pools'
-import { ensureDeviceWg, syncWireguardConfig } from './wireguard'
-import { ensureDeviceOvpn } from './openvpn'
-import { ensureDeviceIkev2, syncIkev2 } from './ikev2'
 
 
 /** Ключ идемпотентности создания из заголовка idempotency-key; hash - отпечаток тела: тот же ключ с другим запросом отклоняется. */

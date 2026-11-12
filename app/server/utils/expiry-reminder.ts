@@ -2,10 +2,6 @@ import { and, eq, gt, lte } from 'drizzle-orm'
 import { plural } from '../../shared/plural'
 import { useDb } from '../database/client'
 import { clients } from '../database/schema'
-import { notifyClient } from './bot-events'
-import { joinDetail, recordEvent } from './events'
-import { useLogger } from './logger'
-import { botConfigured } from './telegram-config'
 
 /** «через 3 дня» в журнале и в сообщении клиенту. @internal */
 export const expiryLeftText = (days: number) => `через ${days} ${plural(days, 'day')}`

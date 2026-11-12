@@ -1,5 +1,3 @@
-import { retryBotEvents } from '../utils/bot-events'
-
 export default defineNitroPlugin((nitro) => {
   let running = false
   const timer = setInterval(async () => {

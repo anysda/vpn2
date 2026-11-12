@@ -1,20 +1,281 @@
 import { hash, verify } from '@node-rs/argon2'
+import { base32 } from '@better-auth/utils/base32'
+import { createOTP } from '@better-auth/utils/otp'
 import { betterAuth, type BetterAuthPlugin } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api'
+import { symmetricDecrypt } from 'better-auth/crypto'
 import { genericOAuth, twoFactor, username } from 'better-auth/plugins'
-import { and, eq, inArray, ne, notInArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull, lt, ne, notInArray, or } from 'drizzle-orm'
 import type { H3Event } from 'h3'
+import { load as parseYaml } from 'js-yaml'
+import { existsSync, readFileSync } from 'node:fs'
+import { z } from 'zod'
 import { useDb } from '../database/client'
-import * as schema from '../database/schema'
-import { consumeCode, otp, TOTP_ISSUER, TOTP_PERIOD, totpKeys } from './auth-totp'
-import { resolveSsoUser, SSO_PROVIDER, SsoDenied, ssoSettings } from './sso'
+import { accounts, sessions, twoFactors, users, verifications } from '../database/schema'
+
+// Вход, сессии, 2FA и SSO на better-auth. Своё: argon2 с параметрами установки, 2FA-секреты из
+// users.totp_secret и гашение кода, правило допуска SSO, отзыв сессий при смене пароля, 2FA и списка SSO.
+
+const ConfigSchema = z.object({
+  admin: z
+    .object({
+      user: z.string().default('admin'),
+      password: z.string().optional(),
+    })
+    .default({ user: 'admin' }),
+})
+
+let anysdaConfig: z.infer<typeof ConfigSchema> | null = null
+
+/** Блок `admin:` config.yaml; остальное панель берёт из NUXT_* env. */
+export function loadAnysdaConfig() {
+  if (anysdaConfig) return anysdaConfig
+  const path = useRuntimeConfig().anysdaConfigPath
+  if (!existsSync(path)) {
+    useLogger().warn({ path }, 'anysda config not found; using defaults')
+    return null
+  }
+  // Неразборный файл - громкий отказ, а не admin со случайным паролем. Исходное исключение js-yaml
+  // несёт строки файла с паролем: в журнал не попадает.
+  try {
+    anysdaConfig = ConfigSchema.parse(parseYaml(readFileSync(path, 'utf-8')))
+    return anysdaConfig
+  }
+  catch {
+    throw new Error(`anysda config ${path} is invalid: check YAML syntax and admin field types`)
+  }
+}
 
 /**
- * Вход, сессии, 2FA и SSO на better-auth. Своё: argon2 с параметрами установки,
- * 2FA-секреты из users.totp_secret и гашение кода, правило допуска SSO,
- * отзыв сессий при смене пароля, 2FA и списка SSO.
+ * SSO через Authentik: учётку из IdP панель не заводит, только привязывает вход к существующей
+ * по `sub` из явного списка `allowedSubs` («<sub>» или «<sub>:<логин>» через запятую).
  */
+export const SSO_PROVIDER = 'authentik'
+
+// Настройки из профиля панели; блок `sso:` config.yaml только засевает их, пока файла нет.
+const SSO_PATH = '/var/lib/anysda-vpn2/runtime/sso-runtime.json'
+
+export interface SsoStored {
+  enabled: boolean
+  authentikUrl: string
+  appSlug: string
+  clientId: string
+  clientSecret: string
+  allowedSubs: string
+  label: string
+  autoRedirect: boolean
+  passwordLogin: boolean
+  redirectUrl: string
+}
+
+export function parseAllowedSubs(raw: string): Map<string, string | null> {
+  const allowed = new Map<string, string | null>()
+  for (const part of raw.split(',')) {
+    const item = part.trim()
+    if (!item) continue
+    const [sub, username] = item.split(':')
+    if (!sub?.trim()) continue
+    allowed.set(sub.trim(), username?.trim() || null)
+  }
+  return allowed
+}
+
+const WELL_KNOWN = '/.well-known/openid-configuration'
+const AUTHENTIK_DISCOVERY = /^(.+?)\/application\/o\/([^/]+)\/\.well-known\/openid-configuration$/
+
+export function discoveryFrom(authentikUrl: string, appSlug: string): string {
+  const url = authentikUrl.trim().replace(/\/+$/, '')
+  if (!url) return ''
+  if (url.includes(WELL_KNOWN)) return url
+  return `${url}/application/o/${appSlug.trim() || 'vpn2'}${WELL_KNOWN}`
+}
+
+function seedFromConfig(): SsoStored {
+  const cfg = useRuntimeConfig()
+  const oidc = cfg.oauth.oidc
+  const discovery = String(oidc.openidConfig ?? '')
+  const m = AUTHENTIK_DISCOVERY.exec(discovery)
+  return {
+    enabled: !!cfg.public.sso.enabled,
+    authentikUrl: m ? m[1]! : discovery,
+    appSlug: m ? m[2]! : '',
+    clientId: String(oidc.clientId ?? ''),
+    clientSecret: String(oidc.clientSecret ?? ''),
+    allowedSubs: String(cfg.sso.allowedSubs ?? ''),
+    label: String(cfg.public.sso.label || 'Authentik'),
+    autoRedirect: !!cfg.public.sso.autoRedirect,
+    passwordLogin: cfg.sso.passwordLogin !== false,
+    redirectUrl: String(oidc.redirectURL ?? ''),
+  }
+}
+
+let cached: { stored: SsoStored, fromPanel: boolean } | null = null
+
+/** Настройки как в профиле; `fromPanel` - сохранены ли они уже из панели. Битый файл - засев. */
+export function readSsoStored() {
+  if (!cached) {
+    const seed = seedFromConfig()
+    const parsed = readJsonFile<Partial<SsoStored>>(SSO_PATH)
+    const stored = { ...seed }
+    for (const key of Object.keys(seed) as (keyof SsoStored)[]) {
+      if (parsed && typeof parsed[key] === typeof seed[key]) (stored as Record<string, unknown>)[key] = parsed[key]
+    }
+    cached = { stored, fromPanel: !!parsed }
+  }
+  return { stored: { ...cached.stored }, fromPanel: cached.fromPanel }
+}
+
+export function writeSsoStored(data: SsoStored) {
+  writeJsonFile(SSO_PATH, data)
+  cached = { stored: { ...data }, fromPanel: true }
+}
+
+export function maskSecret(secret: string): string {
+  if (!secret) return ''
+  if (secret.length < 12) return '••••••'
+  return `${secret.slice(0, 4)}••••••${secret.slice(-2)}`
+}
+
+/** Адрес возврата по адресу, с которого открыт профиль: его вписывают в провайдер Authentik. */
+export function defaultRedirectUrl(event: H3Event): string {
+  const proto = useRuntimeConfig().session.cookie.secure ? 'https' : getRequestProtocol(event, { xForwardedProto: true })
+  return `${proto}://${getRequestHost(event, { xForwardedHost: true })}/auth/authentik`
+}
+
+/** `allowed`: sub → локальный логин (null - единственная учётка панели). */
+export function ssoSettings() {
+  const s = readSsoStored().stored
+  const discoveryUrl = discoveryFrom(s.authentikUrl, s.appSlug)
+  const enabled = s.enabled && !!s.clientId.trim() && !!discoveryUrl && !!s.clientSecret.trim()
+  return {
+    enabled,
+    autoRedirect: enabled && s.autoRedirect,
+    passwordLogin: !enabled || s.passwordLogin,
+    label: s.label || 'Authentik',
+    allowed: parseAllowedSubs(s.allowedSubs),
+    discoveryUrl,
+    clientId: s.clientId,
+    clientSecret: s.clientSecret,
+    redirectUrl: s.redirectUrl,
+  }
+}
+
+class SsoDenied extends Error {
+  constructor(public code: string, message: string) {
+    super(message)
+  }
+}
+
+/** Локальная учётка для вошедшего в IdP или SsoDenied; привязку потом создаёт better-auth по почте. */
+async function resolveSsoUser(sub: string, preferredUsername?: string) {
+  if (!sub) throw new SsoDenied('sso_no_sub', 'IdP не вернул sub')
+  const db = useDb()
+
+  // Список проверяется первым и для уже привязанных: привязка переживает удаление sub.
+  const { allowed } = ssoSettings()
+  if (!allowed.has(sub)) {
+    throw new SsoDenied('sso_not_allowed', `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`)
+  }
+
+  const [linked] = await db
+    .select({ user: users })
+    .from(accounts)
+    .innerJoin(users, eq(users.id, accounts.userId))
+    .where(and(eq(accounts.providerId, SSO_PROVIDER), eq(accounts.accountId, sub)))
+    .limit(1)
+  if (linked) return linked.user
+
+  const wantUsername = allowed.get(sub)
+  let target: typeof users.$inferSelect | undefined
+
+  if (wantUsername) {
+    const found = await db.select().from(users).where(eq(users.username, wantUsername)).limit(1)
+    target = found[0]
+    if (!target) throw new SsoDenied('sso_no_local_user', `в панели нет учётки «${wantUsername}»`)
+  }
+  else {
+    const all = await db.select().from(users).limit(2)
+    if (all.length !== 1) {
+      throw new SsoDenied('sso_ambiguous', `учёток в панели ${all.length} — в sso.allowed_subs нужен формат <sub>:<логин>`)
+    }
+    target = all[0]!
+  }
+
+  const [other] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.userId, target.id), eq(accounts.providerId, SSO_PROVIDER)))
+    .limit(1)
+  if (other) throw new SsoDenied('sso_already_linked', `учётка «${target.username}» уже привязана к другому sub`)
+
+  return target
+}
+
+export async function probeDiscovery(url: string): Promise<{ ok: true, issuer: string } | { ok: false, message: string }> {
+  let res: Response
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { accept: 'application/json' } })
+  }
+  catch (err) {
+    const reason = err instanceof Error && err.name === 'TimeoutError' ? 'нет ответа за 5 секунд' : 'адрес недоступен'
+    return { ok: false, message: `Discovery не прочитан: ${reason}` }
+  }
+  if (!res.ok) return { ok: false, message: `Discovery не прочитан: HTTP ${res.status}` }
+  const doc = await res.json().catch(() => null) as { issuer?: unknown, authorization_endpoint?: unknown } | null
+  if (!doc || typeof doc.issuer !== 'string' || typeof doc.authorization_endpoint !== 'string') {
+    return { ok: false, message: 'По адресу не discovery OpenID: нет issuer или authorization_endpoint' }
+  }
+  return { ok: true, issuer: doc.issuer }
+}
+
+const TOTP_PERIOD = 30
+const TOTP_ISSUER = 'anysda-vpn2'
+
+type OtpKey = string | CryptoKey
+// В типах createOTP ключ только строка, но CryptoKey проходит как есть.
+const otp = (key: OtpKey) => createOTP(key as string, { period: TOTP_PERIOD, digits: 6 })
+
+/** Секрет из users.totp_secret: base32 от сырых байт ключа. */
+async function legacyKey(secret: string): Promise<CryptoKey> {
+  const bytes = base32.decode(secret.toUpperCase().replace(/[\s=]/g, ''))
+  return crypto.subtle.importKey('raw', bytes, { name: 'HMAC', hash: 'SHA-1' }, false, ['sign'])
+}
+
+/** check - чем проверять код человека, library - секрет библиотеки. */
+async function totpKeys(secretConfig: unknown, userId: number): Promise<{ check: OtpKey, library: string } | null> {
+  const db = useDb()
+  const [row] = await db
+    .select({ legacy: users.legacyTotpSecret, secret: twoFactors.secret })
+    .from(twoFactors)
+    .innerJoin(users, eq(users.id, twoFactors.userId))
+    .where(eq(twoFactors.userId, userId))
+    .limit(1)
+  if (!row) return null
+  const library = await symmetricDecrypt({ key: secretConfig as string, data: row.secret })
+  return { check: row.legacy ? await legacyKey(row.legacy) : library, library }
+}
+
+/** Код ±1 шаг гасится условным update: из параллельных запросов пройдёт один. */
+async function consumeCode(userId: number, key: OtpKey, code: unknown): Promise<number | null> {
+  const token = String(code ?? '').replace(/\s/g, '')
+  if (!/^\d{6}$/.test(token)) return null
+  const now = Math.floor(Date.now() / 1000 / TOTP_PERIOD)
+  let step: number | null = null
+  for (const s of [now - 1, now, now + 1]) {
+    if (await otp(key).hotp(s) === token) step = s
+  }
+  if (step === null) return null
+  const won = await useDb()
+    .update(users)
+    .set({ totpLastStep: step })
+    .where(and(
+      eq(users.id, userId),
+      or(isNull(users.totpLastStep), lt(users.totpLastStep, step)),
+    ))
+    .returning({ id: users.id })
+  return won.length === 1 ? step : null
+}
 
 /** Форма входа без авторедиректа в SSO: break-glass. */
 export const LOGIN_FORM = '/login?direct=1'
@@ -27,16 +288,16 @@ type HookCtx = Parameters<Middleware>[0]
 export const hashPassword = (plain: string): Promise<string> => hash(plain, ARGON2)
 export const verifyPassword = (hashed: string, plain: string): Promise<boolean> => verify(hashed, plain).catch(() => false)
 
-/** Удаляет SSO-сессии учёток, чей sub больше не в списке (при выключенном SSO - все). Возвращает число. */
+/** Удаляет SSO-сессии учёток, чей sub больше не в списке (при выключенном SSO - все). */
 export async function revokeDisallowedSsoSessions(sso = ssoSettings()): Promise<number> {
   const subs = sso.enabled ? [...sso.allowed.keys()] : []
   const db = useDb()
-  const isSso = eq(schema.sessions.loginMethod, 'sso')
-  const allowedUsers = db.select({ id: schema.accounts.userId }).from(schema.accounts)
-    .where(and(eq(schema.accounts.providerId, SSO_PROVIDER), inArray(schema.accounts.accountId, subs)))
-  const gone = await db.delete(schema.sessions)
-    .where(subs.length ? and(isSso, notInArray(schema.sessions.userId, allowedUsers)) : isSso)
-    .returning({ id: schema.sessions.id })
+  const isSso = eq(sessions.loginMethod, 'sso')
+  const allowedUsers = db.select({ id: accounts.userId }).from(accounts)
+    .where(and(eq(accounts.providerId, SSO_PROVIDER), inArray(accounts.accountId, subs)))
+  const gone = await db.delete(sessions)
+    .where(subs.length ? and(isSso, notInArray(sessions.userId, allowedUsers)) : isSso)
+    .returning({ id: sessions.id })
   return gone.length
 }
 
@@ -49,7 +310,6 @@ async function twoFactorUserId(ctx: HookCtx): Promise<number | null> {
   return v ? Number(v.value) : null
 }
 
-/** Код не из 6 цифр - ошибка формы, а не неверный код. */
 function requireCodeShape(code: unknown) {
   if (!/^\d{6}$/.test(String(code ?? '').replace(/\s/g, ''))) {
     throw APIError.from('BAD_REQUEST', { code: 'VALIDATION_ERROR', message: '[body.code] 6 digits expected' })
@@ -67,8 +327,8 @@ const panelGuard = (): BetterAuthPlugin => ({
       hook(['/sign-in/username'], async () => {
         if (!ssoSettings().passwordLogin) throw new APIError('FORBIDDEN', { code: 'PASSWORD_LOGIN_DISABLED', message: 'Password login disabled' })
       }),
-      // Код проверяется здесь (секреты users.totp_secret, гашение повтора), а библиотеке
-      // уходит заведомо верный или неверный: счётчики неудач ведёт она.
+      // Код проверяется здесь (секреты users.totp_secret, гашение повтора), а библиотеке уходит
+      // заведомо верный или неверный: счётчики неудач ведёт она.
       hook(['/two-factor/verify-totp'], async (ctx) => {
         const body = { ...(ctx.body ?? {}), trustDevice: false }
         requireCodeShape(body.code)
@@ -96,7 +356,6 @@ const panelGuard = (): BetterAuthPlugin => ({
           throw APIError.from('UNAUTHORIZED', { code: 'INVALID_CODE', message: 'Invalid code' })
         }
       }),
-      // Смена пароля всегда рвёт остальные сессии.
       hook(['/change-password'], async (ctx) => {
         if (typeof ctx.body?.newPassword === 'string' && ctx.body.newPassword.length > 256) {
           throw APIError.from('BAD_REQUEST', { code: 'PASSWORD_TOO_LONG', message: 'Password is too long' })
@@ -121,16 +380,15 @@ const panelGuard = (): BetterAuthPlugin => ({
         if (!fresh) return
         if (ctx.path === '/two-factor/verify-totp' && ctx.getCookie(ctx.context.createAuthCookie(TWO_FACTOR_COOKIE).name)) return
         const userId = Number(fresh.user.id)
-        await useDb().delete(schema.sessions).where(and(eq(schema.sessions.userId, userId), ne(schema.sessions.token, fresh.session.token)))
+        await useDb().delete(sessions).where(and(eq(sessions.userId, userId), ne(sessions.token, fresh.session.token)))
         if (ctx.path === '/two-factor/disable') {
-          await useDb().update(schema.users).set({ legacyTotpSecret: null, totpLastStep: null }).where(eq(schema.users.id, userId))
+          await useDb().update(users).set({ legacyTotpSecret: null, totpLastStep: null }).where(eq(users.id, userId))
         }
       }),
     ],
   },
 })
 
-/** Провайдер Authentik; без настроенного SSO /auth/authentik отвечает sso_off раньше библиотеки. */
 function ssoProvider(sso: ReturnType<typeof ssoSettings>) {
   return {
     providerId: SSO_PROVIDER,
@@ -152,7 +410,7 @@ function ssoProvider(sso: ReturnType<typeof ssoSettings>) {
       }
       catch (err) {
         if (!(err instanceof SsoDenied)) throw err
-        // Причина в лог, в браузер только код.
+        // Причина в журнал, в браузер только код.
         useLogger().warn({ sub, preferred, reason: err.message }, 'sso: вход отклонён')
         throw new APIError('FOUND', undefined, { Location: `${LOGIN_FORM}&error=${err.code}` })
       }
@@ -163,7 +421,8 @@ function ssoProvider(sso: ReturnType<typeof ssoSettings>) {
 function buildAuth() {
   const cfg = useRuntimeConfig()
   const sso = ssoSettings()
-  const { users, sessions, accounts, verifications, twoFactors } = schema
+  // Попытки входа, смены пароля и кода 2FA - на адрес и ручку за 5 минут.
+  const attempts = { window: 300, max: Number(cfg.authLoginMaxAttempts) || 10 }
   return betterAuth({
     appName: TOTP_ISSUER,
     secret: String(cfg.session.password ?? ''),
@@ -179,7 +438,6 @@ function buildAuth() {
       // Без defaultValue: оно затёрло бы значение при пересоздании сессии.
       additionalFields: { loginMethod: { type: 'string', required: false, input: false } },
     },
-    // Почту для привязки выдаёт resolveSsoUser, а не IdP.
     account: { modelName: 'accounts', accountLinking: { enabled: true, trustedProviders: [SSO_PROVIDER] } },
     verification: { modelName: 'verifications' },
     emailAndPassword: {
@@ -201,8 +459,7 @@ function buildAuth() {
       storage: 'memory',
       window: 60,
       max: 100,
-      // Неудачи пароля и кода считает ручка /api/auth/*.
-      customRules: { '/sign-in/username': false, '/change-password': false, '/two-factor/*': false, '/get-session': false },
+      customRules: { '/sign-in/username': attempts, '/change-password': attempts, '/two-factor/*': attempts, '/get-session': false },
     },
     databaseHooks: {
       session: {

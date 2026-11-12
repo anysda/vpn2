@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { and, eq, sql } from 'drizzle-orm'
 import { useDb } from '../database/client'
@@ -50,85 +50,72 @@ async function initPanel() {
 
   // 2. Seed/sync admin user from config.yaml (idempotent restore)
   const yamlConfig = loadAnysdaConfig()
-  const desiredUser = yamlConfig?.admin?.user ?? process.env.NUXT_ADMIN_USER ?? 'admin'
-  let desiredPassword = yamlConfig?.admin?.password ?? process.env.NUXT_ADMIN_PASSWORD ?? ''
+  const configUser = yamlConfig?.admin?.user
+  const configPassword = yamlConfig?.admin?.password
+  const [current] = await localDb.select().from(users).limit(1)
 
-  const existing = await localDb.select().from(users).limit(1)
-
-  if (existing.length === 0) {
-    if (!desiredPassword) {
-      desiredPassword = randomBytes(13).toString('base64url').slice(0, 18)
-      const pwdPath = '/var/lib/anysda-vpn2/admin-password.txt'
-      try {
-        const dir = dirname(pwdPath)
-        if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
-        writeFileSync(pwdPath, desiredPassword, { mode: 0o600 })
-        log.warn({ pwdPath }, 'generated admin password — saved to file')
-      }
-      catch {
-        throw new Error(`Cannot save generated admin password to ${pwdPath}`)
-      }
-    }
-    const passwordHash = await hashPassword(desiredPassword)
+  if (!current) {
+    const username = configUser ?? process.env.NUXT_ADMIN_USER ?? 'admin'
+    const password = configPassword || process.env.NUXT_ADMIN_PASSWORD || await generatedAdminPassword()
+    const passwordHash = await hashPassword(password)
     await localDb.transaction(async (tx) => {
       // Синтетическая почта привязана к id, а он известен только после вставки.
-      const [row] = await tx.insert(users).values({
-        username: desiredUser,
-        name: desiredUser,
-        email: `new-${randomBytes(8).toString('hex')}@panel.invalid`,
-      }).returning({ id: users.id })
+      const [row] = await tx.insert(users)
+        .values({ username, name: username, email: `new-${randomBytes(8).toString('hex')}@panel.invalid` }).returning({ id: users.id })
       const id = row!.id
       await tx.update(users).set({ email: `u${id}@panel.invalid` }).where(eq(users.id, id))
-      await tx.insert(accounts).values({
-        accountId: String(id),
-        providerId: 'credential',
-        userId: id,
-        password: passwordHash,
-      })
-      if (yamlConfig?.admin?.password) await tx.insert(adminConfigPassword).values({ userId: id, hash: passwordHash })
+      await tx.insert(accounts).values({ accountId: String(id), providerId: 'credential', userId: id, password: passwordHash })
+      if (configPassword) await tx.insert(adminConfigPassword).values({ userId: id, hash: passwordHash })
     })
-    log.info({ username: desiredUser }, 'admin user created')
+    log.info({ username }, 'admin user created')
   }
   else {
-    const current = existing[0]!
     const changed: string[] = []
-    if (yamlConfig?.admin?.user && current.username !== yamlConfig.admin.user) {
-      await localDb.update(users)
-        .set({ username: yamlConfig.admin.user, name: yamlConfig.admin.user, updatedAt: new Date() })
-        .where(eq(users.id, current.id))
+    if (configUser && current.username !== configUser) {
+      await localDb.update(users).set({ username: configUser, name: configUser, updatedAt: new Date() }).where(eq(users.id, current.id))
       changed.push('username')
     }
-    // Пароль из конфига применяется, только когда сменили сам конфиг (сравнение
-    // с последним применённым), иначе смена в панели откатывалась бы на каждом
-    // перезапуске. Вместе с ним рвутся все сессии.
-    const yamlPassword = yamlConfig?.admin?.password
-    if (yamlPassword) {
-      const [applied] = await localDb.select().from(adminConfigPassword)
-        .where(eq(adminConfigPassword.userId, current.id)).limit(1)
-      if (!applied || !(await verifyPassword(applied.hash, yamlPassword))) {
-        const [credential] = await localDb.select().from(accounts)
-          .where(and(eq(accounts.userId, current.id), eq(accounts.providerId, 'credential')))
-          .limit(1)
-        let hash = credential?.password ?? ''
-        if (!hash || !(await verifyPassword(hash, yamlPassword))) {
-          hash = await hashPassword(yamlPassword)
-          if (credential) {
-            await localDb.update(accounts).set({ password: hash, updatedAt: new Date() }).where(eq(accounts.id, credential.id))
-          }
-          else {
-            await localDb.insert(accounts).values({ accountId: String(current.id), providerId: 'credential', userId: current.id, password: hash })
-          }
-          await localDb.delete(sessions).where(eq(sessions.userId, current.id))
-          changed.push('password')
-        }
-        await localDb.insert(adminConfigPassword).values({ userId: current.id, hash })
-          .onConflictDoUpdate({ target: adminConfigPassword.userId, set: { hash } })
-      }
-    }
+    if (configPassword && await applyConfigPassword(current.id, configPassword)) changed.push('password')
     if (changed.length > 0) log.info({ keys: changed }, 'admin user synced from config.yaml')
   }
 
   // 3. Список SSO мог смениться, пока панель стояла.
   const revoked = await revokeDisallowedSsoSessions()
   if (revoked > 0) log.info({ count: revoked }, 'sso sessions revoked: sub no longer allowed')
+}
+
+/** Пароля нет ни в конфиге, ни в env: случайный, в файл только для root. */
+async function generatedAdminPassword(): Promise<string> {
+  const password = randomBytes(13).toString('base64url').slice(0, 18)
+  const path = '/var/lib/anysda-vpn2/admin-password.txt'
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, password, { mode: 0o600 })
+  }
+  catch {
+    throw new Error(`Cannot save generated admin password to ${path}`)
+  }
+  useLogger().warn({ pwdPath: path }, 'generated admin password — saved to file')
+  return password
+}
+
+/**
+ * Пароль из конфига применяется, только когда сменили сам конфиг (сравнение с последним
+ * применённым), иначе смена в панели откатывалась бы на каждом перезапуске. Вместе с ним рвутся все сессии.
+ */
+async function applyConfigPassword(userId: number, password: string): Promise<boolean> {
+  const db = useDb()
+  const [applied] = await db.select().from(adminConfigPassword).where(eq(adminConfigPassword.userId, userId)).limit(1)
+  if (applied && await verifyPassword(applied.hash, password)) return false
+  const [credential] = await db.select().from(accounts)
+    .where(and(eq(accounts.userId, userId), eq(accounts.providerId, 'credential'))).limit(1)
+  const same = !!credential?.password && await verifyPassword(credential.password, password)
+  const hash = same ? credential!.password! : await hashPassword(password)
+  if (!same) {
+    if (credential) await db.update(accounts).set({ password: hash, updatedAt: new Date() }).where(eq(accounts.id, credential.id))
+    else await db.insert(accounts).values({ accountId: String(userId), providerId: 'credential', userId, password: hash })
+    await db.delete(sessions).where(eq(sessions.userId, userId))
+  }
+  await db.insert(adminConfigPassword).values({ userId, hash }).onConflictDoUpdate({ target: adminConfigPassword.userId, set: { hash } })
+  return !same
 }

@@ -94,7 +94,7 @@ test.describe('ikev2-domain', () => {
 test.describe('ikev2-repair', () => {
   const test = baseTest
 
-  test('массовое восстановление IKEv2 сохраняет креды и читает пул один раз', async () => {
+  test('синхронизация 2000 устройств IKEv2 читает пул один раз и не трогает креды', async () => {
     const client = createClient({ url: ':memory:' })
     const queries: string[] = []
     const db = drizzle(client, { schema, logger: { logQuery: query => queries.push(query) } })
@@ -105,8 +105,8 @@ test.describe('ikev2-repair', () => {
       for (let i = 0; i < 2000; i++) ips.push(nextPoolAddress('ikev2', ips))
       await db.insert(schema.devices).values(ips.map((ip, i) => ({
         clientId: owner!.id, name: `device-${i}`, ikev2Ip: ip,
-        ikev2Username: i === 0 ? 'preserved' : null,
-        ikev2Password: i === 0 ? 'preserved-password' : null,
+        ikev2Username: i === 0 ? 'preserved' : `repair-device-${i}`,
+        ikev2Password: i === 0 ? 'preserved-password' : `password-${i}`,
       })))
       let config = ''
       const ikev2 = serverModule<typeof import('../server/utils/ikev2')>(
@@ -134,7 +134,7 @@ test.describe('ikev2-repair', () => {
       const start = performance.now()
       await ikev2.syncIkev2()
       const reads = queries.filter(query => /^select /i.test(query)).length
-      console.log(`IKEv2 repair: devices=2000 selects=${reads} ms=${Math.round(performance.now() - start)}`)
+      console.log(`IKEv2 sync: devices=2000 selects=${reads} ms=${Math.round(performance.now() - start)}`)
       expect(reads, 'один снимок вместо повторного чтения всего пула на каждое устройство').toBeLessThanOrEqual(3)
       const rows = await db.select().from(schema.devices)
       expect(new Set(rows.map(row => row.ikev2Username)).size).toBe(2000)

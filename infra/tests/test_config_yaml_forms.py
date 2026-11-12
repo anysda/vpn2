@@ -6,7 +6,7 @@ import unittest
 
 from test_deploy import values, write_envs
 from vpn2 import config as vpn2_config
-from vpn2.setup import merge_setup_config, parse_yaml
+from vpn2.setup import parse_yaml, update
 
 
 # Дословный вывод yaml.safe_dump: ключи по алфавиту, список без отступа,
@@ -113,9 +113,8 @@ class SafeDumpConfigTests(unittest.TestCase):
                 self.assertEqual(ports[other], {'se': None, 'nl': '8443'}[other])
 
     def test_setup_merge_keeps_unindented_exits(self):
-        answers = ("entry:\n  host: 192.0.2.1\n  password: 'new'\n"
-                   "exits:\n  - tag: nl\n    host: 192.0.2.3\n    password: 'p3'\n")
-        merged = merge_setup_config(SAFE_DUMP, answers)
+        answers = {'entry': {'host': '192.0.2.1', 'password': "'new'"}, 'exits': [('nl', '192.0.2.3', 'p3')]}
+        merged = update(SAFE_DUMP, answers)
         cfg = parse_yaml(merged)
         self.assertEqual([(e['tag'], e['password'], e.get('hy2_direct_port')) for e in cfg['exits']],
                          [('nl', 'p3', '8443')])

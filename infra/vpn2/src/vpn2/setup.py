@@ -246,72 +246,6 @@ def parse_yaml(text):
     return raw
 
 
-def _blocks(text, pattern):
-    matches = list(re.finditer(pattern, text, re.MULTILINE))
-    ends = [match.start() for match in matches[1:]] + [len(text)]
-    return (text[:matches[0].start()] if matches else text,
-            [text[match.start():end] for match, end in zip(matches, ends)])
-
-
-def _shift(text, by):
-    """Сдвиг строк на by пробелов (меньше нуля - влево)."""
-    return re.sub(r'^ {0,%d}' % -by if by < 0 else '^(?=.)', '' if by < 0 else ' ' * by, text, flags=re.MULTILINE)
-
-
-def _items(body):
-    """(маркер «- » с его отступом, текст до списка, элементы с ключами на отступе 4).
-
-    yaml.safe_dump пишет список без отступа («- tag:»), мастер - с отступом («  - tag:»).
-    """
-    found = re.search(r'^( *)- ', body, re.MULTILINE)
-    marker = found[0] if found else '  - '
-    lead, parts = _blocks(body, '^' + re.escape(marker))
-    return marker, lead, [_shift(part.replace(marker, ' ' * len(marker), 1), 4 - len(marker)) for part in parts]
-
-
-def merge_setup_config(previous, answers):
-    """Обновляет в прежнем config.yaml только ответы мастера; остальные строки и комментарии целы.
-
-    Экзиты сопоставляются по тегу: удалённые в мастере уходят, лишние поля оставшихся остаются.
-    """
-    old_exits, new_exits = parse_yaml(previous)['exits'], parse_yaml(answers)['exits']
-    tags = [item.get('tag') for item in old_exits]
-    if any(not tag for tag in tags) or len(tags) != len(set(tags)):
-        sys.exit('ERROR: config.yaml: exits: для сохранения настроек нужны уникальные непустые теги')
-
-    def merge(old, new, indent):
-        pattern = '^' + ' ' * indent + r'[^ #\n-][^:\n]*:'
-        prefix, old_parts = _blocks(old, pattern)
-        keyed = {part.split(':', 1)[0].strip(): part for part in old_parts}
-        for part in _blocks(new, pattern)[1]:
-            name = part.split(':', 1)[0].strip()
-            if name not in keyed:
-                keyed[name] = part
-                continue
-            (old_head, _, old_body), (new_head, _, new_body) = keyed[name].partition('\n'), part.partition('\n')
-            new_value = new_head.partition(':')[2].strip()
-            if indent == 0 and name == 'exits':
-                marker, lead, old_items = _items(old_body)
-                marker, new_items = (marker if old_items else _items(new_body)[0]), _items(new_body)[2]
-                by_tag = {item['tag']: text for item, text in zip(old_exits, old_items)}
-                merged = [_shift(merge(by_tag.get(item['tag'], ''), text, 4), len(marker) - 4)
-                          .replace(' ' * len(marker), marker, 1) for item, text in zip(new_exits, new_items)]
-                keyed[name] = old_head + '\n' + lead + ''.join(merged)
-            elif not new_value or new_value.startswith('#'):
-                keyed[name] = old_head + '\n' + merge(old_body, new_body, indent + 2)
-            else:
-                # Комментарий в строке прежнего значения остаётся; # внутри кавычек - часть значения.
-                value = old_head.partition(':')[2].lstrip()
-                found = re.fullmatch(r'''(?:'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|.*?)([ \t]+\#.*)?''', value)
-                keyed[name] = new_head + ((' ' + value) if value.startswith('#') else (found[1] or '')) + '\n' + old_body
-        return prefix + ''.join(keyed.values())
-
-    result = merge(previous.rstrip() + '\n', answers, 0)
-    checked(result, validate=False)
-    return result
-
-
-
 def validate_tag(ui, tag, used):
     if not TAG.fullmatch(tag):
         ui.fail('Тег: строчная буква в начале, далее строчные буквы, цифры и дефисы; '
@@ -647,9 +581,15 @@ def scalar(key, value):
     return quoted(value)
 
 
+def exit_item(marker, node):
+    """Строки экзита в списке с маркером marker («  - » у мастера, «- » у yaml.safe_dump)."""
+    tag, address, secret = node
+    pad = ' ' * len(marker)
+    return [f'{marker}tag: {tag}', f'{pad}host: {quoted(address)}', f'{pad}password: {quoted(secret)}']
+
+
 def exit_lines(exits):
-    return '\n\n'.join(f'  - tag: {tag}\n    host: {quoted(address)}\n    password: {quoted(secret)}'
-                       for tag, address, secret in exits)
+    return '\n\n'.join('\n'.join(exit_item('  - ', node)) for node in exits)
 
 
 def render(answers):
@@ -678,9 +618,8 @@ def render(answers):
 
 
 def changes(old, new, everything=False):
-    """Секции с полями, ответ на которые отличается от прежнего.
+    """Ответы, отличные от прежних: {секция: {ключ: значение YAML}}; s3 - словарь своих полей, exits - список.
 
-    Поле - пара (ключ, строка YAML); у s3 вместо строки список своих полей.
     Неизменённое в файл не пишется: так Enter на всех вопросах оставляет
     config.yaml байт в байт, а правка одного ответа меняет одну строку.
     """
@@ -688,67 +627,120 @@ def changes(old, new, everything=False):
     for name in new:
         if name == 'exits':
             if everything or new['exits'] != old['exits']:
-                result['exits'] = exit_lines(new['exits'])
+                result['exits'] = new['exits']
             continue
-        fields = [(key, f'  {key}: {scalar(key, value)}') for key, value in new[name].items()
-                  if key != 's3' and (everything or value != old[name][key])]
+        fields = {key: scalar(key, value) for key, value in new[name].items()
+                  if key != 's3' and (everything or value != old[name][key])}
         if name == 'backup' and everything and not new[name]['enabled']:
-            fields = fields[:1]   # как на чистой машине: выключенным бэкапам хватает enabled
+            fields = {'enabled': fields['enabled']}   # как на чистой машине: выключенным бэкапам хватает enabled
         elif name == 'backup':
-            s3 = [(key, f'    {key}: {quoted(value)}') for key, value in new[name]['s3'].items()
-                  if value != old[name]['s3'][key]]
+            s3 = {key: quoted(value) for key, value in new[name]['s3'].items() if value != old[name]['s3'][key]}
             if s3:
-                fields.append(('s3', s3))
+                fields['s3'] = s3
         if fields:
             result[name] = fields
     return result
 
 
-def update(previous, changed):
-    """Прежний config.yaml с изменёнными ответами; остальные строки не тронуты.
+def _key(line, indent):
+    """Имя поля YAML на отступе indent или None."""
+    found = re.match(' ' * indent + r'([^ #\n-][^:\n]*):', line)
+    return found[1].strip() if found else None
 
-    Слияние делает merge_setup_config: комментарии и неспрошенные настройки
-    остаются, экзиты сопоставляются по тегу. Новое поле он дописывает в конец
-    секции, после её пустых строк - возвращаем его к остальным полям.
-    """
-    known = parse_yaml(previous)
-    merged, appended, runs = [], [], []
-    for name, fields in changed.items():
-        present = re.search(f'^{name}:', previous, re.MULTILINE)
-        if name == 'exits':
-            # Пустая строка после последнего экзита остаётся, если была.
-            block = re.search(r'^exits:.*\n(?:[ #].*\n|\n)*', previous, re.MULTILINE)
-            lines = [fields + '\n' if block and block[0].endswith('\n\n') else fields]
+
+def _block_end(lines, start, indent):
+    """Конец блока полей на отступе indent: первая строка от start с полем левее."""
+    outer = re.compile(r' {0,%d}[^ #\n-][^:\n]*:' % (indent - 2))
+    return next((i for i in range(start, len(lines)) if outer.match(lines[i])), len(lines))
+
+
+def _meaningful_end(lines, start, end):
+    """Пустые строки и комментарии в конце блока остаются за его полями."""
+    while end > start and (not lines[end - 1].strip() or lines[end - 1].lstrip().startswith('#')):
+        end -= 1
+    return end
+
+
+def _without_blank_tail(item):
+    while not item[-1].strip():
+        item = item[:-1]
+    return item
+
+
+def _field_lines(fields, indent):
+    lines = []
+    for key, value in fields.items():
+        if isinstance(value, dict):
+            lines += [' ' * indent + f'{key}:', *_field_lines(value, indent + 2)]
         else:
-            lines, run = [], []
-            was = known[name] if present else {}
-            for key, line in fields:
-                if key != 's3':
-                    lines.append(line)
-                    if key not in was:
-                        run.append(line)
-                    continue
-                inner = [text for _, text in line]
-                lines += ['  s3:', *inner]
-                if was.get('s3'):
-                    runs.append([text for field, text in line if field not in was['s3']])
-                else:
-                    run += ['  s3:', *inner]
-            runs.append(run)
-        (merged if present else appended).append('\n'.join([f'{name}:', *lines]) + '\n')
-    text = previous.rstrip() + '\n'
-    if merged:
-        text = merge_setup_config(previous, ''.join(merged))
-        for run in filter(None, runs):
-            block = '\n'.join(run) + '\n'
-            while '\n\n' + block in text:
-                text = text.replace('\n\n' + block, '\n' + block + '\n', 1)
-        if any(key == 'password' and line != "  password: ''" for key, line in changed.get('admin', [])):
-            text = text.replace(NO_PASSWORD + '\n', '', 1)
-        text = text.rstrip('\n') + '\n'
-    text += ''.join('\n' + section for section in appended)
-    checked(text)
-    return text
+            lines.append(' ' * indent + f'{key}: {value}')
+    return lines
+
+
+def _keep_comment(old, new):
+    """Новая строка поля с комментарием прежней; # внутри кавычек - часть значения."""
+    value = old.partition(':')[2].lstrip()
+    if value.startswith('#'):
+        return f'{new} {value}'
+    return new + (re.fullmatch(r'''(?:'(?:[^']|'')*'|"(?:[^"\\]|\\.)*"|.*?)([ \t]+\#.*)?''', value)[1] or '')
+
+
+def _put(lines, start, indent, fields):
+    """Поля в блок от строки start: прежняя строка поля меняется, новое поле встаёт за последним."""
+    for key, value in fields.items():
+        end = _block_end(lines, start, indent)
+        at = next((i for i in range(start, end) if _key(lines[i], indent) == key), None)
+        if at is not None and isinstance(value, dict):
+            _put(lines, at + 1, indent + 2, value)
+        elif at is not None:
+            lines[at] = _keep_comment(lines[at], ' ' * indent + f'{key}: {value}')
+        else:
+            end = _meaningful_end(lines, start, end)
+            lines[end:end] = _field_lines({key: value}, indent)
+
+
+def _put_exits(lines, start, stored, exits):
+    """Экзиты по тегу: у оставшихся меняются host и password, прочие их строки целы; убранные уходят."""
+    tags = [node.get('tag') for node in stored]
+    if any(not tag for tag in tags) or len(tags) != len(set(tags)):
+        sys.exit('ERROR: config.yaml: exits: для сохранения настроек нужны уникальные непустые теги')
+    end = _meaningful_end(lines, start, _block_end(lines, start, 2))
+    starts = [i for i in range(start, end) if re.match(' *- ', lines[i])]
+    marker = re.match(' *- ', lines[starts[0]])[0] if starts else '  - '
+    items = [_without_blank_tail(lines[first:last]) for first, last in zip(starts, [*starts[1:], end])]
+    # Пустая строка между экзитами - как в прежнем файле; у одного экзита - как пишет мастер.
+    gap = [''] if len(items) < 2 or len(items[0]) < starts[1] - starts[0] else []
+    by_tag = dict(zip(tags, items))
+    merged = []
+    for node in exits:
+        item = list(by_tag.get(node[0]) or exit_item(marker, node))
+        if node[0] in by_tag:
+            item[0] = ' ' * len(marker) + item[0][len(marker):]
+            _put(item, 0, len(marker), {'host': quoted(node[1]), 'password': quoted(node[2])})
+            item[0] = marker + item[0][len(marker):]
+        merged += [*(gap if merged else []), *item]
+    lines[starts[0] if starts else end:end] = merged
+
+
+def update(previous, changed):
+    """Прежний config.yaml с изменёнными ответами; остальные строки и комментарии не тронуты.
+
+    Новое поле встаёт за последним полем своей секции, секция без раздела в файле дописывается в конец.
+    """
+    lines = previous.rstrip().split('\n')
+    appended = []
+    for name, fields in changed.items():
+        at = next((i for i, line in enumerate(lines) if _key(line, 0) == name), None)
+        if at is None:
+            body = exit_lines(fields) if name == 'exits' else '\n'.join(_field_lines(fields, 2))
+            appended.append(f'{name}:\n{body}\n')
+        elif name == 'exits':
+            _put_exits(lines, at + 1, parse_yaml(previous)['exits'], fields)
+        else:
+            _put(lines, at + 1, 2, fields)
+    if changed.get('admin', {}).get('password', "''") != "''" and NO_PASSWORD in lines:
+        lines.remove(NO_PASSWORD)
+    return '\n'.join(lines) + '\n' + ''.join('\n' + section for section in appended)
 
 
 def save(text):
@@ -826,7 +818,9 @@ def wizard(ui):
     else:
         changed = changes(known, new, everything=not rerun)
         if changed:
-            save(update(previous, changed))
+            text = update(previous, changed)
+            checked(text)
+            save(text)
         else:
             config.chmod(0o600)
             ui.ok('config.yaml без изменений')

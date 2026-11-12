@@ -113,7 +113,7 @@ class SetupInputTests(unittest.TestCase):
                       'plain#secret', "''", ''):
             with self.subTest(value=value):
                 original = f'admin:\n  password: {value}  # keep credential note\n'
-                result = setup.merge_setup_config(original, "admin:\n  password: 'new # secret'\n")
+                result = setup.update(original, {'admin': {'password': "'new # secret'"}})
                 self.assertEqual(yaml.safe_load(result)['admin']['password'], 'new # secret')
                 self.assertIn('# keep credential note', result)
 
@@ -122,8 +122,7 @@ class SetupInputTests(unittest.TestCase):
         expected = yaml.safe_load(original)
         expected['entry']['password'] = 'new secret'
         expected['backup']['enabled'] = False
-        result = setup.merge_setup_config(original, "entry:\n  password: 'new secret'\n"
-                                           'backup:\n  enabled: false\n')
+        result = setup.update(original, {'entry': {'password': "'new secret'"}, 'backup': {'enabled': 'false'}})
         self.assertEqual(yaml.safe_load(result), expected)
         self.assertIn('# Кастомные порты (опционально).', result)
 

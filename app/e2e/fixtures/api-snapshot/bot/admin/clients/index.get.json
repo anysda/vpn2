@@ -7,33 +7,57 @@
     "body": [
       {
         "id": "<id>",
+        "deleting": false,
         "name": "e2e-api-snapshot-bot",
-        "status": "active",
-        "accessStatus": "Состояние не подтверждено",
-        "deviceCount": 0,
-        "deviceLimit": 3,
+        "filterTraffic": true,
         "expiresAt": null,
-        "tgLinked": false
+        "deviceLimit": 3,
+        "frozenManual": false,
+        "tgUsername": null,
+        "preferredExit": null,
+        "createdAt": "<time>",
+        "accessStatus": "Состояние не подтверждено",
+        "status": "active",
+        "tgLinked": false,
+        "deviceCount": 0,
+        "rxTotal": 0,
+        "txTotal": 0
       },
       {
         "id": "<id>",
+        "deleting": false,
         "name": "e2e-api-snapshot-second",
-        "status": "active",
-        "accessStatus": "Состояние не подтверждено",
-        "deviceCount": 0,
-        "deviceLimit": 3,
+        "filterTraffic": true,
         "expiresAt": null,
-        "tgLinked": false
+        "deviceLimit": 3,
+        "frozenManual": false,
+        "tgUsername": null,
+        "preferredExit": null,
+        "createdAt": "<time>",
+        "accessStatus": "Состояние не подтверждено",
+        "status": "active",
+        "tgLinked": false,
+        "deviceCount": 0,
+        "rxTotal": 0,
+        "txTotal": 0
       },
       {
         "id": "<id>",
+        "deleting": false,
         "name": "e2e-api-snapshot-main",
-        "status": "active",
-        "accessStatus": "Ключи перевыпущены",
-        "deviceCount": 2,
-        "deviceLimit": 6,
+        "filterTraffic": false,
         "expiresAt": "2099-12-30T20:59:59.000Z",
-        "tgLinked": false
+        "deviceLimit": 6,
+        "frozenManual": false,
+        "tgUsername": null,
+        "preferredExit": null,
+        "createdAt": "<time>",
+        "accessStatus": "Ключи перевыпущены",
+        "status": "active",
+        "tgLinked": false,
+        "deviceCount": 2,
+        "rxTotal": 0,
+        "txTotal": 0
       }
     ]
   }

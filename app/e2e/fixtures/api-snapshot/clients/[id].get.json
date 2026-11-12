@@ -5,19 +5,19 @@
     "status": 200,
     "contentType": "application/json",
     "body": {
-      "operation": null,
-      "deleting": false,
       "id": "<id>",
+      "deleting": false,
       "name": "e2e-api-snapshot-second",
       "filterTraffic": true,
       "expiresAt": null,
       "deviceLimit": 3,
       "frozenManual": false,
-      "createdAt": "<time>",
-      "status": "active",
-      "tgLinked": false,
       "tgUsername": null,
       "preferredExit": null,
+      "createdAt": "<time>",
+      "operation": null,
+      "status": "active",
+      "tgLinked": false,
       "rxTotal": 0,
       "txTotal": 0,
       "devices": []
@@ -42,19 +42,19 @@
     "status": 200,
     "contentType": "application/json",
     "body": {
-      "operation": null,
-      "deleting": false,
       "id": "<id>",
+      "deleting": false,
       "name": "e2e-api-snapshot-main",
       "filterTraffic": false,
       "expiresAt": "2099-12-31T20:59:59.000Z",
       "deviceLimit": 5,
       "frozenManual": false,
-      "createdAt": "<time>",
-      "status": "active",
-      "tgLinked": false,
       "tgUsername": null,
       "preferredExit": null,
+      "createdAt": "<time>",
+      "operation": null,
+      "status": "active",
+      "tgLinked": false,
       "rxTotal": 0,
       "txTotal": 0,
       "devices": [
@@ -62,21 +62,21 @@
           "id": "<id>",
           "name": "phone",
           "configName": "<config-name>",
+          "hasWg": true,
+          "hasOvpn": true,
           "createdAt": "<time>",
           "rxTotal": 0,
-          "txTotal": 0,
-          "hasWg": true,
-          "hasOvpn": true
+          "txTotal": 0
         },
         {
           "id": "<id>",
           "name": "laptop",
           "configName": "<config-name>",
+          "hasWg": true,
+          "hasOvpn": true,
           "createdAt": "<time>",
           "rxTotal": 0,
-          "txTotal": 0,
-          "hasWg": true,
-          "hasOvpn": true
+          "txTotal": 0
         }
       ]
     }

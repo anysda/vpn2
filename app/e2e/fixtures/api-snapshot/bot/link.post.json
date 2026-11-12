@@ -18,6 +18,16 @@
     "status": 200,
     "contentType": "application/json",
     "body": {
+      "id": "<id>",
+      "deleting": false,
+      "name": "e2e-api-snapshot-bot",
+      "filterTraffic": true,
+      "expiresAt": null,
+      "deviceLimit": 3,
+      "frozenManual": false,
+      "tgUsername": "snapshot_user",
+      "preferredExit": null,
+      "createdAt": "<time>",
       "operation": {
         "id": "<uuid>",
         "clientId": "<id>",
@@ -55,10 +65,6 @@
         "createdAt": "<ms>"
       },
       "accessStatus": "Доступ включён",
-      "id": "<id>",
-      "name": "e2e-api-snapshot-bot",
-      "deviceLimit": 3,
-      "expiresAt": null,
       "devices": []
     }
   }

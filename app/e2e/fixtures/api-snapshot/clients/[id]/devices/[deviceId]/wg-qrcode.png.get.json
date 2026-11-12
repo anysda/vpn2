@@ -1,9 +1,0 @@
-[
-  {
-    "method": "GET",
-    "path": "/api/clients/{main}/devices/{phone}/wg-qrcode.png",
-    "status": 200,
-    "contentType": "image/png",
-    "body": "<png-qrcode>"
-  }
-]

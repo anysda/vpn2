@@ -89,6 +89,7 @@ const NORMALIZATION = [
   ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch'], 'field', ['createdAt', 'updatedAt'], '<time>', ISO, R_TIME),
   ...rule(['clients/index.post', 'clients/[id].patch', 'bot/admin/clients/index.post', 'bot/admin/clients/[id].patch', 'bot/admin/clients/[id].get'], 'field', ['password'], '<password>', PASSWORD, R_PASSWORD),
   ...rule(['bot/admin/clients/[id].get'], 'field', ['id'], '<id>', ID, R_ID),
+  ...rule(['bot/admin/clients/[id].get', ...BOT_CLIENT], 'field', ['createdAt'], '<time>', ISO, R_TIME),
 
   { route: 'clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
   ...rule(['clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
@@ -107,7 +108,7 @@ const NORMALIZATION = [
   ...rule(['clients/[id]/devices/[deviceId]/ikev2-credentials.get'], 'field', ['caCertPem'], '<pem>', PEM, 'сертификат IKEv2 CA: случайный, срок от момента прогона'),
   { route: 'clients/[id]/devices/[deviceId]/wg-qrcode.svg.get', kind: 'body', key: '', label: '<svg-qrcode>', check: /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 \d+ \d+"[\s\S]+<\/svg>$/, reason: 'картинка кодирует случайные ключи WireGuard' },
   // Тело PNG читается как текст UTF-8: байт 0x89 сигнатуры становится U+FFFD, остальное цело; управляющие байты после сигнатуры заменены в check любым символом (no-control-regex).
-  ...['clients/[id]/devices/[deviceId]/wg-qrcode.png.get', 'bot/devices/[deviceId]/wg-qrcode.png.get'].map(route => /** @type {Rule} */ ({ route, kind: 'body', key: '', label: '<png-qrcode>', check: /^\uFFFDPNG\r\n[\s\S]\n[\s\S]{3}\rIHDR[\s\S]{60,}$/, reason: 'картинка кодирует случайные ключи WireGuard: проверены сигнатура PNG, заголовок IHDR и длина' })),
+  { route: 'bot/devices/[deviceId]/wg-qrcode.png.get', kind: 'body', key: '', label: '<png-qrcode>', check: /^\uFFFDPNG\r\n[\s\S]\n[\s\S]{3}\rIHDR[\s\S]{60,}$/, reason: 'картинка кодирует случайные ключи WireGuard: проверены сигнатура PNG, заголовок IHDR и длина' },
 
   ...rule(['clients/top.get'], 'field', ['since'], '<sec>', SEC, 'начало суток: от даты прогона'),
   ...rule(['clients/top.get'], 'field', ['historyStart'], '<sec>', SEC, 'начало истории: от момента прогона'),
@@ -116,6 +117,7 @@ const NORMALIZATION = [
 
   { route: 'bot/admin/clients/index.get', kind: 'scope', key: '', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список общий на панель шарда: строки других спеков из эталона исключены' },
   ...rule(['bot/admin/clients/index.get'], 'field', ['*.id'], '<id>', ID, R_ID),
+  ...rule(['bot/admin/clients/index.get'], 'field', ['*.createdAt'], '<time>', ISO, R_TIME),
   ...rule(BOT_CLIENT, 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
 
   { route: SNAPSHOT, kind: 'scope', key: 'clients', field: 'name', label: '', check: /^e2e-api-snapshot-/, reason: 'список клиентов общий на панель шарда: строки других спеков из эталона исключены' },
@@ -224,7 +226,6 @@ export async function walk(io) {
   await adminCall('clients/[id]/devices/[deviceId]/ovpn-config.get', 'GET', '/api/clients/{main}/devices/{phone}/ovpn-config')
   await adminCall('clients/[id]/devices/[deviceId]/ikev2-credentials.get', 'GET', '/api/clients/{main}/devices/{phone}/ikev2-credentials')
   await adminCall('clients/[id]/devices/[deviceId]/wg-qrcode.svg.get', 'GET', '/api/clients/{main}/devices/{phone}/wg-qrcode.svg')
-  await adminCall('clients/[id]/devices/[deviceId]/wg-qrcode.png.get', 'GET', '/api/clients/{main}/devices/{phone}/wg-qrcode.png')
   await adminCall('clients/[id]/devices/[deviceId]/send-wg-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-wg-to-tg')
   await adminCall('clients/[id]/devices/[deviceId]/send-ovpn-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-ovpn-to-tg')
   await adminCall('clients/[id]/devices/[deviceId]/send-ikev2-to-tg.post', 'POST', '/api/clients/{main}/devices/{phone}/send-ikev2-to-tg')

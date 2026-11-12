@@ -76,18 +76,10 @@ MANUAL_DIR = Path('/etc/sing-box/manual-routes')
 ROUTER = Path('/etc/sing-box/config.json')
 # Прямой выход и одноимённый ручной набор панели.
 DIRECT = 'direct-ru'
-# Эхо прямого пути, отзыва и внешней пробы. Адреса entry клиенту закрыты, кроме
-# tcp 22/80/443 (client_block_rules роутера), поэтому эхо слушает отдельный адрес
-# из документационной сети 203.0.113.0/24 (RFC 5737): он не частный и снаружи не
-# маршрутизируется. Это не адрес интерфейса, а локальный маршрут через WAN прямого
-# выхода: сокет, привязанный к WAN, доставляется в эхо, а список адресов WAN не
-# меняется. Новый адрес на WAN sing-box (auto_detect_interface) считает сменой сети
-# и рвёт все соединения hy2: ssh к экзитам через hy2-mgmt, SOCKS tg-proxy, сессии
-# клиентов. В прямой выход запрос уводит метка в ручном наборе direct-ru.
+# Эхо прямого пути: адрес RFC 5737 локальным маршрутом через WAN прямого выхода (клиенту открыты
+# только tcp 22/80/443 адресов entry); новый адрес на WAN sing-box принял бы за смену сети.
 ECHO_IP = '203.0.113.84'
-# Эхо пути через экзит - тот же приём на самом экзите: локальный маршрут на lo.
-# Адрес экзита годится не всегда: экзит в частной сети entry не пропустит клиенту
-# (ip_is_private -> reject), а правило это защита и не ослабляется.
+# Эхо пути через экзит - тот же приём на экзите: локальный маршрут на lo.
 EXIT_ECHO_IP = '203.0.113.85'
 EXIT_ECHO_ROUTE = f'local {EXIT_ECHO_IP}/32 dev lo table local'
 TG_PROXY = ('127.0.0.1', 7897)
@@ -159,7 +151,6 @@ class Report:
         return 2 if STATUSES[UNKNOWN] in results else 0
 
 
-# ---------------------------------------------------------------- пробы в netns
 def probe_echo(ip, port, host):
     """POST nonce на цель эха (target.py); ответ - тот же nonce и адрес отправителя."""
     nonce = secrets.token_hex(16)
@@ -178,30 +169,12 @@ def probe_echo(ip, port, host):
         connection.close()
 
 
-def probe_internet(ip, host, path, status):
-    connection = http.client.HTTPConnection(ip, 80, timeout=5)
+def probe_egress(ip, host, path='/', timeout=8):
+    """Код HTTP-ответа или None. Host - метка ручного маршрута экзита, поэтому чужой сервер
+    отвечает 404 или 403, но ответить он может, только если экзит открыл соединение наружу."""
+    connection = http.client.HTTPConnection(ip, 80, timeout=timeout)
     try:
         connection.request('GET', path, headers={'Host': host, 'User-Agent': 'vpn2-verify'})
-        response = connection.getresponse()
-        response.read(65536)
-        # Соединение держим, пока проверка смотрит в API sing-box.
-        time.sleep(0.8)
-        return response.status == status
-    except (OSError, http.client.HTTPException):
-        return False
-    finally:
-        connection.close()
-
-
-def probe_egress(ip, host):
-    """Код любого HTTP-ответа внешнего адреса или None: важен сам ответ, а не страница.
-
-    Host - метка ручного маршрута экзита, поэтому чужой сервер отвечает 404 или 403,
-    но ответить он может, только если экзит открыл соединение наружу.
-    """
-    connection = http.client.HTTPConnection(ip, 80, timeout=8)
-    try:
-        connection.request('GET', '/', headers={'Host': host, 'User-Agent': 'vpn2-verify'})
         response = connection.getresponse()
         response.read(65536)
         # Соединение держим, пока проверка смотрит в API sing-box.
@@ -211,6 +184,10 @@ def probe_egress(ip, host):
         return None
     finally:
         connection.close()
+
+
+def probe_internet(ip, host, path, status):
+    return probe_egress(ip, host, path, timeout=5) == status
 
 
 def probe_dns(server, name, port=53):
@@ -254,7 +231,6 @@ def probe_dns(server, name, port=53):
 PROBES = {'echo': probe_echo, 'internet': probe_internet, 'egress': probe_egress, 'dns': probe_dns}
 
 
-# ----------------------------------------------------------------- sing-box API
 class Router:
     def __init__(self):
         config = json.loads(ROUTER.read_text())
@@ -328,7 +304,6 @@ def in_namespace(router, source, kind, args, dest=None, deadline=12):
     return result, list(seen.values())
 
 
-# ----------------------------------------------------------------- клиент netns
 class Namespace:
     def up(self):
         run('ip', 'netns', 'add', NS)
@@ -593,11 +568,8 @@ class IKEv2:
         if self.process is not None and self.process.poll() is None:
             return
         self.run_dir.mkdir(mode=0o700, exist_ok=True)
-        # Свой /run и свой strongswan.conf в своём mount-namespace: pid-файл и сокеты не
-        # пересекаются с charon сервера, DNS хоста клиент не трогает (resolve не загружен). Путь конфига прежний:
-        # AppArmor не даёт charon читать STRONGSWAN_CONF из другого места.
-        # Плагины перечислены явно: forecast, connmark, bypass-lan и kernel-libipsec из
-        # набора хоста перехватывали бы трафик клиента в netns.
+        # Свой /run и strongswan.conf в своём mount-namespace (AppArmor держит путь конфига);
+        # плагины перечислены явно, чтобы плагины хоста не перехватывали трафик клиента.
         (self.run_dir / 'strongswan.conf').write_text(
             'charon {\n  install_dns = no\n  load_modular = no\n'
             '  load = random nonce aes sha1 sha2 hmac gmp md4 openssl pem pkcs1 pkcs8 x509 pubkey constraints '
@@ -667,9 +639,7 @@ class IKEv2:
         return ids
 
     def terminate(self, eap_id, wait=20):
-        # Имя SA - conn, которую выбрал charon: проверочная или общая anysda-ikev2, если
-        # она пустила логин раньше. Поэтому, как продукт, снимаем каждую SA логина по id
-        # и ждём, пока их не останется: «живая сессия» проверяется сразу после.
+        # SA логина может стоять под общей conn anysda-ikev2: снимаем каждую по id, пока не останется.
         deadline = time.monotonic() + wait
         while (ids := self.server_sas(eap_id)) and time.monotonic() < deadline:
             for sa in ids:
@@ -706,7 +676,6 @@ class IKEv2:
             self.terminate(secret['id'], wait=10)
 
 
-# ------------------------------------------------- ретранслятор через экзит
 def relay_reachable(relay, port, pauses=(0, 5, 10, 20)):
     """health ретранслятора с повтором: транспорт до экзита пропадает на десятки
     секунд, пока сторож не переключит его (hy2 -> tcp), и одиночный промах не
@@ -847,7 +816,6 @@ class Relay:
         self.end_session()
 
 
-# ---------------------------------------------------------------- служба управления
 class ControlError(Exception):
     pass
 
@@ -991,9 +959,7 @@ def wg_apply_once(report, label, component):
             control_call('wg.apply', {'version': version + 1, 'peers': peers + [test]})
         except ControlError as error:
             if str(error) in ('stale', 'conflict'):
-                # Панель применила свой набор после снимка проверки. Служба отказала до
-                # любых изменений: возвращать нечего, а возврат сохранённого снял бы
-                # устройство, только что выпущенное в панели.
+                # Служба отказала до изменений: возвращать нечего.
                 forget_wg_apply()
                 return f'панель применяла пиров одновременно с проверкой, wg.apply отклонён: {error}'
             return done(FAIL, f'wg.apply с тестовым пиром отклонён: {error}')
@@ -1010,7 +976,6 @@ def wg_apply_once(report, label, component):
         restore_wg_apply()
 
 
-# ---------------------------------------------------------------- контрольные цели
 class TargetError(Exception):
     """Локальная цель эха не поднялась: без неё провал проб выглядел бы сломанным маршрутом."""
 
@@ -1193,18 +1158,14 @@ def manual_markers(exits, add):
 
 
 def echo_addresses():
-    """Остатки эха прямого пути: локальный маршрут и адрес на интерфейсе от прошлых версий."""
-    found = []
-    with contextlib.suppress(ValueError):
-        found += [['route', 'local', ECHO_IP + '/32', 'dev', entry['dev'], 'table', 'local']
-                  for entry in json.loads(run('ip', '-j', '-4', 'route', 'show', 'table', 'local', 'type', 'local',
-                                              ECHO_IP + '/32', check=False).stdout or '[]') if entry.get('dev')]
-    with contextlib.suppress(ValueError):
-        found += [['address', ECHO_IP + '/32', 'dev', entry['ifname']]
-                  for entry in json.loads(run('ip', '-j', '-4', 'address', 'show', 'to', ECHO_IP + '/32',
-                                              check=False).stdout or '[]')
-                  if any(a.get('local') == ECHO_IP for a in entry.get('addr_info', []))]
-    return found
+    """Локальные маршруты эха прямого пути."""
+    try:
+        routes = json.loads(run('ip', '-j', '-4', 'route', 'show', 'table', 'local', 'type', 'local',
+                                ECHO_IP + '/32', check=False).stdout or '[]')
+    except ValueError:
+        return []
+    return [['route', 'local', ECHO_IP + '/32', 'dev', entry['dev'], 'table', 'local']
+            for entry in routes if entry.get('dev')]
 
 
 def leftovers():
@@ -1240,8 +1201,7 @@ def cleanup(protocols=()):
     for pid in run('ip', 'netns', 'pids', NS, check=False).stdout.split():
         with contextlib.suppress(ProcessLookupError, ValueError):
             os.kill(int(pid), signal.SIGKILL)
-    # Удаление поднятой ссылки ядро ведёт через off, и networkd-dispatcher ищет её уже пропавшей:
-    # ошибка в журнале. Опущенная заранее ссылка в off при удалении не переходит.
+    # Ссылка опускается до удаления: иначе networkd-dispatcher пишет ошибку в журнал.
     if run('ip', 'link', 'set', HOST_IF, 'down', check=False).returncode == 0:
         time.sleep(1)
     run('ip', 'netns', 'del', NS, check=False)
@@ -1266,7 +1226,6 @@ def cleanup(protocols=()):
         shutil.rmtree(WORK, ignore_errors=True)
 
 
-# ---------------------------------------------------------------- сценарий
 class Verifier:
     def __init__(self, report, exits, wan_ip, public_ip):
         self.report = report
@@ -1546,11 +1505,7 @@ class Verifier:
                             'экзит не достаёт до публичного адреса entry (tg-proxy) - нет внешней точки измерения')
             return
         proto, port = protocol.ports[-1]
-        # Сразу после установки одиночный обмен через экзит теряется, а UDP-ассоциация
-        # SOCKS5 бывает мёртвой с начала: каждая попытка - своя сессия ретранслятора,
-        # connect() сам снимает туннель прошлой попытки. UDP через экзит пропадает и на
-        # минуту при живой сети: третья попытка - через ~100 с после первой, всё окно
-        # не дольше ~2 мин (неудачный connect - до 20 с), паузы только у красной пробы.
+        # Каждая попытка - своя сессия ретранслятора: UDP-ассоциация SOCKS5 бывает мёртвой с начала.
         for pause in (0, 15, 45):
             time.sleep(pause)
             relay_port = self.relay.start(proto, port)

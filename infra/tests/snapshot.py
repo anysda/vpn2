@@ -223,7 +223,9 @@ _SECRET_FIELD = re.compile('pass|secret|token|key|private|hash|uuid|short_id|psk
 _ASSIGN = re.compile(r'''^((\s*)(?:-\s+)?(?:export\s+)?["']?([\w.-]+)["']?\s*[:=]\s*)(.*)$''')
 _MASK = '*'
 # Каталоги данных служб: сверяются сам каталог, его права и владелец, содержимое живое.
-_SHALLOW = ('var/lib/sing-box', 'var/lib/vmsingle', 'var/lib/caddy')
+# /opt/vpn2 - среда установщика, статика аварийки - имена в них по сборке.
+_SHALLOW = ('var/lib/sing-box', 'var/lib/vmsingle', 'var/lib/caddy', 'opt/vpn2',
+            'opt/vpn2-emergency/static')
 
 
 def _run(argv):
@@ -375,12 +377,12 @@ def _walk(path, root, records, deep=True):
 
 
 def _files(root):
-    """Файлы, каталоги и ссылки под /etc, /usr/local/bin, /usr/local/sbin, /opt/anysda*,
-    /var/lib/anysda*, /var/lib/vpn2* в root; конфиг и бинарь AdGuard Home; каталоги
-    данных служб (_SHALLOW) без содержимого."""
+    """Файлы, каталоги и ссылки под /etc, /usr/local/bin, /usr/local/sbin,
+    /usr/local/lib/anysda, /var/anysda, /opt/anysda*, /var/lib/anysda*, /var/lib/vpn2* в root; конфиг и бинарь AdGuard Home,
+    запись выпуска аварийки; каталоги (_SHALLOW) без содержимого."""
     records = {}
-    roots = [os.path.join(root, 'etc'), os.path.join(root, 'usr/local/bin'),
-             os.path.join(root, 'usr/local/sbin')]
+    roots = [os.path.join(root, name) for name in ('etc', 'usr/local/bin', 'usr/local/sbin',
+                                                   'usr/local/lib/anysda', 'var/anysda')]
     for mask in ('opt/anysda*', 'var/lib/anysda*', 'var/lib/vpn2*'):
         roots.extend(sorted(glob.glob(os.path.join(root, mask))))
     for path in roots:
@@ -389,6 +391,8 @@ def _files(root):
         _walk(os.path.join(root, home), root, records, deep=False)
         for name in ('AdGuardHome', 'AdGuardHome.yaml'):
             _walk(os.path.join(root, home, name), root, records)
+    _walk(os.path.join(root, 'opt/vpn2-emergency'), root, records, deep=False)
+    _walk(os.path.join(root, 'opt/vpn2-emergency/release.json'), root, records)
     for name in _SHALLOW:
         _walk(os.path.join(root, name), root, records, deep=False)
     return records

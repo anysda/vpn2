@@ -71,9 +71,13 @@ def _protocol_lines(view: dict) -> str:
     return md('\n'.join(lines) + '\n') if lines else ''
 
 
+def keyboard(*rows: list[tuple[str, str]]) -> dict:
+    """Inline keyboard from rows of (button text, callback data)."""
+    return {'inline_keyboard': [[{'text': text, 'callback_data': data} for text, data in row] for row in rows]}
+
+
 def confirm_markup(yes_data: str, no_data: str) -> dict:
-    return {'inline_keyboard': [[{'text': '✅ Да', 'callback_data': yes_data},
-                                 {'text': '✖ Отмена', 'callback_data': no_data}]]}
+    return keyboard([('✅ Да', yes_data), ('✖ Отмена', no_data)])
 
 
 def menu(view: dict) -> str:
@@ -97,8 +101,7 @@ def devices(view: dict) -> str:
 
 
 def devices_markup(view: dict) -> dict:
-    return {'inline_keyboard': [[{'text': f'📱 {d.get("name", "?")}', 'callback_data': f'dev:{d.get("id")}'}]
-                                for d in view.get('devices', [])]}
+    return keyboard(*([(f'📱 {d.get("name", "?")}', f'dev:{d.get("id")}')] for d in view.get('devices', [])))
 
 
 def find_device(view: dict, device_id: str) -> dict | None:
@@ -112,13 +115,9 @@ def device_card(device: dict) -> str:
 
 
 def device_card_markup(device_id: str) -> dict:
-    return {'inline_keyboard': [
-        [{'text': 'WireGuard', 'callback_data': f'wg:{device_id}'},
-         {'text': 'OpenVPN', 'callback_data': f'ovpn:{device_id}'}],
-        [{'text': '🔄 Перевыпустить ключи', 'callback_data': f'reic:{device_id}'},
-         {'text': '🗑 Удалить', 'callback_data': f'del:{device_id}'}],
-        [{'text': '‹ Назад', 'callback_data': 'devs'}],
-    ]}
+    return keyboard([('WireGuard', f'wg:{device_id}'), ('OpenVPN', f'ovpn:{device_id}')],
+                    [('🔄 Перевыпустить ключи', f'reic:{device_id}'), ('🗑 Удалить', f'del:{device_id}')],
+                    [('‹ Назад', 'devs')])
 
 
 # Access states of a finished operation; any other one shows «⏳» in the client list.
@@ -133,13 +132,10 @@ def clients_markup(items: list[dict]) -> dict:
         if verified and verified not in _SETTLED:
             icon = '⏳'
         count = c.get('deviceCount', 0)
-        rows.append([{
-            'text': f'{icon} {c.get("name", "?")} — {count} {plural_ru(count, _TABLE["plural"]["botDevice"])}'
-                    f' · лимит: {_limit(c.get("deviceLimit"))}' + (f' · {verified}' if verified else ''),
-            'callback_data': f'acl:{c.get("id")}',
-        }])
-    rows.append([{'text': '➕ Создать клиента', 'callback_data': 'anew'}])
-    return {'inline_keyboard': rows}
+        text = (f'{icon} {c.get("name", "?")} — {count} {plural_ru(count, _TABLE["plural"]["botDevice"])}'
+                f' · лимит: {_limit(c.get("deviceLimit"))}' + (f' · {verified}' if verified else ''))
+        rows.append([(text, f'acl:{c.get("id")}')])
+    return keyboard(*rows, [('➕ Создать клиента', 'anew')])
 
 
 def client_card(c: dict) -> str:
@@ -165,16 +161,13 @@ def client_card_markup(c: dict) -> dict:
     can_retry = (operation and operation.get('status') != 'superseded'
                  and (operation.get('status') == 'pending'
                       or c.get('accessStatus') == 'Состояние не подтверждено'))
-    return {'inline_keyboard': [
-        [{'text': '☀️ Разморозить' if frozen else '❄️ Заморозить', 'callback_data': f'afz:{cid}'}],
-        *([[{'text': 'Повторить', 'callback_data': f'aretry:{cid}'}]] if can_retry else []),
-        [{'text': '➖ Лимит', 'callback_data': f'alm-:{cid}'},
-         {'text': '➕ Лимит', 'callback_data': f'alm+:{cid}'}],
-        [{'text': '🗓 Срок', 'callback_data': f'aexp:{cid}'}],
-        [{'text': '📨 Отправить приглашение', 'callback_data': f'ainv:{cid}'}],
-        [{'text': '🗑 Удалить', 'callback_data': f'adel:{cid}'}],
-        [{'text': '‹ К списку', 'callback_data': 'acl'}],
-    ]}
+    return keyboard([('☀️ Разморозить' if frozen else '❄️ Заморозить', f'afz:{cid}')],
+                    *([[('Повторить', f'aretry:{cid}')]] if can_retry else []),
+                    [('➖ Лимит', f'alm-:{cid}'), ('➕ Лимит', f'alm+:{cid}')],
+                    [('🗓 Срок', f'aexp:{cid}')],
+                    [('📨 Отправить приглашение', f'ainv:{cid}')],
+                    [('🗑 Удалить', f'adel:{cid}')],
+                    [('‹ К списку', 'acl')])
 
 
 # Outbound names of app/shared/outbounds.ts: hy2-us-direct → US, hy2-de-warp → DE WARP.

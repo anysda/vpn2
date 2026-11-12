@@ -89,6 +89,9 @@ class Snapshot(Temp):
         def collector(now):
             return snapshot_sender.collect(path, self.directory / 'telegram.json', now)
 
+        # Состояние отправителя v1.1.5: та же установка, другая схема.
+        (self.directory / 'sender').mkdir()
+        (self.directory / 'sender/sender.json').write_text(json.dumps({'installation_id': 'inst', 'snapshot': {}}))
         self.assertEqual(snapshot_sender.run_once(config, deliver, collector, NOW), {'a': 'accepted', 'b': 'unavailable'})
         sent = snapshot.validate(json.loads(delivered['a'][0]))
         self.assertEqual((sent['version'], sent['admin_chat_id'], [e['id'] for e in sent['exits']]), (1, 900, ['a', 'b']))

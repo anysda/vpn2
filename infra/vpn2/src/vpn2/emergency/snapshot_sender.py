@@ -150,7 +150,8 @@ def run_once(config, deliver, collector, now=None):
         state = json.loads(path.read_text())
     except (OSError, ValueError):
         state = {}
-    if state.get('installation_id') != installation:
+    # Без 'image' - файл отправителя v1.1.5 другой схемы: начать заново, как с чистой установки.
+    if state.get('installation_id') != installation or 'image' not in state:
         state = {'installation_id': installation, 'image': None, 'granted': {}, 'sent': {}}
     data = collector(now)
     _keep_granted(state['granted'], data['clients'])

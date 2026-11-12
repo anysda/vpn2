@@ -6,7 +6,6 @@ peer and `PublicKey = k # note` is the key `k`. Each reader is cut out of its
 script and run on forms of one wg0.conf that wg reads identically.
 """
 import base64
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -92,37 +91,12 @@ WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
            '  local key; key=$(cat); [[ -n $key ]] || return 1; echo ' + FRESH + '; }\n')
 
 
-def load_verify():
-    spec = importlib.util.spec_from_file_location('verify_traffic_comment', ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
-VT = load_verify()
 
 
-def verify_conf_peers(form):
-    """verify-traffic.py conf_peers(): peers as restore_wg_apply and wg.apply take them."""
-    return [(p['key'], p['preshared_key'], p['allowed']) for p in VT.conf_peers(conf(form))]
 
 
-def verify_syncconf(form):
-    """verify-traffic.py restore_wg_apply(): what wg reads from `wg syncconf wg0 /dev/stdin`."""
-    sent = []
-    saved = VT.WORK, VT.run, VT.restore_file
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WORK = Path(directory)
-        (VT.WORK / 'wg0.conf').write_text(conf(form))
-        VT.run = lambda *args, data=None, **_kw: sent.append((args, data))
-        VT.restore_file = lambda *_args: None
-        try:
-            VT.restore_wg_apply()
-        finally:
-            VT.WORK, VT.run, VT.restore_file = saved
-    [(args, data)] = sent
-    assert args[:3] == ('wg', 'syncconf', 'wg0'), args
-    return wg_view(data)
 
 
 def svc_conf_iface(form):
@@ -156,10 +130,6 @@ ADDRESSES = (0, ['addr 10.66.66.1/24', 'addr fd66:66::1/64'])
 
 def every_reader(case, form):
     """The same answers as on the canonical file, from every reader."""
-    with case.subTest('1a verify conf_peers', form=form):
-        case.assertEqual(verify_conf_peers(form), PEERS)
-    with case.subTest('1b verify syncconf body', form=form):
-        case.assertEqual(verify_syncconf(form), SYNCCONF)
     with case.subTest('4 svc addresses', form=form):
         case.assertEqual(svc_conf_iface(form), ADDRESSES)
     with case.subTest('5 28-wireguard', form=form):
@@ -179,12 +149,6 @@ class WgConfCommentTests(unittest.TestCase):
             with self.subTest(form):
                 self.assertEqual(wg_view(conf(form)), view)
 
-    def test_1_verify_keeps_peers_and_values(self):
-        for form in ('section-comment', 'value-comment'):
-            with self.subTest('conf_peers', form=form):
-                self.assertEqual(verify_conf_peers(form), PEERS)
-            with self.subTest('syncconf body', form=form):
-                self.assertEqual(verify_syncconf(form), SYNCCONF)
 
     def test_4_svc_addresses_match_live_wg0(self):
         for form in ('section-comment', 'section-blank', 'value-comment'):

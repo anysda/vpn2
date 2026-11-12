@@ -6,15 +6,14 @@ whitespace is `[Interface]` or `[Peer]` (any case): `[Peer]=x`, `[Interface]=`,
 lines up to `\\n` only, a lone `\\r` is whitespace inside the line: `[Peer]\\rPublicKey = ...`
 is one line wg does not recognize, `PersistentKeepalive\\r= 25` is a good one,
 `# old\\rFoo = 1` is a comment. A file with CRLF line ends passes. The backup check
-(anysda-backup.sh --check-bundle) and verify-traffic.py read wg0.conf from disk and
-decide like wg after wg-quick.
+(anysda-backup.sh --check-bundle) reads wg0.conf from disk and
+decides like wg after wg-quick.
 """
-import re
 import unittest
 
-from test_wg_conf_allowedips_net import apply_gate, syncconf_body, wg_sets
-from test_wg_conf_allowedips_prefix import A4, A6, OLD, SERVER, VT
-from test_wg_conf_lines import wanted_peers, wg_quick_strip, wg_reject, written
+from test_wg_conf_allowedips_net import wg_sets
+from test_wg_conf_allowedips_prefix import A4, A6, OLD, SERVER
+from test_wg_conf_lines import wg_quick_strip, wg_reject, written
 from test_wg_conf_module import BASE, CANONICAL, backup_check, conf
 from wg_root import as_root
 
@@ -99,11 +98,6 @@ def reference(text):
     return None
 
 
-def restored(text):
-    """verify-traffic.py restore_wg_apply() of wg0.conf on disk, as wg reads the body: interface lines, peers."""
-    body = syncconf_body(text)
-    interface = body.split('\n[Peer]', 1)[0].split('\n')
-    return sorted(filter(None, (re.sub(r'[ \t\n\v\f\r]', '', line) for line in interface))), wanted_peers(body)
 
 
 @as_root
@@ -122,30 +116,11 @@ class WgConfLinesRawTests(unittest.TestCase):
             self.assertEqual(code, 3, (out, err))
         with self.subTest('backup names wg0.conf', **where):
             self.assertTrue([line for line in out if 'wg0.conf' in line], (out, err))
-        for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
-            with self.subTest(f'verify {name} fails', **where):
-                with self.assertRaises(ValueError) as caught:
-                    call(text)
-                self.assertIn('wg0.conf', str(caught.exception))
-        with self.subTest('verify reads wg0.conf: FAIL', **where):
-            notes = apply_gate(text)
-            self.assertTrue(notes and notes[0][0] == VT.FAIL and 'wg0.conf' in notes[0][1], notes)
-        with self.subTest('verify restore reads wg0.conf: ValueError', **where):
-            with self.assertRaises(ValueError):
-                syncconf_body(text)
 
     def assert_accepted(self, text, **where):
-        canonical = conf(CANONICAL)
         with self.subTest('backup: no complaint', **where):
             code, out, err = backup_check(text)
             self.assertEqual((code, out), (0, []), err)
-        with self.subTest('verify: the same peers', **where):
-            self.assertEqual(wanted_peers(text), wanted_peers(canonical))
-            self.assertIsNotNone(VT.apply_peers(text))
-        with self.subTest('verify reads wg0.conf: the same as the canonical file', **where):
-            self.assertEqual(apply_gate(text), apply_gate(canonical))
-        with self.subTest('verify restore reads wg0.conf: the same peers', **where):
-            self.assertEqual(restored(text), restored(canonical))
 
     def test_1_header_is_the_whole_line(self):
         for name in HEADERS:

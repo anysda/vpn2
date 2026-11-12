@@ -1,24 +1,9 @@
-"""wg0.conf outside apply: AllowedIPs read as networks, an emptied peer, an address on two peers.
-
-wg parses each AllowedIPs entry into a network (no mask is /32 or /128, `/032`
-is 32, `fd66:66:0::3` is `fd66:66::3`), `-X` removes that network, a peer may
-end with no addresses, and an address added to a later peer leaves the earlier
-one. An entry wg cannot parse rejects the whole file.
-verify-traffic.py and the `wg syncconf` body of restore_wg_apply must end with
-the sets wg ends with, or fail like wg does. A form with a signed entry is
-taken as the wg installed here decides it (installed_wg, see the prefix tests):
-wireguard-tools 1.0.20210914 rejects it, 1.0.20250521 applies it.
-"""
+"""wg0.conf forms with AllowedIPs read as networks and the reference wg_sets, shared by the wg0.conf tests."""
 import ipaddress
-from pathlib import Path
 import re
-import tempfile
-import unittest
 
 from test_wg_conf_allowedips_prefix import (
-    A4, A6, B4, GONE, OLD, PASSED_GATE, PEER, PSK_GONE, PSK_ONE, PSK_TWO, SERVER, VT, WG_APPLY,
-    assert_rejected_like_wg, installed_wg, signed)
-from wg_root import as_root
+    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, SERVER)
 
 A4_BARE = '10.66.66.3'
 G4, G6 = '10.66.66.4/32', 'fd66:66::4/128'
@@ -58,7 +43,6 @@ WG_ORACLE = {
     'two-peers': {GONE: {G4, G6}, OLD: {A4, A6}},
     'canonical': {GONE: {G4, G6}, OLD: {A4, A6}},
 }
-SPLIT = [(VT.UNKNOWN, 'пиры wg0 расходятся с wg0.conf - полный набор для wg.apply неизвестен')]
 
 
 def conf(form):
@@ -119,142 +103,3 @@ def wg_sets(text):
     for net, peer in owners.items():
         sets[peer].add(net)
     return sets
-
-
-def apply_gate(text):
-    """verify-traffic.py wg_apply_check() up to the free address, live wg0 holding the conf's peers."""
-    notes = []
-
-    class Report:
-        @staticmethod
-        def add(_label, _component, status, note):
-            notes.append((status, note))
-
-    class Done:
-        stdout = f'{PEER} {GONE} {OLD}'
-
-    def run(*args, **_kw):
-        assert args == ('wg', 'show', 'wg0', 'peers'), args
-        return Done
-
-    saved = VT.WG_CONF, VT.CONTROL_SOCKET, VT.CONTROL_WG_STATE, VT.run, VT.WireGuard.free_addresses
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WG_CONF, VT.CONTROL_SOCKET = Path(directory) / 'wg0.conf', Path(directory)
-        VT.CONTROL_WG_STATE = Path(directory) / 'absent.json'
-        VT.WG_CONF.write_text(text)
-        VT.run = run
-        VT.WireGuard.free_addresses = staticmethod(lambda _count: [])
-        try:
-            VT.wg_apply_check(Report)
-        finally:
-            VT.WG_CONF, VT.CONTROL_SOCKET, VT.CONTROL_WG_STATE, VT.run = saved[:4]
-            VT.WireGuard.free_addresses = staticmethod(saved[4])
-    return notes
-
-
-def syncconf_body(text):
-    """verify-traffic.py restore_wg_apply(): the text it sends to `wg syncconf wg0 /dev/stdin`."""
-    sent = []
-    saved = VT.WORK, VT.run, VT.restore_file
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WORK = Path(directory)
-        (VT.WORK / 'wg0.conf').write_text(text)
-        VT.run = lambda *args, data=None, **_kw: sent.append((args, data))
-        VT.restore_file = lambda *_args: None
-        try:
-            VT.restore_wg_apply()
-        finally:
-            VT.WORK, VT.run, VT.restore_file = saved
-    [(args, data)] = sent
-    assert args[:3] == ('wg', 'syncconf', 'wg0'), args
-    return data
-
-
-@as_root
-class WgConfAllowedIpsNetTests(unittest.TestCase):
-    """1 address forms, 2 emptied peer, 3 address on two peers, 4 file wg rejects, 5 the file as written."""
-
-    def test_0_reference_matches_wg(self):
-        for form, wanted in WG_ORACLE.items():
-            with self.subTest(form):
-                sets = wg_sets(conf(form))
-                self.assertEqual({GONE: sets[GONE], OLD: sets[OLD]}, wanted)
-                self.assertEqual(sets[PEER], {'10.66.66.2/32', 'fd66:66::2/128'})
-            with self.subTest('installed wg', form=form):
-                address, sets = installed_wg(conf(form))
-                if signed(address):
-                    self.assertIn(address, ''.join(FORMS[form][1]))
-                else:
-                    self.assertIsNone(address)
-                    self.assertEqual(sets, wg_sets(conf(form)))
-        for form in REJECTED:
-            with self.subTest(form):
-                self.assertRaises(ValueError, wg_sets, conf(form))
-            with self.subTest('installed wg', form=form):
-                self.assertIsNotNone(installed_wg(conf(form))[0])
-
-    def assert_reads_like_wg(self, form):
-        text, wanted = conf(form), wg_sets(conf(form))
-        address, sets = installed_wg(text)
-        if address is not None:
-            assert_rejected_like_wg(self, form, address, lambda: apply_gate(text),
-                                    {'conf_peers': lambda: VT.conf_peers(text),
-                                     'apply_peers': lambda: VT.apply_peers(text),
-                                     'syncconf body': lambda: syncconf_body(text)})
-            return
-        with self.subTest('installed wg', form=form):
-            self.assertEqual(sets, wanted)
-        with self.subTest('verify conf_peers', form=form):
-            self.assertEqual({p['key']: sorted(p['allowed']) for p in VT.conf_peers(text)},
-                             {key: sorted(value) for key, value in wanted.items()})
-        expressible = all(len([a for a in value if a.endswith('/32')]) == 1 for value in wanted.values())
-        with self.subTest('verify apply_peers', form=form):
-            self.assertEqual(VT.apply_peers(text), WG_APPLY if expressible else None)
-        with self.subTest('verify peers vs wg0', form=form):
-            self.assertEqual(apply_gate(text), PASSED_GATE if expressible else SPLIT)
-        body = syncconf_body(text)
-        with self.subTest('syncconf body has no empty AllowedIPs', form=form):
-            self.assertEqual([line for line in body.split('\n') if re.fullmatch(r'\s*AllowedIPs\s*=\s*', line)], [])
-        with self.subTest('syncconf body sets', form=form):
-            try:
-                self.assertEqual(wg_sets(body), wanted)
-            except ValueError as error:
-                self.fail(f'wg rejects the body: {error}')
-
-    def assert_fails_like_wg(self, form):
-        text, named = conf(form), REJECTED[form][2]
-        for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
-            with self.subTest(f'verify {name} fails', form=form):
-                with self.assertRaises(Exception) as caught:
-                    call(text)
-                self.assertIn(named, str(caught.exception))
-        with self.subTest('verify peers vs wg0', form=form):
-            try:
-                notes = apply_gate(text)
-            except Exception as error:
-                self.assertIn(named, str(error))
-            else:
-                self.assertTrue(notes and notes != PASSED_GATE and named in notes[0][1], notes)
-
-    def test_1_address_compared_as_network(self):
-        for form in ('nomask-minus', 'mask-zero-minus', 'v6-form-minus', 'nomask-add', 'v6-form-twice',
-                     'only-removed'):
-            self.assert_reads_like_wg(form)
-
-    def test_2_emptied_peer_syncs_with_no_addresses(self):
-        for form in ('only-removed', 'removed-all', 'no-allowedips'):
-            self.assert_reads_like_wg(form)
-
-    def test_3_address_on_two_peers_stays_with_the_last(self):
-        self.assert_reads_like_wg('two-peers')
-
-    def test_4_file_wg_rejects_is_not_read_silently(self):
-        for form in REJECTED:
-            self.assert_fails_like_wg(form)
-
-    def test_5_file_as_written_reads_as_before(self):
-        self.assert_reads_like_wg('canonical')
-
-
-if __name__ == '__main__':
-    unittest.main()

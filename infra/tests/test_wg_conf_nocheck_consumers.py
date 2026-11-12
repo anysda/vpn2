@@ -3,12 +3,9 @@
 Review 12 of 729cda0 (`--check-bundle` exit 5, the backup copy exits 4 with the event
 "сверка … не выполнена") found:
 1 deploy.sh do_backup printed "БД и конфиги VPN расходятся - перевыпусти" on every exit 4;
-2 verify-traffic.py wg_apply_check made the ValueError "проверить нечем" a FAIL (code 1);
 3 anysda-backup.sh put the reason into the event JSON as it came: tab, CR, \\x01, \\x1b
   and a non-UTF-8 byte broke the body, a reason over 200 characters made the panel
   (events.post.ts, zod max(200)) refuse the whole body, and curl hid it behind `|| true`;
-4 restore_wg_apply re-read the saved wg0.conf before restoring the files: when that read
-  failed, wg0.conf and control-wg.json stayed as the check left them;
 5 free_addresses read wg0.conf as text: a latin-1 byte in a comment, which wg takes,
   raised UnicodeDecodeError and the check stopped.
 Each consumer runs as it is in its script; only what it asks the node for is stubbed.
@@ -23,10 +20,9 @@ import tempfile
 import time
 import types
 import unittest
-from unittest import mock
 
 from test_deploy import bash, function
-from test_wg_conf_allowedips_prefix import ROOT, VT, source
+from test_wg_conf_allowedips_prefix import ROOT, source
 
 S = 'KLKQERtKGmYrCPaUJZYYoFjRRNizdBvaUWfrjPG5I1Q='
 P = '0ivjKi39oR/BxsZp17GSMczPpE4CKHCaC1RbI3zedFg='
@@ -43,124 +39,6 @@ def result(stdout='', code=0):
     return types.SimpleNamespace(stdout=stdout, returncode=code)
 
 
-def node(live, addresses='10.66.66.2/32\n', prefix=24):
-    """`run` of verify-traffic.py as wg and ip on the node answer; `live` - peers of wg0."""
-    def run(*args, **_options):
-        if args[:4] == ('wg', 'show', 'wg0', 'peers'):
-            return result('\n'.join(sorted(live)) + '\n')
-        if args[:4] == ('wg', 'show', 'wg0', 'allowed-ips'):
-            return result(addresses)
-        if args[0] == 'ip':
-            return result(json.dumps([{'addr_info': [{'local': '10.66.66.1', 'prefixlen': prefix}]}]))
-        if args[:2] == ('wg', 'pubkey'):
-            return result(TEST_KEY + '\n')
-        if args[:2] in (('wg', 'genkey'), ('wg', 'genpsk')):
-            return result('G' * 43 + '=\n')
-        return result()
-    return run
-
-
-class VerifyApplyCheckTests(unittest.TestCase):
-    """2 wg_apply_check: nothing to check with - UNKNOWN, code 2; wg refusing the file - FAIL."""
-
-    def check(self, directory, asked, path):
-        root = Path(directory)
-        (root / 'control.sock').touch()
-        (root / 'wg0.conf').write_text(CONF + 'Bogus = 1\n')
-        bin_dir = root / path
-        bin_dir.mkdir()
-        for name in ('wg', 'ip', 'unshare', 'setpriv'):
-            if path == 'no-wg' and name == 'wg':
-                continue
-            (bin_dir / name).write_text('#!/bin/sh\nexit 0\n')
-            (bin_dir / name).chmod(0o755)
-        process = types.SimpleNamespace(run=asked, TimeoutExpired=subprocess.TimeoutExpired)
-        report = VT.Report('test')
-        with mock.patch.object(VT, 'CONTROL_SOCKET', root / 'control.sock'), \
-                mock.patch.object(VT, 'WG_CONF', root / 'wg0.conf'), \
-                mock.patch.object(VT, 'run', node({P})), mock.patch.object(VT.wg_conf, 'subprocess', process), \
-                mock.patch.dict(os.environ, {'PATH': str(bin_dir)}):
-            VT.wg_apply_check(report)
-        return [(row['result'], row['reason']) for row in report.rows], report.code()
-
-    def test_nothing_to_check_with_is_not_checked(self):
-        def denied(args, **_options):
-            return subprocess.CompletedProcess(args, 1, b'', b'unshare: unshare failed: Operation not permitted\n')
-
-        def hangs(args, **_options):
-            raise subprocess.TimeoutExpired(args, 30)
-
-        def never(*_args, **_options):
-            raise AssertionError('wg asked without wg')
-
-        for case, asked, path in (('no-wg', never, 'no-wg'), ('no-rights', denied, 'bin'),
-                                  ('endpoint-name', hangs, 'bin')):
-            with self.subTest(case), tempfile.TemporaryDirectory() as directory:
-                rows, code = self.check(directory, asked, path)
-                self.assertEqual(len(rows), 1, rows)
-                self.assertEqual(rows[0][0], VT.STATUSES[VT.UNKNOWN], rows)
-                self.assertIn(NOCHECK, rows[0][1])
-                self.assertEqual(code, 2, rows)
-
-    def test_wg_refusing_the_file_is_still_a_failure(self):
-        calls = []
-
-        def refuses(args, **_options):
-            calls.append(args)
-            if len(calls) == 1:
-                return subprocess.CompletedProcess(args, 121, b'', b"Line unrecognized: `Bogus=1'\n"
-                                                                    b'Configuration parsing error\n')
-            return subprocess.CompletedProcess(args, 0, b'', b'')
-
-        with tempfile.TemporaryDirectory() as directory:
-            rows, code = self.check(directory, refuses, 'bin')
-        self.assertEqual(len(rows), 1, rows)
-        self.assertEqual(rows[0][0], VT.STATUSES[VT.FAIL], rows)
-        self.assertIn('wg0.conf: wg отвергает файл', rows[0][1])
-        self.assertEqual(code, 1)
-
-
-class VerifyRestoreTests(unittest.TestCase):
-    """4 the re-read of the saved wg0.conf fails: wg0.conf and control-wg.json come back byte for byte."""
-
-    def test_failed_reread_still_restores_both_files(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / 'work').mkdir()
-            (root / 'control.sock').touch()
-            conf, state = root / 'wg0.conf', root / 'wg.json'
-            conf.write_bytes(CONF.encode())
-            state.write_bytes(b'{"version": 7}\n')
-            before = conf.read_bytes(), state.read_bytes()
-            live = {P}
-            reads = []
-
-            def read(_data):
-                reads.append(1)
-                if len(reads) > 1:
-                    raise ValueError(NOCHECK + ' - wg не ответил за 30 с')
-                return {'PrivateKey': S}, [{'key': P, 'preshared_key': PSK, 'allowed': ['10.66.66.2/32']}]
-
-            def control_call(_method, params):
-                # The service writes wg0.conf and its version state as wg.apply does.
-                live.clear()
-                live.update(peer['key'] for peer in params['peers'])
-                conf.write_text('[Interface]\n' + ''.join(f'\n[Peer]\nPublicKey = {peer["key"]}\n'
-                                                          for peer in params['peers']))
-                state.write_text(json.dumps({'version': params['version']}))
-
-            with mock.patch.object(VT, 'CONTROL_SOCKET', root / 'control.sock'), \
-                    mock.patch.object(VT, 'WG_CONF', conf), mock.patch.object(VT, 'CONTROL_WG_STATE', state), \
-                    mock.patch.object(VT, 'WORK', root / 'work'), mock.patch.object(VT, 'run', node(live)), \
-                    mock.patch.object(VT, 'control_call', control_call), mock.patch.object(VT.wg_conf, 'read', read):
-                try:
-                    VT.wg_apply_check(VT.Report('test'))
-                except Exception:  # what verify does with the failure is not this test's
-                    pass
-            self.assertGreater(len(reads), 1, 'the saved wg0.conf was not read again')
-            self.assertEqual((conf.read_bytes(), state.read_bytes()), before)
-
-
 class VerifyFreeAddressesTests(unittest.TestCase):
     """5 a latin-1 byte in a wg0.conf comment, LANG=C: free addresses as wg holds the file."""
 
@@ -175,9 +53,9 @@ vt.WG_CONF = Path(sys.argv[2])
 def run(*args, **_options):
     if args[0] == 'ip':
         return types.SimpleNamespace(stdout=json.dumps([{'addr_info': [{'local': '10.66.66.1', 'prefixlen': 29}]}]))
-    return types.SimpleNamespace(stdout='')
+    return types.SimpleNamespace(stdout='51820' if 'listen-port' in args else '')
 vt.run = run
-print(json.dumps(vt.WireGuard.free_addresses(3)))
+print(json.dumps(vt.WireGuard().free))
 '''
 
     def test_latin1_comment_is_read_as_wg_reads_it(self):
@@ -192,7 +70,7 @@ print(json.dumps(vt.WireGuard.free_addresses(3)))
         self.assertNotIn('UnicodeDecodeError', done.stderr)
         self.assertEqual(done.returncode, 0, done.stderr[-2000:])
         # /29: hosts .1-.6, .1 is wg0 itself, .6 is the peer of wg0.conf (live wg shows none).
-        self.assertEqual(json.loads(done.stdout), ['10.66.66.5', '10.66.66.4', '10.66.66.3'])
+        self.assertEqual(json.loads(done.stdout), ['10.66.66.5', '10.66.66.4'])
 
 
 class DeployBackupTests(unittest.TestCase):

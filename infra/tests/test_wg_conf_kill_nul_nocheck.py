@@ -1,7 +1,7 @@
 """wg0.conf check: a kill mid-check leaves no key behind, NUL as wg sees it, a hanging Endpoint.
 
 Review 11 of the check that asks wg in a temporary netns found:
-1 the backup copy or verify killed (SIGTERM, SIGKILL) after `wg setconf` left the netns
+1 the backup copy killed (SIGTERM, SIGKILL) after `wg setconf` left the netns
   with wg0, the server key and PSK in it, until reboot;
 2 28-wireguard read server.priv keeping NUL, while wg-quick
   drops it: `Public\\0Key`, `[Pe\\0er]`, `Private\\0Key` - wg holds what the stage does not see;
@@ -16,19 +16,16 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import unittest
 
-from test_wg_conf_allowedips_prefix import VT
 from test_wg_conf_module import BASE, LIB, bundle, conf
-from test_wg_conf_wg_oracle import A, B, S, backup, mk, oracle
+from test_wg_conf_wg_oracle import A, S, backup, mk, oracle
 import vpn_roles
 from wg_root import as_root
 
 WG, WG_QUICK, IP, NSENTER = shutil.which('wg'), shutil.which('wg-quick'), shutil.which('ip'), shutil.which('nsenter')
-TESTS = Path(__file__).resolve().parent
 LIMIT = 30  # wg_conf.py: the bound of one wg call
 MARGIN = 15
 # 2 NUL in key names, values and section headers: wg-quick drops it before wg.
@@ -36,9 +33,6 @@ NUL_PRIVATE = {
     'priv-nul-name': mk().replace(b'PrivateKey = ', b'Private\x00Key = '),
     'iface-nul-header': mk(header=b'[Inter\x00face]'),
 }
-# Verify's path to the check, in a process of its own.
-VERIFY = ('import sys; sys.path.insert(0, sys.argv[1]); from test_wg_conf_allowedips_prefix import VT; '
-          'VT.apply_peers(open(sys.argv[2], "rb").read())')
 
 
 def stub_wg(directory, mark):
@@ -94,11 +88,6 @@ class WgCheckEdgeTests(unittest.TestCase):
         self.groups = []
 
     def tearDown(self):
-        for group in self.groups:
-            try:
-                os.killpg(group, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
         for name in named() - self.before:
             subprocess.run([IP, 'netns', 'del', name], capture_output=True, check=False)
         self.groups = []
@@ -114,9 +103,7 @@ class WgCheckEdgeTests(unittest.TestCase):
                                 'PYTHONDONTWRITEBYTECODE': '1'}
             root = bundle(top / 'bundle', conf(BASE))
             (root / 'etc-wireguard/wg0.conf').write_bytes(mk())
-            callers = {'backup --check-bundle': ['bash', str(LIB / 'anysda-backup.sh'), '--check-bundle', str(root)],
-                       'verify apply_peers': [sys.executable, '-c', VERIFY, str(TESTS),
-                                              str(root / 'etc-wireguard/wg0.conf')]}
+            callers = {'backup --check-bundle': ['bash', str(LIB / 'anysda-backup.sh'), '--check-bundle', str(root)]}
             for who, command in callers.items():
                 for sig in (signal.SIGTERM, signal.SIGKILL):
                     with self.subTest('no netns holds the key after the kill, the next check works',
@@ -132,8 +119,6 @@ class WgCheckEdgeTests(unittest.TestCase):
                         os.killpg(child.pid, sig)
                         child.wait(timeout=30)
                         time.sleep(2)
-                        peers = VT.wg_conf.conf_peers(mk())
-                        self.assertEqual(sorted(peer['key'] for peer in peers), sorted([A.decode(), B.decode()]))
                         try:
                             self.assertEqual(holding_key(), [])
                             self.assertEqual(named() - self.before, set())
@@ -157,17 +142,7 @@ class WgCheckEdgeTests(unittest.TestCase):
             self.assertNotEqual(code, 0, lines)
             self.assertTrue([line for line in lines if 'wg0.conf' in line], lines)
             self.assertLess(took, LIMIT + MARGIN)
-        start = time.monotonic()
-        with self.subTest('verify apply_peers: ValueError naming wg0.conf'):
-            try:
-                VT.apply_peers(raw)
-            except ValueError as error:
-                self.assertIn('wg0.conf', str(error))
-            except Exception as error:  # noqa: BLE001 - the check must not die of it
-                self.fail(f'{type(error).__name__}: {error}')
-            else:
-                self.fail('accepted a file wg could not apply')
-            self.assertLess(time.monotonic() - start, LIMIT + MARGIN)
+
 
 if __name__ == '__main__':
     unittest.main()

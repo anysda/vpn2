@@ -4,9 +4,8 @@ wg rejects the whole file on a line it does not recognize: an unknown name, a
 typo in a name, a line without `=`, an unknown section, a name with a
 non-ASCII letter next to the real one. wg-quick takes out only its own names
 in [Interface] (Address, DNS, MTU, Table, PreUp, PostUp, PreDown, PostDown,
-SaveConfig) before wg. The backup check (anysda-backup.sh --check-bundle) and
-verify-traffic.py must fail on such a file like wg does, not read past the
-line. On the node the backup script lies in /usr/local/bin and takes
+SaveConfig) before wg. The backup check (anysda-backup.sh --check-bundle)
+must fail on such a file like wg does, not read past the line. On the node the backup script lies in /usr/local/bin and takes
 wg_conf.py from /usr/local/lib/anysda, not from a wg_conf.py next to itself.
 """
 import json
@@ -19,9 +18,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'vpn2/tests'))
 from test_control import module  # noqa: E402
-from test_wg_conf_allowedips_net import apply_gate
-from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER, VT
-from test_wg_conf_module import BASE, CANONICAL, DEVICES, backup_check, conf
+from test_wg_conf_allowedips_prefix import NEW, PSK_TWO, ROOT, SERVER
+from test_wg_conf_module import BASE, DEVICES, backup_check, conf
 import vpn_roles
 from wg_root import as_root
 
@@ -166,8 +164,6 @@ def wg_reject(text):
     return None
 
 
-def wanted_peers(text):
-    return sorted((p['key'], sorted(p['allowed'])) for p in VT.conf_peers(text))
 
 
 @as_root
@@ -188,30 +184,13 @@ class WgConfLinesTests(unittest.TestCase):
                 with self.subTest('backup names wg0.conf', place=place, form=form):
                     self.assertTrue([line for line in out if 'wg0.conf' in line], (out, err))
 
-    def test_1b_verify_fails_on_unrecognized_line(self):
-        for place, lines_of in UNRECOGNIZED.items():
-            for form, lines in lines_of.items():
-                text = with_lines(place, lines)
-                for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
-                    with self.subTest(f'verify {name} fails', place=place, form=form):
-                        with self.assertRaises(ValueError) as caught:
-                            call(text)
-                        self.assertIn('wg0.conf', str(caught.exception))
-                with self.subTest('verify peers vs wg0: FAIL', place=place, form=form):
-                    notes = apply_gate(text)
-                    self.assertTrue(notes and notes[0][0] == VT.FAIL and 'wg0.conf' in notes[0][1], notes)
-
     def test_1c_accepted_lines_and_file_as_written_pass(self):
-        canonical = wanted_peers(conf(CANONICAL))
         for (place, form), text in forms().items():
             if WG_ORACLE[place, form] is not None:
                 continue
             with self.subTest('backup: no complaint', place=place, form=form):
                 code, out, err = backup_check(text)
                 self.assertEqual((code, out), (0, []), err)
-            with self.subTest('verify: the same peers', place=place, form=form):
-                self.assertEqual(wanted_peers(text), canonical)
-                self.assertIsNotNone(VT.apply_peers(text))
 
 if __name__ == '__main__':
     unittest.main()

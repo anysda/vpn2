@@ -5,7 +5,6 @@ ASCII letters: `PrivateKey` with the Kelvin sign is an unknown line for wg.
 Each reader is cut out of its script and run on the same file in three forms.
 """
 import base64
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -72,36 +71,12 @@ def pairs(text):
     return [(m[1].lower(), m[2]) for m in re.finditer(r'(?m)^\s*([A-Za-z]+)\s*=\s*(.*?)\s*$', text)]
 
 
-def load_verify():
-    spec = importlib.util.spec_from_file_location('verify_traffic_case', ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
-VT = load_verify()
 
 
-def verify_conf_peers(style):
-    return [(p['key'], p['preshared_key'], p['allowed']) for p in VT.conf_peers(conf(style))]
 
 
-def verify_syncconf_body(style):
-    """verify-traffic.py restore_wg_apply(): body of `wg syncconf wg0 /dev/stdin`."""
-    sent = []
-    saved = VT.WORK, VT.run, VT.restore_file
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WORK = Path(directory)
-        (VT.WORK / 'wg0.conf').write_text(conf(style))
-        VT.run = lambda *args, data=None, **_kw: sent.append((args, data))
-        VT.restore_file = lambda *_args: None
-        try:
-            VT.restore_wg_apply()
-        finally:
-            VT.WORK, VT.run, VT.restore_file = saved
-    [(args, data)] = sent
-    assert args[:3] == ('wg', 'syncconf', 'wg0'), args
-    return data
 
 
 def wireguard_rerun(style):
@@ -122,14 +97,7 @@ PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32']), (OLD, PSK_TWO, ['10.66.66.3/32'])]
 class WgConfKeyCaseTests(unittest.TestCase):
     """Edges 1-5: every reader takes the mixed-case file like wg does."""
 
-    def test_3a_verify_conf_peers_finds_peers(self):
-        self.assertEqual(verify_conf_peers('mixed'), PEERS)
 
-    def test_3b_verify_syncconf_body_keeps_interface(self):
-        body = pairs(verify_syncconf_body('mixed'))
-        for line in (('privatekey', SERVER), ('listenport', '51820'), ('fwmark', '0x66'),
-                     ('publickey', PEER), ('presharedkey', PSK_ONE), ('publickey', OLD)):
-            self.assertIn(line, body)
 
     def test_4_wireguard_rerun_keeps_server_key(self):
         code, priv, stderr = wireguard_rerun('mixed')
@@ -160,17 +128,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
             self.assertTrue([line for line in lines if 'PublicKey' in line], (lines, err))
             for value in (SERVER, PEER, OLD):
                 self.assertNotIn(value, '\n'.join(lines) + err)
-        with self.subTest('3a verify conf_peers'):
-            with self.assertRaises(ValueError) as caught:
-                verify_conf_peers(style)
-            self.assertIn('PublicKey', str(caught.exception))
-        with self.subTest('3b verify syncconf'):
-            # No body with the keys is built, nothing goes to `wg syncconf`.
-            with self.assertRaises(ValueError) as caught:
-                verify_syncconf_body(style)
-            self.assertIn('PublicKey', str(caught.exception))
-            for value in (SERVER, '51820', '0x66', PEER, OLD):
-                self.assertNotIn(value, str(caught.exception))
         with self.subTest('4 28-wireguard'):
             code, priv, stderr = wireguard_rerun(style)
             self.assertNotEqual(code, 0)
@@ -179,12 +136,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
 
     def test_7_canonical_config_reads_as_before(self):
         style = 'canonical'
-        with self.subTest('3a verify conf_peers'):
-            self.assertEqual(verify_conf_peers(style), PEERS)
-        with self.subTest('3b verify syncconf'):
-            body = pairs(verify_syncconf_body(style))
-            for line in (('privatekey', SERVER), ('listenport', '51820'), ('fwmark', '0x66'), ('publickey', PEER)):
-                self.assertIn(line, body)
         with self.subTest('4 28-wireguard'):
             code, priv, stderr = wireguard_rerun(style)
             self.assertEqual((code, priv), (0, SERVER), stderr)

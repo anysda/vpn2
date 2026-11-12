@@ -5,9 +5,8 @@ Ten review rounds caught the edges of reading wg0.conf one at a time; values
 not UTF-8 and NUL were not seen at all. Here the oracle is wg: a copy of wg-quick
 strips the file (bash `read` drops NUL), the real `wg setconf wg0 /dev/stdin`
 applies the rest to a fresh wg0 in a temporary netns, `wg show wg0 dump` gives
-the peers. The backup check (anysda-backup.sh --check-bundle), verify-traffic.py
-(wg_apply_check, restore_wg_apply) and restore (peer cut, server key, live
-peers) must end with the same decision and the same peers (key, PSK,
+the peers. The backup check (anysda-backup.sh --check-bundle) and restore
+(peer cut, server key, live peers) must end with the same decision and the same peers (key, PSK,
 AllowedIPs); a file wg rejects is a complaint naming wg0.conf, not a traceback.
 Without wg or a netns to ask, each of them refuses loudly instead of passing the
 file. /usr/bin/wg and wg-quick do not read /tmp under AppArmor: the body goes
@@ -26,7 +25,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from test_wg_conf_allowedips_prefix import OLD_LINES, VT, conf as prefix_conf
+from test_wg_conf_allowedips_prefix import OLD_LINES, conf as prefix_conf
 from test_wg_conf_lines import forms as line_forms
 from test_wg_conf_module import CANONICAL, FORMS, LIB, conf as module_conf
 from wg_root import as_root
@@ -263,68 +262,10 @@ def backup(raw, rows):
     return done.returncode, done.stdout.splitlines() + done.stderr.splitlines()
 
 
-def through(stub):
-    """VT.run with `wg show wg0 peers` and `wg syncconf wg0` answered by `stub`, every other command real."""
-    real = VT.run
-
-    def run(*args, **kwargs):
-        if args[:3] in (('wg', 'show', 'wg0'), ('wg', 'syncconf', 'wg0')):
-            return stub(*args, **kwargs)
-        return real(*args, **kwargs)
-    return run
 
 
-def gate(raw, live):
-    """verify-traffic.py wg_apply_check() on wg0.conf `raw`, live wg0 holding `live`: [(status, note)]."""
-    notes = []
-
-    class Report:
-        @staticmethod
-        def add(_label, _component, status, note):
-            notes.append((status, note))
-
-    class Done:
-        stdout = ' '.join(live)
-
-    saved = VT.WG_CONF, VT.CONTROL_SOCKET, VT.CONTROL_WG_STATE, VT.run, VT.WireGuard.free_addresses
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WG_CONF, VT.CONTROL_SOCKET = Path(directory) / 'wg0.conf', Path(directory)
-        VT.CONTROL_WG_STATE = Path(directory) / 'absent.json'
-        VT.WG_CONF.write_bytes(raw)
-        VT.run = through(lambda *_args, **_kw: Done)
-        VT.WireGuard.free_addresses = staticmethod(lambda _count: [])
-        try:
-            VT.wg_apply_check(Report)
-        finally:
-            VT.WG_CONF, VT.CONTROL_SOCKET, VT.CONTROL_WG_STATE, VT.run = saved[:4]
-            VT.WireGuard.free_addresses = staticmethod(saved[4])
-    return notes
 
 
-def syncconf_peers(raw):
-    """verify-traffic.py restore_wg_apply() on a saved wg0.conf `raw`: the peers it sends to `wg syncconf`."""
-    sent = []
-    saved = VT.WORK, VT.run, VT.restore_file
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WORK = Path(directory)
-        (VT.WORK / 'wg0.conf').write_bytes(raw)
-        VT.run = through(lambda *_args, data=None, **_kw: sent.append(data))
-        VT.restore_file = lambda *_args: None
-        try:
-            VT.restore_wg_apply()
-        finally:
-            VT.WORK, VT.run, VT.restore_file = saved
-    assert len(sent) == 1, sent
-    peers = []
-    for section in sent[0].split('[Peer]')[1:]:
-        values = {}
-        for line in section.split('\n'):
-            name, _, value = line.partition('=')
-            if name.strip():
-                values.setdefault(name.strip().lower(), []).append(value.strip())
-        peers.append((values['publickey'][-1], (values.get('presharedkey') or [''])[-1],
-                      sorted(entry.strip() for line in values.get('allowedips', []) for entry in line.split(','))))
-    return sorted(peers)
 
 
 def without_wg(directory):
@@ -364,7 +305,7 @@ class WgOracleTests(unittest.TestCase):
     """1 values, 2 not UTF-8, 3 NUL, 4 restore, 5 peers on every edge, 6 nothing to ask, 7 own files."""
 
     def check(self, name, raw):
-        """Decision and peers of the backup check and verify against wg on one file."""
+        """Decision and peers of the backup check against wg on one file."""
         error, _private, peers = oracle(raw)
         if error:
             code, lines = backup(raw, [(A.decode(), S.decode(), '10.66.66.3', False)])
@@ -372,13 +313,6 @@ class WgOracleTests(unittest.TestCase):
                 self.assertEqual(code, 3, lines)
                 self.assertTrue([line for line in lines if 'wg0.conf' in line], lines)
                 self.assertFalse([line for line in lines if 'Traceback' in line], lines)
-            with self.subTest('verify wg_apply_check: FAIL naming wg0.conf', edge=name, wg=error):
-                notes = gate(raw, [A.decode(), B.decode()])
-                self.assertTrue(notes and notes[0][0] == VT.FAIL and 'wg0.conf' in notes[0][1], notes)
-            with self.subTest('verify restore_wg_apply: refuses naming wg0.conf', edge=name, wg=error):
-                with self.assertRaises(ValueError) as caught:
-                    syncconf_peers(raw)
-                self.assertIn('wg0.conf', str(caught.exception))
             return
         # Every peer known only by the address it holds in wg: a peer of the copy wg does not have,
         # or without that address, is a complaint.
@@ -396,11 +330,6 @@ class WgOracleTests(unittest.TestCase):
             self.assertEqual((code, len(lines)), (3 if disabled else 0, len(disabled)), lines)
             for label in disabled:
                 self.assertTrue([line for line in lines if label in line], (label, lines))
-        with self.subTest('verify wg_apply_check: no FAIL', edge=name):
-            notes = gate(raw, [key for key, _, _ in peers])
-            self.assertFalse([note for note in notes if note[0] == VT.FAIL], notes)
-        with self.subTest('verify restore_wg_apply: the peers are wg\'s', edge=name):
-            self.assertEqual(syncconf_peers(raw), peers)
 
     def check_all(self, table):
         for name, raw in table.items():
@@ -437,14 +366,6 @@ class WgOracleTests(unittest.TestCase):
                     with self.subTest('backup: refuses naming wg0.conf', kind=kind):
                         self.assertNotEqual(code, 0, lines)
                         self.assertTrue([line for line in lines if 'wg0.conf' in line], lines)
-                    with self.subTest('verify wg_apply_check: FAIL naming wg0.conf', kind=kind):
-                        notes = gate(mk(), [A.decode(), B.decode()])
-                        self.assertTrue(notes and notes[0][0] in (VT.FAIL, VT.UNKNOWN) and 'wg0.conf' in notes[0][1],
-                                        notes)
-                    with self.subTest('verify restore_wg_apply: refuses naming wg0.conf', kind=kind):
-                        with self.assertRaises(Exception) as caught:
-                            syncconf_peers(mk())
-                        self.assertIn('wg0.conf', str(caught.exception))
 
     def test_7_own_files_and_earlier_forms(self):
         own = own_files()

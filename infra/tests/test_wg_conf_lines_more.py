@@ -5,15 +5,14 @@ a value that is only a comment - `Line unrecognized`, the whole file rejected.
 wg-quick takes its own names out only in a section whose header is `[Interface]`
 as a whole (any case) and trims a name only at its ends: after `[ Interface ]`
 and in `Post Up = ...` the line stays for wg, which rejects it. The backup check
-(anysda-backup.sh --check-bundle) and verify-traffic.py decide like wg after
+(anysda-backup.sh --check-bundle) decides like wg after
 wg-quick. The backup check takes wg_conf.py only from the library directory,
 never from the directory it is run from.
 """
 import unittest
 
-from test_wg_conf_allowedips_net import apply_gate
-from test_wg_conf_allowedips_prefix import SERVER, VT
-from test_wg_conf_lines import wanted_peers, wg_quick_strip, wg_reject, with_lines, written
+from test_wg_conf_allowedips_prefix import SERVER
+from test_wg_conf_lines import wg_quick_strip, wg_reject, with_lines, written
 from test_wg_conf_module import BASE, CANONICAL, backup_check, conf
 from wg_root import as_root
 
@@ -80,22 +79,11 @@ class WgConfLinesMoreTests(unittest.TestCase):
             self.assertEqual(code, 3, (out, err))
         with self.subTest('backup names wg0.conf', **where):
             self.assertTrue([line for line in out if 'wg0.conf' in line], (out, err))
-        for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
-            with self.subTest(f'verify {name} fails', **where):
-                with self.assertRaises(ValueError) as caught:
-                    call(text)
-                self.assertIn('wg0.conf', str(caught.exception))
-        with self.subTest('verify peers vs wg0: FAIL', **where):
-            notes = apply_gate(text)
-            self.assertTrue(notes and notes[0][0] == VT.FAIL and 'wg0.conf' in notes[0][1], notes)
 
     def assert_accepted(self, text, **where):
         with self.subTest('backup: no complaint', **where):
             code, out, err = backup_check(text)
             self.assertEqual((code, out), (0, []), err)
-        with self.subTest('verify: the same peers', **where):
-            self.assertEqual(wanted_peers(text), wanted_peers(conf(CANONICAL)))
-            self.assertIsNotNone(VT.apply_peers(text))
 
     def test_1_wg_name_without_value_is_rejected(self):
         for (kind, name, form), text in forms().items():

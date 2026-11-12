@@ -412,7 +412,7 @@ class Stage:
         before = len(self.read_rows())
         rc = code(subprocess.run(
             [sys.executable, '-I', str(module), 'check', '--tag', self.tag, '--exits', ' '.join(self.exits),
-             '--public-host', self.env.get('ENTRY_HOST', ''), '--report', str(self.rows)]).returncode)
+             '--report', str(self.rows)]).returncode)
         # Итог считает строки модуля: три «Ошибка» - три провала.
         fresh = [row['result'] for row in self.read_rows()[before:]]
         failed, unmeasured = fresh.count('Ошибка'), fresh.count('Не проверено')

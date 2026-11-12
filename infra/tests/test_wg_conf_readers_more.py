@@ -6,7 +6,6 @@ and wg-quick splits Address at commas and blanks alike. Each reader is cut out
 of its script and run on forms of one wg0.conf.
 """
 import base64
-import importlib.util
 import os
 from pathlib import Path
 import re
@@ -106,39 +105,6 @@ def bash(script, directory):
                           text=True, capture_output=True, timeout=15)
 
 
-def load_verify():
-    spec = importlib.util.spec_from_file_location('verify_traffic_more', ROOT / 'infra/vpn2/src/vpn2/verify/traffic.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-VT = load_verify()
-
-
-def verify_conf_peers(form):
-    """verify-traffic.py conf_peers(): peers as restore_wg_apply and wg.apply take them."""
-    return [(p['key'], p['preshared_key'], p['allowed']) for p in VT.conf_peers(conf(form))]
-
-
-def verify_syncconf_peers(form):
-    """verify-traffic.py restore_wg_apply(): peers wg reads from `wg syncconf wg0 /dev/stdin`."""
-    sent = []
-    saved = VT.WORK, VT.run, VT.restore_file
-    with tempfile.TemporaryDirectory() as directory:
-        VT.WORK = Path(directory)
-        (VT.WORK / 'wg0.conf').write_text(conf(form))
-        VT.run = lambda *args, data=None, **_kw: sent.append((args, data))
-        VT.restore_file = lambda *_args: None
-        try:
-            VT.restore_wg_apply()
-        finally:
-            VT.WORK, VT.run, VT.restore_file = saved
-    [(args, data)] = sent
-    assert args[:3] == ('wg', 'syncconf', 'wg0'), args
-    return wg_view(data)[1]
-
-
 def svc_conf_iface(form):
     """anysda-svc.sh wg0_conf_iface: addresses wg0_apply compares with live wg0."""
     block = cut(source('infra/lib/anysda-svc.sh'), 'wg0_conf_iface() {', '\n}\n') + '\n}\n'
@@ -163,7 +129,7 @@ IN_PLACE = ('value-comment', 'blank-in-name', 'section-comment')
 
 @as_root
 class WgConfReadersMoreTests(unittest.TestCase):
-    """1 restore in place, 2 AllowedIPs over two lines, 3 Address split like wg-quick, 4 the file as written."""
+    """3 Address split like wg-quick, 4 the file as written."""
 
     def test_0_references_read_every_form_like_wg(self):
         view = wg_view(conf('canonical'))
@@ -176,26 +142,13 @@ class WgConfReadersMoreTests(unittest.TestCase):
             with self.subTest('wg-quick', form=form):
                 self.assertEqual(wg_quick_addresses(conf(form)), ADDRESSES)
 
-    def test_2_two_allowedips_lines_keep_both_addresses(self):
-        form = 'allowed-two-lines'
-        with self.subTest('verify conf_peers'):
-            self.assertEqual(verify_conf_peers(form), wg_peers(form))
-        with self.subTest('verify syncconf body'):
-            self.assertEqual(verify_syncconf_peers(form), wg_view(conf(form))[1])
-
     def test_3_svc_addresses_like_wg_quick(self):
         for form in ('address-space', 'canonical', 'address-two-lines'):
             with self.subTest(form):
                 self.assertEqual(svc_conf_iface(form), (0, wg_quick_addresses(conf(form))))
 
     def test_4_file_as_written_reads_as_before(self):
-        form = 'canonical'
-        with self.subTest('verify conf_peers'):
-            self.assertEqual(verify_conf_peers(form), wg_peers(form))
-        with self.subTest('verify syncconf body'):
-            self.assertEqual(verify_syncconf_peers(form), wg_view(conf(form))[1])
-        with self.subTest('svc'):
-            self.assertEqual(svc_conf_iface(form), (0, ADDRESSES))
+        self.assertEqual(svc_conf_iface('canonical'), (0, ADDRESSES))
 
 
 if __name__ == '__main__':

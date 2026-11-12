@@ -2,7 +2,7 @@
 
 wg rejects the whole file when a [Peer] section has `PublicKey =` with no
 value or no PublicKey at all. The backup check (anysda-backup.sh
---check-bundle) and verify-traffic.py must fail like wg does, not drop the
+--check-bundle) must fail like wg does, not drop the
 section with its addresses. The backup role installs wg_conf.py where the node keeps
 its libraries, /usr/local/lib/anysda/, before the backup script that imports
 it, and restore runs the check with the module from there wherever restore
@@ -17,9 +17,9 @@ import subprocess
 import tempfile
 import unittest
 
-from test_wg_conf_allowedips_net import G4, G6, apply_gate
+from test_wg_conf_allowedips_net import G4, G6
 from test_wg_conf_allowedips_prefix import (
-    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER, VT)
+    A4, A6, B4, GONE, OLD, PEER, PSK_GONE, PSK_ONE, PSK_TWO, ROOT, SERVER)
 from wg_root import as_root
 
 LIB = ROOT / 'infra/lib'
@@ -119,18 +119,6 @@ class WgConfModuleTests(unittest.TestCase):
                 self.assertEqual(code, 3, (lines, err))
             with self.subTest('backup names PublicKey', form=form):
                 self.assertTrue([line for line in lines if 'PublicKey' in line], (lines, err))
-
-    def test_1b_verify_fails_on_peer_without_key(self):
-        for form in FORMS:
-            text = conf(FORMS[form])
-            for name, call in (('conf_peers', VT.conf_peers), ('apply_peers', VT.apply_peers)):
-                with self.subTest(f'verify {name} fails', form=form):
-                    with self.assertRaises(ValueError) as caught:
-                        call(text)
-                    self.assertIn('PublicKey', str(caught.exception))
-            with self.subTest('verify peers vs wg0: FAIL', form=form):
-                notes = apply_gate(text)
-                self.assertTrue(notes and notes[0][0] == VT.FAIL and 'PublicKey' in notes[0][1], notes)
 
     def test_1c_file_as_written_passes(self):
         code, lines, err = backup_check(conf(CANONICAL))

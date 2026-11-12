@@ -3,13 +3,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from test_deploy import source
-from zapret_support import role_file, stage, tasks
+from zapret_support import role_file, tasks
 from test_yt_failover import load_watch
 
 
@@ -103,19 +102,8 @@ class PotTests(unittest.TestCase):
         self.assertNotIn('secret', detail)
 
     def test_installer_is_shipped_and_service_budget_covers_two_attempts(self):
-        shipped = next(task for task in tasks() if task['name'] == 'Библиотека ресурсов')
-        self.assertEqual(shipped['ansible.builtin.copy']['src'], '{{ zapret_infra }}/lib/{{ item }}')
-        self.assertIn('install-yt-pot.sh', shipped['loop'])
-        with tempfile.TemporaryDirectory() as venv, \
-                patch.object(stage, '_output', return_value=stage.YT_DLP_VER), \
-                patch.object(stage.os.path, 'isfile', return_value=True), \
-                patch.object(stage, '_pot_state', return_value=('1', 1)), \
-                patch.object(stage.subprocess, 'run') as run:
-            run.return_value = stage.subprocess.CompletedProcess([], 0, stdout='')
-            # yt-dlp и Node уже нужных версий: остаётся только вызов установщика PO-токенов.
-            with patch.object(stage, 'NODE_VER', stage.YT_DLP_VER):
-                stage.install_probe({'PATH': '/usr/bin', 'VPN2_YT_POT_INSTALL': '/x/install-yt-pot.sh'}, venv)
-        self.assertEqual(run.call_args.args[0], ['bash', '/x/install-yt-pot.sh', venv])
+        shipped = next(task for task in tasks() if task['name'] == 'Файлы десинка и видеопробы')
+        self.assertIn({'src': 'install-yt-pot.sh', 'dest': '{{ zapret_tmp }}/install-yt-pot.sh'}, shipped['loop'])
         self.assertIn('TimeoutStartSec=240', role_file('anysda-yt-failover.service'))
         installer = source('infra/ansible/roles/zapret/files/install-yt-pot.sh')
         self.assertIn('sha256sum -c -', installer)

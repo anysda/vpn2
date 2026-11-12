@@ -4,6 +4,7 @@ import os from 'node:os'
 import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
+import { coalesceRuns } from './api'
 
 /**
  * IPv6 endpoint попал бы в split-local 2000::/3, поэтому берём IPv4 входа, а без него

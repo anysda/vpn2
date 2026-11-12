@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import re
-import selectors
 import shutil
 import socket
 import subprocess
@@ -24,49 +23,18 @@ BLANK = r'[ \t\v\f\r]'
 
 
 def run(argv, deadline, data=None):
-    """Bound both pipes while reading; never retain or publish stderr."""
-    deadline = min(deadline, time.monotonic() + 10)
-    output = bytearray()
-    size = 0
-    pending = memoryview(data.encode() if data is not None else b'')
-    with subprocess.Popen(argv, stdin=subprocess.DEVNULL if data is None else subprocess.PIPE,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, env={'PATH': '/usr/sbin:/usr/bin',
-                                                      'LC_ALL': 'C'}) as process:
-        try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout, selectors.EVENT_READ)
-                selector.register(process.stderr, selectors.EVENT_READ)
-                if process.stdin:
-                    selector.register(process.stdin, selectors.EVENT_WRITE)
-                while selector.get_map():
-                    remaining = deadline - time.monotonic()
-                    require(remaining > 0, 'limit')
-                    for event, _mask in selector.select(remaining):
-                        if event.fileobj is process.stdin:
-                            try:
-                                pending = pending[os.write(process.stdin.fileno(), pending[:8192]):]
-                            except BrokenPipeError:
-                                pending = pending[:0]
-                            if not pending:
-                                selector.unregister(process.stdin)
-                                process.stdin.close()
-                            continue
-                        chunk = os.read(event.fileobj.fileno(), 8192)
-                        if not chunk:
-                            selector.unregister(event.fileobj)
-                            continue
-                        size += len(chunk)
-                        require(size <= LIMIT, 'limit')
-                        if event.fileobj is process.stdout:
-                            output.extend(chunk)
-            process.wait(timeout=max(0.001, deadline - time.monotonic()))
-            require(process.returncode == 0, 'unavailable')
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
-    return output.decode('utf-8', errors='strict')
+    """Bounded run: 10 s at most, output over LIMIT is refused; stderr is never kept."""
+    timeout = min(deadline - time.monotonic(), 10)
+    require(timeout > 0, 'limit')
+    try:
+        result = subprocess.run(argv, input=None if data is None else data.encode(),
+                                capture_output=True, timeout=timeout,
+                                env={'PATH': '/usr/sbin:/usr/bin', 'LC_ALL': 'C'}, check=False)
+    except subprocess.TimeoutExpired:
+        raise Fault('limit') from None
+    require(len(result.stdout) + len(result.stderr) <= LIMIT, 'limit')
+    require(result.returncode == 0, 'unavailable')
+    return result.stdout.decode('utf-8', errors='strict')
 
 
 def utc_now():

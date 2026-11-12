@@ -87,8 +87,16 @@ jobs:
         uses: ./.github/actions/apt-install
         with:
           packages: strongswan-pki libstrongswan-standard-plugins wireguard-tools openvpn apache2-utils nftables iptables iproute2 qrencode zbar-tools
-      - run: python3 -m pip install PyYAML==6.0.3
+      - run: python3 -m pip install -c infra/ansible/constraints.txt PyYAML Jinja2
         timeout-minutes: 5
+      # Шаблоны ролей рисует ansible из venv тестов; пробы в своём сетевом пространстве идут от root
+      # без сети, поэтому venv строится заранее и для root.
+      - name: ansible тестов
+        timeout-minutes: 5
+        run: |
+          warm='import sys; sys.path.insert(0, "infra/tests"); import vpn_roles; vpn_roles.ansible_playbook()'
+          python3 -c "$warm"
+          sudo -n "$(command -v python3)" -c "$warm"
       # Тесты панели качают Caddy при импорте в каждой части; releases/download
       # молчит до таймаута по 120 с, API релизов отдаёт тот же файл сразу.
       - name: Caddy для тестов панели

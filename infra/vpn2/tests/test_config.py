@@ -13,7 +13,7 @@ SOURCES = samples.collect()
 ALL = {name: text for group in SOURCES.values() for name, text in group.items()}
 
 # Число образцов по источникам, измеренное при написании; сбор меньше - красный тест.
-MIN_SAMPLES = {'example': 1, 'tests': 45, 'wizard': 1}
+MIN_SAMPLES = {'example': 1, 'tests': 40, 'wizard': 1}
 MIN_ACCEPTED = 26
 TRUE_WORDS = {'true', 'yes', 'y', '1'}
 
@@ -27,10 +27,6 @@ def oracle(text):
         return ORACLE.parse_yaml(text)
     except SystemExit:
         return None
-
-
-def expected(value, field_type):
-    return str(value).lower() in TRUE_WORDS if field_type is bool else str(value)
 
 
 def old_raw(cfg):
@@ -54,29 +50,11 @@ def walk(old, new, path):
 
 
 def differences(name, cfg, typed):
-    """Список (образец, ключ, оракул, новый): типизированные разделы и raw по всем разделам и ключам."""
+    """Список (образец, ключ, оракул, новый): raw по всем разделам и ключам, число экзитов."""
     out = [(name, f'raw:{path}', old, new)
            for path, old, new in walk(old_raw(cfg), {k: v for k, v in typed.raw.items() if v}, '')]
-
-    def compare(section, old, new):
-        for key, value in old.items():
-            if isinstance(value, dict):
-                continue
-            kind = type(getattr(new, key))
-            got = getattr(new, key)
-            if expected(value, kind) != got:
-                out.append((name, f'{section}.{key}', value, got))
-
-    compare('entry', cfg['entry'], typed.entry)
-    compare('ports', cfg['ports'], typed.ports)
-    compare('telegram', cfg['telegram'], typed.telegram)
-    compare('sso', cfg['sso'], typed.sso)
     if len(cfg['exits']) != len(typed.exits):
         out.append((name, 'exits', len(cfg['exits']), len(typed.exits)))
-    for index, (old, new) in enumerate(zip(cfg['exits'], typed.exits)):
-        compare(f'exits[{index}]', old, new)
-    if cfg['hy2_hop'] is not None:
-        compare('ports.hy2_hop', cfg['hy2_hop'], typed.ports.hy2_hop)
     return out
 
 
@@ -133,9 +111,8 @@ def test_quotes_comments_and_non_ascii():
             'sso:\n  enabled: "yes"\n  label: Вход через «Authentik»\n')
     cfg = config.loads(text)
     assert (cfg.entry.host, cfg.entry.password) == ('1.2.3.4', "it's # not")
-    assert (cfg.telegram.bot_token, cfg.telegram.chat_id) == ('пароль-ключ', '42')
-    assert cfg.sso.enabled is True
-    assert cfg.sso.label == 'Вход через «Authentik»'
+    assert (cfg.raw['telegram']['bot_token'], cfg.raw['telegram']['chat_id']) == ('пароль-ключ', '42')
+    assert cfg.raw['sso'] == {'enabled': 'yes', 'label': 'Вход через «Authentik»'}
     assert differences('forms', oracle(text), cfg) == []
 
 
@@ -151,44 +128,11 @@ def test_all_typed_fields_are_read():
             '  client_secret: x\n  allowed_subs: z\n  auto_redirect: true\n'
             '  password_login: false\n  label: l\n  discovery_url: d\n')
     cfg = config.loads(text)
-    assert cfg.entry == config.Entry(host='h', password='p', public_host='vpn.test')
-    assert cfg.exits == (config.Exit(tag='t', host='e', password='w', hy2_direct_port='4443',
-                                     hy2_up_mbps='100', hy2_down_mbps='200', hy2_insecure=True),)
-    hop = config.Hy2Hop(enabled=True, direct='1-2', warp='3-4', mgmt='5-6', interval='30')
-    assert cfg.ports == config.Ports(hy2_direct='443', hy2_warp='8443', hy2_mgmt='8444',
-                                     wireguard='51820', openvpn='1194', hy2_hop=hop)
-    assert cfg.telegram == config.Telegram(bot_token='b', chat_id='c', admin_username='a')
-    assert cfg.sso == config.Sso(
-        enabled=True, base_url='u', app_slug='s', client_id='i', client_secret='x',
-        allowed_subs='z', auto_redirect=True, password_login=False, label='l', discovery_url='d')
+    assert cfg.entry == config.Node('ru', 'h', 'p')
+    assert cfg.exits == (config.Node('t', 'e', 'w'),)
     assert cfg.raw['ports']['hy2_hop']['interval'] == '30'
-    first = cfg.exits[0]
-    assert (first.hy2_direct_port, first.hy2_up_mbps, first.hy2_down_mbps) == ('4443', '100', '200')
-    assert first.hy2_insecure is True
-    assert cfg.telegram.admin_username == 'a'
-    assert (cfg.sso.base_url, cfg.sso.app_slug, cfg.sso.discovery_url) == ('u', 's', 'd')
-    assert (cfg.sso.auto_redirect, cfg.sso.password_login) == (True, False)
+    assert cfg.raw['exits'][0]['hy2_insecure'] == 'true'
     assert differences('all', oracle(text), cfg) == []
-
-
-def test_absent_boolean_keys_keep_old_defaults():
-    base = 'entry:\n  host: h\n  password: p\n'
-    sso = config.loads(base + 'sso:\n  enabled: true\n').sso
-    assert sso.auto_redirect is True
-    assert sso.password_login is True
-    hop = config.loads(base + 'ports:\n  hy2_hop:\n    direct: 1-2\n').ports.hy2_hop
-    assert hop == config.Hy2Hop(enabled=True, direct='1-2', warp='25000-29999',
-                                mgmt='30000-30999', interval='5s')
-    explicit = config.loads(base + 'sso:\n  enabled: true\n  auto_redirect: false\n'
-                            '  password_login: no\nports:\n  hy2_hop:\n    enabled: false\n')
-    assert explicit.sso.auto_redirect is False
-    assert explicit.sso.password_login is False
-    assert explicit.ports.hy2_hop.enabled is False
-    assert config.loads(base).ports.hy2_hop is None
-    old = dict(ORACLE.HY2_HOP_DEFAULTS)
-    old['enabled'] = old['enabled'] == '1'
-    new = config.Hy2Hop()
-    assert old == {k: getattr(new, k) for k in old}
 
 
 def test_raw_keeps_strings_of_every_section():
@@ -285,8 +229,7 @@ def test_positive_control_corrupted_key_is_caught():
     cfg = oracle(text)
     assert differences('example', cfg, config.loads(text)) == []
     rows = differences('example-broken', cfg, config.loads(broken))
-    assert rows == [('example-broken', 'raw:exits[0].host', '5.6.7.8', '5.6.7.9'),
-                    ('example-broken', 'exits[0].host', '5.6.7.8', '5.6.7.9')]
+    assert rows == [('example-broken', 'raw:exits[0].host', '5.6.7.8', '5.6.7.9')]
     with tempfile.TemporaryDirectory() as directory:
         copy = Path(directory) / 'config.yaml'
         copy.write_text(broken, encoding='utf-8')

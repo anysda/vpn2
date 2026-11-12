@@ -1,11 +1,11 @@
-"""vpn2.config.versions: infra/versions.yml против пинов в стадиях и конфига ansible."""
+"""release.versions: infra/versions.yml против пинов в стадиях и конфига ansible."""
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 
-from vpn2 import config
+from vpn2 import release
 
 INFRA = Path(__file__).resolve().parents[2]
 VERSIONS = INFRA / 'versions.yml'
@@ -54,25 +54,24 @@ def check_lines(pins):
 
 
 def test_keys():
-    assert set(config.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', 'victoriametrics', *STAGE_PINS,
+    assert set(release.versions(VERSIONS)) == {'ansible_core', 'ansible_posix', 'aws_cli', 'victoriametrics', *STAGE_PINS,
                                              *STAGE_LINES}
 
 
 def test_matches_stages():
-    check_stages(config.versions(VERSIONS))
-    check_lines(config.versions(VERSIONS))
+    check_stages(release.versions(VERSIONS))
+    check_lines(release.versions(VERSIONS))
 
 
 def test_release_reader_agrees():
-    """Выпуск читает файл без PyYAML (до venv) и видит то же, что vpn2.config."""
-    from vpn2 import release
-    assert release.versions(VERSIONS) == config.versions(VERSIONS)
+    """Выпуск читает файл без PyYAML (до venv) и видит то же, что PyYAML."""
+    assert release.versions(VERSIONS) == yaml.safe_load(VERSIONS.read_text())
 
 
 def test_no_pins_outside_versions():
     """Сборщик манифеста не держит своих версий: только ключи versions.yml."""
     text = (INFRA / 'vpn2/src/vpn2/release/build.py').read_text(encoding='utf-8')
-    pins = config.versions(VERSIONS)
+    pins = release.versions(VERSIONS)
     assert [key for key, value in pins.items() if value in text] == []
     assert not re.search(r"['\"]v?\d+\.\d+\.\d+['\"]", text)
 
@@ -81,23 +80,15 @@ def test_matches_stage_detects_drift(tmp_path):
     drifted = tmp_path / 'versions.yml'
     drifted.write_text(VERSIONS.read_text(encoding='utf-8').replace('2.11.9', '2.11.8'), encoding='utf-8')
     with pytest.raises(AssertionError):
-        check_stages(config.versions(drifted))
+        check_stages(release.versions(drifted))
 
 
 def test_matches_constraints():
     first = (INFRA / 'ansible/constraints.txt').read_text(encoding='utf-8').splitlines()[0]
-    assert first == f"ansible-core=={config.versions(VERSIONS)['ansible_core']}"
+    assert first == f"ansible-core=={release.versions(VERSIONS)['ansible_core']}"
 
 
 def test_matches_requirements():
     reqs = yaml.safe_load((INFRA / 'ansible/requirements.yml').read_text(encoding='utf-8'))
     posix = [c for c in reqs['collections'] if c['name'] == 'ansible.posix']
-    assert [c['version'] for c in posix] == [f"=={config.versions(VERSIONS)['ansible_posix']}"]
-
-
-@pytest.mark.parametrize('text', ['- a\n- b\n', 'caddy: 2\n', 'caddy: {a: b}\n', ''])
-def test_bad_file(tmp_path, text):
-    bad = tmp_path / 'versions.yml'
-    bad.write_text(text, encoding='utf-8')
-    with pytest.raises(config.ConfigError):
-        config.versions(bad)
+    assert [c['version'] for c in posix] == [f"=={release.versions(VERSIONS)['ansible_posix']}"]

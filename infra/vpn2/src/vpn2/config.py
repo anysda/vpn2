@@ -7,9 +7,8 @@ entry_resources и failover проверяются так же, текстовы
 """
 import os
 import re
-from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import NamedTuple
 
 import yaml
 
@@ -70,72 +69,17 @@ class ConfigError(Exception):
         self.reason = reason
 
 
-@dataclass(frozen=True)
-class Entry:
-    host: str = ''
-    password: str = ''
-    public_host: str = ''
+class Node(NamedTuple):
+    tag: str
+    host: str
+    password: str
 
 
-@dataclass(frozen=True)
-class Exit:
-    tag: str = ''
-    host: str = ''
-    password: str = ''
-    hy2_direct_port: str = ''
-    hy2_up_mbps: str = ''
-    hy2_down_mbps: str = ''
-    hy2_insecure: bool = False
-
-
-@dataclass(frozen=True)
-class Hy2Hop:
-    enabled: bool = True
-    direct: str = '20000-24999'
-    warp: str = '25000-29999'
-    mgmt: str = '30000-30999'
-    interval: str = '5s'
-
-
-@dataclass(frozen=True)
-class Ports:
-    hy2_direct: str = ''
-    hy2_warp: str = ''
-    hy2_mgmt: str = ''
-    wireguard: str = ''
-    openvpn: str = ''
-    hy2_hop: Hy2Hop | None = None
-
-
-@dataclass(frozen=True)
-class Telegram:
-    bot_token: str = ''
-    chat_id: str = ''
-    admin_username: str = ''
-
-
-@dataclass(frozen=True)
-class Sso:
-    enabled: bool = False
-    base_url: str = ''
-    app_slug: str = ''
-    client_id: str = ''
-    client_secret: str = ''
-    allowed_subs: str = ''
-    auto_redirect: bool = True
-    password_login: bool = True
-    label: str = ''
-    discovery_url: str = ''
-
-
-@dataclass(frozen=True)
-class Config:
-    entry: Entry
-    exits: tuple[Exit, ...]
-    ports: Ports
-    telegram: Telegram
-    sso: Sso
-    raw: dict[str, Any] = field(default_factory=dict)
+class Config(NamedTuple):
+    """Подключение к узлам и разделы файла как есть: все значения строками."""
+    entry: Node
+    exits: tuple
+    raw: dict
 
 
 def _plain_forms(text):
@@ -260,32 +204,6 @@ def _sections(root):
     return out
 
 
-def _flag(value):
-    return str(value).lower() in TRUE_WORDS
-
-
-def _typed(cls, data):
-    """Датакласс из словаря раздела; булевы поля приводятся к bool."""
-    args = {}
-    for item in cls.__dataclass_fields__.values():
-        if item.name in data and not isinstance(data[item.name], dict):
-            args[item.name] = _flag(data[item.name]) if item.type is bool else data[item.name]
-    return cls(**args)
-
-
-def _build(sections):
-    ports = dict(sections.get('ports', {}))
-    hop = ports.pop('hy2_hop', None)
-    return Config(
-        entry=_typed(Entry, sections.get('entry', {})),
-        exits=tuple(_typed(Exit, item) for item in sections.get('exits', [])),
-        ports=replace(_typed(Ports, ports), hy2_hop=None if hop is None else _typed(Hy2Hop, hop)),
-        telegram=_typed(Telegram, sections.get('telegram', {})),
-        sso=_typed(Sso, sections.get('sso', {})),
-        raw=sections,
-    )
-
-
 def loads(text):
     """Config из текста config.yaml; неверный файл - ConfigError.
 
@@ -301,7 +219,11 @@ def loads(text):
         raise ConfigError('yaml', f'{getattr(error, "problem", None) or "ошибка разбора"}{where}') from None
     if root is None:
         raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
-    return _build(_sections(root))
+    sections = _sections(root)
+    entry = sections.get('entry', {})
+    exits = tuple(Node(item.get('tag', ''), item.get('host', ''), item.get('password', ''))
+                  for item in sections.get('exits', []))
+    return Config(Node('ru', entry.get('host', ''), entry.get('password', '')), exits, sections)
 
 
 def load(path='/etc/anysda/config.yaml'):
@@ -309,17 +231,3 @@ def load(path='/etc/anysda/config.yaml'):
     with open(path, encoding='utf-8') as handle:
         return loads(handle.read())
 
-
-def versions(path: str | Path) -> dict[str, str]:
-    """Пины внешних версий из infra/versions.yml; неверный файл - ConfigError."""
-    try:
-        with open(path, encoding='utf-8') as handle:
-            raw = yaml.safe_load(handle.read())
-    except yaml.YAMLError as error:
-        raise ConfigError('yaml', getattr(error, 'problem', None) or 'ошибка разбора') from None
-    if not isinstance(raw, dict):
-        raise ConfigError('<корень>', 'пустой файл или не словарь ключей')
-    for key, value in raw.items():
-        if not isinstance(value, str):
-            raise ConfigError(str(key), 'значение не строка')
-    return raw

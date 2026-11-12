@@ -260,7 +260,7 @@ def artifact(manifest, name, cache, destination=None):
 
 
 def versions(path):
-    """Flat `key: "value"` pins of infra/versions.yml; vpn2.config.versions is the strict reader."""
+    """Flat `key: "value"` pins of infra/versions.yml; PyYAML reads the same."""
     pins = {}
     for line in Path(path).read_text(encoding='utf-8').splitlines():
         match = re.fullmatch(r'([a-z0-9_]+):\s*"([^"]+)"\s*', line)

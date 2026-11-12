@@ -45,6 +45,11 @@ verify_old_layout_entry:
   - /usr/local/lib/anysda/wg_conf.py
   - /var/anysda/ikev2-clients.conf.sha256
   - /var/anysda/ikev2-clients.state.json
+  - /var/anysda/.stamps/19-yt-zapret
+  - /var/anysda/.stamps/20-ru-router
+  - /var/anysda/.stamps/27-ikev2
+  - /var/anysda/.stamps/28-wireguard
+  - /var/anysda/.stamps/29-openvpn
   - /var/lib/vpn2-apply/ikev2.good
   - /var/lib/vpn2-apply/wg.good
   - /var/lib/vpn2-deploy/deploy.lock

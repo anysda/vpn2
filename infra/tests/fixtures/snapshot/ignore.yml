@@ -74,9 +74,4 @@
 - {section: containers, name: 'anysda-tgbot', field: image_id, reason: образ бота собирается из исходников коммита}
 - {section: containers, name: 'vpn2-emergency', field: image, reason: образ аварийного канала собирается из исходников коммита}
 - {section: containers, name: 'vpn2-emergency', field: image_id, reason: образ аварийного канала собирается из исходников коммита}
-- {section: files, name: /var/anysda/.stamps/19-yt-zapret, field: '*', reason: стадия 19 не пишет отметку - её никто не читает}
-- {section: files, name: /var/anysda/.stamps/20-ru-router, field: '*', reason: стадия 20 не пишет отметку - её никто не читает}
-- {section: files, name: /var/anysda/.stamps/27-ikev2, field: '*', reason: стадия 27 не пишет отметку - её никто не читает}
-- {section: files, name: /var/anysda/.stamps/28-wireguard, field: '*', reason: стадия 28 не пишет отметку - её никто не читает}
-- {section: files, name: /var/anysda/.stamps/29-openvpn, field: '*', reason: стадия 29 не пишет отметку - её никто не читает}
-- {section: files, name: /etc/systemd/system/anysda-ikev2-cert-sync.timer, field: '*', reason: таймер ставится всегда, без домена он выключен}
+- {section: files, name: /etc/systemd/system/anysda-ikev2-cert-sync.timer, field: '*', reason: таймер ставится всегда - без домена он выключен}

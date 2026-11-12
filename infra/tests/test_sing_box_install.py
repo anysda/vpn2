@@ -77,24 +77,22 @@ class SingBoxInstallTests(unittest.TestCase):
             script(stage_file, 'set -o pipefail\nHOST_TAG=test\n' + section
                    + f'\ntouch {shlex.quote(str(continued))}\n')
             script(tools / 'uname', f'echo {"aarch64" if arch == "arm64" else "x86_64"}\n')
-            script(tools / 'curl', '''
-printf '%s\\n' "$*" >> "$DOWNLOADS"
-out=''
-fail=0
-while (($#)); do
-  case "$1" in
-    -o) out=$2; shift ;;
-    -fsSL|--fail) fail=1 ;;
-  esac
-  shift
-done
-if [[ "$SCENARIO" == signal ]]; then kill -TERM "$PPID"; exit 143; fi
-if [[ "$SCENARIO" == network ]]; then exit 7; fi
-if [[ "$SCENARIO" == http404 && "$fail" == 1 ]]; then
-  echo 'curl: (22) The requested URL returned error: 404' >&2
-  exit 22
-fi
-if [[ -n "$out" ]]; then cp "$ARCHIVE" "$out"; else cat "$ARCHIVE"; fi
+            # Установщик берёт vpn2.release из каталога рядом с собой: подставной загрузчик.
+            fetcher = work / 'vpn2/release'
+            fetcher.mkdir(parents=True)
+            (fetcher.parent / '__init__.py').write_text('')
+            (fetcher / '__init__.py').write_text('')
+            (fetcher / '__main__.py').write_text('''import os, shutil, signal, sys
+args = sys.argv[1:]
+with open(os.environ['DOWNLOADS'], 'a') as log:
+    log.write(' '.join(args) + '\\n')
+scenario = os.environ['SCENARIO']
+if scenario == 'signal':
+    os.kill(os.getppid(), signal.SIGTERM)
+    sys.exit(143)
+if scenario in ('network', 'http404'):
+    sys.exit('release: download failed')
+shutil.copy(os.environ['ARCHIVE'], args[args.index('artifact') + 2])
 ''')
             script(tools / 'tar', 'touch "$UNPACKED"\nexec /usr/bin/tar "$@"\n')
             if scenario in ('install_error', 'mv_error'):

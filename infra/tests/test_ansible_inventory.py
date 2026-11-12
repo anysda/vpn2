@@ -26,7 +26,7 @@ def run(directory, text, *args):
     path.write_text(text, encoding='utf-8')
     # Окружение пустое: настройки запуска из окружения инвентарь отдаёт узлам, эталону они не нужны.
     env = dict(PATH=os.environ['PATH'], VPN2_CONFIG=str(path), PYTHONPATH=str(INFRA / 'vpn2/src'),
-               VPN2_STATE_DIR=str(Path(directory) / 'state'))
+               VPN2_STATE_DIR=str(Path(directory) / 'state'), VPN2_INVENTORY_SECRETS='show')
     return subprocess.run([sys.executable, 'infra/ansible/inventory.py', *args], cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=30)
 

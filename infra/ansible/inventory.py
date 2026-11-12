@@ -6,8 +6,8 @@
   vpn2_node  - кто этот узел: tag, role (entry|exit), host, mgmt_ip.
   vpn2_exits - экзиты деплоя списком: tag, env_tag, host, mgmt_ip, hy2_direct_port (число),
                hy2_up_mbps, hy2_down_mbps (число или null), hy2_insecure (логическое).
-Секреты лежат в vpn2_env открыто: ansible-playbook они нужны. Под ansible-inventory
-(его вывод попадает в логи) и при VPN2_INVENTORY_SECRETS=hide значения закрыты.
+Секреты в --list закрыты: вывод ansible-inventory попадает в логи. Открыто их отдаёт
+только VPN2_INVENTORY_SECRETS=show - так инвентарь читает ansible-playbook оркестратора.
 """
 import base64
 import json
@@ -124,8 +124,7 @@ def prepare(cfg: Config, state: Path, repo_root: Path):
         print('orchestrator-ключ восстановлен из config.yaml')
     tags = [node.tag for node in cfg.exits]
     path = state / 'mgmt-ips.txt'
-    source = path if path.exists() else repo_root / 'infra/state/mgmt-ips.txt'
-    old = dict(line.split() for line in (source.read_text().splitlines() if source.exists() else ())
+    old = dict(line.split() for line in (path.read_text().splitlines() if path.exists() else ())
                if len(line.split()) == 2 and not line.startswith('#'))
     pinned = {**old, **{tag: str(octet) for tag, octet in nodevars.mgmt_octets(tags, state=state, repo_root=repo_root).items()}}
     text = ('# тег → последний октет MGMT_IP (10.99.0.N); номера не меняются: на них метки метрик и mon-порт.\n'
@@ -139,29 +138,6 @@ def prepare(cfg: Config, state: Path, repo_root: Path):
     if skipped:
         print(f'исключены по UDP-фильтру: {", ".join(skipped)} ({state}/excluded-exits.txt) — '
               'их MGMT_IP-индексы зарезервированы и не переиспользуются')
-
-
-def ancestors():
-    """Командные строки процессов-предков, от ближайшего."""
-    pid = os.getppid()
-    while pid > 1:
-        try:
-            words = [os.fsdecode(word) for word in Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0') if word]
-            pid = int(Path(f'/proc/{pid}/stat').read_text(encoding='utf-8', errors='replace').rpartition(')')[2].split()[1])
-        except (OSError, ValueError, IndexError):
-            return
-        yield words
-
-
-def asked_by_ansible_inventory():
-    """Инвентарь спросил ansible-inventory: как бы его ни запустили - файлом, обёрткой или модулем."""
-    for words in ancestors():
-        names = [Path(word).name for word in words]
-        if 'ansible-inventory' in names or 'ansible.cli.inventory' in names:
-            return True
-        if any(pair == ('ansible', 'inventory') for pair in zip(names, names[1:])):
-            return True
-    return False
 
 
 def main(argv):
@@ -189,8 +165,7 @@ def main(argv):
         except (OSError, ConfigError) as error:
             print(f'inventory.py: {error}', file=sys.stderr)
             return 1
-        mode = os.environ.get('VPN2_INVENTORY_SECRETS', '')
-        hide = mode == 'hide' or (mode != 'show' and asked_by_ansible_inventory())
+        hide = os.environ.get('VPN2_INVENTORY_SECRETS') != 'show'
         print(json.dumps(inventory(cfg, STATE_DIR, repo_root=repo, hide_secrets=hide),
                          indent=2, sort_keys=True))
         return 0

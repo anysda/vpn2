@@ -33,12 +33,13 @@ MANIFEST=${VPN2_RELEASE_MANIFEST:-}
 GUARDED=' 00-bootstrap 05-mgmt-mesh 10-foreign 19-yt-zapret 20-ru-router 22-adguard 23-emergency 27-ikev2 28-wireguard 29-openvpn 30-frontend '
 GUARD_WINDOW=${VPN2_FW_GUARD_WINDOW:-90}
 FRESH_LOGIN='-o ControlMaster=no -o ControlPath=none'
-export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_INFRA=$DEPLOY_ROOT VPN2_SOURCE_ROOT=$REPO
+export VPN2_DEVELOPMENT=${VPN2_DEVELOPMENT:-false} VPN2_INFRA=$DEPLOY_ROOT VPN2_SOURCE_ROOT=$REPO VPN2_INVENTORY_SECRETS=show
 export VPN2_RELEASE_MANIFEST=/tmp/anysda/release-manifest.json
 
 inventory() {
   PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B "$DEPLOY_ROOT/ansible/inventory.py" "$@"
 }
+vpn2_module() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B -m "$@"; }
 
 # Переменные узлов из config.yaml на время запуска: ENVS/<узел>.env для source.
 envs_write() {
@@ -69,10 +70,8 @@ expand_hosts() {
 
 # Узлы стадии через запятую: порядок и принадлежность стадий знает site.yml.
 stage_nodes() {
-  local out rc=0
-  out=$(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages nodes \
-          --site "$DEPLOY_ROOT/ansible/site.yml" "$@" 2>&1) || rc=$?
-  (( rc == 0 )) || die "$out"
+  local out
+  out=$(vpn2_module vpn2.stages nodes "$@" 2>&1) || die "$out"
   tr ' ' ',' <<<"$out"
 }
 
@@ -170,8 +169,7 @@ verify_and_rotate_ports() {
   mkfifo "$answers"
   exec {screen}>&1
   # shellcheck disable=SC2046  # экзиты через пробел
-  exec {requests}< <(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" \
-    python3 -B -m vpn2.cli ports check $(expand_hosts foreign) 3>&1 >&"$screen" <>"$answers")
+  exec {requests}< <(vpn2_module vpn2.cli ports check $(expand_hosts foreign) 3>&1 >&"$screen" <>"$answers")
   pid=$!
   while IFS=' ' read -r -u "$requests" kind rest; do
     [[ "$kind" == rerun ]] || { _STAGE_LOG+=("$rest"); continue; }
@@ -195,7 +193,7 @@ run_stage() {
   case "$stage" in
     00-bootstrap) prep_keys ;;
     20-ru-router) pull_secrets; warn_insecure_exits ;;
-    23-emergency) PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.emergency provision "$REPO" ;;
+    23-emergency) vpn2_module vpn2.emergency provision "$REPO" ;;
   esac
   if [[ "$stage" == 10-foreign ]]; then
     [[ $(exit_tags | wc -w) != 1 ]] || warn 'единственный экзит: на время его обновления возможен перерыв VPN'
@@ -239,7 +237,7 @@ do_all() {
       *)           run_stage "$stage" "$group" ;;
     esac
     [[ "$stage" != 20-ru-router ]] || verify_and_rotate_ports
-  done 3< <(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -B -m vpn2.stages list --site "$DEPLOY_ROOT/ansible/site.yml")
+  done 3< <(vpn2_module vpn2.stages list)
   (( verify_rc != 1 )) || return 1
   play "$DEPLOY_ROOT/ansible/site.yml" --tags old-layout -e verify_old_layout=true --limit "$(expand_hosts all | tr ' ' ',')" >/dev/null \
     || warn 'остатки раскладки v1.1.5 не убраны: повтори ./deploy.sh'
@@ -249,7 +247,7 @@ do_all() {
   return "$verify_rc"
 }
 
-release_cli() { PYTHONPATH="$DEPLOY_ROOT/vpn2/src" python3 -m vpn2.release --manifest "$MANIFEST" "$@" "$REPO"; }
+release_cli() { vpn2_module vpn2.release --manifest "$MANIFEST" "$@" "$REPO"; }
 
 # Выпуск открывается до изменений: манифест сверен с деревом, журнал прошлого деплоя закрыт,
 # на каждом узле проверки и снимок. С фазы applying узлы считаются изменёнными.
@@ -304,14 +302,14 @@ trap on_exit EXIT
 envs_write
 trap 'exit 130' INT
 trap 'exit 143' TERM
-dry_restore=false
-[[ "${1:-}" != restore || " ${*:2} " != *' --dry-run '* ]] || dry_restore=true
 # Ошибка в аргументах выпуск не открывает: иначе журнал остался бы в applying до recover.
 case "${1:-}" in
   ''|recover|rollback) ;;
   backup)      do_backup; exit ;;
   backup-list) /usr/local/bin/anysda-backup-list.sh; exit ;;
-  restore)     "$dry_restore" || restore_preflight "${@:2}" ;;
+  restore)
+    [[ " ${*:2} " != *' --dry-run '* ]] || { do_restore "${@:2}"; exit; }
+    restore_preflight "${@:2}" ;;
   *)
     [[ $# -ge 2 ]] || die "использование: ./deploy.sh <stage> <group>  (пример: ./deploy.sh 30-frontend ru)"
     stage_nodes "$1" >/dev/null
@@ -320,13 +318,13 @@ case "${1:-}" in
     # shellcheck disable=SC2086  # список узлов через пробел
     stage_nodes --refuse-empty "$1" $group >/dev/null ;;
 esac
-"$dry_restore" || install_prereqs
-[[ "${1:-}" == 99-verify ]] || "$dry_restore" || release_start "$@"
+install_prereqs
+[[ "${1:-}" == 99-verify ]] || release_start "$@"
 case "${1:-}" in
   ''|recover) do_all ;;
   restore)    do_restore "${@:2}" ;;
   rollback)   /opt/vpn2/venv/bin/vpn2 containers rollback && PYTHONPATH=/tmp/anysda python3 -m vpn2.cli state phase --phase rolled-back ;;
   *)          run_stage "$1" "$2"
-              [[ "$1" != 30-frontend || "$2" == [!ra]* ]] || print_sso_notice ;;
+              [[ "$1" != 30-frontend || ! "$2" =~ ^(ru|all)$ ]] || print_sso_notice ;;
 esac
 release_complete

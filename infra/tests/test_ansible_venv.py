@@ -222,18 +222,14 @@ class AnsibleVenvTest(unittest.TestCase):
         self.assertIn('пины те же, без загрузки', res.stdout)
         self.assertEqual(calls.read_text().splitlines(), lines)
         self.assertEqual(same, first)
-        # другое колесо: копия действующей сборки и одна установка колеса, без сети
-        (first / 'bin/tool').write_text(f'#!{first}/bin/python\n')
+        # другое колесо: новая сборка из склада без сети, коллекции прежние
         self.edit_source(infra)
         res, second = self.installed(bin_dir, infra)
         self.assertIn('колесо vpn2 обновлено', res.stdout)
         added = calls.read_text().splitlines()[len(lines):]
-        self.assertEqual(len(added), 1, added)
-        self.assertTrue('--no-index --no-deps --force-reinstall' in added[0], added)
+        self.assertEqual([' download ' in x or x.startswith('galaxy ') for x in added], [False] * 3, added)
         self.assertNotEqual(second, first)
         self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
-        # запускалки копии смотрят на свою сборку, а не на снесённую
-        self.assertEqual((second / 'bin/tool').read_text(), f'#!{second}/bin/python\n')
         self.assertTrue((root / 'venv/.vpn2-wheel').read_text().startswith(
             (root / 'wheels/.src-sha256').read_text().strip()))
         # другие пины: склад и коллекции качаются заново
@@ -249,26 +245,6 @@ class AnsibleVenvTest(unittest.TestCase):
         # Отметка, по которой роли перезапускают службы пакета, меняется и от
         # одних пинов: иначе демон остаётся на сборке с прежними зависимостями.
         self.assertNotEqual((root / 'venv/.vpn2-wheel').read_text(), stamp)
-
-    @NEEDS_WHEEL
-    @NEEDS_PIP_WHEEL
-    def test_aborted_copy_is_rebuilt(self):
-        infra = self.infra()
-        bin_dir, calls = self.fake_python()
-        build(self, self.tmp, infra)
-        root = self.tmp / 'root'
-        _, first = self.installed(bin_dir, infra)
-        self.edit_source(infra)
-        # Обрыв между копией и установкой колеса: копия без метки, с прежним пакетом.
-        res = install(self.tmp, bin_dir, infra, FAIL_ON='--force-reinstall')
-        self.assertNotEqual(res.returncode, 0)
-        self.assertEqual((root / 'venv').resolve(), first)
-        left = [x for x in (root / 'venvs').iterdir() if x != first]
-        self.assertFalse(any((x / '.vpn2-pins').exists() for x in left), left)
-        before = len(calls.read_text().splitlines())
-        _, second = self.installed(bin_dir, infra)
-        self.assertEqual(len(calls.read_text().splitlines()), before + 1)
-        self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
 
     @NEEDS_WHEEL
     @NEEDS_PIP_WHEEL

@@ -151,12 +151,12 @@ def run_script(tmp, text, **extra):
     return env
 
 
-def test_script_hides_secrets_on_request():
+def test_script_shows_secrets_only_on_request():
     with tempfile.TemporaryDirectory() as tmp:
         env = run_script(tmp, MINIMAL.replace('password: p\n', 'password: entry-S3CRET\n', 1))
         outputs = [subprocess.run([sys.executable, str(SCRIPT), '--list'], env=dict(env, **mode), check=True,
                                   capture_output=True, text=True, timeout=30).stdout
-                   for mode in ({}, {'VPN2_INVENTORY_SECRETS': 'hide'})]
+                   for mode in ({'VPN2_INVENTORY_SECRETS': 'show'}, {})]
     assert 'entry-S3CRET' in outputs[0] and 'entry-S3CRET' not in outputs[1]
 
 
@@ -170,7 +170,7 @@ def test_ansible_reads_values_verbatim_and_inventory_listing_is_masked():
         launcher.chmod(0o755)
         message = '{{ ansible_password }}|{{ vpn2_env.SSH_PASS }}|{{ vpn2_env.NOPE | default("") }}|{{ vpn2_node.role }}'
         play = subprocess.run(['ansible', '-i', str(launcher), 'ru', '-c', 'local', '-m', 'ansible.builtin.debug',
-                               '-a', 'msg=' + message], env=env, capture_output=True, text=True, timeout=120)
+                               '-a', 'msg=' + message], env=dict(env, VPN2_INVENTORY_SECRETS='show'), capture_output=True, text=True, timeout=120)
         listing = subprocess.run(['ansible-inventory', '-i', str(launcher), '--list'], env=env,
                                  capture_output=True, text=True, timeout=120)
         asked = (Path(tmp) / 'asked').read_text(encoding='utf-8')

@@ -81,8 +81,8 @@ _venv_prune() {
 
 _pip() { "$VPN2_PYTHON" "$PIP_WHL/pip" --disable-pip-version-check "$@"; }
 
-# Полная сборка $1 из склада колёс $VPN2_ROOT/pip-wheels, склад обновляется при смене пинов $2.
-_venv_build_full() {
+# Сборка $1 из склада колёс $VPN2_ROOT/pip-wheels без сети; склад обновляется при смене пинов $2.
+_venv_build() {
   local new="$1" pins="$2" store="$VPN2_ROOT/pip-wheels" c="$ANSIBLE_VENV_INFRA/ansible/constraints.txt"
   if [[ "$(cat "$store/.vpn2-pins" 2>/dev/null)" != "$pins" ]]; then
     rm -rf "$store"
@@ -95,23 +95,11 @@ _venv_build_full() {
   _pip --python "$new/bin/python" install --no-index --no-deps "$WHEEL"
 }
 
-# Сменилось только колесо: копия действующей сборки $2 с переставленным пакетом vpn2.
-# Запускалки в bin несут полный путь сборки и переводятся на новую.
-_venv_build_copy() {
-  local new="$1" old="$2"
-  rm -rf "$new.part"
-  cp -a "$old" "$new.part" || return 1
-  rm -f "$new.part/.vpn2-pins" "$new.part/.vpn2-wheel"
-  mv -T "$new.part" "$new" || return 1
-  grep -rlF "$old/" "$new/bin" | xargs -r sed -i "s|$old/|$new/|g" || return 1
-  _pip --python "$new/bin/python" install --no-index --no-deps --force-reinstall "$WHEEL"
-}
-
 # Новая сборка ставится рядом, действующая до подмены не трогается; оборванная остаётся
 # без метки .vpn2-pins и пересобирается. .vpn2-wheel - отпечаток сборки, по нему роли
 # перезапускают службы пакета.
 _ansible_venv_install_locked() {
-  local venv="$VPN2_ROOT/venv" pins had new old stamp
+  local venv="$VPN2_ROOT/venv" pins had new stamp
   pins="$(ansible_venv_pins)"
   WHEEL="$(ansible_wheel_path)" || die "ansible: колеса vpn2 нет в $VPN2_ROOT/wheels"
   stamp="$(cat "$VPN2_ROOT/wheels/.src-sha256") $pins"
@@ -125,14 +113,9 @@ _ansible_venv_install_locked() {
   [[ -n "$PIP_WHL" ]] || die "ansible: нет pip-*.whl в $PYTHON_WHEELS_DIR (пакет python3-venv)"
   new="$VPN2_ROOT/venvs/${pins:0:12}-${stamp:0:12}"
   if [[ ! -f "$new/.vpn2-pins" ]]; then
-    rm -rf "$new" "$new.part"
+    rm -rf "$new"
     mkdir -p "$VPN2_ROOT/venvs"
-    old="$(readlink -f "$venv" 2>/dev/null)"
-    if [[ "$had" == "$pins" && -n "$old" && "$old" != "$new" ]]; then
-      _venv_build_copy "$new" "$old" || return 1
-    else
-      _venv_build_full "$new" "$pins" || return 1
-    fi
+    _venv_build "$new" "$pins" || return 1
   fi
   if [[ "$had" != "$pins" ]]; then
     _venv_retry "$new/bin/ansible-galaxy" collection install \

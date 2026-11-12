@@ -1,12 +1,6 @@
 ---
 # sing-box на entry: трафик клиентов, заведённый в TPROXY :7898, расходится по
 # наборам geoip/geosite в туннели Hysteria2 до экзитов.
-- name: Команда vpn2
-  ansible.builtin.stat:
-    path: "{{ router_vpn2 }}"
-  register: router_vpn2_stat
-  failed_when: not (router_vpn2_stat.stat.executable | default(false))
-
 - name: Каталоги роутера
   ansible.builtin.file:
     path: "{{ item.path }}"

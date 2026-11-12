@@ -96,7 +96,7 @@ def test_nft_missing_file_is_named(tmp_path, capsys):
 def test_router_wrong_call_shows_every_step(argv, capsys):
     assert cli.main(['router', *argv]) == 2
     err = capsys.readouterr().err
-    assert err.startswith('Использование: vpn2 router config|entry-addrs|apply-routes|rule-sets|base-config|')
+    assert err == 'Использование: vpn2 router entry-addrs|apply-routes [аргументы]\n'
 
 
 @pytest.mark.parametrize('stage', ['monitoring', 'telegram', 'panel'])

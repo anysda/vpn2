@@ -303,7 +303,7 @@ class Backend:
 
     @contextlib.contextmanager
     def ca(self):
-        """Отказ openssl внутри vpn2.pki - тот же ответ службы, что и раньше."""
+        """Отказ openssl внутри vpn2.pki - ответ службы unavailable."""
         try:
             yield
         except pki.PkiError:

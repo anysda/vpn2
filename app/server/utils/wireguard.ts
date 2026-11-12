@@ -90,8 +90,7 @@ export function loadServerKeys(): Promise<{ publicKey: string }> {
 export function ensureDeviceWg(deviceId: number) {
   const db = useDb()
   return claimUnique(`device ${deviceId}: не удалось занять адрес WG`, async () => {
-    const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-    if (!row) throw new Error(`device ${deviceId} not found`)
+    const row = await deviceById(deviceId)
     if (row.wgPrivateKey && row.wgPublicKey && row.wgPresharedKey && row.wgIp) return row
     const kp = wgKeypair()
     const ip = row.wgIp ?? nextPoolAddress('wg', (await db.select({ ip: devicesTable.wgIp }).from(devicesTable)).map(r => r.ip))

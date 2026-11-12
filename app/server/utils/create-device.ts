@@ -4,13 +4,12 @@ import type { H3Event } from 'h3'
 import { useDb } from '../database/client'
 import { clients, deviceRequests, devices } from '../database/schema'
 
+const deviceDeleted = () => createError({ statusCode: 410, statusMessage: 'device_deleted', message: 'Устройство по этому запросу уже удалено' })
 
 /** Ключ идемпотентности создания из заголовка idempotency-key; hash - отпечаток тела: тот же ключ с другим запросом отклоняется. */
 export function deviceRequestKey(event: H3Event, request: Record<string, unknown>) {
-  const key = getHeader(event, 'idempotency-key')
-  if (key === undefined) return undefined
-  if (!/^[\w:.-]{1,128}$/.test(key)) throw createError({ statusCode: 400, message: 'Неверный ключ идемпотентности' })
-  return { key, hash: createHash('sha256').update(JSON.stringify(request)).digest('hex') }
+  const key = idempotencyKey(event)
+  return key === undefined ? undefined : { key, hash: createHash('sha256').update(JSON.stringify(request)).digest('hex') }
 }
 
 /**
@@ -24,9 +23,7 @@ export async function rejectDeletedDeviceRepeat(idempotency?: { key: string, has
   const [done] = await db.select().from(deviceRequests).where(eq(deviceRequests.idempotencyKey, idempotency.key))
   if (!done || done.requestHash !== idempotency.hash) return
   const [device] = await db.select({ deleting: devices.deleting }).from(devices).where(eq(devices.id, done.deviceId))
-  if (!device || device.deleting) {
-    throw createError({ statusCode: 410, statusMessage: 'device_deleted', message: 'Устройство по этому запросу уже удалено' })
-  }
+  if (!device || device.deleting) throw deviceDeleted()
 }
 
 /**
@@ -49,9 +46,7 @@ export async function createDeviceWithAddresses(
           throw createError({ statusCode: 409, statusMessage: 'idempotency_conflict', message: 'Ключ идемпотентности уже использован для другого запроса' })
         }
         const [device] = await tx.select().from(devices).where(eq(devices.id, done.deviceId))
-        if (!device || device.deleting) {
-          throw createError({ statusCode: 410, statusMessage: 'device_deleted', message: 'Устройство по этому запросу уже удалено' })
-        }
+        if (!device || device.deleting) throw deviceDeleted()
         return { device, replay: true }
       }
     }

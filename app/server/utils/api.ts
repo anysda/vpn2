@@ -63,6 +63,13 @@ export function accepted<T>(event: H3Event, result: T): T {
   return result
 }
 
+/** Заголовок idempotency-key, если передан; неверный формат - 400. */
+export function idempotencyKey(event: H3Event): string | undefined {
+  const key = getHeader(event, 'idempotency-key')
+  if (key !== undefined && !/^[\w:.-]{1,128}$/.test(key)) throw createError({ statusCode: 400, message: 'Неверный ключ идемпотентности' })
+  return key
+}
+
 export const notFound = () => createError({ statusCode: 404, statusMessage: 'not_found' })
 
 // Подписи полей для человека; поля без подписи называются как в запросе.

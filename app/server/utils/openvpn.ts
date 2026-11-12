@@ -7,11 +7,6 @@ import { clients as clientsTable, devices as devicesTable } from '../database/sc
 const withCaLock = serialQueue()
 
 const db = () => useDb()
-async function deviceRow(deviceId: number) {
-  const [row] = await db().select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-  if (!row) throw new Error(`device ${deviceId} not found`)
-  return row
-}
 /** Владелец ещё на той же версии доступа и не удаляется. */
 const ownerAt = (id: number, version: number) => exists(db().select({ id: clientsTable.id }).from(clientsTable)
   .where(and(eq(clientsTable.id, id), eq(clientsTable.accessVersion, version), eq(clientsTable.deleting, false))))
@@ -19,7 +14,7 @@ const ownerAt = (id: number, version: number) => exists(db().select({ id: client
 /** Постоянный адрес OpenVPN устройства. */
 function ensureDeviceOvpnIp(deviceId: number) {
   return claimUnique(`device ${deviceId}: не удалось занять адрес OpenVPN`, async () => {
-    const row = await deviceRow(deviceId)
+    const row = await deviceById(deviceId)
     if (row.ovpnIp) return row
     const ip = nextPoolAddress('ovpn', (await db().select({ ip: devicesTable.ovpnIp }).from(devicesTable)).map(r => r.ip))
     const [updated] = await db().update(devicesTable).set({ ovpnIp: ip, updatedAt: new Date() })
@@ -104,7 +99,7 @@ export async function buildOvpnConfig(p: OvpnConfigParams): Promise<string> {
 /** Выдаёт устройству сертификат OpenVPN, если его нет; адрес и ccd - до выдачи конфига. */
 export function ensureDeviceOvpn(deviceId: number) {
   return withCaLock(async () => {
-    const row = await deviceRow(deviceId)
+    const row = await deviceById(deviceId)
     if (row.ovpnCert && row.ovpnKey && row.ovpnIp) return row
     if (!row.ovpnCert || !row.ovpnKey) {
       const [owner] = await db().select().from(clientsTable).where(eq(clientsTable.id, row.clientId))
@@ -130,7 +125,7 @@ export function reissueDeviceOvpn(deviceId: number, clientId: number, version: n
       const [owner] = await db().select({ id: clientsTable.id }).from(clientsTable)
         .where(and(eq(clientsTable.id, clientId), eq(clientsTable.accessVersion, version)))
       if (!owner) throw new Error('superseded')
-      const row = await deviceRow(deviceId)
+      const row = await deviceById(deviceId)
       if (row.ovpnCert) {
         await revokeAccessCert(row.ovpnCert)
         await killOvpnClient(ovpnCn(deviceId))

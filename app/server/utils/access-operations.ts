@@ -39,11 +39,7 @@ export async function replayAccess(key: string, input: AccessRequest) {
   return { id: existing.clientId, operation: operationView(existing) }
 }
 
-export function accessRequestKey(event: H3Event): string {
-  const key = getHeader(event, 'idempotency-key') ?? randomUUID()
-  if (!/^[\w:.-]{1,128}$/.test(key)) throw createError({ statusCode: 400, message: 'Неверный ключ идемпотентности' })
-  return key
-}
+export const accessRequestKey = (event: H3Event): string => idempotencyKey(event) ?? randomUUID()
 
 /** Версия охватывает клиента целиком: заморозка конфликтует с любым его устройством. */
 export async function enqueueAccess(input: AccessRequest & {

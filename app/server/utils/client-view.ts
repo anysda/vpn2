@@ -43,6 +43,12 @@ export async function clientList() {
   })
 }
 
+export async function deviceById(id: number) {
+  const [device] = await useDb().select().from(devices).where(eq(devices.id, id)).limit(1)
+  if (!device) throw new Error(`device ${id} not found`)
+  return device
+}
+
 export async function clientOr404(id: number) {
   const [client] = await useDb().select().from(clients).where(eq(clients.id, id)).limit(1)
   if (!client) throw notFound()

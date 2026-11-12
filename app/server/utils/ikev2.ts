@@ -37,8 +37,7 @@ function buildIkev2Username(clientName: string, deviceName: string, takenUsernam
 export function ensureDeviceIkev2(deviceId: number) {
   const db = useDb()
   return claimUnique(`device ${deviceId}: не удалось занять логин и адрес IKEv2`, async () => {
-    const [row] = await db.select().from(devicesTable).where(eq(devicesTable.id, deviceId)).limit(1)
-    if (!row) throw new Error(`device ${deviceId} not found`)
+    const row = await deviceById(deviceId)
     if (row.ikev2Username && row.ikev2Password && row.ikev2Ip) return row
     const [client] = await db.select({ name: clientsTable.name }).from(clientsTable).where(eq(clientsTable.id, row.clientId)).limit(1)
     if (!client) throw new Error(`client ${row.clientId} not found`)

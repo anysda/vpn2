@@ -59,8 +59,7 @@ ROLLBACK_UNITS = ('sing-box', *START_UNITS)
 STAGES = {'22-adguard': ('adguard config', 'adguard restart'), '30-frontend': ('containers panel',),
           '35-telegram': ('containers telegram',)}
 RESYNC = ('set -a; source "$1"; set +a; r=$2/infra; shift 2; '
-          'export VPN2_ENTRY_RESOURCES=$r/ansible/roles/resources/files/entry_resources.py '
-          'VPN2_POOLS=$r/../app/shared/vpn-pools.json VPN2_PANEL_CONFIG_TPL=$r/configs/anysda-config.yaml.tpl '
+          'export VPN2_POOLS=$r/../app/shared/vpn-pools.json VPN2_PANEL_CONFIG_TPL=$r/configs/anysda-config.yaml.tpl '
           'VPN2_DEPLOY_STATE=$r/lib/deploy_state.py; '
           'for step in "$@"; do ${VPN2_BIN:-/opt/vpn2/venv/bin/vpn2} $step || exit; done')
 # Проверка узла: окружение стадий целиком, пакет из дерева, интерпретатор тот же, что у restore.

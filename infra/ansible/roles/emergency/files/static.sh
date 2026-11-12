@@ -9,11 +9,12 @@ container=vpn2-emergency
 
 image=$("$venv/bin/python" - "${EMERGENCY_IMAGE:-}" "${EMERGENCY_IMAGE_PULL:-true}" <<'PY'
 import os, sys
-from vpn2.containers import engine
+from vpn2.containers import compose
 from vpn2.release import ReleaseError
 try:
-    print(engine.release_image(os.environ, 'emergency', sys.argv[1], sys.argv[2] != 'false'))
-except (engine.EngineError, ReleaseError, OSError, ValueError, KeyError) as error:
+    environ = {**os.environ, 'EMERGENCY_IMAGE': sys.argv[1], 'EMERGENCY_IMAGE_PULL': sys.argv[2]}
+    print(compose.release_image(environ, 'emergency', compose.Docker()))
+except (compose.EngineError, ReleaseError, OSError, ValueError, KeyError) as error:
     sys.exit(f'release: emergency: {error}; no unverified artifact accepted')
 PY
 )

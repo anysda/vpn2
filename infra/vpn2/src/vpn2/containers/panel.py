@@ -53,7 +53,8 @@ class StageError(Exception):
 
 
 def deploy_state(*args):
-    return subprocess.run([sys.executable, DEPLOY_STATE, *map(str, args)], check=False).returncode
+    tool = os.environ.get('VPN2_DEPLOY_STATE') or DEPLOY_STATE
+    return subprocess.run([sys.executable, tool, *map(str, args)], check=False).returncode
 
 
 def must(*args):
@@ -237,7 +238,7 @@ def sso(environ):
 
 def write_config(user, password):
     """Логин и пароль JSON-строками: JSON-строка - YAML-скаляр, спецсимволы пароля конфиг не ломают."""
-    template = Path(TEMPLATE)
+    template = Path(os.environ.get('VPN2_PANEL_CONFIG_TPL') or TEMPLATE)
     if not template.is_file():
         raise StageError(f'{template} не найден')
     text = (template.read_text().replace('${ADMIN_USER_YAML}', json.dumps(user, ensure_ascii=False))

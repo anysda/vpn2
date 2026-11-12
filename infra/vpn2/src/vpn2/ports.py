@@ -16,6 +16,9 @@ from vpn2 import config
 from vpn2.probe import ClashApi
 
 UDP_PROBE_PORTS = (33445, 39847, 41001, 51234, 60123)
+CLASH_SECRET = Path('/etc/anysda/clash-secret.txt')
+# Окно готовности sing-box после перезапуска: 6 проб через 5 с, до ~70 с на молчащий канал.
+READY_ATTEMPTS, READY_PAUSE = 6, 5
 G, Y, R, E = ('\033[32m', '\033[33m', '\033[31m', '\033[0m') if sys.stderr.isatty() else ('',) * 4
 
 
@@ -27,15 +30,32 @@ def fatal(text):
     sys.exit(f'{R}[deploy] FATAL:{E} verify_and_rotate_ports: {text}')
 
 
+def probe_delay(api, tag):
+    """Одна проба канала через clash-api роутера entry: мс или None."""
+    delay, _reason = api.delay(f'hy2-{tag}-direct', 'http://cp.cloudflare.com/generate_204',
+                               timeout_ms=5000, http_timeout=8)
+    return delay
+
+
 def clash_delay(tag):
-    """Задержка канала в мс по clash-api роутера entry или None."""
+    """Задержка канала в мс или None, если канал молчит все READY_ATTEMPTS проб.
+
+    Сразу после 20-ru-router sing-box ещё поднимается: clash-api не отвечает или первая
+    проба hy2 падает. Один промах ещё не значит, что порт режут, - иначе перекатка
+    здорового экзита.
+    """
     try:
-        secret = Path('/etc/anysda/clash-secret.txt').read_text().rstrip('\n')
+        secret = CLASH_SECRET.read_text().rstrip('\n')
     except OSError:
         return None
-    delay, _reason = ClashApi('http://10.99.0.1:9090', secret).delay(
-        f'hy2-{tag}-direct', 'http://cp.cloudflare.com/generate_204', timeout_ms=5000, http_timeout=8)
-    return delay
+    api = ClashApi('http://10.99.0.1:9090', secret)
+    for attempt in range(READY_ATTEMPTS):
+        if attempt:
+            time.sleep(READY_PAUSE)
+        delay = probe_delay(api, tag)
+        if delay:
+            return delay
+    return None
 
 
 def on_exit(tag, command):
@@ -102,7 +122,6 @@ def rotate(tag, current):
         config.set_exit_port(path, tag, port)
         if not rerun(f'rotate-{tag}-{port}.log', f'10-foreign:{tag}', '20-ru-router:ru'):
             continue
-        time.sleep(4)
         delay = clash_delay(tag)
         if delay:
             say(f'{G}RTT={delay}ms ✓{E}\n')

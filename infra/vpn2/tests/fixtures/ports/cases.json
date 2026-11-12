@@ -304,5 +304,73 @@
     "rotate-se-rollback.log"
    ]
   }
+ },
+ {
+  "name": "router_just_restarted",
+  "foreign": "nl",
+  "delay": {
+   "nl:4443": [
+    null,
+    null,
+    null,
+    40
+   ]
+  },
+  "open": {},
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-nl-direct    port=4443  RTT=40ms ✓\n\n",
+   "stderr": "",
+   "events": [],
+   "excluded": null,
+   "stagelog": [],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 4443\nadmin:\n  user: anysda\n",
+   "logs": []
+  }
+ },
+ {
+  "name": "blocked_after_window",
+  "foreign": "nl",
+  "delay": {
+   "nl:4443": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    40
+   ],
+   "nl:443": 47
+  },
+  "open": {
+   "nl": [
+    33445
+   ]
+  },
+  "ssh_fail": [],
+  "rerun_fail": [],
+  "expected": {
+   "rc": 0,
+   "stdout": "==> verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов\n  hy2-nl-direct    port=4443  ×\n    UDP-пробник: UDP проходит на :33445 — пробую hy2 rotation\n    → пробую hy2 :443 RTT=47ms ✓\n\n",
+   "stderr": "",
+   "events": [
+    "ssh nl allow 33445",
+    "ssh nl delete allow 33445",
+    "set nl 443",
+    "rerun rotate-nl-443.log 10-foreign:nl",
+    "rerun rotate-nl-443.log 20-ru-router:ru"
+   ],
+   "excluded": null,
+   "stagelog": [
+    "[port-rotate]\tforeign\tT"
+   ],
+   "config": "entry:\n  host: 192.0.2.1\n  password: entry-pass\nexits:\n  - tag: se\n    host: 192.0.2.2\n    password: se-pass\n  - tag: nl\n    host: 192.0.2.3\n    password: nl-pass\n    hy2_direct_port: 443\nadmin:\n  user: anysda\n",
+   "logs": [
+    "rotate-nl-443.log"
+   ]
+  }
  }
 ]

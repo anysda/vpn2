@@ -29,8 +29,17 @@ def current_port(tag):
     return int(found.get('hy2_direct_port', 443))
 
 
-def delay(tag):
-    return case()['delay'].get(f'{tag}:{current_port(tag)}')
+PROBES = {}
+
+
+def delay(_api, tag):
+    """Ответ одной пробы: число на все пробы или список по порядку (последний повторяется)."""
+    key = f'{tag}:{current_port(tag)}'
+    answers = case()['delay'].get(key)
+    if not isinstance(answers, list):
+        return answers
+    seen = PROBES[key] = PROBES.get(key, 0) + 1
+    return answers[min(seen, len(answers)) - 1]
 
 
 def udp_answer(host, port):
@@ -54,7 +63,8 @@ def vpn2(argv):
         event(f'set {tag} {port}')
         write(path, tag, port)
 
-    config.set_exit_port, ports.clash_delay, ports.udp_ask = set_exit_port, delay, udp_answer
+    config.set_exit_port, ports.probe_delay, ports.udp_ask = set_exit_port, delay, udp_answer
+    ports.CLASH_SECRET = Path(os.environ['PORTS_CASE'])
     ports.time.sleep = lambda _seconds: None
     return cli.main(argv)
 

@@ -354,6 +354,11 @@ class Watchdog:
     def free(self, tag):
         return self.penalty.get(node_of(tag), 0.0) <= clock()
 
+    def fastest(self, pool):
+        """Быстрейший выход вне штрафной; в штрафной все - быстрейший из всех."""
+        free = {m: d for m, d in pool.items() if self.free(m)} or pool
+        return min(free, key=free.get)
+
     # --- каналы hy2/TCP ---
 
     def transports(self):
@@ -401,8 +406,7 @@ class Watchdog:
                  + ', '.join(f'{m}: {h.why.get(m, "?")}' for m in self.members) + ')')
         if not pool:
             return
-        free = {m: d for m, d in pool.items() if self.free(m)} or pool
-        best = min(free, key=free.get)
+        best = self.fastest(pool)
         if now in pool:
             # Текущий жив: смена только по устойчивому преимуществу в скорости.
             if best != now and pool[best] + TOLERANCE < pool[now]:
@@ -428,8 +432,7 @@ class Watchdog:
             else:
                 # Перевыбор после штрафа: иначе ушли бы на соседний выход того же узла.
                 why += f', узел {node_of(now)} в штрафной {self.penalize(now):.0f}с'
-                free = {m: d for m, d in pool.items() if self.free(m)} or pool
-                best = min(free, key=free.get)
+                best = self.fastest(pool)
         self.candidate, self.streak = '', 0
         self.api.select(GROUP, best, timeout=API_TIMEOUT)
         self.proxies[GROUP]['now'] = best

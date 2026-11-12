@@ -13,7 +13,7 @@ import socket
 import subprocess
 import time
 
-from ..fsutil import LockBusy, atomic, lock
+from ..fsutil import LockBusy, atomic, lock, read_json
 # wg0.conf is read one way: vpn2-apply's.
 from .. import pki, wg
 from .contract import API, Fault, LIMIT, METHODS, key as validate_key, load_pools, require
@@ -56,6 +56,12 @@ MAX_JOURNAL = 2000
 FORGET_AFTER = 60
 
 
+def openvpn_clients(rows, width):
+    """CLIENT_LIST rows of `status 2` with at least width fields for panel devices (common name dev_N)."""
+    return [row for row in rows if len(row) >= width and row[0] == 'CLIENT_LIST'
+            and re.fullmatch(r'dev_[1-9][0-9]*', row[1])]
+
+
 class Backend:
     def __init__(self, root=Path('/'), state=Path('/var/lib/vpn2-control'), pools=None):
         self.root = root
@@ -83,7 +89,7 @@ class Backend:
 
     def applied(self, domain):
         path = self.state / (domain + '.json')
-        return json.loads(path.read_text()).get('params') if path.exists() else None
+        return read_json(path, {}).get('params')
 
     def expires(self, protocol):
         if protocol == 'openvpn':
@@ -112,7 +118,7 @@ class Backend:
         """Take expired devices off with the same paths as an apply."""
         now = utc_now()
         journal_path = self.state / 'expired.json'
-        journal = json.loads(journal_path.read_text()) if journal_path.exists() else []
+        journal = read_json(journal_path, [])
         removed = []
         failed = []
         for protocol in ('wg', 'ikev2', 'openvpn'):
@@ -239,7 +245,7 @@ class Backend:
                 if not path.exists() or path.read_text() != body:
                     atomic(path, body, 0o644)
             default = {'disabled': []} if params['resource'] == 'disabled-exits' else {}
-            return {'config': json.loads(path.read_text()) if path.exists() else default}
+            return {'config': read_json(path, default)}
         if method in ('openvpn.issue', 'openvpn.revoke', 'openvpn.certificate', 'openvpn.disconnect'):
             return self.openvpn_resource(method, params)
         if method == 'state.read':
@@ -309,6 +315,14 @@ class Backend:
         except pki.PkiError:
             raise Fault('unavailable') from None
 
+    def write_under_ca(self, target, make):
+        """make(path) writes a temporary file beside target; target is replaced only by a complete one."""
+        candidate = target.with_suffix('.tmp')
+        with self.ca():
+            make(candidate)
+        atomic(target, candidate.read_text())
+        candidate.unlink()
+
     def served(self, path):
         # OpenVPN re-reads the CRL and ccd after dropping to user nobody and
         # group nogroup, so only the "other" bits apply. An unreadable CRL
@@ -361,11 +375,7 @@ class Backend:
                 directory.mkdir(mode=0o700, exist_ok=True)
                 key, csr, cert = (directory / name for name in ('key.pem', 'csr.pem', 'cert.pem'))
                 if not key.exists():
-                    candidate = directory / 'key.tmp'
-                    with self.ca():
-                        pki.genkey(candidate, run=self.openssl)
-                    atomic(key, candidate.read_text())
-                    candidate.unlink()
+                    self.write_under_ca(key, lambda path: pki.genkey(path, run=self.openssl))
                 if not cert.exists():
                     public = self.command('/usr/bin/openssl', 'pkey', '-in', str(key), '-pubout')
                     for status, serial in self.certificates(device_id):
@@ -375,11 +385,7 @@ class Backend:
                             atomic(cert, existing.read_text())
                             break
                 if not cert.exists():
-                    candidate = directory / 'cert.tmp'
-                    with self.ca():
-                        pki.issue(base / 'pki', cn, key, csr, candidate, run=self.openssl)
-                    atomic(cert, candidate.read_text())
-                    candidate.unlink()
+                    self.write_under_ca(cert, lambda path: pki.issue(base / 'pki', cn, key, csr, path, run=self.openssl))
                 serial = self.command('/usr/bin/openssl', 'x509', '-in', str(cert), '-noout', '-serial')
                 require(('V', serial.strip().split('=', 1)[1]) in self.certificates(device_id), 'conflict')
                 return {'cert': cert.read_text(), 'key': key.read_text()}
@@ -415,11 +421,8 @@ class Backend:
         if protocol == 'wg':
             return {'samples': wg.transfer(self.command('/usr/bin/wg', 'show', 'wg0', 'transfer'))}
         if protocol == 'openvpn':
-            rows = []
-            for row in csv.reader(self.management('status 2')):
-                if len(row) >= 7 and row[0] == 'CLIENT_LIST' and re.fullmatch(r'dev_[1-9][0-9]*', row[1]):
-                    rows.append({'device_id': int(row[1][4:]), 'rx': int(row[6]), 'tx': int(row[5])})
-            return {'samples': rows}
+            clients = openvpn_clients(csv.reader(self.management('status 2')), 7)
+            return {'samples': [{'device_id': int(row[1][4:]), 'rx': int(row[6]), 'tx': int(row[5])} for row in clients]}
         # Written by the host sampler; the service only reads it.
         data = json.loads(self.path('/etc/anysda/ikev2-status.json').read_text())
         require(time.time() - data['updated'] < 30, 'unavailable')
@@ -551,9 +554,9 @@ class Backend:
         # Persist identities requiring termination BEFORE changing files. This
         # survives death after load or terminate and is cleared only on proof.
         pending_path = self.state / 'ikev2-pending.json'
-        pending = set(json.loads(pending_path.read_text())) if pending_path.exists() else set()
+        pending = set(read_json(pending_path, []))
         previous_path = self.state / 'ikev2-identities.json'
-        previous = json.loads(previous_path.read_text()) if previous_path.exists() else {}
+        previous = read_json(previous_path, {})
         current = {client['username']: hashlib.sha256(json.dumps(client, sort_keys=True, separators=(',', ':'))
                                                      .encode()).hexdigest() for client in clients}
         pending.update(name for name, digest in previous.items() if current.get(name) != digest)
@@ -604,9 +607,7 @@ class Backend:
         if protocol == 'openvpn':
             rows = list(csv.reader(self.management('status 2')))
             require(any(row == ['END'] for row in rows), 'unavailable')
-            sessions = {row[1]: row[3] for row in rows if len(row) >= 4 and
-                        row[0] == 'CLIENT_LIST' and re.fullmatch(r'dev_[1-9][0-9]*', row[1])}
-            return {'sessions': sessions}
+            return {'sessions': {row[1]: row[3] for row in openvpn_clients(rows, 4)}}
         conns = self.command('/usr/sbin/swanctl', '--list-conns')
         devices = [int(value) for value in re.findall(r'^anysda-dev-(\d+):', conns, re.M)]
         credentials = {}

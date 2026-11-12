@@ -8,7 +8,6 @@ import os
 import re
 import shutil
 import sqlite3
-import stat
 import subprocess
 import sys
 import time
@@ -197,11 +196,7 @@ def copy_extras(bundle, root):
     # Без mgmt-ips.txt новый entry раздал бы экзитам адреса mesh заново, по позиции в config.yaml.
     if os.path.isdir(f'{root}/var/lib/anysda-vpn2/state'):
         _must(['cp', '-a', f'{root}/var/lib/anysda-vpn2/state', f'{bundle}/deploy-state'])
-    for top, dirs, files in os.walk(bundle):
-        for name in dirs + files:
-            mode = os.lstat(os.path.join(top, name)).st_mode
-            if stat.S_ISSOCK(mode) or stat.S_ISFIFO(mode) or stat.S_ISBLK(mode) or stat.S_ISCHR(mode):
-                os.unlink(os.path.join(top, name))
+    archive.drop_special_files(bundle)
 
 
 def _output(argv):

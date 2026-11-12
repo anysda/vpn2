@@ -27,6 +27,8 @@ from pathlib import Path
 from vpn2 import wg
 from vpn2.backup import archive, check, env, revoke
 from vpn2.backup import run as run_backup
+from vpn2.fsutil import filled
+from vpn2.release.state import migration_history
 
 NO_PASSPHRASE = ('anysda-restore FATAL: ANYSDA_BACKUP_PASSPHRASE пуст в {env_file}.\n'
                  '  Заполни backup.passphrase в config.yaml и прогони ./deploy.sh 26-backup ru')
@@ -90,10 +92,6 @@ def _say(text):
 
 def _warn(text):
     print(f'anysda-restore: {text}', file=sys.stderr, flush=True)
-
-
-def _filled(path):
-    return os.path.isfile(path) and os.path.getsize(path) > 0
 
 
 def _write_private(path, data):
@@ -264,15 +262,10 @@ def _schema(database, folder):
         entries = json.load(f)['entries']
     journal = [(int(e['when']), hashlib.sha256(Path(folder, e['tag'] + '.sql').read_bytes()).hexdigest())
                for e in entries]
-    with contextlib.closing(sqlite3.connect(f'file:{database}?mode=ro', uri=True)) as db:
-        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if '__drizzle_migrations' in tables:
-            history = [(int(when), digest) for when, digest in
-                       db.execute('SELECT created_at, hash FROM __drizzle_migrations ORDER BY created_at')]
-        elif tables:
-            raise ValueError('в базе архива нет истории миграций (__drizzle_migrations)')
-        else:
-            history = []
+    history = migration_history(database)
+    if history is None:
+        raise ValueError('в базе архива нет истории миграций (__drizzle_migrations)')
+    history = [(int(when), digest) for when, digest in history]
     if len(history) > len(journal) and history[:len(journal)] == journal:
         raise ValueError(f'схема БД архива новее текущей версии: {len(history)} миграций против {len(journal)}')
     for index, row in enumerate(history):
@@ -342,7 +335,7 @@ def wg_key_material(bundle):
             item.unlink()
     if not (conf.is_file() or priv.is_file()):
         return
-    if not _filled(priv):
+    if not filled(priv):
         try:
             key = wg.private_key(conf.read_bytes().decode('latin-1'))
         except OSError as exc:
@@ -415,8 +408,7 @@ def pre_restore_snapshot(settings, work, root, live_db):
     for path in SNAPSHOT_PATHS:
         if os.path.lexists(os.path.join(root, path)):
             must(['cp', '-a', '--parents', path, f'{tree}/'], cwd=root)
-    must(['find', str(tree), '(', '-type', 's', '-o', '-type', 'p', '-o', '-type', 'b', '-o', '-type', 'c', ')',
-          '-delete'])
+    archive.drop_special_files(tree)
     tar_path, encrypted = work / 'pre-restore.tar.gz', work / 'pre-restore.tar.gz.age'
     archive.pack(tree, '.', tar_path)
     try:
@@ -765,7 +757,7 @@ def start_services(rb):
         rb.code(['swanctl', '--load-all'], **QUIET)
     if os.path.isdir(os.path.join(rb.bundle, 'caddy-storage')):
         rb.must(['systemctl', 'start', 'caddy'])
-        if _filled(rb.live('etc/anysda/ikev2-domain')) and rb.exists(CERT_SYNC):
+        if filled(rb.live('etc/anysda/ikev2-domain')) and rb.exists(CERT_SYNC):
             rb.must(['systemctl', 'start', CERT_SYNC])
         if rb.sync_units:
             rb.must(['systemctl', 'start', *rb.sync_units])
@@ -817,7 +809,7 @@ def resync(source_root, env_file, work):
     Первая неудача останавливает цепочку; вывод стадии - в work/<стадия>.log, его хвост - в причине.
     """
     for stage, steps in STAGES.items():
-        if not _filled(env_file):
+        if not filled(env_file):
             fail = f'не прочитан {source_root}/config.yaml: окружение стадий не собрано'
         else:
             _say(f'{stage} с восстановленными паролями…')
@@ -838,7 +830,7 @@ def resync(source_root, env_file, work):
 def smoke(source_root, env_file, presnap_final):
     """vpn2 verify пакетом установленного дерева: код 2 - предупреждение, иной отказ - RestoreError(7)."""
     package = Path(source_root) / 'infra/vpn2/src'
-    if not ((package / 'vpn2/verify/stage.py').is_file() and _filled(env_file)):
+    if not ((package / 'vpn2/verify/stage.py').is_file() and filled(env_file)):
         return _warn(f'WARN: нет vpn2 verify ({package}) или env стадий — пропуск smoke-test')
     _say('99-verify…')
     code = archive.code(['bash', '-c', VERIFY, 'anysda-restore', str(env_file), str(package), sys.executable])

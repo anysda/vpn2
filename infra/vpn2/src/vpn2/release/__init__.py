@@ -21,6 +21,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from vpn2.fsutil import read_json
+
 # CI publishes each images build's manifest next to the panel image, tagged
 # release-<full commit>: the package is public, anonymous pull needs no account.
 RELEASE_SOURCE = 'https://ghcr.io/anysda/vpn2/panel'
@@ -41,10 +43,6 @@ GITHUB_API = 'https://api.github.com'
 
 class ReleaseError(Exception):
     detail = ''
-
-
-def read_json(path):
-    return json.loads(Path(path).read_text())
 
 
 def sha256(path):

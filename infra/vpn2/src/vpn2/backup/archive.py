@@ -9,6 +9,7 @@ import re
 import select
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tarfile
@@ -16,6 +17,8 @@ import tempfile
 import termios
 import time
 from pathlib import Path
+
+from vpn2 import fsutil
 
 MANIFEST = 'manifest.json'
 NAME = re.compile(r'anysda-vpn2-([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z)\.tar\.gz\.age')
@@ -131,6 +134,15 @@ def pack(directory, name, out_tar):
         tar.add(os.path.join(directory, name), arcname=name)
 
 
+def drop_special_files(tree):
+    """Сокеты, каналы и устройства из скопированных живых каталогов: их не хешируют и не архивируют."""
+    for top, _, files in os.walk(tree):
+        for name in files:
+            path = os.path.join(top, name)
+            if stat.S_IFMT(os.lstat(path).st_mode) in (stat.S_IFSOCK, stat.S_IFIFO, stat.S_IFBLK, stat.S_IFCHR):
+                os.unlink(path)
+
+
 def unpack(tar_path, dest):
     try:
         with tarfile.open(tar_path) as tar:
@@ -179,22 +191,18 @@ def pty_run(argv, passphrase, prompts, *, timeout=TIMEOUT):
     return proc.wait()
 
 
-def _filled(path):
-    return os.path.isfile(path) and os.path.getsize(path) > 0
-
-
 def encrypt(src, dst, passphrase):
     """`age -p -o dst src` с паролем через pty; src затирается. Отказ - ArchiveError (код age или 3)."""
     rc = pty_run(['age', '-p', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase', b'Confirm passphrase'))
     wipe(src)
-    if rc or not _filled(dst):
+    if rc or not fsutil.filled(dst):
         raise ArchiveError(rc if rc > 0 else 3, f'anysda-backup FATAL: шифрование age не дало файла {dst}')
 
 
 def decrypt(src, dst, passphrase):
     """`age -d -o dst src` с паролем через pty; отказ - dst удаляется и ArchiveError(4)."""
     rc = pty_run(['age', '-d', '-o', str(dst), str(src)], passphrase, (b'Enter passphrase',))
-    if rc or not _filled(dst):
+    if rc or not fsutil.filled(dst):
         with contextlib.suppress(OSError):
             os.unlink(dst)
         raise ArchiveError(4, f'anysda-restore: дешифровка провалилась (age exit={rc})'

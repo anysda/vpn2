@@ -59,6 +59,10 @@ def publish(path, body, mode=0o600):
     return True
 
 
+def filled(path):
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def read_json(path, default=_MISSING):
     """Parse a JSON file; a missing file gives default if passed, bad JSON always raises."""
     try:

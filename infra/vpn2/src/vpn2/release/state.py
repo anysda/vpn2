@@ -17,7 +17,8 @@ import tempfile
 import time
 
 from vpn2 import fsutil, swap
-from vpn2.release import ReleaseError, architecture, artifact, command, image, load, read_json, sha256
+from vpn2.fsutil import read_json
+from vpn2.release import ReleaseError, architecture, artifact, command, image, load, sha256
 
 
 def atomic_json(path, data):
@@ -25,17 +26,20 @@ def atomic_json(path, data):
     fsutil.atomic(path, json.dumps(data))
 
 
-def schema(database):
-    if not Path(database).exists():
-        return []
-    with closing(sqlite3.connect(Path(database).as_uri() + '?mode=ro', uri=True)) as connection:
+def migration_history(database):
+    """(created_at, hash) of applied migrations; [] for an empty database, None when tables exist without history."""
+    with closing(sqlite3.connect(Path(database).absolute().as_uri() + '?mode=ro', uri=True)) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if '__drizzle_migrations' not in tables:
-            if tables:
-                raise ReleaseError('unrecognised database: migration history missing')
-            return []
-        return [{'when': row[0], 'sha256': row[1]} for row in connection.execute(
-            'SELECT created_at, hash FROM __drizzle_migrations ORDER BY created_at')]
+            return None if tables else []
+        return connection.execute('SELECT created_at, hash FROM __drizzle_migrations ORDER BY created_at').fetchall()
+
+
+def schema(database):
+    history = migration_history(database) if Path(database).exists() else []
+    if history is None:
+        raise ReleaseError('unrecognised database: migration history missing')
+    return [{'when': when, 'sha256': digest} for when, digest in history]
 
 
 def compatible(database, contract, migrating=False):
@@ -153,7 +157,7 @@ def rotate_backups(state, keep=KEEP_BACKUPS):
     """
     folder = Path(state) / 'backups'
     journal = Path(state) / 'operation.json'
-    current = read_json(journal).get('backup') if journal.exists() else None
+    current = read_json(journal, {}).get('backup')
     kept, removed = 0, 0
     for item in backup_dirs(folder):
         if str(item) == current or ((item / 'complete.json').exists() and kept < keep):
@@ -260,7 +264,7 @@ def main(argv=None):
             return 0
         if args.action == 'record-rollback':
             previous = args.state / 'panel/previous-installed.json'
-            record = read_json(previous) if previous.exists() else {'release': None}
+            record = read_json(previous, {'release': None})
             record['actual'] = composition()
             record['state'] = 'panel-rollback'
             atomic_json(args.state / 'installed.json', record)
@@ -272,7 +276,7 @@ def main(argv=None):
             preflight(manifest, args.database, args.state, warn=args.action == 'preflight')
             if args.partial:
                 installed = args.state / 'installed.json'
-                previous = read_json(installed).get('release') if installed.exists() else None
+                previous = read_json(installed, {}).get('release')
                 if not previous or previous['stages'] != manifest['stages']:
                     raise ReleaseError('release stages changed; run full deploy before individual stages')
             if args.action == 'preflight':

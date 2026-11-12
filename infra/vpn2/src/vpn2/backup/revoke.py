@@ -49,6 +49,11 @@ def wg_key(directory):
     return hashlib.sha256(key.encode()).hexdigest() if key else None
 
 
+def access_kinds(wg_public_key, ovpn_cert, ikev2_password):
+    return {kind for kind, value in (('WireGuard', wg_public_key), ('OpenVPN', ovpn_cert),
+                                     ('IKEv2', ikev2_password)) if value}
+
+
 def wg_public_keys(text):
     """PublicKey всех пиров wg0.conf так, как их читает wg."""
     pairs = (wg.line(line.replace('\0', '')) for line in text.split('\n'))
@@ -174,8 +179,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             what = set()
             if not live_read:
                 user, password = row.get('ikev2_username'), row.get('ikev2_password')
-                had = {kind for kind, value in (('WireGuard', row.get('wg_public_key')), ('OpenVPN', cert),
-                                                ('IKEv2', password)) if value}
+                had = access_kinds(row.get('wg_public_key'), cert, password)
                 # Сертификат OpenVPN отзывают только удаление и перевыпуск в панели, и оба
                 # снимают все виды доступа; заморозка и срок пишут disable в ccd. Отозван —
                 # снято всё, живые конфиги лишь подсказывают подпись: учётка IKEv2 на узле
@@ -221,13 +225,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             if mine and not (row.get('created_at') and mine.get('created_at')
                              and row['created_at'] != mine.get('created_at')):
                 continue
-            what = set()
-            if row.get('wg_public_key'):
-                what.add('WireGuard')
-            if row.get('ovpn_cert') and same_ca:
-                what.add('OpenVPN')
-            if row.get('ikev2_password'):
-                what.add('IKEv2')
+            what = access_kinds(row.get('wg_public_key'), same_ca and row.get('ovpn_cert'), row.get('ikev2_password'))
             issued[device_id] = (what, mine is None, row)
         absent_ids = {device_id for device_id, (_w, absent, _r) in issued.items() if absent}
         # Живая БД могла пропасть или не читаться, а PKI и ccd узла переживают её,
@@ -238,9 +236,8 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         if same_ca:
             newcerts = os.path.join(live_pki, 'newcerts')
             for name in sorted(os.listdir(newcerts) if os.path.isdir(newcerts) else ()):
-                try:
-                    pem = open(os.path.join(newcerts, name)).read()
-                except OSError:
+                pem = read(os.path.join(newcerts, name))
+                if pem is None:
                     continue
                 serial = serial_of(pem)
                 if serial in indexed:
@@ -340,7 +337,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
         # в конце файла остаются на месте.
         def detach_notes(block):
             n = len(block)
-            while n and not block[n - 1][0] and '#' in block[n - 1][2]:
+            while n and not block[n - 1][0] and '#' in block[n - 1][1]:
                 n -= 1
             notes = block[n:]
             del block[n:]
@@ -348,18 +345,18 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
 
         blocks = [[]]
         for line in re.findall(r'[^\n]*\n|[^\n]+', open(wg_path, encoding='latin-1', newline='').read()):
-            clean = re.sub(r'[ \t\n\v\f\r]', '', line.replace('\0', '').split('#', 1)[0])
+            clean = re.sub(wg.BLANK, '', line.replace('\0', '').rstrip('\n').split('#', 1)[0])
             if clean.startswith('['):
                 blocks.append(detach_notes(blocks[-1]))
-            blocks[-1].append((clean.encode().lower(), clean.partition('=')[2], line))
+            blocks[-1].append((clean, line))
         blocks.append(detach_notes(blocks[-1]))
         kept = []
         for block in blocks:
-            key = [value for name, value, _ in block if name.startswith(b'publickey=')]
-            names = [name for name, _, _ in block if name]
-            if names and names[0] == b'[peer]' and key and key[-1] in wg_keys:
+            keys = [clean.partition('=')[2] for clean, _ in block if clean.lower().startswith('publickey=')]
+            names = [clean.lower() for clean, _ in block if clean]
+            if names and names[0] == '[peer]' and keys and keys[-1] in wg_keys:
                 continue
-            kept += [line for _, _, line in block]
+            kept += [line for _, line in block]
         rewrite(wg_path, ''.join(kept), 'latin-1')
 
     if (ike_ids or ike_secrets) and os.path.isfile(ike_path):
@@ -433,10 +430,7 @@ def run(bundle, issued_list, *, live_db='/var/lib/anysda-vpn2/db.sqlite',
             for name in ('serial', 'crlnumber'):
                 values = []
                 for folder in (pki, live_pki):
-                    try:
-                        value = open(os.path.join(folder, name)).read().strip()
-                    except OSError:
-                        continue
+                    value = (read(os.path.join(folder, name)) or '').strip()
                     if HEX.fullmatch(value):
                         values.append(int(value, 16))
                 if values and os.path.isfile(os.path.join(pki, name)):

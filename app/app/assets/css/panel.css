@@ -1,6 +1,4 @@
-/* ---------- тема ----------
-   Тёмная по умолчанию; светлая — по data-theme, который ставит color-mode
-   до отрисовки (выбор «как в системе» он сам сводит к light или dark). */
+/* Тема: тёмная по умолчанию, светлая по data-theme от color-mode. */
 :root {
   --bg:#08080a; --c1:#151518; --c2:#101012; --chip:#1b1b1f; --chip2:#222227;
   --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
@@ -83,7 +81,7 @@ div.light::after{content:"";position:absolute;right:-180px;top:-120px;width:620p
 .me{display:flex;align-items:center;gap:10px;padding:4px 14px 4px 4px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line)}
 .me i{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--av-a),var(--av-b));display:grid;place-items:center;font-style:normal;font-size:12px;font-weight:600}
 .me div{font-size:12px;line-height:1.25}
-/* узкий ПК: вкладки посередине не оставляют места имени — имя только в меню и для чтения с экрана, шапка не шире окна при любом логине */
+/* узкий ПК: имя только в меню и для чтения с экрана */
 @media (min-width:721px) and (max-width:900px){.wrap>header .me div{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}}
 svg.i{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 /* заголовок */
@@ -138,21 +136,16 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 }
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{transition-property:opacity,color,background-color,border-color,box-shadow!important}
-  /* страховка: бесконечное (ореол, пульс, крутилка) играет не дольше одного раза */
   *,*::before,*::after{animation-iteration-count:1!important}
   .tab.on{animation:tfade .2s}
 }
 
-/* ---------- телефон: окно до 720px ----------
-   Шапка сверху с заголовком раздела, вкладки — в таб-баре снизу, поповеры —
-   нижней шторкой. Шире 720px этих правил нет и каркас десктопный. */
+/* Телефон до 720px: шапка сверху с заголовком раздела, вкладки - в таб-баре снизу. */
 .mhead,.mper,.mbar{display:none}
 @media (max-width:720px){
-  /* --mtop: контент на 4px ниже фиксированной шапки; --mh — её высота (layouts/default.vue), до монтирования — шапка без подзаголовка.
-     От неё же отступ прокрутки: элемент в фокусе и якорь встают под шапку, а не за неё; снизу так же над таб-баром (--mb) */
+  /* --mh и --mb - высоты шапки и таб-бара (layouts/default.vue): отступ контента и прокрутки */
   html{--mtop:calc(var(--mh,calc(66px + env(safe-area-inset-top))) + 4px);scroll-padding:var(--mtop) 0 var(--mb,calc(88px + env(safe-area-inset-bottom)));-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--mglow:radial-gradient(closest-side,rgba(255,255,255,.09),rgba(255,255,255,.025) 55%,transparent)}
   body{min-height:100dvh}
-  /* свечение под ширину телефона, как в мобильном макете; шапка рисует свою часть пятна, чтобы не закрывать его */
   div.light::before{top:-220px;width:620px;height:420px;background:var(--mglow)}
   div.light::after{display:none}
   .wrap{padding:var(--mtop) 16px calc(128px + env(safe-area-inset-bottom))}
@@ -174,8 +167,6 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   .tab.on{display:flex;flex-direction:column;gap:12px;animation:tfade .25s var(--ease)}
   .mbar{display:block;position:fixed;z-index:30;left:0;right:0;bottom:0;padding:22px 12px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(180deg,transparent,var(--bg) 46%);pointer-events:none;-webkit-user-select:none;user-select:none}
   .mbar .tabs{display:flex;gap:0;padding:4px;pointer-events:auto;background:linear-gradient(180deg,var(--card-a),var(--card-b));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 18px 40px -10px rgba(0,0,0,calc(.6*var(--shk)))}
-  /* ширина вкладки = слово + поровну свободного места: пилюля облегает слово с одинаковыми
-     отступами, промежутки между словами равны; уже слова вкладка не сжимается */
   .mbar .tabs a{flex:1 1 auto;height:44px;display:grid;place-items:center;padding:0 2px;font-size:11.5px;transition:transform .16s var(--ease),background .25s,color .2s}
   .mbar .tabs a:not(.on):hover{color:var(--t2)}
   .mbar .tabs a:active,.mper:active{transform:scale(.96)}
@@ -196,8 +187,7 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 @media (max-width:720px) and (prefers-reduced-motion:reduce){
   .tab.on{animation:tfade .25s}
 }
-/* Вход на телефоне: карточка по центру экрана во всю ширину, поля и кнопки
-   под палец (46px). Шире 720px остаются правила .lgn выше. */
+/* Вход на телефоне: карточка по центру во всю ширину, поля и кнопки 46px. */
 @media (max-width:720px){
   .wrap.lgw{display:flex;flex-direction:column;min-height:100dvh;padding:calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom))}
   .wrap.lgw>.login{flex:1;display:flex;flex-direction:column;justify-content:center;align-items:stretch;min-height:0}
@@ -210,7 +200,7 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
   .lgw .lgn .lgo{font-size:14px}
   .lgw .lgn .pill{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 }
-/* ---------- общие детали разделов: одно правило на все разделы, где деталь есть ---------- */
+/* общие детали разделов */
 .inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
 .inp:focus-within{border-color:rgba(var(--fg),.3)}
 .inp input{background:none;border:0;outline:0;color:var(--t1);font:500 13px var(--font-sans);width:200px}

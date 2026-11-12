@@ -1,6 +1,5 @@
 import { plural } from '#shared/plural'
 
-
 const MIB = 1024 * 1024
 const GIB = 1024 ** 3
 const MSK = 'Europe/Moscow'

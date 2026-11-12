@@ -914,7 +914,8 @@ cmd_deploy_upgrade() {
   ssh_node "$ENTRY" "$DEPLOY_LOCK_WAIT" \
     || die 'замок деплоя на entry не освободился за 70 с'
   local mgmt left
-  mgmt=$(ssh_node "$ENTRY" "cat $STATE/mgmt-ips.txt 2>/dev/null || cat $OLD_STATE/mgmt-ips.txt") \
+  # Адреса - строки «тег октет»; шапку-комментарий деплой пишет свою.
+  mgmt=$(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt 2>/dev/null || grep -v '^#' $OLD_STATE/mgmt-ips.txt") \
     || die 'обновление: адреса mesh выпуска не прочитаны'
   push_tree --over "$tag"
   docker tag "$image" "$PANEL_REF"
@@ -922,7 +923,7 @@ cmd_deploy_upgrade() {
   entry_run deploy './deploy.sh --development' || rc=$?
   log "обновление с $tag: код $rc за $(( (SECONDS - started) / 60 )) мин $(( (SECONDS - started) % 60 )) с"
   (( rc == 0 )) || return "$rc"
-  [[ $(ssh_node "$ENTRY" "cat $STATE/mgmt-ips.txt") == "$mgmt" ]] \
+  [[ $(ssh_node "$ENTRY" "grep -v '^#' $STATE/mgmt-ips.txt") == "$mgmt" ]] \
     || die 'обновление: адреса mesh после переноса состояния не те, что у выпуска'
   ssh_node "$ENTRY" "test -s $STATE/known_hosts" || die "обновление: нет $STATE/known_hosts"
   left=$(ssh_node "$ENTRY" "ls -d $OLD_STATE ${OLD_STATE%/state}/.known_hosts* 2>/dev/null") || true

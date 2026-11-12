@@ -39,11 +39,12 @@ def ansible_playbook():
     cache.mkdir(parents=True, exist_ok=True)
     with open(cache / 'ansible.lock', 'w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
+        # Venv строится на своём месте: скрипты venv помнят путь интерпретатора в shebang.
+        # Оборванная установка не оставляет ansible-playbook, следующий запуск строит заново.
         if not (venv / 'bin/ansible-playbook').exists():
-            shutil.rmtree(f'{venv}.new', ignore_errors=True)
-            subprocess.run([sys.executable, '-m', 'venv', f'{venv}.new'], check=True)
-            subprocess.run([f'{venv}.new/bin/pip', 'install', '-q', '-c', str(pins), 'ansible-core'], check=True)
-            os.replace(f'{venv}.new', venv)
+            shutil.rmtree(venv, ignore_errors=True)
+            subprocess.run([sys.executable, '-m', 'venv', str(venv)], check=True)
+            subprocess.run([f'{venv}/bin/pip', 'install', '-q', '-c', str(pins), 'ansible-core'], check=True)
     return str(venv / 'bin/ansible-playbook')
 
 

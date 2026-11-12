@@ -2,7 +2,7 @@
 const props = defineProps<{ nodes: NodeMetric[], pings: Record<string, number | null>, refresh: () => Promise<unknown> }>()
 const { toast, busy, act } = useAct()
 const ask = useAsk()
-const ERRORS: Record<string, string> = { last_enabled_exit: 'Нельзя выключить последний включённый экзит', unknown_exit: 'Неизвестный экзит' }
+const LAST_EXIT = 'Нельзя выключить последний включённый экзит'
 
 // CPU за последние 13 опросов: начало из VictoriaMetrics, дальше каждый опрос дописывает точку.
 const series = ref<Record<string, number[]>>({})
@@ -30,19 +30,13 @@ const mbps = (v: number | null | undefined) => v == null ? '—' : ru(v, v < 10 
 const LEVEL = { w: 'text-(--amber)', c: 'text-(--red-t)', '': '' }
 
 const apply = (x: NodeMetric, disabled: boolean) => act('exit', async () => {
-  try {
-    await $fetch(`/api/ops/exits/${encodeURIComponent(x.tag)}`, { method: 'PATCH', body: { disabled } })
-  }
-  catch (e) {
-    const code = (e as { data?: { statusMessage?: string } }).data?.statusMessage ?? (e as { statusMessage?: string }).statusMessage ?? ''
-    throw new Error(ERRORS[code] ?? (code || 'Ошибка'), { cause: e })
-  }
+  await $fetch(`/api/ops/exits/${encodeURIComponent(x.tag)}`, { method: 'PATCH', body: { disabled } })
   await props.refresh()
 }, { title: `${exitName(x.tag)} ${disabled ? 'выключен' : 'включён'}`, color: 'success' })
 
 function toggle(x: NodeMetric) {
   if (x.disabled) return void apply(x, false)
-  if (props.nodes.every(y => y.tag === x.tag || y.tag === 'ru' || y.disabled)) return toast.add({ title: ERRORS.last_enabled_exit!, color: 'error' })
+  if (props.nodes.every(y => y.tag === x.tag || y.tag === 'ru' || y.disabled)) return toast.add({ title: LAST_EXIT, color: 'error' })
   if (!x.active && !x.activeDevices) return void apply(x, true)
   openTag.value = null
   ask.value = {

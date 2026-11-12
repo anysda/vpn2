@@ -12,6 +12,7 @@ const lastSeen = new Map<string, { rx: number, tx: number }>()
 const RECENT_WINDOW_MS = 5 * 60_000
 const recent = new Map<number, Array<{ at: number, bytes: number }>>()
 
+/** @internal */
 export function recentBytesByDevice(nowMs = Date.now()): Map<number, number> {
   const out = new Map<number, number>()
   for (const [id, list] of recent) {

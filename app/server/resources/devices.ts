@@ -37,7 +37,7 @@ async function botDevice<T>(event: H3Event, preflight: Preflight<T>) {
 }
 
 /** WireGuard включён и публичный адрес задан. */
-export function requireWgEndpoint(): string {
+function requireWgEndpoint(): string {
   const cfg = useRuntimeConfig()
   if (!cfg.wgEnabled) throw unavailable('wg_disabled', 'WireGuard выключен')
   if (!cfg.wgPublicHost) throw createError({ statusCode: 500, statusMessage: 'wg_public_host_not_configured' })

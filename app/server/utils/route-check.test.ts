@@ -7,6 +7,7 @@ import { buildRoutePlan } from '../../scripts/route-plan.mjs'
 describe('route-check', () => {
   type Row = { id: number, type: string, value: string, outbound: string }
 
+  const PLAN_TIMEOUT = 120_000
   const buildPlan = (rows: Row[], sets: Record<string, object[]>, env: Record<string, string> = {}, prefs: Record<string, string[]> = {}): RoutePlan =>
     buildRoutePlan(rows, sets, env, prefs)
 
@@ -44,9 +45,10 @@ describe('route-check', () => {
 
   describe('проверка адреса по снимку маршрутов роутера', () => {
     let plan: RoutePlan
+    // План строит генератор роутера через ansible: на чистом раннере сначала ставится его venv.
     beforeAll(() => {
       plan = buildPlan(ROWS, SETS, { YT_ROUTE: 'zapret' }, PREFS)
-    })
+    }, PLAN_TIMEOUT)
 
     function check(input: string, ip: string | null = null) {
       const q = rc.parseQuery(input)!
@@ -105,7 +107,7 @@ describe('route-check', () => {
       const q = rc.parseQuery('1.1.1.1')!
       expect(rc.explain(p, rc.clientConn(q, null), [{ id: 7, type: 'ip_cidr', value: '1.1.1.1/32', outbound: 'direct-ru' }], PROXIES))
         .toMatchObject({ reason: 'manual', rule: '1.1.1.1/32', routeId: 7, outbound: 'direct-ru' })
-    })
+    }, PLAN_TIMEOUT)
 
     it('без ответа clash закреплённый выход назван своим именем', () => {
       const q = rc.parseQuery('api.openai.com')!

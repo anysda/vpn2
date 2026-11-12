@@ -25,6 +25,7 @@ export type ClientCreateInput = z.infer<typeof ClientCreate>
 export type ClientPatch = z.infer<typeof ClientPatch>
 type ClientUpdate = Partial<typeof clients.$inferInsert>
 
+/** @internal */
 export const deviceLimitBelowCountText = (have: number) => `У клиента уже ${have} ${plural(have, 'device')} — лимит не может быть меньше`
 const time = (date: Date | null | undefined) => date?.getTime() ?? null
 const deviceCount = async (clientId: number) =>

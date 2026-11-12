@@ -5,6 +5,7 @@ const GIB = 1024 ** 3
 export const WD_MON = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
 const MONTHS_GEN = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
 
+/** @internal */
 export const pad2 = (x: number) => String(x).padStart(2, '0')
 
 export const ru = (v: number, digits = 0) =>

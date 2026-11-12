@@ -42,7 +42,7 @@ async function vmResult<V>(path: string, query: Record<string, unknown>, timeout
 }
 
 /** Значение по instance; недоступная VM - пустая карта, при strict - исключение. */
-export async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
+async function instantQuery(promql: string, time?: number, strict = false): Promise<Map<string, number>> {
   const result = new Map<string, number>()
   try {
     const rows = await vmResult<{ value: [number, string] }>('query', { query: promql, ...(time === undefined ? {} : { time }) }, 3000, strict)

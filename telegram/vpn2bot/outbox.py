@@ -9,7 +9,7 @@ import random
 import sqlite3
 import time
 
-from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
+from telegram.error import BadRequest, Forbidden, InvalidToken, RetryAfter, TelegramError
 
 log = logging.getLogger('tgbot.outbox')
 
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, chat_id INTEGER NOT N
     payload TEXT NOT NULL, expires REAL NOT NULL, due REAL NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS receipts (delivery_id TEXT PRIMARY KEY, digest TEXT NOT NULL,
     event_id INTEGER NOT NULL, expires REAL NOT NULL);'''
+
+
+# Telegram refused the message for good: dropped and reported to the panel with this status.
+REJECTED = {BadRequest: 400, Forbidden: 403, InvalidToken: 404}
 
 
 class QueueFull(Exception):
@@ -113,15 +117,16 @@ class Outbox:
                 await send(**payload)
             log.info('outbox delivered id=%d', row['id'])
         except Exception as error:
-            rejected = 403 if isinstance(error, Forbidden) else 400 if isinstance(error, BadRequest) else None
+            rejected = next((status for kind, status in REJECTED.items() if isinstance(error, kind)), None)
             if rejected is None:
                 delay = min(300, 5 * 2 ** min(row['attempts'], 6) * random.uniform(1, 1.2))
                 if isinstance(error, RetryAfter):
                     wait = error.retry_after
                     delay = max(delay, wait.total_seconds() if isinstance(wait, timedelta) else wait)
                     self.throttled_until = max(self.throttled_until, time.time() + delay)
-                elif isinstance(error, NetworkError) or not isinstance(error, TelegramError):
-                    # The Bot API has no idempotency key: a send of unknown outcome waits at least a minute.
+                elif not isinstance(error, TelegramError) or error.__cause__ is not None:
+                    # No answer from Telegram (timeout, lost connection, broken body): the outcome is unknown,
+                    # and the Bot API has no idempotency key, so such a send waits at least a minute.
                     delay = max(delay, 60)
                 with self.db:
                     self.db.execute('UPDATE events SET due = ? WHERE id = ?', (time.time() + delay, row['id']))

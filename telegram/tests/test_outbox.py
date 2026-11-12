@@ -7,9 +7,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from telegram import Bot
 from telegram.error import Forbidden, RetryAfter, TelegramError
 
-from harness import import_bot
+from harness import FakeTelegram, import_bot
 
 
 class OutboxTests(unittest.IsolatedAsyncioTestCase):
@@ -134,6 +135,24 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             self.queue.remove(event_id)
         self.queue.enqueue([{'chat_id': 200, 'text': 'blocked recipient'}])
         await self.worker_until(AsyncMock(side_effect=Forbidden('bot was blocked by the user')), lambda: not self.rows())
+
+    async def test_bot_api_answers_keep_their_retry_and_drop_rules(self):
+        """Through the real Bot API transport: 5xx backs off without the one-minute floor,
+        no answer at all waits a minute, an invalid token (401) drops the message and reports 404."""
+        answers = {'sendMessage': [(500, {'ok': False, 'error_code': 500, 'description': 'Internal Server Error'}),
+                                   ConnectionError('no route'),
+                                   (401, {'ok': False, 'error_code': 401, 'description': 'Unauthorized'})]}
+        self.bot.api.bot = Bot(self.bot.config.TOKEN, request=FakeTelegram([], answers))
+        for minimum, maximum in ((5, 60), (60, 400)):
+            event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
+            now = time.time()
+            await self.worker_until(self.bot.api.send, lambda: self.rows()[0][1] == 1 and self.rows()[0][2] > now + 1)
+            self.assertTrue(now + minimum <= self.rows()[0][2] < now + maximum, self.rows())
+            self.queue.remove(event_id)
+        reported = AsyncMock()
+        self.queue.enqueue([{'chat_id': 200, 'text': 'bad token'}])
+        await self.worker_until(self.bot.api.send, lambda: not self.rows(), reported)
+        reported.assert_awaited_once_with({'chat_id': 200, 'text': 'bad token'}, 404)
 
     async def test_permanent_rejection_is_reported_once_and_report_failure_is_harmless(self):
         reported = AsyncMock(side_effect=[RuntimeError('panel down'), None])

@@ -111,7 +111,9 @@ export async function fetchNodeMetrics(instances: string[], allowHoldover = true
 }
 
 // Суточный трафик - только физические интерфейсы: на entry трафик клиента виден ещё на wg0/tun0/xfrm0.
-export const DAILY_DEVICE_FILTER = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
+const PHYSICAL = 'device!~"lo|wg.*|tun.*|xfrm.*|docker.*|veth.*|br-.*"'
+const increase = (direction: 'receive' | 'transmit', sec: number) =>
+  `sum by(instance) (increase_prometheus(node_network_${direction}_bytes_total{${PHYSICAL}}[${sec}s]))`
 const DAILY_CACHE_MS = 30_000
 
 let dailyCache: { at: number, day: number, rx: Map<string, number>, tx: Map<string, number> } | null = null
@@ -126,13 +128,9 @@ export async function fetchDailyTraffic(instances: string[]): Promise<Map<string
   if (!dailyCache || now - dailyCache.at > DAILY_CACHE_MS) {
     const seconds = (Math.floor(now / 1000) + MSK_OFFSET_SEC) % 86400
     if (seconds === 0) return new Map(instances.map(inst => [inst, { rxBytes: 0, txBytes: 0 }]))
-    const range = `${seconds}s`
     // increase_prometheus не берёт сэмпл из вчерашнего дня; время фиксируем вместе с окном.
     const time = Math.floor(now / 1000)
-    const [rx, tx] = await Promise.all([
-      instantQuery(`sum by(instance) (increase_prometheus(node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
-      instantQuery(`sum by(instance) (increase_prometheus(node_network_transmit_bytes_total{${DAILY_DEVICE_FILTER}}[${range}]))`, time),
-    ])
+    const [rx, tx] = await Promise.all([instantQuery(increase('receive', seconds), time), instantQuery(increase('transmit', seconds), time)])
     dailyCache = { at: now, day, rx, tx }
   }
   return new Map(instances.map(inst => [inst, {
@@ -156,9 +154,6 @@ export function nodeInstances(): Array<{ tag: string, instance: string, label: s
   ]
 }
 
-const RX = `node_network_receive_bytes_total{${DAILY_DEVICE_FILTER}}`
-const increase = (sec: number) => `sum by(instance) (increase_prometheus(${RX}[${sec}s]))`
-
 const round = (v: number | null | undefined) => v == null ? null : Math.round(v)
 
 const SHAPE = { day: { step: 3600, n: 24 }, week: { step: 86400, n: 7 } } as const
@@ -177,9 +172,9 @@ export async function exitTraffic(period: 'day' | 'week', nowMs = Date.now()) {
   const exits = nodeInstances().filter(x => x.tag !== 'ru')
 
   const [full, partial, before] = await Promise.all([
-    rangeQuery(increase(step), first + step, cur, step),
-    elapsed > 0 ? instantQuery(increase(elapsed), now) : Promise.resolve(new Map<string, number>()),
-    instantQuery(increase(window), now - n * step),
+    rangeQuery(increase('receive', step), first + step, cur, step),
+    elapsed > 0 ? instantQuery(increase('receive', elapsed), now) : Promise.resolve(new Map<string, number>()),
+    instantQuery(increase('receive', window), now - n * step),
   ])
 
   const rows = exits.map(({ tag, instance }) => {
@@ -204,33 +199,23 @@ export async function exitTraffic(period: 'day' | 'week', nowMs = Date.now()) {
 
 export interface ClashProxy { name: string, type: string, now?: string, delay?: number, history?: Array<{ time: string, delay: number }> }
 
-/** clash API sing-box отдаёт JSON с `Content-Type: text/plain`: разбор явный. */
-function clash<T>(path: string): Promise<T> {
-  const secret = useRuntimeConfig().clashSecret as string
-  return $fetch<T>(`${useRuntimeConfig().clashApiUrl}/${path}`, {
-    parseResponse: JSON.parse, timeout: 3000, headers: secret ? { Authorization: `Bearer ${secret}` } : {},
-  }) as Promise<T>
-}
-
-export async function fetchProxies(): Promise<ClashProxy[]> {
+/** clash API sing-box отдаёт JSON с `Content-Type: text/plain`: разбор явный. Недоступен - `unavailable`. */
+async function clash<T>(path: string, unavailable: T): Promise<T> {
+  const { clashSecret, clashApiUrl } = useRuntimeConfig()
   try {
-    return Object.values((await clash<{ proxies?: Record<string, ClashProxy> }>('proxies')).proxies ?? {})
+    return await $fetch<T>(`${clashApiUrl}/${path}`, {
+      parseResponse: JSON.parse, timeout: 3000, headers: clashSecret ? { Authorization: `Bearer ${clashSecret}` } : {},
+    }) as T
   }
   catch (err) {
-    useLogger().warn({ err }, 'clash /proxies failed')
-    return []
+    useLogger().warn({ err }, `clash /${path} failed`)
+    return unavailable
   }
 }
 
-export async function fetchConnections() {
-  try {
-    return await clash<{ connections: Array<{ chains: string[], metadata?: { sourceIP?: string } }> }>('connections')
-  }
-  catch (err) {
-    useLogger().warn({ err }, 'clash /connections failed')
-    return null
-  }
-}
+export const fetchProxies = async () => Object.values((await clash<{ proxies?: Record<string, ClashProxy> }>('proxies', {})).proxies ?? {})
+export const fetchConnections = () =>
+  clash<{ connections: Array<{ chains: string[], metadata?: { sourceIP?: string } }> } | null>('connections', null)
 
 /** Выходы для панели, бота и маршрутов: direct-ru, затем direct и warp экзитов; служебные не показываются. */
 export function userVisibleOutbounds(proxies: ClashProxy[]): ClashProxy[] {

@@ -3,6 +3,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
+from telegram.error import BadRequest
+
 from . import api, config, events, texts
 from .api import BotApiError
 from .config import log
@@ -34,9 +36,12 @@ class Ask:
         """Redraw the message of the pressed button; without a button send a new one."""
         await api.send(self.chat_id, text, 'Markdown', markup, self.message_id)
 
-    async def answer(self, text: str = '', alert: bool = False) -> dict:
-        payload = api.given(callback_query_id=self.callback_id, text=text or None, show_alert=alert or None)
-        return (await api.telegram_http.post('/answerCallbackQuery', json=payload, timeout=20)).json()
+    async def answer(self, text: str = '', alert: bool = False) -> bool:
+        """False when Telegram refused the answer, e.g. the button is too old."""
+        try:
+            return await api.bot.answer_callback_query(self.callback_id, text or None, show_alert=alert or None)
+        except BadRequest:
+            return False
 
     async def json(self, method: str, path: str, body: dict | None = None):
         return (await api.panel(method, path, body)).json()
@@ -323,8 +328,8 @@ async def allowed(update) -> bool:
     if update.message and update.message.sender_chat:
         return False
     try:
-        member = await api.telegram('getChatMember', {'chat_id': chat.id, 'user_id': user.id})
-        return member.get('result', {}).get('status') in ('creator', 'administrator')
+        member = await api.bot.get_chat_member(chat.id, user.id)
+        return member.status in ('creator', 'administrator')
     except Exception:
         log.warning('Не удалось проверить администратора Telegram-чата')
         return False
@@ -376,5 +381,5 @@ async def report_failure(ask: Ask, error: Exception) -> None:
         await ask.say(f'❌ {message}')
     else:
         answered = await ask.answer(message, alert=True)
-        if ask.role == CLIENT and not answered.get('ok'):
+        if ask.role == CLIENT and not answered:
             await ask.say(f'❌ {message}')

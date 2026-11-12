@@ -7,6 +7,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+from telegram.error import Forbidden, RetryAfter, TelegramError
+
 from harness import import_bot
 
 
@@ -15,9 +17,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         # One fresh package per test: the queue, its exceptions and 'vpn2bot.outbox.X' patches share a module.
         self.bot = import_bot()
         self.addAsyncCleanup(self.bot.api.panel_http.aclose)
-        self.addAsyncCleanup(self.bot.api.telegram_http.aclose)
         self.Outbox, self.QueueFull = self.bot.outbox.Outbox, self.bot.outbox.QueueFull
-        self.TelegramSendError = self.bot.outbox.TelegramSendError
         directory = tempfile.TemporaryDirectory(prefix='tgbot-outbox-')
         self.addCleanup(directory.cleanup)
         self.queue = self.open(directory.name + '/outbox.sqlite')
@@ -123,7 +123,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
         remove(self.rows()[0][0])
 
     async def test_backoff_ambiguous_send_and_permanent_error(self):
-        for error, minimum in ((self.TelegramSendError(503), 5), (TimeoutError(), 60)):
+        for error, minimum in ((TelegramError('Internal Server Error'), 5), (TimeoutError(), 60)):
             event_id = self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
             now = time.time()
             send = AsyncMock(side_effect=error)
@@ -133,18 +133,18 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
             send.assert_awaited_once()
             self.queue.remove(event_id)
         self.queue.enqueue([{'chat_id': 200, 'text': 'blocked recipient'}])
-        await self.worker_until(AsyncMock(side_effect=self.TelegramSendError(403)), lambda: not self.rows())
+        await self.worker_until(AsyncMock(side_effect=Forbidden('bot was blocked by the user')), lambda: not self.rows())
 
     async def test_permanent_rejection_is_reported_once_and_report_failure_is_harmless(self):
         reported = AsyncMock(side_effect=[RuntimeError('panel down'), None])
         for text in ('first', 'second'):
             self.queue.enqueue([{'chat_id': 200, 'text': text}])
-            await self.worker_until(AsyncMock(side_effect=self.TelegramSendError(403)),
+            await self.worker_until(AsyncMock(side_effect=Forbidden('bot was blocked by the user')),
                                     lambda: not self.rows(), reported)
         self.assertEqual(reported.await_args_list[0].args, ({'chat_id': 200, 'text': 'first'}, 403))
         self.assertEqual(reported.await_count, 2)
         self.queue.enqueue([{'chat_id': 200, 'text': 'retry'}])
-        await self.worker_until(AsyncMock(side_effect=self.TelegramSendError(503)),
+        await self.worker_until(AsyncMock(side_effect=TelegramError('Internal Server Error')),
                                 lambda: self.rows()[0][1] == 1, reported)
         self.assertEqual(reported.await_count, 2)
 
@@ -163,7 +163,7 @@ class OutboxTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_retry_after_pauses_all_recipients(self):
         self.queue.enqueue([{'chat_id': 200, 'text': 'rate limited'}])
-        send = AsyncMock(side_effect=self.TelegramSendError(429, 600))
+        send = AsyncMock(side_effect=RetryAfter(600))
         await self.worker_until(send, lambda: self.rows()[0][2] > time.time() + 500)
         self.queue.enqueue([{'chat_id': 300, 'text': 'new recipient'}])
         self.assertIsNone(self.queue.claim())

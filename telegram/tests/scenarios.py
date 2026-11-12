@@ -70,7 +70,7 @@ CODE_409 = (409, {'statusMessage': 'device_limit_below_count'})
 HANDLER_TEXT = (409, {'statusMessage': 'Conflict', 'message': 'Клиент удаляется'})
 UNKNOWN_CODE = (400, {'statusMessage': 'brand_new_code'})
 CRASH = RuntimeError('boom 123456:TEST_ONLY_TOKEN')
-REJECTED = (200, {'ok': False, 'error_code': 400, 'description': 'query is too old'})
+REJECTED = (400, {'ok': False, 'error_code': 400, 'description': 'Bad Request: query is too old'})
 CANT_PARSE = (400, {'ok': False, 'error_code': 400, 'description': "Bad Request: can't parse entities"})
 EVERY_CLIENT_BUTTON = [('client', ('press', data)) for data in (
     'devs', 'dev:1', 'dev:9', 'wg:1', 'wg:9', 'ovpn:2', 'ovpn:9', 'reic:1', 'reicyes:1',
@@ -145,7 +145,12 @@ def press_all(who, *buttons):
 
 
 GROUP = {'TELEGRAM_CHAT_ID': '-100500'}
-MEMBER = {name: (200, {'ok': True, 'result': {'status': name}})
+# getChatMember results with the fields Telegram always sends for each status.
+RIGHTS = ('can_be_edited', 'can_manage_chat', 'can_delete_messages', 'can_manage_video_chats', 'can_restrict_members',
+          'can_promote_members', 'can_change_info', 'can_invite_users', 'can_post_stories', 'can_edit_stories',
+          'can_delete_stories')
+MEMBER = {name: (200, {'ok': True, 'result': {'status': name, 'user': {'id': 7, 'is_bot': False, 'first_name': 'x'},
+                                              'is_anonymous': False, **dict.fromkeys(RIGHTS, False)}})
           for name in ('creator', 'administrator', 'member')}
 ADMIN = {
     'commands': {'steps': [('admin', '/start'), ('admin', '/help'), ('admin', '/status'),

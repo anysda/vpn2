@@ -9,8 +9,8 @@ The panel draws the PNG, the bot only forwards it. fixtures/qr-worst-wg.png is
 the panel's answer for qr-worst-wg.conf, recorded once; app/e2e/qr-size.sh
 passes a fresh pair from a live panel in QR_WORST_CONF and QR_WORST_PNG.
 """
+import asyncio
 import base64
-import json
 import os
 from pathlib import Path
 import shutil
@@ -24,7 +24,9 @@ import zlib
 
 import httpx
 
-from harness import import_bot, update
+from telegram import Bot
+
+from harness import FakeTelegram, import_bot, update
 
 HERE = Path(__file__).resolve().parent
 LIVE = bool(os.environ.get('QR_WORST_PNG'))
@@ -107,25 +109,27 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.bot = import_bot()
         self.addAsyncCleanup(self.bot.api.panel_http.aclose)
-        self.addAsyncCleanup(self.bot.api.telegram_http.aclose)
         self.conf = WORST.read_text()
         self.png = WORST_PNG.read_bytes()
         self.panel_calls = []
         self.sent = []
 
-    def telegram(self, request):
-        self.sent.append((request.url.path.rsplit('/', 1)[-1], request.content))
-        return httpx.Response(200, json={'ok': True, 'result': {}})
+    def methods(self):
+        return [entry[2].lstrip('/') for entry in self.sent]
+
+    def upload(self, index):
+        """Form fields, file name and content (as the harness records it) of the index-th Bot API call."""
+        _, _, _, fields, (_, filename, content) = self.sent[index]
+        return fields, filename, content
 
     def clients(self, panel):
         def handler(request):
             self.panel_calls.append(f'{request.method} {request.url.raw_path.decode()}')
             return panel(request)
         local = httpx.AsyncClient(base_url='http://panel.test', transport=httpx.MockTransport(handler))
-        tg = httpx.AsyncClient(base_url='http://tg.test/bot', transport=httpx.MockTransport(self.telegram))
         self.addAsyncCleanup(local.aclose)
-        self.addAsyncCleanup(tg.aclose)
-        return patch.object(self.bot.api, 'panel_http', local), patch.object(self.bot.api, 'telegram_http', tg)
+        tg = Bot(self.bot.config.TOKEN, request=FakeTelegram(self.sent, {}))
+        return patch.object(self.bot.api, 'panel_http', local), patch.object(self.bot.api, 'bot', tg)
 
     def panel(self, png_status=200):
         def answer(request):
@@ -150,41 +154,37 @@ class QrFromPanelTests(unittest.IsolatedAsyncioTestCase):
             'GET /api/bot/devices/7/wg-config?chatId=200',
             'GET /api/bot/devices/7/wg-qrcode.png?chatId=200',
         ])
-        self.assertEqual([method for method, _ in self.sent],
-                         ['answerCallbackQuery', 'sendPhoto', 'sendDocument'])
-        photo, document = self.sent[1][1], self.sent[2][1]
-        self.assertIn(self.png, photo)
-        self.assertIn('*Телефон* — WireGuard'.encode(), photo)
-        self.assertIn(self.conf.encode(), document)
-        self.assertIn(b'filename="ivan-phone.conf"', document)
+        self.assertEqual(self.methods(), ['answerCallbackQuery', 'sendPhoto', 'sendDocument'])
+        (photo_fields, _, photo), (_, filename, document) = self.upload(1), self.upload(2)
+        self.assertEqual(photo, self.png.decode('utf-8', 'backslashreplace'))
+        self.assertEqual(photo_fields['caption'], '*Телефон* — WireGuard')
+        self.assertEqual((filename, document), ('ivan-phone.conf', self.conf))
 
     async def test_panel_failure_on_png_sends_nothing_but_the_usual_error(self):
         local, tg = self.clients(self.panel(png_status=502))
         with local, tg:
             await self.bot.handlers.dispatch(update('client', ('press', 'wg:7')), None)
-        self.assertEqual([method for method, _ in self.sent], ['answerCallbackQuery', 'answerCallbackQuery'])
-        self.assertEqual(json.loads(self.sent[1][1]), {
+        self.assertEqual(self.methods(), ['answerCallbackQuery', 'answerCallbackQuery'])
+        self.assertEqual(self.sent[1][3], {
             'callback_query_id': 'callback', 'show_alert': True,
             'text': 'Панель временно недоступна. Попробуйте позже.'})
 
     async def send_event(self, extra):
-        tasks = []
         request = SimpleNamespace(headers={'X-Tgbot-Secret': self.bot.config.SECRET}, json=AsyncMock(
             return_value={'type': 'client_send_wireguard', 'name': 'ivan-phone', 'conf': self.conf, **extra}))
         local, tg = self.clients(self.panel())
-        with local, tg, patch.object(self.bot.events.asyncio, 'create_task', side_effect=tasks.append):
+        with local, tg:
             self.assertEqual((await self.bot.events.handle_event(request)).status, 200)
-            for task in tasks:
-                await task
+            await asyncio.gather(*self.bot.events.sending)
         self.assertEqual(self.panel_calls, [])
-        return [method for method, _ in self.sent]
+        return self.methods()
 
     async def test_admin_chat_gets_the_png_from_the_panels_event(self):
         methods = await self.send_event({'qr': base64.b64encode(self.png).decode()})
         self.assertEqual(methods, ['sendPhoto', 'sendDocument'])
-        self.assertIn(self.png, self.sent[0][1])
-        self.assertIn('*ivan-phone* — WireGuard'.encode(), self.sent[0][1])
-        self.assertIn(self.conf.encode(), self.sent[1][1])
+        self.assertEqual(self.upload(0)[2], self.png.decode('utf-8', 'backslashreplace'))
+        self.assertEqual(self.upload(0)[0]['caption'], '*ivan-phone* — WireGuard')
+        self.assertEqual(self.upload(1)[2], self.conf)
 
     async def test_event_without_png_still_delivers_the_config(self):
         for extra in ({}, {'qr': 'не base64'}, {'qr': base64.b64encode(b'not a png').decode()}, {'qr': 7}):

@@ -11,7 +11,6 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_poll_cannot_keep_health_green(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         request = bot.api.WatchedRequest(proxy=bot.config.TG_PROXY)
         self.addAsyncCleanup(request.shutdown)
         responses = [(502, b'upstream down'), (409, b'{"ok":false}'),
@@ -32,7 +31,6 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
     async def test_successful_empty_poll_refreshes_health(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         request = bot.api.WatchedRequest(proxy=bot.config.TG_PROXY)
         self.addAsyncCleanup(request.shutdown)
         with patch.object(bot.api.HTTPXRequest, 'do_request', AsyncMock(
@@ -46,7 +44,6 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_reports_bot_username(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         bot.api.LAST_POLL_OK = time.monotonic()
         bot.config.BOT_USERNAME = 'example_vpn_bot'
         health = await bot.events.handle_health(None)
@@ -58,7 +55,6 @@ class PollHealthTests(unittest.IsolatedAsyncioTestCase):
     async def test_stalled_watchdog_exits(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         bot.api.LAST_POLL_OK = time.monotonic() - bot.config.POLL_STALL_SEC - 10
         with patch.object(bot.api.asyncio, 'sleep', AsyncMock()), \
                 patch.object(bot.api.os, '_exit', side_effect=asyncio.CancelledError) as exit_process:

@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 
-import httpx
 from aiohttp import web
+from telegram.error import NetworkError
 
 from harness import import_bot
 
@@ -33,7 +33,6 @@ class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
                         'HTTP_PROXY': proxy_url, 'HTTPS_PROXY': proxy_url,
                         'ALL_PROXY': proxy_url, 'NO_PROXY': ''})
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         await bot.api.status()
         await bot.api.panel('POST', '/api/bot/link', {'chatId': 200, 'password': 'TEST_ONLY_PASSWORD'})
         self.assertEqual(len(proxy_requests), 0, 'panel requests leaked to environment proxy')
@@ -58,8 +57,7 @@ class ProxyRoutingTests(unittest.IsolatedAsyncioTestCase):
         proxy_url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
         bot = import_bot({'TG_PROXY': proxy_url, 'HTTPS_PROXY': 'http://127.0.0.1:9'})
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
-        with self.assertRaises(httpx.ProxyError):
+        with self.assertRaisesRegex(NetworkError, 'ProxyError'):
             await bot.api.send(100, 'test')
         request = bot.api.WatchedRequest(proxy=bot.config.TG_PROXY)
         self.addAsyncCleanup(request.shutdown)

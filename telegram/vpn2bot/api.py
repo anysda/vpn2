@@ -6,54 +6,45 @@ import re
 import time
 
 import httpx
+from telegram import Bot, InputFile
+from telegram.error import BadRequest
 from telegram.request import HTTPXRequest
 
 from . import config
 from .config import log
-from .outbox import TelegramSendError
 from .texts import ERROR_FALLBACK, ERROR_TEXT
 
 panel_http = httpx.AsyncClient(base_url=config.ANYSDA_URL, timeout=10.0, trust_env=False,
                                headers={'Authorization': f'Bearer {config.SECRET}'})
-# Sends bypass the python-telegram-bot pool; getUpdates goes through WatchedRequest.
-telegram_http = httpx.AsyncClient(
-    base_url=f'https://api.telegram.org/bot{config.TOKEN}', proxy=config.TG_PROXY,
-    timeout=httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0),
-    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
 
 
-def given(**fields) -> dict:
-    return {key: value for key, value in fields.items() if value is not None}
-
-
-async def telegram(method: str, payload: dict, files: dict | None = None) -> dict:
-    """Bot API call raising on ok:false; Markdown that Telegram cannot parse goes again as plain text."""
-    if files is None:
-        r = await telegram_http.post(f'/{method}', json=payload, timeout=20)
-    else:
-        r = await telegram_http.post(f'/{method}', data=payload, files=files, timeout=30)
-    body = r.json()
-    description = str(body.get('description', ''))
-    if body.get('ok') or (method == 'editMessageText' and 'message is not modified' in description):
-        return body
-    if 'parse_mode' in payload and "can't parse" in description:
-        plain = {key: value for key, value in payload.items() if key != 'parse_mode'}
-        return await telegram(method, plain, files)
-    retry_after = body.get('parameters', {}).get('retry_after', 0)
-    raise TelegramSendError(body.get('error_code', r.status_code), float(retry_after))
+async def plain_if_unparsable(call, **kwargs):
+    """Markdown that Telegram cannot parse goes again as plain text."""
+    try:
+        return await call(**kwargs)
+    except BadRequest as e:
+        if not kwargs.get('parse_mode') or "can't parse" not in e.message.lower():
+            raise
+        return await call(**{**kwargs, 'parse_mode': None})
 
 
 async def send(chat_id: int, text: str, parse_mode: str | None = None,
-               reply_markup: dict | None = None, message_id: int | None = None) -> dict:
-    payload = given(chat_id=chat_id, text=text, message_id=message_id or None,
-                     parse_mode=parse_mode or None, reply_markup=reply_markup)
-    return await telegram('editMessageText' if message_id else 'sendMessage', payload)
+               reply_markup: dict | None = None, message_id: int | None = None) -> None:
+    message = {'chat_id': chat_id, 'text': text, 'parse_mode': parse_mode, 'reply_markup': reply_markup}
+    if not message_id:
+        await plain_if_unparsable(bot.send_message, **message)
+        return
+    try:
+        await plain_if_unparsable(bot.edit_message_text, message_id=message_id, **message)
+    except BadRequest as e:
+        if 'message is not modified' not in e.message.lower():
+            raise
 
 
-async def send_file(chat_id: int, kind: str, filename: str, content: bytes, caption: str) -> dict:
-    mime = 'image/png' if kind == 'photo' else 'application/octet-stream'
-    data = {'chat_id': str(chat_id), 'caption': caption, 'parse_mode': 'Markdown'}
-    return await telegram(f'send{kind.capitalize()}', data, {kind: (filename, content, mime)})
+async def send_file(chat_id: int, kind: str, filename: str, content: bytes, caption: str) -> None:
+    method = bot.send_photo if kind == 'photo' else bot.send_document
+    await plain_if_unparsable(method, chat_id=chat_id, caption=caption, parse_mode='Markdown',
+                              **{kind: InputFile(content, filename=filename)})
 
 
 class BotApiError(Exception):
@@ -120,6 +111,13 @@ class WatchedRequest(HTTPXRequest):
         if isinstance(body, dict) and body.get('ok') is True and isinstance(body.get('result'), list):
             LAST_POLL_OK = time.monotonic()
         return result
+
+
+# Without a token the bot only answers /health and waits for the panel (see __main__).
+bot = Bot(config.TOKEN, request=HTTPXRequest(connection_pool_size=20, connect_timeout=10.0, read_timeout=20.0,
+                                            pool_timeout=10.0, proxy=config.TG_PROXY),
+          get_updates_request=WatchedRequest(connection_pool_size=4, read_timeout=40, proxy=config.TG_PROXY),
+          ) if config.TOKEN else None
 
 
 async def poll_watchdog() -> None:

@@ -1,5 +1,6 @@
 """Panel notifications that survive a restart and a Telegram outage; one bot process owns the file."""
 import asyncio
+from datetime import timedelta
 import hashlib
 import json
 import logging
@@ -7,6 +8,8 @@ from pathlib import Path
 import random
 import sqlite3
 import time
+
+from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter, TelegramError
 
 log = logging.getLogger('tgbot.outbox')
 
@@ -23,12 +26,6 @@ CREATE TABLE IF NOT EXISTS receipts (delivery_id TEXT PRIMARY KEY, digest TEXT N
 
 class QueueFull(Exception):
     pass
-
-
-class TelegramSendError(RuntimeError):
-    def __init__(self, status: int, retry_after: float = 0):
-        super().__init__(f'Telegram send failed (HTTP {status})')
-        self.status, self.retry_after = status, retry_after
 
 
 class Outbox:
@@ -116,21 +113,24 @@ class Outbox:
                 await send(**payload)
             log.info('outbox delivered id=%d', row['id'])
         except Exception as error:
-            status = error.status if isinstance(error, TelegramSendError) else None
-            if status not in (400, 403, 404):
-                # The Bot API has no idempotency key: a send of unknown outcome waits at least a minute.
-                delay = max(min(300, 5 * 2 ** min(row['attempts'], 6) * random.uniform(1, 1.2)),
-                            60 if status is None else 0, error.retry_after if status == 429 else 0)
-                if status == 429:
+            rejected = 403 if isinstance(error, Forbidden) else 400 if isinstance(error, BadRequest) else None
+            if rejected is None:
+                delay = min(300, 5 * 2 ** min(row['attempts'], 6) * random.uniform(1, 1.2))
+                if isinstance(error, RetryAfter):
+                    wait = error.retry_after
+                    delay = max(delay, wait.total_seconds() if isinstance(wait, timedelta) else wait)
                     self.throttled_until = max(self.throttled_until, time.time() + delay)
+                elif isinstance(error, NetworkError) or not isinstance(error, TelegramError):
+                    # The Bot API has no idempotency key: a send of unknown outcome waits at least a minute.
+                    delay = max(delay, 60)
                 with self.db:
                     self.db.execute('UPDATE events SET due = ? WHERE id = ?', (time.time() + delay, row['id']))
                 log.warning('outbox retry id=%d attempt=%d delay=%.1fs error=%s',
                             row['id'], row['attempts'] + 1, delay, type(error).__name__)
                 return
-            log.warning('outbox rejected id=%d status=%d', row['id'], status)
+            log.warning('outbox rejected id=%d status=%d', row['id'], rejected)
             try:
-                await on_rejected(payload, status)
+                await on_rejected(payload, rejected)
             except Exception as report_error:
                 log.warning('outbox rejection report failed id=%d error=%s',
                             row['id'], type(report_error).__name__)

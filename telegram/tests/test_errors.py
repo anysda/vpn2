@@ -11,7 +11,6 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_callback_exception_does_not_reveal_token(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         with patch.object(bot.api, 'panel', AsyncMock(side_effect=RuntimeError(
                 f'https://api.telegram.org/bot{bot.config.TOKEN}/sendPhoto'))), \
                 patch.object(bot.handlers.Ask, 'answer', AsyncMock(return_value={'ok': True})) as reply:
@@ -21,7 +20,6 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_unexpected_panel_exception_does_not_reveal_password(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         password = 'TEST_ONLY_CLIENT_PASSWORD'
         with patch.object(bot.api, 'panel', AsyncMock(side_effect=RuntimeError(password))), \
                 patch.object(bot.api, 'send', AsyncMock()) as reply, \
@@ -34,7 +32,6 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_panel_server_error_body_is_not_forwarded(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         for response in (httpx.Response(500, json={'message': 'TEST_ONLY_PASSWORD'}),
                          httpx.Response(502, text='TEST_ONLY_PASSWORD'),
                          httpx.Response(400, text='<html>TEST_ONLY_PASSWORD</html>')):
@@ -46,7 +43,6 @@ class ErrorPrivacyTests(unittest.IsolatedAsyncioTestCase):
     async def test_log_formatter_redacts_event_secret_and_proxy_credentials(self):
         bot = import_bot()
         self.addAsyncCleanup(bot.api.panel_http.aclose)
-        self.addAsyncCleanup(bot.api.telegram_http.aclose)
         record = logging.LogRecord('test', logging.ERROR, '', 1,
                                    f'{bot.config.TOKEN} {bot.config.SECRET} http://user:proxy-password@proxy.test:80',
                                    (), None)

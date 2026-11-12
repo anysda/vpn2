@@ -3,12 +3,14 @@ import os
 import time
 
 from aiohttp import web
-from telegram.error import InvalidToken, NetworkError
+from telegram.error import InvalidToken
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
-from telegram.request import HTTPXRequest
 
 from . import api, config, events, handlers, monitor
 from .config import log
+
+# The event loop holds tasks only weakly.
+watchers: list[asyncio.Task] = []
 
 
 async def serve(*routes, outbox: bool = False) -> web.AppRunner:
@@ -41,46 +43,32 @@ async def restart_on_new_runtime() -> None:
     os._exit(0)
 
 
-async def main() -> None:
+def run() -> None:
+    """/event and /health first: panel events are queued while Telegram is still unreachable."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     if not config.TOKEN or config.CHAT_ID == 0:
         log.warning('Токен бота или Chat ID не заданы: жду их в панели, раздел «Боты»')
-        await serve(web.get('/health', events.health(waiting_token=True)))
-        await restart_on_new_runtime()
-    tgapp = (Application.builder().token(config.TOKEN)
-             .request(HTTPXRequest(connection_pool_size=50, pool_timeout=20.0, connect_timeout=10.0,
-                                   read_timeout=20.0, proxy=config.TG_PROXY))
-             .get_updates_request(api.WatchedRequest(connection_pool_size=4, read_timeout=40,
-                                                     proxy=config.TG_PROXY))
-             .build())
+        loop.run_until_complete(serve(web.get('/health', events.health(waiting_token=True))))
+        loop.run_until_complete(restart_on_new_runtime())
+    runner = loop.run_until_complete(serve(web.post('/event', events.handle_event),
+                                           web.get('/health', events.handle_health), outbox=True))
+    log.info('Event server on 127.0.0.1:%d', config.EVENT_PORT)
+    watchers.extend(loop.create_task(job()) for job in (restart_on_new_runtime, api.poll_watchdog, monitor.monitor_loop))
+    tgapp = Application.builder().bot(api.bot).post_init(started).build()
     tgapp.add_handler(CommandHandler(handlers.COMMANDS, handlers.dispatch))
     tgapp.add_handler(CallbackQueryHandler(handlers.dispatch))
     tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.dispatch))
-    runner = await serve(web.post('/event', events.handle_event), web.get('/health', events.handle_health), outbox=True)
-    log.info('Event server on 127.0.0.1:%d', config.EVENT_PORT)
-    tasks = [asyncio.create_task(restart_on_new_runtime()), asyncio.create_task(api.poll_watchdog())]
     try:
-        # Panel events are queued while Telegram is still unreachable.
-        while True:
-            try:
-                await tgapp.initialize()
-                break
-            except NetworkError:
-                log.warning('Telegram initialization unavailable; retry in 5s')
-                await asyncio.sleep(5)
-        config.BOT_USERNAME = tgapp.bot.username
-        async with tgapp:
-            await tgapp.start()
-            tasks.append(asyncio.create_task(monitor.monitor_loop()))
-            await tgapp.updater.start_polling(drop_pending_updates=True)
-            log.info('Bot started as @%s, polling Telegram via TG_PROXY', config.BOT_USERNAME)
-            try:
-                await asyncio.Event().wait()
-            finally:
-                await tgapp.updater.stop()
-                await tgapp.stop()
+        tgapp.run_polling(drop_pending_updates=True, bootstrap_retries=-1, close_loop=False)
     finally:
-        # The port is free again before invalid_token_pause; asyncio.run cancels the tasks itself.
-        await runner.cleanup()
+        # The port is free again before invalid_token_pause; the stopped loop no longer runs the watchers.
+        loop.run_until_complete(runner.cleanup())
+
+
+async def started(tgapp: Application) -> None:
+    config.BOT_USERNAME = tgapp.bot.username
+    log.info('Bot started as @%s, polling Telegram via TG_PROXY', config.BOT_USERNAME)
 
 
 async def invalid_token_pause() -> None:
@@ -93,7 +81,7 @@ async def invalid_token_pause() -> None:
 
 if __name__ == '__main__':
     try:
-        asyncio.run(main())
+        run()
     except InvalidToken:
         asyncio.run(invalid_token_pause())
         raise SystemExit(1) from None

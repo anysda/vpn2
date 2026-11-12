@@ -14,6 +14,9 @@ import tempfile
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from telegram import Bot
+from telegram.request import BaseRequest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 MODULES = ('config', 'texts', 'api', 'outbox', 'handlers', 'monitor', 'events', '__main__')
@@ -88,6 +91,48 @@ class FakeHttp:
         return await self.request('POST', path, **kwargs)
 
 
+class FakeTelegram(BaseRequest):
+    """Stands in for the Bot API transport of python-telegram-bot: records each call, answers from a table.
+
+    A call is recorded as the bot puts it on the wire: JSON parameters, or form fields and files."""
+    MESSAGE = {'message_id': 1, 'date': 0, 'chat': {'id': 1, 'type': 'private'}}
+    RESULTS = {'sendMessage': MESSAGE, 'editMessageText': MESSAGE, 'sendPhoto': MESSAGE, 'sendDocument': MESSAGE,
+               'getChatMember': {'status': 'member', 'user': {'id': 1, 'is_bot': False, 'first_name': 'x'}}}
+
+    def __init__(self, record, answers):
+        super().__init__()
+        self.record, self.answers = record, answers
+
+    @property
+    def read_timeout(self):
+        return None
+
+    async def initialize(self):
+        pass
+
+    async def shutdown(self):
+        pass
+
+    async def do_request(self, url, method, request_data=None, **_):
+        name = url.rsplit('/', 1)[-1]
+        if request_data is not None and request_data.contains_files:
+            entry = ['tg', method, f'/{name}', request_data.json_parameters]
+            for field, (filename, content, _mime) in request_data.multipart_data.items():
+                entry.append([field, filename, content.decode('utf-8', 'backslashreplace')])
+        else:
+            entry = ['tg', method, f'/{name}', request_data.parameters if request_data else {}]
+        self.record.append(entry)
+        answer = self.answers.get(name)
+        if isinstance(answer, list):
+            answer = answer.pop(0) if answer else None
+        if isinstance(answer, Exception):
+            raise answer
+        status, body = answer or (200, {'ok': True})
+        if body.get('ok') and 'result' not in body:
+            body = {**body, 'result': self.RESULTS.get(name, True)}
+        return status, json.dumps(body).encode()
+
+
 def update(who, what):
     """A Telegram update: text (or a command) from a chat, or ('press', data)."""
     chat_id, user_id, chat_type = WHO[who]
@@ -102,7 +147,8 @@ def update(who, what):
 
 
 def wire(bot, telegram, panel):
-    bot.api.telegram_http, bot.api.panel_http = telegram, panel
+    bot.api.bot = Bot(ENV['TELEGRAM_BOT_TOKEN'], request=telegram, get_updates_request=telegram)
+    bot.api.panel_http = panel
 
 
 async def deliver(bot, incoming):
@@ -138,9 +184,7 @@ async def play(scenario, defaults):
     bot = import_bot(scenario.get('env'))
     bot.config.BOT_USERNAME = scenario.get('bot_username', 'vpn_test_bot')
     panel = copy.deepcopy({**defaults, **scenario.get('panel', {})})
-    telegram = {f'POST /{method}': answer
-                for method, answer in copy.deepcopy(scenario.get('tg', {})).items()}
-    wire(bot, FakeHttp('tg', record, telegram, (200, {'ok': True, 'result': {}})),
+    wire(bot, FakeTelegram(record, copy.deepcopy(scenario.get('tg', {}))),
          FakeHttp('panel', record, panel, (404, {'statusMessage': 'not_found'})))
     clock = SimpleNamespace(now=1000.0, feed=None)
     real_sleep = asyncio.sleep

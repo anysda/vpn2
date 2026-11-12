@@ -25,7 +25,7 @@ from harness import import_bot
 bot = import_bot({key: os.environ[key] for key in (
     'TG_PROXY', 'TGBOT_EVENT_PORT', 'TGBOT_OUTBOX_PATH', 'SSL_CERT_FILE',
     'TGBOT_POLL_STALL_SEC', 'ANYSDA_URL')})
-asyncio.run(bot.__main__.main())
+bot.__main__.run()
 '''
 
 
@@ -83,9 +83,9 @@ class DeliveryProcessTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.1)
             result = []
         elif method == 'sendMessage':
-            payload = await request.json()
+            payload = dict(await request.post())
             self.messages.append(payload)
-            result = {'message_id': len(self.messages)}
+            result = {'message_id': len(self.messages), 'date': 0, 'chat': {'id': int(payload['chat_id']), 'type': 'private'}}
         else:
             result = True
         response = web.json_response({'ok': True, 'result': result})
@@ -193,7 +193,7 @@ class DeliveryProcessTests(unittest.IsolatedAsyncioTestCase):
         print(f'revision={os.environ.get("BOT_REVISION", "working-tree")} restart={restart} '
               f'ack_ms={latencies} delivered={len(self.messages)} expected=2', flush=True)
         self.assertEqual(len(self.messages), 2, self.log_path.read_text()[-3000:])
-        self.assertEqual([message['chat_id'] for message in self.messages], [100, 200])
+        self.assertEqual([message['chat_id'] for message in self.messages], ['100', '200'])
         self.assertIn('outage-regression', self.messages[0]['text'])
         self.assertEqual(self.messages[1]['text'], payloads[1]['text'])
         self.assertGreater(self.connects, 0)

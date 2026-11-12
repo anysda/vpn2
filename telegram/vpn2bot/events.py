@@ -15,6 +15,8 @@ from .outbox import Outbox, QueueFull
 from .texts import md, md_bold
 
 OUTBOX_KEY = web.AppKey('outbox', Outbox)
+# The event loop holds tasks weakly: a send without a reference here may be collected half-way.
+sending: set[asyncio.Task] = set()
 
 
 async def report_rejected(payload: dict, status: int) -> None:
@@ -148,7 +150,9 @@ async def handle_event(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(status=400)
     if kind in SENT:
-        asyncio.create_task(SENT[kind](data))
+        task = asyncio.create_task(SENT[kind](data))
+        sending.add(task)
+        task.add_done_callback(sending.discard)
     if payloads is None:
         return web.Response(text='ok')
     delivery_id = data.get('deliveryId')

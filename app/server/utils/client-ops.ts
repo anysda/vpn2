@@ -46,11 +46,8 @@ export async function createClient(input: ClientCreateInput, actor: string): Pro
   assertExpiryAllowed(input.expiresAt)
   const name = input.name.trim()
   await assertNameFree(name)
-  const values: typeof clients.$inferInsert = { name, filterTraffic: input.filterTraffic ?? true, password: generateClientPassword() }
-  if (input.expiresAt !== undefined) values.expiresAt = input.expiresAt ? new Date(input.expiresAt) : null
-  if (input.deviceLimit !== undefined) values.deviceLimit = input.deviceLimit
-  const [row] = await useDb().insert(clients).values(values).returning()
-  if (!row) throw createError({ statusCode: 500, statusMessage: 'insert_failed' })
+  const values = { ...normalized(input), name, filterTraffic: input.filterTraffic ?? true, password: generateClientPassword() }
+  const [row] = (await useDb().insert(clients).values(values).returning()) as [Client]
   // Клиент уже создан: сбой очереди бота - предупреждение в ответе, не ошибка.
   const warning = await notifyWarning(notifyBot('client_created', { name: row.name }), 'Уведомление о клиенте не отправлено')
   await recordEvent({ type: 'client_created', level: 'info', object: `client:${row.id}`, actor, title: `Клиент создан · ${row.name}`, detail: actor })
@@ -88,12 +85,10 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   }
   assertExpiryAllowed(patch.expiresAt)
   const [before] = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
-  if (!before) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+  if (!before) throw notFound()
   if (typeof patch.deviceLimit === 'number') {
     const have = await deviceCount(id)
-    if (patch.deviceLimit < have) {
-      throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: deviceLimitBelowCountText(have) })
-    }
+    if (patch.deviceLimit < have) throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: deviceLimitBelowCountText(have) })
   }
   if (upd.name !== undefined) await assertNameFree(upd.name, id)
   if (upd.preferredExit) await assertKnownOutbound(`hy2-${upd.preferredExit}-direct`)
@@ -111,7 +106,7 @@ export async function updateClient(id: number, patch: ClientPatch, actor: string
   const row = queued ? queued.client : (await db.update(clients).set(upd).where(and(...conditions)).returning())[0]
   if (!row) {
     const [exists] = await db.select({ id: clients.id }).from(clients).where(eq(clients.id, id)).limit(1)
-    if (!exists) throw createError({ statusCode: 404, statusMessage: 'not_found' })
+    if (!exists) throw notFound()
     if (upd.name !== undefined) await assertNameFree(upd.name, id)
     throw createError({ statusCode: 409, statusMessage: 'device_limit_below_count', message: 'Лимит не может быть меньше числа устройств клиента' })
   }

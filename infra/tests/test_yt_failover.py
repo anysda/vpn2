@@ -83,6 +83,39 @@ class YoutubeFailoverTests(unittest.TestCase):
                 self.assertEqual(changes, ['foreign-best', 'youtube-ru'])
                 self.assertEqual(notify.call_count, 2)
 
+    def test_api_reads_and_switches_selector_through_clash_api(self):
+        watch = load_watch()
+        seen = []
+
+        class Response:
+            def __init__(self, raw):
+                self.raw = raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return self.raw
+
+        class Opener:
+            def open(self, req, timeout):
+                seen.append((req.get_method(), req.full_url, req.data, timeout))
+                return Response(b'{"now": "youtube-ru"}' if req.get_method() == 'GET' else b'')
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'config.json'
+            config.write_text(json.dumps({'experimental': {'clash_api': {
+                'external_controller': '127.0.0.1:9090', 'secret': 's'}}}))
+            with patch.object(watch, 'CONFIG', config), patch.object(watch, 'OPENER', Opener()):
+                self.assertEqual(watch.api('GET'), {'now': 'youtube-ru'})
+                self.assertEqual(watch.api('PUT', {'name': 'foreign-best'}), {})
+        self.assertEqual(seen, [
+            ('GET', 'http://127.0.0.1:9090/proxies/youtube-auto', None, 5),
+            ('PUT', 'http://127.0.0.1:9090/proxies/youtube-auto', b'{"name": "foreign-best"}', 5)])
+
     def test_api_failure_does_not_claim_switch_and_retries(self):
         watch = load_watch()
         with tempfile.TemporaryDirectory() as directory:

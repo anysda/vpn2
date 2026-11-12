@@ -49,7 +49,7 @@ def api(method, body=None):
     if method == 'PUT':
         client.select('youtube-auto', body['name'], timeout=5)
         return {}
-    return client.proxy('youtube-auto', timeout=5)
+    return client.request('GET', '/proxies/youtube-auto', timeout=5)
 
 
 def notify(detail):

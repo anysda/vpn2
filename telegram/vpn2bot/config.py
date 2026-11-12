@@ -6,8 +6,7 @@ import re
 
 
 class _RedactTokenFormatter(logging.Formatter):
-    """Вырезает токен бота из любой строки лога, включая трассировки:
-    python-telegram-bot кладёт токен прямо в текст InvalidToken."""
+    """python-telegram-bot puts the token into the text of InvalidToken: cut secrets from every line."""
     secrets: tuple = ()
 
     def format(self, record: logging.LogRecord) -> str:
@@ -20,60 +19,47 @@ class _RedactTokenFormatter(logging.Formatter):
 logging.basicConfig(level=logging.INFO)
 for _h in logging.getLogger().handlers:
     _h.setFormatter(_RedactTokenFormatter('%(asctime)s %(levelname)s %(name)s — %(message)s'))
-# httpx на INFO пишет URL каждого запроса, а в URL Telegram API сидит токен.
+# httpx logs every request URL at INFO, and the Bot API URL holds the token.
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 log = logging.getLogger('tgbot')
 
-# Настройки из панели («Боты») перебивают env: панель пишет файл, бот по смене
-# mtime выходит, docker --restart поднимает его с новыми значениями.
+# Written by the panel's «Боты»; overrides the environment, a change of it restarts the bot.
 RUNTIME_PATH = pathlib.Path('/etc/anysda/telegram-runtime.json')
+try:
+    _runtime = json.loads(RUNTIME_PATH.read_text()) if RUNTIME_PATH.exists() else {}
+except (OSError, ValueError):
+    _runtime = {}
+_runtime = _runtime if isinstance(_runtime, dict) else {}
 
 
-def _load_runtime() -> tuple[str, int, str]:
-    """Токен, Chat ID и никнейм админа без @ (он в ответе непривязанным людям)."""
-    token = os.environ.get('TELEGRAM_BOT_TOKEN', '')
-    env_chat = os.environ.get('TELEGRAM_CHAT_ID', '0').strip()
-    chat = ''
-    admin = os.environ.get('TELEGRAM_ADMIN_USERNAME', '')
-    if RUNTIME_PATH.exists():
-        try:
-            data = json.loads(RUNTIME_PATH.read_text())
-            token = (data.get('bot_token') or token).strip()
-            chat = str(data.get('chat_id') or '').strip()
-            admin = (data.get('admin_username') or admin or '').strip()
-        except Exception:
-            pass
-    admin = admin.lstrip('@').strip()
-    # Кривой chat_id (например «@mychannel») не должен ронять бота по кругу:
-    # откат на env; если и там не число — 0, дальше та же ошибка, что и без env.
-    for source, raw in (('telegram-runtime.json', chat), ('TELEGRAM_CHAT_ID', env_chat)):
+def _chat_id() -> int:
+    for source, raw in (('telegram-runtime.json', _runtime.get('chat_id')),
+                        ('TELEGRAM_CHAT_ID', os.environ.get('TELEGRAM_CHAT_ID'))):
+        raw = str(raw or '').strip()
         if re.fullmatch(r'-?[0-9]+', raw):
-            return token, int(raw), admin
+            return int(raw)
         if raw:
             log.error('chat_id %r из %s не число', raw, source)
-    return token, 0, admin
+    return 0
 
 
-TOKEN, CHAT_ID, ADMIN_USERNAME = _load_runtime()
+TOKEN = str(_runtime.get('bot_token') or os.environ.get('TELEGRAM_BOT_TOKEN', '')).strip()
+CHAT_ID = _chat_id()
+ADMIN_USERNAME = str(_runtime.get('admin_username') or os.environ.get('TELEGRAM_ADMIN_USERNAME', ''))
+ADMIN_USERNAME = ADMIN_USERNAME.strip().lstrip('@').strip()
 SECRET = os.environ.get('TGBOT_SECRET', '')
 if not SECRET:
-    raise RuntimeError(
-        'TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
-        'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.'
-    )
+    raise RuntimeError('TGBOT_SECRET не задан — /event-эндпоинт отказался бы аутентифицировать. '
+                       'Задай TGBOT_SECRET через env или /etc/anysda/telegram-runtime.json.')
 _RedactTokenFormatter.secrets = (TOKEN, SECRET)
-# Порт, на котором панель шлёт события боту и docker спрашивает /health.
 EVENT_PORT = int(os.environ.get('TGBOT_EVENT_PORT', '8877'))
 OUTBOX_PATH = os.environ.get('TGBOT_OUTBOX_PATH', '/var/lib/anysda-tgbot/outbox.sqlite')
 ANYSDA_URL = os.environ.get('ANYSDA_URL', 'http://127.0.0.1:51821')
-# Локальный HTTP-прокси sing-box до экзита: Telegram доступен только через него.
+# Telegram is reachable only through this sing-box proxy to the exit.
 TG_PROXY = os.environ.get('TG_PROXY', 'http://127.0.0.1:7897')
-# Сколько секунд без успешного getUpdates считать зависанием поллера (см.
-# api.poll_watchdog). Обычный long-poll отвечает за ~10 с. 0 = сторож выключен.
+# Seconds without a successful getUpdates before the process exits; 0 turns the watchdog off.
 POLL_STALL_SEC = int(os.environ.get('TGBOT_POLL_STALL_SEC', '300'))
-# Отвергнутый токен сам не починится: сколько ждать перед выходом под рестарт.
 INVALID_TOKEN_PAUSE_SEC = int(os.environ.get('TGBOT_INVALID_TOKEN_PAUSE_SEC', '300'))
-
-# username бота — заполняется при старте через getMe; нужен для диплинков-приглашений.
+# Filled from getMe at start; invitation links need it.
 BOT_USERNAME: str | None = None

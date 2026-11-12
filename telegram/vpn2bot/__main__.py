@@ -11,7 +11,7 @@ from . import api, config, events, handlers, monitor
 from .config import log
 
 
-async def serve(routes: list) -> web.AppRunner:
+async def serve(*routes) -> web.AppRunner:
     app = web.Application()
     if any(route.path == '/event' for route in routes):
         app.cleanup_ctx.append(events.event_outbox)
@@ -23,8 +23,7 @@ async def serve(routes: list) -> web.AppRunner:
 
 
 async def runtime_changed(limit_sec: float = float('inf')) -> bool:
-    """Дождаться правки telegram-runtime.json: панель сохранила новые токен или
-    Chat ID. False — за limit_sec секунд файл не менялся."""
+    """True once the panel saved telegram-runtime.json, False after limit_sec without a change."""
     def mtime():
         return config.RUNTIME_PATH.stat().st_mtime if config.RUNTIME_PATH.exists() else None
 
@@ -44,14 +43,10 @@ async def restart_on_new_runtime() -> None:
 
 async def main() -> None:
     if not config.TOKEN or config.CHAT_ID == 0:
-        # Бот ставится и без токена: ждём «Сохранить» в панели, не выходя, иначе
-        # docker --restart крутит его по кругу. /health нужен, чтобы контейнер
-        # не стал unhealthy; порт освобождается вместе с процессом.
+        # Exiting here would make docker --restart spin; /health keeps the container healthy.
         log.warning('Токен бота или Chat ID не заданы: жду их в панели, раздел «Боты»')
-        await serve([web.get('/health', events.health())])
+        await serve(web.get('/health', events.health(waiting_token=True)))
         await restart_on_new_runtime()
-    # Пул и таймауты выше умолчаний HTTPXRequest (1 соединение, 1 с), иначе
-    # PoolTimeout при любой задержке прокси.
     tgapp = (Application.builder().token(config.TOKEN)
              .request(HTTPXRequest(connection_pool_size=50, pool_timeout=20.0, connect_timeout=10.0,
                                    read_timeout=20.0, proxy=config.TG_PROXY))
@@ -61,13 +56,11 @@ async def main() -> None:
     tgapp.add_handler(CommandHandler(handlers.COMMANDS, handlers.dispatch))
     tgapp.add_handler(CallbackQueryHandler(handlers.dispatch))
     tgapp.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.dispatch))
-
-    runner = await serve([web.post('/event', events.handle_event),
-                          web.get('/health', events.handle_health)])
+    runner = await serve(web.post('/event', events.handle_event), web.get('/health', events.handle_health))
     log.info('Event server on 127.0.0.1:%d', config.EVENT_PORT)
     tasks = [asyncio.create_task(restart_on_new_runtime()), asyncio.create_task(api.poll_watchdog())]
     try:
-        # События панели принимаем в очередь, даже пока Telegram недоступен.
+        # Panel events are queued while Telegram is still unreachable.
         while True:
             try:
                 await tgapp.initialize()
@@ -75,7 +68,6 @@ async def main() -> None:
             except NetworkError:
                 log.warning('Telegram initialization unavailable; retry in 5s')
                 await asyncio.sleep(5)
-        # Имя бота нужно для ссылок-приглашений и «Настроек» панели.
         config.BOT_USERNAME = tgapp.bot.username
         async with tgapp:
             await tgapp.start()
@@ -95,12 +87,10 @@ async def main() -> None:
 
 
 async def invalid_token_pause() -> None:
-    """Пауза перед перезапуском с отвергнутым токеном: без неё docker поднимает
-    бот через секунды, и тот снова бьётся в Telegram с тем же токеном. Новый
-    токен из панели обрывает паузу сразу. /health живёт всю паузу."""
-    runner = await serve([web.get('/health', events.health(invalid_token=True))])
+    """Without the pause docker restarts the bot into the same rejected token within seconds.
+    A new token from the panel ends the pause at once; /health stays up throughout."""
+    runner = await serve(web.get('/health', events.health(waiting_token=True, invalid_token=True)))
     try:
-        # Строка пишется после старта сервера: по ней узнают, что пауза началась.
         log.error('Telegram отверг токен бота (InvalidToken): проверьте токен в панели, '
                   'раздел «Боты». Перезапуск через %d с или сразу после сохранения токена',
                   config.INVALID_TOKEN_PAUSE_SEC)
@@ -116,6 +106,6 @@ if __name__ == '__main__':
         asyncio.run(invalid_token_pause())
         raise SystemExit(1) from None
     except Exception:
-        # Через логгер, а не голой трассировкой в stderr: так токен вырезается.
+        # Through the logger, not a bare traceback: the token gets cut out.
         log.exception('бот остановлен ошибкой')
         raise SystemExit(1) from None

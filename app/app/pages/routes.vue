@@ -28,19 +28,18 @@ const columns = computed(() => routeColumns(outbounds.value))
 const cells = computed(() => columns.value.flatMap(c => c.cells))
 const cellName = (ob: string) => cells.value.find(c => c.outbound === ob)?.name ?? ob
 // Перенос виден сразу, до ответа сервера; при ошибке правило возвращается.
-const moving = ref<Record<number, string>>({})
-const shown = computed(() => rules.value.map(r => moving.value[r.id] ? { ...r, outbound: moving.value[r.id]! } : r))
+const moving = reactive(new Map<number, string>())
+const shown = computed(() => rules.value.map(r => ({ ...r, outbound: moving.get(r.id) ?? r.outbound })))
 const rulesFor = (ob: string) => shown.value.filter(r => r.outbound === ob)
 
 async function move(rule: Route, outbound: string) {
   if (rule.outbound === outbound) return
-  moving.value = { ...moving.value, [rule.id]: outbound }
+  moving.set(rule.id, outbound)
   await act('move', async () => {
     await $fetch<unknown>(`/api/routes/${rule.id}`, { method: 'PATCH', body: { outbound } })
     await refresh()
   }, `«${rule.value}» → ${cellName(outbound)}`, 'Ошибка перемещения')
-  const { [rule.id]: _, ...rest } = moving.value
-  moving.value = rest
+  moving.delete(rule.id)
 }
 const remove = (rule: Route) => act('del', async () => {
   await $fetch<unknown>(`/api/routes/${rule.id}`, { method: 'DELETE' })

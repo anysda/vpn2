@@ -1,5 +1,4 @@
 /* Клиенты и ключи: перенос #t-clients из макета. .clp - страница, .clm - её модалки. */
-.clp .ha{display:flex;gap:8px}
 .tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
 .clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .cxp .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
 /* фильтр */

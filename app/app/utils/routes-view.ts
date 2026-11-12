@@ -10,7 +10,6 @@ interface Cell {
   name: string
   delay: number | null
   warp: boolean
-  ru: boolean
 }
 
 export interface Column {
@@ -61,8 +60,8 @@ export function routeColumns(outbounds: Outbound[]): Column[] {
     const ru = tag === 'ru'
     const name = countryName(tag)
     const cells: Cell[] = []
-    if (direct) cells.push({ outbound: direct.name, label: 'Напрямую', name, delay: ruDelay(direct.delay, ru), warp: false, ru })
-    if (warp) cells.push({ outbound: warp.name, label: 'WARP', name: `${name} · WARP`, delay: warp.delay, warp: true, ru })
+    if (direct) cells.push({ outbound: direct.name, label: 'Напрямую', name, delay: ruDelay(direct.delay, ru), warp: false })
+    if (warp) cells.push({ outbound: warp.name, label: 'WARP', name: `${name} · WARP`, delay: warp.delay, warp: true })
     return { tag, name, sub: ru ? 'RU · entry' : tag.toUpperCase(), delay: direct ? ruDelay(direct.delay, ru) : null, cells }
   })
 }

@@ -154,10 +154,9 @@ const used = (dev: Device) => dev.rxTotal + dev.txTotal
 
 async function addDev() {
   const n = newDev.name.trim()
-  if (n && await act('dev', async () => toast.add(doneToast(`Девайс «${n}» добавлен`, (await addDevice(d.value!.id, n)).warning)), undefined, 'Не удалось добавить девайс')) {
-    newDev.open = false
-    await changed()
-  }
+  if (!n || !await act('dev', () => addDevice(d.value!.id, n), r => doneToast(`Девайс «${n}» добавлен`, r.warning), 'Не удалось добавить девайс')) return
+  newDev.open = false
+  await changed()
 }
 </script>
 

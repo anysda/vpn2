@@ -1,23 +1,23 @@
 /* Тема: тёмная по умолчанию, светлая по data-theme от color-mode. */
 :root {
-  --bg:#08080a; --c1:#151518; --c2:#101012; --chip:#1b1b1f; --chip2:#222227;
+  --bg:#08080a; --chip:#1b1b1f; --chip2:#222227;
   --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
   --t1:#f4f4f5; --t2:#a3a3aa; --t3:#6e6e76;
   --red:#ff5b52; --amber:#f2b552; --orange:#ff8a3d; --green:#6fd59a; --violet:#a78bfa; --blue:#7cb4ff;
-  --r:22px; --ease:cubic-bezier(.23,1,.32,1); --ease-io:cubic-bezier(.77,0,.175,1);
+  --r:22px; --ease:cubic-bezier(.23,1,.32,1);
   color-scheme:dark;
   --tabs-bg:rgba(255,255,255,.04); --t4:#55555c; --fg:255,255,255; --glow:255,255,255; --gk:1; --shk:1;
   --acc:#fff; --acc-t:#0a0a0a; --bd-t:#111;
   --card-a:#18181b; --card-b:#111113; --sunk:#0c0c0e; --sunk2:#121215; --kg:#19191c;
-  --pop-a:#1c1c20; --pop-b:#121214; --tip:rgba(24,24,27,.92); --toast:rgba(28,28,32,.97); --ovl:rgba(4,4,5,.66);
+  --tip:rgba(24,24,27,.92); --toast:rgba(28,28,32,.97);
   --lit-a:#3c3c42; --lit-b:#232327; --lit-c:#141416; --lit-t:#b9b9c0;
-  --av-a:#3a3a40; --av-b:#1c1c20; --wk-a:#45454c; --wk-b:#26262b; --wk-on:#9a9aa2; --tog:#2a2a2f; --tog-k:#8e8e96;
+  --av-a:#3a3a40; --av-b:#1c1c20; --tog:#2a2a2f; --tog-k:#8e8e96;
   --g1:#b4b4bb; --g2:#8e8e96; --g3:#5d5d64; --g4:#3d3d43; --g5:#2e2e33;
   --red-rgb:255,91,82; --amb-rgb:242,181,82; --grn-rgb:111,213,154;
   --red-t:#ff8f88; --red-t2:#ffc9c5; --amb-t2:#f1d7a8; --pink:#ff8fb1;
 }
 :root[data-theme="light"] {
-  --bg:#ececee; --c1:#ffffff; --c2:#f7f7f8; --chip:#f4f4f5; --chip2:#eaeaed;
+  --bg:#ececee; --chip:#f4f4f5; --chip2:#eaeaed;
   --line:rgba(24,24,27,.09); --line2:rgba(24,24,27,.16);
   --t1:#18181b; --t2:#4f4f57; --t3:#66666e; --t4:#a1a1aa;
   --red:#b8251a; --amber:#945705; --orange:#c2410c; --green:#0f6b3d; --violet:#6d4bd6; --blue:#2563c9;
@@ -25,9 +25,9 @@
   --tabs-bg:#fff; --fg:24,24,27; --glow:24,24,27; --gk:.22; --shk:.16;
   --acc:#18181b; --acc-t:#fafafa; --bd-t:#fff;
   --card-a:#ffffff; --card-b:#fafafa; --sunk:#f3f3f5; --sunk2:#ececef; --kg:#fbfbfc;
-  --pop-a:#ffffff; --pop-b:#fafafa; --tip:rgba(255,255,255,.97); --toast:rgba(255,255,255,.97); --ovl:rgba(39,39,42,.3);
+  --tip:rgba(255,255,255,.97); --toast:rgba(255,255,255,.97);
   --lit-a:#dcdce1; --lit-b:#eeeef1; --lit-c:#fbfbfc; --lit-t:#4f4f57;
-  --av-a:#e4e4e7; --av-b:#d1d1d6; --wk-a:#d4d4d8; --wk-b:#e7e7ea; --wk-on:#71717a; --tog:#d4d4d8; --tog-k:#ffffff;
+  --av-a:#e4e4e7; --av-b:#d1d1d6; --tog:#d4d4d8; --tog-k:#ffffff;
   --g1:#52525b; --g2:#71717a; --g3:#a1a1aa; --g4:#c4c4ca; --g5:#e4e4e7;
   --red-rgb:200,40,30; --amb-rgb:181,110,8; --grn-rgb:15,107,61;
   --red-t:#b42318; --red-t2:#912018; --amb-t2:#6f4204; --pink:#c11574;
@@ -124,7 +124,6 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 .errp{text-align:center}.errp .tri{width:40px;height:40px;color:var(--amber);display:inline-block}
 .errp h2{font-size:18px;font-weight:500;margin-top:10px}.errp .big{display:block;margin-top:8px;font-size:64px}
 .errp p{color:var(--t2);margin-top:10px}
-[hidden]{display:none!important}
 
 /* ---------- движение ---------- */
 /* вкладка проявляется */

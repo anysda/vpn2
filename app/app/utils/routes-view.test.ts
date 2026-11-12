@@ -16,15 +16,15 @@ describe('routeColumns', () => {
     ])
     expect(cols).toEqual([
       { tag: 'ru', name: 'Россия', sub: 'RU · entry', delay: 0, cells: [
-        { outbound: 'direct-ru', label: 'Напрямую', name: 'Россия', delay: 0, warp: false, ru: true },
+        { outbound: 'direct-ru', label: 'Напрямую', name: 'Россия', delay: 0, warp: false },
       ] },
       { tag: 'de', name: 'Германия', sub: 'DE', delay: 42, cells: [
-        { outbound: 'hy2-de-direct', label: 'Напрямую', name: 'Германия', delay: 42, warp: false, ru: false },
-        { outbound: 'hy2-de-warp', label: 'WARP', name: 'Германия · WARP', delay: null, warp: true, ru: false },
+        { outbound: 'hy2-de-direct', label: 'Напрямую', name: 'Германия', delay: 42, warp: false },
+        { outbound: 'hy2-de-warp', label: 'WARP', name: 'Германия · WARP', delay: null, warp: true },
       ] },
       { tag: 'us2', name: 'Соединенные Штаты', sub: 'US2', delay: null, cells: [
-        { outbound: 'hy2-us2-direct', label: 'Напрямую', name: 'Соединенные Штаты', delay: null, warp: false, ru: false },
-        { outbound: 'hy2-us2-warp', label: 'WARP', name: 'Соединенные Штаты · WARP', delay: 180, warp: true, ru: false },
+        { outbound: 'hy2-us2-direct', label: 'Напрямую', name: 'Соединенные Штаты', delay: null, warp: false },
+        { outbound: 'hy2-us2-warp', label: 'WARP', name: 'Соединенные Штаты · WARP', delay: 180, warp: true },
       ] },
     ])
   })
@@ -32,7 +32,7 @@ describe('routeColumns', () => {
   it('колонка без прямого выхода остаётся без задержки в шапке', () => {
     expect(routeColumns([ob('hy2-nl-warp', 70)])).toEqual([
       { tag: 'nl', name: 'Нидерланды', sub: 'NL', delay: null, cells: [
-        { outbound: 'hy2-nl-warp', label: 'WARP', name: 'Нидерланды · WARP', delay: 70, warp: true, ru: false },
+        { outbound: 'hy2-nl-warp', label: 'WARP', name: 'Нидерланды · WARP', delay: 70, warp: true },
       ] },
     ])
   })

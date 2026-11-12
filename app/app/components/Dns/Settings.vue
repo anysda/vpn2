@@ -49,9 +49,9 @@ async function saveEdit() {
 }
 function reset(what: keyof typeof RESET) {
   const a = RESET[what]
-  const req = what === 'cache' ? () => $fetch<unknown>('/api/dns/settings/cache-clear', { method: 'POST' }) : () => $fetch<unknown>('/api/dns/settings/reset', { method: 'POST', body: { what } })
-  async function run() {
-    await req()
+  const run = async () => {
+    if (what === 'cache') await $fetch<unknown>('/api/dns/settings/cache-clear', { method: 'POST' })
+    else await $fetch<unknown>('/api/dns/settings/reset', { method: 'POST', body: { what } })
     toast.add({ title: a.done })
   }
   ask.value = { title: a.title, text: a.text, ok: a.ok, danger: what !== 'cache', run }

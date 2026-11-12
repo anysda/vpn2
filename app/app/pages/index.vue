@@ -15,7 +15,9 @@ const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [
 const pings = computed(() => Object.fromEntries(routeColumns(outbounds.value).map(c => [c.tag, c.delay || null])))
 
 const { data: events, refresh: refreshEvents } = useFetch('/api/events', { query: { limit: 30 }, default: () => [] })
-usePoll(refreshEvents, 30_000)
+// «Сегодня» ленты - по часам сервера, пока страница не ожила: гидратация сходится и при чужих часах браузера.
+const eventsNow = useState('events-now', () => Date.now())
+usePoll(() => refreshEvents().then(() => { eventsNow.value = Date.now() }), 30_000)
 const LEVEL: Record<EventLevel, string> = { alarm: 'var(--red)', warn: 'var(--amber)', info: 'var(--g2)', ok: 'var(--green)' }
 
 // Выходы: доля экзита в текущем трафике; лидер акцентом, медленные и пропавшие красным.
@@ -58,7 +60,7 @@ const onlineCards = computed(() => {
         <h3>События</h3>
         <ul v-if="events.length" class="scroll mt-3 flex-1 space-y-3">
           <li v-for="e in events" :key="e.id" class="grid grid-cols-[44px_8px_1fr] gap-x-2.5 text-sm">
-            <time class="mono text-xs text-(--t3)" :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, Date.now()) }}</time>
+            <time class="mono text-xs text-(--t3)" :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, eventsNow) }}</time>
             <span class="dot mt-1.5" :style="{ background: LEVEL[e.level] }" />
             <div class="min-w-0 break-words">
               <b class="font-medium">{{ e.title }}</b><small v-if="e.detail" class="block text-xs text-(--t3)">{{ e.detail }}</small>

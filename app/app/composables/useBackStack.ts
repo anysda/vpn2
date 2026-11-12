@@ -35,17 +35,23 @@ export function useLayer(open: Ref<boolean>) {
   const router = useRouter()
   const mobile = useMobile()
   const layer = `layer-${++layers}`
-  watch(open, now => enqueue(async () => {
-    if (now && mobile.value && !onTop(layer)) {
-      const { path, query, hash } = router.currentRoute.value
-      await router.push({ path, query, hash, state: { layer }, force: true })
-    }
-    else if (!now && onTop(layer)) {
-      await back(router)
-    }
-  }))
+  // Открыта, а своя запись ещё ждёт очереди: «назад» закрытой в тот же такт соседки - не ей.
+  let pending = false
+  watch(open, (now) => {
+    pending = now
+    return enqueue(async () => {
+      pending = false
+      if (now && mobile.value && !onTop(layer)) {
+        const { path, query, hash } = router.currentRoute.value
+        await router.push({ path, query, hash, state: { layer }, force: true })
+      }
+      else if (!now && onTop(layer)) {
+        await back(router)
+      }
+    })
+  })
   const closed = () => {
-    if (open.value && mobile.value && !onTop(layer)) open.value = false
+    if (open.value && mobile.value && !pending && !onTop(layer)) open.value = false
   }
   onMounted(() => window.addEventListener('popstate', closed))
   onBeforeUnmount(() => window.removeEventListener('popstate', closed))

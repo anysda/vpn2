@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ru } from '@nuxt/ui/locale'
+
 const mobile = useMobile()
 useHead({
   link: [
@@ -8,7 +10,7 @@ useHead({
 </script>
 
 <template>
-  <UApp :toaster="{ position: mobile ? 'top-center' : 'bottom-right' }">
+  <UApp :locale="ru" :toaster="{ position: mobile ? 'top-center' : 'bottom-right' }">
     <NuxtLayout>
       <NuxtPage />
     </NuxtLayout>

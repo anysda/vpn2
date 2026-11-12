@@ -12,15 +12,23 @@ const name = computed(() => typed.value.trim().toLowerCase().replace(/^https?:\/
 const { data: res, error, refresh: check } = useFetch('/api/dns/check', { key: 'dns-check', query: { name }, server: false, immediate: false, watch: [name] })
 watch(error, e => e && e.statusCode !== 400 && toast.add({ title: errText(e), color: 'error' }))
 
-// AdGuard пересобирает фильтры в фоне и ещё ~0,5 с отвечает по старым правилам.
+// AdGuard пересобирает фильтры в фоне и ещё ~0,5 с отвечает по старым правилам:
+// домен, введённый до или сразу после «Применить», проверяется повторно до конца этого окна.
+let settleUntil = 0
+let every: ReturnType<typeof setInterval> | undefined
 function recheckWhileSettling() {
-  void check()
-  const every = setInterval(check, 250)
-  setTimeout(() => clearInterval(every), 2000)
+  clearInterval(every)
+  every = setInterval(() => Date.now() < settleUntil ? check() : clearInterval(every), 250)
 }
+watch(name, n => n && Date.now() < settleUntil && recheckWhileSettling())
+onUnmounted(() => clearInterval(every))
 const apply = () => act('save', async () => {
   text.value = (await $fetch<{ text: string }>('/api/dns/rules', { method: 'PUT', body: { text: text.value } })).text
-  if (name.value) recheckWhileSettling()
+  settleUntil = Date.now() + 3000
+  if (name.value) {
+    void check()
+    recheckWhileSettling()
+  }
 }, 'Свои правила применены')
 
 const COLOR = { blk: 'text-(--red-t)', ok: 'text-(--green)', rw: 'text-(--t1)' }

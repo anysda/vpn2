@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from vpn2.watchdog import failover, yt
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
 import snapshot
 from snapshot import collect, diff
 

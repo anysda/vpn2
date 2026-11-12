@@ -18,31 +18,22 @@ ENTRY_INSTALL = 6 * GIB    # диск entry после полной устано
 def plan(mem_kb, avail, min_free, install=0):
     """Размер swap в байтах и пояснение; 0 - не создавать.
 
-    min(RAM, 2 ГиБ, свободно - min_free - 512 МиБ - install), округление вниз
-    до МиБ, меньше 256 МиБ - без swap. install - место, которое установка ещё
-    не заняла: swap создаётся первым шагом, пакеты и образы ложатся после него.
+    min(RAM, 2 ГиБ, свободно - min_free - 512 МиБ - install) вниз до МиБ, меньше 256 МиБ - без swap.
+    install - место, которое установка ещё займёт после swap.
     """
     size = min(mem_kb * 1024, 2 * GIB)
     reason = f'RAM {mem_kb // 1024} МиБ'
     kept = f'{min_free // MIB} + 512' + (f', установке {install // MIB}' if install else '')
-    cap = _trunc((avail - min_free - RESERVE - install) / MIB) * MIB
+    cap = int((avail - min_free - RESERVE - install) / MIB) * MIB
     if cap < size:
-        size = cap
-        reason = f'урезан, деплою оставлено {kept}'
+        size, reason = cap, f'урезан, деплою оставлено {kept}'
     if size < 256 * MIB:
-        return 0, (f'swap пропущен: свободно {avail // MIB} МиБ, деплою нужно '
-                   f'{kept}, swap меньше 256 МиБ не создаю')
+        return 0, f'swap пропущен: свободно {avail // MIB} МиБ, деплою нужно {kept}, swap меньше 256 МиБ не создаю'
     return size, f'swap: {SWAPFILE} {size // MIB} МиБ ({reason}; свободно {avail // MIB} МиБ)'
 
 
 def pending(install_bytes, used):
-    """Сколько установка ещё займёт: её полный размер минус уже занятое на диске."""
     return max(0, install_bytes - used)
-
-
-def _trunc(value):
-    # bash делит с усечением к нулю, а не вниз
-    return int(value)
 
 
 def min_free_bytes(manifest):
@@ -56,38 +47,30 @@ def _ok(argv):
     return subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
-def _enable(path):
-    os.chmod(path, 0o600)
-    return _ok(['mkswap', path]) and _ok(['swapon', path])
+def _usage():
+    return shutil.disk_usage(os.path.dirname(SWAPFILE) or '/')
 
 
-def _create(path, mem_kb, min_free, say, install_bytes=0, *, zeros=False):
-    """Создаёт и включает swap-файл; False - пропущен."""
-    usage = shutil.disk_usage(os.path.dirname(path) or '/')
+def _enable():
+    os.chmod(SWAPFILE, 0o600)
+    return _ok(['mkswap', SWAPFILE]) and _ok(['swapon', SWAPFILE])
+
+
+def _create(mem_kb, min_free, install_bytes, say, *, zeros=False):
+    """Создаёт и включает swap-файл по plan; False - пропущен."""
+    usage = _usage()
     size, text = plan(mem_kb, usage.free, min_free, pending(install_bytes, usage.used))
     say(text)
     if not size:
         return False
-    # fallocate на части ФС не работает или даёт файл с дырами, которые swapon
-    # не берёт, - тогда пишем нулями.
-    if not zeros and _ok(['fallocate', '-l', str(size), path]) and _enable(path):
-        return True
-    Path(path).unlink(missing_ok=True)
-    if _ok(['dd', 'if=/dev/zero', f'of={path}', 'bs=1M', f'count={size // MIB}', 'status=none']) \
-            and _enable(path):
-        return True
-    Path(path).unlink(missing_ok=True)
-    say(f'swap пропущен: swapon не включил {path}')
+    # fallocate на части ФС не работает или даёт файл с дырами, которые swapon не берёт, - тогда нулями.
+    dd = ['dd', 'if=/dev/zero', f'of={SWAPFILE}', 'bs=1M', f'count={size // MIB}', 'status=none']
+    for argv in ([dd] if zeros else [['fallocate', '-l', str(size), SWAPFILE], dd]):
+        if _ok(argv) and _enable():
+            return True
+        Path(SWAPFILE).unlink(missing_ok=True)
+    say(f'swap пропущен: swapon не включил {SWAPFILE}')
     return False
-
-
-def _oversized(path, mem_kb, min_free, install_bytes):
-    """Выключенный файл больше, чем ему сейчас отвёл бы plan: размер в байтах, иначе 0."""
-    size = os.path.getsize(path)
-    usage = shutil.disk_usage(os.path.dirname(path) or '/')
-    fits, _ = plan(mem_kb, usage.free + size, min_free,
-                   pending(install_bytes, usage.used - size))
-    return size if size > fits else 0
 
 
 def _container():
@@ -104,116 +87,69 @@ def _meminfo(proc, key):
                 if line.startswith(key + ':'))
 
 
-def _active(proc):
-    """Включённые swap из /proc/swaps: (путь, занято байт)."""
+def _ours(proc):
+    """Занято в нашем включённом файле; None - swap выключен; False - на узле чужой swap."""
     rows = [line.split() for line in (proc / 'swaps').read_text().splitlines()[1:]]
-    return [(row[0], int(row[3]) * 1024) for row in rows if len(row) >= 4]
+    active = [(row[0], int(row[3]) * 1024) for row in rows if len(row) >= 4]
+    if not active:
+        return None
+    return active[0][1] if [path for path, _used in active] == [SWAPFILE] else False
 
 
-def _drop_fstab(fstab, path):
+def _drop_fstab(fstab):
     lines = fstab.read_text().splitlines(keepends=True)
-    kept = [line for line in lines if line.split()[:1] != [path]]
+    kept = [line for line in lines if line.split()[:1] != [SWAPFILE]]
     if kept != lines:
         fstab.write_text(''.join(kept))
     return kept != lines
 
 
-def _shrink(proc, min_free, install_bytes, say, in_use):
-    """Наш /swapfile прежнего размера отдаёт место деплою; True - узел изменён.
-
-    Старые версии брали под swap всё свободное, и проверке перед бэкапом места
-    не оставалось. Файл трогаем, только когда запас деплоя (min_free + 512 МиБ)
-    уже съеден и расчётный размер меньше хотя бы на шаг: иначе по мере
-    заполнения диска swap пересоздавался бы каждым деплоем. in_use - байт
-    занято во включённом файле, None - файл выключен.
-    """
-    path = SWAPFILE
-    size = os.path.getsize(path)
-    usage = shutil.disk_usage(os.path.dirname(path) or '/')
-    if usage.free >= min_free + RESERVE:
-        return False
-    fits, _ = plan(_meminfo(proc, 'MemTotal'), usage.free + size, min_free,
-                   pending(install_bytes, usage.used - size))
-    if size - fits < STEP:
-        return False
+def _shrink(proc, mem_kb, min_free, install_bytes, say, in_use, *, recreate=True):
+    """Наш /swapfile, который держит место деплоя, убирается; True - убран. in_use None - файл выключен."""
+    size, usage = os.path.getsize(SWAPFILE), _usage()
+    fits, _ = plan(mem_kb, usage.free + size, min_free, pending(install_bytes, usage.used - size))
     if in_use is None:
-        say(f'swap: выключенный {path} {size // MIB} МиБ занимает место деплоя, убираю')
-        Path(path).unlink()
+        if size <= fits:
+            return False
+        say(f'swap: имеющийся {SWAPFILE} {size // MIB} МиБ не по месту, пересоздаю' if recreate
+            else f'swap: выключенный {SWAPFILE} {size // MIB} МиБ занимает место деплоя, убираю')
+        Path(SWAPFILE).unlink()
         return True
+    # Пока запас деплоя не съеден или разница меньше шага, swap не пересоздаётся каждым деплоем.
+    if usage.free >= min_free + RESERVE or size - fits < STEP:
+        return False
     available = _meminfo(proc, 'MemAvailable') * 1024
     # swapoff возвращает страницы в память: не поместятся - узел встанет.
     if in_use + MEMORY_MARGIN > available:
-        say(f'swap: {path} {size // MIB} МиБ занимает место деплоя, но выключить его нельзя: '
+        say(f'swap: {SWAPFILE} {size // MIB} МиБ занимает место деплоя, но выключить его нельзя: '
             f'в нём {in_use // MIB} МиБ, свободной памяти {available // MIB} МиБ; оставлен как есть')
         return False
-    say(f'swap: включённый {path} {size // MIB} МиБ занимает место деплоя, '
+    say(f'swap: включённый {SWAPFILE} {size // MIB} МиБ занимает место деплоя, '
         + (f'пересоздаю в {fits // MIB} МиБ' if fits else 'убираю'))
-    if not _ok(['swapoff', path]):
-        say(f'swap: swapoff {path} не прошёл, оставлен как есть')
+    if not _ok(['swapoff', SWAPFILE]):
+        say(f'swap: swapoff {SWAPFILE} не прошёл, оставлен как есть')
         return False
-    Path(path).unlink()
+    Path(SWAPFILE).unlink()
     return True
-
-
-def _ours(proc):
-    """Занято в нашем включённом файле; None - swap выключен; False - на узле чужой swap."""
-    active = _active(proc)
-    if not active:
-        return None
-    if [path for path, _used in active] != [SWAPFILE]:
-        return False
-    return active[0][1]
 
 
 def release(min_free, say, *, proc='/proc', install_bytes=0):
-    """Перед проверкой места деплоем: наш swap-файл прежнего размера отдаёт лишнее.
-
-    Зовёт проверка перед бэкапом, когда свободного меньше порога: узел,
-    поставленный старой версией, чинится сам, без ручного swapoff.
-    """
+    """Проверка места перед бэкапом: swap-файл v1.1.5, съевший запас деплоя, отдаёт лишнее."""
     proc = Path(proc)
     if not (proc / 'swaps').is_file() or not os.path.isfile(SWAPFILE) or _container():
         return False
-    in_use = _ours(proc)
-    if in_use is False or not _shrink(proc, min_free, install_bytes, say, in_use):
+    in_use, mem_kb = _ours(proc), _meminfo(proc, 'MemTotal')
+    if in_use is False or not _shrink(proc, mem_kb, min_free, install_bytes, say, in_use, recreate=False):
         return False
-    if in_use is not None:
-        _recreate(proc.parent, _meminfo(proc, 'MemTotal'), min_free, install_bytes, say)
+    if in_use is not None and not _create(mem_kb, min_free, install_bytes, say):
+        _drop_fstab(proc.parent / 'etc/fstab')
     return True
-
-
-def _recreate(root, mem_kb, min_free, install_bytes, say):
-    """После снятого swap: новый по расчёту; места нет - убирает и строку fstab."""
-    if _create(SWAPFILE, mem_kb, min_free, say, install_bytes):
-        return True
-    _drop_fstab(root / 'etc/fstab', SWAPFILE)
-    return False
-
-
-def _switch_on(mem_kb, min_free, install_bytes, say):
-    """Swap выключен: создаёт файл или включает имеющийся; False - узел остался без swap."""
-    extra = _oversized(SWAPFILE, mem_kb, min_free, install_bytes) if os.path.isfile(SWAPFILE) else 0
-    if extra:
-        # Выключенный файл прежнего размера оставил бы деплой без места.
-        say(f'swap: имеющийся {SWAPFILE} {extra // MIB} МиБ не по месту, пересоздаю')
-        Path(SWAPFILE).unlink()
-    if not os.path.isfile(SWAPFILE):
-        return _create(SWAPFILE, mem_kb, min_free, say, install_bytes)
-    # Обрывок прошлого прогона: файл есть, swap не включён.
-    say(f'swap: включаю имеющийся {SWAPFILE}')
-    os.chmod(SWAPFILE, 0o600)
-    if _ok(['swapon', SWAPFILE]) or _enable(SWAPFILE):
-        return True
-    say(f'swap: {SWAPFILE} не включается, пересоздаю')
-    Path(SWAPFILE).unlink(missing_ok=True)
-    return _create(SWAPFILE, mem_kb, min_free, say, install_bytes, zeros=True)
 
 
 def ensure(manifest, say, *, root='/', install_bytes=0):
     """Включает swap, если он нужен и его нет; True - состояние узла изменилось.
 
-    install_bytes - сколько диска занимает узел после полной установки: на
-    чистом узле swap не берёт место, которое установка займёт следом.
+    install_bytes - диск узла после полной установки: swap не берёт место, которое она займёт следом.
     """
     root = Path(root)
     virt = _container()
@@ -225,16 +161,25 @@ def ensure(manifest, say, *, root='/', install_bytes=0):
         return False
     min_free = min_free_bytes(manifest)
     in_use = _ours(root / 'proc')
-    if in_use is not None:
-        # Включённый swap не трогаем, кроме своего файла, который держит место деплоя.
-        if in_use is False or not os.path.isfile(SWAPFILE) \
-                or not _shrink(root / 'proc', min_free, install_bytes, say, in_use):
-            return False
-        if not _recreate(root, mem_kb, min_free, install_bytes, say):
-            return True
-    elif not _switch_on(mem_kb, min_free, install_bytes, say):
+    if in_use is False:
+        return False
+    removed = os.path.isfile(SWAPFILE) and _shrink(root / 'proc', mem_kb, min_free, install_bytes, say, in_use)
+    if in_use is not None and not removed:
+        return False
+    if os.path.isfile(SWAPFILE):
+        # Обрывок прошлого прогона: файл есть, swap не включён.
+        say(f'swap: включаю имеющийся {SWAPFILE}')
+        os.chmod(SWAPFILE, 0o600)
+        on = _ok(['swapon', SWAPFILE]) or _enable()
+        if not on:
+            say(f'swap: {SWAPFILE} не включается, пересоздаю')
+            Path(SWAPFILE).unlink(missing_ok=True)
+            on = _create(mem_kb, min_free, install_bytes, say, zeros=True)
+    else:
+        on = _create(mem_kb, min_free, install_bytes, say)
+    if not on:
         # Файла нет и не будет: строка fstab о нём давала бы сбой юнита при загрузке.
-        return not os.path.isfile(SWAPFILE) and _drop_fstab(root / 'etc/fstab', SWAPFILE)
+        return _drop_fstab(root / 'etc/fstab') or removed
     fstab = root / 'etc/fstab'
     if not any(line.split()[:1] == [SWAPFILE] for line in fstab.read_text().splitlines()):
         with fstab.open('a') as output:

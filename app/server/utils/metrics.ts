@@ -219,16 +219,10 @@ export const fetchConnections = () =>
 
 /** Выходы для панели, бота и маршрутов: direct-ru, затем direct и warp экзитов; служебные не показываются. */
 export function userVisibleOutbounds(proxies: ClashProxy[]): ClashProxy[] {
+  const rank = (name: string) => name === 'direct-ru' ? 0 : name.endsWith('-warp') ? 2 : 1
   return proxies
     .filter(p => parseOutbound(p.name) !== null)
-    .sort((a, b) => {
-      if (a.name === 'direct-ru') return -1
-      if (b.name === 'direct-ru') return 1
-      const aWarp = a.name.endsWith('-warp')
-      const bWarp = b.name.endsWith('-warp')
-      if (aWarp !== bWarp) return aWarp ? 1 : -1
-      return a.name.localeCompare(b.name)
-    })
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
 }
 
 export async function readDisabledExits(): Promise<string[]> {
@@ -313,10 +307,6 @@ function lagStart(lag: { at: number, detail?: string }): number {
   return stale ? lag.at - Number(stale[1]) * 1000 : lag.at
 }
 
-function downtimeText(ms: number): string {
-  return `простой ${Math.max(1, Math.floor(ms / 60_000))} мин`
-}
-
 export async function checkNodes(now = Date.now()): Promise<void> {
   const nodes = nodeInstances()
   const health = await fetchNodeHealth(nodes.map(n => n.instance))
@@ -357,7 +347,7 @@ export async function checkNodes(now = Date.now()): Promise<void> {
         const rebooted = h.uptimeSec !== null && h.uptimeSec < downMs / 1000 + 60
         await recordEvent({
           type: 'node_online', level: 'ok', object, at: now, title: `${name} снова в сети`,
-          detail: [rebooted && 'после перезагрузки', downtimeText(downMs)].filter(Boolean).join(' · '),
+          detail: [rebooted && 'после перезагрузки', `простой ${Math.max(1, Math.floor(downMs / 60_000))} мин`].filter(Boolean).join(' · '),
         })
       }
     }

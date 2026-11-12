@@ -42,8 +42,7 @@
   when: not emergency_entry
   changed_when: false
 
-# Слово image говорит проверке узла, что здесь ждут release.json и запасной
-# Hysteria2; пустую отметку оставляла стадия до образа.
+# Слово image говорит проверке узла, что здесь ждут release.json и запасной Hysteria2.
 - name: Отметка стадии
   ansible.builtin.copy:
     content: "image {{ emergency_image }}\n"

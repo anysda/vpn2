@@ -1,3 +1,5 @@
+import { isIP } from 'node:net'
+
 /**
  * AllowedIPs клиентских WireGuard-конфигов: интернет без локальных диапазонов
  * (RFC1918, CGNAT, loopback, multicast), чтобы домашняя сеть клиента не уезжала
@@ -29,18 +31,13 @@ function prefixToNet(prefix: string): string | null {
 const ipToInt = (ip: string): number => ip.split('.').reduce((acc, o) => acc * 256 + Number(o), 0)
 const intToIp = (n: number): string => [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.')
 
-function isIpv4(s: string): boolean {
-  const o = s.split('.')
-  return o.length === 4 && o.every(x => /^\d{1,3}$/.test(x) && Number(x) <= 255)
-}
-
 /**
  * Выбивает из префиксов endpoint сервера: при списке не-/0 wg-quick кладёт
  * обычные маршруты, и endpoint внутри своего же префикса даёт петлю (Linux и
  * macOS-CLI). Префикс заменяется разбиением без этого /32.
  */
 function excludeHost(cidrs: string[], host: string): string[] {
-  if (!isIpv4(host)) return cidrs
+  if (isIP(host) !== 4) return cidrs
   const ip = ipToInt(host)
   const out: string[] = []
   for (const cidr of cidrs) {
@@ -74,7 +71,7 @@ function excludeHost(cidrs: string[], host: string): string[] {
 export function wgAllowedIps(splitLocal: boolean, tunnelPrefixes: string[] = [], endpointHost = '', endpointIp = ''): string {
   if (!splitLocal) return '0.0.0.0/0, ::/0'
   const nets = tunnelPrefixes.map(prefixToNet).filter(Boolean) as string[]
-  const host = isIpv4(endpointHost) ? endpointHost : endpointIp.trim()
+  const host = isIP(endpointHost) === 4 ? endpointHost : endpointIp.trim()
   return [...excludeHost(PUBLIC_V4, host), ...nets, PUBLIC_V6].join(', ')
 }
 

@@ -5,24 +5,16 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 
-/** Только публичный IPv4: адрес туннеля, docker или LAN не годится для автоопределения. */
-function isPublicIpv4(address: string): boolean {
-  if (isIP(address) !== 4) return false
-  const [a, b] = address.split('.').map(Number) as [number, number]
-  return a !== 0 && a !== 10 && a !== 127 && a < 224 && !(a === 100 && b >= 64 && b <= 127)
-    && !(a === 169 && b === 254) && !(a === 172 && b >= 16 && b <= 31) && !(a === 192 && b === 168)
-}
-
 /**
- * IPv6 endpoint попал бы в split-local 2000::/3, поэтому берём IPv4 входа, а без
- * него единственный публичный IPv4 интерфейсов сервера. Домены сохраняем.
+ * IPv6 endpoint попал бы в split-local 2000::/3, поэтому берём IPv4 входа, а без него
+ * единственный публичный IPv4 интерфейсов сервера (не туннель, docker или LAN). Домены сохраняем.
  */
 function wgEndpoint(host: string): string {
   if (isIP(host.trim().replace(/^\[(.*)\]$/, '$1')) !== 6) return host
   const entryIp = (process.env.NUXT_WG_ENDPOINT_IP || '').trim()
   if (isIP(entryIp) === 4) return entryIp
   const addresses = new Set(Object.values(os.networkInterfaces()).flatMap(records =>
-    (records || []).filter(r => !r.internal && r.family === 'IPv4' && isPublicIpv4(r.address)).map(r => r.address)))
+    (records || []).filter(r => !r.internal && r.family === 'IPv4' && !isPrivateAddress(r.address)).map(r => r.address)))
   if (addresses.size === 1) return [...addresses][0]!
   throw createError({
     statusCode: 422, statusMessage: 'wg_ipv4_endpoint_unavailable',

@@ -49,6 +49,7 @@ const SOURCE_PORT = new Set(['source_port', 'source_port_range'])
 // Не дают перехода к следующему правилу только эти действия.
 const NON_FINAL = new Set(['sniff', 'resolve', 'route-options'])
 
+/** Частные, служебные и групповые адреса: в интернете их нет. */
 const PRIVATE = new BlockList()
 for (const [net, bits, type] of [
   ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
@@ -56,7 +57,7 @@ for (const [net, bits, type] of [
   ['192.168.0.0', 16, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
   ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
 ] as const) PRIVATE.addSubnet(net, bits, type)
-const isPrivate = (ip: string) => PRIVATE.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
+export const isPrivateAddress = (ip: string) => PRIVATE.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
 
 function list(value: unknown): string[] {
   if (value === undefined || value === null) return []
@@ -134,7 +135,7 @@ function destHit(plan: RoutePlan, conn: Conn, rule: SbRule, key: string): Matche
       return matched(key, v ?? ip)
     }
     case 'ip_is_private':
-      return rule.ip_is_private === true && ip && isPrivate(ip) ? matched(key, ip) : null
+      return rule.ip_is_private === true && ip && isPrivateAddress(ip) ? matched(key, ip) : null
     case 'rule_set':
       for (const tag of list(rule.rule_set)) {
         for (const inner of plan.rule_set[tag] ?? []) {
@@ -153,7 +154,7 @@ function sourceHit(conn: Conn, rule: SbRule, keys: string[]): MatchedBy | null {
   if (!src) return null
   for (const k of keys) {
     if (k === 'source_ip_cidr' && inNets(cidrs(rule, k), src)) return matched(k, src)
-    if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivate(src)) return matched(k, src)
+    if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivateAddress(src)) return matched(k, src)
   }
   return null
 }

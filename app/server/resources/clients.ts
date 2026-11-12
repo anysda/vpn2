@@ -37,9 +37,7 @@ export default {
    */
   'GET /clients/top': admin(async (event) => {
     const q = getQuery(event)
-    if (q.period !== undefined && q.period !== 'day' && q.period !== 'week') {
-      throw createError({ statusCode: 400, statusMessage: 'invalid_period' })
-    }
+    if (q.period !== undefined && q.period !== 'day' && q.period !== 'week') throw createError({ statusCode: 400, statusMessage: 'invalid_period' })
     const period = q.period === 'week' ? 'week' : 'day'
     const since = { day: periodStartSec('day'), week: periodStartSec('week') }
     const [rows, day, week, recent, historyStart] = await Promise.all([

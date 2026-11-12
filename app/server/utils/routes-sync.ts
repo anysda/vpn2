@@ -17,8 +17,6 @@ const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}(?:\/(?:\d|[12]\d|3[0-2]))?$/
 export function detectRouteType(value: string): 'domain' | 'ip_cidr' | null {
   // Числовой адрес не должен становиться доменом, если октеты или маска
   // неверны: применитель маршрутов отвергнет его после успешного ответа API.
-  if (/^[\d.]+(?:\/.*)?$/.test(value)) {
-    return CIDR_RE.test(value) && isIPv4(value.split('/')[0]!) ? 'ip_cidr' : null
-  }
+  if (/^[\d.]+(?:\/.*)?$/.test(value)) return CIDR_RE.test(value) && isIPv4(value.split('/')[0]!) ? 'ip_cidr' : null
   return DOMAIN_RE.test(value) ? 'domain' : null
 }

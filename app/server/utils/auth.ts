@@ -164,9 +164,7 @@ async function resolveSsoUser(sub: string, preferredUsername?: string) {
 
   // Список проверяется первым и для уже привязанных: привязка переживает удаление sub.
   const { allowed } = ssoSettings()
-  if (!allowed.has(sub)) {
-    throw new SsoDenied('sso_not_allowed', `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`)
-  }
+  if (!allowed.has(sub)) throw new SsoDenied('sso_not_allowed', `sub ${sub} (${preferredUsername ?? '?'}) не в списке sso.allowed_subs`)
 
   const [linked] = await db.select({ user: users }).from(accounts).innerJoin(users, eq(users.id, accounts.userId))
     .where(and(eq(accounts.providerId, SSO_PROVIDER), eq(accounts.accountId, sub))).limit(1)
@@ -278,9 +276,7 @@ async function twoFactorUserId(ctx: HookCtx): Promise<number | null> {
 }
 
 function requireCodeShape(code: unknown) {
-  if (!isCode(code)) {
-    throw APIError.from('BAD_REQUEST', { code: 'VALIDATION_ERROR', message: '[body.code] 6 digits expected' })
-  }
+  if (!isCode(code)) throw APIError.from('BAD_REQUEST', { code: 'VALIDATION_ERROR', message: '[body.code] 6 digits expected' })
 }
 
 const hook = (paths: string[], handler: Middleware) =>

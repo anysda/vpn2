@@ -94,9 +94,7 @@ export async function readBodyAs<T>(event: Parameters<typeof readBody>[0], schem
     body = await readBody(event, { strict: true })
   }
   catch (e) {
-    if (isError(e) && e.statusCode === 400) {
-      throw createError({ statusCode: 400, statusMessage: 'invalid_json', message: 'Запрос не в формате JSON' })
-    }
+    if (isError(e) && e.statusCode === 400) throw createError({ statusCode: 400, statusMessage: 'invalid_json', message: 'Запрос не в формате JSON' })
     throw e
   }
   const r = schema.safeParse(body)

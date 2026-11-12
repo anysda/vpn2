@@ -14,9 +14,7 @@ const mbps = (bps: number | null | undefined) => bps != null ? bps * 8 / 1e6 : n
 export default {
   'GET /version': () => {
     // HTTP слушает раньше конца инициализации, а деплой ждёт именно готовую панель.
-    if (!isPanelReady()) {
-      throw createError({ statusCode: 503, statusMessage: 'panel_starting', message: 'Панель запускается' })
-    }
+    if (!isPanelReady()) throw createError({ statusCode: 503, statusMessage: 'panel_starting', message: 'Панель запускается' })
     return { name: 'anysda-vpn2', version: '1.1.5', license: 'MIT' }
   },
   'GET /events': admin(async event => recentEvents((await getValidatedQuery(event, EventsQuery.parse)).limit)),

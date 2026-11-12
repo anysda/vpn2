@@ -16,9 +16,7 @@ export function requireBotAuth(event: H3Event): void {
   const expected = Buffer.from(String(useRuntimeConfig().tgbotSecret ?? ''))
   if (!expected.length) throw createError({ statusCode: 503, statusMessage: 'tgbot_secret_not_configured' })
   const provided = Buffer.from((getHeader(event, 'authorization') ?? '').replace(/^Bearer\s+/i, ''))
-  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
-    throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
-  }
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) throw createError({ statusCode: 401, statusMessage: 'unauthorized' })
 }
 
 /** Клиент, привязанный к Telegram-чату. 404 `not_linked`, если такого нет. */

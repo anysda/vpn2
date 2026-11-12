@@ -1,16 +1,13 @@
 #!/usr/sbin/nft -f
 # Managed by anysda-vpn2 stage 19-yt-zapret. Не редактировать руками —
 # перезаписывается каждым прогоном стадии.
-#
-# Отбор — ТОЛЬКО по метке {{ zapret_v.mark }}, которую sing-box ставит на сокеты outbound
-# youtube-ru. Остальной трафик ноды (панель, ACME, docker pull, hy2 к экзитам)
-# в очередь не попадает ни при каких условиях.
+# Отбор — только по метке {{ zapret_v.mark }} сокетов outbound youtube-ru sing-box.
 
 table inet ytzapret
 delete table inet ytzapret
 
 table inet ytzapret {
-    # Метим исходящее диаг-юзера — это A/B-пробник, см. anysda-yt-check.
+    # Исходящее диаг-юзера A/B-проверки anysda-yt-check.
     chain out {
         type filter hook output priority -150; policy accept;
         meta skuid {{ zapret_v.diag_uid }} meta mark set {{ zapret_v.mark }} counter
@@ -18,28 +15,22 @@ table inet ytzapret {
 
     chain post {
         type filter hook postrouting priority 101; policy accept;
-        # Метка живёт на исходящем пакете, но ответы сервера приходят без неё.
-        # Переносим её в conntrack — по ct mark ловим обратное направление.
+        # Метка в conntrack: по ct mark ловятся ответы сервера.
         meta mark {{ zapret_v.mark }} ct mark set {{ zapret_v.mark }} counter
-        # Поправка окна под scale из стратегии (см. шаг 5 стадии). Стоит ДО
-        # очереди: пакет, вернувшийся из nfqws2, остаток цепочки не проходит.
+        # Поправка окна стоит до очереди: пакет из nfqws2 остаток цепочки не проходит.
 {{ zapret_v.window_rules }}
-        # Десинк нужен только в начале соединения: ClientHello и первые
-        # сегменты. Остальное идёт мимо очереди на полной скорости.
         meta mark {{ zapret_v.mark }} oifname "{{ zapret_v.wan }}" tcp dport 443 ct original packets 1-12 counter queue num {{ zapret_v.queue }} bypass
     }
 
     chain pre {
         type filter hook prerouting priority -101; policy accept;
-        # Ответы сервера. БЕЗ этой цепочки wssize не видит SYN,ACK и
-        # реассемблинг не заводится — обход молча перестаёт работать.
+        # Без ответов сервера wssize не видит SYN,ACK, и обход молча перестаёт работать.
         ct mark {{ zapret_v.mark }} iifname "{{ zapret_v.wan }}" tcp sport 443 ct reply packets 1-12 counter queue num {{ zapret_v.queue }} bypass
     }
 
     chain predefrag {
         type filter hook output priority -401; policy accept;
-        # Пакеты, которые nfqws2 генерит сам, помечены 0x40000000. Без notrack
-        # строгий conntrack дропает их как INVALID.
+        # Пакеты nfqws2 помечены 0x40000000; без notrack conntrack дропает их как INVALID.
         mark and 0x40000000 != 0x00000000 notrack
     }
 }

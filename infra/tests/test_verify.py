@@ -294,7 +294,12 @@ class VerifyTest(unittest.TestCase):
                 f'sys.path.insert(0, {str(ROOT / "infra/vpn2/src")!r})\n'
                 'from vpn2.verify import stage\n'
                 + ''.join(f'stage.{name} = Path({str(path)!r})\n' for name, path in paths.items())
-                + f'stage.YT_CHECK, stage.YT_FAILOVER = {str(yt)!r}, ({str(failover)!r}, "watchdog", "yt")\n'
+                + f'stage.YT_CHECK = {str(yt)!r}\n'
+                # Сторож YouTube: его состояние и clash API, отказ API - сбой контроллера.
+                + f'stage.yt.CONFIG, stage.yt.STATE = Path({str(config)!r}), Path({str(state_file)!r})\n'
+                + ('def api(*_):\n    raise OSError("clash api")\n' if fault == 'yt-failover'
+                   else 'def api(*_):\n    return {"now": "youtube-ru"}\n')
+                + 'stage.yt.api = api\n'
                 'raise SystemExit(stage.run(dict(os.environ)))\n')
             command = [sys.executable, '-B', str(script)]
             # VERIFY_REF - ревизия с прежней стадией на bash: эталон вывода для сверки переноса.

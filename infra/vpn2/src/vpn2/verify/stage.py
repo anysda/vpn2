@@ -17,7 +17,7 @@ import tempfile
 import time
 import traceback
 
-from vpn2.watchdog import warp
+from vpn2.watchdog import warp, yt
 
 REPORT = '/var/lib/anysda/verify-report.json'
 TRAFFIC = Path(__file__).with_name('traffic.py')
@@ -34,7 +34,6 @@ SINGBOX_CONFIG = Path('/etc/sing-box/config.json')
 WARP_STATE = Path('/var/lib/anysda-warp-watchdog/state.json')
 TARGETS_URL = 'http://127.0.0.1:8428/api/v1/targets'
 YT_CHECK = '/usr/local/bin/anysda-yt-check'
-YT_FAILOVER = ('/opt/vpn2/venv/bin/vpn2', 'watchdog', 'yt')
 TRAFFIC_LABEL = 'трафик: контрольный клиент'
 TPROXY = ('-j', 'TPROXY', '--tproxy-mark', '0x42/0x42', '--on-port', '7898', '--on-ip', '127.0.0.1')
 STATIC = ('static/index.html', 'static/instructions.html')
@@ -117,6 +116,36 @@ def grep(argv, pattern, env=None):
     rc, out, err = sh(*argv, env=env)
     hit = any(re.search(pattern, line) for line in out.splitlines())
     return (rc if hit else 1), err.rstrip('\n')
+
+
+def yt_status():
+    """Selector YouTube и последняя проба сторожа: 2 - свежего измерения нет, 1 - выход или проба не те."""
+    try:
+        config = json.loads(yt.CONFIG.read_text())
+        if not any(o.get('tag') == 'youtube-auto' for o in config.get('outbounds', [])):
+            return 2, 'YouTube: ожидаю конфиг youtube-auto от стадии 20'
+        lines = ['YouTube selector: ' + yt.api('GET')['now']]
+        state = json.loads(yt.STATE.read_text()) if yt.STATE.exists() else None
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as failure:
+        return 1, f'YouTube: ошибка контроллера {type(failure).__name__}'
+    if lines[0].rpartition(' ')[2] not in ('youtube-ru', 'foreign-best'):
+        return 1, '\n'.join([*lines, 'неизвестный выход selector'])
+    if not isinstance(state, dict):
+        return 2, '\n'.join([*lines, 'нет измерений видеопотока' if state is None else 'некорректное состояние видеопробы'])
+    counters = [state.get(key) for key in ('good', 'bad')]
+    if any(type(value) is not int or not 0 <= value <= yt.HITS for value in counters):
+        return 2, '\n'.join([*lines, 'некорректные счётчики видеопробы'])
+    detail = state.get('last_probe') or 'нет измерений видеопотока'
+    lines.append(f'good={counters[0]} bad={counters[1]}; {"не измерено: " if state.get("unmeasured") else ""}{detail}')
+    if state.get('unmeasured') or not any(counters) or not state.get('last_probe'):
+        return 2, '\n'.join(lines)
+    stamp = state.get('checked_at')
+    # Период 5 мин + до 240 с на oneshot; старый успех не скрывает остановку проб.
+    if type(stamp) not in (int, float) or not 0 <= time.time() - stamp <= 600:
+        return 2, '\n'.join([*lines, 'нет свежего измерения видеопотока (не старше 600 с)'])
+    if counters[1]:
+        return 1, '\n'.join([*lines, 'последняя проба обхода неуспешна; запасной VPN-путь этой пробой не проверяется'])
+    return 0, '\n'.join(lines)
 
 
 def service(name):
@@ -489,10 +518,9 @@ def youtube(stage):
         return
     stage.check('yt-zapret: A/B-проверка обхода', command, YT_CHECK, allow_unmeasured=True)
     # Нет свежей видеопробы (код 2) - одна проба здесь: таймер мог её ещё не запускать.
-    if command(*YT_FAILOVER, '--status')[0] == 2:
+    if yt_status()[0] == 2:
         command('systemctl', 'start', 'anysda-yt-failover.service')
-    stage.check('yt-failover: selector и последняя видеопроба', command, *YT_FAILOVER, '--status',
-                allow_unmeasured=True)
+    stage.check('yt-failover: selector и последняя видеопроба', yt_status, allow_unmeasured=True)
     stage.check('yt-failover: таймер active', service, 'anysda-yt-failover.timer')
 
 

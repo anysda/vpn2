@@ -46,7 +46,7 @@ for release in 'ID=other' 'ID=debian'; do
 done
 
 # На оркестраторе проверяются команды, APT нужны имена пакетов.
-eval "$(sed -n '/^install_prereqs() {$/,/^}$/p' "$ROOT/infra/deploy.sh")"
+eval "$(sed -n '/^install_prereqs() {$/,/^}$/p' "$ROOT/infra/lib/deploy-prep.sh")"
 export C_B= C_END= C_G=
 # shellcheck disable=SC2317,SC2329
 command() {
@@ -54,13 +54,26 @@ command() {
   builtin command "$@"
 }
 # shellcheck disable=SC2317,SC2329
-_install_prereq_pkgs() {
-  [[ " $* " == *' openssh-client '* && " $* " != *' scp '* && " $* " != *' ssh '* ]]
-  echo 'SSH package mapping: OK'
+step() { :; }
+# shellcheck disable=SC2317,SC2329
+apt_have() { :; }
+# shellcheck disable=SC2317,SC2329
+apt_prepare() { :; }
+# shellcheck disable=SC2317,SC2329
+docker_apt_source() { :; }
+# shellcheck disable=SC2317,SC2329
+apt_get() {
+  [[ $1 == install ]] || return 0
+  [[ " $* " == *' openssh-client '* && " $* " != *' scp '* && " $* " != *' ssh '* ]] && MAPPED=1
 }
 # shellcheck disable=SC2317,SC2329
-ansible_venv_start() { :; }
-install_prereqs
+ansible_venv_ensure() { :; }
+# shellcheck disable=SC2317,SC2329
+ansible_wheel_path() { echo vpn2.whl; }
+MAPPED=
+install_prereqs >/dev/null
+[[ $MAPPED == 1 ]]
+echo 'SSH package mapping: OK'
 
 # Настоящая POSIX-блокировка: проверяем fallback при отсутствии fuser,
 # затем её освобождение. Держит родительский процесс, фоновых jobs нет.

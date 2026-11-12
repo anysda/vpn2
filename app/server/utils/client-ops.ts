@@ -46,7 +46,7 @@ export async function createClient(input: ClientCreateInput, actor: string): Pro
   assertExpiryAllowed(input.expiresAt)
   const name = input.name.trim()
   await assertNameFree(name)
-  const values = { ...normalized(input), name, filterTraffic: input.filterTraffic ?? true, password: generateClientPassword() }
+  const values = { ...normalized(input), name, filterTraffic: input.filterTraffic ?? true, password: generatePassword() }
   const [row] = (await useDb().insert(clients).values(values).returning()) as [Client]
   // Клиент уже создан: сбой очереди бота - предупреждение в ответе, не ошибка.
   const warning = await notifyWarning(notifyBot('client_created', { name: row.name }), 'Уведомление о клиенте не отправлено')

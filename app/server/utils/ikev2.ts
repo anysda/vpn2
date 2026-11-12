@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto'
 import { and, eq, isNull } from 'drizzle-orm'
 import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
@@ -14,12 +13,6 @@ export const readIkev2CaPem = async () => (await profile()).ca
 /** Адрес entry для IKEv2: ENTRY_HOST (на него выписан сертификат сервера), иначе публичный адрес WG. */
 export function entryHost(): string {
   return String(process.env.ENTRY_HOST || useRuntimeConfig().wgPublicHost || '').trim()
-}
-
-/** 20 символов без спецзнаков: пароль вводят руками в системный VPN-клиент. */
-function generateIkev2Password(): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-  return [...randomBytes(20)].map(b => alphabet.charAt(b % alphabet.length)).join('')
 }
 
 /** `<клиент>-<устройство>`, уникальный среди всех устройств: это id в secrets swanctl. */
@@ -44,7 +37,7 @@ export function ensureDeviceIkev2(deviceId: number) {
     const all = await db.select({ username: devicesTable.ikev2Username, ip: devicesTable.ikev2Ip }).from(devicesTable)
     const [updated] = await db.update(devicesTable).set({
       ikev2Username: row.ikev2Username ?? buildIkev2Username(client.name, row.name, all.map(r => r.username)),
-      ikev2Password: row.ikev2Password ?? generateIkev2Password(),
+      ikev2Password: row.ikev2Password ?? generatePassword(),
       ikev2Ip: row.ikev2Ip ?? nextPoolAddress('ikev2', all.map(r => r.ip)),
       updatedAt: new Date(),
     }).where(and(

@@ -118,7 +118,7 @@ export default {
     const before = await useDb().transaction(async (tx) => {
       const [client] = await tx.select({ tgChatId: clients.tgChatId, name: clients.name }).from(clients).where(eq(clients.id, id)).limit(1)
       if (!client) throw notFound()
-      await tx.update(clients).set({ tgChatId: null, tgUsername: null, password: generateClientPassword(), updatedAt: new Date() })
+      await tx.update(clients).set({ tgChatId: null, tgUsername: null, password: generatePassword(), updatedAt: new Date() })
         .where(eq(clients.id, id))
       return client
     }, { behavior: 'immediate' })

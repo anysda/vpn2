@@ -104,8 +104,8 @@ ss -uanmp 2>/dev/null | grep -A1 sing-box | grep -o 'rb[0-9]*' | sed 's/^/SKRB /
 # Текст, который .bashrc узла печатает при входе по ssh, приходит в stdout
 # раньше вывода команды: команда сначала печатает метку, всё до неё отбрасываем.
 # Без метки shell узла не дошёл до команды (exit или exec в .bashrc) - это отказ
-# даже при коде 0. Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из
-# infra/lib/ssh.sh: инструмент ssh.sh не подключает.
+# даже при коде 0. Метка и причина - копия MARK и NO_MARK_REASON из
+# infra/vpn2/src/vpn2/verify/stage.py: инструмент пакет не подключает.
 SSH_MARK = 'vpn2-ssh-output-begin'
 SSH_NO_MARK_REASON = 'shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 

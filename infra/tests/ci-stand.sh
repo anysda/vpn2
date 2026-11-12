@@ -129,8 +129,8 @@ ssh_node() {
   # сначала печатает метку, всё до неё отбрасывается, после неё идёт потоком.
   # Без метки shell узла не дошёл до команды (exit или exec в .bashrc) - это
   # отказ с причиной даже при коде 0; при 255 (соединение) - код и сообщение ssh.
-  # Метка и причина - копия _SSH_MARK и _SSH_NO_MARK_REASON из infra/lib/ssh.sh:
-  # инструмент ssh.sh не подключает.
+  # Метка и причина - копия MARK и NO_MARK_REASON из infra/vpn2/src/vpn2/verify/stage.py:
+  # инструмент пакет не подключает.
   local mark=vpn2-ssh-output-begin st
   local reason='shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
   { ssh -i "$STAND_DIR/id_ed25519" -o BatchMode=yes -o ConnectTimeout=10 \

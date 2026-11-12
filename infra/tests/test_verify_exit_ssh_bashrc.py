@@ -2,9 +2,8 @@
 
 Настоящий 99-verify на ru с заглушками из test_verify; ssh подменён на
 подставной sshd с login shell: сначала .bashrc экзита (режим из FAKE_BASHRC),
-затем команда через bash. Проверка должна отрезать вывод до метки начала, как
-ssh_exec и push в infra/lib/ssh.sh, и отличать exit в .bashrc от прошедшей
-проверки.
+затем команда через bash. Проверка должна отрезать вывод до метки начала
+(stage.MARK) и отличать exit в .bashrc от прошедшей проверки.
 """
 from pathlib import Path
 import tempfile

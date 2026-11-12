@@ -39,7 +39,7 @@ TPROXY = ('-j', 'TPROXY', '--tproxy-mark', '0x42/0x42', '--on-port', '7898', '--
 STATIC = ('static/index.html', 'static/instructions.html')
 COPIES = ('vpn2', 'vpn2_emergency')
 BROKEN = (OSError, ValueError, KeyError, TypeError, AttributeError)
-# Метка и причина те же, что у _SSH_MARK и _SSH_NO_MARK_REASON в infra/lib/ssh.sh.
+# Метка начала вывода команды на узле: всё до неё напечатал .bashrc.
 MARK = 'vpn2-ssh-output-begin'
 NO_MARK_REASON = 'shell узла не дошёл до команды (.bashrc root делает exit или exec), команда не выполнена'
 # Снимок читает код самой аварийки под её пользователем: каталог состояния закрыт для остальных.

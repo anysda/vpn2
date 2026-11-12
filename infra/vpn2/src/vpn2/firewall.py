@@ -162,23 +162,34 @@ def ufw_defaults(incoming='deny', outgoing='allow', *, path='/etc/default/ufw', 
     return changed
 
 
-# --- NFT: text generators -------------------------------------------------
+QUIC_TABLE = '''#!/usr/sbin/nft -f
+# Managed by anysda-vpn2 stage 19-yt-zapret. Не редактировать руками —
+# перезаписывается стадией и таймером anysda-yt-quic-refresh.timer.
 
-def own_table(table, body, *, header=(), family='inet', gap=False):
-    """Text of a file that replaces one whole table: table / delete table / table {body}.
+table inet anysda_ytquic
+delete table inet anysda_ytquic
 
-    The first two lines make the load idempotent: the table is created if
-    missing, then deleted, then defined anew. ``header`` lines go first as is,
-    ``body`` is a string or a list of already indented lines. ``gap`` puts an
-    empty line between the delete and the definition (the YouTube QUIC file).
-    """
-    lines = list(header) + [f'table {family} {table}', f'delete table {family} {table}']
-    if gap:
-        lines.append('')
-    lines.append(f'table {family} {table} {{')
-    lines.extend(body.split('\n') if isinstance(body, str) else body)
-    lines.append('}')
-    return '\n'.join(lines) + '\n'
+table inet anysda_ytquic {
+    set google_v4 {
+        type ipv4_addr
+        flags interval
+        elements = { %s }
+    }
+    set google_v6 {
+        type ipv6_addr
+        flags interval
+        elements = { %s }
+    }
+
+    # priority -200 — РАНЬШЕ mangle/prerouting (-150), где стоит TPROXY.
+    # Иначе пакет уйдёт в sing-box до того, как мы его увидим.
+    chain prerouting {
+        type filter hook prerouting priority -200; policy accept;
+%s
+    }
+}
+
+'''
 
 
 def load_google_prefixes(path):
@@ -214,37 +225,10 @@ def load_google_prefixes(path):
 
 
 def google_quic_table(v4, v6, ifaces=('wg0', 'xfrm0', 'tun0')):
-    """The anysda_ytquic table: UDP/443 from tunnels to Google falls back to TCP.
-
-    Byte for byte the output of gen-yt-quic-nft.py (stage 19-yt-zapret),
-    including its closing empty line.
-    """
-    header = ['#!/usr/sbin/nft -f',
-              '# Managed by anysda-vpn2 stage 19-yt-zapret. Не редактировать руками —',
-              '# перезаписывается стадией и таймером anysda-yt-quic-refresh.timer.',
-              '']
-    body = [
-        '    set google_v4 {',
-        '        type ipv4_addr',
-        '        flags interval',
-        '        elements = { ' + ', '.join(v4) + ' }',
-        '    }',
-        '    set google_v6 {',
-        '        type ipv6_addr',
-        '        flags interval',
-        '        elements = { ' + ', '.join(v6) + ' }',
-        '    }',
-        '',
-        '    # priority -200 — РАНЬШЕ mangle/prerouting (-150), где стоит TPROXY.',
-        '    # Иначе пакет уйдёт в sing-box до того, как мы его увидим.',
-        '    chain prerouting {',
-        '        type filter hook prerouting priority -200; policy accept;',
-    ]
-    for iface in ifaces:
-        body.append(f'        iifname "{iface}" udp dport 443 ip daddr @google_v4 counter drop')
-        body.append(f'        iifname "{iface}" udp dport 443 ip6 daddr @google_v6 counter drop')
-    body.append('    }')
-    return own_table('anysda_ytquic', body, header=header, gap=True) + '\n'
+    """Таблица anysda_ytquic: UDP/443 из туннелей к Google отбрасывается, клиент уходит на TCP."""
+    drops = '\n'.join(f'        iifname "{iface}" udp dport 443 {family} daddr @google_{name} counter drop'
+                      for iface in ifaces for family, name in (('ip', 'v4'), ('ip6', 'v6')))
+    return QUIC_TABLE % (', '.join(v4), ', '.join(v6), drops)
 
 
 _FLUSH_RE = re.compile(rb'(?m)^[ \t]*flush[ \t]+ruleset[ \t]*;?[ \t]*(#.*)?$')

@@ -9,7 +9,7 @@ import pytest
 from vpn2 import firewall
 
 FIXTURES = Path(__file__).parent / 'fixtures' / 'firewall'
-GOOG = Path(__file__).parents[2] / 'lib' / 'google-prefixes.json'
+GOOG = Path(__file__).parents[2] / 'ansible/roles/zapret/files/google-prefixes.json'
 HY2HOP = Path(__file__).parents[2] / 'ansible/roles/exit/templates/nftables-hy2hop.conf.j2'
 
 
@@ -18,13 +18,6 @@ def fixture(name):
 
 
 # --- generators -------------------------------------------------------------
-
-def test_own_table_shape_and_repeat():
-    text = firewall.own_table('t1', ['    chain c {', '    }'], header=['# h'])
-    assert text == '# h\ntable inet t1\ndelete table inet t1\ntable inet t1 {\n    chain c {\n    }\n}\n'
-    assert firewall.own_table('t1', '    x', family='ip').startswith('table ip t1\ndelete table ip t1\n')
-    assert firewall.own_table('t1', ['    chain c {', '    }'], header=['# h']) == text
-
 
 def test_google_quic_table_matches_old_generator_byte_for_byte():
     v4, v6 = firewall.load_google_prefixes(GOOG)

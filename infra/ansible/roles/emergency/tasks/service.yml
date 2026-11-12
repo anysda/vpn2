@@ -1,54 +1,26 @@
 ---
-- name: Ресурсы юнита наблюдателя
+- name: Ресурсы юнитов аварийки
   ansible.builtin.include_role:
     name: resources
   vars:
-    resources_units: [vpn2-emergency]
+    resources_units: "{{ emergency_services }}"
 
-- name: Наблюдатель включён
+- name: Службы аварийки включены
   ansible.builtin.systemd_service:
-    name: vpn2-emergency.service
+    name: "{{ item }}.service"
     enabled: true
     daemon_reload: "{{ emergency_unit is changed }}"
+  loop: "{{ emergency_services }}"
 
 # Перезапуск только при смене входов службы: пакета, юнита с его drop-in,
 # состава аварийки. Идущую аварию повторный деплой без правок не трогает.
-- name: Наблюдатель идёт с текущими входами
+- name: Службы аварийки идут с текущими входами
   ansible.builtin.command:
-    argv: "{{ emergency_bash + [emergency_restart_step, emergency_tmp, 'vpn2-emergency', emergency_package_mark, emergency_etc ~ '/agent.json'] }}"
+    argv: "{{ emergency_bash + [emergency_restart_step, emergency_tmp, item, emergency_package_mark, emergency_etc ~ '/agent.json'] }}"
+  loop: "{{ emergency_services }}"
   environment: "{{ emergency_env }}"
-  register: emergency_agent_run
-  changed_when: "'changed=1' in emergency_agent_run.stdout"
-
-# Entry заранее передаёт экзитам список клиентов.
-- name: Передача списка клиентов
-  when: emergency_entry
-  block:
-    - name: Юнит передачи списка клиентов
-      ansible.builtin.template:
-        src: vpn2-emergency-snapshot.service.j2
-        dest: "{{ emergency_units }}/vpn2-emergency-snapshot.service"
-        mode: '0644'
-      register: emergency_snapshot_unit
-
-    - name: Ресурсы юнита передачи
-      ansible.builtin.include_role:
-        name: resources
-      vars:
-        resources_units: [vpn2-emergency-snapshot]
-
-    - name: Передача включена
-      ansible.builtin.systemd_service:
-        name: vpn2-emergency-snapshot.service
-        enabled: true
-        daemon_reload: "{{ emergency_snapshot_unit is changed }}"
-
-    - name: Передача идёт с текущими входами
-      ansible.builtin.command:
-        argv: "{{ emergency_bash + [emergency_restart_step, emergency_tmp, 'vpn2-emergency-snapshot', emergency_package_mark] }}"
-      environment: "{{ emergency_env }}"
-      register: emergency_snapshot_run
-      changed_when: "'changed=1' in emergency_snapshot_run.stdout"
+  register: emergency_service_run
+  changed_when: "'changed=1' in emergency_service_run.stdout"
 
 # Копии пакета прежних выпусков рядом с аварийкой: службы уже идут из venv.
 - name: Копии пакета прежних выпусков убраны

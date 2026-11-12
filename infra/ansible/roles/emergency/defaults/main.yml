@@ -22,7 +22,8 @@ emergency_peers: >-
      | map(attribute='value.host') | list
      + ([] if emergency_config.node == emergency_config.entry_id | default('entry') else ['any']) }}
 emergency_hy2_port: "{{ vpn2_env.EMERGENCY_HY2_PORT | default('18443', true) }}"
-emergency_hy2_units: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.service]
+# Наблюдатель на каждом узле; entry заранее передаёт экзитам список клиентов.
+emergency_services: "{{ ['vpn2-emergency'] + (['vpn2-emergency-snapshot'] if emergency_entry else []) }}"
 
 # Docker - хранилище образа со статикой; polkitd даёт агенту в песочнице
 # запустить Hysteria2.

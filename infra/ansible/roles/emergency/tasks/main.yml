@@ -67,28 +67,18 @@
     create_home: false
     shell: /usr/sbin/nologin
 
-- name: Каталог настроек vpn2
-  ansible.builtin.file:
-    path: /etc/vpn2
-    state: directory
-    mode: '0755'
-
 - name: Каталоги аварийки
   ansible.builtin.file:
     path: "{{ item.path }}"
     state: directory
-    owner: "{{ item.owner }}"
-    group: vpn2-emergency
+    owner: "{{ item.owner | default(omit) }}"
+    group: "{{ item.group | default(omit) }}"
     mode: "{{ item.mode }}"
   loop:
-    - {path: "{{ emergency_state }}", owner: vpn2-emergency, mode: '0700'}
-    - {path: "{{ emergency_etc }}", owner: root, mode: '0750'}
-
-- name: Каталог статики и выпуска
-  ansible.builtin.file:
-    path: "{{ emergency_home }}"
-    state: directory
-    mode: '0755'
+    - {path: /etc/vpn2, mode: '0755'}
+    - {path: "{{ emergency_state }}", owner: vpn2-emergency, group: vpn2-emergency, mode: '0700'}
+    - {path: "{{ emergency_etc }}", owner: root, group: vpn2-emergency, mode: '0750'}
+    - {path: "{{ emergency_home }}", mode: '0755'}
 
 - name: Состав аварийки
   ansible.builtin.copy:
@@ -106,16 +96,17 @@
   register: emergency_static
   changed_when: "'changed=1' in emergency_static.stdout"
 
-- name: Юнит наблюдателя
+- name: Юниты служб аварийки
   ansible.builtin.template:
-    src: vpn2-emergency.service.j2
-    dest: "{{ emergency_units }}/vpn2-emergency.service"
+    src: "{{ item }}.service.j2"
+    dest: "{{ emergency_units }}/{{ item }}.service"
     mode: '0644'
+  loop: "{{ emergency_services }}"
   register: emergency_unit
 
 - name: Аварийный вход экзита
   ansible.builtin.import_tasks: exit.yml
   when: not emergency_entry
 
-- name: Наблюдатель и передача списка клиентов
+- name: Службы аварийки
   ansible.builtin.import_tasks: service.yml

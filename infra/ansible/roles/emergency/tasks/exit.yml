@@ -8,14 +8,6 @@
     create_home: false
     shell: /usr/sbin/nologin
 
-- name: Юниты аварийного Hysteria2
-  ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "{{ emergency_units }}/{{ item }}"
-    mode: '0644'
-  loop: "{{ emergency_hy2_units }}"
-  register: emergency_hy2_unit_files
-
 - name: Каталог аварийного Hysteria2
   ansible.builtin.file:
     path: "{{ emergency_state }}/hy2"
@@ -31,11 +23,6 @@
     src: 50-vpn2-emergency-hy2.rules
     dest: /etc/polkit-1/rules.d/50-vpn2-emergency-hy2.rules
     mode: '0644'
-
-- name: Юниты аварийного Hysteria2 перечитаны  # noqa: no-handler
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  when: emergency_hy2_unit_files is changed or emergency_unit is changed
 
 # При идущей аварии адрес и порт не меняются: их называют выданные профили.
 # Команда пишет один и тот же файл настроек, вне аварии порт остаётся закрыт.
@@ -89,6 +76,25 @@
     argv: "{{ emergency_bash + ['systemctl stop vpn2-tls.timer vpn2-tls.service 2>/dev/null || true'] }}"
   changed_when: false
 
+- name: Юниты аварийного Hysteria2 и выгрузки сертификата
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ emergency_units }}/{{ item }}"
+    mode: '0644'
+  loop: [vpn2-emergency-hy2.service, vpn2-emergency-hy2-probe.service, vpn2-tls.service, vpn2-tls.timer]
+  register: emergency_exit_units
+
+- name: Ресурсы юнита выгрузки сертификата
+  ansible.builtin.include_role:
+    name: resources
+  vars:
+    resources_units: [vpn2-tls]
+
+- name: Юниты экзита перечитаны  # noqa: no-handler
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: emergency_exit_units is changed or emergency_unit is changed
+
 - name: Настройки TLS и сниппеты Caddy
   ansible.builtin.command:
     argv:
@@ -129,25 +135,10 @@
   register: emergency_caddy_run
   changed_when: "'changed=1' in emergency_caddy_run.stdout"
 
-- name: Юниты выгрузки сертификата
-  ansible.builtin.template:
-    src: "{{ item }}.j2"
-    dest: "{{ emergency_units }}/{{ item }}"
-    mode: '0644'
-  loop: [vpn2-tls.service, vpn2-tls.timer]
-  register: emergency_tls_units
-
-- name: Ресурсы юнита выгрузки сертификата
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [vpn2-tls]
-
 - name: Caddy включён
   ansible.builtin.systemd_service:
     name: caddy.service
     enabled: true
-    daemon_reload: "{{ emergency_tls_units is changed }}"
 
 - name: Первый сертификат на IP
   ansible.builtin.command:
@@ -170,16 +161,5 @@
 # выдаче шаг её не трогает.
 - name: Сертификат страницы аварийки
   ansible.builtin.command:
-    argv:
-      - runuser
-      - -u
-      - vpn2-emergency
-      - --
-      - "{{ emergency_venv }}/bin/python"
-      - -B
-      - -c
-      - "import sys; from vpn2.emergency import hy2; hy2.tls_pair(*sys.argv[1:])"
-      - "{{ emergency_state }}"
-      - "{{ emergency_public_ip }}"
-      - /etc/vpn2/tls/ip
+    argv: [runuser, -u, vpn2-emergency, --, "{{ emergency_vpn2 }}", emergency, hy2, tls-pair, "{{ emergency_public_ip }}"]
   changed_when: false

@@ -2,12 +2,6 @@
 # Сторож активно опрашивает экзиты через clash-api и переключает группу
 # foreign-best на живой экзит. Идёт после 20-ru-router: тот пишет секрет
 # clash-api и поднимает sing-box.
-- name: Команда vpn2
-  ansible.builtin.stat:
-    path: "{{ failover_vpn2 }}"
-  register: failover_vpn2_stat
-  failed_when: not (failover_vpn2_stat.stat.executable | default(false))
-
 - name: Файл сторожа прежних выпусков убран
   ansible.builtin.file:
     path: /usr/local/bin/anysda-failover-watchdog
@@ -57,17 +51,10 @@
 # Перезапуск только при смене входов службы: кода сторожа, юнита, env-файла.
 - name: Сторож экзитов запущен с текущими входами
   ansible.builtin.command:
-    argv:
-      - /bin/bash
-      - --norc
-      - -euo
-      - pipefail
-      - -c
-      - 'source "$0/anysda-svc.sh"; svc_restart_if_changed anysda-failover-watchdog "$@"; svc_settle 3'
-      - "{{ failover_tmp }}"
-      - "{{ failover_wheel_mark }}"
-      - /etc/systemd/system/anysda-failover-watchdog.service
-      - "{{ failover_env }}"
+    argv: [/bin/bash, --norc, -euo, pipefail, -c, "{{ failover_restart_step }}", "{{ failover_tmp }}",
+           "{{ failover_wheel_mark }}", /etc/systemd/system/anysda-failover-watchdog.service, "{{ failover_env }}"]
+    vars:
+      failover_restart_step: source "$0/anysda-svc.sh"; svc_restart_if_changed anysda-failover-watchdog "$@"; svc_settle 3
   environment:
     HOST_TAG: "{{ inventory_hostname }}"
   register: failover_restart

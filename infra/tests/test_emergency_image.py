@@ -276,9 +276,12 @@ class EmergencyImageTests(unittest.TestCase):
             for needle in ('hy2', 'caddy', 'vpn2-tls'):
                 self.assertNotIn(needle, text.lower(), name)
         # VPN2-514: список клиентов экзитам передаёт только entry, своей службой.
-        sender = [task for task in self.tasks('service.yml') if 'vpn2-emergency-snapshot' in json.dumps(task)]
-        self.assertEqual(len(sender), 4)
-        self.assertEqual({task['when'] for task in sender}, {'emergency_entry'})
+        defaults = yaml.safe_load((ROLE / 'defaults/main.yml').read_text())
+        self.assertEqual(defaults['emergency_services'],
+                         "{{ ['vpn2-emergency'] + (['vpn2-emergency-snapshot'] if emergency_entry else []) }}")
+        for task in self.tasks('main.yml') + self.tasks('service.yml'):
+            if 'emergency_services' in json.dumps(task):
+                self.assertNotIn('vpn2-emergency-snapshot', json.dumps(task))
         unit = (ROLE / 'templates/vpn2-emergency-snapshot.service.j2').read_text()
         self.assertIn('ExecStart=/opt/vpn2/venv/bin/vpn2 emergency snapshot-sender run', unit)
         self.assertIn('WantedBy=multi-user.target', unit)

@@ -25,16 +25,6 @@ LEGACY_KEYS = {'type', 'tag', 'server', 'server_port', 'password', 'obfs', 'tls'
                'up_mbps', 'down_mbps'}
 HOP_KEYS = ('server_ports', 'hop_interval')
 
-FAKE_NFT = '''#!/bin/sh
-echo "nft $*" >> "$NFT_LOG"
-prev=
-for arg in "$@"; do
-  if [ "$prev" = -f ]; then
-    if [ "$arg" = - ]; then cat >> "$NFT_LOG"; else cat "$arg" >> "$NFT_LOG"; fi
-  fi
-  prev=$arg
-done
-'''
 STUBS = '''
 release_download() { printf '#!/bin/sh\\nexit 1\\n' > "$2"; }
 sha256sum() {

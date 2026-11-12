@@ -77,24 +77,6 @@ def wg_sets(text):
     return {p['publickey']: set(p.get('allowedips', [])) for p in wg_view(text)[1]}
 
 
-def installed_wg(text):
-    """The wg installed here on `text` as a node takes it: wg-quick strip, `wg setconf` on a fresh wg0 in a netns.
-
-    (None, {peer: set of AllowedIPs}) if wg applies the file, (the entry wg cannot parse, None) if it rejects it.
-    """
-    from test_wg_conf_wg_oracle import oracle  # it imports this module
-    error, _key, peers = oracle(text.encode())
-    if error is None:
-        return None, {key: set(ips) for key, _psk, ips in peers}
-    found = re.search(r"Unable to parse IP address: `([^']*)'", error)
-    assert found, error
-    return found.group(1), None
-
-
-
-
-
-
 def source(path):
     return (ROOT / path).read_text()
 
@@ -104,18 +86,3 @@ def cut(text, start, end):
     body = text.split(start, 1)[1]
     assert end in body, end
     return start + body.split(end, 1)[0]
-
-
-
-
-
-
-
-
-
-
-
-
-WG_APPLY = [{'key': PEER, 'preshared_key': PSK_ONE, 'ip': '10.66.66.2'},
-            {'key': GONE, 'preshared_key': PSK_GONE, 'ip': '10.66.66.4'},
-            {'key': OLD, 'preshared_key': PSK_TWO, 'ip': '10.66.66.3'}]

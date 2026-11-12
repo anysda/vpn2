@@ -55,7 +55,7 @@ class Cluster:
         self.names = [f'exit{i}' for i in range(1, exits + 1)]
         self.nodes = {agent.ENTRY: {'host': '192.0.2.1', 'port': 51821},
                       **{name: {'host': f'192.0.2.{10 + i}', 'port': 51821} for i, name in enumerate(self.names)}}
-        self.hy2, self.sent, self.telegram, self.beats = FakeHy2(), [], True, 0
+        self.hy2, self.sent, self.telegram = FakeHy2(), [], True
         self.entry, self.ready, self.down, self.cut, self.exits = True, True, set(), set(), {}
         api = types.SimpleNamespace(call=self.call)
         for target, value in (('hy2', self.hy2), ('BotApi', lambda _token: api)):
@@ -106,7 +106,6 @@ class Cluster:
             self.wall += 1
             up = [name for name in self.names if name not in self.down]
             if self.entry and self.now % agent.PERIOD == 0:
-                self.beats += 1
                 raw = agent.pack(bytes.fromhex(KEY), dict(ready=self.ready, f=agent.ENTRY, n=self.stamp(),
                                                           i=self.exits[up[0]].installation))
                 for name in up:
@@ -140,7 +139,7 @@ class Cluster:
         return [part.get('text', part.get('document', '')) for to, part in self.sent if to == chat]
 
 
-class EmergencyContract(unittest.TestCase):
+class EmergencyAgentTests(unittest.TestCase):
     def setUp(self):
         logging.disable(logging.CRITICAL)
         self.addCleanup(logging.disable, logging.NOTSET)

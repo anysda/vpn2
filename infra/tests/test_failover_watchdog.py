@@ -114,7 +114,7 @@ class Base(unittest.TestCase):
         return s
 
 
-class DeadExit(Base):
+class DeadExitTests(Base):
     def test_replaced_within_documented_bound(self):
         s = self.stand()
         s.kill('aa')
@@ -200,7 +200,7 @@ class DeadExit(Base):
                                          r'провер\w+ подряд - перезапустил sing-box$')
 
 
-class Disabled(Base):
+class DisabledTests(Base):
     def test_disabled_node_left_at_once_and_connections_closed(self):
         s = self.stand()
         s.conns = [{'id': 'user', 'chains': ['hy2-aa-direct', 'lane-01']},
@@ -230,7 +230,7 @@ class Disabled(Base):
         self.assertEqual(s.restarts, [])
 
 
-class TcpReserve(Base):
+class TcpReserveTests(Base):
     def test_udp_cut_moves_channel_to_tcp_and_back(self):
         s = self.stand()
         s.cut_udp('aa')
@@ -263,7 +263,7 @@ class TcpReserve(Base):
         self.assertEqual(s.now(), 'hy2-aa-direct')
 
 
-class LanesPinsTg(Base):
+class LanesPinsTgTests(Base):
     def test_lanes_leave_dead_node_and_spread(self):
         s = self.stand()
         s.tick(fo.REBALANCE_INTERVAL + fo.IDLE_DWELL)

@@ -101,18 +101,6 @@ def test_min_free_falls_back_without_manifest(tmp_path):
     (tmp_path / 'm.json').write_text('{"min_free_bytes": 5}')
     assert swap.min_free_bytes(tmp_path / 'm.json') == 5
 
-
-class Clock:
-    def __init__(self):
-        self.now = 0
-
-    def __call__(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.now += seconds
-
-
 def test_f2b_ignore_matches_stage():
     resolve = lambda _name: ['203.0.113.7', '203.0.113.7', '2001:db8::1']  # noqa: E731
     assert host.f2b_ignore('198.51.100.9 50000 22', 'entry.example', resolve) == [

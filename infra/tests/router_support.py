@@ -111,11 +111,6 @@ def run_generator(**overrides):
     return render(env)
 
 
-def exit_secrets(tags, password='test-password-0123456789'):
-    """Секреты экзитов в том виде, в каком деплой кладёт их в foreign-secrets.env."""
-    return {f'{upper(tag)}_{kind}': password for tag in tags for kind in KINDS}
-
-
 def role_tasks():
     import yaml
     return yaml.safe_load((ROOT / 'infra/ansible/roles/router/tasks/main.yml').read_text())
@@ -159,10 +154,3 @@ def snapshot(directory):
     return {str(path.relative_to(directory)): (path.read_bytes(), path.stat().st_mtime_ns)
             for path in directory.rglob('*.json')
             if path.name not in ('manual.json', 'prefs.json')}
-
-
-def client_block_rules():
-    """Блок клиентских назначений из сгенерированного конфига: три правила вокруг ip_is_private."""
-    rules = json.loads(generate())['route']['rules']
-    start = next(i for i, rule in enumerate(rules) if rule.get('ip_is_private')) - 1
-    return rules[start:start + 3]

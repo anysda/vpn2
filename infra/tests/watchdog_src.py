@@ -20,14 +20,3 @@ def path(kind):
 def command(kind):
     """Запуск сторожа отдельным процессом."""
     return [sys.executable, '-m', 'vpn2.cli', 'watchdog', kind]
-
-
-def shim(directory, body=None):
-    """Команда vpn2 для стадии в песочнице: пакет из дерева или подменное тело."""
-    path = Path(directory) / 'vpn2'
-    path.write_text(body or f'#!/bin/sh\nPYTHONPATH={SRC} exec {sys.executable} -m vpn2.cli "$@"\n')
-    path.chmod(0o755)
-    return path
-
-
-VENV_VPN2 = '/opt/vpn2/venv/bin/vpn2'

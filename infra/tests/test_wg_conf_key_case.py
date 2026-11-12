@@ -71,14 +71,6 @@ def pairs(text):
     return [(m[1].lower(), m[2]) for m in re.finditer(r'(?m)^\s*([A-Za-z]+)\s*=\s*(.*?)\s*$', text)]
 
 
-
-
-
-
-
-
-
-
 def wireguard_rerun(style):
     """The wireguard role's wg-identity step on a host that has only wg0.conf."""
     with tempfile.TemporaryDirectory() as directory:
@@ -90,13 +82,9 @@ def wireguard_rerun(style):
         return result.returncode, priv.read_text().strip() if priv.exists() else None, result.stderr
 
 
-PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32']), (OLD, PSK_TWO, ['10.66.66.3/32'])]
-
-
 @as_root
 class WgConfKeyCaseTests(unittest.TestCase):
     """Edges 1-5: every reader takes the mixed-case file like wg does."""
-
 
 
     def test_4_wireguard_rerun_keeps_server_key(self):

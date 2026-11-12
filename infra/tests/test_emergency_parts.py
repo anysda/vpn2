@@ -37,7 +37,7 @@ class Temp(unittest.TestCase):
         self.directory = Path(tempfile.mkdtemp())
 
 
-class Snapshot(Temp):
+class SnapshotTests(Temp):
     def test_expiry_applies_at_read_time_and_bad_files_are_no_snapshot(self):
         value = image()
         value['clients'][0]['expires_at'] = snapshot.iso_time(NOW + 60)
@@ -138,7 +138,7 @@ class Api:
         return self.replies.pop(0) if self.replies else Reply(True, result={'message_id': len(self.calls)})
 
 
-class Spool(Temp):
+class SpoolTests(Temp):
     def put(self, key, chat=1, parts=2, **meta):
         return spool.put(self.directory, key, chat, [{'method': 'sendMessage', 'text': f'{key}/{i}'}
                                                      for i in range(parts)], **meta)
@@ -189,7 +189,7 @@ class Spool(Temp):
         self.assertEqual([row['key'] for row in spool.rows(self.directory)], ['new'])
 
 
-class Notices(Temp):
+class NoticesTests(Temp):
     common = dict(emergency='e', generation=1, exit_name='Амстердам', wall=NOW)
 
     def test_client_gets_every_device_or_nothing_with_reason(self):
@@ -238,7 +238,7 @@ class Runtime:
         return self.ok
 
 
-class Hy2(Temp):
+class Hy2Tests(Temp):
     def setUp(self):
         super().setUp()
         self.options = {'server_ip': '192.0.2.10', 'port': 18443, 'tls_dir': str(self.directory / 'no-tls'),

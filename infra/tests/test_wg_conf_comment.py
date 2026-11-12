@@ -91,14 +91,6 @@ WG_STUB = ('wg() { if [[ $1 == genkey ]]; then echo ' + FRESH + '; return; fi\n'
            '  local key; key=$(cat); [[ -n $key ]] || return 1; echo ' + FRESH + '; }\n')
 
 
-
-
-
-
-
-
-
-
 def svc_conf_iface(form):
     """anysda-svc.sh wg0_conf_iface: addresses wg0_apply compares with live wg0."""
     block = cut(source('infra/lib/anysda-svc.sh'), 'wg0_conf_iface() {', '\n}\n') + '\n}\n'
@@ -120,11 +112,6 @@ def wireguard_rerun(form):
         return result.returncode, priv.read_text() if priv.exists() else None, result.stderr
 
 
-PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32', 'fd66:66::2/128']),
-         (OLD, PSK_TWO, ['10.66.66.3/32', 'fd66:66::3/128'])]
-SYNCCONF = [{'listenport': '51820', 'privatekey': SERVER},
-            [{'publickey': PEER, 'presharedkey': PSK_ONE, 'allowedips': '10.66.66.2/32,fd66:66::2/128'},
-             {'publickey': OLD, 'presharedkey': PSK_TWO, 'allowedips': '10.66.66.3/32,fd66:66::3/128'}]]
 ADDRESSES = (0, ['addr 10.66.66.1/24', 'addr fd66:66::1/64'])
 
 

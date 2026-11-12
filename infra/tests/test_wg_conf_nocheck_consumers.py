@@ -28,7 +28,6 @@ from test_wg_conf_allowedips_prefix import ROOT, source
 S = 'KLKQERtKGmYrCPaUJZYYoFjRRNizdBvaUWfrjPG5I1Q='
 P = '0ivjKi39oR/BxsZp17GSMczPpE4CKHCaC1RbI3zedFg='
 PSK = 'C' * 43 + '='
-TEST_KEY = 'T' * 43 + '='
 CONF = f'[Interface]\nPrivateKey = {S}\nListenPort = 51820\n\n[Peer]\nPublicKey = {P}\nPresharedKey = {PSK}\n' \
        'AllowedIPs = 10.66.66.2/32\n'
 NOCHECK = 'wg0.conf: проверить нечем'

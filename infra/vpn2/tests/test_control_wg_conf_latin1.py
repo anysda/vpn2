@@ -1,17 +1,15 @@
-"""wg0.conf with a latin-1 byte in a comment, which wg takes: control backend and vpn2-apply.
+"""wg0.conf with a latin-1 byte in a comment, which wg takes: control backend.
 
 VPN2-616. After VPN2-595 the readers of wg0.conf take it as bytes, control still as text: at LANG=C or
 C.UTF-8 Python decodes UTF-8, and `# caf\\xe9` was UnicodeDecodeError in
-Backend.wireguard (wg.apply: add and remove a peer) and in Applier
-install/rollback/mark wg. The panel could neither list nor change peers.
+Backend.wireguard (wg.apply: add and remove a peer). The panel could neither list nor change peers.
 
 Each case runs in a child Python with LANG and LC_ALL set there (C starts UTF-8
 mode), against the same wg0.conf with the comment as `cafe`: the outcome is the
 same and the written files are the same bytes, with the comment byte kept.
 
-1 backend wg.apply, latin-1 comment; 2 apply install/rollback/mark wg, the same;
-3 the comment in ASCII and in UTF-8, written bytes as now;
-4 other text files (sing-box config, server.conf and the CRL, settings json) as now.
+1 backend wg.apply, latin-1 comment; 2 the comment in ASCII and in UTF-8, written bytes as now;
+3 other text files (sing-box config, server.conf and the CRL, settings json) as now.
 """
 import json
 import os
@@ -96,13 +94,7 @@ try:
                 return 'MainPID=100\nNRestarts=0\n'
             return wg(*argv, data=data)
         applier = apply.Applier(work / 'root', work / 'state', host, settle=0)
-        resource = 'sing-box' if case == 'apply-sing-box' else 'wg'
-        if case in ('apply-install', 'apply-sing-box'):
-            applier.install(resource, work / 'new.conf')
-        elif case == 'apply-rollback':
-            applier.rollback('wg')
-        elif case == 'apply-mark':
-            applier.mark('wg')
+        applier.install('sing-box', work / 'new.conf')
 except BaseException as error:
     outcome['error'] = f'{type(error).__name__}: {error}'
     outcome['code'] = getattr(error, 'code', None)
@@ -177,37 +169,9 @@ class Probe:
             self.assertEqual(list(outcome['result']['observed']['peers']), [KEY['b']])
             self.assertEqual(result['root/etc/wireguard/wg0.conf'], conf(comment, 'b').removesuffix(tail(comment)))
 
-    def check_apply(self, comment):
-        # The header of the candidate or last good, the peers of wg0.conf as they are now.
-        for outcome, result in self.same('apply-install', comment, install_files):
-            self.assertIsNone(outcome['error'])
-            self.assertEqual(result['root/etc/wireguard/wg0.conf'], conf(comment, 'b', port=51821))
-            self.assertEqual(result['state/wg.good'], conf(comment, 'b', port=51821))
-        for outcome, result in self.same('apply-rollback', comment, rollback_files):
-            self.assertEqual(outcome['code'], 3, outcome['error'])
-            self.assertEqual(result['root/etc/wireguard/wg0.conf'], conf(comment, 'b'))
-            self.assertEqual(result['state/wg.good'], conf(comment, 'b'))
-        for outcome, result in self.same('apply-mark', comment, mark_files):
-            self.assertIsNone(outcome['error'])
-            self.assertEqual(result['state/wg.good'], conf(comment, 'b'))
-
 
 def backend_files(*names):
     return lambda comment: {'root/etc/wireguard/wg0.conf': conf(comment, *names)}
-
-
-def install_files(comment):
-    return {'root/etc/wireguard/wg0.conf': conf(comment, 'b'),
-            'new.conf': conf(comment, port=51821).removesuffix(tail(comment))}
-
-
-def rollback_files(comment):
-    return {'root/etc/wireguard/wg0.conf': conf(comment, 'b', port=51821),
-            'state/wg.good': conf(comment, 'a')}
-
-
-def mark_files(comment):
-    return {'root/etc/wireguard/wg0.conf': conf(comment, 'b')}
 
 
 class BackendTests(Probe, unittest.TestCase):
@@ -217,14 +181,16 @@ class BackendTests(Probe, unittest.TestCase):
         self.check_backend(LATIN1)
 
 
-class ApplyTests(Probe, unittest.TestCase):
-    """2 vpn2-apply install, rollback and mark wg with `# caf\\xe9`: the byte kept in wg0.conf and last good."""
-
 class AsNowTests(Probe, unittest.TestCase):
-    """3 the comment in ASCII and in UTF-8: the same outcome and bytes as now."""
+    """2 the comment in ASCII and in UTF-8: the same outcome and bytes as now."""
+
+    def test_ascii_and_utf8_comment(self):
+        for comment in (ASCII, UTF8):
+            self.check_backend(comment)
+
 
 class OtherFilesTests(Probe, unittest.TestCase):
-    """4 the text files that are not wg0.conf: UTF-8 read and written as now."""
+    """3 the text files that are not wg0.conf: UTF-8 read and written as now."""
 
     def test_sing_box_config(self):
         def files(comment):

@@ -14,7 +14,6 @@ cleanup() {
   dk rm -f "$NAME" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
-STAND_CMD=(bash -c 'mkdir -p /var/lib/anysda-vpn2; exec node .output/server/index.mjs')
 stand_up "$NAME-base" "$E2E_UPGRADE_FROM" "127.0.0.1:$PORT" "$PASS"
 stand_wait "$NAME-base" "http://127.0.0.1:$PORT"
 dk exec --user 10001:10001 -i "$NAME-base" node --input-type=module - seed < "$APP_DIR/e2e/support/pool-upgrade.mjs"

@@ -23,12 +23,10 @@ stand_down() {
 }
 
 # stand_up <имя> <образ> <адрес:порт Caddy на хосте> <пароль admin> [аргументы docker run панели...]
-# Хранилище /var/lib/anysda-vpn2 (tmpfs, том) и лишние -e передаёт вызывающий,
-# команду вместо штатной (если нужна) - массив STAND_CMD.
+# Хранилище /var/lib/anysda-vpn2 (tmpfs, том) и лишние -e передаёт вызывающий.
 stand_up() {
   local name=$1 image=$2 publish=$3 pass=$4
   local command=(node .output/server/index.mjs)
-  if [[ ${STAND_CMD+x} ]]; then command=("${STAND_CMD[@]}"); fi
   shift 4
   local vpn_args=()
   if [[ ${E2E_VPN_SERVICES:-0} == 1 ]]; then

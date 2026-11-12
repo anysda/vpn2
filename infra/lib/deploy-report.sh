@@ -3,7 +3,7 @@
 # Деплой идёт с entry, поэтому состояние entry читается с диска этой же машины.
 
 print_summary() {
-  local total=$(( $(date +%s) - _TOTAL_T0 )) timing url pass title entry row width=0 rows=()
+  local total=$(( $(date +%s) - _TOTAL_T0 )) timing url pass title row width=0 rows=()
   timing="$(( total / 60 ))m $(( total % 60 ))s"; timing=${timing#0m }
   # shellcheck disable=SC1091
   source "$ENVS/ru.env"

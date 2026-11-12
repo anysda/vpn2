@@ -137,7 +137,8 @@ preflight_ssh() {
     printf '  %-30s %b✗%b\n' "$host" "$C_R" "$C_END"
     reasons+=("нода $host ($addr) недоступна по ssh с entry: $reason")
   done
-  SKIPPED_EXIT_TAGS="${skipped[*]}"
+  # Экзиты без входа: их не берут стадии (expand_hosts в infra/deploy.sh).
+  export SKIPPED_EXIT_TAGS="${skipped[*]}"
   if (( ${#reasons[@]} == 0 )); then
     (( ${#skipped[@]} == 0 )) || printf '  %b⚠ Продолжаю без экзитов: %s%b\n' "$C_Y" "${skipped[*]}" "$C_END"
     printf '\n'

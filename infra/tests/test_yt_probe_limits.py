@@ -154,12 +154,11 @@ class ProbeLimitTests(unittest.TestCase):
                 self.assertEqual(state['good'], 1)
 
     def test_probe_unit_limit_follows_tier_and_survives_oom_kill(self):
-        tool = ROOT / 'infra/ansible/roles/resources/files/entry_resources.py'
+        sys.path.insert(0, str(ROOT / 'infra/vpn2/src'))
+        from vpn2 import resources
 
         def dropin(ram):
-            out = subprocess.check_output([sys.executable, str(tool), '--ram-mib', str(ram),
-                                           '--free-mib', '8192', '--unit', 'anysda-yt-failover'],
-                                          text=True)
+            out = resources.unit_dropin(ram, 'anysda-yt-failover')
             return dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
 
         small = dropin(2048)

@@ -31,7 +31,7 @@ class E2ePathsTests(unittest.TestCase):
                 (['app/app/pages/index.vue'], 'true'),
                 (['infra/deploy.sh', 'app/e2e/run-local.sh'], 'true'),
                 (['app/shared/vpn-pools.json'], 'true'),
-                (['infra/ansible/roles/resources/files/entry_resources.py'], 'true'),
+                (['infra/vpn2/src/vpn2/resources.py'], 'true'),
                 (['infra/vpn2/src/vpn2/pki.py'], 'true'),
                 (['infra/vpn2/src/vpn2/containers/panel.py'], 'true'),
                 (['infra/tests/speedtest.py'], 'true'),

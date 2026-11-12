@@ -1,5 +1,3 @@
 ---
-resources_infra: "{{ vpn2_env.VPN2_INFRA | default('') }}"
-resources_tmp: /tmp/anysda
-# Юниты, которым пишется drop-in: имена без .service, задаёт зовущая роль.
+resources_host: [/opt/vpn2/venv/bin/python, -m, vpn2.cli.host]
 resources_units: []

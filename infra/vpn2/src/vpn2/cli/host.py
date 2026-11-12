@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vpn2 import entryvpn, exitnode, firewall, ikev2, pki, svc, swap
+from vpn2 import entryvpn, exitnode, firewall, ikev2, pki, resources, svc, swap
 
 CHANGED = 'vpn2: changed'
 
@@ -200,6 +200,8 @@ ACTIONS = (
         _arg('--dns', required=True),
     ), lambda args: ikev2.server(args.entry_host, args.public_host, args.panel_domain, args.subnet, args.dns,
                                  _say, lambda: svc.restart_if_changed(ikev2.UNIT, ikev2.starter_inputs()))),
+    ('resources', 'drop-in лимитов юнитов', (_arg('units', nargs='+'),),
+     lambda args: resources.apply_units(args.units)),
     ('venv', 'venv vpn2 экзита из колеса', (
         _arg('wheel'),
         _arg('--root', default='/opt/vpn2'),

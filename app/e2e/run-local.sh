@@ -73,9 +73,12 @@ fi
 started=$SECONDS
 PASS=$(openssl rand -hex 12)
 # Проверяем панель именно с установочным профилем entry 2 ГБ.
-resource_args=$(python3 "$APP_DIR/../infra/ansible/roles/resources/files/entry_resources.py" \
-  --ram-mib 2048 --free-mib 8192 --service panel)
-eval "$resource_args"
+mapfile -t ENTRY_DOCKER_ARGS < <(PYTHONPATH="$APP_DIR/../infra/vpn2/src" python3 -c '
+from vpn2 import resources
+limits, env, _ = resources.container(resources.calculate(2048, 8192, {}), "panel")
+print("--memory", limits["mem_limit"], "--memory-swap", limits["memswap_limit"], sep="\n")
+for name, value in env.items():
+    print("-e", f"{name}={value}", sep="\n")')
 # Зовёт trap EXIT ниже; shellcheck этого не видит: 0.11 пишет SC2329 (из-за
 # `exit $rc` в конце файла), 0.9-0.10 на раннере CI - SC2317 на теле функции.
 # shellcheck disable=SC2317,SC2329

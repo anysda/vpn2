@@ -161,21 +161,28 @@ verify() {
   return "$result"
 }
 
-# После 20-ru-router vpn2 ports check меряет hy2-direct экзитов и подбирает порт. Стадии для
-# перекатки он кладёт в $TMP/ports/rerun (журнал, затем стадия:группа), код ждёт следующим вызовом.
+# После 20-ru-router vpn2 ports check меряет hy2-direct экзитов и подбирает порт. Перекатку
+# стадий он просит в fd 3 строкой `rerun журнал стадия:группа...` и ждёт её код на stdin.
 verify_and_rotate_ports() {
-  local rc='' plan pair
+  local screen requests pid kind rest pair rc answers=$TMP/ports-answers
   step 'verify: проверяю tunnels via clash-api + UDP-пробник для мертвецов'
+  rm -f "$answers"
+  mkfifo "$answers"
+  exec {screen}>&1
   # shellcheck disable=SC2046  # экзиты через пробел
-  while PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" python3 -B -m vpn2.cli ports check \
-          --state "$TMP/ports" ${rc:+--rerun-rc "$rc"} $(expand_hosts foreign) || exit 1
-        [[ -s "$TMP/ports/rerun" ]]; do
-    mapfile -t plan <"$TMP/ports/rerun"
+  exec {requests}< <(PYTHONPATH="$DEPLOY_ROOT/vpn2/src" VPN2_CONFIG="$REPO/config.yaml" \
+    python3 -B -m vpn2.cli ports check $(expand_hosts foreign) 3>&1 >&"$screen" <>"$answers")
+  pid=$!
+  while IFS=' ' read -r -u "$requests" kind rest; do
+    [[ "$kind" == rerun ]] || { _STAGE_LOG+=("$rest"); continue; }
     envs_write
     rc=0
-    ( for pair in "${plan[@]:1}"; do run_stage "${pair%%:*}" "${pair##*:}"; done ) >"${plan[0]}" 2>&1 || rc=$?
+    # shellcheck disable=SC2086  # стадии через пробел
+    ( for pair in ${rest#* }; do run_stage "${pair%%:*}" "${pair##*:}"; done ) >"${rest%% *}" 2>&1 || rc=$?
+    echo "$rc" >"$answers"
   done
-  mapfile -t -O "${#_STAGE_LOG[@]}" _STAGE_LOG <"$TMP/ports/stagelog"
+  exec {requests}<&- {screen}>&-
+  wait "$pid" || exit 1
 }
 
 run_stage() {

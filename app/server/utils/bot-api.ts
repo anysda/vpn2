@@ -39,13 +39,5 @@ export async function requireChatLinked(clientId: number, chatId: number): Promi
 /** Сводка клиента для бота: имя, лимит и список устройств. */
 export async function botClientView(clientId: number) {
   const { client: c, devices, operation, accessStatus } = await clientCard(clientId)
-  return {
-    operation,
-    accessStatus,
-    id: c.id,
-    name: c.name,
-    deviceLimit: c.deviceLimit,
-    expiresAt: c.expiresAt,
-    devices: devices.map(d => deviceView(c, d)),
-  }
+  return { ...clientFields(c), operation, accessStatus, devices: devices.map(d => deviceView(c, d)) }
 }

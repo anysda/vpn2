@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm'
 import { accessStatus } from '../../shared/access-operation'
 import { useDb } from '../database/client'
 import { clients, devices } from '../database/schema'
+import type { Client } from '../database/schema'
 
 /** Девайс в карточке клиента: общие поля панели и бота. */
 export function deviceView(client: { name: string }, d: typeof devices.$inferSelect) {
@@ -14,7 +15,13 @@ export function deviceView(client: { name: string }, d: typeof devices.$inferSel
   }
 }
 
-/** Список клиентов для панели; бот берёт из него свои поля. */
+/** Клиент в ответах панели и бота: строка без пароля привязки, чата и служебных полей. */
+export function clientFields(client: Client) {
+  const { password: _password, tgChatId: _chat, accessVersion: _version, updatedAt: _updated, ...fields } = client
+  return fields
+}
+
+/** Список клиентов для панели и админского чата бота. */
 export async function clientList() {
   const rows = await useDb().select().from(clients).orderBy(...clientsNewestFirst)
   const totals = await deviceTotalsByClient()
@@ -24,18 +31,10 @@ export async function clientList() {
     const t = totals.get(c.id)
     const operation = operations.get(c.id)
     return {
+      ...clientFields(c),
       accessStatus: accessStatus(operation ?? null),
-      id: c.id,
-      name: c.name,
-      filterTraffic: c.filterTraffic,
-      expiresAt: c.expiresAt,
-      deviceLimit: c.deviceLimit,
-      frozenManual: c.frozenManual,
-      createdAt: c.createdAt,
       status: clientStatus(c),
       tgLinked: !!c.tgChatId,
-      tgUsername: c.tgUsername,
-      preferredExit: c.preferredExit,
       deviceCount: t?.count ?? 0,
       rxTotal: t?.rx ?? 0,
       txTotal: t?.tx ?? 0,

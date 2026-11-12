@@ -47,40 +47,33 @@ beforeEach(() => {
   access.latest = operation
 })
 
-describe('списки клиентов: поля и их порядок у админа и у бота', () => {
+const json = (value: unknown) => JSON.parse(JSON.stringify(value))
+const fields = (c: typeof anna | typeof boris) => ({
+  id: c.id, name: c.name, filterTraffic: c.filterTraffic, expiresAt: c.expiresAt, deviceLimit: c.deviceLimit,
+  frozenManual: c.frozenManual, deleting: false, createdAt: created, tgUsername: c.tgUsername, preferredExit: c.preferredExit,
+})
+
+describe('списки клиентов: одни поля у админа и у бота, без пароля и чата', () => {
   const rows = () => dbResults.push([anna, boris], [{ clientId: 7, cnt: 2, rx: 105, tx: 206 }])
+  const expected = json([
+    { ...fields(anna), accessStatus: 'Включение выполняется', status: 'active', tgLinked: true, deviceCount: 2, rxTotal: 105, txTotal: 206 },
+    { ...fields(boris), accessStatus: 'Состояние не подтверждено', status: 'frozen', tgLinked: false, deviceCount: 0, rxTotal: 0, txTotal: 0 },
+  ])
 
-  it('админ', async () => {
+  it.each([['админ', adminList], ['бот', botList]] as const)('%s', async (_who, list) => {
     rows()
-    expect(JSON.stringify(await adminList(fakeEvent({})))).toBe(JSON.stringify([
-      {
-        accessStatus: 'Включение выполняется', id: 7, name: 'Anna', filterTraffic: true, expiresAt: anna.expiresAt, deviceLimit: 3,
-        frozenManual: false, createdAt: created, status: 'active', tgLinked: true, tgUsername: 'anna', preferredExit: 'fra',
-        deviceCount: 2, rxTotal: 105, txTotal: 206,
-      },
-      {
-        accessStatus: 'Состояние не подтверждено', id: 8, name: 'Boris', filterTraffic: false, expiresAt: null, deviceLimit: 1,
-        frozenManual: true, createdAt: created, status: 'frozen', tgLinked: false, tgUsername: null, preferredExit: null,
-        deviceCount: 0, rxTotal: 0, txTotal: 0,
-      },
-    ]))
-  })
-
-  it('бот', async () => {
-    rows()
-    expect(JSON.stringify(await botList(fakeEvent({})))).toBe(JSON.stringify([
-      { id: 7, name: 'Anna', status: 'active', accessStatus: 'Включение выполняется', deviceCount: 2, deviceLimit: 3, expiresAt: anna.expiresAt, tgLinked: true },
-      { id: 8, name: 'Boris', status: 'frozen', accessStatus: 'Состояние не подтверждено', deviceCount: 0, deviceLimit: 1, expiresAt: null, tgLinked: false },
-    ]))
+    const got = json(await list(fakeEvent({}) as never))
+    expect(got).toEqual(expected)
+    expect(got[0]).not.toHaveProperty('password')
+    expect(got[0]).not.toHaveProperty('tgChatId')
   })
 })
 
-describe('карточка клиента: поля и их порядок у админа и у бота', () => {
-  it('админ: клиент, операция и девайсы с суммой трафика', async () => {
+describe('карточка клиента у админа и у бота', () => {
+  it('админ: клиент, операция и девайсы с суммой трафика, без пароля', async () => {
     dbResults.push([anna], devices)
-    expect(JSON.stringify(await adminCard(fakeEvent({ id: '7' })))).toBe(JSON.stringify({
-      operation, deleting: false, id: 7, name: 'Anna', filterTraffic: true, expiresAt: anna.expiresAt, deviceLimit: 3, frozenManual: false,
-      createdAt: created, status: 'active', tgLinked: true, tgUsername: 'anna', preferredExit: 'fra', rxTotal: 105, txTotal: 206,
+    expect(json(await adminCard(fakeEvent({ id: '7' })))).toEqual(json({
+      ...fields(anna), operation, status: 'active', tgLinked: true, rxTotal: 105, txTotal: 206,
       devices: [
         { id: 12, name: 'laptop', configName: deviceConfigName('Anna', 'laptop', 12), hasWg: true, hasOvpn: false, createdAt: created, rxTotal: 100, txTotal: 200 },
         { id: 13, name: 'phone', configName: deviceConfigName('Anna', 'phone', 13), hasWg: false, hasOvpn: true, createdAt: created, rxTotal: 5, txTotal: 6 },
@@ -90,9 +83,8 @@ describe('карточка клиента: поля и их порядок у а
 
   it('бот: число девайсов и пароль для приглашения', async () => {
     dbResults.push([anna], devices)
-    expect(JSON.stringify(await botCard(fakeEvent({ id: '7' })))).toBe(JSON.stringify({
-      operation, accessStatus: 'Включение выполняется', id: 7, name: 'Anna', status: 'active', frozenManual: false, filterTraffic: true,
-      deviceCount: 2, deviceLimit: 3, expiresAt: anna.expiresAt, tgLinked: true, password: 'secret',
+    expect(json(await botCard(fakeEvent({ id: '7' })))).toEqual(json({
+      ...fields(anna), operation, accessStatus: 'Включение выполняется', status: 'active', deviceCount: 2, tgLinked: true, password: 'secret',
     }))
   })
 

@@ -88,19 +88,10 @@ export default {
     const { client: c, devices, operation, status, tgLinked } = await clientCard(idParam(event))
     const sum = (key: 'rxTotal' | 'txTotal') => devices.reduce((total, d) => total + d[key], 0)
     return {
+      ...clientFields(c),
       operation,
-      deleting: c.deleting,
-      id: c.id,
-      name: c.name,
-      filterTraffic: c.filterTraffic,
-      expiresAt: c.expiresAt,
-      deviceLimit: c.deviceLimit,
-      frozenManual: c.frozenManual,
-      createdAt: c.createdAt,
       status,
       tgLinked,
-      tgUsername: c.tgUsername,
-      preferredExit: c.preferredExit,
       rxTotal: sum('rxTotal'),
       txTotal: sum('txTotal'),
       devices: devices.map(d => ({ ...deviceView(c, d), createdAt: d.createdAt, rxTotal: d.rxTotal, txTotal: d.txTotal })),
@@ -140,35 +131,13 @@ export default {
   'POST /access-operations/:id/retry': admin(retryOperation),
 
   // Админский чат бота: те же операции, что в панели, со своим набором полей.
-  'GET /bot/admin/clients': bot(async () => (await clientList()).map(c => ({
-    id: c.id,
-    name: c.name,
-    status: c.status,
-    accessStatus: c.accessStatus,
-    deviceCount: c.deviceCount,
-    deviceLimit: c.deviceLimit,
-    expiresAt: c.expiresAt,
-    tgLinked: c.tgLinked,
-  }))),
+  'GET /bot/admin/clients': bot(() => clientList()),
   // Из бота - имя и фильтрация; срок и лимит админ задаёт потом карточкой.
   'POST /bot/admin/clients': bot(async event => createClient(await readBodyAs(event, ClientCreate.pick({ name: true, filterTraffic: true })), BOT_ACTOR)),
   /** password - для диплинка-приглашения. */
   'GET /bot/admin/clients/:id': bot(async (event) => {
     const { client: c, devices, operation, accessStatus, status, tgLinked } = await clientCard(idParam(event))
-    return {
-      operation,
-      accessStatus,
-      id: c.id,
-      name: c.name,
-      status,
-      frozenManual: c.frozenManual,
-      filterTraffic: c.filterTraffic,
-      deviceCount: devices.length,
-      deviceLimit: c.deviceLimit,
-      expiresAt: c.expiresAt,
-      tgLinked,
-      password: c.password,
-    }
+    return { ...clientFields(c), operation, accessStatus, status, deviceCount: devices.length, tgLinked, password: c.password }
   }),
   'PATCH /bot/admin/clients/:id': bot(event => patchClient(event, ClientPatch.omit({ preferredExit: true }), BOT_ACTOR)),
   'DELETE /bot/admin/clients/:id': bot(event => clientAccess(event, 'delete', BOT_ACTOR)),

@@ -4,12 +4,7 @@ import { claimUnique, useDb } from '../database/client'
 import { clients as clientsTable, devices as devicesTable } from '../database/schema'
 
 // openssl ca не блокирует index.txt/serial/crlnumber: выдача, перевыпуск и отзыв идут по очереди.
-let caQueue: Promise<unknown> = Promise.resolve()
-function withCaLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = caQueue.then(fn)
-  caQueue = run.catch(() => {})
-  return run
-}
+const withCaLock = serialQueue()
 
 const db = () => useDb()
 async function deviceRow(deviceId: number) {

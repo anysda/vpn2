@@ -25,8 +25,7 @@ function wgEndpoint(host: string): string {
     (records || []).filter(r => !r.internal && r.family === 'IPv4' && isPublicIpv4(r.address)).map(r => r.address)))
   if (addresses.size === 1) return [...addresses][0]!
   throw createError({
-    statusCode: 422,
-    statusMessage: 'wg_ipv4_endpoint_unavailable',
+    statusCode: 422, statusMessage: 'wg_ipv4_endpoint_unavailable',
     message: 'Не удалось определить IPv4-адрес сервера для WireGuard. Укажите доступный клиентам IPv4 сервера в entry.public_host и примените конфигурацию.',
   })
 }

@@ -23,9 +23,9 @@ import shutil
 import ssl
 import subprocess
 import time
-import urllib.request
 import uuid
 
+from vpn2 import notify
 from vpn2.fsutil import atomic, lock, read_json
 
 LE = 'https://acme-v02.api.letsencrypt.org/directory'
@@ -224,23 +224,14 @@ def observe(config, state, cert, error, now):
 def deliver(config, state):
     """Entry: the Telegram bot's event endpoint. Exits have no bot outside an
     emergency, so events stay queued in state.json (bot_secret unset)."""
-    try:
-        secret = read_text(config['bot_secret']).strip() if config.get('bot_secret') else ''
-        if not secret:
+    if not config.get('bot_secret'):
+        return
+    while state.get('pending'):
+        sent = notify.bot_event(state['pending'][0], secret_file=config['bot_secret'],
+                                url=config.get('bot_url', notify.BOT_URL))
+        if sent is not notify.Outcome.SENT:
             return
-        while state.get('pending'):
-            event = state['pending'][0]
-            request = urllib.request.Request(config.get('bot_url', 'http://127.0.0.1:8877/event'),
-                                             data=json.dumps(event).encode(),
-                                             headers={'Content-Type': 'application/json',
-                                                      'X-Tgbot-Secret': secret})
-            with urllib.request.urlopen(request, timeout=5) as response:
-                result = json.load(response)
-                if not result.get('ok') or 'event_id' not in result:
-                    return
-            state['pending'].pop(0)
-    except (OSError, ValueError):
-        pass
+        state['pending'].pop(0)
 
 
 def journal(state):

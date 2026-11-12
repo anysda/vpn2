@@ -3,7 +3,8 @@
 set -euo pipefail
 probe_venv=${1:?путь venv видеопробы}
 pot_version=2.0.2
-if [[ "$("$probe_venv/bin/python3" -c 'from importlib.metadata import version; print(version("bgutil-ytdlp-pot-provider"))' 2>/dev/null || true)" != "$pot_version" ]]; then
+installed=$("$probe_venv/bin/pip" show bgutil-ytdlp-pot-provider 2>/dev/null | sed -n 's/^Version: //p' || true)
+if [[ "$installed" != "$pot_version" ]]; then
   "$probe_venv/bin/pip" install --disable-pip-version-check "bgutil-ytdlp-pot-provider==$pot_version"
 fi
 if [[ -s "$probe_venv/bgutil/server/build/generate_once.js" && -f "$probe_venv/bgutil/.installed" ]] \

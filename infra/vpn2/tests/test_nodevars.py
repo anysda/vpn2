@@ -1,4 +1,4 @@
-"""Переменные узла из пакета (vpn2.nodevars) равны env-файлам config2env.py ключ в ключ."""
+"""Переменные узла из пакета (vpn2.nodevars) равны тому, что bash получает от inventory.py --env, ключ в ключ."""
 import shutil
 import tempfile
 from pathlib import Path
@@ -148,7 +148,7 @@ MATRIX = {
 
 
 def compare(text, *, development=False, state=None, legacy=None):
-    """(старое, расхождения до записи состояния config2env, расхождения после); старое None - конфиг отвергнут."""
+    """(старое, расхождения до записи состояния деплоем, расхождения после); старое None - конфиг отвергнут."""
     with tempfile.TemporaryDirectory() as tmp:
         repo, state_dir = layout(tmp, text, state=state, legacy=legacy)
 
@@ -168,16 +168,16 @@ def compare(text, *, development=False, state=None, legacy=None):
 
 
 @pytest.mark.parametrize('name', sorted(MATRIX))
-def test_matrix_equals_config2env(name):
+def test_matrix_equals_bash_env(name):
     text, options = MATRIX[name]
     old, before, after = compare(text, **options)
-    assert old is not None, 'config2env отверг образец матрицы'
+    assert old is not None, 'деплой отверг образец матрицы'
     assert before == []
     assert after == []
     assert all(isinstance(value, str) for env in old.values() for value in env.values())
 
 
-def test_samples_of_repo_equal_config2env():
+def test_samples_of_repo_equal_bash_env():
     checked = 0
     for group in samples.collect().values():
         for name, text in group.items():
@@ -187,7 +187,7 @@ def test_samples_of_repo_equal_config2env():
                 continue
             old, before, after = compare(text)
             if old is None:
-                assert isinstance(before, config.ConfigError), f'{name}: config2env отверг, пакет принял'
+                assert isinstance(before, config.ConfigError), f'{name}: деплой отверг, пакет принял'
                 continue
             assert (name, before, after) == (name, [], [])
             checked += 1
@@ -218,9 +218,9 @@ def test_positive_control_extra_and_changed_key_are_caught():
     (MINIMAL.replace('    password: q\n', '    password: q\n    hy2_up_mbps: 10\n'), 'exits[nl]'),
     ('entry:\n  host: 198.18.0.1\n  password: p\n', 'exits'),
 ])
-def test_rejected_like_config2env(text, key):
+def test_rejected_by_prepare(text, key):
     old, before, _ = compare(text)
-    assert old is None, 'config2env принял образец'
+    assert old is None, 'деплой принял образец'
     assert isinstance(before, config.ConfigError)
     assert before.key == key
 

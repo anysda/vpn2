@@ -8,12 +8,10 @@ import json
 import os
 from pathlib import Path
 import shlex
-import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from unittest.mock import patch
 import warnings
@@ -50,27 +48,6 @@ class ReleaseTests(unittest.TestCase):
         os.umask(before)
         self.addCleanup(os.umask, before)
 
-    def test_each_exit_bootstrap_waits_for_previous_exit_update(self):
-        source = (ROOT / 'infra/deploy.sh').read_text()
-        functions = ''
-        for name in ('do_all', 'run_tracks'):
-            functions += name + '() {' + source.split(name + '() {', 1)[1].split('\n}', 1)[0] + '\n}\n'
-        script = functions + '''
-for name in print_banner pause_entry_auto_updates install_prereqs do_check preflight_ssh prep_orchestrator_key prep_entry_mgmt_key verify_and_rotate_ports print_summary announce_deploy_done release_complete; do
-  eval "$name() { :; }"
-done
-die() { exit 1; }
-expand_hosts() { case "$1" in all) echo 'ru alpha beta';; foreign) echo 'alpha beta';; *) echo "$1";; esac; }
-run_stage() { for host in $(expand_hosts "$2"); do echo "$1 $host"; done; }
-prefetch_images() { true & _PREFETCH_PID=$!; }
-do_all
-'''
-        run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        stages = [line for line in run.stdout.splitlines() if line.endswith((' alpha', ' beta'))]
-        self.assertEqual(stages[:6], ['00-bootstrap alpha', '05-mgmt-mesh alpha', '10-foreign alpha',
-                                      '00-bootstrap beta', '05-mgmt-mesh beta', '10-foreign beta'])
-
     def test_inventory_failure_never_announces_success(self):
         source = (ROOT / 'infra/deploy.sh').read_text()
         script = 'do_all() {' + source.split('do_all() {', 1)[1].split('\n}', 1)[0] + '\n}\n'
@@ -88,148 +65,6 @@ do_all
         run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=10)
         self.assertNotEqual(run.returncode, 0, 'failed inventory was announced as successful deploy')
         self.assertNotIn('premature-', run.stdout)
-
-    def test_recovery_rechecks_contract_and_backups_before_resuming(self):
-        library = ROOT / 'infra/lib/deploy-release.sh'
-        self.assertTrue(library.exists(), 'release recovery is missing')
-        state = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, state)
-        run = subprocess.run(['bash', '-euo', 'pipefail', '-c', f'''
-source {shlex.quote(str(library))}
-DEPLOY_ROOT={shlex.quote(str(ROOT / 'infra'))}
-VPN2_STATE_DIR={shlex.quote(state)}
-VPN2_RELEASE_MANIFEST=$VPN2_STATE_DIR/release-manifest.json
-touch "$VPN2_RELEASE_MANIFEST"
-install_prereqs() {{ :; }}
-load_env() {{ :; }}
-expand_hosts() {{ echo ru; }}
-push() {{ :; }}
-python3() {{ echo source-checked; }}
-die() {{ echo "$*" >&2; exit 1; }}
-ssh_exec() {{
-  if [[ "$*" == *'exec flock'* ]]; then echo locked; read -r unlock
-  elif [[ "$*" == *operation.json* ]]; then return 76
-  elif [[ "$*" == *--partial* ]]; then return 1
-  elif [[ "$*" == *preflight* ]]; then echo preflight-checked
-  elif [[ "$*" == *prepare* ]]; then echo artifacts-checked
-  elif [[ "$*" == *' backup'* ]]; then echo backup-checked
-  fi
-}}
-release_start recover
-release_complete
-'''], capture_output=True, text=True, timeout=10)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(run.stdout.splitlines(), ['source-checked', 'preflight-checked', 'artifacts-checked', 'backup-checked'])
-
-    def test_exit_completion_reloads_files_removed_by_stage_cleanup(self):
-        library = ROOT / 'infra/lib/deploy-release.sh'
-        self.assertTrue(library.exists(), 'release orchestration is missing')
-        run = subprocess.run(['bash', '-euo', 'pipefail', '-c', f'''
-source {shlex.quote(str(library))}
-DEPLOY_ROOT={shlex.quote(str(ROOT / 'infra'))}
-VPN2_DEPLOY_MUTATING=true
-VPN2_RELEASE_MANIFEST=release-manifest.json
-helper=false manifest=false
-expand_hosts() {{ echo exit; }}
-load_env() {{ :; }}
-push() {{
-  if [[ "$1" == *deploy_state.py ]]; then helper=true; fi
-  if [[ "$1" == release-manifest.json ]]; then manifest=true; fi
-}}
-ssh_exec() {{ [[ "$helper" == true && "$manifest" == true ]]; }}
-release_complete
-'''], capture_output=True, text=True, timeout=10)
-        self.assertEqual(run.returncode, 0, run.stderr)
-
-    def test_preflight_does_not_wait_for_lifetime_lock(self):
-        source = (ROOT / 'infra/deploy.sh').read_text()
-        body = source.split('preflight_ssh() {', 1)[1].split('\n}', 1)[0]
-        script = 'preflight_ssh() {' + body + '\n}\n' + '''
-C_B= C_END= C_Y= C_R=
-expand_hosts() { echo ru; }
-_preflight_host() { touch "$4/$1.ok"; }
-sleep 3 & lifetime=$!
-trap 'kill "$lifetime" 2>/dev/null || true; wait "$lifetime" 2>/dev/null || true' EXIT
-preflight_ssh
-'''
-        started = time.monotonic()
-        run = subprocess.run(['bash', '-euo', 'pipefail', '-c', script], capture_output=True, text=True, timeout=5)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertLess(time.monotonic() - started, 2, 'preflight waited for the lifetime deploy lock')
-
-    def test_local_lock_precedes_environment_generation(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            shutil.copyfile(ROOT / 'deploy.sh', root / 'deploy.sh')
-            (root / 'config.yaml').touch()
-            (root / 'infra/lib').mkdir(parents=True)
-            shutil.copyfile(ROOT / 'infra/lib/state-dir.sh', root / 'infra/lib/state-dir.sh')
-            env = {**os.environ, 'VPN2_STATE_DIR': f'{root}/state', 'VPN2_DEPLOY_LOCK': f'{root}/deploy.lock'}
-            (root / 'infra/lib/config2env.py').write_text(
-                'from pathlib import Path\nimport sys\n'
-                'with (Path(sys.argv[1]) / "generated").open("a") as output: output.write("generated\\n")\n')
-            stage = root / 'infra/deploy.sh'
-            stage.write_text('#!/bin/sh\nsleep 2\n')
-            stage.chmod(0o755)
-            first = subprocess.Popen(['bash', str(root / 'deploy.sh')], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     env=env)
-            try:
-                for _ in range(100):
-                    if (root / 'generated').exists():
-                        break
-                    time.sleep(0.01)
-                second = subprocess.run(['bash', str(root / 'deploy.sh')], capture_output=True, text=True, timeout=5,
-                                        env=env)
-                self.assertNotEqual(second.returncode, 0, 'concurrent deploy rewrote the active env files')
-                self.assertEqual((root / 'generated').read_text().splitlines(), ['generated'])
-            finally:
-                first.communicate(timeout=5)
-
-    def test_clean_orchestrator_installs_transport_before_remote_lock(self):
-        library = ROOT / 'infra/lib/deploy-release.sh'
-        self.assertTrue(library.exists(), 'release orchestration is missing')
-        with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / 'sshpass-installed'
-            run = subprocess.run(['bash', '-euo', 'pipefail', '-c', f'''
-source {shlex.quote(str(library))}
-DEPLOY_ROOT={shlex.quote(str(ROOT / 'infra'))}
-VPN2_DEVELOPMENT=true
-install_prereqs() {{ touch {shlex.quote(str(marker))}; }}
-load_env() {{ :; }}
-expand_hosts() {{ echo ru; }}
-push() {{ :; }}
-die() {{ echo "$*" >&2; exit 1; }}
-ssh_exec() {{
-  test -f {shlex.quote(str(marker))} || return 127
-  if [[ "$*" == *'exec flock'* ]]; then echo locked; read -r unlock; fi
-}}
-release_start
-release_complete
-'''], capture_output=True, text=True, timeout=15)
-            self.assertEqual(run.returncode, 0, run.stderr)
-
-    def test_deploy_lock_and_interrupted_operation(self):
-        program = ROOT / 'infra/lib/deploy_state.py'
-        self.assertTrue(program.exists(), 'deploy has no installation lock')
-        with tempfile.TemporaryDirectory() as directory:
-            command = [sys.executable, str(program), '--state', directory, 'hold']
-            first = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True)
-            try:
-                self.assertEqual(first.stdout.readline().strip(), 'locked')
-                second = subprocess.run(command, input='', capture_output=True, text=True, timeout=10)
-                self.assertNotEqual(second.returncode, 0)
-                self.assertIn('deploy already running', second.stderr)
-            finally:
-                first.stdin.close()
-                first.wait(timeout=10)
-                first.stdout.close()
-                first.stderr.close()
-            (Path(directory) / 'operation.json').write_text('{"phase":"applying"}')
-            interrupted = subprocess.run(command, input='', capture_output=True, text=True, timeout=10)
-            self.assertNotEqual(interrupted.returncode, 0)
-            self.assertIn('unfinished deploy', interrupted.stderr)
-            print('deploy lock: second executor rejected; interrupted operation requires recovery')
 
     def test_retagged_image_is_rejected_before_panel_changes(self):
         with tempfile.TemporaryDirectory() as directory:

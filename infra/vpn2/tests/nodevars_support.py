@@ -1,4 +1,4 @@
-"""Оракул для переменных узла: env-файлы config2env.py, прочитанные bash, как их читает load_env."""
+"""Переменные узла глазами bash: вывод inventory.py --env, прочитанный source, как его читает деплой."""
 import os
 import subprocess
 import sys
@@ -36,17 +36,26 @@ def layout(tmp, text, *, state=None, legacy=None):
 
 
 def old_env(repo, state_dir, *, development=False):
-    """{узел: окружение} по config2env.py или None, если он отверг конфиг."""
-    env = {'PATH': os.environ['PATH'], 'HOME': str(repo.parent / 'home'), 'VPN2_STATE_DIR': str(state_dir)}
+    """{узел: окружение} из inventory.py --env после source или None, если --prepare отверг конфиг."""
+    env = {'PATH': os.environ['PATH'], 'HOME': str(repo.parent / 'home'), 'VPN2_STATE_DIR': str(state_dir),
+           'PYTHONPATH': str(ROOT / 'infra/vpn2/src'), 'VPN2_CONFIG': str(repo / 'config.yaml')}
     if development:
         env['VPN2_DEVELOPMENT'] = 'true'
-    result = subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), str(repo)],
-                            env=env, capture_output=True, text=True, timeout=60)
-    if result.returncode:
+
+    def inventory(*args):
+        return subprocess.run([sys.executable, '-B', str(ROOT / 'infra/ansible/inventory.py'), *args],
+                              env=env, capture_output=True, text=True, timeout=60)
+
+    if inventory('--prepare').returncode:
         return None
     envs = repo / 'infra/envs'
-    return {path.stem: sourced(envs / 'all.env', path)
-            for path in sorted(envs.glob('*.env')) if path.stem not in ('all', 'exits')}
+    envs.mkdir(parents=True, exist_ok=True)
+    (envs / 'ru.env').write_text(inventory('--env', 'ru').stdout)
+    for tag in sourced(envs / 'ru.env')['EXIT_TAGS'].split():
+        (envs / f'{tag}.env').write_text(inventory('--env', tag).stdout)
+    passed = {'VPN2_DEVELOPMENT'} if development else set()
+    return {path.stem: {name: value for name, value in sourced(path).items() if name not in passed}
+            for path in sorted(envs.glob('*.env'))}
 
 
 def differences(old, new):

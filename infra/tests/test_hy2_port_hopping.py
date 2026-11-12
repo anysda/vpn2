@@ -1,7 +1,7 @@
 """Смена портов hysteria2 у трёх каналов entry → экзит (VPN2-635).
 
 Один постоянный UDP-поток до экзита фильтр провайдера режет по 5-tuple.
-config.yaml `ports.hy2_hop` → config2env (all.env: HY2_HOP_ENABLED,
+config.yaml `ports.hy2_hop` → переменные узла (all.env: HY2_HOP_ENABLED,
 HY2_HOP_DIRECT, HY2_HOP_WARP, HY2_HOP_MGMT, HY2_HOP_INTERVAL) → outbound
 entry получает диапазон и интервал, экзит перенаправляет диапазон на порт канала.
 """
@@ -16,6 +16,7 @@ import unittest
 
 
 from router_support import ROOT, generate, run_generator
+from test_deploy import write_envs
 
 
 CHANNELS = ('direct', 'warp', 'mgmt')
@@ -44,7 +45,7 @@ sha256sum() {
 
 
 def candidates():
-    text = (ROOT / 'infra/deploy.sh').read_text()
+    text = (ROOT / 'infra/lib/port-rotate.sh').read_text()
     return [int(p) for p in re.search(r'^HY2_PORT_CANDIDATES=\(([^)]*)\)', text, re.M).group(1).split()]
 
 
@@ -64,9 +65,7 @@ def with_hop(enabled='true', interval=None, **ranges):
 
 def convert(config, directory):
     (Path(directory) / 'config.yaml').write_text(config)
-    return subprocess.run([sys.executable, str(ROOT / 'infra/lib/config2env.py'), directory],
-                          capture_output=True, text=True, timeout=30,
-                          env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
+    return write_envs(directory, env={'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
 
 
 def load_env(directory, host):
@@ -93,7 +92,7 @@ def hy2_outbounds(cfg):
 
 class Hy2PortHoppingTests(unittest.TestCase):
     def entry(self, config):
-        """config.yaml → config2env → генератор entry с env стадии 20-ru-router."""
+        """config.yaml → переменные узла → генератор entry с env стадии 20-ru-router."""
         with tempfile.TemporaryDirectory() as directory:
             result = convert(config, directory)
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -135,7 +134,7 @@ class Hy2PortHoppingTests(unittest.TestCase):
         outbounds, env, _ = self.entry(with_hop('true'))
         self.assert_hopping(outbounds, env, DEFAULTS, '5s')
 
-    # край 2: проверка на уровне env, на HEAD config2env ключа ports.hy2_hop не знает
+    # край 2: проверка на уровне env
     def test_disabled_hopping_keeps_outbounds_byte_identical(self):
         hop = {'HY2_HOP_DIRECT': '20000-24999', 'HY2_HOP_WARP': '25000-29999',
                'HY2_HOP_MGMT': '30000-30999', 'HY2_HOP_INTERVAL': '5s'}

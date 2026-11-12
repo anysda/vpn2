@@ -1,4 +1,4 @@
-"""Образцы config.yaml для сверки нового парсера со старым (config2env.parse_yaml).
+"""Образцы config.yaml из репы для проверок переменных узлов.
 
 Источники собираются без правки самих источников:
   example - config.example.yaml из корня репы;
@@ -8,7 +8,6 @@
             fixtures/setup/minimal.
 """
 import ast
-import importlib.util
 import re
 import tempfile
 from pathlib import Path
@@ -20,13 +19,6 @@ TOP_KEY = re.compile(r'^(entry|exits|admin|panel):', re.MULTILINE)
 
 WIZARD_ANSWERS = (FIXTURES / 'minimal/answers').read_text()
 WIZARD_STUBS = {'ipify': '192.0.2.1', 'geo-198.51.100.2': '{}'}
-
-
-def load_oracle():
-    spec = importlib.util.spec_from_file_location('config2env', ROOT / 'infra/lib/config2env.py')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _constant_text(node):

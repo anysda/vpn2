@@ -23,7 +23,7 @@ def seconds(value):
 
 
 class Hy2HopIntervalDefaultTests(unittest.TestCase):
-    # Тот же путь config.yaml → config2env → генератор, что у test_hy2_port_hopping.
+    # Тот же путь config.yaml → переменные узла → генератор, что у test_hy2_port_hopping.
     entry = hopping.Hy2PortHoppingTests.entry
 
     def assert_short_hops(self, config):

@@ -1,4 +1,4 @@
-"""Hostvars инвентаря ansible: vpn2_env равен env-файлам config2env.py, секреты в логи не идут."""
+"""Hostvars инвентаря ansible: vpn2_env равен тому, что bash получает от inventory.py --env."""
 import importlib.util
 import json
 import os
@@ -43,7 +43,7 @@ def envs(result):
 
 
 @pytest.mark.parametrize('name', sorted(MATRIX))
-def test_hostvars_equal_config2env(name):
+def test_hostvars_equal_bash_env(name):
     text, options = MATRIX[name]
     with tempfile.TemporaryDirectory() as tmp:
         repo, state_dir, result = build(text, tmp, **options)

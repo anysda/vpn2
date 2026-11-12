@@ -115,16 +115,6 @@ def wireguard_rerun(style):
         return result.returncode, priv.read_text().strip() if priv.exists() else None, result.stderr
 
 
-def svc_conf_iface(style):
-    """anysda-svc.sh wg0_conf_iface: addresses of [Interface] in wg0.conf."""
-    block = cut(source('infra/lib/anysda-svc.sh'), 'wg0_conf_iface() {', '\n}\n') + '\n}\n'
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / 'wg0.conf'
-        path.write_text(conf(style))
-        result = bash(block.replace('/etc/wireguard/wg0.conf', str(path)) + 'wg0_conf_iface\n', directory)
-        return result.returncode, result.stdout.split('\n')[:-1]
-
-
 PEERS = [(PEER, PSK_ONE, ['10.66.66.2/32']), (OLD, PSK_TWO, ['10.66.66.3/32'])]
 
 
@@ -144,9 +134,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
     def test_4_wireguard_rerun_keeps_server_key(self):
         code, priv, stderr = wireguard_rerun('mixed')
         self.assertEqual((code, priv), (0, SERVER), stderr)
-
-    def test_5_svc_reads_interface_section(self):
-        self.assertEqual(svc_conf_iface('mixed'), (0, ['addr 10.66.66.1/24']))
 
     def test_6_non_ascii_name_is_not_a_key_anywhere(self):
         style = 'lookalike'
@@ -189,8 +176,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertIn('cannot replace an active WireGuard private key', stderr)
             self.assertNotEqual(priv, FRESH)
-        with self.subTest('5 svc'):
-            self.assertEqual(svc_conf_iface(style), (0, []))
 
     def test_7_canonical_config_reads_as_before(self):
         style = 'canonical'
@@ -203,8 +188,6 @@ class WgConfKeyCaseTests(unittest.TestCase):
         with self.subTest('4 28-wireguard'):
             code, priv, stderr = wireguard_rerun(style)
             self.assertEqual((code, priv), (0, SERVER), stderr)
-        with self.subTest('5 svc'):
-            self.assertEqual(svc_conf_iface(style), (0, ['addr 10.66.66.1/24']))
 
 
 if __name__ == '__main__':

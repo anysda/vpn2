@@ -1,11 +1,10 @@
 """Проверки пользовательского ввода до записи env и выполнения shell."""
-import os
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
-from test_deploy import ROOT
+from test_deploy import write_envs
 
 
 CONFIG = """entry:
@@ -21,9 +20,7 @@ exits:
 class ConfigValidationTests(unittest.TestCase):
     def convert(self, config, directory):
         (Path(directory) / 'config.yaml').write_text(config)
-        return subprocess.run(['python3', str(ROOT / 'infra/lib/config2env.py'), directory],
-                              capture_output=True, text=True, timeout=10,
-                              env={**os.environ, 'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
+        return write_envs(directory, env={'VPN2_STATE_DIR': f'{directory}/state', 'HOME': directory})
 
     def test_unsafe_env_fields_rejected_before_writes(self):
         cases = [

@@ -23,6 +23,7 @@ TOOL = ROOT / "infra/ansible/roles/resources/files/entry_resources.py"
 sys.path.insert(0, str(ROOT / "infra/vpn2/src"))
 from adguard_support import render_unit  # noqa: E402
 from containers_support import FACTS, compose  # noqa: E402
+from test_deploy import write_envs  # noqa: E402
 from vpn2.adguard import dns as adguard_dns, stage as adguard  # noqa: E402
 
 SERVICES = ("panel", "bot", "vm")
@@ -148,9 +149,7 @@ class EntryMemoryTest(unittest.TestCase):
                 (ROOT / "config.example.yaml").read_text()
                 .replace('  passphrase: ""', '  passphrase: test pass')
                 + "\nentry_resources:\n  querylog_size: 0\n  adaway_enabled: false\n  retention_days: 11\n")
-            subprocess.run([sys.executable, str(ROOT / "infra/lib/config2env.py"), str(root)],
-                           capture_output=True, check=True,
-                           env={**os.environ, 'VPN2_STATE_DIR': f'{root}/state'})
+            self.assertEqual(write_envs(root, env={'VPN2_STATE_DIR': f'{root}/state'}).returncode, 0)
             command = (f"source {shlex.quote(str(root / 'infra/envs/ru.env'))}; "
                        f"source {shlex.quote(str(ROOT / 'infra/ansible/roles/resources/files/entry-resources.sh'))}; "
                        "entry_resources vm; printf '%s\\n' \"${ENTRY_RUNTIME_ARGS[@]}\"")
@@ -167,7 +166,7 @@ class EntryMemoryTest(unittest.TestCase):
             self.assertIn(f"resource_text(environ, '{service}')", (package / f"{module_name}.py").read_text())
         # AdGuard ставит роль: библиотеку кладёт она же, профиль берёт шаг limits.
         tasks = yaml.safe_load((ROOT / "infra/ansible/roles/adguard/tasks/main.yml").read_text())
-        shipped = [name for task in tasks if "lib/" in str(task.get("ansible.builtin.copy", {}).get("src"))
+        shipped = [name for task in tasks if "resources/files/" in str(task.get("ansible.builtin.copy", {}).get("src"))
                    for name in task["loop"]]
         self.assertEqual(shipped, ["entry-resources.sh", "entry_resources.py"])
         self.assertIn("limits", [task["ansible.builtin.command"]["argv"].split("'")[1] for task in tasks
@@ -177,7 +176,7 @@ class EntryMemoryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for filename in ("entry-resources.sh", "entry_resources.py"):
-                shutil.copy(ROOT / "infra/lib" / filename, root)
+                shutil.copy(ROOT / "infra/ansible/roles/resources/files" / filename, root)
             command = f"source {shlex.quote(str(root / 'entry-resources.sh'))}; entry_resources vm"
             result = subprocess.run(["bash", "-eu", "-c", command], capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr)

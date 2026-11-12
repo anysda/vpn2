@@ -111,7 +111,7 @@ def inventory(cfg: Config, state: Path, *, repo_root=None, environ=None, hide_se
 
 def prepare(cfg: Config, state: Path, repo_root: Path):
     """Перед деплоем: ключ оркестратора из config.yaml в ~/.ssh, октеты mesh закреплены за тегами."""
-    nodevars.validate(cfg)
+    nodevars.env_by_node(cfg, state=state, repo_root=repo_root)
     if cfg.raw.get('orchestrator_key'):
         ssh_dir = Path.home() / '.ssh'
         ssh_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -185,16 +185,16 @@ def asked_by_ansible_inventory():
 
 
 def main(argv):
-    infra = Path(__file__).resolve().parents[1]
-    path = Path(os.environ.get('VPN2_CONFIG') or infra.parent / 'config.yaml')
+    path = Path(os.environ.get('VPN2_CONFIG') or Path(__file__).resolve().parents[2] / 'config.yaml')
+    repo = path.parent
     if argv[:1] in (['--prepare'], ['--env'], ['--set-port']):
         try:
             if argv[0] == '--set-port':
                 return set_port(path, *argv[1:3])
             cfg = load(path)
             if argv[0] == '--prepare':
-                return prepare(cfg, STATE_DIR, infra.parent)
-            found = inventory(cfg, STATE_DIR, repo_root=infra.parent)
+                return prepare(cfg, STATE_DIR, repo)
+            found = inventory(cfg, STATE_DIR, repo_root=repo)
             if 'vpn2_env_error' in found['all'].get('vars', {}):
                 nodevars.validate(cfg)
             if argv[1:] and argv[1] not in found['_meta']['hostvars']:
@@ -213,7 +213,7 @@ def main(argv):
             return 1
         mode = os.environ.get('VPN2_INVENTORY_SECRETS', '')
         hide = mode == 'hide' or (mode != 'show' and asked_by_ansible_inventory())
-        print(json.dumps(inventory(cfg, STATE_DIR, repo_root=infra.parent, hide_secrets=hide),
+        print(json.dumps(inventory(cfg, STATE_DIR, repo_root=repo, hide_secrets=hide),
                          indent=2, sort_keys=True))
         return 0
     if len(argv) == 2 and argv[0] == '--host':

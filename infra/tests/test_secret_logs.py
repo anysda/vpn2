@@ -1,23 +1,17 @@
+from pathlib import Path
 import tempfile
 import unittest
 
-from test_deploy import ROOT, bash
+from test_deploy import write_envs
 
 
 class SecretLogTests(unittest.TestCase):
     def test_yaml_error_hides_value(self):
         with tempfile.TemporaryDirectory() as directory:
-            result = bash('''
-python3 - "$1" <<'PY'
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location('config2env', sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-module.parse_yaml("entry:\\n  password: 'CANARY_UNCLOSED_SECRET\\n")
-PY
-'''.replace('"$1"', f'"{ROOT}/infra/lib/config2env.py"'), directory)
+            (Path(directory) / 'config.yaml').write_text("entry:\n  password: 'CANARY_UNCLOSED_SECRET\n")
+            result = write_envs(directory)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn('незакрытая кавычка', result.stderr)
+            self.assertIn('ERROR: config.yaml:', result.stderr)
             self.assertNotIn('CANARY_UNCLOSED_SECRET', result.stdout + result.stderr)
 
 

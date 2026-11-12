@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createClient } from '~/composables/useClients'
 const open = defineModel<boolean>('open', { default: false })
 const emit = defineEmits<{ created: [id: number] }>()
 const { canSend, reason: tgReason } = useTelegramStatus()
@@ -36,7 +37,7 @@ async function submit() {
 </script>
 
 <template>
-  <Dlg v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy" @ok="submit">
+  <PanelDialog v-model:open="open" title="Новый клиент" ok="Создать" :busy="busy" @ok="submit">
     <label class="fl2"><span>Имя</span><input v-model="form.name" class="in" placeholder="Иван Иванов" @keydown.enter="submit"></label>
     <label class="fl2">
       <span>Срок действия</span>
@@ -72,5 +73,5 @@ async function submit() {
         </button>
       </span>
     </div>
-  </Dlg>
+  </PanelDialog>
 </template>

@@ -1,20 +1,13 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
-/* Модалка уже исключает фоновую область уведомлений из accessibility tree.
-   Постоянный статус очереди не должен закрывать её кнопки на узком экране.
-   Сам тост сохраняется и снова виден после закрытия модалки; ошибки действий
-   остаются видимыми поверх неё. */
+/* Тост очереди бота под открытой модалкой не перекрывает её кнопки. */
 [role="region"][aria-hidden="true"] .bot-queue-toast {
   visibility: hidden;
   pointer-events: none;
 }
 
-/* Manrope по имени - одно объявление на всю панель, здесь. @nuxt/fonts кладёт
-   полный набор @font-face в каждый CSS, где назван шрифт, и при переходах по
-   разделам копии копились бы в document.fonts. Файлы - из пакета
-   @fontsource-variable/manrope (поставщик manrope в nuxt.config.ts).
-   Остальное, и panel.css тоже, берёт var(--font-sans). */
+/* Manrope объявлен один раз здесь: @nuxt/fonts копирует @font-face в каждый CSS, где назван шрифт. */
 @theme static {
   --font-sans: 'Manrope', system-ui, sans-serif;
 }

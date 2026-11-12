@@ -2,7 +2,7 @@ import { parseOutbound } from '#shared/outbounds'
 
 export interface Outbound { name: string, type: string, delay: number | null, isWarp: boolean, isDirectRu: boolean }
 
-export interface Cell {
+interface Cell {
   outbound: string
   /** Подпись ячейки: «Напрямую» или «WARP». */
   label: string

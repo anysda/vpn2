@@ -57,8 +57,10 @@ export function useClients() {
 type Warned = { warning?: string }
 type Method = 'POST' | 'PATCH' | 'DELETE'
 /** Правка клиента; `once` - с ключом запроса: повтор сервер узнаёт и не выполняет. */
-const send = <T>(path: string, method: Method, body?: object, once = false) =>
-  $fetch(`/api/clients${path}`, { method, body, headers: once ? { 'Idempotency-Key': crypto.randomUUID() } : undefined }) as Promise<T>
+function send<T>(path: string, method: Method, body?: object, once = false): Promise<T> {
+  const headers: HeadersInit | undefined = once ? { 'Idempotency-Key': crypto.randomUUID() } : undefined
+  return $fetch<unknown>(`/api/clients${path}`, { method, body, headers }) as Promise<T>
+}
 
 export const fetchClient = (id: number) => $fetch<ClientDetail>(`/api/clients/${id}`)
 export const createClient = (c: { name: string, filterTraffic: boolean, expiresAt: string | null, deviceLimit: number | null }) =>

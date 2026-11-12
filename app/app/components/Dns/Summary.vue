@@ -58,7 +58,7 @@ function when(i: number) {
           <div class="my-3 flex items-end justify-between gap-2">
             <span class="big">{{ c.big }}</span><span v-if="c.tag" class="tag" :class="{ badt: c.red }">{{ c.tag }}</span>
           </div>
-          <Chart :data="c.line.length > 1 ? c.line : [0, 0]" :h="40" :col="c.red ? 'var(--red-t)' : undefined" />
+          <LineChart :data="c.line.length > 1 ? c.line : [0, 0]" :h="40" :col="c.red ? 'var(--red-t)' : undefined" />
         </div>
       </div>
       <div class="mt-3 grid gap-3 md:grid-cols-[2fr_1fr]">
@@ -67,7 +67,7 @@ function when(i: number) {
             <h3>{{ data.units === 'hours' ? 'Запросы за сутки' : `Запросы за ${data.q.length} дн.` }}</h3>
             <span class="text-xs text-(--t3)"><span class="dot bg-(--acc)" /> Все запросы · <span class="dot bg-(--red)" /> Заблокированные</span>
           </div>
-          <Chart :data="data.q" :extra="data.b" :h="200" :tip="i => `${ru(data!.q[i] ?? 0)} запросов · ${ru(data!.b[i] ?? 0)} заблок. · ${when(i)}`" />
+          <LineChart :data="data.q" :extra="data.b" :h="200" :tip="i => `${ru(data!.q[i] ?? 0)} запросов · ${ru(data!.b[i] ?? 0)} заблок. · ${when(i)}`" />
         </div>
         <div class="card">
           <div class="fhead">

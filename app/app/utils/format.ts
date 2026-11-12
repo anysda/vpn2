@@ -14,7 +14,7 @@ export const pad2 = (x: number) => String(x).padStart(2, '0')
 
 /** Число по-русски: запятая и пробелы между разрядами. */
 export const ru = (v: number, digits = 0) =>
-  v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }).replace(/ | /g, ' ')
+  v.toLocaleString('ru-RU', { minimumFractionDigits: digits, maximumFractionDigits: digits }).replace(/[\u00A0\u202F]/g, ' ')
 
 /** Объём, база 1024: «1,4 ГБ», «380 МБ», меньше мегабайта - «12 КБ», ноль - «—». */
 export function sizeBinRu(bytes: number | null | undefined): string {

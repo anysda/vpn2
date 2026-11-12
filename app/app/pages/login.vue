@@ -29,15 +29,9 @@ const SSO_ERRORS: Record<string, string> = {
   sso_ambiguous: 'В панели несколько учёток — привязку нужно задать явно',
   sso_already_linked: 'Учётка панели уже привязана к другому пользователю Authentik',
 }
-const ssoErrorText = computed(() =>
-  ssoError.value ? (SSO_ERRORS[ssoError.value] ?? `Ошибка SSO: ${ssoError.value}`) : null,
-)
+const ssoErrorText = computed(() => ssoError.value ? (SSO_ERRORS[ssoError.value] ?? `Ошибка SSO: ${ssoError.value}`) : null)
 
-const state = reactive({
-  username: '',
-  password: '',
-  totpCode: '',
-})
+const state = reactive({ username: '', password: '', totpCode: '' })
 
 const needsTotp = ref(false)
 const error = ref<string | null>(null)
@@ -69,8 +63,7 @@ async function submit() {
     await navigateTo('/')
   }
   catch (e) {
-    const err = e as { statusMessage?: string, message?: string }
-    error.value = err.statusMessage ?? err.message ?? 'Ошибка'
+    error.value = errText(e)
   }
   finally {
     loading.value = false
@@ -83,26 +76,13 @@ function reset() {
   error.value = null
 }
 
-// Движение входа из макета: карточка выплывает, шаг кода выезжает, ошибка
-// коротко встряхивает форму.
-const card = ref<HTMLElement>()
-const codeField = ref<HTMLElement>()
 const codeInput = ref<HTMLInputElement>()
 const userInput = ref<HTMLInputElement>()
-onMounted(() => {
-  userInput.value?.focus()
-  anim(card.value, [{ opacity: 0, transform: 'translateY(10px) scale(.98)' }, { opacity: 1, transform: 'none' }], { duration: 500 })
-})
+onMounted(() => userInput.value?.focus())
 watch(needsTotp, async (on) => {
   if (!on) return
   await nextTick()
-  rise(codeField.value, { duration: 300 }, -6)
-  setTimeout(() => codeInput.value?.focus(), 30)
-})
-watch(error, (msg) => {
-  if (!msg) return
-  anim(card.value, [{ transform: 'translateX(0)' }, { transform: 'translateX(-7px)' }, { transform: 'translateX(6px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }],
-    { duration: 340, easing: 'ease-out', fill: 'none' })
+  codeInput.value?.focus()
 })
 </script>
 
@@ -111,7 +91,7 @@ watch(error, (msg) => {
     <div class="light" />
     <div class="wrap lgw">
       <main class="tab on bare login">
-        <div ref="card" class="card lgn">
+        <div class="card lgn">
           <div class="logo" style="justify-content:center">
             <span>anysda-vpn2</span>
           </div>
@@ -119,9 +99,6 @@ watch(error, (msg) => {
             {{ ssoErrorText }}
           </div>
 
-          <!-- Кнопка нужна и при autoRedirect: на эту страницу попадают только
-               через break-glass (?direct=1) или после ошибки — обратный путь в SSO
-               должен оставаться в один клик. -->
           <template v-if="sso.enabled && !needsTotp">
             <a class="pill w lsso" href="/auth/authentik">
               <svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4v5c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V7z" /></svg>Войти через {{ sso.label }}
@@ -142,7 +119,7 @@ watch(error, (msg) => {
               <span>Пароль</span>
               <input v-model="state.password" class="in" type="password" required :disabled="needsTotp || loading" autocomplete="current-password">
             </label>
-            <label v-if="needsTotp" ref="codeField" class="fl2">
+            <label v-if="needsTotp" class="fl2">
               <span>Код из аутентификатора</span>
               <input
                 ref="codeInput" v-model="state.totpCode" class="in mono" required placeholder="123 456" inputmode="numeric" enterkeyhint="done"

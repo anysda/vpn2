@@ -61,11 +61,11 @@ async function save() {
         <svg class="i" viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" /></svg>
       </button>
     </div>
-    <Dlg v-model:open="form.open" :title="addLabel" ok="Добавить" :busy="!ready" @ok="save">
+    <PanelDialog v-model:open="form.open" :title="addLabel" ok="Добавить" :busy="!ready" @ok="save">
       <label v-for="f in fields" :key="f.k" class="fl2">
         <span>{{ f.label }}</span>
         <input v-model="form.v[f.k]" class="in" :class="{ mono: f.mono }" :placeholder="f.placeholder" spellcheck="false" @keydown.enter="save">
       </label>
-    </Dlg>
+    </PanelDialog>
   </div>
 </template>

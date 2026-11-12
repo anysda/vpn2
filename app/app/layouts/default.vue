@@ -1,11 +1,4 @@
 <script setup lang="ts">
-const TABS = [
-  { path: '/', label: 'Обзор' },
-  { path: '/clients', label: 'Клиенты' },
-  { path: '/routes', label: 'Маршруты' },
-  { path: '/dns', label: 'DNS' },
-  { path: '/settings', label: 'Настройки' },
-]
 const { user, clear } = useAuthSession()
 const route = useRoute()
 const colorMode = useColorMode()
@@ -18,7 +11,7 @@ async function logout() {
   loggingOut.value = true
   // Снять опросы страницы до удаления сессии, иначе запрос догоняет sign-out ложным 401.
   await nextTick()
-  await $fetch('/api/auth/sign-out', { method: 'POST', body: {} }).catch(() => {})
+  await $fetch<unknown>('/api/auth/sign-out', { method: 'POST', body: {} }).catch(() => {})
   clear()
   // ?direct=1: сессия в Authentik живёт дальше, авторедирект внёс бы обратно тем же кликом.
   await navigateTo('/login?direct=1')
@@ -58,7 +51,7 @@ const menu = computed(() => [
           {{ period === 'day' ? 'Сутки' : 'Неделя' }}
         </button>
         <nav class="tabs">
-          <NuxtLink v-for="t in TABS" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
+          <NuxtLink v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
             {{ t.label }}
           </NuxtLink>
         </nav>
@@ -75,7 +68,7 @@ const menu = computed(() => [
       <slot />
       <div class="mbar">
         <nav class="tabs" aria-label="Разделы">
-          <NuxtLink v-for="t in TABS" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
+          <NuxtLink v-for="t in TAB_PAGES" :key="t.path" :to="t.path" :class="{ on: route.path === t.path }">
             {{ t.label }}
           </NuxtLink>
         </nav>

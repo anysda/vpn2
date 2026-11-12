@@ -14,21 +14,13 @@ const mobile = useMobile()
 const date = (day: number) => new Date(day * 864e5)
 const raw = (d?: Day) => d ? (mode.value === 'on' ? d.online : d.bytes) : 0
 
-// Ступени по квартилям ненулевых дней; различимых значений не больше четырёх - каждому своя, наибольшее темнее всех.
-function scale(values: number[]) {
-  const s = values.filter(v => v > 0).sort((a, b) => a - b), u = [...new Set(s)]
-  if (u.length <= 4) return (v: number) => v > 0 ? (u.length === 1 ? 4 : 1 + Math.round(u.indexOf(v) * 3 / (u.length - 1))) : 0
-  const th = [1, 2, 3].map(k => s[Math.floor(k * s.length / 4)]!)
-  return (v: number) => v > 0 ? 1 + th.filter(t => v >= t).length : 0
-}
-
 const grid = computed(() => {
   if (!data.value) return null
   const weeks = mobile.value ? 14 : 26, today = data.value.today
   const byDay = new Map(data.value.days.map(d => [d.day, d]))
   const start = today - (date(today).getUTCDay() + 6) % 7 - 7 * (weeks - 1)
   const days = Array.from({ length: weeks * 7 }, (_, i) => start + i).filter(day => day <= today)
-  const step = scale(days.map(d => raw(byDay.get(d))))
+  const step = activityScale(days.map(d => raw(byDay.get(d))))
   const months: { w: number, m: string }[] = []
   for (let w = 0, last = -1; w < weeks - 2; w++) {
     const t = date(start + w * 7)
@@ -53,7 +45,7 @@ const read = computed(() => {
   <div class="card flex flex-col">
     <div class="fhead">
       <h3>Активность</h3>
-      <Seg v-model="mode" :options="MODES" small />
+      <SegTabs v-model="mode" :options="MODES" small />
     </div>
     <div v-if="grid" class="mt-3 grid items-center gap-1 text-[11px] text-(--t3)" :style="{ gridTemplateColumns: `22px repeat(${grid.weeks},minmax(0,1fr))` }">
       <span v-for="m in grid.months" :key="`m${m.w}`" class="h-3.5 whitespace-nowrap" :style="{ gridRow: 1, gridColumn: `${m.w + 2}/span 4` }">{{ m.m }}</span>

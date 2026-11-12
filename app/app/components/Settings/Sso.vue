@@ -1,155 +1,152 @@
 <script setup lang="ts">
-/** Карточка «Вход через Authentik». */
 const toast = useToast()
-const { load: loadSso } = useSsoPublic()
+const { load: loadPublic } = useSsoPublic()
 
 interface SsoForm {
-  enabled: boolean
-  authentikUrl: string
-  appSlug: string
-  clientId: string
-  clientSecret: string
-  allowedSubs: string
-  label: string
-  autoRedirect: boolean
-  passwordLogin: boolean
-  redirectUrl: string
+  enabled: boolean, authentikUrl: string, appSlug: string, clientId: string, clientSecret: string
+  allowedSubs: string, label: string, autoRedirect: boolean, passwordLogin: boolean, redirectUrl: string
 }
-const ssoForm = reactive<SsoForm>({
+type TextKey = 'authentikUrl' | 'appSlug' | 'clientId' | 'clientSecret' | 'allowedSubs' | 'redirectUrl' | 'label'
+const form = reactive<SsoForm>({
   enabled: false, authentikUrl: '', appSlug: '', clientId: '', clientSecret: '',
   allowedSubs: '', label: 'Authentik', autoRedirect: true, passwordLogin: true, redirectUrl: '',
 })
-const ssoSecretMasked = ref('')
-const ssoSaving = ref(false)
-const ssoChecking = ref(false)
-const ssoCheck = ref<{ ok: boolean, text: string } | null>(null)
-const ssoLoaded = ref(false)
-const ssoLoading = ref(false)
-const ssoLoadError = ref('')
-// «Сохранить» оживает после правки, как в макете.
-const ssoSaved = ref('')
-const ssoDirty = computed(() => JSON.stringify(ssoForm) !== ssoSaved.value)
+const secretMasked = ref('')
+const saved = ref('')
+const dirty = computed(() => JSON.stringify(form) !== saved.value)
+const loaded = ref(false)
+const loading = ref(false)
+const loadError = ref('')
+const saving = ref(false)
+const checking = ref(false)
+const check = ref<{ ok: boolean, text: string } | null>(null)
 
-async function loadSsoForm() {
-  const r = await $fetch<Omit<SsoForm, 'clientSecret'> & { clientSecretMasked: string }>('/api/admin/sso')
-  const { clientSecretMasked, ...rest } = r
-  Object.assign(ssoForm, rest, { clientSecret: '' })
-  ssoSaved.value = JSON.stringify(ssoForm)
-  ssoSecretMasked.value = clientSecretMasked
-}
-async function reloadSsoForm() {
-  if (ssoLoading.value) return
-  ssoLoading.value = true
-  ssoLoaded.value = false
-  ssoLoadError.value = ''
+const fields = computed<{ key: TextKey, label: string, ph?: string, hint?: string, mono?: boolean, secret?: boolean }[]>(() => [
+  { key: 'clientId', label: 'client_id', mono: true },
+  { key: 'clientSecret', label: 'client_secret', mono: true, secret: true, ph: secretMasked.value ? 'оставить прежний' : '', hint: secretMasked.value && `сохранён: ${secretMasked.value}` },
+  { key: 'allowedSubs', label: 'Кого пускать', mono: true, hint: 'uuid пользователя Authentik (sub), через запятую; с логином панели: uuid:логин' },
+  { key: 'redirectUrl', label: 'Адрес возврата', mono: true, hint: 'Его же впишите в Redirect URI провайдера в Authentik' },
+  { key: 'label', label: 'Подпись кнопки', ph: 'Authentik' },
+])
+
+async function reload() {
+  if (loading.value) return
+  loading.value = true
+  loaded.value = false
+  loadError.value = ''
   try {
-    await loadSsoForm()
-    ssoLoaded.value = true
+    const { clientSecretMasked, ...rest } = await $fetch<Omit<SsoForm, 'clientSecret'> & { clientSecretMasked: string }>('/api/admin/sso')
+    Object.assign(form, rest, { clientSecret: '' })
+    saved.value = JSON.stringify(form)
+    secretMasked.value = clientSecretMasked
+    loaded.value = true
   }
   catch (e) {
-    ssoLoadError.value = apiError(e)
+    loadError.value = errText(e)
   }
   finally {
-    ssoLoading.value = false
+    loading.value = false
   }
 }
-onMounted(reloadSsoForm)
+onMounted(reload)
 
-function apiError(e: unknown): string {
-  const err = e as { data?: { message?: string }, statusMessage?: string, message?: string }
-  return err.data?.message ?? err.statusMessage ?? err.message ?? 'Ошибка'
-}
-
-async function checkSso() {
-  ssoChecking.value = true
-  ssoCheck.value = null
+async function runCheck() {
+  checking.value = true
+  check.value = null
   try {
-    const r = await $fetch<{ issuer: string }>('/api/admin/sso/check', {
-      method: 'POST',
-      body: { authentikUrl: ssoForm.authentikUrl, appSlug: ssoForm.appSlug },
-    })
-    ssoCheck.value = { ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }
+    const r = await $fetch<{ issuer: string }>('/api/admin/sso/check', { method: 'POST', body: { authentikUrl: form.authentikUrl, appSlug: form.appSlug } })
+    check.value = { ok: true, text: `Discovery отвечает, issuer: ${r.issuer}` }
   }
   catch (e) {
-    ssoCheck.value = { ok: false, text: apiError(e) }
+    check.value = { ok: false, text: errText(e) }
   }
   finally {
-    ssoChecking.value = false
+    checking.value = false
   }
 }
 
-async function saveSso() {
-  if (!ssoLoaded.value || ssoSaving.value || !ssoDirty.value) return
-  ssoSaving.value = true
+async function save() {
+  if (!loaded.value || saving.value || !dirty.value) return
+  saving.value = true
   try {
-    await $fetch('/api/admin/sso', { method: 'PUT', body: ssoForm })
+    await $fetch<unknown>('/api/admin/sso', { method: 'PUT', body: form })
     toast.add({ title: 'Настройки входа сохранены', color: 'success' })
-    await Promise.all([reloadSsoForm(), loadSso()])
+    await Promise.all([reload(), loadPublic()])
   }
   catch (e) {
-    toast.add({ title: 'Не сохранено', color: 'error', description: apiError(e) })
+    toast.add({ title: 'Не сохранено', color: 'error', description: errText(e) })
   }
   finally {
-    ssoSaving.value = false
+    saving.value = false
   }
 }
 </script>
 
 <template>
-  <form class="card sc ssso" @submit.prevent="saveSso">
+  <form class="card sc ssso" @submit.prevent="save">
     <div class="sh">
       <h3>Вход через Authentik</h3>
       <div class="ha">
-        <span v-if="ssoForm.enabled" class="tag ok"><span class="dot" style="background:var(--green)" />Включён</span>
+        <span v-if="form.enabled" class="tag ok"><span class="dot bg-(--green)" />Включён</span>
         <span v-else class="tag">Выключен</span>
         <button
-          type="button" role="switch" class="tog" :class="{ on: ssoForm.enabled }" :aria-checked="ssoForm.enabled" aria-label="Вход через Authentik"
-          :disabled="!ssoLoaded || ssoSaving" @click="ssoForm.enabled = !ssoForm.enabled"><i /></button>
+          type="button" role="switch" class="tog" :class="{ on: form.enabled }" :aria-checked="form.enabled" aria-label="Вход через Authentik"
+          :disabled="!loaded || saving" @click="form.enabled = !form.enabled">
+          <i />
+        </button>
       </div>
     </div>
-    <div v-if="ssoLoadError" role="alert" class="al red">
-      <b>Не удалось загрузить настройки входа</b>{{ ssoLoadError }}
-    </div>
-    <div v-if="ssoLoadError" class="fld">
-      <span /><code />
-      <button type="button" class="pill" :disabled="ssoLoading" @click="reloadSsoForm">Повторить загрузку</button>
-    </div>
-    <fieldset :disabled="!ssoLoaded || ssoSaving" class="fg2">
-      <label class="fld"><span>Адрес Authentik или discovery URL</span><input v-model="ssoForm.authentikUrl" class="in mono" placeholder="https://auth.example.com"></label>
-      <label class="fld"><span>Slug приложения</span><input v-model="ssoForm.appSlug" class="in mono" placeholder="vpn2"><small class="hl">не нужен, если выше discovery URL</small></label>
-      <div class="fld">
-        <span>Проверка</span>
-        <code class="sub2" role="status">
-          <template v-if="ssoChecking">проверяю…</template>
-          <span v-else-if="ssoCheck" :style="{ color: ssoCheck.ok ? 'var(--green)' : 'var(--red)' }">{{ ssoCheck.text }}</span>
-          <template v-else>ещё не проверяли</template>
-        </code>
-        <button type="button" class="pill" :disabled="ssoChecking || !ssoForm.authentikUrl" @click="checkSso">Проверить</button>
-      </div>
-      <label class="fld"><span>client_id</span><input v-model="ssoForm.clientId" class="in mono" autocomplete="off"></label>
-      <label class="fld"><span>client_secret</span><input
-        v-model="ssoForm.clientSecret" class="in mono" type="password" autocomplete="new-password"
-        :placeholder="ssoSecretMasked ? 'оставить прежний' : ''"><small v-if="ssoSecretMasked" class="hl">сохранён: {{ ssoSecretMasked }}</small></label>
-      <label class="fld"><span>Кого пускать</span><input v-model="ssoForm.allowedSubs" class="in mono"><small class="hl">uuid пользователя Authentik (sub), через запятую; с логином панели: uuid:логин</small></label>
-      <label class="fld"><span>Адрес возврата</span><input v-model="ssoForm.redirectUrl" class="in mono"><small class="hl">Его же впишите в Redirect URI провайдера в Authentik</small></label>
-      <label class="fld"><span>Подпись кнопки</span><input v-model="ssoForm.label" class="in" placeholder="Authentik"></label>
-      <div class="fld">
-        <span>Бесшовный вход</span><code>сразу уводить в Authentik</code>
-        <button
-          type="button" role="switch" class="tog" :class="{ on: ssoForm.autoRedirect }" :aria-checked="ssoForm.autoRedirect"
-          aria-label="Бесшовный вход" @click="ssoForm.autoRedirect = !ssoForm.autoRedirect"><i /></button>
-      </div>
-      <div class="fld">
-        <span>Оставить вход по паролю</span>
-        <code v-if="ssoForm.passwordLogin">аварийный вход /login?direct=1 работает</code>
-        <code v-else style="color:var(--amber)">Без пароля аварийного входа /login?direct=1 нет. Выключается отдельным сохранением, после входа через Authentik.</code>
-        <button
-          type="button" role="switch" class="tog" :class="{ on: ssoForm.passwordLogin }" :aria-checked="ssoForm.passwordLogin"
-          aria-label="Оставить вход по паролю" @click="ssoForm.passwordLogin = !ssoForm.passwordLogin"><i /></button>
+    <template v-if="loadError">
+      <div role="alert" class="al red">
+        <b>Не удалось загрузить настройки входа</b>{{ loadError }}
       </div>
       <div class="fld">
         <span /><code />
-        <button type="submit" class="pill w" :disabled="!ssoDirty">Сохранить</button>
+        <button type="button" class="pill" :disabled="loading" @click="reload">
+          Повторить загрузку
+        </button>
+      </div>
+    </template>
+    <fieldset :disabled="!loaded || saving" class="fg2">
+      <label class="fld"><span>Адрес Authentik или discovery URL</span><input v-model="form.authentikUrl" class="in mono" placeholder="https://auth.example.com"></label>
+      <label class="fld"><span>Slug приложения</span><input v-model="form.appSlug" class="in mono" placeholder="vpn2"><small class="hl">не нужен, если выше discovery URL</small></label>
+      <div class="fld">
+        <span>Проверка</span>
+        <code class="sub2" role="status">
+          <template v-if="checking">проверяю…</template>
+          <span v-else-if="check" :class="check.ok ? 'text-(--green)' : 'text-(--red)'">{{ check.text }}</span>
+          <template v-else>ещё не проверяли</template>
+        </code>
+        <button type="button" class="pill" :disabled="checking || !form.authentikUrl" @click="runCheck">
+          Проверить
+        </button>
+      </div>
+      <label v-for="f in fields" :key="f.key" class="fld">
+        <span>{{ f.label }}</span>
+        <input v-model="form[f.key]" class="in" :class="{ mono: f.mono }" :type="f.secret ? 'password' : 'text'" :autocomplete="f.secret ? 'new-password' : 'off'" :placeholder="f.ph">
+        <small v-if="f.hint" class="hl">{{ f.hint }}</small>
+      </label>
+      <div class="fld">
+        <span>Бесшовный вход</span><code>сразу уводить в Authentik</code>
+        <button type="button" role="switch" class="tog" :class="{ on: form.autoRedirect }" :aria-checked="form.autoRedirect" aria-label="Бесшовный вход" @click="form.autoRedirect = !form.autoRedirect">
+          <i />
+        </button>
+      </div>
+      <div class="fld">
+        <span>Оставить вход по паролю</span>
+        <code v-if="form.passwordLogin">аварийный вход /login?direct=1 работает</code>
+        <code v-else class="text-(--amber)">Без пароля аварийного входа /login?direct=1 нет. Выключается отдельным сохранением, после входа через Authentik.</code>
+        <button
+          type="button" role="switch" class="tog" :class="{ on: form.passwordLogin }" :aria-checked="form.passwordLogin"
+          aria-label="Оставить вход по паролю" @click="form.passwordLogin = !form.passwordLogin">
+          <i />
+        </button>
+      </div>
+      <div class="fld">
+        <span /><code />
+        <button type="submit" class="pill w" :disabled="!dirty">
+          Сохранить
+        </button>
       </div>
     </fieldset>
   </form>

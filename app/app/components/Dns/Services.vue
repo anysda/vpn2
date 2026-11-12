@@ -10,7 +10,7 @@ let queue: Promise<unknown> = Promise.resolve()
 function save(ids: Set<string>, done?: string) {
   blocked.value = ids
   queue = queue.then(async () => {
-    if (!await act('save', () => $fetch('/api/dns/services', { method: 'PUT', body: { ids: [...ids] } }), done)) await load.refresh()
+    if (!await act('save', () => $fetch<unknown>('/api/dns/services', { method: 'PUT', body: { ids: [...ids] } }), done)) await load.refresh()
   })
 }
 function toggle(id: string) {

@@ -35,7 +35,7 @@ const apply = (x: NodeMetric, disabled: boolean) => act('exit', async () => {
   }
   catch (e) {
     const code = (e as { data?: { statusMessage?: string } }).data?.statusMessage ?? (e as { statusMessage?: string }).statusMessage ?? ''
-    throw new Error(ERRORS[code] ?? (code || 'Ошибка'))
+    throw new Error(ERRORS[code] ?? (code || 'Ошибка'), { cause: e })
   }
   await props.refresh()
 }, { title: `${exitName(x.tag)} ${disabled ? 'выключен' : 'включён'}`, color: 'success' })
@@ -66,14 +66,14 @@ function toggle(x: NodeMetric) {
       <div class="mt-3 flex items-baseline gap-2">
         <span class="big">{{ nodeHealth(x).big }}</span><span class="text-sm text-(--t3)">{{ nodeHealth(x).bigLabel }}</span>
       </div>
-      <Chart :data="series[x.tag] ?? []" :h="44" :col="nodeHealth(x).kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'" class="my-2" />
+      <LineChart :data="series[x.tag] ?? []" :h="44" :col="nodeHealth(x).kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'" class="my-2" />
       <div class="flex items-center justify-between gap-2 text-xs text-(--t3)">
         <span class="tag" :class="x.disabled ? '' : nodeHealth(x).kind === 'ok' ? 'ok' : 'badt'">{{ x.disabled ? 'ВЫКЛ' : nodeHealth(x).tag }}</span>
         <span>{{ nodeHealth(x).meta }}</span>
       </div>
     </button>
 
-    <Dlg v-model:open="open" :title="n ? exitName(n.tag) : ''" wide>
+    <PanelDialog v-model:open="open" :title="n ? exitName(n.tag) : ''" wide>
       <template v-if="n">
         <div class="flex items-center justify-between gap-3">
           <span class="sub2 mono">{{ n.host ?? n.instance }} · аптайм {{ uptimeShort(n.uptimeSec) }}</span>
@@ -101,13 +101,13 @@ function toggle(x: NodeMetric) {
           <div><span>↑ сейчас</span><b>{{ mbps(n.txMbps) }}</b><em>Mbps</em></div>
           <div><span>Сутки ↓</span><b>{{ gbDecRu(n.rxTodayBytes) }}</b><em>сутки ↑ {{ gbDecRu(n.txTodayBytes) }}</em></div>
         </div>
-        <Chart :data="series[n.tag] ?? []" :h="70" :col="nodeHealth(n).kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'" />
+        <LineChart :data="series[n.tag] ?? []" :h="70" :col="nodeHealth(n).kind === 'ok' ? 'var(--acc)' : 'var(--red-t)'" />
       </template>
       <template #footer>
         <button type="button" class="pill" @click="open = false">
           Закрыть
         </button>
       </template>
-    </Dlg>
+    </PanelDialog>
   </section>
 </template>

@@ -29,7 +29,6 @@ function reset() {
 }
 watch(disableOpen, reset)
 
-/** Шаг 2FA: пока запрос идёт, кнопки выключены; отказ - тостом `fail` с текстом сервера. */
 async function call<T>(path: string, body: object, fail: string, done: (r: T) => unknown) {
   busy.value = true
   try {
@@ -115,12 +114,7 @@ async function finish(title: string) {
       </p>
       <div class="qrrow">
         <div class="qr">
-          <svg
-            v-if="totpQr"
-            xmlns="http://www.w3.org/2000/svg"
-            :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`"
-            :style="{ width: `${totpQr.size * 4}px` }"
-            shape-rendering="crispEdges">
+          <svg v-if="totpQr" xmlns="http://www.w3.org/2000/svg" :viewBox="`0 0 ${totpQr.size} ${totpQr.size}`" :style="{ width: `${totpQr.size * 4}px` }" shape-rendering="crispEdges">
             <rect :width="totpQr.size" :height="totpQr.size" fill="#fff" />
             <rect v-for="m in totpQr.dark" :key="`${m.x}-${m.y}`" :x="m.x" :y="m.y" width="1" height="1" fill="#000" />
           </svg>
@@ -143,28 +137,10 @@ async function finish(title: string) {
     </form>
   </div>
 
-  <PanelModal
-    v-model:open="disableOpen"
-    class="stg"
-    title="Выключить 2FA?"
-    closable
-    ok="Выключить"
-    ok-class="redw"
-    :ok-disabled="busy"
-    @ok="disableTotp">
+  <PanelDialog v-model:open="disableOpen" title="Выключить 2FA?" ok="Выключить" danger :busy="busy" @ok="disableTotp">
+    <label class="fl2"><span>Пароль</span><input v-model="pwd" class="in" type="password" autocomplete="current-password" @keydown.enter="disableTotp"></label>
     <label class="fl2">
-      <span>Пароль</span>
-      <input v-model="pwd" class="in" type="password" autocomplete="current-password" @keydown.enter="disableTotp">
+      <span>Код 2FA (6 цифр)</span><input v-model="code" class="in mono" placeholder="123 456" inputmode="numeric" autocomplete="one-time-code" @keydown.enter="disableTotp">
     </label>
-    <label class="fl2">
-      <span>Код 2FA (6 цифр)</span>
-      <input
-        v-model="code"
-        class="in mono"
-        placeholder="123 456"
-        inputmode="numeric"
-        autocomplete="one-time-code"
-        @keydown.enter="disableTotp">
-    </label>
-  </PanelModal>
+  </PanelDialog>
 </template>

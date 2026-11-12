@@ -23,9 +23,9 @@ async function run() {
 </script>
 
 <template>
-  <Dlg v-model:open="open" :title="ask?.title ?? ''" :ok="ask?.ok" :danger="ask?.danger" :busy="busy" @ok="run">
+  <PanelDialog v-model:open="open" :title="ask?.title ?? ''" :ok="ask?.ok" :danger="ask?.danger" :busy="busy" @ok="run">
     <p class="mt">
       {{ ask?.text }}
     </p>
-  </Dlg>
+  </PanelDialog>
 </template>

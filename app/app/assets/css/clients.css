@@ -1,6 +1,6 @@
 /* Клиенты и ключи: перенос #t-clients из макета. .clp - страница, .clm - её модалки. */
 .clp .ha{display:flex;gap:8px}
-.clp .tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
+.tag.amb{color:var(--amber);border:1px solid rgba(var(--amb-rgb),.35);background:rgba(var(--amb-rgb),.08)}
 .clp .tag.access-tag,.clp .crow .tag.access-tag,.clp .crow .cxp .tag.access-tag{max-width:130px;height:auto;min-height:24px;white-space:normal;line-height:1.2;padding:4px 10px}
 /* фильтр */
 .clp .seg{position:relative;display:inline-flex;gap:6px;margin-bottom:14px}
@@ -9,8 +9,6 @@
 .clp .seg>a:active{transform:scale(.96)}
 .clp .seg>a.on{background:var(--acc);color:var(--acc-t);border-color:var(--acc)}
 .clp .seg>a.on b{color:var(--acc-t)}
-.clp .seg.gl>a.on{background:linear-gradient(180deg,var(--card-a),var(--card-b));color:var(--t1);border-color:var(--line)}
-.clp .seg.gl>a.on b{color:var(--t1)}
 .clp .sel{position:relative;display:inline-flex;align-items:center}
 .clp .sel select{appearance:none;height:40px;padding:0 38px 0 16px;border-radius:999px;border:1px solid var(--line);background:rgba(var(--fg),.04);color:var(--t1);font:500 13px var(--font-sans);cursor:pointer;outline:0}
 .clp .sel select option{background:var(--card-a)}
@@ -27,10 +25,6 @@
 .clp .crow:active{transform:scale(.99)}
 .clp .crow.on{background:linear-gradient(90deg,rgba(var(--fg),.09),rgba(var(--fg),.03));box-shadow:inset 0 0 0 1px rgba(var(--glow),calc(.08*var(--gk)))}
 .clp .av i{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;border:2px solid var(--card-b)}
-.clp .av i.on::after{content:"";position:absolute;inset:-2px;border-radius:50%;background:inherit;animation:clp-halo 2.4s var(--ease) infinite;pointer-events:none}
-.clp .crow:nth-child(3n+1) .av i::after{animation-delay:-.7s}
-.clp .crow:nth-child(3n+2) .av i::after{animation-delay:-1.5s}
-@keyframes clp-halo{0%{transform:scale(1);opacity:.6}75%,100%{transform:scale(3);opacity:0}}
 .clp .who>div{min-width:0}
 .clp .who b{display:flex;align-items:center;gap:6px;color:var(--t1);font-weight:500;white-space:nowrap;overflow:hidden}
 .clp .who b>span{overflow:hidden;text-overflow:ellipsis}
@@ -48,18 +42,18 @@
 .clp .cdh h2[contenteditable]:hover,.clp .cdh h2[contenteditable]:focus{background:rgba(var(--fg),.06)}
 .clp .cdh small{color:var(--lit-t);font-size:12.5px}
 .clp .cdh .tag{margin-left:auto}
-.clp .kgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin:20px 0 6px;background:rgba(var(--fg),.07);border-radius:14px;overflow:hidden}
-.clp .kgrid div{background:var(--kg);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
-.clp .kgrid span{font-size:11.5px;color:var(--t3)}
-.clp .kgrid b{font-weight:400;font-size:15px}
-.clp .kgrid em{font-style:normal;font-size:11px;color:var(--t3)}
-.clp .kgrid .in{height:26px;padding:0;background:none;border:0;box-shadow:none;font:400 15px var(--font-sans);border-bottom:1px dashed rgba(var(--fg),.18);border-radius:0}
+.kgrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin:20px 0 6px;background:rgba(var(--fg),.07);border-radius:14px;overflow:hidden}
+.kgrid div{background:var(--kg);padding:12px 14px;display:flex;flex-direction:column;gap:3px}
+.kgrid span{font-size:11.5px;color:var(--t3)}
+.kgrid b{font-weight:400;font-size:15px}
+.kgrid em{font-style:normal;font-size:11px;color:var(--t3)}
+.kgrid .in{height:26px;padding:0;background:none;border:0;box-shadow:none;font:400 15px var(--font-sans);border-bottom:1px dashed rgba(var(--fg),.18);border-radius:0}
 .clp .sub{display:flex;justify-content:space-between;align-items:baseline;margin-top:18px}
 .clp .sub h3{font-size:14px;font-weight:500;color:var(--t1)}
 .clp .sub>span{font-size:12px;color:var(--t3)}
 .clp .sub .pill{height:28px;font-size:12px;padding:0 12px}
 .clp .crw:first-of-type{margin-top:14px}
-.clp .kgrid+.crw{margin-top:12px}
+.kgrid+.crw{margin-top:12px}
 .clp .crw>span:first-child b{color:var(--t1);font-weight:500}
 .clp .crw .pill{height:30px;font-size:12px;padding:0 13px}
 .clp .crw.bt{flex-wrap:wrap}
@@ -102,7 +96,7 @@
   .clp .cgrid>.cdet{order:1}
   .clp .ccol>:not(.clist){order:2}
 }
-/* телефон (≤720): список и карточка клиента — два экрана, окна — нижние шторки */
+/* телефон (≤720): список и карточка клиента — два экрана */
 @media (max-width:720px){
   .wrap>header>.cbk{flex:none}
   .wrap>header>.cbk svg{width:19px;height:19px}
@@ -129,7 +123,7 @@
   .clp .crow .cxp{display:flex;align-self:start;justify-self:end;color:var(--t3);font-size:11px;white-space:nowrap}
   .clp .crow .cxp .tag{height:24px;font-size:11.5px}
   .clp.m-list .cdet,.clp.m-client .head,.clp.m-client .seg,.clp.m-client .ccol{display:none}
-  .clp .cdet{padding:20px 18px;animation:clp-scr .3s var(--ease)}
+  .clp .cdet{padding:20px 18px}
   .clp .cdh{flex-wrap:wrap}
   .clp .cdh>div{flex:1 1 auto;max-width:calc(100% - 66px)}
   .clp .cdh h2{font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -147,37 +141,17 @@
   .clp .kb button.ic{order:0;flex:none;width:34px;margin-left:4px}
   .clp .acts .pill{flex:1;height:40px;padding:0 8px;font-size:13px}
   .clp .acts .pill:first-child{flex:1 1 100%}
-  .clp button,.clp [role=button],.clm.bs button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
-  /* шторки: те же окна, что модалки десктопа */
-  .clm.bs .mh h2{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .clm.bs .mt+.mf{margin-top:22px}
-  .clm.bs .crw+.mf{margin-top:16px}
-  .clm.bs .mf.c3 .pill{height:44px;padding:0 4px}
-  .clm.bs .mf>span{display:grid}
-  .clm.bs .fl2 .in{height:44px;font-size:15px}
-  .clm.bs .arow .in{height:40px}
-  .clm.bs .kvr{display:flex;align-items:center}
-  .clm.bs .kvr>span:empty{display:none}
-  .clm.bs .kvl{display:block}
-  .clm.bs .kvl .kvr{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"k b" "v b";column-gap:10px}
-  .clm.bs .kvl .kvr>span:first-child{grid-area:k}
-  .clm.bs .kvl .kvr code{grid-area:v;margin-top:2px}
-  .clm.bs .kvl .r2{grid-area:b}
+  .clp button,.clp [role=button]{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 }
 @media (max-width:720px) and (hover:hover) and (pointer:fine){
   .clp .crow:hover{background:rgba(var(--fg),.035)}
 }
-@keyframes clp-scr{from{transform:translateX(18px);opacity:0}}
 /* модалки */
 .clm .al.amb{background:rgba(var(--amb-rgb),.07);border-color:rgba(var(--amb-rgb),.28);color:var(--amb-t2)}
 .clm .al.amb b{color:var(--amber)}
 /* QR своим размером (4 px на модуль), но не шире контента; на телефоне - на всю ширину. */
 .clm .qr{display:block;width:auto;height:auto;max-width:100%;image-rendering:pixelated;margin:16px auto 0;padding:12px;border-radius:18px;background:#fff;box-shadow:0 0 40px rgba(var(--glow),calc(.12*var(--gk)))}
 @media (max-width:720px){.clm .qr{width:100%}}
-/* В шторке телефона QR заходит на её поля (20 px) и идёт без рамки: белая тихая зона в 4 модуля уже есть в самом SVG.
-   Худший WG (133 модуля с тихой зоной) на 360-402 px не мельче 2,5 px на модуль. Скругление меньше тихой зоны
-   (на 360 px это 10 px) - угол её не срезает о тёмный фон. */
-.clm.bs .qr{width:calc(100% + 32px);max-width:none;margin-inline:-16px;padding:0;border-radius:8px}
 .clm .kvr{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(var(--fg),.05);font-size:12.5px}
 .clm .kvr:first-of-type{margin-top:12px}
 .clm .kvr>span{color:var(--t3)}
@@ -190,7 +164,3 @@
 .clm .sub2{color:var(--t3);font-size:12.5px;margin-top:3px}
 .clm .tog:disabled{opacity:.35}
 .clm .wait{color:var(--t3);font-size:13px;text-align:center;padding:16px 0 4px}
-@media (prefers-reduced-motion:reduce){
-  .clp .av i.on::after{content:none}
-  .clp .cdet{animation:none}
-}

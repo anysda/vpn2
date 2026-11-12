@@ -1,43 +1,25 @@
 <script setup lang="ts">
-/** Карточка «Мой профиль»: логин, смена пароля и двухфакторный вход. */
 const { user, loginMethod } = useAuthSession()
-const toast = useToast()
 const { sso } = useSsoPublic()
-
-const viaSso = computed(() => loginMethod.value === 'sso')
-
+const toast = useToast()
 const pwd = reactive({ current: '', next: '', confirm: '' })
-const pwdLoading = ref(false)
+const saving = ref(false)
 
 async function changePassword() {
-  if (!pwd.current) {
-    toast.add({ title: 'Введите текущий пароль', color: 'error' })
-    return
-  }
-  if (pwd.next.length < 8) {
-    toast.add({ title: 'Пароль должен быть ≥ 8 символов', color: 'error' })
-    return
-  }
-  if (pwd.next !== pwd.confirm) {
-    toast.add({ title: 'Пароли не совпадают', color: 'error' })
-    return
-  }
-  pwdLoading.value = true
+  const bad = !pwd.current ? 'Введите текущий пароль' : pwd.next.length < 8 ? 'Пароль должен быть ≥ 8 символов' : pwd.next !== pwd.confirm ? 'Пароли не совпадают' : ''
+  if (bad) return toast.add({ title: bad, color: 'error' })
+  saving.value = true
   try {
-    // Остальные сессии сервер рвёт всегда, эта остаётся.
-    await $fetch('/api/auth/change-password', {
-      method: 'POST',
-      body: { currentPassword: pwd.current, newPassword: pwd.next },
-    })
+    // Остальные сессии сервер рвёт, эта остаётся.
+    await $fetch<unknown>('/api/auth/change-password', { method: 'POST', body: { currentPassword: pwd.current, newPassword: pwd.next } })
     toast.add({ title: 'Пароль обновлён', color: 'success' })
     pwd.current = pwd.next = pwd.confirm = ''
   }
   catch (e) {
-    const err = e as { statusMessage?: string, message?: string }
-    toast.add({ title: 'Ошибка', color: 'error', description: err.statusMessage ?? err.message })
+    toast.add({ title: 'Ошибка', color: 'error', description: errText(e) })
   }
   finally {
-    pwdLoading.value = false
+    saving.value = false
   }
 }
 </script>
@@ -46,7 +28,7 @@ async function changePassword() {
   <div class="card sc">
     <div class="sh">
       <h3>Мой профиль</h3>
-      <span v-if="viaSso" class="tag">вход через {{ sso.label }}</span>
+      <span v-if="loginMethod === 'sso'" class="tag">вход через {{ sso.label }}</span>
     </div>
     <div class="fld">
       <span>Логин</span><code>{{ user?.username ?? '—' }}</code>
@@ -60,7 +42,7 @@ async function changePassword() {
       <label class="fld"><span>Повторите</span><input v-model="pwd.confirm" class="in" type="password" autocomplete="new-password"></label>
       <div class="fld">
         <span /><code class="sub2" />
-        <button type="submit" class="pill w" :disabled="pwdLoading">Сохранить пароль</button>
+        <button type="submit" class="pill w" :disabled="saving">Сохранить пароль</button>
       </div>
     </form>
 

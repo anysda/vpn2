@@ -57,7 +57,7 @@ function download() {
   URL.revokeObjectURL(a.href)
   toast.add({ title: `Скачивается ${fileName.value}`, color: 'success' })
 }
-const sendTg = () => act('tg', () => $fetch(`${base.value}/${PATH[props.kind][1]}`, { method: 'POST' }), { title: SENT[props.kind], color: 'success' }, 'Ошибка отправки')
+const sendTg = () => act('tg', () => $fetch<unknown>(`${base.value}/${PATH[props.kind][1]}`, { method: 'POST' }), { title: SENT[props.kind], color: 'success' }, 'Ошибка отправки')
 
 const ikeRows = computed(() => creds.value
   ? [
@@ -71,7 +71,7 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
 </script>
 
 <template>
-  <Dlg v-model:open="open" :title="`${NAME[kind]} · ${device.name}`" :wide="kind === 'ike' || qrWide">
+  <PanelDialog v-model:open="open" :title="`${NAME[kind]} · ${device.name}`" :wide="kind === 'ike' || qrWide">
     <template v-if="kind === 'wg'">
       <p class="mt">
         Отсканируй QR в приложении WireGuard или скачай .conf и импортируй.
@@ -140,5 +140,5 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
         </button>
       </span>
     </template>
-  </Dlg>
+  </PanelDialog>
 </template>

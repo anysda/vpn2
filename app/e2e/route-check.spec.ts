@@ -45,18 +45,15 @@ test.describe('visible-outbounds', () => {
     expect((await bot({})).outbounds.map(p => p.name)).toEqual(visible)
   })
 
-  test('карточки узлов и парсер UI сохраняют тег с дефисом и исключают служебные выходы', () => {
+  test('карточки узлов и парсер выходов сохраняют тег с дефисом и исключают служебные выходы', () => {
     const control = serverModule<typeof import('../server/utils/exit-control')>(
       new URL('../server/utils/exit-control.ts', import.meta.url), { '../../shared/outbounds': outbounds, './control': {} },
     )
-    const ui = serverModule<typeof import('../app/composables/useRoutes')>(
-      new URL('../app/composables/useRoutes.ts', import.meta.url), { '#shared/outbounds': outbounds },
-    )
     expect.soft(control.exitNodeOf('hy2-us-2-direct')).toBe('us-2')
-    expect(ui.parseOutbound('hy2-us-2-direct')).toEqual({ tag: 'us-2', variant: 'direct' })
+    expect(outbounds.parseOutbound('hy2-us-2-direct')).toEqual({ tag: 'us-2', variant: 'direct' })
     for (const proxy of proxies.filter(p => !visible.includes(p.name))) {
       expect(control.exitNodeOf(proxy.name)).toBeNull()
-      expect(ui.parseOutbound(proxy.name)).toBeNull()
+      expect(outbounds.parseOutbound(proxy.name)).toBeNull()
     }
   })
 })

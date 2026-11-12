@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { EventLevel, PanelEvent } from '#shared/events'
+import { parseOutbound } from '#shared/outbounds'
 
 useHead({ title: 'Обзор — anysda-vpn2' })
 definePageMeta({ title: 'Обзор' })
@@ -15,8 +16,8 @@ const { data: outbounds } = useFetch<Array<{ name: string, delay: number | null 
 const pings = computed(() => {
   const out: Record<string, number | null> = {}
   for (const o of outbounds.value) {
-    const m = /^hy2-(.+)-direct$/.exec(o.name)
-    if (m) out[m[1]!] = o.delay || null
+    const p = parseOutbound(o.name)
+    if (p?.variant === 'direct') out[p.tag] = o.delay || null
   }
   return out
 })
@@ -81,18 +82,18 @@ const onlineCards = computed(() => {
       <OverviewWave :period="period" />
       <div class="card">
         <h3>Выходы</h3>
-        <Ring :segs="exits.rows">
+        <RingChart :segs="exits.rows">
           <b class="text-2xl font-light">{{ nodes.length ? ru(exits.total) : '—' }}</b><span class="text-xs text-(--t3)">Мбит/с сейчас</span>
-        </Ring>
+        </RingChart>
         <div v-for="r in exits.rows" :key="r.tag" class="flex items-center gap-2 text-sm">
           <span class="dot" :style="{ background: r.c }" /><span class="flex-1 truncate">{{ exitName(r.tag) }}</span><em class="not-italic">{{ ru(r.v, 1) }}</em><i class="w-9 text-right text-(--t3) not-italic">{{ r.pct }}%</i>
         </div>
       </div>
       <div class="card">
         <h3>DNS сегодня</h3>
-        <Ring :segs="dns?.available ? [{ v: dns.blockedToday, c: 'var(--acc)' }, { v: dns.totalToday - dns.blockedToday, c: 'var(--g5)' }] : []">
+        <RingChart :segs="dns?.available ? [{ v: dns.blockedToday, c: 'var(--acc)' }, { v: dns.totalToday - dns.blockedToday, c: 'var(--g5)' }] : []">
           <b class="text-2xl font-light">{{ dns?.available ? `${ru(dns.blockRatePct, 1)}%` : '—' }}</b><span class="text-xs text-(--t3)">заблокировано</span>
-        </Ring>
+        </RingChart>
         <div v-for="[label, v] in [['Заблокировано', dns?.available ? ru(dns.blockedToday) : '—'], ['Запросов', dns?.available ? ru(dns.totalToday) : '—'], ['Ответ в среднем', dns?.available ? `${ru(dns.avgMs, 1)} мс` : '—']]" :key="label" class="flex justify-between text-sm">
           <span class="text-(--t2)">{{ label }}</span><em class="not-italic">{{ v }}</em>
         </div>
@@ -120,7 +121,7 @@ const onlineCards = computed(() => {
           <div class="my-2 flex items-end justify-between">
             <span class="big">{{ c.value }}</span><span class="tag">{{ c.share }}</span>
           </div>
-          <Chart :data="c.data" :h="50" :band="peakBand(c.data)" />
+          <LineChart :data="c.data" :h="50" :band="peakBand(c.data)" />
         </div>
       </div>
     </section>

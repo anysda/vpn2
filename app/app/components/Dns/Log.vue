@@ -59,7 +59,7 @@ onUnmounted(() => removeEventListener('scroll', onScroll))
 function rule(r: Row) {
   const block = r.kind === 'ok'
   return act(r.domain, async () => {
-    await $fetch('/api/dns/log-rule', { method: 'POST', body: { domain: r.domain, block, client: r.ip } })
+    await $fetch<unknown>('/api/dns/log-rule', { method: 'POST', body: { domain: r.domain, block, client: r.ip } })
     for (const x of rows.value) if (x.domain === r.domain && x.kind !== 'rw') Object.assign(x, { kind: block ? 'blk' : 'ok', detail: 'Свои правила' })
   }, `${r.domain}: ${block ? 'заблокирован' : 'разблокирован'} своим правилом`)
 }
@@ -72,7 +72,7 @@ function rule(r: Row) {
         <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4 4" /></svg>
         <input v-model="q" placeholder="Домен или клиент" aria-label="Домен или клиент">
       </label>
-      <Seg v-model="f" :options="FILTERS" small />
+      <SegTabs v-model="f" :options="FILTERS" small />
       <button type="button" class="pill md:ml-auto" @click="refresh">
         Обновить
       </button>

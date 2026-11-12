@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
-import { initials } from '../app/utils/clients-view'
+import { initials } from '../app/utils/format'
 
 type Connection = 'connected' | 'seen' | 'never' | 'unknown' | 'blocked' | 'expired'
 interface Device { id: number, name: string, ready: boolean }

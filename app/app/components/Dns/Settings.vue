@@ -65,7 +65,7 @@ async function saveEdit() {
 }
 function reset(what: keyof typeof RESET) {
   const a = RESET[what]
-  const req = what === 'cache' ? () => $fetch('/api/dns/settings/cache-clear', { method: 'POST' }) : () => $fetch('/api/dns/settings/reset', { method: 'POST', body: { what } })
+  const req = what === 'cache' ? () => $fetch<unknown>('/api/dns/settings/cache-clear', { method: 'POST' }) : () => $fetch<unknown>('/api/dns/settings/reset', { method: 'POST', body: { what } })
   async function run() {
     await req()
     toast.add({ title: a.done })
@@ -86,7 +86,7 @@ function reset(what: keyof typeof RESET) {
           </button>
         </div>
         <textarea v-model="ups" class="area mono" spellcheck="false" aria-label="Серверы выше" :readonly="busy.has('upstreams')" @blur="saveUps" />
-        <Seg :model-value="data.mode" small :options="MODES" class="mt-3" @update:model-value="v => patch({ mode: v })" />
+        <SegTabs :model-value="data.mode" small :options="MODES" class="mt-3" @update:model-value="v => patch({ mode: v })" />
         <div class="fld">
           <span>Bootstrap</span><code class="mono break-all">{{ data.bootstrap }}</code>
           <button type="button" class="pill" @click="openEdit('bootstrap', 'Bootstrap', true)">
@@ -134,11 +134,11 @@ function reset(what: keyof typeof RESET) {
         </div>
         <div class="fld">
           <span>Хранить журнал</span>
-          <Seg :model-value="String(data.logHours)" small :options="LOG" @update:model-value="v => patch({ logHours: Number(v) })" />
+          <SegTabs :model-value="String(data.logHours)" small :options="LOG" @update:model-value="v => patch({ logHours: Number(v) })" />
         </div>
         <div class="fld">
           <span>Хранить статистику</span>
-          <Seg :model-value="String(data.statsHours)" small :options="STATS" @update:model-value="v => patch({ statsHours: Number(v) })" />
+          <SegTabs :model-value="String(data.statsHours)" small :options="STATS" @update:model-value="v => patch({ statsHours: Number(v) })" />
         </div>
         <div class="fld">
           <span>Скрывать адреса клиентов</span><code>в журнале последний байт обнуляется</code>
@@ -158,11 +158,11 @@ function reset(what: keyof typeof RESET) {
       </div>
     </div>
 
-    <Dlg v-model:open="edit.open" :title="edit.name" ok="Сохранить" :busy="busy.has(edit.k)" @ok="saveEdit">
+    <PanelDialog v-model:open="edit.open" :title="edit.name" ok="Сохранить" :busy="busy.has(edit.k)" @ok="saveEdit">
       <label class="fl2">
         <span>{{ edit.name }}</span>
         <input v-model="edit.val" class="in" :class="{ mono: edit.mono }" spellcheck="false" @keydown.enter="saveEdit">
       </label>
-    </Dlg>
+    </PanelDialog>
   </div>
 </template>

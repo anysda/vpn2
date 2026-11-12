@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ClientDetail, ClientTraffic, Device } from '~/composables/useClients'
+import { updateClient, type ClientDetail, type ClientTraffic, type Device } from '~/composables/useClients'
 import { accessProtocols, accessStatus, protocolNames, type AccessOperation } from '#shared/access-operation'
 
 const props = defineProps<{ clientId: number, traffic: ClientTraffic | null, exits: string[] }>()
@@ -131,7 +131,7 @@ function protocolText(op: AccessOperation, p: typeof accessProtocols[number]) {
 }
 const canRetry = (op: AccessOperation) => op.status !== 'superseded' && (op.status !== 'confirmed' || opTitle.value === UNSURE)
 const retry = (op: AccessOperation) => act('retry', async () => {
-  await $fetch(`/api/access-operations/${op.id}/retry`, { method: 'POST' })
+  await $fetch<unknown>(`/api/access-operations/${op.id}/retry`, { method: 'POST' })
   await changed()
 }, undefined, 'Не удалось повторить операцию')
 
@@ -291,9 +291,9 @@ async function addDev() {
       </button>
     </div>
 
-    <Dlg v-model:open="newDev.open" title="Новый девайс" ok="Добавить" :busy="!newDev.name.trim() || busy.has('dev')" @ok="addDev">
+    <PanelDialog v-model:open="newDev.open" title="Новый девайс" ok="Добавить" :busy="!newDev.name.trim() || busy.has('dev')" @ok="addDev">
       <label class="fl2"><span>Название девайса</span><input v-model="newDev.name" class="in" placeholder="напр. iPhone" @keydown.enter="addDev"></label>
-    </Dlg>
+    </PanelDialog>
     <ClientsDeviceConfig v-if="cfg" v-model:open="cfgOpen" :client-id="d.id" :device="cfg.device" :kind="cfg.kind" />
   </div>
 </template>

@@ -17,7 +17,7 @@ const EXAMPLE = 'chatgpt.com'
 
 useHead({ title: 'Маршруты — anysda-vpn2' })
 definePageMeta({ title: 'Маршруты' })
-const { toast, act } = useAct()
+const { act } = useAct()
 const mobile = useMobile()
 
 const { data: rules, refresh } = useFetch<Route[]>('/api/routes', { default: () => [], server: false })
@@ -38,14 +38,14 @@ async function move(rule: Route, outbound: string) {
   if (rule.outbound === outbound) return
   moving.value = { ...moving.value, [rule.id]: outbound }
   await act('move', async () => {
-    await $fetch(`/api/routes/${rule.id}`, { method: 'PATCH', body: { outbound } })
+    await $fetch<unknown>(`/api/routes/${rule.id}`, { method: 'PATCH', body: { outbound } })
     await refresh()
   }, `«${rule.value}» → ${cellName(outbound)}`, 'Ошибка перемещения')
   const { [rule.id]: _, ...rest } = moving.value
   moving.value = rest
 }
 const remove = (rule: Route) => act('del', async () => {
-  await $fetch(`/api/routes/${rule.id}`, { method: 'DELETE' })
+  await $fetch<unknown>(`/api/routes/${rule.id}`, { method: 'DELETE' })
   await refresh()
 }, `«${rule.value}» удалено`)
 
@@ -69,7 +69,7 @@ watch(cells, (list) => {
   if (!newRule.outbound && list.length) newRule.outbound = list.find(c => c.outbound === 'direct-ru')?.outbound ?? list[0]!.outbound
 }, { immediate: true })
 const add = () => act('add', async () => {
-  await $fetch('/api/routes', { method: 'POST', body: { value: newRule.value.trim(), outbound: newRule.outbound } })
+  await $fetch<unknown>('/api/routes', { method: 'POST', body: { value: newRule.value.trim(), outbound: newRule.outbound } })
   newRule.value = ''
   await refresh()
 }, 'Правило добавлено')
@@ -172,7 +172,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
       {{ mobile ? 'Нажми на правило, чтобы перенести его на другой выход.' : 'Перетаскивай правила между выходами.' }} Трафик без совпадения с ручным правилом идёт по автоматическим правилам роутера.
     </p>
 
-    <Dlg v-model:open="pickOpen" :title="picked?.value ?? ''">
+    <PanelDialog v-model:open="pickOpen" :title="picked?.value ?? ''">
       <p class="mt">
         Выход
       </p>
@@ -186,6 +186,6 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
           Удалить
         </button>
       </template>
-    </Dlg>
+    </PanelDialog>
   </main>
 </template>

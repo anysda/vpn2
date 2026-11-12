@@ -28,6 +28,6 @@ function tip(i: number) {
       <span class="big">{{ data ? gbDecNumRu(data.sum) : '—' }}<small class="text-lg text-(--t3)"> ГБ</small></span>
       <span v-if="delta" class="tag" :title="period === 'day' ? 'Сравнение с тем же временем вчера' : 'Сравнение с тем же временем неделю назад'">{{ delta }}</span>
     </div>
-    <Chart :data="gb" :h="140" :band="peakBand(gb, 5)" :tip="tip" />
+    <LineChart :data="gb" :h="140" :band="peakBand(gb, 5)" :tip="tip" />
   </div>
 </template>

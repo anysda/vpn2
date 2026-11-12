@@ -1,7 +1,6 @@
 """Мастер config.yaml: задаёт вопросы, пишет config.yaml.
 
-Запускается обёрткой setup.sh из дерева репы до установки пакета, поэтому
-только стандартная библиотека. Вопросы, их порядок, проверки ввода и итоговый
+Запускается обёрткой setup.sh из дерева репы до установки пакета. Вопросы, их порядок, проверки ввода и итоговый
 файл закреплены эталоном tests/fixtures/setup.
 
 При существующем config.yaml прежние ответы служат значениями по умолчанию:
@@ -17,10 +16,11 @@ import signal
 import string
 import subprocess
 import sys
-import tempfile
 import termios
 import unicodedata
 from pathlib import Path
+
+from vpn2 import fsutil
 
 ROOT = Path(os.path.abspath(__file__)).parents[4]
 
@@ -29,8 +29,6 @@ CONTROL = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
 SPACE = (' \t\n\r\v\f\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006'
          '\u2008\u2009\u200a\u2028\u2029\u205f\u3000')
 PRIVATE = re.compile(r'(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.)')
-TAG = re.compile(r'[a-z]([a-z0-9-]*[a-z0-9])?')
-RESERVED = ('ru', 'all', 'exits', 'foreign')
 BOX = 44
 
 
@@ -208,17 +206,14 @@ def detect_entry_ip():
 
 def detect_geo(address):
     """(код страны строчными, название) по ip-api.com; ('', '') - не определена."""
-    ok, body = output('curl', '-sSf', '--max-time', '5',
-                      f'http://ip-api.com/json/{address}?fields=countryCode,country')
+    ok, body = fetch(f'http://ip-api.com/json/{address}?fields=countryCode,country')
     if not ok:
         return '', ''
     try:
         data = json.loads(body)
-        geo = data.get('countryCode', '').lower() + ':' + data.get('country', '')
+        return data.get('countryCode', '').lower(), data.get('country', '')
     except Exception:
         return '', ''
-    code, _, country = geo.rstrip('\n').partition(':')
-    return code, country
 
 
 SECTIONS = ('entry', 'panel', 'admin', 'alerts', 'entry_resources', 'failover', 'openvpn', 'ports',
@@ -247,11 +242,12 @@ def parse_yaml(text):
 
 
 def validate_tag(ui, tag, used):
+    from vpn2.nodevars import RESERVED_TAGS, TAG
     if not TAG.fullmatch(tag):
         ui.fail('Тег: строчная буква в начале, далее строчные буквы, цифры и дефисы; '
                 'дефис в конце запрещён (пример: us, us-2)')
         return False
-    if tag in RESERVED:
+    if tag in RESERVED_TAGS:
         ui.fail(f"Тег '{tag}' зарезервирован")
         return False
     if tag in used:
@@ -745,16 +741,7 @@ def update(previous, changed):
 
 def save(text):
     """Замена атомарна, файл сразу 0600: прежний config.yaml цел до последнего шага."""
-    config = ROOT / 'config.yaml'
-    fd, temporary = tempfile.mkstemp(prefix='.config-', suffix='.yaml', dir=config.parent)
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as file:
-            file.write(text)
-        os.replace(temporary, config)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-    config.chmod(0o600)
+    fsutil.atomic(ROOT / 'config.yaml', text)
 
 
 def wizard(ui):

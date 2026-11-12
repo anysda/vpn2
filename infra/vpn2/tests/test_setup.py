@@ -198,7 +198,7 @@ def test_config_is_private_before_write(tmp_path, monkeypatch, existing):
     assert len(written) == 1
     assert target.read_text().count('CANARY_SECRET') == 3
     assert target.stat().st_mode & 0o777 == 0o600
-    assert [path.name for path in tmp_path.glob('.config-*')] == []
+    assert [path.name for path in tmp_path.glob('.fsutil-*')] == []
 
 
 def wait_for(stream, text, seen=b''):

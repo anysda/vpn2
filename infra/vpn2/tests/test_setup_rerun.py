@@ -216,7 +216,7 @@ def test_input_end_keeps_filled_config(tmp_path, answers):
     assert code == 1, output
     assert 'ввод прерван' in output or answers
     assert config.read_bytes() == before
-    assert [path.name for path in root.glob('.config-*')] == []
+    assert [path.name for path in root.glob('.fsutil-*')] == []
 
 
 @pytest.mark.parametrize('number', [signal.SIGINT, signal.SIGTERM])
@@ -249,7 +249,7 @@ def test_signal_in_the_middle_keeps_filled_config(tmp_path, number):
         assert termios.tcgetattr(slave)[3] & termios.ECHO
         assert 'Traceback' not in output
         assert config.read_bytes() == before
-        assert [path.name for path in root.glob('.config-*')] == []
+        assert [path.name for path in root.glob('.fsutil-*')] == []
     finally:
         os.close(master)
         os.close(slave)

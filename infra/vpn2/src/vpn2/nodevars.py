@@ -12,6 +12,7 @@ from vpn2.config import HY2_PORT_CANDIDATES, STATE_DIR, TRUE_WORDS, Config, Conf
 from vpn2.watchdog.hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields
 
 RESERVED_TAGS = ('ru', 'all', 'exits', 'foreign')
+TAG = re.compile(r'[a-z](?:[a-z0-9-]*[a-z0-9])?')
 OVPN_PROTOS = ('udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6', 'tcp-server', 'tcp4-server', 'tcp6-server')
 FALSE_WORDS = ('false', 'no', 'n', '0')
 LABEL = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
@@ -152,7 +153,7 @@ def validate(cfg: Config) -> dict:
     for index, item in enumerate(sec['exits']):
         key = f'exits[{index}]'
         tag = item.get('tag', '')
-        if not re.fullmatch(r'[a-z](?:[a-z0-9-]*[a-z0-9])?', tag) or tag in RESERVED_TAGS or tag in tags:
+        if not TAG.fullmatch(tag) or tag in RESERVED_TAGS or tag in tags:
             raise ConfigError(key + '.tag', 'нужен уникальный незарезервированный тег: [a-z](?:[a-z0-9-]*[a-z0-9])?')
         tags.add(tag)
         _check_host(item.get('host', ''), key + '.host')

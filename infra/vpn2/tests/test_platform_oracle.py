@@ -118,3 +118,20 @@ def test_adguard_configs(name, tmp_path, monkeypatch):
             (tmp_path / live / 'AdGuardHome.yaml').write_bytes(path.read_bytes())
         files = {name_: hashlib.sha256((tmp_path / name_).read_bytes()).hexdigest() for name_ in expected['files']}
         assert (out.getvalue(), err.getvalue(), files) == (expected['out'], expected['err'], expected['files'])
+
+
+NODEVARS = json.loads((FIXTURES / 'nodevars.json').read_text())
+
+
+@pytest.mark.parametrize('name', sorted(NODEVARS))
+def test_node_env(name, tmp_path):
+    from nodevars_cases import cases
+    from vpn2 import config, nodevars
+    text, state = cases()[name]
+    for file, body in state.items():
+        (tmp_path / file).write_text(body)
+    try:
+        result = nodevars.env_by_node(config.loads(text), state=tmp_path, development=name == 'development')
+    except config.ConfigError as error:
+        result = 'ConfigError: ' + str(error)
+    assert result == NODEVARS[name]

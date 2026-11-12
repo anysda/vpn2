@@ -53,6 +53,18 @@ def _flag(value):
     return str(value).lower() in TRUE_WORDS
 
 
+# Явные настройки ru.env (раздел, ключ, имя, вид): без ключа в config.yaml умолчание берёт роль.
+OPTIONAL = (('ports', 'wireguard', 'WG_LISTEN_PORT', 'int'), ('ports', 'openvpn', 'OVPN_PORT', 'int'),
+            ('openvpn', 'proto', 'OVPN_PROTO', 'str'), ('wireguard', 'mtu', 'WG_MTU', 'int'),
+            ('wireguard', 'split_local', 'WG_SPLIT_LOCAL', 'flag'),
+            ('failover', 'restart_after_checks', 'RESTART_AFTER_CHECKS', 'int'),
+            ('failover', 'restart_min_interval', 'RESTART_MIN_INTERVAL_S', 'int'),
+            ('alerts', 'cpu_pct', 'ALERT_CPU_PCT', 'int'), ('alerts', 'ram_pct', 'ALERT_RAM_PCT', 'int'),
+            ('alerts', 'window', 'ALERT_WINDOW_SEC', 'int'))
+FORMATS = {'int': lambda value: str(int(value)), 'str': str,
+           'flag': lambda value: 'true' if _flag(value) else 'false'}
+
+
 def env_tag(tag):
     """Тег экзита в именах переменных: дефис bash в именах не допускает."""
     return tag.upper().replace('-', '_')
@@ -309,7 +321,7 @@ def _backup(backup):
 
 def _entry(sec, development):
     """Переменные ru.env."""
-    host, ports = sec['entry']['host'], sec['ports']
+    host = sec['entry']['host']
     env = {'HOST_TAG': 'ru', 'SSH_USER': 'root', 'SSH_HOST': host, 'SSH_PASS': sec['entry']['password'],
            'PUB_IP_OUT': host, 'MGMT_IP': '10.99.0.1',
            'ADMIN_USER': sec['admin'].get('user', 'anysda') or 'anysda',
@@ -320,28 +332,14 @@ def _entry(sec, development):
         for section, name in (('panel', 'PANEL_IMAGE'), ('tgbot', 'TGBOT_IMAGE')):
             if sec[section].get('image', ''):
                 env[name] = sec[section]['image']
-    # Только явные настройки: умолчания принадлежат ролям.
-    for key, name in (('wireguard', 'WG_LISTEN_PORT'), ('openvpn', 'OVPN_PORT')):
-        if key in ports:
-            env[name] = str(int(ports[key]))
-    if 'proto' in sec['openvpn']:
-        env['OVPN_PROTO'] = sec['openvpn']['proto']
-    if 'mtu' in sec['wireguard']:
-        env['WG_MTU'] = str(int(sec['wireguard']['mtu']))
-    if 'split_local' in sec['wireguard']:
-        env['WG_SPLIT_LOCAL'] = 'true' if _flag(sec['wireguard']['split_local']) else 'false'
-    for key, name in (('restart_after_checks', 'RESTART_AFTER_CHECKS'),
-                      ('restart_min_interval', 'RESTART_MIN_INTERVAL_S')):
-        if key in sec['failover']:
-            env[name] = str(int(sec['failover'][key]))
+    for section, key, name, kind in OPTIONAL:
+        if key in sec[section]:
+            env[name] = FORMATS[kind](sec[section][key])
     telegram = sec['telegram']
     if telegram.get('bot_token') and telegram.get('chat_id'):
         env.update(TELEGRAM_BOT_TOKEN=telegram['bot_token'], TELEGRAM_CHAT_ID=telegram['chat_id'])
         if telegram.get('admin_username'):
             env['TELEGRAM_ADMIN_USERNAME'] = telegram['admin_username']
-    for key, name in (('cpu_pct', 'ALERT_CPU_PCT'), ('ram_pct', 'ALERT_RAM_PCT'), ('window', 'ALERT_WINDOW_SEC')):
-        if key in sec['alerts']:
-            env[name] = str(int(sec['alerts'][key]))
     return {**env, **_youtube(sec['youtube']), **_sso(sec['sso']), **_backup(sec['backup'])}
 
 

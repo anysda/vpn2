@@ -35,23 +35,20 @@ def _output(argv, run, **kwargs):
     return run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
 
 
-def _register(etc, say, run):
+def _registered(etc, say, run):
     """Вывод register несёт Id аккаунта и устройства: в лог идёт только хвост сбоя."""
+    say('регистрирую WARP устройство')
     try:
         # Без таймаута register при фильтрации Cloudflare висит ~145 с на TCP connect.
         done = _output([WGCF, 'register', '--accept-tos'], run, cwd=etc, timeout=15)
     except subprocess.TimeoutExpired:
-        return False
-    if done.returncode == 0:
+        done = None
+    if done and done.returncode == 0:
         return True
-    for line in done.stdout.splitlines()[-3:]:
+    for line in done.stdout.splitlines()[-3:] if done else []:
         say(line)
+    say('⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder')
     return False
-
-
-def _protect(etc):
-    for name in ('wgcf-account.toml', 'wgcf-profile.conf'):
-        (etc / name).chmod(0o600)
 
 
 def _nonempty(path):
@@ -61,13 +58,11 @@ def _nonempty(path):
 def ensure_warp_profile(etc, say, run=subprocess.run):
     """Регистрирует устройство WARP и строит профиль; False - WARP на узле нет."""
     account, profile = etc / 'wgcf-account.toml', etc / 'wgcf-profile.conf'
-    if not account.is_file():
-        say('регистрирую WARP устройство')
-        if not _register(etc, say, run):
-            say('⚠ wgcf register не прошёл (Cloudflare API недоступен) — WARP outbound будет placeholder')
-            return False
+    if not account.is_file() and not _registered(etc, say, run):
+        return False
     if _output([WGCF, 'generate'], run, cwd=etc).returncode == 0:
-        _protect(etc)
+        account.chmod(0o600)
+        profile.chmod(0o600)
     elif _nonempty(profile):
         say('⚠ wgcf generate не прошёл — оставляю профиль прошлого прогона')
     else:
@@ -156,7 +151,11 @@ def warp_values(etc, say, run=subprocess.run):
     return values
 
 
-def peer_address(host, say, resolve=None):
+def _resolve_v4(host):
+    return [item[4][0] for item in socket.getaddrinfo(host, None, socket.AF_INET)]
+
+
+def peer_address(host, say, resolve=_resolve_v4):
     """IP пира WARP для конфига.
 
     sing-box разрешает домен пира при старте: без DNS это FATAL, и вместе с
@@ -169,17 +168,13 @@ def peer_address(host, say, resolve=None):
     except ValueError:
         pass
     try:
-        found = (resolve or _resolve_v4)(host)
+        found = resolve(host)
     except OSError:
         found = []
     if found:
         return found[0]
     say(f'⚠ адрес WARP-пира {host} не разрешился, беру {WARP_PEER_FALLBACK}')
     return WARP_PEER_FALLBACK
-
-
-def _resolve_v4(host):
-    return [item[4][0] for item in socket.getaddrinfo(host, None, socket.AF_INET)]
 
 
 def _password():
@@ -332,15 +327,6 @@ def apply_config(box, text, run=subprocess.run):
             os.unlink(candidate)
 
 
-def bandwidth_fragment(env):
-    """Поля скорости клиентских hy2-инбаундов для шаблона.
-
-    Пустая пара скоростей сохраняет BBR. Служебный hy2-mgmt настройка не затрагивает.
-    """
-    fields = hy2_bandwidth.bandwidth_fields(env.get('HY2_UP_MBPS'), env.get('HY2_DOWN_MBPS'))
-    return json.dumps(fields)[1:-1] + ',' if fields else ''
-
-
 def configure(env, template, say, *, etc='/etc/anysda', box='/etc/sing-box', run=subprocess.run):
     """Профиль WARP, секреты, сертификат и конфиг sing-box; True - узел изменён."""
     for variable in ('PUB_IP', 'HY2_DIRECT_PORT', 'HY2_WARP_PORT', 'HY2_MGMT_PORT'):
@@ -354,6 +340,8 @@ def configure(env, template, say, *, etc='/etc/anysda', box='/etc/sing-box', run
     values.update(secrets)
     values['WGCF_PEER_ENDPOINT_HOST'] = peer_address(values['WGCF_PEER_ENDPOINT_HOST'], say)
     issued = ensure_cert(box, etc, env['PUB_IP'], say, run)
-    values['HY2_BANDWIDTH_FIELDS'] = bandwidth_fragment(env)
+    # Поля скорости клиентских hy2-инбаундов; пустая пара сохраняет BBR, hy2-mgmt их не получает.
+    speed = hy2_bandwidth.bandwidth_fields(env.get('HY2_UP_MBPS'), env.get('HY2_DOWN_MBPS'))
+    values['HY2_BANDWIDTH_FIELDS'] = json.dumps(speed)[1:-1] + ',' if speed else ''
     changed = apply_config(box, render_config(Path(template).read_text(), values), run)
     return changed or created or issued

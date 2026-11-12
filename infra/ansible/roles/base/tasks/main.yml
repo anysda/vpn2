@@ -80,6 +80,20 @@
   retries: 3
   delay: 10
 
+# Корневые сертификаты образа VPS бывают старше архива: TLS до реестра и ACME на свежем наборе.
+- name: Свежие корневые сертификаты
+  ansible.builtin.apt:
+    name: ca-certificates
+    state: latest
+    only_upgrade: true
+    lock_timeout: 1200
+  environment:
+    NEEDRESTART_MODE: a
+  register: base_ca
+  until: base_ca is succeeded
+  retries: 3
+  delay: 10
+
 - name: Docker из официального источника
   ansible.builtin.import_tasks: docker.yml
   when: base_entry

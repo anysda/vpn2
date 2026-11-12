@@ -270,6 +270,8 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
   .seg button{touch-action:manipulation;-webkit-user-select:none;user-select:none}
   /* ряд вкладок шире экрана листается сам, страница вбок не едет */
   .seg{min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:none}
+  /* кнопки заголовка карточки не помещаются рядом с ним - уходят строкой ниже */
+  .fhead{flex-wrap:wrap;gap:10px}
   .sc{padding:20px 18px;min-height:0}
   .fld{flex-wrap:wrap;gap:7px 8px}
   .fld>span:first-child{width:auto;flex:1 0 100%}

@@ -14,22 +14,22 @@ const COLS = 'grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_100px_130px_minmax(0
 <template>
   <div>
     <DnsLoadError :of="load" />
-    <div class="card overflow-x-auto">
+    <div class="card md:overflow-x-auto!">
       <DnsHead title="Клиенты DNS" sub="Узнаются по адресу в туннеле. Настройки здесь сильнее общих">
         <span v-if="data" class="tag">{{ tag }}</span>
       </DnsHead>
-      <div class="min-w-[760px]">
-        <div class="py-2 text-xs text-(--t3)" :class="COLS">
+      <div class="md:min-w-[760px]">
+        <div class="py-2 text-xs text-(--t3) max-md:hidden" :class="COLS">
           <span>Клиент</span><span>Адреса</span><span>Фильтры</span><span>Безопасный поиск</span><span>Сервисы</span><span>Запросов</span>
         </div>
-        <div v-for="c in data ?? []" :key="c.name" data-testid="dns-client-row" class="border-t border-(--line) py-2.5 text-sm" :class="COLS">
-          <div class="who">
+        <div v-for="c in data ?? []" :key="c.name" data-testid="dns-client-row" class="border-t border-(--line) py-2.5 text-sm max-md:flex! max-md:flex-wrap max-md:gap-x-2 max-md:gap-y-1.5" :class="COLS">
+          <div class="who max-md:basis-full">
             <span class="av">{{ initials(c.name) }}</span>
             <div class="min-w-0">
               <b class="block truncate font-medium">{{ c.name }}</b><small class="text-xs text-(--t3)">{{ c.tg }}</small>
             </div>
           </div>
-          <span class="mono text-(--t2)">{{ ips(c.ips) }}</span>
+          <span class="mono text-(--t2) max-md:basis-full">{{ ips(c.ips) }}</span>
           <span><span class="tag" :class="{ ok: c.filters === 'common' }">{{ c.filters === 'common' ? 'общие' : 'выключены' }}</span></span>
           <span><span class="tag" :class="SAFE[c.safesearch][0]">{{ SAFE[c.safesearch][1] }}</span></span>
           <span :class="{ 'text-(--t3)': !c.services }">{{ c.services ?? 'как у всех' }}</span>

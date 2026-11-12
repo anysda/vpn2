@@ -5,7 +5,7 @@ const model = defineModel<T>({ required: true })
 function pick(v: T, e: MouseEvent) {
   model.value = v
   const tab = e.currentTarget as HTMLElement
-  tab.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  tab.scrollIntoView({ block: 'nearest', inline: 'center' })
 }
 </script>
 

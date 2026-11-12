@@ -320,6 +320,24 @@ sys.stdin.read()
         expected = run('wg', 'pubkey', input=WG_KEYS['archived']).stdout.strip()
         self.assertEqual(Path('/etc/wireguard/server.pub').read_text().strip(), expected)
 
+    def test_v1_1_5_archive_restores_over_live_data(self):
+        # Архив выпуска v1.1.5: его скрипт бэкапа лежит фикстурой без правок.
+        legacy = REPO / 'infra/vpn2/tests/fixtures/backup/anysda-backup.sh'
+        result = run('bash', str(legacy), env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.conn.execute("UPDATE clients SET name = 'live-client'")
+        self.conn.commit()
+        for path in FILES:
+            write(path, body(path, 'live'))
+        write('/etc/wireguard/keys/server.priv', WG_KEYS['live'])
+        result = self.script('restore', 'latest', '--force')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        with sqlite3.connect(DB) as restored:
+            self.assertEqual(restored.execute('SELECT name FROM clients').fetchall(), [('archived-client',)])
+        for path in FILES:
+            self.assertEqual(Path(path).read_text(), body(path, 'archived'))
+        self.assertEqual(Path('/etc/wireguard/keys/server.priv').read_text().strip(), WG_KEYS['archived'])
+
     def test_restore_after_tmp_cleanup_preserves_archived_password(self):
         # Изолируем зависимость от /tmp от отдельной регрессии ссылок WG.
         for name in ('server.priv', 'server.pub'):

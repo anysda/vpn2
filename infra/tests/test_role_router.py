@@ -17,7 +17,6 @@ INSTALLED = {
     'sing-box.service': ('/etc/systemd/system/sing-box.service', '0644'),
     'anysda-apply-routes.service': ('/etc/systemd/system/anysda-apply-routes.service', '0644'),
     'anysda-apply-routes.path': ('/etc/systemd/system/anysda-apply-routes.path', '0644'),
-    '99-anysda-vpn.conf': ('/etc/sysctl.d/99-anysda-vpn.conf', '0644'),
 }
 
 
@@ -63,10 +62,17 @@ class RouterRoleTests(unittest.TestCase):
         # Деплой экспортирует путь манифеста всегда; без флага разработки установщик ищет его и падает.
         self.assertEqual(task['environment']['VPN2_DEVELOPMENT'], "{{ vpn2_env.VPN2_DEVELOPMENT | default('') }}")
 
+    def test_route_localnet_is_set_by_sysctl_module(self):
+        # TPROXY клиентов (--on-ip 127.0.0.1) - тот же файл, что в слепке entry.
+        tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
+        sysctl, = [t['ansible.posix.sysctl'] for t in tasks if 'ansible.posix.sysctl' in t]
+        self.assertEqual(sysctl, {'name': 'net.ipv4.conf.all.route_localnet', 'value': '1',
+                                  'sysctl_file': '/etc/sysctl.d/99-anysda-vpn.conf'})
+
     def test_steps_report_change_by_package_output(self):
         tasks = yaml.safe_load((ROLE / 'tasks/main.yml').read_text())
-        steps = [t for t in tasks if 'router_step' in str((t.get('ansible.builtin.command') or {}).get('argv'))]
-        self.assertGreaterEqual(len(steps), 6)
+        steps = [t for t in tasks if 'router_vpn2' in str((t.get('ansible.builtin.command') or {}).get('argv'))]
+        self.assertGreaterEqual(len(steps), 3)
         for task in steps:
             with self.subTest(task=task['name']):
                 self.assertIn('changed_when', task)

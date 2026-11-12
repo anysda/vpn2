@@ -4,7 +4,10 @@ Telegram, тексты сообщений, выдача Hysteria2."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import shutil
+import socket
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import threading
@@ -315,6 +318,46 @@ class Hy2(Temp):
         state = {'generation': 5, 'api_secret': 'secret', 'options': {'port': server.server_address[1]}}
         self.assertEqual(hy2.live_devices(state), {11, 13})
         self.assertEqual(seen, [('/connections', 'Bearer secret')])
+
+    @unittest.skipUnless(shutil.which('sing-box') and shutil.which('curl'), 'needs sing-box and curl')
+    def test_self_test_passes_on_204_and_fails_on_http_error_through_the_tunnel(self):
+        class Target(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(404 if self.path == '/missing' else 204)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        target = ThreadingHTTPServer(('127.0.0.1', 0), Target)
+        threading.Thread(target=target.serve_forever, daemon=True).start()
+        self.addCleanup(target.server_close)
+        self.addCleanup(target.shutdown)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.bind(('127.0.0.1', 0))
+            port = udp.getsockname()[1]
+        home = self.directory / 'hy2'
+        home.mkdir()
+        subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
+                        '-nodes', '-days', '30', '-subj', '/CN=t', '-addext', 'subjectAltName=IP:127.0.0.1',
+                        '-keyout', str(home / 'privkey.pem'), '-out', str(home / 'fullchain.pem')],
+                       check=True, capture_output=True)
+        server = {'log': {'level': 'error'}, 'outbounds': [{'type': 'direct'}],
+                  'inbounds': [{'type': 'hysteria2', 'listen': '127.0.0.1', 'listen_port': port,
+                                'users': [{'name': 'g1-readiness', 'password': 'probe'}],
+                                'tls': {'enabled': True, 'certificate_path': str(home / 'fullchain.pem'),
+                                        'key_path': str(home / 'privkey.pem')}}]}
+        (self.directory / 'server.json').write_text(json.dumps(server))
+        instance = subprocess.Popen([shutil.which('sing-box'), 'run', '-c', str(self.directory / 'server.json')])
+        self.addCleanup(instance.wait)
+        self.addCleanup(instance.terminate)
+        for path, expected in (('/generate_204', True), ('/missing', False)):
+            options = {'port': port, 'server_ip': '127.0.0.1', 'binary': shutil.which('sing-box'),
+                       'probe_url': f'http://127.0.0.1:{target.server_address[1]}{path}'}
+            (home / 'generation.json').write_text(json.dumps(
+                {'generation': 1, 'active': True, 'probe_password': 'probe', 'options': options}))
+            with self.subTest(path=path):
+                self.assertIs(hy2.probe(self.directory), expected)
 
     def test_firewall_isolates_the_service_user_and_gates_the_port(self):
         closed, opened = hy2.firewall_rules(990, 18443, False), hy2.firewall_rules(990, 18443, True)

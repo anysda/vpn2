@@ -49,22 +49,18 @@ test.describe('frame', () => {
       await loginApi(page)
       await page.goto('/routes')
       await hydrated(page)
-      // Вторая вкладка нажата, пока первый переход ещё снимает старую страницу:
+      // Вторая вкладка нажата сразу за первой, пока первый переход не закончен:
       // браузер отменяет первый переход, его отказ не должен всплыть на страницу.
       await page.evaluate(() => {
         const link = (name: string) => [...document.querySelectorAll<HTMLAnchorElement>('nav a')].find(a => a.textContent?.trim() === name)!
-        new MutationObserver((_, observer) => {
-          if (document.documentElement.dataset.vt !== 'page') return
-          observer.disconnect()
-          link('DNS').click()
-        }).observe(document.documentElement, { attributeFilter: ['data-vt'] })
         link('Клиенты').click()
+        link('DNS').click()
       })
       const nav = page.getByRole('navigation')
       await expect(page).toHaveURL(/\/dns$/)
       await expect(page).toHaveTitle(/^DNS — /)
       await expect(nav.locator('[aria-current="page"]')).toHaveText('DNS')
-      await expect(page.locator('html[data-vt]')).toHaveCount(0)
+      await expect(page.locator('.errp')).toHaveCount(0)
     })
   })
 
@@ -100,9 +96,9 @@ test.describe('frame', () => {
       await expect(html).toHaveAttribute('data-theme', 'dark')
 
       const choose = async (label: string) => {
-        await page.getByRole('button', { name: `@${ADMIN_USER}` }).click()
-        await page.getByRole('group', { name: 'Тема' }).getByRole('button', { name: label, exact: true }).click()
-        await page.keyboard.press('Escape')
+        await page.getByRole('button', { name: `Меню @${ADMIN_USER}` }).click()
+        await page.getByRole('menuitemcheckbox', { name: `Тема: ${label.toLowerCase()}` }).click()
+        await expect(page.getByRole('menu')).toBeHidden()
       }
       await choose('Светлая')
       await expect(html).toHaveAttribute('data-theme', 'light')
@@ -297,7 +293,7 @@ test.describe('narrow', { tag: '@narrow' }, () => {
       await expect(page.getByRole('heading', { level: 1, name: 'Маршруты' })).toBeVisible()
       await noHorizontalOverflow(page, '/routes')
       await page.goto('/dns')
-      await expect(page.getByText('DNS').first()).toBeVisible()
+      await expect(page.getByRole('tab', { name: 'Сводка', exact: true })).toBeVisible()
       await noHorizontalOverflow(page, '/dns')
 
       await page.goto('/settings')

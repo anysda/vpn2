@@ -637,7 +637,9 @@ test.describe('mobile-dns', { tag: '@mobile' }, () => {
       await page.getByRole('button', { name: 'Добавить список' }).first().tap()
       const list = sheet(page, 'Добавить список')
       await expect(list.getByRole('textbox', { name: 'Адрес списка' })).toBeVisible()
-      await page.touchscreen.tap(20, 20)
+      // тап по затемнению под окном, мимо тостов сверху
+      const box = (await list.boundingBox())!
+      await page.touchscreen.tap(20, box.y + box.height + 40)
       await expect(list).toBeHidden()
 
       await seg.getByRole('tab', { name: 'Настройки DNS' }).tap()

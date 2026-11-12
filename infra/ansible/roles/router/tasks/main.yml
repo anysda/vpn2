@@ -110,10 +110,3 @@
     port: 9090
     timeout: 10
   when: "'vpn2: changed' in router_restart.stdout"
-
-- name: Отметка стадии
-  ansible.builtin.copy:
-    content: ''
-    dest: /var/anysda/.stamps/20-ru-router
-    force: false
-    mode: '0644'

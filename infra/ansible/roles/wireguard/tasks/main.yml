@@ -1,14 +1,11 @@
 ---
 # Ядерный WireGuard на wg0. Панель переписывает wg0.conf пирами включённых
 # клиентов и применяет его `wg syncconf`.
-- name: Каталоги отметок и WireGuard
+- name: Каталог WireGuard
   ansible.builtin.file:
-    path: "{{ item.path }}"
+    path: /etc/wireguard
     state: directory
-    mode: "{{ item.mode }}"
-  loop:
-    - {path: /var/anysda/.stamps, mode: '0755'}
-    - {path: /etc/wireguard, mode: '0700'}
+    mode: '0700'
 
 - name: Пакет wireguard-tools
   ansible.builtin.apt:
@@ -67,10 +64,3 @@
   vars:
     routing: {unit: anysda-wg-routing, iface: wg0, chain: ANYSDA_WG_TPROXY, mss: "{{ wireguard_mss }}",
               after: wg-quick@wg0.service, routes: "{{ wireguard_subnets }}", v6_reject: true}
-
-- name: Отметка стадии
-  ansible.builtin.copy:
-    content: ''
-    dest: /var/anysda/.stamps/28-wireguard
-    force: false
-    mode: '0644'

@@ -1,12 +1,6 @@
 ---
 # Сервер OpenVPN на tun0: EC PKI (CA, сертификат сервера, tls-crypt). Панель
 # выпускает и отзывает сертификаты клиентов этим CA и ведёт ccd.
-- name: Каталог отметок стадий
-  ansible.builtin.file:
-    path: /var/anysda/.stamps
-    state: directory
-    mode: '0755'
-
 - name: Протокол OpenVPN поддержан
   ansible.builtin.assert:
     that: openvpn_proto in openvpn_protocols
@@ -81,10 +75,3 @@
   vars:
     routing: {unit: anysda-ovpn-routing, iface: tun0, chain: ANYSDA_OVPN_TPROXY, mss: 1340,
               after: openvpn-server@server.service}
-
-- name: Отметка стадии
-  ansible.builtin.copy:
-    content: ''
-    dest: /var/anysda/.stamps/29-openvpn
-    force: false
-    mode: '0644'

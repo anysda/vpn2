@@ -1,12 +1,6 @@
 ---
 # IKEv2/IPsec на strongSwan (swanctl): сервер по сертификату, клиент по EAP-MSCHAPv2.
 # Учётные записи устройств - /etc/swanctl/conf.d/anysda-clients.conf панели, трафик через xfrm0 в TPROXY.
-- name: Каталог отметок стадий
-  ansible.builtin.file:
-    path: /var/anysda/.stamps
-    state: directory
-    mode: '0755'
-
 - name: Пакеты strongSwan
   ansible.builtin.apt:
     name: "{{ ikev2_packages }}"
@@ -153,10 +147,3 @@
     path: /etc/anysda/ikev2-cert.sha256
     state: absent
   when: ikev2_le_domain | length == 0
-
-- name: Отметка стадии
-  ansible.builtin.copy:
-    content: ''
-    dest: /var/anysda/.stamps/27-ikev2
-    force: false
-    mode: '0644'

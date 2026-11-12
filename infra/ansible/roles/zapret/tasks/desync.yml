@@ -203,10 +203,3 @@
 - name: Итог A/B-проверки
   ansible.builtin.debug:
     msg: "{{ zapret_check.stdout_lines }}"
-
-- name: Отметка стадии
-  ansible.builtin.copy:
-    content: ''
-    dest: /var/anysda/.stamps/19-yt-zapret
-    force: false
-    mode: '0644'

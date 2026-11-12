@@ -8,6 +8,7 @@ import json
 import math
 import uuid
 from http.client import HTTPException
+from typing import NamedTuple
 from urllib import error, parse, request
 
 BOT_URL = 'http://127.0.0.1:8877/event'
@@ -106,34 +107,13 @@ def panel_event(event, *, secret_file=SECRET_FILE, url=PANEL_URL, timeout=5, ope
     return _post(event, url, {'Authorization': f'Bearer {secret}'}, timeout, opener, None)
 
 
-def flush(pending, **kwargs):
-    """Шлёт очередь по порядку, снимает с головы только доставленное; на первом
-    не-SENT стоп. Список меняется на месте. Пустая очередь -> SENT."""
-    while pending:
-        outcome = bot_event(pending[0], **kwargs)
-        if outcome is not Outcome.SENT:
-            return outcome
-        pending.pop(0)
-    return Outcome.SENT
-
-
-class Reply:
+class Reply(NamedTuple):
     """Итог одного запроса к Bot API."""
-    __slots__ = ('ok', 'reason', 'retry_after', 'final', 'result')
-
-    def __init__(self, ok, reason='', retry_after=0, final=False, result=None):
-        self.ok = ok
-        self.reason = reason
-        self.retry_after = retry_after
-        self.final = final
-        self.result = result
-
-    def __iter__(self):
-        return iter((self.ok, self.reason, self.retry_after, self.final, self.result))
-
-    def __repr__(self):
-        return (f'Reply(ok={self.ok!r}, reason={self.reason!r}, '
-                f'retry_after={self.retry_after!r}, final={self.final!r})')
+    ok: bool
+    reason: str = ''
+    retry_after: float = 0
+    final: bool = False
+    result: object = None
 
 
 class BotApi:

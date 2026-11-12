@@ -107,25 +107,6 @@ def test_bot_event_отказы_без_исключения_и_секрета(se
         assert SECRET not in repr(out) and SECRET not in str(out)
 
 
-def test_flush_порядок_и_повтор(secret_file):
-    pending = [{'n': 1}, {'n': 2}, {'n': 3}]
-    op = Opener(ok_bot(), Resp(403, {}), ok_bot())
-    assert notify.flush(pending, secret_file=secret_file, opener=op) is Outcome.FAILED
-    assert pending == [{'n': 2}, {'n': 3}]
-    op2 = Opener(ok_bot(2), ok_bot(3))
-    assert notify.flush(pending, secret_file=secret_file, opener=op2) is Outcome.SENT
-    assert pending == []
-    assert [json.loads(r.data)['n'] for r, _ in op2.requests] == [2, 3]
-    assert notify.flush(pending, secret_file=secret_file, opener=op2) is Outcome.SENT
-    assert len(op2.requests) == 2
-
-
-def test_flush_нет_секрета_очередь_цела(tmp_path):
-    pending = [{'n': 1}]
-    out = notify.flush(pending, secret_file=str(tmp_path / 'нет'), opener=Opener(ok_bot()))
-    assert out is Outcome.NO_BOT and pending == [{'n': 1}]
-
-
 def test_clean_detail():
     assert notify.clean_detail('') == ''
     assert notify.clean_detail('a\x00b\n\tc   d') == 'a b c d'

@@ -580,7 +580,7 @@ entry_uptime() { ssh_node "$ENTRY" 'cut -d" " -f1 /proc/uptime' 2>/dev/null || e
 SNAP_DIR=/run/vpn2-snapshot
 
 snapshot_tool() {  # <адрес узла>
-  ssh_node "$1" "mkdir -p $SNAP_DIR && cat > $SNAP_DIR/snapshot.py" < "$REPO_ROOT/infra/tests/snapshot.py"
+  ssh_node "$1" "mkdir -p $SNAP_DIR && cat > $SNAP_DIR/snapshot.py" < "$REPO_ROOT/infra/tools/snapshot.py"
 }
 
 snapshot_run() {  # <адрес узла> <аргументы snapshot...>

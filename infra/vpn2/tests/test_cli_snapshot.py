@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tests'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'tools'))
 import snapshot
 
-TOOLS = str(Path(__file__).resolve().parents[2] / 'tests')
+TOOLS = str(Path(__file__).resolve().parents[2] / 'tools')
 SECTIONS = {'files', 'units', 'ports', 'firewall', 'containers', 'wg', 'verify'}
 
 

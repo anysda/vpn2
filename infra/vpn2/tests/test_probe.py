@@ -158,7 +158,7 @@ def test_request_errors_propagate():
         c.request('GET', '/x', timeout=1)
 
 
-def test_proxies_select_proxy_connections_close():
+def test_proxies_select_connections_close():
     seen = []
 
     def handler(req, _timeout):
@@ -174,11 +174,9 @@ def test_proxies_select_proxy_connections_close():
     assert c.connections(timeout=5) == [{'id': 'c1'}]
     c.select('grp узел', 'hy2-узел-direct', timeout=5)
     c.close('c1', timeout=5)
-    assert c.proxy('youtube-auto', timeout=5) == {}
     assert seen[2][:2] == ('PUT', '/proxies/grp%20%D1%83%D0%B7%D0%B5%D0%BB')
     assert json.loads(seen[2][2]) == {'name': 'hy2-узел-direct'}
     assert seen[3][:2] == ('DELETE', '/connections/c1')
-    assert seen[4][:2] == ('GET', '/proxies/youtube-auto')
 
 
 def test_proxies_connections_empty():

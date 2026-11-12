@@ -82,10 +82,6 @@ class ClashApi:
         """GET /proxies -> словарь outbound'ов."""
         return self.request('GET', '/proxies', timeout=timeout).get('proxies') or {}
 
-    def proxy(self, name, *, timeout):
-        """GET /proxies/<name>."""
-        return self.request('GET', f'/proxies/{_q(name)}', timeout=timeout)
-
     def select(self, group, name, *, timeout):
         """PUT /proxies/<group> {'name': name}."""
         self.request('PUT', f'/proxies/{_q(group)}', {'name': name},

@@ -96,7 +96,7 @@ const NORMALIZATION = [
   ...rule(['clients/index.get'], 'field', ['*.createdAt'], '<time>', ISO, R_TIME),
   ...rule(['clients/[id].get'], 'field', ['id', 'devices.*.id'], '<id>', ID, R_ID),
   ...rule(['clients/[id].get'], 'field', ['createdAt', 'devices.*.createdAt'], '<time>', ISO, R_TIME),
-  ...rule(['clients/[id].get', ...BOT_CLIENT], 'field', ['devices.*.configName'], '<config-name>', /^e2e-api-snaps-\d+$/, 'имя конфига содержит идентификатор устройства'),
+  ...rule(['clients/[id].get', ...BOT_CLIENT], 'field', ['devices.*.configName'], '<config-name>', /^e2e-api-[a-z-]*-[0-9a-z]+$/, 'имя конфига содержит идентификатор устройства в base36'),
   ...rule(['clients/[id]/devices/index.post'], 'field', ['id', 'clientId'], '<id>', ID, R_ID),
   ...rule(['clients/[id]/devices/index.post'], 'field', ['createdAt'], '<time>', ISO, R_TIME),
 

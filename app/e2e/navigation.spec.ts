@@ -301,12 +301,20 @@ test.describe('mobile-inputs', { tag: '@mobile' }, () => {
 
         await openHome(page, '/dns')
         const seg = page.locator('.dns .head .seg')
+        // В DOM только открытый подраздел: поля проверяются в каждом.
+        const small: string[] = []
+        let seen = 0
         for (const name of DNS_SUBS) {
           const tab = seg.getByRole('tab', { name, exact: true })
           await tab.tap()
           await expect(tab).toHaveAttribute('aria-selected', 'true')
+          await page.waitForLoadState('networkidle')
+          const list = await fields(page)
+          seen += list.length
+          small.push(...list.filter(f => f.size < 16).map(f => `${name}: ${f.what} ${f.size}px`))
         }
-        await allAtLeast16(page, '/dns, все подразделы')
+        expect(seen, '/dns: поля есть').toBeGreaterThan(0)
+        expect(small, '/dns: поля мельче 16px').toEqual([])
       })
     })
   }

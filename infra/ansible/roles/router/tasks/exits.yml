@@ -67,7 +67,7 @@
 - name: Открытые части Reality разобраны
   ansible.builtin.set_fact:
     router_reality: >-
-      {{ router_reality | combine({item.item: dict(item.content | b64decode | split('\n') | select | map('split', '=', 1))}) }}
+      {{ router_reality | combine({item.item: dict((item.content | b64decode).splitlines() | select | map('split', '=', 1))}) }}
   loop: "{{ router_reality_files.results | selectattr('content', 'defined') | list }}"
 
 - name: Секрет clash-api создаётся один раз

@@ -12,7 +12,6 @@ const wg = vi.hoisted(() => {
 const botWgConfig = devices['GET /bot/devices/:deviceId/wg-config']
 const botWgQrPng = devices['GET /bot/devices/:deviceId/wg-qrcode.png']
 const adminWgConfig = devices['GET /clients/:id/devices/:deviceId/wg-config']
-const adminWgQrPng = devices['GET /clients/:id/devices/:deviceId/wg-qrcode.png']
 const adminWgQrSvg = devices['GET /clients/:id/devices/:deviceId/wg-qrcode.svg']
 const sendWgToTg = devices['POST /clients/:id/devices/:deviceId/send-wg-to-tg']
 
@@ -79,7 +78,6 @@ const routes = [
   { name: 'бот wg-qrcode.png', handler: botWgQrPng, ...bot, tail: ['db:chatLinked'], type: 'image/png', body: () => qrPng(conf) },
   { name: 'админ wg-config', handler: adminWgConfig, ...admin, tail: [], type: text, body: () => conf },
   { name: 'админ send-wg-to-tg', handler: sendWgToTg, ...admin, tail: ['fetch'], type: undefined, body: () => ({ ok: true }) },
-  { name: 'админ wg-qrcode.png', handler: adminWgQrPng, ...admin, tail: [], type: 'image/png', body: () => qrPng(conf) },
   { name: 'админ wg-qrcode.svg', handler: adminWgQrSvg, ...admin, tail: [], type: 'image/svg+xml; charset=utf-8', body: () => qrSvg(conf) },
 ] as const
 

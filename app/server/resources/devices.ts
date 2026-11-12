@@ -177,7 +177,6 @@ export default {
   'POST /clients/:id/devices/:deviceId/reissue': admin((event, user) => panelAccess(event, 'reissue', actorOf(user))),
 
   'GET /clients/:id/devices/:deviceId/wg-config': admin(async event => text(event, await panelWg(event))),
-  'GET /clients/:id/devices/:deviceId/wg-qrcode.png': admin(async event => png(event, await panelWg(event))),
   'GET /clients/:id/devices/:deviceId/wg-qrcode.svg': admin(async event => typed(event, 'image/svg+xml; charset=utf-8', qrSvg(await panelWg(event)))),
   'GET /clients/:id/devices/:deviceId/ovpn-config': admin(async event =>
     text(event, (await panelConfig(event, () => requireOvpnEndpoint(), ovpnConfig)).conf)),

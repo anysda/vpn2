@@ -204,7 +204,7 @@ describe('enqueueAccess: версия, вид и содержимое опера
     const set = sets()[1]!
     for (const key of ['wgPrivateKey', 'wgPublicKey', 'wgPresharedKey']) expect(set[key]).toMatch(/^[A-Za-z0-9+/]{43}=$/)
     expect(set.wgPublicKey).not.toBe('test-key-wg-1')
-    expect(set.ikev2Password).toMatch(/^[0-9a-f]{40}$/)
+    expect(set.ikev2Password).toMatch(/^[A-Za-z]{20}$/)
     expect(payloadOf().rotateOvpn).toEqual([{ id: 1, cert: 'test-cert-1' }])
     expect(payloadOf().retired).toEqual([{ id: 1, wgPublicKey: 'test-key-wg-1', ovpnCert: 'test-cert-1' }])
   })

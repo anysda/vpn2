@@ -307,8 +307,7 @@ def test_build_openvpn_mismatched_pair_and_bad_tls_key(tmp_path):
 
 def ca_identity(directory):
     pem = (directory / 'ca.crt').read_text()
-    finger = pki.run(['openssl', 'x509', '-noout', '-fingerprint', '-sha256'], data=pem).stdout
-    return pki.serial(pem), finger
+    return pki.run(['openssl', 'x509', '-noout', '-serial', '-fingerprint', '-sha256'], data=pem).stdout
 
 
 @pytest.mark.skipif(shutil.which('openssl') is None or shutil.which('openvpn') is None,
@@ -318,12 +317,13 @@ def test_build_openvpn_real_kit_verifies_and_repeat_keeps_ca(tmp_path):
     with pki.transaction(target) as work:
         pki.build_openvpn(work)
     ca, crt, crl = target / 'ca.crt', target / 'server.crt', target / 'crl.pem'
-    assert pki.verify(ca, crt, purpose='sslserver') and pki.verify(ca, crt, crl=crl)
+    assert pki.verify(ca, crt) and pki.verify(ca, crt, crl=crl)
+    assert pki.run(['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(crt)]).returncode == 0
     assert pki.pair_valid(target / 'server.key', crt) and pki.tls_crypt_valid((target / 'tls-crypt.key').read_text())
     assert 'CN=anysda-vpn2-server' in subprocess.run(['openssl', 'x509', '-noout', '-subject', '-nameopt', 'RFC2253', '-in', str(crt)], capture_output=True, text=True, check=True).stdout
     assert pki.index((target / 'index.txt').read_text())[0].subject == '/CN=anysda-vpn2-server'
     first, before = ca_identity(target), tree(target)
-    assert first[0] is not None and 'Fingerprint=' in first[1]
+    assert 'serial=' in first and 'Fingerprint=' in first
     with pki.transaction(target) as work:
         pki.build_openvpn(work)
     assert ca_identity(target) == first and tree(target) == before

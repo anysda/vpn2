@@ -207,21 +207,14 @@ def test_require_key_generates_when_cert_is_dead():
                                'ec_paramgen_curve:prime256v1', '-out', '/p/k']
 
 
-def test_verify_argv_plain_crl_and_purpose():
+def test_verify_argv_plain_and_crl():
     fake = Fake(done(0))
     assert pki.verify('/p/ca.crt', '/p/c.pem', run=fake)
     assert pki.verify('/p/ca.crt', '/p/c.pem', crl='/p/crl.pem', run=fake)
-    assert pki.verify('/p/ca.crt', '/p/s.crt', purpose='sslserver', run=fake)
     assert argvs(fake) == [
         ['openssl', 'verify', '-CAfile', '/p/ca.crt', '/p/c.pem'],
-        ['openssl', 'verify', '-CAfile', '/p/ca.crt', '-CRLfile', '/p/crl.pem', '-crl_check', '/p/c.pem'],
-        ['openssl', 'verify', '-CAfile', '/p/ca.crt', '-purpose', 'sslserver', '/p/s.crt']]
+        ['openssl', 'verify', '-CAfile', '/p/ca.crt', '-CRLfile', '/p/crl.pem', '-crl_check', '/p/c.pem']]
     assert not pki.verify('ca', 'c', crl='crl', run=Fake(done(2, err='certificate revoked')))
-
-
-def test_missing_openssl_in_serial_is_pki_error():
-    with pytest.raises(PkiError, match='not found'):
-        pki.serial('PEM', run=Fake(PkiError('openssl: not found')))
 
 
 def test_issue_argv_and_serial():
@@ -232,9 +225,6 @@ def test_issue_argv_and_serial():
         ['openssl', 'ca', '-batch', '-notext', '-config', '/p/pki/openssl.cnf', '-extensions', 'client_ext',
          '-days', '3650', '-in', '/w/csr.pem', '-out', '/w/cert.tmp'],
         ['openssl', 'x509', '-in', '/w/cert.tmp', '-noout', '-serial']]
-    fake = Fake(done(0), done(0), done(0, 'serial=BEEF\n'))
-    assert pki.issue('/p', 'dev_8', 'k', 'r', 'c', days=30, extensions='server_ext', run=fake) == 'BEEF'
-    assert argvs(fake)[1][argvs(fake)[1].index('-extensions'):][:4] == ['-extensions', 'server_ext', '-days', '30']
 
 
 def test_issue_failures_stop_at_the_failing_step():
@@ -248,12 +238,10 @@ def test_issue_failures_stop_at_the_failing_step():
         pki.issue('/p', 'dev_7', 'k', 'r', 'c', run=Fake(done(4, err='bad')))
 
 
-def test_revoke_argv_reason_and_error_text():
+def test_revoke_argv_and_error_text():
     fake = Fake(done(0))
     pki.revoke('/p/pki', '/p/n/0A.pem', run=fake)
-    pki.revoke('/p/pki', '/p/n/0A.pem', reason='certificateHold', run=fake)
-    base = ['openssl', 'ca', '-batch', '-config', '/p/pki/openssl.cnf', '-revoke', '/p/n/0A.pem']
-    assert argvs(fake) == [base, [*base, '-crl_reason', 'certificateHold']]
+    assert argvs(fake) == [['openssl', 'ca', '-batch', '-config', '/p/pki/openssl.cnf', '-revoke', '/p/n/0A.pem']]
     with pytest.raises(PkiError) as caught:
         pki.revoke('/p', 'c', run=Fake(done(1, err='first\nAlready revoked\n')))
     assert str(caught.value) == 'openssl ca -revoke: Already revoked' and caught.value.code == 1
@@ -302,16 +290,11 @@ def test_gencrl_unverifiable_crl_keeps_the_old_file(tmp_path):
     assert sorted(p.name for p in tmp_path.iterdir()) == ['crl.pem']
 
 
-def test_gencrl_failure_of_openssl_ca_and_no_verify(tmp_path):
+def test_gencrl_failure_of_openssl_ca(tmp_path):
     out = tmp_path / 'crl.pem'
     with pytest.raises(PkiError, match='gencrl: no index'):
         pki.gencrl(tmp_path, out, run=Fake(done(1, err='no index')))
     assert not out.exists()
-    fake = crl_maker('RAW\n')
-    pki.gencrl(tmp_path, out, verify=False, run=fake)
-    assert fake.calls == [['openssl', 'ca', '-batch', '-config', f'{tmp_path}/openssl.cnf', '-gencrl',
-                           '-out', str(out)]]
-    assert out.read_text() == 'RAW\n'
 
 
 def test_error_text_has_no_input_data_or_argv():
@@ -323,7 +306,6 @@ def test_error_text_has_no_input_data_or_argv():
         pki._checked(fake, ['openssl', 'pkey', '-in', '/x/TOPSECRETPATH'], 'openssl pkey', data=secret)
     assert 'TOPSECRET' not in str(caught.value) + repr(caught.value.args)
     assert str(caught.value) == 'openssl pkey: unable to load'
-    assert pki.serial(secret, run=fake) is None
     with pytest.raises(PkiError) as timed:
         pki.run(['sleep', '5'], data=secret, timeout=0.05)
     assert 'TOPSECRET' not in str(timed.value)
@@ -388,7 +370,6 @@ def test_real_issue_revoke_gencrl_verify(ca, tmp_path):
     pki.genkey(key)
     value = pki.issue(ca, 'dev_7', key, csr, cert)
     assert value == '0A' and pki.pair_valid(key, cert)
-    assert pki.serial(cert.read_text()) == 10
     rows = pki.by_cn(pki.index((ca / 'index.txt').read_text()), 'dev_7', strict=True)
     assert [(row.status, row.serial) for row in rows] == [('V', '0A')]
     assert (ca / 'newcerts' / '0A.pem').read_text() == cert.read_text()
@@ -409,13 +390,13 @@ def test_real_issue_revoke_gencrl_verify(ca, tmp_path):
 
 
 @real
-def test_real_revoke_with_reason_and_failures(ca, tmp_path):
+def test_real_revoke_twice_and_failures(ca, tmp_path):
     key, cert = tmp_path / 'key.pem', tmp_path / 'cert.pem'
     pki.genkey(key)
     pki.issue(ca, 'dev_8', key, tmp_path / 'csr.pem', cert)
-    pki.revoke(ca, cert, reason='certificateHold')
+    pki.revoke(ca, cert)
     row, = pki.by_cn(pki.index((ca / 'index.txt').read_text()), 'dev_8')
-    assert (row.status, row.revoked.partition(',')[2]) == ('R', 'certificateHold')
+    assert row.status == 'R'
     with pytest.raises(PkiError, match='openssl ca -revoke: ') as caught:
         pki.revoke(ca, cert)
     assert caught.value.code not in (None, 0)

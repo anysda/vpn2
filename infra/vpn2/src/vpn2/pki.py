@@ -189,55 +189,39 @@ def require_key(key, cert, *, run=run):
     genkey(key, run=run)
 
 
-def verify(ca, cert, *, crl=None, purpose=None, run=run):
+def verify(ca, cert, *, crl=None, run=run):
     argv = ['openssl', 'verify', '-CAfile', str(ca)]
     if crl is not None:
         argv += ['-CRLfile', str(crl), '-crl_check']
-    if purpose:
-        argv += ['-purpose', purpose]
     return _ok(run, [*argv, str(cert)])
 
 
-def serial(pem, *, run=run):
-    """Серийник сертификата (PEM-текст) числом; None, если openssl его не отдал."""
-    done = run(['openssl', 'x509', '-noout', '-serial'], data=pem)
-    value = done.stdout.strip().partition('=')[2]
-    return int(value, 16) if done.returncode == 0 and HEX.fullmatch(value) else None
-
-
-def _x509_serial(runner, cert):
-    value = _checked(runner, ['openssl', 'x509', '-in', str(cert), '-noout', '-serial'],
+def issue(directory, cn, key, csr, out, *, run=run):
+    """Клиентский сертификат для key через `openssl ca` (запись в index/serial CA); serial hex-строкой."""
+    _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr), '-subj', '/CN=' + cn],
+             'openssl req')
+    _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(Path(directory) / 'openssl.cnf'),
+                   '-extensions', 'client_ext', '-days', '3650', '-in', str(csr), '-out', str(out)],
+             'openssl ca')
+    value = _checked(run, ['openssl', 'x509', '-in', str(out), '-noout', '-serial'],
                      'openssl x509').stdout.strip().partition('=')[2]
     if not HEX.fullmatch(value):
         raise PkiError('openssl x509 -serial: no serial')
     return value
 
 
-def issue(directory, cn, key, csr, out, *, days=3650, extensions='client_ext', run=run):
-    """Сертификат для key через `openssl ca` (запись в index/serial CA); serial hex-строкой."""
-    _checked(run, ['openssl', 'req', '-new', '-key', str(key), '-out', str(csr), '-subj', '/CN=' + cn],
-             'openssl req')
-    _checked(run, ['openssl', 'ca', '-batch', '-notext', '-config', str(Path(directory) / 'openssl.cnf'),
-                   '-extensions', extensions, '-days', str(days), '-in', str(csr), '-out', str(out)],
-             'openssl ca')
-    return _x509_serial(run, out)
-
-
-def revoke(directory, cert, *, reason=None, run=run):
+def revoke(directory, cert, *, run=run):
     _checked(run, ['openssl', 'ca', '-batch', '-config', str(Path(directory) / 'openssl.cnf'),
-                   '-revoke', str(cert), *(['-crl_reason', reason] if reason else [])], 'openssl ca -revoke')
+                   '-revoke', str(cert)], 'openssl ca -revoke')
 
 
-def gencrl(directory, out, *, verify=True, run=run):
-    """CRL из базы CA в out; verify - сначала во временный файл, проверка ca.crt, затем атомарно 0644."""
+def gencrl(directory, out, *, run=run):
+    """CRL из базы CA сначала во временный файл, проверка по ca.crt, затем атомарно в out (0644)."""
     directory, out = Path(directory), Path(out)
-    argv = ['openssl', 'ca', '-batch', '-config', str(directory / 'openssl.cnf'), '-gencrl', '-out']
-    if not verify:
-        _checked(run, [*argv, str(out)], 'openssl ca -gencrl')
-        return
     with tempfile.TemporaryDirectory(dir=out.parent) as work:
         crl = Path(work) / 'crl.pem'
-        _checked(run, [*argv, str(crl)], 'openssl ca -gencrl')
+        _checked(run, ['openssl', 'ca', '-batch', '-config', str(directory / 'openssl.cnf'), '-gencrl',
+                       '-out', str(crl)], 'openssl ca -gencrl')
         _checked(run, ['openssl', 'crl', '-in', str(crl), '-noout', '-verify', '-CAfile',
                        str(directory / 'ca.crt')], 'openssl crl')
         atomic(out, crl.read_text(), 0o644)
@@ -294,9 +278,25 @@ def _require_pair(key, cert, run):
         raise PkiError(f'PKI: invalid or mismatched key/certificate: {cert}')
 
 
-def _modes(paths, mode):
-    for path in paths:
-        path.chmod(mode)
+def _ensure_ca(ca_key, ca, create, run):
+    """CA с годным ключом: create() выпускает его, когда сертификата нет или он негоден."""
+    require_key(ca_key, ca, run=run)
+    if not cert_valid(ca, run=run):
+        create()
+    _require_pair(ca_key, ca, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
+
+
+def _check_server(ca, key, cert, run):
+    _require_pair(key, cert, run)
+    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
+
+
+def _chmod(private, public):
+    for path in private:
+        path.chmod(0o600)
+    for path in public:
+        path.chmod(0o644)
 
 
 def build_openvpn(directory, *, run=run):
@@ -312,13 +312,9 @@ def build_openvpn(directory, *, run=run):
         if not (pki / name).is_file():
             atomic(pki / name, body)
     ca, ca_key, cnf, build = pki / 'ca.crt', pki / 'ca.key', pki / 'openssl.cnf', pki / 'build.cnf'
-    require_key(ca_key, ca, run=run)
-    if not cert_valid(ca, run=run):
-        _checked(run, ['openssl', 'req', '-x509', '-new', '-key', str(ca_key), '-days', '3650', '-sha256',
-                       '-out', str(ca), '-subj', '/CN=anysda-vpn2 CA', '-config', str(cnf),
-                       '-extensions', 'v3_ca'], 'openssl req')
-    _require_pair(ca_key, ca, run)
-    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
+    _ensure_ca(ca_key, ca, lambda: _checked(
+        run, ['openssl', 'req', '-x509', '-new', '-key', str(ca_key), '-days', '3650', '-sha256', '-out', str(ca),
+              '-subj', '/CN=anysda-vpn2 CA', '-config', str(cnf), '-extensions', 'v3_ca'], 'openssl req'), run)
     atomic(build, openssl_cnf(pki))
     key, cert, csr = pki / 'server.key', pki / 'server.crt', pki / 'server.csr'
     require_key(key, cert, run=run)
@@ -334,14 +330,12 @@ def build_openvpn(directory, *, run=run):
     crl_check = ['openssl', 'crl', '-in', str(crl), '-noout', '-verify', '-CAfile', str(ca)]
     if not _ok(run, crl_check):
         _checked(run, ['openssl', 'ca', '-config', str(build), '-gencrl', '-out', str(crl)], 'openssl ca -gencrl')
-    _require_pair(key, cert, run)
-    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
+    _check_server(ca, key, cert, run)
     _checked(run, crl_check, 'openssl crl')
     if not (tls.is_file() and tls_crypt_valid(tls.read_text(errors='replace'))):
         raise PkiError(f'PKI: invalid tls-crypt key: {tls}')
     build.unlink(missing_ok=True)
-    _modes((ca_key, key, tls), 0o600)
-    _modes((ca, cert, crl), 0o644)
+    _chmod((ca_key, key, tls), (ca, cert, crl))
 
 
 def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=run):
@@ -352,16 +346,14 @@ def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=ru
     """
     pki = Path(directory)
     ca, ca_key, key, cert = pki / 'ca.crt', pki / 'ca.key', pki / 'server.key', pki / 'server.crt'
-    require_key(ca_key, ca, run=run)
-    if not cert_valid(ca, run=run):
+
+    def create_ca():
         say('generating CA (ECDSA P-256, 10y)')
         ca.write_text(_checked(run, ['pki', '--self', '--in', str(ca_key), '--type', 'ecdsa',
                                      '--dn', 'CN=anysda-vpn2 IKEv2 CA', '--ca', '--lifetime', '3650',
                                      '--outform', 'pem'], 'pki --self').stdout)
-    _modes((ca_key,), 0o600)
-    _modes((ca,), 0o644)
-    _require_pair(ca_key, ca, run)
-    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), str(ca)], 'openssl verify')
+
+    _ensure_ca(ca_key, ca, create_ca, run)
     sans = [public] if public == entry_host else [public, entry_host]
     require_key(key, cert, run=run)
     reissue = not (pair_valid(key, cert, run=run) and verify(ca, cert, run=run))
@@ -385,7 +377,5 @@ def build_ikev2(directory, public, entry_host, *, say=lambda _text: None, run=ru
                                        '--flag', 'serverAuth', '--flag', 'ikeIntermediate',
                                        '--lifetime', '1825', '--outform', 'pem'], 'pki --issue').stdout)
         pub.unlink()
-    _require_pair(key, cert, run)
-    _checked(run, ['openssl', 'verify', '-CAfile', str(ca), '-purpose', 'sslserver', str(cert)], 'openssl verify')
-    _modes((ca_key, key), 0o600)
-    _modes((ca, cert), 0o644)
+    _check_server(ca, key, cert, run)
+    _chmod((ca_key, key), (ca, cert))

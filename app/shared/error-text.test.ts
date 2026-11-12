@@ -10,8 +10,7 @@ const appDir = join(sharedDir, '..')
 const readJson = (url: URL) => JSON.parse(readFileSync(fileURLToPath(url), 'utf8'))
 
 const table = readJson(new URL('./error-text.json', import.meta.url))
-const fixture = readJson(new URL('../../telegram/tests/fixtures/texts.json', import.meta.url))
-const rendered = fixture.rendered
+const readText = (rel: string) => readFileSync(join(appDir, '..', rel), 'utf8')
 
 const panelPairs: Record<string, string> = {
   Unauthorized: 'Нужно войти',
@@ -55,11 +54,14 @@ describe('единая таблица текстов ошибок', () => {
     expect(table.panel).toEqual(panelPairs)
   })
 
-  it('bot и botFallback совпадают с фикстурой бота', () => {
-    expect(Object.keys(rendered.ERROR_TEXT).length).toBe(32)
-    expect(table.bot).toEqual(rendered.ERROR_TEXT)
+  it('бот берёт bot, botFallback и plural.botDevice из этой таблицы', () => {
     expect(Object.keys(table.bot).length).toBe(32)
-    expect(table.botFallback).toBe(rendered.ERROR_FALLBACK)
+    expect(table.botFallback).toBe('Не удалось выполнить запрос. Попробуйте позже.')
+    expect(readText('telegram/Dockerfile')).toContain('COPY --chmod=0644 app/shared/error-text.json ./vpn2bot/error-text.json')
+    const texts = readText('telegram/vpn2bot/texts.py')
+    for (const use of ["with_name('error-text.json')", "_TABLE['bot']", "_TABLE['botFallback']", '_TABLE["plural"]["botDevice"]']) {
+      expect(texts, use).toContain(use)
+    }
   })
 
   it('plural содержит тройки панели и бота', () => {
@@ -78,13 +80,6 @@ describe('единая таблица текстов ошибок', () => {
     const values = Object.values(table.plural)
     for (const triple of panelTriples) {
       expect(hasTriple(values, triple), `нет тройки панели ${triple.join(' / ')}`).toBe(true)
-    }
-    const botKeys = Object.keys(rendered.plural_ru)
-    expect(botKeys.length).toBeGreaterThanOrEqual(1)
-    for (const key of botKeys) {
-      const triple = key.split(' / ')
-      expect(triple.length).toBe(3)
-      expect(hasTriple(values, triple), `нет тройки бота ${key}`).toBe(true)
     }
   })
 

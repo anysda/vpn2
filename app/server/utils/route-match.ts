@@ -22,6 +22,7 @@ export interface Conn {
 
 /** Что именно совпало: элемент правила и набор, в котором он лежит. */
 interface MatchedBy { kind: string, value: string, sets: string[] }
+const matched = (kind: string, value: string): MatchedBy => ({ kind, value, sets: [] })
 
 export interface RouteHit {
   index: number
@@ -48,13 +49,14 @@ const SOURCE_PORT = new Set(['source_port', 'source_port_range'])
 // Не дают перехода к следующему правилу только эти действия.
 const NON_FINAL = new Set(['sniff', 'resolve', 'route-options'])
 
-const PRIVATE: Array<[string, number, 'ipv4' | 'ipv6']> = [
+const PRIVATE = new BlockList()
+for (const [net, bits, type] of [
   ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
   ['127.0.0.0', 8, 'ipv4'], ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'],
   ['192.168.0.0', 16, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
   ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
-]
-let privateList: BlockList | null = null
+] as const) PRIVATE.addSubnet(net, bits, type)
+const isPrivate = (ip: string) => PRIVATE.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
 
 function list(value: unknown): string[] {
   if (value === undefined || value === null) return []
@@ -65,21 +67,18 @@ function list(value: unknown): string[] {
 // сетью IPv6 как ::ffff:a.b.c.d, и ::/0 совпала бы с любым адресом IPv4, а
 // sing-box семейства не смешивает.
 interface Nets { 4: BlockList, 6: BlockList }
-const cidrCache = new WeakMap<SbRule, Nets>()
-const sourceCache = new WeakMap<SbRule, Nets>()
-function cidrs(rule: SbRule, key: 'ip_cidr' | 'source_ip_cidr' = 'ip_cidr'): Nets {
-  const cache = key === 'ip_cidr' ? cidrCache : sourceCache
-  let nets = cache.get(rule)
-  if (!nets) {
-    nets = { 4: new BlockList(), 6: new BlockList() }
-    for (const c of list(rule[key])) {
-      const [addr = '', bits] = c.split('/')
-      const family = isIP(addr)
-      if (family === 4) nets[4].addSubnet(addr, bits === undefined ? 32 : Number(bits), 'ipv4')
-      else if (family === 6) nets[6].addSubnet(addr, bits === undefined ? 128 : Number(bits), 'ipv6')
-    }
-    cache.set(rule, nets)
+const netsCache = { ip_cidr: new WeakMap<SbRule, Nets>(), source_ip_cidr: new WeakMap<SbRule, Nets>() }
+function cidrs(rule: SbRule, key: keyof typeof netsCache = 'ip_cidr'): Nets {
+  const cached = netsCache[key].get(rule)
+  if (cached) return cached
+  const nets = { 4: new BlockList(), 6: new BlockList() }
+  for (const c of list(rule[key])) {
+    const [addr = '', bits] = c.split('/')
+    const family = isIP(addr)
+    if (family === 4) nets[4].addSubnet(addr, bits === undefined ? 32 : Number(bits), 'ipv4')
+    else if (family === 6) nets[6].addSubnet(addr, bits === undefined ? 128 : Number(bits), 'ipv6')
   }
+  netsCache[key].set(rule, nets)
   return nets
 }
 
@@ -87,18 +86,6 @@ function inNets(nets: Nets, ip: string) {
   const family = isIP(ip)
   if (family === 4) return nets[4].check(ip, 'ipv4')
   return family === 6 && nets[6].check(ip, 'ipv6')
-}
-
-function ipIn(bl: BlockList, ip: string) {
-  return bl.check(ip, isIP(ip) === 4 ? 'ipv4' : 'ipv6')
-}
-
-function isPrivate(ip: string) {
-  if (!privateList) {
-    privateList = new BlockList()
-    for (const [a, b, t] of PRIVATE) privateList.addSubnet(a, b, t)
-  }
-  return ipIn(privateList, ip)
 }
 
 function suffixHit(domain: string, suffix: string) {
@@ -114,6 +101,13 @@ function regexHit(domain: string, re: string) {
   }
 }
 
+const DOMAIN_TESTS: Record<string, (domain: string, item: string) => boolean> = {
+  domain: (d, x) => d === x,
+  domain_suffix: suffixHit,
+  domain_keyword: (d, x) => d.includes(x),
+  domain_regex: regexHit,
+}
+
 function portHit(conn: Conn, rule: SbRule, key: string) {
   if (key === 'port') return list(rule.port).some(p => Number(p) === conn.port)
   return list(rule.port_range).some((r) => {
@@ -124,35 +118,23 @@ function portHit(conn: Conn, rule: SbRule, key: string) {
 
 /** Первый совпавший элемент группы адреса назначения или null. */
 function destHit(plan: RoutePlan, conn: Conn, rule: SbRule, key: string): MatchedBy | null {
-  const d = conn.domain
-  const ip = conn.ip
+  const { domain, ip } = conn
+  const domainTest = DOMAIN_TESTS[key]
+  if (domainTest) {
+    const v = domain ? list(rule[key]).find(x => domainTest(domain, x)) : undefined
+    return v ? matched(key, v) : null
+  }
   switch (key) {
-    case 'domain': {
-      const v = d ? list(rule.domain).find(x => x === d) : undefined
-      return v ? { kind: key, value: v, sets: [] } : null
-    }
-    case 'domain_suffix': {
-      const v = d ? list(rule.domain_suffix).find(x => suffixHit(d, x)) : undefined
-      return v ? { kind: key, value: v, sets: [] } : null
-    }
-    case 'domain_keyword': {
-      const v = d ? list(rule.domain_keyword).find(x => d.includes(x)) : undefined
-      return v ? { kind: key, value: v, sets: [] } : null
-    }
-    case 'domain_regex': {
-      const v = d ? list(rule.domain_regex).find(x => regexHit(d, x)) : undefined
-      return v ? { kind: key, value: v, sets: [] } : null
-    }
     case 'ip_cidr': {
       if (!ip || !inNets(cidrs(rule), ip)) return null
       // Какая именно подсеть совпала - для подписи и поиска правила панели;
       // в больших наборах (geoip) подписью остаётся сам адрес.
       const all = list(rule.ip_cidr)
       const v = all.length <= 64 ? all.find(c => inNets(cidrs({ ip_cidr: c }), ip)) : undefined
-      return { kind: key, value: v ?? ip, sets: [] }
+      return matched(key, v ?? ip)
     }
     case 'ip_is_private':
-      return rule.ip_is_private === true && ip && isPrivate(ip) ? { kind: key, value: ip, sets: [] } : null
+      return rule.ip_is_private === true && ip && isPrivate(ip) ? matched(key, ip) : null
     case 'rule_set':
       for (const tag of list(rule.rule_set)) {
         for (const inner of plan.rule_set[tag] ?? []) {
@@ -170,8 +152,8 @@ function sourceHit(conn: Conn, rule: SbRule, keys: string[]): MatchedBy | null {
   const src = conn.source
   if (!src) return null
   for (const k of keys) {
-    if (k === 'source_ip_cidr' && inNets(cidrs(rule, k), src)) return { kind: k, value: src, sets: [] }
-    if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivate(src)) return { kind: k, value: src, sets: [] }
+    if (k === 'source_ip_cidr' && inNets(cidrs(rule, k), src)) return matched(k, src)
+    if (k === 'source_ip_is_private' && rule.source_ip_is_private === true && isPrivate(src)) return matched(k, src)
   }
   return null
 }
@@ -199,7 +181,7 @@ function ruleHit(plan: RoutePlan, conn: Conn, rule: SbRule): MatchedBy | null {
     const results = subs.map(r => ruleHit(plan, conn, r))
     const ok = rule.mode === 'or' ? results.some(Boolean) : results.length > 0 && results.every(Boolean)
     const sub = subs.findIndex((r, i) => results[i] && r.invert !== true)
-    hit = ok ? (sub >= 0 ? results[sub]! : { kind: '', value: '', sets: [] }) : null
+    hit = ok ? (sub >= 0 ? results[sub]! : matched('', '')) : null
   }
   else {
     const keys = Object.keys(rule).filter(k => !ACTION_KEYS.has(k))
@@ -223,9 +205,9 @@ function ruleHit(plan: RoutePlan, conn: Conn, rule: SbRule): MatchedBy | null {
     const ports = keys.filter(k => PORT.has(k))
     if (ok && ports.length) ok = ports.some(k => portHit(conn, rule, k))
     if (ok) ok = keys.filter(k => !DEST.has(k) && !PORT.has(k) && !SOURCE.has(k)).every(k => otherHit(conn, rule, k))
-    hit = ok ? (by ?? { kind: '', value: '', sets: [] }) : null
+    hit = ok ? (by ?? matched('', '')) : null
   }
-  if (invert) return hit ? null : { kind: '', value: '', sets: [] }
+  if (invert) return hit ? null : matched('', '')
   return hit
 }
 

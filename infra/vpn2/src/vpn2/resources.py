@@ -178,12 +178,9 @@ def _live(unit, body):
     root = Path('/sys/fs/cgroup' + cgroup)
     try:
         pids = (root / 'cgroup.procs').read_text().split()
-    except OSError:
-        return
-    try:
         threads = (root / 'cgroup.threads').read_text().split()
     except OSError:
-        threads = [tid for pid in pids for tid in _tasks(pid)]
+        return
     for pid in pids if oom else ():
         try:
             Path(f'/proc/{pid}/oom_score_adj').write_text(oom)
@@ -196,12 +193,6 @@ def _live(unit, body):
         except OSError:
             pass
 
-
-def _tasks(pid):
-    try:
-        return os.listdir(f'/proc/{pid}/task')
-    except OSError:
-        return [pid]
 
 def apply_units(units, root=UNIT_DIR):
     """Drop-in последним по имени поверх ручного override.conf; вернуть, менялся ли хоть один."""

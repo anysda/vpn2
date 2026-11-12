@@ -145,7 +145,8 @@ def prepare(directory, **overrides):
     for old, new in replacements.items():
         source = source.replace(old, str(new))
     script = directory / 'apply.py'
-    script.write_text(source)
+    # Модуль без входа скриптом: копию запускает дописанный вызов main().
+    script.write_text(source + '\n\nsys.exit(main())\n')
     return script
 
 

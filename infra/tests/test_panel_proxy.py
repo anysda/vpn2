@@ -65,7 +65,8 @@ class PanelProxyTests(unittest.TestCase):
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
         sources = {'app/e2e/support/panel-stand.sh': (ROOT / 'app/e2e/support/panel-stand.sh').read_text(),
-                   'vpn2.containers.panel': panel.caddyfile('192.0.2.1', 'https://192.0.2.1')}
+                   'vpn2.containers.panel': panel.CADDYFILE.replace('@TLS_HOST@', '192.0.2.1')
+                   .replace('@SITE@', 'https://192.0.2.1')}
         for path, source in sources.items():
             blocks = list(proxy_blocks(source))
             # Stage 30 keeps one proxy snippet for domain and IP sites.

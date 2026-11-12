@@ -54,7 +54,5 @@ zapret_all_off:
           '/usr/local/bin/anysda-yt-check', '/etc/nftables-yt-zapret.conf', '/etc/sysctl.d/97-anysda-yt-zapret.conf',
           '/etc/modules-load.d/anysda-yt-zapret.conf', '/var/anysda/.stamps/19-yt-zapret'] }}
 
-zapret_env_names: [YT_ROUTE, YT_QUIC, YT_MARK, YT_ZAPRET_QUEUE, YT_ZAPRET_REPO, YT_ZAPRET_REF, YT_ZAPRET_BASE,
-                   YT_ZAPRET_WINDOW_SCALE, YT_ZAPRET_STRATEGY, YT_ZAPRET_WSCALE, YT_ZAPRET_OFFLOAD,
-                   VPN2_RELEASE_MANIFEST, VPN2_DEVELOPMENT]
-zapret_env: "{{ dict(zapret_env_names | product([''])) | combine(vpn2_env | dict2items | selectattr('key', 'in', zapret_env_names) | items2dict) }}"
+# Окружение шагов - все переменные узла, кроме пароля входа на entry.
+zapret_env: "{{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict }}"

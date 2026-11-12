@@ -14,12 +14,10 @@
 
 - name: Сторож WARP и его таймер
   ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    mode: "{{ item.mode }}"
-  loop:
-    - {src: anysda-warp-watchdog.service, dest: /etc/systemd/system/anysda-warp-watchdog.service, mode: '0644'}
-    - {src: anysda-warp-watchdog.timer, dest: /etc/systemd/system/anysda-warp-watchdog.timer, mode: '0644'}
+    src: "{{ item }}"
+    dest: /etc/systemd/system/{{ item }}
+    mode: '0644'
+  loop: [anysda-warp-watchdog.service, anysda-warp-watchdog.timer]
   when: exit_warp_enabled
 
 # Состояние сторожа остаётся и без WARP: повторная установка не обнуляет лимиты перезапусков.
@@ -36,9 +34,7 @@
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
-  loop:
-    - /etc/systemd/system/anysda-warp-watchdog.timer
-    - /etc/systemd/system/anysda-warp-watchdog.service
+  loop: [/etc/systemd/system/anysda-warp-watchdog.timer, /etc/systemd/system/anysda-warp-watchdog.service]
   when: not exit_warp_enabled
 
 - name: Файл сторожа прежних выпусков убран

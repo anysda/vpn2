@@ -21,21 +21,8 @@ exit_libs:
   - "{{ exit_infra }}/configs/sing-box-server.json.tpl"
   - "{{ exit_wheel }}"
 
-# Окружение узла из config.yaml: его читают шаги пакета vpn2.
-exit_env:
-  HOST_TAG: "{{ inventory_hostname }}"
-  PUB_IP: "{{ vpn2_env.PUB_IP | default('') }}"
-  HY2_DIRECT_PORT: "{{ vpn2_env.HY2_DIRECT_PORT | default('') }}"
-  HY2_WARP_PORT: "{{ vpn2_env.HY2_WARP_PORT | default('') }}"
-  HY2_MGMT_PORT: "{{ vpn2_env.HY2_MGMT_PORT | default('') }}"
-  HY2_UP_MBPS: "{{ vpn2_env.HY2_UP_MBPS | default('') }}"
-  HY2_DOWN_MBPS: "{{ vpn2_env.HY2_DOWN_MBPS | default('') }}"
-  REALITY_SNI: "{{ vpn2_env.REALITY_SNI | default('') }}"
-  REALITY_PORT: "{{ vpn2_env.REALITY_PORT | default('') }}"
-  HY2_HOP_ENABLED: "{{ vpn2_env.HY2_HOP_ENABLED | default('') }}"
-  HY2_HOP_DIRECT: "{{ vpn2_env.HY2_HOP_DIRECT | default('') }}"
-  HY2_HOP_WARP: "{{ vpn2_env.HY2_HOP_WARP | default('') }}"
-  HY2_HOP_MGMT: "{{ vpn2_env.HY2_HOP_MGMT | default('') }}"
+# Окружение шагов - все переменные узла, кроме пароля входа на узел.
+exit_env: "{{ vpn2_env | dict2items | rejectattr('key', 'eq', 'SSH_PASS') | items2dict | combine({'HOST_TAG': inventory_hostname}) }}"
 
 # Сторож WARP живёт в пакете vpn2: venv экзита ставит первая стадия.
 exit_vpn2: /opt/vpn2/venv/bin/vpn2
@@ -47,7 +34,7 @@ exit_wgcf_url: >-
   https://github.com/ViRb3/wgcf/releases/download/v{{ exit_wgcf_version }}/wgcf_{{ exit_wgcf_version }}_linux_amd64
 
 # Без ports.hy2_hop в config.yaml окружение диапазонов не несёт: умолчания те
-# же, что в пакете vpn2 (exitnode.HOP_DEFAULTS) и на стороне entry.
+# же, что у entry (router_hop_defaults роли router).
 exit_hop_enabled: "{{ vpn2_env.HY2_HOP_ENABLED | default('1', true) == '1' }}"
 exit_hop_direct: "{{ vpn2_env.HY2_HOP_DIRECT | default('20000-24999', true) }}"
 exit_hop_warp: "{{ vpn2_env.HY2_HOP_WARP | default('25000-29999', true) }}"

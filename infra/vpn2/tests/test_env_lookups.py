@@ -98,8 +98,7 @@ def test_counter_sees_every_spelling():
 
 def test_every_name_roles_read_is_in_hostvars():
     lists = listed()
-    assert {'verify_env_names',
-            'zapret_env_names'} <= set(lists), 'списки имён ролей не найдены: разбор defaults устарел'
+    assert {'verify_env_names'} <= set(lists), 'списки имён ролей не найдены: разбор defaults устарел'
     plain, prefixes, suffixes = reads()
     assert {'env', 'router_env'} <= aliases(), 'другие имена vpn2_env не найдены: разбор устарел'
     assert {'MGMT_IP'} <= prefixes and {'HY2_UP_MBPS', 'HY2_INSECURE'} <= suffixes, 'имена с тегом не найдены'
@@ -111,6 +110,6 @@ def test_every_name_roles_read_is_in_hostvars():
     plain |= {name for _, args in calls() for name in re.findall(rf"'({NAME})'", args)}
     for names in lists.values():
         plain |= set(names)
-    assert len(plain) >= 75
+    assert len(plain) >= 60
     unknown = plain - known
     assert unknown == set(), f'этих имён в hostvars (vpn2_env) нет, добавь в vpn2.nodevars: {sorted(unknown)}'

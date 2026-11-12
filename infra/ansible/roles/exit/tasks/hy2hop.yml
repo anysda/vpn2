@@ -1,79 +1,75 @@
 ---
 # Файл таблицы грузит свой oneshot при загрузке и drop-in nftables.service
 # после его start и reload.
-- name: Служба смены портов hy2 остановлена
-  ansible.builtin.command:  # noqa: command-instead-of-module
-    cmd: systemctl disable --now anysda-hy2hop.service
-    removes: /etc/systemd/system/anysda-hy2hop.service
+- name: Смена портов hy2 включена
+  when: exit_hop_enabled
+  block:
+    - name: Таблица перенаправления диапазонов hy2
+      ansible.builtin.template:
+        src: nftables-hy2hop.conf.j2
+        dest: /etc/nftables-hy2hop.conf
+        mode: '0644'
+        validate: nft -c -f %s
+
+    # Грузится и при прежнем файле: после перезагрузки nft таблицы могло не быть.
+    - name: Таблица hy2 загружена
+      ansible.builtin.command:
+        argv: [nft, -f, /etc/nftables-hy2hop.conf]
+      changed_when: false
+
+    - name: Каталог drop-in nftables
+      ansible.builtin.file:
+        path: /etc/systemd/system/nftables.service.d
+        state: directory
+        mode: '0755'
+
+    - name: Юнит смены портов hy2 и drop-in nftables
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: '0644'
+      loop:
+        - {src: anysda-hy2hop.service, dest: /etc/systemd/system/anysda-hy2hop.service}
+        - {src: 90-anysda-hy2hop.conf, dest: /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf}
+
+    - name: Ресурсы юнита смены портов hy2
+      ansible.builtin.include_role:
+        name: resources
+      vars:
+        resources_units: [anysda-hy2hop]
+
+    - name: Служба смены портов hy2 включена
+      ansible.builtin.systemd_service:
+        name: anysda-hy2hop.service
+        enabled: true
+        state: started
+        daemon_reload: true
+
+- name: Смена портов hy2 выключена
   when: not exit_hop_enabled
-  failed_when: false
+  block:
+    - name: Служба смены портов hy2 остановлена
+      ansible.builtin.command:  # noqa: command-instead-of-module
+        cmd: systemctl disable --now anysda-hy2hop.service
+        removes: /etc/systemd/system/anysda-hy2hop.service
+      failed_when: false
 
-- name: Таблица перенаправления диапазонов hy2
-  ansible.builtin.template:
-    src: nftables-hy2hop.conf.j2
-    dest: /etc/nftables-hy2hop.conf
-    mode: '0644'
-    validate: nft -c -f %s
-  when: exit_hop_enabled
+    # Нет таблицы - nft отказывает, это и есть нужное состояние.
+    - name: Таблица hy2 снята
+      ansible.builtin.command:
+        argv: [nft, delete, table, inet, vpn2_hy2hop]
+      changed_when: false
+      failed_when: false
 
-# Грузится и при прежнем файле: после перезагрузки nft таблицы могло не быть.
-- name: Таблица hy2 загружена
-  ansible.builtin.command:
-    argv: [nft, -f, /etc/nftables-hy2hop.conf]
-  changed_when: false
-  when: exit_hop_enabled
+    - name: Юнит смены портов hy2, drop-in nftables и таблица сняты
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/anysda-hy2hop.service
+        - /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
+        - /etc/nftables-hy2hop.conf
 
-# Нет таблицы - nft отказывает, это и есть нужное состояние.
-- name: Таблица hy2 снята
-  ansible.builtin.command:
-    argv: [nft, delete, table, inet, vpn2_hy2hop]
-  changed_when: false
-  failed_when: false
-  when: not exit_hop_enabled
-
-- name: Каталог drop-in nftables
-  ansible.builtin.file:
-    path: /etc/systemd/system/nftables.service.d
-    state: directory
-    mode: '0755'
-  when: exit_hop_enabled
-
-- name: Юнит смены портов hy2 и drop-in nftables
-  ansible.builtin.copy:
-    src: "{{ item.src }}"
-    dest: "{{ item.dest }}"
-    mode: '0644'
-  loop:
-    - {src: anysda-hy2hop.service, dest: /etc/systemd/system/anysda-hy2hop.service}
-    - {src: 90-anysda-hy2hop.conf, dest: /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf}
-  when: exit_hop_enabled
-
-- name: Ресурсы юнита смены портов hy2
-  ansible.builtin.include_role:
-    name: resources
-  vars:
-    resources_units: [anysda-hy2hop]
-  when: exit_hop_enabled
-
-- name: Служба смены портов hy2 включена
-  ansible.builtin.systemd_service:
-    name: anysda-hy2hop.service
-    enabled: true
-    state: started
-    daemon_reload: true
-  when: exit_hop_enabled
-
-- name: Юнит смены портов hy2, drop-in nftables и таблица сняты
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /etc/systemd/system/anysda-hy2hop.service
-    - /etc/systemd/system/nftables.service.d/90-anysda-hy2hop.conf
-    - /etc/nftables-hy2hop.conf
-  when: not exit_hop_enabled
-
-- name: Systemd перечитал юниты
-  ansible.builtin.systemd_service:
-    daemon_reload: true
-  when: not exit_hop_enabled
+    - name: Systemd перечитал юниты
+      ansible.builtin.systemd_service:
+        daemon_reload: true

@@ -60,6 +60,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Образ и ядро ВМ между ранами: с Ubuntu - только при новой сборке образа.
+      - name: ключ образа ВМ
+        id: image
+        run: echo "key=stand-image-$(infra/tests/ci-stand.sh image-key)" >> "$GITHUB_OUTPUT"
+
+      - name: image cache
+        id: image-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
+
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
       # До up: прокси поднимается до запуска ВМ, их прогрев идёт через него.
       - name: apt cache
@@ -67,7 +79,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: /var/tmp/vpn2-apt-cache
-          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/deploy.sh', 'infra/versions.yml', 'infra/lib/*.sh', 'infra/ansible/**/*.yml') }}
           restore-keys: stand-apt-${{ matrix.os }}-
 
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
@@ -105,6 +117,14 @@ jobs:
       - name: up
         id: up
         run: sudo infra/tests/ci-stand.sh up-wait
+
+      # Сразу после up: образ и ядро уже проверены по суммам.
+      - name: image cache save
+        if: ${{ steps.image-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
 
       # Полный деплой сам кончается 99-verify всех узлов.
       - name: deploy
@@ -246,6 +266,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Образ и ядро ВМ между ранами: с Ubuntu - только при новой сборке образа.
+      - name: ключ образа ВМ
+        id: image
+        run: echo "key=stand-image-$(infra/tests/ci-stand.sh image-key)" >> "$GITHUB_OUTPUT"
+
+      - name: image cache
+        id: image-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
+
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
       # До up: прокси поднимается до запуска ВМ, их прогрев идёт через него.
       - name: apt cache
@@ -253,7 +285,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: /var/tmp/vpn2-apt-cache
-          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          key: stand-apt-${{ matrix.os }}-${{ hashFiles('deploy.sh', 'infra/deploy.sh', 'infra/versions.yml', 'infra/lib/*.sh', 'infra/ansible/**/*.yml') }}
           restore-keys: stand-apt-${{ matrix.os }}-
 
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
@@ -291,6 +323,14 @@ jobs:
       - name: up
         id: up
         run: sudo infra/tests/ci-stand.sh up-wait
+
+      # Сразу после up: образ и ядро уже проверены по суммам.
+      - name: image cache save
+        if: ${{ steps.image-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
 
       # Манифест выпуска: образы по digest, как их собрал релиз.
       - name: манифест выпуска
@@ -358,6 +398,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Образ и ядро ВМ между ранами: с Ubuntu - только при новой сборке образа.
+      - name: ключ образа ВМ
+        id: image
+        run: echo "key=stand-image-$(infra/tests/ci-stand.sh image-key)" >> "$GITHUB_OUTPUT"
+
+      - name: image cache
+        id: image-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
+
       # Пакеты ВМ - через прокси apt на раннере; его каталог живёт между ранами.
       # Узлы обрыва - Ubuntu 26.04: кэш общий с развёртыванием 26.04.
       - name: apt cache
@@ -365,7 +417,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: /var/tmp/vpn2-apt-cache
-          key: stand-apt-26.04-${{ hashFiles('deploy.sh', 'infra/scripts/*.sh', 'infra/lib/*.sh') }}
+          key: stand-apt-26.04-${{ hashFiles('deploy.sh', 'infra/deploy.sh', 'infra/versions.yml', 'infra/lib/*.sh', 'infra/ansible/**/*.yml') }}
           restore-keys: stand-apt-26.04-
 
       # qemu и прокси apt на раннер - из набора .deb, не с зеркал: ci-stand.sh
@@ -379,6 +431,14 @@ jobs:
       - name: up
         id: up
         run: sudo infra/tests/ci-stand.sh up
+
+      # Сразу после up: образ и ядро уже проверены по суммам.
+      - name: image cache save
+        if: ${{ steps.image-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: /var/tmp/vpn2-image-cache
+          key: ${{ steps.image.outputs.key }}
 
       - name: deploy
         run: sudo infra/tests/ci-stand.sh deploy-udp

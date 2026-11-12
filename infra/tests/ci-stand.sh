@@ -23,6 +23,7 @@
 #   sudo infra/tests/ci-stand.sh restore-check [--foreign-pass] restore эталонного архива и сверка; с флагом - чужой пароль, шаг обязан упасть
 #   sudo infra/tests/ci-stand.sh collect <каталог>      отчёты и журналы
 #   sudo infra/tests/ci-stand.sh down                   снести всё
+#   infra/tests/ci-stand.sh image-key                    ключ кэша образа и ядра (stand.yml)
 #
 # Образ панели - локальный docker-образ, собранный из этого же дерева; на
 # entry он загружается, как только 00-bootstrap поднял docker, deploy берёт его по panel.image.
@@ -48,7 +49,15 @@ case $STAND_OS in
   26.04) IMAGE_SERIAL=20261016 ;;
   *) IMAGE_SERIAL='' ;;
 esac
-IMAGE_URL=${STAND_IMAGE_URL:-https://cloud-images.ubuntu.com/releases/$STAND_OS/release-$IMAGE_SERIAL/ubuntu-$STAND_OS-server-cloudimg-amd64.img}
+IMAGE_NAME=ubuntu-$STAND_OS-server-cloudimg-amd64.img
+IMAGE_KEY=$STAND_OS-$IMAGE_SERIAL
+if [[ -n "${STAND_IMAGE_URL:-}" ]]; then
+  IMAGE_NAME=${STAND_IMAGE_URL##*/}
+  IMAGE_KEY=$STAND_OS-url-$(printf '%s' "$STAND_IMAGE_URL" | sha256sum | cut -c1-12)
+fi
+# Образ и ядро живут вне STAND_DIR (down его стирает); в CI каталог между
+# прогонами хранит actions/cache по ключу image-key.
+IMAGE_DIR=${STAND_IMAGE_CACHE:-/var/tmp/vpn2-image-cache}/$IMAGE_KEY
 # Адреса вне частных диапазонов: sing-box отклоняет клиентские соединения в
 # частные сети, а проверка трафика ходит на адреса entry и экзита.
 NET=198.18.10
@@ -294,10 +303,12 @@ apt_proxy_up() {
   mkdir -p "$APT_CACHE"
   printf 'CacheDir: %s\nBindAddress: %s\nPort: 3142\n' "$APT_CACHE" "$NET.1" \
     > /etc/apt-cacher-ng/zz-vpn2-ci.conf
-  # Запросы ВМ к archive.ubuntu.com прокси шлёт на бэкенды uburep. Без этого
-  # файла их угадывает postinst по региону раннера (mirrors.ubuntu.com):
-  # бэкенд задан явно, тот же, что в источниках ВМ.
-  echo 'http://archive.ubuntu.com/ubuntu/' > /etc/apt-cacher-ng/backends_ubuntu
+  # Запросы ВМ к archive.ubuntu.com прокси шлёт на бэкенды uburep по порядку.
+  # Без этого файла их угадывает postinst по региону раннера (mirrors.ubuntu.com):
+  # первый - тот же, что в источниках ВМ, следом запасные вне ubuntu.com.
+  { echo 'http://archive.ubuntu.com/ubuntu/'
+    grep -Ev '^[[:space:]]*(#|$)' "$REPO_ROOT/.github/actions/apt-install/mirrors.txt" | sed 's|/*$|/|'
+  } > /etc/apt-cacher-ng/backends_ubuntu
   chown -R apt-cacher-ng: "$APT_CACHE"
   systemctl restart apt-cacher-ng
   local deadline=$((SECONDS + 30))
@@ -317,31 +328,57 @@ apt_proxy_stats() {
     END {printf "[stand] прокси apt: с зеркал %.1f МБ, отдано ВМ %.1f МБ\n", i / 1e6, o / 1e6}' "$log"
 }
 
+# Каталоги образа по порядку: Canonical, затем зеркала вне ubuntu.com с той же
+# сборкой - сбой DNS Canonical их не задевает. Сумма - из SHA256SUMS источника.
+image_sources() {
+  if [[ -n "${STAND_IMAGE_URL:-}" ]]; then echo "${STAND_IMAGE_URL%/*}"; return; fi
+  local mirror
+  for mirror in https://cloud-images.ubuntu.com https://mirror.yandex.ru/ubuntu-cloud-images \
+    https://mirror.nju.edu.cn/ubuntu-cloud-images; do
+    echo "$mirror/releases/$STAND_OS/release-$IMAGE_SERIAL"
+  done
+}
+
+# check_sum <каталог> <файл> <имя в SHA256SUMS>
+check_sum() {
+  local sums
+  sums=$(curl -fsSL --retry 3 --connect-timeout 15 "$1/SHA256SUMS") || return 1
+  printf '%s\n' "$sums" | awk -v n="$3" -v f="$2" '$2 == n || $2 == "*" n {print $1 "  " f}' \
+    | grep . | sha256sum --check --status
+}
+
 fetch_image() {
-  local image=$1 sums name url size i a b pids=() started=$SECONDS
-  log "образ: $IMAGE_URL"
-  # Один поток упирается в ~50 МБ/с: образ (~850 МБ) - четырьмя диапазонами
-  # с одного зеркала (адрес после редиректа); без длины - одним потоком.
-  url=$(curl -fsIL --retry 3 -o /dev/null -w '%{url_effective}' "$IMAGE_URL")
+  local image=$1 src started=$SECONDS
+  for src in $(image_sources); do
+    log "образ: $src/$IMAGE_NAME"
+    if download_image "$src/$IMAGE_NAME" "$image.part" && check_sum "$src" "$image.part" "$IMAGE_NAME"; then
+      mv "$image.part" "$image"
+      log "образ скачан за $((SECONDS - started)) с"
+      return 0
+    fi
+    log "образ с $src не скачан или сумма не сошлась"
+  done
+  return 1
+}
+
+# Один поток упирается в ~50 МБ/с: образ (~850 МБ) - четырьмя диапазонами
+# с одного зеркала (адрес после редиректа); без длины - одним потоком.
+download_image() {
+  local url part=$2 size i a b rc=0 pids=()
+  url=$(curl -fsIL --retry 3 --connect-timeout 15 -o /dev/null -w '%{url_effective}' "$1") || return 1
   size=$(curl -fsI --retry 3 "$url" | tr -d '\r' | awk 'tolower($1) == "content-length:" {print $2}' | tail -n1)
-  if [[ "$size" =~ ^[0-9]+$ ]] && (( size > 4 )); then
-    for i in 0 1 2 3; do
-      a=$((size * i / 4)) b=$((size * (i + 1) / 4 - 1))
-      curl -fsS --retry 3 -r "$a-$b" -o "$image.part$i" "$url" & pids+=($!)
-    done
-    for i in "${pids[@]}"; do wait "$i" || die 'образ ВМ не скачан'; done
-    cat "$image.part0" "$image.part1" "$image.part2" "$image.part3" > "$image.part"
-    rm -f "$image.part0" "$image.part1" "$image.part2" "$image.part3"
-    (( $(stat -c %s "$image.part") == size )) || die 'образ ВМ скачан не целиком'
-  else
-    curl -fsSL --retry 3 -o "$image.part" "$IMAGE_URL"
+  if ! [[ "$size" =~ ^[0-9]+$ ]] || (( size <= 4 )); then
+    curl -fsSL --retry 3 -o "$part" "$url"
+    return
   fi
-  log "образ скачан за $((SECONDS - started)) с"
-  sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/SHA256SUMS")
-  name=${IMAGE_URL##*/}
-  printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$image.part"'"}' \
-    | grep . | sha256sum --check --status || die "контрольная сумма $name не сошлась"
-  mv "$image.part" "$image"
+  for i in 0 1 2 3; do
+    a=$((size * i / 4)) b=$((size * (i + 1) / 4 - 1))
+    curl -fsS --retry 3 -r "$a-$b" -o "$part$i" "$url" & pids+=($!)
+  done
+  for i in "${pids[@]}"; do wait "$i" || rc=1; done
+  (( rc == 0 )) && cat "$part"0 "$part"1 "$part"2 "$part"3 > "$part"
+  rm -f "$part"0 "$part"1 "$part"2 "$part"3
+  (( rc == 0 )) && (( $(stat -c %s "$part") == size ))
 }
 
 # Ядро того же образа (каталог unpacked рядом с ним): qemu грузит его сам,
@@ -352,13 +389,17 @@ fetch_image() {
 # snapd продукту не нужен: его засев держит cloud-init на загрузке ~2 с.
 # Нет ядра - через GRUB.
 fetch_kernel() {
-  local dir=$1 name sums
-  name=$(basename "$IMAGE_URL" .img)-vmlinuz-generic
-  sums=$(curl -fsSL --retry 3 "${IMAGE_URL%/*}/unpacked/SHA256SUMS") || return 1
-  curl -fsSL --retry 3 -o "$dir/vmlinuz.part" "${IMAGE_URL%/*}/unpacked/$name" || return 1
-  printf '%s\n' "$sums" | awk -v n="$name" '$2 == n || $2 == "*" n {print $1 "  '"$dir/vmlinuz.part"'"}' \
-    | grep . | sha256sum --check --status || return 1
-  mv "$dir/vmlinuz.part" "$dir/vmlinuz"
+  local kernel=$1 name src
+  name=${IMAGE_NAME%.img}-vmlinuz-generic
+  for src in $(image_sources); do
+    if curl -fsSL --retry 3 --connect-timeout 15 -o "$kernel.part" "$src/unpacked/$name" \
+      && check_sum "$src/unpacked" "$kernel.part" "$name"; then
+      mv "$kernel.part" "$kernel"
+      log "ядро: $src/unpacked/$name"
+      return 0
+    fi
+  done
+  return 1
 }
 
 vm_wait_ready() {
@@ -381,14 +422,21 @@ cmd_up() {
   host_machine
   host_stats 'начало up'
   chmod 700 "$STAND_DIR"
-  local image=$STAND_DIR/base.img fetch='' up_t0=$SECONDS
+  local image=$IMAGE_DIR/$IMAGE_NAME kernel=$IMAGE_DIR/vmlinuz fetch='' up_t0=$SECONDS
+  mkdir -p "$IMAGE_DIR"
   # Образ качается, пока ставится qemu.
-  if [[ ! -f "$image" ]]; then
+  if [[ -f "$image" ]]; then
+    log "образ из кэша: $image"
+  else
     fetch_image "$image" &
     fetch=$!
   fi
   local kfetch='' boot=()
-  [[ -f "$STAND_DIR/vmlinuz" ]] || { fetch_kernel "$STAND_DIR" & kfetch=$!; }
+  if [[ -f "$kernel" ]]; then
+    log "ядро из кэша: $kernel"
+  else
+    fetch_kernel "$kernel" & kfetch=$!
+  fi
   if ! command -v qemu-system-x86_64 cloud-localds qemu-img apt-cacher-ng >/dev/null; then
     # Раннер одноразовый: dpkg без fsync, needrestart не опрашивает сервисы.
     # Индекс apt в образе раннера свежий: update (~3 с) - только если без
@@ -401,8 +449,8 @@ cmd_up() {
   fi
   if [[ -n "$fetch" ]]; then wait "$fetch" || die 'образ ВМ не скачан'; fi
   if [[ -n "$kfetch" ]] && ! wait "$kfetch"; then log 'ядро образа не скачано: загрузка через GRUB'; fi
-  if [[ -f "$STAND_DIR/vmlinuz" ]]; then
-    boot=(-kernel "$STAND_DIR/vmlinuz"
+  if [[ -f "$kernel" ]]; then
+    boot=(-kernel "$kernel"
       -append 'root=/dev/vda1 rootwait ro console=tty1 console=ttyS0 mitigations=off systemd.mask=snapd.service systemd.mask=snapd.socket systemd.mask=snapd.seeded.service')
   fi
   [[ -f "$STAND_DIR/id_ed25519" ]] || ssh-keygen -q -t ed25519 -N '' -C vpn2-ci-stand -f "$STAND_DIR/id_ed25519"
@@ -1166,5 +1214,6 @@ case "${1:-}" in
   restore-check) cmd_restore_check "${@:2}" ;;
   collect) cmd_collect "${@:2}" ;;
   down) cmd_down ;;
-  *) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
+  image-key) echo "$IMAGE_KEY" ;;
+  *) sed -n '2,37p' "$0" | sed 's/^# \{0,1\}//'; exit 64 ;;
 esac

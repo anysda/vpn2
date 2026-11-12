@@ -1,0 +1,5 @@
+# Запасные зеркала архива Ubuntu вне зоны ubuntu.com: сбой DNS Canonical их не
+# задевает. Подписи архива те же - apt сверяет их ключом Ubuntu.
+# Читают debs.sh (пакеты раннера) и infra/tests/ci-stand.sh (прокси apt стенда).
+https://mirrors.edge.kernel.org/ubuntu
+https://ftp.halifax.rwth-aachen.de/ubuntu

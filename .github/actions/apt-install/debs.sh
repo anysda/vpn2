@@ -45,9 +45,7 @@ pull() {
   say "набор $ref: $(find "$work" -name '*.deb' | wc -l) .deb, $(du -sh "$work" | cut -f1), $((SECONDS - t0)) с"
 }
 
-# Запасные зеркала вне зоны ubuntu.com: сбой DNS Canonical их не задевает.
-# Подписи архива те же - apt сверяет их ключом Ubuntu из образа раннера.
-mirrors=${APT_DEBS_MIRRORS-https://mirrors.edge.kernel.org/ubuntu https://ftp.halifax.rwth-aachen.de/ubuntu}
+mirrors=${APT_DEBS_MIRRORS-$(grep -Ev '^[[:space:]]*(#|$)' "$here/mirrors.txt" | tr '\n' ' ')}
 
 # Параметры apt для попытки: пусто - штатные зеркала раннера, иначе одно запасное.
 sources() {

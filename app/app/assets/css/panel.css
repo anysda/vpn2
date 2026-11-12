@@ -222,6 +222,7 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
   /* --mh и --mb - высоты шапки и таб-бара (layouts/default.vue): отступ контента и прокрутки */
   html{--mtop:calc(var(--mh,calc(66px + env(safe-area-inset-top))) + 4px);scroll-padding:var(--mtop) 0 var(--mb,calc(88px + env(safe-area-inset-bottom)));-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;--mglow:radial-gradient(closest-side,rgba(255,255,255,.09),rgba(255,255,255,.025) 55%,transparent)}
   body{min-height:100dvh}
+  .inp.big2{height:44px;margin-top:12px;padding:0 14px}
   div.light::before{top:-220px;width:620px;height:420px;background:var(--mglow)}
   div.light::after{display:none}
   .wrap{padding:var(--mtop) 16px calc(128px + env(safe-area-inset-bottom))}

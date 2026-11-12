@@ -15,7 +15,7 @@ const EXAMPLE = 'chatgpt.com'
 
 useHead({ title: 'Маршруты — anysda-vpn2' })
 definePageMeta({ title: 'Маршруты' })
-const { act } = useAct()
+const { act, busy } = useAct()
 const mobile = useMobile()
 
 const { data: rules, refresh } = useFetch('/api/routes', { default: () => [], server: false })
@@ -38,7 +38,7 @@ async function move(rule: Route, outbound: string) {
   await act('move', async () => {
     await $fetch<unknown>(`/api/routes/${rule.id}`, { method: 'PATCH', body: { outbound } })
     await refresh()
-  }, `«${rule.value}» → ${cellName(outbound)}`, 'Ошибка перемещения')
+  }, `«${rule.value}» → ${cellName(outbound)}`, { title: 'Ошибка перемещения' })
   moving.delete(rule.id)
 }
 const remove = (rule: Route) => act('del', async () => {
@@ -65,7 +65,8 @@ const newRule = reactive({ value: '', outbound: '' })
 watch(cells, (list) => {
   if (!newRule.outbound && list.length) newRule.outbound = list.find(c => c.outbound === 'direct-ru')?.outbound ?? list[0]!.outbound
 }, { immediate: true })
-const add = () => act('add', async () => {
+// Второй Enter или клик, пока идёт первый POST, правило не дублирует.
+const add = () => busy.value.has('add') || act('add', async () => {
   await $fetch<unknown>('/api/routes', { method: 'POST', body: { value: newRule.value.trim(), outbound: newRule.outbound } })
   newRule.value = ''
   await refresh()
@@ -121,14 +122,14 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
       </form>
     </section>
 
-    <section data-testid="route-board" class="grid gap-3" :style="mobile ? undefined : { gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(0,1fr))` }">
+    <section data-testid="route-board" class="grid gap-3" :style="mobile ? undefined : { gridTemplateColumns: `repeat(${Math.min(Math.max(columns.length, 1), 5)},minmax(min-content,1fr))` }">
       <div v-for="col in columns" :key="col.tag" data-testid="route-exit" :data-tag="col.tag" class="card flex flex-col gap-2.5">
-        <div data-testid="route-exit-head" class="flex items-start justify-between gap-2">
-          <div><b class="block font-medium">{{ col.name }}</b><small class="text-xs text-(--t3)">{{ col.sub }}</small></div>
-          <span class="text-2xl font-extralight" :class="col.delay === null ? 'text-(--red-t)' : rtc(col.delay)">{{ col.delay ?? '—' }}<small class="text-xs">мс</small></span>
+        <div data-testid="route-exit-head" class="flex flex-wrap items-start justify-between gap-x-2">
+          <div class="min-w-min flex-[1_1_0]"><b class="block font-medium">{{ col.name }}</b><small class="text-xs text-(--t3)">{{ col.sub }}</small></div>
+          <span class="flex-none text-2xl font-extralight whitespace-nowrap" :class="col.delay === null ? 'text-(--red-t)' : rtc(col.delay)">{{ col.delay ?? '—' }}<small class="text-xs">мс</small></span>
         </div>
         <div
-          v-for="cell in col.cells" :key="cell.outbound" data-testid="route-cell" :data-outbound="cell.outbound" class="flex flex-col gap-1.5 rounded-xl border border-dashed p-2.5"
+          v-for="cell in col.cells" :key="cell.outbound" data-testid="route-cell" :data-outbound="cell.outbound" class="flex flex-col [contain:inline-size] gap-1.5 rounded-xl border border-dashed p-2.5"
           :class="over === cell.outbound ? 'border-(--line2) bg-(--sunk2)' : 'border-(--line) bg-(--sunk)'"
           @dragover.prevent="over = cell.outbound" @drop.prevent="drop(cell.outbound)">
           <div class="flex justify-between gap-2 text-xs text-(--t3)">
@@ -142,7 +143,7 @@ const checkOut = computed(() => checked.value!.outbound === 'youtube-ru' ? `${co
               @dragstart="dragging = rule" @dragend="dragging = over = null" @click="mobile && (picked = rule)">
               <span class="min-w-0 flex-1 truncate">{{ rule.value }}</span>
               <button type="button" class="opacity-0 group-hover:opacity-100 hover:text-(--red-t) max-md:hidden" aria-label="Удалить" @click="remove(rule)">
-                ✕
+                <svg class="size-[11px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             </div>
             <span v-if="!rulesFor(cell.outbound).length" class="m-auto py-2 text-xs text-(--t4)">{{ mobile ? 'пусто' : 'перетащите сюда' }}</span>

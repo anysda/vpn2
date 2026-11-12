@@ -2,8 +2,8 @@
 # Сквозные тесты панели без стенда: собрать образ, поднять контейнер с
 # одноразовым паролем за Caddy, как ставит стадия 30, разложить ключи WG, CA OpenVPN и пометки IKEv2 теми же
 # командами, что стадии 27-29, подставить VictoriaMetrics и clash API, прогнать
-# Playwright. Аргументы уходят в `playwright test`. Подъём панели общий
-# с e2e/front-test.sh, он в e2e/support/panel-stand.sh.
+# Playwright. Аргументы уходят в `playwright test`. Подъём панели - в
+# e2e/support/panel-stand.sh.
 #
 #   DOCKER="sudo -n docker" bash e2e/run-local.sh            # всё
 #   E2E_SKIP_BUILD=1 bash e2e/run-local.sh e2e/routes.spec.ts

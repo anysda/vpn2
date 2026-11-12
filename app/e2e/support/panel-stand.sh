@@ -2,7 +2,7 @@
 # Панель в docker без стенда: контейнер панели за Caddy, как ставит стадия 30,
 # ключи WG, CA OpenVPN и пометки IKEv2 теми же командами, что стадии 27-29,
 # подставные бэкенды из fake-backends.mjs. Общая часть e2e/run-local.sh и
-# e2e/front-test.sh, подключается через source.
+# e2e/pool-upgrade.sh, подключается через source.
 #
 # DOCKER - команда docker («sudo -n docker» и т.п.).
 
@@ -48,7 +48,7 @@ stand_up() {
     -e NUXT_VM_URL=http://127.0.0.1:8428 -e NUXT_CLASH_API_URL=http://127.0.0.1:9090 \
     -e NUXT_PUBLIC_SSO_ENABLED=false \
     "${vpn_args[@]}" "$@" "$image" sh -ec \
-    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime; chown -R 10001:10001 /var/lib/anysda-vpn2; if [ "$PWD" = /src ]; then chown -R 10001:10001 /src/node_modules /src/.nuxt; fi; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
+    'if [ -f scripts/migrate.mjs ]; then node scripts/migrate.mjs; fi; mkdir -p /var/lib/anysda-vpn2/runtime; chown -R 10001:10001 /var/lib/anysda-vpn2; exec setpriv --reuid 10001 --regid 10001 --clear-groups "$@"' \
     -- "${command[@]}" >/dev/null
 
   dk exec -i "$name" sh -c 'cat > /tmp/fake-backends.mjs' < "$STAND_APP_DIR/e2e/support/fake-backends.mjs"

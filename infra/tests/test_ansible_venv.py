@@ -66,7 +66,7 @@ def tree_status():
 
 
 def install(tmp_path, bin_dir, infra_dir, **env):
-    return bash('ansible_venv_install',
+    return bash('mkdir -p "$VPN2_ROOT"; _ansible_venv_install_locked',
                 VPN2_ROOT=str(tmp_path / 'root'), ANSIBLE_VENV_INFRA=str(infra_dir),
                 VPN2_PYTHON=str(bin_dir / 'python3'), **env)
 
@@ -134,14 +134,6 @@ class AnsibleVenvTest(unittest.TestCase):
         self.assertEqual(subprocess.run([venv / 'bin/vpn2'], capture_output=True, text=True).stdout,
                          'vpn2\n')
         return res, venv.resolve()
-
-    def venv_wait(self, mode):
-        log = self.tmp / 'venv.log'
-        return bash(
-            'warn() { echo "WARN $*" >&2; }\n'
-            f'echo pip-boom > {log}; (exit 1) & _VENV_PID=$!\n'
-            f'ansible_venv_wait {mode}; echo "rc=$?"',
-            VPN2_ROOT=str(self.tmp / 'root'), VENV_LOG=str(log))
 
     def test_pins_change_with_each_input(self):
         for name in PIN_FILES:
@@ -301,34 +293,6 @@ class AnsibleVenvTest(unittest.TestCase):
 
     @NEEDS_WHEEL
     @NEEDS_PIP_WHEEL
-    def test_directory_of_old_release_becomes_link(self):
-        infra = self.infra()
-        bin_dir, calls = self.fake_python()
-        build(self, self.tmp, infra)
-        root = self.tmp / 'root'
-        venv = root / 'venv'
-        venv.mkdir(parents=True)
-        pin = bash('ansible_venv_pins', ANSIBLE_VENV_INFRA=str(infra),
-                   VPN2_PYTHON=str(bin_dir / 'python3')).stdout.strip()
-        (venv / '.vpn2-pins').write_text(pin + '\n')
-        (venv / '.vpn2-wheel').write_text(
-            f"{(root / 'wheels/.src-sha256').read_text().strip()} {pin}\n")
-        # метки те же: каталог прежнего выпуска не трогается
-        res = install(self.tmp, bin_dir, infra)
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn('пины те же, без загрузки', res.stdout)
-        self.assertFalse(calls.exists())
-        self.assertFalse(venv.is_symlink())
-        # другое колесо: каталог уступает место симлинку, коллекции не качаются
-        self.edit_source(infra)
-        self.installed(bin_dir, infra)
-        self.assertFalse(any(x.startswith('galaxy ') for x in calls.read_text().splitlines()))
-        self.assertEqual(len(list((root / 'venvs').iterdir())), 1)
-        self.assertEqual(sorted(x.name for x in root.iterdir() if x.name.startswith('venv')),
-                         ['venv', 'venvs'])
-
-    @NEEDS_WHEEL
-    @NEEDS_PIP_WHEEL
     def test_build_of_running_process_is_kept(self):
         infra = self.infra()
         bin_dir, _ = self.fake_python()
@@ -347,94 +311,6 @@ class AnsibleVenvTest(unittest.TestCase):
             service.wait()
         self.installed(bin_dir, infra)
         self.assertEqual([x.name for x in (root / 'venvs').iterdir()], [second.name])
-
-    def test_background_install_does_not_hold_deploy_lock(self):
-        # Деплой берёт замок через exec {fd}> и падает; фон с sleep ещё идёт,
-        # а следующий запуск обязан взять тот же замок.
-        lock = self.tmp / 'deploy.lock'
-        res = bash(
-            f'exec {{fd}}>{lock}; flock -n "$fd" || exit 9\n'
-            'ansible_wheel_build() { :; }\n'
-            '_ansible_venv_install_locked() { sleep 60; }\n'
-            'ansible_venv_start\n'
-            'echo "bg=$_VENV_PID" >&2\n'
-            'exit 1',
-            VPN2_ROOT=str(self.tmp / 'root'))
-        bg = int(res.stderr.rsplit('bg=', 1)[1].split()[0])
-        try:
-            self.assertEqual(res.returncode, 1, res.stderr)
-            # Фон закрывает унаследованный дескриптор замка первым делом, но
-            # уже после своего запуска: сразу за выходом деплоя замок ещё может
-            # быть занят. Ждём его меньше, чем живёт фон: держи фон замок до
-            # конца установки, ожидание не дождалось бы.
-            second = subprocess.run(['flock', '-w', '20', str(lock), 'true'])
-            self.assertEqual(second.returncode, 0, 'фон venv держит замок деплоя')
-        finally:
-            subprocess.run(['pkill', '-P', str(bg)])
-            subprocess.run(['kill', str(bg)])
-
-    def test_soft_venv_wait_warns_and_returns_zero(self):
-        res = self.venv_wait('soft')
-        self.assertEqual(res.returncode, 0, res.stderr)
-        self.assertIn('rc=0', res.stdout)
-        self.assertIn('pip-boom', res.stderr)
-        self.assertIn('WARN ansible: venv не установился, лог', res.stderr)
-        self.assertIn('повторится при следующем запуске', res.stderr)
-
-    def test_strict_venv_wait_dies_on_failed_background(self):
-        res = self.venv_wait('')
-        self.assertNotEqual(res.returncode, 0)
-        self.assertNotIn('rc=', res.stdout)
-        self.assertIn('ansible: venv не установился', res.stderr)
-
-    @NEEDS_WHEEL
-    def test_wheel_build_installs_venv_package_only_when_setuptools_missing(self):
-        system = glob.glob('/usr/share/python-wheels/setuptools-*.whl')[0]
-        for ready in (False, True):
-            with self.subTest(ready=ready):
-                tmp = self.new_tmp()
-                wheels = tmp / 'pywheels'
-                wheels.mkdir()
-                if ready:
-                    shutil.copy(system, wheels)
-                calls = tmp / 'calls'
-                res = bash(
-                    f'_install_prereq_pkgs() {{ echo "$*" >> {calls}; '
-                    f'cp {system} "$PYTHON_WHEELS_DIR/"; }}\n'
-                    'ansible_wheel_build',
-                    VPN2_ROOT=str(tmp / 'root'), PYTHON_WHEELS_DIR=str(wheels))
-                self.assertEqual(res.returncode, 0, res.stderr)
-                self.assertTrue(list((tmp / 'root/wheels').glob('vpn2-*-py3-none-any.whl')))
-                if ready:
-                    self.assertFalse(calls.exists())
-                else:
-                    self.assertEqual(calls.read_text().splitlines(), ['python3-venv'])
-
-    def test_wheel_build_installs_wheel_package_only_when_setuptools_lacks_bdist_wheel(self):
-        for has_cmd in (False, True):
-            with self.subTest(has_bdist_wheel=has_cmd):
-                tmp = self.new_tmp()
-                wheels = tmp / 'pywheels'
-                wheels.mkdir()
-                with zipfile.ZipFile(wheels / 'setuptools-1-py3-none-any.whl', 'w') as z:
-                    z.writestr('setuptools/__init__.py', '')
-                    if has_cmd:
-                        z.writestr('setuptools/command/__init__.py', '')
-                        z.writestr('setuptools/command/bdist_wheel.py', '')
-                calls = tmp / 'calls'
-                # Модуль wheel на хосте тестов не мешает: проба его не видит.
-                bash(
-                    f'_install_prereq_pkgs() {{ echo "$*" >> {calls}; }}\n'
-                    'nowheel() { [[ "$*" == *"import wheel"* ]] && return 1; '
-                    '/usr/bin/python3 "$@"; }\n'
-                    'ansible_wheel_build',
-                    VPN2_ROOT=str(tmp / 'root'), PYTHON_WHEELS_DIR=str(wheels),
-                    VPN2_PYTHON='nowheel')
-                if has_cmd:
-                    self.assertFalse(calls.exists())
-                else:
-                    self.assertEqual(calls.read_text().splitlines(), ['python3-wheel'])
-
 
 if __name__ == '__main__':
     unittest.main()

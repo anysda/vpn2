@@ -1,19 +1,11 @@
 # shellcheck shell=bash
-# Общие приёмы стадий деплоя и anysda-restore: не рвать клиентов зря и не
-# стоять молча на блокировке apt.
-#
-# Рестарт службы обрывает сессии: IKEv2-устройства после рестарта strongswan
-# сами не переподключаются, у WireGuard обнуляются рукопожатия. Поэтому
-# службу перезапускаем, только если она читает уже не то, с чем стартовала,
-# тем же отпечатком, что у sing-box в 10-foreign и 20-ru-router.
+# Общие приёмы стадий деплоя и anysda-restore: перезапуск служб только при смене
+# их входов, apt без молчаливого ожидания блокировок.
 
 SVC_FP_DIR=${SVC_FP_DIR:-/var/lib/anysda/applied}
 
-# Loads lazily: backup/restore also use this library without release artifacts.
-# release_download <имя> <файл> <url> [sha256]: один путь в обоих режимах -
-# vpn2.release с повтором, запасным путём через API релизов GitHub и сверкой
-# хеша. Хеш берётся из манифеста сборки; в режиме разработки манифеста нет,
-# хеш приходит из стадии (четвёртый аргумент). Есть оба - обязаны совпасть.
+# release_download <имя> <файл> <url> [sha256]: vpn2.release с повтором и сверкой хеша;
+# хеш из манифеста сборки, в режиме разработки - четвёртым аргументом.
 release_download() {
   local name="$1" destination="$2" url="$3" sha="${4:-}" src manifest=()
   src=$(dirname "${BASH_SOURCE[0]}")
@@ -26,20 +18,14 @@ release_download() {
 
 svc_say() { echo "[${HOST_TAG:-anysda}]   $*"; }
 
-# bcrypt ограничен 72 байтами. Короткие пароли совместимы со старыми
-# установками; длинные преобразуем целиком, без усечения UTF-8 или суффикса.
-# Этот же пароль передаёт AdGuard прокси панели (стадия 30).
+# Пароль AdGuard под bcrypt: до 72 байт как есть, длиннее - sha256 от всего пароля.
 agh_password() {
   printf '%s' "$1" | python3 -c 'import hashlib, sys
 p = sys.stdin.buffer.read()
 sys.stdout.buffer.write(p if len(p) <= 72 else hashlib.sha256(b"vpn2-adguard-v1\0" + p).hexdigest().encode())'
 }
 
-# nftables — не единственный владелец ruleset: ufw, Docker, fail2ban и
-# routing-службы держат в нём свои таблицы. Даже ExecStop штатного юнита
-# делает глобальный flush (restart = stop + start). Убираем оба сброса;
-# native nft-конфиги должны заменять только собственные таблицы, как YouTube.
-# Вызывается ДО apt/needrestart и после установки пакета на чистой ноде.
+# nftables.service не сбрасывает весь ruleset: в нём таблицы ufw, Docker, fail2ban.
 nftables_preserve_rules() {
   local conf=/etc/nftables.conf
   if [[ -f "$conf" ]] && grep -Eq '^[[:space:]]*flush[[:space:]]+ruleset[[:space:]]*;?[[:space:]]*(#.*)?$' "$conf"; then
@@ -60,10 +46,8 @@ SVC_RESTARTED=0
 
 svc_fingerprint() { { cat "$@" 2>/dev/null || true; } | sha256sum | cut -d' ' -f1; }
 
-# svc_restart_if_changed UNIT FILE...
-# FILE — всё, что служба читает при старте: бинарник, юнит, конфиги,
-# сертификаты. Отпечаток их содержимого сверяем с записанным при прошлом
-# рестарте; нет файла — нет его и в отпечатке.
+# svc_restart_if_changed UNIT FILE...: рестарт, если служба не идёт или отпечаток файлов,
+# что она читает при старте, не тот, что при прошлом рестарте.
 svc_restart_if_changed() {
   local unit=$1 fp_file fp
   shift
@@ -80,9 +64,7 @@ svc_restart_if_changed() {
   svc_say "$unit перезапущен"
 }
 
-# svc_settle SEC [ПРОБА...] — дать только что перезапущенной службе подняться
-# (или упасть) до показа статуса. С пробой ждём, пока она пройдёт, но не
-# дольше SEC; без пробы — ровно SEC. Если ничего не перезапускали, ждать нечего.
+# svc_settle SEC [ПРОБА...]: после рестарта ждёт пробу до SEC с, без пробы - SEC с.
 svc_settle() {
   local sec=$1 i
   shift
@@ -99,12 +81,9 @@ svc_settle() {
   SVC_RESTARTED=0
 }
 
-# wg0_apply — применить /etc/wireguard/wg0.conf. Ключи и пиры `wg syncconf`
-# меняет на живом интерфейсе без обрыва. Рестарт wg-quick нужен, только если
-# интерфейса нет или в wg0.conf другие адреса. Порт меняет сам syncconf.
+# wg0_apply: wg syncconf без обрыва, рестарт wg-quick - только без интерфейса или
+# при других адресах. Address читается как у wg-quick.
 wg0_conf_iface() {
-  # Как wg-quick: строка до первого #, имя и значение без пробелов по краям,
-  # имена в любом регистре, Address делится по запятым и пробелам.
   awk '
     { sub(/#.*/, ""); key = $0; sub(/=.*/, "", key); value = $0; sub(/^[^=]*=/, "", value)
       gsub(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/, "", key); gsub(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/, "", value) }
@@ -127,18 +106,12 @@ wg0_apply() {
   fi
 }
 
-# ── apt/dpkg ────────────────────────────────────────────────────────────────
-# На свежей Ubuntu apt-daily и unattended-upgrades минутами держат блокировки
-# apt/dpkg. Штатный DPkg::Lock::Timeout ждёт их молча, а `apt-get update`
-# (блокировку списков) не ждёт вовсе и сразу падает, поэтому перед apt
-# ждём сами и раз в 20 с пишем, кого ждём. Пишем в stdout стадии, каким он был
-# при подключении библиотеки: `apt_get install ... >/dev/null` не глушит строку.
+# apt и dpkg: перед apt ждём блокировки сами и раз в 20 с пишем, кого ждём, в stdout
+# стадии на момент подключения библиотеки (`apt_get ... >/dev/null` строку не глушит).
 exec {APT_LOG_FD}>&1
 APT_LOCKS=(/var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock)
 APT_LOCK_TIMEOUT=1200
-# Ожидание исчерпано: метка живёт час и снимается свободным apt. При ней
-# следующий вызов не ждёт второй круг, а apt-get получает короткий
-# Lock::Timeout и либо идёт, либо падает сразу.
+# Метка исчерпанного ожидания живёт час: следующий вызов не ждёт, Lock::Timeout короткий.
 APT_GAVE_UP=${APT_GAVE_UP:-/run/anysda-apt-gave-up}
 APT_GAVE_UP_LOCK_TIMEOUT=60
 
@@ -146,8 +119,7 @@ apt_gave_up() {
   [[ -n "$(find "$APT_GAVE_UP" -mmin -60 2>/dev/null)" ]]
 }
 
-# В минимальном Debian нет psmisc/fuser. lslocks из util-linux видит те же
-# блокировки ядра; без него отсутствие fuser выглядело как свободный apt.
+# fuser, а без psmisc - lslocks из util-linux.
 apt_lock_holders() {
   if command -v fuser >/dev/null 2>&1; then
     fuser "${APT_LOCKS[@]}" 2>/dev/null
@@ -182,39 +154,25 @@ apt_wait_idle() {
   (( SECONDS - t0 < 5 )) || svc_say "apt освободился через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
 }
 
-# apt_auto_pause — автообновления Ubuntu на паузу до конца деплоя.
-# Через минуту после загрузки apt-daily запускает unattended-upgrade, и
-# следующие стадии минутами стоят на блокировке apt. Выключаем только на время
-# деплоя, не насовсем: своей политики обновлений у узлов нет, патчи
-# безопасности ставит только unattended-upgrades. Маска --runtime живёт до
-# перезагрузки, а через час её снимает таймер, даже если деплой упал.
+_unit_running() { [[ "$(systemctl show -P ActiveState "$1" 2>/dev/null)" == @(activating|active|deactivating) ]]; }
+
+# apt_auto_pause: автообновления на паузу маской --runtime; через час её снимает таймер.
 apt_auto_pause() {
   local timers=(apt-daily.timer apt-daily-upgrade.timer)
   local jobs=(apt-daily.service apt-daily-upgrade.service)
   local units=("${timers[@]}" "${jobs[@]}" unattended-upgrades.service)
   local t0=$SECONDS said=-20 j busy
-  # mask --now сначала перечитывает замаскированный юнит:
-  # активный таймер теряет Trigger и переходит в failed до остановки.
-  # Сначала остановим таймеры; reset-failed убирает след старого порядка
-  # при повторной установке, не затрагивая ошибки самих APT-служб.
+  # Таймеры: стоп до маски, иначе активный уходит в failed.
   systemctl stop "${timers[@]}" >/dev/null 2>&1 || true
   systemctl mask --runtime "${timers[@]}" >/dev/null 2>&1 || true
   systemctl reset-failed "${timers[@]}" >/dev/null 2>&1 || true
-  # Сработавший таймер оставляет службу в ExecStartPre: она до 30 с ждёт
-  # сеть и apt ещё не держит, а через минуту схватит его посреди деплоя.
-  # Такую снимаем, ничего не начато. Уже идущую дожидаемся, а не рвём
-  # посреди dpkg.
+  # Служба в ExecStartPre ещё ничего не начала - снимаем; идущую дожидаемся.
   for j in "${jobs[@]}"; do
     if [[ "$(systemctl show -P SubState "$j" 2>/dev/null)" == start-pre ]]; then
       systemctl stop "$j" >/dev/null 2>&1 || true
     fi
   done
-  # Обе службы oneshot: пока работают, они в activating, а не active.
-  while busy=$(for j in "${jobs[@]}"; do
-      if [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]]; then
-        printf '%s ' "$j"
-      fi
-    done) && [[ -n "$busy" ]]; do
+  while busy=$(for j in "${jobs[@]}"; do ! _unit_running "$j" || printf '%s ' "$j"; done) && [[ -n "$busy" ]]; do
     if (( SECONDS - t0 >= APT_LOCK_TIMEOUT )); then
       svc_say "автообновление так и не закончилось за $(( SECONDS - t0 )) с, продолжаю" >&"$APT_LOG_FD"
       break
@@ -226,32 +184,21 @@ apt_auto_pause() {
     sleep 2
   done
   (( SECONDS - t0 < 5 )) || svc_say "автообновление закончилось через $(( SECONDS - t0 )) с" >&"$APT_LOG_FD"
-  # Маску на службы - только когда они стоят: маска перечитывает юнит, и у
-  # идущей oneshot-службы TimeoutStartSec падает с infinity до 90 с - systemd
-  # убил бы unattended-upgrade посреди установки.
+  # Маска идущей oneshot-службы сократила бы её TimeoutStartSec до 90 с.
   for j in "${jobs[@]}"; do
-    [[ "$(systemctl show -P ActiveState "$j" 2>/dev/null)" == @(activating|active|deactivating) ]] \
-      || systemctl mask --runtime "$j" >/dev/null 2>&1 || true
+    _unit_running "$j" || systemctl mask --runtime "$j" >/dev/null 2>&1 || true
   done
   apt_wait_idle
   systemctl mask --runtime --now unattended-upgrades.service >/dev/null 2>&1 || true
   systemctl stop anysda-apt-resume.timer >/dev/null 2>&1 || true
-  # Возврат: снять все маски, запустить снова таймеры и службу
-  # unattended-upgrades (она только доводит обновление при выключении).
   systemd-run --quiet --unit=anysda-apt-resume --on-active=1h \
     /bin/sh -c "systemctl unmask --runtime ${units[*]}
       for u in ${timers[*]} unattended-upgrades.service; do if systemctl is-enabled --quiet \$u; then systemctl start \$u; fi; done" \
     || svc_say "таймер возврата автообновлений не поставлен, вернутся после перезагрузки"
 }
 
-# apt_get ARGS... — apt-get после apt_wait_idle; гонку между проверкой и
-# стартом закрывает штатный DPkg::Lock::Timeout.
-# Разовый 5xx зеркала или прокси (InRelease, .deb) apt не повторяет даже с
-# Acquire::Retries: HTTP-ошибку он считает окончательной, update лишь
-# предупреждает и оставляет старые списки, а install потом падает «Unable to
-# locate package». Поэтому сбой загрузки (5xx, 408, 429, обрыв сети) повторяем
-# сами, всего APT_FETCH_TRIES раз с паузой; 4xx - ответ зеркала, не повтор.
-# Не отдало и тогда - строка «зеркало apt не отдало» с адресом и прежний код.
+# apt_get ARGS...: apt-get после apt_wait_idle. Сбой загрузки (5xx, 408, 429, обрыв)
+# повторяется до APT_FETCH_TRIES раз, прочие 4xx - нет; итог - строка «зеркало apt не отдало».
 APT_FETCH_TRIES=3
 apt_get() {
   local try=1 rc err failed lock_timeout
@@ -282,9 +229,7 @@ apt_get() {
   return "$rc"
 }
 
-# deb_install FILE — локальный .deb. Без зависимостей - сразу dpkg -i: apt-get
-# install ./x.deb сначала читает все списки (~3 с на ядро). С зависимостями -
-# через apt. Перед ним то же ожидание блокировок, что у apt_get.
+# deb_install FILE: без зависимостей - dpkg -i, с зависимостями - apt.
 deb_install() {
   if [[ -n "$(dpkg-deb -f "$1" Depends Pre-Depends 2>/dev/null)" ]]; then
     apt_get install -y -qq "$1"
@@ -294,13 +239,7 @@ deb_install() {
   DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold -i "$1"
 }
 
-# Caddy: панель entry (30) и выпуск сертификата на IP экзита (23).
-# APT-репо Caddy на Cloudsmith отвечает 402 Payment Required: apt-get update
-# с ним падает целиком. Ставим .deb из GitHub-релиза (тот же пакет, с юнитом и
-# пользователем caddy). Список Cloudsmith со старых нод убирает deploy.sh
-# перед каждой стадией.
-# Ставим и поверх старой версии: проверка «caddy есть» оставляла узлы на той,
-# что встала первой.
+# Caddy - .deb из GitHub-релиза, ставится поверх любой другой версии.
 CADDY_VER='2.11.9'
 # GitHub release assets API, tag v2.11.9, поле digest.
 CADDY_SHA256='bbea4aeaadc86b233c168cc33bad9daa1cbce756dc08949b783b45398f8e65cb'
@@ -315,29 +254,21 @@ caddy_install() {
   rm -rf "$tmp"
 }
 
-# apt_have PKG... — все пакеты уже установлены. apt-get install поверх
-# установленного всё равно читает списки и кэш (~2-3 с на ядро).
+# apt_have PKG...: все пакеты уже установлены.
 apt_have() {
   local st
   st=$(dpkg-query -W -f='${db:Status-Status}\n' "$@" 2>/dev/null) || return 1
   ! grep -qvx installed <<<"$st"
 }
 
-# docker_apt_source — официальное APT-репо Docker (ключ download.docker.com),
-# а не `curl get.docker.com | sh`. Файл
-# источника переписываем только при отличии: иначе apt_update_if_stale
-# решит, что списки устарели. Docker нужен только entry (25/30/35).
-# shellcheck disable=SC2034  # читают роли emergency и containers
-# buildx на узле не зовёт никто (образы собирает CI), compose нужен только entry и
-# ставится ролью containers; их и rootless-extras
-# тянут Recommends docker-ce/docker-ce-cli: минус ~130 МБ распаковки на 1 ядре.
+# docker_apt_source: APT-репо Docker; файл источника переписывается только при отличии.
+# DOCKER_PKGS и DOCKER_SKIP читают роли emergency и containers.
+# shellcheck disable=SC2034
 DOCKER_PKGS=(docker-ce docker-ce-cli containerd.io)
 # shellcheck disable=SC2034
 DOCKER_SKIP=(docker-ce-rootless-extras- docker-buildx-plugin- docker-compose-plugin-)
 docker_apt_source() {
   local list=/etc/apt/sources.list.d/docker.list line distro codename release
-  # Debian и Ubuntu имеют разные репозитории, включая ключ. Не подставлять
-  # Ubuntu для неизвестной ОС: это создаёт несуществующий suite в APT.
   release=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${VERSION_CODENAME:-}") || return
   read -r distro codename <<<"$release"
   case "$distro" in
@@ -362,13 +293,8 @@ docker_apt_source() {
   [[ "$(cat "$list" 2>/dev/null)" == "$line" ]] || echo "$line" > "$list"
 }
 
-# apt_lists_are_fresh LISTS SOURCE... — списки свежие, если каталог обновлён
-# за последний час, ни один источник не новее его и в нём есть индекс пакетов
-# (*_Packages*). Одного *_InRelease мало: update с кодом 0 при сбое зеркала
-# оставляет его без Packages, и install не находит пакет. Время индекса не
-# годится: apt ставит файлу
-# Last-Modified зеркала, сразу после update он бывает старше месяца. Свежий
-# каталог на только что поднятой машине может держать один partial/.
+# apt_lists_are_fresh LISTS SOURCE...: каталог списков обновлён за час, источники не
+# новее его и в нём есть *_Packages*.
 apt_lists_are_fresh() {
   local lists=$1
   shift
@@ -377,21 +303,12 @@ apt_lists_are_fresh() {
   [[ -n "$(find "$lists" -maxdepth 1 -type f -name '*_Packages*' -print -quit 2>/dev/null)" ]]
 }
 
-# apt_update_if_stale — apt-get update, если нет свежего индекса или источник
-# менялся после него. После 00-bootstrap свежий индекс пропускает повторный
-# update; пустой lists/partial всегда его запускает.
 apt_update_if_stale() {
-  local lists=/var/lib/apt/lists
-  if apt_lists_are_fresh "$lists" /etc/apt/sources.list /etc/apt/sources.list.d; then
-    return 0
-  fi
-  apt_get update -qq
+  apt_lists_are_fresh /var/lib/apt/lists /etc/apt/sources.list /etc/apt/sources.list.d || apt_get update -qq
 }
 
-# apt_prepare — перед стадией: Lock::Timeout для любого apt на узле, ожидание
-# блокировок, и если хостер перезагрузил машину посреди установки пакетов,
-# dpkg остаётся прерванным и любой apt-get падает с «dpkg was interrupted» -
-# доводим его.
+# apt_prepare: Lock::Timeout для любого apt на узле, ожидание блокировок, довод
+# прерванного dpkg.
 apt_prepare() {
   printf 'DPkg::Lock::Timeout "%s";\n' "$APT_LOCK_TIMEOUT" > /etc/apt/apt.conf.d/90anysda-lock-timeout
   apt_wait_idle
@@ -401,14 +318,8 @@ apt_prepare() {
   fi
 }
 
-# apt_sshd_first — в подготовке 00-bootstrap, до включения сторожа фаервола:
-# обновляет один openssh отдельным коротким заходом. В общем заходе пакетов
-# prerm останавливает sshd, а запускает его configure в самом конце: между ними
-# распаковка сотен пакетов, дольше окна сторожа, и сторож принимал это за
-# потерянный доступ. Здесь sshd лежит секунды, сторож ещё не взведён, фаервол
-# не тронут. После первой установки (метка стадии) общий заход пакетов не
-# идёт, обновлять нечего. sshd не вернулся - стадия падает до правок фаервола.
-# Строка об этом идёт в stdout: там её получает приставка с именем узла.
+# apt_sshd_first: до первой 00-bootstrap и до сторожа фаервола обновляет openssh
+# отдельным заходом и ждёт баннер sshd; не дождался - отказ до правок фаервола.
 APT_SSHD_STAMP=/var/anysda/.stamps/00-bootstrap
 APT_SSHD_WAIT=60
 apt_sshd_versions() {
@@ -416,7 +327,7 @@ apt_sshd_versions() {
     | awk '$1 == "Installed:" { i = $2 } $1 == "Candidate:" { c = $2 } END { print i, c }'
 }
 
-# Новый вход по тому же адресу и порту, которым пришёл деплой: баннер sshd.
+# Баннер sshd по адресу и порту, которыми пришёл деплой.
 sshd_answers() {
   local addr port
   read -r _ _ addr port <<<"${SSH_CONNECTION:-}"
@@ -429,7 +340,6 @@ apt_sshd_first() {
   local installed candidate t0
   [[ ! -e "$APT_SSHD_STAMP" ]] || return 0
   apt_have openssh-server || return 0
-  # Сбой списков покажет сама стадия: её apt идёт следом и читает те же списки.
   apt_update_if_stale || true
   read -r installed candidate < <(apt_sshd_versions) || true
   [[ -n "$candidate" && "$candidate" != "(none)" && "$installed" != "$candidate" ]] || return 0
@@ -445,10 +355,4 @@ apt_sshd_first() {
     fi
     sleep 2
   done
-}
-
-# Заглушка до entry-resources.sh: стадия, подключившая библиотеку, получает
-# настоящую функцию; без библиотеки юнит ставится без своих лимитов.
-entry_unit_resources() {
-  echo "WARN: entry-resources.sh не подключён, лимиты $1 не записаны" >&2
 }

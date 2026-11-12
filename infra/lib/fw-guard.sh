@@ -17,12 +17,9 @@ set -euo pipefail
 DIR=${FW_GUARD_DIR:-/run/vpn2-fw-guard}
 ETC=${FW_GUARD_ETC:-/etc}
 UNIT=vpn2-fw-guard
-# Свои nft-таблицы стадий (19-yt-zapret, port hopping Hysteria2 из 10-foreign).
-# Чужие таблицы (Docker, fail2ban) не
-# снимаем: откат всего ruleset стёр бы то, что службы добавили за время стадии.
+# Свои nft-таблицы стадий; чужие (Docker, fail2ban) не трогаются.
 TABLES=('inet ytzapret' 'inet anysda_ytquic' 'inet vpn2_hy2hop')
-# Файлы, из которых эти таблицы поднимаются после перезагрузки (под $ETC):
-# без них живая таблица вернулась бы к снимку, а диск остался бы от стадии.
+# Файлы под $ETC, из которых эти таблицы поднимаются после перезагрузки.
 FILES=(nftables-hy2hop.conf)
 
 say() { echo "vpn2-fw-guard: $*"; }
@@ -73,16 +70,13 @@ restore() {
       [[ ! -f "$file" ]] || nft -f "$file" || rc=1
     done
   fi
-  # Снимок без каталога files снят сторожем до этой версии: диск не трогаем.
-  if [[ -d "$snap/files" ]]; then
-    for file in "${FILES[@]}"; do
-      if [[ -f "$snap/files/$file" ]]; then
-        cp -a "$snap/files/$file" "$ETC/$file.vpn2-guard" && mv "$ETC/$file.vpn2-guard" "$ETC/$file" || rc=1
-      else
-        rm -f "$ETC/$file" || rc=1
-      fi
-    done
-  fi
+  for file in "${FILES[@]}"; do
+    if [[ -f "$snap/files/$file" ]]; then
+      cp -a "$snap/files/$file" "$ETC/$file.vpn2-guard" && mv "$ETC/$file.vpn2-guard" "$ETC/$file" || rc=1
+    else
+      rm -f "$ETC/$file" || rc=1
+    fi
+  done
   return $rc
 }
 

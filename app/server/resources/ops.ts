@@ -126,7 +126,7 @@ export default {
   'PATCH /ops/exits/:tag': admin(async (event, user) => {
     const tag = String(getRouterParam(event, 'tag') || '')
     const exits = nodeInstances().map(n => n.tag).filter(t => t !== 'ru')
-    if (!exits.includes(tag)) throw createError({ statusCode: 404, statusMessage: 'unknown_exit' })
+    if (!exits.includes(tag)) throw createError({ statusCode: 404, statusMessage: 'unknown_exit', message: 'Неизвестный экзит' })
     const { disabled } = await readValidatedBody(event, z.object({ disabled: z.boolean() }).parse)
     const written = await toggleExit(tag, disabled, exits, async (wasDisabled) => {
       useLogger().info({ tag, wasDisabled, disabled }, 'exit toggled manually')
@@ -136,7 +136,7 @@ export default {
         title: `${disabled ? 'Экзит выключен' : 'Экзит включён'} · ${tag.toUpperCase()}`, detail: joinDetail('вручную', actorOf(user)),
       })
     })
-    if (!written) throw createError({ statusCode: 409, statusMessage: 'last_enabled_exit' })
+    if (!written) throw createError({ statusCode: 409, statusMessage: 'last_enabled_exit', message: 'Нельзя выключить последний включённый экзит' })
     return { tag, disabled }
   }),
 

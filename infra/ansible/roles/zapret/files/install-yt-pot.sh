@@ -16,16 +16,12 @@ pot_tmp=$probe_venv/.pot-install
 rm -rf "$pot_tmp" "$probe_venv"/.pot-install.*
 mkdir -p "$pot_tmp"
 trap 'rm -rf "$pot_tmp"' EXIT
-if [[ -n "${VPN2_RELEASE_MANIFEST:-}" && "${VPN2_DEVELOPMENT:-false}" != true ]]; then
-  release_src=$(dirname "$0")
-  [[ -d "$release_src/vpn2/release" ]] || release_src=$release_src/../vpn2/src
-  PYTHONPATH=$release_src python3 -m vpn2.release --manifest "$VPN2_RELEASE_MANIFEST" artifact yt-pot "$pot_tmp/source.tar.gz"
-else
-  curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
-    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/$pot_version.tar.gz" -o "$pot_tmp/source.tar.gz"
-fi
-printf '%s  %s\n' 1f2ae9ec39405b8e80397dfc2551f58deed09d8dff4b2b8fbc314df8e091c0a1 \
-  "$pot_tmp/source.tar.gz" | sha256sum -c -
+# python3 - venv пакета vpn2: роль ставит его первым в PATH.
+release=(python3 -m vpn2.release)
+[[ "${VPN2_DEVELOPMENT:-false}" == true ]] || release+=(--manifest "${VPN2_RELEASE_MANIFEST:-/tmp/anysda/release-manifest.json}")
+"${release[@]}" artifact yt-pot "$pot_tmp/source.tar.gz" \
+  --url "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/$pot_version.tar.gz" \
+  --sha256 1f2ae9ec39405b8e80397dfc2551f58deed09d8dff4b2b8fbc314df8e091c0a1
 tar -xzf "$pot_tmp/source.tar.gz" -C "$pot_tmp"
 export PATH="$probe_venv/bin:$PATH"
 export npm_config_cache="$pot_tmp/npm-cache"

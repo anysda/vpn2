@@ -106,7 +106,8 @@ class PotTests(unittest.TestCase):
         self.assertIn({'src': 'install-yt-pot.sh', 'dest': '{{ zapret_tmp }}/install-yt-pot.sh'}, shipped['loop'])
         self.assertIn('TimeoutStartSec=240', role_file('anysda-yt-failover.service'))
         installer = source('infra/ansible/roles/zapret/files/install-yt-pot.sh')
-        self.assertIn('sha256sum -c -', installer)
+        self.assertIn('artifact yt-pot', installer)
+        self.assertIn('--sha256 ', installer)
         self.assertIn('ci --no-audit', installer)
         self.assertIn('prune --omit=dev', installer)
 

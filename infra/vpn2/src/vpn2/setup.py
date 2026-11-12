@@ -253,6 +253,22 @@ def _blocks(text, pattern):
             [text[match.start():end] for match, end in zip(matches, ends)])
 
 
+def _shift(text, by):
+    """Сдвиг строк на by пробелов (меньше нуля - влево)."""
+    return re.sub(r'^ {0,%d}' % -by if by < 0 else '^(?=.)', '' if by < 0 else ' ' * by, text, flags=re.MULTILINE)
+
+
+def _items(body):
+    """(маркер «- » с его отступом, текст до списка, элементы с ключами на отступе 4).
+
+    yaml.safe_dump пишет список без отступа («- tag:»), мастер - с отступом («  - tag:»).
+    """
+    found = re.search(r'^( *)- ', body, re.MULTILINE)
+    marker = found[0] if found else '  - '
+    lead, parts = _blocks(body, '^' + re.escape(marker))
+    return marker, lead, [_shift(part.replace(marker, ' ' * len(marker), 1), 4 - len(marker)) for part in parts]
+
+
 def merge_setup_config(previous, answers):
     """Обновляет в прежнем config.yaml только ответы мастера; остальные строки и комментарии целы.
 
@@ -264,7 +280,7 @@ def merge_setup_config(previous, answers):
         sys.exit('ERROR: config.yaml: exits: для сохранения настроек нужны уникальные непустые теги')
 
     def merge(old, new, indent):
-        pattern = '^' + ' ' * indent + r'[^ #\n][^:\n]*:'
+        pattern = '^' + ' ' * indent + r'[^ #\n-][^:\n]*:'
         prefix, old_parts = _blocks(old, pattern)
         keyed = {part.split(':', 1)[0].strip(): part for part in old_parts}
         for part in _blocks(new, pattern)[1]:
@@ -275,11 +291,11 @@ def merge_setup_config(previous, answers):
             (old_head, _, old_body), (new_head, _, new_body) = keyed[name].partition('\n'), part.partition('\n')
             new_value = new_head.partition(':')[2].strip()
             if indent == 0 and name == 'exits':
-                lead, old_items = _blocks(old_body, '^  - ')
+                marker, lead, old_items = _items(old_body)
+                marker, new_items = (marker if old_items else _items(new_body)[0]), _items(new_body)[2]
                 by_tag = {item['tag']: text for item, text in zip(old_exits, old_items)}
-                merged = [merge(by_tag.get(item['tag'], '').replace('  - ', '    ', 1),
-                                text.replace('  - ', '    ', 1), 4).replace('    ', '  - ', 1)
-                          for item, text in zip(new_exits, _blocks(new_body, '^  - ')[1])]
+                merged = [_shift(merge(by_tag.get(item['tag'], ''), text, 4), len(marker) - 4)
+                          .replace(' ' * len(marker), marker, 1) for item, text in zip(new_exits, new_items)]
                 keyed[name] = old_head + '\n' + lead + ''.join(merged)
             elif not new_value or new_value.startswith('#'):
                 keyed[name] = old_head + '\n' + merge(old_body, new_body, indent + 2)

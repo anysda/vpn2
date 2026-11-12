@@ -5,22 +5,21 @@ const token = ref('')
 const chatId = ref('')
 const admin = ref('')
 const showToken = ref(false)
-const savedChat = () => String(data.value?.chat_id ?? '')
-const savedAdmin = () => String(data.value?.admin_username ?? '')
+const saved = (s: typeof data.value | undefined) => ({ chatId: String(s?.chat_id ?? ''), admin: String(s?.admin_username ?? '') })
 
 // Опрос обновляет поле, только пока оператор его не правил.
 watch(data, (d, prev) => {
   if (!d) return
-  if (chatId.value === String(prev?.chat_id ?? '')) chatId.value = String(d.chat_id ?? '')
-  if (admin.value === String(prev?.admin_username ?? '')) admin.value = String(d.admin_username ?? '')
+  if (chatId.value === saved(prev).chatId) chatId.value = saved(d).chatId
+  if (admin.value === saved(prev).admin) admin.value = saved(d).admin
 }, { immediate: true })
 
 const status = computed(() => !data.value?.configured ? { label: 'Не настроен', cls: '' } : data.value.running ? { label: 'Онлайн', cls: 'ok' } : { label: 'Офлайн', cls: 'badt' })
 const body = computed(() => {
   const b: Record<string, string> = {}
   if (token.value.trim()) b.bot_token = token.value.trim()
-  if (chatId.value.trim() !== savedChat()) b.chat_id = chatId.value.trim()
-  if (admin.value.trim() !== savedAdmin()) b.admin_username = admin.value.trim()
+  if (chatId.value.trim() !== saved(data.value).chatId) b.chat_id = chatId.value.trim()
+  if (admin.value.trim() !== saved(data.value).admin) b.admin_username = admin.value.trim()
   return b
 })
 

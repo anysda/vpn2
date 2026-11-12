@@ -108,7 +108,6 @@
   .clp .thead{display:none}
   .clp .crows{flex:none;height:auto;padding:0}
   .clp .crow{grid-template-columns:auto minmax(0,1fr) auto;gap:3px 12px;height:auto;padding:10px;color:var(--t3);touch-action:manipulation;-webkit-user-select:none;user-select:none}
-  .clp .crow:hover{background:none}
   .clp .crow:active{background:rgba(var(--fg),.05);transform:scale(.99)}
   .clp .crow .who{display:contents}
   .clp .crow .av,.clp .crow .who>div{grid-row:span 2}
@@ -139,9 +138,8 @@
   .clp .acts .pill:first-child{flex:1 1 100%}
   .clp button,.clp [role=button]{touch-action:manipulation;-webkit-user-select:none;user-select:none}
 }
-@media (max-width:720px) and (hover:hover) and (pointer:fine){
-  .clp .crow:hover{background:rgba(var(--fg),.035)}
-}
+/* телефон пальцем: подсветка строки только нажатием */
+@media (max-width:720px) and (hover:none),(max-width:720px) and (pointer:coarse){.clp .crow:hover{background:none}}
 /* модалки */
 .clm .al.amb{background:rgba(var(--amb-rgb),.07);border-color:rgba(var(--amb-rgb),.28);color:var(--amb-t2)}
 .clm .al.amb b{color:var(--amber)}

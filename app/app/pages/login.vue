@@ -64,14 +64,8 @@ function reset() {
   error.value = null
 }
 
-const codeInput = ref<HTMLInputElement>()
-const userInput = ref<HTMLInputElement>()
-onMounted(() => userInput.value?.focus())
-watch(needsTotp, async (on) => {
-  if (!on) return
-  await nextTick()
-  codeInput.value?.focus()
-})
+// Курсор в поле, как только оно появилось: логин при открытии, код - на втором шаге.
+const vFocus = { mounted: (el: HTMLInputElement) => el.focus() }
 </script>
 
 <template>
@@ -100,7 +94,7 @@ watch(needsTotp, async (on) => {
             <label class="fl2">
               <span>Логин</span>
               <input
-                ref="userInput" v-model="state.username" class="in" required :disabled="needsTotp || loading" autocomplete="username"
+                v-model="state.username" v-focus class="in" required :disabled="needsTotp || loading" autocomplete="username"
                 autocapitalize="none" spellcheck="false">
             </label>
             <label class="fl2">
@@ -110,7 +104,7 @@ watch(needsTotp, async (on) => {
             <label v-if="needsTotp" class="fl2">
               <span>Код из аутентификатора</span>
               <input
-                ref="codeInput" v-model="state.totpCode" class="in mono" required placeholder="123 456" inputmode="numeric" enterkeyhint="done"
+                v-model="state.totpCode" v-focus class="in mono" required placeholder="123 456" inputmode="numeric" enterkeyhint="done"
                 autocomplete="one-time-code">
             </label>
             <div v-if="error" class="al red" role="alert">

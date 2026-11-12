@@ -69,14 +69,16 @@ function select(id: number) {
   selectedId.value = id
   if (mobile.value) void router.push({ query: { ...route.query, id } })
 }
-// Пропавшего (удалён, скрыт поиском) сменяет тот, кто стоял на его месте.
+// Пропавшего (удалён, скрыт поиском) сменяет тот, кто стоял на его месте; телефон - к списку.
 let lastIndex = 0
+function selectNeighbour(list: Client[]) {
+  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
+  if (mobile.value && screen.value === 'client') void router.replace({ query: { ...route.query, id: undefined } })
+}
 watch(rows, (list) => {
   const at = list.findIndex(c => c.id === selectedId.value)
   if (at >= 0) lastIndex = at
-  if (!listed.value || at >= 0) return
-  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
-  if (mobile.value && screen.value === 'client') void router.replace({ query: { ...route.query, id: undefined } })
+  else if (listed.value) selectNeighbour(list)
 })
 
 async function onCreated(id: number) {
@@ -92,11 +94,7 @@ async function onGone(id: number) {
   removed.value = [...removed.value, id]
   await refresh()
 }
-function onDeleting(id: number) {
-  const list = rows.value.filter(c => c.id !== id)
-  selectedId.value = list[Math.min(lastIndex, list.length - 1)]?.id ?? null
-  if (mobile.value) void router.replace({ query: { ...route.query, id: undefined } })
-}
+const onDeleting = (id: number) => selectNeighbour(rows.value.filter(c => c.id !== id))
 
 const newOpen = ref(false)
 function dot(c: Client) {

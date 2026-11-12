@@ -9,10 +9,9 @@ import re
 from pathlib import Path
 
 from vpn2.config import STATE_DIR, TRUE_WORDS, Config, ConfigError
+from vpn2.ports import HY2_PORT_CANDIDATES
 from vpn2.watchdog.hy2_bandwidth import HY2_HOP_DEFAULTS, bandwidth_fields
 
-# Порты перебора hy2 после стадии 20: HY2_PORT_CANDIDATES в infra/deploy.sh.
-HY2_PORT_CANDIDATES = (443, 4443, 4444, 8443, 8444, 33445)
 RESERVED_TAGS = ('ru', 'all', 'exits', 'foreign')
 OVPN_PROTOS = ('udp', 'udp4', 'udp6', 'tcp', 'tcp4', 'tcp6', 'tcp-server', 'tcp4-server', 'tcp6-server')
 FALSE_WORDS = ('false', 'no', 'n', '0')
@@ -136,21 +135,12 @@ def hop_settings(hop):
     return enabled, ranges, interval
 
 
-def _sections(cfg):
-    """Разделы config.yaml в раскладке старого разбора: hy2_hop отдельно от ports."""
-    raw = cfg.raw
-    ports = dict(raw.get('ports', {}))
-    hop = ports.pop('hy2_hop', None)
-    out = {name: raw.get(name, {}) for name in (
-        'entry', 'telegram', 'admin', 'panel', 'tgbot', 'youtube', 'sso', 'backup', 'entry_resources',
-        'wireguard', 'openvpn', 'failover', 'alerts')}
-    out.update(exits=[dict(item) for item in raw.get('exits', [])], ports=ports, hy2_hop=hop)
-    return out
-
-
 def validate(cfg: Config) -> dict:
     """Проверки config.yaml до деплоя; возвращает разделы с каноническим panel.domain."""
-    sec = _sections(cfg)
+    sec = {name: cfg.raw.get(name, {}) for name in (
+        'entry', 'telegram', 'admin', 'panel', 'tgbot', 'youtube', 'sso', 'backup', 'entry_resources',
+        'wireguard', 'openvpn', 'failover', 'alerts', 'ports')}
+    sec['exits'] = cfg.raw.get('exits', [])
     entry = sec['entry']
     _check_host(entry.get('host', ''), 'entry.host')
     if not entry.get('password'):
@@ -172,9 +162,10 @@ def validate(cfg: Config) -> dict:
         if 'hy2_direct_port' in item:
             _check_port(item['hy2_direct_port'], key + '.hy2_direct_port')
     for name, value in sec['ports'].items():
-        _check_port(value, 'ports.' + name)
-    if sec['hy2_hop'] is not None:
-        hop_settings(sec['hy2_hop'])
+        if name == 'hy2_hop':
+            hop_settings(value)
+        else:
+            _check_port(value, 'ports.' + name)
     if 'proto' in sec['openvpn'] and sec['openvpn']['proto'] not in OVPN_PROTOS:
         raise ConfigError('openvpn.proto', 'допустимо ' + ', '.join(OVPN_PROTOS))
     _check_int(sec['wireguard'], 'mtu', 1280, 9000, ('wireguard.mtu', 'ожидается целое число от 1280 до 9000'))
@@ -241,8 +232,8 @@ def _common(sec, exits, octets):
     direct = ports.get('hy2_direct', '443')
     env = {'ENTRY_HOST': sec['entry']['host'], 'AGH_PORT': '3000', 'HY2_DIRECT_PORT': direct,
            'HY2_WARP_PORT': ports.get('hy2_warp', '8443'), 'HY2_MGMT_PORT': ports.get('hy2_mgmt', '8444')}
-    if sec['hy2_hop'] is not None:
-        enabled, ranges, interval = hop_settings(sec['hy2_hop'])
+    if 'hy2_hop' in ports:
+        enabled, ranges, interval = hop_settings(ports['hy2_hop'])
         env['HY2_HOP_ENABLED'] = str(int(enabled))
         for channel, (low, high) in ranges.items():
             env[f'HY2_HOP_{channel.upper()}'] = f'{low}-{high}'

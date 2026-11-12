@@ -274,8 +274,8 @@ def test_ufw_defaults(tmp_path):
     path.write_text('DEFAULT_INPUT_POLICY="DROP"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\n')
     assert firewall.ufw_defaults(path=path, run=fake) == []
     assert calls == []
-    assert firewall.ufw_defaults('reject', path=tmp_path / 'absent', run=fake) == ['incoming', 'outgoing']
-    assert calls == [['ufw', 'default', 'reject', 'incoming'], ['ufw', 'default', 'allow', 'outgoing']]
+    assert firewall.ufw_defaults(path=tmp_path / 'absent', run=fake) == ['incoming', 'outgoing']
+    assert calls == [['ufw', 'default', 'deny', 'incoming'], ['ufw', 'default', 'allow', 'outgoing']]
 
 
 def test_default_run_sets_c_locale_and_captures():

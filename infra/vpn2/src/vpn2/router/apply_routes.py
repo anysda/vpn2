@@ -32,13 +32,12 @@ def load(path, kind):
     try:
         with open(path) as f:
             value = json.load(f)
+        if not isinstance(value, kind):
+            raise ValueError(f'ожидался {kind.__name__}')
     except FileNotFoundError:
         return kind()
     except (ValueError, OSError) as e:
         raise Refusal(f'{path}: не читается список маршрутов: {e}; сохраняю действующие правила')
-    if not isinstance(value, kind):
-        raise Refusal(f'{path}: не читается список маршрутов: ожидался {kind.__name__}; '
-                      'сохраняю действующие правила')
     return value
 
 

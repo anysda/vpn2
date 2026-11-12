@@ -142,21 +142,16 @@ def ufw_repair_if_lost(*, units=('docker', 'fail2ban'), conf='/etc/ufw/ufw.conf'
     return True
 
 
-_POLICY = {'deny': 'DROP', 'allow': 'ACCEPT', 'reject': 'REJECT'}
-
-
-def ufw_defaults(incoming='deny', outgoing='allow', *, path='/etc/default/ufw', run=run):
-    """Set default policies, but only those the file does not already hold.
-
-    Returns the list of directions changed.
-    """
+def ufw_defaults(*, path='/etc/default/ufw', run=run):
+    """Входящие deny, исходящие allow - только те направления, что файл ещё не держит; вернуть сменённые."""
     try:
         lines = Path(path).read_text().splitlines()
     except OSError:
         lines = []
     changed = []
-    for direction, name, policy in (('incoming', 'INPUT', incoming), ('outgoing', 'OUTPUT', outgoing)):
-        if f'DEFAULT_{name}_POLICY="{_POLICY[policy]}"' not in lines:
+    for direction, chain, policy, target in (('incoming', 'INPUT', 'deny', 'DROP'),
+                                             ('outgoing', 'OUTPUT', 'allow', 'ACCEPT')):
+        if f'DEFAULT_{chain}_POLICY="{target}"' not in lines:
             _call(run, ['ufw', 'default', policy, direction])
             changed.append(direction)
     return changed

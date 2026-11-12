@@ -3,10 +3,19 @@ defineProps<{ title: string, ok?: string, danger?: boolean, busy?: boolean, wide
 defineEmits<{ ok: [] }>()
 const open = defineModel<boolean>('open', { default: false })
 useLayer(open)
+
+// Курсор - в первое поле окна, а не на крестик; поле, выбранное раньше, не отнимается.
+function firstField(e: Event) {
+  const box = e.target as HTMLElement
+  const field = box.querySelector<HTMLElement>('input, textarea, select')
+  if (!field) return
+  e.preventDefault()
+  if (!box.contains(document.activeElement)) field.focus()
+}
 </script>
 
 <template>
-  <UModal v-model:open="open" :title="title" :ui="{ content: `clm ${wide ? 'sm:max-w-2xl' : 'sm:max-w-md'}`, footer: 'justify-end' }">
+  <UModal v-model:open="open" :title="title" :content="{ onOpenAutoFocus: firstField }" :ui="{ content: `clm ${wide ? 'sm:max-w-2xl' : 'sm:max-w-md'}`, footer: 'justify-end' }">
     <template #body>
       <slot />
     </template>

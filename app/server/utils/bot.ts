@@ -31,16 +31,8 @@ export async function recordEvent(input: {
   type: string, level: EventLevel, title: string, detail?: string, object?: string | null, actor?: string | null, key?: string, at?: number
 }): Promise<boolean> {
   try {
-    const rows = await useDb().insert(events).values({
-      at: input.at ?? Date.now(),
-      type: input.type,
-      level: input.level,
-      title: input.title,
-      detail: input.detail ?? '',
-      object: input.object ?? null,
-      actor: input.actor ?? null,
-      key: input.key ?? null,
-    }).onConflictDoNothing({ target: events.key }).returning({ id: events.id })
+    const rows = await useDb().insert(events).values({ ...input, at: input.at ?? Date.now(), detail: input.detail ?? '' })
+      .onConflictDoNothing({ target: events.key }).returning({ id: events.id })
     return rows.length > 0
   }
   catch (err) {
@@ -98,33 +90,26 @@ export function maskToken(token: string): string {
  * LISTEN без обработчика. Имя бот узнаёт у Telegram (getMe) и отдаёт в том же ответе.
  */
 export async function botHealth(): Promise<{ running: boolean, username: string }> {
-  const port = Number(useRuntimeConfig().tgbotEventPort ?? 8877)
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })
-    if (!res.ok) return { running: false, username: '' }
-    const body = await res.json().catch(() => ({})) as { username?: unknown, waiting_token?: unknown }
-    if (body.waiting_token === true) return { running: false, username: '' }
-    return { running: true, username: typeof body.username === 'string' ? body.username : '' }
-  }
-  catch {
-    return { running: false, username: '' }
-  }
+  const body = await fetch(botUrl('health'), { signal: AbortSignal.timeout(1000) })
+    .then(res => res.ok ? res.json().catch(() => ({})) : null, () => null) as { username?: unknown, waiting_token?: unknown } | null
+  if (!body || body.waiting_token === true) return { running: false, username: '' }
+  return { running: true, username: typeof body.username === 'string' ? body.username : '' }
 }
 
 export function botSecretOrThrow() {
   if (!useRuntimeConfig().tgbotSecret) throw createError({ statusCode: 503, statusMessage: 'bot_not_configured', message: 'Telegram-бот не настроен' })
 }
 
-function postBotEvent(body: Record<string, unknown>, opts: { timeout: number, retry: number }): Promise<unknown> {
-  const url: string = `http://127.0.0.1:${Number(useRuntimeConfig().tgbotEventPort ?? 8877)}/event`
-  return $fetch<unknown>(url, {
-    method: 'POST', headers: { 'X-Tgbot-Secret': String(useRuntimeConfig().tgbotSecret) },
-    body, timeout: opts.timeout, retry: opts.retry,
+const botUrl = (path: string) => `http://127.0.0.1:${Number(useRuntimeConfig().tgbotEventPort ?? 8877)}/${path}`
+
+function postBotEvent(body: Record<string, unknown>, timeout: number): Promise<unknown> {
+  return $fetch<unknown>(botUrl('event'), {
+    method: 'POST', headers: { 'X-Tgbot-Secret': String(useRuntimeConfig().tgbotSecret) }, body, timeout, retry: 0,
   })
 }
 
 export async function sendBotEvent(body: Record<string, unknown>): Promise<void> {
-  await postBotEvent(body, { timeout: 8000, retry: 0 }).catch((cause) => {
+  await postBotEvent(body, 8000).catch((cause) => {
     throw createError({ statusCode: 502, statusMessage: 'bot_unreachable', message: 'Бот не отвечает — проверь /api/admin/telegram', cause })
   })
 }
@@ -170,12 +155,10 @@ async function deliveryFailed(label: string): Promise<void> {
   await recordEvent({ type: 'bot_delivery_failed', level: 'alarm', object: 'bot', title: 'Бот не принял уведомление', detail: label })
 }
 
+/** Одна попытка на запись за раз: повтор из таймера ждёт идущую. */
 function attempt(id: string): Promise<void> {
-  const pending = inFlight.get(id)
-  if (pending) return pending
-  const pendingAttempt = attemptOnce(id).finally(() => { inFlight.delete(id) })
-  inFlight.set(id, pendingAttempt)
-  return pendingAttempt
+  if (!inFlight.has(id)) inFlight.set(id, attemptOnce(id).finally(() => inFlight.delete(id)))
+  return inFlight.get(id)!
 }
 
 async function attemptOnce(id: string) {
@@ -197,7 +180,7 @@ async function attemptOnce(id: string) {
   let accepted = false
   try {
     if (!useRuntimeConfig().tgbotSecret) throw new Error('bot not configured')
-    const ack = await postBotEvent({ ...JSON.parse(row.payload), deliveryId: id }, { timeout: 1500, retry: 0 }) as { ok: boolean, delivery_id: string }
+    const ack = await postBotEvent({ ...JSON.parse(row.payload), deliveryId: id }, 1500) as { ok: boolean, delivery_id: string }
     accepted = ack.ok === true && ack.delivery_id === id
   }
   catch { /* Очередь и оставшиеся попытки видны администратору. */ }

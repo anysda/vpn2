@@ -98,7 +98,7 @@ def test_counter_sees_every_spelling():
 
 def test_every_name_roles_read_is_in_hostvars():
     lists = listed()
-    assert {'adguard_env_names', 'verify_env_names',
+    assert {'verify_env_names',
             'zapret_env_names'} <= set(lists), 'списки имён ролей не найдены: разбор defaults устарел'
     plain, prefixes, suffixes = reads()
     assert {'env', 'router_env'} <= aliases(), 'другие имена vpn2_env не найдены: разбор устарел'

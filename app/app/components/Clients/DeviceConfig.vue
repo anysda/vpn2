@@ -61,14 +61,12 @@ function download() {
 }
 const sendTg = () => act('tg', () => $fetch<unknown>(`${base.value}/${k.value.send}`, { method: 'POST' }), { title: k.value.sent, color: 'success' }, 'Ошибка отправки')
 
-const ikeRows = computed(() => creds.value
-  ? [
-      { k: 'Remote ID (iOS) / Server identity (Android)', v: creds.value.remoteId, lab: 'Remote ID' },
-      { k: 'Сервер', v: creds.value.server, lab: 'Сервер' },
-      { k: 'Логин', v: creds.value.username, lab: 'Логин' },
-      { k: 'Пароль', v: creds.value.password, lab: 'Пароль', secret: true },
-    ]
-  : [])
+const IKE_ROWS = [
+  { k: 'Remote ID (iOS) / Server identity (Android)', field: 'remoteId', lab: 'Remote ID', secret: false },
+  { k: 'Сервер', field: 'server', lab: 'Сервер', secret: false },
+  { k: 'Логин', field: 'username', lab: 'Логин', secret: false },
+  { k: 'Пароль', field: 'password', lab: 'Пароль', secret: true },
+] as const
 const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server}\nRemote ID: ${creds.value.remoteId}\nЛогин: ${creds.value.username}\nПароль: ${creds.value.password}` : '')
 </script>
 
@@ -99,15 +97,15 @@ const ikeText = computed(() => creds.value ? `Сервер: ${creds.value.server
         <b>Ожидается сертификат Caddy</b>
         IKEv2 автоматически перейдёт на домен после выдачи сертификата. Пока действуют временные настройки ниже. После перехода откройте это окно заново.
       </div>
-      <div class="kvl">
-        <div v-for="r in ikeRows" :key="r.lab" class="kvr">
+      <div v-if="creds" class="kvl">
+        <div v-for="r in IKE_ROWS" :key="r.lab" class="kvr">
           <span>{{ r.k }}</span>
-          <code>{{ r.secret && !showPass ? '•'.repeat(20) : r.v }}</code>
+          <code>{{ r.secret && !showPass ? '•'.repeat(20) : creds[r.field] }}</code>
           <span class="r2">
             <button v-if="r.secret" type="button" class="xb" aria-label="Показать" :aria-pressed="showPass" @click="showPass = !showPass">
               <svg class="i" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="2.6" /></svg>
             </button>
-            <button type="button" class="xb" aria-label="Копировать" @click="copy(r.v, `${r.lab} скопирован`)">
+            <button type="button" class="xb" aria-label="Копировать" @click="copy(creds[r.field], `${r.lab} скопирован`)">
               <svg class="i" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5" /><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" /></svg>
             </button>
           </span>

@@ -48,7 +48,6 @@
 .clp .sub h3{font-size:14px;font-weight:500;color:var(--t1)}
 .clp .sub>span{font-size:12px;color:var(--t3)}
 .clp .sub .pill{height:28px;font-size:12px;padding:0 12px}
-.clp .crw:first-of-type{margin-top:14px}
 .kgrid+.crw{margin-top:12px}
 .clp .crw>span:first-child b{color:var(--t1);font-weight:500}
 .clp .crw .pill{height:30px;font-size:12px;padding:0 13px}

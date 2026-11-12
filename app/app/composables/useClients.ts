@@ -6,18 +6,9 @@ export type Device = ClientDetail['devices'][number]
 /** Трафик клиента: за всё время, с 00:00 МСК, за 5 минут; online - выше шума keepalive. */
 export type ClientTraffic = Api<'/api/clients/traffic'>[number]
 
-/** Список клиентов раз в 3 с; сбой опроса оставляет последний удачный список. */
+/** Список клиентов раз в 3 с. */
 export function useClients() {
-  const last = useState<Client[]>('clients-last', () => [])
-  const { data, refresh, status, error } = useFetch('/api/clients', {
-    key: 'clients',
-    default: () => last.value,
-    transform: list => (last.value = list),
-    server: false,
-    dedupe: 'defer',
-    timeout: 10_000,
-  })
-  usePoll(refresh, 3000)
+  const { data, refresh, status, error } = usePolledFetch('/api/clients', 3000, 10_000, [] as Client[])
   return { clients: data, refresh: () => refresh({ dedupe: 'cancel' }), status, error }
 }
 

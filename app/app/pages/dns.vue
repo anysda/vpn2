@@ -15,9 +15,7 @@ const SUBS = [
   { value: 'set', label: 'Настройки DNS', view: DnsSettings },
 ] as const
 const sub = ref<typeof SUBS[number]['value']>('sum')
-// Подраздел монтируется при первом заходе и дальше живёт со своим состоянием.
-const seen = reactive(new Set([sub.value]))
-watch(sub, v => seen.add(v))
+const view = computed(() => SUBS.find(s => s.value === sub.value)!.view)
 </script>
 
 <template>
@@ -25,8 +23,7 @@ watch(sub, v => seen.add(v))
     <div class="head">
       <SegTabs v-model="sub" :options="SUBS" class="max-w-full" />
     </div>
-    <section v-for="s in SUBS.filter(x => seen.has(x.value))" v-show="sub === s.value" :key="s.value" data-testid="dns-panel">
-      <component :is="s.view" />
-    </section>
+    <!-- Подраздел монтируется при первом заходе и дальше живёт со своим состоянием. -->
+    <section data-testid="dns-panel"><KeepAlive><component :is="view" /></KeepAlive></section>
   </main>
 </template>

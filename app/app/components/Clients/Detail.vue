@@ -113,12 +113,9 @@ function confirm(title: string, text: string, ok: string, fail: string, run: () 
 }
 const name = (s: string) => `«${s}»`
 
-function askRemove(c: ClientDetail) {
-  confirm('Удалить клиента?', `Удалить клиента ${name(c.name)} со всеми девайсами? Действие необратимо; доступ прекратится после подтверждения отключения.`,
-    'Удалить', 'Ошибка удаления', async () => {
-      await removeClient(c.id)
-      emit('deleting', c.id)
-    }, 'Отключение выполняется', true)
+async function remove(id: number) {
+  await removeClient(id)
+  emit('deleting', id)
 }
 
 const UNSURE = 'Состояние не подтверждено'
@@ -279,7 +276,11 @@ async function addDev() {
       <button type="button" class="pill" :disabled="busy.has('freeze')" @click="toggleFreeze">
         {{ d.frozenManual ? 'Разморозить' : 'Заморозить' }}
       </button>
-      <button type="button" class="pill red" @click="askRemove(d)">Удалить клиента</button>
+      <button
+        type="button" class="pill red"
+        @click="confirm('Удалить клиента?', `Удалить клиента ${name(d.name)} со всеми девайсами? Действие необратимо; доступ прекратится после подтверждения отключения.`, 'Удалить', 'Ошибка удаления', () => remove(d!.id), 'Отключение выполняется', true)">
+        Удалить клиента
+      </button>
     </div>
 
     <PanelDialog v-model:open="newDev.open" title="Новый девайс" ok="Добавить" :busy="!newDev.name.trim() || busy.has('dev')" @ok="addDev">

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { plural } from '#shared/plural'
 
-
 const { data, load } = useDns('/api/dns/clients')
 const tag = computed(() => {
   const n = data.value?.length ?? 0, ips = (data.value ?? []).reduce((a, r) => a + r.ips.length, 0)

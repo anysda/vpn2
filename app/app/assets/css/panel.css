@@ -98,8 +98,6 @@ a.pill{text-decoration:none}
 .card{position:relative;border-radius:var(--r);background:linear-gradient(180deg,var(--card-a) 0%,var(--card-b) 100%);border:1px solid var(--line);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 24px 48px -12px rgba(0,0,0,calc(.5*var(--shk)));padding:18px 20px;overflow:hidden}
 .big{font-weight:200;font-size:44px;letter-spacing:-.03em;line-height:1}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
-/* вкладки */
-.tab{display:block}
 .in{height:38px;width:100%;min-width:0;border-radius:12px;padding:0 13px;background:var(--sunk);border:1px solid var(--line);box-shadow:inset 0 2px 8px rgba(0,0,0,calc(.4*var(--shk)));color:var(--t1);font:500 13px var(--font-sans);outline:0;transition:border-color .2s,box-shadow .2s,background-color .2s}
 .in:focus{border-color:rgba(var(--fg),.3)}.in::placeholder{color:var(--t4)}.in:disabled{opacity:.45}
 .in.mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12.5px}
@@ -141,9 +139,7 @@ button.me{font:inherit;color:inherit;cursor:pointer;transition:transform .16s va
 /* Телефон до 720px: шапка сверху с заголовком раздела, вкладки - в таб-баре снизу. */
 .mhead,.mper,.mbar{display:none}
 /* Safari на iPhone увеличивает страницу при фокусе в поле со шрифтом меньше 16px. */
-@media (pointer:coarse){
-  input,select,textarea{font-size:16px!important}
-}
+@media (pointer:coarse){input,select,textarea{font-size:16px!important}}
 /* общие детали разделов */
 .inp{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:999px;background:rgba(var(--fg),.04);border:1px solid var(--line);color:var(--t3);transition:border-color .2s}
 .inp:focus-within{border-color:rgba(var(--fg),.3)}
@@ -281,6 +277,4 @@ fieldset.fg2{border:0;margin:0;padding:0;min-width:0}
   #tfa .qr{align-self:center}
   .area{min-height:104px;font-size:16px}
 }
-@media (max-width:720px) and (prefers-reduced-motion:reduce){
-  .tab.on{animation:tfade .25s}
-}
+@media (max-width:720px) and (prefers-reduced-motion:reduce){.tab.on{animation:tfade .25s}}

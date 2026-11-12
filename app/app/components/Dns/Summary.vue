@@ -3,12 +3,11 @@ const { data, error, refresh } = useFetch('/api/dns/summary', { server: false, l
 usePoll(refresh, 60_000)
 
 const ms = (v: number) => v < 10 ? ru(v, 1) : ru(v)
-const period = computed(() => data.value?.units === 'days' ? `за ${data.value.q.length} дн.` : 'за сутки')
 const upMax = computed(() => Math.max(1, ...(data.value?.upstreams ?? []).map(u => u.pct)))
 const cards = computed(() => {
   const d = data.value!
   return [
-    { title: 'Запросы DNS', big: ru(d.queries), tag: period.value, line: d.q },
+    { title: 'Запросы DNS', big: ru(d.queries), tag: d.units === 'days' ? `за ${d.q.length} дн.` : 'за сутки', line: d.q },
     { title: 'Заблокировано фильтрами', big: ru(d.blocked), tag: `${ru(d.blockedPct, 1)}%`, line: d.b, lit: true },
     { title: 'Заблокировано угроз', big: ru(d.threats), tag: 'фишинг, вредонос', line: d.t, red: true },
     { title: 'Время ответа', big: `${ms(d.avgMs)} мс`, tag: d.cachedPct === null ? '' : `${d.cachedPct}% из кэша`, line: d.ms },

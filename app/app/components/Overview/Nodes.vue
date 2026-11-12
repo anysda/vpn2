@@ -28,6 +28,8 @@ const open = computed({ get: () => openTag.value !== null, set: (v) => { if (!v)
 const n = computed(() => props.nodes.find(x => x.tag === openTag.value) ?? null)
 const mbps = (v: number | null | undefined) => v == null ? '—' : ru(v, v < 10 ? 1 : 0)
 const LEVEL = { w: 'text-(--amber)', c: 'text-(--red-t)', '': '' }
+// Нагрузка узла в окне: подпись, поле, порог жёлтого и красного.
+const LOADS = [['CPU', 'cpu', 60, 80], ['iowait', 'iowait', 10, 30], ['steal', 'steal', 10, 30], ['RAM', 'ram', 60, 80]] as const
 
 const apply = (x: NodeMetric, disabled: boolean) => act('exit', async () => {
   await $fetch(`/api/ops/exits/${encodeURIComponent(x.tag)}`, { method: 'PATCH', body: { disabled } })
@@ -77,10 +79,7 @@ function toggle(x: NodeMetric) {
           </div>
         </div>
         <div class="kgrid mgrid">
-          <div><span>CPU</span><b :class="LEVEL[level(n.cpu, 60, 80)]">{{ pct(n.cpu) }}</b></div>
-          <div><span>iowait</span><b :class="LEVEL[level(n.iowait, 10, 30)]">{{ pct(n.iowait) }}</b></div>
-          <div><span>steal</span><b :class="LEVEL[level(n.steal, 10, 30)]">{{ pct(n.steal) }}</b></div>
-          <div><span>RAM</span><b :class="LEVEL[level(n.ram, 60, 80)]">{{ pct(n.ram) }}</b></div>
+          <div v-for="[label, key, warn, crit] in LOADS" :key="key"><span>{{ label }}</span><b :class="LEVEL[level(n[key], warn, crit)]">{{ pct(n[key]) }}</b></div>
           <div title="Свободно на корневом разделе">
             <span>HDD свободно</span>
             <b :class="n.diskFreePct == null ? '' : n.diskFreePct < 10 ? LEVEL.c : n.diskFreePct < 20 ? LEVEL.w : ''">{{ n.diskFreeBytes == null ? '—' : gibLatin(n.diskFreeBytes) }}</b>

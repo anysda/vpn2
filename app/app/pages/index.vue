@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { EventLevel } from '#shared/events'
-import { parseOutbound } from '#shared/outbounds'
 
 useHead({ title: 'Обзор — anysda-vpn2' })
 definePageMeta({ title: 'Обзор' })
@@ -13,19 +12,10 @@ usePoll(refreshNodes, 2000)
 const nodes = computed(() => sortNodes(nodeList.value))
 // Пинг экзита - задержка его прямого выхода в sing-box.
 const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
-const pings = computed(() => {
-  const out: Record<string, number | null> = {}
-  for (const o of outbounds.value) {
-    const p = parseOutbound(o.name)
-    if (p?.variant === 'direct') out[p.tag] = o.delay || null
-  }
-  return out
-})
+const pings = computed(() => Object.fromEntries(routeColumns(outbounds.value).map(c => [c.tag, c.delay || null])))
 
 const { data: events, refresh: refreshEvents } = useFetch('/api/events', { query: { limit: 30 }, default: () => [] })
 usePoll(refreshEvents, 30_000)
-const now = ref(Date.now())
-watch(events, () => { now.value = Date.now() })
 const LEVEL: Record<EventLevel, string> = { alarm: 'var(--red)', warn: 'var(--amber)', info: 'var(--g2)', ok: 'var(--green)' }
 
 // Выходы: доля экзита в текущем трафике; лидер акцентом, медленные и пропавшие красным.
@@ -68,7 +58,7 @@ const onlineCards = computed(() => {
         <h3>События</h3>
         <ul v-if="events.length" class="scroll mt-3 flex-1 space-y-3">
           <li v-for="e in events" :key="e.id" class="grid grid-cols-[44px_8px_1fr] gap-x-2.5 text-sm">
-            <time class="mono text-xs text-(--t3)" :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, now) }}</time>
+            <time class="mono text-xs text-(--t3)" :datetime="new Date(e.at).toISOString()">{{ timeOrDdmmMsk(e.at, Date.now()) }}</time>
             <span class="dot mt-1.5" :style="{ background: LEVEL[e.level] }" />
             <div class="min-w-0 break-words">
               <b class="font-medium">{{ e.title }}</b><small v-if="e.detail" class="block text-xs text-(--t3)">{{ e.detail }}</small>

@@ -12,6 +12,16 @@ export function usePoll(fn: () => unknown, ms: number) {
   })
 }
 
+/** Общий на панель опрос `url` раз в `ms`; сбой опроса оставляет последний удачный ответ. */
+export function usePolledFetch<P extends ApiPath, T = Api<P>>(url: P, ms: number, timeout: number, initial: T) {
+  const last = useState<T>(`last ${url}`, () => initial)
+  const { data, refresh, status, error } = useFetch(url, {
+    key: url, default: () => last.value, transform: (v: T) => (last.value = v), server: false, dedupe: 'defer', timeout,
+  })
+  usePoll(refresh, ms)
+  return { data: data as Ref<T>, refresh, status, error }
+}
+
 /** `source`, обновлённый через `ms` после последней правки (ввод в поиске). */
 export function useDebounced<T>(source: Ref<T>, ms: number) {
   const settled = ref(source.value) as Ref<T>

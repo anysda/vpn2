@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import '~/assets/css/clients.css'
 import { inDaysRu, plural } from '#shared/plural'
-import { parseOutbound } from '#shared/outbounds'
 import type { Client } from '~/composables/useClients'
 
 useHead({ title: 'Клиенты — anysda-vpn2' })
@@ -18,8 +17,7 @@ const clients = computed(() => fetched.value.filter(c => !removed.value.includes
 const { data: traffic, refresh: refreshTraffic } = useFetch('/api/clients/traffic', { default: () => ({}) as Api<'/api/clients/traffic'>, server: false })
 usePoll(refreshTraffic, 3000)
 const { data: outbounds } = useFetch('/api/routes/outbounds', { default: () => [], server: false })
-const exits = computed(() => [...new Set(outbounds.value.map(o => parseOutbound(o.name))
-  .filter(p => p?.variant === 'direct' && p.tag !== 'ru').map(p => p!.tag))].sort())
+const exits = computed(() => routeColumns(outbounds.value).filter(c => c.tag !== 'ru' && c.cells.some(x => !x.warp)).map(c => c.tag))
 
 // До первого ответа на этом открытии «Пока нет клиентов» и «0 клиентов» были бы неправдой.
 const listed = ref(false)

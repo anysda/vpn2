@@ -30,11 +30,8 @@ export const ruFirst = (a: string, b: string) => a === 'ru' ? -1 : b === 'ru' ? 
 export function countryName(tag: string): string {
   const code = tag.replace(/[0-9]+$/, '').toUpperCase()
   if (/^[A-Z]{2}$/.test(code)) {
-    try {
-      const name = regions.of(code)
-      if (name && name !== code) return name
-    }
-    catch { /* не код страны */ }
+    const name = regions.of(code)
+    if (name && name !== code) return name
   }
   return tag.toUpperCase()
 }

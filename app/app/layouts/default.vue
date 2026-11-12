@@ -40,11 +40,7 @@ onMounted(() => {
   }))
   for (const el of [headEl.value, barEl.value]) if (el) ro.observe(el, { box: 'border-box' })
 })
-onUnmounted(() => {
-  ro?.disconnect()
-  document.documentElement.style.removeProperty('--mh')
-  document.documentElement.style.removeProperty('--mb')
-})
+onUnmounted(() => ro?.disconnect())
 </script>
 
 <template>

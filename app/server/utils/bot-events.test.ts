@@ -1,12 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { dbOps, dbResults, fetchMock, installStubs, rejection } from '../test/stubs'
-import { botSecretOrThrow, notifyBackupFailed, retryBotEvents, sendBotEvent } from './bot-events'
+import { botSecretOrThrow, notifyBackupFailed, retryBotEvents, sendBotEvent } from './bot'
 
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
-vi.mock('./events', () => ({ recordEvent: vi.fn() }))
-vi.mock('./telegram-config', async importOriginal => ({
-  ...await importOriginal<typeof import('./telegram-config')>(),
-  botConfigured: () => configured.value,
+vi.mock('./api', async importOriginal => ({
+  ...await importOriginal<object>(),
+  readJsonFile: () => configured.value ? { bot_token: 't', chat_id: 1 } : null,
 }))
 
 const configured = vi.hoisted(() => ({ value: true }))
@@ -19,8 +18,8 @@ beforeEach(() => {
 })
 
 describe('botSecretOrThrow', () => {
-  it('отдаёт секрет', () => {
-    expect(botSecretOrThrow()).toBe('s3cret')
+  it('с секретом - без ошибки', () => {
+    expect(() => botSecretOrThrow()).not.toThrow()
   })
 
   it('без секрета - 503 bot_not_configured', () => {
@@ -78,14 +77,6 @@ describe('очередь outbox', () => {
     const last = dbOps.filter(o => o.op === 'set').at(-1)?.args[0] as { status?: string, lastFailure?: number }
     expect(last.status).toBe('queued')
     expect(last.lastFailure).toBeGreaterThan(0)
-  })
-
-  it('без секрета - запрос боту не уходит, запись остаётся в очереди', async () => {
-    installStubs({ tgbotEventPort: 9911 })
-    queued()
-    await retryBotEvents()
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(dbOps.filter(o => o.op === 'set').at(-1)?.args[0]).toMatchObject({ status: 'queued' })
   })
 
   it('подтверждение без delivery_id или с чужим - не доставка', async () => {

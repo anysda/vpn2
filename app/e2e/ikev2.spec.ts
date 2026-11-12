@@ -10,7 +10,7 @@ import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import * as schema from '../server/database/schema'
 import { nextPoolAddress } from '../server/utils/address-pools'
-import { coalesceRuns } from '../server/utils/coalesce'
+import { coalesceRuns } from '../server/utils/api'
 import { slugify } from '../server/utils/naming'
 import { serverModule } from './support/server-module'
 
@@ -113,7 +113,7 @@ test.describe('ikev2-repair', () => {
         'server/utils/ikev2.ts', {
           '../database/client': { useDb: () => db }, '../database/schema': schema,
           './address-pools': { nextPoolAddress }, './naming': { slugify },
-          './coalesce': { coalesceRuns }, './client-status': { isClientActive: () => true, expiryForControl: () => null },
+          './api': { coalesceRuns }, './client-status': { isClientActive: () => true, expiryForControl: () => null },
           './client-dns': { clientDns: () => ['192.0.2.53'] },
           './control': { controlApply: async (_method: string, params: unknown) => {
             config = execFileSync('python3', ['e2e/support/render-ikev2.py'], { input: JSON.stringify(params), encoding: 'utf8' })

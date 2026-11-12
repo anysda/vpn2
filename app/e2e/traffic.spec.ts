@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test'
-import * as mskDay from '../server/utils/msk-day'
 import { serverModule } from './support/server-module'
 import { createClient } from '@libsql/client'
 import { drizzle } from 'drizzle-orm/libsql'
 import { migrate } from 'drizzle-orm/libsql/migrator'
 import { fileURLToPath } from 'node:url'
 import * as schema from '../server/database/schema'
-import { ikev2Deltas } from '../server/utils/ikev2-counters'
-import { coalesceRuns } from '../server/utils/coalesce'
+import { coalesceRuns } from '../server/utils/api'
+
+const mskDay = serverModule<typeof import('../server/utils/metrics')>('server/utils/metrics.ts', {})
 
 test.describe('daily-traffic', () => {
   const instance = '192.0.2.1:9100'
@@ -17,11 +17,9 @@ test.describe('daily-traffic', () => {
     let now = start
     let missing = false
     const queries: Array<{ query: string, time?: number }> = []
-    const metrics = serverModule<typeof import('../server/utils/vm-client')>(
-      new URL('../server/utils/vm-client.ts', import.meta.url), {
-        './logger': { useLogger: () => ({ warn: () => {} }) },
-        './msk-day': mskDay,
-      }, {
+    const metrics = serverModule<typeof import('../server/utils/metrics')>(
+      new URL('../server/utils/metrics.ts', import.meta.url), {}, {
+        useLogger: () => ({ warn: () => {} }),
         Date: { now: () => now },
         useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid' }),
         $fetch: async (_url: string, options: { query: { query: string, time?: number } }) => {
@@ -73,27 +71,33 @@ test.describe('overview-traffic', () => {
   interface Call { promql: string, start?: number, end?: number, step?: number, time?: number }
   type Rows = Map<string, Array<number | null>>
 
-  // Настоящий exit-traffic.ts с подменой VM: range — ответ query_range,
-  // instant — ответы мгновенных запросов по порядку (текущее ведро, затем прошлое окно).
+  // Настоящий exitTraffic с подменой VM: range - ответ query_range,
+  // instant - ответы мгновенных запросов по порядку (текущее ведро, затем прошлое окно).
   function load(range: Rows, instant: Array<Map<string, number>>, exits = [{ tag: 'ru', instance: RU }, { tag: 'nl', instance: NL }, { tag: 'fi', instance: FI }]) {
     const calls: { range: Call[], instant: Call[] } = { range: [], instant: [] }
-    const mod = serverModule<typeof import('../server/utils/exit-traffic')>(
-      new URL('../server/utils/exit-traffic.ts', import.meta.url), {
-        './msk-day': mskDay,
-        './vm-range': {
-          rangeQuery: async (promql: string, start: number, end: number, step: number) => {
-            calls.range.push({ promql, start, end, step })
-            return range
-          },
-        },
-        './vm-client': {
-          DAILY_DEVICE_FILTER: 'device="eth0"',
-          nodeInstances: () => exits,
-          instantQuery: async (promql: string, time?: number) => {
-            calls.instant.push({ promql, time })
-            return instant[calls.instant.length - 1] ?? new Map()
-          },
-        },
+    type Query = { query: string, start: number, end: number, step: string, time?: number }
+    const vm = async (url: string, { query }: { query: Query }) => {
+      if (url.endsWith('/query_range')) {
+        const step = Number.parseInt(query.step)
+        calls.range.push({ promql: query.query, start: query.start, end: query.end, step })
+        const result = [...range].map(([instance, values]) => ({
+          metric: { instance }, values: values.flatMap((v, i) => v === null ? [] : [[query.start + i * step, String(v)]]),
+        }))
+        return { status: 'success', data: { result } }
+      }
+      calls.instant.push({ promql: query.query, time: query.time })
+      const values = instant[calls.instant.length - 1] ?? new Map()
+      return { status: 'success', data: { result: [...values].map(([instance, v]) => ({ metric: { instance }, value: [0, String(v)] })) } }
+    }
+    const mod = serverModule<typeof import('../server/utils/metrics')>(
+      new URL('../server/utils/metrics.ts', import.meta.url), {}, {
+        useLogger: () => ({ warn: () => {} }),
+        useRuntimeConfig: () => ({
+          vmUrl: 'http://metrics.invalid',
+          mgmtIps: exits.map(x => `${x.tag}:${x.instance.split(':')[0]}`).join(','),
+          exitTags: exits.filter(x => x.tag !== 'ru').map(x => x.tag).join(' '),
+        }),
+        $fetch: vm,
       },
     )
     return { exitTraffic: mod.exitTraffic, calls }
@@ -173,14 +177,13 @@ test.describe('overview-traffic', () => {
       { day: 20741, clientId: 2, bytes: 3 },
     ]
     const query = { select: () => query, from: () => query, innerJoin: () => query, groupBy: async () => rows }
-    const { activityDays } = serverModule<typeof import('../server/utils/activity-days')>(
-      new URL('../server/utils/activity-days.ts', import.meta.url), {
+    const { activityDays } = serverModule<typeof import('../server/utils/traffic')>(
+      new URL('../server/utils/traffic.ts', import.meta.url), {
         'drizzle-orm': { eq: () => null, sql: () => null },
         '../database/client': { useDb: () => query },
         '../database/schema': { deviceTrafficHourly: {}, devices: {} },
-        './client-activity': { PERIOD_ACTIVE_MIN_BYTES: MIN },
-        './msk-day': mskDay,
-      },
+        './metrics': mskDay,
+      }, { process },
     )
     expect(await activityDays(NOW)).toEqual({
       today: mskDay.mskDay(NOW),
@@ -193,8 +196,6 @@ test.describe('overview-traffic', () => {
 })
 
 test.describe('traffic-collector', () => {
-  const mskDay = serverModule<typeof import('../server/utils/msk-day')>(new URL('../server/utils/msk-day.ts', import.meta.url), {})
-
   for (const proto of ['wg', 'ovpn']) {
     test(`сборщик ${proto}: ошибка записи не теряет трафик, повтор не удваивает его`, async () => {
       const client = createClient({ url: ':memory:' })
@@ -204,13 +205,12 @@ test.describe('traffic-collector', () => {
         const [owner] = await db.insert(schema.clients).values({ name: 'collector-test', password: 'unused-test-password' }).returning()
         const [device] = await db.insert(schema.devices).values({ clientId: owner!.id, name: 'test', wgPublicKey: 'test-key' }).returning()
         let counter = 100
-        const collector = serverModule<typeof import('../server/utils/traffic-collector')>(
-          new URL('../server/utils/traffic-collector.ts', import.meta.url), {
+        const collector = serverModule<typeof import('../server/utils/traffic')>(
+          new URL('../server/utils/traffic.ts', import.meta.url), {
             '../database/client': { useDb: () => db },
             '../database/schema': schema,
-            './ikev2-counters': { ikev2Deltas },
-            './coalesce': { coalesceRuns },
-            './msk-day': mskDay,
+            './api': { coalesceRuns },
+            './metrics': mskDay,
             './control': { control: async (_method: string, params: { protocol: string }) => {
               if (params.protocol === 'ikev2') throw new Error('no IKEv2 sample')
               return { samples: params.protocol === (proto === 'ovpn' ? 'openvpn' : proto)
@@ -278,35 +278,20 @@ test.describe('traffic-collector', () => {
       for (let i = 0; i < rows.length; i += 2000) await db.insert(schema.deviceTrafficHourly).values(rows.slice(i, i + 2000))
 
       // Каждая загрузка - как свежий запуск панели: первый прогон сборщика чистит историю.
-      const loadCollector = () => serverModule<typeof import('../server/utils/traffic-collector')>(
-        new URL('../server/utils/traffic-collector.ts', import.meta.url), {
+      const loadCollector = () => serverModule<typeof import('../server/utils/traffic')>(
+        new URL('../server/utils/traffic.ts', import.meta.url), {
           '../database/client': { useDb: () => db },
           '../database/schema': schema,
-          './ikev2-counters': { ikev2Deltas },
-          './coalesce': { coalesceRuns },
-          './msk-day': mskDay,
+          './api': { coalesceRuns },
+          './metrics': mskDay,
           './control': { control: async () => { throw new Error('no traffic sample') } },
           'node:child_process': { execFile: (...args: unknown[]) => (args.at(-1) as (e: Error | null, o: { stdout: string }) => void)(null, { stdout: '' }) },
           'node:fs/promises': { readFile: async () => { throw new Error('no status file') } },
         }, { useLogger: () => ({ info: () => {} }), process },
       )
       const collector = loadCollector()
-      const activity = serverModule<typeof import('../server/utils/client-activity')>(
-        new URL('../server/utils/client-activity.ts', import.meta.url), {
-          '../database/client': { useDb: () => db },
-          '../database/schema': schema,
-          './msk-day': mskDay,
-          './traffic-collector': collector,
-        },
-      )
-      const { activityDays } = serverModule<typeof import('../server/utils/activity-days')>(
-        new URL('../server/utils/activity-days.ts', import.meta.url), {
-          '../database/client': { useDb: () => db },
-          '../database/schema': schema,
-          './client-activity': activity,
-          './msk-day': mskDay,
-        },
-      )
+      const activity = collector
+      const { activityDays } = collector
       const consumers = async () => ({
         days: (await activityDays()).days,
         day: [...(await activity.periodTotalsByClient(activity.periodStartSec('day'))).entries()],

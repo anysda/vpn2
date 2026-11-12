@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { calls, dbOps, dbResults, dbRows, installStubs, rejection } from '../test/stubs'
 import { accessRequestKey, enqueueAccess, getAccess, replayAccess, retryAccess, runAccessOperations } from './access-operations'
 import { accessAdapter } from './access-adapter'
-import { botConfigured } from './telegram-config'
+import { botConfigured } from './bot'
 
 vi.mock('../database/client', async () => (await import('../test/stubs')).databaseModule)
 vi.mock('./access-adapter', () => ({ accessAdapter: { enabled: vi.fn() } }))
 vi.mock('./access-lock', () => ({ withAccessLock: (action: () => Promise<void>) => action() }))
-vi.mock('./telegram-config', () => ({ botConfigured: vi.fn() }))
+vi.mock('./bot', () => ({ botConfigured: vi.fn() }))
 vi.mock('./control', () => ({ ControlUnavailable: class extends Error { constructor() { super('Нет связи с сервисом') } } }))
 
 const allOn = { wg: true, openvpn: true, ikev2: true }

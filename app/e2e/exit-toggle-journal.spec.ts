@@ -19,7 +19,7 @@ test('одновременные переключения экзита: журн
     for (const tag of params.config.disabled) disabled.add(tag)
     applied.push({ before, after: disabled.has('se') })
   }
-  const exitControl = serverModule('server/utils/exit-control.ts', {
+  const metrics = serverModule('server/utils/metrics.ts', {
     './control': { control, controlApply },
     '../../shared/outbounds': { parseOutbound: () => null },
   })
@@ -28,13 +28,12 @@ test('одновременные переключения экзита: журн
   const logs: Array<{ wasDisabled?: boolean, disabled: boolean }> = []
   const handler = apiRoute<(event: { tag: string, disabled: boolean }) => Promise<unknown>>('ops', 'PATCH /ops/exits/:tag', {
     '../utils/auth': { requireAuth: async () => ({ name: 'admin' }) },
-    '../utils/events': {
+    '../utils/bot': {
       actorOf: () => 'admin',
       joinDetail: (...parts: string[]) => parts.join(' · '),
       recordEvent: async (row: { type: string }) => { events.push(row.type) },
     },
-    '../utils/exit-control': exitControl,
-    '../utils/vm-client': { nodeInstances: () => ['ru', 'se', 'fi', 'at'].map(tag => ({ tag })) },
+    '../utils/metrics': { ...metrics, nodeInstances: () => ['ru', 'se', 'fi', 'at'].map(tag => ({ tag })) },
   }, {
     defineEventHandler: (fn: unknown) => fn,
     getRouterParam: (event: { tag: string }) => event.tag,

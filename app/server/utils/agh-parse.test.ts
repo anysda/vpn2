@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { logMatch, logRow, summarize, toggleRules } from './agh-parse'
-import type { AghLogEntry, AghStats, LogRow } from './agh-parse'
+import { logMatch, logRow, summarize, toggleRules } from './dns'
+import type { AghLogEntry, AghStats } from './dns'
+
+type LogRow = ReturnType<typeof logRow>
 
 const entry = (over: Partial<AghLogEntry> = {}): AghLogEntry => ({
   client: '10.99.0.5', question: { name: 'example.com', type: 'A' }, reason: 'NotFilteredNotFound', time: '2026-01-01T00:00:00Z', ...over,
@@ -140,11 +142,11 @@ describe('toggleRules', () => {
 })
 
 describe('summarize', () => {
-  const stats = (over: Partial<AghStats> = {}): AghStats => ({
+  const stats = (over: Partial<AghStats> = {}) => ({
     time_units: 'days', num_dns_queries: 0, num_blocked_filtering: 0, num_replaced_safebrowsing: 0, num_replaced_parental: 0, avg_processing_time: 0,
     dns_queries: [], blocked_filtering: [], replaced_safebrowsing: [], replaced_parental: [],
     top_queried_domains: [], top_clients: [], top_blocked_domains: [], top_upstreams_responses: [], top_upstreams_avg_time: [], ...over,
-  })
+  }) as AghStats
 
   it('пустая статистика и пустой журнал: нули, cachedPct=null, режим пустой = балансировка', () => {
     expect(summarize(stats(), none, '', [])).toEqual({

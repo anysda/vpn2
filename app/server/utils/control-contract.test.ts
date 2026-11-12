@@ -5,15 +5,15 @@ import ts from 'typescript'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { dbOps, dbResults, fakeEvent, installStubs } from '../test/stubs'
 import { control, controlApply } from './control'
-import { recordEvent } from './events'
+import { recordEvent } from './bot'
 import { loadServerKeys, syncWireguardConfig } from './wireguard'
 import { buildOvpnConfig, caReady, ensureDeviceOvpn, killOvpnClient, revokeAccessCert } from './openvpn'
 import { buildIkev2ClientInfo, ikev2Mode, ikev2ServerReady, readIkev2CaPem, syncIkev2 } from './ikev2'
 import { reportControlExpiry, syncControlExpiry } from './expiry'
-import { toggleExit } from './exit-control'
+import { toggleExit } from './metrics'
 import { syncRoutesFile } from './routes-sync'
 import { accessAdapter } from './access-adapter'
-import { collectTraffic } from './traffic-collector'
+import { collectTraffic } from './traffic'
 import { syncClientPrefsFile } from './client-prefs'
 import routes from '../resources/routes'
 
@@ -37,7 +37,7 @@ vi.mock('../database/client', async () => ({
 vi.mock('./auth', async () => (await import('../test/stubs')).authModule)
 vi.mock('./control', () => ({ control: vi.fn(), controlApply: vi.fn() }))
 vi.mock('./access-lock', () => ({ withAccessLock: (action: () => Promise<void>) => action() }))
-vi.mock('./events', async importOriginal => ({ ...(await importOriginal<object>()), recordEvent: vi.fn(async () => true) }))
+vi.mock('./bot', async importOriginal => ({ ...(await importOriginal<object>()), recordEvent: vi.fn(async () => true) }))
 
 const sent: Example[] = []
 const label = (e: Example) => e.method === 'settings.apply' || e.method.endsWith('.read')

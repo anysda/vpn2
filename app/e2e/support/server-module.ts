@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, relative, resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import { utilsImports } from '../../server/test/auto-imports.cjs'
 
 /**
  * Исполняем настоящий серверный модуль с подменой только его окружения, без Nitro.
@@ -16,12 +17,14 @@ export function serverModule<T = Record<string, unknown>>(
   mocks: Record<string, unknown>,
   globals: Record<string, unknown> = {},
   lazy = false,
+  cache = new Map<string, object>(),
 ): T {
   const filename = typeof file === 'string' ? resolve(process.env.E2E_SERVER_ROOT || '.', file) : fileURLToPath(file)
   const root = fileURLToPath(new URL('../../../', import.meta.url))
-  const source = process.env.SERVER_REVISION
+  const raw = process.env.SERVER_REVISION
     ? execFileSync('git', ['show', `${process.env.SERVER_REVISION}:${relative(root, filename)}`], { cwd: root, encoding: 'utf8' })
     : readFileSync(filename, 'utf8')
+  const source = (filename.includes('/server/database/') ? '' : utilsImports(raw, filename, Object.keys(globals))) + raw
   // esModuleInterop выключен явно (в TypeScript 6 он включён по умолчанию):
   // `import * as x` остаётся простым require, как пространство имён в сборке
   // Nitro, без лишнего ключа default, на котором спотыкается drizzle.
@@ -29,7 +32,9 @@ export function serverModule<T = Record<string, unknown>>(
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: false },
     fileName: filename,
   })
+  // Модуль виден соседям до исполнения, как в CommonJS: круговые импорты утилит не зацикливаются.
   const exports = {}
+  cache.set(filename, exports)
   const require = createRequire(import.meta.url)
   runInNewContext(outputText, {
     exports,
@@ -39,8 +44,8 @@ export function serverModule<T = Record<string, unknown>>(
       // настоящим модулем и теми же подменами, а не ищем от каталога загрузчика.
       const sibling = name.startsWith('.') ? `${resolve(dirname(filename), name)}.ts` : ''
       if (sibling && (process.env.SERVER_REVISION || existsSync(sibling))) {
-        const load = () => serverModule<object>(sibling, mocks, globals, lazy)
-        if (!lazy) return load()
+        const load = () => cache.get(sibling) ?? serverModule<object>(sibling, mocks, globals, lazy, cache)
+        if (!lazy && !sibling.includes('/server/utils/')) return load()
         let loaded: object | undefined
         return new Proxy({}, { get: (_, key) => Reflect.get(loaded ??= load(), key) })
       }

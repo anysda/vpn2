@@ -39,10 +39,10 @@ async function panel(runtime: Record<string, unknown> = {}) {
   const schema: typeof Schema = app.load('app/server/database/schema.ts')
   const db = (app.load('app/server/database/client.ts') as typeof Database).useDb()
   await migrate(db, { migrationsFolder: path.join(root, 'app/server/database/migrations') })
-  app.overrides.set('app/server/utils/validate.ts', {
+  app.patch('app/server/utils/api.ts', {
     readBodyAs: async (event: { body: unknown }, body: { parse: (v: unknown) => unknown }) => body.parse(event.body),
   })
-  app.overrides.set('app/server/utils/events.ts', { actorOf: () => 'panel', BOT_ACTOR: 'bot', recordEvent: async () => {}, joinDetail: () => '' })
+  app.patch('app/server/utils/bot.ts', { actorOf: () => 'panel', BOT_ACTOR: 'bot', recordEvent: async () => {}, joinDetail: () => '' })
   app.overrides.set('app/server/utils/auth.ts', { requireAuth: async () => ({ id: 1, username: 'admin' }) })
   app.overrides.set('app/server/utils/wireguard.ts', { ensureDeviceWg: async () => {}, syncWireguardConfig: async () => {} })
   app.overrides.set('app/server/utils/ikev2.ts', { ensureDeviceIkev2: async () => {}, syncIkev2: async () => {} })
@@ -95,11 +95,10 @@ test('VPN2-458: смена пароля в панели переживает п�
     '@libsql/client': { createClient: () => client },
     '../database/client': { useDb: () => db },
     '../database/schema': panelSchema,
-    '../utils/auth': { hashPassword: (plain: string) => hash(plain), verifyPassword, revokeDisallowedSsoSessions: async () => 0 },
-    '../utils/anysda-config': { loadAnysdaConfig: () => config },
+    '../utils/auth': { hashPassword: (plain: string) => hash(plain), verifyPassword, revokeDisallowedSsoSessions: async () => 0, loadAnysdaConfig: () => config },
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },
-    '../utils/panel-ready': { markPanelReady: () => {} },
+    '../utils/api': { markPanelReady: () => {} },
     '../utils/access-operations': { compactDatabase: async () => false },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,
@@ -146,28 +145,19 @@ test('VPN2-458: смена пароля в панели переживает п�
 })
 
 test('VPN2-461: сохранение списка SSO отзывает сессии выпавших, выключение SSO — все SSO-сессии', async () => {
-  const { app, schema, db, route, close } = await panel({ session: { password: 'test-only-session-secret-0123456789', cookie: { secure: false } } })
+  const { app, schema, db, route, close } = await panel({
+    session: { password: 'test-only-session-secret-0123456789', cookie: { secure: false } },
+    oauth: { oidc: {} }, public: { sso: {} }, sso: {},
+  })
   try {
-    const realSso = app.load('app/server/utils/sso.ts')
     let stored = {
       enabled: true, authentikUrl: 'https://idp.example.test', appSlug: 'vpn2', clientId: 'panel', clientSecret: 'test-secret',
       allowedSubs: 'sub-admin:admin,sub-bob:bob', label: 'Authentik', autoRedirect: false, passwordLogin: true,
       redirectUrl: 'https://panel.example.test/auth/authentik',
     }
-    const settings = () => {
-      const discoveryUrl = realSso.discoveryFrom(stored.authentikUrl, stored.appSlug)
-      const enabled = stored.enabled && !!stored.clientId && !!discoveryUrl && !!stored.clientSecret
-      return {
-        enabled, autoRedirect: enabled && stored.autoRedirect, passwordLogin: !enabled || stored.passwordLogin, label: stored.label,
-        allowed: realSso.parseAllowedSubs(stored.allowedSubs), discoveryUrl,
-        clientId: stored.clientId, clientSecret: stored.clientSecret, redirectUrl: stored.redirectUrl,
-      }
-    }
-    app.overrides.set('app/server/utils/sso.ts', {
-      ...realSso,
-      readSsoStored: () => ({ stored: { ...stored }, fromPanel: true }),
-      writeSsoStored: (next: typeof stored) => { stored = { ...next } },
-      ssoSettings: settings,
+    app.patch('app/server/utils/api.ts', {
+      readJsonFile: () => ({ ...stored }),
+      writeJsonFile: (_path: string, next: typeof stored) => { stored = { ...next } },
     })
     app.overrides.delete('app/server/utils/auth.ts')
     const auth = app.load('app/server/utils/auth.ts')
@@ -215,7 +205,7 @@ test('VPN2-462: лимит, сниженный во время двух пара
   try {
     const paused = gate(2)
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
-    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     const post = route('devices POST /clients/:id/devices')
     const [client] = await db.insert(schema.clients).values({ name: 'limit', password: 'limit-invite', deviceLimit: 3 }).returning()
     const requests = ['phone', 'laptop'].map(name => call(post, { params: { id: String(client!.id) }, body: { name } }))
@@ -266,7 +256,7 @@ test('VPN2-467: при полной очереди бота отзыв Telegram 
 test('VPN2-468: отзыв между проверкой приглашения и записью привязки побеждает', async () => {
   const { app, schema, db, route, useBot, close } = await panel()
   try {
-    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     // Первый select после взвода отдаёт результат только после отзыва:
     // так link проверил пароль, а записать привязку ещё не успел.
@@ -320,7 +310,7 @@ test('VPN2-468: отзыв бота во время добавления уст�
   try {
     const paused = gate(1)
     app.overrides.set('app/server/utils/openvpn.ts', { caReady: paused.caReady, ensureDeviceOvpn: async () => {} })
-    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     const add = route('devices POST /bot/devices')
     const unlink = route('clients POST /clients/:id/unlink')
@@ -349,7 +339,7 @@ test('VPN2-476: отзыв бота во время удаления и пере
     app.overrides.set('app/server/utils/access-adapter.ts', { accessAdapter: {
       enabled: async () => { await paused.caReady(); return { wg: true, openvpn: false, ikev2: true } },
     } })
-    app.patch('app/server/utils/bot-events.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
+    app.patch('app/server/utils/bot.ts', { notifyClient: async () => {}, notifyWarning: async () => undefined })
     useBot()
     const remove = route('devices DELETE /bot/devices/:deviceId')
     const reissue = route('devices POST /bot/devices/:deviceId/reissue')

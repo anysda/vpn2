@@ -6,9 +6,9 @@ const notifyBackupFailed = vi.hoisted(() => vi.fn())
 const body = vi.hoisted(() => ({ value: {} as Record<string, unknown> }))
 
 vi.mock('../utils/bot-api', async () => (await import('./stubs')).botApiModule)
-vi.mock('../utils/events', () => ({ recordEvent }))
-vi.mock('../utils/bot-events', () => ({ notifyBackupFailed }))
-vi.mock('../utils/validate', () => ({
+vi.mock('../utils/bot', async importOriginal => ({ ...await importOriginal<object>(), recordEvent, notifyBackupFailed }))
+vi.mock('../utils/api', async importOriginal => ({
+  ...await importOriginal<object>(),
   readBodyAs: async (_event: unknown, schema: { parse: (v: unknown) => unknown }) => schema.parse(body.value),
 }))
 vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)

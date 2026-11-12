@@ -1,13 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { agh } from './agh-client'
-import { checkUntil, citesGone, findList, listNames, listsView } from './dns-context'
-import type { AghFilter, AghFilteringStatus } from './dns-context'
-import type { CheckHost } from './agh-parse'
-
-vi.mock('./agh-client', () => ({ agh: vi.fn() }))
+import { fetchMock, installStubs } from '../test/stubs'
+import { checkUntil, citesGone, findList, listNames, listsView } from './dns'
+import type { AghFilter, CheckHost, FilteringStatus as AghFilteringStatus } from './dns'
 
 const f = (id: number, over: Partial<AghFilter> = {}): AghFilter => ({ id, name: `L${id}`, url: `https://x/${id}.txt`, enabled: true, rules_count: id * 10, ...over })
-const st = (over: Partial<AghFilteringStatus> = {}): AghFilteringStatus => ({ enabled: true, interval: 24, filters: [], whitelist_filters: [], user_rules: [], ...over })
+const st = (over: Partial<AghFilteringStatus> = {}): AghFilteringStatus => ({ interval: 24, filters: [], whitelist_filters: [], user_rules: [], ...over })
 
 describe('listNames', () => {
   it('null и пустые списки - пустая карта', () => {
@@ -100,10 +97,10 @@ describe('citesGone', () => {
 })
 
 describe('checkUntil', () => {
-  const aghMock = vi.mocked(agh)
+  const aghMock = fetchMock
   beforeEach(() => {
     vi.useFakeTimers()
-    aghMock.mockReset()
+    installStubs({ aghUrl: 'http://agh' })
   })
   afterEach(() => vi.useRealTimers())
 
@@ -115,7 +112,7 @@ describe('checkUntil', () => {
     await vi.advanceTimersByTimeAsync(1000)
     expect(result).toEqual({ reason: 'r3' })
     expect(aghMock).toHaveBeenCalledTimes(3)
-    expect(aghMock).toHaveBeenCalledWith('filtering/check_host', { query: { name: 'a.com', client: undefined } })
+    expect(aghMock).toHaveBeenCalledWith('http://agh/control/filtering/check_host', expect.objectContaining({ query: { name: 'a.com', client: undefined } }))
   })
 
   it('кончается по сроку: done не наступил, возвращается последний ответ и опрос стоит', async () => {

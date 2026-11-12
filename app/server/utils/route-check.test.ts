@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest'
-import type { ClashProxy } from './clash-client'
+import type { ClashProxy } from './metrics'
 import type { RoutePlan } from './route-match'
 import * as rc from './route-check'
 import { buildRoutePlan } from '../../scripts/route-plan.mjs'

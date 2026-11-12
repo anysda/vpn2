@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 import os from 'node:os'
 import QRCode from 'qrcode-svg'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { stubError } from '../test/stubs'
 import { buildWgClientConfig } from './wireguard'
+
+vi.stubGlobal('createError', stubError)
 
 vi.mock('../database/client', async () => ({
   ...(await import('../test/stubs')).databaseModule,

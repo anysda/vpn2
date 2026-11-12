@@ -18,7 +18,7 @@ vi.mock('./bot-api', () => ({
 vi.mock('./client-ops', async importOriginal => ({
   ...await importOriginal<typeof import('./client-ops')>(), createClient: calls.createClient, updateClient: calls.updateClient,
 }))
-vi.mock('./events', () => ({ BOT_ACTOR: 'bot' }))
+vi.mock('./bot', async importOriginal => ({ ...await importOriginal<object>(), BOT_ACTOR: 'bot' }))
 vi.mock('./access-operations', () => ({ accessRequestKey: () => 'key', enqueueAccess: calls.enqueueAccess }))
 vi.mock('./create-device', () => ({
   createDeviceWithAddresses: calls.createDevice,

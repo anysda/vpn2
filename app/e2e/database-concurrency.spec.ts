@@ -65,11 +65,10 @@ test('HTTP ждёт миграции и администратора при ме
     '@libsql/client': { createClient: () => client },
     '../database/client': { useDb: () => db },
     '../database/schema': schema,
-    '../utils/auth': { hashPassword: () => { started(); return password }, verifyPassword: async () => false, revokeDisallowedSsoSessions: async () => 0 },
-    '../utils/anysda-config': { loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
+    '../utils/auth': { hashPassword: () => { started(); return password }, verifyPassword: async () => false, revokeDisallowedSsoSessions: async () => 0, loadAnysdaConfig: () => ({ admin: { user: 'admin', password: 'test' } }) },
     '../utils/client-prefs': { syncClientPrefsFile: async () => {} },
     '../utils/control': { ControlUnavailable: class extends Error {} },
-    '../utils/panel-ready': { markPanelReady: () => {} },
+    '../utils/api': { markPanelReady: () => {} },
     '../utils/access-operations': { compactDatabase: async () => false },
   }, {
     defineNitroPlugin: (callback: unknown) => callback,

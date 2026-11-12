@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import * as s from './dns-settings'
+import * as s from './dns'
 
 // Настройки, перезаписи и клиенты AdGuard Home для вкладки DNS: проверка ввода
 // до отправки и перевод ответов /control/* в то, что показывает панель.
@@ -31,8 +31,8 @@ describe('dns-settings', () => {
   })
 
   // Поле настроек так, как его видит вкладка: через settingsView.
-  const field = (over: Record<string, unknown>) => s.settingsView({ ...info, ...over } as never, false, false, { enabled: false },
-    { enabled: true, interval: 0, anonymize_client_ip: false, ignored: [] }, { enabled: true, interval: 0, ignored: [] })
+  const field = (over: Record<string, unknown>) => s.settingsView({ info: { ...info, ...over } as never, sb: false, parental: false, ss: { enabled: false },
+    log: { interval: 0, anonymize_client_ip: false }, stats: { interval: 0 } })
 
   it('ответ на блокировку: значение поля → режим AdGuard', () => {
     expect(field({ blocking_mode: 'default', blocking_ipv4: '' }).block).toBe('0.0.0.0')
@@ -72,9 +72,9 @@ describe('dns-settings', () => {
     expect(field({ cache_size: 1572864 }).cache).toBe('1,5 МБ')
     expect(field({ cache_size: 0 }).cache).toBe('выключен')
     expect(field({ cache_size: 4194304, cache_enabled: false }).cache).toBe('выключен')
-    const v = s.settingsView(info, true, false, { enabled: true },
-      { enabled: true, interval: 7_776_000_000, anonymize_client_ip: true, ignored: [] },
-      { enabled: true, interval: 86_400_000, ignored: [] })
+    const v = s.settingsView({ info, sb: true, parental: false, ss: { enabled: true },
+      log: { interval: 7_776_000_000, anonymize_client_ip: true },
+      stats: { interval: 86_400_000 } })
     expect(v).toEqual({
       upstreams: 'https://dns.example/dns-query\n192.0.2.53',
       mode: 'load_balance',
@@ -92,8 +92,8 @@ describe('dns-settings', () => {
       statsHours: 24,
       anonymize: true,
     })
-    expect(s.settingsView({ ...info, upstream_dns: null, bootstrap_dns: null, upstream_mode: 'parallel' }, false, false, { enabled: false },
-      { enabled: true, interval: 0, anonymize_client_ip: false, ignored: [] }, { enabled: true, interval: 0, ignored: [] }))
+    expect(s.settingsView({ info: { ...info, upstream_dns: null, bootstrap_dns: null, upstream_mode: 'parallel' }, sb: false, parental: false, ss: { enabled: false },
+      log: { interval: 0, anonymize_client_ip: false }, stats: { interval: 0 } }))
       .toMatchObject({ upstreams: '', bootstrap: '', mode: 'parallel' })
   })
 

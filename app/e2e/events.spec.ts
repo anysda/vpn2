@@ -2,7 +2,6 @@ import { type APIRequestContext, test as baseTest } from '@playwright/test'
 import { ADMIN_USER, NODES, authPost, expect, loginApi, uniq, test } from './support/fixtures'
 import { container, inside } from './support/openvpn-ca'
 import { waitAccess } from './support/access'
-import * as mskDay from '../server/utils/msk-day'
 import * as outbounds from '../shared/outbounds'
 import { serverModule } from './support/server-module'
 
@@ -207,9 +206,10 @@ test.describe('events-nodes', () => {
   const test = baseTest
 
   type Row = { type: string, level: string, object?: string | null, title: string, detail?: string, at?: number }
-  type Watch = typeof import('../server/utils/node-watch')
+  type Watch = typeof import('../server/utils/metrics')
 
   const INSTANCE = '192.0.2.2:9100'
+  const RU = '10.99.0.1:9100'
 
   /** Фейковая VictoriaMetrics: значения на ноду задаёт тест, down — VM недоступна. */
   class FakeVm {
@@ -221,42 +221,37 @@ test.describe('events-nodes', () => {
     fetch = async (_url: string, opts: { query: { query: string } }) => {
       if (this.down) throw new Error('connect ECONNREFUSED')
       const q = opts.query.query
-      const value = q.includes('timestamp(node_time_seconds)') ? this.stale
-        : q.includes('iowait') ? this.iowait
-          : q.includes('node_boot_time_seconds') ? this.uptime
-            : null
-      return {
-        status: 'success',
-        data: { resultType: 'vector', result: value === null ? [] : [{ metric: { instance: INSTANCE }, value: [0, String(value)] }] },
-      }
+      const [value, ru] = q.includes('timestamp(node_time_seconds)') ? [this.stale, 5]
+        : q.includes('iowait') ? [this.iowait, 1]
+          : q.includes('node_boot_time_seconds') ? [this.uptime, 100_000]
+            : [null, null]
+      const result = [
+        ...value === null ? [] : [{ metric: { instance: INSTANCE }, value: [0, String(value)] }],
+        ...ru === null ? [] : [{ metric: { instance: RU }, value: [0, String(ru)] }],
+      ]
+      return { status: 'success', data: { resultType: 'vector', result } }
     }
   }
 
   function setup(seed: Row[] = [], foreignBest: { now: string | undefined } = { now: undefined }) {
     const vm = new FakeVm()
     const journal: Row[] = [...seed]
-    const metrics = serverModule<typeof import('../server/utils/vm-client')>(
-      new URL('../server/utils/vm-client.ts', import.meta.url), {
-        './logger': { useLogger: () => ({ warn: () => {} }) },
-        './msk-day': mskDay,
-      }, {
-        useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', mgmtIps: 'de:192.0.2.2', exitTags: 'de' }),
-        $fetch: (url: string, opts: { query: { query: string } }) => vm.fetch(url, opts),
-      },
-    )
-    // Только экзит de: ru в mgmtIps не задан, его инстанс в VM пуст — фильтруем.
-    const only = { ...metrics, nodeInstances: () => metrics.nodeInstances().filter(n => n.tag === 'de') }
-    const watch = serverModule<Watch>(new URL('../server/utils/node-watch.ts', import.meta.url), {
-      './vm-client': only,
-      './events': {
+    // Нода ru всегда здорова: проверка идёт по экзиту de.
+    const watch = serverModule<Watch>(new URL('../server/utils/metrics.ts', import.meta.url), {
+      './bot': {
         recordEvent: async (row: Row) => { journal.push(row); return true },
         lastEventOf: async (object: string, types: string[]) => {
           const hit = [...journal].reverse().find(r => r.object === object && types.includes(r.type))
           return hit ? { type: hit.type, at: hit.at ?? 0, detail: hit.detail ?? '' } : null
         },
       },
-      './clash-client': { fetchProxies: async () => [{ name: 'foreign-best', type: 'Selector', now: foreignBest.now }] },
-      './exit-control': { exitNodeOf: (o: string | undefined) => (o ? outbounds.parseOutbound(o)?.tag ?? null : null) },
+      '../../shared/outbounds': outbounds,
+    }, {
+      useLogger: () => ({ warn: () => {} }),
+      useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', clashApiUrl: 'http://clash.invalid', mgmtIps: 'de:192.0.2.2', exitTags: 'de' }),
+      $fetch: async (url: string, opts: { query: { query: string } }) => url.endsWith('/proxies')
+        ? { proxies: { 'foreign-best': { name: 'foreign-best', type: 'Selector', now: foreignBest.now } } }
+        : vm.fetch(url, opts),
     })
     return { vm, journal, watch }
   }

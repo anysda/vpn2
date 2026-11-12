@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import * as r from './agh-rules'
+import * as r from './dns'
 
 // Свои правила AdGuard Home: строки, которые настоящий AdGuard 0.107 принимает
 // ответом 200 и молча не применяет, и вердикт /control/filtering/check_host.

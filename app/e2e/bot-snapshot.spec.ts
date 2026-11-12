@@ -1,16 +1,13 @@
 import { expect, test } from '@playwright/test'
-import * as mskDay from '../server/utils/msk-day'
 import * as outbounds from '../shared/outbounds'
 import { apiRoute, serverModule } from './support/server-module'
 
 test.describe('bot-metrics', () => {
   test('бот получает отсутствие CPU/RAM, а не сохранённую нагрузку прошлого опроса', async () => {
     let missing = false
-    const metrics = serverModule<typeof import('../server/utils/vm-client')>(
-      new URL('../server/utils/vm-client.ts', import.meta.url), {
-        './logger': { useLogger: () => ({ warn: () => {} }) },
-        './msk-day': mskDay,
-      }, {
+    const metrics = serverModule<typeof import('../server/utils/metrics')>(
+      new URL('../server/utils/metrics.ts', import.meta.url), {}, {
+        useLogger: () => ({ warn: () => {} }),
         useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', mgmtIps: 'ru:192.0.2.1' }),
         $fetch: async () => ({
           status: 'success',
@@ -23,11 +20,10 @@ test.describe('bot-metrics', () => {
         '../database/client': { useDb: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }) },
         '../utils/bot-api': { requireBotAuth: () => {} },
         '../utils/client-status': { clientStatus: () => 'active' },
-        '../utils/clash-client': {
-          fetchProxies: async () => [], fetchConnections: async () => null,
+        '../utils/metrics': {
+          ...metrics, fetchProxies: async () => [], fetchConnections: async () => null,
           userVisibleOutbounds: (proxies: Array<{ name: string }>) => proxies.filter(p => outbounds.parseOutbound(p.name)),
         },
-        '../utils/vm-client': metrics,
       }, { defineEventHandler: (fn: unknown) => fn },
     )
     expect((await handler({})).nodes[0]!.cpu).toBe(95)
@@ -51,11 +47,9 @@ test.describe('bot-node-size', () => {
 
   test('бот получает число ядер и память ноды, без метрики - null', async () => {
     let sized = true
-    const metrics = serverModule<typeof import('../server/utils/vm-client')>(
-      new URL('../server/utils/vm-client.ts', import.meta.url), {
-        './logger': { useLogger: () => ({ warn: () => {} }) },
-        './msk-day': mskDay,
-      }, {
+    const metrics = serverModule<typeof import('../server/utils/metrics')>(
+      new URL('../server/utils/metrics.ts', import.meta.url), {}, {
+        useLogger: () => ({ warn: () => {} }),
         useRuntimeConfig: () => ({ vmUrl: 'http://metrics.invalid', mgmtIps: 'ru:192.0.2.1' }),
         $fetch: async (_url: string, options: { query: { query: string } }) => {
           const promql = options.query.query
@@ -77,11 +71,10 @@ test.describe('bot-node-size', () => {
         '../database/client': { useDb: () => ({ select: () => ({ from: () => ({ orderBy: async () => [] }) }) }) },
         '../utils/bot-api': { requireBotAuth: () => {} },
         '../utils/client-status': { clientStatus: () => 'active' },
-        '../utils/clash-client': {
-          fetchProxies: async () => [], fetchConnections: async () => null,
+        '../utils/metrics': {
+          ...metrics, fetchProxies: async () => [], fetchConnections: async () => null,
           userVisibleOutbounds: (proxies: Array<{ name: string }>) => proxies.filter(p => outbounds.parseOutbound(p.name)),
         },
-        '../utils/vm-client': metrics,
       }, { defineEventHandler: (fn: unknown) => fn },
     )
     const node = (await handler({})).nodes[0]!

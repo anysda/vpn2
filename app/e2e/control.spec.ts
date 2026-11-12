@@ -191,7 +191,7 @@ test.describe('cron-lifecycle', () => {
     }
     for (const [module, method] of [
       ['client-prefs', 'syncClientPrefsFile'],
-      ['traffic-collector', 'collectTraffic'],
+      ['traffic', 'collectTraffic'],
     ]) {
       imports[`../utils/${module}`] = { [method!]: async () => {
         calls.push(method!)
@@ -283,7 +283,7 @@ test.describe('cron-lifecycle', () => {
     let close!: () => Promise<void>
     const plugin = serverModule('server/plugins/access-operations.ts', {
       '../utils/access-operations': { runAccessOperations: async () => { calls++; await held } },
-      '../utils/panel-ready': { isPanelReady: () => ready },
+      '../utils/api': { isPanelReady: () => ready },
     }, {
       defineNitroPlugin: (fn: unknown) => fn,
       useLogger: () => ({ error: () => {} }),

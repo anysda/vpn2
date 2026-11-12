@@ -11,6 +11,12 @@ import { eq } from 'drizzle-orm'
 import * as outbounds from '../shared/outbounds'
 import * as plural from '../shared/plural'
 
+// Бот настроен: файл Telegram с токеном и чатом; секрет - в useRuntimeConfig теста.
+const telegramFile = (mocks: Record<string, unknown> = {}, globals: Record<string, unknown> = {}) => {
+  const api = serverModule<typeof import('../server/utils/api')>('server/utils/api.ts', mocks, globals)
+  return { ...api, readJsonFile: () => ({ bot_token: 'test', chat_id: 1 }) }
+}
+
 test.describe('bot-delivery', () => {
   test('бот лежит: постоянная очередь, повторы, рестарт, подтверждение и окончательная ошибка', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'panel-outbox-'))
@@ -23,13 +29,13 @@ test.describe('bot-delivery', () => {
     let attempts = 0
     let whileSending: unknown
     const delivered = new Set<string>()
-    const journal: Array<{ type: string, detail?: string }> = []
-    const load = () => serverModule<typeof import('../server/utils/bot-events')>(
-      new URL('../server/utils/bot-events.ts', import.meta.url), {
+    const journal = () => db.select({ type: schema.events.type, detail: schema.events.detail }).from(schema.events)
+    const api = telegramFile()
+    const load = () => serverModule<typeof import('../server/utils/bot')>(
+      new URL('../server/utils/bot.ts', import.meta.url), {
         '../database/client': { useDb: () => db },
         '../database/schema': schema,
-        './telegram-config': { botConfigured: () => true },
-        './events': { recordEvent: async (row: { type: string, detail?: string }) => { journal.push(row); return true } },
+        './api': api,
       }, {
         Date: { now: () => now },
         useRuntimeConfig: () => ({ tgbotSecret: 'test' }),
@@ -80,7 +86,7 @@ test.describe('bot-delivery', () => {
         await load().retryBotEvents()
       }
       expect((await queue.botDeliveries()).find(row => row.id === last.id)).toMatchObject({ status: 'failed', remaining: 0 })
-      expect(journal, 'окончательная ошибка доставки — тревога в журнале').toEqual([
+      expect(await journal(), 'окончательная ошибка доставки — тревога в журнале').toEqual([
         expect.objectContaining({ type: 'bot_delivery_failed', detail: 'Уведомление клиенту «Тест»' }),
       ])
       const exhausted = attempts
@@ -94,7 +100,7 @@ test.describe('bot-delivery', () => {
       await load().retryBotEvents()
       expect(attempts).toBe(beforeExpiry)
       expect((await queue.botDeliveries()).find(row => row.id === expired.id)?.status).toBe('failed')
-      expect(journal.filter(row => row.type === 'bot_delivery_failed'), 'просроченное — тоже тревога, один раз').toHaveLength(2)
+      expect((await journal()).filter(row => row.type === 'bot_delivery_failed'), 'просроченное — тоже тревога, один раз').toHaveLength(2)
 
       const stored = await db.select().from(schema.botOutbox)
       expect(stored.every(row => row.payload === '')).toBe(true)
@@ -122,7 +128,6 @@ test.describe('bot-delivery', () => {
     const db = drizzle(client, { schema })
     let configured = false
     let posts = 0
-    const telegram = { botConfigured: () => configured }
     const globals = {
       // Без telegram: в config.yaml деплой не выдаёт панели секрет бота.
       useRuntimeConfig: () => ({ tgbotSecret: configured ? 'test' : '' }),
@@ -132,12 +137,12 @@ test.describe('bot-delivery', () => {
         return { ok: true, delivery_id: options.body.deliveryId }
       },
     }
-    const events = serverModule<typeof import('../server/utils/bot-events')>(
-      new URL('../server/utils/bot-events.ts', import.meta.url), {
+    const api = telegramFile({ './auth': { requireAuth: async () => {} } }, globals)
+    const events = serverModule<typeof import('../server/utils/bot')>(
+      new URL('../server/utils/bot.ts', import.meta.url), {
         '../database/client': { useDb: () => db },
         '../database/schema': schema,
-        './telegram-config': telegram,
-        './events': { recordEvent: async () => true },
+        './api': api,
       }, globals,
     )
     const broadcast = apiRoute<(event: unknown) => Promise<unknown>>(
@@ -145,9 +150,8 @@ test.describe('bot-delivery', () => {
         '../database/client': { useDb: () => ({ select: () => ({ from: () => ({ where: async () => [{ chatId: 100 }] }) }) }) },
         '../database/schema': schema,
         '../utils/auth': { requireAuth: async () => {} },
-        '../utils/bot-events': events,
-        '../utils/telegram-config': telegram,
-        '../utils/validate': { readBodyAs: async () => ({ text: 'объявление' }) },
+        '../utils/bot': events,
+        '../utils/api': { ...api, readBodyAs: async () => ({ text: 'объявление' }) },
       }, { ...globals, defineEventHandler: (fn: unknown) => fn },
     )
     const outbox = async () => (await db.select({ status: schema.botOutbox.status, attempts: schema.botOutbox.attempts }).from(schema.botOutbox))
@@ -195,23 +199,22 @@ test.describe('expiry-reminder', () => {
     let db = drizzle(client, { schema })
     const sent: Array<{ chatId: number, text: string, name: string }> = []
 
-    const logger = { './logger': { useLogger: () => ({ error: () => {}, warn: () => {} }) } }
+    const logger = { useLogger: () => ({ error: () => {}, warn: () => {} }) }
     const load = () => {
-      const journal = serverModule<typeof import('../server/utils/events')>(new URL('../server/utils/events.ts', import.meta.url), {
+      const journal = serverModule<typeof import('../server/utils/bot')>(new URL('../server/utils/bot.ts', import.meta.url), {
         '../database/client': { useDb: () => db },
         '../database/schema': schema,
         '../../shared/outbounds': outbounds,
-        ...logger,
-      })
+      }, logger)
       const reminder = serverModule<typeof import('../server/utils/expiry-reminder')>(new URL('../server/utils/expiry-reminder.ts', import.meta.url), {
         '../database/client': { useDb: () => db },
         '../database/schema': schema,
         '../../shared/plural': plural,
-        './bot-events': { notifyClient: async (chatId: number, text: string, name: string) => { sent.push({ chatId, text, name }); return null } },
-        './events': journal,
-        './telegram-config': { botConfigured: () => true },
-        ...logger,
-      })
+        './bot': {
+          ...journal, botConfigured: () => true,
+          notifyClient: async (chatId: number, text: string, name: string) => { sent.push({ chatId, text, name }); return null },
+        },
+      }, logger)
       return { journal, reminder }
     }
     try {

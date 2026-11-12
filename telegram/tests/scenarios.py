@@ -150,7 +150,7 @@ MEMBER = {name: (200, {'ok': True, 'result': {'status': name}})
 ADMIN = {
     'commands': {'steps': [('admin', '/start'), ('admin', '/help'), ('admin', '/status'),
                            ('admin', '/nodes'), ('admin', '/clients'), ('admin', 'просто текст')]},
-    'commands_fail': {'steps': [('admin', '/status'), ('admin', '/nodes'), ('admin', '/nodes'),
+    'commands_fail': {'steps': [('admin', '/status'), ('admin', '/status'), ('admin', '/status'),
                                 ('admin', '/clients'), ('admin', '/clients')],
                       'panel': {'GET /api/ops/bot-snapshot': [
                                     (500, 'trace'), CRASH,

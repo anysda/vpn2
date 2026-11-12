@@ -966,8 +966,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1007,8 +1007,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1064,8 +1064,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1224,8 +1224,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "🔄 *Перевыпустить ключи?*\n\nСтарые конфиги перестанут работать — нужно будет выдать новые на все устройства.",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1266,8 +1266,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "Перевыпуск выполняется\n\n📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1348,8 +1348,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "🗑 *Удалить устройство «Телефон»?*\n\nКонфиги этого устройства перестанут работать.",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1387,8 +1387,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "🗑 *Удалить устройство «?»?*\n\nКонфиги этого устройства перестанут работать.",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1427,8 +1427,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Ваши устройства* (2/3)\nДоступ включён\nWireGuard: Подтверждено\nOpenVPN: Не требуется\nIKEv2: ошибка\\_x\nВыберите устройство:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1848,8 +1848,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -1889,8 +1889,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Телефон*\nПротоколы: WireGuard\n\nВыберите действие:",
+    "message_id": 1,
     "reply_markup": {
      "inline_keyboard": [
       [
@@ -2080,8 +2080,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *?*\nПротоколы: нет конфигов\n\nВыберите действие:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2135,8 +2135,8 @@
    "/editMessageText",
    {
     "chat_id": 200,
-    "message_id": 1,
     "text": "📱 *Ваши устройства* (1/∞)\nСостояние не подтверждено\nWireGuard: Заменена\nIKEv2: Заменена\nВыберите устройство:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2153,6 +2153,32 @@
  ],
  "client/strangers": [
   [
+   "panel",
+   "GET",
+   "/api/bot/client?chatId=200",
+   null
+  ],
+  [
+   "tg",
+   "POST",
+   "/sendMessage",
+   {
+    "chat_id": 200,
+    "text": "🔐 *VPN-доступ* для *Иван*\\_*П*.\nУстройства: 2 из 3.\n🗓 Ключ действует до 31.12.2026.",
+    "parse_mode": "Markdown",
+    "reply_markup": {
+     "keyboard": [
+      [
+       "📱 Мои устройства",
+       "➕ Добавить устройство"
+      ]
+     ],
+     "resize_keyboard": true,
+     "is_persistent": true
+    }
+   }
+  ],
+  [
    "tg",
    "POST",
    "/answerCallbackQuery",
@@ -2168,7 +2194,7 @@
    "/sendMessage",
    {
     "chat_id": 100,
-    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/clients — клиенты",
     "parse_mode": "Markdown"
    }
   ],
@@ -2178,7 +2204,7 @@
    "/sendMessage",
    {
     "chat_id": 100,
-    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/clients — клиенты",
     "parse_mode": "Markdown"
    }
   ],
@@ -2195,22 +2221,6 @@
    {
     "chat_id": 100,
     "text": "*Состояние системы*\n\n🖥 *RU*: CPU 12% | RAM 40% | ↕ 1.8 Mbps\n🖥 *DE*: CPU — | RAM — | ↕ 0.0 Mbps\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
-    "parse_mode": "Markdown"
-   }
-  ],
-  [
-   "panel",
-   "GET",
-   "/api/ops/bot-snapshot",
-   null
-  ],
-  [
-   "tg",
-   "POST",
-   "/sendMessage",
-   {
-    "chat_id": 100,
-    "text": "*Exit-ноды*\n\n🟢 `US`: 120 ms\n🔴 `DE WARP`: нет связи",
     "parse_mode": "Markdown"
    }
   ],
@@ -2314,7 +2324,7 @@
    "/sendMessage",
    {
     "chat_id": 100,
-    "text": "Нет нод",
+    "text": "*Состояние системы*\n\n",
     "parse_mode": "Markdown"
    }
   ],
@@ -2370,8 +2380,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2435,8 +2445,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2504,8 +2514,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2573,8 +2583,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Пётр*\nЖелаемое состояние: активен ✅\nСостояние не подтверждено\nWireGuard: ошибка\\_x\nУстройств: 1/1\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2648,8 +2658,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Заменён*\nЖелаемое состояние: активен ✅\nКлючи перевыпущены\nWireGuard: Заменена\nУстройств: 21/∞\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2766,8 +2776,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2850,8 +2860,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -2958,8 +2968,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Пётр*\nЖелаемое состояние: активен ✅\nСостояние не подтверждено\nWireGuard: ошибка\\_x\nУстройств: 1/1\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -3082,8 +3092,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -3166,8 +3176,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Иван*\\_*П*\nЖелаемое состояние: активен ✅\nДоступ включён\nУстройств: 2/3\nСрок действия: 31.12.2026\nTelegram: привязан ✅",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -3265,8 +3275,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Анна*\nЖелаемое состояние: заморожен ❄️\nСостояние не подтверждено\nУстройств: 5/∞\nСрок действия: garbage\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -3349,8 +3359,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👤 *Заменён*\nЖелаемое состояние: активен ✅\nКлючи перевыпущены\nWireGuard: Заменена\nУстройств: 21/∞\nСрок действия: бессрочно\nTelegram: не привязан ✖",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -4131,8 +4141,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "🗑 *Удалить клиента «Иван*\\_*П»?*\n\nВсе его устройства и конфиги перестанут работать.",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -4177,8 +4187,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -4242,8 +4252,8 @@
    "/editMessageText",
    {
     "chat_id": 100,
-    "message_id": 1,
     "text": "🗑 *Удалить клиента «Анна»?*\n\nВсе его устройства и конфиги перестанут работать.",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [
@@ -4369,7 +4379,7 @@
    "/sendMessage",
    {
     "chat_id": -100500,
-    "text": "*anysda-vpn*\n\n/status — состояние системы\n/nodes  — RTT по exit-нодам\n/clients — клиенты",
+    "text": "*anysda-vpn*\n\n/status — состояние системы\n/clients — клиенты",
     "parse_mode": "Markdown"
    }
   ],
@@ -4429,8 +4439,8 @@
    "/editMessageText",
    {
     "chat_id": -100500,
-    "message_id": 1,
     "text": "👥 *Клиенты* (5 шт.)\nВыберите клиента для управления:",
+    "message_id": 1,
     "parse_mode": "Markdown",
     "reply_markup": {
      "inline_keyboard": [

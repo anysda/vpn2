@@ -162,7 +162,6 @@ def device_card_markup(device_id: str) -> dict:
 
 ADMIN_START = ('*anysda-vpn*\n\n'
                '/status — состояние системы\n'
-               '/nodes  — RTT по exit-нодам\n'
                '/clients — клиенты')
 ASK_CLIENT_NAME = '➕ Пришлите имя нового клиента.'
 NO_CLIENT_NAME = 'Имя не распознано. Пришлите имя клиента ещё раз.'
@@ -259,10 +258,6 @@ def status(data: dict, header: str = '*Состояние системы*') -> s
         lines.append(f'🖥 *{n.get("tag", "?").upper()}*: CPU {_pct(n.get("cpu"))}'
                      f' | RAM {_pct(n.get("ram"))} | ↕ {net:.1f} Mbps')
     return '\n'.join([*lines, '', *_exit_lines(data)])
-
-
-def nodes(data: dict) -> str:
-    return '\n'.join(['*Exit-ноды*\n', *_exit_lines(data)]) if _exit_lines(data) else 'Нет нод'
 
 
 DEPLOY_DONE = '✅ *Установка завершена*'

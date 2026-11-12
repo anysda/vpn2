@@ -1,6 +1,6 @@
 """anysda-vpn Telegram bot: one process for the admin chat and for VPN clients.
 
-Admin chat (TELEGRAM_CHAT_ID): /status, /nodes, /clients with client management
+Admin chat (TELEGRAM_CHAT_ID): /status, /clients with client management
 on inline buttons, alerts of the background monitor, notifications of the panel.
 Any other private chat is a client: /start <password> links the chat by an
 invitation, then a menu of devices and their configs.

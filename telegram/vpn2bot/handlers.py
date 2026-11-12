@@ -178,10 +178,6 @@ async def status(ask: Ask) -> None:
     await ask.say(texts.status(await api.status()), 'Markdown')
 
 
-async def nodes(ask: Ask) -> None:
-    await ask.say(texts.nodes(await api.status()), 'Markdown')
-
-
 async def client_list(ask: Ask) -> None:
     items = await ask.json('GET', CLIENTS)
     await ask.show(texts.CLIENT_LIST.format(len(items)), texts.clients_markup(items))
@@ -314,7 +310,6 @@ ROUTES = {
     (ADMIN, '/start'): admin_start,
     (ADMIN, '/help'): admin_start,
     (ADMIN, '/status'): status,
-    (ADMIN, '/nodes'): nodes,
     (ADMIN, '/clients'): client_list,
     (ADMIN, TEXT): admin_text,
     (ADMIN, 'acl'): open_clients,

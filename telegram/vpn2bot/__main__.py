@@ -79,9 +79,7 @@ async def main() -> None:
                 await tgapp.updater.stop()
                 await tgapp.stop()
     finally:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # The port is free again before invalid_token_pause; asyncio.run cancels the tasks itself.
         await runner.cleanup()
 
 

@@ -157,7 +157,6 @@ def client_card_markup(c: dict) -> dict:
     cid = c.get('id')
     operation = c.get('operation') or {}
     frozen = bool(c.get('frozenManual')) or c.get('status') == 'frozen'
-    # «Повторить» while the access operation is neither confirmed nor superseded.
     can_retry = (operation and operation.get('status') != 'superseded'
                  and (operation.get('status') == 'pending'
                       or c.get('accessStatus') == 'Состояние не подтверждено'))

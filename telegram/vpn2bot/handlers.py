@@ -12,7 +12,6 @@ ADMIN, CLIENT = 'admin', 'client'
 TEXT = 'text'
 CLIENTS = '/api/bot/admin/clients'
 
-# Chats asked for a device name after «Добавить устройство».
 awaiting_device_name: set[int] = set()
 # What the one admin chat is asked to type: ('anew', '') a new client's name, ('aexp', id) an expiry.
 admin_await: tuple | None = None
